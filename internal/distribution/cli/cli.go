@@ -43,6 +43,7 @@ type cliEnv struct {
 	outcome   any
 	started   time.Time
 	prelogged bool
+	openedDir string
 }
 
 // Execute runs the CLI and returns the process exit code.
@@ -175,7 +176,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 	if !env.json {
 		progress = func(line string) { env.print("%s", line) }
 	}
-	return service.Open(service.Options{
+	svc, err := service.Open(service.Options{
 		DBPath:       paths.DB,
 		BackupDir:    paths.Backups,
 		DataDir:      filepath.Dir(paths.DB),
@@ -188,6 +189,11 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		ReadOnly:     config.ReadOnly(os.Getenv(config.EnvReadOnly)),
 		Progress:     progress,
 	})
+	if err != nil {
+		return nil, err
+	}
+	env.openedDir = filepath.Dir(paths.DB)
+	return svc, nil
 }
 
 // serviceRunE is the RunE of every command that needs the database open: it

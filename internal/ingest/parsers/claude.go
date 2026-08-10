@@ -87,15 +87,8 @@ type claudeBuilder struct {
 // answerable.
 func ParseClaudeSession(content []byte, meta FileMeta) (Records, error) {
 	builder := &claudeBuilder{pending: map[string]*ToolUse{}}
-	cwd, model, validLines := "", "", 0
-	var discards []Discard
-	for index, raw := range lines(content) {
-		var line claudeLine
-		if err := json.Unmarshal([]byte(raw), &line); err != nil {
-			discards = append(discards, Discard{Record: index + 1, Reason: "invalid JSON: " + err.Error()})
-			continue
-		}
-		validLines++
+	cwd, model := "", ""
+	discards, validLines := consumeClaudeLines(content, func(line claudeLine) {
 		if cwd == "" {
 			cwd = line.Cwd
 		}
@@ -103,7 +96,7 @@ func ParseClaudeSession(content []byte, meta FileMeta) (Records, error) {
 			model = line.Message.Model
 		}
 		builder.consume(line)
-	}
+	})
 	if validLines == 0 && len(lines(content)) > 0 {
 		return Records{}, fmt.Errorf("the Claude transcript contains no valid JSON lines")
 	}
@@ -134,18 +127,12 @@ func ParseClaudeSession(content []byte, meta FileMeta) (Records, error) {
 func ParseCoworkAudit(content []byte, meta FileMeta) (Records, error) {
 	builder := &claudeBuilder{auditMode: true, pending: map[string]*ToolUse{}}
 	firstSessionID := ""
-	var discards []Discard
-	for index, raw := range lines(content) {
-		var line claudeLine
-		if err := json.Unmarshal([]byte(raw), &line); err != nil {
-			discards = append(discards, Discard{Record: index + 1, Reason: "invalid JSON: " + err.Error()})
-			continue
-		}
+	discards, _ := consumeClaudeLines(content, func(line claudeLine) {
 		if firstSessionID == "" {
 			firstSessionID = line.SessionID
 		}
 		builder.consume(line)
-	}
+	})
 	builder.flush()
 	exchanges := builder.finish()
 	if len(exchanges) == 0 {
@@ -167,6 +154,21 @@ func ParseCoworkAudit(content []byte, meta FileMeta) (Records, error) {
 	}
 	session.StartedAt, session.EndedAt, session.DurationMinutes = span(exchanges)
 	return Records{Sessions: []Session{session}, Discards: discards}, nil
+}
+
+func consumeClaudeLines(content []byte, consume func(claudeLine)) ([]Discard, int) {
+	var discards []Discard
+	valid := 0
+	for index, raw := range lines(content) {
+		var line claudeLine
+		if err := json.Unmarshal([]byte(raw), &line); err != nil {
+			discards = append(discards, Discard{Record: index + 1, Reason: "invalid JSON: " + err.Error()})
+			continue
+		}
+		valid++
+		consume(line)
+	}
+	return discards, valid
 }
 
 func (b *claudeBuilder) consume(line claudeLine) {

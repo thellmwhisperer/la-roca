@@ -3,6 +3,7 @@
 package acceptance
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"fmt"
 	"io/fs"
@@ -21,6 +22,11 @@ func (w *distributionWorld) updateAgainstUnreachableRelease() error {
 		return err
 	}
 	w.state["updateBefore"] = before
+	records, err := executionLogRecords(w.home)
+	if err != nil {
+		return err
+	}
+	w.state["updateLogRecords"] = records
 	w.last = w.run("update", "--api", "http://127.0.0.1:1", "--repo", "synthetic/unreachable", "--binary", w.installed)
 	return nil
 }
@@ -40,6 +46,13 @@ func (w *distributionWorld) failedUpdateChangesNothing() error {
 	if before := w.state["updateBefore"].(map[string]string); !reflect.DeepEqual(after, before) {
 		return fmt.Errorf("failed update changed the installation:\nbefore=%v\nafter=%v", before, after)
 	}
+	records, err := executionLogRecords(w.home)
+	if err != nil {
+		return err
+	}
+	if before := w.state["updateLogRecords"].(int); records != before+1 {
+		return fmt.Errorf("failed update added %d audit records, want 1", records-before)
+	}
 	return nil
 }
 
@@ -50,6 +63,9 @@ func fingerprintHome(home string) (map[string]string, error) {
 			return err
 		}
 		if entry.IsDir() {
+			if path == filepath.Join(home, ".roca", "logs") {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		body, err := os.ReadFile(path)
@@ -62,4 +78,31 @@ func fingerprintHome(home string) (map[string]string, error) {
 		return nil
 	})
 	return result, err
+}
+
+func executionLogRecords(home string) (int, error) {
+	files, err := filepath.Glob(filepath.Join(home, ".roca", "logs", "executions-*.jsonl"))
+	if err != nil {
+		return 0, err
+	}
+	total := 0
+	for _, path := range files {
+		file, err := os.Open(path)
+		if err != nil {
+			return 0, err
+		}
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			total++
+		}
+		scanErr := scanner.Err()
+		closeErr := file.Close()
+		if scanErr != nil {
+			return 0, scanErr
+		}
+		if closeErr != nil {
+			return 0, closeErr
+		}
+	}
+	return total, nil
 }

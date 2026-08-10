@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -12,6 +13,14 @@ import (
 )
 
 func (env *cliEnv) logExecution(cmd *cobra.Command, started time.Time, code int, runErr error) error {
+	// A concurrently authorized purge may remove the data directory while a
+	// long-running command is still alive. Its eventual exit must not recreate
+	// operator-deleted state just to append a completion record.
+	if env.openedDir != "" {
+		if _, err := os.Stat(env.openedDir); os.IsNotExist(err) {
+			return nil
+		}
+	}
 	paths, err := env.resolvePaths()
 	if err != nil {
 		return fmt.Errorf("resolve the execution log location: %w", err)

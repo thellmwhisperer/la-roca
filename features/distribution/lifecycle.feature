@@ -5,9 +5,9 @@ Feature: Distribution lifecycle
   Background:
     Given an isolated La Roca distribution
 
-  Scenario: Update without a reachable release fails plainly and changes nothing
+  Scenario: Update without a reachable release fails plainly, changes no functional state and leaves an audit trace
     When update checks an unreachable synthetic release endpoint
-    Then update fails plainly and the installation is unchanged
+    Then update fails plainly, the installation is unchanged and one audit record is added
 
   Scenario: Uninstall removes La Roca and keeps the data unless the operator consents; purge removes everything La Roca ever created, zero residue
     Given two synthetic homes with every La Roca integration installed

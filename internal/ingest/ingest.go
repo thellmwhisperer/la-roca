@@ -282,19 +282,15 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 // read turns one artefact into records; what the content declares outranks what
 // the path encodes.
 func read(ctx context.Context, opts Options, target Target, result *Result) (parsers.Records, string) {
+	var databaseReader func(context.Context, string) (parsers.Records, []string, error)
 	switch target.Kind {
 	case parsers.KindOpenCodeDB:
-		records, complaints, err := ReadOpenCode(ctx, target.Path)
-		if err != nil {
-			return parsers.Records{}, err.Error()
-		}
-		result.Warnings = append(result.Warnings, complaints...)
-		for index, complaint := range complaints {
-			records.Discards = append(records.Discards, parsers.Discard{Record: index + 1, Reason: complaint})
-		}
-		return records, ""
+		databaseReader = ReadOpenCode
 	case parsers.KindHermesDB:
-		records, complaints, err := ReadHermes(ctx, target.Path)
+		databaseReader = ReadHermes
+	}
+	if databaseReader != nil {
+		records, complaints, err := databaseReader(ctx, target.Path)
 		if err != nil {
 			return parsers.Records{}, err.Error()
 		}

@@ -15,7 +15,7 @@ import (
 
 func registerDistributionLifecycleSteps(ctx *godog.ScenarioContext, w *distributionWorld) {
 	ctx.When(`^update checks an unreachable synthetic release endpoint$`, w.updateAgainstUnreachableRelease)
-	ctx.Then(`^update fails plainly and the installation is unchanged$`, w.failedUpdateChangesNothing)
+	ctx.Then(`^update fails plainly, the installation is unchanged and one audit record is added$`, w.failedUpdateChangesNothing)
 	ctx.Given(`^two synthetic homes with every La Roca integration installed$`, w.twoFullyIntegratedHomes)
 	ctx.When(`^one home uninstalls with data kept and the other consents to purge$`, w.uninstallAndPurge)
 	ctx.Then(`^the first keeps only its data and the second has zero La Roca residue$`, w.lifecycleConsentIsRespected)

@@ -425,11 +425,7 @@ func listTools(t *testing.T, session *mcp.ClientSession) *mcp.ListToolsResult {
 func callTool(t *testing.T, session *mcp.ClientSession, name string,
 	arguments map[string]any) *mcp.CallToolResult {
 	t.Helper()
-	result, err := session.CallTool(context.Background(),
-		&mcp.CallToolParams{Name: name, Arguments: arguments})
-	if err != nil {
-		t.Fatalf("call %s: %v", name, err)
-	}
+	result := callToolResult(t, session, name, arguments)
 	if result.IsError {
 		t.Fatalf("call %s answered with an error: %s", name, renderedText(result))
 	}
@@ -439,15 +435,22 @@ func callTool(t *testing.T, session *mcp.ClientSession, name string,
 func callToolExpectingError(t *testing.T, session *mcp.ClientSession, name string,
 	arguments map[string]any) string {
 	t.Helper()
+	result := callToolResult(t, session, name, arguments)
+	if !result.IsError {
+		t.Fatalf("call %s was expected to be refused and was not", name)
+	}
+	return renderedText(result)
+}
+
+func callToolResult(t *testing.T, session *mcp.ClientSession, name string,
+	arguments map[string]any) *mcp.CallToolResult {
+	t.Helper()
 	result, err := session.CallTool(context.Background(),
 		&mcp.CallToolParams{Name: name, Arguments: arguments})
 	if err != nil {
 		t.Fatalf("call %s: %v", name, err)
 	}
-	if !result.IsError {
-		t.Fatalf("call %s was expected to be refused and was not", name)
-	}
-	return renderedText(result)
+	return result
 }
 
 func queryThroughThePlug(t *testing.T, session *mcp.ClientSession,
