@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 
 	"github.com/cucumber/godog"
@@ -105,7 +106,7 @@ func (w *distributionWorld) helpIsComplete() error {
 func (w *distributionWorld) exerciseOutputForms(command string) error {
 	var channel *httptest.Server
 	if command == "update" {
-		channel = httptest.NewServer(http.HandlerFunc(func(out http.ResponseWriter, _ *http.Request) {
+		channel = httptest.NewTLSServer(http.HandlerFunc(func(out http.ResponseWriter, _ *http.Request) {
 			out.Header().Set("Content-Type", "application/json")
 			fmt.Fprint(out, `{"tag_name":"v99.0.0","assets":[]}`)
 		}))
@@ -115,6 +116,9 @@ func (w *distributionWorld) exerciseOutputForms(command string) error {
 	runOne := func(label string, machine bool) (distributionRun, error) {
 		if err := w.prepare(label); err != nil {
 			return distributionRun{}, err
+		}
+		if channel != nil {
+			writeTLSCertificate(filepath.Join(w.home, "tls-ca.pem"), channel)
 		}
 		args, err := distributionCommandArgs(command, w.home, channel)
 		if err != nil {

@@ -140,6 +140,10 @@ func distributionEnvironment(home, binary string) []string {
 	if _, err := os.Stat(filepath.Join(home, ".roca", "config.toml")); os.IsNotExist(err) {
 		env = append(env, "ROCA_MODELS_ORDER=none")
 	}
+	certificate := filepath.Join(home, "tls-ca.pem")
+	if _, err := os.Stat(certificate); err == nil {
+		env = append(env, "SSL_CERT_FILE="+certificate)
+	}
 	return env
 }
 

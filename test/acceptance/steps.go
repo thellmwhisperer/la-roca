@@ -430,10 +430,13 @@ func (m *world) environment() []string {
 	// these two the same way an operator would set them once instead of passing
 	// --repo on every update, and no scenario here ever reaches github.com.
 	if m.install.server != nil {
+		certificate := filepath.Join(m.home, "tls-ca.pem")
 		environment = append(environment,
 			"ROCA_REPO="+m.install.repo,
 			"ROCA_GITHUB_API="+m.install.server.URL,
-			"GITHUB_TOKEN="+m.install.token)
+			"GITHUB_TOKEN="+m.install.token,
+			"SSL_CERT_FILE="+certificate,
+			"CURL_CA_BUNDLE="+certificate)
 	}
 	return environment
 }

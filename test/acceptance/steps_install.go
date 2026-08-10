@@ -5,6 +5,7 @@ package acceptance
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -23,7 +24,7 @@ import (
 //
 // Still black box, and here that matters more than anywhere else: the installer
 // is a shell script and the release channel is GitHub. What this file stands up
-// is a real HTTP server speaking the API's shapes, and the real `install.sh` is
+// is a real HTTPS server speaking the API's shapes, and the real `install.sh` is
 // run against it with the real `curl`. A test that reimplemented the download
 // would be testing itself.
 //
@@ -165,7 +166,7 @@ func (m *world) theChannel() *installWorld {
 			" (acceptance) " + runtime.GOOS + "/" + runtime.GOARCH + "\";; esac\n")
 
 	channel := &m.install
-	m.install.server = httptest.NewServer(http.HandlerFunc(
+	m.install.server = httptest.NewTLSServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			if channel.token != "" &&
 				r.Header.Get("Authorization") != "Bearer "+channel.token {
@@ -176,7 +177,15 @@ func (m *world) theChannel() *installWorld {
 			}
 			channel.serve(w, r)
 		}))
+	writeTLSCertificate(filepath.Join(m.home, "tls-ca.pem"), m.install.server)
 	return &m.install
+}
+
+func writeTLSCertificate(path string, server *httptest.Server) {
+	certificate := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
+	if err := os.WriteFile(path, certificate, 0o600); err != nil {
+		panic(err)
+	}
 }
 
 func (c *installWorld) serve(w http.ResponseWriter, r *http.Request) {
