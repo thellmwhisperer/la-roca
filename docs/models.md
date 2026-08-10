@@ -95,9 +95,9 @@ Same verb for every provider this build ships. Bare `roca login` lists them.
 
 ```
 roca login              # lists subscription and key providers
-roca login codex        # opens the browser, leaves the session on this machine
-roca login xai          # prompts for the key (no echo), stores it at 0600
-roca login xai --model grok-4-fast  # logs in and persists the answering model
+roca login codex        # opens the browser, then presents the model picker
+roca login xai          # stores the key, then presents the model picker
+roca login xai --model grok-4-fast  # validates and probes this exact model
 roca doctor             # says whether it is usable, never what is in it
 roca logout codex       # forgets the subscription session
 roca logout xai         # forgets the stored key
@@ -114,20 +114,28 @@ A key login stores the secret at `credentials/<provider>.key` with the same
 permissions. Config-file `api_key` and the provider's environment variable keep
 working; a key stored by login takes precedence.
 
-`--model <id>` works with every login provider and writes only
-`models.<provider>.model` (the `model` key under `[models.<provider>]`) in
-`~/.roca/config.toml`; existing comments and unrelated keys remain unchanged.
-Without that override, the table's documented default is the fallback. Login,
-init and doctor name the resolved model, whether it came from the configuration
-or the built-in default, and repeat both ways to change it.
+After authentication, login lists canonical model IDs and accepts an arrow-key
+selection; it never copies free text into the configuration. OpenAI-compatible
+providers and Ollama supply their live catalogues through `/models` and
+`/api/tags`. Codex uses the public models.dev catalogue, then a cached or
+embedded snapshot when the catalogue is unavailable. A fallback list is
+labelled as possibly stale, and `roca update` refreshes its cache.
 
-`roca model set <provider> <model-id>` writes that same
-`models.<provider>.model` without re-running a login: it is the way to switch
-the answering model of a provider you are already logged in to. An unknown
-provider is refused with the names this build knows.
+Catalogue membership proves only that the model exists. Before changing
+`config.toml`, La Roca sends one minimal real request with the newly stored
+credential or subscription session. Only a successful response writes the
+canonical ID; rejection prints the provider's own error and leaves the model
+configuration unchanged. `--model <id>` uses this same validation path when a
+non-interactive login needs an exact choice.
+
+`roca model set <model-id>` validates and probes the first configured provider
+without re-running login. The explicit
+`roca model set <provider> <model-id>` form remains available when switching a
+different configured provider. Both forms share the gate implemented in
+`internal/distribution/cli/model_validation.go`.
 
 ```
-roca model set codex gpt-5.6-sol
+roca model set gpt-5.6-sol
 roca model set ollama qwen3.5:4b
 ```
 

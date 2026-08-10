@@ -24,6 +24,10 @@ claims:
     contract:
       file: features/provider/selection.feature
       item: "Doctor names which model is going to answer, and why"
+  internal/distribution/cli/model_validation.go:
+    contract:
+      file: features/07_model_adapters.feature
+      item: "F07-10 Login persists the answering model without replacing the configuration"
   internal/distribution/cli/serve.go:
     contract:
       file: features/08_mcp_plug.feature
