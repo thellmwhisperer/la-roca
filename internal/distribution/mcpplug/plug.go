@@ -286,8 +286,10 @@ func serveOver(ctx context.Context, svc *service.Service, build Build,
 	transport mcp.Transport) error {
 	err := New(svc, build).Run(ctx, transport)
 	// A closed pipe is how this server ends its life, not a failure: the agent
-	// that launched it went away, which is exactly the contract.
-	if err == io.EOF || err == os.ErrClosed {
+	// that launched it went away, which is exactly the contract. The comparison
+	// is errors.Is because the transport wraps: an == check reported the normal
+	// end of life as a failure the moment the error arrived wrapped.
+	if errors.Is(err, io.EOF) || errors.Is(err, os.ErrClosed) {
 		return nil
 	}
 	return err
