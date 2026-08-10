@@ -53,7 +53,7 @@ wrong or dishonest output; **low** is cosmetic or a consistency defect.
 | 11 | this review | low | `ingestSourceLabel` derived the label from the session count, so the live rows called one source "claude" until its first session landed and "claude-code" after: one source under two names inside one report. | fixed `cdd45ba` |
 | 12 | this review | low | The English sweep missed two unit fixtures: one temp filename in a file it did sweep, and a Spanish fixture added 45 minutes after it in a file it never reached. | fixed `a7f3751` |
 | 13 | this review | low | The store wave filed its delta inventory at `test/acceptance/store-domain-delta.md`; the other three used `features/<domain>/delta-inventory.md`. | fixed `391b82b` |
-| 14 | this review | medium | A log-write failure turns a successful command into exit 1. | **needs-decision** `logging-failure-is-fatal` |
+| 14 | this review | medium | A log-write failure turned a successful command into exit 1: the answer was already on stdout and the exit code said the run had failed. | fixed, owner ruling `logging-failure-is-fatal` |
 | 15 | this review | medium | `dedupRows` reorders and filters any result set with `source` and `text` columns, including model-generated SQL with its own `ORDER BY`. | **needs-decision** `dedup-reorders-model-sql` |
 | 16 | this review | low | `pi.go` mixes two numbering schemes in one discard stream. | logged (below) |
 | 17 | this review | low | `loginModel` writes the config before the credential is saved. | logged (below) |
@@ -61,21 +61,24 @@ wrong or dishonest output; **low** is cosmetic or a consistency defect.
 | 19 | this review | low | `logfile.Append` globs and prunes the stream on every single write. | logged (nit) |
 | 20 | this review | low | The store domain has no `bite-proof.md`; the other three waves do. | logged (gap) |
 
-### The two that need a decision
+### The decisions
 
-**`logging-failure-is-fatal`** (`internal/distribution/cli/cli.go:75-77`). When
-`logExecution` fails, `Execute` returns `(ExitError, logErr)`. A `roca query` on a
-machine whose `~/.roca/logs/` is not writable prints its answer to stdout and then
-exits 1 with an error, so a script checking the exit code concludes the query
-failed while holding the answer. Both readings are defensible, which is why this is
-not fixed here: either the JSONL trace is part of the product's promise and failing
-to write it is a real failure (current behaviour, and the README states the
-guarantee unconditionally), or observability must never fail the command and the
-failure belongs on stderr as a warning with the command's own exit code preserved.
-The second option narrows a guarantee documented the same day, so it is the owner's
-call. No test pins the current behaviour either way.
+**`logging-failure-is-fatal`: ruled, and applied.** `Execute` returned
+`(ExitError, logErr)` when `logExecution` failed, so a `roca query` on a machine
+whose `~/.roca/logs/` was not writable printed its answer to stdout and then exited
+1, and a script reading the exit code concluded the query had failed while holding
+the answer.
 
-**`dedup-reorders-model-sql`** (`internal/provider/service/query.go:131-166`).
+The ruling: a log-write failure never fails the command. The command finishes with
+its own honest exit code, prints its answer, and emits one visible stderr warning
+that the log could not be written. Applied in `internal/distribution/cli/cli.go`,
+pinned by `TestAnUnwritableLogDoesNotFailTheCommand` (unwritable log directory, a
+query that exits 0 with exactly one stderr warning and a clean stdout), and the
+README's unconditional guarantee is softened to match: the trace is a record of the
+work, never a condition of it.
+
+**`dedup-reorders-model-sql`: still open with the owner, and untouched here**
+(`internal/provider/service/query.go:131-166`).
 `found()` runs `dedupRows` on every answer, including the two model-SQL paths
 (`llm.go:181`, `llm.go:318`). Any result set whose columns include `source` and
 `text` is then deduplicated, re-sorted by `relevanceRank` (memory first, thinking
@@ -223,6 +226,14 @@ b9c25a9 fmt: gofmt the lifecycle and codex changes
 a7f3751 test: english sweep for the two unit fixtures it missed
 ```
 
+Then, applying the ruling on `logging-failure-is-fatal`:
+
+```
+fix(cli): never let an unwritable log fail the command
+```
+
 Every behavioural fix landed red first: the reproducing test was written and seen
 to fail before the production change. No new features, no new abstractions, no
 raised ceilings.
+
+One open decision remains with the owner: `dedup-reorders-model-sql`.
