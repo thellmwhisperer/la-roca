@@ -46,10 +46,22 @@ func (w *distributionWorld) requestBudgetedRow(surface string) error {
 		if err != nil {
 			return err
 		}
-		rows, _ := doc["rows"].([]any)
+		rows, ok := doc["rows"].([]any)
+		if !ok {
+			return fmt.Errorf("the tool answer declares no rows list: %v", doc)
+		}
 		for _, item := range rows {
-			row, _ := item.(map[string]any)
-			values = append(values, fmt.Sprint(row["content"]))
+			// Ignoring these assertions appended "<nil>" as a value, so the budget
+			// was measured over something the answer never carried.
+			row, ok := item.(map[string]any)
+			if !ok {
+				return fmt.Errorf("a row is not an object: %v", item)
+			}
+			content, ok := row["content"].(string)
+			if !ok {
+				return fmt.Errorf("a row carries no content string: %v", row)
+			}
+			values = append(values, content)
 		}
 	default:
 		return fmt.Errorf("unknown row surface %q", surface)

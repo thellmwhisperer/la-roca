@@ -78,8 +78,13 @@ func (w *ingestAcceptanceWorld) expectDelta(want map[string]int) error {
 		return fmt.Errorf("delta is not an object: %v", w.last.doc)
 	}
 	for _, key := range []string{"memories", "sessions", "exchanges", "thinking_blocks", "tool_uses"} {
-		expected := want[key]
-		if got := int(delta[key].(float64)); got != expected {
+		// An unchecked assertion here panicked inside the step, which reads as a
+		// broken harness rather than the report field that is missing.
+		number, ok := delta[key].(float64)
+		if !ok {
+			return fmt.Errorf("delta.%s is missing or not a number: %v", key, delta[key])
+		}
+		if got, expected := int(number), want[key]; got != expected {
 			return fmt.Errorf("delta.%s=%d, want %d", key, got, expected)
 		}
 	}

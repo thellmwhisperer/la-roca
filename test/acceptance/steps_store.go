@@ -579,7 +579,14 @@ func (m *world) searchRows(wantNonEmpty bool) ([]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, _ := document["rows"].([]any)
+	// An absent rows field IS the honest zero: QueryResult carries `omitempty`, so
+	// a match of "empty" has no rows key at all. What is not allowed is a rows
+	// field that exists and is not a list, which no answer should ever produce.
+	raw, declared := document["rows"]
+	rows, ok := raw.([]any)
+	if declared && !ok {
+		return nil, fmt.Errorf("rows is not a list: %s", m.last.stdout)
+	}
 	if wantNonEmpty && len(rows) == 0 {
 		return nil, fmt.Errorf("the search returned no rows: %s", m.last.stdout)
 	}
