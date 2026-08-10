@@ -35,8 +35,9 @@ func TestAdoptingARealLabDatabase(t *testing.T) {
 		report.Verdict, report.Orphans, report.Differences)
 
 	if report.Verdict != store.VerdictCurrent && report.Verdict != store.VerdictMigratable {
-		t.Fatalf("verdict = %q (%s): a live existing database is adopted",
-			report.Verdict, report.Reason)
+		t.Fatalf("verdict = %q (%s): a live existing database should be adoptable, "+
+			"so the verdict has to be %q or %q",
+			report.Verdict, report.Reason, store.VerdictCurrent, store.VerdictMigratable)
 	}
 	if len(report.Orphans) == 0 {
 		t.Error("orphans = none: the existing database carries at least messages")

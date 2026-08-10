@@ -68,9 +68,12 @@ type Adoption struct {
 
 // Inspect classifies the database by structure, never by the text of its create
 // statements: it compares table and view names and, per column, type affinity,
-// NOT NULL, default expression and position in the primary key. A database that
-// is identical column by column is adopted even when
-// its DDL is written another way.
+// NOT NULL, default expression and position in the primary key. A database whose
+// every REQUIRED column matches is adopted even when its DDL is written another
+// way. The rule is "all required columns match" and not "identical column by
+// column": `compare` walks the expected columns, so a table carrying an extra
+// column of the operator's own is adopted with it rather than refused. An extra
+// TABLE is different and is reported as an orphan.
 //
 // What this comparison deliberately does not cover: CHECKs and trigger bodies
 // are invisible to PRAGMA table_info. They are neither compared nor repaired;
