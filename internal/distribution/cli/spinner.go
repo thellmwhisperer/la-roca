@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"sync"
 	"time"
 )
 
@@ -37,6 +38,10 @@ type spinner struct {
 	stop    chan struct{}
 	done    chan struct{}
 	started bool
+	// once keeps finish idempotent. The contract below promises it is safe to
+	// defer, which invites a caller to both defer it and call it on the success
+	// path; the second close of stop panicked instead.
+	once sync.Once
 }
 
 // startSpinner decides whether to animate and returns a spinner that is always
@@ -88,14 +93,16 @@ func (s *spinner) draw(frame int) {
 }
 
 // finish stops the spinner, joins its goroutine and, if it ever drew, clears the
-// row. Safe on an inert spinner and safe to defer.
+// row. Safe on an inert spinner, safe to defer, and safe to call twice.
 func (s *spinner) finish() {
 	if !s.active {
 		return
 	}
-	close(s.stop)
-	<-s.done
-	if s.started {
-		fmt.Fprint(s.out, clearLine)
-	}
+	s.once.Do(func() {
+		close(s.stop)
+		<-s.done
+		if s.started {
+			fmt.Fprint(s.out, clearLine)
+		}
+	})
 }

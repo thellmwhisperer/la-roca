@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -13,7 +14,10 @@ func TestMCPInstallDeclaresTheRunningExecutable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "claude.json")
 	running := runningExecutable(t)
 	out, configured := installMCP(t, path)
-	if !strings.Contains(configured, running) {
+	// The configuration is JSON, so the path is compared in its encoded form: a
+	// path carrying a backslash or a quote is escaped on the way in, and a raw
+	// comparison would fail for a reason that is not the product's.
+	if !strings.Contains(configured, strconv.Quote(running)) {
 		t.Fatalf("configuration does not name the running executable %q:\n%s",
 			running, configured)
 	}

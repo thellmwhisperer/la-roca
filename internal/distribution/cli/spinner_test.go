@@ -72,3 +72,20 @@ func TestFinishIsSafeOnAnInertSpinner(t *testing.T) {
 	env := &cliEnv{errOut: &bytes.Buffer{}}
 	startSpinner(env, "x").finish()
 }
+
+// finish documents itself as safe to defer, and a caller that both defers it and
+// calls it on the success path is exactly the pattern that wording invites. The
+// second close of the stop channel panicked, so the promise was not kept.
+func TestFinishIsSafeToCallTwice(t *testing.T) {
+	fastSpinner(t)
+	var buf bytes.Buffer
+	spin := newSpinner(&buf, "searching memory", true)
+	time.Sleep(spinnerGrace + 3*spinnerTick)
+
+	spin.finish()
+	spin.finish()
+
+	if !strings.Contains(buf.String(), "searching memory") {
+		t.Errorf("the spinner never painted its label:\n%q", buf.String())
+	}
+}
