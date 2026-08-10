@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 
-	"github.com/thellmwhisperer/la-roca/internal/query"
+	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 	"github.com/thellmwhisperer/la-roca/internal/store/search"
 )
 

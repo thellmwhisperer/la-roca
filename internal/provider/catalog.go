@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/thellmwhisperer/la-roca/internal/config"
-	"github.com/thellmwhisperer/la-roca/internal/oauth"
+	"github.com/thellmwhisperer/la-roca/internal/provider/config"
+	"github.com/thellmwhisperer/la-roca/internal/provider/oauth"
 )
 
 // EnvOrder is the provider order asked for out loud, right now. It wins over

@@ -5,10 +5,10 @@ import (
 	"runtime"
 
 	"github.com/spf13/cobra"
-	"github.com/thellmwhisperer/la-roca/internal/config"
+	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/human"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
-	"github.com/thellmwhisperer/la-roca/internal/service"
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 // The configuration keys that move where the ingest looks. They are read with the

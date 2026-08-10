@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
-	"github.com/thellmwhisperer/la-roca/internal/service"
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 // What the ingest wrote has to be answerable in the same command. A memory that is

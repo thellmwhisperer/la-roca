@@ -20,7 +20,7 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/thellmwhisperer/la-roca/internal/service"
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 // ServerName is how La Roca announces itself in the handshake, and it is the

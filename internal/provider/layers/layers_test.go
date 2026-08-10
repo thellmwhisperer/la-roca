@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/thellmwhisperer/la-roca/internal/layers"
+	"github.com/thellmwhisperer/la-roca/internal/provider/layers"
 )
 
 func TestTheRegistryCarriesTheTwelveLayers(t *testing.T) {

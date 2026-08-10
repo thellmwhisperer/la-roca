@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/thellmwhisperer/la-roca/internal/config"
+	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 )
 
 func TestResolveNamesAPathWithoutCreatingOrSelectingADatabase(t *testing.T) {

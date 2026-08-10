@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
-	"github.com/thellmwhisperer/la-roca/internal/service"
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 var allAgents = []string{"claude", "claude-desktop", "cowork", "codex", "opencode", "pi", "hermes"}

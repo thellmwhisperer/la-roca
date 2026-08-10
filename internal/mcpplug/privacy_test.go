@@ -8,7 +8,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/thellmwhisperer/la-roca/internal/mcpplug"
-	"github.com/thellmwhisperer/la-roca/internal/service"
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 // The decision of 2026-08-05 ~21:55: MCP tool errors must never carry

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thellmwhisperer/la-roca/internal/service"
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 // The decision of 2026-08-05 ~21:55: agent-facing JSON surfaces must

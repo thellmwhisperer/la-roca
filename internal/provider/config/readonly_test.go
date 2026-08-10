@@ -3,7 +3,7 @@ package config_test
 import (
 	"testing"
 
-	"github.com/thellmwhisperer/la-roca/internal/config"
+	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 )
 
 // Read-only mode is the operator's switch, not a state the product infers. It

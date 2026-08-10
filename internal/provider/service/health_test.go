@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thellmwhisperer/la-roca/internal/service"
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 // seedOrphanSupersedes plants what only an aged database has: memories pointing

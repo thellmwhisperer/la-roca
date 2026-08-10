@@ -52,7 +52,7 @@ import (
 //     substantial words. It is the same false premise as F06-01, and changing
 //     the question is the suite owner's decision, not this wave's. That the
 //     reason travels with the answer IS measured, over the question the F07
-//     scenarios use, in internal/service.
+//     scenarios use, in internal/provider/service.
 //   - F06-01: its premise is that "cuantas herramientas se han usado en total"
 //     is answered today by the model. With the v1 corpus the compiler answers
 //     it, which is better behaviour and a false premise: the scenario needs a

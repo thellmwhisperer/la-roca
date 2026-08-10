@@ -20,7 +20,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thellmwhisperer/la-roca/internal/config"
+	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 )
 
 // modelConfigPath is the config path under an isolated home. A helper and not an

@@ -2,7 +2,7 @@ package mcpplug
 
 import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/thellmwhisperer/la-roca/internal/service"
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 // The five tools of v1, each one defended by a concrete caller (TECH-SPEC

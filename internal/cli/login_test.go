@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thellmwhisperer/la-roca/internal/oauth"
+	"github.com/thellmwhisperer/la-roca/internal/provider/oauth"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 )
 

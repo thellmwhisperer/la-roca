@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thellmwhisperer/la-roca/internal/query/sqlgate"
+	"github.com/thellmwhisperer/la-roca/internal/provider/query/sqlgate"
 )
 
 func gate(t *testing.T) *sqlgate.Gate {

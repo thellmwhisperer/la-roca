@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/agentcfg"
-	"github.com/thellmwhisperer/la-roca/internal/config"
+	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/lifecycle"
 	"github.com/thellmwhisperer/la-roca/internal/skill"
 )

@@ -36,7 +36,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thellmwhisperer/la-roca/internal/oauth"
+	"github.com/thellmwhisperer/la-roca/internal/provider/oauth"
 )
 
 // -- 1/5 HELPER · codexBackend, sse, liveSession --

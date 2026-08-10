@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider"
-	"github.com/thellmwhisperer/la-roca/internal/service"
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 // fakeProvider is a model that answers whatever the test says. It is the whole

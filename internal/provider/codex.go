@@ -37,7 +37,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/thellmwhisperer/la-roca/internal/oauth"
+	"github.com/thellmwhisperer/la-roca/internal/provider/oauth"
 )
 
 // -- 1/4 HELPER · Defaults and construction --

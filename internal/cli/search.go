@@ -3,7 +3,7 @@ package cli
 import (
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/human"
-	"github.com/thellmwhisperer/la-roca/internal/service"
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 func indexCommand(env *cliEnv) *cobra.Command {

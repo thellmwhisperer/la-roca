@@ -34,8 +34,8 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/data"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
-	"github.com/thellmwhisperer/la-roca/internal/query"
-	"github.com/thellmwhisperer/la-roca/internal/query/sqlgate"
+	"github.com/thellmwhisperer/la-roca/internal/provider/query"
+	"github.com/thellmwhisperer/la-roca/internal/provider/query/sqlgate"
 )
 
 // -- 1/4 HELPER · degradation reasons and correction --

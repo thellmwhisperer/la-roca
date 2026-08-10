@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/data"
-	"github.com/thellmwhisperer/la-roca/internal/query/sqlgate"
+	"github.com/thellmwhisperer/la-roca/internal/provider/query/sqlgate"
 )
 
 const someDDL = `

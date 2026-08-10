@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thellmwhisperer/la-roca/internal/query"
+	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 )
 
 func termPlan(term string) query.Plan {

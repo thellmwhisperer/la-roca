@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider"
-	"github.com/thellmwhisperer/la-roca/internal/service"
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 func TestInitCreatesTheDatabaseAndSyncsTheLayerRegistry(t *testing.T) {

@@ -12,7 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	"github.com/thellmwhisperer/la-roca/internal/layers"
+	"github.com/thellmwhisperer/la-roca/internal/provider/layers"
 	"github.com/thellmwhisperer/la-roca/internal/skill"
 )
 

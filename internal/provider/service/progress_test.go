@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
-	"github.com/thellmwhisperer/la-roca/internal/service"
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 func TestIngestNarratesEachSourceAndItsDelta(t *testing.T) {

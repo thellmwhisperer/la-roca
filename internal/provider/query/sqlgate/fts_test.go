@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thellmwhisperer/la-roca/internal/query/sqlgate"
+	"github.com/thellmwhisperer/la-roca/internal/provider/query/sqlgate"
 )
 
 // The gate is worth its two halves, and both have to know the lexical index:

@@ -31,8 +31,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/thellmwhisperer/la-roca/internal/query"
-	"github.com/thellmwhisperer/la-roca/internal/service"
+	"github.com/thellmwhisperer/la-roca/internal/provider/query"
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 // -- 1/3 CORE · rowOutput -- <- START HERE

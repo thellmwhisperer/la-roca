@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thellmwhisperer/la-roca/internal/config"
+	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 )
 
 func settings(t *testing.T, body string) Settings {

@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/thellmwhisperer/la-roca/internal/service"
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 // TestSearchOverARealLabDatabase runs the search layer against a copy of a live

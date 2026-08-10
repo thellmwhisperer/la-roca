@@ -6,7 +6,7 @@ import (
 	"sort"
 
 	"github.com/spf13/cobra"
-	"github.com/thellmwhisperer/la-roca/internal/service"
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 // storeCommand is the write half of the product on the shell. It is the same

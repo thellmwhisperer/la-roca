@@ -28,7 +28,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thellmwhisperer/la-roca/internal/service"
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 // -- 1/2 CORE · TestAnEmptyModelPlanLabelsTheLiteralFallback -- <- START HERE

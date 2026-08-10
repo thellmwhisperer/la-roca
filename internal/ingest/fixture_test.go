@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/thellmwhisperer/la-roca/internal/layers"
+	"github.com/thellmwhisperer/la-roca/internal/provider/layers"
 	"github.com/thellmwhisperer/la-roca/internal/store"
 	_ "modernc.org/sqlite"
 )
