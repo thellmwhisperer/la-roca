@@ -1,3 +1,31 @@
+/*
+@overview Composes query, SQL, health, and store results into AXI text. ~180 lines, 5 public symbols.
+
+	READING GUIDE
+	-------------
+	1. Start at Query for the natural-language answer contract
+	2. Read Exec for direct SQL rendering
+	3. Read Health and Store for the remaining result composers
+
+	MAIN FLOW
+	---------
+	service result -> provenance/message -> optional prose -> TOON rows -> contextual help
+
+	PUBLIC API
+	----------
+	QueryPreamble  Render query provenance and route context
+	Query          Render a query, optional interpretation, evidence, and help
+	Exec           Render a gated SELECT and its rows
+	Health         Render live health checks
+	Store          Render a stored-memory outcome
+
+	INTERNALS
+	---------
+	appendLine, queryTail
+
+@exports QueryPreamble, Query, Exec, Health, Store
+@deps standard formatting/sorting/strings, internal human/service
+*/
 package axi
 
 import (
@@ -8,6 +36,8 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/human"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
+
+// -- 1/3 CORE · Query and QueryPreamble -- <- START HERE
 
 // appendLine writes line to b on its own line, skipping empties. It never
 // leaves a leading or trailing blank line, so a composer's output is exactly
@@ -50,8 +80,8 @@ func QueryPreamble(res service.QueryResult) string {
 }
 
 // queryTail is the rows table and the help that follow the preamble when a
-// query answered with rows. The shell reaches it through Query (with no prose);
-// the shell's prose path replaces it with the model's rendering.
+// query answered with rows. Both the shell and MCP surface reach it through
+// Query; full shell output adds prose above it without hiding the evidence.
 func queryTail(res service.QueryResult) string {
 	var b strings.Builder
 	appendLine(&b, RowOutput(res.Columns, res.Rows, res.Question))
@@ -64,9 +94,8 @@ func queryTail(res service.QueryResult) string {
 // Query renders the AXI text for a query result: the route preamble and then
 // whichever tail the answer takes. A question the model never lifted is only
 // its message; a compile-only answer is its SQL; an empty match is the message
-// and the help to broaden it; and a matched answer is its rows and help, unless
-// the caller passed prose, in which case that rendering stands in for the
-// table.
+// and the help to broaden it; and a matched answer is its rows and help. When
+// the caller passes prose, that interpretation is added above the evidence.
 //
 // The shell passes the second inference call's prose; the plug passes the empty
 // string, because an agent reads rows and writes its own.
@@ -84,11 +113,16 @@ func Query(res service.QueryResult, prose string) string {
 		appendLine(&b, QueryHelp(res))
 	case prose != "":
 		appendLine(&b, prose)
+		appendLine(&b, queryTail(res))
 	default:
 		appendLine(&b, queryTail(res))
 	}
 	return b.String()
 }
+
+// -/ 1/3
+
+// -- 2/3 HELPER · Exec --
 
 // Exec renders the AXI text for a SELECT run under the read-only gate: the SQL
 // that ran, its rows, the count and latency, and the help to reach the envelope
@@ -105,6 +139,10 @@ func Exec(res service.ExecResult) string {
 	}
 	return b.String()
 }
+
+// -/ 2/3
+
+// -- 3/3 HELPER · Health and Store --
 
 // Health renders the AXI text for a diagnosis: the overall status and the
 // check table a human scans. The count is the truth; the summary is what makes
@@ -138,3 +176,5 @@ func Store(res service.StoreResult) string {
 	}
 	return fmt.Sprintf("stored: memory %d in layer %s", res.ID, res.Layer)
 }
+
+// -/ 3/3

@@ -49,8 +49,8 @@ func TestQueryRendersTheRouteLineTOONRowsAndHelp(t *testing.T) {
 func TestQueryAddsProseAboveTheEvidenceWhenTheCallerPassesIt(t *testing.T) {
 	res := service.QueryResult{
 		Question: "count memories", Path: service.PathLLM, Engine: "ollama",
-		Model: "qwen", Match: service.MatchFound, RowCount: 2,
-		Columns: []string{"n"}, Rows: []map[string]any{{"n": int64(2)}},
+		Model: "qwen", Match: service.MatchFound, RowCount: 1,
+		Columns: []string{"n", "evidence"}, Rows: []map[string]any{{"n": int64(2), "evidence": "the row"}},
 	}
 	got := axi.Query(res, "there are two memories")
 	if !strings.Contains(got, "route ") {

@@ -21,8 +21,11 @@ Automation that creates or selects a location must pass `--db-path`.
 
 ## Shell commands
 
+Data = `roca query`; human reading = `roca query --full`; raw SQL = `roca exec`.
+
 ```bash
 roca query "who is Ana"                        # natural-language search
+roca query --full "what happened with Y"       # add prose for human reading
 roca query "what happened with Y" --json
 roca query "ffmpeg patterns" --sql-only        # the SQL the model would run, without running it
 roca exec "SELECT COUNT(*) AS memories FROM memories"  # run a gate-approved SELECT

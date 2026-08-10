@@ -1,15 +1,15 @@
 /*
-@overview Core CLI command assembly and human query rendering. ~380 lines, no public symbols.
+@overview Core CLI command assembly and human query rendering. ~440 lines, no public symbols.
 
 	READING GUIDE
 	-------------
-	1. Start at queryCommand and render
+	1. Start at queryCommand and answerQuery
 	2. Read initCommand for bootstrap behavior
 	3. Read the remaining command factories on demand
 
 	MAIN FLOW
 	---------
-	Cobra command -> service call -> JSON or honest human rendering
+	Cobra command -> answerQuery -> optional interpretation -> AXI rendering
 
 	PUBLIC API
 	----------
@@ -17,15 +17,16 @@
 
 	INTERNALS
 	---------
-	versionCommand, initCommand, schemaCommand, queryCommand, execCommand, teachCommand, render
+	versionCommand, initCommand, schemaCommand, queryCommand, answerQuery, axiQuery, execCommand, render
 
 @exports
-@deps Cobra, internal config/human/query/service/store
+@deps standard context/I-O/runtime, Cobra, internal axi/config/human/service/store
 */
 package cli
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -343,9 +344,11 @@ func schemaCommand(env *cliEnv) *cobra.Command {
 
 func queryCommand(env *cliEnv) *cobra.Command {
 	var req service.QueryRequest
+	var full bool
 	cmd := &cobra.Command{
 		Use:   "query <question>",
 		Short: "Answer a natural-language question about the memory",
+		Long:  "Data: query; human reading: query --full; raw SQL: exec.",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: env.serviceRunE(func(cmd *cobra.Command, args []string, svc *service.Service) error {
 			req.Question = strings.Join(args, " ")
@@ -353,11 +356,12 @@ func queryCommand(env *cliEnv) *cobra.Command {
 			// as frozen. The spinner says it is running on the error stream of an
 			// interactive terminal only, so a piped call and a --json call see nothing.
 			spin := startSpinner(env, spinnerLabel)
-			result, err := svc.Query(cmd.Context(), req)
+			answer, err := answerQuery(cmd.Context(), svc, req, full && !env.json)
 			spin.finish()
 			if err != nil {
 				return err
 			}
+			result := answer.result
 			// A question that needed a model on a machine with no model
 			// available is not an answer, even when the keyword rescue found
 			// rows. The rows are a courtesy; the exit code tells the truth, so
@@ -369,28 +373,46 @@ func queryCommand(env *cliEnv) *cobra.Command {
 			if env.json {
 				return env.printJSON(result)
 			}
-			// The second inference call: the rows the query returned go back to the
-			// same provider that answered, to be rendered as prose in the question's
-			// language. It is attempted only when a model served (res.Engine is set),
-			// so a machine with no model is not probed again for nothing; and a
-			// failure leaves the row renderer as the floor, because the fragility of
-			// a provider never takes a query's answer away.
-			var prose string
-			if result.Engine != "" && result.RowCount > 0 {
-				if answer, err := svc.Interpret(cmd.Context(), result.Question, result.Columns, result.Rows); err == nil {
-					prose = answer
-				} else {
-					env.print("(the model could not interpret: %v)", err)
-				}
+			if answer.interpretErr != nil {
+				env.print("(the model could not interpret: %v)", answer.interpretErr)
 			}
-			render(env, result, prose)
+			env.print("%s", axiQuery(answer))
 			return nil
 		}),
 	}
 	cmd.Flags().StringVar(&req.Layer, "layer", "", "restrict the answer to one layer")
 	cmd.Flags().IntVar(&req.MaxChars, "max-chars", 0, "character budget per text field")
 	cmd.Flags().BoolVar(&req.SQLOnly, "sql-only", false, "return the SQL without running it")
+	cmd.Flags().BoolVar(&full, "full", false, "add a prose interpretation for human reading")
 	return cmd
+}
+
+// queryAnswer keeps the rows and the optional second inference together. The
+// interpretation error is presentation context, not a query failure: callers
+// still render the first inference's evidence when the second one fails.
+type queryAnswer struct {
+	result       service.QueryResult
+	prose        string
+	interpretErr error
+}
+
+// answerQuery always performs the natural-language-to-SQL query once. Full
+// mode adds one interpretation call only when that query returned model-backed
+// rows; default mode stops at the data, matching the MCP surface.
+func answerQuery(ctx context.Context, svc *service.Service, req service.QueryRequest,
+	full bool) (queryAnswer, error) {
+	result, err := svc.Query(ctx, req)
+	answer := queryAnswer{result: result}
+	if err != nil || !full || result.Engine == "" || result.RowCount == 0 {
+		return answer, err
+	}
+	answer.prose, answer.interpretErr = svc.Interpret(
+		ctx, result.Question, result.Columns, result.Rows)
+	return answer, nil
+}
+
+func axiQuery(answer queryAnswer) string {
+	return axi.Query(answer.result, answer.prose)
 }
 
 func execCommand(env *cliEnv) *cobra.Command {
@@ -425,15 +447,11 @@ func execCommand(env *cliEnv) *cobra.Command {
 // render is the readable output. The same answer --json hands over whole,
 // summarized here for a human at a terminal.
 //
-// prose is the model's natural-language rendering of the rows, when the
-// second inference call answered. Empty means it did not (no model served, or
-// the call failed), and the rows fall back to their tabular form: a table is
-// the floor the prose sits on, never an answer the prose hides.
+// prose is the model's natural-language rendering of the rows, when full mode's
+// second inference call answered. Empty means default row mode or a failed call.
 func render(env *cliEnv, res service.QueryResult, prose string) {
-	// The AXI text — route preamble, the rows or the prose that stands in for
-	// them, and the contextual help — has one owner in the axi package. The
-	// shell's only part here is the second inference call's prose: empty when no
-	// model served or the call failed, in which case axi.Query falls to the rows.
+	// The AXI text — route preamble, optional prose, rows and contextual help —
+	// has one owner in the axi package.
 	env.print("%s", axi.Query(res, prose))
 }
 

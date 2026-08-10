@@ -137,6 +137,7 @@ const presentationPrompt = "## La Roca — local semantic memory\n" +
 	"context or a decision may exist.\n" +
 	"With a shell, use `roca query \"<natural question>\"`; preserve durable context " +
 	"with `roca store`.\n" +
+	"Data = `roca query`; human reading = `roca query --full`; raw SQL = `roca exec`.\n" +
 	"Without a shell, use the MCP equivalents: `roca_query` and `roca_store`.\n" +
 	"On first bootstrap, `roca init` asks new or adopt; adoption uses only the source path the user types.\n" +
 	"La Roca never edits agent instruction files; a human chooses where to paste this block.\n"

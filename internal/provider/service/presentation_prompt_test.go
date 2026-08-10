@@ -54,6 +54,7 @@ func TestInitWritesTheAgentPresentationPrompt(t *testing.T) {
 	for _, want := range []string{
 		"La Roca", "local semantic memory", "when to query",
 		"roca query \"<natural question>\"", "roca store",
+		"Data = `roca query`; human reading = `roca query --full`; raw SQL = `roca exec`.",
 		"roca_query", "roca_store",
 	} {
 		if !strings.Contains(string(body), want) {

@@ -1,7 +1,32 @@
+/*
+@overview Contract tests for default-row and opt-in-full CLI query modes. ~175 lines, no public symbols.
+
+	READING GUIDE
+	-------------
+	1. Start at TestQueryDefaultsToOneInferenceAndRows
+	2. Read TestQueryFullAddsOneInterpretationAndKeepsEvidence
+	3. Read the failure and help contracts last
+
+	MAIN FLOW
+	---------
+	fake provider -> real Service query -> answerQuery mode -> AXI output assertions
+
+	PUBLIC API
+	----------
+	None; this file tests package-private CLI behavior.
+
+	INTERNALS
+	---------
+	queryModeProvider, queryModeService, the four query-mode contract tests
+
+@exports
+@deps standard context/errors/path/strings/testing, internal provider/service
+*/
 package cli
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,9 +35,12 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
+// -- 1/3 HELPER · queryModeProvider --
+
 type queryModeProvider struct {
 	answers []string
 	calls   int
+	failAt  int
 }
 
 func (p *queryModeProvider) Name() string    { return "fake" }
@@ -24,10 +52,17 @@ func (p *queryModeProvider) Models(context.Context) provider.ModelReport {
 	return provider.ModelReport{Ready: true, Models: []string{p.ModelID()}}
 }
 func (p *queryModeProvider) Chat(context.Context, provider.ChatRequest) (provider.ChatResponse, error) {
-	answer := p.answers[p.calls]
 	p.calls++
+	if p.calls == p.failAt {
+		return provider.ChatResponse{}, errors.New("interpretation unavailable")
+	}
+	answer := p.answers[p.calls-1]
 	return provider.ChatResponse{Content: answer, Provider: p.Name(), ModelID: p.ModelID()}, nil
 }
+
+// -/ 1/3
+
+// -- 2/3 HELPER · queryModeService --
 
 func queryModeService(t *testing.T, model *queryModeProvider) *service.Service {
 	t.Helper()
@@ -47,9 +82,13 @@ func queryModeService(t *testing.T, model *queryModeProvider) *service.Service {
 	return svc
 }
 
+// -/ 2/3
+
+// -- 3/3 CORE · query mode contracts -- <- START HERE
+
 func TestQueryDefaultsToOneInferenceAndRows(t *testing.T) {
 	model := &queryModeProvider{answers: []string{
-		"SELECT 'raw evidence' AS text LIMIT 1",
+		"SELECT 'memory' AS source, 1 AS id, 'raw evidence' AS text LIMIT 1",
 		"The evidence says the format is rows.",
 	}}
 	answer, err := answerQuery(t.Context(), queryModeService(t, model), service.QueryRequest{
@@ -62,14 +101,14 @@ func TestQueryDefaultsToOneInferenceAndRows(t *testing.T) {
 		t.Fatalf("default query made %d provider calls, want one", model.calls)
 	}
 	got := axiQuery(answer)
-	if !strings.Contains(got, "rows[1]{text}") || !strings.Contains(got, "raw evidence") {
+	if !strings.Contains(got, "rows[1]{source,id,text}") || !strings.Contains(got, "raw evidence") {
 		t.Fatalf("default query did not render its evidence rows:\n%s", got)
 	}
 }
 
 func TestQueryFullAddsOneInterpretationAndKeepsEvidence(t *testing.T) {
 	model := &queryModeProvider{answers: []string{
-		"SELECT 'raw evidence' AS text LIMIT 1",
+		"SELECT 'memory' AS source, 1 AS id, 'raw evidence' AS text LIMIT 1",
 		"The evidence says the format is rows.",
 	}}
 	answer, err := answerQuery(t.Context(), queryModeService(t, model), service.QueryRequest{
@@ -85,12 +124,31 @@ func TestQueryFullAddsOneInterpretationAndKeepsEvidence(t *testing.T) {
 	for _, want := range []string{
 		"route llm_fallback · provider fake · model fake-model",
 		"The evidence says the format is rows.",
-		"rows[1]{text}",
+		"rows[1]{source,id,text}",
 		"raw evidence",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("full query output does not contain %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestQueryFullFallsBackToRowsWhenInterpretationFails(t *testing.T) {
+	model := &queryModeProvider{answers: []string{
+		"SELECT 'memory' AS source, 1 AS id, 'raw evidence' AS text LIMIT 1",
+	}, failAt: 2}
+	answer, err := answerQuery(t.Context(), queryModeService(t, model), service.QueryRequest{
+		Question: "what decisions were made about the format",
+	}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model.calls != 2 || answer.interpretErr == nil {
+		t.Fatalf("failed interpretation = calls %d, error %v", model.calls, answer.interpretErr)
+	}
+	got := axiQuery(answer)
+	if !strings.Contains(got, "rows[1]{source,id,text}") || !strings.Contains(got, "raw evidence") {
+		t.Fatalf("failed interpretation took the rows away:\n%s", got)
 	}
 }
 
@@ -106,3 +164,5 @@ func TestQueryHelpTeachesDataHumanAndSQLModes(t *testing.T) {
 		t.Fatalf("query help does not teach the three modes:\n%s", output.String())
 	}
 }
+
+// -/ 3/3
