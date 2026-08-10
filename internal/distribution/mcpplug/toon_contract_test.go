@@ -111,11 +111,9 @@ func TestHealthThroughThePlugRendersTheStatusAndCheckTable(t *testing.T) {
 	}
 }
 
-// The before-and-after of the rule: for a wide result the readable half a
-// token-budgeted agent consumes is an order of magnitude smaller than the JSON
-// envelope that used to be the whole answer. The structured half still carries
-// every byte of it; the readable half clips each field and drops the provenance.
-func TestAWideResultIsAnOrderOfMagnitudeSmallerAsTOON(t *testing.T) {
+// Both MCP halves inherit the service budget. The readable half may clip more
+// tightly for presentation, but StructuredContent must never bypass max_chars.
+func TestAWideResultBudgetsReadableAndStructuredContent(t *testing.T) {
 	svc := seededService(t)
 	wide := strings.Repeat("abcdefghij", 250) // ~2500 chars per memory
 	for i := range 40 {
@@ -145,11 +143,22 @@ func TestAWideResultIsAnOrderOfMagnitudeSmallerAsTOON(t *testing.T) {
 	if looksLikeJSONDump(text) {
 		t.Errorf("the readable half is a JSON dump, not AXI TOON:\n%s", text)
 	}
-	// The envelope keeps the full text of every row; the readable half clips
-	// each to the field width and drops the metadata, so it is materially
-	// smaller. A regression that stopped clipping makes them peers again.
-	if len(text) >= len(envelope)/8 {
-		t.Errorf("the TOON half (%d bytes) is not an order of magnitude under the JSON envelope (%d bytes)",
-			len(text), len(envelope))
+	var structured service.ExecResult
+	decode(t, result, &structured)
+	marked := 0
+	for _, row := range structured.Rows {
+		value := row["text"].(string)
+		if len([]rune(value)) > service.DefaultMaxChars {
+			t.Fatalf("structured text bypassed the default budget: %d runes", len([]rune(value)))
+		}
+		if strings.HasSuffix(value, "…") {
+			marked++
+		}
+	}
+	if marked != 40 {
+		t.Fatalf("marked truncated rows = %d, want 40", marked)
+	}
+	if len(envelope) > 30000 {
+		t.Errorf("budgeted structured envelope is still unexpectedly wide: %d bytes", len(envelope))
 	}
 }

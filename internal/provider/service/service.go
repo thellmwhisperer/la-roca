@@ -19,6 +19,10 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/store/search"
 )
 
+// DefaultMaxChars is the per-text-field budget shared by every service caller.
+// A zero request means this default, never an unbounded response.
+const DefaultMaxChars = 500
+
 // Options are the service's opening options.
 type Options struct {
 	DBPath    string
@@ -374,20 +378,39 @@ func (s *Service) syncLayers(ctx context.Context) error {
 // a truncation that eats what you were looking for is not a summary, it is a
 // shorter wrong answer.
 func truncate(text string, budget int, term string) string {
+	if budget <= 0 {
+		budget = DefaultMaxChars
+	}
 	runes := []rune(text)
-	if budget <= 0 || len(runes) <= budget {
+	if len(runes) <= budget {
 		return text
+	}
+	if budget == 1 {
+		return "…"
 	}
 	start := 0
 	if pos := matchPosition(text, term); pos > 0 {
 		start = max(0, pos-budget/3)
 	}
-	end := min(len(runes), start+budget)
-	excerpt := string(runes[start:end])
+	contentBudget := budget
 	if start > 0 {
-		excerpt = "…" + string([]rune(excerpt)[1:])
+		contentBudget--
 	}
-	return excerpt
+	end := min(len(runes), start+contentBudget)
+	tail := end < len(runes)
+	if tail {
+		contentBudget--
+		end = min(len(runes), start+contentBudget)
+	}
+	excerpt := string(runes[start:end])
+	return strings.Repeat("…", btoi(start > 0)) + excerpt + strings.Repeat("…", btoi(tail))
+}
+
+func btoi(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func matchPosition(text, term string) int {

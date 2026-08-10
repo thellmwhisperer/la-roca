@@ -391,7 +391,7 @@ func queryCommand(env *cliEnv) *cobra.Command {
 		}),
 	}
 	cmd.Flags().StringVar(&req.Layer, "layer", "", "restrict the answer to one layer")
-	cmd.Flags().IntVar(&req.MaxChars, "max-chars", 0, "character budget per text field")
+	cmd.Flags().IntVar(&req.MaxChars, "max-chars", service.DefaultMaxChars, "character budget per text field")
 	cmd.Flags().BoolVar(&req.SQLOnly, "sql-only", false, "return the SQL without running it")
 	cmd.Flags().BoolVar(&full, "full", false, "add a prose interpretation for human reading")
 	return cmd
@@ -452,7 +452,7 @@ func execCommand(env *cliEnv) *cobra.Command {
 			return nil
 		}),
 	}
-	cmd.Flags().IntVar(&req.MaxChars, "max-chars", 0, "character budget per text field")
+	cmd.Flags().IntVar(&req.MaxChars, "max-chars", service.DefaultMaxChars, "character budget per text field")
 	return cmd
 }
 

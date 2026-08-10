@@ -56,13 +56,12 @@ func (a execArgs) request() service.ExecRequest {
 	return service.ExecRequest{SQL: a.SQL, MaxChars: a.MaxChars}
 }
 
-// queryArgs is what an agent sends to ask a question. The defaults live in the
-// schema and not in a handler: the SDK applies them before the call, so the
-// plug stays a passthrough and the declared surface is the honest one.
+// queryArgs is what an agent sends to ask a question. A zero budget reaches the
+// service, where the shared default is applied for every surface.
 type queryArgs struct {
 	Query    string `json:"query" jsonschema:"short natural-language question, under 15 words"`
 	Layer    string `json:"layer,omitempty" jsonschema:"restrict the answer to one memory layer"`
-	MaxChars int    `json:"max_chars,omitempty" jsonschema:"character budget per text field,default=500"`
+	MaxChars int    `json:"max_chars,omitempty" jsonschema:"character budget per text field"`
 }
 
 func (a queryArgs) request() service.QueryRequest {

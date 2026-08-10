@@ -3,6 +3,7 @@ package mcpplug_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -68,6 +69,10 @@ func TestTheExecToolTakesOnlySQLAndTheCLIsTextBudget(t *testing.T) {
 		}
 		if additional, ok := schema["additionalProperties"].(bool); !ok || additional {
 			t.Errorf("additionalProperties = %v, want false", schema["additionalProperties"])
+		}
+		maxChars, _ := properties["max_chars"].(map[string]any)
+		if strings.Contains(fmt.Sprint(maxChars["description"]), "default=") {
+			t.Errorf("schema advertises a description-only default: %v", maxChars)
 		}
 		return
 	}

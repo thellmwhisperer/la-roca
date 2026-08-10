@@ -10,6 +10,22 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
+func TestExecAppliesTheDefaultCharacterBudget(t *testing.T) {
+	svc, _ := serviceWithPaths(t)
+	long := strings.Repeat("abcdefghij", 80)
+
+	result, err := svc.Exec(t.Context(), service.ExecRequest{
+		SQL: "SELECT '" + long + "' AS text",
+	})
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	text := result.Rows[0]["text"].(string)
+	if len([]rune(text)) > service.DefaultMaxChars || !strings.HasSuffix(text, "…") {
+		t.Fatalf("default-budget text = %d runes, %q", len([]rune(text)), text)
+	}
+}
+
 func TestInitCreatesTheDatabaseAndSyncsTheLayerRegistry(t *testing.T) {
 	svc, _ := openService(t)
 	ctx := context.Background()
