@@ -12,13 +12,11 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
 )
 
-// This file is the only one in the ingest that knows SQL (TECH-SPEC 5.2). What
+// This file is the only one in the ingest that knows SQL. What
 // arrives here is already normalized, so every decision left is about idempotency:
 // what lands, what is left alone, and what is never rewritten.
 
-// defaultLayer is where a memory whose declared type the registry does not know
-// goes. It is the laboratory's default and it is deliberate: the content is worth
-// more than the vocabulary.
+// defaultLayer preserves content whose declared type the registry does not know.
 const defaultLayer = "pattern"
 
 // Counts is what one run wrote, per table. It is the delta the operator reads, and
@@ -503,8 +501,7 @@ func readExchangeMap(metadata, scope string) map[string]exchangeKey {
 		switch typed := value.(type) {
 		case float64:
 			// OpenCode stores the bare number and the hashes beside it; Pi stores
-			// the pair together. Both shapes are read, because a database adopted
-			// from the laboratory carries whichever its version wrote.
+			// the pair together. Both shapes remain readable across versions.
 			key.Number = int(typed)
 			if hash, ok := fingerprints[id].(string); ok {
 				key.Fingerprint = hash
@@ -526,9 +523,8 @@ func readExchangeMap(metadata, scope string) map[string]exchangeKey {
 
 // putExchangeMap writes the map back in the shape its own source keeps it in.
 //
-// The two shapes are not a whim: the database may be the laboratory's, adopted in
-// place and still readable by it, and each of its adapters reads its own. Writing
-// one shape for both would leave the other adapter unable to find what it wrote.
+// Each adapter writes the exchange-map shape it also reads; using one shape for
+// both would leave the other adapter unable to find its entries.
 func putExchangeMap(metadata map[string]any, scope string, assigned map[string]exchangeKey) {
 	ids := map[string]any{}
 	fingerprints := map[string]any{}

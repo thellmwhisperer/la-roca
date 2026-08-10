@@ -85,7 +85,7 @@ type Result struct {
 	// Scanned is what the roots hold, per source, always with every source
 	// present: a source missing from the report reads as one nobody looked at.
 	Scanned map[string]int `json:"scanned"`
-	// Sources is what each source wrote. It is what F02-09 reads as "a count for
+	// Sources is what each source wrote: a count for
 	// every seeded source".
 	Sources map[string]*Counts `json:"sources"`
 	// Files says how the run divided its work: what it read, what it skipped by
@@ -108,8 +108,8 @@ type Result struct {
 
 // Run reads every source in the matrix once and writes what changed.
 //
-// The order of the sources is the laboratory's: memories, then the files agents
-// keep as configuration, then the transcripts. It matters for one thing only, and
+// Sources are read as memories, agent configuration, then transcripts. The order
+// matters for one thing only, and
 // it is the session titles: the transcript writes the session and the metadata
 // file names it, so the first non-blank name wins deterministically.
 func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (Result, error) {
@@ -259,8 +259,8 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 	})
 }
 
-// read turns one artefact into records, resolving the project the way the
-// laboratory does: what the content declares outranks what the path encodes.
+// read turns one artefact into records; what the content declares outranks what
+// the path encodes.
 func read(ctx context.Context, opts Options, target Target, result *Result) (parsers.Records, string) {
 	switch target.Kind {
 	case parsers.KindOpenCodeDB:
@@ -318,7 +318,7 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 	return records, ""
 }
 
-// resolveProjects settles each session's project with the laboratory's precedence:
+// resolveProjects settles each session's project with this precedence:
 // the working directory the artefact itself declares, then the identity the scan
 // declared, then what the path encodes. The path is the last resort because its
 // encoding is lossy.

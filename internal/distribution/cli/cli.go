@@ -66,8 +66,8 @@ func rootCommand(env *cliEnv) *cobra.Command {
 			"classifier all live in the binary and the database beside it.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		// `roca --version` is the second line the operator types (PRD R1) and the
-		// health check `install.sh` and `roca update` run before they trust a
+		// `roca --version` is the health check `install.sh` and `roca update` run
+		// before they trust a
 		// binary. It answers exactly what `roca version` answers: the same
 		// question spelled two ways may not have two answers.
 		Version:           env.build.Version,

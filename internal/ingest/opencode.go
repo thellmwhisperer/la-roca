@@ -20,8 +20,8 @@ import (
 // ingesting it would store an answer that had not been given yet.
 
 // openCodeScope is where OpenCode's exchange map lives inside the session
-// metadata. It is nested, and it stays nested, because a database adopted from
-// the laboratory already carries it there: reading it anywhere else would
+// metadata. It is nested, and it stays nested, because existing databases may
+// already carry it there; reading it anywhere else would
 // renumber exchanges that already landed and duplicate the lot.
 const openCodeScope = "opencode"
 

@@ -6,10 +6,8 @@ import (
 	"testing"
 )
 
-// The readable rendering has to work for all 33 templates, not only for term
-// search. The previous wave painted the rows by reading the "source" and "text"
-// columns by hand, so everything else came out as "[<nil>] <nil>": a count, a
-// session and a grouping do not have those columns.
+// The readable rendering has to work for all templates, including rows without
+// "source" and "text" columns.
 //
 // One case per row-shape family, which are the ones the templates emit.
 
@@ -161,8 +159,7 @@ func TestRuntimeListingsUseTOONRows(t *testing.T) {
 	}
 }
 
-// `roca --version` is the second line of the reference flow (PRD R1) and
-// the health check `install.sh` and `roca update` run on a binary before they
+// `roca --version` is the health check `install.sh` and `roca update` run on a binary before they
 // trust it. It has to exist, and it has to answer the same thing the subcommand
 // answers: two spellings of the same question with two different answers is two
 // products.

@@ -42,7 +42,7 @@ import (
 var thePrefix = []string{".local", "bin"}
 
 // theNewVersion is the tag the channel publishes as newer than the built one.
-// Its artefact is not a Go binary: what F01-10 and F02-07 measure is that the
+// Its artefact is not a Go binary: the contract is that the
 // bytes on the PATH changed and that the new ones answer, and the installer is
 // deliberately blind to what it is installing.
 const theNewVersion = "v99.9.9"
@@ -64,7 +64,7 @@ type installWorld struct {
 	inode uint64
 	// publishNew makes `releases/latest` answer with the newer tag. A channel
 	// that always published the newest version could not express "installed at
-	// an earlier version", which is what F02-07 starts from.
+	// an earlier version".
 	publishNew bool
 	// slowAssets holds an asset transfer open long enough for a kill that lands
 	// "halfway" to actually land halfway. A local httptest server serves the
@@ -326,7 +326,7 @@ func (m *world) installedFromTheChannel() error {
 	if err := m.iRunTheInstaller(); err != nil {
 		return err
 	}
-	// F01-11 asks whether reinstalling the same version replaced the file or
+	// This checks whether reinstalling the same version replaced the file or
 	// recognized it. The answer is the inode, and it has to be read before the
 	// second run and not after it.
 	return m.rememberTheInode()
@@ -334,7 +334,7 @@ func (m *world) installedFromTheChannel() error {
 
 // installedAtAnEarlierVersion: the built binary is what is installed, with its
 // database and its configuration already there, and the channel publishes a
-// newer version. That is the shape F02-07 measures, and the data has to exist
+// newer version. The data has to exist
 // beforehand for "still intact" to mean anything.
 func (m *world) installedAtAnEarlierVersion() error {
 	channel := m.theChannel()
@@ -376,9 +376,8 @@ func (m *world) aStrangersFileNamedRoca() error {
 
 const theStrangersContent = "#!/bin/sh\necho this is not la roca\n"
 
-// theRuntimeIsNotStarted: v1 has no daemon, so this is the state every scenario
-// is already in. The step checks it instead of assuming it, which is D-6's
-// replacement: no process is left after any command (TECH-SPEC 8.5).
+// theRuntimeIsNotStarted checks that a command leaves no resident process; v1
+// has no daemon.
 func (m *world) theRuntimeIsNotStarted() error { return m.noResidentProcess() }
 
 func (m *world) installedInTheConfigurationsOf(first, second, third string) error {
@@ -389,7 +388,7 @@ func (m *world) installedInTheConfigurationsOf(first, second, third string) erro
 			return err
 		}
 		// Content of the operator's own, written BEFORE Roca arrives. That is
-		// what F02-05 asks to get back byte for byte, and a snapshot taken after
+		// what uninstall restores byte for byte, and a snapshot taken after
 		// the install would be asking for Roca's own entry back.
 		if err := m.writeTheOperatorsConfig(runtime, path); err != nil {
 			return err
@@ -444,8 +443,8 @@ func (m *world) iRunTheInstallerOfTheNewVersion() error {
 // and what nobody had tested.
 func (m *world) iPipeTheInstallerToAShell() error {
 	channel := m.theChannel()
-	// Written the way PRD R1 writes it, credential included on both sides of the
-	// pipe: curl needs it to read the script out of a private repository, and
+	// The credential is included on both sides of the pipe: curl needs it to read
+	// a script from a private repository, and
 	// the shell needs it to download the release the script then asks for.
 	line := fmt.Sprintf(
 		`curl -fsSL -H "Authorization: Bearer %s" -H "Accept: application/vnd.github.raw" `+
@@ -496,8 +495,7 @@ func (m *world) iKillTheInstallerHalfway() error {
 	return nil
 }
 
-// iUninstallAnswering is the interactive uninstall of PRD R5: the question is
-// asked and the operator's answer arrives on standard input.
+// iUninstallAnswering sends the operator's answer to the interactive uninstall.
 func (m *world) iUninstallAnswering(answer string) error {
 	command := exec.Command(m.binaryPath(), "uninstall")
 	command.Stdin = strings.NewReader(answer + "\n")
@@ -827,9 +825,8 @@ func (m *world) everyCheckHasItsVerdict() error {
 	return nil
 }
 
-// everyFailedCheckNamesItsRemedy walks doctor's output and requires a remedy
-// under every [no]. It is the D-3 lesson as a step: a diagnosis that names the
-// failure and not the fix sends the operator to read code.
+// everyFailedCheckNamesItsRemedy requires a remedy under every failed doctor
+// check.
 func (m *world) everyFailedCheckNamesItsRemedy() error {
 	lines := strings.Split(m.last.stdout, "\n")
 	for i, line := range lines {
@@ -1082,7 +1079,7 @@ func exists(path string) bool {
 }
 
 // inodeOf identifies a file by what the filesystem calls it, which is how
-// F01-11 asks whether a reinstall of the same version replaced the file or
+// This checks whether a reinstall of the same version replaced the file or
 // recognized it and did nothing.
 func inodeOf(info os.FileInfo) uint64 {
 	stat, ok := info.Sys().(*syscall.Stat_t)

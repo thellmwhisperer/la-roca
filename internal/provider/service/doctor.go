@@ -10,7 +10,7 @@ import (
 )
 
 // What doctor says about a provider's credential. Presence, never the value:
-// that is the whole contract of F07-08, and it is enforced by there being no
+// and it is enforced by there being no
 // field that could hold it.
 const (
 	CredentialPresent   = "present"
@@ -22,8 +22,8 @@ const (
 // understood of its configuration, and which model is going to answer.
 //
 // It is what an operator reads before opening an issue, so every no carries its
-// remedy. A diagnosis that names the failure without naming the fix forces the
-// operator to read code, and the lab already paid for learning that.
+// remedy; a diagnosis that names only the failure forces the operator to read
+// code.
 type DoctorReport struct {
 	Version    string `json:"version"`
 	SourceSHA  string `json:"source_sha"`

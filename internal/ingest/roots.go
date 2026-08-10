@@ -2,7 +2,7 @@ package ingest
 
 import "strings"
 
-// The roots are configuration, never constants (TECH-SPEC 5.1). They come from
+// The roots are configuration, never constants. They come from
 // the home the process was given and from what the operator declared, and an
 // absolute path with a machine, a user or a personal mount written into this file
 // would be a guard failure and not a style decision.
@@ -68,8 +68,7 @@ type Roots struct {
 	Workspace     WorkspaceRoots
 }
 
-// The environment variables the laboratory already honours, kept by name so an
-// operator who set them does not have to learn new ones.
+// These environment variable names are stable for operator compatibility.
 const (
 	envClaudeProjects = "CLAUDE_PROJECTS_ROOT"
 	envCodexRoot      = "CODEX_ROOT"

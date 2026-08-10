@@ -83,7 +83,7 @@ func TestAPurgeWithServeAliveDoesNotFailAndConverges(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 
 	// A copy of its own for each run, because `roca uninstall` deletes the binary
-	// it is running from (PRD I3) and the live `serve` needs the installed one to
+	// it is running from and the live `serve` needs the installed one to
 	// stay where it is.
 	if code := m.purgeWith(t, aPurgerCopy(t, m.binary)); code != 0 {
 		t.Fatalf("the purge failed with serve alive (code %d):\n%s\n%s",

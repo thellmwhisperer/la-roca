@@ -48,8 +48,7 @@ type world struct {
 	readOnly bool
 	// agentConfig and settings are the two files an integration touches: the
 	// runtime's MCP configuration and its lifecycle settings. Both keep the
-	// bytes they had before Roca arrived, because that is what F02-04, F02-05
-	// and F11-08 ask about.
+	// bytes they had before Roca arrived.
 	agentConfig        string
 	agentConfigBefore  string
 	agentConfigRuntime string
@@ -62,7 +61,7 @@ type world struct {
 	install   installWorld
 	installed string
 	// agentConfigsBefore is what each runtime's configuration said before Roca
-	// was declared in it, so F02-05 can ask for every other byte back, and
+	// was declared in it, so every other byte can be restored, and
 	// configBefore is the same question about this product's own file across an
 	// update.
 	agentConfigsBefore map[string]string
@@ -113,7 +112,7 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	})
 	ctx.After(func(c context.Context, _ *godog.Scenario, err error) (context.Context, error) {
 		// A traceback in the operator's face is always a failure, whether the
-		// step is written or not: the D-3 lesson, applied to the whole suite.
+		// step asserted it explicitly or not.
 		if trace := hasTraceback(m.last); trace != "" && err == nil {
 			m.closeThePlug()
 			m.closeModels()
@@ -427,7 +426,7 @@ func (m *world) record(label string, command *exec.Cmd) error {
 		}
 		m.last.code = exit.ExitCode()
 	}
-	// F07-08 asks about every output of a session, not only the last one.
+	// Credential checks cover every output of a session, not only the last one.
 	m.everything = append(m.everything, m.last)
 	return nil
 }

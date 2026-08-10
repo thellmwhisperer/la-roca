@@ -2,8 +2,8 @@ package parsers
 
 import "testing"
 
-// The fixtures are synthetic from the very first line (PRD C5): no real
-// transcript ever enters a test, and no private vocabulary either.
+// The fixtures are entirely synthetic: no real transcript or private vocabulary
+// enters a test.
 
 const claudeTranscript = `
 {"type":"user","timestamp":"2026-08-01T10:00:00.000Z","cwd":"/w/demo","message":{"content":"how many memories are there"}}
@@ -34,12 +34,11 @@ func TestClaudeSessionSplitsExchangesOnTheHumanTurn(t *testing.T) {
 	if session.Project != "demo" {
 		t.Errorf("project = %q, want demo", session.Project)
 	}
-	// Three exchanges out of two human turns, and that is the laboratory's
-	// semantics and not a bug: a tool result with no human text of its own closes
+	// Three exchanges out of two human turns is intentional: a tool result with no
+	// human text of its own closes
 	// the open exchange without closing the human turn, so what the agent says
 	// after the tool round trip is a second exchange under the same question.
-	// Aggregating it instead would move every exchange count in the corpus, and
-	// the semantics belong to the laboratory (CLAUDE.md, the sources rule).
+	// Aggregating it instead would change every exchange count in the corpus.
 	if len(session.Exchanges) != 3 {
 		t.Fatalf("exchanges = %d, want 3", len(session.Exchanges))
 	}

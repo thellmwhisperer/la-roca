@@ -10,9 +10,8 @@ import (
 // The TOML editor, for Codex.
 //
 // Roca owns one table, `[mcp_servers.roca]`, and the edits are line edits over
-// it. A table is the shape Codex writes and the shape an operator recognizes;
-// the laboratory also handles an inline `mcp_servers = { ... }` and this one
-// refuses it instead, by name and with the remedy, because corrupting somebody's
+// it. A table is the shape Codex writes and the shape an operator recognizes.
+// Inline `mcp_servers = { ... }` is refused by name and with a remedy because corrupting somebody's
 // config is worse than asking them to spell it the ordinary way.
 
 func tomlDeclare(r runtime, text string, entry fields) (string, error) {
@@ -56,9 +55,8 @@ func tomlHeader(r runtime, name string) string {
 	return "[" + r.serversKey + "." + name + "]"
 }
 
-// tomlBlock finds the `[mcp_servers.<name>]` table. The comment run directly
-// above the header belongs to the table, exactly as the laboratory decided: a
-// comment separated by a blank line is unrelated content and stays where it is.
+// tomlBlock treats the contiguous comment run above `[mcp_servers.<name>]` as
+// part of that table; a comment separated by a blank line remains unrelated.
 func tomlBlock(text string, r runtime, name string) (block, bool) {
 	header := tomlHeader(r, name)
 	lines, offsets := splitLines(text)

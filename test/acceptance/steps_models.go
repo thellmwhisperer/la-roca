@@ -27,8 +27,7 @@ import (
 // may well have a real Ollama listening on its usual port, and a suite that
 // contacted it would measure that machine instead of this binary.
 
-// theCredential is the fake frontier credential. Its value is what F07-08 hunts
-// for in every output, so it has to be recognizable and unlike anything else.
+// theCredential is recognizable so every output can be checked for leaks.
 const theCredential = "sk-roca-acceptance-CREDENTIAL-VALUE-7741"
 
 // theFrontierName is the frontier provider of these scenarios. A preset by key
@@ -203,9 +202,7 @@ func (m *world) theLocalModelIsNotAvailable() error {
 	return m.writeModelConfig()
 }
 
-// theConfigurationDeclaresTheOrder writes the order into the file, which is
-// what F07-06 is about: the order is decided by the configuration and not by
-// the code.
+// theConfigurationDeclaresTheOrder writes the order into the operator's config.
 func (m *world) theConfigurationDeclaresTheOrder() error {
 	m.ensureRequestLog()
 	m.models.order = []string{theFrontierName, "ollama"}
@@ -219,8 +216,8 @@ func (m *world) theConfigurationDeclaresTheOrder() error {
 	return m.writeModelConfig()
 }
 
-// theConfigurationDeclaresAnUnknownProvider is F07-07: data the operator
-// persisted that this build does not understand.
+// theConfigurationDeclaresAnUnknownProvider writes persisted data this build
+// does not understand.
 func (m *world) theConfigurationDeclaresAnUnknownProvider() error {
 	m.ensureRequestLog()
 	m.models.order = []string{theUnknownProvider, "ollama"}
@@ -348,9 +345,8 @@ func quotedList(values []string) string {
 
 // --- execution ---
 
-// theGoldenBenchOfTheFastRoute writes a bench with only fast-route questions
-// and runs it. It is what F07-05 needs: proving that with no model at all the
-// deterministic route still works end to end.
+// theGoldenBenchOfTheFastRoute proves the deterministic route works end to end
+// with no model.
 func (m *world) theGoldenBenchOfTheFastRoute() error {
 	path := filepath.Join(m.home, "fast-route.yaml")
 	bench := `version: 1
@@ -413,8 +409,7 @@ func (m *world) itDeclaresItDegradedToTheLocalFloor() error {
 	return fmt.Errorf("it does not declare it fell to the local floor: %s", m.last.stdout)
 }
 
-// noActionAskedOfTheOperator is the other half of F07-02: falling to the floor
-// is automatic, so nothing may be asked of whoever ran the query.
+// noActionAskedOfTheOperator checks that falling to the floor is automatic.
 func (m *world) noActionAskedOfTheOperator() error {
 	document, err := m.json()
 	if err != nil {
@@ -557,7 +552,7 @@ func (m *world) thatWarningListsTheAvailableProviders() error {
 	return nil
 }
 
-// noOutputCarriesTheCredential is F07-08 over every command of the scenario.
+// noOutputCarriesTheCredential checks every command run by the scenario.
 func (m *world) noOutputCarriesTheCredential() error {
 	for _, executed := range m.everything {
 		if strings.Contains(executed.stdout+executed.stderr, theCredential) {

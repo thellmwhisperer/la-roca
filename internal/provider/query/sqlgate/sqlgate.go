@@ -2,11 +2,9 @@
 // touch the database passes through here first, whether it comes from a
 // template or from a model.
 //
-// The lab solves it with sqlglot plus SQLite's `set_authorizer`, and that second
-// half is what gives the strong guarantee: "valid" means SQLite accepted this
-// exact string, not that a validator believes it would. The pure-Go driver that
-// makes the static binary possible does not expose the authorizer, so the work
-// is split in two (TECH-SPEC 1.5):
+// "Valid" means SQLite accepted the exact statement, not merely that a parser
+// believes it would. The pure-Go driver does not expose SQLite's authorizer, so
+// the work is split in two:
 //
 //   - Table and column existence, and syntax: the engine says so. The statement
 //     is prepared against an in-memory database that contains only the visible
@@ -18,8 +16,8 @@
 //     over a connection with query_only, `prepare` of a DELETE passes, and the
 //     rejection only arrives at execution time.
 //
-// The verdict messages are contract surface, and the consecrated suite quotes
-// them literally (F04-06).
+// The verdict messages are contract surface and the acceptance suite quotes
+// them literally.
 package sqlgate
 
 import (
@@ -35,7 +33,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// MaxLimit is the cap the gate guarantees. It is the same one as the lab's.
+// MaxLimit is the cap the gate guarantees.
 const MaxLimit = 1000
 
 // invisibleTables are the ones that exist in the schema but are not queryable:
@@ -267,8 +265,8 @@ func withLimit(stmt string, sel *rqlite.SelectStatement) (string, error) {
 	return stmt[:start] + strconv.Itoa(MaxLimit) + stmt[end:], nil
 }
 
-// allowedFunctions is the lab's allowlist, ported as it is: scalar, date and
-// time, aggregate, JSON, window and maths.
+// allowedFunctions contains supported scalar, date and time, aggregate, JSON,
+// window and maths functions.
 var allowedFunctions = set(
 	// scalar
 	"abs", "char", "coalesce", "concat", "concat_ws", "format", "glob", "hex",

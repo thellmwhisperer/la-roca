@@ -18,10 +18,8 @@ import (
 
 // The skill is the only manual an agent ever receives. Every command it shows
 // has to run and every layer it names has to exist, or the agent is led to an
-// invocation the product refuses. This guard parses the embedded skill the way
-// a reader does and checks each example against the real cobra command tree and
-// the real layer registry, so the documented release blocker -- examples that
-// named flags and layers the binary does not have -- cannot come back.
+// invocation the product refuses. This guard checks each example against the
+// real command tree and layer registry.
 //
 // There is one skill body: internal/distribution/skill/SKILL.md, embedded in
 // the binary. Nothing else in the repository carries a copy.
@@ -168,10 +166,8 @@ func taughtShellLines(md string) []string {
 	return lines
 }
 
-// The "Layers" section is prose, so command parsing does not reach it. Its
-// backticked layer names are checked straight against the registry: this is the
-// line the release blocker lived on, where `fact`, `decision` and `preference`
-// were presented as layers that do not exist.
+// The "Layers" prose is checked directly against the registry because command
+// parsing does not reach it.
 func TestTheSkillLayersSectionNamesOnlyRealLayers(t *testing.T) {
 	registry, err := layers.Load()
 	if err != nil {

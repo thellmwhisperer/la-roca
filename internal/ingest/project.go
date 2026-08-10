@@ -11,11 +11,8 @@
 // database Codex keeps beside its rollouts and enriches records the rollout
 // parser already produced.
 //
-// The two are never given the same name. `ingest/codex.go` next to
-// `parsers/codex.go` cost a wave the question of which one a stack trace meant,
-// and the answer was not in either file: format parser and source adapter are
-// different roles, and a name that hides the difference is the smell, not the
-// duplication.
+// Format parsers and source adapters use distinct names so stack traces identify
+// the responsible role without additional context.
 package ingest
 
 import (

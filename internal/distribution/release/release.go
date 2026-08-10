@@ -14,7 +14,7 @@
 //
 // The private-repo route is not an option either: this repository is
 // private, the anonymous one-liner gives 404 there, and the real path is the
-// authenticated API (TECH-SPEC 6.3). The credential travels in the header and
+// authenticated API. The credential travels in the header and
 // in no output.
 package release
 
@@ -237,8 +237,7 @@ func (s Source) get(ctx context.Context, url, accept, what string) ([]byte, erro
 // answers the same code to both, so what tells them apart here is whether a
 // credential travelled at all.
 //
-// Sending an operator who already exported a token to export a token is how a
-// diagnosis costs an afternoon (the D-3 lesson). With one in hand the message
+// When a token is already present, the message names what was requested and
 // names what was asked for and leaves both live readings standing, because from
 // this side they genuinely are both live.
 func (s Source) notFound(what string) error {
@@ -381,8 +380,8 @@ func Swap(current string, payload []byte, answers func(path string) error) error
 // rollback puts the previous binary back and returns what the operator is left
 // with, to be appended to the error the caller is already returning.
 //
-// The state and not a second error: printing one failure over another buries
-// the cause, which is the D-3 lesson, and "where is my binary" is not a cause.
+// This returns state rather than a second error because another failure would
+// bury the cause; "where is my binary" is not a cause.
 // What this may never do is DELETE that file. With the new binary gone and the
 // previous one deleted there is no `roca` left on the machine and nothing on
 // disk to copy back, which turns a bad update into a reinstall.
@@ -399,9 +398,8 @@ func rollback(previous, current string) string {
 //
 // Those files are this package's, they are chmod 755, and nothing else ever
 // removes them: an update interrupted between staging and renaming would leave
-// an executable orphan beside the binary for ever. It is the rule `install.sh`
-// already applies to its own leftovers, and the same half of D-7: what we own
-// is deleted whenever it is there, and nothing else is touched.
+// an executable orphan beside the binary for ever. Owned staging files are
+// deleted whenever present, and nothing else is touched.
 //
 // A `.previous` is not swept. It only exists when even the rollback failed, and
 // then it is the one file the operator has left.

@@ -264,10 +264,10 @@ func (m *world) writeConfig(content string) error {
 	return writeFixture(filepath.Join(m.home, ".roca", "config.toml"), content)
 }
 
-// --- the configuration steps of the D-1 defect ---
+// Configuration precedence steps.
 
-// theKeyAtTheRoot writes the key outside every section, which is where an operator
-// writes it by hand and where the laboratory used not to read it.
+// theKeyAtTheRoot writes the key outside every section, as hand-written configs
+// commonly do.
 func (m *world) theKeyAtTheRoot(key string) error {
 	if key != "workspace_roots" {
 		return fmt.Errorf("this suite only declares workspace_roots, not %q", key)
@@ -460,8 +460,7 @@ func (m *world) aSecondDirectoryAttributesItsSession() error {
 	return m.sessionHasProject(secondIdentitySession, "other")
 }
 
-// theSectionsValueWins is the second half of the D-1 rule: the key under its
-// section beats the same key at the root of the document.
+// theSectionsValueWins checks that a section value beats the same root key.
 func (m *world) theSectionsValueWins() error {
 	document, err := m.json()
 	if err != nil {

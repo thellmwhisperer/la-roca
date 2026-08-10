@@ -204,10 +204,9 @@ func piEntries(rows []string) ([]*piEntry, error) {
 	return entries, nil
 }
 
-// piActivePath is the branch that ends at the last entry, root first. The
-// validations are the laboratory's, and each one guards a way of reading a tree
-// wrong: two roots, a missing parent, a cycle, or a last entry that is not a leaf
-// because the file was written out of order.
+// piActivePath is the branch that ends at the last entry, root first. Its
+// validations reject two roots, a missing parent, a cycle, or a last entry that
+// is not a leaf because the file was written out of order.
 func piActivePath(entries []*piEntry) ([]*piEntry, error) {
 	byID := make(map[string]*piEntry, len(entries))
 	children := map[string]int{}
@@ -437,10 +436,9 @@ func piProject(pending *piPending, number *int) (Exchange, bool) {
 	return exchange, true
 }
 
-// fingerprint hashes a canonical projection of the turn, so re-reading a file
-// that did not change recognizes the exchange that already landed. It is not the
-// laboratory's hash byte for byte: hashing across two languages was never a
-// contract, and what has to hold is that the same turn always hashes the same.
+// fingerprint hashes a canonical projection of the turn, so re-reading an
+// unchanged file recognizes the exchange that already landed. Only stable
+// identity for the same turn is required.
 func (p *piPending) fingerprint() string {
 	projection := struct {
 		User     string     `json:"user"`

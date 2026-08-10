@@ -24,7 +24,7 @@ type Options struct {
 	BackupDir string
 	// DataDir is where personal artefacts hang next to the database. Empty falls
 	// back to the directory of DBPath. Nothing generated from the operator's
-	// data may ever be written outside it (2026-08-05).
+	// data may ever be written outside it.
 	DataDir string
 	Version string
 	Commit  string
@@ -238,8 +238,7 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 	return result, nil
 }
 
-// bootstrapIngest is the first read of the disk (PRD 3.4: init is config,
-// database, model gate and first ingest). It is incremental like every other
+// bootstrapIngest is init's first read of the disk. It is incremental like every other
 // run, so on a machine that already ingested it costs a fingerprint check per
 // file and writes nothing.
 func (s *Service) bootstrapIngest(ctx context.Context) *IngestResult {
@@ -319,8 +318,7 @@ var errReadOnly = fmt.Errorf("La Roca is in read-only mode: this operation write
 
 // refuseReadOnly is that same refusal naming the operation it refused. The
 // message belongs to the service and neither surface rewrites it: a shell and a
-// plug that answer read-only mode with different words are two products
-// (TECH-SPEC 1.8).
+// plug that answer read-only mode with different words are two products.
 func refuseReadOnly(operation string) error {
 	return fmt.Errorf("%w (operation: %s)", errReadOnly, operation)
 }

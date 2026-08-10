@@ -49,7 +49,7 @@ func TestStoreWritesOneMemoryAndReturnsItsIdentity(t *testing.T) {
 
 // The audit of a write says which surface wrote it, because a memory written by
 // the plug and one written by the shell are indistinguishable afterwards
-// otherwise, and F08-05 asks precisely that question.
+// otherwise.
 func TestStoreRecordsWhichSurfaceWroteIt(t *testing.T) {
 	svc, _ := serviceWithPaths(t)
 	ctx := context.Background()
@@ -101,9 +101,8 @@ func TestStoreKeepsTheMetadataTheCallerSentAlongsideTheAudit(t *testing.T) {
 	}
 }
 
-// The lab deduplicates in the (layer, status, project) scope, and it is what
-// keeps a hook that fires twice on the same session from writing the handoff
-// twice.
+// Deduplication in the (layer, status, project) scope keeps a repeated hook from
+// writing the same handoff twice.
 func TestStoreDeduplicatesTheSameContentInTheSameScope(t *testing.T) {
 	svc, _ := serviceWithPaths(t)
 	ctx := context.Background()
@@ -219,8 +218,7 @@ func TestStoreRefusesBeforeAnyDatabaseIOWhenReadOnly(t *testing.T) {
 	if err == nil {
 		t.Fatal("a read-only installation accepted a write")
 	}
-	// The same message on both surfaces: the refusal is the service's, and the
-	// two surfaces only render it (TECH-SPEC 1.8).
+	// The refusal belongs to the service; both surfaces render the same message.
 	if !strings.Contains(err.Error(), "read-only") {
 		t.Errorf("error %q does not name read-only mode", err)
 	}

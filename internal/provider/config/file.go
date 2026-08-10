@@ -166,8 +166,7 @@ const (
 
 // File is the operator's config, already read.
 //
-// Two rules govern this whole file and both were paid for in the lab (TECH-SPEC
-// 3.3):
+// Two rules govern this whole file:
 //
 //   - **Data the operator persisted outlives the release that understood it.**
 //     A key this build does not know is a warning that names the remedy, never a
@@ -183,7 +182,7 @@ type File struct {
 	// the file and the remedy.
 	Warnings []string
 
-	// defaults and root hold the loose scalar keys, for the D-1 rule.
+	// defaults and root hold the supported loose scalar keys.
 	defaults map[string]any
 	root     map[string]any
 }
@@ -257,9 +256,7 @@ func LoadFile(path string) (File, error) {
 }
 
 // readModels walks the [models] section by hand instead of letting a decoder
-// impose a shape. It is what lets an unknown key be reported by its own name,
-// which is the half of the D-1 rule that turns a warning into something
-// actionable.
+// impose a shape, so an unknown key can be reported by its own name.
 func readModels(section map[string]any, path string, warnings *[]string) ModelsConfig {
 	models := ModelsConfig{Providers: map[string]ProviderConfig{}}
 	if section == nil {
@@ -323,8 +320,8 @@ func unknownKey(key, path string) string {
 		key, path)
 }
 
-// Default resolves a loose key with the D-1 rule: it is looked up under
-// [defaults] and at the root of the document, and [defaults] wins on collision.
+// Default resolves a loose key under [defaults] and at the root of the document;
+// [defaults] wins on collision.
 //
 // Reading only [defaults] is what made `roca init` warn "No workspace roots
 // configured" with the key defined, and made a hand-written config invisible.
@@ -338,8 +335,8 @@ func (f File) Default(key string) string {
 	return ""
 }
 
-// DefaultList resolves a loose key that holds a list of paths, with the same D-1
-// rule as Default: [defaults] first, then the root of the document.
+// DefaultList resolves a loose list under [defaults] first, then the document
+// root.
 //
 // Three shapes are accepted, because all three are what operators actually write:
 // a TOML array, a JSON array inside a string (which is how the equivalent

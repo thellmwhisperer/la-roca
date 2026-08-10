@@ -17,8 +17,7 @@ import (
 //
 // Every one of them answers the same question in a different way: **after this
 // went wrong, does the operator still have a `roca` that runs, and were they
-// told the truth about why?** A refusal that names the wrong cause costs the
-// afternoon the D-3 lesson already paid for once.
+// told the truth about why?** A refusal must name the actual cause.
 
 // A version that was never published is a 404, and so is a private repository
 // read anonymously. They have opposite remedies, and the operator who typed

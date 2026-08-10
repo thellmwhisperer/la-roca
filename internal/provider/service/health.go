@@ -59,7 +59,7 @@ type healthCheck struct {
 
 // The v1 checks. There is deliberately no check over `runs`: that table is v2
 // and this binary creates none, and a diagnosis that named it would be naming a
-// component this version does not have (F10-03).
+// component this version does not have.
 var healthChecks = []healthCheck{
 	{
 		name:     "orphan_supersedes",

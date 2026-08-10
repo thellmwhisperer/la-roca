@@ -56,7 +56,7 @@ api_key = "sk-x"
 	}
 }
 
-// F07-07: an unknown provider in the configuration kills nothing.
+// An unknown provider in persisted configuration does not stop the cascade.
 func TestAnUnknownProviderInTheConfigWarnsAndTheRestKeepWorking(t *testing.T) {
 	cascade, err := BuildCascade(settings(t, "[models]\norder = [\"telepathy\", \"ollama\"]\n"))
 	if err != nil {
@@ -257,8 +257,7 @@ func TestTheBudgetsComeFromTheConfiguration(t *testing.T) {
 	}
 }
 
-// The D-1 rule reaches the model: a loose key at the root of the document is as
-// good as one under [defaults].
+// A loose model key at the document root is equivalent to one under [defaults].
 func TestALooseModelKeyRetunesTheLocalFloor(t *testing.T) {
 	cascade, err := BuildCascade(settings(t, "ollama_model = \"qwen3.5:2b\"\n\n[models]\norder = [\"ollama\"]\n"))
 	if err != nil {

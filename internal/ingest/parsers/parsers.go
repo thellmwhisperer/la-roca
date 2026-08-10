@@ -1,8 +1,9 @@
 // Package parsers is the pure half of the ingest: it turns one artefact's bytes
 // into normalized records and nothing else.
+// File-format parsers live here; store-backed readers such as OpenCode and Hermes stay in internal/ingest beside foreign-source guards.
 //
 // It touches neither the database nor the clock nor the disk beyond the content
-// it is handed. That is not purism (TECH-SPEC 5.2): it is what makes the ingest
+// it is handed. That isolation makes the ingest
 // suite a table of cases with example files and expected output, with no
 // database and no integration marker, which is the difference between a
 // 40-second suite and a 40-minute one.
@@ -21,8 +22,7 @@ import (
 // never parsed as a Claude one merely because it also ends in `.jsonl`.
 type Kind string
 
-// The v1 source matrix (PRD requirement M1, TECH-SPEC 5.1). Nine families, and
-// none of them is lost.
+// The v1 source matrix has nine families, and none of them is lost.
 const (
 	// KindClaudeSession is a Claude Code transcript under ~/.claude/projects.
 	KindClaudeSession Kind = "claude_session"
@@ -103,8 +103,8 @@ type Session struct {
 	// would never land.
 	AgentMayUpgrade bool
 	// ExchangeKeyScope names where the source's exchange map lives inside the
-	// session metadata; empty is the top level. It exists because a database
-	// adopted from the laboratory already carries those maps in a particular
+	// session metadata; empty is the top level. Existing databases may carry
+	// those maps in a particular
 	// place, and reading them anywhere else would renumber exchanges that already
 	// landed.
 	ExchangeKeyScope string
@@ -165,8 +165,7 @@ type Memory struct {
 	Metadata    map[string]any
 	// Source and FilePath are the pair that makes re-ingesting a file update its
 	// memory instead of duplicating it. They also travel inside Metadata as
-	// `_cron_source` and `file_path`, which is how a database adopted from the
-	// laboratory recognizes its own rows.
+	// `_cron_source` and `file_path`, which identifies rows across re-ingests.
 	Source   string
 	FilePath string
 }
@@ -210,7 +209,7 @@ func lines(content []byte) []string {
 	return out
 }
 
-// wordCount is the lab's `len(text.split())`: whitespace-separated words.
+// wordCount counts whitespace-separated words.
 func wordCount(text string) int { return len(strings.Fields(text)) }
 
 // PlaceThinking gives every thinking block its position in the session, which is

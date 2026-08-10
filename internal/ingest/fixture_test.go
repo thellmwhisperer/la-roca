@@ -13,9 +13,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// A whole synthetic world: every source of the v1 matrix, each one
-// invented here. No real transcript, no real database and no private vocabulary
-// ever enters a test (PRD C5).
+// A whole synthetic world: every source of the v1 matrix is invented here. No
+// real transcript, database or private vocabulary enters a test.
 
 // world is a sandbox HOME with the agents' artefacts in it.
 type world struct {

@@ -1,7 +1,7 @@
 // Package agentcfg declares La Roca in an agent runtime's own configuration
 // file, and withdraws it again leaving every other byte where it was.
 //
-// The rule this package exists to keep is the one F02-04 and F02-05 ask about:
+// This package preserves operator-owned configuration:
 // **the file belongs to the operator**. Roca owns exactly one entry inside it,
 // and everything else — comments, ordering, blank lines, the JSONC the runtime
 // tolerates, the neighbouring servers — has to come back untouched. That is why

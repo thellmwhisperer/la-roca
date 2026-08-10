@@ -308,7 +308,7 @@ func TestReadOnlyModeIsRefusedThroughThePlugToo(t *testing.T) {
 }
 
 // The handshake announces the product, never the library: an agent that reads
-// back an SDK version has been told nothing about what answered it (F08-01).
+// back an SDK version has been told nothing about what answered it.
 func TestTheHandshakeAnnouncesTheProductAndItsVersion(t *testing.T) {
 	session := connect(t, seededService(t))
 
@@ -324,8 +324,7 @@ func TestTheHandshakeAnnouncesTheProductAndItsVersion(t *testing.T) {
 	}
 }
 
-// The plug keeps nothing between calls, which is what makes a process that is
-// born and dies with the pipe the right shape (PRD requirement P4). Two
+// The plug keeps nothing between calls. Two
 // sessions of the same server see exactly the same thing, in either order.
 func TestTheServerKeepsNoStateBetweenSessions(t *testing.T) {
 	svc := seededService(t)

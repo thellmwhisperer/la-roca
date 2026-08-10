@@ -37,8 +37,8 @@ func Backup(ctx context.Context, db *DB, dir string) (string, error) {
 // CopyDatabase copies the source database to destPath using VACUUM INTO, which
 // produces a self-contained database from a live WAL source consistently — the
 // WAL is checkpointed into the copy, and the source is not modified. It is the
-// adoption-by-copy tool: init calls it to copy the lab's database into La Roca's
-// own home, and from that point the copy is the one operated on.
+// adoption-by-copy tool: init copies an existing database into La Roca's home,
+// and from that point the copy is the one operated on.
 func CopyDatabase(ctx context.Context, srcPath, destPath string) error {
 	src, err := Open(srcPath)
 	if err != nil {

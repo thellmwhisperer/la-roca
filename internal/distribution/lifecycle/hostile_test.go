@@ -7,15 +7,14 @@ import (
 	"testing"
 )
 
-// The hostile half of the purge. D-7's two halves protect each other, and both
-// of them fail in the same direction when the inventory is incomplete: a path
+// The purge's two guarantees protect each other, and both fail in the same
+// direction when the inventory is incomplete: a path
 // Roca created that nobody declared is left behind AND reported as somebody
 // else's, which keeps the whole data directory alive and tells the operator to
 // go and delete their own product by hand.
 
-// A survivor that is on the inventory is Roca's, whatever kept it alive. Calling
-// it "La Roca did not create it" is the second half of D-7 firing at the first
-// half's own files, and the operator is sent to delete something the product
+// A survivor on the inventory is Roca's, whatever kept it alive. Calling it
+// foreign sends the operator to delete something the product
 // already declared as its own.
 //
 // A data directory the operator locked down is one way to reach that state. A

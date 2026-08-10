@@ -138,7 +138,7 @@ func TestHealthAnswersInReadOnlyMode(t *testing.T) {
 
 // v1 has no `runs` table: it is v2 scope and the binary creates none. A health
 // report that named a check over it would be naming a component this version
-// does not have, which F10-03 forbids.
+// does not have.
 func TestHealthNamesNoComponentThisVersionDoesNotHave(t *testing.T) {
 	svc, _ := serviceWithPaths(t)
 

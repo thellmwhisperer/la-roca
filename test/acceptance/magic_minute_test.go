@@ -15,10 +15,7 @@ import (
 // nobody has run to an answer out of the operator's own corpus, in under a
 // minute, with no manual step in between.
 //
-// It is the birth test of D-2 ("startup on a virgin machine") and the honest
-// half of F01-15 that a sandbox can measure: F01-15 also walks a `stop` step,
-// and v1 has no daemon to stop, so the daemon half of it belongs to the real
-// battery on the reference machine and not here.
+// The sandbox measures startup on a virgin machine; v1 has no daemon to stop.
 //
 // The journey is the one an operator actually walks:
 //

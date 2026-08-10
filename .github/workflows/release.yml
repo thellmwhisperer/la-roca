@@ -1,13 +1,9 @@
 name: Release
 
-# The rule (PRD I1, TECH-SPEC 6.2): the release artefacts are produced
-# by the channel. Nothing built by hand on a laptop is ever "the" release, and
-# that is why this workflow, and not a person, is what a `vX.Y.Z` tag calls.
+# Release artefacts are produced by this workflow; local builds are never
+# published as official releases.
 #
-# `workflow_dispatch` is here for the case the laboratory already learned it
-# needs: rebuilding a release without burning a new version. It takes the tag it
-# is to build, checks that tag out and uploads over what is there, so a rerun
-# converges on the same release instead of creating a second one.
+# `workflow_dispatch` rebuilds an existing tag without creating a new version.
 
 on:
   push:

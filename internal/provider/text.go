@@ -7,10 +7,8 @@ import (
 
 // Clean turns what a model emitted into what the gate can look at.
 //
-// None of the three things it does is cosmetic: each one is a shape in which a
-// real model breaks a real query, observed in the lab against local models.
-// What it does NOT do is repair SQL: the gate judges, and the repairs of
-// TECH-SPEC 1.5 are built only when the golden bench proves each one necessary.
+// None of the three things it does is cosmetic: local models emit each shape.
+// It does not repair SQL; the gate judges every result.
 func Clean(raw string) string {
 	text := thinkingBlock.ReplaceAllString(raw, "")
 	text = insideTheFence(text)
@@ -23,8 +21,7 @@ func Clean(raw string) string {
 // CleanProse is the shape for the second call, the row interpretation: the
 // reasoning block goes, the blanks are trimmed, and nothing else is touched.
 // Prose legitimately quotes fenced blocks and ends in punctuation, so Clean's
-// fence extraction must never run on it: applied to a full Spanish answer it
-// kept only the first fence and delivered the single word "atm" (2026-08-10).
+// fence extraction must never run on it.
 func CleanProse(raw string) string {
 	return strings.TrimSpace(thinkingBlock.ReplaceAllString(raw, ""))
 }
@@ -49,7 +46,7 @@ func insideTheFence(text string) string {
 // one repeating verbatim is a small model that has stopped being able to stop.
 const loopThreshold = 50
 
-// deloop cuts the text at the first repetition loop, like the lab's `_deloop`.
+// deloop cuts the text at the first repetition loop.
 func deloop(text string) string {
 	lines := strings.Split(text, "\n")
 	seen := make(map[string]bool, len(lines))

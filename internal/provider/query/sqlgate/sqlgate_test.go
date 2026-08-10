@@ -35,7 +35,7 @@ func TestTheGateAcceptsAReadOfTheVisibleTables(t *testing.T) {
 	}
 }
 
-// Only reads are allowed (F04-06). The message is the consecrated suite's
+// Only reads are allowed. The message is the acceptance suite's
 // contract, so it is checked literally.
 func TestTheGateLetsOnlySelectThrough(t *testing.T) {
 	benchCases := []string{
@@ -58,8 +58,8 @@ func TestTheGateLetsOnlySelectThrough(t *testing.T) {
 	}
 }
 
-// A chained statement does not slip through (F04-07). The lab keeps the first
-// query because a small model adds chatter behind it; here the gate is strict
+// A chained statement does not slip through. The gate is strict even when a
+// small model adds chatter behind a valid first query;
 // and whoever has to trim chatter trims it earlier, which is where you know
 // whether it came from a model or from an operator.
 func TestTheGateRejectsAChainedStatement(t *testing.T) {
@@ -74,8 +74,8 @@ func TestTheGateRejectsAChainedStatement(t *testing.T) {
 }
 
 // Table and column existence is the engine's word, not an AST allowlist: the
-// statement is prepared against an in-memory database that only has the visible
-// tables (TECH-SPEC 1.5).
+// statement is prepared against an in-memory database containing only visible
+// tables.
 func TestTheEngineIsTheOneThatSaysWhatDoesNotExist(t *testing.T) {
 	benchCases := []struct{ stmt, dice string }{
 		{"SELECT * FROM no_existe LIMIT 1", "no such table"},

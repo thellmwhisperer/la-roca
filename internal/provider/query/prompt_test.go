@@ -390,8 +390,8 @@ func TestTheRulesTeachTheRelativeDateThatSQLiteActuallyUnderstands(t *testing.T)
 //	content LIKE '%Ana%' OR metadata LIKE '%Ana%'
 //
 // and every hit was noise ("ganancia", "banana", "extractViewedUserId").
-// The lab documented the same failure in March. The prompt has to put the FTS
-// tables in front of the model, forbid bare %term% LIKE on text columns, and
+// The prompt has to put the FTS tables in front of the model, forbid bare
+// %term% LIKE on text columns, and
 // show the MATCH + bm25 shape that actually works — including the multi-source
 // breadth the compiler templates already use.
 func productSchema() Schema {

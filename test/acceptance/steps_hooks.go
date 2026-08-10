@@ -21,7 +21,7 @@ import (
 // reads and over the standard output the runtime really parses.
 
 // theSettingsWithAHookOfItsOwn is a settings file that already has a hook in it
-// before Roca arrives, which is the whole question F11-01 and F11-08 ask.
+// before Roca arrives.
 const theSettingsWithAHookOfItsOwn = `{
   "model": "opus",
   "hooks": {

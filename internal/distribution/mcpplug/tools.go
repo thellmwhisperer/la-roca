@@ -5,8 +5,8 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
-// The five tools of v1, each one defended by a concrete caller (TECH-SPEC
-// 1.8). Adding one is a product decision; `roca_list_runs` is out because
+// The five tools of v1 each have a concrete caller. Adding one changes the
+// product surface; `roca_list_runs` is out because
 // `runs` is v2 and this binary creates no such table.
 var (
 	execTool = &mcp.Tool{

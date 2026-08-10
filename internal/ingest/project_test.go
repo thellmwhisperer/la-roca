@@ -19,7 +19,7 @@ func TestAnEncodedAbsolutePathDecodesAgainstTheConfiguredRoot(t *testing.T) {
 
 // The encoding is lossy, so a directory no configured prefix explains is
 // ambiguous. It is a diagnosis with a remedy, and no raw absolute path is
-// persisted as if it were a project name (TECH-SPEC 5.1).
+// persisted as if it were a project name.
 func TestAnEncodedPathNoRootExplainsIsAmbiguous(t *testing.T) {
 	project, ok := ProjectFromEncodedDir("-w-otro-sitio-demo", ResolveWorkspaceRoots([]string{"/x"}))
 	if ok {

@@ -15,9 +15,8 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 )
 
-// keyReleaseRepo is where an operator writes the repository once instead of
-// passing --repo on every update. It is read with the D-1 rule, under
-// [defaults] and at the root of the document.
+// keyReleaseRepo is read under [defaults] and at the document root so an
+// operator need not pass --repo on every update.
 const keyReleaseRepo = "release_repo"
 
 // versionCheck is how long the new binary gets to answer `--version`. A binary

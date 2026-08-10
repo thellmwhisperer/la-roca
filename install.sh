@@ -264,7 +264,7 @@ fi
 rm -f "$PROBE"
 
 # Converge over an interrupted run: whatever a previous kill left staged in the
-# prefix is this script's and goes now. It is the D-7 rule in shell: what we own
+# prefix is this script's and goes now: what we own
 # is deleted whenever it is there, and nothing else is touched.
 rm -f "$PREFIX"/.roca-install.* 2>/dev/null || true
 
@@ -340,7 +340,7 @@ if [ "$EXPECTED" != "$COMPUTED" ]; then
   die "the checksum of $ARTEFACT does not match: the channel published $EXPECTED and what came down is $COMPUTED. Nothing was installed"
 fi
 
-# The channel publishes bare binaries (TECH-SPEC 6.2), which is the branch below
+# The channel publishes bare binaries, which is the branch below
 # that is taken every time. The tarball branch stays because whether the channel
 # compresses is the channel's decision and not this script's, and the day it does
 # what goes on the PATH is the binary inside and not the archive.

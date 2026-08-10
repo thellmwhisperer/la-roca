@@ -50,8 +50,7 @@ func TestApplySchemaCreatesTheEightV1Tables(t *testing.T) {
 	}
 }
 
-// The v1 scope creates neither the tables deferred to v2 nor the ones the lab's
-// catalog declares dead: no command, no table, no tool.
+// The v1 schema contains only tables used by the current command and tool set.
 func TestApplySchemaCreatesNoTableOutsideV1(t *testing.T) {
 	db := openFresh(t)
 	if err := store.ApplySchema(context.Background(), db); err != nil {

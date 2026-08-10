@@ -10,10 +10,8 @@ import (
 	"github.com/cucumber/godog"
 )
 
-// TestStoreDomainSuite runs the per-domain STORE acceptance suite against the
-// real binary. It is the first wave of the suite rebirth: every scenario here
-// is one the approved list froze by title, and they all run green against the
-// artefact `make build` produces.
+// TestStoreDomainSuite runs the frozen STORE acceptance scenarios against the
+// real binary produced by `make build`.
 //
 // It is black box, like the consecrated suite: no product symbol is imported,
 // only `roca` is run and its output and its database are read. The store domain

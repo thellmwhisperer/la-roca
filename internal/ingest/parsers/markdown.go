@@ -9,7 +9,7 @@ import (
 // The two memory sources of the matrix that are plain text: Claude memory files
 // (including the global one) and Codex memories, rules and skills.
 
-// codexTypeToLayer is the laboratory's map. A Codex memory or rule is guidance
+// codexTypeToLayer maps Codex memory types to semantic layers. A memory or rule is guidance
 // for the agent; a skill is a replicable practice.
 var codexTypeToLayer = map[string]string{
 	"memory": "feedback",
@@ -62,8 +62,7 @@ func ParseMemoryFile(content []byte) MemoryFile {
 // memoryRecord is the row both of them produce: the same eight fields,
 // differing only in the layer it lands in, who wrote it and what its own
 // metadata declares. The `_cron_source` and `file_path` pair travels inside the
-// metadata as well as beside it, which is how a database adopted from the
-// laboratory recognizes its own rows.
+// metadata as well as beside it, preserving identity across re-ingests.
 func memoryRecord(source, layer, body string, meta FileMeta, declared map[string]any) Records {
 	metadata := map[string]any{
 		"_cron_source": source,

@@ -7,9 +7,7 @@ import (
 	"time"
 )
 
-// paramsBudget and errorBudget are the laboratory's cuts, kept to the character:
-// a summary is a summary, and an error message that fills a column stops being
-// readable.
+// paramsBudget and errorBudget keep summaries and stored errors readable.
 const (
 	paramsBudget = 500
 	errorBudget  = 1000
@@ -57,7 +55,7 @@ type turn struct {
 // claudeBuilder is the state machine both Claude Code and Cowork transcripts
 // walk: one human turn plus the aggregated agent response is one exchange.
 type claudeBuilder struct {
-	// auditMode is the Cowork variant. Two differences, both the laboratory's: a
+	// auditMode is the Cowork variant. It has two differences: a
 	// user line that is only tool results is dropped instead of closing the turn,
 	// and the human turn is reset after each flush so a second agent block does
 	// not reopen it.
@@ -327,8 +325,8 @@ func (l claudeLine) stamp() string {
 }
 
 // decodeContent reads a message's content, which is either a bare string or a
-// list of blocks. The text of a list is its first text block, as the laboratory
-// reads it: a user turn has one.
+// list of blocks. A list's text is its first text block because a user turn has
+// one.
 func decodeContent(message *claudeMessage) (string, []claudeBlock) {
 	if message == nil || len(message.Content) == 0 {
 		return "", nil

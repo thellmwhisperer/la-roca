@@ -255,8 +255,7 @@ func TestKeyLoginStoresTheCredentialAt0600(t *testing.T) {
 	}
 }
 
-// Tests the JSON output contracts for login and logout. Every kernel command
-// answers --json (TECH-SPEC 1.8). Field equality, not substring hunts.
+// Tests the JSON output contracts for login and logout using field equality.
 func TestLoginAndLogoutJSONContracts(t *testing.T) {
 	// Bare login --json: structured provider catalogue.
 	t.Run("bare login", func(t *testing.T) {

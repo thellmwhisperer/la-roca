@@ -92,8 +92,8 @@ func TestAMatchingChecksumPasses(t *testing.T) {
 	}
 }
 
-// The channel compresses each artefact with its LICENSE and README
-// (TECH-SPEC 6.2). What is installed is the binary inside, not the tarball.
+// The channel compresses each artefact with its LICENSE and README; installation
+// extracts the binary rather than storing the tarball.
 func TestTheBinaryIsTakenOutOfTheTarball(t *testing.T) {
 	payload := tarball(t, map[string]string{
 		"LICENSE": "a licence",
@@ -196,8 +196,7 @@ func TestAnUnswappableBinaryIsRolledBack(t *testing.T) {
 }
 
 // The release query speaks the GitHub API and carries the credential, because
-// the reference repository is private and the anonymous route gives 404
-// there (TECH-SPEC 6.3).
+// the reference repository is private and the anonymous route gives 404.
 func TestTheLatestReleaseIsReadOverTheAuthenticatedAPI(t *testing.T) {
 	var sawToken string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

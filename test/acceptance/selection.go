@@ -14,9 +14,8 @@ import (
 // selectScenarios reads the consecrated features and returns a copy with only
 // the requested scenarios, keeping header, tags and background.
 //
-// The files in features/ are not touched: they are v1's complete contract and
-// are versioned frozen. What changes per wave is which part of the contract is
-// claimed, and that is declared in the runner, not by editing the suite.
+// The files in features/ are versioned contracts; the runner selects the
+// implemented subset without editing them.
 func selectScenarios(dir string, ids []string) ([]godog.Feature, error) {
 	paths, err := filepath.Glob(filepath.Join(dir, "*.feature"))
 	if err != nil {
@@ -43,9 +42,8 @@ func selectScenarios(dir string, ids []string) ([]godog.Feature, error) {
 // trim keeps the feature's preamble (header and background) and, of the
 // scenarios, only the requested ones, with the tags that precede them.
 //
-// The files in features/ are not touched: they are v1's complete contract and
-// are versioned frozen. What changes per wave is which part of the contract is
-// claimed, and that is declared in the runner, not by editing the suite.
+// The files in features/ are versioned contracts; the runner selects the
+// implemented subset without editing them.
 func trim(content string, ids []string) (string, int) {
 	lines := strings.Split(content, "\n")
 

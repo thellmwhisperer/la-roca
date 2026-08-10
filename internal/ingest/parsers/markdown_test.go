@@ -26,8 +26,7 @@ func TestClaudeMemoryReadsItsFrontmatter(t *testing.T) {
 	if memory.Origin != "cron" || memory.SourceAgent != "claude-code" || memory.Project != "demo" {
 		t.Errorf("memory = %+v", memory)
 	}
-	// The pair that makes re-ingesting update instead of duplicate, and that a
-	// database adopted from the laboratory recognizes as its own.
+	// This pair makes re-ingesting update rather than duplicate the memory.
 	if memory.Metadata["_cron_source"] != "claude-code" ||
 		memory.Metadata["file_path"] != "/w/.claude/projects/-w-demo/memory/dash.md" {
 		t.Errorf("metadata = %+v", memory.Metadata)

@@ -6,29 +6,12 @@ import (
 	"strings"
 )
 
-// The prompt handed to the model, and where it comes from.
-//
-// The lab builds it in `_sql_generation_system_prompt` out of a generated
-// `semantic-layer.md` file: the schema inside <schema> and four rules inside
-// <rules>. The rules are ported because each one earns its place; the schema is
-// NOT ported as a file. It is read from the DDL that is already embedded, and
-// the reason is a defect this code was born with.
-//
-// **The defect.** The ported rule said, unconditionally, "always filter active
-// memories with WHERE supersedes IS NULL". That both hid the replacement rather
-// than the memory it replaced and named `supersedes` without saying it exists
-// only on `memories`. So every question the model answered out of `sessions`
-// came back carrying a column that is not there, the gate rejected it, and two
-// different questions produced the same rejection. A prompt that announces a
-// schema or memory semantics the product does not have is a systematic defect,
-// not a weak model.
-//
-// **The fix, and the shape that keeps it fixed.** The schema and the rules come
+// The schema and rules handed to the model come
 // from ONE read of ONE DDL: the same `data.Schema` the gate prepares its
 // validation database with, minus the same tables the gate hides. A rule about
 // a column can then only name the tables that really carry it, and a column
 // nobody carries earns no rule at all. `TestThePromptNeverNamesAColumnTheSchemaDoesNotHave`
-// measures exactly that over the real schema.
+// enforces that invariant over the real schema.
 
 // LayerHint is one semantic layer as the model sees it: what it is called and
 // what goes in it.

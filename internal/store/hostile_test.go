@@ -12,8 +12,8 @@ import (
 //
 // SQLite answers SQLITE_CANTOPEN and the driver renders its extended code as
 // **"out of memory"**, which is a true sentence about a different machine. An
-// operator reading it looks at their RAM, and what is wrong is a directory
-// permission. It is the D-3 lesson at the very first thing the product does.
+// operator reading it looks at their RAM when the actual fault is a directory
+// permission.
 
 // A database under a directory that cannot be written to says so, and says what
 // to do about it.

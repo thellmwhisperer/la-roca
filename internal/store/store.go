@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	// busyTimeout is the same one the lab applies on every connection.
+	// busyTimeout bounds lock contention on every connection.
 	busyTimeout = 15 * time.Second
 	// writeRetries caps the busy wait when acquiring the write lock arrives
 	// contended.
@@ -43,8 +43,7 @@ type DB struct {
 // does not block a writer, busy_timeout so a writer waits instead of failing,
 // and _txlock=immediate so the transaction takes the write lock as it opens.
 // Without the third, a transaction that reads before writing fails to promote
-// with SQLITE_BUSY_SNAPSHOT, which the busy handler never retries: that is the
-// bug that cost 48 lost transactions out of 8 writers in the lab.
+// with SQLITE_BUSY_SNAPSHOT, which the busy handler never retries.
 func Open(path string) (*DB, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -76,8 +75,7 @@ func Open(path string) (*DB, error) {
 // as the same SQLITE_CANTOPEN, and the driver renders that extended code as
 // **"out of memory"** — a true sentence about an entirely different machine.
 // Somebody who pointed `--db-path` at a directory they do not own goes and looks
-// at their RAM, which is the D-3 lesson happening at the very first thing this
-// product does.
+// at their RAM instead of fixing the path.
 //
 // So the two things the engine cannot see are checked here, in the order an
 // operator would check them, and only on the path where the open already failed.

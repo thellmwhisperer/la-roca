@@ -156,9 +156,8 @@ func TestASecondPassOverTheSameDiskChangesNothing(t *testing.T) {
 	}
 }
 
-// Every path of every source is in the state table. That is the debt v1 does not
-// inherit: in the laboratory only the live route wrote it, so the table was empty
-// on a machine with thousands of sessions.
+// Every path of every source belongs in the state table, regardless of the route
+// that discovered it.
 func TestEveryPathOfEverySourceIsFingerprinted(t *testing.T) {
 	world := newWorld(t)
 	db := rocaDatabase(t)
@@ -219,10 +218,7 @@ func TestAGrownTranscriptOnlyAddsWhatIsNew(t *testing.T) {
 	}
 }
 
-// The duplication shield, proven with data. The adopted corpus carries
-// the same exchange six and ten times with consecutive ids, inherited from the
-// laboratory's ingestion. La Roca's own ingest claims it cannot produce that, and
-// this proves it three ways: the same session, reached again by a re-run, by a
+// The duplication shield covers three routes: the same session reached by a re-run, by a
 // re-scan of rewritten content, and by a copy under a second path, leaves not one
 // duplicate row and not one rewrite.
 func TestTheSameSessionReachedAgainLeavesNoDuplicateRows(t *testing.T) {
@@ -278,9 +274,7 @@ func TestTheSameSessionReachedAgainLeavesNoDuplicateRows(t *testing.T) {
 	assertNoNewDuplicates(t, db.SQL(), baselineDupes, baseline, "a copy under a second path")
 }
 
-// The dry run is a first-class mode: it never writes, it never breaks, and it says
-// what it would do. The laboratory's QA found that `--dry-run --json` blew up
-// there; it cannot be born here.
+// A dry run never writes and still reports what it would do under JSON output.
 func TestTheDryRunWritesNothingAndAnswersHonestly(t *testing.T) {
 	world := newWorld(t)
 	db := rocaDatabase(t)
@@ -523,9 +517,7 @@ func touchFuture(t *testing.T, path string) {
 	}
 }
 
-// duplicateExchanges counts exchange groups that share the same session and the
-// same text more than once. That is the shape of the laboratory's defect: the
-// same message stored under consecutive ids.
+// duplicateExchanges counts repeated text groups within the same session.
 func duplicateExchanges(t *testing.T, db *sql.DB) int {
 	t.Helper()
 	var dupes int

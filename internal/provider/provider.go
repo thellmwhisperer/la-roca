@@ -4,7 +4,7 @@
 // The decision is frontier with a local floor: the configured provider
 // serves when there is a credential, and with no network or no credential the
 // fall to local Ollama is automatic. The local one is the guaranteed floor, not
-// the product's identity (decisions/la-roca-alcance-v1-20260805.md, point 3).
+// the product's identity.
 //
 // Three things this package holds on to, and each one was paid for:
 //
@@ -17,7 +17,7 @@
 //     and one written in code still fails. There is no way to lose the
 //     provenance along the way because there is no constructor without it.
 //   - **Zero provider SDKs.** The adapters speak HTTP with net/http and JSON
-//     with encoding/json (TECH-SPEC 1.6). An SDK puts its dependency chain and
+//     with encoding/json. An SDK puts its dependency chain and
 //     its version cadence inside the binary to save two hundred lines.
 package provider
 
@@ -49,9 +49,8 @@ const (
 	NameXAI      = "xai"
 )
 
-// DefaultTimeout bounds a request to a provider. It is generous because the
-// measured LLM path against local qwen3.5:4b costs about 22 s (TECH-SPEC 1.4),
-// and it exists because an unbounded request is a hung command.
+// DefaultTimeout bounds a request to a provider. It leaves room for slower
+// local models because an unbounded request is a hung command.
 const DefaultTimeout = 90 * time.Second
 
 const ProbeTimeout = 3 * time.Second
@@ -74,8 +73,7 @@ type Provider interface {
 // Readiness is the answer to "can I use you right now?".
 //
 // Reason and Action are not decoration: they are what `roca doctor` prints, and
-// the lab already learned that a diagnosis that does not name the remedy forces
-// the operator to read code.
+// every diagnosis must name its remedy.
 type Readiness struct {
 	Ready   bool   `json:"ready"`
 	ModelID string `json:"model,omitempty"`
@@ -144,8 +142,8 @@ type ModelsListing struct {
 	Reason   string   `json:"reason,omitempty"`
 }
 
-// Source is where a provider order came from. It is the D-5 lesson as a type:
-// a caller that reads the operator's selection and passes it on loses the
+// Source is where a provider order came from. A caller that reads the
+// operator's selection and passes it on loses the
 // degradation unless the provenance travels with the value.
 type Source int
 
@@ -175,7 +173,7 @@ func (s Source) String() string {
 
 // Selection is a provider order with its provenance and with where it is
 // written, because every message to the operator names the key and the file,
-// never a TOML table (TECH-SPEC 3.3).
+// never a TOML table.
 type Selection struct {
 	Names  []string
 	Source Source
@@ -183,9 +181,8 @@ type Selection struct {
 	Key    string
 }
 
-// disablingNames turn the model off without being unknown names. It is the
-// lab's llm_engine=none, kept because an operator who does not want a model
-// should not have to invent an empty list.
+// disablingNames turn the model off without being unknown names, so an
+// operator does not have to invent an empty list.
 var disablingNames = map[string]bool{
 	"none": true, "off": true, "disabled": true, "false": true, "0": true,
 }
@@ -210,14 +207,12 @@ type Resolved struct {
 // the local floor last.
 //
 // The last element is always a provider that can exist on any supported
-// platform. In the lab, an order that ended in MLX on Linux masked real Ollama
-// failures during init, and the rule that came out of it is kept even though
-// La Roca has no MLX (TECH-SPEC 3.2).
+// platform, so platform-specific providers cannot hide a usable local floor.
 func DefaultOrder() []string { return []string{NameCodex, NameOllama} }
 
 // Resolve turns a selection into providers.
 //
-// Two guarantees ported from the lab, plus the provenance rule:
+// Resolve preserves two validation guarantees plus the provenance rule:
 //   - a duplicate is an error, always: the same provider twice hides a config
 //     confusion, and guessing which of the two was meant is answering a
 //     different question;

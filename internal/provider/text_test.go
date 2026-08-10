@@ -21,8 +21,8 @@ func TestCleanStripsMarkdownFences(t *testing.T) {
 	}
 }
 
-// Small local models loop: they repeat a long line forever until they run out
-// of tokens. The lab cuts at the first repetition (`_deloop`) and so does this.
+// Small local models may repeat a long line until they run out of tokens, so
+// cleanup stops at the first repetition.
 func TestCleanCutsAtTheFirstRepetitionLoop(t *testing.T) {
 	long := "SELECT content FROM memories WHERE content LIKE '%format%' AND supersedes IS NULL"
 	raw := long + "\n" + long + "\n" + long
@@ -52,10 +52,7 @@ func TestCleanLeavesAnEmptyAnswerEmpty(t *testing.T) {
 	}
 }
 
-// CleanProse is the interpretation's cleanup: reasoning goes, everything else
-// stays. Extracting the first fence out of prose is what turned a full answer
-// into the single word "atm" (2026-08-10), so fences and punctuation survive
-// whole.
+// CleanProse drops reasoning while preserving fenced blocks and punctuation.
 func TestCleanProse(t *testing.T) {
 	prose := "The details:\n```\natm\n```\nand 97 subs."
 	for raw, want := range map[string]string{

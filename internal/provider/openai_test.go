@@ -105,7 +105,7 @@ func TestOpenAICompatibleWithACredentialProbesAndServes(t *testing.T) {
 }
 
 // Without network the frontier is not available and the cascade has to fall to
-// the floor unaided: that is what F07-02 measures.
+// the floor unaided.
 func TestOpenAICompatibleWithoutNetworkIsNotReadyAndSaysWhere(t *testing.T) {
 	compatible, err := NewOpenAICompatible(OpenAIConfig{
 		Name: NameDeepSeek, BaseURL: "http://127.0.0.1:1/v1", APIKey: "sk-secret",

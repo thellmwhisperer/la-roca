@@ -22,8 +22,7 @@ jobs:
       # part of its chain, so a red build says "slop gate" in the job list
       # instead of "format, vet and tests". The runner is scripts/slopslint.sh:
       # it pins the version, picks the platform binary and caches it under
-      # .tmp/, so any other lane (the distribution wave's included) plugs the
-      # gate in by copying these two lines and nothing else.
+      # .tmp/, so another workflow can reuse the gate with the same command.
       - name: Slop gate (duplication ceilings)
         run: make slop
 

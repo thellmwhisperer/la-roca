@@ -177,8 +177,8 @@ func outputText(output json.RawMessage) string {
 	return string(output)
 }
 
-// isToolError is the laboratory's rule and only that one: a non-zero exit code
-// inside the output's metadata. Guessing an error out of the text would file
+// isToolError recognizes only a non-zero exit code inside output metadata.
+// Guessing an error out of the text would file
 // every command that printed the word "error" as a failure.
 func isToolError(output string) bool {
 	var document struct {

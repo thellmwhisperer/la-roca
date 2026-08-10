@@ -41,7 +41,7 @@ func (m *world) longMemory(minimum int) error {
 }
 
 // aHandoffMemoryAbout seeds a session-continuity handoff that free-text search
-// must still find (F04-16): handoff is not private messaging.
+// must still find: handoff is not private messaging.
 func (m *world) aHandoffMemoryAbout(about string) error {
 	db, err := m.openDB()
 	if err != nil {

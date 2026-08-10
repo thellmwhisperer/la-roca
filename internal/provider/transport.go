@@ -12,7 +12,7 @@ import (
 )
 
 // DefaultMaxTokens is the budget for one answer. The answer is a SELECT, not an
-// essay: the lab uses the same 500 and never had a query that did not fit.
+// essay.
 const DefaultMaxTokens = 500
 
 // errorBodyBudget is how much of a failed response's body travels into the
@@ -20,8 +20,8 @@ const DefaultMaxTokens = 500
 // an HTML page into the operator's terminal.
 const errorBodyBudget = 300
 
-// postJSON is the whole transport these adapters share. It is here and not in a
-// provider SDK on purpose (TECH-SPEC 1.6).
+// postJSON is the whole transport these adapters share, avoiding provider SDK
+// dependencies.
 func postJSON(ctx context.Context, client *http.Client, endpoint string,
 	headers map[string]string, body any, into any) error {
 

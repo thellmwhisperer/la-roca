@@ -10,8 +10,8 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/store"
 )
 
-// Provenance says how the search was done. It is a product requirement (PRD C2)
-// and not decoration: a poor result over the index and a poor one over a LIKE
+// Provenance says how the search was done. It is not decoration: a poor result
+// over the index and a poor one over a LIKE
 // are fixed in different ways, and without this the operator does not know which
 // of the two they are looking at.
 type Provenance struct {

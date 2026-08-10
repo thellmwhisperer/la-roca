@@ -8,8 +8,8 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
-// The decision of 2026-08-05 ~21:55: agent-facing JSON surfaces must
-// never carry the database file path. The CLI text output may still show it to
+// Agent-facing JSON surfaces must never carry the database file path. The CLI
+// text output may still show it to
 // the operator, but the structured output a script or an MCP agent reads must
 // not.
 

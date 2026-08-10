@@ -11,8 +11,8 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
-// fakeProvider is a model that answers whatever the test says. It is the whole
-// mock this wave needs: the adapters have their own tests against real HTTP.
+// fakeProvider is a model that answers whatever the test says; adapters have
+// separate tests against real HTTP.
 type fakeProvider struct {
 	name  string
 	model string
@@ -170,7 +170,7 @@ func TestTheGateAddsTheMissingLimitInsteadOfRefusing(t *testing.T) {
 	}
 }
 
-// F07-01: with a credential and network, the frontier provider serves and the
+// With a credential and network, the frontier provider serves and the
 // local one is never asked for anything.
 func TestWithTheFrontierAvailableTheLocalOneIsNotTouched(t *testing.T) {
 	frontier := answering("codex", "SELECT content FROM memories LIMIT 5")
@@ -189,7 +189,7 @@ func TestWithTheFrontierAvailableTheLocalOneIsNotTouched(t *testing.T) {
 	}
 }
 
-// F07-02: with no network the cascade falls to the local floor unaided, and it
+// With no network the cascade falls to the local floor unaided, and it
 // says so.
 func TestWithoutNetworkItFallsToTheLocalFloorAndDeclaresIt(t *testing.T) {
 	frontier := unavailable("codex", "the access token expired at 100% and could not be refreshed", "log in again")
@@ -221,7 +221,7 @@ func TestWithoutNetworkItFallsToTheLocalFloorAndDeclaresIt(t *testing.T) {
 	}
 }
 
-// F07-04: with nothing at all the failure is clear, actionable and not a
+// With nothing available the failure is clear, actionable and not a
 // traceback.
 func TestWithNoProviderAtAllTheFailureNamesEverythingTried(t *testing.T) {
 	svc := serviceWithModel(t,
@@ -364,7 +364,7 @@ func TestTheRescueFindsTheEntityBehindShortWords(t *testing.T) {
 	}
 }
 
-// F07-05: with the model turned off, no provider is contacted and the
+// With the model turned off, no provider is contacted and the
 // question is declared unresolved — there is no deterministic route to fall
 // back to.
 func TestWithTheModelOffNoProviderIsContacted(t *testing.T) {
@@ -746,8 +746,7 @@ func TestTheModelsFencedSQLStillPassesTheGate(t *testing.T) {
 }
 
 // Interpretation is prose, not SQL: an answer that quotes a fenced block must
-// arrive whole, and only the reasoning block is dropped. Clipping to the first
-// fence is what turned a full answer into the single word "atm" (2026-08-10).
+// arrive whole, and only the reasoning block is dropped.
 func TestInterpretKeepsProseThatQuotesAFencedBlock(t *testing.T) {
 	prose := "The repo is:\n```\nthellmwhisperer/agentic-team-member\n```\nand the channel has 97 subs."
 	svc := serviceWithModel(t, answering("codex", "<think>summarize</think>\n"+prose))

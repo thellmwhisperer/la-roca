@@ -57,8 +57,8 @@ type SearchRequest struct {
 // QueryResult is the complete answer: which path it left by, with what SQL, and
 // from which version of the code.
 //
-// That provenance is a product requirement (PRD, requirement C2) and not
-// decoration: a poor result because the provider failed and a poor one because
+// Provenance is not decoration: a poor result because the provider failed and
+// a poor one because
 // the model wrote bad SQL are fixed in different ways, and without the
 // provenance the operator does not know which of the two they are looking at.
 type QueryResult struct {
@@ -111,7 +111,7 @@ type QueryResult struct {
 }
 
 // found records the rows an answer came back with. Zero of them are declared as
-// zero and never dressed up as an answer (F04-10), and a message the caller has
+// zero and never dressed up as an answer, and a message the caller has
 // already written is not written over: down the model path that message is what
 // says why the rescue is the one answering.
 //
@@ -199,7 +199,7 @@ func (s *Service) Query(ctx context.Context, req QueryRequest) (res QueryResult,
 		// What the configuration said that this build did not understand travels
 		// with every answer: a question is exactly where an operator would
 		// otherwise never find out that half their [models] section is being
-		// ignored (F07-07).
+		// ignored.
 		Warnings: s.opts.Providers.Warnings,
 	}
 	defer func() { res.LatencyMS = time.Since(start).Milliseconds() }()

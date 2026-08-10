@@ -43,7 +43,7 @@ func TestRenderSQLFTSRequiresEveryWord(t *testing.T) {
 	}
 }
 
-// A layer constraint is always respected (F04-13 contract). With a layer, the
+// A layer constraint is always respected. With a layer, the
 // other three sources are not queried: they have no layer, and returning them
 // would be failing to respect it.
 func TestRenderSQLFTSWithALayerLooksOnlyAtMemories(t *testing.T) {

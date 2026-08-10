@@ -11,8 +11,8 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
-// The decision of 2026-08-05 ~21:55: MCP tool errors must never carry
-// the database file path. A broken tool that names a path on the operator's
+// MCP tool errors must never carry the database file path. A broken tool that
+// names a path on the operator's
 // machine is information an agent should not have.
 
 func TestMCPToolErrorsMustNotCarryTheDatabasePath(t *testing.T) {

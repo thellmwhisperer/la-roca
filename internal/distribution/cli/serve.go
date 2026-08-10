@@ -5,9 +5,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/mcpplug"
 )
 
-// serveCommand is the only way to serve. The laboratory launched its MCP as a
-// module; here it is a first-class subcommand because there is nothing else
-// (TECH-SPEC 1.7).
+// serveCommand is the first-class entry point for serving MCP.
 //
 // It is on demand and in the foreground: the agent launches it, it answers over
 // its standard input and output, and it dies when that pipe closes. There is no

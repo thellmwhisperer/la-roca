@@ -9,12 +9,12 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 )
 
-// The five runtimes the lab supports, each with a synthetic configuration in
-// its own format. They are synthetic on purpose: a fixture copied from a real
+// Each supported runtime has a synthetic configuration in its own format. A
+// fixture copied from a real
 // machine would carry that machine's vocabulary into a public repository.
 //
 // Every fixture has content of its own before Roca arrives, because that is the
-// whole question F02-04 asks: does installing preserve what was already there.
+// contract: installing preserves what was already there.
 var fixtures = map[string]string{
 	agentcfg.RuntimeCodex: `# The operator's Codex configuration
 model = "gpt-5-codex"
@@ -297,7 +297,7 @@ func TestWithdrawingWhatWasNeverInstalledChangesNothing(t *testing.T) {
 }
 
 // And a config file that is not there is not created by an uninstall: what is
-// removed is Roca's entry, never the operator's file (F02-05).
+// removed is Roca's entry, never the operator's file.
 func TestWithdrawingDoesNotCreateAConfigThatIsNotThere(t *testing.T) {
 	for _, runtime := range agentcfg.Runtimes() {
 		t.Run(runtime, func(t *testing.T) {

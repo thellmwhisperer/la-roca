@@ -8,10 +8,8 @@ import (
 	"testing"
 )
 
-// The plug's law, and the reason this file exists (TECH-SPEC 1.2, PRD
-// requirement P2): behaviour that lives in an MCP handler is behaviour no
-// shell, hook or script can reach. The lab pins it with
-// `TestServiceIsTheOneSurface`; here it is pinned by reading the handlers
+// Behaviour that lives in an MCP handler is behaviour no shell, hook or script
+// can reach. This contract is pinned by reading the handlers
 // themselves, because a comment saying "no logic here" has never stopped
 // anybody.
 //

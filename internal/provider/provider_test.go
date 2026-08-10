@@ -80,8 +80,7 @@ func TestOrderResolvesToTheProvidersItNames(t *testing.T) {
 }
 
 // The provenance travels in the type: an order the operator persisted degrades,
-// one written in code is still a contract and fails. That is defect D-5 of the
-// lab, ported (TECH-SPEC 3.3).
+// while one written in code is still a contract and fails.
 func TestAnUnknownNameFromConfigDegradesAndNamesTheRemedy(t *testing.T) {
 	catalog := Catalog{"ollama": func() (Provider, error) { return ready("ollama", "qwen3.5:4b"), nil }}
 
@@ -130,8 +129,8 @@ func TestADuplicateInTheOrderIsAnError(t *testing.T) {
 	}
 }
 
-// The lab ended its default order in a provider impossible on Linux and that
-// masked real Ollama failures. The rule is kept: the floor is always last.
+// The default order always ends in a provider available on every supported
+// platform so platform-specific failures cannot mask the local floor.
 func TestTheDefaultOrderEndsInTheProviderThatCanExistAnywhere(t *testing.T) {
 	order := DefaultOrder()
 	if len(order) == 0 {
@@ -145,7 +144,7 @@ func TestTheDefaultOrderEndsInTheProviderThatCanExistAnywhere(t *testing.T) {
 func TestNoneDisablesTheModelWithoutBeingAnUnknownName(t *testing.T) {
 	resolved, err := Resolve(Selection{Names: []string{"none"}, Source: SourceEnv}, Catalog{})
 	if err != nil {
-		t.Fatalf("`none` is the lab's llm_engine=none, not an unknown name: %v", err)
+		t.Fatalf("`none` disables the model; it is not an unknown name: %v", err)
 	}
 	if len(resolved.Providers) != 0 {
 		t.Fatalf("`none` leaves no provider, got %v", names(resolved.Providers))
@@ -155,8 +154,8 @@ func TestNoneDisablesTheModelWithoutBeingAnUnknownName(t *testing.T) {
 	}
 }
 
-// The fall is by availability, not by exception: before using a provider it is
-// asked Ready (TECH-SPEC 3.2).
+// The fall is by availability, not by exception: each provider is asked Ready
+// before use.
 func TestPickTakesTheFirstAvailableAndDeclaresWhyTheOthersAreNot(t *testing.T) {
 	frontier := notReady("codex", "there is no Codex session", "run `roca login codex`")
 	floor := ready("ollama", "qwen3.5:4b")

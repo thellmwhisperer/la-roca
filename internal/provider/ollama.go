@@ -8,9 +8,7 @@ import (
 	"strings"
 )
 
-// DefaultOllamaModel is the local floor's model. It is the one the Mac mini
-// battery measured (TECH-SPEC 1.4) and the one the SQL repairs, when they are
-// built, will be justified against.
+// DefaultOllamaModel is the local floor used to validate query behavior.
 const DefaultOllamaModel = "qwen3.5:4b"
 
 // DefaultOllamaBaseURL is where Ollama listens with no configuration.

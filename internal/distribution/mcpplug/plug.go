@@ -4,8 +4,7 @@
 // agents that have no shell, and it carries exactly six tools, each one a
 // single call into the same service object `roca query` drives. There is no
 // state between calls: the process is born when the agent launches it and dies
-// when the agent closes the pipe, which is what makes the stateless 2026-07-28
-// revision of the protocol the natural north star (TECH-SPEC 1.8).
+// when the agent closes the pipe, matching the stateless protocol.
 //
 // The law of this package is pinned by passthrough_test.go and not by this
 // comment: a handler with logic of its own is a capability no shell, hook or
@@ -52,8 +51,8 @@ type plug struct{ svc *service.Service }
 // order they are declared here.
 //
 // Every handler is wrapped in sanitizing so that an MCP tool error never carries
-// the database file path. That is the rule (adenda 2026-08-05 ~21:55):
-// no agent surface ever reveals where the database lives on disk. The handlers
+// the database file path. No agent surface reveals where the database lives on
+// disk. The handlers
 // themselves stay one-statement pass-throughs; the sanitization lives here, in
 // the glue between the handlers and the SDK, where it cannot grow logic the
 // other surfaces cannot reach.

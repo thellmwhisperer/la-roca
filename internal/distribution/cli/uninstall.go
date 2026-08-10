@@ -17,8 +17,8 @@ import (
 
 // uninstallCommand leaves the machine as it was.
 //
-// Interactive by default because that is the flow the operator runs (PRD R5),
-// and with `--keep-data` / `--purge` for scripts. The default answer keeps the
+// Interactive by default, with `--keep-data` and `--purge` for scripts. The
+// default answer keeps the
 // data: a question whose Enter key deletes a corpus is a trap, and the operator
 // who wants it gone types `n` and gets it.
 func uninstallCommand(env *cliEnv) *cobra.Command {
@@ -106,9 +106,8 @@ func (env *cliEnv) uninstall(purge bool) error {
 	if env.json {
 		return env.printJSON(map[string]any{
 			"purged": purge && report.Purged,
-			// With no daemon there is no process to stop and none is left
-			// behind: every command opens the database, works and exits
-			// (TECH-SPEC 8.5, D-6 disappears by construction).
+			// With no daemon there is no process to stop: every command opens the
+			// database, works and exits.
 			"stopped":  true,
 			"deleted":  withoutDBPaths(report.Deleted, paths.DB),
 			"kept":     withoutDBKept(report.Kept, paths.DB),
@@ -253,8 +252,7 @@ func recoveryBackups(configFile string) ([]string, error) {
 }
 
 // ownedPaths is the declaration: every path this product creates in an
-// installation, listed once. It is a declaration and not a walk of the
-// filesystem, which is the whole of the D-7 fix (internal/distribution/lifecycle).
+// installation, listed once. It is a declaration, not a filesystem walk.
 //
 // The journals are named explicitly because SQLite writes them beside the
 // database and a WAL left behind is a file with the operator's data in it.
@@ -262,9 +260,8 @@ func recoveryBackups(configFile string) ([]string, error) {
 // The cache is declared at its ROOT and not only at this database's keyed
 // subdirectory. Roca creates both, and declaring only the deepest one left a
 // `cache/` behind on every machine that had ever trained a classifier: the
-// directory survived, it kept the whole data directory alive with it, and the
-// second half of D-7 then reported La Roca's own directory as a file La Roca
-// did not create.
+// directory survived, kept the whole data directory alive, and was then
+// misreported as foreign.
 func ownedPaths(paths config.Paths) []string {
 	dataDir := dirOf(paths.DB)
 	owned := []string{

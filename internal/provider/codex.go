@@ -14,9 +14,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/oauth"
 )
 
-// DefaultCodexModel is the model the subscription adapter asks for. It is the
-// decision of 2026-08-05: Codex is the most generous plan in tokens
-// and Luna is the model of the moment.
+// DefaultCodexModel is the model the subscription adapter asks for.
 const DefaultCodexModel = "gpt-5.6-luna"
 
 // DefaultCodexBaseURL is the vendor's endpoint for subscription sessions. It is

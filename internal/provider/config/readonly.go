@@ -2,8 +2,7 @@ package config
 
 import "strings"
 
-// EnvReadOnly is the operator's switch for read-only mode, with the lab's own
-// spelling so a machine that already exports it keeps working.
+// EnvReadOnly is the operator's switch for read-only mode.
 const EnvReadOnly = "ROCA_READ_ONLY"
 
 // falseWords are the spellings that mean "off". Everything else that is not

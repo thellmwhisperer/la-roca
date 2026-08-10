@@ -34,8 +34,8 @@ func TestSubagentIsItsOwnSessionUnderItsParent(t *testing.T) {
 	if got := session.Exchanges[0].AgentText; got != "there are nine\nand none is lost" {
 		t.Errorf("agent text = %q", got)
 	}
-	// Every exchange is numbered, which is what lets the unique index defend it
-	// instead of a text comparison (PRD M2: one idempotency contract).
+	// Every exchange is numbered so the unique index can defend identity without
+	// text comparison.
 	if session.Exchanges[0].Number != 1 || session.Exchanges[1].Number != 2 {
 		t.Errorf("numbers = %d, %d", session.Exchanges[0].Number, session.Exchanges[1].Number)
 	}

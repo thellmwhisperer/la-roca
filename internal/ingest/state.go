@@ -9,8 +9,7 @@ import (
 	"strconv"
 )
 
-// This is the whole idempotency contract of the ingest (PRD requirement M2), and
-// it has two levels because one is not enough.
+// Ingest idempotency has two levels because one is not enough.
 //
 // **File level.** `ingest_file_state` keeps, per path, the source kind, the agent,
 // the project, a fingerprint, the last sync and the last error. Before a file is

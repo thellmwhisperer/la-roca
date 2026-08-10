@@ -1,14 +1,10 @@
 // Package lifecycle is the deletion half of "installing is copying a binary".
 //
-// It exists to hold one contract, D-7, and the contract has two halves that
-// look like they contradict each other and do not:
+// It holds two guarantees that look contradictory and are not:
 //
 //   - **What Roca owns is deleted whenever it is there.** The inventory is a
-//     DECLARATION and never a snapshot of the filesystem taken beforehand. That
-//     is what killed the laboratory's purge in #451: it captured the inventory
-//     before creating its own lock directory, then refused to delete that
-//     directory as one that "appeared after the inventory", reported
-//     `purged: no`, and left residue with the CLI already gone.
+//     DECLARATION and never a snapshot taken before the command creates its own
+//     artefacts.
 //   - **What Roca did not create is never deleted**, it is reported by name and
 //     the directory holding it survives with it. That protection is kept whole.
 //     What was removed is the race, not the protection.
@@ -54,9 +50,7 @@ type Kept struct {
 }
 
 // Report is what the purge did. `Purged` is true when it ran to the end without
-// an error, whether or not it found anything: finishing a job that was already
-// finished is success, and reporting it as a failure is what made the lab's
-// second purge look broken.
+// an error, whether or not it found anything; an already-finished job is success.
 type Report struct {
 	Purged  bool     `json:"purged"`
 	Deleted []string `json:"deleted"`
@@ -183,8 +177,8 @@ func (p Plan) removeDataDir(report *Report) {
 // A path on the inventory that is still here is Roca's and the purge failed to
 // remove it: a live process wrote its journal back after the sweep went past, or
 // the directory stopped being writable. Telling the operator that La Roca did
-// not create their own database is the second half of D-7 firing at the first
-// half's files, and it sends them to delete this product by hand.
+// not create their own database misclassifies an owned survivor and sends them
+// to delete product files by hand.
 func whyItStayed(isOurs bool) string {
 	if isOurs {
 		return "La Roca created it and could not delete it: run the uninstall again"

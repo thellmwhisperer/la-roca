@@ -32,7 +32,7 @@ var theDecidedSurface = []string{
 }
 
 // theWithdrawnTools are the ones the pruning took out, with the command line
-// that replaces each: F08-09 asks for both halves.
+// that replaces each.
 var theWithdrawnTools = map[string]string{
 	"roca_list_runs": "roca health",
 	"roca_inbox":     "roca query",
@@ -312,7 +312,7 @@ func (m *world) noWithdrawnTool() error {
 	return nil
 }
 
-// The other half of F08-09: a withdrawn tool is only withdrawn if what it did
+// A withdrawn tool is only withdrawn if what it did
 // is still reachable, and the command that does it has to really exist.
 func (m *world) everyWithdrawnToolHasItsCommand() error {
 	for tool, command := range theWithdrawnTools {

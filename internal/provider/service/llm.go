@@ -62,7 +62,7 @@ func correction(rejection error) string {
 //     a provider never takes down a query.
 //
 // What it does NOT do is silently retry with the next provider when the titular
-// one fails mid-request. That is deliberate (TECH-SPEC 3.2): a provider that is
+// one fails mid-request: a provider that is
 // returning 500 has to look like a provider that is returning 500, not like
 // "the answers are odd today".
 func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResult) (QueryResult, error) {
@@ -79,7 +79,7 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 	res.Providers = attempts
 
 	if chosen == nil {
-		// F07-04: the failure names which providers were tried, why each one
+		// The failure names which providers were tried, why each one
 		// failed and the exact command that fixes it. The rescue still runs,
 		// because rows the operator can use are worth more than a bare error;
 		// but the exit is a failure all the same, because the question needed a
@@ -90,7 +90,7 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 	}
 	res.Engine = chosen.Name()
 	res.Model = chosen.ModelID()
-	// F07-02: the fall is declared and nothing is asked of the operator. It goes
+	// The fall is declared and nothing is asked of the operator. It goes
 	// in its own field so that whatever happens to the answer afterwards cannot
 	// overwrite it, nor be mistaken for it.
 	res.ProviderNote = noteAboutTheFall(chosen, attempts)

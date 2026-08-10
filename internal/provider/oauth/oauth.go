@@ -1,9 +1,7 @@
 // Package oauth is the subscription login: the browser flow with PKCE, the
 // credential on disk with the permissions of a secret, and the silent renewal.
 //
-// Why this exists at all is the decision of 2026-08-05: OAuth is a
-// must at release because Codex is the most generous plan in tokens and users
-// come in with the subscription they already pay for, with no platform key.
+// OAuth lets an operator use an existing subscription without a platform key.
 //
 // Two properties this package is written around, and neither is optional:
 //

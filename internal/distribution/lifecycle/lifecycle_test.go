@@ -60,9 +60,8 @@ func TestThePurgeDeletesWhatItDeclaresAndNamesEveryPath(t *testing.T) {
 	}
 }
 
-// Re-runnable by contract: the second purge finds nothing, ends ok all the
-// same, and does not punish the operator with a failure for finishing a job
-// that was already finished (D-7).
+// The second purge finds nothing and still succeeds because the job is already
+// complete.
 func TestThePurgeRunTwiceEndsOkBothTimes(t *testing.T) {
 	_, data, database := anInstallation(t)
 	plan := Plan{Owned: []string{database}, DataDir: data}
@@ -82,11 +81,8 @@ func TestThePurgeRunTwiceEndsOkBothTimes(t *testing.T) {
 	}
 }
 
-// D-7 itself: the inventory is a DECLARATION and not a snapshot of the
-// filesystem. In the laboratory the inventory was captured before the command
-// created its own artefacts, so the purge then refused to delete its own
-// directory as one that "appeared after the inventory", reported purged: no,
-// and left residue with the CLI already gone (#451).
+// The inventory is a DECLARATION, not a snapshot taken before the command
+// creates its own artefacts.
 //
 // The race is what was removed. A path Roca owns is deleted whenever it exists,
 // no matter when it appeared.

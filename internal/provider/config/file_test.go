@@ -161,9 +161,8 @@ func TestSetModelOrderCreatesAndSurgicallyEditsTheConfiguration(t *testing.T) {
 	}
 }
 
-// Defect D-1 of the lab: a key written at the root of the document resolves the
-// same as one under [defaults], and [defaults] wins on collision. Reading only
-// [defaults] is what made a hand-written config invisible.
+// A key written at the document root resolves like one under [defaults], and
+// [defaults] wins on collision.
 func TestAKeyAtTheRootResolvesTheSameAsOneUnderDefaults(t *testing.T) {
 	file, err := LoadFile(write(t, "model = \"qwen3.5:2b\"\n"))
 	if err != nil {
@@ -261,8 +260,7 @@ func TestTheConfigPathHangsOffTheDataDirectoryAndTheEnvironmentWins(t *testing.T
 	}
 }
 
-// The D-1 rule holds for the list keys too, and the three shapes an operator may
-// write a list of roots in are all read.
+// List keys accept every documented shape and prefer [defaults] on collision.
 func TestDefaultListReadsEveryShapeAndPrefersTheSection(t *testing.T) {
 	cases := []struct {
 		name    string

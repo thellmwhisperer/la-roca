@@ -30,8 +30,8 @@ func TestADatabaseCreatedByRocaIsAdoptedUntouched(t *testing.T) {
 	}
 }
 
-// D-4b: the decision to adopt cannot depend on the text of the DDL. Whitespace,
-// comments, column order and constraint order are formatting noise.
+// Adoption cannot depend on the text of the DDL. Whitespace, comments, column
+// order and constraint order are formatting noise.
 func TestDDLFormattingNoiseNeverBlocks(t *testing.T) {
 	db := openFresh(t)
 	ctx := context.Background()

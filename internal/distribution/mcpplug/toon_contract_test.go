@@ -10,8 +10,8 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
-// The decided product rule (2026-08-10): an MCP tool answer renders in the
-// compact AXI shape the shell uses, never as the raw JSON envelope. The
+// An MCP tool answer renders in the compact AXI shape the shell uses, never as
+// the raw JSON envelope. The
 // structured half stays for a caller that reads JSON; the readable half a
 // token-budgeted agent actually consumes is the route line, the rows[N]{cols}:
 // table and the help. These tests pin that contract and the size win it buys.

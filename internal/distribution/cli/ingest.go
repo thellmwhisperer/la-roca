@@ -11,8 +11,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
-// The configuration keys that move where the ingest looks. They are read with the
-// D-1 rule, under [defaults] and at the root of the document, so a hand-written
+// These keys are read under [defaults] and at the document root, so a hand-written
 // config is not invisible.
 const (
 	keyWorkspaceRoots = "workspace_roots"

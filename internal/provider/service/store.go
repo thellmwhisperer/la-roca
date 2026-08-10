@@ -66,8 +66,8 @@ type StoreResult struct {
 // Store writes one memory. It is the write half of the product, and the same
 // object the plug's `roca_store` and the shell's `roca store` both call.
 //
-// The deduplication scope is the lab's: identical content in the same layer,
-// status and project, among the memories nothing supersedes.
+// Deduplication compares content, layer, status and project among active
+// memories.
 func (s *Service) Store(ctx context.Context, req StoreRequest) (StoreResult, error) {
 	if s.opts.ReadOnly {
 		return StoreResult{}, refuseReadOnly("store")

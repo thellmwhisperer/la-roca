@@ -14,8 +14,7 @@ import (
 // formatting. Instead it locates the byte range of exactly one member and
 // rewrites those bytes.
 //
-// JSONC is handled with the trick the laboratory settled on: comments are
-// blanked out into a *view* of the same length, so every offset found in the
+// JSONC comments are blanked into a same-length *view*, so every offset found in the
 // view is the same offset in the real text. The edits then apply to the real
 // bytes and the comments never move.
 

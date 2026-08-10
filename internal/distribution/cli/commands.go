@@ -327,7 +327,7 @@ func queryCommand(env *cliEnv) *cobra.Command {
 			// available is not an answer, even when the keyword rescue found
 			// rows. The rows are a courtesy; the exit code tells the truth, so
 			// a script does not read "it worked" from a machine that has
-			// nothing to answer with (F07-04).
+			// nothing to answer with.
 			if result.Degraded == service.DegradedUnavailable {
 				env.code = ExitError
 			}

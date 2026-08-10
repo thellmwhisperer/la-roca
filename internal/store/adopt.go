@@ -49,7 +49,7 @@ type Report struct {
 	RequiredStructures int          `json:"required_structures"`
 	Differences        []Difference `json:"differences,omitempty"`
 	// Orphans are tables and views the database carries and v1 does not
-	// declare. They are reported and do not block: a lab database will carry
+	// declare. They are reported and do not block: an existing database may carry
 	// proposals, runs or leftovers of withdrawn features, and they are still
 	// its data.
 	Orphans []string `json:"orphans,omitempty"`
@@ -68,8 +68,8 @@ type Adoption struct {
 
 // Inspect classifies the database by structure, never by the text of its create
 // statements: it compares table and view names and, per column, type affinity,
-// NOT NULL, default expression and position in the primary key. This is the D-4
-// contract: a database that is identical column by column is adopted even when
+// NOT NULL, default expression and position in the primary key. A database that
+// is identical column by column is adopted even when
 // its DDL is written another way.
 //
 // What this comparison deliberately does not cover: CHECKs and trigger bodies
@@ -590,8 +590,8 @@ func normalizeDefault(value string) string {
 }
 
 // affinity applies SQLite's affinity determination rules, which are what really
-// governs how a column is stored. Comparing the text of the declared type would
-// be comparing DDL by text again, which is defect D-4.
+// governs how a column is stored. Declared type spelling is not structural
+// identity.
 func affinity(declaredType string) string {
 	t := strings.ToUpper(declaredType)
 	switch {

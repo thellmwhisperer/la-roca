@@ -14,9 +14,9 @@ import (
 // shell, the way the suite runs everything else here.
 //
 // The consecrated scenarios cover the ones this product designed for: a run
-// killed with -9 converges (F01-10), a healthy installation is recognized and
-// not redone (F01-11), and a stranger's file at the target is named and not
-// overwritten (F01-12). What is left are the failures of the machine underneath,
+// killed with -9 converges, a healthy installation is recognized and not redone,
+// and a stranger's file at the target is named and not overwritten. What is
+// left are failures of the machine underneath,
 // and there the rule is the one the script's own header states: whatever goes
 // wrong, it says `install.sh:` and it says nothing was installed.
 

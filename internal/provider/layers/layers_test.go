@@ -71,9 +71,8 @@ func TestTheClassifierLabelsComeFromTheRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	// There are nine, not the eight the tech spec says in 2.3: the lab's
-	// registry also marks "protocol", which is an alias of "pattern". The
-	// embedded data rules, since that is what the classifier is going to read.
+	// "protocol" remains a classifier label even though it aliases "pattern";
+	// the embedded registry is the classifier's source of truth.
 	want := []string{
 		"feedback", "pattern", "pill", "discovery", "handoff",
 		"question", "review", "issue", "protocol",

@@ -23,10 +23,8 @@ const (
 	rowsPerWriter = 5
 )
 
-// TestEightProcessesWriteWithoutLosingTransactions is wave 1's gate. These are
-// real processes over a barrier, not goroutines: an in-process pool shares the
-// handle and proves nothing about contention between processes, which is where
-// the lab measured 48 lost transactions.
+// These are real processes over a barrier: an in-process pool shares the handle
+// and cannot exercise contention between processes.
 func TestEightProcessesWriteWithoutLosingTransactions(t *testing.T) {
 	if os.Getenv(envWriter) != "" {
 		t.Skip("this process is a child writer")

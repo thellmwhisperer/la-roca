@@ -9,15 +9,15 @@ import (
 	"testing"
 )
 
-// A public product must not leak the internal factory/fleet workflow that built
-// it. These names belong to that workflow and to nothing a user, a contributor
+// A public product must not leak internal production roles. These names belong
+// to that workflow and to nothing a user, a contributor
 // or a doc reader should ever see. If one returns, this test fails the build.
 //
 // "scout" is the one word here that also lives in a legitimate idiom, Uncle
 // Bob's boy-scout rule (leave the code cleaner than you found it). It is allowed
 // inside that idiom and forbidden everywhere else, which is exactly "scout as a
-// factory role is banned; the clean-code idiom is not".
-var forbiddenFactoryTerms = []struct {
+// internal role is banned; the clean-code idiom is not".
+var forbiddenWorkflowTerms = []struct {
 	term    string
 	forgive string // lowercased compound that pardons an occurrence of term
 }{
@@ -43,7 +43,7 @@ var nonProductDirs = map[string]bool{
 	"node_modules": true, ".opencode": true,
 }
 
-func TestProductVocabularyIsFreeOfInternalFactoryRoles(t *testing.T) {
+func TestProductVocabularyIsFreeOfInternalRoles(t *testing.T) {
 	_, here, _, _ := runtime.Caller(0)
 	here = filepath.Clean(here)
 	root := filepath.Clean(filepath.Join(filepath.Dir(here), "..", "..", ".."))
@@ -77,7 +77,7 @@ func TestProductVocabularyIsFreeOfInternalFactoryRoles(t *testing.T) {
 			return nil // binary
 		}
 		lower := strings.ToLower(string(body))
-		for _, f := range forbiddenFactoryTerms {
+		for _, f := range forbiddenWorkflowTerms {
 			for pos := 0; ; {
 				i := strings.Index(lower[pos:], f.term)
 				if i < 0 {

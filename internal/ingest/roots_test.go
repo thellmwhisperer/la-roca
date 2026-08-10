@@ -104,7 +104,7 @@ func TestUnderWSLTheAgentRootsStayLinuxAndTheWorkspaceCrossesTheMount(t *testing
 	}
 }
 
-// The roots are configuration, never constants (TECH-SPEC 5.1). What the operator
+// The roots are configuration, never constants. What the operator
 // declares wins over the platform default, and it wins over the environment too.
 func TestWhatTheOperatorDeclaresWinsOverThePlatformDefault(t *testing.T) {
 	roots := ResolveRoots(

@@ -8,8 +8,8 @@ import (
 
 // An operator who installed this product and types `roca update` has already
 // said which repository they trust: the one the binary they are running came
-// from. Making them repeat it in a flag is asking a question whose answer is
-// decided, and the D-1 order still stands over it: the flag, then the
+// from. Making them repeat it in a flag is redundant. Precedence is the flag,
+// then the
 // environment, then the configuration, and only then the channel this product
 // publishes from.
 func TestUpdateFallsBackToTheRepositoryThisProductPublishesFrom(t *testing.T) {

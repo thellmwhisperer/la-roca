@@ -13,7 +13,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
-// F07-06: the provider order is decided by the configuration, and doctor
+// Provider order comes from configuration, and doctor
 // reports it in the declared order with a verdict per provider.
 func TestDoctorReportsTheProvidersInTheDeclaredOrder(t *testing.T) {
 	svc := seededServiceWith(t, provider.Cascade{
@@ -74,7 +74,7 @@ func TestDoctorCarriesTheConfigurationsWarnings(t *testing.T) {
 	}
 }
 
-// F07-08: the credential never appears in any output. Presence is reported,
+// The credential never appears in any output. Presence is reported,
 // the value never is.
 func TestDoctorReportsTheCredentialsPresenceAndNeverItsValue(t *testing.T) {
 	compatible, err := provider.NewOpenAICompatible(provider.OpenAIConfig{
