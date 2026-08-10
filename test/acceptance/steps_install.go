@@ -308,7 +308,7 @@ func (m *world) installedWithData() error {
 	if err := m.installedAndInitialized(); err != nil {
 		return err
 	}
-	if _, err := m.run("roca store --layer project --content 'el ancla del ciclo de instalacion'"); err != nil {
+	if _, err := m.run("roca store --layer project --content 'the installation cycle anchor'"); err != nil {
 		return err
 	}
 	m.memories++

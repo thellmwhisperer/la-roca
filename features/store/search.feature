@@ -26,7 +26,7 @@ Feature: Finding what was stored
 
     Examples:
       | seeded                          | query | accent |
-      | el café de la mañana está listo | cafe  | café   |
+      | the naïve façade is ready       | naive | naïve  |
       | das portal läuft über das netz  | uber  | über   |
 
   Scenario: Results rank by relevance, best first

@@ -71,7 +71,7 @@ func TestCodexFileLayerComesFromWhatKindOfFileItIs(t *testing.T) {
 			Path:       "/w/.codex/" + sourceType + "/x",
 			FileName:   "x",
 			SourceType: sourceType,
-			SkillName:  "una-skill",
+			SkillName:  "synthetic-skill",
 		})
 		if err != nil {
 			t.Fatalf("parse %s: %v", sourceType, err)

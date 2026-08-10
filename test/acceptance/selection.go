@@ -22,12 +22,24 @@ func selectScenarios(dir string, ids []string) ([]godog.Feature, error) {
 		return nil, err
 	}
 	var features []godog.Feature
+	matched := make(map[string]bool, len(ids))
 	for _, path := range paths {
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			return nil, err
 		}
-		excerpt, scenarios := trim(string(raw), ids)
+		content := string(raw)
+		for _, line := range strings.Split(content, "\n") {
+			if !isScenarioHeading(line) {
+				continue
+			}
+			for _, id := range ids {
+				if belongsTo(line, []string{id}) {
+					matched[id] = true
+				}
+			}
+		}
+		excerpt, scenarios := trim(content, ids)
 		if scenarios == 0 {
 			continue
 		}
@@ -35,6 +47,15 @@ func selectScenarios(dir string, ids []string) ([]godog.Feature, error) {
 			Name:     filepath.Base(path),
 			Contents: []byte(excerpt),
 		})
+	}
+	var missing []string
+	for _, id := range ids {
+		if !matched[id] {
+			missing = append(missing, strings.TrimSpace(id))
+		}
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("selected scenario IDs not found: %s", strings.Join(missing, ", "))
 	}
 	return features, nil
 }

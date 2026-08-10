@@ -54,7 +54,7 @@ func TestQueryThroughThePlugRendersTheRouteLineNotAJSONDump(t *testing.T) {
 	session := connect(t, seededServiceWithModel(t))
 
 	result := callTool(t, session, "roca_query", map[string]any{
-		"query": "cuantas memorias hay",
+		"query": "how many memories are there",
 	})
 	text := renderedText(result)
 
@@ -77,7 +77,7 @@ func TestSQLThroughThePlugRendersTheRouteLineAndSQLNotAJSONDump(t *testing.T) {
 	session := connect(t, seededServiceWithModel(t))
 
 	result := callTool(t, session, "roca_sql", map[string]any{
-		"query": "cuantas memorias hay",
+		"query": "how many memories are there",
 	})
 	text := renderedText(result)
 

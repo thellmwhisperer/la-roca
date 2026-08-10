@@ -102,27 +102,27 @@ func (w *world) seed(t *testing.T) {
 	// not memory (the sources ruling).
 	w.write(t, filepath.Join(w.home, ".claude", "CLAUDE.md"), "# Global\n\nAlways TDD.\n")
 	w.write(t, filepath.Join(roots.CodexRoot, "AGENTS.md"), "# Codex\n\nTest first.\n")
-	w.write(t, filepath.Join(w.demoCwd(), "AGENTS.md"), "# demo\n\nLee la spec antes.\n")
+	w.write(t, filepath.Join(w.demoCwd(), "AGENTS.md"), "# demo\n\nRead the specification first.\n")
 
 	// Codex: a rollout, a memory, a rule and a skill.
 	w.write(t, filepath.Join(roots.CodexSessions, "2026", "08", "01", "rollout-abc.jsonl"),
 		fmt.Sprintf(`
 {"type":"session_meta","timestamp":"2026-08-01T09:00:00Z","payload":{"id":"codex-thread-1","cwd":%q,"timestamp":"2026-08-01T09:00:00Z","cli_version":"9.9.9"}}
-{"type":"event_msg","timestamp":"2026-08-01T09:00:01Z","payload":{"type":"user_message","message":"arranca la ola seis"}}
+{"type":"event_msg","timestamp":"2026-08-01T09:00:01Z","payload":{"type":"user_message","message":"start the sixth fixture"}}
 {"type":"response_item","timestamp":"2026-08-01T09:00:02Z","payload":{"type":"reasoning","summary":[{"text":"the matrix first"}]}}
-{"type":"event_msg","timestamp":"2026-08-01T09:00:30Z","payload":{"type":"task_complete","last_agent_message":"en marcha"}}
+{"type":"event_msg","timestamp":"2026-08-01T09:00:30Z","payload":{"type":"task_complete","last_agent_message":"running"}}
 `, w.demoCwd()))
-	w.write(t, filepath.Join(roots.CodexRoot, "memories", "una.md"), "Recuerda el contrato de idempotencia.\n")
-	w.write(t, filepath.Join(roots.CodexRoot, "rules", "mia.rules"), "no reescribir lo ya normalizado\n")
+	w.write(t, filepath.Join(roots.CodexRoot, "memories", "one.md"), "Remember the idempotency contract.\n")
+	w.write(t, filepath.Join(roots.CodexRoot, "rules", "custom.rules"), "do not rewrite normalized data\n")
 	w.write(t, filepath.Join(roots.CodexRoot, "rules", "default.rules"), "this one is not ingested\n")
-	w.write(t, filepath.Join(roots.CodexRoot, "skills", "medir", "SKILL.md"), "Medir antes de opinar.\n")
+	w.write(t, filepath.Join(roots.CodexRoot, "skills", "measure", "SKILL.md"), "Measure before judging.\n")
 
 	// Claude Desktop and Cowork, each with the layout of its own runtime.
 	w.write(t, filepath.Join(roots.ClaudeDesktopSessions, "session.json"), fmt.Sprintf(`{
   "cliSessionId": "%s",
   "sessionId": "local-1",
   "cwd": %q,
-  "title": "la ola seis",
+  "title": "the sixth fixture",
   "createdAt": 1785542400000,
   "lastActivityAt": 1785542520000
 }`, fixtureSessionID, w.demoCwd()))
@@ -166,11 +166,11 @@ func (w *world) seedOpenCode(t *testing.T, path string) {
 	exec(t, db, `INSERT INTO message VALUES ('m2','oc1',1785542401000,1785542402000,
 	              '{"role":"assistant","parentID":"m1","time":{"created":1785542401000,"completed":1785542402000}}')`)
 	exec(t, db, `INSERT INTO part VALUES ('p1','m1','oc1',1785542400000,1785542400000,
-	              '{"type":"text","text":"que falta de la ola"}')`)
+	              '{"type":"text","text":"what remains in the fixture"}')`)
 	exec(t, db, `INSERT INTO part VALUES ('p2','m2','oc1',1785542401500,1785542402000,
-	              '{"type":"text","text":"la verificacion"}')`)
+	              '{"type":"text","text":"the verification"}')`)
 	exec(t, db, `INSERT INTO part VALUES ('p3','m2','oc1',1785542401600,1785542402000,
-	              '{"type":"reasoning","text":"queda medir"}')`)
+	              '{"type":"reasoning","text":"measurement remains"}')`)
 	exec(t, db, `INSERT INTO part VALUES ('p4','m2','oc1',1785542401700,1785542402000,
 	              '{"type":"tool","tool":"bash","state":{"status":"completed"}}')`)
 }

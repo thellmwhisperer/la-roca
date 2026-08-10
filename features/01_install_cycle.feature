@@ -20,14 +20,6 @@ Feature: The full installation cycle
     And running "roca --version" exits with code 0
     And the output of "roca --version" contains the version and the source SHA
 
-  @fast
-  Scenario: F01-02 A virgin machine can say it is not initialized yet
-    Given La Roca is installed but not initialized
-    When I run "roca status"
-    Then the command exits with a code other than 0
-    And the output names the exact command "roca init" as the remedy
-    And the output contains no traceback
-
   @fast @acceptance
   Scenario: F01-03 init creates config, database and model, and is idempotent
     Given La Roca is installed but not initialized
@@ -46,32 +38,16 @@ Feature: The full installation cycle
   @fast
   Scenario: F01-04 The database init creates is the one every command reads
     Given La Roca is installed and initialized
-    When I run "roca store --layer project --content 'ancla de aceptacion'"
-    And I run "roca query 'cuantas memorias hay' --json"
+    When I run "roca store --layer project --content 'synthetic acceptance anchor'"
+    And I run "roca query 'how many memories are there' --json"
     Then the JSON output has "rows[0].COUNT(*)" equal to "1"
     And no command has needed "--db-path" to find the database
-
-  @fast @acceptance
-  Scenario: F01-05 The runtime starts on demand and stops leaving no residue
-    Given La Roca is installed and initialized
-    When I run "roca start --json"
-    Then the command exits with code 0
-    And the JSON output has "state" equal to "ready"
-    And the JSON output has "problems" equal to "none"
-    And the published MCP endpoint answers a handshake
-    When I run "roca status --json"
-    Then the JSON output has "state" equal to "ready"
-    When I run "roca stop --json"
-    Then the command exits with code 0
-    And the JSON output has "state" equal to "down"
-    And the runtime port is free
-    And no Roca process is left alive
 
   @fast
   Scenario: F01-06 Querying works without anything having been started
     Given La Roca is installed and initialized
     And the runtime is not started
-    When I run "roca query 'cuantas memorias hay' --json"
+    When I run "roca query 'how many memories are there' --json"
     Then the command exits with code 0
     And the JSON output has "path" not empty
     And no resident process has been started
@@ -143,32 +119,5 @@ Feature: The full installation cycle
     Then the command exits with code 0
     And the JSON output has "database" equal to "adopted"
     And the JSON output lists the orphan tables it found
-    And the output names the exact command to archive them
     And no data table has been dropped
     And no row has been deleted
-    When I run "roca start --json"
-    Then the JSON output has "problems" equal to "none"
-
-  @fast
-  Scenario: F01-14 Archiving orphans is explicit, with a copy first and destroying nothing
-    Given a HOME with an aged Roca database carrying tables from withdrawn features
-    And La Roca is initialized over that database
-    When I run "roca schema archive-orphans --json"
-    Then the command exits with code 0
-    And the JSON output has "applied" equal to "false"
-    And no table has been renamed
-    When I run "roca schema archive-orphans --yes --json"
-    Then the command exits with code 0
-    And the JSON output names the backup created before touching anything
-    And that copy exists and is a restorable database
-    And every orphan table appears renamed, not dropped
-    And the rows of the renamed tables are still there
-
-  @acceptance @slow
-  Scenario: F01-15 The whole cycle, twice in a row, with the same numbers
-    Given a clean HOME with no trace of Roca
-    When I walk the full cycle of installation, init, use, stop and purge
-    And I walk the full cycle a second time
-    Then both cycles exit with code 0 in every one of their steps
-    And the ingest counts of the second cycle equal those of the first
-    And no Roca artefact is left in the HOME

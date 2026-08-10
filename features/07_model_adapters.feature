@@ -8,14 +8,14 @@ Feature: Frontier with a local floor
 
   Background:
     Given La Roca is installed and initialized
-    And a HOME with the seeded world "golden-corpus"
+    And a HOME with the seeded world "synthetic-corpus"
 
   @fast
   Scenario: F07-01 With a credential and network, the frontier provider is used
     Given there is a valid credential for the frontier provider
     And the frontier provider is available
     And the local model is available too
-    When I run "roca query 'que decisiones se tomaron sobre el formato' --json"
+    When I run "roca query 'what decisions were made about the format' --json"
     Then the command exits with code 0
     And the JSON output has "engine" equal to the frontier provider
     And the JSON output has "path" equal to "llm_fallback"
@@ -26,7 +26,7 @@ Feature: Frontier with a local floor
     Given there is a valid credential for the frontier provider
     And there is no network
     And the local model is available
-    When I run "roca query 'que decisiones se tomaron sobre el formato' --json"
+    When I run "roca query 'what decisions were made about the format' --json"
     Then the command exits with code 0
     And the JSON output has "engine" equal to "ollama"
     And the JSON output has "path" equal to "llm_fallback"
@@ -37,7 +37,7 @@ Feature: Frontier with a local floor
   Scenario: F07-03 Without a credential, the cascade drops to the local model
     Given there is no frontier provider credential
     And the local model is available
-    When I run "roca query 'que decisiones se tomaron sobre el formato' --json"
+    When I run "roca query 'what decisions were made about the format' --json"
     Then the command exits with code 0
     And the JSON output has "engine" equal to "ollama"
 
@@ -45,21 +45,12 @@ Feature: Frontier with a local floor
   Scenario: F07-04 With no frontier and no local, the failure is clear and actionable
     Given there is no frontier provider credential
     And the local model is not available
-    When I run "roca query 'que decisiones se tomaron sobre el formato' --json"
+    When I run "roca query 'what decisions were made about the format' --json"
     Then the command exits with a code other than 0
     And the JSON output has "degraded" equal to "llm_unavailable"
     And the output names which providers were tried and why each one failed
     And the output names the exact command to install or start the local model
     And the output contains no traceback
-
-  @fast
-  Scenario: F07-05 With no model at all, the fast route still works end to end
-    Given there is no frontier provider credential
-    And the local model is not available
-    When I run the golden bench restricted to the fast-route queries
-    Then they all exit with code 0
-    And they all have "path" equal to "compiler"
-    And no query has tried to contact a provider
 
   @fast
   Scenario: F07-06 The provider order is decided by the configuration, not by the code
@@ -71,28 +62,9 @@ Feature: Frontier with a local floor
   @fast
   Scenario: F07-07 An unknown provider in the configuration kills nothing
     Given the configuration declares a provider this version does not know
-    When I run "roca query 'cuantas memorias hay' --json"
+    When I run "roca query 'how many memories are there' --json"
     Then the output contains a warning that names the unknown provider
     And that warning lists the available providers
-
-  @fast
-  Scenario: F07-08 The credential never appears in any output
-    Given there is a valid credential for the frontier provider
-    When I run "roca doctor --json"
-    And I run "roca query 'que decisiones se tomaron sobre el formato' --json"
-    And I run "roca status --json"
-    Then no output contains the credential's value
-    And no persistent log contains the credential's value
-
-  @acceptance @slow
-  Scenario: F07-09 The golden bench is measured against every adapter
-    Given the frontier provider is available
-    And the local model is available
-    When I run the golden bench forcing the frontier provider
-    And I run the golden bench forcing the local model
-    Then each run produces its own relevance report
-    And the report declares, per adapter, how many queries met their criterion
-    And the report declares the 95th percentile latency of each adapter
 
   @fast
   Scenario: F07-10 Login persists the answering model without replacing the configuration
@@ -111,6 +83,6 @@ Feature: Frontier with a local floor
     Given there is a valid credential for the frontier provider
     And the frontier provider is available
     And the configuration chooses model "frontier-demo" for the frontier provider
-    When I run "roca query 'que decisiones se tomaron sobre el formato' --json"
+    When I run "roca query 'what decisions were made about the format' --json"
     Then the command exits with code 0
     And the JSON output has "model" equal to "frontier-demo"

@@ -748,10 +748,10 @@ func TestTheModelsFencedSQLStillPassesTheGate(t *testing.T) {
 // Interpretation is prose, not SQL: an answer that quotes a fenced block must
 // arrive whole, and only the reasoning block is dropped.
 func TestInterpretKeepsProseThatQuotesAFencedBlock(t *testing.T) {
-	prose := "The repo is:\n```\nthellmwhisperer/agentic-team-member\n```\nand the channel has 97 subs."
+	prose := "The repo is:\n```\nexample-labs/synthetic-orchid\n```\nand the channel has 23 subscribers."
 	svc := serviceWithModel(t, answering("codex", "<think>summarize</think>\n"+prose))
 	got, err := svc.Interpret(context.Background(), "give me the details",
-		[]string{"text"}, []map[string]any{{"text": "ATM — Agentic Team Member"}})
+		[]string{"text"}, []map[string]any{{"text": "Synthetic Orchid Test Fixture"}})
 	if err != nil || got != prose {
 		t.Fatalf("the prose was clipped: %q (err=%v)", got, err)
 	}

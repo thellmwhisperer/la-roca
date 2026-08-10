@@ -72,7 +72,7 @@ func TestPiFingerprintIsStableAndChangesWithTheTurn(t *testing.T) {
 
 func TestPiTurnWithAnUnansweredToolIsDeferredAndNotIngested(t *testing.T) {
 	content := `{"type":"session","version":3,"id":"pi-78","cwd":"/w/demo","timestamp":"2026-08-01T13:00:00Z"}
-{"id":"e1","parentId":null,"type":"message","message":{"role":"user","content":"arranca"}}
+{"id":"e1","parentId":null,"type":"message","message":{"role":"user","content":"start"}}
 {"id":"e2","parentId":"e1","type":"message","message":{"role":"assistant","stopReason":"stop","content":[{"type":"toolCall","id":"tc1","name":"grep"}]}}
 `
 	records, err := Parse(KindPiSession, []byte(content), FileMeta{})

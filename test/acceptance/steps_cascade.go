@@ -5,12 +5,10 @@ package acceptance
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 )
 
-// Steps for the query cascade and for teach. They are still black box: not one
+// Steps for the query path. They are still black box: not one
 // symbol of the product is imported here, only `roca` is run and its output and
 // its database are read.
 
@@ -25,8 +23,8 @@ func (m *world) longMemory(minimum int) error {
 	}
 	defer db.Close()
 
-	content := "esta es una memoria muy larga de prueba. " +
-		strings.Repeat("relleno para pasar del presupuesto de truncado. ", minimum/40+10)
+	content := "this is a long synthetic memory. " +
+		strings.Repeat("filler text extends beyond the truncation budget. ", minimum/40+10)
 	if len(content) <= minimum {
 		return fmt.Errorf("the seeded memory is %d long and the scenario asks for more than %d",
 			len(content), minimum)
@@ -48,23 +46,13 @@ func (m *world) aHandoffMemoryAbout(about string) error {
 		return err
 	}
 	defer db.Close()
-	content := "traspaso donde dejamos " + about + " para el siguiente agente"
+	content := "handoff notes about " + about + " for the next agent"
 	if _, err := db.Exec(
 		"INSERT INTO memories (layer, content, origin) VALUES ('handoff', ?, 'agent')",
 		content); err != nil {
 		return err
 	}
 	m.memories++
-	return nil
-}
-
-// hasNeverAnswered clears the working cache so the next query pays the cold
-// load of the personal classifier. The personal artefact next to the database
-// may already exist (init/calibrate train it); what the scenario measures is
-// that the first answer still lands under the budget when nothing is warm in
-// this process.
-func (m *world) hasNeverAnswered() error {
-	_ = os.RemoveAll(m.classifierCache())
 	return nil
 }
 
@@ -83,20 +71,6 @@ func (m *world) iRunTheSQLItReturned() error {
 	}
 	_, err = m.runWith("roca exec "+stmt, []string{"exec", stmt, "--json"})
 	return err
-}
-
-// iRestartTheRuntime does nothing, and that is the contract: La Roca has no
-// daemon, so every command is already a new process and the previous scenario
-// left none alive. The step exists so the frozen suite runs without being
-// touched, and so that the property is visibly met by construction.
-func (m *world) iRestartTheRuntime() error { return nil }
-
-func (m *world) iDeleteTheClassifierCache() error {
-	return os.RemoveAll(m.classifierCache())
-}
-
-func (m *world) classifierCache() string {
-	return filepath.Join(m.home, ".roca", "cache")
 }
 
 // --- assertions ---
@@ -334,61 +308,7 @@ func (m *world) theMemoriesTableStillExists() error {
 	return nil
 }
 
-func (m *world) aSingleTaughtExample() error {
-	question := taughtQuestionOf(m.last.command)
-	if question == "" {
-		return fmt.Errorf("I do not know what question was taught: %q", m.last.command)
-	}
-	db, err := m.openDB()
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
-	var n int
-	if err := db.QueryRow(
-		"SELECT COUNT(*) FROM queryplan_teach_examples WHERE question = ?", question).Scan(&n); err != nil {
-		return err
-	}
-	if n != 1 {
-		return fmt.Errorf("there are %d taught examples for %q, want 1", n, question)
-	}
-	return nil
-}
-
-func (m *world) namesTheUnknownTemplate() error {
-	return m.outputContains("plantilla_inventada")
-}
-
-func (m *world) itListsTheAvailableTemplates() error {
-	// Naming several of the ones that do exist is enough: if it named only
-	// one, the operator would still not know which ones they can use.
-	for _, template := range []string{"count_memories", "search_all_sources_by_term"} {
-		if err := m.outputContains(template); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (m *world) noExampleStored() error {
-	db, err := m.openDB()
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	var n int
-	if err := db.QueryRow("SELECT COUNT(*) FROM queryplan_teach_examples").Scan(&n); err != nil {
-		return err
-	}
-	if n != 0 {
-		return fmt.Errorf("%d examples were stored after a rejection", n)
-	}
-	return nil
-}
-
-// cleanOutput: what goes to stdout is the answer and nothing else. The cost of
-// preparing the classifier must not show up as noise in front of the JSON.
+// cleanOutput verifies that stdout contains the answer and nothing else.
 func (m *world) cleanOutput() error {
 	if _, err := m.json(); err != nil {
 		return err
@@ -410,15 +330,6 @@ func sameRows(a, b any) bool {
 // questionOf pulls the quoted question out of one of the suite's commands.
 func questionOf(command string) string {
 	return quoted(command)
-}
-
-// taughtQuestionOf pulls out whatever follows --question.
-func taughtQuestionOf(command string) string {
-	i := strings.Index(command, "--question ")
-	if i < 0 {
-		return ""
-	}
-	return quoted(command[i:])
 }
 
 func quoted(text string) string {

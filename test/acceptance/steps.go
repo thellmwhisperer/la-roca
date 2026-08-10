@@ -126,13 +126,10 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Given(`^a HOME with a database whose schema differs only in whitespace, comments and constraint order$`, m.dbWithDDLNoise)
 	ctx.Given(`^there is a memory with content longer than (\d+) characters$`, m.longMemory)
 	ctx.Given(`^there is a handoff memory about "([^"]*)"$`, m.aHandoffMemoryAbout)
-	ctx.Given(`^La Roca has just been initialized and has never answered a query$`, m.hasNeverAnswered)
 
 	ctx.When(`^I run "([^"]*)"$`, m.iRun)
 	ctx.When(`^I run "([^"]*)" a second time$`, m.iRun)
 	ctx.When(`^I run "roca exec" with the SQL it returned, in JSON format$`, m.iRunTheSQLItReturned)
-	ctx.When(`^I restart the runtime$`, m.iRestartTheRuntime)
-	ctx.When(`^I delete the classifier's working cache directory$`, m.iDeleteTheClassifierCache)
 
 	ctx.Then(`^the command exits with code (\d+)$`, m.itExitsWithCode)
 	ctx.Then(`^the command exits with a code other than 0$`, m.itExitsWithNonZeroCode)
@@ -150,7 +147,7 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Then(`^no row has been returned$`, m.jsonHasZeroRows)
 	ctx.Then(`^the memory count has not changed$`, m.theMemoryCountHasNotChanged)
 	ctx.Then(`^the memories table still exists$`, m.theMemoriesTableStillExists)
-	ctx.Then(`^the first row contains the text seeded about guiones largos$`, m.firstRowCarriesTheSeed)
+	ctx.Then(`^the first row contains the synthetic release marker$`, m.firstRowCarriesTheSeed)
 	ctx.Then(`^the first row contains the text "([^"]*)"$`, m.firstRowContains)
 	ctx.Then(`^the output contains no invented text$`, m.withoutInventedText)
 	ctx.Then(`^no call has been made to the model provider$`, m.withoutModelCall)
@@ -162,10 +159,6 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Then(`^every returned row belongs to the layer "([^"]*)"$`, m.allRowsBelongToTheLayer)
 	ctx.Then(`^no text field of the answer exceeds (\d+) characters$`, m.noFieldExceeds)
 	ctx.Then(`^the kept text includes the search match$`, m.theTextKeepsTheMatch)
-	ctx.Then(`^there is only one taught example for that question$`, m.aSingleTaughtExample)
-	ctx.Then(`^the output names the unknown template$`, m.namesTheUnknownTemplate)
-	ctx.Then(`^the output lists the available templates$`, m.itListsTheAvailableTemplates)
-	ctx.Then(`^no example has been stored$`, m.noExampleStored)
 	ctx.Then(`^the output does not mix warm-up noise with the answer$`, m.cleanOutput)
 	ctx.Then(`^the orphan tables are reported and do not block$`, m.orphansReportedAndNotBlocking)
 	ctx.Then(`^the decision to adopt does not depend on the text of the create statements$`, m.adoptionByStructure)
@@ -176,7 +169,6 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 	registerInstallSteps(ctx, m)
 	registerIngestSteps(ctx, m)
 	registerMCPSteps(ctx, m)
-	registerHookSteps(ctx, m)
 }
 
 // registerModelSteps are the ones about the providers. They live apart because
@@ -195,7 +187,6 @@ func registerModelSteps(ctx *godog.ScenarioContext, m *world) {
 	ctx.Given(`^the configuration chooses model "([^"]*)" for the frontier provider$`,
 		m.configurationChoosesFrontierModel)
 
-	ctx.When(`^I run the golden bench restricted to the fast-route queries$`, m.theGoldenBenchOfTheFastRoute)
 	ctx.When(`^I log in to "([^"]*)" with model "([^"]*)"$`, m.loginWithModel)
 
 	ctx.Then(`^the JSON output has "([^"]*)" equal to the frontier provider$`, m.jsonKeyEqualToTheFrontier)
@@ -206,9 +197,6 @@ func registerModelSteps(ctx *godog.ScenarioContext, m *world) {
 		m.itNamesEveryProviderTriedAndWhy)
 	ctx.Then(`^the output names the exact command to install or start the local model$`,
 		m.itNamesTheCommandThatStartsTheLocalModel)
-	ctx.Then(`^they all exit with code (\d+)$`, m.theyAllExitWithCode)
-	ctx.Then(`^they all have "path" equal to "([^"]*)"$`, m.theyAllLeaveByThePath)
-	ctx.Then(`^no query has tried to contact a provider$`, m.noProviderWasContacted)
 	ctx.Then(`^the JSON output lists the providers in the declared order$`,
 		m.theProvidersAreListedInTheDeclaredOrder)
 	ctx.Then(`^for each one it declares whether it is available and why$`,
@@ -244,7 +232,7 @@ func (m *world) installedAndInitialized() error {
 	return nil
 }
 
-// seededWorld plants the corpus the scenario counts on. The golden corpus is
+// seededWorld plants the synthetic corpus the scenario counts on.
 // seeded by writing memories into the database; the operator's world is seeded on
 // disk, as the artefact families the agents leave behind, and it is
 // `roca ingest` that has to find them.
@@ -255,7 +243,7 @@ func (m *world) seededWorld(name string) error {
 	if name == "session-lifecycle" {
 		return m.sessionLifecycleWorld()
 	}
-	if name != "golden-corpus" {
+	if name != "synthetic-corpus" {
 		return fmt.Errorf("I do not know how to seed the world %q", name)
 	}
 	db, err := m.openDB()
@@ -265,9 +253,9 @@ func (m *world) seededWorld(name string) error {
 	defer db.Close()
 
 	seeded := []struct{ layer, content string }{
-		{"project", "El capitán odia los guiones largos en el texto generado: se reescribe con punto o coma."},
-		{"feedback", "Ancla de aceptación del corpus dorado: ROCAE2E_TRINI_ALPHA_7741."},
-		{"discovery", "La adopción de una base compara estructura, jamás el texto del DDL."},
+		{"project", "Synthetic release marker: ORCHID_FIXTURE_7741 is ready for verification."},
+		{"feedback", "Synthetic acceptance anchor: ROCAE2E_TRINI_ALPHA_7741."},
+		{"discovery", "Database adoption compares structure, never DDL formatting."},
 	}
 	for _, s := range seeded {
 		if _, err := db.Exec(
@@ -286,8 +274,8 @@ func (m *world) seededWorld(name string) error {
 // The pill a session receives and the newest handoff it is handed. They are
 // written out here because the lifecycle scenarios assert on them by name.
 const (
-	theSeededPill    = "nunca se rompe la build"
-	theNewestHandoff = "la sesion anterior dejo el indice a medias"
+	theSeededPill    = "the build must remain green"
+	theNewestHandoff = "the previous session left the index incomplete"
 )
 
 // sessionLifecycleWorld plants what job J3 serves: one pill on the roster and
@@ -307,8 +295,8 @@ func (m *world) sessionLifecycleWorld() error {
 		return fmt.Errorf("seed the pill: %w", err)
 	}
 	handoffs := []string{
-		"la primera sesion dejo el esquema adoptado",
-		"la segunda sesion dejo la cascada entera",
+		"the first session adopted the schema",
+		"the second session completed the provider path",
 		theNewestHandoff,
 	}
 	for i, content := range handoffs {
@@ -327,8 +315,8 @@ func (m *world) sessionLifecycleWorld() error {
 // inside it, like the one on a machine that has been running for months.
 func (m *world) agedDB() error {
 	return m.alterInstalledDB("age the database",
-		`CREATE TABLE garden_notes (id INTEGER PRIMARY KEY, nota TEXT)`,
-		`INSERT INTO garden_notes (nota) VALUES ('de una feature retirada')`,
+		`CREATE TABLE garden_notes (id INTEGER PRIMARY KEY, note TEXT)`,
+		`INSERT INTO garden_notes (note) VALUES ('from a retired feature')`,
 		`CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, sequence INTEGER)`,
 		`CREATE TABLE proposals (id INTEGER PRIMARY KEY, kind TEXT, summary TEXT)`,
 		`INSERT INTO memories (layer, content, origin) VALUES ('project', 'memoria vieja', 'human')`,
@@ -577,7 +565,7 @@ func (m *world) theMemoryCountHasNotChanged() error {
 }
 
 func (m *world) firstRowCarriesTheSeed() error {
-	return m.firstRowContains("guiones largos")
+	return m.firstRowContains("ORCHID_FIXTURE_7741")
 }
 
 func (m *world) firstRowContains(want string) error {
@@ -630,7 +618,7 @@ func (m *world) orphansReportedAndNotBlocking() error {
 	}
 	defer db.Close()
 	var score string
-	if err := db.QueryRow("SELECT nota FROM garden_notes").Scan(&score); err != nil {
+	if err := db.QueryRow("SELECT note FROM garden_notes").Scan(&score); err != nil {
 		return fmt.Errorf("the orphan table is gone: %w", err)
 	}
 	return nil

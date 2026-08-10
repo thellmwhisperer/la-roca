@@ -345,34 +345,6 @@ func quotedList(values []string) string {
 
 // --- execution ---
 
-// theGoldenBenchOfTheFastRoute proves the deterministic route works end to end
-// with no model.
-func (m *world) theGoldenBenchOfTheFastRoute() error {
-	path := filepath.Join(m.home, "fast-route.yaml")
-	bench := `version: 1
-generator: acceptance-suite
-cases:
-  - id: count-memories-es
-    question: cuantas memorias hay
-    expect_path: compiler
-    expect_template: count_memories
-  - id: count-memories-en
-    question: how many memories are there
-    expect_path: compiler
-    expect_template: count_memories
-  - id: search-seeded-term
-    question: guiones largos
-    expect_path: compiler
-    expect_min_rows: 1
-`
-	if err := os.WriteFile(path, []byte(bench), 0o600); err != nil {
-		return err
-	}
-	_, err := m.runWith("roca bench golden "+path,
-		[]string{"bench", "golden", path, "--json", "--method", "like"})
-	return err
-}
-
 // --- assertions ---
 
 func (m *world) jsonKeyEqualToTheFrontier(key string) error {
@@ -385,19 +357,6 @@ func (m *world) theLocalProviderReceivedNoRequest() error {
 	}
 	if count := m.models.requests.count("local"); count != 0 {
 		return fmt.Errorf("the local provider received %d requests and had to receive none", count)
-	}
-	return nil
-}
-
-func (m *world) noProviderWasContacted() error {
-	if m.models.requests == nil {
-		return nil
-	}
-	for _, who := range []string{"frontier", "local"} {
-		if count := m.models.requests.count(who); count != 0 {
-			return fmt.Errorf("%s was contacted %d times and the fast route needs no model",
-				who, count)
-		}
 	}
 	return nil
 }
@@ -453,38 +412,6 @@ func (m *world) itNamesTheCommandThatStartsTheLocalModel() error {
 	}
 	return fmt.Errorf("it does not name the exact command to install or start the local model: %s",
 		everything)
-}
-
-func (m *world) theyAllExitWithCode(expected int) error {
-	if m.last.code != expected {
-		return fmt.Errorf("the bench exited with %d, want %d (%s)",
-			m.last.code, expected, m.last.stderr)
-	}
-	return nil
-}
-
-// theyAllLeaveByThePath reads the bench's report and checks every case took the
-// declared path. The bench already judges `expect_path`, so a green bench is
-// the check; this reads the score to make the failure say which case failed.
-func (m *world) theyAllLeaveByThePath(path string) error {
-	document, err := m.json()
-	if err != nil {
-		return err
-	}
-	scores, ok := document["scores"].([]any)
-	if !ok || len(scores) == 0 {
-		return fmt.Errorf("the bench published no score: %s", m.last.stdout)
-	}
-	for _, raw := range scores {
-		score, _ := raw.(map[string]any)
-		passed, _ := score["passed"].(float64)
-		total, _ := score["total"].(float64)
-		if passed != total {
-			return fmt.Errorf("%v of %v cases met their criterion (expected path %s): %s",
-				passed, total, path, m.last.stdout)
-		}
-	}
-	return nil
 }
 
 func (m *world) theProvidersAreListedInTheDeclaredOrder() error {

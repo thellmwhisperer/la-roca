@@ -21,19 +21,19 @@ import (
 //
 //  1. copy the binary onto the PATH (installing IS copying one file)
 //  2. `roca init`: create the explicit database, read the detected source families off the
-//     disk, gate the model and calibrate a golden bench from what was found
+//     disk, gate model-authored SQL and index what was found
 //  3. ask the first question and get rows back
 //
-// The bench is not decoration in this test. An installation that answers in
+// The timed query is not decoration in this test. An installation that answers in
 // forty seconds and cannot say whether its search is any good is half a
-// product, and the calibration is the step that makes the answer measurable
+// product, and the query step makes the answer measurable
 // from day one.
 const theMagicMinute = time.Minute
 
 // theFirstQuestion is asked the way the product declares a search, so the
-// journey measures the corpus and the cascade and not the classifier's mood on
+// journey measures the corpus and provider path rather than an external model's state on
 // one particular phrasing.
-const theFirstQuestion = "que sabemos de la matriz de ingesta"
+const theFirstQuestion = "what do we know about the ingest matrix"
 
 func TestTheMagicMinute(t *testing.T) {
 	binary, err := rocaBinary()

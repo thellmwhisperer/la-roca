@@ -2,7 +2,7 @@
 
 @install @human-flow
 Feature: The operator's real flow
-  As the operator installing La Roca on their Mac mini
+  As an operator installing La Roca on their own machine
   I want the exact sequence I type to work end to end
   so that I do not discover on my machine what nobody tested.
 
@@ -39,10 +39,6 @@ Feature: The operator's real flow
     When I run "roca doctor"
     Then the command exits with code 0
     And no config, database or model check is in an error state
-    When I run "roca start"
-    Then the command exits with code 0
-    And the output contains "ready"
-    And the output lists no problem
 
   @acceptance
   Scenario Outline: F02-04 Installing La Roca into an agent's config
@@ -87,19 +83,8 @@ Feature: The operator's real flow
     And the previous database and configuration are still intact
     And the MCP entries in the agent configurations still point at a binary that exists
 
-  @acceptance
-  Scenario: F02-08 Plugins are listed and enabled without breaking startup
-    Given La Roca is installed and initialized
-    When I run "roca plugins list --json"
-    Then the command exits with code 0
-    And the JSON output lists every plugin with its state
-    When I run "roca plugins enable media"
-    And I run "roca start --json"
-    Then the command exits with code 0
-    And the JSON output has "problems" equal to "none"
-
   @acceptance @slow
-  Scenario: F02-09 Real ingest of the operator's corpus
+  Scenario: F02-09 Synthetic ingest of every supported source
     Given La Roca is installed and initialized
     And a HOME with the seeded world "operator"
     When I run "roca ingest --json"

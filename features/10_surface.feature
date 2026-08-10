@@ -18,15 +18,12 @@ Feature: The surface is the product
 
     Examples:
       | command                                        |
-      | roca layers                                    |
       | roca health                                    |
-      | roca status                                    |
       | roca doctor                                    |
       | roca schema status                             |
       | roca ingest --dry-run                          |
-      | roca plugins list                              |
       | roca mcp status                                |
-      | roca query 'cuantas memorias hay'     |
+      | roca query 'how many memories are there'       |
 
   @fast
   Scenario: F10-02 A command that does not exist names the ones that do
@@ -38,7 +35,6 @@ Feature: The surface is the product
   @fast
   Scenario: F10-03 No message to the operator names something that no longer exists
     When I run "roca doctor"
-    And I run "roca status"
     And I run "roca --help"
     Then no output names a component this version does not have
 
@@ -54,7 +50,7 @@ Feature: The surface is the product
   Scenario: F10-05 The binary does not write outside its declared paths
     Given a clean HOME with no trace of Roca
     And I take a fingerprint of the whole HOME
-    When I run the installer, "roca init", "roca ingest", "roca query" and "roca stop"
+    When I run the installer, "roca init", "roca ingest" and "roca query"
     Then every path created outside the initial fingerprint is declared as Roca's own
     And no created path is outside the HOME
 

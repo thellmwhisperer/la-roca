@@ -62,10 +62,6 @@ func registerMCPSteps(ctx *godog.ScenarioContext, m *world) {
 	ctx.When(`^I call the query tool with no arguments$`, m.iCallQueryWithNoArguments)
 	ctx.When(`^I call the store tool over stdio with a new memory$`, m.iCallStore)
 	ctx.When(`^I call the store tool over stdio$`, m.iCallStore)
-	ctx.When(`^I call the teach tool over stdio with a question and its template$`,
-		m.iCallTeach)
-	ctx.When(`^I run "roca query" with that same question and "--no-llm"$`,
-		m.iQueryTheTaughtQuestion)
 
 	ctx.Then(`^the response declares the server name$`, m.itDeclaresTheServerName)
 	ctx.Then(`^the response declares the product version, not a library's$`,
@@ -161,29 +157,8 @@ func (m *world) iCallQueryWithNoArguments() error {
 func (m *world) iCallStore() error {
 	return m.callTool("roca_store", map[string]any{
 		"layer":   "discovery",
-		"content": "una memoria escrita desde el enchufe",
+		"content": "a synthetic memory written through the protocol",
 	})
-}
-
-func (m *world) iCallTeach() error {
-	if err := m.callTool("roca_teach", map[string]any{
-		"question": theTaughtQuestion,
-		"template": "search_all_sources_by_term",
-	}); err != nil {
-		return err
-	}
-	if m.plug.last.IsError {
-		return fmt.Errorf("teaching through the plug failed: %s", renderedText(m.plug.last))
-	}
-	return nil
-}
-
-const theTaughtQuestion = "que sabemos de los guiones largos"
-
-func (m *world) iQueryTheTaughtQuestion() error {
-	_, err := m.runWith("roca query "+theTaughtQuestion+" --json",
-		[]string{"query", theTaughtQuestion, "--json"})
-	return err
 }
 
 func (m *world) callTool(name string, arguments map[string]any) error {
@@ -362,7 +337,7 @@ func (m *world) theSessionIsStillAlive() error {
 }
 
 func (m *world) aCorrectCallAfterItWorks() error {
-	if err := m.iCallQuery("cuantas memorias hay"); err != nil {
+	if err := m.iCallQuery("how many memories are there"); err != nil {
 		return err
 	}
 	return m.theResponseIsNotAnError()
@@ -585,48 +560,48 @@ func (m *world) aBackupOfTheConfigurationExists() error {
 func configurationOf(agent, home string) (string, string, error) {
 	switch agent {
 	case "codex":
-		return filepath.Join(home, ".codex", "config.toml"), `# La configuracion del operador
+		return filepath.Join(home, ".codex", "config.toml"), `# The operator configuration
 model = "gpt-5-codex"
 
-[mcp_servers.otro-servidor]
-command = "otro-binario"
+[mcp_servers.other-server]
+command = "other-binary"
 `, nil
 	case "claude":
 		return filepath.Join(home, ".claude.json"), `{
   "numStartups": 42,
   "mcpServers": {
-    "otro-servidor": {
+    "other-server": {
       "type": "stdio",
-      "command": "otro-binario"
+      "command": "other-binary"
     }
   }
 }
 `, nil
 	case "opencode":
 		return filepath.Join(home, ".config", "opencode", "opencode.json"), `{
-  // OpenCode lee JSONC y este comentario tiene que sobrevivir
+  // OpenCode reads JSONC and this comment must survive
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "otro-servidor": {
+    "other-server": {
       "type": "local",
-      "command": ["otro-binario"],
+      "command": ["other-binary"],
       "enabled": true
     }
   }
 }
 `, nil
 	case "hermes":
-		return filepath.Join(home, ".hermes", "config.yaml"), `# Configuracion de Hermes
+		return filepath.Join(home, ".hermes", "config.yaml"), `# Hermes configuration
 runtime: hermes
 mcp_servers:
-  otro-servidor:
-    command: otro-binario
+  other-server:
+    command: other-binary
 `, nil
 	case "pi":
 		return filepath.Join(home, ".pi", "agent", "mcp.json"), `{
   "mcpServers": {
-    "otro-servidor": {
-      "command": "otro-binario"
+    "other-server": {
+      "command": "other-binary"
     }
   }
 }

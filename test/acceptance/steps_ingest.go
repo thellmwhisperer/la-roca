@@ -56,57 +56,54 @@ func (m *world) theOperatorsArtefacts() error {
 
 	files := map[string]string{
 		filepath.Join(claudeProjects, seededSessionID+".jsonl"): fmt.Sprintf(`
-{"type":"user","timestamp":"2026-08-01T10:00:00Z","cwd":%q,"message":{"content":"cuantas fuentes ingiere la matriz"}}
-{"type":"assistant","timestamp":"2026-08-01T10:00:02Z","message":{"content":[{"type":"thinking","thinking":"son nueve familias"},{"type":"text","text":"nueve"},{"type":"tool_use","id":"t1","name":"Grep","input":{"pattern":"fuente"}}]}}
+{"type":"user","timestamp":"2026-08-01T10:00:00Z","cwd":%q,"message":{"content":"how many source families are ingested"}}
+{"type":"assistant","timestamp":"2026-08-01T10:00:02Z","message":{"content":[{"type":"thinking","thinking":"there are nine families"},{"type":"text","text":"nine"},{"type":"tool_use","id":"t1","name":"Grep","input":{"pattern":"source"}}]}}
 {"type":"user","timestamp":"2026-08-01T10:00:03Z","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":false}]}}
-{"type":"user","timestamp":"2026-08-01T10:00:30Z","message":{"content":[{"type":"text","text":"y ninguna se pierde"}]}}
-{"type":"assistant","timestamp":"2026-08-01T10:00:31Z","message":{"content":[{"type":"text","text":"ninguna"}]}}
+{"type":"user","timestamp":"2026-08-01T10:00:30Z","message":{"content":[{"type":"text","text":"and none are lost"}]}}
+{"type":"assistant","timestamp":"2026-08-01T10:00:31Z","message":{"content":[{"type":"text","text":"none"}]}}
 `, demo),
-		filepath.Join(claudeProjects, "memory", "matriz.md"): "---\nname: la-matriz\ntype: project\n---\n" +
-			"La matriz de ingesta v1 tiene nueve familias de fuentes distintas, " +
-			"y cada adaptador entra por su propio camino sin tocar los demas.\n",
-		filepath.Join(claudeProjects, "memory", "MEMORY.md"): "- [la matriz](matriz.md)\n",
+		filepath.Join(claudeProjects, "memory", "matrix.md"): "---\nname: source-matrix\ntype: project\n---\n" +
+			"The v1 ingest matrix has nine distinct source families, " +
+			"and each adapter follows its own path without touching the others.\n",
+		filepath.Join(claudeProjects, "memory", "MEMORY.md"): "- [source matrix](matrix.md)\n",
 		filepath.Join(claudeProjects, seededSessionID, "subagents", "child-1.jsonl"): `
-{"type":"user","sessionId":"` + seededSessionID + `","agentId":"child-1","timestamp":"2026-08-01T10:00:10Z","message":{"content":[{"type":"text","text":"busca los adaptadores"}]}}
-{"type":"assistant","sessionId":"` + seededSessionID + `","agentId":"child-1","timestamp":"2026-08-01T10:00:11Z","message":{"content":[{"type":"text","text":"estan en internal/ingest"}]}}
+{"type":"user","sessionId":"` + seededSessionID + `","agentId":"child-1","timestamp":"2026-08-01T10:00:10Z","message":{"content":[{"type":"text","text":"find the adapters"}]}}
+{"type":"assistant","sessionId":"` + seededSessionID + `","agentId":"child-1","timestamp":"2026-08-01T10:00:11Z","message":{"content":[{"type":"text","text":"they are in internal/ingest"}]}}
 `,
-		filepath.Join(home, ".claude", "CLAUDE.md"): "# Global\n\nEl test primero y siempre rojo antes " +
-			"que nada, porque un codigo escrito sin comprobacion previa miente sobre lo que hace.\n",
-		filepath.Join(codex, "AGENTS.md"): "# Codex\n\nLee la especificacion completa antes de " +
-			"escribir una linea, ya que rehacer cuesta el triple de lo que cuesta preguntar.\n",
-		filepath.Join(demo, "AGENTS.md"): "# demo\n\nEste proyecto declara su propio contrato " +
-			"ejecutable, y ninguna ola lo modifica para que le encaje mejor su trabajo.\n",
+		filepath.Join(home, ".claude", "CLAUDE.md"): "# Global\n\nRun the synthetic test first.\n",
+		filepath.Join(codex, "AGENTS.md"):           "# Codex\n\nRead the complete synthetic specification first.\n",
+		filepath.Join(demo, "AGENTS.md"):            "# demo\n\nThis project declares its executable contract.\n",
 		filepath.Join(codex, "sessions", "2026", "08", "01", "rollout-abc.jsonl"): fmt.Sprintf(`
 {"type":"session_meta","timestamp":"2026-08-01T09:00:00Z","payload":{"id":"codex-thread-1","cwd":%q,"timestamp":"2026-08-01T09:00:00Z","cli_version":"9.9.9"}}
-{"type":"event_msg","timestamp":"2026-08-01T09:00:01Z","payload":{"type":"user_message","message":"arranca la ola de la ingesta"}}
-{"type":"response_item","timestamp":"2026-08-01T09:00:02Z","payload":{"type":"reasoning","summary":[{"text":"la matriz primero"}]}}
-{"type":"event_msg","timestamp":"2026-08-01T09:00:40Z","payload":{"type":"task_complete","last_agent_message":"en marcha"}}
+{"type":"event_msg","timestamp":"2026-08-01T09:00:01Z","payload":{"type":"user_message","message":"start the ingest fixture"}}
+{"type":"response_item","timestamp":"2026-08-01T09:00:02Z","payload":{"type":"reasoning","summary":[{"text":"the matrix first"}]}}
+{"type":"event_msg","timestamp":"2026-08-01T09:00:40Z","payload":{"type":"task_complete","last_agent_message":"running"}}
 `, demo),
-		filepath.Join(codex, "memories", "contrato.md"):     "Un solo contrato de idempotencia.\n",
-		filepath.Join(codex, "rules", "mias.rules"):         "no reescribir lo ya normalizado\n",
-		filepath.Join(codex, "rules", "default.rules"):      "esta no se ingiere\n",
-		filepath.Join(codex, "skills", "medir", "SKILL.md"): "Medir antes de opinar.\n",
-		filepath.Join(appSupport, "claude-code-sessions", "sesion.json"): fmt.Sprintf(`{
+		filepath.Join(codex, "memories", "contract.md"):       "One idempotency contract.\n",
+		filepath.Join(codex, "rules", "custom.rules"):         "do not rewrite normalized data\n",
+		filepath.Join(codex, "rules", "default.rules"):        "this is not ingested\n",
+		filepath.Join(codex, "skills", "measure", "SKILL.md"): "Measure before judging.\n",
+		filepath.Join(appSupport, "claude-code-sessions", "session.json"): fmt.Sprintf(`{
   "cliSessionId": "%s",
   "sessionId": "local-1",
   "cwd": %q,
-  "title": "la ola de la ingesta",
+  "title": "the ingest fixture",
   "createdAt": 1785542400000,
   "lastActivityAt": 1785542520000
 }`, seededSessionID, demo),
 		filepath.Join(appSupport, "local-agent-mode-sessions", "cw.json"): fmt.Sprintf(`{
   "cliSessionId": "cowork-1",
   "cwd": %q,
-  "title": "revision de la matriz"
+  "title": "matrix review"
 }`, demo),
 		filepath.Join(appSupport, "local-agent-mode-sessions", "cw", "audit.jsonl"): `
-{"type":"user","session_id":"cowork-1","_audit_timestamp":"2026-08-01T12:00:00Z","message":{"content":[{"type":"text","text":"revisa la matriz"}]}}
-{"type":"assistant","_audit_timestamp":"2026-08-01T12:00:04Z","message":{"content":"revisada"}}
+{"type":"user","session_id":"cowork-1","_audit_timestamp":"2026-08-01T12:00:00Z","message":{"content":[{"type":"text","text":"review the matrix"}]}}
+{"type":"assistant","_audit_timestamp":"2026-08-01T12:00:04Z","message":{"content":"reviewed"}}
 `,
-		filepath.Join(home, ".pi", "agent", "sessions", projectDir, "sesion.jsonl"): fmt.Sprintf(
+		filepath.Join(home, ".pi", "agent", "sessions", projectDir, "session.jsonl"): fmt.Sprintf(
 			`{"type":"session","version":3,"id":"pi-1","cwd":%q,"timestamp":"2026-08-01T13:00:00Z"}
-{"id":"p1","parentId":null,"type":"message","timestamp":"2026-08-01T13:00:01Z","message":{"role":"user","content":"cuenta las fuentes"}}
-{"id":"p2","parentId":"p1","type":"message","timestamp":"2026-08-01T13:00:02Z","message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"nueve"}]}}
+{"id":"p1","parentId":null,"type":"message","timestamp":"2026-08-01T13:00:01Z","message":{"role":"user","content":"count the sources"}}
+{"id":"p2","parentId":"p1","type":"message","timestamp":"2026-08-01T13:00:02Z","message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"nine"}]}}
 `, demo),
 	}
 	for path, content := range files {
@@ -184,9 +181,9 @@ func (m *world) seedOpenCode(demo string) error {
 		{`INSERT INTO message VALUES ('m2','oc1',1785542401000,1785542402000,
 		   '{"role":"assistant","parentID":"m1","time":{"created":1785542401000,"completed":1785542402000}}')`, nil},
 		{`INSERT INTO part VALUES ('p1','m1','oc1',1785542400000,1785542400000,
-		   '{"type":"text","text":"que queda de la ola"}')`, nil},
+		   '{"type":"text","text":"what remains in the fixture"}')`, nil},
 		{`INSERT INTO part VALUES ('p2','m2','oc1',1785542401500,1785542402000,
-		   '{"type":"text","text":"la verificacion contra realidad"}')`, nil},
+		   '{"type":"text","text":"verification against reality"}')`, nil},
 	}
 	for _, statement := range statements {
 		if _, err := db.Exec(statement.sql, statement.args...); err != nil {
@@ -212,10 +209,10 @@ func (m *world) seedHermes(demo string) error {
 		{`CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, content TEXT,
 		   reasoning_content TEXT, tool_calls TEXT, tool_name TEXT, timestamp REAL,
 		   active INTEGER, finish_reason TEXT)`, nil},
-		{`INSERT INTO sessions VALUES ('h1','tui','modelo-de-prueba',?,'una sesion',
+		{`INSERT INTO sessions VALUES ('h1','tui','synthetic-model',?,'a synthetic session',
 		   1785542400,1785542700,'stop',3)`, []any{demo}},
-		{`INSERT INTO messages VALUES (1,'h1','user','cuantas fuentes ingiere',NULL,NULL,NULL,1785542400,1,NULL)`, nil},
-		{`INSERT INTO messages VALUES (2,'h1','assistant','nueve','hay que contarlas',NULL,NULL,1785542401,1,'stop')`, nil},
+		{`INSERT INTO messages VALUES (1,'h1','user','how many sources are ingested',NULL,NULL,NULL,1785542400,1,NULL)`, nil},
+		{`INSERT INTO messages VALUES (2,'h1','assistant','nine','they must be counted',NULL,NULL,1785542401,1,'stop')`, nil},
 	}
 	for _, statement := range statements {
 		if _, err := db.Exec(statement.sql, statement.args...); err != nil {

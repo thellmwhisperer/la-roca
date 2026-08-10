@@ -221,8 +221,8 @@ func TestAGrownTranscriptOnlyAddsWhatIsNew(t *testing.T) {
 	transcript := filepath.Join(world.roots().ClaudeProjects, world.projectDir(),
 		fixtureSessionID+".jsonl")
 	appendTo(t, transcript, `
-{"type":"user","timestamp":"2026-08-01T10:05:00Z","message":{"content":[{"type":"text","text":"y la verificacion"}]}}
-{"type":"assistant","timestamp":"2026-08-01T10:05:01Z","message":{"content":[{"type":"text","text":"contra un arbol sintetico"}]}}
+{"type":"user","timestamp":"2026-08-01T10:05:00Z","message":{"content":[{"type":"text","text":"and the verification"}]}}
+{"type":"assistant","timestamp":"2026-08-01T10:05:01Z","message":{"content":[{"type":"text","text":"against a synthetic tree"}]}}
 `)
 
 	second, err := Run(ctx, db, registry(t), options)

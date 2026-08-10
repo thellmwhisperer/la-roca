@@ -37,7 +37,7 @@ func TestTheStoredClockDoesNotMoveWithTheOperatorsTimezone(t *testing.T) {
 	for _, zone := range []string{"Pacific/Kiritimati", "Etc/GMT+12"} {
 		locale := []string{"TZ=" + zone, "LC_ALL=tr_TR.UTF-8", "LANG=tr_TR.UTF-8"}
 		output, code := m.runUnder(t, locale, "store", "--layer", "project",
-			"--content", "la nota del huso "+zone+" con longitud suficiente")
+			"--content", "the note for timezone "+zone+" has sufficient length")
 		if code != 0 {
 			t.Fatalf("store under TZ=%s: code %d\n%s", zone, code, output)
 		}

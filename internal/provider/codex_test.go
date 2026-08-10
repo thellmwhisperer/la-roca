@@ -195,7 +195,7 @@ func TestCodexReadsTheAnswerOutOfTheEventStream(t *testing.T) {
 // The adapter transports, it does not interpret: a prose answer that quotes a
 // fenced block arrives whole.
 func TestCodexKeepsProseAroundAFencedBlock(t *testing.T) {
-	prose := "The details: ```\natm\n``` and the channel has 97 subs."
+	prose := "The details: ```\nfixture\n``` and the channel has 23 subscribers."
 	server, _ := codexBackend(t, []string{
 		sse("response.output_text.delta", map[string]any{"delta": prose}),
 	})

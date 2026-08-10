@@ -48,6 +48,6 @@ Feature: Several agents writing at the same time
   @fast
   Scenario: F09-06 Killing a writer halfway does not leave the database locked
     When I launch a process that writes and kill it with SIGKILL during the write
-    And I run "roca store --layer discovery --content 'despues del muerto'"
+    And I run "roca store --layer discovery --content 'after the interrupted writer'"
     Then the command exits with code 0
     And the database integrity check passes

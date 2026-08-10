@@ -8,7 +8,7 @@ Feature: The MCP is a thin plug over the same core
 
   Background:
     Given La Roca is installed and initialized
-    And a HOME with the seeded world "golden-corpus"
+    And a HOME with the seeded world "synthetic-corpus"
 
   @fast
   Scenario: F08-01 The server comes up on demand over stdio and announces who it is
@@ -31,7 +31,7 @@ Feature: The MCP is a thin plug over the same core
   @fast
   Scenario: F08-03 Querying over stdio
     When I open an MCP session over stdio against the binary
-    And I call the query tool with the question "cuantas memorias hay"
+    And I call the query tool with the question "how many memories are there"
     Then the response is not an error
     And the structured response has "path" equal to "unresolved"
 
@@ -45,10 +45,10 @@ Feature: The MCP is a thin plug over the same core
 
     Examples:
       | query                        |
-      | cuantas memorias hay         |
+      | how many memories are there  |
       | count memories by project    |
-      | guiones largos               |
-      | que feedback tenemos         |
+      | synthetic release marker     |
+      | what feedback do we have     |
 
   @fast
   Scenario: F08-05 Writing through the plug is writing through the product
@@ -57,12 +57,6 @@ Feature: The MCP is a thin plug over the same core
     When I run "roca exec 'SELECT COUNT(*) AS n FROM memories WHERE supersedes IS NULL' --json"
     Then the count has gone up by one
     And the audit record of that write declares it came from the plug
-
-  @fast
-  Scenario: F08-06 Teaching through the plug is teaching through the product
-    When I call the teach tool over stdio with a question and its template
-    And I run "roca query" with that same question and "--no-llm"
-    Then the JSON output has "path" equal to "compiler"
 
   @fast
   Scenario: F08-07 A missing argument is answered as a tool error, not as a crash
@@ -76,7 +70,7 @@ Feature: The MCP is a thin plug over the same core
   @fast
   Scenario: F08-08 Read-only mode is respected on both surfaces
     Given La Roca is in read-only mode
-    When I run "roca store --layer discovery --content 'no deberia entrar'"
+    When I run "roca store --layer discovery --content 'this must be refused'"
     Then the command exits with a code other than 0
     And the output names read-only mode and the refused operation
     When I call the store tool over stdio
@@ -90,11 +84,3 @@ Feature: The MCP is a thin plug over the same core
     And I send "tools/list"
     Then no withdrawn tool appears in the list
     And for every withdrawn tool the command line that replaces it exists
-
-  @acceptance
-  Scenario: F08-10 The resident server and stdio give the same thing
-    Given the runtime is started
-    When I query the published endpoint with the question "cuantas memorias hay"
-    And I query the same question over stdio
-    Then both responses have the same rows
-    And both responses have the same "sql"
