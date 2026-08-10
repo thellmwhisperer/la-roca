@@ -78,6 +78,13 @@ func TestTheDryRunThroughTheServiceTouchesNothing(t *testing.T) {
 	if exchanges != 0 {
 		t.Errorf("exchanges = %d, want none: a dry run writes nothing", exchanges)
 	}
+	var memories int
+	if err := svc.DB().SQL().QueryRow(`SELECT COUNT(*) FROM memories`).Scan(&memories); err != nil {
+		t.Fatalf("count memories: %v", err)
+	}
+	if memories != 0 {
+		t.Errorf("memories = %d, want none: a dry run persists no memory either", memories)
+	}
 }
 
 // serviceOverTheSources opens an installation whose sources are the sandbox home's,

@@ -64,6 +64,8 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (IngestResult, 
 
 	index, err := s.Index(ctx)
 	if err != nil {
+		// The total is reported on every other exit, including the dry run above.
+		result.TotalElapsedMS = time.Since(started).Milliseconds()
 		return result, err
 	}
 	result.Index = &index
