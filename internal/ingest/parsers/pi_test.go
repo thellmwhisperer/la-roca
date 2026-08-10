@@ -137,3 +137,28 @@ func TestPiHeaderAloneIsASessionWithNothingInItYet(t *testing.T) {
 		t.Fatalf("records = %+v", records)
 	}
 }
+
+// A thinking block with nothing readable in it is the same noise as a redacted
+// one: an empty row nobody can query, hanging off an exchange. The redacted case
+// was already discarded by name; the empty one was stored, so it was neither
+// skipped nor counted.
+func TestPiDoesNotStoreAThinkingBlockWithNoText(t *testing.T) {
+	content := `{"type":"session","version":3,"id":"s1","cwd":"/w/demo","timestamp":"2026-08-01T10:00:00Z"}
+{"id":"e1","type":"message","parentId":null,"timestamp":"2026-08-01T10:00:01Z","message":{"role":"user","content":"why"}}
+{"id":"e2","type":"message","parentId":"e1","timestamp":"2026-08-01T10:00:02Z","message":{"role":"assistant","stopReason":"stop","content":[{"type":"thinking","thinking":"   "},{"type":"text","text":"because"}]}}
+`
+	records, err := Parse(KindPiSession, []byte(content), FileMeta{Path: "/w/.pi/s1.jsonl"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	exchange := records.Sessions[0].Exchanges[0]
+	for _, block := range exchange.Thinking {
+		if block.Text == "" {
+			t.Errorf("an empty thinking block landed in the corpus: %+v", exchange.Thinking)
+		}
+	}
+	if len(records.Discards) != 1 {
+		t.Errorf("discards = %d, want the empty block counted: %+v",
+			len(records.Discards), records.Discards)
+	}
+}

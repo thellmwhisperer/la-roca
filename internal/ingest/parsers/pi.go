@@ -390,12 +390,19 @@ func piConsumeAssistant(pending *piPending, message *piMessage, record int) []Di
 			}
 		case "thinking":
 			// A redacted or encrypted block is not readable text, and storing its
-			// envelope would fill the corpus with noise nobody can query.
+			// envelope would fill the corpus with noise nobody can query. A block
+			// whose text is blank is the same noise by the same argument, and the
+			// text blocks above already refuse it.
 			if block.Redacted || block.Encrypted {
 				discards = append(discards, Discard{Record: record, Reason: "thinking block is redacted or encrypted"})
 				continue
 			}
-			pending.thinking = append(pending.thinking, strings.TrimSpace(block.Thinking))
+			trimmed := strings.TrimSpace(block.Thinking)
+			if trimmed == "" {
+				discards = append(discards, Discard{Record: record, Reason: "thinking block has no readable text"})
+				continue
+			}
+			pending.thinking = append(pending.thinking, trimmed)
 		case "toolCall":
 			if block.ID == "" {
 				pending.invalid = true
