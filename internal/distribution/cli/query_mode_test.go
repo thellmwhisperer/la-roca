@@ -17,7 +17,7 @@
 
 	INTERNALS
 	---------
-	queryModeProvider, queryModeService, the four query-mode contract tests
+	queryModeProvider, queryModeService, runQueryMode, the four query-mode contract tests
 
 @exports
 @deps standard context/errors/path/strings/testing, internal provider/service
@@ -42,6 +42,12 @@ type queryModeProvider struct {
 	calls   int
 	failAt  int
 }
+
+const (
+	queryModeSQL      = "SELECT 'memory' AS source, 1 AS id, 'raw evidence' AS text LIMIT 1"
+	queryModeQuestion = "what decisions were made about the format"
+	queryModeProse    = "The evidence says the format is rows."
+)
 
 func (p *queryModeProvider) Name() string    { return "fake" }
 func (p *queryModeProvider) ModelID() string { return "fake-model" }
@@ -82,45 +88,37 @@ func queryModeService(t *testing.T, model *queryModeProvider) *service.Service {
 	return svc
 }
 
+func runQueryMode(t *testing.T, full bool, failAt int) (*queryModeProvider, queryAnswer, string) {
+	t.Helper()
+	model := &queryModeProvider{answers: []string{queryModeSQL, queryModeProse}, failAt: failAt}
+	answer, err := answerQuery(t.Context(), queryModeService(t, model), service.QueryRequest{
+		Question: queryModeQuestion,
+	}, full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return model, answer, axiQuery(answer)
+}
+
 // -/ 2/3
 
 // -- 3/3 CORE · query mode contracts -- <- START HERE
 
 func TestQueryDefaultsToOneInferenceAndRows(t *testing.T) {
-	model := &queryModeProvider{answers: []string{
-		"SELECT 'memory' AS source, 1 AS id, 'raw evidence' AS text LIMIT 1",
-		"The evidence says the format is rows.",
-	}}
-	answer, err := answerQuery(t.Context(), queryModeService(t, model), service.QueryRequest{
-		Question: "what decisions were made about the format",
-	}, false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	model, _, got := runQueryMode(t, false, 0)
 	if model.calls != 1 {
 		t.Fatalf("default query made %d provider calls, want one", model.calls)
 	}
-	got := axiQuery(answer)
 	if !strings.Contains(got, "rows[1]{source,id,text}") || !strings.Contains(got, "raw evidence") {
 		t.Fatalf("default query did not render its evidence rows:\n%s", got)
 	}
 }
 
 func TestQueryFullAddsOneInterpretationAndKeepsEvidence(t *testing.T) {
-	model := &queryModeProvider{answers: []string{
-		"SELECT 'memory' AS source, 1 AS id, 'raw evidence' AS text LIMIT 1",
-		"The evidence says the format is rows.",
-	}}
-	answer, err := answerQuery(t.Context(), queryModeService(t, model), service.QueryRequest{
-		Question: "what decisions were made about the format",
-	}, true)
-	if err != nil {
-		t.Fatal(err)
-	}
+	model, _, got := runQueryMode(t, true, 0)
 	if model.calls != 2 {
 		t.Fatalf("full query made %d provider calls, want two", model.calls)
 	}
-	got := axiQuery(answer)
 	for _, want := range []string{
 		"route llm_fallback · provider fake · model fake-model",
 		"The evidence says the format is rows.",
@@ -134,19 +132,10 @@ func TestQueryFullAddsOneInterpretationAndKeepsEvidence(t *testing.T) {
 }
 
 func TestQueryFullFallsBackToRowsWhenInterpretationFails(t *testing.T) {
-	model := &queryModeProvider{answers: []string{
-		"SELECT 'memory' AS source, 1 AS id, 'raw evidence' AS text LIMIT 1",
-	}, failAt: 2}
-	answer, err := answerQuery(t.Context(), queryModeService(t, model), service.QueryRequest{
-		Question: "what decisions were made about the format",
-	}, true)
-	if err != nil {
-		t.Fatal(err)
-	}
+	model, answer, got := runQueryMode(t, true, 2)
 	if model.calls != 2 || answer.interpretErr == nil {
 		t.Fatalf("failed interpretation = calls %d, error %v", model.calls, answer.interpretErr)
 	}
-	got := axiQuery(answer)
 	if !strings.Contains(got, "rows[1]{source,id,text}") || !strings.Contains(got, "raw evidence") {
 		t.Fatalf("failed interpretation took the rows away:\n%s", got)
 	}
