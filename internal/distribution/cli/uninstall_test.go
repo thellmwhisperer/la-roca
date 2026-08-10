@@ -204,33 +204,36 @@ func resolvedIn(t *testing.T, home string) config.Paths {
 // purge worked. --json reports `purge && report.Purged`, so a purge that hit an
 // error is false there; the readable line branched on the REQUEST instead of the
 // OUTCOME and said "purged: yes" over the errors it had just printed.
-func TestTheReadableUninstallDoesNotClaimAPurgeThatFailed(t *testing.T) {
-	var out strings.Builder
-	env := &cliEnv{out: &out, errOut: &out}
-	report := lifecycle.Report{
-		Purged:  false,
-		Deleted: []string{},
-		Errors:  []string{"delete /home/.roca/roca.db: permission denied"},
-	}
-
-	renderUninstall(env, true, report, nil)
-
-	if strings.Contains(out.String(), "purged: yes") {
-		t.Errorf("a failed purge reports itself as done:\n%s", out.String())
-	}
-	if !strings.Contains(out.String(), "purged: no") {
-		t.Errorf("a failed purge does not say so:\n%s", out.String())
-	}
-}
-
-// The happy path keeps the line the operator flow asserts.
-func TestTheReadableUninstallStillConfirmsAPurgeThatWorked(t *testing.T) {
-	var out strings.Builder
-	env := &cliEnv{out: &out, errOut: &out}
-
-	renderUninstall(env, true, lifecycle.Report{Purged: true, Deleted: []string{}}, nil)
-
-	if !strings.Contains(out.String(), "purged: yes") {
-		t.Errorf("a purge that worked does not confirm it:\n%s", out.String())
+func TestTheReadableUninstallReportsThePurgeOutcome(t *testing.T) {
+	for _, want := range []struct {
+		name   string
+		report lifecycle.Report
+		line   string
+		absent string
+	}{
+		{
+			name: "it failed",
+			report: lifecycle.Report{Deleted: []string{},
+				Errors: []string{"delete /home/.roca/roca.db: permission denied"}},
+			line:   "purged: no",
+			absent: "purged: yes",
+		},
+		{
+			name:   "it worked",
+			report: lifecycle.Report{Purged: true, Deleted: []string{}},
+			line:   "purged: yes",
+			absent: "purged: no",
+		},
+	} {
+		t.Run(want.name, func(t *testing.T) {
+			var out strings.Builder
+			renderUninstall(&cliEnv{out: &out, errOut: &out}, true, want.report, nil)
+			if !strings.Contains(out.String(), want.line) {
+				t.Errorf("want %q in\n%s", want.line, out.String())
+			}
+			if strings.Contains(out.String(), want.absent) {
+				t.Errorf("must not say %q in\n%s", want.absent, out.String())
+			}
+		})
 	}
 }
