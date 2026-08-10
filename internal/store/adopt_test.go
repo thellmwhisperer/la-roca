@@ -72,8 +72,8 @@ func TestOrphanTablesAreReportedAndDoNotBlock(t *testing.T) {
 	if err := store.ApplySchema(ctx, db); err != nil {
 		t.Fatalf("ApplySchema: %v", err)
 	}
-	execute(t, db, `CREATE TABLE garden_notes (id INTEGER PRIMARY KEY, nota TEXT)`)
-	execute(t, db, `INSERT INTO garden_notes (nota) VALUES ('de una feature retirada')`)
+	execute(t, db, `CREATE TABLE garden_notes (id INTEGER PRIMARY KEY, note TEXT)`)
+	execute(t, db, `INSERT INTO garden_notes (note) VALUES ('from a removed feature')`)
 	execute(t, db, `CREATE TABLE messages (id INTEGER PRIMARY KEY)`)
 
 	report, err := store.Inspect(ctx, db)
@@ -96,7 +96,7 @@ func TestOrphanTablesAreReportedAndDoNotBlock(t *testing.T) {
 	}
 	// The repair boundary never drops a data table.
 	var score string
-	if err := db.SQL().QueryRow("SELECT nota FROM garden_notes").Scan(&score); err != nil {
+	if err := db.SQL().QueryRow("SELECT note FROM garden_notes").Scan(&score); err != nil {
 		t.Fatalf("the orphan disappeared after adopting: %v", err)
 	}
 }
@@ -363,7 +363,7 @@ func recreate(t *testing.T, db *store.DB, table, ddl string) {
 func seedIdentity(t *testing.T, db *store.DB) {
 	t.Helper()
 	execute(t, db, `INSERT INTO memories (layer, content, origin)
-	                 VALUES ('project', 'ancla de adopcion', 'agent')`)
+	                 VALUES ('project', 'anchor of adoption', 'agent')`)
 }
 
 func contains(list []string, value string) bool {

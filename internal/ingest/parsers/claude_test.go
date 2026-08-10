@@ -96,11 +96,11 @@ func TestClaudeSessionSplitsExchangesOnTheHumanTurn(t *testing.T) {
 }
 
 const claudeCompacted = `
-{"type":"user","timestamp":"2026-08-01T10:00:00Z","message":{"content":"primera"}}
-{"type":"assistant","timestamp":"2026-08-01T10:00:01Z","message":{"content":[{"type":"text","text":"una"}]}}
-{"type":"summary","summary":"resumen de la conversacion anterior"}
-{"type":"user","timestamp":"2026-08-01T10:05:00Z","message":{"content":"segunda"}}
-{"type":"assistant","timestamp":"2026-08-01T10:05:01Z","message":{"content":[{"type":"thinking","thinking":"sigo"},{"type":"text","text":"dos"}]}}
+{"type":"user","timestamp":"2026-08-01T10:00:00Z","message":{"content":"first"}}
+{"type":"assistant","timestamp":"2026-08-01T10:00:01Z","message":{"content":[{"type":"text","text":"one"}]}}
+{"type":"summary","summary":"summary of the previous conversation"}
+{"type":"user","timestamp":"2026-08-01T10:05:00Z","message":{"content":"second"}}
+{"type":"assistant","timestamp":"2026-08-01T10:05:01Z","message":{"content":[{"type":"thinking","thinking":"continuing"},{"type":"text","text":"two"}]}}
 `
 
 func TestClaudeSessionMarksWhatComesAfterACompaction(t *testing.T) {
@@ -130,8 +130,8 @@ func TestClaudeSessionSurvivesGarbage(t *testing.T) {
 	// A live transcript can be truncated mid-line, and a corrupt line cannot
 	// cost the whole file.
 	broken := "{not json\n" +
-		`{"type":"user","timestamp":"2026-08-01T10:00:00Z","message":{"content":"hola"}}` + "\n" +
-		`{"type":"assistant","timestamp":"2026-08-01T10:00:01Z","message":{"content":[{"type":"text","text":"adios"}]}}` + "\n" +
+		`{"type":"user","timestamp":"2026-08-01T10:00:00Z","message":{"content":"hello"}}` + "\n" +
+		`{"type":"assistant","timestamp":"2026-08-01T10:00:01Z","message":{"content":[{"type":"text","text":"bye"}]}}` + "\n" +
 		`{"type":"assistant","timestamp":"2026`
 	records, err := Parse(KindClaudeSession, []byte(broken), FileMeta{SessionID: "s2"})
 	if err != nil {

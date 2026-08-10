@@ -146,9 +146,9 @@ func TestTheGateRejectsWhatIsNotEvenAQuery(t *testing.T) {
 	for _, benchCase := range []string{
 		"",
 		"   ",
-		"ATTACH DATABASE 'otra.db' AS otra",
+		"ATTACH DATABASE 'other.db' AS other",
 		"PRAGMA table_info(memories)",
-		"esto no es sql",
+		"this is not sql",
 	} {
 		if _, err := gate(t).Validate(benchCase); err == nil {
 			t.Errorf("Validate(%q) passed", benchCase)

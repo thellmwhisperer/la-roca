@@ -14,7 +14,7 @@ func TestStoreWritesOneMemoryAndReturnsItsIdentity(t *testing.T) {
 
 	result, err := svc.Store(context.Background(), service.StoreRequest{
 		Layer:   "discovery",
-		Content: "  la adopcion compara estructura, jamas el texto del DDL  ",
+		Content: "  adoption compares structure, never the text of the DDL  ",
 		Surface: service.SurfaceCLI,
 	})
 	if err != nil {
@@ -39,7 +39,7 @@ func TestStoreWritesOneMemoryAndReturnsItsIdentity(t *testing.T) {
 	}
 	// The content is stored trimmed, which is what makes the deduplication
 	// below compare the same thing the caller sees.
-	if content != "la adopcion compara estructura, jamas el texto del DDL" {
+	if content != "adoption compares structure, never the text of the DDL" {
 		t.Errorf("content = %q: it is not stored trimmed", content)
 	}
 	if origin != "agent" {

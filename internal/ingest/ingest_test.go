@@ -354,7 +354,7 @@ func TestOneBadFileIsIsolatedAndNamed(t *testing.T) {
 	// A foreign transcript under the subagents root: same extension, another shape.
 	world.write(t, filepath.Join(world.roots().ClaudeProjects, world.projectDir(),
 		fixtureSessionID, "subagents", "foreign.jsonl"),
-		`{"event":"turn","payload":{"role":"user","text":"otra cosa"}}`+"\n")
+		`{"event":"turn","payload":{"role":"user","text":"something else"}}`+"\n")
 
 	result, err := Run(ctx, db, registry(t), Options{Roots: world.roots()})
 	if err != nil {
@@ -399,8 +399,8 @@ func TestAnAmbiguousProjectDirectoryIsDiagnosedAndNotInvented(t *testing.T) {
 	orphan := "-somewhere-nobody-declared"
 	world.write(t, filepath.Join(world.roots().ClaudeProjects, orphan,
 		"99999999-8888-7777-6666-555555555555.jsonl"), `
-{"type":"user","timestamp":"2026-08-01T10:00:00Z","message":{"content":"hola"}}
-{"type":"assistant","timestamp":"2026-08-01T10:00:01Z","message":{"content":[{"type":"text","text":"adios"}]}}
+{"type":"user","timestamp":"2026-08-01T10:00:00Z","message":{"content":"hello"}}
+{"type":"assistant","timestamp":"2026-08-01T10:00:01Z","message":{"content":[{"type":"text","text":"bye"}]}}
 `)
 
 	result, err := Run(context.Background(), db, registry(t), Options{Roots: world.roots()})

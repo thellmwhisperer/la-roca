@@ -25,23 +25,23 @@ func TestTheDefaultDatabaseLivesUnderTheHome(t *testing.T) {
 func TestTheFlagBeatsTheEnvironmentAndTheHome(t *testing.T) {
 	home := t.TempDir()
 	paths, err := config.Resolve(config.Input{
-		Home: home, Flag: "/tmp/otra.db", Env: "/tmp/entorno.db",
+		Home: home, Flag: "/tmp/other.db", Env: "/tmp/environment.db",
 	})
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if paths.DB != "/tmp/otra.db" {
+	if paths.DB != "/tmp/other.db" {
 		t.Errorf("database = %q, want the flag's", paths.DB)
 	}
 }
 
 func TestTheEnvironmentBeatsTheHome(t *testing.T) {
 	home := t.TempDir()
-	paths, err := config.Resolve(config.Input{Home: home, Env: "/tmp/entorno.db"})
+	paths, err := config.Resolve(config.Input{Home: home, Env: "/tmp/environment.db"})
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if paths.DB != "/tmp/entorno.db" {
+	if paths.DB != "/tmp/environment.db" {
 		t.Errorf("database = %q, want the environment's", paths.DB)
 	}
 }

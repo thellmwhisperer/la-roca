@@ -103,7 +103,7 @@ func TestWriteOpensTheTransactionInImmediateMode(t *testing.T) {
 		}
 		_, err := tx.Exec(
 			"INSERT INTO memories (layer, content, origin) VALUES (?, ?, ?)",
-			"project", "ancla", "agent")
+			"project", "anchor", "agent")
 		return err
 	})
 	if err != nil {

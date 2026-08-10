@@ -6,10 +6,10 @@ import "testing"
 // A Pi file is a tree: the header, then entries linked by parentId. Only the
 // branch that ends at the last entry is the conversation that happened.
 const piSession = `{"type":"session","version":3,"id":"pi-77","cwd":"/w/demo","timestamp":"2026-08-01T13:00:00Z"}
-{"id":"e1","parentId":null,"type":"message","timestamp":"2026-08-01T13:00:01Z","message":{"role":"user","content":"cuenta los adaptadores","timestamp":"2026-08-01T13:00:01Z"}}
-{"id":"e2","parentId":"e1","type":"message","timestamp":"2026-08-01T13:00:02Z","message":{"role":"assistant","stopReason":"tool","content":[{"type":"thinking","thinking":"hay que contar"},{"type":"toolCall","id":"tc1","name":"grep"}]}}
+{"id":"e1","parentId":null,"type":"message","timestamp":"2026-08-01T13:00:01Z","message":{"role":"user","content":"count the adapters","timestamp":"2026-08-01T13:00:01Z"}}
+{"id":"e2","parentId":"e1","type":"message","timestamp":"2026-08-01T13:00:02Z","message":{"role":"assistant","stopReason":"tool","content":[{"type":"thinking","thinking":"we have to count"},{"type":"toolCall","id":"tc1","name":"grep"}]}}
 {"id":"e3","parentId":"e2","type":"message","timestamp":"2026-08-01T13:00:03Z","message":{"role":"toolResult","toolCallId":"tc1","isError":false}}
-{"id":"e4","parentId":"e3","type":"message","timestamp":"2026-08-01T13:00:04Z","message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"nueve"}],"timestamp":"2026-08-01T13:00:04Z"}}
+{"id":"e4","parentId":"e3","type":"message","timestamp":"2026-08-01T13:00:04Z","message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"nine"}],"timestamp":"2026-08-01T13:00:04Z"}}
 `
 
 func TestPiSessionProjectsTheActiveBranch(t *testing.T) {
@@ -30,7 +30,7 @@ func TestPiSessionProjectsTheActiveBranch(t *testing.T) {
 		t.Fatalf("exchanges = %d, want 1", len(session.Exchanges))
 	}
 	exchange := session.Exchanges[0]
-	if exchange.HumanText != "cuenta los adaptadores" || exchange.AgentText != "nueve" {
+	if exchange.HumanText != "count the adapters" || exchange.AgentText != "nine" {
 		t.Errorf("exchange = %+v", exchange)
 	}
 	// Pi keys its exchanges on the source's own id, so re-reading a grown file
@@ -61,7 +61,7 @@ func TestPiFingerprintIsStableAndChangesWithTheTurn(t *testing.T) {
 	if first.Sessions[0].Exchanges[0].Fingerprint != again.Sessions[0].Exchanges[0].Fingerprint {
 		t.Error("the same turn hashed differently twice")
 	}
-	changed, err := Parse(KindPiSession, []byte(strings.Replace(piSession, "nueve", "diez", 1)), FileMeta{})
+	changed, err := Parse(KindPiSession, []byte(strings.Replace(piSession, "nine", "diez", 1)), FileMeta{})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

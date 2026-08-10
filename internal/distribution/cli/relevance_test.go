@@ -109,12 +109,12 @@ func TestJSONCarriesVersionAndSourceSHAAndNotTheDBPath(t *testing.T) {
 func TestRenderPrefersProseOverRows(t *testing.T) {
 	var output strings.Builder
 	render(&cliEnv{out: &output}, service.QueryResult{
-		Question: "que se decidió sobre el formato", Path: service.PathLLM, Engine: "codex",
+		Question: "what was decided about the format", Path: service.PathLLM, Engine: "codex",
 		Model: "codex-model", Match: service.MatchFound, RowCount: 1,
 		Columns: []string{"text"}, Rows: []map[string]any{{"text": "fila cruda"}},
-	}, "El formato se decidió en una memoria.")
+	}, "The format was decided in a memory.")
 	got := output.String()
-	if !strings.Contains(got, "El formato se decidió en una memoria.") {
+	if !strings.Contains(got, "The format was decided in a memory.") {
 		t.Fatalf("the prose answer is missing:\n%s", got)
 	}
 	if strings.Contains(got, "fila cruda") {

@@ -83,19 +83,19 @@ func (w *world) seed(t *testing.T) {
 	// Claude Code: a transcript, a memory file, and the index that is not one.
 	w.write(t, filepath.Join(project, fixtureSessionID+".jsonl"), fmt.Sprintf(`
 {"type":"user","timestamp":"2026-08-01T10:00:00Z","cwd":%q,"message":{"content":"how many adapters are there"}}
-{"type":"assistant","timestamp":"2026-08-01T10:00:02Z","message":{"content":[{"type":"thinking","thinking":"son nine"},{"type":"text","text":"nine"},{"type":"tool_use","id":"t1","name":"Grep","input":{"pattern":"adaptador"}}]}}
+{"type":"assistant","timestamp":"2026-08-01T10:00:02Z","message":{"content":[{"type":"thinking","thinking":"there are nine"},{"type":"text","text":"nine"},{"type":"tool_use","id":"t1","name":"Grep","input":{"pattern":"adapter"}}]}}
 {"type":"user","timestamp":"2026-08-01T10:00:03Z","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":false}]}}
-{"type":"user","timestamp":"2026-08-01T10:00:20Z","message":{"content":[{"type":"text","text":"y ninguno se pierde"}]}}
-{"type":"assistant","timestamp":"2026-08-01T10:00:21Z","message":{"content":[{"type":"text","text":"ninguno"}]}}
+{"type":"user","timestamp":"2026-08-01T10:00:20Z","message":{"content":[{"type":"text","text":"and none is lost"}]}}
+{"type":"assistant","timestamp":"2026-08-01T10:00:21Z","message":{"content":[{"type":"text","text":"none"}]}}
 `, w.demoCwd()))
-	w.write(t, filepath.Join(project, "memory", "nota.md"),
+	w.write(t, filepath.Join(project, "memory", "note.md"),
 		"---\nname: the-matrix\ntype: project\n---\nThe ingest matrix has nine sources.\n")
-	w.write(t, filepath.Join(project, "memory", "MEMORY.md"), "- [nota](nota.md)\n")
+	w.write(t, filepath.Join(project, "memory", "MEMORY.md"), "- [note](note.md)\n")
 
 	// A subagent under the layout the runtime uses today.
 	w.write(t, filepath.Join(project, fixtureSessionID, "subagents", "child-1.jsonl"), `
-{"type":"user","sessionId":"`+fixtureSessionID+`","agentId":"child-1","timestamp":"2026-08-01T10:00:05Z","message":{"content":[{"type":"text","text":"busca los parsers"}]}}
-{"type":"assistant","sessionId":"`+fixtureSessionID+`","agentId":"child-1","timestamp":"2026-08-01T10:00:06Z","message":{"content":[{"type":"text","text":"estan en parsers/"}]}}
+{"type":"user","sessionId":"`+fixtureSessionID+`","agentId":"child-1","timestamp":"2026-08-01T10:00:05Z","message":{"content":[{"type":"text","text":"find the parsers"}]}}
+{"type":"assistant","sessionId":"`+fixtureSessionID+`","agentId":"child-1","timestamp":"2026-08-01T10:00:06Z","message":{"content":[{"type":"text","text":"they are in parsers/"}]}}
 `)
 
 	// Instruction files are present to prove they do not become ingest content:

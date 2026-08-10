@@ -235,7 +235,7 @@ func TestCodexKeepsProseAroundAFencedBlock(t *testing.T) {
 		sse("response.output_text.delta", map[string]any{"delta": prose}),
 	})
 	res, err := NewCodex(CodexConfig{Session: liveSession(t), BaseURL: server.URL}).
-		Chat(context.Background(), ChatRequest{Messages: []Message{{Role: RoleUser, Content: "detalles"}}})
+		Chat(context.Background(), ChatRequest{Messages: []Message{{Role: RoleUser, Content: "details"}}})
 	if err != nil || res.Content != prose {
 		t.Fatalf("the answer was clipped: %q (err=%v)", res.Content, err)
 	}

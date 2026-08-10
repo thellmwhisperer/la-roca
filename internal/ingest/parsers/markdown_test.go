@@ -38,12 +38,12 @@ func TestClaudeMemoryReadsItsFrontmatter(t *testing.T) {
 }
 
 func TestMemoryWithoutFrontmatterIsAllBody(t *testing.T) {
-	records, err := Parse(KindClaudeMemory, []byte("  una nota escrita a mano  \n"), FileMeta{})
+	records, err := Parse(KindClaudeMemory, []byte("  a hand-written note  \n"), FileMeta{})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	memory := records.Memories[0]
-	if memory.Content != "una nota escrita a mano" {
+	if memory.Content != "a hand-written note" {
 		t.Errorf("content = %q", memory.Content)
 	}
 	// No declared type: the layer is left for the ingest layer's registry to
