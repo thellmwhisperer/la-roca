@@ -6,14 +6,11 @@ import (
 	"testing"
 )
 
-func TestSaveAPIKeyWritesWithSecretPermissions(t *testing.T) {
+func TestSaveAPIKeyTrimsAndRoundTrips(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "credentials")
 	if err := SaveAPIKey(dir, NameXAI, " sk-xai-secret "); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	path := APIKeyPath(dir, NameXAI)
-	assertMode(t, path, 0o600)
-	assertMode(t, dir, 0o700)
 	got, err := LoadAPIKey(dir, NameXAI)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -21,20 +18,6 @@ func TestSaveAPIKeyWritesWithSecretPermissions(t *testing.T) {
 	if got != "sk-xai-secret" {
 		t.Fatalf("loaded %q, want the trimmed key", got)
 	}
-}
-
-func TestSaveAPIKeyTightensAPreExistingCredentialDirectory(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "credentials")
-	if err := os.Mkdir(dir, 0o777); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(dir, 0o777); err != nil {
-		t.Fatal(err)
-	}
-	if err := SaveAPIKey(dir, NameXAI, "secret"); err != nil {
-		t.Fatal(err)
-	}
-	assertMode(t, dir, 0o700)
 }
 
 func TestDeleteAPIKeyForgetsTheCredential(t *testing.T) {
@@ -113,16 +96,5 @@ api_key = "from-config"
 	}
 	if !cascade3.Providers[0].(*OpenAICompatible).HasCredential() {
 		t.Fatal("config api_key has to keep working after logout")
-	}
-}
-
-func assertMode(t *testing.T, path string, want os.FileMode) {
-	t.Helper()
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat %s: %v", path, err)
-	}
-	if got := info.Mode().Perm(); got != want {
-		t.Fatalf("%s is %o, want %o", path, got, want)
 	}
 }

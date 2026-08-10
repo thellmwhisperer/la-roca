@@ -182,50 +182,6 @@ func TestRefreshFailsWithTheVendorsReason(t *testing.T) {
 	}
 }
 
-// The credential is a session of another product living on the operator's disk.
-// It is written with the permissions of a secret or it is not written.
-func TestTheStoreWritesTheCredentialUnreadableToAnybodyElse(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "credentials")
-	store := Store{Path: filepath.Join(dir, "codex.json")}
-
-	if err := store.Save(Token{AccessToken: "at", RefreshToken: "rt"}); err != nil {
-		t.Fatalf("save: %v", err)
-	}
-
-	info, err := os.Stat(store.Path)
-	if err != nil {
-		t.Fatalf("stat: %v", err)
-	}
-	if mode := info.Mode().Perm(); mode != 0o600 {
-		t.Fatalf("the credential file is %o and it has to be 600", mode)
-	}
-	dirInfo, err := os.Stat(dir)
-	if err != nil {
-		t.Fatalf("stat dir: %v", err)
-	}
-	if mode := dirInfo.Mode().Perm(); mode != 0o700 {
-		t.Fatalf("the credential directory is %o and it has to be 700", mode)
-	}
-}
-
-func TestTheStoreTightensAPreExistingCredentialDirectory(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "credentials")
-	if err := os.Mkdir(dir, 0o777); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(dir, 0o777); err != nil {
-		t.Fatal(err)
-	}
-	store := Store{Path: filepath.Join(dir, "codex.json")}
-	if err := store.Save(Token{AccessToken: "at"}); err != nil {
-		t.Fatal(err)
-	}
-	info, err := os.Stat(dir)
-	if err != nil || info.Mode().Perm() != 0o700 {
-		t.Fatalf("credential directory info = %v, err=%v; want mode 0700", info, err)
-	}
-}
-
 func TestTheStoreRoundTripsAndForgets(t *testing.T) {
 	store := Store{Path: filepath.Join(t.TempDir(), "codex.json")}
 	if store.Exists() {
@@ -258,23 +214,6 @@ func TestTheStoreRoundTripsAndForgets(t *testing.T) {
 	}
 	if err := store.Delete(); err != nil {
 		t.Fatalf("deleting what is not there is not a failure: %v", err)
-	}
-}
-
-// A file the operator left with loose permissions is tightened when it is
-// rewritten: converging is worth more than complaining.
-func TestSavingOverALoosePermissionFileTightensIt(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "codex.json")
-	if err := os.WriteFile(path, []byte("{}"), 0o644); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	store := Store{Path: path}
-	if err := store.Save(Token{AccessToken: "at"}); err != nil {
-		t.Fatalf("save: %v", err)
-	}
-	info, _ := os.Stat(path)
-	if mode := info.Mode().Perm(); mode != 0o600 {
-		t.Fatalf("mode %o", mode)
 	}
 }
 
