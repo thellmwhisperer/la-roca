@@ -66,7 +66,8 @@ variables used by installation.
 mirrors. A custom base must be HTTPS, contain no credentials, query or fragment,
 and is combined only with an `owner/name` repository path. Setting either
 redirects release metadata and downloads, so do not point it at an origin you
-do not trust.
+do not trust. A trusted mirror with a private CA can use the standard
+`SSL_CERT_FILE` environment variable.
 
 ## Uninstall
 

@@ -24,6 +24,8 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -213,7 +215,11 @@ func (s Source) get(ctx context.Context, url, accept, what string) ([]byte, erro
 		request.Header.Set("Authorization", "Bearer "+s.Token)
 	}
 
-	response, err := s.client().Do(request)
+	client, err := s.client()
+	if err != nil {
+		return nil, err
+	}
+	response, err := client.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("ask the release channel: %w", err)
 	}
@@ -303,11 +309,28 @@ func (s Source) ValidateAsset(raw string) error {
 	return nil
 }
 
-func (s Source) client() *http.Client {
+func (s Source) client() (*http.Client, error) {
 	if s.HTTP != nil {
-		return s.HTTP
+		return s.HTTP, nil
 	}
-	return &http.Client{Timeout: 5 * time.Minute}
+	client := &http.Client{Timeout: 5 * time.Minute}
+	certificateFile := os.Getenv("SSL_CERT_FILE")
+	if certificateFile == "" {
+		return client, nil
+	}
+	roots, err := x509.SystemCertPool()
+	if err != nil {
+		return nil, fmt.Errorf("load system certificates for the release channel: %w", err)
+	}
+	pem, err := os.ReadFile(certificateFile)
+	if err != nil {
+		return nil, fmt.Errorf("read SSL_CERT_FILE for the release channel: %w", err)
+	}
+	if !roots.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("SSL_CERT_FILE contains no certificates for the release channel")
+	}
+	client.Transport = &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots}}
+	return client, nil
 }
 
 // Verify checks the payload against its line of checksums.txt.
