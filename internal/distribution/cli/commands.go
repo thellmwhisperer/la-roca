@@ -166,8 +166,13 @@ func (env *cliEnv) selectInitDatabase(in io.Reader, paths config.Paths, explicit
 		return "new", "", nil
 	}
 	if exists {
-		info, _ := os.Stat(paths.DB)
-		env.initSay("database at %s · %d bytes", paths.DB, info.Size())
+		// The file was there a moment ago. If it has gone since, that is a live
+		// disk and not a crash: the size is what goes unreported, nothing else.
+		if info, err := os.Stat(paths.DB); err == nil {
+			env.initSay("database at %s · %d bytes", paths.DB, info.Size())
+		} else {
+			env.initSay("database at %s", paths.DB)
+		}
 		env.initSay("keep: use the current database here, then index the agent history found on this machine")
 		env.initSay("reinitialize: permanently replace the current database with an empty one, then index the agent history found on this machine")
 		if !terminalInput(in) {

@@ -180,7 +180,9 @@ func TestHealthReportsItsStatus(t *testing.T) {
 	}
 
 	doc := mustJSON(t, runRoot(t, contractBuild(), "health", "--json"))
-	if doc["status"] == "" {
+	// A missing key decodes to nil, and nil is not "": the old check passed over
+	// an envelope with no status at all.
+	if status, ok := doc["status"].(string); !ok || status == "" {
 		t.Errorf("health --json has no status:\n%s", doc)
 	}
 	checks, _ := doc["checks"].(map[string]any)
