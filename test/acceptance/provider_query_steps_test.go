@@ -24,6 +24,42 @@ func registerProviderQuerySteps(ctx *godog.ScenarioContext, w *providerAcceptanc
 	ctx.Then(`^no rows were returned$`, w.noRowsReturned)
 	ctx.Then(`^zero rows are reported$`, w.zeroRowsReported)
 	ctx.Then(`^the literal rescue is reported$`, w.literalRescueReported)
+	ctx.Then(`^the result used the model SQL path$`, w.usedModelSQL)
+	ctx.Then(`^exactly (\d+) rows? (?:is|are) reported$`, w.exactRowsReported)
+	ctx.Then(`^the degraded reason is "([^"]*)"$`, w.degradedReason)
+}
+
+func (w *providerAcceptanceWorld) usedModelSQL() error {
+	doc, err := w.lastJSON()
+	if err != nil {
+		return err
+	}
+	if doc["path"] != "llm_fallback" || strings.TrimSpace(fmt.Sprint(doc["sql"])) == "" {
+		return fmt.Errorf("model SQL path not declared: %s", w.last.stdout)
+	}
+	return nil
+}
+
+func (w *providerAcceptanceWorld) exactRowsReported(want int) error {
+	doc, err := w.lastJSON()
+	if err != nil {
+		return err
+	}
+	if got := intValue(doc["row_count"]); got != want {
+		return fmt.Errorf("row_count = %d, want %d: %s", got, want, w.last.stdout)
+	}
+	return nil
+}
+
+func (w *providerAcceptanceWorld) degradedReason(want string) error {
+	doc, err := w.lastJSON()
+	if err != nil {
+		return err
+	}
+	if got := fmt.Sprint(doc["degraded"]); got != want {
+		return fmt.Errorf("degraded = %q, want %q: %s", got, want, w.last.stdout)
+	}
+	return nil
 }
 
 func (w *providerAcceptanceWorld) memoryExists(content string) error {

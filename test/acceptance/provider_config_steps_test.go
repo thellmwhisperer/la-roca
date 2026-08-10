@@ -20,6 +20,7 @@ func registerProviderConfigSteps(ctx *godog.ScenarioContext, w *providerAcceptan
 	ctx.Given(`^the configuration also contains the unknown key "([^"]*)"$`, w.addUnknownConfigKey)
 	ctx.Given(`^the configuration file is missing$`, w.removeConfig)
 	ctx.Given(`^no configured provider is available$`, w.noProviderAvailable)
+	ctx.Given(`^the model answers with SQL "([^"]*)"$`, w.modelAnswersSQL)
 	ctx.Then(`^the reported provider order is "([^"]*)"$`, w.reportedProviderOrder)
 	ctx.Then(`^the output warns about "([^"]*)"$`, w.outputWarnsAbout)
 	ctx.Then(`^the configuration is reported as absent$`, w.configReportedAbsent)
@@ -77,12 +78,16 @@ func (w *providerAcceptanceWorld) persistProviderConfiguration(extra string) err
 		fixture.BaseURL = providerDeadEndpoint
 		if fixture.Availability == "ready" {
 			server := httptest.NewServer(http.HandlerFunc(func(out http.ResponseWriter, request *http.Request) {
-				if request.URL.Path != "/api/tags" {
+				switch request.URL.Path {
+				case "/api/tags":
+					out.Header().Set("Content-Type", "application/json")
+					_, _ = fmt.Fprintf(out, `{"models":[{"name":%q,"model":%q}]}`, fixture.Model, fixture.Model)
+				case "/api/chat":
+					out.Header().Set("Content-Type", "application/json")
+					_, _ = fmt.Fprintf(out, `{"message":{"content":%q}}`, w.modelSQL)
+				default:
 					http.NotFound(out, request)
-					return
 				}
-				out.Header().Set("Content-Type", "application/json")
-				_, _ = fmt.Fprintf(out, `{"models":[{"name":%q,"model":%q}]}`, fixture.Model, fixture.Model)
 			}))
 			w.readyServers = append(w.readyServers, server)
 			fixture.BaseURL = server.URL
@@ -94,6 +99,11 @@ func (w *providerAcceptanceWorld) persistProviderConfiguration(extra string) err
 		}
 	}
 	return w.writeConfig(body.String())
+}
+
+func (w *providerAcceptanceWorld) modelAnswersSQL(statement string) error {
+	w.modelSQL = statement
+	return nil
 }
 
 func (w *providerAcceptanceWorld) addUnknownConfigKey(key string) error {

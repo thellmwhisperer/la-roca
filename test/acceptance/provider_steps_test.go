@@ -25,6 +25,7 @@ type providerAcceptanceWorld struct {
 	statements   []run
 	providers    []providerFixture
 	credential   string
+	modelSQL     string
 	readyServers []*httptest.Server
 }
 
@@ -56,6 +57,7 @@ func registerProviderAcceptanceSteps(ctx *godog.ScenarioContext, binary string) 
 		w.statements = nil
 		w.providers = nil
 		w.credential = ""
+		w.modelSQL = ""
 		w.readyServers = nil
 		return c, nil
 	})

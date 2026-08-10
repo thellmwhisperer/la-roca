@@ -39,3 +39,25 @@ Feature: Honest queries without a model
     Then the command exits with code 1
     And zero rows are reported
     And the literal rescue is reported
+
+  Scenario: Model SQL passes the gate, executes, and returns its rows
+    Given the provider configuration is:
+      | provider | model            | availability |
+      | ollama   | gate-acceptance  | ready         |
+    And the model answers with SQL "SELECT id, content AS text FROM memories ORDER BY id LIMIT 1"
+    When I ask "provider acceptance sentinel"
+    Then the command exits with code 0
+    And the result used the model SQL path
+    And exactly 1 row is reported
+    And one row contains "provider acceptance sentinel"
+
+  Scenario: Model SQL rejected by the gate never executes
+    Given the provider configuration is:
+      | provider | model            | availability |
+      | ollama   | gate-acceptance  | ready         |
+    And the model answers with SQL "DELETE FROM memories"
+    When I ask "gate rejection absent terms"
+    Then the command exits with code 1
+    And the degraded reason is "invalid_sql"
+    And zero rows are reported
+    And the database still contains 1 memory
