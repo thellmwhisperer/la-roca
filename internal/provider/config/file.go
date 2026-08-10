@@ -4,12 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 // SetProviderModel changes only a model assignment and preserves the remaining TOML.
@@ -50,10 +50,7 @@ func editFile(path string, update func(string) string) error {
 		}
 	}
 	updated := update(text)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("create the configuration directory: %w", err)
-	}
-	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
+	if err := securefile.Write(path, []byte(updated), 0o600, 0o700); err != nil {
 		return fmt.Errorf("write the configuration at %s: %w", path, err)
 	}
 	return nil

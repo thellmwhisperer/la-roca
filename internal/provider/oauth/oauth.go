@@ -30,9 +30,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 // renewalMargin is how early a token is considered expired. A token that is
@@ -290,21 +291,12 @@ type Store struct{ Path string }
 // Save writes the session with the permissions of a secret, creating the
 // directory with the permissions of a secret's directory.
 func (s Store) Save(token Token) error {
-	if err := os.MkdirAll(filepath.Dir(s.Path), 0o700); err != nil {
-		return fmt.Errorf("create the credential directory: %w", err)
-	}
 	payload, err := json.MarshalIndent(token, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(s.Path, append(payload, '\n'), 0o600); err != nil {
+	if err := securefile.Write(s.Path, append(payload, '\n'), 0o600, 0o700); err != nil {
 		return fmt.Errorf("write the credential: %w", err)
-	}
-	// WriteFile only applies the mode when it creates the file: a credential
-	// the operator left world-readable stays that way unless it is tightened
-	// here.
-	if err := os.Chmod(s.Path, 0o600); err != nil {
-		return fmt.Errorf("restrict the credential's permissions: %w", err)
 	}
 	return nil
 }
@@ -358,7 +350,18 @@ func (s Session) Token(ctx context.Context) (Token, error) {
 	if !token.Expired(time.Now()) {
 		return token, nil
 	}
-
+	unlock, err := securefile.Lock(s.Store.Path + ".lock")
+	if err != nil {
+		return Token{}, fmt.Errorf("lock the credential for renewal: %w", err)
+	}
+	defer unlock()
+	token, err = s.Store.Load()
+	if err != nil {
+		return Token{}, err
+	}
+	if !token.Expired(time.Now()) {
+		return token, nil
+	}
 	renewed, err := s.refresh(ctx, token)
 	if err != nil {
 		return Token{}, fmt.Errorf("refresh the expired access token: %w", err)

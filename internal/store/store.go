@@ -66,6 +66,10 @@ func Open(path string) (*DB, error) {
 		handle.Close()
 		return nil, fmt.Errorf("open the database %q: %w", abs, whyItCannotOpen(abs, err))
 	}
+	if err := os.Chmod(abs, 0o600); err != nil {
+		handle.Close()
+		return nil, fmt.Errorf("restrict the database %q: %w", abs, err)
+	}
 	return &DB{sql: handle, path: abs}, nil
 }
 

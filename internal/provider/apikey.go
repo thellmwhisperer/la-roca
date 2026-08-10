@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 // APIKeyFile is the name of a key-based provider's credential inside the
@@ -27,17 +29,8 @@ func SaveAPIKey(credentials, name, key string) error {
 		return fmt.Errorf("the API key is empty")
 	}
 	path := APIKeyPath(credentials, name)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("create the credential directory: %w", err)
-	}
-	if err := os.WriteFile(path, append([]byte(key), '\n'), 0o600); err != nil {
+	if err := securefile.Write(path, append([]byte(key), '\n'), 0o600, 0o700); err != nil {
 		return fmt.Errorf("write the credential: %w", err)
-	}
-	// WriteFile only applies the mode when it creates the file: a credential
-	// the operator left world-readable stays that way unless it is tightened
-	// here.
-	if err := os.Chmod(path, 0o600); err != nil {
-		return fmt.Errorf("restrict the credential's permissions: %w", err)
 	}
 	return nil
 }

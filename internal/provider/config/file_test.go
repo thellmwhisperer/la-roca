@@ -118,8 +118,23 @@ func TestSetProviderModelCreatesAndSurgicallyEditsTheConfiguration(t *testing.T)
 	if string(after) != want {
 		t.Fatalf("unrelated bytes changed:\n--- want ---\n%s--- got ---\n%s", want, after)
 	}
-	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o640 {
-		t.Fatalf("mode changed: info=%v err=%v", info, err)
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode = %v err=%v, want 0600", info, err)
+	}
+}
+
+func TestEditingAConfigurationWithAnInlineKeyTightensItsPermissions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	body := "[models.xai]\nmodel = \"old\"\napi_key = \"secret\"\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetProviderModel(path, "xai", "new"); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("credential-bearing config info = %v, err=%v; want mode 0600", info, err)
 	}
 }
 
@@ -142,8 +157,8 @@ func TestSetModelOrderCreatesAndSurgicallyEditsTheConfiguration(t *testing.T) {
 	if string(after) != want {
 		t.Fatalf("unrelated bytes changed:\n--- want ---\n%s--- got ---\n%s", want, after)
 	}
-	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o640 {
-		t.Fatalf("mode changed: info=%v err=%v", info, err)
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode = %v err=%v, want 0600", info, err)
 	}
 
 	childOnly := "[models.xai]\nmodel = \"grok-4\"\n"

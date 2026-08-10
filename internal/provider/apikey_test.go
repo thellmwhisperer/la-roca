@@ -23,6 +23,20 @@ func TestSaveAPIKeyWritesWithSecretPermissions(t *testing.T) {
 	}
 }
 
+func TestSaveAPIKeyTightensAPreExistingCredentialDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "credentials")
+	if err := os.Mkdir(dir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveAPIKey(dir, NameXAI, "secret"); err != nil {
+		t.Fatal(err)
+	}
+	assertMode(t, dir, 0o700)
+}
+
 func TestDeleteAPIKeyForgetsTheCredential(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "credentials")
 	if err := SaveAPIKey(dir, NameDeepSeek, "sk-ds"); err != nil {

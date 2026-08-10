@@ -5,12 +5,14 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -204,6 +206,24 @@ func TestTheStoreWritesTheCredentialUnreadableToAnybodyElse(t *testing.T) {
 	}
 }
 
+func TestTheStoreTightensAPreExistingCredentialDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "credentials")
+	if err := os.Mkdir(dir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	store := Store{Path: filepath.Join(dir, "codex.json")}
+	if err := store.Save(Token{AccessToken: "at"}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("credential directory info = %v, err=%v; want mode 0700", info, err)
+	}
+}
+
 func TestTheStoreRoundTripsAndForgets(t *testing.T) {
 	store := Store{Path: filepath.Join(t.TempDir(), "codex.json")}
 	if store.Exists() {
@@ -305,6 +325,48 @@ func TestSessionRenewsOnItsOwnAndPersistsTheResult(t *testing.T) {
 	}
 	if refreshes != 1 {
 		t.Fatalf("it renewed %d times and once was enough", refreshes)
+	}
+}
+
+func TestConcurrentSessionsRefreshOneRotatingTokenOnce(t *testing.T) {
+	var mu sync.Mutex
+	refreshes := 0
+	server := tokenServer(t, func(form url.Values) (int, map[string]any) {
+		mu.Lock()
+		defer mu.Unlock()
+		refreshes++
+		if refreshes > 1 || form.Get("refresh_token") != "rt-once" {
+			return http.StatusBadRequest, map[string]any{"error": "invalid_grant"}
+		}
+		return http.StatusOK, map[string]any{
+			"access_token": "fresh", "refresh_token": "rt-next", "expires_in": 3600,
+		}
+	})
+	store := Store{Path: filepath.Join(t.TempDir(), "credentials", "codex.json")}
+	if err := store.Save(Token{AccessToken: "stale", RefreshToken: "rt-once", ExpiresAt: time.Now().Add(-time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	session := Session{Store: store, Flow: Flow{Endpoints: Endpoints{Token: server.URL, ClientID: "cid"}}}
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for range 2 {
+		go func() {
+			<-start
+			token, err := session.Token(context.Background())
+			if err == nil && token.AccessToken != "fresh" {
+				err = fmt.Errorf("access token = %q", token.AccessToken)
+			}
+			results <- err
+		}()
+	}
+	close(start)
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatalf("concurrent token call: %v", err)
+		}
+	}
+	if refreshes != 1 {
+		t.Fatalf("refreshes = %d, want 1", refreshes)
 	}
 }
 

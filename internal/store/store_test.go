@@ -3,11 +3,28 @@ package store_test
 import (
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/store"
 )
+
+func TestOpenTightensTheDatabaseFileToOperatorOnly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "roca.db")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("database info = %v, err=%v; want mode 0600", info, err)
+	}
+}
 
 func TestOpenAppliesWALAndBusyTimeout(t *testing.T) {
 	db := openFresh(t)
