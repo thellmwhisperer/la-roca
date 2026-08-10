@@ -21,11 +21,17 @@ import (
 // last output it gave. Anything the binary creates outside this HOME is
 // residue.
 type world struct {
-	binary   string
-	home     string
-	last     run
-	previous run
-	memories int
+	binary string
+	// releaseStamped is a copy of this product built with a clean release version
+	// linked in. `roca update` refuses to overwrite a build that is not a
+	// published release, so the scenario that drives the whole update flow
+	// installs this one and the scenario that pins the refusal installs the
+	// working copy `make build` produces.
+	releaseStamped string
+	home           string
+	last           run
+	previous       run
+	memories       int
 	// everything is every run of the scenario, for the steps that ask about a
 	// whole session's output and not only the last command's.
 	everything []run

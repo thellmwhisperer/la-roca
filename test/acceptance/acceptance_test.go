@@ -29,7 +29,7 @@ var selectedScenarios = []string{
 	"F08-07 ", "F08-08 ", "F08-09 ",
 	"F01-01 ", "F01-06 ", "F01-07 ",
 	"F01-10 ", "F01-11 ", "F01-12 ",
-	"F02-01 ", "F02-05 ", "F02-07 ", "F02-11 ",
+	"F02-01 ", "F02-05 ", "F02-07 ", "F02-08 ", "F02-11 ",
 }
 
 func TestAcceptanceSuite(t *testing.T) {

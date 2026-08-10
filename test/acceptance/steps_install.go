@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -89,6 +90,8 @@ func registerInstallSteps(ctx *godog.ScenarioContext, m *world) {
 	ctx.Given(`^La Roca has just been installed from the release channel$`, m.installedFromTheChannel)
 	ctx.Given(`^La Roca is installed at the target version$`, m.installedFromTheChannel)
 	ctx.Given(`^La Roca is installed at an earlier version$`, m.installedAtAnEarlierVersion)
+	ctx.Given(`^La Roca is installed at an earlier release version$`,
+		m.installedAtAnEarlierReleaseVersion)
 	ctx.Given(`^there is a regular file named "roca" in the binaries directory$`, m.aStrangersFileNamedRoca)
 	ctx.Given(`^the runtime is not started$`, m.theRuntimeIsNotStarted)
 	ctx.Given(`^La Roca is installed in the configurations of "([^"]*)", "([^"]*)" and "([^"]*)"$`,
@@ -150,6 +153,46 @@ func registerInstallSteps(ctx *godog.ScenarioContext, m *world) {
 	ctx.Then(`^no Roca artefact is left in the HOME$`, m.noRocaArtefactInTheHome)
 }
 
+// theReleaseVersion is the clean tag a release-stamped acceptance binary reports.
+// `roca update` refuses to overwrite a build that is not a published release, so
+// the scenario that exercises the whole update flow needs an artefact that IS
+// one. `make build` stamps the working copy (`<sha>-dirty`), which is the other
+// half of that contract and is what the refusal scenario runs.
+const theReleaseVersion = "v1.0.0"
+
+var (
+	releaseStampOnce sync.Once
+	releaseStampPath string
+	releaseStampErr  error
+)
+
+// releaseStampedBinary is this product's code with a release version linked in.
+// It is the same source `make build` compiles; only the version differs, which is
+// the one input the refusal reads.
+func releaseStampedBinary() (string, error) {
+	releaseStampOnce.Do(func() {
+		root, err := filepath.Abs(filepath.Join("..", ".."))
+		if err != nil {
+			releaseStampErr = err
+			return
+		}
+		out := filepath.Join(root, ".tmp", "acceptance", "roca-release")
+		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+			releaseStampErr = err
+			return
+		}
+		build := exec.Command("go", "build",
+			"-ldflags", "-X main.version="+theReleaseVersion, "-o", out, "./cmd/roca")
+		build.Dir = root
+		if output, err := build.CombinedOutput(); err != nil {
+			releaseStampErr = fmt.Errorf("stamp a release binary: %v: %s", err, output)
+			return
+		}
+		releaseStampPath = out
+	})
+	return releaseStampPath, releaseStampErr
+}
+
 // --- the channel ---
 
 // theChannel stands up the scenario's release server the first time somebody
@@ -162,7 +205,7 @@ func (m *world) theChannel() *installWorld {
 	m.install.repo = "roca-acceptance/la-roca"
 	m.install.versions = map[string][]byte{}
 	m.install.builtVersion = m.builtVersion()
-	m.install.versions[m.install.builtVersion] = mustRead(m.binary)
+	m.install.versions[m.install.builtVersion] = mustRead(m.artefact())
 	m.install.versions[theNewVersion] = []byte(
 		"#!/bin/sh\ncase \"$1\" in --version) echo \"roca " + theNewVersion +
 			" (acceptance) " + runtime.GOOS + "/" + runtime.GOARCH + "\";; esac\n")
@@ -300,7 +343,7 @@ func (m *world) installBinary() error {
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(target, mustRead(m.binary), 0o755); err != nil {
+	if err := os.WriteFile(target, mustRead(m.artefact()), 0o755); err != nil {
 		return err
 	}
 	m.installed = target
@@ -347,6 +390,26 @@ func (m *world) installedFromTheChannel() error {
 // database and its configuration already there, and the channel publishes a
 // newer version. The data has to exist
 // beforehand for "still intact" to mean anything.
+// artefact is the binary this scenario installs: `make build`'s own by default,
+// and the release-stamped one for the scenario that needs a published version.
+func (m *world) artefact() string {
+	if m.releaseStamped != "" {
+		return m.releaseStamped
+	}
+	return m.binary
+}
+
+// installedAtAnEarlierReleaseVersion is the update flow's premise: what is
+// installed is a real release, older than what the channel publishes.
+func (m *world) installedAtAnEarlierReleaseVersion() error {
+	stamped, err := releaseStampedBinary()
+	if err != nil {
+		return err
+	}
+	m.releaseStamped = stamped
+	return m.installedAtAnEarlierVersion()
+}
+
 func (m *world) installedAtAnEarlierVersion() error {
 	channel := m.theChannel()
 	if err := m.installedWithData(); err != nil {
@@ -1021,7 +1084,7 @@ func (m *world) builtVersion() string {
 	if m.install.builtVersion != "" {
 		return m.install.builtVersion
 	}
-	output, err := exec.Command(m.binary, "version").CombinedOutput()
+	output, err := exec.Command(m.artefact(), "version").CombinedOutput()
 	if err != nil {
 		return "dev"
 	}

@@ -75,13 +75,21 @@ Feature: The operator's real flow
     And the output contains no traceback
 
   @fast
-  Scenario: F02-07 Updating refuses to overwrite a build that is not a release
+  Scenario: F02-07 Updating is part of the flow and has an answer
+    Given La Roca is installed at an earlier release version
+    When I run "roca update"
+    Then the command exits with code 0
+    And "roca --version" reports the new version
+    And the previous database and configuration are still intact
+    And the MCP entries in the agent configurations still point at a binary that exists
+
+  @fast
+  Scenario: F02-08 Updating refuses to overwrite a build that is not a release
     Given La Roca is installed at an earlier version
     When I run "roca update"
     Then the command exits with code 1
     And the output names what is published and how to install it
     And the previous database and configuration are still intact
-    And the MCP entries in the agent configurations still point at a binary that exists
 
   @acceptance @slow
   Scenario: F02-09 Synthetic ingest of every supported source
