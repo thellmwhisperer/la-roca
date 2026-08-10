@@ -82,14 +82,14 @@ func (w *world) seed(t *testing.T) {
 
 	// Claude Code: a transcript, a memory file, and the index that is not one.
 	w.write(t, filepath.Join(project, fixtureSessionID+".jsonl"), fmt.Sprintf(`
-{"type":"user","timestamp":"2026-08-01T10:00:00Z","cwd":%q,"message":{"content":"cuantos adaptadores hay"}}
-{"type":"assistant","timestamp":"2026-08-01T10:00:02Z","message":{"content":[{"type":"thinking","thinking":"son nueve"},{"type":"text","text":"nueve"},{"type":"tool_use","id":"t1","name":"Grep","input":{"pattern":"adaptador"}}]}}
+{"type":"user","timestamp":"2026-08-01T10:00:00Z","cwd":%q,"message":{"content":"how many adapters are there"}}
+{"type":"assistant","timestamp":"2026-08-01T10:00:02Z","message":{"content":[{"type":"thinking","thinking":"son nine"},{"type":"text","text":"nine"},{"type":"tool_use","id":"t1","name":"Grep","input":{"pattern":"adaptador"}}]}}
 {"type":"user","timestamp":"2026-08-01T10:00:03Z","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":false}]}}
 {"type":"user","timestamp":"2026-08-01T10:00:20Z","message":{"content":[{"type":"text","text":"y ninguno se pierde"}]}}
 {"type":"assistant","timestamp":"2026-08-01T10:00:21Z","message":{"content":[{"type":"text","text":"ninguno"}]}}
 `, w.demoCwd()))
 	w.write(t, filepath.Join(project, "memory", "nota.md"),
-		"---\nname: la-matriz\ntype: project\n---\nLa matriz de ingesta tiene nueve fuentes.\n")
+		"---\nname: the-matrix\ntype: project\n---\nThe ingest matrix has nine sources.\n")
 	w.write(t, filepath.Join(project, "memory", "MEMORY.md"), "- [nota](nota.md)\n")
 
 	// A subagent under the layout the runtime uses today.
@@ -101,8 +101,8 @@ func (w *world) seed(t *testing.T) {
 	// Instruction files are present to prove they do not become ingest content:
 	// the global CLAUDE.md and the repository AGENTS.md files are configuration,
 	// not memory (the sources ruling).
-	w.write(t, filepath.Join(w.home, ".claude", "CLAUDE.md"), "# Global\n\nSiempre TDD.\n")
-	w.write(t, filepath.Join(roots.CodexRoot, "AGENTS.md"), "# Codex\n\nEl test primero.\n")
+	w.write(t, filepath.Join(w.home, ".claude", "CLAUDE.md"), "# Global\n\nAlways TDD.\n")
+	w.write(t, filepath.Join(roots.CodexRoot, "AGENTS.md"), "# Codex\n\nTest first.\n")
 	w.write(t, filepath.Join(w.demoCwd(), "AGENTS.md"), "# demo\n\nLee la spec antes.\n")
 
 	// Codex: a rollout, a memory, a rule and a skill.
@@ -110,16 +110,16 @@ func (w *world) seed(t *testing.T) {
 		fmt.Sprintf(`
 {"type":"session_meta","timestamp":"2026-08-01T09:00:00Z","payload":{"id":"codex-thread-1","cwd":%q,"timestamp":"2026-08-01T09:00:00Z","cli_version":"9.9.9"}}
 {"type":"event_msg","timestamp":"2026-08-01T09:00:01Z","payload":{"type":"user_message","message":"arranca la ola seis"}}
-{"type":"response_item","timestamp":"2026-08-01T09:00:02Z","payload":{"type":"reasoning","summary":[{"text":"la matriz primero"}]}}
+{"type":"response_item","timestamp":"2026-08-01T09:00:02Z","payload":{"type":"reasoning","summary":[{"text":"the matrix first"}]}}
 {"type":"event_msg","timestamp":"2026-08-01T09:00:30Z","payload":{"type":"task_complete","last_agent_message":"en marcha"}}
 `, w.demoCwd()))
 	w.write(t, filepath.Join(roots.CodexRoot, "memories", "una.md"), "Recuerda el contrato de idempotencia.\n")
 	w.write(t, filepath.Join(roots.CodexRoot, "rules", "mia.rules"), "no reescribir lo ya normalizado\n")
-	w.write(t, filepath.Join(roots.CodexRoot, "rules", "default.rules"), "esta no se ingiere\n")
+	w.write(t, filepath.Join(roots.CodexRoot, "rules", "default.rules"), "this one is not ingested\n")
 	w.write(t, filepath.Join(roots.CodexRoot, "skills", "medir", "SKILL.md"), "Medir antes de opinar.\n")
 
 	// Claude Desktop and Cowork, each with the layout of its own runtime.
-	w.write(t, filepath.Join(roots.ClaudeDesktopSessions, "sesion.json"), fmt.Sprintf(`{
+	w.write(t, filepath.Join(roots.ClaudeDesktopSessions, "session.json"), fmt.Sprintf(`{
   "cliSessionId": "%s",
   "sessionId": "local-1",
   "cwd": %q,
@@ -130,18 +130,18 @@ func (w *world) seed(t *testing.T) {
 	w.write(t, filepath.Join(roots.CoworkSessions, "cw.json"), fmt.Sprintf(`{
   "cliSessionId": "cowork-1",
   "cwd": %q,
-  "title": "revision"
+  "title": "review"
 }`, w.demoCwd()))
 	w.write(t, filepath.Join(roots.CoworkSessions, "cw", "audit.jsonl"), `
-{"type":"user","session_id":"cowork-1","_audit_timestamp":"2026-08-01T12:00:00Z","message":{"content":[{"type":"text","text":"revisa la matriz"}]}}
-{"type":"assistant","_audit_timestamp":"2026-08-01T12:00:04Z","message":{"content":"revisada"}}
+{"type":"user","session_id":"cowork-1","_audit_timestamp":"2026-08-01T12:00:00Z","message":{"content":[{"type":"text","text":"review the matrix"}]}}
+{"type":"assistant","_audit_timestamp":"2026-08-01T12:00:04Z","message":{"content":"reviewed"}}
 `)
 
 	// Pi, with its tree.
-	w.write(t, filepath.Join(roots.PiSessions, w.projectDir(), "sesion.jsonl"),
+	w.write(t, filepath.Join(roots.PiSessions, w.projectDir(), "session.jsonl"),
 		fmt.Sprintf(`{"type":"session","version":3,"id":"pi-1","cwd":%q,"timestamp":"2026-08-01T13:00:00Z"}
-{"id":"p1","parentId":null,"type":"message","timestamp":"2026-08-01T13:00:01Z","message":{"role":"user","content":"cuenta las fuentes"}}
-{"id":"p2","parentId":"p1","type":"message","timestamp":"2026-08-01T13:00:02Z","message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"nueve"}]}}
+{"id":"p1","parentId":null,"type":"message","timestamp":"2026-08-01T13:00:01Z","message":{"role":"user","content":"count the sources"}}
+{"id":"p2","parentId":"p1","type":"message","timestamp":"2026-08-01T13:00:02Z","message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"nine"}]}}
 `, w.demoCwd()))
 
 	w.seedOpenCode(t, roots.OpenCodeDB)
@@ -186,16 +186,16 @@ func (w *world) seedHermes(t *testing.T, path string) {
 	exec(t, db, `CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT,
 	              content TEXT, reasoning_content TEXT, tool_calls TEXT, tool_name TEXT,
 	              timestamp REAL, active INTEGER, finish_reason TEXT)`)
-	exec(t, db, `INSERT INTO sessions VALUES ('h1','tui','modelo-de-prueba',?,'una sesion',
+	exec(t, db, `INSERT INTO sessions VALUES ('h1','tui','test-model',?,'a session',
 	              1785542400, 1785542700, 'stop', 4, 1, 120)`, w.demoCwd())
-	exec(t, db, `INSERT INTO messages VALUES (1,'h1','user','cuantas fuentes ingiere',NULL,NULL,NULL,1785542400,1,NULL)`)
-	exec(t, db, `INSERT INTO messages VALUES (2,'h1','assistant','nueve','hay que contar',
-	              '[{"function":{"name":"grep","arguments":"{\"pattern\":\"fuente\"}"}}]',NULL,1785542401,1,'stop')`)
+	exec(t, db, `INSERT INTO messages VALUES (1,'h1','user','how many sources does it ingest',NULL,NULL,NULL,1785542400,1,NULL)`)
+	exec(t, db, `INSERT INTO messages VALUES (2,'h1','assistant','nine','we have to count',
+	              '[{"function":{"name":"grep","arguments":"{\"pattern\":\"source\"}"}}]',NULL,1785542401,1,'stop')`)
 	exec(t, db, `INSERT INTO messages VALUES (3,'h1','tool','{"ok":true}',NULL,NULL,'grep',1785542402,1,NULL)`)
 	// A session Hermes has not closed: it is not read until it has an ending.
-	exec(t, db, `INSERT INTO sessions VALUES ('h2','tui','modelo-de-prueba',?,'viva',
+	exec(t, db, `INSERT INTO sessions VALUES ('h2','tui','test-model',?,'live',
 	              1785542800, NULL, NULL, 1, 0, 10)`, w.demoCwd())
-	exec(t, db, `INSERT INTO messages VALUES (4,'h2','user','en curso',NULL,NULL,NULL,1785542800,1,NULL)`)
+	exec(t, db, `INSERT INTO messages VALUES (4,'h2','user','in progress',NULL,NULL,NULL,1785542800,1,NULL)`)
 }
 
 func openSynthetic(t *testing.T, path string) *sql.DB {

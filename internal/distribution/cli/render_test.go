@@ -61,13 +61,13 @@ func TestAGroupedResultUsesExactTOON(t *testing.T) {
 
 func TestSearchUsesTheExactAXITOONShape(t *testing.T) {
 	got := rowOutput([]string{"source", "id", "text", "created_at"}, []map[string]any{
-		{"source": "memory", "id": int64(11), "text": "el capitán, odia los guiones largos",
+		{"source": "memory", "id": int64(11), "text": "the team, hates the long dashes",
 			"created_at": "2026-08-04 21:45:10"},
-		{"source": "thinking", "id": int64(90), "text": "un razonamiento", "created_at": nil},
+		{"source": "thinking", "id": int64(90), "text": "some reasoning", "created_at": nil},
 	})
 	want := "rows[2]{source,id,created_at,text}:\n" +
-		"  memory,11,\"2026-08-04 21:45:10\",\"el capitán, odia los guiones largos\"\n" +
-		"  thinking,90,null,un razonamiento"
+		"  memory,11,\"2026-08-04 21:45:10\",\"the team, hates the long dashes\"\n" +
+		"  thinking,90,null,some reasoning"
 	if got != want {
 		t.Fatalf("TOON search differs:\n--- got ---\n%s\n--- want ---\n%s", got, want)
 	}
@@ -104,7 +104,7 @@ func TestTheColumnOrderIsTheQueryOrder(t *testing.T) {
 }
 
 func TestALongTextIsFlattenedAndClipped(t *testing.T) {
-	length := "primera línea\nsegunda línea " + strings.Repeat("relleno ", 60)
+	length := "first line\nsecond line " + strings.Repeat("filler ", 60)
 	output := rowOutput([]string{"content"}, []map[string]any{{"content": length}})
 	if strings.Contains(output, "\n") {
 		t.Errorf("the text still has line breaks:\n%s", output)
@@ -112,13 +112,13 @@ func TestALongTextIsFlattenedAndClipped(t *testing.T) {
 	if len([]rune(output)) > fieldWidth {
 		t.Errorf("the field takes %d characters", len([]rune(output)))
 	}
-	if !strings.Contains(output, "primera línea segunda línea") {
+	if !strings.Contains(output, "first line second line") {
 		t.Errorf("the clipping ate the beginning:\n%s", output)
 	}
 }
 
 func TestAnAverageIsNotPrintedWithTwentyDecimals(t *testing.T) {
-	output := rowOutput([]string{"media"}, []map[string]any{{"media": 3.4666666666666663}})
+	output := rowOutput([]string{"average"}, []map[string]any{{"average": 3.4666666666666663}})
 	if output != "3.46667" {
 		t.Errorf("average = %q, want 3.46667", output)
 	}
@@ -134,9 +134,9 @@ func TestWithoutRowsThereAreNoLines(t *testing.T) {
 // piece of data because the caller left the column list behind.
 func TestAnUndeclaredColumnStillShowsUp(t *testing.T) {
 	output := rowOutput([]string{"id"}, []map[string]any{
-		{"id": int64(1), "sorpresa": "aquí estoy"},
+		{"id": int64(1), "surprise": "here I am"},
 	})
-	if output != "rows[1]{id,sorpresa}:\n  1,aquí estoy" {
+	if output != "rows[1]{id,surprise}:\n  1,here I am" {
 		t.Errorf("the undeclared column was lost:\n%s", output)
 	}
 }

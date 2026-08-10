@@ -5,12 +5,12 @@ import "testing"
 const codexRollout = `
 {"type":"session_meta","timestamp":"2026-08-01T09:00:00Z","payload":{"id":"c0dec0de","cwd":"/w/demo","timestamp":"2026-08-01T09:00:00Z","cli_version":"1.2.3","model_provider":"openai"}}
 {"type":"turn_context","timestamp":"2026-08-01T09:00:01Z","payload":{"turn_id":"t1","model":"gpt-test"}}
-{"type":"event_msg","timestamp":"2026-08-01T09:00:02Z","payload":{"type":"user_message","message":"compila el binario"}}
-{"type":"response_item","timestamp":"2026-08-01T09:00:03Z","payload":{"type":"reasoning","summary":[{"text":"hay que"},{"text":"compilar"}]}}
+{"type":"event_msg","timestamp":"2026-08-01T09:00:02Z","payload":{"type":"user_message","message":"compile the binary"}}
+{"type":"response_item","timestamp":"2026-08-01T09:00:03Z","payload":{"type":"reasoning","summary":[{"text":"we have to"},{"text":"compile"}]}}
 {"type":"response_item","timestamp":"2026-08-01T09:00:04Z","payload":{"type":"function_call","call_id":"c1","name":"shell","arguments":"{\"cmd\":\"make build\"}"}}
 {"type":"response_item","timestamp":"2026-08-01T09:00:05Z","payload":{"type":"function_call_output","call_id":"c1","output":"{\"metadata\":{\"exit_code\":2}}"}}
-{"type":"event_msg","timestamp":"2026-08-01T09:02:06Z","payload":{"type":"task_complete","turn_id":"t1","last_agent_message":"ha fallado"}}
-{"type":"event_msg","timestamp":"2026-08-01T09:03:00Z","payload":{"type":"user_message","message":"y ahora"}}
+{"type":"event_msg","timestamp":"2026-08-01T09:02:06Z","payload":{"type":"task_complete","turn_id":"t1","last_agent_message":"it failed"}}
+{"type":"event_msg","timestamp":"2026-08-01T09:03:00Z","payload":{"type":"user_message","message":"and now"}}
 {"type":"response_item","timestamp":"2026-08-01T09:03:01Z","payload":{"type":"function_call","call_id":"c2","name":"shell","arguments":"{\"cmd\":\"ls\"}"}}
 {"type":"event_msg","timestamp":"2026-08-01T09:03:02Z","payload":{"type":"turn_aborted"}}
 `
@@ -32,10 +32,10 @@ func TestCodexSessionClosesOnTaskCompleteAndDiscardsAnAbortedTurn(t *testing.T) 
 		t.Fatalf("exchanges = %d, want 1: the aborted turn is not an exchange", len(session.Exchanges))
 	}
 	exchange := session.Exchanges[0]
-	if exchange.HumanText != "compila el binario" || exchange.AgentText != "ha fallado" {
+	if exchange.HumanText != "compile the binary" || exchange.AgentText != "it failed" {
 		t.Errorf("exchange = %+v", exchange)
 	}
-	if len(exchange.Thinking) != 1 || exchange.Thinking[0].Text != "hay que compilar" {
+	if len(exchange.Thinking) != 1 || exchange.Thinking[0].Text != "we have to compile" {
 		t.Fatalf("thinking = %+v", exchange.Thinking)
 	}
 	if len(exchange.Tools) != 1 {

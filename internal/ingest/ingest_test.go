@@ -80,7 +80,7 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 		t.Errorf("config memories = %d, want none", got)
 	}
 	// The global CLAUDE.md is configuration: its text never reaches the corpus.
-	if got := countRows(t, db.SQL(), `memories WHERE content LIKE '%Siempre TDD%'`); got != 0 {
+	if got := countRows(t, db.SQL(), `memories WHERE content LIKE '%Always TDD%'`); got != 0 {
 		t.Errorf("the global CLAUDE.md was ingested as a memory: %d row(s)", got)
 	}
 	if result.Delta.Exchanges == 0 || result.Delta.ThinkingBlocks == 0 || result.Delta.ToolUses == 0 {

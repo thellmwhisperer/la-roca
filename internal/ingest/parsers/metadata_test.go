@@ -6,12 +6,12 @@ const desktopMetadata = `{
   "cliSessionId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
   "sessionId": "local-77",
   "cwd": "/w/demo",
-  "title": "  arreglar la ingesta  ",
+  "title": "  fix the ingest  ",
   "createdAt": 1785542400000,
   "lastActivityAt": 1785542520000,
-  "model": "modelo-de-prueba",
+  "model": "test-model",
   "permissionMode": "acceptEdits",
-  "initialMessage": "empieza por la matriz",
+  "initialMessage": "start with the matrix",
   "userSelectedFolders": ["/w/demo"],
   "enabledMcpTools": []
 }`
@@ -36,7 +36,7 @@ func TestSessionMetadataIsASnapshotWithNoExchange(t *testing.T) {
 	if len(session.Exchanges) != 0 {
 		t.Errorf("exchanges = %d, want none", len(session.Exchanges))
 	}
-	if session.Title != "arreglar la ingesta" {
+	if session.Title != "fix the ingest" {
 		t.Errorf("title = %q, want it trimmed", session.Title)
 	}
 	if session.StartedAt != "2026-08-01T00:00:00Z" {
@@ -81,11 +81,11 @@ func TestSessionMetadataWithoutAnIdIsSkipped(t *testing.T) {
 }
 
 const coworkAudit = `
-{"type":"user","session_id":"cw-1","_audit_timestamp":"2026-08-01T11:00:00Z","message":{"content":[{"type":"text","text":"revisa el informe"}]}}
-{"type":"assistant","_audit_timestamp":"2026-08-01T11:00:03Z","message":{"content":"revisado"}}
+{"type":"user","session_id":"cw-1","_audit_timestamp":"2026-08-01T11:00:00Z","message":{"content":[{"type":"text","text":"review the report"}]}}
+{"type":"assistant","_audit_timestamp":"2026-08-01T11:00:03Z","message":{"content":"reviewed"}}
 {"type":"user","_audit_timestamp":"2026-08-01T11:00:04Z","message":{"content":[{"type":"tool_result","tool_use_id":"x","is_error":false}]}}
-{"type":"user","_audit_timestamp":"2026-08-01T11:00:10Z","message":{"content":[{"type":"text","text":"y el segundo"}]}}
-{"type":"assistant","_audit_timestamp":"2026-08-01T11:00:11Z","message":{"content":[{"type":"text","text":"tambien"}]}}
+{"type":"user","_audit_timestamp":"2026-08-01T11:00:10Z","message":{"content":[{"type":"text","text":"and the second one"}]}}
+{"type":"assistant","_audit_timestamp":"2026-08-01T11:00:11Z","message":{"content":[{"type":"text","text":"also"}]}}
 `
 
 func TestCoworkAuditPairsTurnsAndTakesItsIdentityFromTheSidecar(t *testing.T) {
@@ -100,17 +100,17 @@ func TestCoworkAuditPairsTurnsAndTakesItsIdentityFromTheSidecar(t *testing.T) {
 	if session.ID != "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" {
 		t.Errorf("session id = %q: the sidecar declares it", session.ID)
 	}
-	if session.Title != "arreglar la ingesta" {
+	if session.Title != "fix the ingest" {
 		t.Errorf("title = %q", session.Title)
 	}
 	// The tool-result-only line is not a turn: two turns, two exchanges.
 	if len(session.Exchanges) != 2 {
 		t.Fatalf("exchanges = %d, want 2", len(session.Exchanges))
 	}
-	if session.Exchanges[0].AgentText != "revisado" {
+	if session.Exchanges[0].AgentText != "reviewed" {
 		t.Errorf("a bare string answer was lost: %+v", session.Exchanges[0])
 	}
-	if session.Exchanges[1].HumanText != "y el segundo" {
+	if session.Exchanges[1].HumanText != "and the second one" {
 		t.Errorf("second exchange = %+v", session.Exchanges[1])
 	}
 }

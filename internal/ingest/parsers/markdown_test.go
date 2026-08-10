@@ -3,11 +3,11 @@ package parsers
 import "testing"
 
 func TestClaudeMemoryReadsItsFrontmatter(t *testing.T) {
-	content := "---\nname: la-regla-del-guion\ntype: feedback\ndescription: como escribir\n---\n" +
-		"Nunca usar guiones largos en el texto generado.\n"
+	content := "---\nname: the-dash-rule\ntype: feedback\ndescription: how to write\n---\n" +
+		"Never use long dashes in the generated text.\n"
 	records, err := Parse(KindClaudeMemory, []byte(content), FileMeta{
-		Path:     "/w/.claude/projects/-w-demo/memory/guion.md",
-		FileName: "guion.md",
+		Path:     "/w/.claude/projects/-w-demo/memory/dash.md",
+		FileName: "dash.md",
 		Project:  "demo",
 	})
 	if err != nil {
@@ -20,7 +20,7 @@ func TestClaudeMemoryReadsItsFrontmatter(t *testing.T) {
 	if memory.Layer != "feedback" {
 		t.Errorf("layer = %q: it comes from the declared type", memory.Layer)
 	}
-	if memory.Content != "Nunca usar guiones largos en el texto generado." {
+	if memory.Content != "Never use long dashes in the generated text." {
 		t.Errorf("content = %q", memory.Content)
 	}
 	if memory.Origin != "cron" || memory.SourceAgent != "claude-code" || memory.Project != "demo" {
@@ -29,10 +29,10 @@ func TestClaudeMemoryReadsItsFrontmatter(t *testing.T) {
 	// The pair that makes re-ingesting update instead of duplicate, and that a
 	// database adopted from the laboratory recognizes as its own.
 	if memory.Metadata["_cron_source"] != "claude-code" ||
-		memory.Metadata["file_path"] != "/w/.claude/projects/-w-demo/memory/guion.md" {
+		memory.Metadata["file_path"] != "/w/.claude/projects/-w-demo/memory/dash.md" {
 		t.Errorf("metadata = %+v", memory.Metadata)
 	}
-	if memory.Metadata["memory_name"] != "la-regla-del-guion" {
+	if memory.Metadata["memory_name"] != "the-dash-rule" {
 		t.Errorf("metadata = %+v", memory.Metadata)
 	}
 }

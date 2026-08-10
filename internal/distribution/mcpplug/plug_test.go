@@ -92,13 +92,13 @@ func TestTheSameQuestionThroughThePlugAndThroughTheServiceIsTheSameAnswer(t *tes
 	ctx := context.Background()
 
 	direct, err := svc.Query(ctx, service.QueryRequest{
-		Question: "cuantas memorias hay",
+		Question: "how many memories are there",
 	})
 	if err != nil {
 		t.Fatalf("Query over the service: %v", err)
 	}
 	throughThePlug := queryThroughThePlug(t, session, map[string]any{
-		"query": "cuantas memorias hay",
+		"query": "how many memories are there",
 	})
 
 	if throughThePlug.SQL != direct.SQL {
@@ -130,7 +130,7 @@ func TestTheSQLToolCompilesWithoutRunning(t *testing.T) {
 	session := connect(t, seededServiceWithModel(t))
 
 	result := callTool(t, session, "roca_sql", map[string]any{
-		"query": "cuantas memorias hay",
+		"query": "how many memories are there",
 	})
 	var answer service.QueryResult
 	decode(t, result, &answer)
@@ -280,7 +280,7 @@ func TestAMissingArgumentIsAToolErrorAndTheSessionSurvives(t *testing.T) {
 	// And a correct call right after it works, which is what "the session is
 	// still alive" means.
 	after := queryThroughThePlug(t, session, map[string]any{
-		"query": "cuantas memorias hay",
+		"query": "how many memories are there",
 	})
 	if after.SQL == "" {
 		t.Error("the session did not survive the mistaken call")
@@ -330,10 +330,10 @@ func TestTheHandshakeAnnouncesTheProductAndItsVersion(t *testing.T) {
 func TestTheServerKeepsNoStateBetweenSessions(t *testing.T) {
 	svc := seededService(t)
 	first := queryThroughThePlug(t, connect(t, svc), map[string]any{
-		"query": "cuantas memorias hay",
+		"query": "how many memories are there",
 	})
 	second := queryThroughThePlug(t, connect(t, svc), map[string]any{
-		"query": "cuantas memorias hay",
+		"query": "how many memories are there",
 	})
 
 	if asJSON(t, first.Rows) != asJSON(t, second.Rows) || first.SQL != second.SQL {
@@ -473,8 +473,8 @@ func seededService(t *testing.T) *service.Service {
 		t.Fatalf("Init: %v", err)
 	}
 	for _, seed := range []struct{ layer, content string }{
-		{"project", "el capitan odia los guiones largos en el texto generado"},
-		{"discovery", "la adopcion compara estructura, jamas el texto del DDL"},
+		{"project", "the team hates long dashes in the generated text"},
+		{"discovery", "adoption compares structure, never the text of the DDL"},
 	} {
 		if _, err := svc.Store(context.Background(), service.StoreRequest{
 			Layer: seed.layer, Content: seed.content, Surface: service.SurfaceCLI,

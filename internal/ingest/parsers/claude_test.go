@@ -6,12 +6,12 @@ import "testing"
 // transcript ever enters a test, and no private vocabulary either.
 
 const claudeTranscript = `
-{"type":"user","timestamp":"2026-08-01T10:00:00.000Z","cwd":"/w/demo","message":{"content":"cuantas memorias hay"}}
-{"type":"assistant","timestamp":"2026-08-01T10:00:02.500Z","message":{"content":[{"type":"thinking","thinking":"dos palabras y una cuenta"},{"type":"text","text":"hay tres"},{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls -la"}}]}}
+{"type":"user","timestamp":"2026-08-01T10:00:00.000Z","cwd":"/w/demo","message":{"content":"how many memories are there"}}
+{"type":"assistant","timestamp":"2026-08-01T10:00:02.500Z","message":{"content":[{"type":"thinking","thinking":"two words and a count"},{"type":"text","text":"there are three"},{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls -la"}}]}}
 {"type":"user","timestamp":"2026-08-01T10:00:03.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":[{"type":"text","text":"no such directory"}]}]}}
-{"type":"assistant","timestamp":"2026-08-01T10:00:04.000Z","message":{"content":[{"type":"text","text":"lo arreglo"}]}}
-{"type":"user","timestamp":"2026-08-01T10:00:10.000Z","message":{"content":[{"type":"text","text":"y ahora"}]}}
-{"type":"assistant","timestamp":"2026-08-01T10:00:11.000Z","message":{"content":[{"type":"text","text":"listo"}]}}
+{"type":"assistant","timestamp":"2026-08-01T10:00:04.000Z","message":{"content":[{"type":"text","text":"I will fix it"}]}}
+{"type":"user","timestamp":"2026-08-01T10:00:10.000Z","message":{"content":[{"type":"text","text":"and now"}]}}
+{"type":"assistant","timestamp":"2026-08-01T10:00:11.000Z","message":{"content":[{"type":"text","text":"ready"}]}}
 `
 
 func TestClaudeSessionSplitsExchangesOnTheHumanTurn(t *testing.T) {
@@ -47,18 +47,18 @@ func TestClaudeSessionSplitsExchangesOnTheHumanTurn(t *testing.T) {
 	if first.Number != 1 {
 		t.Errorf("first exchange number = %d, want 1", first.Number)
 	}
-	if first.HumanText != "cuantas memorias hay" {
+	if first.HumanText != "how many memories are there" {
 		t.Errorf("human text = %q", first.HumanText)
 	}
 	// The assistant's text blocks are joined, and only the text ones.
-	if first.AgentText != "hay tres" {
+	if first.AgentText != "there are three" {
 		t.Errorf("agent text = %q", first.AgentText)
 	}
-	if second := session.Exchanges[1]; second.HumanText != "cuantas memorias hay" ||
-		second.AgentText != "lo arreglo" {
+	if second := session.Exchanges[1]; second.HumanText != "how many memories are there" ||
+		second.AgentText != "I will fix it" {
 		t.Errorf("second exchange = %+v", second)
 	}
-	if third := session.Exchanges[2]; third.HumanText != "y ahora" || third.AgentText != "listo" {
+	if third := session.Exchanges[2]; third.HumanText != "and now" || third.AgentText != "ready" {
 		t.Errorf("third exchange = %+v", third)
 	}
 	if first.LatencyMS == nil || *first.LatencyMS != 2500 {
@@ -143,7 +143,7 @@ func TestClaudeSessionSurvivesGarbage(t *testing.T) {
 }
 
 func TestClaudeSessionWithoutAnyExchangeIsSkipped(t *testing.T) {
-	records, err := Parse(KindClaudeSession, []byte(`{"type":"user","message":{"content":"sin respuesta"}}`),
+	records, err := Parse(KindClaudeSession, []byte(`{"type":"user","message":{"content":"no answer"}}`),
 		FileMeta{SessionID: "s3"})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
