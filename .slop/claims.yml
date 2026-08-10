@@ -1,0 +1,66 @@
+schema: 1
+claims:
+  internal/distribution/cli/cli.go:
+    contract:
+      file: features/distribution/cli.feature
+      item: "Help lists every command with one honest line each"
+  internal/distribution/cli/commands.go:
+    contract:
+      file: features/distribution/cli.feature
+      item: "Every command speaks human by default and JSON only when asked"
+  internal/distribution/cli/ingest.go:
+    contract:
+      file: features/ingest/report.feature
+      item: "Ingest ends with per-source counts and a total delta"
+  internal/distribution/cli/mcp.go:
+    contract:
+      file: features/distribution/mcp.feature
+      item: "MCP serve exposes its tools over stdio and answers a health check"
+  internal/distribution/cli/memory.go:
+    contract:
+      file: features/store/write.feature
+      item: "Store writes one memory with layer, origin and project"
+  internal/distribution/cli/models.go:
+    contract:
+      file: features/provider/selection.feature
+      item: "Doctor names which model is going to answer, and why"
+  internal/distribution/cli/search.go:
+    contract:
+      file: features/store/search.feature
+      item: "Search matches whole words, never substrings inside other words"
+  internal/distribution/cli/serve.go:
+    contract:
+      file: features/08_mcp_plug.feature
+      item: "F08-01 The server comes up on demand over stdio and announces who it is"
+  internal/distribution/cli/skill.go:
+    contract:
+      file: features/distribution/skill.feature
+      item: "Skill install places the skill where the chosen agent discovers it, and says where"
+  internal/distribution/cli/uninstall.go:
+    contract:
+      file: features/distribution/lifecycle.feature
+      item: "Uninstall removes La Roca and keeps the data unless the operator consents"
+  internal/distribution/cli/update.go:
+    contract:
+      file: features/distribution/lifecycle.feature
+      item: "Update without a reachable release fails plainly"
+  internal/distribution/mcpplug/tools.go:
+    contract:
+      file: features/08_mcp_plug.feature
+      item: "F08-02 Discovery returns exactly the decided surface"
+  data/layers.yaml:
+    contract:
+      file: features/store/write.feature
+      item: "Store writes one memory with layer, origin and project"
+  data/schema.sql:
+    contract:
+      file: features/store/init.feature
+      item: "Init creates a fresh database with the complete schema"
+  data/search.sql:
+    contract:
+      file: features/store/search.feature
+      item: "Search matches whole words, never substrings inside other words"
+  internal/distribution/skill/SKILL.md:
+    contract:
+      file: features/distribution/skill.feature
+      item: "Skill install places the skill where the chosen agent discovers it, and says where"

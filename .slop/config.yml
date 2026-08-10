@@ -1,14 +1,15 @@
 # What the slop gate measures in this repository.
 #
-# Two scopes, measured independently so duplication in production code cannot
+# Two duplication scopes, measured independently so production code cannot
 # hide inside the test scope. Both sweep from the repository root because the
 # product's code lives in three roots (`cmd/`, `internal/`, `test/`) and a clone
 # copied from a command into a package is exactly the kind the gate exists to
 # catch: scoping per directory would make it invisible.
 #
-# What is not swept: `data/` (embedded artefacts plus the one `embed.go` that
-# declares them), `features/` (the frozen Gherkin contract, not Go),
-# `bin/`, `dist/` and `.tmp/` (build output and the cached gate binary itself).
+# `features/` is the frozen Gherkin contract and is not duplication input;
+# `bin/`, `dist/` and `.tmp/` are build output and gate caches. Embedded data
+# stays visible to the public-surface census even though the Go scopes do not
+# select it.
 schema: 1
 
 detector:
@@ -27,7 +28,6 @@ global_ignore:
   - "**/.worktrees/**"
   - "bin/**"
   - "dist/**"
-  - "data/**"
   - "features/**"
 
 scopes:
@@ -44,3 +44,45 @@ scopes:
   go_tests:
     scan_path: .
     pattern: "{cmd/**/*_test.go,internal/**/*_test.go,test/**/*.go}"
+
+# Orphan scopes are repository surfaces, not language scans. A new public
+# surface starts as active debt until something outside itself consumes it;
+# the committed ceiling makes that addition fail closed.
+orphan_scopes:
+  markdown:
+    files: ["**/*.md"]
+
+  public_surfaces:
+    files:
+      - "internal/distribution/cli/*.go"
+      - "internal/distribution/mcpplug/tools.go"
+      - "data/*.{sql,yaml}"
+      - "internal/distribution/skill/SKILL.md"
+    ignore:
+      - "**/*_test.go"
+      - "internal/distribution/cli/execution_log.go"
+      - "internal/distribution/cli/ingest_progress.go"
+      - "internal/distribution/cli/render.go"
+      - "internal/distribution/cli/spinner.go"
+      - "internal/distribution/cli/style.go"
+
+# Claims select the same registered capability files. Any new registrator or
+# embedded asset is therefore rejected until it points at a surviving scenario.
+claims:
+  file: .slop/claims.yml
+  surfaces:
+    commands_and_flags:
+      files: ["internal/distribution/cli/*.go"]
+      ignore:
+        - "**/*_test.go"
+        - "internal/distribution/cli/execution_log.go"
+        - "internal/distribution/cli/ingest_progress.go"
+        - "internal/distribution/cli/render.go"
+        - "internal/distribution/cli/spinner.go"
+        - "internal/distribution/cli/style.go"
+    mcp_tools:
+      files: ["internal/distribution/mcpplug/tools.go"]
+    embedded_assets:
+      files:
+        - "data/*.{sql,yaml}"
+        - "internal/distribution/skill/SKILL.md"

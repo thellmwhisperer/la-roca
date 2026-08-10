@@ -27,3 +27,12 @@ scopes:
   # the bench and hooks suites, dropping the count from 23 to 22.
   go_tests:
     active_clones_ceiling: 22
+
+  # The markdown and public-surface blocks bootstrap today's census. They are
+  # ratchets, not budgets: removing an orphan lowers the corresponding number,
+  # and adding one fails the gate.
+orphan_scopes:
+  markdown:
+    active_orphans_ceiling: 5
+  public_surfaces:
+    active_orphans_ceiling: 12
