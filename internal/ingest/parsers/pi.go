@@ -42,6 +42,7 @@ type piEntry struct {
 	Message   *piMessage `json:"message"`
 
 	hasParent bool
+	record    int
 }
 
 func (e *piEntry) UnmarshalJSON(data []byte) error {
@@ -94,7 +95,7 @@ type piHeader struct {
 // that happened, and only its complete turns are exchanges: a turn whose tool
 // calls have no results yet is deferred, not ingested half-written.
 func ParsePiSession(content []byte, meta FileMeta) (Records, error) {
-	rows, deferred, err := piRows(content)
+	rows, deferred, discards, err := piRows(content)
 	if err != nil {
 		return Records{}, err
 	}
@@ -133,7 +134,7 @@ func ParsePiSession(content []byte, meta FileMeta) (Records, error) {
 
 	if len(rows) == 1 {
 		session.Metadata["source_high_water_at"] = isoFromAnyInstant(header.Timestamp)
-		return Records{Sessions: []Session{session}, Deferred: deferred}, nil
+		return Records{Sessions: []Session{session}, Deferred: deferred, Discards: discards}, nil
 	}
 
 	entries, err := piEntries(rows[1:])
@@ -144,8 +145,9 @@ func ParsePiSession(content []byte, meta FileMeta) (Records, error) {
 	if err != nil {
 		return Records{}, err
 	}
-	exchanges, stillOpen := piExchanges(active)
+	exchanges, stillOpen, exchangeDiscards := piExchanges(active)
 	deferred += stillOpen
+	discards = append(discards, exchangeDiscards...)
 
 	session.Exchanges = exchanges
 	session.Metadata["source_high_water_id"] = active[len(active)-1].ID
@@ -153,20 +155,21 @@ func ParsePiSession(content []byte, meta FileMeta) (Records, error) {
 		session.Metadata["source_high_water_at"] = at
 	}
 	session.StartedAt, session.EndedAt, session.DurationMinutes = span(exchanges)
-	return Records{Sessions: []Session{session}, Deferred: deferred}, nil
+	return Records{Sessions: []Session{session}, Deferred: deferred, Discards: discards}, nil
 }
 
 // piRows splits the file, holding back a live tail. A final line with no newline
 // behind it is a line Pi is still writing: reading it would ingest half a
 // message, so it is deferred until the next run.
-func piRows(content []byte) ([]string, int, error) {
+func piRows(content []byte) ([]string, int, []Discard, error) {
 	text := string(content)
 	if strings.TrimSpace(text) == "" {
-		return nil, 0, fmt.Errorf("empty Pi session")
+		return nil, 0, nil, fmt.Errorf("empty Pi session")
 	}
 	physical := strings.SplitAfter(text, "\n")
 	var rows []string
 	deferred := 0
+	var discards []Discard
 	for index, raw := range physical {
 		final := index == len(physical)-1
 		if strings.TrimSpace(raw) == "" {
@@ -182,23 +185,25 @@ func piRows(content []byte) ([]string, int, error) {
 				deferred++
 				continue
 			}
-			return nil, 0, fmt.Errorf("invalid JSON before the live tail at line %d", index+1)
+			discards = append(discards, Discard{Record: index + 1, Reason: "invalid JSON"})
+			continue
 		}
 		rows = append(rows, line)
 	}
 	if len(rows) == 0 {
-		return nil, deferred, fmt.Errorf("the Pi session has no complete header")
+		return nil, deferred, discards, fmt.Errorf("the Pi session has no complete header")
 	}
-	return rows, deferred, nil
+	return rows, deferred, discards, nil
 }
 
 func piEntries(rows []string) ([]*piEntry, error) {
 	entries := make([]*piEntry, 0, len(rows))
-	for _, row := range rows {
+	for index, row := range rows {
 		var entry piEntry
 		if err := json.Unmarshal([]byte(row), &entry); err != nil {
 			return nil, fmt.Errorf("a Pi entry is not an object: %w", err)
 		}
+		entry.record = index + 2
 		entries = append(entries, &entry)
 	}
 	return entries, nil
@@ -267,26 +272,28 @@ func piActivePath(entries []*piEntry) ([]*piEntry, error) {
 
 // piPending is one turn being assembled along the active branch.
 type piPending struct {
-	userID    string
-	humanText string
-	humanTS   string
-	compacted bool
-	agentText []string
-	thinking  []string
-	calls     []string
-	callNames map[string]string
-	results   map[string]bool
-	errors    map[string]bool
-	invalid   bool
-	terminal  *piEntry
+	userID     string
+	userRecord int
+	humanText  string
+	humanTS    string
+	compacted  bool
+	agentText  []string
+	thinking   []string
+	calls      []string
+	callNames  map[string]string
+	results    map[string]bool
+	errors     map[string]bool
+	invalid    bool
+	terminal   *piEntry
 }
 
-func piExchanges(active []*piEntry) ([]Exchange, int) {
+func piExchanges(active []*piEntry) ([]Exchange, int, []Discard) {
 	var exchanges []Exchange
 	var pending *piPending
 	compacted := false
 	deferred := 0
 	number := 0
+	var discards []Discard
 
 	close := func() {
 		if pending == nil {
@@ -308,6 +315,7 @@ func piExchanges(active []*piEntry) ([]Exchange, int) {
 			continue
 		}
 		if entry.Type != "message" || entry.Message == nil {
+			discards = append(discards, Discard{Record: entry.record, Reason: "unsupported or incomplete Pi entry"})
 			continue
 		}
 		message := entry.Message
@@ -316,22 +324,25 @@ func piExchanges(active []*piEntry) ([]Exchange, int) {
 			close()
 			text := piContentText(message.Content)
 			if text == "" {
+				discards = append(discards, Discard{Record: entry.record, Reason: "user message has no readable content"})
 				continue
 			}
 			pending = &piPending{
-				userID:    entry.ID,
-				humanText: text,
-				humanTS:   isoFromAnyInstant(firstInstant(message.Timestamp, entry.Timestamp)),
-				compacted: compacted,
-				callNames: map[string]string{},
-				results:   map[string]bool{},
-				errors:    map[string]bool{},
+				userID:     entry.ID,
+				userRecord: entry.record,
+				humanText:  text,
+				humanTS:    isoFromAnyInstant(firstInstant(message.Timestamp, entry.Timestamp)),
+				compacted:  compacted,
+				callNames:  map[string]string{},
+				results:    map[string]bool{},
+				errors:     map[string]bool{},
 			}
 		case "assistant":
 			if pending == nil {
+				discards = append(discards, Discard{Record: entry.record, Reason: "assistant message has no user turn"})
 				continue
 			}
-			piConsumeAssistant(pending, message)
+			discards = append(discards, piConsumeAssistant(pending, message, entry.record)...)
 			if piTerminalReasons[message.StopReason] {
 				pending.terminal = entry
 			} else {
@@ -339,33 +350,38 @@ func piExchanges(active []*piEntry) ([]Exchange, int) {
 			}
 		case "toolResult":
 			if pending == nil {
+				discards = append(discards, Discard{Record: entry.record, Reason: "tool result has no user turn"})
 				continue
 			}
 			id := message.ToolCallID
 			if _, declared := pending.callNames[id]; !declared || pending.results[id] {
 				pending.invalid = true
+				discards = append(discards, Discard{Record: entry.record, Reason: "tool result has no unique matching call"})
 				continue
 			}
 			pending.results[id] = true
 			pending.errors[id] = message.IsError
+		default:
+			discards = append(discards, Discard{Record: entry.record, Reason: "unsupported message role: " + message.Role})
 		}
 	}
 	close()
-	return exchanges, deferred
+	return exchanges, deferred, discards
 }
 
-func piConsumeAssistant(pending *piPending, message *piMessage) {
+func piConsumeAssistant(pending *piPending, message *piMessage, record int) []Discard {
 	var text string
 	if err := json.Unmarshal(message.Content, &text); err == nil {
 		if trimmed := strings.TrimSpace(text); trimmed != "" {
 			pending.agentText = append(pending.agentText, trimmed)
 		}
-		return
+		return nil
 	}
 	var blocks []piBlock
 	if err := json.Unmarshal(message.Content, &blocks); err != nil {
-		return
+		return []Discard{{Record: record, Reason: "assistant content is neither text nor blocks"}}
 	}
+	var discards []Discard
 	for _, block := range blocks {
 		switch block.Type {
 		case "text":
@@ -376,22 +392,28 @@ func piConsumeAssistant(pending *piPending, message *piMessage) {
 			// A redacted or encrypted block is not readable text, and storing its
 			// envelope would fill the corpus with noise nobody can query.
 			if block.Redacted || block.Encrypted {
+				discards = append(discards, Discard{Record: record, Reason: "thinking block is redacted or encrypted"})
 				continue
 			}
 			pending.thinking = append(pending.thinking, strings.TrimSpace(block.Thinking))
 		case "toolCall":
 			if block.ID == "" {
 				pending.invalid = true
+				discards = append(discards, Discard{Record: record, Reason: "tool call declares no id"})
 				continue
 			}
 			if _, seen := pending.callNames[block.ID]; seen {
 				pending.invalid = true
+				discards = append(discards, Discard{Record: record, Reason: "duplicate tool call id"})
 				continue
 			}
 			pending.callNames[block.ID] = block.Name
 			pending.calls = append(pending.calls, block.ID)
+		default:
+			discards = append(discards, Discard{Record: record, Reason: "unsupported assistant block: " + block.Type})
 		}
 	}
+	return discards
 }
 
 // piProject turns a finished turn into an exchange, or refuses to. A turn with a

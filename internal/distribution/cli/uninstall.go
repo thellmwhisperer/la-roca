@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/lifecycle"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 )
@@ -267,7 +268,7 @@ func ownedPaths(paths config.Paths) []string {
 	owned := []string{
 		paths.DB, paths.DB + "-wal", paths.DB + "-shm", paths.DB + "-journal",
 		paths.Config, paths.Backups, paths.CacheRoot, paths.Credentials,
-		filepath.Join(dataDir, "prompt.md"),
+		filepath.Join(dataDir, "prompt.md"), filepath.Join(dataDir, logfile.DirName),
 	}
 	// Skill files live under each runtime's own directory, outside ~/.roca.
 	for _, runtime := range skill.Runtimes() {

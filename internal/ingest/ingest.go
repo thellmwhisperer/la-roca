@@ -37,8 +37,15 @@ type Options struct {
 // run.
 type Failure struct {
 	Path   string `json:"path"`
-	Kind   string `json:"kind"`
+	Parser string `json:"parser"`
 	Reason string `json:"error"`
+}
+
+type DiscardDetail struct {
+	Path   string `json:"path"`
+	Parser string `json:"parser"`
+	Record int    `json:"record"`
+	Reason string `json:"reason"`
 }
 
 // Tables are the row counts of the five tables the ingest writes. Before, after,
@@ -80,8 +87,10 @@ type Result struct {
 	DryRun bool `json:"dry_run"`
 	// Errors is a count and not a list, first, because that is what a script
 	// checks. The list is beside it.
-	Errors       int       `json:"errors"`
-	ErrorDetails []Failure `json:"error_details,omitempty"`
+	Errors           int             `json:"errors"`
+	ErrorDetails     []Failure       `json:"error_details,omitempty"`
+	RecordsDiscarded int             `json:"records_discarded"`
+	DiscardDetails   []DiscardDetail `json:"discard_details,omitempty"`
 	// Scanned is what the roots hold, per source, always with every source
 	// present: a source missing from the report reads as one nobody looked at.
 	Scanned map[string]int `json:"scanned"`
@@ -222,8 +231,18 @@ func (r *Result) source(agent string) *Counts {
 func (r *Result) fail(target Target, reason string) {
 	r.Errors++
 	r.ErrorDetails = append(r.ErrorDetails, Failure{
-		Path: target.Path, Kind: string(target.Kind), Reason: reason,
+		Path: target.Path, Parser: string(target.Kind), Reason: reason,
 	})
+}
+
+func (r *Result) discard(target Target, discards []parsers.Discard) {
+	for _, discard := range discards {
+		r.RecordsDiscarded++
+		r.DiscardDetails = append(r.DiscardDetails, DiscardDetail{
+			Path: target.Path, Parser: string(target.Kind),
+			Record: discard.Record, Reason: discard.Reason,
+		})
+	}
 }
 
 // ingestOne reads one artefact and writes it, with its state, in one transaction.
@@ -243,6 +262,7 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 		})
 	}
 	result.ExchangesHeld += records.Deferred
+	result.discard(target, records.Discards)
 
 	return db.Write(ctx, func(tx *sql.Tx) error {
 		counts, err := WriteRecords(ctx, tx, layers, records)
@@ -269,6 +289,9 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 			return parsers.Records{}, err.Error()
 		}
 		result.Warnings = append(result.Warnings, complaints...)
+		for index, complaint := range complaints {
+			records.Discards = append(records.Discards, parsers.Discard{Record: index + 1, Reason: complaint})
+		}
 		return records, ""
 	case parsers.KindHermesDB:
 		records, complaints, err := ReadHermes(ctx, target.Path)
@@ -276,6 +299,9 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 			return parsers.Records{}, err.Error()
 		}
 		result.Warnings = append(result.Warnings, complaints...)
+		for index, complaint := range complaints {
+			records.Discards = append(records.Discards, parsers.Discard{Record: index + 1, Reason: complaint})
+		}
 		return records, ""
 	}
 
@@ -307,7 +333,10 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 		SkillName:   target.SkillName,
 	}
 	if target.SidecarPath != "" {
-		meta.Sidecar, _ = os.ReadFile(target.SidecarPath)
+		meta.Sidecar, err = os.ReadFile(target.SidecarPath)
+		if err != nil {
+			result.fail(Target{Path: target.SidecarPath, Kind: parsers.KindSessionMetadata}, err.Error())
+		}
 	}
 
 	records, err := parsers.Parse(target.Kind, content, meta)

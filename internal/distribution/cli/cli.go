@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
@@ -33,25 +34,38 @@ const (
 )
 
 type cliEnv struct {
-	build  Build
-	out    io.Writer
-	errOut io.Writer
-	dbPath string
-	json   bool
-	code   int
+	build   Build
+	out     io.Writer
+	errOut  io.Writer
+	dbPath  string
+	json    bool
+	code    int
+	outcome any
 }
 
 // Execute runs the CLI and returns the process exit code.
 func Execute(build Build) (int, error) {
+	started := time.Now()
 	env := &cliEnv{build: build, out: os.Stdout, errOut: os.Stderr}
 	root := rootCommand(env)
-	if err := root.Execute(); err != nil {
+	executed, err := root.ExecuteC()
+	if err != nil {
 		if strings.Contains(err.Error(), "unknown command") {
-			return ExitError, fmt.Errorf("%w; run `roca --help` to list commands", err)
+			err = fmt.Errorf("%w; run `roca --help` to list commands", err)
 		}
-		return ExitError, err
 	}
-	return env.code, nil
+	code := env.code
+	if err != nil {
+		code = ExitError
+	}
+	logErr := env.logExecution(executed, started, code, err)
+	if err != nil {
+		return code, err
+	}
+	if logErr != nil {
+		return ExitError, logErr
+	}
+	return code, nil
 }
 
 func rootCommand(env *cliEnv) *cobra.Command {
@@ -261,10 +275,13 @@ func buildProviders(file config.File, paths config.Paths) provider.Cascade {
 }
 
 func (env *cliEnv) printJSON(value any) error {
+	env.capture(value)
 	encoder := json.NewEncoder(env.out)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(value)
 }
+
+func (env *cliEnv) capture(value any) { env.outcome = value }
 
 func (env *cliEnv) print(format string, args ...any) {
 	fmt.Fprintf(env.out, format+"\n", args...)

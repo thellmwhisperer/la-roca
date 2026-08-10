@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/data"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
@@ -109,8 +110,11 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 	var validated string
 	var rejection error
 	for attempt := 0; attempt <= retriesOnRejection; attempt++ {
+		inferenceStart := time.Now()
 		answer, err := cascade.Chat(ctx, chosen, provider.ChatRequest{Messages: messages})
+		res.SQLInferenceMS += time.Since(inferenceStart).Milliseconds()
 		if err != nil {
+			res.ProviderError = err.Error()
 			return s.rescue(ctx, req, res, DegradedLLMError,
 				fmt.Sprintf("%s could not answer: %v", chosen.Name(), err)), nil
 		}
@@ -153,7 +157,9 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 	}
 
 	term := query.SearchTerm(req.Question)
+	executionStart := time.Now()
 	columns, rows, err := s.execute(ctx, validated, term, req.MaxChars)
+	res.ExecutionMS += time.Since(executionStart).Milliseconds()
 	if err != nil {
 		return s.rescue(ctx, req, res, DegradedExecution,
 			fmt.Sprintf("the validated SQL failed when it ran: %v", err)), nil
@@ -290,7 +296,9 @@ func (s *Service) rescue(ctx context.Context, req QueryRequest, res QueryResult,
 		return s.rescueSQL(plan, res)
 	}
 
+	executionStart := time.Now()
 	columns, rows, stmt, provenance, err := s.searchByTerm(ctx, plan, "", req.MaxChars, true)
+	res.ExecutionMS += time.Since(executionStart).Milliseconds()
 	if err != nil {
 		// A rescue that fails is not a second failure to report: the query
 		// already has its declared reason and adding this one buries it.

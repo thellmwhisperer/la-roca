@@ -76,6 +76,9 @@ func Open(opts Options) (*Service, error) {
 // yet.
 func (s *Service) DB() *store.DB { return s.db }
 
+// DataDir is the operator-owned directory where file traces live.
+func (s *Service) DataDir() string { return s.dataDir() }
+
 // Close closes the database.
 func (s *Service) Close() error {
 	if s.gate != nil {
@@ -249,7 +252,7 @@ func (s *Service) bootstrapIngest(ctx context.Context) *IngestResult {
 		// query what was already there.
 		report.Errors++
 		report.ErrorDetails = append(report.ErrorDetails,
-			ingest.Failure{Kind: "ingest", Reason: err.Error()})
+			ingest.Failure{Parser: "ingest", Reason: err.Error()})
 	}
 	return &report
 }

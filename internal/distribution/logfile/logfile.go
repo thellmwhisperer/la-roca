@@ -1,0 +1,163 @@
+// Package logfile writes the product's credential-safe JSONL traces.
+package logfile
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"time"
+)
+
+const (
+	DirName       = "logs"
+	RetentionDays = 30
+	Executions    = "executions"
+	MCPAudit      = "mcp-audit"
+	Ingest        = "ingest"
+)
+
+type Writer struct {
+	dir string
+	now func() time.Time
+}
+
+type ExecutionRecord struct {
+	Timestamp    time.Time      `json:"timestamp"`
+	Command      string         `json:"command"`
+	Flags        map[string]any `json:"flags"`
+	DatabasePath string         `json:"database_path,omitempty"`
+	DurationMS   int64          `json:"duration_ms"`
+	ExitCode     int            `json:"exit_code"`
+	Result       any            `json:"result,omitempty"`
+	Error        string         `json:"error,omitempty"`
+}
+
+type MCPRecord struct {
+	Timestamp  time.Time `json:"timestamp"`
+	Tool       string    `json:"tool"`
+	Args       any       `json:"args"`
+	OK         bool      `json:"ok"`
+	DurationMS int64     `json:"duration_ms"`
+	RowCount   int       `json:"row_count"`
+}
+
+type IngestRecord struct {
+	Timestamp time.Time `json:"timestamp"`
+	Result    any       `json:"result"`
+}
+
+func New(dataDir string) *Writer {
+	return &Writer{dir: filepath.Join(dataDir, DirName), now: time.Now}
+}
+
+func (w *Writer) Append(stream string, record any) error {
+	if w == nil || w.dir == "" {
+		return fmt.Errorf("the log directory is not configured")
+	}
+	if err := os.MkdirAll(w.dir, 0o700); err != nil {
+		return fmt.Errorf("create the log directory: %w", err)
+	}
+	now := w.now().UTC()
+	path := filepath.Join(w.dir, stream+"-"+now.Format(time.DateOnly)+".jsonl")
+	line, err := json.Marshal(Redact(record))
+	if err != nil {
+		return fmt.Errorf("encode the %s log record: %w", stream, err)
+	}
+	line = append(line, '\n')
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return fmt.Errorf("open the %s log: %w", stream, err)
+	}
+	_, writeErr := file.Write(line)
+	closeErr := file.Close()
+	if writeErr != nil {
+		return fmt.Errorf("append the %s log: %w", stream, writeErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close the %s log: %w", stream, closeErr)
+	}
+	return w.prune(stream, now)
+}
+
+func (w *Writer) prune(stream string, now time.Time) error {
+	matches, err := filepath.Glob(filepath.Join(w.dir, stream+"-*.jsonl"))
+	if err != nil {
+		return fmt.Errorf("list %s logs: %w", stream, err)
+	}
+	sort.Strings(matches)
+	cutoff := now.AddDate(0, 0, -(RetentionDays - 1)).Format(time.DateOnly)
+	for _, path := range matches {
+		name := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(path), stream+"-"), ".jsonl")
+		if _, err := time.Parse(time.DateOnly, name); err != nil || name >= cutoff {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove expired log %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
+var (
+	secretKey  = regexp.MustCompile(`(?i)(api[_-]?key|token|password|passwd|secret|credential|authorization|cookie)`)
+	secretText = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]+`),
+		regexp.MustCompile(`(?i)\b(api[_-]?key|token|password|passwd|secret)\s*[:=]\s*[^\s,;]+`),
+		regexp.MustCompile(`\b(sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]{8,}|xox[baprs]-[A-Za-z0-9-]{8,})\b`),
+		regexp.MustCompile(`(?s)-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----`),
+	}
+)
+
+func SensitiveName(name string) bool { return secretKey.MatchString(name) }
+
+func Redact(value any) any {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return map[string]any{"error": "unencodable log record"}
+	}
+	var document any
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return map[string]any{"error": "unencodable log record"}
+	}
+	return redactValue("", document)
+}
+
+func redactValue(key string, value any) any {
+	if SensitiveName(key) {
+		return "[REDACTED]"
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		for field, item := range typed {
+			typed[field] = redactValue(field, item)
+		}
+		return typed
+	case []any:
+		for index, item := range typed {
+			typed[index] = redactValue(key, item)
+		}
+		return typed
+	case string:
+		for _, pattern := range secretText {
+			typed = pattern.ReplaceAllStringFunc(typed, redactSecretText)
+		}
+		return typed
+	default:
+		return value
+	}
+}
+
+func redactSecretText(match string) string {
+	lower := strings.ToLower(match)
+	if strings.HasPrefix(lower, "bearer ") {
+		return match[:7] + "[REDACTED]"
+	}
+	if index := strings.IndexAny(match, ":="); index >= 0 {
+		return strings.TrimSpace(match[:index+1]) + "[REDACTED]"
+	}
+	return "[REDACTED]"
+}

@@ -111,6 +111,29 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 	}
 }
 
+func TestUnreadableCoworkSidecarIsCountedPerFile(t *testing.T) {
+	world := newWorld(t)
+	path := filepath.Join(world.roots().CoworkSessions, "cw.json")
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+
+	result, err := Run(context.Background(), rocaDatabase(t), registry(t), Options{Roots: world.roots()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, failure := range result.ErrorDetails {
+		if failure.Path == path && failure.Parser == string(parsers.KindSessionMetadata) && failure.Reason != "" {
+			found = true
+		}
+	}
+	if !found || result.Errors == 0 {
+		t.Fatalf("sidecar read failure was not counted: errors=%d details=%+v", result.Errors, result.ErrorDetails)
+	}
+}
+
 // The contract of requirement M2, and it is a test and not an aspiration: running
 // the ingest twice over the same disk produces exactly the same state.
 func TestASecondPassOverTheSameDiskChangesNothing(t *testing.T) {

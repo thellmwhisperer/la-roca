@@ -13,13 +13,16 @@ package mcpplug
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
@@ -66,11 +69,13 @@ func New(svc *service.Service, build Build) *mcp.Server {
 	}, &mcp.ServerOptions{Instructions: instructions})
 
 	dbPath := svc.DB().Path()
+	audit := logfile.New(svc.DataDir())
 	mcp.AddTool(server, execTool, sanitizing(p.exec, dbPath))
 	mcp.AddTool(server, healthTool, sanitizing(p.health, dbPath))
 	mcp.AddTool(server, queryTool, sanitizing(p.query, dbPath))
 	mcp.AddTool(server, sqlTool, sanitizing(p.sql, dbPath))
 	mcp.AddTool(server, storeTool, sanitizing(p.store, dbPath))
+	server.AddReceivingMiddleware(auditCalls(audit))
 	return server
 }
 
@@ -86,6 +91,73 @@ func sanitizing[In, Out any](
 		res, out, err := h(ctx, req, in)
 		return res, out, ScrubPath(err, dbPath)
 	}
+}
+
+func auditCalls(audit *logfile.Writer) mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if method != "tools/call" {
+				return next(ctx, method, req)
+			}
+			started := time.Now()
+			tool, args := toolCall(req)
+			result, err := next(ctx, method, req)
+			ok := err == nil
+			if callResult, isToolResult := result.(*mcp.CallToolResult); isToolResult {
+				ok = ok && !callResult.IsError
+			}
+			_ = audit.Append(logfile.MCPAudit, logfile.MCPRecord{
+				Timestamp: started.UTC(), Tool: tool, Args: args, OK: ok,
+				DurationMS: time.Since(started).Milliseconds(), RowCount: resultRows(result),
+			})
+			return result, err
+		}
+	}
+}
+
+func toolCall(req mcp.Request) (string, any) {
+	call, ok := req.(*mcp.CallToolRequest)
+	if !ok || call.Params == nil {
+		return "unknown", map[string]any{}
+	}
+	args := any(map[string]any{})
+	if len(call.Params.Arguments) > 0 {
+		if err := json.Unmarshal(call.Params.Arguments, &args); err != nil {
+			args = string(call.Params.Arguments)
+		}
+	}
+	return call.Params.Name, args
+}
+
+func resultRows(value any) int {
+	switch result := value.(type) {
+	case *mcp.CallToolResult:
+		return resultRows(result.StructuredContent)
+	case service.QueryResult:
+		return result.RowCount
+	case service.ExecResult:
+		return result.RowCount
+	case service.StoreResult:
+		if result.ID != 0 {
+			return 1
+		}
+	case service.HealthReport:
+		rows := 0
+		for _, check := range result.Checks {
+			rows += len(check.Rows)
+		}
+		return rows
+	case map[string]any:
+		if count, ok := result["row_count"].(float64); ok {
+			return int(count)
+		}
+	case json.RawMessage:
+		var decoded any
+		if json.Unmarshal(result, &decoded) == nil {
+			return resultRows(decoded)
+		}
+	}
+	return 0
 }
 
 // rendered paints the AXI TOON text for a service answer and lets the SDK

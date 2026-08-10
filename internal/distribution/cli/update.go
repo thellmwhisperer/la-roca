@@ -192,6 +192,7 @@ func binaryToReplace(declared string) (string, error) {
 // report prints one outcome in both shapes. Every command of this surface
 // answers --json when asked, and update is the one an operator scripts.
 func (env *cliEnv) report(document map[string]any, format string, args ...any) error {
+	env.capture(document)
 	if env.json {
 		return env.printJSON(document)
 	}

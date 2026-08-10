@@ -88,10 +88,12 @@ type claudeBuilder struct {
 func ParseClaudeSession(content []byte, meta FileMeta) (Records, error) {
 	builder := &claudeBuilder{pending: map[string]*ToolUse{}}
 	cwd, model, validLines := "", "", 0
-	for _, raw := range lines(content) {
+	var discards []Discard
+	for index, raw := range lines(content) {
 		var line claudeLine
 		if err := json.Unmarshal([]byte(raw), &line); err != nil {
-			continue // one corrupt line never costs the file
+			discards = append(discards, Discard{Record: index + 1, Reason: "invalid JSON: " + err.Error()})
+			continue
 		}
 		validLines++
 		if cwd == "" {
@@ -124,7 +126,7 @@ func ParseClaudeSession(content []byte, meta FileMeta) (Records, error) {
 		session.Metadata["compactions"] = builder.compactions
 	}
 	session.StartedAt, session.EndedAt, session.DurationMinutes = span(session.Exchanges)
-	return Records{Sessions: []Session{session}}, nil
+	return Records{Sessions: []Session{session}, Discards: discards}, nil
 }
 
 // ParseCoworkAudit turns a Cowork audit transcript into one session, merging in
@@ -132,9 +134,11 @@ func ParseClaudeSession(content []byte, meta FileMeta) (Records, error) {
 func ParseCoworkAudit(content []byte, meta FileMeta) (Records, error) {
 	builder := &claudeBuilder{auditMode: true, pending: map[string]*ToolUse{}}
 	firstSessionID := ""
-	for _, raw := range lines(content) {
+	var discards []Discard
+	for index, raw := range lines(content) {
 		var line claudeLine
 		if err := json.Unmarshal([]byte(raw), &line); err != nil {
+			discards = append(discards, Discard{Record: index + 1, Reason: "invalid JSON: " + err.Error()})
 			continue
 		}
 		if firstSessionID == "" {
@@ -145,7 +149,7 @@ func ParseCoworkAudit(content []byte, meta FileMeta) (Records, error) {
 	builder.flush()
 	exchanges := builder.finish()
 	if len(exchanges) == 0 {
-		return Records{}, nil
+		return Records{Discards: discards}, nil
 	}
 
 	sidecar := readSessionMetadata(meta.Sidecar)
@@ -162,7 +166,7 @@ func ParseCoworkAudit(content []byte, meta FileMeta) (Records, error) {
 		session.Metadata["initial_message"] = sidecar.initialMessage
 	}
 	session.StartedAt, session.EndedAt, session.DurationMinutes = span(exchanges)
-	return Records{Sessions: []Session{session}}, nil
+	return Records{Sessions: []Session{session}, Discards: discards}, nil
 }
 
 func (b *claudeBuilder) consume(line claudeLine) {

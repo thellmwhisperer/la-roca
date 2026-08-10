@@ -71,10 +71,18 @@ type FileMeta struct {
 type Records struct {
 	Sessions []Session
 	Memories []Memory
+	// Discards are source records the parser deliberately left out, each with
+	// the record position and the reason it could not be normalized.
+	Discards []Discard
 	// Deferred counts the turns the artefact is still writing. They are not
 	// errors either, and they are reported so an operator can tell "nothing new"
 	// from "half a session in flight".
 	Deferred int
+}
+
+type Discard struct {
+	Record int    `json:"record"`
+	Reason string `json:"reason"`
 }
 
 // Session is one conversation, with everything that hangs off it.

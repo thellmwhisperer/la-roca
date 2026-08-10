@@ -33,6 +33,7 @@ func ingestCommand(env *cliEnv) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			env.capture(result)
 			if env.json {
 				return env.printJSON(result)
 			}
@@ -68,14 +69,19 @@ func renderIngest(env *cliEnv, result service.IngestResult) {
 			result.ExchangesHeld)
 	}
 	for _, failure := range result.ErrorDetails {
-		env.print("error: %s (%s): %s", failure.Path, failure.Kind, failure.Reason)
+		env.print("error: %s (%s): %s", failure.Path, failure.Parser, failure.Reason)
+	}
+	for _, discard := range result.DiscardDetails {
+		env.print("discard: %s (%s record %d): %s",
+			discard.Path, discard.Parser, discard.Record, discard.Reason)
 	}
 	if result.Index != nil {
 		if result.Index.LexicalBuilt {
 			env.print("index: full-text index built")
 		}
 	}
-	env.print("%d errors · %s", result.Errors, axi.Duration(result.ElapsedMS))
+	env.print("%d errors · %d records discarded · %s",
+		result.Errors, result.RecordsDiscarded, axi.Duration(result.ElapsedMS))
 }
 
 // ingestSources resolves where every agent's artefacts live on this machine.

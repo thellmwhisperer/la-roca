@@ -104,6 +104,14 @@ type QueryResult struct {
 	Warnings []string `json:"warnings,omitempty"`
 	// LLMLatencyMS is what the model alone cost, apart from the total.
 	LLMLatencyMS int64 `json:"llm_latency_ms,omitempty"`
+	// SQLInferenceMS, ExecutionMS and InterpretationMS are the three query
+	// phases. Interpretation is populated by the CLI only when --full asks for it.
+	SQLInferenceMS   int64 `json:"sql_inference_ms"`
+	ExecutionMS      int64 `json:"execution_ms"`
+	InterpretationMS int64 `json:"interpretation_ms"`
+	// ProviderError preserves the provider's own failure text. File logging
+	// applies credential redaction before it reaches disk.
+	ProviderError string `json:"provider_error,omitempty"`
 
 	LatencyMS int64  `json:"latency_ms"`
 	Version   string `json:"version"`

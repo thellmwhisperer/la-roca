@@ -44,25 +44,30 @@ func ParseSubagent(content []byte, meta FileMeta) (Records, error) {
 		AgentID   string         `json:"agentId"`
 		UUID      string         `json:"uuid"`
 		Message   *claudeMessage `json:"message"`
+		record    int
 	}
 
 	var entries []message
-	for _, raw := range lines(content) {
+	var discards []Discard
+	for index, raw := range lines(content) {
 		var entry message
 		if err := json.Unmarshal([]byte(raw), &entry); err != nil {
+			discards = append(discards, Discard{Record: index + 1, Reason: "invalid JSON: " + err.Error()})
 			continue
 		}
+		entry.record = index + 1
 		entries = append(entries, entry)
 	}
 	if len(entries) == 0 {
-		return Records{}, nil
+		return Records{Discards: discards}, nil
 	}
 
 	parentID := entries[0].SessionID
 	agentID := entries[0].AgentID
 	sessionID := firstNonEmpty(agentID, parentID)
 	if sessionID == "" {
-		return Records{}, nil
+		discards = append(discards, Discard{Record: entries[0].record, Reason: "subagent record declares no session identity"})
+		return Records{Discards: discards}, nil
 	}
 
 	session := Session{
@@ -78,6 +83,7 @@ func ParseSubagent(content []byte, meta FileMeta) (Records, error) {
 	if kind == subagentCompact {
 		for _, entry := range entries {
 			if entry.Type != "system" {
+				discards = append(discards, Discard{Record: entry.record, Reason: "unsupported compact record: " + entry.Type})
 				continue
 			}
 			text, blocks := decodeContent(entry.Message)
@@ -85,6 +91,7 @@ func ParseSubagent(content []byte, meta FileMeta) (Records, error) {
 				text = joinText(blocks)
 			}
 			if text == "" {
+				discards = append(discards, Discard{Record: entry.record, Reason: "compact record has no readable content"})
 				continue
 			}
 			session.Thinking = append(session.Thinking, Thinking{
@@ -94,9 +101,9 @@ func ParseSubagent(content []byte, meta FileMeta) (Records, error) {
 			})
 		}
 		if len(session.Thinking) == 0 {
-			return Records{}, nil
+			return Records{Discards: discards}, nil
 		}
-		return Records{Sessions: []Session{session}}, nil
+		return Records{Sessions: []Session{session}, Discards: discards}, nil
 	}
 
 	// The transcript writes the agent's answer in chunks: consecutive assistant
@@ -110,6 +117,7 @@ func ParseSubagent(content []byte, meta FileMeta) (Records, error) {
 			text = joinText(blocks)
 		}
 		if text == "" {
+			discards = append(discards, Discard{Record: entry.record, Reason: "subagent record has no readable content"})
 			continue
 		}
 		switch entry.Type {
@@ -123,6 +131,8 @@ func ParseSubagent(content []byte, meta FileMeta) (Records, error) {
 			}
 			agents = append(agents, side{text, entry.Timestamp})
 			pendingAgent = true
+		default:
+			discards = append(discards, Discard{Record: entry.record, Reason: "unsupported subagent record: " + entry.Type})
 		}
 	}
 
@@ -138,10 +148,10 @@ func ParseSubagent(content []byte, meta FileMeta) (Records, error) {
 		})
 	}
 	if len(session.Exchanges) == 0 {
-		return Records{}, nil
+		return Records{Discards: discards}, nil
 	}
 	session.StartedAt, session.EndedAt, session.DurationMinutes = span(session.Exchanges)
-	return Records{Sessions: []Session{session}}, nil
+	return Records{Sessions: []Session{session}, Discards: discards}, nil
 }
 
 // LooksLikeSubagent decides whether a file really is a subagent transcript

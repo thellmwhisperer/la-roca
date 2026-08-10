@@ -3,6 +3,7 @@ package mcpplug_test
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/mcpplug"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -169,6 +171,52 @@ func TestTheExecToolRunsTheSameValidatedSelectAsTheService(t *testing.T) {
 	if throughThePlug.SQL != direct.SQL || throughThePlug.RowCount != direct.RowCount {
 		t.Errorf("the plug ran %q/%d rows, service ran %q/%d rows",
 			throughThePlug.SQL, throughThePlug.RowCount, direct.SQL, direct.RowCount)
+	}
+}
+
+func TestEveryToolCallWritesACredentialFreeAuditRecord(t *testing.T) {
+	svc := seededService(t)
+	callTool(t, connect(t, svc), "roca_exec", map[string]any{
+		"sql": "SELECT 'token=private-value' AS text",
+	})
+	matches, err := filepath.Glob(filepath.Join(svc.DataDir(), logfile.DirName, "mcp-audit-*.jsonl"))
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("MCP audit logs = %v, err=%v", matches, err)
+	}
+	raw, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, want := range []string{`"tool":"roca_exec"`, `"ok":true`, `"row_count":1`, `"duration_ms":`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("audit lacks %q: %s", want, text)
+		}
+	}
+	if strings.Contains(text, "private-value") {
+		t.Fatalf("credential leaked into MCP audit: %s", text)
+	}
+}
+
+func TestMalformedToolCallIsAuditedAsAFailure(t *testing.T) {
+	svc := seededService(t)
+	session := connect(t, svc)
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "roca_query", Arguments: map[string]any{},
+	})
+	if err != nil || !result.IsError {
+		t.Fatalf("malformed call result=%v err=%v", result, err)
+	}
+	matches, err := filepath.Glob(filepath.Join(svc.DataDir(), logfile.DirName, "mcp-audit-*.jsonl"))
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("MCP audit logs = %v, err=%v", matches, err)
+	}
+	raw, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := string(raw); !strings.Contains(text, `"tool":"roca_query"`) || !strings.Contains(text, `"ok":false`) {
+		t.Fatalf("failed call was not audited as a failure: %s", text)
 	}
 }
 

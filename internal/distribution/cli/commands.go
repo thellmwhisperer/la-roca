@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
@@ -322,6 +323,7 @@ func queryCommand(env *cliEnv) *cobra.Command {
 				return err
 			}
 			result := answer.result
+			env.capture(result)
 			// A question that needed a model on a machine with no model
 			// available is not an answer, even when the keyword rescue found
 			// rows. The rows are a courtesy; the exit code tells the truth, so
@@ -366,8 +368,13 @@ func answerQuery(ctx context.Context, svc *service.Service, req service.QueryReq
 	if err != nil || !full || result.Engine == "" || result.RowCount == 0 {
 		return answer, err
 	}
+	started := time.Now()
 	answer.prose, answer.interpretErr = svc.Interpret(
 		ctx, result.Question, result.Columns, result.Rows)
+	answer.result.InterpretationMS = time.Since(started).Milliseconds()
+	if answer.interpretErr != nil {
+		answer.result.ProviderError = answer.interpretErr.Error()
+	}
 	return answer, nil
 }
 
@@ -389,6 +396,7 @@ func execCommand(env *cliEnv) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			env.capture(result)
 			if env.json {
 				return env.printJSON(result)
 			}
