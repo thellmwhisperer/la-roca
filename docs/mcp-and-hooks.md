@@ -1,11 +1,7 @@
-# The plug and the hooks
+# The MCP plug
 
-The two ways La Roca reaches an agent that is not typing commands: the MCP
-server it can call, and the session hooks that hand it context before it asks.
-
-Sources: PRD 3.5 (the v1 MCP surface) and job J3, TECH-SPEC 1.7 and 1.8, and the
-the decision on open question A-1, option (b): the hooks enter v1 for the
-`claude` runtime.
+The way La Roca reaches an agent that is not typing commands: the MCP server it
+can call.
 
 ---
 
@@ -23,14 +19,13 @@ roca mcp serve
 Nothing but the protocol goes to standard output. A print there corrupts the
 session, which is why every diagnostic in this path writes to standard error.
 
-### The six tools
+### The five tools
 
 | Tool | What it does | The caller that defends it |
 |---|---|---|
 | `roca_exec` | Runs a SELECT under the same gate as `roca exec` | Agents that received SQL from `roca_sql` and have no shell |
 | `roca_query` | Answers a question from memory | The product's job, for an agent with no shell |
 | `roca_store` | Writes one memory back | The other half of the same job |
-| `roca_teach` | Teaches the compiler an example and retrains in place | Correcting the route with no redeploy |
 | `roca_health` | The non-destructive checks over live data | An agent that cannot run `roca doctor` |
 | `roca_sql` | Compiles a question into SQL without running it | Agents that need to inspect the SQL before `roca_exec` runs it |
 
@@ -105,105 +100,15 @@ declared command and backup path; JSON includes the executable too.
 
 ---
 
-## 3. `roca hook`: the session lifecycle (job J3)
-
-**The law:** a hook is a subprocess on the critical path of somebody's session.
-It reaches the kernel by running a command and reading its standard output.
-Never the database directly, never the MCP. Scenario F11-06 measures it over the
-settings file itself.
-
-### Wiring it up
-
-```
-roca hook install claude
-roca hook uninstall claude
-roca hook status
-```
-
-It writes into `$CLAUDE_CONFIG_DIR`/`~/.claude/settings.json` — which is not the
-same file as the MCP config — one command per lifecycle event:
-
-| Event | Command | Why |
-|---|---|---|
-| `SessionStart` | `roca hook context --runtime claude` | Hands the session what it should already know |
-| `PreCompact` | `roca hook record --trigger precompact` | The context is about to be lost |
-| `SessionEnd` | `roca hook record --trigger session_end` | The session ended |
-
-`Stop` is deliberately absent. It fires on every turn, and in the laboratory it
-exists to keep the live session hot through the incremental ingest; in v1 that
-engine is `roca ingest`, so a `Stop` hook would be a subprocess on every single
-turn with nothing to do. It comes back the day it has a referent.
-
-Roca owns the entries whose command runs `roca hook`, recognized by shape and
-not by exact string, so a hook installed with an absolute path is still
-withdrawn by a plain `uninstall`. A hook the user wrote survives both. Outside
-the `hooks` member not one byte moves; inside it Roca re-serializes, which is
-the laboratory's own trade and the honest one.
-
-### The transport
-
-```
-roca hook context [--runtime claude] [--json] [--max-chars N] [--project P] [--pills a,b]
-roca hook handoff [--json] [--max-chars N]
-roca hook record --trigger precompact|session_end [--session-id ID] [--cwd DIR]
-```
-
-`record` reads the runtime's event payload from standard input when there is
-one, so the session and the working directory come from the runtime itself and
-not from what a settings file happened to hard-code.
-
-**Exit codes are a contract.** The transport commands never exit non-zero: they
-run on the critical path of a session, and a hook that fails is a hook that can
-break it. Whatever went wrong goes to standard error and the session carries on
-with less context. On a machine with no Roca on it they stay silent rather than
-printing noise into every session. The wiring commands are ordinary tools and
-report failure with 1.
-
-### The injection budget
-
-Everything a hook pushes into a fresh session competes with the user's own
-prompt for the same window, so the block is capped, trimmed against a published
-rule, and reported in numbers a caller can assert on.
-
-The rule is **fair-share water filling**: when the sections do not fit, each gets
-an equal slice of what is left; a section that needs less than its slice gives
-the surplus back; and a section that cannot even hold its floor
-(`MinSectionChars`, 160) is dropped whole instead of cut into a fragment that
-reads like a whole thing saying something else. One oversized handoff therefore
-cannot starve the pills.
-
-Whatever did not fit is not lost: the block always ends by pointing back at La
-Roca, so the agent digs on demand.
-
-| Setting | Where | Default |
-|---|---|---|
-| Injection cap | `ROCA_SESSIONSTART_MAX_CHARS`, then `hooks_max_chars` in the config | 12000 |
-| Project scope | `--project`, then `ROCA_PROJECT` | the memories with no project |
-| Pill roster | `--pills` (declare it empty to serve none) | what La Roca serves |
-
-`--json` returns the block together with the budget report: the limit, what was
-used, what the pointer cost and the state of every section (`full`, `trimmed`,
-`dropped`) with its characters before and after.
-
-### What a session receives
-
-The rostered pills and the three newest handoffs of its scope. The roster is
-decided by data and not by code: a pill joins it by existing and leaves it by
-setting `session_start` false in its own metadata; ordering comes from
-`pill_order`, then the slug. A recompiled pill is a newer row for the same slug,
-so the newest row is the live one.
-
----
-
-## 4. Three adoption layers
+## 3. Three adoption layers
 
 An agent learns La Roca three different ways. They stack; none replaces another.
 
 | Layer | What it is | How the operator turns it on |
 |---|---|---|
 | **Prompt** | A one-line aviso from `roca init` that a skill exists | Automatic on every init; install is never implied |
-| **Skill** | Canonical `SKILL.md` that teaches query/store/teach/exec and the MCP tools | `roca skill install [runtime]` — copies one file into each runtime's personal skills directory |
-| **MCP** | Six passthrough tools for agents with no shell | `roca mcp install <runtime>` |
+| **Skill** | Canonical `SKILL.md` that teaches query/store/exec and the MCP tools | `roca skill install [runtime]` — copies one file into each runtime's personal skills directory |
+| **MCP** | Five passthrough tools for agents with no shell | `roca mcp install <runtime>` |
 
 ```
 roca skill                 # list runtimes and where the skill would land
@@ -227,10 +132,10 @@ already match the embedded canonical text. The skill body lives in
 
 ---
 
-## 5. Read-only mode
+## 4. Read-only mode
 
 `ROCA_READ_ONLY=1` refuses every write **in the service, before any database
 I/O**, so both surfaces refuse with the same words and only render them
 differently. Measured in scenario F08-08. Anything that does not write —
-`query`, `health`, `hook context` — still answers, which is exactly when an
-operator who suspects something reaches for it.
+`query`, `health` — still answers, which is exactly when an operator who
+suspects something reaches for it.

@@ -205,8 +205,7 @@ See [docs/mcp-and-hooks.md](docs/mcp-and-hooks.md).
 You do not have to take anybody's word for it. `roca calibrate` builds a golden
 bench out of your own corpus (`roca init` builds the first one for you), and
 `roca bench golden` scores the search against it. A generated case is born green
-or it is not published: what cannot find its own memory measures nothing. Format
-and rules in [docs/golden-bench.md](docs/golden-bench.md).
+or it is not published: what cannot find its own memory measures nothing.
 
 ## Install, update, uninstall
 
@@ -257,13 +256,9 @@ there, in writing, why.
 
 ## Documents
 
-- [docs/PRD.md](docs/PRD.md), the product's why.
-- [docs/TECH-SPEC.md](docs/TECH-SPEC.md), the architecture, the schema and the
-  construction waves.
 - [docs/models.md](docs/models.md), providers, presets and the cascade.
 - [docs/mcp-and-hooks.md](docs/mcp-and-hooks.md), the plug and the session hooks.
 - [docs/lifecycle.md](docs/lifecycle.md), install, calibrate, update, uninstall.
-- [docs/golden-bench.md](docs/golden-bench.md), how the search is scored.
 
 ## License
 
