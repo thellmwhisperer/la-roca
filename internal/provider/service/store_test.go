@@ -159,6 +159,45 @@ func TestStoreDoesNotDeduplicateAcrossProjects(t *testing.T) {
 	}
 }
 
+func TestStoreDeduplicatesOnlyAgainstCurrentMemories(t *testing.T) {
+	svc, _ := serviceWithPaths(t)
+	ctx := context.Background()
+
+	original, err := svc.Store(ctx, service.StoreRequest{
+		Layer: "discovery", Content: "original", Surface: service.SurfaceCLI,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := svc.Store(ctx, service.StoreRequest{
+		Layer: "discovery", Content: "replacement", Supersedes: original.ID,
+		Surface: service.SurfaceCLI,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	currentAgain, err := svc.Store(ctx, service.StoreRequest{
+		Layer: "discovery", Content: "replacement", Surface: service.SurfaceCLI,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !currentAgain.Skipped || currentAgain.ID != replacement.ID {
+		t.Fatalf("current duplicate = %+v, want skipped id %d", currentAgain, replacement.ID)
+	}
+
+	staleAgain, err := svc.Store(ctx, service.StoreRequest{
+		Layer: "discovery", Content: "original", Surface: service.SurfaceCLI,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if staleAgain.Skipped {
+		t.Fatalf("superseded content was treated as current: %+v", staleAgain)
+	}
+}
+
 // The alias travels: a `handover` written by anybody lands in `handoff`, which
 // is what the session-lifecycle reader looks for.
 func TestStoreNormalizesTheLayerThroughTheRegistryAliases(t *testing.T) {

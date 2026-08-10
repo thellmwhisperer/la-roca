@@ -108,7 +108,8 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (StoreResult, err
 		var existing int64
 		row := tx.QueryRowContext(ctx,
 			`SELECT id FROM memories
-			 WHERE supersedes IS NULL AND layer = ? AND status = ? AND content = ?
+			 WHERE id NOT IN (SELECT supersedes FROM memories WHERE supersedes IS NOT NULL)
+			   AND layer = ? AND status = ? AND content = ?
 			   AND (project = ? OR (project IS NULL AND ? IS NULL))
 			 LIMIT 1`,
 			physical, status, content, orNull(req.Project), orNull(req.Project))

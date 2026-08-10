@@ -4,7 +4,7 @@ import "testing"
 
 func TestSearchRowsPreferAnswersOverEchoesAndThinking(t *testing.T) {
 	res := QueryResult{Question: "who is Ana"}
-	res.found([]string{"source", "id", "text"}, []map[string]any{
+	res.foundSearch([]string{"source", "id", "text"}, []map[string]any{
 		{"source": "thinking", "id": int64(1), "text": `test for "who is Ana"`},
 		{"source": "exchange", "id": int64(2), "text": `run roca query "who is Ana"`},
 		{"source": "exchange", "id": int64(3), "text": "Ana led the engineering conversation"},
@@ -22,7 +22,7 @@ func TestSearchRowsPreferAnswersOverEchoesAndThinking(t *testing.T) {
 
 func TestSearchRowsWithNullTextAreRemoved(t *testing.T) {
 	res := QueryResult{Question: "resonance"}
-	res.found([]string{"source", "id", "text"}, []map[string]any{
+	res.foundSearch([]string{"source", "id", "text"}, []map[string]any{
 		{"source": "exchange", "id": int64(1), "text": nil},
 		{"source": "exchange", "id": int64(2), "text": "health cluster about resonance"},
 	})
@@ -33,11 +33,30 @@ func TestSearchRowsWithNullTextAreRemoved(t *testing.T) {
 
 func TestSearchRowsWithIdenticalSourceAndTextAreDeduplicated(t *testing.T) {
 	res := QueryResult{Question: "registro duplicado"}
-	res.found([]string{"source", "id", "text"}, []map[string]any{
+	res.foundSearch([]string{"source", "id", "text"}, []map[string]any{
 		{"source": "memory", "id": int64(1), "text": "registro duplicado"},
 		{"source": "memory", "id": int64(2), "text": "registro duplicado"},
 	})
 	if res.RowCount != 1 || res.Rows[0]["id"] != int64(1) {
 		t.Fatalf("duplicate rows survived: count=%d rows=%v", res.RowCount, res.Rows)
+	}
+}
+
+func TestModelRowsKeepTheSQLOrderAndEveryValue(t *testing.T) {
+	rows := []map[string]any{
+		{"source": "thinking", "id": int64(1), "text": "first"},
+		{"source": "memory", "id": int64(2), "text": ""},
+		{"source": "memory", "id": int64(3), "text": "first"},
+	}
+	res := QueryResult{Question: "preserve model rows"}
+	res.found([]string{"source", "id", "text"}, rows)
+
+	if res.RowCount != 3 {
+		t.Fatalf("model row count = %d, want 3: %v", res.RowCount, res.Rows)
+	}
+	for i, want := range []int64{1, 2, 3} {
+		if got := res.Rows[i]["id"]; got != want {
+			t.Fatalf("model row %d id = %v, want %d: %v", i, got, want, res.Rows)
+		}
 	}
 }

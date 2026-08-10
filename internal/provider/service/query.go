@@ -111,19 +111,22 @@ type QueryResult struct {
 // already written is not written over: down the model path that message is what
 // says why the rescue is the one answering.
 //
-// Search results are deduplicated here, at the point rows are recorded: the
-// adopted corpus carries genuine duplicate rows (identical content, identical
-// timestamp, consecutive ids) and the term search returns each one. Only a
-// result set that carries a source and a text is touched — a count of five is
-// not five copies of one thing — and the database is never mutated.
+// Rows are recorded exactly as SQL returned them. Model-authored SELECTs own
+// their row count and order; silently rewriting either would make the displayed
+// SQL disagree with its result.
 func (r *QueryResult) found(columns []string, rows []map[string]any) {
-	rows = dedupRows(r.Question, columns, rows)
 	r.Columns, r.Rows, r.RowCount = columns, rows, len(rows)
 	r.Match = MatchFound
 	if len(rows) == 0 {
 		r.Match = MatchEmpty
 		r.Message = cmp.Or(r.Message, noMatches)
 	}
+}
+
+// foundSearch applies the lexical search presentation policy before recording
+// rows. That policy never touches model-authored SQL results.
+func (r *QueryResult) foundSearch(columns []string, rows []map[string]any) {
+	r.found(columns, dedupRows(r.Question, columns, rows))
 }
 
 // dedupRows collapses search-result rows whose source and text are identical,

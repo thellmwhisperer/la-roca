@@ -316,7 +316,7 @@ func (s *Service) rescue(ctx context.Context, req QueryRequest, res QueryResult,
 	res.SQL = stmt
 	res.Search = provenance
 	res.Retried = true
-	res.found(columns, rows)
+	res.foundSearch(columns, rows)
 	return res
 }
 
