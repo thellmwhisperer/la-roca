@@ -116,7 +116,7 @@ func TestSubagentCountsTheTurnsPositionalPairingCannotUse(t *testing.T) {
 		name      string
 		lines     []string
 		exchanges int
-		discards  int
+		records   []int
 	}{
 		{
 			name: "two human turns nobody answered",
@@ -127,7 +127,8 @@ func TestSubagentCountsTheTurnsPositionalPairingCannotUse(t *testing.T) {
 				`{"type":"user","sessionId":"p","agentId":"c","message":{"content":"third"}}`,
 			},
 			exchanges: 1,
-			discards:  2,
+			// The third and fourth lines are the turns nobody answered.
+			records: []int{3, 4},
 		},
 		{
 			name: "an answer with no turn to pair it with",
@@ -135,7 +136,7 @@ func TestSubagentCountsTheTurnsPositionalPairingCannotUse(t *testing.T) {
 				`{"type":"assistant","sessionId":"p","agentId":"c","message":{"content":"unprompted"}}`,
 			},
 			exchanges: 0,
-			discards:  1,
+			records:   []int{1},
 		},
 	} {
 		t.Run(want.name, func(t *testing.T) {
@@ -151,13 +152,19 @@ func TestSubagentCountsTheTurnsPositionalPairingCannotUse(t *testing.T) {
 			if got != want.exchanges {
 				t.Errorf("exchanges = %d, want %d", got, want.exchanges)
 			}
-			if len(records.Discards) != want.discards {
+			if len(records.Discards) != len(want.records) {
 				t.Fatalf("discards = %d, want %d: %+v",
-					len(records.Discards), want.discards, records.Discards)
+					len(records.Discards), len(want.records), records.Discards)
 			}
-			for _, discard := range records.Discards {
-				if discard.Record == 0 || discard.Reason == "" {
-					t.Errorf("a discard names neither a record nor a reason: %+v", discard)
+			// The source position is the diagnostic: a discard that names the
+			// wrong line sends the operator to the wrong record.
+			for i, discard := range records.Discards {
+				if discard.Record != want.records[i] {
+					t.Errorf("discard %d names record %d, want %d: %+v",
+						i, discard.Record, want.records[i], discard)
+				}
+				if discard.Reason == "" {
+					t.Errorf("discard %d carries no reason: %+v", i, discard)
 				}
 			}
 		})

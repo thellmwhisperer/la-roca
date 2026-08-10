@@ -151,14 +151,17 @@ func TestPiDoesNotStoreAThinkingBlockWithNoText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
+	// The whitespace-only block is not stored at all: a per-block emptiness check
+	// would pass a parser that kept the "   " it was handed.
 	exchange := records.Sessions[0].Exchanges[0]
-	for _, block := range exchange.Thinking {
-		if block.Text == "" {
-			t.Errorf("an empty thinking block landed in the corpus: %+v", exchange.Thinking)
-		}
+	if got := len(exchange.Thinking); got != 0 {
+		t.Errorf("thinking blocks = %d, want none: %+v", got, exchange.Thinking)
 	}
 	if len(records.Discards) != 1 {
-		t.Errorf("discards = %d, want the empty block counted: %+v",
+		t.Fatalf("discards = %d, want the empty block counted: %+v",
 			len(records.Discards), records.Discards)
+	}
+	if discard := records.Discards[0]; discard.Record != 3 || discard.Reason == "" {
+		t.Errorf("discard = %+v, want record 3 with a reason", discard)
 	}
 }

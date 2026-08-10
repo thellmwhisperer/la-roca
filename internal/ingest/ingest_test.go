@@ -112,6 +112,13 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 }
 
 func TestUnreadableCoworkSidecarIsCountedPerFile(t *testing.T) {
+	// The permission bits are the only way to make this read fail while the file
+	// stays a regular file the scan still pairs, and they do not bind a
+	// privileged process: as root the read succeeds and this test would fail for
+	// a reason that is not the product's. It says so instead of flaking.
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: chmod cannot make a file unreadable")
+	}
 	world := newWorld(t)
 	path := filepath.Join(world.roots().CoworkSessions, "cw.json")
 	if err := os.Chmod(path, 0); err != nil {

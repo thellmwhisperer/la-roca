@@ -73,10 +73,11 @@ func TestCodexToolWithoutAFailingExitCodeIsNotAnError(t *testing.T) {
 	}
 }
 
-// Pi holds a turn the artefact is still writing and reports it as deferred. A
-// rollout whose last event is a user message is the same live tail, and it was
-// leaving the turn out of the exchanges, out of the discards and out of the
-// deferred count: invisible in all three, which reads as a file with nothing new.
+// A rollout whose last event is a user message is a live tail, the same shape Pi
+// holds and reports as deferred. It was leaving the turn out of the exchanges,
+// out of the discards and out of the deferred count: invisible in all three,
+// which reads as a file with nothing new. Deferred and discarded are exclusive:
+// a turn the next run will land is not a turn this run threw away.
 func TestCodexHoldsTheTurnTheRolloutIsStillWriting(t *testing.T) {
 	content := `{"type":"session_meta","timestamp":"2026-08-01T10:00:00Z","payload":{"id":"roll-1","cwd":"/w/demo"}}
 {"type":"event_msg","timestamp":"2026-08-01T10:00:01Z","payload":{"type":"user_message","message":"closed question"}}
@@ -92,6 +93,10 @@ func TestCodexHoldsTheTurnTheRolloutIsStillWriting(t *testing.T) {
 	}
 	if records.Deferred != 1 {
 		t.Errorf("deferred = %d, want 1 turn still in flight", records.Deferred)
+	}
+	if got := len(records.Discards); got != 0 {
+		t.Errorf("discards = %d, want none: a deferred turn is not a discarded one: %+v",
+			got, records.Discards)
 	}
 }
 
@@ -113,6 +118,10 @@ func TestCodexCountsAUserMessageThatSupersedesAnUnclosedTurn(t *testing.T) {
 	if len(records.Discards) != 1 {
 		t.Fatalf("discards = %d, want the superseded turn counted: %+v",
 			len(records.Discards), records.Discards)
+	}
+	// The second line is the question that never completed.
+	if discard := records.Discards[0]; discard.Record != 2 || discard.Reason == "" {
+		t.Errorf("discard = %+v, want record 2 with a reason", discard)
 	}
 	if records.Sessions[0].Exchanges[0].HumanText != "asked again" {
 		t.Errorf("the completed turn kept the wrong question: %q",
@@ -150,14 +159,17 @@ func TestCodexDoesNotStoreReasoningWithNoText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	for _, block := range records.Sessions[0].Exchanges[0].Thinking {
-		if block.Text == "" {
-			t.Errorf("an empty thinking block landed in the corpus: %+v",
-				records.Sessions[0].Exchanges[0].Thinking)
-		}
+	// Nothing is stored, not merely nothing empty: a parser that synthesized
+	// whitespace for the missing summary would satisfy a per-block check.
+	if got := len(records.Sessions[0].Exchanges[0].Thinking); got != 0 {
+		t.Errorf("thinking blocks = %d, want none: %+v", got,
+			records.Sessions[0].Exchanges[0].Thinking)
 	}
 	if len(records.Discards) != 1 {
-		t.Errorf("discards = %d, want the empty reasoning counted: %+v",
+		t.Fatalf("discards = %d, want the empty reasoning counted: %+v",
 			len(records.Discards), records.Discards)
+	}
+	if discard := records.Discards[0]; discard.Record != 3 || discard.Reason == "" {
+		t.Errorf("discard = %+v, want record 3 with a reason", discard)
 	}
 }
