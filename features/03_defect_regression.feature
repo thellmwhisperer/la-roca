@@ -6,26 +6,6 @@ Feature: The campaign's eight defects do not come back
   I want every defect that cost a night to have its own named scenario
   so that its return is identified in the failure title and not in a log.
 
-  @regression:D-1 @fast
-  Scenario: D-1 A key written at the root of the configuration is read
-    Given La Roca is installed and initialized
-    And a HOME with the seeded world "operator"
-    And the configuration declares "workspace_roots" at the root of the document, outside every section
-    When I run "roca ingest --json"
-    Then the command exits with code 0
-    And the output does not contain "no declared workspace root explains"
-    And a session under that workspace root is attributed to its project
-    And adding a second directory to that key attributes its session too
-
-  @regression:D-1 @fast
-  Scenario: D-1b A key under its section beats the same key at the root
-    Given La Roca is installed and initialized
-    And the configuration declares "workspace_roots" at the root and also under its defaults section
-    When I run "roca ingest --json"
-    Then the command exits with code 0
-    And the JSON output reflects the section's value, not the root's
-    And only the session under the section's workspace root gets a project identity
-
   @regression:D-2 @fast @acceptance
   Scenario: D-2 Startup on a virgin machine is green
     Given a clean HOME with no trace of Roca

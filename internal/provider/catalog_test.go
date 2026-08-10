@@ -257,9 +257,9 @@ func TestTheBudgetsComeFromTheConfiguration(t *testing.T) {
 	}
 }
 
-// A loose model key at the document root is equivalent to one under [defaults].
-func TestALooseModelKeyRetunesTheLocalFloor(t *testing.T) {
-	cascade, err := BuildCascade(settings(t, "ollama_model = \"qwen3.5:2b\"\n\n[models]\norder = [\"ollama\"]\n"))
+func TestAModelKeyUnderDefaultsRetunesTheLocalFloor(t *testing.T) {
+	cascade, err := BuildCascade(settings(t,
+		"[defaults]\nollama_model = \"qwen3.5:2b\"\n\n[models]\norder = [\"ollama\"]\n"))
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}

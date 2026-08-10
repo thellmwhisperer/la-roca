@@ -161,7 +161,7 @@ func loadDomainFeatures(dir string) ([]godog.Feature, error) {
 func (w *ingestAcceptanceWorld) writeConfig(workspace string) error {
 	body := ""
 	if workspace != "" {
-		body = fmt.Sprintf("workspace_roots = [%q]\n", workspace)
+		body = fmt.Sprintf("[defaults]\nworkspace_roots = [%q]\n", workspace)
 	}
 	return writeFixture(filepath.Join(w.home, ".roca", "config.toml"), body)
 }

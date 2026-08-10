@@ -182,9 +182,8 @@ type File struct {
 	// the file and the remedy.
 	Warnings []string
 
-	// defaults and root hold the supported loose scalar keys.
+	// defaults holds the supported loose scalar keys.
 	defaults map[string]any
-	root     map[string]any
 }
 
 // ModelsConfig is the [models] section: which providers, in what order, with
@@ -248,7 +247,6 @@ func LoadFile(path string) (File, error) {
 		return file, fmt.Errorf("the configuration at %s is not valid TOML: %w", path, err)
 	}
 
-	file.root = document
 	file.defaults, _ = document["defaults"].(map[string]any)
 	models, _ := document["models"].(map[string]any)
 	file.Models = readModels(models, path, &file.Warnings)
@@ -320,23 +318,15 @@ func unknownKey(key, path string) string {
 		key, path)
 }
 
-// Default resolves a loose key under [defaults] and at the root of the document;
-// [defaults] wins on collision.
-//
-// Reading only [defaults] is what made `roca init` warn "No workspace roots
-// configured" with the key defined, and made a hand-written config invisible.
+// Default resolves a loose key under [defaults].
 func (f File) Default(key string) string {
 	if value, ok := f.defaults[key]; ok {
-		return asString(value)
-	}
-	if value, ok := f.root[key]; ok {
 		return asString(value)
 	}
 	return ""
 }
 
-// DefaultList resolves a loose list under [defaults] first, then the document
-// root.
+// DefaultList resolves a loose list under [defaults].
 //
 // Three shapes are accepted, because all three are what operators actually write:
 // a TOML array, a JSON array inside a string (which is how the equivalent
@@ -344,9 +334,6 @@ func (f File) Default(key string) string {
 // root written as a bare string is a config, not a mistake.
 func (f File) DefaultList(key string) []string {
 	if value, ok := f.defaults[key]; ok {
-		return asStrings(value)
-	}
-	if value, ok := f.root[key]; ok {
 		return asStrings(value)
 	}
 	return nil

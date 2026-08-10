@@ -136,10 +136,10 @@ roca update --version vX.Y.Z
 ```
 
 The repository comes from `--repo`, then `ROCA_REPO`, then the `release_repo`
-key of `config.toml` (read with the D-1 rule: under `[defaults]` or at the
-root), and last from `release.DefaultRepo`, the channel this product publishes
-from. A fork, a mirror or a private rebuild is one flag away, which is the
-reason the default is the last link and not the only one.
+key under `[defaults]` in `config.toml`, and last from `release.DefaultRepo`,
+the channel this product publishes from. A fork, a mirror or a private rebuild
+is one flag away, which is the reason the default is the last link and not the
+only one.
 The credential comes from `GITHUB_TOKEN` and from nowhere else, so it lives in
 no output and in no file of this product's.
 

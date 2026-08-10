@@ -161,25 +161,20 @@ func TestSetModelOrderCreatesAndSurgicallyEditsTheConfiguration(t *testing.T) {
 	}
 }
 
-// A key written at the document root resolves like one under [defaults], and
-// [defaults] wins on collision.
-func TestAKeyAtTheRootResolvesTheSameAsOneUnderDefaults(t *testing.T) {
-	file, err := LoadFile(write(t, "model = \"qwen3.5:2b\"\n"))
+func TestLooseKeysAreReadOnlyFromDefaults(t *testing.T) {
+	file, err := LoadFile(write(t, "model = \"ignored-root\"\n\n[defaults]\nmodel = \"configured\"\n"))
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if got := file.Default("model"); got != "qwen3.5:2b" {
-		t.Fatalf("a key at the root is invisible: %q", got)
-	}
-}
-
-func TestDefaultsWinsOnCollision(t *testing.T) {
-	file, err := LoadFile(write(t, "model = \"at-the-root\"\n\n[defaults]\nmodel = \"under-defaults\"\n"))
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if got := file.Default("model"); got != "under-defaults" {
+	if got := file.Default("model"); got != "configured" {
 		t.Fatalf("model %q", got)
+	}
+	rootOnly, err := LoadFile(write(t, "model = \"ignored-root\"\n"))
+	if err != nil {
+		t.Fatalf("load root-only file: %v", err)
+	}
+	if got := rootOnly.Default("model"); got != "" {
+		t.Fatalf("root-level model still resolves: %q", got)
 	}
 }
 
@@ -260,20 +255,17 @@ func TestTheConfigPathHangsOffTheDataDirectoryAndTheEnvironmentWins(t *testing.T
 	}
 }
 
-// List keys accept every documented shape and prefer [defaults] on collision.
-func TestDefaultListReadsEveryShapeAndPrefersTheSection(t *testing.T) {
+// List keys accept every documented shape under [defaults].
+func TestDefaultListReadsEveryShapeFromDefaults(t *testing.T) {
 	cases := []struct {
 		name    string
 		content string
 		want    []string
 	}{
-		{"a TOML array at the root", "workspace_roots = [\"/w\", \"/x\"]\n", []string{"/w", "/x"}},
-		{"a single path", "workspace_roots = \"/w\"\n", []string{"/w"}},
-		{"a JSON array inside a string", "workspace_roots = \"[\\\"/w\\\", \\\"/x\\\"]\"\n",
+		{"a TOML array", "[defaults]\nworkspace_roots = [\"/w\", \"/x\"]\n", []string{"/w", "/x"}},
+		{"a single path", "[defaults]\nworkspace_roots = \"/w\"\n", []string{"/w"}},
+		{"a JSON array inside a string", "[defaults]\nworkspace_roots = \"[\\\"/w\\\", \\\"/x\\\"]\"\n",
 			[]string{"/w", "/x"}},
-		{"the section beats the root",
-			"workspace_roots = [\"/root\"]\n[defaults]\nworkspace_roots = [\"/section\"]\n",
-			[]string{"/section"}},
 	}
 	for _, one := range cases {
 		path := filepath.Join(t.TempDir(), "config.toml")

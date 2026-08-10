@@ -29,35 +29,16 @@ var seededSources = []string{
 }
 
 func registerIngestSteps(ctx *godog.ScenarioContext, m *world) {
-	ctx.Given(`^the configuration declares "([^"]*)" at the root of the document, outside every section$`,
-		m.theKeyAtTheRoot)
-	ctx.Given(`^the configuration declares "([^"]*)" at the root and also under its defaults section$`,
-		m.theKeyAtTheRootAndInItsSection)
-
 	ctx.Then(`^the JSON output reports a count for every seeded source$`, m.aCountForEverySeededSource)
 	ctx.Then(`^the delta of the second ingest is zero in every category$`, m.theDeltaIsZero)
 	ctx.Then(`^the output is valid JSON$`, m.theOutputIsValidJSON)
 	ctx.Then(`^the database has not changed$`, m.theDatabaseHasNotChanged)
 	ctx.Then(`^the output does not contain "([^"]*)"$`, m.theOutputDoesNotContain)
-	ctx.Then(`^a session under that workspace root is attributed to its project$`,
-		m.theDeclaredRootAttributesItsSession)
-	ctx.Then(`^adding a second directory to that key attributes its session too$`,
-		m.aSecondDirectoryAttributesItsSession)
-	ctx.Then(`^the JSON output reflects the section's value, not the root's$`, m.theSectionsValueWins)
-	ctx.Then(`^only the session under the section's workspace root gets a project identity$`,
-		m.onlyTheSectionsRootAttributesItsSession)
 }
 
 // --- the seeded world ---
 
 const seededSessionID = "11111111-2222-3333-4444-555555555555"
-
-const (
-	rootIdentitySession      = "22222222-3333-4444-5555-666666666666"
-	secondIdentitySession    = "33333333-4444-5555-6666-777777777777"
-	discardedIdentitySession = "44444444-5555-6666-7777-888888888888"
-	sectionIdentitySession   = "55555555-6666-7777-8888-999999999999"
-)
 
 // operatorWorld writes every source artefact under this scenario's
 // HOME and takes a fingerprint of the database, so a step can later prove that a
@@ -142,7 +123,7 @@ func (m *world) theOperatorsArtefacts() error {
 
 	// The workspace root is declared, because without it the project instruction
 	// files are not looked for at all.
-	return m.writeConfig("workspace_roots = [\"" + workspace + "\"]\n")
+	return m.writeConfig("[defaults]\nworkspace_roots = [\"" + workspace + "\"]\n")
 }
 
 // operatorWorld is that same corpus with the database's fingerprint taken, for
@@ -264,67 +245,6 @@ func (m *world) writeConfig(content string) error {
 	return writeFixture(filepath.Join(m.home, ".roca", "config.toml"), content)
 }
 
-// Configuration precedence steps.
-
-// theKeyAtTheRoot writes the key outside every section, as hand-written configs
-// commonly do.
-func (m *world) theKeyAtTheRoot(key string) error {
-	if key != "workspace_roots" {
-		return fmt.Errorf("this suite only declares workspace_roots, not %q", key)
-	}
-	m.declaredRoots = []string{filepath.Join(m.home, "w")}
-	if err := m.seedIdentityTranscript(m.declaredRoots[0], "identified", rootIdentitySession); err != nil {
-		return err
-	}
-	return m.writeConfig(rootsDocument("", m.declaredRoots))
-}
-
-// theKeyAtTheRootAndInItsSection writes it in both places with different values, so
-// the precedence is measurable and not assumed.
-func (m *world) theKeyAtTheRootAndInItsSection(key string) error {
-	if key != "workspace_roots" {
-		return fmt.Errorf("this suite only declares workspace_roots, not %q", key)
-	}
-	atTheRoot := filepath.Join(m.home, "del-documento")
-	inTheSection := filepath.Join(m.home, "de-la-seccion")
-	if err := m.seedIdentityTranscript(atTheRoot, "from-root", discardedIdentitySession); err != nil {
-		return err
-	}
-	if err := m.seedIdentityTranscript(inTheSection, "from-section", sectionIdentitySession); err != nil {
-		return err
-	}
-	m.declaredRoots = []string{inTheSection}
-	m.discardedRoots = []string{atTheRoot}
-	return m.writeConfig(rootsDocument(atTheRoot, []string{inTheSection}))
-}
-
-func (m *world) seedIdentityTranscript(root, project, sessionID string) error {
-	cwd := filepath.Join(root, project)
-	encoded := strings.NewReplacer(":", "-", `\`, "-", "/", "-").Replace(cwd)
-	return writeFixture(filepath.Join(m.home, ".claude", "projects", encoded, sessionID+".jsonl"), `
-{"type":"user","timestamp":"2026-08-01T15:00:00Z","message":{"content":"identify this project"}}
-{"type":"assistant","timestamp":"2026-08-01T15:00:01Z","message":{"content":[{"type":"text","text":"identified"}]}}
-`)
-}
-
-// rootsDocument writes the configuration document: the key at the root when one is
-// given, and the key under [defaults] for the declared ones.
-func rootsDocument(atTheRoot string, inTheSection []string) string {
-	var document strings.Builder
-	if atTheRoot != "" {
-		fmt.Fprintf(&document, "workspace_roots = [%q]\n", atTheRoot)
-	}
-	if len(inTheSection) == 0 {
-		return document.String()
-	}
-	if atTheRoot == "" {
-		fmt.Fprintf(&document, "workspace_roots = [%s]\n", quotedList(inTheSection))
-		return document.String()
-	}
-	fmt.Fprintf(&document, "\n[defaults]\nworkspace_roots = [%s]\n", quotedList(inTheSection))
-	return document.String()
-}
-
 // --- the assertions ---
 
 func (m *world) aCountForEverySeededSource() error {
@@ -439,76 +359,4 @@ func (m *world) databaseFingerprint() (string, error) {
 		rows.Close()
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
-}
-
-func (m *world) theDeclaredRootAttributesItsSession() error {
-	return m.sessionHasProject(rootIdentitySession, "identified")
-}
-
-func (m *world) aSecondDirectoryAttributesItsSession() error {
-	second := filepath.Join(m.home, "otro-sitio")
-	if err := m.seedIdentityTranscript(second, "other", secondIdentitySession); err != nil {
-		return err
-	}
-	m.declaredRoots = append(m.declaredRoots, second)
-	if err := m.writeConfig(rootsDocument("", m.declaredRoots)); err != nil {
-		return err
-	}
-	if _, err := m.run("roca ingest --json"); err != nil {
-		return err
-	}
-	return m.sessionHasProject(secondIdentitySession, "other")
-}
-
-// theSectionsValueWins checks that a section value beats the same root key.
-func (m *world) theSectionsValueWins() error {
-	document, err := m.json()
-	if err != nil {
-		return err
-	}
-	roots, ok := document["workspace_roots"].(map[string]any)
-	if !ok {
-		return fmt.Errorf("the output does not report the workspace roots: %v", keys(document))
-	}
-	selected := fmt.Sprint(roots["selected"])
-	for _, declared := range m.declaredRoots {
-		if !strings.Contains(selected, declared) {
-			return fmt.Errorf("the section's value %q is not in %s", declared, selected)
-		}
-	}
-	for _, discarded := range m.discardedRoots {
-		if strings.Contains(selected, discarded) {
-			return fmt.Errorf("the root's value %q is still in %s", discarded, selected)
-		}
-	}
-	return nil
-}
-
-func (m *world) onlyTheSectionsRootAttributesItsSession() error {
-	if err := m.sessionHasProject(sectionIdentitySession, "from-section"); err != nil {
-		return err
-	}
-	return m.sessionHasProject(discardedIdentitySession, "")
-}
-
-func (m *world) sessionHasProject(sessionID, want string) error {
-	db, err := m.openDB()
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	var project sql.NullString
-	if err := db.QueryRow("SELECT project FROM sessions WHERE session_id = ?", sessionID).
-		Scan(&project); err != nil {
-		return fmt.Errorf("read project for session %s: %w", sessionID, err)
-	}
-	if want == "" {
-		if !project.Valid || project.String == "" {
-			return nil
-		}
-	} else if project.Valid && project.String == want {
-		return nil
-	}
-	return fmt.Errorf("session %s project = %q (valid=%t), want %q",
-		sessionID, project.String, project.Valid, want)
 }

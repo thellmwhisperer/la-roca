@@ -46,13 +46,9 @@ For each setting, in this order of precedence:
 
 1. the environment,
 2. its `[models.<provider>]` table,
-3. a loose key at the root of the document or under `[defaults]` (`model`,
-   `ollama_model`, `ollama_base_url`, `codex_model`), with `[defaults]` winning
-   on collision,
+3. a loose key under `[defaults]` (`model`, `ollama_model`,
+   `ollama_base_url`, `codex_model`),
 4. the built-in default.
-
-A key written at the document root resolves like one under `[defaults]`, and
-`[defaults]` wins on collision.
 
 `ROCA_MODELS_ORDER` overrides the order from the environment; `ROCA_MODELS_ORDER=none`
 turns the model off entirely.

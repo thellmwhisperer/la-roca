@@ -18,8 +18,6 @@ import (
 
 // selectedScenarios are the implemented contracts exercised by this build.
 var selectedScenarios = []string{
-	"D-1 ",  // a key at the root of the configuration is read
-	"D-1b ", // the key under its section beats the same key at the root
 	"D-4 ",  // aged database adopted, orphans reported
 	"D-4b ", // DDL formatting noise never blocks
 	"F02-09 ", "F02-10 ",

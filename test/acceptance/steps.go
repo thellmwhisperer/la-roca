@@ -37,10 +37,6 @@ type world struct {
 	// dbFingerprint is the content of the database when the world was seeded, for
 	// the steps that prove a command wrote nothing.
 	dbFingerprint string
-	// declaredRoots and discardedRoots are the workspace roots a scenario wrote
-	// into the configuration, and the ones it wrote expecting them to lose.
-	declaredRoots  []string
-	discardedRoots []string
 	// plug is the scenario's MCP session over stdio and what it last got back.
 	plug plugWorld
 	// readOnly is the operator's switch, applied to every command and every
@@ -99,8 +95,6 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 		m.everything = nil
 		m.models = modelWorld{}
 		m.dbFingerprint = ""
-		m.declaredRoots = nil
-		m.discardedRoots = nil
 		m.plug = plugWorld{}
 		m.readOnly = false
 		m.agentConfig, m.agentConfigBefore, m.agentConfigRuntime = "", "", ""
