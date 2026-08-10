@@ -1,0 +1,17 @@
+# Build artefacts
+/bin/
+/dist/
+
+# Project scratch (see AGENTS.md), including the cached slop-gate binary
+/.tmp/
+/.worktrees/
+
+# macOS
+.DS_Store
+
+# Personal training artefacts. They are generated next to the operator's
+# database by `roca calibrate` / `roca init` from that machine's own corpus.
+# Committing either would leak the operator's questions, project names and
+# routing model into the git history forever (2026-08-05).
+queryplan_examples.txt
+classifier.roca

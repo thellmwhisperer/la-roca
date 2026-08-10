@@ -1,0 +1,405 @@
+// Package service is the kernel shared by the CLI and MCP surfaces.
+package service
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+
+	"github.com/thellmwhisperer/la-roca/internal/ingest"
+	"github.com/thellmwhisperer/la-roca/internal/layers"
+	"github.com/thellmwhisperer/la-roca/internal/provider"
+	"github.com/thellmwhisperer/la-roca/internal/query/sqlgate"
+	"github.com/thellmwhisperer/la-roca/internal/search"
+	"github.com/thellmwhisperer/la-roca/internal/store"
+)
+
+// Options are the service's opening options.
+type Options struct {
+	DBPath    string
+	BackupDir string
+	// BenchDir is where this installation's own golden benches live. They are
+	// versioned data files of the operator's, generated from their corpus,
+	// because this binary ships no questions inside it (PRD C5).
+	BenchDir string
+	// DataDir is where personal artefacts hang next to the database: the golden
+	// benches the calibration generates. Empty falls back to the directory of
+	// DBPath. Nothing generated from the operator's data may ever be written
+	// outside it (2026-08-05).
+	DataDir string
+	Version string
+	Commit  string
+	// ReadOnly refuses in the service, before any database I/O.
+	ReadOnly bool
+	// Providers is the resolved model cascade. Its zero value is a service that
+	// contacts no provider, which is what an installation with no model
+	// configured needs.
+	Providers provider.Cascade
+	// ConfigPath and ConfigExists are what doctor reports: every message about
+	// configuration names the file, never a TOML table.
+	ConfigPath   string
+	ConfigExists bool
+	// Sources is where every agent's artefacts live on this machine, already
+	// resolved from the home, the environment and the configuration. It is
+	// resolved by the surface and handed over, so this object never guesses at a
+	// path of its own.
+	Sources ingest.Roots
+	// Progress receives terse human-readable phase lines. Structured surfaces
+	// leave it nil and receive only the result.
+	Progress func(string)
+}
+
+// Service opens the database once and answers both surfaces.
+type Service struct {
+	db       *store.DB
+	opts     Options
+	registry layers.Registry
+
+	gateOnce    sync.Once
+	gate        *sqlgate.Gate
+	gateFailure error
+}
+
+// Open opens the database without creating or adopting it: that is Init's job.
+func Open(opts Options) (*Service, error) {
+	registry, err := layers.Load()
+	if err != nil {
+		return nil, err
+	}
+	db, err := store.Open(opts.DBPath)
+	if err != nil {
+		return nil, err
+	}
+	return &Service{db: db, opts: opts, registry: registry}, nil
+}
+
+// DB exposes the database for whatever has no method of its own in the service
+// yet.
+func (s *Service) DB() *store.DB { return s.db }
+
+// Close closes the database.
+func (s *Service) Close() error {
+	if s.gate != nil {
+		s.gate.Close()
+	}
+	return s.db.Close()
+}
+
+// theGate opens the read-only gate the first time it is needed. It is an
+// in-memory database with the visible schema, so it costs a few milliseconds a
+// command that does not query has no reason to pay.
+func (s *Service) theGate() (*sqlgate.Gate, error) {
+	s.gateOnce.Do(func() { s.gate, s.gateFailure = sqlgate.Open() })
+	return s.gate, s.gateFailure
+}
+
+// InitResult is what init did with the database.
+type InitResult struct {
+	DBPath string `json:"-"`
+	// ConfigPath is where this installation reads its settings from, whether or
+	// not the file is there. An operator whose configuration is being ignored
+	// needs to know which file the product looked at before they edit another.
+	ConfigPath string         `json:"config_path"`
+	Database   string         `json:"database"`
+	Verdict    string         `json:"verdict"`
+	Structures int            `json:"schema_structures"`
+	Orphans    []string       `json:"orphans,omitempty"`
+	Repairs    []string       `json:"repairs,omitempty"`
+	BackupPath string         `json:"-"`
+	Layers     int            `json:"layers"`
+	Bytes      int64          `json:"database_bytes"`
+	Rows       ingest.Tables  `json:"rows"`
+	Search     *search.Report `json:"search_index,omitempty"`
+	// Model and Ingest are the rest of the bootstrap: whether a model is going
+	// to answer, and what the first read of the disk found. Neither can fail
+	// the command, and both report.
+	Model      *InitModel    `json:"model"`
+	Ingest     *IngestResult `json:"ingest"`
+	PromptPath string        `json:"prompt_path"`
+	Prompt     string        `json:"-"`
+}
+
+// InitModel is the model gate at bootstrap: which provider is going to answer,
+// or why none is and what to do about it. It is the same verdict `roca doctor`
+// prints, said once at the moment an operator first has a reason to care.
+type InitModel struct {
+	Ready    bool   `json:"ready"`
+	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+	Action   string `json:"action,omitempty"`
+	Disabled bool   `json:"disabled,omitempty"`
+}
+
+const presentationPrompt = "## La Roca — local semantic memory\n" +
+	"La Roca contains local session history, curated memories, handoffs, decisions, " +
+	"and tool traces from your agents.\n" +
+	"when to query: at session start, before repeating research, and whenever prior " +
+	"context or a decision may exist.\n" +
+	"With a shell, use `roca query \"<natural question>\"`; preserve durable context " +
+	"with `roca store`.\n" +
+	"Without a shell, use the MCP equivalents: `roca_query` and `roca_store`.\n" +
+	"On first bootstrap, `roca init` asks new or adopt; adoption uses only the source path the user types.\n" +
+	"La Roca never edits agent instruction files; a human chooses where to paste this block.\n"
+
+// Init leaves the database ready: it creates the new one or adopts the one that
+// is there, and resyncs the layer registry. It is idempotent by contract,
+// because the real flow runs it more than once.
+func (s *Service) Init(ctx context.Context) (InitResult, error) {
+	if s.opts.ReadOnly {
+		return InitResult{}, errReadOnly
+	}
+	progress := s.opts.Progress
+	if progress == nil {
+		progress = func(string) {}
+	}
+	detected := ingest.DetectAgents(s.opts.Sources)
+	progress("agents: checking known sources")
+	progress("agents detected: " + strings.Join(detected, ", "))
+	progress("database: inspecting " + s.db.Path())
+	before, err := store.Inspect(ctx, s.db)
+	if err != nil {
+		return InitResult{}, err
+	}
+	adoption, err := store.Adopt(ctx, s.db, s.opts.BackupDir)
+	if err != nil {
+		return InitResult{}, err
+	}
+	if err := s.syncLayers(ctx); err != nil {
+		return InitResult{}, err
+	}
+	state := "adopted"
+	progressState := "existing"
+	if before.Fresh {
+		state = "created"
+		progressState = "created"
+	}
+	rows := ingest.Tables{
+		Memories: s.countOf(ctx, "memories"), Sessions: s.countOf(ctx, "sessions"),
+		Exchanges: s.countOf(ctx, "exchanges"), ThinkingBlocks: s.countOf(ctx, "thinking_blocks"),
+		ToolUses: s.countOf(ctx, "tool_uses"),
+	}
+	var bytes int64
+	if info, statErr := os.Stat(s.db.Path()); statErr == nil {
+		bytes = info.Size()
+	}
+	progress(fmt.Sprintf("database: %s · %d bytes · %d memories · %d sessions · %d exchanges",
+		progressState, bytes, rows.Memories, rows.Sessions, rows.Exchanges))
+	progress("index: building search index")
+
+	// Search is indexed during adoption, which is when the database changes
+	// hands. It is incremental: on an already indexed database it costs
+	// nothing, and that is why init can always call it without punishing
+	// whoever already had it.
+	report, err := s.Index(ctx)
+	if err != nil {
+		return InitResult{}, err
+	}
+
+	progress(fmt.Sprintf("index: ready in %d ms", report.ElapsedMS))
+	result := InitResult{
+		DBPath:     s.db.Path(),
+		ConfigPath: s.opts.ConfigPath,
+		Database:   state,
+		Verdict:    string(adoption.Verdict),
+		Structures: adoption.RequiredStructures,
+		Orphans:    adoption.Orphans,
+		Repairs:    adoption.Repairs,
+		BackupPath: adoption.BackupPath,
+		Layers:     len(s.registry.Layers),
+		Bytes:      bytes,
+		Rows:       rows,
+		Search:     &report,
+	}
+
+	// The rest of the bootstrap. None of it may take the command down: a
+	// database that is ready is the thing init promised, and a source that
+	// cannot be read or a model that is not installed are reported states.
+	progress("ingest: starting first read")
+	result.Ingest = s.bootstrapIngest(ctx)
+	progress(fmt.Sprintf("ingest: complete · %d files read · %d skipped · %d errors",
+		result.Ingest.FilesRead, result.Ingest.FilesSkipped, result.Ingest.Errors))
+	progress("model: checking declared providers")
+	result.Model = s.modelGate(ctx)
+	if result.Model.Ready {
+		progress("model: " + result.Model.Provider + "/" + result.Model.Model + " will answer")
+	} else {
+		progress("model: no provider will answer · " + result.Model.Reason)
+	}
+	result.Rows = result.Ingest.After
+	if info, statErr := os.Stat(s.db.Path()); statErr == nil {
+		result.Bytes = info.Size()
+	}
+	result.PromptPath = filepath.Join(s.dataDir(), "prompt.md")
+	result.Prompt = presentationPrompt
+	if err := os.WriteFile(result.PromptPath, []byte(result.Prompt), 0o600); err != nil {
+		return InitResult{}, fmt.Errorf("write the agent prompt at %s: %w", result.PromptPath, err)
+	}
+	return result, nil
+}
+
+// bootstrapIngest is the first read of the disk (PRD 3.4: init is config,
+// database, model gate and first ingest). It is incremental like every other
+// run, so on a machine that already ingested it costs a fingerprint check per
+// file and writes nothing.
+func (s *Service) bootstrapIngest(ctx context.Context) *IngestResult {
+	report, err := s.Ingest(ctx, IngestRequest{})
+	if err != nil {
+		// An ingest that blows up is one more error in its own report, never a
+		// bootstrap that fails: the database is ready and the operator can
+		// query what was already there.
+		report.Errors++
+		report.ErrorDetails = append(report.ErrorDetails,
+			ingest.Failure{Kind: "ingest", Reason: err.Error()})
+	}
+	return &report
+}
+
+// modelGate asks who is going to answer, without stopping at the first yes:
+// the operator reading the bootstrap wants the picture, and a provider that is
+// not available has to arrive with its remedy attached.
+func (s *Service) modelGate(ctx context.Context) *InitModel {
+	cascade := s.opts.Providers
+	if cascade.Disabled {
+		return &InitModel{Disabled: true, Reason: "the model is turned off in the configuration"}
+	}
+	if len(cascade.Providers) == 0 {
+		return &InitModel{
+			Reason: "no model provider is configured",
+			Action: "declare one under [models] in " + s.opts.ConfigPath +
+				", or run `roca doctor` to see the ones this version knows",
+		}
+	}
+	gate := &InitModel{}
+	for _, attempt := range cascade.Diagnose(ctx) {
+		if attempt.Ready {
+			return &InitModel{Ready: true, Provider: attempt.Name, Model: attempt.ModelID}
+		}
+		if gate.Reason == "" {
+			gate.Provider, gate.Reason, gate.Action = attempt.Name, attempt.Reason, attempt.Action
+		}
+	}
+	return gate
+}
+
+// dataDir is the directory the database hangs off. The agent prompt the
+// bootstrap writes lives here, beside the operator's database.
+func (s *Service) dataDir() string {
+	if s.opts.DataDir != "" {
+		return s.opts.DataDir
+	}
+	if s.opts.DBPath != "" {
+		return filepath.Dir(s.opts.DBPath)
+	}
+	return ""
+}
+
+// countOf is how many rows a table holds, or zero when it cannot be asked.
+//
+// It is the one live number both `roca doctor` and the calibration carry: an
+// installation that answers nothing because it has nothing ingested looks
+// exactly like a broken one until you count. The table name is always a
+// constant of this package, never anything that came in from outside: there is
+// no interpolation of a caller's string here.
+func (s *Service) countOf(ctx context.Context, table string) int {
+	var count int
+	row := s.db.SQL().QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table)
+	if err := row.Scan(&count); err != nil {
+		return 0
+	}
+	return count
+}
+
+// SchemaStatus classifies the database without touching it.
+func (s *Service) SchemaStatus(ctx context.Context) (store.Report, error) {
+	return store.Inspect(ctx, s.db)
+}
+
+var errReadOnly = fmt.Errorf("La Roca is in read-only mode: this operation writes")
+
+// refuseReadOnly is that same refusal naming the operation it refused. The
+// message belongs to the service and neither surface rewrites it: a shell and a
+// plug that answer read-only mode with different words are two products
+// (TECH-SPEC 1.8).
+func refuseReadOnly(operation string) error {
+	return fmt.Errorf("%w (operation: %s)", errReadOnly, operation)
+}
+
+// syncLayers leaves in the table the layers declared in the embedded registry.
+// It only writes what changes, so that adopting a live database does not touch
+// it without reason.
+func (s *Service) syncLayers(ctx context.Context) error {
+	return s.db.Write(ctx, func(tx *sql.Tx) error {
+		for _, layer := range s.registry.Layers {
+			_, err := tx.ExecContext(ctx, `
+				INSERT INTO layers (name, description, schema_file, is_coordination,
+				                    search_excluded, is_classifier_label, alias_of,
+				                    added_by, deprecated, lifecycle, since_version,
+				                    ingest_allowed)
+				VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				ON CONFLICT(name) DO UPDATE SET
+				  description = excluded.description,
+				  is_coordination = excluded.is_coordination,
+				  search_excluded = excluded.search_excluded,
+				  is_classifier_label = excluded.is_classifier_label,
+				  alias_of = excluded.alias_of,
+				  deprecated = excluded.deprecated,
+				  lifecycle = excluded.lifecycle,
+				  since_version = excluded.since_version,
+				  ingest_allowed = excluded.ingest_allowed
+				WHERE description IS NOT excluded.description
+				   OR is_coordination IS NOT excluded.is_coordination
+				   OR search_excluded IS NOT excluded.search_excluded
+				   OR is_classifier_label IS NOT excluded.is_classifier_label
+				   OR alias_of IS NOT excluded.alias_of
+				   OR deprecated IS NOT excluded.deprecated
+				   OR lifecycle IS NOT excluded.lifecycle
+				   OR since_version IS NOT excluded.since_version
+				   OR ingest_allowed IS NOT excluded.ingest_allowed`,
+				layer.Name, layer.Description, layer.IsCoordination, layer.SearchExcluded,
+				layer.IsClassifierLabel, orNull(layer.AliasOf), layer.AddedBy,
+				layer.Deprecated, layer.Lifecycle, layer.SinceVersion, layer.IngestAllowed)
+			if err != nil {
+				return fmt.Errorf("sync layer %q: %w", layer.Name, err)
+			}
+		}
+		return nil
+	})
+}
+
+// truncate clips a text to the requested budget while keeping the search match:
+// a truncation that eats what you were looking for is not a summary, it is a
+// shorter wrong answer.
+func truncate(text string, budget int, term string) string {
+	runes := []rune(text)
+	if budget <= 0 || len(runes) <= budget {
+		return text
+	}
+	start := 0
+	if pos := matchPosition(text, term); pos > 0 {
+		start = max(0, pos-budget/3)
+	}
+	end := min(len(runes), start+budget)
+	excerpt := string(runes[start:end])
+	if start > 0 {
+		excerpt = "…" + string([]rune(excerpt)[1:])
+	}
+	return excerpt
+}
+
+func matchPosition(text, term string) int {
+	lower := strings.ToLower(text)
+	for _, part := range strings.Split(term, "+") {
+		if part == "" {
+			continue
+		}
+		if i := strings.Index(lower, strings.ToLower(part)); i >= 0 {
+			return len([]rune(text[:i]))
+		}
+	}
+	return -1
+}

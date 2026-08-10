@@ -1,0 +1,46 @@
+# What the slop gate measures in this repository.
+#
+# Two scopes, measured independently so duplication in production code cannot
+# hide inside the test scope. Both sweep from the repository root because the
+# product's code lives in three roots (`cmd/`, `internal/`, `test/`) and a clone
+# copied from a command into a package is exactly the kind the gate exists to
+# catch: scoping per directory would make it invisible.
+#
+# What is not swept: `data/` (embedded artefacts plus the one `embed.go` that
+# declares them), `features/` (the consecrated Gherkin contract, not Go),
+# `bin/`, `dist/` and `.tmp/` (build output and the cached gate binary itself).
+schema: 1
+
+detector:
+  name: jscpd
+  version: "4.2.5" # must match the detector linked into the binary
+
+defaults:
+  format: go
+  mode: mild
+  min_lines: 5
+  min_tokens: 50
+
+global_ignore:
+  - "**/.git/**"
+  - "**/.tmp/**"
+  - "**/.worktrees/**"
+  - "bin/**"
+  - "dist/**"
+  - "data/**"
+  - "features/**"
+
+scopes:
+  # Everything the shipped binary is made of.
+  go_production:
+    scan_path: .
+    pattern: "{cmd,internal}/**/*.go"
+    ignore:
+      - "**/*_test.go"
+
+  # The suites and the Gherkin step harness. Fixture-shaped repetition is
+  # cheaper here than in production, so it gets its own ceiling and never
+  # subsidises the production one.
+  go_tests:
+    scan_path: .
+    pattern: "{cmd/**/*_test.go,internal/**/*_test.go,test/**/*.go}"

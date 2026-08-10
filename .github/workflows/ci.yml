@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The slop gate. It is its own step, before `make check` runs it again as
+      # part of its chain, so a red build says "slop gate" in the job list
+      # instead of "format, vet and tests". The runner is scripts/slopslint.sh:
+      # it pins the version, picks the platform binary and caches it under
+      # .tmp/, so any other lane (the distribution wave's included) plugs the
+      # gate in by copying these two lines and nothing else.
+      - name: Slop gate (duplication ceilings)
+        run: make slop
+
+      # `make check` builds the binary itself (its first prerequisite) and runs
+      # the acceptance suite as part of `go test ./...`, so there is no separate
+      # build or acceptance step: a green check is a green suite over the real
+      # binary, on a runner that had nothing an hour ago.
+      - name: Build, format, vet, tests and slop gate
+        run: make check
+
+      # The four targets come out of a single runner because CGO_ENABLED=0
+      # makes cross compilation trivial. That is the port's biggest operational
+      # change: one lane that either breaks whole or does not break, not four.
+      # It is the same `make dist` the release channel runs, so a target that
+      # stops cross compiling is a red pull request and not a red tag.
+      - name: The four artefacts from a single runner
+        run: make dist
+
+      # The OSS portability guard: an absolute path with a machine name, a user
+      # name or a personal mount in production is a build failure.
+      - name: Portability guard
+        run: ./scripts/portability-guard.sh

@@ -1,0 +1,122 @@
+package ingest
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"os"
+	"strconv"
+)
+
+// This is the whole idempotency contract of the ingest (PRD requirement M2), and
+// it has two levels because one is not enough.
+//
+// **File level.** `ingest_file_state` keeps, per path, the source kind, the agent,
+// the project, a fingerprint, the last sync and the last error. Before a file is
+// read, its current fingerprint is compared with the stored one; when they match
+// the file is skipped whole, without being opened. That is what makes a repeated
+// `roca ingest` cheap, and the operator's real flow runs it repeatedly.
+//
+// **Record level.** A fingerprint is not enough for a log that grows: a session
+// file changes on every turn and its fingerprint changes whole. The second defence
+// is structural and lives in the schema: `idx_exchanges_session_number`, unique
+// over `(session_id, exchange_number)`. Re-reading a grown file inserts only the
+// new exchanges.
+//
+// The debt v1 does not inherit is that this used to be two contracts: the live
+// route kept fingerprints and the full reconciliation did not, so the table was
+// empty on a machine with 3,943 sessions. Here every route is this route.
+
+// Fingerprint is a file's identity for the skip decision: its size and its
+// modification time in nanoseconds.
+//
+// It is deliberately not a hash of the content. The whole point is to decide
+// without opening the file, and hashing 1.4 GB of transcripts to discover that
+// nothing changed would cost more than re-ingesting them.
+func Fingerprint(path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	return strconv.FormatInt(info.Size(), 10) + ":" +
+		strconv.FormatInt(info.ModTime().UnixNano(), 10), nil
+}
+
+// FileState is what the database remembers about one path.
+type FileState struct {
+	Fingerprint string
+	LastError   string
+}
+
+// LoadState reads the whole state table once. One query beats one query per file:
+// a machine with thousands of transcripts would otherwise spend the run on
+// round trips.
+func LoadState(ctx context.Context, db *sql.DB) (map[string]FileState, error) {
+	rows, err := db.QueryContext(ctx,
+		`SELECT path, COALESCE(fingerprint, ''), COALESCE(last_error, '') FROM ingest_file_state`)
+	if err != nil {
+		return nil, fmt.Errorf("read the ingest state: %w", err)
+	}
+	defer rows.Close()
+
+	state := map[string]FileState{}
+	for rows.Next() {
+		var path, fingerprint, failure string
+		if err := rows.Scan(&path, &fingerprint, &failure); err != nil {
+			return nil, fmt.Errorf("read the ingest state: %w", err)
+		}
+		state[path] = FileState{Fingerprint: fingerprint, LastError: failure}
+	}
+	return state, rows.Err()
+}
+
+// Unchanged decides whether a file can be skipped without being opened.
+//
+// A path with an error recorded against it is always re-read: the error may have
+// been the disk, the agent writing mid-file, or a bug that has since been fixed,
+// and none of those is a reason to never look again.
+func Unchanged(state map[string]FileState, path, fingerprint string) bool {
+	known, ok := state[path]
+	if !ok || known.LastError != "" || known.Fingerprint == "" {
+		return false
+	}
+	return known.Fingerprint == fingerprint
+}
+
+// RecordState writes one path's state. The upsert by path is what makes
+// re-ingesting never duplicate the state either.
+func RecordState(ctx context.Context, tx *sql.Tx, target Target, fingerprint string,
+	failure string, summary map[string]any) error {
+	payload := "{}"
+	if len(summary) > 0 {
+		if encoded, err := json.Marshal(summary); err == nil {
+			payload = string(encoded)
+		}
+	}
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO ingest_file_state
+		  (path, source_kind, source_agent, project, fingerprint, last_synced_at, last_error, metadata)
+		VALUES (?, ?, ?, ?, ?, datetime('now'), ?, ?)
+		ON CONFLICT(path) DO UPDATE SET
+		  source_kind = excluded.source_kind,
+		  source_agent = excluded.source_agent,
+		  project = excluded.project,
+		  fingerprint = excluded.fingerprint,
+		  last_synced_at = datetime('now'),
+		  last_error = excluded.last_error,
+		  metadata = excluded.metadata`,
+		target.Path, string(target.Kind), nullIfEmpty(target.SourceAgent),
+		nullIfEmpty(target.Project), fingerprint, nullIfEmpty(failure), payload)
+	if err != nil {
+		return fmt.Errorf("record the state of %s: %w", target.Path, err)
+	}
+	return nil
+}
+
+func nullIfEmpty(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}

@@ -1,0 +1,32 @@
+# What this repository tolerates, per scope. It is not a budget to spend.
+#
+# `check --enforce` fails when the measurement is above a ceiling (a regression)
+# and when it is below one (an improvement nobody committed). Paying debt down
+# means lowering the number in the same change, so the base branch always states
+# the truth about how much duplication is actually in it.
+#
+# The ratchet is monotonic: these numbers may go down, never up. A wave that
+# raises one to get its build green has not fixed anything, it has moved the
+# line. If a clone is genuinely irreducible, it gets a tombstone in
+# .slop/tombstones and stops counting as active, with its reason written down
+# and reviewable, and the ceiling comes down by one all the same.
+schema: 1
+scopes:
+  # Zero, and it is meant to stay zero. The wave that installed this gate found
+  # five and removed all five: the availability probe of the cascade, the
+  # foreign-database prologue of two source adapters, the open-the-service
+  # preamble of eight commands, the atomic write of the classifier artefact, and
+  # the runtime-catalogue body shared by `mcp status` and `hook status`. In the
+  # code that ships, a clone has an owner every time.
+  go_production:
+    active_clones_ceiling: 0
+
+  # The suites and the Gherkin harness. Most of what is left is the same fixture
+  # assembled on either side of a package boundary, which Go cannot share without
+  # a testing package of its own. It is real debt, written down as such: the
+  # number comes down as those boundaries get a home, and it never goes up.
+  #
+  # The v1 model-only strip removed the compiler/classifier/teach/calibrate
+  # suites, dropping the count from 24 to 23.
+  go_tests:
+    active_clones_ceiling: 23

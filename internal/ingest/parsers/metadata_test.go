@@ -1,0 +1,126 @@
+package parsers
+
+import "testing"
+
+const desktopMetadata = `{
+  "cliSessionId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+  "sessionId": "local-77",
+  "cwd": "/w/demo",
+  "title": "  arreglar la ingesta  ",
+  "createdAt": 1785542400000,
+  "lastActivityAt": 1785542520000,
+  "model": "modelo-de-prueba",
+  "permissionMode": "acceptEdits",
+  "initialMessage": "empieza por la matriz",
+  "userSelectedFolders": ["/w/demo"],
+  "enabledMcpTools": []
+}`
+
+func TestSessionMetadataIsASnapshotWithNoExchange(t *testing.T) {
+	records, err := Parse(KindSessionMetadata, []byte(desktopMetadata), FileMeta{
+		SourceAgent: "claude-code",
+		Project:     "demo",
+	})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	session := records.Sessions[0]
+	// The CLI's session id is the identity: it is the one the transcript under
+	// ~/.claude/projects also carries, which is what makes the two halves meet.
+	if session.ID != "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" {
+		t.Errorf("session id = %q", session.ID)
+	}
+	if !session.Snapshot {
+		t.Error("a metadata file is a snapshot: it merges over what the transcript wrote")
+	}
+	if len(session.Exchanges) != 0 {
+		t.Errorf("exchanges = %d, want none", len(session.Exchanges))
+	}
+	if session.Title != "arreglar la ingesta" {
+		t.Errorf("title = %q, want it trimmed", session.Title)
+	}
+	if session.StartedAt != "2026-08-01T00:00:00Z" {
+		t.Errorf("started at = %q", session.StartedAt)
+	}
+	if session.EndedAt != "2026-08-01T00:02:00Z" {
+		t.Errorf("ended at = %q", session.EndedAt)
+	}
+	if session.Metadata["entrypoint"] != "claude-desktop" {
+		t.Errorf("entrypoint = %v", session.Metadata["entrypoint"])
+	}
+	if session.Metadata["local_session_id"] != "local-77" {
+		t.Errorf("local session id = %v", session.Metadata["local_session_id"])
+	}
+	// An empty list is data the runtime declared, not an absence.
+	if _, ok := session.Metadata["enabled_mcp_tools"]; !ok {
+		t.Errorf("metadata = %+v", session.Metadata)
+	}
+}
+
+func TestCoworkMetadataDeclaresItsOwnEntrypoint(t *testing.T) {
+	records, err := Parse(KindSessionMetadata, []byte(desktopMetadata),
+		FileMeta{SourceAgent: "claude-cowork"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := records.Sessions[0].Metadata["entrypoint"]; got != "claude-cowork" {
+		t.Errorf("entrypoint = %v, want claude-cowork", got)
+	}
+}
+
+func TestSessionMetadataWithoutAnIdIsSkipped(t *testing.T) {
+	for _, content := range []string{`{"cwd":"/w/demo"}`, `not json at all`, `[]`} {
+		records, err := Parse(KindSessionMetadata, []byte(content), FileMeta{})
+		if err != nil {
+			t.Fatalf("parse %q: %v", content, err)
+		}
+		if len(records.Sessions) != 0 {
+			t.Errorf("%q was not skipped: %+v", content, records)
+		}
+	}
+}
+
+const coworkAudit = `
+{"type":"user","session_id":"cw-1","_audit_timestamp":"2026-08-01T11:00:00Z","message":{"content":[{"type":"text","text":"revisa el informe"}]}}
+{"type":"assistant","_audit_timestamp":"2026-08-01T11:00:03Z","message":{"content":"revisado"}}
+{"type":"user","_audit_timestamp":"2026-08-01T11:00:04Z","message":{"content":[{"type":"tool_result","tool_use_id":"x","is_error":false}]}}
+{"type":"user","_audit_timestamp":"2026-08-01T11:00:10Z","message":{"content":[{"type":"text","text":"y el segundo"}]}}
+{"type":"assistant","_audit_timestamp":"2026-08-01T11:00:11Z","message":{"content":[{"type":"text","text":"tambien"}]}}
+`
+
+func TestCoworkAuditPairsTurnsAndTakesItsIdentityFromTheSidecar(t *testing.T) {
+	records, err := Parse(KindCoworkAudit, []byte(coworkAudit), FileMeta{
+		SourceAgent: "claude-cowork",
+		Sidecar:     []byte(desktopMetadata),
+	})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	session := records.Sessions[0]
+	if session.ID != "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" {
+		t.Errorf("session id = %q: the sidecar declares it", session.ID)
+	}
+	if session.Title != "arreglar la ingesta" {
+		t.Errorf("title = %q", session.Title)
+	}
+	// The tool-result-only line is not a turn: two turns, two exchanges.
+	if len(session.Exchanges) != 2 {
+		t.Fatalf("exchanges = %d, want 2", len(session.Exchanges))
+	}
+	if session.Exchanges[0].AgentText != "revisado" {
+		t.Errorf("a bare string answer was lost: %+v", session.Exchanges[0])
+	}
+	if session.Exchanges[1].HumanText != "y el segundo" {
+		t.Errorf("second exchange = %+v", session.Exchanges[1])
+	}
+}
+
+func TestCoworkAuditWithoutASidecarFallsBackToItsOwnSessionID(t *testing.T) {
+	records, err := Parse(KindCoworkAudit, []byte(coworkAudit), FileMeta{})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := records.Sessions[0].ID; got != "cw-1" {
+		t.Errorf("session id = %q, want cw-1", got)
+	}
+}
