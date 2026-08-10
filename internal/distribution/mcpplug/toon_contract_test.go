@@ -67,6 +67,9 @@ func TestQueryThroughThePlugRendersTheRouteLineNotAJSONDump(t *testing.T) {
 	if result.StructuredContent == nil {
 		t.Error("the structured envelope was dropped")
 	}
+	if strings.Contains(text, "Run `roca ") {
+		t.Errorf("MCP help points a shell-less agent at shell commands:\n%s", text)
+	}
 	envelope, _ := json.Marshal(result.StructuredContent)
 	t.Logf("roca_query: TOON readable %d bytes vs JSON envelope %d bytes", len(text), len(envelope))
 }
@@ -89,6 +92,9 @@ func TestSQLThroughThePlugRendersTheRouteLineAndSQLNotAJSONDump(t *testing.T) {
 	}
 	if looksLikeJSONDump(text) {
 		t.Errorf("the readable half is a JSON dump, not AXI TOON:\n%s", text)
+	}
+	if strings.Contains(text, "Run `roca ") {
+		t.Errorf("MCP exec help points a shell-less agent at shell commands:\n%s", text)
 	}
 }
 

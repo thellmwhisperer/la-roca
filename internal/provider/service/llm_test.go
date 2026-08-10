@@ -250,6 +250,22 @@ func TestWithNoProviderAtAllTheFailureNamesEverythingTried(t *testing.T) {
 	}
 }
 
+func TestEveryDeclaredDegradedModeIsAFailure(t *testing.T) {
+	for _, mode := range []string{
+		service.DegradedUnavailable,
+		service.DegradedLLMError,
+		service.DegradedInvalidSQL,
+		service.DegradedExecution,
+	} {
+		if !service.IsDegradedFailure(mode) {
+			t.Errorf("degraded mode %q is not classified as a failure", mode)
+		}
+	}
+	if service.IsDegradedFailure("") {
+		t.Error("an ordinary result is classified as a failure")
+	}
+}
+
 // A provider that says yes and then fails is a declared query failure, and the
 // keyword rescue answers anyway: the fragility of a provider never takes down a
 // query.

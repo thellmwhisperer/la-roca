@@ -47,6 +47,22 @@ func runRootSplit(t *testing.T, build Build, in io.Reader, args ...string) (stri
 	return out.String(), errs.String()
 }
 
+func TestUninstallPromptUsesStderrSoJSONStdoutStaysClean(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	var out, errs strings.Builder
+	env := &cliEnv{out: &out, errOut: &errs, json: true}
+
+	if _, err := env.askAboutTheData(strings.NewReader("\n")); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("uninstall prompt polluted stdout: %q", out.String())
+	}
+	if !strings.Contains(errs.String(), "Keep the Roca database") {
+		t.Fatalf("stderr does not carry the prompt: %q", errs.String())
+	}
+}
+
 // failingRoot runs a command that has to fail and returns its error, failing the
 // test when it did not. The data commands share this error-path shape, and a
 // second copy of it is a clone that drifts.

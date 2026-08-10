@@ -174,15 +174,19 @@ func TestLoginAndLogoutHonorJSON(t *testing.T) {
 			env := &cliEnv{build: Build{Version: "test"}, out: &out, errOut: &out}
 			root := rootCommand(env)
 			root.SetArgs(args)
-			if err := root.Execute(); err != nil {
+			err := root.Execute()
+			if name == "unknown" {
+				if err == nil || out.Len() != 0 {
+					t.Fatalf("unknown login error=%v stdout=%q", err, out.String())
+				}
+				return
+			}
+			if err != nil {
 				t.Fatalf("execute: %v", err)
 			}
 			var got map[string]any
 			if err := json.Unmarshal([]byte(out.String()), &got); err != nil {
 				t.Fatalf("not JSON: %v\n%s", err, out.String())
-			}
-			if name == "unknown" && (env.code != ExitError || got["error"] != `there is no login for "nope"`) {
-				t.Fatalf("unknown result = %#v, code=%d", got, env.code)
 			}
 			if name == "bare" && (env.code != ExitOK || got["configuration"] == nil || got["providers"] == nil) {
 				t.Fatalf("bare result = %#v, code=%d", got, env.code)
@@ -205,12 +209,8 @@ func TestLoginAndLogoutHonorJSON(t *testing.T) {
 	env := &cliEnv{build: Build{Version: "test"}, out: &unknown, errOut: &unknown}
 	root := rootCommand(env)
 	root.SetArgs([]string{"--json", "logout", "nope"})
-	if err := root.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal([]byte(unknown.String()), &got); err != nil ||
-		env.code != ExitError || got["error"] != `there is no credential store for "nope"` {
-		t.Fatalf("unknown logout = %#v, code=%d, err=%v", got, env.code, err)
+	if err := root.Execute(); err == nil || unknown.Len() != 0 {
+		t.Fatalf("unknown logout error=%v stdout=%q", err, unknown.String())
 	}
 }
 

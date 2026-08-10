@@ -51,11 +51,11 @@ func QueryPreamble(res service.QueryResult) string {
 // queryTail is the rows table and the help that follow the preamble when a
 // query answered with rows. Both the shell and MCP surface reach it through
 // Query; full shell output adds prose above it without hiding the evidence.
-func queryTail(res service.QueryResult) string {
+func queryTail(res service.QueryResult, help func(service.QueryResult) string) string {
 	var b strings.Builder
 	appendLine(&b, RowOutput(res.Columns, res.Rows, res.Question))
 	if !(res.RowCount == 1 && len(res.Columns) == 1) {
-		appendLine(&b, QueryHelp(res))
+		appendLine(&b, help(res))
 	}
 	return b.String()
 }
@@ -69,6 +69,15 @@ func queryTail(res service.QueryResult) string {
 // The shell passes the second inference call's prose; the plug passes the empty
 // string, because an agent reads rows and writes its own.
 func Query(res service.QueryResult, prose string) string {
+	return composeQuery(res, prose, QueryHelp)
+}
+
+// MCPQuery renders the same answer with next steps a shell-less agent can use.
+func MCPQuery(res service.QueryResult) string {
+	return composeQuery(res, "", MCPQueryHelp)
+}
+
+func composeQuery(res service.QueryResult, prose string, help func(service.QueryResult) string) string {
 	if res.Path == service.PathUnresolved {
 		return res.Message
 	}
@@ -79,12 +88,12 @@ func Query(res service.QueryResult, prose string) string {
 		appendLine(&b, res.SQL)
 	case res.RowCount == 0:
 		appendLine(&b, res.Message)
-		appendLine(&b, QueryHelp(res))
+		appendLine(&b, help(res))
 	case prose != "":
 		appendLine(&b, prose)
-		appendLine(&b, queryTail(res))
+		appendLine(&b, queryTail(res, help))
 	default:
-		appendLine(&b, queryTail(res))
+		appendLine(&b, queryTail(res, help))
 	}
 	return b.String()
 }
@@ -93,15 +102,30 @@ func Query(res service.QueryResult, prose string) string {
 // that ran, its rows, the count and latency, and the help to reach the envelope
 // or expand the fields.
 func Exec(res service.ExecResult) string {
+	return exec(res, true)
+}
+
+// MCPExec renders an executed SELECT with MCP-native next steps.
+func MCPExec(res service.ExecResult) string {
+	return exec(res, false)
+}
+
+func exec(res service.ExecResult, shell bool) string {
 	var b strings.Builder
 	appendLine(&b, res.SQL)
 	appendLine(&b, RowOutput(res.Columns, res.Rows))
 	appendLine(&b, fmt.Sprintf("%s · %s",
 		Quantity(int64(res.RowCount), "row"), Duration(res.LatencyMS)))
 	if res.RowCount > 0 && !(res.RowCount == 1 && len(res.Columns) == 1) {
-		appendLine(&b, RenderHelp(
-			"Run `roca exec \"<SELECT>\" --json` for the complete result envelope",
-			"Run `roca exec \"<SELECT>\" --max-chars 2000` to expand text fields"))
+		if shell {
+			appendLine(&b, RenderHelp(
+				"Run `roca exec \"<SELECT>\" --json` for the complete result envelope",
+				"Run `roca exec \"<SELECT>\" --max-chars 2000` to expand text fields"))
+		} else {
+			appendLine(&b, RenderHelp(
+				"Read structuredContent for the complete result envelope",
+				"Call roca_exec again with max_chars 2000 to expand text fields"))
+		}
 	}
 	return b.String()
 }

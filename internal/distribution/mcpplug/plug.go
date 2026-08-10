@@ -69,12 +69,13 @@ func New(svc *service.Service, build Build) *mcp.Server {
 	}, &mcp.ServerOptions{Instructions: instructions})
 
 	dbPath := svc.DB().Path()
+	dataDir := svc.DataDir()
 	audit := logfile.New(svc.DataDir())
-	mcp.AddTool(server, execTool, sanitizing(p.exec, dbPath))
-	mcp.AddTool(server, healthTool, sanitizing(p.health, dbPath))
-	mcp.AddTool(server, queryTool, sanitizing(p.query, dbPath))
-	mcp.AddTool(server, sqlTool, sanitizing(p.sql, dbPath))
-	mcp.AddTool(server, storeTool, sanitizing(p.store, dbPath))
+	mcp.AddTool(server, execTool, sanitizing(p.exec, dbPath, dataDir))
+	mcp.AddTool(server, healthTool, sanitizing(p.health, dbPath, dataDir))
+	mcp.AddTool(server, queryTool, sanitizing(p.query, dbPath, dataDir))
+	mcp.AddTool(server, sqlTool, sanitizing(p.sql, dbPath, dataDir))
+	mcp.AddTool(server, storeTool, sanitizing(p.store, dbPath, dataDir))
 	server.AddReceivingMiddleware(auditCalls(audit))
 	return server
 }
@@ -85,10 +86,17 @@ func New(svc *service.Service, build Build) *mcp.Server {
 // result passes through untouched.
 func sanitizing[In, Out any](
 	h func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error),
-	dbPath string,
+	dbPath, dataDir string,
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error) {
 	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
 		res, out, err := h(ctx, req, in)
+		if query, ok := any(out).(service.QueryResult); ok {
+			query = scrubQueryResult(query, dataDir)
+			out = any(query).(Out)
+			if res != nil {
+				res.Content = []mcp.Content{&mcp.TextContent{Text: axi.MCPQuery(query)}}
+			}
+		}
 		return res, out, ScrubPath(err, dbPath)
 	}
 }
@@ -184,11 +192,15 @@ func rendered[T any](res T, err error, paint func(T) string) (*mcp.CallToolResul
 // axi.Query shows the rows for one and the SQL for the other, so they share a
 // wrapper.
 func queryText(res service.QueryResult, err error) (*mcp.CallToolResult, service.QueryResult, error) {
-	return rendered(res, err, func(r service.QueryResult) string { return axi.Query(r, "") })
+	result, out, callErr := rendered(res, err, axi.MCPQuery)
+	if result != nil {
+		result.IsError = service.IsDegradedFailure(res.Degraded)
+	}
+	return result, out, callErr
 }
 
 func execText(res service.ExecResult, err error) (*mcp.CallToolResult, service.ExecResult, error) {
-	return rendered(res, err, axi.Exec)
+	return rendered(res, err, axi.MCPExec)
 }
 
 func storeText(res service.StoreResult, err error) (*mcp.CallToolResult, service.StoreResult, error) {
@@ -211,6 +223,27 @@ func ScrubPath(err error, dbPath string) error {
 	}
 	cleaned := strings.ReplaceAll(msg, dbPath, "the database")
 	return errors.New(cleaned)
+}
+
+func scrubQueryResult(result service.QueryResult, dataDir string) service.QueryResult {
+	for i := range result.Warnings {
+		result.Warnings[i] = scrubDataDir(result.Warnings[i], dataDir)
+	}
+	result.Message = scrubDataDir(result.Message, dataDir)
+	result.ProviderNote = scrubDataDir(result.ProviderNote, dataDir)
+	result.ProviderError = scrubDataDir(result.ProviderError, dataDir)
+	for i := range result.Providers {
+		result.Providers[i].Reason = scrubDataDir(result.Providers[i].Reason, dataDir)
+		result.Providers[i].Action = scrubDataDir(result.Providers[i].Action, dataDir)
+	}
+	return result
+}
+
+func scrubDataDir(text, dataDir string) string {
+	if dataDir == "" {
+		return text
+	}
+	return strings.ReplaceAll(text, dataDir, "the data directory")
 }
 
 // Serve runs the server over stdio in the foreground until the client closes

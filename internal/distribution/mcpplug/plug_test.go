@@ -244,6 +244,52 @@ func TestTheExecToolRefusesAWriteWithTheGatesVerdict(t *testing.T) {
 	}
 }
 
+func TestADegradedQueryIsAnMCPToolErrorWithItsEnvelopeIntact(t *testing.T) {
+	svc := openServiceWith(t, false, provider.Cascade{Providers: []provider.Provider{
+		fakeModel{sql: "DELETE FROM memories"},
+	}})
+	if _, err := svc.Init(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := connect(t, svc).CallTool(t.Context(), &mcp.CallToolParams{
+		Name: "roca_query", Arguments: map[string]any{"query": "invalid sql sentinel"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError || result.StructuredContent == nil {
+		t.Fatalf("degraded MCP result = isError %v, structured %T", result.IsError, result.StructuredContent)
+	}
+	var answer service.QueryResult
+	decode(t, result, &answer)
+	if answer.Degraded != service.DegradedInvalidSQL {
+		t.Fatalf("degraded = %q, want %q", answer.Degraded, service.DegradedInvalidSQL)
+	}
+}
+
+func TestMCPWarningsScrubTheWholeDataDirectoryPrefix(t *testing.T) {
+	providers := provider.Cascade{
+		Providers: []provider.Provider{fakeModel{sql: "SELECT 1 AS n LIMIT 1"}},
+	}
+	svc := openServiceWith(t, false, providers)
+	providers.Warnings = []string{"unknown key in " + filepath.Join(svc.DataDir(), "config.toml")}
+	svc.Close()
+	svc = openServiceWith(t, false, providers)
+	if _, err := svc.Init(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	result := callTool(t, connect(t, svc), "roca_query", map[string]any{"query": "count one"})
+	for surface, output := range map[string]string{
+		"text": renderedText(result), "structured": asJSON(t, result.StructuredContent),
+	} {
+		if strings.Contains(output, svc.DataDir()) {
+			t.Errorf("%s output leaked data directory %q: %s", surface, svc.DataDir(), output)
+		}
+	}
+}
+
 func TestTheExecToolNeverCarriesTheDatabasePath(t *testing.T) {
 	svc := seededService(t)
 	dbPath := svc.DB().Path()

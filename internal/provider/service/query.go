@@ -94,9 +94,10 @@ type QueryResult struct {
 	LLMLatencyMS int64 `json:"llm_latency_ms,omitempty"`
 	// SQLInferenceMS, ExecutionMS and InterpretationMS are the three query
 	// phases. Interpretation is populated by the CLI only when --full asks for it.
-	SQLInferenceMS   int64 `json:"sql_inference_ms"`
-	ExecutionMS      int64 `json:"execution_ms"`
-	InterpretationMS int64 `json:"interpretation_ms"`
+	SQLInferenceMS   int64  `json:"sql_inference_ms"`
+	ExecutionMS      int64  `json:"execution_ms"`
+	InterpretationMS int64  `json:"interpretation_ms"`
+	Interpretation   string `json:"interpretation,omitempty"`
 	// ProviderError preserves the provider's own failure text. File logging
 	// applies credential redaction before it reaches disk.
 	ProviderError string `json:"provider_error,omitempty"`
@@ -199,7 +200,7 @@ func (s *Service) Query(ctx context.Context, req QueryRequest) (res QueryResult,
 		// with every answer: a question is exactly where an operator would
 		// otherwise never find out that half their [models] section is being
 		// ignored.
-		Warnings: s.opts.Providers.Warnings,
+		Warnings: slices.Clone(s.opts.Providers.Warnings),
 	}
 	defer func() { res.LatencyMS = time.Since(start).Milliseconds() }()
 	return s.llmStage(ctx, req, res)

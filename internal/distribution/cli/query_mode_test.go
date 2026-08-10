@@ -81,7 +81,7 @@ func TestQueryDefaultsToOneInferenceAndRows(t *testing.T) {
 }
 
 func TestQueryFullAddsOneInterpretationAndKeepsEvidence(t *testing.T) {
-	model, _, got := runQueryMode(t, true, 0)
+	model, answer, got := runQueryMode(t, true, 0)
 	if model.calls != 2 {
 		t.Fatalf("full query made %d provider calls, want two", model.calls)
 	}
@@ -94,6 +94,9 @@ func TestQueryFullAddsOneInterpretationAndKeepsEvidence(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("full query output does not contain %q:\n%s", want, got)
 		}
+	}
+	if answer.result.Interpretation != queryModeProse {
+		t.Errorf("structured interpretation = %q, want %q", answer.result.Interpretation, queryModeProse)
 	}
 }
 

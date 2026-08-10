@@ -61,14 +61,14 @@ func (env *cliEnv) askAboutTheData(in io.Reader) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	fmt.Fprintf(env.out, "Keep the Roca database and data at %s? [Y/n]: ",
+	fmt.Fprintf(env.errOut, "Keep the Roca database and data at %s? [Y/n]: ",
 		dirOf(paths.DB))
 
 	line, err := bufio.NewReader(in).ReadString('\n')
 	if err != nil && strings.TrimSpace(line) == "" {
 		// Nobody answered. Silence is read as the answer that can be taken
 		// back, which is the one that keeps the data.
-		env.print("no answer: your data stays where it is")
+		fmt.Fprintln(env.errOut, "no answer: your data stays where it is")
 		return false, nil
 	}
 	return strings.EqualFold(strings.TrimSpace(line), "n"), nil

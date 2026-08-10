@@ -29,9 +29,8 @@ type Build struct {
 // answer either: it has a code of its own so a script can tell them apart
 // without reading prose.
 const (
-	ExitOK      = 0
-	ExitError   = 1
-	ExitRefused = 2
+	ExitOK    = 0
+	ExitError = 1
 )
 
 type cliEnv struct {

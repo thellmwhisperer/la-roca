@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -134,25 +133,18 @@ func TestModelSetUnknownProviderListsKnownAndSuggestsDoctor(t *testing.T) {
 	}
 }
 
-// The same unknown-provider failure answers a JSON error envelope with the
-// refusal exit code, so a program pipes only parseable JSON.
+// Errors always use the error channel, even when --json was requested.
 func TestModelSetUnknownProviderListsKnownOnJSON(t *testing.T) {
 	_ = isolatedLoginHome(t)
 	var out strings.Builder
 	env := &cliEnv{build: Build{Version: "test"}, out: &out, errOut: &out}
 	root := rootCommand(env)
 	root.SetArgs([]string{"--json", "model", "set", "nope", "x"})
-	if err := root.Execute(); err != nil {
-		t.Fatalf("execute: %v", err)
+	err := root.Execute()
+	if err == nil || !strings.HasPrefix(err.Error(), `there is no provider "nope"`) {
+		t.Fatalf("error = %v", err)
 	}
-	var doc map[string]any
-	if err := json.Unmarshal([]byte(out.String()), &doc); err != nil {
-		t.Fatalf("not JSON: %v\n%s", err, out.String())
-	}
-	if env.code != ExitError {
-		t.Errorf("exit code = %d, want %d", env.code, ExitError)
-	}
-	if !strings.HasPrefix(doc["error"].(string), `there is no provider "nope"`) {
-		t.Errorf("error field = %v", doc["error"])
+	if out.Len() != 0 {
+		t.Fatalf("error polluted stdout: %q", out.String())
 	}
 }

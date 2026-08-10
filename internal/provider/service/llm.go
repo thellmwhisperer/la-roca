@@ -29,6 +29,14 @@ const (
 	DegradedExecution = "sql_execution_error"
 )
 
+// IsDegradedFailure is the one success contract shared by CLI exit codes and
+// MCP tool results. A rescue may still carry useful rows, but these modes mean
+// the model-backed operation failed.
+func IsDegradedFailure(mode string) bool {
+	return mode == DegradedUnavailable || mode == DegradedLLMError ||
+		mode == DegradedInvalidSQL || mode == DegradedExecution
+}
+
 // retriesOnRejection is how many extra attempts a rejected query buys.
 //
 // One, and the number is the whole design. Measured against real qwen3.5:4b the

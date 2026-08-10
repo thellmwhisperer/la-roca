@@ -365,7 +365,7 @@ func queryCommand(env *cliEnv) *cobra.Command {
 			// as frozen. The spinner says it is running on the error stream of an
 			// interactive terminal only, so a piped call and a --json call see nothing.
 			spin := startSpinner(env, spinnerLabel)
-			answer, err := answerQuery(cmd.Context(), svc, req, full && !env.json)
+			answer, err := answerQuery(cmd.Context(), svc, req, full)
 			spin.finish()
 			if err != nil {
 				return err
@@ -377,7 +377,7 @@ func queryCommand(env *cliEnv) *cobra.Command {
 			// rows. The rows are a courtesy; the exit code tells the truth, so
 			// a script does not read "it worked" from a machine that has
 			// nothing to answer with.
-			if result.Degraded == service.DegradedUnavailable {
+			if service.IsDegradedFailure(result.Degraded) {
 				env.code = ExitError
 			}
 			if env.json {
@@ -420,6 +420,7 @@ func answerQuery(ctx context.Context, svc *service.Service, req service.QueryReq
 	answer.prose, answer.interpretErr = svc.Interpret(
 		ctx, result.Question, result.Columns, result.Rows)
 	answer.result.InterpretationMS = time.Since(started).Milliseconds()
+	answer.result.Interpretation = answer.prose
 	if answer.interpretErr != nil {
 		answer.result.ProviderError = answer.interpretErr.Error()
 	}

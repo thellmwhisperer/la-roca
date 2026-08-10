@@ -231,9 +231,6 @@ func loginCommand(env *cliEnv) *cobra.Command {
 			case provider.IsKeyProvider(name):
 				return env.loginKey(cmd, name, model)
 			default:
-				if env.json {
-					return unsupportedProvider(env, fmt.Sprintf("there is no login for %q", args[0]))
-				}
 				return fmt.Errorf(
 					"there is no login for %q\n\n%s",
 					args[0], loginCatalogue())
@@ -287,11 +284,6 @@ func (e loginEntry) humanFlow() string {
 		return "subscription"
 	}
 	return "API key"
-}
-
-func unsupportedProvider(env *cliEnv, message string) error {
-	env.code = ExitError
-	return env.printJSON(map[string]any{"error": message})
 }
 
 func (env *cliEnv) showLoginOverview() error {
@@ -582,9 +574,6 @@ func logoutCommand(env *cliEnv) *cobra.Command {
 				}
 				return env.forget(name, "credential")
 			default:
-				if env.json {
-					return unsupportedProvider(env, fmt.Sprintf("there is no credential store for %q", args[0]))
-				}
 				return fmt.Errorf(
 					"there is no credential store for %q. Supported providers:\n%s",
 					args[0], loginCatalogue())
@@ -661,10 +650,6 @@ func (env *cliEnv) modelSet(rawName, modelID string) error {
 	known := knownProviderNames(file)
 	if !slices.Contains(known, name) {
 		message := fmt.Sprintf("there is no provider %q\n\n%s", rawName, knownProvidersHelp(known))
-		if env.json {
-			env.code = ExitError
-			return env.printJSON(map[string]any{"error": message})
-		}
 		return fmt.Errorf("%s", message)
 	}
 	if err := config.SetProviderModel(paths.Config, name, model); err != nil {
