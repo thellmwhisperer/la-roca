@@ -45,6 +45,9 @@ func registerStoreSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Given(`^the model always defers to literal search$`, m.modelDefersToLiteralSearch)
 	ctx.Given(`^a memory in layer "([^"]*)" with content "([^"]*)"$`, m.storeMemoryFixture)
 	ctx.Given(`^a clean HOME with a "([^"]*)" file at the database path$`, m.foreignOrCorruptFile)
+	ctx.Given(`^a home Roca database containing a memory unique to home$`, m.homeDatabaseWithUniqueMemory)
+	ctx.Given(`^another Roca database containing a memory unique to that database$`, m.otherDatabaseWithUniqueMemory)
+	ctx.Given(`^a selected path where no Roca database exists$`, m.missingDatabasePath)
 
 	// --- when: the one action the scenario exercises ---
 	ctx.When(`^I initialize the database$`, m.runInit)
@@ -60,6 +63,9 @@ func registerStoreSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.When(`^I store a memory in layer "([^"]*)" superseding memory (\d+) with content "([^"]*)"$`,
 		m.storeSupersedingID)
 	ctx.When(`^I search for "([^"]*)"$`, m.searchFor)
+	ctx.When(`^I search the other database for its unique memory$`, m.searchOtherDatabase)
+	ctx.When(`^I search without choosing a database for the command$`, m.searchHomeDatabase)
+	ctx.When(`^I search that database$`, m.searchMissingDatabase)
 	ctx.When(`^two writers store different memories at the same time$`, m.twoConcurrentWriters)
 
 	// --- then: properties the scenario asserts ---
@@ -84,6 +90,11 @@ func registerStoreSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Then(`^no result contains "([^"]*)"$`, m.noResultContains)
 	ctx.Then(`^the output names the missing content$`, m.namesMissingContent)
 	ctx.Then(`^the output names the refused write$`, m.namesRefusedWrite)
+	ctx.Then(`^the search returns the memory from the other database$`, m.searchReturnsOtherMemory)
+	ctx.Then(`^the output identifies the other database as the one that answered$`, m.outputIdentifiesOtherDatabase)
+	ctx.Then(`^the search returns the memory from the home database$`, m.searchReturnsHomeMemory)
+	ctx.Then(`^the output identifies the home database as the one that answered$`, m.outputIdentifiesHomeDatabase)
+	ctx.Then(`^the output says to run "roca init" before searching it$`, m.outputPointsToInit)
 	ctx.Then(`^both writes succeed$`, m.bothWritesSucceed)
 	ctx.Then(`^the database holds both memories intact$`, m.holdsBothMemories)
 }
@@ -108,6 +119,19 @@ func (m *world) storeDBPath() string {
 func (m *world) backupsDir() string {
 	return filepath.Join(m.home, ".roca", "backups")
 }
+
+func (m *world) otherDBPath() string {
+	return filepath.Join(m.home, "other", "roca.db")
+}
+
+func (m *world) missingDBPath() string {
+	return filepath.Join(m.home, "missing", "roca.db")
+}
+
+const (
+	homeUniqueMemory  = "home-only albatross"
+	otherUniqueMemory = "other-only narwhal"
+)
 
 // --- given fixtures ---
 
@@ -215,6 +239,43 @@ func (m *world) foreignOrCorruptFile(kind string) error {
 	}
 }
 
+func (m *world) homeDatabaseWithUniqueMemory() error {
+	if err := m.freshDatabase(); err != nil {
+		return err
+	}
+	if err := m.modelDefersToLiteralSearch(); err != nil {
+		return err
+	}
+	return m.storeMemoryFixture("project", homeUniqueMemory)
+}
+
+func (m *world) otherDatabaseWithUniqueMemory() error {
+	if _, err := m.runWith("roca init --db-path <other> --json", []string{
+		"init", "--db-path", m.otherDBPath(), "--json",
+	}); err != nil {
+		return err
+	}
+	if m.last.code != 0 {
+		return fmt.Errorf("init other database exited %d: %s", m.last.code, m.last.stderr)
+	}
+
+	config, err := os.ReadFile(filepath.Join(m.home, ".roca", "config.toml"))
+	if err != nil {
+		return fmt.Errorf("read the home model configuration: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(m.otherDBPath()), "config.toml"), config, 0o600); err != nil {
+		return fmt.Errorf("configure the other database: %w", err)
+	}
+	return m.storeMemoryAt(m.otherDBPath(), "project", otherUniqueMemory, "", "", 0)
+}
+
+func (m *world) missingDatabasePath() error {
+	if _, err := os.Stat(m.missingDBPath()); !os.IsNotExist(err) {
+		return fmt.Errorf("the selected path is not missing: %v", err)
+	}
+	return nil
+}
+
 // --- when actions ---
 
 func (m *world) storeMemoryFixture(layer, content string) error {
@@ -245,12 +306,16 @@ func (m *world) storeSupersedingID(layer string, id int, content string) error {
 	return m.storeMemory(layer, content, "", "", int64(id))
 }
 
-// storeMemory runs the one write the product has, always against the scenario's
-// own database and always in JSON, because the JSON carries the id the next
-// step reads.
+// storeMemory runs the one write the product has against the home database and
+// always in JSON, because the JSON carries the id the next step reads. The
+// path-aware helper also seeds the selected-database scenarios.
 func (m *world) storeMemory(layer, content, origin, project string, supersedes int64) error {
+	return m.storeMemoryAt(m.storeDBPath(), layer, content, origin, project, supersedes)
+}
+
+func (m *world) storeMemoryAt(path, layer, content, origin, project string, supersedes int64) error {
 	args := []string{"store", "--layer", layer, "--content", content,
-		"--db-path", m.storeDBPath(), "--json"}
+		"--db-path", path, "--json"}
 	if origin != "" {
 		args = append(args, "--origin", origin)
 	}
@@ -268,6 +333,25 @@ func (m *world) storeMemory(layer, content, origin, project string, supersedes i
 func (m *world) searchFor(term string) error {
 	args := append([]string{"query", "--db-path", m.storeDBPath(), "--json"}, strings.Fields(term)...)
 	_, err := m.runWith(fmt.Sprintf("roca query %s --json", strconv.Quote(term)), args)
+	return err
+}
+
+func (m *world) searchOtherDatabase() error {
+	_, err := m.runWith("roca query narwhal --db-path <other> --json", []string{
+		"query", "narwhal", "--db-path", m.otherDBPath(), "--json",
+	})
+	return err
+}
+
+func (m *world) searchHomeDatabase() error {
+	_, err := m.runWith("roca query albatross", []string{"query", "albatross"})
+	return err
+}
+
+func (m *world) searchMissingDatabase() error {
+	_, err := m.runWith("roca query anything --db-path <missing>", []string{
+		"query", "anything", "--db-path", m.missingDBPath(),
+	})
 	return err
 }
 
@@ -570,6 +654,33 @@ func (m *world) namesRefusedWrite() error {
 		return fmt.Errorf("the refusal does not name the rejected write: %s", m.last.stderr)
 	}
 	return nil
+}
+
+func (m *world) searchReturnsOtherMemory() error {
+	return m.firstResultContains(otherUniqueMemory)
+}
+
+func (m *world) outputIdentifiesOtherDatabase() error {
+	document, err := m.json()
+	if err != nil {
+		return err
+	}
+	if document["database_path"] != m.otherDBPath() {
+		return fmt.Errorf("database_path = %v, want %s", document["database_path"], m.otherDBPath())
+	}
+	return nil
+}
+
+func (m *world) searchReturnsHomeMemory() error {
+	return m.outputContains(homeUniqueMemory)
+}
+
+func (m *world) outputIdentifiesHomeDatabase() error {
+	return m.outputContains("database: " + m.storeDBPath())
+}
+
+func (m *world) outputPointsToInit() error {
+	return m.outputContains("run `roca init` before this command")
 }
 
 func (m *world) bothWritesSucceed() error {

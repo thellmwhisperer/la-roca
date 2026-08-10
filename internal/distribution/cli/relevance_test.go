@@ -62,9 +62,10 @@ func TestEmptySearchSuggestsHowToBroadenIt(t *testing.T) {
 	}
 }
 
-// The JSON envelope always carries version and source_sha so a program knows
-// which build answered, and it never carries the database path.
-func TestJSONCarriesVersionAndSourceSHAAndNotTheDBPath(t *testing.T) {
+// The service result carries version and source_sha so every surface knows
+// which build answered. The CLI adds the selected database at its boundary;
+// the shared service result remains path-free for agent surfaces.
+func TestQueryResultCarriesBuildIdentityWithoutSurfaceData(t *testing.T) {
 	var output strings.Builder
 	result := service.QueryResult{
 		Question: "what is v1 scope", Path: service.PathKeyword,

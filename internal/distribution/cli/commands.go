@@ -381,8 +381,12 @@ func queryCommand(env *cliEnv) *cobra.Command {
 				env.code = ExitError
 			}
 			if env.json {
-				return env.printJSON(result)
+				return env.printJSON(struct {
+					service.QueryResult
+					DatabasePath string `json:"database_path"`
+				}{result, svc.DB().Path()})
 			}
+			env.print("database: %s", svc.DB().Path())
 			if answer.interpretErr != nil {
 				env.print("(the model could not interpret: %v)", answer.interpretErr)
 			}
