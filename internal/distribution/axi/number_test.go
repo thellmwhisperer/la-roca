@@ -15,3 +15,14 @@ func TestNumberSeparatesThousandsForPeople(t *testing.T) {
 		}
 	}
 }
+
+func TestQuantityUsesTheHumanNumberAndNoun(t *testing.T) {
+	for _, test := range []struct {
+		value int64
+		want  string
+	}{{1, "1 session"}, {0, "0 sessions"}, {1501, "1,501 sessions"}} {
+		if got := Quantity(test.value, "session"); got != test.want {
+			t.Errorf("Quantity(%d) = %q, want %q", test.value, got, test.want)
+		}
+	}
+}

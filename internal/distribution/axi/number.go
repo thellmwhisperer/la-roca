@@ -15,3 +15,11 @@ func Number(value int64) string {
 	}
 	return sign + digits
 }
+
+// Quantity joins a formatted count to a simple English noun.
+func Quantity(value int64, noun string) string {
+	if value == 1 || value == -1 {
+		return Number(value) + " " + noun
+	}
+	return Number(value) + " " + noun + "s"
+}

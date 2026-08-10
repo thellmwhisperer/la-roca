@@ -245,9 +245,9 @@ func renderBootstrap(env *cliEnv, result service.InitResult) {
 	if result.Ingest != nil {
 		env.print("  agents detected: %s", detectedAgentsLine(result.Ingest.DetectedAgents))
 		env.print("  agents not found: %s", missingAgentsLine(result.Ingest.DetectedAgents))
-		env.print("ingest: %s files read · %s skipped · %s errors · %s",
-			axi.Number(int64(result.Ingest.FilesRead)), axi.Number(int64(result.Ingest.FilesSkipped)),
-			axi.Number(int64(result.Ingest.Errors)), axi.Duration(result.Ingest.ElapsedMS))
+		env.print("ingest: %s read · %s skipped · %s · %s",
+			axi.Quantity(int64(result.Ingest.FilesRead), "file"), axi.Number(int64(result.Ingest.FilesSkipped)),
+			axi.Quantity(int64(result.Ingest.Errors), "error"), axi.Duration(result.Ingest.ElapsedMS))
 		renderIngestSources(env, *result.Ingest)
 		renderIngestDelta(env, result.Ingest.Delta)
 		renderIngestDetails(env, *result.Ingest)

@@ -63,13 +63,13 @@ func renderIngest(env *cliEnv, result service.IngestResult) {
 		env.print("  warning: %s", warning)
 	}
 	if result.DryRun {
-		env.print("ingest: dry run · %s files pending · %s skipped · %s",
-			axi.Number(int64(result.FilesRead)), axi.Number(int64(result.FilesSkipped)),
+		env.print("ingest: dry run · %s pending · %s skipped · %s",
+			axi.Quantity(int64(result.FilesRead), "file"), axi.Number(int64(result.FilesSkipped)),
 			axi.Duration(result.ElapsedMS))
 	} else {
-		env.print("ingest: %s files read · %s skipped · %s errors · %s",
-			axi.Number(int64(result.FilesRead)), axi.Number(int64(result.FilesSkipped)),
-			axi.Number(int64(result.Errors)), axi.Duration(result.ElapsedMS))
+		env.print("ingest: %s read · %s skipped · %s · %s",
+			axi.Quantity(int64(result.FilesRead), "file"), axi.Number(int64(result.FilesSkipped)),
+			axi.Quantity(int64(result.Errors), "error"), axi.Duration(result.ElapsedMS))
 	}
 	renderIngestSources(env, result)
 	renderIngestDelta(env, result.Delta)
@@ -97,11 +97,11 @@ func renderIngestSources(env *cliEnv, result service.IngestResult) {
 			stats = &ingest.SourceStats{}
 		}
 		sessions := counts.Sessions + counts.SessionsUpdated
-		env.print("  ✓ %s · %s files · %s sessions · %s exchanges · %s memories · %s discarded · %s",
-			ingestSourceLabel(name, sessions), axi.Number(int64(stats.Read)),
-			axi.Number(int64(sessions)),
-			axi.Number(int64(counts.Exchanges)),
-			axi.Number(int64(counts.MemoriesInserted+counts.MemoriesUpdated)),
+		env.print("  ✓ %s · %s · %s · %s · %s · %s discarded · %s",
+			ingestSourceLabel(name, sessions), axi.Quantity(int64(stats.Read), "file"),
+			axi.Quantity(int64(sessions), "session"),
+			axi.Quantity(int64(counts.Exchanges), "exchange"),
+			axi.Quantity(int64(counts.MemoriesInserted+counts.MemoriesUpdated), "memory"),
 			axi.Number(int64(stats.RecordsDiscarded)), axi.Duration(stats.ElapsedMS))
 	}
 }
