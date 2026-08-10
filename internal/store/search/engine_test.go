@@ -9,8 +9,8 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 	"github.com/thellmwhisperer/la-roca/internal/provider/query/sqlgate"
-	"github.com/thellmwhisperer/la-roca/internal/store/search"
 	"github.com/thellmwhisperer/la-roca/internal/store"
+	"github.com/thellmwhisperer/la-roca/internal/store/search"
 )
 
 func TestLexicalIndexSearchFindsWhatWasSeeded(t *testing.T) {

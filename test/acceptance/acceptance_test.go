@@ -99,7 +99,7 @@ import (
 //     path has nothing to execute. The property the scenario protects — a purge
 //     that converges over the state it finds and can be applied twice without
 //     punishing the operator, which is the whole of D-7 — is measured over the
-//     same plan applied twice in `internal/lifecycle`, together with the race
+//     same plan applied twice in `internal/distribution/lifecycle`, together with the race
 //     that killed the laboratory's version (#451: an artefact created after the
 //     inventory was refused as foreign). Reconciling the scenario with the
 //     product means changing either the question or the contract, and both are

@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/thellmwhisperer/la-roca/internal/mcpplug"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/mcpplug"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 

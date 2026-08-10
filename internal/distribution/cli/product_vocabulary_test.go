@@ -46,7 +46,7 @@ var nonProductDirs = map[string]bool{
 func TestProductVocabularyIsFreeOfInternalFactoryRoles(t *testing.T) {
 	_, here, _, _ := runtime.Caller(0)
 	here = filepath.Clean(here)
-	root := filepath.Clean(filepath.Join(filepath.Dir(here), "..", ".."))
+	root := filepath.Clean(filepath.Join(filepath.Dir(here), "..", "..", ".."))
 
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {

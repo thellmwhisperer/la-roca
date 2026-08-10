@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/lifecycle"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
-	"github.com/thellmwhisperer/la-roca/internal/lifecycle"
 )
 
 // The inventory is a declaration, so what is missing from it is invisible until

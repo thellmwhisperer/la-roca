@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/thellmwhisperer/la-roca/internal/cli"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/cli"
 )
 
 // Filled in by the linker at build time. See the Makefile.

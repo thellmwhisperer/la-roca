@@ -16,10 +16,10 @@ import (
 
 	_ "embed"
 
-	"github.com/thellmwhisperer/la-roca/internal/agentcfg"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 )
 
-//go:generate cp SKILL.md ../../skills/roca/SKILL.md
+//go:generate cp SKILL.md ../../../skills/roca/SKILL.md
 
 //go:embed SKILL.md
 var content string

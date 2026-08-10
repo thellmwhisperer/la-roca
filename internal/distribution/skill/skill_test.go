@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thellmwhisperer/la-roca/internal/skill"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
 )
 
 func TestContentIsANamedRocaSkill(t *testing.T) {

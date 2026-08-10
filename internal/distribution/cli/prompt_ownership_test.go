@@ -14,7 +14,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/thellmwhisperer/la-roca/internal/lifecycle"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/lifecycle"
 )
 
 // -- 1/1 CORE · TestThePurgeOwnsTheGeneratedAgentPrompt -- <- START HERE

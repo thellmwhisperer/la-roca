@@ -9,10 +9,10 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/thellmwhisperer/la-roca/internal/agentcfg"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/lifecycle"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
-	"github.com/thellmwhisperer/la-roca/internal/lifecycle"
-	"github.com/thellmwhisperer/la-roca/internal/skill"
 )
 
 // uninstallCommand leaves the machine as it was.
@@ -216,7 +216,7 @@ func nameSurvivingBackups(report *lifecycle.Report, configFile string) {
 
 // ownedPaths is the declaration: every path this product creates in an
 // installation, listed once. It is a declaration and not a walk of the
-// filesystem, which is the whole of the D-7 fix (internal/lifecycle).
+// filesystem, which is the whole of the D-7 fix (internal/distribution/lifecycle).
 //
 // The journals are named explicitly because SQLite writes them beside the
 // database and a WAL left behind is a file with the operator's data in it.

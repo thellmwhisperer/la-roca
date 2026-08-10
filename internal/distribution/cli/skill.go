@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/thellmwhisperer/la-roca/internal/skill"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
 )
 
 // skillCommand installs the canonical agent skill that teaches runtimes how to

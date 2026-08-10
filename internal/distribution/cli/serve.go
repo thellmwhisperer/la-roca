@@ -2,7 +2,7 @@ package cli
 
 import (
 	"github.com/spf13/cobra"
-	"github.com/thellmwhisperer/la-roca/internal/mcpplug"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/mcpplug"
 )
 
 // serveCommand is the only way to serve. The laboratory launched its MCP as a

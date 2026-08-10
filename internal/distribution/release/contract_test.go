@@ -24,7 +24,7 @@ var theMatrix = []string{"darwin-arm64", "linux-x64", "linux-arm64", "windows-x6
 // place of a version is what makes the comparison exact instead of a substring
 // that would also match a shorter platform's name.
 func TestTheMakefileBuildsEveryArtefactTheChannelPublishes(t *testing.T) {
-	makefile := readRepoFile(t, "../../Makefile")
+	makefile := readRepoFile(t, "../../../Makefile")
 	for _, platform := range theMatrix {
 		if want := ArtefactName("$(VERSION)", platform); !strings.Contains(makefile, want) {
 			t.Errorf("the Makefile builds no %s", want)
@@ -36,7 +36,7 @@ func TestTheMakefileBuildsEveryArtefactTheChannelPublishes(t *testing.T) {
 // the channel would be a second spelling of the names, in the one place where
 // nobody runs the tests that would catch it.
 func TestTheChannelBuildsThroughTheMakefileAndNotByHand(t *testing.T) {
-	workflow := readRepoFile(t, "../../.github/workflows/release.yml")
+	workflow := readRepoFile(t, "../../../.github/workflows/release.yml")
 	if !strings.Contains(workflow, "make dist") {
 		t.Error("the release workflow does not build with `make dist`")
 	}

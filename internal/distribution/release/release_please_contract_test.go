@@ -7,7 +7,7 @@ import (
 )
 
 func TestReleasePleaseRunsOnlyFromTrustedMainWithLeastPrivilege(t *testing.T) {
-	workflow := readRepoFile(t, "../../.github/workflows/release-please.yml")
+	workflow := readRepoFile(t, "../../../.github/workflows/release-please.yml")
 	for _, required := range []string{
 		"branches: [main]",
 		"contents: read",
@@ -41,7 +41,7 @@ func TestReleasePleaseRunsOnlyFromTrustedMainWithLeastPrivilege(t *testing.T) {
 		}
 	}
 
-	channel := readRepoFile(t, "../../.github/workflows/release.yml")
+	channel := readRepoFile(t, "../../../.github/workflows/release.yml")
 	if !strings.Contains(channel, `tags: ["v*"]`) {
 		t.Error("the artefact channel is no longer driven by vX.Y.Z tags")
 	}
@@ -60,7 +60,7 @@ func TestReleasePleaseStartsAtThePublishedRCAndOwnsPluginVersioning(t *testing.T
 			} `json:"extra-files"`
 		} `json:"packages"`
 	}
-	if err := json.Unmarshal([]byte(readRepoFile(t, "../../release-please-config.json")), &config); err != nil {
+	if err := json.Unmarshal([]byte(readRepoFile(t, "../../../release-please-config.json")), &config); err != nil {
 		t.Fatalf("release-please config is not valid JSON: %v", err)
 	}
 	root, ok := config.Packages["."]
@@ -73,7 +73,7 @@ func TestReleasePleaseStartsAtThePublishedRCAndOwnsPluginVersioning(t *testing.T
 	}
 
 	var manifest map[string]string
-	if err := json.Unmarshal([]byte(readRepoFile(t, "../../.release-please-manifest.json")), &manifest); err != nil {
+	if err := json.Unmarshal([]byte(readRepoFile(t, "../../../.release-please-manifest.json")), &manifest); err != nil {
 		t.Fatalf("release-please manifest is not valid JSON: %v", err)
 	}
 	if manifest["."] != "1.0.0-rc.9" {
@@ -83,7 +83,7 @@ func TestReleasePleaseStartsAtThePublishedRCAndOwnsPluginVersioning(t *testing.T
 	var plugin struct {
 		Version string `json:"version"`
 	}
-	if err := json.Unmarshal([]byte(readRepoFile(t, "../../plugin.json")), &plugin); err != nil {
+	if err := json.Unmarshal([]byte(readRepoFile(t, "../../../plugin.json")), &plugin); err != nil {
 		t.Fatalf("plugin manifest is not valid JSON: %v", err)
 	}
 	if plugin.Version != root.ReleaseAs {
@@ -94,7 +94,7 @@ func TestReleasePleaseStartsAtThePublishedRCAndOwnsPluginVersioning(t *testing.T
 		t.Fatalf("plugin version is not owned by release-please: extra-files = %#v", root.ExtraFiles)
 	}
 
-	docs := readRepoFile(t, "../../docs/releases.md")
+	docs := readRepoFile(t, "../../../docs/releases.md")
 	for _, required := range []string{"v1.0.0-rc.9", "feat:", "BREAKING CHANGE:", "release-as", "RELEASE_PLEASE_TOKEN", "plugin.json"} {
 		if !strings.Contains(docs, required) {
 			t.Errorf("release documentation is missing %q", required)

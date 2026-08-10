@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
-	"github.com/thellmwhisperer/la-roca/internal/skill"
 )
 
 func TestSkillBareListsEveryRuntimePath(t *testing.T) {

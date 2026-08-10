@@ -2,7 +2,7 @@ package cli
 
 import (
 	"github.com/spf13/cobra"
-	"github.com/thellmwhisperer/la-roca/internal/human"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/human"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 

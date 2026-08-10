@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thellmwhisperer/la-roca/internal/provider/oauth"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
+	"github.com/thellmwhisperer/la-roca/internal/provider/oauth"
 )
 
 // A bare `roca login` lists what this build supports instead of a Cobra arity

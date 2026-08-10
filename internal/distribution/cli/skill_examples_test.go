@@ -12,8 +12,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
 	"github.com/thellmwhisperer/la-roca/internal/provider/layers"
-	"github.com/thellmwhisperer/la-roca/internal/skill"
 )
 
 // The skill is the only manual an agent ever receives. Every command it shows
@@ -68,13 +68,13 @@ func TestEverySkillExampleIsValidAgainstTheRealCLI(t *testing.T) {
 // `roca health` while the product surface and the embedded skill taught
 // `roca doctor`.
 func TestPluginSkillIsExactCopyOfCanonical(t *testing.T) {
-	got, err := os.ReadFile(filepath.Join("..", "..", "skills", "roca", "SKILL.md"))
+	got, err := os.ReadFile(filepath.Join("..", "..", "..", "skills", "roca", "SKILL.md"))
 	if err != nil {
 		t.Fatalf("read plugin skill: %v", err)
 	}
 	want := skill.Content()
 	if string(got) != want {
-		t.Fatalf("skills/roca/SKILL.md diverges from internal/skill/SKILL.md; edit the embedded skill and run go generate ./internal/skill")
+		t.Fatalf("skills/roca/SKILL.md diverges from internal/distribution/skill/SKILL.md; edit the embedded skill and run go generate ./internal/distribution/skill")
 	}
 }
 
@@ -113,7 +113,7 @@ func TestSkillDiagnosisCommandIsDoctor(t *testing.T) {
 }
 
 func TestAgentPluginPackageMatchesThePublicContract(t *testing.T) {
-	root := filepath.Join("..", "..")
+	root := filepath.Join("..", "..", "..")
 	read := func(name string) []byte {
 		t.Helper()
 		content, err := os.ReadFile(filepath.Join(root, name))

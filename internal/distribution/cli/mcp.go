@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/thellmwhisperer/la-roca/internal/agentcfg"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 )
 
 // EnvExecutable is an explicit test and operator override. Without it, the

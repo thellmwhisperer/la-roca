@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
-	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
+	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 

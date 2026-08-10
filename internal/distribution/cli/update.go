@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/release"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
-	"github.com/thellmwhisperer/la-roca/internal/release"
 )
 
 // keyReleaseRepo is where an operator writes the repository once instead of

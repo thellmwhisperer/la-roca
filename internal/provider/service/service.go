@@ -11,11 +11,11 @@ import (
 	"sync"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
-	"github.com/thellmwhisperer/la-roca/internal/provider/layers"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
+	"github.com/thellmwhisperer/la-roca/internal/provider/layers"
 	"github.com/thellmwhisperer/la-roca/internal/provider/query/sqlgate"
-	"github.com/thellmwhisperer/la-roca/internal/store/search"
 	"github.com/thellmwhisperer/la-roca/internal/store"
+	"github.com/thellmwhisperer/la-roca/internal/store/search"
 )
 
 // Options are the service's opening options.

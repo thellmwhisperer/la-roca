@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thellmwhisperer/la-roca/internal/agentcfg"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 )
 
 // The five runtimes the lab supports, each with a synthetic configuration in

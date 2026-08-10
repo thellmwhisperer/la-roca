@@ -3,7 +3,7 @@ package cli
 import (
 	"testing"
 
-	"github.com/thellmwhisperer/la-roca/internal/release"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/release"
 )
 
 // An operator who installed this product and types `roca update` has already
