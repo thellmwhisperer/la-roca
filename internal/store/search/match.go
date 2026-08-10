@@ -65,7 +65,7 @@ func Tokenize(text string) []string {
 	var tokens []string
 	var current strings.Builder
 	for _, r := range text {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+		if isTokenRune(r) {
 			current.WriteRune(fold(unicode.ToLower(r)))
 			continue
 		}
@@ -78,6 +78,15 @@ func Tokenize(text string) []string {
 		tokens = append(tokens, current.String())
 	}
 	return tokens
+}
+
+// isTokenRune is unicode61's own idea of a token character: the letter
+// categories, EVERY number category and private use. `unicode.IsDigit` is the
+// decimal digits alone (Nd), so a superscript (No) or a private-use rune was a
+// separator here while the index kept it inside the token, and a term stored as
+// one token was asked for as two.
+func isTokenRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsNumber(r) || unicode.In(r, unicode.Co)
 }
 
 // fold strips the diacritic from the accented letters that appear in the
