@@ -110,11 +110,19 @@ func Uninstall(name, path string) (Outcome, error) {
 	if filepath.Base(dir) != SkillName {
 		return out, nil
 	}
-	if err := os.RemoveAll(dir); err != nil {
-		return out, fmt.Errorf("remove %s: %w", dir, err)
+	// The canonical file is ours and goes. The directory only follows when
+	// nothing else is left in it: RemoveAll took whatever the operator had put
+	// beside the skill, which is the half of D-7 that says what La Roca did not
+	// create is never deleted. Remove is the same shape the parent already used.
+	if err := os.Remove(path); err != nil {
+		return out, fmt.Errorf("remove %s: %w", path, err)
 	}
 	out.Changed = true
-	out.Removed = []string{dir}
+	out.Removed = []string{path}
+	if err := os.Remove(dir); err != nil {
+		return out, nil
+	}
+	out.Removed = append(out.Removed, dir)
 	if skillsDir := filepath.Dir(dir); skillsDir != dir {
 		if err := os.Remove(skillsDir); err == nil {
 			out.Removed = append(out.Removed, skillsDir)

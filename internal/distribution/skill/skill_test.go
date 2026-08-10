@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
 )
 
@@ -184,5 +185,42 @@ func TestUninstallLeavesForeignContentAlone(t *testing.T) {
 	}
 	if _, err := os.Stat(dir); err != nil {
 		t.Fatal("foreign skill dir was removed")
+	}
+}
+
+// D-7's second half: what La Roca did not create is never deleted. The withdrawal
+// took the whole skill directory with os.RemoveAll, so anything the operator had
+// put beside the canonical SKILL.md went with it. The parent-directory cleanup
+// right below already had the correct shape: remove, which only succeeds when
+// nothing else is left.
+func TestWithdrawingASkillLeavesTheOperatorsOwnFilesAlone(t *testing.T) {
+	home := t.TempDir()
+	path, err := skill.Path(agentcfg.RuntimeClaude, home, func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := skill.Install(agentcfg.RuntimeClaude, path); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	mine := filepath.Join(filepath.Dir(path), "notes-of-mine.md")
+	if err := os.WriteFile(mine, []byte("my own notes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := skill.Uninstall(agentcfg.RuntimeClaude, path)
+	if err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+
+	if _, err := os.Stat(mine); err != nil {
+		t.Errorf("a file La Roca did not create was deleted: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("the canonical SKILL.md survived: %v", err)
+	}
+	for _, removed := range out.Removed {
+		if removed == filepath.Dir(path) {
+			t.Errorf("the report claims it removed %s, which is still there", removed)
+		}
 	}
 }
