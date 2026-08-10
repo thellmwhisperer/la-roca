@@ -105,6 +105,7 @@ func (g *Gate) Close() error { return g.db.Close() }
 // going to run. The string it returns is the one to execute: it may carry the
 // LIMIT that was missing.
 func (g *Gate) Validate(stmt string) (string, error) {
+	stmt = strings.TrimSpace(stmt)
 	stmts, err := rqlite.NewParser(strings.NewReader(stmt)).ParseStatements()
 	if err != nil {
 		return "", fmt.Errorf("SQL parse error: %w", err)
@@ -125,7 +126,7 @@ func (g *Gate) Validate(stmt string) (string, error) {
 		return "", err
 	}
 
-	clean, err := withLimit(withoutSemicolon(stmt), sel)
+	clean, err := withLimit(stmt, sel)
 	if err != nil {
 		return "", err
 	}
@@ -220,6 +221,28 @@ func (v *inspector) Visit(n rqlite.Node) (rqlite.Visitor, rqlite.Node, error) {
 			v.reason = fmt.Errorf("no such table: %q is not a table this query can read",
 				node.Name.Name)
 		}
+	case *rqlite.QualifiedTableFunctionName:
+		if node.Name == nil {
+			break
+		}
+		name := strings.ToLower(node.Name.Name)
+		if strings.HasPrefix(name, "sqlite_") || strings.HasPrefix(name, "pragma_") {
+			v.reason = fmt.Errorf("no such table: %q is not a table this query can read",
+				node.Name.Name)
+		}
+	case *rqlite.WithClause:
+		for _, cte := range node.CTEs {
+			if cte != nil && cte.Select != nil {
+				if err := walkTheTree(cte.Select); err != nil {
+					v.reason = err
+					break
+				}
+			}
+		}
+	case rqlite.SelectExpr:
+		if node.SelectStatement != nil {
+			v.reason = walkTheTree(node.SelectStatement)
+		}
 	}
 	return v, n, nil
 }
@@ -243,9 +266,13 @@ func hasAnySuffix(name string, suffixes []string) bool {
 // into "constant string" and lose the engine's error.
 func withLimit(stmt string, sel *rqlite.SelectStatement) (string, error) {
 	if sel.LimitExpr == nil {
-		return stmt + fmt.Sprintf(" LIMIT %d", MaxLimit), nil
+		return appendLimit(stmt), nil
 	}
-	number, isNumber := sel.LimitExpr.(*rqlite.NumberLit)
+	target := sel.LimitExpr
+	if sel.OffsetComma.IsValid() {
+		target = sel.OffsetExpr
+	}
+	number, isNumber := target.(*rqlite.NumberLit)
 	if !isNumber {
 		return "", fmt.Errorf("LIMIT must be a numeric literal")
 	}
@@ -263,6 +290,84 @@ func withLimit(stmt string, sel *rqlite.SelectStatement) (string, error) {
 		return "", fmt.Errorf("LIMIT must be a numeric literal")
 	}
 	return stmt[:start] + strconv.Itoa(MaxLimit) + stmt[end:], nil
+}
+
+func appendLimit(stmt string) string {
+	end := trailingSQLCodeEnd(stmt)
+	code := strings.TrimRight(stmt[:end], "; \t\r\n")
+	tail := stmt[end:]
+	return code + fmt.Sprintf(" LIMIT %d", MaxLimit) + tail
+}
+
+// trailingSQLCodeEnd finds the final byte of executable SQL while ignoring
+// quoted text and comments. The LIMIT belongs before a trailing comment, where
+// SQLite can execute it, rather than inside that comment.
+func trailingSQLCodeEnd(stmt string) int {
+	const (
+		normal = iota
+		singleQuoted
+		doubleQuoted
+		backtickQuoted
+		bracketQuoted
+		lineComment
+		blockComment
+	)
+	state, end := normal, 0
+	for i := 0; i < len(stmt); i++ {
+		char := stmt[i]
+		switch state {
+		case lineComment:
+			if char == '\n' {
+				state = normal
+			}
+			continue
+		case blockComment:
+			if char == '*' && i+1 < len(stmt) && stmt[i+1] == '/' {
+				state, i = normal, i+1
+			}
+			continue
+		case singleQuoted, doubleQuoted, backtickQuoted, bracketQuoted:
+			end = i + 1
+			closing := byte('\'')
+			if state == doubleQuoted {
+				closing = '"'
+			} else if state == backtickQuoted {
+				closing = '`'
+			} else if state == bracketQuoted {
+				closing = ']'
+			}
+			if char == closing {
+				if i+1 < len(stmt) && stmt[i+1] == closing && state != bracketQuoted {
+					end, i = i+2, i+1
+				} else {
+					state = normal
+				}
+			}
+			continue
+		}
+		if char == '-' && i+1 < len(stmt) && stmt[i+1] == '-' {
+			state, i = lineComment, i+1
+			continue
+		}
+		if char == '/' && i+1 < len(stmt) && stmt[i+1] == '*' {
+			state, i = blockComment, i+1
+			continue
+		}
+		switch char {
+		case '\'':
+			state = singleQuoted
+		case '"':
+			state = doubleQuoted
+		case '`':
+			state = backtickQuoted
+		case '[':
+			state = bracketQuoted
+		}
+		if !strings.ContainsRune(" \t\r\n", rune(char)) {
+			end = i + 1
+		}
+	}
+	return end
 }
 
 // allowedFunctions contains supported scalar, date and time, aggregate, JSON,

@@ -141,6 +141,59 @@ func TestTheLimitIsAddedAndClamped(t *testing.T) {
 	}
 }
 
+func TestTheLimitClampHandlesWhitespaceOffsetsAndBothSQLiteForms(t *testing.T) {
+	for _, tc := range []struct {
+		statement, want string
+	}{
+		{"\n  SELECT id FROM memories LIMIT 2000", "LIMIT 1000"},
+		{"SELECT id FROM memories LIMIT 2000 OFFSET 4", "LIMIT 1000 OFFSET 4"},
+		{"SELECT id FROM memories LIMIT 4, 2000", "LIMIT 4, 1000"},
+	} {
+		clean, err := gate(t).Validate(tc.statement)
+		if err != nil {
+			t.Errorf("Validate(%q) = %v", tc.statement, err)
+			continue
+		}
+		if !strings.Contains(clean, tc.want) {
+			t.Errorf("Validate(%q) = %q, want %q", tc.statement, clean, tc.want)
+		}
+	}
+}
+
+func TestTheLimitIsEffectiveBeforeTrailingComments(t *testing.T) {
+	for _, statement := range []string{
+		"SELECT id FROM memories -- trailing comment",
+		"SELECT id FROM memories /* trailing comment",
+		"SELECT id FROM memories LIMIT 500000 -- trailing comment",
+	} {
+		clean, err := gate(t).Validate(statement)
+		if err != nil {
+			t.Errorf("Validate(%q) = %v", statement, err)
+			continue
+		}
+		comment := strings.Index(clean, "--")
+		if comment < 0 {
+			comment = strings.Index(clean, "/*")
+		}
+		limit := strings.Index(clean, "LIMIT 1000")
+		if limit < 0 || comment >= 0 && limit > comment {
+			t.Errorf("cap is not effective before the comment: %q", clean)
+		}
+	}
+}
+
+func TestTableValuedPragmasCannotReadSchemaIndirectly(t *testing.T) {
+	for _, statement := range []string{
+		"SELECT * FROM pragma_table_info('memories')",
+		"WITH hidden AS (SELECT * FROM pragma_table_info('ingest_file_state')) SELECT * FROM hidden",
+		"SELECT id FROM memories WHERE id IN (SELECT cid FROM pragma_table_info('memories'))",
+	} {
+		if _, err := gate(t).Validate(statement); err == nil {
+			t.Errorf("Validate(%q) exposed schema through a table-valued pragma", statement)
+		}
+	}
+}
+
 func TestTheGateRejectsWhatIsNotEvenAQuery(t *testing.T) {
 	for _, benchCase := range []string{
 		"",
