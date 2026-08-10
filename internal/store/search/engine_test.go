@@ -163,7 +163,7 @@ func seededWorld(t *testing.T) *store.DB {
 	writeTo(t, db, `
 		INSERT INTO memories (layer, content, origin) VALUES
 		  ('fact', 'the team forbids long dashes in every deliverable', 'human'),
-		  ('fact', 'a naive Muller facade sketch from the design review', 'agent'),
+		  ('fact', 'a naïve Müller façade sketch from the design review', 'agent'),
 		  ('fact', 'the database opens in WAL mode with a busy timeout', 'agent');
 		INSERT INTO sessions (session_id, project, title) VALUES ('s1', 'roca', 'test session');
 		INSERT INTO exchanges (session_id, exchange_number, human_text, agent_text) VALUES
@@ -298,4 +298,20 @@ func aProjectFromTheData(t *testing.T, db *store.DB) string {
 		t.Fatalf("look for a project in the data: %v", err)
 	}
 	return project
+}
+
+// The provenance names the route that actually ran. An unsupported method used to
+// fall through to the FTS branch while `search_method` kept reporting the
+// unsupported string, so the answer described a route the engine had not taken.
+func TestAnUnsupportedSearchMethodIsRefusedByName(t *testing.T) {
+	engine, _ := indexedWorld(t)
+
+	_, err := engine.Search(context.Background(), request("alpha", "unknown"))
+
+	if err == nil {
+		t.Fatal("an unsupported method was accepted")
+	}
+	if !strings.Contains(err.Error(), "unknown") {
+		t.Errorf("the error does not name the method it refused: %v", err)
+	}
 }

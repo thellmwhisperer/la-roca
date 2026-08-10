@@ -70,6 +70,13 @@ type Result struct {
 // answers, and it says so.
 func (m *Engine) Search(ctx context.Context, req Request) (Result, error) {
 	method := cmp.Or(req.Method, MethodFTS)
+	// The provenance names the route that ran, so a method this engine does not
+	// know is refused instead of silently answered by the FTS branch under the
+	// unknown name.
+	if method != MethodFTS && method != MethodLike {
+		return Result{}, fmt.Errorf(
+			"there is no search method %q: it is %s or %s", method, MethodFTS, MethodLike)
+	}
 	limit := req.Limit
 	if limit <= 0 {
 		limit = 10
