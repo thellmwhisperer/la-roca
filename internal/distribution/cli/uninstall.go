@@ -97,8 +97,13 @@ func (env *cliEnv) uninstall(cmd *cobra.Command, purge bool) error {
 		// record so uninstall leaves the promised zero residue.
 		if !env.started.IsZero() {
 			env.capture(map[string]any{"purge_requested": true})
+			// The trace never fails the command, and least of all this one: the
+			// operator authorized a purge. A log that could not be written is
+			// named in the report and the purge goes on. prelogged is set either
+			// way, so the ordinary post-run record cannot recreate the log
+			// directory the purge is about to remove.
 			if err := env.logExecution(cmd, env.started, ExitOK, nil); err != nil {
-				return err
+				failed(&report, "record this run before the purge: %v", err)
 			}
 			env.prelogged = true
 		}
@@ -123,11 +128,19 @@ func (env *cliEnv) uninstall(cmd *cobra.Command, purge bool) error {
 			"deleted":  withoutDBPaths(report.Deleted, paths.DB),
 			"kept":     withoutDBKept(report.Kept, paths.DB),
 			"runtimes": runtimes,
-			"errors":   withoutDBPaths(report.Errors, paths.DB),
+			"errors":   scrubDBPaths(report.Errors, paths.DB),
 		})
 	}
 	renderUninstall(env, purge, report, runtimes)
 	return nil
+}
+
+// failed records an error and takes the verdict down with it. An error appended
+// without touching Purged printed "purged: yes" directly under its own error
+// lines, which is the divergence the readable report exists to prevent.
+func failed(report *lifecycle.Report, format string, args ...any) {
+	report.Errors = append(report.Errors, fmt.Sprintf(format, args...))
+	report.Purged = false
 }
 
 // withdrawTheIntegrations takes La Roca's entry out of every runtime's own MCP
@@ -142,8 +155,7 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 	// named.
 	withdrawn := func(what string, outcome agentcfg.Outcome, err error) {
 		if err != nil {
-			report.Errors = append(report.Errors,
-				fmt.Sprintf("withdraw %s: %v", what, err))
+			failed(report, "withdraw %s: %v", what, err)
 			return
 		}
 		if outcome.Changed {
@@ -157,7 +169,7 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 	for _, runtime := range agentcfg.Runtimes() {
 		path, err := configFileOf(runtime, "")
 		if err != nil {
-			report.Errors = append(report.Errors, err.Error())
+			failed(report, "%s", err)
 			continue
 		}
 		outcome, err := agentcfg.Uninstall(runtime, path)
@@ -169,19 +181,18 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 
 	home, err := os.UserHomeDir()
 	if err != nil {
-		report.Errors = append(report.Errors, fmt.Sprintf("home: %v", err))
+		failed(report, "home: %v", err)
 		return outcomes
 	}
 	for _, runtime := range skill.Runtimes() {
 		path, err := skill.Path(runtime, home, os.Getenv)
 		if err != nil {
-			report.Errors = append(report.Errors, err.Error())
+			failed(report, "%s", err)
 			continue
 		}
 		outcome, err := skill.Uninstall(runtime, path)
 		if err != nil {
-			report.Errors = append(report.Errors,
-				fmt.Sprintf("withdraw skill from %s: %v", runtime, err))
+			failed(report, "withdraw skill from %s: %v", runtime, err)
 			continue
 		}
 		if outcome.Changed {
@@ -212,8 +223,7 @@ func keepTheBackup(report *lifecycle.Report, outcome agentcfg.Outcome) {
 func removeRecoveryBackups(report *lifecycle.Report, configFile string) {
 	for _, path := range recoveryBackupsFor(report, configFile) {
 		if err := os.Remove(path); err != nil {
-			report.Errors = append(report.Errors, fmt.Sprintf("delete %s: %v", path, err))
-			report.Purged = false
+			failed(report, "delete %s: %v", path, err)
 			continue
 		}
 		report.Deleted = append(report.Deleted, path)
@@ -235,8 +245,7 @@ func nameSurvivingBackups(report *lifecycle.Report, configFile string) {
 func recoveryBackupsFor(report *lifecycle.Report, configFile string) []string {
 	paths, err := recoveryBackups(configFile)
 	if err != nil {
-		report.Errors = append(report.Errors, err.Error())
-		report.Purged = false
+		failed(report, "%s", err)
 	}
 	return paths
 }
@@ -283,6 +292,25 @@ func ownedPaths(paths config.Paths) []string {
 		owned = append(owned, filepath.Dir(path))
 	}
 	return owned
+}
+
+// scrubDBPaths takes the database's location out of error PROSE. withoutDBPaths
+// filters entries that are the path exactly, which is what the deleted list
+// holds; an error is a sentence with the path inside it, so filtering left it
+// published. The suffixes are replaced before the bare path, or `roca.db-wal`
+// would come out as `the database-wal`.
+func scrubDBPaths(messages []string, dbPath string) []string {
+	if dbPath == "" {
+		return messages
+	}
+	out := make([]string, 0, len(messages))
+	for _, message := range messages {
+		for _, suffix := range []string{"-wal", "-shm", "-journal", ""} {
+			message = strings.ReplaceAll(message, dbPath+suffix, "the database"+suffix)
+		}
+		out = append(out, message)
+	}
+	return out
 }
 
 // withoutDBPaths filters out paths that reveal the database file from a string
