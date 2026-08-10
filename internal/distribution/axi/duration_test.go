@@ -1,4 +1,4 @@
-package human
+package axi
 
 import "testing"
 

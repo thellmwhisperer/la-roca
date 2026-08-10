@@ -12,7 +12,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
-	"github.com/thellmwhisperer/la-roca/internal/distribution/human"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -239,7 +238,7 @@ func renderBootstrap(env *cliEnv, result service.InitResult) {
 		result.Rows.ThinkingBlocks, result.Rows.ToolUses)
 	if result.Search != nil {
 		env.print("index: full-text index ready · %s",
-			human.Duration(result.Search.ElapsedMS))
+			axi.Duration(result.Search.ElapsedMS))
 	}
 	if model := result.Model; model != nil {
 		switch {

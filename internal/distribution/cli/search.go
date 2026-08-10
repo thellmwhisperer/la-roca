@@ -2,7 +2,7 @@ package cli
 
 import (
 	"github.com/spf13/cobra"
-	"github.com/thellmwhisperer/la-roca/internal/distribution/human"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
@@ -25,7 +25,7 @@ func indexCommand(env *cliEnv) *cobra.Command {
 			if report.LexicalBuilt {
 				env.print("full-text index built")
 			}
-			env.print("%s", human.Duration(report.ElapsedMS))
+			env.print("%s", axi.Duration(report.ElapsedMS))
 			return nil
 		}),
 	}

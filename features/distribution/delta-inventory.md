@@ -30,4 +30,4 @@ This inventory lists behavior present in distribution code that none of the 13 a
 - Purge convergence after partial failure, refusal to delete foreign files, bounded survivor reporting, SQLite journal cleanup, and JSON path privacy are broader than the zero-residue synthetic-home scenario.
 - Release discovery by latest or tag, private repository authentication, platform rejection, and update rollback after an unhealthy replacement remain unclaimed.
 
-Authoritative code inspected: `internal/distribution/cli`, `internal/distribution/mcpplug`, `internal/distribution/agentcfg`, `internal/distribution/human`, `internal/distribution/lifecycle`, `internal/distribution/release`, and `install.sh`.
+Authoritative code inspected: `internal/distribution/axi`, `internal/distribution/cli`, `internal/distribution/mcpplug`, `internal/distribution/agentcfg`, `internal/distribution/lifecycle`, `internal/distribution/release`, and `install.sh`.

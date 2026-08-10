@@ -5,7 +5,7 @@ import (
 	"runtime"
 
 	"github.com/spf13/cobra"
-	"github.com/thellmwhisperer/la-roca/internal/distribution/human"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -75,7 +75,7 @@ func renderIngest(env *cliEnv, result service.IngestResult) {
 			env.print("index: full-text index built")
 		}
 	}
-	env.print("%d errors · %s", result.Errors, human.Duration(result.ElapsedMS))
+	env.print("%d errors · %s", result.Errors, axi.Duration(result.ElapsedMS))
 }
 
 // ingestSources resolves where every agent's artefacts live on this machine.

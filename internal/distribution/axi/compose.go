@@ -5,7 +5,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/thellmwhisperer/la-roca/internal/distribution/human"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
@@ -36,9 +35,9 @@ func QueryPreamble(res service.QueryResult) string {
 	appendLine(&b, res.ProviderNote)
 	if res.Engine != "" {
 		appendLine(&b, fmt.Sprintf("route %s · provider %s · model %s · %s",
-			res.Path, res.Engine, res.Model, human.Duration(res.LatencyMS)))
+			res.Path, res.Engine, res.Model, Duration(res.LatencyMS)))
 	} else {
-		appendLine(&b, fmt.Sprintf("route %s · %s", res.Path, human.Duration(res.LatencyMS)))
+		appendLine(&b, fmt.Sprintf("route %s · %s", res.Path, Duration(res.LatencyMS)))
 	}
 	if res.Degraded != "" {
 		appendLine(&b, "degraded: "+res.Degraded)
@@ -97,7 +96,7 @@ func Exec(res service.ExecResult) string {
 	var b strings.Builder
 	appendLine(&b, res.SQL)
 	appendLine(&b, RowOutput(res.Columns, res.Rows))
-	appendLine(&b, fmt.Sprintf("%d rows · %s", res.RowCount, human.Duration(res.LatencyMS)))
+	appendLine(&b, fmt.Sprintf("%d rows · %s", res.RowCount, Duration(res.LatencyMS)))
 	if res.RowCount > 0 && !(res.RowCount == 1 && len(res.Columns) == 1) {
 		appendLine(&b, RenderHelp(
 			"Run `roca exec \"<SELECT>\" --json` for the complete result envelope",
