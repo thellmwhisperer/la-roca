@@ -380,7 +380,7 @@ func queryCommand(env *cliEnv) *cobra.Command {
 				if answer, err := svc.Interpret(cmd.Context(), result.Question, result.Columns, result.Rows); err == nil {
 					prose = answer
 				} else {
-					env.print("(el modelo no pudo interpretar: %v)", err)
+					env.print("(the model could not interpret: %v)", err)
 				}
 			}
 			render(env, result, prose)

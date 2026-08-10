@@ -35,8 +35,8 @@ const MatchAny = " OR "
 // MatchExpression translates the plan's term into an FTS5 MATCH expression.
 //
 // Every word goes in double quotes, which is the same contract the LIKE it
-// replaces used to meet: searching for "guiones largos" is not searching for
-// "guiones" or "largos".
+// replaces used to meet: searching for "long dashes" is not searching for
+// "long" or "dashes".
 //
 // The quotes are not cosmetic. Without them, a term carrying the word "OR"
 // would turn the AND into an OR, and one carrying a parenthesis would blow up

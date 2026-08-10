@@ -162,7 +162,7 @@ func RenderSQLLike(plan Plan, coordinationLayers []string) (string, error) {
 }
 
 // likeClauses require the column to match every word of the term: searching for
-// "guiones largos" is not searching for "guiones" or "largos".
+// "long dashes" is not searching for "long" or "dashes".
 func likeClauses(column, term string) string {
 	parts := strings.Split(term, "+")
 	clauses := make([]string, 0, len(parts))

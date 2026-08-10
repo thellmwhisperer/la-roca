@@ -21,7 +21,7 @@ var (
 			"Good questions are short and specific:\n" +
 			"- \"count memories by project\" — analytics\n" +
 			"- \"what do we know about ffmpeg\" — concept search\n" +
-			"- \"que feedback tenemos\" — the corpus answers in both languages\n\n" +
+			"- \"what feedback do we have\" — ask in any language; the corpus answers with what it holds\n\n" +
 			"Keep it under 15 words and one concept per question. " +
 			"With zero results, rephrase with different keywords.",
 	}

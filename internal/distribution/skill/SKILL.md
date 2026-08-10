@@ -74,7 +74,7 @@ the gate. Install them with `roca mcp install <runtime>`.
 
 ```bash
 roca query "who is Ana"
-roca query "que feedback tenemos" --json
+roca query "what feedback do we have" --json
 roca store --layer handoff --content "wave 6 left the gate in place" --origin agent
 ```
 
