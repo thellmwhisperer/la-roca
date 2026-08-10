@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -191,7 +192,12 @@ func TestTheSurvivorOverflowDoesNotCallOwnedFilesForeign(t *testing.T) {
 	}
 
 	// The directory stops being writable, so every owned path survives the sweep:
-	// these are the survivors the contract calls Roca's own.
+	// these are the survivors the contract calls Roca's own. Neither trick binds
+	// a privileged process, and Windows has no such mode, so the test says so
+	// instead of failing for a reason that is not the product's.
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("permissions cannot make a directory unwritable here")
+	}
 	if err := os.Chmod(data, 0o500); err != nil {
 		t.Fatal(err)
 	}
@@ -223,13 +229,18 @@ func TestTheSurvivorOverflowCountsInSingularWhenOnlyOneIsLeft(t *testing.T) {
 
 	report := Plan{DataDir: data}.Apply()
 
+	overflow := ""
 	for _, kept := range report.Kept {
-		if kept.Path == data && !strings.Contains(kept.Reason, "1 more file") {
-			t.Errorf("the overflow over six survivors reads %q", kept.Reason)
+		if kept.Path == data {
+			overflow = kept.Reason
 		}
-		if kept.Path == data && strings.Contains(kept.Reason, "1 more files") {
-			t.Errorf("the overflow reads %q", kept.Reason)
-		}
+	}
+	if overflow == "" {
+		t.Fatalf("no overflow line over six survivors: %+v", report.Kept)
+	}
+	if !strings.Contains(overflow, "1 more file") ||
+		strings.Contains(overflow, "1 more files") {
+		t.Errorf("the overflow over six survivors reads %q", overflow)
 	}
 }
 
