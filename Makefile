@@ -40,14 +40,6 @@ windows-amd64:
 .PHONY: dist
 dist: darwin-arm64 linux-arm64 linux-amd64 windows-amd64 ## Build the four targets from a single runner
 
-# `make classifier` is gone: the classifier is a personal artefact generated
-# next to the operator's database by `roca calibrate` / `roca init`, never a
-# file in this tree (2026-08-05). Shipping somebody's training data
-# inside the binary is a serious leak.
-# `make dictionary` is gone for the same reason and a stronger one: v1.0 search
-# is lexical (FTS5) only, so there is no static coordinate dictionary to
-# distill and nothing in the build needs it.
-
 .PHONY: test
 test: ## Unit and contract tests
 	go test ./...

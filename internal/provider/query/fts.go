@@ -26,7 +26,7 @@ const (
 )
 
 // RenderSQLFTS compiles the term search against the FTS5 lexical index,
-// requiring every word (AND). It is the precise match the golden bench
+// requiring every word (AND). It is the precise match the query tests
 // measures.
 //
 // It requires every word, respects the layer when there is one, excludes the
@@ -144,7 +144,7 @@ func limitClause(p Plan, fallback int) string {
 }
 
 // RenderSQLLike is the reference floor: a LIKE over every text column, no index.
-// It is the competitor the bench measures the FTS index against and the route
+// It is the fallback the query tests compare with the FTS index and the route
 // the search falls to when the database is not indexed yet. It requires every
 // word of the term and respects the layer, exactly like the index route.
 func RenderSQLLike(plan Plan, coordinationLayers []string) (string, error) {

@@ -97,8 +97,8 @@ func rootCommand(env *cliEnv) *cobra.Command {
 			"\n" +
 			"It reads what Claude, Codex, OpenCode and the rest write to disk, normalizes\n" +
 			"that into one local SQLite database, and answers natural-language questions\n" +
-			"about it. Nothing leaves this machine: the index, the dictionary and the\n" +
-			"classifier all live in the binary and the database beside it.",
+			"about it. Nothing leaves this machine: the database and its search index\n" +
+			"stay beside the binary on the operator's computer.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		// `roca --version` is the health check `install.sh` and `roca update` run
@@ -248,7 +248,7 @@ func (env *cliEnv) serviceRunE(
 }
 
 // runtimeStatus is the body of the two status commands over the runtime
-// catalogue, `roca mcp status` and `roca hook status`.
+// catalogue and `roca mcp status`.
 //
 // Both answer the same question about a different declaration: which runtimes
 // were asked about (the argument, or all of them), one report each, and the

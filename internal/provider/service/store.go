@@ -38,7 +38,7 @@ type StoreRequest struct {
 	Layer   string
 	Content string
 	// Origin is who creates it: human, agent or cron. Empty means agent, which
-	// is what a plug call and a hook both are.
+	// is what a plug call is.
 	Origin      string
 	SourceAgent string
 	Project     string
@@ -56,8 +56,7 @@ type StoreResult struct {
 	ID    int64  `json:"id"`
 	Layer string `json:"layer"`
 	// Skipped says the content was already stored in this scope. It is not an
-	// error: a hook that fires twice over the same session must not write the
-	// same handoff twice.
+	// error: retrying the same write must not create a duplicate memory.
 	Skipped   bool   `json:"skipped,omitempty"`
 	Version   string `json:"version"`
 	SourceSHA string `json:"source_sha"`

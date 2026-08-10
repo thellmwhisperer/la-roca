@@ -134,7 +134,7 @@ func (f Flow) Login(ctx context.Context, opts LoginOptions) (Token, error) {
 }
 
 // LoginNarrative is what the operator reads before the browser opens. It is a
-// constant so the CLI and the golden test share one wording.
+// constant so the CLI and its regression test share one wording.
 const LoginNarrative = "" +
 	"A browser will open at the vendor's auth page. Confirm the account there.\n" +
 	"La Roca receives an access token, never your password.\n" +

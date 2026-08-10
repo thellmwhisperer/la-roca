@@ -225,9 +225,8 @@ func Status(name, path string) (Report, error) {
 // first. A transform that changes nothing writes nothing, which is what makes a
 // second install cost an operator nothing.
 //
-// It is exported because the session-lifecycle hooks edit a settings file that
-// is not an MCP config and still deserves every one of those guarantees. Two
-// spines would be two sets of ways to lose somebody's file.
+// It is exported so every configuration integration can share the same safety
+// guarantees. Two edit paths would create two sets of ways to lose a file.
 func Edit(name, path string, transform func(string) (string, error),
 	createMissing bool) (Outcome, error) {
 	outcome := Outcome{Runtime: name, Path: path}

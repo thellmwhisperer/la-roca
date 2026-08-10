@@ -4,9 +4,9 @@ La Roca uses **frontier with a local floor**: the configured provider serves whe
 and with no network or no credential the fall to local Ollama is automatic. The
 local one is the guaranteed floor, not the product's identity.
 
-Most questions never reach here. The classifier resolves the fast route in
-milliseconds and only what it declines goes to a model, which costs seconds. A
-machine with no model at all keeps answering everything the compiler knows.
+Questions use the first configured provider that reports itself ready. If the
+selected provider is unavailable or produces unusable SQL, La Roca reports the
+degraded state and attempts literal search over the local index.
 
 ## The configuration
 

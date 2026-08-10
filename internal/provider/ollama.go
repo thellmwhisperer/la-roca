@@ -149,7 +149,7 @@ func (o *Ollama) Chat(ctx context.Context, req ChatRequest) (ChatResponse, error
 		"options": map[string]any{
 			"num_predict": maxTokens(req),
 			// Zero temperature: the same question has to compile to the same SQL,
-			// or the golden bench measures noise.
+			// or repeatable query tests measure noise.
 			"temperature": 0,
 		},
 	}

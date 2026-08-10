@@ -47,7 +47,7 @@ func TestReleasePleaseRunsOnlyFromTrustedMainWithLeastPrivilege(t *testing.T) {
 	}
 }
 
-func TestReleasePleaseStartsAtThePublishedRCAndOwnsPluginVersioning(t *testing.T) {
+func TestReleasePleaseOwnsOneStableVersion(t *testing.T) {
 	var config struct {
 		ReleaseType string `json:"release-type"`
 		Packages    map[string]struct {
@@ -67,8 +67,8 @@ func TestReleasePleaseStartsAtThePublishedRCAndOwnsPluginVersioning(t *testing.T
 	if !ok {
 		t.Fatal("release-please does not declare the repository root as its Go package")
 	}
-	if config.ReleaseType != "go" || root.PackageName != "roca" || root.ReleaseAs != "1.0.0" {
-		t.Fatalf("release config = type %q, package %q, release-as %q; want go, roca, 1.0.0",
+	if config.ReleaseType != "go" || root.PackageName != "roca" || root.ReleaseAs != "" {
+		t.Fatalf("release config = type %q, package %q, release-as %q; want go, roca, no pinned release",
 			config.ReleaseType, root.PackageName, root.ReleaseAs)
 	}
 
@@ -76,8 +76,8 @@ func TestReleasePleaseStartsAtThePublishedRCAndOwnsPluginVersioning(t *testing.T
 	if err := json.Unmarshal([]byte(readRepoFile(t, "../../../.release-please-manifest.json")), &manifest); err != nil {
 		t.Fatalf("release-please manifest is not valid JSON: %v", err)
 	}
-	if manifest["."] != "1.0.0-rc.9" {
-		t.Fatalf("manifest baseline = %q, want the published 1.0.0-rc.9", manifest["."])
+	if manifest["."] != "1.0.0" {
+		t.Fatalf("manifest baseline = %q, want 1.0.0", manifest["."])
 	}
 
 	var plugin struct {
@@ -86,8 +86,8 @@ func TestReleasePleaseStartsAtThePublishedRCAndOwnsPluginVersioning(t *testing.T
 	if err := json.Unmarshal([]byte(readRepoFile(t, "../../../plugin.json")), &plugin); err != nil {
 		t.Fatalf("plugin manifest is not valid JSON: %v", err)
 	}
-	if plugin.Version != root.ReleaseAs {
-		t.Fatalf("plugin version = %q, want initial release version %q", plugin.Version, root.ReleaseAs)
+	if plugin.Version != manifest["."] {
+		t.Fatalf("plugin version = %q, want manifest version %q", plugin.Version, manifest["."])
 	}
 	if len(root.ExtraFiles) != 1 || root.ExtraFiles[0].Type != "json" ||
 		root.ExtraFiles[0].Path != "plugin.json" || root.ExtraFiles[0].JSONPath != "$.version" {
@@ -95,12 +95,12 @@ func TestReleasePleaseStartsAtThePublishedRCAndOwnsPluginVersioning(t *testing.T
 	}
 
 	docs := readRepoFile(t, "../../../docs/releases.md")
-	for _, required := range []string{"v1.0.0-rc.9", "feat:", "BREAKING CHANGE:", "release-as", "RELEASE_PLEASE_TOKEN", "plugin.json"} {
+	for _, required := range []string{"1.0.0", "feat:", "BREAKING CHANGE:", "RELEASE_PLEASE_TOKEN", "plugin.json"} {
 		if !strings.Contains(docs, required) {
 			t.Errorf("release documentation is missing %q", required)
 		}
 	}
-	if strings.Contains(docs, "v1.0.0-rc.8") {
-		t.Error("release documentation still calls rc.8 the published baseline")
+	if strings.Contains(docs, "release-as") {
+		t.Error("release documentation still instructs maintainers to pin a release")
 	}
 }

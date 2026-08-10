@@ -1,14 +1,14 @@
 // Package mcpplug is La Roca's MCP surface: the plug, not the product.
 //
 // The CLI is the complete surface over the kernel. This package exists for the
-// agents that have no shell, and it carries exactly six tools, each one a
+// agents that have no shell, and it carries exactly five tools, each one a
 // single call into the same service object `roca query` drives. There is no
 // state between calls: the process is born when the agent launches it and dies
 // when the agent closes the pipe, matching the stateless protocol.
 //
 // The law of this package is pinned by passthrough_test.go and not by this
-// comment: a handler with logic of its own is a capability no shell, hook or
-// script can reach.
+// comment: a handler with logic of its own is a capability no other surface
+// can reach.
 package mcpplug
 
 import (
@@ -50,7 +50,7 @@ type Build struct {
 // it.
 type plug struct{ svc *service.Service }
 
-// New builds the server with the six tools of the decided surface, in the
+// New builds the server with the five tools of the decided surface, in the
 // order they are declared here.
 //
 // Every handler is wrapped in sanitizing so that an MCP tool error never carries

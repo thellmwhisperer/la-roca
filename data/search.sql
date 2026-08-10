@@ -4,7 +4,7 @@
 -- make a database a Roca one and adoption compares them one by one; what is
 -- here is a derived index, it can be thrown away and rebuilt without losing a
 -- single piece of data, and that is why it lives apart: if it counted as
--- structure, adopting the operator's live database would require a 1.4 GB backup
+-- structure, adopting a large live database would require an unnecessary backup
 -- in order to create an index that rebuilds itself.
 --
 -- Everything goes with IF NOT EXISTS: applying it twice changes nothing.
@@ -15,8 +15,8 @@
 -- never a second copy of the text. On the real database that is the difference
 -- between growing 26% and growing more than double.
 --
--- `remove_diacritics 2` folds the diacritics and leaves the ñ alone, which is
--- the only variant that treats Spanish well. The folding has to be the same one
+-- `remove_diacritics 2` folds diacritics while preserving U+00F1, which is
+-- required for consistent Unicode folding. The folding has to be the same one
 -- `query.Fold` does and the same one the lexical MATCH expression is built
 -- with: what the index stores and what the query asks for start from the same
 -- tokens or the search misses its own index.

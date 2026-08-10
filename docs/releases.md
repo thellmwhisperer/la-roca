@@ -20,12 +20,9 @@ output, and the action runs only when that output says the token is present.
 
 ## Version policy
 
-The manifest starts at version `1.0.0-rc.9`, corresponding to the published tag
-`v1.0.0-rc.9`. The initial `release-as` override makes the first proposal the
-official `1.0.0` release. Release Please also updates the version in
-`plugin.json` through `extra-files`, so the plugin manifest has no independent
-version lifecycle. Remove `release-as` from `release-please-config.json` after
-that release lands; leaving it in place would keep forcing the same version.
+The release manifest and `plugin.json` both start at `1.0.0`. Release Please
+updates the plugin version through `extra-files`, so the plugin manifest has no
+independent version lifecycle and no permanently pinned release override.
 
 After `1.0.0`, normal Conventional Commits choose the next version:
 
@@ -33,7 +30,3 @@ After `1.0.0`, normal Conventional Commits choose the next version:
 - `feat:` produces a minor release.
 - A commit with `!` after its type, such as `feat!:`, or a
   `BREAKING CHANGE:` footer produces a major release.
-
-When an operator must select a version explicitly, temporarily set
-`release-as` to that version, merge the generated release pull request, then
-remove the override.

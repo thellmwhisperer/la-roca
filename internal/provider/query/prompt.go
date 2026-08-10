@@ -391,7 +391,7 @@ func quotedNames(names []string) string {
 }
 
 // SortedLayerHints keeps the registry's layers in a stable order, so that the
-// same installation always sends the same prompt and the golden bench measures
+// same installation always sends the same prompt and repeatable tests measure
 // the model and not the map's iteration order.
 func SortedLayerHints(hints []LayerHint) []LayerHint {
 	sorted := slices.Clone(hints)

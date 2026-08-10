@@ -5,7 +5,7 @@
 // the SQLite + FTS5 schema (see prompt.go), validated by the gate
 // (internal/query/sqlgate). When the model cannot answer, the rescue searches
 // the FTS5 index with the question's own words (see fts.go). There is no
-// deterministic routing, no classifier and no language pack: the text utilities
+// deterministic text processing with no language-specific vocabulary: the utilities
 // here are the only residue, and they are language-independent.
 package query
 
@@ -34,7 +34,7 @@ func Fold(text string) string {
 
 // SearchTerm turns a free-form question into the words the FTS rescue searches
 // for: folded, substantial and joined by "+". It is language-independent on
-// purpose — v1 has no language pack and no stop-word list — so it keeps the
+// purpose: v1 has no built-in stop-word list, so it keeps the
 // tokens that carry the question and drops the ones that do not: anything shorter
 // than three letters and anything that is only digits. What noise remains, bm25
 // ranks.

@@ -25,13 +25,13 @@ import (
 //
 // The debt v1 does not inherit is that this used to be two contracts: the live
 // route kept fingerprints and the full reconciliation did not, so the table was
-// empty on a machine with 3,943 sessions. Here every route is this route.
+// empty on a machine with many sessions. Here every route is this route.
 
 // Fingerprint is a file's identity for the skip decision: its size and its
 // modification time in nanoseconds.
 //
 // It is deliberately not a hash of the content. The whole point is to decide
-// without opening the file, and hashing 1.4 GB of transcripts to discover that
+// without opening the file, and hashing a large transcript archive to discover that
 // nothing changed would cost more than re-ingesting them.
 func Fingerprint(path string) (string, error) {
 	info, err := os.Stat(path)
