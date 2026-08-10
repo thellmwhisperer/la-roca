@@ -80,3 +80,47 @@ func TestAnOperatorsOwnRepositoryStillWins(t *testing.T) {
 		t.Errorf("repo = %q, want the environment's", fromEnv.Repo)
 	}
 }
+
+// `roca update` replaces the running executable. A build that is not a published
+// release tag is somebody's working copy: `git describe` gives `v0.1.0-5-gabc`,
+// `v0.1.0-dirty` or a bare commit, and none of those equals the tag it would be
+// compared against, so the updater treated every one of them as out of date and
+// overwrote the operator's own build with a release.
+//
+// A clean release tag keeps updating exactly as before.
+func TestUpdateRefusesToReplaceABuildThatIsNotAReleaseTag(t *testing.T) {
+	for _, want := range []struct {
+		version  string
+		replaces bool
+	}{
+		{version: "v0.1.0", replaces: true},
+		{version: "0.1.0", replaces: true},
+		{version: "v0.1.0-5-gabc1234", replaces: false},
+		{version: "v0.1.0-dirty", replaces: false},
+		{version: "abc1234", replaces: false},
+		{version: "dev", replaces: false},
+		{version: "", replaces: false},
+	} {
+		if got := isReleaseBuild(want.version); got != want.replaces {
+			t.Errorf("isReleaseBuild(%q) = %v, want %v", want.version, got, want.replaces)
+		}
+	}
+}
+
+// The refusal names what the operator can do instead, and it is not an update
+// that silently did nothing.
+func TestTheRefusalToSelfReplaceSaysWhatToDoInstead(t *testing.T) {
+	var out strings.Builder
+	env := &cliEnv{out: &out, errOut: &out, build: Build{Version: "v0.1.0-dirty"}}
+
+	err := env.refuseSelfReplacement("v0.2.0")
+
+	if err == nil {
+		t.Fatal("a development build was allowed to replace itself")
+	}
+	for _, want := range []string{"v0.1.0-dirty", "v0.2.0", "install.sh"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not mention %q: %v", want, err)
+		}
+	}
+}

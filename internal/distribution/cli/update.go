@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -83,6 +84,32 @@ func (env *cliEnv) releaseSource(repo, api string) (release.Source, error) {
 	return source, nil
 }
 
+// releaseTag is what a published version looks like: `v1.2.3` or `1.2.3`, and
+// nothing after it.
+var releaseTag = regexp.MustCompile(`^v?[0-9]+\.[0-9]+\.[0-9]+$`)
+
+// isReleaseBuild says whether the running binary IS a published release.
+//
+// `git describe` stamps a working copy as `v0.1.0-5-gabc1234`, `v0.1.0-dirty` or
+// a bare commit, and `dev` when there is no tag at all. None of those equals the
+// tag they would be compared against, so every one of them read as out of date
+// and the updater overwrote the operator's own build with a release.
+func isReleaseBuild(version string) bool {
+	return releaseTag.MatchString(strings.TrimSpace(version))
+}
+
+// refuseSelfReplacement is the answer for a build that is not a release: name what
+// is running, name what is published, and name the way to install it that does not
+// overwrite the operator's own binary.
+func (env *cliEnv) refuseSelfReplacement(latest string) error {
+	env.code = ExitError
+	return fmt.Errorf(
+		"this build is %s, which is not a published release, so `roca update` will "+
+			"not replace it. %s is published: install it with install.sh, or build "+
+			"from a clean release tag",
+		orDash(env.build.Version), latest)
+}
+
 // update is the whole flow, in the order that keeps a working binary on the
 // machine at every step.
 func (env *cliEnv) update(ctx context.Context, source release.Source,
@@ -98,6 +125,11 @@ func (env *cliEnv) update(ctx context.Context, source release.Source,
 	}
 
 	current := env.build.Version
+	// The refusal comes before any comparison with the published tag: a working
+	// copy is not "out of date", it is simply not a release.
+	if !checkOnly && !isReleaseBuild(current) {
+		return env.refuseSelfReplacement(published.Tag)
+	}
 	if published.Tag == current {
 		return env.report(map[string]any{
 			"updated": false, "version": current, "latest": published.Tag,
