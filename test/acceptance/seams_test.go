@@ -18,61 +18,6 @@ import (
 // running. Those three assumptions are exactly the ones an operator breaks on
 // the first day, so they are measured here against the real binary.
 
-// A HOME with a space and a non-ASCII character in it. `roca init`, a write and
-// a read all have to work, and the hook the product declares for that
-// installation has to be a command line a shell can actually run.
-//
-// The last one is the reason this exists: a hook entry is a command LINE, so an
-// unquoted path under `/Users/Ana Maria` declared a hook that ran `/Users/Ana`.
-// Nothing failed loudly about it — the entries were written, `hook status` said
-// configured, and no context ever reached a session.
-func TestAHomeWithSpacesAndUnicodeWorksEndToEnd(t *testing.T) {
-	m := aWorldIn(t, "Ana María Ñandú (test)")
-	if err := m.installBinary(); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := m.mustRun(m.initCommand(false)); err != nil {
-		t.Fatalf("init under a HOME with a space: %v\n%s", err, m.last.stderr)
-	}
-	if err := m.mustRun("roca store --layer project --content 'la costura del hogar con espacios y acentos'"); err != nil {
-		t.Fatalf("store: %v\n%s", err, m.last.stderr)
-	}
-	// Pointed at the installed file and not left as the bare name: an operator
-	// whose prefix is not on the runtime's PATH declares the absolute path, and
-	// that path is the one carrying the space. Passed as arguments and not as a
-	// line, because a line is exactly what this case is about.
-	if output, code := m.runUnder(t, nil, "hook", "install", "claude",
-		"--executable", m.installed); code != 0 {
-		t.Fatalf("hook install: code %d\n%s", code, output)
-	}
-
-	settings := filepath.Join(m.home, ".claude", "settings.json")
-	body, err := os.ReadFile(settings)
-	if err != nil {
-		t.Fatalf("the settings file was not written: %v", err)
-	}
-	line := theDeclaredHookCommand(t, string(body))
-
-	command := exec.Command("sh", "-c", line)
-	command.Env = m.environment()
-	output, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("a shell cannot run the declared hook %q: %v\n%s", line, err, output)
-	}
-
-	if err := m.mustRun("roca hook uninstall claude"); err != nil {
-		t.Fatalf("hook uninstall: %v\n%s", err, m.last.stderr)
-	}
-	after, err := os.ReadFile(settings)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(after), "hook context") {
-		t.Fatalf("the withdrawal did not recognize its own entry:\n%s", after)
-	}
-}
-
 // A timezone fourteen hours from the runner's and a locale whose rules for
 // upper case are not the ASCII ones. What the product stores has to be the same
 // instant either way: two installations whose timestamps drift with the
@@ -219,21 +164,6 @@ func (m *world) runUnder(t *testing.T, environment []string, arguments ...string
 		t.Fatalf("run %v: %v", arguments, err)
 	}
 	return string(output), 0
-}
-
-// theDeclaredHookCommand pulls the command line out of the settings file the
-// product just wrote. It is read back off disk and not rebuilt here, because
-// what a shell gets handed is what is in that file.
-func theDeclaredHookCommand(t *testing.T, settings string) string {
-	t.Helper()
-	for _, fragment := range strings.Split(settings, `"command":`)[1:] {
-		line, _, found := strings.Cut(strings.TrimSpace(fragment)[1:], `"`)
-		if found && strings.Contains(line, "hook context") {
-			return strings.ReplaceAll(line, `\/`, "/")
-		}
-	}
-	t.Fatalf("the settings file declares no hook context command:\n%s", settings)
-	return ""
 }
 
 // theStamps reads the created_at values out of the readable table `roca exec`

@@ -27,6 +27,7 @@ scopes:
   # number comes down as those boundaries get a home, and it never goes up.
   #
   # The v1 model-only strip removed the compiler/classifier/teach/calibrate
-  # suites, dropping the count from 24 to 23.
+  # suites, dropping the count from 24 to 23. The OSS sanitization sweep removed
+  # the bench and hooks suites, dropping the count from 23 to 22.
   go_tests:
-    active_clones_ceiling: 23
+    active_clones_ceiling: 22
