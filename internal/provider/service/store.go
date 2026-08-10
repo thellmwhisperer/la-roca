@@ -144,6 +144,11 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (StoreResult, err
 func encodeMetadata(metadata map[string]any, surface string) (string, error) {
 	merged := make(map[string]any, len(metadata)+1)
 	maps.Copy(merged, metadata)
+	// The reserved key is taken away from the caller BEFORE the audit is applied.
+	// Writing it only when a surface was supplied left a caller's own `surface`
+	// standing on every path that has none, which is a forged audit in the one
+	// field the caller may not author.
+	delete(merged, surfaceKey)
 	if surface != "" {
 		merged[surfaceKey] = surface
 	}
