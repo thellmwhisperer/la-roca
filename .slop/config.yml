@@ -26,6 +26,11 @@ global_ignore:
   - "**/.git/**"
   - "**/.tmp/**"
   - "**/.worktrees/**"
+  # Agent-runtime state a coding agent drops in a checkout. `.gitignore` calls it
+  # "never product content", and a census that walks it measures somebody's
+  # node_modules: 31 vendored READMEs counted as orphaned public markdown.
+  - "**/.opencode/**"
+  - "**/.claude/**"
   - "bin/**"
   - "dist/**"
   - "features/**"
