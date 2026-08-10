@@ -394,7 +394,7 @@ func TestTheModelReceivesTheSchemaAndTheRulesAndNeverTheDatabase(t *testing.T) {
 		service.QueryRequest{Question: theFreeQuestion}); err != nil {
 		t.Fatalf("Query: %v", err)
 	}
-	for _, wanted := range []string{"memories", "supersedes IS NULL", "SELECT"} {
+	for _, wanted := range []string{"memories", "NOT IN (SELECT supersedes", "SELECT"} {
 		if !strings.Contains(model.prompt, wanted) {
 			t.Errorf("the prompt does not carry %q:\n%s", wanted, model.prompt)
 		}

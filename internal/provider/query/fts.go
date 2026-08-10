@@ -59,8 +59,9 @@ func renderFTS(plan Plan, coordinationLayers []string, limit int, joiner string)
 		"SELECT 'memory' AS source, m.id AS id, m.content AS text, "+
 			"m.created_at AS created_at, 0 AS source_priority, f.rango AS rango "+
 			"FROM (%s) AS f JOIN memories AS m ON m.id = f.fila "+
-			"WHERE m.supersedes IS NULL",
-		subquery("memories_fts", expression, "", "", limit))
+			"WHERE %s",
+		subquery("memories_fts", expression, "", "", limit),
+		supersedeExclusion("m.id"))
 
 	if plan.Layer != "" {
 		// A layer constraint is always respected, and the other three sources
@@ -113,6 +114,20 @@ func subquery(table, expression, column, filter string, limit int) string {
 		table, table, where, limit)
 }
 
+// supersedeExclusion is the corrected "current memories" filter: a memory
+// answers while no other memory replaces it. The row that carries `supersedes`
+// is the replacement; the row it points at is the old one, and the old one stops
+// answering. Filtering on the row's own `supersedes` (IS NULL) was the inverted
+// filter that hid the replacement instead of the row it replaced.
+//
+// idColumn is the qualified reference of the memories id in the surrounding
+// query (`m.id` over the FTS alias, the bare `id` over the LIKE floor).
+func supersedeExclusion(idColumn string) string {
+	return fmt.Sprintf("%s NOT IN (SELECT supersedes FROM memories WHERE supersedes IS NOT NULL)",
+		idColumn)
+}
+
+// isValidLimit reports whether limit is one the renderer accepts.
 func isValidLimit(limit int) bool { return limit > 0 && limit <= maxLimit }
 
 // limitClause is the LIMIT the LIKE floor carries, falling back to the house cap
@@ -138,7 +153,7 @@ func RenderSQLLike(plan Plan, coordinationLayers []string) (string, error) {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "SELECT 'memory' AS source, id, content AS text, created_at "+
-		"FROM memories WHERE %s AND supersedes IS NULL", likeClauses("content", plan.Term))
+		"FROM memories WHERE %s AND %s", likeClauses("content", plan.Term), supersedeExclusion("id"))
 	if plan.Layer != "" {
 		// A layer constraint is always respected, and the other three sources
 		// have no layer: returning them would be failing to respect it.

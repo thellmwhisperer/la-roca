@@ -75,7 +75,7 @@ func TestSemanticLayerCarriesTheLayersAndWhatTheyAreFor(t *testing.T) {
 func TestTheSystemPromptCarriesTheRulesThatKeepTheAnswerRunnable(t *testing.T) {
 	prompt := SQLSystemPrompt(ReadSchema(someDDL, nil), nil, nil)
 
-	for _, rule := range []string{"SELECT", "supersedes IS NULL", "LIMIT"} {
+	for _, rule := range []string{"SELECT", "NOT IN (SELECT supersedes", "LIMIT"} {
 		if !strings.Contains(prompt, rule) {
 			t.Errorf("the prompt does not impose %q:\n%s", rule, prompt)
 		}
@@ -91,11 +91,12 @@ func TestTheSystemPromptCarriesTheRulesThatKeepTheAnswerRunnable(t *testing.T) {
 
 // THE DEFECT THIS TEST EXISTS FOR.
 //
-// The prompt used to impose `WHERE supersedes IS NULL` on every query, and
-// `supersedes` only exists on `memories`. Every question the model answered from
-// `sessions` came back with a column that is not there, the gate rejected it,
-// and two different questions produced the same rejection. That is the shape of
-// a systematic defect: the prompt was announcing a schema the gate does not
+// The prompt used to impose `WHERE supersedes IS NULL` on every query. That hid
+// replacements instead of the rows they replaced, and `supersedes` only exists
+// on `memories`. Every question the model answered from `sessions` came back
+// with a column that is not there, the gate rejected it, and two different
+// questions produced the same rejection. That is the shape of a systematic
+// defect: the prompt was announcing semantics and a schema the product does not
 // have.
 //
 // The rule is now derived from the same DDL the gate prepares itself with, so a
@@ -103,7 +104,7 @@ func TestTheSystemPromptCarriesTheRulesThatKeepTheAnswerRunnable(t *testing.T) {
 func TestTheSupersedesRuleNamesOnlyTheTablesThatCarryTheColumn(t *testing.T) {
 	prompt := SQLSystemPrompt(ReadSchema(someDDL, nil), nil, nil)
 
-	line := ruleAbout(rulesOf(t, prompt), "supersedes IS NULL")
+	line := ruleAbout(rulesOf(t, prompt), "NOT IN (SELECT supersedes")
 	if line == "" {
 		t.Fatalf("the prompt imposes no rule about supersedes:\n%s", prompt)
 	}

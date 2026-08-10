@@ -34,7 +34,8 @@ Feature: Writing one memory
     And I store a memory in layer "project" superseding the previous one with content "the corrected answer holds thirteen"
     And I search for "answer"
     Then the search returns exactly 1 result
-    And the first result contains "forty two"
+    And the first result contains "thirteen"
+    And no result contains "forty two"
 
   Scenario: Supersedes pointing at a missing memory is refused
     Given a fresh Roca database

@@ -183,3 +183,39 @@ func texts(rows []search.Row) []string {
 	}
 	return out
 }
+
+func rowWithID(rows []search.Row, id int64) bool {
+	for _, row := range rows {
+		if row.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// THE FILTER THIS TEST EXISTS FOR.
+//
+// A memory another memory replaces stops answering, and the replacement
+// answers. The row that carries `supersedes` is the replacement; the row it
+// points at is the superseded one. Filtering on the row's own `supersedes`
+// (IS NULL) was the inverted filter that hid the replacement and kept the old
+// one answering, and this test pins the corrected filter at the store seam so
+// it cannot come back.
+func TestASupersededMemoryStopsAnswering(t *testing.T) {
+	engine, db := indexedWorld(t)
+	writeTo(t, db, `INSERT INTO memories (id, layer, content, origin)
+		VALUES (100, 'fact', 'el puerto alpha es ochenta', 'human')`)
+	writeTo(t, db, `INSERT INTO memories (id, layer, content, origin, supersedes)
+		VALUES (101, 'fact', 'el puerto alpha corregido es cuarenta', 'human', 100)`)
+
+	res, err := engine.Search(context.Background(), request("alpha", search.MethodFTS))
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if !rowWithID(res.Rows, 101) {
+		t.Errorf("the replacement memory does not answer: %v", texts(res.Rows))
+	}
+	if rowWithID(res.Rows, 100) {
+		t.Errorf("the superseded memory still answers: %v", texts(res.Rows))
+	}
+}

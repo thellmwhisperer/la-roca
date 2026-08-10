@@ -15,12 +15,13 @@ import (
 // the reason is a defect this code was born with.
 //
 // **The defect.** The ported rule said, unconditionally, "always filter active
-// memories with WHERE supersedes IS NULL". `supersedes` exists on `memories`
-// and on no other table. So every question the model answered out of
-// `sessions` came back carrying a column that is not there, the gate rejected
-// it, and two different questions produced the same rejection. A prompt that
-// announces a schema the gate does not have is a systematic defect, not a weak
-// model.
+// memories with WHERE supersedes IS NULL". That both hid the replacement rather
+// than the memory it replaced and named `supersedes` without saying it exists
+// only on `memories`. So every question the model answered out of `sessions`
+// came back carrying a column that is not there, the gate rejected it, and two
+// different questions produced the same rejection. A prompt that announces a
+// schema or memory semantics the product does not have is a systematic defect,
+// not a weak model.
 //
 // **The fix, and the shape that keeps it fixed.** The schema and the rules come
 // from ONE read of ONE DDL: the same `data.Schema` the gate prepares its
@@ -309,7 +310,7 @@ func ftsExamples(schema Schema) string {
 		"SELECT 'memory' AS source, m.id, m.content AS text, 0 AS source_priority, f.rango AS rango\n" +
 		"FROM (SELECT rowid AS fila, bm25(memories_fts) AS rango FROM memories_fts\n" +
 		"      WHERE memories_fts MATCH '\"ana\"' ORDER BY rango LIMIT 20) AS f\n" +
-		"JOIN memories AS m ON m.id = f.fila WHERE m.supersedes IS NULL\n" +
+		"JOIN memories AS m ON m.id = f.fila WHERE m.id NOT IN (SELECT supersedes FROM memories WHERE supersedes IS NOT NULL)\n" +
 		"UNION ALL\n" +
 		"SELECT 'exchange', rowid, agent_text, 1 AS source_priority, bm25(exchanges_fts) AS rango\n" +
 		"FROM exchanges_fts WHERE exchanges_fts MATCH '{agent_text} : (\"ana\")'\n" +
@@ -351,18 +352,20 @@ func SubstringLikeRejection(sql string) string {
 		"Respond ONLY with the corrected SQL."
 }
 
-// supersededRule is the rule that used to be a lie. It names the tables that
-// really carry the column and says out loud that no other one does, because
-// what the model got wrong was not the filter but where to apply it. With no
-// table carrying it, there is no rule: a rule about a column that does not
-// exist is the same defect written the other way round.
+// supersededRule is the rule that used to be a lie. It names the table that
+// really carries the column, says out loud that no other one does, and describes
+// the direction of replacement correctly. With no table carrying it, there is
+// no rule: a rule about a column that does not exist is the same defect written
+// the other way round.
 func supersededRule(schema Schema) string {
 	carriers := schema.TablesWith(supersededColumn)
 	if len(carriers) == 0 {
 		return ""
 	}
-	return "- Superseded rows are excluded with `" + supersededColumn + " IS NULL`, and that " +
-		"column exists ONLY in " + quotedNames(carriers) + ": never use it on any other table"
+	return "- A memory another row replaces stops answering: exclude the memory referenced " +
+		"by another row's `" + supersededColumn + "`, using NOT IN (SELECT supersedes FROM " +
+		"memories WHERE supersedes IS NOT NULL). That column exists ONLY in " +
+		quotedNames(carriers) + ": never use it on any other table"
 }
 
 func layerInstruction(schema Schema, layers []string) string {
