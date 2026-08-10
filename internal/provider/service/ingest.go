@@ -23,6 +23,16 @@ type IngestResult struct {
 	TotalElapsedMS int64          `json:"-"`
 }
 
+// Index leaves the database ready to search. It is idempotent and cheap when
+// there is nothing new, which is what allows init to call it without punishing
+// whoever already had it indexed.
+func (s *Service) Index(ctx context.Context) (search.Report, error) {
+	if s.opts.ReadOnly {
+		return search.Report{}, errReadOnly
+	}
+	return search.Index(ctx, s.db)
+}
+
 // Ingest reads every source of the matrix once and leaves what it wrote
 // answerable.
 //

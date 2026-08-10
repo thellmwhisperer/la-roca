@@ -3,6 +3,7 @@ package search_test
 import (
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -63,6 +64,36 @@ func TestWithoutAnIndexItDegradesToLike(t *testing.T) {
 	}
 }
 
+func TestLexicalSearchHonorsLayerAndSearchExclusions(t *testing.T) {
+	engine, db := indexedWorld(t)
+	writeTo(t, db, `INSERT INTO memories (layer, content, origin) VALUES
+		('handoff', 'handoff where we left zingalor kumquat', 'agent'),
+		('question', 'private message with zingalor kumquat', 'agent'),
+		('feedback', 'the layer anchor belongs here', 'agent'),
+		('project', 'the layer anchor belongs elsewhere', 'agent')`)
+
+	plan := query.Plan{Template: query.TemplateSearchByTerm, Term: "zingalor+kumquat", Limit: 10}
+	res, err := engine.Search(context.Background(), requestForPlan(plan, []string{"question"}))
+	if err != nil {
+		t.Fatalf("excluded-layer search: %v", err)
+	}
+	if !anyRowContains(res.Rows, "handoff where we left") {
+		t.Fatalf("the searchable handoff was lost: %v", texts(res.Rows))
+	}
+	if anyRowContains(res.Rows, "private message") {
+		t.Errorf("a search-excluded message answered: %v", texts(res.Rows))
+	}
+
+	plan = query.Plan{Template: query.TemplateSearchByTerm, Term: "layer+anchor", Layer: "feedback", Limit: 10}
+	res, err = engine.Search(context.Background(), requestForPlan(plan, nil))
+	if err != nil {
+		t.Fatalf("layer-constrained search: %v", err)
+	}
+	if len(res.Rows) != 1 || !anyRowContains(res.Rows, "belongs here") {
+		t.Errorf("layer-constrained rows = %v", texts(res.Rows))
+	}
+}
+
 // --- indexing ---
 
 func TestIndexingTwiceRebuildsNothing(t *testing.T) {
@@ -108,8 +139,14 @@ func TestANewRowEntersTheIndexImmediately(t *testing.T) {
 
 func request(term, method string) search.Request {
 	plan := query.Plan{Template: query.TemplateSearchByTerm, Term: term, Limit: 10}
-	stmt, _ := query.RenderSQLFTS(plan, nil, 10)
-	return search.Request{Term: term, SQLLexical: stmt, Method: method, Limit: 10}
+	request := requestForPlan(plan, nil)
+	request.Method = method
+	return request
+}
+
+func requestForPlan(plan query.Plan, excluded []string) search.Request {
+	stmt, _ := query.RenderSQLFTS(plan, excluded, 10)
+	return search.Request{Term: plan.Term, SQLLexical: stmt, Method: search.MethodFTS, Limit: 10}
 }
 
 func seededWorld(t *testing.T) *store.DB {
@@ -218,4 +255,47 @@ func TestASupersededMemoryStopsAnswering(t *testing.T) {
 	if rowWithID(res.Rows, 100) {
 		t.Errorf("the superseded memory still answers: %v", texts(res.Rows))
 	}
+}
+
+func TestSearchOverARealLabDatabase(t *testing.T) {
+	path := os.Getenv("ROCA_BASE_REAL")
+	if path == "" {
+		t.Skip("no ROCA_BASE_REAL: there is no copy of a real database at hand")
+	}
+	if !filepath.IsAbs(path) {
+		t.Fatalf("ROCA_BASE_REAL must be an absolute path, got %q", path)
+	}
+
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if _, err := search.Index(context.Background(), db); err != nil {
+		t.Fatalf("Index: %v", err)
+	}
+	engine := &search.Engine{DB: db, Validate: theGate(t)}
+
+	project := aProjectFromTheData(t, db)
+	for _, question := range []string{"handoff", project, "deployment"} {
+		term := query.SearchTerm(question)
+		res, err := engine.Search(context.Background(), request(term, search.MethodFTS))
+		if err != nil {
+			t.Errorf("Search(%q): %v", question, err)
+			continue
+		}
+		t.Logf("%-30q -> method=%s rows=%d", question, res.Provenance.Method, len(res.Rows))
+	}
+}
+
+func aProjectFromTheData(t *testing.T, db *store.DB) string {
+	t.Helper()
+	var project string
+	err := db.SQL().QueryRow(
+		`SELECT project FROM sessions WHERE project IS NOT NULL AND project <> ''
+		 GROUP BY project ORDER BY COUNT(*) DESC LIMIT 1`).Scan(&project)
+	if err != nil {
+		t.Fatalf("look for a project in the data: %v", err)
+	}
+	return project
 }

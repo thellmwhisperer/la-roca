@@ -22,6 +22,6 @@ The approved 13 scenarios claim deterministic configuration, selection diagnosis
 | Doctor's credential-presence, agent-detection, prompt, memory-count, version, and source fields | `internal/provider/service/doctor.go` |
 | Schema-aware model prompt construction, joins, layer hints, FTS examples, and substring-LIKE rejection | `internal/provider/query/prompt.go` |
 | SQL gate function allowlist, schema/table/column checks, hidden tables, chained-statement rejection, JOIN validation, and oversized LIMIT clamping | `internal/provider/query/sqlgate/` |
-| Exact and lenient FTS compilation, LIKE fallback, term normalization, wildcard escaping, and layer exclusion | `internal/provider/query/fts.go`, `internal/provider/query/text.go`, and `internal/provider/service/search.go` |
+| Exact and lenient FTS compilation, LIKE fallback, term normalization, wildcard escaping, and layer exclusion | `internal/provider/query/fts.go`, `internal/provider/query/text.go`, and `internal/provider/service/llm.go` |
 | Layer aliases, ingest admission, coordination groups, classifier labels, and the full embedded layer registry | `internal/provider/layers/layers.go` and `data/layers.yaml` |
-| Direct search method selection, row deduplication/relevance ordering, text budgets, and count narration | `internal/provider/service/query.go` and `internal/provider/service/search.go` |
+| Row deduplication/relevance ordering, text budgets, and count narration | `internal/provider/service/query.go` |

@@ -30,3 +30,14 @@ func TestSearchRowsWithNullTextAreRemoved(t *testing.T) {
 		t.Fatalf("null text row survived: count=%d rows=%v", res.RowCount, res.Rows)
 	}
 }
+
+func TestSearchRowsWithIdenticalSourceAndTextAreDeduplicated(t *testing.T) {
+	res := QueryResult{Question: "registro duplicado"}
+	res.found([]string{"source", "id", "text"}, []map[string]any{
+		{"source": "memory", "id": int64(1), "text": "registro duplicado"},
+		{"source": "memory", "id": int64(2), "text": "registro duplicado"},
+	})
+	if res.RowCount != 1 || res.Rows[0]["id"] != int64(1) {
+		t.Fatalf("duplicate rows survived: count=%d rows=%v", res.RowCount, res.Rows)
+	}
+}

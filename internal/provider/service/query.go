@@ -42,18 +42,6 @@ type QueryRequest struct {
 	SQLOnly bool
 }
 
-// SearchRequest runs the search layer directly, without the model. It is what
-// the golden bench measures the index against, and it is not a path a question
-// normally takes: the model is always asked first.
-type SearchRequest struct {
-	Question string
-	// Method forces one search method (like or fts); empty lets the engine
-	// choose the index and fall to the LIKE floor only when there is none.
-	Method   string
-	Layer    string
-	MaxChars int
-}
-
 // QueryResult is the complete answer: which path it left by, with what SQL, and
 // from which version of the code.
 //
@@ -212,32 +200,6 @@ func (s *Service) Query(ctx context.Context, req QueryRequest) (res QueryResult,
 	}
 	defer func() { res.LatencyMS = time.Since(start).Milliseconds() }()
 	return s.llmStage(ctx, req, res)
-}
-
-// Search runs the search layer directly over the question's own words, with no
-// model in the path. It is the golden bench's measure of the index and not a
-// path a question normally takes.
-func (s *Service) Search(ctx context.Context, req SearchRequest) (QueryResult, error) {
-	start := time.Now()
-	res := QueryResult{
-		Question: req.Question, Version: s.opts.Version, SourceSHA: s.opts.Commit,
-	}
-	defer func() { res.LatencyMS = time.Since(start).Milliseconds() }()
-
-	plan := query.Plan{
-		Template: query.TemplateSearchByTerm,
-		Term:     query.SearchTerm(req.Question),
-		Layer:    req.Layer,
-		Limit:    10,
-	}
-	res.QueryPlan = &plan
-	columns, rows, stmt, provenance, err := s.searchByTerm(ctx, plan, req.Method, req.MaxChars, false)
-	if err != nil {
-		return res, err
-	}
-	res.SQL, res.Search = stmt, provenance
-	res.found(columns, rows)
-	return res, nil
 }
 
 // ExecRequest is a SELECT the caller wants to run as it is. It is the natural

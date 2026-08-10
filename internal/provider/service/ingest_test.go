@@ -52,15 +52,6 @@ func TestWhatTheIngestWritesIsSearchableAtOnce(t *testing.T) {
 		t.Error("what the ingest wrote is not in the full-text index")
 	}
 
-	// And the ingested memory is answerable through the product's own search
-	// layer, over the term search the rescue uses.
-	answer, err := svc.Search(ctx, service.SearchRequest{Question: "sextant angle position"})
-	if err != nil {
-		t.Fatalf("search: %v", err)
-	}
-	if answer.RowCount == 0 {
-		t.Errorf("the ingested memory is not answerable: path=%s", answer.Path)
-	}
 }
 
 // A dry run through the service writes nothing and refreshes no index.
