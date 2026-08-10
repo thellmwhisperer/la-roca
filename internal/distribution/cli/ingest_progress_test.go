@@ -35,3 +35,16 @@ func TestIngestRowsAreInertOffATerminal(t *testing.T) {
 		t.Fatalf("plain stream received terminal control bytes: %q", output.String())
 	}
 }
+
+// The same contract the spinner carries: finish joins the goroutine and must
+// survive being called twice. The ingest path guards it by nilling the pointer
+// after the first call, but the guard belongs to the object, not to the one
+// caller that remembers.
+func TestIngestRowsFinishIsSafeToCallTwice(t *testing.T) {
+	var buf strings.Builder
+	rows := newIngestRows(&buf, true)
+	rows.update(ingest.SourceProgress{Source: "claude-code", Processed: 1, Total: 1})
+
+	rows.finish()
+	rows.finish()
+}

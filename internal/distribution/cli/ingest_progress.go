@@ -24,6 +24,10 @@ type ingestRows struct {
 	frame int
 	stop  chan struct{}
 	done  chan struct{}
+	// once keeps finish idempotent. The ingest path happens to call it exactly
+	// once, but the guard belongs to the object and not to the one caller that
+	// remembers: a second close of stop panicked.
+	once sync.Once
 }
 
 func newIngestRows(out io.Writer, active bool) *ingestRows {
@@ -97,6 +101,11 @@ func (r *ingestRows) finish() {
 	if !r.active {
 		return
 	}
+	r.once.Do(r.erase)
+}
+
+// erase stops the redraw goroutine and takes the temporary block off the screen.
+func (r *ingestRows) erase() {
 	close(r.stop)
 	<-r.done
 	r.mu.Lock()
