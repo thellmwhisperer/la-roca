@@ -160,15 +160,48 @@ func (p Plan) removeDataDir(report *Report) {
 	for index, entry := range entries {
 		if index == named {
 			report.Kept = append(report.Kept, Kept{
-				Path: p.DataDir,
-				Reason: fmt.Sprintf("and %d more files La Roca did not create",
-					len(entries)-named),
+				Path:   p.DataDir,
+				Reason: whyTheRestStayed(p.DataDir, entries[named:], owned),
 			})
 			break
 		}
 		path := filepath.Join(p.DataDir, entry.Name())
 		report.Kept = append(report.Kept, Kept{Path: path, Reason: whyItStayed(owned[path])})
 	}
+}
+
+// whyTheRestStayed is the reason for the survivors the bounded list stops naming
+// one by one. It classifies them the same way whyItStayed classifies the named
+// ones, because the overflow calling an owned survivor foreign is the
+// misclassification D-7's second half exists to prevent: it would send the
+// operator to delete this product's own files by hand instead of re-running the
+// uninstall.
+func whyTheRestStayed(dir string, rest []os.DirEntry, owned map[string]bool) string {
+	ours := 0
+	for _, entry := range rest {
+		if owned[filepath.Join(dir, entry.Name())] {
+			ours++
+		}
+	}
+	switch {
+	case ours == 0:
+		return fmt.Sprintf("and %s La Roca did not create", files(len(rest)))
+	case ours == len(rest):
+		return fmt.Sprintf("and %s La Roca created and could not delete: "+
+			"run the uninstall again", files(ours))
+	default:
+		return fmt.Sprintf("and %s: %d La Roca created and could not delete "+
+			"(run the uninstall again), %d it did not create",
+			files(len(rest)), ours, len(rest)-ours)
+	}
+}
+
+// files counts survivors in prose. One leftover file is never "1 more files".
+func files(count int) string {
+	if count == 1 {
+		return "1 more file"
+	}
+	return fmt.Sprintf("%d more files", count)
 }
 
 // whyItStayed tells the two survivors apart, because the operator does two
