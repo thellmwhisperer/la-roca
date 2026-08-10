@@ -78,9 +78,9 @@ func rootCommand(env *cliEnv) *cobra.Command {
 	root.AddCommand(
 		versionCommand(env), initCommand(env), queryCommand(env),
 		execCommand(env), schemaCommand(env),
-		indexCommand(env), benchCommand(env), doctorCommand(env),
+		indexCommand(env), doctorCommand(env),
 		ingestCommand(env), storeCommand(env), healthCommand(env),
-		mcpCommand(env), hookCommand(env), skillCommand(env),
+		mcpCommand(env), skillCommand(env),
 		loginCommand(env), logoutCommand(env), modelCommand(env),
 		updateCommand(env), uninstallCommand(env),
 		modelsCommand(env),
@@ -155,7 +155,6 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 	return service.Open(service.Options{
 		DBPath:       paths.DB,
 		BackupDir:    paths.Backups,
-		BenchDir:     paths.Bench,
 		DataDir:      filepath.Dir(paths.DB),
 		Version:      env.build.Version,
 		Commit:       env.build.Commit,

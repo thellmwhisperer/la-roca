@@ -51,17 +51,3 @@ func TestWithoutAHomeNoPathIsGuessed(t *testing.T) {
 		t.Fatal("Resolve invented a path with no HOME")
 	}
 }
-
-func TestTheBenchesHangOffTheDataDirectory(t *testing.T) {
-	home := t.TempDir()
-	paths, err := config.Resolve(config.Input{Home: home})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := filepath.Join(home, ".roca", "bench"); paths.Bench != want {
-		t.Fatalf("bench = %q, want %q", paths.Bench, want)
-	}
-	if filepath.Dir(paths.Bench) != filepath.Dir(paths.DB) {
-		t.Fatalf("the bench (%s) does not live beside the database (%s)", paths.Bench, paths.DB)
-	}
-}

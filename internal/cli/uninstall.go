@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/agentcfg"
 	"github.com/thellmwhisperer/la-roca/internal/config"
-	"github.com/thellmwhisperer/la-roca/internal/hooks"
 	"github.com/thellmwhisperer/la-roca/internal/lifecycle"
 	"github.com/thellmwhisperer/la-roca/internal/skill"
 )
@@ -122,16 +121,15 @@ func (env *cliEnv) uninstall(purge bool) error {
 }
 
 // withdrawTheIntegrations takes La Roca's entry out of every runtime's own MCP
-// configuration and out of the settings file that declares its session hooks.
+// configuration.
 //
 // A runtime whose file is not there is not an error and not a line of output: a
 // machine where the operator never installed `hermes` is the normal case, and
 // five lines saying so on every uninstall is noise.
 func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report) []agentcfg.Outcome {
 	var outcomes []agentcfg.Outcome
-	// The MCP entries and the session hooks are withdrawn from different files
-	// by different packages, and they are reported the same way: what changed is
-	// named, what failed is named, and what was left behind is named.
+	// What changed is named, what failed is named, and what was left behind is
+	// named.
 	withdrawn := func(what string, outcome agentcfg.Outcome, err error) {
 		if err != nil {
 			report.Errors = append(report.Errors,
@@ -152,16 +150,6 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report) []agentcfg.
 		}
 		outcome, err := agentcfg.Uninstall(runtime, path)
 		withdrawn("roca from "+runtime, outcome, err)
-	}
-
-	settings, err := settingsFileOf("")
-	if err != nil {
-		report.Errors = append(report.Errors, err.Error())
-		return outcomes
-	}
-	for _, runtime := range hooks.Runtimes() {
-		outcome, err := hooks.Uninstall(runtime, settings)
-		withdrawn("the "+runtime+" hooks", outcome, err)
 	}
 
 	home, err := os.UserHomeDir()
@@ -243,7 +231,7 @@ func ownedPaths(paths config.Paths) []string {
 	dataDir := dirOf(paths.DB)
 	owned := []string{
 		paths.DB, paths.DB + "-wal", paths.DB + "-shm", paths.DB + "-journal",
-		paths.Config, paths.Backups, paths.CacheRoot, paths.Credentials, paths.Bench,
+		paths.Config, paths.Backups, paths.CacheRoot, paths.Credentials,
 		filepath.Join(dataDir, "prompt.md"),
 	}
 	// Skill files live under each runtime's own directory, outside ~/.roca.

@@ -45,11 +45,6 @@ type Paths struct {
 	// a secret. It never holds a platform key: those live in the config or in
 	// the environment.
 	Credentials string
-	// Bench is where this installation's own golden benches live, versioned.
-	// They are the operator's data files, generated from the operator's corpus,
-	// because the binary ships the format and the runner and no questions at
-	// all (PRD C5).
-	Bench string
 	// Language is the optional vocabulary overlay: a language.yaml the operator
 	// drops in to extend the embedded pack (Italian markers, extra stop words)
 	// without recompiling. Empty when the operator ships none.
@@ -62,7 +57,6 @@ const (
 	FileDB     = "roca.db"
 	DirBackups = "backups"
 	DirCache   = "cache"
-	DirBench   = "bench"
 	EnvDBPath  = "ROCA_DB_PATH"
 )
 
@@ -109,7 +103,6 @@ func inDataDir(paths Paths, dataDir string, in Input) Paths {
 		paths.Config = in.ConfigEnv
 	}
 	paths.Credentials = filepath.Join(dataDir, DirCredentials)
-	paths.Bench = filepath.Join(dataDir, DirBench)
 	paths.Language = filepath.Join(dataDir, FileLanguage)
 	return paths
 }

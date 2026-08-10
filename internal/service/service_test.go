@@ -284,7 +284,6 @@ func baseOptions(paths testPaths) service.Options {
 		DBPath:    paths.db,
 		BackupDir: paths.backups,
 		DataDir:   paths.data,
-		BenchDir:  filepath.Join(paths.data, "bench"),
 		Version:   "0.0.0-test",
 		Commit:    "0123456789abcdef",
 	}

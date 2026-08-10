@@ -22,14 +22,9 @@ import (
 type Options struct {
 	DBPath    string
 	BackupDir string
-	// BenchDir is where this installation's own golden benches live. They are
-	// versioned data files of the operator's, generated from their corpus,
-	// because this binary ships no questions inside it (PRD C5).
-	BenchDir string
-	// DataDir is where personal artefacts hang next to the database: the golden
-	// benches the calibration generates. Empty falls back to the directory of
-	// DBPath. Nothing generated from the operator's data may ever be written
-	// outside it (2026-08-05).
+	// DataDir is where personal artefacts hang next to the database. Empty falls
+	// back to the directory of DBPath. Nothing generated from the operator's
+	// data may ever be written outside it (2026-08-05).
 	DataDir string
 	Version string
 	Commit  string

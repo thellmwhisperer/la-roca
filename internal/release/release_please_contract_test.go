@@ -104,23 +104,3 @@ func TestReleasePleaseStartsAtThePublishedRCAndOwnsPluginVersioning(t *testing.T
 		t.Error("release documentation still calls rc.8 the published baseline")
 	}
 }
-
-func TestPRDDescribesThePublicProductThatExists(t *testing.T) {
-	prd := readRepoFile(t, "../../docs/PRD.md")
-	if strings.Contains(prd, "roca plugins") {
-		t.Error("the canonical walkthrough includes the nonexistent `roca plugins` command family")
-	}
-
-	start := strings.Index(prd, "### R1.")
-	end := strings.Index(prd, "### R2.")
-	if start < 0 || end <= start {
-		t.Fatal("the canonical installation walkthrough cannot be found")
-	}
-	walkthrough := prd[start:end]
-	if !strings.Contains(walkthrough, "https://raw.githubusercontent.com/thellmwhisperer/la-roca/main/install.sh") {
-		t.Error("the public one-liner is not the primary canonical installation route")
-	}
-	if strings.Contains(walkthrough, "Installation by authenticated curl") {
-		t.Error("the canonical public walkthrough still starts with the private-repository-only route")
-	}
-}

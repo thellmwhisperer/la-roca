@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/thellmwhisperer/la-roca/internal/bench"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/query"
 	"github.com/thellmwhisperer/la-roca/internal/search"
@@ -109,35 +108,6 @@ type QueryResult struct {
 	LatencyMS int64  `json:"latency_ms"`
 	Version   string `json:"version"`
 	SourceSHA string `json:"source_sha"`
-}
-
-// Observed is what a bench sees of this answer.
-//
-// It lives here and not in each caller because two of them judge with it: the
-// runner behind `roca bench golden` and the calibration's own proof step. Two
-// spellings of "what a case observed" would let a case be born green in the
-// generator and come out red in the runner, which would say nothing about the
-// search and everything about the two copies.
-func (r QueryResult) Observed() bench.Observed {
-	observed := bench.Observed{
-		Path:      r.Path,
-		Rows:      r.RowCount,
-		LatencyMS: r.LatencyMS,
-	}
-	if r.QueryPlan != nil {
-		observed.Template = r.QueryPlan.Template
-	}
-	if r.Search != nil {
-		observed.Method = r.Search.Method
-	}
-	for _, row := range r.Rows {
-		for _, value := range row {
-			if text, isText := value.(string); isText {
-				observed.Texts = append(observed.Texts, text)
-			}
-		}
-	}
-	return observed
 }
 
 // found records the rows an answer came back with. Zero of them are declared as

@@ -84,7 +84,7 @@ func TestRootMenuShowsExactlyThePublicNine(t *testing.T) {
 
 func TestHiddenCommandsStillHaveHelp(t *testing.T) {
 	for _, name := range []string{
-		"bench", "exec", "health", "hook", "index", "logout", "mcp", "models", "schema", "skill", "version",
+		"exec", "health", "index", "logout", "mcp", "models", "schema", "skill", "version",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := rootCommand(&cliEnv{})

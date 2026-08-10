@@ -111,9 +111,9 @@ func TestUninstallCleansTheEmptySkillChainAndNamesEverySurvivor(t *testing.T) {
 	t.Setenv("ROCA_DB_PATH", "")
 	t.Setenv("ROCA_CONFIG", "")
 	t.Setenv("ROCA_MODELS_ORDER", "none")
-	// In production the binary is `roca`, and the hook withdrawal recognizes a
-	// hook by that name in the command line. In-process the executable is the
-	// test binary, so name a `roca` for the install to write.
+	// In production the binary is `roca`, and the install writes that name into
+	// the runtime configuration. In-process the executable is the test binary,
+	// so name a `roca` for the install to write.
 	t.Setenv("ROCA_BIN", filepath.Join(home, "roca"))
 	for _, key := range []string{
 		"CLAUDE_CONFIG_DIR", "CODEX_HOME", "OPENCODE_CONFIG",
@@ -125,15 +125,12 @@ func TestUninstallCleansTheEmptySkillChainAndNamesEverySurvivor(t *testing.T) {
 	// Pre-existing operator configuration: install leaves recovery .bak files
 	// beside these, and the uninstall must name every one that survives.
 	claudeJSON := filepath.Join(home, ".claude.json")
-	settings := filepath.Join(home, ".claude", "settings.json")
-	writeFile(t, settings, `{"theme":"dark"}`)
 	writeFile(t, claudeJSON, `{"model":"opus"}`)
 
 	build := Build{Version: "test", Commit: "test-sha"}
 	runRoot(t, build, "init", "--db-path", filepath.Join(home, ".roca", "roca.db"))
 	runRoot(t, build, "skill", "install", "claude")
 	runRoot(t, build, "mcp", "install", "claude")
-	runRoot(t, build, "hook", "install", "claude")
 
 	out := runRoot(t, build, "uninstall", "--purge")
 
