@@ -161,7 +161,18 @@ exit 0
 	if err := os.WriteFile(filepath.Join(bin, "curl"), []byte(spy), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	env := []string{"PATH=" + bin + ":" + os.Getenv("PATH")}
+	// This case is the anonymous one: the GITHUB_TOKEN remedy belongs here, and
+	// only here. install.sh's die_network deliberately withholds it when a token
+	// is already set (sending a token-holder off to set a token is the
+	// afternoon-costing misdiagnosis api_get warns about), so the assertion on
+	// "GITHUB_TOKEN" is only valid with the token cleared. Clearing it also makes
+	// the case reproducible on a machine or a CI lane that carries a token in its
+	// ambient environment, where it would otherwise take the token-set branch and
+	// report "the token is set, so this is the network".
+	env := []string{
+		"PATH=" + bin + ":" + os.Getenv("PATH"),
+		"GITHUB_TOKEN=",
+	}
 	output, err := runTheInstaller(t, env, "--repo", "owner/name",
 		"--prefix", t.TempDir(), "--force")
 	if err == nil {
