@@ -39,6 +39,16 @@ func TestFingerprintDetectsSameSizeSameMtimeEdit(t *testing.T) {
 	}
 }
 
+func TestKnownFingerprintCanMatchMetadataWhenContentCannotBeRead(t *testing.T) {
+	state := map[string]FileState{"session": {Fingerprint: "5:10:digest"}}
+	if !unchangedMetadata(state, "session", "5:10") {
+		t.Fatal("known content fingerprint did not retain its metadata identity")
+	}
+	if unchangedMetadata(state, "session", "5:11") {
+		t.Fatal("changed metadata was accepted")
+	}
+}
+
 func TestDatabaseFingerprintChangesWithWAL(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "source.db")
 	db, err := sql.Open("sqlite", path)

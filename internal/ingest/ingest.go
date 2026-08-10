@@ -238,6 +238,13 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		}
 		fingerprint, err := targetFingerprint(target)
 		if err != nil {
+			metadata, metadataErr := metadataFingerprint(target.Path)
+			isDatabase := target.Kind == parsers.KindOpenCodeDB || target.Kind == parsers.KindHermesDB
+			if metadataErr == nil && !isDatabase && unchangedMetadata(state, target.Path, metadata) {
+				result.FilesSkipped++
+				finishTarget()
+				continue
+			}
 			result.fingerprintFailure(target, err)
 			finishTarget()
 			continue

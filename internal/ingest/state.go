@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
 )
@@ -35,7 +36,7 @@ import (
 // content digest. Size and mtime alone collide after timestamp-preserving
 // restores, which would otherwise mark changed transcripts as synced forever.
 func Fingerprint(path string) (string, error) {
-	info, err := os.Stat(path)
+	metadata, err := metadataFingerprint(path)
 	if err != nil {
 		return "", err
 	}
@@ -48,9 +49,16 @@ func Fingerprint(path string) (string, error) {
 	if _, err := io.Copy(digest, file); err != nil {
 		return "", err
 	}
+	return metadata + ":" + fmt.Sprintf("%x", digest.Sum(nil)), nil
+}
+
+func metadataFingerprint(path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
 	return strconv.FormatInt(info.Size(), 10) + ":" +
-		strconv.FormatInt(info.ModTime().UnixNano(), 10) + ":" +
-		fmt.Sprintf("%x", digest.Sum(nil)), nil
+		strconv.FormatInt(info.ModTime().UnixNano(), 10), nil
 }
 
 // targetFingerprint includes SQLite's write-ahead log for database sources.
@@ -113,6 +121,12 @@ func Unchanged(state map[string]FileState, path, fingerprint string) bool {
 		return false
 	}
 	return known.Fingerprint == fingerprint
+}
+
+func unchangedMetadata(state map[string]FileState, path, metadata string) bool {
+	known, ok := state[path]
+	return ok && known.LastError == "" && metadata != "" &&
+		strings.HasPrefix(known.Fingerprint, metadata+":")
 }
 
 // RecordState writes one path's state. The upsert by path is what makes
