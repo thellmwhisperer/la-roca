@@ -16,14 +16,14 @@ import (
 func TestLexicalIndexSearchFindsWhatWasSeeded(t *testing.T) {
 	engine, _ := indexedWorld(t)
 
-	res, err := engine.Search(context.Background(), request("guiones+largos", search.MethodFTS))
+	res, err := engine.Search(context.Background(), request("long+dashes", search.MethodFTS))
 	if err != nil {
-		t.Fatalf("Buscar: %v", err)
+		t.Fatalf("Search: %v", err)
 	}
 	if res.Provenance.Method != search.MethodFTS {
 		t.Fatalf("method = %q (%s), want fts", res.Provenance.Method, res.Provenance.Reason)
 	}
-	if !anyRowContains(res.Rows, "guiones largos") {
+	if !anyRowContains(res.Rows, "long dashes") {
 		t.Errorf("the lexical search did not find what was seeded; it brought %d rows: %v",
 			len(res.Rows), texts(res.Rows))
 	}
@@ -35,9 +35,9 @@ func TestLexicalIndexSearchFindsWhatWasSeeded(t *testing.T) {
 func TestLexicalIndexSearchFoldsDiacritics(t *testing.T) {
 	engine, _ := indexedWorld(t)
 
-	res, err := engine.Search(context.Background(), request("capitan", search.MethodFTS))
+	res, err := engine.Search(context.Background(), request("muller", search.MethodFTS))
 	if err != nil {
-		t.Fatalf("Buscar: %v", err)
+		t.Fatalf("Search: %v", err)
 	}
 	if len(res.Rows) == 0 {
 		t.Error("asking without the diacritic did not find what was written with it")
@@ -51,9 +51,9 @@ func TestWithoutAnIndexItDegradesToLike(t *testing.T) {
 	db := seededWorld(t)
 	engine := &search.Engine{DB: db, Validate: theGate(t)}
 
-	res, err := engine.Search(context.Background(), request("guiones+largos", search.MethodFTS))
+	res, err := engine.Search(context.Background(), request("long+dashes", search.MethodFTS))
 	if err != nil {
-		t.Fatalf("Buscar: %v", err)
+		t.Fatalf("Search: %v", err)
 	}
 	if res.Provenance.Method != search.MethodLike {
 		t.Errorf("method = %q, want it to degrade to like", res.Provenance.Method)
@@ -93,13 +93,13 @@ func TestANewRowEntersTheIndexImmediately(t *testing.T) {
 	engine, db := indexedWorld(t)
 
 	writeTo(t, db, `INSERT INTO memories (layer, content, origin)
-		VALUES ('fact', 'la marmota silbadora vigila el ferrocarril', 'human')`)
+		VALUES ('fact', 'the whistling marmot watches the railway', 'human')`)
 
-	res, err := engine.Search(ctx, request("marmota", search.MethodFTS))
+	res, err := engine.Search(ctx, request("marmot", search.MethodFTS))
 	if err != nil {
-		t.Fatalf("Buscar: %v", err)
+		t.Fatalf("Search: %v", err)
 	}
-	if !anyRowContains(res.Rows, "marmota") {
+	if !anyRowContains(res.Rows, "marmot") {
 		t.Error("the lexical index did not see the freshly inserted row")
 	}
 }
@@ -125,15 +125,15 @@ func seededWorld(t *testing.T) *store.DB {
 	}
 	writeTo(t, db, `
 		INSERT INTO memories (layer, content, origin) VALUES
-		  ('fact', 'el capitán prohibió los guiones largos en todo texto entregable', 'human'),
-		  ('fact', 'el coche del equipo se aparca en el garaje de la oficina', 'human'),
-		  ('fact', 'la base de datos se abre en modo WAL con busy timeout', 'agent');
-		INSERT INTO sessions (session_id, project, title) VALUES ('s1', 'roca', 'sesión de prueba');
+		  ('fact', 'the captain forbids long dashes in every deliverable', 'human'),
+		  ('fact', 'a naive Muller facade sketch from the design review', 'agent'),
+		  ('fact', 'the database opens in WAL mode with a busy timeout', 'agent');
+		INSERT INTO sessions (session_id, project, title) VALUES ('s1', 'roca', 'test session');
 		INSERT INTO exchanges (session_id, exchange_number, human_text, agent_text) VALUES
-		  ('s1', 1, 'como configuro el arranque del servicio', 'se configura con un fichero yaml'),
-		  ('s1', 2, 'que pasa con los guiones largos', 'que el capitán los odia');
+		  ('s1', 1, 'how do I configure the service startup', 'it is set with a yaml file'),
+		  ('s1', 2, 'what about the long dashes', 'the captain dislikes them');
 		INSERT INTO thinking_blocks (session_id, exchange_number, full_text) VALUES
-		  ('s1', 1, 'pensando en los guiones largos y en el formato');`)
+		  ('s1', 1, 'thinking about the long dashes and the format');`)
 	return db
 }
 
@@ -141,7 +141,7 @@ func indexedWorld(t *testing.T) (*search.Engine, *store.DB) {
 	t.Helper()
 	db := seededWorld(t)
 	if _, err := search.Index(context.Background(), db); err != nil {
-		t.Fatalf("Indexar: %v", err)
+		t.Fatalf("Index: %v", err)
 	}
 	return &search.Engine{DB: db, Validate: theGate(t)}, db
 }

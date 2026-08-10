@@ -79,10 +79,10 @@ func clean(text string, folds bool) string {
 	return strings.Join(strings.Fields(b.String()), " ")
 }
 
-// fold strips the diacritic from the letters that appear in the real corpus,
-// which is Spanish and English. It does not use a full Unicode table because
-// that would add a new dependency to a dependency list that is closed on
-// purpose, and it is the same table the search layer carries.
+// fold strips the diacritic from the accented letters that appear in the
+// corpus. It does not use a full Unicode table because that would add a new
+// dependency to a dependency list that is closed on purpose, and it is the same
+// table the search layer carries.
 func fold(r rune) rune {
 	for i, accented := range accentedRunes {
 		if accented == r {

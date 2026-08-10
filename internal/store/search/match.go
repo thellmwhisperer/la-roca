@@ -80,10 +80,10 @@ func Tokenize(text string) []string {
 	return tokens
 }
 
-// fold strips the diacritic from the letters of the real corpus, which is
-// Spanish and English. It is the same table as query.Fold, duplicated on
-// purpose: this package does not depend on the cascade (query imports search,
-// not the other way round), and it is four lines.
+// fold strips the diacritic from the accented letters that appear in the
+// corpus. It is the same table as query.Fold, duplicated on purpose: this
+// package does not depend on the cascade (query imports search, not the other
+// way round), and it is four lines.
 func fold(r rune) rune {
 	for i, accented := range accentedRunes {
 		if accented == r {

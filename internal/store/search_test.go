@@ -59,26 +59,26 @@ func TestTheTriggersKeepTheIndexUpToDate(t *testing.T) {
 	}
 
 	write(t, db, `INSERT INTO memories (id, layer, content, origin)
-		VALUES (1, 'fact', 'el capitán bendijo los guiones largos', 'human')`)
-	if n := ftsMatches(t, db, "memories_fts", "guiones"); n != 1 {
+		VALUES (1, 'fact', 'the captain blessed a naïve Müller façade', 'human')`)
+	if n := ftsMatches(t, db, "memories_fts", "captain"); n != 1 {
 		t.Errorf("after inserting, matches = %d, want 1", n)
 	}
 
 	// Without diacritics too: the index folds diacritics like the cascade does.
-	if n := ftsMatches(t, db, "memories_fts", "capitan"); n != 1 {
+	if n := ftsMatches(t, db, "memories_fts", "muller"); n != 1 {
 		t.Errorf("searching without the diacritic, matches = %d, want 1", n)
 	}
 
-	write(t, db, `UPDATE memories SET content = 'ahora habla de binarios' WHERE id = 1`)
-	if n := ftsMatches(t, db, "memories_fts", "guiones"); n != 0 {
+	write(t, db, `UPDATE memories SET content = 'now it talks about binaries' WHERE id = 1`)
+	if n := ftsMatches(t, db, "memories_fts", "captain"); n != 0 {
 		t.Errorf("after the update, the old text is still indexed (%d matches)", n)
 	}
-	if n := ftsMatches(t, db, "memories_fts", "binarios"); n != 1 {
+	if n := ftsMatches(t, db, "memories_fts", "binaries"); n != 1 {
 		t.Errorf("after the update, the new text is not indexed (%d matches)", n)
 	}
 
 	write(t, db, `DELETE FROM memories WHERE id = 1`)
-	if n := ftsMatches(t, db, "memories_fts", "binarios"); n != 0 {
+	if n := ftsMatches(t, db, "memories_fts", "binaries"); n != 0 {
 		t.Errorf("after the delete, the row is still indexed (%d matches)", n)
 	}
 }
@@ -93,12 +93,12 @@ func TestTheExchangesIndexCoversBothColumns(t *testing.T) {
 	}
 
 	write(t, db, `INSERT INTO exchanges (id, human_text, agent_text)
-		VALUES (1, 'pregunta del humano sobre wallpapers', 'respuesta del agente sobre binarios')`)
+		VALUES (1, 'human question about wallpapers', 'agent answer about binaries')`)
 
 	if n := ftsMatches(t, db, "exchanges_fts", "wallpapers"); n != 1 {
 		t.Errorf("human_text not indexed (%d matches)", n)
 	}
-	if n := ftsMatches(t, db, "exchanges_fts", "binarios"); n != 1 {
+	if n := ftsMatches(t, db, "exchanges_fts", "binaries"); n != 1 {
 		t.Errorf("agent_text not indexed (%d matches)", n)
 	}
 }

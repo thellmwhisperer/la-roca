@@ -12,7 +12,7 @@ func termPlan(term string) query.Plan {
 }
 
 func TestRenderSQLFTSSearchesTheFourSources(t *testing.T) {
-	stmt, err := query.RenderSQLFTS(termPlan("guiones+largos"), nil, 10)
+	stmt, err := query.RenderSQLFTS(termPlan("long+dashes"), nil, 10)
 	if err != nil {
 		t.Fatalf("RenderSQLFTS: %v", err)
 	}
@@ -34,11 +34,11 @@ func TestRenderSQLFTSSearchesTheFourSources(t *testing.T) {
 }
 
 func TestRenderSQLFTSRequiresEveryWord(t *testing.T) {
-	stmt, err := query.RenderSQLFTS(termPlan("guiones+largos"), nil, 10)
+	stmt, err := query.RenderSQLFTS(termPlan("long+dashes"), nil, 10)
 	if err != nil {
 		t.Fatalf("RenderSQLFTS: %v", err)
 	}
-	if !strings.Contains(stmt, `'"guiones" AND "largos"'`) {
+	if !strings.Contains(stmt, `'"long" AND "dashes"'`) {
 		t.Errorf("the SQL does not require both words:\n%s", stmt)
 	}
 }
@@ -47,7 +47,7 @@ func TestRenderSQLFTSRequiresEveryWord(t *testing.T) {
 // other three sources are not queried: they have no layer, and returning them
 // would be failing to respect it.
 func TestRenderSQLFTSWithALayerLooksOnlyAtMemories(t *testing.T) {
-	plan := termPlan("binario")
+	plan := termPlan("binary")
 	plan.Layer = "fact"
 	stmt, err := query.RenderSQLFTS(plan, nil, 10)
 	if err != nil {
@@ -62,7 +62,7 @@ func TestRenderSQLFTSWithALayerLooksOnlyAtMemories(t *testing.T) {
 }
 
 func TestRenderSQLFTSExcludesTheSearchExcludedLayers(t *testing.T) {
-	stmt, err := query.RenderSQLFTS(termPlan("binario"),
+	stmt, err := query.RenderSQLFTS(termPlan("binary"),
 		[]string{"question", "review"}, 10)
 	if err != nil {
 		t.Fatalf("RenderSQLFTS: %v", err)

@@ -13,7 +13,7 @@ func TestSearchTermKeepsTheSubstantialWordsAndDropsTheRest(t *testing.T) {
 	benchCases := []struct{ question, term string }{
 		// Short tokens and bare numbers are dropped; diacritics fold; up to four
 		// words survive, AND-joined for the FTS rescue.
-		{"¿cuántas sesiones abrió codex en 2024?", "cuantas+sesiones+abrio+codex"},
+		{"naïve Müller façade review 2024?", "naive+muller+facade+review"},
 		{"what do we know about ffmpeg", "what+know+about+ffmpeg"},
 	}
 	for _, c := range benchCases {
