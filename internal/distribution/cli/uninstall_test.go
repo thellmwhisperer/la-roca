@@ -158,6 +158,19 @@ func TestUninstallCleansTheEmptySkillChainAndNamesEverySurvivor(t *testing.T) {
 	}
 }
 
+func TestUnreadableRecoveryBackupDirectoryFailsTheReport(t *testing.T) {
+	notDirectory := filepath.Join(t.TempDir(), "agent-home")
+	writeFile(t, notDirectory, "this path is a file")
+	report := lifecycle.Report{Purged: true}
+
+	if paths := recoveryBackupsFor(&report, filepath.Join(notDirectory, "config.toml")); len(paths) != 0 {
+		t.Fatalf("an unreadable parent returned backup paths: %v", paths)
+	}
+	if report.Purged || len(report.Errors) != 1 || !strings.Contains(report.Errors[0], "read recovery backups") {
+		t.Fatalf("enumeration failure was not reported: %+v", report)
+	}
+}
+
 // --- helpers ---
 
 // writeFile creates the parent directory and writes a file, the way an

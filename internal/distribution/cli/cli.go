@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
@@ -45,6 +46,9 @@ func Execute(build Build) (int, error) {
 	env := &cliEnv{build: build, out: os.Stdout, errOut: os.Stderr}
 	root := rootCommand(env)
 	if err := root.Execute(); err != nil {
+		if strings.Contains(err.Error(), "unknown command") {
+			return ExitError, fmt.Errorf("%w; run `roca --help` to list commands", err)
+		}
 		return ExitError, err
 	}
 	return env.code, nil

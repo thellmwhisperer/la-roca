@@ -55,7 +55,7 @@ func TestSkillInstallWritesUnderTempHome(t *testing.T) {
 func TestSkillInstallAllNarratesEveryPath(t *testing.T) {
 	skillTestHome(t)
 	var output strings.Builder
-	runSkill(t, &output, "skill", "install")
+	runSkill(t, &output, "skill", "install", "--all")
 	text := output.String()
 	for _, runtime := range skill.Runtimes() {
 		if !strings.Contains(text, runtime+": wrote ") {

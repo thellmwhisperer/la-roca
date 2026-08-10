@@ -322,13 +322,9 @@ fi
 if ! download_release_asset "$ASSET_URL" "$DOWNLOAD_URL" "$WORK/$ARTEFACT" "$ARTEFACT"; then
   # curl could not answer at all (000): that is the network or a token a private
   # repository refused, not a name the release did not publish. Surface it
-  # instead of blaming the release or trying another name.
+  # instead of blaming the release.
   case "$DOWNLOAD_CODE" in 000|"") die_network ;; esac
-  ARTEFACT="$BINARY-$PLATFORM"
-  ASSET_URL=$(asset_url "$WORK/release.json" "$ARTEFACT")
-  DOWNLOAD_URL="https://github.com/$REPO/releases/download/$TAG/$ARTEFACT"
-  download_release_asset "$ASSET_URL" "$DOWNLOAD_URL" "$WORK/$ARTEFACT" "$ARTEFACT" || \
-    download_failed_die "release $TAG publishes no artefact for $PLATFORM (tried $BINARY-$TAG-$PLATFORM and $BINARY-$PLATFORM)"
+  download_failed_die "release $TAG publishes no artefact $ARTEFACT for $PLATFORM"
 fi
 if ! download_release_asset "$SUMS_URL" "$SUMS_DOWNLOAD_URL" "$WORK/checksums.txt" "checksums.txt"; then
   download_failed_die "release $TAG publishes no checksums.txt: nothing is installed unverified"

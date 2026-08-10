@@ -29,14 +29,19 @@ func skillCommand(env *cliEnv) *cobra.Command {
 }
 
 func skillInstallCommand(env *cliEnv) *cobra.Command {
-	return &cobra.Command{
+	var all bool
+	cmd := &cobra.Command{
 		Use:   "install [runtime]",
 		Short: "Write the roca skill into one runtime, or every supported one",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			runtimes := skill.Runtimes()
-			if len(args) == 1 {
-				runtimes = args
+			if all == (len(args) == 1) {
+				return fmt.Errorf("name one runtime (%s) or ask for --all",
+					strings.Join(skill.Runtimes(), ", "))
+			}
+			runtimes := args
+			if all {
+				runtimes = skill.Runtimes()
 			}
 			outcomes := make([]skill.Outcome, 0, len(runtimes))
 			for _, runtime := range runtimes {
@@ -63,6 +68,8 @@ func skillInstallCommand(env *cliEnv) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&all, "all", false, "install into every supported runtime")
+	return cmd
 }
 
 func (env *cliEnv) listSkillDestinations() error {

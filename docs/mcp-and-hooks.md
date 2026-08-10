@@ -107,12 +107,12 @@ An agent learns La Roca three different ways. They stack; none replaces another.
 | Layer | What it is | How the operator turns it on |
 |---|---|---|
 | **Prompt** | A one-line aviso from `roca init` that a skill exists | Automatic on every init; install is never implied |
-| **Skill** | Canonical `SKILL.md` that teaches query/store/exec and the MCP tools | `roca skill install [runtime]` — copies one file into each runtime's personal skills directory |
+| **Skill** | Canonical `SKILL.md` that teaches query/store/exec and the MCP tools | `roca skill install <runtime>` or `--all` — copies one file into each selected runtime's personal skills directory |
 | **MCP** | Five passthrough tools for agents with no shell | `roca mcp install <runtime>` |
 
 ```
 roca skill                 # list runtimes and where the skill would land
-roca skill install         # every supported runtime
+roca skill install --all   # every supported runtime, explicitly selected
 roca skill install claude  # one runtime
 ```
 

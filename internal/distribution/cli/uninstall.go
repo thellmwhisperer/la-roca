@@ -84,7 +84,7 @@ func (env *cliEnv) uninstall(purge bool) error {
 		return err
 	}
 	report := lifecycle.Report{Purged: true, Deleted: []string{}}
-	runtimes := env.withdrawTheIntegrations(&report)
+	runtimes := env.withdrawTheIntegrations(&report, purge)
 
 	// A binary that cannot say where it is is one this command leaves alone: the
 	// rest of the uninstall still happens and the operator deletes one file.
@@ -126,7 +126,7 @@ func (env *cliEnv) uninstall(purge bool) error {
 // A runtime whose file is not there is not an error and not a line of output: a
 // machine where the operator never installed `hermes` is the normal case, and
 // five lines saying so on every uninstall is noise.
-func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report) []agentcfg.Outcome {
+func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool) []agentcfg.Outcome {
 	var outcomes []agentcfg.Outcome
 	// What changed is named, what failed is named, and what was left behind is
 	// named.
@@ -138,7 +138,9 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report) []agentcfg.
 		}
 		if outcome.Changed {
 			outcomes = append(outcomes, outcome)
-			keepTheBackup(report, outcome)
+			if !purge {
+				keepTheBackup(report, outcome)
+			}
 		}
 	}
 
@@ -150,6 +152,9 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report) []agentcfg.
 		}
 		outcome, err := agentcfg.Uninstall(runtime, path)
 		withdrawn("roca from "+runtime, outcome, err)
+		if purge {
+			removeRecoveryBackups(report, path)
+		}
 	}
 
 	home, err := os.UserHomeDir()
@@ -180,11 +185,9 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report) []agentcfg.
 // withdrawal touched, and removes the one the withdrawal itself just made.
 //
 // The withdrawal's own copy holds the file with La Roca's entry still in it —
-// the exact state being removed — so it is taken back. The copy the install
-// made of the operator's original is a different file and a different question:
-// whether the purge may delete La Roca's `.bak` files at all is a held
-// decision, so whatever survives is named instead, and a
-// survivor that is not named is exactly the leftover the acta found.
+// the exact state being removed — so it is taken back. A regular uninstall
+// keeps earlier recovery copies and names them. Purge takes the other branch
+// and deletes the whole recovery family under the operator's consent.
 func keepTheBackup(report *lifecycle.Report, outcome agentcfg.Outcome) {
 	if outcome.Backup != "" {
 		os.Remove(outcome.Backup)
@@ -192,26 +195,61 @@ func keepTheBackup(report *lifecycle.Report, outcome agentcfg.Outcome) {
 	nameSurvivingBackups(report, outcome.Path)
 }
 
+// removeRecoveryBackups applies the purge consent to the recovery copies La
+// Roca created beside an agent configuration. A regular uninstall keeps and
+// names them; --purge removes the whole product-owned family, including copies
+// left by a previous interrupted withdrawal.
+func removeRecoveryBackups(report *lifecycle.Report, configFile string) {
+	for _, path := range recoveryBackupsFor(report, configFile) {
+		if err := os.Remove(path); err != nil {
+			report.Errors = append(report.Errors, fmt.Sprintf("delete %s: %v", path, err))
+			report.Purged = false
+			continue
+		}
+		report.Deleted = append(report.Deleted, path)
+	}
+}
+
 // nameSurvivingBackups reports every `config.bak*` beside configFile as a kept
 // survivor, so an operator reads what the withdrawal left behind. The live
 // config file is excluded: it is named on the "withdrawn from" line.
 func nameSurvivingBackups(report *lifecycle.Report, configFile string) {
-	dir := filepath.Dir(configFile)
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return
-	}
-	base := filepath.Base(configFile)
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || name == base || !strings.HasPrefix(name, base+".bak") {
-			continue
-		}
+	for _, path := range recoveryBackupsFor(report, configFile) {
 		report.Kept = append(report.Kept, lifecycle.Kept{
-			Path:   filepath.Join(dir, name),
+			Path:   path,
 			Reason: "La Roca's recovery backup of your configuration: delete it yourself if you no longer need it",
 		})
 	}
+}
+
+func recoveryBackupsFor(report *lifecycle.Report, configFile string) []string {
+	paths, err := recoveryBackups(configFile)
+	if err != nil {
+		report.Errors = append(report.Errors, err.Error())
+		report.Purged = false
+	}
+	return paths
+}
+
+func recoveryBackups(configFile string) ([]string, error) {
+	dir := filepath.Dir(configFile)
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read recovery backups beside %s: %w", configFile, err)
+	}
+	base := filepath.Base(configFile)
+	var paths []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasPrefix(name, base+".bak") {
+			continue
+		}
+		paths = append(paths, filepath.Join(dir, name))
+	}
+	return paths, nil
 }
 
 // ownedPaths is the declaration: every path this product creates in an
