@@ -227,9 +227,12 @@ func TestMalformedToolCallIsAuditedAsAFailure(t *testing.T) {
 
 func TestUnavailableLLMIsAuditedAsDegradedNotOK(t *testing.T) {
 	svc := seededServiceWithUnavailableModel(t)
-	result := callTool(t, connect(t, svc), "roca_query", map[string]any{
+	result := callToolResult(t, connect(t, svc), "roca_query", map[string]any{
 		"query": "question no provider can answer",
 	})
+	if !result.IsError {
+		t.Fatal("unavailable LLM did not fail the MCP tool result")
+	}
 	var answer service.QueryResult
 	decode(t, result, &answer)
 	if answer.Degraded != service.DegradedUnavailable {
