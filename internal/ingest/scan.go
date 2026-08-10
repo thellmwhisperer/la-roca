@@ -81,6 +81,26 @@ type Plan struct {
 	Warnings       []string
 }
 
+var supportedAgentFamilies = []string{
+	"claude", "claude-desktop", "cowork", "codex", "opencode", "pi", "hermes",
+}
+
+// MissingAgentFamilies returns the supported families not present in detected,
+// in the same stable order used by machine detection.
+func MissingAgentFamilies(detected []string) []string {
+	present := make(map[string]bool, len(detected))
+	for _, family := range detected {
+		present[family] = true
+	}
+	missing := make([]string, 0, len(supportedAgentFamilies))
+	for _, family := range supportedAgentFamilies {
+		if !present[family] {
+			missing = append(missing, family)
+		}
+	}
+	return missing
+}
+
 // -- 1/4 CORE · Scan and DetectAgents -- <- START HERE
 
 // Scan walks every root in the v1 matrix and returns what one run would read.

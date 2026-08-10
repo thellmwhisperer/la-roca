@@ -100,6 +100,7 @@ type Result struct {
 
 	WorkspaceRoots Workspace         `json:"workspace_roots"`
 	DetectedAgents []string          `json:"detected_agents"`
+	MissingAgents  []string          `json:"agents_not_found"`
 	Roots          map[string]string `json:"roots"`
 	Warnings       []string          `json:"warnings,omitempty"`
 	ElapsedMS      int64             `json:"elapsed_ms"`
@@ -123,6 +124,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 			Selected: orEmpty(plan.WorkspaceRoots),
 		},
 		DetectedAgents: orEmpty(plan.DetectedAgents),
+		MissingAgents:  MissingAgentFamilies(plan.DetectedAgents),
 		Roots:          declaredRoots(opts.Roots),
 		Warnings:       plan.Warnings,
 	}

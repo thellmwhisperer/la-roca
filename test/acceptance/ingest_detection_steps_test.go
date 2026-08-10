@@ -29,7 +29,7 @@ func registerIngestDetectionSteps(ctx *godog.ScenarioContext, w *ingestAcceptanc
 	})
 	ctx.When(`^I inspect ingest without writing$`, func() error { return w.runIngest(true) })
 	ctx.Then(`^exactly those agent families are detected$`, func() error {
-		found, err := w.detectedFamilies()
+		found, err := w.reportedFamilies("detected_agents")
 		if err != nil {
 			return err
 		}
@@ -39,15 +39,15 @@ func registerIngestDetectionSteps(ctx *godog.ScenarioContext, w *ingestAcceptanc
 		return nil
 	})
 	ctx.Then(`^the supported agent family "([^"]*)" is reported as not found$`, func(family string) error {
-		found, err := w.detectedFamilies()
+		missing, err := w.reportedFamilies("agents_not_found")
 		if err != nil {
 			return err
 		}
 		if !slices.Contains(supportedIngestFamilies, family) {
 			return fmt.Errorf("%q is not in the supported family roster", family)
 		}
-		if slices.Contains(found, family) {
-			return fmt.Errorf("absent family %q was reported as detected: %v", family, found)
+		if !slices.Contains(missing, family) {
+			return fmt.Errorf("absent family %q is missing from agents_not_found: %v", family, missing)
 		}
 		return nil
 	})
@@ -86,10 +86,10 @@ func (w *ingestAcceptanceWorld) seedPresentFamily(family string) error {
 	return os.MkdirAll(path, 0o700)
 }
 
-func (w *ingestAcceptanceWorld) detectedFamilies() ([]string, error) {
-	raw, ok := w.last.doc["detected_agents"].([]any)
+func (w *ingestAcceptanceWorld) reportedFamilies(field string) ([]string, error) {
+	raw, ok := w.last.doc[field].([]any)
 	if !ok {
-		return nil, fmt.Errorf("detected_agents is not a list: %v", w.last.doc)
+		return nil, fmt.Errorf("%s is not a list: %v", field, w.last.doc)
 	}
 	families := make([]string, 0, len(raw))
 	for _, value := range raw {

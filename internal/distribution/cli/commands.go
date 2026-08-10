@@ -37,6 +37,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/human"
+	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	"github.com/thellmwhisperer/la-roca/internal/store"
@@ -294,17 +295,7 @@ func detectedAgentsLine(agents []string) string {
 }
 
 func missingAgentsLine(detected []string) string {
-	present := make(map[string]bool, len(detected))
-	for _, name := range detected {
-		present[name] = true
-	}
-	var missing []string
-	for _, name := range []string{"claude", "claude-desktop", "cowork", "codex", "opencode", "pi", "hermes"} {
-		if !present[name] {
-			missing = append(missing, name)
-		}
-	}
-	return detectedAgentsLine(missing)
+	return detectedAgentsLine(ingest.MissingAgentFamilies(detected))
 }
 
 // -/ 1/3
