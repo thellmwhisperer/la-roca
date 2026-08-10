@@ -29,6 +29,11 @@ func storeCommand(env *cliEnv) *cobra.Command {
 				if err := json.Unmarshal([]byte(metadata), &req.Metadata); err != nil {
 					return fmt.Errorf("--metadata is not a JSON object: %w", err)
 				}
+				// `null` decodes without error and leaves no map behind, so the
+				// flag was accepted while carrying nothing the message promised.
+				if req.Metadata == nil {
+					return fmt.Errorf("--metadata is not a JSON object: it is null")
+				}
 			}
 			req.Surface = service.SurfaceCLI
 			result, err := svc.Store(cmd.Context(), req)
