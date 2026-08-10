@@ -711,6 +711,33 @@ func TestHermesMissingStartDoesNotBecomeTheUnixEpoch(t *testing.T) {
 	}
 }
 
+func TestHermesKeepsActiveFilterWhenMessagesHaveNoID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hermes.db")
+	db := openSynthetic(t, path)
+	exec(t, db, `CREATE TABLE sessions (id TEXT, started_at REAL, ended_at REAL)`)
+	exec(t, db, `CREATE TABLE messages (session_id TEXT, role TEXT, content TEXT,
+		timestamp REAL, active INTEGER)`)
+	exec(t, db, `INSERT INTO sessions VALUES ('h1', 10, 20)`)
+	exec(t, db, `INSERT INTO messages VALUES ('h1', 'user', 'question', 10, 1)`)
+	exec(t, db, `INSERT INTO messages VALUES ('h1', 'assistant', 'active answer', 11, 1)`)
+	exec(t, db, `INSERT INTO messages VALUES ('h1', 'assistant', 'rewound answer', 12, 0)`)
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	records, complaints, err := ReadHermes(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(complaints) != 0 {
+		t.Fatalf("complaints = %v", complaints)
+	}
+	got := records.Sessions[0].Exchanges[0].AgentText
+	if got != "active answer" {
+		t.Fatalf("answer = %q, want active answer", got)
+	}
+}
+
 // A dry run over a database it cannot read answers anyway, and it says which of
 // the two reads failed. The state failure earns a warning; the row counts failed
 // in silence, so the report handed over `counts_before` as five zeros with

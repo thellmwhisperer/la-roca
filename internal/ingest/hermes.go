@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -42,6 +43,10 @@ func ReadHermes(ctx context.Context, path string) (parsers.Records, []string, er
 	if err != nil {
 		return parsers.Records{}, nil, err
 	}
+	messageColumns, err := tableColumns(ctx, db, "messages")
+	if err != nil {
+		return parsers.Records{}, nil, err
+	}
 
 	var records parsers.Records
 	var complaints []string
@@ -51,22 +56,27 @@ func ReadHermes(ctx context.Context, path string) (parsers.Records, []string, er
 			complaints = append(complaints, "Hermes: a session with no id was skipped")
 			continue
 		}
-		messages, err := queryRows(ctx, db,
-			`SELECT * FROM messages WHERE session_id = ? AND active = 1
-			 ORDER BY timestamp ASC, id ASC`, id)
+		messages, err := hermesMessages(ctx, db, messageColumns, id)
 		if err != nil {
-			// A schema without `active` is an older Hermes, and its messages are
-			// all live ones.
-			messages, err = queryRows(ctx, db,
-				`SELECT * FROM messages WHERE session_id = ? ORDER BY timestamp ASC`, id)
-			if err != nil {
-				complaints = append(complaints, fmt.Sprintf("Hermes session %s: %v", id, err))
-				continue
-			}
+			complaints = append(complaints, fmt.Sprintf("Hermes session %s: %v", id, err))
+			continue
 		}
 		records.Sessions = append(records.Sessions, hermesSession(source, messages))
 	}
 	return records, complaints, nil
+}
+
+func hermesMessages(ctx context.Context, db *sql.DB, columns map[string]bool, sessionID string) ([]row, error) {
+	filter := ""
+	if columns["active"] {
+		filter = " AND active = 1"
+	}
+	order := "rowid"
+	if columns["id"] {
+		order = "id"
+	}
+	return queryRows(ctx, db, `SELECT * FROM messages WHERE session_id = ?`+filter+
+		` ORDER BY timestamp ASC, `+order+` ASC`, sessionID)
 }
 
 func hermesSession(source row, messages []row) parsers.Session {
