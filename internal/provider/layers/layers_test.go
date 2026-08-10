@@ -66,25 +66,6 @@ func TestSearchExcludesMessagingNotHandoff(t *testing.T) {
 	}
 }
 
-func TestTheClassifierLabelsComeFromTheRegistry(t *testing.T) {
-	registry, err := layers.Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	// "protocol" remains a classifier label even though it aliases "pattern";
-	// the embedded registry is the classifier's source of truth.
-	want := []string{
-		"feedback", "pattern", "pill", "discovery", "handoff",
-		"question", "review", "issue", "protocol",
-	}
-	got := registry.ClassifierLabels()
-	slices.Sort(got)
-	slices.Sort(want)
-	if !slices.Equal(got, want) {
-		t.Errorf("classifier labels = %v, want %v", got, want)
-	}
-}
-
 func TestResolveFollowsTheDeclaredAliases(t *testing.T) {
 	registry, err := layers.Load()
 	if err != nil {

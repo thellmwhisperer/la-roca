@@ -5,7 +5,6 @@ layers:
     ingest_allowed: true
     is_coordination: false
     search_excluded: false
-    is_classifier_label: false
     alias_of:
     deprecated: false
     added_by: kernel
@@ -19,7 +18,6 @@ layers:
     ingest_allowed: true
     is_coordination: false
     search_excluded: false
-    is_classifier_label: true
     alias_of:
     deprecated: false
     added_by: kernel
@@ -33,7 +31,6 @@ layers:
     ingest_allowed: true
     is_coordination: false
     search_excluded: false
-    is_classifier_label: false
     alias_of:
     deprecated: false
     added_by: kernel
@@ -48,7 +45,6 @@ layers:
     ingest_allowed: true
     is_coordination: false
     search_excluded: false
-    is_classifier_label: true
     alias_of:
     deprecated: false
     added_by: kernel
@@ -63,7 +59,6 @@ layers:
     ingest_allowed: true
     is_coordination: false
     search_excluded: false
-    is_classifier_label: true
     alias_of:
     deprecated: false
     added_by: kernel
@@ -79,7 +74,6 @@ layers:
     ingest_allowed: true
     is_coordination: false
     search_excluded: false
-    is_classifier_label: true
     alias_of:
     deprecated: false
     added_by: kernel
@@ -93,7 +87,6 @@ layers:
     ingest_allowed: true
     is_coordination: true
     search_excluded: false
-    is_classifier_label: true
     alias_of:
     deprecated: false
     added_by: kernel
@@ -108,7 +101,6 @@ layers:
     ingest_allowed: true
     is_coordination: true
     search_excluded: false
-    is_classifier_label: false
     alias_of: handoff
     deprecated: true
     added_by: kernel
@@ -122,7 +114,6 @@ layers:
     ingest_allowed: true
     is_coordination: true
     search_excluded: true
-    is_classifier_label: true
     alias_of:
     deprecated: false
     added_by: kernel
@@ -138,7 +129,6 @@ layers:
     ingest_allowed: true
     is_coordination: true
     search_excluded: true
-    is_classifier_label: true
     alias_of:
     deprecated: false
     added_by: kernel
@@ -153,7 +143,6 @@ layers:
     ingest_allowed: true
     is_coordination: true
     search_excluded: true
-    is_classifier_label: true
     alias_of:
     deprecated: false
     added_by: kernel
@@ -168,7 +157,6 @@ layers:
     ingest_allowed: true
     is_coordination: false
     search_excluded: false
-    is_classifier_label: true
     alias_of: pattern
     deprecated: true
     added_by: kernel

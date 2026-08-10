@@ -83,7 +83,6 @@ func TestTheEngineIsTheOneThatSaysWhatDoesNotExist(t *testing.T) {
 		// The internal state tables are not visible to the query: they do not
 		// exist in the database it is prepared against.
 		{"SELECT * FROM ingest_file_state LIMIT 1", "no such table"},
-		{"SELECT * FROM queryplan_teach_examples LIMIT 1", "no such table"},
 		// And neither are v2's, which an adopted database may well carry.
 		{"SELECT * FROM proposals LIMIT 1", "no such table"},
 		{"SELECT * FROM sqlite_master LIMIT 1", "no such table"},

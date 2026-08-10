@@ -21,10 +21,10 @@ func TestInitAsksForNewOrAUserSuppliedAdoptionPath(t *testing.T) {
 			"no database at "+database,
 			"new: create an empty database here, then index the agent history found on this machine",
 			"adopt: if you already have a La Roca database elsewhere, type its path and a copy is brought here; the original is never touched",
-			"schema: 19 required structures created",
+			"schema: 17 required structures created",
 		)
 		assertTranscript(t, "new", out, "[new/adopt]", "created a fresh database", "index")
-		assertSchemaLine(t, "new", out, "schema: 19 required structures created")
+		assertSchemaLine(t, "new", out, "schema: 17 required structures created")
 		if _, err := os.Stat(database); err != nil {
 			t.Fatal(err)
 		}
@@ -70,9 +70,9 @@ func TestInitOffersToKeepOrReinitializeItsHomeDatabase(t *testing.T) {
 	assertTranscriptLines(t, "keep", out,
 		"keep: use the current database here, then index the agent history found on this machine",
 		"reinitialize: permanently replace the current database with an empty one, then index the agent history found on this machine",
-		"schema: 19 required structures verified",
+		"schema: 17 required structures verified",
 	)
-	assertSchemaLine(t, "keep", out, "schema: 19 required structures verified")
+	assertSchemaLine(t, "keep", out, "schema: 17 required structures verified")
 }
 
 func TestInitNamesAnActualSchemaRepair(t *testing.T) {
@@ -95,7 +95,7 @@ func TestInitNamesAnActualSchemaRepair(t *testing.T) {
 		t.Fatalf("repair init: %v\n%s", err, out)
 	}
 	assertSchemaLine(t, "repair", out,
-		"schema: 19 required structures verified; repairs applied (1): the index is missing: idx_memories_layer")
+		"schema: 17 required structures verified; repairs applied (1): the index is missing: idx_memories_layer")
 }
 
 func TestInitRefusesWithoutATerminalOrAnExplicitLocation(t *testing.T) {

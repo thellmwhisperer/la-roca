@@ -267,17 +267,11 @@ func recoveryBackups(configFile string) ([]string, error) {
 //
 // The journals are named explicitly because SQLite writes them beside the
 // database and a WAL left behind is a file with the operator's data in it.
-//
-// The cache is declared at its ROOT and not only at this database's keyed
-// subdirectory. Roca creates both, and declaring only the deepest one left a
-// `cache/` behind on every machine that had ever trained a classifier: the
-// directory survived, kept the whole data directory alive, and was then
-// misreported as foreign.
 func ownedPaths(paths config.Paths) []string {
 	dataDir := dirOf(paths.DB)
 	owned := []string{
 		paths.DB, paths.DB + "-wal", paths.DB + "-shm", paths.DB + "-journal",
-		paths.Config, paths.Backups, paths.CacheRoot, paths.Credentials,
+		paths.Config, paths.Backups, filepath.Join(dataDir, "cache"), paths.Credentials,
 		filepath.Join(dataDir, "prompt.md"), filepath.Join(dataDir, logfile.DirName),
 	}
 	// Skill files live under each runtime's own directory, outside ~/.roca.

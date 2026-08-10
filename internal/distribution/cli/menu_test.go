@@ -81,6 +81,16 @@ func TestServeLivesUnderMCP(t *testing.T) {
 	}
 }
 
+func TestSchemaRejectsUnknownArguments(t *testing.T) {
+	root := rootCommand(&cliEnv{})
+	root.SetOut(&strings.Builder{})
+	root.SetErr(&strings.Builder{})
+	root.SetArgs([]string{"schema", "archive-orphans"})
+	if err := root.Execute(); err == nil {
+		t.Fatal("unknown schema argument exited successfully")
+	}
+}
+
 func commandNames(commands []*cobra.Command) []string {
 	names := make([]string, 0, len(commands))
 	for _, command := range commands {

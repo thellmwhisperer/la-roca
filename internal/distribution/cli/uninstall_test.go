@@ -19,38 +19,6 @@ import (
 // this list does not name is left behind AND named as somebody else's, which
 // keeps the whole data directory alive with it.
 
-// The cache root is Roca's own directory and is declared so the purge removes
-// it rather than reporting it as someone else's, which would keep the data
-// directory alive with it.
-func TestThePurgeDeclaresTheCacheDirectoryItCreates(t *testing.T) {
-	home := t.TempDir()
-	paths := resolvedIn(t, home)
-
-	// Whatever the product writes inside the cache is removed with its parent.
-	if err := os.MkdirAll(paths.Cache, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(paths.Cache, "a-cached-artefact"),
-		[]byte("something the product wrote"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	data := dirOf(paths.DB)
-	report := lifecycle.Plan{Owned: ownedPaths(paths), DataDir: data}.Apply()
-
-	for _, kept := range report.Kept {
-		t.Errorf("the purge kept %s: %s", kept.Path, kept.Reason)
-	}
-	if _, err := os.Stat(data); !os.IsNotExist(err) {
-		left, _ := os.ReadDir(data)
-		var names []string
-		for _, entry := range left {
-			names = append(names, entry.Name())
-		}
-		t.Fatalf("the data directory survives the purge carrying %v", names)
-	}
-}
-
 // The other half of the same rule, and the one that keeps the fix honest: what
 // the operator left in the data directory is not La Roca's. A wider inventory
 // may not turn into a wider deletion.
@@ -193,9 +161,6 @@ func resolvedIn(t *testing.T, home string) config.Paths {
 	paths, err := config.Resolve(config.Input{Home: home})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if !strings.HasPrefix(paths.Cache, dirOf(paths.DB)) {
-		t.Fatalf("the cache %s does not hang off the data directory", paths.Cache)
 	}
 	return paths
 }

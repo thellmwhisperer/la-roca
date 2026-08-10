@@ -152,15 +152,12 @@ func tomlValueEnd(value string) int {
 	return len(strings.TrimRight(value, " \t\r\n"))
 }
 
-// FileConfig is the operator's configuration file, DirCredentials is where
-// subscription sessions live, and FileLanguage is the optional vocabulary
-// overlay. All three hang off the data directory: an operator has one Roca
-// directory, not two, and an adopted database keeps its config next to the data
-// it adopted.
+// FileConfig is the operator's configuration file and DirCredentials is where
+// subscription sessions live. Both hang off the data directory, so an adopted
+// database keeps its configuration next to the imported data.
 const (
 	FileConfig     = "config.toml"
 	DirCredentials = "credentials"
-	FileLanguage   = "language.yaml"
 	EnvConfig      = "ROCA_CONFIG"
 )
 

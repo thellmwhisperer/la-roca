@@ -11,17 +11,16 @@ import (
 
 // Layer is a memory layer declared in the registry.
 type Layer struct {
-	Name              string `yaml:"name" json:"name"`
-	Description       string `yaml:"description" json:"description"`
-	IngestAllowed     bool   `yaml:"ingest_allowed" json:"ingest_allowed"`
-	IsCoordination    bool   `yaml:"is_coordination" json:"is_coordination"`
-	SearchExcluded    bool   `yaml:"search_excluded" json:"search_excluded"`
-	IsClassifierLabel bool   `yaml:"is_classifier_label" json:"is_classifier_label"`
-	AliasOf           string `yaml:"alias_of" json:"alias_of,omitempty"`
-	Deprecated        bool   `yaml:"deprecated" json:"deprecated"`
-	AddedBy           string `yaml:"added_by" json:"added_by"`
-	Lifecycle         string `yaml:"lifecycle" json:"lifecycle"`
-	SinceVersion      string `yaml:"since_version" json:"since_version"`
+	Name           string `yaml:"name" json:"name"`
+	Description    string `yaml:"description" json:"description"`
+	IngestAllowed  bool   `yaml:"ingest_allowed" json:"ingest_allowed"`
+	IsCoordination bool   `yaml:"is_coordination" json:"is_coordination"`
+	SearchExcluded bool   `yaml:"search_excluded" json:"search_excluded"`
+	AliasOf        string `yaml:"alias_of" json:"alias_of,omitempty"`
+	Deprecated     bool   `yaml:"deprecated" json:"deprecated"`
+	AddedBy        string `yaml:"added_by" json:"added_by"`
+	Lifecycle      string `yaml:"lifecycle" json:"lifecycle"`
+	SinceVersion   string `yaml:"since_version" json:"since_version"`
 }
 
 // Registry is the whole registry, in the order it is declared in.
@@ -97,11 +96,6 @@ func (r Registry) Coordination() []string {
 // does not appear in a memory query. Handoff is not among them.
 func (r Registry) SearchExcluded() []string {
 	return r.filter(func(l Layer) bool { return l.SearchExcluded })
-}
-
-// ClassifierLabels are the layers that feed the classifier's labels.
-func (r Registry) ClassifierLabels() []string {
-	return r.filter(func(l Layer) bool { return l.IsClassifierLabel })
 }
 
 // Names are all the declared layers.

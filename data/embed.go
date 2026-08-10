@@ -1,12 +1,10 @@
 // Package data carries inside the binary everything La Roca needs to start with
-// no network: the SQL schema, the search index and the layer registry. v1 is
-// model-only, so there is no classifier, no training corpus and no language
-// pack: the question goes to the model, which answers over the schema below.
+// no network: the SQL schema, the search index and the layer registry.
 package data
 
 import _ "embed"
 
-// Schema is the DDL of the eight v1 tables.
+// Schema is the DDL of the seven v1 tables.
 //
 //go:embed schema.sql
 var Schema string

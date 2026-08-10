@@ -241,9 +241,6 @@ func TestTheConfigPathHangsOffTheDataDirectoryAndTheEnvironmentWins(t *testing.T
 	if want := filepath.Join(home, DirOwn, DirCredentials); paths.Credentials != want {
 		t.Fatalf("credentials %q, want %q", paths.Credentials, want)
 	}
-	if want := filepath.Join(home, DirOwn, FileLanguage); paths.Language != want {
-		t.Fatalf("language %q, want %q", paths.Language, want)
-	}
 
 	t.Setenv(EnvConfig, "/elsewhere/roca.toml")
 	paths, err = Resolve(Input{Home: home, ConfigEnv: os.Getenv(EnvConfig)})

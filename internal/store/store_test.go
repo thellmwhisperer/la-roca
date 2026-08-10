@@ -29,7 +29,7 @@ func TestOpenAppliesWALAndBusyTimeout(t *testing.T) {
 	}
 }
 
-func TestApplySchemaCreatesTheEightV1Tables(t *testing.T) {
+func TestApplySchemaCreatesTheSevenV1Tables(t *testing.T) {
 	db := openFresh(t)
 	if err := store.ApplySchema(context.Background(), db); err != nil {
 		t.Fatalf("ApplySchema: %v", err)
@@ -37,7 +37,7 @@ func TestApplySchemaCreatesTheEightV1Tables(t *testing.T) {
 
 	want := []string{
 		"exchanges", "ingest_file_state", "layers", "memories",
-		"queryplan_teach_examples", "sessions", "thinking_blocks", "tool_uses",
+		"sessions", "thinking_blocks", "tool_uses",
 	}
 	tables := tableNames(t, db.SQL())
 	if len(tables) != len(want) {
@@ -79,8 +79,8 @@ func TestApplySchemaIsIdempotent(t *testing.T) {
 	if err := store.ApplySchema(ctx, db); err != nil {
 		t.Fatalf("second ApplySchema: %v", err)
 	}
-	if got := len(tableNames(t, db.SQL())); got != 8 {
-		t.Errorf("tables = %d after two passes, want 8", got)
+	if got := len(tableNames(t, db.SQL())); got != 7 {
+		t.Errorf("tables = %d after two passes, want 7", got)
 	}
 }
 

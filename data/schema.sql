@@ -1,6 +1,6 @@
 -- La Roca v1 schema.
 --
--- Eight tables, no views. Database adoption compares structure, so an
+-- Seven tables, no views. Database adoption compares structure, so an
 -- "improvement" to the DDL turns a clean adoption into a migration.
 --
 -- Proposals, proposal_annotations, runs, run_logs, messages and layer_stats are
@@ -40,7 +40,6 @@ CREATE TABLE IF NOT EXISTS layers (
   ingest_allowed  INTEGER DEFAULT 1,
   is_coordination INTEGER DEFAULT 0,
   search_excluded INTEGER DEFAULT 0,
-  is_classifier_label INTEGER DEFAULT 0,
   alias_of        TEXT,
   added_by        TEXT DEFAULT 'kernel',
   deprecated      INTEGER DEFAULT 0,
@@ -96,18 +95,6 @@ CREATE TABLE IF NOT EXISTS ingest_file_state (
   metadata       TEXT DEFAULT '{}'
 );
 
--- Examples taught in place to the route classifier
-CREATE TABLE IF NOT EXISTS queryplan_teach_examples (
-  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
-  template             TEXT NOT NULL,
-  question             TEXT NOT NULL,
-  normalized_question  TEXT NOT NULL UNIQUE,
-  source_agent         TEXT,
-  metadata             TEXT DEFAULT '{}',
-  created_at           TEXT DEFAULT (datetime('now')),
-  updated_at           TEXT DEFAULT (datetime('now'))
-);
-
 -- Query indexes
 CREATE INDEX IF NOT EXISTS idx_memories_layer ON memories(layer);
 CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(status);
@@ -123,6 +110,3 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_exchanges_session_number
 
 CREATE INDEX IF NOT EXISTS idx_ingest_state_project ON ingest_file_state(project);
 CREATE INDEX IF NOT EXISTS idx_ingest_state_source_agent ON ingest_file_state(source_agent);
-
-CREATE INDEX IF NOT EXISTS idx_queryplan_teach_examples_template
-  ON queryplan_teach_examples(template);

@@ -108,7 +108,6 @@ func TestAMissingTableIsMigratableAndRepairedAfterBackup(t *testing.T) {
 		t.Fatalf("ApplySchema: %v", err)
 	}
 	seedIdentity(t, db)
-	execute(t, db, `DROP TABLE queryplan_teach_examples`)
 	execute(t, db, `DROP INDEX idx_memories_layer`)
 
 	report, err := store.Inspect(ctx, db)
@@ -227,8 +226,8 @@ func TestAnEmptyDatabaseIsCreatedInsteadOfRejected(t *testing.T) {
 	if _, err := store.Adopt(ctx, db, t.TempDir()); err != nil {
 		t.Fatalf("Adopt: %v", err)
 	}
-	if got := len(tableNames(t, db.SQL())); got != 8 {
-		t.Errorf("tables = %d after adopting an empty database, want 8", got)
+	if got := len(tableNames(t, db.SQL())); got != 7 {
+		t.Errorf("tables = %d after adopting an empty database, want 7", got)
 	}
 }
 
@@ -317,8 +316,8 @@ func TestCopyDatabaseCreatesAVerifiedCopyAndLeavesTheSourceIntact(t *testing.T) 
 		if got := countMemories(t, copyDB.SQL()); got != 1 {
 			t.Errorf("memories in the copy = %d, want 1", got)
 		}
-		if got := len(tableNames(t, copyDB.SQL())); got != 8 {
-			t.Errorf("tables in the copy = %d, want 8", got)
+		if got := len(tableNames(t, copyDB.SQL())); got != 7 {
+			t.Errorf("tables in the copy = %d, want 7", got)
 		}
 		if got := countMemories(t, db.SQL()); got != 1 {
 			t.Errorf("memories in the source after Copy = %d, want 1", got)

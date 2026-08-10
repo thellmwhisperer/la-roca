@@ -303,7 +303,7 @@ func (m *world) twoConcurrentWriters() error {
 
 func (m *world) holdsEveryV1Table() error {
 	return m.hasTables("sessions", "memories", "layers", "exchanges",
-		"tool_uses", "thinking_blocks", "ingest_file_state", "queryplan_teach_examples")
+		"tool_uses", "thinking_blocks", "ingest_file_state")
 }
 
 func (m *world) hasTables(want ...string) error {

@@ -303,9 +303,8 @@ func (s *Service) dataDir() string {
 
 // countOf is how many rows a table holds, or zero when it cannot be asked.
 //
-// It is the one live number both `roca doctor` and the calibration carry: an
-// installation that answers nothing because it has nothing ingested looks
-// exactly like a broken one until you count. The table name is always a
+// It is the live number `roca doctor` uses to distinguish an empty installation
+// from a broken one. The table name is always a
 // constant of this package, never anything that came in from outside: there is
 // no interpolation of a caller's string here.
 func (s *Service) countOf(ctx context.Context, table string) int {
@@ -339,15 +338,14 @@ func (s *Service) syncLayers(ctx context.Context) error {
 		for _, layer := range s.registry.Layers {
 			_, err := tx.ExecContext(ctx, `
 				INSERT INTO layers (name, description, schema_file, is_coordination,
-				                    search_excluded, is_classifier_label, alias_of,
+				                    search_excluded, alias_of,
 				                    added_by, deprecated, lifecycle, since_version,
 				                    ingest_allowed)
-				VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?)
 				ON CONFLICT(name) DO UPDATE SET
 				  description = excluded.description,
 				  is_coordination = excluded.is_coordination,
 				  search_excluded = excluded.search_excluded,
-				  is_classifier_label = excluded.is_classifier_label,
 				  alias_of = excluded.alias_of,
 				  deprecated = excluded.deprecated,
 				  lifecycle = excluded.lifecycle,
@@ -356,14 +354,13 @@ func (s *Service) syncLayers(ctx context.Context) error {
 				WHERE description IS NOT excluded.description
 				   OR is_coordination IS NOT excluded.is_coordination
 				   OR search_excluded IS NOT excluded.search_excluded
-				   OR is_classifier_label IS NOT excluded.is_classifier_label
 				   OR alias_of IS NOT excluded.alias_of
 				   OR deprecated IS NOT excluded.deprecated
 				   OR lifecycle IS NOT excluded.lifecycle
 				   OR since_version IS NOT excluded.since_version
 				   OR ingest_allowed IS NOT excluded.ingest_allowed`,
 				layer.Name, layer.Description, layer.IsCoordination, layer.SearchExcluded,
-				layer.IsClassifierLabel, orNull(layer.AliasOf), layer.AddedBy,
+				orNull(layer.AliasOf), layer.AddedBy,
 				layer.Deprecated, layer.Lifecycle, layer.SinceVersion, layer.IngestAllowed)
 			if err != nil {
 				return fmt.Errorf("sync layer %q: %w", layer.Name, err)

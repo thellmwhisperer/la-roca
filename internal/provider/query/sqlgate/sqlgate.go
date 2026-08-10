@@ -40,7 +40,7 @@ const MaxLimit = 1000
 // the tool's internal state, not the fleet's memory. They are dropped from the
 // validation database, so asking about them is asking about what does not exist.
 var invisibleTables = []string{
-	"ingest_file_state", "queryplan_teach_examples", "search_state",
+	"ingest_file_state", "search_state",
 }
 
 // ftsShadowSuffixes name the shadow tables FTS5 creates behind each virtual

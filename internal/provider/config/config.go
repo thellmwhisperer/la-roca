@@ -5,8 +5,6 @@
 package config
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"path/filepath"
 )
@@ -27,17 +25,6 @@ type Paths struct {
 	Home    string
 	DB      string
 	Backups string
-	// Cache is the classifier's working directory for this database. It is
-	// keyed by database because what is taught lives in the database: two
-	// different databases have two different models, and sharing a cache would
-	// mix them.
-	Cache string
-	// CacheRoot is the directory those per-database caches hang off. It is a
-	// field of its own because the uninstall's inventory has to be able to name
-	// it: Roca creates it, and a purge that only declares the keyed
-	// subdirectory leaves the parent behind on every machine that ever trained
-	// a classifier, and then reports it as somebody else's file.
-	CacheRoot string
 	// Config is the operator's TOML. It hangs off the data directory so that an
 	// imported database keeps its config next to the data it imported.
 	Config string
@@ -45,10 +32,6 @@ type Paths struct {
 	// a secret. It never holds a platform key: those live in the config or in
 	// the environment.
 	Credentials string
-	// Language is the optional vocabulary overlay: a language.yaml the operator
-	// drops in to extend the embedded pack (Italian markers, extra stop words)
-	// without recompiling. Empty when the operator ships none.
-	Language string
 }
 
 // Directories and files this product knows about.
@@ -56,7 +39,6 @@ const (
 	DirOwn     = ".roca"
 	FileDB     = "roca.db"
 	DirBackups = "backups"
-	DirCache   = "cache"
 	EnvDBPath  = "ROCA_DB_PATH"
 )
 
@@ -86,24 +68,14 @@ func Resolve(in Input) (Paths, error) {
 	}, ownDir, in), nil
 }
 
-// inDataDir hangs off the data directory everything that is not the database:
-// the cache, the config and the credentials.
-//
-// The cache goes in a subdirectory named with the fingerprint of the database
-// path, so that two databases in the same directory do not share a model. The
-// config and the credentials do not: they belong to the installation, not to
-// one database.
+// inDataDir hangs the configuration and credentials off the data directory.
 func inDataDir(paths Paths, dataDir string, in Input) Paths {
 	paths.Home = in.Home
-	fingerprint := sha256.Sum256([]byte(paths.DB))
-	paths.CacheRoot = filepath.Join(dataDir, DirCache)
-	paths.Cache = filepath.Join(paths.CacheRoot, hex.EncodeToString(fingerprint[:6]))
 	paths.Config = filepath.Join(dataDir, FileConfig)
 	if in.ConfigEnv != "" {
 		paths.Config = in.ConfigEnv
 	}
 	paths.Credentials = filepath.Join(dataDir, DirCredentials)
-	paths.Language = filepath.Join(dataDir, FileLanguage)
 	return paths
 }
 

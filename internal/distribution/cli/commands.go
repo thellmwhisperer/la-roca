@@ -140,7 +140,6 @@ func initCommand(env *cliEnv) *cobra.Command {
 			if len(result.Orphans) > 0 {
 				env.print("  tables outside v1, kept intact: %s",
 					strings.Join(result.Orphans, ", "))
-				env.print("  archive them when you want to, with: roca schema archive-orphans --yes")
 			}
 			env.print("  layers synced: %s", axi.Number(int64(result.Layers)))
 			env.print("  rows: memories=%s sessions=%s exchanges=%s thinking_blocks=%s tool_uses=%s",
@@ -238,9 +237,8 @@ func fileExists(path string) bool {
 }
 
 // renderBootstrap is the rest of what init did: what the first read of the disk
-// found, which model is going to answer, and whether this installation has a
-// bench to measure itself against. None of the three can fail the command, so
-// all three have to be readable.
+// found and which model is going to answer. Neither phase can fail the command,
+// so both have to be readable.
 func renderBootstrap(env *cliEnv, result service.InitResult) {
 	if result.Ingest != nil {
 		env.print("  agents detected: %s", detectedAgentsLine(result.Ingest.DetectedAgents))
@@ -297,6 +295,10 @@ func schemaCommand(env *cliEnv) *cobra.Command {
 	schema := &cobra.Command{
 		Use:   "schema",
 		Short: "State of the database schema",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
+		},
 	}
 	schema.AddCommand(&cobra.Command{
 		Use:   "status",
@@ -322,6 +324,31 @@ func schemaCommand(env *cliEnv) *cobra.Command {
 		}),
 	})
 	return schema
+}
+
+func indexCommand(env *cliEnv) *cobra.Command {
+	return &cobra.Command{
+		Use:   "index",
+		Short: "Build or refresh the search index",
+		Long: "Builds the full-text index.\n" +
+			"It is incremental: on an already indexed database it costs nothing, and\n" +
+			"`roca init` calls it on its own. Run it by hand to pick up memory that\n" +
+			"another process wrote.",
+		RunE: env.serviceRunE(func(cmd *cobra.Command, _ []string, svc *service.Service) error {
+			report, err := svc.Index(cmd.Context())
+			if err != nil {
+				return err
+			}
+			if env.json {
+				return env.printJSON(report)
+			}
+			if report.LexicalBuilt {
+				env.print("full-text index built")
+			}
+			env.print("%s", axi.Duration(report.ElapsedMS))
+			return nil
+		}),
+	}
 }
 
 func queryCommand(env *cliEnv) *cobra.Command {
