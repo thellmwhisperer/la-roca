@@ -59,13 +59,13 @@ func ParseCodexSession(content []byte, meta FileMeta) (Records, error) {
 		haveHuman   bool
 		humanRecord int
 		deferred    int
-		thinking   []Thinking
-		tools      []*ToolUse
-		pending    = map[string]*ToolUse{}
-		exchanges  []Exchange
-		perTurn    [][]*ToolUse
-		perTurnThk [][]Thinking
-		discards   []Discard
+		thinking    []Thinking
+		tools       []*ToolUse
+		pending     = map[string]*ToolUse{}
+		exchanges   []Exchange
+		perTurn     [][]*ToolUse
+		perTurnThk  [][]Thinking
+		discards    []Discard
 	)
 	discard := func() {
 		humanText, humanTS, haveHuman = "", "", false

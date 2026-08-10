@@ -264,4 +264,3 @@ func makeDir(t *testing.T, parent, name string) string {
 	}
 	return path
 }
-
