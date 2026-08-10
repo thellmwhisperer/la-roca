@@ -42,11 +42,7 @@ func registerIngestIncrementalSteps(ctx *godog.ScenarioContext, w *ingestAccepta
 		return w.runIngest(false)
 	})
 	ctx.Then(`^the file is skipped by fingerprint without an error$`, func() error {
-		skipped, err := ingestJSONNumber(w.last.doc, "files_skipped")
-		if err != nil {
-			return err
-		}
-		errors, err := ingestJSONNumber(w.last.doc, "errors")
+		skipped, errors, _, err := w.reportFileCounts()
 		if err != nil {
 			return err
 		}

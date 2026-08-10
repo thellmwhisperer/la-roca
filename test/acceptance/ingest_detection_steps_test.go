@@ -77,9 +77,9 @@ func (w *ingestAcceptanceWorld) seedPresentFamily(family string) error {
 	case "pi":
 		path = filepath.Join(w.home, ".pi", "agent", "sessions")
 	case "opencode":
-		return writeIngestFixture(filepath.Join(w.home, ".local", "share", "opencode", "opencode.db"), "route marker")
+		return writeFixture(filepath.Join(w.home, ".local", "share", "opencode", "opencode.db"), "route marker")
 	case "hermes":
-		return writeIngestFixture(filepath.Join(w.home, ".hermes", "state.db"), "route marker")
+		return writeFixture(filepath.Join(w.home, ".hermes", "state.db"), "route marker")
 	default:
 		return fmt.Errorf("unsupported fixture family %q", family)
 	}

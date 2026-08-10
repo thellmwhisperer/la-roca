@@ -51,17 +51,12 @@ func registerIngestReportSteps(ctx *godog.ScenarioContext, w *ingestAcceptanceWo
 		return nil
 	})
 	ctx.Then(`^the summary counts every skipped file and error detail$`, func() error {
-		skipped, err := ingestJSONNumber(w.last.doc, "files_skipped")
+		skipped, errors, details, err := w.reportFileCounts()
 		if err != nil {
 			return err
 		}
-		errors, err := ingestJSONNumber(w.last.doc, "errors")
-		if err != nil {
-			return err
-		}
-		details, _ := w.last.doc["error_details"].([]any)
-		if skipped != 1 || errors != 1 || len(details) != errors {
-			return fmt.Errorf("skipped=%d errors=%d details=%d, want 1/1/1", skipped, errors, len(details))
+		if skipped != 1 || errors != 1 || details != errors {
+			return fmt.Errorf("skipped=%d errors=%d details=%d, want 1/1/1", skipped, errors, details)
 		}
 		return nil
 	})
@@ -91,13 +86,13 @@ func (w *ingestAcceptanceWorld) seedClaudeAndCodex() error {
 	if err := w.seedClaudeSession("report", 1, false, ""); err != nil {
 		return err
 	}
-	if err := writeIngestFixture(filepath.Join(w.home, ".claude", "projects", encodeAgentPath(filepath.Join(w.home, "workspace", "report")), "memory", "report.md"), "report memory\n"); err != nil {
+	if err := writeFixture(filepath.Join(w.home, ".claude", "projects", encodeAgentPath(filepath.Join(w.home, "workspace", "report")), "memory", "report.md"), "report memory\n"); err != nil {
 		return err
 	}
 	if err := w.seedCodexSession(""); err != nil {
 		return err
 	}
-	return writeIngestFixture(filepath.Join(w.home, ".codex", "memories", "report.md"), "codex report memory\n")
+	return writeFixture(filepath.Join(w.home, ".codex", "memories", "report.md"), "codex report memory\n")
 }
 
 func (w *ingestAcceptanceWorld) seedSkippedAndMalformed() error {
@@ -109,5 +104,5 @@ func (w *ingestAcceptanceWorld) seedSkippedAndMalformed() error {
 	}
 	id := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 	path := filepath.Join(w.home, ".claude", "projects", encodeAgentPath(filepath.Join(w.home, "workspace", "report-errors")), id+".jsonl")
-	return writeIngestFixture(path, "malformed acceptance input\n")
+	return writeFixture(path, "malformed acceptance input\n")
 }

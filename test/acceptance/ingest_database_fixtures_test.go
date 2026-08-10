@@ -5,7 +5,6 @@ package acceptance
 import (
 	"database/sql"
 	"fmt"
-	"os"
 	"path/filepath"
 )
 
@@ -65,7 +64,7 @@ func (w *ingestAcceptanceWorld) seedHermesSession(model string) error {
 }
 
 func openFixtureDB(path string) (*sql.DB, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := writeFixture(path, ""); err != nil {
 		return nil, err
 	}
 	return sql.Open("sqlite", "file:"+path)

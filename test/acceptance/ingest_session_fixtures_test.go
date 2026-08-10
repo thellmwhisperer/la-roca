@@ -31,7 +31,7 @@ func (w *ingestAcceptanceWorld) seedClaudeSession(project string, exchanges int,
 	if exchanges > 1 {
 		body += claudeExchange(2, cwd, false, model)
 	}
-	if err := writeIngestFixture(path, body); err != nil {
+	if err := writeFixture(path, body); err != nil {
 		return err
 	}
 	w.fixturePath, w.sessionID = path, claudeAcceptanceSession
@@ -76,7 +76,7 @@ func (w *ingestAcceptanceWorld) seedCodexSession(model string) error {
 		"{\"type\":\"event_msg\",\"timestamp\":\"2026-08-01T11:00:02Z\",\"payload\":{\"type\":\"user_message\",\"message\":\"question\"}}\n" +
 		"{\"type\":\"event_msg\",\"timestamp\":\"2026-08-01T11:00:03Z\",\"payload\":{\"type\":\"task_complete\",\"last_agent_message\":\"answer\"}}\n"
 	path := filepath.Join(w.home, ".codex", "sessions", "2026", "08", "01", "rollout.jsonl")
-	if err := writeIngestFixture(path, body); err != nil {
+	if err := writeFixture(path, body); err != nil {
 		return err
 	}
 	w.fixturePath, w.sessionID = path, codexAcceptanceSession
@@ -89,19 +89,19 @@ func (w *ingestAcceptanceWorld) seedDesktopSession(model string) error {
 		w.sessionID, filepath.Join(w.home, "workspace", "desktop-project"), model)
 	path := filepath.Join(w.appSupportPath(), "claude-code-sessions", "desktop.json")
 	w.fixturePath = path
-	return writeIngestFixture(path, body)
+	return writeFixture(path, body)
 }
 
 func (w *ingestAcceptanceWorld) seedCoworkSession() error {
 	w.sessionID = "cowork-acceptance-session"
 	root := filepath.Join(w.appSupportPath(), "local-agent-mode-sessions")
 	metadata := filepath.Join(root, "cowork.json")
-	if err := writeIngestFixture(metadata, fmt.Sprintf(`{"cliSessionId":%q,"cwd":%q,"title":"cowork"}`,
+	if err := writeFixture(metadata, fmt.Sprintf(`{"cliSessionId":%q,"cwd":%q,"title":"cowork"}`,
 		w.sessionID, filepath.Join(w.home, "workspace", "cowork-project"))); err != nil {
 		return err
 	}
 	w.fixturePath = filepath.Join(root, "cowork", "audit.jsonl")
-	return writeIngestFixture(w.fixturePath,
+	return writeFixture(w.fixturePath,
 		`{"type":"user","session_id":"cowork-acceptance-session","_audit_timestamp":"2026-08-01T12:00:00Z","message":{"content":"question"}}`+"\n"+
 			`{"type":"assistant","_audit_timestamp":"2026-08-01T12:00:01Z","message":{"content":"answer"}}`+"\n")
 }
@@ -126,7 +126,7 @@ func (w *ingestAcceptanceWorld) seedPiSession() error {
 		w.sessionID, cwd)
 	path := filepath.Join(w.home, ".pi", "agent", "sessions", encodeAgentPath(cwd), "session.jsonl")
 	w.fixturePath = path
-	return writeIngestFixture(path, body)
+	return writeFixture(path, body)
 }
 
 func encodeAgentPath(path string) string {

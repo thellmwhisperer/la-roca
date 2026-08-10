@@ -49,10 +49,7 @@ var supportedIngestFamilies = []string{
 
 func (w *ingestAcceptanceWorld) registerLifecycle(ctx *godog.ScenarioContext) {
 	ctx.Before(func(c context.Context, _ *godog.Scenario) (context.Context, error) {
-		root, err := filepath.Abs(filepath.Join("..", "..", ".tmp"))
-		if err != nil {
-			return c, err
-		}
+		root := filepath.Join("..", "..", ".tmp")
 		if err := os.MkdirAll(root, 0o700); err != nil {
 			return c, err
 		}
@@ -60,7 +57,10 @@ func (w *ingestAcceptanceWorld) registerLifecycle(ctx *godog.ScenarioContext) {
 		if err != nil {
 			return c, err
 		}
-		w.home = home
+		w.home, err = filepath.Abs(home)
+		if err != nil {
+			return c, err
+		}
 		w.dbPath = filepath.Join(home, ".roca", "roca.db")
 		w.last, w.previous = ingestRun{}, ingestRun{}
 		w.fixturePath, w.sessionID = "", ""
@@ -158,19 +158,12 @@ func loadDomainFeatures(dir string) ([]godog.Feature, error) {
 	return features, nil
 }
 
-func writeIngestFixture(path, content string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(content), 0o600)
-}
-
 func (w *ingestAcceptanceWorld) writeConfig(workspace string) error {
 	body := ""
 	if workspace != "" {
 		body = fmt.Sprintf("workspace_roots = [%q]\n", workspace)
 	}
-	return writeIngestFixture(filepath.Join(w.home, ".roca", "config.toml"), body)
+	return writeFixture(filepath.Join(w.home, ".roca", "config.toml"), body)
 }
 
 func (w *ingestAcceptanceWorld) openDB() (*sql.DB, error) {
@@ -234,6 +227,19 @@ func (w *ingestAcceptanceWorld) databaseBytes() (string, error) {
 	}
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+func (w *ingestAcceptanceWorld) reportFileCounts() (int, int, int, error) {
+	skipped, err := ingestJSONNumber(w.last.doc, "files_skipped")
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	errors, err := ingestJSONNumber(w.last.doc, "errors")
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	details, _ := w.last.doc["error_details"].([]any)
+	return skipped, errors, len(details), nil
 }
 
 func ingestJSONNumber(document map[string]any, path ...string) (int, error) {

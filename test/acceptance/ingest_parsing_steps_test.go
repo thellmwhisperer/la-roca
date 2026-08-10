@@ -24,7 +24,7 @@ func registerIngestParsingSteps(ctx *godog.ScenarioContext, w *ingestAcceptanceW
 			return err
 		}
 		path := filepath.Join(w.home, ".claude", "projects", encodeAgentPath(filepath.Join(workspace, "metadata")), "memory", "declared.md")
-		return writeIngestFixture(path, "---\nname: declared-name\ntype: feedback\ndescription: declared-description\n---\nDurable markdown body.\n")
+		return writeFixture(path, "---\nname: declared-name\ntype: feedback\ndescription: declared-description\n---\nDurable markdown body.\n")
 	})
 	ctx.Given(`^a malformed Claude session file is ready to ingest$`, w.seedMalformedClaude)
 	ctx.Given(`^instruction files and one ordinary session are present$`, w.seedInstructionFiles)
@@ -110,9 +110,9 @@ func (w *ingestAcceptanceWorld) seedMemoryFile(family string) error {
 		if err := w.writeConfig(workspace); err != nil {
 			return err
 		}
-		return writeIngestFixture(filepath.Join(w.home, ".claude", "projects", encodeAgentPath(filepath.Join(workspace, "memory-project")), "memory", "durable.md"), "durable family memory\n")
+		return writeFixture(filepath.Join(w.home, ".claude", "projects", encodeAgentPath(filepath.Join(workspace, "memory-project")), "memory", "durable.md"), "durable family memory\n")
 	case "codex":
-		return writeIngestFixture(filepath.Join(w.home, ".codex", "memories", "durable.md"), "durable family memory\n")
+		return writeFixture(filepath.Join(w.home, ".codex", "memories", "durable.md"), "durable family memory\n")
 	default:
 		return fmt.Errorf("no memory fixture for family %q", family)
 	}
@@ -121,7 +121,7 @@ func (w *ingestAcceptanceWorld) seedMemoryFile(family string) error {
 func (w *ingestAcceptanceWorld) seedMalformedClaude() error {
 	w.sessionID = "99999999-8888-7777-6666-555555555555"
 	w.fixturePath = filepath.Join(w.home, ".claude", "projects", "malformed", w.sessionID+".jsonl")
-	return writeIngestFixture(w.fixturePath, "this is not json\n{nor is this}\n")
+	return writeFixture(w.fixturePath, "this is not json\n{nor is this}\n")
 }
 
 func (w *ingestAcceptanceWorld) seedInstructionFiles() error {
@@ -135,7 +135,7 @@ func (w *ingestAcceptanceWorld) seedInstructionFiles() error {
 		filepath.Join(w.home, "workspace", "instructions", "AGENTS.md"),
 	}
 	for _, path := range paths {
-		if err := writeIngestFixture(path, "# Instructions\n\n"+instructionSentinel+"\n"); err != nil {
+		if err := writeFixture(path, "# Instructions\n\n"+instructionSentinel+"\n"); err != nil {
 			return err
 		}
 	}
