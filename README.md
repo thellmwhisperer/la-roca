@@ -73,6 +73,12 @@ the selected data directory (by default `~/.roca/logs/`). Files are dated:
 `ingest-YYYY-MM-DD.jsonl`. Each stream retains the current day and the previous
 29 days; older dated files are removed when that stream is next written.
 
+The trace is a record of the work, never a condition of it. When a log cannot be
+written (a read-only data directory, a full disk) the command still does its job,
+still prints its answer and still exits with its own code; it says once, on the
+error stream, that this run is not in the log. A missing record is something to
+notice, not a failed command.
+
 Execution records carry the command, changed flags, database path, duration,
 exit code, error and the command's existing `--json` result envelope when one
 exists. Query envelopes also carry route, provider, model, SQL-inference,

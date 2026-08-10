@@ -80,3 +80,49 @@ func TestIngestExecutionAlsoPersistsTheDetailedIngestEnvelope(t *testing.T) {
 		}
 	}
 }
+
+// The trace is observability, and observability never fails the command.
+//
+// A log this run cannot write used to be returned as the run's error, so a query
+// that had already printed its answer on stdout exited 1 and a script reading the
+// exit code concluded the query failed while holding the answer. The command now
+// keeps its own honest exit code and says once, on the error stream, that the log
+// did not get written.
+func TestAnUnwritableLogDoesNotFailTheCommand(t *testing.T) {
+	fixtureInstallation(t)
+	home := os.Getenv("HOME")
+
+	// The log directory cannot be created because a regular file already holds
+	// its name, which is the same failure as a read-only data directory.
+	logs := filepath.Join(home, ".roca", logfile.DirName)
+	if err := os.RemoveAll(logs); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logs, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errs strings.Builder
+	code, err := execute(contractBuild(), &out, &errs,
+		[]string{"query", "how many memories are there"})
+
+	if err != nil {
+		t.Errorf("a log that could not be written became the run's error: %v", err)
+	}
+	if code != ExitOK {
+		t.Errorf("exit code = %d, want %d: the query itself answered", code, ExitOK)
+	}
+	if out.Len() == 0 {
+		t.Error("the answer never reached stdout")
+	}
+	// One warning, on the error stream, and not on stdout where a program parses.
+	if got := strings.Count(errs.String(), "warning:"); got != 1 {
+		t.Errorf("want exactly one stderr warning, got %d:\n%s", got, errs.String())
+	}
+	if !strings.Contains(errs.String(), "log") {
+		t.Errorf("the warning does not say what failed:\n%s", errs.String())
+	}
+	if strings.Contains(out.String(), "warning:") {
+		t.Errorf("the warning leaked into stdout:\n%s", out.String())
+	}
+}

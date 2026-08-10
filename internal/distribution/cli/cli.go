@@ -52,9 +52,18 @@ type cliEnv struct {
 
 // Execute runs the CLI and returns the process exit code.
 func Execute(build Build) (int, error) {
+	return execute(build, os.Stdout, os.Stderr, nil)
+}
+
+// execute is Execute over writers and an argument list a test can supply. A nil
+// args leaves cobra reading the process arguments, which is the production path.
+func execute(build Build, out, errOut io.Writer, args []string) (int, error) {
 	started := time.Now()
-	env := &cliEnv{build: build, out: os.Stdout, errOut: os.Stderr, started: started}
+	env := &cliEnv{build: build, out: out, errOut: errOut, started: started}
 	root := rootCommand(env)
+	if args != nil {
+		root.SetArgs(args)
+	}
 	executed, err := root.ExecuteC()
 	if err != nil {
 		if strings.Contains(err.Error(), "unknown command") {
@@ -65,17 +74,19 @@ func Execute(build Build) (int, error) {
 	if err != nil {
 		code = ExitError
 	}
-	var logErr error
+	// The trace is observability, and observability never fails the command.
+	//
+	// A log that could not be written is said once, on the error stream, and it
+	// changes neither the answer nor the exit code. Returning it as the run's
+	// error made a query that had already printed its answer exit 1, so a script
+	// reading the code concluded the query failed while holding the answer.
 	if !env.prelogged {
-		logErr = env.logExecution(executed, started, code, err)
+		if logErr := env.logExecution(executed, started, code, err); logErr != nil {
+			fmt.Fprintf(env.errOut,
+				"warning: this run is not in the execution log: %v\n", logErr)
+		}
 	}
-	if err != nil {
-		return code, err
-	}
-	if logErr != nil {
-		return ExitError, logErr
-	}
-	return code, nil
+	return code, err
 }
 
 func rootCommand(env *cliEnv) *cobra.Command {
