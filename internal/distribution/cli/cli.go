@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -34,16 +35,19 @@ const (
 )
 
 type cliEnv struct {
-	build     Build
-	out       io.Writer
-	errOut    io.Writer
-	dbPath    string
-	json      bool
-	code      int
-	outcome   any
-	started   time.Time
-	prelogged bool
-	openedDir string
+	build              Build
+	out                io.Writer
+	errOut             io.Writer
+	dbPath             string
+	json               bool
+	code               int
+	outcome            any
+	started            time.Time
+	prelogged          bool
+	openedDir          string
+	liveIngest         *ingestRows
+	wantIngestProgress bool
+	ingestStarted      time.Time
 }
 
 // Execute runs the CLI and returns the process exit code.
@@ -172,28 +176,40 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		return nil, err
 	}
 	home, _ := os.UserHomeDir()
-	var progress func(string)
-	if !env.json {
-		progress = func(line string) { env.print("%s", line) }
+	var ingestProgress func(ingest.SourceProgress)
+	if env.wantIngestProgress && !env.json && termAware(env.errOut) {
+		env.liveIngest = newIngestRows(env.errOut, true)
+		ingestProgress = env.liveIngest.update
 	}
 	svc, err := service.Open(service.Options{
-		DBPath:       paths.DB,
-		BackupDir:    paths.Backups,
-		DataDir:      filepath.Dir(paths.DB),
-		Version:      env.build.Version,
-		Commit:       env.build.Commit,
-		Providers:    buildProviders(file, paths),
-		ConfigPath:   paths.Config,
-		ConfigExists: file.Exists,
-		Sources:      ingestSources(file, home),
-		ReadOnly:     config.ReadOnly(os.Getenv(config.EnvReadOnly)),
-		Progress:     progress,
+		DBPath:         paths.DB,
+		BackupDir:      paths.Backups,
+		DataDir:        filepath.Dir(paths.DB),
+		Version:        env.build.Version,
+		Commit:         env.build.Commit,
+		Providers:      buildProviders(file, paths),
+		ConfigPath:     paths.Config,
+		ConfigExists:   file.Exists,
+		Sources:        ingestSources(file, home),
+		ReadOnly:       config.ReadOnly(os.Getenv(config.EnvReadOnly)),
+		IngestProgress: ingestProgress,
 	})
 	if err != nil {
+		env.finishIngestProgress()
 		return nil, err
 	}
 	env.openedDir = filepath.Dir(paths.DB)
 	return svc, nil
+}
+
+func (env *cliEnv) finishIngestProgress() {
+	if env.liveIngest == nil {
+		env.wantIngestProgress = false
+		return
+	}
+	env.liveIngest.finish()
+	env.liveIngest = nil
+	env.wantIngestProgress = false
 }
 
 // serviceRunE is the RunE of every command that needs the database open: it

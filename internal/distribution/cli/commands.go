@@ -53,6 +53,8 @@ func initCommand(env *cliEnv) *cobra.Command {
 			"An existing home database is kept or reinitialized only by explicit answer.\n" +
 			"Non-interactive callers must select a location explicitly with --db-path.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			commandStarted := time.Now()
+			env.wantIngestProgress = true
 			paths, err := env.resolvePaths()
 			if err != nil {
 				return err
@@ -61,11 +63,6 @@ func initCommand(env *cliEnv) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !env.json {
-				env.print("data directory: %s", dirOf(paths.DB))
-				env.print("configuration: %s", paths.Config)
-			}
-
 			if choice == "reinitialize" {
 				for _, suffix := range []string{"", "-wal", "-shm"} {
 					if err := os.Remove(paths.DB + suffix); err != nil && !os.IsNotExist(err) {
@@ -90,11 +87,18 @@ func initCommand(env *cliEnv) *cobra.Command {
 				return err
 			}
 			defer svc.Close()
+			defer env.finishIngestProgress()
 
 			result, err := svc.Init(cmd.Context())
+			env.finishIngestProgress()
 			if err != nil {
 				return err
 			}
+			commandElapsed := time.Since(commandStarted).Milliseconds()
+			if outsideService := commandElapsed - result.TotalElapsedMS; outsideService > 0 {
+				result.SetupElapsedMS += outsideService
+			}
+			result.TotalElapsedMS = commandElapsed
 			if env.json {
 				return env.printJSON(struct {
 					service.InitResult
@@ -105,34 +109,44 @@ func initCommand(env *cliEnv) *cobra.Command {
 				}{result, env.build.Version, env.build.Commit, adoptedByCopy, source})
 			}
 
+			env.print("setup: %s", axi.Duration(result.SetupElapsedMS))
+			env.print("  data directory: %s", dirOf(paths.DB))
+			env.print("  configuration: %s", paths.Config)
+			env.print("  agents: checking known sources")
+			env.print("  database: inspecting %s", paths.DB)
 			switch {
 			case adoptedByCopy:
-				env.print("database outcome: adopted by copy; %s -> %s; original untouched",
+				env.print("  database: adopted by copy; %s -> %s; original untouched",
 					source, paths.DB)
 			case choice == "new":
-				env.print("database outcome: created a fresh database at %s", paths.DB)
+				env.print("  database: created a fresh database at %s", paths.DB)
 			case choice == "reinitialize":
-				env.print("database outcome: reinitialized a fresh database at %s", paths.DB)
+				env.print("  database: reinitialized a fresh database at %s", paths.DB)
 			default:
-				env.print("database outcome: kept the existing home database at %s", paths.DB)
+				env.print("  database: kept the existing home database at %s", paths.DB)
 			}
 			if result.BackupPath != "" {
-				env.print("backup verified beforehand at %s", result.BackupPath)
+				env.print("  backup verified beforehand at %s", result.BackupPath)
 			}
 			if result.Database == "created" {
-				env.print("schema: %d required structures created", result.Structures)
+				env.print("  schema: %s required structures created", axi.Number(int64(result.Structures)))
 			} else if len(result.Repairs) > 0 {
-				env.print("schema: %d required structures verified; repairs applied (%d): %s",
-					result.Structures, len(result.Repairs), strings.Join(result.Repairs, "; "))
+				env.print("  schema: %s required structures verified; repairs applied (%s): %s",
+					axi.Number(int64(result.Structures)), axi.Number(int64(len(result.Repairs))),
+					strings.Join(result.Repairs, "; "))
 			} else {
-				env.print("schema: %d required structures verified", result.Structures)
+				env.print("  schema: %s required structures verified", axi.Number(int64(result.Structures)))
 			}
 			if len(result.Orphans) > 0 {
-				env.print("tables outside v1, kept intact: %s",
+				env.print("  tables outside v1, kept intact: %s",
 					strings.Join(result.Orphans, ", "))
-				env.print("archive them when you want to, with: roca schema archive-orphans --yes")
+				env.print("  archive them when you want to, with: roca schema archive-orphans --yes")
 			}
-			env.print("layers synced: %d", result.Layers)
+			env.print("  layers synced: %s", axi.Number(int64(result.Layers)))
+			env.print("  rows: memories=%s sessions=%s exchanges=%s thinking_blocks=%s tool_uses=%s",
+				axi.Number(int64(result.RowsBefore.Memories)), axi.Number(int64(result.RowsBefore.Sessions)),
+				axi.Number(int64(result.RowsBefore.Exchanges)), axi.Number(int64(result.RowsBefore.ThinkingBlocks)),
+				axi.Number(int64(result.RowsBefore.ToolUses)))
 			renderBootstrap(env, result)
 			return nil
 		},
@@ -229,14 +243,15 @@ func fileExists(path string) bool {
 // all three have to be readable.
 func renderBootstrap(env *cliEnv, result service.InitResult) {
 	if result.Ingest != nil {
-		env.print("agents detected: %s", detectedAgentsLine(result.Ingest.DetectedAgents))
-		env.print("agents not found: %s", missingAgentsLine(result.Ingest.DetectedAgents))
-		env.print("ingest: %d files read, %d skipped, %d errors",
-			result.Ingest.FilesRead, result.Ingest.FilesSkipped, result.Ingest.Errors)
+		env.print("  agents detected: %s", detectedAgentsLine(result.Ingest.DetectedAgents))
+		env.print("  agents not found: %s", missingAgentsLine(result.Ingest.DetectedAgents))
+		env.print("ingest: %s files read · %s skipped · %s errors · %s",
+			axi.Number(int64(result.Ingest.FilesRead)), axi.Number(int64(result.Ingest.FilesSkipped)),
+			axi.Number(int64(result.Ingest.Errors)), axi.Duration(result.Ingest.ElapsedMS))
+		renderIngestSources(env, *result.Ingest)
+		renderIngestDelta(env, result.Ingest.Delta)
+		renderIngestDetails(env, *result.Ingest)
 	}
-	env.print("rows: memories=%d sessions=%d exchanges=%d thinking_blocks=%d tool_uses=%d",
-		result.Rows.Memories, result.Rows.Sessions, result.Rows.Exchanges,
-		result.Rows.ThinkingBlocks, result.Rows.ToolUses)
 	if result.Search != nil {
 		env.print("index: full-text index ready · %s",
 			axi.Duration(result.Search.ElapsedMS))
@@ -244,21 +259,27 @@ func renderBootstrap(env *cliEnv, result service.InitResult) {
 	if model := result.Model; model != nil {
 		switch {
 		case model.Disabled:
-			env.print("model: turned off in the configuration")
+			env.print("model: turned off in the configuration · %s",
+				axi.Duration(result.ModelElapsedMS))
 		case model.Ready:
-			env.print("%s", modelChoiceLine(model.Provider, "ready", model.Model, result.ConfigPath))
+			env.print("%s · %s",
+				modelChoiceLine(model.Provider, "ready", model.Model, result.ConfigPath),
+				axi.Duration(result.ModelElapsedMS))
 		default:
-			env.print("model: none available (%s)", model.Reason)
+			env.print("model: none available (%s) · %s", model.Reason,
+				axi.Duration(result.ModelElapsedMS))
 			if model.Action != "" {
 				env.print("  remedy: %s", model.Action)
 			}
 		}
 	}
-	env.print("skill: available via `roca skill install` (not installed automatically)")
+	env.print("total: %s", axi.Duration(result.TotalElapsedMS))
+	env.print("next steps:")
 	if result.PromptPath != "" {
-		env.print("agent prompt: %s (paste this block into agent instructions)", result.PromptPath)
-		env.print("%s", strings.TrimSuffix(result.Prompt, "\n"))
+		env.print("  agent prompt: %s", result.PromptPath)
+		env.print("  Paste its contents into the agent instructions you choose.")
 	}
+	env.print("  skill: available via `roca skill install` (not installed automatically)")
 }
 
 func detectedAgentsLine(agents []string) string {

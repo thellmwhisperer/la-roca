@@ -83,8 +83,8 @@ func registerIngestReportSteps(ctx *godog.ScenarioContext, w *ingestAcceptanceWo
 		return nil
 	})
 	ctx.Then(`^each seeded source is summarized once with its elapsed time$`, func() error {
-		for _, source := range []string{"claude", "codex"} {
-			pattern := regexp.MustCompile(`(?m)^  \[ok\] ` + source + ` .* · [^·]+(?:ms|s)$`)
+		for _, source := range []string{"claude-code", "codex"} {
+			pattern := regexp.MustCompile(`(?m)^  ✓ ` + source + ` .* · [^·]+(?:ms|s)$`)
 			if matches := pattern.FindAllString(w.last.stdout, -1); len(matches) != 1 {
 				return fmt.Errorf("source %q summary count=%d:\n%s", source, len(matches), w.last.stdout)
 			}
@@ -102,7 +102,7 @@ func registerIngestReportSteps(ctx *godog.ScenarioContext, w *ingestAcceptanceWo
 	ctx.Then(`^the Claude source summary reports (\d+) discarded records$`, func(want int) error {
 		needle := fmt.Sprintf(" · %d discarded · ", want)
 		for _, line := range strings.Split(w.last.stdout, "\n") {
-			if strings.HasPrefix(line, "  [ok] claude ") && strings.Contains(line, needle) {
+			if strings.HasPrefix(line, "  ✓ claude-code ") && strings.Contains(line, needle) {
 				return nil
 			}
 		}

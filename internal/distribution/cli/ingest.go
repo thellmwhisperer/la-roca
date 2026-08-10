@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"runtime"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
@@ -28,10 +29,18 @@ func ingestCommand(env *cliEnv) *cobra.Command {
 			"It is incremental: a file whose fingerprint has not changed is not even\n" +
 			"opened, so running it repeatedly is cheap and produces the same state.\n" +
 			"`--dry-run` reports what it would read and writes nothing.",
+		PreRun: func(*cobra.Command, []string) {
+			env.wantIngestProgress = true
+			env.ingestStarted = time.Now()
+		},
 		RunE: env.serviceRunE(func(cmd *cobra.Command, _ []string, svc *service.Service) error {
 			result, err := svc.Ingest(cmd.Context(), req)
+			env.finishIngestProgress()
 			if err != nil {
 				return err
+			}
+			if !env.ingestStarted.IsZero() {
+				result.TotalElapsedMS = time.Since(env.ingestStarted).Milliseconds()
 			}
 			env.capture(result)
 			if env.json {
@@ -48,40 +57,77 @@ func ingestCommand(env *cliEnv) *cobra.Command {
 
 // renderIngest is the readable output. The same report --json hands over whole.
 func renderIngest(env *cliEnv, result service.IngestResult) {
+	env.print("setup: agents detected: %s · agents not found: %s",
+		detectedAgentsLine(result.DetectedAgents), missingAgentsLine(result.DetectedAgents))
 	for _, warning := range result.Warnings {
-		env.print("warning: %s", warning)
+		env.print("  warning: %s", warning)
 	}
 	if result.DryRun {
-		env.print("dry run: nothing was written")
+		env.print("ingest: dry run · %s files pending · %s skipped · %s",
+			axi.Number(int64(result.FilesRead)), axi.Number(int64(result.FilesSkipped)),
+			axi.Duration(result.ElapsedMS))
+	} else {
+		env.print("ingest: %s files read · %s skipped · %s errors · %s",
+			axi.Number(int64(result.FilesRead)), axi.Number(int64(result.FilesSkipped)),
+			axi.Number(int64(result.Errors)), axi.Duration(result.ElapsedMS))
 	}
-	env.print("%d files pending, %d skipped by fingerprint", result.FilesRead, result.FilesSkipped)
+	renderIngestSources(env, result)
+	renderIngestDelta(env, result.Delta)
+	if result.ExchangesHeld > 0 {
+		env.print("  %s exchanges are still being written and were left for the next run",
+			axi.Number(int64(result.ExchangesHeld)))
+	}
+	renderIngestDetails(env, result)
+	if result.Index != nil {
+		env.print("index: full-text index ready · %s", axi.Duration(result.Index.ElapsedMS))
+	}
+	env.print("total: %s", axi.Duration(result.TotalElapsedMS))
+	if result.DryRun {
+		env.print("next: run `roca ingest` to write the pending files")
+	} else {
+		env.print("next: run `roca query \"<natural question>\"`")
+	}
+}
+
+func renderIngestSources(env *cliEnv, result service.IngestResult) {
 	for _, name := range ingest.SortedSources(result.Sources) {
 		counts := result.Sources[name]
-		env.print("  %s: %d sessions · %d exchanges · %d memories",
-			name, counts.Sessions,
-			counts.Exchanges, counts.MemoriesInserted+counts.MemoriesUpdated)
+		stats := result.SourceStats[name]
+		if stats == nil {
+			stats = &ingest.SourceStats{}
+		}
+		sessions := counts.Sessions + counts.SessionsUpdated
+		env.print("  ✓ %s · %s files · %s sessions · %s exchanges · %s memories · %s discarded · %s",
+			ingestSourceLabel(name, sessions), axi.Number(int64(stats.Read)),
+			axi.Number(int64(sessions)),
+			axi.Number(int64(counts.Exchanges)),
+			axi.Number(int64(counts.MemoriesInserted+counts.MemoriesUpdated)),
+			axi.Number(int64(stats.RecordsDiscarded)), axi.Duration(stats.ElapsedMS))
 	}
-	env.print("delta: memories=%d sessions=%d exchanges=%d thinking_blocks=%d tool_uses=%d",
-		result.Delta.Memories, result.Delta.Sessions, result.Delta.Exchanges,
-		result.Delta.ThinkingBlocks, result.Delta.ToolUses)
-	if result.ExchangesHeld > 0 {
-		env.print("%d exchanges are still being written and were left for the next run",
-			result.ExchangesHeld)
-	}
+}
+
+func renderIngestDelta(env *cliEnv, delta ingest.Tables) {
+	env.print("delta: memories=%s sessions=%s exchanges=%s thinking_blocks=%s tool_uses=%s",
+		axi.Number(int64(delta.Memories)), axi.Number(int64(delta.Sessions)),
+		axi.Number(int64(delta.Exchanges)), axi.Number(int64(delta.ThinkingBlocks)),
+		axi.Number(int64(delta.ToolUses)))
+}
+
+func renderIngestDetails(env *cliEnv, result service.IngestResult) {
 	for _, failure := range result.ErrorDetails {
 		env.print("error: %s (%s): %s", failure.Path, failure.Parser, failure.Reason)
 	}
 	for _, discard := range result.DiscardDetails {
-		env.print("discard: %s (%s record %d): %s",
-			discard.Path, discard.Parser, discard.Record, discard.Reason)
+		env.print("discard: %s (%s record %s): %s",
+			discard.Path, discard.Parser, axi.Number(int64(discard.Record)), discard.Reason)
 	}
-	if result.Index != nil {
-		if result.Index.LexicalBuilt {
-			env.print("index: full-text index built")
-		}
+}
+
+func ingestSourceLabel(name string, sessions int) string {
+	if name == "claude" && sessions > 0 {
+		return "claude-code"
 	}
-	env.print("%d errors · %d records discarded · %s",
-		result.Errors, result.RecordsDiscarded, axi.Duration(result.ElapsedMS))
+	return name
 }
 
 // ingestSources resolves where every agent's artefacts live on this machine.
