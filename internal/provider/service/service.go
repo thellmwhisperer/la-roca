@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
@@ -46,6 +47,9 @@ type Options struct {
 	// Progress receives terse human-readable phase lines. Structured surfaces
 	// leave it nil and receive only the result.
 	Progress func(string)
+	// IngestProgress is the structured source counter used only by an
+	// interactive shell renderer.
+	IngestProgress func(ingest.SourceProgress)
 }
 
 // Service opens the database once and answers both surfaces.
@@ -115,10 +119,14 @@ type InitResult struct {
 	// Model and Ingest are the rest of the bootstrap: whether a model is going
 	// to answer, and what the first read of the disk found. Neither can fail
 	// the command, and both report.
-	Model      *InitModel    `json:"model"`
-	Ingest     *IngestResult `json:"ingest"`
-	PromptPath string        `json:"prompt_path"`
-	Prompt     string        `json:"-"`
+	Model          *InitModel    `json:"model"`
+	Ingest         *IngestResult `json:"ingest"`
+	PromptPath     string        `json:"prompt_path"`
+	Prompt         string        `json:"-"`
+	RowsBefore     ingest.Tables `json:"-"`
+	SetupElapsedMS int64         `json:"-"`
+	ModelElapsedMS int64         `json:"-"`
+	TotalElapsedMS int64         `json:"-"`
 }
 
 // InitModel is the model gate at bootstrap: which provider is going to answer,
@@ -149,6 +157,7 @@ const presentationPrompt = "## La Roca — local semantic memory\n" +
 // is there, and resyncs the layer registry. It is idempotent by contract,
 // because the real flow runs it more than once.
 func (s *Service) Init(ctx context.Context) (InitResult, error) {
+	started := time.Now()
 	if s.opts.ReadOnly {
 		return InitResult{}, errReadOnly
 	}
@@ -188,18 +197,6 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 	}
 	progress(fmt.Sprintf("database: %s · %d bytes · %d memories · %d sessions · %d exchanges",
 		progressState, bytes, rows.Memories, rows.Sessions, rows.Exchanges))
-	progress("index: building search index")
-
-	// Search is indexed during adoption, which is when the database changes
-	// hands. It is incremental: on an already indexed database it costs
-	// nothing, and that is why init can always call it without punishing
-	// whoever already had it.
-	report, err := s.Index(ctx)
-	if err != nil {
-		return InitResult{}, err
-	}
-
-	progress(fmt.Sprintf("index: ready in %d ms", report.ElapsedMS))
 	result := InitResult{
 		DBPath:     s.db.Path(),
 		ConfigPath: s.opts.ConfigPath,
@@ -212,8 +209,9 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 		Layers:     len(s.registry.Layers),
 		Bytes:      bytes,
 		Rows:       rows,
-		Search:     &report,
+		RowsBefore: rows,
 	}
+	result.SetupElapsedMS = time.Since(started).Milliseconds()
 
 	// The rest of the bootstrap. None of it may take the command down: a
 	// database that is ready is the thing init promised, and a source that
@@ -222,8 +220,14 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 	result.Ingest = s.bootstrapIngest(ctx)
 	progress(fmt.Sprintf("ingest: complete · %d files read · %d skipped · %d errors",
 		result.Ingest.FilesRead, result.Ingest.FilesSkipped, result.Ingest.Errors))
+	result.Search = result.Ingest.Index
+	if result.Search != nil {
+		progress(fmt.Sprintf("index: ready in %d ms", result.Search.ElapsedMS))
+	}
 	progress("model: checking declared providers")
+	modelStarted := time.Now()
 	result.Model = s.modelGate(ctx)
+	result.ModelElapsedMS = time.Since(modelStarted).Milliseconds()
 	if result.Model.Ready {
 		progress("model: " + result.Model.Provider + "/" + result.Model.Model + " will answer")
 	} else {
@@ -238,6 +242,7 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 	if err := os.WriteFile(result.PromptPath, []byte(result.Prompt), 0o600); err != nil {
 		return InitResult{}, fmt.Errorf("write the agent prompt at %s: %w", result.PromptPath, err)
 	}
+	result.TotalElapsedMS = time.Since(started).Milliseconds()
 	return result, nil
 }
 

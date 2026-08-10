@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/store/search"
@@ -18,7 +19,8 @@ type IngestRequest struct {
 // together.
 type IngestResult struct {
 	ingest.Result
-	Index *search.Report `json:"index,omitempty"`
+	Index          *search.Report `json:"index,omitempty"`
+	TotalElapsedMS int64          `json:"-"`
 }
 
 // Ingest reads every source of the matrix once and leaves what it wrote
@@ -29,20 +31,24 @@ type IngestResult struct {
 // would leave a memory that is in the database and cannot be found: the worst of
 // the two states, because it looks like data loss.
 func (s *Service) Ingest(ctx context.Context, req IngestRequest) (IngestResult, error) {
+	started := time.Now()
 	if s.opts.ReadOnly && !req.DryRun {
 		return IngestResult{}, errReadOnly
 	}
 
 	report, err := ingest.Run(ctx, s.db, s.registry, ingest.Options{
-		Roots:    s.opts.Sources,
-		DryRun:   req.DryRun,
-		Progress: s.opts.Progress,
+		Roots:        s.opts.Sources,
+		DryRun:       req.DryRun,
+		Progress:     s.opts.Progress,
+		LiveProgress: s.opts.IngestProgress,
 	})
 	result := IngestResult{Result: report}
 	if err != nil {
+		result.TotalElapsedMS = time.Since(started).Milliseconds()
 		return result, err
 	}
 	if req.DryRun {
+		result.TotalElapsedMS = time.Since(started).Milliseconds()
 		return result, nil
 	}
 
@@ -51,6 +57,7 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (IngestResult, 
 		return result, err
 	}
 	result.Index = &index
+	result.TotalElapsedMS = time.Since(started).Milliseconds()
 
 	return result, nil
 }

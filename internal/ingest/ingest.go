@@ -30,6 +30,31 @@ type Options struct {
 	// Progress receives terse source-level lines while a human-facing command
 	// waits. JSON and MCP callers leave it nil.
 	Progress func(string)
+	// LiveProgress carries counters for an interactive renderer. It is separate
+	// from Progress so plain streams keep their stable sequential lines.
+	LiveProgress func(SourceProgress)
+}
+
+// SourceProgress is one redraw of a source row. Processed counts artefacts
+// inspected, including unchanged fingerprints; Read counts artefacts parsed.
+type SourceProgress struct {
+	Source    string
+	Processed int
+	Total     int
+	Read      int
+	Sessions  int
+	Discarded int
+	ElapsedMS int64
+	Done      bool
+}
+
+// SourceStats attributes work that used to disappear inside the ingest total.
+// It is presentation data, not part of the JSON contract.
+type SourceStats struct {
+	Processed        int
+	Read             int
+	RecordsDiscarded int
+	ElapsedMS        int64
 }
 
 // Failure is one artefact that could not be read, named so the operator knows
@@ -107,12 +132,13 @@ type Result struct {
 	After  Tables `json:"counts_after"`
 	Delta  Tables `json:"delta"`
 
-	WorkspaceRoots Workspace         `json:"workspace_roots"`
-	DetectedAgents []string          `json:"detected_agents"`
-	MissingAgents  []string          `json:"agents_not_found"`
-	Roots          map[string]string `json:"roots"`
-	Warnings       []string          `json:"warnings,omitempty"`
-	ElapsedMS      int64             `json:"elapsed_ms"`
+	WorkspaceRoots Workspace               `json:"workspace_roots"`
+	DetectedAgents []string                `json:"detected_agents"`
+	MissingAgents  []string                `json:"agents_not_found"`
+	Roots          map[string]string       `json:"roots"`
+	Warnings       []string                `json:"warnings,omitempty"`
+	ElapsedMS      int64                   `json:"elapsed_ms"`
+	SourceStats    map[string]*SourceStats `json:"-"`
 }
 
 // Run reads every source in the matrix once and writes what changed.
@@ -136,10 +162,18 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		MissingAgents:  MissingAgentFamilies(plan.DetectedAgents),
 		Roots:          declaredRoots(opts.Roots),
 		Warnings:       plan.Warnings,
+		SourceStats:    map[string]*SourceStats{},
 	}
 	announced := map[string]bool{}
+	liveStarted := map[string]bool{}
+	totals := map[string]int{}
+	remaining := map[string]int{}
+	sourceElapsed := map[string]time.Duration{}
 	for _, target := range plan.Targets {
 		result.source(target.SourceAgent)
+		result.sourceStats(target.SourceAgent)
+		totals[target.SourceAgent]++
+		remaining[target.SourceAgent]++
 	}
 
 	// The state is read even on a dry run: telling an operator that eight hundred
@@ -169,19 +203,47 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 	result.After = before
 
 	for _, target := range plan.Targets {
+		targetStart := time.Now()
+		stats := result.sourceStats(target.SourceAgent)
+		if opts.LiveProgress != nil && !liveStarted[target.SourceAgent] {
+			opts.LiveProgress(SourceProgress{
+				Source: target.SourceAgent, Total: totals[target.SourceAgent],
+			})
+			liveStarted[target.SourceAgent] = true
+		}
+		finishTarget := func() {
+			stats.Processed++
+			sourceElapsed[target.SourceAgent] += time.Since(targetStart)
+			stats.ElapsedMS = sourceElapsed[target.SourceAgent].Milliseconds()
+			remaining[target.SourceAgent]--
+			if opts.LiveProgress != nil {
+				counts := result.source(target.SourceAgent)
+				opts.LiveProgress(SourceProgress{
+					Source: target.SourceAgent, Processed: stats.Processed,
+					Total: totals[target.SourceAgent], Read: stats.Read,
+					Sessions:  counts.Sessions + counts.SessionsUpdated,
+					Discarded: stats.RecordsDiscarded, ElapsedMS: stats.ElapsedMS,
+					Done: remaining[target.SourceAgent] == 0,
+				})
+			}
+		}
 		fingerprint, err := Fingerprint(target.Path)
 		if err != nil {
 			// The file was there when the scan ran and is not there now. That is a
 			// live disk, not an error worth a red run.
 			result.FilesSkipped++
+			finishTarget()
 			continue
 		}
 		if Unchanged(state, target.Path, fingerprint) {
 			result.FilesSkipped++
+			finishTarget()
 			continue
 		}
 		if opts.DryRun {
 			result.FilesRead++
+			stats.Read++
+			finishTarget()
 			continue
 		}
 		if opts.Progress != nil && !announced[target.SourceAgent] {
@@ -189,9 +251,13 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 			announced[target.SourceAgent] = true
 		}
 		result.FilesRead++
+		stats.Read++
+		discardsBefore := result.RecordsDiscarded
 		if err := ingestOne(ctx, db, layers, opts, target, fingerprint, &result); err != nil {
 			return result, err
 		}
+		stats.RecordsDiscarded += result.RecordsDiscarded - discardsBefore
+		finishTarget()
 	}
 
 	if !opts.DryRun {
@@ -212,6 +278,18 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 	}
 	result.ElapsedMS = time.Since(start).Milliseconds()
 	return result, nil
+}
+
+func (r *Result) sourceStats(agent string) *SourceStats {
+	if agent == "" {
+		agent = "unknown"
+	}
+	if stats, ok := r.SourceStats[agent]; ok {
+		return stats
+	}
+	stats := &SourceStats{}
+	r.SourceStats[agent] = stats
+	return stats
 }
 
 // source makes sure a source that was scanned appears in the report even when it
