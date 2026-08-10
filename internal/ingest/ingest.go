@@ -238,9 +238,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		}
 		fingerprint, err := targetFingerprint(target)
 		if err != nil {
-			// The file was there when the scan ran and is not there now. That is a
-			// live disk, not an error worth a red run.
-			result.FilesSkipped++
+			result.fingerprintFailure(target, err)
 			finishTarget()
 			continue
 		}
@@ -323,6 +321,16 @@ func (r *Result) fail(target Target, reason string) {
 	r.ErrorDetails = append(r.ErrorDetails, Failure{
 		Path: target.Path, Parser: string(target.Kind), Reason: reason,
 	})
+}
+
+func (r *Result) fingerprintFailure(target Target, err error) {
+	if os.IsNotExist(err) {
+		// The file was there when the scan ran and is not there now. That is a
+		// live disk, not an error worth a red run.
+		r.FilesSkipped++
+		return
+	}
+	r.fail(target, "fingerprint: "+err.Error())
 }
 
 // foreignDiscard turns one foreign-database complaint into a counted discard.

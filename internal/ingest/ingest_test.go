@@ -704,6 +704,27 @@ func TestUnknownSubagentProbeIsCounted(t *testing.T) {
 	}
 }
 
+func TestFingerprintErrorsOnlySilenceMissingFiles(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		err         error
+		wantErrors  int
+		wantSkipped int
+	}{
+		{name: "disappeared", err: os.ErrNotExist, wantSkipped: 1},
+		{name: "permission", err: os.ErrPermission, wantErrors: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result := Result{}
+			target := Target{Path: "source.jsonl", Kind: parsers.KindClaudeSession}
+			result.fingerprintFailure(target, test.err)
+			if result.Errors != test.wantErrors || result.FilesSkipped != test.wantSkipped {
+				t.Fatalf("errors = %d, skipped = %d", result.Errors, result.FilesSkipped)
+			}
+		})
+	}
+}
+
 // A source that is a live database, not a file, is refused whole when its shape
 // is not the one this build reads. Half a foreign table produces rows nobody can
 // trust, and the refusal has to name the agent so the operator knows which one
