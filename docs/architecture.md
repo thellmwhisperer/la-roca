@@ -28,8 +28,8 @@ fixtures (an external test seam, never a product import).
   `query/sqlgate`), prompts, FTS, and service orchestration (`service`).
 - `internal/distribution/` — the plumbing: CLI (`cli`), MCP stdio (`mcpplug`),
   install/uninstall of the binary and of agent configs (`agentcfg`, `release`,
-  `lifecycle`), and skill install (`skill`). The `human` formatting helper
-  lives here because only the CLI uses it.
+  `lifecycle`), credential-safe JSONL traces (`logfile`), and skill install
+  (`skill`).
 
 ## Notable placements
 

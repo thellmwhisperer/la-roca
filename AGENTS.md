@@ -5,6 +5,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - Run the canonical local gate with `make check`; inspect the Gherkin catalogue with `make accept-index`.
 - Per-domain acceptance lives under `features/<domain>/`; its Godog harness is enabled only by the `acceptance` build tag.
 - Keep distribution ownership declarations centralized in `internal/distribution/cli/uninstall.go` (`ownedPaths` and recovery-backup handling).
+- Operational JSONL lives under the selected data directory's `logs/`; retention and redaction are owned by `internal/distribution/logfile`.
 
 ## Maintaining this file
 

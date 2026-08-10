@@ -65,6 +65,28 @@ home database and asks to keep or explicitly reinitialize it. Without a
 terminal, init refuses instead of waiting or choosing. Automation can select a
 location with `roca init --db-path <path>`; a missing file there is created.
 
+## Studyable traces
+
+Every CLI execution leaves one credential-safe JSONL record under `logs/` in
+the selected data directory (by default `~/.roca/logs/`). Files are dated:
+`executions-YYYY-MM-DD.jsonl`, `mcp-audit-YYYY-MM-DD.jsonl`, and
+`ingest-YYYY-MM-DD.jsonl`. Each stream retains the current day and the previous
+29 days; older dated files are removed when that stream is next written.
+
+Execution records carry the command, changed flags, database path, duration,
+exit code, error and the command's existing `--json` result envelope when one
+exists. Query envelopes also carry route, provider, model, SQL-inference,
+execution and optional interpretation timings, degradation, provider failure
+text and row count. MCP audit records carry the tool, arguments, verdict,
+duration and result row count. Ingest records retain the complete ingest
+envelope, including every file error and every discarded source record with its
+path, parser, record position and reason.
+
+No log is stored in SQLite and no run tables exist. Sensitive flag names,
+credential-shaped text, authorization headers and private keys are redacted
+before a line reaches disk. Log directories and files are created with operator
+only permissions.
+
 ## What it reads
 
 One `roca ingest` sweeps every source family of the matrix, incrementally, so a

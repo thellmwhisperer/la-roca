@@ -195,7 +195,7 @@ session hooks, leaving every other byte of those files exactly where it was
 binary that has gone.
 
 What `--purge` adds: the database and its journals, the configuration, the
-backups, the cache, the credentials and the benches.
+backups, cache, credentials, generated prompt and dated JSONL logs.
 
 **The D-7 contract**, and it has two halves that look contradictory and are not:
 
