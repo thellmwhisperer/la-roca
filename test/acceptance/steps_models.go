@@ -1,5 +1,30 @@
 //go:build acceptance
 
+/**
+ * @overview Models provider worlds and assertions for black-box acceptance. ~500 lines, no public symbols.
+ *
+ *   READING GUIDE
+ *   -------------
+ *   1. Start at theFrontierIsAvailable    <- fake live OpenAI endpoint
+ *   2. theLocalModelIsAvailable           <- fake live Ollama endpoint
+ *   3. writeModelConfig/loginWithModel    <- operator-facing setup
+ *   4. Assertions read only process output and files
+ *
+ *   MAIN FLOW
+ *   Gherkin world -> real HTTP fixture/config -> roca process -> black-box assertion
+ *
+ *   PUBLIC API
+ *   ----------
+ *   None (acceptance-tag test file)
+ *
+ *   INTERNALS
+ *   ---------
+ *   modelWorld, requestLog, provider setup, writeModelConfig, loginWithModel
+ *   model output, fallback, order, warning, and credential assertions
+ *
+ * @exports
+ * @deps httptest, os/exec; acceptance world and product CLI
+ */
 package acceptance
 
 import (
@@ -13,6 +38,8 @@ import (
 	"strings"
 	"sync"
 )
+
+// -- 1/4 HELPER · modelWorld, requestLog, and environment --
 
 // Steps for the model adapters. Still black box: not one symbol of the product
 // is imported here.
@@ -113,6 +140,10 @@ func (m *world) closeModels() {
 	}
 	m.models = modelWorld{}
 }
+
+// -/ 1/4
+
+// -- 2/4 CORE · fake provider worlds <- START HERE --
 
 // --- worlds ---
 
@@ -249,6 +280,10 @@ func withProvider(order []string, name string) []string {
 	return append(order, name)
 }
 
+// -/ 2/4
+
+// -- 3/4 CORE · writeModelConfig and loginWithModel --
+
 // writeModelConfig writes the [models] section the way an operator would.
 func (m *world) writeModelConfig() error {
 	dir := filepath.Join(m.home, ".roca")
@@ -294,6 +329,27 @@ func (m *world) configurationChoosesFrontierModel(model string) error {
 }
 
 func (m *world) loginWithModel(name, model string) error {
+	server := httptest.NewServer(http.HandlerFunc(func(out http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/models":
+			_ = json.NewEncoder(out).Encode(map[string]any{"data": []any{map[string]any{"id": model}}})
+		case "/chat/completions":
+			_ = json.NewEncoder(out).Encode(map[string]any{"choices": []any{map[string]any{
+				"message": map[string]any{"role": "assistant", "content": "x"},
+			}}})
+		default:
+			http.NotFound(out, request)
+		}
+	}))
+	m.models.frontier = server
+	configPath := filepath.Join(m.home, ".roca", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		return err
+	}
+	fixture := "workspace_roots = [\"/work\"]\n\n[models." + name + "]\nbase_url = " + tomlString(server.URL) + "\n"
+	if err := os.WriteFile(configPath, []byte(fixture), 0o600); err != nil {
+		return err
+	}
 	command := exec.Command(m.binaryPath(), "login", name, "--model", model)
 	command.Stdin = strings.NewReader(theCredential + "\n")
 	return m.record("roca login "+name+" --model "+model, command)
@@ -343,9 +399,9 @@ func quotedList(values []string) string {
 	return strings.Join(quotedValues, ", ")
 }
 
-// --- execution ---
+// -/ 3/4
 
-// --- assertions ---
+// -- 4/4 HELPER · model assertions --
 
 func (m *world) jsonKeyEqualToTheFrontier(key string) error {
 	return m.jsonKeyEqualTo(key, theFrontierName)
@@ -508,3 +564,5 @@ func (m *world) noPersistentLogCarriesTheCredential() error {
 		return nil
 	})
 }
+
+// -/ 4/4

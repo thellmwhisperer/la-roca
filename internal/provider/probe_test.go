@@ -1,0 +1,83 @@
+/**
+ * @overview Pins the account-level model probe. ~75 lines, no public symbols.
+ *
+ *   READING GUIDE
+ *   -------------
+ *   1. Start at TestProbeModelUsesOneRealMinimalRequest
+ *   2. Read probeProvider for the fake-provider seam
+ *   3. The rejection subtest pins error propagation
+ *
+ *   MAIN FLOW
+ *   fake provider -> ProbeModel -> one-token Chat -> success or server error
+ *
+ *   PUBLIC API
+ *   ----------
+ *   None (test-only file)
+ *
+ *   INTERNALS
+ *   ---------
+ *   probeProvider, TestProbeModelUsesOneRealMinimalRequest
+ *
+ * @exports
+ * @deps context, errors, testing; internal/provider contracts
+ */
+package provider
+
+import (
+	"context"
+	"errors"
+	"testing"
+)
+
+// -- 1/2 HELPER · probeProvider --
+
+type probeProvider struct {
+	err      error
+	requests []ChatRequest
+}
+
+func (p *probeProvider) Name() string    { return "fake" }
+func (p *probeProvider) ModelID() string { return "fake-model" }
+func (p *probeProvider) Ready(context.Context) Readiness {
+	return Readiness{Ready: true, ModelID: p.ModelID()}
+}
+func (p *probeProvider) Models(context.Context) ModelReport {
+	return ModelReport{Ready: true, Models: []string{p.ModelID()}}
+}
+func (p *probeProvider) Chat(_ context.Context, req ChatRequest) (ChatResponse, error) {
+	p.requests = append(p.requests, req)
+	return ChatResponse{}, p.err
+}
+
+// -/ 1/2
+
+// -- 2/2 CORE · TestProbeModelUsesOneRealMinimalRequest <- START HERE --
+
+func TestProbeModelUsesOneRealMinimalRequest(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		fake := &probeProvider{}
+		if err := ProbeModel(context.Background(), fake); err != nil {
+			t.Fatal(err)
+		}
+		if len(fake.requests) != 1 {
+			t.Fatalf("requests = %d, want one", len(fake.requests))
+		}
+		request := fake.requests[0]
+		if request.MaxTokens != 1 || len(request.Messages) != 1 || request.Messages[0].Role != RoleUser {
+			t.Fatalf("probe request is not minimal: %+v", request)
+		}
+	})
+
+	t.Run("provider rejection", func(t *testing.T) {
+		serverErr := errors.New(`server said: model "fake-model" is not available`)
+		fake := &probeProvider{err: serverErr}
+		if err := ProbeModel(context.Background(), fake); !errors.Is(err, serverErr) {
+			t.Fatalf("error = %v, want the provider's own error", err)
+		}
+		if len(fake.requests) != 1 {
+			t.Fatalf("requests = %d, want one", len(fake.requests))
+		}
+	})
+}
+
+// -/ 2/2

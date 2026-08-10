@@ -1,3 +1,26 @@
+/**
+ * @overview Pins CLI row rendering, runtime output, version identity, and command test helpers. ~240 lines, no public symbols.
+ *
+ *   READING GUIDE
+ *   -------------
+ *   1. Start at TestAGroupedResultUsesExactTOON
+ *   2. Read TestRuntimeListingsUseTOONRows
+ *   3. runRoot/runRootErr are the shared hermetic CLI harness
+ *
+ *   MAIN FLOW
+ *   fixture rows/args -> renderer/root command -> exact output assertion
+ *
+ *   PUBLIC API
+ *   ----------
+ *   None (test-only file)
+ *
+ *   INTERNALS
+ *   ---------
+ *   rendering tests, version tests, runRoot, runRootErr
+ *
+ * @exports
+ * @deps io, strings, testing; CLI rendering and hermetic model test backend
+ */
 package cli
 
 import (
@@ -5,6 +28,8 @@ import (
 	"strings"
 	"testing"
 )
+
+// -- 1/3 CORE · row rendering contracts <- START HERE --
 
 // The readable rendering has to work for all templates, including rows without
 // "source" and "text" columns.
@@ -139,6 +164,10 @@ func TestAnUndeclaredColumnStillShowsUp(t *testing.T) {
 	}
 }
 
+// -/ 1/3
+
+// -- 2/3 CORE · runtime and version contracts --
+
 func TestRuntimeListingsUseTOONRows(t *testing.T) {
 	type report struct{ runtime, state, detail string }
 	var output strings.Builder
@@ -183,6 +212,10 @@ func TestTheVersionFlagAnswersWhatTheSubcommandAnswers(t *testing.T) {
 	}
 }
 
+// -/ 2/3
+
+// -- 3/3 HELPER · runRoot and runRootErr --
+
 func runRoot(t *testing.T, build Build, args ...string) string {
 	t.Helper()
 	out, err := runRootErr(t, build, nil, args...)
@@ -196,7 +229,7 @@ func runRoot(t *testing.T, build Build, args ...string) string {
 func runRootErr(t *testing.T, build Build, in io.Reader, args ...string) (string, error) {
 	t.Helper()
 	var out strings.Builder
-	env := &cliEnv{build: build, out: &out, errOut: &out}
+	env := hermeticCLIEnv(&cliEnv{build: build, out: &out, errOut: &out})
 	root := rootCommand(env)
 	root.SetArgs(args)
 	root.SetOut(&out)
@@ -207,3 +240,5 @@ func runRootErr(t *testing.T, build Build, in io.Reader, args ...string) (string
 	err := root.Execute()
 	return out.String(), err
 }
+
+// -/ 3/3

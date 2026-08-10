@@ -1,14 +1,43 @@
 //go:build acceptance
 
+/**
+ * @overview Implements acceptance steps for provider login/logout and credential safety. ~125 lines, no public symbols.
+ *
+ *   READING GUIDE
+ *   -------------
+ *   1. Start at loginWithAPIKey            <- real catalogue/probe fixture
+ *   2. registerProviderCredentialSteps     <- Gherkin binding
+ *   3. Assertions verify mode, redaction, and deletion
+ *
+ *   MAIN FLOW
+ *   Gherkin step -> fake live provider -> roca login/probe -> filesystem assertion
+ *
+ *   PUBLIC API
+ *   ----------
+ *   None (acceptance-tag test file)
+ *
+ *   INTERNALS
+ *   ---------
+ *   registerProviderCredentialSteps, loginWithAPIKey, credential assertions
+ *
+ * @exports
+ * @deps godog, httptest; providerAcceptanceWorld
+ */
 package acceptance
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/cucumber/godog"
 )
+
+// -- 1/2 CORE · registration and login/logout flows <- START HERE --
 
 func registerProviderCredentialSteps(ctx *godog.ScenarioContext, w *providerAcceptanceWorld) {
 	ctx.Given(`^the API key for "([^"]*)" has been stored through login$`, w.keyStoredThroughLogin)
@@ -26,12 +55,33 @@ func (w *providerAcceptanceWorld) keyStoredThroughLogin(provider string) error {
 
 func (w *providerAcceptanceWorld) loginWithAPIKey(provider, key string) error {
 	w.credential = key
-	return w.runWithInput(key+"\n", "login", provider)
+	const model = "credential-acceptance-model"
+	server := httptest.NewServer(http.HandlerFunc(func(out http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/models":
+			_ = json.NewEncoder(out).Encode(map[string]any{"data": []any{map[string]any{"id": model}}})
+		case "/chat/completions":
+			_ = json.NewEncoder(out).Encode(map[string]any{"choices": []any{map[string]any{
+				"message": map[string]any{"role": "assistant", "content": "x"},
+			}}})
+		default:
+			http.NotFound(out, request)
+		}
+	}))
+	w.readyServers = append(w.readyServers, server)
+	if err := w.writeConfig(fmt.Sprintf("[models.%s]\nbase_url = %s\n", provider, strconv.Quote(server.URL))); err != nil {
+		return err
+	}
+	return w.runWithInput(key+"\n", "login", provider, "--model", model)
 }
 
 func (w *providerAcceptanceWorld) logout(provider string) error {
 	return w.run("logout", provider)
 }
+
+// -/ 1/2
+
+// -- 2/2 HELPER · credential assertions --
 
 func (w *providerAcceptanceWorld) credentialStoredAt0600() error {
 	path := w.credentialPath("xai")
@@ -70,3 +120,5 @@ func (w *providerAcceptanceWorld) outputNamesRemovedCredential(provider string) 
 	}
 	return nil
 }
+
+// -/ 2/2

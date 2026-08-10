@@ -1,7 +1,34 @@
+/**
+ * @overview Owns model diagnosis, catalogues, login/logout, and model switching. ~730 lines, no public symbols.
+ *
+ *   READING GUIDE
+ *   -------------
+ *   1. Start at loginCommand             <- credential entry point
+ *   2. loginCodex/loginKey               <- provider-specific authentication
+ *   3. loginModel                        <- validated persistence handoff
+ *   4. modelSetCommand                   <- no-login model switching
+ *   5. doctorCommand/modelsCommand       <- read-only diagnosis
+ *
+ *   MAIN FLOW
+ *   login -> credential -> validatedModel -> config -> narration
+ *
+ *   PUBLIC API
+ *   ----------
+ *   None (commands are registered within package cli)
+ *
+ *   INTERNALS
+ *   ---------
+ *   doctorCommand, modelsCommand, loginCommand, logoutCommand, modelCommand
+ *   loginCodex, loginKey, loginModel, modelSetContext, knownProviderNames
+ *
+ * @exports
+ * @deps cobra, x/term; provider, config, oauth, service
+ */
 package cli
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +42,8 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	"golang.org/x/term"
 )
+
+// -- 1/5 HELPER · doctorCommand and renderDoctor --
 
 func doctorCommand(env *cliEnv) *cobra.Command {
 	return &cobra.Command{
@@ -103,6 +132,10 @@ func orDash(value string) string {
 	}
 	return value
 }
+
+// -/ 1/5
+
+// -- 2/5 HELPER · modelsCommand and renderModels --
 
 const modelsHelp = "" +
 	"List the models each configured provider offers, and mark the one that is\n" +
@@ -194,6 +227,10 @@ func renderModels(env *cliEnv, listings []provider.ModelsListing, warnings []str
 	}
 }
 
+// -/ 2/5
+
+// -- 3/5 CORE · loginCommand, loginCodex, loginKey, and loginModel <- START HERE --
+
 const loginHelp = "" +
 	"Log in to a model provider. Same verb for every provider this build ships:\n" +
 	"\n" +
@@ -210,7 +247,10 @@ const loginHelp = "" +
 	"Config-file api_key and the provider's environment variable keep working;\n" +
 	"a key stored by login takes precedence.\n" +
 	"\n" +
-	"Use --model <id> to persist the model under [models.<provider>] in ~/.roca/config.toml.\n\n" +
+	"After login, choose a model with the arrow keys. The choice is checked against\n" +
+	"the provider catalogue and probed with the new credential before config changes.\n" +
+	"Scripts can use --model <id>; the ID is subject to the same checks before it\n" +
+	"is written under [models.<provider>] in ~/.roca/config.toml.\n\n" +
 	"With no provider argument, lists what this build supports."
 
 func loginCommand(env *cliEnv) *cobra.Command {
@@ -357,6 +397,10 @@ func (env *cliEnv) loginCodex(cmd *cobra.Command, requestedModel string) error {
 	if err != nil {
 		return err
 	}
+	file, err := config.LoadFile(paths.Config)
+	if err != nil {
+		return err
+	}
 	store := provider.CodexStore(paths.Credentials)
 	// The narrative (the address to open, the waiting line) is prompt output,
 	// so it travels on stderr: under --json stdout has to carry only the result
@@ -367,12 +411,14 @@ func (env *cliEnv) loginCodex(cmd *cobra.Command, requestedModel string) error {
 	if err != nil {
 		return err
 	}
-	model, err := env.loginModel(paths, provider.NameCodex, requestedModel)
-	if err != nil {
-		return err
-	}
 	if err := store.Save(token); err != nil {
 		return err
+	}
+	model, err := env.loginModel(cmd.Context(), cmd.InOrStdin(), paths, file,
+		provider.NameCodex, requestedModel)
+	if err != nil {
+		return fmt.Errorf("%w; the %s session is stored at %s, so rerun `roca model set <id>` to finish",
+			err, provider.NameCodex, store.Path)
 	}
 
 	if env.json {
@@ -402,6 +448,10 @@ func (env *cliEnv) loginKey(cmd *cobra.Command, name, requestedModel string) err
 	if err != nil {
 		return err
 	}
+	file, err := config.LoadFile(paths.Config)
+	if err != nil {
+		return err
+	}
 	preset, _ := provider.Preset(name)
 	label := preset.Label
 	if label == "" {
@@ -413,14 +463,15 @@ func (env *cliEnv) loginKey(cmd *cobra.Command, name, requestedModel string) err
 	if err != nil {
 		return err
 	}
-	model, err := env.loginModel(paths, name, requestedModel)
-	if err != nil {
-		return err
-	}
 	if err := provider.SaveAPIKey(paths.Credentials, name, key); err != nil {
 		return err
 	}
 	path := provider.APIKeyPath(paths.Credentials, name)
+	model, err := env.loginModel(cmd.Context(), cmd.InOrStdin(), paths, file, name, requestedModel)
+	if err != nil {
+		return fmt.Errorf("%w; the %s credential is stored at %s, so rerun `roca model set <id>` to finish",
+			err, name, path)
+	}
 	if env.json {
 		return env.printJSON(map[string]any{
 			"provider":     name,
@@ -436,8 +487,9 @@ func (env *cliEnv) loginKey(cmd *cobra.Command, name, requestedModel string) err
 	return nil
 }
 
-func (env *cliEnv) loginModel(paths config.Paths, name, requested string) (string, error) {
-	file, err := config.LoadFile(paths.Config)
+func (env *cliEnv) loginModel(ctx context.Context, in io.Reader, paths config.Paths,
+	file config.File, name, requested string) (string, error) {
+	model, err := env.validatedModel(ctx, in, paths, file, name, requested)
 	if err != nil {
 		return "", err
 	}
@@ -448,36 +500,13 @@ func (env *cliEnv) loginModel(paths config.Paths, name, requested string) (strin
 	order = append([]string{name}, slices.DeleteFunc(slices.Clone(order), func(current string) bool {
 		return current == name
 	})...)
-	if requested != "" {
-		if err := config.SetProviderModel(paths.Config, name, requested); err != nil {
-			return "", err
-		}
+	if err := config.SetProviderModel(paths.Config, name, model); err != nil {
+		return "", err
 	}
 	if err := config.SetModelOrder(paths.Config, order); err != nil {
-		return "", err
+		return "", fmt.Errorf("model %s was validated and written, but update the provider order: %w", model, err)
 	}
-	file, err = config.LoadFile(paths.Config)
-	if err != nil {
-		return "", err
-	}
-	cascade, err := provider.BuildCascade(provider.Settings{
-		File: file, Credentials: paths.Credentials,
-		Env: func(key string) string {
-			if key == provider.EnvOrder {
-				return ""
-			}
-			return os.Getenv(key)
-		},
-	})
-	if err != nil {
-		return "", fmt.Errorf("resolve the model for %s: %w", name, err)
-	}
-	for _, p := range cascade.Providers {
-		if p.Name() == name {
-			return p.ModelID(), nil
-		}
-	}
-	return "", fmt.Errorf("resolve the model for %s: provider is not in the persisted order", name)
+	return model, nil
 }
 
 func loginNext(paths config.Paths, name string) string {
@@ -545,6 +574,10 @@ func readSecret(prompt string, in io.Reader, out io.Writer) (string, error) {
 	return key, nil
 }
 
+// -/ 3/5
+
+// -- 4/5 HELPER · logoutCommand and credential forgetting --
+
 func logoutCommand(env *cliEnv) *cobra.Command {
 	return &cobra.Command{
 		Use:   "logout <provider>",
@@ -602,6 +635,10 @@ func (env *cliEnv) forget(name, what string) error {
 	return nil
 }
 
+// -/ 4/5
+
+// -- 5/5 CORE · modelCommand and modelSetContext --
+
 // modelCommand is the no-login way to switch the answering model. It changes a
 // model assignment in the configuration without touching a credential: the
 // operator who already logged in picks a different model the same provider
@@ -618,17 +655,21 @@ func modelCommand(env *cliEnv) *cobra.Command {
 
 func modelSetCommand(env *cliEnv) *cobra.Command {
 	return &cobra.Command{
-		Use:   "set <provider> <model-id>",
+		Use:   "set <model-id>",
 		Short: "Set a provider's answering model in the configuration",
-		Long: "Writes models.<provider>.model in ~/.roca/config.toml and leaves every\n" +
+		Long: "Validates a model for the first provider in the configured order, then\n" +
+			"writes models.<provider>.model in ~/.roca/config.toml and leaves every\n" +
 			"other setting — the provider order, the credentials, unrelated tables —\n" +
 			"exactly where it was. It is the way to switch the answering model without\n" +
-			"re-running a login flow.\n\n" +
-			"  roca model set codex gpt-5.6-sol\n" +
+			"re-running a login flow. The former two-argument spelling remains accepted.\n\n" +
+			"  roca model set gpt-5.6-sol\n" +
 			"  roca model set ollama qwen3.5:4b",
-		Args: cobra.ExactArgs(2),
-		RunE: func(_ *cobra.Command, args []string) error {
-			return env.modelSet(args[0], args[1])
+		Args: cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 1 {
+				return env.modelSetCurrent(cmd.Context(), args[0])
+			}
+			return env.modelSetContext(cmd.Context(), args[0], args[1])
 		},
 	}
 }
@@ -637,8 +678,11 @@ func modelSetCommand(env *cliEnv) *cobra.Command {
 // database and it does not rewrite the order: a provider already in the cascade
 // keeps its place, and only the model it answers with changes.
 func (env *cliEnv) modelSet(rawName, modelID string) error {
+	return env.modelSetContext(context.Background(), rawName, modelID)
+}
+
+func (env *cliEnv) modelSetContext(ctx context.Context, rawName, modelID string) error {
 	name := strings.ToLower(strings.TrimSpace(rawName))
-	model := strings.TrimSpace(modelID)
 	paths, err := env.resolvePaths()
 	if err != nil {
 		return err
@@ -651,6 +695,10 @@ func (env *cliEnv) modelSet(rawName, modelID string) error {
 	if !slices.Contains(known, name) {
 		message := fmt.Sprintf("there is no provider %q\n\n%s", rawName, knownProvidersHelp(known))
 		return fmt.Errorf("%s", message)
+	}
+	model, err := env.validatedModel(ctx, nil, paths, file, name, modelID)
+	if err != nil {
+		return err
 	}
 	if err := config.SetProviderModel(paths.Config, name, model); err != nil {
 		return err
@@ -703,3 +751,5 @@ func knownProvidersHelp(names []string) string {
 		"Known providers: %s\n\nSee the configured providers with `roca doctor`.",
 		strings.Join(names, ", "))
 }
+
+// -/ 5/5
