@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/lifecycle"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
@@ -52,6 +53,15 @@ func TestAWiderInventoryStillDeletesNothingOfTheOperators(t *testing.T) {
 // purge inventory has to name them, or uninstall leaves them behind and the
 // surviving skill still instructs agents to call a binary that is gone.
 func TestThePurgeDeclaresSkillPaths(t *testing.T) {
+	// A runtime directory the operator declared in their environment would land
+	// in the inventory too, and two tests here hand it straight to
+	// lifecycle.Apply, which calls os.RemoveAll on every entry: on a machine with
+	// CLAUDE_CONFIG_DIR set, running the suite deleted the operator's real skill
+	// directory. resolvedIn isolates that, and this asserts the isolation holds.
+	elsewhere := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(elsewhere, ".claude"))
+	t.Setenv("CODEX_HOME", filepath.Join(elsewhere, ".codex"))
+
 	home := t.TempDir()
 	paths := resolvedIn(t, home)
 	owned := ownedPaths(paths)
@@ -60,6 +70,10 @@ func TestThePurgeDeclaresSkillPaths(t *testing.T) {
 	for _, path := range owned {
 		if strings.Contains(path, "skills") && strings.Contains(path, "roca") {
 			found++
+		}
+		if !strings.HasPrefix(path, home) {
+			t.Errorf("the inventory reaches outside the resolved home:\n  %s\n  home is %s",
+				path, home)
 		}
 	}
 	if found < 5 {
@@ -75,20 +89,11 @@ func TestThePurgeDeclaresSkillPaths(t *testing.T) {
 // decision; whatever survives is named, or the build fails).
 func TestUninstallCleansTheEmptySkillChainAndNamesEverySurvivor(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("ROCA_DB_PATH", "")
-	t.Setenv("ROCA_CONFIG", "")
-	t.Setenv("ROCA_MODELS_ORDER", "none")
+	isolateRuntimeDirs(t, home)
 	// In production the binary is `roca`, and the install writes that name into
 	// the runtime configuration. In-process the executable is the test binary,
 	// so name a `roca` for the install to write.
 	t.Setenv("ROCA_BIN", filepath.Join(home, "roca"))
-	for _, key := range []string{
-		"CLAUDE_CONFIG_DIR", "CODEX_HOME", "OPENCODE_CONFIG",
-		"HERMES_HOME", "PI_CODING_AGENT_DIR",
-	} {
-		t.Setenv(key, "")
-	}
 
 	// Pre-existing operator configuration: install leaves recovery .bak files
 	// beside these, and the uninstall must name every one that survives.
@@ -153,11 +158,30 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
+// isolateRuntimeDirs clears the runtime directory overrides before any path is
+// resolved. The inventory is built with os.Getenv, and these tests hand it to
+// lifecycle.Apply, which calls os.RemoveAll on every entry: an override left
+// standing pointed the purge at the operator's real directories.
+func isolateRuntimeDirs(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	t.Setenv("ROCA_DB_PATH", "")
+	t.Setenv("ROCA_CONFIG", "")
+	t.Setenv("ROCA_MODELS_ORDER", "none")
+	for _, key := range []string{
+		"CLAUDE_CONFIG_DIR", "CODEX_HOME", "OPENCODE_CONFIG",
+		"HERMES_HOME", "PI_CODING_AGENT_DIR",
+	} {
+		t.Setenv(key, "")
+	}
+}
+
 // resolvedIn is the layout of one installation, asked of the package that owns
 // it. Writing the paths out by hand here would measure this test's idea of the
 // layout and not the product's.
 func resolvedIn(t *testing.T, home string) config.Paths {
 	t.Helper()
+	isolateRuntimeDirs(t, home)
 	paths, err := config.Resolve(config.Input{Home: home})
 	if err != nil {
 		t.Fatal(err)
@@ -200,5 +224,59 @@ func TestTheReadableUninstallReportsThePurgeOutcome(t *testing.T) {
 				t.Errorf("must not say %q in\n%s", want.absent, out.String())
 			}
 		})
+	}
+}
+
+func TestAFailedWithdrawalIsNotReportedAsAPurge(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: a read-only directory cannot be made unwritable")
+	}
+	home := t.TempDir()
+	isolateRuntimeDirs(t, home)
+
+	// Codex declares roca inside a directory nothing may write, so withdrawing it
+	// has to stage a file there and cannot. Every other runtime's file is absent,
+	// which is not an error and not a line of output.
+	codex := filepath.Join(home, ".codex")
+	writeFile(t, filepath.Join(codex, "config.toml"),
+		"[mcp_servers.roca]\ncommand = \"roca\"\nargs = [\"mcp\", \"serve\"]\n")
+	if err := os.Chmod(codex, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(codex, 0o700) })
+
+	var out strings.Builder
+	env := &cliEnv{out: &out, errOut: &out, started: time.Now()}
+	if err := env.uninstall(uninstallCommand(env), true); err != nil {
+		t.Fatalf("uninstall returned an error instead of a report: %v", err)
+	}
+
+	if strings.Contains(out.String(), "purged: yes") {
+		t.Errorf("a purge that could not withdraw reports itself as done:\n%s", out.String())
+	}
+	if env.code != ExitError {
+		t.Errorf("exit code = %d, want %d", env.code, ExitError)
+	}
+}
+
+// The JSON surface never says where the database lives. withoutDBPaths filtered
+// entries that ARE the path exactly, which is right for the deleted list, but the
+// error list carries prose with the path inside it, so an unlinking failure
+// published the location the surface exists to withhold.
+func TestTheJSONSurfaceScrubsTheDatabasePathOutOfErrors(t *testing.T) {
+	const db = "/home/someone/.roca/roca.db"
+	errors := []string{
+		"delete " + db + "-wal: permission denied",
+		"delete " + db + ": permission denied",
+		"withdraw roca from codex: read-only file system",
+	}
+
+	for _, got := range scrubDBPaths(errors, db) {
+		if strings.Contains(got, db) {
+			t.Errorf("an error published the database path: %q", got)
+		}
+	}
+	if len(scrubDBPaths(errors, db)) != len(errors) {
+		t.Errorf("an error was dropped instead of scrubbed: %v", scrubDBPaths(errors, db))
 	}
 }

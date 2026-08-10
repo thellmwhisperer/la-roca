@@ -382,16 +382,7 @@ type skillFixture struct{}
 func fixtureInstallation(t *testing.T) skillFixture {
 	t.Helper()
 	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("ROCA_DB_PATH", "")
-	t.Setenv("ROCA_CONFIG", "")
-	t.Setenv("ROCA_MODELS_ORDER", "none")
-	for _, key := range []string{
-		"CLAUDE_CONFIG_DIR", "CODEX_HOME", "OPENCODE_CONFIG",
-		"HERMES_HOME", "PI_CODING_AGENT_DIR",
-	} {
-		t.Setenv(key, "")
-	}
+	isolateRuntimeDirs(t, home)
 	runRoot(t, Build{Version: "test", Commit: "test-sha"},
 		"init", "--db-path", filepath.Join(home, ".roca", "roca.db"))
 	return skillFixture{}
