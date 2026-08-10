@@ -161,17 +161,29 @@ func (m *world) databaseNeedingRepair() error {
 	return nil
 }
 
-// modelDefersToLiteralSearch points the model at a provider that reaches its
-// catalogue but cannot answer, so every question falls to the literal FTS rescue
+// modelDefersToLiteralSearch points the model at a provider whose valid plan
+// deliberately finds no rows, so every question falls to the literal FTS rescue
 // over the question's own words. That is the one route the search scenarios
-// measure, reached without depending on any real model on the host.
+// measure, reached without depending on any real model on the host or turning a
+// healthy no-match into a provider failure.
 func (m *world) modelDefersToLiteralSearch() error {
 	m.models.frontier = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/models") {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		w.WriteHeader(http.StatusInternalServerError)
+		if strings.HasSuffix(r.URL.Path, "/chat/completions") {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []any{map[string]any{
+					"message": map[string]any{
+						"role":    "assistant",
+						"content": "SELECT id FROM memories WHERE 0 LIMIT 1",
+					},
+				}},
+			})
+			return
+		}
+		http.NotFound(w, r)
 	}))
 	m.models.frontierURL = m.models.frontier.URL
 	m.models.frontierKey = "store-suite-literal-search"

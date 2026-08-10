@@ -116,7 +116,7 @@ func (w *distributionWorld) storeThenQueryOverMCP() error {
 		})
 	})
 	mux.HandleFunc("/api/chat", func(out http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(out, `{"message":{"content":"SELECT 'memory' AS source, id, content AS text, created_at FROM memories WHERE content LIKE '%distribution beacon%'"}}`)
+		_, _ = io.WriteString(out, `{"message":{"content":"SELECT 'memory' AS source, id, content AS text, created_at FROM memories WHERE content = 'distribution beacon acceptance memory' LIMIT 1"}}`)
 	})
 	server := httptest.NewServer(mux)
 	defer server.Close()
