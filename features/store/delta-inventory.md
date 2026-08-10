@@ -1,4 +1,4 @@
-# Store domain — capability delta vs. the approved scenarios
+# Store capability delta inventory
 
 The 16 approved store-domain scenarios are the current contract. This
 file lists what the store-domain CODE can do that NO approved scenario claims,
