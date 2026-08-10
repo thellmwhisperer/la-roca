@@ -218,6 +218,8 @@ func (s *Service) Interpret(ctx context.Context, question string,
 	limited := rows
 	if len(rows) > maxRowsToInterpret {
 		limited = rows[:maxRowsToInterpret]
+		fmt.Fprintf(&b, "Showing %d of %d rows; the remaining rows were omitted.\n",
+			len(limited), len(rows))
 	}
 	for _, row := range limited {
 		values := make([]string, len(columns))
