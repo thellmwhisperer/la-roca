@@ -6,6 +6,11 @@
 /.tmp/
 /.worktrees/
 
+# Agent-runtime session state. Coding agents drop their own scratch here when
+# they work in a checkout; it is never product content (one slipped into
+# history on 2026-08-10 and blocked a cleanup).
+/.opencode/
+
 # macOS
 .DS_Store
 
