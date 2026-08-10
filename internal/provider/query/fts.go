@@ -151,6 +151,13 @@ func RenderSQLLike(plan Plan, coordinationLayers []string) (string, error) {
 	if strings.TrimSpace(plan.Term) == "" {
 		return "", fmt.Errorf("the term search needs a term and the question offers none")
 	}
+	// The clauses are built before any SQL is formatted, so a term that carries
+	// no word is refused the way RenderSQLFTS refuses it. Interpolating an empty
+	// clause list produced `WHERE  AND ...`, which is not a narrower search: it
+	// is broken SQL handed to the gate.
+	if likeClauses("content", plan.Term) == "" {
+		return "", fmt.Errorf("the term search needs a term and the question offers none")
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "SELECT 'memory' AS source, id, content AS text, created_at "+
 		"FROM memories WHERE %s AND %s", likeClauses("content", plan.Term), supersedeExclusion("id"))

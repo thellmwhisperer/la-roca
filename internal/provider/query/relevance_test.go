@@ -68,3 +68,20 @@ func TestTheModelPromptKeepsSearchTextAndSourceRankAligned(t *testing.T) {
 		}
 	}
 }
+
+// The two renderers of one Plan agree about what a usable term is. RenderSQLFTS
+// refuses a term that yields no clause; RenderSQLLike built its SQL first and
+// interpolated an empty clause list, so a punctuation-only term produced
+// `WHERE  AND ...`: broken SQL handed to the gate instead of a refusal.
+func TestBothRenderersRefuseATermThatYieldsNoClause(t *testing.T) {
+	for _, term := range []string{"+", " + ", "++"} {
+		plan := query.Plan{Template: query.TemplateSearchByTerm, Term: term, Limit: 10}
+		if _, err := query.RenderSQLFTS(plan, nil, 50); err == nil {
+			t.Errorf("RenderSQLFTS(%q) accepted a term with no word in it", term)
+		}
+		stmt, err := query.RenderSQLLike(plan, nil)
+		if err == nil {
+			t.Errorf("RenderSQLLike(%q) accepted a term with no word in it: %s", term, stmt)
+		}
+	}
+}
