@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -393,7 +394,7 @@ func queryCommand(env *cliEnv) *cobra.Command {
 			}
 			env.print("database: %s", svc.DB().Path())
 			if answer.interpretErr != nil {
-				env.print("(the model could not interpret: %v)", answer.interpretErr)
+				env.print("%s", interpretationFallback(answer.interpretErr))
 			}
 			env.print("%s", axiQuery(answer))
 			return nil
@@ -427,13 +428,21 @@ func answerQuery(ctx context.Context, svc *service.Service, req service.QueryReq
 	}
 	started := time.Now()
 	answer.prose, answer.interpretErr = svc.Interpret(
-		ctx, result.Question, result.Columns, result.Rows)
+		ctx, result.Question, result.Columns, result.Rows,
+		time.Duration(result.SQLInferenceMS)*time.Millisecond)
 	answer.result.InterpretationMS = time.Since(started).Milliseconds()
 	answer.result.Interpretation = answer.prose
 	if answer.interpretErr != nil {
 		answer.result.ProviderError = answer.interpretErr.Error()
 	}
 	return answer, nil
+}
+
+func interpretationFallback(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "summary timed out; showing rows instead."
+	}
+	return "summary unavailable; showing rows instead."
 }
 
 func axiQuery(answer queryAnswer) string {

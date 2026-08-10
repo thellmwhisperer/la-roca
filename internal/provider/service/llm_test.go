@@ -691,7 +691,7 @@ func TestInterpretPromptIsLanguageAgnostic(t *testing.T) {
 
 	prose, err := svc.Interpret(context.Background(), "what was decided about the format",
 		[]string{"source", "text"},
-		[]map[string]any{{"source": "memory", "text": "decision about the format"}})
+		[]map[string]any{{"source": "memory", "text": "decision about the format"}}, 0)
 	if err != nil {
 		t.Fatalf("Interpret: %v", err)
 	}
@@ -716,8 +716,9 @@ func TestInterpretCapsTheRowsItHandsTheModel(t *testing.T) {
 	for i := range rows {
 		rows[i] = map[string]any{"id": i, "text": fmt.Sprintf("row %d", i)}
 	}
+	rows[0]["text"] = strings.Repeat("x", 300)
 
-	if _, err := svc.Interpret(context.Background(), "all", []string{"id", "text"}, rows); err != nil {
+	if _, err := svc.Interpret(context.Background(), "all", []string{"id", "text"}, rows, 0); err != nil {
 		t.Fatalf("Interpret: %v", err)
 	}
 	// The first ten rows (0..9) travel; the eleventh and beyond do not.
@@ -727,6 +728,10 @@ func TestInterpretCapsTheRowsItHandsTheModel(t *testing.T) {
 	}
 	if strings.Contains(prompt, "row 10") {
 		t.Errorf("the prompt carries more than ten rows:\n%s", prompt)
+	}
+	if strings.Contains(prompt, strings.Repeat("x", 241)) ||
+		!strings.Contains(prompt, strings.Repeat("x", 239)+"…") {
+		t.Errorf("the prompt did not cap a field at 240 characters:\n%s", prompt)
 	}
 }
 
@@ -740,7 +745,7 @@ func TestInterpretFallsBackWhenNoModelServes(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			svc := serviceWithModel(t, providers...)
 			_, err := svc.Interpret(context.Background(), "x",
-				[]string{"a"}, []map[string]any{{"a": 1}})
+				[]string{"a"}, []map[string]any{{"a": 1}}, 0)
 			if err == nil {
 				t.Fatal("expected an error when no model can serve the second call")
 			}
@@ -767,7 +772,7 @@ func TestInterpretKeepsProseThatQuotesAFencedBlock(t *testing.T) {
 	prose := "The repo is:\n```\nexample-labs/synthetic-orchid\n```\nand the channel has 23 subscribers."
 	svc := serviceWithModel(t, answering("codex", "<think>summarize</think>\n"+prose))
 	got, err := svc.Interpret(context.Background(), "give me the details",
-		[]string{"text"}, []map[string]any{{"text": "Synthetic Orchid Test Fixture"}})
+		[]string{"text"}, []map[string]any{{"text": "Synthetic Orchid Test Fixture"}}, 0)
 	if err != nil || got != prose {
 		t.Fatalf("the prose was clipped: %q (err=%v)", got, err)
 	}

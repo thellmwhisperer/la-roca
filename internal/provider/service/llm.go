@@ -200,7 +200,7 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 // row renderer is the floor, and the prose is what sits on top of it when a
 // model answers.
 func (s *Service) Interpret(ctx context.Context, question string,
-	columns []string, rows []map[string]any) (string, error) {
+	columns []string, rows []map[string]any, sqlInference time.Duration) (string, error) {
 	cascade := s.opts.Providers
 	if cascade.Disabled || len(cascade.Providers) == 0 {
 		return "", fmt.Errorf("no model is configured to interpret the rows")
@@ -224,12 +224,13 @@ func (s *Service) Interpret(ctx context.Context, question string,
 	for _, row := range limited {
 		values := make([]string, len(columns))
 		for i, column := range columns {
-			values[i] = fmt.Sprint(row[column])
+			values[i] = truncate(fmt.Sprint(row[column]), interpretationFieldBudget, "")
 		}
 		b.WriteString(strings.Join(values, ", "))
 		b.WriteByte('\n')
 	}
 	b.WriteString("Answer in the same language as the question.")
+	cascade.Timeout = interpretationTimeout(cascade.Timeout, sqlInference)
 	answer, err := cascade.Chat(ctx, chosen, provider.ChatRequest{
 		Messages: []provider.Message{{Role: provider.RoleUser, Content: b.String()}},
 	})
@@ -243,6 +244,22 @@ func (s *Service) Interpret(ctx context.Context, question string,
 // maxRowsToInterpret caps how many rows the second call hands the model, so a
 // large result set does not blow the context for an answer that summarizes it.
 const maxRowsToInterpret = 10
+
+// interpretationFieldBudget keeps the prose prompt materially smaller than
+// the evidence returned to the caller. The complete, caller-selected row
+// budget remains available in the rows printed below the summary.
+const interpretationFieldBudget = 240
+
+// interpretationTimeout gives a cold local model proportionate time for its
+// second, prose-heavy answer. The configured provider timeout remains the
+// floor, while the cap still guarantees that a request eventually returns.
+func interpretationTimeout(base, sqlInference time.Duration) time.Duration {
+	if base <= 0 {
+		base = provider.DefaultTimeout
+	}
+	adaptive := 3 * sqlInference
+	return min(max(base, adaptive), 3*base)
+}
 
 // tried renders the diagnosis: every provider, its reason and its remedy.
 func tried(attempts []provider.Attempt) string {

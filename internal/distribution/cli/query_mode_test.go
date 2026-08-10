@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -15,6 +16,8 @@ type queryModeProvider struct {
 	answers []string
 	calls   int
 	failAt  int
+	delays  []time.Duration
+	budgets []time.Duration
 }
 
 const (
@@ -31,8 +34,18 @@ func (p *queryModeProvider) Ready(context.Context) provider.Readiness {
 func (p *queryModeProvider) Models(context.Context) provider.ModelReport {
 	return provider.ModelReport{Ready: true, Models: []string{p.ModelID()}}
 }
-func (p *queryModeProvider) Chat(context.Context, provider.ChatRequest) (provider.ChatResponse, error) {
+func (p *queryModeProvider) Chat(ctx context.Context, _ provider.ChatRequest) (provider.ChatResponse, error) {
 	p.calls++
+	if deadline, ok := ctx.Deadline(); ok {
+		p.budgets = append(p.budgets, time.Until(deadline))
+	}
+	if p.calls <= len(p.delays) && p.delays[p.calls-1] > 0 {
+		select {
+		case <-time.After(p.delays[p.calls-1]):
+		case <-ctx.Done():
+			return provider.ChatResponse{}, ctx.Err()
+		}
+	}
 	if p.calls == p.failAt {
 		return provider.ChatResponse{}, errors.New("interpretation unavailable")
 	}
@@ -41,11 +54,17 @@ func (p *queryModeProvider) Chat(context.Context, provider.ChatRequest) (provide
 }
 
 func queryModeService(t *testing.T, model *queryModeProvider) *service.Service {
+	return queryModeServiceWithTimeout(t, model, 0)
+}
+
+func queryModeServiceWithTimeout(t *testing.T, model *queryModeProvider,
+	timeout time.Duration) *service.Service {
 	t.Helper()
 	svc, err := service.Open(service.Options{
 		DBPath: filepath.Join(t.TempDir(), "roca.db"),
 		Providers: provider.Cascade{
 			Providers: []provider.Provider{model},
+			Timeout:   timeout,
 		},
 	})
 	if err != nil {
@@ -107,6 +126,34 @@ func TestQueryFullFallsBackToRowsWhenInterpretationFails(t *testing.T) {
 	}
 	if !strings.Contains(got, "rows[1]{source,id,text}") || !strings.Contains(got, "raw evidence") {
 		t.Fatalf("failed interpretation took the rows away:\n%s", got)
+	}
+}
+
+func TestQueryFullAdaptsTheInterpretationDeadlineAndReportsItsTimeout(t *testing.T) {
+	model := &queryModeProvider{
+		answers: []string{queryModeSQL, queryModeProse},
+		delays:  []time.Duration{20 * time.Millisecond, 200 * time.Millisecond},
+	}
+	answer, err := answerQuery(t.Context(),
+		queryModeServiceWithTimeout(t, model, 40*time.Millisecond),
+		service.QueryRequest{Question: queryModeQuestion}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(model.budgets) != 2 || model.budgets[1] < 50*time.Millisecond ||
+		model.budgets[1] <= model.budgets[0] {
+		t.Fatalf("provider budgets = %v; want interpretation scaled above the 40ms SQL budget", model.budgets)
+	}
+	got := interpretationFallback(answer.interpretErr) + "\n" + axiQuery(answer)
+	for _, want := range []string{
+		"summary timed out; showing rows instead.", "rows[1]{source,id,text}", "raw evidence",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("timeout fallback does not contain %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, context.DeadlineExceeded.Error()) {
+		t.Errorf("timeout fallback exposed the provider error:\n%s", got)
 	}
 }
 

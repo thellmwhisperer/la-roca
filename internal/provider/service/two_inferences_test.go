@@ -151,7 +151,7 @@ func runFullInferenceWithService(t *testing.T, svc *service.Service, question st
 	if err != nil {
 		t.Fatalf("Query: %v", err)
 	}
-	prose, err := svc.Interpret(context.Background(), question, result.Columns, result.Rows)
+	prose, err := svc.Interpret(context.Background(), question, result.Columns, result.Rows, 0)
 	if err != nil {
 		t.Fatalf("Interpret: %v", err)
 	}
