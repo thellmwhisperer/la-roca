@@ -20,13 +20,18 @@ func TestMCPToolErrorsMustNotCarryTheDatabasePath(t *testing.T) {
 	dbPath := svc.DB().Path()
 	session := connect(t, svc)
 
+	// roca_exec is the tool that actually fails over a table that is not there.
+	// The fixture used to be roca_sql, which answers "there is no model to ask"
+	// with no error at all, and the assertion below was skipped by a bare return:
+	// the privacy check had never run.
 	result, err := session.CallTool(context.Background(),
-		&mcp.CallToolParams{Name: "roca_sql", Arguments: map[string]any{"query": "SELECT * FROM nowhere"}})
+		&mcp.CallToolParams{Name: "roca_exec", Arguments: map[string]any{"sql": "SELECT * FROM nowhere"}})
 	if err != nil {
-		t.Fatalf("call roca_sql: %v", err)
+		t.Fatalf("call roca_exec: %v", err)
 	}
 	if !result.IsError {
-		return
+		t.Fatalf("roca_exec over a table that does not exist did not return an error: %s",
+			renderedText(result))
 	}
 	text := renderedText(result)
 	if strings.Contains(text, dbPath) {
