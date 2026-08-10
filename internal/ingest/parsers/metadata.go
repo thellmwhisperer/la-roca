@@ -65,9 +65,13 @@ func ParseSessionMetadata(content []byte, meta FileMeta) (Records, error) {
 			Reason: "session metadata has no supported identity (cliSessionId or sessionId)"}}}, nil
 	}
 
+	// `claude-cowork` is the legacy alias and it names the ENTRYPOINT only. The
+	// source agent is the roster name the scanner emits, so a file that declares
+	// the alias does not file the same source under a second identity.
 	sourceAgent := firstNonEmpty(meta.SourceAgent, "claude-desktop")
 	entrypoint := "claude-desktop"
 	if sourceAgent == "cowork" || sourceAgent == "claude-cowork" {
+		sourceAgent = "cowork"
 		entrypoint = "claude-cowork"
 	}
 

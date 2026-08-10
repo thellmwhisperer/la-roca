@@ -60,14 +60,25 @@ func TestSessionMetadataIsASnapshotWithNoExchange(t *testing.T) {
 	}
 }
 
+// The legacy alias names the entrypoint, never the source agent. The scanner
+// emits `cowork`, which is the name on the supported roster, so a session that
+// kept `claude-cowork` as its own source agent would file the same source under
+// two identities: one for query grouping and one in the rows.
 func TestCoworkMetadataDeclaresItsOwnEntrypoint(t *testing.T) {
-	records, err := Parse(KindSessionMetadata, []byte(desktopMetadata),
-		FileMeta{SourceAgent: "claude-cowork"})
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if got := records.Sessions[0].Metadata["entrypoint"]; got != "claude-cowork" {
-		t.Errorf("entrypoint = %v, want claude-cowork", got)
+	for _, declared := range []string{"cowork", "claude-cowork"} {
+		records, err := Parse(KindSessionMetadata, []byte(desktopMetadata),
+			FileMeta{SourceAgent: declared})
+		if err != nil {
+			t.Fatalf("parse %q: %v", declared, err)
+		}
+		session := records.Sessions[0]
+		if got := session.Metadata["entrypoint"]; got != "claude-cowork" {
+			t.Errorf("%s: entrypoint = %v, want claude-cowork", declared, got)
+		}
+		if session.SourceAgent != "cowork" {
+			t.Errorf("%s: source agent = %q, want the roster name cowork",
+				declared, session.SourceAgent)
+		}
 	}
 }
 
