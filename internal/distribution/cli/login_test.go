@@ -259,6 +259,9 @@ func TestKeyLoginStoresTheCredentialAt0600(t *testing.T) {
 func TestLoginAndLogoutJSONContracts(t *testing.T) {
 	// Bare login --json: structured provider catalogue.
 	t.Run("bare login", func(t *testing.T) {
+		// Without this the catalogue is read out of the developer's own home, so
+		// the assertion depends on their real configuration and credentials.
+		withTempHome(t)
 		out, err := runRootErr(t, Build{Version: "test"}, nil, "login", "--json")
 		if err != nil {
 			t.Fatalf("bare login --json: %v", err)
