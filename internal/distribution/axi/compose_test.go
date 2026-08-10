@@ -154,3 +154,28 @@ func TestStoreRendersTheIdentityLine(t *testing.T) {
 		t.Errorf("skipped store line = %q", skipped)
 	}
 }
+
+// Counted prose goes through Quantity and Number everywhere, including the
+// renderer that owns them. Exec was the one line still formatting its own count:
+// "1 rows" for a single row, and no thousands separator over a wide result.
+func TestExecCountsRowsTheWayEveryOtherRendererDoes(t *testing.T) {
+	one := axi.Exec(service.ExecResult{
+		SQL: "SELECT id, layer FROM memories LIMIT 1", RowCount: 1,
+		Columns: []string{"id", "layer"},
+		Rows:    []map[string]any{{"id": int64(1), "layer": "pattern"}},
+	})
+	if strings.Contains(one, "1 rows") {
+		t.Errorf("a single row is counted in the plural:\n%s", one)
+	}
+	if !strings.Contains(one, "1 row ") {
+		t.Errorf("a single row is not counted at all:\n%s", one)
+	}
+
+	many := axi.Exec(service.ExecResult{
+		SQL: "SELECT id FROM memories", RowCount: 12500,
+		Columns: []string{"id"}, Rows: []map[string]any{{"id": int64(1)}},
+	})
+	if !strings.Contains(many, "12,500 rows") {
+		t.Errorf("a wide count is not grouped:\n%s", many)
+	}
+}

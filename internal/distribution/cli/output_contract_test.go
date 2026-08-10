@@ -266,7 +266,8 @@ func TestExecHumanJSONAndError(t *testing.T) {
 	if !strings.Contains(human, "SELECT COUNT(*) AS n FROM memories") {
 		t.Errorf("exec narration lost the SQL it ran:\n%s", human)
 	}
-	if !strings.Contains(human, "rows ·") {
+	// A COUNT(*) returns exactly one row, and one row is counted in the singular.
+	if !strings.Contains(human, "1 row ·") {
 		t.Errorf("exec narration lost its row count and latency:\n%s", human)
 	}
 

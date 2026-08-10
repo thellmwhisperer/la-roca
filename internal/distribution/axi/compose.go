@@ -96,7 +96,8 @@ func Exec(res service.ExecResult) string {
 	var b strings.Builder
 	appendLine(&b, res.SQL)
 	appendLine(&b, RowOutput(res.Columns, res.Rows))
-	appendLine(&b, fmt.Sprintf("%d rows · %s", res.RowCount, Duration(res.LatencyMS)))
+	appendLine(&b, fmt.Sprintf("%s · %s",
+		Quantity(int64(res.RowCount), "row"), Duration(res.LatencyMS)))
 	if res.RowCount > 0 && !(res.RowCount == 1 && len(res.Columns) == 1) {
 		appendLine(&b, RenderHelp(
 			"Run `roca exec \"<SELECT>\" --json` for the complete result envelope",
