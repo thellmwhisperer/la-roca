@@ -125,6 +125,8 @@ func registerInstallSteps(ctx *godog.ScenarioContext, m *world) {
 	ctx.Then(`^the binary that was active still answers "roca --version"$`, m.theActiveBinaryStillAnswers)
 	ctx.Then(`^the active version is still the previous complete one$`, m.theVersionIsStillTheBuiltOne)
 	ctx.Then(`^"roca --version" reports the new version$`, m.theVersionIsTheNewOne)
+	ctx.Then(`^the output names what is published and how to install it$`,
+		m.theRefusalNamesThePublishedVersion)
 	ctx.Then(`^no partial installation tree is left in the HOME$`, m.noPartialInstallation)
 	ctx.Then(`^the active binary has not changed inode$`, m.theInodeHasNotChanged)
 	ctx.Then(`^the output names the file it refuses to overwrite$`, m.itNamesTheInstalledBinary)
@@ -1001,6 +1003,20 @@ func (m *world) binaryPath() string {
 // builtVersion asks the built binary what it calls itself. The channel
 // publishes that same string as "the current version", so the scenarios do not
 // have to know what `git describe` said on the machine that built it.
+// theRefusalNamesThePublishedVersion checks the answer a build that is not a
+// published release gets from `roca update`. The suite tests exactly the artefact
+// `make build` produces, and in a working copy `git describe` stamps it
+// `<sha>-dirty`, so this IS the answer on this machine: the updater will not
+// overwrite somebody's own build, and it says what is published and how to get it.
+func (m *world) theRefusalNamesThePublishedVersion() error {
+	for _, want := range []string{"not a published release", "install.sh"} {
+		if err := m.outputContains(want); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (m *world) builtVersion() string {
 	if m.install.builtVersion != "" {
 		return m.install.builtVersion
