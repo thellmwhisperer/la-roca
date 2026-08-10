@@ -236,7 +236,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 				})
 			}
 		}
-		fingerprint, err := Fingerprint(target.Path)
+		fingerprint, err := targetFingerprint(target)
 		if err != nil {
 			// The file was there when the scan ran and is not there now. That is a
 			// live disk, not an error worth a red run.

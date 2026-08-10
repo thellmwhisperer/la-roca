@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+
+	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
 )
 
 // Ingest idempotency has two levels because one is not enough.
@@ -40,6 +42,27 @@ func Fingerprint(path string) (string, error) {
 	}
 	return strconv.FormatInt(info.Size(), 10) + ":" +
 		strconv.FormatInt(info.ModTime().UnixNano(), 10), nil
+}
+
+// targetFingerprint includes SQLite's write-ahead log for database sources.
+// Commits can live only in that sidecar until the owning process checkpoints,
+// leaving the main database's size and mtime unchanged.
+func targetFingerprint(target Target) (string, error) {
+	main, err := Fingerprint(target.Path)
+	if err != nil {
+		return "", err
+	}
+	if target.Kind != parsers.KindOpenCodeDB && target.Kind != parsers.KindHermesDB {
+		return main, nil
+	}
+	wal, err := Fingerprint(target.Path + "-wal")
+	if err == nil {
+		return main + ":wal:" + wal, nil
+	}
+	if os.IsNotExist(err) {
+		return main + ":wal:none", nil
+	}
+	return "", err
 }
 
 // FileState is what the database remembers about one path.
