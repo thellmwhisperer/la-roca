@@ -46,7 +46,7 @@ func TestQueryRendersTheRouteLineTOONRowsAndHelp(t *testing.T) {
 	}
 }
 
-func TestQueryFallsToProseWhenTheCallerPassesIt(t *testing.T) {
+func TestQueryAddsProseAboveTheEvidenceWhenTheCallerPassesIt(t *testing.T) {
 	res := service.QueryResult{
 		Question: "count memories", Path: service.PathLLM, Engine: "ollama",
 		Model: "qwen", Match: service.MatchFound, RowCount: 2,
@@ -59,8 +59,11 @@ func TestQueryFallsToProseWhenTheCallerPassesIt(t *testing.T) {
 	if !strings.Contains(got, "there are two memories") {
 		t.Errorf("the prose rendering was dropped:\n%s", got)
 	}
-	if strings.Contains(got, "rows[") {
-		t.Errorf("the row table replaced the prose:\n%s", got)
+	if !strings.Contains(got, "rows[1]") || !strings.Contains(got, "the row") {
+		t.Errorf("the evidence rows disappeared under prose:\n%s", got)
+	}
+	if strings.Index(got, "there are two memories") > strings.Index(got, "rows[1]") {
+		t.Errorf("the prose does not ride above the evidence:\n%s", got)
 	}
 }
 
