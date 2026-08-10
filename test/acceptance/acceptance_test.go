@@ -1,3 +1,5 @@
+//go:build acceptance
+
 // Package acceptance runs the consecrated Gherkin suite against the real binary.
 //
 // It is black box by construction: not one symbol of the product is imported
@@ -11,7 +13,6 @@
 package acceptance
 
 import (
-	"os"
 	"testing"
 
 	"github.com/cucumber/godog"
@@ -172,19 +173,7 @@ func TestAcceptanceSuite(t *testing.T) {
 		t.Fatalf("I cannot find the binary: %v", err)
 	}
 
-	suite := godog.TestSuite{
-		ScenarioInitializer: func(ctx *godog.ScenarioContext) {
-			registerSteps(ctx, binary)
-		},
-		Options: &godog.Options{
-			Format:          "pretty",
-			FeatureContents: features,
-			Output:          os.Stdout,
-			TestingT:        t,
-			Strict:          true,
-		},
-	}
-	if suite.Run() != 0 {
-		t.Fail()
-	}
+	runGodog(t, features, func(ctx *godog.ScenarioContext) {
+		registerSteps(ctx, binary)
+	})
 }

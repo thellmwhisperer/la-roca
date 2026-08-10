@@ -81,7 +81,7 @@ fmt:
 
 .PHONY: vet
 vet:
-	go vet ./...
+	go vet -tags acceptance ./...
 
 .PHONY: clean
 clean:
