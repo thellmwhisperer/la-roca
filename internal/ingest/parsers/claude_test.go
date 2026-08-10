@@ -118,6 +118,19 @@ func TestClaudeSessionMarksWhatComesAfterACompaction(t *testing.T) {
 	}
 }
 
+func TestClaudeUnansweredTurnIsDeferred(t *testing.T) {
+	records, err := Parse(KindClaudeSession,
+		[]byte(`{"type":"user","timestamp":"2026-08-01T10:00:00Z","message":{"content":"still working"}}`),
+		FileMeta{SessionID: "s-live"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if records.Deferred != 1 || len(records.Sessions[0].Exchanges) != 0 {
+		t.Fatalf("deferred = %d, exchanges = %d", records.Deferred,
+			len(records.Sessions[0].Exchanges))
+	}
+}
+
 func TestClaudeSessionSurvivesGarbage(t *testing.T) {
 	// A live transcript can be truncated mid-line, and a corrupt line cannot
 	// cost the whole file.

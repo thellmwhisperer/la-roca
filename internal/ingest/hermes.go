@@ -38,8 +38,7 @@ func ReadHermes(ctx context.Context, path string) (parsers.Records, []string, er
 	}
 	defer db.Close()
 
-	sessions, err := queryRows(ctx, db,
-		`SELECT * FROM sessions WHERE ended_at IS NOT NULL ORDER BY started_at ASC`)
+	sessions, err := queryRows(ctx, db, `SELECT * FROM sessions ORDER BY started_at ASC`)
 	if err != nil {
 		return parsers.Records{}, nil, err
 	}
@@ -51,6 +50,10 @@ func ReadHermes(ctx context.Context, path string) (parsers.Records, []string, er
 	var records parsers.Records
 	var complaints []string
 	for _, source := range sessions {
+		if !source.has("ended_at") {
+			records.Deferred++
+			continue
+		}
 		id := source.text("id")
 		if id == "" {
 			complaints = append(complaints, "Hermes: a session with no id was skipped")

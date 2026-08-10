@@ -152,8 +152,10 @@ func ReadOpenCode(ctx context.Context, path string) (parsers.Records, []string, 
 				fmt.Sprintf("OpenCode session %s: it declares no timestamps", native))
 			continue
 		}
-		records.Sessions = append(records.Sessions,
-			openCodeSession(path, source, worktrees, messagesBySession[native], partsBySession[native]))
+		session, deferred := openCodeSession(path, source, worktrees,
+			messagesBySession[native], partsBySession[native])
+		records.Sessions = append(records.Sessions, session)
+		records.Deferred += deferred
 	}
 	return records, complaints, nil
 }
@@ -194,7 +196,7 @@ func openCodeDocuments(ctx context.Context, db *sql.DB, statement string, isMess
 }
 
 func openCodeSession(path string, source row, worktrees map[string]string,
-	messages, parts []openCodeRow) parsers.Session {
+	messages, parts []openCodeRow) (parsers.Session, int) {
 	native := source.text("id")
 	worktree := worktrees[source.text("project_id")]
 	created, _ := source.number("time_created")
@@ -225,13 +227,14 @@ func openCodeSession(path string, source row, worktrees map[string]string,
 		"version":           source.text("version"),
 		"agent":             source.text("agent"),
 	})
-	session.Exchanges = openCodeExchanges(messages, parts)
-	return session
+	var sessionDeferred int
+	session.Exchanges, sessionDeferred = openCodeExchanges(messages, parts)
+	return session, sessionDeferred
 }
 
 // openCodeExchanges groups each human message with the assistant messages that
 // answered it, and admits only the groups that are finished.
-func openCodeExchanges(messages, parts []openCodeRow) []parsers.Exchange {
+func openCodeExchanges(messages, parts []openCodeRow) ([]parsers.Exchange, int) {
 	partsByMessage := map[string][]openCodeRow{}
 	var compactions []float64
 	for _, part := range parts {
@@ -253,10 +256,12 @@ func openCodeExchanges(messages, parts []openCodeRow) []parsers.Exchange {
 	}
 
 	var exchanges []parsers.Exchange
+	deferred := 0
 	number := 0
 	for _, user := range users {
 		answers := assistantsByParent[user.id]
 		if len(answers) == 0 || !allCompleted(answers) {
+			deferred++
 			continue // the agent has not finished answering
 		}
 		var answerParts []openCodeRow
@@ -264,6 +269,7 @@ func openCodeExchanges(messages, parts []openCodeRow) []parsers.Exchange {
 			answerParts = append(answerParts, partsByMessage[answer.id]...)
 		}
 		if anyLiveTool(answerParts) {
+			deferred++
 			continue
 		}
 		number++
@@ -309,7 +315,7 @@ func openCodeExchanges(messages, parts []openCodeRow) []parsers.Exchange {
 		}
 		exchanges = append(exchanges, exchange)
 	}
-	return exchanges
+	return exchanges, deferred
 }
 
 func allCompleted(answers []openCodeRow) bool {

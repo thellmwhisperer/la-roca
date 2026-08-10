@@ -98,6 +98,7 @@ func ParseClaudeSession(content []byte, meta FileMeta) (Records, error) {
 	if validLines == 0 && len(lines(content)) > 0 {
 		return Records{}, fmt.Errorf("the Claude transcript contains no valid JSON lines")
 	}
+	deferred := builder.current != nil && builder.blocks == 0
 	builder.flush()
 
 	session := Session{
@@ -117,7 +118,7 @@ func ParseClaudeSession(content []byte, meta FileMeta) (Records, error) {
 		session.Metadata["compactions"] = builder.compactions
 	}
 	session.StartedAt, session.EndedAt, session.DurationMinutes = span(session.Exchanges)
-	return Records{Sessions: []Session{session}, Discards: discards}, nil
+	return Records{Sessions: []Session{session}, Discards: discards, Deferred: boolCount(deferred)}, nil
 }
 
 // ParseCoworkAudit turns a Cowork audit transcript into one session, merging in
@@ -131,10 +132,11 @@ func ParseCoworkAudit(content []byte, meta FileMeta) (Records, error) {
 		}
 		builder.consume(line)
 	})
+	deferred := builder.current != nil && builder.blocks == 0
 	builder.flush()
 	exchanges := builder.finish()
 	if len(exchanges) == 0 {
-		return Records{Discards: discards}, nil
+		return Records{Discards: discards, Deferred: boolCount(deferred)}, nil
 	}
 
 	sidecar := readSessionMetadata(meta.Sidecar)
@@ -151,7 +153,14 @@ func ParseCoworkAudit(content []byte, meta FileMeta) (Records, error) {
 		session.Metadata["initial_message"] = sidecar.initialMessage
 	}
 	session.StartedAt, session.EndedAt, session.DurationMinutes = span(exchanges)
-	return Records{Sessions: []Session{session}, Discards: discards}, nil
+	return Records{Sessions: []Session{session}, Discards: discards, Deferred: boolCount(deferred)}, nil
+}
+
+func boolCount(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func consumeClaudeLines(content []byte, consume func(claudeLine)) ([]Discard, int) {

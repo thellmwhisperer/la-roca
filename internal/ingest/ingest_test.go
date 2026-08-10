@@ -738,6 +738,31 @@ func TestHermesKeepsActiveFilterWhenMessagesHaveNoID(t *testing.T) {
 	}
 }
 
+func TestDatabaseReadersCountLiveTurnsAsDeferred(t *testing.T) {
+	user := openCodeRow{id: "user-1"}
+	user.message.Role = "user"
+	exchanges, deferred := openCodeExchanges([]openCodeRow{user}, nil)
+	if deferred != 1 || len(exchanges) != 0 {
+		t.Fatalf("OpenCode deferred = %d, exchanges = %d", deferred, len(exchanges))
+	}
+
+	path := filepath.Join(t.TempDir(), "hermes.db")
+	db := openSynthetic(t, path)
+	exec(t, db, `CREATE TABLE sessions (id TEXT, started_at REAL, ended_at REAL)`)
+	exec(t, db, `CREATE TABLE messages (session_id TEXT, role TEXT, content TEXT, timestamp REAL)`)
+	exec(t, db, `INSERT INTO sessions VALUES ('live', 10, NULL)`)
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	records, _, err := ReadHermes(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if records.Deferred != 1 || len(records.Sessions) != 0 {
+		t.Fatalf("Hermes deferred = %d, sessions = %d", records.Deferred, len(records.Sessions))
+	}
+}
+
 // A dry run over a database it cannot read answers anyway, and it says which of
 // the two reads failed. The state failure earns a warning; the row counts failed
 // in silence, so the report handed over `counts_before` as five zeros with
