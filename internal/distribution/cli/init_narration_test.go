@@ -21,7 +21,7 @@ func TestInitNarratesItsPhasesAndPointsToThePromptLast(t *testing.T) {
 		"agents detected:",
 		"agents not found:",
 		"database: inspecting",
-		"database: created",
+		"database outcome: created",
 		"rows: memories=",
 		"ingest:",
 		"delta:",

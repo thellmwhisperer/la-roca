@@ -116,14 +116,14 @@ func initCommand(env *cliEnv) *cobra.Command {
 			env.print("  database: inspecting %s", paths.DB)
 			switch {
 			case adoptedByCopy:
-				env.print("  database: adopted by copy; %s -> %s; original untouched",
+				env.print("  database outcome: adopted by copy; %s -> %s; original untouched",
 					source, paths.DB)
 			case choice == "new":
-				env.print("  database: created a fresh database at %s", paths.DB)
+				env.print("  database outcome: created a fresh database at %s", paths.DB)
 			case choice == "reinitialize":
-				env.print("  database: reinitialized a fresh database at %s", paths.DB)
+				env.print("  database outcome: reinitialized a fresh database at %s", paths.DB)
 			default:
-				env.print("  database: kept the existing home database at %s", paths.DB)
+				env.print("  database outcome: kept the existing home database at %s", paths.DB)
 			}
 			if result.BackupPath != "" {
 				env.print("  backup verified beforehand at %s", result.BackupPath)
