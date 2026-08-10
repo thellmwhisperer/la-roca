@@ -200,6 +200,12 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		if !opts.DryRun {
 			return result, err
 		}
+		// The dry run answers anyway, and it says so. Handing over five zeros with
+		// nothing beside them reports "this database is empty" over a database
+		// whose tables could not be read at all.
+		result.Warnings = append(result.Warnings,
+			fmt.Sprintf("the row counts could not be read, so counts_before, "+
+				"counts_after and delta are reported as zero: %v", err))
 	}
 	result.Before = before
 	result.After = before
@@ -319,6 +325,16 @@ func (r *Result) fail(target Target, reason string) {
 	})
 }
 
+// foreignDiscard turns one foreign-database complaint into a counted discard.
+//
+// Record stays absent on purpose. A database source has no record positions, and
+// the complaint's index in the complaint list is not one: handing it over made
+// the report say "record 2" about a file that has no second record. The identity
+// the operator needs is the session id, and the complaint already carries it.
+func foreignDiscard(complaint string) parsers.Discard {
+	return parsers.Discard{Reason: complaint}
+}
+
 func (r *Result) discard(target Target, discards []parsers.Discard) {
 	for _, discard := range discards {
 		r.RecordsDiscarded++
@@ -379,8 +395,8 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 			return parsers.Records{}, err.Error()
 		}
 		result.Warnings = append(result.Warnings, complaints...)
-		for index, complaint := range complaints {
-			records.Discards = append(records.Discards, parsers.Discard{Record: index + 1, Reason: complaint})
+		for _, complaint := range complaints {
+			records.Discards = append(records.Discards, foreignDiscard(complaint))
 		}
 		return records, ""
 	}

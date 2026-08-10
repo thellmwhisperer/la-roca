@@ -677,3 +677,51 @@ func TestAForeignDatabaseWhoseShapeChangedIsRefusedByName(t *testing.T) {
 		})
 	}
 }
+
+// DiscardDetail.Record is documented as the record position, and an operator
+// reads it that way: "record 2" sends them to the second record of the source.
+// A foreign database has no line numbers, and the complaint's own index in the
+// complaint list was being handed over as if it were one, so the first two
+// skipped sessions of any OpenCode database were reported as records 1 and 2 of
+// a file that has neither.
+func TestAForeignDatabaseComplaintDoesNotInventARecordPosition(t *testing.T) {
+	records := parsers.Records{}
+	complaints := []string{
+		"OpenCode session ses_a: data is not an object",
+		"OpenCode session ses_b: data is not an object",
+	}
+	for _, complaint := range complaints {
+		records.Discards = append(records.Discards, foreignDiscard(complaint))
+	}
+	for _, discard := range records.Discards {
+		if discard.Record != 0 {
+			t.Errorf("a database complaint claims record %d: %q",
+				discard.Record, discard.Reason)
+		}
+	}
+}
+
+// A dry run over a database it cannot read answers anyway, and it says which of
+// the two reads failed. The state failure earns a warning; the row counts failed
+// in silence, so the report handed over `counts_before` as five zeros with
+// nothing to say they are not the truth.
+func TestTheDryRunSaysWhenItCouldNotCountTheRowsEither(t *testing.T) {
+	world := newWorld(t)
+	result, err := Run(context.Background(), emptyDatabase(t), registry(t),
+		Options{Roots: world.roots(), DryRun: true})
+	if err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
+	if result.Before != (Tables{}) {
+		t.Fatalf("counts_before = %+v: this database has no tables to count", result.Before)
+	}
+	var said bool
+	for _, warning := range result.Warnings {
+		if strings.Contains(warning, "row counts") {
+			said = true
+		}
+	}
+	if !said {
+		t.Errorf("zeroed counts are reported as if they were counted: %v", result.Warnings)
+	}
+}
