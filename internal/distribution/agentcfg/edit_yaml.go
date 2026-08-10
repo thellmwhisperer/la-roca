@@ -49,6 +49,16 @@ func yamlDeclare(r runtime, text string, entry fields) (string, error) {
 		return text[:offsets[line]+first] + renderYAMLFlow(entry) +
 			text[offsets[line]+last:], nil
 	}
+	// A flow mapping holding somebody else's server is refused instead of edited,
+	// the same way the TOML editor refuses an inline table. The block path below
+	// appends lines under a value written inline, which put the declaration at the
+	// document's TOP level: a key the runtime never reads, reported as a success.
+	if servers.Style == yaml.FlowStyle {
+		return "", fmt.Errorf(
+			"%s is written as a flow mapping with entries already in it, and this "+
+				"version only edits block mappings: rewrite it as a block mapping "+
+				"and run the command again", r.serversKey)
+	}
 
 	// The new entry lines up with the servers already declared, and with the
 	// key's own indentation plus one step when there are none.

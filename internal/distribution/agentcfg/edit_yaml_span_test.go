@@ -1,6 +1,9 @@
 package agentcfg
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -45,5 +48,54 @@ func TestYamlFlowSpanEndsAtTheClosingBrace(t *testing.T) {
 				t.Errorf("span swallowed %q: it is %q", got, span)
 			}
 		})
+	}
+}
+
+// A flow mapping that already holds somebody else's server took the block-map
+// path, which appends block YAML lines under a value written inline. The result
+// is not the operator's file with one server added: it is a document that no
+// longer parses, and their server is gone with it.
+func TestAFlowMappingWithOtherServersIsNotSilentlyBroken(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	const before = "mcp_servers: {other: {command: theirs, args: [x]}}\n"
+	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Install(RuntimeHermes, path, "roca")
+
+	after, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if err != nil {
+		// A refusal is a fine answer, as long as it names the remedy and the
+		// operator's bytes are untouched.
+		if string(after) != before {
+			t.Errorf("it refused AND edited the file:\n%s", after)
+		}
+		if !strings.Contains(err.Error(), "mcp_servers") {
+			t.Errorf("the refusal does not name the key: %v", err)
+		}
+		return
+	}
+	// If it did edit, the result has to still be YAML and still hold their server.
+	var document map[string]any
+	if err := yaml.Unmarshal(after, &document); err != nil {
+		t.Fatalf("the edit left the file unparseable: %v\n%s", err, after)
+	}
+	servers, _ := document["mcp_servers"].(map[string]any)
+	if _, ok := servers["other"]; !ok {
+		t.Errorf("the operator's own server was lost:\n%s", after)
+	}
+	// The declaration belongs UNDER the servers key. Written at the document's
+	// top level it is a key Hermes never reads, and the command still said it
+	// succeeded.
+	if _, ok := servers[ServerName]; !ok {
+		t.Errorf("the declaration did not land under mcp_servers:\n%s", after)
+	}
+	if _, stray := document[ServerName]; stray {
+		t.Errorf("the declaration landed at the document's top level:\n%s", after)
 	}
 }

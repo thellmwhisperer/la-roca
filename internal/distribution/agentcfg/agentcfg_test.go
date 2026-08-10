@@ -510,3 +510,29 @@ func TestAKeyThatMerelyStartsLikeTheServersKeyIsNotRefused(t *testing.T) {
 		t.Errorf("the declaration did not land:\n%s", after)
 	}
 }
+
+// write promises "the previous file's permissions are kept: this file is the
+// operator's". os.WriteFile only applies its mode when it CREATES the file, and
+// the staged file already exists at 0600 from os.CreateTemp, so the mode was
+// computed and then thrown away: an operator's 0644 config came back 0600.
+func TestTheOperatorsPermissionsSurviveAnEdit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[mcp_servers.other]\ncommand = \"x\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := agentcfg.Install(agentcfg.RuntimeCodex, path, "roca"); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o644 {
+		t.Errorf("mode = %o, want 644: the operator's permissions were not kept", got)
+	}
+}

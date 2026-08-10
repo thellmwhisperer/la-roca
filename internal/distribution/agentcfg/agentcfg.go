@@ -300,6 +300,12 @@ func write(path, content string, previous []byte) error {
 	if err := os.WriteFile(staged, []byte(content), mode); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
+	// os.WriteFile applies its mode only when it CREATES the file, and CreateTemp
+	// already made this one at 0600, so the computed mode has to be applied here
+	// or the operator's own permissions are silently tightened by every edit.
+	if err := os.Chmod(staged, mode); err != nil {
+		return fmt.Errorf("keep the permissions of %s: %w", path, err)
+	}
 	// The file may have changed under us between the read and here. Refusing
 	// then is better than clobbering the runtime that owns it.
 	if previous != nil {
