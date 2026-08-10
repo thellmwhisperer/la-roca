@@ -274,7 +274,7 @@ func ValidateMirror(api, repo string) error {
 	parsed, err := url.Parse(api)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" ||
 		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.RawPath != "" ||
-		(parsed.Path != "/" && path.Clean(parsed.Path) != strings.TrimSuffix(parsed.Path, "/")) {
+		(parsed.Path != "" && parsed.Path != "/" && path.Clean(parsed.Path) != strings.TrimSuffix(parsed.Path, "/")) {
 		return fmt.Errorf("the release API mirror must be an https base URL without credentials, query, or fragment")
 	}
 	return nil

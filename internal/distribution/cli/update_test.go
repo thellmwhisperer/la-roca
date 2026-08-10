@@ -32,6 +32,9 @@ func TestUpdateAcceptsATrustedHTTPSMirrorShape(t *testing.T) {
 	if source.API != "https://mirror.example/api/v3" {
 		t.Fatalf("API = %q", source.API)
 	}
+	if _, err := env.releaseSource("owner/repo", "https://mirror.example"); err != nil {
+		t.Fatalf("root mirror URL was refused: %v", err)
+	}
 }
 
 // An operator who installed this product and types `roca update` has already
