@@ -783,6 +783,15 @@ func TestHermesCountsAssistantContentWithoutAHumanTurn(t *testing.T) {
 	}
 }
 
+func TestHermesDoesNotStoreNegativeDuration(t *testing.T) {
+	session, _ := hermesSession(row{
+		"id": "h-reversed", "started_at": float64(120), "ended_at": float64(60),
+	}, nil)
+	if session.DurationMinutes != nil {
+		t.Fatalf("negative duration = %v", *session.DurationMinutes)
+	}
+}
+
 func TestHermesKeepsActiveFilterWhenMessagesHaveNoID(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hermes.db")
 	db := openSynthetic(t, path)

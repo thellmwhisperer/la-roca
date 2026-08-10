@@ -114,7 +114,7 @@ func hermesSession(source row, messages []row) (parsers.Session, int) {
 	}
 	orphaned := 0
 	session.Exchanges, orphaned = hermesExchanges(source.text("id"), messages)
-	if hasStarted && hasEnded && started > 0 && ended > 0 {
+	if hasStarted && hasEnded && started > 0 && ended >= started {
 		minutes := int((ended - started) / 60)
 		session.DurationMinutes = &minutes
 	}
