@@ -58,7 +58,7 @@ that reads the Makefile keep the two halves of that agreement together.
 Three properties, each of them a scenario of the consecrated suite:
 
 - **The checksum is verified before anything is written** (F01-01, and `Verify`
-  in `internal/release`). A binary that runs is your only way back and it is not
+  in `internal/distribution/release`). A binary that runs is your only way back and it is not
   risked on a download. An artefact with no line of its own in `checksums.txt`
   is refused too: passing it through would be verifying nothing while reporting
   that it verified.
@@ -200,7 +200,7 @@ backups, the cache, the credentials and the benches.
 **The D-7 contract**, and it has two halves that look contradictory and are not:
 
 - **What La Roca owns is deleted whenever it is there.** The inventory is a
-  DECLARATION (`ownedPaths` in `internal/cli/uninstall.go`), never a snapshot of
+  DECLARATION (`ownedPaths` in `internal/distribution/cli/uninstall.go`), never a snapshot of
   the filesystem taken beforehand. Capturing a snapshot first is what killed the
   laboratory's purge in #451: it created its own lock directory afterwards, then
   refused to delete that directory as one that "appeared after the inventory",
@@ -223,7 +223,7 @@ product by hand.
 
 Together they make the purge converge: it runs on a machine a previous attempt
 left halfway, and applying the same plan twice ends ok both times
-(`internal/lifecycle`). One consequence is worth knowing: the purge deletes the
+(`internal/distribution/lifecycle`). One consequence is worth knowing: the purge deletes the
 binary that is running it, so a second `roca uninstall` from the same path has
 nothing to execute. That is the shape of a one-file product, and it is why the
 re-runnability is measured over the plan and not over two shell invocations.

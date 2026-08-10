@@ -35,14 +35,14 @@ such table. A tool with nothing behind it is a tool that lies.
 ### The law of this surface
 
 **Every handler is a single call into the service.** It is not a comment, it is
-two structural tests over `internal/mcpplug/handlers.go`
+two structural tests over `internal/distribution/mcpplug/handlers.go`
 (`passthrough_test.go`): the body of a handler must be one return statement into
 the service, and the file may contain no control flow at all. A handler that
 needs an `if` needs it in the service, where the shell can reach it too.
 
 Parity is measured, not asserted: the same question over both surfaces returns
 the same `sql`, the same `queryplan`, the same rows and the same build
-(scenario F08-04, and `internal/mcpplug/plug_test.go`).
+(scenario F08-04, and `internal/distribution/mcpplug/plug_test.go`).
 
 ### On the protocol version
 
@@ -78,7 +78,7 @@ JSONC OpenCode tolerates and the neighbouring servers. That is why the edits are
 surgical text-range edits and not a parse-and-reserialize round trip, which is
 easy and eats comments. It is measured the only way that is not a matter of
 opinion: installing and then withdrawing gives back the exact previous bytes
-(`internal/agentcfg/agentcfg_test.go`, five runtimes).
+(`internal/distribution/agentcfg/agentcfg_test.go`, five runtimes).
 
 Two more things the shared spine gives every edit: the previous bytes are backed
 up first (`<file>.bak`, and an earlier copy is never overwritten), and a file
@@ -128,7 +128,7 @@ Paths (personal/global only — Roca never writes a project-local skill):
 
 Only that file is created or replaced. Re-running is a no-op when the bytes
 already match the embedded canonical text. The skill body lives in
-`internal/skill/SKILL.md` and ships inside the binary via `go:embed`.
+`internal/distribution/skill/SKILL.md` and ships inside the binary via `go:embed`.
 
 ---
 
