@@ -1,6 +1,7 @@
 package oauth
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -367,6 +369,62 @@ func TestConcurrentSessionsRefreshOneRotatingTokenOnce(t *testing.T) {
 	}
 	if refreshes != 1 {
 		t.Fatalf("refreshes = %d, want 1", refreshes)
+	}
+}
+
+func TestSeparateProcessesShareTheOAuthRenewalLock(t *testing.T) {
+	var mu sync.Mutex
+	refreshes := 0
+	server := tokenServer(t, func(url.Values) (int, map[string]any) {
+		mu.Lock()
+		defer mu.Unlock()
+		refreshes++
+		time.Sleep(100 * time.Millisecond)
+		if refreshes > 1 {
+			return http.StatusBadRequest, map[string]any{"error": "invalid_grant"}
+		}
+		return http.StatusOK, map[string]any{
+			"access_token": "fresh", "refresh_token": "rt-next", "expires_in": 3600,
+		}
+	})
+	path := filepath.Join(t.TempDir(), "credentials", "codex.json")
+	if err := (Store{Path: path}).Save(Token{
+		AccessToken: "stale", RefreshToken: "rt-once", ExpiresAt: time.Now().Add(-time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	commands := make([]*exec.Cmd, 2)
+	outputs := make([]bytes.Buffer, 2)
+	for i := range commands {
+		commands[i] = exec.Command(os.Args[0], "-test.run=^TestOAuthRenewalProcess$")
+		commands[i].Env = append(os.Environ(),
+			"ROCA_OAUTH_RENEWAL_CHILD=1", "ROCA_OAUTH_TOKEN_PATH="+path, "ROCA_OAUTH_TOKEN_URL="+server.URL)
+		commands[i].Stdout, commands[i].Stderr = &outputs[i], &outputs[i]
+		if err := commands[i].Start(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, command := range commands {
+		if err := command.Wait(); err != nil {
+			t.Fatalf("renewal process %d: %v\n%s", i, err, outputs[i].String())
+		}
+	}
+	if refreshes != 1 {
+		t.Fatalf("refreshes = %d, want 1", refreshes)
+	}
+}
+
+func TestOAuthRenewalProcess(t *testing.T) {
+	if os.Getenv("ROCA_OAUTH_RENEWAL_CHILD") != "1" {
+		return
+	}
+	session := Session{
+		Store: Store{Path: os.Getenv("ROCA_OAUTH_TOKEN_PATH")},
+		Flow:  Flow{Endpoints: Endpoints{Token: os.Getenv("ROCA_OAUTH_TOKEN_URL"), ClientID: "cid"}},
+	}
+	token, err := session.Token(context.Background())
+	if err != nil || token.AccessToken != "fresh" {
+		t.Fatalf("token = %+v, err=%v", token, err)
 	}
 }
 
