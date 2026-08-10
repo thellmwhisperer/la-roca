@@ -34,13 +34,10 @@ func TestClaudeSessionSplitsExchangesOnTheHumanTurn(t *testing.T) {
 	if session.Project != "demo" {
 		t.Errorf("project = %q, want demo", session.Project)
 	}
-	// Three exchanges out of two human turns is intentional: a tool result with no
-	// human text of its own closes
-	// the open exchange without closing the human turn, so what the agent says
-	// after the tool round trip is a second exchange under the same question.
-	// Aggregating it instead would change every exchange count in the corpus.
-	if len(session.Exchanges) != 3 {
-		t.Fatalf("exchanges = %d, want 3", len(session.Exchanges))
+	// Tool results are runtime traffic inside the open human turn. Two human turns
+	// therefore produce two exchanges even when an answer continues after a tool.
+	if len(session.Exchanges) != 2 {
+		t.Fatalf("exchanges = %d, want 2", len(session.Exchanges))
 	}
 	first := session.Exchanges[0]
 	if first.Number != 1 {
@@ -50,15 +47,11 @@ func TestClaudeSessionSplitsExchangesOnTheHumanTurn(t *testing.T) {
 		t.Errorf("human text = %q", first.HumanText)
 	}
 	// The assistant's text blocks are joined, and only the text ones.
-	if first.AgentText != "there are three" {
+	if first.AgentText != "there are three\nI will fix it" {
 		t.Errorf("agent text = %q", first.AgentText)
 	}
-	if second := session.Exchanges[1]; second.HumanText != "how many memories are there" ||
-		second.AgentText != "I will fix it" {
+	if second := session.Exchanges[1]; second.HumanText != "and now" || second.AgentText != "ready" {
 		t.Errorf("second exchange = %+v", second)
-	}
-	if third := session.Exchanges[2]; third.HumanText != "and now" || third.AgentText != "ready" {
-		t.Errorf("third exchange = %+v", third)
 	}
 	if first.LatencyMS == nil || *first.LatencyMS != 2500 {
 		t.Errorf("latency = %v, want 2500", first.LatencyMS)
@@ -66,8 +59,8 @@ func TestClaudeSessionSplitsExchangesOnTheHumanTurn(t *testing.T) {
 	if len(first.Thinking) != 1 || first.Thinking[0].WordCount != 5 {
 		t.Fatalf("thinking = %+v", first.Thinking)
 	}
-	if got := first.Thinking[0].Position; got != 1.0/3.0 {
-		t.Errorf("position = %v, want 1/3", got)
+	if got := first.Thinking[0].Position; got != 0.5 {
+		t.Errorf("position = %v, want 1/2", got)
 	}
 	if len(first.Tools) != 1 {
 		t.Fatalf("tools = %+v", first.Tools)

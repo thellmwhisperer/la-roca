@@ -55,10 +55,8 @@ type turn struct {
 // claudeBuilder is the state machine both Claude Code and Cowork transcripts
 // walk: one human turn plus the aggregated agent response is one exchange.
 type claudeBuilder struct {
-	// auditMode is the Cowork variant. It has two differences: a
-	// user line that is only tool results is dropped instead of closing the turn,
-	// and the human turn is reset after each flush so a second agent block does
-	// not reopen it.
+	// auditMode is the Cowork variant. Its human turn is reset after each flush
+	// so a second agent block does not reopen it.
 	auditMode bool
 
 	current   *turn
@@ -199,9 +197,9 @@ func (b *claudeBuilder) consumeUser(line claudeLine) {
 		b.backfill(block)
 	}
 
-	// A Cowork audit line that is only tool results is not a turn boundary: it
-	// is the runtime answering itself.
-	if b.auditMode && hasToolResults && text == "" {
+	// A line that is only tool results is not a turn boundary: it is the runtime
+	// answering itself inside the current human turn.
+	if hasToolResults && text == "" {
 		return
 	}
 
