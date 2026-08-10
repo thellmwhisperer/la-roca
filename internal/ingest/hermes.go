@@ -64,7 +64,13 @@ func ReadHermes(ctx context.Context, path string) (parsers.Records, []string, er
 			complaints = append(complaints, fmt.Sprintf("Hermes session %s: %v", id, err))
 			continue
 		}
-		records.Sessions = append(records.Sessions, hermesSession(source, messages))
+		session, orphaned := hermesSession(source, messages)
+		records.Sessions = append(records.Sessions, session)
+		for range orphaned {
+			records.Discards = append(records.Discards, parsers.Discard{
+				Reason: fmt.Sprintf("Hermes session %s: assistant content has no open human turn", id),
+			})
+		}
 	}
 	return records, complaints, nil
 }
@@ -82,7 +88,7 @@ func hermesMessages(ctx context.Context, db *sql.DB, columns map[string]bool, se
 		` ORDER BY timestamp ASC, `+order+` ASC`, sessionID)
 }
 
-func hermesSession(source row, messages []row) parsers.Session {
+func hermesSession(source row, messages []row) (parsers.Session, int) {
 	model := source.text("model")
 	if model == "" {
 		model = "unknown"
@@ -105,8 +111,9 @@ func hermesSession(source row, messages []row) parsers.Session {
 		EndedAt:     endedAt,
 		Title:       source.text("title"),
 		Snapshot:    true,
-		Exchanges:   hermesExchanges(source.text("id"), messages),
 	}
+	orphaned := 0
+	session.Exchanges, orphaned = hermesExchanges(source.text("id"), messages)
 	if hasStarted && hasEnded && started > 0 && ended > 0 {
 		minutes := int((ended - started) / 60)
 		session.DurationMinutes = &minutes
@@ -115,7 +122,7 @@ func hermesSession(source row, messages []row) parsers.Session {
 		"model":  model,
 		"hermes": hermesMetadata(source, messages),
 	}
-	return session
+	return session, orphaned
 }
 
 // hermesMetadata keeps what Hermes measured about the session, which is the one
@@ -153,10 +160,11 @@ func hermesMetadata(source row, messages []row) map[string]any {
 // A tool call embedded in an assistant message is not counted: only the result
 // message is, because that is the one that knows whether it worked. Counting both
 // would double every tool use in the corpus.
-func hermesExchanges(sessionID string, messages []row) []parsers.Exchange {
+func hermesExchanges(sessionID string, messages []row) ([]parsers.Exchange, int) {
 	var exchanges []parsers.Exchange
 	var current *parsers.Exchange
 	number := 0
+	orphaned := 0
 	// pendingParams carries the arguments from the assistant message that asked
 	// for a tool to the result message that answers it.
 	pendingParams := map[string]string{}
@@ -184,6 +192,10 @@ func hermesExchanges(sessionID string, messages []row) []parsers.Exchange {
 			}
 		case "assistant":
 			if current == nil {
+				if strings.TrimSpace(message.text("content")) != "" ||
+					strings.TrimSpace(message.text("reasoning_content")) != "" {
+					orphaned++
+				}
 				continue
 			}
 			if reasoning := strings.TrimSpace(message.text("reasoning_content")); reasoning != "" {
@@ -220,7 +232,7 @@ func hermesExchanges(sessionID string, messages []row) []parsers.Exchange {
 	closeCurrent()
 
 	parsers.PlaceThinking(exchanges)
-	return exchanges
+	return exchanges, orphaned
 }
 
 // finalizeHermes gives an exchange with no prose an honest label. A turn that only

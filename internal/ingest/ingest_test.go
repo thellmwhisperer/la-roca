@@ -747,12 +747,21 @@ func TestAForeignDatabaseComplaintDoesNotInventARecordPosition(t *testing.T) {
 }
 
 func TestHermesMissingStartDoesNotBecomeTheUnixEpoch(t *testing.T) {
-	session := hermesSession(row{"id": "h-missing", "started_at": nil, "ended_at": float64(10)}, nil)
+	session, _ := hermesSession(row{"id": "h-missing", "started_at": nil, "ended_at": float64(10)}, nil)
 	if session.StartedAt != "" {
 		t.Fatalf("missing started_at became %q", session.StartedAt)
 	}
 	if session.DurationMinutes != nil {
 		t.Fatalf("duration from a missing start = %v", session.DurationMinutes)
+	}
+}
+
+func TestHermesCountsAssistantContentWithoutAHumanTurn(t *testing.T) {
+	_, orphaned := hermesSession(row{"id": "h-orphan"}, []row{{
+		"role": "assistant", "content": "orphan answer",
+	}})
+	if orphaned != 1 {
+		t.Fatalf("orphaned assistant messages = %d, want 1", orphaned)
 	}
 }
 

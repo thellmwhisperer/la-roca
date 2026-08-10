@@ -70,6 +70,7 @@ type claudeBuilder struct {
 	number          int
 	compactions     int
 	afterCompaction bool
+	orphanedAgent   int
 
 	exchanges []Exchange
 	// toolRefs holds each closed exchange's calls by pointer, one slice per
@@ -118,6 +119,9 @@ func ParseClaudeSession(content []byte, meta FileMeta) (Records, error) {
 		session.Metadata["compactions"] = builder.compactions
 	}
 	session.StartedAt, session.EndedAt, session.DurationMinutes = span(session.Exchanges)
+	for range builder.orphanedAgent {
+		discards = append(discards, Discard{Reason: "assistant content has no open human turn"})
+	}
 	return Records{Sessions: []Session{session}, Discards: discards, Deferred: boolCount(deferred)}, nil
 }
 
@@ -242,13 +246,16 @@ func (b *claudeBuilder) backfill(block claudeBlock) {
 }
 
 func (b *claudeBuilder) consumeAssistant(line claudeLine) {
+	text, blocks := decodeContent(line.Message)
 	if b.current == nil {
+		if text != "" || len(blocks) > 0 {
+			b.orphanedAgent++
+		}
 		return
 	}
 	if b.agentTS == "" {
 		b.agentTS = line.stamp()
 	}
-	text, blocks := decodeContent(line.Message)
 	// A Cowork audit may write the agent's answer as a bare string.
 	if len(blocks) == 0 && text != "" {
 		b.blocks++

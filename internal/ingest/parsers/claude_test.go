@@ -1,6 +1,9 @@
 package parsers
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // The fixtures are entirely synthetic: no real transcript or private vocabulary
 // enters a test.
@@ -140,6 +143,18 @@ func TestClaudeJoinsEveryUserTextBlock(t *testing.T) {
 	}
 	if got := records.Sessions[0].Exchanges[0].HumanText; got != "part one\npart two" {
 		t.Fatalf("human text = %q", got)
+	}
+}
+
+func TestClaudeCountsAssistantContentWithoutAHumanTurn(t *testing.T) {
+	records, err := Parse(KindClaudeSession,
+		[]byte(`{"type":"assistant","message":{"content":"orphan answer"}}`),
+		FileMeta{SessionID: "s-orphan"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records.Discards) != 1 || !strings.Contains(records.Discards[0].Reason, "no open human turn") {
+		t.Fatalf("discards = %+v", records.Discards)
 	}
 }
 
