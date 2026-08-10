@@ -80,7 +80,7 @@ func (r *ingestRows) draw() {
 }
 
 func (r *ingestRows) row(progress ingest.SourceProgress) string {
-	label := ingestSourceLabel(progress.Source, progress.Sessions)
+	label := ingestSourceLabel(progress.Source)
 	if progress.Done {
 		return fmt.Sprintf("✓ %s · %s/%s files · %s discarded · %s",
 			label, axi.Number(int64(progress.Processed)),

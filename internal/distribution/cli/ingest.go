@@ -74,8 +74,8 @@ func renderIngest(env *cliEnv, result service.IngestResult) {
 	renderIngestSources(env, result)
 	renderIngestDelta(env, result.Delta)
 	if result.ExchangesHeld > 0 {
-		env.print("  %s exchanges are still being written and were left for the next run",
-			axi.Number(int64(result.ExchangesHeld)))
+		env.print("  %s still being written and left for the next run",
+			axi.Quantity(int64(result.ExchangesHeld), "exchange"))
 	}
 	renderIngestDetails(env, result)
 	if result.Index != nil {
@@ -98,7 +98,7 @@ func renderIngestSources(env *cliEnv, result service.IngestResult) {
 		}
 		sessions := counts.Sessions + counts.SessionsUpdated
 		env.print("  ✓ %s · %s · %s · %s · %s · %s discarded · %s",
-			ingestSourceLabel(name, sessions), axi.Quantity(int64(stats.Read), "file"),
+			ingestSourceLabel(name), axi.Quantity(int64(stats.Read), "file"),
 			axi.Quantity(int64(sessions), "session"),
 			axi.Quantity(int64(counts.Exchanges), "exchange"),
 			axi.Quantity(int64(counts.MemoriesInserted+counts.MemoriesUpdated), "memory", "memories"),
@@ -123,8 +123,15 @@ func renderIngestDetails(env *cliEnv, result service.IngestResult) {
 	}
 }
 
-func ingestSourceLabel(name string, sessions int) string {
-	if name == "claude" && sessions > 0 {
+// ingestSourceLabel is the name one source answers to on every line of a report.
+//
+// `claude` is the scan's own key for the family the supported roster calls
+// `claude-code`, and the label is a property of the source and not of what it
+// happened to write: deriving it from the session count renamed the source
+// mid-run, so the moving rows said "claude" until the first session landed and
+// "claude-code" from then on.
+func ingestSourceLabel(name string) string {
+	if name == "claude" {
 		return "claude-code"
 	}
 	return name
