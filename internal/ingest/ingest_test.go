@@ -701,6 +701,16 @@ func TestAForeignDatabaseComplaintDoesNotInventARecordPosition(t *testing.T) {
 	}
 }
 
+func TestHermesMissingStartDoesNotBecomeTheUnixEpoch(t *testing.T) {
+	session := hermesSession(row{"id": "h-missing", "started_at": nil, "ended_at": float64(10)}, nil)
+	if session.StartedAt != "" {
+		t.Fatalf("missing started_at became %q", session.StartedAt)
+	}
+	if session.DurationMinutes != nil {
+		t.Fatalf("duration from a missing start = %v", session.DurationMinutes)
+	}
+}
+
 // A dry run over a database it cannot read answers anyway, and it says which of
 // the two reads failed. The state failure earns a warning; the row counts failed
 // in silence, so the report handed over `counts_before` as five zeros with

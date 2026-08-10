@@ -80,6 +80,21 @@ func TestSessionMetadataWithoutAnIdIsSkipped(t *testing.T) {
 	}
 }
 
+func TestZeroEpochIsReportedAsMissing(t *testing.T) {
+	records, err := Parse(KindSessionMetadata,
+		[]byte(`{"cliSessionId":"session-1","createdAt":0,"lastActivityAt":0}`), FileMeta{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := records.Sessions[0]
+	if session.StartedAt != "" || session.EndedAt != "" {
+		t.Fatalf("zero timestamps became %q to %q", session.StartedAt, session.EndedAt)
+	}
+	if got := ISOFromEpochSeconds(0); got != "" {
+		t.Fatalf("zero seconds became %q", got)
+	}
+}
+
 const coworkAudit = `
 {"type":"user","session_id":"cw-1","_audit_timestamp":"2026-08-01T11:00:00Z","message":{"content":[{"type":"text","text":"review the report"}]}}
 {"type":"assistant","_audit_timestamp":"2026-08-01T11:00:03Z","message":{"content":"reviewed"}}

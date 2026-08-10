@@ -74,20 +74,27 @@ func hermesSession(source row, messages []row) parsers.Session {
 	if model == "" {
 		model = "unknown"
 	}
-	started, _ := source.number("started_at")
-	ended, _ := source.number("ended_at")
+	started, hasStarted := source.number("started_at")
+	ended, hasEnded := source.number("ended_at")
+	startedAt, endedAt := "", ""
+	if hasStarted {
+		startedAt = parsers.ISOFromEpochSeconds(started)
+	}
+	if hasEnded {
+		endedAt = parsers.ISOFromEpochSeconds(ended)
+	}
 
 	session := parsers.Session{
 		ID:          source.text("id"),
 		SourceAgent: "hermes",
 		Project:     ProjectFromCwd(source.text("cwd")),
-		StartedAt:   parsers.ISOFromEpochSeconds(started),
-		EndedAt:     parsers.ISOFromEpochSeconds(ended),
+		StartedAt:   startedAt,
+		EndedAt:     endedAt,
 		Title:       source.text("title"),
 		Snapshot:    true,
 		Exchanges:   hermesExchanges(source.text("id"), messages),
 	}
-	if started > 0 && ended > 0 {
+	if hasStarted && hasEnded && started > 0 && ended > 0 {
 		minutes := int((ended - started) / 60)
 		session.DurationMinutes = &minutes
 	}

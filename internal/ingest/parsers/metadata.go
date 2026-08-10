@@ -102,6 +102,9 @@ const isoLayout = "2006-01-02T15:04:05.999999999"
 
 // ISOFromEpochMS turns the millisecond epoch the runtimes write into UTC ISO 8601.
 func ISOFromEpochMS(value float64) string {
+	if value == 0 {
+		return ""
+	}
 	return time.UnixMilli(int64(value)).UTC().Format(isoLayout) + "Z"
 }
 
