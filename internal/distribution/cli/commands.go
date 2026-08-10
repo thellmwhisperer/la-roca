@@ -34,6 +34,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/human"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -409,16 +410,7 @@ func execCommand(env *cliEnv) *cobra.Command {
 			if env.json {
 				return env.printJSON(result)
 			}
-			env.print("%s", result.SQL)
-			if rows := rowOutput(result.Columns, result.Rows); rows != "" {
-				env.print("%s", rows)
-			}
-			env.print("%d rows · %s", result.RowCount, human.Duration(result.LatencyMS))
-			if result.RowCount > 0 && !(result.RowCount == 1 && len(result.Columns) == 1) {
-				env.print("%s", renderHelp(
-					"Run `roca exec \"<SELECT>\" --json` for the complete result envelope",
-					"Run `roca exec \"<SELECT>\" --max-chars 2000` to expand text fields"))
-			}
+			env.print("%s", axi.Exec(result))
 			return nil
 		}),
 	}
@@ -438,55 +430,11 @@ func execCommand(env *cliEnv) *cobra.Command {
 // the call failed), and the rows fall back to their tabular form: a table is
 // the floor the prose sits on, never an answer the prose hides.
 func render(env *cliEnv, res service.QueryResult, prose string) {
-	if res.Path == service.PathUnresolved {
-		env.print("%s", res.Message)
-		return
-	}
-
-	for _, warning := range res.Warnings {
-		env.print("warning: %s", warning)
-	}
-	// Who was asked, before what came back: the operator reads the fall to the
-	// floor as context for the answer, not as part of it.
-	if res.ProviderNote != "" {
-		env.print("%s", res.ProviderNote)
-	}
-	// Every question goes to the model; the engine is always set when a
-	// provider served.
-	if res.Engine != "" {
-		env.print("route %s · provider %s · model %s · %s",
-			res.Path, res.Engine, res.Model, human.Duration(res.LatencyMS))
-	} else {
-		env.print("route %s · %s", res.Path, human.Duration(res.LatencyMS))
-	}
-	if res.Degraded != "" {
-		env.print("degraded: %s", res.Degraded)
-	}
-	if res.Message != "" && res.RowCount > 0 {
-		env.print("%s", res.Message)
-	}
-
-	// With no match declared the database was never queried: this is
-	// --sql-only, and what the operator asked for is the SQL.
-	if res.Match == "" {
-		env.print("%s", res.SQL)
-		return
-	}
-	if res.RowCount == 0 {
-		env.print("%s", res.Message)
-		env.print("%s", queryHelp(res))
-		return
-	}
-	if prose != "" {
-		env.print("%s", prose)
-		return
-	}
-	if rows := rowOutput(res.Columns, res.Rows, res.Question); rows != "" {
-		env.print("%s", rows)
-	}
-	if !(res.RowCount == 1 && len(res.Columns) == 1) {
-		env.print("%s", queryHelp(res))
-	}
+	// The AXI text — route preamble, the rows or the prose that stands in for
+	// them, and the contextual help — has one owner in the axi package. The
+	// shell's only part here is the second inference call's prose: empty when no
+	// model served or the call failed, in which case axi.Query falls to the rows.
+	env.print("%s", axi.Query(res, prose))
 }
 
 func dirOf(path string) string { return filepath.Dir(path) }

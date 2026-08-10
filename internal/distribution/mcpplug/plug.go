@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
@@ -88,16 +89,43 @@ func sanitizing[In, Out any](
 	}
 }
 
-// through forwards what the service answered, untouched, adding the nil result
-// that tells the SDK to build the envelope itself.
+// rendered paints the AXI TOON text for a service answer and lets the SDK
+// attach the structured envelope beside it. A handler stays one statement that
+// calls one of the typed wrappers below; this is where the readable half is
+// shaped, so a row-shaped answer reaches an agent as compact rows and not as
+// the raw envelope that once drowned the tool-result budget.
 //
-// It exists so that a handler can be literally one statement. Go only splices a
-// call into a return when it is the whole return, and the alternative is an
-// assignment inside the handler, which is the first step of a handler growing a
-// body of its own. One honest helper here is cheaper than a rule nobody
-// enforces, and passthrough_test.go is what enforces it.
-func through[T any](value T, err error) (*mcp.CallToolResult, T, error) {
-	return nil, value, err
+// Content is the AXI text the agent reads; the SDK keeps filling
+// StructuredContent from the returned value, so a caller that reads JSON still
+// gets the machine-readable envelope. On error the result stays nil and the
+// service's error flows out for the sanitizing wrapper to scrub.
+func rendered[T any](res T, err error, paint func(T) string) (*mcp.CallToolResult, T, error) {
+	if err != nil {
+		return nil, res, err
+	}
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: paint(res)}},
+	}, res, nil
+}
+
+// queryText shapes a natural-language answer. The query tool runs the question
+// and the sql tool compiles it without running; both produce a QueryResult, and
+// axi.Query shows the rows for one and the SQL for the other, so they share a
+// wrapper.
+func queryText(res service.QueryResult, err error) (*mcp.CallToolResult, service.QueryResult, error) {
+	return rendered(res, err, func(r service.QueryResult) string { return axi.Query(r, "") })
+}
+
+func execText(res service.ExecResult, err error) (*mcp.CallToolResult, service.ExecResult, error) {
+	return rendered(res, err, axi.Exec)
+}
+
+func storeText(res service.StoreResult, err error) (*mcp.CallToolResult, service.StoreResult, error) {
+	return rendered(res, err, axi.Store)
+}
+
+func healthText(res service.HealthReport, err error) (*mcp.CallToolResult, service.HealthReport, error) {
+	return rendered(res, err, axi.Health)
 }
 
 // ScrubPath replaces every occurrence of the database path in an error message

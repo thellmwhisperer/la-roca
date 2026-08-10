@@ -15,28 +15,33 @@ import (
 // the words the service wrote. That is why the read-only refusal, an unknown
 // template and a missing argument all reach the agent as something it can read
 // and act on, instead of as a dead session.
+//
+// The readable half is painted by the typed wrappers in plug.go, which turn a
+// row-shaped answer into the AXI TOON table the shell uses too. A handler does
+// no rendering of its own: it stays one statement, and the wrapper it names is
+// the whole of its part in the output.
 
 func (p *plug) exec(ctx context.Context, _ *mcp.CallToolRequest,
 	in execArgs) (*mcp.CallToolResult, service.ExecResult, error) {
-	return through(p.svc.Exec(ctx, in.request()))
+	return execText(p.svc.Exec(ctx, in.request()))
 }
 
 func (p *plug) query(ctx context.Context, _ *mcp.CallToolRequest,
 	in queryArgs) (*mcp.CallToolResult, service.QueryResult, error) {
-	return through(p.svc.Query(ctx, in.request()))
+	return queryText(p.svc.Query(ctx, in.request()))
 }
 
 func (p *plug) sql(ctx context.Context, _ *mcp.CallToolRequest,
 	in sqlArgs) (*mcp.CallToolResult, service.QueryResult, error) {
-	return through(p.svc.Query(ctx, in.request()))
+	return queryText(p.svc.Query(ctx, in.request()))
 }
 
 func (p *plug) store(ctx context.Context, _ *mcp.CallToolRequest,
 	in storeArgs) (*mcp.CallToolResult, service.StoreResult, error) {
-	return through(p.svc.Store(ctx, in.request()))
+	return storeText(p.svc.Store(ctx, in.request()))
 }
 
 func (p *plug) health(ctx context.Context, _ *mcp.CallToolRequest,
 	in healthArgs) (*mcp.CallToolResult, service.HealthReport, error) {
-	return through(p.svc.Health(ctx, in.request()))
+	return healthText(p.svc.Health(ctx, in.request()))
 }

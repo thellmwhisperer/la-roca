@@ -3,9 +3,9 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
 
 	"github.com/spf13/cobra"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
@@ -38,11 +38,7 @@ func storeCommand(env *cliEnv) *cobra.Command {
 			if env.json {
 				return env.printJSON(result)
 			}
-			if result.Skipped {
-				env.print("already stored: memory %d in layer %s", result.ID, result.Layer)
-				return nil
-			}
-			env.print("stored: memory %d in layer %s", result.ID, result.Layer)
+			env.print("%s", axi.Store(result))
 			return nil
 		},
 	}
@@ -74,19 +70,7 @@ func healthCommand(env *cliEnv) *cobra.Command {
 			if env.json {
 				return env.printJSON(report)
 			}
-			env.print("health: %s", report.Status)
-			names := make([]string, 0, len(report.Checks))
-			for name := range report.Checks {
-				names = append(names, name)
-			}
-			sort.Strings(names)
-			rows := make([]map[string]any, 0, len(names))
-			for _, name := range names {
-				check := report.Checks[name]
-				rows = append(rows, map[string]any{"status": check.Status, "check": name,
-					"count": check.Count, "summary": check.Summary})
-			}
-			env.print("%s", rowOutput([]string{"status", "check", "count", "summary"}, rows))
+			env.print("%s", axi.Health(report))
 			return nil
 		}),
 	}
