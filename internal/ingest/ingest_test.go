@@ -664,6 +664,28 @@ func TestCommitRetryDoesNotDoubleReportCounters(t *testing.T) {
 	}
 }
 
+func TestEmptySessionIdentityIsCountedBeforeWrite(t *testing.T) {
+	db := rocaDatabase(t)
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	content := `{"type":"user","message":{"content":"question"}}
+{"type":"assistant","message":{"content":"answer"}}`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result := Result{Sources: map[string]*Counts{}}
+	target := Target{Path: path, Kind: parsers.KindCoworkAudit, SourceAgent: "cowork"}
+	if err := ingestOne(context.Background(), db, registry(t), Options{}, target,
+		"fingerprint", &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.RecordsDiscarded != 1 || !strings.Contains(result.DiscardDetails[0].Reason, "no identity") {
+		t.Fatalf("discards = %+v", result.DiscardDetails)
+	}
+	if got := countRows(t, db.SQL(), "sessions"); got != 0 {
+		t.Fatalf("sessions = %d, want 0", got)
+	}
+}
+
 func TestUnknownSubagentProbeIsCounted(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "subagent.jsonl")
 	content := strings.Repeat("garbage\n", 50) +

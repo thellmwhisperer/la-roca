@@ -361,6 +361,17 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 			return RecordState(ctx, tx, target, fingerprint, reason, nil)
 		})
 	}
+	kept := records.Sessions[:0]
+	for _, session := range records.Sessions {
+		if session.ID == "" {
+			records.Discards = append(records.Discards, parsers.Discard{
+				Reason: "session has no identity",
+			})
+			continue
+		}
+		kept = append(kept, session)
+	}
+	records.Sessions = kept
 	result.ExchangesHeld += records.Deferred
 	result.discard(target, records.Discards)
 
