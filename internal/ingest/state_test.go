@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -9,6 +10,34 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
 )
+
+func TestFingerprintDetectsSameSizeSameMtimeEdit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.WriteFile(path, []byte("alpha"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := Fingerprint(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("bravo"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	after, err := Fingerprint(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after == before {
+		t.Fatalf("fingerprint stayed %q after same-size, same-mtime edit", after)
+	}
+}
 
 func TestDatabaseFingerprintChangesWithWAL(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "source.db")

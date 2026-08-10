@@ -2,9 +2,11 @@ package ingest
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 
@@ -29,19 +31,26 @@ import (
 // route kept fingerprints and the full reconciliation did not, so the table was
 // empty on a machine with many sessions. Here every route is this route.
 
-// Fingerprint is a file's identity for the skip decision: its size and its
-// modification time in nanoseconds.
-//
-// It is deliberately not a hash of the content. The whole point is to decide
-// without opening the file, and hashing a large transcript archive to discover that
-// nothing changed would cost more than re-ingesting them.
+// Fingerprint is a file's identity for the skip decision: metadata plus a
+// content digest. Size and mtime alone collide after timestamp-preserving
+// restores, which would otherwise mark changed transcripts as synced forever.
 func Fingerprint(path string) (string, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return "", err
 	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	digest := sha256.New()
+	if _, err := io.Copy(digest, file); err != nil {
+		return "", err
+	}
 	return strconv.FormatInt(info.Size(), 10) + ":" +
-		strconv.FormatInt(info.ModTime().UnixNano(), 10), nil
+		strconv.FormatInt(info.ModTime().UnixNano(), 10) + ":" +
+		fmt.Sprintf("%x", digest.Sum(nil)), nil
 }
 
 // targetFingerprint includes SQLite's write-ahead log for database sources.
