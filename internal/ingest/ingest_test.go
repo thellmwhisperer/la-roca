@@ -591,7 +591,7 @@ func warnsAbout(warnings []string, fragment string) bool {
 // emptyDatabase is a database with no schema in it at all.
 func emptyDatabase(t *testing.T) Database {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "sin-esquema.db")
+	path := filepath.Join(t.TempDir(), "no-schema.db")
 	handle, err := sql.Open("sqlite", "file:"+path)
 	if err != nil {
 		t.Fatalf("open: %v", err)

@@ -204,9 +204,9 @@ func rowWithID(rows []search.Row, id int64) bool {
 func TestASupersededMemoryStopsAnswering(t *testing.T) {
 	engine, db := indexedWorld(t)
 	writeTo(t, db, `INSERT INTO memories (id, layer, content, origin)
-		VALUES (100, 'fact', 'el puerto alpha es ochenta', 'human')`)
+		VALUES (100, 'fact', 'port alpha is eighty', 'human')`)
 	writeTo(t, db, `INSERT INTO memories (id, layer, content, origin, supersedes)
-		VALUES (101, 'fact', 'el puerto alpha corregido es cuarenta', 'human', 100)`)
+		VALUES (101, 'fact', 'port alpha corrected is forty', 'human', 100)`)
 
 	res, err := engine.Search(context.Background(), request("alpha", search.MethodFTS))
 	if err != nil {
