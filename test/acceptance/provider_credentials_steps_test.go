@@ -26,10 +26,7 @@
 package acceptance
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"strconv"
 	"strings"
@@ -56,18 +53,7 @@ func (w *providerAcceptanceWorld) keyStoredThroughLogin(provider string) error {
 func (w *providerAcceptanceWorld) loginWithAPIKey(provider, key string) error {
 	w.credential = key
 	const model = "credential-acceptance-model"
-	server := httptest.NewServer(http.HandlerFunc(func(out http.ResponseWriter, request *http.Request) {
-		switch request.URL.Path {
-		case "/models":
-			_ = json.NewEncoder(out).Encode(map[string]any{"data": []any{map[string]any{"id": model}}})
-		case "/chat/completions":
-			_ = json.NewEncoder(out).Encode(map[string]any{"choices": []any{map[string]any{
-				"message": map[string]any{"role": "assistant", "content": "x"},
-			}}})
-		default:
-			http.NotFound(out, request)
-		}
-	}))
+	server := newOpenAIModelServer(model)
 	w.readyServers = append(w.readyServers, server)
 	if err := w.writeConfig(fmt.Sprintf("[models.%s]\nbase_url = %s\n", provider, strconv.Quote(server.URL))); err != nil {
 		return err
