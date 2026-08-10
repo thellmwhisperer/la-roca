@@ -125,13 +125,13 @@ func seededWorld(t *testing.T) *store.DB {
 	}
 	writeTo(t, db, `
 		INSERT INTO memories (layer, content, origin) VALUES
-		  ('fact', 'the captain forbids long dashes in every deliverable', 'human'),
+		  ('fact', 'the team forbids long dashes in every deliverable', 'human'),
 		  ('fact', 'a naive Muller facade sketch from the design review', 'agent'),
 		  ('fact', 'the database opens in WAL mode with a busy timeout', 'agent');
 		INSERT INTO sessions (session_id, project, title) VALUES ('s1', 'roca', 'test session');
 		INSERT INTO exchanges (session_id, exchange_number, human_text, agent_text) VALUES
 		  ('s1', 1, 'how do I configure the service startup', 'it is set with a yaml file'),
-		  ('s1', 2, 'what about the long dashes', 'the captain dislikes them');
+		  ('s1', 2, 'what about the long dashes', 'the team dislikes them');
 		INSERT INTO thinking_blocks (session_id, exchange_number, full_text) VALUES
 		  ('s1', 1, 'thinking about the long dashes and the format');`)
 	return db

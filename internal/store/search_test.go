@@ -59,8 +59,8 @@ func TestTheTriggersKeepTheIndexUpToDate(t *testing.T) {
 	}
 
 	write(t, db, `INSERT INTO memories (id, layer, content, origin)
-		VALUES (1, 'fact', 'the captain blessed a naïve Müller façade', 'human')`)
-	if n := ftsMatches(t, db, "memories_fts", "captain"); n != 1 {
+		VALUES (1, 'fact', 'the team blessed a naïve Müller façade', 'human')`)
+	if n := ftsMatches(t, db, "memories_fts", "team"); n != 1 {
 		t.Errorf("after inserting, matches = %d, want 1", n)
 	}
 
@@ -70,7 +70,7 @@ func TestTheTriggersKeepTheIndexUpToDate(t *testing.T) {
 	}
 
 	write(t, db, `UPDATE memories SET content = 'now it talks about binaries' WHERE id = 1`)
-	if n := ftsMatches(t, db, "memories_fts", "captain"); n != 0 {
+	if n := ftsMatches(t, db, "memories_fts", "team"); n != 0 {
 		t.Errorf("after the update, the old text is still indexed (%d matches)", n)
 	}
 	if n := ftsMatches(t, db, "memories_fts", "binaries"); n != 1 {

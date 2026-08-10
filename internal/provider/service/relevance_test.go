@@ -49,7 +49,7 @@ func TestAnEmptyModelPlanLabelsTheLiteralFallback(t *testing.T) {
 	for _, want := range []string{
 		"nothing relevant was found by the plan",
 		"falling back to literal term search:",
-		"guiones",
+		"dashes",
 	} {
 		if !strings.Contains(res.Message, want) {
 			t.Errorf("fallback message does not contain %q: %q", want, res.Message)
@@ -75,7 +75,7 @@ func TestUnavailableModelStillLabelsTheLiteralFallback(t *testing.T) {
 		t.Fatalf("the literal fallback did not return the seeded match: %+v", res)
 	}
 	if !strings.Contains(res.Message, "falling back to literal term search:") ||
-		!strings.Contains(res.Message, "guiones") {
+		!strings.Contains(res.Message, "dashes") {
 		t.Fatalf("literal rows were shown without their label: %q", res.Message)
 	}
 }

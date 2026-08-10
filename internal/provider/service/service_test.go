@@ -66,7 +66,7 @@ func TestTheSearchFindsWhatWasSeeded(t *testing.T) {
 	svc := seededService(t)
 	ctx := context.Background()
 
-	res, err := svc.Search(ctx, service.SearchRequest{Question: "guiones largos"})
+	res, err := svc.Search(ctx, service.SearchRequest{Question: "long dashes"})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestTheSearchFindsWhatWasSeeded(t *testing.T) {
 	if res.RowCount == 0 {
 		t.Fatalf("zero rows: the seeded memory was not found")
 	}
-	if !strings.Contains(firstRowText(t, res), "guiones largos") {
+	if !strings.Contains(firstRowText(t, res), "long dashes") {
 		t.Errorf("the first row does not carry the seed: %v", res.Rows[0])
 	}
 	if res.Version == "" || res.SourceSHA == "" {
@@ -92,9 +92,9 @@ func TestTheSearchFindsWhatWasSeeded(t *testing.T) {
 func TestAHandoffMemoryIsSearchableByTermAndFTS(t *testing.T) {
 	svc, _ := serviceWithPaths(t)
 	ctx := context.Background()
-	const marker = "zingalor calabaza"
-	seed(t, svc, "handoff", "traspaso donde dejamos "+marker+" para el siguiente agente")
-	seed(t, svc, "question", "mensaje privado con "+marker+" que no debe salir en busqueda")
+	const marker = "zingalor kumquat"
+	seed(t, svc, "handoff", "handoff where we left "+marker+" for the next agent")
+	seed(t, svc, "question", "private message with "+marker+" that must not surface in search")
 	if _, err := svc.Index(ctx); err != nil {
 		t.Fatalf("Index: %v", err)
 	}
@@ -112,10 +112,10 @@ func TestAHandoffMemoryIsSearchableByTermAndFTS(t *testing.T) {
 		foundHandoff := false
 		for _, row := range res.Rows {
 			text, _ := row["text"].(string)
-			if strings.Contains(text, "traspaso donde dejamos") {
+			if strings.Contains(text, "handoff where we left") {
 				foundHandoff = true
 			}
-			if strings.Contains(text, "mensaje privado") {
+			if strings.Contains(text, "private message") {
 				t.Errorf("Search(%s) returned a question-layer message: %q", method, text)
 			}
 		}
@@ -178,7 +178,7 @@ func TestIdenticalResultRowsAreDeduplicatedAtAnswerTime(t *testing.T) {
 func TestHonestZeroRowsAreDeclaredAsSuch(t *testing.T) {
 	svc := seededService(t)
 	res, err := svc.Search(context.Background(), service.SearchRequest{
-		Question: "que tiempo hace en madrid",
+		Question: "what is the weather in madrid",
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
@@ -194,7 +194,7 @@ func TestHonestZeroRowsAreDeclaredAsSuch(t *testing.T) {
 func TestALayerConstraintIsAlwaysRespected(t *testing.T) {
 	svc := seededService(t)
 	res, err := svc.Search(context.Background(), service.SearchRequest{
-		Question: "ancla de capa", Layer: "feedback",
+		Question: "layer anchor", Layer: "feedback",
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
@@ -212,7 +212,7 @@ func TestALayerConstraintIsAlwaysRespected(t *testing.T) {
 func TestTheTruncationBudgetIsRespected(t *testing.T) {
 	svc := seededService(t)
 	res, err := svc.Search(context.Background(), service.SearchRequest{
-		Question: "memoria muy larga", MaxChars: 200,
+		Question: "very long memory", MaxChars: 200,
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
@@ -224,7 +224,7 @@ func TestTheTruncationBudgetIsRespected(t *testing.T) {
 	if len([]rune(text)) > 200 {
 		t.Errorf("the text takes %d characters, want at most 200", len([]rune(text)))
 	}
-	if !strings.Contains(text, "memoria muy larga") {
+	if !strings.Contains(text, "very long memory") {
 		t.Errorf("the truncation ate the match: %q", text)
 	}
 }
@@ -335,9 +335,9 @@ func readOnlyService(t *testing.T) *service.Service {
 
 func seedTheUsualMemories(t *testing.T, svc *service.Service) {
 	t.Helper()
-	seed(t, svc, "project", "el capitan odia los guiones largos en el texto generado")
-	seed(t, svc, "feedback", "ancla de capa para la restriccion por capa")
-	seed(t, svc, "project", "memoria muy larga: "+strings.Repeat("relleno ", 800))
+	seed(t, svc, "project", "the team hates long dashes in the generated text")
+	seed(t, svc, "feedback", "layer anchor for the layer constraint")
+	seed(t, svc, "project", "a very long memory: "+strings.Repeat("filler ", 800))
 }
 
 func seed(t *testing.T, svc *service.Service, layer, content string) {

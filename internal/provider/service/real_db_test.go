@@ -40,9 +40,9 @@ func TestSearchOverARealLabDatabase(t *testing.T) {
 	// constant in the code.
 	project := aProjectFromTheData(t, svc)
 	for _, question := range []string{
-		"traspaso",
+		"handoff",
 		project,
-		"despliegue",
+		"deployment",
 	} {
 		res, err := svc.Search(context.Background(), service.SearchRequest{Question: question})
 		if err != nil {

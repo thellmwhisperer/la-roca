@@ -62,9 +62,9 @@ func TestLLMExchangeTextIsCenteredOnTheQuestionTerm(t *testing.T) {
 
 func TestLLMCountSaysItCountsRowsNotEvents(t *testing.T) {
 	svc := serviceWithModel(t, answering("codex",
-		"SELECT COUNT(*) AS veces FROM memories LIMIT 1"))
+		"SELECT COUNT(*) AS times FROM memories LIMIT 1"))
 	res, err := svc.Query(context.Background(), service.QueryRequest{
-		Question: "Cuantas veces Dana se enfada",
+		Question: "how many times Dana gets angry",
 	})
 	if err != nil {
 		t.Fatalf("Query: %v", err)
@@ -76,9 +76,9 @@ func TestLLMCountSaysItCountsRowsNotEvents(t *testing.T) {
 	}
 
 	distinct := serviceWithModel(t, answering("codex",
-		"SELECT COUNT(DISTINCT layer) AS veces FROM memories LIMIT 1"))
+		"SELECT COUNT(DISTINCT layer) AS times FROM memories LIMIT 1"))
 	distinctResult, err := distinct.Query(context.Background(), service.QueryRequest{
-		Question: "Cuantas clases distintas hay",
+		Question: "how many distinct classes are there",
 	})
 	if err != nil {
 		t.Fatalf("distinct Query: %v", err)

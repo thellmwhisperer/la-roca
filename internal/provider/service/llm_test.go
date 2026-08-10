@@ -90,15 +90,15 @@ func unavailable(name, reason, action string) *fakeProvider {
 		ready: provider.Readiness{Reason: reason, Action: action}}
 }
 
-// theFreeQuestion is the one the compiler declines and hands to the model. It
-// is the consecrated suite's own (F07-01 to F07-04): what it leaves after the
-// opener is a single word, and a single word is only a search when it names a
-// project this installation knows, so the term rescue steps aside.
-const theFreeQuestion = "que decisiones se tomaron sobre el formato"
+// theFreeQuestion is the one the deterministic route declines and hands to the
+// model: none of its words names a project this installation knows, so the
+// keyword rescue never runs and the model answers.
+const theFreeQuestion = "what decisions were made about the format"
 
 // theQuestionWithAMatch also reaches the model, and what it leaves behind does
-// match something seeded: it is the one the keyword rescue can answer.
-const theQuestionWithAMatch = "que decisiones se tomaron sobre guiones"
+// match something seeded ("long dashes"): it is the one the keyword rescue can
+// answer when the model does not.
+const theQuestionWithAMatch = "what decisions were made about the long dashes"
 
 func serviceWithModel(t *testing.T, providers ...provider.Provider) *service.Service {
 	t.Helper()
@@ -324,19 +324,18 @@ func TestZeroRowsFromTheModelGoThroughTheRescue(t *testing.T) {
 	}
 }
 
-// Defect 1 on the keyword rescue: a question that is all interrogatives and a
-// stop word around one entity ("quien es Ana" / "who is Ana") has to find the
-// document that carries only the entity. Before the interrogatives were
-// stripped, the rescue searched for "quien" AND "es" AND "ana" and surfaced
-// only echoes of the question itself; the 369 exchanges that mention Ana never
-// appeared. The words stripped come from the language pack, not from Go.
-func TestTheRescueStripsInterrogativesAndFindsTheEntity(t *testing.T) {
+// Defect 1 on the keyword rescue: a question that is mostly short framing
+// words around one entity ("who is Ana") has to find the document that carries
+// only the entity. Before the content-free tokens were dropped, the rescue
+// searched for every word and surfaced only echoes of the question itself; the
+// rows that mention Ana never appeared.
+func TestTheRescueFindsTheEntityBehindShortWords(t *testing.T) {
 	benchCases := []struct {
 		name     string
 		question string
 	}{
-		{"spanish", "quien es Ana"},
-		{"english", "who is Ana"},
+		{"interrogative", "who is Ana"},
+		{"another framing", "where is Ana"},
 	}
 	for _, c := range benchCases {
 		t.Run(c.name, func(t *testing.T) {
@@ -345,7 +344,7 @@ func TestTheRescueStripsInterrogativesAndFindsTheEntity(t *testing.T) {
 			svc := serviceWithModel(t, broken)
 			// The document carries the entity and none of the question words:
 			// it is reachable only once the interrogatives are stripped.
-			seed(t, svc, "project", "registro del agente Ana en el sistema")
+			seed(t, svc, "project", "record of the agent Ana in the system")
 
 			res, err := svc.Query(context.Background(),
 				service.QueryRequest{Question: c.question})
@@ -375,7 +374,7 @@ func TestWithTheModelOffNoProviderIsContacted(t *testing.T) {
 		Timeout: 2 * time.Second, Probe: time.Second,
 	})
 
-	res, err := svc.Query(context.Background(), service.QueryRequest{Question: "cuantas memorias hay"})
+	res, err := svc.Query(context.Background(), service.QueryRequest{Question: "how many memories are there"})
 	if err != nil {
 		t.Fatalf("Query: %v", err)
 	}
@@ -701,18 +700,18 @@ func TestInterpretCapsTheRowsItHandsTheModel(t *testing.T) {
 	svc := serviceWithModel(t, model)
 	rows := make([]map[string]any, 25)
 	for i := range rows {
-		rows[i] = map[string]any{"id": i, "text": fmt.Sprintf("fila %d", i)}
+		rows[i] = map[string]any{"id": i, "text": fmt.Sprintf("row %d", i)}
 	}
 
-	if _, err := svc.Interpret(context.Background(), "todas", []string{"id", "text"}, rows); err != nil {
+	if _, err := svc.Interpret(context.Background(), "all", []string{"id", "text"}, rows); err != nil {
 		t.Fatalf("Interpret: %v", err)
 	}
 	// The first ten rows (0..9) travel; the eleventh and beyond do not.
 	prompt := model.prompts[0]
-	if !strings.Contains(prompt, "fila 9") {
+	if !strings.Contains(prompt, "row 9") {
 		t.Errorf("the prompt dropped the tenth row:\n%s", prompt)
 	}
-	if strings.Contains(prompt, "fila 10") {
+	if strings.Contains(prompt, "row 10") {
 		t.Errorf("the prompt carries more than ten rows:\n%s", prompt)
 	}
 }
@@ -752,9 +751,9 @@ func TestTheModelsFencedSQLStillPassesTheGate(t *testing.T) {
 // arrive whole, and only the reasoning block is dropped. Clipping to the first
 // fence is what turned a full answer into the single word "atm" (2026-08-10).
 func TestInterpretKeepsProseThatQuotesAFencedBlock(t *testing.T) {
-	prose := "El repo es:\n```\nthellmwhisperer/agentic-team-member\n```\ny el canal tiene 97 subs."
+	prose := "The repo is:\n```\nthellmwhisperer/agentic-team-member\n```\nand the channel has 97 subs."
 	svc := serviceWithModel(t, answering("codex", "<think>summarize</think>\n"+prose))
-	got, err := svc.Interpret(context.Background(), "dame detalles",
+	got, err := svc.Interpret(context.Background(), "give me the details",
 		[]string{"text"}, []map[string]any{{"text": "ATM — Agentic Team Member"}})
 	if err != nil || got != prose {
 		t.Fatalf("the prose was clipped: %q (err=%v)", got, err)

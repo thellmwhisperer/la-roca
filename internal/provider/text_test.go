@@ -24,7 +24,7 @@ func TestCleanStripsMarkdownFences(t *testing.T) {
 // Small local models loop: they repeat a long line forever until they run out
 // of tokens. The lab cuts at the first repetition (`_deloop`) and so does this.
 func TestCleanCutsAtTheFirstRepetitionLoop(t *testing.T) {
-	long := "SELECT content FROM memories WHERE content LIKE '%formato%' AND supersedes IS NULL"
+	long := "SELECT content FROM memories WHERE content LIKE '%format%' AND supersedes IS NULL"
 	raw := long + "\n" + long + "\n" + long
 	if got := Clean(raw); got != long {
 		t.Fatalf("the loop was not cut: %q", got)
@@ -53,15 +53,15 @@ func TestCleanLeavesAnEmptyAnswerEmpty(t *testing.T) {
 }
 
 // CleanProse is the interpretation's cleanup: reasoning goes, everything else
-// stays. Extracting the first fence out of prose is what turned a full Spanish
-// answer into the single word "atm" (2026-08-10), so fences and punctuation
-// survive whole.
+// stays. Extracting the first fence out of prose is what turned a full answer
+// into the single word "atm" (2026-08-10), so fences and punctuation survive
+// whole.
 func TestCleanProse(t *testing.T) {
-	prose := "Los detalles:\n```\natm\n```\ny 97 subs."
+	prose := "The details:\n```\natm\n```\nand 97 subs."
 	for raw, want := range map[string]string{
 		prose: prose,
-		"<think>\nrows\n</think>\nEl canal tiene 97 subs.": "El canal tiene 97 subs.",
-		"La memoria termina así;":                          "La memoria termina así;",
+		"<think>\nrows\n</think>\nThe channel has 97 subs.": "The channel has 97 subs.",
+		"The memory ends here;":                          "The memory ends here;",
 	} {
 		if got := CleanProse(raw); got != want {
 			t.Errorf("CleanProse(%q) = %q, want %q", raw, got, want)

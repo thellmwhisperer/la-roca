@@ -44,7 +44,7 @@ func TestWhatTheIngestWritesIsSearchableAtOnce(t *testing.T) {
 	// The full-text index has the exchange the transcript carried.
 	var hits int
 	if err := svc.DB().SQL().QueryRow(
-		`SELECT COUNT(*) FROM exchanges_fts WHERE exchanges_fts MATCH 'sextante'`).
+		`SELECT COUNT(*) FROM exchanges_fts WHERE exchanges_fts MATCH 'sextant'`).
 		Scan(&hits); err != nil {
 		t.Fatalf("search the index: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestWhatTheIngestWritesIsSearchableAtOnce(t *testing.T) {
 
 	// And the ingested memory is answerable through the product's own search
 	// layer, over the term search the rescue uses.
-	answer, err := svc.Search(ctx, service.SearchRequest{Question: "sextante angulo posicion"})
+	answer, err := svc.Search(ctx, service.SearchRequest{Question: "sextant angle position"})
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -128,9 +128,9 @@ func seedATranscript(t *testing.T, home string) {
 		}
 	}
 	write(filepath.Join(project, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl"), `
-{"type":"user","timestamp":"2026-08-01T10:00:00Z","cwd":"`+demo+`","message":{"content":"para que sirve el sextante"}}
-{"type":"assistant","timestamp":"2026-08-01T10:00:01Z","message":{"content":[{"type":"text","text":"para saber donde estas"}]}}
+{"type":"user","timestamp":"2026-08-01T10:00:00Z","cwd":"`+demo+`","message":{"content":"what is the sextant for"}}
+{"type":"assistant","timestamp":"2026-08-01T10:00:01Z","message":{"content":[{"type":"text","text":"to know where you are"}]}}
 `)
-	write(filepath.Join(project, "memory", "sextante.md"),
-		"---\nname: el-sextante\ntype: project\n---\nEl sextante mide el angulo, no la posicion.\n")
+	write(filepath.Join(project, "memory", "sextant.md"),
+		"---\nname: the-sextant\ntype: project\n---\nThe sextant measures the angle, not the position.\n")
 }
