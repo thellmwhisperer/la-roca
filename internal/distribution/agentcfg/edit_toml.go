@@ -110,7 +110,11 @@ func tomlDocument(r runtime, text string) (map[string]any, error) {
 	}
 	for _, line := range strings.Split(text, "\n") {
 		trimmed := strings.TrimSpace(stripComment(line))
-		if strings.HasPrefix(trimmed, r.serversKey) && strings.Contains(trimmed, "=") {
+		// The key is compared exactly. A prefix match refused a document over an
+		// unrelated key that merely starts the same way, such as
+		// `mcp_servers_legacy`.
+		key, _, isAssignment := strings.Cut(trimmed, "=")
+		if isAssignment && strings.TrimSpace(key) == r.serversKey {
 			return nil, fmt.Errorf(
 				"%s is written as an inline table, and this version only edits "+
 					"`[%s.<name>]` tables: rewrite it as tables and run the command again",

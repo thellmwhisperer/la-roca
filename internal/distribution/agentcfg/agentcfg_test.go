@@ -481,3 +481,32 @@ func read(t *testing.T, path string) string {
 func lookup(env map[string]string) func(string) string {
 	return func(key string) string { return env[key] }
 }
+
+// The inline-table refusal matched the servers key as a PREFIX, so a document
+// carrying an unrelated key that merely starts the same way was refused with a
+// complaint about a table it does not have.
+func TestAKeyThatMerelyStartsLikeTheServersKeyIsNotRefused(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	// `mcp_servers_legacy` is somebody else's key, written inline, beside a
+	// perfectly ordinary tables form of the real one.
+	const before = "mcp_servers_legacy = { old = true }\n\n[mcp_servers.other]\ncommand = \"x\"\n"
+	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := agentcfg.Install(agentcfg.RuntimeCodex, path, "roca"); err != nil {
+		t.Fatalf("an unrelated inline key was refused: %v", err)
+	}
+
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(after), "mcp_servers_legacy = { old = true }") {
+		t.Errorf("the neighbour key did not survive:\n%s", after)
+	}
+	if !strings.Contains(string(after), "[mcp_servers.roca]") {
+		t.Errorf("the declaration did not land:\n%s", after)
+	}
+}
