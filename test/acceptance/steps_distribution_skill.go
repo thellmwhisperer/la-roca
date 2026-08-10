@@ -19,6 +19,20 @@ func registerDistributionSkillSteps(ctx *godog.ScenarioContext, w *distributionW
 	ctx.Given(`^synthetic agent instruction files with operator-owned content$`, w.syntheticInstructionFiles)
 	ctx.When(`^the operator initializes La Roca$`, w.initializeWithInstructionFiles)
 	ctx.Then(`^prompt.md is created and every agent instruction file is unchanged$`, w.promptIsSeparateFromInstructions)
+	ctx.Then(`^init points to prompt.md without printing its contents$`, w.initPointsToPrompt)
+}
+
+func (w *distributionWorld) initPointsToPrompt() error {
+	prompt := filepath.Join(w.home, ".roca", "prompt.md")
+	if !strings.Contains(w.last.stdout, "agent prompt: "+prompt) ||
+		!strings.Contains(w.last.stdout, "Paste its contents into the agent instructions you choose.") {
+		return fmt.Errorf("init does not give the prompt path and action: %s", w.last.stdout)
+	}
+	if strings.Contains(w.last.stdout, "## La Roca — local semantic memory") ||
+		strings.Contains(w.last.stdout, "La Roca never edits agent instruction files") {
+		return fmt.Errorf("init dumped prompt.md into the terminal: %s", w.last.stdout)
+	}
+	return nil
 }
 
 func (w *distributionWorld) installSkillFor(agent string) error {

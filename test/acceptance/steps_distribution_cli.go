@@ -19,6 +19,38 @@ func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWor
 	ctx.Then(`^the default answer is human-readable and the requested answer is one JSON document$`, w.outputFormsAreExplicit)
 	ctx.When(`^the operator runs an unknown command$`, w.runUnknownCommand)
 	ctx.Then(`^it fails, names the unknown command, and points to help$`, w.unknownCommandIsHelpful)
+	ctx.Then(`^init reports setup, ingest, index, model, and its total once in that order$`, w.initSummaryIsOrdered)
+}
+
+func (w *distributionWorld) initSummaryIsOrdered() error {
+	if w.human.code != 0 {
+		return fmt.Errorf("human init exited %d: %s%s", w.human.code, w.human.stdout, w.human.stderr)
+	}
+	position := -1
+	for _, prefix := range []string{"setup:", "ingest:", "index:", "model:", "total:"} {
+		if count := countDistributionLines(w.human.stdout, prefix); count != 1 {
+			return fmt.Errorf("init %s line count=%d:\n%s", prefix, count, w.human.stdout)
+		}
+		next := strings.Index(w.human.stdout, "\n"+prefix)
+		if strings.HasPrefix(w.human.stdout, prefix) {
+			next = 0
+		}
+		if next <= position {
+			return fmt.Errorf("init summary is not ordered at %s:\n%s", prefix, w.human.stdout)
+		}
+		position = next
+	}
+	return nil
+}
+
+func countDistributionLines(output, prefix string) int {
+	count := 0
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			count++
+		}
+	}
+	return count
 }
 
 func (w *distributionWorld) askForCLIHelp() error {

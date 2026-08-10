@@ -27,3 +27,7 @@ Feature: Distribution command line
   Scenario: An unknown command fails with a pointer to help, never silently
     When the operator runs an unknown command
     Then it fails, names the unknown command, and points to help
+
+  Scenario: Init closes with one ordered, fully timed summary
+    When the operator exercises the "init" command in human and JSON form
+    Then init reports setup, ingest, index, model, and its total once in that order

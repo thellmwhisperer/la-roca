@@ -25,3 +25,4 @@ Feature: Distribution agent teaching
     Given synthetic agent instruction files with operator-owned content
     When the operator initializes La Roca
     Then prompt.md is created and every agent instruction file is unchanged
+    And init points to prompt.md without printing its contents

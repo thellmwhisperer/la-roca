@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/cucumber/godog"
 )
@@ -22,6 +24,7 @@ func registerIngestReportSteps(ctx *godog.ScenarioContext, w *ingestAcceptanceWo
 		w.databaseHash = hash
 		return w.runIngest(true)
 	})
+	ctx.When(`^I run ingest for a human$`, w.runHumanIngest)
 	ctx.Then(`^each seeded source has counts$`, func() error {
 		sources, ok := w.last.doc["sources"].(map[string]any)
 		if !ok {
@@ -79,6 +82,32 @@ func registerIngestReportSteps(ctx *godog.ScenarioContext, w *ingestAcceptanceWo
 		}
 		return nil
 	})
+	ctx.Then(`^each seeded source is summarized once with its elapsed time$`, func() error {
+		for _, source := range []string{"claude", "codex"} {
+			pattern := regexp.MustCompile(`(?m)^  \[ok\] ` + source + ` .* · [^·]+(?:ms|s)$`)
+			if matches := pattern.FindAllString(w.last.stdout, -1); len(matches) != 1 {
+				return fmt.Errorf("source %q summary count=%d:\n%s", source, len(matches), w.last.stdout)
+			}
+		}
+		return nil
+	})
+	ctx.Then(`^index time and the product total are each reported once$`, func() error {
+		for _, prefix := range []string{"index:", "total:"} {
+			if count := countLinesWithPrefix(w.last.stdout, prefix); count != 1 {
+				return fmt.Errorf("%s line count=%d:\n%s", prefix, count, w.last.stdout)
+			}
+		}
+		return nil
+	})
+	ctx.Then(`^the Claude source summary reports (\d+) discarded records$`, func(want int) error {
+		needle := fmt.Sprintf(" · %d discarded · ", want)
+		for _, line := range strings.Split(w.last.stdout, "\n") {
+			if strings.HasPrefix(line, "  [ok] claude ") && strings.Contains(line, needle) {
+				return nil
+			}
+		}
+		return fmt.Errorf("Claude summary has no %q:\n%s", needle, w.last.stdout)
+	})
 	ctx.Then(`^pending files are reported$`, func() error {
 		read, err := ingestJSONNumber(w.last.doc, "files_read")
 		if err != nil {
@@ -99,6 +128,37 @@ func registerIngestReportSteps(ctx *godog.ScenarioContext, w *ingestAcceptanceWo
 		}
 		return nil
 	})
+}
+
+func (w *ingestAcceptanceWorld) runHumanIngest() error {
+	before, err := w.tableCounts()
+	if err != nil {
+		return err
+	}
+	w.countsBefore = before
+	result, err := w.runCommand("ingest", "--db-path", w.dbPath)
+	if err != nil {
+		return err
+	}
+	after, countErr := w.tableCounts()
+	w.countsAfter = after
+	if countErr != nil {
+		return countErr
+	}
+	if result.code != 0 {
+		return fmt.Errorf("human ingest exited %d: %s", result.code, result.stderr)
+	}
+	return nil
+}
+
+func countLinesWithPrefix(output, prefix string) int {
+	count := 0
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			count++
+		}
+	}
+	return count
 }
 
 func (w *ingestAcceptanceWorld) seedClaudeAndCodex() error {

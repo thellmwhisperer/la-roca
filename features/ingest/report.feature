@@ -21,6 +21,17 @@ Feature: The honest summary
     When I run ingest
     Then the summary reports 3 record discards with reasons
 
+  Scenario: Human ingest closes with one attributed summary
+    Given Claude and Codex artefacts are ready to ingest
+    When I run ingest for a human
+    Then each seeded source is summarized once with its elapsed time
+    And index time and the product total are each reported once
+
+  Scenario: Human source rows own their record discards
+    Given a Claude session with 3 malformed records is ready to ingest
+    When I run ingest for a human
+    Then the Claude source summary reports 3 discarded records
+
   Scenario: Dry-run reports what it would read and writes nothing
     Given a Claude session is ready to ingest
     When I run ingest as a dry-run
