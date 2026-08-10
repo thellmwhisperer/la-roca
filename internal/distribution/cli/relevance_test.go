@@ -52,7 +52,7 @@ func TestKeywordRescueRendersItsRouteAndRows(t *testing.T) {
 func TestEmptySearchSuggestsHowToBroadenIt(t *testing.T) {
 	var output strings.Builder
 	render(&cliEnv{out: &output}, service.QueryResult{
-		Question: "fotosintesis de los tulipanes holandeses", Path: service.PathKeyword,
+		Question: "photosynthesis of Dutch tulips", Path: service.PathKeyword,
 		Match:   service.MatchEmpty,
 		Message: "no matches in memory for that search",
 	}, "")
@@ -111,13 +111,13 @@ func TestRenderPrefersProseOverRows(t *testing.T) {
 	render(&cliEnv{out: &output}, service.QueryResult{
 		Question: "what was decided about the format", Path: service.PathLLM, Engine: "codex",
 		Model: "codex-model", Match: service.MatchFound, RowCount: 1,
-		Columns: []string{"text"}, Rows: []map[string]any{{"text": "fila cruda"}},
+		Columns: []string{"text"}, Rows: []map[string]any{{"text": "raw row"}},
 	}, "The format was decided in a memory.")
 	got := output.String()
 	if !strings.Contains(got, "The format was decided in a memory.") {
 		t.Fatalf("the prose answer is missing:\n%s", got)
 	}
-	if strings.Contains(got, "fila cruda") {
+	if strings.Contains(got, "raw row") {
 		t.Fatalf("the raw rows leaked past the prose:\n%s", got)
 	}
 }

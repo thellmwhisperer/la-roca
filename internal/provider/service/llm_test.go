@@ -665,38 +665,36 @@ func TestTheRetryIsBoundedToo(t *testing.T) {
 }
 
 // Interpret is the second inference call: it hands the model the question and
-// the rows the first call returned, and it answers in Spanish prose. The prompt
-// is the simple, unengineered one the brief names.
-func TestInterpretTurnsRowsIntoSpanishProse(t *testing.T) {
+// the rows the first call returned. Its prompt names no answer language and
+// tells the model to follow the language of the question.
+func TestInterpretPromptIsLanguageAgnostic(t *testing.T) {
 	model := &fakeProvider{name: "codex", model: "codex-model",
 		ready: provider.Readiness{Ready: true},
-		sql:   "El formato se decidió en una memoria."}
+		sql:   "The format was decided in a memory."}
 	svc := serviceWithModel(t, model)
 
-	prose, err := svc.Interpret(context.Background(), "que se decidió sobre el formato",
+	prose, err := svc.Interpret(context.Background(), "what was decided about the format",
 		[]string{"source", "text"},
-		[]map[string]any{{"source": "memory", "text": "decisión sobre el formato"}})
+		[]map[string]any{{"source": "memory", "text": "decision about the format"}})
 	if err != nil {
 		t.Fatalf("Interpret: %v", err)
 	}
-	if prose != "El formato se decidió en una memoria." {
+	if prose != "The format was decided in a memory." {
 		t.Fatalf("prose %q", prose)
 	}
-	// The second call hands the model the question, the rows and the Spanish
-	// instruction, and nothing engineered around them.
-	prompt := model.prompts[0]
-	for _, want := range []string{"Eres La Roca", "que se decidió sobre el formato",
-		"decisión sobre el formato", "Responde en español"} {
-		if !strings.Contains(prompt, want) {
-			t.Errorf("the prompt is missing %q:\n%s", want, prompt)
-		}
+	wantPrompt := "You are La Roca. Question: what was decided about the format. Results:\n" +
+		"source, text\n" +
+		"memory, decision about the format\n" +
+		"Answer in the same language as the question.\n"
+	if prompt := model.prompts[0]; prompt != wantPrompt {
+		t.Errorf("prompt = %q, want %q", prompt, wantPrompt)
 	}
 }
 
 // A large result set does not blow the context: the second call hands the model
 // at most ten rows.
 func TestInterpretCapsTheRowsItHandsTheModel(t *testing.T) {
-	model := answering("codex", "resumen")
+	model := answering("codex", "summary")
 	svc := serviceWithModel(t, model)
 	rows := make([]map[string]any, 25)
 	for i := range rows {

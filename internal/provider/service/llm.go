@@ -208,12 +208,13 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 }
 
 // Interpret is the second inference call of a query: the first turned the
-// question into SQL, this one turns that SQL's rows into a Spanish
-// natural-language answer. The same provider order is asked again — the one
-// that served is the one that is available, so picking once more reaches it —
-// and the rows, capped at ten, travel in the prompt. Whatever goes wrong is an
-// error the caller falls back from, never a query that fails: the row renderer
-// is the floor, and the prose is what sits on top of it when a model answers.
+// question into SQL, this one turns that SQL's rows into a natural-language
+// answer in the question's language. The same provider order is asked again —
+// the one that served is the one that is available, so picking once more
+// reaches it — and the rows, capped at ten, travel in the prompt. Whatever goes
+// wrong is an error the caller falls back from, never a query that fails: the
+// row renderer is the floor, and the prose is what sits on top of it when a
+// model answers.
 func (s *Service) Interpret(ctx context.Context, question string,
 	columns []string, rows []map[string]any) (string, error) {
 	cascade := s.opts.Providers
@@ -225,9 +226,9 @@ func (s *Service) Interpret(ctx context.Context, question string,
 		return "", fmt.Errorf("no model is available to interpret the rows")
 	}
 	var b strings.Builder
-	b.WriteString("Eres La Roca. Pregunta: ")
+	b.WriteString("You are La Roca. Question: ")
 	b.WriteString(question)
-	b.WriteString(". Resultados:\n")
+	b.WriteString(". Results:\n")
 	b.WriteString(strings.Join(columns, ", "))
 	b.WriteByte('\n')
 	limited := rows
@@ -242,7 +243,7 @@ func (s *Service) Interpret(ctx context.Context, question string,
 		b.WriteString(strings.Join(values, ", "))
 		b.WriteByte('\n')
 	}
-	b.WriteString("Responde en español.")
+	b.WriteString("Answer in the same language as the question.")
 	answer, err := cascade.Chat(ctx, chosen, provider.ChatRequest{
 		Messages: []provider.Message{{Role: provider.RoleUser, Content: b.String()}},
 	})

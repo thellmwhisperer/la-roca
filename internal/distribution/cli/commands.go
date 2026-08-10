@@ -370,11 +370,11 @@ func queryCommand(env *cliEnv) *cobra.Command {
 				return env.printJSON(result)
 			}
 			// The second inference call: the rows the query returned go back to the
-			// same provider that answered, to be rendered as Spanish prose. It is
-			// attempted only when a model served (res.Engine is set), so a machine
-			// with no model is not probed again for nothing; and a failure leaves
-			// the row renderer as the floor, because the fragility of a provider
-			// never takes a query's answer away.
+			// same provider that answered, to be rendered as prose in the question's
+			// language. It is attempted only when a model served (res.Engine is set),
+			// so a machine with no model is not probed again for nothing; and a
+			// failure leaves the row renderer as the floor, because the fragility of
+			// a provider never takes a query's answer away.
 			var prose string
 			if result.Engine != "" && result.RowCount > 0 {
 				if answer, err := svc.Interpret(cmd.Context(), result.Question, result.Columns, result.Rows); err == nil {
