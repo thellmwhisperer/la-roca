@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -25,11 +24,6 @@ import (
 // the laboratory already carries it there: reading it anywhere else would
 // renumber exchanges that already landed and duplicate the lot.
 const openCodeScope = "opencode"
-
-// safeAgent is the shape an agent name has to have to become part of a
-// source_agent. Anything else falls back to plain `opencode`: the column is what
-// the query layer groups by, and it is not a place to put arbitrary text.
-var safeAgent = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
 // openCodeSchema is the shape this build reads.
 var openCodeSchema = []foreignTable{
@@ -395,10 +389,7 @@ func openCodeFingerprint(user openCodeRow, answers, parts []openCodeRow) string 
 	return hex.EncodeToString(sum[:])
 }
 
-func openCodeSourceAgent(agent string) string {
-	if agent != "" && safeAgent.MatchString(agent) {
-		return openCodeScope + "-" + agent
-	}
+func openCodeSourceAgent(_ string) string {
 	return openCodeScope
 }
 

@@ -29,8 +29,8 @@ func TestIngestNarratesEachSourceAndItsDelta(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"ingest: reading claude-code",
-		"ingest: claude-code complete ·",
+		"ingest: reading claude",
+		"ingest: claude complete ·",
 		"sessions=", "exchanges=", "memories=",
 	} {
 		if !containsProgress(progress, want) {

@@ -2,6 +2,7 @@ package parsers
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -30,6 +31,7 @@ type claudeLine struct {
 
 type claudeMessage struct {
 	Content json.RawMessage `json:"content"`
+	Model   string          `json:"model"`
 }
 
 // claudeBlock is one content block. `content` is only read on a tool_result,
@@ -87,28 +89,38 @@ type claudeBuilder struct {
 // answerable.
 func ParseClaudeSession(content []byte, meta FileMeta) (Records, error) {
 	builder := &claudeBuilder{pending: map[string]*ToolUse{}}
-	cwd := ""
+	cwd, model, validLines := "", "", 0
 	for _, raw := range lines(content) {
 		var line claudeLine
 		if err := json.Unmarshal([]byte(raw), &line); err != nil {
 			continue // one corrupt line never costs the file
 		}
+		validLines++
 		if cwd == "" {
 			cwd = line.Cwd
 		}
+		if model == "" && line.Message != nil {
+			model = line.Message.Model
+		}
 		builder.consume(line)
+	}
+	if validLines == 0 && len(lines(content)) > 0 {
+		return Records{}, fmt.Errorf("the Claude transcript contains no valid JSON lines")
 	}
 	builder.flush()
 
 	session := Session{
 		ID:          meta.SessionID,
-		SourceAgent: firstNonEmpty(meta.SourceAgent, "claude-code"),
+		SourceAgent: firstNonEmpty(meta.SourceAgent, "claude"),
 		Project:     meta.Project,
 		Exchanges:   builder.finish(),
 		Metadata:    map[string]any{},
 	}
 	if cwd != "" {
 		session.Metadata["cwd"] = cwd
+	}
+	if model != "" {
+		session.Metadata["model"] = model
 	}
 	if builder.compactions > 0 {
 		session.Metadata["compactions"] = builder.compactions
@@ -141,7 +153,7 @@ func ParseCoworkAudit(content []byte, meta FileMeta) (Records, error) {
 	sidecar := readSessionMetadata(meta.Sidecar)
 	session := Session{
 		ID:          firstNonEmpty(sidecar.sessionID, meta.SessionID, firstSessionID),
-		SourceAgent: firstNonEmpty(meta.SourceAgent, "claude-cowork"),
+		SourceAgent: firstNonEmpty(meta.SourceAgent, "cowork"),
 		Project:     meta.Project,
 		Title:       sidecar.title,
 		Snapshot:    true,

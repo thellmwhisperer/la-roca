@@ -78,10 +78,8 @@ func hermesSession(source row, messages []row) parsers.Session {
 	ended, _ := source.number("ended_at")
 
 	session := parsers.Session{
-		// The source agent carries the model, which is what makes "what did each
-		// model answer" a question the corpus can answer.
 		ID:          source.text("id"),
-		SourceAgent: "hermes-" + model,
+		SourceAgent: "hermes",
 		Project:     ProjectFromCwd(source.text("cwd")),
 		StartedAt:   parsers.ISOFromEpochSeconds(started),
 		EndedAt:     parsers.ISOFromEpochSeconds(ended),
@@ -93,7 +91,10 @@ func hermesSession(source row, messages []row) parsers.Session {
 		minutes := int((ended - started) / 60)
 		session.DurationMinutes = &minutes
 	}
-	session.Metadata = map[string]any{"hermes": hermesMetadata(source, messages)}
+	session.Metadata = map[string]any{
+		"model":  model,
+		"hermes": hermesMetadata(source, messages),
+	}
 	return session
 }
 

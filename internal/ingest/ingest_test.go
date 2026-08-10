@@ -50,14 +50,14 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 
 	// The families, by the source agent each of them writes under.
 	for _, agent := range []string{
-		"claude-code", "claude-cowork", "codex", "pi", "opencode", "hermes",
+		"claude", "claude-desktop", "cowork", "codex", "pi", "opencode", "hermes",
 	} {
 		counts, ok := result.Sources[agent]
 		if !ok {
 			t.Errorf("the source %q is not in the report: %v", agent, SortedSources(result.Sources))
 			continue
 		}
-		if counts.Sessions+counts.MemoriesInserted == 0 {
+		if counts.Sessions+counts.SessionsUpdated+counts.MemoriesInserted == 0 {
 			t.Errorf("the source %q wrote nothing: %+v", agent, counts)
 		}
 	}

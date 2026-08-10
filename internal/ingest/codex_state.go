@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 )
@@ -22,8 +21,6 @@ var codexThreadColumns = []string{
 	"agent_nickname", "agent_role", "reasoning_effort", "cli_version",
 	"sandbox_policy", "approval_mode",
 }
-
-var codexNickname = regexp.MustCompile(`[^a-z0-9]+`)
 
 // codexEnrichment is what the state database had to say about one rollout.
 type codexEnrichment struct {
@@ -143,13 +140,9 @@ func (e *codexEnrichment) mergeSpawnEdges(ctx context.Context, db *sql.DB, threa
 	}
 }
 
-// codexSourceAgent turns a nickname into a source agent, or leaves the family
-// name. The slug is bounded to what a column meant for grouping can hold.
+// codexSourceAgent keeps attribution on the closed family name. The nickname is
+// retained independently in metadata, where it can refine a query without
+// inventing a new family value in sessions.source_agent.
 func codexSourceAgent(nickname string) string {
-	slug := strings.Trim(codexNickname.ReplaceAllString(
-		strings.ToLower(strings.TrimSpace(nickname)), "-"), "-")
-	if slug == "" {
-		return "codex"
-	}
-	return "codex-" + slug
+	return "codex"
 }

@@ -64,9 +64,9 @@ func ParseSessionMetadata(content []byte, meta FileMeta) (Records, error) {
 		return Records{}, nil
 	}
 
-	sourceAgent := firstNonEmpty(meta.SourceAgent, "claude-code")
+	sourceAgent := firstNonEmpty(meta.SourceAgent, "claude-desktop")
 	entrypoint := "claude-desktop"
-	if sourceAgent == "claude-cowork" {
+	if sourceAgent == "cowork" || sourceAgent == "claude-cowork" {
 		entrypoint = "claude-cowork"
 	}
 

@@ -171,7 +171,7 @@ func scanClaudeMemories(roots Roots) []Target {
 			targets = append(targets, Target{
 				Path:        filepath.Join(memoryDir, name),
 				Kind:        parsers.KindClaudeMemory,
-				SourceAgent: "claude-code",
+				SourceAgent: "claude",
 				Project:     project,
 				FileName:    name,
 			})
@@ -251,7 +251,7 @@ func scanClaudeSessions(roots Roots, plan *Plan) []Target {
 			targets = append(targets, Target{
 				Path:        filepath.Join(full, name),
 				Kind:        parsers.KindClaudeSession,
-				SourceAgent: "claude-code",
+				SourceAgent: "claude",
 				Project:     project,
 				SessionID:   id,
 				FileName:    name,
@@ -282,7 +282,7 @@ func scanCodexSessions(roots Roots) []Target {
 
 func scanDesktopSessions(roots Roots) []Target {
 	return filesUnder(roots.ClaudeDesktopSessions, ".json", Target{
-		Kind: parsers.KindSessionMetadata, SourceAgent: "claude-code"})
+		Kind: parsers.KindSessionMetadata, SourceAgent: "claude-desktop"})
 }
 
 // scanCoworkSessions pairs each metadata file with the audit transcript that
@@ -291,14 +291,14 @@ func scanDesktopSessions(roots Roots) []Target {
 func scanCoworkSessions(roots Roots) []Target {
 	var targets []Target
 	for _, metadata := range filesUnder(roots.CoworkSessions, ".json", Target{
-		Kind: parsers.KindSessionMetadata, SourceAgent: "claude-cowork"}) {
+		Kind: parsers.KindSessionMetadata, SourceAgent: "cowork"}) {
 		targets = append(targets, metadata)
 		audit := filepath.Join(strings.TrimSuffix(metadata.Path, ".json"), "audit.jsonl")
 		if isFile(audit) {
 			targets = append(targets, Target{
 				Path:        audit,
 				Kind:        parsers.KindCoworkAudit,
-				SourceAgent: "claude-cowork",
+				SourceAgent: "cowork",
 				FileName:    "audit.jsonl",
 				SidecarPath: metadata.Path,
 			})
@@ -331,7 +331,7 @@ func scanSubagents(roots Roots) []Target {
 				targets = append(targets, Target{
 					Path:        path,
 					Kind:        parsers.KindSubagent,
-					SourceAgent: "claude-code",
+					SourceAgent: "claude",
 					Project:     project,
 					FileName:    filepath.Base(path),
 				})
