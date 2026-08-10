@@ -122,7 +122,20 @@ func yamlFlowSpan(node *yaml.Node, lines []string) (int, int, int) {
 	for i := first; i < len(lines[line]); i++ {
 		char := lines[line][i]
 		if quote != 0 {
-			if char == quote && (i == 0 || lines[line][i-1] != '\\') {
+			// YAML's own rules, and they differ per quote style. Inside double
+			// quotes a backslash escapes the next character; inside single quotes
+			// it does not, and a doubled quote is one literal quote. Deciding it
+			// with a look at the PREVIOUS byte also read outside the span, and
+			// treating a single-quoted scalar as backslash-escaped left the quote
+			// open so the scan ran past the mapping and swallowed whatever the
+			// operator had written after it.
+			switch {
+			case quote == '"' && char == '\\':
+				i++
+			case quote == '\'' && char == '\'' &&
+				i+1 < len(lines[line]) && lines[line][i+1] == '\'':
+				i++
+			case char == quote:
 				quote = 0
 			}
 			continue
