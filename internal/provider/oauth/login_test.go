@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -138,12 +139,15 @@ func TestLoginRejectsACallbackWithTheWrongState(t *testing.T) {
 	})
 
 	flow := loginFlow(t, server.URL)
+	page := make(chan string, 1)
 	_, err := flow.Login(context.Background(), LoginOptions{
 		Out: &bytes.Buffer{},
 		OpenBrowser: func(string) error {
 			go func() {
 				res, err := http.Get(flow.Redirect + "?code=c&state=somebody-elses")
 				if err == nil {
+					body, _ := io.ReadAll(res.Body)
+					page <- string(body)
 					res.Body.Close()
 				}
 			}()
@@ -156,6 +160,9 @@ func TestLoginRejectsACallbackWithTheWrongState(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "state") {
 		t.Fatalf("the error does not say what went wrong: %v", err)
+	}
+	if body := <-page; strings.Contains(body, "now connected") {
+		t.Fatalf("wrong-state callback received the success page: %q", body)
 	}
 }
 

@@ -82,7 +82,11 @@ func (f Flow) Login(ctx context.Context, opts LoginOptions) (Token, error) {
 			}
 			return
 		}
-		reply(w, "La Roca is now connected. You can close this tab.")
+		if query.Get("state") != state {
+			reply(w, "This callback is not for this login. You can close this tab and start over.")
+		} else {
+			reply(w, "La Roca is now connected. You can close this tab.")
+		}
 		select {
 		case arrived <- callback{code: query.Get("code"), state: query.Get("state")}:
 		default:
