@@ -147,11 +147,12 @@ type Result struct {
 // matters for one thing only, and
 // it is the session titles: the transcript writes the session and the metadata
 // file names it, so the first non-blank name wins deterministically.
-func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (Result, error) {
+func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (result Result, err error) {
 	start := time.Now()
+	defer func() { result.ElapsedMS = time.Since(start).Milliseconds() }()
 	plan := Scan(opts.Roots)
 
-	result := Result{
+	result = Result{
 		DryRun:  opts.DryRun,
 		Scanned: plan.Scanned,
 		Sources: map[string]*Counts{},
@@ -170,10 +171,11 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 	remaining := map[string]int{}
 	sourceElapsed := map[string]time.Duration{}
 	for _, target := range plan.Targets {
-		result.source(target.SourceAgent)
-		result.sourceStats(target.SourceAgent)
-		totals[target.SourceAgent]++
-		remaining[target.SourceAgent]++
+		source := normalizedSource(target.SourceAgent)
+		result.source(source)
+		result.sourceStats(source)
+		totals[source]++
+		remaining[source]++
 	}
 
 	// The state is read even on a dry run: telling an operator that eight hundred
@@ -203,27 +205,28 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 	result.After = before
 
 	for _, target := range plan.Targets {
+		source := normalizedSource(target.SourceAgent)
 		targetStart := time.Now()
-		stats := result.sourceStats(target.SourceAgent)
-		if opts.LiveProgress != nil && !liveStarted[target.SourceAgent] {
+		stats := result.sourceStats(source)
+		if opts.LiveProgress != nil && !liveStarted[source] {
 			opts.LiveProgress(SourceProgress{
-				Source: target.SourceAgent, Total: totals[target.SourceAgent],
+				Source: source, Total: totals[source],
 			})
-			liveStarted[target.SourceAgent] = true
+			liveStarted[source] = true
 		}
 		finishTarget := func() {
 			stats.Processed++
-			sourceElapsed[target.SourceAgent] += time.Since(targetStart)
-			stats.ElapsedMS = sourceElapsed[target.SourceAgent].Milliseconds()
-			remaining[target.SourceAgent]--
+			sourceElapsed[source] += time.Since(targetStart)
+			stats.ElapsedMS = sourceElapsed[source].Milliseconds()
+			remaining[source]--
 			if opts.LiveProgress != nil {
-				counts := result.source(target.SourceAgent)
+				counts := result.source(source)
 				opts.LiveProgress(SourceProgress{
-					Source: target.SourceAgent, Processed: stats.Processed,
-					Total: totals[target.SourceAgent], Read: stats.Read,
+					Source: source, Processed: stats.Processed,
+					Total: totals[source], Read: stats.Read,
 					Sessions:  counts.Sessions + counts.SessionsUpdated,
 					Discarded: stats.RecordsDiscarded, ElapsedMS: stats.ElapsedMS,
-					Done: remaining[target.SourceAgent] == 0,
+					Done: remaining[source] == 0,
 				})
 			}
 		}
@@ -246,18 +249,19 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 			finishTarget()
 			continue
 		}
-		if opts.Progress != nil && !announced[target.SourceAgent] {
-			opts.Progress("ingest: reading " + target.SourceAgent)
-			announced[target.SourceAgent] = true
+		if opts.Progress != nil && !announced[source] {
+			opts.Progress("ingest: reading " + source)
+			announced[source] = true
 		}
 		result.FilesRead++
 		stats.Read++
 		discardsBefore := result.RecordsDiscarded
-		if err := ingestOne(ctx, db, layers, opts, target, fingerprint, &result); err != nil {
-			return result, err
-		}
+		err = ingestOne(ctx, db, layers, opts, target, fingerprint, &result)
 		stats.RecordsDiscarded += result.RecordsDiscarded - discardsBefore
 		finishTarget()
+		if err != nil {
+			return result, err
+		}
 	}
 
 	if !opts.DryRun {
@@ -276,14 +280,11 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 				counts.MemoriesInserted+counts.MemoriesUpdated))
 		}
 	}
-	result.ElapsedMS = time.Since(start).Milliseconds()
 	return result, nil
 }
 
 func (r *Result) sourceStats(agent string) *SourceStats {
-	if agent == "" {
-		agent = "unknown"
-	}
+	agent = normalizedSource(agent)
 	if stats, ok := r.SourceStats[agent]; ok {
 		return stats
 	}
@@ -295,15 +296,20 @@ func (r *Result) sourceStats(agent string) *SourceStats {
 // source makes sure a source that was scanned appears in the report even when it
 // wrote nothing.
 func (r *Result) source(agent string) *Counts {
-	if agent == "" {
-		agent = "unknown"
-	}
+	agent = normalizedSource(agent)
 	if counts, ok := r.Sources[agent]; ok {
 		return counts
 	}
 	counts := &Counts{}
 	r.Sources[agent] = counts
 	return counts
+}
+
+func normalizedSource(agent string) string {
+	if agent == "" {
+		return "unknown"
+	}
+	return agent
 }
 
 func (r *Result) fail(target Target, reason string) {

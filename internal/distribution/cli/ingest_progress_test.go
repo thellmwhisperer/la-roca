@@ -3,20 +3,16 @@ package cli
 import (
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 )
 
 func TestIngestRowsCarryCountersAndCollapseAway(t *testing.T) {
-	previousTick := spinnerTick
-	spinnerTick = time.Millisecond
-	t.Cleanup(func() { spinnerTick = previousTick })
 	var output strings.Builder
 	rows := newIngestRows(&output, true)
 	rows.update(ingest.SourceProgress{Source: "claude-code", Processed: 1501,
 		Total: 1501, Discarded: 3, ElapsedMS: 91234, Done: true})
-	time.Sleep(3 * spinnerTick)
+	rows.draw()
 	rows.finish()
 
 	got := output.String()
