@@ -97,6 +97,9 @@ func mcpUninstallCommand(env *cliEnv) *cobra.Command {
 			if all {
 				runtimes = agentcfg.Runtimes()
 			}
+			if err := oneRuntimeForAConfigPath(configPath, len(runtimes)); err != nil {
+				return err
+			}
 			var outcomes []agentcfg.Outcome
 			for _, runtime := range runtimes {
 				path, err := configFileOf(runtime, configPath)
@@ -124,6 +127,9 @@ func mcpStatusCommand(env *cliEnv) *cobra.Command {
 		Short: "Which agents have La Roca configured, and which binary they launch",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
+			if err := oneRuntimeForAConfigPath(configPath, len(args)); err != nil {
+				return err
+			}
 			return runtimeStatus(env, args, agentcfg.Runtimes(),
 				func(runtime string) (agentcfg.Report, error) {
 					path, err := configFileOf(runtime, configPath)
@@ -164,6 +170,20 @@ func (env *cliEnv) renderOutcomes(outcomes []agentcfg.Outcome, verb string) erro
 		env.print("%s: %s %s%s", outcome.Runtime, done, outcome.Path, backup)
 	}
 	return nil
+}
+
+// oneRuntimeForAConfigPath refuses a declared configuration file when more than
+// one runtime is selected. `--config` names ONE runtime's file, and applying it
+// to every runtime edited that single file once per runtime, each pass with a
+// different agent's rules: one agent's configuration rewritten by another's
+// editor.
+func oneRuntimeForAConfigPath(configPath string, runtimes int) error {
+	if configPath == "" || runtimes == 1 {
+		return nil
+	}
+	return fmt.Errorf(
+		"--config names one runtime's file: name that one runtime (%s) instead of all of them",
+		listOfRuntimes())
 }
 
 // configFileOf resolves where a runtime keeps its configuration, unless the
