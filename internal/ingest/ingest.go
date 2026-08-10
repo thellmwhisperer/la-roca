@@ -364,19 +364,24 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 	result.ExchangesHeld += records.Deferred
 	result.discard(target, records.Discards)
 
-	return db.Write(ctx, func(tx *sql.Tx) error {
-		counts, err := WriteRecords(ctx, tx, layers, records)
+	var counts Counts
+	err := db.Write(ctx, func(tx *sql.Tx) error {
+		written, err := WriteRecords(ctx, tx, layers, records)
 		if err != nil {
 			return err
 		}
-		result.source(target.SourceAgent).add(counts)
+		counts = written
 		summary := map[string]any{
-			"sessions":  counts.Sessions,
-			"exchanges": counts.Exchanges,
-			"memories":  counts.MemoriesInserted + counts.MemoriesUpdated,
+			"sessions":  written.Sessions,
+			"exchanges": written.Exchanges,
+			"memories":  written.MemoriesInserted + written.MemoriesUpdated,
 		}
 		return RecordState(ctx, tx, target, fingerprint, "", summary)
 	})
+	if err == nil {
+		result.source(target.SourceAgent).add(counts)
+	}
+	return err
 }
 
 // read turns one artefact into records; what the content declares outranks what

@@ -619,6 +619,51 @@ func (b bareDatabase) Write(ctx context.Context, fn func(*sql.Tx) error) error {
 	return tx.Commit()
 }
 
+type retryOnceDatabase struct{ handle *sql.DB }
+
+func (b retryOnceDatabase) SQL() *sql.DB { return b.handle }
+
+func (b retryOnceDatabase) Write(ctx context.Context, fn func(*sql.Tx) error) error {
+	first, err := b.handle.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := fn(first); err != nil {
+		_ = first.Rollback()
+		return err
+	}
+	if err := first.Rollback(); err != nil {
+		return err
+	}
+	second, err := b.handle.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := fn(second); err != nil {
+		_ = second.Rollback()
+		return err
+	}
+	return second.Commit()
+}
+
+func TestCommitRetryDoesNotDoubleReportCounters(t *testing.T) {
+	db := rocaDatabase(t)
+	path := filepath.Join(t.TempDir(), "session.json")
+	if err := os.WriteFile(path, []byte(`{"cliSessionId":"retry-session"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result := Result{Sources: map[string]*Counts{}}
+	target := Target{Path: path, Kind: parsers.KindSessionMetadata, SourceAgent: "claude"}
+	err := ingestOne(context.Background(), retryOnceDatabase{db.SQL()}, registry(t), Options{},
+		target, "fingerprint", &result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := result.Sources["claude"].Sessions; got != 1 {
+		t.Fatalf("reported sessions = %d, want 1 after a retried commit", got)
+	}
+}
+
 // A source that is a live database, not a file, is refused whole when its shape
 // is not the one this build reads. Half a foreign table produces rows nobody can
 // trust, and the refusal has to name the agent so the operator knows which one
