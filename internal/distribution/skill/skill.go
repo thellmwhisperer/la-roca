@@ -1,10 +1,8 @@
 // Package skill installs the canonical agent skill that teaches runtimes how
-// to use La Roca. One embedded SKILL.md, five personal skill paths, no edits
-// to any other file the operator owns.
+// to use La Roca: one embedded SKILL.md, one personal skill path per supported
+// runtime, no edits to any other file the operator owns.
 //
-// SKILL.md is the only edit path. skills/roca/SKILL.md in the Agent Plugins
-// package is a generated copy of the same bytes (go:generate below); the CLI
-// test suite fails the build if they diverge.
+// SKILL.md, embedded below, is the only copy in the repository.
 package skill
 
 import (
@@ -18,8 +16,6 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 )
-
-//go:generate cp SKILL.md ../../../skills/roca/SKILL.md
 
 //go:embed SKILL.md
 var content string

@@ -23,9 +23,8 @@ import (
 // the real layer registry, so the documented release blocker -- examples that
 // named flags and layers the binary does not have -- cannot come back.
 //
-// There is one skill body: internal/skill/SKILL.md (embedded). The Agent
-// Plugins copy at skills/roca/SKILL.md is generated from it; identity is
-// checked below so a divergent hand-edit cannot teach a different CLI.
+// There is one skill body: internal/distribution/skill/SKILL.md, embedded in
+// the binary. Nothing else in the repository carries a copy.
 func TestEverySkillExampleIsValidAgainstTheRealCLI(t *testing.T) {
 	root := rootCommand(&cliEnv{out: io.Discard})
 	registry, err := layers.Load()
@@ -60,21 +59,6 @@ func TestEverySkillExampleIsValidAgainstTheRealCLI(t *testing.T) {
 			t.Errorf("skill example did not exit 0 (code %d):\n  %s\n%s",
 				code, line, out)
 		}
-	}
-}
-
-// The plugin package skill must be the same bytes as the embedded canonical
-// skill. Editing one and not the other is how skills/roca once taught
-// `roca health` while the product surface and the embedded skill taught
-// `roca doctor`.
-func TestPluginSkillIsExactCopyOfCanonical(t *testing.T) {
-	got, err := os.ReadFile(filepath.Join("..", "..", "..", "skills", "roca", "SKILL.md"))
-	if err != nil {
-		t.Fatalf("read plugin skill: %v", err)
-	}
-	want := skill.Content()
-	if string(got) != want {
-		t.Fatalf("skills/roca/SKILL.md diverges from internal/distribution/skill/SKILL.md; edit the embedded skill and run go generate ./internal/distribution/skill")
 	}
 }
 
