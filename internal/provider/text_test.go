@@ -61,7 +61,7 @@ func TestCleanProse(t *testing.T) {
 	for raw, want := range map[string]string{
 		prose: prose,
 		"<think>\nrows\n</think>\nThe channel has 97 subs.": "The channel has 97 subs.",
-		"The memory ends here;":                          "The memory ends here;",
+		"The memory ends here;":                             "The memory ends here;",
 	} {
 		if got := CleanProse(raw); got != want {
 			t.Errorf("CleanProse(%q) = %q, want %q", raw, got, want)
