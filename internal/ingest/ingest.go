@@ -420,7 +420,9 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 			return parsers.Records{}, "it is not a Claude subagent transcript"
 		}
 		if !known {
-			return parsers.Records{}, ""
+			return parsers.Records{Discards: []parsers.Discard{{
+				Reason: "subagent shape could not be identified in the probe window",
+			}}}, ""
 		}
 	}
 

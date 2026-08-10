@@ -664,6 +664,24 @@ func TestCommitRetryDoesNotDoubleReportCounters(t *testing.T) {
 	}
 }
 
+func TestUnknownSubagentProbeIsCounted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "subagent.jsonl")
+	content := strings.Repeat("garbage\n", 50) +
+		`{"type":"user","sessionId":"late","message":{"content":"valid tail"}}` + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	records, reason := read(context.Background(), Options{}, Target{
+		Path: path, Kind: parsers.KindSubagent,
+	}, &Result{})
+	if reason != "" {
+		t.Fatalf("read failure = %q", reason)
+	}
+	if len(records.Discards) != 1 || !strings.Contains(records.Discards[0].Reason, "probe window") {
+		t.Fatalf("discards = %+v", records.Discards)
+	}
+}
+
 // A source that is a live database, not a file, is refused whole when its shape
 // is not the one this build reads. Half a foreign table produces rows nobody can
 // trust, and the refusal has to name the agent so the operator knows which one
