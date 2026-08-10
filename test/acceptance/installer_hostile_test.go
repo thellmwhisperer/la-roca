@@ -13,7 +13,7 @@ import (
 // The installer's hostile cases, run against the real `install.sh` with a real
 // shell, the way the suite runs everything else here.
 //
-// The consecrated scenarios cover the ones this product designed for: a run
+// The frozen scenarios cover the failures this product handles: a run
 // killed with -9 converges, a healthy installation is recognized and not redone,
 // and a stranger's file at the target is named and not overwritten. What is
 // left are failures of the machine underneath,

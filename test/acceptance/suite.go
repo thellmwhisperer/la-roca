@@ -9,7 +9,7 @@ import (
 	"github.com/cucumber/godog"
 )
 
-// runGodog runs one godog suite over prepared feature contents. The consecrated
+// runGodog runs one Godog suite over prepared feature contents. The frozen
 // suite and the per-domain suites reach the same runner, so the suite
 // boilerplate lives in one place instead of being copied into every Test*
 // function that opens a suite.

@@ -21,7 +21,7 @@ import (
 
 // registerStoreSteps wires the curated step vocabulary of the STORE domain.
 //
-// It reuses the black-box world the consecrated suite built (run, record, the
+// It reuses the black-box world shared by the legacy suite (run, record, the
 // environment, openDB, the JSON readers and the exit-code checks): the store
 // domain is the same product spoken of in fewer words, not a second harness.
 // What is new here is only the store-domain Given/When/Then and the fixtures

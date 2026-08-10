@@ -17,7 +17,7 @@ It never edits those instructions.
 curl -fsSL https://raw.githubusercontent.com/thellmwhisperer/la-roca/main/install.sh \
   | sh
 
-# Private repository — the reference route (PRD R1)
+# Private repository — authenticated route
 TOKEN="<the operator's token>"; REPO="thellmwhisperer/la-roca"
 curl -fsSL -H "Authorization: Bearer ${TOKEN}" \
      -H "Accept: application/vnd.github.raw" \
@@ -55,7 +55,7 @@ shape (`roca-<version>-windows-x64.exe`), because without the extension the
 operating system will not run the file at all; `release.ArtefactName` and a test
 that reads the Makefile keep the two halves of that agreement together.
 
-Three properties, each of them a scenario of the consecrated suite:
+Three properties, each covered by an acceptance scenario:
 
 - **The checksum is verified before anything is written** (F01-01, and `Verify`
   in `internal/distribution/release`). A binary that runs is your only way back and it is not
@@ -86,7 +86,7 @@ model-wording request, and the bench path and case count when it publishes.
 Those lines are deliberately plain terminal output: a slow provider must never
 look like a wedged command.
 
-**The binary ships the format and the runner and no questions at all** (PRD C5).
+**The binary ships the format and the runner and no questions at all.**
 A public binary carrying anybody's vocabulary is a leak, so the exam every
 installation is measured against has to be written where the corpus lives. That
 is what this command is for, and `docs/golden-bench.md` is the format it writes.
@@ -185,7 +185,7 @@ roca uninstall --keep-data     # for scripts
 roca uninstall --purge
 ```
 
-The question is the operator's own (PRD R5) and the default keeps your data,
+The question is the operator's own and the default keeps your data,
 because the other answer cannot be taken back.
 
 What it always does: unlinks the binary, and withdraws La Roca's entry from
@@ -201,10 +201,7 @@ backups, the cache, the credentials and the benches.
 
 - **What La Roca owns is deleted whenever it is there.** The inventory is a
   DECLARATION (`ownedPaths` in `internal/distribution/cli/uninstall.go`), never a snapshot of
-  the filesystem taken beforehand. Capturing a snapshot first is what killed the
-  laboratory's purge in #451: it created its own lock directory afterwards, then
-  refused to delete that directory as one that "appeared after the inventory",
-  reported `purged: no`, and left residue with the CLI already gone.
+  the filesystem taken before the command creates its own artefacts.
 - **What La Roca did not create is never deleted.** It is reported by name, with
   the reason, and the directory holding it survives with it. That protection is
   kept whole. What was removed is the race, not the protection.
@@ -229,4 +226,4 @@ nothing to execute. That is the shape of a one-file product, and it is why the
 re-runnability is measured over the plan and not over two shell invocations.
 
 There is no process to stop and none is left behind: every command opens the
-database, works and exits (TECH-SPEC 8.5). D-6 disappears by construction.
+database, works and exits.

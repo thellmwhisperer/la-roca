@@ -1,8 +1,8 @@
 # Ingest capability delta inventory
 
-Capabilities below exist in ingest code but no approved scenario in this wave
+Capabilities below exist in ingest code but no approved scenario
 claims them. This is an inventory for later pruning or contract work, not a
-request to expand this wave.
+request to expand coverage.
 
 | Unclaimed capability | Where it lives |
 |---|---|

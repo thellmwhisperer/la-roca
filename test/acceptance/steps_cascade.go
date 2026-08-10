@@ -87,7 +87,7 @@ func (m *world) iRunTheSQLItReturned() error {
 
 // iRestartTheRuntime does nothing, and that is the contract: La Roca has no
 // daemon, so every command is already a new process and the previous scenario
-// left none alive. The step exists so the consecrated suite runs without being
+// left none alive. The step exists so the frozen suite runs without being
 // touched, and so that the property is visibly met by construction.
 func (m *world) iRestartTheRuntime() error { return nil }
 

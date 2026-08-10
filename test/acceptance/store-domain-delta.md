@@ -1,6 +1,6 @@
 # Store domain — capability delta vs. the approved scenarios
 
-The 16 approved store-domain scenarios are the contract this wave ships. This
+The 16 approved store-domain scenarios are the current contract. This
 file lists what the store-domain CODE can do that NO approved scenario claims,
 so the owner can prune or commission coverage deliberately. It is an inventory,
 not a wish list: nothing here is broken, and nothing here is deleted.
@@ -21,7 +21,7 @@ Each row is `capability -> where it lives -> claimed by no scenario`.
 - Structural adoption that ignores the text of the DDL (same columns, rewritten
   create statements).
   -> `internal/store/adopt.go` `Inspect`/`compare`.
-  -> The consecrated suite claims this (D-4 / D-4b); no store-domain scenario does.
+  -> The legacy suite claims this (D-4 / D-4b); no store-domain scenario does.
 - `roca index` as a standalone command (rebuild the search index by hand).
   -> `internal/distribution/cli/search.go` `indexCommand`, `internal/store/search/index.go`.
   -> No scenario runs it (init builds the index implicitly).

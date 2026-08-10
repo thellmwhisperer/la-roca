@@ -1,6 +1,6 @@
 # Provider capability delta inventory
 
-The approved 13 scenarios deliberately claim deterministic configuration, selection diagnosis, no-model degradation, the coarse SQL boundary, and the xAI API-key lifecycle. The provider code also contains the following capabilities that no scenario in this wave claims.
+The approved 13 scenarios claim deterministic configuration, selection diagnosis, no-model degradation, the coarse SQL boundary, and the xAI API-key lifecycle. The provider code also contains the following capabilities that no approved scenario claims.
 
 | Unclaimed capability | Where it lives |
 |---|---|

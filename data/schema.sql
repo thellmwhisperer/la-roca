@@ -1,14 +1,10 @@
 -- La Roca v1 schema.
 --
--- Eight tables, no views. Each one's DDL is copied literally from the lab
--- (the frozen reference schema) because
--- database adoption (docs/TECH-SPEC.md 2.4) compares structure: an
+-- Eight tables, no views. Database adoption compares structure, so an
 -- "improvement" to the DDL turns a clean adoption into a migration.
 --
--- Out of v1 by the scope decision: proposals, proposal_annotations,
--- runs and run_logs (v2, and a database that already has them keeps them
--- intact). Out because they are dead in the lab's own catalog: messages,
--- layer_stats.
+-- Proposals, proposal_annotations, runs, run_logs, messages and layer_stats are
+-- outside the v1 schema; existing databases retain those tables as orphans.
 
 CREATE TABLE IF NOT EXISTS sessions (
   session_id    TEXT PRIMARY KEY,

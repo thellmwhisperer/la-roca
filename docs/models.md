@@ -1,7 +1,6 @@
 # Model providers
 
-La Roca's decision is **frontier with a local floor** (the decision of
-2026-08-05, point 3): the configured provider serves when there is a credential,
+La Roca uses **frontier with a local floor**: the configured provider serves when there is a credential,
 and with no network or no credential the fall to local Ollama is automatic. The
 local one is the guaranteed floor, not the product's identity.
 
@@ -52,12 +51,11 @@ For each setting, in this order of precedence:
    on collision,
 4. the built-in default.
 
-Point 3 is the lab's defect D-1: a key written at the root of the document has
-to resolve the same as one under `[defaults]`. Reading only `[defaults]` is what
-made a hand-written config invisible.
+A key written at the document root resolves like one under `[defaults]`, and
+`[defaults]` wins on collision.
 
 `ROCA_MODELS_ORDER` overrides the order from the environment; `ROCA_MODELS_ORDER=none`
-turns the model off entirely, which is the lab's `llm_engine=none`.
+turns the model off entirely.
 
 ## The providers
 
@@ -144,8 +142,8 @@ Claude stays out: its terms forbid it outside official tools.
 1. A provider is chosen **by availability**, never by exception: each one is
    asked `Ready` in order and the first yes serves. The ones behind it are not
    asked anything.
-2. The model generates SQL and that SQL **always** passes the two-halved gate
-   (`docs/TECH-SPEC.md` 1.5). A model is not above the gate.
+2. The model generates SQL and that SQL **always** passes the two-halved gate.
+   A model is not above the gate.
 3. Whatever fails from there on degrades to the keyword rescue and says which of
    four things went wrong: `llm_unavailable`, `llm_error`, `invalid_sql`,
    `sql_execution_error`.
@@ -188,8 +186,8 @@ DDL's own `REFERENCES` clauses), and every rule that names a column.
 That is not tidiness. Two defects came out of not having it, and both looked
 like a weak model until the rejected SQL was read:
 
-- The rule ported from the lab said, flatly, "always filter with `supersedes IS
-  NULL`". That column exists in `memories` and nowhere else, so every question
+- A blanket "always filter with `supersedes IS NULL`" rule is invalid because
+  that column exists in `memories` and nowhere else, so every question
   answered out of `sessions` came back rejected. Different questions, one
   identical error.
 - The prompt listed tables and columns but never how they connect, so `what

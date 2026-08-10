@@ -11,7 +11,7 @@ import (
 	"github.com/cucumber/godog"
 )
 
-// selectScenarios reads the consecrated features and returns a copy with only
+// selectScenarios reads the frozen features and returns a copy with only
 // the requested scenarios, keeping header, tags and background.
 //
 // The files in features/ are versioned contracts; the runner selects the

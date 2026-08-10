@@ -1,6 +1,6 @@
 //go:build acceptance
 
-// Package acceptance runs the consecrated Gherkin suite against the real binary.
+// Package acceptance runs the frozen Gherkin suite against the real binary.
 //
 // It is black box by construction: not one symbol of the product is imported
 // here. The only thing this package knows how to do is prepare a toy HOME, run

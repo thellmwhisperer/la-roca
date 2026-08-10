@@ -86,9 +86,8 @@ that changed underneath us aborts instead of clobbering the runtime that owns
 it.
 
 **One declared boundary.** A `codex` config that writes `mcp_servers` as an
-inline table is refused by name, with the remedy, instead of being edited. The
-laboratory handles that shape; this version does not, and corrupting somebody's
-config is worse than asking them to spell it the ordinary way.
+inline table is refused by name, with the remedy, instead of being edited.
+Corrupting somebody's config is worse than asking them to spell it as a table.
 
 By default, the binary written into the entry is the absolute path of the
 `roca` executable performing the installation. It is deliberately not a bare

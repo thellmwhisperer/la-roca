@@ -7,7 +7,7 @@
 # catch: scoping per directory would make it invisible.
 #
 # What is not swept: `data/` (embedded artefacts plus the one `embed.go` that
-# declares them), `features/` (the consecrated Gherkin contract, not Go),
+# declares them), `features/` (the frozen Gherkin contract, not Go),
 # `bin/`, `dist/` and `.tmp/` (build output and the cached gate binary itself).
 schema: 1
 

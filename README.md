@@ -246,11 +246,11 @@ make dist      # the four release targets from this one machine
 ```
 
 The acceptance suite in [`features/`](features) was written before the code and
-is the executable contract: 102 scenarios consecrated and frozen before a line
+is the executable contract: 102 scenarios frozen before a line
 was built, across install, operator flow, defect regressions, the query cascade,
 the golden bench, teach, model adapters, the MCP plug, concurrency and the
 surface, plus 9 more for the session hooks, which entered with the capability.
-Which scenarios a wave claims is declared in
+The scenarios implemented by this build are declared in
 `test/acceptance/acceptance_test.go`, and the handful that stay unclaimed say
 there, in writing, why.
 
