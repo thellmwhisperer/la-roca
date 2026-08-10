@@ -53,10 +53,12 @@ func ParseCodexSession(content []byte, meta FileMeta) (Records, error) {
 	}
 
 	var (
-		number     int
-		humanText  string
-		humanTS    string
-		haveHuman  bool
+		number      int
+		humanText   string
+		humanTS     string
+		haveHuman   bool
+		humanRecord int
+		deferred    int
 		thinking   []Thinking
 		tools      []*ToolUse
 		pending    = map[string]*ToolUse{}
@@ -99,7 +101,17 @@ func ParseCodexSession(content []byte, meta FileMeta) (Records, error) {
 		case "event_msg":
 			switch payload.InnerType {
 			case "user_message":
+				// A question arriving over one that never completed replaces it, and
+				// the replaced turn will never complete: it is counted here, because
+				// nothing downstream can see the turn that was overwritten.
+				if haveHuman {
+					discards = append(discards, Discard{Record: humanRecord,
+						Reason: "turn superseded by a later question before it completed"})
+				}
 				humanText, humanTS, haveHuman = payload.Message, line.Timestamp, true
+				humanRecord = index + 1
+				thinking, tools = nil, nil
+				pending = map[string]*ToolUse{}
 			case "task_complete":
 				if !haveHuman {
 					discards = append(discards, Discard{Record: index + 1, Reason: "completed turn has no user message"})
@@ -127,7 +139,14 @@ func ParseCodexSession(content []byte, meta FileMeta) (Records, error) {
 		case "response_item":
 			switch payload.InnerType {
 			case "reasoning":
+				// A summary with no text is an empty row nobody can query, so it is
+				// left out by name instead of stored as noise.
 				text := summaryText(payload.Summary)
+				if strings.TrimSpace(text) == "" {
+					discards = append(discards, Discard{Record: index + 1,
+						Reason: "reasoning summary has no readable text"})
+					continue
+				}
 				thinking = append(thinking, Thinking{Text: text, WordCount: wordCount(text)})
 			case "function_call", "custom_tool_call":
 				tool := &ToolUse{
@@ -152,6 +171,13 @@ func ParseCodexSession(content []byte, meta FileMeta) (Records, error) {
 		}
 	}
 
+	// A rollout whose last event is a question is one Codex is still answering.
+	// That turn is deferred and not discarded: the next run reads a longer file
+	// and lands it. Reporting it in neither is what made a live tail invisible.
+	if haveHuman {
+		deferred++
+	}
+
 	for i := range exchanges {
 		exchanges[i].Thinking = perTurnThk[i]
 		for _, tool := range perTurn[i] {
@@ -164,7 +190,7 @@ func ParseCodexSession(content []byte, meta FileMeta) (Records, error) {
 	PlaceThinking(exchanges)
 	session.Exchanges = exchanges
 	session.DurationMinutes = minutesBetween(session.StartedAt, session.EndedAt)
-	return Records{Sessions: []Session{session}, Discards: discards}, nil
+	return Records{Sessions: []Session{session}, Discards: discards, Deferred: deferred}, nil
 }
 
 func summaryText(items []codexSummary) string {

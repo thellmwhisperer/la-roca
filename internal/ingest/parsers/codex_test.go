@@ -69,3 +69,74 @@ func TestCodexToolWithoutAFailingExitCodeIsNotAnError(t *testing.T) {
 		t.Errorf("tools = %+v: only a non-zero exit code is an error", tools)
 	}
 }
+
+// Pi holds a turn the artefact is still writing and reports it as deferred. A
+// rollout whose last event is a user message is the same live tail, and it was
+// leaving the turn out of the exchanges, out of the discards and out of the
+// deferred count: invisible in all three, which reads as a file with nothing new.
+func TestCodexHoldsTheTurnTheRolloutIsStillWriting(t *testing.T) {
+	content := `{"type":"session_meta","timestamp":"2026-08-01T10:00:00Z","payload":{"id":"roll-1","cwd":"/w/demo"}}
+{"type":"event_msg","timestamp":"2026-08-01T10:00:01Z","payload":{"type":"user_message","message":"closed question"}}
+{"type":"event_msg","timestamp":"2026-08-01T10:00:02Z","payload":{"type":"task_complete","last_agent_message":"the answer"}}
+{"type":"event_msg","timestamp":"2026-08-01T10:00:03Z","payload":{"type":"user_message","message":"still being answered"}}
+`
+	records, err := Parse(KindCodexSession, []byte(content), FileMeta{SessionID: "roll-1"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := len(records.Sessions[0].Exchanges); got != 1 {
+		t.Fatalf("exchanges = %d, want 1: half a turn is not an exchange", got)
+	}
+	if records.Deferred != 1 {
+		t.Errorf("deferred = %d, want 1 turn still in flight", records.Deferred)
+	}
+}
+
+// A user message arriving over one that never completed replaces it, and the
+// replaced turn is gone for good: it is a discard, not a deferral.
+func TestCodexCountsAUserMessageThatSupersedesAnUnclosedTurn(t *testing.T) {
+	content := `{"type":"session_meta","timestamp":"2026-08-01T10:00:00Z","payload":{"id":"roll-2","cwd":"/w/demo"}}
+{"type":"event_msg","timestamp":"2026-08-01T10:00:01Z","payload":{"type":"user_message","message":"interrupted"}}
+{"type":"event_msg","timestamp":"2026-08-01T10:00:02Z","payload":{"type":"user_message","message":"asked again"}}
+{"type":"event_msg","timestamp":"2026-08-01T10:00:03Z","payload":{"type":"task_complete","last_agent_message":"the answer"}}
+`
+	records, err := Parse(KindCodexSession, []byte(content), FileMeta{SessionID: "roll-2"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := len(records.Sessions[0].Exchanges); got != 1 {
+		t.Fatalf("exchanges = %d, want 1", got)
+	}
+	if len(records.Discards) != 1 {
+		t.Fatalf("discards = %d, want the superseded turn counted: %+v",
+			len(records.Discards), records.Discards)
+	}
+	if records.Sessions[0].Exchanges[0].HumanText != "asked again" {
+		t.Errorf("the completed turn kept the wrong question: %q",
+			records.Sessions[0].Exchanges[0].HumanText)
+	}
+}
+
+// The same rule down the Codex path: a reasoning event whose summary carries no
+// text is not a thinking block, and leaving it out has to be counted.
+func TestCodexDoesNotStoreReasoningWithNoText(t *testing.T) {
+	content := `{"type":"session_meta","timestamp":"2026-08-01T10:00:00Z","payload":{"id":"roll-3","cwd":"/w/demo"}}
+{"type":"event_msg","timestamp":"2026-08-01T10:00:01Z","payload":{"type":"user_message","message":"why"}}
+{"type":"response_item","timestamp":"2026-08-01T10:00:02Z","payload":{"type":"reasoning","summary":[]}}
+{"type":"event_msg","timestamp":"2026-08-01T10:00:03Z","payload":{"type":"task_complete","last_agent_message":"because"}}
+`
+	records, err := Parse(KindCodexSession, []byte(content), FileMeta{SessionID: "roll-3"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	for _, block := range records.Sessions[0].Exchanges[0].Thinking {
+		if block.Text == "" {
+			t.Errorf("an empty thinking block landed in the corpus: %+v",
+				records.Sessions[0].Exchanges[0].Thinking)
+		}
+	}
+	if len(records.Discards) != 1 {
+		t.Errorf("discards = %d, want the empty reasoning counted: %+v",
+			len(records.Discards), records.Discards)
+	}
+}
