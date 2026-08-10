@@ -283,7 +283,7 @@ func (o *OpenAICompatible) Chat(ctx context.Context, req ChatRequest) (ChatRespo
 		return ChatResponse{}, fmt.Errorf("%s answered with no choices", o.label)
 	}
 	return ChatResponse{
-		Content:  Clean(answer.Choices[0].Message.Content),
+		Content:  answer.Choices[0].Message.Content,
 		Provider: o.name,
 		ModelID:  o.model,
 	}, nil

@@ -85,9 +85,11 @@ func TestOllamaThatDoesNotAnswerNamesHowToStartIt(t *testing.T) {
 	}
 }
 
-func TestOllamaChatReturnsTheCleanedContent(t *testing.T) {
-	server, hits := ollamaServer(t, []string{"qwen3.5:4b"},
-		"<think>counting</think>\n```sql\nSELECT count(*) FROM memories LIMIT 1\n```")
+// The adapter returns what the model wrote: shaping is the caller's decision,
+// because only the caller knows whether it asked for SQL or for prose.
+func TestOllamaChatReturnsTheRawContent(t *testing.T) {
+	raw := "<think>counting</think>\n```sql\nSELECT count(*) FROM memories LIMIT 1\n```"
+	server, hits := ollamaServer(t, []string{"qwen3.5:4b"}, raw)
 	ollama := NewOllama(OllamaConfig{BaseURL: server.URL, Model: "qwen3.5:4b"})
 
 	res, err := ollama.Chat(context.Background(), ChatRequest{
@@ -96,7 +98,7 @@ func TestOllamaChatReturnsTheCleanedContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("chat: %v", err)
 	}
-	if res.Content != "SELECT count(*) FROM memories LIMIT 1" {
+	if res.Content != raw {
 		t.Fatalf("content %q", res.Content)
 	}
 	if res.Provider != NameOllama || res.ModelID != "qwen3.5:4b" {

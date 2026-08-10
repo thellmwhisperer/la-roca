@@ -232,7 +232,7 @@ func (c *Codex) Chat(ctx context.Context, req ChatRequest) (ChatResponse, error)
 	if err != nil {
 		return ChatResponse{}, err
 	}
-	return ChatResponse{Content: Clean(content), Provider: c.Name(), ModelID: c.model}, nil
+	return ChatResponse{Content: content, Provider: c.Name(), ModelID: c.model}, nil
 }
 
 func (c *Codex) authorize(request *http.Request, token oauth.Token) {

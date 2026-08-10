@@ -51,3 +51,20 @@ func TestCleanLeavesAnEmptyAnswerEmpty(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+// CleanProse is the interpretation's cleanup: reasoning goes, everything else
+// stays. Extracting the first fence out of prose is what turned a full Spanish
+// answer into the single word "atm" (2026-08-10), so fences and punctuation
+// survive whole.
+func TestCleanProse(t *testing.T) {
+	prose := "Los detalles:\n```\natm\n```\ny 97 subs."
+	for raw, want := range map[string]string{
+		prose: prose,
+		"<think>\nrows\n</think>\nEl canal tiene 97 subs.": "El canal tiene 97 subs.",
+		"La memoria termina así;":                          "La memoria termina así;",
+	} {
+		if got := CleanProse(raw); got != want {
+			t.Errorf("CleanProse(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}

@@ -226,6 +226,21 @@ func TestCodexReadsTheAnswerOutOfTheEventStream(t *testing.T) {
 	}
 }
 
+// The adapter transports, it does not interpret: a prose answer that quotes a
+// fenced block arrives whole. Clipping to the first fence at this layer is what
+// turned a full Spanish interpretation into the single word "atm" (2026-08-10).
+func TestCodexKeepsProseAroundAFencedBlock(t *testing.T) {
+	prose := "Los detalles: ```\natm\n``` y el canal tiene 97 subs."
+	server, _ := codexBackend(t, []string{
+		sse("response.output_text.delta", map[string]any{"delta": prose}),
+	})
+	res, err := NewCodex(CodexConfig{Session: liveSession(t), BaseURL: server.URL}).
+		Chat(context.Background(), ChatRequest{Messages: []Message{{Role: RoleUser, Content: "detalles"}}})
+	if err != nil || res.Content != prose {
+		t.Fatalf("the answer was clipped: %q (err=%v)", res.Content, err)
+	}
+}
+
 // Some answers come whole in the completion event and never as deltas.
 func TestCodexReadsTheAnswerOutOfTheCompletionEvent(t *testing.T) {
 	server, _ := codexBackend(t, []string{

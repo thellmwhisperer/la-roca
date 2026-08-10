@@ -168,7 +168,7 @@ func (o *Ollama) Chat(ctx context.Context, req ChatRequest) (ChatResponse, error
 		return ChatResponse{}, fmt.Errorf("ask Ollama at %s: %w", o.baseURL, err)
 	}
 	return ChatResponse{
-		Content:  Clean(answer.Message.Content),
+		Content:  answer.Message.Content,
 		Provider: o.Name(),
 		ModelID:  o.model,
 	}, nil

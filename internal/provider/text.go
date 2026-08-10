@@ -20,6 +20,15 @@ func Clean(raw string) string {
 	return strings.TrimSpace(text)
 }
 
+// CleanProse is the shape for the second call, the row interpretation: the
+// reasoning block goes, the blanks are trimmed, and nothing else is touched.
+// Prose legitimately quotes fenced blocks and ends in punctuation, so Clean's
+// fence extraction must never run on it: applied to a full Spanish answer it
+// kept only the first fence and delivered the single word "atm" (2026-08-10).
+func CleanProse(raw string) string {
+	return strings.TrimSpace(thinkingBlock.ReplaceAllString(raw, ""))
+}
+
 // thinkingBlock is the reasoning a thinking model emits before answering. It is
 // not part of the answer and the gate would reject it as syntax.
 var thinkingBlock = regexp.MustCompile(`(?s)<think>.*?</think>`)

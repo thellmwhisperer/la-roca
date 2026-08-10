@@ -734,3 +734,29 @@ func TestInterpretFallsBackWhenNoModelServes(t *testing.T) {
 		})
 	}
 }
+
+// The adapters hand back raw model output, so the SQL stage owns the shaping:
+// a model that wraps its SQL in a fence behind a thinking block still passes
+// the gate and reaches the database.
+func TestTheModelsFencedSQLStillPassesTheGate(t *testing.T) {
+	svc := serviceWithModel(t, answering("codex",
+		"<think>plan the query</think>\n```sql\nSELECT content FROM memories WHERE supersedes IS NULL LIMIT 5\n```"))
+	res, err := svc.Query(context.Background(), service.QueryRequest{Question: theFreeQuestion})
+	if err != nil || res.Degraded != "" || res.RowCount == 0 {
+		t.Fatalf("the fenced SQL did not survive the stage: degraded=%q rows=%d err=%v",
+			res.Degraded, res.RowCount, err)
+	}
+}
+
+// Interpretation is prose, not SQL: an answer that quotes a fenced block must
+// arrive whole, and only the reasoning block is dropped. Clipping to the first
+// fence is what turned a full answer into the single word "atm" (2026-08-10).
+func TestInterpretKeepsProseThatQuotesAFencedBlock(t *testing.T) {
+	prose := "El repo es:\n```\nthellmwhisperer/agentic-team-member\n```\ny el canal tiene 97 subs."
+	svc := serviceWithModel(t, answering("codex", "<think>summarize</think>\n"+prose))
+	got, err := svc.Interpret(context.Background(), "dame detalles",
+		[]string{"text"}, []map[string]any{{"text": "ATM — Agentic Team Member"}})
+	if err != nil || got != prose {
+		t.Fatalf("the prose was clipped: %q (err=%v)", got, err)
+	}
+}

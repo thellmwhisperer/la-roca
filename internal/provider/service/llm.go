@@ -146,11 +146,14 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 				fmt.Sprintf("%s could not answer: %v", chosen.Name(), err)), nil
 		}
 		res.LLMLatencyMS += answer.LatencyMS
+		// The adapter hands back raw model output; this stage asked for SQL, so
+		// this stage shapes it: fence extraction, deloop, reasoning strip.
+		sql := provider.Clean(answer.Content)
 		// What the model wrote travels whether or not it runs, and it is not
 		// lost when the rescue answers over it.
-		res.ModelSQL = answer.Content
+		res.ModelSQL = sql
 
-		validated, rejection = gate.Validate(answer.Content)
+		validated, rejection = gate.Validate(sql)
 		if rejection == nil {
 			// Defense in depth behind the prompt: bare LIKE '%term%' on a text
 			// column is the substring disease (Ana → ganancia). Reject with a
@@ -171,7 +174,7 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 		// have run the query, and it is the one piece of information that fixes
 		// it.
 		messages = append(messages,
-			provider.Message{Role: provider.RoleAssistant, Content: answer.Content},
+			provider.Message{Role: provider.RoleAssistant, Content: sql},
 			provider.Message{Role: provider.RoleUser, Content: correction(rejection)})
 	}
 	res.SQL = validated
@@ -246,7 +249,8 @@ func (s *Service) Interpret(ctx context.Context, question string,
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(answer.Content), nil
+	// Prose keeps its fences and its punctuation; only the reasoning goes.
+	return provider.CleanProse(answer.Content), nil
 }
 
 // maxRowsToInterpret caps how many rows the second call hands the model, so a
