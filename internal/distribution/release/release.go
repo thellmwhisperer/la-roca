@@ -232,10 +232,18 @@ func (s Source) get(ctx context.Context, url, accept, what string) ([]byte, erro
 		return nil, fmt.Errorf("the release channel answered %s for %s",
 			response.Status, what)
 	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, maxArtefact))
+	// One byte beyond the ceiling, so a payload over it is REFUSED instead of
+	// truncated into a shorter artefact that then fails its checksum with a
+	// misleading reason.
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxArtefact+1))
 	if err != nil {
 		return nil, fmt.Errorf(
 			"the transfer of %s did not finish: %w. Nothing was replaced", what, err)
+	}
+	if len(body) > maxArtefact {
+		return nil, fmt.Errorf(
+			"%s is larger than the %d bytes this version will download. Nothing was replaced",
+			what, maxArtefact)
 	}
 	return body, nil
 }

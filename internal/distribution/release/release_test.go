@@ -222,9 +222,11 @@ func TestAnUnswappableBinaryIsRolledBack(t *testing.T) {
 // The release query speaks the GitHub API and carries the credential, because
 // the reference repository is private and the anonymous route gives 404.
 func TestTheLatestReleaseIsReadOverTheAuthenticatedAPI(t *testing.T) {
-	var sawToken string
+	// The handler runs on the server's goroutine and the assertion on the test's,
+	// so the captured header travels over a channel instead of a shared variable.
+	tokens := make(chan string, 4)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sawToken = r.Header.Get("Authorization")
+		tokens <- r.Header.Get("Authorization")
 		if r.URL.Path != "/repos/owner/name/releases/latest" {
 			http.NotFound(w, r)
 			return
@@ -246,6 +248,12 @@ func TestTheLatestReleaseIsReadOverTheAuthenticatedAPI(t *testing.T) {
 	}
 	if found.Tag != "v9.9.9" {
 		t.Fatalf("tag = %q", found.Tag)
+	}
+	var sawToken string
+	select {
+	case sawToken = <-tokens:
+	default:
+		t.Fatal("the release query never reached the server")
 	}
 	if sawToken != "Bearer a-token" {
 		t.Fatalf("Authorization = %q: the private route needs the credential", sawToken)
