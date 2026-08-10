@@ -37,6 +37,25 @@ func TestAppendWritesOneCredentialFreeDatedLine(t *testing.T) {
 	}
 }
 
+func TestRedactCoversTheDocumentedCredentialShapes(t *testing.T) {
+	secrets := []string{
+		"github_pat_11AA22BB33CC44DD55EE66FF77GG88HH99II",
+		"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature123",
+		"AKIAIOSFODNN7EXAMPLE",
+		"AIzaSyA12345678901234567890123456789012",
+	}
+	redacted := Redact(map[string]any{"question": strings.Join(secrets, " ")})
+	raw, err := json.Marshal(redacted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range secrets {
+		if strings.Contains(string(raw), secret) {
+			t.Errorf("credential shape survived redaction: %s", secret)
+		}
+	}
+}
+
 func TestAppendPrunesFilesOutsideTheRetentionWindow(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, DirName)

@@ -225,6 +225,27 @@ func TestMalformedToolCallIsAuditedAsAFailure(t *testing.T) {
 	}
 }
 
+func TestUnavailableLLMIsAuditedAsDegradedNotOK(t *testing.T) {
+	svc := seededServiceWithUnavailableModel(t)
+	result := callTool(t, connect(t, svc), "roca_query", map[string]any{
+		"query": "question no provider can answer",
+	})
+	var answer service.QueryResult
+	decode(t, result, &answer)
+	if answer.Degraded != service.DegradedUnavailable {
+		t.Fatalf("fixture answered without the unavailable path: degraded=%q", answer.Degraded)
+	}
+	matches, _ := filepath.Glob(filepath.Join(svc.DataDir(), logfile.DirName, "mcp-audit-*.jsonl"))
+	raw, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	if !strings.Contains(text, `"ok":false`) || !strings.Contains(text, `"degraded":"llm_unavailable"`) {
+		t.Fatalf("degraded call was audited optimistically: %s", text)
+	}
+}
+
 func TestTheExecToolRefusesAWriteWithTheGatesVerdict(t *testing.T) {
 	svc := seededService(t)
 	statement := "DELETE FROM memories"
@@ -635,6 +656,29 @@ func (f fakeModel) Models(context.Context) provider.ModelReport {
 }
 func (f fakeModel) Chat(context.Context, provider.ChatRequest) (provider.ChatResponse, error) {
 	return provider.ChatResponse{Content: f.sql, Provider: "fake", ModelID: "fake-model"}, nil
+}
+
+type unavailableModel struct{}
+
+func (unavailableModel) Name() string    { return "unavailable" }
+func (unavailableModel) ModelID() string { return "offline-model" }
+func (unavailableModel) Ready(context.Context) provider.Readiness {
+	return provider.Readiness{Reason: "offline", Action: "start it"}
+}
+func (unavailableModel) Models(context.Context) provider.ModelReport {
+	return provider.ModelReport{Reason: "offline"}
+}
+func (unavailableModel) Chat(context.Context, provider.ChatRequest) (provider.ChatResponse, error) {
+	return provider.ChatResponse{}, fmt.Errorf("must not call an unavailable provider")
+}
+
+func seededServiceWithUnavailableModel(t *testing.T) *service.Service {
+	t.Helper()
+	svc := openServiceWith(t, false, provider.Cascade{Providers: []provider.Provider{unavailableModel{}}})
+	if _, err := svc.Init(context.Background()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	return svc
 }
 
 // seededServiceWithModel is the seeded installation with a model that answers a

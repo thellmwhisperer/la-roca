@@ -15,9 +15,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -76,7 +78,7 @@ func New(svc *service.Service, build Build) *mcp.Server {
 	mcp.AddTool(server, queryTool, sanitizing(p.query, dbPath, dataDir))
 	mcp.AddTool(server, sqlTool, sanitizing(p.sql, dbPath, dataDir))
 	mcp.AddTool(server, storeTool, sanitizing(p.store, dbPath, dataDir))
-	server.AddReceivingMiddleware(auditCalls(audit))
+	server.AddReceivingMiddleware(auditCalls(audit, os.Stderr))
 	return server
 }
 
@@ -101,7 +103,8 @@ func sanitizing[In, Out any](
 	}
 }
 
-func auditCalls(audit *logfile.Writer) mcp.Middleware {
+func auditCalls(audit *logfile.Writer, warnings io.Writer) mcp.Middleware {
+	var warned sync.Once
 	return func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 			if method != "tools/call" {
@@ -114,13 +117,38 @@ func auditCalls(audit *logfile.Writer) mcp.Middleware {
 			if callResult, isToolResult := result.(*mcp.CallToolResult); isToolResult {
 				ok = ok && !callResult.IsError
 			}
-			_ = audit.Append(logfile.MCPAudit, logfile.MCPRecord{
+			degraded := resultDegraded(result)
+			ok = ok && degraded == ""
+			if appendErr := audit.Append(logfile.MCPAudit, logfile.MCPRecord{
 				Timestamp: started.UTC(), Tool: tool, Args: args, OK: ok,
 				DurationMS: time.Since(started).Milliseconds(), RowCount: resultRows(result),
-			})
+				Degraded: degraded,
+			}); appendErr != nil {
+				warned.Do(func() {
+					fmt.Fprintf(warnings, "warning: MCP calls are not being written to the audit log: %v\n", appendErr)
+				})
+			}
 			return result, err
 		}
 	}
+}
+
+func resultDegraded(value any) string {
+	switch result := value.(type) {
+	case *mcp.CallToolResult:
+		return resultDegraded(result.StructuredContent)
+	case service.QueryResult:
+		return result.Degraded
+	case map[string]any:
+		degraded, _ := result["degraded"].(string)
+		return degraded
+	case json.RawMessage:
+		var decoded any
+		if json.Unmarshal(result, &decoded) == nil {
+			return resultDegraded(decoded)
+		}
+	}
+	return ""
 }
 
 func toolCall(req mcp.Request) (string, any) {

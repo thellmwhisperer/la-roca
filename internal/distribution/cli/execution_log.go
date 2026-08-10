@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,7 +33,7 @@ func (env *cliEnv) logExecution(cmd *cobra.Command, started time.Time, code int,
 		DatabasePath: paths.DB,
 		DurationMS:   time.Since(started).Milliseconds(),
 		ExitCode:     code,
-		Result:       env.outcome,
+		Result:       resultWithoutRows(env.outcome),
 	}
 	if runErr != nil {
 		record.Error = runErr.Error()
@@ -47,6 +48,24 @@ func (env *cliEnv) logExecution(cmd *cobra.Command, started time.Time, code int,
 		})
 	}
 	return nil
+}
+
+func resultWithoutRows(result any) any {
+	if result == nil {
+		return nil
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		return map[string]any{"summary_error": "result metadata could not be encoded"}
+	}
+	var summary any
+	if err := json.Unmarshal(raw, &summary); err != nil {
+		return map[string]any{"summary_error": "result metadata could not be encoded"}
+	}
+	if fields, ok := summary.(map[string]any); ok {
+		delete(fields, "rows")
+	}
+	return summary
 }
 
 func commandName(cmd *cobra.Command) string {

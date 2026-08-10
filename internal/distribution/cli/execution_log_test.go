@@ -13,11 +13,12 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
-func TestExecutionLogCarriesTheExistingEnvelopeAndRedactedFlags(t *testing.T) {
+func TestExecutionLogCarriesMetadataWithoutResultRowsAndRedactsFlags(t *testing.T) {
 	dataDir := t.TempDir()
 	dbPath := filepath.Join(dataDir, "roca.db")
 	env := &cliEnv{dbPath: dbPath, outcome: service.QueryResult{
-		Path: service.PathLLM, Engine: "codex", Model: "model", RowCount: 2,
+		Question: "what changed", Path: service.PathLLM, Engine: "codex", Model: "model", RowCount: 2,
+		Rows: []map[string]any{{"text": "private row contents"}},
 	}}
 	root := &cobra.Command{Use: "roca"}
 	query := &cobra.Command{Use: "query"}
@@ -39,13 +40,16 @@ func TestExecutionLogCarriesTheExistingEnvelopeAndRedactedFlags(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	for _, want := range []string{`"command":"query"`, `"database_path":"` + dbPath + `"`, `"path":"llm_fallback"`, `"row_count":2`, `"api-token":"[REDACTED]"`} {
+	for _, want := range []string{`"command":"query"`, `"database_path":"` + dbPath + `"`, `"question":"what changed"`, `"path":"llm_fallback"`, `"row_count":2`, `"api-token":"[REDACTED]"`} {
 		if !strings.Contains(text, want) {
 			t.Errorf("execution log lacks %q: %s", want, text)
 		}
 	}
 	if strings.Contains(text, "token-private-value") {
 		t.Fatalf("credential flag leaked: %s", text)
+	}
+	if strings.Contains(text, "private row contents") || strings.Contains(text, `"rows"`) {
+		t.Fatalf("result rows leaked into the execution log: %s", text)
 	}
 }
 

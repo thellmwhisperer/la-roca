@@ -28,6 +28,26 @@ credentials, backups, `prompt.md`, and operational JSONL under `logs/`. La Roca
 does not edit agent instruction files; the operator decides whether to use the
 generated prompt or install the bundled skill.
 
+## Operational logs
+
+The dated `executions`, `mcp-audit`, and `ingest` JSONL streams retain 30 days.
+A logging failure warns once but never changes a command or tool result.
+
+Execution records store the command, changed flags, database path, duration,
+exit code, error and result metadata. Query records keep the question, route,
+provider, model, SQL, timings, degradation, provider failure text and row count;
+they never store result row contents. MCP audit records store the tool,
+redacted arguments, verdict, degraded state, duration and result row count.
+Ingest records retain the complete ingest envelope, including every file error
+and every discarded source record with its path, parser, record position and
+reason.
+
+No log is stored in SQLite and no run tables exist. Before a line reaches disk,
+redaction covers sensitive field names; bearer and key/value secrets; PEM
+private keys; OpenAI `sk-*`, GitHub `gh[pousr]_*` and `github_pat_*`, Slack
+`xox*`, JWT `eyJ*`, AWS `AKIA*`, and Google `AIza*` credential shapes. Log
+directories and files are created with operator-only permissions.
+
 ## What it reads
 
 `roca ingest` incrementally reads supported local artefacts:

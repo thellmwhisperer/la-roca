@@ -43,6 +43,7 @@ type MCPRecord struct {
 	OK         bool      `json:"ok"`
 	DurationMS int64     `json:"duration_ms"`
 	RowCount   int       `json:"row_count"`
+	Degraded   string    `json:"degraded,omitempty"`
 }
 
 type IngestRecord struct {
@@ -107,7 +108,10 @@ var (
 	secretText = []*regexp.Regexp{
 		regexp.MustCompile(`(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]+`),
 		regexp.MustCompile(`(?i)\b(api[_-]?key|token|password|passwd|secret)\s*[:=]\s*[^\s,;]+`),
-		regexp.MustCompile(`\b(sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]{8,}|xox[baprs]-[A-Za-z0-9-]{8,})\b`),
+		regexp.MustCompile(`\b(sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]{8,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{8,})\b`),
+		regexp.MustCompile(`\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b`),
+		regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`),
+		regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`),
 		regexp.MustCompile(`(?s)-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----`),
 	}
 )
