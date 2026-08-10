@@ -34,19 +34,21 @@ const (
 )
 
 type cliEnv struct {
-	build   Build
-	out     io.Writer
-	errOut  io.Writer
-	dbPath  string
-	json    bool
-	code    int
-	outcome any
+	build     Build
+	out       io.Writer
+	errOut    io.Writer
+	dbPath    string
+	json      bool
+	code      int
+	outcome   any
+	started   time.Time
+	prelogged bool
 }
 
 // Execute runs the CLI and returns the process exit code.
 func Execute(build Build) (int, error) {
 	started := time.Now()
-	env := &cliEnv{build: build, out: os.Stdout, errOut: os.Stderr}
+	env := &cliEnv{build: build, out: os.Stdout, errOut: os.Stderr, started: started}
 	root := rootCommand(env)
 	executed, err := root.ExecuteC()
 	if err != nil {
@@ -58,7 +60,10 @@ func Execute(build Build) (int, error) {
 	if err != nil {
 		code = ExitError
 	}
-	logErr := env.logExecution(executed, started, code, err)
+	var logErr error
+	if !env.prelogged {
+		logErr = env.logExecution(executed, started, code, err)
+	}
 	if err != nil {
 		return code, err
 	}

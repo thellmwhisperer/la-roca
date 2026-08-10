@@ -45,7 +45,7 @@ func uninstallCommand(env *cliEnv) *cobra.Command {
 				}
 				wipe = answer
 			}
-			return env.uninstall(wipe)
+			return env.uninstall(cmd, wipe)
 		},
 	}
 	cmd.Flags().BoolVar(&keepData, "keep-data", false, "remove the binary and keep the database")
@@ -79,7 +79,7 @@ func (env *cliEnv) askAboutTheData(in io.Reader) (bool, error) {
 // The integrations go first, and on purpose: they name the binary, so an agent
 // left pointing at a file that is gone is the one residue an operator does not
 // find until their next session fails to start.
-func (env *cliEnv) uninstall(purge bool) error {
+func (env *cliEnv) uninstall(cmd *cobra.Command, purge bool) error {
 	paths, err := env.resolvePaths()
 	if err != nil {
 		return err
@@ -92,6 +92,16 @@ func (env *cliEnv) uninstall(purge bool) error {
 	running, _ := os.Executable()
 	plan := lifecycle.Plan{Binary: running}
 	if purge {
+		// The execution is recorded before the operator-authorized purge removes
+		// the log directory itself. Execute then suppresses its ordinary post-run
+		// record so uninstall leaves the promised zero residue.
+		if !env.started.IsZero() {
+			env.capture(map[string]any{"purge_requested": true})
+			if err := env.logExecution(cmd, env.started, ExitOK, nil); err != nil {
+				return err
+			}
+			env.prelogged = true
+		}
 		plan.Owned = ownedPaths(paths)
 		plan.DataDir = dirOf(paths.DB)
 	}
