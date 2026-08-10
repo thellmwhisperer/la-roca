@@ -1,12 +1,3 @@
-/*
-@overview Uninstall ownership contract for init's generated presentation prompt. ~45 lines.
-READING GUIDE: Start at TestThePurgeOwnsTheGeneratedAgentPrompt.
-MAIN FLOW: generated prompt.md -> ownedPaths -> lifecycle purge -> file removed.
-PUBLIC API: None; this file tests CLI-owned installation inventory.
-INTERNALS: TestThePurgeOwnsTheGeneratedAgentPrompt.
-@exports
-@deps os/path/filepath/testing, internal lifecycle
-*/
 package cli
 
 import (
@@ -16,8 +7,6 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/lifecycle"
 )
-
-// -- 1/1 CORE · TestThePurgeOwnsTheGeneratedAgentPrompt -- <- START HERE
 
 func TestThePurgeOwnsTheGeneratedAgentPrompt(t *testing.T) {
 	paths := resolvedIn(t, t.TempDir())
@@ -39,5 +28,3 @@ func TestThePurgeOwnsTheGeneratedAgentPrompt(t *testing.T) {
 		}
 	}
 }
-
-// -/ 1/1

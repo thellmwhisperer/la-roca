@@ -1,27 +1,3 @@
-/*
-*
-@overview MCP installation narration and executable-path regressions. ~120 lines, no public symbols.
-
-	READING GUIDE
-	-------------
-	1. Start at TestMCPInstallDeclaresTheRunningExecutable
-	2. Then read override normalization and the JSON receipt
-
-	MAIN FLOW
-	---------
-	running test binary -> mcp install -> runtime config plus narrated receipt
-
-	PUBLIC API
-	----------
-	None; this file tests CLI behavior.
-
-	INTERNALS
-	---------
-	Executable path, whitespace override, JSON receipt, and shared install helpers
-
-@exports
-@deps os/path/filepath/strings/testing
-*/
 package cli
 
 import (
@@ -31,8 +7,6 @@ import (
 	"strings"
 	"testing"
 )
-
-// -- 1/4 CORE · TestMCPInstallDeclaresTheRunningExecutable -- <- START HERE
 
 func TestMCPInstallDeclaresTheRunningExecutable(t *testing.T) {
 	t.Setenv(EnvExecutable, "")
@@ -54,10 +28,6 @@ func TestMCPInstallDeclaresTheRunningExecutable(t *testing.T) {
 	}
 }
 
-// -/ 1/4
-
-// -- 2/4 CORE · TestMCPInstallIgnoresAWhitespaceOnlyOverride --
-
 func TestMCPInstallIgnoresAWhitespaceOnlyOverride(t *testing.T) {
 	t.Setenv(EnvExecutable, "   ")
 	path := filepath.Join(t.TempDir(), "claude.json")
@@ -68,10 +38,6 @@ func TestMCPInstallIgnoresAWhitespaceOnlyOverride(t *testing.T) {
 			running, configured)
 	}
 }
-
-// -/ 2/4
-
-// -- 3/4 CORE · TestMCPInstallJSONNamesTheDeclaredExecutable --
 
 func TestMCPInstallJSONNamesTheDeclaredExecutable(t *testing.T) {
 	t.Setenv(EnvExecutable, "")
@@ -90,10 +56,6 @@ func TestMCPInstallJSONNamesTheDeclaredExecutable(t *testing.T) {
 		t.Fatalf("receipt executable = %q, want %q", receipt.Executable, running)
 	}
 }
-
-// -/ 3/4
-
-// -- 4/4 HELPERS · runningExecutable, installMCP --
 
 func runningExecutable(t *testing.T) string {
 	t.Helper()
@@ -121,5 +83,3 @@ func installMCP(t *testing.T, path string) (string, string) {
 	}
 	return out, string(configured)
 }
-
-// -/ 4/4

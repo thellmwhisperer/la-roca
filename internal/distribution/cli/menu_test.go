@@ -1,28 +1,3 @@
-/*
-@overview Contracts the deliberately small root help menu and the live hidden CLI surface. ~100 lines, no public symbols.
-
-	READING GUIDE
-	-------------
-	1. Start at TestRootMenuShowsExactlyThePublicNine
-	2. Read TestHiddenCommandsStillHaveHelp
-	3. Finish at TestServeLivesUnderMCP
-
-	MAIN FLOW
-	---------
-	rootCommand -> Cobra discovery/help -> exact public and hidden surface assertions
-
-	PUBLIC API
-	----------
-	None; this file tests package-private command assembly.
-
-	INTERNALS
-	---------
-	TestRootMenuShowsExactlyThePublicNine, TestHiddenCommandsStillHaveHelp,
-	TestServeLivesUnderMCP, commandNames
-
-@exports
-@deps slices/strings/testing, Cobra command assembly
-*/
 package cli
 
 import (
@@ -32,8 +7,6 @@ import (
 
 	"github.com/spf13/cobra"
 )
-
-// -- 1/4 CORE · TestRootMenuShowsExactlyThePublicNine -- <- START HERE
 
 func TestRootMenuShowsExactlyThePublicNine(t *testing.T) {
 	want := []string{
@@ -78,10 +51,6 @@ func TestRootMenuShowsExactlyThePublicNine(t *testing.T) {
 	}
 }
 
-// -/ 1/4
-
-// -- 2/4 HELPER · TestHiddenCommandsStillHaveHelp --
-
 func TestHiddenCommandsStillHaveHelp(t *testing.T) {
 	for _, name := range []string{
 		"exec", "health", "index", "logout", "mcp", "models", "schema", "skill", "version",
@@ -101,10 +70,6 @@ func TestHiddenCommandsStillHaveHelp(t *testing.T) {
 	}
 }
 
-// -/ 2/4
-
-// -- 3/4 HELPER · TestServeLivesUnderMCP --
-
 func TestServeLivesUnderMCP(t *testing.T) {
 	root := rootCommand(&cliEnv{})
 	command, args, err := root.Find([]string{"mcp", "serve"})
@@ -116,10 +81,6 @@ func TestServeLivesUnderMCP(t *testing.T) {
 	}
 }
 
-// -/ 3/4
-
-// -- 4/4 HELPER · commandNames --
-
 func commandNames(commands []*cobra.Command) []string {
 	names := make([]string, 0, len(commands))
 	for _, command := range commands {
@@ -127,5 +88,3 @@ func commandNames(commands []*cobra.Command) []string {
 	}
 	return names
 }
-
-// -/ 4/4

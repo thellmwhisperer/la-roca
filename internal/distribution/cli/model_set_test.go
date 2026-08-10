@@ -1,16 +1,3 @@
-/*
-@overview Output contract for `roca model set`, the no-login model switch.
-
-	READING GUIDE
-	-------------
-	1. Start at TestModelSetWritesTheModelAndPreservesTheRest
-	2. Read TestModelSetNarratesTheModelAndItsSource for the human line
-	3. Finish at TestModelSetUnknownProviderListsKnownOnJSON for the error path
-
-	INTERNALS
-	---------
-	modelConfigPath, TestModelSet*
-*/
 package cli
 
 import (

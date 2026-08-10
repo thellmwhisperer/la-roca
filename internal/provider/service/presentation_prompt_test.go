@@ -1,27 +1,3 @@
-/*
-*
-@overview Init-generated agent presentation prompt contract. ~105 lines, no public symbols.
-
-	READING GUIDE
-	-------------
-	1. Start at TestInitWritesTheAgentPresentationPrompt
-	2. TestDoctorDistinguishesAMissingPrompt pins the pre-init/legacy diagnosis
-
-	MAIN FLOW
-	---------
-	Service.Init -> prompt.md in data directory -> InitResult and DoctorReport references
-
-	PUBLIC API
-	----------
-	None; this file tests service behavior.
-
-	INTERNALS
-	---------
-	TestInitWritesTheAgentPresentationPrompt, TestDoctorDistinguishesAMissingPrompt
-
-@exports
-@deps os/path/filepath/strings/testing, internal/service
-*/
 package service_test
 
 import (
@@ -30,8 +6,6 @@ import (
 	"strings"
 	"testing"
 )
-
-// -- 1/2 CORE · TestInitWritesTheAgentPresentationPrompt -- <- START HERE
 
 func TestInitWritesTheAgentPresentationPrompt(t *testing.T) {
 	paths := freshPaths(t)
@@ -80,10 +54,6 @@ func TestInitWritesTheAgentPresentationPrompt(t *testing.T) {
 	}
 }
 
-// -/ 1/2
-
-// -- 2/2 CORE · TestDoctorDistinguishesAMissingPrompt --
-
 func TestDoctorDistinguishesAMissingPrompt(t *testing.T) {
 	paths := freshPaths(t)
 	svc := serviceOn(t, paths)
@@ -106,5 +76,3 @@ func TestDoctorDistinguishesAMissingPrompt(t *testing.T) {
 		t.Fatalf("doctor lost the missing prompt location: %q", report.PromptPath)
 	}
 }
-
-// -/ 2/2

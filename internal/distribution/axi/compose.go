@@ -1,31 +1,3 @@
-/*
-@overview Composes query, SQL, health, and store results into AXI text. ~180 lines, 5 public symbols.
-
-	READING GUIDE
-	-------------
-	1. Start at Query for the natural-language answer contract
-	2. Read Exec for direct SQL rendering
-	3. Read Health and Store for the remaining result composers
-
-	MAIN FLOW
-	---------
-	service result -> provenance/message -> optional prose -> TOON rows -> contextual help
-
-	PUBLIC API
-	----------
-	QueryPreamble  Render query provenance and route context
-	Query          Render a query, optional interpretation, evidence, and help
-	Exec           Render a gated SELECT and its rows
-	Health         Render live health checks
-	Store          Render a stored-memory outcome
-
-	INTERNALS
-	---------
-	appendLine, queryTail
-
-@exports QueryPreamble, Query, Exec, Health, Store
-@deps standard formatting/sorting/strings, internal human/service
-*/
 package axi
 
 import (
@@ -36,8 +8,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/human"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
-
-// -- 1/3 CORE · Query and QueryPreamble -- <- START HERE
 
 // appendLine writes line to b on its own line, skipping empties. It never
 // leaves a leading or trailing blank line, so a composer's output is exactly
@@ -120,10 +90,6 @@ func Query(res service.QueryResult, prose string) string {
 	return b.String()
 }
 
-// -/ 1/3
-
-// -- 2/3 HELPER · Exec --
-
 // Exec renders the AXI text for a SELECT run under the read-only gate: the SQL
 // that ran, its rows, the count and latency, and the help to reach the envelope
 // or expand the fields.
@@ -139,10 +105,6 @@ func Exec(res service.ExecResult) string {
 	}
 	return b.String()
 }
-
-// -/ 2/3
-
-// -- 3/3 HELPER · Health and Store --
 
 // Health renders the AXI text for a diagnosis: the overall status and the
 // check table a human scans. The count is the truth; the summary is what makes
@@ -176,5 +138,3 @@ func Store(res service.StoreResult) string {
 	}
 	return fmt.Sprintf("stored: memory %d in layer %s", res.ID, res.Layer)
 }
-
-// -/ 3/3

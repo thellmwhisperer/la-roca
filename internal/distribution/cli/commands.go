@@ -1,27 +1,3 @@
-/*
-@overview Core CLI command assembly and human query rendering. ~440 lines, no public symbols.
-
-	READING GUIDE
-	-------------
-	1. Start at queryCommand and answerQuery
-	2. Read initCommand for bootstrap behavior
-	3. Read the remaining command factories on demand
-
-	MAIN FLOW
-	---------
-	Cobra command -> answerQuery -> optional interpretation -> AXI rendering
-
-	PUBLIC API
-	----------
-	None; command factories are package-private.
-
-	INTERNALS
-	---------
-	versionCommand, initCommand, schemaCommand, queryCommand, answerQuery, axiQuery, execCommand, render
-
-@exports
-@deps standard context/I-O/runtime, Cobra, internal axi/config/human/service/store
-*/
 package cli
 
 import (
@@ -43,8 +19,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/store"
 	"golang.org/x/term"
 )
-
-// -- 1/3 HELPER · version and bootstrap commands --
 
 func versionCommand(env *cliEnv) *cobra.Command {
 	return &cobra.Command{
@@ -298,10 +272,6 @@ func missingAgentsLine(detected []string) string {
 	return detectedAgentsLine(ingest.MissingAgentFamilies(detected))
 }
 
-// -/ 1/3
-
-// -- 2/3 CORE · query and data commands -- <- START HERE
-
 func schemaCommand(env *cliEnv) *cobra.Command {
 	schema := &cobra.Command{
 		Use:   "schema",
@@ -430,10 +400,6 @@ func execCommand(env *cliEnv) *cobra.Command {
 	cmd.Flags().IntVar(&req.MaxChars, "max-chars", 0, "character budget per text field")
 	return cmd
 }
-
-// -/ 2/3
-
-// -- 3/3 CORE · render --
 
 // render is the readable output. The same answer --json hands over whole,
 // summarized here for a human at a terminal.

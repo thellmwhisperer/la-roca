@@ -1,26 +1,3 @@
-/*
-@overview Model-empty fallback honesty contract. ~55 lines, no public symbols.
-
-	READING GUIDE
-	-------------
-	1. Start at TestAnEmptyModelPlanLabelsTheLiteralFallback
-	2. Read TestUnavailableModelStillLabelsTheLiteralFallback
-
-	MAIN FLOW
-	---------
-	model SQL -> zero rows -> labeled literal fallback -> QueryResult
-
-	PUBLIC API
-	----------
-	None; this file tests Service.Query.
-
-	INTERNALS
-	---------
-	TestAnEmptyModelPlanLabelsTheLiteralFallback, TestUnavailableModelStillLabelsTheLiteralFallback
-
-@exports
-@deps context/strings/testing, internal query/service
-*/
 package service_test
 
 import (
@@ -30,8 +7,6 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
-
-// -- 1/2 CORE · TestAnEmptyModelPlanLabelsTheLiteralFallback -- <- START HERE
 
 func TestAnEmptyModelPlanLabelsTheLiteralFallback(t *testing.T) {
 	// Equality (not substring LIKE): the LIKE form is rejected before it runs,
@@ -60,10 +35,6 @@ func TestAnEmptyModelPlanLabelsTheLiteralFallback(t *testing.T) {
 	}
 }
 
-// -/ 1/2
-
-// -- 2/2 CORE · TestUnavailableModelStillLabelsTheLiteralFallback --
-
 func TestUnavailableModelStillLabelsTheLiteralFallback(t *testing.T) {
 	svc := serviceWithModel(t, unavailable("codex", "not signed in", "roca login codex"))
 
@@ -79,5 +50,3 @@ func TestUnavailableModelStillLabelsTheLiteralFallback(t *testing.T) {
 		t.Fatalf("literal rows were shown without their label: %q", res.Message)
 	}
 }
-
-// -/ 2/2

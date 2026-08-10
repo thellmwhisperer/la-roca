@@ -1,27 +1,3 @@
-/*
-@overview Contract tests for the Codex subscription adapter. ~260 lines, no public API.
-
-	READING GUIDE
-	-------------
-	1. Start at TestCodexSendsTheSystemMessageAsInstructions for the request contract
-	2. Read the stream tests for response decoding
-	3. Read readiness and credential tests on demand
-
-	MAIN FLOW
-	---------
-	test request -> codexBackend -> Codex.Chat -> captured request or SSE answer
-
-	PUBLIC API
-	----------
-	None; this file tests package provider from inside the package.
-
-	INTERNALS
-	---------
-	codexBackend, sse, liveSession, TestCodex*
-
-@exports
-@deps net/http/httptest for the fake backend; internal/oauth for disposable sessions
-*/
 package provider
 
 import (
@@ -38,8 +14,6 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/oauth"
 )
-
-// -- 1/5 HELPER · codexBackend, sse, liveSession --
 
 // codexBackend plays the vendor's Responses endpoint, which answers with a
 // server-sent event stream.
@@ -73,10 +47,6 @@ func liveSession(t *testing.T) oauth.Session {
 	}
 	return oauth.Session{Store: store}
 }
-
-// -/ 1/5
-
-// -- 2/5 HELPER · Ready contract --
 
 func TestCodexWithoutASessionNamesTheExactCommand(t *testing.T) {
 	codex := NewCodex(CodexConfig{
@@ -190,10 +160,6 @@ func TestCodexNamesAnExpiredUnrefreshableSession(t *testing.T) {
 	}
 }
 
-// -/ 2/5
-
-// -- 3/5 HELPER · Response stream contract --
-
 func TestCodexReadsTheAnswerOutOfTheEventStream(t *testing.T) {
 	server, headers := codexBackend(t, []string{
 		sse("response.created", map[string]any{}),
@@ -287,10 +253,6 @@ func TestCodexReportsTheVendorsFailureEvent(t *testing.T) {
 	}
 }
 
-// -/ 3/5
-
-// -- 4/5 CORE · Request body contract -- <- START HERE
-
 func TestCodexSendsTheSystemMessageAsInstructions(t *testing.T) {
 	var body map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -328,10 +290,6 @@ func TestCodexSendsTheSystemMessageAsInstructions(t *testing.T) {
 	}
 }
 
-// -/ 4/5
-
-// -- 5/5 HELPER · Model and credential contract --
-
 func TestCodexDefaultsToTheModelTheDecisionNames(t *testing.T) {
 	if DefaultCodexModel != "gpt-5.6-luna" {
 		t.Fatalf("the default model is %q and the decision names gpt-5.6-luna", DefaultCodexModel)
@@ -350,5 +308,3 @@ func TestCodexNeverPrintsTheCredential(t *testing.T) {
 		t.Fatalf("the credential leaked: %+v", readiness)
 	}
 }
-
-// -/ 5/5

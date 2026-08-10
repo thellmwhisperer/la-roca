@@ -1,21 +1,3 @@
-/*
-@overview AXI TOON row rendering, delegated to the shared axi package. ~30 lines, no public symbols.
-
-	READING GUIDE
-	-------------
-	The renderer lives in internal/distribution/axi. This file keeps the
-	package-private names the shell's other listings (runtime status, the skill
-	table, the doctor) and its tests call, and forwards them to the one owner, so
-	a second TOON renderer never grows here.
-
-	PUBLIC API
-	----------
-	None; this file serves the CLI package.
-
-	INTERNALS
-	---------
-	rowOutput, renderHelp, fieldWidth
-*/
 package cli
 
 import (

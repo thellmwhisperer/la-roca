@@ -1,32 +1,6 @@
-/*
-@overview Search-row relevance contracts for null removal, echo demotion, and source preference. ~95 lines, no public symbols.
-
-	READING GUIDE
-	-------------
-	1. Start at TestSearchRowsPreferAnswersOverEchoesAndThinking
-	2. Read TestSearchRowsWithNullTextAreRemoved
-	3. Both exercise QueryResult.found directly
-
-	MAIN FLOW
-	---------
-	raw SQL rows -> relevance ordering -> deduplication -> honest QueryResult
-
-	PUBLIC API
-	----------
-	None; this file tests package-private answer assembly.
-
-	INTERNALS
-	---------
-	TestSearchRowsPreferAnswersOverEchoesAndThinking, TestSearchRowsWithNullTextAreRemoved
-
-@exports
-@deps testing, internal service
-*/
 package service
 
 import "testing"
-
-// -- 1/2 CORE · TestSearchRowsPreferAnswersOverEchoesAndThinking -- <- START HERE
 
 func TestSearchRowsPreferAnswersOverEchoesAndThinking(t *testing.T) {
 	res := QueryResult{Question: "who is Ana"}
@@ -46,10 +20,6 @@ func TestSearchRowsPreferAnswersOverEchoesAndThinking(t *testing.T) {
 	}
 }
 
-// -/ 1/2
-
-// -- 2/2 CORE · TestSearchRowsWithNullTextAreRemoved --
-
 func TestSearchRowsWithNullTextAreRemoved(t *testing.T) {
 	res := QueryResult{Question: "resonance"}
 	res.found([]string{"source", "id", "text"}, []map[string]any{
@@ -60,5 +30,3 @@ func TestSearchRowsWithNullTextAreRemoved(t *testing.T) {
 		t.Fatalf("null text row survived: count=%d rows=%v", res.RowCount, res.Rows)
 	}
 }
-
-// -/ 2/2

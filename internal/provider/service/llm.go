@@ -1,28 +1,3 @@
-/*
-@overview Model-backed query stage, row interpretation, diagnostics, and labeled literal rescue. ~380 lines, no public symbols.
-
-	READING GUIDE
-	-------------
-	1. Start at llmStage
-	2. Read Interpret for the second call that turns rows into prose
-	3. Read rescue for fallback honesty
-	4. Read correction and provider diagnostics on demand
-
-	MAIN FLOW
-	---------
-	provider selection -> generated SQL -> gate -> execution -> labeled rescue if needed
-
-	PUBLIC API
-	----------
-	None; Service.Query calls these package-private stages.
-
-	INTERNALS
-	---------
-	llmStage, Interpret, rescue, rescueSQL, correction, tried, noteAboutTheFall, sqlPrompt
-
-@exports
-@deps cmp/context/fmt/strings/sync, internal data/provider/query/sqlgate
-*/
 package service
 
 import (
@@ -37,8 +12,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 	"github.com/thellmwhisperer/la-roca/internal/provider/query/sqlgate"
 )
-
-// -- 1/4 HELPER · degradation reasons and correction --
 
 // Why an answer down the model path is degraded. They are declared reasons and
 // they travel in the answer, because a poor result with a provider that failed
@@ -73,10 +46,6 @@ func correction(rejection error) string {
 		"columns listed under its own name, and that a column of another table has to be " +
 		"reached with a JOIN. Respond ONLY with the corrected SQL query."
 }
-
-// -/ 1/4
-
-// -- 2/4 CORE · llmStage -- <- START HERE
 
 // llmStage is stage 4 of the cascade, with stage 5 behind it.
 //
@@ -258,10 +227,6 @@ func (s *Service) Interpret(ctx context.Context, question string,
 // large result set does not blow the context for an answer that summarizes it.
 const maxRowsToInterpret = 10
 
-// -/ 2/4
-
-// -- 3/4 HELPER · provider diagnostics --
-
 // tried renders the diagnosis: every provider, its reason and its remedy.
 func tried(attempts []provider.Attempt) string {
 	var out strings.Builder
@@ -289,10 +254,6 @@ func noteAboutTheFall(chosen provider.Provider, attempts []provider.Attempt) str
 	}
 	return prefix + fmt.Sprintf("answered by %s", chosen.Name())
 }
-
-// -/ 3/4
-
-// -- 4/4 CORE · rescue and sqlPrompt --
 
 // rescue is stage 5: the direct search with the operator's own words. It is
 // what makes the model path degrade instead of failing.
@@ -404,5 +365,3 @@ func (s *Service) sqlPrompt(layer string) string {
 var theModelsSchema = sync.OnceValue(func() query.Schema {
 	return query.ReadSchema(data.Schema+"\n"+data.SearchSchema, sqlgate.HiddenTables())
 })
-
-// -/ 4/4

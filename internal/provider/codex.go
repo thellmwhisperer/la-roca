@@ -1,29 +1,3 @@
-/*
-@overview Codex subscription adapter. ~320 lines, 10 public symbols, OAuth Responses transport.
-
-	READING GUIDE
-	-------------
-	1. Start at Codex.Chat for the request/response contract
-	2. Read Codex.Ready for provider selection behavior
-	3. Read readResponseStream for SSE decoding
-
-	MAIN FLOW
-	---------
-	NewCodex -> Ready -> Chat -> splitBySystemMessage -> readResponseStream -> ChatResponse
-
-	PUBLIC API
-	----------
-	DefaultCodexModel, DefaultCodexBaseURL   Vendor defaults
-	CodexConfig, NewCodex                    Adapter construction
-	Codex and its Name, ModelID, HasCredential, Ready, Chat methods
-
-	INTERNALS
-	---------
-	probe, authorize, splitBySystemMessage, joinRules, readResponseStream
-
-@exports DefaultCodexModel, DefaultCodexBaseURL, CodexConfig, Codex, NewCodex, Name, ModelID, HasCredential, Ready, Chat
-@deps internal/oauth for subscription sessions; net/http for Responses; encoding/json and bufio for SSE
-*/
 package provider
 
 import (
@@ -39,8 +13,6 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/oauth"
 )
-
-// -- 1/4 HELPER · Defaults and construction --
 
 // DefaultCodexModel is the model the subscription adapter asks for. It is the
 // decision of 2026-08-05: Codex is the most generous plan in tokens
@@ -106,10 +78,6 @@ func (c *Codex) Models(ctx context.Context) ModelReport {
 	}
 	return ModelReport{Ready: true, Models: []string{c.model}}
 }
-
-// -/ 1/4
-
-// -- 2/4 HELPER · Codex.Ready --
 
 func (c *Codex) Ready(ctx context.Context) Readiness {
 	if !c.session.Store.Exists() {
@@ -178,10 +146,6 @@ func (c *Codex) probe(ctx context.Context, token oauth.Token) (int, error) {
 	return res.StatusCode, nil
 }
 
-// -/ 2/4
-
-// -- 3/4 CORE · Codex.Chat -- <- START HERE
-
 // Chat asks the vendor over its Responses protocol.
 //
 // The system message travels as `instructions` and the question as the input,
@@ -241,10 +205,6 @@ func (c *Codex) authorize(request *http.Request, token oauth.Token) {
 		request.Header.Set("chatgpt-account-id", token.AccountID)
 	}
 }
-
-// -/ 3/4
-
-// -- 4/4 HELPER · Request shaping and response decoding --
 
 // splitBySystemMessage turns the two messages this product sends into the shape
 // the Responses protocol wants: the rules as instructions, the question as
@@ -339,5 +299,3 @@ func readResponseStream(body io.Reader) (string, error) {
 	}
 	return whole, nil
 }
-
-// -/ 4/4

@@ -1,36 +1,3 @@
-/*
-@overview Output contract net for the user-facing CLI surfaces. ~205 lines, no public symbols.
-
-	READING GUIDE
-	-------------
-	1. Start at TestBareLoginHonoursTheJSONFlag and TestLogoutHonoursTheJSONFlag
-	   (the two real bugs: --json was ignored)
-	2. Read the doctor/health/init pins for the narration contracts
-	3. Read the query/store/teach/exec pins for the data-command envelopes
-
-	MAIN FLOW
-	---------
-	public command -> human narration OR --json envelope OR error exit ->
-	the exact shape that a script or a human relies on, pinned so it cannot
-	silently regress.
-
-	PUBLIC API
-	----------
-	None; this file holds the output contracts of package-private commands.
-
-	INTERNALS
-	---------
-	mustJSON, runRootSplit, failingRoot, contractBuild,
-	TestBareLoginHonoursTheJSONFlag, TestLogoutHonoursTheJSONFlag,
-	TestKeyLoginAnswersAJSONEnvelope, TestDoctorNarratesAndAnswersJSON,
-	TestHealthReportsItsStatus, TestInitAnswersAJSONEnvelope,
-	TestQueryPaintsTOONRowsAndARouteLine, TestQueryRefusalIsHonestUnderJSON,
-	TestStoreHumanJSONAndError, TestTeachHumanJSONAndError,
-	TestExecHumanJSONAndError, TestUnknownCommandFailsByNameAndSuggestsATypo.
-
-@exports
-@deps encoding/json/path/filepath/strings/testing, internal provider
-*/
 package cli
 
 import (
@@ -92,8 +59,6 @@ func failingRoot(t *testing.T, args ...string) error {
 	return err
 }
 
-// -- 1/12 BUG · bare login honours --json -- <- START HERE
-
 // `roca login --json` with no provider used to print the human catalogue
 // regardless of the flag. The flag is a contract: a program asking for JSON may
 // not be handed prose it then has to parse.
@@ -117,10 +82,6 @@ func TestBareLoginHonoursTheJSONFlag(t *testing.T) {
 	}
 }
 
-// -/ 1/12
-
-// -- 2/12 BUG · logout honours --json --
-
 // `roca logout` used to print its confirmation as prose even under --json.
 // Forgetting is an end state a script checks, so it answers a document.
 // Forgetting what was already forgotten is the end state logout promises, so no
@@ -133,10 +94,6 @@ func TestLogoutHonoursTheJSONFlag(t *testing.T) {
 		t.Errorf("logout --json shape is wrong: %v", doc)
 	}
 }
-
-// -/ 2/12
-
-// -- 3/12 PIN · key login JSON envelope --
 
 // `roca login <key-provider> --json` answers who, where and with what model,
 // and never echoes the key. The prompt that asks for it travels on stderr, so
@@ -162,10 +119,6 @@ func TestKeyLoginAnswersAJSONEnvelope(t *testing.T) {
 		t.Errorf("the prompt did not move to stderr:\n%s", stderr)
 	}
 }
-
-// -/ 3/12
-
-// -- 4/12 PIN · doctor narration and JSON --
 
 // `roca doctor` is the diagnosis the skill points an agent at ("diagnosis +
 // remedies"). Its human narration names the database, the configuration and the
@@ -194,10 +147,6 @@ func TestDoctorNarratesAndAnswersJSON(t *testing.T) {
 	}
 }
 
-// -/ 4/12
-
-// -- 5/12 PIN · health status --
-
 // `roca health` is the shell form of the MCP `roca_health` tool. Its status
 // line and its TOON check table are the contract both surfaces share.
 func TestHealthReportsItsStatus(t *testing.T) {
@@ -224,10 +173,6 @@ func TestHealthReportsItsStatus(t *testing.T) {
 	}
 }
 
-// -/ 5/12
-
-// -- 6/12 PIN · init JSON envelope --
-
 // `roca init` narrates its phases for a human (covered in init_narration_test);
 // under --json it answers the outcome envelope a program parses, with the
 // adopted-by-copy flag telling the adoption path apart from a fresh create and
@@ -251,10 +196,6 @@ func TestInitAnswersAJSONEnvelope(t *testing.T) {
 	}
 }
 
-// -/ 6/12
-
-// -- 7/12 PIN · query default TOON and route line --
-
 // `roca query` paints AXI TOON rows under a route narration line, which is what
 // the skill documents. The route line names the path and the template so the
 // operator can tell a compiler answer from a model one.
@@ -275,10 +216,6 @@ func TestQueryPaintsTOONRowsAndARouteLine(t *testing.T) {
 		t.Errorf("the matched text did not surface:\n%s", human)
 	}
 }
-
-// -/ 7/12
-
-// -- 8/12 PIN · query refusal is honest under JSON --
 
 // A question the deterministic route declines and no model can lift is not an
 // answer. The exit is not a failure under --json and the envelope says so by
@@ -302,10 +239,6 @@ func TestQueryRefusalIsHonestUnderJSON(t *testing.T) {
 	}
 }
 
-// -/ 8/12
-
-// -- 9/12 PIN · store human, JSON and error --
-
 func TestStoreHumanJSONAndError(t *testing.T) {
 	fixtureInstallation(t)
 
@@ -325,10 +258,6 @@ func TestStoreHumanJSONAndError(t *testing.T) {
 		t.Errorf("the error does not name the missing flag: %v", err)
 	}
 }
-
-// -/ 9/12
-
-// -- 11/12 PIN · exec human, JSON and error --
 
 func TestExecHumanJSONAndError(t *testing.T) {
 	fixtureInstallation(t)
@@ -352,10 +281,6 @@ func TestExecHumanJSONAndError(t *testing.T) {
 	}
 }
 
-// -/ 11/12
-
-// -- 12/12 PIN · unknown command recovery --
-
 // An unknown command is a failure that names what was asked, and a typo close to
 // a real one is answered with the suggestion Cobra computes. That is how an
 // operator recovers from a misspelling; a wholly unknown name still fails by
@@ -371,5 +296,3 @@ func TestUnknownCommandFailsByNameAndSuggestsATypo(t *testing.T) {
 		t.Errorf("a close typo is not suggested:\n%v", err)
 	}
 }
-
-// -/ 12/12

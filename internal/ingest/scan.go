@@ -1,32 +1,3 @@
-/*
-*
-@overview Discovers present agent stores and maps their artefacts to ingest targets. ~420 lines, 4 public symbols.
-
-	READING GUIDE
-	-------------
-	1. Start at Scan                    <- source orchestration and detection
-	2. DetectAgents defines visibility  <- machine-level agent presence
-	3. Read source scanners on demand   <- one scanner per artefact family
-	4. Disk helpers are isolated last   <- no source semantics below them
-
-	MAIN FLOW
-	---------
-	Roots -> DetectAgents -> source scanners -> Plan -> Run
-
-	PUBLIC API
-	----------
-	Target          One discovered artefact and its identity.
-	Plan            Complete scan report and target list.
-	Scan            Discovers targets for agents present on this machine.
-	DetectAgents    Reports runtimes whose routes or stores exist.
-
-	INTERNALS
-	---------
-	scanClaudeMemories, scanCodexFiles, scanClaudeSessions, source-specific scanners, disk helpers
-
-@exports Target, Plan, Scan, DetectAgents
-@deps os/io/fs/path/filepath, internal/ingest/parsers
-*/
 package ingest
 
 import (
@@ -101,8 +72,6 @@ func MissingAgentFamilies(detected []string) []string {
 	return missing
 }
 
-// -- 1/4 CORE · Scan and DetectAgents -- <- START HERE
-
 // Scan walks every root in the v1 matrix and returns what one run would read.
 //
 // It reads no content: a root that does not exist contributes nothing, and that
@@ -169,10 +138,6 @@ func (p *Plan) add(targets []Target, key string) {
 	p.Scanned[key] += len(targets)
 	p.Targets = append(p.Targets, targets...)
 }
-
-// -/ 1/4
-
-// -- 2/4 HELPER · Memory and Codex file scanners --
 
 // scanClaudeMemories finds the per-project memory files. MEMORY.md is the index
 // the memories point at, not a memory: ingesting it would store a table of
@@ -243,10 +208,6 @@ func scanCodexFiles(roots Roots) []Target {
 	}
 	return targets
 }
-
-// -/ 2/4
-
-// -- 3/4 HELPER · Session scanners --
 
 // scanClaudeSessions finds the transcripts, and diagnoses the project directories
 // no declared root explains.
@@ -379,10 +340,6 @@ func scanPiSessions(roots Roots) []Target {
 	return targets
 }
 
-// -/ 3/4
-
-// -- 4/4 HELPER · Disk primitives --
-
 // existingFile is one target for a path that is there and nothing for one that
 // is not, which is the normal state of a source this machine does not run.
 func existingFile(path string, shape Target) []Target {
@@ -477,5 +434,3 @@ func realPath(path string) string {
 	}
 	return resolved
 }
-
-// -/ 4/4

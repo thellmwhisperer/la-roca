@@ -1,27 +1,3 @@
-/*
-@overview Contract tests for default-row and opt-in-full CLI query modes. ~175 lines, no public symbols.
-
-	READING GUIDE
-	-------------
-	1. Start at TestQueryDefaultsToOneInferenceAndRows
-	2. Read TestQueryFullAddsOneInterpretationAndKeepsEvidence
-	3. Read the failure and help contracts last
-
-	MAIN FLOW
-	---------
-	fake provider -> real Service query -> answerQuery mode -> AXI output assertions
-
-	PUBLIC API
-	----------
-	None; this file tests package-private CLI behavior.
-
-	INTERNALS
-	---------
-	queryModeProvider, queryModeService, runQueryMode, the four query-mode contract tests
-
-@exports
-@deps standard context/errors/path/strings/testing, internal provider/service
-*/
 package cli
 
 import (
@@ -34,8 +10,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
-
-// -- 1/3 HELPER · queryModeProvider --
 
 type queryModeProvider struct {
 	answers []string
@@ -66,10 +40,6 @@ func (p *queryModeProvider) Chat(context.Context, provider.ChatRequest) (provide
 	return provider.ChatResponse{Content: answer, Provider: p.Name(), ModelID: p.ModelID()}, nil
 }
 
-// -/ 1/3
-
-// -- 2/3 HELPER · queryModeService --
-
 func queryModeService(t *testing.T, model *queryModeProvider) *service.Service {
 	t.Helper()
 	svc, err := service.Open(service.Options{
@@ -99,10 +69,6 @@ func runQueryMode(t *testing.T, full bool, failAt int) (*queryModeProvider, quer
 	}
 	return model, answer, axiQuery(answer)
 }
-
-// -/ 2/3
-
-// -- 3/3 CORE · query mode contracts -- <- START HERE
 
 func TestQueryDefaultsToOneInferenceAndRows(t *testing.T) {
 	model, _, got := runQueryMode(t, false, 0)
@@ -153,5 +119,3 @@ func TestQueryHelpTeachesDataHumanAndSQLModes(t *testing.T) {
 		t.Fatalf("query help does not teach the three modes:\n%s", output.String())
 	}
 }
-
-// -/ 3/3

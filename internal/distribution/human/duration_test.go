@@ -1,31 +1,6 @@
-/*
-@overview Contracts the one human duration spelling used across terminal output. ~50 lines, no public symbols.
-
-	READING GUIDE
-	-------------
-	1. Start at TestDuration
-	2. Each row is an operator-provided output class
-
-	MAIN FLOW
-	---------
-	milliseconds -> Duration -> compact human text
-
-	PUBLIC API
-	----------
-	None; this file tests Duration.
-
-	INTERNALS
-	---------
-	TestDuration
-
-@exports
-@deps testing
-*/
 package human
 
 import "testing"
-
-// -- 1/1 CORE · TestDuration -- <- START HERE
 
 func TestDuration(t *testing.T) {
 	for _, test := range []struct {
@@ -42,5 +17,3 @@ func TestDuration(t *testing.T) {
 		}
 	}
 }
-
-// -/ 1/1

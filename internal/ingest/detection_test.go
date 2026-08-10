@@ -1,28 +1,3 @@
-/*
-*
-@overview Detection and workspace-identity contracts for ingest. ~100 lines, no public symbols.
-
-	READING GUIDE
-	-------------
-	1. Start at TestDetectedAgentsFollowExistingStores
-	2. Read TestWorkspaceRootsResolveSessionIdentityWithoutBecomingContent
-	3. The fixture helpers only create source paths and minimal transcripts
-
-	MAIN FLOW
-	---------
-	synthetic roots -> Scan -> detected agents / target identity -> assertions
-
-	PUBLIC API
-	----------
-	None; this file tests package-level ingest behavior.
-
-	INTERNALS
-	---------
-	TestDetectedAgentsFollowExistingStores, TestWorkspaceRootsResolveSessionIdentityWithoutBecomingContent
-
-@exports
-@deps testing, os/path/filepath, internal ingest scan
-*/
 package ingest
 
 import (
@@ -31,8 +6,6 @@ import (
 	"slices"
 	"testing"
 )
-
-// -- 1/2 CORE · TestDetectedAgentsFollowExistingStores -- <- START HERE
 
 func TestDetectedAgentsFollowExistingStores(t *testing.T) {
 	home := t.TempDir()
@@ -76,10 +49,6 @@ func TestDetectedAgentsFollowExistingStores(t *testing.T) {
 	}
 }
 
-// -/ 1/2
-
-// -- 2/2 HELPER · TestWorkspaceRootsResolveSessionIdentityWithoutBecomingContent --
-
 func TestWorkspaceRootsResolveSessionIdentityWithoutBecomingContent(t *testing.T) {
 	home := t.TempDir()
 	workspace := filepath.Join(home, "work")
@@ -115,5 +84,3 @@ func TestWorkspaceRootsResolveSessionIdentityWithoutBecomingContent(t *testing.T
 		}
 	}
 }
-
-// -/ 2/2

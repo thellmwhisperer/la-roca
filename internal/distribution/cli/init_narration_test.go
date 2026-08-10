@@ -1,12 +1,3 @@
-/*
-@overview End-to-end readable init narration contract. ~75 lines, no public symbols.
-READING GUIDE: Start at TestInitNarratesItsPhasesAndPrintsThePromptLast.
-MAIN FLOW: isolated HOME -> roca init -> ordered terse phase lines -> presentation prompt.
-PUBLIC API: None; this file tests CLI behavior.
-INTERNALS: TestInitNarratesItsPhasesAndPrintsThePromptLast.
-@exports
-@deps strings/testing
-*/
 package cli
 
 import (
@@ -14,8 +5,6 @@ import (
 	"strings"
 	"testing"
 )
-
-// -- 1/1 CORE · TestInitNarratesItsPhasesAndPrintsThePromptLast -- <- START HERE
 
 func TestInitNarratesItsPhasesAndPrintsThePromptLast(t *testing.T) {
 	home := t.TempDir()
@@ -51,5 +40,3 @@ func TestInitNarratesItsPhasesAndPrintsThePromptLast(t *testing.T) {
 		t.Errorf("the presentation prompt is not the last init artifact:\n%s", out)
 	}
 }
-
-// -/ 1/1
