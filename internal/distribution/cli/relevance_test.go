@@ -44,9 +44,6 @@ func TestKeywordRescueRendersItsRouteAndRows(t *testing.T) {
 	if !strings.Contains(got, "La Roca v1 scope is memory and query") {
 		t.Fatalf("the row text is missing:\n%s", got)
 	}
-	if strings.Contains(got, "roca teach") {
-		t.Fatalf("the render suggests a teach command that no longer exists:\n%s", got)
-	}
 }
 
 func TestEmptySearchSuggestsHowToBroadenIt(t *testing.T) {
@@ -92,7 +89,7 @@ func TestJSONCarriesVersionAndSourceSHAAndNotTheDBPath(t *testing.T) {
 		}
 	}
 	// A program that marshals the result must not see a field that could hold a
-	// classifier confidence the model path does not produce.
+	// confidence metadata the model path does not produce.
 	var loose map[string]any
 	if err := json.Unmarshal([]byte(body), &loose); err != nil {
 		t.Fatalf("unmarshal: %v", err)

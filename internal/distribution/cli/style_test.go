@@ -22,7 +22,7 @@ func TestTermAwareIsFalseForABuffer(t *testing.T) {
 // escape code could leak. Off a terminal it returns the text untouched.
 func TestPaintEmitsNoCodesWithoutATerminal(t *testing.T) {
 	var buf bytes.Buffer
-	for _, text := range []string{"[ok]", "route compiler", "1908"} {
+	for _, text := range []string{"[ok]", "query planner", "1908"} {
 		if got := paint(&buf, ansiGreen, text); got != text {
 			t.Errorf("paint(%q) = %q, want it plain off a terminal", text, got)
 		}

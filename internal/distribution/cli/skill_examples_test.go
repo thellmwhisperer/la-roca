@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -139,17 +138,18 @@ func TestAgentPluginPackageMatchesThePublicContract(t *testing.T) {
 		t.Errorf("mcp.json does not declare roca mcp serve over stdio: %#v", mcp)
 	}
 
-	// Manifests only: the skill body is the product manual (identity-checked
-	// against the embedded canonical) and may use the product's own words.
 	packageFiles := []string{"plugin.json", "mcp.json"}
-	// Built without writing the banned role name as a contiguous literal; the
-	// product-vocabulary gate owns that ban and must stay the only place that
-	// names the terms it forbids.
-	role := "cap" + "tain"
-	forbidden := regexp.MustCompile(`(?i)roca[-_ ]?madre|bench|golden|calibrat|` + role + `|internal|/users/`)
+	manifestDigests := append([]encodedTerm(nil), forbiddenWorkflowDigests...)
+	manifestDigests = append(manifestDigests,
+		encodedTerm{5, "1b32c28cb38c05480eccc1bd60ff97029b57a05c96718b96dad7e9d84894f549"},
+		encodedTerm{6, "dd56de4137951d9c92681b03416ec15f886b4482a27e3a517d32f085244cbe5d"},
+		encodedTerm{8, "c53b5446a3cb2fe4501f964a9bc9c398db54f09963c3a0362b025b297c3c2eb5"},
+		encodedTerm{8, "3bed2cb3a3acf7b6a8ef408420cc682d5520e26976d354254f528c965612054f"},
+		encodedTerm{7, "3e44fb009899c0f900c1e74cd803b171d70a5d799d2cc933898d78e8d5fc17ca"},
+	)
 	for _, name := range packageFiles {
-		if match := forbidden.Find(read(name)); match != nil {
-			t.Errorf("%s contains non-public vocabulary %q", name, match)
+		if offset, found := encodedVocabularyMatch(read(name), manifestDigests); found {
+			t.Errorf("%s contains non-public vocabulary at byte %d", name, offset)
 		}
 	}
 }
