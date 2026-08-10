@@ -33,6 +33,6 @@ scopes:
   # and adding one fails the gate.
 orphan_scopes:
   markdown:
-    active_orphans_ceiling: 5
+    active_orphans_ceiling: 4
   public_surfaces:
     active_orphans_ceiling: 12

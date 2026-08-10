@@ -21,9 +21,9 @@ jobs:
       # The slop gate. It is its own step, before `make check` runs it again as
       # part of its chain, so a red build says "slop gate" in the job list
       # instead of "format, vet and tests". The runner is scripts/slopslint.sh:
-      # it pins the version, picks the platform binary and caches it under
-      # .tmp/, so another workflow can reuse the gate with the same command.
-      - name: Slop gate (duplication ceilings)
+      # it builds the pinned upstream commit once and caches the platform binary
+      # under .tmp/, so another workflow can reuse the exact same gate.
+      - name: Slop gate (duplication, orphans and claims)
         run: make slop
 
       # `make check` builds the binary itself (its first prerequisite) and runs

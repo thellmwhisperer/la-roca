@@ -58,12 +58,12 @@ accept-index: ## List and verify the per-domain acceptance scenarios
 .PHONY: check
 check: build fmt vet test accept slop ## What CI requires before merging
 
-# The slop gate blocks. `--enforce` fails both ways on purpose: over the ceiling
-# is a regression, under it is an improvement that was not committed, so the base
-# branch always states the truth. The ceilings live in .slop/ceilings.yml and the
-# ratchet is monotonic: raising one to make a build pass is not a fix.
+# The slop gate blocks duplication and orphan regressions, and verifies every
+# selected public surface still has a live acceptance claim. `--enforce` fails
+# both ways on a ceiling: over is a regression, under is an uncommitted
+# improvement. The ratchets in .slop/ceilings.yml are monotonic.
 .PHONY: slop
-slop: ## The duplication gate, blocking (see .slop/config.yml)
+slop: ## Duplication, orphan and public-surface claims gates
 	./scripts/slopslint.sh check --classify --enforce
 
 .PHONY: fmt
