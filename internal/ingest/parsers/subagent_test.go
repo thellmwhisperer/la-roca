@@ -102,3 +102,50 @@ func TestLooksLikeSubagentRejectsAForeignTranscriptUnderASharedRoot(t *testing.T
 		t.Error("an unparseable file should be unknown, not foreign")
 	}
 }
+
+// The discard counter is the contract: every source record the parser leaves out
+// is counted with its position and its reason. Positional pairing drops the
+// surplus side of an unbalanced transcript, and those turns were dropped in
+// silence, so `records_discarded` under-reported what the corpus lost.
+func TestSubagentCountsTheTurnsPositionalPairingCannotUse(t *testing.T) {
+	// Three human turns, one answer: two humans have nowhere to go.
+	content := `{"type":"user","sessionId":"p","agentId":"c","timestamp":"2026-08-01T12:00:00Z","message":{"content":"first"}}
+{"type":"assistant","sessionId":"p","agentId":"c","timestamp":"2026-08-01T12:00:01Z","message":{"content":"only answer"}}
+{"type":"user","sessionId":"p","agentId":"c","timestamp":"2026-08-01T12:00:02Z","message":{"content":"second"}}
+{"type":"user","sessionId":"p","agentId":"c","timestamp":"2026-08-01T12:00:03Z","message":{"content":"third"}}
+`
+	records, err := Parse(KindSubagent, []byte(content), FileMeta{
+		Path: "/w/.claude/projects/-w-demo/sess/subagents/c.jsonl",
+	})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(records.Sessions[0].Exchanges) != 1 {
+		t.Fatalf("exchanges = %d, want 1", len(records.Sessions[0].Exchanges))
+	}
+	if len(records.Discards) != 2 {
+		t.Fatalf("discards = %d, want 2 unpaired turns: %+v",
+			len(records.Discards), records.Discards)
+	}
+	for _, discard := range records.Discards {
+		if discard.Record == 0 || discard.Reason == "" {
+			t.Errorf("a discard names neither a record nor a reason: %+v", discard)
+		}
+	}
+}
+
+// A transcript whose turns pair into nothing still has to say what it left out,
+// or an operator reads "no exchanges" as "the file was empty".
+func TestSubagentWithNoPairableTurnCountsWhatItDropped(t *testing.T) {
+	content := `{"type":"user","sessionId":"p","agentId":"c","timestamp":"2026-08-01T12:00:00Z","message":{"content":"nobody answered"}}
+`
+	records, err := Parse(KindSubagent, []byte(content), FileMeta{
+		Path: "/w/.claude/projects/-w-demo/sess/subagents/c.jsonl",
+	})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(records.Discards) != 1 {
+		t.Fatalf("discards = %d, want 1: %+v", len(records.Discards), records.Discards)
+	}
+}

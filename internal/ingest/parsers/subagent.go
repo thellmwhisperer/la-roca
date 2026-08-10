@@ -108,7 +108,10 @@ func ParseSubagent(content []byte, meta FileMeta) (Records, error) {
 
 	// The transcript writes the agent's answer in chunks: consecutive assistant
 	// lines are one answer, and the human line that follows closes it.
-	type side struct{ text, timestamp string }
+	type side struct {
+		text, timestamp string
+		record          int
+	}
 	var humans, agents []side
 	pendingAgent := false
 	for _, entry := range entries {
@@ -123,20 +126,32 @@ func ParseSubagent(content []byte, meta FileMeta) (Records, error) {
 		switch entry.Type {
 		case "user":
 			pendingAgent = false
-			humans = append(humans, side{text, entry.Timestamp})
+			humans = append(humans, side{text, entry.Timestamp, entry.record})
 		case "assistant":
 			if pendingAgent {
 				agents[len(agents)-1].text += "\n" + text
 				continue
 			}
-			agents = append(agents, side{text, entry.Timestamp})
+			agents = append(agents, side{text, entry.Timestamp, entry.record})
 			pendingAgent = true
 		default:
 			discards = append(discards, Discard{Record: entry.record, Reason: "unsupported subagent record: " + entry.Type})
 		}
 	}
 
+	// An unbalanced transcript has a side with nowhere to go: a human turn nobody
+	// answered, or an answer to a turn that is not in this file. Those records are
+	// counted rather than dropped in silence, because the discard counter is what
+	// tells an operator "no exchanges" from "the file was empty".
 	pairs := min(len(humans), len(agents))
+	for _, unpaired := range humans[pairs:] {
+		discards = append(discards, Discard{Record: unpaired.record,
+			Reason: "human turn with no answer to pair it with"})
+	}
+	for _, unpaired := range agents[pairs:] {
+		discards = append(discards, Discard{Record: unpaired.record,
+			Reason: "answer with no human turn to pair it with"})
+	}
 	for i := range pairs {
 		session.Exchanges = append(session.Exchanges, Exchange{
 			Number:         i + 1,
