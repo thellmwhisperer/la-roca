@@ -24,10 +24,6 @@ claims:
     contract:
       file: features/provider/selection.feature
       item: "Doctor names which model is going to answer, and why"
-  internal/distribution/cli/search.go:
-    contract:
-      file: features/store/search.feature
-      item: "Search matches whole words, never substrings inside other words"
   internal/distribution/cli/serve.go:
     contract:
       file: features/08_mcp_plug.feature
