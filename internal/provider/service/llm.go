@@ -18,7 +18,7 @@
 
 	INTERNALS
 	---------
-	llmStage, Interpret, rescue, correction, tried, noteAboutTheFall, sqlPrompt
+	llmStage, Interpret, rescue, rescueSQL, correction, tried, noteAboutTheFall, sqlPrompt
 
 @exports
 @deps cmp/context/fmt/strings/sync, internal data/provider/query/sqlgate
@@ -324,6 +324,9 @@ func (s *Service) rescue(ctx context.Context, req QueryRequest, res QueryResult,
 	}
 	label := "falling back to literal term search: " + strings.ReplaceAll(plan.Term, "+", " ")
 	res.Message = strings.TrimSpace(strings.TrimSpace(res.Message) + "\n" + label)
+	if req.SQLOnly {
+		return s.rescueSQL(plan, res)
+	}
 
 	columns, rows, stmt, provenance, err := s.searchByTerm(ctx, plan, "", req.MaxChars, true)
 	if err != nil {
@@ -343,6 +346,28 @@ func (s *Service) rescue(ctx context.Context, req QueryRequest, res QueryResult,
 	res.Search = provenance
 	res.Retried = true
 	res.found(columns, rows)
+	return res
+}
+
+// rescueSQL compiles the deterministic literal fallback without executing it.
+// SQL-only is an inspection boundary: provider selection and the gate may run,
+// but the operator's database must not be queried for result rows.
+func (s *Service) rescueSQL(plan query.Plan, res QueryResult) QueryResult {
+	const limit = 10
+	stmt, err := query.RenderSQLFTSAny(plan, s.registry.SearchExcluded(), limit)
+	if err != nil {
+		return res
+	}
+	gate, err := s.theGate()
+	if err != nil {
+		return res
+	}
+	validated, err := gate.Validate(stmt)
+	if err != nil {
+		return res
+	}
+	res.SQL = validated
+	res.QueryPlan = &plan
 	return res
 }
 
