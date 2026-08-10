@@ -122,6 +122,12 @@ func (f Flow) Login(ctx context.Context, opts LoginOptions) (Token, error) {
 
 	select {
 	case <-waitCtx.Done():
+		// The operator stopping the login is not a deadline that expired.
+		// Reporting a timeout it never reached sends them to wait longer for a
+		// flow they cancelled themselves.
+		if err := ctx.Err(); err != nil {
+			return Token{}, err
+		}
 		return Token{}, fmt.Errorf("the login did not finish within %s: run it again", timeout)
 	case got := <-arrived:
 		switch {

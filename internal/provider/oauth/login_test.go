@@ -34,6 +34,13 @@ func loginFlow(t *testing.T, tokenURL string) Flow {
 	return Flow{Endpoints: endpoints, Originator: "roca"}
 }
 
+// The fake server's secrets are distinctive on purpose: a leak assertion over a
+// two-letter token cannot tell a real leak from the word "paste".
+const (
+	accessSentinel  = "sentinel-access-9f3c1e"
+	refreshSentinel = "sentinel-refresh-7b1d40"
+)
+
 func TestLoginWaitsForTheCallbackAndExchangesTheCode(t *testing.T) {
 	server := tokenServer(t, func(form url.Values) (int, map[string]any) {
 		if form.Get("code") != "the-code" {
@@ -43,7 +50,7 @@ func TestLoginWaitsForTheCallbackAndExchangesTheCode(t *testing.T) {
 			t.Error("it exchanged without proving PKCE")
 		}
 		return http.StatusOK, map[string]any{
-			"access_token": "at", "refresh_token": "rt",
+			"access_token": accessSentinel, "refresh_token": refreshSentinel,
 			"id_token": idTokenWith("acct-7"), "expires_in": 3600,
 		}
 	})
@@ -73,7 +80,8 @@ func TestLoginWaitsForTheCallbackAndExchangesTheCode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	if token.AccessToken != "at" || token.RefreshToken != "rt" || token.AccountID != "acct-7" {
+	if token.AccessToken != accessSentinel || token.RefreshToken != refreshSentinel ||
+		token.AccountID != "acct-7" {
 		t.Fatalf("token %+v", token)
 	}
 	// The operator has to be able to finish the login with no browser: the URL
@@ -82,9 +90,13 @@ func TestLoginWaitsForTheCallbackAndExchangesTheCode(t *testing.T) {
 	if !strings.Contains(got, "auth.openai.com") {
 		t.Fatalf("it did not print the address to open: %q", got)
 	}
-	if strings.Contains(got, "at") && strings.Contains(got, "rt") &&
-		strings.Contains(got, "access_token") {
-		t.Fatalf("the credential leaked to the output: %q", got)
+	// Each secret is checked on its own. The old assertion joined three
+	// substrings with AND, so it only fired when all three appeared, and its
+	// two-letter fixtures ("at", "rt") matched ordinary prose besides.
+	for _, secret := range []string{accessSentinel, refreshSentinel} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("the credential %q leaked to the output: %q", secret, got)
+		}
 	}
 	// The OAuth narrative is a few fixed lines before anything opens. Pinning
 	// them here keeps the wording terse and stops a later edit from dropping
