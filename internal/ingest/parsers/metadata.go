@@ -61,7 +61,8 @@ func ParseSessionMetadata(content []byte, meta FileMeta) (Records, error) {
 	}
 	sessionID := firstNonEmpty(payload.CliSessionID, payload.SessionID)
 	if sessionID == "" {
-		return Records{}, nil
+		return Records{Discards: []Discard{{Record: 1,
+			Reason: "session metadata has no supported identity (cliSessionId or sessionId)"}}}, nil
 	}
 
 	sourceAgent := firstNonEmpty(meta.SourceAgent, "claude-desktop")

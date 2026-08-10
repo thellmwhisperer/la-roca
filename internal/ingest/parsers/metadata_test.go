@@ -1,6 +1,9 @@
 package parsers
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 const desktopMetadata = `{
   "cliSessionId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
@@ -77,6 +80,13 @@ func TestSessionMetadataWithoutAnIdIsSkipped(t *testing.T) {
 		if len(records.Sessions) != 0 {
 			t.Errorf("%q was not skipped: %+v", content, records)
 		}
+		if len(records.Discards) != 1 {
+			t.Errorf("%q discards = %d, want 1", content, len(records.Discards))
+		}
+	}
+	records, _ := Parse(KindSessionMetadata, []byte(`{"cwd":"/w/demo"}`), FileMeta{})
+	if !strings.Contains(records.Discards[0].Reason, "cliSessionId or sessionId") {
+		t.Fatalf("missing identity discard = %q", records.Discards[0].Reason)
 	}
 }
 
