@@ -131,6 +131,18 @@ func TestClaudeUnansweredTurnIsDeferred(t *testing.T) {
 	}
 }
 
+func TestClaudeJoinsEveryUserTextBlock(t *testing.T) {
+	content := []byte(`{"type":"user","message":{"content":[{"type":"text","text":"part one"},{"type":"text","text":"part two"}]}}
+{"type":"assistant","message":{"content":"answer"}}`)
+	records, err := Parse(KindClaudeSession, content, FileMeta{SessionID: "s-blocks"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := records.Sessions[0].Exchanges[0].HumanText; got != "part one\npart two" {
+		t.Fatalf("human text = %q", got)
+	}
+}
+
 func TestClaudeSessionSurvivesGarbage(t *testing.T) {
 	// A live transcript can be truncated mid-line, and a corrupt line cannot
 	// cost the whole file.

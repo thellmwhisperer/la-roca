@@ -338,8 +338,7 @@ func (l claudeLine) stamp() string {
 }
 
 // decodeContent reads a message's content, which is either a bare string or a
-// list of blocks. A list's text is its first text block because a user turn has
-// one.
+// list of blocks. Every text block belongs to the message and is retained.
 func decodeContent(message *claudeMessage) (string, []claudeBlock) {
 	if message == nil || len(message.Content) == 0 {
 		return "", nil
@@ -352,12 +351,13 @@ func decodeContent(message *claudeMessage) (string, []claudeBlock) {
 	if err := json.Unmarshal(message.Content, &blocks); err != nil {
 		return "", nil
 	}
+	var textParts []string
 	for _, block := range blocks {
 		if block.Type == "text" {
-			return block.Text, blocks
+			textParts = append(textParts, block.Text)
 		}
 	}
-	return "", blocks
+	return strings.Join(textParts, "\n"), blocks
 }
 
 // resultText reads a tool result's payload, string or list of text blocks.
