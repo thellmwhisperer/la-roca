@@ -159,7 +159,13 @@ func ParseCodexSession(content []byte, meta FileMeta) (Records, error) {
 				}
 			case "function_call_output", "custom_tool_call_output":
 				output := outputText(payload.Output)
-				if tool, ok := pending[payload.CallID]; ok && isToolError(output) {
+				tool, ok := pending[payload.CallID]
+				if !ok {
+					discards = append(discards, Discard{Record: index + 1,
+						Reason: "tool verdict has unknown call_id: " + payload.CallID})
+					continue
+				}
+				if isToolError(output) {
 					tool.HadError = true
 					tool.ErrorMessage = Clip(output, errorBudget)
 				}

@@ -1,6 +1,9 @@
 package parsers
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 const codexRollout = `
 {"type":"session_meta","timestamp":"2026-08-01T09:00:00Z","payload":{"id":"c0dec0de","cwd":"/w/demo","timestamp":"2026-08-01T09:00:00Z","cli_version":"1.2.3","model_provider":"openai"}}
@@ -114,6 +117,24 @@ func TestCodexCountsAUserMessageThatSupersedesAnUnclosedTurn(t *testing.T) {
 	if records.Sessions[0].Exchanges[0].HumanText != "asked again" {
 		t.Errorf("the completed turn kept the wrong question: %q",
 			records.Sessions[0].Exchanges[0].HumanText)
+	}
+}
+
+func TestCodexCountsToolVerdictWithUnknownCallID(t *testing.T) {
+	content := `{"type":"event_msg","payload":{"type":"user_message","message":"first"}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"old","name":"shell"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"replacement"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"old","output":{"metadata":{"exit_code":1}}}}
+{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"done"}}`
+	records, err := Parse(KindCodexSession, []byte(content), FileMeta{SessionID: "roll-verdict"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records.Discards) != 2 {
+		t.Fatalf("discards = %+v", records.Discards)
+	}
+	if !strings.Contains(records.Discards[1].Reason, "unknown call_id") {
+		t.Fatalf("tool verdict discard = %q", records.Discards[1].Reason)
 	}
 }
 
