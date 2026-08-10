@@ -25,4 +25,7 @@ func TestQuantityUsesTheHumanNumberAndNoun(t *testing.T) {
 			t.Errorf("Quantity(%d) = %q, want %q", test.value, got, test.want)
 		}
 	}
+	if got := Quantity(0, "memory", "memories"); got != "0 memories" {
+		t.Errorf("irregular plural = %q", got)
+	}
 }

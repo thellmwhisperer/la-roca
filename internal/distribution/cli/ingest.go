@@ -101,7 +101,7 @@ func renderIngestSources(env *cliEnv, result service.IngestResult) {
 			ingestSourceLabel(name, sessions), axi.Quantity(int64(stats.Read), "file"),
 			axi.Quantity(int64(sessions), "session"),
 			axi.Quantity(int64(counts.Exchanges), "exchange"),
-			axi.Quantity(int64(counts.MemoriesInserted+counts.MemoriesUpdated), "memory"),
+			axi.Quantity(int64(counts.MemoriesInserted+counts.MemoriesUpdated), "memory", "memories"),
 			axi.Number(int64(stats.RecordsDiscarded)), axi.Duration(stats.ElapsedMS))
 	}
 }
