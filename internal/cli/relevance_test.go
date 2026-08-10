@@ -10,11 +10,11 @@ import (
 
 func TestSearchExcerptKeepsTheMatchVisible(t *testing.T) {
 	full := strings.Repeat("irrelevant preamble ", 30) +
-		"the colonoscopia result is genuinely relevant " + strings.Repeat("tail ", 30)
+		"the resonancia result is genuinely relevant " + strings.Repeat("tail ", 30)
 	row := map[string]any{"source": "exchange", "text": full}
 
-	line := rowOutput([]string{"source", "text"}, []map[string]any{row}, "colonoscopia")
-	if !strings.Contains(line, "colonoscopia") {
+	line := rowOutput([]string{"source", "text"}, []map[string]any{row}, "resonancia")
+	if !strings.Contains(line, "resonancia") {
 		t.Fatalf("the visible excerpt hides the match:\n%s", line)
 	}
 	if !strings.Contains(line, ",…") {

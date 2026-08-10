@@ -114,7 +114,7 @@ func TestInitRefusesWithoutATerminalOrAnExplicitLocation(t *testing.T) {
 
 func TestACommandWithoutADatabaseSaysToRunInitAndCreatesNothing(t *testing.T) {
 	home := initChoiceHome(t)
-	out, err := runInitChoice(t, false, "", "query", "who", "is", "Edu")
+	out, err := runInitChoice(t, false, "", "query", "who", "is", "Ana")
 	if err == nil {
 		t.Fatalf("query opened a database that init never created:\n%s", out)
 	}

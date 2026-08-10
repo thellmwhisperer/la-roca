@@ -25,7 +25,7 @@ func TestSearchTermKeepsTheSubstantialWordsAndDropsTheRest(t *testing.T) {
 
 func TestFTSPrefersCuratedMemoriesAndDemotesThinking(t *testing.T) {
 	stmt, err := query.RenderSQLFTS(query.Plan{
-		Template: query.TemplateSearchByTerm, Term: "edu", Limit: 10,
+		Template: query.TemplateSearchByTerm, Term: "ana", Limit: 10,
 	}, nil, 50)
 	if err != nil {
 		t.Fatalf("RenderSQLFTS: %v", err)

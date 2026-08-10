@@ -29,13 +29,13 @@ import "testing"
 // -- 1/2 CORE · TestSearchRowsPreferAnswersOverEchoesAndThinking -- <- START HERE
 
 func TestSearchRowsPreferAnswersOverEchoesAndThinking(t *testing.T) {
-	res := QueryResult{Question: "quien es Edu"}
+	res := QueryResult{Question: "quien es Ana"}
 	res.found([]string{"source", "id", "text"}, []map[string]any{
-		{"source": "thinking", "id": int64(1), "text": `test for "quien es Edu"`},
-		{"source": "exchange", "id": int64(2), "text": `run roca query "quien es Edu"`},
-		{"source": "exchange", "id": int64(3), "text": "Edu led the engineering conversation"},
-		{"source": "memory", "id": int64(4), "text": "Edu is Head of Software Engineering"},
-		{"source": "memory", "id": int64(5), "text": `documentation quotes "quien es Edu"`},
+		{"source": "thinking", "id": int64(1), "text": `test for "quien es Ana"`},
+		{"source": "exchange", "id": int64(2), "text": `run roca query "quien es Ana"`},
+		{"source": "exchange", "id": int64(3), "text": "Ana led the engineering conversation"},
+		{"source": "memory", "id": int64(4), "text": "Ana is Head of Software Engineering"},
+		{"source": "memory", "id": int64(5), "text": `documentation quotes "quien es Ana"`},
 	})
 
 	want := []int64{4, 5, 3, 2, 1}
@@ -51,10 +51,10 @@ func TestSearchRowsPreferAnswersOverEchoesAndThinking(t *testing.T) {
 // -- 2/2 CORE · TestSearchRowsWithNullTextAreRemoved --
 
 func TestSearchRowsWithNullTextAreRemoved(t *testing.T) {
-	res := QueryResult{Question: "colonoscopia"}
+	res := QueryResult{Question: "resonancia"}
 	res.found([]string{"source", "id", "text"}, []map[string]any{
 		{"source": "exchange", "id": int64(1), "text": nil},
-		{"source": "exchange", "id": int64(2), "text": "health cluster about colonoscopia"},
+		{"source": "exchange", "id": int64(2), "text": "health cluster about resonancia"},
 	})
 	if res.RowCount != 1 || res.Rows[0]["id"] != int64(2) {
 		t.Fatalf("null text row survived: count=%d rows=%v", res.RowCount, res.Rows)

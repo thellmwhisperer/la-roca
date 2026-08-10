@@ -153,7 +153,7 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 		validated, rejection = gate.Validate(answer.Content)
 		if rejection == nil {
 			// Defense in depth behind the prompt: bare LIKE '%term%' on a text
-			// column is the substring disease (Edu → redundante). Reject with a
+			// column is the substring disease (Ana → ganancia). Reject with a
 			// retry hint that points at FTS; do not rewrite the SQL.
 			if hint := query.SubstringLikeRejection(validated); hint != "" {
 				rejection = fmt.Errorf("%s", hint)

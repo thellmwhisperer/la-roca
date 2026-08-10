@@ -40,18 +40,18 @@ func TestLLMExchangeTextIsCenteredOnTheQuestionTerm(t *testing.T) {
 	if _, err := svc.DB().SQL().Exec(
 		"INSERT INTO sessions (session_id) VALUES ('health');"+
 			"INSERT INTO exchanges (id, session_id, exchange_number, agent_text) VALUES (1, 'health', 1, ?)",
-		strings.Repeat("preamble ", 80)+"Qwen and Gemma discussed colonoscopia in the health cluster"); err != nil {
+		strings.Repeat("preamble ", 80)+"Qwen and Gemma discussed resonancia in the health cluster"); err != nil {
 		t.Fatalf("seed exchange: %v", err)
 	}
 
 	res, err := svc.Query(context.Background(), service.QueryRequest{
-		Question: "colonoscopia", MaxChars: 140,
+		Question: "resonancia", MaxChars: 140,
 	})
 	if err != nil {
 		t.Fatalf("Query: %v", err)
 	}
 	text, _ := res.Rows[0]["text"].(string)
-	if !strings.Contains(text, "colonoscopia") || !strings.HasPrefix(text, "…") {
+	if !strings.Contains(text, "resonancia") || !strings.HasPrefix(text, "…") {
 		t.Fatalf("LLM exchange text is not centered on the match: %q", text)
 	}
 }
@@ -64,7 +64,7 @@ func TestLLMCountSaysItCountsRowsNotEvents(t *testing.T) {
 	svc := serviceWithModel(t, answering("codex",
 		"SELECT COUNT(*) AS veces FROM memories LIMIT 1"))
 	res, err := svc.Query(context.Background(), service.QueryRequest{
-		Question: "Cuantas veces Javi se enfada",
+		Question: "Cuantas veces Dana se enfada",
 	})
 	if err != nil {
 		t.Fatalf("Query: %v", err)

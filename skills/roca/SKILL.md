@@ -22,7 +22,7 @@ Automation that creates or selects a location must pass `--db-path`.
 ## Shell commands
 
 ```bash
-roca query "who is Edu"                        # natural-language search
+roca query "who is Ana"                        # natural-language search
 roca query "what happened with Y" --json
 roca query "ffmpeg patterns" --sql-only        # the SQL the model would run, without running it
 roca exec "SELECT COUNT(*) AS memories FROM memories"  # run a gate-approved SELECT
@@ -73,7 +73,7 @@ the gate. Install them with `roca mcp install <runtime>`.
 ## Good
 
 ```bash
-roca query "who is Edu"
+roca query "who is Ana"
 roca query "que feedback tenemos" --json
 roca store --layer handoff --content "wave 6 left the gate in place" --origin agent
 ```

@@ -73,7 +73,7 @@ var createTable = regexp.MustCompile(`(?is)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS
 
 // createVirtualFTS reads the FTS5 lexical index tables out of search.sql. They
 // are CREATE VIRTUAL TABLE, not CREATE TABLE, so the ordinary reader misses them
-// and the model never learns MATCH exists — which is how content LIKE '%Edu%'
+// and the model never learns MATCH exists — which is how content LIKE '%Ana%'
 // became the default term search.
 var createVirtualFTS = regexp.MustCompile(`(?is)CREATE\s+VIRTUAL\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'` + "`" + `]?(\w+)["'` + "`" + `]?\s+USING\s+fts5\s*\((.*?)\)\s*;`)
 
@@ -262,7 +262,7 @@ func SQLSystemPrompt(schema Schema, layers []LayerHint, layerFilter []string) st
 		"- Always end the query with an explicit LIMIT",
 		"- Respond ONLY with the SQL query: no explanations, no markdown, no code fences")
 	if hasTable(schema, "memories_fts") {
-		// Substring LIKE '%Edu%' matches "redundante" and "deduplication". The
+		// Substring LIKE '%Ana%' matches "ganancia" and "banana". The
 		// FTS tables are the only honest term search; bm25 ranks, created_at
 		// does not unless the question is about time.
 		rules = append(rules,
@@ -271,7 +271,7 @@ func SQLSystemPrompt(schema Schema, layers []LayerHint, layerFilter []string) st
 				"ORDER BY bm25(...). Never write LIKE '%term%' on content, metadata, "+
 				"human_text, agent_text or full_text: that matches inside other words",
 			"- Quote each search token in double quotes inside MATCH "+
-				`(memories_fts MATCH '"edu"'). When joining an FTS hit to its content `+
+				`(memories_fts MATCH '"ana"'). When joining an FTS hit to its content `+
 				"table, pull rowid inside a subquery as an alias and join on id = alias; "+
 				"an FTS query may return unqualified rowid directly, but never write table.rowid",
 			"- Rank term search by bm25 relevance, not created_at, unless the question "+
@@ -305,21 +305,21 @@ func ftsExamples(schema Schema) string {
 		return ""
 	}
 	return "\n\n<examples>\n" +
-		"Term search for Edu across sources (token MATCH + bm25 — never LIKE '%Edu%'):\n" +
+		"Term search for Ana across sources (token MATCH + bm25 — never LIKE '%Ana%'):\n" +
 		"SELECT 'memory' AS source, m.id, m.content AS text, 0 AS source_priority, f.rango AS rango\n" +
 		"FROM (SELECT rowid AS fila, bm25(memories_fts) AS rango FROM memories_fts\n" +
-		"      WHERE memories_fts MATCH '\"edu\"' ORDER BY rango LIMIT 20) AS f\n" +
+		"      WHERE memories_fts MATCH '\"ana\"' ORDER BY rango LIMIT 20) AS f\n" +
 		"JOIN memories AS m ON m.id = f.fila WHERE m.supersedes IS NULL\n" +
 		"UNION ALL\n" +
 		"SELECT 'exchange', rowid, agent_text, 1 AS source_priority, bm25(exchanges_fts) AS rango\n" +
-		"FROM exchanges_fts WHERE exchanges_fts MATCH '{agent_text} : (\"edu\")'\n" +
+		"FROM exchanges_fts WHERE exchanges_fts MATCH '{agent_text} : (\"ana\")'\n" +
 		"UNION ALL\n" +
 		"SELECT 'human', rowid, human_text, 1, bm25(exchanges_fts)\n" +
-		"FROM exchanges_fts WHERE exchanges_fts MATCH '{human_text} : (\"edu\")'\n" +
+		"FROM exchanges_fts WHERE exchanges_fts MATCH '{human_text} : (\"ana\")'\n" +
 		"AND human_text NOT LIKE '<task-notification%'\n" +
 		"UNION ALL\n" +
 		"SELECT 'thinking', rowid, full_text, 2, bm25(thinking_fts)\n" +
-		"FROM thinking_fts WHERE thinking_fts MATCH '\"edu\"'\n" +
+		"FROM thinking_fts WHERE thinking_fts MATCH '\"ana\"'\n" +
 		"ORDER BY source_priority, rango LIMIT 20\n\n" +
 		"Count on base tables (not FTS), with an explicit LIMIT:\n" +
 		"SELECT COUNT(*) AS n FROM exchanges LIMIT 1\n" +
@@ -344,8 +344,8 @@ func SubstringLikeRejection(sql string) string {
 		return ""
 	}
 	return "substring LIKE '%term%' on a text column matches inside other words " +
-		"(Edu matches redundante). For term search use the FTS tables with MATCH " +
-		`and ORDER BY bm25(...), e.g. memories_fts MATCH '"edu"'. ` +
+		"(Ana matches ganancia). For term search use the FTS tables with MATCH " +
+		`and ORDER BY bm25(...), e.g. memories_fts MATCH '"ana"'. ` +
 		"Search memories_fts, exchanges_fts and thinking_fts with UNION ALL unless " +
 		"the question targets one source. Pull rowid inside a subquery; never table.rowid. " +
 		"Respond ONLY with the corrected SQL."

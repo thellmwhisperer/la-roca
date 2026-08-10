@@ -386,9 +386,9 @@ func TestTheRulesTeachTheRelativeDateThatSQLiteActuallyUnderstands(t *testing.T)
 //
 // Verified on the real corpus: the model wrote
 //
-//	content LIKE '%Edu%' OR metadata LIKE '%Edu%'
+//	content LIKE '%Ana%' OR metadata LIKE '%Ana%'
 //
-// and every hit was noise ("redundante", "deduplication", "extractViewedUserId").
+// and every hit was noise ("ganancia", "banana", "extractViewedUserId").
 // The lab documented the same failure in March. The prompt has to put the FTS
 // tables in front of the model, forbid bare %term% LIKE on text columns, and
 // show the MATCH + bm25 shape that actually works — including the multi-source
@@ -429,7 +429,7 @@ func TestThePromptSteersTermSearchToFTSNotSubstringLike(t *testing.T) {
 		t.Errorf("the prompt does not warn against substring LIKE:\n%s", prompt)
 	}
 	// Worked example: quoted token MATCH, not a bare word the FTS parser owns.
-	if !strings.Contains(prompt, `MATCH '"edu"'`) && !strings.Contains(prompt, `MATCH '"Edu"'`) {
+	if !strings.Contains(prompt, `MATCH '"ana"'`) && !strings.Contains(prompt, `MATCH '"Ana"'`) {
 		t.Errorf("the prompt carries no worked MATCH example:\n%s", prompt)
 	}
 	// Breadth: memories + exchanges (+ thinking), the compiler's own surface.
@@ -442,19 +442,19 @@ func TestThePromptSteersTermSearchToFTSNotSubstringLike(t *testing.T) {
 	}
 }
 
-func TestSubstringLikeRejectionCatchesTheEduDisease(t *testing.T) {
+func TestSubstringLikeRejectionCatchesTheAnaDisease(t *testing.T) {
 	cases := []struct {
 		sql    string
 		reject bool
 	}{
-		{`SELECT content FROM memories WHERE content LIKE '%Edu%' ORDER BY created_at DESC LIMIT 20`, true},
-		{`SELECT * FROM memories WHERE content LIKE '%Edu%' OR metadata LIKE '%Edu%' LIMIT 10`, true},
-		{`SELECT human_text FROM exchanges WHERE human_text LIKE '%edu%' LIMIT 5`, true},
+		{`SELECT content FROM memories WHERE content LIKE '%Ana%' ORDER BY created_at DESC LIMIT 20`, true},
+		{`SELECT * FROM memories WHERE content LIKE '%Ana%' OR metadata LIKE '%Ana%' LIMIT 10`, true},
+		{`SELECT human_text FROM exchanges WHERE human_text LIKE '%ana%' LIMIT 5`, true},
 		// Prefix-only LIKE is not the disease (task notifications, project filters).
 		{`SELECT * FROM exchanges WHERE human_text NOT LIKE '<task-notification%' LIMIT 5`, false},
 		{`SELECT * FROM sessions WHERE project LIKE 'la-roca%' LIMIT 5`, false},
 		// FTS is what we want.
-		{`SELECT rowid FROM memories_fts WHERE memories_fts MATCH '"edu"' LIMIT 10`, false},
+		{`SELECT rowid FROM memories_fts WHERE memories_fts MATCH '"ana"' LIMIT 10`, false},
 		// Counts and plain filters are fine.
 		{`SELECT COUNT(*) FROM exchanges LIMIT 1`, false},
 	}
@@ -467,7 +467,7 @@ func TestSubstringLikeRejectionCatchesTheEduDisease(t *testing.T) {
 			t.Errorf("false positive (%s):\n%s", got, c.sql)
 		}
 	}
-	hint := SubstringLikeRejection(`SELECT content FROM memories WHERE content LIKE '%Edu%' LIMIT 5`)
+	hint := SubstringLikeRejection(`SELECT content FROM memories WHERE content LIKE '%Ana%' LIMIT 5`)
 	for _, needle := range []string{"MATCH", "memories_fts", "bm25"} {
 		if !strings.Contains(hint, needle) {
 			t.Errorf("the rejection hint does not steer to %q: %s", needle, hint)

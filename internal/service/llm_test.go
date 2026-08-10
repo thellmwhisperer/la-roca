@@ -325,18 +325,18 @@ func TestZeroRowsFromTheModelGoThroughTheRescue(t *testing.T) {
 }
 
 // Defect 1 on the keyword rescue: a question that is all interrogatives and a
-// stop word around one entity ("quien es Edu" / "who is Edu") has to find the
+// stop word around one entity ("quien es Ana" / "who is Ana") has to find the
 // document that carries only the entity. Before the interrogatives were
-// stripped, the rescue searched for "quien" AND "es" AND "edu" and surfaced
-// only echoes of the question itself; the 369 exchanges that mention Edu never
+// stripped, the rescue searched for "quien" AND "es" AND "ana" and surfaced
+// only echoes of the question itself; the 369 exchanges that mention Ana never
 // appeared. The words stripped come from the language pack, not from Go.
 func TestTheRescueStripsInterrogativesAndFindsTheEntity(t *testing.T) {
 	benchCases := []struct {
 		name     string
 		question string
 	}{
-		{"spanish", "quien es Edu"},
-		{"english", "who is Edu"},
+		{"spanish", "quien es Ana"},
+		{"english", "who is Ana"},
 	}
 	for _, c := range benchCases {
 		t.Run(c.name, func(t *testing.T) {
@@ -345,7 +345,7 @@ func TestTheRescueStripsInterrogativesAndFindsTheEntity(t *testing.T) {
 			svc := serviceWithModel(t, broken)
 			// The document carries the entity and none of the question words:
 			// it is reachable only once the interrogatives are stripped.
-			seed(t, svc, "project", "registro del agente Edu en el sistema")
+			seed(t, svc, "project", "registro del agente Ana en el sistema")
 
 			res, err := svc.Query(context.Background(),
 				service.QueryRequest{Question: c.question})
@@ -358,7 +358,7 @@ func TestTheRescueStripsInterrogativesAndFindsTheEntity(t *testing.T) {
 			if res.RowCount == 0 {
 				t.Fatalf("zero rows: the interrogatives were not stripped before the rescue searched")
 			}
-			if !strings.Contains(strings.ToLower(firstRowText(t, res)), "edu") {
+			if !strings.Contains(strings.ToLower(firstRowText(t, res)), "ana") {
 				t.Errorf("the first row does not carry the entity: %v", res.Rows[0])
 			}
 		})
