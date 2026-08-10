@@ -207,6 +207,40 @@ honest zero. Absent-is-empty is the contract, and only a `rows` field that exist
 and is not a list is malformed. Half the finding applied; the other half would
 have broken the guarantee it looked like it was protecting.
 
+## Superseded while this branch was open
+
+`main` advanced 29 commits during this batch (a large ingest wave, a surface
+contract rework, a sqlgate pass, and the public cleanup), so the branch was
+rebased four times. Three items were overtaken and their fixes dropped in favour
+of main's, which reached the same place:
+
+- **The dedup ruling itself.** Main implemented the identical split
+  independently, naming the presentation recorder `foundSearch` where this branch
+  called it `foundRanked`. Same semantics: `found` records what the SQL returned,
+  and only the literal search applies presentation. Main's naming won; what
+  survives from this branch is the end-to-end test
+  (`TestTheModelPathReturnsTheRowsItsSQLProduced`), which drives a real model-path
+  query and is not tied to either name.
+- **D11** (`forgiven` guarded against a term absent from its compound): main
+  rewrote the vocabulary guard to match SHA-256 digests of encoded terms, and the
+  `forgiven` helper no longer exists.
+- **D5** (the TOON ratio assertion): main replaced that test with a per-row
+  character budget plus a marked-truncation count, a stronger contract than the
+  size ratio it tightened.
+
+One earlier conclusion of mine was also overruled, and the report should say so
+rather than leave a claim the tree contradicts: batch 1 recorded that the Spanish
+fixtures under `features/` and `test/acceptance/` were deliberate coverage for
+answering in the question's language and should not be swept. `main`'s AGENTS.md
+now reads "Public source, documentation, features, and fixtures are English-only;
+use unmistakably synthetic test data", and the fixtures were translated. The
+later decision stands; the batch 1 note is obsolete.
+
+Note on this file's home: `main` deleted `docs/reviews/` and every delta
+inventory as internal working material. These two batch reports are the only
+things left under that path, so they are transient by construction: keep them for
+the merge and delete them with the rest, or name a home that survives.
+
 ## What is still owed
 
 - `internal/provider` past the timeout, ideally scoped per package.
