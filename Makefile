@@ -52,12 +52,19 @@ dist: darwin-arm64 linux-arm64 linux-amd64 windows-amd64 ## Build the four targe
 test: ## Unit and contract tests
 	go test ./...
 
-.PHONY: accept
-accept: build ## The godog acceptance suite against the real binary
-	go test ./test/acceptance -count=1
+.PHONY: accept accept-index
+accept: build accept-index ## The godog acceptance suites against the real binary
+	go test -tags=acceptance ./test/acceptance -count=1
+
+accept-index: ## List and verify the per-domain acceptance scenarios
+	@files="$$(find features -mindepth 2 -name '*.feature' -type f | sort)"; \
+		test -n "$$files" || { echo "no per-domain acceptance features found"; exit 1; }; \
+		for file in $$files; do \
+			grep -HnE '^[[:space:]]*Scenario( Outline)?:' "$$file" || exit 1; \
+		done
 
 .PHONY: check
-check: build fmt vet test slop ## What CI requires before merging
+check: build fmt vet test accept slop ## What CI requires before merging
 
 # The slop gate blocks. `--enforce` fails both ways on purpose: over the ceiling
 # is a regression, under it is an improvement that was not committed, so the base
