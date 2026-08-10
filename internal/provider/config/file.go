@@ -175,12 +175,18 @@ type File struct {
 	Path   string
 	Exists bool
 	Models ModelsConfig
+	Query  QueryConfig
 	// Warnings are what this build did not understand, each one naming the key,
 	// the file and the remedy.
 	Warnings []string
 
 	// defaults holds the supported loose scalar keys.
 	defaults map[string]any
+}
+
+// QueryConfig bounds execution of SQL that passed the read-only gate.
+type QueryConfig struct {
+	TimeoutMS int `toml:"timeout_ms"`
 }
 
 // ModelsConfig is the [models] section: which providers, in what order, with
@@ -225,6 +231,8 @@ var knownModelsKeys = map[string]bool{
 	"order": true, "timeout_ms": true, "probe_ms": true,
 }
 
+var knownQueryKeys = map[string]bool{"timeout_ms": true}
+
 // LoadFile reads the config. A file that is not there is a machine with
 // defaults, not a failure.
 func LoadFile(path string) (File, error) {
@@ -247,7 +255,24 @@ func LoadFile(path string) (File, error) {
 	file.defaults, _ = document["defaults"].(map[string]any)
 	models, _ := document["models"].(map[string]any)
 	file.Models = readModels(models, path, &file.Warnings)
+	query, _ := document["query"].(map[string]any)
+	file.Query = readQuery(query, path, &file.Warnings)
 	return file, nil
+}
+
+func readQuery(section map[string]any, path string, warnings *[]string) QueryConfig {
+	var query QueryConfig
+	for _, key := range sortedKeys(section) {
+		switch key {
+		case "timeout_ms":
+			query.TimeoutMS = readInt(section[key])
+		default:
+			if !knownQueryKeys[key] {
+				*warnings = append(*warnings, unknownKey("query."+key, path))
+			}
+		}
+	}
+	return query
 }
 
 // readModels walks the [models] section by hand instead of letting a decoder

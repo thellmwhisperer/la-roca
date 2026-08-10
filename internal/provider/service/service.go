@@ -33,6 +33,9 @@ type Options struct {
 	DataDir string
 	Version string
 	Commit  string
+	// QueryTimeout bounds execution after SQL passes the read-only gate. Zero
+	// uses DefaultQueryTimeout.
+	QueryTimeout time.Duration
 	// ReadOnly refuses in the service, before any database I/O.
 	ReadOnly bool
 	// Providers is the resolved model cascade. Its zero value is a service that
@@ -55,6 +58,10 @@ type Options struct {
 	// interactive shell renderer.
 	IngestProgress func(ingest.SourceProgress)
 }
+
+// DefaultQueryTimeout prevents an accepted recursive or aggregate query from
+// consuming resources indefinitely without requiring configuration.
+const DefaultQueryTimeout = 5 * time.Second
 
 // Service opens the database once and answers both surfaces.
 type Service struct {

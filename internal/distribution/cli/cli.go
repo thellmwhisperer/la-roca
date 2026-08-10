@@ -197,6 +197,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		DataDir:        filepath.Dir(paths.DB),
 		Version:        env.build.Version,
 		Commit:         env.build.Commit,
+		QueryTimeout:   time.Duration(file.Query.TimeoutMS) * time.Millisecond,
 		Providers:      buildProviders(file, paths),
 		ConfigPath:     paths.Config,
 		ConfigExists:   file.Exists,

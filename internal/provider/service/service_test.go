@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -23,6 +24,28 @@ func TestExecAppliesTheDefaultCharacterBudget(t *testing.T) {
 	text := result.Rows[0]["text"].(string)
 	if len([]rune(text)) > service.DefaultMaxChars || !strings.HasSuffix(text, "…") {
 		t.Fatalf("default-budget text = %d runes, %q", len([]rune(text)), text)
+	}
+}
+
+func TestExecStopsAQueryThatExceedsTheCostBudget(t *testing.T) {
+	paths := freshPaths(t)
+	svc := serviceOn(t, paths, func(options *service.Options) {
+		options.QueryTimeout = time.Millisecond
+	})
+	if _, err := svc.Init(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	started := time.Now()
+	_, err := svc.Exec(t.Context(), service.ExecRequest{SQL: `
+		WITH RECURSIVE costly(n) AS (
+			SELECT 1 UNION ALL SELECT n + 1 FROM costly WHERE n < 100000000
+		) SELECT sum(n) FROM costly`})
+	if err == nil {
+		t.Fatal("runaway recursive query completed without the cost budget")
+	}
+	if time.Since(started) > time.Second {
+		t.Fatalf("query timeout took too long: %v", time.Since(started))
 	}
 }
 

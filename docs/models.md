@@ -17,10 +17,15 @@ One file, TOML, at `config.toml` inside the data directory (`~/.roca/`).
 [models]
 # The order they are tried in. The first available one serves.
 order = ["codex", "deepseek", "ollama"]
-# Budgets, in milliseconds. timeout_ms bounds a query, probe_ms bounds the
-# availability question that is asked before every one.
+# Model budgets, in milliseconds. timeout_ms bounds a provider request;
+# probe_ms bounds the availability question asked before every one.
 timeout_ms = 90000
 probe_ms   = 3000
+
+[query]
+# SQL that passed the read-only gate may execute for this long. The working
+# default is 5000 ms when this section is absent.
+timeout_ms = 5000
 
 [models.codex]
 model = "gpt-5.6-luna"

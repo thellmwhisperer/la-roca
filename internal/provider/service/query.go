@@ -255,11 +255,17 @@ func (s *Service) Exec(ctx context.Context, req ExecRequest) (ExecResult, error)
 // execute runs the validated SELECT and normalizes the rows into maps keyed by
 // column name, which is what both surfaces render.
 func (s *Service) execute(ctx context.Context, stmt, term string, maxChars int) ([]string, []map[string]any, error) {
+	timeout := s.opts.QueryTimeout
+	if timeout <= 0 {
+		timeout = DefaultQueryTimeout
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	reader, err := s.db.ReadOnly()
 	if err != nil {
 		return nil, nil, err
 	}
-	rows, err := reader.QueryContext(ctx, stmt)
+	rows, err := reader.QueryContext(queryCtx, stmt)
 	if err != nil {
 		return nil, nil, fmt.Errorf("run the validated query: %w", err)
 	}

@@ -68,6 +68,16 @@ model = "deepseek-reasoner"
 	}
 }
 
+func TestTheQueryCostBudgetIsReadFromConfig(t *testing.T) {
+	file, err := LoadFile(write(t, "[query]\ntimeout_ms = 2750\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if file.Query.TimeoutMS != 2750 {
+		t.Fatalf("query timeout = %dms, want 2750ms", file.Query.TimeoutMS)
+	}
+}
+
 func TestSetProviderModelCreatesAndSurgicallyEditsTheConfiguration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "config.toml")
 	if err := SetProviderModel(path, "xai", "grok-first"); err != nil {
