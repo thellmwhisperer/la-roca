@@ -1,10 +1,38 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/release"
 )
+
+func TestUpdateRefusesAnInsecureOrMalformedMirror(t *testing.T) {
+	env := &cliEnv{}
+	t.Setenv("HOME", t.TempDir())
+	for _, api := range []string{"http://mirror.example", "https://mirror.example?repo=other", "https://mirror.example/api/../other"} {
+		if _, err := env.releaseSource("owner/repo", api); err == nil {
+			t.Errorf("API %q was accepted", api)
+		}
+	}
+	for _, repo := range []string{"not-a-repo", "owner/%2Frepo"} {
+		if _, err := env.releaseSource(repo, "https://mirror.example/api/v3"); err == nil || !strings.Contains(err.Error(), "owner/name") {
+			t.Fatalf("malformed repository %q refusal = %v", repo, err)
+		}
+	}
+}
+
+func TestUpdateAcceptsATrustedHTTPSMirrorShape(t *testing.T) {
+	env := &cliEnv{}
+	t.Setenv("HOME", t.TempDir())
+	source, err := env.releaseSource("owner/repo", "https://mirror.example/api/v3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.API != "https://mirror.example/api/v3" {
+		t.Fatalf("API = %q", source.API)
+	}
+}
 
 // An operator who installed this product and types `roca update` has already
 // said which repository they trust: the one the binary they are running came

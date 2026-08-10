@@ -92,6 +92,30 @@ func TestAMatchingChecksumPasses(t *testing.T) {
 	}
 }
 
+func TestAStandardSha256sumBinaryChecksumPasses(t *testing.T) {
+	payload := []byte("the artefact")
+	sum := sha256.Sum256(payload)
+	line := hex.EncodeToString(sum[:]) + " *roca-v1-linux-x64\n"
+	if err := Verify(payload, line, "roca-v1-linux-x64"); err != nil {
+		t.Fatalf("sha256sum -b output was refused: %v", err)
+	}
+}
+
+func TestReleaseAssetsStayOnTheSelectedHTTPSOrigin(t *testing.T) {
+	source := Source{API: "https://mirror.example/api/v3", Repo: "owner/repo"}
+	if err := source.ValidateAsset("https://mirror.example/assets/roca"); err != nil {
+		t.Fatalf("same-origin HTTPS asset was refused: %v", err)
+	}
+	for _, raw := range []string{
+		"http://mirror.example/assets/roca",
+		"https://other.example/assets/roca",
+	} {
+		if err := source.ValidateAsset(raw); err == nil {
+			t.Errorf("asset URL %q was accepted", raw)
+		}
+	}
+}
+
 // The channel compresses each artefact with its LICENSE and README; installation
 // extracts the binary rather than storing the tarball.
 func TestTheBinaryIsTakenOutOfTheTarball(t *testing.T) {

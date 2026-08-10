@@ -62,6 +62,12 @@ verification fails, the active executable is unchanged.
 The update channel can be selected with the same repository and API environment
 variables used by installation.
 
+`--api` and `ROCA_GITHUB_API` exist only for tests and trusted GitHub-compatible
+mirrors. A custom base must be HTTPS, contain no credentials, query or fragment,
+and is combined only with an `owner/name` repository path. Setting either
+redirects release metadata and downloads, so do not point it at an origin you
+do not trust.
+
 ## Uninstall
 
 ```sh

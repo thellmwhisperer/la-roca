@@ -52,7 +52,7 @@ func updateCommand(env *cliEnv) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&repo, "repo", "", "the release repository, owner/name (or "+release.EnvRepo+")")
 	cmd.Flags().StringVar(&tag, "version", "", "a specific version instead of the latest")
-	cmd.Flags().StringVar(&api, "api", "", "the API base URL (or "+release.EnvAPI+")")
+	cmd.Flags().StringVar(&api, "api", "", "a trusted HTTPS test/mirror API base (or "+release.EnvAPI+")")
 	cmd.Flags().StringVar(&target, "binary", "", "the binary to replace (default: the one running)")
 	cmd.Flags().BoolVar(&check, "check", false, "report what is published without replacing anything")
 	return cmd
@@ -71,12 +71,16 @@ func (env *cliEnv) releaseSource(repo, api string) (release.Source, error) {
 	if err != nil {
 		return release.Source{}, err
 	}
-	return release.Source{
+	source := release.Source{
 		API: firstNonEmpty(api, os.Getenv(release.EnvAPI)),
 		Repo: firstNonEmpty(repo, os.Getenv(release.EnvRepo),
 			file.Default(keyReleaseRepo), release.DefaultRepo),
 		Token: os.Getenv(release.EnvToken),
-	}, nil
+	}
+	if err := release.ValidateMirror(source.API, source.Repo); err != nil {
+		return release.Source{}, err
+	}
+	return source, nil
 }
 
 // update is the whole flow, in the order that keeps a working binary on the
@@ -119,6 +123,12 @@ func (env *cliEnv) update(ctx context.Context, source release.Source,
 		return fmt.Errorf(
 			"release %s publishes no checksums.txt: nothing is installed unverified",
 			published.Tag)
+	}
+	if err := source.ValidateAsset(asset.URL); err != nil {
+		return err
+	}
+	if err := source.ValidateAsset(sums.URL); err != nil {
+		return err
 	}
 
 	payload, err := source.Download(ctx, asset)

@@ -29,7 +29,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -259,6 +261,48 @@ func (s Source) base() string {
 	return strings.TrimRight(s.API, "/")
 }
 
+// ValidateMirror limits custom release origins to explicit HTTPS mirrors and a
+// repository path that can be appended without changing URL structure.
+func ValidateMirror(api, repo string) error {
+	parts := strings.Split(repo, "/")
+	if len(parts) != 2 || !repoPart(parts[0]) || !repoPart(parts[1]) {
+		return fmt.Errorf("the release repository must have the shape owner/name")
+	}
+	if api == "" {
+		return nil
+	}
+	parsed, err := url.Parse(api)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" ||
+		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.RawPath != "" ||
+		(parsed.Path != "/" && path.Clean(parsed.Path) != strings.TrimSuffix(parsed.Path, "/")) {
+		return fmt.Errorf("the release API mirror must be an https base URL without credentials, query, or fragment")
+	}
+	return nil
+}
+
+func repoPart(value string) bool {
+	if value == "" || value == "." || value == ".." {
+		return false
+	}
+	for _, char := range value {
+		if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || strings.ContainsRune("_.-", char)) {
+			return false
+		}
+	}
+	return true
+}
+
+// ValidateAsset binds downloads to the selected HTTPS release origin.
+func (s Source) ValidateAsset(raw string) error {
+	base, baseErr := url.Parse(s.base())
+	asset, assetErr := url.Parse(raw)
+	if baseErr != nil || assetErr != nil || asset.Scheme != "https" || asset.Host != base.Host {
+		return fmt.Errorf("the release asset URL must use the selected HTTPS release origin")
+	}
+	return nil
+}
+
 func (s Source) client() *http.Client {
 	if s.HTTP != nil {
 		return s.HTTP
@@ -277,7 +321,7 @@ func Verify(payload []byte, checksums, artefact string) error {
 
 	for _, line := range strings.Split(checksums, "\n") {
 		fields := strings.Fields(line)
-		if len(fields) != 2 || filepath.Base(fields[1]) != artefact {
+		if len(fields) != 2 || filepath.Base(strings.TrimPrefix(fields[1], "*")) != artefact {
 			continue
 		}
 		if !strings.EqualFold(fields[0], computed) {
