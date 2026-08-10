@@ -344,9 +344,15 @@ func renderUninstall(env *cliEnv, purge bool, report lifecycle.Report,
 	for _, failure := range report.Errors {
 		env.print("error: %s", failure)
 	}
-	if purge {
+	// The verdict is the OUTCOME and never the request. --json reports
+	// `purge && report.Purged`, and a readable line that branched on `purge`
+	// alone printed "purged: yes" directly under the errors that say it did not.
+	switch {
+	case purge && report.Purged:
 		env.print("purged: yes")
-		return
+	case purge:
+		env.print("purged: no (what is left is named above: run the uninstall again)")
+	default:
+		env.print("purged: no (your data is still where it was)")
 	}
-	env.print("purged: no (your data is still where it was)")
 }
