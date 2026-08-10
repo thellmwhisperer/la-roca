@@ -56,15 +56,68 @@ func editFile(path string, update func(string) string) error {
 	return nil
 }
 
+// tableKey is the canonical form of a TOML table header: the dotted key, lower
+// case, with the brackets, the surrounding whitespace and any quoting of a
+// component removed. It is empty for a line that is not a plain table header, so
+// an array-of-tables header and ordinary key lines never compare equal to one.
+func tableKey(line string) string {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, "[") || !strings.HasSuffix(line, "]") ||
+		strings.HasPrefix(line, "[[") {
+		return ""
+	}
+	inner := strings.TrimSpace(line[1 : len(line)-1])
+	if inner == "" {
+		return ""
+	}
+	var parts []string
+	var current strings.Builder
+	quote := rune(0)
+	for _, r := range inner {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0
+				continue
+			}
+			current.WriteRune(r)
+		case r == '"' || r == '\'':
+			quote = r
+		case r == '.':
+			parts = append(parts, strings.TrimSpace(current.String()))
+			current.Reset()
+		default:
+			current.WriteRune(r)
+		}
+	}
+	if quote != 0 {
+		return "" // an unterminated quote is not a header this may rewrite
+	}
+	parts = append(parts, strings.TrimSpace(current.String()))
+	for _, part := range parts {
+		if part == "" {
+			return ""
+		}
+	}
+	return strings.ToLower(strings.Join(parts, "."))
+}
+
 func setTableValueText(text, header, key, value string) string {
 	start, end, firstChild := -1, len(text), -1
-	childPrefix := strings.TrimSuffix(strings.ToLower(header), "]") + "."
+	// The operator wrote this file, and TOML spells one table several ways:
+	// `[models.xai]`, `[ models.xai ]` and `[models."xai"]` are the same table.
+	// Comparing the raw line text matched only the first, so an edit to either of
+	// the others appended a SECOND table for the same key and left the
+	// configuration unparseable.
+	want := tableKey(header)
+	childPrefix := want + "."
 	offset := 0
 	for _, line := range strings.SplitAfter(text, "\n") {
 		clean := strings.TrimSpace(strings.SplitN(line, "#", 2)[0])
-		if strings.EqualFold(clean, header) {
+		candidate := tableKey(clean)
+		if candidate != "" && candidate == want {
 			start = offset + len(line)
-		} else if firstChild < 0 && strings.HasPrefix(strings.ToLower(clean), childPrefix) {
+		} else if firstChild < 0 && candidate != "" && strings.HasPrefix(candidate, childPrefix) {
 			firstChild = offset
 		}
 		if start >= 0 && offset >= start && strings.HasPrefix(clean, "[") {

@@ -311,3 +311,41 @@ func TestDefaultListReadsEveryShapeFromDefaults(t *testing.T) {
 		}
 	}
 }
+
+// A TOML header may be spelled several ways for the same table, and the operator
+// wrote the file. Matching the raw line text meant `[models."xai"]` and
+// `[ models.xai ]` never matched the table being edited, so the edit APPENDED a
+// second `[models.xai]`: two tables for one key in the operator's own file.
+func TestAnEquivalentTableHeaderIsEditedAndNotDuplicated(t *testing.T) {
+	for _, header := range []string{`[models."xai"]`, `[ models.xai ]`, "[models.xai]"} {
+		path := filepath.Join(t.TempDir(), "config.toml")
+		before := header + "\nmodel = \"old\"\napi_key_env = \"XAI_KEY\"\n"
+		if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := SetProviderModel(path, "xai", "grok-new"); err != nil {
+			t.Fatalf("%s: %v", header, err)
+		}
+		after, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		declared := 0
+		for _, line := range strings.Split(string(after), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "[") && strings.Contains(trimmed, "xai") {
+				declared++
+			}
+		}
+		if declared != 1 {
+			t.Errorf("%s: the table is declared %d times:\n%s", header, declared, after)
+		}
+		file, err := LoadFile(path)
+		if err != nil {
+			t.Fatalf("%s: the edited file no longer parses: %v", header, err)
+		}
+		if got := file.Models.Providers["xai"].Model; got != "grok-new" {
+			t.Errorf("%s: model = %q, want grok-new:\n%s", header, got, after)
+		}
+	}
+}
