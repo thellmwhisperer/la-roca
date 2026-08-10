@@ -11,7 +11,7 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/query"
-	"github.com/thellmwhisperer/la-roca/internal/search"
+	"github.com/thellmwhisperer/la-roca/internal/store/search"
 )
 
 // Paths a question can leave by. v1 is model-only: every question is asked of

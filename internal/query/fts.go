@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/thellmwhisperer/la-roca/internal/search"
+	"github.com/thellmwhisperer/la-roca/internal/store/search"
 )
 
 // Plan is a search the rescue runs: which term, against which layer, with what

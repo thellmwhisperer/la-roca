@@ -14,7 +14,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/layers"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/query/sqlgate"
-	"github.com/thellmwhisperer/la-roca/internal/search"
+	"github.com/thellmwhisperer/la-roca/internal/store/search"
 	"github.com/thellmwhisperer/la-roca/internal/store"
 )
 

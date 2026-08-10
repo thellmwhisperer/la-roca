@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
-	"github.com/thellmwhisperer/la-roca/internal/search"
+	"github.com/thellmwhisperer/la-roca/internal/store/search"
 )
 
 // IngestRequest is what the operator asked for.

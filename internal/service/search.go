@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/thellmwhisperer/la-roca/internal/query"
-	"github.com/thellmwhisperer/la-roca/internal/search"
+	"github.com/thellmwhisperer/la-roca/internal/store/search"
 )
 
 // searchByTerm resolves the term-search template by the best available route,

@@ -9,7 +9,7 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/query"
 	"github.com/thellmwhisperer/la-roca/internal/query/sqlgate"
-	"github.com/thellmwhisperer/la-roca/internal/search"
+	"github.com/thellmwhisperer/la-roca/internal/store/search"
 	"github.com/thellmwhisperer/la-roca/internal/store"
 )
 
