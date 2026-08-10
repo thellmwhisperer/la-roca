@@ -37,10 +37,15 @@ var forbiddenWorkflowTerms = []struct {
 
 // directories that are not product source: build output, local agent state, and
 // vendored dependencies. none of them ships in the repository.
+//
+// `.claude` and `.opencode` are the same category: a coding agent working in a
+// checkout writes its own settings there, and that file naming the workflow this
+// list bans turned the canonical gate red over a file the repository does not
+// contain. The ban is on what this product ships, not on the operator's tools.
 var nonProductDirs = map[string]bool{
 	".git": true, ".tmp": true, ".worktrees": true,
 	"bin": true, "dist": true, "vendor": true,
-	"node_modules": true, ".opencode": true,
+	"node_modules": true, ".opencode": true, ".claude": true,
 }
 
 func TestProductVocabularyIsFreeOfInternalRoles(t *testing.T) {
