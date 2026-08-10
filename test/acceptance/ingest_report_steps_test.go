@@ -4,6 +4,7 @@ package acceptance
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/cucumber/godog"
@@ -12,6 +13,7 @@ import (
 func registerIngestReportSteps(ctx *godog.ScenarioContext, w *ingestAcceptanceWorld) {
 	ctx.Given(`^Claude and Codex artefacts are ready to ingest$`, w.seedClaudeAndCodex)
 	ctx.Given(`^one unchanged session and one malformed session are ready to ingest$`, w.seedSkippedAndMalformed)
+	ctx.Given(`^a Claude session with (\d+) malformed records is ready to ingest$`, w.seedMalformedRecords)
 	ctx.When(`^I run ingest as a dry-run$`, func() error {
 		hash, err := w.databaseBytes()
 		if err != nil {
@@ -60,6 +62,23 @@ func registerIngestReportSteps(ctx *godog.ScenarioContext, w *ingestAcceptanceWo
 		}
 		return nil
 	})
+	ctx.Then(`^the summary reports (\d+) record discards with reasons$`, func(want int) error {
+		got, err := ingestJSONNumber(w.last.doc, "records_discarded")
+		if err != nil {
+			return err
+		}
+		details, _ := w.last.doc["discard_details"].([]any)
+		if got != want || len(details) != want {
+			return fmt.Errorf("records_discarded=%d details=%d, want %d", got, len(details), want)
+		}
+		for _, raw := range details {
+			detail, _ := raw.(map[string]any)
+			if detail["path"] == "" || detail["parser"] == "" || detail["reason"] == "" {
+				return fmt.Errorf("discard has no path, parser or reason: %v", detail)
+			}
+		}
+		return nil
+	})
 	ctx.Then(`^pending files are reported$`, func() error {
 		read, err := ingestJSONNumber(w.last.doc, "files_read")
 		if err != nil {
@@ -105,4 +124,18 @@ func (w *ingestAcceptanceWorld) seedSkippedAndMalformed() error {
 	id := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 	path := filepath.Join(w.home, ".claude", "projects", encodeAgentPath(filepath.Join(w.home, "workspace", "report-errors")), id+".jsonl")
 	return writeFixture(path, "malformed acceptance input\n")
+}
+
+func (w *ingestAcceptanceWorld) seedMalformedRecords(count int) error {
+	if err := w.seedClaudeSession("record-discards", 1, false, ""); err != nil {
+		return err
+	}
+	raw, err := os.ReadFile(w.fixturePath)
+	if err != nil {
+		return err
+	}
+	for i := 0; i < count; i++ {
+		raw = append(raw, []byte(fmt.Sprintf("malformed record %d\n", i+1))...)
+	}
+	return os.WriteFile(w.fixturePath, raw, 0o600)
 }

@@ -16,6 +16,11 @@ Feature: The honest summary
     When I run ingest
     Then the summary counts every skipped file and error detail
 
+  Scenario: Every malformed record inside a session is counted
+    Given a Claude session with 3 malformed records is ready to ingest
+    When I run ingest
+    Then the summary reports 3 record discards with reasons
+
   Scenario: Dry-run reports what it would read and writes nothing
     Given a Claude session is ready to ingest
     When I run ingest as a dry-run
