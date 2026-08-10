@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 )
@@ -81,36 +80,43 @@ func (w *Writer) Append(stream string, record any) error {
 	if closeErr != nil {
 		return fmt.Errorf("close the %s log: %w", stream, closeErr)
 	}
-	return w.prune(stream, now)
+	// The record is written and closed, so the append succeeded. Rotation is
+	// housekeeping after the fact: a file that could not be removed is not a
+	// reason to tell the caller its trace was not written.
+	w.prune(stream, now)
+	return nil
 }
 
-func (w *Writer) prune(stream string, now time.Time) error {
+// prune drops the dated files past the retention window. It reports nothing: one
+// file it cannot remove must not stop it from removing the rest, and it must not
+// become the verdict of the append that called it.
+func (w *Writer) prune(stream string, now time.Time) {
 	matches, err := filepath.Glob(filepath.Join(w.dir, stream+"-*.jsonl"))
 	if err != nil {
-		return fmt.Errorf("list %s logs: %w", stream, err)
+		return
 	}
-	sort.Strings(matches)
 	cutoff := now.AddDate(0, 0, -(RetentionDays - 1)).Format(time.DateOnly)
 	for _, path := range matches {
 		name := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(path), stream+"-"), ".jsonl")
 		if _, err := time.Parse(time.DateOnly, name); err != nil || name >= cutoff {
 			continue
 		}
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("remove expired log %s: %w", path, err)
-		}
+		os.Remove(path)
 	}
-	return nil
 }
 
 var (
-	secretKey  = regexp.MustCompile(`(?i)(api[_-]?key|token|password|passwd|secret|credential|authorization|cookie)`)
+	secretKey = regexp.MustCompile(`(?i)(api[_-]?key|access[_-]?key|private[_-]?key|` +
+		`signing[_-]?key|session[_-]?key|token|password|passwd|secret|credential|` +
+		`authorization|cookie)`)
 	secretText = []*regexp.Regexp{
 		regexp.MustCompile(`(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]+`),
 		regexp.MustCompile(`(?i)\b(api[_-]?key|token|password|passwd|secret)\s*[:=]\s*[^\s,;]+`),
 		regexp.MustCompile(`\b(sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]{8,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{8,})\b`),
 		regexp.MustCompile(`\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b`),
-		regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`),
+		// ASIA beside AKIA: a temporary AWS session credential is the same shape
+		// and the same secret as a long-lived access key id.
+		regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`),
 		regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`),
 		regexp.MustCompile(`(?s)-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----`),
 	}

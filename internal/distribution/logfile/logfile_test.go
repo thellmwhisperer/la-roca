@@ -81,3 +81,50 @@ func TestAppendPrunesFilesOutsideTheRetentionWindow(t *testing.T) {
 		t.Fatalf("retained file is missing: %v", err)
 	}
 }
+
+// The redaction is what makes these traces safe to keep, so the names and the
+// shapes it recognizes are pinned. Every pattern is BOUNDED: `keyword` contains
+// "key" and is an ordinary field name, so it must survive.
+func TestTheRedactionCoversBoundedCredentialNamesAndKeyShapes(t *testing.T) {
+	for _, want := range []struct {
+		name      string
+		sensitive bool
+	}{
+		{name: "access_key", sensitive: true},
+		{name: "private_key", sensitive: true},
+		{name: "signing-key", sensitive: true},
+		{name: "session_key", sensitive: true},
+		{name: "api_key", sensitive: true},
+		{name: "authorization", sensitive: true},
+		{name: "keyword", sensitive: false},
+		{name: "monkey", sensitive: false},
+		{name: "database_path", sensitive: false},
+	} {
+		if got := SensitiveName(want.name); got != want.sensitive {
+			t.Errorf("SensitiveName(%q) = %v, want %v", want.name, got, want.sensitive)
+		}
+	}
+}
+
+func TestTheRedactionRecognizesKeysByTheirShape(t *testing.T) {
+	for _, secret := range []string{
+		"AKIAIOSFODNN7EXAMPLE",
+		"ASIAIOSFODNN7EXAMPLE",
+		"AIzaSyA0abcdefghijklmnopqrstuvwxyz01234",
+	} {
+		redacted := Redact(map[string]any{"note": "it said " + secret + " out loud"})
+		encoded, err := json.Marshal(redacted)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(encoded), secret) {
+			t.Errorf("%s reached the log: %s", secret, encoded)
+		}
+	}
+	// An ordinary sentence that merely starts like one of them is not a key.
+	redacted := Redact(map[string]any{"note": "AKIA is a prefix"})
+	encoded, _ := json.Marshal(redacted)
+	if strings.Contains(string(encoded), "REDACTED") {
+		t.Errorf("ordinary prose was redacted: %s", encoded)
+	}
+}
