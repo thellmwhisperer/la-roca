@@ -34,7 +34,7 @@ const (
 	KindCoworkAudit Kind = "cowork_audit"
 	// KindCodexSession is a Codex rollout.
 	KindCodexSession Kind = "codex_session"
-	// KindCodexFile is a Codex memory, rule or skill.
+	// KindCodexFile is a Codex memory or rule.
 	KindCodexFile Kind = "codex_file"
 	// KindCodexMemoryAggregate is Codex's merged raw memory export. Unlike an
 	// ordinary memory file, it contains one independently addressable record per
@@ -63,10 +63,8 @@ type FileMeta struct {
 	// Sidecar is the paired metadata JSON of a Cowork audit transcript. It
 	// travels as content so the parser stays off the disk.
 	Sidecar []byte
-	// SourceType qualifies a Codex file: memory, rule or skill.
+	// SourceType qualifies a Codex file as a memory or rule.
 	SourceType string
-	// SkillName is the directory a Codex SKILL.md was found under.
-	SkillName string
 }
 
 // Records are the normalized rows one artefact produced. Empty is not an error:

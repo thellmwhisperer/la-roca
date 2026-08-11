@@ -65,13 +65,12 @@ func TestAnEmptyMemoryFileIsSkipped(t *testing.T) {
 }
 
 func TestCodexFileLayerComesFromWhatKindOfFileItIs(t *testing.T) {
-	cases := map[string]string{"memory": "feedback", "rule": "feedback", "skill": "pattern"}
+	cases := map[string]string{"memory": "feedback", "rule": "feedback"}
 	for sourceType, layer := range cases {
 		records, err := Parse(KindCodexFile, []byte("contenido"), FileMeta{
 			Path:       "/w/.codex/" + sourceType + "/x",
 			FileName:   "x",
 			SourceType: sourceType,
-			SkillName:  "synthetic-skill",
 		})
 		if err != nil {
 			t.Fatalf("parse %s: %v", sourceType, err)

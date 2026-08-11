@@ -467,7 +467,6 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 		Project:     target.Project,
 		SourceAgent: target.SourceAgent,
 		SourceType:  target.SourceType,
-		SkillName:   target.SkillName,
 	}
 	if target.SidecarPath != "" {
 		meta.Sidecar, err = os.ReadFile(target.SidecarPath)

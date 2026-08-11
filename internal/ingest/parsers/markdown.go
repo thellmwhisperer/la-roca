@@ -7,14 +7,12 @@ import (
 )
 
 // The two memory sources of the matrix that are plain text: Claude memory files
-// (including the global one) and Codex memories, rules and skills.
+// and Codex memories and rules.
 
-// codexTypeToLayer maps Codex memory types to semantic layers. A memory or rule is guidance
-// for the agent; a skill is a replicable practice.
+// codexTypeToLayer maps Codex memory types to semantic layers.
 var codexTypeToLayer = map[string]string{
 	"memory": "feedback",
 	"rule":   "feedback",
-	"skill":  "pattern",
 }
 
 // frontmatter is the `---` block a memory file opens with.
@@ -96,7 +94,7 @@ func ParseClaudeMemory(content []byte, meta FileMeta) (Records, error) {
 	return memoryRecord("claude-code", file.Type, file.Body, meta, declared), nil
 }
 
-// ParseCodexFile turns a Codex memory, rule or skill into one memory. Codex keeps
+// ParseCodexFile turns a Codex memory or rule into one memory. Codex keeps
 // them outside any workspace, so the scan declares no project for them.
 func ParseCodexFile(content []byte, meta FileMeta) (Records, error) {
 	body := strings.TrimSpace(string(content))
@@ -104,6 +102,5 @@ func ParseCodexFile(content []byte, meta FileMeta) (Records, error) {
 		return Records{}, nil
 	}
 	declared := map[string]any{"source_type": meta.SourceType}
-	putIfSet(declared, "skill_name", meta.SkillName)
 	return memoryRecord("codex", codexTypeToLayer[meta.SourceType], body, meta, declared), nil
 }

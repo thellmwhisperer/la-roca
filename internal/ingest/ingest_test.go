@@ -33,7 +33,7 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 	// wrote something. A family missing from here is a family that has been lost.
 	for key, want := range map[string]int{
 		"claude_memory_files":  1, // one project file; not MEMORY.md and not the global CLAUDE.md
-		"codex_files":          3, // one memory, one rule, one skill; not default.rules
+		"codex_files":          3, // one memory, one rule and one refused skill; not default.rules
 		"session_files":        1,
 		"codex_session_files":  1,
 		"claude_desktop_files": 1,
@@ -70,11 +70,15 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 	if result.Delta.Sessions != 7 {
 		t.Errorf("sessions = %d, want 7", result.Delta.Sessions)
 	}
-	// Four memories: the per-project Claude memory file plus the three Codex
-	// memories/rules/skills. The global CLAUDE.md and the repository instructions
-	// are configuration, not content.
-	if result.Delta.Memories != 4 {
-		t.Errorf("memories = %d, want 4", result.Delta.Memories)
+	// Three memories: the per-project Claude memory file plus the Codex memory
+	// and rule. SKILL.md, the global CLAUDE.md and repository instructions are
+	// configuration, not content.
+	if result.Delta.Memories != 3 {
+		t.Errorf("memories = %d, want 3", result.Delta.Memories)
+	}
+	if result.FilesExcluded != 1 || result.RecordsDiscarded != 1 {
+		t.Errorf("excluded/discarded = %d/%d, want 1/1: %+v",
+			result.FilesExcluded, result.RecordsDiscarded, result.DiscardDetails)
 	}
 	if got := countRows(t, db.SQL(), "memories WHERE source_agent = 'config'"); got != 0 {
 		t.Errorf("config memories = %d, want none", got)
@@ -82,6 +86,9 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 	// The global CLAUDE.md is configuration: its text never reaches the corpus.
 	if got := countRows(t, db.SQL(), `memories WHERE content LIKE '%Always TDD%'`); got != 0 {
 		t.Errorf("the global CLAUDE.md was ingested as a memory: %d row(s)", got)
+	}
+	if got := countRows(t, db.SQL(), `memories WHERE content LIKE '%Measure before judging%'`); got != 0 {
+		t.Errorf("SKILL.md was ingested as a memory: %d row(s)", got)
 	}
 	if result.Delta.Exchanges == 0 || result.Delta.ThinkingBlocks == 0 || result.Delta.ToolUses == 0 {
 		t.Errorf("delta = %+v: something stopped writing its children", result.Delta)

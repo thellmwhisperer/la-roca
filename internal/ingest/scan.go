@@ -33,7 +33,6 @@ type Target struct {
 	SessionID   string
 	FileName    string
 	SourceType  string
-	SkillName   string
 	// SidecarPath is the metadata file paired with a Cowork audit transcript.
 	SidecarPath string
 	// ExclusionReason marks a discovered artefact that policy counts but never
@@ -180,7 +179,8 @@ func scanClaudeMemories(roots Roots) []Target {
 	return targets
 }
 
-// scanCodexFiles finds the memories, rules and skills Codex keeps as files.
+// scanCodexFiles finds the memories and rules Codex keeps as files, plus the
+// instruction documents policy requires the report to count and refuse.
 // `default.rules` is the shipped default and not the operator's rule.
 func scanCodexFiles(roots Roots) []Target {
 	var targets []Target
@@ -223,12 +223,11 @@ func scanCodexFiles(roots Roots) []Target {
 			continue
 		}
 		targets = append(targets, Target{
-			Path:        path,
-			Kind:        parsers.KindCodexFile,
-			SourceAgent: "codex",
-			FileName:    "SKILL.md",
-			SourceType:  "skill",
-			SkillName:   dir,
+			Path:            path,
+			Kind:            parsers.KindCodexFile,
+			SourceAgent:     "codex",
+			FileName:        "SKILL.md",
+			ExclusionReason: "Codex skill instruction document is excluded",
 		})
 	}
 	return targets

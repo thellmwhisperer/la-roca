@@ -104,7 +104,7 @@ func (w *world) seed(t *testing.T) {
 	w.write(t, filepath.Join(roots.CodexRoot, "AGENTS.md"), "# Codex\n\nTest first.\n")
 	w.write(t, filepath.Join(w.demoCwd(), "AGENTS.md"), "# demo\n\nRead the specification first.\n")
 
-	// Codex: a rollout, a memory, a rule and a skill.
+	// Codex: a rollout, a memory, a rule and a refused instruction document.
 	w.write(t, filepath.Join(roots.CodexSessions, "2026", "08", "01", "rollout-abc.jsonl"),
 		fmt.Sprintf(`
 {"type":"session_meta","timestamp":"2026-08-01T09:00:00Z","payload":{"id":"codex-thread-1","cwd":%q,"timestamp":"2026-08-01T09:00:00Z","cli_version":"9.9.9"}}
