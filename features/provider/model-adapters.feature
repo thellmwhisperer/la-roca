@@ -17,8 +17,8 @@ Feature: Frontier with a local floor
     And the local model is available too
     When I run "roca query 'what decisions were made about the format' --json"
     Then the command exits with code 0
-    And the JSON output has "engine" equal to the frontier provider
-    And the JSON output has "path" equal to "llm_fallback"
+    And the JSON output has "sql_provider" equal to the frontier provider
+    And the JSON output has "path" equal to "model"
     And the local provider has received no request
 
   @fast
@@ -27,7 +27,7 @@ Feature: Frontier with a local floor
     And the local model is available
     When I run "roca query 'what decisions were made about the format' --json"
     Then the command exits with code 0
-    And the JSON output has "engine" equal to "ollama"
+    And the JSON output has "sql_provider" equal to "ollama"
 
   @fast
   Scenario: An unknown provider in the configuration kills nothing
@@ -55,4 +55,4 @@ Feature: Frontier with a local floor
     And the configuration chooses model "frontier-demo" for the frontier provider
     When I run "roca query 'what decisions were made about the format' --json"
     Then the command exits with code 0
-    And the JSON output has "model" equal to "frontier-demo"
+    And the JSON output has "sql_model" equal to "frontier-demo"
