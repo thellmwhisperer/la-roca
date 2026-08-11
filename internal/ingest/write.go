@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -172,10 +173,10 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 			}
 			continue
 		}
-		// A known source identity or an ambiguous content anchor may already be
+		// A known source identity or an ambiguous historical anchor may already be
 		// the historical row. Leaving it untouched is safer than manufacturing a
 		// second copy that a later ingest cannot distinguish from the first.
-		if identityKnown || ambiguous || matcher.occupied(number) {
+		if identityKnown || ambiguous {
 			if identityKnown {
 				if known.Fingerprint == exchange.Fingerprint {
 					counts.ExchangesUnchanged++
@@ -185,8 +186,11 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 			}
 			continue
 		}
-		if exchange.SourceID != "" {
-			next++
+		if matcher.occupied(number) {
+			number = matcher.freshNumber()
+		}
+		if number >= next {
+			next = number + 1
 		}
 		landed, err := w.exchange(ctx, session.ID, number, exchange)
 		if err != nil {
@@ -239,17 +243,23 @@ type storedExchange struct {
 	humanTimestamp, agentTimestamp string
 }
 
+type timestampPair struct {
+	human, agent string
+}
+
 type exchangeMatcher struct {
 	byNumber     map[int]storedExchange
-	byTimestamps map[string][]storedExchange
+	byTimestamps map[timestampPair][]storedExchange
 	byContent    map[[sha256.Size]byte][]storedExchange
+	nextNumber   int
 }
 
 func (w *writer) exchangeMatcher(ctx context.Context, sessionID string) (*exchangeMatcher, error) {
 	m := &exchangeMatcher{
 		byNumber:     map[int]storedExchange{},
-		byTimestamps: map[string][]storedExchange{},
+		byTimestamps: map[timestampPair][]storedExchange{},
 		byContent:    map[[sha256.Size]byte][]storedExchange{},
+		nextNumber:   1,
 	}
 	rows, err := w.tx.QueryContext(ctx, `
 		SELECT exchange_number, COALESCE(human_text, ''), COALESCE(agent_text, ''),
@@ -288,10 +298,23 @@ func (m *exchangeMatcher) occupy(number int, exchange parsers.Exchange) {
 		number: number, humanText: exchange.HumanText, agentText: exchange.AgentText,
 		humanTimestamp: exchange.HumanTimestamp, agentTimestamp: exchange.AgentTimestamp,
 	}
+	if number >= m.nextNumber {
+		m.nextNumber = number + 1
+	}
+}
+
+func (m *exchangeMatcher) freshNumber() int {
+	for m.occupied(m.nextNumber) {
+		m.nextNumber++
+	}
+	return m.nextNumber
 }
 
 func (m *exchangeMatcher) addStored(stored storedExchange) {
 	m.byNumber[stored.number] = stored
+	if stored.number >= m.nextNumber {
+		m.nextNumber = stored.number + 1
+	}
 	if key, ok := timestampAnchor(stored.humanTimestamp, stored.agentTimestamp); ok {
 		m.byTimestamps[key] = append(m.byTimestamps[key], stored)
 	}
@@ -300,28 +323,29 @@ func (m *exchangeMatcher) addStored(stored storedExchange) {
 	}
 }
 
-// match accepts the numbered row only when its known content agrees. Historical
-// numbering falls back to a unique timestamp pair, then to the exact content
-// fingerprint. Ambiguity is reported so the caller does not insert a duplicate.
 func (m *exchangeMatcher) match(number int, exchange parsers.Exchange) (int, bool, bool) {
-	if stored, ok := m.byNumber[number]; ok && compatibleContent(stored, exchange) {
-		return number, true, false
-	}
+	timestampsPresent := false
 	timestampsAmbiguous := false
 	if key, ok := timestampAnchor(exchange.HumanTimestamp, exchange.AgentTimestamp); ok {
-		candidates := compatibleCandidates(m.byTimestamps[key], exchange)
-		if len(candidates) == 1 {
+		timestampsPresent = true
+		candidates := m.byTimestamps[key]
+		if len(candidates) == 1 && compatibleContent(candidates[0], exchange) {
 			return candidates[0].number, true, false
 		}
 		timestampsAmbiguous = len(candidates) > 1
 	}
 	if key, ok := contentAnchor(exchange.HumanText, exchange.AgentText); ok {
-		candidates := m.byContent[key]
+		candidates := compatibleCandidates(m.byContent[key], exchange)
 		if len(candidates) == 1 {
 			return candidates[0].number, true, false
 		}
 		if len(candidates) > 1 {
 			return 0, false, true
+		}
+	}
+	if !timestampsPresent || timestampsAmbiguous {
+		if stored, ok := m.byNumber[number]; ok && compatibleContent(stored, exchange) {
+			return number, true, false
 		}
 	}
 	return 0, false, timestampsAmbiguous
@@ -354,18 +378,27 @@ func compatibleContent(stored storedExchange, exchange parsers.Exchange) bool {
 	return matched
 }
 
-func timestampAnchor(human, agent string) (string, bool) {
+func timestampAnchor(human, agent string) (timestampPair, bool) {
 	if human == "" && agent == "" {
-		return "", false
+		return timestampPair{}, false
 	}
-	return human + "\x00" + agent, true
+	return timestampPair{human: human, agent: agent}, true
 }
 
 func contentAnchor(human, agent string) ([sha256.Size]byte, bool) {
 	if human == "" && agent == "" {
 		return [sha256.Size]byte{}, false
 	}
-	return sha256.Sum256([]byte(human + "\x00" + agent)), true
+	hash := sha256.New()
+	var length [8]byte
+	for _, component := range []string{human, agent} {
+		binary.BigEndian.PutUint64(length[:], uint64(len(component)))
+		_, _ = hash.Write(length[:])
+		_, _ = hash.Write([]byte(component))
+	}
+	var anchor [sha256.Size]byte
+	copy(anchor[:], hash.Sum(nil))
+	return anchor, true
 }
 
 // currentSession is what the database already holds for this id.

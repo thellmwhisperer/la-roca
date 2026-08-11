@@ -198,46 +198,140 @@ func TestTheBackfillNeverOverwritesProvenanceThatLanded(t *testing.T) {
 	}
 }
 
-func TestBackfillRefusesMismatchedAndAmbiguousContent(t *testing.T) {
-	db := rocaDatabase(t)
-	ctx := context.Background()
-	write := func(exchanges []parsers.Exchange) Counts {
-		t.Helper()
-		var counts Counts
-		err := db.Write(ctx, func(tx *sql.Tx) error {
-			var err error
-			counts, err = WriteRecords(ctx, tx, registry(t), parsers.Records{Sessions: []parsers.Session{{
-				ID: "synthetic-anchor-safety", Exchanges: exchanges,
-			}}})
-			return err
+func TestBackfillMatchesHistoricalAnchorsSafely(t *testing.T) {
+	type storedRow struct {
+		number                      int
+		humanText, agentText, model string
+	}
+	provenance := func(model string) parsers.Provenance {
+		return parsers.Provenance{Model: model}
+	}
+	tests := []struct {
+		name         string
+		stored       []parsers.Exchange
+		replay       []parsers.Exchange
+		wantInserted int
+		want         []storedRow
+	}{
+		{
+			name: "timestamps precede a repeated content anchor",
+			stored: []parsers.Exchange{
+				{Number: 1, HumanText: "same turn", AgentText: "same answer",
+					HumanTimestamp: "2026-01-01T00:00:01Z", AgentTimestamp: "2026-01-01T00:00:02Z"},
+				{Number: 7, HumanText: "same turn", AgentText: "same answer",
+					HumanTimestamp: "2026-01-01T00:00:03Z", AgentTimestamp: "2026-01-01T00:00:04Z"},
+			},
+			replay: []parsers.Exchange{{
+				Number: 1, HumanText: "same turn", AgentText: "same answer",
+				HumanTimestamp: "2026-01-01T00:00:03Z", AgentTimestamp: "2026-01-01T00:00:04Z",
+				Provenance: provenance("timestamp-match"),
+			}},
+			want: []storedRow{
+				{number: 1, humanText: "same turn", agentText: "same answer"},
+				{number: 7, humanText: "same turn", agentText: "same answer", model: "timestamp-match"},
+			},
+		},
+		{
+			name: "component boundaries cannot collide",
+			stored: []parsers.Exchange{{
+				Number: 1, HumanText: "a", AgentText: "\x00b",
+			}},
+			replay: []parsers.Exchange{{
+				Number: 1, HumanText: "a\x00", AgentText: "b", Provenance: provenance("new-turn"),
+			}},
+			wantInserted: 1,
+			want: []storedRow{
+				{number: 1, humanText: "a", agentText: "\x00b"},
+				{number: 2, humanText: "a\x00", agentText: "b", model: "new-turn"},
+			},
+		},
+		{
+			name: "occupied numbers preserve new exchanges",
+			stored: []parsers.Exchange{{
+				Number: 1, HumanText: "historical turn", AgentText: "historical answer",
+			}},
+			replay: []parsers.Exchange{
+				{Number: 1, HumanText: "new preceding turn", AgentText: "new preceding answer",
+					Provenance: provenance("new-exchange")},
+				{Number: 2, HumanText: "historical turn", AgentText: "historical answer",
+					Provenance: provenance("historical-match")},
+			},
+			wantInserted: 1,
+			want: []storedRow{
+				{number: 1, humanText: "historical turn", agentText: "historical answer", model: "historical-match"},
+				{number: 2, humanText: "new preceding turn", agentText: "new preceding answer", model: "new-exchange"},
+			},
+		},
+		{
+			name: "ambiguous anchors remain untouched",
+			stored: []parsers.Exchange{
+				{Number: 7, HumanText: "repeated turn", AgentText: "repeated answer"},
+				{Number: 8, HumanText: "repeated turn", AgentText: "repeated answer"},
+			},
+			replay: []parsers.Exchange{{
+				Number: 2, HumanText: "repeated turn", AgentText: "repeated answer",
+				Provenance: provenance("must-not-land"),
+			}},
+			want: []storedRow{
+				{number: 7, humanText: "repeated turn", agentText: "repeated answer"},
+				{number: 8, humanText: "repeated turn", agentText: "repeated answer"},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db := rocaDatabase(t)
+			ctx := context.Background()
+			write := func(exchanges []parsers.Exchange) Counts {
+				t.Helper()
+				var counts Counts
+				err := db.Write(ctx, func(tx *sql.Tx) error {
+					var err error
+					counts, err = WriteRecords(ctx, tx, registry(t), parsers.Records{Sessions: []parsers.Session{{
+						ID: "synthetic-anchor-safety", Exchanges: exchanges,
+					}}})
+					return err
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return counts
+			}
+			write(test.stored)
+			if counts := write(test.replay); counts.Exchanges != test.wantInserted {
+				t.Fatalf("first replay inserted %d exchanges, want %d", counts.Exchanges, test.wantInserted)
+			}
+			if counts := write(test.replay); counts.Exchanges != 0 {
+				t.Fatalf("second replay inserted exchanges: %+v", counts)
+			}
+
+			rows, err := db.SQL().Query(`SELECT exchange_number, COALESCE(human_text, ''),
+				COALESCE(agent_text, ''), COALESCE(model, '') FROM exchanges
+				WHERE session_id = 'synthetic-anchor-safety' ORDER BY exchange_number`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rows.Close()
+			var got []storedRow
+			for rows.Next() {
+				var row storedRow
+				if err := rows.Scan(&row.number, &row.humanText, &row.agentText, &row.model); err != nil {
+					t.Fatal(err)
+				}
+				got = append(got, row)
+			}
+			if err := rows.Err(); err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != len(test.want) {
+				t.Fatalf("stored rows = %+v, want %+v", got, test.want)
+			}
+			for i := range got {
+				if got[i] != test.want[i] {
+					t.Fatalf("stored rows = %+v, want %+v", got, test.want)
+				}
+			}
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return counts
-	}
-	write([]parsers.Exchange{
-		{Number: 1, HumanText: "stored turn", AgentText: "stored answer"},
-		{Number: 7, HumanText: "repeated turn", AgentText: "repeated answer"},
-		{Number: 8, HumanText: "repeated turn", AgentText: "repeated answer"},
-	})
-	model := parsers.Provenance{Model: "must-not-land"}
-	unsafe := []parsers.Exchange{
-		{Number: 1, HumanText: "different turn", AgentText: "different answer", Provenance: model},
-		{Number: 2, HumanText: "repeated turn", AgentText: "repeated answer", Provenance: model},
-	}
-	for range 2 {
-		if counts := write(unsafe); counts.Exchanges != 0 {
-			t.Fatalf("unsafe replay inserted exchanges: %+v", counts)
-		}
-	}
-	var rows, enriched int
-	if err := db.SQL().QueryRow(`SELECT COUNT(*), COUNT(model) FROM exchanges
-		WHERE session_id = 'synthetic-anchor-safety'`).Scan(&rows, &enriched); err != nil {
-		t.Fatal(err)
-	}
-	if rows != 3 || enriched != 0 {
-		t.Fatalf("unsafe replay left rows/enriched = %d/%d, want 3/0", rows, enriched)
 	}
 }
 
