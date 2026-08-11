@@ -32,7 +32,7 @@ func TestInitAndDoctorNarrateTheModelSourceAndExactChangePaths(t *testing.T) {
 			render(&cliEnv{out: &output})
 			for _, want := range []string{
 				"gpt-operator", "from " + path, "models.codex.model",
-				"roca login codex --model <id>",
+				"roca model set <id>",
 			} {
 				if !strings.Contains(output.String(), want) {
 					t.Errorf("output does not carry %q:\n%s", want, output.String())
@@ -96,6 +96,25 @@ func TestBuiltInModelSourceIsVisible(t *testing.T) {
 			t.Fatalf("env source should name the env var:\n%s", output.String())
 		}
 	})
+}
+
+func TestInitSaysDetectedLocalCLIIsReadyWithoutRocaLogin(t *testing.T) {
+	var output strings.Builder
+	renderBootstrap(&cliEnv{out: &output}, service.InitResult{
+		DetectedModelBinaries: []string{"claude", "codex"}, FactoryDefault: true,
+		FactoryDefaultProvider: "claude",
+		Model: &service.InitModel{
+			Ready: true, Provider: "claude", Model: "factory-model", ExternalCredential: true,
+		},
+	})
+	for _, want := range []string{
+		"model binaries detected: claude, codex", "factory default selected: claude",
+		"no roca login required", "uses the existing local CLI session", "roca query",
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("init output does not contain %q:\n%s", want, output.String())
+		}
+	}
 }
 
 func TestDoctorExactProviderProbeNarration(t *testing.T) {

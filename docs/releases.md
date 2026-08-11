@@ -1,5 +1,8 @@
 # Releases
 
+First-time path: [install, detect an already signed-in agent CLI, and query
+without a La Roca login](lifecycle.md#install).
+
 `.github/workflows/release-please.yml` maintains one release pull request from
 the Conventional Commits merged into `main`; it does not build artefacts.
 Merging that pull request creates the `vX.Y.Z` tag. The tag then triggers

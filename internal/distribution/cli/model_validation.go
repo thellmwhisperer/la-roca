@@ -103,7 +103,7 @@ func (env *cliEnv) modelSetCurrent(ctx context.Context, model string) error {
 	}
 	order := file.Models.Order
 	if len(order) == 0 {
-		order = provider.DefaultOrder()
+		order = provider.DefaultOrder(nil)
 	}
 	if len(order) == 0 {
 		return fmt.Errorf("there is no provider to set a model for; log in to one first")

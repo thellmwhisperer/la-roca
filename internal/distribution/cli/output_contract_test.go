@@ -91,8 +91,8 @@ func TestBareLoginHonoursTheJSONFlag(t *testing.T) {
 		t.Fatalf("bare login --json lists no providers:\n%s", out)
 	}
 	first, _ := providers[0].(map[string]any)
-	if first["name"] != provider.NameCodex || first["flow"] != "subscription" {
-		t.Errorf("first provider is not codex/subscription: %v", first)
+	if first["name"] != provider.NameCodex || first["flow"] != "local_cli" {
+		t.Errorf("first provider is not codex/local_cli: %v", first)
 	}
 	if !strings.Contains(first["command"].(string), "roca login codex") {
 		t.Errorf("first command does not name the login verb: %v", first)
