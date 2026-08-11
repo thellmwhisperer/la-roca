@@ -20,6 +20,9 @@ func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWor
 	ctx.Then(`^the default answer is human-readable and the requested answer is one JSON document$`, w.outputFormsAreExplicit)
 	ctx.When(`^the operator runs an unknown command$`, w.runUnknownCommand)
 	ctx.Then(`^it fails, names the unknown command, and points to help$`, w.unknownCommandIsHelpful)
+	ctx.When(`^the operator exercises the plugin dispatch contract$`, w.exercisePluginDispatch)
+	ctx.Then(`^arguments, standard input, output, and exit status cross the plugin seam untouched$`, w.pluginForwardsProcessContract)
+	ctx.Then(`^built-ins win, missing plugins explain the convention, and plugins lists the fixtures$`, w.pluginBoundariesAreHonest)
 	ctx.Then(`^init reports setup, ingest, index, model, and its total once in that order$`, w.initSummaryIsOrdered)
 }
 
@@ -66,7 +69,7 @@ func (w *distributionWorld) helpIsComplete() error {
 	honest := map[string]string{
 		"doctor": "configuration", "ingest": "source", "init": "database",
 		"login": "model", "query": "memory", "store": "memory",
-		"uninstall": "remove", "update": "release",
+		"uninstall": "remove", "update": "release", "plugins": "plugin",
 	}
 	found := map[string]string{}
 	inCommands := false
@@ -127,6 +130,9 @@ func (w *distributionWorld) exerciseOutputForms(command string) error {
 		if machine {
 			args = append(args, "--json")
 		}
+		if command == "plugins" {
+			return w.runAtInput(w.home, w.installed, "", []string{"PATH=" + pluginFixtures(w.root)}, args...), nil
+		}
 		return w.runAt(w.home, w.installed, args...), nil
 	}
 
@@ -157,9 +163,61 @@ func distributionCommandArgs(command, home string, channel *httptest.Server) ([]
 		return []string{"update", "--check", "--api", channel.URL, "--repo", "example/roca"}, nil
 	case "uninstall":
 		return []string{"uninstall", "--keep-data"}, nil
+	case "plugins":
+		return []string{"plugins"}, nil
 	default:
 		return nil, fmt.Errorf("unknown acceptance command %q", command)
 	}
+}
+
+func (w *distributionWorld) exercisePluginDispatch() error {
+	path := pluginFixtures(w.root)
+	env := []string{"PATH=" + path}
+	w.state["plugin"] = w.runAtInput(w.root, w.binary, "synthetic input\n", env,
+		"demo", "alpha", "two words")
+	w.state["builtin"] = w.runAtInput(w.root, w.binary, "", env, "version")
+	w.state["missing"] = w.runAtInput(w.root, w.binary, "", env, "absent")
+	w.state["list"] = w.runAtInput(w.root, w.binary, "", env, "plugins")
+	return nil
+}
+
+func pluginFixtures(root string) string {
+	return filepath.Join(filepath.Dir(filepath.Dir(root)), "testdata", "plugins")
+}
+
+func (w *distributionWorld) pluginForwardsProcessContract() error {
+	run := w.state["plugin"].(distributionRun)
+	if run.code != 23 {
+		return fmt.Errorf("plugin exit=%d, want 23: %s", run.code, run.stderr)
+	}
+	for _, want := range []string{"args: <alpha> <two words>", "stdin: <synthetic input>"} {
+		if !strings.Contains(run.stdout, want) {
+			return fmt.Errorf("plugin output does not contain %q: %q", want, run.stdout)
+		}
+	}
+	if run.stderr != "fixture stderr\n" {
+		return fmt.Errorf("plugin stderr = %q", run.stderr)
+	}
+	return nil
+}
+
+func (w *distributionWorld) pluginBoundariesAreHonest() error {
+	builtin := w.state["builtin"].(distributionRun)
+	if builtin.code != 0 || strings.Contains(builtin.stdout+builtin.stderr, "fixture built-in collision") {
+		return fmt.Errorf("same-named plugin intercepted built-in: %+v", builtin)
+	}
+	missing := w.state["missing"].(distributionRun)
+	if missing.code == 0 || !strings.Contains(missing.stderr, "roca-absent") || !strings.Contains(missing.stderr, "PATH") {
+		return fmt.Errorf("missing plugin error does not explain the convention: %+v", missing)
+	}
+	listed := w.state["list"].(distributionRun)
+	for _, name := range []string{"demo", "version"} {
+		want := name + "\t" + filepath.Join(pluginFixtures(w.root), "roca-"+name)
+		if !strings.Contains(listed.stdout, want) {
+			return fmt.Errorf("plugin list does not contain %q: %q", want, listed.stdout)
+		}
+	}
+	return nil
 }
 
 func (w *distributionWorld) outputFormsAreExplicit() error {
