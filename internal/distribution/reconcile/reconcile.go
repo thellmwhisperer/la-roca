@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -98,7 +97,7 @@ func Registry() []Entry {
 				Alert:  "Claude Code is on PATH but no usable Claude provider is configured; model sonnet can answer through the existing local CLI session.",
 				Prompt: "Enable the Claude provider?",
 				Changes: []config.Change{{Kind: config.PrependUnique, Table: "models", Key: "order",
-					Value: provider.NameClaude, Default: provider.DefaultOrder()},
+					Value: provider.NameClaude, Default: provider.DefaultOrder(nil)},
 					{Kind: config.ReplaceTable, Table: "models.claude"}},
 			},
 		},
@@ -166,7 +165,7 @@ func detected(context Context, file config.File, detection Detection) bool {
 	if detection.Provider != "" {
 		order := file.Models.Order
 		if order == nil {
-			order = provider.DefaultOrder()
+			order = provider.DefaultOrder(context.LookPath)
 		}
 		declared := slices.Contains(order, detection.Provider)
 		switch detection.ProviderState {
@@ -184,12 +183,7 @@ func detected(context Context, file config.File, detection Detection) bool {
 }
 
 func binaryOnPath(context Context, name string) bool {
-	lookPath := context.LookPath
-	if lookPath == nil {
-		lookPath = exec.LookPath
-	}
-	_, err := lookPath(name)
-	return err == nil
+	return provider.BinaryOnPath(context.LookPath, name)
 }
 
 func providerUsable(context Context, file config.File, name string, declared bool) bool {

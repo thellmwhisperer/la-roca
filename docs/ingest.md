@@ -1,5 +1,8 @@
 # Ingest sources
 
+First-time path: [install, detect an already signed-in agent CLI, and query
+without a La Roca login](lifecycle.md#install).
+
 `roca ingest` reads agent stores from their configured platform locations and
 reads downloaded account exports only when you name them. It fingerprints each
 source file by path and content, so an unchanged rerun is a zero delta and a

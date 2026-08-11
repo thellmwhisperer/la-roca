@@ -132,12 +132,29 @@ func TestADuplicateInTheOrderIsAnError(t *testing.T) {
 // The default order always ends in a provider available on every supported
 // platform so platform-specific failures cannot mask the local floor.
 func TestTheDefaultOrderEndsInTheProviderThatCanExistAnywhere(t *testing.T) {
-	order := DefaultOrder()
+	order := DefaultOrder(func(string) (string, error) { return "", errors.New("missing") })
 	if len(order) == 0 {
 		t.Fatal("there is no default order")
 	}
 	if last := order[len(order)-1]; last != NameOllama {
 		t.Fatalf("the default order ends in %q and it has to end in the local floor", last)
+	}
+}
+
+func TestFailedFactoryDefaultIncludesMissingBinaryDiagnostics(t *testing.T) {
+	cascade := Cascade{
+		Providers: []Provider{notReady("ollama", "Ollama does not answer", "start it")},
+		FallbackDiagnostics: []Attempt{{
+			Name: NameClaude, Reason: "claude binary not found in PATH",
+			Action: "install Claude Code or put `claude` on PATH",
+		}},
+	}
+	chosen, attempts := cascade.Pick(t.Context())
+	if chosen != nil || len(attempts) != 2 {
+		t.Fatalf("chosen = %v, attempts = %+v", chosen, attempts)
+	}
+	if attempts[1].Reason != "claude binary not found in PATH" {
+		t.Fatalf("missing binary diagnosis was lost: %+v", attempts)
 	}
 }
 

@@ -138,15 +138,19 @@ type InitResult struct {
 	// Model and Ingest are the rest of the bootstrap: whether a model is going
 	// to answer, and what the first read of the disk found. Neither can fail
 	// the command, and both report.
-	Model          *InitModel    `json:"model"`
-	Ingest         *IngestResult `json:"ingest"`
-	PromptPath     string        `json:"prompt_path"`
-	Prompt         string        `json:"-"`
-	Warnings       []string      `json:"warnings,omitempty"`
-	RowsBefore     ingest.Tables `json:"-"`
-	SetupElapsedMS int64         `json:"-"`
-	ModelElapsedMS int64         `json:"-"`
-	TotalElapsedMS int64         `json:"-"`
+	Model                  *InitModel    `json:"model"`
+	Ingest                 *IngestResult `json:"ingest"`
+	PromptPath             string        `json:"prompt_path"`
+	Prompt                 string        `json:"-"`
+	Warnings               []string      `json:"warnings,omitempty"`
+	DetectedModelBinaries  []string      `json:"detected_model_binaries"`
+	MissingModelBinaries   []string      `json:"missing_model_binaries"`
+	FactoryDefault         bool          `json:"factory_default"`
+	FactoryDefaultProvider string        `json:"factory_default_provider,omitempty"`
+	RowsBefore             ingest.Tables `json:"-"`
+	SetupElapsedMS         int64         `json:"-"`
+	ModelElapsedMS         int64         `json:"-"`
+	TotalElapsedMS         int64         `json:"-"`
 }
 
 // InitModel is the model gate at bootstrap: which provider is going to answer,
@@ -159,6 +163,9 @@ type InitModel struct {
 	Reason   string `json:"reason,omitempty"`
 	Action   string `json:"action,omitempty"`
 	Disabled bool   `json:"disabled,omitempty"`
+	// ExternalCredential means the chosen command uses the agent CLI's own
+	// session and needs no La Roca login.
+	ExternalCredential bool `json:"external_credential,omitempty"`
 }
 
 const presentationPrompt = "## La Roca — local semantic memory\n" +
@@ -218,18 +225,21 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 	progress(fmt.Sprintf("database: %s · %d bytes · %d memories · %d sessions · %d exchanges",
 		progressState, bytes, rows.Memories, rows.Sessions, rows.Exchanges))
 	result := InitResult{
-		DBPath:     s.db.Path(),
-		ConfigPath: s.opts.ConfigPath,
-		Database:   state,
-		Verdict:    string(adoption.Verdict),
-		Structures: adoption.RequiredStructures,
-		Orphans:    adoption.Orphans,
-		Repairs:    adoption.Repairs,
-		BackupPath: adoption.BackupPath,
-		Layers:     len(s.registry.Layers),
-		Bytes:      bytes,
-		Rows:       rows,
-		RowsBefore: rows,
+		DBPath:                s.db.Path(),
+		ConfigPath:            s.opts.ConfigPath,
+		Database:              state,
+		Verdict:               string(adoption.Verdict),
+		Structures:            adoption.RequiredStructures,
+		Orphans:               adoption.Orphans,
+		Repairs:               adoption.Repairs,
+		BackupPath:            adoption.BackupPath,
+		Layers:                len(s.registry.Layers),
+		Bytes:                 bytes,
+		Rows:                  rows,
+		RowsBefore:            rows,
+		DetectedModelBinaries: append([]string(nil), s.opts.Providers.DetectedBinaries...),
+		MissingModelBinaries:  provider.MissingCommandPresets(s.opts.Providers.DetectedBinaries),
+		FactoryDefault:        s.opts.Providers.FactoryDefault,
 	}
 	result.SetupElapsedMS = time.Since(started).Milliseconds()
 
@@ -247,6 +257,9 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 	progress("model: checking declared providers")
 	modelStarted := time.Now()
 	result.Model = s.modelGate(ctx)
+	if result.FactoryDefault && result.Model.Ready {
+		result.FactoryDefaultProvider = result.Model.Provider
+	}
 	result.ModelElapsedMS = time.Since(modelStarted).Milliseconds()
 	if result.Model.Ready {
 		progress("model: " + result.Model.Provider + "/" + result.Model.Model + " will answer")
@@ -305,9 +318,11 @@ func (s *Service) modelGate(ctx context.Context) *InitModel {
 		}
 	}
 	gate := &InitModel{}
-	for _, attempt := range cascade.Diagnose(ctx) {
+	for i, attempt := range cascade.Diagnose(ctx) {
 		if attempt.Ready {
-			return &InitModel{Ready: true, Provider: attempt.Name, Model: attempt.ModelID}
+			credential, external := cascade.Providers[i].(interface{ ExternalCredential() bool })
+			return &InitModel{Ready: true, Provider: attempt.Name, Model: attempt.ModelID,
+				ExternalCredential: external && credential.ExternalCredential()}
 		}
 		if gate.Reason == "" {
 			gate.Provider, gate.Reason, gate.Action = attempt.Name, attempt.Reason, attempt.Action

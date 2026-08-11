@@ -249,6 +249,8 @@ func renderBootstrap(env *cliEnv, result service.InitResult) {
 	for _, warning := range result.Warnings {
 		env.print("warning: %s", warning)
 	}
+	renderModelDetection(env, result.DetectedModelBinaries, result.MissingModelBinaries,
+		result.FactoryDefault, result.FactoryDefaultProvider)
 	if result.Ingest != nil {
 		env.print("  agents detected: %s", detectedAgentsLine(result.Ingest.DetectedAgents))
 		env.print("  agents not found: %s", missingAgentsLine(result.Ingest.DetectedAgents))
@@ -269,9 +271,11 @@ func renderBootstrap(env *cliEnv, result service.InitResult) {
 			env.print("model: turned off in the configuration · %s",
 				axi.Duration(result.ModelElapsedMS))
 		case model.Ready:
-			env.print("%s · %s",
-				modelChoiceLine(model.Provider, "ready", model.Model, result.ConfigPath),
-				axi.Duration(result.ModelElapsedMS))
+			line := modelChoiceLine(model.Provider, "ready", model.Model, result.ConfigPath)
+			if model.ExternalCredential {
+				line += " · uses the existing local CLI session; no roca login required"
+			}
+			env.print("%s · %s", line, axi.Duration(result.ModelElapsedMS))
 		default:
 			env.print("model: none available (%s) · %s", model.Reason,
 				axi.Duration(result.ModelElapsedMS))
@@ -283,6 +287,9 @@ func renderBootstrap(env *cliEnv, result service.InitResult) {
 	renderBedrock(env, result.Bedrock)
 	env.print("total: %s", axi.Duration(result.TotalElapsedMS))
 	env.print("next steps:")
+	if result.Model != nil && result.Model.Ready {
+		env.print("  query: `roca query \"what did we decide last time\"`")
+	}
 	if result.PromptPath != "" {
 		env.print("  agent prompt: %s", result.PromptPath)
 		env.print("  Paste its contents into the agent instructions you choose.")
@@ -479,7 +486,7 @@ func answerQuery(ctx context.Context, svc *service.Service, req service.QueryReq
 	interpretation, err := svc.InterpretStream(
 		ctx, result.Question, result.Columns, result.Rows,
 		time.Duration(result.SQLInferenceMS)*time.Millisecond,
-		onStart, req.InterpretationDelta)
+		result.Engine, onStart, req.InterpretationDelta)
 	answer.prose, answer.interpretErr = interpretation.Text, err
 	answer.result.InterpretationMS = time.Since(started).Milliseconds()
 	answer.result.LatencyMS += answer.result.InterpretationMS
