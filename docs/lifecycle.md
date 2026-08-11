@@ -57,23 +57,24 @@ In a terminal, database selection flows directly into a model-first chooser:
    harness question.
 3. Init confirms the provider/model pair, probes a changed choice, and writes
    the provider entry, model, and order to the configuration with a surgical
-   edit. Existing configuration gets a named `.roca.bak` recovery copy.
+   edit. An existing configuration file gets a named `.roca.bak` recovery copy
+   when the edit changes it.
 
-Thus a normal new init takes three answers (database, model, confirmation), or
-four when a harness choice or adoption path is needed. It uses the agent CLI's
-existing session and does not add a login step.
+A normal fresh init asks for the database, model, and confirmation. An ambiguous
+harness adds one question; adoption separately asks for its source path. It uses
+the agent CLI's existing session and does not add a login step.
 
 Init also writes `prompt.md` in the selected data directory. If that optional
 write fails, init reports a warning and leaves the prepared database usable. It
 does not edit agent instruction files or install integrations without a
 separate command.
 
-A successful init reports the corpus floor: the oldest ingested moment, the
-bedrock your memory reaches back to. An empty database says so plainly instead
-of printing a zero date. It ends with an `answering:` line that names the active
-provider/model, the exact configuration path, and the command or key that
-changes it. `roca doctor` reports the same floor as part of installation health,
-and `--json` carries the machine fields in both commands.
+A successful human-readable init reports the corpus floor: the oldest ingested
+moment, the bedrock your memory reaches back to. An empty database says so
+plainly instead of printing a zero date. It ends with an `answering:` line that
+names the active provider/model, the exact configuration path, and the command
+or key that changes it. `roca doctor` reports the same floor as part of
+installation health, and `--json` carries the machine fields in both commands.
 
 Before asking for any provider setup, init detects supported agent CLIs already
 on `PATH` and uses their existing signed-in sessions. Its summary names the
@@ -84,9 +85,10 @@ HTTP/OAuth or key login is optional setup only for users without a usable local
 CLI who choose a configured remote provider.
 
 With `--db-path` on non-terminal input, init keeps that zero-login factory
-selection without opening the chooser or writing model configuration. It emits
-one `answering:` notice with the chosen provider/model and configuration path;
-scripts receive no prompts. `--json` remains one JSON document.
+selection without opening the chooser or writing model configuration. Human
+output emits one `answering:` notice with the chosen provider/model and
+configuration path; scripts receive no prompts. `--json` remains one JSON
+document.
 
 ## Update
 

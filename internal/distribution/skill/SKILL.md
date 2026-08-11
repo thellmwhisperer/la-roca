@@ -19,10 +19,10 @@ creates an empty database and indexes detected agent sources. If the home
 database already exists, init asks to keep or explicitly reinitialize it.
 It then lists models by their detected CLI or local Ollama origin, asks for the
 model first, resolves its harness, and confirms the pair before editing
-`~/.roca/config.toml` with a recovery backup. Plain Enter keeps the factory
-choice and uses the CLI's existing session without a La Roca login. Automation
-that creates or selects a location must pass `--db-path`; non-terminal init
-does not open the chooser or write model configuration.
+`~/.roca/config.toml`, backing up an existing file when it changes. Plain Enter
+keeps the factory choice and uses the CLI's existing session without a La Roca
+login. Automation that creates or selects a location must pass `--db-path`;
+non-terminal init does not open the chooser or write model configuration.
 
 ## Shell commands
 
