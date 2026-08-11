@@ -89,7 +89,8 @@ func registerInstallSteps(ctx *godog.ScenarioContext, m *world) {
 	ctx.Given(`^a valid credential for the release repository$`, m.aValidReleaseCredential)
 	ctx.Given(`^La Roca has just been installed from the release channel$`, m.installedFromTheChannel)
 	ctx.Given(`^La Roca is installed at the target version$`, m.installedFromTheChannel)
-	ctx.Given(`^La Roca is installed at an earlier version$`, m.installedAtAnEarlierVersion)
+	ctx.Given(`^La Roca is installed at an earlier development build$`,
+		m.installedAtAnEarlierDevelopmentBuild)
 	ctx.Given(`^La Roca is installed at an earlier release version$`,
 		m.installedAtAnEarlierReleaseVersion)
 	ctx.Given(`^there is a regular file named "roca" in the binaries directory$`, m.aStrangersFileNamedRoca)
@@ -160,10 +161,20 @@ func registerInstallSteps(ctx *godog.ScenarioContext, m *world) {
 // half of that contract and is what the refusal scenario runs.
 const theReleaseVersion = "v1.0.0"
 
+// theDevVersion is what `git describe` says about a working copy: not a clean
+// release tag. The refusal scenario stamps it explicitly instead of inheriting
+// whatever the checkout happens to report, because the release workflow builds
+// from a clean tag and would otherwise break the scenario's premise.
+const theDevVersion = "1a2b3c4-dirty"
+
 var (
 	releaseStampOnce sync.Once
 	releaseStampPath string
 	releaseStampErr  error
+
+	devStampOnce sync.Once
+	devStampPath string
+	devStampErr  error
 )
 
 // releaseStampedBinary is this product's code with a release version linked in.
@@ -191,6 +202,32 @@ func releaseStampedBinary() (string, error) {
 		releaseStampPath = out
 	})
 	return releaseStampPath, releaseStampErr
+}
+
+// devStampedBinary is the same code with an explicitly non-release version
+// linked in: the refusal scenario's premise, made true by construction.
+func devStampedBinary() (string, error) {
+	devStampOnce.Do(func() {
+		root, err := filepath.Abs(filepath.Join("..", ".."))
+		if err != nil {
+			devStampErr = err
+			return
+		}
+		out := filepath.Join(root, ".tmp", "acceptance", "roca-dev")
+		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+			devStampErr = err
+			return
+		}
+		build := exec.Command("go", "build",
+			"-ldflags", "-X main.version="+theDevVersion, "-o", out, "./cmd/roca")
+		build.Dir = root
+		if output, err := build.CombinedOutput(); err != nil {
+			devStampErr = fmt.Errorf("stamp a dev binary: %v: %s", err, output)
+			return
+		}
+		devStampPath = out
+	})
+	return devStampPath, devStampErr
 }
 
 // --- the channel ---
@@ -391,10 +428,14 @@ func (m *world) installedFromTheChannel() error {
 // newer version. The data has to exist
 // beforehand for "still intact" to mean anything.
 // artefact is the binary this scenario installs: `make build`'s own by default,
-// and the release-stamped one for the scenario that needs a published version.
+// the release-stamped one for the scenario that needs a published version, and
+// the dev-stamped one for the scenario that pins the refusal.
 func (m *world) artefact() string {
 	if m.releaseStamped != "" {
 		return m.releaseStamped
+	}
+	if m.devStamped != "" {
+		return m.devStamped
 	}
 	return m.binary
 }
@@ -407,6 +448,17 @@ func (m *world) installedAtAnEarlierReleaseVersion() error {
 		return err
 	}
 	m.releaseStamped = stamped
+	return m.installedAtAnEarlierVersion()
+}
+
+// installedAtAnEarlierDevelopmentBuild is the refusal scenario's premise: what
+// is installed is explicitly NOT a release, whatever the working copy reports.
+func (m *world) installedAtAnEarlierDevelopmentBuild() error {
+	stamped, err := devStampedBinary()
+	if err != nil {
+		return err
+	}
+	m.devStamped = stamped
 	return m.installedAtAnEarlierVersion()
 }
 

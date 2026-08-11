@@ -28,10 +28,15 @@ type world struct {
 	// installs this one and the scenario that pins the refusal installs the
 	// working copy `make build` produces.
 	releaseStamped string
-	home           string
-	last           run
-	previous       run
-	memories       int
+	// devStamped is the same code with an explicitly non-release version linked
+	// in. The refusal scenario installs it so its premise holds even when the
+	// working copy is built from a clean release tag, which is exactly what the
+	// release workflow does.
+	devStamped string
+	home       string
+	last       run
+	previous   run
+	memories   int
 	// everything is every run of the scenario, for the steps that ask about a
 	// whole session's output and not only the last command's.
 	everything []run

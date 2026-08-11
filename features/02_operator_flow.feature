@@ -85,7 +85,7 @@ Feature: The operator's real flow
 
   @fast
   Scenario: F02-08 Updating refuses to overwrite a build that is not a release
-    Given La Roca is installed at an earlier version
+    Given La Roca is installed at an earlier development build
     When I run "roca update"
     Then the command exits with code 1
     And the output names what is published and how to install it
