@@ -114,32 +114,42 @@ rows, `roca exec` runs your own `SELECT` through the same read-only gate, and
 
 ## Three ways to use it
 
-**1. Shared context between agents.** A session starts by asking for the
-latest handoff and ends by storing one. The Claude session you open today
-knows what Codex did last night, without you re-explaining the project.
+### 1. Shared context between agents
+
+A session starts by asking for the latest handoff and ends by storing one.
+The Claude session you open today knows what Codex did last night, without
+you re-explaining the project.
 
 ```sh
 roca query "latest handoff for this project"
-roca store --layer handoff --content "auth refactor: token refresh done, retry logic pending, branch fix/auth-retry"
+roca store --layer handoff --content "token refresh done, retry pending"
 ```
 
-**2. Chat with your data.** Ask your own history real questions. Which
-sessions went well and which wasted an evening? What do you keep
-re-explaining to every new session? Which model is fastest at fixing tests,
-and which one writes the best plans? Which model do you actually have fun
-working with, which one is a pure professional, and which one can you simply
-not work with? Which harness works best for which kind of work? The answers are already in your logs, with the rows to prove
-them. Use them to prompt better and to pick the right agent for the next
-job.
+### 2. Chat with your data
 
-**3. Distill what repeats.** Patterns in your history become skills that
-travel back to every agent. A regular skill is a snapshot of a tool. A skill
-distilled from La Roca comes with its whole story: the how, the why, and the
-failed attempts behind the final answer stay in the database, one question
-away.
-`roca skill install` ships the operating craft into each runtime today, and
-the `pill` layer is built for what comes next: condensed artifacts distilled
-from your own history and injected through hooks, so an agent is charged with
+Ask your own history real questions:
+
+- Which sessions went well, and which one wasted an evening?
+- What do you keep re-explaining to every new session?
+- Which model is fastest at fixing tests? Which one writes the best plans?
+- Which model do you actually have fun working with, and which one can you
+  simply not work with?
+- Which harness works best for which kind of work?
+
+The answers are already in your logs, with the rows to prove them. Use them
+to prompt better and to pick the right agent for the next job.
+
+### 3. Distill what repeats
+
+Patterns in your history become skills that travel back to every agent.
+
+A regular skill is a snapshot of a tool. A skill distilled from La Roca
+comes with its whole story: the how, the why, and the failed attempts behind
+the final answer, one question away.
+
+`roca skill install` ships the operating craft into each runtime today. The
+`pill` layer is built for what comes next: condensed artifacts distilled
+from your own history and injected through hooks, charging an agent with
 exactly the information the task needs instead of a whole skill.
 
 ## How it works
