@@ -23,10 +23,12 @@ Feature: Distribution command line
       | doctor    |
       | update    |
       | uninstall |
+      | plugins   |
 
-  Scenario: An unknown command fails with a pointer to help, never silently
-    When the operator runs an unknown command
-    Then it fails, names the unknown command, and points to help
+  Scenario: Neighbor executables extend unknown commands without intercepting built-ins
+    When the operator exercises the plugin dispatch contract
+    Then arguments, standard input, output, and exit status cross the plugin seam untouched
+    And built-ins win, missing plugins explain the convention, and plugins lists the fixtures
 
   Scenario: Init closes with one ordered, fully timed summary
     When the operator exercises the "init" command in human and JSON form

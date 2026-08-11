@@ -3,10 +3,12 @@ package service_test
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
+	"github.com/thellmwhisperer/la-roca/internal/store"
 )
 
 func TestStoreWritesOneMemoryAndReturnsItsIdentity(t *testing.T) {
@@ -232,6 +234,10 @@ func TestStoreRefusesWhatTheSchemaWouldRefuseAnyway(t *testing.T) {
 		{"no content", service.StoreRequest{Layer: "discovery", Content: "   "}, "content"},
 		{"an origin outside the contract",
 			service.StoreRequest{Layer: "discovery", Content: "x", Origin: "robot"}, "origin"},
+		{"an empty plugin origin",
+			service.StoreRequest{Layer: "discovery", Content: "x", Origin: "plugin:"}, "origin"},
+		{"a plugin origin with a path",
+			service.StoreRequest{Layer: "discovery", Content: "x", Origin: "plugin:bad/name"}, "origin"},
 		{"a status outside the contract",
 			service.StoreRequest{Layer: "discovery", Content: "x", Status: "half"}, "status"},
 	}
@@ -246,6 +252,63 @@ func TestStoreRefusesWhatTheSchemaWouldRefuseAnyway(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStoreRoundTripsAPluginOrigin(t *testing.T) {
+	cases := []struct {
+		name string
+		open func(*testing.T) *service.Service
+	}{
+		{"current schema", func(t *testing.T) *service.Service {
+			svc, _ := serviceWithPaths(t)
+			return svc
+		}},
+		{"released v1 origin constraint", legacyOriginService},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := tc.open(t)
+			result, err := svc.Store(context.Background(), service.StoreRequest{
+				Layer: "discovery", Content: "plugin-owned synthetic memory", Origin: "plugin:demo",
+				Surface: service.SurfaceCLI,
+			})
+			if err != nil {
+				t.Fatalf("Store: %v", err)
+			}
+			var origin string
+			if err := svc.DB().SQL().QueryRow(
+				"SELECT origin FROM memories WHERE id = ?", result.ID).Scan(&origin); err != nil {
+				t.Fatalf("read back: %v", err)
+			}
+			if origin != "plugin:demo" {
+				t.Errorf("origin = %q, want plugin:demo", origin)
+			}
+		})
+	}
+}
+
+func legacyOriginService(t *testing.T) *service.Service {
+	path := filepath.Join(t.TempDir(), "roca.db")
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.SQL().Exec(`CREATE TABLE memories (
+		id INTEGER PRIMARY KEY AUTOINCREMENT, layer TEXT NOT NULL, content TEXT NOT NULL,
+		metadata TEXT DEFAULT '{}', origin TEXT NOT NULL CHECK (origin IN ('human', 'agent', 'cron')),
+		source_agent TEXT, project TEXT, status TEXT DEFAULT 'active', supersedes INTEGER)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	svc, err := service.Open(service.Options{DBPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { svc.Close() })
+	return svc
 }
 
 func TestStoreRefusesBeforeAnyDatabaseIOWhenReadOnly(t *testing.T) {
