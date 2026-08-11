@@ -26,6 +26,7 @@ func TestProviderAcceptanceSuite(t *testing.T) {
 			Output:   os.Stdout,
 			Strict:   true,
 			TestingT: t,
+			Tags:     "~@journey",
 		},
 	}
 	if suite.Run() != 0 {

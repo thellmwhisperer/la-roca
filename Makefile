@@ -49,8 +49,10 @@ accept: build accept-index ## The godog acceptance suites against the real binar
 	go test -tags=acceptance ./test/acceptance -count=1
 
 accept-index: ## List and verify the per-domain acceptance scenarios
-	@files="$$(find features -mindepth 2 -name '*.feature' -type f | sort)"; \
+	@files="$$(find features -name '*.feature' -type f | sort)"; \
 		test -n "$$files" || { echo "no per-domain acceptance features found"; exit 1; }; \
+		unexpected="$$(printf '%s\n' "$$files" | grep -Ev '^features/(store|ingest|provider|distribution)/[^/]+\.feature$$' || true)"; \
+		test -z "$$unexpected" || { echo "features must live directly under store, ingest, provider or distribution:"; echo "$$unexpected"; exit 1; }; \
 		for file in $$files; do \
 			grep -HnE '^[[:space:]]*Scenario( Outline)?:' "$$file" || exit 1; \
 		done
@@ -59,7 +61,7 @@ accept-index: ## List and verify the per-domain acceptance scenarios
 check: build fmt vet test accept slop ## What CI requires before merging
 
 # The slop gate blocks duplication and orphan regressions, and verifies every
-# selected public surface still has a live acceptance claim. `--enforce` fails
+# catalogued public surface still has a live acceptance claim. `--enforce` fails
 # both ways on a ceiling: over is a regression, under is an uncommitted
 # improvement. The ratchets in .slop/ceilings.yml are monotonic.
 .PHONY: slop

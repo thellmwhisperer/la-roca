@@ -25,6 +25,7 @@ func TestDistributionAcceptance(t *testing.T) {
 			Output:   os.Stdout,
 			TestingT: t,
 			Strict:   true,
+			Tags:     "~@journey",
 		},
 	}
 	if suite.Run() != 0 {
