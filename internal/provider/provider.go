@@ -16,9 +16,9 @@
 //     order came from, so a name the operator persisted degrades with a warning
 //     and one written in code still fails. There is no way to lose the
 //     provenance along the way because there is no constructor without it.
-//   - **Zero provider SDKs.** The adapters speak HTTP with net/http and JSON
-//     with encoding/json. An SDK puts its dependency chain and
-//     its version cadence inside the binary to save two hundred lines.
+//   - **Zero provider SDKs.** Network adapters speak HTTP with net/http; local
+//     adapters run an argv template with os/exec. An SDK puts its dependency
+//     chain and version cadence inside the binary to save two hundred lines.
 package provider
 
 import (
@@ -44,6 +44,7 @@ func unreachable(label string, err error) string {
 const (
 	NameOllama   = "ollama"
 	NameCodex    = "codex"
+	NameClaude   = "claude"
 	NameDeepSeek = "deepseek"
 	NameZAI      = "zai"
 	NameXAI      = "xai"
@@ -348,7 +349,16 @@ func (c Cascade) Pick(ctx context.Context) (Provider, []Attempt) {
 func (c Cascade) Diagnose(ctx context.Context) []Attempt {
 	attempts := make([]Attempt, 0, len(c.Providers))
 	for _, p := range c.Providers {
-		attempt, _ := c.ask(ctx, p)
+		probeCtx, cancel := context.WithTimeout(ctx, c.probeFor(p))
+		readiness := p.Ready(probeCtx)
+		if diagnostic, ok := p.(interface {
+			DiagnoseReady(context.Context) Readiness
+		}); ok {
+			readiness = diagnostic.DiagnoseReady(probeCtx)
+		}
+		cancel()
+		attempt := Attempt{Name: p.Name(), Ready: readiness.Ready,
+			ModelID: readiness.ModelID, Reason: readiness.Reason, Action: readiness.Action}
 		attempts = append(attempts, attempt)
 	}
 	return attempts
@@ -371,9 +381,19 @@ func (c Cascade) Models(ctx context.Context) []ModelsListing {
 }
 
 func (c Cascade) askModels(ctx context.Context, p Provider) ModelReport {
-	modelsCtx, cancel := context.WithTimeout(ctx, c.probe())
+	modelsCtx, cancel := context.WithTimeout(ctx, c.probeFor(p))
 	defer cancel()
 	return p.Models(modelsCtx)
+}
+
+func (c Cascade) probeFor(p Provider) time.Duration {
+	if c.Probe > 0 {
+		return c.Probe
+	}
+	if timed, ok := p.(interface{ RequestTimeout() time.Duration }); ok {
+		return timed.RequestTimeout()
+	}
+	return ProbeTimeout
 }
 
 // Chat asks the chosen provider, with the budget bounded. What goes past the
@@ -386,7 +406,7 @@ func (c Cascade) Chat(ctx context.Context, p Provider, req ChatRequest) (ChatRes
 
 func (c Cascade) chat(ctx context.Context, p Provider,
 	ask func(context.Context) (ChatResponse, error)) (ChatResponse, error) {
-	callCtx, cancel := context.WithTimeout(ctx, c.timeout())
+	callCtx, cancel := context.WithTimeout(ctx, c.timeoutFor(p))
 	defer cancel()
 
 	start := time.Now()
@@ -428,6 +448,16 @@ func (c Cascade) timeout() time.Duration {
 		return DefaultTimeout
 	}
 	return c.Timeout
+}
+
+func (c Cascade) timeoutFor(p Provider) time.Duration {
+	if c.Timeout > 0 {
+		return c.Timeout
+	}
+	if timed, ok := p.(interface{ RequestTimeout() time.Duration }); ok {
+		return timed.RequestTimeout()
+	}
+	return DefaultTimeout
 }
 
 func (c Cascade) probe() time.Duration {

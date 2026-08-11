@@ -205,7 +205,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		Interpreters:   interpreters,
 		ConfigPath:     paths.Config,
 		ConfigExists:   file.Exists,
-		Sources:        ingestSources(file, home),
+		Sources:        ingestSources(file, home, paths.Runner),
 		ReadOnly:       config.ReadOnly(os.Getenv(config.EnvReadOnly)),
 		IngestProgress: ingestProgress,
 	})
@@ -308,6 +308,7 @@ func buildProviders(file config.File, paths config.Paths) (provider.Cascade, pro
 	settings := provider.Settings{
 		File:        file,
 		Credentials: paths.Credentials,
+		RunnerDir:   paths.Runner,
 		Env:         os.Getenv,
 	}
 	cascade, err := provider.BuildCascade(settings)

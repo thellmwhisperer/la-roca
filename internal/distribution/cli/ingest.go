@@ -143,7 +143,7 @@ func ingestSourceLabel(name string) string {
 // process was given, from the environment and from what the operator declared,
 // and the operator's declaration wins. A path with a machine name inside the
 // binary is a guard failure, not a style decision.
-func ingestSources(file config.File, home string) ingest.Roots {
+func ingestSources(file config.File, home, runnerDir string) ingest.Roots {
 	return ingest.ResolveRoots(
 		ingest.Environment{GOOS: runtime.GOOS, Home: home, Getenv: os.Getenv},
 		ingest.Settings{
@@ -156,6 +156,7 @@ func ingestSources(file config.File, home string) ingest.Roots {
 			OpenCodeDB:            file.Default("opencode_db_path"),
 			PiSessions:            file.Default("pi_sessions_root"),
 			HermesDB:              file.Default("hermes_db_path"),
+			RunnerDir:             runnerDir,
 			WorkspaceRoots:        file.DefaultList(keyWorkspaceRoots),
 			SubagentRoots:         file.DefaultList(keySubagentRoots),
 		})

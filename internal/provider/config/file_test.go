@@ -79,6 +79,58 @@ model = "deepseek-reasoner"
 	}
 }
 
+func TestABinaryProviderConfigurationIsReadWhole(t *testing.T) {
+	path := write(t, `[models.claude]
+command = ["claude", "-p", "{prompt}", "--model", "{model}", "--effort", "{effort}"]
+model = "sonnet"
+effort = "high"
+response_format = "json"
+timeout_seconds = 45
+`)
+	file, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := file.Models.Providers["claude"]
+	if strings.Join(got.Command, " ") != "claude -p {prompt} --model {model} --effort {effort}" ||
+		got.TimeoutSeconds != 45 || got.Values["model"] != "sonnet" ||
+		got.Values["effort"] != "high" || got.ResponseFormat != "json" || len(file.Warnings) != 0 {
+		t.Fatalf("provider = %+v, warnings = %v", got, file.Warnings)
+	}
+}
+
+func TestAProviderCannotDeclareBothTransports(t *testing.T) {
+	path := write(t, `[models.fixture]
+base_url = "https://example.invalid/v1"
+command = ["fixture", "{prompt}"]
+`)
+	_, err := LoadFile(path)
+	if err == nil {
+		t.Fatal("both transports were accepted")
+	}
+	for _, piece := range []string{"models.fixture.base_url", "models.fixture.command", path} {
+		if !strings.Contains(err.Error(), piece) {
+			t.Errorf("error does not name %q: %v", piece, err)
+		}
+	}
+}
+
+func TestAnUnknownCommandPlaceholderNamesTheProviderKeyAndFile(t *testing.T) {
+	path := write(t, `[models.fixture]
+command = ["fixture", "--effort", "{effort}"]
+model = "fixture-model"
+`)
+	_, err := LoadFile(path)
+	if err == nil {
+		t.Fatal("unknown placeholder was accepted")
+	}
+	for _, piece := range []string{"fixture", "{effort}", "models.fixture", path} {
+		if !strings.Contains(err.Error(), piece) {
+			t.Errorf("error does not name %q: %v", piece, err)
+		}
+	}
+}
+
 func TestTheQueryCostBudgetIsReadFromConfig(t *testing.T) {
 	file, err := LoadFile(write(t, "[query]\ntimeout_ms = 2750\n"))
 	if err != nil {
@@ -235,20 +287,20 @@ func TestAnUnknownKeyIsAWarningThatNamesTheKeyTheFileAndTheRemedy(t *testing.T) 
 	}
 }
 
-func TestAnUnknownKeyInsideAProviderIsAlsoAWarning(t *testing.T) {
+func TestAProviderSpecificKeyBecomesATemplateValue(t *testing.T) {
 	path := write(t, "[models.ollama]\nmodel = \"qwen3.5:4b\"\nteleport = 3\n")
 	file, err := LoadFile(path)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if len(file.Warnings) == 0 {
-		t.Fatal("an unknown key inside a provider is silent")
-	}
-	if !strings.Contains(strings.Join(file.Warnings, " "), "teleport") {
-		t.Fatalf("the warning does not name the key: %v", file.Warnings)
+	if len(file.Warnings) != 0 {
+		t.Fatalf("provider tuning was reported as unknown: %v", file.Warnings)
 	}
 	if file.Models.Providers["ollama"].Model != "qwen3.5:4b" {
 		t.Fatal("the known keys stopped loading")
+	}
+	if file.Models.Providers["ollama"].Values["teleport"] != "3" {
+		t.Fatalf("provider tuning was not preserved: %+v", file.Models.Providers["ollama"].Values)
 	}
 }
 
