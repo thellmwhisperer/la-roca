@@ -1,0 +1,92 @@
+[
+  {
+    "uuid": "synthetic-discarded-root",
+    "name": "Synthetic root recovery",
+    "summary": "A fictional chain after an unreadable first message.",
+    "created_at": "2026-08-02T08:00:00.000Z",
+    "updated_at": "2026-08-02T08:00:04.000Z",
+    "chat_messages": [
+      {
+        "uuid": "root-unreadable-human",
+        "text": "",
+        "content": [],
+        "sender": "human",
+        "created_at": "2026-08-02T08:00:01.000Z",
+        "parent_message_uuid": null
+      },
+      {
+        "uuid": "root-orphaned-assistant",
+        "text": "This readable message becomes a thread root.",
+        "sender": "assistant",
+        "created_at": "2026-08-02T08:00:02.000Z",
+        "parent_message_uuid": "root-unreadable-human"
+      },
+      {
+        "uuid": "root-recovered-human",
+        "text": "Name a synthetic recovery marker.",
+        "sender": "human",
+        "created_at": "2026-08-02T08:00:03.000Z",
+        "parent_message_uuid": "root-orphaned-assistant"
+      },
+      {
+        "uuid": "root-recovered-assistant",
+        "text": "Call it Silver Kestrel.",
+        "sender": "assistant",
+        "created_at": "2026-08-02T08:00:04.000Z",
+        "parent_message_uuid": "root-recovered-human"
+      }
+    ]
+  },
+  {
+    "uuid": "synthetic-discarded-middle",
+    "name": "Synthetic middle recovery",
+    "summary": "A fictional chain around an unreadable middle message.",
+    "created_at": "2026-08-02T09:00:00.000Z",
+    "updated_at": "2026-08-02T09:00:06.000Z",
+    "chat_messages": [
+      {
+        "uuid": "mid-existing-human",
+        "text": "Choose a synthetic signal.",
+        "sender": "human",
+        "created_at": "2026-08-02T09:00:01.000Z",
+        "parent_message_uuid": null
+      },
+      {
+        "uuid": "mid-existing-assistant",
+        "text": "Use Violet Lantern.",
+        "sender": "assistant",
+        "created_at": "2026-08-02T09:00:02.000Z",
+        "parent_message_uuid": "mid-existing-human"
+      },
+      {
+        "uuid": "mid-unreadable-human",
+        "text": "",
+        "content": [],
+        "sender": "human",
+        "created_at": "2026-08-02T09:00:03.000Z",
+        "parent_message_uuid": "mid-existing-assistant"
+      },
+      {
+        "uuid": "mid-orphaned-assistant",
+        "text": "This readable reply bypasses the unreadable parent.",
+        "sender": "assistant",
+        "created_at": "2026-08-02T09:00:04.000Z",
+        "parent_message_uuid": "mid-unreadable-human"
+      },
+      {
+        "uuid": "mid-recovered-human",
+        "text": "Add a synthetic confirmation.",
+        "sender": "human",
+        "created_at": "2026-08-02T09:00:05.000Z",
+        "parent_message_uuid": "mid-orphaned-assistant"
+      },
+      {
+        "uuid": "mid-recovered-assistant",
+        "text": "Violet Lantern is confirmed.",
+        "sender": "assistant",
+        "created_at": "2026-08-02T09:00:06.000Z",
+        "parent_message_uuid": "mid-recovered-human"
+      }
+    ]
+  }
+]

@@ -2,11 +2,14 @@ package ingest
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
 )
 
 func TestDeclaredClaudeWebExportIsIncrementalAndIdempotent(t *testing.T) {
@@ -22,7 +25,7 @@ func TestDeclaredClaudeWebExportIsIncrementalAndIdempotent(t *testing.T) {
 		first.Delta.Exchanges != 4 || first.Delta.Memories != 1 {
 		t.Fatalf("first ingest = %+v", first)
 	}
-	if first.RecordsDiscarded != 2 {
+	if first.RecordsDiscarded != 0 {
 		t.Fatalf("discards = %+v", first.DiscardDetails)
 	}
 
@@ -112,6 +115,76 @@ func TestGrownClaudeWebExportAddsOnlyNewMessageIdentities(t *testing.T) {
 	counts := result.Sources["claude-web"]
 	if counts.Exchanges != 1 || counts.ExchangesUnchanged != 4 {
 		t.Fatalf("grown export counts = %+v", counts)
+	}
+}
+
+func TestClaudeWebParserRevisionBackfillsLegacyCascadeWithoutDuplicates(t *testing.T) {
+	export := t.TempDir()
+	path := filepath.Join(export, "conversations.json")
+	raw, err := os.ReadFile(filepath.Join("testdata", "anthropic-export", "discarded-ancestors.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	records, err := parsers.ParseClaudeWebConversations(strings.NewReader(string(raw)), parsers.FileMeta{
+		Path: path, FileName: "conversations.json",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	records.Sessions[0].Exchanges = nil
+	records.Sessions[1].Exchanges = records.Sessions[1].Exchanges[:1]
+
+	db := rocaDatabase(t)
+	target := Target{Path: path, Kind: parsers.KindClaudeWebConversations, SourceAgent: "claude-web"}
+	legacyFingerprint, err := Fingerprint(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Write(context.Background(), func(tx *sql.Tx) error {
+		if _, err := WriteRecords(context.Background(), tx, registry(t), records); err != nil {
+			return err
+		}
+		return RecordState(context.Background(), tx, target, legacyFingerprint, "", nil)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := Run(context.Background(), db, registry(t), Options{
+		Roots: Roots{ClaudeWebExports: []string{export}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.FilesRead != 1 || first.Delta != (Tables{Exchanges: 2}) {
+		t.Fatalf("recovery ingest = %+v", first)
+	}
+	counts := first.Sources["claude-web"]
+	if counts.Exchanges != 2 || counts.ExchangesUnchanged != 1 ||
+		countRows(t, db.SQL(), "sessions") != 2 || countRows(t, db.SQL(), "exchanges") != 3 {
+		t.Fatalf("recovery counts = %+v, sessions/exchanges = %d/%d", counts,
+			countRows(t, db.SQL(), "sessions"), countRows(t, db.SQL(), "exchanges"))
+	}
+	if first.RecordsDiscarded != 2 {
+		t.Fatalf("recovery discards = %+v", first.DiscardDetails)
+	}
+	for _, detail := range first.DiscardDetails {
+		if !strings.Contains(detail.Reason, "has no text") || strings.Contains(detail.Reason, "parent chain") {
+			t.Errorf("imprecise recovery discard = %+v", detail)
+		}
+	}
+
+	second, err := Run(context.Background(), db, registry(t), Options{
+		Roots: Roots{ClaudeWebExports: []string{export}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.FilesSkipped != 1 || second.Delta != (Tables{}) ||
+		countRows(t, db.SQL(), "sessions") != 2 || countRows(t, db.SQL(), "exchanges") != 3 {
+		t.Fatalf("idempotent recovery ingest = %+v", second)
 	}
 }
 
