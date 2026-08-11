@@ -486,7 +486,7 @@ func answerQuery(ctx context.Context, svc *service.Service, req service.QueryReq
 	interpretation, err := svc.InterpretStream(
 		ctx, result.Question, result.Columns, result.Rows,
 		time.Duration(result.SQLInferenceMS)*time.Millisecond,
-		onStart, req.InterpretationDelta)
+		result.Engine, onStart, req.InterpretationDelta)
 	answer.prose, answer.interpretErr = interpretation.Text, err
 	answer.result.InterpretationMS = time.Since(started).Milliseconds()
 	answer.result.LatencyMS += answer.result.InterpretationMS

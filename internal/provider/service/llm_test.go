@@ -764,6 +764,41 @@ func TestInterpretPromptIsLanguageAgnostic(t *testing.T) {
 	}
 }
 
+func TestInterpretReusesTheSQLProviderUnlessAnExplicitOrderExists(t *testing.T) {
+	rows := []map[string]any{{"text": "decision"}}
+	for _, tc := range []struct {
+		name           string
+		interpreters   []provider.Cascade
+		wantEngine     string
+		wantFloorCalls int
+	}{
+		{name: "factory order", wantEngine: "ollama", wantFloorCalls: 1},
+		{name: "explicit interpretation order", interpreters: []provider.Cascade{
+			cascadeOf(answering("split", "explicit summary")),
+		}, wantEngine: "split"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			broken := answering("claude", "")
+			broken.external = true
+			broken.fail = fmt.Errorf("local CLI account is signed out")
+			floor := answering("ollama", "factory summary")
+			main := provider.Cascade{
+				Providers: []provider.Provider{broken, floor}, FactoryDefault: true,
+				Timeout: 2 * time.Second, Probe: time.Second,
+			}
+			svc := seededServiceWith(t, main, tc.interpreters...)
+			got, err := svc.InterpretStream(t.Context(), "what was decided", []string{"text"}, rows,
+				0, "ollama", nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Engine != tc.wantEngine || broken.requests != 0 || floor.requests != tc.wantFloorCalls {
+				t.Fatalf("interpretation = %+v, requests = %d/%d", got, broken.requests, floor.requests)
+			}
+		})
+	}
+}
+
 // A large result set does not blow the context: the second call hands the model
 // at most ten rows.
 func TestInterpretCapsTheRowsItHandsTheModel(t *testing.T) {

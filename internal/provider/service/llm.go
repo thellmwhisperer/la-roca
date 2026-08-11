@@ -241,13 +241,12 @@ type Interpretation struct {
 // Who is asked is the privacy decision of the whole product. With an
 // interpretation order configured and available, the rows go there and nowhere
 // else, so the machine that wrote the SQL never sees the data it selected. With
-// none configured the same order is asked again — the one that served is the one
-// that is available, so picking once more reaches it — and that is the behaviour
-// of every installation that does not declare the split.
+// none configured, a caller carrying SQL provenance reuses that provider; other
+// callers ask the same order again.
 func (s *Service) Interpret(ctx context.Context, question string,
 	columns []string, rows []map[string]any,
 	sqlInference time.Duration) (Interpretation, error) {
-	return s.InterpretStream(ctx, question, columns, rows, sqlInference, nil, nil)
+	return s.InterpretStream(ctx, question, columns, rows, sqlInference, "", nil, nil)
 }
 
 // InterpretStream is Interpret with live prose callbacks. Streaming is used
@@ -255,9 +254,9 @@ func (s *Service) Interpret(ctx context.Context, question string,
 // machine callers and buffered providers keep the ordinary complete response.
 func (s *Service) InterpretStream(ctx context.Context, question string,
 	columns []string, rows []map[string]any, sqlInference time.Duration,
-	onStart func(bool), onDelta func(string)) (Interpretation, error) {
+	sqlProvider string, onStart func(bool), onDelta func(string)) (Interpretation, error) {
 
-	cascade, chosen, note, err := s.interpreter(ctx)
+	cascade, chosen, note, err := s.interpreter(ctx, sqlProvider)
 	if err != nil {
 		return Interpretation{}, err
 	}
@@ -316,7 +315,7 @@ func (s *Service) InterpretStream(ctx context.Context, question string,
 // with the fall declared. The cascade comes back with the chosen provider
 // because the budget travels in it, and asking one provider under another's
 // budget is how a local model gets a frontier model's timeout.
-func (s *Service) interpreter(ctx context.Context) (provider.Cascade, provider.Provider, string, error) {
+func (s *Service) interpreter(ctx context.Context, sqlProvider string) (provider.Cascade, provider.Provider, string, error) {
 	main := s.opts.Providers
 	var note string
 	if split := s.opts.Interpreters; len(split.Providers) > 0 {
@@ -325,6 +324,12 @@ func (s *Service) interpreter(ctx context.Context) (provider.Cascade, provider.P
 			return split, chosen, "", nil
 		}
 		note = "the interpretation provider was not available (" + reasonsOf(attempts) + ")"
+	} else if main.FactoryDefault && sqlProvider != "" {
+		for _, chosen := range main.Providers {
+			if chosen.Name() == sqlProvider {
+				return main, chosen, "", nil
+			}
+		}
 	}
 	chosen, err := pickOrFail(ctx, main)
 	if err != nil {

@@ -21,6 +21,19 @@ from your terminal, or from the agents themselves over MCP.
 Every answer shows its proof: the SQL that produced it and the rows that
 back it.
 
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/thellmwhisperer/la-roca/main/install.sh | sh
+```
+
+This installs one static binary at `~/.local/bin/roca`, with no dependencies
+and no other changes. La Roca supports macOS on Apple Silicon and Linux; on
+Windows, use WSL.
+
+If `claude` or `codex` is already installed and signed in, no login of any kind
+is needed: run `roca init` and go. Update later with `roca update`.
+
 ## Sixty seconds
 
 ```text
