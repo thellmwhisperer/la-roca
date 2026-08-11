@@ -73,20 +73,42 @@ func targetFingerprint(target Target) (string, error) {
 		return parserAwareFingerprint(target.Kind, main), nil
 	}
 	wal, err := Fingerprint(target.Path + "-wal")
-	if err == nil {
-		return main + ":wal:" + wal, nil
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		wal = "none"
 	}
-	if os.IsNotExist(err) {
-		return main + ":wal:none", nil
-	}
-	return "", err
+	return parserAwareFingerprint(target.Kind, main+":wal:"+wal), nil
+}
+
+// parserVersions is the reading each source kind currently gets. The version
+// travels inside the watermark, so a build that learned to read more of a source
+// re-reads the files it already synced instead of trusting a fingerprint earned
+// by a poorer reading. What actually lands is still decided record by record:
+// the unique index refuses a duplicate exchange and the provenance backfill only
+// fills columns that are NULL, so a plain `roca ingest` enriches a corpus
+// without ever writing a second copy of it.
+//
+// A kind absent from here is one whose reading has not changed since the
+// watermark was introduced, and its files stay skipped.
+var parserVersions = map[parsers.Kind]string{
+	parsers.KindClaudeSession:          "claude-session-v2",
+	parsers.KindCoworkAudit:            "cowork-audit-v2",
+	parsers.KindSubagent:               "subagent-v2",
+	parsers.KindCodexSession:           "codex-session-v2",
+	parsers.KindPiSession:              "pi-session-v2",
+	parsers.KindOpenCodeDB:             "opencode-v2",
+	parsers.KindHermesDB:               "hermes-v2",
+	parsers.KindClaudeWebConversations: "claude-web-conversations-v2",
 }
 
 func parserAwareFingerprint(kind parsers.Kind, fingerprint string) string {
-	if kind == parsers.KindClaudeWebConversations {
-		return fingerprint + ":parser:claude-web-conversations-v2"
+	version, versioned := parserVersions[kind]
+	if !versioned {
+		return fingerprint
 	}
-	return fingerprint
+	return fingerprint + ":parser:" + version
 }
 
 // FileState is what the database remembers about one path.

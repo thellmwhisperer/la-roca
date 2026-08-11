@@ -296,14 +296,18 @@ func legacyOriginService(t *testing.T) *service.Service {
 	_, err = db.SQL().Exec(`CREATE TABLE memories (
 		id INTEGER PRIMARY KEY AUTOINCREMENT, layer TEXT NOT NULL, content TEXT NOT NULL,
 		metadata TEXT DEFAULT '{}', origin TEXT NOT NULL CHECK (origin IN ('human', 'agent', 'cron')),
-		source_agent TEXT, project TEXT, status TEXT DEFAULT 'active', supersedes INTEGER)`)
+		source_agent TEXT, source_session TEXT, source_sequence INTEGER, project TEXT,
+		status TEXT DEFAULT 'active', supersedes INTEGER, created_at TEXT DEFAULT (datetime('now')));
+		CREATE TABLE sessions (session_id TEXT PRIMARY KEY);
+		CREATE TABLE exchanges (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, exchange_number INTEGER)`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	svc, err := service.Open(service.Options{DBPath: path})
+	svc, err := service.Open(service.Options{DBPath: path, BackupDir: filepath.Join(t.TempDir(), "backups")})
 	if err != nil {
 		t.Fatal(err)
 	}

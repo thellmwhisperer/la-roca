@@ -75,6 +75,12 @@ func (w *ingestAcceptanceWorld) seedCodexSession(model string) error {
 		modelLine +
 		"{\"type\":\"event_msg\",\"timestamp\":\"2026-08-01T11:00:02Z\",\"payload\":{\"type\":\"user_message\",\"message\":\"question\"}}\n" +
 		"{\"type\":\"event_msg\",\"timestamp\":\"2026-08-01T11:00:03Z\",\"payload\":{\"type\":\"task_complete\",\"last_agent_message\":\"answer\"}}\n"
+	return w.writeCodexRollout(body)
+}
+
+// writeCodexRollout files a rollout where the scanner looks for one and leaves it
+// as the fixture the scenario is about.
+func (w *ingestAcceptanceWorld) writeCodexRollout(body string) error {
 	path := filepath.Join(w.home, ".codex", "sessions", "2026", "08", "01", "rollout.jsonl")
 	if err := writeFixture(path, body); err != nil {
 		return err
