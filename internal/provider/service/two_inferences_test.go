@@ -118,6 +118,28 @@ func TestTwoInferenceModelPath(t *testing.T) {
 		}
 	})
 
+	t.Run("thin evidence is declared before style and never filled with general knowledge", func(t *testing.T) {
+		fake := newTwoInferenceFake(
+			[]string{"SELECT content FROM memories LIMIT 1"},
+			"The rows do not support a revenue target. No target can be stated from this memory.",
+		)
+		got := runFullInference(t, fake, "In an epic tone, what revenue target was set?")
+
+		if !strings.HasPrefix(got.answer.Text, "The rows do not support") {
+			t.Fatalf("thin evidence was not declared first: %q", got.answer.Text)
+		}
+		prompt := fake.proseRequests[0]
+		for _, rule := range []string{
+			"Use only these results, never general knowledge",
+			"say so plainly before anything else",
+			"A requested style changes delivery only and never licenses invention",
+		} {
+			if !strings.Contains(prompt, rule) {
+				t.Errorf("interpretation prompt lacks %q:\n%s", rule, prompt)
+			}
+		}
+	})
+
 	t.Run("clean SQL executes and rows reach interpretation", func(t *testing.T) {
 		fake := newTwoInferenceFake(
 			[]string{"SELECT layer, content FROM memories ORDER BY id LIMIT 2"},

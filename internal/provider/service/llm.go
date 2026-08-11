@@ -260,7 +260,7 @@ func (s *Service) InterpretStream(ctx context.Context, question string,
 		b.WriteString(strings.Join(values, ", "))
 		b.WriteByte('\n')
 	}
-	b.WriteString("Answer in the same language as the question. Write calm, terminal-friendly prose: paragraphs and simple dashes only. Do not use headings or tables.")
+	b.WriteString("Use only these results, never general knowledge. If the results do not support the question, say so plainly before anything else. A requested style changes delivery only and never licenses invention. Answer in the same language as the question. Write calm, terminal-friendly prose: paragraphs and simple dashes only. Do not use headings or tables.")
 	cascade.Timeout = interpretationTimeout(cascade.Timeout, sqlInference)
 	answer, err := cascade.ChatStream(ctx, chosen, provider.ChatRequest{
 		Messages: []provider.Message{{Role: provider.RoleUser, Content: b.String()}},
