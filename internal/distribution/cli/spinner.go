@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mattn/go-runewidth"
 )
 
 // A spinner is the one piece of motion La Roca shows: it tells an operator a
@@ -47,6 +49,7 @@ type spinner struct {
 	started bool
 	preview string
 	space   bool
+	width   int
 	mu      sync.Mutex
 	// once keeps finish idempotent. The contract below promises it is safe to
 	// defer, which invites a caller to both defer it and call it on the success
@@ -58,13 +61,18 @@ type spinner struct {
 // safe to finish. A non-terminal or a --json call gets an inert spinner whose
 // finish is a no-op, so the caller never has to branch.
 func startSpinner(env *cliEnv, label string) *spinner {
-	return newSpinner(env.errOut, label, !env.json && termAware(env.errOut))
+	return newSpinnerAtWidth(env.errOut, label, !env.json && termAware(env.errOut),
+		detectedTerminalWidth(env.errOut))
 }
 
 // newSpinner owns the activation decision the caller already made, so the draw
 // and clear logic is testable on a plain buffer without faking a terminal.
 func newSpinner(out io.Writer, label string, active bool) *spinner {
-	s := &spinner{out: out, label: label, active: active}
+	return newSpinnerAtWidth(out, label, active, fallbackTerminalWidth)
+}
+
+func newSpinnerAtWidth(out io.Writer, label string, active bool, width int) *spinner {
+	s := &spinner{out: out, label: label, active: active, width: max(1, width)}
 	if !active {
 		return s
 	}
@@ -101,13 +109,48 @@ func (s *spinner) run() {
 // stream that receives a draw without colour still reads cleanly.
 func (s *spinner) draw(frame int) {
 	s.mu.Lock()
-	label, preview := s.label, s.preview
+	label, preview, width := s.label, s.preview, s.width
 	s.mu.Unlock()
 	glyph := spinnerFrames[frame%len(spinnerFrames)]
-	if preview != "" {
-		label += " · " + preview
+	line := statusLine(glyph, label, preview, width)
+	painted := strings.Replace(line, glyph, paint(s.out, ansiCyan, glyph), 1)
+	fmt.Fprint(s.out, clearLine, painted)
+}
+
+func statusLine(glyph, label, preview string, width int) string {
+	limit := max(1, width-1)
+	base := glyph + " " + label
+	if runewidth.StringWidth(base) > limit {
+		return runewidth.Truncate(base, limit, "…")
 	}
-	fmt.Fprintf(s.out, "%s%s %s", clearLine, paint(s.out, ansiCyan, glyph), label)
+	available := limit - runewidth.StringWidth(base) - runewidth.StringWidth(" · ")
+	if preview == "" || available <= 0 {
+		return base
+	}
+	return base + " · " + tailAtWidth(preview, available)
+}
+
+func tailAtWidth(text string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if runewidth.StringWidth(text) <= width {
+		return text
+	}
+	if width == 1 {
+		return "…"
+	}
+	runes := []rune(text)
+	used, start := 0, len(runes)
+	for start > 0 {
+		cell := runewidth.RuneWidth(runes[start-1])
+		if used+cell > width-1 {
+			break
+		}
+		used += cell
+		start--
+	}
+	return "…" + string(runes[start:])
 }
 
 func (s *spinner) phase(label string) {
@@ -125,10 +168,7 @@ func (s *spinner) appendPreview(delta string) {
 	}
 	s.preview += clean
 	s.space = len(delta) > 0 && strings.ContainsAny(delta[len(delta)-1:], " \t\r\n")
-	runes := []rune(s.preview)
-	if len(runes) > 80 {
-		s.preview = "…" + string(runes[len(runes)-79:])
-	}
+	s.preview = tailAtWidth(s.preview, s.width)
 	s.mu.Unlock()
 }
 

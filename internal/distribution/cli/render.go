@@ -20,6 +20,10 @@ const (
 )
 
 func terminalWidth(w io.Writer) int {
+	return saneTerminalWidth(detectedTerminalWidth(w))
+}
+
+func detectedTerminalWidth(w io.Writer) int {
 	type descriptor interface{ Fd() uintptr }
 	file, ok := w.(descriptor)
 	if !ok {
@@ -29,7 +33,7 @@ func terminalWidth(w io.Writer) int {
 	if err != nil {
 		return fallbackTerminalWidth
 	}
-	return saneTerminalWidth(width)
+	return width
 }
 
 func saneTerminalWidth(width int) int {

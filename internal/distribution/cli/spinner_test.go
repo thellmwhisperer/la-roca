@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mattn/go-runewidth"
 )
 
 // A spinner is motion, and motion is for an interactive terminal only. These
@@ -100,7 +102,7 @@ func TestSpinnerNarratesPhasesAndLiveAnswerText(t *testing.T) {
 	spin.phase("composing the answer")
 	spin.appendPreview("The first ")
 	spin.appendPreview("words arrive")
-	time.Sleep(spinnerTick)
+	time.Sleep(2 * spinnerTick)
 	spin.finish()
 
 	got := buf.String()
@@ -109,6 +111,27 @@ func TestSpinnerNarratesPhasesAndLiveAnswerText(t *testing.T) {
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("phased spinner lacks %q:\n%q", want, got)
+		}
+	}
+}
+
+func TestStreamingStatusNeverWrapsOrWritesANewline(t *testing.T) {
+	fastSpinner(t)
+	var buf bytes.Buffer
+	spin := newSpinnerAtWidth(&buf, spinnerComposing, true, 40)
+	spin.appendPreview("A deliberately long interpretation arrives token by token in the live terminal")
+	time.Sleep(spinnerGrace + 2*spinnerTick)
+	spin.finish()
+
+	for _, frame := range strings.Split(buf.String(), clearLine) {
+		if frame == "" {
+			continue
+		}
+		if strings.ContainsAny(frame, "\r\n") {
+			t.Fatalf("status frame wrote a line break: %q", frame)
+		}
+		if width := runewidth.StringWidth(frame); width >= 40 {
+			t.Fatalf("status frame is %d cells in a 40-column terminal: %q", width, frame)
 		}
 	}
 }
