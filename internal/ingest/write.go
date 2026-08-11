@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"maps"
 	"strings"
-	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
 )
@@ -222,9 +221,7 @@ func staleSnapshotMetadata(session parsers.Session, current row) (map[string]any
 		return nil, false
 	}
 	updated, _ := stored["updated_at"].(string)
-	incomingTime, incomingErr := time.Parse(time.RFC3339Nano, session.SnapshotUpdatedAt)
-	storedTime, storedErr := time.Parse(time.RFC3339Nano, updated)
-	return stored, incomingErr == nil && storedErr == nil && incomingTime.Before(storedTime)
+	return stored, parsers.ClaudeWebTimestampBefore(session.SnapshotUpdatedAt, updated)
 }
 
 func mergeMetadata(base, preferred map[string]any) map[string]any {
@@ -480,12 +477,13 @@ func (w *writer) memory(ctx context.Context, memory parsers.Memory) (Counts, err
 	}
 
 	var id int64
-	var stored string
+	var stored, storedMetadata string
 	err = w.tx.QueryRowContext(ctx, `
-		SELECT id, content FROM memories
+		SELECT id, content, metadata FROM memories
 		WHERE json_extract(metadata, '$._cron_source') = ?
 		  AND json_extract(metadata, '$.file_path') = ?
-		ORDER BY id LIMIT 1`, memory.Source, memory.FilePath).Scan(&id, &stored)
+		ORDER BY id LIMIT 1`, memory.Source, memory.FilePath).Scan(&id, &stored, &storedMetadata)
+	freshness := claudeWebMemoryFreshness(memory, storedMetadata)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		layer := w.layers.Resolve(memory.Layer, defaultLayer)
@@ -501,7 +499,7 @@ func (w *writer) memory(ctx context.Context, memory parsers.Memory) (Counts, err
 		counts.MemoriesInserted = 1
 	case err != nil:
 		return counts, fmt.Errorf("look up the memory of %s: %w", memory.FilePath, err)
-	case stored == memory.Content:
+	case freshness < 0 || stored == memory.Content && freshness <= 0:
 		// Same file, same text: nothing to do, and nothing written either. This is
 		// what makes a second pass leave the database byte for byte as it was.
 		counts.MemoriesUnchanged = 1
@@ -516,6 +514,26 @@ func (w *writer) memory(ctx context.Context, memory parsers.Memory) (Counts, err
 		counts.MemoriesUpdated = 1
 	}
 	return counts, nil
+}
+
+func claudeWebMemoryFreshness(memory parsers.Memory, storedMetadata string) int {
+	identity, _ := memory.Metadata["memory_uuid"].(string)
+	incoming, _ := memory.Metadata["updated_at"].(string)
+	if memory.Source != "claude-web" || identity == "" || incoming == "" {
+		return 0
+	}
+	var stored map[string]any
+	if json.Unmarshal([]byte(storedMetadata), &stored) != nil {
+		return 0
+	}
+	updated, _ := stored["updated_at"].(string)
+	if parsers.ClaudeWebTimestampBefore(incoming, updated) {
+		return -1
+	}
+	if parsers.ClaudeWebTimestampBefore(updated, incoming) {
+		return 1
+	}
+	return 0
 }
 
 // readExchangeMap reads the exchange map out of a session's metadata, from the

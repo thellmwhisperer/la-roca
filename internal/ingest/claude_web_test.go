@@ -117,10 +117,11 @@ func TestGrownClaudeWebExportAddsOnlyNewMessageIdentities(t *testing.T) {
 
 func TestMultipleClaudeWebExportsKeepNewestSnapshotAndOneMemory(t *testing.T) {
 	directories := []struct {
-		path, name, summary, updated string
+		path, name, summary, updated, memory, memoryUpdated string
 	}{
-		{filepath.Join(t.TempDir(), "newer"), "Newer synthetic snapshot", "Newer synthetic summary.", "2026-08-01T09:10:00Z"},
-		{filepath.Join(t.TempDir(), "older"), "Older synthetic snapshot", "Older synthetic summary.", "2026-08-01T09:05:00Z"},
+		{filepath.Join(t.TempDir(), "oldest"), "Oldest synthetic snapshot", "Oldest synthetic summary.", "2026-08-01T09:01:00", "Newest synthetic memory.", "2026-08-01T08:01:00"},
+		{filepath.Join(t.TempDir(), "newest"), "Newest synthetic snapshot", "Newest synthetic summary.", "2026-08-01T09:10:00", "Newest synthetic memory.", "2026-08-01T08:10:00"},
+		{filepath.Join(t.TempDir(), "middle"), "Middle synthetic snapshot", "Middle synthetic summary.", "2026-08-01T09:05:00", "Middle synthetic memory.", "2026-08-01T08:05:00"},
 	}
 	for _, export := range directories {
 		if err := os.MkdirAll(export.path, 0o700); err != nil {
@@ -128,10 +129,10 @@ func TestMultipleClaudeWebExportsKeepNewestSnapshotAndOneMemory(t *testing.T) {
 		}
 		conversation, err := json.Marshal([]map[string]any{{
 			"uuid": "synthetic-overlap", "name": export.name, "summary": export.summary,
-			"created_at": "2026-08-01T09:00:00Z", "updated_at": export.updated,
+			"created_at": "2026-08-01T09:00:00", "updated_at": export.updated,
 			"chat_messages": []map[string]any{
-				{"uuid": "synthetic-human", "text": "Name the synthetic marker.", "sender": "human", "created_at": "2026-08-01T09:00:01Z"},
-				{"uuid": "synthetic-assistant", "text": "Glass Finch.", "sender": "assistant", "created_at": "2026-08-01T09:00:02Z", "parent_message_uuid": "synthetic-human"},
+				{"uuid": "synthetic-human", "text": "Name the synthetic marker.", "sender": "human", "created_at": "2026-08-01T09:00:01"},
+				{"uuid": "synthetic-assistant", "text": "Glass Finch.", "sender": "assistant", "created_at": "2026-08-01T09:00:02", "parent_message_uuid": "synthetic-human"},
 			},
 		}})
 		if err != nil {
@@ -140,8 +141,14 @@ func TestMultipleClaudeWebExportsKeepNewestSnapshotAndOneMemory(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(export.path, "conversations.json"), conversation, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		memory := `[{"uuid":"synthetic-overlap-memory","memory":"One synthetic memory."}]`
-		if err := os.WriteFile(filepath.Join(export.path, "memories.json"), []byte(memory), 0o600); err != nil {
+		memory, err := json.Marshal([]map[string]any{{
+			"uuid": "synthetic-overlap-memory", "memory": export.memory,
+			"updated_at": export.memoryUpdated,
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(export.path, "memories.json"), memory, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -154,6 +161,14 @@ func TestMultipleClaudeWebExportsKeepNewestSnapshotAndOneMemory(t *testing.T) {
 	if got := countRows(t, db.SQL(), "memories"); got != 1 {
 		t.Fatalf("memories = %d, want 1", got)
 	}
+	var memory, memoryUpdated string
+	if err := db.SQL().QueryRow(`SELECT content, json_extract(metadata, '$.updated_at') FROM memories`).
+		Scan(&memory, &memoryUpdated); err != nil {
+		t.Fatal(err)
+	}
+	if memory != directories[1].memory || memoryUpdated != directories[1].memoryUpdated {
+		t.Fatalf("newest memory = content %q updated %q", memory, memoryUpdated)
+	}
 	var ended, name, summary, updated string
 	var duration int
 	err := db.SQL().QueryRow(`SELECT ended_at, duration_minutes,
@@ -163,8 +178,8 @@ func TestMultipleClaudeWebExportsKeepNewestSnapshotAndOneMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ended != directories[0].updated || duration != 10 || name != directories[0].name ||
-		summary != directories[0].summary || updated != directories[0].updated {
+	if ended != directories[1].updated || duration != 10 || name != directories[1].name ||
+		summary != directories[1].summary || updated != directories[1].updated {
 		t.Fatalf("newest snapshot = ended %q duration %d name %q summary %q updated %q",
 			ended, duration, name, summary, updated)
 	}

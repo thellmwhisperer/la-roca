@@ -349,6 +349,12 @@ func validInstant(value string) string {
 	return ""
 }
 
+func ClaudeWebTimestampBefore(left, right string) bool {
+	leftTime, leftOK := parseISO(strings.TrimSpace(left))
+	rightTime, rightOK := parseISO(strings.TrimSpace(right))
+	return leftOK && rightOK && leftTime.Before(rightTime)
+}
+
 func openJSONArray(decoder *json.Decoder, label string) error {
 	token, err := decoder.Token()
 	if err != nil {
