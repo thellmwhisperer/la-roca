@@ -22,6 +22,7 @@ func TestBareLoginExactOutputWithoutSessions(t *testing.T) {
 	out := runRoot(t, Build{Version: "test"}, "login")
 	want := "Supported providers:\n" +
 		"  codex       subscription  ·  roca login codex\n" +
+		"  claude      local CLI     ·  roca login claude\n" +
 		"  deepseek    API key       ·  roca login deepseek\n" +
 		"  zai         API key       ·  roca login zai\n" +
 		"  xai         API key       ·  roca login xai\n" +
@@ -31,6 +32,7 @@ func TestBareLoginExactOutputWithoutSessions(t *testing.T) {
 		"  ollama: model qwen3.5:4b (built-in default · change with: models.ollama.model in " + configPath + ")\n" +
 		"Credential and session state:\n" +
 		"  codex: no session\n" +
+		"  claude: existing Claude Code session; La Roca stores no credential\n" +
 		"  deepseek: no stored API key\n" +
 		"  zai: no stored API key\n" +
 		"  xai: no stored API key\n" +
@@ -142,6 +144,28 @@ func TestLoginModelPersistsTheChoiceAndNarratesItsSource(t *testing.T) {
 		"forget it with `roca logout xai`\n"
 	if out != wantOut {
 		t.Fatalf("login narration changed:\n--- want ---\n%s--- got ---\n%s", wantOut, out)
+	}
+}
+
+func TestClaudeLoginUsesTheExistingLocalSession(t *testing.T) {
+	home := isolatedLoginHome(t)
+	out := runRoot(t, Build{Version: "test"}, "login", "claude", "--model", "claude-test")
+	for _, want := range []string{
+		"existing account session are working",
+		"managed by Claude Code; La Roca never reads or stores it",
+		"claude selected (claude-test",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("login output does not contain %q:\n%s", want, out)
+		}
+	}
+	file, err := os.ReadFile(filepath.Join(home, ".roca", "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(file), `order = ["claude", "codex", "ollama"]`) ||
+		!strings.Contains(string(file), `model = "claude-test"`) {
+		t.Fatalf("Claude choice was not persisted:\n%s", file)
 	}
 }
 
@@ -275,15 +299,19 @@ func TestLoginAndLogoutJSONContracts(t *testing.T) {
 			t.Fatalf("providers field missing or not an array")
 		}
 		all := provider.KeyProviders()
-		if len(providers) != 1+len(all) {
-			t.Errorf("expected %d providers, got %d", 1+len(all), len(providers))
+		if len(providers) != 2+len(all) {
+			t.Errorf("expected %d providers, got %d", 2+len(all), len(providers))
 		}
 		first, _ := providers[0].(map[string]any)
 		if first["name"] != provider.NameCodex || first["flow"] != "subscription" {
 			t.Errorf("codex entry wrong: %v", first)
 		}
+		claude, _ := providers[1].(map[string]any)
+		if claude["name"] != provider.NameClaude || claude["flow"] != "local_cli" {
+			t.Errorf("claude entry wrong: %v", claude)
+		}
 		for i, name := range all {
-			e, _ := providers[1+i].(map[string]any)
+			e, _ := providers[2+i].(map[string]any)
 			if e["name"] != name || e["flow"] != "api_key" {
 				t.Errorf("%s entry wrong: %v", name, e)
 			}

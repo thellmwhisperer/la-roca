@@ -16,3 +16,13 @@ Feature: Provider credentials
     Then the command exits with code 0
     And the credential for "xai" is absent
     And the output names the removed credential for "xai"
+
+  Scenario: Claude login verifies the existing local session without taking its credential
+    Given a fake Claude Code binary is available
+    When I log in to "claude" with model "claude-acceptance"
+    Then the command exits with code 0
+    And the configuration chooses model "claude-acceptance" for "claude"
+    And the output says La Roca never reads or stores the Claude credential
+    When I run Doctor
+    Then the command exits with code 0
+    And Doctor reports "claude" ready
