@@ -270,48 +270,21 @@ func TestSessionRenewsOnItsOwnAndPersistsTheResult(t *testing.T) {
 }
 
 func TestConcurrentSessionsRefreshOneRotatingTokenOnce(t *testing.T) {
-	var mu sync.Mutex
-	refreshes := 0
-	server := tokenServer(t, func(form url.Values) (int, map[string]any) {
-		mu.Lock()
-		defer mu.Unlock()
-		refreshes++
-		if refreshes > 1 || form.Get("refresh_token") != "rt-once" {
-			return http.StatusBadRequest, map[string]any{"error": "invalid_grant"}
-		}
-		return http.StatusOK, map[string]any{
-			"access_token": "fresh", "refresh_token": "rt-next", "expires_in": 3600,
-		}
+	initial := Token{AccessToken: "stale", RefreshToken: "rt-once", ExpiresAt: time.Now().Add(-time.Minute)}
+	assertConcurrentRefreshOnce(t, initial, func(session Session) (Token, error) {
+		return session.Token(context.Background())
 	})
-	store := Store{Path: filepath.Join(t.TempDir(), "credentials", "codex.json")}
-	if err := store.Save(Token{AccessToken: "stale", RefreshToken: "rt-once", ExpiresAt: time.Now().Add(-time.Minute)}); err != nil {
-		t.Fatal(err)
-	}
-	session := Session{Store: store, Flow: Flow{Endpoints: Endpoints{Token: server.URL, ClientID: "cid"}}}
-	start := make(chan struct{})
-	results := make(chan error, 2)
-	for range 2 {
-		go func() {
-			<-start
-			token, err := session.Token(context.Background())
-			if err == nil && token.AccessToken != "fresh" {
-				err = fmt.Errorf("access token = %q", token.AccessToken)
-			}
-			results <- err
-		}()
-	}
-	close(start)
-	for range 2 {
-		if err := <-results; err != nil {
-			t.Fatalf("concurrent token call: %v", err)
-		}
-	}
-	if refreshes != 1 {
-		t.Fatalf("refreshes = %d, want 1", refreshes)
-	}
 }
 
 func TestConcurrentExplicitRefreshesRotateOneTokenOnce(t *testing.T) {
+	rejected := Token{AccessToken: "rejected", RefreshToken: "rt-once", ExpiresAt: time.Now().Add(time.Hour)}
+	assertConcurrentRefreshOnce(t, rejected, func(session Session) (Token, error) {
+		return session.Refresh(context.Background(), rejected)
+	})
+}
+
+func assertConcurrentRefreshOnce(t *testing.T, initial Token, refresh func(Session) (Token, error)) {
+	t.Helper()
 	var mu sync.Mutex
 	refreshes := 0
 	server := tokenServer(t, func(form url.Values) (int, map[string]any) {
@@ -326,8 +299,7 @@ func TestConcurrentExplicitRefreshesRotateOneTokenOnce(t *testing.T) {
 		}
 	})
 	store := Store{Path: filepath.Join(t.TempDir(), "credentials", "codex.json")}
-	rejected := Token{AccessToken: "rejected", RefreshToken: "rt-once", ExpiresAt: time.Now().Add(time.Hour)}
-	if err := store.Save(rejected); err != nil {
+	if err := store.Save(initial); err != nil {
 		t.Fatal(err)
 	}
 	session := Session{Store: store, Flow: Flow{Endpoints: Endpoints{Token: server.URL, ClientID: "cid"}}}
@@ -336,7 +308,7 @@ func TestConcurrentExplicitRefreshesRotateOneTokenOnce(t *testing.T) {
 	for range 2 {
 		go func() {
 			<-start
-			token, err := session.Refresh(context.Background(), rejected)
+			token, err := refresh(session)
 			if err == nil && token.AccessToken != "fresh" {
 				err = fmt.Errorf("access token = %q", token.AccessToken)
 			}
