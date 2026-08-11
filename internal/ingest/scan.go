@@ -93,6 +93,7 @@ func Scan(roots Roots) Plan {
 	plan.add(scanCoworkSessions(roots), "cowork_files")
 	plan.add(scanSubagents(roots), "subagent_files")
 	plan.add(scanPiSessions(roots), "pi_session_files")
+	plan.add(scanClaudeWebExports(roots), "claude_web_export_files")
 	plan.add(existingFile(roots.OpenCodeDB, Target{
 		Kind: parsers.KindOpenCodeDB, SourceAgent: "opencode"}), "opencode_databases")
 	plan.add(existingFile(roots.HermesDB, Target{
@@ -130,6 +131,7 @@ func DetectAgents(roots Roots) []string {
 	}{
 		{"claude", claude},
 		{"claude-desktop", pathExists(roots.ClaudeDesktopSessions)},
+		{"claude-web", anyPathExists(roots.ClaudeWebExports)},
 		{"cowork", pathExists(roots.CoworkSessions)},
 		{"codex", pathExists(roots.CodexRoot) || pathExists(roots.CodexSessions) || isFile(roots.CodexStateDB)},
 		{"opencode", isFile(roots.OpenCodeDB)},
@@ -143,6 +145,43 @@ func DetectAgents(roots Roots) []string {
 		}
 	}
 	return detected
+}
+
+// scanClaudeWebExports reads only the two v1 files from directories the
+// operator declared. In particular it never walks projects/ or design_chats/.
+func scanClaudeWebExports(roots Roots) []Target {
+	var targets []Target
+	seen := map[string]bool{}
+	for _, root := range roots.ClaudeWebExports {
+		for _, shape := range []struct {
+			name string
+			kind parsers.Kind
+		}{
+			{"memories.json", parsers.KindClaudeWebMemories},
+			{"conversations.json", parsers.KindClaudeWebConversations},
+		} {
+			path := filepath.Join(root, shape.name)
+			key := realPath(path)
+			if !isFile(path) || seen[key] {
+				continue
+			}
+			seen[key] = true
+			targets = append(targets, Target{
+				Path: path, Kind: shape.kind, SourceAgent: "claude-web",
+				FileName: shape.name,
+			})
+		}
+	}
+	return targets
+}
+
+func anyPathExists(paths []string) bool {
+	for _, path := range paths {
+		if pathExists(path) {
+			return true
+		}
+	}
+	return false
 }
 
 // add files what one source found. Every source calls it exactly once, which is
