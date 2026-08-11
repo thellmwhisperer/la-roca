@@ -60,7 +60,7 @@ func renderFTS(plan Plan, coordinationLayers []string, limit int, joiner string)
 			"m.created_at AS created_at, 0 AS source_priority, f.rango AS rango "+
 			"FROM (%s) AS f JOIN memories AS m ON m.id = f.fila "+
 			"WHERE %s",
-		subquery("memories_fts", expression, "", "", limit),
+		subquery("memories_fts", expression, "", ""),
 		supersedeExclusion("m.id"))
 
 	if plan.Layer != "" {
@@ -78,16 +78,16 @@ func renderFTS(plan Plan, coordinationLayers []string, limit int, joiner string)
 		fmt.Sprintf(
 			"SELECT 'exchange', e.id, e.agent_text, e.agent_timestamp, 1 AS source_priority, g.rango "+
 				"FROM (%s) AS g JOIN exchanges AS e ON e.id = g.fila",
-			subquery("exchanges_fts", expression, "agent_text", "", limit)),
+			subquery("exchanges_fts", expression, "agent_text", "")),
 		fmt.Sprintf(
 			"SELECT 'human', h.id, h.human_text, h.human_timestamp, 1 AS source_priority, i.rango "+
 				"FROM (%s) AS i JOIN exchanges AS h ON h.id = i.fila",
 			subquery("exchanges_fts", expression, "human_text",
-				"human_text NOT LIKE '<task-notification%'", limit)),
+				"human_text NOT LIKE '<task-notification%'")),
 		fmt.Sprintf(
 			"SELECT 'thinking', t.id, t.full_text, NULL, 2 AS source_priority, j.rango "+
 				"FROM (%s) AS j JOIN thinking_blocks AS t ON t.id = j.fila",
-			subquery("thinking_fts", expression, "", "", limit)),
+			subquery("thinking_fts", expression, "", "")),
 	}
 	return strings.Join(parts, " UNION ALL ") +
 		fmt.Sprintf(" ORDER BY source_priority, rango LIMIT %d", limit), nil
@@ -99,7 +99,7 @@ func renderFTS(plan Plan, coordinationLayers []string, limit int, joiner string)
 // The per-column filter (`{column} : expression`) is what lets the two columns
 // of exchanges be queried separately over a single index: without it, a match in
 // what the agent said would count as a match in what the human asked.
-func subquery(table, expression, column, filter string, limit int) string {
+func subquery(table, expression, column, filter string) string {
 	match := expression
 	if column != "" {
 		match = fmt.Sprintf("{%s} : (%s)", column, expression)
@@ -108,10 +108,8 @@ func subquery(table, expression, column, filter string, limit int) string {
 	if filter != "" {
 		where += " AND " + filter
 	}
-	return fmt.Sprintf(
-		"SELECT rowid AS fila, bm25(%s) AS rango FROM %s WHERE %s "+
-			"ORDER BY rango LIMIT %d",
-		table, table, where, limit)
+	return fmt.Sprintf("SELECT rowid AS fila, bm25(%s) AS rango FROM %s WHERE %s",
+		table, table, where)
 }
 
 // supersedeExclusion is the corrected "current memories" filter: a memory

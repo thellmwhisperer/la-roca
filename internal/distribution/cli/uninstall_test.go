@@ -52,7 +52,7 @@ func TestAWiderInventoryStillDeletesNothingOfTheOperators(t *testing.T) {
 // Skill files live outside ~/.roca, under each runtime's own directory. The
 // purge inventory has to name them, or uninstall leaves them behind and the
 // surviving skill still instructs agents to call a binary that is gone.
-func TestThePurgeDeclaresSkillPaths(t *testing.T) {
+func TestThePurgeDoesNotClaimRuntimeSkillDirectories(t *testing.T) {
 	// A runtime directory the operator declared in their environment would land
 	// in the inventory too, and two tests here hand it straight to
 	// lifecycle.Apply, which calls os.RemoveAll on every entry: on a machine with
@@ -66,18 +66,48 @@ func TestThePurgeDeclaresSkillPaths(t *testing.T) {
 	paths := resolvedIn(t, home)
 	owned := ownedPaths(paths)
 
-	var found int
 	for _, path := range owned {
 		if strings.Contains(path, "skills") && strings.Contains(path, "roca") {
-			found++
+			t.Errorf("the data inventory claims a runtime skill directory: %s", path)
 		}
 		if !strings.HasPrefix(path, home) {
 			t.Errorf("the inventory reaches outside the resolved home:\n  %s\n  home is %s",
 				path, home)
 		}
 	}
-	if found < 5 {
-		t.Errorf("owned paths include %d skill directories, want at least 5", found)
+}
+
+func TestPurgePreservesGenericSiblingDirectoryContents(t *testing.T) {
+	home := t.TempDir()
+	paths := resolvedIn(t, home)
+	foreign := filepath.Join(paths.Backups, "operator.txt")
+	writeFile(t, foreign, "mine")
+	report := lifecycle.Plan{Owned: ownedPaths(paths), DataDir: dirOf(paths.DB)}.Apply()
+	if _, err := os.Stat(foreign); err != nil {
+		t.Fatalf("purge deleted an operator file from a generic directory: %v", err)
+	}
+	if len(report.Errors) == 0 {
+		t.Fatal("non-empty owned directory was silently treated as deleted")
+	}
+}
+
+func TestRecoveryBackupOwnershipIsProductSpecific(t *testing.T) {
+	dir := t.TempDir()
+	configFile := filepath.Join(dir, "config.toml")
+	writeFile(t, configFile+".bak", "operator")
+	writeFile(t, configFile+".roca.bak", "roca")
+	writeFile(t, configFile+".roca.bak.2", "roca")
+	paths, err := recoveryBackups(configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 2 {
+		t.Fatalf("owned recovery backups = %v", paths)
+	}
+	for _, path := range paths {
+		if path == configFile+".bak" {
+			t.Fatal("operator backup was claimed by the purge")
+		}
 	}
 }
 

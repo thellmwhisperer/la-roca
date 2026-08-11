@@ -37,6 +37,17 @@ func TestAppendWritesOneCredentialFreeDatedLine(t *testing.T) {
 	}
 }
 
+func TestAppendExistingDoesNotRecreateRemovedDirectories(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "removed")
+	writer := New(root)
+	if err := writer.AppendExisting(Executions, ExecutionRecord{}); err == nil {
+		t.Fatal("append unexpectedly created a missing log directory")
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("removed data directory was recreated: %v", err)
+	}
+}
+
 func TestRedactCoversTheDocumentedCredentialShapes(t *testing.T) {
 	secrets := []string{
 		"github_pat_11AA22BB33CC44DD55EE66FF77GG88HH99II",

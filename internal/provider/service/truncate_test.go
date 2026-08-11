@@ -27,3 +27,17 @@ func TestTruncateMarksEveryClippedEdgeWithoutDroppingTheExcerptStart(t *testing.
 		})
 	}
 }
+
+func TestMatchPositionTracksUnicodeCaseChanges(t *testing.T) {
+	for _, tc := range []struct {
+		text string
+		want int
+	}{
+		{"AȺneedle", 2},
+		{"Kneedle", 1},
+	} {
+		if got := matchPosition(tc.text, "needle"); got != tc.want {
+			t.Errorf("matchPosition(%q) = %d, want %d", tc.text, got, tc.want)
+		}
+	}
+}

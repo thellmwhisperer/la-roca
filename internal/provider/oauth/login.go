@@ -139,7 +139,7 @@ func (f Flow) Login(ctx context.Context, opts LoginOptions) (Token, error) {
 		case got.code == "":
 			return Token{}, fmt.Errorf("the callback came back with no code: start over")
 		}
-		return f.Exchange(ctx, got.code, pkce.Verifier)
+		return f.Exchange(waitCtx, got.code, pkce.Verifier)
 	}
 }
 

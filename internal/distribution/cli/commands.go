@@ -65,7 +65,7 @@ func initCommand(env *cliEnv) *cobra.Command {
 				return err
 			}
 			if choice == "reinitialize" {
-				for _, suffix := range []string{"", "-wal", "-shm"} {
+				for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
 					if err := os.Remove(paths.DB + suffix); err != nil && !os.IsNotExist(err) {
 						return fmt.Errorf("replace the existing database %s: %w", paths.DB, err)
 					}
@@ -246,6 +246,9 @@ func fileExists(path string) bool {
 // found and which model is going to answer. Neither phase can fail the command,
 // so both have to be readable.
 func renderBootstrap(env *cliEnv, result service.InitResult) {
+	for _, warning := range result.Warnings {
+		env.print("warning: %s", warning)
+	}
 	if result.Ingest != nil {
 		env.print("  agents detected: %s", detectedAgentsLine(result.Ingest.DetectedAgents))
 		env.print("  agents not found: %s", missingAgentsLine(result.Ingest.DetectedAgents))

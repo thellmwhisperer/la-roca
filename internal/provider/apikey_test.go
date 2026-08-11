@@ -3,6 +3,7 @@ package provider
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -48,6 +49,15 @@ func TestSaveAPIKeyRefusesAnEmptyKey(t *testing.T) {
 	}
 	if _, err := os.Stat(APIKeyPath(dir, NameZAI)); !os.IsNotExist(err) {
 		t.Fatalf("an empty key must not leave a file: %v", err)
+	}
+}
+
+func TestAPIKeyPathCannotEscapeTheCredentialDirectory(t *testing.T) {
+	dir := t.TempDir()
+	path := APIKeyPath(dir, "../../operator-secret")
+	rel, err := filepath.Rel(dir, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		t.Fatalf("credential path escaped: %q (relative %q, error %v)", path, rel, err)
 	}
 }
 

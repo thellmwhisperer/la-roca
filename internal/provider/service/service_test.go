@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -70,6 +71,21 @@ func TestInitCreatesTheDatabaseAndSyncsTheLayerRegistry(t *testing.T) {
 	}
 	if layers != 12 {
 		t.Errorf("layers synced = %d, want 12", layers)
+	}
+}
+
+func TestInitReportsPromptWriteFailureWithoutDiscardingItsResult(t *testing.T) {
+	paths := freshPaths(t)
+	if err := os.Mkdir(filepath.Join(paths.data, "prompt.md"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	svc := serviceOn(t, paths)
+	result, err := svc.Init(t.Context())
+	if err != nil {
+		t.Fatalf("database bootstrap failed with the prompt write: %v", err)
+	}
+	if result.Database == "" || len(result.Warnings) != 1 {
+		t.Fatalf("partial result = %+v", result)
 	}
 }
 

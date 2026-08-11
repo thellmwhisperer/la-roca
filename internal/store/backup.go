@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,7 +29,7 @@ func Backup(ctx context.Context, db *DB, dir string) (string, error) {
 	if _, err := db.sql.ExecContext(ctx, "VACUUM INTO ?", dest); err != nil {
 		return "", fmt.Errorf("copy the database to %q: %w", dest, err)
 	}
-	if err := verifyBackup(ctx, db, dest); err != nil {
+	if err := verifyBackup(ctx, db.sql, dest); err != nil {
 		return "", err
 	}
 	return dest, nil
@@ -40,11 +41,19 @@ func Backup(ctx context.Context, db *DB, dir string) (string, error) {
 // adoption-by-copy tool: init copies an existing database into La Roca's home,
 // and from that point the copy is the one operated on.
 func CopyDatabase(ctx context.Context, srcPath, destPath string) error {
-	src, err := Open(srcPath)
+	abs, err := filepath.Abs(srcPath)
+	if err != nil {
+		return fmt.Errorf("resolve the source database at %q: %w", srcPath, err)
+	}
+	dsn := "file:" + abs + "?" + url.Values{"mode": {"ro"}}.Encode()
+	src, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return fmt.Errorf("open the source database at %q: %w", srcPath, err)
 	}
 	defer src.Close()
+	if err := src.PingContext(ctx); err != nil {
+		return fmt.Errorf("open the source database at %q: %w", srcPath, err)
+	}
 
 	if _, err := os.Stat(destPath); err == nil {
 		return fmt.Errorf("%s already exists: refusing to overwrite it", destPath)
@@ -54,7 +63,7 @@ func CopyDatabase(ctx context.Context, srcPath, destPath string) error {
 		return fmt.Errorf("create the destination directory: %w", err)
 	}
 
-	if _, err := src.sql.ExecContext(ctx, "VACUUM INTO ?", destPath); err != nil {
+	if _, err := src.ExecContext(ctx, "VACUUM INTO ?", destPath); err != nil {
 		return fmt.Errorf("copy the database from %q to %q: %w", srcPath, destPath, err)
 	}
 
@@ -66,12 +75,23 @@ func CopyDatabase(ctx context.Context, srcPath, destPath string) error {
 
 // verifyBackup checks that the copy opens, that the engine considers it whole,
 // and that the identity tables carry the same rows as the original.
-func verifyBackup(ctx context.Context, src *DB, dest string) error {
+func verifyBackup(ctx context.Context, src *sql.DB, dest string) error {
 	copyDB, err := Open(dest)
 	if err != nil {
 		return fmt.Errorf("verify the backup %q: %w", dest, err)
 	}
 	defer copyDB.Close()
+	var sessionsFTS int
+	if err := copyDB.sql.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'sessions_fts'").Scan(&sessionsFTS); err != nil {
+		return fmt.Errorf("verify the backup %q: %w", dest, err)
+	}
+	if sessionsFTS == 1 {
+		if _, err := copyDB.sql.ExecContext(ctx,
+			"INSERT INTO sessions_fts(sessions_fts) VALUES ('rebuild')"); err != nil {
+			return fmt.Errorf("rebuild the session index in %q: %w", dest, err)
+		}
+	}
 
 	var integrity string
 	if err := copyDB.sql.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&integrity); err != nil {
@@ -82,7 +102,7 @@ func verifyBackup(ctx context.Context, src *DB, dest string) error {
 	}
 
 	for _, table := range identityTables {
-		expected, err := countRows(ctx, src.sql, table)
+		expected, err := countRows(ctx, src, table)
 		if err != nil {
 			return fmt.Errorf("verify the backup %q: %w", dest, err)
 		}

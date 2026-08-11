@@ -302,6 +302,9 @@ func TestCopyDatabaseCreatesAVerifiedCopyAndLeavesTheSourceIntact(t *testing.T) 
 			t.Fatalf("ApplySchema: %v", err)
 		}
 		seedIdentity(t, db)
+		if err := os.Chmod(db.Path(), 0o640); err != nil {
+			t.Fatal(err)
+		}
 
 		dest := filepath.Join(t.TempDir(), "roca.db")
 		if err := store.CopyDatabase(ctx, db.Path(), dest); err != nil {
@@ -322,6 +325,11 @@ func TestCopyDatabaseCreatesAVerifiedCopyAndLeavesTheSourceIntact(t *testing.T) 
 		if got := countMemories(t, db.SQL()); got != 1 {
 			t.Errorf("memories in the source after Copy = %d, want 1", got)
 		}
+		if info, err := os.Stat(db.Path()); err != nil {
+			t.Errorf("stat source after copy: %v", err)
+		} else if info.Mode().Perm() != 0o640 {
+			t.Errorf("source permissions changed to %v", info.Mode().Perm())
+		}
 	})
 
 	t.Run("refuses to overwrite an existing file", func(t *testing.T) {
@@ -339,6 +347,36 @@ func TestCopyDatabaseCreatesAVerifiedCopyAndLeavesTheSourceIntact(t *testing.T) 
 			t.Fatal("CopyDatabase overwrote an existing file")
 		}
 	})
+}
+
+func TestCopyDatabaseRebuildsSessionFTSAfterRowidRenumbering(t *testing.T) {
+	db := openFresh(t)
+	ctx := context.Background()
+	if err := store.ApplySchema(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.EnsureSearchSchema(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	execute(t, db, `INSERT INTO sessions (session_id, title) VALUES
+		('s1', 'first'), ('s2', 'discarded'), ('s3', 'target session')`)
+	execute(t, db, `DELETE FROM sessions WHERE session_id = 's2'`)
+	dest := filepath.Join(t.TempDir(), "copy.db")
+	if err := store.CopyDatabase(ctx, db.Path(), dest); err != nil {
+		t.Fatal(err)
+	}
+	copyDB, err := store.Open(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer copyDB.Close()
+	var sessionID string
+	err = copyDB.SQL().QueryRow(`SELECT s.session_id FROM sessions_fts
+		JOIN sessions AS s ON s.rowid = sessions_fts.rowid
+		WHERE sessions_fts MATCH 'target'`).Scan(&sessionID)
+	if err != nil || sessionID != "s3" {
+		t.Fatalf("session search mapped to %q: %v", sessionID, err)
+	}
 }
 
 // --- helpers ---

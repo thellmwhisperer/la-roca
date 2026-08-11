@@ -45,9 +45,8 @@ func yamlDeclare(r runtime, text string, entry fields) (string, error) {
 	}
 	if servers.Style == yaml.FlowStyle && (len(servers.Content) == 0 ||
 		(len(servers.Content) == 2 && servers.Content[0].Value == ServerName)) {
-		line, first, last := yamlFlowSpan(servers, lines)
-		return text[:offsets[line]+first] + renderYAMLFlow(entry) +
-			text[offsets[line]+last:], nil
+		first, last := yamlFlowSpan(servers, text, lines, offsets)
+		return text[:first] + renderYAMLFlow(entry) + text[last:], nil
 	}
 	// A flow mapping holding somebody else's server is refused instead of edited,
 	// the same way the TOML editor refuses an inline table. The block path below
@@ -93,8 +92,8 @@ func yamlRemove(r runtime, text string, entries []string) (string, error) {
 	lines, offsets := splitLines(text)
 	if servers.Style == yaml.FlowStyle && len(servers.Content) == 2 &&
 		servers.Content[0].Value == ServerName {
-		line, first, last := yamlFlowSpan(servers, lines)
-		return text[:offsets[line]+first] + "{}" + text[offsets[line]+last:], nil
+		first, last := yamlFlowSpan(servers, text, lines, offsets)
+		return text[:first] + "{}" + text[last:], nil
 	}
 	var firsts, lasts []int
 	for _, name := range entries {
@@ -126,11 +125,20 @@ func renderYAMLFlow(entry fields) string {
 	return "{" + ServerName + ": {" + strings.Join(parts, ", ") + "}}"
 }
 
-func yamlFlowSpan(node *yaml.Node, lines []string) (int, int, int) {
-	line, first := node.Line-1, node.Column-1
+func yamlFlowSpan(node *yaml.Node, text string, lines []string, offsets []int) (int, int) {
+	line := node.Line - 1
+	column := node.Column - 1
+	if line < 0 || line >= len(lines) {
+		return 0, 0
+	}
+	lineRunes := []rune(lines[line])
+	if column > len(lineRunes) {
+		column = len(lineRunes)
+	}
+	first := offsets[line] + len(string(lineRunes[:column]))
 	depth, quote := 0, byte(0)
-	for i := first; i < len(lines[line]); i++ {
-		char := lines[line][i]
+	for i := first; i < len(text); i++ {
+		char := text[i]
 		if quote != 0 {
 			// YAML's own rules, and they differ per quote style. Inside double
 			// quotes a backslash escapes the next character; inside single quotes
@@ -142,8 +150,7 @@ func yamlFlowSpan(node *yaml.Node, lines []string) (int, int, int) {
 			switch {
 			case quote == '"' && char == '\\':
 				i++
-			case quote == '\'' && char == '\'' &&
-				i+1 < len(lines[line]) && lines[line][i+1] == '\'':
+			case quote == '\'' && char == '\'' && i+1 < len(text) && text[i+1] == '\'':
 				i++
 			case char == quote:
 				quote = 0
@@ -157,11 +164,11 @@ func yamlFlowSpan(node *yaml.Node, lines []string) (int, int, int) {
 		} else if char == '}' {
 			depth--
 			if depth == 0 {
-				return line, first, i + 1
+				return first, i + 1
 			}
 		}
 	}
-	return line, first, len(lines[line])
+	return first, len(text)
 }
 
 func yamlDecode(_ runtime, text string) (map[string]any, error) {

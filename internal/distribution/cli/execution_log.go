@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,14 +15,6 @@ import (
 )
 
 func (env *cliEnv) logExecution(cmd *cobra.Command, started time.Time, code int, runErr error) error {
-	// A concurrently authorized purge may remove the data directory while a
-	// long-running command is still alive. Its eventual exit must not recreate
-	// operator-deleted state just to append a completion record.
-	if env.openedDir != "" {
-		if _, err := os.Stat(env.openedDir); os.IsNotExist(err) {
-			return nil
-		}
-	}
 	paths, err := env.resolvePaths()
 	if err != nil {
 		return fmt.Errorf("resolve the execution log location: %w", err)
@@ -39,13 +32,35 @@ func (env *cliEnv) logExecution(cmd *cobra.Command, started time.Time, code int,
 		record.Error = runErr.Error()
 	}
 	writer := logfile.New(filepath.Dir(paths.DB))
-	if err := writer.Append(logfile.Executions, record); err != nil {
+	appendRecord := writer.Append
+	if env.openedDir != "" {
+		appendRecord = writer.AppendExisting
+	}
+	if err := appendRecord(logfile.Executions, record); err != nil {
+		if env.openedDir != "" && os.IsNotExist(rootError(err)) {
+			return nil
+		}
 		return err
 	}
 	if commandName(cmd) == "ingest" && env.outcome != nil {
-		return writer.Append(logfile.Ingest, logfile.IngestRecord{
+		err := appendRecord(logfile.Ingest, logfile.IngestRecord{
 			Timestamp: started.UTC(), Result: env.outcome,
 		})
+		if env.openedDir != "" && os.IsNotExist(rootError(err)) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func rootError(err error) error {
+	for err != nil {
+		unwrapped := errors.Unwrap(err)
+		if unwrapped == nil {
+			return err
+		}
+		err = unwrapped
 	}
 	return nil
 }

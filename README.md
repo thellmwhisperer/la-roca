@@ -14,7 +14,12 @@ There is no hosted service, vector database, or agent framework to run.
 ## Install and start
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/thellmwhisperer/la-roca/main/install.sh | sh
+VERSION=v1.0.0
+INSTALLER_SHA256=4a3ebdbf23fdb643cc1e275a8af0a233264efdf0e4fa7b3137ef968d1f3fd7e4
+curl -fsSLO "https://github.com/thellmwhisperer/la-roca/releases/download/$VERSION/install.sh"
+ACTUAL_SHA256=$( (sha256sum install.sh 2>/dev/null || shasum -a 256 install.sh) | awk '{print $1}')
+[ "$ACTUAL_SHA256" = "$INSTALLER_SHA256" ] || exit 1
+sh ./install.sh --version "$VERSION"
 roca init
 roca query "what did we decide about the ingest matrix"
 ```
@@ -94,6 +99,12 @@ matching without imposing a corpus language.
 The default order is `codex, ollama`: an available subscription provider first
 and a local provider last. Configuration decides the order. `roca doctor`
 reports what is available and how to fix anything that is not.
+
+Natural-language questions are sent to the selected provider to generate SQL.
+When `--full` is requested, that provider also receives at most ten result rows,
+with each field truncated to 240 characters, to produce the prose answer. The
+database, full result set, and search index remain local. Configure only Ollama
+or turn models off when no query content may leave the machine.
 
 ```sh
 roca login codex

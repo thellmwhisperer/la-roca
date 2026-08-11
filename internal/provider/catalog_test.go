@@ -162,6 +162,7 @@ order = ["mycorp"]
 
 [models.mycorp]
 base_url = "https://llm.internal/v1"
+model = "mycorp-7b"
 api_key_env = "MYCORP_TOKEN"
 `)
 	base.Env = func(key string) string {

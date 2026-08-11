@@ -33,12 +33,10 @@ func TestYamlFlowSpanEndsAtTheClosingBrace(t *testing.T) {
 				t.Fatalf("the fixture is not YAML: %v", err)
 			}
 			servers := document.Content[0].Content[1]
-			line, first, last := yamlFlowSpan(servers, []string{want.line})
+			lines, offsets := splitLines(want.line)
+			first, last := yamlFlowSpan(servers, want.line, lines, offsets)
 
 			span := want.line[first:last]
-			if line != 0 {
-				t.Fatalf("line = %d, want 0", line)
-			}
 			if span[0] != '{' || span[len(span)-1] != '}' {
 				t.Errorf("span %q does not stop at the closing brace", span)
 			}
@@ -48,6 +46,23 @@ func TestYamlFlowSpanEndsAtTheClosingBrace(t *testing.T) {
 				t.Errorf("span swallowed %q: it is %q", got, span)
 			}
 		})
+	}
+}
+
+func TestYamlFlowSpanCoversMultilineMappings(t *testing.T) {
+	const before = "mcp_servers: {\n  roca: {command: old, args: [mcp, serve]}\n}\nafter: keep\n"
+	var document yaml.Node
+	if err := yaml.Unmarshal([]byte(before), &document); err != nil {
+		t.Fatal(err)
+	}
+	servers := document.Content[0].Content[1]
+	lines, offsets := splitLines(before)
+	first, last := yamlFlowSpan(servers, before, lines, offsets)
+	if got := before[first:last]; !strings.HasSuffix(got, "\n}") {
+		t.Fatalf("span = %q", got)
+	}
+	if got := before[last:]; got != "\nafter: keep\n" {
+		t.Fatalf("trailing content = %q", got)
 	}
 }
 

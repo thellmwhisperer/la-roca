@@ -279,6 +279,14 @@ func TestOpenAICompatibleModelsWithoutACredentialIsNotReady(t *testing.T) {
 	}
 }
 
+func TestCustomOpenAICompatibleProviderRequiresAModel(t *testing.T) {
+	if _, err := NewOpenAICompatible(OpenAIConfig{
+		Name: "mycorp", BaseURL: "https://models.example.test/v1",
+	}); err == nil || !strings.Contains(err.Error(), "model") {
+		t.Fatalf("missing model error = %v", err)
+	}
+}
+
 func TestOpenAICompatibleReportsTheStatusOfAFailedRequest(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, `{"error":"insufficient balance"}`, http.StatusPaymentRequired)

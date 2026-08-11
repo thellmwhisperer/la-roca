@@ -52,6 +52,14 @@ func TestMemoryWithoutFrontmatterIsAllBody(t *testing.T) {
 	}
 }
 
+func TestMemoryFrontmatterAcceptsCRLFAndQuotedScalars(t *testing.T) {
+	file := ParseMemoryFile([]byte("---\r\nname: 'portable'\r\ntype: \"feedback\"\r\ndescription: 'quoted value'\r\n---\r\nbody\r\n"))
+	if file.Name != "portable" || file.Type != "feedback" ||
+		file.Description != "quoted value" || file.Body != "body" {
+		t.Fatalf("frontmatter = %+v", file)
+	}
+}
+
 func TestAnEmptyMemoryFileIsSkipped(t *testing.T) {
 	for _, content := range []string{"", "   \n\n", "---\ntype: feedback\n---\n\n"} {
 		records, err := Parse(KindClaudeMemory, []byte(content), FileMeta{})

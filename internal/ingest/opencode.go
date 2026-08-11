@@ -285,7 +285,7 @@ func openCodeExchanges(messages, parts []openCodeRow) ([]parsers.Exchange, int) 
 		agent := lastCompletion(answers)
 		exchange.HumanTimestamp = isoFromMS(human)
 		exchange.AgentTimestamp = isoFromMS(agent)
-		if elapsed := int(agent - human); elapsed >= 0 {
+		if elapsed := int(agent - human); human > 0 && agent > 0 && elapsed >= 0 {
 			exchange.LatencyMS = &elapsed
 		}
 		for _, part := range answerParts {

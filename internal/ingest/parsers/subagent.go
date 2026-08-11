@@ -121,6 +121,7 @@ func ParseSubagent(content []byte, meta FileMeta) (Records, error) {
 		}
 		if text == "" {
 			discards = append(discards, Discard{Record: entry.record, Reason: "subagent record has no readable content"})
+			pendingAgent = false
 			continue
 		}
 		switch entry.Type {
@@ -135,6 +136,7 @@ func ParseSubagent(content []byte, meta FileMeta) (Records, error) {
 			agents = append(agents, side{text, entry.Timestamp, entry.record})
 			pendingAgent = true
 		default:
+			pendingAgent = false
 			discards = append(discards, Discard{Record: entry.record, Reason: "unsupported subagent record: " + entry.Type})
 		}
 	}

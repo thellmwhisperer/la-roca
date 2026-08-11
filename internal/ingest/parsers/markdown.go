@@ -4,6 +4,8 @@ import (
 	"maps"
 	"regexp"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // The two memory sources of the matrix that are plain text: Claude memory files
@@ -16,7 +18,7 @@ var codexTypeToLayer = map[string]string{
 }
 
 // frontmatter is the `---` block a memory file opens with.
-var frontmatter = regexp.MustCompile(`(?s)\A---\n(.*?)\n---\n(.*)\z`)
+var frontmatter = regexp.MustCompile(`(?s)\A---\r?\n(.*?)\r?\n---\r?\n(.*)\z`)
 
 // MemoryFile is a memory file already split into its declared header and body.
 type MemoryFile struct {
@@ -36,12 +38,13 @@ func ParseMemoryFile(content []byte) MemoryFile {
 		return MemoryFile{Body: strings.TrimSpace(text)}
 	}
 	file := MemoryFile{Body: strings.TrimSpace(match[2])}
-	for _, line := range strings.Split(match[1], "\n") {
+	header := strings.ReplaceAll(match[1], "\r\n", "\n")
+	for _, line := range strings.Split(header, "\n") {
 		key, value, found := strings.Cut(line, ":")
 		if !found {
 			continue
 		}
-		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
+		key, value = strings.TrimSpace(key), frontmatterValue(strings.TrimSpace(value))
 		if key == "" || value == "" {
 			continue
 		}
@@ -55,6 +58,18 @@ func ParseMemoryFile(content []byte) MemoryFile {
 		}
 	}
 	return file
+}
+
+func frontmatterValue(value string) string {
+	if len(value) < 2 || value[0] != value[len(value)-1] ||
+		(value[0] != '\'' && value[0] != '"') {
+		return value
+	}
+	var decoded string
+	if err := yaml.Unmarshal([]byte(value), &decoded); err != nil {
+		return value
+	}
+	return decoded
 }
 
 // memoryRecord is the row both of them produce: the same eight fields,

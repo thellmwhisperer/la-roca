@@ -55,11 +55,26 @@ func New(dataDir string) *Writer {
 }
 
 func (w *Writer) Append(stream string, record any) error {
+	return w.append(stream, record, true)
+}
+
+func (w *Writer) AppendExisting(stream string, record any) error {
+	return w.append(stream, record, false)
+}
+
+func (w *Writer) append(stream string, record any, createDir bool) error {
 	if w == nil || w.dir == "" {
 		return fmt.Errorf("the log directory is not configured")
 	}
-	if err := os.MkdirAll(w.dir, 0o700); err != nil {
-		return fmt.Errorf("create the log directory: %w", err)
+	if createDir {
+		if err := os.MkdirAll(w.dir, 0o700); err != nil {
+			return fmt.Errorf("create the log directory: %w", err)
+		}
+	} else if info, err := os.Stat(w.dir); err != nil || !info.IsDir() {
+		if err == nil {
+			err = fmt.Errorf("not a directory")
+		}
+		return fmt.Errorf("open the log directory: %w", err)
 	}
 	now := w.now().UTC()
 	path := filepath.Join(w.dir, stream+"-"+now.Format(time.DateOnly)+".jsonl")

@@ -901,6 +901,23 @@ func TestDatabaseReadersCountLiveTurnsAsDeferred(t *testing.T) {
 	}
 }
 
+func TestOpenCodeLatencyRequiresBothTimestamps(t *testing.T) {
+	completed := 2000.0
+	user := openCodeRow{id: "u"}
+	user.message.Role = "user"
+	answer := openCodeRow{id: "a"}
+	answer.message.Role = "assistant"
+	answer.message.ParentID = "u"
+	answer.message.Time.Completed = &completed
+	exchanges, deferred := openCodeExchanges([]openCodeRow{user, answer}, nil)
+	if deferred != 0 || len(exchanges) != 1 {
+		t.Fatalf("exchanges=%d deferred=%d", len(exchanges), deferred)
+	}
+	if exchanges[0].LatencyMS != nil {
+		t.Fatalf("latency without a human timestamp = %v", *exchanges[0].LatencyMS)
+	}
+}
+
 // A dry run over a database it cannot read answers anyway, and it says which of
 // the two reads failed. The state failure earns a warning; the row counts failed
 // in silence, so the report handed over `counts_before` as five zeros with

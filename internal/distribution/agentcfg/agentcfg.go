@@ -269,12 +269,12 @@ func Edit(name, path string, transform func(string) (string, error),
 // backUp copies the previous bytes aside before anything is replaced. An
 // earlier recovery copy outranks a later one, so `.bak` is never overwritten.
 func backUp(path string, previous []byte) (string, error) {
-	backup := path + ".bak"
+	backup := path + ".roca.bak"
 	for index := 1; ; index++ {
 		if _, err := os.Stat(backup); os.IsNotExist(err) {
 			break
 		}
-		backup = fmt.Sprintf("%s.bak.%d", path, index)
+		backup = fmt.Sprintf("%s.roca.bak.%d", path, index)
 	}
 	if err := os.WriteFile(backup, previous, 0o600); err != nil {
 		return "", fmt.Errorf("back up %s: %w", path, err)

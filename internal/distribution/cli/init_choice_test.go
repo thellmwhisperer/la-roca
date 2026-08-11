@@ -75,6 +75,24 @@ func TestInitOffersToKeepOrReinitializeItsHomeDatabase(t *testing.T) {
 	assertSchemaLine(t, "keep", out, "schema: 17 required structures verified")
 }
 
+func TestReinitializeRemovesTheRollbackJournal(t *testing.T) {
+	home := initChoiceHome(t)
+	path := filepath.Join(home, ".roca", "roca.db")
+	if out, err := runInitChoice(t, false, "", "init", "--db-path", path); err != nil {
+		t.Fatalf("seed init: %v\n%s", err, out)
+	}
+	journal := path + "-journal"
+	if err := os.WriteFile(journal, []byte("old data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runInitChoice(t, true, "reinitialize\n", "init"); err != nil {
+		t.Fatalf("reinitialize: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(journal); !os.IsNotExist(err) {
+		t.Fatalf("rollback journal survived: %v", err)
+	}
+}
+
 func TestInitNamesAnActualSchemaRepair(t *testing.T) {
 	home := initChoiceHome(t)
 	own := seedCandidate(t, filepath.Join(home, ".roca", "roca.db"))

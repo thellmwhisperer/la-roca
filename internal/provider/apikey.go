@@ -2,6 +2,7 @@ package provider
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,7 +14,7 @@ import (
 // credentials directory. The suffix keeps it apart from the subscription
 // session files (codex.json).
 func APIKeyFile(name string) string {
-	return normalize(name) + ".key"
+	return url.QueryEscape(normalize(name)) + ".key"
 }
 
 // APIKeyPath is where a key-based provider's credential lives.

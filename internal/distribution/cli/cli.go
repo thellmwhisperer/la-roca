@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
@@ -97,8 +98,8 @@ func rootCommand(env *cliEnv) *cobra.Command {
 			"\n" +
 			"It reads what Claude, Codex, OpenCode and the rest write to disk, normalizes\n" +
 			"that into one local SQLite database, and answers natural-language questions\n" +
-			"about it. Nothing leaves this machine: the database and its search index\n" +
-			"stay beside the binary on the operator's computer.",
+			"about it. The database and search index stay on this machine. Natural-language\n" +
+			"questions, and up to ten result rows for --full, go to the selected model provider.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		// `roca --version` is the health check `install.sh` and `roca update` run
@@ -210,6 +211,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		env.finishIngestProgress()
 		return nil, err
 	}
+	_ = os.MkdirAll(filepath.Join(filepath.Dir(paths.DB), logfile.DirName), 0o700)
 	env.openedDir = filepath.Dir(paths.DB)
 	return svc, nil
 }

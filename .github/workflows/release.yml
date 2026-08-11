@@ -23,6 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          persist-credentials: false
           # The tag, and its whole history: `make dist` reads the version from
           # the workflow and not from git, but the acceptance suite and the
           # generated notes want the repository as it really is.
@@ -72,8 +73,9 @@ jobs:
         env:
           VERSION: ${{ inputs.tag || github.ref_name }}
         run: |
+          cp install.sh bin/install.sh
           cd bin
-          sha256sum roca-"$VERSION"-* > checksums.txt
+          sha256sum roca-"$VERSION"-* install.sh > checksums.txt
           cat checksums.txt
 
       # The binaries first and checksums.txt last, in two commands, because the
@@ -89,4 +91,5 @@ jobs:
             gh release create "$VERSION" --verify-tag \
               --title "roca $VERSION" --generate-notes
           gh release upload "$VERSION" --clobber bin/roca-"$VERSION"-*
+          gh release upload "$VERSION" --clobber bin/install.sh
           gh release upload "$VERSION" --clobber bin/checksums.txt

@@ -6,13 +6,16 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/lifecycle"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
+	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 )
 
@@ -259,11 +262,11 @@ func recoveryBackups(configFile string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read recovery backups beside %s: %w", configFile, err)
 	}
-	base := filepath.Base(configFile)
+	base := filepath.Base(configFile) + ".roca.bak"
 	var paths []string
 	for _, entry := range entries {
 		name := entry.Name()
-		if entry.IsDir() || !strings.HasPrefix(name, base+".bak") {
+		if entry.IsDir() || !recoveryBackupName(name, base) {
 			continue
 		}
 		paths = append(paths, filepath.Join(dir, name))
@@ -271,8 +274,20 @@ func recoveryBackups(configFile string) ([]string, error) {
 	return paths, nil
 }
 
-// ownedPaths is the declaration: every path this product creates in an
-// installation, listed once. It is a declaration, not a filesystem walk.
+func recoveryBackupName(name, base string) bool {
+	if name == base {
+		return true
+	}
+	suffix := strings.TrimPrefix(name, base+".")
+	if suffix == name || suffix == "" {
+		return false
+	}
+	_, err := strconv.ParseUint(suffix, 10, 64)
+	return err == nil
+}
+
+// ownedPaths is the declaration of exact product paths and product file-name
+// families. Directories are included only so lifecycle can remove them empty.
 //
 // The journals are named explicitly because SQLite writes them beside the
 // database and a WAL left behind is a file with the operator's data in it.
@@ -280,18 +295,55 @@ func ownedPaths(paths config.Paths) []string {
 	dataDir := dirOf(paths.DB)
 	owned := []string{
 		paths.DB, paths.DB + "-wal", paths.DB + "-shm", paths.DB + "-journal",
-		paths.Config, paths.Backups, filepath.Join(dataDir, "cache"), paths.Credentials,
-		filepath.Join(dataDir, "prompt.md"), filepath.Join(dataDir, logfile.DirName),
+		paths.Config, filepath.Join(dataDir, "prompt.md"),
 	}
-	// Skill files live under each runtime's own directory, outside ~/.roca.
-	for _, runtime := range skill.Runtimes() {
-		path, err := skill.Path(runtime, paths.Home, os.Getenv)
-		if err != nil {
+	backupPrefix := strings.TrimSuffix(filepath.Base(paths.DB), ".db") + "."
+	owned = append(owned, ownedFiles(paths.Backups, func(name string) bool {
+		if !strings.HasPrefix(name, backupPrefix) || !strings.HasSuffix(name, ".backup.db") {
+			return false
+		}
+		stamp := strings.TrimSuffix(strings.TrimPrefix(name, backupPrefix), ".backup.db")
+		_, err := time.Parse("20060102T150405Z", stamp)
+		return err == nil
+	})...)
+	cacheDir := filepath.Join(dataDir, "cache")
+	owned = append(owned, filepath.Join(cacheDir, modelsDevCacheFile))
+	owned = append(owned, filepath.Join(paths.Credentials, provider.FileCodexSession))
+	for _, name := range provider.KeyProviders() {
+		owned = append(owned, provider.APIKeyPath(paths.Credentials, name))
+	}
+	logDir := filepath.Join(dataDir, logfile.DirName)
+	owned = append(owned, ownedFiles(logDir, ownedLogName)...)
+	owned = append(owned, paths.Backups, cacheDir, paths.Credentials, logDir)
+	return owned
+}
+
+func ownedFiles(dir string, owns func(string) bool) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var paths []string
+	for _, entry := range entries {
+		if !entry.IsDir() && owns(entry.Name()) {
+			paths = append(paths, filepath.Join(dir, entry.Name()))
+		}
+	}
+	return paths
+}
+
+func ownedLogName(name string) bool {
+	for _, stream := range []string{logfile.Executions, logfile.MCPAudit, logfile.Ingest} {
+		prefix := stream + "-"
+		if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, ".jsonl") {
 			continue
 		}
-		owned = append(owned, filepath.Dir(path))
+		stamp := strings.TrimSuffix(strings.TrimPrefix(name, prefix), ".jsonl")
+		if _, err := time.Parse(time.DateOnly, stamp); err == nil {
+			return true
+		}
 	}
-	return owned
+	return false
 }
 
 // scrubDBPaths takes the database's location out of error PROSE. withoutDBPaths

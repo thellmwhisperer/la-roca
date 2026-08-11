@@ -92,9 +92,9 @@ func sortByDepth(paths []string) {
 	})
 }
 
-// remove deletes one owned path, directory or file, and records which of the
-// three things happened. A path that is not there is `absent`, and absent is
-// not an error: it is the state after the previous run.
+// remove deletes one owned path and records which of the three things happened.
+// Directories are removed only when empty. A path that is not there is `absent`,
+// and absent is not an error: it is the state after the previous run.
 func (r *Report) remove(path string) {
 	if path == "" {
 		return
@@ -102,7 +102,7 @@ func (r *Report) remove(path string) {
 	if _, err := os.Lstat(path); os.IsNotExist(err) {
 		return
 	}
-	if err := os.RemoveAll(path); err != nil {
+	if err := os.Remove(path); err != nil {
 		r.fail("delete %s: %v", path, err)
 		return
 	}

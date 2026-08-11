@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -263,6 +264,43 @@ func TestLoginGivesUpAtItsDeadlineWithoutHangingForever(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Fatalf("it waited %v past its deadline", elapsed)
+	}
+}
+
+func TestLoginDeadlineAlsoBoundsTheTokenExchange(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer func() {
+		close(release)
+		server.Close()
+	}()
+	flow := loginFlow(t, server.URL)
+	started := time.Now()
+	_, err := flow.Login(context.Background(), LoginOptions{
+		Out: &bytes.Buffer{},
+		OpenBrowser: func(raw string) error {
+			parsed, _ := url.Parse(raw)
+			state := url.QueryEscape(parsed.Query().Get("state"))
+			go func() {
+				res, requestErr := http.Get(flow.Redirect + "?code=c&state=" + state)
+				if requestErr == nil {
+					res.Body.Close()
+				}
+			}()
+			return nil
+		},
+		Timeout: 150 * time.Millisecond,
+	})
+	if err == nil {
+		t.Fatal("unbounded token exchange returned no error")
+	}
+	if time.Since(started) > time.Second {
+		t.Fatalf("token exchange exceeded the login deadline: %v", time.Since(started))
 	}
 }
 

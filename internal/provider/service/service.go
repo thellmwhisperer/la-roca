@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
@@ -134,6 +135,7 @@ type InitResult struct {
 	Ingest         *IngestResult `json:"ingest"`
 	PromptPath     string        `json:"prompt_path"`
 	Prompt         string        `json:"-"`
+	Warnings       []string      `json:"warnings,omitempty"`
 	RowsBefore     ingest.Tables `json:"-"`
 	SetupElapsedMS int64         `json:"-"`
 	ModelElapsedMS int64         `json:"-"`
@@ -251,7 +253,8 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 	result.PromptPath = filepath.Join(s.dataDir(), "prompt.md")
 	result.Prompt = presentationPrompt
 	if err := os.WriteFile(result.PromptPath, []byte(result.Prompt), 0o600); err != nil {
-		return InitResult{}, fmt.Errorf("write the agent prompt at %s: %w", result.PromptPath, err)
+		result.Warnings = append(result.Warnings,
+			fmt.Sprintf("write the agent prompt at %s: %v", result.PromptPath, err))
 	}
 	result.TotalElapsedMS = time.Since(started).Milliseconds()
 	return result, nil
@@ -421,14 +424,27 @@ func btoi(value bool) int {
 }
 
 func matchPosition(text, term string) int {
-	lower := strings.ToLower(text)
+	lower, positions := lowerWithPositions(text)
 	for _, part := range strings.Split(term, "+") {
 		if part == "" {
 			continue
 		}
 		if i := strings.Index(lower, strings.ToLower(part)); i >= 0 {
-			return len([]rune(text[:i]))
+			return positions[i]
 		}
 	}
 	return -1
+}
+
+func lowerWithPositions(text string) (string, []int) {
+	var lower strings.Builder
+	positions := make([]int, 0, len(text))
+	for position, char := range []rune(text) {
+		folded := string(unicode.ToLower(char))
+		lower.WriteString(folded)
+		for range len(folded) {
+			positions = append(positions, position)
+		}
+	}
+	return lower.String(), positions
 }

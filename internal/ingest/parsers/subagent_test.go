@@ -44,6 +44,23 @@ func TestSubagentIsItsOwnSessionUnderItsParent(t *testing.T) {
 	}
 }
 
+func TestSubagentDoesNotMergeAcrossDiscardedRecords(t *testing.T) {
+	lines := []string{
+		`{"type":"user","sessionId":"p","agentId":"c","message":{"content":"question"}}`,
+		`{"type":"assistant","sessionId":"p","agentId":"c","message":{"content":"first"}}`,
+		`{"type":"progress","sessionId":"p","agentId":"c","message":{"content":"gap"}}`,
+		`{"type":"assistant","sessionId":"p","agentId":"c","message":{"content":"second"}}`,
+	}
+	records, err := Parse(KindSubagent, []byte(strings.Join(lines, "\n")+"\n"),
+		FileMeta{Path: "/w/.claude/projects/-w-demo/sess/subagents/c.jsonl"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := records.Sessions[0].Exchanges[0].AgentText; got != "first" {
+		t.Fatalf("agent text merged across a discard: %q", got)
+	}
+}
+
 func TestSubagentWithoutAnAgentIDKeepsTheSessionAndDeclaresNoParent(t *testing.T) {
 	content := `{"type":"user","sessionId":"solo-1","timestamp":"2026-08-01T12:00:00Z","message":{"content":"hello"}}
 {"type":"assistant","sessionId":"solo-1","timestamp":"2026-08-01T12:00:01Z","message":{"content":[{"type":"text","text":"bye"}]}}`

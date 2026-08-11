@@ -60,12 +60,17 @@ USAGE
 say()  { printf '%s\n' "$*"; }
 die()  { printf 'install.sh: %s\n' "$*" >&2; exit 1; }
 
+require_value() {
+  [ "$#" -ge 2 ] || die "$1 needs a value"
+  case "$2" in --*) die "$1 needs a value, not $2" ;; esac
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
-    --repo)    REPO="${2:-}"; shift 2 ;;
-    --version) VERSION="${2:-}"; shift 2 ;;
-    --prefix)  PREFIX="${2:-}"; shift 2 ;;
-    --api)     API="${2:-}"; shift 2 ;;
+    --repo)    require_value "$@"; REPO="$2"; shift 2 ;;
+    --version) require_value "$@"; VERSION="$2"; shift 2 ;;
+    --prefix)  require_value "$@"; PREFIX="$2"; shift 2 ;;
+    --api)     require_value "$@"; API="$2"; shift 2 ;;
     --force)   FORCE=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *)         die "I do not understand $1. Run --help." ;;
@@ -313,7 +318,8 @@ SUMS_DOWNLOAD_URL="https://github.com/$REPO/releases/download/$TAG/checksums.txt
 # Already there and already this version: say so and touch nothing. The inode
 # stays what it was, which is what a script reinstalling in a loop needs.
 if [ -x "$TARGET" ] && [ "$FORCE" -eq 0 ]; then
-  if version_of "$TARGET" | grep -q -- "$TAG"; then
+  INSTALLED_VERSION=$(version_of "$TARGET" | awk 'NR == 1 && $1 == "roca" { print $2 }')
+  if [ "$INSTALLED_VERSION" = "$TAG" ]; then
     say "roca $TAG is already installed at $TARGET"
     exit 0
   fi

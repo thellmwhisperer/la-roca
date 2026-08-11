@@ -110,11 +110,16 @@ func NewOpenAICompatible(cfg OpenAIConfig) (*OpenAICompatible, error) {
 			"the provider %q declares no base_url and this version has no preset for it: "+
 				"write base_url and model in [models.%s]", name, name)
 	}
+	model := firstNonEmpty(cfg.Model, preset.Model)
+	if model == "" {
+		return nil, fmt.Errorf(
+			"the provider %q declares no model: write model in [models.%s]", name, name)
+	}
 	return &OpenAICompatible{
 		name:       name,
 		label:      firstNonEmpty(preset.Label, name),
 		baseURL:    normalizeBaseURL(baseURL),
-		model:      firstNonEmpty(cfg.Model, preset.Model),
+		model:      model,
 		apiKey:     cfg.APIKey,
 		keyEnv:     preset.KeyEnv,
 		envAliases: preset.EnvAliases,
