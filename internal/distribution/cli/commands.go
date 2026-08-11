@@ -358,8 +358,9 @@ func initModelChange(name, model, path string) string {
 	orderOverride := strings.TrimSpace(os.Getenv(provider.EnvOrder)) != ""
 	modelOverrides := initModelEnvironmentOverrides(name, model, file)
 	change := fmt.Sprintf("roca model set <id> or models.%s.model in %s", name, path)
+	effectiveChange := change
 	if orderOverride {
-		change = "models.<provider>.model in " + path
+		effectiveChange = "models.<provider>.model in " + path
 	}
 
 	var governing, unset []string
@@ -371,10 +372,13 @@ func initModelChange(name, model, path string) string {
 		governing = append(governing, modelOverrides[0])
 		unset = append(unset, modelOverrides...)
 	}
-	guidance := change
+	guidance := effectiveChange
 	if len(governing) > 0 {
 		guidance = fmt.Sprintf("change %s directly; or unset %s before using %s",
-			strings.Join(governing, " and "), strings.Join(unset, " and "), change)
+			strings.Join(governing, " and "), strings.Join(unset, " and "), effectiveChange)
+	}
+	if orderOverride {
+		guidance = change + "; " + guidance
 	}
 	if transport := initModelTransportOverride(name, path, file); transport != "" {
 		guidance += "; transport is governed by " + transport +
