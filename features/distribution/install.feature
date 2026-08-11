@@ -20,6 +20,15 @@ Feature: The full installation cycle
     And running "roca --version" exits with code 0
     And the output of "roca --version" contains the version and the source SHA
 
+  @fast
+  Scenario: Querying works without anything having been started
+    Given La Roca is installed and initialized
+    And the runtime is not started
+    When I run "roca query 'how many memories are there' --json"
+    Then the command exits with code 0
+    And the JSON output has "path" not empty
+    And no resident process has been started
+
   @fast @acceptance
   Scenario: A half installation converges on the next one
     Given La Roca is installed and initialized

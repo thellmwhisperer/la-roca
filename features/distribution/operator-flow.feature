@@ -56,3 +56,11 @@ Feature: The operator's real flow
     Then the command exits with code 1
     And the output names what is published and how to install it
     And the previous database and configuration are still intact
+
+  @acceptance
+  Scenario: Interactive uninstall with the operator's answer
+    Given La Roca is installed and initialized with data
+    When I run "roca uninstall" and answer "n" to the question about keeping data
+    Then the command exits with code 0
+    And the output contains "purged: yes"
+    And no Roca artefact is left in the HOME

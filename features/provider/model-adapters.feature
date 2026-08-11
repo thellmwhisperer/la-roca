@@ -22,12 +22,35 @@ Feature: Frontier with a local floor
     And the local provider has received no request
 
   @fast
+  Scenario: Without network, the cascade drops to the local model unaided
+    Given there is a valid credential for the frontier provider
+    And there is no network
+    And the local model is available
+    When I run "roca query 'what decisions were made about the format' --json"
+    Then the command exits with code 0
+    And the JSON output has "sql_provider" equal to "ollama"
+    And the JSON output has "path" equal to "model"
+    And the output declares that it degraded to the local floor
+    And no action has been asked of the operator
+
+  @fast
   Scenario: Without a credential, the cascade drops to the local model
     Given there is no frontier provider credential
     And the local model is available
     When I run "roca query 'what decisions were made about the format' --json"
     Then the command exits with code 0
     And the JSON output has "sql_provider" equal to "ollama"
+
+  @fast
+  Scenario: With no frontier and no local, the failure is clear and actionable
+    Given there is no frontier provider credential
+    And the local model is not available
+    When I run "roca query 'what decisions were made about the format' --json"
+    Then the command exits with a code other than 0
+    And the JSON output has "degraded" equal to "model_unavailable"
+    And the output names which providers were tried and why each one failed
+    And the output names the exact command to install or start the local model
+    And the output contains no traceback
 
   @fast
   Scenario: An unknown provider in the configuration kills nothing
