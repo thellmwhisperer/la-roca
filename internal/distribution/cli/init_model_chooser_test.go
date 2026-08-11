@@ -146,6 +146,84 @@ func TestTTYInitWritesSurgicallyWithBackupAndNamesIt(t *testing.T) {
 	}
 }
 
+func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
+	tests := []struct {
+		name    string
+		prepare func(*testing.T, string, string)
+		input   string
+		backend chooserTestBackend
+		want    string
+		avoid   string
+	}{
+		{
+			name: "environment order",
+			prepare: func(t *testing.T, _, bin string) {
+				fakeModelCLI(t, bin, provider.NameClaude)
+				fakeModelCLI(t, bin, provider.NameCodex)
+				t.Setenv("ROCA_MODELS_ORDER", provider.NameCodex)
+			},
+			input: "sonnet\n\n",
+			want:  "answering: codex/" + provider.DefaultCodexModel,
+			avoid: "answering: claude/sonnet",
+		},
+		{
+			name: "provider model environment",
+			prepare: func(t *testing.T, _, _ string) {
+				t.Setenv("ROCA_OLLAMA_MODEL", "environment-model")
+			},
+			input: "local-one\n\n",
+			backend: chooserTestBackend{catalogues: map[string]modelCatalogue{
+				provider.NameOllama: {IDs: []string{"local-one"}},
+			}},
+			want:  "answering: ollama/environment-model",
+			avoid: "answering: ollama/local-one",
+		},
+		{
+			name: "persisted base URL",
+			prepare: func(t *testing.T, home, bin string) {
+				fakeModelCLI(t, bin, provider.NameClaude)
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path != "/v1/models" {
+						http.NotFound(w, r)
+						return
+					}
+					_, _ = w.Write([]byte(`{"data":[]}`))
+				}))
+				t.Cleanup(server.Close)
+				writeInitChooserConfig(t, home, fmt.Sprintf("[models]\norder = [\"ollama\"]\n\n[models.claude]\nbase_url = %q\napi_key = \"synthetic-key\"\nmodel = \"remote-old\"\n", server.URL+"/v1"))
+			},
+			input: "sonnet\n\n",
+			want:  "answering: claude/sonnet",
+			avoid: "uses the existing local CLI session",
+		},
+		{
+			name: "persisted custom command",
+			prepare: func(t *testing.T, home, bin string) {
+				fakeModelCLI(t, bin, provider.NameClaude)
+				writeInitChooserConfig(t, home, "[models]\norder = [\"ollama\"]\n\n[models.claude]\ncommand = [\"missing-custom-claude\", \"{prompt}\"]\nmodel = \"custom-old\"\n\n[models.ollama]\nmodel = \"local-fallback\"\n")
+			},
+			input: "sonnet\n\n",
+			want:  "answering: ollama/local-fallback",
+			avoid: "answering: claude/sonnet",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			home, bin := initChooserHome(t)
+			test.prepare(t, home, bin)
+			out, err := runInitChooser(t, true, test.input, test.backend,
+				"init", "--db-path", filepath.Join(home, ".roca", "roca.db"))
+			if err != nil {
+				t.Fatalf("init: %v\n%s", err, out)
+			}
+			if !strings.Contains(out, test.want) || test.avoid != "" && strings.Contains(out, test.avoid) {
+				t.Fatalf("effective choice mismatch: want %q and avoid %q:\n%s", test.want, test.avoid, out)
+			}
+		})
+	}
+}
+
 func TestNonTTYInitPrintsOneAnsweringAlertAndDoesNotWriteConfig(t *testing.T) {
 	home, bin := initChooserHome(t)
 	fakeModelCLI(t, bin, provider.NameClaude)
@@ -197,10 +275,13 @@ func initChooserHome(t *testing.T) (string, string) {
 	t.Setenv("ROCA_DB_PATH", "")
 	t.Setenv("ROCA_CONFIG", "")
 	t.Setenv("ROCA_MODELS_ORDER", "")
+	t.Setenv("ROCA_CODEX_MODEL", "")
+	t.Setenv("ROCA_OLLAMA_MODEL", "")
+	t.Setenv("ROCA_MODEL", "")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/tags":
-			_, _ = w.Write([]byte(`{"models":[]}`))
+			_, _ = w.Write([]byte(`{"models":[{"name":"local-one"},{"name":"environment-model"},{"name":"local-fallback"}]}`))
 		case "/api/chat":
 			_, _ = w.Write([]byte(`{"message":{"content":"SELECT 1"}}`))
 		default:
@@ -210,6 +291,17 @@ func initChooserHome(t *testing.T) (string, string) {
 	t.Cleanup(server.Close)
 	t.Setenv("ROCA_OLLAMA_BASE_URL", server.URL)
 	return home, bin
+}
+
+func writeInitChooserConfig(t *testing.T, home, text string) {
+	t.Helper()
+	path := filepath.Join(home, ".roca", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func fakeModelCLI(t *testing.T, bin, name string) {

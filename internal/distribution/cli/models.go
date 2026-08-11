@@ -220,11 +220,49 @@ func (env *cliEnv) chooseInitModel(ctx context.Context, input *bufio.Reader,
 	} else {
 		env.initSay("configuration unchanged: %s", outcome.Path)
 	}
-	result.Model = &service.InitModel{
-		Ready: true, Provider: harness, Model: model,
-		ExternalCredential: slices.Contains(provider.DetectedCommandPresets(nil), harness),
+	result.Model, err = effectiveInitModel(ctx, paths)
+	if err != nil {
+		return result, err
 	}
+	result.FactoryDefault = false
+	result.FactoryDefaultProvider = ""
 	return result, nil
+}
+
+func effectiveInitModel(ctx context.Context, paths config.Paths) (*service.InitModel, error) {
+	file, err := config.LoadFile(paths.Config)
+	if err != nil {
+		return nil, err
+	}
+	cascade, err := provider.BuildCascade(provider.Settings{
+		File: file, Credentials: paths.Credentials, RunnerDir: paths.Runner, Env: os.Getenv,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("resolve the effective model choice from %s: %w", paths.Config, err)
+	}
+	if cascade.Disabled {
+		return &service.InitModel{Disabled: true, Reason: "the model is turned off in the configuration"}, nil
+	}
+	if len(cascade.Providers) == 0 {
+		return &service.InitModel{
+			Reason: "no model provider is configured",
+			Action: "declare one under [models] in " + paths.Config,
+		}, nil
+	}
+	gate := &service.InitModel{}
+	for index, attempt := range cascade.Diagnose(ctx) {
+		if attempt.Ready {
+			credential, external := cascade.Providers[index].(interface{ ExternalCredential() bool })
+			return &service.InitModel{
+				Ready: true, Provider: attempt.Name, Model: attempt.ModelID,
+				ExternalCredential: external && credential.ExternalCredential(),
+			}, nil
+		}
+		if gate.Reason == "" {
+			gate.Provider, gate.Reason, gate.Action = attempt.Name, attempt.Reason, attempt.Action
+		}
+	}
+	return gate, nil
 }
 
 func (env *cliEnv) discoverInitModels(ctx context.Context, paths config.Paths,
