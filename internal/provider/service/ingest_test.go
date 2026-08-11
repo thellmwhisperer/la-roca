@@ -87,6 +87,35 @@ func TestTheDryRunThroughTheServiceTouchesNothing(t *testing.T) {
 	}
 }
 
+func TestInitBedrockIncludesTheDeclaredAnthropicExport(t *testing.T) {
+	export := t.TempDir()
+	for _, name := range []string{"conversations.json", "memories.json"} {
+		raw, err := os.ReadFile(filepath.Join("..", "..", "ingest", "testdata", "anthropic-export", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(export, name), raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	paths := freshPaths(t)
+	svc, err := service.Open(service.Options{
+		DBPath: paths.db, BackupDir: paths.backups, DataDir: paths.data,
+		Sources: ingest.Roots{ClaudeWebExports: []string{export}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { svc.Close() })
+	result, err := svc.Init(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Bedrock == nil || result.Bedrock.Timestamp != "2025-04-02T07:00:00.000Z" {
+		t.Fatalf("init bedrock = %+v", result.Bedrock)
+	}
+}
+
 // serviceOverTheSources opens an installation whose sources are the sandbox home's,
 // with no model cascade: the ingest never needs one.
 func serviceOverTheSources(t *testing.T, home string) *service.Service {

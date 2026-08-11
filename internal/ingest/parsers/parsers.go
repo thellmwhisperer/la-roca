@@ -22,7 +22,7 @@ import (
 // never parsed as a Claude one merely because it also ends in `.jsonl`.
 type Kind string
 
-// The v1 source matrix has nine families, and none of them is lost.
+// The source matrix names every supported artefact shape.
 const (
 	// KindClaudeSession is a Claude Code transcript under ~/.claude/projects.
 	KindClaudeSession Kind = "claude_session"
@@ -49,6 +49,10 @@ const (
 	// names every source the ingest state table can hold.
 	KindOpenCodeDB Kind = "opencode_database"
 	KindHermesDB   Kind = "hermes_database"
+	// The official Anthropic data export contributes its conversations and
+	// Claude-web memories as separate file-state targets.
+	KindClaudeWebConversations Kind = "claude_web_conversations"
+	KindClaudeWebMemories      Kind = "claude_web_memories"
 )
 
 // FileMeta is what the scan already knows about an artefact: where it came from
@@ -96,8 +100,9 @@ type Session struct {
 	EndedAt     string
 	Title       string
 	// DurationMinutes is nil when either end of the session is unknown.
-	DurationMinutes *int
-	Metadata        map[string]any
+	DurationMinutes   *int
+	Metadata          map[string]any
+	SnapshotUpdatedAt string
 	// Snapshot merges an observed state into the row that is already there:
 	// non-null fields win and the first non-blank title stays. A metadata
 	// artefact is a snapshot; re-parsing a grown transcript is not, because
@@ -197,6 +202,12 @@ var byKind = map[Kind]func([]byte, FileMeta) (Records, error){
 	KindClaudeMemory:         ParseClaudeMemory,
 	KindCodexFile:            ParseCodexFile,
 	KindCodexMemoryAggregate: ParseCodexMemoryAggregate,
+	KindClaudeWebConversations: func(content []byte, meta FileMeta) (Records, error) {
+		return ParseClaudeWebConversations(strings.NewReader(string(content)), meta)
+	},
+	KindClaudeWebMemories: func(content []byte, meta FileMeta) (Records, error) {
+		return ParseClaudeWebMemories(strings.NewReader(string(content)), meta)
+	},
 }
 
 // Parse turns an artefact into normalized records. It does not open the
