@@ -221,6 +221,7 @@ func (s Settings) ollama() Provider {
 			s.File.Default("model"),
 		),
 		KeepAlive: firstNonEmpty(cfg.KeepAlive, s.File.Default("ollama_keep_alive")),
+		Think:     cfg.Think,
 	})
 }
 

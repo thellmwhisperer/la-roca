@@ -273,6 +273,11 @@ type ProviderConfig struct {
 	APIKeyEnv string `toml:"api_key_env"`
 	// KeepAlive is how long the local model stays loaded.
 	KeepAlive string `toml:"keep_alive"`
+	// Think turns a local reasoning model's thinking back on. It is off by
+	// default because thinking is neither the SQL nor the summary asked of the
+	// model, and on qwen3.5 it is the difference between an interpretation that
+	// answers in seconds and one that answers in minutes.
+	Think bool `toml:"think"`
 }
 
 // knownProviderKeys is what a provider table may carry. It is here and not
@@ -280,7 +285,7 @@ type ProviderConfig struct {
 // wrote, not a field name.
 var knownProviderKeys = map[string]bool{
 	"preset": true, "base_url": true, "model": true,
-	"api_key": true, "api_key_env": true, "keep_alive": true,
+	"api_key": true, "api_key_env": true, "keep_alive": true, "think": true,
 }
 
 var knownModelsKeys = map[string]bool{
@@ -381,6 +386,8 @@ func readProvider(table map[string]any, prefix, path string, warnings *[]string)
 			cfg.APIKeyEnv = text
 		case "keep_alive":
 			cfg.KeepAlive = text
+		case "think":
+			cfg.Think, _ = table[key].(bool)
 		default:
 			if !knownProviderKeys[key] {
 				*warnings = append(*warnings, unknownKey(prefix+"."+key, path))

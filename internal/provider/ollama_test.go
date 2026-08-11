@@ -177,3 +177,48 @@ func contains(values []string, wanted string) bool {
 	}
 	return false
 }
+
+// chatRequest is what the adapter actually posts to /api/chat.
+func chatRequest(t *testing.T, tune func(*OllamaConfig)) map[string]any {
+	t.Helper()
+	var posted map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+			t.Errorf("decode the request: %v", err)
+		}
+		json.NewEncoder(w).Encode(map[string]any{"message": map[string]any{"content": "ok"}})
+	}))
+	defer server.Close()
+	cfg := OllamaConfig{BaseURL: server.URL, Model: DefaultOllamaModel}
+	tune(&cfg)
+	if _, err := NewOllama(cfg).Chat(context.Background(), ChatRequest{
+		Messages: []Message{{Role: RoleUser, Content: "interpret these rows"}},
+	}); err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	return posted
+}
+
+// Thinking is off on every request this product makes, and the reason is
+// measured rather than aesthetic: a qwen3.5 interpretation with thinking took
+// minutes where the same one without it took seconds, and the in-prompt
+// /no_think switch does nothing on that family. The API field is the only thing
+// that turns it off, and an operator who wants the reasoning back says so.
+func TestOllamaAsksWithoutThinkingUnlessTheOperatorTurnsItOn(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		tune func(*OllamaConfig)
+		want bool
+	}{
+		{name: "off by default", tune: func(*OllamaConfig) {}},
+		{name: "off when the operator says so", tune: func(c *OllamaConfig) { c.Think = false }},
+		{name: "on when the operator asks for it", tune: func(c *OllamaConfig) { c.Think = true }, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			think, declared := chatRequest(t, tc.tune)["think"].(bool)
+			if !declared || think != tc.want {
+				t.Fatalf("think = %v (declared %v), want %v", think, declared, tc.want)
+			}
+		})
+	}
+}

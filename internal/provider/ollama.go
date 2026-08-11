@@ -22,7 +22,13 @@ type OllamaConfig struct {
 	// default: loading a 4B model costs seconds and paying for it on every
 	// query is what makes the local path feel broken.
 	KeepAlive string
-	Client    *http.Client
+	// Think asks the model to reason before answering. It is off unless the
+	// operator turns it on, and the reason is measured: an interpretation on
+	// qwen3.5 with thinking took minutes where the same one without it took
+	// seconds. The API field is the only switch that works on that family; a
+	// /no_think in the prompt does nothing.
+	Think  bool
+	Client *http.Client
 }
 
 // Ollama is the local floor: no credential, no network beyond localhost, and
@@ -32,6 +38,7 @@ type Ollama struct {
 	baseURL   string
 	model     string
 	keepAlive string
+	think     bool
 	client    *http.Client
 }
 
@@ -41,6 +48,7 @@ func NewOllama(cfg OllamaConfig) *Ollama {
 		baseURL:   normalizeBaseURL(firstNonEmpty(cfg.BaseURL, DefaultOllamaBaseURL)),
 		model:     firstNonEmpty(cfg.Model, DefaultOllamaModel),
 		keepAlive: cfg.KeepAlive,
+		think:     cfg.Think,
 		client:    orDefaultClient(cfg.Client),
 	}
 }
@@ -143,9 +151,12 @@ func (o *Ollama) Chat(ctx context.Context, req ChatRequest) (ChatResponse, error
 		"model":    o.model,
 		"messages": req.Messages,
 		"stream":   false,
-		// The thinking of a reasoning model is not part of an SQL statement, and
-		// paying tokens to generate it and then throwing it away is paying twice.
-		"think": false,
+		// The thinking of a reasoning model is neither the SQL nor the summary
+		// that is asked of it, and paying tokens to generate it and then throw it
+		// away is paying twice. It is also the difference between a local
+		// interpretation that answers in seconds and one that answers in minutes,
+		// and on qwen3.5 this field is the only switch that turns it off.
+		"think": o.think,
 		"options": map[string]any{
 			"num_predict": maxTokens(req),
 			// Zero temperature: the same question has to compile to the same SQL,

@@ -3,7 +3,10 @@ package service_test
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -191,6 +194,40 @@ func TestTheTwoInferencesSplitAcrossProviders(t *testing.T) {
 				local.proseRequests[0])
 		}
 	})
+}
+
+// The second inference is where a local reasoning model costs the most: the
+// prompt is long and the answer is prose. Thinking is off on that request, and
+// the switch is the API field, because on qwen3.5 an in-prompt /no_think does
+// nothing and the difference measured on a real machine was minutes against
+// seconds.
+func TestTheInterpretationAsksTheLocalModelNotToThink(t *testing.T) {
+	var asked map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/tags" {
+			json.NewEncoder(w).Encode(map[string]any{
+				"models": []map[string]any{{"name": "qwen3.5:4b", "model": "qwen3.5:4b"}}})
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&asked); err != nil {
+			t.Errorf("decode the interpretation request: %v", err)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"message": map[string]any{"content": theLocalProse}})
+	}))
+	defer server.Close()
+
+	frontier, _ := theSplitPair("unused")
+	local := provider.NewOllama(provider.OllamaConfig{
+		BaseURL: server.URL, Model: "qwen3.5:4b"})
+	got := runFullInferenceWithService(t, splitService(t, frontier, local), theFreeQuestion)
+
+	if got.answer.Engine != provider.NameOllama || got.answer.Text != theLocalProse {
+		t.Fatalf("the local model did not read the rows: %+v", got.answer)
+	}
+	if think, declared := asked["think"].(bool); !declared || think {
+		t.Fatalf("the interpretation let the model think: think=%v declared=%v", think, declared)
+	}
 }
 
 // theSeededRow is content this installation holds and the split SQL returns, so

@@ -40,6 +40,7 @@ timeout_ms = 15000
 base_url = "http://localhost:11434"
 model = "qwen3.5:4b"
 keep_alive = "10m"
+think = true
 
 [models.deepseek]
 preset = "deepseek"
@@ -70,8 +71,11 @@ model = "deepseek-reasoner"
 		t.Fatalf("deepseek %+v", deepseek)
 	}
 	ollama := file.Models.Providers["ollama"]
-	if ollama.BaseURL != "http://localhost:11434" || ollama.KeepAlive != "10m" {
+	if ollama.BaseURL != "http://localhost:11434" || ollama.KeepAlive != "10m" || !ollama.Think {
 		t.Fatalf("ollama %+v", ollama)
+	}
+	if deepseek.Think {
+		t.Fatal("thinking is on for a provider that never asked for it")
 	}
 }
 
