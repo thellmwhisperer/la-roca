@@ -10,6 +10,8 @@ One binary, one file, zero dependencies. Local SQLite. CLI + MCP.
 [![CI](https://github.com/thellmwhisperer/la-roca/actions/workflows/ci.yml/badge.svg)](https://github.com/thellmwhisperer/la-roca/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+https://github.com/user-attachments/assets/f27d377b-e4ad-4c59-beb6-86dd02af4f84
+
 Your coding agents write thousands of sessions, reasoning traces, tool calls,
 and memory notes to disk, then forget all of it. La Roca reads what Claude
 Code, Codex, OpenCode, Pi, Hermes, and Claude Desktop leave behind, normalizes
