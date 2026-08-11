@@ -1,0 +1,92 @@
+name: Release
+
+# Release artefacts are produced by this workflow; local builds are never
+# published as official releases.
+#
+# `workflow_dispatch` rebuilds an existing tag without creating a new version.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The tag to build and publish (vX.Y.Z)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The tag, and its whole history: `make dist` reads the version from
+          # the workflow and not from git, but the acceptance suite and the
+          # generated notes want the repository as it really is.
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # A release nobody could merge is a release nobody should install. The
+      # same gate the pull request had to pass, run again over the tag, because a
+      # tag can point anywhere. `make check` builds the binary and runs the
+      # acceptance suite as part of `go test ./...`, so it is the whole gate.
+      - name: Build, format, vet, tests and slop gate
+        run: make check
+
+      # The version the binary reports IS the tag, injected through the
+      # Makefile's ldflags. Everything downstream depends on it: the artefact
+      # names carry it, `roca update` compares against it to decide whether it
+      # is already the latest, and `install.sh` reads it to skip a reinstall.
+      - name: The four artefacts from a single runner
+        env:
+          VERSION: ${{ inputs.tag || github.ref_name }}
+        run: make dist VERSION="$VERSION"
+
+      # The one artefact this runner can execute, asked the one question every
+      # client of the channel asks a binary before trusting it. A build whose
+      # version does not answer the tag is a release that would tell every
+      # installation the wrong thing about itself.
+      - name: The binary answers the tag it was built from
+        env:
+          VERSION: ${{ inputs.tag || github.ref_name }}
+        run: |
+          reported=$(./bin/roca-"$VERSION"-linux-x64 --version)
+          echo "$reported"
+          case "$reported" in
+            "roca $VERSION"*) ;;
+            *) echo "the binary reports '$reported' and the tag is $VERSION" >&2; exit 1 ;;
+          esac
+
+      # One `<sha256>  <name>` line per artefact, with bare names: it is what
+      # `install.sh` and `roca update` both look their own artefact up by, and
+      # an artefact with no line of its own is refused by both.
+      - name: checksums.txt
+        env:
+          VERSION: ${{ inputs.tag || github.ref_name }}
+        run: |
+          cd bin
+          sha256sum roca-"$VERSION"-* > checksums.txt
+          cat checksums.txt
+
+      # The binaries first and checksums.txt last, in two commands, because the
+      # order is the contract: a checksums.txt published before the artefacts is
+      # a window in which an installer verifies against a file describing
+      # artefacts that are not there yet.
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.tag || github.ref_name }}
+        run: |
+          gh release view "$VERSION" >/dev/null 2>&1 || \
+            gh release create "$VERSION" --verify-tag \
+              --title "roca $VERSION" --generate-notes
+          gh release upload "$VERSION" --clobber bin/roca-"$VERSION"-*
+          gh release upload "$VERSION" --clobber bin/checksums.txt

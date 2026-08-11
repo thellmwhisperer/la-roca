@@ -1,0 +1,317 @@
+package search_test
+
+import (
+	"context"
+	"database/sql"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/thellmwhisperer/la-roca/internal/provider/query"
+	"github.com/thellmwhisperer/la-roca/internal/provider/query/sqlgate"
+	"github.com/thellmwhisperer/la-roca/internal/store"
+	"github.com/thellmwhisperer/la-roca/internal/store/search"
+)
+
+func TestLexicalIndexSearchFindsWhatWasSeeded(t *testing.T) {
+	engine, _ := indexedWorld(t)
+
+	res, err := engine.Search(context.Background(), request("long+dashes", search.MethodFTS))
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if res.Provenance.Method != search.MethodFTS {
+		t.Fatalf("method = %q (%s), want fts", res.Provenance.Method, res.Provenance.Reason)
+	}
+	if !anyRowContains(res.Rows, "long dashes") {
+		t.Errorf("the lexical search did not find what was seeded; it brought %d rows: %v",
+			len(res.Rows), texts(res.Rows))
+	}
+}
+
+// The index folds diacritics just like the tokenizer does, so asking without
+// diacritics finds what was written with them. It is what the LIKE did with its
+// second folded variant, and here it comes free from the tokenizer.
+func TestLexicalIndexSearchFoldsDiacritics(t *testing.T) {
+	engine, _ := indexedWorld(t)
+
+	res, err := engine.Search(context.Background(), request("muller", search.MethodFTS))
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(res.Rows) == 0 {
+		t.Error("asking without the diacritic did not find what was written with it")
+	}
+}
+
+// With no index at all, the search falls back to the usual LIKE. The engine does
+// not run it: it says that is the method, and whoever compiles the template runs
+// it.
+func TestWithoutAnIndexItDegradesToLike(t *testing.T) {
+	db := seededWorld(t)
+	engine := &search.Engine{DB: db, Validate: theGate(t)}
+
+	res, err := engine.Search(context.Background(), request("long+dashes", search.MethodFTS))
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if res.Provenance.Method != search.MethodLike {
+		t.Errorf("method = %q, want it to degrade to like", res.Provenance.Method)
+	}
+	if res.Provenance.DegradedFrom != search.MethodFTS {
+		t.Errorf("it does not say which method it degraded from: %+v", res.Provenance)
+	}
+}
+
+func TestLexicalSearchHonorsLayerAndSearchExclusions(t *testing.T) {
+	engine, db := indexedWorld(t)
+	writeTo(t, db, `INSERT INTO memories (layer, content, origin) VALUES
+		('handoff', 'handoff where we left zingalor kumquat', 'agent'),
+		('question', 'private message with zingalor kumquat', 'agent'),
+		('feedback', 'the layer anchor belongs here', 'agent'),
+		('project', 'the layer anchor belongs elsewhere', 'agent')`)
+
+	plan := query.Plan{Template: query.TemplateSearchByTerm, Term: "zingalor+kumquat", Limit: 10}
+	res, err := engine.Search(context.Background(), requestForPlan(plan, []string{"question"}))
+	if err != nil {
+		t.Fatalf("excluded-layer search: %v", err)
+	}
+	if !anyRowContains(res.Rows, "handoff where we left") {
+		t.Fatalf("the searchable handoff was lost: %v", texts(res.Rows))
+	}
+	if anyRowContains(res.Rows, "private message") {
+		t.Errorf("a search-excluded message answered: %v", texts(res.Rows))
+	}
+
+	plan = query.Plan{Template: query.TemplateSearchByTerm, Term: "layer+anchor", Layer: "feedback", Limit: 10}
+	res, err = engine.Search(context.Background(), requestForPlan(plan, nil))
+	if err != nil {
+		t.Fatalf("layer-constrained search: %v", err)
+	}
+	if len(res.Rows) != 1 || !anyRowContains(res.Rows, "belongs here") {
+		t.Errorf("layer-constrained rows = %v", texts(res.Rows))
+	}
+}
+
+// --- indexing ---
+
+func TestIndexingTwiceRebuildsNothing(t *testing.T) {
+	ctx := context.Background()
+	db := seededWorld(t)
+
+	first, err := search.Index(ctx, db)
+	if err != nil {
+		t.Fatalf("first indexing run: %v", err)
+	}
+	if !first.LexicalBuilt {
+		t.Error("the first indexing run did not build the lexical index")
+	}
+
+	second, err := search.Index(ctx, db)
+	if err != nil {
+		t.Fatalf("second indexing run: %v", err)
+	}
+	if second.LexicalBuilt {
+		t.Error("the second indexing run rebuilt the lexical index, which was already there")
+	}
+}
+
+// A new row enters the lexical index immediately, without reindexing, because
+// the triggers live in the database and fire on every write.
+func TestANewRowEntersTheIndexImmediately(t *testing.T) {
+	ctx := context.Background()
+	engine, db := indexedWorld(t)
+
+	writeTo(t, db, `INSERT INTO memories (layer, content, origin)
+		VALUES ('fact', 'the whistling marmot watches the railway', 'human')`)
+
+	res, err := engine.Search(ctx, request("marmot", search.MethodFTS))
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if !anyRowContains(res.Rows, "marmot") {
+		t.Error("the lexical index did not see the freshly inserted row")
+	}
+}
+
+// --- helpers ---
+
+func request(term, method string) search.Request {
+	plan := query.Plan{Template: query.TemplateSearchByTerm, Term: term, Limit: 10}
+	request := requestForPlan(plan, nil)
+	request.Method = method
+	return request
+}
+
+func requestForPlan(plan query.Plan, excluded []string) search.Request {
+	stmt, _ := query.RenderSQLFTS(plan, excluded, 10)
+	return search.Request{Term: plan.Term, SQLLexical: stmt, Method: search.MethodFTS, Limit: 10}
+}
+
+func seededWorld(t *testing.T) *store.DB {
+	t.Helper()
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "roca.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := store.ApplySchema(ctx, db); err != nil {
+		t.Fatalf("ApplySchema: %v", err)
+	}
+	writeTo(t, db, `
+		INSERT INTO memories (layer, content, origin) VALUES
+		  ('fact', 'the team forbids long dashes in every deliverable', 'human'),
+		  ('fact', 'a naïve Müller façade sketch from the design review', 'agent'),
+		  ('fact', 'the database opens in WAL mode with a busy timeout', 'agent');
+		INSERT INTO sessions (session_id, project, title) VALUES ('s1', 'roca', 'test session');
+		INSERT INTO exchanges (session_id, exchange_number, human_text, agent_text) VALUES
+		  ('s1', 1, 'how do I configure the service startup', 'it is set with a yaml file'),
+		  ('s1', 2, 'what about the long dashes', 'the team dislikes them');
+		INSERT INTO thinking_blocks (session_id, exchange_number, full_text) VALUES
+		  ('s1', 1, 'thinking about the long dashes and the format');`)
+	return db
+}
+
+func indexedWorld(t *testing.T) (*search.Engine, *store.DB) {
+	t.Helper()
+	db := seededWorld(t)
+	if _, err := search.Index(context.Background(), db); err != nil {
+		t.Fatalf("Index: %v", err)
+	}
+	return &search.Engine{DB: db, Validate: theGate(t)}, db
+}
+
+func theGate(t *testing.T) func(string) (string, error) {
+	t.Helper()
+	gate, err := sqlgate.Open()
+	if err != nil {
+		t.Fatalf("Open the gate: %v", err)
+	}
+	t.Cleanup(func() { gate.Close() })
+	return gate.Validate
+}
+
+func writeTo(t *testing.T, db *store.DB, stmt string) {
+	t.Helper()
+	err := db.Write(context.Background(), func(tx *sql.Tx) error {
+		_, err := tx.Exec(stmt)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+}
+
+func anyRowContains(rows []search.Row, text string) bool {
+	for _, row := range rows {
+		if strings.Contains(strings.ToLower(row.Text), strings.ToLower(text)) {
+			return true
+		}
+	}
+	return false
+}
+
+func texts(rows []search.Row) []string {
+	var out []string
+	for _, row := range rows {
+		out = append(out, row.Source+":"+row.Text)
+	}
+	return out
+}
+
+func rowWithID(rows []search.Row, id int64) bool {
+	for _, row := range rows {
+		if row.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// THE FILTER THIS TEST EXISTS FOR.
+//
+// A memory another memory replaces stops answering, and the replacement
+// answers. The row that carries `supersedes` is the replacement; the row it
+// points at is the superseded one. Filtering on the row's own `supersedes`
+// (IS NULL) was the inverted filter that hid the replacement and kept the old
+// one answering, and this test pins the corrected filter at the store seam so
+// it cannot come back.
+func TestASupersededMemoryStopsAnswering(t *testing.T) {
+	engine, db := indexedWorld(t)
+	writeTo(t, db, `INSERT INTO memories (id, layer, content, origin)
+		VALUES (100, 'fact', 'port alpha is eighty', 'human')`)
+	writeTo(t, db, `INSERT INTO memories (id, layer, content, origin, supersedes)
+		VALUES (101, 'fact', 'port alpha corrected is forty', 'human', 100)`)
+
+	res, err := engine.Search(context.Background(), request("alpha", search.MethodFTS))
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if !rowWithID(res.Rows, 101) {
+		t.Errorf("the replacement memory does not answer: %v", texts(res.Rows))
+	}
+	if rowWithID(res.Rows, 100) {
+		t.Errorf("the superseded memory still answers: %v", texts(res.Rows))
+	}
+}
+
+func TestSearchOverARealLabDatabase(t *testing.T) {
+	path := os.Getenv("ROCA_BASE_REAL")
+	if path == "" {
+		t.Skip("no ROCA_BASE_REAL: there is no copy of a real database at hand")
+	}
+	if !filepath.IsAbs(path) {
+		t.Fatalf("ROCA_BASE_REAL must be an absolute path, got %q", path)
+	}
+
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if _, err := search.Index(context.Background(), db); err != nil {
+		t.Fatalf("Index: %v", err)
+	}
+	engine := &search.Engine{DB: db, Validate: theGate(t)}
+
+	project := aProjectFromTheData(t, db)
+	for _, question := range []string{"handoff", project, "deployment"} {
+		term := query.SearchTerm(question)
+		res, err := engine.Search(context.Background(), request(term, search.MethodFTS))
+		if err != nil {
+			t.Errorf("Search(%q): %v", question, err)
+			continue
+		}
+		t.Logf("%-30q -> method=%s rows=%d", question, res.Provenance.Method, len(res.Rows))
+	}
+}
+
+func aProjectFromTheData(t *testing.T, db *store.DB) string {
+	t.Helper()
+	var project string
+	err := db.SQL().QueryRow(
+		`SELECT project FROM sessions WHERE project IS NOT NULL AND project <> ''
+		 GROUP BY project ORDER BY COUNT(*) DESC LIMIT 1`).Scan(&project)
+	if err != nil {
+		t.Fatalf("look for a project in the data: %v", err)
+	}
+	return project
+}
+
+// The provenance names the route that actually ran. An unsupported method used to
+// fall through to the FTS branch while `search_method` kept reporting the
+// unsupported string, so the answer described a route the engine had not taken.
+func TestAnUnsupportedSearchMethodIsRefusedByName(t *testing.T) {
+	engine, _ := indexedWorld(t)
+
+	_, err := engine.Search(context.Background(), request("alpha", "unknown"))
+
+	if err == nil {
+		t.Fatal("an unsupported method was accepted")
+	}
+	if !strings.Contains(err.Error(), "unknown") {
+		t.Errorf("the error does not name the method it refused: %v", err)
+	}
+}

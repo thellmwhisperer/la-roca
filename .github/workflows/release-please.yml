@@ -1,0 +1,40 @@
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+
+# The action receives a separately scoped repository token. The automatic
+# workflow token remains read-only and cannot mutate repository state.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      # Step-level `if: secrets.X != ''` still ran the action with an empty
+      # token (CI stayed red: "Input required and not supplied: token"). Gate
+      # through an env check + output so a missing secret is a green skip.
+      - id: token
+        env:
+          RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          if [ -n "$RELEASE_PLEASE_TOKEN" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
+        if: steps.token.outputs.present == 'true'
+        with:
+          # A repository token is intentional: tags created with GITHUB_TOKEN do
+          # not trigger the existing tag-driven release workflow. This workflow
+          # has no branch-selectable dispatch and never checks out repository code.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
