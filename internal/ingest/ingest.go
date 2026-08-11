@@ -126,6 +126,7 @@ type Result struct {
 	// fingerprint, and what a source is still writing.
 	FilesRead     int `json:"files_read"`
 	FilesSkipped  int `json:"files_skipped"`
+	FilesExcluded int `json:"files_excluded"`
 	ExchangesHeld int `json:"exchanges_deferred"`
 
 	Before Tables `json:"counts_before"`
@@ -176,6 +177,13 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		result.sourceStats(source)
 		totals[source]++
 		remaining[source]++
+	}
+	for _, target := range plan.Excluded {
+		result.source(target.SourceAgent)
+		stats := result.sourceStats(target.SourceAgent)
+		stats.RecordsDiscarded++
+		result.FilesExcluded++
+		result.discard(target, []parsers.Discard{{Reason: target.ExclusionReason}})
 	}
 
 	// The state is read even on a dry run: telling an operator that eight hundred
@@ -481,6 +489,13 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 // declared, then what the path encodes. The path is the last resort because its
 // encoding is lossy.
 func resolveProjects(ctx context.Context, opts Options, target Target, records *parsers.Records) {
+	for i := range records.Memories {
+		memory := &records.Memories[i]
+		cwd, _ := memory.Metadata["cwd"].(string)
+		if memory.Project == "" && cwd != "" {
+			memory.Project = ProjectFromCwd(cwd)
+		}
+	}
 	for i := range records.Sessions {
 		session := &records.Sessions[i]
 		cwd, _ := session.Metadata["cwd"].(string)

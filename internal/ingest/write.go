@@ -453,10 +453,11 @@ func (w *writer) memory(ctx context.Context, memory parsers.Memory) (Counts, err
 	case errors.Is(err, sql.ErrNoRows):
 		layer := w.layers.Resolve(memory.Layer, defaultLayer)
 		_, err := w.tx.ExecContext(ctx, `
-			INSERT INTO memories (layer, content, metadata, origin, source_agent, project, status)
-			VALUES (?, ?, ?, ?, ?, ?, 'active')`,
+			INSERT INTO memories
+			  (layer, content, metadata, origin, source_agent, project, status, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, 'active', COALESCE(NULLIF(?, ''), datetime('now')))`,
 			layer, memory.Content, string(metadata), memory.Origin,
-			nullIfEmpty(memory.SourceAgent), nullIfEmpty(memory.Project))
+			nullIfEmpty(memory.SourceAgent), nullIfEmpty(memory.Project), memory.CreatedAt)
 		if err != nil {
 			return counts, fmt.Errorf("insert the memory of %s: %w", memory.FilePath, err)
 		}
@@ -469,8 +470,9 @@ func (w *writer) memory(ctx context.Context, memory parsers.Memory) (Counts, err
 		counts.MemoriesUnchanged = 1
 	default:
 		_, err := w.tx.ExecContext(ctx,
-			`UPDATE memories SET content = ?, metadata = ? WHERE id = ?`,
-			memory.Content, string(metadata), id)
+			`UPDATE memories SET content = ?, metadata = ?,
+			 created_at = COALESCE(NULLIF(?, ''), created_at) WHERE id = ?`,
+			memory.Content, string(metadata), memory.CreatedAt, id)
 		if err != nil {
 			return counts, fmt.Errorf("update the memory of %s: %w", memory.FilePath, err)
 		}

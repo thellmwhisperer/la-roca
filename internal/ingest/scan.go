@@ -36,12 +36,16 @@ type Target struct {
 	SkillName   string
 	// SidecarPath is the metadata file paired with a Cowork audit transcript.
 	SidecarPath string
+	// ExclusionReason marks a discovered artefact that policy counts but never
+	// fingerprints, opens, parses, or writes.
+	ExclusionReason string
 }
 
 // Plan is everything one run is going to look at, with what the scan already has
 // to say about it.
 type Plan struct {
-	Targets []Target
+	Targets  []Target
+	Excluded []Target
 	// Scanned counts the artefacts found per source, which is what `--dry-run`
 	// reports and what tells an operator whether a root is being seen at all.
 	Scanned map[string]int
@@ -83,7 +87,7 @@ func Scan(roots Roots) Plan {
 		DetectedAgents: DetectAgents(roots),
 	}
 	plan.add(scanClaudeMemories(roots), "claude_memory_files")
-	plan.add(scanCodexFiles(roots), "codex_files")
+	plan.addCodex(scanCodexFiles(roots))
 	plan.add(scanClaudeSessions(roots, &plan), "session_files")
 	plan.add(scanCodexSessions(roots), "codex_session_files")
 	plan.add(scanDesktopSessions(roots), "claude_desktop_files")
@@ -95,6 +99,17 @@ func Scan(roots Roots) Plan {
 	plan.add(existingFile(roots.HermesDB, Target{
 		Kind: parsers.KindHermesDB, SourceAgent: "hermes"}), "hermes_databases")
 	return plan
+}
+
+func (p *Plan) addCodex(found []Target) {
+	p.Scanned["codex_files"] += len(found)
+	for _, target := range found {
+		if target.ExclusionReason != "" {
+			p.Excluded = append(p.Excluded, target)
+			continue
+		}
+		p.Targets = append(p.Targets, target)
+	}
 }
 
 // DetectAgents reports the agents whose route or store exists, in the stable
@@ -170,15 +185,25 @@ func scanClaudeMemories(roots Roots) []Target {
 func scanCodexFiles(roots Roots) []Target {
 	var targets []Target
 	for _, name := range filesIn(filepath.Join(roots.CodexRoot, "memories")) {
-		if strings.HasSuffix(name, ".md") {
-			targets = append(targets, Target{
-				Path:        filepath.Join(roots.CodexRoot, "memories", name),
-				Kind:        parsers.KindCodexFile,
-				SourceAgent: "codex",
-				FileName:    name,
-				SourceType:  "memory",
-			})
+		if !strings.HasSuffix(name, ".md") {
+			continue
 		}
+		kind := parsers.KindCodexFile
+		exclusion := ""
+		switch name {
+		case "raw_memories.md":
+			kind = parsers.KindCodexMemoryAggregate
+		case "MEMORY.md", "memory_summary.md":
+			exclusion = "derived Codex memory aggregate is excluded"
+		}
+		targets = append(targets, Target{
+			Path:            filepath.Join(roots.CodexRoot, "memories", name),
+			Kind:            kind,
+			SourceAgent:     "codex",
+			FileName:        name,
+			SourceType:      "memory",
+			ExclusionReason: exclusion,
+		})
 	}
 	for _, name := range filesIn(filepath.Join(roots.CodexRoot, "rules")) {
 		if strings.HasSuffix(name, ".rules") && name != "default.rules" {

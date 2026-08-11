@@ -36,6 +36,10 @@ const (
 	KindCodexSession Kind = "codex_session"
 	// KindCodexFile is a Codex memory, rule or skill.
 	KindCodexFile Kind = "codex_file"
+	// KindCodexMemoryAggregate is Codex's merged raw memory export. Unlike an
+	// ordinary memory file, it contains one independently addressable record per
+	// thread block.
+	KindCodexMemoryAggregate Kind = "codex_memory_aggregate"
 	// KindSubagent is a subagent transcript under a Claude project.
 	KindSubagent Kind = "subagent"
 	// KindPiSession is a Pi v3 session file.
@@ -176,20 +180,25 @@ type Memory struct {
 	// `_cron_source` and `file_path`, which identifies rows across re-ingests.
 	Source   string
 	FilePath string
+	// CreatedAt is the source timestamp when an artefact declares one. The v1
+	// memory schema has no separate updated_at column, so aggregate updates use
+	// this timestamp as the row's searchable time.
+	CreatedAt string
 }
 
 // byKind is the whole matrix of file artefacts: one kind, one function that
 // decodes it. The two database kinds are absent because internal/ingest reads
 // them itself, and a kind with no entry here is a refusal by name.
 var byKind = map[Kind]func([]byte, FileMeta) (Records, error){
-	KindClaudeSession:   ParseClaudeSession,
-	KindCoworkAudit:     ParseCoworkAudit,
-	KindSessionMetadata: ParseSessionMetadata,
-	KindCodexSession:    ParseCodexSession,
-	KindSubagent:        ParseSubagent,
-	KindPiSession:       ParsePiSession,
-	KindClaudeMemory:    ParseClaudeMemory,
-	KindCodexFile:       ParseCodexFile,
+	KindClaudeSession:        ParseClaudeSession,
+	KindCoworkAudit:          ParseCoworkAudit,
+	KindSessionMetadata:      ParseSessionMetadata,
+	KindCodexSession:         ParseCodexSession,
+	KindSubagent:             ParseSubagent,
+	KindPiSession:            ParsePiSession,
+	KindClaudeMemory:         ParseClaudeMemory,
+	KindCodexFile:            ParseCodexFile,
+	KindCodexMemoryAggregate: ParseCodexMemoryAggregate,
 }
 
 // Parse turns an artefact into normalized records. It does not open the
