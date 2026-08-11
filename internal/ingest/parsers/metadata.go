@@ -57,7 +57,8 @@ func ParseSessionMetadata(content []byte, meta FileMeta) (Records, error) {
 	if err := json.Unmarshal(content, &payload); err != nil {
 		// A file that is not the metadata document is not a failure of the
 		// ingest: the directory it lives in holds other things.
-		return Records{Discards: []Discard{{Record: 1, Reason: "invalid metadata JSON: " + err.Error()}}}, nil
+		return Records{Discards: []Discard{{Record: 1,
+			Reason: "invalid metadata JSON: " + err.Error(), Category: "invalid metadata JSON"}}}, nil
 	}
 	sessionID := firstNonEmpty(payload.CliSessionID, payload.SessionID)
 	if sessionID == "" {

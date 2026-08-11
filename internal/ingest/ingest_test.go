@@ -76,9 +76,11 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 	if result.Delta.Memories != 4 {
 		t.Errorf("memories = %d, want 4", result.Delta.Memories)
 	}
-	if result.FilesExcluded != 1 || result.RecordsDiscarded != 1 {
-		t.Errorf("excluded/discarded = %d/%d, want 1/1: %+v",
-			result.FilesExcluded, result.RecordsDiscarded, result.DiscardDetails)
+	// A file the scan refuses on purpose is an exclusion and not a failure to read
+	// one: the report keeps the two apart so a healthy run reads as healthy.
+	if result.FilesExcluded != 1 || result.RecordsExcluded != 1 || result.RecordsDiscarded != 0 {
+		t.Errorf("excluded files/records and discards = %d/%d/%d, want 1/1/0: %+v",
+			result.FilesExcluded, result.RecordsExcluded, result.RecordsDiscarded, result.DiscardSummary)
 	}
 	if got := countRows(t, db.SQL(), "memories WHERE source_agent = 'config'"); got != 0 {
 		t.Errorf("config memories = %d, want none", got)
@@ -818,6 +820,34 @@ func TestAForeignDatabaseComplaintDoesNotInventARecordPosition(t *testing.T) {
 			t.Errorf("a database complaint claims record %d: %q",
 				discard.Record, discard.Reason)
 		}
+	}
+}
+
+func TestDiscardCategoriesStayStableAndShareOneDetailBudget(t *testing.T) {
+	result := Result{}
+	target := Target{Path: "/synthetic/private/rollout.jsonl", Kind: parsers.KindCodexSession}
+	for i := 0; i < discardDetailBudget+1; i++ {
+		result.discard(target, []parsers.Discard{{
+			Record: i + 1, Reason: fmt.Sprintf("codex runtime event id-%d", i),
+			Category: "codex runtime event", ByDesign: true,
+		}})
+	}
+	result.discard(target, []parsers.Discard{{
+		Record: 200, Reason: "tool verdict has unknown call_id: synthetic-call",
+		Category: "tool verdict has unknown call_id",
+	}})
+	if result.RecordsExcluded != discardDetailBudget+1 || result.RecordsDiscarded != 1 ||
+		len(result.DiscardDetails) != discardDetailBudget {
+		t.Fatalf("discard totals/details = %d/%d/%d", result.RecordsExcluded,
+			result.RecordsDiscarded, len(result.DiscardDetails))
+	}
+	if len(result.DiscardSummary) != 2 || result.DiscardSummary[0].Count != discardDetailBudget+1 ||
+		result.DiscardSummary[0].Reason != "codex runtime event" {
+		t.Fatalf("discard summary = %+v", result.DiscardSummary)
+	}
+	if result.DiscardDetails[0].Reason != "codex runtime event id-0" ||
+		!result.DiscardDetails[0].ByDesign {
+		t.Fatalf("discard detail lost its precise reason: %+v", result.DiscardDetails[0])
 	}
 }
 

@@ -37,6 +37,11 @@ type claudeWebFile struct {
 	Name     string `json:"name"`
 }
 
+type claudeWebDiscard struct {
+	reason   string
+	category string
+}
+
 // ParseClaudeWebConversations streams the top-level export array. Only one
 // conversation tree is retained at a time, so a large history does not require
 // a second copy of the whole conversations.json file in memory.
@@ -74,7 +79,7 @@ func parseClaudeWebConversation(payload claudeWebConversation, recordBase int) R
 	paired := make([]claudeWebMessage, 0, len(payload.ChatMessages)/2)
 	for i, message := range payload.ChatMessages {
 		parent := parents[i]
-		if reasons[i] != "" || message.Sender != "assistant" || parent < 0 ||
+		if reasons[i].reason != "" || message.Sender != "assistant" || parent < 0 ||
 			payload.ChatMessages[parent].Sender != "human" {
 			continue
 		}
@@ -117,9 +122,10 @@ func parseClaudeWebConversation(payload claudeWebConversation, recordBase int) R
 	}
 	discards := make([]Discard, 0, len(reasons))
 	for i := range payload.ChatMessages {
-		if reasons[i] != "" {
+		if reasons[i].reason != "" {
 			discards = append(discards, Discard{
-				Record: recordBase + i + 1, Reason: reasons[i],
+				Record: recordBase + i + 1, Reason: reasons[i].reason,
+				Category: reasons[i].category,
 			})
 		}
 	}
@@ -133,26 +139,35 @@ func parseClaudeWebConversation(payload claudeWebConversation, recordBase int) R
 	}}, Discards: discards}
 }
 
-func claudeWebMessageGraph(messages []claudeWebMessage) (map[string]int, []int, map[int]string) {
+func claudeWebMessageGraph(messages []claudeWebMessage) (map[string]int, []int, map[int]claudeWebDiscard) {
 	byID := make(map[string]int, len(messages))
-	reasons := map[int]string{}
+	reasons := map[int]claudeWebDiscard{}
 	for i := range messages {
 		message := &messages[i]
 		message.UUID = strings.TrimSpace(message.UUID)
 		message.ParentMessageUUID = strings.TrimSpace(message.ParentMessageUUID)
 		switch {
 		case message.UUID == "":
-			reasons[i] = "message has no uuid"
+			reasons[i] = claudeWebDiscard{reason: "message has no uuid"}
 		case byID[message.UUID] != 0:
-			reasons[i] = fmt.Sprintf("message uuid %s is duplicated", message.UUID)
+			reasons[i] = claudeWebDiscard{
+				reason:   fmt.Sprintf("message uuid %s is duplicated", message.UUID),
+				category: "message uuid is duplicated",
+			}
 		default:
 			byID[message.UUID] = i + 1
 		}
-		if reasons[i] == "" && message.Sender != "human" && message.Sender != "assistant" {
-			reasons[i] = fmt.Sprintf("message %s has unsupported sender %q", message.UUID, message.Sender)
+		if reasons[i].reason == "" && message.Sender != "human" && message.Sender != "assistant" {
+			reasons[i] = claudeWebDiscard{
+				reason:   fmt.Sprintf("message %s has unsupported sender %q", message.UUID, message.Sender),
+				category: "message has unsupported sender",
+			}
 		}
-		if reasons[i] == "" && claudeWebText(*message) == "" {
-			reasons[i] = fmt.Sprintf("%s message %s has no text", message.Sender, message.UUID)
+		if reasons[i].reason == "" && claudeWebText(*message) == "" {
+			reasons[i] = claudeWebDiscard{
+				reason:   fmt.Sprintf("%s message %s has no text", message.Sender, message.UUID),
+				category: message.Sender + " message has no text",
+			}
 		}
 	}
 	parents := claudeWebSurvivingParents(messages, byID, reasons)
@@ -161,7 +176,7 @@ func claudeWebMessageGraph(messages []claudeWebMessage) (map[string]int, []int, 
 }
 
 func claudeWebSurvivingParents(messages []claudeWebMessage, byID map[string]int,
-	reasons map[int]string) []int {
+	reasons map[int]claudeWebDiscard) []int {
 	parents := make([]int, len(messages))
 	resolved := make([]int, len(messages))
 	visiting := make([]bool, len(messages))
@@ -170,7 +185,7 @@ func claudeWebSurvivingParents(messages []claudeWebMessage, byID map[string]int,
 	}
 	var resolve func(int) int
 	resolve = func(index int) int {
-		if reasons[index] == "" {
+		if reasons[index].reason == "" {
 			return index
 		}
 		if resolved[index] != -2 {
@@ -197,20 +212,24 @@ func claudeWebSurvivingParents(messages []claudeWebMessage, byID map[string]int,
 	return parents
 }
 
-func claudeWebDiscardCycles(messages []claudeWebMessage, parents []int, reasons map[int]string) {
+func claudeWebDiscardCycles(messages []claudeWebMessage, parents []int,
+	reasons map[int]claudeWebDiscard) {
 	state := make([]uint8, len(messages))
 	var visit func(int)
 	visit = func(index int) {
 		state[index] = 1
 		parent := parents[index]
-		if parent >= 0 && reasons[parent] == "" {
+		if parent >= 0 && reasons[parent].reason == "" {
 			switch state[parent] {
 			case 0:
 				visit(parent)
 			case 1:
 				for member := parent; ; member = parents[member] {
-					reasons[member] = fmt.Sprintf(
-						"message %s has a cyclic parent chain", messages[member].UUID)
+					reasons[member] = claudeWebDiscard{
+						reason: fmt.Sprintf(
+							"message %s has a cyclic parent chain", messages[member].UUID),
+						category: "message has a cyclic parent chain",
+					}
 					if member == index {
 						break
 					}
@@ -220,7 +239,7 @@ func claudeWebDiscardCycles(messages []claudeWebMessage, parents []int, reasons 
 		state[index] = 2
 	}
 	for i := range messages {
-		if reasons[i] == "" && state[i] == 0 {
+		if reasons[i].reason == "" && state[i] == 0 {
 			visit(i)
 		}
 	}
@@ -241,7 +260,13 @@ func ParseClaudeWebMemories(reader io.Reader, meta FileMeta) (Records, error) {
 		}
 		memory, reason := parseClaudeWebMemory(raw, meta, index)
 		if reason != "" {
-			records.Discards = append(records.Discards, Discard{Record: index, Reason: reason})
+			category := "memory has no text"
+			if strings.Contains(reason, "neither text nor an object") {
+				category = "memory is neither text nor an object"
+			}
+			records.Discards = append(records.Discards, Discard{
+				Record: index, Reason: reason, Category: category,
+			})
 			continue
 		}
 		records.Memories = append(records.Memories, memory)

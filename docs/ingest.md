@@ -57,3 +57,37 @@ zero-delta fast path.
 Attachment and file names are retained as per-exchange metadata. La Roca does
 not open their bytes. Entries from `memories.json` enter the `user` layer with
 origin `cron` and source `claude-web`.
+
+## Per-exchange provenance
+
+Every exchange carries what its own source recorded about how the answer was
+produced: `model`, `provider`, `tokens_in`, `tokens_out`, `tokens_reasoning` and
+`cost_usd`. They are filled from the artefact and from nothing else, so a column
+is NULL wherever the source states nothing, which is normal and not missing
+data. Read them with `IS NOT NULL` and never as a zero: a Claude transcript
+counts tokens and names no provider, a Codex rollout counts the reasoning tokens
+apart, Pi and OpenCode also price the turn, Hermes measures a whole session
+rather than a turn, and the Claude web export states none of it.
+
+Thinking text stays in `thinking_blocks`, keyed to its session and exchange; it
+is not duplicated onto `exchanges`. Codex reasoning now lands there on the
+exchange that produced it, alongside the other sources' thinking blocks.
+
+The fingerprint of every versioned source includes its parser revision. When a
+release teaches a parser to read more of a source, the next plain `roca ingest`
+reopens the files it had already synced and backfills only the columns that are
+still NULL; nothing that already landed is rewritten and no exchange is written
+twice.
+
+## Reading the summary
+
+The default summary is one line per source with what it contributed, followed by
+up to five reasons in each group for what was left out, with each reason
+collapsed to a count.
+The two groups are apart on purpose: `excluded` counts the records this build
+never meant to read, which is most of a runtime log and is not a problem, and
+`discards` counts the records it could not read, which is. `roca ingest
+--verbose` adds the per-record detail with its absolute path for up to 100
+retained records. Totals and the complete collapsed summary remain exact in JSON
+output and the ingest log when a run leaves out more records than that; the log
+retains the same bounded per-record detail.

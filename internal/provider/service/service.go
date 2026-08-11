@@ -75,13 +75,15 @@ type Service struct {
 	db       *store.DB
 	opts     Options
 	registry layers.Registry
+	schemaMu sync.Mutex
+	schemaOK bool
 
 	gateOnce    sync.Once
 	gate        *sqlgate.Gate
 	gateFailure error
 }
 
-// Open opens the database without creating or adopting it: that is Init's job.
+// Open opens the database. Its schema is adopted before the first data operation.
 func Open(opts Options) (*Service, error) {
 	registry, err := layers.Load()
 	if err != nil {
@@ -107,6 +109,27 @@ func (s *Service) Close() error {
 		s.gate.Close()
 	}
 	return s.db.Close()
+}
+
+func (s *Service) ensureSchema(ctx context.Context) error {
+	s.schemaMu.Lock()
+	defer s.schemaMu.Unlock()
+	if s.schemaOK {
+		return nil
+	}
+	if s.opts.ReadOnly {
+		report, err := store.Inspect(ctx, s.db)
+		if err != nil {
+			return err
+		}
+		if report.Verdict != store.VerdictCurrent {
+			return fmt.Errorf("the database schema requires adoption, but La Roca is in read-only mode: %s", report.Reason)
+		}
+	} else if _, err := store.Adopt(ctx, s.db, s.opts.BackupDir); err != nil {
+		return err
+	}
+	s.schemaOK = true
+	return nil
 }
 
 // theGate opens the read-only gate the first time it is needed. It is an
@@ -204,6 +227,9 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 	if err != nil {
 		return InitResult{}, err
 	}
+	s.schemaMu.Lock()
+	s.schemaOK = true
+	s.schemaMu.Unlock()
 	if err := s.syncLayers(ctx); err != nil {
 		return InitResult{}, err
 	}

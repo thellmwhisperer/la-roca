@@ -92,6 +92,9 @@ type CredentialHolder interface {
 }
 
 func (s *Service) Doctor(ctx context.Context) (DoctorReport, error) {
+	if err := s.ensureSchema(ctx); err != nil {
+		return DoctorReport{}, err
+	}
 	bedrock, err := s.bedrock(ctx)
 	if err != nil {
 		return DoctorReport{}, err

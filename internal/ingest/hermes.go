@@ -68,7 +68,8 @@ func ReadHermes(ctx context.Context, path string) (parsers.Records, []string, er
 		records.Sessions = append(records.Sessions, session)
 		for range orphaned {
 			records.Discards = append(records.Discards, parsers.Discard{
-				Reason: fmt.Sprintf("Hermes session %s: assistant content has no open human turn", id),
+				Reason:   fmt.Sprintf("Hermes session %s: assistant content has no open human turn", id),
+				Category: "Hermes assistant content has no open human turn",
 			})
 		}
 	}
@@ -114,6 +115,20 @@ func hermesSession(source row, messages []row) (parsers.Session, int) {
 	}
 	orphaned := 0
 	session.Exchanges, orphaned = hermesExchanges(source.text("id"), messages)
+	// Hermes prices and counts a whole session and never a turn, so every turn of
+	// it carries the model and the provider that answered and no invented split
+	// of the totals. Those totals travel beside the session in the same
+	// vocabulary the exchange columns use, so one question reads both.
+	provenance := parsers.Provenance{
+		// The session's own model column and not the "unknown" placeholder its
+		// metadata falls back to: a column filled with a placeholder is worse than
+		// an empty one, because a query cannot tell it from a real name.
+		Model:    source.text("model"),
+		Provider: source.text("billing_provider"),
+	}
+	for i := range session.Exchanges {
+		session.Exchanges[i].Provenance = provenance
+	}
 	if hasStarted && hasEnded && started > 0 && ended >= started {
 		minutes := int((ended - started) / 60)
 		session.DurationMinutes = &minutes
@@ -121,8 +136,31 @@ func hermesSession(source row, messages []row) (parsers.Session, int) {
 	session.Metadata = map[string]any{
 		"model":  model,
 		"hermes": hermesMetadata(source, messages),
+		"usage":  hermesUsage(source),
 	}
 	return session, orphaned
+}
+
+// hermesUsage restates the session totals under the names the per-exchange
+// provenance columns use. Hermes is the one source that already measured what a
+// conversation spent, and saying it in a private vocabulary is what kept it
+// unqueryable beside every other source.
+func hermesUsage(source row) map[string]any {
+	usage := map[string]any{}
+	for key, column := range map[string]string{
+		"tokens_in":        "input_tokens",
+		"tokens_out":       "output_tokens",
+		"tokens_reasoning": "reasoning_tokens",
+		"cost_usd":         "actual_cost_usd",
+	} {
+		if source.has(column) {
+			usage[key] = source[column]
+		}
+	}
+	if _, priced := usage["cost_usd"]; !priced && source.has("estimated_cost_usd") {
+		usage["cost_usd"] = source["estimated_cost_usd"]
+	}
+	return usage
 }
 
 // hermesMetadata keeps what Hermes measured about the session, which is the one

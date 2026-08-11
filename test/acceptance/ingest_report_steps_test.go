@@ -199,3 +199,54 @@ func (w *ingestAcceptanceWorld) seedMalformedRecords(count int) error {
 	}
 	return os.WriteFile(w.fixturePath, raw, 0o600)
 }
+
+// The rollout an operator really has: the conversation plus the runtime
+// machinery around it, which this build reads part of and leaves the rest of out
+// by design.
+func (w *ingestAcceptanceWorld) seedCodexMachineryRollout() error {
+	cwd := filepath.Join(w.home, "workspace", "codex-provenance")
+	body := fmt.Sprintf(`{"type":"session_meta","timestamp":"2026-08-01T11:00:00Z","payload":{"id":%q,"cwd":%q,"timestamp":"2026-08-01T11:00:00Z","model_provider":"acceptance-provider"}}
+{"type":"turn_context","timestamp":"2026-08-01T11:00:01Z","payload":{"turn_id":"turn-1","model":"acceptance-model","effort":"high","summary":"auto"}}
+{"type":"event_msg","timestamp":"2026-08-01T11:00:02Z","payload":{"type":"task_started","turn_id":"turn-1"}}
+{"type":"event_msg","timestamp":"2026-08-01T11:00:03Z","payload":{"type":"user_message","message":"question"}}
+{"type":"event_msg","timestamp":"2026-08-01T11:00:04Z","payload":{"type":"agent_reasoning","text":"the machinery is not the conversation"}}
+{"type":"event_msg","timestamp":"2026-08-01T11:00:05Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":40,"output_tokens":6,"reasoning_output_tokens":3}}}}
+{"type":"event_msg","timestamp":"2026-08-01T11:00:06Z","payload":{"type":"task_complete","last_agent_message":"answer"}}
+`, codexAcceptanceSession, cwd)
+	return w.writeCodexRollout(body)
+}
+
+func registerIngestProvenanceSteps(ctx *godog.ScenarioContext, w *ingestAcceptanceWorld) {
+	ctx.Given(`^a Codex rollout with runtime machinery is ready to ingest$`, w.seedCodexMachineryRollout)
+	ctx.Then(`^the summary names the exclusions by reason and prints no absolute path$`, func() error {
+		if !strings.Contains(w.last.stdout, "left out by design") {
+			return fmt.Errorf("the summary does not name its exclusions:\n%s", w.last.stdout)
+		}
+		if strings.Contains(w.last.stdout, w.fixturePath) {
+			return fmt.Errorf("the default summary printed an artefact path:\n%s", w.last.stdout)
+		}
+		return nil
+	})
+	ctx.Then(`^the exchange carries the model, the provider and the token counts of the rollout$`, func() error {
+		db, err := w.openDB()
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		var model, provider string
+		var in, out, reasoning int
+		err = db.QueryRow(`SELECT model, provider, tokens_in, tokens_out, tokens_reasoning
+			FROM exchanges WHERE session_id = ?`, w.sessionID).
+			Scan(&model, &provider, &in, &out, &reasoning)
+		if err != nil {
+			return fmt.Errorf("read the provenance of %s: %w", w.sessionID, err)
+		}
+		if model != "acceptance-model" || provider != "acceptance-provider" {
+			return fmt.Errorf("model/provider = %q/%q", model, provider)
+		}
+		if in != 40 || out != 6 || reasoning != 3 {
+			return fmt.Errorf("tokens in/out/reasoning = %d/%d/%d, want 40/6/3", in, out, reasoning)
+		}
+		return nil
+	})
+}
