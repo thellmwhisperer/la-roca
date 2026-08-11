@@ -42,6 +42,12 @@ type Options struct {
 	// contacts no provider, which is what an installation with no model
 	// configured needs.
 	Providers provider.Cascade
+	// Interpreters is the cascade the result rows travel to, when the operator
+	// declared one. Its zero value is the installation that does not split the
+	// two inferences: whoever wrote the SQL also reads the rows. Declared, it is
+	// what keeps the rows on this machine while the question goes to a frontier
+	// model.
+	Interpreters provider.Cascade
 	// ConfigPath and ConfigExists are what doctor reports: every message about
 	// configuration names the file, never a TOML table.
 	ConfigPath   string

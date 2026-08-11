@@ -41,6 +41,15 @@ type DoctorReport struct {
 	// Titular is the one that is going to answer: the first available in the
 	// order. Empty means no model is available.
 	Titular string `json:"titular_provider,omitempty"`
+	// Interpreters are the providers declared for the second inference, each
+	// with the same verdict the main ones get. Empty is an installation that
+	// does not split the two inferences, which is the default.
+	Interpreters []DoctorProvider `json:"interpreters,omitempty"`
+	// InterpretTitular is the one that is going to read the result rows. Empty
+	// with interpreters declared means none of them is available and the rows go
+	// to whoever writes the SQL, which is the decision an operator who split
+	// them for privacy has to be able to see.
+	InterpretTitular string `json:"interpret_provider,omitempty"`
 	// ModelDisabled says the operator turned the model off on purpose, which is
 	// not the same as having none available.
 	ModelDisabled bool     `json:"model_disabled,omitempty"`
@@ -85,9 +94,21 @@ func (s *Service) Doctor(ctx context.Context) (DoctorReport, error) {
 		PromptExists:   promptErr == nil && promptInfo.Mode().IsRegular(),
 	}
 
-	attempts := cascade.Diagnose(ctx)
-	for i, attempt := range attempts {
-		report.Providers = append(report.Providers, DoctorProvider{
+	report.Providers, report.Titular = verdicts(ctx, cascade)
+	// The second inference gets the same diagnosis as the first, and only when
+	// the operator declared one: an installation that does not split the two
+	// inferences has no second decision to report.
+	report.Interpreters, report.InterpretTitular = verdicts(ctx, s.opts.Interpreters)
+	return report, nil
+}
+
+// verdicts is one cascade diagnosed: every provider with its verdict, in the
+// declared order, and the first available one.
+func verdicts(ctx context.Context, cascade provider.Cascade) ([]DoctorProvider, string) {
+	var reported []DoctorProvider
+	var titular string
+	for i, attempt := range cascade.Diagnose(ctx) {
+		reported = append(reported, DoctorProvider{
 			Name:       attempt.Name,
 			Ready:      attempt.Ready,
 			Model:      attempt.ModelID,
@@ -95,11 +116,11 @@ func (s *Service) Doctor(ctx context.Context) (DoctorReport, error) {
 			Action:     attempt.Action,
 			Credential: credentialOf(cascade.Providers[i]),
 		})
-		if attempt.Ready && report.Titular == "" {
-			report.Titular = attempt.Name
+		if attempt.Ready && titular == "" {
+			titular = attempt.Name
 		}
 	}
-	return report, nil
+	return reported, titular
 }
 
 func credentialOf(p provider.Provider) string {

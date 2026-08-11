@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"path/filepath"
@@ -14,6 +15,10 @@ import (
 
 type queryModeProvider struct {
 	answers []string
+	// name and model are the provenance a split test needs: two of these under
+	// different names is an installation with the inferences on two providers.
+	name    string
+	model   string
 	calls   int
 	failAt  int
 	delays  []time.Duration
@@ -26,8 +31,8 @@ const (
 	queryModeProse    = "The evidence says the format is rows."
 )
 
-func (p *queryModeProvider) Name() string    { return "fake" }
-func (p *queryModeProvider) ModelID() string { return "fake-model" }
+func (p *queryModeProvider) Name() string    { return cmp.Or(p.name, "fake") }
+func (p *queryModeProvider) ModelID() string { return cmp.Or(p.model, "fake-model") }
 func (p *queryModeProvider) Ready(context.Context) provider.Readiness {
 	return provider.Readiness{Ready: true, ModelID: p.ModelID()}
 }
@@ -57,8 +62,11 @@ func queryModeService(t *testing.T, model *queryModeProvider) *service.Service {
 	return queryModeServiceWithTimeout(t, model, 0)
 }
 
+// queryModeServiceWithTimeout is the installation the query-mode tests ask.
+// Naming interpreters is the installation that splits the two inferences: the
+// result rows go to them and to nobody else.
 func queryModeServiceWithTimeout(t *testing.T, model *queryModeProvider,
-	timeout time.Duration) *service.Service {
+	timeout time.Duration, interpreters ...provider.Provider) *service.Service {
 	t.Helper()
 	svc, err := service.Open(service.Options{
 		DBPath: filepath.Join(t.TempDir(), "roca.db"),
@@ -66,6 +74,7 @@ func queryModeServiceWithTimeout(t *testing.T, model *queryModeProvider,
 			Providers: []provider.Provider{model},
 			Timeout:   timeout,
 		},
+		Interpreters: provider.Cascade{Providers: interpreters, Timeout: timeout},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -167,5 +176,33 @@ func TestQueryHelpTeachesDataHumanAndSQLModes(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "Data: query; human reading: query --full; raw SQL: exec.") {
 		t.Fatalf("query help does not teach the three modes:\n%s", output.String())
+	}
+}
+
+// An installation that splits the two inferences answers with two provenances:
+// the SQL provider and the one that read the rows. Both travel in the envelope
+// and both are printed, because "the rows never left this machine" is a claim
+// an operator has to be able to check.
+func TestQueryFullNamesTheProviderThatReadTheRows(t *testing.T) {
+	frontier := &queryModeProvider{answers: []string{queryModeSQL},
+		name: "codex", model: "gpt-frontier"}
+	local := &queryModeProvider{answers: []string{queryModeProse},
+		name: "ollama", model: "qwen-local"}
+	answer, err := answerQuery(t.Context(),
+		queryModeServiceWithTimeout(t, frontier, 0, local),
+		service.QueryRequest{Question: queryModeQuestion}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if frontier.calls != 1 || local.calls != 1 {
+		t.Fatalf("calls = SQL %d, interpretation %d; want one each", frontier.calls, local.calls)
+	}
+	if answer.result.Engine != "codex" || answer.result.InterpretEngine != "ollama" ||
+		answer.result.InterpretModel != "qwen-local" || answer.result.InterpretNote != "" {
+		t.Fatalf("the envelope does not carry both provenances: %+v", answer.result)
+	}
+	if got := axiQuery(answer); !strings.Contains(got,
+		"interpretation · provider ollama · model qwen-local") {
+		t.Fatalf("the rendered answer does not name who read the rows:\n%s", got)
 	}
 }

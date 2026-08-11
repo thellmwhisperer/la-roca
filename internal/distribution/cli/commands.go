@@ -427,11 +427,18 @@ func answerQuery(ctx context.Context, svc *service.Service, req service.QueryReq
 		return answer, err
 	}
 	started := time.Now()
-	answer.prose, answer.interpretErr = svc.Interpret(
+	interpretation, err := svc.Interpret(
 		ctx, result.Question, result.Columns, result.Rows,
 		time.Duration(result.SQLInferenceMS)*time.Millisecond)
+	answer.prose, answer.interpretErr = interpretation.Text, err
 	answer.result.InterpretationMS = time.Since(started).Milliseconds()
-	answer.result.Interpretation = answer.prose
+	answer.result.Interpretation = interpretation.Text
+	// Who read the rows travels in the envelope beside who wrote the SQL: on an
+	// installation that splits the two inferences they are different providers,
+	// and that difference is the whole point of splitting them.
+	answer.result.InterpretEngine = interpretation.Engine
+	answer.result.InterpretModel = interpretation.Model
+	answer.result.InterpretNote = interpretation.Note
 	if answer.interpretErr != nil {
 		answer.result.ProviderError = answer.interpretErr.Error()
 	}

@@ -98,6 +98,17 @@ type QueryResult struct {
 	ExecutionMS      int64  `json:"execution_ms"`
 	InterpretationMS int64  `json:"interpretation_ms"`
 	Interpretation   string `json:"interpretation,omitempty"`
+	// InterpretEngine and InterpretModel are the second inference's own
+	// provenance: which provider read the result rows. They differ from Engine
+	// and Model on an installation that splits the two inferences, and that
+	// difference is the claim "the rows never left this machine" made checkable.
+	InterpretEngine string `json:"interpret_engine,omitempty"`
+	InterpretModel  string `json:"interpret_model,omitempty"`
+	// InterpretNote says the configured interpretation provider was not
+	// available and the rows went to the provider that wrote the SQL instead. It
+	// is kept apart from ProviderNote for the same reason that one is kept apart
+	// from Message: they answer different questions about the same answer.
+	InterpretNote string `json:"interpret_note,omitempty"`
 	// ProviderError preserves the provider's own failure text. File logging
 	// applies credential redaction before it reaches disk.
 	ProviderError string `json:"provider_error,omitempty"`

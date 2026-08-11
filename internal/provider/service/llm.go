@@ -191,24 +191,45 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 	return res, nil
 }
 
+// Interpretation is what the second inference answered and who answered it.
+//
+// The provenance is not decoration here either: an installation that splits the
+// two inferences does it so the rows stay on one machine, and an answer that
+// does not say which provider read them cannot be checked against that claim.
+type Interpretation struct {
+	Text string
+	// Engine and Model are the provider that read the rows and the model it
+	// read them with.
+	Engine string
+	Model  string
+	// Note is the declared fall: the configured interpretation provider was not
+	// available and the rows went to the provider that wrote the SQL instead.
+	// Empty means the rows went where the configuration said they would.
+	Note string
+}
+
 // Interpret is the second inference call of a query: the first turned the
 // question into SQL, this one turns that SQL's rows into a natural-language
-// answer in the question's language. The same provider order is asked again —
-// the one that served is the one that is available, so picking once more
-// reaches it — and the rows, capped at ten, travel in the prompt. Whatever goes
-// wrong is an error the caller falls back from, never a query that fails: the
-// row renderer is the floor, and the prose is what sits on top of it when a
-// model answers.
+// answer in the question's language. The rows, capped at ten, travel in the
+// prompt. Whatever goes wrong is an error the caller falls back from, never a
+// query that fails: the row renderer is the floor, and the prose is what sits
+// on top of it when a model answers.
+//
+// Who is asked is the privacy decision of the whole product. With an
+// interpretation order configured and available, the rows go there and nowhere
+// else, so the machine that wrote the SQL never sees the data it selected. With
+// none configured the same order is asked again — the one that served is the one
+// that is available, so picking once more reaches it — and that is the behaviour
+// of every installation that does not declare the split.
 func (s *Service) Interpret(ctx context.Context, question string,
-	columns []string, rows []map[string]any, sqlInference time.Duration) (string, error) {
-	cascade := s.opts.Providers
-	if cascade.Disabled || len(cascade.Providers) == 0 {
-		return "", fmt.Errorf("no model is configured to interpret the rows")
+	columns []string, rows []map[string]any,
+	sqlInference time.Duration) (Interpretation, error) {
+
+	cascade, chosen, note, err := s.interpreter(ctx)
+	if err != nil {
+		return Interpretation{}, err
 	}
-	chosen, _ := cascade.Pick(ctx)
-	if chosen == nil {
-		return "", fmt.Errorf("no model is available to interpret the rows")
-	}
+	answered := Interpretation{Engine: chosen.Name(), Model: chosen.ModelID(), Note: note}
 	var b strings.Builder
 	b.WriteString("You are La Roca. Question: ")
 	b.WriteString(question)
@@ -235,10 +256,44 @@ func (s *Service) Interpret(ctx context.Context, question string,
 		Messages: []provider.Message{{Role: provider.RoleUser, Content: b.String()}},
 	})
 	if err != nil {
-		return "", err
+		return Interpretation{}, err
 	}
 	// Prose keeps its fences and its punctuation; only the reasoning goes.
-	return provider.CleanProse(answer.Content), nil
+	answered.Text = provider.CleanProse(answer.Content)
+	return answered, nil
+}
+
+// interpreter decides who reads the rows: the configured interpretation
+// provider when it is available, and the provider that wrote the SQL otherwise,
+// with the fall declared. The cascade comes back with the chosen provider
+// because the budget travels in it, and asking one provider under another's
+// budget is how a local model gets a frontier model's timeout.
+func (s *Service) interpreter(ctx context.Context) (provider.Cascade, provider.Provider, string, error) {
+	main := s.opts.Providers
+	if split := s.opts.Interpreters; len(split.Providers) > 0 {
+		if chosen, attempts := split.Pick(ctx); chosen != nil {
+			return split, chosen, "", nil
+		} else if fallback, err := pickOrFail(ctx, main); err == nil {
+			return main, fallback, "the interpretation provider was not available (" +
+				reasonsOf(attempts) + "): the rows were read by " + fallback.Name(), nil
+		}
+	}
+	chosen, err := pickOrFail(ctx, main)
+	return main, chosen, "", err
+}
+
+// pickOrFail is the main order asked for someone to read the rows, with the two
+// refusals told apart: an installation with no model configured and one whose
+// models are all down are fixed differently.
+func pickOrFail(ctx context.Context, cascade provider.Cascade) (provider.Provider, error) {
+	if cascade.Disabled || len(cascade.Providers) == 0 {
+		return nil, fmt.Errorf("no model is configured to interpret the rows")
+	}
+	chosen, _ := cascade.Pick(ctx)
+	if chosen == nil {
+		return nil, fmt.Errorf("no model is available to interpret the rows")
+	}
+	return chosen, nil
 }
 
 // maxRowsToInterpret caps how many rows the second call hands the model, so a
@@ -274,15 +329,22 @@ func tried(attempts []provider.Attempt) string {
 	return strings.TrimRight(out.String(), "\n")
 }
 
+// reasonsOf is the one-line roll call of providers that did not serve, with
+// each one's own reason. Both notes that name a fall are built from it.
+func reasonsOf(attempts []provider.Attempt) string {
+	reasons := make([]string, 0, len(attempts))
+	for _, attempt := range attempts {
+		reasons = append(reasons, attempt.Name+": "+cmp.Or(attempt.Reason, "not available"))
+	}
+	return strings.Join(reasons, "; ")
+}
+
 func noteAboutTheFall(chosen provider.Provider, attempts []provider.Attempt) string {
 	if len(attempts) < 2 {
 		return ""
 	}
-	reasons := make([]string, 0, len(attempts)-1)
-	for _, attempt := range attempts[:len(attempts)-1] {
-		reasons = append(reasons, attempt.Name+": "+cmp.Or(attempt.Reason, "not available"))
-	}
-	prefix := "the providers ahead of it were not available (" + strings.Join(reasons, "; ") + "): "
+	prefix := "the providers ahead of it were not available (" +
+		reasonsOf(attempts[:len(attempts)-1]) + "): "
 	if chosen.Name() == provider.NameOllama {
 		return prefix + fmt.Sprintf("degraded to the local floor (%s)", chosen.Name())
 	}

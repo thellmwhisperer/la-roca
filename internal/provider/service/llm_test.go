@@ -102,9 +102,15 @@ const theQuestionWithAMatch = "what decisions were made about the long dashes"
 
 func serviceWithModel(t *testing.T, providers ...provider.Provider) *service.Service {
 	t.Helper()
-	return seededServiceWith(t, provider.Cascade{
+	return seededServiceWith(t, cascadeOf(providers...))
+}
+
+// cascadeOf is a live order over the given providers with the short budgets a
+// test can afford.
+func cascadeOf(providers ...provider.Provider) provider.Cascade {
+	return provider.Cascade{
 		Providers: providers, Timeout: 2 * time.Second, Probe: time.Second,
-	})
+	}
 }
 
 func TestTheModelAnswersWhatTheCompilerDeclines(t *testing.T) {
@@ -695,8 +701,8 @@ func TestInterpretPromptIsLanguageAgnostic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Interpret: %v", err)
 	}
-	if prose != "The format was decided in a memory." {
-		t.Fatalf("prose %q", prose)
+	if prose.Text != "The format was decided in a memory." {
+		t.Fatalf("prose %q", prose.Text)
 	}
 	wantPrompt := "You are La Roca. Question: what was decided about the format. Results:\n" +
 		"source, text\n" +
@@ -773,7 +779,7 @@ func TestInterpretKeepsProseThatQuotesAFencedBlock(t *testing.T) {
 	svc := serviceWithModel(t, answering("codex", "<think>summarize</think>\n"+prose))
 	got, err := svc.Interpret(context.Background(), "give me the details",
 		[]string{"text"}, []map[string]any{{"text": "Synthetic Orchid Test Fixture"}}, 0)
-	if err != nil || got != prose {
-		t.Fatalf("the prose was clipped: %q (err=%v)", got, err)
+	if err != nil || got.Text != prose {
+		t.Fatalf("the prose was clipped: %q (err=%v)", got.Text, err)
 	}
 }

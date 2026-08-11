@@ -179,3 +179,31 @@ func TestExecCountsRowsTheWayEveryOtherRendererDoes(t *testing.T) {
 		t.Errorf("a wide count is not grouped:\n%s", many)
 	}
 }
+
+// An installation that splits the two inferences says so above the evidence:
+// the route line names the provider that wrote the SQL, and the line under it
+// names the provider the rows were read by. A fall back to the SQL provider
+// prints its note instead, because then there is nothing to distinguish.
+func TestQueryNamesTheProviderThatReadTheRows(t *testing.T) {
+	res := service.QueryResult{
+		Question: "count memories", Path: service.PathLLM, Engine: "codex",
+		Model: "gpt-5.6-sol", LatencyMS: 4, Match: service.MatchFound, RowCount: 1,
+		Columns: []string{"n"}, Rows: []map[string]any{{"n": int64(2)}},
+		InterpretEngine: "ollama", InterpretModel: "qwen3.5:4b",
+	}
+	got := axi.Query(res, "there are two memories")
+	if !strings.Contains(got, "interpretation · provider ollama · model qwen3.5:4b") {
+		t.Errorf("the second inference's provenance is missing:\n%s", got)
+	}
+
+	res.InterpretEngine, res.InterpretModel = "codex", "gpt-5.6-sol"
+	res.InterpretNote = "the interpretation provider was not available " +
+		"(ollama: not running): the rows were read by codex"
+	got = axi.Query(res, "there are two memories")
+	if !strings.Contains(got, res.InterpretNote) {
+		t.Errorf("the fall back to the SQL provider is not declared:\n%s", got)
+	}
+	if strings.Contains(got, "interpretation · provider") {
+		t.Errorf("one provider was rendered as if it were two:\n%s", got)
+	}
+}

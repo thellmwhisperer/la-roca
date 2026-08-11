@@ -177,3 +177,34 @@ func TestDoctorNamesTheDatabaseAndTheConfigurationFile(t *testing.T) {
 		t.Error("it does not count what is in the memory")
 	}
 }
+
+// The interpretation decision is reported exactly like the main one: every
+// declared provider with its verdict, and the one that is going to read the
+// rows. An installation that does not split the two inferences reports nothing
+// extra, because nothing extra was decided.
+func TestDoctorReportsTheInterpretationDecision(t *testing.T) {
+	main := cascadeOf(answering("codex", ""))
+	svc := seededServiceWith(t, main, cascadeOf(
+		unavailable("ollama", "it does not answer", "start it"),
+		answering("mycorp", "")))
+
+	report, err := svc.Doctor(context.Background())
+	if err != nil {
+		t.Fatalf("Doctor: %v", err)
+	}
+	if report.Titular != "codex" || report.InterpretTitular != "mycorp" {
+		t.Fatalf("the two decisions were not told apart: %+v", report)
+	}
+	if len(report.Interpreters) != 2 || report.Interpreters[0].Reason == "" ||
+		report.Interpreters[0].Action == "" {
+		t.Fatalf("an interpretation diagnosis with no remedy: %+v", report.Interpreters)
+	}
+
+	together, err := seededServiceWith(t, main).Doctor(context.Background())
+	if err != nil {
+		t.Fatalf("Doctor: %v", err)
+	}
+	if len(together.Interpreters) != 0 || together.InterpretTitular != "" {
+		t.Fatalf("an installation without the split reported one: %+v", together)
+	}
+}

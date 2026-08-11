@@ -61,25 +61,7 @@ func renderDoctor(env *cliEnv, report service.DoctorReport) {
 		env.print("model: no provider declared")
 	default:
 		env.print("providers, in the declared order:")
-		for _, p := range report.Providers {
-			status := "working"
-			if !p.Ready {
-				status = map[string]string{service.CredentialPresent: "present-but-failed",
-					service.CredentialAbsent: "absent"}[p.Credential]
-				if status == "" {
-					status = "failed"
-				}
-			}
-			env.print("  %s %s · model %s (%s · change with: %s) · credential %s · probe %s",
-				env.mark(p.Ready), p.Name, orDash(p.Model), modelChoiceSource(report.ConfigPath, p.Name, p.Model),
-				modelChange(p.Name, report.ConfigPath), p.Credential, status)
-			if !p.Ready {
-				env.print("      %s", orDash(p.Reason))
-				if p.Action != "" {
-					env.print("      remedy: %s", p.Action)
-				}
-			}
-		}
+		renderProviders(env, report.ConfigPath, report.Providers)
 	}
 
 	if report.Titular != "" {
@@ -88,6 +70,7 @@ func renderDoctor(env *cliEnv, report service.DoctorReport) {
 		env.print("no provider is available: questions the compiler does not resolve " +
 			"will fall to the keyword rescue")
 	}
+	renderInterpretation(env, report)
 	if report.PromptPath != "" {
 		if report.PromptExists {
 			env.print("agent prompt: %s (paste it into agent instructions)", report.PromptPath)
@@ -96,6 +79,50 @@ func renderDoctor(env *cliEnv, report service.DoctorReport) {
 			env.print("      remedy: run `roca init` to generate it")
 		}
 	}
+}
+
+// renderProviders is one declared order with a verdict per provider, and it is
+// the same block for both of them: the order that answers questions and the one
+// that reads the result rows are read by the same operator, in the same shape.
+func renderProviders(env *cliEnv, configPath string, providers []service.DoctorProvider) {
+	for _, p := range providers {
+		status := "working"
+		if !p.Ready {
+			status = map[string]string{service.CredentialPresent: "present-but-failed",
+				service.CredentialAbsent: "absent"}[p.Credential]
+			if status == "" {
+				status = "failed"
+			}
+		}
+		env.print("  %s %s · model %s (%s · change with: %s) · credential %s · probe %s",
+			env.mark(p.Ready), p.Name, orDash(p.Model), modelChoiceSource(configPath, p.Name, p.Model),
+			modelChange(p.Name, configPath), p.Credential, status)
+		if !p.Ready {
+			env.print("      %s", orDash(p.Reason))
+			if p.Action != "" {
+				env.print("      remedy: %s", p.Action)
+			}
+		}
+	}
+}
+
+// renderInterpretation is the second inference's decision, and it is printed
+// only by an installation that declared one. With the split active the result
+// rows go to that provider and to no other, which is the whole reason to
+// declare it, so the line says it out loud.
+func renderInterpretation(env *cliEnv, report service.DoctorReport) {
+	if len(report.Interpreters) == 0 {
+		return
+	}
+	env.print("interpretation providers, in the declared order:")
+	renderProviders(env, report.ConfigPath, report.Interpreters)
+	if report.InterpretTitular != "" {
+		env.print("the one that is going to read the result rows: %s "+
+			"(the rows go to it and to no other provider)", report.InterpretTitular)
+		return
+	}
+	env.print("no interpretation provider is available: the result rows fall back to " +
+		"the provider that writes the SQL")
 }
 
 func orDash(value string) string {

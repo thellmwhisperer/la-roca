@@ -39,6 +39,14 @@ func QueryPreamble(res service.QueryResult) string {
 	} else {
 		appendLine(&b, fmt.Sprintf("route %s · %s", res.Path, Duration(res.LatencyMS)))
 	}
+	// Who read the result rows, when that is somebody else. An installation
+	// splits the two inferences so the rows stay on one machine, and a claim
+	// like that is worth nothing unless the answer names who received them.
+	appendLine(&b, res.InterpretNote)
+	if res.InterpretEngine != "" && res.InterpretEngine != res.Engine {
+		appendLine(&b, fmt.Sprintf("interpretation · provider %s · model %s",
+			res.InterpretEngine, res.InterpretModel))
+	}
 	if res.Degraded != "" {
 		appendLine(&b, "degraded: "+res.Degraded)
 	}

@@ -167,11 +167,16 @@ func seededService(t *testing.T) *service.Service {
 }
 
 // seededServiceWith is the same seeded installation with a model cascade
-// plugged in. The model tests need it.
-func seededServiceWith(t *testing.T, providers provider.Cascade) *service.Service {
+// plugged in. The model tests need it. A second cascade is the installation
+// that splits the two inferences: the rows go to it and nowhere else.
+func seededServiceWith(t *testing.T, providers provider.Cascade,
+	interpreters ...provider.Cascade) *service.Service {
 	t.Helper()
 	svc := initialized(t, freshPaths(t), func(options *service.Options) {
 		options.Providers = providers
+		if len(interpreters) > 0 {
+			options.Interpreters = interpreters[0]
+		}
 	})
 	seedTheUsualMemories(t, svc)
 	return svc
