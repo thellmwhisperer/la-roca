@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -92,25 +93,48 @@ func TestFinishIsSafeToCallTwice(t *testing.T) {
 	}
 }
 
+// syncBuffer lets the test read what the render goroutine has painted so far
+// without racing it: fixed sleeps made this test flaky on slow runners, where
+// a phase could be replaced before its first frame ever rendered.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func waitForFrame(t *testing.T, buf *syncBuffer, want string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(buf.String(), want) {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("phased spinner never painted %q:\n%q", want, buf.String())
+}
+
 func TestSpinnerNarratesOnlyTheBufferedPhases(t *testing.T) {
 	fastSpinner(t)
-	var buf bytes.Buffer
+	var buf syncBuffer
 	spin := newSpinner(&buf, "shaping the search", true)
-	time.Sleep(spinnerGrace + spinnerTick)
+	waitForFrame(t, &buf, "shaping the search")
 	spin.phase("searching memory")
-	time.Sleep(spinnerTick)
+	waitForFrame(t, &buf, "searching memory")
 	spin.phase("composing the answer")
-	time.Sleep(2 * spinnerTick)
+	waitForFrame(t, &buf, "composing the answer")
 	spin.finish()
-
-	got := buf.String()
-	for _, want := range []string{
-		"shaping the search", "searching memory", "composing the answer",
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("phased spinner lacks %q:\n%q", want, got)
-		}
-	}
 }
 
 func TestPhaseStatusNeverWrapsOrWritesANewline(t *testing.T) {
