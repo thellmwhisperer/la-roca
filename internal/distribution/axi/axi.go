@@ -229,10 +229,9 @@ func MCPQueryHelp(res service.QueryResult) string {
 	if res.RowCount == 0 {
 		return RenderHelp(
 			"Call roca_query again with shorter keywords to broaden the search",
-			"Read structuredContent to inspect the route and SQL")
+			"Call roca_sql with the same question to inspect the route and SQL")
 	}
 	return RenderHelp(
-		"Read structuredContent for the complete result envelope",
 		"Call roca_sql with the same question, then pass its SELECT to roca_exec with max_chars 2000")
 }
 

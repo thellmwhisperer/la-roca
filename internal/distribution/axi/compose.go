@@ -123,7 +123,6 @@ func exec(res service.ExecResult, shell bool) string {
 				"Run `roca exec \"<SELECT>\" --max-chars 2000` to expand text fields"))
 		} else {
 			appendLine(&b, RenderHelp(
-				"Read structuredContent for the complete result envelope",
 				"Call roca_exec again with max_chars 2000 to expand text fields"))
 		}
 	}
