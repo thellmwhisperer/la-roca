@@ -114,7 +114,9 @@ func TestQueryFullAddsOneInterpretationAndKeepsEvidence(t *testing.T) {
 		t.Fatalf("full query made %d provider calls, want two", model.calls)
 	}
 	for _, want := range []string{
-		"route llm_fallback · provider fake · model fake-model",
+		"route model",
+		"SQL · provider fake · model fake-model",
+		"answer · provider fake · model fake-model",
 		"The evidence says the format is rows.",
 		"rows[1]{source,id,text}",
 		"raw evidence",
@@ -202,7 +204,7 @@ func TestQueryFullNamesTheProviderThatReadTheRows(t *testing.T) {
 		t.Fatalf("the envelope does not carry both provenances: %+v", answer.result)
 	}
 	if got := axiQuery(answer); !strings.Contains(got,
-		"interpretation · provider ollama · model qwen-local") {
+		"answer · provider ollama · model qwen-local") {
 		t.Fatalf("the rendered answer does not name who read the rows:\n%s", got)
 	}
 }

@@ -38,7 +38,7 @@ func TestKeywordRescueRendersItsRouteAndRows(t *testing.T) {
 			"text":       "La Roca v1 scope is memory and query"}},
 	}, "")
 	got := output.String()
-	if !strings.Contains(got, "route keyword_fallback") {
+	if !strings.Contains(got, "route keyword") {
 		t.Fatalf("the route line is missing:\n%s", got)
 	}
 	if !strings.Contains(got, "La Roca v1 scope is memory and query") {
@@ -80,7 +80,7 @@ func TestQueryResultCarriesBuildIdentityWithoutSurfaceData(t *testing.T) {
 	}
 	body := output.String()
 	for _, want := range []string{
-		`"path": "keyword_fallback"`,
+		`"path": "keyword"`,
 		`"version": "v1"`,
 		`"source_sha": "abc"`,
 		`"row_count": 1`,

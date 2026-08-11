@@ -1,6 +1,7 @@
 package axi_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -14,23 +15,28 @@ import (
 
 func TestQueryRendersTheRouteLineTOONRowsAndHelp(t *testing.T) {
 	res := service.QueryResult{
-		Question:  "what do we know about axi",
-		Path:      service.PathLLM,
-		Engine:    "ollama",
-		Model:     "qwen",
-		LatencyMS: 4,
-		Match:     service.MatchFound,
-		RowCount:  1,
-		Columns:   []string{"source", "id", "text"},
+		Question:       "what do we know about axi",
+		Path:           service.PathLLM,
+		Engine:         "ollama",
+		Model:          "qwen",
+		SQLInferenceMS: 4, ExecutionMS: 2,
+		Match:    service.MatchFound,
+		RowCount: 1,
+		Columns:  []string{"source", "id", "text"},
 		Rows: []map[string]any{{
 			"source": "memory", "id": int64(1), "text": "AXI uses TOON rows, stable fields.",
 		}},
 	}
 	got := axi.Query(res, "")
 
-	wantRoute := "route llm_fallback · provider ollama · model qwen · 4 ms"
-	if !strings.Contains(got, wantRoute) {
-		t.Errorf("the route line is wrong:\n%s", got)
+	for _, want := range []string{
+		"route model",
+		"SQL · provider ollama · model qwen · 4 ms",
+		"search · 2 ms",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the phase header lacks %q:\n%s", want, got)
+		}
 	}
 	if !strings.Contains(got, "rows[1]{source,id,text}:") {
 		t.Errorf("the TOON row header is missing:\n%s", got)
@@ -189,10 +195,11 @@ func TestQueryNamesTheProviderThatReadTheRows(t *testing.T) {
 		Question: "count memories", Path: service.PathLLM, Engine: "codex",
 		Model: "gpt-5.6-sol", LatencyMS: 4, Match: service.MatchFound, RowCount: 1,
 		Columns: []string{"n"}, Rows: []map[string]any{{"n": int64(2)}},
-		InterpretEngine: "ollama", InterpretModel: "qwen3.5:4b",
+		SQLInferenceMS: 4, ExecutionMS: 2,
+		InterpretEngine: "ollama", InterpretModel: "qwen3.5:4b", InterpretationMS: 9,
 	}
 	got := axi.Query(res, "there are two memories")
-	if !strings.Contains(got, "interpretation · provider ollama · model qwen3.5:4b") {
+	if !strings.Contains(got, "answer · provider ollama · model qwen3.5:4b · 9 ms") {
 		t.Errorf("the second inference's provenance is missing:\n%s", got)
 	}
 
@@ -203,7 +210,33 @@ func TestQueryNamesTheProviderThatReadTheRows(t *testing.T) {
 	if !strings.Contains(got, res.InterpretNote) {
 		t.Errorf("the fall back to the SQL provider is not declared:\n%s", got)
 	}
-	if strings.Contains(got, "interpretation · provider") {
-		t.Errorf("one provider was rendered as if it were two:\n%s", got)
+	if !strings.Contains(got, "answer · provider codex · model gpt-5.6-sol · 9 ms") {
+		t.Errorf("the shared provider lost the answer's separate timing:\n%s", got)
+	}
+}
+
+func TestQueryEnvelopeUsesHonestPhaseNames(t *testing.T) {
+	raw, err := json.Marshal(service.QueryResult{
+		Path: service.PathLLM, Engine: "codex", Model: "gpt",
+		InterpretEngine: "ollama", InterpretModel: "qwen",
+		SQLInferenceMS: 3, ExecutionMS: 2, InterpretationMS: 8,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, want := range []string{
+		`"path":"model"`, `"sql_provider":"codex"`, `"sql_model":"gpt"`,
+		`"interpretation_provider":"ollama"`, `"interpretation_model":"qwen"`,
+		`"sql_inference_ms":3`, `"execution_ms":2`, `"interpretation_ms":8`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("phase envelope lacks %s: %s", want, text)
+		}
+	}
+	for _, obsolete := range []string{`"engine"`, `"interpret_engine"`, "llm_fallback"} {
+		if strings.Contains(text, obsolete) {
+			t.Errorf("phase envelope kept compiler-era %q: %s", obsolete, text)
+		}
 	}
 }

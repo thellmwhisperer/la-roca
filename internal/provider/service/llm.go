@@ -20,9 +20,9 @@ import (
 // and one with a provider that answered nonsense are fixed in different ways.
 const (
 	// DegradedUnavailable: no provider of the order was available.
-	DegradedUnavailable = "llm_unavailable"
+	DegradedUnavailable = "model_unavailable"
 	// DegradedLLMError: a provider said it was available and then failed.
-	DegradedLLMError = "llm_error"
+	DegradedLLMError = "model_error"
 	// DegradedInvalidSQL: the model answered and the gate rejected it.
 	DegradedInvalidSQL = "invalid_sql"
 	// DegradedExecution: the SQL passed the gate and blew up when it ran.

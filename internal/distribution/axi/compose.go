@@ -33,19 +33,21 @@ func QueryPreamble(res service.QueryResult) string {
 		appendLine(&b, "warning: "+warning)
 	}
 	appendLine(&b, res.ProviderNote)
+	appendLine(&b, "route "+res.Path)
 	if res.Engine != "" {
-		appendLine(&b, fmt.Sprintf("route %s · provider %s · model %s · %s",
-			res.Path, res.Engine, res.Model, Duration(res.LatencyMS)))
-	} else {
-		appendLine(&b, fmt.Sprintf("route %s · %s", res.Path, Duration(res.LatencyMS)))
+		appendLine(&b, fmt.Sprintf("SQL · provider %s · model %s · %s",
+			res.Engine, res.Model, Duration(res.SQLInferenceMS)))
+	}
+	if res.Match != "" {
+		appendLine(&b, "search · "+Duration(res.ExecutionMS))
 	}
 	// Who read the result rows, when that is somebody else. An installation
 	// splits the two inferences so the rows stay on one machine, and a claim
 	// like that is worth nothing unless the answer names who received them.
 	appendLine(&b, res.InterpretNote)
-	if res.InterpretEngine != "" && res.InterpretEngine != res.Engine {
-		appendLine(&b, fmt.Sprintf("interpretation · provider %s · model %s",
-			res.InterpretEngine, res.InterpretModel))
+	if res.InterpretEngine != "" {
+		appendLine(&b, fmt.Sprintf("answer · provider %s · model %s · %s",
+			res.InterpretEngine, res.InterpretModel, Duration(res.InterpretationMS)))
 	}
 	if res.Degraded != "" {
 		appendLine(&b, "degraded: "+res.Degraded)

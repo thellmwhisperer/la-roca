@@ -40,7 +40,7 @@ func TestExecutionLogCarriesMetadataWithoutResultRowsAndRedactsFlags(t *testing.
 		t.Fatal(err)
 	}
 	text := string(raw)
-	for _, want := range []string{`"command":"query"`, `"database_path":"` + dbPath + `"`, `"question":"what changed"`, `"path":"llm_fallback"`, `"row_count":2`, `"api-token":"[REDACTED]"`} {
+	for _, want := range []string{`"command":"query"`, `"database_path":"` + dbPath + `"`, `"question":"what changed"`, `"path":"model"`, `"row_count":2`, `"api-token":"[REDACTED]"`} {
 		if !strings.Contains(text, want) {
 			t.Errorf("execution log lacks %q: %s", want, text)
 		}
