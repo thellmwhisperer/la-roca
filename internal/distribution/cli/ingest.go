@@ -1,8 +1,12 @@
 package cli
 
 import (
+	"fmt"
 	"os"
+	"regexp"
 	"runtime"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -22,6 +26,7 @@ const (
 
 func ingestCommand(env *cliEnv) *cobra.Command {
 	var req service.IngestRequest
+	var verbose bool
 	cmd := &cobra.Command{
 		Use:   "ingest",
 		Short: "Read every source of the matrix and normalize what changed",
@@ -47,17 +52,25 @@ func ingestCommand(env *cliEnv) *cobra.Command {
 			if env.json {
 				return env.printJSON(result)
 			}
-			renderIngest(env, result)
+			renderIngest(env, result, verbose)
 			return nil
 		}),
 	}
 	cmd.Flags().BoolVar(&req.DryRun, "dry-run", false,
 		"report what would be read without writing anything")
+	cmd.Flags().BoolVar(&verbose, "verbose", false,
+		"add up to 100 record details with paths; the ingest log has the full run report")
 	return cmd
 }
 
 // renderIngest is the readable output. The same report --json hands over whole.
-func renderIngest(env *cliEnv, result service.IngestResult) {
+//
+// What the default says is what happened: what each source contributed, and what
+// was left out collapsed onto the reason it was left out, with the records this
+// build never meant to read named as the exclusions they are. The per-record
+// detail retained by the report, and its absolute paths, are behind `--verbose`;
+// the same bounded report is in the ingest log either way.
+func renderIngest(env *cliEnv, result service.IngestResult, verbose bool) {
 	env.print("setup: agents detected: %s · agents not found: %s",
 		detectedAgentsLine(result.DetectedAgents), missingAgentsLine(result.DetectedAgents))
 	for _, warning := range result.Warnings {
@@ -78,7 +91,7 @@ func renderIngest(env *cliEnv, result service.IngestResult) {
 		env.print("  %s still being written and left for the next run",
 			axi.Quantity(int64(result.ExchangesHeld), "exchange"))
 	}
-	renderIngestDetails(env, result)
+	renderIngestOutcome(env, result, verbose)
 	if result.Index != nil {
 		env.print("index: full-text index ready · %s", axi.Duration(result.Index.ElapsedMS))
 	}
@@ -98,12 +111,19 @@ func renderIngestSources(env *cliEnv, result service.IngestResult) {
 			stats = &ingest.SourceStats{}
 		}
 		sessions := counts.Sessions + counts.SessionsUpdated
-		env.print("  ✓ %s · %s · %s · %s · %s · %s discarded · %s",
+		// The discard count earns its place on the row only when there is one:
+		// printing "0 discarded" beside every healthy source is what taught an
+		// operator to read the row looking for bad news.
+		discarded := ""
+		if stats.RecordsDiscarded > 0 {
+			discarded = fmt.Sprintf("%s discarded · ", axi.Number(int64(stats.RecordsDiscarded)))
+		}
+		env.print("  ✓ %s · %s · %s · %s · %s · %s%s",
 			ingestSourceLabel(name), axi.Quantity(int64(stats.Read), "file"),
 			axi.Quantity(int64(sessions), "session"),
 			axi.Quantity(int64(counts.Exchanges), "exchange"),
 			axi.Quantity(int64(counts.MemoriesInserted+counts.MemoriesUpdated), "memory", "memories"),
-			axi.Number(int64(stats.RecordsDiscarded)), axi.Duration(stats.ElapsedMS))
+			discarded, axi.Duration(stats.ElapsedMS))
 	}
 }
 
@@ -114,13 +134,91 @@ func renderIngestDelta(env *cliEnv, delta ingest.Tables) {
 		axi.Number(int64(delta.ToolUses)))
 }
 
-func renderIngestDetails(env *cliEnv, result service.IngestResult) {
+// categoriesShown bounds the collapsed block. A run over a large corpus meets
+// dozens of categories and the tail of them is noise; the counts above the block
+// are always the whole truth.
+const categoriesShown = 5
+
+var absolutePathInError = regexp.MustCompile(
+	`(^|[[:space:]"'(\[])((?:/[^:\n"')]+)|(?:[A-Za-z]:[\\/][^:\n"')]+))(:|["')\]])`,
+)
+
+func renderIngestOutcome(env *cliEnv, result service.IngestResult, verbose bool) {
 	for _, failure := range result.ErrorDetails {
-		env.print("error: %s (%s): %s", failure.Path, failure.Parser, failure.Reason)
+		path := compactIngestPath(failure.Path)
+		if failure.Path == "" {
+			path = "unknown file"
+		}
+		reason := compactIngestError(failure.Reason, failure.Path)
+		if verbose {
+			reason = failure.Reason
+			if failure.Path != "" {
+				path = failure.Path
+			}
+		}
+		env.print("error: %s (%s): %s", path, failure.Parser, reason)
+	}
+	renderIngestCategories(env, result, true,
+		fmt.Sprintf("excluded: %s left out by design",
+			axi.Quantity(int64(result.RecordsExcluded), "record")))
+	renderIngestCategories(env, result, false,
+		fmt.Sprintf("discards: %s could not be read",
+			axi.Quantity(int64(result.RecordsDiscarded), "record")))
+	if !verbose {
+		if len(result.DiscardDetails) > 0 {
+			env.print("  detail: run `roca ingest --verbose` for up to 100 records and paths; the ingest log has the full run report")
+		}
+		return
 	}
 	for _, discard := range result.DiscardDetails {
-		env.print("discard: %s (%s record %s): %s",
+		label := "discard"
+		if discard.ByDesign {
+			label = "excluded"
+		}
+		env.print("%s: %s (%s record %s): %s", label,
 			discard.Path, discard.Parser, axi.Number(int64(discard.Record)), discard.Reason)
+	}
+}
+
+func compactIngestError(reason, knownPath string) string {
+	if knownPath != "" {
+		reason = strings.ReplaceAll(reason, knownPath, compactIngestPath(knownPath))
+	}
+	return absolutePathInError.ReplaceAllStringFunc(reason, func(match string) string {
+		parts := absolutePathInError.FindStringSubmatch(match)
+		return parts[1] + compactIngestPath(parts[2]) + parts[3]
+	})
+}
+
+func compactIngestPath(path string) string {
+	path = strings.TrimRight(path, `/\`)
+	if at := strings.LastIndexAny(path, `/\`); at >= 0 {
+		return path[at+1:]
+	}
+	return path
+}
+
+// renderIngestCategories prints one side of the outcome collapsed onto its
+// reasons, and prints nothing at all when that side is empty.
+func renderIngestCategories(env *cliEnv, result service.IngestResult, byDesign bool, headline string) {
+	var categories []ingest.DiscardCategory
+	for _, category := range result.DiscardSummary {
+		if category.ByDesign == byDesign {
+			categories = append(categories, category)
+		}
+	}
+	if len(categories) == 0 {
+		return
+	}
+	slices.SortStableFunc(categories, func(a, b ingest.DiscardCategory) int {
+		return b.Count - a.Count
+	})
+	env.print("%s", headline)
+	for _, category := range categories[:min(len(categories), categoriesShown)] {
+		env.print("  · %s · %s", category.Reason, axi.Number(int64(category.Count)))
+	}
+	if rest := len(categories) - categoriesShown; rest > 0 {
+		env.print("  · %s more", axi.Quantity(int64(rest), "reason"))
 	}
 }
 

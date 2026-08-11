@@ -52,7 +52,8 @@ func ParseSubagent(content []byte, meta FileMeta) (Records, error) {
 	for index, raw := range lines(content) {
 		var entry message
 		if err := json.Unmarshal([]byte(raw), &entry); err != nil {
-			discards = append(discards, Discard{Record: index + 1, Reason: "invalid JSON: " + err.Error()})
+			discards = append(discards, Discard{Record: index + 1,
+				Reason: "invalid JSON: " + err.Error(), Category: "invalid JSON"})
 			continue
 		}
 		entry.record = index + 1
@@ -83,7 +84,9 @@ func ParseSubagent(content []byte, meta FileMeta) (Records, error) {
 	if kind == subagentCompact {
 		for _, entry := range entries {
 			if entry.Type != "system" {
-				discards = append(discards, Discard{Record: entry.record, Reason: "unsupported compact record: " + entry.Type})
+				discards = append(discards, Discard{Record: entry.record,
+					Reason:   "unsupported compact record: " + entry.Type,
+					Category: "unsupported compact record"})
 				continue
 			}
 			text, blocks := decodeContent(entry.Message)
@@ -111,6 +114,10 @@ func ParseSubagent(content []byte, meta FileMeta) (Records, error) {
 	type side struct {
 		text, timestamp string
 		record          int
+		// model and usage are the provenance the assistant chunks declared; the
+		// human side of a transcript declares none.
+		model string
+		usage UsageTally
 	}
 	var humans, agents []side
 	pendingAgent := false
@@ -127,17 +134,24 @@ func ParseSubagent(content []byte, meta FileMeta) (Records, error) {
 		switch entry.Type {
 		case "user":
 			pendingAgent = false
-			humans = append(humans, side{text, entry.Timestamp, entry.record})
+			humans = append(humans, side{text: text, timestamp: entry.Timestamp, record: entry.record})
 		case "assistant":
-			if pendingAgent {
+			if !pendingAgent {
+				agents = append(agents, side{text: text, timestamp: entry.Timestamp, record: entry.record})
+				pendingAgent = true
+			} else {
 				agents[len(agents)-1].text += "\n" + text
-				continue
 			}
-			agents = append(agents, side{text, entry.Timestamp, entry.record})
-			pendingAgent = true
+			answer := &agents[len(agents)-1]
+			if answer.model == "" && entry.Message != nil {
+				answer.model = entry.Message.Model
+			}
+			claimClaudeUsage(&answer.usage, entry.Message)
 		default:
 			pendingAgent = false
-			discards = append(discards, Discard{Record: entry.record, Reason: "unsupported subagent record: " + entry.Type})
+			discards = append(discards, Discard{Record: entry.record,
+				Reason:   "unsupported subagent record: " + entry.Type,
+				Category: "unsupported subagent record"})
 		}
 	}
 
@@ -162,6 +176,7 @@ func ParseSubagent(content []byte, meta FileMeta) (Records, error) {
 			HumanTimestamp: humans[i].timestamp,
 			AgentTimestamp: agents[i].timestamp,
 			LatencyMS:      latency(humans[i].timestamp, agents[i].timestamp),
+			Provenance:     agents[i].usage.Provenance(agents[i].model, ""),
 		})
 	}
 	if len(session.Exchanges) == 0 {

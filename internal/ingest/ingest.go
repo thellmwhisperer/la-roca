@@ -55,6 +55,7 @@ type SourceStats struct {
 	Processed        int
 	Read             int
 	RecordsDiscarded int
+	RecordsExcluded  int
 	ElapsedMS        int64
 }
 
@@ -68,11 +69,29 @@ type Failure struct {
 }
 
 type DiscardDetail struct {
-	Path   string `json:"path"`
-	Parser string `json:"parser"`
-	Record int    `json:"record"`
-	Reason string `json:"reason"`
+	Path     string `json:"path"`
+	Parser   string `json:"parser"`
+	Record   int    `json:"record"`
+	Reason   string `json:"reason"`
+	ByDesign bool   `json:"by_design"`
 }
+
+// DiscardCategory is one reason with how many records met it. The collapsed
+// shape is the one an operator reads: a healthy ingest of a large corpus leaves
+// hundreds of thousands of runtime records unread by design, and listing them
+// one by one turns a healthy run into a wall of alarm.
+type DiscardCategory struct {
+	Reason string `json:"reason"`
+	Count  int    `json:"count"`
+	// ByDesign separates what this build never meant to read from what it could
+	// not read. Only the second is a problem anybody has to look at.
+	ByDesign bool `json:"by_design"`
+}
+
+// discardDetailBudget caps the per-record list. The counts are always exact;
+// what is bounded is the evidence, because a report that carries one entry per
+// source record stops being a report.
+const discardDetailBudget = 100
 
 // Tables are the row counts of the five tables the ingest writes. Before, after,
 // and the difference: on a second pass over the same disk the difference is zero
@@ -113,10 +132,15 @@ type Result struct {
 	DryRun bool `json:"dry_run"`
 	// Errors is a count and not a list, first, because that is what a script
 	// checks. The list is beside it.
-	Errors           int             `json:"errors"`
-	ErrorDetails     []Failure       `json:"error_details,omitempty"`
-	RecordsDiscarded int             `json:"records_discarded"`
-	DiscardDetails   []DiscardDetail `json:"discard_details,omitempty"`
+	Errors       int       `json:"errors"`
+	ErrorDetails []Failure `json:"error_details,omitempty"`
+	// RecordsDiscarded counts what could not be read; RecordsExcluded counts what
+	// this build never meant to read. They are apart because collapsing them is
+	// what made a healthy ingest report thousands of failures.
+	RecordsDiscarded int               `json:"records_discarded"`
+	RecordsExcluded  int               `json:"records_excluded"`
+	DiscardDetails   []DiscardDetail   `json:"discard_details,omitempty"`
+	DiscardSummary   []DiscardCategory `json:"discard_summary,omitempty"`
 	// Scanned is what the roots hold, per source, always with every source
 	// present: a source missing from the report reads as one nobody looked at.
 	Scanned map[string]int `json:"scanned"`
@@ -141,6 +165,8 @@ type Result struct {
 	Warnings       []string                `json:"warnings,omitempty"`
 	ElapsedMS      int64                   `json:"elapsed_ms"`
 	SourceStats    map[string]*SourceStats `json:"-"`
+	// categories indexes DiscardSummary while the run is collapsing into it.
+	categories map[string]int `json:"-"`
 }
 
 // Run reads every source in the matrix once and writes what changed.
@@ -182,9 +208,11 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 	for _, target := range plan.Excluded {
 		result.source(target.SourceAgent)
 		stats := result.sourceStats(target.SourceAgent)
-		stats.RecordsDiscarded++
+		stats.RecordsExcluded++
 		result.FilesExcluded++
-		result.discard(target, []parsers.Discard{{Reason: target.ExclusionReason}})
+		// A file the scan refuses on purpose is not a failure to read one: it is
+		// this build declining to ingest something it decided is not corpus.
+		result.discard(target, []parsers.Discard{parsers.Excluded(target.ExclusionReason)})
 	}
 
 	// The state is read even on a dry run: telling an operator that eight hundred
@@ -275,9 +303,10 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		}
 		result.FilesRead++
 		stats.Read++
-		discardsBefore := result.RecordsDiscarded
+		discardsBefore, excludedBefore := result.RecordsDiscarded, result.RecordsExcluded
 		err = ingestOne(ctx, db, layers, opts, target, fingerprint, &result)
 		stats.RecordsDiscarded += result.RecordsDiscarded - discardsBefore
+		stats.RecordsExcluded += result.RecordsExcluded - excludedBefore
 		finishTarget()
 		if err != nil {
 			return result, err
@@ -356,17 +385,57 @@ func (r *Result) fingerprintFailure(target Target, err error) {
 // the report say "record 2" about a file that has no second record. The identity
 // the operator needs is the session id, and the complaint already carries it.
 func foreignDiscard(complaint string) parsers.Discard {
-	return parsers.Discard{Reason: complaint}
+	category := complaint
+	for _, source := range []string{"Hermes session ", "OpenCode session "} {
+		if tail, found := strings.CutPrefix(complaint, source); found {
+			if _, reason, separated := strings.Cut(tail, ": "); separated {
+				category = strings.TrimSuffix(source, " ") + ": " + reason
+			}
+			break
+		}
+	}
+	return parsers.Discard{Reason: complaint, Category: category}
 }
 
 func (r *Result) discard(target Target, discards []parsers.Discard) {
 	for _, discard := range discards {
-		r.RecordsDiscarded++
+		r.categorize(discard)
+		if discard.ByDesign {
+			r.RecordsExcluded++
+		} else {
+			r.RecordsDiscarded++
+		}
+		if len(r.DiscardDetails) >= discardDetailBudget {
+			continue
+		}
 		r.DiscardDetails = append(r.DiscardDetails, DiscardDetail{
 			Path: target.Path, Parser: string(target.Kind),
-			Record: discard.Record, Reason: discard.Reason,
+			Record: discard.Record, Reason: discard.Reason, ByDesign: discard.ByDesign,
 		})
 	}
+}
+
+// categorize collapses one discard onto its reason. The categories keep the
+// order they first appeared in, which is the order the sources were read: a
+// stable order is what makes two runs of the same disk comparable.
+func (r *Result) categorize(discard parsers.Discard) {
+	if r.categories == nil {
+		r.categories = map[string]int{}
+	}
+	reason := discard.Category
+	if reason == "" {
+		reason = discard.Reason
+	}
+	key := fmt.Sprintf("%t\x00%s", discard.ByDesign, reason)
+	at, known := r.categories[key]
+	if !known {
+		r.categories[key] = len(r.DiscardSummary)
+		r.DiscardSummary = append(r.DiscardSummary, DiscardCategory{
+			Reason: reason, Count: 1, ByDesign: discard.ByDesign,
+		})
+		return
+	}
+	r.DiscardSummary[at].Count++
 }
 
 // ingestOne reads one artefact and writes it, with its state, in one transaction.

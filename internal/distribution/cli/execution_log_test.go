@@ -83,6 +83,9 @@ func TestIngestExecutionAlsoPersistsTheDetailedIngestEnvelope(t *testing.T) {
 			RecordsDiscarded: 1,
 			DiscardDetails: []ingest.DiscardDetail{{
 				Path: "/source/session.jsonl", Parser: "claude_session", Record: 3, Reason: "invalid JSON",
+			}, {
+				Path: "/source/runtime.jsonl", Parser: "codex_session", Record: 4,
+				Reason: "runtime event", ByDesign: true,
 			}},
 		}},
 	}
@@ -100,7 +103,8 @@ func TestIngestExecutionAlsoPersistsTheDetailedIngestEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"records_discarded":1`, `"parser":"claude_session"`, `"reason":"invalid JSON"`} {
+	for _, want := range []string{`"records_discarded":1`, `"parser":"claude_session"`,
+		`"reason":"invalid JSON"`, `"by_design":true`} {
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("ingest log lacks %q: %s", want, raw)
 		}
