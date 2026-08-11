@@ -103,13 +103,7 @@ func TestPurgePreservesGenericSiblingDirectoryContents(t *testing.T) {
 func TestPurgeRemovesAnAuditCreatedAfterTheOwnershipSnapshot(t *testing.T) {
 	home := t.TempDir()
 	paths := resolvedIn(t, home)
-	dataDir := dirOf(paths.DB)
-	writer := logfile.New(dataDir)
-	if err := writer.Prepare(); err != nil {
-		t.Fatal(err)
-	}
-	foreign := filepath.Join(dataDir, logfile.DirName, "operator.txt")
-	writeFile(t, foreign, "mine")
+	dataDir, writer, foreign := preparedLogFixture(t, paths)
 
 	done := make(chan error, 1)
 	report := applyPurge(dataDir, func() lifecycle.Plan {
@@ -129,9 +123,7 @@ func TestPurgeRemovesAnAuditCreatedAfterTheOwnershipSnapshot(t *testing.T) {
 	if _, err := os.Stat(foreign); err != nil {
 		t.Fatalf("foreign log was not preserved: %v", err)
 	}
-	if !report.Purged || len(report.Errors) != 0 {
-		t.Fatalf("purge report = %+v", report)
-	}
+	requireSuccessfulPurge(t, report)
 }
 
 func TestPurgeReleasesAndRemovesItsLogLock(t *testing.T) {
@@ -140,12 +132,7 @@ func TestPurgeReleasesAndRemovesItsLogLock(t *testing.T) {
 	dataDir := dirOf(paths.DB)
 
 	for range 2 {
-		report := applyPurge(dataDir, func() lifecycle.Plan {
-			return lifecycle.Plan{Owned: ownedPaths(paths), DataDir: dataDir}
-		})
-		if !report.Purged || len(report.Errors) != 0 {
-			t.Fatalf("purge report = %+v", report)
-		}
+		purgeOwnedPaths(t, paths)
 		if _, err := os.Stat(dataDir); !os.IsNotExist(err) {
 			t.Fatalf("data directory survived purge: %v", err)
 		}
@@ -194,20 +181,9 @@ func TestPurgeReconciliationKeepsTheOriginalReasonForAPath(t *testing.T) {
 func TestPurgeReportsForeignLogSurvivorsOnce(t *testing.T) {
 	home := t.TempDir()
 	paths := resolvedIn(t, home)
-	dataDir := dirOf(paths.DB)
-	writer := logfile.New(dataDir)
-	if err := writer.Prepare(); err != nil {
-		t.Fatal(err)
-	}
-	foreign := filepath.Join(dataDir, logfile.DirName, "operator.txt")
-	writeFile(t, foreign, "mine")
+	_, _, foreign := preparedLogFixture(t, paths)
 
-	report := applyPurge(dataDir, func() lifecycle.Plan {
-		return lifecycle.Plan{Owned: ownedPaths(paths), DataDir: dataDir}
-	})
-	if !report.Purged || len(report.Errors) != 0 {
-		t.Fatalf("purge report = %+v", report)
-	}
+	report := purgeOwnedPaths(t, paths)
 	counts := map[lifecycle.Kept]int{}
 	for _, survivor := range report.Kept {
 		counts[survivor]++
@@ -247,12 +223,7 @@ func TestPurgePreservesSymlinkedProductDirectoriesAndTargets(t *testing.T) {
 		}
 	}
 
-	report := applyPurge(dataDir, func() lifecycle.Plan {
-		return lifecycle.Plan{Owned: ownedPaths(paths), DataDir: dataDir}
-	})
-	if !report.Purged || len(report.Errors) != 0 {
-		t.Fatalf("purge report = %+v", report)
-	}
+	purgeOwnedPaths(t, paths)
 	for _, directory := range directories {
 		if info, err := os.Lstat(directory.path); err != nil || info.Mode()&os.ModeSymlink == 0 {
 			t.Errorf("symlink %s was not preserved: info=%v err=%v", directory.path, info, err)
@@ -347,6 +318,35 @@ func TestUnreadableRecoveryBackupDirectoryFailsTheReport(t *testing.T) {
 }
 
 // --- helpers ---
+
+func preparedLogFixture(t *testing.T, paths config.Paths) (string, *logfile.Writer, string) {
+	t.Helper()
+	dataDir := dirOf(paths.DB)
+	writer := logfile.New(dataDir)
+	if err := writer.Prepare(); err != nil {
+		t.Fatal(err)
+	}
+	foreign := filepath.Join(dataDir, logfile.DirName, "operator.txt")
+	writeFile(t, foreign, "mine")
+	return dataDir, writer, foreign
+}
+
+func purgeOwnedPaths(t *testing.T, paths config.Paths) lifecycle.Report {
+	t.Helper()
+	dataDir := dirOf(paths.DB)
+	report := applyPurge(dataDir, func() lifecycle.Plan {
+		return lifecycle.Plan{Owned: ownedPaths(paths), DataDir: dataDir}
+	})
+	requireSuccessfulPurge(t, report)
+	return report
+}
+
+func requireSuccessfulPurge(t *testing.T, report lifecycle.Report) {
+	t.Helper()
+	if !report.Purged || len(report.Errors) != 0 {
+		t.Fatalf("purge report = %+v", report)
+	}
+}
 
 // writeFile creates the parent directory and writes a file, the way an
 // operator's pre-existing configuration looks before La Roca touches it.
