@@ -70,7 +70,7 @@ func targetFingerprint(target Target) (string, error) {
 		return "", err
 	}
 	if target.Kind != parsers.KindOpenCodeDB && target.Kind != parsers.KindHermesDB {
-		return main, nil
+		return parserAwareFingerprint(target.Kind, main), nil
 	}
 	wal, err := Fingerprint(target.Path + "-wal")
 	if err == nil {
@@ -80,6 +80,13 @@ func targetFingerprint(target Target) (string, error) {
 		return main + ":wal:none", nil
 	}
 	return "", err
+}
+
+func parserAwareFingerprint(kind parsers.Kind, fingerprint string) string {
+	if kind == parsers.KindClaudeWebConversations {
+		return fingerprint + ":parser:claude-web-conversations-v2"
+	}
+	return fingerprint
 }
 
 // FileState is what the database remembers about one path.
