@@ -19,12 +19,22 @@ func registerProviderConfigSteps(ctx *godog.ScenarioContext, w *providerAcceptan
 	ctx.Given(`^the provider configuration is:$`, w.providerConfiguration)
 	ctx.Given(`^the configuration also contains the unknown key "([^"]*)"$`, w.addUnknownConfigKey)
 	ctx.Given(`^the configuration file is missing$`, w.removeConfig)
+	ctx.Given(`^a fake "([^"]+)" agent CLI binary is on PATH$`, w.fakeAgentCLIOnPath)
 	ctx.Given(`^no configured provider is available$`, w.noProviderAvailable)
 	ctx.Given(`^the model answers with SQL "([^"]*)"$`, w.modelAnswersSQL)
 	ctx.Given(`^a provider backed by a local binary answers with SQL "([^"]*)"$`, w.localBinaryAnswersSQL)
 	ctx.Then(`^the reported provider order is "([^"]*)"$`, w.reportedProviderOrder)
 	ctx.Then(`^the output warns about "([^"]*)"$`, w.outputWarnsAbout)
 	ctx.Then(`^the configuration is reported as absent$`, w.configReportedAbsent)
+}
+
+func (w *providerAcceptanceWorld) fakeAgentCLIOnPath(name string) error {
+	path, err := w.writeFakeBinary(name, `printf '%s' 'SELECT 1'`)
+	if err != nil {
+		return err
+	}
+	w.environment["PATH"] = filepath.Dir(path) + string(os.PathListSeparator) + "/usr/bin:/bin"
+	return nil
 }
 
 func (w *providerAcceptanceWorld) initializedHomeWithoutModel() error {

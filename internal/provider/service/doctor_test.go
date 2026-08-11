@@ -45,6 +45,31 @@ func TestDoctorReportsTheProvidersInTheDeclaredOrder(t *testing.T) {
 	}
 }
 
+func TestDoctorReportsDetectedBinariesAndTheFactorySelection(t *testing.T) {
+	local := answering("codex", "")
+	local.external = true
+	svc := seededServiceWith(t, provider.Cascade{
+		Providers:        []provider.Provider{local, answering("ollama", "")},
+		DetectedBinaries: []string{"codex"},
+		FallbackDiagnostics: []provider.Attempt{{
+			Name: "claude", Reason: "claude binary not found in PATH",
+		}},
+		FactoryDefault: true,
+	})
+	report, err := svc.Doctor(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(report.DetectedModelBinaries, ",") != "codex" ||
+		strings.Join(report.MissingModelBinaries, ",") != "claude" ||
+		!report.FactoryDefault || report.FactoryDefaultProvider != "codex" {
+		t.Fatalf("factory diagnosis = %+v", report)
+	}
+	if report.Providers[0].Credential != service.CredentialExternal {
+		t.Fatalf("credential = %q", report.Providers[0].Credential)
+	}
+}
+
 func TestDoctorSaysSoWhenNobodyIsAvailable(t *testing.T) {
 	svc := seededServiceWith(t, provider.Cascade{
 		Providers: []provider.Provider{unavailable("ollama", "it does not answer", "start it")},

@@ -269,9 +269,11 @@ func renderBootstrap(env *cliEnv, result service.InitResult) {
 			env.print("model: turned off in the configuration · %s",
 				axi.Duration(result.ModelElapsedMS))
 		case model.Ready:
-			env.print("%s · %s",
-				modelChoiceLine(model.Provider, "ready", model.Model, result.ConfigPath),
-				axi.Duration(result.ModelElapsedMS))
+			line := modelChoiceLine(model.Provider, "ready", model.Model, result.ConfigPath)
+			if model.ExternalCredential {
+				line += " · uses the existing local CLI session; no roca login required"
+			}
+			env.print("%s · %s", line, axi.Duration(result.ModelElapsedMS))
 		default:
 			env.print("model: none available (%s) · %s", model.Reason,
 				axi.Duration(result.ModelElapsedMS))
@@ -283,6 +285,9 @@ func renderBootstrap(env *cliEnv, result service.InitResult) {
 	renderBedrock(env, result.Bedrock)
 	env.print("total: %s", axi.Duration(result.TotalElapsedMS))
 	env.print("next steps:")
+	if result.Model != nil && result.Model.Ready {
+		env.print("  query: `roca query \"what did we decide last time\"`")
+	}
 	if result.PromptPath != "" {
 		env.print("  agent prompt: %s", result.PromptPath)
 		env.print("  Paste its contents into the agent instructions you choose.")

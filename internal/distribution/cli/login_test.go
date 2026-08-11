@@ -22,18 +22,18 @@ func TestBareLoginExactOutputWithoutSessions(t *testing.T) {
 	configPath := filepath.Join(home, ".roca", "config.toml")
 	out := runRoot(t, Build{Version: "test"}, "login")
 	want := "Supported providers:\n" +
-		"  codex       subscription  ·  roca login codex\n" +
+		"  codex       local CLI     ·  roca login codex\n" +
 		"  claude      local CLI     ·  roca login claude\n" +
 		"  deepseek    API key       ·  roca login deepseek\n" +
 		"  zai         API key       ·  roca login zai\n" +
 		"  xai         API key       ·  roca login xai\n" +
 		"Model configuration:\n" +
 		"  order: codex, ollama (built-in default · change with: models.order in " + configPath + ")\n" +
-		"  codex: model gpt-5.6-luna (built-in default · change with: roca login codex --model <id> or models.codex.model in " + configPath + ")\n" +
+		"  codex: model gpt-5.6-luna (built-in default · change with: roca model set <id> or models.codex.model in " + configPath + ")\n" +
 		"  ollama: model qwen3.5:4b (built-in default · change with: models.ollama.model in " + configPath + ")\n" +
 		"Credential and session state:\n" +
-		"  codex: no session\n" +
-		"  claude: existing Claude Code session; La Roca stores no credential\n" +
+		"  codex: existing Codex CLI session; La Roca stores no credential and requires no login\n" +
+		"  claude: existing Claude Code session; La Roca stores no credential and requires no login\n" +
 		"  deepseek: no stored API key\n" +
 		"  zai: no stored API key\n" +
 		"  xai: no stored API key\n" +
@@ -45,6 +45,8 @@ func TestBareLoginExactOutputWithoutSessions(t *testing.T) {
 
 func TestBareLoginExactOutputWithASession(t *testing.T) {
 	home := isolatedLoginHome(t)
+	writeFile(t, filepath.Join(home, ".roca", "config.toml"),
+		"[models.codex]\nbase_url = \"https://chatgpt.com/backend-api/codex\"\n")
 	expires := time.Date(2026, 8, 17, 13, 0, 0, 0, time.UTC)
 	store := provider.CodexStore(filepath.Join(home, ".roca", "credentials"))
 	if err := store.Save(oauth.Token{AccessToken: "secret", ExpiresAt: expires}); err != nil {
@@ -85,7 +87,7 @@ func TestUnknownLoginProviderListsTheSupportedOnes(t *testing.T) {
 	}
 }
 
-// The login help text names both flows in order (subscription → API key)
+// The login help text names the zero-login local CLI flow before API keys
 // without the stray indentation that used to leave "Providers with a
 // subscription flow:" floating.
 func TestLoginHelpNamesBothFlowsCleanly(t *testing.T) {
@@ -95,13 +97,13 @@ func TestLoginHelpNamesBothFlowsCleanly(t *testing.T) {
 		t.Fatalf("stray indentation is back in the help:\n%s", out)
 	}
 
-	subPos := strings.Index(out, "subscription")
+	subPos := strings.Index(out, "local CLI")
 	keyPos := strings.Index(out, "API key")
 	if subPos < 0 || keyPos < 0 {
 		t.Fatalf("help missing a flow name:\n%s", out)
 	}
 	if subPos >= keyPos {
-		t.Errorf("subscription must appear before API key:\n%s", out)
+		t.Errorf("local CLI must appear before API key:\n%s", out)
 	}
 
 	for _, want := range []string{
@@ -319,7 +321,7 @@ func TestLoginAndLogoutJSONContracts(t *testing.T) {
 			t.Errorf("expected %d providers, got %d", 2+len(all), len(providers))
 		}
 		first, _ := providers[0].(map[string]any)
-		if first["name"] != provider.NameCodex || first["flow"] != "subscription" {
+		if first["name"] != provider.NameCodex || first["flow"] != "local_cli" {
 			t.Errorf("codex entry wrong: %v", first)
 		}
 		claude, _ := providers[1].(map[string]any)
@@ -414,6 +416,11 @@ func isolatedLoginHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte("fixture"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
 	for _, key := range []string{
 		"ROCA_DB_PATH", "ROCA_CONFIG", "ROCA_MODELS_ORDER", "ROCA_CODEX_MODEL",
 		"ROCA_OLLAMA_MODEL", "ROCA_MODEL", "DEEPSEEK_API_KEY", "ZAI_API_KEY", "XAI_API_KEY",

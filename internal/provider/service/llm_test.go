@@ -24,14 +24,16 @@ type fakeProvider struct {
 	fail     error
 	delay    time.Duration
 	requests int
+	external bool
 	// prompt is the last system message it received, and prompts is all of
 	// them: the retry has to be checkable for what it carries.
 	prompt  string
 	prompts []string
 }
 
-func (f *fakeProvider) Name() string    { return f.name }
-func (f *fakeProvider) ModelID() string { return f.model }
+func (f *fakeProvider) Name() string             { return f.name }
+func (f *fakeProvider) ModelID() string          { return f.model }
+func (f *fakeProvider) ExternalCredential() bool { return f.external }
 
 func (f *fakeProvider) Models(context.Context) provider.ModelReport {
 	return provider.ModelReport{Ready: f.ready.Ready, Models: []string{f.model}}
@@ -253,6 +255,29 @@ func TestWithNoProviderAtAllTheFailureNamesEverythingTried(t *testing.T) {
 	}
 	if !strings.Contains(res.Message, "ollama serve") {
 		t.Fatalf("the message does not name the exact command to start the local model: %q", res.Message)
+	}
+}
+
+func TestFactoryDegradationNamesEveryMissingBinaryBeforeKeywordRescue(t *testing.T) {
+	svc := seededServiceWith(t, provider.Cascade{
+		Providers: []provider.Provider{unavailable("ollama", "Ollama does not answer", "run `ollama serve`")},
+		FallbackDiagnostics: []provider.Attempt{
+			{Name: "claude", Reason: "claude binary not found in PATH", Action: "install Claude Code"},
+			{Name: "codex", Reason: "codex binary not found in PATH", Action: "install Codex CLI"},
+		},
+		FactoryDefault: true,
+	})
+	res, err := svc.Query(t.Context(), service.QueryRequest{Question: theQuestionWithAMatch})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Path != service.PathKeyword || res.Degraded != service.DegradedUnavailable {
+		t.Fatalf("result = %+v", res)
+	}
+	for _, want := range []string{"claude binary not found in PATH", "codex binary not found in PATH", "Ollama does not answer"} {
+		if !strings.Contains(res.Message, want) {
+			t.Errorf("degraded answer does not contain %q: %s", want, res.Message)
+		}
 	}
 }
 

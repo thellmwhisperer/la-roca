@@ -159,6 +159,9 @@ type InitModel struct {
 	Reason   string `json:"reason,omitempty"`
 	Action   string `json:"action,omitempty"`
 	Disabled bool   `json:"disabled,omitempty"`
+	// ExternalCredential means the chosen command uses the agent CLI's own
+	// session and needs no La Roca login.
+	ExternalCredential bool `json:"external_credential,omitempty"`
 }
 
 const presentationPrompt = "## La Roca — local semantic memory\n" +
@@ -305,9 +308,11 @@ func (s *Service) modelGate(ctx context.Context) *InitModel {
 		}
 	}
 	gate := &InitModel{}
-	for _, attempt := range cascade.Diagnose(ctx) {
+	for i, attempt := range cascade.Diagnose(ctx) {
 		if attempt.Ready {
-			return &InitModel{Ready: true, Provider: attempt.Name, Model: attempt.ModelID}
+			credential, external := cascade.Providers[i].(interface{ ExternalCredential() bool })
+			return &InitModel{Ready: true, Provider: attempt.Name, Model: attempt.ModelID,
+				ExternalCredential: external && credential.ExternalCredential()}
 		}
 		if gate.Reason == "" {
 			gate.Provider, gate.Reason, gate.Action = attempt.Name, attempt.Reason, attempt.Action

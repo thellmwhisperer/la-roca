@@ -211,12 +211,20 @@ type Resolved struct {
 	Disabled bool
 }
 
-// DefaultOrder is the order with no config: the frontier by subscription first,
-// the local floor last.
+// DefaultOrder is the effective order with no config: detected local agent CLI
+// binaries first and the local floor last. Keyword search remains the rescue
+// after this provider order rather than pretending to be a model provider.
 //
 // The last element is always a provider that can exist on any supported
 // platform, so platform-specific providers cannot hide a usable local floor.
-func DefaultOrder() []string { return []string{NameCodex, NameOllama} }
+func DefaultOrder(lookPath LookPathFunc) []string {
+	return defaultOrderFromDetected(DetectedCommandPresets(lookPath))
+}
+
+func defaultOrderFromDetected(detected []string) []string {
+	order := append([]string(nil), detected...)
+	return append(order, NameOllama)
+}
 
 // Resolve turns a selection into providers.
 //
@@ -309,6 +317,16 @@ func normalize(name string) string {
 // Cascade is the resolved order, ready to serve.
 type Cascade struct {
 	Providers []Provider
+	// DetectedBinaries names shipped local CLI presets found on PATH. It is
+	// diagnostic metadata even when an explicit provider order is active.
+	DetectedBinaries []string
+	// FallbackDiagnostics are absent factory-default binaries. They are appended
+	// only when every actual provider fails, so keyword degradation names the
+	// semantic transports that were missing without putting them in the order.
+	FallbackDiagnostics []Attempt
+	// FactoryDefault says the order was constructed from PATH rather than read
+	// from the environment or configuration.
+	FactoryDefault bool
 	// Timeout bounds a model request. Zero is DefaultTimeout.
 	Timeout time.Duration
 	// Probe bounds the availability question. Zero is ProbeTimeout.
@@ -343,6 +361,7 @@ func (c Cascade) Pick(ctx context.Context) (Provider, []Attempt) {
 			return p, attempts
 		}
 	}
+	attempts = append(attempts, c.FallbackDiagnostics...)
 	return nil, attempts
 }
 
