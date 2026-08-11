@@ -93,13 +93,13 @@ func targetFingerprint(target Target) (string, error) {
 // A kind absent from here is one whose reading has not changed since the
 // watermark was introduced, and its files stay skipped.
 var parserVersions = map[parsers.Kind]string{
-	parsers.KindClaudeSession:          "claude-session-v2",
-	parsers.KindCoworkAudit:            "cowork-audit-v2",
-	parsers.KindSubagent:               "subagent-v2",
-	parsers.KindCodexSession:           "codex-session-v2",
-	parsers.KindPiSession:              "pi-session-v2",
-	parsers.KindOpenCodeDB:             "opencode-v2",
-	parsers.KindHermesDB:               "hermes-v2",
+	parsers.KindClaudeSession:          "claude-session-v3",
+	parsers.KindCoworkAudit:            "cowork-audit-v3",
+	parsers.KindSubagent:               "subagent-v3",
+	parsers.KindCodexSession:           "codex-session-v3",
+	parsers.KindPiSession:              "pi-session-v3",
+	parsers.KindOpenCodeDB:             "opencode-v3",
+	parsers.KindHermesDB:               "hermes-v3",
 	parsers.KindClaudeWebConversations: "claude-web-conversations-v2",
 }
 
