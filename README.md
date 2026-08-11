@@ -40,6 +40,17 @@ ends by telling you how deep your memory goes: the oldest moment it ingested
 is the floor of your rock. `roca doctor` reports the same floor along with
 which model will answer and how to fix anything that is not ready.
 
+## Let your agent drive
+
+The best experience is letting your agent drive: ask it a question in plain
+language and it interrogates La Roca for you, reads the rows, follows up,
+and digs where the evidence points. You stay in the conversation; the
+database work happens underneath.
+
+An agent with a shell uses the CLI directly. An agent without one gets the
+same operations through La Roca's MCP layer, and the experience is
+practically the same, sometimes better.
+
 ## What you can ask
 
 Things that are one question away once your history is a database.
@@ -223,15 +234,6 @@ ingested as memories. Live databases are opened as guests with SQLite
 `query_only` enabled and a short busy timeout.
 
 ## Agents plug in
-
-The best experience is letting your agent do the talking: ask it a question
-in plain language and it interrogates La Roca, reads the rows, follows up,
-and digs where the evidence points. You stay in the conversation; the
-database work happens underneath.
-
-An agent that can run shell commands uses the CLI directly. An agent without
-shell access gets the same operations through La Roca's MCP layer, and the
-experience is practically the same, sometimes better.
 
 La Roca is built agent-first, following the AXI convention (agent ergonomic
 interface) shared by a family of agent-facing tools: route narration above
