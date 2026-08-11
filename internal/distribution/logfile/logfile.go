@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 const (
@@ -17,6 +19,7 @@ const (
 	Executions    = "executions"
 	MCPAudit      = "mcp-audit"
 	Ingest        = "ingest"
+	lockName      = ".roca.lock"
 )
 
 type Writer struct {
@@ -63,13 +66,35 @@ func (w *Writer) AppendExisting(stream string, record any) error {
 }
 
 func (w *Writer) Prepare() error {
-	if w == nil || w.dir == "" {
-		return fmt.Errorf("the log directory is not configured")
+	release, err := w.Lock()
+	if err != nil {
+		return err
 	}
-	if err := os.MkdirAll(w.dir, 0o700); err != nil {
-		return fmt.Errorf("create the log directory: %w", err)
+	if err := release(); err != nil {
+		return fmt.Errorf("release the log lock: %w", err)
 	}
 	return nil
+}
+
+func (w *Writer) Lock() (func() error, error) {
+	if w == nil || w.dir == "" {
+		return nil, fmt.Errorf("the log directory is not configured")
+	}
+	if err := os.MkdirAll(w.dir, 0o700); err != nil {
+		return nil, fmt.Errorf("create the log directory: %w", err)
+	}
+	release, err := securefile.Lock(w.LockPath())
+	if err != nil {
+		return nil, fmt.Errorf("lock the log directory: %w", err)
+	}
+	return release, nil
+}
+
+func (w *Writer) LockPath() string {
+	if w == nil {
+		return ""
+	}
+	return filepath.Join(w.dir, lockName)
 }
 
 func (w *Writer) append(stream string, record any, createDir bool) error {
@@ -80,7 +105,13 @@ func (w *Writer) append(stream string, record any, createDir bool) error {
 		if err := w.Prepare(); err != nil {
 			return err
 		}
-	} else if info, err := os.Stat(w.dir); err != nil || !info.IsDir() {
+	}
+	release, err := securefile.LockExisting(w.LockPath())
+	if err != nil {
+		return fmt.Errorf("lock the log directory: %w", err)
+	}
+	defer release()
+	if info, err := os.Stat(w.dir); err != nil || !info.IsDir() {
 		if err == nil {
 			err = fmt.Errorf("not a directory")
 		}

@@ -211,7 +211,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		env.finishIngestProgress()
 		return nil, err
 	}
-	_ = os.MkdirAll(filepath.Join(filepath.Dir(paths.DB), logfile.DirName), 0o700)
+	_ = logfile.New(filepath.Dir(paths.DB)).Prepare()
 	env.openedDir = filepath.Dir(paths.DB)
 	return svc, nil
 }

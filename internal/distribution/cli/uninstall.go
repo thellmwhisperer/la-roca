@@ -94,6 +94,7 @@ func (env *cliEnv) uninstall(cmd *cobra.Command, purge bool) error {
 	// rest of the uninstall still happens and the operator deletes one file.
 	running, _ := os.Executable()
 	plan := lifecycle.Plan{Binary: running}
+	var applied lifecycle.Report
 	if purge {
 		// The execution is recorded before the operator-authorized purge removes
 		// the log directory itself. Execute then suppresses its ordinary post-run
@@ -110,10 +111,13 @@ func (env *cliEnv) uninstall(cmd *cobra.Command, purge bool) error {
 			}
 			env.prelogged = true
 		}
-		plan.Owned = ownedPaths(paths)
-		plan.DataDir = dirOf(paths.DB)
+		dataDir := dirOf(paths.DB)
+		applied = applyPurge(dataDir, func() lifecycle.Plan {
+			return lifecycle.Plan{Binary: running, Owned: ownedPaths(paths), DataDir: dataDir}
+		})
+	} else {
+		applied = plan.Apply()
 	}
-	applied := plan.Apply()
 	report.Deleted = append(report.Deleted, applied.Deleted...)
 	report.Kept = append(report.Kept, applied.Kept...)
 	report.Errors = append(report.Errors, applied.Errors...)
@@ -138,6 +142,20 @@ func (env *cliEnv) uninstall(cmd *cobra.Command, purge bool) error {
 	}
 	renderUninstall(env, purge, report, runtimes)
 	return nil
+}
+
+func applyPurge(dataDir string, plan func() lifecycle.Plan) lifecycle.Report {
+	report := lifecycle.Report{Purged: true, Deleted: []string{}}
+	release, err := logfile.New(dataDir).Lock()
+	if err != nil {
+		failed(&report, "lock product logs for purge: %v", err)
+		return report
+	}
+	report = plan().Apply()
+	if err := release(); err != nil {
+		failed(&report, "release the product log lock after purge: %v", err)
+	}
+	return report
 }
 
 // failed records an error and takes the verdict down with it. An error appended
@@ -316,6 +334,7 @@ func ownedPaths(paths config.Paths) []string {
 	}
 	logDir := filepath.Join(dataDir, logfile.DirName)
 	owned = append(owned, ownedFiles(logDir, ownedLogName)...)
+	owned = append(owned, logfile.New(dataDir).LockPath())
 	owned = append(owned, paths.Backups, cacheDir, paths.Credentials, logDir)
 	return owned
 }

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/lifecycle"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 )
 
@@ -95,6 +97,40 @@ func TestPurgePreservesGenericSiblingDirectoryContents(t *testing.T) {
 		if !slices.ContainsFunc(report.Kept, func(kept lifecycle.Kept) bool { return kept.Path == path }) {
 			t.Errorf("preserved path %s was not named: %+v", path, report.Kept)
 		}
+	}
+}
+
+func TestPurgeRemovesAnAuditCreatedAfterTheOwnershipSnapshot(t *testing.T) {
+	home := t.TempDir()
+	paths := resolvedIn(t, home)
+	dataDir := dirOf(paths.DB)
+	writer := logfile.New(dataDir)
+	if err := writer.Prepare(); err != nil {
+		t.Fatal(err)
+	}
+	foreign := filepath.Join(dataDir, logfile.DirName, "operator.txt")
+	writeFile(t, foreign, "mine")
+
+	done := make(chan error, 1)
+	report := applyPurge(dataDir, func() lifecycle.Plan {
+		plan := lifecycle.Plan{Owned: ownedPaths(paths), DataDir: dataDir}
+		go func() {
+			done <- writer.AppendExisting(logfile.MCPAudit, logfile.MCPRecord{})
+		}()
+		return plan
+	})
+
+	if err := <-done; err == nil || !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("late audit append error = %v, want missing lifecycle lock", err)
+	}
+	if matches, err := filepath.Glob(filepath.Join(dataDir, logfile.DirName, "mcp-audit-*.jsonl")); err != nil || len(matches) != 0 {
+		t.Fatalf("late product audit survived: %v, err=%v", matches, err)
+	}
+	if _, err := os.Stat(foreign); err != nil {
+		t.Fatalf("foreign log was not preserved: %v", err)
+	}
+	if !report.Purged || len(report.Errors) != 0 {
+		t.Fatalf("purge report = %+v", report)
 	}
 }
 
