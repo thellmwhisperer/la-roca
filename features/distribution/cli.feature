@@ -33,3 +33,7 @@ Feature: Distribution command line
   Scenario: Init closes with one ordered, fully timed summary
     When the operator exercises the "init" command in human and JSON form
     Then init reports setup, ingest, index, model, and its total once in that order
+
+  Scenario: Non-interactive init names the answering model without opening the chooser
+    When the operator initializes non-interactively with a detected model CLI
+    Then init prints one answering notice and writes no model configuration

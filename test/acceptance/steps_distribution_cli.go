@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -24,6 +25,8 @@ func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWor
 	ctx.Then(`^arguments, standard input, output, and exit status cross the plugin seam untouched$`, w.pluginForwardsProcessContract)
 	ctx.Then(`^built-ins win, missing plugins explain the convention, and plugins lists the fixtures$`, w.pluginBoundariesAreHonest)
 	ctx.Then(`^init reports setup, ingest, index, model, and its total once in that order$`, w.initSummaryIsOrdered)
+	ctx.When(`^the operator initializes non-interactively with a detected model CLI$`, w.initWithDetectedModelCLI)
+	ctx.Then(`^init prints one answering notice and writes no model configuration$`, w.initHasOneAnsweringNotice)
 }
 
 func (w *distributionWorld) initSummaryIsOrdered() error {
@@ -55,6 +58,45 @@ func countDistributionLines(output, prefix string) int {
 		}
 	}
 	return count
+}
+
+func (w *distributionWorld) initWithDetectedModelCLI() error {
+	if err := w.prepare("init-model-notice"); err != nil {
+		return err
+	}
+	bin := filepath.Join(w.home, "bin")
+	if err := os.MkdirAll(bin, 0o700); err != nil {
+		return err
+	}
+	claude := filepath.Join(bin, "claude")
+	if err := os.WriteFile(claude, []byte("#!/bin/sh\nprintf '{\"result\":\"SELECT 1\"}\\n'\n"), 0o700); err != nil {
+		return err
+	}
+	w.last = w.runAtInput(w.home, w.installed, "", []string{
+		"PATH=" + bin, "ROCA_MODELS_ORDER=claude",
+	}, "init", "--db-path", filepath.Join(w.home, ".roca", "roca.db"))
+	return nil
+}
+
+func (w *distributionWorld) initHasOneAnsweringNotice() error {
+	if w.last.code != 0 {
+		return fmt.Errorf("non-interactive init exited %d: %s%s", w.last.code, w.last.stdout, w.last.stderr)
+	}
+	if count := countDistributionLines(w.last.stdout, "answering:"); count != 1 {
+		return fmt.Errorf("answering line count=%d, want 1:\n%s", count, w.last.stdout)
+	}
+	for _, want := range []string{"answering: claude/sonnet", "configuration:", "roca model set <id>"} {
+		if !strings.Contains(w.last.stdout, want) {
+			return fmt.Errorf("answering notice does not contain %q:\n%s", want, w.last.stdout)
+		}
+	}
+	if strings.Contains(w.last.stdout+w.last.stderr, "Which model") {
+		return fmt.Errorf("non-interactive init opened the chooser: %s%s", w.last.stdout, w.last.stderr)
+	}
+	if _, err := os.Stat(filepath.Join(w.home, ".roca", "config.toml")); !os.IsNotExist(err) {
+		return fmt.Errorf("non-interactive init wrote model configuration: %v", err)
+	}
+	return nil
 }
 
 func (w *distributionWorld) askForCLIHelp() error {

@@ -200,7 +200,7 @@ const presentationPrompt = "## La Roca — local semantic memory\n" +
 	"with `roca store`.\n" +
 	"Data = `roca query`; human reading = `roca query --full`; raw SQL = `roca exec`.\n" +
 	"Without a shell, use the MCP equivalents: `roca_query` and `roca_store`.\n" +
-	"On first bootstrap, `roca init` asks new or adopt; adoption uses only the source path the user types.\n" +
+	"On first bootstrap, `roca init` asks new or adopt, then chooses the answering model before its harness.\n" +
 	"La Roca never edits agent instruction files; a human chooses where to paste this block.\n"
 
 // Init leaves the database ready: it creates the new one or adopts the one that

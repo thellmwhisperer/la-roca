@@ -43,6 +43,13 @@ var commandPresets = map[string]CommandPreset{
 // CommandPresetNames returns shipped command providers in stable display order.
 func CommandPresetNames() []string { return []string{NameClaude, NameCodex} }
 
+// CommandPresetDefaultModel returns the one model a detected CLI can offer
+// without inventing a catalogue the CLI itself does not expose.
+func CommandPresetDefaultModel(name string) (string, bool) {
+	preset, ok := commandPresets[name]
+	return preset.Model, ok
+}
+
 // LookPathFunc is the platform-aware executable lookup used by factory-default
 // detection. Tests and reconciliation can provide the same observable PATH
 // without duplicating detection rules.
