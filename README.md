@@ -153,6 +153,10 @@ exactly the information the task needs instead of a whole skill.
   the answer. Each phase's provider is configured independently, including
   fully local through Ollama: make the query smart so the reader can be
   cheap, local, and secure.
+- **Bring the plan you already pay for.** `roca login codex` signs into your
+  existing Codex subscription through its own OAuth, no API key required;
+  key-based providers work too, and the local floor through Ollama needs
+  neither. Asking your history questions does not open a new bill.
 - **Exact retrieval, no embeddings.** Recovery is SQL plus a local FTS5 index
   with diacritic folding; a plain `LIKE` fallback works before the index
   exists. If you want semantics, your model supplies it at question time; the
