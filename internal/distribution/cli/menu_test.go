@@ -8,9 +8,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func TestRootMenuShowsExactlyThePublicNine(t *testing.T) {
+func TestRootMenuShowsExactlyThePublicCommands(t *testing.T) {
 	want := []string{
-		"doctor", "ingest", "init", "login", "query", "store", "uninstall", "update",
+		"doctor", "ingest", "init", "login", "plugins", "query", "store", "uninstall", "update",
 	}
 	root := rootCommand(&cliEnv{})
 	root.InitDefaultHelpCmd()
