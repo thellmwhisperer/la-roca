@@ -156,6 +156,8 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 		avoid         string
 		guidance      string
 		avoidGuidance string
+		orderEnv      string
+		modelEnv      bool
 	}{
 		{
 			name: "environment order",
@@ -171,11 +173,7 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 			avoidGuidance: "which makes",
 		},
 		{
-			name: "provider model environment",
-			prepare: func(t *testing.T, _, _ string) {
-				t.Setenv("ROCA_OLLAMA_MODEL", "environment-model")
-				t.Setenv("ROCA_MODEL", "local-fallback")
-			},
+			name:  "provider model environment",
 			input: "local-one\n\n",
 			backend: chooserTestBackend{catalogues: map[string]modelCatalogue{
 				provider.NameOllama: {IDs: []string{"local-one"}},
@@ -183,14 +181,10 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 			want:     "answering: ollama/environment-model",
 			avoid:    "answering: ollama/local-one",
 			guidance: "change ROCA_OLLAMA_MODEL directly; or unset ROCA_OLLAMA_MODEL and ROCA_MODEL before using roca model set",
+			modelEnv: true,
 		},
 		{
-			name: "stacked order and model environment",
-			prepare: func(t *testing.T, _, _ string) {
-				t.Setenv("ROCA_MODELS_ORDER", provider.NameOllama)
-				t.Setenv("ROCA_OLLAMA_MODEL", "environment-model")
-				t.Setenv("ROCA_MODEL", "local-fallback")
-			},
+			name:  "stacked order and model environment",
 			input: "local-one\n\n",
 			backend: chooserTestBackend{catalogues: map[string]modelCatalogue{
 				provider.NameOllama: {IDs: []string{"local-one"}},
@@ -199,6 +193,8 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 			avoid:         "answering: ollama/local-one",
 			guidance:      "unset ROCA_MODELS_ORDER and ROCA_OLLAMA_MODEL and ROCA_MODEL before using models.<provider>.model",
 			avoidGuidance: "which makes",
+			orderEnv:      provider.NameOllama,
+			modelEnv:      true,
 		},
 		{
 			name: "persisted base URL",
@@ -212,7 +208,7 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 					_, _ = w.Write([]byte(`{"data":[]}`))
 				}))
 				t.Cleanup(server.Close)
-				writeInitChooserConfig(t, home, fmt.Sprintf("[models]\norder = [\"ollama\"]\n\n[models.claude]\nbase_url = %q\napi_key = \"synthetic-key\"\nmodel = \"remote-old\"\n", server.URL+"/v1"))
+				writeConfig(t, home, fmt.Sprintf("[models]\norder = [\"ollama\"]\n\n[models.claude]\nbase_url = %q\napi_key = \"synthetic-key\"\nmodel = \"remote-old\"\n", server.URL+"/v1"))
 			},
 			input:    "sonnet\n\n",
 			want:     "answering: claude/sonnet",
@@ -223,7 +219,7 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 			name: "persisted custom command",
 			prepare: func(t *testing.T, home, bin string) {
 				fakeModelCLI(t, bin, provider.NameClaude)
-				writeInitChooserConfig(t, home, "[models]\norder = [\"ollama\"]\n\n[models.claude]\ncommand = [\"missing-custom-claude\", \"{prompt}\"]\nmodel = \"custom-old\"\n\n[models.ollama]\nmodel = \"local-fallback\"\n")
+				writeConfig(t, home, "[models]\norder = [\"ollama\"]\n\n[models.claude]\ncommand = [\"missing-custom-claude\", \"{prompt}\"]\nmodel = \"custom-old\"\n\n[models.ollama]\nmodel = \"local-fallback\"\n")
 			},
 			input: "sonnet\n\n",
 			want:  "answering: ollama/local-fallback",
@@ -237,7 +233,7 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 					[]byte("#!/bin/sh\nprintf 'SELECT 1\\n'\n"), 0o700); err != nil {
 					t.Fatal(err)
 				}
-				writeInitChooserConfig(t, home,
+				writeConfig(t, home,
 					"[models]\norder = [\"ollama\"]\n\n[models.claude]\ncommand = [\"custom-claude\", \"{prompt}\"]\nmodel = \"custom-old\"\n")
 			},
 			input:    "sonnet\n\n",
@@ -249,7 +245,16 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			home, bin := initChooserHome(t)
-			test.prepare(t, home, bin)
+			if test.prepare != nil {
+				test.prepare(t, home, bin)
+			}
+			if test.orderEnv != "" {
+				t.Setenv("ROCA_MODELS_ORDER", test.orderEnv)
+			}
+			if test.modelEnv {
+				t.Setenv("ROCA_OLLAMA_MODEL", "environment-model")
+				t.Setenv("ROCA_MODEL", "local-fallback")
+			}
 			out, err := runInitChooser(t, true, test.input, test.backend,
 				"init", "--db-path", filepath.Join(home, ".roca", "roca.db"))
 			if err != nil {
@@ -380,17 +385,6 @@ func initChooserHome(t *testing.T) (string, string) {
 	t.Cleanup(server.Close)
 	t.Setenv("ROCA_OLLAMA_BASE_URL", server.URL)
 	return home, bin
-}
-
-func writeInitChooserConfig(t *testing.T, home, text string) {
-	t.Helper()
-	path := filepath.Join(home, ".roca", "config.toml")
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
-		t.Fatal(err)
-	}
 }
 
 func fakeModelCLI(t *testing.T, bin, name string) {
