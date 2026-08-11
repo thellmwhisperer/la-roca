@@ -379,11 +379,18 @@ func (c Cascade) askModels(ctx context.Context, p Provider) ModelReport {
 // Chat asks the chosen provider, with the budget bounded. What goes past the
 // budget is a declared failure, never a command that never comes back.
 func (c Cascade) Chat(ctx context.Context, p Provider, req ChatRequest) (ChatResponse, error) {
+	return c.chat(ctx, p, func(callCtx context.Context) (ChatResponse, error) {
+		return p.Chat(callCtx, req)
+	})
+}
+
+func (c Cascade) chat(ctx context.Context, p Provider,
+	ask func(context.Context) (ChatResponse, error)) (ChatResponse, error) {
 	callCtx, cancel := context.WithTimeout(ctx, c.timeout())
 	defer cancel()
 
 	start := time.Now()
-	res, err := p.Chat(callCtx, req)
+	res, err := ask(callCtx)
 	if err != nil {
 		return ChatResponse{}, err
 	}
@@ -404,33 +411,16 @@ func (c Cascade) Chat(ctx context.Context, p Provider, req ChatRequest) (ChatRes
 // for both streaming and buffered providers.
 func (c Cascade) ChatStream(ctx context.Context, p Provider, req ChatRequest,
 	onDelta func(string)) (ChatResponse, error) {
-	callCtx, cancel := context.WithTimeout(ctx, c.timeout())
-	defer cancel()
-
-	start := time.Now()
-	var res ChatResponse
-	var err error
-	if streaming, ok := p.(StreamingProvider); ok {
-		res, err = streaming.ChatStream(callCtx, req, onDelta)
-	} else {
-		res, err = p.Chat(callCtx, req)
+	return c.chat(ctx, p, func(callCtx context.Context) (ChatResponse, error) {
+		if streaming, ok := p.(StreamingProvider); ok {
+			return streaming.ChatStream(callCtx, req, onDelta)
+		}
+		res, err := p.Chat(callCtx, req)
 		if err == nil && onDelta != nil && res.Content != "" {
 			onDelta(res.Content)
 		}
-	}
-	if err != nil {
-		return ChatResponse{}, err
-	}
-	if res.Provider == "" {
-		res.Provider = p.Name()
-	}
-	if res.ModelID == "" {
-		res.ModelID = p.ModelID()
-	}
-	if res.LatencyMS == 0 {
-		res.LatencyMS = time.Since(start).Milliseconds()
-	}
-	return res, nil
+		return res, err
+	})
 }
 
 func (c Cascade) timeout() time.Duration {
