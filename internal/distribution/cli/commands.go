@@ -259,7 +259,7 @@ func renderBootstrap(env *cliEnv, result service.InitResult) {
 			axi.Quantity(int64(result.Ingest.Errors), "error"), axi.Duration(result.Ingest.ElapsedMS))
 		renderIngestSources(env, *result.Ingest)
 		renderIngestDelta(env, result.Ingest.Delta)
-		renderIngestDetails(env, *result.Ingest)
+		renderIngestOutcome(env, *result.Ingest, false)
 	}
 	if result.Search != nil {
 		env.print("index: full-text index ready · %s",

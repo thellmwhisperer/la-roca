@@ -12,6 +12,10 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - MCP answers are TOON-only text: never return row envelopes in `StructuredContent`; the contract lives in `internal/distribution/mcpplug/toon_contract_test.go`.
 - A query costs two inferences and only the second one sees result rows; they may run on different providers (`models.interpret_order`). Keep rows out of the SQL prompt: the guarantee is pinned in `internal/provider/service/two_inferences_test.go`.
 - Keep local-binary isolation and corpus exclusion synchronized: shipped command data lives in `internal/provider/command_presets.go`, the generic adapter in `internal/provider/localbinary.go`, and the runner ingest guard is pinned in `internal/ingest/detection_test.go`.
+- There is no migration runner: `data/schema.sql` is the only schema, and `internal/store/adopt.go` compares an existing database against it and adds what is missing, so a new column must be nullable with a constant default or adoption refuses it.
+- Teaching a parser to read more of a source means bumping its entry in `parserVersions` (`internal/ingest/state.go`): the version rides in the watermark so a plain `roca ingest` re-reads synced files, and `internal/ingest/provenance_test.go` pins that the re-read backfills without duplicating.
+- Per-exchange provenance is filled only from what a source itself recorded; a column NULL means the source said nothing, never zero. Use `parsers.UsageTally` rather than assembling `parsers.Provenance` by hand.
+- Records left out are reported apart: `parsers.Discard.ByDesign` is what this build never meant to read, and everything else is what it could not read. Collapsing the two is what made a healthy ingest report thousands of failures.
 
 ## Maintaining this file
 

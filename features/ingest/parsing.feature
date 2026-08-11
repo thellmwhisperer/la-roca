@@ -25,6 +25,11 @@ Feature: Normalizing each family
     When I run ingest
     Then one Codex session and one exchange exist
 
+  Scenario: An exchange carries the provenance its own source recorded
+    Given a Codex rollout with runtime machinery is ready to ingest
+    When I run ingest
+    Then the exchange carries the model, the provider and the token counts of the rollout
+
   Scenario: Markdown memories become memories with their metadata
     Given a markdown memory with declared metadata is ready to ingest
     When I run ingest

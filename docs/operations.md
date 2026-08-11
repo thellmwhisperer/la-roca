@@ -18,8 +18,8 @@ provider, model, SQL, timings, degradation, provider failure text and row
 count; they never store result row contents. MCP audit records store the
 tool, redacted arguments, verdict, degraded state, duration and result row
 count. Ingest records retain the complete ingest envelope, including every
-file error and every discarded source record with its path, parser, record
-position and reason.
+file error, exact excluded and discarded totals, collapsed reasons, and up to
+100 source-record details with their path, parser, record position and reason.
 
 No log is stored in SQLite and no run tables exist.
 

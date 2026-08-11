@@ -32,6 +32,11 @@ Feature: The honest summary
     When I run ingest for a human
     Then the Claude source summary reports 3 discarded records
 
+  Scenario: The default summary collapses what was left out and keeps paths out of it
+    Given a Codex rollout with runtime machinery is ready to ingest
+    When I run ingest for a human
+    Then the summary names the exclusions by reason and prints no absolute path
+
   Scenario: Dry-run reports what it would read and writes nothing
     Given a Claude session is ready to ingest
     When I run ingest as a dry-run

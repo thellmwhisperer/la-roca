@@ -207,7 +207,25 @@ func isConstraintWord(word string) bool { return constraintWords[strings.ToUpper
 const (
 	supersededColumn = "supersedes"
 	layerColumn      = "layer"
+	// provenanceColumn is the one the provenance rule is written from: where it
+	// exists, so do the rest of the columns of that shape.
+	provenanceColumn = "tokens_in"
 )
+
+// provenanceRule says how the per-exchange provenance is filled, which is: from
+// what each source itself recorded, and not at all where it recorded nothing. A
+// model that does not know it writes AVG(cost_usd) over a corpus where one
+// source in seven states a price and answers as if that were everybody.
+func provenanceRule(schema Schema) string {
+	carriers := schema.TablesWith(provenanceColumn)
+	if len(carriers) == 0 {
+		return ""
+	}
+	return "- model, provider, tokens_in, tokens_out, tokens_reasoning and cost_usd of " +
+		quotedNames(carriers) + " hold what the source recorded and are NULL wherever it " +
+		"recorded nothing, which is normal and not missing data: filter them with IS NOT " +
+		"NULL and never read a NULL as a zero"
+}
 
 // SQLSystemPrompt is the whole instruction the model receives. The question
 // goes separately, as the user's turn: mixing them is what lets a question
@@ -221,6 +239,9 @@ func SQLSystemPrompt(schema Schema, layers []LayerHint, layerFilter []string) st
 	// name the tables that really carry it. An empty rule is a column no table
 	// has, and it is not written at all.
 	if rule := supersededRule(schema); rule != "" {
+		rules = append(rules, rule)
+	}
+	if rule := provenanceRule(schema); rule != "" {
 		rules = append(rules, rule)
 	}
 	rules = append(rules,

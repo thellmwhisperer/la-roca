@@ -34,5 +34,7 @@ scopes:
 orphan_scopes:
   markdown:
     active_orphans_ceiling: 1
+  # Down one: the schema stopped being an orphan when the ingest documentation
+  # started naming the per-exchange provenance columns it declares.
   public_surfaces:
-    active_orphans_ceiling: 12
+    active_orphans_ceiling: 11

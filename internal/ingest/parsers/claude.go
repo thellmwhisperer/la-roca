@@ -30,6 +30,19 @@ type claudeLine struct {
 type claudeMessage struct {
 	Content json.RawMessage `json:"content"`
 	Model   string          `json:"model"`
+	Usage   *claudeUsage    `json:"usage"`
+}
+
+// claudeUsage is what one assistant message declares it spent. The prompt is
+// billed across three tiers and the transcript states them apart, so the one
+// number an operator asks for is their sum; the runtime does not separate the
+// reasoning tokens from the rest of the output, and no reasoning total is
+// invented for it.
+type claudeUsage struct {
+	Input         *int `json:"input_tokens"`
+	Output        *int `json:"output_tokens"`
+	CacheCreation *int `json:"cache_creation_input_tokens"`
+	CacheRead     *int `json:"cache_read_input_tokens"`
 }
 
 // claudeBlock is one content block. `content` is only read on a tool_result,
@@ -66,6 +79,10 @@ type claudeBuilder struct {
 	thinking  []Thinking
 	tools     []*ToolUse
 	pending   map[string]*ToolUse
+	// model and usage are the turn's provenance, gathered over every assistant
+	// message the turn is made of.
+	model string
+	usage UsageTally
 
 	number          int
 	compactions     int
@@ -173,7 +190,8 @@ func consumeClaudeLines(content []byte, consume func(claudeLine)) ([]Discard, in
 	for index, raw := range lines(content) {
 		var line claudeLine
 		if err := json.Unmarshal([]byte(raw), &line); err != nil {
-			discards = append(discards, Discard{Record: index + 1, Reason: "invalid JSON: " + err.Error()})
+			discards = append(discards, Discard{Record: index + 1,
+				Reason: "invalid JSON: " + err.Error(), Category: "invalid JSON"})
 			continue
 		}
 		valid++
@@ -256,6 +274,7 @@ func (b *claudeBuilder) consumeAssistant(line claudeLine) {
 	if b.agentTS == "" {
 		b.agentTS = line.stamp()
 	}
+	b.claim(line.Message)
 	// A Cowork audit may write the agent's answer as a bare string.
 	if len(blocks) == 0 && text != "" {
 		b.blocks++
@@ -282,6 +301,38 @@ func (b *claudeBuilder) consumeAssistant(line claudeLine) {
 	}
 }
 
+// claim records what one assistant message says about how it was produced. A
+// turn is answered by several of them, so the counts add up and the first model
+// named is the turn's: a transcript that switched model mid-turn still answered
+// under the one it started with.
+func (b *claudeBuilder) claim(message *claudeMessage) {
+	if message == nil {
+		return
+	}
+	if b.model == "" {
+		b.model = message.Model
+	}
+	claimClaudeUsage(&b.usage, message)
+}
+
+// claimClaudeUsage adds one assistant message's declared spend to a turn's
+// tally. The three prompt tiers are one number because "how many tokens did this
+// question cost to ask" is the question an operator has; the runtime does not
+// separate the reasoning tokens, so none are claimed.
+func claimClaudeUsage(tally *UsageTally, message *claudeMessage) {
+	if message == nil || message.Usage == nil {
+		return
+	}
+	usage := message.Usage
+	if usage.Input != nil || usage.CacheCreation != nil || usage.CacheRead != nil {
+		tally.AddInputTokens(intOrZero(usage.Input) +
+			intOrZero(usage.CacheCreation) + intOrZero(usage.CacheRead))
+	}
+	if usage.Output != nil {
+		tally.AddOutputTokens(*usage.Output)
+	}
+}
+
 // flush closes the open exchange. A human turn with no agent answer is not an
 // exchange yet: it is a question still in flight, and the next ingest will pick
 // it up when it has been answered.
@@ -302,6 +353,9 @@ func (b *claudeBuilder) flush() {
 		AgentTimestamp:    b.agentTS,
 		LatencyMS:         latency(b.current.timestamp, b.agentTS),
 		Thinking:          b.thinking,
+		// A Claude transcript names the model that answered and counts what it
+		// spent; it names no provider and states no price, so those stay absent.
+		Provenance: b.usage.Provenance(b.model, ""),
 	}
 	for i := range exchange.Thinking {
 		exchange.Thinking[i].IsAfterCompaction = b.afterCompaction
@@ -324,6 +378,8 @@ func (b *claudeBuilder) reset() {
 	b.thinking = nil
 	b.tools = nil
 	b.afterCompaction = false
+	b.model = ""
+	b.usage = UsageTally{}
 }
 
 // finish materializes the tool calls and places the thinking blocks. Neither can

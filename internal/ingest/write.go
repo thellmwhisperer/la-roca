@@ -142,7 +142,12 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 			known, landed := assigned[exchange.SourceID]
 			if landed {
 				// It is already in. Whether the source has edited it since is
-				// reported, and it is still not rewritten.
+				// reported, and fields that already landed are still not rewritten.
+				thinking, err := w.enrichExchange(ctx, session.ID, known.Number, exchange)
+				if err != nil {
+					return counts, err
+				}
+				counts.ThinkingBlocks += thinking
 				if known.Fingerprint == exchange.Fingerprint {
 					counts.ExchangesUnchanged++
 				} else {
@@ -158,6 +163,11 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 			return counts, err
 		}
 		if !landed {
+			thinking, err := w.enrichExchange(ctx, session.ID, number, exchange)
+			if err != nil {
+				return counts, err
+			}
+			counts.ThinkingBlocks += thinking
 			continue
 		}
 		counts.Exchanges++
@@ -370,20 +380,24 @@ func keysItsOwnExchanges(session parsers.Session) bool {
 // exchange inserts one exchange and says whether it landed.
 //
 // INSERT OR IGNORE plus changes() is the whole record-level contract: the unique
-// index over (session_id, exchange_number) decides, and the children are written
-// only for a parent that actually went in. Writing them unconditionally is how a
-// re-ingest triples the thinking blocks of a session that grew by one turn.
+// index over (session_id, exchange_number) decides whether the normalized parent
+// is new or eligible only for additive enrichment.
 func (w *writer) exchange(ctx context.Context, sessionID string, number int,
 	exchange parsers.Exchange) (bool, error) {
+	provenance := exchange.Provenance
 	result, err := w.tx.ExecContext(ctx, `
 		INSERT OR IGNORE INTO exchanges
 		  (session_id, exchange_number, is_after_compaction, human_text, agent_text,
-		   human_timestamp, agent_timestamp, response_latency_ms)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		   human_timestamp, agent_timestamp, response_latency_ms,
+		   model, provider, tokens_in, tokens_out, tokens_reasoning, cost_usd)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sessionID, number, boolToInt(exchange.IsAfterCompaction),
 		nullIfEmpty(exchange.HumanText), nullIfEmpty(exchange.AgentText),
 		nullIfEmpty(exchange.HumanTimestamp), nullIfEmpty(exchange.AgentTimestamp),
-		nullInt(exchange.LatencyMS))
+		nullInt(exchange.LatencyMS),
+		nullIfEmpty(provenance.Model), nullIfEmpty(provenance.Provider),
+		nullInt(provenance.TokensIn), nullInt(provenance.TokensOut),
+		nullInt(provenance.TokensReasoning), nullFloat(provenance.CostUSD))
 	var affected int64
 	if err == nil {
 		affected, err = result.RowsAffected()
@@ -391,7 +405,57 @@ func (w *writer) exchange(ctx context.Context, sessionID string, number int,
 	if err != nil {
 		return false, fmt.Errorf("insert the exchange %s/%d: %w", sessionID, number, err)
 	}
-	return affected > 0, nil
+	if affected > 0 {
+		return true, nil
+	}
+	return false, nil
+}
+
+func (w *writer) enrichExchange(ctx context.Context, sessionID string, number int,
+	exchange parsers.Exchange) (int, error) {
+	provenance := exchange.Provenance
+	_, err := w.tx.ExecContext(ctx, `
+		UPDATE exchanges SET
+		  agent_text = COALESCE(agent_text, ?),
+		  model = COALESCE(model, ?),
+		  provider = COALESCE(provider, ?),
+		  tokens_in = COALESCE(tokens_in, ?),
+		  tokens_out = COALESCE(tokens_out, ?),
+		  tokens_reasoning = COALESCE(tokens_reasoning, ?),
+		  cost_usd = COALESCE(cost_usd, ?)
+		WHERE session_id = ? AND exchange_number = ?`,
+		nullIfEmpty(exchange.AgentText),
+		nullIfEmpty(provenance.Model), nullIfEmpty(provenance.Provider),
+		nullInt(provenance.TokensIn), nullInt(provenance.TokensOut),
+		nullInt(provenance.TokensReasoning), nullFloat(provenance.CostUSD),
+		sessionID, number)
+	if err != nil {
+		return 0, fmt.Errorf("enrich the exchange %s/%d: %w", sessionID, number, err)
+	}
+	inserted := 0
+	for _, block := range exchange.Thinking {
+		result, err := w.tx.ExecContext(ctx, `
+			INSERT INTO thinking_blocks
+			  (session_id, exchange_number, position_in_session, depth, word_count,
+			   is_after_compaction, full_text)
+			SELECT ?, ?, ?, ?, ?, ?, ?
+			WHERE NOT EXISTS (
+			  SELECT 1 FROM thinking_blocks
+			  WHERE session_id = ? AND exchange_number = ? AND full_text = ?
+			)`,
+			sessionID, number, block.Position, nullIfEmpty(block.Depth), block.WordCount,
+			boolToInt(block.IsAfterCompaction), block.Text,
+			sessionID, number, block.Text)
+		if err != nil {
+			return inserted, fmt.Errorf("enrich a thinking block of %s/%d: %w", sessionID, number, err)
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return inserted, fmt.Errorf("count an enriched thinking block of %s/%d: %w", sessionID, number, err)
+		}
+		inserted += int(affected)
+	}
+	return inserted, nil
 }
 
 func (w *writer) children(ctx context.Context, sessionID string, number int,
@@ -619,6 +683,13 @@ func boolToInt(value bool) int {
 }
 
 func nullInt(value *int) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func nullFloat(value *float64) any {
 	if value == nil {
 		return nil
 	}
