@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS memories (
   layer           TEXT NOT NULL,
   content         TEXT NOT NULL,
   metadata        TEXT DEFAULT '{}',
-  origin          TEXT NOT NULL CHECK (origin IN ('human', 'agent', 'cron')),
+  origin          TEXT NOT NULL CHECK (origin IN ('human', 'agent', 'cron') OR origin GLOB 'plugin:?*'),
   source_agent    TEXT,
   source_session  TEXT REFERENCES sessions(session_id),
   source_sequence INTEGER,

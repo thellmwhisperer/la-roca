@@ -93,7 +93,7 @@ func (a sqlArgs) request() service.QueryRequest {
 type storeArgs struct {
 	Layer   string `json:"layer" jsonschema:"user, feedback, project, pattern, pill, discovery, handoff, question, review or issue"`
 	Content string `json:"content" jsonschema:"the content of the memory, in natural language"`
-	Origin  string `json:"origin,omitempty" jsonschema:"who creates it: human, agent or cron,default=agent"`
+	Origin  string `json:"origin,omitempty" jsonschema:"who creates it: human, agent, cron or plugin:<name>,default=agent"`
 
 	SourceAgent string         `json:"source_agent,omitempty" jsonschema:"which agent is writing it"`
 	Project     string         `json:"project,omitempty" jsonschema:"project scope; omit for global"`

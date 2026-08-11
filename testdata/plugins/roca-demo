@@ -1,0 +1,10 @@
+#!/bin/sh
+printf 'args:'
+for argument in "$@"; do
+  printf ' <%s>' "$argument"
+done
+printf '\n'
+IFS= read -r input
+printf 'stdin: <%s>\n' "$input"
+printf 'fixture stderr\n' >&2
+exit 23

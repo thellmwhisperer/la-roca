@@ -2,10 +2,14 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -53,22 +57,32 @@ type cliEnv struct {
 
 // Execute runs the CLI and returns the process exit code.
 func Execute(build Build) (int, error) {
-	return execute(build, os.Stdout, os.Stderr, nil)
+	return executeCommand(build, os.Stdout, os.Stderr, os.Args[1:], true)
 }
 
-// execute is Execute over writers and an argument list a test can supply. A nil
-// args leaves cobra reading the process arguments, which is the production path.
+// execute is Execute over writers and an argument list a test can supply. It
+// deliberately leaves plugin dispatch to the production entry point.
 func execute(build Build, out, errOut io.Writer, args []string) (int, error) {
+	return executeCommand(build, out, errOut, args, false)
+}
+
+func executeCommand(build Build, out, errOut io.Writer, args []string, plugins bool) (int, error) {
 	started := time.Now()
 	env := &cliEnv{build: build, out: out, errOut: errOut, started: started}
 	root := rootCommand(env)
-	if args != nil {
-		root.SetArgs(args)
+	if plugins {
+		if handled, code, err := dispatchPlugin(root, args); handled {
+			return code, err
+		}
 	}
+	root.SetArgs(args)
 	executed, err := root.ExecuteC()
 	if err != nil {
 		if strings.Contains(err.Error(), "unknown command") {
 			err = fmt.Errorf("%w; run `roca --help` to list commands", err)
+			if len(args) > 0 && !strings.HasPrefix(args[0], "-") && !builtIn(root, args[0]) {
+				err = fmt.Errorf("%w; a `roca-%s` executable on your PATH would handle this", err, args[0])
+			}
 		}
 	}
 	code := env.code
@@ -123,7 +137,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 		mcpCommand(env), skillCommand(env),
 		loginCommand(env), logoutCommand(env), modelCommand(env),
 		updateCommand(env), uninstallCommand(env),
-		modelsCommand(env),
+		modelsCommand(env), pluginsCommand(env),
 	)
 	root.InitDefaultHelpCmd()
 	for _, command := range root.Commands() {
@@ -139,11 +153,155 @@ func rootCommand(env *cliEnv) *cobra.Command {
 
 func publicCommand(name string) bool {
 	switch name {
-	case "init", "query", "store", "ingest", "login", "doctor", "update", "uninstall":
+	case "init", "query", "store", "ingest", "login", "doctor", "update", "uninstall", "plugins":
 		return true
 	default:
 		return false
 	}
+}
+
+type plugin struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
+func dispatchPlugin(root *cobra.Command, args []string) (bool, int, error) {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") || builtIn(root, args[0]) {
+		return false, 0, nil
+	}
+	path, found := findPlugin(args[0])
+	if !found {
+		return false, 0, nil
+	}
+	command := exec.Command(path, args[1:]...)
+	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
+	err := command.Run()
+	if err == nil {
+		return true, ExitOK, nil
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		return true, exit.ExitCode(), nil
+	}
+	return true, ExitError, fmt.Errorf("execute plugin %s: %w", path, err)
+}
+
+func builtIn(root *cobra.Command, name string) bool {
+	for _, command := range root.Commands() {
+		if command.Name() == name || slices.Contains(command.Aliases, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func findPlugin(name string) (string, bool) {
+	for _, directory := range pluginPathDirectories() {
+		for _, filename := range pluginFilenames("roca-" + name) {
+			path := filepath.Join(directory, filename)
+			if isExecutable(path) {
+				return path, true
+			}
+		}
+	}
+	return "", false
+}
+
+func pluginsCommand(env *cliEnv) *cobra.Command {
+	return &cobra.Command{
+		Use:   "plugins",
+		Short: "List neighbor plugin executables on PATH",
+		Args:  cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			plugins := listPlugins()
+			if env.json {
+				return env.printJSON(map[string]any{"plugins": plugins})
+			}
+			for _, plugin := range plugins {
+				env.print("%s\t%s", plugin.Name, plugin.Path)
+			}
+			return nil
+		},
+	}
+}
+
+func listPlugins() []plugin {
+	found := []plugin{}
+	for _, directory := range pluginPathDirectories() {
+		entries, err := os.ReadDir(directory)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			name, ok := pluginName(entry.Name())
+			path := filepath.Join(directory, entry.Name())
+			if ok && isExecutable(path) {
+				found = append(found, plugin{Name: name, Path: path})
+			}
+		}
+	}
+	slices.SortFunc(found, func(a, b plugin) int {
+		return strings.Compare(a.Path, b.Path)
+	})
+	return found
+}
+
+func pluginPathDirectories() []string {
+	cwd, _ := filepath.EvalSymlinks(mustAbs("."))
+	seen := map[string]bool{}
+	var directories []string
+	for _, item := range filepath.SplitList(os.Getenv("PATH")) {
+		if item == "" {
+			continue
+		}
+		directory := mustAbs(item)
+		resolved, err := filepath.EvalSymlinks(directory)
+		if err != nil {
+			resolved = directory
+		}
+		if resolved == cwd || seen[resolved] {
+			continue
+		}
+		seen[resolved] = true
+		directories = append(directories, directory)
+	}
+	return directories
+}
+
+func mustAbs(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	return abs
+}
+
+func pluginFilenames(base string) []string {
+	if runtime.GOOS == "windows" {
+		return []string{base + ".exe", base + ".com", base + ".bat", base + ".cmd"}
+	}
+	return []string{base}
+}
+
+func pluginName(filename string) (string, bool) {
+	name := filename
+	if runtime.GOOS == "windows" {
+		ext := strings.ToLower(filepath.Ext(filename))
+		if !slices.Contains([]string{".exe", ".com", ".bat", ".cmd"}, ext) {
+			return "", false
+		}
+		name = strings.TrimSuffix(filename, filepath.Ext(filename))
+	}
+	name, ok := strings.CutPrefix(name, "roca-")
+	return name, ok && name != ""
+}
+
+func isExecutable(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	return runtime.GOOS == "windows" || info.Mode().Perm()&0o111 != 0
 }
 
 // resolvePaths decides where everything of this installation lives, without

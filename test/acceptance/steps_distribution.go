@@ -101,8 +101,19 @@ func (w *distributionWorld) run(args ...string) distributionRun {
 }
 
 func (w *distributionWorld) runAt(home, binary string, args ...string) distributionRun {
+	return w.runAtInput(home, binary, "", nil, args...)
+}
+
+func (w *distributionWorld) runAtInput(home, binary, input string, extraEnv []string, args ...string) distributionRun {
 	cmd := exec.Command(binary, args...)
 	cmd.Env = distributionEnvironment(home, binary)
+	for _, assignment := range extraEnv {
+		key, _, _ := strings.Cut(assignment, "=")
+		cmd.Env = replaceEnvironment(cmd.Env, key, assignment)
+	}
+	if input != "" {
+		cmd.Stdin = strings.NewReader(input)
+	}
 	var stdout, stderr strings.Builder
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
@@ -116,6 +127,17 @@ func (w *distributionWorld) runAt(home, binary string, args ...string) distribut
 		}
 	}
 	return distributionRun{code: code, stdout: stdout.String(), stderr: stderr.String()}
+}
+
+func replaceEnvironment(env []string, key, assignment string) []string {
+	prefix := key + "="
+	filtered := env[:0]
+	for _, item := range env {
+		if !strings.HasPrefix(item, prefix) {
+			filtered = append(filtered, item)
+		}
+	}
+	return append(filtered, assignment)
 }
 
 func distributionEnvironment(home, binary string) []string {
