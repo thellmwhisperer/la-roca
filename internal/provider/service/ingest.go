@@ -30,6 +30,9 @@ func (s *Service) Index(ctx context.Context) (search.Report, error) {
 	if s.opts.ReadOnly {
 		return search.Report{}, errReadOnly
 	}
+	if err := s.ensureSchema(ctx); err != nil {
+		return search.Report{}, err
+	}
 	return search.Index(ctx, s.db)
 }
 
@@ -44,6 +47,11 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (IngestResult, 
 	started := time.Now()
 	if s.opts.ReadOnly && !req.DryRun {
 		return IngestResult{}, errReadOnly
+	}
+	if !req.DryRun {
+		if err := s.ensureSchema(ctx); err != nil {
+			return IngestResult{}, err
+		}
 	}
 
 	report, err := ingest.Run(ctx, s.db, s.registry, ingest.Options{

@@ -95,7 +95,7 @@ func (w *world) seed(t *testing.T) {
 	// Claude Code: a transcript, a memory file, and the index that is not one.
 	w.write(t, filepath.Join(project, fixtureSessionID+".jsonl"), fmt.Sprintf(`
 {"type":"user","timestamp":"2026-08-01T10:00:00Z","cwd":%q,"message":{"content":"how many adapters are there"}}
-{"type":"assistant","timestamp":"2026-08-01T10:00:02Z","message":{"content":[{"type":"thinking","thinking":"there are nine"},{"type":"text","text":"nine"},{"type":"tool_use","id":"t1","name":"Grep","input":{"pattern":"adapter"}}]}}
+{"type":"assistant","timestamp":"2026-08-01T10:00:02Z","message":{"model":"fixture-claude-model","usage":{"input_tokens":10,"cache_creation_input_tokens":5,"cache_read_input_tokens":20,"output_tokens":7},"content":[{"type":"thinking","thinking":"there are nine"},{"type":"text","text":"nine"},{"type":"tool_use","id":"t1","name":"Grep","input":{"pattern":"adapter"}}]}}
 {"type":"user","timestamp":"2026-08-01T10:00:03Z","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":false}]}}
 {"type":"user","timestamp":"2026-08-01T10:00:20Z","message":{"content":[{"type":"text","text":"and none is lost"}]}}
 {"type":"assistant","timestamp":"2026-08-01T10:00:21Z","message":{"content":[{"type":"text","text":"none"}]}}
@@ -107,7 +107,7 @@ func (w *world) seed(t *testing.T) {
 	// A subagent under the layout the runtime uses today.
 	w.write(t, filepath.Join(project, fixtureSessionID, "subagents", "child-1.jsonl"), `
 {"type":"user","sessionId":"`+fixtureSessionID+`","agentId":"child-1","timestamp":"2026-08-01T10:00:05Z","message":{"content":[{"type":"text","text":"find the parsers"}]}}
-{"type":"assistant","sessionId":"`+fixtureSessionID+`","agentId":"child-1","timestamp":"2026-08-01T10:00:06Z","message":{"content":[{"type":"text","text":"they are in parsers/"}]}}
+{"type":"assistant","sessionId":"`+fixtureSessionID+`","agentId":"child-1","timestamp":"2026-08-01T10:00:06Z","message":{"model":"fixture-subagent-model","usage":{"input_tokens":4,"output_tokens":2},"content":[{"type":"text","text":"they are in parsers/"}]}}
 `)
 
 	// Instruction files are present to prove they do not become ingest content:
@@ -120,9 +120,12 @@ func (w *world) seed(t *testing.T) {
 	// Codex: a rollout, a memory, a rule and a refused instruction document.
 	w.write(t, filepath.Join(roots.CodexSessions, "2026", "08", "01", "rollout-abc.jsonl"),
 		fmt.Sprintf(`
-{"type":"session_meta","timestamp":"2026-08-01T09:00:00Z","payload":{"id":"codex-thread-1","cwd":%q,"timestamp":"2026-08-01T09:00:00Z","cli_version":"9.9.9"}}
+{"type":"session_meta","timestamp":"2026-08-01T09:00:00Z","payload":{"id":"codex-thread-1","cwd":%q,"timestamp":"2026-08-01T09:00:00Z","cli_version":"9.9.9","model_provider":"fixture-provider"}}
+{"type":"turn_context","timestamp":"2026-08-01T09:00:01Z","payload":{"model":"fixture-codex-model","effort":"high","summary":"auto"}}
 {"type":"event_msg","timestamp":"2026-08-01T09:00:01Z","payload":{"type":"user_message","message":"start the sixth fixture"}}
+{"type":"event_msg","timestamp":"2026-08-01T09:00:02Z","payload":{"type":"agent_reasoning","text":"the matrix first"}}
 {"type":"response_item","timestamp":"2026-08-01T09:00:02Z","payload":{"type":"reasoning","summary":[{"text":"the matrix first"}]}}
+{"type":"event_msg","timestamp":"2026-08-01T09:00:03Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":31,"output_tokens":9,"reasoning_output_tokens":4}}}}
 {"type":"event_msg","timestamp":"2026-08-01T09:00:30Z","payload":{"type":"task_complete","last_agent_message":"running"}}
 `, w.demoCwd()))
 	w.write(t, filepath.Join(roots.CodexRoot, "memories", "one.md"), "Remember the idempotency contract.\n")
@@ -146,14 +149,14 @@ func (w *world) seed(t *testing.T) {
 }`, w.demoCwd()))
 	w.write(t, filepath.Join(roots.CoworkSessions, "cw", "audit.jsonl"), `
 {"type":"user","session_id":"cowork-1","_audit_timestamp":"2026-08-01T12:00:00Z","message":{"content":[{"type":"text","text":"review the matrix"}]}}
-{"type":"assistant","_audit_timestamp":"2026-08-01T12:00:04Z","message":{"content":"reviewed"}}
+{"type":"assistant","_audit_timestamp":"2026-08-01T12:00:04Z","message":{"model":"fixture-cowork-model","usage":{"input_tokens":6,"output_tokens":1},"content":"reviewed"}}
 `)
 
 	// Pi, with its tree.
 	w.write(t, filepath.Join(roots.PiSessions, w.projectDir(), "session.jsonl"),
 		fmt.Sprintf(`{"type":"session","version":3,"id":"pi-1","cwd":%q,"timestamp":"2026-08-01T13:00:00Z"}
 {"id":"p1","parentId":null,"type":"message","timestamp":"2026-08-01T13:00:01Z","message":{"role":"user","content":"count the sources"}}
-{"id":"p2","parentId":"p1","type":"message","timestamp":"2026-08-01T13:00:02Z","message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"nine"}]}}
+{"id":"p2","parentId":"p1","type":"message","timestamp":"2026-08-01T13:00:02Z","message":{"role":"assistant","stopReason":"stop","model":"fixture-pi-model","provider":"fixture-pi-provider","usage":{"input":12,"output":5,"reasoning":2,"cacheRead":3,"cost":{"total":0.25}},"content":[{"type":"text","text":"nine"}]}}
 `, w.demoCwd()))
 
 	w.seedOpenCode(t, roots.OpenCodeDB)
@@ -177,7 +180,9 @@ func (w *world) seedOpenCode(t *testing.T, path string) {
 	exec(t, db, `INSERT INTO message VALUES ('m1','oc1',1785542400000,1785542400000,
 	              '{"role":"user","time":{"created":1785542400000}}')`)
 	exec(t, db, `INSERT INTO message VALUES ('m2','oc1',1785542401000,1785542402000,
-	              '{"role":"assistant","parentID":"m1","time":{"created":1785542401000,"completed":1785542402000}}')`)
+	              '{"role":"assistant","parentID":"m1","time":{"created":1785542401000,"completed":1785542402000},
+	                "modelID":"fixture-opencode-model","providerID":"fixture-opencode-provider","cost":0.5,
+	                "tokens":{"input":40,"output":11,"reasoning":6,"cache":{"read":2,"write":1}}}')`)
 	exec(t, db, `INSERT INTO part VALUES ('p1','m1','oc1',1785542400000,1785542400000,
 	              '{"type":"text","text":"what remains in the fixture"}')`)
 	exec(t, db, `INSERT INTO part VALUES ('p2','m2','oc1',1785542401500,1785542402000,
@@ -194,19 +199,23 @@ func (w *world) seedHermes(t *testing.T, path string) {
 	defer db.Close()
 	exec(t, db, `CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT, model TEXT, cwd TEXT,
 	              title TEXT, started_at REAL, ended_at REAL, end_reason TEXT,
-	              message_count INTEGER, tool_call_count INTEGER, input_tokens INTEGER)`)
+	              message_count INTEGER, tool_call_count INTEGER, input_tokens INTEGER,
+	              output_tokens INTEGER, reasoning_tokens INTEGER, actual_cost_usd REAL,
+	              billing_provider TEXT)`)
 	exec(t, db, `CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT,
 	              content TEXT, reasoning_content TEXT, tool_calls TEXT, tool_name TEXT,
 	              timestamp REAL, active INTEGER, finish_reason TEXT)`)
 	exec(t, db, `INSERT INTO sessions VALUES ('h1','tui','test-model',?,'a session',
-	              1785542400, 1785542700, 'stop', 4, 1, 120)`, w.demoCwd())
+	              1785542400, 1785542700, 'stop', 4, 1, 120, 33, 8, 0.75, 'fixture-hermes-provider')`,
+		w.demoCwd())
 	exec(t, db, `INSERT INTO messages VALUES (1,'h1','user','how many sources does it ingest',NULL,NULL,NULL,1785542400,1,NULL)`)
 	exec(t, db, `INSERT INTO messages VALUES (2,'h1','assistant','nine','we have to count',
 	              '[{"function":{"name":"grep","arguments":"{\"pattern\":\"source\"}"}}]',NULL,1785542401,1,'stop')`)
 	exec(t, db, `INSERT INTO messages VALUES (3,'h1','tool','{"ok":true}',NULL,NULL,'grep',1785542402,1,NULL)`)
 	// A session Hermes has not closed: it is not read until it has an ending.
 	exec(t, db, `INSERT INTO sessions VALUES ('h2','tui','test-model',?,'live',
-	              1785542800, NULL, NULL, 1, 0, 10)`, w.demoCwd())
+	              1785542800, NULL, NULL, 1, 0, 10, 1, 0, NULL, 'fixture-hermes-provider')`,
+		w.demoCwd())
 	exec(t, db, `INSERT INTO messages VALUES (4,'h2','user','in progress',NULL,NULL,NULL,1785542800,1,NULL)`)
 }
 

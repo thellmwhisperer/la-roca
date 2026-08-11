@@ -93,6 +93,9 @@ func TestClaudeWebDiscardedMessagesDoNotPoisonDescendants(t *testing.T) {
 		if discard.Record != []int{1, 7}[i] || !strings.Contains(discard.Reason, "has no text") {
 			t.Errorf("discard %d = %+v, want its own unreadable-message reason", i, discard)
 		}
+		if discard.Category != "human message has no text" {
+			t.Errorf("discard %d has unstable category %q", i, discard.Category)
+		}
 		if strings.Contains(discard.Reason, "parent chain") {
 			t.Errorf("discard %d retained the cascading reason: %+v", i, discard)
 		}
