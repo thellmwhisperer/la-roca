@@ -254,6 +254,25 @@ func TestCodexReadsTheAnswerOutOfTheCompletionEvent(t *testing.T) {
 	}
 }
 
+func TestCodexStreamsABufferedCompletionWhenThereWereNoDeltas(t *testing.T) {
+	server, _ := codexBackend(t, []string{
+		sse("response.completed", map[string]any{
+			"response": map[string]any{"output": []any{map[string]any{
+				"content": []any{map[string]any{"type": "output_text", "text": "whole answer"}},
+			}}},
+		}),
+	})
+	var chunks []string
+	_, err := NewCodex(CodexConfig{Session: liveSession(t), BaseURL: server.URL}).
+		ChatStream(t.Context(), ChatRequest{}, func(delta string) { chunks = append(chunks, delta) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(chunks, "") != "whole answer" {
+		t.Fatalf("buffered completion was not surfaced: %q", chunks)
+	}
+}
+
 func TestCodexReportsTheVendorsFailureEvent(t *testing.T) {
 	server, _ := codexBackend(t, []string{
 		sse("response.failed", map[string]any{

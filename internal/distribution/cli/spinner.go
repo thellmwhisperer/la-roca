@@ -119,7 +119,8 @@ func (s *spinner) phase(label string) {
 func (s *spinner) appendPreview(delta string) {
 	s.mu.Lock()
 	clean := strings.Join(strings.Fields(delta), " ")
-	if clean != "" && s.preview != "" && s.space {
+	leadingSpace := len(delta) > 0 && strings.ContainsAny(delta[:1], " \t\r\n")
+	if clean != "" && s.preview != "" && (s.space || leadingSpace) {
 		s.preview += " "
 	}
 	s.preview += clean

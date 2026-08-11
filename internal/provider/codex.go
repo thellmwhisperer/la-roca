@@ -311,5 +311,8 @@ func readResponseStream(body io.Reader, onDelta func(string)) (string, error) {
 	if text.Len() > 0 {
 		return text.String(), nil
 	}
+	if whole != "" && onDelta != nil {
+		onDelta(whole)
+	}
 	return whole, nil
 }
