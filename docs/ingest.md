@@ -69,6 +69,10 @@ counts tokens and names no provider, a Codex rollout counts the reasoning tokens
 apart, Pi and OpenCode also price the turn, Hermes measures a whole session
 rather than a turn, and the Claude web export states none of it.
 
+Thinking text stays in `thinking_blocks`, keyed to its session and exchange; it
+is not duplicated onto `exchanges`. Codex reasoning now lands there on the
+exchange that produced it, alongside the other sources' thinking blocks.
+
 The fingerprint of every versioned source includes its parser revision. When a
 release teaches a parser to read more of a source, the next plain `roca ingest`
 reopens the files it had already synced and backfills only the columns that are
@@ -78,9 +82,11 @@ twice.
 ## Reading the summary
 
 The default summary is one line per source with what it contributed, followed by
-what was left out collapsed onto the reason for it. The two are apart on
-purpose: `excluded` counts the records this build never meant to read, which is
-most of a runtime log and is not a problem, and `discards` counts the records it
-could not read, which is. `roca ingest --verbose` adds the per-record detail with
-the path of each; the whole report, detail included, is in the ingest log under
-the selected data directory either way.
+up to five reasons for what was left out, with each reason collapsed to a count.
+The two groups are apart on purpose: `excluded` counts the records this build
+never meant to read, which is most of a runtime log and is not a problem, and
+`discards` counts the records it could not read, which is. `roca ingest
+--verbose` adds the per-record detail with its absolute path for up to 100
+retained records. Totals and the complete collapsed summary remain exact in JSON
+output and the ingest log when a run leaves out more records than that; the log
+retains the same bounded per-record detail.

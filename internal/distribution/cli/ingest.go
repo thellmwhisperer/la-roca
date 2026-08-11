@@ -68,8 +68,8 @@ func ingestCommand(env *cliEnv) *cobra.Command {
 // What the default says is what happened: what each source contributed, and what
 // was left out collapsed onto the reason it was left out, with the records this
 // build never meant to read named as the exclusions they are. The per-record
-// detail, and the absolute paths in it, are behind `--verbose`; the whole report
-// is in the ingest log either way.
+// detail retained by the report, and its absolute paths, are behind `--verbose`;
+// the same bounded report is in the ingest log either way.
 func renderIngest(env *cliEnv, result service.IngestResult, verbose bool) {
 	env.print("setup: agents detected: %s · agents not found: %s",
 		detectedAgentsLine(result.DetectedAgents), missingAgentsLine(result.DetectedAgents))

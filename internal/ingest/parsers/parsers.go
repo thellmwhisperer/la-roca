@@ -166,8 +166,8 @@ type Exchange struct {
 
 // Provenance is the unified shape every source fills with whatever it recorded
 // about one answer: who produced it and what it spent. Every field is optional
-// and absence is the normal case, because no source records all of them and
-// guessing one would put an invented number in the corpus.
+// and absence is the normal case, because not every source records all of them
+// and guessing one would put an invented number in the corpus.
 //
 // The pointers are what tells "the source says zero" from "the source does not
 // say", and only the first of those is a measurement.

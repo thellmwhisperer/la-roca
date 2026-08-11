@@ -50,9 +50,9 @@ CREATE TABLE IF NOT EXISTS layers (
 
 -- The provenance columns say how one answer was produced: which model and
 -- provider answered, what it spent, and what it cost. Every one of them is
--- nullable because they are filled from what the source itself recorded and no
--- source records all of them; a NULL means "this source does not say", never
--- zero.
+-- nullable because they are filled from what the source itself recorded and
+-- not every source records all of them; a NULL means "this source does not say",
+-- never zero.
 CREATE TABLE IF NOT EXISTS exchanges (
   id                    INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id            TEXT REFERENCES sessions(session_id),
