@@ -7,7 +7,7 @@ Feature: The operator's real flow
   so that I do not discover on my machine what nobody tested.
 
   @acceptance
-  Scenario: F02-01 One-line installation from the release channel
+  Scenario: One-line installation from the release channel
     Given a clean HOME with no trace of Roca
     And a valid credential for the release repository
     When I download the installer from the repository and pipe it to a shell
@@ -17,7 +17,7 @@ Feature: The operator's real flow
     And if the binaries directory is not on the PATH, the output warns about it
 
   @acceptance
-  Scenario Outline: F02-04 Installing La Roca into an agent's config
+  Scenario Outline: Installing La Roca into an agent's config
     Given La Roca is installed and initialized
     And the agent "<agent>" has its configuration file with content of its own
     When I run "roca mcp install <agent>"
@@ -33,7 +33,7 @@ Feature: The operator's real flow
       | opencode |
 
   @fast
-  Scenario: F02-07 Updating is part of the flow and has an answer
+  Scenario: Updating is part of the flow and has an answer
     Given La Roca is installed at an earlier release version
     When I run "roca update"
     Then the command exits with code 0
@@ -42,7 +42,7 @@ Feature: The operator's real flow
     And the MCP entries in the agent configurations still point at a binary that exists
 
   @fast
-  Scenario: F02-08 Updating refuses to overwrite a build that is not a release
+  Scenario: Updating refuses to overwrite a build that is not a release
     Given La Roca is installed at an earlier version
     When I run "roca update"
     Then the command exits with code 1

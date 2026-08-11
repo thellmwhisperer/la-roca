@@ -11,7 +11,7 @@ Feature: The MCP is a thin plug over the same core
     And a HOME with the seeded world "synthetic-corpus"
 
   @fast
-  Scenario: F08-01 The server comes up on demand over stdio and announces who it is
+  Scenario: The server comes up on demand over stdio and announces who it is
     When I open an MCP session over stdio against the binary
     And I send "initialize"
     Then the response declares the server name
@@ -20,7 +20,7 @@ Feature: The MCP is a thin plug over the same core
     And the process exits when standard input is closed
 
   @fast
-  Scenario: F08-02 Discovery returns exactly the decided surface
+  Scenario: Discovery returns exactly the decided surface
     When I open an MCP session over stdio against the binary
     And I send "tools/list"
     Then the response lists exactly the tools decided for v1
@@ -29,7 +29,7 @@ Feature: The MCP is a thin plug over the same core
     And no tool that is not on the decided list appears
 
   @fast
-  Scenario: F08-03 Querying over stdio
+  Scenario: Querying over stdio
     When I open an MCP session over stdio against the binary
     And I call the query tool with the question "how many memories are there"
     Then the response is not an error
@@ -37,7 +37,7 @@ Feature: The MCP is a thin plug over the same core
     And the readable response is plain AXI text
 
   @fast
-  Scenario Outline: F08-04 Representative queries ship only readable AXI
+  Scenario Outline: Representative queries ship only readable AXI
     When I call the query tool over stdio with the question "<query>"
     Then the response is not an error
     And the response carries no structured content
@@ -51,7 +51,7 @@ Feature: The MCP is a thin plug over the same core
       | what feedback do we have     |
 
   @fast
-  Scenario: F08-05 Writing through the plug is writing through the product
+  Scenario: Writing through the plug is writing through the product
     When I call the store tool over stdio with a new memory
     Then the response is not an error
     When I run "roca exec 'SELECT COUNT(*) AS n FROM memories WHERE supersedes IS NULL' --json"
@@ -59,7 +59,7 @@ Feature: The MCP is a thin plug over the same core
     And the audit record of that write declares it came from the plug
 
   @fast
-  Scenario: F08-07 A missing argument is answered as a tool error, not as a crash
+  Scenario: A missing argument is answered as a tool error, not as a crash
     When I open an MCP session over stdio against the binary
     And I call the query tool with no arguments
     Then the response is a tool error
@@ -68,7 +68,7 @@ Feature: The MCP is a thin plug over the same core
     And a correct call right after it works
 
   @fast
-  Scenario: F08-08 Read-only mode is respected on both surfaces
+  Scenario: Read-only mode is respected on both surfaces
     Given La Roca is in read-only mode
     When I run "roca store --layer discovery --content 'this must be refused'"
     Then the command exits with a code other than 0
