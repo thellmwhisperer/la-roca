@@ -122,7 +122,13 @@ func auditCalls(audit *logfile.Writer, warnings io.Writer) mcp.Middleware {
 			if appendErr := audit.Append(logfile.MCPAudit, logfile.MCPRecord{
 				Timestamp: started.UTC(), Tool: tool, Args: args, OK: ok,
 				DurationMS: time.Since(started).Milliseconds(), RowCount: resultRows(result),
-				Degraded: degraded,
+				Degraded: degraded, SQLProvider: resultString(result, "sql_provider"),
+				SQLModel:               resultString(result, "sql_model"),
+				SQLInferenceMS:         resultMilliseconds(result, "sql_inference_ms"),
+				ExecutionMS:            resultMilliseconds(result, "execution_ms"),
+				InterpretationProvider: resultString(result, "interpretation_provider"),
+				InterpretationModel:    resultString(result, "interpretation_model"),
+				InterpretationMS:       resultMilliseconds(result, "interpretation_ms"),
 			}); appendErr != nil {
 				warned.Do(func() {
 					fmt.Fprintf(warnings, "warning: MCP calls are not being written to the audit log: %v\n", appendErr)
@@ -130,6 +136,56 @@ func auditCalls(audit *logfile.Writer, warnings io.Writer) mcp.Middleware {
 			}
 			return result, err
 		}
+	}
+}
+
+func resultString(value any, key string) string {
+	switch result := value.(type) {
+	case *mcp.CallToolResult:
+		return resultString(result.Meta, key)
+	case mcp.Meta:
+		text, _ := result[key].(string)
+		return text
+	case map[string]any:
+		text, _ := result[key].(string)
+		return text
+	}
+	return ""
+}
+
+func resultMilliseconds(value any, key string) *int64 {
+	var milliseconds int64
+	switch result := value.(type) {
+	case *mcp.CallToolResult:
+		return resultMilliseconds(result.Meta, key)
+	case mcp.Meta:
+		value, exists := result[key]
+		if !exists {
+			return nil
+		}
+		milliseconds = numberAsInt64(value)
+	case map[string]any:
+		value, exists := result[key]
+		if !exists {
+			return nil
+		}
+		milliseconds = numberAsInt64(value)
+	default:
+		return nil
+	}
+	return &milliseconds
+}
+
+func numberAsInt64(value any) int64 {
+	switch number := value.(type) {
+	case int64:
+		return number
+	case int:
+		return int64(number)
+	case float64:
+		return int64(number)
+	default:
+		return 0
 	}
 }
 
@@ -220,12 +276,22 @@ func rendered[T any](res T, err error, paint func(T) string) (*mcp.CallToolResul
 	if err != nil {
 		return nil, nil, err
 	}
+	metadata := mcp.Meta{
+		"row_count": resultRows(res),
+		"degraded":  resultDegraded(res),
+	}
+	if query, ok := any(res).(service.QueryResult); ok {
+		metadata["sql_provider"] = query.Engine
+		metadata["sql_model"] = query.Model
+		metadata["sql_inference_ms"] = query.SQLInferenceMS
+		metadata["execution_ms"] = query.ExecutionMS
+		metadata["interpretation_provider"] = query.InterpretEngine
+		metadata["interpretation_model"] = query.InterpretModel
+		metadata["interpretation_ms"] = query.InterpretationMS
+	}
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: paint(res)}},
-		Meta: mcp.Meta{
-			"row_count": resultRows(res),
-			"degraded":  resultDegraded(res),
-		},
+		Meta:    metadata,
 	}, nil, nil
 }
 
