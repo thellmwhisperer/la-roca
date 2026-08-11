@@ -116,24 +116,34 @@ func assertRecordedProvenance(t *testing.T, db *sql.DB) {
 	}
 }
 
-// The re-ingest that backfills. The shipped v1.7 corpus carries exchanges with
-// no provenance and v2 parser watermarks; bumping the version is what makes a
-// plain `roca ingest` read those files again, and the record-level idempotency
-// is what keeps it from writing a second copy of anything.
-func TestAPlainReingestBackfillsProvenanceWithoutDuplicating(t *testing.T) {
+// The re-ingest that backfills. Historical parsers did not always assign the
+// exchange number that today's parser does, so the fixture moves those rows to
+// numbers the current parse will not produce. The content and timestamps are
+// unchanged: they are the stable evidence that the old row is the same turn.
+func TestAPlainReingestMatchesHistoricalNumbersWithoutDuplicating(t *testing.T) {
 	_, db, ctx, options := seededWorld(t)
 
 	before := tableSnapshot(t, db.SQL())
-	// What v1.7 left behind: the columns it failed to fill and watermarks that
-	// already claimed the v2 parser revision.
+	// What v1.8.1 left behind: NULL provenance, parser-v3 watermarks, and rows
+	// numbered by the older Claude, Codex, Cowork, subagent and Hermes readers.
 	if err := db.Write(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `UPDATE exchanges SET model = NULL, provider = NULL,
 			tokens_in = NULL, tokens_out = NULL, tokens_reasoning = NULL, cost_usd = NULL`)
 		if err != nil {
 			return err
 		}
+		for _, table := range []string{"exchanges", "thinking_blocks", "tool_uses"} {
+			for _, offset := range []int{100, -99} {
+				_, err = tx.ExecContext(ctx, `UPDATE `+table+` SET exchange_number = exchange_number + ?
+					WHERE session_id IN (?, ?, ?, ?, ?)`, offset, fixtureSessionID, "child-1", "cowork-1",
+					"codex-thread-1", "h1")
+				if err != nil {
+					return err
+				}
+			}
+		}
 		_, err = tx.ExecContext(ctx,
-			`UPDATE ingest_file_state SET fingerprint = replace(fingerprint, '-v3', '-v2')
+			`UPDATE ingest_file_state SET fingerprint = replace(fingerprint, '-v4', '-v3')
 			 WHERE instr(fingerprint, ':parser:') > 0`)
 		return err
 	}); err != nil {
@@ -185,6 +195,49 @@ func TestTheBackfillNeverOverwritesProvenanceThatLanded(t *testing.T) {
 	}
 	if overwritten != 0 {
 		t.Errorf("%d exchanges had their model rewritten", overwritten)
+	}
+}
+
+func TestBackfillRefusesMismatchedAndAmbiguousContent(t *testing.T) {
+	db := rocaDatabase(t)
+	ctx := context.Background()
+	write := func(exchanges []parsers.Exchange) Counts {
+		t.Helper()
+		var counts Counts
+		err := db.Write(ctx, func(tx *sql.Tx) error {
+			var err error
+			counts, err = WriteRecords(ctx, tx, registry(t), parsers.Records{Sessions: []parsers.Session{{
+				ID: "synthetic-anchor-safety", Exchanges: exchanges,
+			}}})
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return counts
+	}
+	write([]parsers.Exchange{
+		{Number: 1, HumanText: "stored turn", AgentText: "stored answer"},
+		{Number: 7, HumanText: "repeated turn", AgentText: "repeated answer"},
+		{Number: 8, HumanText: "repeated turn", AgentText: "repeated answer"},
+	})
+	model := parsers.Provenance{Model: "must-not-land"}
+	unsafe := []parsers.Exchange{
+		{Number: 1, HumanText: "different turn", AgentText: "different answer", Provenance: model},
+		{Number: 2, HumanText: "repeated turn", AgentText: "repeated answer", Provenance: model},
+	}
+	for range 2 {
+		if counts := write(unsafe); counts.Exchanges != 0 {
+			t.Fatalf("unsafe replay inserted exchanges: %+v", counts)
+		}
+	}
+	var rows, enriched int
+	if err := db.SQL().QueryRow(`SELECT COUNT(*), COUNT(model) FROM exchanges
+		WHERE session_id = 'synthetic-anchor-safety'`).Scan(&rows, &enriched); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 3 || enriched != 0 {
+		t.Fatalf("unsafe replay left rows/enriched = %d/%d, want 3/0", rows, enriched)
 	}
 }
 

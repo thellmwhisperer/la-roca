@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -111,6 +112,10 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 	if err != nil {
 		return counts, err
 	}
+	matcher, err := w.exchangeMatcher(ctx, session.ID)
+	if err != nil {
+		return counts, err
+	}
 
 	metadata := map[string]any{}
 	maps.Copy(metadata, session.Metadata)
@@ -138,24 +143,49 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 
 	for _, exchange := range session.Exchanges {
 		number := exchange.Number
+		known, identityKnown := assigned[exchange.SourceID]
 		if exchange.SourceID != "" {
-			known, landed := assigned[exchange.SourceID]
-			if landed {
-				// It is already in. Whether the source has edited it since is
-				// reported, and fields that already landed are still not rewritten.
-				thinking, err := w.enrichExchange(ctx, session.ID, known.Number, exchange)
-				if err != nil {
-					return counts, err
+			if identityKnown {
+				number = known.Number
+			} else {
+				number = next
+			}
+		}
+		matched, found, ambiguous := matcher.match(number, exchange)
+		if found {
+			thinking, err := w.enrichExchange(ctx, session.ID, matched, exchange)
+			if err != nil {
+				return counts, err
+			}
+			counts.ThinkingBlocks += thinking
+			if exchange.SourceID != "" {
+				assigned[exchange.SourceID] = exchangeKey{
+					Number: matched, Fingerprint: exchange.Fingerprint,
 				}
-				counts.ThinkingBlocks += thinking
+			}
+			if identityKnown {
 				if known.Fingerprint == exchange.Fingerprint {
 					counts.ExchangesUnchanged++
 				} else {
 					counts.ExchangesChanged++
 				}
-				continue
 			}
-			number = next
+			continue
+		}
+		// A known source identity or an ambiguous content anchor may already be
+		// the historical row. Leaving it untouched is safer than manufacturing a
+		// second copy that a later ingest cannot distinguish from the first.
+		if identityKnown || ambiguous || matcher.occupied(number) {
+			if identityKnown {
+				if known.Fingerprint == exchange.Fingerprint {
+					counts.ExchangesUnchanged++
+				} else {
+					counts.ExchangesChanged++
+				}
+			}
+			continue
+		}
+		if exchange.SourceID != "" {
 			next++
 		}
 		landed, err := w.exchange(ctx, session.ID, number, exchange)
@@ -163,13 +193,9 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 			return counts, err
 		}
 		if !landed {
-			thinking, err := w.enrichExchange(ctx, session.ID, number, exchange)
-			if err != nil {
-				return counts, err
-			}
-			counts.ThinkingBlocks += thinking
 			continue
 		}
+		matcher.occupy(number, exchange)
 		counts.Exchanges++
 		if exchange.SourceID != "" {
 			assigned[exchange.SourceID] = exchangeKey{
@@ -205,6 +231,141 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 		}
 	}
 	return counts, nil
+}
+
+type storedExchange struct {
+	number                         int
+	humanText, agentText           string
+	humanTimestamp, agentTimestamp string
+}
+
+type exchangeMatcher struct {
+	byNumber     map[int]storedExchange
+	byTimestamps map[string][]storedExchange
+	byContent    map[[sha256.Size]byte][]storedExchange
+}
+
+func (w *writer) exchangeMatcher(ctx context.Context, sessionID string) (*exchangeMatcher, error) {
+	m := &exchangeMatcher{
+		byNumber:     map[int]storedExchange{},
+		byTimestamps: map[string][]storedExchange{},
+		byContent:    map[[sha256.Size]byte][]storedExchange{},
+	}
+	rows, err := w.tx.QueryContext(ctx, `
+		SELECT exchange_number, COALESCE(human_text, ''), COALESCE(agent_text, ''),
+		       COALESCE(human_timestamp, ''), COALESCE(agent_timestamp, '')
+		FROM exchanges WHERE session_id = ?`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("read the exchange anchors of %s: %w", sessionID, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var stored storedExchange
+		var number sql.NullInt64
+		if err := rows.Scan(&number, &stored.humanText, &stored.agentText,
+			&stored.humanTimestamp, &stored.agentTimestamp); err != nil {
+			return nil, fmt.Errorf("read an exchange anchor of %s: %w", sessionID, err)
+		}
+		if !number.Valid {
+			continue
+		}
+		stored.number = int(number.Int64)
+		m.addStored(stored)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read the exchange anchors of %s: %w", sessionID, err)
+	}
+	return m, nil
+}
+
+func (m *exchangeMatcher) occupied(number int) bool {
+	_, exists := m.byNumber[number]
+	return exists
+}
+
+func (m *exchangeMatcher) occupy(number int, exchange parsers.Exchange) {
+	m.byNumber[number] = storedExchange{
+		number: number, humanText: exchange.HumanText, agentText: exchange.AgentText,
+		humanTimestamp: exchange.HumanTimestamp, agentTimestamp: exchange.AgentTimestamp,
+	}
+}
+
+func (m *exchangeMatcher) addStored(stored storedExchange) {
+	m.byNumber[stored.number] = stored
+	if key, ok := timestampAnchor(stored.humanTimestamp, stored.agentTimestamp); ok {
+		m.byTimestamps[key] = append(m.byTimestamps[key], stored)
+	}
+	if key, ok := contentAnchor(stored.humanText, stored.agentText); ok {
+		m.byContent[key] = append(m.byContent[key], stored)
+	}
+}
+
+// match accepts the numbered row only when its known content agrees. Historical
+// numbering falls back to a unique timestamp pair, then to the exact content
+// fingerprint. Ambiguity is reported so the caller does not insert a duplicate.
+func (m *exchangeMatcher) match(number int, exchange parsers.Exchange) (int, bool, bool) {
+	if stored, ok := m.byNumber[number]; ok && compatibleContent(stored, exchange) {
+		return number, true, false
+	}
+	timestampsAmbiguous := false
+	if key, ok := timestampAnchor(exchange.HumanTimestamp, exchange.AgentTimestamp); ok {
+		candidates := compatibleCandidates(m.byTimestamps[key], exchange)
+		if len(candidates) == 1 {
+			return candidates[0].number, true, false
+		}
+		timestampsAmbiguous = len(candidates) > 1
+	}
+	if key, ok := contentAnchor(exchange.HumanText, exchange.AgentText); ok {
+		candidates := m.byContent[key]
+		if len(candidates) == 1 {
+			return candidates[0].number, true, false
+		}
+		if len(candidates) > 1 {
+			return 0, false, true
+		}
+	}
+	return 0, false, timestampsAmbiguous
+}
+
+func compatibleCandidates(candidates []storedExchange, exchange parsers.Exchange) []storedExchange {
+	matched := make([]storedExchange, 0, len(candidates))
+	for _, candidate := range candidates {
+		if compatibleContent(candidate, exchange) {
+			matched = append(matched, candidate)
+		}
+	}
+	return matched
+}
+
+func compatibleContent(stored storedExchange, exchange parsers.Exchange) bool {
+	matched := false
+	for _, pair := range [][2]string{
+		{stored.humanText, exchange.HumanText},
+		{stored.agentText, exchange.AgentText},
+	} {
+		if pair[0] == "" || pair[1] == "" {
+			continue
+		}
+		if pair[0] != pair[1] {
+			return false
+		}
+		matched = true
+	}
+	return matched
+}
+
+func timestampAnchor(human, agent string) (string, bool) {
+	if human == "" && agent == "" {
+		return "", false
+	}
+	return human + "\x00" + agent, true
+}
+
+func contentAnchor(human, agent string) ([sha256.Size]byte, bool) {
+	if human == "" && agent == "" {
+		return [sha256.Size]byte{}, false
+	}
+	return sha256.Sum256([]byte(human + "\x00" + agent)), true
 }
 
 // currentSession is what the database already holds for this id.
