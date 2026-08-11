@@ -1,0 +1,27 @@
+# Merged stage-1 raw memories
+
+## Thread `11111111-2222-3333-4444-555555555555`
+updated_at: 2026-08-01T10:20:30Z
+cwd: /workspace/atlas
+rollout_path: /synthetic/rollout-one.jsonl
+rollout_summary_file: summary-one.md
+---
+description: A synthetic indexing decision.
+task: split an invented aggregate
+keywords: synthetic, indexing
+---
+### Task 1: Keep thread boundaries
+Reusable knowledge: one invented block becomes one memory.
+
+## Thread `aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee`
+updated_at: 2026-08-02T11:22:33.456Z
+cwd: C:\workspace\beacon
+rollout_path: C:\synthetic\rollout-two.jsonl
+rollout_summary_file: summary-two.md
+---
+description: A second synthetic decision.
+task_group: verify timestamps
+task_outcome: complete
+---
+### Task 1: Preserve the block
+Failures and how to do differently: use unmistakably invented data.
