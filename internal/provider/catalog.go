@@ -23,6 +23,9 @@ type Settings struct {
 	File config.File
 	// Credentials is the directory subscription sessions live in.
 	Credentials string
+	// RunnerDir is the neutral working directory for subprocess providers.
+	// It is outside every repository and is explicitly excluded from ingest.
+	RunnerDir string
 	// Env reads the environment. It is a field and not a call to os.Getenv so
 	// that a test can hand over an environment of its own.
 	Env func(key string) string
@@ -138,11 +141,18 @@ func (s Settings) selection(catalog Catalog) Selection {
 // adapter, the presets, and any provider the operator declared a table for.
 func (s Settings) catalog() Catalog {
 	catalog := Catalog{
-		NameOllama: func() (Provider, error) { return s.ollama(), nil },
-		NameCodex:  func() (Provider, error) { return s.codex(), nil },
+		NameOllama: s.withCommand(NameOllama, func() (Provider, error) { return s.ollama(), nil }),
+		NameCodex:  s.withCommand(NameCodex, func() (Provider, error) { return s.codex(), nil }),
+	}
+	for name, preset := range commandPresets {
+		fallback := catalog[name]
+		if fallback == nil {
+			fallback = s.openAIFactory(name)
+		}
+		catalog[name] = s.binaryPresetFactory(name, preset, fallback)
 	}
 	for _, name := range PresetNames() {
-		catalog[name] = s.openAIFactory(name)
+		catalog[name] = s.withCommand(name, s.openAIFactory(name))
 	}
 	// A provider with a table of its own is a provider this build knows how to
 	// build: one adapter, many providers. It is what lets an operator point at
@@ -151,9 +161,70 @@ func (s Settings) catalog() Catalog {
 		if _, already := catalog[name]; already {
 			continue
 		}
-		catalog[name] = s.openAIFactory(name)
+		catalog[name] = s.withCommand(name, s.openAIFactory(name))
 	}
 	return catalog
+}
+
+func (s Settings) binaryPresetFactory(name string, preset CommandPreset, fallback Factory) Factory {
+	return func() (Provider, error) {
+		cfg := s.File.Models.Providers[name]
+		if firstNonEmpty(cfg.BaseURL, s.File.Default(name+"_base_url")) != "" {
+			return fallback()
+		}
+		command := cfg.Command
+		action := ""
+		responseFormat := cfg.ResponseFormat
+		if len(command) == 0 {
+			command = preset.Command
+			action = preset.Action
+			if responseFormat == "" {
+				responseFormat = preset.ResponseFormat
+			}
+		}
+		return s.localBinary(name, command, firstNonEmpty(
+			cfg.Model, s.File.Default(name+"_model"), preset.Model), preset.Models,
+			cfg.Values, firstNonZero(cfg.TimeoutSeconds, preset.TimeoutSeconds), action, responseFormat)
+	}
+}
+
+func (s Settings) withCommand(name string, fallback Factory) Factory {
+	return func() (Provider, error) {
+		cfg := s.File.Models.Providers[name]
+		if len(cfg.Command) == 0 {
+			return fallback()
+		}
+		return s.localBinary(name, cfg.Command, firstNonEmpty(
+			cfg.Model, s.File.Default(name+"_model"), s.File.Default("model")), nil,
+			cfg.Values, cfg.TimeoutSeconds, "", cfg.ResponseFormat)
+	}
+}
+
+func (s Settings) localBinary(name string, command []string, model string, models []string,
+	values map[string]string, timeoutSeconds int, action, responseFormat string) (Provider, error) {
+	runner := s.RunnerDir
+	if runner == "" && s.Credentials != "" {
+		runner = filepath.Join(filepath.Dir(s.Credentials), config.DirRunner)
+	}
+	variables := make(map[string]string, len(values)+1)
+	for key, value := range values {
+		variables[key] = value
+	}
+	variables["model"] = model
+	return NewLocalBinary(LocalBinaryConfig{
+		Name: name, Command: command, Model: model, Models: models, Variables: variables,
+		File: s.File.Path, WorkDir: runner,
+		Timeout: time.Duration(timeoutSeconds) * time.Second, Action: action, ResponseFormat: responseFormat,
+	})
+}
+
+func firstNonZero(values ...int) int {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func (s Settings) openAIFactory(name string) Factory {
