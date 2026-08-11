@@ -77,6 +77,12 @@ the gate. Install them with `roca mcp install <runtime>`.
 
 ## Operating craft
 
+- Landing on a machine that is new to you, get up to speed from La Roca
+  before asking the human anything: active projects and their volume from
+  `sessions` analytics, and what the operator's agents already knew, since
+  their memory and rule files land in the `user`, `feedback` and `project`
+  layers at ingest. On a fresh install the `handoff` layer is empty until
+  agents store the first one, so read the history, then write it yourself.
 - Start project work with `roca_query("latest handoff for <project>")`. Ask for
   the current handoff protocol and follow it instead of freezing it here. After
   meaningful work, always store a handoff with branch, changes, state, next
