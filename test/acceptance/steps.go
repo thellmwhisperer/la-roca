@@ -487,7 +487,7 @@ func (m *world) jsonKeyEqualTo(key, value string) error {
 // lookup walks a dotted path with optional indexes: `model.ready`,
 // `ingest.errors`, `rows[0].COUNT(*)`.
 //
-// The frozen suite asks about nested keys, and a flat lookup would answer
+// The journey suite asks about nested keys, and a flat lookup would answer
 // "there is no such key" over a document that carries it three levels down. A
 // key with a dot inside it wins over the path reading, because `rows[0].COUNT(*)`
 // is a column name and not a route.

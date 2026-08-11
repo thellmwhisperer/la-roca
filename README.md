@@ -334,8 +334,10 @@ make dist
 ```
 
 `make check` runs formatting, vet, unit tests, the Godog acceptance suite, and
-the duplication gate. Acceptance contracts live under `features/`; the Godog
-harness is compiled only with the `acceptance` build tag.
+the duplication gate. Acceptance contracts live directly under
+`features/{store,ingest,provider,distribution}/`; every feature there is
+discovered automatically, and `make accept-index` rejects any other layout. The
+Godog harness is compiled only with the `acceptance` build tag.
 
 ## License
 
