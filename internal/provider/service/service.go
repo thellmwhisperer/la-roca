@@ -43,6 +43,12 @@ type Options struct {
 	// contacts no provider, which is what an installation with no model
 	// configured needs.
 	Providers provider.Cascade
+	// Interpreters is the cascade the result rows travel to, when the operator
+	// declared one. Its zero value is the installation that does not split the
+	// two inferences: whoever wrote the SQL also reads the rows. Declared, it is
+	// what keeps the rows on this machine while the question goes to a frontier
+	// model.
+	Interpreters provider.Cascade
 	// ConfigPath and ConfigExists are what doctor reports: every message about
 	// configuration names the file, never a TOML table.
 	ConfigPath   string
@@ -127,6 +133,7 @@ type InitResult struct {
 	Layers     int            `json:"layers"`
 	Bytes      int64          `json:"database_bytes"`
 	Rows       ingest.Tables  `json:"rows"`
+	Bedrock    *Bedrock       `json:"bedrock"`
 	Search     *search.Report `json:"search_index,omitempty"`
 	// Model and Ingest are the rest of the bootstrap: whether a model is going
 	// to answer, and what the first read of the disk found. Neither can fail
@@ -247,6 +254,10 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 		progress("model: no provider will answer · " + result.Model.Reason)
 	}
 	result.Rows = result.Ingest.After
+	result.Bedrock, err = s.bedrock(ctx)
+	if err != nil {
+		return InitResult{}, err
+	}
 	if info, statErr := os.Stat(s.db.Path()); statErr == nil {
 		result.Bytes = info.Size()
 	}

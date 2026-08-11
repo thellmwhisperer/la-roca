@@ -39,13 +39,20 @@ type ExecutionRecord struct {
 }
 
 type MCPRecord struct {
-	Timestamp  time.Time `json:"timestamp"`
-	Tool       string    `json:"tool"`
-	Args       any       `json:"args"`
-	OK         bool      `json:"ok"`
-	DurationMS int64     `json:"duration_ms"`
-	RowCount   int       `json:"row_count"`
-	Degraded   string    `json:"degraded,omitempty"`
+	Timestamp              time.Time `json:"timestamp"`
+	Tool                   string    `json:"tool"`
+	Args                   any       `json:"args"`
+	OK                     bool      `json:"ok"`
+	DurationMS             int64     `json:"duration_ms"`
+	RowCount               int       `json:"row_count"`
+	Degraded               string    `json:"degraded,omitempty"`
+	SQLProvider            string    `json:"sql_provider,omitempty"`
+	SQLModel               string    `json:"sql_model,omitempty"`
+	SQLInferenceMS         *int64    `json:"sql_inference_ms,omitempty"`
+	ExecutionMS            *int64    `json:"execution_ms,omitempty"`
+	InterpretationProvider string    `json:"interpretation_provider,omitempty"`
+	InterpretationModel    string    `json:"interpretation_model,omitempty"`
+	InterpretationMS       *int64    `json:"interpretation_ms,omitempty"`
 }
 
 type IngestRecord struct {

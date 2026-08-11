@@ -1,8 +1,12 @@
 package service_test
 
 import (
+	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -102,13 +106,37 @@ func TestTwoInferenceModelPath(t *testing.T) {
 		)
 		got := runFullInference(t, fake, "¿Qué decisión se tomó sobre el formato?")
 
-		if got.prose != "La decisión está guardada en una memoria." {
-			t.Fatalf("prose = %q", got.prose)
+		if got.answer.Text != "La decisión está guardada en una memoria." {
+			t.Fatalf("prose = %q", got.answer.Text)
 		}
 		prompt := fake.proseRequests[0]
 		if !strings.Contains(prompt, "¿Qué decisión se tomó sobre el formato?") ||
-			!strings.Contains(prompt, "same language as the question") {
+			!strings.Contains(prompt, "same language as the question") ||
+			!strings.Contains(prompt, "simple dashes") ||
+			!strings.Contains(prompt, "Do not use headings or tables") {
 			t.Fatalf("language contract did not reach inference 2:\n%s", prompt)
+		}
+	})
+
+	t.Run("thin evidence is declared before style and never filled with general knowledge", func(t *testing.T) {
+		fake := newTwoInferenceFake(
+			[]string{"SELECT content FROM memories LIMIT 1"},
+			"The rows do not support a revenue target. No target can be stated from this memory.",
+		)
+		got := runFullInference(t, fake, "In an epic tone, what revenue target was set?")
+
+		if !strings.HasPrefix(got.answer.Text, "The rows do not support") {
+			t.Fatalf("thin evidence was not declared first: %q", got.answer.Text)
+		}
+		prompt := fake.proseRequests[0]
+		for _, rule := range []string{
+			"Use only these results, never general knowledge",
+			"say so plainly before anything else",
+			"A requested style changes delivery only and never licenses invention",
+		} {
+			if !strings.Contains(prompt, rule) {
+				t.Errorf("interpretation prompt lacks %q:\n%s", rule, prompt)
+			}
 		}
 	})
 
@@ -122,10 +150,10 @@ func TestTwoInferenceModelPath(t *testing.T) {
 		if got.result.Path != service.PathLLM || got.result.RowCount != 2 {
 			t.Fatalf("clean model path did not return rows: %+v", got.result)
 		}
-		if got.prose != "Two memories answer the question." ||
+		if got.answer.Text != theLocalProse ||
 			len(fake.sqlRequests) != 1 || len(fake.proseRequests) != 1 {
 			t.Fatalf("two inferences did not complete: prose=%q SQL=%d prose calls=%d",
-				got.prose, len(fake.sqlRequests), len(fake.proseRequests))
+				got.answer.Text, len(fake.sqlRequests), len(fake.proseRequests))
 		}
 		for _, row := range got.result.Rows {
 			if !strings.Contains(fake.proseRequests[0], fmt.Sprint(row["content"])) {
@@ -135,9 +163,122 @@ func TestTwoInferenceModelPath(t *testing.T) {
 	})
 }
 
+// TestTheTwoInferencesSplitAcrossProviders is the privacy shape: the question
+// and the schema go to the provider that writes the SQL, and the rows that SQL
+// returned go only to the provider configured to read them.
+func TestTheTwoInferencesSplitAcrossProviders(t *testing.T) {
+	t.Run("the rows are read by the configured interpretation provider", func(t *testing.T) {
+		frontier, local := theSplitPair("The frontier read the rows.")
+		got := runFullInferenceWithService(t, splitService(t, frontier, local), theFreeQuestion)
+
+		if got.result.Engine != "codex" || got.result.Model != "gpt-frontier" {
+			t.Fatalf("the SQL provenance changed: %+v", got.result)
+		}
+		if got.answer.Engine != "ollama" || got.answer.Model != "qwen-local" ||
+			got.answer.Note != "" || got.answer.Text != theLocalProse {
+			t.Fatalf("the rows were not read by the interpretation provider: %+v", got.answer)
+		}
+		if len(frontier.proseRequests) != 0 || len(local.proseRequests) != 1 ||
+			len(local.sqlRequests) != 0 {
+			t.Fatalf("the inferences did not split: frontier prose %d, local prose %d, local SQL %d",
+				len(frontier.proseRequests), len(local.proseRequests), len(local.sqlRequests))
+		}
+	})
+
+	t.Run("an interpretation provider that is down falls back and says so", func(t *testing.T) {
+		frontier, local := theSplitPair("The frontier read the rows.")
+		local.notReady = "ollama is not running"
+		got := runFullInferenceWithService(t, splitService(t, frontier, local), theFreeQuestion)
+
+		if got.answer.Engine != "codex" || got.answer.Text != "The frontier read the rows." {
+			t.Fatalf("the fallback did not answer: %+v", got.answer)
+		}
+		if !strings.Contains(got.answer.Note, "ollama is not running") ||
+			!strings.Contains(got.answer.Note, "codex") {
+			t.Fatalf("the fallback is not declared honestly: %q", got.answer.Note)
+		}
+		if len(local.proseRequests) != 0 {
+			t.Fatalf("a provider that is down was asked anyway")
+		}
+	})
+
+	t.Run("no result row ever reaches the provider that only writes SQL", func(t *testing.T) {
+		frontier, local := theSplitPair("unused")
+		runFullInferenceWithService(t, splitService(t, frontier, local), theFreeQuestion)
+
+		asked := strings.Join(append(frontier.sqlRequests, frontier.proseRequests...), "\n")
+		if !strings.Contains(asked, theFreeQuestion) || !strings.Contains(asked, "<schema>") {
+			t.Fatalf("the SQL provider was not given the question and the schema:\n%s", asked)
+		}
+		if strings.Contains(asked, theSeededRow) {
+			t.Fatalf("a result row reached the provider that only writes SQL:\n%s", asked)
+		}
+		if !strings.Contains(local.proseRequests[0], theSeededRow) {
+			t.Fatalf("the interpretation provider did not receive the rows:\n%s",
+				local.proseRequests[0])
+		}
+	})
+}
+
+// The second inference is where a local reasoning model costs the most: the
+// prompt is long and the answer is prose. Thinking is off on that request, and
+// the switch is the API field, because on qwen3.5 an in-prompt /no_think does
+// nothing and the difference measured on a real machine was minutes against
+// seconds.
+func TestTheInterpretationAsksTheLocalModelNotToThink(t *testing.T) {
+	var asked map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/tags" {
+			json.NewEncoder(w).Encode(map[string]any{
+				"models": []map[string]any{{"name": "qwen3.5:4b", "model": "qwen3.5:4b"}}})
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&asked); err != nil {
+			t.Errorf("decode the interpretation request: %v", err)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"message": map[string]any{"content": theLocalProse}})
+	}))
+	defer server.Close()
+
+	frontier, _ := theSplitPair("unused")
+	local := provider.NewOllama(provider.OllamaConfig{
+		BaseURL: server.URL, Model: "qwen3.5:4b"})
+	got := runFullInferenceWithService(t, splitService(t, frontier, local), theFreeQuestion)
+
+	if got.answer.Engine != provider.NameOllama || got.answer.Text != theLocalProse {
+		t.Fatalf("the local model did not read the rows: %+v", got.answer)
+	}
+	if think, declared := asked["think"].(bool); !declared || think {
+		t.Fatalf("the interpretation let the model think: think=%v declared=%v", think, declared)
+	}
+}
+
+// theSeededRow is content this installation holds and the split SQL returns, so
+// a test can tell "the rows travelled here" from "the schema travelled here".
+const theSeededRow = "the team hates long dashes in the generated text"
+
+const theLocalProse = "Two memories answer the question."
+
+// theSplitPair is the pair the split tests ask: a frontier model that writes
+// SQL and a local model that reads the rows it returned.
+func theSplitPair(frontierProse string) (frontier, local *twoInferenceFake) {
+	frontier = newTwoInferenceFake(
+		[]string{"SELECT content FROM memories ORDER BY id LIMIT 2"}, frontierProse)
+	frontier.name, frontier.model = "codex", "gpt-frontier"
+	local = newTwoInferenceFake(nil, theLocalProse)
+	local.name, local.model = "ollama", "qwen-local"
+	return frontier, local
+}
+
+func splitService(t *testing.T, sql, interpret provider.Provider) *service.Service {
+	t.Helper()
+	return seededServiceWith(t, cascadeOf(sql), cascadeOf(interpret))
+}
+
 type fullInference struct {
 	result service.QueryResult
-	prose  string
+	answer service.Interpretation
 }
 
 func runFullInference(t *testing.T, fake *twoInferenceFake, question string) fullInference {
@@ -151,19 +292,24 @@ func runFullInferenceWithService(t *testing.T, svc *service.Service, question st
 	if err != nil {
 		t.Fatalf("Query: %v", err)
 	}
-	prose, err := svc.Interpret(context.Background(), question, result.Columns, result.Rows, 0)
+	answer, err := svc.Interpret(context.Background(), question, result.Columns, result.Rows, 0)
 	if err != nil {
 		t.Fatalf("Interpret: %v", err)
 	}
-	return fullInference{result: result, prose: prose}
+	return fullInference{result: result, answer: answer}
 }
 
 // twoInferenceFake is the provider-domain seam for the model's two jobs. SQL
 // answers only requests with a system prompt; prose answers only the subsequent
 // row-interpretation request. It never opens a socket or invokes a real model.
+// name, model and notReady are what the split tests set: two of these under
+// different names is an installation with the inferences on two providers.
 type twoInferenceFake struct {
 	sql           []string
 	prose         string
+	name          string
+	model         string
+	notReady      string
 	sqlRequests   []string
 	proseRequests []string
 }
@@ -172,13 +318,16 @@ func newTwoInferenceFake(sql []string, prose string) *twoInferenceFake {
 	return &twoInferenceFake{sql: sql, prose: prose}
 }
 
-func (*twoInferenceFake) Name() string    { return "fake" }
-func (*twoInferenceFake) ModelID() string { return "canned-two-inference" }
-func (*twoInferenceFake) Ready(context.Context) provider.Readiness {
-	return provider.Readiness{Ready: true, ModelID: "canned-two-inference"}
+func (f *twoInferenceFake) Name() string    { return cmp.Or(f.name, "fake") }
+func (f *twoInferenceFake) ModelID() string { return cmp.Or(f.model, "canned-two-inference") }
+func (f *twoInferenceFake) Ready(context.Context) provider.Readiness {
+	if f.notReady != "" {
+		return provider.Readiness{Reason: f.notReady}
+	}
+	return provider.Readiness{Ready: true, ModelID: f.ModelID()}
 }
-func (*twoInferenceFake) Models(context.Context) provider.ModelReport {
-	return provider.ModelReport{Ready: true, Models: []string{"canned-two-inference"}}
+func (f *twoInferenceFake) Models(context.Context) provider.ModelReport {
+	return provider.ModelReport{Ready: true, Models: []string{f.ModelID()}}
 }
 
 func (f *twoInferenceFake) Chat(_ context.Context,
