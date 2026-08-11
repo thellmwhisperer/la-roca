@@ -1,28 +1,3 @@
-/**
- * @overview Owns verified self-update and post-update catalogue refresh. ~245 lines, no public symbols.
- *
- *   READING GUIDE
- *   -------------
- *   1. Start at update                    <- verified replacement flow
- *   2. updateCommand                      <- flags and release source
- *   3. refreshCatalogueAfterUpdate        <- offline model snapshot refresh
- *   4. binaryToReplace/answersItsVersion  <- rollback safety
- *
- *   MAIN FLOW
- *   updateCommand -> release -> verify -> swap -> refresh catalogue -> report
- *
- *   PUBLIC API
- *   ----------
- *   None (command is registered within package cli)
- *
- *   INTERNALS
- *   ---------
- *   updateCommand, releaseSource, update, refreshCatalogueAfterUpdate
- *   theRelease, answersItsVersion, binaryToReplace, report
- *
- * @exports
- * @deps cobra; distribution/release, provider/config
- */
 package cli
 
 import (
@@ -40,8 +15,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/release"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 )
-
-// -- 1/4 HELPER · updateCommand and releaseSource --
 
 // keyReleaseRepo is read under [defaults] and at the document root so an
 // operator need not pass --repo on every update.
@@ -137,10 +110,6 @@ func (env *cliEnv) refuseSelfReplacement(latest string) error {
 		orDash(env.build.Version), latest)
 }
 
-// -/ 1/4
-
-// -- 2/4 CORE · update <- START HERE --
-
 // update is the whole flow, in the order that keeps a working binary on the
 // machine at every step.
 func (env *cliEnv) update(ctx context.Context, source release.Source,
@@ -229,10 +198,6 @@ func (env *cliEnv) update(ctx context.Context, source release.Source,
 	}, "roca %s installed at %s (was %s)", published.Tag, installed, current)
 }
 
-// -/ 2/4
-
-// -- 3/4 HELPER · refreshCatalogueAfterUpdate and release lookup --
-
 // refreshCatalogueAfterUpdate keeps the offline model list current without
 // turning catalogue availability into authority over a verified binary update.
 // A failed refresh is named on stderr and the embedded snapshot remains usable.
@@ -249,10 +214,6 @@ func theRelease(ctx context.Context, source release.Source, tag string) (release
 	}
 	return source.Latest(ctx)
 }
-
-// -/ 3/4
-
-// -- 4/4 HELPER · binary verification, target resolution, and report --
 
 // answersItsVersion is what "the new binary works" means here: it runs and it
 // answers `--version`. It is the same check the operator would type, which is
@@ -294,5 +255,3 @@ func (env *cliEnv) report(document map[string]any, format string, args ...any) e
 	env.print(format, args...)
 	return nil
 }
-
-// -/ 4/4

@@ -1,27 +1,3 @@
-/**
- * @overview Pins catalogue, picker, probe, and no-write validation. ~300 lines, no public symbols.
- *
- *   READING GUIDE
- *   -------------
- *   1. Start at TestModelSetNeverWritesBeforeCatalogueAndProbePass
- *   2. Read TestLoginPickerPersistsOnlyAfterItsProbe
- *   3. Read TestCodexCatalogueUsesLiveModelsDevAndFallsBackHonestly
- *   4. Picker and fake-provider helpers follow
- *
- *   MAIN FLOW
- *   fake/live catalogue -> exact ID -> fake real probe -> config write or refusal
- *
- *   PUBLIC API
- *   ----------
- *   None (test-only file)
- *
- *   INTERNALS
- *   ---------
- *   fakePickerProvider, validationEnv, catalogueServer, fixedModelPicker
- *
- * @exports
- * @deps context, httptest, provider/config, CLI model-validation seams
- */
 package cli
 
 import (
@@ -39,8 +15,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 )
-
-// -- 1/5 CORE · TestModelSetNeverWritesBeforeCatalogueAndProbePass <- START HERE --
 
 func TestModelSetNeverWritesBeforeCatalogueAndProbePass(t *testing.T) {
 	for _, test := range []struct {
@@ -107,10 +81,6 @@ func TestModelSetOneArgumentTargetsTheFirstConfiguredProvider(t *testing.T) {
 	}
 }
 
-// -/ 1/5
-
-// -- 2/5 CORE · TestLoginPickerPersistsOnlyAfterItsProbe --
-
 func TestLoginPickerPersistsOnlyAfterItsProbe(t *testing.T) {
 	for _, test := range []struct {
 		name       string
@@ -171,10 +141,6 @@ func TestLoginPickerPersistsOnlyAfterItsProbe(t *testing.T) {
 	}
 }
 
-// -/ 2/5
-
-// -- 3/5 CORE · TestCodexCatalogueUsesLiveModelsDevAndFallsBackHonestly --
-
 func TestCodexCatalogueUsesLiveModelsDevAndFallsBackHonestly(t *testing.T) {
 	t.Run("live catalogue", func(t *testing.T) {
 		server := catalogueServer(t, http.StatusOK, `{
@@ -227,10 +193,6 @@ func TestCodexCatalogueUsesLiveModelsDevAndFallsBackHonestly(t *testing.T) {
 	})
 }
 
-// -/ 3/5
-
-// -- 4/5 CORE · TestArrowModelPickerSelectsOnlyAListedID --
-
 func TestArrowModelPickerSelectsOnlyAListedID(t *testing.T) {
 	var output strings.Builder
 	chosen, err := readArrowModelChoice(strings.NewReader("\x1b[B\r"), &output,
@@ -245,10 +207,6 @@ func TestArrowModelPickerSelectsOnlyAListedID(t *testing.T) {
 		t.Fatalf("picker does not explain its controls: %q", output.String())
 	}
 }
-
-// -/ 4/5
-
-// -- 5/5 HELPER · fakePickerProvider and fixtures --
 
 type fakePickerProvider struct {
 	model    string
@@ -295,5 +253,3 @@ func catalogueServer(t *testing.T, status int, body string) *httptest.Server {
 func fixedModelPicker(model string) modelPicker {
 	return func(io.Reader, io.Writer, []string, string) (string, error) { return model, nil }
 }
-
-// -/ 5/5

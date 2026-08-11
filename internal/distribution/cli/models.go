@@ -1,29 +1,3 @@
-/**
- * @overview Owns model diagnosis, catalogues, login/logout, and model switching. ~730 lines, no public symbols.
- *
- *   READING GUIDE
- *   -------------
- *   1. Start at loginCommand             <- credential entry point
- *   2. loginCodex/loginKey               <- provider-specific authentication
- *   3. loginModel                        <- validated persistence handoff
- *   4. modelSetCommand                   <- no-login model switching
- *   5. doctorCommand/modelsCommand       <- read-only diagnosis
- *
- *   MAIN FLOW
- *   login -> credential -> validatedModel -> config -> narration
- *
- *   PUBLIC API
- *   ----------
- *   None (commands are registered within package cli)
- *
- *   INTERNALS
- *   ---------
- *   doctorCommand, modelsCommand, loginCommand, logoutCommand, modelCommand
- *   loginCodex, loginKey, loginModel, modelSetContext, knownProviderNames
- *
- * @exports
- * @deps cobra, x/term; provider, config, oauth, service
- */
 package cli
 
 import (
@@ -42,8 +16,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	"golang.org/x/term"
 )
-
-// -- 1/5 HELPER · doctorCommand and renderDoctor --
 
 func doctorCommand(env *cliEnv) *cobra.Command {
 	return &cobra.Command{
@@ -132,10 +104,6 @@ func orDash(value string) string {
 	}
 	return value
 }
-
-// -/ 1/5
-
-// -- 2/5 HELPER · modelsCommand and renderModels --
 
 const modelsHelp = "" +
 	"List the models each configured provider offers, and mark the one that is\n" +
@@ -226,10 +194,6 @@ func renderModels(env *cliEnv, listings []provider.ModelsListing, warnings []str
 		}
 	}
 }
-
-// -/ 2/5
-
-// -- 3/5 CORE · loginCommand, loginCodex, loginKey, and loginModel <- START HERE --
 
 const loginHelp = "" +
 	"Log in to a model provider. Same verb for every provider this build ships:\n" +
@@ -574,10 +538,6 @@ func readSecret(prompt string, in io.Reader, out io.Writer) (string, error) {
 	return key, nil
 }
 
-// -/ 3/5
-
-// -- 4/5 HELPER · logoutCommand and credential forgetting --
-
 func logoutCommand(env *cliEnv) *cobra.Command {
 	return &cobra.Command{
 		Use:   "logout <provider>",
@@ -634,10 +594,6 @@ func (env *cliEnv) forget(name, what string) error {
 	env.print("%s for %s forgotten", what, name)
 	return nil
 }
-
-// -/ 4/5
-
-// -- 5/5 CORE · modelCommand and modelSetContext --
 
 // modelCommand is the no-login way to switch the answering model. It changes a
 // model assignment in the configuration without touching a credential: the
@@ -751,5 +707,3 @@ func knownProvidersHelp(names []string) string {
 		"Known providers: %s\n\nSee the configured providers with `roca doctor`.",
 		strings.Join(names, ", "))
 }
-
-// -/ 5/5

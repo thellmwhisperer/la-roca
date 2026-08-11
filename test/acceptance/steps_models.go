@@ -1,30 +1,5 @@
 //go:build acceptance
 
-/**
- * @overview Models provider worlds and assertions for black-box acceptance. ~500 lines, no public symbols.
- *
- *   READING GUIDE
- *   -------------
- *   1. Start at theFrontierIsAvailable    <- fake live OpenAI endpoint
- *   2. theLocalModelIsAvailable           <- fake live Ollama endpoint
- *   3. writeModelConfig/loginWithModel    <- operator-facing setup
- *   4. Assertions read only process output and files
- *
- *   MAIN FLOW
- *   Gherkin world -> real HTTP fixture/config -> roca process -> black-box assertion
- *
- *   PUBLIC API
- *   ----------
- *   None (acceptance-tag test file)
- *
- *   INTERNALS
- *   ---------
- *   modelWorld, requestLog, provider setup, writeModelConfig, loginWithModel
- *   model output, fallback, order, warning, and credential assertions
- *
- * @exports
- * @deps httptest, os/exec; acceptance world and product CLI
- */
 package acceptance
 
 import (
@@ -38,8 +13,6 @@ import (
 	"strings"
 	"sync"
 )
-
-// -- 1/4 HELPER · modelWorld, requestLog, and environment --
 
 // Steps for the model adapters. Still black box: not one symbol of the product
 // is imported here.
@@ -140,10 +113,6 @@ func (m *world) closeModels() {
 	}
 	m.models = modelWorld{}
 }
-
-// -/ 1/4
-
-// -- 2/4 CORE · fake provider worlds <- START HERE --
 
 // --- worlds ---
 
@@ -280,10 +249,6 @@ func withProvider(order []string, name string) []string {
 	return append(order, name)
 }
 
-// -/ 2/4
-
-// -- 3/4 CORE · writeModelConfig and loginWithModel --
-
 // writeModelConfig writes the [models] section the way an operator would.
 func (m *world) writeModelConfig() error {
 	dir := filepath.Join(m.home, ".roca")
@@ -387,10 +352,6 @@ func quotedList(values []string) string {
 	}
 	return strings.Join(quotedValues, ", ")
 }
-
-// -/ 3/4
-
-// -- 4/4 HELPER · model assertions --
 
 func (m *world) jsonKeyEqualToTheFrontier(key string) error {
 	return m.jsonKeyEqualTo(key, theFrontierName)
@@ -553,5 +514,3 @@ func (m *world) noPersistentLogCarriesTheCredential() error {
 		return nil
 	})
 }
-
-// -/ 4/4

@@ -1,26 +1,3 @@
-/**
- * @overview Pins the account-level model probe. ~75 lines, no public symbols.
- *
- *   READING GUIDE
- *   -------------
- *   1. Start at TestProbeModelUsesOneRealMinimalRequest
- *   2. Read probeProvider for the fake-provider seam
- *   3. The rejection subtest pins error propagation
- *
- *   MAIN FLOW
- *   fake provider -> ProbeModel -> one-token Chat -> success or server error
- *
- *   PUBLIC API
- *   ----------
- *   None (test-only file)
- *
- *   INTERNALS
- *   ---------
- *   probeProvider, TestProbeModelUsesOneRealMinimalRequest
- *
- * @exports
- * @deps context, errors, testing; internal/provider contracts
- */
 package provider
 
 import (
@@ -28,8 +5,6 @@ import (
 	"errors"
 	"testing"
 )
-
-// -- 1/2 HELPER · probeProvider --
 
 type probeProvider struct {
 	err      error
@@ -48,10 +23,6 @@ func (p *probeProvider) Chat(_ context.Context, req ChatRequest) (ChatResponse, 
 	p.requests = append(p.requests, req)
 	return ChatResponse{}, p.err
 }
-
-// -/ 1/2
-
-// -- 2/2 CORE · TestProbeModelUsesOneRealMinimalRequest <- START HERE --
 
 func TestProbeModelUsesOneRealMinimalRequest(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
@@ -79,5 +50,3 @@ func TestProbeModelUsesOneRealMinimalRequest(t *testing.T) {
 		}
 	})
 }
-
-// -/ 2/2

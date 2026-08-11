@@ -6,6 +6,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - Per-domain acceptance lives under `features/<domain>/`; the Godog harness is enabled only by the `acceptance` build tag.
 - The slop gate ratchets over test code too, so new tests alone can fail `make check`: fold paired cases into one table-driven test rather than raise the ceiling in `.slop/`.
 - Public source, documentation, features, and fixtures are English-only; use unmistakably synthetic test data.
+- Never add Sherpa-style navigational comment blocks or numbered section maps to any file; the owner forbids them repository-wide.
 - Keep distribution ownership declarations centralized in `internal/distribution/cli/uninstall.go` (`ownedPaths` and recovery-backup handling).
 - Operational JSONL lives under the selected data directory's `logs/`; retention and redaction are owned by `internal/distribution/logfile`.
 

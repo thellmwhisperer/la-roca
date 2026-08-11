@@ -1,28 +1,3 @@
-/**
- * @overview Wires the root CLI environment, command tree, paths, and service lifecycle. ~360 lines, 2 public symbols.
- *
- *   READING GUIDE
- *   -------------
- *   1. Start at rootCommand              <- complete CLI registry
- *   2. Execute/execute                   <- process boundary and exit contract
- *   3. openServiceWith/serviceRunE       <- database lifecycle
- *   4. buildProviders                    <- model cascade handoff
- *
- *   MAIN FLOW
- *   Execute -> rootCommand -> command RunE -> service/provider -> renderer
- *
- *   PUBLIC API
- *   ----------
- *   Build      Linker-supplied build identity
- *   Execute()  Runs the CLI and returns its exit code
- *
- *   INTERNALS
- *   ---------
- *   cliEnv, execute, rootCommand, resolvePaths, openServiceWith, runtimeStatus
- *
- * @exports Build, Execute
- * @deps cobra; ingest, provider/config/service
- */
 package cli
 
 import (
@@ -40,8 +15,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
-
-// -- 1/4 CORE · Build, cliEnv, Execute, and execute --
 
 // Build is what the linker put inside the binary.
 type Build struct {
@@ -116,10 +89,6 @@ func execute(build Build, out, errOut io.Writer, args []string) (int, error) {
 	return code, err
 }
 
-// -/ 1/4
-
-// -- 2/4 CORE · rootCommand <- START HERE --
-
 func rootCommand(env *cliEnv) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "roca",
@@ -175,10 +144,6 @@ func publicCommand(name string) bool {
 		return false
 	}
 }
-
-// -/ 2/4
-
-// -- 3/4 CORE · resolvePaths, openServiceWith, and serviceRunE --
 
 // resolvePaths decides where everything of this installation lives, without
 // touching the database. Commands that only need a path (a login, a logout) pay
@@ -283,10 +248,6 @@ func (env *cliEnv) serviceRunE(
 	}
 }
 
-// -/ 3/4
-
-// -- 4/4 HELPER · runtimeStatus, buildProviders, and output writers --
-
 // runtimeStatus is the body of the two status commands over the runtime
 // catalogue and `roca mcp status`.
 //
@@ -364,5 +325,3 @@ func (env *cliEnv) capture(value any) { env.outcome = value }
 func (env *cliEnv) print(format string, args ...any) {
 	fmt.Fprintf(env.out, format+"\n", args...)
 }
-
-// -/ 4/4

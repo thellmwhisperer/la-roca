@@ -1,27 +1,3 @@
-/**
- * @overview Pins human/JSON CLI output contracts across authentication and data commands. ~350 lines, no public symbols.
- *
- *   READING GUIDE
- *   -------------
- *   1. Start at TestKeyLoginAnswersAJSONEnvelope
- *   2. Authentication/bootstrap contracts surround it
- *   3. Query/store/exec contracts follow
- *   4. Helpers at the top parse JSON and execute hermetically
- *
- *   MAIN FLOW
- *   command fixture -> root command -> stdout/stderr split -> contract assertion
- *
- *   PUBLIC API
- *   ----------
- *   None (test-only file)
- *
- *   INTERNALS
- *   ---------
- *   contractBuild, mustJSON, runRootSplit, failingRoot, output contract tests
- *
- * @exports
- * @deps encoding/json, testing; provider and CLI hermetic test harness
- */
 package cli
 
 import (
@@ -33,8 +9,6 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 )
-
-// -- 1/3 HELPER · contract build and command harness --
 
 // A build the whole file shares for its assertions. The version travels into
 // every JSON envelope, so the contract pins it by this constant rather than by
@@ -100,10 +74,6 @@ func failingRoot(t *testing.T, args ...string) error {
 	}
 	return err
 }
-
-// -/ 1/3
-
-// -- 2/3 CORE · authentication and bootstrap output contracts <- START HERE --
 
 // `roca login --json` with no provider used to print the human catalogue
 // regardless of the flag. The flag is a contract: a program asking for JSON may
@@ -244,10 +214,6 @@ func TestInitAnswersAJSONEnvelope(t *testing.T) {
 	}
 }
 
-// -/ 2/3
-
-// -- 3/3 CORE · query, store, exec, and error output contracts --
-
 // `roca query` paints AXI TOON rows under a route narration line, which is what
 // the skill documents. The route line names the path and the template so the
 // operator can tell a compiler answer from a model one.
@@ -349,5 +315,3 @@ func TestUnknownCommandFailsByNameAndSuggestsATypo(t *testing.T) {
 		t.Errorf("a close typo is not suggested:\n%v", err)
 	}
 }
-
-// -/ 3/3

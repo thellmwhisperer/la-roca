@@ -1,26 +1,3 @@
-/**
- * @overview Pins update-time model snapshot refresh semantics. ~75 lines, no public symbols.
- *
- *   READING GUIDE
- *   -------------
- *   1. Start at TestUpdateRefreshesTheSnapshotOnlyWhenItIsAnUpdate
- *   2. The fake release channel always reports the installed version
- *   3. The table distinguishes update from read-only --check
- *
- *   MAIN FLOW
- *   fake release -> update/check -> optional catalogue refresh -> assertion
- *
- *   PUBLIC API
- *   ----------
- *   None (test-only file)
- *
- *   INTERNALS
- *   ---------
- *   TestUpdateRefreshesTheSnapshotOnlyWhenItIsAnUpdate
- *
- * @exports
- * @deps context, httptest, testing; distribution/release and CLI update
- */
 package cli
 
 import (
@@ -32,8 +9,6 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/release"
 )
-
-// -- 1/1 CORE · TestUpdateRefreshesTheSnapshotOnlyWhenItIsAnUpdate <- START HERE --
 
 func TestUpdateRefreshesTheSnapshotOnlyWhenItIsAnUpdate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(out http.ResponseWriter, _ *http.Request) {
@@ -70,5 +45,3 @@ func TestUpdateRefreshesTheSnapshotOnlyWhenItIsAnUpdate(t *testing.T) {
 		})
 	}
 }
-
-// -/ 1/1

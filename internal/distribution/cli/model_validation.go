@@ -1,28 +1,3 @@
-/**
- * @overview Validates model choices before config writes. ~360 lines, no public symbols.
- *
- *   READING GUIDE
- *   -------------
- *   1. Start at validatedModel             <- orchestration and invariant
- *   2. providerModelBackend                <- live catalogue and real probe
- *   3. readCodexCatalogue                  <- models.dev plus offline fallback
- *   4. readArrowModelChoice                <- terminal-only canonical selection
- *
- *   MAIN FLOW
- *   catalogue -> exact choice -> real one-token probe -> caller may persist
- *
- *   PUBLIC API
- *   ----------
- *   None (package-private CLI implementation)
- *
- *   INTERNALS
- *   ---------
- *   modelCatalogue, modelValidationBackend, providerModelBackend
- *   validatedModel, readCodexCatalogue, fetchModelsDev, readArrowModelChoice
- *
- * @exports
- * @deps embed, net/http, x/term; provider, config, securefile
- */
 package cli
 
 import (
@@ -54,8 +29,6 @@ const (
 
 //go:embed models_dev_snapshot.json
 var embeddedModelsDevSnapshot []byte
-
-// -- 1/4 CORE · validatedModel <- START HERE --
 
 type modelCatalogue struct {
 	IDs    []string
@@ -135,10 +108,6 @@ func (env *cliEnv) modelSetCurrent(ctx context.Context, model string) error {
 	}
 	return env.modelSetContext(ctx, order[0], model)
 }
-
-// -/ 1/4
-
-// -- 2/4 CORE · providerModelBackend --
 
 type providerModelBackend struct {
 	paths      config.Paths
@@ -224,10 +193,6 @@ func validationEnvironment(key string) string {
 		return os.Getenv(key)
 	}
 }
-
-// -/ 2/4
-
-// -- 3/4 CORE · readCodexCatalogue and models.dev fallback --
 
 type cachedModelSnapshot struct {
 	RefreshedAt string   `json:"refreshed_at"`
@@ -372,10 +337,6 @@ func parseModelSnapshot(raw []byte) ([]string, error) {
 	return models, nil
 }
 
-// -/ 3/4
-
-// -- 4/4 CORE · readArrowModelChoice --
-
 func terminalArrowModelPicker(in io.Reader, out io.Writer, models []string, current string) (string, error) {
 	file, ok := in.(*os.File)
 	if !ok || !term.IsTerminal(int(file.Fd())) {
@@ -437,5 +398,3 @@ func readArrowModelChoice(in io.Reader, out io.Writer, models []string, current 
 		}
 	}
 }
-
-// -/ 4/4
