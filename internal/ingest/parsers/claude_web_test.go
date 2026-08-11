@@ -60,15 +60,73 @@ func TestClaudeWebExportPairsEveryHonestBranch(t *testing.T) {
 	}
 }
 
-func TestClaudeWebExportReportsDanglingAndOrphanedMessages(t *testing.T) {
+func TestClaudeWebExportDoesNotDiscardUnpairedReadableMessages(t *testing.T) {
 	records := parseClaudeWebFixture(t, "conversations.json")
-	if len(records.Discards) != 2 {
-		t.Fatalf("discards = %+v, want dangling and orphaned messages", records.Discards)
+	if len(records.Discards) != 0 {
+		t.Fatalf("discards = %+v, want readable thread roots and leaves retained", records.Discards)
 	}
-	reasons := records.Discards[0].Reason + "\n" + records.Discards[1].Reason
-	for _, want := range []string{"has no assistant reply", "parent message 29999999-9999-4999-8999-999999999999 was not found"} {
-		if !strings.Contains(reasons, want) {
-			t.Errorf("discard reasons = %q, missing %q", reasons, want)
+}
+
+func TestClaudeWebDiscardedMessagesDoNotPoisonDescendants(t *testing.T) {
+	records := parseClaudeWebFixture(t, "discarded-ancestors.json")
+	if len(records.Sessions) != 2 {
+		t.Fatalf("sessions = %d, want 2", len(records.Sessions))
+	}
+	var sourceIDs []string
+	for _, session := range records.Sessions {
+		for _, exchange := range session.Exchanges {
+			sourceIDs = append(sourceIDs, exchange.SourceID)
+		}
+	}
+	wantIDs := []string{
+		"root-recovered-assistant",
+		"mid-existing-assistant",
+		"mid-recovered-assistant",
+	}
+	if !reflect.DeepEqual(sourceIDs, wantIDs) {
+		t.Fatalf("exchange source ids = %v, want %v", sourceIDs, wantIDs)
+	}
+	if len(records.Discards) != 2 {
+		t.Fatalf("discards = %+v, want only the two unreadable messages", records.Discards)
+	}
+	for i, discard := range records.Discards {
+		if discard.Record != []int{1, 7}[i] || !strings.Contains(discard.Reason, "has no text") {
+			t.Errorf("discard %d = %+v, want its own unreadable-message reason", i, discard)
+		}
+		if strings.Contains(discard.Reason, "parent chain") {
+			t.Errorf("discard %d retained the cascading reason: %+v", i, discard)
+		}
+	}
+}
+
+func TestClaudeWebUnreadableMessagesKeepTheirOwnReasons(t *testing.T) {
+	payload := claudeWebConversation{UUID: "synthetic-reasons", ChatMessages: []claudeWebMessage{
+		{Text: "Readable but unidentified.", Sender: "human"},
+		{UUID: "unsupported", Text: "Synthetic unsupported record.", Sender: "system"},
+		{UUID: "empty", Sender: "human"},
+		{UUID: "duplicate", Text: "Original identity.", Sender: "human"},
+		{UUID: "duplicate", Text: "Duplicate identity.", Sender: "assistant"},
+		{UUID: "cycle-human", Text: "Synthetic cycle question.", Sender: "human", ParentMessageUUID: "cycle-assistant"},
+		{UUID: "cycle-assistant", Text: "Synthetic cycle answer.", Sender: "assistant", ParentMessageUUID: "cycle-human"},
+	}}
+	records := parseClaudeWebConversation(payload, 0)
+	want := []struct {
+		record int
+		reason string
+	}{
+		{1, "message has no uuid"},
+		{2, `message unsupported has unsupported sender "system"`},
+		{3, "human message empty has no text"},
+		{5, "message uuid duplicate is duplicated"},
+		{6, "message cycle-human has a cyclic parent chain"},
+		{7, "message cycle-assistant has a cyclic parent chain"},
+	}
+	if len(records.Discards) != len(want) {
+		t.Fatalf("discards = %+v, want %d precise reasons", records.Discards, len(want))
+	}
+	for i, expected := range want {
+		if got := records.Discards[i]; got.Record != expected.record || got.Reason != expected.reason {
+			t.Errorf("discard %d = %+v, want record %d reason %q", i, got, expected.record, expected.reason)
 		}
 	}
 }
@@ -137,10 +195,10 @@ func parseClaudeWebFixture(t *testing.T, name string) Records {
 		records Records
 		err     error
 	)
-	if name == "conversations.json" {
-		records, err = ParseClaudeWebConversations(bytes.NewReader(raw), meta)
-	} else {
+	if name == "memories.json" {
 		records, err = ParseClaudeWebMemories(bytes.NewReader(raw), meta)
+	} else {
+		records, err = ParseClaudeWebConversations(bytes.NewReader(raw), meta)
 	}
 	if err != nil {
 		t.Fatalf("parse %s: %v", name, err)
