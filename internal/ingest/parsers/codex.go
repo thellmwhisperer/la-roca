@@ -192,13 +192,15 @@ func (r *codexReader) read(content []byte) {
 		record := index + 1
 		var line codexLine
 		if err := json.Unmarshal([]byte(raw), &line); err != nil {
-			r.discards = append(r.discards, Discard{Record: record, Reason: "invalid JSON: " + err.Error()})
+			r.discards = append(r.discards, Discard{Record: record,
+				Reason: "invalid JSON: " + err.Error(), Category: "invalid JSON"})
 			continue
 		}
 		var payload codexPayload
 		if len(line.Payload) > 0 {
 			if err := json.Unmarshal(line.Payload, &payload); err != nil {
-				r.discards = append(r.discards, Discard{Record: record, Reason: "invalid payload: " + err.Error()})
+				r.discards = append(r.discards, Discard{Record: record,
+					Reason: "invalid payload: " + err.Error(), Category: "invalid payload"})
 				continue
 			}
 		}
@@ -329,7 +331,8 @@ func (r *codexReader) responseItem(record int, line codexLine, payload codexPayl
 		tool, ok := r.pending[payload.CallID]
 		if !ok {
 			r.discards = append(r.discards, Discard{Record: record,
-				Reason: "tool verdict has unknown call_id: " + payload.CallID})
+				Reason:   "tool verdict has unknown call_id: " + payload.CallID,
+				Category: "tool verdict has unknown call_id"})
 			return
 		}
 		if isToolError(output) {
@@ -380,7 +383,11 @@ func (r *codexReader) recover(record int, line codexLine, payload codexPayload) 
 // own log and the conversation is a deliberate subset of it, so the records left
 // out are reported as the exclusions they are and never as failures.
 func (r *codexReader) exclude(record int, kind, name string) {
-	r.excludeRecord(record, "codex runtime "+kind+" not ingested: "+firstNonEmpty(name, "unnamed"))
+	r.discards = append(r.discards, Discard{
+		Record: record, ByDesign: true,
+		Reason:   "codex runtime " + kind + " not ingested: " + firstNonEmpty(name, "unnamed"),
+		Category: "codex runtime " + kind + " not ingested",
+	})
 }
 
 func (r *codexReader) excludeRecord(record int, reason string) {
@@ -406,7 +413,12 @@ func (r *codexReader) exchanges(turns []codexTurn) []Exchange {
 			}
 			switch {
 			case signal.usage != nil:
-				usage.AddTokens(intOrZero(signal.usage.Input), intOrZero(signal.usage.Output))
+				if signal.usage.Input != nil {
+					usage.AddInputTokens(*signal.usage.Input)
+				}
+				if signal.usage.Output != nil {
+					usage.AddOutputTokens(*signal.usage.Output)
+				}
 				if signal.usage.Reasoning != nil {
 					usage.AddReasoningTokens(*signal.usage.Reasoning)
 				}

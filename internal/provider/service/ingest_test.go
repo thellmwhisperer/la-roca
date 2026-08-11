@@ -9,7 +9,61 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
+	"github.com/thellmwhisperer/la-roca/internal/store"
 )
+
+func TestPlainIngestAdoptsThePreviousSchemaAndFillsProvenance(t *testing.T) {
+	home := t.TempDir()
+	seedATranscript(t, home)
+	paths := freshPaths(t)
+	legacy, err := os.ReadFile(filepath.Join("testdata", "schema-v1.6.0.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(paths.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.SQL().Exec(string(legacy)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	svc, err := service.Open(service.Options{
+		DBPath: paths.db, BackupDir: paths.backups, DataDir: paths.data,
+		Sources: ingest.ResolveRoots(
+			ingest.Environment{GOOS: "darwin", Home: home},
+			ingest.Settings{WorkspaceRoots: []string{filepath.Join(home, "w")}}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { svc.Close() })
+	result, err := svc.Ingest(t.Context(), service.IngestRequest{})
+	if err != nil {
+		t.Fatalf("plain ingest: %v", err)
+	}
+	if result.Errors != 0 {
+		t.Fatalf("ingest errors = %+v", result.ErrorDetails)
+	}
+	var model, provider string
+	var tokensIn, tokensOut, reasoning int
+	var cost float64
+	err = svc.DB().SQL().QueryRow(`
+		SELECT COALESCE(model, ''), COALESCE(provider, ''), COALESCE(tokens_in, -1),
+		       COALESCE(tokens_out, -1), COALESCE(tokens_reasoning, -1), COALESCE(cost_usd, -1)
+		FROM exchanges LIMIT 1`).Scan(&model, &provider, &tokensIn, &tokensOut, &reasoning, &cost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model != "fixture-upgrade-model" || provider != "" || tokensIn != 3 || tokensOut != 2 ||
+		reasoning != -1 || cost != -1 {
+		t.Fatalf("adopted provenance = %q/%q %d/%d/%d/%v", model, provider,
+			tokensIn, tokensOut, reasoning, cost)
+	}
+}
 
 // What the ingest wrote has to be answerable in the same command. A memory that is
 // in the database and cannot be found is worse than one that is not there: it
@@ -156,7 +210,7 @@ func seedATranscript(t *testing.T, home string) {
 	}
 	write(filepath.Join(project, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl"), `
 {"type":"user","timestamp":"2026-08-01T10:00:00Z","cwd":"`+demo+`","message":{"content":"what is the sextant for"}}
-{"type":"assistant","timestamp":"2026-08-01T10:00:01Z","message":{"content":[{"type":"text","text":"to know where you are"}]}}
+{"type":"assistant","timestamp":"2026-08-01T10:00:01Z","message":{"model":"fixture-upgrade-model","usage":{"input_tokens":3,"output_tokens":2},"content":[{"type":"text","text":"to know where you are"}]}}
 `)
 	write(filepath.Join(project, "memory", "sextant.md"),
 		"---\nname: the-sextant\ntype: project\n---\nThe sextant measures the angle, not the position.\n")

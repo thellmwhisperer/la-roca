@@ -48,6 +48,9 @@ func TestASourceKeepsOneNameForTheWholeRun(t *testing.T) {
 // absolute paths that read as failure.
 func TestTheDefaultSummaryCollapsesWhatWasLeftOut(t *testing.T) {
 	report := service.IngestResult{Result: ingest.Result{
+		ErrorDetails: []ingest.Failure{{
+			Path: "/somewhere/private/broken.jsonl", Parser: "codex_session", Reason: "invalid JSON",
+		}},
 		RecordsExcluded:  9,
 		RecordsDiscarded: 2,
 		DiscardSummary: []ingest.DiscardCategory{
@@ -68,18 +71,20 @@ func TestTheDefaultSummaryCollapsesWhatWasLeftOut(t *testing.T) {
 		{
 			verbose: false,
 			present: []string{
+				"error: broken.jsonl (codex_session): invalid JSON",
 				"excluded: 9 records left out by design",
 				"· codex runtime event not ingested: token_count · 9",
 				"discards: 2 records could not be read",
 				"· invalid JSON: unexpected end of input · 2",
 				"roca ingest --verbose",
 			},
-			absent: []string{"/somewhere/private/rollout.jsonl"},
+			absent: []string{"/somewhere/private/rollout.jsonl", "/somewhere/private/broken.jsonl"},
 		},
 		{
 			verbose: true,
-			present: []string{"/somewhere/private/rollout.jsonl", "excluded: 9 records left out by design"},
-			absent:  []string{"roca ingest --verbose"},
+			present: []string{"/somewhere/private/rollout.jsonl", "/somewhere/private/broken.jsonl",
+				"excluded: 9 records left out by design"},
+			absent: []string{"roca ingest --verbose"},
 		},
 	} {
 		var output strings.Builder

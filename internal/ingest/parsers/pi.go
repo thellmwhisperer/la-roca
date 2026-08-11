@@ -321,9 +321,13 @@ func (p *piPending) claim(message *piMessage) {
 	if usage == nil {
 		return
 	}
-	p.usage.AddTokens(
-		intOrZero(usage.Input)+intOrZero(usage.CacheRead)+intOrZero(usage.CacheWrite),
-		intOrZero(usage.Output))
+	if usage.Input != nil || usage.CacheRead != nil || usage.CacheWrite != nil {
+		p.usage.AddInputTokens(
+			intOrZero(usage.Input) + intOrZero(usage.CacheRead) + intOrZero(usage.CacheWrite))
+	}
+	if usage.Output != nil {
+		p.usage.AddOutputTokens(*usage.Output)
+	}
 	if usage.Reasoning != nil {
 		p.usage.AddReasoningTokens(*usage.Reasoning)
 	}
@@ -407,7 +411,9 @@ func piExchanges(active []*piEntry) ([]Exchange, int, []Discard) {
 			pending.results[id] = true
 			pending.errors[id] = message.IsError
 		default:
-			discards = append(discards, Discard{Record: entry.record, Reason: "unsupported message role: " + message.Role})
+			discards = append(discards, Discard{Record: entry.record,
+				Reason:   "unsupported message role: " + message.Role,
+				Category: "unsupported message role"})
 		}
 	}
 	close()
@@ -464,7 +470,9 @@ func piConsumeAssistant(pending *piPending, message *piMessage, record int) []Di
 			pending.callNames[block.ID] = block.Name
 			pending.calls = append(pending.calls, block.ID)
 		default:
-			discards = append(discards, Discard{Record: record, Reason: "unsupported assistant block: " + block.Type})
+			discards = append(discards, Discard{Record: record,
+				Reason:   "unsupported assistant block: " + block.Type,
+				Category: "unsupported assistant block"})
 		}
 	}
 	return discards

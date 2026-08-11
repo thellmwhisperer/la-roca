@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"strings"
 	"testing"
+
+	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
 )
 
 // Provenance is the answer to "which model answered, how much did it think, what
@@ -171,6 +173,65 @@ func TestTheBackfillNeverOverwritesProvenanceThatLanded(t *testing.T) {
 	}
 	if overwritten != 0 {
 		t.Errorf("%d exchanges had their model rewritten", overwritten)
+	}
+}
+
+func TestAReingestEnrichesMissingAnswerAndThinkingOnlyOnce(t *testing.T) {
+	db := rocaDatabase(t)
+	ctx := context.Background()
+	write := func(answer, depth string) Counts {
+		t.Helper()
+		var counts Counts
+		exchange := parsers.Exchange{
+			Number: 1, HumanText: "recover the answer", AgentText: answer,
+		}
+		if depth != "" {
+			exchange.Thinking = []parsers.Thinking{{
+				Text: "verify the recovered answer", Depth: depth, WordCount: 4,
+			}}
+		}
+		err := db.Write(ctx, func(tx *sql.Tx) error {
+			var err error
+			counts, err = WriteRecords(ctx, tx, registry(t), parsers.Records{Sessions: []parsers.Session{{
+				ID: "synthetic-codex-backfill", SourceAgent: "codex",
+				Exchanges: []parsers.Exchange{exchange},
+			}}})
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return counts
+	}
+
+	write("", "")
+	if counts := write("recovered answer", "first"); counts.ThinkingBlocks != 1 {
+		t.Fatalf("enrichment counts = %+v", counts)
+	}
+	if counts := write("replacement answer", "replacement"); counts.ThinkingBlocks != 0 {
+		t.Fatalf("idempotent enrichment counts = %+v", counts)
+	}
+	var answer, depth string
+	err := db.SQL().QueryRow(`
+		SELECT e.agent_text, t.depth FROM exchanges e
+		JOIN thinking_blocks t USING (session_id, exchange_number)
+		WHERE e.session_id = 'synthetic-codex-backfill'`).Scan(&answer, &depth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "recovered answer" || depth != "first" ||
+		countRows(t, db.SQL(), "thinking_blocks WHERE session_id = 'synthetic-codex-backfill'") != 1 {
+		t.Fatalf("enriched answer/thinking = %q/%q", answer, depth)
+	}
+}
+
+func TestOpenCodePartialUsageDoesNotInventInputTokens(t *testing.T) {
+	output := 7.0
+	got := openCodeProvenance([]openCodeRow{{message: openCodeMessage{
+		Tokens: &openCodeTokens{Output: &output},
+	}}})
+	if got.TokensIn != nil || got.TokensOut == nil || *got.TokensOut != 7 {
+		t.Fatalf("partial OpenCode usage = input:%v output:%v", got.TokensIn, got.TokensOut)
 	}
 }
 

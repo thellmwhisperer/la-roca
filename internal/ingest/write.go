@@ -142,11 +142,12 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 			known, landed := assigned[exchange.SourceID]
 			if landed {
 				// It is already in. Whether the source has edited it since is
-				// reported, and it is still not rewritten. Only the provenance a
-				// previous parser version never read is filled in.
-				if err := w.backfillProvenance(ctx, session.ID, known.Number, exchange.Provenance); err != nil {
+				// reported, and fields that already landed are still not rewritten.
+				thinking, err := w.enrichExchange(ctx, session.ID, known.Number, exchange)
+				if err != nil {
 					return counts, err
 				}
+				counts.ThinkingBlocks += thinking
 				if known.Fingerprint == exchange.Fingerprint {
 					counts.ExchangesUnchanged++
 				} else {
@@ -162,6 +163,11 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 			return counts, err
 		}
 		if !landed {
+			thinking, err := w.enrichExchange(ctx, session.ID, number, exchange)
+			if err != nil {
+				return counts, err
+			}
+			counts.ThinkingBlocks += thinking
 			continue
 		}
 		counts.Exchanges++
@@ -374,9 +380,8 @@ func keysItsOwnExchanges(session parsers.Session) bool {
 // exchange inserts one exchange and says whether it landed.
 //
 // INSERT OR IGNORE plus changes() is the whole record-level contract: the unique
-// index over (session_id, exchange_number) decides, and the children are written
-// only for a parent that actually went in. Writing them unconditionally is how a
-// re-ingest triples the thinking blocks of a session that grew by one turn.
+// index over (session_id, exchange_number) decides whether the normalized parent
+// is new or eligible only for additive enrichment.
 func (w *writer) exchange(ctx context.Context, sessionID string, number int,
 	exchange parsers.Exchange) (bool, error) {
 	provenance := exchange.Provenance
@@ -403,21 +408,15 @@ func (w *writer) exchange(ctx context.Context, sessionID string, number int,
 	if affected > 0 {
 		return true, nil
 	}
-	return false, w.backfillProvenance(ctx, sessionID, number, provenance)
+	return false, nil
 }
 
-// backfillProvenance fills the provenance a row was written without, and only
-// that: every column is COALESCEd, so a re-ingest that now reads a richer source
-// lands the values that were missing and never rewrites one that already
-// answered a query. It is what makes bumping a parser version a backfill instead
-// of a migration.
-func (w *writer) backfillProvenance(ctx context.Context, sessionID string, number int,
-	provenance parsers.Provenance) error {
-	if provenance.Empty() {
-		return nil
-	}
+func (w *writer) enrichExchange(ctx context.Context, sessionID string, number int,
+	exchange parsers.Exchange) (int, error) {
+	provenance := exchange.Provenance
 	_, err := w.tx.ExecContext(ctx, `
 		UPDATE exchanges SET
+		  agent_text = COALESCE(agent_text, ?),
 		  model = COALESCE(model, ?),
 		  provider = COALESCE(provider, ?),
 		  tokens_in = COALESCE(tokens_in, ?),
@@ -425,14 +424,38 @@ func (w *writer) backfillProvenance(ctx context.Context, sessionID string, numbe
 		  tokens_reasoning = COALESCE(tokens_reasoning, ?),
 		  cost_usd = COALESCE(cost_usd, ?)
 		WHERE session_id = ? AND exchange_number = ?`,
+		nullIfEmpty(exchange.AgentText),
 		nullIfEmpty(provenance.Model), nullIfEmpty(provenance.Provider),
 		nullInt(provenance.TokensIn), nullInt(provenance.TokensOut),
 		nullInt(provenance.TokensReasoning), nullFloat(provenance.CostUSD),
 		sessionID, number)
 	if err != nil {
-		return fmt.Errorf("backfill the provenance of %s/%d: %w", sessionID, number, err)
+		return 0, fmt.Errorf("enrich the exchange %s/%d: %w", sessionID, number, err)
 	}
-	return nil
+	inserted := 0
+	for _, block := range exchange.Thinking {
+		result, err := w.tx.ExecContext(ctx, `
+			INSERT INTO thinking_blocks
+			  (session_id, exchange_number, position_in_session, depth, word_count,
+			   is_after_compaction, full_text)
+			SELECT ?, ?, ?, ?, ?, ?, ?
+			WHERE NOT EXISTS (
+			  SELECT 1 FROM thinking_blocks
+			  WHERE session_id = ? AND exchange_number = ? AND full_text = ?
+			)`,
+			sessionID, number, block.Position, nullIfEmpty(block.Depth), block.WordCount,
+			boolToInt(block.IsAfterCompaction), block.Text,
+			sessionID, number, block.Text)
+		if err != nil {
+			return inserted, fmt.Errorf("enrich a thinking block of %s/%d: %w", sessionID, number, err)
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return inserted, fmt.Errorf("count an enriched thinking block of %s/%d: %w", sessionID, number, err)
+		}
+		inserted += int(affected)
+	}
+	return inserted, nil
 }
 
 func (w *writer) children(ctx context.Context, sessionID string, number int,

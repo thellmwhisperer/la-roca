@@ -68,7 +68,8 @@ func ReadHermes(ctx context.Context, path string) (parsers.Records, []string, er
 		records.Sessions = append(records.Sessions, session)
 		for range orphaned {
 			records.Discards = append(records.Discards, parsers.Discard{
-				Reason: fmt.Sprintf("Hermes session %s: assistant content has no open human turn", id),
+				Reason:   fmt.Sprintf("Hermes session %s: assistant content has no open human turn", id),
+				Category: "Hermes assistant content has no open human turn",
 			})
 		}
 	}

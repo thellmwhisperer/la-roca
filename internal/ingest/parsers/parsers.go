@@ -87,8 +87,9 @@ type Records struct {
 }
 
 type Discard struct {
-	Record int    `json:"record"`
-	Reason string `json:"reason"`
+	Record   int    `json:"record"`
+	Reason   string `json:"reason"`
+	Category string `json:"category,omitempty"`
 	// ByDesign marks a source record this build never intended to normalize:
 	// runtime machinery a log writes about itself. It is reported apart from the
 	// records that could not be read, because an operator reading "thousands of
@@ -208,22 +209,29 @@ func Cost(value float64, stated bool) *float64 {
 // may state one and not the other, and a total nobody stated has to stay absent
 // rather than become a zero.
 type UsageTally struct {
-	tokensStated    bool
-	input, output   int
+	inputStated     bool
+	input           int
+	outputStated    bool
+	output          int
 	reasoningStated bool
 	reasoning       int
 	costStated      bool
 	cost            float64
 }
 
-// AddTokens records one request's prompt and answer tokens.
-func (t *UsageTally) AddTokens(input, output int) {
-	t.tokensStated = true
+// AddInputTokens records one request's prompt tokens.
+func (t *UsageTally) AddInputTokens(input int) {
+	t.inputStated = true
 	t.input += input
+}
+
+// AddOutputTokens records one request's answer tokens.
+func (t *UsageTally) AddOutputTokens(output int) {
+	t.outputStated = true
 	t.output += output
 }
 
-// AddReasoningTokens is apart from AddTokens because a source that counts
+// AddReasoningTokens is apart from the input and output counters because a source that counts
 // tokens does not necessarily separate the ones spent thinking, and a zero
 // nobody stated would read as an answer given without thought.
 func (t *UsageTally) AddReasoningTokens(count int) {
@@ -243,8 +251,8 @@ func (t UsageTally) Provenance(model, provider string) Provenance {
 	return Provenance{
 		Model:           model,
 		Provider:        provider,
-		TokensIn:        Tokens(t.input, t.tokensStated),
-		TokensOut:       Tokens(t.output, t.tokensStated),
+		TokensIn:        Tokens(t.input, t.inputStated),
+		TokensOut:       Tokens(t.output, t.outputStated),
 		TokensReasoning: Tokens(t.reasoning, t.reasoningStated),
 		CostUSD:         Cost(t.cost, t.costStated),
 	}

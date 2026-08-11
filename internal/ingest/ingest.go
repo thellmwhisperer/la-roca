@@ -384,7 +384,16 @@ func (r *Result) fingerprintFailure(target Target, err error) {
 // the report say "record 2" about a file that has no second record. The identity
 // the operator needs is the session id, and the complaint already carries it.
 func foreignDiscard(complaint string) parsers.Discard {
-	return parsers.Discard{Reason: complaint}
+	category := complaint
+	for _, source := range []string{"Hermes session ", "OpenCode session "} {
+		if tail, found := strings.CutPrefix(complaint, source); found {
+			if _, reason, separated := strings.Cut(tail, ": "); separated {
+				category = strings.TrimSuffix(source, " ") + ": " + reason
+			}
+			break
+		}
+	}
+	return parsers.Discard{Reason: complaint, Category: category}
 }
 
 func (r *Result) discard(target Target, discards []parsers.Discard) {
@@ -392,9 +401,9 @@ func (r *Result) discard(target Target, discards []parsers.Discard) {
 		r.categorize(discard)
 		if discard.ByDesign {
 			r.RecordsExcluded++
-			continue
+		} else {
+			r.RecordsDiscarded++
 		}
-		r.RecordsDiscarded++
 		if len(r.DiscardDetails) >= discardDetailBudget {
 			continue
 		}
@@ -412,11 +421,16 @@ func (r *Result) categorize(discard parsers.Discard) {
 	if r.categories == nil {
 		r.categories = map[string]int{}
 	}
-	at, known := r.categories[discard.Reason]
+	reason := discard.Category
+	if reason == "" {
+		reason = discard.Reason
+	}
+	key := fmt.Sprintf("%t\x00%s", discard.ByDesign, reason)
+	at, known := r.categories[key]
 	if !known {
-		r.categories[discard.Reason] = len(r.DiscardSummary)
+		r.categories[key] = len(r.DiscardSummary)
 		r.DiscardSummary = append(r.DiscardSummary, DiscardCategory{
-			Reason: discard.Reason, Count: 1, ByDesign: discard.ByDesign,
+			Reason: reason, Count: 1, ByDesign: discard.ByDesign,
 		})
 		return
 	}

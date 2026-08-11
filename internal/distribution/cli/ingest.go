@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"time"
@@ -139,7 +140,14 @@ const categoriesShown = 5
 
 func renderIngestOutcome(env *cliEnv, result service.IngestResult, verbose bool) {
 	for _, failure := range result.ErrorDetails {
-		env.print("error: %s (%s): %s", failure.Path, failure.Parser, failure.Reason)
+		path := filepath.Base(failure.Path)
+		if failure.Path == "" {
+			path = "unknown file"
+		}
+		if verbose && failure.Path != "" {
+			path = failure.Path
+		}
+		env.print("error: %s (%s): %s", path, failure.Parser, failure.Reason)
 	}
 	renderIngestCategories(env, result, true,
 		fmt.Sprintf("excluded: %s left out by design",

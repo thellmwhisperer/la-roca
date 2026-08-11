@@ -356,11 +356,17 @@ func openCodeProvenance(answers []openCodeRow) parsers.Provenance {
 		if tokens == nil {
 			continue
 		}
-		prompt := roundToInt(tokens.Input)
-		if tokens.Cache != nil {
-			prompt += roundToInt(tokens.Cache.Read) + roundToInt(tokens.Cache.Write)
+		if tokens.Input != nil || tokens.Cache != nil &&
+			(tokens.Cache.Read != nil || tokens.Cache.Write != nil) {
+			prompt := roundToInt(tokens.Input)
+			if tokens.Cache != nil {
+				prompt += roundToInt(tokens.Cache.Read) + roundToInt(tokens.Cache.Write)
+			}
+			tally.AddInputTokens(prompt)
 		}
-		tally.AddTokens(prompt, roundToInt(tokens.Output))
+		if tokens.Output != nil {
+			tally.AddOutputTokens(roundToInt(tokens.Output))
+		}
 		if tokens.Reasoning != nil {
 			tally.AddReasoningTokens(roundToInt(tokens.Reasoning))
 		}

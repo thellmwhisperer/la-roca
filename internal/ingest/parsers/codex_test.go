@@ -142,7 +142,8 @@ func TestCodexCountsToolVerdictWithUnknownCallID(t *testing.T) {
 	if len(records.Discards) != 2 {
 		t.Fatalf("discards = %+v", records.Discards)
 	}
-	if !strings.Contains(records.Discards[1].Reason, "unknown call_id") {
+	if !strings.Contains(records.Discards[1].Reason, "unknown call_id") ||
+		records.Discards[1].Category != "tool verdict has unknown call_id" {
 		t.Fatalf("tool verdict discard = %q", records.Discards[1].Reason)
 	}
 }

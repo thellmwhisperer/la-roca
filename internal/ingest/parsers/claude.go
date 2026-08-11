@@ -190,7 +190,8 @@ func consumeClaudeLines(content []byte, consume func(claudeLine)) ([]Discard, in
 	for index, raw := range lines(content) {
 		var line claudeLine
 		if err := json.Unmarshal([]byte(raw), &line); err != nil {
-			discards = append(discards, Discard{Record: index + 1, Reason: "invalid JSON: " + err.Error()})
+			discards = append(discards, Discard{Record: index + 1,
+				Reason: "invalid JSON: " + err.Error(), Category: "invalid JSON"})
 			continue
 		}
 		valid++
@@ -322,9 +323,14 @@ func claimClaudeUsage(tally *UsageTally, message *claudeMessage) {
 	if message == nil || message.Usage == nil {
 		return
 	}
-	prompt := intOrZero(message.Usage.Input) +
-		intOrZero(message.Usage.CacheCreation) + intOrZero(message.Usage.CacheRead)
-	tally.AddTokens(prompt, intOrZero(message.Usage.Output))
+	usage := message.Usage
+	if usage.Input != nil || usage.CacheCreation != nil || usage.CacheRead != nil {
+		tally.AddInputTokens(intOrZero(usage.Input) +
+			intOrZero(usage.CacheCreation) + intOrZero(usage.CacheRead))
+	}
+	if usage.Output != nil {
+		tally.AddOutputTokens(*usage.Output)
+	}
 }
 
 // flush closes the open exchange. A human turn with no agent answer is not an

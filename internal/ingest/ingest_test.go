@@ -823,6 +823,33 @@ func TestAForeignDatabaseComplaintDoesNotInventARecordPosition(t *testing.T) {
 	}
 }
 
+func TestDiscardCategoriesStayStableAndShareOneDetailBudget(t *testing.T) {
+	result := Result{}
+	target := Target{Path: "/synthetic/private/rollout.jsonl", Kind: parsers.KindCodexSession}
+	for i := 0; i < discardDetailBudget+1; i++ {
+		result.discard(target, []parsers.Discard{{
+			Record: i + 1, Reason: fmt.Sprintf("codex runtime event id-%d", i),
+			Category: "codex runtime event", ByDesign: true,
+		}})
+	}
+	result.discard(target, []parsers.Discard{{
+		Record: 200, Reason: "tool verdict has unknown call_id: synthetic-call",
+		Category: "tool verdict has unknown call_id",
+	}})
+	if result.RecordsExcluded != discardDetailBudget+1 || result.RecordsDiscarded != 1 ||
+		len(result.DiscardDetails) != discardDetailBudget {
+		t.Fatalf("discard totals/details = %d/%d/%d", result.RecordsExcluded,
+			result.RecordsDiscarded, len(result.DiscardDetails))
+	}
+	if len(result.DiscardSummary) != 2 || result.DiscardSummary[0].Count != discardDetailBudget+1 ||
+		result.DiscardSummary[0].Reason != "codex runtime event" {
+		t.Fatalf("discard summary = %+v", result.DiscardSummary)
+	}
+	if result.DiscardDetails[0].Reason != "codex runtime event id-0" {
+		t.Fatalf("discard detail lost its precise reason: %+v", result.DiscardDetails[0])
+	}
+}
+
 func TestHermesMissingStartDoesNotBecomeTheUnixEpoch(t *testing.T) {
 	session, _ := hermesSession(row{"id": "h-missing", "started_at": nil, "ended_at": float64(10)}, nil)
 	if session.StartedAt != "" {
