@@ -116,8 +116,13 @@ func TestAgentPluginPackageMatchesThePublicContract(t *testing.T) {
 	if manifest.Schema != "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json" {
 		t.Errorf("plugin.json has schema %q", manifest.Schema)
 	}
-	if manifest.Name != "roca" || manifest.Version != "1.0.0" || manifest.Description == "" {
-		t.Errorf("plugin.json metadata = name %q, version %q, description %q", manifest.Name, manifest.Version, manifest.Description)
+	var release map[string]string
+	if err := json.Unmarshal(read(".release-please-manifest.json"), &release); err != nil {
+		t.Fatalf("parse .release-please-manifest.json: %v", err)
+	}
+	if manifest.Name != "roca" || manifest.Version != release["."] || manifest.Description == "" {
+		t.Errorf("plugin.json metadata = name %q, version %q (release manifest %q), description %q",
+			manifest.Name, manifest.Version, release["."], manifest.Description)
 	}
 
 	var mcp struct {
