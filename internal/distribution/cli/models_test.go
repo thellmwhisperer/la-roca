@@ -90,15 +90,23 @@ func TestModelsJSONContract(t *testing.T) {
 // way a real installation would.
 func writeProviderConfig(t *testing.T, home, name, baseURL, model string) {
 	t.Helper()
+	writeConfig(t, home, fmt.Sprintf(
+		"[models]\norder = [%q]\n\n[models.%s]\nbase_url = %q\napi_key = \"sk-test\"\nmodel = %q\n",
+		name, name, baseURL, model))
+}
+
+// writeConfig lays a configuration under an isolated home and says where it
+// wrote it, which is what every test that reads it back needs next.
+func writeConfig(t *testing.T, home, body string) string {
+	t.Helper()
 	path := filepath.Join(home, ".roca", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	body := fmt.Sprintf("[models]\norder = [%q]\n\n[models.%s]\nbase_url = %q\napi_key = \"sk-test\"\nmodel = %q\n",
-		name, name, baseURL, model)
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	return path
 }
 
 // The interpretation order reaches doctor from the configuration file: the two
@@ -106,16 +114,9 @@ func writeProviderConfig(t *testing.T, home, name, baseURL, model string) {
 // with the same verdict it gives the one that answers the question.
 func TestDoctorReportsTheConfiguredInterpretationProvider(t *testing.T) {
 	home := isolatedLoginHome(t)
-	path := filepath.Join(home, ".roca", "config.toml")
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	body := "[models]\norder = [\"mycorp\"]\ninterpret_order = [\"ollama\"]\nprobe_ms = 200\n" +
-		"\n[models.mycorp]\nbase_url = \"http://127.0.0.1:1/v1\"\napi_key = \"sk-test\"\nmodel = \"mycorp-7b\"\n" +
-		"\n[models.ollama]\nbase_url = \"http://127.0.0.1:1\"\nmodel = \"qwen3.5:4b\"\n"
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeConfig(t, home, "[models]\norder = [\"mycorp\"]\ninterpret_order = [\"ollama\"]\nprobe_ms = 200\n"+
+		"\n[models.mycorp]\nbase_url = \"http://127.0.0.1:1/v1\"\napi_key = \"sk-test\"\nmodel = \"mycorp-7b\"\n"+
+		"\n[models.ollama]\nbase_url = \"http://127.0.0.1:1\"\nmodel = \"qwen3.5:4b\"\n")
 
 	build := Build{Version: "test", Commit: "abc123"}
 	runRoot(t, build, "init", "--db-path", filepath.Join(home, ".roca", "roca.db"))

@@ -17,6 +17,11 @@ One file, TOML, at `config.toml` inside the data directory (`~/.roca/`).
 [models]
 # The order they are tried in. The first available one serves.
 order = ["codex", "deepseek", "ollama"]
+# Optional. The order the RESULT ROWS are read by, when you want the two
+# inferences on different providers. Leave it out and the provider that wrote
+# the SQL also reads the rows, which is what every installation did before this
+# key existed.
+interpret_order = ["ollama"]
 # Model budgets, in milliseconds. timeout_ms bounds a provider request;
 # probe_ms bounds the availability question asked before every one.
 timeout_ms = 90000
@@ -38,6 +43,10 @@ model   = "deepseek-chat"
 base_url   = "http://localhost:11434"
 model      = "qwen3.5:4b"
 keep_alive = "10m"
+# Off by default. A reasoning model's thinking is neither the SQL nor the
+# summary asked of it, and on qwen3.5 leaving it on turned a local
+# interpretation from seconds into minutes. Turn it back on only to debug.
+think      = false
 ```
 
 With no file at all the order is `codex, ollama`: the subscription first, the
@@ -56,7 +65,50 @@ For each setting, in this order of precedence:
 4. the built-in default.
 
 `ROCA_MODELS_ORDER` overrides the order from the environment; `ROCA_MODELS_ORDER=none`
-turns the model off entirely.
+turns the model off entirely. There is no environment override for
+`interpret_order`: it is a decision about where your data goes, and it is
+written down in the file.
+
+### Splitting the two inferences
+
+A query costs two model calls. The first turns the question into SQL and
+receives the question and the schema. The second turns the rows that SQL
+returned into prose, and it is the only one that ever sees your data.
+
+`interpret_order` puts that second call on providers of its own:
+
+```toml
+[models]
+order           = ["codex"]     # writes the SQL: sees the question and the schema
+interpret_order = ["ollama"]    # reads the rows: they go here and nowhere else
+```
+
+With that written, the result rows never leave the machine while the question
+still goes to a frontier model. The resolution rules are the main order's: the
+first available provider serves, an unknown name is a warning that names
+`models.interpret_order` and the file, and `none` there is not an off switch,
+it just leaves the two inferences together.
+
+When no interpretation provider is available the rows go to the provider that
+wrote the SQL, and the answer says so instead of pretending otherwise:
+
+```
+route llm_fallback · provider codex · model gpt-5.6-sol · 8231 ms
+the interpretation provider was not available (ollama: Ollama does not answer
+at localhost:11434): the rows were read by codex
+```
+
+With the split working, the second provenance is a line of its own, and in
+`--json` it is `interpret_engine`, `interpret_model` and `interpret_note`:
+
+```
+route llm_fallback · provider codex · model gpt-5.6-sol · 8231 ms
+interpretation · provider ollama · model qwen3.5:4b
+```
+
+`roca doctor` reports that decision the same way it reports the main one: every
+declared interpretation provider with its verdict and its remedy, and the one
+that is going to read the rows.
 
 ## The providers
 
