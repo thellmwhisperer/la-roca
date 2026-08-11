@@ -388,4 +388,6 @@ A query that is valid at once costs one request. Only the ones that need it pay.
 `roca doctor` prints the resolved order, which providers are available, which
 one is going to answer and, for each one that is not available, the exact
 command that fixes it. It reports that a credential is **present**, never its
-value: there is no code path that prints one.
+value: there is no code path that prints one. It also re-lists open capability
+proposals; the post-update review contract is documented under
+[Update](lifecycle.md#update).
