@@ -1,0 +1,166 @@
+version: 1
+layers:
+  - name: user
+    description: User profile, preferences, background, and stable personal context.
+    ingest_allowed: true
+    is_coordination: false
+    search_excluded: false
+    alias_of:
+    deprecated: false
+    added_by: kernel
+    since_version: 0.1.0
+    lifecycle: curated
+    capabilities: {}
+    hints: [user, usuario, perfil]
+
+  - name: feedback
+    description: Behavioral guidance and corrections for agents.
+    ingest_allowed: true
+    is_coordination: false
+    search_excluded: false
+    alias_of:
+    deprecated: false
+    added_by: kernel
+    since_version: 0.1.0
+    lifecycle: curated
+    capabilities: {}
+    hints: [feedback, correccion, correcciones, guidance]
+
+  - name: project
+    description: Project purpose, status, decisions, and roadmap.
+    ingest_allowed: true
+    is_coordination: false
+    search_excluded: false
+    alias_of:
+    deprecated: false
+    added_by: kernel
+    since_version: 0.1.0
+    lifecycle: curated
+    capabilities:
+      requires_bootstrap_check: true
+    hints: [project, proyecto, estado]
+
+  - name: pattern
+    description: Replicable practice validated through real tool use, with parameters, environment, and provenance.
+    ingest_allowed: true
+    is_coordination: false
+    search_excluded: false
+    alias_of:
+    deprecated: false
+    added_by: kernel
+    since_version: 0.1.0
+    lifecycle: curated
+    capabilities:
+      supports_provenance: true
+    hints: [pattern, patterns, patron, patrones, recipe, receta]
+
+  - name: pill
+    description: Injectable condensed artifact derived from a pattern.
+    ingest_allowed: true
+    is_coordination: false
+    search_excluded: false
+    alias_of:
+    deprecated: false
+    added_by: kernel
+    since_version: 0.1.0
+    lifecycle: injectable
+    capabilities:
+      supports_injection: true
+      derives_from: pattern
+    hints: [pill, pills, pildora, pildoras]
+
+  - name: discovery
+    description: Important discoveries, gotchas, and things learned the hard way.
+    ingest_allowed: true
+    is_coordination: false
+    search_excluded: false
+    alias_of:
+    deprecated: false
+    added_by: kernel
+    since_version: 0.1.0
+    lifecycle: curated
+    capabilities: {}
+    hints: [discovery, discoveries, descubrimiento, descubrimientos, hallazgo, hallazgos]
+
+  - name: handoff
+    description: Session continuity context for future agents.
+    ingest_allowed: true
+    is_coordination: true
+    search_excluded: false
+    alias_of:
+    deprecated: false
+    added_by: kernel
+    since_version: 0.1.0
+    lifecycle: coordination
+    capabilities:
+      load_at_session_start: true
+    hints: [handoff, handoffs]
+
+  - name: handover
+    description: Accepted on ingest; normalized to handoff before write.
+    ingest_allowed: true
+    is_coordination: true
+    search_excluded: false
+    alias_of: handoff
+    deprecated: true
+    added_by: kernel
+    since_version: 0.1.0
+    lifecycle: alias
+    capabilities: {}
+    hints: [handover, handovers]
+
+  - name: question
+    description: Private messages and questions between humans and agents.
+    ingest_allowed: true
+    is_coordination: true
+    search_excluded: true
+    alias_of:
+    deprecated: false
+    added_by: kernel
+    since_version: 0.1.0
+    lifecycle: inbox
+    capabilities:
+      supports_inbox: true
+      supports_read_by_id: true
+    hints: [question, questions, pregunta, preguntas, mensaje, mensajes]
+
+  - name: review
+    description: Code review requests, review findings, and review responses.
+    ingest_allowed: true
+    is_coordination: true
+    search_excluded: true
+    alias_of:
+    deprecated: false
+    added_by: kernel
+    since_version: 0.1.0
+    lifecycle: review
+    capabilities:
+      supports_review: true
+    hints: [review, reviews, revision, revisiones]
+
+  - name: issue
+    description: Bugs, broken state, operational debt, and actionable problems.
+    ingest_allowed: true
+    is_coordination: true
+    search_excluded: true
+    alias_of:
+    deprecated: false
+    added_by: kernel
+    since_version: 0.1.0
+    lifecycle: issue
+    capabilities:
+      supports_issue_lifecycle: true
+    hints: [issue, issues, bug, bugs, problema, problemas, rotura, deuda, task, tasks, tarea, tareas]
+
+  - name: protocol
+    description: Accepted on ingest; normalized to pattern before write.
+    ingest_allowed: true
+    is_coordination: false
+    search_excluded: false
+    alias_of: pattern
+    deprecated: true
+    added_by: kernel
+    since_version: 0.1.0
+    lifecycle: alias
+    capabilities: {}
+    hints: [protocol, protocols, protocolo, protocolos]

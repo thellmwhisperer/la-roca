@@ -1,0 +1,41 @@
+# language: en
+
+@acceptance @ingest
+Feature: Normalizing each family
+  Supported artefacts become the common session and memory records without
+  turning configuration files or corrupt input into corpus content.
+
+  Scenario: A Claude session becomes sessions, exchanges, thinking blocks and tool calls
+    Given a Claude session with reasoning and a tool call is ready to ingest
+    When I run ingest
+    Then one session, one exchange, one thinking block and one tool call exist
+
+  Scenario Outline: The memory files an agent leaves behind become memories (the product's seed: MEMORY.md, memory dirs, learnings; per family)
+    Given a "<family>" memory file with durable content is ready to ingest
+    When I run ingest
+    Then one memory from "<family>" exists
+
+    Examples:
+      | family |
+      | claude |
+      | codex  |
+
+  Scenario: A Codex session becomes sessions and exchanges
+    Given a Codex session is ready to ingest
+    When I run ingest
+    Then one Codex session and one exchange exist
+
+  Scenario: Markdown memories become memories with their metadata
+    Given a markdown memory with declared metadata is ready to ingest
+    When I run ingest
+    Then its content and declared metadata exist on one memory
+
+  Scenario: A malformed file is skipped and counted, never fatal
+    Given a malformed Claude session file is ready to ingest
+    When I run ingest
+    Then the command succeeds and counts one malformed file
+
+  Scenario: CLAUDE.md and AGENTS.md instruction files are never ingested
+    Given instruction files and one ordinary session are present
+    When I run ingest
+    Then no instruction file is recorded as content or ingest state
