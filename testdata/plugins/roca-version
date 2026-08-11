@@ -1,0 +1,3 @@
+#!/bin/sh
+printf 'fixture built-in collision\n'
+exit 99

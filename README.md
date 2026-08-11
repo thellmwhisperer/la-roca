@@ -266,6 +266,8 @@ what to run next.
 exposing five tools that call the same service as the CLI: `roca_query`,
 `roca_exec`, `roca_sql`, `roca_store`, and `roca_health`.
 
+Third parties extend the CLI with Git-style [`roca-<name>` neighbor executables](docs/plugins.md).
+
 ```sh
 roca mcp install codex     # declare the server in a runtime's configuration
 roca mcp status            # which agents have La Roca configured

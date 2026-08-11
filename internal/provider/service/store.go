@@ -10,6 +10,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"unicode"
 )
 
 // The two surfaces that write. It travels into the memory's own metadata
@@ -37,8 +38,8 @@ var (
 type StoreRequest struct {
 	Layer   string
 	Content string
-	// Origin is who creates it: human, agent or cron. Empty means agent, which
-	// is what a plug call is.
+	// Origin is who creates it: human, agent, cron or plugin:<name>. Empty means
+	// agent, which is what an MCP call is.
 	Origin      string
 	SourceAgent string
 	Project     string
@@ -80,8 +81,8 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (StoreResult, err
 		return StoreResult{}, fmt.Errorf("the content of the memory is required")
 	}
 	origin := valueOr(req.Origin, "agent")
-	if !slices.Contains(validOrigins, origin) {
-		return StoreResult{}, fmt.Errorf("origin %q is not one of %s",
+	if !validOrigin(origin) {
+		return StoreResult{}, fmt.Errorf("origin %q is not one of %s or plugin:<name>",
 			origin, strings.Join(validOrigins, ", "))
 	}
 	status := valueOr(req.Status, "active")
@@ -121,12 +122,27 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (StoreResult, err
 			return fmt.Errorf("look for an identical memory: %w", err)
 		}
 
+		// Released v1 databases carry the original three-value CHECK. The service
+		// is now the authoritative validator for the expanded shape, so allow this
+		// one validated insert without making an existing database inoperable.
+		pluginOrigin := strings.HasPrefix(origin, "plugin:")
+		if pluginOrigin {
+			if _, err := tx.ExecContext(ctx, "PRAGMA ignore_check_constraints = ON"); err != nil {
+				return fmt.Errorf("open the plugin origin compatibility gate: %w", err)
+			}
+		}
 		outcome, err := tx.ExecContext(ctx,
 			`INSERT INTO memories (layer, content, metadata, origin, source_agent,
 			                       project, status, supersedes)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 			physical, content, metadata, origin, orNull(req.SourceAgent),
 			orNull(req.Project), status, orNull(req.Supersedes))
+		if pluginOrigin {
+			if _, closeErr := tx.ExecContext(context.WithoutCancel(ctx),
+				"PRAGMA ignore_check_constraints = OFF"); closeErr != nil {
+				return fmt.Errorf("close the plugin origin compatibility gate: %w", closeErr)
+			}
+		}
 		if err != nil {
 			return fmt.Errorf("store the memory: %w", err)
 		}
@@ -137,6 +153,22 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (StoreResult, err
 		return StoreResult{}, err
 	}
 	return result, nil
+}
+
+func validOrigin(origin string) bool {
+	if slices.Contains(validOrigins, origin) {
+		return true
+	}
+	name, ok := strings.CutPrefix(origin, "plugin:")
+	if !ok || name == "" {
+		return false
+	}
+	for _, r := range name {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && !strings.ContainsRune("-_.", r) {
+			return false
+		}
+	}
+	return true
 }
 
 // encodeMetadata merges the caller's metadata with the audit of which surface
