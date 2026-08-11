@@ -20,6 +20,9 @@ func TestTheDefaultDatabaseLivesUnderTheHome(t *testing.T) {
 	if paths.Backups != filepath.Join(home, ".roca", "backups") {
 		t.Errorf("backups = %q", paths.Backups)
 	}
+	if paths.Reconciliation != filepath.Join(home, ".roca", "reconciliation.json") {
+		t.Errorf("reconciliation = %q", paths.Reconciliation)
+	}
 }
 
 func TestTheFlagBeatsTheEnvironmentAndTheHome(t *testing.T) {

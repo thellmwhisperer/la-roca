@@ -30,11 +30,21 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			proposals, err := env.openCapabilityProposals()
+			if err != nil {
+				return err
+			}
+			for _, proposal := range proposals {
+				report.CapabilityProposals = append(report.CapabilityProposals, proposal.Proposal.Alert)
+			}
 			if env.json {
 				return env.printJSON(report)
 			}
 			renderDoctor(env, report)
-			return nil
+			if terminalInput(cmd.InOrStdin()) && !env.skipReconciliation {
+				_, err = env.reconcileCapabilities(cmd, true, true)
+			}
+			return err
 		}),
 	}
 }
@@ -78,6 +88,12 @@ func renderDoctor(env *cliEnv, report service.DoctorReport) {
 		} else {
 			env.print("agent prompt: missing at %s", report.PromptPath)
 			env.print("      remedy: run `roca init` to generate it")
+		}
+	}
+	if len(report.CapabilityProposals) > 0 {
+		env.print("open capability proposals:")
+		for _, proposal := range report.CapabilityProposals {
+			env.print("  - %s", proposal)
 		}
 	}
 }

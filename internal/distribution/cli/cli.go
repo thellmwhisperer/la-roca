@@ -53,6 +53,7 @@ type cliEnv struct {
 	modelBackend        modelValidationBackend
 	modelPicker         modelPicker
 	modelCatalogRefresh modelCatalogRefresher
+	skipReconciliation  bool
 }
 
 // Execute runs the CLI and returns the process exit code.
@@ -69,6 +70,19 @@ func execute(build Build, out, errOut io.Writer, args []string) (int, error) {
 func executeCommand(build Build, out, errOut io.Writer, args []string, plugins bool) (int, error) {
 	started := time.Now()
 	env := &cliEnv{build: build, out: out, errOut: errOut, started: started}
+	return executeWithOptions(env, args, nil, plugins)
+}
+
+func executeWithEnv(env *cliEnv, args []string, in io.Reader) (int, error) {
+	return executeWithOptions(env, args, in, false)
+}
+
+func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) (int, error) {
+	started := env.started
+	if started.IsZero() {
+		started = time.Now()
+		env.started = started
+	}
 	root := rootCommand(env)
 	if plugins {
 		if handled, code, err := dispatchPlugin(root, args); handled {
@@ -76,7 +90,13 @@ func executeCommand(build Build, out, errOut io.Writer, args []string, plugins b
 		}
 	}
 	root.SetArgs(args)
+	if in != nil {
+		root.SetIn(in)
+	}
 	executed, err := root.ExecuteC()
+	if reconciliationErr := env.reconcileAfterCommand(executed); err == nil {
+		err = reconciliationErr
+	}
 	if err != nil {
 		if strings.Contains(err.Error(), "unknown command") {
 			err = fmt.Errorf("%w; run `roca --help` to list commands", err)
@@ -138,6 +158,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 		loginCommand(env), logoutCommand(env), modelCommand(env),
 		updateCommand(env), uninstallCommand(env),
 		modelsCommand(env), pluginsCommand(env),
+		capabilitiesCommand(env),
 	)
 	root.InitDefaultHelpCmd()
 	for _, command := range root.Commands() {

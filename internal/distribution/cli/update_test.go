@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -122,5 +123,23 @@ func TestTheRefusalToSelfReplaceSaysWhatToDoInstead(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not mention %q: %v", want, err)
 		}
+	}
+}
+
+func TestCapabilityCountRequiresThePendingField(t *testing.T) {
+	if _, err := decodeCapabilityCount([]byte(`{}`)); err == nil ||
+		!strings.Contains(err.Error(), "missing pending") {
+		t.Fatalf("missing pending field error = %v", err)
+	}
+	if count, err := decodeCapabilityCount([]byte(`{"pending":2}`)); err != nil || count != 2 {
+		t.Fatalf("count = %d, err %v", count, err)
+	}
+}
+
+func TestCapabilityCountUsesTheSelectedDatabase(t *testing.T) {
+	command := capabilityCountCommand(context.Background(), "/installed/roca", "/custom/roca.db")
+	want := "/installed/roca _capabilities --json --db-path /custom/roca.db"
+	if got := strings.Join(command.Args, " "); got != want {
+		t.Fatalf("capability count command = %q, want %q", got, want)
 	}
 }

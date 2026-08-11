@@ -33,6 +33,9 @@ type Paths struct {
 	// a secret. It never holds a platform key: those live in the config or in
 	// the environment.
 	Credentials string
+	// Reconciliation records which capability proposals this release already
+	// offered. It is disposable product state, separate from operator config.
+	Reconciliation string
 }
 
 // Directories and files this product knows about.
@@ -79,6 +82,7 @@ func inDataDir(paths Paths, dataDir string, in Input) Paths {
 		paths.Config = in.ConfigEnv
 	}
 	paths.Credentials = filepath.Join(dataDir, DirCredentials)
+	paths.Reconciliation = filepath.Join(dataDir, "reconciliation.json")
 	return paths
 }
 
