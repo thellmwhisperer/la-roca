@@ -14,6 +14,10 @@ import (
 // boilerplate lives in one place instead of being copied into every Test*
 // function that opens a suite.
 func runGodog(t *testing.T, features []godog.Feature, init func(*godog.ScenarioContext)) {
+	runGodogTagged(t, features, "", init)
+}
+
+func runGodogTagged(t *testing.T, features []godog.Feature, tags string, init func(*godog.ScenarioContext)) {
 	suite := godog.TestSuite{
 		ScenarioInitializer: init,
 		Options: &godog.Options{
@@ -22,6 +26,7 @@ func runGodog(t *testing.T, features []godog.Feature, init func(*godog.ScenarioC
 			Output:          os.Stdout,
 			TestingT:        t,
 			Strict:          true,
+			Tags:            tags,
 		},
 	}
 	if suite.Run() != 0 {

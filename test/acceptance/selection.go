@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/cucumber/godog"
@@ -17,10 +18,20 @@ import (
 // The files in features/ are versioned contracts; the runner selects the
 // implemented subset without editing them.
 func selectScenarios(dir string, ids []string) ([]godog.Feature, error) {
-	paths, err := filepath.Glob(filepath.Join(dir, "*.feature"))
+	var paths []string
+	err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.Type().IsRegular() && filepath.Ext(path) == ".feature" {
+			paths = append(paths, path)
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
+	sort.Strings(paths)
 	var features []godog.Feature
 	matched := make(map[string]bool, len(ids))
 	for _, path := range paths {

@@ -44,7 +44,7 @@ func TestStoreDomainSuite(t *testing.T) {
 		t.Fatalf("I cannot find the binary: %v", err)
 	}
 
-	runGodog(t, features, func(ctx *godog.ScenarioContext) {
+	runGodogTagged(t, features, "~@journey", func(ctx *godog.ScenarioContext) {
 		registerStoreSteps(ctx, binary)
 	})
 }
