@@ -1,0 +1,119 @@
+[
+  {
+    "uuid": "10000000-0000-4000-8000-000000000001",
+    "name": "Synthetic orchard planning",
+    "summary": "A fictional plan for an indoor orchard sensor.",
+    "created_at": "2025-04-03T08:00:00.000Z",
+    "updated_at": "2025-04-03T08:05:00.000Z",
+    "chat_messages": [
+      {
+        "uuid": "20000000-0000-4000-8000-000000000001",
+        "text": "Choose a synthetic sensor label.",
+        "content": [],
+        "sender": "human",
+        "created_at": "2025-04-03T08:00:01.000Z",
+        "updated_at": "2025-04-03T08:00:01.000Z",
+        "attachments": [{"file_name": "invented-sensors.txt"}],
+        "files": [],
+        "parent_message_uuid": null
+      },
+      {
+        "uuid": "20000000-0000-4000-8000-000000000002",
+        "text": "Call it Amber Finch.",
+        "content": [],
+        "sender": "assistant",
+        "created_at": "2025-04-03T08:00:02.000Z",
+        "updated_at": "2025-04-03T08:00:02.000Z",
+        "attachments": [],
+        "files": [],
+        "parent_message_uuid": "20000000-0000-4000-8000-000000000001"
+      },
+      {
+        "uuid": "20000000-0000-4000-8000-000000000003",
+        "text": "The alternate branch calls it Copper Wren.",
+        "content": [],
+        "sender": "assistant",
+        "created_at": "2025-04-03T08:00:03.000Z",
+        "updated_at": "2025-04-03T08:00:03.000Z",
+        "attachments": [],
+        "files": [{"file_name": "fictional-labels.csv"}],
+        "parent_message_uuid": "20000000-0000-4000-8000-000000000001"
+      },
+      {
+        "uuid": "20000000-0000-4000-8000-000000000004",
+        "text": "Keep the first branch.",
+        "content": [],
+        "sender": "human",
+        "created_at": "2025-04-03T08:01:00.000Z",
+        "updated_at": "2025-04-03T08:01:00.000Z",
+        "attachments": [],
+        "files": [],
+        "parent_message_uuid": "20000000-0000-4000-8000-000000000002"
+      },
+      {
+        "uuid": "20000000-0000-4000-8000-000000000005",
+        "text": "Amber Finch is selected.",
+        "content": [],
+        "sender": "assistant",
+        "created_at": "2025-04-03T08:01:01.000Z",
+        "updated_at": "2025-04-03T08:01:01.000Z",
+        "attachments": [],
+        "files": [],
+        "parent_message_uuid": "20000000-0000-4000-8000-000000000004"
+      },
+      {
+        "uuid": "20000000-0000-4000-8000-000000000006",
+        "text": "This deliberately has no reply.",
+        "content": [],
+        "sender": "human",
+        "created_at": "2025-04-03T08:02:00.000Z",
+        "updated_at": "2025-04-03T08:02:00.000Z",
+        "attachments": [],
+        "files": [],
+        "parent_message_uuid": "20000000-0000-4000-8000-000000000005"
+      },
+      {
+        "uuid": "20000000-0000-4000-8000-000000000007",
+        "text": "This deliberately points at a missing parent.",
+        "content": [],
+        "sender": "assistant",
+        "created_at": "2025-04-03T08:03:00.000Z",
+        "updated_at": "2025-04-03T08:03:00.000Z",
+        "attachments": [],
+        "files": [],
+        "parent_message_uuid": "29999999-9999-4999-8999-999999999999"
+      }
+    ]
+  },
+  {
+    "uuid": "10000000-0000-4000-8000-000000000002",
+    "name": "Synthetic lighthouse checklist",
+    "summary": "A fictional maintenance exchange.",
+    "created_at": "2026-08-01T09:00:00.000Z",
+    "updated_at": "2026-08-01T09:00:02.000Z",
+    "chat_messages": [
+      {
+        "uuid": "30000000-0000-4000-8000-000000000001",
+        "text": "",
+        "content": [{"type": "text", "text": "Name the synthetic checklist."}],
+        "sender": "human",
+        "created_at": "2026-08-01T09:00:01.000Z",
+        "updated_at": "2026-08-01T09:00:01.000Z",
+        "attachments": [],
+        "files": [],
+        "parent_message_uuid": null
+      },
+      {
+        "uuid": "30000000-0000-4000-8000-000000000002",
+        "text": "",
+        "content": [{"type": "text", "text": "Use Glass Beacon."}],
+        "sender": "assistant",
+        "created_at": "2026-08-01T09:00:02.000Z",
+        "updated_at": "2026-08-01T09:00:02.000Z",
+        "attachments": [],
+        "files": [],
+        "parent_message_uuid": "30000000-0000-4000-8000-000000000001"
+      }
+    ]
+  }
+]
