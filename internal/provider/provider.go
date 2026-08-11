@@ -70,6 +70,13 @@ type Provider interface {
 	Chat(ctx context.Context, req ChatRequest) (ChatResponse, error)
 }
 
+// StreamingProvider is the optional transport capability used for prose. SQL
+// still travels through Chat as one statement; an interpretation can expose
+// text as it arrives without making streaming mandatory for every adapter.
+type StreamingProvider interface {
+	ChatStream(context.Context, ChatRequest, func(string)) (ChatResponse, error)
+}
+
 // Readiness is the answer to "can I use you right now?".
 //
 // Reason and Action are not decoration: they are what `roca doctor` prints, and
@@ -372,11 +379,18 @@ func (c Cascade) askModels(ctx context.Context, p Provider) ModelReport {
 // Chat asks the chosen provider, with the budget bounded. What goes past the
 // budget is a declared failure, never a command that never comes back.
 func (c Cascade) Chat(ctx context.Context, p Provider, req ChatRequest) (ChatResponse, error) {
+	return c.chat(ctx, p, func(callCtx context.Context) (ChatResponse, error) {
+		return p.Chat(callCtx, req)
+	})
+}
+
+func (c Cascade) chat(ctx context.Context, p Provider,
+	ask func(context.Context) (ChatResponse, error)) (ChatResponse, error) {
 	callCtx, cancel := context.WithTimeout(ctx, c.timeout())
 	defer cancel()
 
 	start := time.Now()
-	res, err := p.Chat(callCtx, req)
+	res, err := ask(callCtx)
 	if err != nil {
 		return ChatResponse{}, err
 	}
@@ -390,6 +404,23 @@ func (c Cascade) Chat(ctx context.Context, p Provider, req ChatRequest) (ChatRes
 		res.LatencyMS = time.Since(start).Milliseconds()
 	}
 	return res, nil
+}
+
+// ChatStream streams when the chosen adapter supports it and otherwise emits
+// the completed answer once. The caller therefore has one graceful contract
+// for both streaming and buffered providers.
+func (c Cascade) ChatStream(ctx context.Context, p Provider, req ChatRequest,
+	onDelta func(string)) (ChatResponse, error) {
+	return c.chat(ctx, p, func(callCtx context.Context) (ChatResponse, error) {
+		if streaming, ok := p.(StreamingProvider); ok {
+			return streaming.ChatStream(callCtx, req, onDelta)
+		}
+		res, err := p.Chat(callCtx, req)
+		if err == nil && onDelta != nil && res.Content != "" {
+			onDelta(res.Content)
+		}
+		return res, err
+	})
 }
 
 func (c Cascade) timeout() time.Duration {

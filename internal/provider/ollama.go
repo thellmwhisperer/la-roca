@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -22,7 +23,13 @@ type OllamaConfig struct {
 	// default: loading a 4B model costs seconds and paying for it on every
 	// query is what makes the local path feel broken.
 	KeepAlive string
-	Client    *http.Client
+	// Think asks the model to reason before answering. It is off unless the
+	// operator turns it on, and the reason is measured: an interpretation on
+	// qwen3.5 with thinking took minutes where the same one without it took
+	// seconds. The API field is the only switch that works on that family; a
+	// /no_think in the prompt does nothing.
+	Think  bool
+	Client *http.Client
 }
 
 // Ollama is the local floor: no credential, no network beyond localhost, and
@@ -32,6 +39,7 @@ type Ollama struct {
 	baseURL   string
 	model     string
 	keepAlive string
+	think     bool
 	client    *http.Client
 }
 
@@ -41,6 +49,7 @@ func NewOllama(cfg OllamaConfig) *Ollama {
 		baseURL:   normalizeBaseURL(firstNonEmpty(cfg.BaseURL, DefaultOllamaBaseURL)),
 		model:     firstNonEmpty(cfg.Model, DefaultOllamaModel),
 		keepAlive: cfg.KeepAlive,
+		think:     cfg.Think,
 		client:    orDefaultClient(cfg.Client),
 	}
 }
@@ -139,13 +148,28 @@ func (o *Ollama) installAction() string {
 // product asks for one SQL statement and reads it whole, and a stream would only
 // add a parser.
 func (o *Ollama) Chat(ctx context.Context, req ChatRequest) (ChatResponse, error) {
+	return o.chat(ctx, req, false, nil)
+}
+
+// ChatStream asks Ollama for its newline-delimited response and forwards each
+// content chunk while retaining the complete answer.
+func (o *Ollama) ChatStream(ctx context.Context, req ChatRequest,
+	onDelta func(string)) (ChatResponse, error) {
+	return o.chat(ctx, req, true, onDelta)
+}
+
+func (o *Ollama) chat(ctx context.Context, req ChatRequest, stream bool,
+	onDelta func(string)) (ChatResponse, error) {
 	body := map[string]any{
 		"model":    o.model,
 		"messages": req.Messages,
-		"stream":   false,
-		// The thinking of a reasoning model is not part of an SQL statement, and
-		// paying tokens to generate it and then throwing it away is paying twice.
-		"think": false,
+		"stream":   stream,
+		// The thinking of a reasoning model is neither the SQL nor the summary
+		// that is asked of it, and paying tokens to generate it and then throw it
+		// away is paying twice. It is also the difference between a local
+		// interpretation that answers in seconds and one that answers in minutes,
+		// and on qwen3.5 this field is the only switch that turns it off.
+		"think": o.think,
 		"options": map[string]any{
 			"num_predict": maxTokens(req),
 			// Zero temperature: the same question has to compile to the same SQL,
@@ -155,6 +179,9 @@ func (o *Ollama) Chat(ctx context.Context, req ChatRequest) (ChatResponse, error
 	}
 	if o.keepAlive != "" {
 		body["keep_alive"] = o.keepAlive
+	}
+	if stream {
+		return o.stream(ctx, body, onDelta)
 	}
 
 	var answer struct {
@@ -170,4 +197,44 @@ func (o *Ollama) Chat(ctx context.Context, req ChatRequest) (ChatResponse, error
 		Provider: o.Name(),
 		ModelID:  o.model,
 	}, nil
+}
+
+func (o *Ollama) stream(ctx context.Context, body map[string]any,
+	onDelta func(string)) (ChatResponse, error) {
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return ChatResponse{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL+"/api/chat",
+		bytes.NewReader(raw))
+	if err != nil {
+		return ChatResponse{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := o.client.Do(req)
+	if err != nil {
+		return ChatResponse{}, fmt.Errorf("ask Ollama at %s: %w", o.baseURL, err)
+	}
+	defer drain(res)
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return ChatResponse{}, fmt.Errorf("ask Ollama at %s: it answered %d: %s",
+			o.baseURL, res.StatusCode, excerpt(res.Body))
+	}
+	var content strings.Builder
+	decoder := json.NewDecoder(res.Body)
+	for decoder.More() {
+		var chunk struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		}
+		if err := decoder.Decode(&chunk); err != nil {
+			return ChatResponse{}, fmt.Errorf("read Ollama's answer: %w", err)
+		}
+		content.WriteString(chunk.Message.Content)
+		if onDelta != nil && chunk.Message.Content != "" {
+			onDelta(chunk.Message.Content)
+		}
+	}
+	return ChatResponse{Content: content.String(), Provider: o.Name(), ModelID: o.model}, nil
 }

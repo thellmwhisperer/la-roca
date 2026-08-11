@@ -20,8 +20,8 @@ import (
 // no compiler path and no refusal: a question the model cannot answer is
 // declared unresolved, not turned away at a gate.
 const (
-	PathLLM        = "llm_fallback"
-	PathKeyword    = "keyword_fallback"
+	PathLLM        = "model"
+	PathKeyword    = "keyword"
 	PathUnresolved = "unresolved"
 )
 
@@ -40,6 +40,25 @@ type QueryRequest struct {
 	MaxChars int
 	// SQLOnly returns the SQL the model generated without running it.
 	SQLOnly bool
+	// Progress and the interpretation hooks are presentation only. They are
+	// ignored by machine callers and never enter the result envelope.
+	Progress            func(QueryPhase)
+	InterpretationStart func(bool, QueryResult)
+	InterpretationDelta func(string)
+}
+
+type QueryPhase string
+
+const (
+	QueryPhaseSQL            QueryPhase = "sql"
+	QueryPhaseExecution      QueryPhase = "execution"
+	QueryPhaseInterpretation QueryPhase = "interpretation"
+)
+
+func progress(req QueryRequest, phase QueryPhase) {
+	if req.Progress != nil {
+		req.Progress(phase)
+	}
 }
 
 // QueryResult is the complete answer: which path it left by, with what SQL, and
@@ -63,14 +82,14 @@ type QueryResult struct {
 	// Engine and Model are the model path's provenance: which provider answered
 	// and with which model. Without them a poor answer cannot be attributed, and
 	// changing provider becomes a bet.
-	Engine string `json:"engine,omitempty"`
-	Model  string `json:"model,omitempty"`
+	Engine string `json:"sql_provider,omitempty"`
+	Model  string `json:"sql_model,omitempty"`
 	// ProviderNote says the providers ahead of the one that served were not
 	// available. It is kept apart from Message on purpose: falling to the floor
 	// is a fact about WHO WAS ASKED and the message is a fact about WHAT
 	// ANSWERED, and writing one over the other produced an answer that said the
 	// provider was unavailable while reporting that same provider as the engine.
-	ProviderNote string `json:"provider_note,omitempty"`
+	ProviderNote string `json:"sql_provider_note,omitempty"`
 	// Degraded says what went wrong down the model path, with one of the
 	// declared reasons. Absent means nothing went wrong.
 	Degraded string `json:"degraded,omitempty"`
@@ -91,13 +110,24 @@ type QueryResult struct {
 	// understand. They never take down a query.
 	Warnings []string `json:"warnings,omitempty"`
 	// LLMLatencyMS is what the model alone cost, apart from the total.
-	LLMLatencyMS int64 `json:"llm_latency_ms,omitempty"`
+	LLMLatencyMS int64 `json:"sql_provider_latency_ms,omitempty"`
 	// SQLInferenceMS, ExecutionMS and InterpretationMS are the three query
 	// phases. Interpretation is populated by the CLI only when --full asks for it.
 	SQLInferenceMS   int64  `json:"sql_inference_ms"`
 	ExecutionMS      int64  `json:"execution_ms"`
 	InterpretationMS int64  `json:"interpretation_ms"`
 	Interpretation   string `json:"interpretation,omitempty"`
+	// InterpretEngine and InterpretModel are the second inference's own
+	// provenance: which provider read the result rows. They differ from Engine
+	// and Model on an installation that splits the two inferences, and that
+	// difference is the claim "the rows never left this machine" made checkable.
+	InterpretEngine string `json:"interpretation_provider,omitempty"`
+	InterpretModel  string `json:"interpretation_model,omitempty"`
+	// InterpretNote says the configured interpretation provider was not
+	// available and the rows went to the provider that wrote the SQL instead. It
+	// is kept apart from ProviderNote for the same reason that one is kept apart
+	// from Message: they answer different questions about the same answer.
+	InterpretNote string `json:"interpretation_provider_note,omitempty"`
 	// ProviderError preserves the provider's own failure text. File logging
 	// applies credential redaction before it reaches disk.
 	ProviderError string `json:"provider_error,omitempty"`

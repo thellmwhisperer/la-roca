@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,10 +17,15 @@ import (
 func TestExecutionLogCarriesMetadataWithoutResultRowsAndRedactsFlags(t *testing.T) {
 	dataDir := t.TempDir()
 	dbPath := filepath.Join(dataDir, "roca.db")
-	env := &cliEnv{dbPath: dbPath, outcome: service.QueryResult{
-		Question: "what changed", Path: service.PathLLM, Engine: "codex", Model: "model", RowCount: 2,
-		Rows: []map[string]any{{"text": "private row contents"}}, Interpretation: "private row contents",
-	}}
+	frontier := &queryModeProvider{answers: []string{queryModeSQL}, name: "codex", model: "gpt-frontier"}
+	local := &queryModeProvider{answers: []string{queryModeProse}, name: "ollama", model: "qwen-local"}
+	answer, err := answerQuery(t.Context(), queryModeServiceWithTimeout(t, frontier, 0, local),
+		service.QueryRequest{Question: queryModeQuestion}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer.result.Rows[0]["text"] = "private row contents"
+	env := &cliEnv{dbPath: dbPath, outcome: answer.result}
 	root := &cobra.Command{Use: "roca"}
 	query := &cobra.Command{Use: "query"}
 	root.AddCommand(query)
@@ -40,7 +46,12 @@ func TestExecutionLogCarriesMetadataWithoutResultRowsAndRedactsFlags(t *testing.
 		t.Fatal(err)
 	}
 	text := string(raw)
-	for _, want := range []string{`"command":"query"`, `"database_path":"` + dbPath + `"`, `"question":"what changed"`, `"path":"llm_fallback"`, `"row_count":2`, `"api-token":"[REDACTED]"`} {
+	for _, want := range []string{`"command":"query"`, `"database_path":"` + dbPath + `"`,
+		`"question":"` + queryModeQuestion + `"`, `"path":"model"`, `"row_count":1`,
+		`"sql_provider":"codex"`, `"sql_model":"gpt-frontier"`, `"sql_inference_ms":`,
+		`"execution_ms":`, `"interpretation_provider":"ollama"`,
+		`"interpretation_model":"qwen-local"`, `"interpretation_ms":`,
+		`"api-token":"[REDACTED]"`} {
 		if !strings.Contains(text, want) {
 			t.Errorf("execution log lacks %q: %s", want, text)
 		}
@@ -50,6 +61,17 @@ func TestExecutionLogCarriesMetadataWithoutResultRowsAndRedactsFlags(t *testing.
 	}
 	if strings.Contains(text, "private row contents") || strings.Contains(text, `"rows"`) || strings.Contains(text, `"interpretation"`) {
 		t.Fatalf("result rows leaked into the execution log: %s", text)
+	}
+	var record struct {
+		Result map[string]json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &record); err != nil {
+		t.Fatal(err)
+	}
+	for _, obsolete := range []string{"engine", "model", "interpret_engine", "interpret_model"} {
+		if _, exists := record.Result[obsolete]; exists {
+			t.Errorf("obsolete envelope key %q returned: %s", obsolete, raw)
+		}
 	}
 }
 

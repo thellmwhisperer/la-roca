@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"database/sql"
 	"encoding/json"
 	"io"
 	"path/filepath"
@@ -160,6 +161,56 @@ func TestDoctorNarratesAndAnswersJSON(t *testing.T) {
 	}
 	if doc["version"] != contractVersion {
 		t.Errorf("doctor --json version = %v, want %q", doc["version"], contractVersion)
+	}
+}
+
+func TestInitAndDoctorNarrateBedrockAndExposeItAsJSON(t *testing.T) {
+	home := t.TempDir()
+	isolateRuntimeDirs(t, home)
+	dbPath := filepath.Join(home, ".roca", "roca.db")
+	runRoot(t, contractBuild(), "init", "--db-path", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO sessions (session_id, project, started_at)
+		VALUES ('first', 'bedrock-project', '2026-01-31T08:15:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, command := range []string{"init", "doctor"} {
+		human := runRoot(t, contractBuild(), command, "--db-path", dbPath)
+		if !strings.Contains(human, "bedrock: your memory reaches back to 31 Jan 2026 (first session: bedrock-project)") {
+			t.Errorf("%s did not narrate bedrock:\n%s", command, human)
+		}
+		doc := mustJSON(t, runRoot(t, contractBuild(), command, "--db-path", dbPath, "--json"))
+		bedrock, _ := doc["bedrock"].(map[string]any)
+		if bedrock["timestamp"] != "2026-01-31T08:15:00Z" || bedrock["project"] != "bedrock-project" {
+			t.Errorf("%s bedrock JSON = %#v", command, bedrock)
+		}
+	}
+}
+
+func TestInitAndDoctorTellTheTruthWhenTheCorpusIsEmpty(t *testing.T) {
+	home := t.TempDir()
+	isolateRuntimeDirs(t, home)
+	dbPath := filepath.Join(home, ".roca", "roca.db")
+	for _, command := range []string{"init", "doctor"} {
+		human := runRoot(t, contractBuild(), command, "--db-path", dbPath)
+		if !strings.Contains(human, "bedrock: your memory has no history yet") {
+			t.Errorf("%s empty bedrock narration:\n%s", command, human)
+		}
+		if strings.Contains(human, "1970") {
+			t.Errorf("%s invented an epoch:\n%s", command, human)
+		}
+		doc := mustJSON(t, runRoot(t, contractBuild(), command, "--db-path", dbPath, "--json"))
+		if doc["bedrock"] != nil {
+			t.Errorf("%s empty bedrock JSON = %#v, want null", command, doc["bedrock"])
+		}
 	}
 }
 

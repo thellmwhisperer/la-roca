@@ -244,6 +244,12 @@ type QueryConfig struct {
 type ModelsConfig struct {
 	// Order is the provider order. Empty means the default order.
 	Order []string `toml:"order"`
+	// InterpretOrder is the provider order for the second inference, the one
+	// that reads the result rows. Empty means the rows are interpreted by
+	// whichever provider of Order served, which is the behaviour of an
+	// installation that never heard of this key. Declaring it separates the two
+	// inferences: the question and the schema go to Order, the rows go here.
+	InterpretOrder []string `toml:"interpret_order"`
 	// TimeoutMS bounds a model request. Zero is the adapter's default.
 	TimeoutMS int `toml:"timeout_ms"`
 	// ProbeMS bounds the availability question. Zero is the adapter's default.
@@ -267,6 +273,11 @@ type ProviderConfig struct {
 	APIKeyEnv string `toml:"api_key_env"`
 	// KeepAlive is how long the local model stays loaded.
 	KeepAlive string `toml:"keep_alive"`
+	// Think turns a local reasoning model's thinking back on. It is off by
+	// default because thinking is neither the SQL nor the summary asked of the
+	// model, and on qwen3.5 it is the difference between an interpretation that
+	// answers in seconds and one that answers in minutes.
+	Think bool `toml:"think"`
 }
 
 // knownProviderKeys is what a provider table may carry. It is here and not
@@ -274,11 +285,11 @@ type ProviderConfig struct {
 // wrote, not a field name.
 var knownProviderKeys = map[string]bool{
 	"preset": true, "base_url": true, "model": true,
-	"api_key": true, "api_key_env": true, "keep_alive": true,
+	"api_key": true, "api_key_env": true, "keep_alive": true, "think": true,
 }
 
 var knownModelsKeys = map[string]bool{
-	"order": true, "timeout_ms": true, "probe_ms": true,
+	"order": true, "interpret_order": true, "timeout_ms": true, "probe_ms": true,
 }
 
 var knownQueryKeys = map[string]bool{"timeout_ms": true}
@@ -343,6 +354,8 @@ func readModels(section map[string]any, path string, warnings *[]string) ModelsC
 		switch key {
 		case "order":
 			models.Order = readStrings(value)
+		case "interpret_order":
+			models.InterpretOrder = readStrings(value)
 		case "timeout_ms":
 			models.TimeoutMS = readInt(value)
 		case "probe_ms":
@@ -373,6 +386,8 @@ func readProvider(table map[string]any, prefix, path string, warnings *[]string)
 			cfg.APIKeyEnv = text
 		case "keep_alive":
 			cfg.KeepAlive = text
+		case "think":
+			cfg.Think, _ = table[key].(bool)
 		default:
 			if !knownProviderKeys[key] {
 				*warnings = append(*warnings, unknownKey(prefix+"."+key, path))
