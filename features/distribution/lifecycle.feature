@@ -9,6 +9,14 @@ Feature: Distribution lifecycle
     When update checks an unreachable synthetic release endpoint
     Then update fails plainly, the installation is unchanged and one audit record is added
 
+  @journey @fast
+  Scenario: Update announces pending capabilities and doctor keeps listing them
+    Given La Roca is installed at an earlier release version
+    When I run "roca update"
+    Then the update names how many capability proposals await
+    When I run "roca doctor"
+    Then doctor lists the open capability proposals
+
   Scenario: Uninstall removes La Roca and keeps the data unless the operator consents; purge removes everything La Roca ever created, zero residue
     Given two synthetic homes with every La Roca integration installed
     When one home uninstalls with data kept and the other consents to purge
