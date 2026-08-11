@@ -1,9 +1,10 @@
 # Model providers
 
-La Roca uses **detected agent CLIs with a local floor**. On a fresh install it
-finds shipped CLI presets on `PATH`, uses their existing signed-in sessions in
-stable order, then tries local Ollama. No La Roca login or provider table is
-required. An explicit provider order remains authoritative.
+After [installation](lifecycle.md#install), La Roca uses **detected agent CLIs
+with a local floor**. It finds shipped CLI presets on `PATH`, uses their
+existing signed-in sessions in stable order (`claude`, then `codex`), then
+tries local Ollama. No La Roca login or provider table is required: ask with
+`roca query`. An explicit provider order remains authoritative.
 
 Questions use the first configured provider that reports itself ready. If the
 selected provider is unavailable or produces unusable SQL, La Roca reports the

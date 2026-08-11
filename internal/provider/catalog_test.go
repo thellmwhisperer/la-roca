@@ -30,6 +30,17 @@ func settings(t *testing.T, body string) Settings {
 	}
 }
 
+func pathWithBinaries(t *testing.T, names ...string) string {
+	t.Helper()
+	bin := t.TempDir()
+	for _, name := range names {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("fixture"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return bin
+}
+
 func TestWithNoConfigTheOrderIsTheDefaultOne(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	cascade, err := BuildCascade(settings(t, ""))
@@ -50,16 +61,11 @@ func TestZeroConfigBuildsTheOrderFromDetectedCommandPresets(t *testing.T) {
 		{name: "none", want: "ollama", missing: "claude,codex"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			bin := t.TempDir()
-			for _, name := range strings.Split(tc.detected, ",") {
-				if name == "" {
-					continue
-				}
-				if err := os.WriteFile(filepath.Join(bin, name), []byte("fixture"), 0o700); err != nil {
-					t.Fatal(err)
-				}
+			binaries := []string(nil)
+			if tc.detected != "" {
+				binaries = strings.Split(tc.detected, ",")
 			}
-			t.Setenv("PATH", bin)
+			t.Setenv("PATH", pathWithBinaries(t, binaries...))
 			cascade, err := BuildCascade(settings(t, ""))
 			if err != nil {
 				t.Fatal(err)
@@ -85,13 +91,7 @@ func TestZeroConfigBuildsTheOrderFromDetectedCommandPresets(t *testing.T) {
 }
 
 func TestExplicitOrderWinsUntouchedWhenCommandBinariesAreDetected(t *testing.T) {
-	bin := t.TempDir()
-	for _, name := range []string{NameClaude, NameCodex} {
-		if err := os.WriteFile(filepath.Join(bin, name), []byte("fixture"), 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	t.Setenv("PATH", bin)
+	t.Setenv("PATH", pathWithBinaries(t, NameClaude, NameCodex))
 	cascade, err := BuildCascade(settings(t, "[models]\norder = [\"ollama\"]\n"))
 	if err != nil {
 		t.Fatal(err)

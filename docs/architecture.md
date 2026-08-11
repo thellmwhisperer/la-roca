@@ -1,5 +1,8 @@
 # Architecture: the four domains
 
+First-time path: [install, detect an already signed-in agent CLI, and query
+without a La Roca login](lifecycle.md#install).
+
 `internal/` is four layers, bottom up. **No domain imports the one above it.**
 A package that reaches upward is a defect to fix by moving code, not by a
 shortcut.

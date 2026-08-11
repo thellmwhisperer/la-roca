@@ -1,10 +1,10 @@
 // Package provider is the model adapters and the cascade that chooses between
 // them.
 //
-// The decision is frontier with a local floor: the configured provider
-// serves when there is a credential, and with no network or no credential the
-// fall to local Ollama is automatic. The local one is the guaranteed floor, not
-// the product's identity.
+// With no explicit order, the decision is detected local agent CLIs in stable
+// preset order, then Ollama as the local floor. An environment or file order is
+// preserved as the operator wrote it; keyword rescue belongs to the service
+// after this provider cascade rather than pretending to be a provider.
 //
 // Three things this package holds on to, and each one was paid for:
 //

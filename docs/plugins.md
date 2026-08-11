@@ -1,5 +1,8 @@
 # Plugins
 
+First-time path: [install, detect an already signed-in agent CLI, and query
+without a La Roca login](lifecycle.md#install).
+
 La Roca plugins are ordinary neighbor executables. When `roca <name>` is not
 a built-in command, La Roca looks for `roca-<name>` on `PATH` and hands control
 to that executable. Arguments after the command, standard input,

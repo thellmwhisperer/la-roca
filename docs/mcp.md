@@ -1,5 +1,8 @@
 # The MCP plug
 
+First-time path: [install, detect an already signed-in agent CLI, and query
+without a La Roca login](lifecycle.md#install).
+
 The way La Roca reaches an agent that is not typing commands: the MCP server it
 can call.
 

@@ -40,7 +40,7 @@ is needed: run `roca init` and go. Update later with `roca update`.
 $ curl -fsSL https://raw.githubusercontent.com/thellmwhisperer/la-roca/main/install.sh | sh
 $ roca init
 $ roca query --full "what did we decide about the retention window"
-SQL · codex · gpt-5.6 · 3.1 s / search · 2 ms / answer · ollama · gemma4:12b · 9.8 s
+SQL · codex · gpt-5.6-luna · 3.1 s / search · 2 ms / answer · codex · gpt-5.6-luna · 9.8 s
 
 You decided it on 2 August: operational logs keep 30 days, in dated streams,
 never stored in SQLite. Your own words that night: "30 days and out. I do
@@ -87,6 +87,9 @@ enforce the same boundary.
 ## What you can ask
 
 Things that are one question away once your history is a database.
+The prose examples below use an optional Codex-to-Ollama split; without an
+explicit `models.interpret_order`, the provider that writes the SQL also reads
+the rows.
 
 ### Which model do you actually have chemistry with?
 
