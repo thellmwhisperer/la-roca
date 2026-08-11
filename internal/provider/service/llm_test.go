@@ -24,14 +24,16 @@ type fakeProvider struct {
 	fail     error
 	delay    time.Duration
 	requests int
+	external bool
 	// prompt is the last system message it received, and prompts is all of
 	// them: the retry has to be checkable for what it carries.
 	prompt  string
 	prompts []string
 }
 
-func (f *fakeProvider) Name() string    { return f.name }
-func (f *fakeProvider) ModelID() string { return f.model }
+func (f *fakeProvider) Name() string             { return f.name }
+func (f *fakeProvider) ModelID() string          { return f.model }
+func (f *fakeProvider) ExternalCredential() bool { return f.external }
 
 func (f *fakeProvider) Models(context.Context) provider.ModelReport {
 	return provider.ModelReport{Ready: f.ready.Ready, Models: []string{f.model}}
@@ -256,6 +258,29 @@ func TestWithNoProviderAtAllTheFailureNamesEverythingTried(t *testing.T) {
 	}
 }
 
+func TestFactoryDegradationNamesEveryMissingBinaryBeforeKeywordRescue(t *testing.T) {
+	svc := seededServiceWith(t, provider.Cascade{
+		Providers: []provider.Provider{unavailable("ollama", "Ollama does not answer", "run `ollama serve`")},
+		FallbackDiagnostics: []provider.Attempt{
+			{Name: "claude", Reason: "claude binary not found in PATH", Action: "install Claude Code"},
+			{Name: "codex", Reason: "codex binary not found in PATH", Action: "install Codex CLI"},
+		},
+		FactoryDefault: true,
+	})
+	res, err := svc.Query(t.Context(), service.QueryRequest{Question: theQuestionWithAMatch})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Path != service.PathKeyword || res.Degraded != service.DegradedUnavailable {
+		t.Fatalf("result = %+v", res)
+	}
+	for _, want := range []string{"claude binary not found in PATH", "codex binary not found in PATH", "Ollama does not answer"} {
+		if !strings.Contains(res.Message, want) {
+			t.Errorf("degraded answer does not contain %q: %s", want, res.Message)
+		}
+	}
+}
+
 func TestEveryDeclaredDegradedModeIsAFailure(t *testing.T) {
 	for _, mode := range []string{
 		service.DegradedUnavailable,
@@ -299,6 +324,29 @@ func TestAProviderThatFailsMidRequestDegradesToTheKeywordRescue(t *testing.T) {
 	}
 	if res.Path != service.PathKeyword {
 		t.Fatalf("path %q: the rescue answered and it has to say so", res.Path)
+	}
+}
+
+func TestFactoryDefaultFailsForwardFromAnUnusableLocalCLI(t *testing.T) {
+	broken := answering("claude", "")
+	broken.external = true
+	broken.fail = fmt.Errorf("local CLI account is signed out")
+	floor := answering("ollama", "SELECT content FROM memories WHERE supersedes IS NULL LIMIT 5")
+	svc := seededServiceWith(t, provider.Cascade{
+		Providers: []provider.Provider{broken, floor}, FactoryDefault: true,
+		Timeout: 2 * time.Second, Probe: time.Second,
+	})
+
+	res, err := svc.Query(t.Context(), service.QueryRequest{Question: theFreeQuestion})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Degraded != "" || res.Engine != "ollama" || broken.requests != 1 || floor.requests != 1 {
+		t.Fatalf("factory failover result = %+v, requests = %d/%d", res, broken.requests, floor.requests)
+	}
+	if len(res.Providers) != 2 || res.Providers[0].Ready ||
+		!strings.Contains(res.Providers[0].Reason, "signed out") {
+		t.Fatalf("factory attempts = %+v", res.Providers)
 	}
 }
 
@@ -713,6 +761,41 @@ func TestInterpretPromptIsLanguageAgnostic(t *testing.T) {
 		"paragraphs and simple dashes only. Do not use headings or tables.\n"
 	if prompt := model.prompts[0]; prompt != wantPrompt {
 		t.Errorf("prompt = %q, want %q", prompt, wantPrompt)
+	}
+}
+
+func TestInterpretReusesTheSQLProviderUnlessAnExplicitOrderExists(t *testing.T) {
+	rows := []map[string]any{{"text": "decision"}}
+	for _, tc := range []struct {
+		name           string
+		interpreters   []provider.Cascade
+		wantEngine     string
+		wantFloorCalls int
+	}{
+		{name: "factory order", wantEngine: "ollama", wantFloorCalls: 1},
+		{name: "explicit interpretation order", interpreters: []provider.Cascade{
+			cascadeOf(answering("split", "explicit summary")),
+		}, wantEngine: "split"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			broken := answering("claude", "")
+			broken.external = true
+			broken.fail = fmt.Errorf("local CLI account is signed out")
+			floor := answering("ollama", "factory summary")
+			main := provider.Cascade{
+				Providers: []provider.Provider{broken, floor}, FactoryDefault: true,
+				Timeout: 2 * time.Second, Probe: time.Second,
+			}
+			svc := seededServiceWith(t, main, tc.interpreters...)
+			got, err := svc.InterpretStream(t.Context(), "what was decided", []string{"text"}, rows,
+				0, "ollama", nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Engine != tc.wantEngine || broken.requests != 0 || floor.requests != tc.wantFloorCalls {
+				t.Fatalf("interpretation = %+v, requests = %d/%d", got, broken.requests, floor.requests)
+			}
+		})
 	}
 }
 

@@ -60,6 +60,8 @@ func renderDoctor(env *cliEnv, report service.DoctorReport) {
 	}
 	env.print("agents detected: %s", detectedAgentsLine(report.DetectedAgents))
 	env.print("agents not found: %s", missingAgentsLine(report.DetectedAgents))
+	renderModelDetection(env, report.DetectedModelBinaries, report.MissingModelBinaries,
+		report.FactoryDefault, report.FactoryDefaultProvider)
 
 	for _, warning := range report.Warnings {
 		env.print("warning: %s", warning)
@@ -242,16 +244,17 @@ func renderModels(env *cliEnv, listings []provider.ModelsListing, warnings []str
 const loginHelp = "" +
 	"Log in to a model provider. Same verb for every provider this build ships:\n" +
 	"\n" +
-	"  subscription flow  roca login codex\n" +
+	"  local CLI session  roca login codex\n" +
 	"  local CLI session  roca login claude\n" +
 	"  API key            roca login xai\n" +
 	"  API key            roca login zai\n" +
 	"  API key            roca login deepseek\n" +
 	"\n" +
-	"A local CLI login verifies the binary and its existing vendor session. La Roca\n" +
-	"never reads or stores that credential.\n" +
+	"A detected local CLI needs no La Roca login: its existing vendor session is\n" +
+	"used automatically. This command only verifies that binary and session.\n" +
 	"\n" +
-	"A subscription login opens the vendor's browser flow and leaves the session\n" +
+	"The configured Codex HTTP/OAuth subscription fallback opens the vendor's browser flow\n" +
+	"and leaves the session\n" +
 	"on this machine, readable only by you. It renews itself: you log in once.\n" +
 	"\n" +
 	"A key login prompts for the API key (no echo when the terminal supports it),\n" +
@@ -314,11 +317,15 @@ type loginEntry struct {
 	Command string `json:"command"`
 }
 
-// loginEntries is the single source of what this build can log in to: the
-// subscription and local-session flows first, then every key provider.
-func loginEntries() []loginEntry {
+// loginEntries is the single source of what this build can log in to: local
+// sessions first, a configured subscription transport when present, then keys.
+func loginEntries(files ...config.File) []loginEntry {
+	codexFlow := "local_cli"
+	if len(files) > 0 && !provider.UsesCommandTransport(files[0], provider.NameCodex) {
+		codexFlow = "subscription"
+	}
 	entries := []loginEntry{{
-		Name: provider.NameCodex, Flow: "subscription",
+		Name: provider.NameCodex, Flow: codexFlow,
 		Command: "roca login " + provider.NameCodex,
 	}, {
 		Name: provider.NameClaude, Flow: "local_cli",
@@ -332,10 +339,10 @@ func loginEntries() []loginEntry {
 	return entries
 }
 
-func loginCatalogue() string {
+func loginCatalogue(files ...config.File) string {
 	var b strings.Builder
 	b.WriteString("Supported providers:\n")
-	for _, entry := range loginEntries() {
+	for _, entry := range loginEntries(files...) {
 		b.WriteString(fmt.Sprintf("  %-10s  %-12s  ·  %s\n",
 			entry.Name, entry.humanFlow(), entry.Command))
 	}
@@ -389,7 +396,10 @@ func (env *cliEnv) showLoginOverview() error {
 		codexState = "session present but unreadable"
 	}
 	states := map[string]string{provider.NameCodex: codexState}
-	states[provider.NameClaude] = "existing Claude Code session; La Roca stores no credential"
+	if provider.UsesCommandTransport(file, provider.NameCodex) {
+		states[provider.NameCodex] = localCLISessionState(provider.NameCodex, cascade.DetectedBinaries)
+	}
+	states[provider.NameClaude] = localCLISessionState(provider.NameClaude, cascade.DetectedBinaries)
 	for _, name := range provider.KeyProviders() {
 		states[name] = "no stored API key"
 		if fileExists(provider.APIKeyPath(paths.Credentials, name)) {
@@ -399,12 +409,12 @@ func (env *cliEnv) showLoginOverview() error {
 	states[provider.NameOllama] = "local runtime, no credential needed"
 	if env.json {
 		return env.printJSON(map[string]any{
-			"providers": loginEntries(), "credentials": states,
+			"providers": loginEntries(file), "credentials": states,
 			"configuration": map[string]any{"path": paths.Config, "order": order,
 				"order_source": orderSource},
 		})
 	}
-	env.print("%s", loginCatalogue())
+	env.print("%s", loginCatalogue(file))
 	env.print("Model configuration:")
 	env.print("  order: %s (%s · change with: models.order in %s)",
 		strings.Join(order, ", "), orderSource, paths.Config)
@@ -413,11 +423,34 @@ func (env *cliEnv) showLoginOverview() error {
 			p.Name(), p.ModelID(), modelChoiceSource(paths.Config, p.Name(), p.ModelID()), modelChange(p.Name(), paths.Config))
 	}
 	env.print("Credential and session state:")
-	for _, entry := range loginEntries() {
+	for _, entry := range loginEntries(file) {
 		env.print("  %s: %s", entry.Name, states[entry.Name])
 	}
 	env.print("  %s: %s", provider.NameOllama, states[provider.NameOllama])
 	return nil
+}
+
+func localCLISessionState(name string, detected []string) string {
+	if !slices.Contains(detected, name) {
+		return name + " binary not found in PATH"
+	}
+	return name + " binary detected; session not verified (run `roca login " + name + "`)"
+}
+
+func renderModelDetection(env *cliEnv, detected, missing []string, factory bool, selected string) {
+	env.print("model binaries detected: %s", detectedAgentsLine(detected))
+	env.print("model binaries not found: %s", detectedAgentsLine(missing))
+	if !factory {
+		return
+	}
+	switch {
+	case selected == "":
+		env.print("factory default selected: none (no model provider is ready)")
+	case slices.Contains(detected, selected):
+		env.print("factory default selected: %s (existing local CLI session; no roca login required)", selected)
+	default:
+		env.print("factory default selected: %s (local runtime)", selected)
+	}
 }
 
 func (env *cliEnv) loginCodex(cmd *cobra.Command, requestedModel string) error {
@@ -544,7 +577,7 @@ func (env *cliEnv) loginModel(ctx context.Context, in io.Reader, paths config.Pa
 	}
 	order := file.Models.Order
 	if len(order) == 0 {
-		order = provider.DefaultOrder()
+		order = provider.DefaultOrder(nil)
 	}
 	order = append([]string{name}, slices.DeleteFunc(slices.Clone(order), func(current string) bool {
 		return current == name
@@ -571,6 +604,11 @@ func modelChoiceLine(name, status, model, path string) string {
 }
 
 func modelChange(name, path string) string {
+	if name == provider.NameCodex {
+		if file, err := config.LoadFile(path); err == nil && !provider.UsesCommandTransport(file, name) {
+			return fmt.Sprintf("roca login %s --model <id> or models.%s.model in %s", name, name, path)
+		}
+	}
 	if slices.Contains(provider.CommandPresetNames(), name) {
 		return fmt.Sprintf("roca model set <id> or models.%s.model in %s", name, path)
 	}
