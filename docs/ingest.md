@@ -39,9 +39,17 @@ and ignores `projects/`, `design_chats/`, `users.json`, and
 Each conversation UUID becomes an unprojected `claude-web` session whose name
 and summary are retained as metadata. Human and assistant messages are paired by
 `parent_message_uuid`, then ordered by timestamp; alternate replies remain
-separate exchanges instead of collapsing a branch. Human messages without a
-reply and messages whose parent is missing are discarded, and `roca ingest`
-reports each discard with its source record and reason.
+separate exchanges instead of collapsing a branch. An unreadable message is
+discarded on its own with its source record and precise reason; its readable
+descendants are reparented to the nearest surviving ancestor, or begin a new
+timestamp-ordered thread when none survives. A missing parent and an unpaired
+readable message are not malformed records and do not poison later exchanges.
+
+The conversation-file fingerprint includes the parser revision. After an ingest
+fix changes normalization, the next `roca ingest` reopens an unchanged export,
+backfills newly recoverable exchanges by message identity, and leaves sessions
+and exchanges that already landed untouched. Later runs return to the normal
+zero-delta fast path.
 
 Attachment and file names are retained as per-exchange metadata. La Roca does
 not open their bytes. Entries from `memories.json` enter the `user` layer with
