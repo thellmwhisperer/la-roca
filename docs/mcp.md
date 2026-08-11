@@ -6,7 +6,8 @@ can call.
 `roca_query` uses the same factory order as the CLI: La Roca detects an already
 signed-in supported agent CLI and needs no separate login or MCP credential
 setup. Configured HTTP/OAuth and key flows are fallbacks when no local CLI is
-usable.
+usable, but they are attempted only when named in an explicit `models.order` or
+`ROCA_MODELS_ORDER`.
 
 ---
 

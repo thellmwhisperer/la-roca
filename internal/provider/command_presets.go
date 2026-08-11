@@ -68,3 +68,17 @@ func DetectedCommandPresets(lookPath LookPathFunc) []string {
 	}
 	return detected
 }
+
+func MissingCommandPresets(detected []string) []string {
+	present := make(map[string]bool, len(detected))
+	for _, name := range detected {
+		present[name] = true
+	}
+	var missing []string
+	for _, name := range CommandPresetNames() {
+		if !present[name] {
+			missing = append(missing, name)
+		}
+	}
+	return missing
+}

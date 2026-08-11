@@ -115,15 +115,7 @@ func (s *Service) Doctor(ctx context.Context) (DoctorReport, error) {
 		PromptPath:            promptPath,
 		PromptExists:          promptErr == nil && promptInfo.Mode().IsRegular(),
 	}
-	detected := make(map[string]bool, len(cascade.DetectedBinaries))
-	for _, name := range cascade.DetectedBinaries {
-		detected[name] = true
-	}
-	for _, name := range provider.CommandPresetNames() {
-		if !detected[name] {
-			report.MissingModelBinaries = append(report.MissingModelBinaries, name)
-		}
-	}
+	report.MissingModelBinaries = provider.MissingCommandPresets(cascade.DetectedBinaries)
 
 	report.Providers, report.Titular = verdicts(ctx, cascade)
 	if cascade.FactoryDefault {

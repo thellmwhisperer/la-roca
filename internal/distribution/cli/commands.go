@@ -249,6 +249,8 @@ func renderBootstrap(env *cliEnv, result service.InitResult) {
 	for _, warning := range result.Warnings {
 		env.print("warning: %s", warning)
 	}
+	renderModelDetection(env, result.DetectedModelBinaries, result.MissingModelBinaries,
+		result.FactoryDefault, result.FactoryDefaultProvider)
 	if result.Ingest != nil {
 		env.print("  agents detected: %s", detectedAgentsLine(result.Ingest.DetectedAgents))
 		env.print("  agents not found: %s", missingAgentsLine(result.Ingest.DetectedAgents))

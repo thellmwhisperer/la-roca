@@ -314,9 +314,11 @@ roca model set ollama qwen3.5:4b
 ```
 
 The fallback vendor OAuth flow is fragile and changes with no notice. That risk
-is taken with eyes open and the mitigation is in the shape: when it breaks, the
-adapter fails clearly and the cascade degrades to the next provider or to the
-local floor. It never takes down a query.
+is taken with eyes open and the mitigation is in the shape: a readiness or probe
+failure moves selection to the next provider or the local floor. After a
+provider has been selected, a query-time failure is reported and goes directly
+to keyword rescue instead of silently retrying another provider. It never takes
+down the process.
 
 ## What happens on a query
 
@@ -329,9 +331,12 @@ local floor. It never takes down a query.
    four things went wrong: `model_unavailable`, `model_error`, `invalid_sql`,
    `sql_execution_error`.
 
-A provider that says it is available and then fails is **not** silently retried
-with the next one. That is deliberate: retrying in silence turns "the frontier
-provider is returning 500" into "the answers are odd today".
+A provider in an explicit order that says it is available and then fails is
+**not** silently retried with the next one. The factory order has one declared
+exception: when a detected local CLI's first real request proves that its
+session is unusable, La Roca records that failure and tries the next ready
+factory provider. This uses the query itself instead of spending an extra model
+inference on a separate account probe.
 
 Every answer down this path declares who answered:
 

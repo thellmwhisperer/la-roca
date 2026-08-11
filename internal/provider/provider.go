@@ -8,10 +8,10 @@
 //
 // Three things this package holds on to, and each one was paid for:
 //
-//   - **The fall is by availability, not by exception.** Before using a provider
-//     it is asked Ready. A provider that says yes and then fails is a query
-//     failure, declared as such: retrying in silence with the next one turns
-//     "the frontier provider is returning 500" into "the answers are odd today".
+//   - **The fall is normally by availability, not by exception.** Before using a
+//     provider it is asked Ready. The factory order permits one narrower case:
+//     a detected local CLI whose first real request disproves its usable session
+//     fails forward without paying for a separate inference probe.
 //   - **The provenance travels in the type.** A Selection carries where the
 //     order came from, so a name the operator persisted degrades with a warning
 //     and one written in code still fails. There is no way to lose the
@@ -320,7 +320,7 @@ type Cascade struct {
 	// DetectedBinaries names shipped local CLI presets found on PATH. It is
 	// diagnostic metadata even when an explicit provider order is active.
 	DetectedBinaries []string
-	// FallbackDiagnostics are absent factory-default binaries. They are appended
+	// FallbackDiagnostics are absent shipped binaries. They are appended
 	// only when every actual provider fails, so keyword degradation names the
 	// semantic transports that were missing without putting them in the order.
 	FallbackDiagnostics []Attempt
@@ -353,16 +353,43 @@ func (c Cascade) ask(ctx context.Context, p Provider) (Attempt, bool) {
 // It stops at the first yes: asking the ones behind the titular costs latency
 // on every single query and answers a question nobody asked.
 func (c Cascade) Pick(ctx context.Context) (Provider, []Attempt) {
+	return c.pick(ctx, 0)
+}
+
+func (c Cascade) PickAfter(ctx context.Context, providerName string) (Provider, []Attempt) {
+	start := len(c.Providers)
+	for i, candidate := range c.Providers {
+		if candidate.Name() == providerName {
+			start = i + 1
+			break
+		}
+	}
+	return c.pick(ctx, start)
+}
+
+func (c Cascade) pick(ctx context.Context, start int) (Provider, []Attempt) {
 	var attempts []Attempt
-	for _, p := range c.Providers {
+	for _, p := range c.Providers[start:] {
 		attempt, ready := c.ask(ctx, p)
 		attempts = append(attempts, attempt)
 		if ready {
 			return p, attempts
 		}
 	}
-	attempts = append(attempts, c.FallbackDiagnostics...)
-	return nil, attempts
+	return nil, c.CompleteDiagnostics(attempts)
+}
+
+func (c Cascade) CompleteDiagnostics(attempts []Attempt) []Attempt {
+	seen := make(map[string]bool, len(attempts))
+	for _, attempt := range attempts {
+		seen[attempt.Name] = true
+	}
+	for _, diagnostic := range c.FallbackDiagnostics {
+		if !seen[diagnostic.Name] {
+			attempts = append(attempts, diagnostic)
+		}
+	}
+	return attempts
 }
 
 func (c Cascade) Diagnose(ctx context.Context) []Attempt {

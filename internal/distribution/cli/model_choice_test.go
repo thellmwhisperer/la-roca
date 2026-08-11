@@ -100,10 +100,17 @@ func TestBuiltInModelSourceIsVisible(t *testing.T) {
 
 func TestInitSaysDetectedLocalCLIIsReadyWithoutRocaLogin(t *testing.T) {
 	var output strings.Builder
-	renderBootstrap(&cliEnv{out: &output}, service.InitResult{Model: &service.InitModel{
-		Ready: true, Provider: "codex", Model: "factory-model", ExternalCredential: true,
-	}})
-	for _, want := range []string{"no roca login required", "uses the existing local CLI session", "roca query"} {
+	renderBootstrap(&cliEnv{out: &output}, service.InitResult{
+		DetectedModelBinaries: []string{"claude", "codex"}, FactoryDefault: true,
+		FactoryDefaultProvider: "claude",
+		Model: &service.InitModel{
+			Ready: true, Provider: "claude", Model: "factory-model", ExternalCredential: true,
+		},
+	})
+	for _, want := range []string{
+		"model binaries detected: claude, codex", "factory default selected: claude",
+		"no roca login required", "uses the existing local CLI session", "roca query",
+	} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("init output does not contain %q:\n%s", want, output.String())
 		}

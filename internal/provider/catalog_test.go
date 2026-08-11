@@ -102,6 +102,22 @@ func TestExplicitOrderWinsUntouchedWhenCommandBinariesAreDetected(t *testing.T) 
 	if cascade.FactoryDefault || len(cascade.FallbackDiagnostics) != 0 {
 		t.Fatalf("explicit order carries factory-default state: %+v", cascade)
 	}
+
+	t.Setenv("PATH", t.TempDir())
+	cascade, err = BuildCascade(settings(t, "[models]\norder = [\"deepseek\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(names(cascade.Providers), ","); got != "deepseek" {
+		t.Fatalf("explicit order changed to %q", got)
+	}
+	var reasons []string
+	for _, diagnostic := range cascade.FallbackDiagnostics {
+		reasons = append(reasons, diagnostic.Reason)
+	}
+	if got := strings.Join(reasons, ","); got != "claude binary not found in PATH,codex binary not found in PATH" {
+		t.Fatalf("missing binary diagnostics = %q", got)
+	}
 }
 
 func TestTheConfiguredOrderIsWhatDecides(t *testing.T) {

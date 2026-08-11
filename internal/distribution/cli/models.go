@@ -60,19 +60,8 @@ func renderDoctor(env *cliEnv, report service.DoctorReport) {
 	}
 	env.print("agents detected: %s", detectedAgentsLine(report.DetectedAgents))
 	env.print("agents not found: %s", missingAgentsLine(report.DetectedAgents))
-	env.print("model binaries detected: %s", detectedAgentsLine(report.DetectedModelBinaries))
-	env.print("model binaries not found: %s", detectedAgentsLine(report.MissingModelBinaries))
-	if report.FactoryDefault {
-		switch {
-		case report.FactoryDefaultProvider == "":
-			env.print("factory default selected: none (no model provider is ready)")
-		case slices.Contains(report.DetectedModelBinaries, report.FactoryDefaultProvider):
-			env.print("factory default selected: %s (existing local CLI session; no roca login required)",
-				report.FactoryDefaultProvider)
-		default:
-			env.print("factory default selected: %s (local runtime)", report.FactoryDefaultProvider)
-		}
-	}
+	renderModelDetection(env, report.DetectedModelBinaries, report.MissingModelBinaries,
+		report.FactoryDefault, report.FactoryDefaultProvider)
 
 	for _, warning := range report.Warnings {
 		env.print("warning: %s", warning)
@@ -408,9 +397,9 @@ func (env *cliEnv) showLoginOverview() error {
 	}
 	states := map[string]string{provider.NameCodex: codexState}
 	if provider.UsesCommandTransport(file, provider.NameCodex) {
-		states[provider.NameCodex] = "existing Codex CLI session; La Roca stores no credential and requires no login"
+		states[provider.NameCodex] = localCLISessionState(provider.NameCodex, cascade.DetectedBinaries)
 	}
-	states[provider.NameClaude] = "existing Claude Code session; La Roca stores no credential and requires no login"
+	states[provider.NameClaude] = localCLISessionState(provider.NameClaude, cascade.DetectedBinaries)
 	for _, name := range provider.KeyProviders() {
 		states[name] = "no stored API key"
 		if fileExists(provider.APIKeyPath(paths.Credentials, name)) {
@@ -439,6 +428,29 @@ func (env *cliEnv) showLoginOverview() error {
 	}
 	env.print("  %s: %s", provider.NameOllama, states[provider.NameOllama])
 	return nil
+}
+
+func localCLISessionState(name string, detected []string) string {
+	if !slices.Contains(detected, name) {
+		return name + " binary not found in PATH"
+	}
+	return name + " binary detected; session not verified (run `roca login " + name + "`)"
+}
+
+func renderModelDetection(env *cliEnv, detected, missing []string, factory bool, selected string) {
+	env.print("model binaries detected: %s", detectedAgentsLine(detected))
+	env.print("model binaries not found: %s", detectedAgentsLine(missing))
+	if !factory {
+		return
+	}
+	switch {
+	case selected == "":
+		env.print("factory default selected: none (no model provider is ready)")
+	case slices.Contains(detected, selected):
+		env.print("factory default selected: %s (existing local CLI session; no roca login required)", selected)
+	default:
+		env.print("factory default selected: %s (local runtime)", selected)
+	}
 }
 
 func (env *cliEnv) loginCodex(cmd *cobra.Command, requestedModel string) error {

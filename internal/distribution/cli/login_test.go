@@ -32,8 +32,8 @@ func TestBareLoginExactOutputWithoutSessions(t *testing.T) {
 		"  codex: model gpt-5.6-luna (built-in default · change with: roca model set <id> or models.codex.model in " + configPath + ")\n" +
 		"  ollama: model qwen3.5:4b (built-in default · change with: models.ollama.model in " + configPath + ")\n" +
 		"Credential and session state:\n" +
-		"  codex: existing Codex CLI session; La Roca stores no credential and requires no login\n" +
-		"  claude: existing Claude Code session; La Roca stores no credential and requires no login\n" +
+		"  codex: codex binary detected; session not verified (run `roca login codex`)\n" +
+		"  claude: claude binary not found in PATH\n" +
 		"  deepseek: no stored API key\n" +
 		"  zai: no stored API key\n" +
 		"  xai: no stored API key\n" +

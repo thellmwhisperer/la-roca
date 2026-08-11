@@ -62,8 +62,9 @@ func correction(rejection error) string {
 // The order of what happens here is the contract and not an implementation
 // detail:
 //
-//  1. A provider is chosen by availability, never by exception. What is not
-//     available does not get asked, and why it was not is recorded.
+//  1. A provider is chosen by availability. What is not available does not get
+//     asked, and why it was not is recorded. In the factory order only, a local
+//     CLI whose first real request disproves its session fails forward.
 //  2. The model generates SQL and that SQL ALWAYS goes through the two-halved
 //     gate. A model is not above the gate: if it were, "everything that runs has
 //     been validated" would stop being true.
@@ -71,10 +72,9 @@ func correction(rejection error) string {
 //     failing, and it says which of the four things went wrong. The fragility of
 //     a provider never takes down a query.
 //
-// What it does NOT do is silently retry with the next provider when the titular
-// one fails mid-request: a provider that is
-// returning 500 has to look like a provider that is returning 500, not like
-// "the answers are odd today".
+// Configured orders never retry a provider failure with the next provider. The
+// factory local-CLI exception is declared in the attempts and applies only to
+// the first request, before any SQL answer exists.
 func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResult) (QueryResult, error) {
 	progress(req, QueryPhaseSQL)
 	cascade := s.opts.Providers
@@ -120,13 +120,34 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 	var validated string
 	var rejection error
 	for attempt := 0; attempt <= retriesOnRejection; attempt++ {
-		inferenceStart := time.Now()
-		answer, err := cascade.Chat(ctx, chosen, provider.ChatRequest{Messages: messages})
-		res.SQLInferenceMS += time.Since(inferenceStart).Milliseconds()
-		if err != nil {
+		var answer provider.ChatResponse
+		for {
+			inferenceStart := time.Now()
+			answer, err = cascade.Chat(ctx, chosen, provider.ChatRequest{Messages: messages})
+			res.SQLInferenceMS += time.Since(inferenceStart).Milliseconds()
+			if err == nil {
+				break
+			}
 			res.ProviderError = err.Error()
-			return s.rescue(ctx, req, res, DegradedLLMError,
-				fmt.Sprintf("%s could not answer: %v", chosen.Name(), err)), nil
+			credential, localCLI := chosen.(interface{ ExternalCredential() bool })
+			if attempt != 0 || !cascade.FactoryDefault || !localCLI || !credential.ExternalCredential() {
+				res.Providers = cascade.CompleteDiagnostics(res.Providers)
+				return s.rescue(ctx, req, res, DegradedLLMError,
+					fmt.Sprintf("%s could not answer: %v\n%s", chosen.Name(), err, tried(res.Providers))), nil
+			}
+			res.Providers[len(res.Providers)-1].Ready = false
+			res.Providers[len(res.Providers)-1].Reason = err.Error()
+			res.Providers[len(res.Providers)-1].Action =
+				"verify the existing local CLI session with `roca login " + chosen.Name() + "`"
+			next, further := cascade.PickAfter(ctx, chosen.Name())
+			res.Providers = append(res.Providers, further...)
+			if next == nil {
+				return s.rescue(ctx, req, res, DegradedLLMError,
+					"no factory-default model could answer.\n"+tried(res.Providers)), nil
+			}
+			chosen = next
+			res.Engine, res.Model = chosen.Name(), chosen.ModelID()
+			res.ProviderNote = noteAboutTheFall(chosen, res.Providers)
 		}
 		res.LLMLatencyMS += answer.LatencyMS
 		// The adapter hands back raw model output; this stage asked for SQL, so

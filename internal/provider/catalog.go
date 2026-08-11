@@ -74,9 +74,10 @@ func BuildCascade(s Settings) (Cascade, error) {
 	}
 
 	cascade := Cascade{
-		Providers:        resolved.Providers,
-		DetectedBinaries: detected,
-		Disabled:         resolved.Disabled,
+		Providers:           resolved.Providers,
+		DetectedBinaries:    detected,
+		FallbackDiagnostics: missingBinaryDiagnostics(detected),
+		Disabled:            resolved.Disabled,
 		// The config's warnings travel with the cascade: they are about the same
 		// file and the operator reads them in the same place.
 		Warnings: append(append(append([]string(nil), s.File.Warnings...),
@@ -84,7 +85,6 @@ func BuildCascade(s Settings) (Cascade, error) {
 	}
 	if selection.Source == SourceCode {
 		cascade.FactoryDefault = true
-		cascade.FallbackDiagnostics = missingBinaryDiagnostics(detected)
 	}
 	return s.budgeted(cascade), nil
 }
@@ -150,15 +150,8 @@ func (s Settings) selection(catalog Catalog, detected []string) Selection {
 }
 
 func missingBinaryDiagnostics(detected []string) []Attempt {
-	present := make(map[string]bool, len(detected))
-	for _, name := range detected {
-		present[name] = true
-	}
 	var missing []Attempt
-	for _, name := range CommandPresetNames() {
-		if present[name] {
-			continue
-		}
+	for _, name := range MissingCommandPresets(detected) {
 		preset := commandPresets[name]
 		missing = append(missing, Attempt{Name: name, ModelID: preset.Model,
 			Reason: filepath.Base(preset.Command[0]) + " binary not found in PATH", Action: preset.Action})

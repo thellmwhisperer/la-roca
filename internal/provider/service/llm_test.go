@@ -327,6 +327,29 @@ func TestAProviderThatFailsMidRequestDegradesToTheKeywordRescue(t *testing.T) {
 	}
 }
 
+func TestFactoryDefaultFailsForwardFromAnUnusableLocalCLI(t *testing.T) {
+	broken := answering("claude", "")
+	broken.external = true
+	broken.fail = fmt.Errorf("local CLI account is signed out")
+	floor := answering("ollama", "SELECT content FROM memories WHERE supersedes IS NULL LIMIT 5")
+	svc := seededServiceWith(t, provider.Cascade{
+		Providers: []provider.Provider{broken, floor}, FactoryDefault: true,
+		Timeout: 2 * time.Second, Probe: time.Second,
+	})
+
+	res, err := svc.Query(t.Context(), service.QueryRequest{Question: theFreeQuestion})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Degraded != "" || res.Engine != "ollama" || broken.requests != 1 || floor.requests != 1 {
+		t.Fatalf("factory failover result = %+v, requests = %d/%d", res, broken.requests, floor.requests)
+	}
+	if len(res.Providers) != 2 || res.Providers[0].Ready ||
+		!strings.Contains(res.Providers[0].Reason, "signed out") {
+		t.Fatalf("factory attempts = %+v", res.Providers)
+	}
+}
+
 // A provider that never comes back is bounded, and what times out is a declared
 // failure.
 func TestASlowProviderIsBoundedByTheBudget(t *testing.T) {
