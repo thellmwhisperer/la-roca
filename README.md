@@ -44,7 +44,25 @@ which model will answer and how to fix anything that is not ready.
 
 Things that are one question away once your history is a database.
 
-The bug you know you have already fixed once, seen by both readers:
+### Which model do you actually have chemistry with?
+
+The questions you never thought your logs could settle:
+
+```text
+$ roca query --full "which model do I have real chemistry with, and which one just gets the job done"
+SQL · codex · gpt-5.6 · 3.4 s / search · 4 ms / answer · ollama · gemma4:12b · 12.1 s
+
+Claude is the passionate one: three times the praise and three times the
+cursing of anyone else, and you always come back. Codex is the contractor:
+half the anger, a third of the joy, and the only one you trust overnight
+("going to sleep, I expect both PRs green by morning"). And the one you
+cannot work with lately is qwen-0.8b: four abandoned sessions in a row
+without a single kind word.
+```
+
+### The bug you know you have already fixed once
+
+The same answer, seen by both readers:
 
 <details open>
 <summary><strong>What your agent sees (default): TOON format, for token efficiency and a better agent experience</strong></summary>
@@ -79,7 +97,7 @@ cheap, local, and secure.
 
 </details>
 
-The perfect one-liner an agent wrote for you weeks ago:
+### The perfect one-liner an agent wrote for you weeks ago
 
 ```text
 $ roca query "the ffmpeg one-liner that extracted frames for verification"
@@ -87,7 +105,7 @@ rows[1]{source,created_at,text}:
   exchange,"2026-07-29 18:05:33","ffmpeg -ss 2 -i out.mp4 -frames:v 1 -q:v 3 frame.jpg   # verify before delivering"
 ```
 
-Yesterday's decision, with the conversation that made it:
+### Yesterday's decision, with the conversation that made it
 
 ```text
 $ roca query "what did we decide about the retention window"
@@ -96,23 +114,10 @@ rows[2]{source,created_at,text}:
   exchange,"2026-08-02 21:02:44","30 days and out. I do not want eternal logs."
 ```
 
-And the questions you never thought your logs could settle: which model do
-you actually have chemistry with?
+### Exact SQL, when you want it
 
-```text
-$ roca query --full "which model do I have real chemistry with, and which one just gets the job done"
-SQL · codex · gpt-5.6 · 3.4 s / search · 4 ms / answer · ollama · gemma4:12b · 12.1 s
-
-Claude is the passionate one: three times the praise and three times the
-cursing of anyone else, and you always come back. Codex is the contractor:
-half the anger, a third of the joy, and the only one you trust overnight
-("going to sleep, I expect both PRs green by morning"). And the one you
-cannot work with lately is qwen-0.8b: four abandoned sessions in a row
-without a single kind word.
-```
-
-And because it is a real database, not a search box, you can interrogate it
-with exact SQL. No grep and no vector store can answer this:
+Because it is a real database, not a search box. No grep and no vector
+store can answer this:
 
 ```sh
 roca exec "SELECT source_agent, COUNT(*) AS sessions
