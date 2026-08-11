@@ -30,13 +30,93 @@ func settings(t *testing.T, body string) Settings {
 	}
 }
 
+func pathWithBinaries(t *testing.T, names ...string) string {
+	t.Helper()
+	bin := t.TempDir()
+	for _, name := range names {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("fixture"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return bin
+}
+
 func TestWithNoConfigTheOrderIsTheDefaultOne(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
 	cascade, err := BuildCascade(settings(t, ""))
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
-	if got := strings.Join(names(cascade.Providers), ","); got != "codex,ollama" {
+	if got := strings.Join(names(cascade.Providers), ","); got != "ollama" {
 		t.Fatalf("order %q", got)
+	}
+}
+
+func TestZeroConfigBuildsTheOrderFromDetectedCommandPresets(t *testing.T) {
+	for _, tc := range []struct {
+		name, detected, want, missing string
+	}{
+		{name: "both binaries", detected: "claude,codex", want: "claude,codex,ollama"},
+		{name: "codex only", detected: "codex", want: "codex,ollama", missing: "claude"},
+		{name: "none", want: "ollama", missing: "claude,codex"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			binaries := []string(nil)
+			if tc.detected != "" {
+				binaries = strings.Split(tc.detected, ",")
+			}
+			t.Setenv("PATH", pathWithBinaries(t, binaries...))
+			cascade, err := BuildCascade(settings(t, ""))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(names(cascade.Providers), ","); got != tc.want {
+				t.Fatalf("order = %q, want %q", got, tc.want)
+			}
+			if got := strings.Join(cascade.DetectedBinaries, ","); got != tc.detected {
+				t.Fatalf("detected binaries = %q, want %q", got, tc.detected)
+			}
+			var missing []string
+			for _, attempt := range cascade.FallbackDiagnostics {
+				missing = append(missing, attempt.Name)
+				if attempt.Reason != attempt.Name+" binary not found in PATH" {
+					t.Fatalf("%s reason = %q", attempt.Name, attempt.Reason)
+				}
+			}
+			if got := strings.Join(missing, ","); got != tc.missing {
+				t.Fatalf("missing binaries = %q, want %q", got, tc.missing)
+			}
+		})
+	}
+}
+
+func TestExplicitOrderWinsUntouchedWhenCommandBinariesAreDetected(t *testing.T) {
+	t.Setenv("PATH", pathWithBinaries(t, NameClaude, NameCodex))
+	cascade, err := BuildCascade(settings(t, "[models]\norder = [\"ollama\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(names(cascade.Providers), ","); got != "ollama" {
+		t.Fatalf("explicit order changed to %q", got)
+	}
+	if cascade.FactoryDefault || len(cascade.FallbackDiagnostics) != 0 {
+		t.Fatalf("explicit order carries factory-default state: %+v", cascade)
+	}
+
+	t.Setenv("PATH", t.TempDir())
+	cascade, err = BuildCascade(settings(t, "[models]\norder = [\"deepseek\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(names(cascade.Providers), ","); got != "deepseek" {
+		t.Fatalf("explicit order changed to %q", got)
+	}
+	var reasons []string
+	for _, diagnostic := range cascade.FallbackDiagnostics {
+		reasons = append(reasons, diagnostic.Reason)
+	}
+	if got := strings.Join(reasons, ","); got != "claude binary not found in PATH,codex binary not found in PATH" {
+		t.Fatalf("missing binary diagnostics = %q", got)
 	}
 }
 
@@ -122,6 +202,25 @@ func TestClaudeIsABuiltInLocalBinaryProvider(t *testing.T) {
 	} {
 		if !strings.Contains(joined, flag) {
 			t.Errorf("default Claude command does not contain %q: %q", flag, joined)
+		}
+	}
+}
+
+func TestCodexIsAZeroconfigBuiltInLocalBinaryProvider(t *testing.T) {
+	base := settings(t, "[models]\norder = [\"codex\"]\n")
+	cascade, err := BuildCascade(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary, ok := cascade.Providers[0].(*LocalBinary)
+	preset := commandPresets[NameCodex]
+	if !ok || binary.ModelID() != DefaultCodexModel || preset.Model != DefaultCodexModel {
+		t.Fatalf("Codex provider = %#v; preset = %#v", cascade.Providers[0], preset)
+	}
+	joined := strings.Join(preset.Command, " ")
+	for _, flag := range []string{"codex exec", "--model {model}", "--sandbox read-only", "--ephemeral", "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules", "--color never"} {
+		if !strings.Contains(joined, flag) {
+			t.Errorf("default Codex command does not contain %q: %q", flag, joined)
 		}
 	}
 }
@@ -355,7 +454,7 @@ func TestTheConfigWarningsTravelWithTheCascade(t *testing.T) {
 }
 
 func TestCodexTakesItsSessionFromTheCredentialsDirectory(t *testing.T) {
-	base := settings(t, "[models]\norder = [\"codex\"]\n")
+	base := settings(t, "[models]\norder = [\"codex\"]\n\n[models.codex]\nbase_url = \"https://chatgpt.com/backend-api/codex\"\n")
 	cascade, err := BuildCascade(base)
 	if err != nil {
 		t.Fatalf("build: %v", err)

@@ -74,3 +74,22 @@ func TestDoctorNamesDetectedAgents(t *testing.T) {
 		}
 	})
 }
+
+func TestDoctorExplainsTheZeroLoginFactorySelection(t *testing.T) {
+	var output strings.Builder
+	renderDoctor(&cliEnv{out: &output}, service.DoctorReport{
+		DetectedModelBinaries:  []string{"claude", "codex"},
+		FactoryDefault:         true,
+		FactoryDefaultProvider: "claude",
+	})
+	out := output.String()
+	for _, want := range []string{
+		"model binaries detected: claude, codex",
+		"factory default selected: claude",
+		"no roca login required",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("doctor output does not contain %q:\n%s", want, out)
+		}
+	}
+}

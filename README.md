@@ -21,18 +21,37 @@ from your terminal, or from the agents themselves over MCP.
 Every answer shows its proof: the SQL that produced it and the rows that
 back it.
 
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/thellmwhisperer/la-roca/main/install.sh | sh
+```
+
+This installs one static binary at `~/.local/bin/roca`, with no dependencies
+and no other changes. La Roca supports macOS on Apple Silicon and Linux; on
+Windows, use WSL.
+
+If `claude` or `codex` is already installed and signed in, no login of any kind
+is needed: run `roca init` and go. Update later with `roca update`.
+
 ## Sixty seconds
 
 ```text
 $ curl -fsSL https://raw.githubusercontent.com/thellmwhisperer/la-roca/main/install.sh | sh
 $ roca init
 $ roca query --full "what did we decide about the retention window"
-SQL · codex · gpt-5.6 · 3.1 s / search · 2 ms / answer · ollama · gemma4:12b · 9.8 s
+SQL · codex · gpt-5.6-luna · 3.1 s / search · 2 ms / answer · codex · gpt-5.6-luna · 9.8 s
 
 You decided it on 2 August: operational logs keep 30 days, in dated streams,
 never stored in SQLite. Your own words that night: "30 days and out. I do
 not want eternal logs."
 ```
+
+If an already signed-in agent CLI is on `PATH`, that is the factory default:
+La Roca detects it and semantic queries work immediately. No provider table,
+API key, browser flow, or `roca login` step is required. Without one, La Roca
+tries the local Ollama floor and finally the keyword rescue, naming every
+missing or unavailable semantic route.
 
 `roca init` asks before creating or adopting a database, never silently, and
 ends by telling you how deep your memory goes: the oldest moment it ingested
@@ -68,6 +87,9 @@ enforce the same boundary.
 ## What you can ask
 
 Things that are one question away once your history is a database.
+The prose examples below use an optional Codex-to-Ollama split; without an
+explicit `models.interpret_order`, the provider that writes the SQL also reads
+the rows.
 
 ### Which model do you actually have chemistry with?
 
@@ -219,12 +241,11 @@ exactly the information the task needs instead of a whole skill.
   the answer. Each phase's provider is configured independently, including
   fully local through Ollama: make the query smart so the reader can be
   cheap, local, and secure.
-- **Bring the plan you already pay for.** `roca login codex` signs into your
-  existing Codex subscription through its own OAuth, no API key required;
-  providers can also run through a local CLI like Claude Code using the
-  subscription you already pay for; key-based providers work too, and the
-  local floor through Ollama needs neither. Asking your history questions does
-  not open a new bill.
+- **Bring the plan you already pay for.** La Roca detects supported agent CLIs
+  already on `PATH` and uses their existing signed-in sessions without reading,
+  copying, or storing credentials. No La Roca login is required. For machines
+  without a usable local CLI, key-based and HTTP/OAuth providers remain
+  configurable fallbacks, and the local Ollama floor needs no credential.
 - **Exact retrieval, no embeddings.** Recovery is SQL plus a local FTS5 index
   with diacritic folding; a plain `LIKE` fallback works before the index
   exists. If you want semantics, your model supplies it at question time; the
@@ -283,7 +304,8 @@ Configuration edits preserve unrelated bytes and create a recovery backup.
 The [docs index](docs/README.md) orders the longer reads:
 
 - [Architecture](docs/architecture.md): the four internal domains.
-- [Model providers](docs/models.md): provider order, login, local floor.
+- [Model providers](docs/models.md): automatic CLI detection, provider order,
+  local floor, and fallback login flows.
 - [The MCP plug](docs/mcp.md): tools, contract, integration targets.
 - [Install, update, and uninstall](docs/lifecycle.md): the binary's life.
 - [Operations](docs/operations.md): logs, redaction, retention.

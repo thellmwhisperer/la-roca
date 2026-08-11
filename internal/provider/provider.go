@@ -1,17 +1,17 @@
 // Package provider is the model adapters and the cascade that chooses between
 // them.
 //
-// The decision is frontier with a local floor: the configured provider
-// serves when there is a credential, and with no network or no credential the
-// fall to local Ollama is automatic. The local one is the guaranteed floor, not
-// the product's identity.
+// With no explicit order, the decision is detected local agent CLIs in stable
+// preset order, then Ollama as the local floor. An environment or file order is
+// preserved as the operator wrote it; keyword rescue belongs to the service
+// after this provider cascade rather than pretending to be a provider.
 //
 // Three things this package holds on to, and each one was paid for:
 //
-//   - **The fall is by availability, not by exception.** Before using a provider
-//     it is asked Ready. A provider that says yes and then fails is a query
-//     failure, declared as such: retrying in silence with the next one turns
-//     "the frontier provider is returning 500" into "the answers are odd today".
+//   - **The fall is normally by availability, not by exception.** Before using a
+//     provider it is asked Ready. The factory order permits one narrower case:
+//     a detected local CLI whose first real request disproves its usable session
+//     fails forward without paying for a separate inference probe.
 //   - **The provenance travels in the type.** A Selection carries where the
 //     order came from, so a name the operator persisted degrades with a warning
 //     and one written in code still fails. There is no way to lose the
@@ -211,12 +211,20 @@ type Resolved struct {
 	Disabled bool
 }
 
-// DefaultOrder is the order with no config: the frontier by subscription first,
-// the local floor last.
+// DefaultOrder is the effective order with no config: detected local agent CLI
+// binaries first and the local floor last. Keyword search remains the rescue
+// after this provider order rather than pretending to be a model provider.
 //
 // The last element is always a provider that can exist on any supported
 // platform, so platform-specific providers cannot hide a usable local floor.
-func DefaultOrder() []string { return []string{NameCodex, NameOllama} }
+func DefaultOrder(lookPath LookPathFunc) []string {
+	return defaultOrderFromDetected(DetectedCommandPresets(lookPath))
+}
+
+func defaultOrderFromDetected(detected []string) []string {
+	order := append([]string(nil), detected...)
+	return append(order, NameOllama)
+}
 
 // Resolve turns a selection into providers.
 //
@@ -309,6 +317,16 @@ func normalize(name string) string {
 // Cascade is the resolved order, ready to serve.
 type Cascade struct {
 	Providers []Provider
+	// DetectedBinaries names shipped local CLI presets found on PATH. It is
+	// diagnostic metadata even when an explicit provider order is active.
+	DetectedBinaries []string
+	// FallbackDiagnostics are absent shipped binaries. They are appended
+	// only when every actual provider fails, so keyword degradation names the
+	// semantic transports that were missing without putting them in the order.
+	FallbackDiagnostics []Attempt
+	// FactoryDefault says the order was constructed from PATH rather than read
+	// from the environment or configuration.
+	FactoryDefault bool
 	// Timeout bounds a model request. Zero is DefaultTimeout.
 	Timeout time.Duration
 	// Probe bounds the availability question. Zero is ProbeTimeout.
@@ -335,15 +353,43 @@ func (c Cascade) ask(ctx context.Context, p Provider) (Attempt, bool) {
 // It stops at the first yes: asking the ones behind the titular costs latency
 // on every single query and answers a question nobody asked.
 func (c Cascade) Pick(ctx context.Context) (Provider, []Attempt) {
+	return c.pick(ctx, 0)
+}
+
+func (c Cascade) PickAfter(ctx context.Context, providerName string) (Provider, []Attempt) {
+	start := len(c.Providers)
+	for i, candidate := range c.Providers {
+		if candidate.Name() == providerName {
+			start = i + 1
+			break
+		}
+	}
+	return c.pick(ctx, start)
+}
+
+func (c Cascade) pick(ctx context.Context, start int) (Provider, []Attempt) {
 	var attempts []Attempt
-	for _, p := range c.Providers {
+	for _, p := range c.Providers[start:] {
 		attempt, ready := c.ask(ctx, p)
 		attempts = append(attempts, attempt)
 		if ready {
 			return p, attempts
 		}
 	}
-	return nil, attempts
+	return nil, c.CompleteDiagnostics(attempts)
+}
+
+func (c Cascade) CompleteDiagnostics(attempts []Attempt) []Attempt {
+	seen := make(map[string]bool, len(attempts))
+	for _, attempt := range attempts {
+		seen[attempt.Name] = true
+	}
+	for _, diagnostic := range c.FallbackDiagnostics {
+		if !seen[diagnostic.Name] {
+			attempts = append(attempts, diagnostic)
+		}
+	}
+	return attempts
 }
 
 func (c Cascade) Diagnose(ctx context.Context) []Attempt {

@@ -18,7 +18,7 @@ const (
 	CredentialPresent   = "present"
 	CredentialAbsent    = "absent"
 	CredentialNotNeeded = "not needed"
-	CredentialExternal  = "managed by local CLI"
+	CredentialExternal  = "managed by local CLI; no roca login required"
 )
 
 // DoctorReport is the installation's diagnosis: where its data is, what it
@@ -39,6 +39,14 @@ type DoctorReport struct {
 	Bedrock      *Bedrock `json:"bedrock"`
 	// DetectedAgents are the runtimes whose routes or stores exist on this machine.
 	DetectedAgents []string `json:"detected_agents"`
+	// DetectedModelBinaries and MissingModelBinaries describe shipped agent CLI
+	// transports independently of the configured order.
+	DetectedModelBinaries []string `json:"detected_model_binaries"`
+	MissingModelBinaries  []string `json:"missing_model_binaries"`
+	// FactoryDefaultProvider is the provider selected by the PATH-built order.
+	// It stays empty when the operator supplied an order or none is ready.
+	FactoryDefault         bool   `json:"factory_default"`
+	FactoryDefaultProvider string `json:"factory_default_provider,omitempty"`
 
 	// Providers are in the declared order, each with its verdict.
 	Providers []DoctorProvider `json:"providers"`
@@ -92,21 +100,27 @@ func (s *Service) Doctor(ctx context.Context) (DoctorReport, error) {
 	promptPath := filepath.Join(s.dataDir(), "prompt.md")
 	promptInfo, promptErr := os.Stat(promptPath)
 	report := DoctorReport{
-		Version:        s.opts.Version,
-		SourceSHA:      s.opts.Commit,
-		DBPath:         s.db.Path(),
-		ConfigPath:     s.opts.ConfigPath,
-		ConfigExists:   s.opts.ConfigExists,
-		ModelDisabled:  cascade.Disabled,
-		Warnings:       cascade.Warnings,
-		Memories:       s.countOf(ctx, "memories"),
-		Bedrock:        bedrock,
-		DetectedAgents: ingest.DetectAgents(s.opts.Sources),
-		PromptPath:     promptPath,
-		PromptExists:   promptErr == nil && promptInfo.Mode().IsRegular(),
+		Version:               s.opts.Version,
+		SourceSHA:             s.opts.Commit,
+		DBPath:                s.db.Path(),
+		ConfigPath:            s.opts.ConfigPath,
+		ConfigExists:          s.opts.ConfigExists,
+		ModelDisabled:         cascade.Disabled,
+		Warnings:              cascade.Warnings,
+		Memories:              s.countOf(ctx, "memories"),
+		Bedrock:               bedrock,
+		DetectedAgents:        ingest.DetectAgents(s.opts.Sources),
+		DetectedModelBinaries: append([]string(nil), cascade.DetectedBinaries...),
+		FactoryDefault:        cascade.FactoryDefault,
+		PromptPath:            promptPath,
+		PromptExists:          promptErr == nil && promptInfo.Mode().IsRegular(),
 	}
+	report.MissingModelBinaries = provider.MissingCommandPresets(cascade.DetectedBinaries)
 
 	report.Providers, report.Titular = verdicts(ctx, cascade)
+	if cascade.FactoryDefault {
+		report.FactoryDefaultProvider = report.Titular
+	}
 	// The second inference gets the same diagnosis as the first, and only when
 	// the operator declared one: an installation that does not split the two
 	// inferences has no second decision to report.

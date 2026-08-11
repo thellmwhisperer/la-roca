@@ -5,6 +5,7 @@ Feature: Provider configuration
     Given an initialized home with no model
 
   Scenario: The provider order in config decides who is asked first
+    Given a fake "codex" agent CLI binary is on PATH
     Given the provider configuration is:
       | provider | model             | availability |
       | ollama   | local-acceptance  | unreachable  |
@@ -28,4 +29,12 @@ Feature: Provider configuration
     When I run Doctor
     Then the command exits with code 0
     And the configuration is reported as absent
+    And the reported provider order is "ollama"
+
+  Scenario: A detected agent CLI becomes the zero-login factory default
+    Given a fake "codex" agent CLI binary is on PATH
+    And the configuration file is missing
+    When I run Doctor
+    Then the command exits with code 0
     And the reported provider order is "codex, ollama"
+    And the titular provider is "codex"

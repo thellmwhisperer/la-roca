@@ -30,7 +30,7 @@ func TestLaunchRegistryDetections(t *testing.T) {
 		{"claude gap", "[models]\norder = [\"ollama\"]\n", ProposalClaudeCLI, true},
 		{"unusable claude HTTP", "[models]\norder = [\"claude\"]\n[models.claude]\nbase_url = \"https://example.invalid\"\nmodel = \"remote\"\n", ProposalClaudeCLI, true},
 		{"usable claude HTTP", "[models]\norder = [\"claude\"]\n[models.claude]\nbase_url = \"https://example.invalid\"\nmodel = \"remote\"\napi_key = \"synthetic-credential\"\n", ProposalClaudeCLI, false},
-		{"codex migration", "[models]\norder = [\"codex\"]\n", ProposalCodexCLI, true},
+		{"codex migration", "[models]\norder = [\"codex\"]\n[models.codex]\nbase_url = \"https://chatgpt.com/backend-api/codex\"\n", ProposalCodexCLI, true},
 		{"anthropic export gap", "[defaults]\n", ProposalAnthropicExport, true},
 	}
 	for _, tc := range cases {
