@@ -297,7 +297,16 @@ var knownModelsKeys = map[string]bool{
 	"order": true, "interpret_order": true, "timeout_ms": true, "probe_ms": true,
 }
 
+var knownProviderKeys = map[string]bool{
+	"preset": true, "base_url": true, "model": true,
+	"api_key": true, "api_key_env": true, "keep_alive": true, "think": true,
+}
+
 var knownQueryKeys = map[string]bool{"timeout_ms": true}
+
+func KnownProviderKey(key string) bool { return knownProviderKeys[key] }
+
+func UnknownKeyWarning(key, path string) string { return unknownKey(key, path) }
 
 // LoadFile reads the config. A file that is not there is a machine with
 // defaults, not a failure.

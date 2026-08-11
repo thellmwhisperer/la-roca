@@ -2,6 +2,7 @@ package provider
 
 import (
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -73,7 +74,8 @@ func BuildCascade(s Settings) (Cascade, error) {
 		Disabled:  resolved.Disabled,
 		// The config's warnings travel with the cascade: they are about the same
 		// file and the operator reads them in the same place.
-		Warnings: append(append([]string(nil), s.File.Warnings...), resolved.Warnings...),
+		Warnings: append(append(append([]string(nil), s.File.Warnings...),
+			s.transportWarnings()...), resolved.Warnings...),
 	}), nil
 }
 
@@ -169,7 +171,7 @@ func (s Settings) catalog() Catalog {
 func (s Settings) binaryPresetFactory(name string, preset CommandPreset, fallback Factory) Factory {
 	return func() (Provider, error) {
 		cfg := s.File.Models.Providers[name]
-		if firstNonEmpty(cfg.BaseURL, s.File.Default(name+"_base_url")) != "" {
+		if !UsesCommandTransport(s.File, name) {
 			return fallback()
 		}
 		command := cfg.Command
@@ -186,6 +188,43 @@ func (s Settings) binaryPresetFactory(name string, preset CommandPreset, fallbac
 			cfg.Model, s.File.Default(name+"_model"), preset.Model), preset.Models,
 			cfg.Values, firstNonZero(cfg.TimeoutSeconds, preset.TimeoutSeconds), action, responseFormat)
 	}
+}
+
+func UsesCommandTransport(file config.File, name string) bool {
+	name = normalize(name)
+	cfg := file.Models.Providers[name]
+	if len(cfg.Command) > 0 {
+		return true
+	}
+	_, preset := commandPresets[name]
+	return preset && firstNonEmpty(cfg.BaseURL, file.Default(name+"_base_url")) == ""
+}
+
+func (s Settings) transportWarnings() []string {
+	var names []string
+	for name := range s.File.Models.Providers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var warnings []string
+	for _, name := range names {
+		if UsesCommandTransport(s.File, name) {
+			continue
+		}
+		cfg := s.File.Models.Providers[name]
+		var keys []string
+		for key := range cfg.Values {
+			if !config.KnownProviderKey(key) {
+				keys = append(keys, key)
+			}
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			warnings = append(warnings, config.UnknownKeyWarning(
+				"models."+name+"."+key, s.File.Path))
+		}
+	}
+	return warnings
 }
 
 func (s Settings) withCommand(name string, fallback Factory) Factory {

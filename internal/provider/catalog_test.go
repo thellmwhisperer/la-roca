@@ -329,12 +329,28 @@ func TestAModelKeyUnderDefaultsRetunesTheLocalFloor(t *testing.T) {
 }
 
 func TestTheConfigWarningsTravelWithTheCascade(t *testing.T) {
-	cascade, err := BuildCascade(settings(t, "[models]\norder = [\"ollama\"]\nturbo_mode = true\n"))
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-	if !strings.Contains(strings.Join(cascade.Warnings, " "), "turbo_mode") {
-		t.Fatalf("the config warning got lost: %v", cascade.Warnings)
+	for _, tc := range []struct {
+		name, body, warning string
+	}{
+		{name: "models key", body: "[models]\norder = [\"ollama\"]\nturbo_mode = true\n", warning: "turbo_mode"},
+		{name: "HTTP provider key", body: "[models]\norder = [\"deepseek\"]\n[models.deepseek]\nbase_urll = \"https://private.invalid/v1\"\n", warning: "models.deepseek.base_urll"},
+		{name: "command scalar", body: "[models]\norder = [\"fixture\"]\n[models.fixture]\ncommand = [\"fixture\", \"{tuning}\"]\nmodel = \"fixture-model\"\ntuning = \"high\"\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := settings(t, tc.body)
+			base.RunnerDir = t.TempDir()
+			cascade, err := BuildCascade(base)
+			if err != nil {
+				t.Fatalf("build: %v", err)
+			}
+			joined := strings.Join(cascade.Warnings, " ")
+			if tc.warning != "" && !strings.Contains(joined, tc.warning) {
+				t.Fatalf("warning does not contain %q: %v", tc.warning, cascade.Warnings)
+			}
+			if tc.warning == "" && joined != "" {
+				t.Fatalf("command scalar was reported as unknown: %v", cascade.Warnings)
+			}
+		})
 	}
 }
 

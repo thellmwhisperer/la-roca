@@ -151,8 +151,8 @@ func TestClaudeLoginUsesTheExistingLocalSession(t *testing.T) {
 	home := isolatedLoginHome(t)
 	out := runRoot(t, Build{Version: "test"}, "login", "claude", "--model", "claude-test")
 	for _, want := range []string{
-		"existing account session are working",
-		"managed by Claude Code; La Roca never reads or stores it",
+		"local command and its existing account session are working",
+		"managed by the local CLI; La Roca never reads or stores it",
 		"claude selected (claude-test",
 	} {
 		if !strings.Contains(out, want) {
@@ -166,6 +166,20 @@ func TestClaudeLoginUsesTheExistingLocalSession(t *testing.T) {
 	if !strings.Contains(string(file), `order = ["claude", "codex", "ollama"]`) ||
 		!strings.Contains(string(file), `model = "claude-test"`) {
 		t.Fatalf("Claude choice was not persisted:\n%s", file)
+	}
+}
+
+func TestConfiguredCommandsUseLocalLoginBeforeProviderSpecificDispatch(t *testing.T) {
+	for _, name := range []string{provider.NameCodex, "fixture"} {
+		t.Run(name, func(t *testing.T) {
+			home := isolatedLoginHome(t)
+			path := filepath.Join(home, ".roca", "config.toml")
+			writeFile(t, path, fmt.Sprintf("[models.%s]\ncommand = [\"synthetic-cli\"]\nmodel = \"local-model\"\n", name))
+			out := runRoot(t, Build{Version: "test"}, "login", name, "--model", "local-model")
+			if !strings.Contains(out, name+"'s local command") || strings.Contains(out, "Paste your") {
+				t.Fatalf("configured command did not use local login:\n%s", out)
+			}
+		})
 	}
 }
 

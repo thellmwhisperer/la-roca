@@ -125,7 +125,7 @@ func newProviderModelBackend(paths config.Paths, file config.File) *providerMode
 func (b *providerModelBackend) Catalogue(ctx context.Context, name, current string) (modelCatalogue, error) {
 	catalogueCtx, cancel := context.WithTimeout(ctx, b.timeout())
 	defer cancel()
-	if name == provider.NameCodex {
+	if name == provider.NameCodex && !provider.UsesCommandTransport(b.file, name) {
 		return readCodexCatalogue(catalogueCtx, b.client, b.catalogURL, modelsDevCachePath(b.paths))
 	}
 	candidate, err := b.candidate(name, current)

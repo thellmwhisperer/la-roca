@@ -261,11 +261,20 @@ func loginCommand(env *cliEnv) *cobra.Command {
 				return env.showLoginOverview()
 			}
 			name := strings.ToLower(strings.TrimSpace(args[0]))
+			paths, err := env.resolvePaths()
+			if err != nil {
+				return err
+			}
+			file, err := config.LoadFile(paths.Config)
+			if err != nil {
+				return err
+			}
+			if provider.UsesCommandTransport(file, name) {
+				return env.loginLocalCommand(cmd, paths, file, name, model)
+			}
 			switch {
 			case name == provider.NameCodex:
 				return env.loginCodex(cmd, model)
-			case name == provider.NameClaude:
-				return env.loginClaude(cmd, model)
 			case provider.IsKeyProvider(name):
 				return env.loginKey(cmd, name, model)
 			default:
@@ -446,31 +455,24 @@ func (env *cliEnv) loginCodex(cmd *cobra.Command, requestedModel string) error {
 	return nil
 }
 
-func (env *cliEnv) loginClaude(cmd *cobra.Command, requestedModel string) error {
-	paths, err := env.resolvePaths()
-	if err != nil {
-		return err
-	}
-	file, err := config.LoadFile(paths.Config)
-	if err != nil {
-		return err
-	}
+func (env *cliEnv) loginLocalCommand(cmd *cobra.Command, paths config.Paths,
+	file config.File, name, requestedModel string) error {
 	model, err := env.loginModel(cmd.Context(), cmd.InOrStdin(), paths, file,
-		provider.NameClaude, requestedModel)
+		name, requestedModel)
 	if err != nil {
-		return fmt.Errorf("verify the existing Claude Code session: %w", err)
+		return fmt.Errorf("verify the existing %s local CLI session: %w", name, err)
 	}
 	if env.json {
 		return env.printJSON(map[string]any{
-			"provider": provider.NameClaude, "model": model,
-			"model_source":          modelChoiceSource(paths.Config, provider.NameClaude, model),
-			"credential_managed_by": "Claude Code", "credential_seen_by_roca": false,
+			"provider": name, "model": model,
+			"model_source":          modelChoiceSource(paths.Config, name, model),
+			"credential_managed_by": "local CLI", "credential_seen_by_roca": false,
 		})
 	}
-	env.print("Claude Code and its existing account session are working")
-	env.print("credential: managed by Claude Code; La Roca never reads or stores it")
-	env.print("%s", modelChoiceLine(provider.NameClaude, "selected", model, paths.Config))
-	env.print("%s", loginNext(paths, provider.NameClaude))
+	env.print("%s's local command and its existing account session are working", name)
+	env.print("credential: managed by the local CLI; La Roca never reads or stores it")
+	env.print("%s", modelChoiceLine(name, "selected", model, paths.Config))
+	env.print("%s", loginNext(paths, name))
 	return nil
 }
 
