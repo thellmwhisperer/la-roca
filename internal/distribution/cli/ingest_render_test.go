@@ -49,7 +49,9 @@ func TestASourceKeepsOneNameForTheWholeRun(t *testing.T) {
 func TestTheDefaultSummaryCollapsesWhatWasLeftOut(t *testing.T) {
 	report := service.IngestResult{Result: ingest.Result{
 		ErrorDetails: []ingest.Failure{{
-			Path: "/somewhere/private/broken.jsonl", Parser: "codex_session", Reason: "invalid JSON",
+			Path: "/somewhere/private/broken.jsonl", Parser: "codex_session",
+			Reason: "fingerprint: open /somewhere/private/broken.jsonl: permission denied; " +
+				"sidecar /another/private/paired.json: unavailable",
 		}},
 		RecordsExcluded:  9,
 		RecordsDiscarded: 2,
@@ -58,6 +60,8 @@ func TestTheDefaultSummaryCollapsesWhatWasLeftOut(t *testing.T) {
 			{Reason: "invalid JSON: unexpected end of input", Count: 2},
 		},
 		DiscardDetails: []ingest.DiscardDetail{
+			{Path: "/somewhere/private/runtime.jsonl", Parser: "codex_session",
+				Record: 3, Reason: "runtime event", ByDesign: true},
 			{Path: "/somewhere/private/rollout.jsonl", Parser: "codex_session",
 				Record: 4, Reason: "invalid JSON: unexpected end of input"},
 		},
@@ -71,18 +75,22 @@ func TestTheDefaultSummaryCollapsesWhatWasLeftOut(t *testing.T) {
 		{
 			verbose: false,
 			present: []string{
-				"error: broken.jsonl (codex_session): invalid JSON",
+				"error: broken.jsonl (codex_session): fingerprint: open broken.jsonl: " +
+					"permission denied; sidecar paired.json: unavailable",
 				"excluded: 9 records left out by design",
 				"· codex runtime event not ingested: token_count · 9",
 				"discards: 2 records could not be read",
 				"· invalid JSON: unexpected end of input · 2",
 				"roca ingest --verbose",
 			},
-			absent: []string{"/somewhere/private/rollout.jsonl", "/somewhere/private/broken.jsonl"},
+			absent: []string{"/somewhere/private/rollout.jsonl", "/somewhere/private/runtime.jsonl",
+				"/somewhere/private/broken.jsonl", "/another/private/paired.json"},
 		},
 		{
 			verbose: true,
 			present: []string{"/somewhere/private/rollout.jsonl", "/somewhere/private/broken.jsonl",
+				"fingerprint: open /somewhere/private/broken.jsonl: permission denied",
+				"excluded: /somewhere/private/runtime.jsonl", "discard: /somewhere/private/rollout.jsonl",
 				"excluded: 9 records left out by design"},
 			absent: []string{"roca ingest --verbose"},
 		},

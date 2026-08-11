@@ -845,7 +845,8 @@ func TestDiscardCategoriesStayStableAndShareOneDetailBudget(t *testing.T) {
 		result.DiscardSummary[0].Reason != "codex runtime event" {
 		t.Fatalf("discard summary = %+v", result.DiscardSummary)
 	}
-	if result.DiscardDetails[0].Reason != "codex runtime event id-0" {
+	if result.DiscardDetails[0].Reason != "codex runtime event id-0" ||
+		!result.DiscardDetails[0].ByDesign {
 		t.Fatalf("discard detail lost its precise reason: %+v", result.DiscardDetails[0])
 	}
 }

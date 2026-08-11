@@ -3,9 +3,10 @@ package cli
 import (
 	"fmt"
 	"os"
-	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -138,16 +139,24 @@ func renderIngestDelta(env *cliEnv, delta ingest.Tables) {
 // are always the whole truth.
 const categoriesShown = 5
 
+var absolutePathInError = regexp.MustCompile(
+	`(^|[[:space:]"'(\[])((?:/[^:\n"')]+)|(?:[A-Za-z]:[\\/][^:\n"')]+))(:|["')\]])`,
+)
+
 func renderIngestOutcome(env *cliEnv, result service.IngestResult, verbose bool) {
 	for _, failure := range result.ErrorDetails {
-		path := filepath.Base(failure.Path)
+		path := compactIngestPath(failure.Path)
 		if failure.Path == "" {
 			path = "unknown file"
 		}
-		if verbose && failure.Path != "" {
-			path = failure.Path
+		reason := compactIngestError(failure.Reason, failure.Path)
+		if verbose {
+			reason = failure.Reason
+			if failure.Path != "" {
+				path = failure.Path
+			}
 		}
-		env.print("error: %s (%s): %s", path, failure.Parser, failure.Reason)
+		env.print("error: %s (%s): %s", path, failure.Parser, reason)
 	}
 	renderIngestCategories(env, result, true,
 		fmt.Sprintf("excluded: %s left out by design",
@@ -162,9 +171,31 @@ func renderIngestOutcome(env *cliEnv, result service.IngestResult, verbose bool)
 		return
 	}
 	for _, discard := range result.DiscardDetails {
-		env.print("discard: %s (%s record %s): %s",
+		label := "discard"
+		if discard.ByDesign {
+			label = "excluded"
+		}
+		env.print("%s: %s (%s record %s): %s", label,
 			discard.Path, discard.Parser, axi.Number(int64(discard.Record)), discard.Reason)
 	}
+}
+
+func compactIngestError(reason, knownPath string) string {
+	if knownPath != "" {
+		reason = strings.ReplaceAll(reason, knownPath, compactIngestPath(knownPath))
+	}
+	return absolutePathInError.ReplaceAllStringFunc(reason, func(match string) string {
+		parts := absolutePathInError.FindStringSubmatch(match)
+		return parts[1] + compactIngestPath(parts[2]) + parts[3]
+	})
+}
+
+func compactIngestPath(path string) string {
+	path = strings.TrimRight(path, `/\`)
+	if at := strings.LastIndexAny(path, `/\`); at >= 0 {
+		return path[at+1:]
+	}
+	return path
 }
 
 // renderIngestCategories prints one side of the outcome collapsed onto its

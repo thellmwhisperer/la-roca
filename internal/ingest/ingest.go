@@ -69,10 +69,11 @@ type Failure struct {
 }
 
 type DiscardDetail struct {
-	Path   string `json:"path"`
-	Parser string `json:"parser"`
-	Record int    `json:"record"`
-	Reason string `json:"reason"`
+	Path     string `json:"path"`
+	Parser   string `json:"parser"`
+	Record   int    `json:"record"`
+	Reason   string `json:"reason"`
+	ByDesign bool   `json:"by_design"`
 }
 
 // DiscardCategory is one reason with how many records met it. The collapsed
@@ -409,7 +410,7 @@ func (r *Result) discard(target Target, discards []parsers.Discard) {
 		}
 		r.DiscardDetails = append(r.DiscardDetails, DiscardDetail{
 			Path: target.Path, Parser: string(target.Kind),
-			Record: discard.Record, Reason: discard.Reason,
+			Record: discard.Record, Reason: discard.Reason, ByDesign: discard.ByDesign,
 		})
 	}
 }
