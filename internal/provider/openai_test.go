@@ -294,3 +294,25 @@ func TestOpenAICompatibleReportsTheStatusOfAFailedRequest(t *testing.T) {
 		t.Fatalf("the error does not carry the status: %v", err)
 	}
 }
+
+func TestOpenAICompatibleReadsChatCompletionDeltas(t *testing.T) {
+	compatible, _ := NewOpenAICompatible(OpenAIConfig{
+		Name: NameDeepSeek, BaseURL: "https://example.test", APIKey: "k",
+	})
+	if compatible.chatBody(ChatRequest{}, true)["stream"] != true {
+		t.Fatal("streaming chat body disabled the event stream")
+	}
+	stream := strings.NewReader("ignored\n" +
+		`data: {"choices":[{"delta":{"content":"first "}}]}` + "\n" +
+		`data: {"choices":[{"delta":{"content":"words"}}]}` + "\n" +
+		"data: [DONE]\n")
+	var deltas []string
+	answer, err := readChatCompletionStream(stream,
+		func(delta string) { deltas = append(deltas, delta) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "first words" || strings.Join(deltas, "|") != "first |words" {
+		t.Fatalf("answer = %q, deltas = %q", answer, deltas)
+	}
+}

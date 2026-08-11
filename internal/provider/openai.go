@@ -1,9 +1,12 @@
 package provider
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 )
@@ -259,14 +262,7 @@ func (o *OpenAICompatible) exportSuffix() string {
 
 // Chat asks for a completion over the OpenAI-compatible protocol.
 func (o *OpenAICompatible) Chat(ctx context.Context, req ChatRequest) (ChatResponse, error) {
-	body := map[string]any{
-		"model":      o.model,
-		"messages":   req.Messages,
-		"max_tokens": maxTokens(req),
-		// Zero temperature: the same question has to compile to the same SQL.
-		"temperature": 0,
-		"stream":      false,
-	}
+	body := o.chatBody(req, false)
 
 	var answer struct {
 		Choices []struct {
@@ -287,4 +283,91 @@ func (o *OpenAICompatible) Chat(ctx context.Context, req ChatRequest) (ChatRespo
 		Provider: o.name,
 		ModelID:  o.model,
 	}, nil
+}
+
+// ChatStream reads the standard chat-completions event stream and forwards
+// only answer text. The buffered Chat path remains the default for SQL, pipes
+// and machine output.
+func (o *OpenAICompatible) ChatStream(ctx context.Context, req ChatRequest,
+	onDelta func(string)) (ChatResponse, error) {
+	raw, err := json.Marshal(o.chatBody(req, true))
+	if err != nil {
+		return ChatResponse{}, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		o.baseURL+"/chat/completions", bytes.NewReader(raw))
+	if err != nil {
+		return ChatResponse{}, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "text/event-stream")
+	request.Header.Set("Authorization", "Bearer "+o.apiKey)
+	res, err := o.client.Do(request)
+	if err != nil {
+		return ChatResponse{}, fmt.Errorf("ask %s: %w", o.label, err)
+	}
+	defer drain(res)
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return ChatResponse{}, fmt.Errorf("ask %s: it answered %d: %s",
+			o.label, res.StatusCode, excerpt(res.Body))
+	}
+	content, err := readChatCompletionStream(res.Body, onDelta)
+	if err != nil {
+		return ChatResponse{}, fmt.Errorf("read %s's answer: %w", o.label, err)
+	}
+	return ChatResponse{Content: content, Provider: o.name, ModelID: o.model}, nil
+}
+
+func (o *OpenAICompatible) chatBody(req ChatRequest, stream bool) map[string]any {
+	return map[string]any{
+		"model":      o.model,
+		"messages":   req.Messages,
+		"max_tokens": maxTokens(req),
+		// Zero temperature: the same question has to compile to the same SQL.
+		"temperature": 0,
+		"stream":      stream,
+	}
+}
+
+func readChatCompletionStream(body io.Reader, onDelta func(string)) (string, error) {
+	var content strings.Builder
+	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		payload, ok := strings.CutPrefix(strings.TrimSpace(scanner.Text()), "data:")
+		if !ok {
+			continue
+		}
+		payload = strings.TrimSpace(payload)
+		if payload == "" || payload == "[DONE]" {
+			continue
+		}
+		var event struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+			} `json:"choices"`
+			Error *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(payload), &event); err != nil {
+			continue
+		}
+		if event.Error != nil {
+			return "", fmt.Errorf("provider could not answer: %s", event.Error.Message)
+		}
+		for _, choice := range event.Choices {
+			delta := choice.Delta.Content
+			content.WriteString(delta)
+			if onDelta != nil && delta != "" {
+				onDelta(delta)
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+	return content.String(), nil
 }
