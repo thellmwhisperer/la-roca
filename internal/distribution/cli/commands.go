@@ -78,7 +78,7 @@ func initCommand(env *cliEnv) *cobra.Command {
 				if modelErr != nil {
 					return modelErr
 				}
-				_, completed, chooserErr := env.chooseInitModel(cmd.Context(), input, paths,
+				chooserResult, completed, chooserErr := env.chooseInitModel(cmd.Context(), input, paths,
 					service.InitResult{ConfigPath: paths.Config, Model: initialModel})
 				env.initChooserElapsed = initMachineDuration(time.Since(chooserStarted),
 					env.initPromptWait-promptWaitBefore)
@@ -86,6 +86,7 @@ func initCommand(env *cliEnv) *cobra.Command {
 					return chooserErr
 				}
 				if choice == "reinitialize" && !completed {
+					renderInitAnswer(env, chooserResult)
 					return nil
 				}
 			}
@@ -352,35 +353,66 @@ func renderInitAnswer(env *cliEnv, result service.InitResult) {
 }
 
 func initModelChange(name, model, path string) string {
-	var overrides []string
-	if strings.TrimSpace(os.Getenv(provider.EnvOrder)) != "" {
-		overrides = append(overrides, "remove or change "+provider.EnvOrder)
+	file, _ := config.LoadFile(path)
+	orderOverride := strings.TrimSpace(os.Getenv(provider.EnvOrder)) != ""
+	modelOverrides := initModelEnvironmentOverrides(name, model, file)
+	change := fmt.Sprintf("roca model set <id> or models.%s.model in %s", name, path)
+	if orderOverride {
+		change = fmt.Sprintf("models.%s.model in %s", name, path)
 	}
-	for _, key := range map[string][]string{
+
+	var governing, unset []string
+	if orderOverride {
+		governing = append(governing, provider.EnvOrder)
+		unset = append(unset, provider.EnvOrder)
+	}
+	if len(modelOverrides) > 0 {
+		governing = append(governing, modelOverrides[0])
+		unset = append(unset, modelOverrides...)
+	}
+	guidance := change
+	if len(governing) > 0 {
+		guidance = fmt.Sprintf("change %s directly; or unset %s before using %s",
+			strings.Join(governing, " and "), strings.Join(unset, " and "), change)
+	}
+	if transport := initModelTransportOverride(name, path, file); transport != "" {
+		guidance += "; transport is governed by " + transport +
+			"; remove or change it to use the built-in transport"
+	}
+	return guidance
+}
+
+func initModelEnvironmentOverrides(name, model string, file config.File) []string {
+	keys := map[string][]string{
 		provider.NameCodex:  {"ROCA_CODEX_MODEL"},
 		provider.NameOllama: {"ROCA_OLLAMA_MODEL", "ROCA_MODEL"},
-	}[name] {
-		if os.Getenv(key) == model {
-			overrides = append(overrides, "remove or change "+key)
-			break
+	}[name]
+	if name == provider.NameCodex && provider.UsesCommandTransport(file, name) ||
+		name == provider.NameOllama && len(file.Models.Providers[name].Command) > 0 {
+		return nil
+	}
+	var overrides []string
+	for _, key := range keys {
+		if os.Getenv(key) != "" {
+			overrides = append(overrides, key)
 		}
 	}
-	if file, err := config.LoadFile(path); err == nil {
-		cfg := file.Models.Providers[name]
-		switch {
-		case len(cfg.Command) > 0:
-			overrides = append(overrides,
-				fmt.Sprintf("remove or change models.%s.command in %s", name, path))
-		case slices.Contains(provider.CommandPresetNames(), name) && cfg.BaseURL != "":
-			overrides = append(overrides,
-				fmt.Sprintf("remove or change models.%s.base_url in %s", name, path))
-		}
+	if len(overrides) > 0 && os.Getenv(overrides[0]) != model {
+		return nil
 	}
-	change := fmt.Sprintf("roca model set <id> or models.%s.model in %s", name, path)
-	if len(overrides) == 0 {
-		return change
+	return overrides
+}
+
+func initModelTransportOverride(name, path string, file config.File) string {
+	cfg := file.Models.Providers[name]
+	switch {
+	case len(cfg.Command) > 0:
+		return fmt.Sprintf("models.%s.command in %s", name, path)
+	case slices.Contains(provider.CommandPresetNames(), name) && cfg.BaseURL != "":
+		return fmt.Sprintf("models.%s.base_url in %s", name, path)
+	default:
+		return ""
 	}
-	return strings.Join(overrides, "; ") + "; then " + change
 }
 
 func renderBedrock(env *cliEnv, bedrock *service.Bedrock) {

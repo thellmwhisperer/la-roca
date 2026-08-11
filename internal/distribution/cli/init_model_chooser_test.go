@@ -166,12 +166,13 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 			input:    "sonnet\n\n",
 			want:     "answering: codex/" + provider.DefaultCodexModel,
 			avoid:    "answering: claude/sonnet",
-			guidance: "remove or change ROCA_MODELS_ORDER",
+			guidance: "change ROCA_MODELS_ORDER directly; or unset ROCA_MODELS_ORDER before using models.codex.model",
 		},
 		{
 			name: "provider model environment",
 			prepare: func(t *testing.T, _, _ string) {
 				t.Setenv("ROCA_OLLAMA_MODEL", "environment-model")
+				t.Setenv("ROCA_MODEL", "local-fallback")
 			},
 			input: "local-one\n\n",
 			backend: chooserTestBackend{catalogues: map[string]modelCatalogue{
@@ -179,7 +180,22 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 			}},
 			want:     "answering: ollama/environment-model",
 			avoid:    "answering: ollama/local-one",
-			guidance: "remove or change ROCA_OLLAMA_MODEL",
+			guidance: "change ROCA_OLLAMA_MODEL directly; or unset ROCA_OLLAMA_MODEL and ROCA_MODEL before using roca model set",
+		},
+		{
+			name: "stacked order and model environment",
+			prepare: func(t *testing.T, _, _ string) {
+				t.Setenv("ROCA_MODELS_ORDER", provider.NameOllama)
+				t.Setenv("ROCA_OLLAMA_MODEL", "environment-model")
+				t.Setenv("ROCA_MODEL", "local-fallback")
+			},
+			input: "local-one\n\n",
+			backend: chooserTestBackend{catalogues: map[string]modelCatalogue{
+				provider.NameOllama: {IDs: []string{"local-one"}},
+			}},
+			want:     "answering: ollama/environment-model",
+			avoid:    "answering: ollama/local-one",
+			guidance: "change ROCA_MODELS_ORDER and ROCA_OLLAMA_MODEL directly; or unset ROCA_MODELS_ORDER and ROCA_OLLAMA_MODEL and ROCA_MODEL before using models.ollama.model",
 		},
 		{
 			name: "persisted base URL",
@@ -198,7 +214,7 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 			input:    "sonnet\n\n",
 			want:     "answering: claude/sonnet",
 			avoid:    "uses the existing local CLI session",
-			guidance: "remove or change models.claude.base_url",
+			guidance: "transport is governed by models.claude.base_url",
 		},
 		{
 			name: "persisted custom command",
@@ -223,7 +239,7 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 			},
 			input:    "sonnet\n\n",
 			want:     "answering: claude/sonnet",
-			guidance: "remove or change models.claude.command",
+			guidance: "transport is governed by models.claude.command",
 		},
 	}
 
@@ -275,6 +291,14 @@ func TestReinitializeChooserFailureLeavesTheDatabaseUntouched(t *testing.T) {
 			}
 			if string(after) != string(before) {
 				t.Fatalf("reinitialize changed the database after chooser failure:\n%s", out)
+			}
+			if !test.wantErr {
+				last := strings.TrimSpace(out)
+				last = last[strings.LastIndex(last, "\n")+1:]
+				if !strings.HasPrefix(last, "answering: claude/sonnet") ||
+					!strings.Contains(last, "configuration: "+filepath.Join(home, ".roca", "config.toml")) {
+					t.Fatalf("canceled reinitialize did not end with the unchanged answer:\n%s", out)
+				}
 			}
 		})
 	}
