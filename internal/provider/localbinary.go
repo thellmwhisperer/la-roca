@@ -136,7 +136,7 @@ func (b *LocalBinary) Ready(context.Context) Readiness {
 	command, _ := b.renderCommand("")
 	if _, err := executable(command[0]); err != nil {
 		return Readiness{ModelID: b.model,
-			Reason: fmt.Sprintf("local binary %q was not found: %v", command[0], err),
+			Reason: fmt.Sprintf("%s binary not found in PATH", filepath.Base(command[0])),
 			Action: b.action}
 	}
 	return Readiness{Ready: true, ModelID: b.model}

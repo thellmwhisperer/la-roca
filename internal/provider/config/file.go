@@ -13,6 +13,168 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
+type ChangeKind string
+
+const (
+	SetValue      ChangeKind = "set"
+	PrependUnique ChangeKind = "prepend-unique"
+	ReplaceTable  ChangeKind = "replace-table"
+)
+
+type Field struct {
+	Key       string
+	Value     any
+	ValueFrom string
+	Fallback  any
+}
+
+// Change is one declarative, surgical TOML edit. A reconciliation proposal
+// carries these as data so the runner never needs feature-specific write code.
+type Change struct {
+	Kind    ChangeKind
+	Table   string
+	Key     string
+	Value   any
+	Default []string
+	Fields  []Field
+}
+
+// ApplyText applies a set of declared changes without reserializing the
+// operator's document. The whole result is decoded before it can be written.
+func ApplyText(text string, changes []Change) (string, error) {
+	var document map[string]any
+	if strings.TrimSpace(text) != "" {
+		if _, err := toml.Decode(text, &document); err != nil {
+			return "", fmt.Errorf("the configuration is not valid TOML: %w", err)
+		}
+	}
+	if document == nil {
+		document = map[string]any{}
+	}
+	updated := text
+	for _, change := range changes {
+		switch change.Kind {
+		case SetValue:
+			updated = setTableValueText(updated, "["+change.Table+"]", change.Key,
+				tomlLiteral(change.Value))
+		case PrependUnique:
+			values := stringListAt(document, change.Table, change.Key)
+			if values == nil {
+				values = append([]string(nil), change.Default...)
+			}
+			value := strings.TrimSpace(fmt.Sprint(change.Value))
+			values = prependUnique(values, value)
+			updated = setTableValueText(updated, "["+change.Table+"]", change.Key,
+				tomlLiteral(values))
+		case ReplaceTable:
+			fields := make([]Field, len(change.Fields))
+			copy(fields, change.Fields)
+			for i := range fields {
+				if fields[i].ValueFrom != "" {
+					fields[i].Value = scalarAt(document, fields[i].ValueFrom)
+					if fields[i].Value == nil || strings.TrimSpace(fmt.Sprint(fields[i].Value)) == "" {
+						fields[i].Value = fields[i].Fallback
+					}
+				}
+			}
+			updated = replaceTableText(updated, change.Table, fields)
+		default:
+			return "", fmt.Errorf("unknown configuration change %q", change.Kind)
+		}
+		if _, err := toml.Decode(updated, &document); err != nil {
+			return "", fmt.Errorf("configuration change for %s produced invalid TOML: %w", change.Table, err)
+		}
+	}
+	return updated, nil
+}
+
+func prependUnique(values []string, value string) []string {
+	out := []string{value}
+	for _, current := range values {
+		if current != value {
+			out = append(out, current)
+		}
+	}
+	return out
+}
+
+func tomlLiteral(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strconv.Quote(typed)
+	case []string:
+		quoted := make([]string, len(typed))
+		for i, item := range typed {
+			quoted[i] = strconv.Quote(item)
+		}
+		return "[" + strings.Join(quoted, ", ") + "]"
+	case bool, int, int64, float64:
+		return fmt.Sprint(typed)
+	default:
+		raw, _ := json.Marshal(value)
+		return string(raw)
+	}
+}
+
+func stringListAt(document map[string]any, table, key string) []string {
+	value := valueAt(document, table+"."+key)
+	if value == nil {
+		return nil
+	}
+	return readStrings(value)
+}
+
+func scalarAt(document map[string]any, path string) any { return valueAt(document, path) }
+
+func valueAt(document map[string]any, path string) any {
+	var current any = document
+	for _, part := range strings.Split(path, ".") {
+		table, ok := current.(map[string]any)
+		if !ok {
+			return nil
+		}
+		current = table[part]
+	}
+	return current
+}
+
+func replaceTableText(text, table string, fields []Field) string {
+	header := "[" + table + "]"
+	var body strings.Builder
+	body.WriteString(header + "\n")
+	for _, field := range fields {
+		body.WriteString(field.Key + " = " + tomlLiteral(field.Value) + "\n")
+	}
+	block := body.String()
+	want := strings.ToLower(table)
+	start, end, offset := -1, len(text), 0
+	for _, line := range strings.SplitAfter(text, "\n") {
+		clean := strings.TrimSpace(strings.SplitN(line, "#", 2)[0])
+		candidate := tableKey(clean)
+		if start < 0 && candidate == want {
+			start = offset
+		} else if start >= 0 && (candidate != "" || strings.HasPrefix(clean, "[[")) {
+			end = offset
+			break
+		}
+		offset += len(line)
+	}
+	if start < 0 {
+		if text == "" {
+			return block
+		}
+		separator := "\n"
+		if !strings.HasSuffix(text, "\n") {
+			separator = "\n\n"
+		}
+		return text + separator + block
+	}
+	if end < len(text) && !strings.HasSuffix(block, "\n\n") {
+		block += "\n"
+	}
+	return text[:start] + block + text[end:]
+}
+
 // SetProviderModel changes only a model assignment and preserves the remaining TOML.
 func SetProviderModel(path, provider, model string) error {
 	provider, model = strings.TrimSpace(strings.ToLower(provider)), strings.TrimSpace(model)
