@@ -42,6 +42,22 @@ type openCodeMessage struct {
 		Created   *float64 `json:"created"`
 		Completed *float64 `json:"completed"`
 	} `json:"time"`
+	ModelID    string          `json:"modelID"`
+	ProviderID string          `json:"providerID"`
+	Cost       *float64        `json:"cost"`
+	Tokens     *openCodeTokens `json:"tokens"`
+}
+
+// openCodeTokens is what OpenCode counted for one assistant message. The cache
+// tiers are prompt tokens like the rest, and they are added to it.
+type openCodeTokens struct {
+	Input     *float64 `json:"input"`
+	Output    *float64 `json:"output"`
+	Reasoning *float64 `json:"reasoning"`
+	Cache     *struct {
+		Read  *float64 `json:"read"`
+		Write *float64 `json:"write"`
+	} `json:"cache"`
 }
 
 // openCodePart is the `data` document of a part row.
@@ -281,6 +297,7 @@ func openCodeExchanges(messages, parts []openCodeRow) ([]parsers.Exchange, int) 
 			HumanText:         textOfParts(partsByMessage[user.id], "text"),
 			AgentText:         textOfParts(answerParts, "text"),
 		}
+		exchange.Provenance = openCodeProvenance(answers)
 		human := completionOf(user.message.Time.Created, user.created)
 		agent := lastCompletion(answers)
 		exchange.HumanTimestamp = isoFromMS(human)
@@ -316,6 +333,54 @@ func openCodeExchanges(messages, parts []openCodeRow) ([]parsers.Exchange, int) 
 		exchanges = append(exchanges, exchange)
 	}
 	return exchanges, deferred
+}
+
+// openCodeProvenance adds up what the assistant messages of one turn declared.
+// OpenCode is the source that states everything: the model, who served it, the
+// tokens with the reasoning ones apart, and the price of the call.
+func openCodeProvenance(answers []openCodeRow) parsers.Provenance {
+	var tally parsers.UsageTally
+	model, provider := "", ""
+	for _, answer := range answers {
+		message := answer.message
+		if model == "" {
+			model = message.ModelID
+		}
+		if provider == "" {
+			provider = message.ProviderID
+		}
+		if message.Cost != nil {
+			tally.AddCost(*message.Cost)
+		}
+		tokens := message.Tokens
+		if tokens == nil {
+			continue
+		}
+		if tokens.Input != nil || tokens.Cache != nil &&
+			(tokens.Cache.Read != nil || tokens.Cache.Write != nil) {
+			prompt := roundToInt(tokens.Input)
+			if tokens.Cache != nil {
+				prompt += roundToInt(tokens.Cache.Read) + roundToInt(tokens.Cache.Write)
+			}
+			tally.AddInputTokens(prompt)
+		}
+		if tokens.Output != nil {
+			tally.AddOutputTokens(roundToInt(tokens.Output))
+		}
+		if tokens.Reasoning != nil {
+			tally.AddReasoningTokens(roundToInt(tokens.Reasoning))
+		}
+	}
+	return tally.Provenance(model, provider)
+}
+
+// roundToInt reads a counter JSON decoded as a float. A token count is a whole
+// number wherever it came from.
+func roundToInt(value *float64) int {
+	if value == nil {
+		return 0
+	}
+	return int(*value)
 }
 
 func allCompleted(answers []openCodeRow) bool {

@@ -48,6 +48,11 @@ CREATE TABLE IF NOT EXISTS layers (
   since_version   TEXT
 );
 
+-- The provenance columns say how one answer was produced: which model and
+-- provider answered, what it spent, and what it cost. Every one of them is
+-- nullable because they are filled from what the source itself recorded and
+-- not every source records all of them; a NULL means "this source does not say",
+-- never zero.
 CREATE TABLE IF NOT EXISTS exchanges (
   id                    INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id            TEXT REFERENCES sessions(session_id),
@@ -57,7 +62,13 @@ CREATE TABLE IF NOT EXISTS exchanges (
   agent_text            TEXT,
   human_timestamp       TEXT,
   agent_timestamp       TEXT,
-  response_latency_ms   INTEGER
+  response_latency_ms   INTEGER,
+  model                 TEXT,
+  provider              TEXT,
+  tokens_in             INTEGER,
+  tokens_out            INTEGER,
+  tokens_reasoning      INTEGER,
+  cost_usd              REAL
 );
 
 CREATE TABLE IF NOT EXISTS tool_uses (

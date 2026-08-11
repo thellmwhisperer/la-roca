@@ -233,6 +233,9 @@ func (s *Service) Query(ctx context.Context, req QueryRequest) (res QueryResult,
 		Warnings: slices.Clone(s.opts.Providers.Warnings),
 	}
 	defer func() { res.LatencyMS = time.Since(start).Milliseconds() }()
+	if err := s.ensureSchema(ctx); err != nil {
+		return res, err
+	}
 	return s.llmStage(ctx, req, res)
 }
 
@@ -259,6 +262,9 @@ type ExecResult struct {
 // itself rejects any write.
 func (s *Service) Exec(ctx context.Context, req ExecRequest) (ExecResult, error) {
 	start := time.Now()
+	if err := s.ensureSchema(ctx); err != nil {
+		return ExecResult{}, err
+	}
 	gate, err := s.theGate()
 	if err != nil {
 		return ExecResult{}, err
