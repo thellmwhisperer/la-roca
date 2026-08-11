@@ -48,18 +48,8 @@ func lock(path string, disposition uint32) (func() error, error) {
 		return closeErr
 	}
 	if disposition == windows.OPEN_EXISTING {
-		held, heldErr := file.Stat()
-		current, currentErr := os.Stat(path)
-		if heldErr != nil || currentErr != nil || !os.SameFile(held, current) {
-			release()
-			switch {
-			case heldErr != nil:
-				return nil, heldErr
-			case currentErr != nil:
-				return nil, currentErr
-			default:
-				return nil, &os.PathError{Op: "lock", Path: path, Err: os.ErrNotExist}
-			}
+		if err := validateExistingLock(path, file, release); err != nil {
+			return nil, err
 		}
 	}
 	return release, nil

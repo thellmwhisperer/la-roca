@@ -39,18 +39,8 @@ func lock(path string, flags int) (func() error, error) {
 		return closeErr
 	}
 	if flags&os.O_CREATE == 0 {
-		held, heldErr := file.Stat()
-		current, currentErr := os.Stat(path)
-		if heldErr != nil || currentErr != nil || !os.SameFile(held, current) {
-			release()
-			switch {
-			case heldErr != nil:
-				return nil, heldErr
-			case currentErr != nil:
-				return nil, currentErr
-			default:
-				return nil, &os.PathError{Op: "lock", Path: path, Err: os.ErrNotExist}
-			}
+		if err := validateExistingLock(path, file, release); err != nil {
+			return nil, err
 		}
 	}
 	return release, nil
