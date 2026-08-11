@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -132,5 +133,13 @@ func TestCapabilityCountRequiresThePendingField(t *testing.T) {
 	}
 	if count, err := decodeCapabilityCount([]byte(`{"pending":2}`)); err != nil || count != 2 {
 		t.Fatalf("count = %d, err %v", count, err)
+	}
+}
+
+func TestCapabilityCountUsesTheSelectedDatabase(t *testing.T) {
+	command := capabilityCountCommand(context.Background(), "/installed/roca", "/custom/roca.db")
+	want := "/installed/roca _capabilities --json --db-path /custom/roca.db"
+	if got := strings.Join(command.Args, " "); got != want {
+		t.Fatalf("capability count command = %q, want %q", got, want)
 	}
 }

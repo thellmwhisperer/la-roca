@@ -47,6 +47,20 @@ func TestRunnerOffersEachOpenProposalOncePerVersion(t *testing.T) {
 	}
 }
 
+func TestBinaryDetectionDelegatesPlatformResolution(t *testing.T) {
+	requested := ""
+	open := Open(Context{LookPath: func(name string) (string, error) {
+		requested = name
+		return `C:\\tools\\claude.exe`, nil
+	}}, []Entry{{
+		ID: "platform-binary", Detection: Detection{Binary: "claude"},
+		Proposal: Proposal{Alert: "available"},
+	}})
+	if requested != "claude" || len(open) != 1 {
+		t.Fatalf("lookup requested %q, open proposals = %d", requested, len(open))
+	}
+}
+
 func TestTTYAcceptanceWritesSurgicallyWithBackupAndNamesTheResult(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")

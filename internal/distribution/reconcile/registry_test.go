@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 )
 
@@ -24,10 +25,13 @@ func TestLaunchRegistryDetections(t *testing.T) {
 
 	cases := []struct {
 		name, configText, proposal string
+		want                       bool
 	}{
-		{"claude gap", "[models]\norder = [\"ollama\"]\n", ProposalClaudeCLI},
-		{"codex migration", "[models]\norder = [\"codex\"]\n", ProposalCodexCLI},
-		{"anthropic export gap", "[defaults]\n", ProposalAnthropicExport},
+		{"claude gap", "[models]\norder = [\"ollama\"]\n", ProposalClaudeCLI, true},
+		{"unusable claude HTTP", "[models]\norder = [\"claude\"]\n[models.claude]\nbase_url = \"https://example.invalid\"\nmodel = \"remote\"\n", ProposalClaudeCLI, true},
+		{"usable claude HTTP", "[models]\norder = [\"claude\"]\n[models.claude]\nbase_url = \"https://example.invalid\"\nmodel = \"remote\"\napi_key = \"synthetic-credential\"\n", ProposalClaudeCLI, false},
+		{"codex migration", "[models]\norder = [\"codex\"]\n", ProposalCodexCLI, true},
+		{"anthropic export gap", "[defaults]\n", ProposalAnthropicExport, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -41,10 +45,11 @@ func TestLaunchRegistryDetections(t *testing.T) {
 			}
 			open := Open(Context{
 				ConfigPath: path, CredentialsPath: credentials, File: file,
-				Path: bin, Capabilities: map[string]bool{CapabilityAnthropicExport: true},
+				LookPath: lookPathIn(bin), Capabilities: map[string]bool{CapabilityAnthropicExport: true},
 			}, Registry())
-			if !containsProposal(open, tc.proposal) {
-				t.Fatalf("open proposals = %v, want %s", proposalIDs(open), tc.proposal)
+			if got := containsProposal(open, tc.proposal); got != tc.want {
+				t.Fatalf("open proposals = %v, contains %s = %v, want %v",
+					proposalIDs(open), tc.proposal, got, tc.want)
 			}
 		})
 	}
@@ -63,7 +68,7 @@ func TestCodexMigrationReplacesHTTPSettingsWithTheDeclaredCommand(t *testing.T) 
 	var out strings.Builder
 	result, err := Run(Context{
 		Version: "v2", ConfigPath: path, StampPath: filepath.Join(root, "stamp.json"),
-		CredentialsPath: credentials, Path: bin,
+		CredentialsPath: credentials, LookPath: lookPathIn(bin),
 		Capabilities: map[string]bool{CapabilityAnthropicExport: true},
 	}, only(ProposalCodexCLI), Options{Interactive: true, In: strings.NewReader("y\n"), Out: &out})
 	if err != nil {
@@ -82,6 +87,43 @@ func TestCodexMigrationReplacesHTTPSettingsWithTheDeclaredCommand(t *testing.T) 
 	}
 	if strings.Contains(text, "base_url") {
 		t.Errorf("HTTP transport survived migration:\n%s", text)
+	}
+}
+
+func TestClaudeProposalReplacesUnusableHTTPWithSonnetPreset(t *testing.T) {
+	root, bin := t.TempDir(), t.TempDir()
+	writeExecutable(t, filepath.Join(bin, "claude"))
+	path := filepath.Join(root, "config.toml")
+	before := "# keep\n[models]\norder = [\"claude\", \"ollama\"]\n\n[models.claude]\nbase_url = \"https://example.invalid\"\nmodel = \"remote\"\n"
+	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Run(Context{
+		Version: "v2", ConfigPath: path, StampPath: filepath.Join(root, "stamp.json"),
+		CredentialsPath: filepath.Join(root, "credentials"), LookPath: lookPathIn(bin),
+	}, only(ProposalClaudeCLI), Options{
+		Interactive: true, In: strings.NewReader("y\n"), Out: &strings.Builder{},
+	})
+	if err != nil || result.Accepted != 1 {
+		t.Fatalf("result = %+v, err %v", result, err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "# keep") || strings.Contains(string(raw), "base_url") ||
+		strings.Contains(string(raw), `model = "remote"`) {
+		t.Fatalf("Claude HTTP settings survived preset enablement:\n%s", raw)
+	}
+	file, err := config.LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cascade, err := provider.BuildCascade(provider.Settings{
+		File: file, RunnerDir: filepath.Join(root, "runner"),
+	})
+	if err != nil || len(cascade.Providers) == 0 || cascade.Providers[0].ModelID() != "sonnet" {
+		t.Fatalf("Claude preset = %+v, err %v", cascade, err)
 	}
 }
 
@@ -157,9 +199,20 @@ model = "gpt-test"
 	}
 	if open := Open(Context{
 		ConfigPath: path, CredentialsPath: filepath.Join(root, "credentials"), File: file,
-		Path: root, Capabilities: map[string]bool{CapabilityAnthropicExport: true},
+		LookPath: lookPathIn(root), Capabilities: map[string]bool{CapabilityAnthropicExport: true},
 	}, Registry()); len(open) != 0 {
 		t.Fatalf("configured environment still has proposals: %v", proposalIDs(open))
+	}
+}
+
+func lookPathIn(directory string) func(string) (string, error) {
+	return func(name string) (string, error) {
+		path := filepath.Join(directory, name)
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			return "", os.ErrNotExist
+		}
+		return path, nil
 	}
 }
 

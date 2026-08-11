@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"os/exec"
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/reconcile"
@@ -21,9 +22,22 @@ func (env *cliEnv) reconciliationContext() (reconcile.Context, error) {
 	return reconcile.Context{
 		Version: env.build.Version, ConfigPath: paths.Config,
 		StampPath: paths.Reconciliation, CredentialsPath: paths.Credentials,
-		Path: os.Getenv("PATH"), File: file,
+		LookPath: exec.LookPath, Env: os.Getenv, File: file,
 		Capabilities: map[string]bool{reconcile.CapabilityAnthropicExport: true},
 	}, nil
+}
+
+func (env *cliEnv) reconcileAfterCommand(cmd *cobra.Command) error {
+	if cmd == nil || env.skipReconciliation {
+		return nil
+	}
+	switch cmd.Name() {
+	case "doctor", "update", "uninstall", "_capabilities":
+		return nil
+	}
+	interactive := terminalInput(cmd.InOrStdin()) && !env.json
+	_, err := env.reconcileCapabilities(cmd, interactive, false)
+	return err
 }
 
 func (env *cliEnv) openCapabilityProposals() ([]reconcile.Entry, error) {

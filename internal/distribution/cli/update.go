@@ -199,7 +199,11 @@ func (env *cliEnv) update(ctx context.Context, source release.Source,
 		return err
 	}
 	env.refreshCatalogueAfterUpdate(ctx)
-	pending, countErr := capabilityCountFromBinary(ctx, installed)
+	paths, pathErr := env.resolvePaths()
+	pending, countErr := 0, pathErr
+	if pathErr == nil {
+		pending, countErr = capabilityCountFromBinary(ctx, installed, paths.DB)
+	}
 	if countErr != nil {
 		pending = lenOrZero(env.openCapabilityProposals())
 		fmt.Fprintf(env.errOut, "warning: the new binary could not count capability proposals: %v\n", countErr)
@@ -228,13 +232,17 @@ func (env *cliEnv) reportUpdate(document map[string]any, pending int,
 	return nil
 }
 
-func capabilityCountFromBinary(ctx context.Context, binary string) (int, error) {
-	command := exec.CommandContext(ctx, binary, "_capabilities", "--json")
+func capabilityCountFromBinary(ctx context.Context, binary, dbPath string) (int, error) {
+	command := capabilityCountCommand(ctx, binary, dbPath)
 	output, err := command.Output()
 	if err != nil {
 		return 0, err
 	}
 	return decodeCapabilityCount(output)
+}
+
+func capabilityCountCommand(ctx context.Context, binary, dbPath string) *exec.Cmd {
+	return exec.CommandContext(ctx, binary, "_capabilities", "--json", "--db-path", dbPath)
 }
 
 func decodeCapabilityCount(output []byte) (int, error) {

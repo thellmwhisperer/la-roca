@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -30,8 +31,8 @@ const (
 type ProviderCondition string
 
 const (
-	ProviderMissing ProviderCondition = "missing"
-	ProviderHTTP    ProviderCondition = "http"
+	ProviderUnavailable ProviderCondition = "unavailable"
+	ProviderHTTP        ProviderCondition = "http"
 )
 
 // Detection is an AND of observable environment and configuration facts.
@@ -65,7 +66,8 @@ type Context struct {
 	ConfigPath      string
 	StampPath       string
 	CredentialsPath string
-	Path            string
+	LookPath        func(string) (string, error)
+	Env             func(string) string
 	File            config.File
 	Capabilities    map[string]bool
 }
@@ -91,12 +93,13 @@ func Registry() []Entry {
 		{
 			ID: ProposalClaudeCLI,
 			Detection: Detection{Binary: provider.NameClaude, Provider: provider.NameClaude,
-				ProviderState: ProviderMissing},
+				ProviderState: ProviderUnavailable},
 			Proposal: Proposal{
 				Alert:  "Claude Code is on PATH but no usable Claude provider is configured; model sonnet can answer through the existing local CLI session.",
 				Prompt: "Enable the Claude provider?",
 				Changes: []config.Change{{Kind: config.PrependUnique, Table: "models", Key: "order",
-					Value: provider.NameClaude, Default: provider.DefaultOrder()}},
+					Value: provider.NameClaude, Default: provider.DefaultOrder()},
+					{Kind: config.ReplaceTable, Table: "models.claude"}},
 			},
 		},
 		{
@@ -151,7 +154,7 @@ func detected(context Context, file config.File, detection Detection) bool {
 	if detection.Capability != "" && !context.Capabilities[detection.Capability] {
 		return false
 	}
-	if detection.Binary != "" && !binaryOnPath(context.Path, detection.Binary) {
+	if detection.Binary != "" && !binaryOnPath(context, detection.Binary) {
 		return false
 	}
 	if detection.Credential != "" && !regularFile(filepath.Join(context.CredentialsPath, detection.Credential)) {
@@ -166,14 +169,13 @@ func detected(context Context, file config.File, detection Detection) bool {
 			order = provider.DefaultOrder()
 		}
 		declared := slices.Contains(order, detection.Provider)
-		command := len(file.Models.Providers[detection.Provider].Command) > 0
 		switch detection.ProviderState {
-		case ProviderMissing:
-			if declared {
+		case ProviderUnavailable:
+			if providerUsable(context, file, detection.Provider, declared) {
 				return false
 			}
 		case ProviderHTTP:
-			if !declared || command {
+			if !declared || provider.UsesCommandTransport(file, detection.Provider) {
 				return false
 			}
 		}
@@ -181,24 +183,48 @@ func detected(context Context, file config.File, detection Detection) bool {
 	return true
 }
 
-func binaryOnPath(pathValue, name string) bool {
-	if strings.ContainsRune(name, os.PathSeparator) {
-		return executableFile(name)
+func binaryOnPath(context Context, name string) bool {
+	lookPath := context.LookPath
+	if lookPath == nil {
+		lookPath = exec.LookPath
 	}
-	if pathValue == "" {
-		pathValue = os.Getenv("PATH")
-	}
-	for _, directory := range filepath.SplitList(pathValue) {
-		if executableFile(filepath.Join(directory, name)) {
-			return true
-		}
-	}
-	return false
+	_, err := lookPath(name)
+	return err == nil
 }
 
-func executableFile(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir() && info.Mode()&0o111 != 0
+func providerUsable(context Context, file config.File, name string, declared bool) bool {
+	if !declared {
+		return false
+	}
+	if provider.UsesCommandTransport(file, name) {
+		command := file.Models.Providers[name].Command
+		if len(command) == 0 {
+			command = []string{name}
+		}
+		return binaryOnPath(context, command[0])
+	}
+	env := func(key string) string {
+		if key == provider.EnvOrder || context.Env == nil {
+			return ""
+		}
+		return context.Env(key)
+	}
+	cascade, err := provider.BuildCascade(provider.Settings{
+		File: file, Credentials: context.CredentialsPath, Env: env,
+	})
+	if err != nil {
+		return false
+	}
+	for _, candidate := range cascade.Providers {
+		if candidate.Name() != name {
+			continue
+		}
+		if credentialed, ok := candidate.(interface{ HasCredential() bool }); ok {
+			return credentialed.HasCredential()
+		}
+		return true
+	}
+	return false
 }
 
 func regularFile(path string) bool {
