@@ -270,16 +270,22 @@ func (s *Service) Interpret(ctx context.Context, question string,
 // budget is how a local model gets a frontier model's timeout.
 func (s *Service) interpreter(ctx context.Context) (provider.Cascade, provider.Provider, string, error) {
 	main := s.opts.Providers
+	var note string
 	if split := s.opts.Interpreters; len(split.Providers) > 0 {
-		if chosen, attempts := split.Pick(ctx); chosen != nil {
+		chosen, attempts := split.Pick(ctx)
+		if chosen != nil {
 			return split, chosen, "", nil
-		} else if fallback, err := pickOrFail(ctx, main); err == nil {
-			return main, fallback, "the interpretation provider was not available (" +
-				reasonsOf(attempts) + "): the rows were read by " + fallback.Name(), nil
 		}
+		note = "the interpretation provider was not available (" + reasonsOf(attempts) + ")"
 	}
 	chosen, err := pickOrFail(ctx, main)
-	return main, chosen, "", err
+	if err != nil {
+		return main, nil, "", err
+	}
+	if note != "" {
+		note += ": the rows were read by " + chosen.Name()
+	}
+	return main, chosen, note, nil
 }
 
 // pickOrFail is the main order asked for someone to read the rows, with the two
