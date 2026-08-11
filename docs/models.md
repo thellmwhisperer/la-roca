@@ -18,6 +18,23 @@ Most installations do not need this file for model access: the examples below
 are overrides for operators who want a fixed order, split inference, or a
 fallback provider.
 
+An interactive `roca init` is the shortest way to create those overrides. It
+starts with models rather than provider names: detected agent CLIs are grouped
+as origins with their shipped default and a free-text option, while Ollama
+contributes the models returned by its local `/api/tags` catalogue. After the
+model choice, init auto-selects its harness when exactly one origin matches or
+asks which harness to use when several match. The confirmed pair is probed when
+it differs from the already-ready default, then `models.order` and
+`models.<provider>.model` are edited in place. Existing files keep their
+comments and unrelated settings and receive a named recovery backup when the
+edit changes them. The complete question and automation contracts live in
+[Initialize](lifecycle.md#initialize).
+
+Plain Enter through the chooser preserves the effective selection the normal
+factory ordering would have made. Non-terminal init does not run this chooser
+or write the model configuration; it reports the effective provider/model and
+the configuration path once so automation stays question-free.
+
 ```toml
 [models]
 # The order they are tried in. The first available one serves.
