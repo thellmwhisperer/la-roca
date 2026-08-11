@@ -15,3 +15,5 @@ Reading order, from operator to contributor:
 6. [Releases](releases.md): how versions are cut and artefacts are built.
 
 The [README](../README.md) is the front page; these pages carry the depth.
+The [changelog](../CHANGELOG.md) is maintained by release automation, one
+entry per version.
