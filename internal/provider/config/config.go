@@ -25,6 +25,7 @@ type Paths struct {
 	Home    string
 	DB      string
 	Backups string
+	Runner  string
 	// Config is the operator's TOML. It hangs off the data directory so that an
 	// imported database keeps its config next to the data it imported.
 	Config string
@@ -39,6 +40,7 @@ const (
 	DirOwn     = ".roca"
 	FileDB     = "roca.db"
 	DirBackups = "backups"
+	DirRunner  = "runner"
 	EnvDBPath  = "ROCA_DB_PATH"
 )
 
@@ -71,6 +73,7 @@ func Resolve(in Input) (Paths, error) {
 // inDataDir hangs the configuration and credentials off the data directory.
 func inDataDir(paths Paths, dataDir string, in Input) Paths {
 	paths.Home = in.Home
+	paths.Runner = filepath.Join(dataDir, DirRunner)
 	paths.Config = filepath.Join(dataDir, FileConfig)
 	if in.ConfigEnv != "" {
 		paths.Config = in.ConfigEnv

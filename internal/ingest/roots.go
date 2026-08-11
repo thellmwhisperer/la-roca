@@ -43,6 +43,9 @@ type Settings struct {
 	OpenCodeDB            string
 	PiSessions            string
 	HermesDB              string
+	// RunnerDir is La Roca's neutral subprocess cwd. Any runtime artefact keyed
+	// to this directory is product traffic, never operator corpus.
+	RunnerDir string
 	// WorkspaceRoots resolve project identity from encoded session paths. Files
 	// under them are never ingested as content.
 	WorkspaceRoots []string
@@ -64,6 +67,7 @@ type Roots struct {
 	OpenCodeDB    string
 	PiSessions    string
 	HermesDB      string
+	RunnerDir     string
 	SubagentRoots []string
 	Workspace     WorkspaceRoots
 }
@@ -107,6 +111,7 @@ func ResolveRoots(env Environment, settings Settings) Roots {
 			join(env, env.Home, ".pi", "agent", "sessions")),
 		HermesDB: pick(env, settings.HermesDB, envHermesDB,
 			join(env, env.Home, ".hermes", "state.db")),
+		RunnerDir: expand(env, settings.RunnerDir),
 		Workspace: ResolveWorkspaceRoots(expandAll(env, settings.WorkspaceRoots)),
 	}
 

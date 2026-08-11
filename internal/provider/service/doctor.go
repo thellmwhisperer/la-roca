@@ -18,6 +18,7 @@ const (
 	CredentialPresent   = "present"
 	CredentialAbsent    = "absent"
 	CredentialNotNeeded = "not needed"
+	CredentialExternal  = "managed by local CLI"
 )
 
 // DoctorReport is the installation's diagnosis: where its data is, what it
@@ -171,6 +172,9 @@ func verdicts(ctx context.Context, cascade provider.Cascade) ([]DoctorProvider, 
 }
 
 func credentialOf(p provider.Provider) string {
+	if external, ok := p.(interface{ ExternalCredential() bool }); ok && external.ExternalCredential() {
+		return CredentialExternal
+	}
 	holder, holds := p.(CredentialHolder)
 	if !holds {
 		return CredentialNotNeeded

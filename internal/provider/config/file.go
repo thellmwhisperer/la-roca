@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -262,9 +263,17 @@ type ModelsConfig struct {
 type ProviderConfig struct {
 	// Preset fills in endpoint and model from what this build knows about a
 	// named provider. Empty tries the provider's own name as a preset.
-	Preset  string `toml:"preset"`
-	BaseURL string `toml:"base_url"`
-	Model   string `toml:"model"`
+	Preset  string   `toml:"preset"`
+	BaseURL string   `toml:"base_url"`
+	Command []string `toml:"command"`
+	Model   string   `toml:"model"`
+	// ResponseFormat declares whether command stdout is plain text or a JSON
+	// envelope whose result field is the answer.
+	ResponseFormat string `toml:"response_format"`
+	// TimeoutSeconds bounds one local-binary invocation. It is separate from
+	// the millisecond-wide cascade budget because command startup is measured
+	// in seconds and has a deliberately generous default.
+	TimeoutSeconds int `toml:"timeout_seconds"`
 	// APIKey is the credential. It is read from here or from APIKeyEnv, never
 	// from the database, and it never travels to any output.
 	APIKey string `toml:"api_key"`
@@ -278,21 +287,26 @@ type ProviderConfig struct {
 	// model, and on qwen3.5 it is the difference between an interpretation that
 	// answers in seconds and one that answers in minutes.
 	Think bool `toml:"think"`
-}
-
-// knownProviderKeys is what a provider table may carry. It is here and not
-// derived from the struct because the warning has to name the key the operator
-// wrote, not a field name.
-var knownProviderKeys = map[string]bool{
-	"preset": true, "base_url": true, "model": true,
-	"api_key": true, "api_key_env": true, "keep_alive": true, "think": true,
+	// Values preserves every scalar for command-template substitution. Tuning
+	// belongs to the provider table and does not need a release that knows its
+	// vocabulary before it can reach the local CLI.
+	Values map[string]string `toml:"-"`
 }
 
 var knownModelsKeys = map[string]bool{
 	"order": true, "interpret_order": true, "timeout_ms": true, "probe_ms": true,
 }
 
+var knownProviderKeys = map[string]bool{
+	"preset": true, "base_url": true, "model": true,
+	"api_key": true, "api_key_env": true, "keep_alive": true, "think": true,
+}
+
 var knownQueryKeys = map[string]bool{"timeout_ms": true}
+
+func KnownProviderKey(key string) bool { return knownProviderKeys[key] }
+
+func UnknownKeyWarning(key, path string) string { return unknownKey(key, path) }
 
 // LoadFile reads the config. A file that is not there is a machine with
 // defaults, not a failure.
@@ -316,9 +330,39 @@ func LoadFile(path string) (File, error) {
 	file.defaults, _ = document["defaults"].(map[string]any)
 	models, _ := document["models"].(map[string]any)
 	file.Models = readModels(models, path, &file.Warnings)
+	for name, provider := range file.Models.Providers {
+		if provider.BaseURL != "" && len(provider.Command) > 0 {
+			return file, fmt.Errorf(
+				"provider %q in %s declares both models.%s.base_url and models.%s.command; choose exactly one transport",
+				name, path, name, name)
+		}
+		for _, placeholder := range CommandPlaceholders(provider.Command) {
+			if placeholder == "prompt" {
+				continue
+			}
+			if _, exists := provider.Values[placeholder]; !exists {
+				return file, fmt.Errorf(
+					"provider %q command in %s uses unknown placeholder {%s}; declare %s under models.%s",
+					name, path, placeholder, placeholder, name)
+			}
+		}
+	}
 	query, _ := document["query"].(map[string]any)
 	file.Query = readQuery(query, path, &file.Warnings)
 	return file, nil
+}
+
+var commandPlaceholder = regexp.MustCompile(`\{([A-Za-z_][A-Za-z0-9_-]*)\}`)
+
+// CommandPlaceholders returns the template keys named by an argv declaration.
+func CommandPlaceholders(command []string) []string {
+	var placeholders []string
+	for _, argument := range command {
+		for _, match := range commandPlaceholder.FindAllStringSubmatch(argument, -1) {
+			placeholders = append(placeholders, match[1])
+		}
+	}
+	return placeholders
 }
 
 func readQuery(section map[string]any, path string, warnings *[]string) QueryConfig {
@@ -347,8 +391,7 @@ func readModels(section map[string]any, path string, warnings *[]string) ModelsC
 	for _, key := range sortedKeys(section) {
 		value := section[key]
 		if table, isTable := value.(map[string]any); isTable {
-			models.Providers[strings.ToLower(key)] = readProvider(
-				table, "models."+key, path, warnings)
+			models.Providers[strings.ToLower(key)] = readProvider(table)
 			continue
 		}
 		switch key {
@@ -369,17 +412,26 @@ func readModels(section map[string]any, path string, warnings *[]string) ModelsC
 	return models
 }
 
-func readProvider(table map[string]any, prefix, path string, warnings *[]string) ProviderConfig {
-	var cfg ProviderConfig
+func readProvider(table map[string]any) ProviderConfig {
+	cfg := ProviderConfig{Values: make(map[string]string, len(table))}
 	for _, key := range sortedKeys(table) {
 		text, _ := table[key].(string)
+		if key != "command" {
+			cfg.Values[key] = templateString(table[key])
+		}
 		switch key {
 		case "preset":
 			cfg.Preset = text
 		case "base_url":
 			cfg.BaseURL = text
+		case "command":
+			cfg.Command = readStrings(table[key])
 		case "model":
 			cfg.Model = text
+		case "response_format":
+			cfg.ResponseFormat = text
+		case "timeout_seconds":
+			cfg.TimeoutSeconds = readInt(table[key])
 		case "api_key":
 			cfg.APIKey = text
 		case "api_key_env":
@@ -388,13 +440,21 @@ func readProvider(table map[string]any, prefix, path string, warnings *[]string)
 			cfg.KeepAlive = text
 		case "think":
 			cfg.Think, _ = table[key].(bool)
-		default:
-			if !knownProviderKeys[key] {
-				*warnings = append(*warnings, unknownKey(prefix+"."+key, path))
-			}
 		}
 	}
 	return cfg
+}
+
+func templateString(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case bool, int64, float64:
+		return fmt.Sprint(typed)
+	default:
+		raw, _ := json.Marshal(value)
+		return string(raw)
+	}
 }
 
 // unknownKey is the warning shape: the key, the file and the exact remedy.

@@ -97,6 +97,65 @@ api_key = "k"
 	}
 }
 
+func TestClaudeIsABuiltInLocalBinaryProvider(t *testing.T) {
+	base := settings(t, "[models]\norder = [\"claude\"]\n")
+	cascade, err := BuildCascade(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cascade.Providers) != 1 {
+		t.Fatalf("providers = %v", names(cascade.Providers))
+	}
+	claude, ok := cascade.Providers[0].(*LocalBinary)
+	preset := commandPresets[NameClaude]
+	if !ok || claude.ModelID() != preset.Model || preset.ResponseFormat != binaryResponseJSON {
+		t.Fatalf("Claude provider = %#v", cascade.Providers[0])
+	}
+	joined := strings.Join(preset.Command, " ")
+	if strings.Contains(joined, "{prompt}") {
+		t.Fatalf("default Claude command exposes the prompt in argv: %q", joined)
+	}
+	for _, flag := range []string{
+		"-p", "--output-format json", "--model {model}", "--safe-mode",
+		"--strict-mcp-config", "--tools ", "--disable-slash-commands",
+		"--no-session-persistence", "--no-chrome",
+	} {
+		if !strings.Contains(joined, flag) {
+			t.Errorf("default Claude command does not contain %q: %q", flag, joined)
+		}
+	}
+}
+
+func TestAConfiguredCommandSelectsTheBinaryTransport(t *testing.T) {
+	for _, tc := range []struct {
+		name, model string
+		timeout     int
+	}{
+		{name: "fixture", model: "fixture-model", timeout: 7},
+		{name: NameCodex, model: "codex-cli-model"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := settings(t, "[models]\norder = [\""+tc.name+"\"]\n")
+			base.File.Models.Providers[tc.name] = config.ProviderConfig{
+				Command: []string{fakeBinary(t), "--model", "{model}"},
+				Model:   tc.model, TimeoutSeconds: tc.timeout,
+			}
+			base.RunnerDir = t.TempDir()
+			cascade, err := BuildCascade(base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			binary, ok := cascade.Providers[0].(*LocalBinary)
+			if !ok || binary.ModelID() != tc.model {
+				t.Fatalf("provider = %#v", cascade.Providers[0])
+			}
+			if tc.timeout > 0 && binary.RequestTimeout() != time.Duration(tc.timeout)*time.Second {
+				t.Fatalf("timeout = %v", binary.RequestTimeout())
+			}
+		})
+	}
+}
+
 func TestThePresetsAreInTheCatalogWithoutBeingDeclared(t *testing.T) {
 	for _, name := range PresetNames() {
 		cascade, err := BuildCascade(settings(t, "[models]\norder = [\""+name+"\"]\n"))
@@ -270,12 +329,28 @@ func TestAModelKeyUnderDefaultsRetunesTheLocalFloor(t *testing.T) {
 }
 
 func TestTheConfigWarningsTravelWithTheCascade(t *testing.T) {
-	cascade, err := BuildCascade(settings(t, "[models]\norder = [\"ollama\"]\nturbo_mode = true\n"))
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-	if !strings.Contains(strings.Join(cascade.Warnings, " "), "turbo_mode") {
-		t.Fatalf("the config warning got lost: %v", cascade.Warnings)
+	for _, tc := range []struct {
+		name, body, warning string
+	}{
+		{name: "models key", body: "[models]\norder = [\"ollama\"]\nturbo_mode = true\n", warning: "turbo_mode"},
+		{name: "HTTP provider key", body: "[models]\norder = [\"deepseek\"]\n[models.deepseek]\nbase_urll = \"https://private.invalid/v1\"\n", warning: "models.deepseek.base_urll"},
+		{name: "command scalar", body: "[models]\norder = [\"fixture\"]\n[models.fixture]\ncommand = [\"fixture\", \"{tuning}\"]\nmodel = \"fixture-model\"\ntuning = \"high\"\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := settings(t, tc.body)
+			base.RunnerDir = t.TempDir()
+			cascade, err := BuildCascade(base)
+			if err != nil {
+				t.Fatalf("build: %v", err)
+			}
+			joined := strings.Join(cascade.Warnings, " ")
+			if tc.warning != "" && !strings.Contains(joined, tc.warning) {
+				t.Fatalf("warning does not contain %q: %v", tc.warning, cascade.Warnings)
+			}
+			if tc.warning == "" && joined != "" {
+				t.Fatalf("command scalar was reported as unknown: %v", cascade.Warnings)
+			}
+		})
 	}
 }
 
@@ -319,6 +394,9 @@ func TestTheInterpretationOrderIsACascadeOfItsOwn(t *testing.T) {
 		{name: "declared names the provider that reads the rows",
 			body: "[models]\norder = [\"codex\"]\ninterpret_order = [\"ollama\"]\ntimeout_ms = 15000\n",
 			want: "ollama"},
+		{name: "a local binary can read the rows",
+			body: "[models]\norder = [\"ollama\"]\ninterpret_order = [\"claude\"]\ntimeout_ms = 15000\n",
+			want: "claude"},
 		{name: "an unknown name warns and leaves no split",
 			body:    "[models]\ninterpret_order = [\"telepathy\"]\n",
 			warning: "telepathy"},
