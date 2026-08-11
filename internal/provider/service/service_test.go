@@ -74,6 +74,26 @@ func TestInitCreatesTheDatabaseAndSyncsTheLayerRegistry(t *testing.T) {
 	}
 }
 
+func TestInitCarriesFactoryBinarySelectionMetadata(t *testing.T) {
+	paths := freshPaths(t)
+	local := answering("codex", "")
+	local.external = true
+	svc := serviceOn(t, paths, func(options *service.Options) {
+		options.Providers = provider.Cascade{
+			Providers: []provider.Provider{local}, DetectedBinaries: []string{"codex"}, FactoryDefault: true,
+		}
+	})
+	result, err := svc.Init(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(result.DetectedModelBinaries, ",") != "codex" ||
+		strings.Join(result.MissingModelBinaries, ",") != "claude" ||
+		!result.FactoryDefault || result.FactoryDefaultProvider != "codex" {
+		t.Fatalf("init model metadata = %+v", result)
+	}
+}
+
 func TestInitReportsPromptWriteFailureWithoutDiscardingItsResult(t *testing.T) {
 	paths := freshPaths(t)
 	if err := os.Mkdir(filepath.Join(paths.data, "prompt.md"), 0o700); err != nil {

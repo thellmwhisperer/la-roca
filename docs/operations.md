@@ -1,5 +1,8 @@
 # Operations: logs, redaction, retention
 
+First-time path: [install, detect an already signed-in agent CLI, and query
+without a La Roca login](lifecycle.md#install).
+
 Every CLI execution writes a redacted JSONL record under the selected data
 directory's `logs/`. A logging failure warns once on stderr but never changes
 a command or tool result.

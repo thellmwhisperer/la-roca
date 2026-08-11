@@ -73,13 +73,18 @@ func (w *providerAcceptanceWorld) everyProviderHasFailureReason() error {
 		return err
 	}
 	providers := objectList(doc["providers"])
-	if len(providers) != len(w.providers) {
-		return fmt.Errorf("tried %d providers, want %d", len(providers), len(w.providers))
+	if len(providers) < len(w.providers) {
+		return fmt.Errorf("tried %d providers, want at least the %d configured providers", len(providers), len(w.providers))
 	}
-	for i, provider := range providers {
+	for i, provider := range providers[:len(w.providers)] {
 		if provider["provider"] != w.providers[i].Name || provider["ready"] != false ||
 			strings.TrimSpace(fmt.Sprint(provider["reason"])) == "" {
 			return fmt.Errorf("provider failure %d is incomplete: %v", i, provider)
+		}
+	}
+	for i, provider := range providers[len(w.providers):] {
+		if provider["ready"] != false || strings.TrimSpace(fmt.Sprint(provider["reason"])) == "" {
+			return fmt.Errorf("additional factory diagnostic %d is incomplete: %v", i, provider)
 		}
 	}
 	return nil

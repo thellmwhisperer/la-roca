@@ -56,6 +56,14 @@ plainly instead of printing a zero date. `roca doctor` reports the same floor
 as part of installation health, and `--json` carries the machine field in
 both commands.
 
+Before asking for any provider setup, init detects supported agent CLIs already
+on `PATH` and uses their existing signed-in sessions. Its summary names the
+selected factory-default provider and says that no La Roca login is required;
+the next step is simply `roca query "<question>"`. Ollama and then keyword
+search remain the honest local fallbacks when no detected CLI can serve.
+HTTP/OAuth or key login is optional setup only for users without a usable local
+CLI who choose a configured remote provider.
+
 ## Update
 
 ```sh
@@ -80,9 +88,10 @@ already offered for the current version. An interactive doctor run offers them
 again; `--json` reports them under `capability_proposals` without prompting.
 The current proposals are:
 
-- When Claude Code is on `PATH` but no usable Claude provider is configured,
-  enable the shipped local-CLI preset at the front of `models.order`; its
-  default model is `sonnet`.
+- When an explicit provider order excludes a detected Claude Code binary,
+  offer the shipped local-CLI preset at the front of that configured order;
+  its default model is `sonnet`. An absent order already detects it as the
+  factory default and needs no proposal.
 - When Codex is using La Roca's OAuth/HTTP session and the Codex CLI is on
   `PATH`, replace that provider's HTTP settings with the isolated `codex exec`
   local-binary transport while preserving the selected model.

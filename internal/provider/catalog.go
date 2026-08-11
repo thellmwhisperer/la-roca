@@ -30,6 +30,9 @@ type Settings struct {
 	// Env reads the environment. It is a field and not a call to os.Getenv so
 	// that a test can hand over an environment of its own.
 	Env func(key string) string
+	// LookPath resolves local CLI executables for the zero-config factory
+	// order. Nil uses the platform's PATH lookup.
+	LookPath LookPathFunc
 }
 
 func (s Settings) env(keys ...string) string {
@@ -62,21 +65,28 @@ func CodexFlow() oauth.Flow {
 // unknown name degrades or fails.
 func BuildCascade(s Settings) (Cascade, error) {
 	catalog := s.catalog()
-	selection := s.selection(catalog)
+	detected := DetectedCommandPresets(s.LookPath)
+	selection := s.selection(catalog, detected)
 
 	resolved, err := Resolve(selection, catalog)
 	if err != nil {
 		return Cascade{}, err
 	}
 
-	return s.budgeted(Cascade{
-		Providers: resolved.Providers,
-		Disabled:  resolved.Disabled,
+	cascade := Cascade{
+		Providers:           resolved.Providers,
+		DetectedBinaries:    detected,
+		FallbackDiagnostics: missingBinaryDiagnostics(detected),
+		Disabled:            resolved.Disabled,
 		// The config's warnings travel with the cascade: they are about the same
 		// file and the operator reads them in the same place.
 		Warnings: append(append(append([]string(nil), s.File.Warnings...),
 			s.transportWarnings()...), resolved.Warnings...),
-	}), nil
+	}
+	if selection.Source == SourceCode {
+		cascade.FactoryDefault = true
+	}
+	return s.budgeted(cascade), nil
 }
 
 // BuildInterpretCascade turns models.interpret_order into the cascade of the
@@ -124,7 +134,7 @@ func (s Settings) budgeted(cascade Cascade) Cascade {
 }
 
 // selection reads the order with its provenance attached.
-func (s Settings) selection(catalog Catalog) Selection {
+func (s Settings) selection(catalog Catalog, detected []string) Selection {
 	if raw := s.env(EnvOrder); raw != "" {
 		return Selection{Names: splitList(raw), Source: SourceEnv, Key: EnvOrder}
 	}
@@ -136,7 +146,17 @@ func (s Settings) selection(catalog Catalog) Selection {
 	}
 	// The default order is code, and it only names what this build carries, so
 	// it cannot fail; declaring it as code is what keeps that true.
-	return Selection{Names: presentIn(DefaultOrder(), catalog), Source: SourceCode}
+	return Selection{Names: presentIn(defaultOrderFromDetected(detected), catalog), Source: SourceCode}
+}
+
+func missingBinaryDiagnostics(detected []string) []Attempt {
+	var missing []Attempt
+	for _, name := range MissingCommandPresets(detected) {
+		preset := commandPresets[name]
+		missing = append(missing, Attempt{Name: name, ModelID: preset.Model,
+			Reason: filepath.Base(preset.Command[0]) + " binary not found in PATH", Action: preset.Action})
+	}
+	return missing
 }
 
 // catalog is what this build can build: the local floor, the subscription
