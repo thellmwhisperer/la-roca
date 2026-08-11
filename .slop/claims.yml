@@ -27,11 +27,11 @@ claims:
   internal/distribution/cli/model_validation.go:
     contract:
       file: features/provider/model-adapters.feature
-      item: "F07-10 Login persists the answering model without replacing the configuration"
+      item: "Login persists the answering model without replacing the configuration"
   internal/distribution/cli/serve.go:
     contract:
       file: features/distribution/mcp-contract.feature
-      item: "F08-01 The server comes up on demand over stdio and announces who it is"
+      item: "The server comes up on demand over stdio and announces who it is"
   internal/distribution/cli/skill.go:
     contract:
       file: features/distribution/skill.feature
@@ -47,7 +47,7 @@ claims:
   internal/distribution/mcpplug/tools.go:
     contract:
       file: features/distribution/mcp-contract.feature
-      item: "F08-02 Discovery returns exactly the decided surface"
+      item: "Discovery returns exactly the decided surface"
   data/layers.yaml:
     contract:
       file: features/store/write.feature
