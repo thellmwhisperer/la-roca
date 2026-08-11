@@ -32,7 +32,10 @@ func newWorld(t *testing.T) *world {
 		home:      home,
 		workspace: workspace,
 		env:       Environment{GOOS: "darwin", Home: home},
-		settings:  Settings{WorkspaceRoots: []string{workspace}},
+		settings: Settings{
+			WorkspaceRoots:       []string{workspace},
+			AnthropicExportPaths: []string{filepath.Join(home, "declared-anthropic-export")},
+		},
 	}
 	w.seed(t)
 	return w
@@ -78,6 +81,16 @@ func (w *world) seed(t *testing.T) {
 	t.Helper()
 	roots := w.roots()
 	project := filepath.Join(roots.ClaudeProjects, w.projectDir())
+	w.write(t, filepath.Join(roots.ClaudeWebExports[0], "conversations.json"), `[{
+  "uuid":"web-fixture-1","name":"Synthetic web fixture","summary":"Invented export data.",
+  "created_at":"2026-08-01T08:00:00Z","updated_at":"2026-08-01T08:00:02Z",
+  "chat_messages":[
+    {"uuid":"web-human-1","text":"name the fixture","sender":"human","created_at":"2026-08-01T08:00:01Z","parent_message_uuid":null},
+    {"uuid":"web-agent-1","text":"glass beacon","sender":"assistant","created_at":"2026-08-01T08:00:02Z","parent_message_uuid":"web-human-1"}
+  ]
+}]`)
+	w.write(t, filepath.Join(roots.ClaudeWebExports[0], "memories.json"),
+		`[{"uuid":"web-memory-1","memory":"The synthetic export is explicitly declared.","created_at":"2026-08-01T07:00:00Z"}]`)
 
 	// Claude Code: a transcript, a memory file, and the index that is not one.
 	w.write(t, filepath.Join(project, fixtureSessionID+".jsonl"), fmt.Sprintf(`

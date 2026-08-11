@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
@@ -440,6 +441,29 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 		return records, ""
 	}
 
+	if target.Kind == parsers.KindClaudeWebConversations ||
+		target.Kind == parsers.KindClaudeWebMemories {
+		file, err := os.Open(target.Path)
+		if err != nil {
+			return parsers.Records{}, err.Error()
+		}
+		defer file.Close()
+		meta := parsers.FileMeta{
+			Path: target.Path, FileName: target.FileName, SourceAgent: target.SourceAgent,
+		}
+		var records parsers.Records
+		if target.Kind == parsers.KindClaudeWebConversations {
+			records, err = parsers.ParseClaudeWebConversations(file, meta)
+		} else {
+			records, err = parsers.ParseClaudeWebMemories(file, meta)
+		}
+		if err != nil {
+			return parsers.Records{}, err.Error()
+		}
+		resolveProjects(ctx, opts, target, &records)
+		return records, ""
+	}
+
 	content, err := os.ReadFile(target.Path)
 	if err != nil {
 		return parsers.Records{}, err.Error()
@@ -497,6 +521,11 @@ func resolveProjects(ctx context.Context, opts Options, target Target, records *
 	}
 	for i := range records.Sessions {
 		session := &records.Sessions[i]
+		if target.Kind == parsers.KindClaudeWebConversations {
+			// An export path says nothing about the conversation's project. It is
+			// deliberately not passed through path heuristics in v1.
+			continue
+		}
 		cwd, _ := session.Metadata["cwd"].(string)
 		fromContent := ""
 		switch target.Kind {
@@ -569,6 +598,7 @@ func declaredRoots(roots Roots) map[string]string {
 		"opencode_db":             roots.OpenCodeDB,
 		"pi_sessions":             roots.PiSessions,
 		"hermes_db":               roots.HermesDB,
+		"anthropic_export_paths":  strings.Join(roots.ClaudeWebExports, string(os.PathListSeparator)),
 	}
 	maps.DeleteFunc(declared, func(_, value string) bool { return value == "" })
 	return declared

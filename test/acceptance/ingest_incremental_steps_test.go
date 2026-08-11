@@ -5,6 +5,7 @@ package acceptance
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/cucumber/godog"
 )
@@ -21,6 +22,21 @@ func registerIngestIncrementalSteps(ctx *godog.ScenarioContext, w *ingestAccepta
 	})
 	ctx.Given(`^a Claude session is ready to ingest$`, func() error {
 		return w.seedClaudeSession("repeat", 1, false, "")
+	})
+	ctx.Given(`^a declared Anthropic export is ready to ingest$`, func() error {
+		export := filepath.Join(w.home, "declared-anthropic-export")
+		fixture := filepath.Join("..", "..", "internal", "ingest", "testdata", "anthropic-export")
+		for _, name := range []string{"conversations.json", "memories.json"} {
+			raw, err := os.ReadFile(filepath.Join(fixture, name))
+			if err != nil {
+				return err
+			}
+			if err := writeFixture(filepath.Join(export, name), string(raw)); err != nil {
+				return err
+			}
+		}
+		return writeFixture(filepath.Join(w.home, ".roca", "config.toml"),
+			fmt.Sprintf("[defaults]\nanthropic_export_paths = [%q]\n", export))
 	})
 	ctx.Given(`^a Claude session with one exchange has already been ingested$`, func() error {
 		if err := w.seedClaudeSession("growing", 1, false, ""); err != nil {
@@ -59,6 +75,35 @@ func registerIngestIncrementalSteps(ctx *godog.ScenarioContext, w *ingestAccepta
 			if w.countsAfter[table] != before {
 				return fmt.Errorf("%s changed from %d to %d", table, before, w.countsAfter[table])
 			}
+		}
+		return nil
+	})
+	ctx.Then(`^the declared Anthropic export is ingested$`, func() error {
+		for query, want := range map[string]int{
+			`SELECT COUNT(*) FROM sessions WHERE source_agent = 'claude-web'`: 2,
+			`SELECT COUNT(*) FROM exchanges e JOIN sessions s ON s.session_id = e.session_id
+			  WHERE s.source_agent = 'claude-web'`: 4,
+			`SELECT COUNT(*) FROM memories WHERE source_agent = 'claude-web'
+			  AND layer = 'user' AND origin = 'cron'`: 1,
+		} {
+			got, err := w.queryInt(query)
+			if err != nil {
+				return err
+			}
+			if got != want {
+				return fmt.Errorf("query %q returned %d, want %d", query, got, want)
+			}
+		}
+		return nil
+	})
+	ctx.Then(`^doctor reports the export's older date as bedrock$`, func() error {
+		result, err := w.runCommand("doctor", "--db-path", w.dbPath, "--json")
+		if err != nil {
+			return err
+		}
+		bedrock, ok := result.doc["bedrock"].(map[string]any)
+		if !ok || bedrock["timestamp"] != "2025-04-02T07:00:00.000Z" {
+			return fmt.Errorf("doctor bedrock = %v", result.doc["bedrock"])
 		}
 		return nil
 	})
