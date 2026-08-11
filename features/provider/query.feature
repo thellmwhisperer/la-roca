@@ -51,6 +51,14 @@ Feature: Honest queries without a model
     And exactly 1 row is reported
     And one row contains "provider acceptance sentinel"
 
+  Scenario: A provider backed by a local binary answers the query
+    Given a provider backed by a local binary answers with SQL "SELECT id, content AS text FROM memories ORDER BY id LIMIT 1"
+    When I ask "provider acceptance sentinel"
+    Then the command exits with code 0
+    And the result used the model SQL path
+    And exactly 1 row is reported
+    And one row contains "provider acceptance sentinel"
+
   Scenario: Model SQL rejected by the gate never executes
     Given the provider configuration is:
       | provider | model            | availability |
