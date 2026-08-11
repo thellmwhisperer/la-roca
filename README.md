@@ -62,7 +62,35 @@ without a single kind word.
 
 ### The bug you know you have already fixed once
 
-The same answer, seen by both readers:
+```text
+$ roca query "have I fixed a stale lock error before"
+SQL · provider codex · model gpt-5.6 · 2.9 s / search · 3 ms
+rows[2]{source,created_at,text}:
+  exchange,"2026-06-14 23:41:02","fixed: stale .lock left by a killed run; rm .ingest.lock and rerun with --resume"
+  memory,"2026-06-15 00:02:19","Pattern: a killed ingest leaves .ingest.lock behind; delete it before blaming the parser"
+```
+
+### The perfect one-liner an agent wrote for you weeks ago
+
+```text
+$ roca query "the ffmpeg one-liner that extracted frames for verification"
+rows[1]{source,created_at,text}:
+  exchange,"2026-07-29 18:05:33","ffmpeg -ss 2 -i out.mp4 -frames:v 1 -q:v 3 frame.jpg   # verify before delivering"
+```
+
+### Yesterday's decision, with the conversation that made it
+
+```text
+$ roca query "what did we decide about the retention window"
+rows[2]{source,created_at,text}:
+  memory,"2026-08-02 21:14:09","Decision: operational logs keep 30 days, dated streams, never stored in SQLite"
+  exchange,"2026-08-02 21:02:44","30 days and out. I do not want eternal logs."
+```
+
+### One answer, two readers
+
+Every query serves both audiences. Your agent gets the rows; you get the
+prose with `--full`:
 
 <details open>
 <summary><strong>What your agent sees (default): TOON format, for token efficiency and a better agent experience</strong></summary>
@@ -96,23 +124,6 @@ local model on your machine: make the query smart so the reader can be
 cheap, local, and secure.
 
 </details>
-
-### The perfect one-liner an agent wrote for you weeks ago
-
-```text
-$ roca query "the ffmpeg one-liner that extracted frames for verification"
-rows[1]{source,created_at,text}:
-  exchange,"2026-07-29 18:05:33","ffmpeg -ss 2 -i out.mp4 -frames:v 1 -q:v 3 frame.jpg   # verify before delivering"
-```
-
-### Yesterday's decision, with the conversation that made it
-
-```text
-$ roca query "what did we decide about the retention window"
-rows[2]{source,created_at,text}:
-  memory,"2026-08-02 21:14:09","Decision: operational logs keep 30 days, dated streams, never stored in SQLite"
-  exchange,"2026-08-02 21:02:44","30 days and out. I do not want eternal logs."
-```
 
 ### Exact SQL, when you want it
 
