@@ -152,6 +152,59 @@ func TestPurgeReleasesAndRemovesItsLogLock(t *testing.T) {
 	}
 }
 
+func TestPurgeReconciliationClearsOnlyResolvedLockFailures(t *testing.T) {
+	lockPath := filepath.Join(t.TempDir(), "logs", ".roca.lock")
+	stale := "delete " + lockPath + ": the product-owned artifact remains"
+	genuine := "delete another product file: permission denied"
+
+	recovered := reconcilePurge(
+		lifecycle.Report{Purged: false, Errors: []string{stale}},
+		lifecycle.Report{Purged: true}, lockPath,
+	)
+	if !recovered.Purged || len(recovered.Errors) != 0 {
+		t.Fatalf("recovered report = %+v", recovered)
+	}
+
+	failed := reconcilePurge(
+		lifecycle.Report{Purged: false, Errors: []string{stale, genuine}},
+		lifecycle.Report{Purged: true}, lockPath,
+	)
+	if failed.Purged || !slices.Equal(failed.Errors, []string{genuine}) {
+		t.Fatalf("failed report = %+v", failed)
+	}
+}
+
+func TestPurgeReportsForeignLogSurvivorsOnce(t *testing.T) {
+	home := t.TempDir()
+	paths := resolvedIn(t, home)
+	dataDir := dirOf(paths.DB)
+	writer := logfile.New(dataDir)
+	if err := writer.Prepare(); err != nil {
+		t.Fatal(err)
+	}
+	foreign := filepath.Join(dataDir, logfile.DirName, "operator.txt")
+	writeFile(t, foreign, "mine")
+
+	report := applyPurge(dataDir, func() lifecycle.Plan {
+		return lifecycle.Plan{Owned: ownedPaths(paths), DataDir: dataDir}
+	})
+	if !report.Purged || len(report.Errors) != 0 {
+		t.Fatalf("purge report = %+v", report)
+	}
+	counts := map[lifecycle.Kept]int{}
+	for _, survivor := range report.Kept {
+		counts[survivor]++
+	}
+	for survivor, count := range counts {
+		if count != 1 {
+			t.Errorf("kept survivor reported %d times: %+v", count, survivor)
+		}
+	}
+	if !slices.ContainsFunc(report.Kept, func(kept lifecycle.Kept) bool { return kept.Path == foreign }) {
+		t.Fatalf("foreign log was not reported: %+v", report.Kept)
+	}
+}
+
 func TestPurgePreservesSymlinkedProductDirectoriesAndTargets(t *testing.T) {
 	home := t.TempDir()
 	paths := resolvedIn(t, home)

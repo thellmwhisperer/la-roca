@@ -163,17 +163,33 @@ func applyPurge(dataDir string, plan func() lifecycle.Plan) lifecycle.Report {
 		Owned:   []string{logs.LockPath(), filepath.Dir(logs.LockPath())},
 		DataDir: dataDir,
 	}.Apply()
+	return reconcilePurge(report, final, logs.LockPath())
+}
+
+func reconcilePurge(report, final lifecycle.Report, lockPath string) lifecycle.Report {
 	report.Deleted = append(report.Deleted, final.Deleted...)
 	report.Kept = append(report.Kept, final.Kept...)
 	report.Errors = append(report.Errors, final.Errors...)
-	report.Purged = report.Purged && final.Purged
+	if _, err := os.Lstat(lockPath); os.IsNotExist(err) {
+		remaining := report.Errors[:0]
+		prefix := "delete " + lockPath + ":"
+		for _, failure := range report.Errors {
+			if !strings.HasPrefix(failure, prefix) {
+				remaining = append(remaining, failure)
+			}
+		}
+		report.Errors = remaining
+	}
 	kept := report.Kept[:0]
+	seen := map[lifecycle.Kept]bool{}
 	for _, survivor := range report.Kept {
-		if _, err := os.Lstat(survivor.Path); err == nil || !os.IsNotExist(err) {
+		if _, err := os.Lstat(survivor.Path); (err == nil || !os.IsNotExist(err)) && !seen[survivor] {
 			kept = append(kept, survivor)
+			seen[survivor] = true
 		}
 	}
 	report.Kept = kept
+	report.Purged = len(report.Errors) == 0
 	return report
 }
 
