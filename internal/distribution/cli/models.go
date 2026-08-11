@@ -166,10 +166,10 @@ type initModelChoice struct {
 }
 
 func (env *cliEnv) chooseInitModel(ctx context.Context, input *bufio.Reader,
-	paths config.Paths, result service.InitResult) (service.InitResult, error) {
+	paths config.Paths, result service.InitResult) (service.InitResult, bool, error) {
 	file, err := config.LoadFile(paths.Config)
 	if err != nil {
-		return result, err
+		return result, false, err
 	}
 	origins := env.discoverInitModels(ctx, paths, file)
 	defaultChoice := currentInitModel(result)
@@ -178,38 +178,40 @@ func (env *cliEnv) chooseInitModel(ctx context.Context, input *bufio.Reader,
 		defaultChoice = firstInitModel(origins)
 	}
 	if defaultChoice.Model == "" {
-		return result, nil
+		return result, true, nil
 	}
 	model, err := env.askInitModel(input, origins, defaultChoice.Model)
 	if err != nil {
-		return result, err
+		return result, false, err
 	}
 	candidates := initHarnesses(origins, model)
 	if len(candidates) == 0 {
-		return result, fmt.Errorf("no detected harness can serve model %s; configuration was not changed", model)
+		return result, false, fmt.Errorf(
+			"no detected harness can serve model %s; configuration was not changed", model)
 	}
 	harness, err := env.askInitHarness(input, model, candidates, defaultChoice.Provider)
 	if err != nil {
-		return result, err
+		return result, false, err
 	}
-	confirmed, err := confirmInitModel(input, env.errOut, harness, model)
+	confirmed, err := env.confirmInitModel(input, env.errOut, harness, model)
 	if err != nil {
-		return result, err
+		return result, false, err
 	}
 	if !confirmed {
 		env.initSay("model choice canceled; configuration was not changed")
-		return result, nil
+		return result, false, nil
 	}
 	if harness != defaultChoice.Provider || model != defaultChoice.Model {
 		backend := env.initModelBackend(paths, file, harness)
 		if err := backend.Probe(ctx, harness, model); err != nil {
-			return result, fmt.Errorf("%s model %s failed its account probe: %w; configuration was not changed",
+			return result, false, fmt.Errorf(
+				"%s model %s failed its account probe: %w; configuration was not changed",
 				harness, model, err)
 		}
 	}
 	outcome, err := writeInitModelChoice(paths.Config, harness, model)
 	if err != nil {
-		return result, err
+		return result, false, err
 	}
 	if outcome.Changed {
 		fmt.Fprintf(env.errOut, "configuration updated: %s", outcome.Path)
@@ -222,11 +224,15 @@ func (env *cliEnv) chooseInitModel(ctx context.Context, input *bufio.Reader,
 	}
 	result.Model, err = effectiveInitModel(ctx, paths)
 	if err != nil {
-		return result, err
+		return result, false, err
+	}
+	if !result.Model.Ready {
+		return result, false, fmt.Errorf(
+			"the persisted model choice has no available provider: %s", result.Model.Reason)
 	}
 	result.FactoryDefault = false
 	result.FactoryDefaultProvider = ""
-	return result, nil
+	return result, true, nil
 }
 
 func effectiveInitModel(ctx context.Context, paths config.Paths) (*service.InitModel, error) {
@@ -368,7 +374,7 @@ func (env *cliEnv) askInitModel(input *bufio.Reader, origins []initModelOrigin,
 		env.initSay("  free text: type any model ID")
 	}
 	fmt.Fprintf(env.errOut, "Which model do you want answering? [%s]: ", defaultModel)
-	answer, err := readInitLine(input)
+	answer, err := env.readInitLine(input)
 	if err != nil {
 		return "", err
 	}
@@ -414,7 +420,7 @@ func (env *cliEnv) askInitHarness(input *bufio.Reader, model string, candidates 
 		env.initSay("  %d. %s", index+1, candidate)
 	}
 	fmt.Fprintf(env.errOut, "Which harness serves %s? [%s]: ", model, defaultProvider)
-	answer, err := readInitLine(input)
+	answer, err := env.readInitLine(input)
 	if err != nil {
 		return "", err
 	}
@@ -432,9 +438,10 @@ func (env *cliEnv) askInitHarness(input *bufio.Reader, model string, candidates 
 		answer, strings.Join(candidates, ", "))
 }
 
-func confirmInitModel(input *bufio.Reader, out io.Writer, providerName, model string) (bool, error) {
+func (env *cliEnv) confirmInitModel(input *bufio.Reader, out io.Writer,
+	providerName, model string) (bool, error) {
 	fmt.Fprintf(out, "Use %s/%s? [Y/n]: ", providerName, model)
-	answer, err := readInitLine(input)
+	answer, err := env.readInitLine(input)
 	if err != nil {
 		return false, err
 	}
@@ -448,8 +455,8 @@ func confirmInitModel(input *bufio.Reader, out io.Writer, providerName, model st
 	}
 }
 
-func readInitLine(input *bufio.Reader) (string, error) {
-	line, err := input.ReadString('\n')
+func (env *cliEnv) readInitLine(input *bufio.Reader) (string, error) {
+	line, err := env.readInitRaw(input)
 	answer := strings.TrimSpace(line)
 	if err != nil && answer == "" {
 		return "", fmt.Errorf("roca init received no answer")

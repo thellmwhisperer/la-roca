@@ -9,12 +9,14 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
+	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	"github.com/thellmwhisperer/la-roca/internal/store"
@@ -69,6 +71,24 @@ func initCommand(env *cliEnv) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if interactive && !env.skipInitChooser {
+				chooserStarted := time.Now()
+				promptWaitBefore := env.initPromptWait
+				initialModel, modelErr := effectiveInitModel(cmd.Context(), paths)
+				if modelErr != nil {
+					return modelErr
+				}
+				_, completed, chooserErr := env.chooseInitModel(cmd.Context(), input, paths,
+					service.InitResult{ConfigPath: paths.Config, Model: initialModel})
+				env.initChooserElapsed = initMachineDuration(time.Since(chooserStarted),
+					env.initPromptWait-promptWaitBefore)
+				if chooserErr != nil {
+					return chooserErr
+				}
+				if choice == "reinitialize" && !completed {
+					return nil
+				}
+			}
 			if choice == "reinitialize" {
 				for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
 					if err := os.Remove(paths.DB + suffix); err != nil && !os.IsNotExist(err) {
@@ -100,10 +120,12 @@ func initCommand(env *cliEnv) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			commandElapsed := time.Since(commandStarted).Milliseconds()
-			if outsideService := commandElapsed - result.TotalElapsedMS; outsideService > 0 {
+			commandElapsed := initMachineDuration(time.Since(commandStarted), env.initPromptWait).Milliseconds()
+			chooserElapsed := env.initChooserElapsed.Milliseconds()
+			if outsideService := commandElapsed - result.TotalElapsedMS - chooserElapsed; outsideService > 0 {
 				result.SetupElapsedMS += outsideService
 			}
+			result.ModelElapsedMS += chooserElapsed
 			result.TotalElapsedMS = commandElapsed
 			if env.json {
 				return env.printJSON(struct {
@@ -114,13 +136,6 @@ func initCommand(env *cliEnv) *cobra.Command {
 					AdoptedFrom   string `json:"adopted_from,omitempty"`
 				}{result, env.build.Version, env.build.Commit, adoptedByCopy, source})
 			}
-			if interactive && !env.skipInitChooser {
-				result, err = env.chooseInitModel(cmd.Context(), input, paths, result)
-				if err != nil {
-					return err
-				}
-			}
-
 			env.print("setup: %s", axi.Duration(result.SetupElapsedMS))
 			env.print("  data directory: %s", dirOf(paths.DB))
 			env.print("  configuration: %s", paths.Config)
@@ -191,7 +206,7 @@ func (env *cliEnv) selectInitDatabase(reader *bufio.Reader, paths config.Paths,
 		if !interactive {
 			return "", "", fmt.Errorf("roca init needs an interactive keep or reinitialize answer; run it in a terminal, or pass --db-path explicitly")
 		}
-		choice, err := readInitAnswer(reader, env.errOut,
+		choice, err := env.readInitAnswer(reader, env.errOut,
 			"Choose database [keep/reinitialize] (no default): ", "keep", "reinitialize")
 		return choice, "", err
 	}
@@ -202,13 +217,13 @@ func (env *cliEnv) selectInitDatabase(reader *bufio.Reader, paths config.Paths,
 	if !interactive {
 		return "", "", fmt.Errorf("roca init needs an interactive new or adopt answer; run it in a terminal, or pass --db-path explicitly")
 	}
-	choice, err := readInitAnswer(reader, env.errOut,
+	choice, err := env.readInitAnswer(reader, env.errOut,
 		"Choose database [new/adopt] (no default): ", "new", "adopt")
 	if err != nil || choice == "new" {
 		return choice, "", err
 	}
 	fmt.Fprint(env.errOut, "Path to the database to adopt: ")
-	raw, readErr := reader.ReadString('\n')
+	raw, readErr := env.readInitRaw(reader)
 	if readErr != nil && strings.TrimSpace(raw) == "" {
 		return "", "", fmt.Errorf("roca init received no database path")
 	}
@@ -229,9 +244,10 @@ func (env *cliEnv) selectInitDatabase(reader *bufio.Reader, paths config.Paths,
 	return "adopt", source, nil
 }
 
-func readInitAnswer(reader *bufio.Reader, out io.Writer, prompt string, allowed ...string) (string, error) {
+func (env *cliEnv) readInitAnswer(reader *bufio.Reader, out io.Writer,
+	prompt string, allowed ...string) (string, error) {
 	fmt.Fprint(out, prompt)
-	line, err := reader.ReadString('\n')
+	line, err := env.readInitRaw(reader)
 	answer := strings.ToLower(strings.TrimSpace(line))
 	if err != nil && answer == "" {
 		return "", fmt.Errorf("roca init received no answer")
@@ -242,6 +258,20 @@ func readInitAnswer(reader *bufio.Reader, out io.Writer, prompt string, allowed 
 		}
 	}
 	return "", fmt.Errorf("database choice %q is not valid; answer %s", answer, strings.Join(allowed, " or "))
+}
+
+func (env *cliEnv) readInitRaw(reader *bufio.Reader) (string, error) {
+	started := time.Now()
+	line, err := reader.ReadString('\n')
+	env.initPromptWait += time.Since(started)
+	return line, err
+}
+
+func initMachineDuration(elapsed, promptWait time.Duration) time.Duration {
+	if elapsed <= promptWait {
+		return 0
+	}
+	return elapsed - promptWait
 }
 
 func (env *cliEnv) initSay(format string, args ...any) {
@@ -314,15 +344,43 @@ func renderInitAnswer(env *cliEnv, result service.InitResult) {
 	}
 	line := fmt.Sprintf("answering: %s/%s (%s) · configuration: %s · change with: %s",
 		model.Provider, model.Model, modelChoiceSource(result.ConfigPath, model.Provider, model.Model),
-		result.ConfigPath, initModelChange(model.Provider, result.ConfigPath))
+		result.ConfigPath, initModelChange(model.Provider, model.Model, result.ConfigPath))
 	if model.ExternalCredential {
 		line += " · uses the existing local CLI session; no roca login required"
 	}
 	env.print("%s", line)
 }
 
-func initModelChange(name, path string) string {
-	return fmt.Sprintf("roca model set <id> or models.%s.model in %s", name, path)
+func initModelChange(name, model, path string) string {
+	var overrides []string
+	if strings.TrimSpace(os.Getenv(provider.EnvOrder)) != "" {
+		overrides = append(overrides, "remove or change "+provider.EnvOrder)
+	}
+	for _, key := range map[string][]string{
+		provider.NameCodex:  {"ROCA_CODEX_MODEL"},
+		provider.NameOllama: {"ROCA_OLLAMA_MODEL", "ROCA_MODEL"},
+	}[name] {
+		if os.Getenv(key) == model {
+			overrides = append(overrides, "remove or change "+key)
+			break
+		}
+	}
+	if file, err := config.LoadFile(path); err == nil {
+		cfg := file.Models.Providers[name]
+		switch {
+		case len(cfg.Command) > 0:
+			overrides = append(overrides,
+				fmt.Sprintf("remove or change models.%s.command in %s", name, path))
+		case slices.Contains(provider.CommandPresetNames(), name) && cfg.BaseURL != "":
+			overrides = append(overrides,
+				fmt.Sprintf("remove or change models.%s.base_url in %s", name, path))
+		}
+	}
+	change := fmt.Sprintf("roca model set <id> or models.%s.model in %s", name, path)
+	if len(overrides) == 0 {
+		return change
+	}
+	return strings.Join(overrides, "; ") + "; then " + change
 }
 
 func renderBedrock(env *cliEnv, bedrock *service.Bedrock) {

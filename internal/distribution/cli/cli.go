@@ -55,6 +55,8 @@ type cliEnv struct {
 	modelCatalogRefresh modelCatalogRefresher
 	skipReconciliation  bool
 	skipInitChooser     bool
+	initPromptWait      time.Duration
+	initChooserElapsed  time.Duration
 }
 
 // Execute runs the CLI and returns the process exit code.

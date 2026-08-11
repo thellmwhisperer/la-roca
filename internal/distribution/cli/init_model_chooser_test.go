@@ -112,7 +112,7 @@ func TestTTYInitWritesSurgicallyWithBackupAndNamesIt(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	before := "# operator note\n[models]\nprobe_ms = 75\norder = [\"ollama\"]\n"
+	before := "# operator note\n[models]\nprobe_ms = 500\norder = [\"ollama\"]\n"
 	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestTTYInitWritesSurgicallyWithBackupAndNamesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(raw), "# operator note") ||
-		!strings.Contains(string(raw), "probe_ms = 75") ||
+		!strings.Contains(string(raw), "probe_ms = 500") ||
 		!strings.Contains(string(raw), `order = ["claude", "ollama"]`) ||
 		!strings.Contains(string(raw), `[models.claude]`) {
 		t.Fatalf("surgical config edit lost operator content:\n%s", raw)
@@ -148,12 +148,13 @@ func TestTTYInitWritesSurgicallyWithBackupAndNamesIt(t *testing.T) {
 
 func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 	tests := []struct {
-		name    string
-		prepare func(*testing.T, string, string)
-		input   string
-		backend chooserTestBackend
-		want    string
-		avoid   string
+		name     string
+		prepare  func(*testing.T, string, string)
+		input    string
+		backend  chooserTestBackend
+		want     string
+		avoid    string
+		guidance string
 	}{
 		{
 			name: "environment order",
@@ -162,9 +163,10 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 				fakeModelCLI(t, bin, provider.NameCodex)
 				t.Setenv("ROCA_MODELS_ORDER", provider.NameCodex)
 			},
-			input: "sonnet\n\n",
-			want:  "answering: codex/" + provider.DefaultCodexModel,
-			avoid: "answering: claude/sonnet",
+			input:    "sonnet\n\n",
+			want:     "answering: codex/" + provider.DefaultCodexModel,
+			avoid:    "answering: claude/sonnet",
+			guidance: "remove or change ROCA_MODELS_ORDER",
 		},
 		{
 			name: "provider model environment",
@@ -175,8 +177,9 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 			backend: chooserTestBackend{catalogues: map[string]modelCatalogue{
 				provider.NameOllama: {IDs: []string{"local-one"}},
 			}},
-			want:  "answering: ollama/environment-model",
-			avoid: "answering: ollama/local-one",
+			want:     "answering: ollama/environment-model",
+			avoid:    "answering: ollama/local-one",
+			guidance: "remove or change ROCA_OLLAMA_MODEL",
 		},
 		{
 			name: "persisted base URL",
@@ -192,9 +195,10 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 				t.Cleanup(server.Close)
 				writeInitChooserConfig(t, home, fmt.Sprintf("[models]\norder = [\"ollama\"]\n\n[models.claude]\nbase_url = %q\napi_key = \"synthetic-key\"\nmodel = \"remote-old\"\n", server.URL+"/v1"))
 			},
-			input: "sonnet\n\n",
-			want:  "answering: claude/sonnet",
-			avoid: "uses the existing local CLI session",
+			input:    "sonnet\n\n",
+			want:     "answering: claude/sonnet",
+			avoid:    "uses the existing local CLI session",
+			guidance: "remove or change models.claude.base_url",
 		},
 		{
 			name: "persisted custom command",
@@ -205,6 +209,21 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 			input: "sonnet\n\n",
 			want:  "answering: ollama/local-fallback",
 			avoid: "answering: claude/sonnet",
+		},
+		{
+			name: "ready persisted custom command",
+			prepare: func(t *testing.T, home, bin string) {
+				fakeModelCLI(t, bin, provider.NameClaude)
+				if err := os.WriteFile(filepath.Join(bin, "custom-claude"),
+					[]byte("#!/bin/sh\nprintf 'SELECT 1\\n'\n"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				writeInitChooserConfig(t, home,
+					"[models]\norder = [\"ollama\"]\n\n[models.claude]\ncommand = [\"custom-claude\", \"{prompt}\"]\nmodel = \"custom-old\"\n")
+			},
+			input:    "sonnet\n\n",
+			want:     "answering: claude/sonnet",
+			guidance: "remove or change models.claude.command",
 		},
 	}
 
@@ -219,6 +238,43 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 			}
 			if !strings.Contains(out, test.want) || test.avoid != "" && strings.Contains(out, test.avoid) {
 				t.Fatalf("effective choice mismatch: want %q and avoid %q:\n%s", test.want, test.avoid, out)
+			}
+			if test.guidance != "" && !strings.Contains(out, test.guidance) {
+				t.Fatalf("effective guidance does not contain %q:\n%s", test.guidance, out)
+			}
+		})
+	}
+}
+
+func TestReinitializeChooserFailureLeavesTheDatabaseUntouched(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{name: "invalid harness", input: "reinitialize\nprivate-model\ninvalid\n", wantErr: true},
+		{name: "canceled confirmation", input: "reinitialize\nsonnet\nn\n"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			home, bin := initChooserHome(t)
+			fakeModelCLI(t, bin, provider.NameClaude)
+			fakeModelCLI(t, bin, provider.NameCodex)
+			path := seedCandidate(t, filepath.Join(home, ".roca", "roca.db"))
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			out, runErr := runInitChooser(t, true, test.input, chooserTestBackend{}, "init")
+			if (runErr != nil) != test.wantErr {
+				t.Fatalf("init error=%v, want error=%v:\n%s", runErr, test.wantErr, out)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(after) != string(before) {
+				t.Fatalf("reinitialize changed the database after chooser failure:\n%s", out)
 			}
 		})
 	}

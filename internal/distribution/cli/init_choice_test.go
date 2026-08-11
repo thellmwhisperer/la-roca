@@ -5,9 +5,19 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/store"
 )
+
+func TestInitMachineDurationExcludesPromptWait(t *testing.T) {
+	if got := initMachineDuration(9*time.Second, 7*time.Second); got != 2*time.Second {
+		t.Fatalf("machine duration = %s, want 2s", got)
+	}
+	if got := initMachineDuration(7*time.Second, 9*time.Second); got != 0 {
+		t.Fatalf("negative machine duration was not clamped: %s", got)
+	}
+}
 
 func TestInitAsksForNewOrAUserSuppliedAdoptionPath(t *testing.T) {
 	t.Run("new", func(t *testing.T) {
