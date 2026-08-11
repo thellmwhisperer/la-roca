@@ -113,8 +113,9 @@ about to happen, what La Roca receives (an access token, never the password)
 and how to revoke it. If the browser does not open, the address is printed and
 pasting it works just as well.
 
-A key login stores the secret at `credentials/<provider>.key` with the same
-permissions. Config-file `api_key` and the provider's environment variable keep
+A key login stores the secret under `credentials/` in a `.key` file whose
+provider name is URL-escaped, so even a custom name cannot escape that
+directory. Config-file `api_key` and the provider's environment variable keep
 working; a key stored by login takes precedence.
 
 After authentication, login lists canonical model IDs and accepts an arrow-key

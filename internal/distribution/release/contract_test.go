@@ -37,6 +37,9 @@ func TestTheMakefileBuildsEveryArtefactTheChannelPublishes(t *testing.T) {
 // nobody runs the tests that would catch it.
 func TestTheChannelBuildsThroughTheMakefileAndNotByHand(t *testing.T) {
 	workflow := readRepoFile(t, "../../../.github/workflows/release.yml")
+	if !strings.Contains(workflow, "persist-credentials: false") {
+		t.Error("the release checkout persists its GitHub credential")
+	}
 	if !strings.Contains(workflow, "make dist") {
 		t.Error("the release workflow does not build with `make dist`")
 	}

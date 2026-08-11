@@ -45,8 +45,10 @@ it. Non-interactive automation must select a location with `--db-path`; init
 never guesses. Existing tables outside the current schema are reported and left
 intact.
 
-Init also writes `prompt.md` in the selected data directory. It does not edit
-agent instruction files or install integrations without a separate command.
+Init also writes `prompt.md` in the selected data directory. If that optional
+write fails, init reports a warning and leaves the prepared database usable. It
+does not edit agent instruction files or install integrations without a
+separate command.
 
 ## Update
 
