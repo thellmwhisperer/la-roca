@@ -154,7 +154,9 @@ func TestMultipleClaudeWebExportsKeepNewestSnapshotAndOneMemory(t *testing.T) {
 	}
 
 	db := rocaDatabase(t)
-	roots := Roots{ClaudeWebExports: []string{directories[0].path, directories[1].path}}
+	roots := Roots{ClaudeWebExports: []string{
+		directories[0].path, directories[1].path, directories[2].path,
+	}}
 	if _, err := Run(context.Background(), db, registry(t), Options{Roots: roots}); err != nil {
 		t.Fatal(err)
 	}
