@@ -46,6 +46,10 @@ type Settings struct {
 	// RunnerDir is La Roca's neutral subprocess cwd. Any runtime artefact keyed
 	// to this directory is product traffic, never operator corpus.
 	RunnerDir string
+	// AnthropicExportPaths are directories the operator explicitly selected.
+	// There is no default and no environment fallback: exports are never
+	// discovered from Downloads or another broad location.
+	AnthropicExportPaths []string
 	// WorkspaceRoots resolve project identity from encoded session paths. Files
 	// under them are never ingested as content.
 	WorkspaceRoots []string
@@ -63,13 +67,14 @@ type Roots struct {
 	CodexSessions         string
 	// CodexStateDB is Codex's own SQLite state. It is read only to enrich a
 	// session with the model and the agent nickname it ran under.
-	CodexStateDB  string
-	OpenCodeDB    string
-	PiSessions    string
-	HermesDB      string
-	RunnerDir     string
-	SubagentRoots []string
-	Workspace     WorkspaceRoots
+	CodexStateDB     string
+	OpenCodeDB       string
+	PiSessions       string
+	HermesDB         string
+	RunnerDir        string
+	ClaudeWebExports []string
+	SubagentRoots    []string
+	Workspace        WorkspaceRoots
 }
 
 // These environment variable names are stable for operator compatibility.
@@ -111,8 +116,9 @@ func ResolveRoots(env Environment, settings Settings) Roots {
 			join(env, env.Home, ".pi", "agent", "sessions")),
 		HermesDB: pick(env, settings.HermesDB, envHermesDB,
 			join(env, env.Home, ".hermes", "state.db")),
-		RunnerDir: expand(env, settings.RunnerDir),
-		Workspace: ResolveWorkspaceRoots(expandAll(env, settings.WorkspaceRoots)),
+		RunnerDir:        expand(env, settings.RunnerDir),
+		ClaudeWebExports: expandAll(env, settings.AnthropicExportPaths),
+		Workspace:        ResolveWorkspaceRoots(expandAll(env, settings.WorkspaceRoots)),
 	}
 
 	roots.SubagentRoots = expandAll(env, settings.SubagentRoots)

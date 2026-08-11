@@ -32,16 +32,17 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 	// Every source of the matrix is scanned, and every family
 	// wrote something. A family missing from here is a family that has been lost.
 	for key, want := range map[string]int{
-		"claude_memory_files":  1, // one project file; not MEMORY.md and not the global CLAUDE.md
-		"codex_files":          3, // one memory, one rule and one refused skill; not default.rules
-		"session_files":        1,
-		"codex_session_files":  1,
-		"claude_desktop_files": 1,
-		"cowork_files":         2, // the metadata and the audit transcript it pairs with
-		"subagent_files":       1,
-		"pi_session_files":     1,
-		"opencode_databases":   1,
-		"hermes_databases":     1,
+		"claude_memory_files":     1, // one project file; not MEMORY.md and not the global CLAUDE.md
+		"codex_files":             3, // one memory, one rule and one refused skill; not default.rules
+		"session_files":           1,
+		"codex_session_files":     1,
+		"claude_desktop_files":    1,
+		"cowork_files":            2, // the metadata and the audit transcript it pairs with
+		"subagent_files":          1,
+		"pi_session_files":        1,
+		"opencode_databases":      1,
+		"hermes_databases":        1,
+		"claude_web_export_files": 2,
 	} {
 		if got := result.Scanned[key]; got != want {
 			t.Errorf("scanned[%s] = %d, want %d", key, got, want)
@@ -50,7 +51,7 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 
 	// The families, by the source agent each of them writes under.
 	for _, agent := range []string{
-		"claude", "claude-desktop", "cowork", "codex", "pi", "opencode", "hermes",
+		"claude", "claude-desktop", "claude-web", "cowork", "codex", "pi", "opencode", "hermes",
 	} {
 		counts, ok := result.Sources[agent]
 		if !ok {
@@ -62,19 +63,18 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 		}
 	}
 
-	// Six sessions: the Claude transcript, its subagent, the Codex rollout, the
-	// Cowork one, Pi's and OpenCode's. The desktop metadata names the Claude
-	// transcript's own session instead of opening another one, and the Hermes one
-	// is the eighth. The count is asserted whole so a source that stops writing is
-	// visible here and not three waves later.
-	if result.Delta.Sessions != 7 {
-		t.Errorf("sessions = %d, want 7", result.Delta.Sessions)
+	// Eight sessions: the agent runtimes plus the explicitly declared Claude web
+	// export. Desktop metadata names the Claude transcript instead of opening
+	// another session. The count is asserted whole so a source that stops writing
+	// is visible here and not three waves later.
+	if result.Delta.Sessions != 8 {
+		t.Errorf("sessions = %d, want 8", result.Delta.Sessions)
 	}
-	// Three memories: the per-project Claude memory file plus the Codex memory
-	// and rule. SKILL.md, the global CLAUDE.md and repository instructions are
+	// Four memories: the Claude and Codex files plus the one exported Claude web
+	// memory. SKILL.md, the global CLAUDE.md and repository instructions are
 	// configuration, not content.
-	if result.Delta.Memories != 3 {
-		t.Errorf("memories = %d, want 3", result.Delta.Memories)
+	if result.Delta.Memories != 4 {
+		t.Errorf("memories = %d, want 4", result.Delta.Memories)
 	}
 	if result.FilesExcluded != 1 || result.RecordsDiscarded != 1 {
 		t.Errorf("excluded/discarded = %d/%d, want 1/1: %+v",
