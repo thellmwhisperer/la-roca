@@ -32,7 +32,7 @@ func (env *cliEnv) reconcileAfterCommand(cmd *cobra.Command) error {
 		return nil
 	}
 	switch cmd.Name() {
-	case "doctor", "update", "uninstall", "_capabilities":
+	case "init", "doctor", "update", "uninstall", "_capabilities":
 		return nil
 	}
 	interactive := terminalInput(cmd.InOrStdin()) && !env.json
