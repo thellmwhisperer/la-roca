@@ -192,6 +192,27 @@ func TestCodexReadsTheAnswerOutOfTheEventStream(t *testing.T) {
 	}
 }
 
+func TestCodexStreamsAnswerDeltasAsTheyArrive(t *testing.T) {
+	server, _ := codexBackend(t, []string{
+		sse("response.output_text.delta", map[string]any{"type": "response.output_text.delta", "delta": "first "}),
+		sse("response.output_text.delta", map[string]any{"type": "response.output_text.delta", "delta": "words"}),
+	})
+	codex := NewCodex(CodexConfig{Session: liveSession(t), BaseURL: server.URL})
+	var chunks []string
+	res, err := codex.ChatStream(t.Context(), ChatRequest{}, func(delta string) {
+		chunks = append(chunks, delta)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(chunks, "|"); got != "first |words" {
+		t.Fatalf("streamed chunks = %q", got)
+	}
+	if res.Content != "first words" {
+		t.Fatalf("buffered content = %q", res.Content)
+	}
+}
+
 // The adapter transports, it does not interpret: a prose answer that quotes a
 // fenced block arrives whole.
 func TestCodexKeepsProseAroundAFencedBlock(t *testing.T) {
@@ -222,14 +243,18 @@ func TestCodexReadsTheAnswerOutOfTheCompletionEvent(t *testing.T) {
 	})
 	codex := NewCodex(CodexConfig{Session: liveSession(t), BaseURL: server.URL})
 
-	res, err := codex.Chat(context.Background(), ChatRequest{
+	var chunks []string
+	res, err := codex.ChatStream(context.Background(), ChatRequest{
 		Messages: []Message{{Role: RoleUser, Content: "one"}},
-	})
+	}, func(delta string) { chunks = append(chunks, delta) })
 	if err != nil {
 		t.Fatalf("chat: %v", err)
 	}
 	if res.Content != "SELECT 1 LIMIT 1" {
 		t.Fatalf("content %q", res.Content)
+	}
+	if strings.Join(chunks, "") != res.Content {
+		t.Fatalf("buffered completion was not surfaced: %q", chunks)
 	}
 }
 

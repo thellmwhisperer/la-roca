@@ -1,6 +1,7 @@
 package axi_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -14,23 +15,28 @@ import (
 
 func TestQueryRendersTheRouteLineTOONRowsAndHelp(t *testing.T) {
 	res := service.QueryResult{
-		Question:  "what do we know about axi",
-		Path:      service.PathLLM,
-		Engine:    "ollama",
-		Model:     "qwen",
-		LatencyMS: 4,
-		Match:     service.MatchFound,
-		RowCount:  1,
-		Columns:   []string{"source", "id", "text"},
+		Question:       "what do we know about axi",
+		Path:           service.PathLLM,
+		Engine:         "ollama",
+		Model:          "qwen",
+		SQLInferenceMS: 4, ExecutionMS: 2,
+		Match:    service.MatchFound,
+		RowCount: 1,
+		Columns:  []string{"source", "id", "text"},
 		Rows: []map[string]any{{
 			"source": "memory", "id": int64(1), "text": "AXI uses TOON rows, stable fields.",
 		}},
 	}
 	got := axi.Query(res, "")
 
-	wantRoute := "route llm_fallback · provider ollama · model qwen · 4 ms"
-	if !strings.Contains(got, wantRoute) {
-		t.Errorf("the route line is wrong:\n%s", got)
+	for _, want := range []string{
+		"route model",
+		"SQL · provider ollama · model qwen · 4 ms",
+		"search · 2 ms",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the phase header lacks %q:\n%s", want, got)
+		}
 	}
 	if !strings.Contains(got, "rows[1]{source,id,text}:") {
 		t.Errorf("the TOON row header is missing:\n%s", got)
@@ -46,24 +52,29 @@ func TestQueryRendersTheRouteLineTOONRowsAndHelp(t *testing.T) {
 	}
 }
 
-func TestQueryAddsProseAboveTheEvidenceWhenTheCallerPassesIt(t *testing.T) {
+func TestQueryWithProseOmitsEveryEvidenceRow(t *testing.T) {
 	res := service.QueryResult{
-		Question: "count memories", Path: service.PathLLM, Engine: "ollama",
-		Model: "qwen", Match: service.MatchFound, RowCount: 1,
-		Columns: []string{"n", "evidence"}, Rows: []map[string]any{{"n": int64(2), "evidence": "the row"}},
+		Question: "recent memories", Path: service.PathLLM, Engine: "ollama",
+		Model: "qwen", Match: service.MatchFound, RowCount: 6,
+		Columns: []string{"source", "id", "text", "created_at"},
+		Rows: []map[string]any{
+			{"source": "memory", "id": int64(1), "text": "first\nrow", "created_at": "2026-08-11"},
+			{"source": "exchange", "id": int64(2), "text": strings.Repeat("x", 90)},
+			{"source": "memory", "id": int64(3), "text": "third row"},
+			{"source": "memory", "id": int64(4), "text": "must stay hidden"},
+		},
 	}
-	got := axi.Query(res, "there are two memories")
+	got := axi.Query(res, "the recent memories agree")
 	if !strings.Contains(got, "route ") {
 		t.Errorf("the preamble was dropped under prose:\n%s", got)
 	}
-	if !strings.Contains(got, "there are two memories") {
+	if !strings.Contains(got, "the recent memories agree") {
 		t.Errorf("the prose rendering was dropped:\n%s", got)
 	}
-	if !strings.Contains(got, "rows[1]") || !strings.Contains(got, "the row") {
-		t.Errorf("the evidence rows disappeared under prose:\n%s", got)
-	}
-	if strings.Index(got, "there are two memories") > strings.Index(got, "rows[1]") {
-		t.Errorf("the prose does not ride above the evidence:\n%s", got)
+	if strings.Contains(got, "evidence:") || strings.Contains(got, "rows[") ||
+		strings.Contains(got, "first row") || strings.Contains(got, "must stay hidden") ||
+		strings.Contains(got, "rows total") {
+		t.Errorf("full mode dumped the rows table:\n%s", got)
 	}
 }
 
@@ -177,5 +188,60 @@ func TestExecCountsRowsTheWayEveryOtherRendererDoes(t *testing.T) {
 	})
 	if !strings.Contains(many, "12,500 rows") {
 		t.Errorf("a wide count is not grouped:\n%s", many)
+	}
+}
+
+// An installation that splits the two inferences says so above the evidence:
+// the route line names the provider that wrote the SQL, and the line under it
+// names the provider the rows were read by. A fall back to the SQL provider
+// prints its note instead, because then there is nothing to distinguish.
+func TestQueryNamesTheProviderThatReadTheRows(t *testing.T) {
+	res := service.QueryResult{
+		Question: "count memories", Path: service.PathLLM, Engine: "codex",
+		Model: "gpt-5.6-sol", LatencyMS: 4, Match: service.MatchFound, RowCount: 1,
+		Columns: []string{"n"}, Rows: []map[string]any{{"n": int64(2)}},
+		SQLInferenceMS: 4, ExecutionMS: 2,
+		InterpretEngine: "ollama", InterpretModel: "qwen3.5:4b", InterpretationMS: 9,
+	}
+	got := axi.Query(res, "there are two memories")
+	if !strings.Contains(got, "answer · provider ollama · model qwen3.5:4b · 9 ms") {
+		t.Errorf("the second inference's provenance is missing:\n%s", got)
+	}
+
+	res.InterpretEngine, res.InterpretModel = "codex", "gpt-5.6-sol"
+	res.InterpretNote = "the interpretation provider was not available " +
+		"(ollama: not running): the rows were read by codex"
+	got = axi.Query(res, "there are two memories")
+	if !strings.Contains(got, res.InterpretNote) {
+		t.Errorf("the fall back to the SQL provider is not declared:\n%s", got)
+	}
+	if !strings.Contains(got, "answer · provider codex · model gpt-5.6-sol · 9 ms") {
+		t.Errorf("the shared provider lost the answer's separate timing:\n%s", got)
+	}
+}
+
+func TestQueryEnvelopeUsesHonestPhaseNames(t *testing.T) {
+	raw, err := json.Marshal(service.QueryResult{
+		Path: service.PathLLM, Engine: "codex", Model: "gpt",
+		InterpretEngine: "ollama", InterpretModel: "qwen",
+		SQLInferenceMS: 3, ExecutionMS: 2, InterpretationMS: 8,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, want := range []string{
+		`"path":"model"`, `"sql_provider":"codex"`, `"sql_model":"gpt"`,
+		`"interpretation_provider":"ollama"`, `"interpretation_model":"qwen"`,
+		`"sql_inference_ms":3`, `"execution_ms":2`, `"interpretation_ms":8`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("phase envelope lacks %s: %s", want, text)
+		}
+	}
+	for _, obsolete := range []string{`"engine"`, `"interpret_engine"`, "llm_fallback"} {
+		if strings.Contains(text, obsolete) {
+			t.Errorf("phase envelope kept compiler-era %q: %s", obsolete, text)
+		}
 	}
 }

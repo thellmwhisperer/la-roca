@@ -33,11 +33,21 @@ func QueryPreamble(res service.QueryResult) string {
 		appendLine(&b, "warning: "+warning)
 	}
 	appendLine(&b, res.ProviderNote)
+	appendLine(&b, "route "+res.Path)
 	if res.Engine != "" {
-		appendLine(&b, fmt.Sprintf("route %s · provider %s · model %s · %s",
-			res.Path, res.Engine, res.Model, Duration(res.LatencyMS)))
-	} else {
-		appendLine(&b, fmt.Sprintf("route %s · %s", res.Path, Duration(res.LatencyMS)))
+		appendLine(&b, fmt.Sprintf("SQL · provider %s · model %s · %s",
+			res.Engine, res.Model, Duration(res.SQLInferenceMS)))
+	}
+	if res.Match != "" {
+		appendLine(&b, "search · "+Duration(res.ExecutionMS))
+	}
+	// Who read the result rows, when that is somebody else. An installation
+	// splits the two inferences so the rows stay on one machine, and a claim
+	// like that is worth nothing unless the answer names who received them.
+	appendLine(&b, res.InterpretNote)
+	if res.InterpretEngine != "" {
+		appendLine(&b, fmt.Sprintf("answer · provider %s · model %s · %s",
+			res.InterpretEngine, res.InterpretModel, Duration(res.InterpretationMS)))
 	}
 	if res.Degraded != "" {
 		appendLine(&b, "degraded: "+res.Degraded)
@@ -49,8 +59,7 @@ func QueryPreamble(res service.QueryResult) string {
 }
 
 // queryTail is the rows table and the help that follow the preamble when a
-// query answered with rows. Both the shell and MCP surface reach it through
-// Query; full shell output adds prose above it without hiding the evidence.
+// query answered with rows. Both the default shell mode and MCP reach it.
 func queryTail(res service.QueryResult, help func(service.QueryResult) string) string {
 	var b strings.Builder
 	appendLine(&b, RowOutput(res.Columns, res.Rows, res.Question))
@@ -64,7 +73,7 @@ func queryTail(res service.QueryResult, help func(service.QueryResult) string) s
 // whichever tail the answer takes. A question the model never lifted is only
 // its message; a compile-only answer is its SQL; an empty match is the message
 // and the help to broaden it; and a matched answer is its rows and help. When
-// the caller passes prose, that interpretation is added above the evidence.
+// the caller passes prose, that interpretation replaces the data tail.
 //
 // The shell passes the second inference call's prose; the plug passes the empty
 // string, because an agent reads rows and writes its own.
@@ -91,7 +100,6 @@ func composeQuery(res service.QueryResult, prose string, help func(service.Query
 		appendLine(&b, help(res))
 	case prose != "":
 		appendLine(&b, prose)
-		appendLine(&b, queryTail(res, help))
 	default:
 		appendLine(&b, queryTail(res, help))
 	}

@@ -177,14 +177,7 @@ func TestEveryToolCallWritesACredentialFreeAuditRecord(t *testing.T) {
 	callTool(t, connect(t, svc), "roca_exec", map[string]any{
 		"sql": "SELECT 'token=private-value' AS text",
 	})
-	matches, err := filepath.Glob(filepath.Join(svc.DataDir(), logfile.DirName, "mcp-audit-*.jsonl"))
-	if err != nil || len(matches) != 1 {
-		t.Fatalf("MCP audit logs = %v, err=%v", matches, err)
-	}
-	raw, err := os.ReadFile(matches[0])
-	if err != nil {
-		t.Fatal(err)
-	}
+	raw := readSingleLog(t, svc.DataDir(), logfile.MCPAudit)
 	text := string(raw)
 	for _, want := range []string{`"tool":"roca_exec"`, `"ok":true`, `"row_count":1`, `"duration_ms":`} {
 		if !strings.Contains(text, want) {
@@ -194,6 +187,37 @@ func TestEveryToolCallWritesACredentialFreeAuditRecord(t *testing.T) {
 	if strings.Contains(text, "private-value") {
 		t.Fatalf("credential leaked into MCP audit: %s", text)
 	}
+}
+
+func TestQueryAuditCarriesTheCurrentAttributionEnvelope(t *testing.T) {
+	svc := seededServiceWithModel(t)
+	callTool(t, connect(t, svc), "roca_query", map[string]any{"query": "how many memories"})
+	raw := readSingleLog(t, svc.DataDir(), logfile.MCPAudit)
+	text := string(raw)
+	for _, want := range []string{`"sql_provider":"fake"`, `"sql_model":"fake-model"`,
+		`"sql_inference_ms":`, `"execution_ms":`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("query audit lacks %q: %s", want, text)
+		}
+	}
+	for _, obsolete := range []string{`"engine":`, `"model":`, `"interpret_engine":`, `"interpret_model":`} {
+		if strings.Contains(text, obsolete) {
+			t.Errorf("query audit returned obsolete key %q: %s", obsolete, text)
+		}
+	}
+}
+
+func readSingleLog(t *testing.T, dataDir, stream string) []byte {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(dataDir, logfile.DirName, stream+"-*.jsonl"))
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("%s logs = %v, err=%v", stream, matches, err)
+	}
+	raw, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }
 
 func TestMalformedToolCallIsAuditedAsAFailure(t *testing.T) {
@@ -236,7 +260,7 @@ func TestUnavailableLLMIsAuditedAsDegradedNotOK(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	if !strings.Contains(text, `"ok":false`) || !strings.Contains(text, `"degraded":"llm_unavailable"`) {
+	if !strings.Contains(text, `"ok":false`) || !strings.Contains(text, `"degraded":"model_unavailable"`) {
 		t.Fatalf("degraded call was audited optimistically: %s", text)
 	}
 }

@@ -10,6 +10,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - Keep distribution ownership declarations centralized in `internal/distribution/cli/uninstall.go` (`ownedPaths` and recovery-backup handling).
 - Operational JSONL lives under the selected data directory's `logs/`; retention and redaction are owned by `internal/distribution/logfile`.
 - MCP answers are TOON-only text: never return row envelopes in `StructuredContent`; the contract lives in `internal/distribution/mcpplug/toon_contract_test.go`.
+- A query costs two inferences and only the second one sees result rows; they may run on different providers (`models.interpret_order`). Keep rows out of the SQL prompt: the guarantee is pinned in `internal/provider/service/two_inferences_test.go`.
 
 ## Maintaining this file
 

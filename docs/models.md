@@ -17,6 +17,11 @@ One file, TOML, at `config.toml` inside the data directory (`~/.roca/`).
 [models]
 # The order they are tried in. The first available one serves.
 order = ["codex", "deepseek", "ollama"]
+# Optional. The order the RESULT ROWS are read by, when you want the two
+# inferences on different providers. Leave it out and the provider that wrote
+# the SQL also reads the rows, which is what every installation did before this
+# key existed.
+interpret_order = ["ollama"]
 # Model budgets, in milliseconds. timeout_ms bounds a provider request;
 # probe_ms bounds the availability question asked before every one.
 timeout_ms = 90000
@@ -38,6 +43,10 @@ model   = "deepseek-chat"
 base_url   = "http://localhost:11434"
 model      = "qwen3.5:4b"
 keep_alive = "10m"
+# Off by default. A reasoning model's thinking is neither the SQL nor the
+# summary asked of it, and on qwen3.5 leaving it on turned a local
+# interpretation from seconds into minutes. Turn it back on only to debug.
+think      = false
 ```
 
 With no file at all the order is `codex, ollama`: the subscription first, the
@@ -59,7 +68,56 @@ API credentials are the exception: a key stored by `roca login` takes precedence
 over the provider table's `api_key` and its environment variable.
 
 `ROCA_MODELS_ORDER` overrides the order from the environment; `ROCA_MODELS_ORDER=none`
-turns the model off entirely.
+turns the model off entirely. There is no environment override for
+`interpret_order`: it is a decision about where your data goes, and it is
+written down in the file.
+
+### Splitting the two inferences
+
+A query costs two model calls. The first turns the question into SQL and
+receives the question and the schema. The second turns the rows that SQL
+returned into prose, and it is the only one that ever sees your data.
+
+`interpret_order` puts that second call on providers of its own:
+
+```toml
+[models]
+order           = ["codex"]     # writes the SQL: sees the question and the schema
+interpret_order = ["ollama"]    # reads the rows: they go here and nowhere else
+```
+
+With that written, the result rows never leave the machine while the question
+still goes to a frontier model. The resolution rules are the main order's: the
+first available provider serves, an unknown name is a warning that names
+`models.interpret_order` and the file, and `none` there is not an off switch,
+it just leaves the two inferences together.
+
+When no interpretation provider is available the rows go to the provider that
+wrote the SQL, and the answer says so instead of pretending otherwise:
+
+```
+route model
+SQL · provider codex · model gpt-5.6-sol · 8.2 s
+search · 12 ms
+the interpretation provider was not available (ollama: Ollama does not answer
+at localhost:11434): the rows were read by codex
+answer · provider codex · model gpt-5.6-sol · 11.4 s
+```
+
+With the split working, the second provenance is a line of its own, and in
+`--json` it is `interpretation_provider`, `interpretation_model` and
+`interpretation_provider_note`:
+
+```
+route model
+SQL · provider codex · model gpt-5.6-sol · 8.2 s
+search · 12 ms
+answer · provider ollama · model qwen3.5:4b · 4.7 s
+```
+
+`roca doctor` reports that decision the same way it reports the main one: every
+declared interpretation provider with its verdict and its remedy, and the one
+that is going to read the rows.
 
 ## The providers
 
@@ -158,7 +216,7 @@ Claude stays out: its terms forbid it outside official tools.
 2. The model generates SQL and that SQL **always** passes the two-halved gate.
    A model is not above the gate.
 3. Whatever fails from there on degrades to the keyword rescue and says which of
-   four things went wrong: `llm_unavailable`, `llm_error`, `invalid_sql`,
+   four things went wrong: `model_unavailable`, `model_error`, `invalid_sql`,
    `sql_execution_error`.
 
 A provider that says it is available and then fails is **not** silently retried
@@ -168,23 +226,28 @@ provider is returning 500" into "the answers are odd today".
 Every answer down this path declares who answered:
 
 ```
-route llm_fallback · provider ollama · model qwen3.5:4b · 12762 ms
+route model
+SQL · provider ollama · model qwen3.5:4b · 12.7 s
+search · 8 ms
 ```
 
-and in `--json`, `engine`, `model`, `llm_latency_ms` and a `providers` array with
-every provider tried and why each one did or did not serve.
+and in `--json`, `sql_provider`, `sql_model`, `sql_inference_ms`, `execution_ms`
+and a `providers` array with every provider tried and why each one did or did
+not serve. A full answer also carries `interpretation_provider`,
+`interpretation_model` and `interpretation_ms` even when the same provider did
+both jobs.
 
 Three fields answer three different questions, and they are kept apart on
 purpose:
 
 | Field | Answers |
 |---|---|
-| `provider_note` | who was asked: the providers ahead of this one were not available |
+| `sql_provider_note` | who was asked: the providers ahead of this one were not available |
 | `message` | what came back: the state of this answer |
 | `model_sql` | what the model wrote, whether or not it ran |
 
 Writing one over another is how an answer came to say *"the configured provider
-is not available"* while reporting that same provider as its `engine`. And
+is not available"* while reporting that same provider as its `sql_provider`. And
 `model_sql` survives the keyword rescue answering over it: without it, a model
 that writes badly cannot be told from a rescue that fired for another reason.
 
