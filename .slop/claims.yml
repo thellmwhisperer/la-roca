@@ -26,11 +26,11 @@ claims:
       item: "Doctor names which model is going to answer, and why"
   internal/distribution/cli/model_validation.go:
     contract:
-      file: features/07_model_adapters.feature
+      file: features/provider/model-adapters.feature
       item: "F07-10 Login persists the answering model without replacing the configuration"
   internal/distribution/cli/serve.go:
     contract:
-      file: features/08_mcp_plug.feature
+      file: features/distribution/mcp-contract.feature
       item: "F08-01 The server comes up on demand over stdio and announces who it is"
   internal/distribution/cli/skill.go:
     contract:
@@ -46,7 +46,7 @@ claims:
       item: "Update without a reachable release fails plainly"
   internal/distribution/mcpplug/tools.go:
     contract:
-      file: features/08_mcp_plug.feature
+      file: features/distribution/mcp-contract.feature
       item: "F08-02 Discovery returns exactly the decided surface"
   data/layers.yaml:
     contract:
