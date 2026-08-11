@@ -28,6 +28,26 @@ func TestContentIsANamedRocaSkill(t *testing.T) {
 	}
 }
 
+func TestContentCarriesOperatingCraft(t *testing.T) {
+	body := skill.Content()
+	for _, needle := range []string{
+		`latest handoff for <project>`,
+		"current handoff protocol",
+		"always store a handoff",
+		"Ask bare first",
+		"search the whole corpus",
+		"sessions` or `exchanges",
+		"ORDER BY timestamp ASC",
+		"Rows are the truth",
+		"Use the layer filter deliberately",
+		"coordination layers",
+	} {
+		if !strings.Contains(body, needle) {
+			t.Errorf("skill operating craft missing %q", needle)
+		}
+	}
+}
+
 func TestRuntimesMatchTheFiveAgentcfgKnows(t *testing.T) {
 	want := []string{"claude", "codex", "hermes", "opencode", "pi"}
 	got := skill.Runtimes()

@@ -65,20 +65,57 @@ func BuildCascade(s Settings) (Cascade, error) {
 		return Cascade{}, err
 	}
 
-	cascade := Cascade{
+	return s.budgeted(Cascade{
 		Providers: resolved.Providers,
 		Disabled:  resolved.Disabled,
 		// The config's warnings travel with the cascade: they are about the same
 		// file and the operator reads them in the same place.
 		Warnings: append(append([]string(nil), s.File.Warnings...), resolved.Warnings...),
+	}), nil
+}
+
+// BuildInterpretCascade turns models.interpret_order into the cascade of the
+// second inference: the one the result rows travel to.
+//
+// A configuration that does not declare that key gets a cascade with no
+// providers, and that is the whole of "absent changes nothing": with nobody
+// declared for the rows, whoever wrote the SQL reads them too. The key is
+// resolved by the same rules as the main order, so an unknown provider is a
+// warning naming the key and the file, never a command that does not run, and
+// naming `none` there leaves the two inferences together rather than turning
+// the second one off.
+//
+// The budgets are the ones under [models]: a second inference on another
+// provider is still a model request of this installation.
+func BuildInterpretCascade(s Settings) (Cascade, error) {
+	order := s.File.Models.InterpretOrder
+	if len(order) == 0 {
+		return Cascade{}, nil
 	}
+	resolved, err := Resolve(Selection{
+		Names: order, Source: SourceConfig,
+		File: s.File.Path, Key: "models.interpret_order",
+	}, s.catalog())
+	if err != nil {
+		return Cascade{}, err
+	}
+	return s.budgeted(Cascade{
+		Providers: resolved.Providers,
+		// The file's own warnings are not repeated here: they already travel with
+		// the main cascade, and the operator reads them once.
+		Warnings: resolved.Warnings,
+	}), nil
+}
+
+// budgeted applies the [models] budgets, which both cascades share.
+func (s Settings) budgeted(cascade Cascade) Cascade {
 	if ms := s.File.Models.TimeoutMS; ms > 0 {
 		cascade.Timeout = time.Duration(ms) * time.Millisecond
 	}
 	if ms := s.File.Models.ProbeMS; ms > 0 {
 		cascade.Probe = time.Duration(ms) * time.Millisecond
 	}
-	return cascade, nil
+	return cascade
 }
 
 // selection reads the order with its provenance attached.
@@ -184,6 +221,7 @@ func (s Settings) ollama() Provider {
 			s.File.Default("model"),
 		),
 		KeepAlive: firstNonEmpty(cfg.KeepAlive, s.File.Default("ollama_keep_alive")),
+		Think:     cfg.Think,
 	})
 }
 

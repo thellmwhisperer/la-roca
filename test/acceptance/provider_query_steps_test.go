@@ -34,7 +34,7 @@ func (w *providerAcceptanceWorld) usedModelSQL() error {
 	if err != nil {
 		return err
 	}
-	if doc["path"] != "llm_fallback" || strings.TrimSpace(fmt.Sprint(doc["sql"])) == "" {
+	if doc["path"] != "model" || strings.TrimSpace(fmt.Sprint(doc["sql"])) == "" {
 		return fmt.Errorf("model SQL path not declared: %s", w.last.stdout)
 	}
 	return nil
@@ -100,7 +100,7 @@ func (w *providerAcceptanceWorld) usedLiteralSearch() error {
 	if err != nil {
 		return err
 	}
-	if doc["path"] != "keyword_fallback" || doc["retried"] != true {
+	if doc["path"] != "keyword" || doc["retried"] != true {
 		return fmt.Errorf("literal route not declared: %s", w.last.stdout)
 	}
 	return nil
