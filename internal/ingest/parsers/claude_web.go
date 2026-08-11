@@ -70,98 +70,16 @@ func parseClaudeWebConversation(payload claudeWebConversation, recordBase int) R
 			Record: recordBase + 1, Reason: "conversation has no uuid",
 		}}}
 	}
-	byID := make(map[string]int, len(payload.ChatMessages))
-	reasons := map[int]string{}
-	for i, message := range payload.ChatMessages {
-		message.UUID = strings.TrimSpace(message.UUID)
-		message.ParentMessageUUID = strings.TrimSpace(message.ParentMessageUUID)
-		payload.ChatMessages[i] = message
-		switch {
-		case message.UUID == "":
-			reasons[i] = "message has no uuid"
-		case message.Sender != "human" && message.Sender != "assistant":
-			reasons[i] = fmt.Sprintf("message %s has unsupported sender %q", message.UUID, message.Sender)
-		case claudeWebText(message) == "":
-			reasons[i] = fmt.Sprintf("%s message %s has no text", message.Sender, message.UUID)
-		case byID[message.UUID] != 0:
-			reasons[i] = fmt.Sprintf("message uuid %s is duplicated", message.UUID)
-		default:
-			byID[message.UUID] = i + 1
-		}
-	}
-
-	state := make([]uint8, len(payload.ChatMessages))
-	var valid func(int) bool
-	valid = func(index int) bool {
-		if reasons[index] != "" {
-			state[index] = 3
-			return false
-		}
-		switch state[index] {
-		case 2:
-			return true
-		case 3:
-			return false
-		case 1:
-			reasons[index] = fmt.Sprintf(
-				"message %s has a cyclic parent chain", payload.ChatMessages[index].UUID)
-			state[index] = 3
-			return false
-		}
-		state[index] = 1
-		message := payload.ChatMessages[index]
-		if message.ParentMessageUUID == "" {
-			if message.Sender != "human" {
-				reasons[index] = fmt.Sprintf(
-					"assistant message %s has no human parent", message.UUID)
-				state[index] = 3
-				return false
-			}
-			state[index] = 2
-			return true
-		}
-		parentPosition, found := byID[message.ParentMessageUUID]
-		if !found {
-			reasons[index] = fmt.Sprintf(
-				"message %s parent message %s was not found", message.UUID, message.ParentMessageUUID)
-			state[index] = 3
-			return false
-		}
-		parent := parentPosition - 1
-		if !valid(parent) {
-			reasons[index] = fmt.Sprintf(
-				"message %s parent chain reaches discarded message %s",
-				message.UUID, message.ParentMessageUUID)
-			state[index] = 3
-			return false
-		}
-		if payload.ChatMessages[parent].Sender == message.Sender {
-			reasons[index] = fmt.Sprintf(
-				"%s message %s has a %s parent", message.Sender, message.UUID, message.Sender)
-			state[index] = 3
-			return false
-		}
-		state[index] = 2
-		return true
-	}
-	for i := range payload.ChatMessages {
-		valid(i)
-	}
-
-	children := map[int]int{}
+	byID, parents, reasons := claudeWebMessageGraph(payload.ChatMessages)
 	paired := make([]claudeWebMessage, 0, len(payload.ChatMessages)/2)
 	for i, message := range payload.ChatMessages {
-		if state[i] != 2 || message.Sender != "assistant" {
+		parent := parents[i]
+		if reasons[i] != "" || message.Sender != "assistant" || parent < 0 ||
+			payload.ChatMessages[parent].Sender != "human" {
 			continue
 		}
-		parent := byID[message.ParentMessageUUID] - 1
-		children[parent]++
+		message.ParentMessageUUID = payload.ChatMessages[parent].UUID
 		paired = append(paired, message)
-	}
-	for i, message := range payload.ChatMessages {
-		if state[i] == 2 && message.Sender == "human" && children[i] == 0 {
-			reasons[i] = fmt.Sprintf("human message %s has no assistant reply", message.UUID)
-		}
 	}
 	sort.SliceStable(paired, func(i, j int) bool {
 		return claudeWebMessageLess(paired[i], paired[j])
@@ -213,6 +131,99 @@ func parseClaudeWebConversation(payload claudeWebConversation, recordBase int) R
 		SnapshotUpdatedAt: ended,
 		ExchangeKeyScope:  "claude_web", Exchanges: exchanges,
 	}}, Discards: discards}
+}
+
+func claudeWebMessageGraph(messages []claudeWebMessage) (map[string]int, []int, map[int]string) {
+	byID := make(map[string]int, len(messages))
+	reasons := map[int]string{}
+	for i := range messages {
+		message := &messages[i]
+		message.UUID = strings.TrimSpace(message.UUID)
+		message.ParentMessageUUID = strings.TrimSpace(message.ParentMessageUUID)
+		switch {
+		case message.UUID == "":
+			reasons[i] = "message has no uuid"
+		case byID[message.UUID] != 0:
+			reasons[i] = fmt.Sprintf("message uuid %s is duplicated", message.UUID)
+		default:
+			byID[message.UUID] = i + 1
+		}
+		if reasons[i] == "" && message.Sender != "human" && message.Sender != "assistant" {
+			reasons[i] = fmt.Sprintf("message %s has unsupported sender %q", message.UUID, message.Sender)
+		}
+		if reasons[i] == "" && claudeWebText(*message) == "" {
+			reasons[i] = fmt.Sprintf("%s message %s has no text", message.Sender, message.UUID)
+		}
+	}
+	parents := claudeWebSurvivingParents(messages, byID, reasons)
+	claudeWebDiscardCycles(messages, parents, reasons)
+	return byID, claudeWebSurvivingParents(messages, byID, reasons), reasons
+}
+
+func claudeWebSurvivingParents(messages []claudeWebMessage, byID map[string]int,
+	reasons map[int]string) []int {
+	parents := make([]int, len(messages))
+	resolved := make([]int, len(messages))
+	visiting := make([]bool, len(messages))
+	for i := range resolved {
+		resolved[i] = -2
+	}
+	var resolve func(int) int
+	resolve = func(index int) int {
+		if reasons[index] == "" {
+			return index
+		}
+		if resolved[index] != -2 {
+			return resolved[index]
+		}
+		if visiting[index] {
+			return -1
+		}
+		visiting[index] = true
+		parent := -1
+		if position, found := byID[messages[index].ParentMessageUUID]; found {
+			parent = resolve(position - 1)
+		}
+		visiting[index] = false
+		resolved[index] = parent
+		return parent
+	}
+	for i := range parents {
+		parents[i] = -1
+		if position, found := byID[messages[i].ParentMessageUUID]; found {
+			parents[i] = resolve(position - 1)
+		}
+	}
+	return parents
+}
+
+func claudeWebDiscardCycles(messages []claudeWebMessage, parents []int, reasons map[int]string) {
+	state := make([]uint8, len(messages))
+	var visit func(int)
+	visit = func(index int) {
+		state[index] = 1
+		parent := parents[index]
+		if parent >= 0 && reasons[parent] == "" {
+			switch state[parent] {
+			case 0:
+				visit(parent)
+			case 1:
+				for member := parent; ; member = parents[member] {
+					reasons[member] = fmt.Sprintf(
+						"message %s has a cyclic parent chain", messages[member].UUID)
+					if member == index {
+						break
+					}
+				}
+			}
+		}
+		state[index] = 2
+	}
+	for i := range messages {
+		if reasons[i] == "" && state[i] == 0 {
+			visit(i)
+		}
+	}
 }
 
 // ParseClaudeWebMemories reads each exported memory independently. UUID is the
