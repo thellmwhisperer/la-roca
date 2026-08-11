@@ -226,14 +226,15 @@ type Interpretation struct {
 func (s *Service) Interpret(ctx context.Context, question string,
 	columns []string, rows []map[string]any,
 	sqlInference time.Duration) (Interpretation, error) {
-	return s.InterpretStream(ctx, question, columns, rows, sqlInference, nil)
+	return s.InterpretStream(ctx, question, columns, rows, sqlInference, nil, nil)
 }
 
-// InterpretStream is Interpret with a live prose callback. Providers without a
-// streaming transport invoke the callback once with the completed answer.
+// InterpretStream is Interpret with live prose callbacks. Streaming is used
+// only when the caller asks for deltas and the chosen provider supports it;
+// machine callers and buffered providers keep the ordinary complete response.
 func (s *Service) InterpretStream(ctx context.Context, question string,
 	columns []string, rows []map[string]any, sqlInference time.Duration,
-	onDelta func(string)) (Interpretation, error) {
+	onStart func(bool), onDelta func(string)) (Interpretation, error) {
 
 	cascade, chosen, note, err := s.interpreter(ctx)
 	if err != nil {
@@ -262,9 +263,20 @@ func (s *Service) InterpretStream(ctx context.Context, question string,
 	}
 	b.WriteString("Use only these results, never general knowledge. If the results do not support the question, say so plainly before anything else. A requested style changes delivery only and never licenses invention. Answer in the same language as the question. Write calm, terminal-friendly prose: paragraphs and simple dashes only. Do not use headings or tables.")
 	cascade.Timeout = interpretationTimeout(cascade.Timeout, sqlInference)
-	answer, err := cascade.ChatStream(ctx, chosen, provider.ChatRequest{
+	request := provider.ChatRequest{
 		Messages: []provider.Message{{Role: provider.RoleUser, Content: b.String()}},
-	}, onDelta)
+	}
+	_, nativeStream := chosen.(provider.StreamingProvider)
+	stream := onDelta != nil && nativeStream
+	if onStart != nil {
+		onStart(stream)
+	}
+	var answer provider.ChatResponse
+	if stream {
+		answer, err = cascade.ChatStream(ctx, chosen, request, onDelta)
+	} else {
+		answer, err = cascade.Chat(ctx, chosen, request)
+	}
 	if err != nil {
 		return Interpretation{}, err
 	}

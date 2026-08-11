@@ -40,9 +40,10 @@ type QueryRequest struct {
 	MaxChars int
 	// SQLOnly returns the SQL the model generated without running it.
 	SQLOnly bool
-	// Progress and InterpretationDelta are presentation hooks. They are ignored
-	// by machine callers and never enter the result envelope.
+	// Progress and the interpretation hooks are presentation only. They are
+	// ignored by machine callers and never enter the result envelope.
 	Progress            func(QueryPhase)
+	InterpretationStart func(bool, QueryResult)
 	InterpretationDelta func(string)
 }
 

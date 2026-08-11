@@ -27,6 +27,19 @@ type queryModeProvider struct {
 	budgets []time.Duration
 }
 
+type streamingQueryModeProvider struct{ *queryModeProvider }
+
+func (p *streamingQueryModeProvider) ChatStream(ctx context.Context, _ provider.ChatRequest,
+	onDelta func(string)) (provider.ChatResponse, error) {
+	p.calls++
+	for _, delta := range []string{"The evidence ", "says the format is rows."} {
+		onDelta(delta)
+	}
+	return provider.ChatResponse{
+		Content: queryModeProse, Provider: p.Name(), ModelID: p.ModelID(),
+	}, nil
+}
+
 const (
 	queryModeSQL      = "SELECT 'memory' AS source, 1 AS id, 'raw evidence' AS text LIMIT 1"
 	queryModeQuestion = "what decisions were made about the format"
@@ -69,6 +82,11 @@ func queryModeService(t *testing.T, model *queryModeProvider) *service.Service {
 // result rows go to them and to nobody else.
 func queryModeServiceWithTimeout(t *testing.T, model *queryModeProvider,
 	timeout time.Duration, interpreters ...provider.Provider) *service.Service {
+	return queryModeServiceWithProvider(t, model, timeout, interpreters...)
+}
+
+func queryModeServiceWithProvider(t *testing.T, model provider.Provider,
+	timeout time.Duration, interpreters ...provider.Provider) *service.Service {
 	t.Helper()
 	svc, err := service.Open(service.Options{
 		DBPath: filepath.Join(t.TempDir(), "roca.db"),
@@ -91,9 +109,10 @@ func queryModeServiceWithTimeout(t *testing.T, model *queryModeProvider,
 func runQueryMode(t *testing.T, full bool, failAt int) (*queryModeProvider, queryAnswer, string) {
 	t.Helper()
 	model := &queryModeProvider{answers: []string{queryModeSQL, queryModeProse}, failAt: failAt}
-	answer, err := answerQuery(t.Context(), queryModeService(t, model), service.QueryRequest{
-		Question: queryModeQuestion,
-	}, full)
+	answer, err := answerQuery(t.Context(),
+		queryModeServiceWithProvider(t, model, 0), service.QueryRequest{
+			Question: queryModeQuestion,
+		}, full)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,30 +178,51 @@ func TestQueryFullJSONKeepsTheCompleteRowsEnvelope(t *testing.T) {
 	}
 }
 
-func TestQueryFullReportsEveryPhaseAndStreamsThroughBufferedProviders(t *testing.T) {
-	model := &queryModeProvider{answers: []string{queryModeSQL, queryModeProse}}
-	var phases []service.QueryPhase
-	var deltas []string
-	answer, err := answerQuery(t.Context(), queryModeService(t, model), service.QueryRequest{
-		Question:            queryModeQuestion,
-		Progress:            func(phase service.QueryPhase) { phases = append(phases, phase) },
-		InterpretationDelta: func(delta string) { deltas = append(deltas, delta) },
-	}, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []service.QueryPhase{
-		service.QueryPhaseSQL, service.QueryPhaseExecution, service.QueryPhaseInterpretation,
-	}
-	if !slices.Equal(phases, want) {
-		t.Fatalf("phases = %v, want %v", phases, want)
-	}
-	if strings.Join(deltas, "") != queryModeProse {
-		t.Fatalf("streamed prose = %q", strings.Join(deltas, ""))
-	}
-	if answer.result.LatencyMS < answer.result.InterpretationMS {
-		t.Fatalf("total latency %d excludes interpretation %d",
-			answer.result.LatencyMS, answer.result.InterpretationMS)
+func TestQueryFullStreamsOnlyNativeProvidersAndReportsEveryPhase(t *testing.T) {
+	for _, native := range []bool{false, true} {
+		t.Run(map[bool]string{false: "buffered", true: "native stream"}[native], func(t *testing.T) {
+			answers := []string{queryModeSQL, queryModeProse}
+			base := &queryModeProvider{answers: answers}
+			var model provider.Provider = base
+			if native {
+				base.answers = answers[:1]
+				model = &streamingQueryModeProvider{base}
+			}
+			var phases []service.QueryPhase
+			var deltas []string
+			var announced bool
+			answer, err := answerQuery(t.Context(),
+				queryModeServiceWithProvider(t, model, 0), service.QueryRequest{
+					Question: queryModeQuestion,
+					Progress: func(phase service.QueryPhase) {
+						phases = append(phases, phase)
+					},
+					InterpretationStart: func(stream bool, _ service.QueryResult) { announced = stream },
+					InterpretationDelta: func(delta string) { deltas = append(deltas, delta) },
+				}, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantPhases := []service.QueryPhase{
+				service.QueryPhaseSQL, service.QueryPhaseExecution, service.QueryPhaseInterpretation,
+			}
+			if !slices.Equal(phases, wantPhases) || announced != native {
+				t.Fatalf("phases = %v, native = %v; want %v, %v",
+					phases, announced, wantPhases, native)
+			}
+			wantDeltas := ""
+			if native {
+				wantDeltas = queryModeProse
+			}
+			if got := strings.Join(deltas, ""); got != wantDeltas {
+				t.Fatalf("streamed prose = %q, want %q", got, wantDeltas)
+			}
+			if answer.prose != queryModeProse || base.calls != 2 ||
+				answer.result.LatencyMS < answer.result.InterpretationMS {
+				t.Fatalf("answer = %q, calls = %d, latency = %d/%d",
+					answer.prose, base.calls, answer.result.LatencyMS, answer.result.InterpretationMS)
+			}
+		})
 	}
 }
 

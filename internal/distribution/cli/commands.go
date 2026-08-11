@@ -371,6 +371,7 @@ func queryCommand(env *cliEnv) *cobra.Command {
 			// as frozen. The spinner says it is running on the error stream of an
 			// interactive terminal only, so a piped call and a --json call see nothing.
 			spin := startSpinner(env, spinnerShaping)
+			live := newLiveInterpretation(env, spin, full, svc.DB().Path())
 			req.Progress = func(phase service.QueryPhase) {
 				switch phase {
 				case service.QueryPhaseExecution:
@@ -381,7 +382,8 @@ func queryCommand(env *cliEnv) *cobra.Command {
 					spin.phase(spinnerShaping)
 				}
 			}
-			req.InterpretationDelta = spin.appendPreview
+			req.InterpretationStart = live.start
+			req.InterpretationDelta = live.append
 			answer, err := answerQuery(cmd.Context(), svc, req, full)
 			spin.finish()
 			if err != nil {
@@ -402,6 +404,9 @@ func queryCommand(env *cliEnv) *cobra.Command {
 					service.QueryResult
 					DatabasePath string `json:"database_path"`
 				}{result, svc.DB().Path()})
+			}
+			if live.finish(answer) {
+				return nil
 			}
 			env.print("database: %s", svc.DB().Path())
 			if answer.interpretErr != nil {
@@ -443,9 +448,14 @@ func answerQuery(ctx context.Context, svc *service.Service, req service.QueryReq
 	if req.Progress != nil {
 		req.Progress(service.QueryPhaseInterpretation)
 	}
+	var onStart func(bool)
+	if req.InterpretationStart != nil {
+		onStart = func(native bool) { req.InterpretationStart(native, result) }
+	}
 	interpretation, err := svc.InterpretStream(
 		ctx, result.Question, result.Columns, result.Rows,
-		time.Duration(result.SQLInferenceMS)*time.Millisecond, req.InterpretationDelta)
+		time.Duration(result.SQLInferenceMS)*time.Millisecond,
+		onStart, req.InterpretationDelta)
 	answer.prose, answer.interpretErr = interpretation.Text, err
 	answer.result.InterpretationMS = time.Since(started).Milliseconds()
 	answer.result.LatencyMS += answer.result.InterpretationMS

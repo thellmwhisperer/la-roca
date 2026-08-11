@@ -6,8 +6,11 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/mattn/go-runewidth"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 // A spinner is the one piece of motion La Roca shows: it tells an operator a
@@ -47,8 +50,6 @@ type spinner struct {
 	stop    chan struct{}
 	done    chan struct{}
 	started bool
-	preview string
-	space   bool
 	width   int
 	mu      sync.Mutex
 	// once keeps finish idempotent. The contract below promises it is safe to
@@ -109,66 +110,26 @@ func (s *spinner) run() {
 // stream that receives a draw without colour still reads cleanly.
 func (s *spinner) draw(frame int) {
 	s.mu.Lock()
-	label, preview, width := s.label, s.preview, s.width
+	label, width := s.label, s.width
 	s.mu.Unlock()
 	glyph := spinnerFrames[frame%len(spinnerFrames)]
-	line := statusLine(glyph, label, preview, width)
+	line := statusLine(glyph, label, width)
 	painted := strings.Replace(line, glyph, paint(s.out, ansiCyan, glyph), 1)
 	fmt.Fprint(s.out, clearLine, painted)
 }
 
-func statusLine(glyph, label, preview string, width int) string {
+func statusLine(glyph, label string, width int) string {
 	limit := max(1, width-1)
 	base := glyph + " " + label
 	if runewidth.StringWidth(base) > limit {
 		return runewidth.Truncate(base, limit, "…")
 	}
-	available := limit - runewidth.StringWidth(base) - runewidth.StringWidth(" · ")
-	if preview == "" || available <= 0 {
-		return base
-	}
-	return base + " · " + tailAtWidth(preview, available)
-}
-
-func tailAtWidth(text string, width int) string {
-	if width <= 0 {
-		return ""
-	}
-	if runewidth.StringWidth(text) <= width {
-		return text
-	}
-	if width == 1 {
-		return "…"
-	}
-	runes := []rune(text)
-	used, start := 0, len(runes)
-	for start > 0 {
-		cell := runewidth.RuneWidth(runes[start-1])
-		if used+cell > width-1 {
-			break
-		}
-		used += cell
-		start--
-	}
-	return "…" + string(runes[start:])
+	return base
 }
 
 func (s *spinner) phase(label string) {
 	s.mu.Lock()
-	s.label, s.preview, s.space = label, "", false
-	s.mu.Unlock()
-}
-
-func (s *spinner) appendPreview(delta string) {
-	s.mu.Lock()
-	clean := strings.Join(strings.Fields(delta), " ")
-	leadingSpace := len(delta) > 0 && strings.ContainsAny(delta[:1], " \t\r\n")
-	if clean != "" && s.preview != "" && (s.space || leadingSpace) {
-		s.preview += " "
-	}
-	s.preview += clean
-	s.space = len(delta) > 0 && strings.ContainsAny(delta[len(delta)-1:], " \t\r\n")
-	s.preview = tailAtWidth(s.preview, s.width)
+	s.label = label
 	s.mu.Unlock()
 }
 
@@ -188,4 +149,126 @@ func (s *spinner) finish() {
 			fmt.Fprint(s.out, clearLine)
 		}
 	})
+}
+
+// liveInterpretation owns the TTY-only transition from the phase line to the
+// provider's real prose. Pipes, JSON and buffered providers never activate it.
+type liveInterpretation struct {
+	env       *cliEnv
+	spin      *spinner
+	writer    *proseStreamWriter
+	requested bool
+	native    bool
+	wrote     bool
+	dbPath    string
+	result    service.QueryResult
+	once      sync.Once
+}
+
+func newLiveInterpretation(env *cliEnv, spin *spinner, full bool, dbPath string) *liveInterpretation {
+	requested := wantsLiveInterpretation(full, env.json, termAware(env.out))
+	return &liveInterpretation{
+		env: env, spin: spin, requested: requested, dbPath: dbPath,
+		writer: newProseStreamWriter(env.out, terminalWidth(env.out)),
+	}
+}
+
+func wantsLiveInterpretation(full, json, tty bool) bool { return full && !json && tty }
+
+func (l *liveInterpretation) start(native bool, result service.QueryResult) {
+	l.native, l.result = l.requested && native, result
+}
+
+func (l *liveInterpretation) append(delta string) {
+	if !l.native || delta == "" {
+		return
+	}
+	l.once.Do(func() {
+		l.spin.finish()
+		fmt.Fprintf(l.env.out, "database: %s\n%s\n", l.dbPath, axi.QueryPreamble(l.result))
+	})
+	l.wrote = true
+	l.writer.append(delta)
+}
+
+// finish returns true when the live prose is already the complete human answer
+// and the buffered renderer must not print a second copy.
+func (l *liveInterpretation) finish(answer queryAnswer) bool {
+	if !l.native || !l.wrote {
+		return false
+	}
+	l.writer.finish()
+	if answer.interpretErr != nil {
+		l.env.print("%s", interpretationFallback(answer.interpretErr))
+		l.env.print("%s", rowOutput(answer.result.Columns, answer.result.Rows, answer.result.Question))
+	}
+	return true
+}
+
+// proseStreamWriter preserves provider text while wrapping complete words one
+// column inside the detected terminal edge. Holding only the current word
+// makes arbitrary provider chunk boundaries invisible to the reader.
+type proseStreamWriter struct {
+	out     io.Writer
+	width   int
+	column  int
+	pending strings.Builder
+	space   strings.Builder
+}
+
+func newProseStreamWriter(out io.Writer, width int) *proseStreamWriter {
+	return &proseStreamWriter{out: out, width: max(1, saneTerminalWidth(width)-1)}
+}
+
+func (w *proseStreamWriter) append(delta string) {
+	for _, r := range delta {
+		if !unicode.IsSpace(r) {
+			w.pending.WriteRune(r)
+			continue
+		}
+		w.flushWord()
+		if r == '\n' || r == '\r' {
+			w.space.Reset()
+			fmt.Fprint(w.out, string(r))
+			w.column = 0
+			continue
+		}
+		w.space.WriteRune(r)
+	}
+}
+
+func (w *proseStreamWriter) flushWord() {
+	word := w.pending.String()
+	if word == "" {
+		return
+	}
+	wordWidth := runewidth.StringWidth(word)
+	space := w.space.String()
+	spaceWidth := runewidth.StringWidth(space)
+	if w.column > 0 && w.column+spaceWidth+wordWidth > w.width {
+		fmt.Fprint(w.out, "\n")
+		w.column = 0
+		space = ""
+		spaceWidth = 0
+	}
+	if w.column > 0 && space != "" {
+		fmt.Fprint(w.out, space)
+		w.column += spaceWidth
+	}
+	for _, r := range word {
+		cell := runewidth.RuneWidth(r)
+		if w.column > 0 && w.column+cell > w.width {
+			fmt.Fprint(w.out, "\n")
+			w.column = 0
+		}
+		fmt.Fprint(w.out, string(r))
+		w.column += cell
+	}
+	w.pending.Reset()
+	w.space.Reset()
+}
+
+func (w *proseStreamWriter) finish() {
+	w.flushWord()
+	fmt.Fprint(w.out, "\n")
 }
