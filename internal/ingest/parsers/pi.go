@@ -67,6 +67,23 @@ type piMessage struct {
 	StopReason string          `json:"stopReason"`
 	ToolCallID string          `json:"toolCallId"`
 	IsError    bool            `json:"isError"`
+	Model      string          `json:"model"`
+	Provider   string          `json:"provider"`
+	Usage      *piUsage        `json:"usage"`
+}
+
+// piUsage is what Pi measured for one assistant message. It is the only source
+// of the matrix that prices a turn in dollars per message rather than per
+// session, and the cache tiers are part of the prompt like everywhere else.
+type piUsage struct {
+	Input      *int `json:"input"`
+	Output     *int `json:"output"`
+	Reasoning  *int `json:"reasoning"`
+	CacheRead  *int `json:"cacheRead"`
+	CacheWrite *int `json:"cacheWrite"`
+	Cost       *struct {
+		Total *float64 `json:"total"`
+	} `json:"cost"`
 }
 
 type piBlock struct {
@@ -285,6 +302,34 @@ type piPending struct {
 	errors     map[string]bool
 	invalid    bool
 	terminal   *piEntry
+	model      string
+	provider   string
+	usage      UsageTally
+}
+
+// claim records what one assistant message of the turn declared about itself.
+// Pi answers a turn with several messages, so the counts add up and the first
+// model named keeps the turn.
+func (p *piPending) claim(message *piMessage) {
+	if p.model == "" {
+		p.model = message.Model
+	}
+	if p.provider == "" {
+		p.provider = message.Provider
+	}
+	usage := message.Usage
+	if usage == nil {
+		return
+	}
+	p.usage.AddTokens(
+		intOrZero(usage.Input)+intOrZero(usage.CacheRead)+intOrZero(usage.CacheWrite),
+		intOrZero(usage.Output))
+	if usage.Reasoning != nil {
+		p.usage.AddReasoningTokens(*usage.Reasoning)
+	}
+	if usage.Cost != nil && usage.Cost.Total != nil {
+		p.usage.AddCost(*usage.Cost.Total)
+	}
 }
 
 func piExchanges(active []*piEntry) ([]Exchange, int, []Discard) {
@@ -371,6 +416,7 @@ func piExchanges(active []*piEntry) ([]Exchange, int, []Discard) {
 }
 
 func piConsumeAssistant(pending *piPending, message *piMessage, record int) []Discard {
+	pending.claim(message)
 	var text string
 	if err := json.Unmarshal(message.Content, &text); err == nil {
 		if trimmed := strings.TrimSpace(text); trimmed != "" {
@@ -447,6 +493,7 @@ func piProject(pending *piPending, number *int) (Exchange, bool) {
 		HumanTimestamp:    pending.humanTS,
 		AgentTimestamp:    agentTS,
 		LatencyMS:         latency(pending.humanTS, agentTS),
+		Provenance:        pending.usage.Provenance(pending.model, pending.provider),
 	}
 	for _, text := range pending.thinking {
 		exchange.Thinking = append(exchange.Thinking, Thinking{

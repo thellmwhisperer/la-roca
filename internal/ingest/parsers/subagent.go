@@ -111,6 +111,10 @@ func ParseSubagent(content []byte, meta FileMeta) (Records, error) {
 	type side struct {
 		text, timestamp string
 		record          int
+		// model and usage are the provenance the assistant chunks declared; the
+		// human side of a transcript declares none.
+		model string
+		usage UsageTally
 	}
 	var humans, agents []side
 	pendingAgent := false
@@ -127,14 +131,19 @@ func ParseSubagent(content []byte, meta FileMeta) (Records, error) {
 		switch entry.Type {
 		case "user":
 			pendingAgent = false
-			humans = append(humans, side{text, entry.Timestamp, entry.record})
+			humans = append(humans, side{text: text, timestamp: entry.Timestamp, record: entry.record})
 		case "assistant":
-			if pendingAgent {
+			if !pendingAgent {
+				agents = append(agents, side{text: text, timestamp: entry.Timestamp, record: entry.record})
+				pendingAgent = true
+			} else {
 				agents[len(agents)-1].text += "\n" + text
-				continue
 			}
-			agents = append(agents, side{text, entry.Timestamp, entry.record})
-			pendingAgent = true
+			answer := &agents[len(agents)-1]
+			if answer.model == "" && entry.Message != nil {
+				answer.model = entry.Message.Model
+			}
+			claimClaudeUsage(&answer.usage, entry.Message)
 		default:
 			pendingAgent = false
 			discards = append(discards, Discard{Record: entry.record, Reason: "unsupported subagent record: " + entry.Type})
@@ -162,6 +171,7 @@ func ParseSubagent(content []byte, meta FileMeta) (Records, error) {
 			HumanTimestamp: humans[i].timestamp,
 			AgentTimestamp: agents[i].timestamp,
 			LatencyMS:      latency(humans[i].timestamp, agents[i].timestamp),
+			Provenance:     agents[i].usage.Provenance(agents[i].model, ""),
 		})
 	}
 	if len(session.Exchanges) == 0 {
