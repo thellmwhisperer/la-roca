@@ -53,10 +53,23 @@ API key, browser flow, or `roca login` step is required. Without one, La Roca
 tries the local Ollama floor and finally the keyword rescue, naming every
 missing or unavailable semantic route.
 
-`roca init` asks before creating or adopting a database, never silently, and
-ends by telling you how deep your memory goes: the oldest moment it ingested
-is the floor of your rock. `roca doctor` reports the same floor along with
-which model will answer and how to fix anything that is not ready.
+`roca init` asks before creating or adopting a database, then shows the models
+this machine can actually serve. The chooser is model-first: pick a model,
+let La Roca resolve its detected CLI or Ollama harness (or choose among several),
+and confirm the pair. Plain Enter keeps the same factory choice La Roca would
+have made without configuration. The confirmed choice is written surgically to
+`~/.roca/config.toml`, with a named recovery backup when an existing file is
+changed; it does not log in again or copy an agent CLI's session. See the
+[full init flow](docs/lifecycle.md#initialize) for the terminal and automation
+contracts.
+
+Every human-readable init closes with one `answering:` line naming the provider,
+model, exact configuration path, and how to change it. A non-interactive init
+with an explicit `--db-path` asks no model questions, writes no model
+configuration, keeps the factory selection, and prints the same one-line answer
+notice. The summary also tells you how deep your memory goes: the oldest moment
+it ingested is the floor of your rock. `roca doctor` reports the same floor and
+model health.
 
 ## Let your agent drive
 

@@ -17,7 +17,12 @@ Before first use, run `roca init` in a terminal. With no home database it asks
 copies that database into `~/.roca`, and leaves the original untouched; `new`
 creates an empty database and indexes detected agent sources. If the home
 database already exists, init asks to keep or explicitly reinitialize it.
-Automation that creates or selects a location must pass `--db-path`.
+It then lists models by their detected CLI or local Ollama origin, asks for the
+model first, resolves its harness, and confirms the pair before editing
+`~/.roca/config.toml`, backing up an existing file when it changes. Plain Enter
+keeps the factory choice and uses the CLI's existing session without a La Roca
+login. Automation that creates or selects a location must pass `--db-path`;
+non-terminal init does not open the chooser or write model configuration.
 
 ## Shell commands
 
@@ -33,9 +38,10 @@ roca store --layer discovery --content "FTS ranks by bm25, created_at only for t
 roca doctor                                    # diagnosis + remedies
 ```
 
-To choose the answering model while logging in, run
-`roca login <provider> --model <id>`; it persists
-`models.<provider>.model` in `~/.roca/config.toml`.
+To change the answering model later without logging in, run
+`roca model set <id>`. A provider login can also accept `--model <id>` when a
+credential flow is actually needed. Both persist `models.<provider>.model` in
+`~/.roca/config.toml`.
 
 `roca exec` runs exactly what `query --sql-only` prints, under the same
 read-only gate; nothing that is not a SELECT reaches the database.
