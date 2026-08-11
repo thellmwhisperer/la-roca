@@ -1,0 +1,17 @@
+# Build artefacts
+/bin/
+/dist/
+
+# Project scratch (see AGENTS.md), including the cached slop-gate binary
+/.tmp/
+/.worktrees/
+
+# Agent-runtime session state. Coding agents drop their own scratch here when
+# they work in a checkout; it is never product content (one slipped into
+# history on 2026-08-10 and blocked a cleanup). The repository declares them
+# itself rather than relying on a personal global ignore.
+/.opencode/
+/.claude/
+
+# macOS
+.DS_Store
