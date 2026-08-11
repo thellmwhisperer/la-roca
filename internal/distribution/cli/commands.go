@@ -280,6 +280,7 @@ func renderBootstrap(env *cliEnv, result service.InitResult) {
 			}
 		}
 	}
+	renderBedrock(env, result.Bedrock)
 	env.print("total: %s", axi.Duration(result.TotalElapsedMS))
 	env.print("next steps:")
 	if result.PromptPath != "" {
@@ -287,6 +288,26 @@ func renderBootstrap(env *cliEnv, result service.InitResult) {
 		env.print("  Paste its contents into the agent instructions you choose.")
 	}
 	env.print("  skill: available via `roca skill install` (not installed automatically)")
+}
+
+func renderBedrock(env *cliEnv, bedrock *service.Bedrock) {
+	if bedrock == nil {
+		env.print("bedrock: your memory has no history yet")
+		return
+	}
+	stamp, err := time.Parse(time.RFC3339, bedrock.Timestamp)
+	if err != nil {
+		stamp, err = time.Parse("2006-01-02 15:04:05", bedrock.Timestamp)
+	}
+	date := bedrock.Timestamp
+	if err == nil {
+		date = stamp.Format("02 Jan 2006")
+	}
+	if bedrock.Project != "" {
+		env.print("bedrock: your memory reaches back to %s (first session: %s)", date, bedrock.Project)
+		return
+	}
+	env.print("bedrock: your memory reaches back to %s", date)
 }
 
 func detectedAgentsLine(agents []string) string {
@@ -373,7 +394,20 @@ func queryCommand(env *cliEnv) *cobra.Command {
 			// The query may round-trip a model, and a model takes long enough to read
 			// as frozen. The spinner says it is running on the error stream of an
 			// interactive terminal only, so a piped call and a --json call see nothing.
-			spin := startSpinner(env, spinnerLabel)
+			spin := startSpinner(env, spinnerShaping)
+			live := newLiveInterpretation(env, spin, full, svc.DB().Path())
+			req.Progress = func(phase service.QueryPhase) {
+				switch phase {
+				case service.QueryPhaseExecution:
+					spin.phase(spinnerSearching)
+				case service.QueryPhaseInterpretation:
+					spin.phase(spinnerComposing)
+				default:
+					spin.phase(spinnerShaping)
+				}
+			}
+			req.InterpretationStart = live.start
+			req.InterpretationDelta = live.append
 			answer, err := answerQuery(cmd.Context(), svc, req, full)
 			spin.finish()
 			if err != nil {
@@ -395,10 +429,15 @@ func queryCommand(env *cliEnv) *cobra.Command {
 					DatabasePath string `json:"database_path"`
 				}{result, svc.DB().Path()})
 			}
+			if live.finish(answer) {
+				return nil
+			}
 			env.print("database: %s", svc.DB().Path())
 			if answer.interpretErr != nil {
 				env.print("%s", interpretationFallback(answer.interpretErr))
 			}
+			answer.prose = formatInterpretation(answer.prose, termAware(env.out),
+				terminalWidth(env.out), colorOn(env.out))
 			env.print("%s", axiQuery(answer))
 			return nil
 		}),
@@ -430,11 +469,27 @@ func answerQuery(ctx context.Context, svc *service.Service, req service.QueryReq
 		return answer, err
 	}
 	started := time.Now()
-	answer.prose, answer.interpretErr = svc.Interpret(
+	if req.Progress != nil {
+		req.Progress(service.QueryPhaseInterpretation)
+	}
+	var onStart func(bool)
+	if req.InterpretationStart != nil {
+		onStart = func(native bool) { req.InterpretationStart(native, result) }
+	}
+	interpretation, err := svc.InterpretStream(
 		ctx, result.Question, result.Columns, result.Rows,
-		time.Duration(result.SQLInferenceMS)*time.Millisecond)
+		time.Duration(result.SQLInferenceMS)*time.Millisecond,
+		onStart, req.InterpretationDelta)
+	answer.prose, answer.interpretErr = interpretation.Text, err
 	answer.result.InterpretationMS = time.Since(started).Milliseconds()
-	answer.result.Interpretation = answer.prose
+	answer.result.LatencyMS += answer.result.InterpretationMS
+	answer.result.Interpretation = interpretation.Text
+	// Who read the rows travels in the envelope beside who wrote the SQL: on an
+	// installation that splits the two inferences they are different providers,
+	// and that difference is the whole point of splitting them.
+	answer.result.InterpretEngine = interpretation.Engine
+	answer.result.InterpretModel = interpretation.Model
+	answer.result.InterpretNote = interpretation.Note
 	if answer.interpretErr != nil {
 		answer.result.ProviderError = answer.interpretErr.Error()
 	}

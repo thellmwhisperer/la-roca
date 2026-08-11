@@ -136,7 +136,7 @@ func (m *world) withoutModelCall() error {
 	if err != nil {
 		return err
 	}
-	if path := fmt.Sprint(document["path"]); path == "llm_fallback" {
+	if path := fmt.Sprint(document["path"]); path == "model" {
 		return fmt.Errorf("the answer left by the model")
 	}
 	if _, ok := document["provider"]; ok {

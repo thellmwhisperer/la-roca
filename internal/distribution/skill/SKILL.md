@@ -48,7 +48,9 @@ bounded preview. Add `--json` when a program needs the unchanged full envelope.
 
 ```text
 $ roca query "what do we know about AXI output"
-route llm_fallback · provider ollama · model qwen3.5:4b · 4 ms
+route model
+SQL · provider ollama · model qwen3.5:4b · 4 ms
+search · 1 ms
 rows[1]{source,id,created_at,text}:
   memory,1,"2026-08-07 17:39:43","AXI output uses TOON rows, stable fields, and contextual help."
 help[2]:
@@ -72,6 +74,27 @@ the gate. Install them with `roca mcp install <runtime>`.
 | Inspect SQL first | `roca query --sql-only` then `roca exec` |
 | Durable memory | `roca store --layer … --content …` |
 | No shell | the MCP tools above |
+
+## Operating craft
+
+- Start project work with `roca_query("latest handoff for <project>")`. Ask for
+  the current handoff protocol and follow it instead of freezing it here. After
+  meaningful work, always store a handoff with branch, changes, state, next
+  steps and blockers.
+- Ask bare first: use one short concept and no hints. Hints can steer SQL to the
+  wrong table; a typo can silently leave noise as the best match.
+- Widen deliberately: say "search the whole corpus (conversations, thinking,
+  memories, sessions)", request OR between terms and raise limits consciously.
+- For counts or rankings, name `sessions` or `exchanges`, where the mass lives;
+  do not aim analytics at the smaller set of curated memories.
+- For origins, compile with `roca_sql`, run with `roca_exec` using
+  `ORDER BY timestamp ASC`, then inspect the first matching session and its
+  surrounding exchanges.
+- Rows are the truth; prose is a reading. Verify claims against returned rows
+  and say plainly when they do not answer the question.
+- Use the layer filter deliberately: `handoff` for continuity and
+  `feedback`/`pattern` for distilled lessons. Search coordination layers
+  explicitly when tracing origins; ordinary knowledge search can skip them.
 
 ## Good
 

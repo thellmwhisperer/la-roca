@@ -33,12 +33,14 @@ func TestTheModelsSectionIsReadWhole(t *testing.T) {
 	path := write(t, `
 [models]
 order = ["deepseek", "ollama"]
+interpret_order = ["ollama"]
 timeout_ms = 15000
 
 [models.ollama]
 base_url = "http://localhost:11434"
 model = "qwen3.5:4b"
 keep_alive = "10m"
+think = true
 
 [models.deepseek]
 preset = "deepseek"
@@ -55,6 +57,12 @@ model = "deepseek-reasoner"
 	if got := strings.Join(file.Models.Order, ","); got != "deepseek,ollama" {
 		t.Fatalf("order %q", got)
 	}
+	if got := strings.Join(file.Models.InterpretOrder, ","); got != "ollama" {
+		t.Fatalf("interpret order %q", got)
+	}
+	if len(file.Warnings) != 0 {
+		t.Fatalf("a known key was reported as unknown: %v", file.Warnings)
+	}
 	if file.Models.TimeoutMS != 15000 {
 		t.Fatalf("timeout %d", file.Models.TimeoutMS)
 	}
@@ -63,8 +71,11 @@ model = "deepseek-reasoner"
 		t.Fatalf("deepseek %+v", deepseek)
 	}
 	ollama := file.Models.Providers["ollama"]
-	if ollama.BaseURL != "http://localhost:11434" || ollama.KeepAlive != "10m" {
+	if ollama.BaseURL != "http://localhost:11434" || ollama.KeepAlive != "10m" || !ollama.Think {
 		t.Fatalf("ollama %+v", ollama)
+	}
+	if deepseek.Think {
+		t.Fatal("thinking is on for a provider that never asked for it")
 	}
 }
 

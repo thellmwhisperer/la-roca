@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mattn/go-runewidth"
 )
 
 // A spinner is motion, and motion is for an interactive terminal only. These
@@ -87,5 +89,46 @@ func TestFinishIsSafeToCallTwice(t *testing.T) {
 
 	if !strings.Contains(buf.String(), "searching memory") {
 		t.Errorf("the spinner never painted its label:\n%q", buf.String())
+	}
+}
+
+func TestSpinnerNarratesOnlyTheBufferedPhases(t *testing.T) {
+	fastSpinner(t)
+	var buf bytes.Buffer
+	spin := newSpinner(&buf, "shaping the search", true)
+	time.Sleep(spinnerGrace + spinnerTick)
+	spin.phase("searching memory")
+	time.Sleep(spinnerTick)
+	spin.phase("composing the answer")
+	time.Sleep(2 * spinnerTick)
+	spin.finish()
+
+	got := buf.String()
+	for _, want := range []string{
+		"shaping the search", "searching memory", "composing the answer",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("phased spinner lacks %q:\n%q", want, got)
+		}
+	}
+}
+
+func TestPhaseStatusNeverWrapsOrWritesANewline(t *testing.T) {
+	fastSpinner(t)
+	var buf bytes.Buffer
+	spin := newSpinnerAtWidth(&buf, spinnerComposing, true, 40)
+	time.Sleep(spinnerGrace + 2*spinnerTick)
+	spin.finish()
+
+	for _, frame := range strings.Split(buf.String(), clearLine) {
+		if frame == "" {
+			continue
+		}
+		if strings.ContainsAny(frame, "\r\n") {
+			t.Fatalf("status frame wrote a line break: %q", frame)
+		}
+		if width := runewidth.StringWidth(frame); width >= 40 {
+			t.Fatalf("status frame is %d cells in a 40-column terminal: %q", width, frame)
+		}
 	}
 }

@@ -102,9 +102,15 @@ const theQuestionWithAMatch = "what decisions were made about the long dashes"
 
 func serviceWithModel(t *testing.T, providers ...provider.Provider) *service.Service {
 	t.Helper()
-	return seededServiceWith(t, provider.Cascade{
+	return seededServiceWith(t, cascadeOf(providers...))
+}
+
+// cascadeOf is a live order over the given providers with the short budgets a
+// test can afford.
+func cascadeOf(providers ...provider.Provider) provider.Cascade {
+	return provider.Cascade{
 		Providers: providers, Timeout: 2 * time.Second, Probe: time.Second,
-	})
+	}
 }
 
 func TestTheModelAnswersWhatTheCompilerDeclines(t *testing.T) {
@@ -368,7 +374,7 @@ func TestTheRescueFindsTheEntityBehindShortWords(t *testing.T) {
 				t.Fatalf("Query: %v", err)
 			}
 			if res.Path != service.PathKeyword {
-				t.Fatalf("path %q, want keyword_fallback: the rescue did not answer", res.Path)
+				t.Fatalf("path %q, want keyword: the rescue did not answer", res.Path)
 			}
 			if res.RowCount == 0 {
 				t.Fatalf("zero rows: the interrogatives were not stripped before the rescue searched")
@@ -457,7 +463,7 @@ func TestTheModelTurnedOffOnPurposeIsNotAFailure(t *testing.T) {
 // A query answered by the keyword rescue, on an installation whose frontier
 // provider was unavailable, came back saying
 // `the configured provider is not available: degraded to the local floor
-// (ollama)` while reporting provider=ollama and route=keyword_fallback. Both
+// (ollama)` while reporting provider=ollama and route=keyword. Both
 // halves were true and the sentence was a lie: the fall to the floor is a fact
 // about WHO WAS ASKED, and the rescue is a fact about WHAT ANSWERED, and one was
 // being written over the other.
@@ -695,13 +701,16 @@ func TestInterpretPromptIsLanguageAgnostic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Interpret: %v", err)
 	}
-	if prose != "The format was decided in a memory." {
-		t.Fatalf("prose %q", prose)
+	if prose.Text != "The format was decided in a memory." {
+		t.Fatalf("prose %q", prose.Text)
 	}
 	wantPrompt := "You are La Roca. Question: what was decided about the format. Results:\n" +
 		"source, text\n" +
 		"memory, decision about the format\n" +
-		"Answer in the same language as the question.\n"
+		"Use only these results, never general knowledge. If the results do not support the question, " +
+		"say so plainly before anything else. A requested style changes delivery only and never licenses invention. " +
+		"Answer in the same language as the question. Write calm, terminal-friendly prose: " +
+		"paragraphs and simple dashes only. Do not use headings or tables.\n"
 	if prompt := model.prompts[0]; prompt != wantPrompt {
 		t.Errorf("prompt = %q, want %q", prompt, wantPrompt)
 	}
@@ -773,7 +782,7 @@ func TestInterpretKeepsProseThatQuotesAFencedBlock(t *testing.T) {
 	svc := serviceWithModel(t, answering("codex", "<think>summarize</think>\n"+prose))
 	got, err := svc.Interpret(context.Background(), "give me the details",
 		[]string{"text"}, []map[string]any{{"text": "Synthetic Orchid Test Fixture"}}, 0)
-	if err != nil || got != prose {
-		t.Fatalf("the prose was clipped: %q (err=%v)", got, err)
+	if err != nil || got.Text != prose {
+		t.Fatalf("the prose was clipped: %q (err=%v)", got.Text, err)
 	}
 }
