@@ -140,9 +140,6 @@ func TestAWideResultBudgetsReadableAndStructuredContent(t *testing.T) {
 		t.Fatalf("marshal the structured envelope: %v", err)
 	}
 
-	t.Logf("wide exec over %d memories: TOON readable %d bytes vs JSON envelope %d bytes",
-		42, len(text), len(envelope))
-
 	if !strings.Contains(text, "rows[") {
 		t.Errorf("the readable half is not the TOON table:\n%s", text)
 	}
@@ -166,5 +163,21 @@ func TestAWideResultBudgetsReadableAndStructuredContent(t *testing.T) {
 	}
 	if len(envelope) > 30000 {
 		t.Errorf("budgeted structured envelope is still unexpectedly wide: %d bytes", len(envelope))
+	}
+
+	wideResult := callTool(t, session, "roca_exec", map[string]any{
+		"sql":       "SELECT 'memory' AS source, id, content AS text FROM memories",
+		"max_chars": 3000,
+	})
+	wideText := renderedText(wideResult)
+	wideEnvelope, err := json.Marshal(wideResult.StructuredContent)
+	if err != nil {
+		t.Fatalf("marshal the wide structured envelope: %v", err)
+	}
+	t.Logf("wide exec over %d memories: TOON readable %d bytes vs former JSON response %d bytes",
+		42, len(wideText), len(wideEnvelope))
+	if len(wideText)*10 >= len(wideEnvelope) {
+		t.Errorf("TOON response (%d bytes) is not an order of magnitude under the former JSON response (%d bytes)",
+			len(wideText), len(wideEnvelope))
 	}
 }
