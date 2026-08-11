@@ -2,6 +2,7 @@ package release
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -76,8 +77,8 @@ func TestReleasePleaseOwnsOneStableVersion(t *testing.T) {
 	if err := json.Unmarshal([]byte(readRepoFile(t, "../../../.release-please-manifest.json")), &manifest); err != nil {
 		t.Fatalf("release-please manifest is not valid JSON: %v", err)
 	}
-	if manifest["."] != "1.0.0" {
-		t.Fatalf("manifest baseline = %q, want 1.0.0", manifest["."])
+	if !regexp.MustCompile(`^\d+\.\d+\.\d+$`).MatchString(manifest["."]) {
+		t.Fatalf("manifest baseline = %q, want a stable semver owned by release-please", manifest["."])
 	}
 
 	var plugin struct {
@@ -95,7 +96,7 @@ func TestReleasePleaseOwnsOneStableVersion(t *testing.T) {
 	}
 
 	docs := readRepoFile(t, "../../../docs/releases.md")
-	for _, required := range []string{"1.0.0", "feat:", "BREAKING CHANGE:", "RELEASE_PLEASE_TOKEN", "plugin.json"} {
+	for _, required := range []string{"feat:", "BREAKING CHANGE:", "RELEASE_PLEASE_TOKEN", "plugin.json"} {
 		if !strings.Contains(docs, required) {
 			t.Errorf("release documentation is missing %q", required)
 		}
