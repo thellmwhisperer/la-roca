@@ -10,32 +10,46 @@ import (
 )
 
 func TestFirstTTYCommandOffersOpenCapabilitiesOnceForTheBuild(t *testing.T) {
-	home, bin := t.TempDir(), t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("PATH", bin)
-	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte("fixture"), 0o700); err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name, input, wantErr string
+		interactive          bool
+		args                 []string
+	}{
+		{name: "successful TTY command", input: "n\n", interactive: true, args: []string{"version"}},
+		{name: "failed non-TTY command", wantErr: "no Roca database", args: []string{"query", "what changed?"}},
 	}
-	path := filepath.Join(home, ".roca", "config.toml")
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte("[defaults]\nanthropic_export_paths = [\"/exports\"]\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	previous := terminalInput
-	terminalInput = func(any) bool { return true }
-	t.Cleanup(func() { terminalInput = previous })
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home, bin := t.TempDir(), t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("PATH", bin)
+			if err := os.WriteFile(filepath.Join(bin, "claude"), []byte("fixture"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(home, ".roca", "config.toml")
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("[defaults]\nanthropic_export_paths = [\"/exports\"]\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			previous := terminalInput
+			terminalInput = func(any) bool { return tc.interactive }
+			t.Cleanup(func() { terminalInput = previous })
 
-	first, err := runCapabilityRoot(t, Build{Version: "v2", Commit: "sha"},
-		strings.NewReader("n\n"), "version")
-	if err != nil || !strings.Contains(first, "Claude Code is on PATH") {
-		t.Fatalf("first command: %v\n%s", err, first)
-	}
-	second, err := runCapabilityRoot(t, Build{Version: "v2", Commit: "sha"},
-		strings.NewReader("n\n"), "version")
-	if err != nil || strings.Contains(second, "Claude Code is on PATH") {
-		t.Fatalf("same-version command repeated proposal: %v\n%s", err, second)
+			first, err := runCapabilityRoot(t, Build{Version: "v2", Commit: "sha"},
+				strings.NewReader(tc.input), tc.args...)
+			if tc.wantErr == "" && err != nil || tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) ||
+				!strings.Contains(first, "Claude Code is on PATH") {
+				t.Fatalf("first command: %v\n%s", err, first)
+			}
+			second, err := runCapabilityRoot(t, Build{Version: "v2", Commit: "sha"},
+				strings.NewReader(tc.input), tc.args...)
+			if tc.wantErr == "" && err != nil || tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) ||
+				strings.Contains(second, "Claude Code is on PATH") {
+				t.Fatalf("same-version command repeated proposal: %v\n%s", err, second)
+			}
+		})
 	}
 }
 
@@ -46,37 +60,6 @@ func runCapabilityRoot(t *testing.T, build Build, in *strings.Reader, args ...st
 	env.skipReconciliation = false
 	_, err := executeWithEnv(env, args, in)
 	return output.String(), err
-}
-
-func TestFailedFirstCommandStillOffersOpenCapabilities(t *testing.T) {
-	home, bin := t.TempDir(), t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("PATH", bin)
-	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte("fixture"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(home, ".roca", "config.toml")
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte("[defaults]\nanthropic_export_paths = [\"/exports\"]\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	previous := terminalInput
-	terminalInput = func(any) bool { return false }
-	t.Cleanup(func() { terminalInput = previous })
-
-	first, err := runCapabilityRoot(t, Build{Version: "v2", Commit: "sha"},
-		strings.NewReader(""), "query", "what changed?")
-	if err == nil || !strings.Contains(err.Error(), "no Roca database") ||
-		!strings.Contains(first, "Claude Code is on PATH") {
-		t.Fatalf("failed first command: %v\n%s", err, first)
-	}
-	second, err := runCapabilityRoot(t, Build{Version: "v2", Commit: "sha"},
-		strings.NewReader(""), "query", "what changed?")
-	if err == nil || strings.Contains(second, "Claude Code is on PATH") {
-		t.Fatalf("failed repeated command: %v\n%s", err, second)
-	}
 }
 
 func TestDoctorListsAnOpenProposalEvenAfterItsVersionStamp(t *testing.T) {
