@@ -48,11 +48,13 @@ func versionLine(build Build) string {
 func initCommand(env *cliEnv) *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
-		Short: "Choose a new database or import one by path, then bootstrap it",
+		Short: "Choose a database and answering model, then bootstrap them",
 		Long: "Creates and bootstraps the database. With no home database, init asks new or adopt;\n" +
 			"adopt then asks for the source path and copies it, leaving the original untouched.\n" +
 			"An existing home database is kept or reinitialized only by explicit answer.\n" +
-			"Non-interactive callers must select a location explicitly with --db-path.",
+			"In a terminal, a model-first chooser lists detected CLI defaults and pulled Ollama models,\n" +
+			"resolves the harness, confirms the pair, and writes it with a recovery backup.\n" +
+			"Non-interactive callers must select a location explicitly with --db-path; they are never prompted.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			commandStarted := time.Now()
 			env.wantIngestProgress = true
@@ -60,7 +62,10 @@ func initCommand(env *cliEnv) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			choice, source, err := env.selectInitDatabase(cmd.InOrStdin(), paths, env.dbPath != "")
+			rawInput := cmd.InOrStdin()
+			interactive := terminalInput(rawInput) && !env.json
+			input := bufio.NewReader(rawInput)
+			choice, source, err := env.selectInitDatabase(input, paths, env.dbPath != "", interactive)
 			if err != nil {
 				return err
 			}
@@ -108,6 +113,12 @@ func initCommand(env *cliEnv) *cobra.Command {
 					AdoptedByCopy bool   `json:"adopted_by_copy,omitempty"`
 					AdoptedFrom   string `json:"adopted_from,omitempty"`
 				}{result, env.build.Version, env.build.Commit, adoptedByCopy, source})
+			}
+			if interactive && !env.skipInitChooser {
+				result, err = env.chooseInitModel(cmd.Context(), input, paths, result)
+				if err != nil {
+					return err
+				}
 			}
 
 			env.print("setup: %s", axi.Duration(result.SetupElapsedMS))
@@ -158,7 +169,8 @@ var terminalInput = func(in any) bool {
 	return ok && term.IsTerminal(int(file.Fd()))
 }
 
-func (env *cliEnv) selectInitDatabase(in io.Reader, paths config.Paths, explicit bool) (string, string, error) {
+func (env *cliEnv) selectInitDatabase(reader *bufio.Reader, paths config.Paths,
+	explicit, interactive bool) (string, string, error) {
 	exists := fileExists(paths.DB)
 	if explicit {
 		if exists {
@@ -176,10 +188,10 @@ func (env *cliEnv) selectInitDatabase(in io.Reader, paths config.Paths, explicit
 		}
 		env.initSay("keep: use the current database here, then index the agent history found on this machine")
 		env.initSay("reinitialize: permanently replace the current database with an empty one, then index the agent history found on this machine")
-		if !terminalInput(in) {
+		if !interactive {
 			return "", "", fmt.Errorf("roca init needs an interactive keep or reinitialize answer; run it in a terminal, or pass --db-path explicitly")
 		}
-		choice, err := readInitAnswer(bufio.NewReader(in), env.errOut,
+		choice, err := readInitAnswer(reader, env.errOut,
 			"Choose database [keep/reinitialize] (no default): ", "keep", "reinitialize")
 		return choice, "", err
 	}
@@ -187,10 +199,9 @@ func (env *cliEnv) selectInitDatabase(in io.Reader, paths config.Paths, explicit
 	env.initSay("no database at %s", paths.DB)
 	env.initSay("new: create an empty database here, then index the agent history found on this machine")
 	env.initSay("adopt: if you already have a La Roca database elsewhere, type its path and a copy is brought here; the original is never touched")
-	if !terminalInput(in) {
+	if !interactive {
 		return "", "", fmt.Errorf("roca init needs an interactive new or adopt answer; run it in a terminal, or pass --db-path explicitly")
 	}
-	reader := bufio.NewReader(in)
 	choice, err := readInitAnswer(reader, env.errOut,
 		"Choose database [new/adopt] (no default): ", "new", "adopt")
 	if err != nil || choice == "new" {
@@ -271,11 +282,7 @@ func renderBootstrap(env *cliEnv, result service.InitResult) {
 			env.print("model: turned off in the configuration · %s",
 				axi.Duration(result.ModelElapsedMS))
 		case model.Ready:
-			line := modelChoiceLine(model.Provider, "ready", model.Model, result.ConfigPath)
-			if model.ExternalCredential {
-				line += " · uses the existing local CLI session; no roca login required"
-			}
-			env.print("%s · %s", line, axi.Duration(result.ModelElapsedMS))
+			env.print("model: ready · %s", axi.Duration(result.ModelElapsedMS))
 		default:
 			env.print("model: none available (%s) · %s", model.Reason,
 				axi.Duration(result.ModelElapsedMS))
@@ -295,6 +302,27 @@ func renderBootstrap(env *cliEnv, result service.InitResult) {
 		env.print("  Paste its contents into the agent instructions you choose.")
 	}
 	env.print("  skill: available via `roca skill install` (not installed automatically)")
+	renderInitAnswer(env, result)
+}
+
+func renderInitAnswer(env *cliEnv, result service.InitResult) {
+	model := result.Model
+	if model == nil || !model.Ready {
+		env.print("answering: none · configuration: %s · change with: models.order and models.<provider>.model in that file",
+			result.ConfigPath)
+		return
+	}
+	line := fmt.Sprintf("answering: %s/%s (%s) · configuration: %s · change with: %s",
+		model.Provider, model.Model, modelChoiceSource(result.ConfigPath, model.Provider, model.Model),
+		result.ConfigPath, initModelChange(model.Provider, result.ConfigPath))
+	if model.ExternalCredential {
+		line += " · uses the existing local CLI session; no roca login required"
+	}
+	env.print("%s", line)
+}
+
+func initModelChange(name, path string) string {
+	return fmt.Sprintf("roca model set <id> or models.%s.model in %s", name, path)
 }
 
 func renderBedrock(env *cliEnv, bedrock *service.Bedrock) {

@@ -7,9 +7,11 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/oauth"
@@ -149,6 +151,283 @@ func orDash(value string) string {
 		return "-"
 	}
 	return value
+}
+
+type initModelOrigin struct {
+	Provider string
+	Label    string
+	Models   []string
+	Open     bool
+}
+
+type initModelChoice struct {
+	Provider string
+	Model    string
+}
+
+func (env *cliEnv) chooseInitModel(ctx context.Context, input *bufio.Reader,
+	paths config.Paths, result service.InitResult) (service.InitResult, error) {
+	file, err := config.LoadFile(paths.Config)
+	if err != nil {
+		return result, err
+	}
+	origins := env.discoverInitModels(ctx, paths, file)
+	defaultChoice := currentInitModel(result)
+	origins = includeCurrentInitModel(origins, defaultChoice)
+	if defaultChoice.Model == "" {
+		defaultChoice = firstInitModel(origins)
+	}
+	if defaultChoice.Model == "" {
+		return result, nil
+	}
+	model, err := env.askInitModel(input, origins, defaultChoice.Model)
+	if err != nil {
+		return result, err
+	}
+	candidates := initHarnesses(origins, model)
+	if len(candidates) == 0 {
+		return result, fmt.Errorf("no detected harness can serve model %s; configuration was not changed", model)
+	}
+	harness, err := env.askInitHarness(input, model, candidates, defaultChoice.Provider)
+	if err != nil {
+		return result, err
+	}
+	confirmed, err := confirmInitModel(input, env.errOut, harness, model)
+	if err != nil {
+		return result, err
+	}
+	if !confirmed {
+		env.initSay("model choice canceled; configuration was not changed")
+		return result, nil
+	}
+	if harness != defaultChoice.Provider || model != defaultChoice.Model {
+		backend := env.initModelBackend(paths, file, harness)
+		if err := backend.Probe(ctx, harness, model); err != nil {
+			return result, fmt.Errorf("%s model %s failed its account probe: %w; configuration was not changed",
+				harness, model, err)
+		}
+	}
+	outcome, err := writeInitModelChoice(paths.Config, harness, model)
+	if err != nil {
+		return result, err
+	}
+	if outcome.Changed {
+		fmt.Fprintf(env.errOut, "configuration updated: %s", outcome.Path)
+		if outcome.Backup != "" {
+			fmt.Fprintf(env.errOut, " (backup: %s)", outcome.Backup)
+		}
+		fmt.Fprintln(env.errOut)
+	} else {
+		env.initSay("configuration unchanged: %s", outcome.Path)
+	}
+	result.Model = &service.InitModel{
+		Ready: true, Provider: harness, Model: model,
+		ExternalCredential: slices.Contains(provider.DetectedCommandPresets(nil), harness),
+	}
+	return result, nil
+}
+
+func (env *cliEnv) discoverInitModels(ctx context.Context, paths config.Paths,
+	file config.File) []initModelOrigin {
+	var origins []initModelOrigin
+	for _, name := range provider.DetectedCommandPresets(nil) {
+		model, ok := provider.CommandPresetDefaultModel(name)
+		if ok && model != "" {
+			origins = append(origins, initModelOrigin{
+				Provider: name, Label: "detected CLI", Models: []string{model}, Open: true,
+			})
+		}
+	}
+	catalogue, err := env.initModelBackend(paths, file, provider.NameOllama).
+		Catalogue(ctx, provider.NameOllama, file.Models.Providers[provider.NameOllama].Model)
+	if err == nil {
+		origins = append(origins, initModelOrigin{
+			Provider: provider.NameOllama, Label: "locally pulled",
+			Models: canonicalModelIDs(catalogue.IDs),
+		})
+	} else {
+		env.initSay("  ollama (locally pulled): unavailable (%v)", err)
+	}
+	return origins
+}
+
+func (env *cliEnv) initModelBackend(paths config.Paths, file config.File,
+	name string) modelValidationBackend {
+	if env.modelBackend != nil {
+		return env.modelBackend
+	}
+	file.Models.Providers = cloneProviderConfigs(file.Models.Providers)
+	cfg := file.Models.Providers[name]
+	if slices.Contains(provider.CommandPresetNames(), name) {
+		cfg.BaseURL = ""
+		cfg.Command = nil
+	}
+	if name == provider.NameOllama {
+		cfg.Command = nil
+	}
+	file.Models.Providers[name] = cfg
+	return newProviderModelBackend(paths, file)
+}
+
+func currentInitModel(result service.InitResult) initModelChoice {
+	if result.Model == nil || !result.Model.Ready {
+		return initModelChoice{}
+	}
+	return initModelChoice{Provider: result.Model.Provider, Model: result.Model.Model}
+}
+
+func includeCurrentInitModel(origins []initModelOrigin, choice initModelChoice) []initModelOrigin {
+	if choice.Model == "" {
+		return origins
+	}
+	for index := range origins {
+		if origins[index].Provider == choice.Provider {
+			if !slices.Contains(origins[index].Models, choice.Model) {
+				origins[index].Models = append(origins[index].Models, choice.Model)
+			}
+			return origins
+		}
+	}
+	return append(origins, initModelOrigin{
+		Provider: choice.Provider, Label: "currently selected", Models: []string{choice.Model},
+	})
+}
+
+func firstInitModel(origins []initModelOrigin) initModelChoice {
+	for _, origin := range origins {
+		if len(origin.Models) > 0 {
+			return initModelChoice{Provider: origin.Provider, Model: origin.Models[0]}
+		}
+	}
+	return initModelChoice{}
+}
+
+func (env *cliEnv) askInitModel(input *bufio.Reader, origins []initModelOrigin,
+	defaultModel string) (string, error) {
+	env.initSay("model chooser:")
+	var numbered []string
+	seen := map[string]bool{}
+	open := false
+	for _, origin := range origins {
+		env.initSay("  %s (%s):", origin.Provider, origin.Label)
+		if len(origin.Models) == 0 {
+			env.initSay("    no models reported")
+		}
+		for _, model := range origin.Models {
+			if !seen[model] {
+				numbered = append(numbered, model)
+				seen[model] = true
+			}
+			marker := ""
+			if model == defaultModel {
+				marker = " (default)"
+			}
+			env.initSay("    %d. %s%s", slices.Index(numbered, model)+1, model, marker)
+		}
+		open = open || origin.Open
+	}
+	if open {
+		env.initSay("  free text: type any model ID")
+	}
+	fmt.Fprintf(env.errOut, "Which model do you want answering? [%s]: ", defaultModel)
+	answer, err := readInitLine(input)
+	if err != nil {
+		return "", err
+	}
+	if answer == "" {
+		return defaultModel, nil
+	}
+	if number, parseErr := strconv.Atoi(answer); parseErr == nil && number > 0 && number <= len(numbered) {
+		return numbered[number-1], nil
+	}
+	return answer, nil
+}
+
+func initHarnesses(origins []initModelOrigin, model string) []string {
+	var exact []string
+	for _, origin := range origins {
+		if slices.Contains(origin.Models, model) {
+			exact = append(exact, origin.Provider)
+		}
+	}
+	if len(exact) > 0 {
+		return exact
+	}
+	var open []string
+	for _, origin := range origins {
+		if origin.Open {
+			open = append(open, origin.Provider)
+		}
+	}
+	return open
+}
+
+func (env *cliEnv) askInitHarness(input *bufio.Reader, model string, candidates []string,
+	defaultProvider string) (string, error) {
+	if len(candidates) == 1 {
+		env.initSay("Harness: %s (only detected harness for %s)", candidates[0], model)
+		return candidates[0], nil
+	}
+	if !slices.Contains(candidates, defaultProvider) {
+		defaultProvider = candidates[0]
+	}
+	env.initSay("Detected harnesses for %s:", model)
+	for index, candidate := range candidates {
+		env.initSay("  %d. %s", index+1, candidate)
+	}
+	fmt.Fprintf(env.errOut, "Which harness serves %s? [%s]: ", model, defaultProvider)
+	answer, err := readInitLine(input)
+	if err != nil {
+		return "", err
+	}
+	if answer == "" {
+		return defaultProvider, nil
+	}
+	if number, parseErr := strconv.Atoi(answer); parseErr == nil && number > 0 && number <= len(candidates) {
+		return candidates[number-1], nil
+	}
+	answer = strings.ToLower(answer)
+	if slices.Contains(candidates, answer) {
+		return answer, nil
+	}
+	return "", fmt.Errorf("harness %q is not one of %s; configuration was not changed",
+		answer, strings.Join(candidates, ", "))
+}
+
+func confirmInitModel(input *bufio.Reader, out io.Writer, providerName, model string) (bool, error) {
+	fmt.Fprintf(out, "Use %s/%s? [Y/n]: ", providerName, model)
+	answer, err := readInitLine(input)
+	if err != nil {
+		return false, err
+	}
+	switch strings.ToLower(answer) {
+	case "", "y", "yes":
+		return true, nil
+	case "n", "no":
+		return false, nil
+	default:
+		return false, fmt.Errorf("confirmation %q is not valid; answer yes or no", answer)
+	}
+}
+
+func readInitLine(input *bufio.Reader) (string, error) {
+	line, err := input.ReadString('\n')
+	answer := strings.TrimSpace(line)
+	if err != nil && answer == "" {
+		return "", fmt.Errorf("roca init received no answer")
+	}
+	return answer, nil
+}
+
+func writeInitModelChoice(path, providerName, model string) (agentcfg.Outcome, error) {
+	changes := []config.Change{
+		{Kind: config.PrependUnique, Table: "models", Key: "order", Value: providerName,
+			Default: provider.DefaultOrder(nil)},
+		{Kind: config.SetValue, Table: "models." + providerName, Key: "model", Value: model},
+	}
+	return agentcfg.Edit("roca", path, func(text string) (string, error) {
+		return config.ApplyText(text, changes)
+	}, true)
 }
 
 const modelsHelp = "" +

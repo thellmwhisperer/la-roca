@@ -54,6 +54,7 @@ type cliEnv struct {
 	modelPicker         modelPicker
 	modelCatalogRefresh modelCatalogRefresher
 	skipReconciliation  bool
+	skipInitChooser     bool
 }
 
 // Execute runs the CLI and returns the process exit code.
