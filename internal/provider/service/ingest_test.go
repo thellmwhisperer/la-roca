@@ -15,32 +15,11 @@ import (
 func TestPlainIngestAdoptsThePreviousSchemaAndFillsProvenance(t *testing.T) {
 	home := t.TempDir()
 	seedATranscript(t, home)
-	paths := freshPaths(t)
 	legacy, err := os.ReadFile(filepath.Join("testdata", "schema-v1.6.0.sql"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	db, err := store.Open(paths.db)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.SQL().Exec(string(legacy)); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	svc, err := service.Open(service.Options{
-		DBPath: paths.db, BackupDir: paths.backups, DataDir: paths.data,
-		Sources: ingest.ResolveRoots(
-			ingest.Environment{GOOS: "darwin", Home: home},
-			ingest.Settings{WorkspaceRoots: []string{filepath.Join(home, "w")}}),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { svc.Close() })
+	svc := serviceOverTheSources(t, home, legacy)
 	result, err := svc.Ingest(t.Context(), service.IngestRequest{})
 	if err != nil {
 		t.Fatalf("plain ingest: %v", err)
@@ -172,9 +151,21 @@ func TestInitBedrockIncludesTheDeclaredAnthropicExport(t *testing.T) {
 
 // serviceOverTheSources opens an installation whose sources are the sandbox home's,
 // with no model cascade: the ingest never needs one.
-func serviceOverTheSources(t *testing.T, home string) *service.Service {
+func serviceOverTheSources(t *testing.T, home string, legacySchema ...[]byte) *service.Service {
 	t.Helper()
 	paths := freshPaths(t)
+	if len(legacySchema) > 0 {
+		db, err := store.Open(paths.db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.SQL().Exec(string(legacySchema[0])); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
 	svc, err := service.Open(service.Options{
 		DBPath:    paths.db,
 		BackupDir: paths.backups,
