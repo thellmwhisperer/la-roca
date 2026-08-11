@@ -76,6 +76,7 @@ func correction(rejection error) string {
 // returning 500 has to look like a provider that is returning 500, not like
 // "the answers are odd today".
 func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResult) (QueryResult, error) {
+	progress(req, QueryPhaseSQL)
 	cascade := s.opts.Providers
 
 	if cascade.Disabled || len(cascade.Providers) == 0 {
@@ -166,6 +167,7 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 	}
 
 	term := query.SearchTerm(req.Question)
+	progress(req, QueryPhaseExecution)
 	executionStart := time.Now()
 	columns, rows, err := s.execute(ctx, validated, term, req.MaxChars)
 	res.ExecutionMS += time.Since(executionStart).Milliseconds()
@@ -224,6 +226,14 @@ type Interpretation struct {
 func (s *Service) Interpret(ctx context.Context, question string,
 	columns []string, rows []map[string]any,
 	sqlInference time.Duration) (Interpretation, error) {
+	return s.InterpretStream(ctx, question, columns, rows, sqlInference, nil)
+}
+
+// InterpretStream is Interpret with a live prose callback. Providers without a
+// streaming transport invoke the callback once with the completed answer.
+func (s *Service) InterpretStream(ctx context.Context, question string,
+	columns []string, rows []map[string]any, sqlInference time.Duration,
+	onDelta func(string)) (Interpretation, error) {
 
 	cascade, chosen, note, err := s.interpreter(ctx)
 	if err != nil {
@@ -250,11 +260,11 @@ func (s *Service) Interpret(ctx context.Context, question string,
 		b.WriteString(strings.Join(values, ", "))
 		b.WriteByte('\n')
 	}
-	b.WriteString("Answer in the same language as the question.")
+	b.WriteString("Answer in the same language as the question. Write calm, terminal-friendly prose: paragraphs and simple dashes only. Do not use headings or tables.")
 	cascade.Timeout = interpretationTimeout(cascade.Timeout, sqlInference)
-	answer, err := cascade.Chat(ctx, chosen, provider.ChatRequest{
+	answer, err := cascade.ChatStream(ctx, chosen, provider.ChatRequest{
 		Messages: []provider.Message{{Role: provider.RoleUser, Content: b.String()}},
-	})
+	}, onDelta)
 	if err != nil {
 		return Interpretation{}, err
 	}
@@ -392,6 +402,7 @@ func (s *Service) rescue(ctx context.Context, req QueryRequest, res QueryResult,
 		return s.rescueSQL(plan, res)
 	}
 
+	progress(req, QueryPhaseExecution)
 	executionStart := time.Now()
 	columns, rows, stmt, provenance, err := s.searchByTerm(ctx, plan, "", req.MaxChars, true)
 	res.ExecutionMS += time.Since(executionStart).Milliseconds()

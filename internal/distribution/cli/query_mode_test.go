@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -127,6 +128,33 @@ func TestQueryFullAddsOneInterpretationAndKeepsEvidence(t *testing.T) {
 	}
 	if answer.result.Interpretation != queryModeProse {
 		t.Errorf("structured interpretation = %q, want %q", answer.result.Interpretation, queryModeProse)
+	}
+}
+
+func TestQueryFullReportsEveryPhaseAndStreamsThroughBufferedProviders(t *testing.T) {
+	model := &queryModeProvider{answers: []string{queryModeSQL, queryModeProse}}
+	var phases []service.QueryPhase
+	var deltas []string
+	answer, err := answerQuery(t.Context(), queryModeService(t, model), service.QueryRequest{
+		Question:            queryModeQuestion,
+		Progress:            func(phase service.QueryPhase) { phases = append(phases, phase) },
+		InterpretationDelta: func(delta string) { deltas = append(deltas, delta) },
+	}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []service.QueryPhase{
+		service.QueryPhaseSQL, service.QueryPhaseExecution, service.QueryPhaseInterpretation,
+	}
+	if !slices.Equal(phases, want) {
+		t.Fatalf("phases = %v, want %v", phases, want)
+	}
+	if strings.Join(deltas, "") != queryModeProse {
+		t.Fatalf("streamed prose = %q", strings.Join(deltas, ""))
+	}
+	if answer.result.LatencyMS < answer.result.InterpretationMS {
+		t.Fatalf("total latency %d excludes interpretation %d",
+			answer.result.LatencyMS, answer.result.InterpretationMS)
 	}
 }
 

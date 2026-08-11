@@ -40,6 +40,24 @@ type QueryRequest struct {
 	MaxChars int
 	// SQLOnly returns the SQL the model generated without running it.
 	SQLOnly bool
+	// Progress and InterpretationDelta are presentation hooks. They are ignored
+	// by machine callers and never enter the result envelope.
+	Progress            func(QueryPhase)
+	InterpretationDelta func(string)
+}
+
+type QueryPhase string
+
+const (
+	QueryPhaseSQL            QueryPhase = "sql"
+	QueryPhaseExecution      QueryPhase = "execution"
+	QueryPhaseInterpretation QueryPhase = "interpretation"
+)
+
+func progress(req QueryRequest, phase QueryPhase) {
+	if req.Progress != nil {
+		req.Progress(phase)
+	}
 }
 
 // QueryResult is the complete answer: which path it left by, with what SQL, and

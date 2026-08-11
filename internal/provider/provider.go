@@ -70,6 +70,13 @@ type Provider interface {
 	Chat(ctx context.Context, req ChatRequest) (ChatResponse, error)
 }
 
+// StreamingProvider is the optional transport capability used for prose. SQL
+// still travels through Chat as one statement; an interpretation can expose
+// text as it arrives without making streaming mandatory for every adapter.
+type StreamingProvider interface {
+	ChatStream(context.Context, ChatRequest, func(string)) (ChatResponse, error)
+}
+
 // Readiness is the answer to "can I use you right now?".
 //
 // Reason and Action are not decoration: they are what `roca doctor` prints, and
@@ -377,6 +384,40 @@ func (c Cascade) Chat(ctx context.Context, p Provider, req ChatRequest) (ChatRes
 
 	start := time.Now()
 	res, err := p.Chat(callCtx, req)
+	if err != nil {
+		return ChatResponse{}, err
+	}
+	if res.Provider == "" {
+		res.Provider = p.Name()
+	}
+	if res.ModelID == "" {
+		res.ModelID = p.ModelID()
+	}
+	if res.LatencyMS == 0 {
+		res.LatencyMS = time.Since(start).Milliseconds()
+	}
+	return res, nil
+}
+
+// ChatStream streams when the chosen adapter supports it and otherwise emits
+// the completed answer once. The caller therefore has one graceful contract
+// for both streaming and buffered providers.
+func (c Cascade) ChatStream(ctx context.Context, p Provider, req ChatRequest,
+	onDelta func(string)) (ChatResponse, error) {
+	callCtx, cancel := context.WithTimeout(ctx, c.timeout())
+	defer cancel()
+
+	start := time.Now()
+	var res ChatResponse
+	var err error
+	if streaming, ok := p.(StreamingProvider); ok {
+		res, err = streaming.ChatStream(callCtx, req, onDelta)
+	} else {
+		res, err = p.Chat(callCtx, req)
+		if err == nil && onDelta != nil && res.Content != "" {
+			onDelta(res.Content)
+		}
+	}
 	if err != nil {
 		return ChatResponse{}, err
 	}

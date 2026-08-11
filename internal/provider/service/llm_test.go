@@ -707,7 +707,8 @@ func TestInterpretPromptIsLanguageAgnostic(t *testing.T) {
 	wantPrompt := "You are La Roca. Question: what was decided about the format. Results:\n" +
 		"source, text\n" +
 		"memory, decision about the format\n" +
-		"Answer in the same language as the question.\n"
+		"Answer in the same language as the question. Write calm, terminal-friendly prose: " +
+		"paragraphs and simple dashes only. Do not use headings or tables.\n"
 	if prompt := model.prompts[0]; prompt != wantPrompt {
 		t.Errorf("prompt = %q, want %q", prompt, wantPrompt)
 	}

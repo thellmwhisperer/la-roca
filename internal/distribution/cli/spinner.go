@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 )
@@ -31,6 +32,12 @@ var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "�
 // narration uses: terse, lowercase, present tense.
 const spinnerLabel = "🪨 searching memory"
 
+const (
+	spinnerShaping   = "🪨 shaping the search"
+	spinnerSearching = "🪨 searching memory"
+	spinnerComposing = "🪨 composing the answer"
+)
+
 type spinner struct {
 	out     io.Writer
 	label   string
@@ -38,6 +45,9 @@ type spinner struct {
 	stop    chan struct{}
 	done    chan struct{}
 	started bool
+	preview string
+	space   bool
+	mu      sync.Mutex
 	// once keeps finish idempotent. The contract below promises it is safe to
 	// defer, which invites a caller to both defer it and call it on the success
 	// path; the second close of stop panicked instead.
@@ -71,7 +81,9 @@ func (s *spinner) run() {
 		return
 	case <-time.After(spinnerGrace):
 	}
+	s.mu.Lock()
 	s.started = true
+	s.mu.Unlock()
 	ticker := time.NewTicker(spinnerTick)
 	defer ticker.Stop()
 	for frame := 0; ; frame++ {
@@ -88,8 +100,35 @@ func (s *spinner) run() {
 // The glyph is coloured on a terminal that allows it and plain otherwise, so a
 // stream that receives a draw without colour still reads cleanly.
 func (s *spinner) draw(frame int) {
+	s.mu.Lock()
+	label, preview := s.label, s.preview
+	s.mu.Unlock()
 	glyph := spinnerFrames[frame%len(spinnerFrames)]
-	fmt.Fprintf(s.out, "%s%s %s", clearLine, paint(s.out, ansiCyan, glyph), s.label)
+	if preview != "" {
+		label += " · " + preview
+	}
+	fmt.Fprintf(s.out, "%s%s %s", clearLine, paint(s.out, ansiCyan, glyph), label)
+}
+
+func (s *spinner) phase(label string) {
+	s.mu.Lock()
+	s.label, s.preview, s.space = label, "", false
+	s.mu.Unlock()
+}
+
+func (s *spinner) appendPreview(delta string) {
+	s.mu.Lock()
+	clean := strings.Join(strings.Fields(delta), " ")
+	if clean != "" && s.preview != "" && s.space {
+		s.preview += " "
+	}
+	s.preview += clean
+	s.space = len(delta) > 0 && strings.ContainsAny(delta[len(delta)-1:], " \t\r\n")
+	runes := []rune(s.preview)
+	if len(runes) > 80 {
+		s.preview = "…" + string(runes[len(runes)-79:])
+	}
+	s.mu.Unlock()
 }
 
 // finish stops the spinner, joins its goroutine and, if it ever drew, clears the
@@ -101,7 +140,10 @@ func (s *spinner) finish() {
 	s.once.Do(func() {
 		close(s.stop)
 		<-s.done
-		if s.started {
+		s.mu.Lock()
+		started := s.started
+		s.mu.Unlock()
+		if started {
 			fmt.Fprint(s.out, clearLine)
 		}
 	})

@@ -370,7 +370,18 @@ func queryCommand(env *cliEnv) *cobra.Command {
 			// The query may round-trip a model, and a model takes long enough to read
 			// as frozen. The spinner says it is running on the error stream of an
 			// interactive terminal only, so a piped call and a --json call see nothing.
-			spin := startSpinner(env, spinnerLabel)
+			spin := startSpinner(env, spinnerShaping)
+			req.Progress = func(phase service.QueryPhase) {
+				switch phase {
+				case service.QueryPhaseExecution:
+					spin.phase(spinnerSearching)
+				case service.QueryPhaseInterpretation:
+					spin.phase(spinnerComposing)
+				default:
+					spin.phase(spinnerShaping)
+				}
+			}
+			req.InterpretationDelta = spin.appendPreview
 			answer, err := answerQuery(cmd.Context(), svc, req, full)
 			spin.finish()
 			if err != nil {
@@ -427,11 +438,15 @@ func answerQuery(ctx context.Context, svc *service.Service, req service.QueryReq
 		return answer, err
 	}
 	started := time.Now()
-	interpretation, err := svc.Interpret(
+	if req.Progress != nil {
+		req.Progress(service.QueryPhaseInterpretation)
+	}
+	interpretation, err := svc.InterpretStream(
 		ctx, result.Question, result.Columns, result.Rows,
-		time.Duration(result.SQLInferenceMS)*time.Millisecond)
+		time.Duration(result.SQLInferenceMS)*time.Millisecond, req.InterpretationDelta)
 	answer.prose, answer.interpretErr = interpretation.Text, err
 	answer.result.InterpretationMS = time.Since(started).Milliseconds()
+	answer.result.LatencyMS += answer.result.InterpretationMS
 	answer.result.Interpretation = interpretation.Text
 	// Who read the rows travels in the envelope beside who wrote the SQL: on an
 	// installation that splits the two inferences they are different providers,

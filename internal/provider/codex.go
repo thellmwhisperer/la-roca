@@ -152,6 +152,19 @@ func (c *Codex) probe(ctx context.Context, token oauth.Token) (int, error) {
 // mode. `store` goes false: the operator's questions about their own memory are
 // not left in a vendor's account.
 func (c *Codex) Chat(ctx context.Context, req ChatRequest) (ChatResponse, error) {
+	return c.chat(ctx, req, nil)
+}
+
+// ChatStream exposes the output-text deltas already carried by the Responses
+// event stream. The same response is buffered and returned for logging and
+// machine output.
+func (c *Codex) ChatStream(ctx context.Context, req ChatRequest,
+	onDelta func(string)) (ChatResponse, error) {
+	return c.chat(ctx, req, onDelta)
+}
+
+func (c *Codex) chat(ctx context.Context, req ChatRequest,
+	onDelta func(string)) (ChatResponse, error) {
 	token, err := c.session.Token(ctx)
 	if err != nil {
 		return ChatResponse{}, fmt.Errorf("the Codex session is not usable: %w", err)
@@ -190,7 +203,7 @@ func (c *Codex) Chat(ctx context.Context, req ChatRequest) (ChatResponse, error)
 		return ChatResponse{}, fmt.Errorf("Codex answered %d: %s", res.StatusCode, excerpt(res.Body))
 	}
 
-	content, err := readResponseStream(res.Body)
+	content, err := readResponseStream(res.Body, onDelta)
 	if err != nil {
 		return ChatResponse{}, err
 	}
@@ -240,7 +253,7 @@ func joinRules(existing, addition string) string {
 // readResponseStream accumulates the answer out of the event stream. The deltas
 // are the normal path; the completion event is read too because some answers
 // arrive whole in it and never as deltas.
-func readResponseStream(body io.Reader) (string, error) {
+func readResponseStream(body io.Reader, onDelta func(string)) (string, error) {
 	var text strings.Builder
 	var whole string
 
@@ -280,6 +293,9 @@ func readResponseStream(body io.Reader) (string, error) {
 		}
 		if event.Delta != "" {
 			text.WriteString(event.Delta)
+			if onDelta != nil {
+				onDelta(event.Delta)
+			}
 		}
 		for _, output := range event.Response.Output {
 			for _, part := range output.Content {

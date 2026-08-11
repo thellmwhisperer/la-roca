@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -166,6 +167,30 @@ func TestOllamaChatOnAServerThatFailsSaysSoWithoutATraceback(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "500") {
 		t.Fatalf("the error does not carry the status: %v", err)
+	}
+}
+
+func TestOllamaStreamsAnswerChunksAsTheyArrive(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if streaming, _ := request["stream"].(bool); !streaming {
+			t.Error("streaming request disabled the Ollama stream")
+		}
+		fmt.Fprintln(w, `{"message":{"content":"first "},"done":false}`)
+		fmt.Fprintln(w, `{"message":{"content":"words"},"done":true}`)
+	}))
+	defer server.Close()
+	var chunks []string
+	res, err := NewOllama(OllamaConfig{BaseURL: server.URL}).ChatStream(
+		t.Context(), ChatRequest{}, func(delta string) { chunks = append(chunks, delta) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(chunks, "|"); got != "first |words" || res.Content != "first words" {
+		t.Fatalf("chunks = %q, content = %q", got, res.Content)
 	}
 }
 

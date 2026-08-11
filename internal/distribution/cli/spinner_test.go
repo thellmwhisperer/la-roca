@@ -89,3 +89,26 @@ func TestFinishIsSafeToCallTwice(t *testing.T) {
 		t.Errorf("the spinner never painted its label:\n%q", buf.String())
 	}
 }
+
+func TestSpinnerNarratesPhasesAndLiveAnswerText(t *testing.T) {
+	fastSpinner(t)
+	var buf bytes.Buffer
+	spin := newSpinner(&buf, "shaping the search", true)
+	time.Sleep(spinnerGrace + spinnerTick)
+	spin.phase("searching memory")
+	time.Sleep(spinnerTick)
+	spin.phase("composing the answer")
+	spin.appendPreview("The first ")
+	spin.appendPreview("words arrive")
+	time.Sleep(spinnerTick)
+	spin.finish()
+
+	got := buf.String()
+	for _, want := range []string{
+		"shaping the search", "searching memory", "composing the answer", "The first words arrive",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("phased spinner lacks %q:\n%q", want, got)
+		}
+	}
+}

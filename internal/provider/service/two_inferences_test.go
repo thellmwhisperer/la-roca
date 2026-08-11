@@ -111,7 +111,9 @@ func TestTwoInferenceModelPath(t *testing.T) {
 		}
 		prompt := fake.proseRequests[0]
 		if !strings.Contains(prompt, "¿Qué decisión se tomó sobre el formato?") ||
-			!strings.Contains(prompt, "same language as the question") {
+			!strings.Contains(prompt, "same language as the question") ||
+			!strings.Contains(prompt, "simple dashes") ||
+			!strings.Contains(prompt, "Do not use headings or tables") {
 			t.Fatalf("language contract did not reach inference 2:\n%s", prompt)
 		}
 	})
