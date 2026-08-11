@@ -5,7 +5,7 @@
 **Your agents' history is a database.**
 **Interrogate it. Interact with it. Learn from it. Have fun with it.**
 
-One binary, one file, zero dependencies. Local SQLite. CLI + MCP.
+One file, zero dependencies. Local SQLite. CLI + MCP.
 
 [![CI](https://github.com/thellmwhisperer/la-roca/actions/workflows/ci.yml/badge.svg)](https://github.com/thellmwhisperer/la-roca/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -19,8 +19,7 @@ it into one SQLite database on your machine, and answers questions about it:
 from your terminal, or from the agents themselves over MCP.
 
 Every answer shows its proof: the SQL that produced it and the rows that
-back it. Nothing leaves your machine: no hosted service, no vector
-database, no framework to run.
+back it.
 
 ## Sixty seconds
 
@@ -50,6 +49,21 @@ database work happens underneath.
 An agent with a shell uses the CLI directly. An agent without one gets the
 same operations through La Roca's MCP layer, and the experience is
 practically the same, sometimes better.
+
+## Private by construction
+
+One binary, one SQLite file in `~/.roca`, zero network in the ingest path.
+Providers are called only to answer the questions you ask, and the SQL phase
+never sees your rows. With `--full`, the prose phase receives at most ten
+result rows with each field truncated to 240 characters; the database, the
+full result set, and the search index never leave the machine. Configure
+only Ollama when no query content may leave it at all.
+
+Every execution writes a redacted JSONL record under `logs/`; query records
+never store result row contents. Details, retention, and the full redaction
+list live in [docs/operations.md](docs/operations.md). `ROCA_READ_ONLY=1`
+refuses writes in the shared service before database I/O, so CLI and MCP
+enforce the same boundary.
 
 ## What you can ask
 
@@ -254,19 +268,6 @@ roca skill install claude  # ship the usage craft into a runtime's skills
 Supported integration targets are Codex, Claude, OpenCode, Hermes, and Pi.
 Configuration edits preserve unrelated bytes and create a recovery backup.
 
-## Private by construction
-
-One binary, one SQLite file in `~/.roca`, zero network in the ingest path.
-Providers are called only to answer the questions you ask, and the SQL phase
-never sees your rows. With `--full`, the prose phase receives at most ten
-result rows with each field truncated to 240 characters; the database, the
-full result set, and the search index never leave the machine. Configure only
-Ollama when no query content may leave it at all. Every execution writes a redacted JSONL record under
-`logs/`; query records never store result row contents. Details, retention,
-and the full redaction list live in [docs/operations.md](docs/operations.md).
-
-`ROCA_READ_ONLY=1` refuses writes in the shared service before database I/O,
-so CLI and MCP enforce the same boundary.
 
 ## Going deeper
 
