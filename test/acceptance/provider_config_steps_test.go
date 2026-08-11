@@ -21,6 +21,7 @@ func registerProviderConfigSteps(ctx *godog.ScenarioContext, w *providerAcceptan
 	ctx.Given(`^the configuration file is missing$`, w.removeConfig)
 	ctx.Given(`^no configured provider is available$`, w.noProviderAvailable)
 	ctx.Given(`^the model answers with SQL "([^"]*)"$`, w.modelAnswersSQL)
+	ctx.Given(`^a provider backed by a local binary answers with SQL "([^"]*)"$`, w.localBinaryAnswersSQL)
 	ctx.Then(`^the reported provider order is "([^"]*)"$`, w.reportedProviderOrder)
 	ctx.Then(`^the output warns about "([^"]*)"$`, w.outputWarnsAbout)
 	ctx.Then(`^the configuration is reported as absent$`, w.configReportedAbsent)
@@ -104,6 +105,30 @@ func (w *providerAcceptanceWorld) persistProviderConfiguration(extra string) err
 func (w *providerAcceptanceWorld) modelAnswersSQL(statement string) error {
 	w.modelSQL = statement
 	return nil
+}
+
+func (w *providerAcceptanceWorld) localBinaryAnswersSQL(statement string) error {
+	path, err := w.writeFakeBinary("local-provider", `printf '%s' "$FAKE_PROVIDER_RESULT"`)
+	if err != nil {
+		return err
+	}
+	w.environment["FAKE_PROVIDER_RESULT"] = statement
+	body := "[models]\norder = [\"local-binary\"]\n\n" +
+		"[models.local-binary]\ncommand = [" + strconv.Quote(path) + "]\n" +
+		"model = \"binary-acceptance\"\ntimeout_seconds = 2\n"
+	return w.writeConfig(body)
+}
+
+func (w *providerAcceptanceWorld) writeFakeBinary(name, body string) (string, error) {
+	dir := filepath.Join(w.home, "bin")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0o700); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 func (w *providerAcceptanceWorld) addUnknownConfigKey(key string) error {

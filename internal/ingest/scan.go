@@ -150,7 +150,13 @@ func DetectAgents(roots Roots) []string {
 // the key, and a source missing from the report reads as one nobody looked at.
 func (p *Plan) add(targets []Target, key string) {
 	p.Scanned[key] += len(targets)
-	p.Targets = append(p.Targets, targets...)
+	for _, target := range targets {
+		if target.ExclusionReason != "" {
+			p.Excluded = append(p.Excluded, target)
+			continue
+		}
+		p.Targets = append(p.Targets, target)
+	}
 }
 
 // scanClaudeMemories finds the per-project memory files. MEMORY.md is the index
@@ -162,17 +168,19 @@ func scanClaudeMemories(roots Roots) []Target {
 	var targets []Target
 	for _, dir := range subdirectories(roots.ClaudeProjects) {
 		project, _ := ProjectFromEncodedDir(dir, roots.Workspace)
+		exclusion := runnerExclusion(roots, dir)
 		memoryDir := filepath.Join(roots.ClaudeProjects, dir, "memory")
 		for _, name := range filesIn(memoryDir) {
 			if !strings.HasSuffix(name, ".md") || name == "MEMORY.md" {
 				continue
 			}
 			targets = append(targets, Target{
-				Path:        filepath.Join(memoryDir, name),
-				Kind:        parsers.KindClaudeMemory,
-				SourceAgent: "claude",
-				Project:     project,
-				FileName:    name,
+				Path:            filepath.Join(memoryDir, name),
+				Kind:            parsers.KindClaudeMemory,
+				SourceAgent:     "claude",
+				Project:         project,
+				FileName:        name,
+				ExclusionReason: exclusion,
 			})
 		}
 	}
@@ -241,8 +249,9 @@ func scanClaudeSessions(roots Roots, plan *Plan) []Target {
 	for _, dir := range subdirectories(roots.ClaudeProjects) {
 		project, resolved := ProjectFromEncodedDir(dir, roots.Workspace)
 		full := filepath.Join(roots.ClaudeProjects, dir)
+		exclusion := runnerExclusion(roots, dir)
 		names := filesIn(full)
-		if !resolved && len(names) > 0 {
+		if exclusion == "" && !resolved && len(names) > 0 {
 			ambiguous = append(ambiguous, dir)
 		}
 		for _, name := range names {
@@ -254,12 +263,13 @@ func scanClaudeSessions(roots Roots, plan *Plan) []Target {
 				continue
 			}
 			targets = append(targets, Target{
-				Path:        filepath.Join(full, name),
-				Kind:        parsers.KindClaudeSession,
-				SourceAgent: "claude",
-				Project:     project,
-				SessionID:   id,
-				FileName:    name,
+				Path:            filepath.Join(full, name),
+				Kind:            parsers.KindClaudeSession,
+				SourceAgent:     "claude",
+				Project:         project,
+				SessionID:       id,
+				FileName:        name,
+				ExclusionReason: exclusion,
 			})
 		}
 	}
@@ -320,6 +330,7 @@ func scanSubagents(roots Roots) []Target {
 	for _, root := range roots.SubagentRoots {
 		for _, dir := range subdirectories(root) {
 			project, _ := ProjectFromEncodedDir(dir, roots.Workspace)
+			exclusion := runnerExclusion(roots, dir)
 			paths := jsonlIn(filepath.Join(root, dir, "subagents"))
 			for _, session := range subdirectories(filepath.Join(root, dir)) {
 				if session == "subagents" || session == "memory" {
@@ -334,16 +345,28 @@ func scanSubagents(roots Roots) []Target {
 				}
 				seen[key] = true
 				targets = append(targets, Target{
-					Path:        path,
-					Kind:        parsers.KindSubagent,
-					SourceAgent: "claude",
-					Project:     project,
-					FileName:    filepath.Base(path),
+					Path:            path,
+					Kind:            parsers.KindSubagent,
+					SourceAgent:     "claude",
+					Project:         project,
+					FileName:        filepath.Base(path),
+					ExclusionReason: exclusion,
 				})
 			}
 		}
 	}
 	return targets
+}
+
+func runnerExclusion(roots Roots, encodedDir string) string {
+	if roots.RunnerDir != "" {
+		for _, path := range []string{roots.RunnerDir, realPath(roots.RunnerDir)} {
+			if encodedDir == encodeRoot(cleanRoot(path)) {
+				return "La Roca local-binary runner session is excluded"
+			}
+		}
+	}
+	return ""
 }
 
 // scanPiSessions reads exactly `sessions/<encoded-cwd>/*.jsonl`, with no

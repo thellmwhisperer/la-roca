@@ -33,6 +33,7 @@ var embeddedModelsDevSnapshot []byte
 type modelCatalogue struct {
 	IDs    []string
 	Stale  bool
+	Open   bool
 	Notice string
 }
 
@@ -46,8 +47,9 @@ type modelPicker func(io.Reader, io.Writer, []string, string) (string, error)
 type modelCatalogRefresher func(context.Context) error
 
 // validatedModel is the only path from user input to a model ID a config edit
-// may receive. It proves exact catalogue membership, then account reachability;
-// callers persist only the returned canonical string.
+// may receive. It proves exact membership for a closed catalogue, then account
+// reachability; an open local-binary catalogue accepts an explicit ID only after
+// that probe. Callers persist only the returned string.
 func (env *cliEnv) validatedModel(ctx context.Context, in io.Reader, paths config.Paths,
 	file config.File, name, requested string) (string, error) {
 
@@ -81,7 +83,7 @@ func (env *cliEnv) validatedModel(ctx context.Context, in io.Reader, paths confi
 			return "", fmt.Errorf("choose a model: %w; configuration was not changed", err)
 		}
 	}
-	if !slices.Contains(catalogue.IDs, model) {
+	if !catalogue.Open && !slices.Contains(catalogue.IDs, model) {
 		return "", fmt.Errorf("model %q is not in %s's catalogue; configuration was not changed", model, name)
 	}
 	if err := backend.Probe(ctx, name, model); err != nil {
@@ -124,12 +126,15 @@ func newProviderModelBackend(paths config.Paths, file config.File) *providerMode
 func (b *providerModelBackend) Catalogue(ctx context.Context, name, current string) (modelCatalogue, error) {
 	catalogueCtx, cancel := context.WithTimeout(ctx, b.timeout())
 	defer cancel()
-	if name == provider.NameCodex {
+	if name == provider.NameCodex && !provider.UsesCommandTransport(b.file, name) {
 		return readCodexCatalogue(catalogueCtx, b.client, b.catalogURL, modelsDevCachePath(b.paths))
 	}
 	candidate, err := b.candidate(name, current)
 	if err != nil {
 		return modelCatalogue{}, err
+	}
+	if flexible, ok := candidate.(interface{ ModelChoices() []string }); ok {
+		return modelCatalogue{IDs: canonicalModelIDs(flexible.ModelChoices()), Open: true}, nil
 	}
 	report := candidate.Models(catalogueCtx)
 	if !report.Ready {
@@ -143,7 +148,12 @@ func (b *providerModelBackend) Probe(ctx context.Context, name, model string) er
 	if err != nil {
 		return err
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, b.timeout())
+	timeout := b.timeout()
+	if timed, ok := candidate.(interface{ RequestTimeout() time.Duration }); ok &&
+		b.file.Models.ProbeMS <= 0 {
+		timeout = timed.RequestTimeout()
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	return provider.ProbeModel(probeCtx, candidate)
 }
@@ -163,10 +173,13 @@ func (b *providerModelBackend) candidate(name, model string) (provider.Provider,
 	file.Models.Providers = cloneProviderConfigs(file.Models.Providers)
 	providerConfig := file.Models.Providers[name]
 	providerConfig.Model = model
+	providerConfig.Values = cloneStrings(providerConfig.Values)
+	providerConfig.Values["model"] = model
 	file.Models.Providers[name] = providerConfig
 	file.Models.Order = []string{name}
 	cascade, err := provider.BuildCascade(provider.Settings{
-		File: file, Credentials: b.paths.Credentials, Env: validationEnvironment,
+		File: file, Credentials: b.paths.Credentials, RunnerDir: b.paths.Runner,
+		Env: validationEnvironment,
 	})
 	if err != nil {
 		return nil, err
@@ -180,7 +193,17 @@ func (b *providerModelBackend) candidate(name, model string) (provider.Provider,
 func cloneProviderConfigs(source map[string]config.ProviderConfig) map[string]config.ProviderConfig {
 	clone := make(map[string]config.ProviderConfig, len(source)+1)
 	for name, value := range source {
+		value.Command = slices.Clone(value.Command)
+		value.Values = cloneStrings(value.Values)
 		clone[name] = value
+	}
+	return clone
+}
+
+func cloneStrings(source map[string]string) map[string]string {
+	clone := make(map[string]string, len(source)+1)
+	for key, value := range source {
+		clone[key] = value
 	}
 	return clone
 }
