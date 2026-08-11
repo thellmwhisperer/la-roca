@@ -15,7 +15,8 @@ import (
 )
 
 // A bare `roca login` lists what this build supports instead of a Cobra arity
-// error. Same verb for every provider: subscription and key flow, one line each.
+// error. Same verb for every provider: subscription, local CLI, and key flow,
+// one line each.
 func TestBareLoginExactOutputWithoutSessions(t *testing.T) {
 	home := isolatedLoginHome(t)
 	configPath := filepath.Join(home, ".roca", "config.toml")

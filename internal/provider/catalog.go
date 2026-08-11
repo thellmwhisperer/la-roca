@@ -25,7 +25,7 @@ type Settings struct {
 	// Credentials is the directory subscription sessions live in.
 	Credentials string
 	// RunnerDir is the neutral working directory for subprocess providers.
-	// It is outside every repository and is explicitly excluded from ingest.
+	// It is dedicated to La Roca and explicitly excluded from ingest.
 	RunnerDir string
 	// Env reads the environment. It is a field and not a call to os.Getenv so
 	// that a test can hand over an environment of its own.

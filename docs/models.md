@@ -60,13 +60,18 @@ configured still has a floor.
 
 ### Where a value can be written
 
-For each non-credential setting, in this order of precedence:
+Precedence depends on the setting. `ROCA_MODELS_ORDER` overrides
+`models.order`. Codex and Ollama's supported environment overrides win over
+their `[models.<provider>]` table, then the compatible loose keys under
+`[defaults]` (`model`, `ollama_model`, `ollama_base_url`, `codex_model`), then
+the built-in default.
 
-1. the environment,
-2. its `[models.<provider>]` table,
-3. a loose key under `[defaults]` (`model`, `ollama_model`,
-   `ollama_base_url`, `codex_model`),
-4. the built-in default.
+Local-binary `command`, `response_format`, `timeout_seconds`, and custom
+substitution values have no environment override. Their provider table wins
+over shipped preset data; an omitted custom-command timeout uses the 120-second
+adapter default. When `[models].timeout_ms` or `probe_ms` is set, that shared
+cascade budget takes precedence over the command timeout for the corresponding
+request or probe.
 
 API credentials are the exception: a key stored by `roca login` takes precedence
 over the provider table's `api_key` and its environment variable.
@@ -181,6 +186,9 @@ timeout_seconds = 120
 A custom provider declares one transport: `base_url` or `command`. Declaring
 both is a configuration error that names both keys and the configuration file.
 Built-in providers may omit both and use their built-in transport.
+The generic command transport works in the SQL and interpretation cascades and
+through `roca doctor`, `roca login <provider>`, and
+`roca model set <provider> <model>`.
 
 `claude` is a shipped command-preset entry, not a special adapter. Its command,
 model, and timeout are all overridden by the same provider table an operator
@@ -233,7 +241,7 @@ working binary or the remedy: install Claude Code or put `claude` on `PATH`.
 Same verb for every provider this build ships. Bare `roca login` lists them.
 
 ```
-roca login              # lists subscription and key providers
+roca login              # lists subscription, local CLI, and key providers
 roca login codex        # opens the browser, then presents the model picker
 roca login claude       # verifies Claude Code's existing session; no browser flow
 roca login xai          # stores the key, then presents the model picker
@@ -259,19 +267,21 @@ Claude login stores no credential. Claude Code owns the operator's existing
 session; La Roca verifies it through the local binary, offers the model choice,
 and never reads or copies that session.
 
-After authentication, login lists canonical model IDs and accepts an arrow-key
-selection; it never copies free text into the configuration. OpenAI-compatible
-providers and Ollama supply their live catalogues through `/models` and
-`/api/tags`. Codex uses the public models.dev catalogue, then a cached or
-embedded snapshot when the catalogue is unavailable. A fallback list is
-labelled as possibly stale, and `roca update` refreshes its cache.
+During login, La Roca offers known model IDs with an arrow-key selection.
+OpenAI-compatible providers and Ollama supply their live catalogues through
+`/models` and `/api/tags`. Codex uses the public models.dev catalogue, then a
+cached or embedded snapshot when the catalogue is unavailable. A fallback list
+is labelled as possibly stale, and `roca update` refreshes its cache. A
+local-binary provider offers its declared or shipped choices interactively and
+also accepts an explicit model ID because many CLIs accept aliases and full IDs
+without exposing a catalogue.
 
-Catalogue membership proves only that the model exists. Before changing
-`config.toml`, La Roca sends one minimal real request with the newly stored
-credential or subscription session. Only a successful response writes the
-canonical ID; rejection prints the provider's own error and leaves the model
-configuration unchanged. `--model <id>` uses this same validation path when a
-non-interactive login needs an exact choice.
+Catalogue membership proves only that a catalogue-backed model exists. Before
+changing `config.toml`, La Roca sends one minimal real request with the candidate
+provider and model; a local binary uses the CLI's existing session. Only a
+successful response writes the ID; rejection prints the provider's own error and
+leaves the model configuration unchanged. `--model <id>` uses this same probe
+path for non-interactive login.
 
 `roca model set <model-id>` validates and probes the first configured provider
 without re-running login. The explicit

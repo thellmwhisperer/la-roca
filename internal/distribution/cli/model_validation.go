@@ -47,8 +47,9 @@ type modelPicker func(io.Reader, io.Writer, []string, string) (string, error)
 type modelCatalogRefresher func(context.Context) error
 
 // validatedModel is the only path from user input to a model ID a config edit
-// may receive. It proves exact catalogue membership, then account reachability;
-// callers persist only the returned canonical string.
+// may receive. It proves exact membership for a closed catalogue, then account
+// reachability; an open local-binary catalogue accepts an explicit ID only after
+// that probe. Callers persist only the returned string.
 func (env *cliEnv) validatedModel(ctx context.Context, in io.Reader, paths config.Paths,
 	file config.File, name, requested string) (string, error) {
 
