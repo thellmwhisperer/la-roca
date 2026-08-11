@@ -57,3 +57,30 @@ zero-delta fast path.
 Attachment and file names are retained as per-exchange metadata. La Roca does
 not open their bytes. Entries from `memories.json` enter the `user` layer with
 origin `cron` and source `claude-web`.
+
+## Per-exchange provenance
+
+Every exchange carries what its own source recorded about how the answer was
+produced: `model`, `provider`, `tokens_in`, `tokens_out`, `tokens_reasoning` and
+`cost_usd`. They are filled from the artefact and from nothing else, so a column
+is NULL wherever the source states nothing, which is normal and not missing
+data. Read them with `IS NOT NULL` and never as a zero: a Claude transcript
+counts tokens and names no provider, a Codex rollout counts the reasoning tokens
+apart, Pi and OpenCode also price the turn, Hermes measures a whole session
+rather than a turn, and the Claude web export states none of it.
+
+The fingerprint of every versioned source includes its parser revision. When a
+release teaches a parser to read more of a source, the next plain `roca ingest`
+reopens the files it had already synced and backfills only the columns that are
+still NULL; nothing that already landed is rewritten and no exchange is written
+twice.
+
+## Reading the summary
+
+The default summary is one line per source with what it contributed, followed by
+what was left out collapsed onto the reason for it. The two are apart on
+purpose: `excluded` counts the records this build never meant to read, which is
+most of a runtime log and is not a problem, and `discards` counts the records it
+could not read, which is. `roca ingest --verbose` adds the per-record detail with
+the path of each; the whole report, detail included, is in the ingest log under
+the selected data directory either way.
