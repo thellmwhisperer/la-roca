@@ -13,7 +13,7 @@ import (
 // TestStoreDomainSuite runs the frozen STORE acceptance scenarios against the
 // real binary produced by `make build`.
 //
-// It is black box, like the legacy suite: no product symbol is imported,
+// It is black box, like the journey suite: no product symbol is imported,
 // only `roca` is run and its output and its database are read. The store domain
 // has its own curated step vocabulary (registerStoreSteps) so that a green here
 // says what it means over this domain and no other.
@@ -44,7 +44,7 @@ func TestStoreDomainSuite(t *testing.T) {
 		t.Fatalf("I cannot find the binary: %v", err)
 	}
 
-	runGodog(t, features, func(ctx *godog.ScenarioContext) {
+	runGodogTagged(t, features, "~@journey", func(ctx *godog.ScenarioContext) {
 		registerStoreSteps(ctx, binary)
 	})
 }

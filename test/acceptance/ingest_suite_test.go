@@ -18,7 +18,7 @@ func TestIngestDomainSuite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load ingest features: %v", err)
 	}
-	runGodog(t, features, func(ctx *godog.ScenarioContext) {
+	runGodogTagged(t, features, "~@journey", func(ctx *godog.ScenarioContext) {
 		registerIngestDomainSteps(ctx, binary)
 	})
 }
