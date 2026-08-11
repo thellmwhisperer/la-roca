@@ -1,10 +1,8 @@
 package lifecycle
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -176,71 +174,6 @@ func TestKeepingTheDataLeavesTheDatabaseWhereItIs(t *testing.T) {
 	}
 	if _, err := os.Stat(binary); !os.IsNotExist(err) {
 		t.Error("the binary is still linked")
-	}
-}
-
-// The bounded survivor list must not misclassify what it stops naming one by
-// one. D-7's second half promises an owned survivor is reported as one the purge
-// failed to remove, so the operator re-runs the uninstall instead of going and
-// deleting product files by hand. The overflow line called every remaining file
-// foreign, which is the exact misclassification that contract exists to prevent.
-func TestTheSurvivorOverflowDoesNotCallOwnedFilesForeign(t *testing.T) {
-	_, data, database := anInstallation(t)
-	owned := []string{database}
-	for i := range 8 {
-		owned = append(owned, touch(t, data, fmt.Sprintf("owned-%d.db-wal", i)))
-	}
-
-	// The directory stops being writable, so every owned path survives the sweep:
-	// these are the survivors the contract calls Roca's own. Neither trick binds
-	// a privileged process, and Windows has no such mode, so the test says so
-	// instead of failing for a reason that is not the product's.
-	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
-		t.Skip("permissions cannot make a directory unwritable here")
-	}
-	if err := os.Chmod(data, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chmod(data, 0o700) })
-
-	report := Plan{Owned: owned, DataDir: data}.Apply()
-
-	overflow := ""
-	for _, kept := range report.Kept {
-		if kept.Path == data {
-			overflow = kept.Reason
-		}
-	}
-	if overflow == "" {
-		t.Fatalf("no overflow line over %d survivors: %+v", len(owned), report.Kept)
-	}
-	if strings.Contains(overflow, "did not create") {
-		t.Errorf("the overflow calls owned survivors foreign: %q", overflow)
-	}
-}
-
-// Counted prose is counted prose everywhere: one leftover file is "1 more
-// file", never "1 more files".
-func TestTheSurvivorOverflowCountsInSingularWhenOnlyOneIsLeft(t *testing.T) {
-	_, data, _ := anInstallation(t)
-	for i := range 5 {
-		touch(t, data, fmt.Sprintf("mine-%d.md", i))
-	}
-
-	report := Plan{DataDir: data}.Apply()
-
-	overflow := ""
-	for _, kept := range report.Kept {
-		if kept.Path == data {
-			overflow = kept.Reason
-		}
-	}
-	if overflow == "" {
-		t.Fatalf("no overflow line over six survivors: %+v", report.Kept)
-	}
-	if !strings.Contains(overflow, "1 more file") ||
-		strings.Contains(overflow, "1 more files") {
-		t.Errorf("the overflow over six survivors reads %q", overflow)
 	}
 }
 

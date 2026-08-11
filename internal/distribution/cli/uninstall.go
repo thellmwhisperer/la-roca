@@ -123,15 +123,17 @@ func (env *cliEnv) uninstall(cmd *cobra.Command, purge bool) error {
 		env.code = ExitError
 	}
 	if env.json {
+		kept := withoutDBKept(report.Kept, paths.DB)
 		return env.printJSON(map[string]any{
 			"purged": purge && report.Purged,
 			// With no daemon there is no process to stop: every command opens the
 			// database, works and exits.
-			"stopped":  true,
-			"deleted":  withoutDBPaths(report.Deleted, paths.DB),
-			"kept":     withoutDBKept(report.Kept, paths.DB),
-			"runtimes": runtimes,
-			"errors":   scrubDBPaths(report.Errors, paths.DB),
+			"stopped":    true,
+			"deleted":    withoutDBPaths(report.Deleted, paths.DB),
+			"kept":       kept,
+			"kept_count": len(kept),
+			"runtimes":   runtimes,
+			"errors":     scrubDBPaths(report.Errors, paths.DB),
 		})
 	}
 	renderUninstall(env, purge, report, runtimes)
@@ -411,6 +413,9 @@ func renderUninstall(env *cliEnv, purge bool, report lifecycle.Report,
 	}
 	for _, path := range report.Deleted {
 		env.print("deleted: %s", path)
+	}
+	if purge {
+		env.print("kept paths: %d", len(report.Kept))
 	}
 	for _, kept := range report.Kept {
 		env.print("kept: %s (%s)", kept.Path, kept.Reason)

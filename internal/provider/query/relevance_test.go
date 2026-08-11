@@ -40,10 +40,10 @@ func TestFTSPrefersCuratedMemoriesAndDemotesThinking(t *testing.T) {
 			t.Errorf("source-aware ordering is missing %q:\n%s", want, stmt)
 		}
 	}
-	if got := strings.Count(stmt, "LIMIT 50"); got != 1 {
-		t.Errorf("candidate branches cap results before eligibility filters (%d limits):\n%s", got, stmt)
+	if got := strings.Count(stmt, "LIMIT 50"); got != 5 {
+		t.Errorf("candidate branches and final result have %d limits, want five:\n%s", got, stmt)
 	}
-	if filter := strings.Index(stmt, "human_text NOT LIKE"); filter < 0 || filter > strings.LastIndex(stmt, "LIMIT 50") {
+	if filter := strings.Index(stmt, "human_text NOT LIKE"); filter < 0 || filter > strings.Index(stmt[filter:], "LIMIT 50")+filter {
 		t.Errorf("task notifications are filtered after the result cap:\n%s", stmt)
 	}
 }

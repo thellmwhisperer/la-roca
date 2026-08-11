@@ -99,10 +99,16 @@ func (r *Report) remove(path string) {
 	if path == "" {
 		return
 	}
-	if _, err := os.Lstat(path); os.IsNotExist(err) {
+	info, statErr := os.Lstat(path)
+	if os.IsNotExist(statErr) {
 		return
 	}
 	if err := os.Remove(path); err != nil {
+		if statErr == nil && info.IsDir() {
+			if entries, readErr := os.ReadDir(path); readErr == nil && len(entries) > 0 {
+				return
+			}
+		}
 		r.fail("delete %s: %v", path, err)
 		return
 	}
@@ -130,10 +136,6 @@ func (p Plan) removeBinary(report *Report) {
 
 // removeDataDir takes the directory away when nothing that is not Roca's is
 // left in it, and reports by name whatever kept it alive.
-//
-// The list of survivors is bounded on purpose: an operator whose Roca directory
-// also holds two hundred files of their own needs to know that and not to read
-// two hundred lines.
 func (p Plan) removeDataDir(report *Report) {
 	if p.DataDir == "" {
 		return
@@ -156,52 +158,27 @@ func (p Plan) removeDataDir(report *Report) {
 		owned[path] = true
 	}
 
-	const named = 5
-	for index, entry := range entries {
-		if index == named {
-			report.Kept = append(report.Kept, Kept{
-				Path:   p.DataDir,
-				Reason: whyTheRestStayed(p.DataDir, entries[named:], owned),
-			})
-			break
+	err = filepath.WalkDir(p.DataDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
-		path := filepath.Join(p.DataDir, entry.Name())
-		report.Kept = append(report.Kept, Kept{Path: path, Reason: whyItStayed(owned[path])})
-	}
-}
-
-// whyTheRestStayed is the reason for the survivors the bounded list stops naming
-// one by one. It classifies them the same way whyItStayed classifies the named
-// ones, because the overflow calling an owned survivor foreign is the
-// misclassification D-7's second half exists to prevent: it would send the
-// operator to delete this product's own files by hand instead of re-running the
-// uninstall.
-func whyTheRestStayed(dir string, rest []os.DirEntry, owned map[string]bool) string {
-	ours := 0
-	for _, entry := range rest {
-		if owned[filepath.Join(dir, entry.Name())] {
-			ours++
+		if path == p.DataDir {
+			return nil
 		}
+		isOurs := owned[path]
+		if isOurs && !entry.IsDir() {
+			report.fail("delete %s: the product-owned artifact remains", path)
+		}
+		report.Kept = append(report.Kept, Kept{Path: path, Reason: whyItStayed(isOurs, entry.IsDir())})
+		return nil
+	})
+	if err != nil {
+		report.fail("read %s: %v", p.DataDir, err)
+		return
 	}
-	switch {
-	case ours == 0:
-		return fmt.Sprintf("and %s La Roca did not create", files(len(rest)))
-	case ours == len(rest):
-		return fmt.Sprintf("and %s La Roca created and could not delete: "+
-			"run the uninstall again", files(ours))
-	default:
-		return fmt.Sprintf("and %s: %d La Roca created and could not delete "+
-			"(run the uninstall again), %d it did not create",
-			files(len(rest)), ours, len(rest)-ours)
-	}
-}
-
-// files counts survivors in prose. One leftover file is never "1 more files".
-func files(count int) string {
-	if count == 1 {
-		return "1 more file"
-	}
-	return fmt.Sprintf("%d more files", count)
+	report.Kept = append(report.Kept, Kept{
+		Path: p.DataDir, Reason: "contains preserved paths named in this report",
+	})
 }
 
 // whyItStayed tells the two survivors apart, because the operator does two
@@ -212,8 +189,11 @@ func files(count int) string {
 // the directory stopped being writable. Telling the operator that La Roca did
 // not create their own database misclassifies an owned survivor and sends them
 // to delete product files by hand.
-func whyItStayed(isOurs bool) string {
+func whyItStayed(isOurs, isDir bool) string {
 	if isOurs {
+		if isDir {
+			return "La Roca created the directory; it contains preserved paths named in this report"
+		}
 		return "La Roca created it and could not delete it: run the uninstall again"
 	}
 	return "La Roca did not create it: delete it yourself if you want to"

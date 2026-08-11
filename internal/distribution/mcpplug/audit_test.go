@@ -32,3 +32,25 @@ func TestAuditAppendFailureWarnsOnceWithoutFailingCalls(t *testing.T) {
 		t.Fatalf("warnings = %d, want one: %s", got, warnings.String())
 	}
 }
+
+func TestAuditDoesNotRecreateARemovedLogDirectory(t *testing.T) {
+	root := t.TempDir()
+	logs := filepath.Join(root, logfile.DirName)
+	if err := os.Mkdir(logs, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	middleware := auditCalls(logfile.New(root), &bytes.Buffer{})
+	if err := os.Remove(logs); err != nil {
+		t.Fatal(err)
+	}
+	next := func(context.Context, string, mcp.Request) (mcp.Result, error) {
+		return &mcp.CallToolResult{}, nil
+	}
+	request := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Name: "roca_query"}}
+	if _, err := middleware(next)(context.Background(), "tools/call", request); err != nil {
+		t.Fatalf("audit failure became a tool failure: %v", err)
+	}
+	if _, err := os.Stat(logs); !os.IsNotExist(err) {
+		t.Fatalf("the removed log directory was recreated: %v", err)
+	}
+}

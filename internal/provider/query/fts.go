@@ -74,27 +74,31 @@ func renderFTS(plan Plan, coordinationLayers []string, limit int, joiner string)
 	}
 
 	parts := []string{
-		memories,
-		fmt.Sprintf(
+		cappedBranch(memories, limit),
+		cappedBranch(fmt.Sprintf(
 			"SELECT 'exchange', e.id, e.agent_text, e.agent_timestamp, 1 AS source_priority, g.rango "+
 				"FROM (%s) AS g JOIN exchanges AS e ON e.id = g.fila",
-			subquery("exchanges_fts", expression, "agent_text", "")),
-		fmt.Sprintf(
+			subquery("exchanges_fts", expression, "agent_text", "")), limit),
+		cappedBranch(fmt.Sprintf(
 			"SELECT 'human', h.id, h.human_text, h.human_timestamp, 1 AS source_priority, i.rango "+
 				"FROM (%s) AS i JOIN exchanges AS h ON h.id = i.fila",
 			subquery("exchanges_fts", expression, "human_text",
-				"human_text NOT LIKE '<task-notification%'")),
-		fmt.Sprintf(
+				"human_text NOT LIKE '<task-notification%'")), limit),
+		cappedBranch(fmt.Sprintf(
 			"SELECT 'thinking', t.id, t.full_text, NULL, 2 AS source_priority, j.rango "+
 				"FROM (%s) AS j JOIN thinking_blocks AS t ON t.id = j.fila",
-			subquery("thinking_fts", expression, "", "")),
+			subquery("thinking_fts", expression, "", "")), limit),
 	}
 	return strings.Join(parts, " UNION ALL ") +
 		fmt.Sprintf(" ORDER BY source_priority, rango LIMIT %d", limit), nil
 }
 
-// subquery pulls out of an FTS5 table the identifiers that match, already
-// ordered by relevance and capped.
+func cappedBranch(branch string, limit int) string {
+	return fmt.Sprintf("SELECT * FROM (%s ORDER BY rango LIMIT %d)", branch, limit)
+}
+
+// subquery pulls out of an FTS5 table the identifiers that match with their
+// relevance rank.
 //
 // The per-column filter (`{column} : expression`) is what lets the two columns
 // of exchanges be queried separately over a single index: without it, a match in

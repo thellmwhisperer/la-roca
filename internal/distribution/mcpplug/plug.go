@@ -73,6 +73,7 @@ func New(svc *service.Service, build Build) *mcp.Server {
 	dbPath := svc.DB().Path()
 	dataDir := svc.DataDir()
 	audit := logfile.New(svc.DataDir())
+	_ = audit.Prepare()
 	mcp.AddTool(server, execTool, sanitizing(p.exec, dbPath, dataDir))
 	mcp.AddTool(server, healthTool, sanitizing(p.health, dbPath, dataDir))
 	mcp.AddTool(server, queryTool, sanitizing(p.query, dbPath, dataDir))
@@ -119,7 +120,7 @@ func auditCalls(audit *logfile.Writer, warnings io.Writer) mcp.Middleware {
 			}
 			degraded := resultDegraded(result)
 			ok = ok && degraded == ""
-			if appendErr := audit.Append(logfile.MCPAudit, logfile.MCPRecord{
+			if appendErr := audit.AppendExisting(logfile.MCPAudit, logfile.MCPRecord{
 				Timestamp: started.UTC(), Tool: tool, Args: args, OK: ok,
 				DurationMS: time.Since(started).Milliseconds(), RowCount: resultRows(result),
 				Degraded: degraded,

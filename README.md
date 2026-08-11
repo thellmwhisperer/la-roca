@@ -14,12 +14,7 @@ There is no hosted service, vector database, or agent framework to run.
 ## Install and start
 
 ```sh
-VERSION=v1.0.0
-INSTALLER_SHA256=4a3ebdbf23fdb643cc1e275a8af0a233264efdf0e4fa7b3137ef968d1f3fd7e4
-curl -fsSLO "https://github.com/thellmwhisperer/la-roca/releases/download/$VERSION/install.sh"
-ACTUAL_SHA256=$( (sha256sum install.sh 2>/dev/null || shasum -a 256 install.sh) | awk '{print $1}')
-[ "$ACTUAL_SHA256" = "$INSTALLER_SHA256" ] || exit 1
-sh ./install.sh --version "$VERSION"
+curl -fsSL https://raw.githubusercontent.com/thellmwhisperer/la-roca/main/install.sh | sh
 roca init
 roca query "what did we decide about the ingest matrix"
 ```

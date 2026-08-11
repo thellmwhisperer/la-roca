@@ -87,6 +87,9 @@ func TestInitReportsPromptWriteFailureWithoutDiscardingItsResult(t *testing.T) {
 	if result.Database == "" || len(result.Warnings) != 1 {
 		t.Fatalf("partial result = %+v", result)
 	}
+	if result.PromptPath != "" {
+		t.Fatalf("failed prompt path is still advertised: %q", result.PromptPath)
+	}
 }
 
 func TestInitIsIdempotent(t *testing.T) {

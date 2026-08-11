@@ -41,11 +41,10 @@ func Backup(ctx context.Context, db *DB, dir string) (string, error) {
 // adoption-by-copy tool: init copies an existing database into La Roca's home,
 // and from that point the copy is the one operated on.
 func CopyDatabase(ctx context.Context, srcPath, destPath string) error {
-	abs, err := filepath.Abs(srcPath)
+	_, dsn, err := sqliteFileDSN(srcPath, url.Values{"mode": {"ro"}})
 	if err != nil {
 		return fmt.Errorf("resolve the source database at %q: %w", srcPath, err)
 	}
-	dsn := "file:" + abs + "?" + url.Values{"mode": {"ro"}}.Encode()
 	src, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return fmt.Errorf("open the source database at %q: %w", srcPath, err)

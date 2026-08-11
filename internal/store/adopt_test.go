@@ -347,6 +347,32 @@ func TestCopyDatabaseCreatesAVerifiedCopyAndLeavesTheSourceIntact(t *testing.T) 
 			t.Fatal("CopyDatabase overwrote an existing file")
 		}
 	})
+
+	t.Run("escapes URI delimiters in the source path", func(t *testing.T) {
+		source := filepath.Join(t.TempDir(), "source?#%.db")
+		db, err := store.Open(source)
+		if err != nil {
+			t.Fatalf("open source: %v", err)
+		}
+		defer db.Close()
+		ctx := context.Background()
+		if err := store.ApplySchema(ctx, db); err != nil {
+			t.Fatalf("ApplySchema: %v", err)
+		}
+		seedIdentity(t, db)
+		dest := filepath.Join(t.TempDir(), "copy.db")
+		if err := store.CopyDatabase(ctx, source, dest); err != nil {
+			t.Fatalf("CopyDatabase: %v", err)
+		}
+		copyDB, err := store.Open(dest)
+		if err != nil {
+			t.Fatalf("open copy: %v", err)
+		}
+		defer copyDB.Close()
+		if got := countMemories(t, copyDB.SQL()); got != 1 {
+			t.Errorf("memories in the copy = %d, want 1", got)
+		}
+	})
 }
 
 func TestCopyDatabaseRebuildsSessionFTSAfterRowidRenumbering(t *testing.T) {

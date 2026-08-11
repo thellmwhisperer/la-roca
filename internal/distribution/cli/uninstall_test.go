@@ -4,6 +4,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -86,8 +88,13 @@ func TestPurgePreservesGenericSiblingDirectoryContents(t *testing.T) {
 	if _, err := os.Stat(foreign); err != nil {
 		t.Fatalf("purge deleted an operator file from a generic directory: %v", err)
 	}
-	if len(report.Errors) == 0 {
-		t.Fatal("non-empty owned directory was silently treated as deleted")
+	if !report.Purged || len(report.Errors) != 0 {
+		t.Fatalf("preserving operator content failed the purge: %+v", report)
+	}
+	for _, path := range []string{foreign, paths.Backups, dirOf(paths.DB)} {
+		if !slices.ContainsFunc(report.Kept, func(kept lifecycle.Kept) bool { return kept.Path == path }) {
+			t.Errorf("preserved path %s was not named: %+v", path, report.Kept)
+		}
 	}
 }
 
@@ -239,7 +246,7 @@ func TestTheReadableUninstallReportsThePurgeOutcome(t *testing.T) {
 		},
 		{
 			name:   "it worked",
-			report: lifecycle.Report{Purged: true, Deleted: []string{}},
+			report: lifecycle.Report{Purged: true, Deleted: []string{}, Kept: []lifecycle.Kept{{Path: "/home/.roca/operator.txt", Reason: "La Roca did not create it"}}},
 			line:   "purged: yes",
 			absent: "purged: no",
 		},
@@ -252,6 +259,9 @@ func TestTheReadableUninstallReportsThePurgeOutcome(t *testing.T) {
 			}
 			if strings.Contains(out.String(), want.absent) {
 				t.Errorf("must not say %q in\n%s", want.absent, out.String())
+			}
+			if !strings.Contains(out.String(), "kept paths: "+strconv.Itoa(len(want.report.Kept))) {
+				t.Errorf("kept count is missing from\n%s", out.String())
 			}
 		})
 	}

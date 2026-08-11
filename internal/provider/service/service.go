@@ -253,8 +253,10 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 	result.PromptPath = filepath.Join(s.dataDir(), "prompt.md")
 	result.Prompt = presentationPrompt
 	if err := os.WriteFile(result.PromptPath, []byte(result.Prompt), 0o600); err != nil {
+		failedPath := result.PromptPath
+		result.PromptPath = ""
 		result.Warnings = append(result.Warnings,
-			fmt.Sprintf("write the agent prompt at %s: %v", result.PromptPath, err))
+			fmt.Sprintf("write the agent prompt at %s: %v", failedPath, err))
 	}
 	result.TotalElapsedMS = time.Since(started).Milliseconds()
 	return result, nil

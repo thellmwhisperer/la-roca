@@ -62,13 +62,23 @@ func (w *Writer) AppendExisting(stream string, record any) error {
 	return w.append(stream, record, false)
 }
 
+func (w *Writer) Prepare() error {
+	if w == nil || w.dir == "" {
+		return fmt.Errorf("the log directory is not configured")
+	}
+	if err := os.MkdirAll(w.dir, 0o700); err != nil {
+		return fmt.Errorf("create the log directory: %w", err)
+	}
+	return nil
+}
+
 func (w *Writer) append(stream string, record any, createDir bool) error {
 	if w == nil || w.dir == "" {
 		return fmt.Errorf("the log directory is not configured")
 	}
 	if createDir {
-		if err := os.MkdirAll(w.dir, 0o700); err != nil {
-			return fmt.Errorf("create the log directory: %w", err)
+		if err := w.Prepare(); err != nil {
+			return err
 		}
 	} else if info, err := os.Stat(w.dir); err != nil || !info.IsDir() {
 		if err == nil {

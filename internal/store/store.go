@@ -45,18 +45,17 @@ type DB struct {
 // Without the third, a transaction that reads before writing fails to promote
 // with SQLITE_BUSY_SNAPSHOT, which the busy handler never retries.
 func Open(path string) (*DB, error) {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return nil, fmt.Errorf("resolve the database path %q: %w", path, err)
-	}
-	dsn := "file:" + abs + "?" + url.Values{
+	abs, dsn, err := sqliteFileDSN(path, url.Values{
 		"_txlock": {"immediate"},
 		"_pragma": {
 			fmt.Sprintf("busy_timeout(%d)", busyTimeout.Milliseconds()),
 			"journal_mode(WAL)",
 			"foreign_keys(ON)",
 		},
-	}.Encode()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("resolve the database path %q: %w", path, err)
+	}
 
 	handle, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -116,13 +115,17 @@ func (db *DB) SQL() *sql.DB { return db.sql }
 // a reader like that fails to read.
 func (db *DB) ReadOnly() (*sql.DB, error) {
 	db.once.Do(func() {
-		dsn := "file:" + db.path + "?" + url.Values{
+		_, dsn, err := sqliteFileDSN(db.path, url.Values{
 			"_pragma": {
 				fmt.Sprintf("busy_timeout(%d)", busyTimeout.Milliseconds()),
 				"journal_mode(WAL)",
 				"query_only(1)",
 			},
-		}.Encode()
+		})
+		if err != nil {
+			db.readOnlyErr = fmt.Errorf("open the database read-only: %w", err)
+			return
+		}
 		handle, err := sql.Open("sqlite", dsn)
 		if err != nil {
 			db.readOnlyErr = fmt.Errorf("open the database read-only: %w", err)
@@ -136,6 +139,15 @@ func (db *DB) ReadOnly() (*sql.DB, error) {
 		db.readOnly = handle
 	})
 	return db.readOnly, db.readOnlyErr
+}
+
+func sqliteFileDSN(path string, params url.Values) (string, string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", "", err
+	}
+	uri := url.URL{Scheme: "file", Path: filepath.ToSlash(abs), RawQuery: params.Encode()}
+	return abs, uri.String(), nil
 }
 
 // Path is the absolute path of the database file.
