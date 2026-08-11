@@ -13,6 +13,12 @@ Feature: Writing one memory
     Then the command exits with code 0
     And the stored memory has layer "project", origin "human" and project "demo"
 
+  Scenario: A plugin write keeps its provenance
+    Given a fresh Roca database
+    When I store a memory in layer "discovery" with origin "plugin:demo", project "synthetic-plugin" and content "the neighbor binary wrote this fixture"
+    Then the command exits with code 0
+    And the stored memory has layer "discovery", origin "plugin:demo" and project "synthetic-plugin"
+
   Scenario: A stored memory is immediately findable
     Given a fresh Roca database
     And the model always defers to literal search

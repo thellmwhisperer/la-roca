@@ -49,7 +49,7 @@ func storeCommand(env *cliEnv) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&req.Layer, "layer", "", "the layer the memory belongs to")
 	cmd.Flags().StringVar(&req.Content, "content", "", "the content of the memory")
-	cmd.Flags().StringVar(&req.Origin, "origin", "", "who creates it: human, agent or cron")
+	cmd.Flags().StringVar(&req.Origin, "origin", "", "who creates it: human, agent, cron or plugin:<name>")
 	cmd.Flags().StringVar(&req.SourceAgent, "source-agent", "", "which agent is writing it")
 	cmd.Flags().StringVar(&req.Project, "project", "", "project scope (omit for global)")
 	cmd.Flags().StringVar(&req.Status, "status", "", "active, pending or resolved")
