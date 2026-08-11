@@ -59,7 +59,7 @@ func ingestCommand(env *cliEnv) *cobra.Command {
 	cmd.Flags().BoolVar(&req.DryRun, "dry-run", false,
 		"report what would be read without writing anything")
 	cmd.Flags().BoolVar(&verbose, "verbose", false,
-		"add the per-record detail, with the path of everything left out")
+		"add up to 100 record details with paths; the ingest log has the full run report")
 	return cmd
 }
 
@@ -166,7 +166,7 @@ func renderIngestOutcome(env *cliEnv, result service.IngestResult, verbose bool)
 			axi.Quantity(int64(result.RecordsDiscarded), "record")))
 	if !verbose {
 		if len(result.DiscardDetails) > 0 {
-			env.print("  detail: run `roca ingest --verbose` for the record and the path of each")
+			env.print("  detail: run `roca ingest --verbose` for up to 100 records and paths; the ingest log has the full run report")
 		}
 		return
 	}

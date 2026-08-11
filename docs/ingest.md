@@ -82,7 +82,8 @@ twice.
 ## Reading the summary
 
 The default summary is one line per source with what it contributed, followed by
-up to five reasons for what was left out, with each reason collapsed to a count.
+up to five reasons in each group for what was left out, with each reason
+collapsed to a count.
 The two groups are apart on purpose: `excluded` counts the records this build
 never meant to read, which is most of a runtime log and is not a problem, and
 `discards` counts the records it could not read, which is. `roca ingest
