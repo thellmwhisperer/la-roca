@@ -67,6 +67,29 @@ binary's version check, and swaps it into place by rename. The existing data,
 configuration, credentials, and agent integrations remain in place. If any
 verification fails, the active executable is unchanged.
 
+After the swap, update reports how many new capability proposals are open. On
+the first command run with each new version, La Roca offers every open proposal
+once for that version. In a terminal it asks before each change; an accepted
+change edits only the declared TOML values, preserves unrelated content, and
+creates the same named recovery backup as `roca login`. A rejection changes no
+configuration. Without a terminal, each proposal is one plain alert: La Roca
+does not prompt or edit the configuration.
+
+`roca doctor` always lists proposals that remain open, even after they were
+already offered for the current version. An interactive doctor run offers them
+again; `--json` reports them under `capability_proposals` without prompting.
+The current proposals are:
+
+- When Claude Code is on `PATH` but no usable Claude provider is configured,
+  enable the shipped local-CLI preset at the front of `models.order`; its
+  default model is `sonnet`.
+- When Codex is using La Roca's OAuth/HTTP session and the Codex CLI is on
+  `PATH`, replace that provider's HTTP settings with the isolated `codex exec`
+  local-binary transport while preserving the selected model.
+- When Anthropic export ingest is available but
+  `defaults.anthropic_export_paths` is empty, ask for an extracted export
+  directory and add that typed path. See [Ingest sources](ingest.md#declare-an-anthropic-data-export).
+
 The update channel can be selected with the same repository and API environment
 variables used by installation.
 

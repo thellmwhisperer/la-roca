@@ -62,6 +62,9 @@ type DoctorReport struct {
 	// paste into agent instructions. Roca never edits those files itself.
 	PromptPath   string `json:"prompt_path"`
 	PromptExists bool   `json:"prompt_exists"`
+	// CapabilityProposals are open post-update configuration choices. The CLI
+	// fills them from the reconciliation registry before rendering this report.
+	CapabilityProposals []string `json:"capability_proposals,omitempty"`
 }
 
 // DoctorProvider is one provider's verdict.

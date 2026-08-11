@@ -210,7 +210,8 @@ func TestLoginAndLogoutHonorJSON(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			var out strings.Builder
-			env := &cliEnv{build: Build{Version: "test"}, out: &out, errOut: &out}
+			env := &cliEnv{build: Build{Version: "test"}, out: &out, errOut: &out,
+				skipReconciliation: true}
 			root := rootCommand(env)
 			root.SetArgs(args)
 			err := root.Execute()

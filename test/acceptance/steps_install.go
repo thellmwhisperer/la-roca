@@ -147,11 +147,33 @@ func registerInstallSteps(ctx *godog.ScenarioContext, m *world) {
 	ctx.Then(`^the previous database and configuration are still intact$`, m.theDataSurvivedTheUpdate)
 	ctx.Then(`^the MCP entries in the agent configurations still point at a binary that exists$`,
 		m.theMCPEntriesStillPointSomewhere)
+	ctx.Then(`^the update names how many capability proposals await$`, m.updateNamesCapabilityProposals)
+	ctx.Then(`^doctor lists the open capability proposals$`, m.doctorListsCapabilityProposals)
 	ctx.Then(`^no agent configuration contains a Roca entry any more$`, m.noAgentConfigMentionsRoca)
 	ctx.Then(`^every agent configuration keeps the rest of its content byte for byte$`,
 		m.theAgentConfigsKeptTheirOwnBytes)
 	ctx.Then(`^no agent configuration file has been deleted$`, m.noAgentConfigWasDeleted)
 	ctx.Then(`^no Roca artefact is left in the HOME$`, m.noRocaArtefactInTheHome)
+}
+
+func (m *world) updateNamesCapabilityProposals() error {
+	output := m.last.stdout + m.last.stderr
+	for _, want := range []string{"1 new capability needs a look", "roca doctor"} {
+		if !strings.Contains(output, want) {
+			return fmt.Errorf("update does not contain %q: %s", want, output)
+		}
+	}
+	return nil
+}
+
+func (m *world) doctorListsCapabilityProposals() error {
+	output := m.last.stdout + m.last.stderr
+	for _, want := range []string{"open capability proposals", "anthropic_export_paths"} {
+		if !strings.Contains(output, want) {
+			return fmt.Errorf("doctor code %d does not contain %q: %s", m.last.code, want, output)
+		}
+	}
+	return nil
 }
 
 // theReleaseVersion is the clean tag a release-stamped acceptance binary reports.
@@ -171,11 +193,38 @@ var (
 	releaseStampOnce sync.Once
 	releaseStampPath string
 	releaseStampErr  error
+	newStampOnce     sync.Once
+	newStampPath     string
+	newStampErr      error
 
 	devStampOnce sync.Once
 	devStampPath string
 	devStampErr  error
 )
+
+func newStampedBinary() (string, error) {
+	newStampOnce.Do(func() {
+		root, err := filepath.Abs(filepath.Join("..", ".."))
+		if err != nil {
+			newStampErr = err
+			return
+		}
+		out := filepath.Join(root, ".tmp", "acceptance", "roca-new-release")
+		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+			newStampErr = err
+			return
+		}
+		build := exec.Command("go", "build",
+			"-ldflags", "-X main.version="+theNewVersion, "-o", out, "./cmd/roca")
+		build.Dir = root
+		if output, err := build.CombinedOutput(); err != nil {
+			newStampErr = fmt.Errorf("stamp the new release binary: %v: %s", err, output)
+			return
+		}
+		newStampPath = out
+	})
+	return newStampPath, newStampErr
+}
 
 // releaseStampedBinary is this product's code with a release version linked in.
 // It is the same source `make build` compiles; only the version differs, which is
@@ -243,9 +292,11 @@ func (m *world) theChannel() *installWorld {
 	m.install.versions = map[string][]byte{}
 	m.install.builtVersion = m.builtVersion()
 	m.install.versions[m.install.builtVersion] = mustRead(m.artefact())
-	m.install.versions[theNewVersion] = []byte(
-		"#!/bin/sh\ncase \"$1\" in --version) echo \"roca " + theNewVersion +
-			" (acceptance) " + runtime.GOOS + "/" + runtime.GOARCH + "\";; esac\n")
+	newBinary, err := newStampedBinary()
+	if err != nil {
+		panic(err)
+	}
+	m.install.versions[theNewVersion] = mustRead(newBinary)
 
 	channel := &m.install
 	m.install.server = httptest.NewTLSServer(http.HandlerFunc(
