@@ -181,11 +181,11 @@ func reconcilePurge(report, final lifecycle.Report, lockPath string) lifecycle.R
 		report.Errors = remaining
 	}
 	kept := report.Kept[:0]
-	seen := map[lifecycle.Kept]bool{}
+	seen := map[string]bool{}
 	for _, survivor := range report.Kept {
-		if _, err := os.Lstat(survivor.Path); (err == nil || !os.IsNotExist(err)) && !seen[survivor] {
+		if _, err := os.Lstat(survivor.Path); (err == nil || !os.IsNotExist(err)) && !seen[survivor.Path] {
 			kept = append(kept, survivor)
-			seen[survivor] = true
+			seen[survivor.Path] = true
 		}
 	}
 	report.Kept = kept

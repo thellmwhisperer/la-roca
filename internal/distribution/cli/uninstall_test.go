@@ -174,6 +174,23 @@ func TestPurgeReconciliationClearsOnlyResolvedLockFailures(t *testing.T) {
 	}
 }
 
+func TestPurgeReconciliationKeepsTheOriginalReasonForAPath(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "owned-log.jsonl")
+	writeFile(t, path, "still here")
+	lockPath := filepath.Join(directory, ".roca.lock")
+	original := lifecycle.Kept{Path: path, Reason: "La Roca created it and could not delete it: run the uninstall again"}
+	later := lifecycle.Kept{Path: path, Reason: "La Roca did not create it: delete it yourself if you want to"}
+
+	report := reconcilePurge(
+		lifecycle.Report{Purged: false, Kept: []lifecycle.Kept{original}, Errors: []string{"delete " + path + ": permission denied"}},
+		lifecycle.Report{Purged: true, Kept: []lifecycle.Kept{later}}, lockPath,
+	)
+	if !slices.Equal(report.Kept, []lifecycle.Kept{original}) {
+		t.Fatalf("kept outcomes = %+v, want original reason", report.Kept)
+	}
+}
+
 func TestPurgeReportsForeignLogSurvivorsOnce(t *testing.T) {
 	home := t.TempDir()
 	paths := resolvedIn(t, home)
