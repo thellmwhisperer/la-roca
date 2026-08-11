@@ -20,7 +20,8 @@ surfaces:
 
 - CLI commands with `--json` when it needs machine-shaped output.
 - `roca query`, `roca exec`, and `roca sql` for reads; explicit SQL still goes
-  through La Roca's read-only gate.
+  through La Roca's read-only gate. Query inherits the detected-agent-CLI
+  factory default, so a plugin does not introduce a separate login step.
 - `roca store` for writes. Use the documented layers and pass
   `--origin plugin:<name>` so the plugin's records remain attributable and can
   be selected or purged by origin. Plugin names may contain letters, digits,

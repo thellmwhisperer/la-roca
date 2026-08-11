@@ -3,6 +3,11 @@
 The way La Roca reaches an agent that is not typing commands: the MCP server it
 can call.
 
+`roca_query` uses the same factory order as the CLI: La Roca detects an already
+signed-in supported agent CLI and needs no separate login or MCP credential
+setup. Configured HTTP/OAuth and key flows are fallbacks when no local CLI is
+usable.
+
 ---
 
 ## 1. `roca mcp serve`: the MCP over stdio

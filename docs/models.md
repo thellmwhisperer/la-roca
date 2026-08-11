@@ -1,8 +1,9 @@
 # Model providers
 
-La Roca uses **frontier with a local floor**: the configured provider serves when there is a credential,
-and with no network or no credential the fall to local Ollama is automatic. The
-local one is the guaranteed floor, not the product's identity.
+La Roca uses **detected agent CLIs with a local floor**. On a fresh install it
+finds shipped CLI presets on `PATH`, uses their existing signed-in sessions in
+stable order, then tries local Ollama. No La Roca login or provider table is
+required. An explicit provider order remains authoritative.
 
 Questions use the first configured provider that reports itself ready. If the
 selected provider is unavailable or produces unusable SQL, La Roca reports the
@@ -12,6 +13,9 @@ degraded state and attempts literal search over the local index.
 
 One file, TOML, at `config.toml` inside the data directory (`~/.roca/`).
 `roca doctor` prints the exact path it read.
+Most installations do not need this file for model access: the examples below
+are overrides for operators who want a fixed order, split inference, or a
+fallback provider.
 
 ```toml
 [models]
@@ -53,10 +57,16 @@ keep_alive = "10m"
 think      = false
 ```
 
-With no file at all the order is `codex, ollama`: the subscription first, the
-local floor last. The last element of the default order is always a provider
-that can exist on any supported platform, so a machine that has nothing
-configured still has a floor.
+With no explicit `models.order`, the effective order is the detected shipped
+agent CLI binaries first and `ollama` last. For example, a machine where two
+supported CLIs are installed gets both before Ollama; a machine with neither
+gets only Ollama as its model order. Keyword search is the final rescue after
+that order, not a model provider. If every semantic route is unavailable, the
+answer names each missing binary (for example, `claude binary not found in
+PATH`) and the Ollama failure before using the rescue.
+
+Detection affects only the absent-order case. `ROCA_MODELS_ORDER` still wins
+over the file, and any explicit `order` in the file is preserved exactly.
 
 ### Where a value can be written
 
@@ -132,7 +142,7 @@ that is going to read the rows.
 
 | Name | Class | Credential | Default model |
 |---|---|---|---|
-| `codex` | subscription (OAuth) | `roca login codex` | `gpt-5.6-luna` |
+| `codex` | local Codex CLI | existing Codex CLI session | `gpt-5.6-luna` |
 | `claude` | local Claude Code CLI | existing Claude Code session | `sonnet` |
 | `deepseek` | frontier by key | `roca login deepseek`, `api_key`, or `DEEPSEEK_API_KEY` | `deepseek-chat` |
 | `zai` | frontier by key | `roca login zai`, `api_key`, `ZAI_API_KEY`, or `ROCA_GLM_API_KEY` | `glm-4.6` |
@@ -190,10 +200,11 @@ The generic command transport works in the SQL and interpretation cascades and
 through `roca doctor`, `roca login <provider>`, and
 `roca model set <provider> <model>`.
 
-`claude` is a shipped command-preset entry, not a special adapter. Its command,
-model, and timeout are all overridden by the same provider table an operator
-uses for any other CLI. With Claude Code installed and already signed in, this
-is enough:
+`claude` and `codex` are shipped command-preset entries, not special adapters.
+Their command, model, and timeout are all overridden by the same provider table
+an operator uses for any other CLI. When either binary is already installed and
+signed in, no configuration is needed. An explicit table is only for overrides;
+for example:
 
 ```toml
 [models]
@@ -210,6 +221,11 @@ skills, no Chrome integration, and no session persistence. It runs under the
 dedicated `runner/` directory in La Roca's data directory, away from repository
 instructions. The ingest scan explicitly excludes any runtime transcript keyed
 to that directory.
+
+The Codex preset uses its non-interactive `exec` transport with the shipped
+default model, a read-only sandbox, an ephemeral session, no repository or user
+configuration, and no color. Its prompt arrives on stdin, and it runs in the
+same dedicated runner directory.
 
 To use an explicit Claude binary path, copy the built-in isolation contract into
 the command template:
@@ -233,39 +249,42 @@ When `response_format = "json"`, La Roca reads the answer from stdout's
 independent of command arguments, so a CLI may accept JSON input while returning
 text. Non-zero exits, malformed JSON, missing binaries, and timeouts are ordinary
 provider failures: they produce the same honest degraded query path as an HTTP
-provider failure. `roca doctor` runs the account probe and reports either the
-working binary or the remedy: install Claude Code or put `claude` on `PATH`.
+provider failure. `roca doctor` lists every detected shipped binary, identifies
+the provider the factory order selected, says that no La Roca login is required,
+and reports a binary-specific remedy for anything missing or unusable.
 
-## Login
+## Fallback login flows
 
-Same verb for every provider this build ships. Bare `roca login` lists them.
+Detected agent CLIs need no La Roca login. Bare `roca login` lists all supported
+flows; invoking it for a local CLI is an optional verification of the binary,
+existing vendor session, and selected model.
+These flows are setup fallbacks for users without a usable local CLI, not a
+step between installation and the first query.
 
 ```
-roca login              # lists subscription, local CLI, and key providers
-roca login codex        # opens the browser, then presents the model picker
-roca login claude       # verifies Claude Code's existing session; no browser flow
+roca login              # lists local CLI, subscription fallback, and key providers
+roca login codex        # optionally verifies the existing Codex CLI session
+roca login claude       # optionally verifies the existing Claude Code session
 roca login xai          # stores the key, then presents the model picker
 roca login xai --model grok-4-fast  # validates and probes this exact model
 roca doctor             # says whether it is usable, never what is in it
-roca logout codex       # forgets the subscription session
 roca logout xai         # forgets the stored key
 ```
 
-A subscription session lands in `credentials/codex.json` inside the data
-directory, with mode `0600` in a directory with mode `0700`, and it renews
-itself: you log in once. Before the browser opens, the command says what is
-about to happen, what La Roca receives (an access token, never the password)
-and how to revoke it. If the browser does not open, the address is printed and
-pasting it works just as well.
+The Codex HTTP/OAuth transport remains available as a configured fallback. Set
+`models.codex.base_url` to the subscription endpoint and keep `codex` in an
+explicit order; `roca login codex` then opens the browser flow. Its session
+lands in `credentials/codex.json` with mode `0600` under a `0700` directory and
+renews itself. This compatibility path is no longer the fresh-install default.
 
 A key login stores the secret under `credentials/` in a `.key` file whose
 provider name is URL-escaped, so even a custom name cannot escape that
 directory. Config-file `api_key` and the provider's environment variable keep
 working; a key stored by login takes precedence.
 
-Claude login stores no credential. Claude Code owns the operator's existing
-session; La Roca verifies it through the local binary, offers the model choice,
-and never reads or copies that session.
+Local CLI verification stores no credential. The CLI owns the operator's
+existing session; La Roca probes it through the binary, offers the model
+choice, and never reads or copies that session.
 
 During login, La Roca offers known model IDs with an arrow-key selection.
 OpenAI-compatible providers and Ollama supply their live catalogues through
@@ -294,10 +313,10 @@ roca model set gpt-5.6-sol
 roca model set ollama qwen3.5:4b
 ```
 
-A vendor's OAuth flow is fragile and changes with no notice. That risk is taken
-with eyes open and the mitigation is in the shape: when it breaks, the adapter
-fails clearly and the cascade degrades to the next provider or to the local
-floor. It never takes down a query.
+The fallback vendor OAuth flow is fragile and changes with no notice. That risk
+is taken with eyes open and the mitigation is in the shape: when it breaks, the
+adapter fails clearly and the cascade degrades to the next provider or to the
+local floor. It never takes down a query.
 
 ## What happens on a query
 

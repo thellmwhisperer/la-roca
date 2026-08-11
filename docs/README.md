@@ -2,8 +2,9 @@
 
 Reading order, from operator to contributor:
 
-1. [Model providers](models.md): provider order, login, the local floor, and
-   how the two query inferences choose their models.
+1. [Model providers](models.md): automatic agent CLI detection, provider order,
+   the local floor, fallback login flows, and how the two query inferences
+   choose their models.
 2. [Ingest sources](ingest.md): declare downloaded data exports and understand
    their incremental boundary.
 3. [Plugins](plugins.md): extend the CLI with Git-style neighbor executables
