@@ -499,7 +499,7 @@ func (m *world) thePreviousContentSurvives() error {
 }
 
 func (m *world) aBackupOfTheConfigurationExists() error {
-	if _, err := os.Stat(m.agentConfig + ".bak"); err != nil {
+	if _, err := os.Stat(m.agentConfig + ".roca.bak"); err != nil {
 		return fmt.Errorf("there is no backup of %s: %w", m.agentConfig, err)
 	}
 	return nil
