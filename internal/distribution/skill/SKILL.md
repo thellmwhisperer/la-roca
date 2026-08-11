@@ -48,7 +48,9 @@ bounded preview. Add `--json` when a program needs the unchanged full envelope.
 
 ```text
 $ roca query "what do we know about AXI output"
-route llm_fallback · provider ollama · model qwen3.5:4b · 4 ms
+route model
+SQL · provider ollama · model qwen3.5:4b · 4 ms
+search · 1 ms
 rows[1]{source,id,created_at,text}:
   memory,1,"2026-08-07 17:39:43","AXI output uses TOON rows, stable fields, and contextual help."
 help[2]:

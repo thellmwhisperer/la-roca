@@ -236,7 +236,7 @@ func TestUnavailableLLMIsAuditedAsDegradedNotOK(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	if !strings.Contains(text, `"ok":false`) || !strings.Contains(text, `"degraded":"llm_unavailable"`) {
+	if !strings.Contains(text, `"ok":false`) || !strings.Contains(text, `"degraded":"model_unavailable"`) {
 		t.Fatalf("degraded call was audited optimistically: %s", text)
 	}
 }

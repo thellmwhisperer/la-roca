@@ -17,8 +17,8 @@ Feature: Frontier with a local floor
     And the local model is available too
     When I run "roca query 'what decisions were made about the format' --json"
     Then the command exits with code 0
-    And the JSON output has "engine" equal to the frontier provider
-    And the JSON output has "path" equal to "llm_fallback"
+    And the JSON output has "sql_provider" equal to the frontier provider
+    And the JSON output has "path" equal to "model"
     And the local provider has received no request
 
   @fast
@@ -28,8 +28,8 @@ Feature: Frontier with a local floor
     And the local model is available
     When I run "roca query 'what decisions were made about the format' --json"
     Then the command exits with code 0
-    And the JSON output has "engine" equal to "ollama"
-    And the JSON output has "path" equal to "llm_fallback"
+    And the JSON output has "sql_provider" equal to "ollama"
+    And the JSON output has "path" equal to "model"
     And the output declares that it degraded to the local floor
     And no action has been asked of the operator
 
@@ -39,7 +39,7 @@ Feature: Frontier with a local floor
     And the local model is available
     When I run "roca query 'what decisions were made about the format' --json"
     Then the command exits with code 0
-    And the JSON output has "engine" equal to "ollama"
+    And the JSON output has "sql_provider" equal to "ollama"
 
   @fast
   Scenario: F07-04 With no frontier and no local, the failure is clear and actionable
@@ -47,7 +47,7 @@ Feature: Frontier with a local floor
     And the local model is not available
     When I run "roca query 'what decisions were made about the format' --json"
     Then the command exits with a code other than 0
-    And the JSON output has "degraded" equal to "llm_unavailable"
+    And the JSON output has "degraded" equal to "model_unavailable"
     And the output names which providers were tried and why each one failed
     And the output names the exact command to install or start the local model
     And the output contains no traceback
