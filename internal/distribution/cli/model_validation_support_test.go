@@ -17,6 +17,7 @@ type testModelBackend struct{}
 
 func (testModelBackend) Catalogue(_ context.Context, _, current string) (modelCatalogue, error) {
 	models := []string{
+		"claude-test",
 		"deepseek-chat", "gpt-5.6-luna", "gpt-5.6-sol", "grok-4", "grok-chosen",
 		"internal-7b", "internal-9b", "qwen3.5:4b",
 	}

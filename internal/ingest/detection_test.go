@@ -84,3 +84,29 @@ func TestWorkspaceRootsResolveSessionIdentityWithoutBecomingContent(t *testing.T
 		}
 	}
 }
+
+func TestTheLocalBinaryRunnerIsNeverIngested(t *testing.T) {
+	home := t.TempDir()
+	runner := filepath.Join(home, ".roca", "runner")
+	roots := ResolveRoots(Environment{GOOS: "darwin", Home: home}, Settings{RunnerDir: runner})
+	transcript := filepath.Join(roots.ClaudeProjects, encodeRoot(runner),
+		"99999999-8888-7777-6666-555555555555.jsonl")
+	if err := os.MkdirAll(filepath.Dir(transcript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(transcript, []byte("synthetic private inference\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan := Scan(roots)
+	for _, target := range plan.Targets {
+		if target.Path == transcript {
+			t.Fatal("La Roca's own inference session entered the ingest plan")
+		}
+	}
+	if len(plan.Excluded) != 1 || plan.Excluded[0].Path != transcript {
+		t.Fatalf("runner transcript was not explicitly excluded: %+v", plan.Excluded)
+	}
+	if len(plan.Warnings) != 0 {
+		t.Fatalf("the excluded runner created an operator warning: %v", plan.Warnings)
+	}
+}
