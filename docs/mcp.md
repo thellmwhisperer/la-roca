@@ -32,6 +32,13 @@ session, which is why every diagnostic in this path writes to standard error.
 `roca_list_runs` is **not** in v1: `runs` is v2 scope and this binary creates no
 such table. A tool with nothing behind it is a tool that lies.
 
+### Answers are TOON text
+
+Every tool answers as compact TOON rows in plain text, the same shape the CLI
+prints: cheap for a model to read, with the route narration above the data.
+The server never returns row envelopes in `StructuredContent`; that contract
+is pinned by `internal/distribution/mcpplug/toon_contract_test.go`.
+
 ### The law of this surface
 
 **Every handler is a single call into the service.** It is not a comment, it is

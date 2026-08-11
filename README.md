@@ -1,52 +1,162 @@
+<p align="center"><img src="docs/assets/banner.jpg" alt="La Roca: glowing agent monoliths feeding golden roots into one shared bedrock" width="100%"></p>
+
 # La Roca
 
-**Local semantic memory for agent fleets. One binary.**
+**Your agents' history is a database.**
+**Interrogate it. Interact with it. Learn from it. Have fun with it.**
+
+One binary, one file, zero dependencies. Local SQLite. CLI + MCP.
 
 [![CI](https://github.com/thellmwhisperer/la-roca/actions/workflows/ci.yml/badge.svg)](https://github.com/thellmwhisperer/la-roca/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Go 1.25](https://img.shields.io/badge/go-1.25-00ADD8.svg)](go.mod)
 
-Agent runtimes leave sessions, exchanges, reasoning blocks, tool calls, and
-memory files in different local formats. La Roca ingests that trail into one
-SQLite database and answers natural-language questions through a CLI or MCP.
-There is no hosted service, vector database, or agent framework to run.
+Your coding agents write thousands of sessions, reasoning traces, tool calls,
+and memory notes to disk, then forget all of it. La Roca reads what Claude
+Code, Codex, OpenCode, Pi, Hermes, and Claude Desktop leave behind, normalizes
+it into one SQLite database on your machine, and answers questions about it:
+from your terminal, or from the agents themselves over MCP.
 
-## Install and start
+Every answer shows its proof: the SQL that produced it and the rows that
+back it. Nothing leaves your machine: no hosted service, no vector
+database, no framework to run.
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/thellmwhisperer/la-roca/main/install.sh | sh
-roca init
-roca query "what did we decide about the ingest matrix"
+## Sixty seconds
+
+```text
+$ curl -fsSL https://raw.githubusercontent.com/thellmwhisperer/la-roca/main/install.sh | sh
+$ roca init
+$ roca query --full "what did we decide about the retention window"
+SQL · codex · gpt-5.6 · 3.1 s / search · 2 ms / answer · ollama · gemma4:12b · 9.8 s
+
+You decided it on 2 August: operational logs keep 30 days, in dated streams,
+never stored in SQLite. Your own words that night: "30 days and out. I do
+not want eternal logs."
 ```
 
-With no home database, `roca init` asks whether to create a new database or
-adopt an existing one by copy. It never chooses silently. For automation, pass
-an explicit location with `roca init --db-path <path>`.
+`roca init` asks before creating or adopting a database, never silently, and
+ends by telling you how deep your memory goes: the oldest moment it ingested
+is the floor of your rock. `roca doctor` reports the same floor along with
+which model will answer and how to fix anything that is not ready.
 
-The default data directory is `~/.roca`. It contains `roca.db`, configuration,
-credentials, backups, `prompt.md`, and operational JSONL under `logs/`. La Roca
-does not edit agent instruction files; the operator decides whether to use the
-generated prompt or install the bundled skill.
+## What you can ask
 
-## Operational logs
+Things that are one question away once your history is a database.
 
-The dated `executions`, `mcp-audit`, and `ingest` JSONL streams retain 30 days.
-A logging failure warns once but never changes a command or tool result.
+The bug you know you have already fixed once, seen by both readers:
 
-Execution records store the command, changed flags, database path, duration,
-exit code, error and result metadata. Query records keep the question, route,
-provider, model, SQL, timings, degradation, provider failure text and row count;
-they never store result row contents. MCP audit records store the tool,
-redacted arguments, verdict, degraded state, duration and result row count.
-Ingest records retain the complete ingest envelope, including every file error
-and every discarded source record with its path, parser, record position and
-reason.
+<details open>
+<summary><strong>What your agent sees (default): TOON format, for token efficiency and a better agent experience</strong></summary>
 
-No log is stored in SQLite and no run tables exist. Before a line reaches disk,
-redaction covers sensitive field names; bearer and key/value secrets; PEM
-private keys; OpenAI `sk-*`, GitHub `gh[pousr]_*` and `github_pat_*`, Slack
-`xox*`, JWT `eyJ*`, AWS `AKIA*`, and Google `AIza*` credential shapes. Log
-directories and files are created with operator-only permissions.
+```text
+$ roca query "have I fixed a stale lock error before"
+SQL · provider codex · model gpt-5.6 · 2.9 s / search · 3 ms
+rows[2]{source,created_at,text}:
+  exchange,"2026-06-14 23:41:02","fixed: stale .lock left by a killed run; rm .ingest.lock and rerun with --resume"
+  memory,"2026-06-15 00:02:19","Pattern: a killed ingest leaves .ingest.lock behind; delete it before blaming the parser"
+```
+
+</details>
+
+<details>
+<summary><strong>What you see with <code>--full</code>: concise human prose</strong></summary>
+
+```text
+$ roca query --full "have I fixed a stale lock error before"
+SQL · codex · gpt-5.6 · 2.9 s / search · 3 ms / answer · ollama · gemma4:12b · 11.4 s
+
+Yes, twice, and both times it was the same trap. On 14 June at 23:41 you
+fixed it live: a killed run had left .ingest.lock behind, and the cure was
+rm .ingest.lock followed by a rerun with --resume. The next morning you
+stored the lesson as a pattern: a killed ingest always leaves its lock file
+behind, so delete it before blaming the parser.
+```
+
+The second inference reads only the rows and writes the answer. It can be a
+local model on your machine: make the query smart so the reader can be
+cheap, local, and secure.
+
+</details>
+
+The perfect one-liner an agent wrote for you weeks ago:
+
+```text
+$ roca query "the ffmpeg one-liner that extracted frames for verification"
+rows[1]{source,created_at,text}:
+  exchange,"2026-07-29 18:05:33","ffmpeg -ss 2 -i out.mp4 -frames:v 1 -q:v 3 frame.jpg   # verify before delivering"
+```
+
+Yesterday's decision, with the conversation that made it:
+
+```text
+$ roca query "what did we decide about the retention window"
+rows[2]{source,created_at,text}:
+  memory,"2026-08-02 21:14:09","Decision: operational logs keep 30 days, dated streams, never stored in SQLite"
+  exchange,"2026-08-02 21:02:44","30 days and out. I do not want eternal logs."
+```
+
+And because it is a real database, not a search box, you can interrogate it
+with exact SQL. No grep and no vector store can answer this:
+
+```sh
+roca exec "SELECT source_agent, COUNT(*) AS sessions
+           FROM sessions
+           WHERE started_at LIKE '2026-07%'
+           GROUP BY source_agent
+           ORDER BY sessions DESC"
+```
+
+`roca query` compiles your question into one checked `SELECT` and shows it.
+`--sql-only` compiles without executing, `--full` adds a prose reading of the
+rows, `roca exec` runs your own `SELECT` through the same read-only gate, and
+`--json` returns the complete machine envelope.
+
+## Three ways to use it
+
+**1. Shared context between agents.** A session starts by asking for the
+latest handoff and ends by storing one. The Claude session you open today
+knows what Codex did last night, without you re-explaining the project.
+
+```sh
+roca query "latest handoff for this project"
+roca store --layer handoff --content "auth refactor: token refresh done, retry logic pending, branch fix/auth-retry"
+```
+
+**2. Chat with your data.** Ask your own history real questions. Which
+sessions went well and which wasted an evening? What do you keep
+re-explaining to every new session? Which model is fastest at fixing tests,
+and which one writes the best plans? Which model do you actually have fun
+working with, which one is a pure professional, and which one can you simply
+not work with? Which harness works best for which kind of work? The answers are already in your logs, with the rows to prove
+them. Use them to prompt better and to pick the right agent for the next
+job.
+
+**3. Distill what repeats.** Patterns in your history become skills that
+travel back to every agent. A regular skill is a snapshot of a tool. A skill
+distilled from La Roca comes with its whole story: the how, the why, and the
+failed attempts behind the final answer stay in the database, one question
+away.
+`roca skill install` ships the operating craft into each runtime today, and
+the `pill` layer is built for what comes next: condensed artifacts distilled
+from your own history and injected through hooks, so an agent is charged with
+exactly the information the task needs instead of a whole skill.
+
+## How it works
+
+- **One normalized schema.** Sessions, exchanges, thinking blocks, tool calls,
+  and curated memories in typed layers (`handoff`, `pattern`, `discovery`,
+  `feedback`, `pill`, among others), the same shape for every runtime it
+  reads.
+- **A query is two inferences.** The first sees the schema, never your rows,
+  and writes one `SELECT`. The second sees only the result rows and composes
+  the answer. Each phase's provider is configured independently, including
+  fully local through Ollama: make the query smart so the reader can be
+  cheap, local, and secure.
+- **Exact retrieval, no embeddings.** Recovery is SQL plus a local FTS5 index
+  with diacritic folding; a plain `LIKE` fallback works before the index
+  exists. If you want semantics, your model supplies it at question time; the
+  retrieval itself stays exact and auditable.
+- **Honest degradation.** No usable provider, or SQL that cannot run, falls
+  back to literal search and says so in the result.
 
 ## What it reads
 
@@ -56,103 +166,69 @@ directories and files are created with operator-only permissions.
 |---|---|
 | Claude Code | Sessions, subagent transcripts, and per-project memory files |
 | Claude Desktop and Cowork | Session stores and Claude memory files |
-| Codex | Sessions, memory, rule and skill files, and the state database |
-| OpenCode | Its local database |
+| Codex | Sessions, memory, rule and skill files, and what matters from its state database |
+| OpenCode | Sessions and exchanges, distilled from its local database |
 | Pi | Session files |
-| Hermes | Its state database |
+| Hermes | Sessions, distilled from its state database |
 
 Repository `AGENTS.md` and `CLAUDE.md` files are instructions and are never
 ingested as memories. Live databases are opened as guests with SQLite
 `query_only` enabled and a short busy timeout.
 
-## Querying
+## Agents plug in
 
-`roca query` asks a configured provider to produce one SQLite `SELECT`, checks
-the statement against the embedded schema, applies a row limit, executes it,
-and returns compact TOON rows. If no provider is usable or generated SQL cannot
-run, literal search is attempted and the degraded state is reported.
+The best experience is letting your agent do the talking: ask it a question
+in plain language and it interrogates La Roca, reads the rows, follows up,
+and digs where the evidence points. You stay in the conversation; the
+database work happens underneath.
 
-```sh
-roca query "what changed in the release process"
-roca query "what changed in the release process" --full
-roca query "what changed in the release process" --sql-only
-roca exec "SELECT layer, COUNT(*) AS total FROM memories GROUP BY layer LIMIT 20"
-```
+An agent that can run shell commands uses the CLI directly. An agent without
+shell access gets the same operations through La Roca's MCP layer, and the
+experience is practically the same, sometimes better.
 
-The default `query` result is evidence for agents. `--full` adds a prose
-interpretation for a human reader in the question's language. `--sql-only`
-compiles without executing; `roca exec` runs an explicit `SELECT` through the
-same gate. `--json` returns the complete machine-readable envelope, and
-`--max-chars` bounds text fields.
+La Roca is built agent-first, following the AXI convention (agent ergonomic
+interface) shared by a family of agent-facing tools: route narration above
+the data, compact TOON rows, bounded text previews, and deterministic next
+commands in every answer. An agent never has to guess what it just got or
+what to run next.
 
-Literal search uses a local SQLite FTS5 index ranked by relevance, with a plain
-`LIKE` fallback before the index exists. Unicode diacritics are folded for
-matching without imposing a corpus language.
-
-## Providers
-
-The default order is `codex, ollama`: an available subscription provider first
-and a local provider last. Configuration decides the order. `roca doctor`
-reports what is available and how to fix anything that is not.
-
-Natural-language questions are sent to the selected provider to generate SQL.
-When `--full` is requested, that provider also receives at most ten result rows,
-with each field truncated to 240 characters, to produce the prose answer. The
-database, full result set, and search index remain local. Configure only Ollama
-or turn models off when no query content may leave the machine.
+`roca mcp serve` runs a foreground stdio server owned by the calling agent,
+exposing five tools that call the same service as the CLI: `roca_query`,
+`roca_exec`, `roca_sql`, `roca_store`, and `roca_health`.
 
 ```sh
-roca login codex
-roca login xai
-roca model set codex <model-id>
-roca doctor
-roca logout codex
-```
-
-See [docs/models.md](docs/models.md) for provider configuration and selection.
-
-## CLI and MCP
-
-The daily root menu is `init`, `query`, `store`, `ingest`, `login`, `doctor`,
-`update`, and `uninstall`. Integration commands remain callable without
-crowding the root help.
-
-`roca mcp serve` runs a foreground stdio server owned by the calling agent. It
-exposes five tools: `roca_exec`, `roca_health`, `roca_query`, `roca_sql`, and
-`roca_store`. They call the same service as the CLI.
-
-```sh
-roca mcp install codex
-roca mcp status
-roca mcp uninstall codex
-
-roca skill install codex
+roca mcp install codex     # declare the server in a runtime's configuration
+roca mcp status            # which agents have La Roca configured
+roca skill install claude  # ship the usage craft into a runtime's skills
 ```
 
 Supported integration targets are Codex, Claude, OpenCode, Hermes, and Pi.
 Configuration edits preserve unrelated bytes and create a recovery backup.
-See [docs/mcp.md](docs/mcp.md).
 
-## Operations
+## Private by construction
 
-Every CLI execution writes a redacted JSONL record under the selected data
-directory's `logs/`. A logging failure is reported on stderr but does not
-change the command result. Log directories and files are created with
-operator-only permissions and dated streams retain thirty days.
+One binary, one SQLite file in `~/.roca`, zero network in the ingest path.
+Providers are called only to answer the questions you ask, and the SQL phase
+never sees your rows. With `--full`, the prose phase receives at most ten
+result rows with each field truncated to 240 characters; the database, the
+full result set, and the search index never leave the machine. Configure only
+Ollama when no query content may leave it at all. Every execution writes a redacted JSONL record under
+`logs/`; query records never store result row contents. Details, retention,
+and the full redaction list live in [docs/operations.md](docs/operations.md).
 
-```sh
-roca update
-roca uninstall
-roca uninstall --purge
-```
+`ROCA_READ_ONLY=1` refuses writes in the shared service before database I/O,
+so CLI and MCP enforce the same boundary.
 
-Update verifies the downloaded binary against `checksums.txt` before replacing
-the current executable. Uninstall removes integrations and the binary; data is
-kept unless the operator explicitly consents to purge. See
-[docs/lifecycle.md](docs/lifecycle.md).
+## Going deeper
 
-`ROCA_READ_ONLY=1` refuses writes in the shared service before database I/O, so
-CLI and MCP enforce the same boundary.
+The [docs index](docs/README.md) orders the longer reads:
+
+- [Architecture](docs/architecture.md): the four internal domains.
+- [Model providers](docs/models.md): provider order, login, local floor.
+- [The MCP plug](docs/mcp.md): tools, contract, integration targets.
+- [Install, update, and uninstall](docs/lifecycle.md): the binary's life.
+- [Operations](docs/operations.md): logs, redaction, retention.
+- [Releases](docs/releases.md): how versions are cut.
 
 ## Build and test
 

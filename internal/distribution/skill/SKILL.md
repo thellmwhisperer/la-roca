@@ -92,6 +92,11 @@ the gate. Install them with `roca mcp install <runtime>`.
   surrounding exchanges.
 - Rows are the truth; prose is a reading. Verify claims against returned rows
   and say plainly when they do not answer the question.
+- CLI and MCP split by job: with a shell, dig with the CLI, which composes
+  with pipes, files and `--max-chars` for fast iteration; write long or
+  quote-heavy memories with `roca_store` over MCP, whose structured params
+  avoid shell escaping. When shell permissions block a CLI call, the MCP
+  tools are the frictionless path, not a fallback.
 - Use the layer filter deliberately: `handoff` for continuity and
   `feedback`/`pattern` for distilled lessons. Search coordination layers
   explicitly when tracing origins; ordinary knowledge search can skip them.
