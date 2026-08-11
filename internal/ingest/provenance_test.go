@@ -21,6 +21,40 @@ type provenanceRow struct {
 	cost                        sql.NullFloat64
 }
 
+type provenanceExpectation struct {
+	session                     string
+	model, provider             string
+	tokensIn, tokensOut, reason int
+	cost                        float64
+	// counted names the numeric columns the source does state, so an absent
+	// one is asserted absent instead of compared against a zero.
+	counted string
+}
+
+var recordedProvenance = []provenanceExpectation{
+	// The three prompt tiers of a Claude transcript are one number, and the
+	// runtime separates no reasoning tokens out of the answer.
+	{session: fixtureSessionID, model: "fixture-claude-model",
+		tokensIn: 35, tokensOut: 7, counted: "in out"},
+	{session: "child-1", model: "fixture-subagent-model",
+		tokensIn: 4, tokensOut: 2, counted: "in out"},
+	{session: "cowork-1", model: "fixture-cowork-model",
+		tokensIn: 6, tokensOut: 1, counted: "in out"},
+	// A rollout counts the reasoning tokens apart and names who served it.
+	{session: "codex-thread-1", model: "fixture-codex-model", provider: "fixture-provider",
+		tokensIn: 31, tokensOut: 9, reason: 4, counted: "in out reasoning"},
+	// Pi and OpenCode are the two that also price the turn.
+	{session: "pi:pi-1", model: "fixture-pi-model", provider: "fixture-pi-provider",
+		tokensIn: 15, tokensOut: 5, reason: 2, cost: 0.25, counted: "in out reasoning cost"},
+	{session: "opencode:oc1", model: "fixture-opencode-model", provider: "fixture-opencode-provider",
+		tokensIn: 43, tokensOut: 11, reason: 6, cost: 0.5, counted: "in out reasoning cost"},
+	// Hermes measures a whole session and never a turn: the turn carries who
+	// answered and no invented split of the totals.
+	{session: "h1", model: "test-model", provider: "fixture-hermes-provider"},
+	// The web export is the signal-poor source, and every column stays NULL.
+	{session: "web-fixture-1"},
+}
+
 // readProvenance keys on the session and not on the agent: the synthetic world
 // files two sessions under the Claude family, and the desktop metadata renames
 // the transcript's own to the runtime that owns it.
@@ -44,42 +78,17 @@ func TestEverySourceFillsTheProvenanceItRecords(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 
-	// What each source of the synthetic world states about its first exchange.
-	// The zero value of a field is "this source states nothing", which is a
-	// contract of its own: a column filled with an invented zero is worse than an
-	// empty one, because no query can tell it from a measurement.
-	for _, want := range []struct {
-		session                     string
-		model, provider             string
-		tokensIn, tokensOut, reason int
-		cost                        float64
-		// counted names the numeric columns the source does state, so an absent
-		// one is asserted absent instead of compared against a zero.
-		counted string
-	}{
-		// The three prompt tiers of a Claude transcript are one number, and the
-		// runtime separates no reasoning tokens out of the answer.
-		{session: fixtureSessionID, model: "fixture-claude-model",
-			tokensIn: 35, tokensOut: 7, counted: "in out"},
-		{session: "child-1", model: "fixture-subagent-model",
-			tokensIn: 4, tokensOut: 2, counted: "in out"},
-		{session: "cowork-1", model: "fixture-cowork-model",
-			tokensIn: 6, tokensOut: 1, counted: "in out"},
-		// A rollout counts the reasoning tokens apart and names who served it.
-		{session: "codex-thread-1", model: "fixture-codex-model", provider: "fixture-provider",
-			tokensIn: 31, tokensOut: 9, reason: 4, counted: "in out reasoning"},
-		// Pi and OpenCode are the two that also price the turn.
-		{session: "pi:pi-1", model: "fixture-pi-model", provider: "fixture-pi-provider",
-			tokensIn: 15, tokensOut: 5, reason: 2, cost: 0.25, counted: "in out reasoning cost"},
-		{session: "opencode:oc1", model: "fixture-opencode-model", provider: "fixture-opencode-provider",
-			tokensIn: 43, tokensOut: 11, reason: 6, cost: 0.5, counted: "in out reasoning cost"},
-		// Hermes measures a whole session and never a turn: the turn carries who
-		// answered and no invented split of the totals.
-		{session: "h1", model: "test-model", provider: "fixture-hermes-provider"},
-		// The web export is the signal-poor source, and every column stays NULL.
-		{session: "web-fixture-1"},
-	} {
-		got := readProvenance(t, db.SQL(), want.session)
+	assertRecordedProvenance(t, db.SQL())
+}
+
+// assertRecordedProvenance checks what each source of the synthetic world
+// states about its first exchange. The zero value of a field is "this source
+// states nothing": an invented zero is worse than an empty column because no
+// query can tell it from a measurement.
+func assertRecordedProvenance(t *testing.T, db *sql.DB) {
+	t.Helper()
+	for _, want := range recordedProvenance {
+		got := readProvenance(t, db, want.session)
 		if got.model.String != want.model || got.provider.String != want.provider {
 			t.Errorf("%s: model/provider = %q/%q, want %q/%q",
 				want.session, got.model.String, got.provider.String, want.model, want.provider)
@@ -107,17 +116,16 @@ func TestEverySourceFillsTheProvenanceItRecords(t *testing.T) {
 	}
 }
 
-// The re-ingest that backfills. A corpus ingested by an older build carries the
-// exchanges with no provenance at all and a watermark with no parser version in
-// it; bumping the version is what makes a plain `roca ingest` read those files
-// again, and the record-level idempotency is what keeps it from writing a second
-// copy of anything.
+// The re-ingest that backfills. The shipped v1.7 corpus carries exchanges with
+// no provenance and v2 parser watermarks; bumping the version is what makes a
+// plain `roca ingest` read those files again, and the record-level idempotency
+// is what keeps it from writing a second copy of anything.
 func TestAPlainReingestBackfillsProvenanceWithoutDuplicating(t *testing.T) {
 	_, db, ctx, options := seededWorld(t)
 
 	before := tableSnapshot(t, db.SQL())
-	// What the previous build left behind: the columns it could not read, and its
-	// own watermark, which knew nothing of a parser version.
+	// What v1.7 left behind: the columns it failed to fill and watermarks that
+	// already claimed the v2 parser revision.
 	if err := db.Write(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `UPDATE exchanges SET model = NULL, provider = NULL,
 			tokens_in = NULL, tokens_out = NULL, tokens_reasoning = NULL, cost_usd = NULL`)
@@ -125,7 +133,7 @@ func TestAPlainReingestBackfillsProvenanceWithoutDuplicating(t *testing.T) {
 			return err
 		}
 		_, err = tx.ExecContext(ctx,
-			`UPDATE ingest_file_state SET fingerprint = substr(fingerprint, 1, instr(fingerprint, ':parser:') - 1)
+			`UPDATE ingest_file_state SET fingerprint = replace(fingerprint, '-v3', '-v2')
 			 WHERE instr(fingerprint, ':parser:') > 0`)
 		return err
 	}); err != nil {
@@ -139,10 +147,14 @@ func TestAPlainReingestBackfillsProvenanceWithoutDuplicating(t *testing.T) {
 	if after := tableSnapshot(t, db.SQL()); after != before {
 		t.Errorf("the backfill changed the row counts: %+v, want %+v", after, before)
 	}
-	for _, session := range []string{fixtureSessionID, "codex-thread-1", "pi:pi-1", "opencode:oc1"} {
-		if got := readProvenance(t, db.SQL(), session); !got.model.Valid {
-			t.Errorf("%s: the model was not backfilled", session)
-		}
+	assertRecordedProvenance(t, db.SQL())
+	result, err := Run(ctx, db, registry(t), options)
+	if err != nil {
+		t.Fatalf("idempotent run: %v", err)
+	}
+	if result.FilesRead != 0 || result.Delta != (Tables{}) {
+		t.Errorf("idempotent run read or wrote records: files=%d delta=%+v",
+			result.FilesRead, result.Delta)
 	}
 }
 
