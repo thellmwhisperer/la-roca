@@ -76,9 +76,11 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 	if result.Delta.Memories != 4 {
 		t.Errorf("memories = %d, want 4", result.Delta.Memories)
 	}
-	if result.FilesExcluded != 1 || result.RecordsDiscarded != 1 {
-		t.Errorf("excluded/discarded = %d/%d, want 1/1: %+v",
-			result.FilesExcluded, result.RecordsDiscarded, result.DiscardDetails)
+	// A file the scan refuses on purpose is an exclusion and not a failure to read
+	// one: the report keeps the two apart so a healthy run reads as healthy.
+	if result.FilesExcluded != 1 || result.RecordsExcluded != 1 || result.RecordsDiscarded != 0 {
+		t.Errorf("excluded files/records and discards = %d/%d/%d, want 1/1/0: %+v",
+			result.FilesExcluded, result.RecordsExcluded, result.RecordsDiscarded, result.DiscardSummary)
 	}
 	if got := countRows(t, db.SQL(), "memories WHERE source_agent = 'config'"); got != 0 {
 		t.Errorf("config memories = %d, want none", got)
