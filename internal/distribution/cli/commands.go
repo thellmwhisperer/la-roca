@@ -86,6 +86,7 @@ func initCommand(env *cliEnv) *cobra.Command {
 					return chooserErr
 				}
 				if choice == "reinitialize" && !completed {
+					env.resolveInitUnsetOrderModel(cmd.Context(), paths, true)
 					renderInitAnswer(env, chooserResult)
 					return nil
 				}
@@ -121,6 +122,7 @@ func initCommand(env *cliEnv) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			env.resolveInitUnsetOrderModel(cmd.Context(), paths, interactive)
 			commandElapsed := initMachineDuration(time.Since(commandStarted), env.initPromptWait).Milliseconds()
 			chooserElapsed := env.initChooserElapsed.Milliseconds()
 			if outsideService := commandElapsed - result.TotalElapsedMS - chooserElapsed; outsideService > 0 {
@@ -345,20 +347,33 @@ func renderInitAnswer(env *cliEnv, result service.InitResult) {
 	}
 	line := fmt.Sprintf("answering: %s/%s (%s) · configuration: %s · change with: %s",
 		model.Provider, model.Model, modelChoiceSource(result.ConfigPath, model.Provider, model.Model),
-		result.ConfigPath, initModelChange(model.Provider, model.Model, result.ConfigPath))
+		result.ConfigPath, initModelChange(model.Provider, model.Model, result.ConfigPath,
+			env.initUnsetOrderModel))
 	if model.ExternalCredential {
 		line += " · uses the existing local CLI session; no roca login required"
 	}
 	env.print("%s", line)
 }
 
-func initModelChange(name, model, path string) string {
+func initModelChange(name, model, path string, unsetOrderModel *service.InitModel) string {
 	file, _ := config.LoadFile(path)
 	orderOverride := strings.TrimSpace(os.Getenv(provider.EnvOrder)) != ""
 	modelOverrides := initModelEnvironmentOverrides(name, model, file)
 	change := fmt.Sprintf("roca model set <id> or models.%s.model in %s", name, path)
+	unsetEffect := ""
 	if orderOverride {
-		change = fmt.Sprintf("models.%s.model in %s", name, path)
+		switch {
+		case unsetOrderModel != nil && unsetOrderModel.Ready:
+			change = fmt.Sprintf("models.%s.model in %s", unsetOrderModel.Provider, path)
+			unsetEffect = fmt.Sprintf(", which makes %s/%s answer",
+				unsetOrderModel.Provider, unsetOrderModel.Model)
+		case unsetOrderModel != nil:
+			change = "models.order in " + path
+			unsetEffect = ", which leaves no available provider"
+		default:
+			change = "models.order in " + path
+			unsetEffect = ", then resolve the newly effective provider"
+		}
 	}
 
 	var governing, unset []string
@@ -370,16 +385,41 @@ func initModelChange(name, model, path string) string {
 		governing = append(governing, modelOverrides[0])
 		unset = append(unset, modelOverrides...)
 	}
+	if orderOverride && unsetOrderModel != nil && unsetOrderModel.Ready {
+		for _, key := range initModelEnvironmentOverrides(
+			unsetOrderModel.Provider, unsetOrderModel.Model, file) {
+			if !slices.Contains(unset, key) {
+				unset = append(unset, key)
+			}
+		}
+	}
 	guidance := change
 	if len(governing) > 0 {
-		guidance = fmt.Sprintf("change %s directly; or unset %s before using %s",
-			strings.Join(governing, " and "), strings.Join(unset, " and "), change)
+		guidance = fmt.Sprintf("change %s directly; or unset %s%s before using %s",
+			strings.Join(governing, " and "), strings.Join(unset, " and "), unsetEffect, change)
 	}
 	if transport := initModelTransportOverride(name, path, file); transport != "" {
 		guidance += "; transport is governed by " + transport +
 			"; remove or change it to use the built-in transport"
 	}
 	return guidance
+}
+
+func (env *cliEnv) resolveInitUnsetOrderModel(ctx context.Context, paths config.Paths, diagnose bool) {
+	if strings.TrimSpace(os.Getenv(provider.EnvOrder)) == "" {
+		return
+	}
+	started := time.Now()
+	model, err := effectiveInitModelWithEnv(ctx, paths, func(key string) string {
+		if key == provider.EnvOrder {
+			return ""
+		}
+		return os.Getenv(key)
+	}, diagnose)
+	env.initChooserElapsed += time.Since(started)
+	if err == nil {
+		env.initUnsetOrderModel = model
+	}
 }
 
 func initModelEnvironmentOverrides(name, model string, file config.File) []string {

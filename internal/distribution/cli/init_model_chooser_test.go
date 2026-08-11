@@ -148,13 +148,14 @@ func TestTTYInitWritesSurgicallyWithBackupAndNamesIt(t *testing.T) {
 
 func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 	tests := []struct {
-		name     string
-		prepare  func(*testing.T, string, string)
-		input    string
-		backend  chooserTestBackend
-		want     string
-		avoid    string
-		guidance string
+		name          string
+		prepare       func(*testing.T, string, string)
+		input         string
+		backend       chooserTestBackend
+		want          string
+		avoid         string
+		guidance      string
+		avoidGuidance string
 	}{
 		{
 			name: "environment order",
@@ -163,10 +164,11 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 				fakeModelCLI(t, bin, provider.NameCodex)
 				t.Setenv("ROCA_MODELS_ORDER", provider.NameCodex)
 			},
-			input:    "sonnet\n\n",
-			want:     "answering: codex/" + provider.DefaultCodexModel,
-			avoid:    "answering: claude/sonnet",
-			guidance: "change ROCA_MODELS_ORDER directly; or unset ROCA_MODELS_ORDER before using models.codex.model",
+			input:         "sonnet\n\n",
+			want:          "answering: codex/" + provider.DefaultCodexModel,
+			avoid:         "answering: claude/sonnet",
+			guidance:      "unset ROCA_MODELS_ORDER, which makes claude/sonnet answer before using models.claude.model",
+			avoidGuidance: "before using models.codex.model",
 		},
 		{
 			name: "provider model environment",
@@ -195,7 +197,7 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 			}},
 			want:     "answering: ollama/environment-model",
 			avoid:    "answering: ollama/local-one",
-			guidance: "change ROCA_MODELS_ORDER and ROCA_OLLAMA_MODEL directly; or unset ROCA_MODELS_ORDER and ROCA_OLLAMA_MODEL and ROCA_MODEL before using models.ollama.model",
+			guidance: "unset ROCA_MODELS_ORDER and ROCA_OLLAMA_MODEL and ROCA_MODEL, which makes ollama/environment-model answer before using models.ollama.model",
 		},
 		{
 			name: "persisted base URL",
@@ -257,6 +259,9 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 			}
 			if test.guidance != "" && !strings.Contains(out, test.guidance) {
 				t.Fatalf("effective guidance does not contain %q:\n%s", test.guidance, out)
+			}
+			if test.avoidGuidance != "" && strings.Contains(out, test.avoidGuidance) {
+				t.Fatalf("effective guidance still contains %q:\n%s", test.avoidGuidance, out)
 			}
 		})
 	}

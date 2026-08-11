@@ -236,12 +236,17 @@ func (env *cliEnv) chooseInitModel(ctx context.Context, input *bufio.Reader,
 }
 
 func effectiveInitModel(ctx context.Context, paths config.Paths) (*service.InitModel, error) {
+	return effectiveInitModelWithEnv(ctx, paths, os.Getenv, true)
+}
+
+func effectiveInitModelWithEnv(ctx context.Context, paths config.Paths,
+	readEnv func(string) string, diagnose bool) (*service.InitModel, error) {
 	file, err := config.LoadFile(paths.Config)
 	if err != nil {
 		return nil, err
 	}
 	cascade, err := provider.BuildCascade(provider.Settings{
-		File: file, Credentials: paths.Credentials, RunnerDir: paths.Runner, Env: os.Getenv,
+		File: file, Credentials: paths.Credentials, RunnerDir: paths.Runner, Env: readEnv,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("resolve the effective model choice from %s: %w", paths.Config, err)
@@ -254,6 +259,22 @@ func effectiveInitModel(ctx context.Context, paths config.Paths) (*service.InitM
 			Reason: "no model provider is configured",
 			Action: "declare one under [models] in " + paths.Config,
 		}, nil
+	}
+	if !diagnose {
+		selected, attempts := cascade.Pick(ctx)
+		if selected != nil {
+			credential, external := selected.(interface{ ExternalCredential() bool })
+			return &service.InitModel{
+				Ready: true, Provider: selected.Name(), Model: selected.ModelID(),
+				ExternalCredential: external && credential.ExternalCredential(),
+			}, nil
+		}
+		gate := &service.InitModel{}
+		if len(attempts) > 0 {
+			gate.Provider, gate.Reason, gate.Action =
+				attempts[0].Name, attempts[0].Reason, attempts[0].Action
+		}
+		return gate, nil
 	}
 	gate := &service.InitModel{}
 	for index, attempt := range cascade.Diagnose(ctx) {
