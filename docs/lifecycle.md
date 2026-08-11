@@ -50,6 +50,12 @@ write fails, init reports a warning and leaves the prepared database usable. It
 does not edit agent instruction files or install integrations without a
 separate command.
 
+A successful init ends by reporting the corpus floor: the oldest ingested
+moment, the bedrock your memory reaches back to. An empty database says so
+plainly instead of printing a zero date. `roca doctor` reports the same floor
+as part of installation health, and `--json` carries the machine field in
+both commands.
+
 ## Update
 
 ```sh

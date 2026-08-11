@@ -74,6 +74,27 @@ func TestDoctorCarriesTheConfigurationsWarnings(t *testing.T) {
 	}
 }
 
+func TestDoctorReportsTheOldestCorpusMomentAndItsProject(t *testing.T) {
+	svc := seededServiceWith(t, provider.Cascade{})
+	if _, err := svc.DB().SQL().Exec(`
+		INSERT INTO sessions (session_id, project, started_at) VALUES
+		('later', 'younger-project', '2026-02-02T10:00:00Z'),
+		('first', 'bedrock-project', '2026-01-31T08:15:00Z');
+		INSERT INTO exchanges (session_id, human_timestamp, agent_timestamp) VALUES
+		('later', '2026-02-02T10:00:01Z', '2026-02-02T10:00:02Z');
+		INSERT INTO memories (layer, content, origin, project, created_at) VALUES
+		('project', 'younger memory', 'agent', 'younger-project', '2026-02-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	report, err := svc.Doctor(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Bedrock.Timestamp != "2026-01-31T08:15:00Z" || report.Bedrock.Project != "bedrock-project" {
+		t.Fatalf("bedrock = %+v", report.Bedrock)
+	}
+}
+
 // The credential never appears in any output. Presence is reported,
 // the value never is.
 func TestDoctorReportsTheCredentialsPresenceAndNeverItsValue(t *testing.T) {
@@ -175,5 +196,36 @@ func TestDoctorNamesTheDatabaseAndTheConfigurationFile(t *testing.T) {
 	}
 	if report.Memories == 0 {
 		t.Error("it does not count what is in the memory")
+	}
+}
+
+// The interpretation decision is reported exactly like the main one: every
+// declared provider with its verdict, and the one that is going to read the
+// rows. An installation that does not split the two inferences reports nothing
+// extra, because nothing extra was decided.
+func TestDoctorReportsTheInterpretationDecision(t *testing.T) {
+	main := cascadeOf(answering("codex", ""))
+	svc := seededServiceWith(t, main, cascadeOf(
+		unavailable("ollama", "it does not answer", "start it"),
+		answering("mycorp", "")))
+
+	report, err := svc.Doctor(context.Background())
+	if err != nil {
+		t.Fatalf("Doctor: %v", err)
+	}
+	if report.Titular != "codex" || report.InterpretTitular != "mycorp" {
+		t.Fatalf("the two decisions were not told apart: %+v", report)
+	}
+	if len(report.Interpreters) != 2 || report.Interpreters[0].Reason == "" ||
+		report.Interpreters[0].Action == "" {
+		t.Fatalf("an interpretation diagnosis with no remedy: %+v", report.Interpreters)
+	}
+
+	together, err := seededServiceWith(t, main).Doctor(context.Background())
+	if err != nil {
+		t.Fatalf("Doctor: %v", err)
+	}
+	if len(together.Interpreters) != 0 || together.InterpretTitular != "" {
+		t.Fatalf("an installation without the split reported one: %+v", together)
 	}
 }

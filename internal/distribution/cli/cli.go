@@ -193,6 +193,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		env.liveIngest = newIngestRows(env.errOut, true)
 		ingestProgress = env.liveIngest.update
 	}
+	providers, interpreters := buildProviders(file, paths)
 	svc, err := service.Open(service.Options{
 		DBPath:         paths.DB,
 		BackupDir:      paths.Backups,
@@ -200,7 +201,8 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		Version:        env.build.Version,
 		Commit:         env.build.Commit,
 		QueryTimeout:   time.Duration(file.Query.TimeoutMS) * time.Millisecond,
-		Providers:      buildProviders(file, paths),
+		Providers:      providers,
+		Interpreters:   interpreters,
 		ConfigPath:     paths.Config,
 		ConfigExists:   file.Exists,
 		Sources:        ingestSources(file, home),
@@ -293,26 +295,40 @@ func runtimeStatus[R any](
 	return nil
 }
 
-// buildProviders turns the configuration into the model cascade.
+// buildProviders turns the configuration into the two model cascades: the one
+// that answers questions, and the one the result rows are handed to when the
+// operator declared an interpretation order of its own.
 //
 // Whatever it has to say travels as data inside the cascade and comes out
 // through the answer and through `roca doctor`, which is where an operator
 // reads it. It is not also printed to the error stream: a copy on every single
 // command is noise, and noise on stderr is what makes an operator stop reading
 // it.
-func buildProviders(file config.File, paths config.Paths) provider.Cascade {
-	cascade, err := provider.BuildCascade(provider.Settings{
+func buildProviders(file config.File, paths config.Paths) (provider.Cascade, provider.Cascade) {
+	settings := provider.Settings{
 		File:        file,
 		Credentials: paths.Credentials,
 		Env:         os.Getenv,
-	})
+	}
+	cascade, err := provider.BuildCascade(settings)
 	if err != nil {
 		// No providers, but not "turned off": the operator did not turn the
 		// model off, they wrote an order this build cannot resolve, and doctor
 		// has to say which of the two it is looking at.
-		return provider.Cascade{Warnings: []string{err.Error()}}
+		return provider.Cascade{Warnings: []string{err.Error()}}, provider.Cascade{}
 	}
-	return cascade
+	interpreters, err := provider.BuildInterpretCascade(settings)
+	if err != nil {
+		// An interpretation order this build cannot resolve leaves the two
+		// inferences together and says why. It never takes the query down.
+		cascade.Warnings = append(cascade.Warnings, err.Error())
+		return cascade, provider.Cascade{}
+	}
+	// What resolving that order had to say is about the same file, so it reaches
+	// the operator in the same place as the rest of the configuration.
+	cascade.Warnings = append(cascade.Warnings, interpreters.Warnings...)
+	interpreters.Warnings = nil
+	return cascade, interpreters
 }
 
 func (env *cliEnv) printJSON(value any) error {
