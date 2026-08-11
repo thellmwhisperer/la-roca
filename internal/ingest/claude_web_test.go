@@ -115,6 +115,61 @@ func TestGrownClaudeWebExportAddsOnlyNewMessageIdentities(t *testing.T) {
 	}
 }
 
+func TestMultipleClaudeWebExportsKeepNewestSnapshotAndOneMemory(t *testing.T) {
+	directories := []struct {
+		path, name, summary, updated string
+	}{
+		{filepath.Join(t.TempDir(), "newer"), "Newer synthetic snapshot", "Newer synthetic summary.", "2026-08-01T09:10:00Z"},
+		{filepath.Join(t.TempDir(), "older"), "Older synthetic snapshot", "Older synthetic summary.", "2026-08-01T09:05:00Z"},
+	}
+	for _, export := range directories {
+		if err := os.MkdirAll(export.path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		conversation, err := json.Marshal([]map[string]any{{
+			"uuid": "synthetic-overlap", "name": export.name, "summary": export.summary,
+			"created_at": "2026-08-01T09:00:00Z", "updated_at": export.updated,
+			"chat_messages": []map[string]any{
+				{"uuid": "synthetic-human", "text": "Name the synthetic marker.", "sender": "human", "created_at": "2026-08-01T09:00:01Z"},
+				{"uuid": "synthetic-assistant", "text": "Glass Finch.", "sender": "assistant", "created_at": "2026-08-01T09:00:02Z", "parent_message_uuid": "synthetic-human"},
+			},
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(export.path, "conversations.json"), conversation, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		memory := `[{"uuid":"synthetic-overlap-memory","memory":"One synthetic memory."}]`
+		if err := os.WriteFile(filepath.Join(export.path, "memories.json"), []byte(memory), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	db := rocaDatabase(t)
+	roots := Roots{ClaudeWebExports: []string{directories[0].path, directories[1].path}}
+	if _, err := Run(context.Background(), db, registry(t), Options{Roots: roots}); err != nil {
+		t.Fatal(err)
+	}
+	if got := countRows(t, db.SQL(), "memories"); got != 1 {
+		t.Fatalf("memories = %d, want 1", got)
+	}
+	var ended, name, summary, updated string
+	var duration int
+	err := db.SQL().QueryRow(`SELECT ended_at, duration_minutes,
+		json_extract(metadata, '$.name'), json_extract(metadata, '$.summary'),
+		json_extract(metadata, '$.updated_at') FROM sessions WHERE session_id = 'synthetic-overlap'`).
+		Scan(&ended, &duration, &name, &summary, &updated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ended != directories[0].updated || duration != 10 || name != directories[0].name ||
+		summary != directories[0].summary || updated != directories[0].updated {
+		t.Fatalf("newest snapshot = ended %q duration %d name %q summary %q updated %q",
+			ended, duration, name, summary, updated)
+	}
+}
+
 func copyClaudeWebFixture(t *testing.T) string {
 	t.Helper()
 	target := t.TempDir()

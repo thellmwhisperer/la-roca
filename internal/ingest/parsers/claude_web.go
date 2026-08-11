@@ -210,7 +210,8 @@ func parseClaudeWebConversation(payload claudeWebConversation, recordBase int) R
 		ID: strings.TrimSpace(payload.UUID), SourceAgent: "claude-web",
 		StartedAt: started, EndedAt: ended, DurationMinutes: minutesBetween(started, ended),
 		Title: strings.TrimSpace(payload.Name), Metadata: metadata, Snapshot: true,
-		ExchangeKeyScope: "claude_web", Exchanges: exchanges,
+		SnapshotUpdatedAt: ended,
+		ExchangeKeyScope:  "claude_web", Exchanges: exchanges,
 	}}, Discards: discards}
 }
 
@@ -256,10 +257,10 @@ func parseClaudeWebMemory(raw json.RawMessage, meta FileMeta, index int) (Memory
 		return Memory{}, fmt.Sprintf("memory %d has no text", index)
 	}
 	identity := firstJSONString(object, "uuid", "id")
+	path := "memory-uuid:" + identity
 	if identity == "" {
-		identity = fmt.Sprintf("entry-%d", index)
+		path = fmt.Sprintf("%s#memory=entry-%d", meta.Path, index)
 	}
-	path := meta.Path + "#memory=" + identity
 	created := validInstant(firstJSONString(object, "created_at"))
 	updated := validInstant(firstJSONString(object, "updated_at"))
 	metadata := WithoutEmpty(map[string]any{

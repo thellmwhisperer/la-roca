@@ -100,8 +100,9 @@ type Session struct {
 	EndedAt     string
 	Title       string
 	// DurationMinutes is nil when either end of the session is unknown.
-	DurationMinutes *int
-	Metadata        map[string]any
+	DurationMinutes   *int
+	Metadata          map[string]any
+	SnapshotUpdatedAt string
 	// Snapshot merges an observed state into the row that is already there:
 	// non-null fields win and the first non-blank title stays. A metadata
 	// artefact is a snapshot; re-parsing a grown transcript is not, because

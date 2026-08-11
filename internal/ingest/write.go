@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"maps"
 	"strings"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
 )
@@ -102,6 +103,10 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 	if err != nil {
 		return counts, err
 	}
+	storedMetadata, staleSnapshot := staleSnapshotMetadata(session, current)
+	if staleSnapshot {
+		session.Snapshot = false
+	}
 
 	assigned, next, err := w.exchangeIdentities(ctx, session, current)
 	if err != nil {
@@ -110,6 +115,9 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 
 	metadata := map[string]any{}
 	maps.Copy(metadata, session.Metadata)
+	if staleSnapshot {
+		metadata = mergeMetadata(metadata, storedMetadata)
+	}
 	if session.ParentID != "" {
 		metadata["parent_session_id"] = session.ParentID
 	}
@@ -203,6 +211,35 @@ func (w *writer) currentSession(ctx context.Context, id string) (row, bool, erro
 		return nil, false, fmt.Errorf("look up the session %s: %w", id, err)
 	}
 	return row{"source_agent": agent.String, "metadata": metadata.String}, true, nil
+}
+
+func staleSnapshotMetadata(session parsers.Session, current row) (map[string]any, bool) {
+	if !session.Snapshot || session.SnapshotUpdatedAt == "" {
+		return nil, false
+	}
+	var stored map[string]any
+	if err := json.Unmarshal([]byte(current.text("metadata")), &stored); err != nil {
+		return nil, false
+	}
+	updated, _ := stored["updated_at"].(string)
+	incomingTime, incomingErr := time.Parse(time.RFC3339Nano, session.SnapshotUpdatedAt)
+	storedTime, storedErr := time.Parse(time.RFC3339Nano, updated)
+	return stored, incomingErr == nil && storedErr == nil && incomingTime.Before(storedTime)
+}
+
+func mergeMetadata(base, preferred map[string]any) map[string]any {
+	merged := map[string]any{}
+	maps.Copy(merged, base)
+	for key, value := range preferred {
+		baseMap, baseOK := merged[key].(map[string]any)
+		preferredMap, preferredOK := value.(map[string]any)
+		if baseOK && preferredOK {
+			merged[key] = mergeMetadata(baseMap, preferredMap)
+			continue
+		}
+		merged[key] = value
+	}
+	return merged
 }
 
 // insertSession registers a session on first sight. ON CONFLICT DO NOTHING scopes

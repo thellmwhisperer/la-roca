@@ -103,6 +103,32 @@ func TestClaudeWebMemoriesLandInTheUserLayer(t *testing.T) {
 	}
 }
 
+func TestClaudeWebMemoryIdentityUsesUUIDOrScopedPosition(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		same bool
+	}{
+		{"uuid", `{"uuid":"synthetic-memory-1","memory":"Synthetic preference."}`, true},
+		{"position", `"Synthetic preference."`, false},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			first, reason := parseClaudeWebMemory(json.RawMessage(test.raw), FileMeta{Path: "/export-one/memories.json"}, 1)
+			if reason != "" {
+				t.Fatal(reason)
+			}
+			second, reason := parseClaudeWebMemory(json.RawMessage(test.raw), FileMeta{Path: "/export-two/memories.json"}, 1)
+			if reason != "" {
+				t.Fatal(reason)
+			}
+			if got := first.FilePath == second.FilePath; got != test.same {
+				t.Fatalf("same identity = %t, want %t (%q, %q)", got, test.same, first.FilePath, second.FilePath)
+			}
+		})
+	}
+}
+
 func parseClaudeWebFixture(t *testing.T, name string) Records {
 	t.Helper()
 	raw := readClaudeWebFixture(t, name)
