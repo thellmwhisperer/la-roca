@@ -407,6 +407,8 @@ func queryCommand(env *cliEnv) *cobra.Command {
 			if answer.interpretErr != nil {
 				env.print("%s", interpretationFallback(answer.interpretErr))
 			}
+			answer.prose = formatInterpretation(answer.prose, termAware(env.out),
+				terminalWidth(env.out), colorOn(env.out))
 			env.print("%s", axiQuery(answer))
 			return nil
 		}),
