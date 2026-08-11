@@ -85,4 +85,4 @@ Feature: Frontier with a local floor
     And the configuration chooses model "frontier-demo" for the frontier provider
     When I run "roca query 'what decisions were made about the format' --json"
     Then the command exits with code 0
-    And the JSON output has "model" equal to "frontier-demo"
+    And the JSON output has "sql_model" equal to "frontier-demo"
