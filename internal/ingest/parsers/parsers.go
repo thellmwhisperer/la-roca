@@ -89,7 +89,16 @@ type Records struct {
 type Discard struct {
 	Record int    `json:"record"`
 	Reason string `json:"reason"`
+	// ByDesign marks a source record this build never intended to normalize:
+	// runtime machinery a log writes about itself. It is reported apart from the
+	// records that could not be read, because an operator reading "thousands of
+	// discards" cannot tell a healthy ingest from a broken one otherwise.
+	ByDesign bool `json:"by_design,omitempty"`
 }
+
+// Excluded is a record left out by design, named by the category an operator
+// reads rather than by its position.
+func Excluded(reason string) Discard { return Discard{Reason: reason, ByDesign: true} }
 
 // Session is one conversation, with everything that hangs off it.
 type Session struct {
@@ -150,6 +159,95 @@ type Exchange struct {
 	LatencyMS         *int
 	Thinking          []Thinking
 	Tools             []ToolUse
+	// Provenance is what the source recorded about how this answer was produced.
+	Provenance Provenance
+}
+
+// Provenance is the unified shape every source fills with whatever it recorded
+// about one answer: who produced it and what it spent. Every field is optional
+// and absence is the normal case, because no source records all of them and
+// guessing one would put an invented number in the corpus.
+//
+// The pointers are what tells "the source says zero" from "the source does not
+// say", and only the first of those is a measurement.
+type Provenance struct {
+	Model           string
+	Provider        string
+	TokensIn        *int
+	TokensOut       *int
+	TokensReasoning *int
+	CostUSD         *float64
+}
+
+// Empty says the source recorded nothing about this answer, which is what a
+// signal-poor export leaves behind.
+func (p Provenance) Empty() bool {
+	return p.Model == "" && p.Provider == "" && p.TokensIn == nil &&
+		p.TokensOut == nil && p.TokensReasoning == nil && p.CostUSD == nil
+}
+
+// Tokens is a token count the source stated, nil when it stated none. It is the
+// one constructor for the counted fields so no adapter invents a zero.
+func Tokens(value int, stated bool) *int {
+	if !stated {
+		return nil
+	}
+	return &value
+}
+
+// Cost is the same for a dollar amount.
+func Cost(value float64, stated bool) *float64 {
+	if !stated {
+		return nil
+	}
+	return &value
+}
+
+// UsageTally adds up what a source stated about one turn across the several
+// requests a turn is made of. Tokens and cost are tallied apart because a source
+// may state one and not the other, and a total nobody stated has to stay absent
+// rather than become a zero.
+type UsageTally struct {
+	tokensStated    bool
+	input, output   int
+	reasoningStated bool
+	reasoning       int
+	costStated      bool
+	cost            float64
+}
+
+// AddTokens records one request's prompt and answer tokens.
+func (t *UsageTally) AddTokens(input, output int) {
+	t.tokensStated = true
+	t.input += input
+	t.output += output
+}
+
+// AddReasoningTokens is apart from AddTokens because a source that counts
+// tokens does not necessarily separate the ones spent thinking, and a zero
+// nobody stated would read as an answer given without thought.
+func (t *UsageTally) AddReasoningTokens(count int) {
+	t.reasoningStated = true
+	t.reasoning += count
+}
+
+// AddCost records one request's dollar amount.
+func (t *UsageTally) AddCost(amount float64) {
+	t.costStated = true
+	t.cost += amount
+}
+
+// Provenance is the tally as the exchange stores it, under the model and
+// provider the source named.
+func (t UsageTally) Provenance(model, provider string) Provenance {
+	return Provenance{
+		Model:           model,
+		Provider:        provider,
+		TokensIn:        Tokens(t.input, t.tokensStated),
+		TokensOut:       Tokens(t.output, t.tokensStated),
+		TokensReasoning: Tokens(t.reasoning, t.reasoningStated),
+		CostUSD:         Cost(t.cost, t.costStated),
+	}
 }
 
 // Thinking is one reasoning block.

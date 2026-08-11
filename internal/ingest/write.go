@@ -142,7 +142,11 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 			known, landed := assigned[exchange.SourceID]
 			if landed {
 				// It is already in. Whether the source has edited it since is
-				// reported, and it is still not rewritten.
+				// reported, and it is still not rewritten. Only the provenance a
+				// previous parser version never read is filled in.
+				if err := w.backfillProvenance(ctx, session.ID, known.Number, exchange.Provenance); err != nil {
+					return counts, err
+				}
 				if known.Fingerprint == exchange.Fingerprint {
 					counts.ExchangesUnchanged++
 				} else {
@@ -375,15 +379,20 @@ func keysItsOwnExchanges(session parsers.Session) bool {
 // re-ingest triples the thinking blocks of a session that grew by one turn.
 func (w *writer) exchange(ctx context.Context, sessionID string, number int,
 	exchange parsers.Exchange) (bool, error) {
+	provenance := exchange.Provenance
 	result, err := w.tx.ExecContext(ctx, `
 		INSERT OR IGNORE INTO exchanges
 		  (session_id, exchange_number, is_after_compaction, human_text, agent_text,
-		   human_timestamp, agent_timestamp, response_latency_ms)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		   human_timestamp, agent_timestamp, response_latency_ms,
+		   model, provider, tokens_in, tokens_out, tokens_reasoning, cost_usd)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sessionID, number, boolToInt(exchange.IsAfterCompaction),
 		nullIfEmpty(exchange.HumanText), nullIfEmpty(exchange.AgentText),
 		nullIfEmpty(exchange.HumanTimestamp), nullIfEmpty(exchange.AgentTimestamp),
-		nullInt(exchange.LatencyMS))
+		nullInt(exchange.LatencyMS),
+		nullIfEmpty(provenance.Model), nullIfEmpty(provenance.Provider),
+		nullInt(provenance.TokensIn), nullInt(provenance.TokensOut),
+		nullInt(provenance.TokensReasoning), nullFloat(provenance.CostUSD))
 	var affected int64
 	if err == nil {
 		affected, err = result.RowsAffected()
@@ -391,7 +400,39 @@ func (w *writer) exchange(ctx context.Context, sessionID string, number int,
 	if err != nil {
 		return false, fmt.Errorf("insert the exchange %s/%d: %w", sessionID, number, err)
 	}
-	return affected > 0, nil
+	if affected > 0 {
+		return true, nil
+	}
+	return false, w.backfillProvenance(ctx, sessionID, number, provenance)
+}
+
+// backfillProvenance fills the provenance a row was written without, and only
+// that: every column is COALESCEd, so a re-ingest that now reads a richer source
+// lands the values that were missing and never rewrites one that already
+// answered a query. It is what makes bumping a parser version a backfill instead
+// of a migration.
+func (w *writer) backfillProvenance(ctx context.Context, sessionID string, number int,
+	provenance parsers.Provenance) error {
+	if provenance.Empty() {
+		return nil
+	}
+	_, err := w.tx.ExecContext(ctx, `
+		UPDATE exchanges SET
+		  model = COALESCE(model, ?),
+		  provider = COALESCE(provider, ?),
+		  tokens_in = COALESCE(tokens_in, ?),
+		  tokens_out = COALESCE(tokens_out, ?),
+		  tokens_reasoning = COALESCE(tokens_reasoning, ?),
+		  cost_usd = COALESCE(cost_usd, ?)
+		WHERE session_id = ? AND exchange_number = ?`,
+		nullIfEmpty(provenance.Model), nullIfEmpty(provenance.Provider),
+		nullInt(provenance.TokensIn), nullInt(provenance.TokensOut),
+		nullInt(provenance.TokensReasoning), nullFloat(provenance.CostUSD),
+		sessionID, number)
+	if err != nil {
+		return fmt.Errorf("backfill the provenance of %s/%d: %w", sessionID, number, err)
+	}
+	return nil
 }
 
 func (w *writer) children(ctx context.Context, sessionID string, number int,
@@ -619,6 +660,13 @@ func boolToInt(value bool) int {
 }
 
 func nullInt(value *int) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func nullFloat(value *float64) any {
 	if value == nil {
 		return nil
 	}
