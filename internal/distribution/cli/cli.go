@@ -57,7 +57,6 @@ type cliEnv struct {
 	skipInitChooser     bool
 	initPromptWait      time.Duration
 	initChooserElapsed  time.Duration
-	initUnsetOrderModel *service.InitModel
 }
 
 // Execute runs the CLI and returns the process exit code.

@@ -167,8 +167,8 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 			input:         "sonnet\n\n",
 			want:          "answering: codex/" + provider.DefaultCodexModel,
 			avoid:         "answering: claude/sonnet",
-			guidance:      "unset ROCA_MODELS_ORDER, which makes claude/sonnet answer before using models.claude.model",
-			avoidGuidance: "before using models.codex.model",
+			guidance:      "unset ROCA_MODELS_ORDER before using models.<provider>.model",
+			avoidGuidance: "which makes",
 		},
 		{
 			name: "provider model environment",
@@ -195,9 +195,10 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 			backend: chooserTestBackend{catalogues: map[string]modelCatalogue{
 				provider.NameOllama: {IDs: []string{"local-one"}},
 			}},
-			want:     "answering: ollama/environment-model",
-			avoid:    "answering: ollama/local-one",
-			guidance: "unset ROCA_MODELS_ORDER and ROCA_OLLAMA_MODEL and ROCA_MODEL, which makes ollama/environment-model answer before using models.ollama.model",
+			want:          "answering: ollama/environment-model",
+			avoid:         "answering: ollama/local-one",
+			guidance:      "unset ROCA_MODELS_ORDER and ROCA_OLLAMA_MODEL and ROCA_MODEL before using models.<provider>.model",
+			avoidGuidance: "which makes",
 		},
 		{
 			name: "persisted base URL",
@@ -262,6 +263,9 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 			}
 			if test.avoidGuidance != "" && strings.Contains(out, test.avoidGuidance) {
 				t.Fatalf("effective guidance still contains %q:\n%s", test.avoidGuidance, out)
+			}
+			if !strings.HasSuffix(strings.TrimSpace(out), "run roca doctor to confirm who will answer") {
+				t.Fatalf("effective guidance does not end with the verification instruction:\n%s", out)
 			}
 		})
 	}
