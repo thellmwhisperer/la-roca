@@ -350,7 +350,7 @@ func ownedPaths(paths config.Paths) []string {
 	dataDir := dirOf(paths.DB)
 	owned := []string{
 		paths.DB, paths.DB + "-wal", paths.DB + "-shm", paths.DB + "-journal",
-		paths.Config, filepath.Join(dataDir, "prompt.md"),
+		paths.Config, paths.Reconciliation, filepath.Join(dataDir, "prompt.md"),
 	}
 	backupPrefix := strings.TrimSuffix(filepath.Base(paths.DB), ".db") + "."
 	backups, backupsExist := ownedFiles(paths.Backups, func(name string) bool {

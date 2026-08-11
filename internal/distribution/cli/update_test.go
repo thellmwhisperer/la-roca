@@ -124,3 +124,13 @@ func TestTheRefusalToSelfReplaceSaysWhatToDoInstead(t *testing.T) {
 		}
 	}
 }
+
+func TestCapabilityCountRequiresThePendingField(t *testing.T) {
+	if _, err := decodeCapabilityCount([]byte(`{}`)); err == nil ||
+		!strings.Contains(err.Error(), "missing pending") {
+		t.Fatalf("missing pending field error = %v", err)
+	}
+	if count, err := decodeCapabilityCount([]byte(`{"pending":2}`)); err != nil || count != 2 {
+		t.Fatalf("count = %d, err %v", count, err)
+	}
+}

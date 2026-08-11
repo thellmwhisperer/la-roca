@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/reconcile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/release"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 )
@@ -133,6 +135,11 @@ func (env *cliEnv) update(ctx context.Context, source release.Source,
 	if published.Tag == current {
 		if !checkOnly {
 			env.refreshCatalogueAfterUpdate(ctx)
+			return env.reportUpdate(map[string]any{
+				"updated": false, "version": current, "latest": published.Tag,
+				"reason": "already at the latest version",
+			}, lenOrZero(env.openCapabilityProposals()),
+				"roca %s is already the latest version", current)
 		}
 		return env.report(map[string]any{
 			"updated": false, "version": current, "latest": published.Tag,
@@ -192,10 +199,55 @@ func (env *cliEnv) update(ctx context.Context, source release.Source,
 		return err
 	}
 	env.refreshCatalogueAfterUpdate(ctx)
-	return env.report(map[string]any{
+	pending, countErr := capabilityCountFromBinary(ctx, installed)
+	if countErr != nil {
+		pending = lenOrZero(env.openCapabilityProposals())
+		fmt.Fprintf(env.errOut, "warning: the new binary could not count capability proposals: %v\n", countErr)
+	}
+	return env.reportUpdate(map[string]any{
 		"updated": true, "version": published.Tag, "previous": current,
 		"binary": installed,
-	}, "roca %s installed at %s (was %s)", published.Tag, installed, current)
+	}, pending, "roca %s installed at %s (was %s)", published.Tag, installed, current)
+}
+
+func lenOrZero(entries []reconcile.Entry, err error) int {
+	if err != nil {
+		return 0
+	}
+	return len(entries)
+}
+
+func (env *cliEnv) reportUpdate(document map[string]any, pending int,
+	format string, args ...any) error {
+	document["capability_proposals"] = pending
+	if env.json {
+		return env.printJSON(document)
+	}
+	env.print(format, args...)
+	env.print("%s", capabilityCountLine(pending))
+	return nil
+}
+
+func capabilityCountFromBinary(ctx context.Context, binary string) (int, error) {
+	command := exec.CommandContext(ctx, binary, "_capabilities", "--json")
+	output, err := command.Output()
+	if err != nil {
+		return 0, err
+	}
+	return decodeCapabilityCount(output)
+}
+
+func decodeCapabilityCount(output []byte) (int, error) {
+	var result struct {
+		Pending *int `json:"pending"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil {
+		return 0, fmt.Errorf("decode capability count: %w", err)
+	}
+	if result.Pending == nil {
+		return 0, fmt.Errorf("decode capability count: missing pending")
+	}
+	return *result.Pending, nil
 }
 
 // refreshCatalogueAfterUpdate keeps the offline model list current without

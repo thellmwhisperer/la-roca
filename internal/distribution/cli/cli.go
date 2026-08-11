@@ -53,6 +53,7 @@ type cliEnv struct {
 	modelBackend        modelValidationBackend
 	modelPicker         modelPicker
 	modelCatalogRefresh modelCatalogRefresher
+	skipReconciliation  bool
 }
 
 // Execute runs the CLI and returns the process exit code.
@@ -125,6 +126,18 @@ func rootCommand(env *cliEnv) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
 		},
+		PersistentPostRunE: func(cmd *cobra.Command, _ []string) error {
+			switch cmd.Name() {
+			case "doctor", "update", "uninstall", "_capabilities":
+				return nil
+			}
+			if env.skipReconciliation {
+				return nil
+			}
+			interactive := terminalInput(cmd.InOrStdin()) && !env.json
+			_, err := env.reconcileCapabilities(cmd, interactive, false)
+			return err
+		},
 	}
 	root.SetVersionTemplate(versionLine(env.build) + "\n")
 	root.PersistentFlags().StringVar(&env.dbPath, "db-path", "", "database to use")
@@ -138,6 +151,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 		loginCommand(env), logoutCommand(env), modelCommand(env),
 		updateCommand(env), uninstallCommand(env),
 		modelsCommand(env), pluginsCommand(env),
+		capabilitiesCommand(env),
 	)
 	root.InitDefaultHelpCmd()
 	for _, command := range root.Commands() {
