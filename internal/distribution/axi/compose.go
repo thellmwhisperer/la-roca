@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
@@ -59,8 +60,7 @@ func QueryPreamble(res service.QueryResult) string {
 }
 
 // queryTail is the rows table and the help that follow the preamble when a
-// query answered with rows. Both the shell and MCP surface reach it through
-// Query; full shell output adds prose above it without hiding the evidence.
+// query answered with rows. Both the default shell mode and MCP reach it.
 func queryTail(res service.QueryResult, help func(service.QueryResult) string) string {
 	var b strings.Builder
 	appendLine(&b, RowOutput(res.Columns, res.Rows, res.Question))
@@ -68,6 +68,68 @@ func queryTail(res service.QueryResult, help func(service.QueryResult) string) s
 		appendLine(&b, help(res))
 	}
 	return b.String()
+}
+
+const (
+	fullEvidenceRows = 3
+	fullEvidenceText = 80
+)
+
+// evidenceFooter leaves receipts under a human interpretation without making
+// the reader cross the complete data table. The default query remains the
+// expansion path, while JSON retains the complete structured envelope.
+func evidenceFooter(res service.QueryResult) string {
+	var b strings.Builder
+	appendLine(&b, "evidence:")
+	limit := min(fullEvidenceRows, len(res.Rows))
+	for _, row := range res.Rows[:limit] {
+		fields := make([]string, 0, 4)
+		if source := compactEvidenceValue(row, "source"); source != "" {
+			fields = append(fields, source)
+		}
+		if id := compactEvidenceValue(row, "id"); id != "" {
+			fields = append(fields, "id "+id)
+		}
+		if text := firstEvidenceValue(row, "text", "content", "human_text", "agent_text", "full_text", "title"); text != "" {
+			fields = append(fields, compactEvidenceText(text))
+		}
+		if date := firstEvidenceValue(row, "created_at", "date", "updated_at"); date != "" {
+			fields = append(fields, strings.Join(strings.Fields(date), " "))
+		}
+		appendLine(&b, "  "+strings.Join(fields, " · "))
+	}
+	total := res.RowCount
+	if total == 0 {
+		total = len(res.Rows)
+	}
+	appendLine(&b, fmt.Sprintf("%s total · run without --full for the full table",
+		Quantity(int64(total), "row")))
+	return b.String()
+}
+
+func compactEvidenceValue(row map[string]any, key string) string {
+	value, ok := row[key]
+	if !ok || value == nil {
+		return ""
+	}
+	return strings.Join(strings.Fields(asText(value)), " ")
+}
+
+func firstEvidenceValue(row map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value := compactEvidenceValue(row, key); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func compactEvidenceText(value string) string {
+	value = strings.Join(strings.Fields(value), " ")
+	if utf8.RuneCountInString(value) <= fullEvidenceText {
+		return value
+	}
+	return string([]rune(value)[:fullEvidenceText-1]) + "…"
 }
 
 // Query renders the AXI text for a query result: the route preamble and then
@@ -101,7 +163,7 @@ func composeQuery(res service.QueryResult, prose string, help func(service.Query
 		appendLine(&b, help(res))
 	case prose != "":
 		appendLine(&b, prose)
-		appendLine(&b, queryTail(res, help))
+		appendLine(&b, evidenceFooter(res))
 	default:
 		appendLine(&b, queryTail(res, help))
 	}

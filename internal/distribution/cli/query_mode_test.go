@@ -3,6 +3,7 @@ package cli
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"slices"
@@ -109,7 +110,7 @@ func TestQueryDefaultsToOneInferenceAndRows(t *testing.T) {
 	}
 }
 
-func TestQueryFullAddsOneInterpretationAndKeepsEvidence(t *testing.T) {
+func TestQueryFullAddsOneInterpretationAndCompactEvidence(t *testing.T) {
 	model, answer, got := runQueryMode(t, true, 0)
 	if model.calls != 2 {
 		t.Fatalf("full query made %d provider calls, want two", model.calls)
@@ -119,7 +120,9 @@ func TestQueryFullAddsOneInterpretationAndKeepsEvidence(t *testing.T) {
 		"SQL · provider fake · model fake-model",
 		"answer · provider fake · model fake-model",
 		"The evidence says the format is rows.",
-		"rows[1]{source,id,text}",
+		"evidence:",
+		"memory · id 1 · raw evidence",
+		"1 row total · run without --full for the full table",
 		"raw evidence",
 	} {
 		if !strings.Contains(got, want) {
@@ -128,6 +131,34 @@ func TestQueryFullAddsOneInterpretationAndKeepsEvidence(t *testing.T) {
 	}
 	if answer.result.Interpretation != queryModeProse {
 		t.Errorf("structured interpretation = %q, want %q", answer.result.Interpretation, queryModeProse)
+	}
+	if strings.Contains(got, "rows[") {
+		t.Errorf("full query dumped its rows table:\n%s", got)
+	}
+}
+
+func TestQueryFullJSONKeepsTheCompleteRowsEnvelope(t *testing.T) {
+	_, answer, _ := runQueryMode(t, true, 0)
+	answer.result.RowCount = 5
+	answer.result.Rows = append(answer.result.Rows,
+		map[string]any{"source": "memory", "id": int64(2), "text": "second"},
+		map[string]any{"source": "memory", "id": int64(3), "text": "third"},
+		map[string]any{"source": "memory", "id": int64(4), "text": "fourth"},
+		map[string]any{"source": "memory", "id": int64(5), "text": "fifth"})
+	var output strings.Builder
+	if err := (&cliEnv{out: &output}).printJSON(answer.result); err != nil {
+		t.Fatal(err)
+	}
+	var envelope struct {
+		Rows           []map[string]any `json:"rows"`
+		RowCount       int              `json:"row_count"`
+		Interpretation string           `json:"interpretation"`
+	}
+	if err := json.Unmarshal([]byte(output.String()), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.RowCount != 5 || len(envelope.Rows) != 5 || envelope.Interpretation != queryModeProse {
+		t.Fatalf("full JSON envelope was compacted: %+v", envelope)
 	}
 }
 

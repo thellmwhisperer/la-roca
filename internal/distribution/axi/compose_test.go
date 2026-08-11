@@ -52,23 +52,37 @@ func TestQueryRendersTheRouteLineTOONRowsAndHelp(t *testing.T) {
 	}
 }
 
-func TestQueryAddsProseAboveTheEvidenceWhenTheCallerPassesIt(t *testing.T) {
+func TestQueryAddsProseAboveACompactEvidenceFooter(t *testing.T) {
 	res := service.QueryResult{
-		Question: "count memories", Path: service.PathLLM, Engine: "ollama",
-		Model: "qwen", Match: service.MatchFound, RowCount: 1,
-		Columns: []string{"n", "evidence"}, Rows: []map[string]any{{"n": int64(2), "evidence": "the row"}},
+		Question: "recent memories", Path: service.PathLLM, Engine: "ollama",
+		Model: "qwen", Match: service.MatchFound, RowCount: 6,
+		Columns: []string{"source", "id", "text", "created_at"},
+		Rows: []map[string]any{
+			{"source": "memory", "id": int64(1), "text": "first\nrow", "created_at": "2026-08-11"},
+			{"source": "exchange", "id": int64(2), "text": strings.Repeat("x", 90)},
+			{"source": "memory", "id": int64(3), "text": "third row"},
+			{"source": "memory", "id": int64(4), "text": "must stay hidden"},
+		},
 	}
-	got := axi.Query(res, "there are two memories")
+	got := axi.Query(res, "the recent memories agree")
 	if !strings.Contains(got, "route ") {
 		t.Errorf("the preamble was dropped under prose:\n%s", got)
 	}
-	if !strings.Contains(got, "there are two memories") {
+	if !strings.Contains(got, "the recent memories agree") {
 		t.Errorf("the prose rendering was dropped:\n%s", got)
 	}
-	if !strings.Contains(got, "rows[1]") || !strings.Contains(got, "the row") {
-		t.Errorf("the evidence rows disappeared under prose:\n%s", got)
+	want := "evidence:\n" +
+		"  memory · id 1 · first row · 2026-08-11\n" +
+		"  exchange · id 2 · " + strings.Repeat("x", 79) + "…\n" +
+		"  memory · id 3 · third row\n" +
+		"6 rows total · run without --full for the full table"
+	if !strings.Contains(got, want) {
+		t.Errorf("compact evidence footer differs:\n%s", got)
 	}
-	if strings.Index(got, "there are two memories") > strings.Index(got, "rows[1]") {
+	if strings.Contains(got, "rows[") || strings.Contains(got, "must stay hidden") {
+		t.Errorf("full mode dumped the rows table:\n%s", got)
+	}
+	if strings.Index(got, "the recent memories agree") > strings.Index(got, "evidence:") {
 		t.Errorf("the prose does not ride above the evidence:\n%s", got)
 	}
 }
