@@ -277,6 +277,7 @@ func renderBootstrap(env *cliEnv, result service.InitResult) {
 			}
 		}
 	}
+	renderBedrock(env, result.Bedrock)
 	env.print("total: %s", axi.Duration(result.TotalElapsedMS))
 	env.print("next steps:")
 	if result.PromptPath != "" {
@@ -284,6 +285,26 @@ func renderBootstrap(env *cliEnv, result service.InitResult) {
 		env.print("  Paste its contents into the agent instructions you choose.")
 	}
 	env.print("  skill: available via `roca skill install` (not installed automatically)")
+}
+
+func renderBedrock(env *cliEnv, bedrock *service.Bedrock) {
+	if bedrock == nil {
+		env.print("bedrock: your memory has no history yet")
+		return
+	}
+	stamp, err := time.Parse(time.RFC3339, bedrock.Timestamp)
+	if err != nil {
+		stamp, err = time.Parse("2006-01-02 15:04:05", bedrock.Timestamp)
+	}
+	date := bedrock.Timestamp
+	if err == nil {
+		date = stamp.Format("02 Jan 2006")
+	}
+	if bedrock.Project != "" {
+		env.print("bedrock: your memory reaches back to %s (first session: %s)", date, bedrock.Project)
+		return
+	}
+	env.print("bedrock: your memory reaches back to %s", date)
 }
 
 func detectedAgentsLine(agents []string) string {

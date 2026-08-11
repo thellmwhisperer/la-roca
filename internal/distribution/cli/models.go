@@ -42,6 +42,7 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 func renderDoctor(env *cliEnv, report service.DoctorReport) {
 	env.print("roca %s (%s)", report.Version, report.SourceSHA)
 	env.print("database: %s · %d memories", report.DBPath, report.Memories)
+	renderBedrock(env, report.Bedrock)
 	if report.ConfigExists {
 		env.print("configuration: %s", report.ConfigPath)
 	} else {

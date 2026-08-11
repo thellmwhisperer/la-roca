@@ -74,6 +74,27 @@ func TestDoctorCarriesTheConfigurationsWarnings(t *testing.T) {
 	}
 }
 
+func TestDoctorReportsTheOldestCorpusMomentAndItsProject(t *testing.T) {
+	svc := seededServiceWith(t, provider.Cascade{})
+	if _, err := svc.DB().SQL().Exec(`
+		INSERT INTO sessions (session_id, project, started_at) VALUES
+		('later', 'younger-project', '2026-02-02T10:00:00Z'),
+		('first', 'bedrock-project', '2026-01-31T08:15:00Z');
+		INSERT INTO exchanges (session_id, human_timestamp, agent_timestamp) VALUES
+		('later', '2026-02-02T10:00:01Z', '2026-02-02T10:00:02Z');
+		INSERT INTO memories (layer, content, origin, project, created_at) VALUES
+		('project', 'younger memory', 'agent', 'younger-project', '2026-02-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	report, err := svc.Doctor(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Bedrock.Timestamp != "2026-01-31T08:15:00Z" || report.Bedrock.Project != "bedrock-project" {
+		t.Fatalf("bedrock = %+v", report.Bedrock)
+	}
+}
+
 // The credential never appears in any output. Presence is reported,
 // the value never is.
 func TestDoctorReportsTheCredentialsPresenceAndNeverItsValue(t *testing.T) {

@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -31,8 +33,9 @@ type DoctorReport struct {
 	ConfigPath string `json:"config_path,omitempty"`
 	// ConfigExists tells "there is no file, these are the defaults" apart from
 	// "there is a file and this is what it says".
-	ConfigExists bool `json:"config_exists"`
-	Memories     int  `json:"memories"`
+	ConfigExists bool     `json:"config_exists"`
+	Memories     int      `json:"memories"`
+	Bedrock      *Bedrock `json:"bedrock"`
 	// DetectedAgents are the runtimes whose routes or stores exist on this machine.
 	DetectedAgents []string `json:"detected_agents"`
 
@@ -77,6 +80,10 @@ type CredentialHolder interface {
 }
 
 func (s *Service) Doctor(ctx context.Context) (DoctorReport, error) {
+	bedrock, err := s.bedrock(ctx)
+	if err != nil {
+		return DoctorReport{}, err
+	}
 	cascade := s.opts.Providers
 	promptPath := filepath.Join(s.dataDir(), "prompt.md")
 	promptInfo, promptErr := os.Stat(promptPath)
@@ -89,6 +96,7 @@ func (s *Service) Doctor(ctx context.Context) (DoctorReport, error) {
 		ModelDisabled:  cascade.Disabled,
 		Warnings:       cascade.Warnings,
 		Memories:       s.countOf(ctx, "memories"),
+		Bedrock:        bedrock,
 		DetectedAgents: ingest.DetectAgents(s.opts.Sources),
 		PromptPath:     promptPath,
 		PromptExists:   promptErr == nil && promptInfo.Mode().IsRegular(),
@@ -100,6 +108,45 @@ func (s *Service) Doctor(ctx context.Context) (DoctorReport, error) {
 	// inferences has no second decision to report.
 	report.Interpreters, report.InterpretTitular = verdicts(ctx, s.opts.Interpreters)
 	return report, nil
+}
+
+// Bedrock is the oldest valid moment in the ingested corpus. Project is best
+// effort: exchanges inherit it from their session, while a memory may carry it
+// directly.
+type Bedrock struct {
+	Timestamp string `json:"timestamp"`
+	Project   string `json:"project,omitempty"`
+}
+
+func (s *Service) bedrock(ctx context.Context) (*Bedrock, error) {
+	const query = `
+		WITH candidates(timestamp, project) AS (
+			SELECT started_at, project FROM sessions WHERE julianday(started_at) IS NOT NULL
+			UNION ALL
+			SELECT e.human_timestamp, s.project FROM exchanges e
+			LEFT JOIN sessions s ON s.session_id = e.session_id
+			WHERE julianday(e.human_timestamp) IS NOT NULL
+			UNION ALL
+			SELECT e.agent_timestamp, s.project FROM exchanges e
+			LEFT JOIN sessions s ON s.session_id = e.session_id
+			WHERE julianday(e.agent_timestamp) IS NOT NULL
+			UNION ALL
+			SELECT created_at, project FROM memories WHERE julianday(created_at) IS NOT NULL
+		), floor(value) AS (SELECT MIN(julianday(timestamp)) FROM candidates)
+		SELECT c.timestamp, COALESCE(c.project, '')
+		FROM candidates c, floor
+		WHERE julianday(c.timestamp) = floor.value
+		ORDER BY c.project IS NULL, c.project
+		LIMIT 1`
+	var result Bedrock
+	err := s.db.SQL().QueryRowContext(ctx, query).Scan(&result.Timestamp, &result.Project)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read corpus bedrock: %w", err)
+	}
+	return &result, nil
 }
 
 // verdicts is one cascade diagnosed: every provider with its verdict, in the
