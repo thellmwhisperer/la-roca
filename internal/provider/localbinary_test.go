@@ -149,4 +149,7 @@ func TestLocalBinaryReportsAMissingExecutable(t *testing.T) {
 	if ready.Ready || !strings.Contains(ready.Reason, "not found") || !strings.Contains(ready.Action, "PATH") {
 		t.Fatalf("readiness = %+v", ready)
 	}
+	if ready.Reason != "roca-definitely-absent-binary binary not found in PATH" {
+		t.Fatalf("missing binary reason = %q", ready.Reason)
+	}
 }

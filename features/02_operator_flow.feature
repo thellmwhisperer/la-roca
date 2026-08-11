@@ -91,6 +91,14 @@ Feature: The operator's real flow
     And the output names what is published and how to install it
     And the previous database and configuration are still intact
 
+  @fast
+  Scenario: F02-12 Update announces pending capabilities and doctor keeps listing them
+    Given La Roca is installed at an earlier release version
+    When I run "roca update"
+    Then the update names how many capability proposals await
+    When I run "roca doctor"
+    Then doctor lists the open capability proposals
+
   @acceptance @slow
   Scenario: F02-09 Synthetic ingest of every supported source
     Given La Roca is installed and initialized
