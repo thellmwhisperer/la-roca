@@ -45,16 +45,35 @@ it. Non-interactive automation must select a location with `--db-path`; init
 never guesses. Existing tables outside the current schema are reported and left
 intact.
 
+In a terminal, database selection flows directly into a model-first chooser:
+
+1. Init lists the default model for every detected supported agent CLI and the
+   models returned by Ollama's local catalogue, then asks which model should
+   answer. A CLI without an enumerable catalogue contributes its shipped
+   default and accepts a free-text model ID. Plain Enter keeps the provider and
+   model the existing selection rules would use.
+2. Init resolves the harnesses that can serve that model. One candidate is
+   selected and named automatically; several candidates produce one short
+   harness question.
+3. Init confirms the provider/model pair, probes a changed choice, and writes
+   the provider entry, model, and order to the configuration with a surgical
+   edit. Existing configuration gets a named `.roca.bak` recovery copy.
+
+Thus a normal new init takes three answers (database, model, confirmation), or
+four when a harness choice or adoption path is needed. It uses the agent CLI's
+existing session and does not add a login step.
+
 Init also writes `prompt.md` in the selected data directory. If that optional
 write fails, init reports a warning and leaves the prepared database usable. It
 does not edit agent instruction files or install integrations without a
 separate command.
 
-A successful init ends by reporting the corpus floor: the oldest ingested
-moment, the bedrock your memory reaches back to. An empty database says so
-plainly instead of printing a zero date. `roca doctor` reports the same floor
-as part of installation health, and `--json` carries the machine field in
-both commands.
+A successful init reports the corpus floor: the oldest ingested moment, the
+bedrock your memory reaches back to. An empty database says so plainly instead
+of printing a zero date. It ends with an `answering:` line that names the active
+provider/model, the exact configuration path, and the command or key that
+changes it. `roca doctor` reports the same floor as part of installation health,
+and `--json` carries the machine fields in both commands.
 
 Before asking for any provider setup, init detects supported agent CLIs already
 on `PATH` and uses their existing signed-in sessions. Its summary names the
@@ -63,6 +82,11 @@ the next step is simply `roca query "<question>"`. Ollama and then keyword
 search remain the honest local fallbacks when no detected CLI can serve.
 HTTP/OAuth or key login is optional setup only for users without a usable local
 CLI who choose a configured remote provider.
+
+With `--db-path` on non-terminal input, init keeps that zero-login factory
+selection without opening the chooser or writing model configuration. It emits
+one `answering:` notice with the chosen provider/model and configuration path;
+scripts receive no prompts. `--json` remains one JSON document.
 
 ## Update
 
@@ -76,12 +100,14 @@ configuration, credentials, and agent integrations remain in place. If any
 verification fails, the active executable is unchanged.
 
 After the swap, update reports how many new capability proposals are open. On
-the first command run with each new version, La Roca offers every open proposal
-once for that version. In a terminal it asks before each change; an accepted
-change edits only the declared TOML values, preserves unrelated content, and
-creates the same named recovery backup as `roca login`. A rejection changes no
-configuration. Without a terminal, each proposal is one plain alert: La Roca
-does not prompt or edit the configuration.
+the first eligible command run with each new version, La Roca offers every open
+proposal once for that version. Init reserves its short question budget for the
+database and model chooser, so proposals wait for the next command. In a
+terminal La Roca asks before each proposal change; an accepted change edits only
+the declared TOML values, preserves unrelated content, and creates the same
+named recovery backup as `roca login`. A rejection changes no configuration.
+Without a terminal, each proposal is one plain alert: La Roca does not prompt
+or edit the configuration.
 
 `roca doctor` always lists proposals that remain open, even after they were
 already offered for the current version. An interactive doctor run offers them
