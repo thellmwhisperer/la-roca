@@ -163,22 +163,35 @@ func claudeWebMessageGraph(messages []claudeWebMessage) (map[string]int, []int, 
 func claudeWebSurvivingParents(messages []claudeWebMessage, byID map[string]int,
 	reasons map[int]string) []int {
 	parents := make([]int, len(messages))
+	resolved := make([]int, len(messages))
+	visiting := make([]bool, len(messages))
+	for i := range resolved {
+		resolved[i] = -2
+	}
+	var resolve func(int) int
+	resolve = func(index int) int {
+		if reasons[index] == "" {
+			return index
+		}
+		if resolved[index] != -2 {
+			return resolved[index]
+		}
+		if visiting[index] {
+			return -1
+		}
+		visiting[index] = true
+		parent := -1
+		if position, found := byID[messages[index].ParentMessageUUID]; found {
+			parent = resolve(position - 1)
+		}
+		visiting[index] = false
+		resolved[index] = parent
+		return parent
+	}
 	for i := range parents {
 		parents[i] = -1
-		seen := map[int]bool{i: true}
-		parentID := messages[i].ParentMessageUUID
-		for parentID != "" {
-			position, found := byID[parentID]
-			if !found || seen[position-1] {
-				break
-			}
-			parent := position - 1
-			seen[parent] = true
-			if reasons[parent] == "" {
-				parents[i] = parent
-				break
-			}
-			parentID = messages[parent].ParentMessageUUID
+		if position, found := byID[messages[i].ParentMessageUUID]; found {
+			parents[i] = resolve(position - 1)
 		}
 	}
 	return parents
@@ -195,10 +208,10 @@ func claudeWebDiscardCycles(messages []claudeWebMessage, parents []int, reasons 
 			case 0:
 				visit(parent)
 			case 1:
-				for member := index; ; member = parents[member] {
+				for member := parent; ; member = parents[member] {
 					reasons[member] = fmt.Sprintf(
 						"message %s has a cyclic parent chain", messages[member].UUID)
-					if member == parent {
+					if member == index {
 						break
 					}
 				}

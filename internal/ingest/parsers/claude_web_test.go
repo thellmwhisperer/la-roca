@@ -106,8 +106,6 @@ func TestClaudeWebUnreadableMessagesKeepTheirOwnReasons(t *testing.T) {
 		{UUID: "empty", Sender: "human"},
 		{UUID: "duplicate", Text: "Original identity.", Sender: "human"},
 		{UUID: "duplicate", Text: "Duplicate identity.", Sender: "assistant"},
-		{UUID: "cycle-human", Text: "Synthetic cycle question.", Sender: "human", ParentMessageUUID: "cycle-assistant"},
-		{UUID: "cycle-assistant", Text: "Synthetic cycle answer.", Sender: "assistant", ParentMessageUUID: "cycle-human"},
 	}}
 	records := parseClaudeWebConversation(payload, 0)
 	want := []struct {
@@ -118,8 +116,6 @@ func TestClaudeWebUnreadableMessagesKeepTheirOwnReasons(t *testing.T) {
 		{2, `message unsupported has unsupported sender "system"`},
 		{3, "human message empty has no text"},
 		{5, "message uuid duplicate is duplicated"},
-		{6, "message cycle-human has a cyclic parent chain"},
-		{7, "message cycle-assistant has a cyclic parent chain"},
 	}
 	if len(records.Discards) != len(want) {
 		t.Fatalf("discards = %+v, want %d precise reasons", records.Discards, len(want))
@@ -128,6 +124,65 @@ func TestClaudeWebUnreadableMessagesKeepTheirOwnReasons(t *testing.T) {
 		if got := records.Discards[i]; got.Record != expected.record || got.Reason != expected.reason {
 			t.Errorf("discard %d = %+v, want record %d reason %q", i, got, expected.record, expected.reason)
 		}
+	}
+}
+
+func TestClaudeWebCyclesDiscardEveryMember(t *testing.T) {
+	tests := []struct {
+		name        string
+		messages    []claudeWebMessage
+		wantReasons []string
+		wantSources []string
+	}{
+		{
+			name: "two members",
+			messages: []claudeWebMessage{
+				{UUID: "cycle-human", Text: "Synthetic cycle question.", Sender: "human", ParentMessageUUID: "cycle-assistant"},
+				{UUID: "cycle-assistant", Text: "Synthetic cycle answer.", Sender: "assistant", ParentMessageUUID: "cycle-human"},
+			},
+			wantReasons: []string{
+				"message cycle-human has a cyclic parent chain",
+				"message cycle-assistant has a cyclic parent chain",
+			},
+			wantSources: []string{},
+		},
+		{
+			name: "three members with surviving descendant",
+			messages: []claudeWebMessage{
+				{UUID: "cycle-a", Text: "Synthetic cycle A.", Sender: "human", ParentMessageUUID: "cycle-b"},
+				{UUID: "cycle-b", Text: "Synthetic cycle B.", Sender: "assistant", ParentMessageUUID: "cycle-c"},
+				{UUID: "cycle-c", Text: "Synthetic cycle C.", Sender: "human", ParentMessageUUID: "cycle-a"},
+				{UUID: "descendant-human", Text: "Readable descendant question.", Sender: "human", ParentMessageUUID: "cycle-b"},
+				{UUID: "descendant-assistant", Text: "Readable descendant answer.", Sender: "assistant", ParentMessageUUID: "descendant-human"},
+			},
+			wantReasons: []string{
+				"message cycle-a has a cyclic parent chain",
+				"message cycle-b has a cyclic parent chain",
+				"message cycle-c has a cyclic parent chain",
+			},
+			wantSources: []string{"descendant-assistant"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			records := parseClaudeWebConversation(claudeWebConversation{
+				UUID: "synthetic-cycle", ChatMessages: test.messages,
+			}, 0)
+			gotReasons := make([]string, 0, len(records.Discards))
+			for _, discard := range records.Discards {
+				gotReasons = append(gotReasons, discard.Reason)
+			}
+			if !reflect.DeepEqual(gotReasons, test.wantReasons) {
+				t.Errorf("discard reasons = %v, want %v", gotReasons, test.wantReasons)
+			}
+			gotSources := make([]string, 0, len(records.Sessions[0].Exchanges))
+			for _, exchange := range records.Sessions[0].Exchanges {
+				gotSources = append(gotSources, exchange.SourceID)
+			}
+			if !reflect.DeepEqual(gotSources, test.wantSources) {
+				t.Errorf("exchange source ids = %v, want %v", gotSources, test.wantSources)
+			}
+		})
 	}
 }
 
