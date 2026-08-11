@@ -52,7 +52,7 @@ func TestQueryRendersTheRouteLineTOONRowsAndHelp(t *testing.T) {
 	}
 }
 
-func TestQueryAddsProseAboveACompactEvidenceFooter(t *testing.T) {
+func TestQueryWithProseOmitsEveryEvidenceRow(t *testing.T) {
 	res := service.QueryResult{
 		Question: "recent memories", Path: service.PathLLM, Engine: "ollama",
 		Model: "qwen", Match: service.MatchFound, RowCount: 6,
@@ -71,19 +71,10 @@ func TestQueryAddsProseAboveACompactEvidenceFooter(t *testing.T) {
 	if !strings.Contains(got, "the recent memories agree") {
 		t.Errorf("the prose rendering was dropped:\n%s", got)
 	}
-	want := "evidence:\n" +
-		"  memory · id 1 · first row · 2026-08-11\n" +
-		"  exchange · id 2 · " + strings.Repeat("x", 79) + "…\n" +
-		"  memory · id 3 · third row\n" +
-		"6 rows total · run without --full for the full table"
-	if !strings.Contains(got, want) {
-		t.Errorf("compact evidence footer differs:\n%s", got)
-	}
-	if strings.Contains(got, "rows[") || strings.Contains(got, "must stay hidden") {
+	if strings.Contains(got, "evidence:") || strings.Contains(got, "rows[") ||
+		strings.Contains(got, "first row") || strings.Contains(got, "must stay hidden") ||
+		strings.Contains(got, "rows total") {
 		t.Errorf("full mode dumped the rows table:\n%s", got)
-	}
-	if strings.Index(got, "the recent memories agree") > strings.Index(got, "evidence:") {
-		t.Errorf("the prose does not ride above the evidence:\n%s", got)
 	}
 }
 

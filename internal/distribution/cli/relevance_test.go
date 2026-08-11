@@ -102,9 +102,9 @@ func TestQueryResultCarriesBuildIdentityWithoutSurfaceData(t *testing.T) {
 	}
 }
 
-// When the second inference call answered, the prose rides above the raw rows:
-// a human gets the interpretation and can inspect the evidence it was built from.
-func TestRenderAddsProseAboveRows(t *testing.T) {
+// When the second inference call answered, its prose is the human answer. Raw
+// rows remain available through the default query and JSON modes.
+func TestRenderUsesProseWithoutRows(t *testing.T) {
 	var output strings.Builder
 	render(&cliEnv{out: &output}, service.QueryResult{
 		Question: "what was decided about the format", Path: service.PathLLM, Engine: "codex",
@@ -115,8 +115,8 @@ func TestRenderAddsProseAboveRows(t *testing.T) {
 	if !strings.Contains(got, "The format was decided in a memory.") {
 		t.Fatalf("the prose answer is missing:\n%s", got)
 	}
-	if !strings.Contains(got, "raw row") {
-		t.Fatalf("the raw evidence disappeared under the prose:\n%s", got)
+	if strings.Contains(got, "raw row") || strings.Contains(got, "rows[") {
+		t.Fatalf("raw evidence followed the prose:\n%s", got)
 	}
 }
 

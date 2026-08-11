@@ -110,7 +110,7 @@ func TestQueryDefaultsToOneInferenceAndRows(t *testing.T) {
 	}
 }
 
-func TestQueryFullAddsOneInterpretationAndCompactEvidence(t *testing.T) {
+func TestQueryFullAddsOneInterpretationWithoutEvidence(t *testing.T) {
 	model, answer, got := runQueryMode(t, true, 0)
 	if model.calls != 2 {
 		t.Fatalf("full query made %d provider calls, want two", model.calls)
@@ -120,10 +120,6 @@ func TestQueryFullAddsOneInterpretationAndCompactEvidence(t *testing.T) {
 		"SQL · provider fake · model fake-model",
 		"answer · provider fake · model fake-model",
 		"The evidence says the format is rows.",
-		"evidence:",
-		"memory · id 1 · raw evidence",
-		"1 row total · run without --full for the full table",
-		"raw evidence",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("full query output does not contain %q:\n%s", want, got)
@@ -132,8 +128,9 @@ func TestQueryFullAddsOneInterpretationAndCompactEvidence(t *testing.T) {
 	if answer.result.Interpretation != queryModeProse {
 		t.Errorf("structured interpretation = %q, want %q", answer.result.Interpretation, queryModeProse)
 	}
-	if strings.Contains(got, "rows[") {
-		t.Errorf("full query dumped its rows table:\n%s", got)
+	if strings.Contains(got, "rows[") || strings.Contains(got, "raw evidence") ||
+		strings.Contains(got, "evidence:") || strings.Contains(got, "rows total") {
+		t.Errorf("full query printed evidence after its prose:\n%s", got)
 	}
 }
 
