@@ -306,3 +306,42 @@ func TestTheResolvedCodexModelFollowsConfigOverTheBuiltInDefault(t *testing.T) {
 		t.Fatalf("resolved model %q, built-in default %q", got, DefaultCodexModel)
 	}
 }
+
+// The interpretation order is the second inference's own cascade. Declaring it
+// splits the two inferences; leaving it out is an installation where whoever
+// wrote the SQL also reads the rows, which is every installation that never
+// heard of the key.
+func TestTheInterpretationOrderIsACascadeOfItsOwn(t *testing.T) {
+	for _, tc := range []struct{ name, body, want, warning string }{
+		{name: "absent leaves the two inferences together",
+			body: "[models]\norder = [\"ollama\"]\n"},
+		{name: "declared names the provider that reads the rows",
+			body: "[models]\norder = [\"codex\"]\ninterpret_order = [\"ollama\"]\ntimeout_ms = 15000\n",
+			want: "ollama"},
+		{name: "an unknown name warns and leaves no split",
+			body:    "[models]\ninterpret_order = [\"telepathy\"]\n",
+			warning: "telepathy"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cascade, err := BuildInterpretCascade(settings(t, tc.body))
+			if err != nil {
+				t.Fatalf("build: %v", err)
+			}
+			if got := strings.Join(names(cascade.Providers), ","); got != tc.want {
+				t.Fatalf("interpretation order %q, want %q", got, tc.want)
+			}
+			joined := strings.Join(cascade.Warnings, " ")
+			switch {
+			case tc.warning == "" && joined != "":
+				t.Fatalf("unexpected warnings: %v", cascade.Warnings)
+			case tc.warning != "" && !strings.Contains(joined, tc.warning):
+				t.Fatalf("the warning does not name %q: %v", tc.warning, cascade.Warnings)
+			case tc.warning != "" && !strings.Contains(joined, "models.interpret_order"):
+				t.Fatalf("the warning does not name the key: %v", cascade.Warnings)
+			}
+			if tc.want != "" && cascade.Timeout != 15*time.Second {
+				t.Fatalf("the model budget did not reach it: %v", cascade.Timeout)
+			}
+		})
+	}
+}
