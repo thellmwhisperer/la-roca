@@ -7,14 +7,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 // An MCP tool answer renders in the compact AXI shape the shell uses, never as
-// the raw JSON envelope. The
-// structured half stays for a caller that reads JSON; the readable half a
-// token-budgeted agent actually consumes is the route line, the rows[N]{cols}:
-// table and the help. These tests pin that contract and the size win it buys.
+// the raw JSON envelope. There is no structured half for a client to prefer:
+// the agent consumes the route line, the rows[N]{cols}: table and the help.
+// These tests pin that contract and the size win it buys.
 
 // looksLikeJSONDump reports whether the readable half reads as a serialized
 // object or array rather than AXI text, which is the regression these tests
@@ -24,8 +24,23 @@ func looksLikeJSONDump(text string) bool {
 	return strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")
 }
 
-// A row-shaped answer comes back as a TOON table, and the structured envelope is
-// still attached for a caller that wants it.
+func assertNoStructuredEnvelope(t *testing.T, result any) {
+	t.Helper()
+	call, ok := result.(*mcp.CallToolResult)
+	if !ok {
+		t.Fatalf("result type = %T, want *mcp.CallToolResult", result)
+	}
+	if call.StructuredContent != nil {
+		t.Fatalf("structured JSON envelope shipped: %s", asJSON(t, call.StructuredContent))
+	}
+	wire := asJSON(t, call)
+	if strings.Contains(wire, `"structuredContent"`) || strings.Contains(wire, `"rows":`) ||
+		strings.Contains(wire, `"columns":`) {
+		t.Fatalf("raw rows JSON shipped on the wire: %s", wire)
+	}
+}
+
+// A row-shaped answer comes back only as a TOON table.
 func TestRowShapedResultsRenderAsTOONNotAJSONDump(t *testing.T) {
 	session := connect(t, seededService(t))
 
@@ -43,9 +58,7 @@ func TestRowShapedResultsRenderAsTOONNotAJSONDump(t *testing.T) {
 	if looksLikeJSONDump(text) {
 		t.Errorf("the readable half is a JSON dump, not AXI TOON:\n%s", text)
 	}
-	if result.StructuredContent == nil {
-		t.Error("the structured envelope was dropped: a JSON reader lost its machine-readable half")
-	}
+	assertNoStructuredEnvelope(t, result)
 }
 
 // The natural-language tool carries the route narration above its answer, and
@@ -64,14 +77,10 @@ func TestQueryThroughThePlugRendersTheRouteLineNotAJSONDump(t *testing.T) {
 	if looksLikeJSONDump(text) {
 		t.Errorf("the readable half is a JSON dump, not AXI TOON:\n%s", text)
 	}
-	if result.StructuredContent == nil {
-		t.Error("the structured envelope was dropped")
-	}
+	assertNoStructuredEnvelope(t, result)
 	if strings.Contains(text, "Run `roca ") {
 		t.Errorf("MCP help points a shell-less agent at shell commands:\n%s", text)
 	}
-	envelope, _ := json.Marshal(result.StructuredContent)
-	t.Logf("roca_query: TOON readable %d bytes vs JSON envelope %d bytes", len(text), len(envelope))
 }
 
 // The compile-only tool answers with its SQL under the route line, not with the
@@ -96,6 +105,7 @@ func TestSQLThroughThePlugRendersTheRouteLineAndSQLNotAJSONDump(t *testing.T) {
 	if strings.Contains(text, "Run `roca ") {
 		t.Errorf("MCP exec help points a shell-less agent at shell commands:\n%s", text)
 	}
+	assertNoStructuredEnvelope(t, result)
 }
 
 // The health tool answers with its status line and the check table the shell
@@ -115,11 +125,12 @@ func TestHealthThroughThePlugRendersTheStatusAndCheckTable(t *testing.T) {
 	if looksLikeJSONDump(text) {
 		t.Errorf("the readable half is a JSON dump, not AXI TOON:\n%s", text)
 	}
+	assertNoStructuredEnvelope(t, result)
 }
 
-// Both MCP halves inherit the service budget. The readable half may clip more
-// tightly for presentation, but StructuredContent must never bypass max_chars.
-func TestAWideResultBudgetsReadableAndStructuredContent(t *testing.T) {
+// The TOON answer inherits the service budget, and the former JSON envelope is
+// used only inside the test to pin the size reduction it bought.
+func TestAWideResultBudgetsTOONAndShipsNoRowsEnvelope(t *testing.T) {
 	svc := seededService(t)
 	wide := strings.Repeat("abcdefghij", 250) // ~2500 chars per memory
 	for i := range 40 {
@@ -132,13 +143,10 @@ func TestAWideResultBudgetsReadableAndStructuredContent(t *testing.T) {
 	session := connect(t, svc)
 
 	result := callTool(t, session, "roca_exec", map[string]any{
-		"sql": "SELECT 'memory' AS source, id, content AS text FROM memories",
+		"sql":       "SELECT 'memory' AS source, id, content AS text FROM memories",
+		"max_chars": 48,
 	})
 	text := renderedText(result)
-	envelope, err := json.Marshal(result.StructuredContent)
-	if err != nil {
-		t.Fatalf("marshal the structured envelope: %v", err)
-	}
 
 	if !strings.Contains(text, "rows[") {
 		t.Errorf("the readable half is not the TOON table:\n%s", text)
@@ -146,38 +154,30 @@ func TestAWideResultBudgetsReadableAndStructuredContent(t *testing.T) {
 	if looksLikeJSONDump(text) {
 		t.Errorf("the readable half is a JSON dump, not AXI TOON:\n%s", text)
 	}
-	var structured service.ExecResult
-	decode(t, result, &structured)
-	marked := 0
-	for _, row := range structured.Rows {
-		value := row["text"].(string)
-		if len([]rune(value)) > service.DefaultMaxChars {
-			t.Fatalf("structured text bypassed the default budget: %d runes", len([]rune(value)))
-		}
-		if strings.HasSuffix(value, "…") {
-			marked++
-		}
+	if strings.Contains(text, strings.Repeat("abcdefghij", 5)) || !strings.Contains(text, "…") {
+		t.Errorf("max_chars did not clip the TOON cells to 48 characters:\n%s", text)
 	}
-	if marked != 40 {
-		t.Fatalf("marked truncated rows = %d, want 40", marked)
-	}
-	if len(envelope) > 30000 {
-		t.Errorf("budgeted structured envelope is still unexpectedly wide: %d bytes", len(envelope))
-	}
+	assertNoStructuredEnvelope(t, result)
 
+	statement := "SELECT 'memory' AS source, id, content AS text FROM memories"
+	former, err := svc.Exec(context.Background(), service.ExecRequest{SQL: statement, MaxChars: 3000})
+	if err != nil {
+		t.Fatalf("build the former JSON response: %v", err)
+	}
+	formerEnvelope, err := json.Marshal(former)
+	if err != nil {
+		t.Fatalf("marshal the former JSON response: %v", err)
+	}
 	wideResult := callTool(t, session, "roca_exec", map[string]any{
-		"sql":       "SELECT 'memory' AS source, id, content AS text FROM memories",
+		"sql":       statement,
 		"max_chars": 3000,
 	})
 	wideText := renderedText(wideResult)
-	wideEnvelope, err := json.Marshal(wideResult.StructuredContent)
-	if err != nil {
-		t.Fatalf("marshal the wide structured envelope: %v", err)
-	}
 	t.Logf("wide exec over %d memories: TOON readable %d bytes vs former JSON response %d bytes",
-		42, len(wideText), len(wideEnvelope))
-	if len(wideText)*10 >= len(wideEnvelope) {
+		42, len(wideText), len(formerEnvelope))
+	if len(wideText)*10 >= len(formerEnvelope) {
 		t.Errorf("TOON response (%d bytes) is not an order of magnitude under the former JSON response (%d bytes)",
-			len(wideText), len(wideEnvelope))
+			len(wideText), len(formerEnvelope))
 	}
+	assertNoStructuredEnvelope(t, wideResult)
 }

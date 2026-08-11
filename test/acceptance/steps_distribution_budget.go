@@ -32,37 +32,15 @@ func (w *distributionWorld) requestBudgetedRow(surface string) error {
 		if result.code != 0 {
 			return fmt.Errorf("terminal budget query: %s", result.stderr)
 		}
-		for _, line := range strings.Split(result.stdout, "\n") {
-			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, budgetMarker) {
-				values = append(values, line)
-			}
-		}
+		values = budgetedValues(result.stdout)
 	case "MCP":
 		if err := w.callTool("roca_exec", map[string]any{"sql": statement, "max_chars": 48}); err != nil {
 			return err
 		}
-		doc, err := structuredDocument(w.tool)
-		if err != nil {
-			return err
+		if w.tool.StructuredContent != nil {
+			return fmt.Errorf("the tool shipped a structured rows envelope: %v", w.tool.StructuredContent)
 		}
-		rows, ok := doc["rows"].([]any)
-		if !ok {
-			return fmt.Errorf("the tool answer declares no rows list: %v", doc)
-		}
-		for _, item := range rows {
-			// Ignoring these assertions appended "<nil>" as a value, so the budget
-			// was measured over something the answer never carried.
-			row, ok := item.(map[string]any)
-			if !ok {
-				return fmt.Errorf("a row is not an object: %v", item)
-			}
-			content, ok := row["content"].(string)
-			if !ok {
-				return fmt.Errorf("a row carries no content string: %v", row)
-			}
-			values = append(values, content)
-		}
+		values = budgetedValues(renderedText(w.tool))
 	default:
 		return fmt.Errorf("unknown row surface %q", surface)
 	}
@@ -71,6 +49,17 @@ func (w *distributionWorld) requestBudgetedRow(surface string) error {
 	}
 	w.state["budgetValues"] = values
 	return nil
+}
+
+func budgetedValues(output string) []string {
+	var values []string
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, budgetMarker) {
+			values = append(values, line)
+		}
+	}
+	return values
 }
 
 func (w *distributionWorld) budgetIsRespected() error {

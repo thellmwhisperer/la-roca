@@ -33,15 +33,15 @@ Feature: The MCP is a thin plug over the same core
     When I open an MCP session over stdio against the binary
     And I call the query tool with the question "how many memories are there"
     Then the response is not an error
-    And the structured response has "path" equal to "unresolved"
+    And the response carries no structured content
+    And the readable response is plain AXI text
 
   @fast
-  Scenario Outline: F08-04 Exact parity between the two surfaces
-    When I run "roca query '<query>' --json"
-    And I call the query tool over stdio with the question "<query>"
-    Then both responses have the same "path"
-    And both responses have the same rows
-    And both responses declare the same version and the same source SHA
+  Scenario Outline: F08-04 Representative queries ship only readable AXI
+    When I call the query tool over stdio with the question "<query>"
+    Then the response is not an error
+    And the response carries no structured content
+    And the readable response is plain AXI text
 
     Examples:
       | query                        |

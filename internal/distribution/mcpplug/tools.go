@@ -40,7 +40,7 @@ var (
 	healthTool = &mcp.Tool{
 		Name: "roca_health",
 		Description: "Run the non-destructive checks over live data and return the " +
-			"structured diagnosis. It is what an agent that cannot run `roca doctor` " +
+			"compact AXI diagnosis. It is what an agent that cannot run `roca doctor` " +
 			"asks instead.",
 	}
 )

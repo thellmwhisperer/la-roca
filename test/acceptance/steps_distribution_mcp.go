@@ -16,7 +16,6 @@ import (
 	"strings"
 
 	"github.com/cucumber/godog"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func registerDistributionMCPSteps(ctx *godog.ScenarioContext, w *distributionWorld) {
@@ -49,17 +48,17 @@ func (w *distributionWorld) mcpToolsAndHealthAreSound() error {
 		if strings.TrimSpace(tool.Description) == "" || tool.InputSchema == nil {
 			return fmt.Errorf("tool %q lacks a description or input schema", tool.Name)
 		}
+		if tool.OutputSchema != nil {
+			return fmt.Errorf("tool %q advertises structured output instead of AXI TOON", tool.Name)
+		}
 	}
 	sort.Strings(got)
 	if !reflect.DeepEqual(got, want) {
 		return fmt.Errorf("MCP tools = %v, want %v", got, want)
 	}
-	doc, err := structuredDocument(w.tool)
-	if err != nil {
-		return err
-	}
-	if doc["status"] != "pass" || !strings.Contains(renderedText(w.tool), "health: pass") {
-		return fmt.Errorf("health is not a passing structured and readable answer: %v %q", doc, renderedText(w.tool))
+	if w.tool.StructuredContent != nil || !strings.Contains(renderedText(w.tool), "health: pass") {
+		return fmt.Errorf("health is not a TOON-only passing answer: structured=%v text=%q",
+			w.tool.StructuredContent, renderedText(w.tool))
 	}
 	return nil
 }
@@ -84,24 +83,14 @@ func (w *distributionWorld) queryRowsOnBothSurfaces() error {
 }
 
 func (w *distributionWorld) toonRowsHaveParity() error {
-	doc, err := structuredDocument(w.tool)
-	if err != nil {
-		return err
-	}
 	terminal, agent := w.human.stdout, renderedText(w.tool)
 	for _, answer := range []string{terminal, agent} {
 		if !strings.Contains(answer, "rows[1]{id,content}") || !strings.Contains(answer, toonParityContent) {
 			return fmt.Errorf("readable answer lacks the expected TOON shape and cell: %q", answer)
 		}
 	}
-	columns, _ := doc["columns"].([]any)
-	rows, _ := doc["rows"].([]any)
-	if len(columns) != 2 || fmt.Sprint(columns[0]) != "id" || fmt.Sprint(columns[1]) != "content" || len(rows) != 1 {
-		return fmt.Errorf("structured MCP rows do not describe the terminal table: %v", doc)
-	}
-	row, _ := rows[0].(map[string]any)
-	if row["content"] != toonParityContent || !strings.Contains(terminal, fmt.Sprint(row["id"])) {
-		return fmt.Errorf("MCP row cells are absent from the terminal TOON: %v %q", row, terminal)
+	if w.tool.StructuredContent != nil {
+		return fmt.Errorf("MCP shipped a structured rows envelope: %v", w.tool.StructuredContent)
 	}
 	return nil
 }
@@ -136,40 +125,9 @@ func (w *distributionWorld) storeThenQueryOverMCP() error {
 }
 
 func (w *distributionWorld) queryFindsMCPMemory() error {
-	doc, err := structuredDocument(w.tool)
-	if err != nil {
-		return err
-	}
-	if nestedTextContains(doc["rows"], mcpStoredContent) {
+	if w.tool.StructuredContent == nil && strings.Contains(renderedText(w.tool), mcpStoredContent) {
 		return nil
 	}
-	return fmt.Errorf("the next MCP query did not return the stored memory: %v", doc)
-}
-
-func nestedTextContains(value any, wanted string) bool {
-	switch item := value.(type) {
-	case []any:
-		for _, child := range item {
-			if nestedTextContains(child, wanted) {
-				return true
-			}
-		}
-	case map[string]any:
-		for _, child := range item {
-			if nestedTextContains(child, wanted) {
-				return true
-			}
-		}
-	default:
-		return strings.Contains(fmt.Sprint(item), wanted)
-	}
-	return false
-}
-
-func structuredDocument(result *mcp.CallToolResult) (map[string]any, error) {
-	document := structuredOf(result)
-	if document == nil {
-		return nil, fmt.Errorf("MCP answer has no structured document")
-	}
-	return document, nil
+	return fmt.Errorf("the next MCP query did not return TOON-only memory text: structured=%v text=%q",
+		w.tool.StructuredContent, renderedText(w.tool))
 }

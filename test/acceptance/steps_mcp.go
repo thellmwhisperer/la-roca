@@ -46,7 +46,6 @@ type plugWorld struct {
 	session *mcp.ClientSession
 	tools   *mcp.ListToolsResult
 	last    *mcp.CallToolResult
-	answer  map[string]any
 }
 
 func registerMCPSteps(ctx *godog.ScenarioContext, m *world) {
@@ -82,16 +81,8 @@ func registerMCPSteps(ctx *godog.ScenarioContext, m *world) {
 	ctx.Then(`^the response names the missing argument$`, m.itNamesTheMissingArgument)
 	ctx.Then(`^the session is still alive$`, m.theSessionIsStillAlive)
 	ctx.Then(`^a correct call right after it works$`, m.aCorrectCallAfterItWorks)
-	ctx.Then(`^the structured response has "([^"]*)" equal to "([^"]*)"$`,
-		m.theStructuredResponseHas)
-	ctx.Then(`^the structured response has "([^"]*)" not empty$`,
-		m.theStructuredResponseIsNotEmpty)
-	ctx.Then(`^the readable response summarizes the number of results$`,
-		m.theReadableResponseSummarizes)
-	ctx.Then(`^both responses have the same "([^"]*)"$`, m.bothSurfacesAgreeOn)
-	ctx.Then(`^both responses have the same rows$`, m.bothSurfacesAgreeOnTheRows)
-	ctx.Then(`^both responses declare the same version and the same source SHA$`,
-		m.bothSurfacesDeclareTheSameBuild)
+	ctx.Then(`^the response carries no structured content$`, m.theResponseCarriesNoStructuredContent)
+	ctx.Then(`^the readable response is plain AXI text$`, m.theReadableResponseIsPlainAXI)
 	ctx.Then(`^the count has gone up by one$`, m.theCountHasGoneUpByOne)
 	ctx.Then(`^the audit record of that write declares it came from the plug$`,
 		m.theAuditSaysItCameFromThePlug)
@@ -171,7 +162,6 @@ func (m *world) callTool(name string, arguments map[string]any) error {
 		return fmt.Errorf("call %s: %w", name, err)
 	}
 	m.plug.last = result
-	m.plug.answer = structuredOf(result)
 	return nil
 }
 
@@ -343,58 +333,17 @@ func (m *world) aCorrectCallAfterItWorks() error {
 	return m.theResponseIsNotAnError()
 }
 
-func (m *world) theStructuredResponseHas(key, value string) error {
-	found, ok := m.plug.answer[key]
-	if !ok {
-		return fmt.Errorf("the structured response has no %q: %v", key, keys(m.plug.answer))
-	}
-	if fmt.Sprint(found) != value {
-		return fmt.Errorf("%s = %v, want %q", key, found, value)
+func (m *world) theResponseCarriesNoStructuredContent() error {
+	if m.plug.last.StructuredContent != nil {
+		return fmt.Errorf("the MCP response carries structured content: %v", m.plug.last.StructuredContent)
 	}
 	return nil
 }
 
-func (m *world) theStructuredResponseIsNotEmpty(key string) error {
-	found, ok := m.plug.answer[key]
-	if !ok || strings.TrimSpace(fmt.Sprint(found)) == "" {
-		return fmt.Errorf("%s is empty in the structured response", key)
-	}
-	return nil
-}
-
-// The readable half is what an agent shows a human. It has to say how many rows
-// there were without being parsed.
-func (m *world) theReadableResponseSummarizes() error {
-	text := renderedText(m.plug.last)
-	rows, _ := m.plug.answer["row_count"].(float64)
-	if !strings.Contains(text, fmt.Sprintf("%d", int(rows))) {
-		return fmt.Errorf("the readable response does not say how many results there were: %s",
-			text)
-	}
-	return nil
-}
-
-// --- parity ---
-
-func (m *world) bothSurfacesAgreeOn(key string) error {
-	fromTheShell, err := m.json()
-	if err != nil {
-		return err
-	}
-	if !sameJSON(fromTheShell[key], m.plug.answer[key]) {
-		return fmt.Errorf("%s = %v over the command line and %v over the plug",
-			key, fromTheShell[key], m.plug.answer[key])
-	}
-	return nil
-}
-
-func (m *world) bothSurfacesAgreeOnTheRows() error { return m.bothSurfacesAgreeOn("rows") }
-
-func (m *world) bothSurfacesDeclareTheSameBuild() error {
-	for _, key := range []string{"version", "source_sha"} {
-		if err := m.bothSurfacesAgreeOn(key); err != nil {
-			return err
-		}
+func (m *world) theReadableResponseIsPlainAXI() error {
+	text := strings.TrimSpace(renderedText(m.plug.last))
+	if text == "" || strings.HasPrefix(text, "{") || strings.HasPrefix(text, "[") {
+		return fmt.Errorf("the readable response is not plain AXI text: %q", text)
 	}
 	return nil
 }
@@ -613,21 +562,6 @@ mcp_servers:
 
 // --- reading a protocol answer ---
 
-func structuredOf(result *mcp.CallToolResult) map[string]any {
-	if result.StructuredContent == nil {
-		return nil
-	}
-	encoded, err := json.Marshal(result.StructuredContent)
-	if err != nil {
-		return nil
-	}
-	var document map[string]any
-	if err := json.Unmarshal(encoded, &document); err != nil {
-		return nil
-	}
-	return document
-}
-
 func renderedText(result *mcp.CallToolResult) string {
 	if result == nil {
 		return ""
@@ -639,20 +573,4 @@ func renderedText(result *mcp.CallToolResult) string {
 		}
 	}
 	return strings.Join(parts, "\n")
-}
-
-// sameJSON compares two values as the two surfaces really hand them over. In
-// memory one of them is an int64 where the protocol's round trip gives a
-// number, and comparing the Go values would be measuring encoding/json instead
-// of parity.
-func sameJSON(left, right any) bool {
-	a, err := json.Marshal(left)
-	if err != nil {
-		return false
-	}
-	b, err := json.Marshal(right)
-	if err != nil {
-		return false
-	}
-	return string(a) == string(b)
 }

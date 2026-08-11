@@ -92,11 +92,11 @@ func sanitizing[In, Out any](
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error) {
 	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
 		res, out, err := h(ctx, req, in)
-		if query, ok := any(out).(service.QueryResult); ok {
-			query = scrubQueryResult(query, dataDir)
-			out = any(query).(Out)
-			if res != nil {
-				res.Content = []mcp.Content{&mcp.TextContent{Text: axi.MCPQuery(query)}}
+		if res != nil {
+			for _, content := range res.Content {
+				if text, ok := content.(*mcp.TextContent); ok {
+					text.Text = scrubDataDir(text.Text, dataDir)
+				}
 			}
 		}
 		return res, out, ScrubPath(err, dbPath)
@@ -136,9 +136,12 @@ func auditCalls(audit *logfile.Writer, warnings io.Writer) mcp.Middleware {
 func resultDegraded(value any) string {
 	switch result := value.(type) {
 	case *mcp.CallToolResult:
-		return resultDegraded(result.StructuredContent)
+		return resultDegraded(result.Meta)
 	case service.QueryResult:
 		return result.Degraded
+	case mcp.Meta:
+		degraded, _ := result["degraded"].(string)
+		return degraded
 	case map[string]any:
 		degraded, _ := result["degraded"].(string)
 		return degraded
@@ -168,7 +171,7 @@ func toolCall(req mcp.Request) (string, any) {
 func resultRows(value any) int {
 	switch result := value.(type) {
 	case *mcp.CallToolResult:
-		return resultRows(result.StructuredContent)
+		return resultRows(result.Meta)
 	case service.QueryResult:
 		return result.RowCount
 	case service.ExecResult:
@@ -183,10 +186,10 @@ func resultRows(value any) int {
 			rows += len(check.Rows)
 		}
 		return rows
+	case mcp.Meta:
+		return metaRowCount(result["row_count"])
 	case map[string]any:
-		if count, ok := result["row_count"].(float64); ok {
-			return int(count)
-		}
+		return metaRowCount(result["row_count"])
 	case json.RawMessage:
 		var decoded any
 		if json.Unmarshal(result, &decoded) == nil {
@@ -196,46 +199,57 @@ func resultRows(value any) int {
 	return 0
 }
 
-// rendered paints the AXI TOON text for a service answer and lets the SDK
-// attach the structured envelope beside it. A handler stays one statement that
-// calls one of the typed wrappers below; this is where the readable half is
-// shaped, so a row-shaped answer reaches an agent as compact rows and not as
-// the raw envelope that once drowned the tool-result budget.
-//
-// Content is the AXI text the agent reads; the SDK keeps filling
-// StructuredContent from the returned value, so a caller that reads JSON still
-// gets the machine-readable envelope. On error the result stays nil and the
-// service's error flows out for the sanitizing wrapper to scrub.
-func rendered[T any](res T, err error, paint func(T) string) (*mcp.CallToolResult, T, error) {
+func metaRowCount(value any) int {
+	switch count := value.(type) {
+	case int:
+		return count
+	case float64:
+		return int(count)
+	default:
+		return 0
+	}
+}
+
+// rendered paints the AXI TOON text for a service answer and returns no typed
+// output value. The SDK serializes every non-nil typed output into
+// StructuredContent, which makes clients prefer a raw JSON envelope over the
+// compact text. Returning any(nil) omits both that envelope and the inferred
+// output schema. The metadata carries only the row count and degraded state
+// needed by the audit middleware; it never carries columns, rows or cell data.
+func rendered[T any](res T, err error, paint func(T) string) (*mcp.CallToolResult, any, error) {
 	if err != nil {
-		return nil, res, err
+		return nil, nil, err
 	}
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: paint(res)}},
-	}, res, nil
+		Meta: mcp.Meta{
+			"row_count": resultRows(res),
+			"degraded":  resultDegraded(res),
+		},
+	}, nil, nil
 }
 
 // queryText shapes a natural-language answer. The query tool runs the question
 // and the sql tool compiles it without running; both produce a QueryResult, and
 // axi.Query shows the rows for one and the SQL for the other, so they share a
 // wrapper.
-func queryText(res service.QueryResult, err error) (*mcp.CallToolResult, service.QueryResult, error) {
-	result, out, callErr := rendered(res, err, axi.MCPQuery)
+func queryText(res service.QueryResult, err error) (*mcp.CallToolResult, any, error) {
+	result, _, callErr := rendered(res, err, axi.MCPQuery)
 	if result != nil {
 		result.IsError = service.IsDegradedFailure(res.Degraded)
 	}
-	return result, out, callErr
+	return result, nil, callErr
 }
 
-func execText(res service.ExecResult, err error) (*mcp.CallToolResult, service.ExecResult, error) {
+func execText(res service.ExecResult, err error) (*mcp.CallToolResult, any, error) {
 	return rendered(res, err, axi.MCPExec)
 }
 
-func storeText(res service.StoreResult, err error) (*mcp.CallToolResult, service.StoreResult, error) {
+func storeText(res service.StoreResult, err error) (*mcp.CallToolResult, any, error) {
 	return rendered(res, err, axi.Store)
 }
 
-func healthText(res service.HealthReport, err error) (*mcp.CallToolResult, service.HealthReport, error) {
+func healthText(res service.HealthReport, err error) (*mcp.CallToolResult, any, error) {
 	return rendered(res, err, axi.Health)
 }
 
@@ -251,20 +265,6 @@ func ScrubPath(err error, dbPath string) error {
 	}
 	cleaned := strings.ReplaceAll(msg, dbPath, "the database")
 	return errors.New(cleaned)
-}
-
-func scrubQueryResult(result service.QueryResult, dataDir string) service.QueryResult {
-	for i := range result.Warnings {
-		result.Warnings[i] = scrubDataDir(result.Warnings[i], dataDir)
-	}
-	result.Message = scrubDataDir(result.Message, dataDir)
-	result.ProviderNote = scrubDataDir(result.ProviderNote, dataDir)
-	result.ProviderError = scrubDataDir(result.ProviderError, dataDir)
-	for i := range result.Providers {
-		result.Providers[i].Reason = scrubDataDir(result.Providers[i].Reason, dataDir)
-		result.Providers[i].Action = scrubDataDir(result.Providers[i].Action, dataDir)
-	}
-	return result
 }
 
 func scrubDataDir(text, dataDir string) string {

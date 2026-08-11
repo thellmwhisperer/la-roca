@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/mcpplug"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
@@ -41,6 +42,9 @@ func TestDiscoveryReturnsExactlyTheDecidedSurface(t *testing.T) {
 		}
 		if tool.InputSchema == nil {
 			t.Errorf("tool %q has no input schema", tool.Name)
+		}
+		if tool.OutputSchema != nil {
+			t.Errorf("tool %q advertises structured output; AXI TOON is the only answer", tool.Name)
 		}
 	}
 	if !reflect.DeepEqual(names, theDecidedSurface) {
@@ -108,47 +112,42 @@ func TestTheSameQuestionThroughThePlugAndThroughTheServiceIsTheSameAnswer(t *tes
 		"query": "how many memories are there",
 	})
 
-	if throughThePlug.SQL != direct.SQL {
-		t.Errorf("sql = %q through the plug, %q through the service",
-			throughThePlug.SQL, direct.SQL)
+	wantRows := axi.RowOutput(direct.Columns, direct.Rows, direct.Question)
+	if !strings.Contains(throughThePlug, wantRows) {
+		t.Errorf("plug answer lacks the service rows:\n%s\nwant rows:\n%s", throughThePlug, wantRows)
 	}
-	if throughThePlug.Path != direct.Path {
-		t.Errorf("path = %q through the plug, %q through the service",
-			throughThePlug.Path, direct.Path)
-	}
-	// The rows are compared as JSON, which is what both surfaces really hand
-	// over: in memory the service returns an int64 where the protocol's own
-	// round trip gives a number, and comparing the Go values would be measuring
-	// encoding/json instead of parity.
-	if asJSON(t, throughThePlug.Rows) != asJSON(t, direct.Rows) {
-		t.Errorf("rows = %s through the plug, %s through the service",
-			asJSON(t, throughThePlug.Rows), asJSON(t, direct.Rows))
-	}
-	if throughThePlug.Version != direct.Version || throughThePlug.SourceSHA != direct.SourceSHA {
-		t.Errorf("the two surfaces declare different versions: %q/%q against %q/%q",
-			throughThePlug.Version, throughThePlug.SourceSHA,
-			direct.Version, direct.SourceSHA)
+	if direct.Path == service.PathUnresolved {
+		if throughThePlug != direct.Message {
+			t.Errorf("plug unresolved answer = %q, service = %q", throughThePlug, direct.Message)
+		}
+	} else if !strings.Contains(throughThePlug, "route "+string(direct.Path)) {
+		t.Errorf("plug answer lacks service route %q:\n%s", direct.Path, throughThePlug)
 	}
 }
 
 // The compile-without-running tool is the same cascade with the SQL kept back,
 // which is what makes it a probe for the compiler and not a second compiler.
 func TestTheSQLToolCompilesWithoutRunning(t *testing.T) {
-	session := connect(t, seededServiceWithModel(t))
+	svc := seededServiceWithModel(t)
+	session := connect(t, svc)
+	direct, err := svc.Query(t.Context(), service.QueryRequest{
+		Question: "how many memories are there", SQLOnly: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	result := callTool(t, session, "roca_sql", map[string]any{
 		"query": "how many memories are there",
 	})
-	var answer service.QueryResult
-	decode(t, result, &answer)
-
-	if answer.SQL == "" {
+	text := renderedText(result)
+	if direct.SQL == "" || !strings.Contains(text, direct.SQL) {
 		t.Error("the sql tool returned no SQL")
 	}
-	if len(answer.Rows) != 0 {
-		t.Errorf("%d rows: the sql tool ran what it was asked only to compile",
-			len(answer.Rows))
+	if strings.Contains(text, "rows[") {
+		t.Errorf("the sql tool ran what it was asked only to compile:\n%s", text)
 	}
+	assertNoStructuredEnvelope(t, result)
 }
 
 func TestTheExecToolRunsTheSameValidatedSelectAsTheService(t *testing.T) {
@@ -166,17 +165,11 @@ func TestTheExecToolRunsTheSameValidatedSelectAsTheService(t *testing.T) {
 	result := callTool(t, session, "roca_exec", map[string]any{
 		"sql": request.SQL, "max_chars": request.MaxChars,
 	})
-	var throughThePlug service.ExecResult
-	decode(t, result, &throughThePlug)
-
-	if asJSON(t, throughThePlug.Rows) != asJSON(t, direct.Rows) {
-		t.Errorf("rows = %s through the plug, %s through the service",
-			asJSON(t, throughThePlug.Rows), asJSON(t, direct.Rows))
+	wantRows := axi.RowOutput(direct.Columns, direct.Rows)
+	if text := renderedText(result); !strings.Contains(text, direct.SQL) || !strings.Contains(text, wantRows) {
+		t.Errorf("plug answer differs from the validated service answer:\n%s\nwant rows:\n%s", text, wantRows)
 	}
-	if throughThePlug.SQL != direct.SQL || throughThePlug.RowCount != direct.RowCount {
-		t.Errorf("the plug ran %q/%d rows, service ran %q/%d rows",
-			throughThePlug.SQL, throughThePlug.RowCount, direct.SQL, direct.RowCount)
-	}
+	assertNoStructuredEnvelope(t, result)
 }
 
 func TestEveryToolCallWritesACredentialFreeAuditRecord(t *testing.T) {
@@ -233,11 +226,10 @@ func TestUnavailableLLMIsAuditedAsDegradedNotOK(t *testing.T) {
 	if !result.IsError {
 		t.Fatal("unavailable LLM did not fail the MCP tool result")
 	}
-	var answer service.QueryResult
-	decode(t, result, &answer)
-	if answer.Degraded != service.DegradedUnavailable {
-		t.Fatalf("fixture answered without the unavailable path: degraded=%q", answer.Degraded)
+	if !strings.Contains(renderedText(result), service.DegradedUnavailable) {
+		t.Fatalf("fixture answered without the unavailable path: %s", renderedText(result))
 	}
+	assertNoStructuredEnvelope(t, result)
 	matches, _ := filepath.Glob(filepath.Join(svc.DataDir(), logfile.DirName, "mcp-audit-*.jsonl"))
 	raw, err := os.ReadFile(matches[0])
 	if err != nil {
@@ -268,7 +260,7 @@ func TestTheExecToolRefusesAWriteWithTheGatesVerdict(t *testing.T) {
 	}
 }
 
-func TestADegradedQueryIsAnMCPToolErrorWithItsEnvelopeIntact(t *testing.T) {
+func TestADegradedQueryIsAnMCPToolErrorWithoutAnEnvelope(t *testing.T) {
 	svc := openServiceWith(t, false, provider.Cascade{Providers: []provider.Provider{
 		fakeModel{sql: "DELETE FROM memories"},
 	}})
@@ -282,14 +274,13 @@ func TestADegradedQueryIsAnMCPToolErrorWithItsEnvelopeIntact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.IsError || result.StructuredContent == nil {
-		t.Fatalf("degraded MCP result = isError %v, structured %T", result.IsError, result.StructuredContent)
+	if !result.IsError {
+		t.Fatalf("degraded MCP result = isError %v", result.IsError)
 	}
-	var answer service.QueryResult
-	decode(t, result, &answer)
-	if answer.Degraded != service.DegradedInvalidSQL {
-		t.Fatalf("degraded = %q, want %q", answer.Degraded, service.DegradedInvalidSQL)
+	if !strings.Contains(renderedText(result), service.DegradedInvalidSQL) {
+		t.Fatalf("degraded answer omits %q: %s", service.DegradedInvalidSQL, renderedText(result))
 	}
+	assertNoStructuredEnvelope(t, result)
 }
 
 func TestMCPWarningsScrubTheWholeDataDirectoryPrefix(t *testing.T) {
@@ -305,13 +296,10 @@ func TestMCPWarningsScrubTheWholeDataDirectoryPrefix(t *testing.T) {
 	}
 
 	result := callTool(t, connect(t, svc), "roca_query", map[string]any{"query": "count one"})
-	for surface, output := range map[string]string{
-		"text": renderedText(result), "structured": asJSON(t, result.StructuredContent),
-	} {
-		if strings.Contains(output, svc.DataDir()) {
-			t.Errorf("%s output leaked data directory %q: %s", surface, svc.DataDir(), output)
-		}
+	if output := renderedText(result); strings.Contains(output, svc.DataDir()) {
+		t.Errorf("text output leaked data directory %q: %s", svc.DataDir(), output)
 	}
+	assertNoStructuredEnvelope(t, result)
 }
 
 func TestTheExecToolNeverCarriesTheDatabasePath(t *testing.T) {
@@ -322,9 +310,6 @@ func TestTheExecToolNeverCarriesTheDatabasePath(t *testing.T) {
 	result := callTool(t, session, "roca_exec", map[string]any{
 		"sql": "SELECT content FROM memories LIMIT 1",
 	})
-	if encoded := asJSON(t, result.StructuredContent); strings.Contains(encoded, dbPath) {
-		t.Errorf("the structured output carries the database path %q: %s", dbPath, encoded)
-	}
 	if text := renderedText(result); strings.Contains(text, dbPath) {
 		t.Errorf("the readable output carries the database path %q: %s", dbPath, text)
 	}
@@ -349,18 +334,19 @@ func TestWritingThroughThePlugIsWritingThroughTheProduct(t *testing.T) {
 	result := callTool(t, session, "roca_store", map[string]any{
 		"layer": "discovery", "content": "written from a shell-less agent",
 	})
-	var stored service.StoreResult
-	decode(t, result, &stored)
-	if stored.ID == 0 {
-		t.Fatal("the write through the plug has no identity")
-	}
+	assertNoStructuredEnvelope(t, result)
 
 	// The audit says it came from the plug, which is what tells this write from
 	// the one the shell would have made.
+	var storedID int64
 	var metadata string
 	if err := svc.DB().SQL().QueryRow(
-		"SELECT metadata FROM memories WHERE id = ?", stored.ID).Scan(&metadata); err != nil {
+		"SELECT id, metadata FROM memories WHERE content = ?", "written from a shell-less agent").
+		Scan(&storedID, &metadata); err != nil {
 		t.Fatalf("read the audit back: %v", err)
+	}
+	if storedID == 0 {
+		t.Fatal("the write through the plug has no identity")
 	}
 	if !strings.Contains(metadata, `"surface":"mcp"`) {
 		t.Errorf("the audit %q does not declare the write came from the plug", metadata)
@@ -368,17 +354,15 @@ func TestWritingThroughThePlugIsWritingThroughTheProduct(t *testing.T) {
 }
 
 func TestHealthThroughThePlugIsTheSameDiagnosis(t *testing.T) {
-	session := connect(t, seededService(t))
+	svc := seededService(t)
+	session := connect(t, svc)
 
 	result := callTool(t, session, "roca_health", nil)
-	var report service.HealthReport
-	decode(t, result, &report)
-	if report.Status == "" {
-		t.Fatal("the health tool returned no verdict")
+	text := renderedText(result)
+	if !strings.HasPrefix(text, "health: ") || !strings.Contains(text, "rows[") {
+		t.Errorf("health tool returned no readable diagnosis:\n%s", text)
 	}
-	if len(report.Checks) == 0 {
-		t.Error("a diagnosis with no checks")
-	}
+	assertNoStructuredEnvelope(t, result)
 }
 
 // A missing argument is the caller's mistake, not the server's: it is answered
@@ -405,7 +389,7 @@ func TestAMissingArgumentIsAToolErrorAndTheSessionSurvives(t *testing.T) {
 	after := queryThroughThePlug(t, session, map[string]any{
 		"query": "how many memories are there",
 	})
-	if after.SQL == "" {
+	if after == "" {
 		t.Error("the session did not survive the mistaken call")
 	}
 }
@@ -458,9 +442,8 @@ func TestTheServerKeepsNoStateBetweenSessions(t *testing.T) {
 		"query": "how many memories are there",
 	})
 
-	if asJSON(t, first.Rows) != asJSON(t, second.Rows) || first.SQL != second.SQL {
-		t.Errorf("two sessions gave different answers: %s / %s",
-			asJSON(t, first.Rows), asJSON(t, second.Rows))
+	if first == "" || second == "" || answerBody(first) != answerBody(second) {
+		t.Errorf("two sessions gave different answers: %q / %q", first, second)
 	}
 }
 
@@ -529,27 +512,21 @@ func callToolResult(t *testing.T, session *mcp.ClientSession, name string,
 }
 
 func queryThroughThePlug(t *testing.T, session *mcp.ClientSession,
-	arguments map[string]any) service.QueryResult {
+	arguments map[string]any) string {
 	t.Helper()
-	var answer service.QueryResult
-	decode(t, callTool(t, session, "roca_query", arguments), &answer)
-	return answer
+	result := callTool(t, session, "roca_query", arguments)
+	assertNoStructuredEnvelope(t, result)
+	return renderedText(result)
 }
 
-// decode reads the structured half of a tool result, which is what an agent
-// with no shell parses.
-func decode(t *testing.T, result *mcp.CallToolResult, into any) {
-	t.Helper()
-	if result.StructuredContent == nil {
-		t.Fatalf("the result has no structured content: %s", renderedText(result))
+func answerBody(text string) string {
+	var body []string
+	for _, line := range strings.Split(text, "\n") {
+		if !strings.HasPrefix(line, "route ") {
+			body = append(body, line)
+		}
 	}
-	encoded, err := json.Marshal(result.StructuredContent)
-	if err != nil {
-		t.Fatalf("re-encode the structured content: %v", err)
-	}
-	if err := json.Unmarshal(encoded, into); err != nil {
-		t.Fatalf("decode the structured content %s: %v", encoded, err)
-	}
+	return strings.Join(body, "\n")
 }
 
 func asJSON(t *testing.T, value any) string {

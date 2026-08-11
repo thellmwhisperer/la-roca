@@ -9,6 +9,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - Never add Sherpa-style navigational comment blocks or numbered section maps to any file; the owner forbids them repository-wide.
 - Keep distribution ownership declarations centralized in `internal/distribution/cli/uninstall.go` (`ownedPaths` and recovery-backup handling).
 - Operational JSONL lives under the selected data directory's `logs/`; retention and redaction are owned by `internal/distribution/logfile`.
+- MCP answers are TOON-only text: never return row envelopes in `StructuredContent`; the contract lives in `internal/distribution/mcpplug/toon_contract_test.go`.
 
 ## Maintaining this file
 
