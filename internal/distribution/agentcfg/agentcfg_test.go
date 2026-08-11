@@ -133,6 +133,43 @@ func TestInstallingAndWithdrawingGivesBackTheExactPreviousBytes(t *testing.T) {
 	}
 }
 
+func TestJSONCWithdrawalPreservesBytesBeforeTheNextMember(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "opencode.json")
+	const before = "{\n  \"mcp\": {\"roca\": {\"type\": \"local\", \"command\": [\"roca\", \"mcp\", \"serve\"], \"enabled\": true},\n    // This comment belongs to the next member.\n    \"other\": {\"type\": \"local\", \"command\": [\"other\"]}\n  }\n}\n"
+	const want = "{\n  \"mcp\": {\n    // This comment belongs to the next member.\n    \"other\": {\"type\": \"local\", \"command\": [\"other\"]}\n  }\n}\n"
+	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentcfg.Uninstall(agentcfg.RuntimeOpencode, path); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, path); got != want {
+		t.Fatalf("uninstalled bytes:\n--- want ---\n%s--- got ---\n%s", want, got)
+	}
+}
+
+func TestCodexEditsQuotedRocaTableHeaders(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	const before = "model = \"synthetic\"\n\n[mcp_servers.\"roca\"]\ncommand = \"old-roca\"\nargs = [\"old\"]\n\n[mcp_servers.other]\ncommand = \"other\"\n"
+	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentcfg.Install(agentcfg.RuntimeCodex, path, "new-roca"); err != nil {
+		t.Fatal(err)
+	}
+	installed := read(t, path)
+	if strings.Count(installed, "roca\"]") != 1 || !strings.Contains(installed, "command = \"new-roca\"") {
+		t.Fatalf("quoted table was not replaced in place:\n%s", installed)
+	}
+	if _, err := agentcfg.Uninstall(agentcfg.RuntimeCodex, path); err != nil {
+		t.Fatal(err)
+	}
+	want := "model = \"synthetic\"\n\n[mcp_servers.other]\ncommand = \"other\"\n"
+	if got := read(t, path); got != want {
+		t.Fatalf("uninstalled bytes:\n--- want ---\n%s--- got ---\n%s", want, got)
+	}
+}
+
 func TestHermesInstallsIntoEmptyServerMappings(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -534,5 +571,15 @@ func TestTheOperatorsPermissionsSurviveAnEdit(t *testing.T) {
 	}
 	if got := info.Mode().Perm(); got != 0o644 {
 		t.Errorf("mode = %o, want 644: the operator's permissions were not kept", got)
+	}
+}
+
+func TestBackupNameStatErrorsAreReturned(t *testing.T) {
+	path := filepath.Join(t.TempDir(), strings.Repeat("x", 250))
+	if err := os.WriteFile(path, []byte("model = \"synthetic\"\n"), 0o600); err != nil {
+		t.Skipf("filesystem does not support the fixture name: %v", err)
+	}
+	if _, err := agentcfg.Install(agentcfg.RuntimeCodex, path, "roca"); err == nil || !strings.Contains(err.Error(), "inspect backup") {
+		t.Fatalf("Install error = %v, want backup inspection failure", err)
 	}
 }

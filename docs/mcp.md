@@ -81,7 +81,7 @@ opinion: installing and then withdrawing gives back the exact previous bytes
 (`internal/distribution/agentcfg/agentcfg_test.go`, five runtimes).
 
 Two more things the shared spine gives every edit: the previous bytes are backed
-up first (`<file>.bak`, and an earlier copy is never overwritten), and a file
+up first (`<file>.roca.bak`, and an earlier copy is never overwritten), and a file
 that changed underneath us aborts instead of clobbering the runtime that owns
 it.
 

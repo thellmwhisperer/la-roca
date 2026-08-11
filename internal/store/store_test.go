@@ -26,6 +26,34 @@ func TestOpenTightensTheDatabaseFileToOperatorOnly(t *testing.T) {
 	}
 }
 
+func TestOpenTightensExistingWALSidecarsToOperatorOnly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "roca.db")
+	first, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { first.Close() })
+	if _, err := first.SQL().Exec("CREATE TABLE permission_fixture (id INTEGER)"); err != nil {
+		t.Fatal(err)
+	}
+	for _, sidecar := range []string{path + "-wal", path + "-shm"} {
+		if err := os.Chmod(sidecar, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	second, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { second.Close() })
+	for _, sidecar := range []string{path + "-wal", path + "-shm"} {
+		info, err := os.Stat(sidecar)
+		if err != nil || info.Mode().Perm() != 0o600 {
+			t.Errorf("sidecar info = %v, err=%v; want mode 0600", info, err)
+		}
+	}
+}
+
 func TestOpenAppliesWALAndBusyTimeout(t *testing.T) {
 	db := openFresh(t)
 

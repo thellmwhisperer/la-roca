@@ -15,7 +15,8 @@ import (
 // config is worse than asking them to spell it the ordinary way.
 
 func tomlDeclare(r runtime, text string, entry fields) (string, error) {
-	if _, err := tomlDocument(r, text); err != nil {
+	document, err := tomlDocument(r, text)
+	if err != nil {
 		return "", err
 	}
 	body := renderTOML(entry)
@@ -23,6 +24,9 @@ func tomlDeclare(r runtime, text string, entry fields) (string, error) {
 		// Replaced in place: the header stays where it is, and so does whatever
 		// comment sits above it.
 		return text[:block.bodyStart] + body + "\n" + text[block.end:], nil
+	}
+	if tomlHasEntry(document, r, ServerName) {
+		return "", fmt.Errorf("the existing %s.%s table cannot be edited safely", r.serversKey, ServerName)
 	}
 	separator := "\n"
 	if text == "" || strings.HasSuffix(text, "\n\n") {
@@ -34,12 +38,16 @@ func tomlDeclare(r runtime, text string, entry fields) (string, error) {
 }
 
 func tomlRemove(r runtime, text string, entries []string) (string, error) {
-	if _, err := tomlDocument(r, text); err != nil {
+	document, err := tomlDocument(r, text)
+	if err != nil {
 		return "", err
 	}
 	for _, name := range entries {
 		block, ok := tomlBlock(text, r, name)
 		if !ok {
+			if tomlHasEntry(document, r, name) {
+				return "", fmt.Errorf("the existing %s.%s table cannot be edited safely", r.serversKey, name)
+			}
 			continue
 		}
 		text = text[:block.start] + text[block.end:]
@@ -58,10 +66,9 @@ func tomlHeader(r runtime, name string) string {
 // tomlBlock treats the contiguous comment run above `[mcp_servers.<name>]` as
 // part of that table; a comment separated by a blank line remains unrelated.
 func tomlBlock(text string, r runtime, name string) (block, bool) {
-	header := tomlHeader(r, name)
 	lines, offsets := splitLines(text)
 	for i, line := range lines {
-		if strings.TrimSpace(stripComment(line)) != header {
+		if !tomlHeaderMatches(line, r, name) {
 			continue
 		}
 		first := i
@@ -95,6 +102,32 @@ func tomlBlock(text string, r runtime, name string) (block, bool) {
 		}, true
 	}
 	return block{}, false
+}
+
+func tomlHeaderMatches(line string, r runtime, name string) bool {
+	header := strings.TrimSpace(stripComment(line))
+	if !strings.HasPrefix(header, "[") || strings.HasPrefix(header, "[[") {
+		return false
+	}
+	var document map[string]any
+	if _, err := toml.Decode(header+"\n", &document); err != nil {
+		return false
+	}
+	servers, ok := document[r.serversKey].(map[string]any)
+	if !ok || len(document) != 1 || len(servers) != 1 {
+		return false
+	}
+	entry, ok := servers[name].(map[string]any)
+	return ok && len(entry) == 0
+}
+
+func tomlHasEntry(document map[string]any, r runtime, name string) bool {
+	servers, ok := document[r.serversKey].(map[string]any)
+	if !ok {
+		return false
+	}
+	_, ok = servers[name]
+	return ok
 }
 
 // tomlDocument reads the file and refuses, before a byte is touched, the shape

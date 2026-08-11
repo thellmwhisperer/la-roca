@@ -366,6 +366,7 @@ func piExchanges(active []*piEntry) ([]Exchange, int, []Discard) {
 		}
 	}
 	close()
+	PlaceThinking(exchanges)
 	return exchanges, deferred, discards
 }
 

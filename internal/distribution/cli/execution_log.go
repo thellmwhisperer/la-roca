@@ -79,6 +79,7 @@ func resultWithoutRows(result any) any {
 	}
 	if fields, ok := summary.(map[string]any); ok {
 		delete(fields, "rows")
+		delete(fields, "interpretation")
 	}
 	return summary
 }

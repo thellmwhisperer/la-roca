@@ -369,10 +369,18 @@ func (s Session) Token(ctx context.Context) (Token, error) {
 	return renewed, nil
 }
 
-func (s Session) Refresh(ctx context.Context) (Token, error) {
+func (s Session) Refresh(ctx context.Context, rejected Token) (Token, error) {
+	unlock, err := securefile.Lock(s.Store.Path + ".lock")
+	if err != nil {
+		return Token{}, fmt.Errorf("lock the credential for renewal: %w", err)
+	}
+	defer unlock()
 	token, err := s.Store.Load()
 	if err != nil {
 		return Token{}, err
+	}
+	if token.AccessToken != rejected.AccessToken || token.RefreshToken != rejected.RefreshToken {
+		return token, nil
 	}
 	return s.refresh(ctx, token)
 }

@@ -102,7 +102,7 @@ func (c *Codex) Ready(ctx context.Context) Readiness {
 		}
 	}
 	if status == http.StatusUnauthorized || status == http.StatusForbidden {
-		token, err = c.session.Refresh(ctx)
+		token, err = c.session.Refresh(ctx, token)
 		if err != nil {
 			return Readiness{ModelID: c.model,
 				Reason: fmt.Sprintf("the Codex access token received HTTP status %d and could not be refreshed: %v", status, err),

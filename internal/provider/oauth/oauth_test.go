@@ -311,6 +311,49 @@ func TestConcurrentSessionsRefreshOneRotatingTokenOnce(t *testing.T) {
 	}
 }
 
+func TestConcurrentExplicitRefreshesRotateOneTokenOnce(t *testing.T) {
+	var mu sync.Mutex
+	refreshes := 0
+	server := tokenServer(t, func(form url.Values) (int, map[string]any) {
+		mu.Lock()
+		defer mu.Unlock()
+		refreshes++
+		if refreshes > 1 || form.Get("refresh_token") != "rt-once" {
+			return http.StatusBadRequest, map[string]any{"error": "invalid_grant"}
+		}
+		return http.StatusOK, map[string]any{
+			"access_token": "fresh", "refresh_token": "rt-next", "expires_in": 3600,
+		}
+	})
+	store := Store{Path: filepath.Join(t.TempDir(), "credentials", "codex.json")}
+	rejected := Token{AccessToken: "rejected", RefreshToken: "rt-once", ExpiresAt: time.Now().Add(time.Hour)}
+	if err := store.Save(rejected); err != nil {
+		t.Fatal(err)
+	}
+	session := Session{Store: store, Flow: Flow{Endpoints: Endpoints{Token: server.URL, ClientID: "cid"}}}
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for range 2 {
+		go func() {
+			<-start
+			token, err := session.Refresh(context.Background(), rejected)
+			if err == nil && token.AccessToken != "fresh" {
+				err = fmt.Errorf("access token = %q", token.AccessToken)
+			}
+			results <- err
+		}()
+	}
+	close(start)
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if refreshes != 1 {
+		t.Fatalf("refreshes = %d, want 1", refreshes)
+	}
+}
+
 func TestSeparateProcessesShareTheOAuthRenewalLock(t *testing.T) {
 	var mu sync.Mutex
 	refreshes := 0

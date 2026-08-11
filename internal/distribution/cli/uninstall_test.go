@@ -134,6 +134,65 @@ func TestPurgeRemovesAnAuditCreatedAfterTheOwnershipSnapshot(t *testing.T) {
 	}
 }
 
+func TestPurgeReleasesAndRemovesItsLogLock(t *testing.T) {
+	home := t.TempDir()
+	paths := resolvedIn(t, home)
+	dataDir := dirOf(paths.DB)
+
+	for range 2 {
+		report := applyPurge(dataDir, func() lifecycle.Plan {
+			return lifecycle.Plan{Owned: ownedPaths(paths), DataDir: dataDir}
+		})
+		if !report.Purged || len(report.Errors) != 0 {
+			t.Fatalf("purge report = %+v", report)
+		}
+		if _, err := os.Stat(dataDir); !os.IsNotExist(err) {
+			t.Fatalf("data directory survived purge: %v", err)
+		}
+	}
+}
+
+func TestPurgePreservesSymlinkedProductDirectoriesAndTargets(t *testing.T) {
+	home := t.TempDir()
+	paths := resolvedIn(t, home)
+	dataDir := dirOf(paths.DB)
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	directories := []struct {
+		path string
+		name string
+	}{
+		{paths.Backups, "roca.20260811T120000Z.backup.db"},
+		{filepath.Join(dataDir, "cache"), modelsDevCacheFile},
+		{paths.Credentials, "codex.json"},
+		{filepath.Join(dataDir, logfile.DirName), "executions-2026-08-11.jsonl"},
+	}
+	for _, directory := range directories {
+		target := t.TempDir()
+		foreign := filepath.Join(target, directory.name)
+		writeFile(t, foreign, "mine")
+		if err := os.Symlink(target, directory.path); err != nil {
+			t.Skipf("symlinks are unavailable: %v", err)
+		}
+	}
+
+	report := applyPurge(dataDir, func() lifecycle.Plan {
+		return lifecycle.Plan{Owned: ownedPaths(paths), DataDir: dataDir}
+	})
+	if !report.Purged || len(report.Errors) != 0 {
+		t.Fatalf("purge report = %+v", report)
+	}
+	for _, directory := range directories {
+		if info, err := os.Lstat(directory.path); err != nil || info.Mode()&os.ModeSymlink == 0 {
+			t.Errorf("symlink %s was not preserved: info=%v err=%v", directory.path, info, err)
+		}
+		if _, err := os.Stat(filepath.Join(directory.path, directory.name)); err != nil {
+			t.Errorf("foreign target file was not preserved: %v", err)
+		}
+	}
+}
+
 func TestRecoveryBackupOwnershipIsProductSpecific(t *testing.T) {
 	dir := t.TempDir()
 	configFile := filepath.Join(dir, "config.toml")

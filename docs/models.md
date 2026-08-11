@@ -47,13 +47,16 @@ configured still has a floor.
 
 ### Where a value can be written
 
-For each setting, in this order of precedence:
+For each non-credential setting, in this order of precedence:
 
 1. the environment,
 2. its `[models.<provider>]` table,
 3. a loose key under `[defaults]` (`model`, `ollama_model`,
    `ollama_base_url`, `codex_model`),
 4. the built-in default.
+
+API credentials are the exception: a key stored by `roca login` takes precedence
+over the provider table's `api_key` and its environment variable.
 
 `ROCA_MODELS_ORDER` overrides the order from the environment; `ROCA_MODELS_ORDER=none`
 turns the model off entirely.

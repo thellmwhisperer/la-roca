@@ -65,9 +65,14 @@ func Open(path string) (*DB, error) {
 		handle.Close()
 		return nil, fmt.Errorf("open the database %q: %w", abs, whyItCannotOpen(abs, err))
 	}
-	if err := os.Chmod(abs, 0o600); err != nil {
-		handle.Close()
-		return nil, fmt.Errorf("restrict the database %q: %w", abs, err)
+	for _, artifact := range []string{abs, abs + "-wal", abs + "-shm"} {
+		if err := os.Chmod(artifact, 0o600); err != nil {
+			if artifact != abs && os.IsNotExist(err) {
+				continue
+			}
+			handle.Close()
+			return nil, fmt.Errorf("restrict the database artifact %q: %w", artifact, err)
+		}
 	}
 	return &DB{sql: handle, path: abs}, nil
 }

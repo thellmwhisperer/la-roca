@@ -70,6 +70,26 @@ func TestPiFingerprintIsStableAndChangesWithTheTurn(t *testing.T) {
 	}
 }
 
+func TestPiPlacesThinkingAcrossTheWholeSession(t *testing.T) {
+	content := piSession + `{"id":"e5","parentId":"e4","type":"message","timestamp":"2026-08-01T13:00:05Z","message":{"role":"user","content":"check again"}}
+{"id":"e6","parentId":"e5","type":"message","timestamp":"2026-08-01T13:00:06Z","message":{"role":"assistant","stopReason":"stop","content":[{"type":"thinking","thinking":"verify the count"},{"type":"text","text":"still nine"}]}}
+`
+	records, err := Parse(KindPiSession, []byte(content), FileMeta{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exchanges := records.Sessions[0].Exchanges
+	if len(exchanges) != 2 {
+		t.Fatalf("exchanges = %d, want 2", len(exchanges))
+	}
+	if got := exchanges[0].Thinking[0].Position; got != 0.5 {
+		t.Errorf("first thinking position = %v, want 0.5", got)
+	}
+	if got := exchanges[1].Thinking[0].Position; got != 1 {
+		t.Errorf("second thinking position = %v, want 1", got)
+	}
+}
+
 func TestPiTurnWithAnUnansweredToolIsDeferredAndNotIngested(t *testing.T) {
 	content := `{"type":"session","version":3,"id":"pi-78","cwd":"/w/demo","timestamp":"2026-08-01T13:00:00Z"}
 {"id":"e1","parentId":null,"type":"message","message":{"role":"user","content":"start"}}

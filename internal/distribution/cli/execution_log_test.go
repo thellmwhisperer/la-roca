@@ -18,7 +18,7 @@ func TestExecutionLogCarriesMetadataWithoutResultRowsAndRedactsFlags(t *testing.
 	dbPath := filepath.Join(dataDir, "roca.db")
 	env := &cliEnv{dbPath: dbPath, outcome: service.QueryResult{
 		Question: "what changed", Path: service.PathLLM, Engine: "codex", Model: "model", RowCount: 2,
-		Rows: []map[string]any{{"text": "private row contents"}},
+		Rows: []map[string]any{{"text": "private row contents"}}, Interpretation: "private row contents",
 	}}
 	root := &cobra.Command{Use: "roca"}
 	query := &cobra.Command{Use: "query"}
@@ -48,7 +48,7 @@ func TestExecutionLogCarriesMetadataWithoutResultRowsAndRedactsFlags(t *testing.
 	if strings.Contains(text, "token-private-value") {
 		t.Fatalf("credential flag leaked: %s", text)
 	}
-	if strings.Contains(text, "private row contents") || strings.Contains(text, `"rows"`) {
+	if strings.Contains(text, "private row contents") || strings.Contains(text, `"rows"`) || strings.Contains(text, `"interpretation"`) {
 		t.Fatalf("result rows leaked into the execution log: %s", text)
 	}
 }

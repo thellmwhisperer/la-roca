@@ -273,6 +273,8 @@ func backUp(path string, previous []byte) (string, error) {
 	for index := 1; ; index++ {
 		if _, err := os.Stat(backup); os.IsNotExist(err) {
 			break
+		} else if err != nil {
+			return "", fmt.Errorf("inspect backup %s: %w", backup, err)
 		}
 		backup = fmt.Sprintf("%s.roca.bak.%d", path, index)
 	}

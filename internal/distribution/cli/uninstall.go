@@ -146,7 +146,11 @@ func (env *cliEnv) uninstall(cmd *cobra.Command, purge bool) error {
 
 func applyPurge(dataDir string, plan func() lifecycle.Plan) lifecycle.Report {
 	report := lifecycle.Report{Purged: true, Deleted: []string{}}
-	release, err := logfile.New(dataDir).Lock()
+	logs := logfile.New(dataDir)
+	if info, err := os.Lstat(filepath.Dir(logs.LockPath())); err == nil && !info.IsDir() {
+		return plan().Apply()
+	}
+	release, err := logs.Lock()
 	if err != nil {
 		failed(&report, "lock product logs for purge: %v", err)
 		return report
@@ -155,6 +159,21 @@ func applyPurge(dataDir string, plan func() lifecycle.Plan) lifecycle.Report {
 	if err := release(); err != nil {
 		failed(&report, "release the product log lock after purge: %v", err)
 	}
+	final := lifecycle.Plan{
+		Owned:   []string{logs.LockPath(), filepath.Dir(logs.LockPath())},
+		DataDir: dataDir,
+	}.Apply()
+	report.Deleted = append(report.Deleted, final.Deleted...)
+	report.Kept = append(report.Kept, final.Kept...)
+	report.Errors = append(report.Errors, final.Errors...)
+	report.Purged = report.Purged && final.Purged
+	kept := report.Kept[:0]
+	for _, survivor := range report.Kept {
+		if _, err := os.Lstat(survivor.Path); err == nil || !os.IsNotExist(err) {
+			kept = append(kept, survivor)
+		}
+	}
+	report.Kept = kept
 	return report
 }
 
@@ -318,31 +337,45 @@ func ownedPaths(paths config.Paths) []string {
 		paths.Config, filepath.Join(dataDir, "prompt.md"),
 	}
 	backupPrefix := strings.TrimSuffix(filepath.Base(paths.DB), ".db") + "."
-	owned = append(owned, ownedFiles(paths.Backups, func(name string) bool {
+	backups, backupsExist := ownedFiles(paths.Backups, func(name string) bool {
 		if !strings.HasPrefix(name, backupPrefix) || !strings.HasSuffix(name, ".backup.db") {
 			return false
 		}
 		stamp := strings.TrimSuffix(strings.TrimPrefix(name, backupPrefix), ".backup.db")
 		_, err := time.Parse("20060102T150405Z", stamp)
 		return err == nil
-	})...)
+	})
+	owned = append(owned, backups...)
+	if backupsExist {
+		owned = append(owned, paths.Backups)
+	}
 	cacheDir := filepath.Join(dataDir, "cache")
-	owned = append(owned, filepath.Join(cacheDir, modelsDevCacheFile))
-	owned = append(owned, filepath.Join(paths.Credentials, provider.FileCodexSession))
-	for _, name := range provider.KeyProviders() {
-		owned = append(owned, provider.APIKeyPath(paths.Credentials, name))
+	if realDirectory(cacheDir) {
+		owned = append(owned, filepath.Join(cacheDir, modelsDevCacheFile), cacheDir)
+	}
+	if realDirectory(paths.Credentials) {
+		owned = append(owned, filepath.Join(paths.Credentials, provider.FileCodexSession))
+		for _, name := range provider.KeyProviders() {
+			owned = append(owned, provider.APIKeyPath(paths.Credentials, name))
+		}
+		owned = append(owned, paths.Credentials)
 	}
 	logDir := filepath.Join(dataDir, logfile.DirName)
-	owned = append(owned, ownedFiles(logDir, ownedLogName)...)
-	owned = append(owned, logfile.New(dataDir).LockPath())
-	owned = append(owned, paths.Backups, cacheDir, paths.Credentials, logDir)
+	logs, logsExist := ownedFiles(logDir, ownedLogName)
+	owned = append(owned, logs...)
+	if logsExist {
+		owned = append(owned, logfile.New(dataDir).LockPath(), logDir)
+	}
 	return owned
 }
 
-func ownedFiles(dir string, owns func(string) bool) []string {
+func ownedFiles(dir string, owns func(string) bool) ([]string, bool) {
+	if !realDirectory(dir) {
+		return nil, false
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil
+		return nil, true
 	}
 	var paths []string
 	for _, entry := range entries {
@@ -350,7 +383,12 @@ func ownedFiles(dir string, owns func(string) bool) []string {
 			paths = append(paths, filepath.Join(dir, entry.Name()))
 		}
 	}
-	return paths
+	return paths, true
+}
+
+func realDirectory(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && info.IsDir()
 }
 
 func ownedLogName(name string) bool {

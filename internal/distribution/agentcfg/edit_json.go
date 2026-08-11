@@ -159,7 +159,9 @@ func (o object) cut(text string, i int) string {
 	case i > 0:
 		return text[:o.members[i-1].end] + text[o.members[i].end:]
 	default:
-		return text[:o.members[0].start] + text[o.members[1].start:]
+		between := text[o.members[0].end:o.members[1].start]
+		comma := strings.IndexByte(between, ',')
+		return text[:o.members[0].start] + text[o.members[0].end+comma+1:]
 	}
 }
 
