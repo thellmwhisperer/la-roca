@@ -35,6 +35,10 @@ timeout_ms = 5000
 [models.codex]
 model = "gpt-5.6-luna"
 
+[models.claude]
+# The built-in command uses Claude Code's existing signed-in session.
+model = "sonnet"
+
 [models.deepseek]
 api_key = "sk-..."          # or leave it out and export DEEPSEEK_API_KEY
 model   = "deepseek-chat"
@@ -82,7 +86,7 @@ returned into prose, and it is the only one that ever sees your data.
 
 ```toml
 [models]
-order           = ["codex"]     # writes the SQL: sees the question and the schema
+order           = ["claude"]    # writes the SQL: sees the question and the schema
 interpret_order = ["ollama"]    # reads the rows: they go here and nowhere else
 ```
 
@@ -124,6 +128,7 @@ that is going to read the rows.
 | Name | Class | Credential | Default model |
 |---|---|---|---|
 | `codex` | subscription (OAuth) | `roca login codex` | `gpt-5.6-luna` |
+| `claude` | local Claude Code CLI | existing Claude Code session | `sonnet` |
 | `deepseek` | frontier by key | `roca login deepseek`, `api_key`, or `DEEPSEEK_API_KEY` | `deepseek-chat` |
 | `zai` | frontier by key | `roca login zai`, `api_key`, `ZAI_API_KEY`, or `ROCA_GLM_API_KEY` | `glm-4.6` |
 | `xai` | frontier by key | `roca login xai`, `api_key`, `XAI_API_KEY`, or `ROCA_GROK_API_KEY` | `grok-4` |
@@ -148,7 +153,80 @@ api_key_env = "MYCORP_TOKEN"
 ```
 
 Anything that speaks `POST {base_url}/chat/completions` works. No provider SDK
-travels inside the binary: the adapters speak HTTP and JSON and nothing else.
+travels inside the binary: the HTTP adapters speak HTTP and JSON and nothing
+else.
+
+### Local-binary transport
+
+A provider table can use a command instead of an HTTP `base_url`. The command
+is an argv template, expanded without shell interpretation. `{prompt}` receives
+the inference prompt; if it is absent, the prompt is sent on stdin. Every other
+placeholder names a scalar in that same provider table: `{model}`, `{effort}`,
+`{thinking}`, or any knob the CLI supports. Unknown placeholders are a
+configuration error that names the provider, key, and file. Literal flags need
+no placeholder. Set `response_format = "json"` when stdout is an object whose
+`result` field is the answer; otherwise stdout is treated as answer text.
+
+```toml
+[models]
+order = ["my-local-cli", "ollama"]
+
+[models.my-local-cli]
+command = ["my-local-cli", "--model", "{model}", "--effort", "{effort}"]
+model = "local-smart"
+effort = "high"
+timeout_seconds = 120
+```
+
+A custom provider declares one transport: `base_url` or `command`. Declaring
+both is a configuration error that names both keys and the configuration file.
+Built-in providers may omit both and use their built-in transport.
+
+`claude` is a shipped command-preset entry, not a special adapter. Its command,
+model, and timeout are all overridden by the same provider table an operator
+uses for any other CLI. With Claude Code installed and already signed in, this
+is enough:
+
+```toml
+[models]
+order = ["claude", "ollama"]
+interpret_order = ["ollama"]
+
+[models.claude]
+model = "sonnet" # aliases and full Claude model IDs are both accepted
+```
+
+The built-in command is pinned to Claude Code's non-interactive, single-turn
+mode. It uses `--safe-mode`, a strict empty MCP configuration, no tools, no
+skills, no Chrome integration, and no session persistence. It runs under the
+dedicated `runner/` directory in La Roca's data directory, away from repository
+instructions. The ingest scan explicitly excludes any runtime transcript keyed
+to that directory.
+
+To use an explicit Claude binary path, copy the built-in isolation contract into
+the command template:
+
+```toml
+[models.claude]
+command = [
+  "/opt/claude/bin/claude", "-p",
+  "--output-format", "json", "--model", "{model}",
+  "--safe-mode", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
+  "--tools", "", "--disable-slash-commands",
+  "--no-session-persistence", "--no-chrome",
+]
+model = "sonnet"
+response_format = "json"
+timeout_seconds = 120
+```
+
+When `response_format = "json"`, La Roca reads the answer from stdout's
+`result` field; otherwise stdout is plain answer text. This declaration is
+independent of command arguments, so a CLI may accept JSON input while returning
+text. Non-zero exits, malformed JSON, missing binaries, and timeouts are ordinary
+provider failures: they produce the same honest degraded query path as an HTTP
+provider failure. `roca doctor` runs the account probe and reports either the
+working binary or the remedy: install Claude Code or put `claude` on `PATH`.
 
 ## Login
 
@@ -157,6 +235,7 @@ Same verb for every provider this build ships. Bare `roca login` lists them.
 ```
 roca login              # lists subscription and key providers
 roca login codex        # opens the browser, then presents the model picker
+roca login claude       # verifies Claude Code's existing session; no browser flow
 roca login xai          # stores the key, then presents the model picker
 roca login xai --model grok-4-fast  # validates and probes this exact model
 roca doctor             # says whether it is usable, never what is in it
@@ -175,6 +254,10 @@ A key login stores the secret under `credentials/` in a `.key` file whose
 provider name is URL-escaped, so even a custom name cannot escape that
 directory. Config-file `api_key` and the provider's environment variable keep
 working; a key stored by login takes precedence.
+
+Claude login stores no credential. Claude Code owns the operator's existing
+session; La Roca verifies it through the local binary, offers the model choice,
+and never reads or copies that session.
 
 After authentication, login lists canonical model IDs and accepts an arrow-key
 selection; it never copies free text into the configuration. OpenAI-compatible
@@ -205,8 +288,6 @@ A vendor's OAuth flow is fragile and changes with no notice. That risk is taken
 with eyes open and the mitigation is in the shape: when it breaks, the adapter
 fails clearly and the cascade degrades to the next provider or to the local
 floor. It never takes down a query.
-
-Claude stays out: its terms forbid it outside official tools.
 
 ## What happens on a query
 
