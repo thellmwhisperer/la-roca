@@ -15,8 +15,9 @@ import (
 // These keys are read under [defaults] and at the document root, so a hand-written
 // config is not invisible.
 const (
-	keyWorkspaceRoots = "workspace_roots"
-	keySubagentRoots  = "subagent_roots"
+	keyWorkspaceRoots       = "workspace_roots"
+	keySubagentRoots        = "subagent_roots"
+	keyAnthropicExportPaths = "anthropic_export_paths"
 )
 
 func ingestCommand(env *cliEnv) *cobra.Command {
@@ -159,5 +160,6 @@ func ingestSources(file config.File, home, runnerDir string) ingest.Roots {
 			RunnerDir:             runnerDir,
 			WorkspaceRoots:        file.DefaultList(keyWorkspaceRoots),
 			SubagentRoots:         file.DefaultList(keySubagentRoots),
+			AnthropicExportPaths:  file.DefaultList(keyAnthropicExportPaths),
 		})
 }

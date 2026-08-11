@@ -240,6 +240,7 @@ exactly the information the task needs instead of a whole skill.
 |---|---|
 | Claude Code | Sessions, subagent transcripts, and per-project memory files |
 | Claude Desktop and Cowork | Session stores and Claude memory files |
+| Claude web/Desktop export you point it at | Conversations and Claude memories from the official Anthropic data export |
 | Codex | Sessions, memory, rule and skill files, and what matters from its state database |
 | OpenCode | Sessions and exchanges, distilled from its local database |
 | Pi | Session files |
@@ -248,6 +249,10 @@ exactly the information the task needs instead of a whole skill.
 Repository `AGENTS.md` and `CLAUDE.md` files are instructions and are never
 ingested as memories. Live databases are opened as guests with SQLite
 `query_only` enabled and a short busy timeout.
+
+Downloaded Anthropic exports are opt-in. Declare their extracted directories
+under `anthropic_export_paths` and run `roca ingest`; see
+[Ingest sources](docs/ingest.md#declare-an-anthropic-data-export).
 
 ## Agents plug in
 
