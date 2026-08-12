@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
@@ -28,6 +29,27 @@ func TestExecAppliesTheDefaultCharacterBudget(t *testing.T) {
 	}
 }
 
+func TestExecDeclaresWhichStageRefusedTheStatement(t *testing.T) {
+	svc, _ := serviceWithPaths(t)
+	cases := []struct{ name, sql string }{
+		{"a write", "DELETE FROM memories"},
+		{"an unknown table", "SELECT * FROM synthetic_absent_table"},
+		{"more than one statement", "SELECT 1; SELECT 2"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, err := svc.Exec(t.Context(), service.ExecRequest{SQL: testCase.sql})
+			if err == nil {
+				t.Fatal("the gate accepted the statement")
+			}
+			if got := logfile.ErrorType(err); got != service.DegradedInvalidSQL {
+				t.Fatalf("error_type = %q, want %q (error: %v)",
+					got, service.DegradedInvalidSQL, err)
+			}
+		})
+	}
+}
+
 func TestExecStopsAQueryThatExceedsTheCostBudget(t *testing.T) {
 	paths := freshPaths(t)
 	svc := serviceOn(t, paths, func(options *service.Options) {
@@ -44,6 +66,9 @@ func TestExecStopsAQueryThatExceedsTheCostBudget(t *testing.T) {
 		) SELECT sum(n) FROM costly`})
 	if err == nil {
 		t.Fatal("runaway recursive query completed without the cost budget")
+	}
+	if got := logfile.ErrorType(err); got != service.DegradedExecution {
+		t.Fatalf("error_type = %q, want %q", got, service.DegradedExecution)
 	}
 	if time.Since(started) > time.Second {
 		t.Fatalf("query timeout took too long: %v", time.Since(started))

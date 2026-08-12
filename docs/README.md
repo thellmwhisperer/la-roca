@@ -14,7 +14,8 @@ Reading order, from operator to contributor:
    and compose the stable machine surfaces.
 5. [The MCP plug](mcp.md): the stdio server, its five tools, the TOON answer
    contract, and the supported integration targets.
-6. [Operations](operations.md): operational logs, redaction, retention, and
+6. [Operations](operations.md): the audit log contract for every CLI and MCP
+   call, the query failures `roca doctor` reports, redaction, retention, and
    the read-only boundary.
 7. [Architecture](architecture.md): the four internal domains and the import
    rule that keeps them honest.

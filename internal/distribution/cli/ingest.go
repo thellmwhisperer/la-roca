@@ -43,13 +43,13 @@ func ingestCommand(env *cliEnv) *cobra.Command {
 		RunE: env.serviceRunE(func(cmd *cobra.Command, _ []string, svc *service.Service) error {
 			result, err := svc.Ingest(cmd.Context(), req)
 			env.finishIngestProgress()
+			env.capture(result)
 			if err != nil {
 				return err
 			}
 			if !env.ingestStarted.IsZero() {
 				result.TotalElapsedMS = time.Since(env.ingestStarted).Milliseconds()
 			}
-			env.capture(result)
 			if env.json {
 				return env.printJSON(result)
 			}
