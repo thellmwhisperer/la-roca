@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+* remove all model credential machinery; agent models authenticate through their own CLIs
+
+Most users need to do nothing: an already signed-in Codex or Claude CLI is detected and used automatically. Existing remote-provider configuration is tolerated and receives a migration proposal. If an older installation left files under `~/.roca/credentials`, La Roca no longer reads them and they may be removed after migration.
+
 ## [1.12.0](https://github.com/thellmwhisperer/la-roca/compare/v1.11.0...v1.12.0) (2026-08-12)
 
 

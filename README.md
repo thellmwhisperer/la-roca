@@ -48,8 +48,8 @@ not want eternal logs."
 ```
 
 If an already signed-in agent CLI is on `PATH`, that is the factory default:
-La Roca detects it and semantic queries work immediately. No provider table,
-API key, browser flow, or `roca login` step is required. Without one, La Roca
+La Roca detects it and semantic queries work immediately. No provider table or
+`roca login` step is required. Without one, La Roca
 tries the local Ollama floor and finally the keyword rescue, naming every
 missing or unavailable semantic route.
 
@@ -262,9 +262,8 @@ exactly the information the task needs instead of a whole skill.
   cheap, local, and secure.
 - **Bring the plan you already pay for.** La Roca detects supported agent CLIs
   already on `PATH` and uses their existing signed-in sessions without reading,
-  copying, or storing credentials. No La Roca login is required. For machines
-  without a usable local CLI, key-based and HTTP/OAuth providers remain
-  configurable fallbacks, and the local Ollama floor needs no credential.
+  copying, or storing secrets. No La Roca login is required. For machines
+  without a usable local CLI, the local Ollama floor and keyword rescue remain.
 - **Exact retrieval, no embeddings.** Recovery is SQL plus a local FTS5 index
   with diacritic folding; a plain `LIKE` fallback works before the index
   exists. If you want semantics, your model supplies it at question time; the
@@ -335,7 +334,7 @@ The [docs index](docs/README.md) orders the longer reads:
 
 - [Architecture](docs/architecture.md): the four internal domains.
 - [Model providers](docs/models.md): automatic CLI detection, provider order,
-  local floor, and fallback login flows.
+  local floor, and CLI-owned authentication.
 - [The MCP plug](docs/mcp.md): tools, contract, integration targets.
 - [Install, update, and uninstall](docs/lifecycle.md): the binary's life.
 - [Operations](docs/operations.md): logs, redaction, retention.
