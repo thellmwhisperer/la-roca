@@ -26,7 +26,10 @@ whose binary moved instead of adding a second one.
 `roca hooks uninstall claude` withdraws that entry and leaves every other
 setting, and every hook that is not La Roca's, exactly as it was. `roca
 uninstall` does the same withdrawal before it unlinks the binary, so no hook
-survives calling a command that is gone.
+survives calling a command that is gone. Settings La Roca cannot read stop the
+install, which cannot safely edit what it cannot parse, but never stop either
+withdrawal: the file is left byte for byte as it is, and one warning line on
+stderr names it and the `hooks run claude` entry to delete by hand.
 
 Other harnesses can use the same client-side pattern: intercept the shell tool,
 read identity only from a harness-owned session source, and inject both flags;

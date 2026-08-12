@@ -149,9 +149,11 @@ func hooksCommand(env *cliEnv) *cobra.Command {
 }
 
 // hooksEditCommand is the shape both `hooks install` and `hooks uninstall`
-// have: one supported runtime, one settings file, one rendered outcome.
+// have: one supported runtime, one settings file, one rendered outcome. An edit
+// that has something to say about a file it left alone returns one warning line,
+// printed here and only here so it cannot be doubled.
 func hooksEditCommand(env *cliEnv, use, short, verb string,
-	edit func(path string) (agentcfg.Outcome, error)) *cobra.Command {
+	edit func(path string) (agentcfg.Outcome, string, error)) *cobra.Command {
 	return &cobra.Command{
 		Use:   use,
 		Short: short,
@@ -164,9 +166,12 @@ func hooksEditCommand(env *cliEnv, use, short, verb string,
 			if err != nil {
 				return err
 			}
-			outcome, err := edit(path)
+			outcome, warning, err := edit(path)
 			if err != nil {
 				return err
+			}
+			if warning != "" {
+				fmt.Fprintln(env.errOut, warning)
 			}
 			return env.renderOutcome(outcome, verb)
 		},
@@ -177,8 +182,11 @@ func hooksInstallCommand(env *cliEnv) *cobra.Command {
 	var executable string
 	cmd := hooksEditCommand(env, "install [runtime]",
 		"Install the Claude Code roca-store signing hook", "updated",
-		func(path string) (agentcfg.Outcome, error) {
-			return installClaudeAuthorshipHook(path, executable)
+		func(path string) (agentcfg.Outcome, string, error) {
+			// Installing into settings this product cannot read is refused, not
+			// warned about: an installer that cannot parse a file cannot edit it.
+			outcome, err := installClaudeAuthorshipHook(path, executable)
+			return outcome, "", err
 		})
 	cmd.Flags().StringVar(&executable, "executable", "",
 		"the binary the hook launches (default: this executable; override with "+EnvExecutable+")")
@@ -250,21 +258,13 @@ func installClaudeAuthorshipHook(path, executable string) (agentcfg.Outcome, err
 	}
 	command := claudeHookCommand(declared)
 	return agentcfg.Edit("claude", path, func(previous string) (string, error) {
-		settings, err := claudeSettings(previous)
+		settings, hooks, entries, err := claudeHookSettings(previous)
 		if err != nil {
 			return "", err
-		}
-		hooks, ok := settings["hooks"].(map[string]any)
-		if settings["hooks"] != nil && !ok {
-			return "", fmt.Errorf("Claude settings hooks must be an object")
 		}
 		if hooks == nil {
 			hooks = map[string]any{}
 			settings["hooks"] = hooks
-		}
-		entries, ok := hooks["PreToolUse"].([]any)
-		if hooks["PreToolUse"] != nil && !ok {
-			return "", fmt.Errorf("Claude settings hooks.PreToolUse must be an array")
 		}
 		found, repointed := adoptClaudeAuthorshipHook(entries, command)
 		if found && !repointed {
@@ -284,18 +284,17 @@ func installClaudeAuthorshipHook(path, executable string) (agentcfg.Outcome, err
 // uninstallClaudeAuthorshipHook takes the PreToolUse entry back out and leaves
 // every other setting, and every hook that is not La Roca's, exactly as it was.
 // A settings file that is not there is not created and not an error.
-func uninstallClaudeAuthorshipHook(path string) (agentcfg.Outcome, error) {
-	return agentcfg.Edit("claude", path, func(previous string) (string, error) {
-		settings, err := claudeSettings(previous)
+//
+// Settings this product cannot read are not a reason to refuse a withdrawal: an
+// operator removing La Roca must not be held hostage by a file La Roca never
+// wrote. The edit is skipped, the command succeeds, and the returned warning
+// names the file and the entry to take out by hand. The caller prints it once.
+func uninstallClaudeAuthorshipHook(path string) (agentcfg.Outcome, string, error) {
+	var warning string
+	outcome, err := agentcfg.Edit("claude", path, func(previous string) (string, error) {
+		settings, hooks, entries, err := claudeHookSettings(previous)
 		if err != nil {
-			return "", err
-		}
-		hooks, ok := settings["hooks"].(map[string]any)
-		if !ok {
-			return previous, nil
-		}
-		entries, ok := hooks["PreToolUse"].([]any)
-		if !ok {
+			warning = foreignClaudeSettingsWarning(path)
 			return previous, nil
 		}
 		remaining, withdrawn := withoutClaudeAuthorshipHook(entries)
@@ -312,6 +311,36 @@ func uninstallClaudeAuthorshipHook(path string) (agentcfg.Outcome, error) {
 		}
 		return encodeClaudeSettings(settings)
 	}, false)
+	return outcome, warning, err
+}
+
+// foreignClaudeSettingsWarning is the single line an operator gets when their
+// Claude settings are not the shape La Roca can edit: the file, and the exact
+// entry to delete so no hook survives calling a binary that is gone.
+func foreignClaudeSettingsWarning(path string) string {
+	return fmt.Sprintf("warning: %s is not readable as Claude settings, "+
+		"so nothing there was changed; remove the hooks.PreToolUse entry whose "+
+		"command ends in `hooks run claude` by hand", path)
+}
+
+// claudeHookSettings is the one reader of Claude's settings document: it decodes
+// the file and hands back the hooks table and its PreToolUse entries. The two
+// edits share this refusal and part company over what it means, so the reader
+// states the shape once and each caller decides whether to stop.
+func claudeHookSettings(previous string) (settings, hooks map[string]any, entries []any, err error) {
+	settings, err = claudeSettings(previous)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	hooks, ok := settings["hooks"].(map[string]any)
+	if settings["hooks"] != nil && !ok {
+		return nil, nil, nil, fmt.Errorf("Claude settings hooks must be an object")
+	}
+	entries, ok = hooks["PreToolUse"].([]any)
+	if hooks["PreToolUse"] != nil && !ok {
+		return nil, nil, nil, fmt.Errorf("Claude settings hooks.PreToolUse must be an array")
+	}
+	return settings, hooks, entries, nil
 }
 
 func claudeSettings(previous string) (map[string]any, error) {

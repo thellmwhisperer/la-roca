@@ -243,7 +243,10 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 	if settings, err := claudeSettingsPath(); err != nil {
 		failed(report, "%s", err)
 	} else {
-		outcome, err := uninstallClaudeAuthorshipHook(settings)
+		outcome, warning, err := uninstallClaudeAuthorshipHook(settings)
+		if warning != "" {
+			fmt.Fprintln(env.errOut, warning)
+		}
 		withdrawn("the Claude signing hook from "+settings, outcome, err)
 		if purge {
 			removeRecoveryBackups(report, settings)

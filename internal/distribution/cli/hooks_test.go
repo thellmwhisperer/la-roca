@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thellmwhisperer/la-roca/internal/distribution/lifecycle"
 )
 
 func TestClaudeHookSignsRocaStoreFromTheTranscriptIdentity(t *testing.T) {
@@ -105,19 +107,19 @@ func TestClaudeHookInstallerPreservesSettingsAndIsIdempotent(t *testing.T) {
 		t.Errorf("reinstall left the hook pointing at a binary that moved: %s", body)
 	}
 
-	outcome, err := uninstallClaudeAuthorshipHook(path)
+	outcome, warning, err := uninstallClaudeAuthorshipHook(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !outcome.Changed {
-		t.Error("uninstall left the signing hook behind")
+	if !outcome.Changed || warning != "" {
+		t.Errorf("uninstall left the signing hook behind or warned about its own file: %q", warning)
 	}
 	body = readSettings(t, path)
 	if strings.Contains(body, "hooks run claude") || !strings.Contains(body, `"permissions"`) ||
 		!strings.Contains(body, `"Write"`) {
 		t.Errorf("uninstall did not withdraw exactly its own hook: %s", body)
 	}
-	if again, err := uninstallClaudeAuthorshipHook(path); err != nil || again.Changed {
+	if again, _, err := uninstallClaudeAuthorshipHook(path); err != nil || again.Changed {
 		t.Errorf("uninstall is not idempotent: changed=%v err=%v", again.Changed, err)
 	}
 
@@ -127,6 +129,72 @@ func TestClaudeHookInstallerPreservesSettingsAndIsIdempotent(t *testing.T) {
 		if err != nil || command == nil {
 			t.Fatalf("roca hooks %s claude is unavailable: %v", verb, err)
 		}
+	}
+}
+
+// Settings La Roca did not write are two different questions. Installing into
+// them is refused, because an installer that cannot read a file cannot edit it
+// safely. Withdrawing from them is not: an operator removing this product must
+// never be held hostage by a file the product never owned, so the withdrawal
+// changes nothing, succeeds, and names what to take out by hand.
+func TestMalformedClaudeSettingsRefuseInstallAndNeverBlockWithdrawal(t *testing.T) {
+	for _, test := range []struct{ name, body string }{
+		{"settings are not JSON", "{not json"},
+		{"hooks is not an object", `{"hooks":"none"}`},
+		{"PreToolUse is not an array", `{"hooks":{"PreToolUse":"none"}}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := skillTestHome(t)
+			path := filepath.Join(home, ".claude", "settings.json")
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(test.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := installClaudeAuthorshipHook(path, filepath.Join(home, "bin", "roca")); err == nil {
+				t.Fatal("install edited settings it could not read")
+			}
+
+			var out, errOut strings.Builder
+			env := &cliEnv{out: &out, errOut: &errOut}
+			root := rootCommand(env)
+			root.SetArgs([]string{"hooks", "uninstall", "claude"})
+			if err := root.Execute(); err != nil {
+				t.Fatalf("withdrawal refused to run over foreign settings: %v", err)
+			}
+			assertClaudeWithdrawalWarning(t, errOut.String(), path)
+
+			errOut.Reset()
+			report := lifecycle.Report{Purged: true, Deleted: []string{}}
+			env.withdrawTheIntegrations(&report, false)
+			assertClaudeWithdrawalWarning(t, errOut.String(), path)
+			for _, failure := range report.Errors {
+				if strings.Contains(failure, "signing hook") {
+					t.Errorf("foreign settings blocked the uninstall: %s", failure)
+				}
+			}
+
+			body, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(body) != test.body {
+				t.Errorf("withdrawal rewrote settings it could not read: %s", body)
+			}
+		})
+	}
+}
+
+func assertClaudeWithdrawalWarning(t *testing.T, warned, path string) {
+	t.Helper()
+	if count := strings.Count(warned, "warning:"); count != 1 {
+		t.Fatalf("want exactly one warning line, got %d: %q", count, warned)
+	}
+	if !strings.Contains(warned, path) || !strings.Contains(warned, "hooks run claude") ||
+		!strings.Contains(warned, "PreToolUse") {
+		t.Fatalf("the warning does not name the file and the entry to remove: %q", warned)
 	}
 }
 
