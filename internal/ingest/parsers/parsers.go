@@ -169,6 +169,13 @@ type Exchange struct {
 	Tools             []ToolUse
 	// Provenance is what the source recorded about how this answer was produced.
 	Provenance Provenance
+	// Signal counts the fields the source stated about this answer, whether or not
+	// this build has a column for each of them. It orders two readings of the same
+	// exchange so the writer keeps the provenance of the one whose source said
+	// more, which is what a poorer snapshot of an old conversation must not undo.
+	// It is only ever compared between readings of one exchange, so its scale is
+	// the source's own and a parser that states nothing leaves it at zero.
+	Signal int
 }
 
 // Provenance is the unified shape every source fills with whatever it recorded

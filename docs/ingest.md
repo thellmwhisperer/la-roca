@@ -55,12 +55,17 @@ JSON file. La Roca reads both the legacy `conversations.json` layout and the
 newer `conversations-*.json` shards, and processes both when an export directory
 contains both shapes. Multiple export directories may be listed; a later export
 of the same account contributes only conversations and messages whose source
-identities have not already landed. When legacy and sharded snapshots overlap,
-the legacy snapshot is read first because it carries richer per-message signal;
-content reconciliation prevents a duplicate.
+identities have not already landed. When legacy and sharded snapshots of the same
+conversation overlap, content reconciliation lands no duplicate and keeps the
+provenance stated by whichever snapshot recorded more about each answer; the
+legacy layout is the richer one, and it wins whether both arrive in one run or
+months apart.
 
 A declared directory containing neither conversation shape is reported as an
-unrecognized OpenAI export layout, with the directory path in the ingest report.
+unrecognized OpenAI export layout. A declared path that does not exist or cannot
+be read is reported as unreadable, which is a different remedy: point the setting
+at the extracted directory. Both name the path in the ingest report, and neither
+is passed over in silence.
 
 Each `conversation_id` becomes an unprojected `chatgpt-web` session. La Roca
 walks the `mapping` parent/children tree and pairs user messages with assistant
@@ -75,13 +80,17 @@ The assistant message's `metadata.model_slug` supplies the model when present,
 falling back to the conversation's `default_model_slug`; the provider is
 `openai`. The export carries no token or cost counts, so those provenance
 columns remain NULL. Epoch timestamps are normalized into the corpus's UTC ISO
-8601 format.
+8601 format. The per-message `update_time`, `status`, `end_turn`, `channel`,
+`metadata.request_id`, and `metadata.turn_exchange_id` fields get no column of
+their own; they are counted, because how much a snapshot stated about an answer
+is what decides which of two snapshots of it keeps the provenance.
 
-`shared_conversations.json` and attachment files are counted in the ingest
-summary as out-of-scope exclusions. The expected companions of a sharded export
-— `codex.json`, `conversation_asset_file_names.json`, `chat.html`, and
-`ads.json` — are ignored without warnings. La Roca does not open attachment
-bytes.
+`shared_conversations.json`, `codex.json`, and attachment files are counted in
+the ingest summary as out-of-scope exclusions and never warned about: Codex
+conversations are a source of their own and not part of this reading.
+`conversation_asset_file_names.json`, `chat.html`, and `ads.json` are expected
+companions of an export and are ignored outright. La Roca does not open
+attachment bytes.
 
 ## What enters the corpus
 

@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -96,12 +97,14 @@ func TestDeclaredShardedChatGPTExportIngestsEveryShard(t *testing.T) {
 	if result.Delta != (Tables{Sessions: 2, Exchanges: 3}) {
 		t.Fatalf("sharded export delta = %+v", result.Delta)
 	}
-	if result.Scanned["chatgpt_web_export_files"] != 2 || result.FilesRead != 2 {
-		t.Fatalf("sharded files scanned/read = %d/%d, want 2/2",
+	// The two shards are read; codex.json is the third file the scan counts, left
+	// out by design and reported as such rather than warned about or hidden.
+	if result.Scanned["chatgpt_web_export_files"] != 3 || result.FilesRead != 2 {
+		t.Fatalf("sharded files scanned/read = %d/%d, want 3/2",
 			result.Scanned["chatgpt_web_export_files"], result.FilesRead)
 	}
-	if result.FilesExcluded != 0 || len(result.Warnings) != 0 {
-		t.Fatalf("expected companions were reported: excluded=%d warnings=%v",
+	if result.FilesExcluded != 1 || len(result.Warnings) != 0 {
+		t.Fatalf("companion accounting: excluded=%d warnings=%v, want 1 and none",
 			result.FilesExcluded, result.Warnings)
 	}
 	for text, wantModel := range map[string]string{
@@ -120,51 +123,80 @@ func TestDeclaredShardedChatGPTExportIngestsEveryShard(t *testing.T) {
 	}
 }
 
+// The richer legacy row wins however the two snapshots reach the corpus: in one
+// directory, in one run from two directories, or in a run months later. The last
+// case is the real one, so the preference cannot live in the read order alone.
 func TestOverlappingChatGPTExportsKeepTheRicherLegacyRows(t *testing.T) {
-	db := rocaDatabase(t)
 	sharded := filepath.Join("testdata", "openai-export-sharded")
 	legacy := filepath.Join("testdata", "openai-export-v1")
-	result, err := Run(context.Background(), db, registry(t), Options{
-		Roots: Roots{ChatGPTWebExports: []string{sharded, legacy}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Delta != (Tables{Sessions: 2, Exchanges: 3}) {
-		t.Fatalf("overlapping export delta = %+v", result.Delta)
-	}
-	var sessions, exchanges int
-	if err := db.SQL().QueryRow(`SELECT COUNT(*) FROM sessions
-		WHERE session_id = '40000000-0000-4000-8000-000000000001'`).Scan(&sessions); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.SQL().QueryRow(`SELECT COUNT(*) FROM exchanges
-		WHERE session_id = '40000000-0000-4000-8000-000000000001'`).Scan(&exchanges); err != nil {
-		t.Fatal(err)
-	}
-	if sessions != 1 || exchanges != 2 {
-		t.Fatalf("overlap stored sessions/exchanges = %d/%d, want 1/2", sessions, exchanges)
-	}
-	for text, wantModel := range map[string]string{
-		"Call it Amber Kestrel.":                      "gpt-synthetic-message",
-		"The alternate branch calls it Silver Heron.": "gpt-synthetic-default",
+	for name, runs := range map[string][][]string{
+		"both shapes in one declared directory":   {{chatGPTExportWithBothShapes(t)}},
+		"a legacy export declared beside shards":  {{sharded, legacy}},
+		"a legacy export ingested in a later run": {{sharded}, {legacy}},
 	} {
-		var model string
-		if err := db.SQL().QueryRow(`SELECT model FROM exchanges WHERE agent_text = ?`, text).
-			Scan(&model); err != nil {
-			t.Fatal(err)
-		}
-		if model != wantModel {
-			t.Errorf("%q kept model %q, want richer legacy model %q", text, model, wantModel)
+		t.Run(name, func(t *testing.T) {
+			db := rocaDatabase(t)
+			for _, declared := range runs {
+				if _, err := Run(context.Background(), db, registry(t), Options{
+					Roots: Roots{ChatGPTWebExports: declared},
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := countRows(t, db.SQL(), "sessions"); got != 2 {
+				t.Fatalf("sessions = %d, want 2", got)
+			}
+			if got := countRows(t, db.SQL(), "exchanges"); got != 3 {
+				t.Fatalf("exchanges = %d, want 3", got)
+			}
+			for text, wantModel := range map[string]string{
+				"Call it Amber Kestrel.":                      "gpt-synthetic-message",
+				"The alternate branch calls it Silver Heron.": "gpt-synthetic-default",
+			} {
+				var model string
+				if err := db.SQL().QueryRow(`SELECT model FROM exchanges WHERE agent_text = ?`, text).
+					Scan(&model); err != nil {
+					t.Fatal(err)
+				}
+				if model != wantModel {
+					t.Errorf("%q kept model %q, want the richer legacy model %q", text, model, wantModel)
+				}
+			}
+		})
+	}
+}
+
+func TestDeclaredChatGPTExportDiagnosesEveryDeclarationItCannotRead(t *testing.T) {
+	present := t.TempDir()
+	for root, want := range map[string]string{
+		present: "unrecognized OpenAI export layout",
+		filepath.Join(present, "never-extracted"): "cannot be read",
+	} {
+		plan := Scan(Roots{ChatGPTWebExports: []string{root}})
+		if len(plan.Warnings) != 1 || !strings.Contains(plan.Warnings[0], root) ||
+			!strings.Contains(plan.Warnings[0], want) {
+			t.Errorf("warnings for %q = %v, want one naming %q", root, plan.Warnings, want)
 		}
 	}
 }
 
-func TestDeclaredChatGPTExportWarnsAboutAnUnrecognizedLayout(t *testing.T) {
+// chatGPTExportWithBothShapes is the directory an operator ends up with after
+// extracting a legacy export and a sharded one over each other.
+func chatGPTExportWithBothShapes(t *testing.T) string {
+	t.Helper()
 	root := t.TempDir()
-	plan := Scan(Roots{ChatGPTWebExports: []string{root}})
-	if len(plan.Warnings) != 1 || !strings.Contains(plan.Warnings[0], root) ||
-		!strings.Contains(plan.Warnings[0], "unrecognized OpenAI export layout") {
-		t.Fatalf("unrecognized layout warnings = %v", plan.Warnings)
+	for _, fixture := range []string{
+		filepath.Join("openai-export-v1", "conversations.json"),
+		filepath.Join("openai-export-sharded", "conversations-000.json"),
+		filepath.Join("openai-export-sharded", "conversations-001.json"),
+	} {
+		raw, err := os.ReadFile(filepath.Join("testdata", fixture))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, filepath.Base(fixture)), raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
+	return root
 }

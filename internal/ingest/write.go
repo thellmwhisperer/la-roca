@@ -97,6 +97,10 @@ func WriteRecords(ctx context.Context, tx *sql.Tx, layers layerResolver,
 type exchangeKey struct {
 	Number      int    `json:"exchange_number"`
 	Fingerprint string `json:"fingerprint,omitempty"`
+	// Signal is how much the reading whose provenance the row carries had stated,
+	// remembered across runs so a poorer reading of the same exchange ingested
+	// later fills what is missing and takes nothing away.
+	Signal int `json:"signal,omitempty"`
 }
 
 func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, error) {
@@ -162,7 +166,11 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 			if !matched.numberValid {
 				counts.ThinkingBlocksDiscarded += len(exchange.Thinking)
 			}
-			thinking, tools, err := w.enrichExchange(ctx, session.ID, matched, exchange)
+			// A reading that stated more about this answer than the one the row
+			// carries owns its provenance, in this run or in one months later.
+			// Anything else only fills what the row is missing.
+			richer := identityKnown && exchange.Signal > known.Signal
+			thinking, tools, err := w.enrichExchange(ctx, session.ID, matched, exchange, richer)
 			if err != nil {
 				return counts, err
 			}
@@ -172,6 +180,7 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 			if exchange.SourceID != "" && matched.numberValid {
 				assigned[exchange.SourceID] = exchangeKey{
 					Number: matched.number, Fingerprint: exchange.Fingerprint,
+					Signal: max(exchange.Signal, known.Signal),
 				}
 			}
 			if identityKnown {
@@ -217,7 +226,7 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 		counts.Exchanges++
 		if exchange.SourceID != "" {
 			assigned[exchange.SourceID] = exchangeKey{
-				Number: number, Fingerprint: exchange.Fingerprint,
+				Number: number, Fingerprint: exchange.Fingerprint, Signal: exchange.Signal,
 			}
 		}
 		thinking, tools, err := w.children(ctx, session.ID, number, exchange)
@@ -890,21 +899,36 @@ func (w *writer) exchange(ctx context.Context, sessionID string, number int,
 	return 0, false, nil
 }
 
+// enrichExchange fills what the row is missing from a later reading of the same
+// exchange, and lets a reading that stated more about the answer than the one the
+// row carries state its provenance instead. Even then it overwrites nothing the
+// source left unsaid: a NULL is the absence of a statement, not a zero.
 func (w *writer) enrichExchange(ctx context.Context, sessionID string, stored storedExchange,
-	exchange parsers.Exchange) (int, int, error) {
+	exchange parsers.Exchange, richer bool) (int, int, error) {
 	provenance := exchange.Provenance
-	_, err := w.tx.ExecContext(ctx, `
-		UPDATE exchanges SET
-		  agent_text = COALESCE(agent_text, ?),
-		  agent_timestamp = COALESCE(agent_timestamp, ?),
-		  response_latency_ms = COALESCE(response_latency_ms, ?),
-		  is_after_compaction = MAX(COALESCE(is_after_compaction, 0), ?),
+	provenanceColumns := `
 		  model = COALESCE(model, ?),
 		  provider = COALESCE(provider, ?),
 		  tokens_in = COALESCE(tokens_in, ?),
 		  tokens_out = COALESCE(tokens_out, ?),
 		  tokens_reasoning = COALESCE(tokens_reasoning, ?),
-		  cost_usd = COALESCE(cost_usd, ?)
+		  cost_usd = COALESCE(cost_usd, ?)`
+	if richer {
+		provenanceColumns = `
+		  model = COALESCE(?, model),
+		  provider = COALESCE(?, provider),
+		  tokens_in = COALESCE(?, tokens_in),
+		  tokens_out = COALESCE(?, tokens_out),
+		  tokens_reasoning = COALESCE(?, tokens_reasoning),
+		  cost_usd = COALESCE(?, cost_usd)`
+	}
+	_, err := w.tx.ExecContext(ctx, `
+		UPDATE exchanges SET
+		  agent_text = COALESCE(agent_text, ?),
+		  agent_timestamp = COALESCE(agent_timestamp, ?),
+		  response_latency_ms = COALESCE(response_latency_ms, ?),
+		  is_after_compaction = MAX(COALESCE(is_after_compaction, 0), ?),`+
+		provenanceColumns+`
 		WHERE id = ? AND session_id = ?`,
 		nullIfEmpty(exchange.AgentText), nullIfEmpty(exchange.AgentTimestamp),
 		nullInt(exchange.LatencyMS), boolToInt(exchange.IsAfterCompaction),
@@ -1117,6 +1141,7 @@ func readExchangeMap(metadata, scope string) map[string]exchangeKey {
 	}
 	ids, _ := document["source_exchange_ids"].(map[string]any)
 	fingerprints, _ := document["source_exchange_fingerprints"].(map[string]any)
+	signals, _ := document["source_exchange_signal"].(map[string]any)
 	for id, value := range ids {
 		key := exchangeKey{}
 		switch typed := value.(type) {
@@ -1134,6 +1159,9 @@ func readExchangeMap(metadata, scope string) map[string]exchangeKey {
 			if hash, ok := typed["fingerprint"].(string); ok {
 				key.Fingerprint = hash
 			}
+		}
+		if signal, ok := signals[id].(float64); ok {
+			key.Signal = int(signal)
 		}
 		if key.Number > 0 {
 			assigned[id] = key
@@ -1159,6 +1187,7 @@ func historyFallbackNumbers(current row) map[int]bool {
 func putExchangeMap(metadata map[string]any, scope string, assigned map[string]exchangeKey) {
 	ids := map[string]any{}
 	fingerprints := map[string]any{}
+	signals := map[string]any{}
 	for id, key := range assigned {
 		if scope == "" {
 			ids[id] = map[string]any{
@@ -1169,6 +1198,9 @@ func putExchangeMap(metadata map[string]any, scope string, assigned map[string]e
 			ids[id] = key.Number
 		}
 		fingerprints[id] = key.Fingerprint
+		if key.Signal > 0 {
+			signals[id] = key.Signal
+		}
 	}
 	into := metadata
 	if scope != "" {
@@ -1183,6 +1215,11 @@ func putExchangeMap(metadata map[string]any, scope string, assigned map[string]e
 		"source_exchange_ids":          ids,
 		"source_exchange_fingerprints": fingerprints,
 	})
+	// Only a source that states per-answer signal carries this key, so a source
+	// that states none keeps the metadata it always had.
+	if len(signals) > 0 {
+		into["source_exchange_signal"] = signals
+	}
 }
 
 func boolToInt(value bool) int {
