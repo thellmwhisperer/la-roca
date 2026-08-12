@@ -73,8 +73,8 @@ A successful human-readable init reports the corpus floor: the oldest ingested
 moment, the bedrock your memory reaches back to. An empty database says so
 plainly instead of printing a zero date. It ends with an `answering:` line that
 names the active provider/model, the exact configuration path, and the setting
-that changes it. `roca doctor` reports the same floor as part of
-installation health, and `--json` carries the machine fields in both commands.
+that changes it. `roca doctor` reports the same floor as part of installation
+health, and `--json` carries the machine fields in both commands.
 
 Before asking for any provider setup, init detects supported agent CLIs already
 on `PATH` and uses their existing signed-in sessions. Its summary names the
@@ -97,8 +97,8 @@ roca update
 
 Update resolves the selected release, verifies its checksum, runs the staged
 binary's version check, and swaps it into place by rename. The existing data,
-configuration and agent integrations remain in place. If any
-verification fails, the active executable is unchanged.
+configuration and agent integrations remain in place. If any verification
+fails, the active executable is unchanged.
 
 If an existing database uses the legacy search tokenizer, the first writable
 command after the update automatically rebuilds only the derived full-text
@@ -112,9 +112,9 @@ proposal once for that version. Init reserves its short question budget for the
 database and model chooser, so proposals wait for the next command. In a
 terminal La Roca asks before each proposal change; an accepted change edits only
 the declared TOML values, preserves unrelated content, and creates the same
-named recovery backup as other configuration edits. A rejection changes no configuration.
-Without a terminal, each proposal is one plain alert: La Roca does not prompt
-or edit the configuration.
+named recovery backup as other configuration edits. A rejection changes no
+configuration. Without a terminal, each proposal is one plain alert: La Roca
+does not prompt or edit the configuration.
 
 `roca doctor` always lists proposals that remain open, even after they were
 already offered for the current version. An interactive doctor run offers them
@@ -158,9 +158,10 @@ roca uninstall --purge
 
 Without an explicit data flag, uninstall asks for consent in an interactive
 terminal. `--keep-data` removes the executable and integrations while retaining
-the data directory. `--purge` removes every artefact current La Roca creates, including
-the database, configuration, indexes, logs, generated prompt,
-backups, skills, and integration recovery copies.
+the data directory. `--purge` removes every artefact La Roca owns, including the
+database, configuration, indexes, logs, generated prompt, backups, skills, and
+integration recovery copies, plus the credential files and model catalogue cache
+that older releases left behind.
 
 Uninstall edits each supported agent configuration surgically, preserving all
 unrelated bytes. It refuses to delete files it cannot identify as product-owned

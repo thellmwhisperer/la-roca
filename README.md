@@ -49,9 +49,9 @@ not want eternal logs."
 
 If an already signed-in agent CLI is on `PATH`, that is the factory default:
 La Roca detects it and semantic queries work immediately. No provider table or
-`roca login` step is required. Without one, La Roca
-tries the local Ollama floor and finally the keyword rescue, naming every
-missing or unavailable semantic route.
+`roca login` step is required. Without one, La Roca tries the local Ollama floor
+and finally the keyword rescue, naming every missing or unavailable semantic
+route.
 
 `roca init` asks before creating or adopting a database, then shows the models
 this machine can actually serve. The chooser is model-first: pick a model,

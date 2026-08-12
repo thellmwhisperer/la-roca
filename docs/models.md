@@ -28,8 +28,8 @@ it differs from the already-ready default, then `models.order` and
 `models.<provider>.model` are edited in place. Existing files keep their
 comments and unrelated settings and receive a named recovery backup when the
 edit changes them. A backup created while retiring a credential-backed provider
-is credential-redacted rather than byte-exact. The complete question and automation contracts live in
-[Initialize](lifecycle.md#initialize).
+is credential-redacted rather than byte-exact. The complete question and
+automation contracts live in [Initialize](lifecycle.md#initialize).
 
 Plain Enter through the chooser preserves the effective selection the normal
 factory ordering would have made. Non-terminal init does not run this chooser
@@ -86,10 +86,12 @@ over the file, and any explicit `order` in the file is preserved exactly.
 ### Where a value can be written
 
 Precedence depends on the setting. `ROCA_MODELS_ORDER` overrides
-`models.order`. Codex and Ollama's supported environment overrides win over
-their `[models.<provider>]` table, then the compatible loose keys under
-`[defaults]` (`model`, `ollama_model`, `ollama_base_url`, `codex_model`), then
-the built-in default.
+`models.order`. Ollama's supported environment overrides win over its
+`[models.ollama]` table, then the compatible loose keys under `[defaults]`
+(`model`, `ollama_model`, `ollama_base_url`), then the built-in default. A
+shipped CLI preset takes no environment override for its model: it reads
+`models.<provider>.model`, then `defaults.<provider>_model` (for example
+`codex_model`), then the shipped default.
 
 Local-binary `command`, `response_format`, `timeout_seconds`, and custom
 substitution values have no environment override. Their provider table wins
@@ -165,13 +167,13 @@ the runtime catalog.
 ### Local-binary transport
 
 A provider table can declare a local command. The command is an argv template,
-expanded without shell interpretation. `{prompt}` receives
-the inference prompt; if it is absent, the prompt is sent on stdin. Every other
-placeholder names a scalar in that same provider table: `{model}`, `{effort}`,
-`{thinking}`, or any knob the CLI supports. Unknown placeholders are a
-configuration error that names the provider, key, and file. Literal flags need
-no placeholder. Set `response_format = "json"` when stdout is an object whose
-`result` field is the answer; otherwise stdout is treated as answer text.
+expanded without shell interpretation. `{prompt}` receives the inference prompt;
+if it is absent, the prompt is sent on stdin. Every other placeholder names a
+scalar in that same provider table: `{model}`, `{effort}`, `{thinking}`, or any
+knob the CLI supports. Unknown placeholders are a configuration error that names
+the provider, key, and file. Literal flags need no placeholder. Set
+`response_format = "json"` when stdout is an object whose `result` field is the
+answer; otherwise stdout is treated as answer text.
 
 ```toml
 [models]
