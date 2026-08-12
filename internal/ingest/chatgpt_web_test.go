@@ -23,6 +23,15 @@ func TestDeclaredChatGPTExportIsIdempotentAndNewerExportAddsOnlyDelta(t *testing
 		t.Fatalf("first exclusions/discards = %d/%d: %+v", first.RecordsExcluded,
 			first.RecordsDiscarded, first.DiscardSummary)
 	}
+	var project string
+	if err := db.SQL().QueryRow(
+		"SELECT COALESCE(project, '') FROM sessions WHERE session_id = ?",
+		"40000000-0000-4000-8000-000000000001").Scan(&project); err != nil {
+		t.Fatal(err)
+	}
+	if project != "" {
+		t.Fatalf("ChatGPT web project = %q, want unset", project)
+	}
 
 	second, err := Run(ctx, db, registry(t), Options{Roots: Roots{ChatGPTWebExports: []string{firstRoot}}})
 	if err != nil {
