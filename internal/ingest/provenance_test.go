@@ -124,7 +124,7 @@ func TestAPlainReingestMatchesHistoricalNumbersWithoutDuplicating(t *testing.T) 
 	_, db, ctx, options := seededWorld(t)
 
 	before := tableSnapshot(t, db.SQL())
-	// What v1.8.2 left behind: NULL provenance, parser-v4 watermarks, and rows
+	// What v1.8.3 left behind: NULL provenance, prior parser watermarks, and rows
 	// numbered or timestamped by older readers.
 	if err := db.Write(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `UPDATE exchanges SET model = NULL, provider = NULL,
@@ -151,7 +151,8 @@ func TestAPlainReingestMatchesHistoricalNumbersWithoutDuplicating(t *testing.T) 
 			return err
 		}
 		_, err = tx.ExecContext(ctx,
-			`UPDATE ingest_file_state SET fingerprint = replace(fingerprint, '-v5', '-v4')
+			`UPDATE ingest_file_state SET fingerprint =
+				replace(replace(fingerprint, '-v6', '-v5'), 'conversations-v4', 'conversations-v3')
 			 WHERE instr(fingerprint, ':parser:') > 0`)
 		return err
 	}); err != nil {
@@ -216,13 +217,14 @@ func TestBackfillMatchesHistoricalAnchorsSafely(t *testing.T) {
 		return parsers.Provenance{Model: model}
 	}
 	tests := []struct {
-		name          string
-		stored        []parsers.Exchange
-		replay        []parsers.Exchange
-		nullNumber    int
-		wantInserted  int
-		wantConflicts int
-		want          []storedRow
+		name                 string
+		stored               []parsers.Exchange
+		replay               []parsers.Exchange
+		nullNumber           int
+		wantInserted         int
+		wantConflicts        int
+		wantThinkingDiscards int
+		want                 []storedRow
 	}{
 		{
 			name: "equivalent timestamp spellings precede a repeated content anchor",
@@ -258,10 +260,69 @@ func TestBackfillMatchesHistoricalAnchorsSafely(t *testing.T) {
 				HumanTimestamp: "2026-01-10T01:29:10.554Z",
 				AgentTimestamp: "2026-01-10T01:29:10.654Z",
 				Provenance:     provenance("numberless-match"),
+				Thinking:       []parsers.Thinking{{Text: "thinking without a row key"}},
 			}},
-			nullNumber: 9,
+			nullNumber:           9,
+			wantThinkingDiscards: 1,
 			want: []storedRow{{numberNull: true, humanText: "numberless turn",
 				agentText: "numberless answer", model: "numberless-match"}},
+		},
+		{
+			name: "a numbered original wins over its numberless duplicate",
+			stored: []parsers.Exchange{
+				{Number: 6, HumanText: "duplicated turn", AgentText: "duplicated answer",
+					HumanTimestamp: "2026-03-18T13:07:01.053000+00:00",
+					AgentTimestamp: "2026-03-18T13:07:02.053000+00:00"},
+				{Number: 9, HumanText: "duplicated turn", AgentText: "duplicated answer",
+					HumanTimestamp: "2026-03-18T13:07:01.053Z",
+					AgentTimestamp: "2026-03-18T13:07:02.053Z"},
+			},
+			replay: []parsers.Exchange{{
+				Number: 6, HumanText: "duplicated turn", AgentText: "duplicated answer",
+				HumanTimestamp: "2026-03-18T13:07:01.053Z",
+				AgentTimestamp: "2026-03-18T13:07:02.053Z",
+				Provenance:     provenance("numbered-original"),
+			}},
+			nullNumber: 9,
+			want: []storedRow{
+				{numberNull: true, humanText: "duplicated turn", agentText: "duplicated answer"},
+				{number: 6, humanText: "duplicated turn", agentText: "duplicated answer",
+					model: "numbered-original"},
+			},
+		},
+		{
+			name: "a textless numbered original wins over its numberless duplicate",
+			stored: []parsers.Exchange{
+				{Number: 6, HumanTimestamp: "2026-03-18T13:08:01.053000+00:00",
+					AgentTimestamp: "2026-03-18T13:08:02.053000+00:00"},
+				{Number: 9, HumanText: "recovered turn", AgentText: "recovered answer",
+					HumanTimestamp: "2026-03-18T13:08:01.053Z",
+					AgentTimestamp: "2026-03-18T13:08:02.053Z"},
+			},
+			replay: []parsers.Exchange{{
+				Number: 6, HumanText: "recovered turn", AgentText: "recovered answer",
+				HumanTimestamp: "2026-03-18T13:08:01.053Z",
+				AgentTimestamp: "2026-03-18T13:08:02.053Z",
+				Provenance:     provenance("numbered-original"),
+			}},
+			nullNumber: 9,
+			want: []storedRow{
+				{numberNull: true, humanText: "recovered turn", agentText: "recovered answer"},
+				{number: 6, agentText: "recovered answer", model: "numbered-original"},
+			},
+		},
+		{
+			name: "textless timestamp peers stay a counted conflict",
+			stored: []parsers.Exchange{
+				{Number: 1, HumanTimestamp: "2026-01-10T01:29:10Z"},
+				{Number: 2, HumanTimestamp: "2026-01-10T02:29:10+01:00"},
+			},
+			replay: []parsers.Exchange{{
+				Number: 1, HumanTimestamp: "2026-01-10T01:29:10.000Z",
+				Provenance: provenance("must-not-land"),
+			}},
+			wantConflicts: 1,
+			want:          []storedRow{{number: 1}, {number: 2}},
 		},
 		{
 			name: "timestamps precede a repeated content anchor",
@@ -439,14 +500,16 @@ func TestBackfillMatchesHistoricalAnchorsSafely(t *testing.T) {
 				}
 			}
 			if counts := write(test.replay); counts.Exchanges != test.wantInserted ||
-				counts.AnchorConflicts != test.wantConflicts {
-				t.Fatalf("first replay counts = %+v, want exchanges/conflicts = %d/%d",
-					counts, test.wantInserted, test.wantConflicts)
+				counts.AnchorConflicts != test.wantConflicts ||
+				counts.ThinkingBlocksDiscarded != test.wantThinkingDiscards {
+				t.Fatalf("first replay counts = %+v, want exchanges/conflicts/thinking discards = %d/%d/%d",
+					counts, test.wantInserted, test.wantConflicts, test.wantThinkingDiscards)
 			}
 			if counts := write(test.replay); counts.Exchanges != 0 ||
-				counts.AnchorConflicts != test.wantConflicts {
-				t.Fatalf("second replay counts = %+v, want exchanges/conflicts = 0/%d",
-					counts, test.wantConflicts)
+				counts.AnchorConflicts != test.wantConflicts ||
+				counts.ThinkingBlocksDiscarded != test.wantThinkingDiscards {
+				t.Fatalf("second replay counts = %+v, want exchanges/conflicts/thinking discards = 0/%d/%d",
+					counts, test.wantConflicts, test.wantThinkingDiscards)
 			}
 
 			rows, err := db.SQL().Query(`SELECT exchange_number, COALESCE(human_text, ''),
@@ -486,11 +549,14 @@ func TestAnchorConflictsUseTheIngestDiscardReport(t *testing.T) {
 	target := Target{Path: "synthetic-session.jsonl", Kind: parsers.KindClaudeSession,
 		SourceAgent: "claude"}
 	result := Result{Sources: map[string]*Counts{}}
-	result.recordWritten(target, Counts{AnchorConflicts: 2})
-	if result.RecordsDiscarded != 2 || len(result.DiscardDetails) != 2 ||
-		len(result.DiscardSummary) != 1 || result.DiscardSummary[0].Count != 2 ||
+	result.recordWritten(target, Counts{AnchorConflicts: 2, ThinkingBlocksDiscarded: 1})
+	if result.RecordsDiscarded != 3 || len(result.DiscardDetails) != 3 ||
+		len(result.DiscardSummary) != 2 || result.DiscardSummary[0].Count != 2 ||
 		result.DiscardSummary[0].Reason != anchorConflictReason ||
-		result.Sources["claude"].AnchorConflicts != 2 {
+		result.DiscardSummary[1].Count != 1 ||
+		result.DiscardSummary[1].Reason != thinkingWithoutNumberReason ||
+		result.Sources["claude"].AnchorConflicts != 2 ||
+		result.Sources["claude"].ThinkingBlocksDiscarded != 1 {
 		t.Fatalf("anchor conflict report = %+v", result)
 	}
 }
