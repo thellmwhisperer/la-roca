@@ -160,6 +160,7 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 			if err != nil {
 				return counts, err
 			}
+			matcher.claim(matched, number, exchange)
 			counts.ThinkingBlocks += thinking
 			if exchange.SourceID != "" {
 				assigned[exchange.SourceID] = exchangeKey{
@@ -175,14 +176,14 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 			}
 			continue
 		}
-		if outcome == exchangeAnchorConflict {
+		if outcome == exchangeAnchorConflict || outcome == exchangeAmbiguous {
 			counts.AnchorConflicts++
 			continue
 		}
-		// A known source identity or an ambiguous historical anchor may already be
+		// A known source identity or a claimed historical row may already be
 		// the historical row. Leaving it untouched is safer than manufacturing a
 		// second copy that a later ingest cannot distinguish from the first.
-		if identityKnown || outcome == exchangeAmbiguous {
+		if identityKnown || outcome == exchangeAlreadyClaimed {
 			if identityKnown {
 				if known.Fingerprint == exchange.Fingerprint {
 					counts.ExchangesUnchanged++
@@ -260,12 +261,29 @@ const (
 	exchangeMatched
 	exchangeAmbiguous
 	exchangeAnchorConflict
+	exchangeAlreadyClaimed
+)
+
+type exchangeIdentity struct {
+	sourceID   string
+	timestamps timestampPair
+	number     int
+	kind       exchangeIdentityKind
+}
+
+type exchangeIdentityKind uint8
+
+const (
+	identityBySource exchangeIdentityKind = iota + 1
+	identityByTimestamps
+	identityByNumber
 )
 
 type exchangeMatcher struct {
 	byNumber     map[int]storedExchange
 	byTimestamps map[timestampPair][]storedExchange
 	byContent    map[[sha256.Size]byte][]storedExchange
+	claimed      map[int]exchangeIdentity
 	nextNumber   int
 }
 
@@ -274,6 +292,7 @@ func (w *writer) exchangeMatcher(ctx context.Context, sessionID string) (*exchan
 		byNumber:     map[int]storedExchange{},
 		byTimestamps: map[timestampPair][]storedExchange{},
 		byContent:    map[[sha256.Size]byte][]storedExchange{},
+		claimed:      map[int]exchangeIdentity{},
 		nextNumber:   1,
 	}
 	rows, err := w.tx.QueryContext(ctx, `
@@ -339,11 +358,16 @@ func (m *exchangeMatcher) addStored(stored storedExchange) {
 }
 
 func (m *exchangeMatcher) match(number int, exchange parsers.Exchange) (int, exchangeMatch) {
+	identity := incomingIdentity(number, exchange)
 	timestampsPresent := false
 	timestampsAmbiguous := false
 	if key, ok := timestampAnchor(exchange.HumanTimestamp, exchange.AgentTimestamp); ok {
 		timestampsPresent = true
-		candidates := m.byTimestamps[key]
+		stored := m.byTimestamps[key]
+		candidates, sameClaim := m.unclaimed(stored, identity)
+		if sameClaim {
+			return 0, exchangeAlreadyClaimed
+		}
 		if len(candidates) == 1 {
 			_, conflicts := compareContent(candidates[0], exchange)
 			if conflicts {
@@ -351,10 +375,17 @@ func (m *exchangeMatcher) match(number int, exchange parsers.Exchange) (int, exc
 			}
 			return candidates[0].number, exchangeMatched
 		}
+		if len(candidates) == 0 && len(stored) > 0 {
+			return 0, exchangeUnmatched
+		}
 		timestampsAmbiguous = len(candidates) > 1
 	}
 	if key, ok := contentAnchor(exchange.HumanText, exchange.AgentText); ok {
-		candidates := compatibleCandidates(m.byContent[key], exchange)
+		stored := compatibleCandidates(m.byContent[key], exchange)
+		candidates, sameClaim := m.unclaimed(stored, identity)
+		if sameClaim {
+			return 0, exchangeAlreadyClaimed
+		}
 		if len(candidates) == 1 {
 			return candidates[0].number, exchangeMatched
 		}
@@ -364,6 +395,12 @@ func (m *exchangeMatcher) match(number int, exchange parsers.Exchange) (int, exc
 	}
 	if !timestampsPresent || timestampsAmbiguous {
 		if stored, ok := m.byNumber[number]; ok && compatibleContent(stored, exchange) {
+			if claim, claimed := m.claimed[number]; claimed {
+				if claim == identity {
+					return 0, exchangeAlreadyClaimed
+				}
+				return 0, exchangeUnmatched
+			}
 			return number, exchangeMatched
 		}
 	}
@@ -371,6 +408,35 @@ func (m *exchangeMatcher) match(number int, exchange parsers.Exchange) (int, exc
 		return 0, exchangeAmbiguous
 	}
 	return 0, exchangeUnmatched
+}
+
+func (m *exchangeMatcher) claim(number, incomingNumber int, exchange parsers.Exchange) {
+	m.claimed[number] = incomingIdentity(incomingNumber, exchange)
+}
+
+func (m *exchangeMatcher) unclaimed(candidates []storedExchange,
+	identity exchangeIdentity) ([]storedExchange, bool) {
+	available := make([]storedExchange, 0, len(candidates))
+	same := false
+	for _, candidate := range candidates {
+		claim, claimed := m.claimed[candidate.number]
+		if !claimed {
+			available = append(available, candidate)
+		} else if claim == identity {
+			same = true
+		}
+	}
+	return available, same
+}
+
+func incomingIdentity(number int, exchange parsers.Exchange) exchangeIdentity {
+	if exchange.SourceID != "" {
+		return exchangeIdentity{kind: identityBySource, sourceID: exchange.SourceID}
+	}
+	if timestamps, ok := timestampAnchor(exchange.HumanTimestamp, exchange.AgentTimestamp); ok {
+		return exchangeIdentity{kind: identityByTimestamps, timestamps: timestamps}
+	}
+	return exchangeIdentity{kind: identityByNumber, number: number}
 }
 
 func compatibleCandidates(candidates []storedExchange, exchange parsers.Exchange) []storedExchange {

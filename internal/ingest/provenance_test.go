@@ -252,6 +252,26 @@ func TestBackfillMatchesHistoricalAnchorsSafely(t *testing.T) {
 			},
 		},
 		{
+			name: "historical rows are claimed once per replay",
+			stored: []parsers.Exchange{{
+				Number: 1, HumanText: "repeated turn", AgentText: "repeated answer",
+				HumanTimestamp: "2026-01-01T00:00:09Z", AgentTimestamp: "2026-01-01T00:00:10Z",
+			}},
+			replay: []parsers.Exchange{
+				{Number: 1, HumanText: "repeated turn", AgentText: "repeated answer",
+					HumanTimestamp: "2026-01-01T00:00:09Z", AgentTimestamp: "2026-01-01T00:00:10Z",
+					Provenance: provenance("historical-match")},
+				{Number: 2, HumanText: "repeated turn", AgentText: "repeated answer",
+					HumanTimestamp: "2026-01-01T00:00:11Z", AgentTimestamp: "2026-01-01T00:00:12Z",
+					Provenance: provenance("new-exchange")},
+			},
+			wantInserted: 1,
+			want: []storedRow{
+				{number: 1, humanText: "repeated turn", agentText: "repeated answer", model: "historical-match"},
+				{number: 2, humanText: "repeated turn", agentText: "repeated answer", model: "new-exchange"},
+			},
+		},
+		{
 			name: "component boundaries cannot collide",
 			stored: []parsers.Exchange{{
 				Number: 1, HumanText: "a", AgentText: "\x00b",
@@ -292,6 +312,7 @@ func TestBackfillMatchesHistoricalAnchorsSafely(t *testing.T) {
 				Number: 2, HumanText: "repeated turn", AgentText: "repeated answer",
 				Provenance: provenance("must-not-land"),
 			}},
+			wantConflicts: 1,
 			want: []storedRow{
 				{number: 7, humanText: "repeated turn", agentText: "repeated answer"},
 				{number: 8, humanText: "repeated turn", agentText: "repeated answer"},
