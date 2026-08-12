@@ -353,7 +353,7 @@ func TestTheExecToolNeverCarriesTheDatabasePath(t *testing.T) {
 
 func TestWritingThroughThePlugIsWritingThroughTheProduct(t *testing.T) {
 	svc := seededService(t)
-	session := connect(t, svc)
+	session := connectAs(t, svc, "claude-code", "2.1.0")
 
 	result := callTool(t, session, "roca_store", map[string]any{
 		"layer": "discovery", "content": "written from a shell-less agent",
@@ -363,17 +363,17 @@ func TestWritingThroughThePlugIsWritingThroughTheProduct(t *testing.T) {
 	// The audit says it came from the plug, which is what tells this write from
 	// the one the shell would have made.
 	var storedID int64
-	var metadata string
+	var agent, model, surface string
 	if err := svc.DB().SQL().QueryRow(
-		"SELECT id, metadata FROM memories WHERE content = ?", "written from a shell-less agent").
-		Scan(&storedID, &metadata); err != nil {
+		"SELECT id, source_agent, source_model, source_surface FROM memories WHERE content = ?", "written from a shell-less agent").
+		Scan(&storedID, &agent, &model, &surface); err != nil {
 		t.Fatalf("read the audit back: %v", err)
 	}
 	if storedID == 0 {
 		t.Fatal("the write through the plug has no identity")
 	}
-	if !strings.Contains(metadata, `"surface":"mcp"`) {
-		t.Errorf("the audit %q does not declare the write came from the plug", metadata)
+	if agent != "claude-code" || model != service.UnknownAuthor || surface != service.SurfaceMCP {
+		t.Errorf("authorship = %q/%q via %q, want claude-code/unknown via mcp", agent, model, surface)
 	}
 }
 
@@ -474,6 +474,10 @@ func TestTheServerKeepsNoStateBetweenSessions(t *testing.T) {
 // --- the harness ---
 
 func connect(t *testing.T, svc *service.Service) *mcp.ClientSession {
+	return connectAs(t, svc, "test", "0")
+}
+
+func connectAs(t *testing.T, svc *service.Service, name, version string) *mcp.ClientSession {
 	t.Helper()
 	server := mcpplug.New(svc, mcpplug.Build{
 		Version: "0.0.0-test", Commit: "0123456789abcdef",
@@ -486,7 +490,7 @@ func connect(t *testing.T, svc *service.Service) *mcp.ClientSession {
 	}
 	t.Cleanup(func() { serverSession.Close() })
 
-	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	client := mcp.NewClient(&mcp.Implementation{Name: name, Version: version}, nil)
 	session, err := client.Connect(ctx, clientTransport, nil)
 	if err != nil {
 		t.Fatalf("connect the client: %v", err)
@@ -584,7 +588,8 @@ func renderedText(result *mcp.CallToolResult) string {
 func storeThroughTheService(t *testing.T, svc *service.Service) string {
 	t.Helper()
 	_, err := svc.Store(context.Background(), service.StoreRequest{
-		Layer: "discovery", Content: "this must not land", Surface: service.SurfaceCLI,
+		Layer: "discovery", Content: "this must not land",
+		Authorship: service.Authorship{Surface: service.SurfaceCLI},
 	})
 	if err == nil {
 		t.Fatal("the service accepted a write in read-only mode")
@@ -603,7 +608,8 @@ func seededService(t *testing.T) *service.Service {
 		{"discovery", "adoption compares structure, never the text of the DDL"},
 	} {
 		if _, err := svc.Store(context.Background(), service.StoreRequest{
-			Layer: seed.layer, Content: seed.content, Surface: service.SurfaceCLI,
+			Layer: seed.layer, Content: seed.content,
+			Authorship: service.Authorship{Surface: service.SurfaceCLI},
 		}); err != nil {
 			t.Fatalf("seed: %v", err)
 		}

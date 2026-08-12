@@ -49,7 +49,8 @@ func TestPlugStripsThePathThatTheServiceStillCarries(t *testing.T) {
 	dbPath := svc.DB().Path()
 
 	_, svcErr := svc.Store(context.Background(), service.StoreRequest{
-		Layer: "discovery", Content: "should be refused", Surface: service.SurfaceCLI,
+		Layer: "discovery", Content: "should be refused",
+		Authorship: service.Authorship{Surface: service.SurfaceCLI},
 	})
 	if svcErr == nil || !strings.Contains(svcErr.Error(), "read-only") {
 		t.Fatalf("unexpected service error: %v", svcErr)

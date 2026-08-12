@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS memories (
   metadata        TEXT DEFAULT '{}',
   origin          TEXT NOT NULL CHECK (origin IN ('human', 'agent', 'cron') OR origin GLOB 'plugin:?*'),
   source_agent    TEXT,
+  source_model    TEXT,
+  source_surface  TEXT,
   source_session  TEXT REFERENCES sessions(session_id),
   source_sequence INTEGER,
   project         TEXT,

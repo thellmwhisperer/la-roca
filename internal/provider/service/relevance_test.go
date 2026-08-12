@@ -21,6 +21,9 @@ func TestAnEmptyModelPlanLabelsTheLiteralFallback(t *testing.T) {
 	if res.Path != service.PathKeyword || res.RowCount == 0 {
 		t.Fatalf("the labeled literal fallback did not answer: %+v", res)
 	}
+	if !strings.Contains(strings.Join(res.Columns, ","), "author") || res.Rows[0]["author"] == nil {
+		t.Fatalf("memory result has no compact authorship: columns=%v row=%v", res.Columns, res.Rows[0])
+	}
 	for _, want := range []string{
 		"nothing relevant was found by the plan",
 		"falling back to literal term search:",

@@ -1,6 +1,8 @@
 package mcpplug
 
 import (
+	"strings"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
@@ -88,32 +90,44 @@ func (a sqlArgs) request() service.QueryRequest {
 	}
 }
 
-// storeArgs is one memory to write. Surface is fixed to the plug: it is the
-// audit and it is not the caller's to declare.
+// storeArgs is one memory to write. The identity card comes from the connected
+// session rather than these caller-controlled arguments.
 type storeArgs struct {
 	Layer   string `json:"layer" jsonschema:"user, feedback, project, pattern, pill, discovery, handoff, question, review or issue"`
 	Content string `json:"content" jsonschema:"the content of the memory, in natural language"`
 	Origin  string `json:"origin,omitempty" jsonschema:"who creates it: human, agent, cron or plugin:<name>,default=agent"`
 
-	SourceAgent string         `json:"source_agent,omitempty" jsonschema:"which agent is writing it"`
-	Project     string         `json:"project,omitempty" jsonschema:"project scope; omit for global"`
-	Status      string         `json:"status,omitempty" jsonschema:"active, pending or resolved,default=active"`
-	Supersedes  int64          `json:"supersedes,omitempty" jsonschema:"id of the memory this one replaces"`
-	Metadata    map[string]any `json:"metadata,omitempty" jsonschema:"structured tags"`
+	Project    string         `json:"project,omitempty" jsonschema:"project scope; omit for global"`
+	Status     string         `json:"status,omitempty" jsonschema:"active, pending or resolved,default=active"`
+	Supersedes int64          `json:"supersedes,omitempty" jsonschema:"id of the memory this one replaces"`
+	Metadata   map[string]any `json:"metadata,omitempty" jsonschema:"structured tags; agent, model and surface belong to the identity card and are refused here"`
 }
 
-func (a storeArgs) request() service.StoreRequest {
+func (a storeArgs) request(authorship service.Authorship) service.StoreRequest {
 	return service.StoreRequest{
-		Layer:       a.Layer,
-		Content:     a.Content,
-		Origin:      a.Origin,
-		SourceAgent: a.SourceAgent,
-		Project:     a.Project,
-		Status:      a.Status,
-		Supersedes:  a.Supersedes,
-		Metadata:    a.Metadata,
-		Surface:     service.SurfaceMCP,
+		Layer:      a.Layer,
+		Content:    a.Content,
+		Origin:     a.Origin,
+		Authorship: authorship,
+		Project:    a.Project,
+		Status:     a.Status,
+		Supersedes: a.Supersedes,
+		Metadata:   a.Metadata,
 	}
+}
+
+func authorshipFromRequest(req *mcp.CallToolRequest) service.Authorship {
+	authorship := service.Authorship{
+		Agent: service.UnknownAuthor, Model: service.UnknownAuthor, Surface: service.SurfaceMCP,
+	}
+	if req == nil || req.Session == nil || req.Session.InitializeParams() == nil ||
+		req.Session.InitializeParams().ClientInfo == nil {
+		return authorship
+	}
+	if name := strings.TrimSpace(req.Session.InitializeParams().ClientInfo.Name); name != "" {
+		authorship.Agent = name
+	}
+	return authorship
 }
 
 // healthArgs is the diagnosis' only knob.
