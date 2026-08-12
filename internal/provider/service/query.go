@@ -95,14 +95,23 @@ type QueryResult struct {
 	Degraded string `json:"degraded,omitempty"`
 	// Retried says the keyword rescue is what answered.
 	Retried bool `json:"retried,omitempty"`
+	// RetriedSQL says the first model-authored candidate was rejected and the
+	// model received one correction attempt with that verdict in hand.
+	RetriedSQL bool `json:"retried_sql,omitempty"`
 	// ModelSQL is what the model generated, whether or not it ran. It survives
 	// the rescue answering over it, because without it a model that writes badly
 	// cannot be told from a rescue that fired for another reason. Whether it ran
 	// is what Degraded says.
 	ModelSQL string `json:"model_sql,omitempty"`
+	// FirstModelSQL preserves the untouched first answer when ModelSQL is the
+	// corrected answer. RetryReason is the exact rejection that bought the retry.
+	FirstModelSQL string `json:"first_model_sql,omitempty"`
+	RetryReason   string `json:"retry_reason,omitempty"`
 	// Repaired names every deterministic repair applied before the strict gate.
 	// ModelSQL remains the untouched output so the forgiveness is auditable.
 	Repaired []string `json:"repaired,omitempty"`
+	// FirstRepaired does the same for the rejected first answer.
+	FirstRepaired []string `json:"first_repaired,omitempty"`
 	// QueryPlan is the rescue's plan: the term it searched for, which the
 	// renderer uses to keep the match inside the excerpt.
 	QueryPlan *query.Plan `json:"queryplan,omitempty"`
@@ -114,12 +123,16 @@ type QueryResult struct {
 	Warnings []string `json:"warnings,omitempty"`
 	// LLMLatencyMS is what the model alone cost, apart from the total.
 	LLMLatencyMS int64 `json:"sql_provider_latency_ms,omitempty"`
+	// SQLRetryProviderLatencyMS is the provider-reported subset spent on the
+	// correction call, so retry cost is distinguishable from a first shot.
+	SQLRetryProviderLatencyMS int64 `json:"sql_retry_provider_latency_ms"`
 	// SQLInferenceMS, ExecutionMS and InterpretationMS are the three query
 	// phases. Interpretation is populated by the CLI only when --full asks for it.
-	SQLInferenceMS   int64  `json:"sql_inference_ms"`
-	ExecutionMS      int64  `json:"execution_ms"`
-	InterpretationMS int64  `json:"interpretation_ms"`
-	Interpretation   string `json:"interpretation,omitempty"`
+	SQLInferenceMS      int64  `json:"sql_inference_ms"`
+	SQLRetryInferenceMS int64  `json:"sql_retry_inference_ms"`
+	ExecutionMS         int64  `json:"execution_ms"`
+	InterpretationMS    int64  `json:"interpretation_ms"`
+	Interpretation      string `json:"interpretation,omitempty"`
 	// InterpretEngine and InterpretModel are the second inference's own
 	// provenance: which provider read the result rows. They differ from Engine
 	// and Model on an installation that splits the two inferences, and that
