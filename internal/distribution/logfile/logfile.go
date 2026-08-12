@@ -49,6 +49,7 @@ type MCPRecord struct {
 	Degraded                  string    `json:"degraded,omitempty"`
 	Retried                   bool      `json:"retried,omitempty"`
 	RetriedSQL                bool      `json:"retried_sql,omitempty"`
+	ModelSQL                  string    `json:"model_sql,omitempty"`
 	FirstModelSQL             string    `json:"first_model_sql,omitempty"`
 	RetryReason               string    `json:"retry_reason,omitempty"`
 	SQLProvider               string    `json:"sql_provider,omitempty"`

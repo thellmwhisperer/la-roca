@@ -121,8 +121,10 @@ type QueryResult struct {
 	// Warnings are what the configuration said that this build did not
 	// understand. They never take down a query.
 	Warnings []string `json:"warnings,omitempty"`
-	// LLMLatencyMS is what the model alone cost, apart from the total.
-	LLMLatencyMS int64 `json:"sql_provider_latency_ms,omitempty"`
+	// LLMLatencyMS is what the model alone cost, apart from the total. It is
+	// declared whenever its retry subset is, so that the share the correction
+	// took is never a numerator without its denominator.
+	LLMLatencyMS int64 `json:"sql_provider_latency_ms"`
 	// SQLRetryProviderLatencyMS is the provider-reported subset spent on the
 	// correction call, so retry cost is distinguishable from a first shot.
 	SQLRetryProviderLatencyMS int64 `json:"sql_retry_provider_latency_ms"`

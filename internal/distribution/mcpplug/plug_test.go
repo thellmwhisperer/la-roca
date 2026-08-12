@@ -235,6 +235,7 @@ func TestQueryAuditDistinguishesRetrySuccessFromRescue(t *testing.T) {
 			},
 			want: []string{`"path":"model"`, `"retried_sql":true`,
 				`"first_model_sql":"SELECT missing FROM memories LIMIT 1"`,
+				`"model_sql":"SELECT content FROM memories WHERE supersedes IS NULL LIMIT 1"`,
 				`"retry_reason":"no such column:`, `missing`,
 				`"sql_retry_inference_ms":`, `"sql_retry_provider_latency_ms":`},
 		},
