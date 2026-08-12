@@ -19,12 +19,13 @@ import (
 // Paths a question can leave by. v1 is model-only: every question is asked of
 // the model (PathLLM), and when the model cannot answer the keyword rescue
 // searches the FTS index with the question's own words (PathKeyword). There is
-// no compiler path and no refusal: a question the model cannot answer is
-// declared unresolved, not turned away at a gate.
+// no compiler path. A model can explicitly refuse an out-of-scope question;
+// that is a legitimate result, distinct from an unavailable model or bad SQL.
 const (
 	PathLLM        = "model"
 	PathKeyword    = "keyword"
 	PathUnresolved = "unresolved"
+	PathRefused    = "refused"
 )
 
 // Match states. Honest zero rows are declared as such instead of dressed up as

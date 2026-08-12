@@ -102,6 +102,10 @@ func composeQuery(res service.QueryResult, prose string, help func(service.Query
 	}
 	var b strings.Builder
 	appendLine(&b, QueryPreamble(res))
+	if res.Path == service.PathRefused {
+		appendLine(&b, res.Message)
+		return b.String()
+	}
 	switch {
 	case res.Match == "":
 		appendLine(&b, res.SQL)

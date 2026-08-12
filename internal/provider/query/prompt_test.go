@@ -108,6 +108,17 @@ func TestTheUserQuestionIsEscapedAndFollowedByReinforcement(t *testing.T) {
 	}
 }
 
+func TestThePromptsDeclareRefusalForQuestionsOutsideMemory(t *testing.T) {
+	system := SQLSystemPrompt(ReadSchema(someDDL, nil), nil, nil)
+	user := SQLUserPrompt("how tall is the Eiffel Tower?")
+
+	if !strings.Contains(system, "single word REFUSE") ||
+		!strings.Contains(user, "outside the La Roca memory database") ||
+		!strings.Contains(user, "REFUSE") {
+		t.Fatalf("the refusal contract is not reinforced in both prompts:\nSYSTEM\n%s\nUSER\n%s", system, user)
+	}
+}
+
 // THE DEFECT THIS TEST EXISTS FOR.
 //
 // The prompt used to impose `WHERE supersedes IS NULL` on every query. That hid

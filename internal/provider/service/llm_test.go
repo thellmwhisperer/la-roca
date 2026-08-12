@@ -179,6 +179,24 @@ func TestTheModelsSQLAlwaysPassesTheGate(t *testing.T) {
 	}
 }
 
+func TestARefusalIsAnHonestNonSQLResult(t *testing.T) {
+	const answer = "REFUSE because the question is outside the memory database"
+	model := answering("codex", answer)
+	svc := serviceWithModel(t, model)
+
+	res, err := svc.Query(t.Context(), service.QueryRequest{Question: "what is the tallest mountain?"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model.requests != 1 || res.Path != service.PathRefused || res.Degraded != "" ||
+		res.RetriedSQL || res.SQL != "" || res.RowCount != 0 {
+		t.Fatalf("refusal result = requests %d, %+v", model.requests, res)
+	}
+	if res.ModelSQL != answer || !strings.Contains(res.Message, "outside") {
+		t.Fatalf("refusal provenance = %+v", res)
+	}
+}
+
 // The gate's LIMIT requirement is a repair, not a rejection: a SELECT with no
 // LIMIT comes back with one.
 func TestTheGateAddsTheMissingLimitInsteadOfRefusing(t *testing.T) {

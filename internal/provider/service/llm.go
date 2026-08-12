@@ -169,6 +169,11 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 		// forgiveness step then repairs only declared, deterministic shapes before
 		// the unchanged gate sees the candidate.
 		res.ModelSQL = answer.Content
+		if query.IsRefusal(answer.Content) {
+			res.Path = PathRefused
+			res.Message = "The question is outside the scope of the La Roca memory database."
+			return res, nil
+		}
 		prepared := sqlrepair.Prepare(answer.Content)
 		res.Repaired = prepared.Repairs
 		sql := prepared.SQL
