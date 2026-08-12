@@ -448,9 +448,9 @@ func (s *Service) syncLayers(ctx context.Context) error {
 	})
 }
 
-// truncate clips a text to the requested budget while keeping the search match:
-// a truncation that eats what you were looking for is not a summary, it is a
-// shorter wrong answer.
+// truncate clips a text to the requested budget while keeping both the leading
+// subject and the search match. When those segments do not fit together, the
+// ellipsis sits between them instead of silently replacing the subject.
 func truncate(text string, budget int, term string) string {
 	if budget <= 0 {
 		budget = DefaultMaxChars
@@ -462,22 +462,26 @@ func truncate(text string, budget int, term string) string {
 	if budget == 1 {
 		return "…"
 	}
-	start := 0
-	if pos := matchPosition(text, term); pos > 0 {
-		start = max(0, pos-budget/3)
+	if budget < 4 {
+		return string(runes[:budget-1]) + "…"
 	}
-	contentBudget := budget
-	if start > 0 {
-		contentBudget--
+	pos, matchEnd := matchSpan(text, term)
+	if pos < 0 || matchEnd <= budget-1 {
+		return string(runes[:budget-1]) + "…"
 	}
-	end := min(len(runes), start+contentBudget)
-	tail := end < len(runes)
+
+	head := max(1, (budget-2)/2)
+	suffixBudget := budget - head - 1
+	start := pos
+	if start+suffixBudget >= len(runes) {
+		start = max(head, len(runes)-suffixBudget)
+	}
+	tail := start+suffixBudget < len(runes)
 	if tail {
-		contentBudget--
-		end = min(len(runes), start+contentBudget)
+		suffixBudget--
 	}
-	excerpt := string(runes[start:end])
-	return strings.Repeat("…", btoi(start > 0)) + excerpt + strings.Repeat("…", btoi(tail))
+	return string(runes[:head]) + "…" + string(runes[start:start+suffixBudget]) +
+		strings.Repeat("…", btoi(tail))
 }
 
 func btoi(value bool) int {
@@ -488,16 +492,23 @@ func btoi(value bool) int {
 }
 
 func matchPosition(text, term string) int {
+	position, _ := matchSpan(text, term)
+	return position
+}
+
+func matchSpan(text, term string) (int, int) {
 	lower, positions := lowerWithPositions(text)
 	for _, part := range strings.Split(term, "+") {
 		if part == "" {
 			continue
 		}
-		if i := strings.Index(lower, strings.ToLower(part)); i >= 0 {
-			return positions[i]
+		folded := strings.ToLower(part)
+		if i := strings.Index(lower, folded); i >= 0 {
+			last := i + len(folded) - 1
+			return positions[i], positions[last] + 1
 		}
 	}
-	return -1
+	return -1, -1
 }
 
 func lowerWithPositions(text string) (string, []int) {
