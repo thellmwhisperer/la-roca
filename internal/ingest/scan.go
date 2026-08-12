@@ -97,7 +97,7 @@ func Scan(roots Roots) Plan {
 	plan.add(scanSubagents(roots), "subagent_files")
 	plan.add(scanPiSessions(roots), "pi_session_files")
 	plan.add(scanClaudeWebExports(roots), "claude_web_export_files")
-	plan.add(scanChatGPTWebExports(roots), "chatgpt_web_export_files")
+	plan.add(scanChatGPTWebExports(roots, &plan), "chatgpt_web_export_files")
 	plan.add(existingFile(roots.OpenCodeDB, Target{
 		Kind: parsers.KindOpenCodeDB, SourceAgent: "opencode"}), "opencode_databases")
 	plan.add(existingFile(roots.HermesDB, Target{
@@ -180,35 +180,56 @@ func scanClaudeWebExports(roots Roots) []Target {
 	return targets
 }
 
-// scanChatGPTWebExports reads conversations.json and accounts for the export
-// records that this build deliberately leaves out. chat.html is only another
-// rendering of conversations.json and is neither opened nor counted.
-func scanChatGPTWebExports(roots Roots) []Target {
-	var targets []Target
+// scanChatGPTWebExports reads both generations of the export conversation
+// layout and accounts for the records that this build deliberately leaves out.
+func scanChatGPTWebExports(roots Roots, plan *Plan) []Target {
+	var monolithic, sharded, excluded []Target
 	seen := map[string]bool{}
 	for _, root := range roots.ChatGPTWebExports {
+		recognized := false
 		for _, name := range filesIn(root) {
 			path := filepath.Join(root, name)
+			target := Target{Path: path, SourceAgent: "chatgpt-web", FileName: name}
+			switch name {
+			case "conversations.json":
+				recognized = true
+				target.Kind = parsers.KindChatGPTWebConversations
+			case "shared_conversations.json":
+				target.ExclusionReason = "shared ChatGPT conversations are out of scope"
+			case "codex.json", "conversation_asset_file_names.json", "chat.html", "ads.json":
+				continue
+			default:
+				if strings.HasPrefix(name, "conversations-") && strings.HasSuffix(name, ".json") {
+					recognized = true
+					target.Kind = parsers.KindChatGPTWebConversations
+				} else {
+					target.ExclusionReason = "ChatGPT export attachment is out of scope"
+				}
+			}
 			key := realPath(path)
 			if seen[key] {
 				continue
 			}
 			seen[key] = true
-			target := Target{Path: path, SourceAgent: "chatgpt-web", FileName: name}
-			switch name {
-			case "conversations.json":
-				target.Kind = parsers.KindChatGPTWebConversations
-			case "shared_conversations.json":
-				target.ExclusionReason = "shared ChatGPT conversations are out of scope"
-			case "chat.html":
-				continue
+			switch {
+			case target.ExclusionReason != "":
+				excluded = append(excluded, target)
+			case name == "conversations.json":
+				monolithic = append(monolithic, target)
 			default:
-				target.ExclusionReason = "ChatGPT export attachment is out of scope"
+				sharded = append(sharded, target)
 			}
-			targets = append(targets, target)
+		}
+		if !recognized {
+			plan.Warnings = append(plan.Warnings, fmt.Sprintf(
+				"unrecognized OpenAI export layout at %q: expected conversations.json or conversations-*.json",
+				root))
 		}
 	}
-	return targets
+	// Legacy snapshots carry more per-message signal. Read them first regardless
+	// of declaration order so the writer's fill-only reconciliation retains that
+	// richer row when a shard repeats the same conversation.
+	return append(append(monolithic, sharded...), excluded...)
 }
 
 func anyPathExists(paths []string) bool {
