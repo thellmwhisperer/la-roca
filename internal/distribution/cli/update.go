@@ -134,7 +134,6 @@ func (env *cliEnv) update(ctx context.Context, source release.Source,
 	}
 	if published.Tag == current {
 		if !checkOnly {
-			env.refreshCatalogueAfterUpdate(ctx)
 			return env.reportUpdate(map[string]any{
 				"updated": false, "version": current, "latest": published.Tag,
 				"reason": "already at the latest version",
@@ -198,7 +197,6 @@ func (env *cliEnv) update(ctx context.Context, source release.Source,
 	if err := release.Swap(installed, binary, answersItsVersion); err != nil {
 		return err
 	}
-	env.refreshCatalogueAfterUpdate(ctx)
 	paths, pathErr := env.resolvePaths()
 	pending, countErr := 0, pathErr
 	if pathErr == nil {
@@ -256,16 +254,6 @@ func decodeCapabilityCount(output []byte) (int, error) {
 		return 0, fmt.Errorf("decode capability count: missing pending")
 	}
 	return *result.Pending, nil
-}
-
-// refreshCatalogueAfterUpdate keeps the offline model list current without
-// turning catalogue availability into authority over a verified binary update.
-// A failed refresh is named on stderr and the embedded snapshot remains usable.
-func (env *cliEnv) refreshCatalogueAfterUpdate(ctx context.Context) {
-	if err := env.refreshModelCatalogue(ctx); err != nil && env.errOut != nil {
-		fmt.Fprintf(env.errOut,
-			"warning: the model catalogue snapshot was not refreshed: %v; the embedded snapshot remains available and may be stale\n", err)
-	}
 }
 
 func theRelease(ctx context.Context, source release.Source, tag string) (release.Release, error) {

@@ -16,7 +16,7 @@ One file, TOML, at `config.toml` inside the data directory (`~/.roca/`).
 `roca doctor` prints the exact path it read.
 Most installations do not need this file for model access: the examples below
 are overrides for operators who want a fixed order, split inference, or a
-fallback provider.
+custom local command.
 
 An interactive `roca init` is the shortest way to create those overrides. It
 starts with models rather than provider names: detected agent CLIs are grouped
@@ -27,8 +27,9 @@ asks which harness to use when several match. The confirmed pair is probed when
 it differs from the already-ready default, then `models.order` and
 `models.<provider>.model` are edited in place. Existing files keep their
 comments and unrelated settings and receive a named recovery backup when the
-edit changes them. The complete question and automation contracts live in
-[Initialize](lifecycle.md#initialize).
+edit changes them. A backup created while retiring a credential-backed provider
+is credential-redacted rather than byte-exact. The complete question and
+automation contracts live in [Initialize](lifecycle.md#initialize).
 
 Plain Enter through the chooser preserves the effective selection the normal
 factory ordering would have made. Non-terminal init does not run this chooser
@@ -38,7 +39,7 @@ the configuration path once so automation stays question-free.
 ```toml
 [models]
 # The order they are tried in. The first available one serves.
-order = ["codex", "deepseek", "ollama"]
+order = ["codex", "claude", "ollama"]
 # Optional. The order the RESULT ROWS are read by, when you want the two
 # inferences on different providers. Leave it out and the provider that wrote
 # the SQL also reads the rows, which is what every installation did before this
@@ -60,10 +61,6 @@ model = "gpt-5.6-luna"
 [models.claude]
 # The built-in command uses Claude Code's existing signed-in session.
 model = "sonnet"
-
-[models.deepseek]
-api_key = "sk-..."          # or leave it out and export DEEPSEEK_API_KEY
-model   = "deepseek-chat"
 
 [models.ollama]
 base_url   = "http://localhost:11434"
@@ -89,10 +86,12 @@ over the file, and any explicit `order` in the file is preserved exactly.
 ### Where a value can be written
 
 Precedence depends on the setting. `ROCA_MODELS_ORDER` overrides
-`models.order`. Codex and Ollama's supported environment overrides win over
-their `[models.<provider>]` table, then the compatible loose keys under
-`[defaults]` (`model`, `ollama_model`, `ollama_base_url`, `codex_model`), then
-the built-in default.
+`models.order`. Ollama's supported environment overrides win over its
+`[models.ollama]` table, then the compatible loose keys under `[defaults]`
+(`model`, `ollama_model`, `ollama_base_url`), then the built-in default. A
+shipped CLI preset takes no environment override for its model: it reads
+`models.<provider>.model`, then `defaults.<provider>_model` (for example
+`codex_model`), then the shipped default.
 
 Local-binary `command`, `response_format`, `timeout_seconds`, and custom
 substitution values have no environment override. Their provider table wins
@@ -100,9 +99,6 @@ over shipped preset data; an omitted custom-command timeout uses the 120-second
 adapter default. When `[models].timeout_ms` or `probe_ms` is set, that shared
 cascade budget takes precedence over the command timeout for the corresponding
 request or probe.
-
-API credentials are the exception: a key stored by `roca login` takes precedence
-over the provider table's `api_key` and its environment variable.
 
 `ROCA_MODELS_ORDER` overrides the order from the environment; `ROCA_MODELS_ORDER=none`
 turns the model off entirely. There is no environment override for
@@ -158,47 +154,26 @@ that is going to read the rows.
 
 ## The providers
 
-| Name | Class | Credential | Default model |
+| Name | Transport | Authentication | Default model |
 |---|---|---|---|
-| `codex` | local Codex CLI | existing Codex CLI session | `gpt-5.6-luna` |
-| `claude` | local Claude Code CLI | existing Claude Code session | `sonnet` |
-| `deepseek` | frontier by key | `roca login deepseek`, `api_key`, or `DEEPSEEK_API_KEY` | `deepseek-chat` |
-| `zai` | frontier by key | `roca login zai`, `api_key`, `ZAI_API_KEY`, or `ROCA_GLM_API_KEY` | `glm-4.6` |
-| `xai` | frontier by key | `roca login xai`, `api_key`, `XAI_API_KEY`, or `ROCA_GROK_API_KEY` | `grok-4` |
-| `ollama` | local floor | none | `qwen3.5:4b` |
+| `codex` | local Codex CLI | owned by Codex CLI | `gpt-5.6-luna` |
+| `claude` | local Claude Code CLI | owned by Claude Code | `sonnet` |
+| `ollama` | local runtime | none | `qwen3.5:4b` |
 
-The three by key are the **same adapter** with a different endpoint, model and
-usual environment variable. A provider of your own is the same adapter again:
-give it a table with a `base_url` and name it in the order. Every key provider
-also answers to `ROCA_<PROVIDER>_API_KEY`; the two known by their model rather
-than their vendor answer to the model's name too (`ROCA_GLM_API_KEY` for `zai`,
-`ROCA_GROK_API_KEY` for `xai`), so an operator who thinks "GLM" or "Grok" never
-has to learn the vendor's spelling.
-
-```toml
-[models]
-order = ["mycorp", "ollama"]
-
-[models.mycorp]
-base_url    = "https://llm.internal/v1"
-model       = "internal-7b"
-api_key_env = "MYCORP_TOKEN"
-```
-
-Anything that speaks `POST {base_url}/chat/completions` works. No provider SDK
-travels inside the binary: the HTTP adapters speak HTTP and JSON and nothing
-else.
+La Roca stores no model-provider secrets. Additional providers must be local
+command transports declared explicitly; remote HTTP providers are not part of
+the runtime catalog.
 
 ### Local-binary transport
 
-A provider table can use a command instead of an HTTP `base_url`. The command
-is an argv template, expanded without shell interpretation. `{prompt}` receives
-the inference prompt; if it is absent, the prompt is sent on stdin. Every other
-placeholder names a scalar in that same provider table: `{model}`, `{effort}`,
-`{thinking}`, or any knob the CLI supports. Unknown placeholders are a
-configuration error that names the provider, key, and file. Literal flags need
-no placeholder. Set `response_format = "json"` when stdout is an object whose
-`result` field is the answer; otherwise stdout is treated as answer text.
+A provider table can declare a local command. The command is an argv template,
+expanded without shell interpretation. `{prompt}` receives the inference prompt;
+if it is absent, the prompt is sent on stdin. Every other placeholder names a
+scalar in that same provider table: `{model}`, `{effort}`, `{thinking}`, or any
+knob the CLI supports. Unknown placeholders are a configuration error that names
+the provider, key, and file. Literal flags need no placeholder. Set
+`response_format = "json"` when stdout is an object whose `result` field is the
+answer; otherwise stdout is treated as answer text.
 
 ```toml
 [models]
@@ -211,12 +186,11 @@ effort = "high"
 timeout_seconds = 120
 ```
 
-A custom provider declares one transport: `base_url` or `command`. Declaring
-both is a configuration error that names both keys and the configuration file.
-Built-in providers may omit both and use their built-in transport.
+A custom provider declares `command`; built-in providers may omit it and use
+their shipped command preset. `base_url` is supported only for local Ollama.
 The generic command transport works in the SQL and interpretation cascades and
-through `roca doctor`, `roca login <provider>`, and
-`roca model set <provider> <model>`.
+through `roca doctor` and `roca model set <provider> <model>`. The `roca login`
+verification surface is reserved for the shipped Codex and Claude CLIs.
 
 `claude` and `codex` are shipped command-preset entries, not special adapters.
 Their command, model, and timeout are all overridden by the same provider table
@@ -266,77 +240,58 @@ When `response_format = "json"`, La Roca reads the answer from stdout's
 `result` field; otherwise stdout is plain answer text. This declaration is
 independent of command arguments, so a CLI may accept JSON input while returning
 text. Non-zero exits, malformed JSON, missing binaries, and timeouts are ordinary
-provider failures: they produce the same honest degraded query path as an HTTP
-provider failure. `roca doctor` lists every detected shipped binary, identifies
+provider failures: they produce the same honest degraded query path as any
+unavailable model. `roca doctor` lists every detected shipped binary, identifies
 the provider the factory order selected, says that no La Roca login is required,
 and reports a binary-specific remedy for anything missing or unusable.
 
-## Fallback login flows
+## Authentication and model selection
 
-Detected agent CLIs need no La Roca login. Bare `roca login` lists all supported
-flows; invoking it for a local CLI is an optional verification of the binary,
-existing vendor session, and selected model.
-These flows are setup fallbacks for users without a usable local CLI, not a
-step between installation and the first query.
+Models authenticate through their own CLIs. La Roca stores no secrets and a
+detected CLI needs no La Roca login. The retained `roca login` verb is an
+optional verification and model-selection surface for the two shipped CLIs:
 
-```
-roca login              # lists local CLI, subscription fallback, and key providers
+```sh
+roca login              # lists Codex and Claude local CLI verification
 roca login codex        # optionally verifies the existing Codex CLI session
 roca login claude       # optionally verifies the existing Claude Code session
-roca login xai          # stores the key, then presents the model picker
-roca login xai --model grok-4-fast  # validates and probes this exact model
-roca doctor             # says whether it is usable, never what is in it
-roca logout xai         # forgets the stored key
+roca doctor             # diagnoses binaries, models, and remedies
 ```
 
-The Codex HTTP/OAuth transport remains available as a configured fallback. Set
-`models.codex.base_url` to the subscription endpoint and keep `codex` in an
-explicit order; `roca login codex` then opens the browser flow. Its session
-lands in `credentials/codex.json` with mode `0600` under a `0700` directory and
-renews itself. This compatibility path is no longer the fresh-install default.
-
-A key login stores the secret under `credentials/` in a `.key` file whose
-provider name is URL-escaped, so even a custom name cannot escape that
-directory. Config-file `api_key` and the provider's environment variable keep
-working; a key stored by login takes precedence.
-
-Local CLI verification stores no credential. The CLI owns the operator's
-existing session; La Roca probes it through the binary, offers the model
-choice, and never reads or copies that session.
-
-During login, La Roca offers known model IDs with an arrow-key selection.
-OpenAI-compatible providers and Ollama supply their live catalogues through
-`/models` and `/api/tags`. Codex uses the public models.dev catalogue, then a
-cached or embedded snapshot when the catalogue is unavailable. A fallback list
-is labelled as possibly stale, and `roca update` refreshes its cache. A
-local-binary provider offers its declared or shipped choices interactively and
-also accepts an explicit model ID because many CLIs accept aliases and full IDs
-without exposing a catalogue.
-
-Catalogue membership proves only that a catalogue-backed model exists. Before
-changing `config.toml`, La Roca sends one minimal real request with the candidate
-provider and model; a local binary uses the CLI's existing session. Only a
-successful response writes the ID; rejection prints the provider's own error and
-leaves the model configuration unchanged. `--model <id>` uses this same probe
-path for non-interactive login.
-
-`roca model set <model-id>` validates and probes the first configured provider
-without re-running login. The explicit
-`roca model set <provider> <model-id>` form remains available when switching a
-different configured provider. Both forms share the gate implemented in
+During verification, La Roca offers known model IDs and sends one minimal real
+request through the CLI before changing `config.toml`. Only a successful probe
+writes the ID; rejection prints the CLI's own error and leaves configuration
+unchanged. `--model <id>` uses the same path for non-interactive verification.
+The shared catalogue-and-probe gate lives in
 `internal/distribution/cli/model_validation.go`.
 
-```
+`roca model set <model-id>` validates and probes the first configured provider.
+The explicit `roca model set <provider> <model-id>` form remains available for
+another configured local command or Ollama.
+
+```sh
 roca model set gpt-5.6-sol
 roca model set ollama qwen3.5:4b
 ```
 
-The fallback vendor OAuth flow is fragile and changes with no notice. That risk
-is taken with eyes open and the mitigation is in the shape: a readiness or probe
-failure moves selection to the next provider or the local floor. After a
-provider has been selected, a query-time failure is reported and goes directly
-to keyword rescue instead of silently retrying another provider. It never takes
-down the process.
+Existing configuration that names a retired remote provider remains readable.
+The provider is ignored with a warning and the rest of the cascade keeps
+working. On first run, reconciliation offers to remove those retired settings
+when the provider has a transport of its own, to replace it with a detected CLI,
+or to drop it when no supported CLI is on `PATH`. A `command` you declared is a
+transport of your own, so it is never removed, never migrated away, and keeps
+answering while retired keys sit unread beside it. Declining changes nothing;
+non-terminal runs emit one plain alert. A provider left with nothing but a
+retired transport becomes available again only by accepting that proposal or by
+removing the retired keys by hand, so declining deliberately keeps the
+configuration unusable.
+
+Old files under `~/.roca/credentials` are never read and never disable a
+provider that works: they get a cleanup proposal of their own, and a Codex or
+Claude CLI on `PATH` keeps answering whether or not you accept it. `roca init`
+retires nothing behind its model confirmation; when the provider you choose
+still carries retired settings or a leftover credential file, that proposal is
+shown with its own yes or no first.
 
 ## What happens on a query
 
@@ -453,7 +408,7 @@ A query that is valid at once costs one request. Only the ones that need it pay.
 
 `roca doctor` prints the resolved order, which providers are available, which
 one is going to answer and, for each one that is not available, the exact
-command that fixes it. It reports that a credential is **present**, never its
-value: there is no code path that prints one. It also re-lists open capability
-proposals; the post-update review contract is documented under
+command that fixes it. It also states that agent models authenticate through
+their own CLIs and that La Roca stores no secrets. Open capability proposals
+are re-listed; the post-update review contract is documented under
 [Update](lifecycle.md#update).

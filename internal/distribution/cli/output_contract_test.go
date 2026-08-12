@@ -99,44 +99,6 @@ func TestBareLoginHonoursTheJSONFlag(t *testing.T) {
 	}
 }
 
-// `roca logout` used to print its confirmation as prose even under --json.
-// Forgetting is an end state a script checks, so it answers a document.
-// Forgetting what was already forgotten is the end state logout promises, so no
-// credential is staged here: the document says "forgotten" either way.
-func TestLogoutHonoursTheJSONFlag(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-
-	doc := mustJSON(t, runRoot(t, contractBuild(), "logout", "xai", "--json"))
-	if doc["provider"] != provider.NameXAI || doc["forgotten"] != true {
-		t.Errorf("logout --json shape is wrong: %v", doc)
-	}
-}
-
-// `roca login <key-provider> --json` answers who, where and with what model,
-// and never echoes the key. The prompt that asks for it travels on stderr, so
-// stdout is a pure envelope a program parses. The human confirmation is covered
-// elsewhere; this pins the machine envelope.
-func TestKeyLoginAnswersAJSONEnvelope(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	stdout, stderr := runRootSplit(t, contractBuild(), strings.NewReader("sk-deepseek\n"),
-		"login", provider.NameDeepSeek, "--json")
-	doc := mustJSON(t, stdout)
-	if doc["provider"] != provider.NameDeepSeek {
-		t.Errorf("provider = %v, want %q", doc["provider"], provider.NameDeepSeek)
-	}
-	if doc["path"] == nil || doc["path"] == "" {
-		t.Errorf("path is missing: %v", doc["path"])
-	}
-	if strings.Contains(stdout, "sk-deepseek") {
-		t.Errorf("the key leaked into the JSON output:\n%s", stdout)
-	}
-	if !strings.Contains(stderr, "API key") {
-		t.Errorf("the prompt did not move to stderr:\n%s", stderr)
-	}
-}
-
 // `roca doctor` is the diagnosis the skill points an agent at ("diagnosis +
 // remedies"). Its human narration names the database, the configuration and the
 // model verdict, and its JSON carries the same fields a program reads.

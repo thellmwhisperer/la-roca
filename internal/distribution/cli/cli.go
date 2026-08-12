@@ -37,26 +37,25 @@ const (
 )
 
 type cliEnv struct {
-	build               Build
-	out                 io.Writer
-	errOut              io.Writer
-	dbPath              string
-	json                bool
-	code                int
-	outcome             any
-	started             time.Time
-	prelogged           bool
-	openedDir           string
-	liveIngest          *ingestRows
-	wantIngestProgress  bool
-	ingestStarted       time.Time
-	modelBackend        modelValidationBackend
-	modelPicker         modelPicker
-	modelCatalogRefresh modelCatalogRefresher
-	skipReconciliation  bool
-	skipInitChooser     bool
-	initPromptWait      time.Duration
-	initChooserElapsed  time.Duration
+	build              Build
+	out                io.Writer
+	errOut             io.Writer
+	dbPath             string
+	json               bool
+	code               int
+	outcome            any
+	started            time.Time
+	prelogged          bool
+	openedDir          string
+	liveIngest         *ingestRows
+	wantIngestProgress bool
+	ingestStarted      time.Time
+	modelBackend       modelValidationBackend
+	modelPicker        modelPicker
+	skipReconciliation bool
+	skipInitChooser    bool
+	initPromptWait     time.Duration
+	initChooserElapsed time.Duration
 }
 
 // Execute runs the CLI and returns the process exit code.
@@ -158,7 +157,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 		indexCommand(env), doctorCommand(env),
 		ingestCommand(env), storeCommand(env), healthCommand(env),
 		mcpCommand(env), skillCommand(env), hooksCommand(env),
-		loginCommand(env), logoutCommand(env), modelCommand(env),
+		loginCommand(env), modelCommand(env),
 		updateCommand(env), uninstallCommand(env),
 		modelsCommand(env), pluginsCommand(env),
 		capabilitiesCommand(env),
@@ -329,7 +328,7 @@ func isExecutable(path string) bool {
 }
 
 // resolvePaths decides where everything of this installation lives, without
-// touching the database. Commands that only need a path (a login, a logout) pay
+// touching the database. Commands that only need a path (such as login) pay
 // nothing for it.
 func (env *cliEnv) resolvePaths() (config.Paths, error) {
 	home, _ := os.UserHomeDir()
@@ -493,10 +492,7 @@ func runtimeStatus[R any](
 // it.
 func buildProviders(file config.File, paths config.Paths) (provider.Cascade, provider.Cascade) {
 	settings := provider.Settings{
-		File:        file,
-		Credentials: paths.Credentials,
-		RunnerDir:   paths.Runner,
-		Env:         os.Getenv,
+		File: file, RunnerDir: paths.Runner, Env: os.Getenv,
 	}
 	cascade, err := provider.BuildCascade(settings)
 	if err != nil {

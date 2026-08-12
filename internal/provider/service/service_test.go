@@ -90,7 +90,7 @@ func TestInitCreatesTheDatabaseAndSyncsTheLayerRegistry(t *testing.T) {
 func TestInitCarriesFactoryBinarySelectionMetadata(t *testing.T) {
 	paths := freshPaths(t)
 	local := answering("codex", "")
-	local.external = true
+	local.commandTransport = true
 	svc := serviceOn(t, paths, func(options *service.Options) {
 		options.Providers = provider.Cascade{
 			Providers: []provider.Provider{local}, DetectedBinaries: []string{"codex"}, FactoryDefault: true,

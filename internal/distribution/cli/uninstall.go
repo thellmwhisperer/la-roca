@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +20,15 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 )
+
+const legacyCredentialsDir = "credentials"
+
+var legacyProviderCredentialFiles = map[string]string{
+	provider.NameCodex: "codex.json",
+	"deepseek":         "deepseek.key",
+	"zai":              "zai.key",
+	"xai":              "xai.key",
+}
 
 // uninstallCommand leaves the machine as it was.
 //
@@ -385,12 +396,13 @@ func ownedPaths(paths config.Paths) []string {
 	if realDirectory(cacheDir) {
 		owned = append(owned, filepath.Join(cacheDir, modelsDevCacheFile), cacheDir)
 	}
-	if realDirectory(paths.Credentials) {
-		owned = append(owned, filepath.Join(paths.Credentials, provider.FileCodexSession))
-		for _, name := range provider.KeyProviders() {
-			owned = append(owned, provider.APIKeyPath(paths.Credentials, name))
+	credentialsDir := filepath.Join(dataDir, legacyCredentialsDir)
+	if realDirectory(credentialsDir) {
+		credentialPaths := legacyProviderCredentialPaths(dataDir)
+		for _, name := range slices.Sorted(maps.Keys(credentialPaths)) {
+			owned = append(owned, credentialPaths[name])
 		}
-		owned = append(owned, paths.Credentials)
+		owned = append(owned, credentialsDir)
 	}
 	logDir := filepath.Join(dataDir, logfile.DirName)
 	logs, logsExist := ownedFiles(logDir, ownedLogName)
@@ -399,6 +411,15 @@ func ownedPaths(paths config.Paths) []string {
 		owned = append(owned, logfile.New(dataDir).LockPath(), logDir)
 	}
 	return owned
+}
+
+func legacyProviderCredentialPaths(dataDir string) map[string]string {
+	directory := filepath.Join(dataDir, legacyCredentialsDir)
+	paths := make(map[string]string, len(legacyProviderCredentialFiles))
+	for name, file := range legacyProviderCredentialFiles {
+		paths[name] = filepath.Join(directory, file)
+	}
+	return paths
 }
 
 func ownedFiles(dir string, owns func(string) bool) ([]string, bool) {
