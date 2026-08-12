@@ -18,18 +18,14 @@ import (
 // converge, because an FTS `rebuild` is idempotent. What this removes is the
 // wasted work after a failure.
 func TestTheBuildResumesFromTheTableThatFailed(t *testing.T) {
-	db := seededWorld(t)
-	ctx := context.Background()
-	if err := store.EnsureSearchSchema(ctx, db); err != nil {
-		t.Fatalf("EnsureSearchSchema: %v", err)
-	}
+	db, ctx := unbuiltIndex(t)
 
 	// The last table cannot be rebuilt: a plain table of the same name survives
 	// EnsureSearchSchema (its DDL is IF NOT EXISTS) and has no rebuild column.
 	writeTo(t, db, `DROP TABLE sessions_fts`)
 	writeTo(t, db, `CREATE TABLE sessions_fts (x)`)
 
-	if _, err := search.Index(ctx, db); err == nil {
+	if _, err := search.Index(ctx, db, nil); err == nil {
 		t.Fatal("the build reported success over a table it could not rebuild")
 	}
 
@@ -48,23 +44,31 @@ func TestTheBuildResumesFromTheTableThatFailed(t *testing.T) {
 // proved by dropping a table and marking it done: a build that still tried to
 // rebuild it would fail, and one that honours the record does not.
 func TestARecordedTableIsNotRebuiltAgain(t *testing.T) {
-	db := seededWorld(t)
-	ctx := context.Background()
-	if err := store.EnsureSearchSchema(ctx, db); err != nil {
-		t.Fatalf("EnsureSearchSchema: %v", err)
-	}
+	db, ctx := unbuiltIndex(t)
 
 	writeTo(t, db, `DROP TABLE memories_fts`)
 	writeTo(t, db, `CREATE TABLE memories_fts (x)`)
 	writeTo(t, db, `INSERT INTO search_state (key, value, updated_at)
 		VALUES ('lexical_index:memories_fts', 'built', datetime('now'))`)
 
-	if _, err := search.Index(ctx, db); err != nil {
+	if _, err := search.Index(ctx, db, nil); err != nil {
 		t.Fatalf("a table already recorded as built was rebuilt anyway: %v", err)
 	}
 	if got := stateOf(t, db, "lexical_index"); got != "built" {
 		t.Errorf("the build did not finish: terminal state = %q", got)
 	}
+}
+
+func unbuiltIndex(t *testing.T) (*store.DB, context.Context) {
+	t.Helper()
+	db := seededWorld(t)
+	ctx := context.Background()
+	if _, err := search.EnsureTokenizer(ctx, db, nil); err != nil {
+		t.Fatalf("EnsureTokenizer: %v", err)
+	}
+	writeTo(t, db, `DELETE FROM search_state
+		WHERE key = 'lexical_index' OR key LIKE 'lexical_index:%'`)
+	return db, ctx
 }
 
 func stateOf(t *testing.T, db *store.DB, key string) string {

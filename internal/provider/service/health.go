@@ -141,7 +141,7 @@ var healthChecks = []healthCheck{
 // it answers the same in a read-only installation, which is exactly where an
 // operator who suspects something reaches for it.
 func (s *Service) Health(ctx context.Context, req HealthRequest) (HealthReport, error) {
-	if err := s.ensureSchema(ctx); err != nil {
+	if _, err := s.ensureSchema(ctx); err != nil {
 		return HealthReport{}, err
 	}
 	maxRows := req.MaxRows

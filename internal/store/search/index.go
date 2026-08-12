@@ -4,14 +4,24 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
+	"github.com/thellmwhisperer/la-roca/data"
 	"github.com/thellmwhisperer/la-roca/internal/store"
 )
 
 // search_state keys.
-const keyLexical = "lexical_index"
+const (
+	keyLexical          = "lexical_index"
+	keyTokenizer        = "lexical_tokenizer"
+	tokenizerGeneration = "unicode61-remove-diacritics-2"
+	tokenizerRebuilding = "rebuilding-" + tokenizerGeneration
+)
+
+var currentTokenizer = regexp.MustCompile(
+	`(?i)tokenize\s*=\s*["']unicode61\s+remove_diacritics\s+2["']`)
 
 // Report is what the indexing did, so that whoever calls it can say so.
 type Report struct {
@@ -25,11 +35,12 @@ type Report struct {
 // It is incremental and resumable by construction. The lexical index maintains
 // itself after the first time, because the triggers live in the database and
 // anybody who writes fires them, this binary or not.
-func Index(ctx context.Context, db *store.DB) (Report, error) {
+func Index(ctx context.Context, db *store.DB, progress func(string)) (Report, error) {
 	start := time.Now()
 	var report Report
 
-	if err := store.EnsureSearchSchema(ctx, db); err != nil {
+	migrated, err := EnsureTokenizer(ctx, db, progress)
+	if err != nil {
 		return report, err
 	}
 
@@ -37,10 +48,120 @@ func Index(ctx context.Context, db *store.DB) (Report, error) {
 	if err != nil {
 		return report, err
 	}
-	report.LexicalBuilt = built
+	report.LexicalBuilt = migrated || built
 
 	report.ElapsedMS = time.Since(start).Milliseconds()
 	return report, nil
+}
+
+// EnsureTokenizer upgrades an existing lexical index to the tokenizer shipped
+// by this build. The content tables are never changed: only the four derived FTS
+// tables and their state markers are replaced.
+//
+// A committed rebuilding marker makes an interrupted upgrade resumable. The
+// per-table markers written by buildLexicalIndex then skip every table that had
+// already committed before the interruption.
+func EnsureTokenizer(ctx context.Context, db *store.DB, progress func(string)) (bool, error) {
+	if err := store.EnsureSearchSchema(ctx, db); err != nil {
+		return false, err
+	}
+
+	state, err := readState(ctx, db, keyTokenizer, "read the tokenizer generation")
+	if err != nil {
+		return false, err
+	}
+	if state == tokenizerGeneration {
+		return false, nil
+	}
+	current, err := tokenizerDefinitionsCurrent(ctx, db)
+	if err != nil {
+		return false, err
+	}
+	if current && state == "" {
+		lexicalState, err := readState(ctx, db, keyLexical, "read the lexical index state")
+		if err != nil {
+			return false, err
+		}
+		built := false
+		if lexicalState != "built" {
+			built, err = buildLexicalIndex(ctx, db)
+			if err != nil {
+				return false, err
+			}
+		}
+		if err := recordTokenizerGeneration(ctx, db); err != nil {
+			return false, err
+		}
+		return built, nil
+	}
+
+	if progress != nil {
+		progress("index: rebuilding for accent-insensitive search; a large corpus can take a few minutes")
+	}
+	if !current {
+		if err := recreateLexicalTables(ctx, db); err != nil {
+			return false, err
+		}
+	}
+
+	built, err := buildLexicalIndex(ctx, db)
+	if err != nil {
+		return false, err
+	}
+	if err := recordTokenizerGeneration(ctx, db); err != nil {
+		return false, err
+	}
+	return built || state == tokenizerRebuilding || !current, nil
+}
+
+func recordTokenizerGeneration(ctx context.Context, db *store.DB) error {
+	err := db.Write(ctx, func(tx *sql.Tx) error {
+		return writeState(ctx, tx, keyTokenizer, tokenizerGeneration)
+	})
+	if err != nil {
+		return fmt.Errorf("record the tokenizer generation: %w", err)
+	}
+	return nil
+}
+
+func tokenizerDefinitionsCurrent(ctx context.Context, db *store.DB) (bool, error) {
+	current := true
+	for _, table := range lexicalTables {
+		var ddl string
+		err := db.SQL().QueryRowContext(ctx,
+			`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`, table,
+		).Scan(&ddl)
+		if err != nil {
+			return false, fmt.Errorf("inspect the tokenizer of %s: %w", table, err)
+		}
+		if !strings.Contains(strings.ToLower(ddl), "using fts5") {
+			return false, fmt.Errorf("inspect the tokenizer of %s: it is not an FTS5 table", table)
+		}
+		if !currentTokenizer.MatchString(ddl) {
+			current = false
+		}
+	}
+	return current, nil
+}
+
+func recreateLexicalTables(ctx context.Context, db *store.DB) error {
+	return db.Write(ctx, func(tx *sql.Tx) error {
+		for _, table := range lexicalTables {
+			if _, err := tx.ExecContext(ctx, "DROP TABLE "+table); err != nil {
+				return fmt.Errorf("drop the old search index %s: %w", table, err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, data.SearchSchema); err != nil {
+			return fmt.Errorf("create the accent-insensitive search index: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM search_state WHERE key = ? OR key LIKE ?`,
+			keyLexical, keyLexical+":%",
+		); err != nil {
+			return fmt.Errorf("reset the lexical index state: %w", err)
+		}
+		return writeState(ctx, tx, keyTokenizer, tokenizerRebuilding)
+	})
 }
 
 // readState reads one of the index's own markers. A table that is not there yet

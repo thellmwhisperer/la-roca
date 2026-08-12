@@ -101,6 +101,12 @@ binary's version check, and swaps it into place by rename. The existing data,
 configuration, credentials, and agent integrations remain in place. If any
 verification fails, the active executable is unchanged.
 
+If an existing database uses the legacy search tokenizer, the first writable
+command after the update automatically rebuilds only the derived full-text
+indexes from their source rows. La Roca prints one progress line while this
+runs; source rows are never changed. An interrupted rebuild resumes safely on
+the next writable command, and completed upgrades are not rebuilt again.
+
 After the swap, update reports how many new capability proposals are open. On
 the first eligible command run with each new version, La Roca offers every open
 proposal once for that version. Init reserves its short question budget for the
