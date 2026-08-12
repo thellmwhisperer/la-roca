@@ -122,14 +122,20 @@ func auditCalls(audit *logfile.Writer, warnings io.Writer) mcp.Middleware {
 			ok = ok && degraded == ""
 			if appendErr := audit.AppendExisting(logfile.MCPAudit, logfile.MCPRecord{
 				Timestamp: started.UTC(), Tool: tool, Args: args, OK: ok,
-				DurationMS: time.Since(started).Milliseconds(), RowCount: resultRows(result),
-				Degraded: degraded, SQLProvider: resultString(result, "sql_provider"),
-				SQLModel:               resultString(result, "sql_model"),
-				SQLInferenceMS:         resultMilliseconds(result, "sql_inference_ms"),
-				ExecutionMS:            resultMilliseconds(result, "execution_ms"),
-				InterpretationProvider: resultString(result, "interpretation_provider"),
-				InterpretationModel:    resultString(result, "interpretation_model"),
-				InterpretationMS:       resultMilliseconds(result, "interpretation_ms"),
+				DurationMS: time.Since(started).Milliseconds(), Path: resultString(result, "path"),
+				RowCount: resultRows(result), Degraded: degraded,
+				Retried: resultBool(result, "retried"), RetriedSQL: resultBool(result, "retried_sql"),
+				FirstModelSQL:             resultString(result, "first_model_sql"),
+				RetryReason:               resultString(result, "retry_reason"),
+				SQLProvider:               resultString(result, "sql_provider"),
+				SQLModel:                  resultString(result, "sql_model"),
+				SQLInferenceMS:            resultMilliseconds(result, "sql_inference_ms"),
+				SQLRetryInferenceMS:       resultMilliseconds(result, "sql_retry_inference_ms"),
+				SQLRetryProviderLatencyMS: resultMilliseconds(result, "sql_retry_provider_latency_ms"),
+				ExecutionMS:               resultMilliseconds(result, "execution_ms"),
+				InterpretationProvider:    resultString(result, "interpretation_provider"),
+				InterpretationModel:       resultString(result, "interpretation_model"),
+				InterpretationMS:          resultMilliseconds(result, "interpretation_ms"),
 			}); appendErr != nil {
 				warned.Do(func() {
 					fmt.Fprintf(warnings, "warning: MCP calls are not being written to the audit log: %v\n", appendErr)
@@ -138,6 +144,20 @@ func auditCalls(audit *logfile.Writer, warnings io.Writer) mcp.Middleware {
 			return result, err
 		}
 	}
+}
+
+func resultBool(value any, key string) bool {
+	switch result := value.(type) {
+	case *mcp.CallToolResult:
+		return resultBool(result.Meta, key)
+	case mcp.Meta:
+		flag, _ := result[key].(bool)
+		return flag
+	case map[string]any:
+		flag, _ := result[key].(bool)
+		return flag
+	}
+	return false
 }
 
 func resultString(value any, key string) string {
@@ -282,9 +302,16 @@ func rendered[T any](res T, err error, paint func(T) string) (*mcp.CallToolResul
 		"degraded":  resultDegraded(res),
 	}
 	if query, ok := any(res).(service.QueryResult); ok {
+		metadata["path"] = query.Path
+		metadata["retried"] = query.Retried
+		metadata["retried_sql"] = query.RetriedSQL
+		metadata["first_model_sql"] = query.FirstModelSQL
+		metadata["retry_reason"] = query.RetryReason
 		metadata["sql_provider"] = query.Engine
 		metadata["sql_model"] = query.Model
 		metadata["sql_inference_ms"] = query.SQLInferenceMS
+		metadata["sql_retry_inference_ms"] = query.SQLRetryInferenceMS
+		metadata["sql_retry_provider_latency_ms"] = query.SQLRetryProviderLatencyMS
 		metadata["execution_ms"] = query.ExecutionMS
 		metadata["interpretation_provider"] = query.InterpretEngine
 		metadata["interpretation_model"] = query.InterpretModel
