@@ -100,6 +100,9 @@ type QueryResult struct {
 	// cannot be told from a rescue that fired for another reason. Whether it ran
 	// is what Degraded says.
 	ModelSQL string `json:"model_sql,omitempty"`
+	// Repaired names every deterministic repair applied before the strict gate.
+	// ModelSQL remains the untouched output so the forgiveness is auditable.
+	Repaired []string `json:"repaired,omitempty"`
 	// QueryPlan is the rescue's plan: the term it searched for, which the
 	// renderer uses to keep the match inside the excerpt.
 	QueryPlan *query.Plan `json:"queryplan,omitempty"`
@@ -222,6 +225,9 @@ func (r *QueryResult) unresolved(andAlso string) {
 // query.
 func (s *Service) Query(ctx context.Context, req QueryRequest) (res QueryResult, err error) {
 	start := time.Now()
+	if err := query.ValidateQuestion(req.Question); err != nil {
+		return res, err
+	}
 	res = QueryResult{
 		Question:  req.Question,
 		Version:   s.opts.Version,

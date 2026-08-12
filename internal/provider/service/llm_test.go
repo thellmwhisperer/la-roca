@@ -140,6 +140,19 @@ func TestTheModelAnswersWhatTheCompilerDeclines(t *testing.T) {
 	}
 }
 
+func TestQuestionGateStopsBeforeTheProviderIsCalled(t *testing.T) {
+	for _, question := range []string{" \n\t ", strings.Repeat("x", 1001)} {
+		model := answering("codex", "SELECT content FROM memories LIMIT 5")
+		svc := serviceWithModel(t, model)
+		if _, err := svc.Query(t.Context(), service.QueryRequest{Question: question}); err == nil {
+			t.Errorf("question %q passed", question)
+		}
+		if model.requests != 0 {
+			t.Errorf("invalid question reached the provider %d times", model.requests)
+		}
+	}
+}
+
 // The gate is not skipped because the SQL comes from the titular provider: what
 // does not pass does not touch the database.
 func TestTheModelsSQLAlwaysPassesTheGate(t *testing.T) {
@@ -849,12 +862,56 @@ func TestInterpretFallsBackWhenNoModelServes(t *testing.T) {
 // a model that wraps its SQL in a fence behind a thinking block still passes
 // the gate and reaches the database.
 func TestTheModelsFencedSQLStillPassesTheGate(t *testing.T) {
-	svc := serviceWithModel(t, answering("codex",
-		"<think>plan the query</think>\n```sql\nSELECT content FROM memories WHERE supersedes IS NULL LIMIT 5\n```"))
+	raw := "<think>plan the query</think>\n```sql\nSELECT content FROM memories WHERE supersedes IS NULL LIMIT 5;\n```"
+	svc := serviceWithModel(t, answering("codex", raw))
 	res, err := svc.Query(context.Background(), service.QueryRequest{Question: theFreeQuestion})
 	if err != nil || res.Degraded != "" || res.RowCount == 0 {
 		t.Fatalf("the fenced SQL did not survive the stage: degraded=%q rows=%d err=%v",
 			res.Degraded, res.RowCount, err)
+	}
+	if res.ModelSQL != raw {
+		t.Fatalf("model_sql = %q, want the untouched model output", res.ModelSQL)
+	}
+	wantRepairs := []string{"thinking_block", "code_fence", "trailing_semicolon"}
+	if strings.Join(res.Repaired, ",") != strings.Join(wantRepairs, ",") {
+		t.Fatalf("repaired = %v, want %v", res.Repaired, wantRepairs)
+	}
+}
+
+func TestKnownUnionMistakesAreRepairedBeforeTheStrictGate(t *testing.T) {
+	raw := "SELECT id, created_at AS occurred_at FROM memories ORDER BY occurred_at DESC LIMIT 5 UNION ALL " +
+		"SELECT id, created_at AS occurred_at FROM memories ORDER BY occurred_at DESC LIMIT 7"
+	svc := serviceWithModel(t, answering("codex", raw))
+	res, err := svc.Query(t.Context(), service.QueryRequest{Question: theFreeQuestion, SQLOnly: true})
+	if err != nil || res.Degraded != "" {
+		t.Fatalf("repaired union degraded=%q sql=%q message=%q err=%v", res.Degraded, res.SQL, res.Message, err)
+	}
+	if res.ModelSQL != raw || strings.Count(strings.ToUpper(res.SQL), "ORDER BY") != 1 {
+		t.Fatalf("audit SQL=%q; executed SQL=%q", res.ModelSQL, res.SQL)
+	}
+	if strings.Join(res.Repaired, ",") != "union_order_by" {
+		t.Fatalf("repaired = %v", res.Repaired)
+	}
+}
+
+func TestTheLiveTruncationShapeStillTakesTheExistingDegradedPath(t *testing.T) {
+	raw := "WITH results AS (\n" +
+		"  SELECT id, content AS text FROM memories\n" +
+		"  UNION ALL\n" +
+		"  SELECT id, agent_text FROM exchanges\n" +
+		"  UNION ALL\n" +
+		"  SELECT id, human_text FROM ("
+	model := answering("codex", raw)
+	svc := serviceWithModel(t, model)
+	res, err := svc.Query(t.Context(), service.QueryRequest{Question: theQuestionWithAMatch})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Degraded != service.DegradedInvalidSQL || res.ModelSQL != raw || len(res.Repaired) != 0 {
+		t.Fatalf("truncated result = %+v", res)
+	}
+	if model.requests != 2 || !strings.Contains(res.Message, "SQL parse error") {
+		t.Fatalf("existing retry/degrade path changed: requests=%d message=%q", model.requests, res.Message)
 	}
 }
 

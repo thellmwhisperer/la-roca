@@ -52,6 +52,16 @@ func TestQueryRendersTheRouteLineTOONRowsAndHelp(t *testing.T) {
 	}
 }
 
+func TestQueryDeclaresEveryModelSQLRepair(t *testing.T) {
+	got := axi.Query(service.QueryResult{
+		Question: "synthetic query", Path: service.PathLLM, Engine: "codex", Model: "test",
+		SQL: "SELECT id FROM memories LIMIT 5", Repaired: []string{"code_fence", "union_order_by"},
+	}, "")
+	if !strings.Contains(got, "repaired: code_fence, union_order_by") {
+		t.Fatalf("repair declaration is missing:\n%s", got)
+	}
+}
+
 func TestQueryWithProseOmitsEveryEvidenceRow(t *testing.T) {
 	res := service.QueryResult{
 		Question: "recent memories", Path: service.PathLLM, Engine: "ollama",
@@ -225,6 +235,7 @@ func TestQueryEnvelopeUsesHonestPhaseNames(t *testing.T) {
 		Path: service.PathLLM, Engine: "codex", Model: "gpt",
 		InterpretEngine: "ollama", InterpretModel: "qwen",
 		SQLInferenceMS: 3, ExecutionMS: 2, InterpretationMS: 8,
+		Repaired: []string{"code_fence", "union_order_by"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -234,6 +245,7 @@ func TestQueryEnvelopeUsesHonestPhaseNames(t *testing.T) {
 		`"path":"model"`, `"sql_provider":"codex"`, `"sql_model":"gpt"`,
 		`"interpretation_provider":"ollama"`, `"interpretation_model":"qwen"`,
 		`"sql_inference_ms":3`, `"execution_ms":2`, `"interpretation_ms":8`,
+		`"repaired":["code_fence","union_order_by"]`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("phase envelope lacks %s: %s", want, text)

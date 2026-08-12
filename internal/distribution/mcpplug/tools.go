@@ -25,7 +25,7 @@ var (
 			"- \"what do we know about ffmpeg\" — concept search\n" +
 			"- \"what feedback do we have\" — ask in any language; the corpus answers with what it holds\n\n" +
 			"Keep it under 15 words and one concept per question. " +
-			"With zero results, rephrase with different keywords.",
+			"The hard input cap is 1000 characters. With zero results, rephrase with different keywords.",
 	}
 	sqlTool = &mcp.Tool{
 		Name: "roca_sql",
@@ -61,7 +61,7 @@ func (a execArgs) request() service.ExecRequest {
 // queryArgs is what an agent sends to ask a question. A zero budget reaches the
 // service, where the shared default is applied for every surface.
 type queryArgs struct {
-	Query    string `json:"query" jsonschema:"short natural-language question, under 15 words"`
+	Query    string `json:"query" jsonschema:"non-empty natural-language question, preferably under 15 words, maximum 1000 characters"`
 	Layer    string `json:"layer,omitempty" jsonschema:"restrict the answer to one memory layer"`
 	MaxChars int    `json:"max_chars,omitempty" jsonschema:"character budget per text field"`
 }
@@ -78,7 +78,7 @@ func (a queryArgs) request() service.QueryRequest {
 // here and not asked for: a tool whose whole purpose is the SQL without running
 // does not take "run it" as a parameter.
 type sqlArgs struct {
-	Query string `json:"query" jsonschema:"short natural-language question, under 15 words"`
+	Query string `json:"query" jsonschema:"non-empty natural-language question, preferably under 15 words, maximum 1000 characters"`
 	Layer string `json:"layer,omitempty" jsonschema:"restrict the answer to one memory layer"`
 }
 

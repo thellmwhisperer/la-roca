@@ -12,6 +12,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 	"github.com/thellmwhisperer/la-roca/internal/provider/query/sqlgate"
+	"github.com/thellmwhisperer/la-roca/internal/provider/query/sqlrepair"
 	"github.com/thellmwhisperer/la-roca/internal/store/search"
 )
 
@@ -150,12 +151,13 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 			res.ProviderNote = noteAboutTheFall(chosen, res.Providers)
 		}
 		res.LLMLatencyMS += answer.LatencyMS
-		// The adapter hands back raw model output; this stage asked for SQL, so
-		// this stage shapes it: fence extraction, deloop, reasoning strip.
-		sql := provider.Clean(answer.Content)
-		// What the model wrote travels whether or not it runs, and it is not
-		// lost when the rescue answers over it.
-		res.ModelSQL = sql
+		// The model's untouched output travels whether or not it runs. A distinct
+		// forgiveness step then repairs only declared, deterministic shapes before
+		// the unchanged gate sees the candidate.
+		res.ModelSQL = answer.Content
+		prepared := sqlrepair.Prepare(answer.Content)
+		res.Repaired = prepared.Repairs
+		sql := prepared.SQL
 
 		validated, rejection = gate.Validate(sql)
 		if rejection == nil {

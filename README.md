@@ -201,7 +201,13 @@ roca exec "SELECT source_agent, COUNT(*) AS sessions
 `roca query` compiles your question into one checked `SELECT` and shows it.
 `--sql-only` compiles without executing, `--full` adds a prose reading of the
 rows, `roca exec` runs your own `SELECT` through the same read-only gate, and
-`--json` returns the complete machine envelope.
+`--json` returns the complete machine envelope. Questions must contain text and
+have a generous 1000-character cap on both CLI and MCP query surfaces.
+
+Model-written SQL is repaired before that gate and then judged by its unchanged
+rules; the SQL you write yourself for `roca exec` never is. `model_sql` keeps
+the untouched model output and `repaired` names each repair applied, listed
+under [Model providers](docs/models.md#the-repairs-between-the-model-and-the-gate).
 
 ## Three ways to use it
 

@@ -52,6 +52,9 @@ func QueryPreamble(res service.QueryResult) string {
 	if res.Degraded != "" {
 		appendLine(&b, "degraded: "+res.Degraded)
 	}
+	if len(res.Repaired) > 0 {
+		appendLine(&b, "repaired: "+strings.Join(res.Repaired, ", "))
+	}
 	if res.Message != "" && res.RowCount > 0 {
 		appendLine(&b, res.Message)
 	}

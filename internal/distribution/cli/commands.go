@@ -517,8 +517,9 @@ func queryCommand(env *cliEnv) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "query <question>",
 		Short: "Answer a natural-language question about the memory",
-		Long:  "Data: query; human reading: query --full; raw SQL: exec.",
-		Args:  cobra.MinimumNArgs(1),
+		Long: "Data: query; human reading: query --full; raw SQL: exec. " +
+			"Questions must contain text and may be at most 1000 characters.",
+		Args: cobra.MinimumNArgs(1),
 		RunE: env.serviceRunE(func(cmd *cobra.Command, args []string, svc *service.Service) error {
 			req.Question = strings.Join(args, " ")
 			// The query may round-trip a model, and a model takes long enough to read
