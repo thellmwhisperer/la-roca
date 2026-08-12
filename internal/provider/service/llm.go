@@ -329,7 +329,13 @@ func (s *Service) InterpretStream(ctx context.Context, question string,
 		escapedColumns[i] = query.EscapePromptText(column)
 	}
 	b.WriteString(strings.Join(escapedColumns, ", "))
-	fmt.Fprintf(&b, "\nrow_count: %d\n</result_shape>\n\n<rows>\n", len(rows))
+	fmt.Fprintf(&b, "\nrow_count: %d\n", len(rows))
+	if hint := query.InterpretationShapeHint(columns, len(rows)); hint != "" {
+		b.WriteString("guardian_hint: ")
+		b.WriteString(hint)
+		b.WriteByte('\n')
+	}
+	b.WriteString("</result_shape>\n\n<rows>\n")
 	limited := rows
 	if len(rows) > maxRowsToInterpret {
 		limited = rows[:maxRowsToInterpret]
@@ -365,7 +371,10 @@ func (s *Service) InterpretStream(ctx context.Context, question string,
 	}
 	var answer provider.ChatResponse
 	if stream {
-		answer, err = cascade.ChatStream(ctx, chosen, request, onDelta)
+		// The guardian needs the complete sentence before it can remove a known
+		// fabricated comparison. Keep native transport streaming, but buffer its
+		// untrusted deltas and publish only the sanitized final prose.
+		answer, err = cascade.ChatStream(ctx, chosen, request, func(string) {})
 	} else {
 		answer, err = cascade.Chat(ctx, chosen, request)
 	}
@@ -373,7 +382,10 @@ func (s *Service) InterpretStream(ctx context.Context, question string,
 		return Interpretation{}, err
 	}
 	// Prose keeps its fences and its punctuation; only the reasoning goes.
-	answered.Text = provider.CleanProse(answer.Content)
+	answered.Text = query.SanitizeInterpretation(provider.CleanProse(answer.Content), columns)
+	if stream {
+		onDelta(answered.Text)
+	}
 	return answered, nil
 }
 

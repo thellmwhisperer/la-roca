@@ -933,6 +933,48 @@ func TestInterpretPromptIsLanguageAgnostic(t *testing.T) {
 	}
 }
 
+func TestInterpretationGuardianScrubsBeforeReturningOrStreaming(t *testing.T) {
+	model := &streamingInterpretationProvider{fakeProvider: fakeProvider{
+		name: "codex", model: "codex-model", ready: provider.Readiness{Ready: true},
+		sql: "Alpha leads, more than the next two combined. Beta follows.",
+	}}
+	svc := serviceWithModel(t, model)
+	var deltas []string
+	got, err := svc.InterpretStream(t.Context(), "which names lead?",
+		[]string{"name", "count"}, []map[string]any{
+			{"name": "Alpha", "count": 30}, {"name": "Beta", "count": 20}, {"name": "Gamma", "count": 15},
+		}, 0, "codex", nil, func(delta string) { deltas = append(deltas, delta) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "Alpha leads. Beta follows."
+	if got.Text != want || strings.Join(deltas, "") != want {
+		t.Fatalf("guardian returned %q and streamed %q, want %q", got.Text, strings.Join(deltas, ""), want)
+	}
+	if strings.Contains(strings.Join(model.rawDeltas, ""), want) ||
+		!strings.Contains(model.prompts[0], "raw rows without an explicit comparison column") {
+		t.Fatalf("guardian did not buffer the raw stream or add its shape hint: %+v", model)
+	}
+}
+
+type streamingInterpretationProvider struct {
+	fakeProvider
+	rawDeltas []string
+}
+
+func (p *streamingInterpretationProvider) ChatStream(_ context.Context, req provider.ChatRequest,
+	onDelta func(string)) (provider.ChatResponse, error) {
+	answer, err := p.Chat(context.Background(), req)
+	if err != nil {
+		return answer, err
+	}
+	for _, delta := range []string{"Alpha leads, more than ", "the next two combined. Beta follows."} {
+		p.rawDeltas = append(p.rawDeltas, delta)
+		onDelta(delta)
+	}
+	return answer, nil
+}
+
 func TestInterpretReusesTheSQLProviderUnlessAnExplicitOrderExists(t *testing.T) {
 	rows := []map[string]any{{"text": "decision"}}
 	for _, tc := range []struct {
