@@ -306,8 +306,9 @@ shown with its own yes or no first.
 3. The model generates SQL, a repair step forgives known model-output mistakes,
    and the result **always** passes the two-halved gate. A model is not above
    the gate.
-4. A gate rejection sends the failed SQL and exact verdict back to that model
-   once, through the same repair and gate path.
+4. A gate rejection, or a failure when the validated statement runs, sends that
+   SQL and the engine's exact verdict back to the same model once, through the
+   same repair and gate path.
 5. Whatever still fails from there on degrades to the keyword rescue and says which of
    four things went wrong: `model_unavailable`, `model_error`, `invalid_sql`,
    `sql_execution_error`.
@@ -356,9 +357,11 @@ after the one `SELECT` is dropped (`surrounding_prose`), a repetition loop is
 cut (`repetition_loop`), trailing semicolons are removed
 (`trailing_semicolon`), and a top-level `UNION ALL` branch `ORDER BY`, with its
 `LIMIT`, is taken out while the statement's final `ORDER BY` stays
-(`union_order_by`). That last one has an aggressive fallback for shapes the
-targeted pass cannot fix, and it is accepted only when what it produces parses
-as one `SELECT`, so truncated output is left exactly as it came.
+(`union_order_by`). An implicit conjunction before a parenthesized FTS OR group
+is made explicit (`fts_or_group`), because FTS5 rejects that otherwise valid
+SQL shape at execution. The UNION repair has an aggressive fallback for shapes
+the targeted pass cannot fix, and it is accepted only when what it produces
+parses as one `SELECT`, so truncated output is left exactly as it came.
 
 None of this authorizes execution: the gate then validates the repaired
 statement with its unchanged rules, and what is still invalid degrades to
@@ -395,9 +398,9 @@ because nothing complains.
 
 ## One retry with the engine's verdict
 
-When the gate rejects what the model wrote, the rejection buys **exactly one**
-more attempt, carrying the rejected SQL and the engine's own reason back to the
-model.
+When the gate rejects what the model wrote, or validated SQL fails at execution,
+the failure buys **exactly one** more attempt, carrying the statement and the
+engine's own reason back to the model.
 
 That is not a repair invented here: the verdict comes from the same SQLite that
 would have run the query, and it is the one piece of information that fixes it.
@@ -410,19 +413,21 @@ A query that is valid at once costs one request. Only the ones that need it pay.
 Zero rows keep their existing literal rescue and never trigger a SQL retry;
 `roca exec` SQL is user-authored and is never retried.
 
-The envelope makes all three outcomes distinguishable. `retried_sql` marks the
-correction call; `first_model_sql`, `first_repaired`, and `retry_reason` retain
-the rejected attempt; `model_sql` and `repaired` describe the corrected attempt.
+The envelope makes all outcomes distinguishable. `retried_sql` marks the
+correction call; `retry_type` says `gate_rejection` or `execution_error`;
+`first_model_sql`, `first_repaired`, and `retry_reason` retain the failed
+attempt; `model_sql` and `repaired` describe the corrected attempt.
 `sql_inference_ms` and `sql_provider_latency_ms` remain totals, while
 `sql_retry_inference_ms` and `sql_retry_provider_latency_ms` attribute the retry
-subset. A retry success has `retried_sql` without degradation, a second
-rejection also has `invalid_sql` and falls through to the ordinary rescue, and a
-rescue that fired for zero rows never asked for a correction of its own.
+subset. A retry success has `retried_sql` without degradation, a second failure
+has `invalid_sql` or `sql_execution_error` and falls through to the ordinary
+rescue, and a rescue that fired for zero rows never asked for a correction of
+its own.
 
 The narration says the same thing above the rows: a query that paid for a
-correction gets its own `SQL retry after gate rejection` line with the time that
-correction took. The MCP audit stream records the identical distinction, and
-what it keeps is listed under
+correction gets its own `SQL retry after gate rejection` or `SQL retry after
+execution error` line with the time that correction took. Both audit streams
+record the identical distinction, and what they keep is listed under
 [Operations](operations.md#streams-and-contents).
 
 ## Diagnosing

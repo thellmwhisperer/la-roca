@@ -39,7 +39,11 @@ func QueryPreamble(res service.QueryResult) string {
 			res.Engine, res.Model, Duration(res.SQLInferenceMS)))
 	}
 	if res.RetriedSQL {
-		appendLine(&b, "SQL retry after gate rejection · "+Duration(res.SQLRetryInferenceMS))
+		reason := "gate rejection"
+		if res.RetryType == service.RetryExecutionError {
+			reason = "execution error"
+		}
+		appendLine(&b, "SQL retry after "+reason+" · "+Duration(res.SQLRetryInferenceMS))
 	}
 	if res.Match != "" {
 		appendLine(&b, "search · "+Duration(res.ExecutionMS))

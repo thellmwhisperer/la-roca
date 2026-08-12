@@ -52,6 +52,12 @@ func TestPrepareRepairsOnlyNamedModelOutputShapes(t *testing.T) {
 			wantSQL:     "SELECT id FROM memories UNION ALL SELECT id FROM exchanges ORDER BY id LIMIT 9",
 			wantRepairs: []string{sqlrepair.UnionOrderBy},
 		},
+		{
+			name:        "FTS phrase followed by parenthesized OR group",
+			raw:         `SELECT rowid FROM memories_fts WHERE memories_fts MATCH '"Javi" ("objetivo" OR "propósito" OR "carrera" OR "impulsa" OR "motivación")'`,
+			wantSQL:     `SELECT rowid FROM memories_fts WHERE memories_fts MATCH '"Javi" AND ("objetivo" OR "propósito" OR "carrera" OR "impulsa" OR "motivación")'`,
+			wantRepairs: []string{sqlrepair.FTSOrGroup},
+		},
 	}
 	for _, benchCase := range benchCases {
 		t.Run(benchCase.name, func(t *testing.T) {
@@ -90,6 +96,8 @@ func TestPrepareLeavesValidSQLAndSuspiciousMultipleBlocksAlone(t *testing.T) {
 		"Preface on the same line: SELECT id FROM memories LIMIT 5",
 		"SELECT id FROM memories ORDER BY id UNION SELECT id FROM exchanges " +
 			"UNION ALL SELECT id FROM sessions ORDER BY id",
+		`SELECT rowid FROM memories_fts WHERE memories_fts MATCH '"alpha" AND ("beta" OR "gamma")'`,
+		`SELECT rowid FROM memories_fts WHERE memories_fts MATCH '"alpha" NOT ("beta" OR "gamma")'`,
 	}
 	for _, raw := range benchCases {
 		got := sqlrepair.Prepare(raw)
