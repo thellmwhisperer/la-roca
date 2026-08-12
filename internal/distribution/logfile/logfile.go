@@ -39,20 +39,28 @@ type ExecutionRecord struct {
 }
 
 type MCPRecord struct {
-	Timestamp              time.Time `json:"timestamp"`
-	Tool                   string    `json:"tool"`
-	Args                   any       `json:"args"`
-	OK                     bool      `json:"ok"`
-	DurationMS             int64     `json:"duration_ms"`
-	RowCount               int       `json:"row_count"`
-	Degraded               string    `json:"degraded,omitempty"`
-	SQLProvider            string    `json:"sql_provider,omitempty"`
-	SQLModel               string    `json:"sql_model,omitempty"`
-	SQLInferenceMS         *int64    `json:"sql_inference_ms,omitempty"`
-	ExecutionMS            *int64    `json:"execution_ms,omitempty"`
-	InterpretationProvider string    `json:"interpretation_provider,omitempty"`
-	InterpretationModel    string    `json:"interpretation_model,omitempty"`
-	InterpretationMS       *int64    `json:"interpretation_ms,omitempty"`
+	Timestamp                 time.Time `json:"timestamp"`
+	Tool                      string    `json:"tool"`
+	Args                      any       `json:"args"`
+	OK                        bool      `json:"ok"`
+	DurationMS                int64     `json:"duration_ms"`
+	Path                      string    `json:"path,omitempty"`
+	RowCount                  int       `json:"row_count"`
+	Degraded                  string    `json:"degraded,omitempty"`
+	Retried                   bool      `json:"retried,omitempty"`
+	RetriedSQL                bool      `json:"retried_sql,omitempty"`
+	ModelSQL                  string    `json:"model_sql,omitempty"`
+	FirstModelSQL             string    `json:"first_model_sql,omitempty"`
+	RetryReason               string    `json:"retry_reason,omitempty"`
+	SQLProvider               string    `json:"sql_provider,omitempty"`
+	SQLModel                  string    `json:"sql_model,omitempty"`
+	SQLInferenceMS            *int64    `json:"sql_inference_ms,omitempty"`
+	SQLRetryInferenceMS       *int64    `json:"sql_retry_inference_ms,omitempty"`
+	SQLRetryProviderLatencyMS *int64    `json:"sql_retry_provider_latency_ms,omitempty"`
+	ExecutionMS               *int64    `json:"execution_ms,omitempty"`
+	InterpretationProvider    string    `json:"interpretation_provider,omitempty"`
+	InterpretationModel       string    `json:"interpretation_model,omitempty"`
+	InterpretationMS          *int64    `json:"interpretation_ms,omitempty"`
 }
 
 type IngestRecord struct {
