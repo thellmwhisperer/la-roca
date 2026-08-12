@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -36,6 +37,20 @@ func TestFingerprintDetectsSameSizeSameMtimeEdit(t *testing.T) {
 	}
 	if after == before {
 		t.Fatalf("fingerprint stayed %q after same-size, same-mtime edit", after)
+	}
+}
+
+func TestCodexFingerprintCarriesTheHistoryParserRevision(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.jsonl")
+	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fingerprint, err := targetFingerprint(Target{Path: path, Kind: parsers.KindCodexHistory})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(fingerprint, ":parser:codex-history-v2") {
+		t.Fatalf("Codex fingerprint = %q, want the v2 history parser revision", fingerprint)
 	}
 }
 
