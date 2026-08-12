@@ -209,10 +209,11 @@ Model-written SQL is repaired before that gate and then judged by its unchanged
 rules; the SQL you write yourself for `roca exec` never is. `model_sql` keeps
 the untouched model output and `repaired` names each repair applied, listed
 under [Model providers](docs/models.md#the-repairs-between-the-model-and-the-gate).
-If the repaired candidate still fails the gate, La Roca gives the model exactly
-one correction attempt with that SQL and the exact verdict before using the
-literal rescue. The JSON envelope retains both attempts and attributes the
-retry latency separately.
+If the repaired candidate still fails either the gate or at execution, La Roca
+gives the model exactly one correction attempt with that SQL and SQLite's exact
+verdict before using the literal rescue. `retry_type` distinguishes
+`gate_rejection` from `execution_error`; the JSON envelope retains both attempts
+and attributes the retry latency separately.
 
 ## Three ways to use it
 

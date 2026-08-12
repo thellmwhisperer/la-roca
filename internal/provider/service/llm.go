@@ -3,6 +3,7 @@ package service
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -38,7 +39,7 @@ func IsDegradedFailure(mode string) bool {
 		mode == DegradedInvalidSQL || mode == DegradedExecution
 }
 
-// retriesOnRejection is how many extra attempts a rejected query buys.
+// retriesOnSQLFailure is how many extra attempts a failed query buys.
 //
 // One, and the number is the whole design. Measured against real qwen3.5:4b the
 // first SQL is often invalid in a way the engine describes exactly ("no such
@@ -46,13 +47,16 @@ func IsDegradedFailure(mode string) bool {
 // shown that error usually fixes it at once. A model that does not fix it with
 // the error in front of it will not fix it on the fifth try either, and every
 // try costs seconds of the operator's time.
-const retriesOnRejection = 1
+const retriesOnSQLFailure = 1
 
-// correction is what is handed back to the model after a rejection: the
-// engine's own verdict and the order to answer with SQL again.
-func correction(rejection error) string {
-	return "That query was rejected before running, by the same SQLite engine that " +
-		"would have run it:\n\n" + rejection.Error() + "\n\n" +
+// correction is what is handed back to the model after either kind of SQL
+// failure: the engine's own verdict and the order to answer with SQL again.
+func correction(failure error, retryType string) string {
+	lead := "That query was rejected before running, by the same SQLite engine that would have run it:"
+	if retryType == RetryExecutionError {
+		lead = "That query passed validation but failed during execution. SQLite returned:"
+	}
+	return lead + "\n\n" + failure.Error() + "\n\n" +
 		"Fix it against the schema you were given. Remember that a table has only the " +
 		"columns listed under its own name, and that a column of another table has to be " +
 		"reached with a JOIN. Respond ONLY with the corrected SQL query."
@@ -119,8 +123,9 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 	}
 
 	var validated string
-	var rejection error
-	for attempt := 0; attempt <= retriesOnRejection; attempt++ {
+	var columns []string
+	var rows []map[string]any
+	for attempt := 0; attempt <= retriesOnSQLFailure; attempt++ {
 		var answer provider.ChatResponse
 		for {
 			inferenceStart := time.Now()
@@ -169,33 +174,55 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 		// and it survives the rescue answering over it.
 		res.CleanedSQL = sql
 
-		validated, rejection = gate.Validate(sql)
-		if rejection == nil {
+		var failure error
+		retryType := RetryGateRejection
+		validated, failure = gate.Validate(sql)
+		if failure == nil {
 			// Defense in depth behind the prompt: bare LIKE '%term%' on a text
 			// column is the substring disease (Ana → ganancia). Reject with a
 			// retry hint that points at FTS; do not rewrite the SQL.
 			if hint := query.SubstringLikeRejection(validated); hint != "" {
-				rejection = fmt.Errorf("%s", hint)
-			} else {
-				break
+				failure = fmt.Errorf("%s", hint)
 			}
 		}
-		if attempt == retriesOnRejection {
+		if failure == nil && !req.SQLOnly {
+			term := query.SearchTerm(req.Question)
+			progress(req, QueryPhaseExecution)
+			executionStart := time.Now()
+			columns, rows, failure = s.execute(ctx, validated, term, req.MaxChars)
+			res.ExecutionMS += time.Since(executionStart).Milliseconds()
+			if failure != nil {
+				retryType = RetryExecutionError
+				failure = exactEngineError(failure)
+			}
+		}
+		if failure == nil {
+			break
+		}
+		// A caller that went away is not a statement a model can correct: the
+		// retry would be spent on a context that can no longer answer, and the
+		// degradation would blame a provider that never failed.
+		if attempt == retriesOnSQLFailure || ctx.Err() != nil {
+			if retryType == RetryExecutionError {
+				return s.rescue(ctx, req, res, DegradedExecution,
+					fmt.Sprintf("the validated SQL failed when it ran: %v", failure)), nil
+			}
 			return s.rescue(ctx, req, res, DegradedInvalidSQL,
 				fmt.Sprintf("the SQL %s generated does not pass the gate: %v",
-					chosen.Name(), rejection)), nil
+					chosen.Name(), failure)), nil
 		}
 		res.RetriedSQL = true
+		res.RetryType = retryType
 		res.FirstModelSQL = answer.Content
 		res.FirstRepaired = append([]string(nil), prepared.Repairs...)
-		res.RetryReason = rejection.Error()
+		res.RetryReason = failure.Error()
 		// The engine said exactly what is wrong. Handing that back is not a
 		// repair invented here: it is the verdict of the same engine that would
 		// have run the query, and it is the one piece of information that fixes
 		// it.
 		messages = append(messages,
-			provider.Message{Role: provider.RoleAssistant, Content: sql},
-			provider.Message{Role: provider.RoleUser, Content: correction(rejection)})
+			provider.Message{Role: provider.RoleAssistant, Content: cmp.Or(validated, sql)},
+			provider.Message{Role: provider.RoleUser, Content: correction(failure, retryType)})
 	}
 	res.SQL = validated
 
@@ -203,15 +230,6 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 		return res, nil
 	}
 
-	term := query.SearchTerm(req.Question)
-	progress(req, QueryPhaseExecution)
-	executionStart := time.Now()
-	columns, rows, err := s.execute(ctx, validated, term, req.MaxChars)
-	res.ExecutionMS += time.Since(executionStart).Milliseconds()
-	if err != nil {
-		return s.rescue(ctx, req, res, DegradedExecution,
-			fmt.Sprintf("the validated SQL failed when it ran: %v", err)), nil
-	}
 	if len(rows) == 0 {
 		// Zero rows down the model path is not an answer yet: the rescue looks
 		// with the operator's own words before declaring there is nothing. It is
@@ -228,6 +246,16 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 	res.Path = PathLLM
 	res.found(columns, rows)
 	return res, nil
+}
+
+func exactEngineError(err error) error {
+	for {
+		cause := errors.Unwrap(err)
+		if cause == nil {
+			return err
+		}
+		err = cause
+	}
 }
 
 // Interpretation is what the second inference answered and who answered it.

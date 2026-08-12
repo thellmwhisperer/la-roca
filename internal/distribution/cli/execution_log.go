@@ -114,11 +114,17 @@ func addQueryAudit(record *logfile.CallRecord, query service.QueryResult) {
 	}
 	record.SQLProvider, record.SQLModel = query.Engine, query.Model
 	record.RowCount, record.RetryReason = query.RowCount, query.RetryReason
+	record.Path, record.Retried = query.Path, query.Retried
+	record.RetriedSQL, record.RetryType = query.RetriedSQL, query.RetryType
+	record.ModelSQL, record.FirstModelSQL = &query.ModelSQL, query.FirstModelSQL
 	if query.QueryPlan != nil {
 		record.QueryPlan = query.QueryPlan
 	}
 	record.ProviderNote = query.ProviderNote
+	record.SQLProviderLatencyMS = milliseconds(query.LLMLatencyMS)
 	record.SQLInferenceMS = milliseconds(query.SQLInferenceMS)
+	record.SQLRetryProviderLatencyMS = milliseconds(query.SQLRetryProviderLatencyMS)
+	record.SQLRetryInferenceMS = milliseconds(query.SQLRetryInferenceMS)
 	record.ExecutionMS = milliseconds(query.ExecutionMS)
 	record.InterpretationProvider, record.InterpretationModel = query.InterpretEngine, query.InterpretModel
 	record.InterpretationMS = milliseconds(query.InterpretationMS)
