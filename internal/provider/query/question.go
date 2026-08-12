@@ -11,10 +11,10 @@ import (
 // pushed toward splitting one question unnaturally.
 const MaxQuestionChars = 1000
 
-// ValidateQuestion is puerta cero for every natural-language query surface.
+// ValidateQuestion is the first gate for every natural-language query surface.
 // It rejects only shapes that cannot be useful. Prompt-injection phrases are
-// intentionally allowed: people legitimately ask about prompts and SQL, and
-// the strict SQL gate—not a brittle wording filter—is the security boundary.
+// intentionally allowed: people legitimately ask about prompts and SQL, and the
+// security boundary is the strict SQL gate, not a brittle wording filter.
 func ValidateQuestion(question string) error {
 	if strings.TrimSpace(question) == "" {
 		return fmt.Errorf("question is empty; provide a natural-language question")

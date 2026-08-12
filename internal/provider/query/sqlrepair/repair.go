@@ -224,6 +224,9 @@ func softUnionOrderBy(stmt string) (string, bool) {
 	branchStart := 0
 	for _, union := range unions {
 		if order := firstPair(tokens, branchStart, union.start, "order", "by"); order >= 0 {
+			if crossesBranch(tokens, order, union.start) {
+				return stmt, false
+			}
 			cuts = append(cuts, span{start: order, end: union.start})
 		}
 		branchStart = union.end
@@ -277,6 +280,9 @@ func aggressiveUnionOrderBy(stmt string) (string, bool) {
 				cut = limit
 			}
 		}
+		if crossesBranch(tokens, cut, branch.end) {
+			return stmt, false
+		}
 		part := strings.TrimSpace(stmt[branch.start:cut])
 		if part == "" {
 			return stmt, false
@@ -288,6 +294,22 @@ func aggressiveUnionOrderBy(stmt string) (string, bool) {
 		fixed += " " + finalOrder
 	}
 	return fixed, fixed != strings.TrimSpace(stmt)
+}
+
+// crossesBranch reports whether the span about to be discarded holds a
+// top-level set operator or SELECT, which would mean the cut deletes a whole
+// branch instead of the branch ordering it was meant to remove.
+func crossesBranch(tokens []token, start, end int) bool {
+	for _, token := range tokens {
+		if token.start < start || token.end > end {
+			continue
+		}
+		switch token.word {
+		case "union", "intersect", "except", "select":
+			return true
+		}
+	}
+	return false
 }
 
 func unionSeparators(tokens []token) []span {

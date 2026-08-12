@@ -88,6 +88,8 @@ func TestPrepareLeavesValidSQLAndSuspiciousMultipleBlocksAlone(t *testing.T) {
 			"UNION ALL SELECT * FROM (SELECT id FROM memories ORDER BY id LIMIT 5) AS older",
 		"```sql\nSELECT id FROM memories\n```\n```sql\nDELETE FROM memories\n```",
 		"Preface on the same line: SELECT id FROM memories LIMIT 5",
+		"SELECT id FROM memories ORDER BY id UNION SELECT id FROM exchanges " +
+			"UNION ALL SELECT id FROM sessions ORDER BY id",
 	}
 	for _, raw := range benchCases {
 		got := sqlrepair.Prepare(raw)
