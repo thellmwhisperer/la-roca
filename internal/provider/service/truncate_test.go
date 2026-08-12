@@ -13,6 +13,10 @@ func TestTruncateMarksEveryClippedEdgeWithoutDroppingTheExcerptStart(t *testing.
 	}{
 		{"tail", strings.Repeat("0123456789", 12), "", "012", "", false, true},
 		{"preserved subject", "Alex, SDE: met Morgan after the synthetic launch", "Morgan", "Alex, SDE", "Morgan", false, true},
+		// A match that starts inside the subject window has no gap to elide:
+		// the excerpt stays contiguous instead of reprinting the overlap.
+		{"match inside the head", "Our internationalization plan for the synthetic fleet",
+			"internationalization", "Our internationaliz", "", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := truncate(tc.text, 20, tc.term)

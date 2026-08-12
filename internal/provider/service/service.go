@@ -476,6 +476,11 @@ func truncate(text string, budget int, term string) string {
 	if start+suffixBudget >= len(runes) {
 		start = max(head, len(runes)-suffixBudget)
 	}
+	if start <= head {
+		// The head already reaches the match, so there is no gap to elide: a
+		// second window would reprint what the subject just showed.
+		return string(runes[:budget-1]) + "…"
+	}
 	tail := start+suffixBudget < len(runes)
 	if tail {
 		suffixBudget--

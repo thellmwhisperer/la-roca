@@ -761,6 +761,36 @@ func TestAnExecutionErrorEarnsTheSameSingleCorrectionAttempt(t *testing.T) {
 	}
 }
 
+// The correction attempt is for statements a model can fix. A caller that
+// cancelled keeps the execution failure it actually had, and pays for no second
+// inference that could never have answered.
+func TestACancelledCallerBuysNoCorrectionAttempt(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	model := answering("ollama", "SELECT content FROM memories WHERE supersedes IS NULL LIMIT 5")
+	svc := serviceWithModel(t, model)
+
+	res, err := svc.Query(ctx, service.QueryRequest{
+		Question: theFreeQuestion,
+		Progress: func(phase service.QueryPhase) {
+			if phase == service.QueryPhaseExecution {
+				cancel()
+			}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model.requests != 1 {
+		t.Fatalf("%d model requests: a dead context was retried", model.requests)
+	}
+	if res.Degraded != service.DegradedExecution || res.RetriedSQL || res.RetryType != "" {
+		t.Fatalf("cancellation lost its own attribution: %+v", res)
+	}
+	if !strings.Contains(res.Message, context.Canceled.Error()) {
+		t.Fatalf("the degraded reason does not name the cancellation: %q", res.Message)
+	}
+}
+
 func TestExecNeverRetriesUserSuppliedSQL(t *testing.T) {
 	model := answering("codex", "SELECT content FROM memories LIMIT 1")
 	svc := serviceWithModel(t, model)

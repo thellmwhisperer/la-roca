@@ -199,7 +199,10 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 		if failure == nil {
 			break
 		}
-		if attempt == retriesOnSQLFailure {
+		// A caller that went away is not a statement a model can correct: the
+		// retry would be spent on a context that can no longer answer, and the
+		// degradation would blame a provider that never failed.
+		if attempt == retriesOnSQLFailure || ctx.Err() != nil {
 			if retryType == RetryExecutionError {
 				return s.rescue(ctx, req, res, DegradedExecution,
 					fmt.Sprintf("the validated SQL failed when it ran: %v", failure)), nil
