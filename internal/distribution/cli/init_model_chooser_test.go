@@ -147,88 +147,92 @@ func TestTTYInitWritesSurgicallyWithBackupAndNamesIt(t *testing.T) {
 	}
 }
 
-func TestInitRetirementEditRedactsBackupAndDeletesLegacyCredential(t *testing.T) {
+func TestInitRetirementRedactsRecoveryBackupsAndDeletesLegacyCredentials(t *testing.T) {
+	tests := []struct {
+		name, body        string
+		preexistingBackup bool
+		legacyCredential  bool
+		wantExactBackup   bool
+		forbidden         []string
+	}{
+		{
+			name:             "credential file",
+			body:             "[models]\norder = [\"codex\"]\n\n[models.codex]\nmodel = \"gpt-legacy\"\n",
+			legacyCredential: true, wantExactBackup: true,
+		},
+		{
+			name:              "quoted inline key in preexisting backup",
+			body:              "[models]\norder = [\"codex\"]\n\n[models.codex]\n\"api_key\" = \"legacy-secret\"\nmodel = \"gpt-legacy\"\n",
+			preexistingBackup: true, forbidden: []string{"legacy-secret", "api_key"},
+		},
+		{
+			name:      "unrelated provider secret",
+			body:      "[models]\norder = [\"xai\"]\n\n[models.xai]\napi_key = \"unrelated-secret\"\nmodel = \"grok-legacy\"\n",
+			forbidden: []string{"unrelated-secret", "api_key"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			paths, credential := initRetirementFixture(t, test.body, test.preexistingBackup, test.legacyCredential)
+			file, err := config.LoadFile(paths.Config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := writeInitModelChoice(paths, file, provider.NameCodex, "gpt-current"); err != nil {
+				t.Fatal(err)
+			}
+
+			backupPaths := []string{paths.Config + ".roca.bak"}
+			if test.preexistingBackup {
+				backupPaths = append(backupPaths, paths.Config+".roca.bak.1")
+			}
+			for _, backupPath := range backupPaths {
+				backup, err := os.ReadFile(backupPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if test.wantExactBackup && string(backup) != test.body {
+					t.Fatalf("historical configuration backup changed:\n%s", backup)
+				}
+				for _, forbidden := range test.forbidden {
+					if strings.Contains(string(backup), forbidden) {
+						t.Fatalf("provider secret %q survived in recovery backup %s:\n%s", forbidden, backupPath, backup)
+					}
+				}
+			}
+			if credential != "" {
+				if _, err := os.Stat(credential); !os.IsNotExist(err) {
+					t.Fatalf("legacy credential survived init retirement: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func initRetirementFixture(t *testing.T, body string, preexistingBackup, legacyCredential bool) (config.Paths, string) {
+	t.Helper()
 	root := t.TempDir()
 	paths := config.Paths{DB: filepath.Join(root, "roca.db"), Config: filepath.Join(root, "config.toml")}
-	body := "[models]\norder = [\"codex\"]\n\n[models.codex]\nmodel = \"gpt-legacy\"\n"
 	if err := os.WriteFile(paths.Config, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if preexistingBackup {
+		if err := os.WriteFile(paths.Config+".roca.bak", []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !legacyCredential {
+		return paths, ""
+	}
+	if err := os.MkdirAll(filepath.Join(root, "credentials"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	credential := legacyProviderCredentialPaths(root)[provider.NameCodex]
-	if err := os.MkdirAll(filepath.Dir(credential), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.WriteFile(credential, []byte("legacy-file-secret"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	file, err := config.LoadFile(paths.Config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := writeInitModelChoice(paths, file, provider.NameCodex, "gpt-current"); err != nil {
-		t.Fatal(err)
-	}
-	backup, err := os.ReadFile(paths.Config + ".roca.bak")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(backup) != body {
-		t.Fatalf("historical configuration backup changed:\n%s", backup)
-	}
-	if _, err := os.Stat(credential); !os.IsNotExist(err) {
-		t.Fatalf("legacy credential survived init retirement: %v", err)
-	}
-}
-
-func TestInitRetirementRedactsQuotedInlineKeyFromBackup(t *testing.T) {
-	root := t.TempDir()
-	paths := config.Paths{DB: filepath.Join(root, "roca.db"), Config: filepath.Join(root, "config.toml")}
-	body := "[models]\norder = [\"codex\"]\n\n[models.codex]\n\"api_key\" = \"legacy-secret\"\nmodel = \"gpt-legacy\"\n"
-	if err := os.WriteFile(paths.Config, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(paths.Config+".roca.bak", []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	file, err := config.LoadFile(paths.Config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := writeInitModelChoice(paths, file, provider.NameCodex, "gpt-current"); err != nil {
-		t.Fatal(err)
-	}
-	for _, backupPath := range []string{paths.Config + ".roca.bak", paths.Config + ".roca.bak.1"} {
-		backup, err := os.ReadFile(backupPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(string(backup), "legacy-secret") || strings.Contains(string(backup), "api_key") {
-			t.Fatalf("quoted provider secret survived in recovery backup %s:\n%s", backupPath, backup)
-		}
-	}
-}
-
-func TestInitAlwaysRedactsUnrelatedProviderSecretsFromBackup(t *testing.T) {
-	root := t.TempDir()
-	paths := config.Paths{DB: filepath.Join(root, "roca.db"), Config: filepath.Join(root, "config.toml")}
-	body := "[models]\norder = [\"xai\"]\n\n[models.xai]\napi_key = \"unrelated-secret\"\nmodel = \"grok-legacy\"\n"
-	if err := os.WriteFile(paths.Config, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	file, err := config.LoadFile(paths.Config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := writeInitModelChoice(paths, file, provider.NameCodex, "gpt-current"); err != nil {
-		t.Fatal(err)
-	}
-	backup, err := os.ReadFile(paths.Config + ".roca.bak")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(backup), "unrelated-secret") || strings.Contains(string(backup), "api_key") {
-		t.Fatalf("unrelated provider secret survived in recovery backup:\n%s", backup)
-	}
+	return paths, credential
 }
 
 func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
