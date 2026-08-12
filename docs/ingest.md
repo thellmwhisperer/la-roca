@@ -50,10 +50,25 @@ openai_export_paths = [
 ]
 ```
 
-Then run `roca ingest`. Point to the extracted directory, not to
-`conversations.json`. Multiple export directories may be listed; a later export
+Then run `roca ingest`. Point to the extracted directory, not to an individual
+JSON file. La Roca reads both the legacy `conversations.json` layout and the
+newer `conversations-*.json` shards, and processes both when an export directory
+contains both shapes. Multiple export directories may be listed; a later export
 of the same account contributes only conversations and messages whose source
-identities have not already landed.
+identities have not already landed. When legacy and sharded snapshots of the same
+conversation overlap, content reconciliation lands no duplicate and keeps the
+provenance stated by whichever snapshot recorded more about each answer; the
+legacy layout is the richer one, and it wins whether both arrive in one run or
+months apart. An exchange an earlier release stored carries no record of how much
+its snapshot stated, and an absent record is not a low one: such a row is filled
+where it is empty and never overwritten, so an upgrade cannot cost a corpus
+provenance it already had.
+
+A declared directory containing neither conversation shape is reported as an
+unrecognized OpenAI export layout. A declared path that does not exist or cannot
+be read is reported as unreadable, which is a different remedy: point the setting
+at the extracted directory. Both name the path in the ingest report, and neither
+is passed over in silence.
 
 Each `conversation_id` becomes an unprojected `chatgpt-web` session. La Roca
 walks the `mapping` parent/children tree and pairs user messages with assistant
@@ -68,11 +83,17 @@ The assistant message's `metadata.model_slug` supplies the model when present,
 falling back to the conversation's `default_model_slug`; the provider is
 `openai`. The export carries no token or cost counts, so those provenance
 columns remain NULL. Epoch timestamps are normalized into the corpus's UTC ISO
-8601 format.
+8601 format. The per-message `update_time`, `status`, `end_turn`, `channel`,
+`metadata.request_id`, and `metadata.turn_exchange_id` fields get no column of
+their own; they are counted, because how much a snapshot stated about an answer
+is what decides which of two snapshots of it keeps the provenance.
 
-`shared_conversations.json` and attachment files are counted in the ingest
-summary as out-of-scope exclusions. `chat.html` is another rendering of the
-conversation history and is ignored. La Roca does not open attachment bytes.
+`shared_conversations.json`, `codex.json`, and attachment files are counted in
+the ingest summary as out-of-scope exclusions and never warned about: Codex
+conversations are a source of their own and not part of this reading.
+`conversation_asset_file_names.json`, `chat.html`, and `ads.json` are expected
+companions of an export and are ignored outright. La Roca does not open
+attachment bytes.
 
 ## What enters the corpus
 
@@ -143,9 +164,13 @@ spelling, are omitted at the parser boundary instead of being assigned a guessed
 instant. In a same-instant collision, one numbered original may be selected over
 compatible numberless duplicates; numbered peers and conflicting text remain
 ambiguous. The replay backfills only fields that are still NULL after the
-content agrees. Every unresolved collision is left untouched and reported as a
-discard, so nothing that already landed is rewritten and no exchange is written
-twice.
+content agrees. The one exception is a source that measures how much each of its
+snapshots stated about an answer, which today is the ChatGPT export: a reading
+that measurably stated more than the one the row's provenance came from states
+the provenance columns instead of only filling them, under the rules in
+[Declare an OpenAI data export](#declare-an-openai-data-export). Every unresolved
+collision is left untouched and reported as a discard, so an ambiguous match
+rewrites nothing and no exchange is written twice.
 
 ## Reading the summary
 
