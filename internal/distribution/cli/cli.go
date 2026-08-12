@@ -45,6 +45,7 @@ type cliEnv struct {
 	code               int
 	outcome            any
 	auditQuery         *service.QueryResult
+	correlation        string
 	auditCommand       string
 	auditArgs          []string
 	started            time.Time
@@ -541,4 +542,13 @@ func (env *cliEnv) capture(value any) { env.outcome = value }
 
 func (env *cliEnv) print(format string, args ...any) {
 	fmt.Fprintf(env.out, format+"\n", args...)
+}
+
+// printCorrelation names the log line of a run that failed without an error to
+// print. The shell's degraded answer is one: it exits non-zero and says why,
+// and an operator reading that has nothing else to match the audit record with.
+func (env *cliEnv) printCorrelation() {
+	if env.correlation != "" {
+		env.print("correlation_id: %s", env.correlation)
+	}
 }

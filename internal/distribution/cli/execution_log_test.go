@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
+	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
@@ -123,6 +124,51 @@ func TestUnexpectedCLIErrorIsDurableAndUserVisibleByCorrelationID(t *testing.T) 
 	}
 	if record.CorrelationID == "" || !strings.Contains(runErr.Error(), record.CorrelationID) {
 		t.Fatalf("screen error %q does not match audit correlation %q", runErr, record.CorrelationID)
+	}
+}
+
+func TestADegradedQueryNamesItsAuditLineWithoutAnError(t *testing.T) {
+	fixtureInstallation(t)
+	home := os.Getenv("HOME")
+	writeConfig(t, home, "[models]\nprobe_ms = 200\n\n"+
+		"[models.mycorp]\nbase_url = \"https://llm.invalid/v1\"\napi_key = \"sk-synthetic\"\n"+
+		"model = \"internal-7b\"\n")
+	t.Setenv(provider.EnvOrder, "mycorp")
+
+	var out, errs strings.Builder
+	code, runErr := execute(contractBuild(), &out, &errs,
+		[]string{"query", "how many synthetic memories are there"})
+	if runErr != nil {
+		t.Fatalf("a degraded answer became a program error: %v", runErr)
+	}
+	if code != ExitError {
+		t.Fatalf("exit code = %d, want %d: the question needed a model and had none", code, ExitError)
+	}
+	matches, err := filepath.Glob(filepath.Join(home, ".roca", logfile.DirName, "executions-*.jsonl"))
+	if err != nil || len(matches) == 0 {
+		t.Fatalf("execution logs = %v, err=%v", matches, err)
+	}
+	raw, err := os.ReadFile(matches[len(matches)-1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record struct {
+		OK            bool   `json:"ok"`
+		ErrorType     string `json:"error_type"`
+		CorrelationID string `json:"correlation_id"`
+	}
+	if err := json.Unmarshal(raw, &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.OK || record.ErrorType != service.DegradedUnavailable {
+		t.Fatalf("audit record = %+v, want a failed %s call", record, service.DegradedUnavailable)
+	}
+	if record.CorrelationID == "" {
+		t.Fatalf("a degraded run left no correlation id in its audit record: %s", raw)
+	}
+	if !strings.Contains(out.String(), record.CorrelationID) {
+		t.Fatalf("the answer on screen does not name the audit line %q:\n%s",
+			record.CorrelationID, out.String())
 	}
 }
 

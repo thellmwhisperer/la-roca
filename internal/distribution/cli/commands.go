@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
@@ -551,14 +552,17 @@ func queryCommand(env *cliEnv) *cobra.Command {
 			// nothing to answer with.
 			if service.IsDegradedFailure(result.Degraded) {
 				env.code = ExitError
+				env.correlation = logfile.NewCorrelationID()
 			}
 			if env.json {
 				return env.printJSON(struct {
 					service.QueryResult
-					DatabasePath string `json:"database_path"`
-				}{result, svc.DB().Path()})
+					DatabasePath  string `json:"database_path"`
+					CorrelationID string `json:"correlation_id,omitempty"`
+				}{result, svc.DB().Path(), env.correlation})
 			}
 			if live.finish(answer) {
+				env.printCorrelation()
 				return nil
 			}
 			env.print("database: %s", svc.DB().Path())
@@ -568,6 +572,7 @@ func queryCommand(env *cliEnv) *cobra.Command {
 			answer.prose = formatInterpretation(answer.prose, termAware(env.out),
 				terminalWidth(env.out), colorOn(env.out))
 			env.print("%s", axiQuery(answer))
+			env.printCorrelation()
 			return nil
 		}),
 	}

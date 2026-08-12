@@ -444,9 +444,20 @@ func ScrubPath(err error, dbPath string) error {
 	if !strings.Contains(msg, dbPath) {
 		return err
 	}
-	cleaned := strings.ReplaceAll(msg, dbPath, "the database")
-	return errors.New(cleaned)
+	// Only Error() reaches the agent, so the scrubbed text is what it reads. The
+	// original stays as the unwrap target because rebuilding the error threw away
+	// the declared category and the audit line then said unclassified_error.
+	return scrubbedError{err: err, message: strings.ReplaceAll(msg, dbPath, "the database")}
 }
+
+type scrubbedError struct {
+	err     error
+	message string
+}
+
+func (e scrubbedError) Error() string { return e.message }
+
+func (e scrubbedError) Unwrap() error { return e.err }
 
 func scrubDataDir(text, dataDir string) string {
 	if dataDir == "" {

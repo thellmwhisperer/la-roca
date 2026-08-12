@@ -72,12 +72,13 @@ The stable fields are:
   `unclassified_error` when this build cannot categorize the failure. Further
   categories may be declared; the vocabulary is the contract, and the Go error
   behind it may change without changing the line.
-- `correlation_id` on every surfaced error, expected or not, printed unchanged
-  in the user-facing error, so an error on screen always names its log line: a
-  read-only gate rejection, a rejected SQL statement, and a degraded query the
-  MCP surface reports as a tool error are correlated exactly like an unexpected
-  exception. A degraded answer a surface still presents as an answer, as the
-  shell does, carries its `degraded` reason and no ID.
+- `correlation_id` on every surfaced failure, expected or not, so what the
+  operator saw always names its log line: a read-only gate rejection, a rejected
+  SQL statement and a degraded query are correlated exactly like an unexpected
+  exception. An error carries the ID in its own text. A degraded query has no
+  error text to carry it, so the shell prints a `correlation_id` line under the
+  answer and a `correlation_id` field in `--json`, and the MCP surface appends
+  the same line to the tool result it marks as an error.
 - Query calls add `question`, `sql`, `sql_provider`, `sql_model`, phase timings,
   and any `degraded`, `fallback_reason`, `retry_reason`, provider note, or
   `queryplan`. `sql` is the cleaned model-generated statement, including when a

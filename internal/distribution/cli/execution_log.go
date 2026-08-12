@@ -25,9 +25,13 @@ func (env *cliEnv) logExecution(cmd *cobra.Command, started time.Time, code int,
 	if env.auditCommand != "" {
 		operation, args = env.auditCommand, env.auditArgs
 	}
+	correlation := logfile.CorrelationID(runErr)
+	if correlation == "" {
+		correlation = env.correlation
+	}
 	call := logfile.CallRecord{
 		Timestamp: started.UTC(), Source: "cli", Args: args, OK: code == ExitOK,
-		DurationMS: time.Since(started).Milliseconds(), CorrelationID: logfile.CorrelationID(runErr),
+		DurationMS: time.Since(started).Milliseconds(), CorrelationID: correlation,
 	}
 	if operation == "query" {
 		call.Question = strings.Join(args, " ")
