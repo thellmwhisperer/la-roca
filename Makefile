@@ -7,6 +7,8 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 BIN     ?= bin/roca
+EVAL_MODE ?= replay
+EVAL_FORMAT ?= human
 
 LDFLAGS := -s -w \
 	-X main.version=$(VERSION) \
@@ -43,6 +45,11 @@ dist: darwin-arm64 linux-arm64 linux-amd64 windows-amd64 ## Build the four targe
 .PHONY: test
 test: ## Unit and contract tests
 	go test ./...
+
+.PHONY: eval
+eval: ## Measure retrieval against the synthetic golden set
+	@$(MAKE) --no-print-directory build >/dev/null
+	@$(BIN) eval --mode $(EVAL_MODE) --format $(EVAL_FORMAT)
 
 .PHONY: accept accept-index
 accept: build accept-index ## The godog acceptance suites against the real binary

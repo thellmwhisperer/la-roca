@@ -180,7 +180,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 	root.PersistentFlags().StringVar(&env.dbPath, "db-path", "", "database to use")
 	root.PersistentFlags().BoolVar(&env.json, "json", false, "JSON output")
 	root.AddCommand(
-		versionCommand(env), initCommand(env), queryCommand(env),
+		versionCommand(env), initCommand(env), queryCommand(env), evalCommand(env),
 		execCommand(env), schemaCommand(env),
 		indexCommand(env), doctorCommand(env),
 		ingestCommand(env), storeCommand(env), healthCommand(env),
