@@ -72,17 +72,16 @@ separate command.
 A successful human-readable init reports the corpus floor: the oldest ingested
 moment, the bedrock your memory reaches back to. An empty database says so
 plainly instead of printing a zero date. It ends with an `answering:` line that
-names the active provider/model, the exact configuration path, and the command
-or key that changes it. `roca doctor` reports the same floor as part of
-installation health, and `--json` carries the machine fields in both commands.
+names the active provider/model, the exact configuration path, and the setting
+that changes it. `roca doctor` reports the same floor as part of installation
+health, and `--json` carries the machine fields in both commands.
 
 Before asking for any provider setup, init detects supported agent CLIs already
 on `PATH` and uses their existing signed-in sessions. Its summary names the
 selected factory-default provider and says that no La Roca login is required;
 the next step is simply `roca query "<question>"`. Ollama and then keyword
-search remain the honest local fallbacks when no detected CLI can serve.
-HTTP/OAuth or key login is optional setup only for users without a usable local
-CLI who choose a configured remote provider.
+search remain the honest local fallbacks when no detected CLI can serve. Models
+authenticate through their own CLIs; La Roca stores no secrets.
 
 With `--db-path` on non-terminal input, init keeps that zero-login factory
 selection without opening the chooser or writing model configuration. Human
@@ -98,8 +97,8 @@ roca update
 
 Update resolves the selected release, verifies its checksum, runs the staged
 binary's version check, and swaps it into place by rename. The existing data,
-configuration, credentials, and agent integrations remain in place. If any
-verification fails, the active executable is unchanged.
+configuration and agent integrations remain in place. If any verification
+fails, the active executable is unchanged.
 
 If an existing database uses the legacy search tokenizer, the first writable
 command after the update automatically rebuilds only the derived full-text
@@ -113,9 +112,9 @@ proposal once for that version. Init reserves its short question budget for the
 database and model chooser, so proposals wait for the next command. In a
 terminal La Roca asks before each proposal change; an accepted change edits only
 the declared TOML values, preserves unrelated content, and creates the same
-named recovery backup as `roca login`. A rejection changes no configuration.
-Without a terminal, each proposal is one plain alert: La Roca does not prompt
-or edit the configuration.
+named recovery backup as other configuration edits. A rejection changes no
+configuration. Without a terminal, each proposal is one plain alert: La Roca
+does not prompt or edit the configuration.
 
 `roca doctor` always lists proposals that remain open, even after they were
 already offered for the current version. An interactive doctor run offers them
@@ -126,9 +125,15 @@ The current proposals are:
   offer the shipped local-CLI preset at the front of that configured order;
   its default model is `sonnet`. An absent order already detects it as the
   factory default and needs no proposal.
-- When Codex is using La Roca's OAuth/HTTP session and the Codex CLI is on
-  `PATH`, replace that provider's HTTP settings with the isolated `codex exec`
-  local-binary transport while preserving the selected model.
+- When a configuration names a retired remote provider, offer migration to a
+  detected local agent CLI. A provider that declares its own `command`, or whose
+  own CLI is detected, is offered the removal of its retired authentication keys
+  instead: its transport and the rest of its table stay. If no CLI is on `PATH`,
+  offer to drop the retired entry. Declining leaves the document unchanged and
+  queries degrade honestly.
+- When only a credential file from an older release is left, offer to remove
+  that file alone. It changes no model configuration and never disables a
+  provider this build can still run.
 - When Anthropic export ingest is available but
   `defaults.anthropic_export_paths` is empty, ask for an extracted export
   directory and add that typed path. See [Ingest sources](ingest.md#declare-an-anthropic-data-export).
@@ -153,9 +158,10 @@ roca uninstall --purge
 
 Without an explicit data flag, uninstall asks for consent in an interactive
 terminal. `--keep-data` removes the executable and integrations while retaining
-the data directory. `--purge` removes every artefact La Roca created, including
-the database, configuration, credentials, indexes, logs, generated prompt,
-backups, skills, and integration recovery copies.
+the data directory. `--purge` removes every artefact La Roca owns, including the
+database, configuration, indexes, logs, generated prompt, backups, skills, and
+integration recovery copies, plus the credential files and model catalogue cache
+that older releases left behind.
 
 Uninstall edits each supported agent configuration surgically, preserving all
 unrelated bytes. It refuses to delete files it cannot identify as product-owned

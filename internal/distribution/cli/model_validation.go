@@ -3,13 +3,9 @@ package cli
 import (
 	"bufio"
 	"context"
-	_ "embed"
-	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -17,24 +13,17 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
-	"github.com/thellmwhisperer/la-roca/internal/securefile"
 	"golang.org/x/term"
 )
 
-const (
-	modelsDevURL       = "https://models.dev/api.json"
-	modelsDevCacheFile = "models.dev.json"
-	catalogueTimeout   = 5 * time.Second
-)
-
-//go:embed models_dev_snapshot.json
-var embeddedModelsDevSnapshot []byte
+// modelsDevCacheFile is the snapshot a release before the credential strip kept
+// for the HTTP Codex adapter. Nothing reads it any more; it is named here only
+// so uninstall still owns and removes it on machines that have one.
+const modelsDevCacheFile = "models.dev.json"
 
 type modelCatalogue struct {
-	IDs    []string
-	Stale  bool
-	Open   bool
-	Notice string
+	IDs  []string
+	Open bool
 }
 
 type modelValidationBackend interface {
@@ -43,8 +32,6 @@ type modelValidationBackend interface {
 }
 
 type modelPicker func(io.Reader, io.Writer, []string, string) (string, error)
-
-type modelCatalogRefresher func(context.Context) error
 
 // validatedModel is the only path from user input to a model ID a config edit
 // may receive. It proves exact membership for a closed catalogue, then account
@@ -61,9 +48,6 @@ func (env *cliEnv) validatedModel(ctx context.Context, in io.Reader, paths confi
 	catalogue, err := backend.Catalogue(ctx, name, current)
 	if err != nil {
 		return "", fmt.Errorf("read %s's model catalogue: %w; configuration was not changed", name, err)
-	}
-	if catalogue.Notice != "" {
-		fmt.Fprintln(env.errOut, "warning:", catalogue.Notice)
 	}
 	if len(catalogue.IDs) == 0 {
 		return "", fmt.Errorf("%s's model catalogue is empty; configuration was not changed", name)
@@ -112,23 +96,21 @@ func (env *cliEnv) modelSetCurrent(ctx context.Context, model string) error {
 }
 
 type providerModelBackend struct {
-	paths      config.Paths
-	file       config.File
-	client     *http.Client
-	catalogURL string
-	build      func(string, string) (provider.Provider, error)
+	paths config.Paths
+	file  config.File
+	build func(string, string) (provider.Provider, error)
 }
 
 func newProviderModelBackend(paths config.Paths, file config.File) *providerModelBackend {
-	return &providerModelBackend{paths: paths, file: file, client: http.DefaultClient, catalogURL: modelsDevURL}
+	return &providerModelBackend{paths: paths, file: file}
 }
 
+// Catalogue asks the provider itself what it offers. Every provider this build
+// carries answers through its own local CLI or its own local runtime, so there
+// is no remote catalogue service left to consult.
 func (b *providerModelBackend) Catalogue(ctx context.Context, name, current string) (modelCatalogue, error) {
 	catalogueCtx, cancel := context.WithTimeout(ctx, b.timeout())
 	defer cancel()
-	if name == provider.NameCodex && !provider.UsesCommandTransport(b.file, name) {
-		return readCodexCatalogue(catalogueCtx, b.client, b.catalogURL, modelsDevCachePath(b.paths))
-	}
 	candidate, err := b.candidate(name, current)
 	if err != nil {
 		return modelCatalogue{}, err
@@ -178,13 +160,17 @@ func (b *providerModelBackend) candidate(name, model string) (provider.Provider,
 	file.Models.Providers[name] = providerConfig
 	file.Models.Order = []string{name}
 	cascade, err := provider.BuildCascade(provider.Settings{
-		File: file, Credentials: b.paths.Credentials, RunnerDir: b.paths.Runner,
+		File: file, RunnerDir: b.paths.Runner,
 		Env: validationEnvironment,
 	})
 	if err != nil {
 		return nil, err
 	}
 	if len(cascade.Providers) != 1 {
+		if len(cascade.Warnings) > 0 {
+			return nil, fmt.Errorf("provider %s cannot be built for validation: %s",
+				name, strings.Join(cascade.Warnings, "; "))
+		}
 		return nil, fmt.Errorf("provider %s cannot be built for validation", name)
 	}
 	return cascade.Providers[0], nil
@@ -217,105 +203,6 @@ func validationEnvironment(key string) string {
 	}
 }
 
-type cachedModelSnapshot struct {
-	RefreshedAt string   `json:"refreshed_at"`
-	Models      []string `json:"models"`
-}
-
-func modelsDevCachePath(paths config.Paths) string {
-	return filepath.Join(filepath.Dir(paths.DB), "cache", modelsDevCacheFile)
-}
-
-func readCodexCatalogue(ctx context.Context, client *http.Client, url, cachePath string) (modelCatalogue, error) {
-	models, err := fetchModelsDev(ctx, client, url)
-	if err == nil {
-		_ = writeModelSnapshot(cachePath, models)
-		return modelCatalogue{IDs: models}, nil
-	}
-	reason := err.Error()
-	if cached, cacheErr := readModelSnapshotFile(cachePath); cacheErr == nil {
-		return modelCatalogue{IDs: cached, Stale: true, Notice: fmt.Sprintf(
-			"the live Codex catalogue could not be read (%s); using the cached snapshot, which is possibly stale", reason)}, nil
-	}
-	embedded, embeddedErr := parseModelSnapshot(embeddedModelsDevSnapshot)
-	if embeddedErr != nil {
-		return modelCatalogue{}, fmt.Errorf("live catalogue: %v; embedded snapshot: %w", err, embeddedErr)
-	}
-	return modelCatalogue{IDs: embedded, Stale: true, Notice: fmt.Sprintf(
-		"the live Codex catalogue could not be read (%s); using the embedded snapshot, which is possibly stale", reason)}, nil
-}
-
-func refreshCodexCatalogue(ctx context.Context, client *http.Client, url, cachePath string) error {
-	models, err := fetchModelsDev(ctx, client, url)
-	if err != nil {
-		return err
-	}
-	return writeModelSnapshot(cachePath, models)
-}
-
-func (env *cliEnv) refreshModelCatalogue(ctx context.Context) error {
-	if env.modelCatalogRefresh != nil {
-		return env.modelCatalogRefresh(ctx)
-	}
-	paths, err := env.resolvePaths()
-	if err != nil {
-		return err
-	}
-	return refreshCodexCatalogue(ctx, http.DefaultClient, modelsDevURL, modelsDevCachePath(paths))
-}
-
-func fetchModelsDev(ctx context.Context, client *http.Client, url string) ([]string, error) {
-	requestCtx, cancel := context.WithTimeout(ctx, catalogueTimeout)
-	defer cancel()
-	if client == nil {
-		client = http.DefaultClient
-	}
-	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, url, http.NoBody)
-	if err != nil {
-		return nil, err
-	}
-	res, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(res.Body, 300))
-		return nil, fmt.Errorf("models.dev answered %d: %s", res.StatusCode, strings.TrimSpace(string(body)))
-	}
-	var document map[string]struct {
-		Models map[string]struct {
-			ID         string `json:"id"`
-			Status     string `json:"status"`
-			Modalities struct {
-				Output []string `json:"output"`
-			} `json:"modalities"`
-		} `json:"models"`
-	}
-	if err := json.NewDecoder(io.LimitReader(res.Body, 16<<20)).Decode(&document); err != nil {
-		return nil, fmt.Errorf("decode models.dev: %w", err)
-	}
-	openAI, ok := document["openai"]
-	if !ok {
-		return nil, fmt.Errorf("models.dev lists no openai provider")
-	}
-	models := make([]string, 0, len(openAI.Models))
-	for key, entry := range openAI.Models {
-		id := entry.ID
-		if id == "" {
-			id = key
-		}
-		if entry.Status != "deprecated" && slices.Contains(entry.Modalities.Output, "text") {
-			models = append(models, id)
-		}
-	}
-	models = canonicalModelIDs(models)
-	if len(models) == 0 {
-		return nil, fmt.Errorf("models.dev lists no active OpenAI text models")
-	}
-	return models, nil
-}
-
 func canonicalModelIDs(models []string) []string {
 	seen := make(map[string]bool, len(models))
 	canonical := make([]string, 0, len(models))
@@ -328,36 +215,6 @@ func canonicalModelIDs(models []string) []string {
 	}
 	sort.Strings(canonical)
 	return canonical
-}
-
-func writeModelSnapshot(path string, models []string) error {
-	payload, err := json.MarshalIndent(cachedModelSnapshot{
-		RefreshedAt: time.Now().UTC().Format(time.RFC3339), Models: canonicalModelIDs(models),
-	}, "", "  ")
-	if err != nil {
-		return err
-	}
-	return securefile.Write(path, append(payload, '\n'), 0o600, 0o700)
-}
-
-func readModelSnapshotFile(path string) ([]string, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	return parseModelSnapshot(raw)
-}
-
-func parseModelSnapshot(raw []byte) ([]string, error) {
-	var snapshot cachedModelSnapshot
-	if err := json.Unmarshal(raw, &snapshot); err != nil {
-		return nil, err
-	}
-	models := canonicalModelIDs(snapshot.Models)
-	if len(models) == 0 {
-		return nil, fmt.Errorf("model snapshot is empty")
-	}
-	return models, nil
 }
 
 func terminalArrowModelPicker(in io.Reader, out io.Writer, models []string, current string) (string, error) {

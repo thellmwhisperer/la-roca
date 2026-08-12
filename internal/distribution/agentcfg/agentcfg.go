@@ -229,6 +229,40 @@ func Status(name, path string) (Report, error) {
 // guarantees. Two edit paths would create two sets of ways to lose a file.
 func Edit(name, path string, transform func(string) (string, error),
 	createMissing bool) (Outcome, error) {
+	return edit(name, path, transform, nil, createMissing)
+}
+
+// EditWithBackup applies a surgical edit while allowing the recovery copy to
+// be transformed before it is written. Credential retirement uses that hook
+// to make a deliberately non-byte-exact, secret-free backup.
+func EditWithBackup(name, path string, transform, backupTransform func(string) (string, error),
+	createMissing bool) (Outcome, error) {
+	return edit(name, path, transform, backupTransform, createMissing)
+}
+
+// Rewrite transforms an existing file in place without creating a backup or
+// returning a reportable Outcome. A missing file and an unchanged transform
+// are both no-ops.
+func Rewrite(path string, transform func(string) (string, error)) error {
+	previous, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	next, err := transform(string(previous))
+	if err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	if next == string(previous) {
+		return nil
+	}
+	return write(path, next, previous)
+}
+
+func edit(name, path string, transform, backupTransform func(string) (string, error),
+	createMissing bool) (Outcome, error) {
 	outcome := Outcome{Runtime: name, Path: path}
 
 	previous, err := os.ReadFile(path)
@@ -250,7 +284,15 @@ func Edit(name, path string, transform func(string) (string, error),
 	}
 
 	if previous != nil {
-		backup, err := backUp(path, previous)
+		backupContent := previous
+		if backupTransform != nil {
+			content, err := backupTransform(string(previous))
+			if err != nil {
+				return outcome, fmt.Errorf("prepare recovery backup for %s: %w", path, err)
+			}
+			backupContent = []byte(content)
+		}
+		backup, err := backUp(path, backupContent)
 		if err != nil {
 			return outcome, err
 		}
