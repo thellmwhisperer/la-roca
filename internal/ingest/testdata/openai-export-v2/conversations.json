@@ -1,0 +1,61 @@
+[
+  {
+    "conversation_id": "40000000-0000-4000-8000-000000000001",
+    "title": "Synthetic lighthouse planning",
+    "create_time": 1767225600.125,
+    "update_time": 1767225607.75,
+    "default_model_slug": "gpt-synthetic-default",
+    "current_node": "42000000-0000-4000-8000-000000000003",
+    "mapping": {
+      "root": {"id": "root", "parent": null, "children": ["41000000-0000-4000-8000-000000000001"], "message": null},
+      "41000000-0000-4000-8000-000000000001": {
+        "id": "41000000-0000-4000-8000-000000000001", "parent": "root",
+        "children": ["42000000-0000-4000-8000-000000000001", "42000000-0000-4000-8000-000000000002"],
+        "message": {"author": {"role": "user"}, "content": {"content_type": "text", "parts": ["Name the synthetic lighthouse beacon."]}, "create_time": 1767225601.125, "metadata": {}}
+      },
+      "42000000-0000-4000-8000-000000000001": {
+        "id": "42000000-0000-4000-8000-000000000001", "parent": "41000000-0000-4000-8000-000000000001", "children": ["system-context"],
+        "message": {"author": {"role": "assistant"}, "content": {"content_type": "text", "parts": ["Call it Amber Kestrel."]}, "create_time": 1767225602.625, "metadata": {"model_slug": "gpt-synthetic-message"}}
+      },
+      "system-context": {
+        "id": "system-context", "parent": "42000000-0000-4000-8000-000000000001", "children": ["tool-context"],
+        "message": {"author": {"role": "system"}, "content": {"content_type": "text", "parts": ["Synthetic system context."]}, "create_time": 1767225603.0, "metadata": {}}
+      },
+      "tool-context": {
+        "id": "tool-context", "parent": "system-context", "children": ["41000000-0000-4000-8000-000000000002"],
+        "message": {"author": {"role": "tool"}, "content": {"content_type": "text", "parts": ["Synthetic tool output."]}, "create_time": 1767225603.25, "metadata": {}}
+      },
+      "42000000-0000-4000-8000-000000000002": {
+        "id": "42000000-0000-4000-8000-000000000002", "parent": "41000000-0000-4000-8000-000000000001", "children": [],
+        "message": {"author": {"role": "assistant"}, "content": {"content_type": "text", "parts": ["The alternate branch calls it Silver Heron."]}, "create_time": 1767225604.875, "metadata": {}}
+      },
+      "41000000-0000-4000-8000-000000000002": {
+        "id": "41000000-0000-4000-8000-000000000002", "parent": "tool-context", "children": ["42000000-0000-4000-8000-000000000003"],
+        "message": {"author": {"role": "user"}, "content": {"content_type": "text", "parts": ["Add a synthetic lens check."]}, "create_time": 1767225606.0, "metadata": {}}
+      },
+      "42000000-0000-4000-8000-000000000003": {
+        "id": "42000000-0000-4000-8000-000000000003", "parent": "41000000-0000-4000-8000-000000000002", "children": [],
+        "message": {"author": {"role": "assistant"}, "content": {"content_type": "text", "parts": ["The synthetic lens is clear."]}, "create_time": 1767225607.75, "metadata": {}}
+      }
+    }
+  },
+  {
+    "conversation_id": "40000000-0000-4000-8000-000000000002",
+    "title": "Synthetic harbor notes",
+    "create_time": 1767229200.0,
+    "update_time": 1767229202.0,
+    "default_model_slug": null,
+    "current_node": "44000000-0000-4000-8000-000000000001",
+    "mapping": {
+      "root-two": {"id": "root-two", "parent": null, "children": ["43000000-0000-4000-8000-000000000001"], "message": null},
+      "43000000-0000-4000-8000-000000000001": {
+        "id": "43000000-0000-4000-8000-000000000001", "parent": "root-two", "children": ["44000000-0000-4000-8000-000000000001"],
+        "message": {"author": {"role": "user"}, "content": {"content_type": "text", "parts": ["Record the fictional tide marker."]}, "create_time": 1767229201.0, "metadata": {}}
+      },
+      "44000000-0000-4000-8000-000000000001": {
+        "id": "44000000-0000-4000-8000-000000000001", "parent": "43000000-0000-4000-8000-000000000001", "children": [],
+        "message": {"author": {"role": "assistant"}, "content": {"content_type": "text", "parts": ["The fictional marker is Blue Tern."]}, "create_time": 1767229202.0, "metadata": {}}
+      }
+    }
+  }
+]

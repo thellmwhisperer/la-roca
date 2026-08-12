@@ -141,11 +141,13 @@ func parseClaudeWebConversation(payload claudeWebConversation, recordBase int) R
 
 func claudeWebMessageGraph(messages []claudeWebMessage) (map[string]int, []int, map[int]claudeWebDiscard) {
 	byID := make(map[string]int, len(messages))
+	nodes := make([]parentGraphNode, len(messages))
 	reasons := map[int]claudeWebDiscard{}
 	for i := range messages {
 		message := &messages[i]
 		message.UUID = strings.TrimSpace(message.UUID)
 		message.ParentMessageUUID = strings.TrimSpace(message.ParentMessageUUID)
+		nodes[i] = parentGraphNode{id: message.UUID, parent: message.ParentMessageUUID}
 		switch {
 		case message.UUID == "":
 			reasons[i] = claudeWebDiscard{reason: "message has no uuid"}
@@ -170,79 +172,15 @@ func claudeWebMessageGraph(messages []claudeWebMessage) (map[string]int, []int, 
 			}
 		}
 	}
-	parents := claudeWebSurvivingParents(messages, byID, reasons)
-	claudeWebDiscardCycles(messages, parents, reasons)
-	return byID, claudeWebSurvivingParents(messages, byID, reasons), reasons
-}
-
-func claudeWebSurvivingParents(messages []claudeWebMessage, byID map[string]int,
-	reasons map[int]claudeWebDiscard) []int {
-	parents := make([]int, len(messages))
-	resolved := make([]int, len(messages))
-	visiting := make([]bool, len(messages))
-	for i := range resolved {
-		resolved[i] = -2
-	}
-	var resolve func(int) int
-	resolve = func(index int) int {
-		if reasons[index].reason == "" {
-			return index
+	discarded := func(index int) bool { return reasons[index].reason != "" }
+	parents := survivingParents(nodes, byID, discarded)
+	discardParentCycles(nodes, parents, discarded, func(index int) {
+		reasons[index] = claudeWebDiscard{
+			reason:   fmt.Sprintf("message %s has a cyclic parent chain", messages[index].UUID),
+			category: "message has a cyclic parent chain",
 		}
-		if resolved[index] != -2 {
-			return resolved[index]
-		}
-		if visiting[index] {
-			return -1
-		}
-		visiting[index] = true
-		parent := -1
-		if position, found := byID[messages[index].ParentMessageUUID]; found {
-			parent = resolve(position - 1)
-		}
-		visiting[index] = false
-		resolved[index] = parent
-		return parent
-	}
-	for i := range parents {
-		parents[i] = -1
-		if position, found := byID[messages[i].ParentMessageUUID]; found {
-			parents[i] = resolve(position - 1)
-		}
-	}
-	return parents
-}
-
-func claudeWebDiscardCycles(messages []claudeWebMessage, parents []int,
-	reasons map[int]claudeWebDiscard) {
-	state := make([]uint8, len(messages))
-	var visit func(int)
-	visit = func(index int) {
-		state[index] = 1
-		parent := parents[index]
-		if parent >= 0 && reasons[parent].reason == "" {
-			switch state[parent] {
-			case 0:
-				visit(parent)
-			case 1:
-				for member := parent; ; member = parents[member] {
-					reasons[member] = claudeWebDiscard{
-						reason: fmt.Sprintf(
-							"message %s has a cyclic parent chain", messages[member].UUID),
-						category: "message has a cyclic parent chain",
-					}
-					if member == index {
-						break
-					}
-				}
-			}
-		}
-		state[index] = 2
-	}
-	for i := range messages {
-		if reasons[i].reason == "" && state[i] == 0 {
-			visit(i)
-		}
-	}
+	})
+	return byID, survivingParents(nodes, byID, discarded), reasons
 }
 
 // ParseClaudeWebMemories reads each exported memory independently. UUID is the

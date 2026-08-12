@@ -135,13 +135,20 @@ func TestTheEnvironmentWinsOverThePlatformDefault(t *testing.T) {
 
 func TestATildeInADeclaredRootIsExpandedAgainstTheDeclaredHome(t *testing.T) {
 	roots := ResolveRoots(Environment{GOOS: "linux", Home: "/home/op"},
-		Settings{PiSessions: "~/sessions/pi", AnthropicExportPaths: []string{"~/exports/claude"}})
+		Settings{
+			PiSessions: "~/sessions/pi", AnthropicExportPaths: []string{"~/exports/claude"},
+			OpenAIExportPaths: []string{"~/exports/chatgpt"},
+		})
 	if roots.PiSessions != "/home/op/sessions/pi" {
 		t.Errorf("pi = %q", roots.PiSessions)
 	}
 	if len(roots.ClaudeWebExports) != 1 ||
 		roots.ClaudeWebExports[0] != "/home/op/exports/claude" {
 		t.Errorf("Claude web exports = %v", roots.ClaudeWebExports)
+	}
+	if len(roots.ChatGPTWebExports) != 1 ||
+		roots.ChatGPTWebExports[0] != "/home/op/exports/chatgpt" {
+		t.Errorf("ChatGPT web exports = %v", roots.ChatGPTWebExports)
 	}
 }
 
