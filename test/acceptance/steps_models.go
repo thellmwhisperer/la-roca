@@ -27,14 +27,7 @@ import (
 // may well have a real Ollama listening on its usual port, and a suite that
 // contacted it would measure that machine instead of this binary.
 
-// theCredential is recognizable so every output can be checked for leaks.
-const theCredential = "sk-roca-acceptance-CREDENTIAL-VALUE-7741"
-
-// theFrontierName is the frontier provider of these scenarios. A preset by key
-// is used and not the subscription one, because the subscription one is a
-// vendor's login and the real one belongs to the final battery with the
-// operator's credential.
-const theFrontierName = "deepseek"
+const theFrontierName = "codex"
 
 // modelWorld is the scenario's provider world.
 type modelWorld struct {
@@ -44,11 +37,9 @@ type modelWorld struct {
 	// fromTheFile says the order travels in the configuration file and not in
 	// the environment. It is what the scenarios about configuration measure,
 	// and it is why they are the only ones that do not set the variable.
-	fromTheFile bool
+	fromTheFile    bool
+	factoryDefault bool
 
-	frontier      *httptest.Server
-	frontierURL   string
-	frontierKey   string
 	frontierModel string
 
 	local    *httptest.Server
@@ -91,6 +82,9 @@ const theGeneratedSQL = "SELECT content FROM memories WHERE supersedes IS NULL L
 // scenarios about configuration declare does go into the file, and those clear
 // this variable so the file is what decides.
 func (m *world) modelEnvironment() []string {
+	if m.models.factoryDefault {
+		return nil
+	}
 	if m.models.orderInTheFile() {
 		return nil
 	}
@@ -105,9 +99,6 @@ func (m *world) modelEnvironment() []string {
 func (w modelWorld) orderInTheFile() bool { return w.fromTheFile }
 
 func (m *world) closeModels() {
-	if m.models.frontier != nil {
-		m.models.frontier.Close()
-	}
 	if m.models.local != nil {
 		m.models.local.Close()
 	}
@@ -116,31 +107,12 @@ func (m *world) closeModels() {
 
 // --- worlds ---
 
-// aValidFrontierCredential starts the fake frontier and writes its credential
-// where an operator would write it.
-func (m *world) aValidFrontierCredential() error {
-	m.ensureRequestLog()
-	m.models.frontierKey = theCredential
-	return m.writeModelConfig()
-}
-
 func (m *world) theFrontierIsAvailable() error {
 	m.ensureRequestLog()
-	log := m.models.requests
-	m.models.frontier = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.note("frontier")
-		if strings.HasSuffix(r.URL.Path, "/models") {
-			json.NewEncoder(w).Encode(map[string]any{"data": []any{}})
-			return
-		}
-		json.NewEncoder(w).Encode(map[string]any{
-			"choices": []any{map[string]any{
-				"message": map[string]any{"role": "assistant", "content": theGeneratedSQL},
-			}},
-		})
-	}))
-	m.models.frontierURL = m.models.frontier.URL
-	m.models.order = withProvider(m.models.order, theFrontierName)
+	m.models.factoryDefault = true
+	if err := m.writeFrontierCLI("printf '%s' " + shellQuote(theGeneratedSQL)); err != nil {
+		return err
+	}
 	return m.writeModelConfig()
 }
 
@@ -149,24 +121,28 @@ func (m *world) theFrontierIsAvailable() error {
 // The local floor keeps answering, because it is local.
 func (m *world) thereIsNoNetwork() error {
 	m.ensureRequestLog()
-	if m.models.frontier != nil {
-		m.models.frontier.Close()
-		m.models.frontier = nil
+	m.models.factoryDefault = true
+	if err := m.writeFrontierCLI("exit 23"); err != nil {
+		return err
 	}
-	m.models.frontierURL = deadEndpoint
-	m.models.order = withProvider(m.models.order, theFrontierName)
 	return m.writeModelConfig()
 }
 
 func (m *world) thereIsNoFrontierCredential() error {
 	m.ensureRequestLog()
-	m.models.frontierKey = ""
-	if m.models.frontierURL == "" {
-		m.models.frontierURL = deadEndpoint
-	}
-	m.models.order = withProvider(m.models.order, theFrontierName)
+	m.models.factoryDefault = true
 	return m.writeModelConfig()
 }
+
+func (m *world) writeFrontierCLI(body string) error {
+	dir := filepath.Join(m.home, "bin")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, theFrontierName), []byte("#!/bin/sh\n"+body+"\n"), 0o700)
+}
+
+func shellQuote(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
 
 func (m *world) theLocalModelIsAvailable() error {
 	m.ensureRequestLog()
@@ -207,9 +183,6 @@ func (m *world) theConfigurationDeclaresTheOrder() error {
 	m.ensureRequestLog()
 	m.models.order = []string{theFrontierName, "ollama"}
 	m.models.fromTheFile = true
-	if m.models.frontierURL == "" {
-		m.models.frontierURL = deadEndpoint
-	}
 	if m.models.localURL == "" {
 		m.models.localURL = deadEndpoint
 	}
@@ -264,17 +237,13 @@ func (m *world) writeModelConfig() error {
 	// Short budgets: these scenarios measure the decision, not the patience.
 	body.WriteString("timeout_ms = 5000\nprobe_ms = 1000\n")
 
-	if m.models.frontierURL != "" || m.models.frontierKey != "" {
+	if m.models.frontierModel != "" {
 		body.WriteString("\n[models." + theFrontierName + "]\n")
-		body.WriteString("base_url = " + tomlString(orDeadEndpoint(m.models.frontierURL)) + "\n")
 		model := m.models.frontierModel
 		if model == "" {
 			model = "the-frontier-model"
 		}
 		body.WriteString("model = " + tomlString(model) + "\n")
-		if m.models.frontierKey != "" {
-			body.WriteString("api_key = " + tomlString(m.models.frontierKey) + "\n")
-		}
 	}
 	if m.models.localURL != "" {
 		body.WriteString("\n[models.ollama]\n")
@@ -287,25 +256,23 @@ func (m *world) writeModelConfig() error {
 func (m *world) configurationChoosesFrontierModel(model string) error {
 	m.models.frontierModel = model
 	m.models.order = withProvider(m.models.order, theFrontierName)
-	if m.models.frontierURL == "" {
-		m.models.frontierURL = deadEndpoint
-	}
 	return m.writeModelConfig()
 }
 
 func (m *world) loginWithModel(name, model string) error {
-	server := newOpenAIModelServer(model)
-	m.models.frontier = server
+	if err := m.writeFrontierCLI("printf '%s' 'SELECT 1'"); err != nil {
+		return err
+	}
 	configPath := filepath.Join(m.home, ".roca", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
 		return err
 	}
-	fixture := "workspace_roots = [\"/work\"]\n\n[models." + name + "]\nbase_url = " + tomlString(server.URL) + "\n"
+	fixture := "workspace_roots = [\"/work\"]\n"
 	if err := os.WriteFile(configPath, []byte(fixture), 0o600); err != nil {
 		return err
 	}
 	command := exec.Command(m.binaryPath(), "login", name, "--model", model)
-	command.Stdin = strings.NewReader(theCredential + "\n")
+	command.Env = m.environment()
 	return m.record("roca login "+name+" --model "+model, command)
 }
 
@@ -327,20 +294,13 @@ func (m *world) modelNarrationNames(model, name string) error {
 	path := filepath.Join(m.home, ".roca", "config.toml")
 	for _, want := range []string{
 		model, "from " + path, "models." + name + ".model",
-		"roca login " + name + " --model <id>",
+		"roca model set <id>",
 	} {
 		if !strings.Contains(all, want) {
 			return fmt.Errorf("model narration does not carry %q:\n%s", want, all)
 		}
 	}
 	return nil
-}
-
-func orDeadEndpoint(url string) string {
-	if url == "" {
-		return deadEndpoint
-	}
-	return url
 }
 
 func tomlString(value string) string { return "\"" + value + "\"" }
@@ -483,34 +443,4 @@ func (m *world) thatWarningListsTheAvailableProviders() error {
 		}
 	}
 	return nil
-}
-
-// noOutputCarriesTheCredential checks every command run by the scenario.
-func (m *world) noOutputCarriesTheCredential() error {
-	for _, executed := range m.everything {
-		if strings.Contains(executed.stdout+executed.stderr, theCredential) {
-			return fmt.Errorf("%q printed the credential", executed.command)
-		}
-	}
-	return nil
-}
-
-// noPersistentLogCarriesTheCredential walks the whole HOME. The config file is
-// where the operator wrote the credential themselves and is not part of what is
-// being measured: what may not carry it is anything the binary writes.
-func (m *world) noPersistentLogCarriesTheCredential() error {
-	written := filepath.Join(m.home, ".roca", "config.toml")
-	return filepath.Walk(m.home, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() || path == written {
-			return nil
-		}
-		content, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return nil
-		}
-		if strings.Contains(string(content), theCredential) {
-			return fmt.Errorf("the credential ended up written at %s", path)
-		}
-		return nil
-	})
 }

@@ -185,12 +185,11 @@ func registerSteps(ctx *godog.ScenarioContext, binary string) {
 // registerModelSteps are the ones about the providers. They live apart because
 // they are the only ones that stand up servers of their own.
 func registerModelSteps(ctx *godog.ScenarioContext, m *world) {
-	ctx.Given(`^there is a valid credential for the frontier provider$`, m.aValidFrontierCredential)
-	ctx.Given(`^the frontier provider is available$`, m.theFrontierIsAvailable)
+	ctx.Given(`^the frontier agent CLI is available$`, m.theFrontierIsAvailable)
 	ctx.Given(`^the local model is available too$`, m.theLocalModelIsAvailable)
 	ctx.Given(`^the local model is available$`, m.theLocalModelIsAvailable)
-	ctx.Given(`^there is no network$`, m.thereIsNoNetwork)
-	ctx.Given(`^there is no frontier provider credential$`, m.thereIsNoFrontierCredential)
+	ctx.Given(`^the frontier agent CLI fails when asked$`, m.thereIsNoNetwork)
+	ctx.Given(`^the frontier agent CLI is not installed$`, m.thereIsNoFrontierCredential)
 	ctx.Given(`^the local model is not available$`, m.theLocalModelIsNotAvailable)
 	ctx.Given(`^the configuration declares the provider order$`, m.theConfigurationDeclaresTheOrder)
 	ctx.Given(`^the configuration declares a provider this version does not know$`,
@@ -215,12 +214,10 @@ func registerModelSteps(ctx *godog.ScenarioContext, m *world) {
 	ctx.Then(`^the output contains a warning that names the unknown provider$`,
 		m.aWarningNamesTheUnknownProvider)
 	ctx.Then(`^that warning lists the available providers$`, m.thatWarningListsTheAvailableProviders)
-	ctx.Then(`^no output contains the credential's value$`, m.noOutputCarriesTheCredential)
-	ctx.Then(`^no persistent log contains the credential's value$`, m.noPersistentLogCarriesTheCredential)
 	ctx.Then(`^the configuration chooses model "([^"]*)" for provider "([^"]*)"$`,
 		m.configurationChoosesProviderModel)
 	ctx.Then(`^the login output names the model, its configuration source and both ways to change it$`,
-		func() error { return m.modelNarrationNames("grok-demo", "xai") })
+		func() error { return m.modelNarrationNames("gpt-5.6-luna", "codex") })
 	ctx.Then(`^the model narration names "([^"]*)", its configuration source and both ways to change it$`,
 		func(model string) error { return m.modelNarrationNames(model, theFrontierName) })
 }
@@ -431,7 +428,7 @@ func (m *world) record(label string, command *exec.Cmd) error {
 func (m *world) environment() []string {
 	environment := append([]string{
 		"HOME=" + m.home,
-		"PATH=/usr/bin:/bin:/usr/sbin:/sbin",
+		"PATH=" + filepath.Join(m.home, "bin") + ":/usr/bin:/bin:/usr/sbin:/sbin",
 		"TMPDIR=" + filepath.Join(m.home, "tmp"),
 	}, m.modelEnvironment()...)
 	if m.readOnly {

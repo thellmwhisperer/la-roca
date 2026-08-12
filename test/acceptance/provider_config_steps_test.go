@@ -103,10 +103,9 @@ func (w *providerAcceptanceWorld) persistProviderConfiguration(extra string) err
 			w.readyServers = append(w.readyServers, server)
 			fixture.BaseURL = server.URL
 		}
-		fmt.Fprintf(&body, "\n[models.%s]\nmodel = %s\nbase_url = %s\n",
-			fixture.Name, strconv.Quote(fixture.Model), strconv.Quote(fixture.BaseURL))
-		if fixture.Name != "ollama" && fixture.Name != "codex" {
-			body.WriteString("api_key = \"synthetic-provider-key\"\n")
+		fmt.Fprintf(&body, "\n[models.%s]\nmodel = %s\n", fixture.Name, strconv.Quote(fixture.Model))
+		if fixture.Name == "ollama" {
+			fmt.Fprintf(&body, "base_url = %s\n", strconv.Quote(fixture.BaseURL))
 		}
 	}
 	return w.writeConfig(body.String())
@@ -161,7 +160,7 @@ func (w *providerAcceptanceWorld) removeConfig() error {
 
 func (w *providerAcceptanceWorld) noProviderAvailable() error {
 	w.providers = []providerFixture{
-		{Name: "xai", Model: "frontier-acceptance", Availability: "unreachable"},
+		{Name: "codex", Model: "frontier-acceptance", Availability: "unreachable"},
 		{Name: "ollama", Model: "local-acceptance", Availability: "unreachable"},
 	}
 	return w.persistProviderConfiguration("")

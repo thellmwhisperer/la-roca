@@ -4,31 +4,168 @@ package acceptance
 
 import (
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 
+	"github.com/creack/pty"
 	"github.com/cucumber/godog"
 )
 
 func registerProviderCredentialSteps(ctx *godog.ScenarioContext, w *providerAcceptanceWorld) {
-	ctx.Given(`^the API key for "([^"]*)" has been stored through login$`, w.keyStoredThroughLogin)
-	ctx.Given(`^a fake Claude Code binary is available$`, w.fakeClaudeAvailable)
-	ctx.When(`^I log in to "([^"]*)" with the API key "([^"]*)"$`, w.loginWithAPIKey)
-	ctx.When(`^I log out from "([^"]*)"$`, w.logout)
-	ctx.When(`^I log in to "([^"]*)" with model "([^"]*)"$`, w.loginWithModel)
-	ctx.Then(`^the credential is stored under the data directory at 0600$`, w.credentialStoredAt0600)
-	ctx.Then(`^no output contains the API key$`, w.outputDoesNotContainKey)
-	ctx.Then(`^the credential for "([^"]*)" is absent$`, w.credentialAbsent)
-	ctx.Then(`^the output names the removed credential for "([^"]*)"$`, w.outputNamesRemovedCredential)
-	ctx.Then(`^the configuration chooses model "([^"]*)" for "([^"]*)"$`, w.configurationChoosesModel)
-	ctx.Then(`^the output says La Roca never reads or stores the Claude credential$`, w.claudeCredentialIsExternal)
-	ctx.Then(`^Doctor reports "([^"]*)" ready$`, w.doctorReportsReady)
+	ctx.Given(`^a pre-existing "(API key|OAuth)" provider configuration$`, w.legacyProviderConfiguration)
+	ctx.Given(`^a fake Claude Code binary is available$`, w.fakeClaudeBinary)
+	ctx.When(`^I query through the legacy provider configuration$`, w.queryLegacyConfiguration)
+	ctx.When(`^I (accept|decline) the first-run migration proposal$`, w.answerMigrationProposal)
+	ctx.When(`^I inspect login and Doctor help$`, w.inspectAuthenticationHelp)
+	ctx.When(`^I log in to "([^\"]*)" with model "([^\"]*)"$`, w.verifyLocalCLI)
+	ctx.Then(`^the legacy query output names the retired provider and why no model answered$`, w.legacyQueryIsHonest)
+	ctx.Then(`^the legacy provider is migrated to "([^\"]*)"$`, w.legacyProviderMigrated)
+	ctx.Then(`^the legacy provider configuration is unchanged$`, w.legacyProviderUnchanged)
+	ctx.Then(`^both help surfaces say models authenticate through their own CLIs$`, w.helpExplainsExternalAuthentication)
+	ctx.Then(`^neither help surface advertises a stored model credential$`, w.helpHasNoStoredCredentialFlow)
+	ctx.Then(`^the configuration chooses model "([^\"]*)" for "([^\"]*)"$`, w.configurationChoosesModel)
+	ctx.Then(`^the output says La Roca stores no secrets$`, w.outputSaysNoSecrets)
+	ctx.Then(`^no model credential directory exists$`, w.noModelCredentialDirectory)
+	ctx.Then(`^the output contains no traceback$`, w.providerOutputHasNoTraceback)
 }
 
-func (w *providerAcceptanceWorld) fakeClaudeAvailable() error {
-	path, err := w.writeFakeBinary("claude", `printf '%s' '{"result":"synthetic Claude answer"}'`)
+func (w *providerAcceptanceWorld) legacyProviderConfiguration(kind string) error {
+	w.legacyProvider = "xai"
+	table := "[models.xai]\nbase_url = \"https://example.invalid/v1\"\napi_key = \"legacy-acceptance-secret\"\nmodel = \"grok-legacy\"\n"
+	if kind == "OAuth" {
+		w.legacyProvider = "codex"
+		table = "[models.codex]\nbase_url = \"https://chatgpt.com/backend-api/codex\"\nmodel = \"gpt-legacy\"\n"
+		legacyDir := filepath.Join(w.home, ".roca", "credentials")
+		if err := os.MkdirAll(legacyDir, 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(legacyDir, "codex.json"), []byte(`{"access_token":"legacy-acceptance-secret"}`), 0o600); err != nil {
+			return err
+		}
+	}
+	w.legacyConfig = "# operator note\n[models]\norder = [\"" + w.legacyProvider + "\", \"ollama\"]\ntimeout_ms = 250\nprobe_ms = 100\n\n" + table + "\n[models.ollama]\nbase_url = \"" + providerDeadEndpoint + "\"\nmodel = \"local-acceptance\"\n"
+	return w.writeConfig(w.legacyConfig)
+}
+
+func (w *providerAcceptanceWorld) queryLegacyConfiguration() error {
+	return w.run("query", "a question requiring a model", "--json")
+}
+
+func (w *providerAcceptanceWorld) legacyQueryIsHonest() error {
+	all := w.last.stdout + w.last.stderr
+	for _, want := range []string{w.legacyProvider, "ignored", "no model"} {
+		if !strings.Contains(strings.ToLower(all), strings.ToLower(want)) {
+			return fmt.Errorf("legacy degradation omitted %q: %s", want, all)
+		}
+	}
+	return nil
+}
+
+func (w *providerAcceptanceWorld) answerMigrationProposal(answer string) error {
+	input := "n\nn\n"
+	if answer == "accept" {
+		input = "y\nn\n"
+	}
+	return w.runDoctorTTY(input)
+}
+
+func (w *providerAcceptanceWorld) runDoctorTTY(input string) error {
+	command := exec.Command(w.binary, "doctor")
+	command.Env = w.commandEnvironment()
+	terminal, err := pty.Start(command)
+	if err != nil {
+		return err
+	}
+	if _, err := terminal.Write([]byte(input)); err != nil {
+		_ = terminal.Close()
+		return err
+	}
+	raw, readErr := io.ReadAll(terminal)
+	_ = terminal.Close()
+	waitErr := command.Wait()
+	w.last = run{command: "roca doctor", stdout: string(raw)}
+	if exit, ok := waitErr.(*exec.ExitError); ok {
+		w.last.code = exit.ExitCode()
+	} else if waitErr != nil {
+		return waitErr
+	}
+	if readErr != nil && !strings.Contains(strings.ToLower(readErr.Error()), "input/output error") {
+		return readErr
+	}
+	return nil
+}
+
+func (w *providerAcceptanceWorld) legacyProviderMigrated(target string) error {
+	raw, err := os.ReadFile(w.configPath())
+	if err != nil {
+		return err
+	}
+	text := string(raw)
+	if !strings.Contains(text, "# operator note") || !strings.Contains(text, `order = ["`+target) {
+		return fmt.Errorf("migration did not preserve the document or select %s:\n%s", target, text)
+	}
+	for _, retired := range []string{"legacy-acceptance-secret", "base_url = \"https://chatgpt.com", "[models.xai]"} {
+		if strings.Contains(text, retired) {
+			return fmt.Errorf("retired provider setting %q survived:\n%s", retired, text)
+		}
+	}
+	return nil
+}
+
+func (w *providerAcceptanceWorld) legacyProviderUnchanged() error {
+	raw, err := os.ReadFile(w.configPath())
+	if err != nil {
+		return err
+	}
+	if string(raw) != w.legacyConfig {
+		return fmt.Errorf("declined migration changed config:\n--- want ---\n%s--- got ---\n%s", w.legacyConfig, raw)
+	}
+	return nil
+}
+
+func (w *providerAcceptanceWorld) inspectAuthenticationHelp() error {
+	w.statements = nil
+	for _, args := range [][]string{{"login", "--help"}, {"doctor", "--help"}} {
+		if err := w.run(args...); err != nil {
+			return err
+		}
+		w.statements = append(w.statements, w.last)
+	}
+	return nil
+}
+
+func (w *providerAcceptanceWorld) authenticationHelp() string {
+	var joined strings.Builder
+	for _, statement := range w.statements {
+		joined.WriteString(statement.stdout)
+		joined.WriteString(statement.stderr)
+	}
+	return joined.String()
+}
+
+func (w *providerAcceptanceWorld) helpExplainsExternalAuthentication() error {
+	all := strings.ToLower(w.authenticationHelp())
+	if strings.Count(all, "through their own cli") < 2 || strings.Count(all, "stores no secrets") < 2 {
+		return fmt.Errorf("help does not explain the authentication boundary twice: %s", all)
+	}
+	return nil
+}
+
+func (w *providerAcceptanceWorld) helpHasNoStoredCredentialFlow() error {
+	all := strings.ToLower(w.authenticationHelp())
+	for _, retired := range []string{"api key", "oauth", "credentials directory", "roca logout"} {
+		if strings.Contains(all, retired) {
+			return fmt.Errorf("help still advertises %q: %s", retired, all)
+		}
+	}
+	return nil
+}
+
+func (w *providerAcceptanceWorld) fakeClaudeBinary() error {
+	path, err := w.writeFakeBinary("claude", `printf '%s' '{"result":"SELECT 1"}'`)
 	if err != nil {
 		return err
 	}
@@ -36,8 +173,8 @@ func (w *providerAcceptanceWorld) fakeClaudeAvailable() error {
 	return nil
 }
 
-func (w *providerAcceptanceWorld) loginWithModel(provider, model string) error {
-	return w.run("login", provider, "--model", model)
+func (w *providerAcceptanceWorld) verifyLocalCLI(name, model string) error {
+	return w.run("login", name, "--model", model)
 }
 
 func (w *providerAcceptanceWorld) configurationChoosesModel(model, name string) error {
@@ -45,87 +182,41 @@ func (w *providerAcceptanceWorld) configurationChoosesModel(model, name string) 
 	if err != nil {
 		return err
 	}
-	want := "[models." + name + "]\nmodel = " + strconv.Quote(model)
-	if !strings.Contains(string(raw), want) {
-		return fmt.Errorf("configuration does not contain %q: %s", want, raw)
+	text := string(raw)
+	table := "[models." + name + "]"
+	start := strings.Index(text, table)
+	if start < 0 {
+		return fmt.Errorf("configuration omitted %q:\n%s", table, text)
+	}
+	section := text[start+len(table):]
+	if next := strings.Index(section, "\n["); next >= 0 {
+		section = section[:next]
+	}
+	want := `model = "` + model + `"`
+	if !strings.Contains(section, want) {
+		return fmt.Errorf("configuration omitted %q from %q:\n%s", want, table, text)
 	}
 	return nil
 }
 
-func (w *providerAcceptanceWorld) claudeCredentialIsExternal() error {
-	all := w.last.stdout + w.last.stderr
-	if !strings.Contains(all, "La Roca never reads or stores it") {
-		return fmt.Errorf("Claude credential boundary is absent: %s", all)
+func (w *providerAcceptanceWorld) outputSaysNoSecrets() error {
+	if !strings.Contains(strings.ToLower(w.last.stdout+w.last.stderr), "stores no secrets") {
+		return fmt.Errorf("output omitted zero-secret boundary: %s%s", w.last.stdout, w.last.stderr)
 	}
 	return nil
 }
 
-func (w *providerAcceptanceWorld) doctorReportsReady(name string) error {
-	doc, err := w.lastJSON()
-	if err != nil {
-		return err
-	}
-	for _, item := range objectList(doc["providers"]) {
-		if item["provider"] == name && item["ready"] == true {
-			return nil
-		}
-	}
-	return fmt.Errorf("Doctor did not report %s ready: %s", name, w.last.stdout)
-}
-
-func (w *providerAcceptanceWorld) keyStoredThroughLogin(provider string) error {
-	return w.loginWithAPIKey(provider, "provider-acceptance-secret")
-}
-
-func (w *providerAcceptanceWorld) loginWithAPIKey(provider, key string) error {
-	w.credential = key
-	const model = "credential-acceptance-model"
-	server := newOpenAIModelServer(model)
-	w.readyServers = append(w.readyServers, server)
-	if err := w.writeConfig(fmt.Sprintf("[models.%s]\nbase_url = %s\n", provider, strconv.Quote(server.URL))); err != nil {
-		return err
-	}
-	return w.runWithInput(key+"\n", "login", provider, "--model", model)
-}
-
-func (w *providerAcceptanceWorld) logout(provider string) error {
-	return w.run("logout", provider)
-}
-
-func (w *providerAcceptanceWorld) credentialStoredAt0600() error {
-	path := w.credentialPath("xai")
-	info, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("credential is not under the data directory: %w", err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		return fmt.Errorf("credential mode = %o, want 600", info.Mode().Perm())
-	}
-	return nil
-}
-
-func (w *providerAcceptanceWorld) outputDoesNotContainKey() error {
-	if w.credential == "" {
-		return fmt.Errorf("the scenario has no API key to protect")
-	}
-	if strings.Contains(w.last.stdout+w.last.stderr, w.credential) {
-		return fmt.Errorf("the API key leaked to output")
-	}
-	return nil
-}
-
-func (w *providerAcceptanceWorld) credentialAbsent(provider string) error {
-	_, err := os.Stat(w.credentialPath(provider))
+func (w *providerAcceptanceWorld) noModelCredentialDirectory() error {
+	_, err := os.Stat(filepath.Join(w.home, ".roca", "credentials"))
 	if !os.IsNotExist(err) {
-		return fmt.Errorf("credential still exists: %v", err)
+		return fmt.Errorf("model credential directory exists: %v", err)
 	}
 	return nil
 }
 
-func (w *providerAcceptanceWorld) outputNamesRemovedCredential(provider string) error {
-	all := w.last.stdout + w.last.stderr
-	if !strings.Contains(all, provider) || !strings.Contains(strings.ToLower(all), "credential") {
-		return fmt.Errorf("logout does not name the removed credential for %s: %s", provider, all)
+func (w *providerAcceptanceWorld) providerOutputHasNoTraceback() error {
+	if strings.Contains(strings.ToLower(w.last.stdout+w.last.stderr), "panic:") {
+		return fmt.Errorf("traceback in output: %s%s", w.last.stdout, w.last.stderr)
 	}
 	return nil
 }

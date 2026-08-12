@@ -18,15 +18,16 @@ import (
 const providerDeadEndpoint = "http://127.0.0.1:1"
 
 type providerAcceptanceWorld struct {
-	binary       string
-	home         string
-	environment  map[string]string
-	last         run
-	statements   []run
-	providers    []providerFixture
-	credential   string
-	modelSQL     string
-	readyServers []*httptest.Server
+	binary         string
+	home           string
+	environment    map[string]string
+	last           run
+	statements     []run
+	providers      []providerFixture
+	legacyProvider string
+	legacyConfig   string
+	modelSQL       string
+	readyServers   []*httptest.Server
 }
 
 type providerFixture struct {
@@ -56,7 +57,8 @@ func registerProviderAcceptanceSteps(ctx *godog.ScenarioContext, binary string) 
 		w.last = run{}
 		w.statements = nil
 		w.providers = nil
-		w.credential = ""
+		w.legacyProvider = ""
+		w.legacyConfig = ""
 		w.modelSQL = ""
 		w.readyServers = nil
 		return c, nil
@@ -157,10 +159,6 @@ func (w *providerAcceptanceWorld) dbPath() string { return filepath.Join(w.home,
 
 func (w *providerAcceptanceWorld) configPath() string {
 	return filepath.Join(w.home, ".roca", "config.toml")
-}
-
-func (w *providerAcceptanceWorld) credentialPath(provider string) string {
-	return filepath.Join(w.home, ".roca", "credentials", provider+".key")
 }
 
 func objectList(value any) []map[string]any {

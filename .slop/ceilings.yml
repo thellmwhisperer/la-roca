@@ -24,9 +24,10 @@ scopes:
   #
   # The v1 model-only strip removed the compiler/classifier/teach/calibrate
   # suites, dropping the count from 24 to 23. The OSS sanitization sweep removed
-  # the bench and hooks suites, dropping the count from 23 to 22.
+  # the bench and hooks suites, dropping the count from 23 to 22. Removing the
+  # provider credential suites dropped the count from 22 to 20.
   go_tests:
-    active_clones_ceiling: 22
+    active_clones_ceiling: 20
 
   # The markdown and public-surface blocks bootstrap today's census. They are
   # ratchets, not budgets: removing an orphan lowers the corresponding number,
