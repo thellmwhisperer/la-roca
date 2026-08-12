@@ -93,6 +93,8 @@ type DiscardCategory struct {
 // source record stops being a report.
 const discardDetailBudget = 100
 
+const anchorConflictReason = "exchange anchor conflict"
+
 // Tables are the row counts of the five tables the ingest writes. Before, after,
 // and the difference: on a second pass over the same disk the difference is zero
 // in every one of them, and that is the contract, not an aspiration.
@@ -354,6 +356,15 @@ func (r *Result) source(agent string) *Counts {
 	return counts
 }
 
+func (r *Result) recordWritten(target Target, counts Counts) {
+	r.source(target.SourceAgent).add(counts)
+	conflicts := make([]parsers.Discard, counts.AnchorConflicts)
+	for i := range conflicts {
+		conflicts[i].Reason = anchorConflictReason
+	}
+	r.discard(target, conflicts)
+}
+
 func normalizedSource(agent string) string {
 	if agent == "" {
 		return "unknown"
@@ -483,7 +494,7 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 		return RecordState(ctx, tx, target, fingerprint, "", summary)
 	})
 	if err == nil {
-		result.source(target.SourceAgent).add(counts)
+		result.recordWritten(target, counts)
 	}
 	return err
 }
