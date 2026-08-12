@@ -124,6 +124,35 @@ func TestChatGPTWebMalformedMessageDoesNotPoisonConversation(t *testing.T) {
 	}
 }
 
+func TestChatGPTWebMalformedEnvelopePreservesValidParent(t *testing.T) {
+	raw := []byte(`[{
+		"conversation_id":"synthetic-malformed-envelope",
+		"mapping":{
+			"root":{"id":"root","parent":null,"children":["user"],"message":null},
+			"user":{"id":"user","parent":"root","children":["broken"],"message":{"author":{"role":"user"},"content":{"parts":["Synthetic prompt."]}}},
+			"broken":{"id":"broken","parent":"user","children":"corrupt","message":{"author":{"role":"assistant"},"content":{"parts":["Unreadable envelope."]}}},
+			"descendant":{"id":"descendant","parent":"broken","children":[],"message":{"author":{"role":"assistant"},"content":{"parts":["Recovered descendant."]}}}
+		}
+	}]`)
+	records, err := ParseChatGPTWebConversations(bytes.NewReader(raw), FileMeta{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exchanges := records.Sessions[0].Exchanges
+	if len(exchanges) != 1 || exchanges[0].SourceID != "descendant" ||
+		exchanges[0].HumanText != "Synthetic prompt." {
+		t.Fatalf("recovered exchanges = %+v", exchanges)
+	}
+	if len(records.Discards) != 2 {
+		t.Fatalf("discards = %+v, want root and malformed envelope", records.Discards)
+	}
+	malformed := records.Discards[1]
+	if malformed.Category != "ChatGPT conversation node has unreadable children" ||
+		malformed.ByDesign || !strings.Contains(malformed.Reason, "node broken has unreadable children") {
+		t.Fatalf("malformed envelope discard = %+v", malformed)
+	}
+}
+
 func parseChatGPTWebFixture(t *testing.T, directory string) Records {
 	t.Helper()
 	path := filepath.Join("..", "testdata", directory, "conversations.json")

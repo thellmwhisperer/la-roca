@@ -29,13 +29,6 @@ type chatGPTNode struct {
 	failure  chatGPTDiscard
 }
 
-type chatGPTRawNode struct {
-	ID       string          `json:"id"`
-	Parent   string          `json:"parent"`
-	Children []string        `json:"children"`
-	Message  json.RawMessage `json:"message"`
-}
-
 type chatGPTMessage struct {
 	Author struct {
 		Role string `json:"role"`
@@ -193,19 +186,34 @@ func orderedChatGPTNodes(mapping map[string]json.RawMessage) []chatGPTNode {
 
 func decodeChatGPTNode(key string, payload json.RawMessage) chatGPTNode {
 	node := chatGPTNode{key: key}
-	var raw chatGPTRawNode
-	if err := json.Unmarshal(payload, &raw); err != nil {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
 		node.failure = chatGPTDiscard{
 			reason:   fmt.Sprintf("conversation node %s is unreadable: %v", key, err),
 			category: "ChatGPT conversation node is unreadable",
 		}
 		return node
 	}
-	node.ID, node.Parent, node.Children = raw.ID, raw.Parent, raw.Children
-	if len(raw.Message) == 0 {
+	decodeField := func(name string, destination any) {
+		raw, found := fields[name]
+		if !found {
+			return
+		}
+		if err := json.Unmarshal(raw, destination); err != nil && node.failure.reason == "" {
+			node.failure = chatGPTDiscard{
+				reason:   fmt.Sprintf("conversation node %s has unreadable %s: %v", key, name, err),
+				category: fmt.Sprintf("ChatGPT conversation node has unreadable %s", name),
+			}
+		}
+	}
+	decodeField("id", &node.ID)
+	decodeField("parent", &node.Parent)
+	decodeField("children", &node.Children)
+	rawMessage, found := fields["message"]
+	if !found {
 		return node
 	}
-	if err := json.Unmarshal(raw.Message, &node.Message); err != nil {
+	if err := json.Unmarshal(rawMessage, &node.Message); err != nil && node.failure.reason == "" {
 		node.failure = chatGPTDiscard{
 			reason:   fmt.Sprintf("message %s is unreadable: %v", chatGPTNodeID(node), err),
 			category: "ChatGPT message is unreadable",
