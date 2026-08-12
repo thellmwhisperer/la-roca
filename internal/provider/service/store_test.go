@@ -17,7 +17,6 @@ func TestStoreWritesOneMemoryAndReturnsItsIdentity(t *testing.T) {
 	result, err := svc.Store(context.Background(), service.StoreRequest{
 		Layer:   "discovery",
 		Content: "  adoption compares structure, never the text of the DDL  ",
-		Surface: service.SurfaceCLI,
 	})
 	if err != nil {
 		t.Fatalf("Store: %v", err)
@@ -58,14 +57,14 @@ func TestStoreRecordsWhichSurfaceWroteIt(t *testing.T) {
 
 	fromThePlug, err := svc.Store(ctx, service.StoreRequest{
 		Layer: "discovery", Content: "written through the plug",
-		Surface: service.SurfaceMCP,
+		Authorship: service.Authorship{Surface: service.SurfaceMCP},
 	})
 	if err != nil {
 		t.Fatalf("Store from the plug: %v", err)
 	}
 	fromTheShell, err := svc.Store(ctx, service.StoreRequest{
 		Layer: "discovery", Content: "written through the shell",
-		Surface: service.SurfaceCLI,
+		Authorship: service.Authorship{Surface: service.SurfaceCLI},
 	})
 	if err != nil {
 		t.Fatalf("Store from the shell: %v", err)
@@ -79,12 +78,50 @@ func TestStoreRecordsWhichSurfaceWroteIt(t *testing.T) {
 	}
 }
 
+func TestEveryNewMemoryCarriesSystemStampedAuthorship(t *testing.T) {
+	svc, _ := serviceWithPaths(t)
+	tests := []struct {
+		name       string
+		authorship service.Authorship
+		want       service.Authorship
+	}{
+		{"detected identity", service.Authorship{Agent: "codex", Model: "gpt-5", Surface: service.SurfaceCLI}, service.Authorship{Agent: "codex", Model: "gpt-5", Surface: service.SurfaceCLI}},
+		{"honest unknown", service.Authorship{}, service.Authorship{Agent: service.UnknownAuthor, Model: service.UnknownAuthor, Surface: service.UnknownAuthor}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := svc.Store(t.Context(), service.StoreRequest{
+				Layer: "discovery", Content: "synthetic " + test.name,
+				Authorship: test.authorship,
+				Metadata:   map[string]any{"surface": "forged", "agent": "forged", "model": "forged"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got service.Authorship
+			if err := svc.DB().SQL().QueryRow(
+				"SELECT source_agent, source_model, source_surface FROM memories WHERE id = ?", result.ID,
+			).Scan(&got.Agent, &got.Model, &got.Surface); err != nil {
+				t.Fatal(err)
+			}
+			if got != test.want {
+				t.Errorf("stored authorship = %+v, want %+v", got, test.want)
+			}
+			metadata := metadataOf(t, svc, result.ID)
+			for _, key := range []string{"surface", "agent", "model"} {
+				if _, exists := metadata[key]; exists {
+					t.Errorf("caller forged reserved metadata key %q: %v", key, metadata)
+				}
+			}
+		})
+	}
+}
+
 func TestStoreKeepsTheMetadataTheCallerSentAlongsideTheAudit(t *testing.T) {
 	svc, _ := serviceWithPaths(t)
 
 	result, err := svc.Store(context.Background(), service.StoreRequest{
 		Layer: "handoff", Content: "a handoff with its own notes",
-		Surface:  service.SurfaceCLI,
 		Metadata: map[string]any{"session_id": "abc-123", "trigger": "session_end"},
 	})
 	if err != nil {
@@ -98,8 +135,8 @@ func TestStoreKeepsTheMetadataTheCallerSentAlongsideTheAudit(t *testing.T) {
 	if metadata["trigger"] != "session_end" {
 		t.Errorf("trigger = %v: the caller's metadata was lost", metadata["trigger"])
 	}
-	if metadata["surface"] != service.SurfaceCLI {
-		t.Errorf("surface = %v: the audit was lost", metadata["surface"])
+	if _, exists := metadata["surface"]; exists {
+		t.Errorf("surface remained in caller metadata instead of its canonical column: %v", metadata)
 	}
 }
 
@@ -109,7 +146,7 @@ func TestStoreDeduplicatesTheSameContentInTheSameScope(t *testing.T) {
 	svc, _ := serviceWithPaths(t)
 	ctx := context.Background()
 	request := service.StoreRequest{
-		Layer: "discovery", Content: "the same thing twice", Surface: service.SurfaceCLI,
+		Layer: "discovery", Content: "the same thing twice",
 	}
 
 	first, err := svc.Store(ctx, request)
@@ -144,14 +181,14 @@ func TestStoreDoesNotDeduplicateAcrossProjects(t *testing.T) {
 
 	first, err := svc.Store(ctx, service.StoreRequest{
 		Layer: "discovery", Content: "same text, another project",
-		Project: "one", Surface: service.SurfaceCLI,
+		Project: "one",
 	})
 	if err != nil {
 		t.Fatalf("first Store: %v", err)
 	}
 	second, err := svc.Store(ctx, service.StoreRequest{
 		Layer: "discovery", Content: "same text, another project",
-		Project: "another", Surface: service.SurfaceCLI,
+		Project: "another",
 	})
 	if err != nil {
 		t.Fatalf("second Store: %v", err)
@@ -166,21 +203,20 @@ func TestStoreDeduplicatesOnlyAgainstCurrentMemories(t *testing.T) {
 	ctx := context.Background()
 
 	original, err := svc.Store(ctx, service.StoreRequest{
-		Layer: "discovery", Content: "original", Surface: service.SurfaceCLI,
+		Layer: "discovery", Content: "original",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	replacement, err := svc.Store(ctx, service.StoreRequest{
 		Layer: "discovery", Content: "replacement", Supersedes: original.ID,
-		Surface: service.SurfaceCLI,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	currentAgain, err := svc.Store(ctx, service.StoreRequest{
-		Layer: "discovery", Content: "replacement", Surface: service.SurfaceCLI,
+		Layer: "discovery", Content: "replacement",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -190,7 +226,7 @@ func TestStoreDeduplicatesOnlyAgainstCurrentMemories(t *testing.T) {
 	}
 
 	staleAgain, err := svc.Store(ctx, service.StoreRequest{
-		Layer: "discovery", Content: "original", Surface: service.SurfaceCLI,
+		Layer: "discovery", Content: "original",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -206,7 +242,7 @@ func TestStoreNormalizesTheLayerThroughTheRegistryAliases(t *testing.T) {
 	svc, _ := serviceWithPaths(t)
 
 	result, err := svc.Store(context.Background(), service.StoreRequest{
-		Layer: "handover", Content: "an alias of handoff", Surface: service.SurfaceCLI,
+		Layer: "handover", Content: "an alias of handoff",
 	})
 	if err != nil {
 		t.Fatalf("Store: %v", err)
@@ -270,7 +306,6 @@ func TestStoreRoundTripsAPluginOrigin(t *testing.T) {
 			svc := tc.open(t)
 			result, err := svc.Store(context.Background(), service.StoreRequest{
 				Layer: "discovery", Content: "plugin-owned synthetic memory", Origin: "plugin:demo",
-				Surface: service.SurfaceCLI,
 			})
 			if err != nil {
 				t.Fatalf("Store: %v", err)
@@ -319,7 +354,7 @@ func TestStoreRefusesBeforeAnyDatabaseIOWhenReadOnly(t *testing.T) {
 	svc := readOnlyService(t)
 
 	_, err := svc.Store(context.Background(), service.StoreRequest{
-		Layer: "discovery", Content: "this must not land", Surface: service.SurfaceCLI,
+		Layer: "discovery", Content: "this must not land",
 	})
 	if err == nil {
 		t.Fatal("a read-only installation accepted a write")
@@ -335,7 +370,11 @@ func TestStoreRefusesBeforeAnyDatabaseIOWhenReadOnly(t *testing.T) {
 
 func surfaceOf(t *testing.T, svc *service.Service, id int64) string {
 	t.Helper()
-	surface, _ := metadataOf(t, svc, id)["surface"].(string)
+	var surface string
+	if err := svc.DB().SQL().QueryRow(
+		"SELECT source_surface FROM memories WHERE id = ?", id).Scan(&surface); err != nil {
+		t.Fatalf("read back source_surface: %v", err)
+	}
 	return surface
 }
 
