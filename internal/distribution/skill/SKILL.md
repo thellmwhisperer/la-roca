@@ -39,9 +39,10 @@ roca doctor                                    # diagnosis + remedies
 ```
 
 To change the answering model later without logging in, run
-`roca model set <id>`. A provider login can also accept `--model <id>` when a
-credential flow is actually needed. Both persist `models.<provider>.model` in
-`~/.roca/config.toml`.
+`roca model set <id>`. `roca login codex --model <id>` and
+`roca login claude --model <id>` optionally verify the CLI's existing session
+before persisting `models.<provider>.model` in `~/.roca/config.toml`; La Roca
+does not handle the authentication or store its secrets.
 
 `roca exec` runs exactly what `query --sql-only` prints, under the same
 read-only gate; nothing that is not a SELECT reaches the database.

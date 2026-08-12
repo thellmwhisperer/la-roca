@@ -120,7 +120,7 @@ func (s Settings) binaryPresetFactory(name string, preset CommandPreset) Factory
 	return func() (Provider, error) {
 		cfg := s.File.Models.Providers[name]
 		if retiredProviderConfig(name, cfg) {
-			return nil, fmt.Errorf("its retired authentication transport is still configured; accept or decline the migration proposal before using this provider")
+			return nil, fmt.Errorf("its retired authentication transport is still configured and is ignored; accept or decline the migration proposal before using this provider")
 		}
 		command, action, responseFormat := cfg.Command, "", cfg.ResponseFormat
 		if len(command) == 0 {
@@ -150,7 +150,7 @@ func (s Settings) withCommand(name string, fallback Factory) Factory {
 	return func() (Provider, error) {
 		cfg := s.File.Models.Providers[name]
 		if retiredProviderConfig(name, cfg) {
-			return nil, fmt.Errorf("its retired authentication transport is still configured; accept or decline the migration proposal before using this provider")
+			return nil, fmt.Errorf("its retired authentication transport is still configured and is ignored; accept or decline the migration proposal before using this provider")
 		}
 		if len(cfg.Command) == 0 {
 			if fallback == nil {

@@ -83,7 +83,7 @@ func TestRetiredCredentialConfigurationsNeverCrashAndDegradeHonestly(t *testing.
 		{
 			name:        "OAuth-backed Codex",
 			body:        "[models]\norder = [\"codex\"]\n[models.codex]\nbase_url = \"https://chatgpt.com/backend-api/codex\"\napi_key = \"legacy-secret\"\n",
-			wantWarning: "accept or decline the migration proposal",
+			wantWarning: "is ignored; accept or decline the migration proposal",
 		},
 		{
 			name: "API-key provider", wantProvider: NameOllama,
