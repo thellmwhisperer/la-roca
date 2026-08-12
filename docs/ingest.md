@@ -95,6 +95,24 @@ Attachment and file names are retained as per-exchange metadata. La Roca does
 not open their bytes. Entries from `memories.json` enter the `user` layer with
 origin `cron` and source `claude-web`.
 
+## Codex legacy history
+
+The oldest Codex rollouts can contain only `session_meta`; their submitted
+prompts survive separately in `~/.codex/history.jsonl`. La Roca uses those
+history records as a prompt-level fallback. Exact prompts close in time are
+reconciled with richer rollout exchanges, regardless of which source lands
+first, and the richer answer enriches the existing row instead of creating a
+duplicate. History prompts with no matching rollout turn remain as prompt-only
+exchanges even when the same session has other richer exchanges. Malformed
+records are discarded independently and grouped under stable history reasons in
+the ingest summary.
+
+When Codex's state database names a model or provider for the legacy session,
+that provenance is retained on its recovered exchanges. The history format does
+not record answers or per-exchange usage. Its session-wide `tokens_used` value
+therefore remains session metadata, while the exchange's answer and token
+columns remain NULL instead of receiving guessed values.
+
 ## Per-exchange provenance
 
 Every exchange carries what its own source recorded about how the answer was

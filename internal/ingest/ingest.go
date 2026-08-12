@@ -621,7 +621,7 @@ func resolveProjects(ctx context.Context, opts Options, target Target, records *
 		cwd, _ := session.Metadata["cwd"].(string)
 		fromContent := ""
 		switch target.Kind {
-		case parsers.KindCodexSession, parsers.KindPiSession:
+		case parsers.KindCodexSession, parsers.KindCodexHistory, parsers.KindPiSession:
 			fromContent = ProjectFromCwd(cwd)
 		default:
 			fromContent = ProjectFromMetadataCwd(cwd)
@@ -633,7 +633,7 @@ func resolveProjects(ctx context.Context, opts Options, target Target, records *
 				session.Project = fromPath
 			}
 		}
-		if target.Kind == parsers.KindCodexSession {
+		if target.Kind == parsers.KindCodexSession || target.Kind == parsers.KindCodexHistory {
 			enrichCodexSession(ctx, opts, target, session)
 		}
 	}
@@ -657,6 +657,15 @@ func enrichCodexSession(ctx context.Context, opts Options, target Target, sessio
 	if enrichment.SourceAgent != "" {
 		session.SourceAgent = enrichment.SourceAgent
 		session.AgentMayUpgrade = true
+	}
+	if session.HistoryFallback {
+		model, _ := session.Metadata["model"].(string)
+		provider, _ := session.Metadata["model_provider"].(string)
+		var usage parsers.UsageTally
+		provenance := usage.Provenance(model, provider)
+		for i := range session.Exchanges {
+			session.Exchanges[i].Provenance = provenance
+		}
 	}
 }
 
