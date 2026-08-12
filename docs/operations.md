@@ -60,9 +60,23 @@ The stable fields are:
 
 - `timestamp`, `source`, `args`, `ok`, `duration_ms`, and `row_count` on every
   call; `command` or `tool` identifies the operation.
-- `error` and `error_type` on failures. An unexpected surfaced error also has
-  an opaque `correlation_id`, and the same ID is printed in the user-facing
-  error.
+- `args` is present on every call and its JSON shape follows the surface: a
+  string array of the positional arguments for CLI commands and plugin
+  commands, and the tool argument object for MCP calls, or the raw argument
+  text as a string when that payload is not valid JSON.
+- `error` and `error_type` on failures. `error_type` is a declared category and
+  never a Go type name: `invalid_sql`, `model_error`, `model_unavailable`,
+  `sql_execution_error`, `not_initialized`, `invalid_usage`, `not_found`,
+  `permission_denied`, `already_exists`, `timeout`, `canceled`,
+  `command_failure`, `tool_error`, or
+  `unclassified_error` when this build cannot categorize the failure. Further
+  categories may be declared; the vocabulary is the contract, and the Go error
+  behind it may change without changing the line.
+- `correlation_id` on every surfaced error, expected or not, printed unchanged
+  in the user-facing error, so an error on screen always names its log line: a
+  read-only gate rejection and a rejected SQL statement are correlated exactly
+  like an unexpected exception. A degraded query that still answered is not a
+  surfaced error; it carries its `degraded` reason instead.
 - Query calls add `question`, `sql`, `sql_provider`, `sql_model`, phase timings,
   and any `degraded`, `fallback_reason`, `retry_reason`, provider note, or
   `queryplan`. `sql` is the cleaned model-generated statement, including when a
@@ -92,8 +106,11 @@ repairs, and failure. Both streams are plain files beside the call audit.
 reports the number of failed `query`/`roca_query`/`roca_sql` calls in the last
 24 hours and renders the five newest errors with their source, type, and
 correlation ID. `roca doctor --json` exposes the same data under
-`query_failures` for automation. Malformed historical lines are skipped and
-counted in `malformed_lines`; a log read failure is a warning, not a failed
+`query_failures` for automation. It only opens the dated segments that can hold
+a record inside the window. Malformed historical lines are skipped and counted
+in `malformed_lines`, and a segment that cannot be read is skipped and counted
+in `unreadable_files`: the count and the five newest errors still describe
+everything that could be read, and the read failure is a warning, not a failed
 diagnosis.
 
 ## Redaction

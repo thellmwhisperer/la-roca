@@ -40,7 +40,7 @@ func (env *cliEnv) logExecution(cmd *cobra.Command, started time.Time, code int,
 	}
 	if !call.OK && call.Error == "" {
 		call.Error = fmt.Sprintf("command exited with code %d", code)
-		call.ErrorType = "command_failure"
+		call.ErrorType = logfile.ErrorCommandFailure
 	}
 	record := logfile.ExecutionRecord{
 		CallRecord:   call,

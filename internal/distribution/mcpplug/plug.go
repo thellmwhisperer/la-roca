@@ -154,7 +154,7 @@ func auditCalls(audit *logfile.Writer, warnings io.Writer) mcp.Middleware {
 						call.ErrorType = degraded
 					}
 					if call.ErrorType == "" {
-						call.ErrorType = "tool_error"
+						call.ErrorType = logfile.ErrorToolError
 					}
 					if degraded == "" {
 						call.CorrelationID = logfile.NewCorrelationID()

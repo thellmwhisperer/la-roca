@@ -117,6 +117,7 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 			if len(args) > 0 && !strings.HasPrefix(args[0], "-") && !builtIn(root, args[0]) {
 				err = fmt.Errorf("%w; a `roca-%s` executable on your PATH would handle this", err, args[0])
 			}
+			err = logfile.Typed(err, logfile.ErrorInvalidUsage)
 		}
 	}
 	code := env.code
@@ -362,8 +363,9 @@ func (env *cliEnv) openService() (*service.Service, config.Paths, error) {
 		return nil, paths, err
 	}
 	if !fileExists(paths.DB) {
-		return nil, paths, fmt.Errorf(
-			"no Roca database exists at %s; run `roca init` before this command", paths.DB)
+		return nil, paths, logfile.Typed(fmt.Errorf(
+			"no Roca database exists at %s; run `roca init` before this command", paths.DB),
+			logfile.ErrorNotInitialized)
 	}
 	svc, err := env.openServiceWith(paths)
 	return svc, paths, err

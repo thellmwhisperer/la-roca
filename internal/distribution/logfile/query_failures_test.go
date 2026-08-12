@@ -1,6 +1,8 @@
 package logfile
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -48,4 +50,41 @@ func TestRecentQueryFailuresReadsTheCommonContractAcrossSurfaces(t *testing.T) {
 	if summary.Recent[0].CorrelationID != "qf_mcp" || summary.Recent[1].CorrelationID != "qf_cli" {
 		t.Fatalf("recent failures are not newest first: %+v", summary.Recent)
 	}
+
+	stale := filepath.Join(root, DirName, Executions+"-2026-07-01.jsonl")
+	if err := os.WriteFile(stale, []byte("{}\n"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	bounded, err := writer.RecentQueryFailures(now, 24*time.Hour, 5)
+	if err != nil {
+		t.Fatalf("a segment dated before the window was opened: %v", err)
+	}
+	if bounded.Count != 2 || bounded.Unreadable != 0 {
+		t.Fatalf("summary = %+v, want the window unchanged", bounded)
+	}
+
+	// The permission bits are the only way to make this read fail while the file
+	// stays a segment the reader still pairs, and they do not bind a privileged
+	// process: as root the read succeeds and this would fail for a reason that is
+	// not the product's.
+	t.Run("an unreadable segment is a gap, not the verdict", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("running as root: chmod cannot make a file unreadable")
+		}
+		unreadable := filepath.Join(root, DirName, Executions+"-"+
+			now.Format(time.DateOnly)+"-1.jsonl")
+		if err := os.WriteFile(unreadable, []byte("{}\n"), 0o000); err != nil {
+			t.Fatal(err)
+		}
+		partial, err := writer.RecentQueryFailures(now, 24*time.Hour, 1)
+		if err == nil {
+			t.Fatal("an unreadable segment was not reported as a warning")
+		}
+		if partial.Count != 2 || partial.Unreadable != 1 {
+			t.Fatalf("summary = %+v, want two failures and one unreadable segment", partial)
+		}
+		if len(partial.Recent) != 1 || partial.Recent[0].CorrelationID != "qf_mcp" {
+			t.Fatalf("a partial reading was neither sorted nor cut: %+v", partial.Recent)
+		}
+	})
 }
