@@ -70,6 +70,7 @@ type Context struct {
 	File                   config.File
 	Capabilities           map[string]bool
 	RetiredCredentialPaths map[string]string
+	RecoveryBackupPaths    []string
 }
 
 type Options struct {
@@ -189,6 +190,21 @@ func retiredProviderEntries(context Context, file config.File) []Entry {
 	entries := make([]Entry, 0, len(candidates))
 	for _, candidate := range candidates {
 		name := candidate.Name
+		if !candidate.RetireConfiguration {
+			alert := fmt.Sprintf("Retired provider credential file detected for %s; no model configuration changes are needed.", name)
+			if configured, declared := providerConfiguration(file, name); declared && len(configured.Command) > 0 {
+				alert = fmt.Sprintf("Retired provider credential file detected for %s; its configured command transport remains unchanged.", name)
+			}
+			entries = append(entries, Entry{
+				ID: ProposalRetiredProvider + "-credential-" + name,
+				Proposal: Proposal{
+					Alert:  alert,
+					Prompt: fmt.Sprintf("Remove the retired %s credential file?", name),
+				},
+				RetiredProvider: name,
+			})
+			continue
+		}
 		target := ""
 		if slices.Contains(detected, name) {
 			target = name
@@ -211,8 +227,9 @@ func retiredProviderEntries(context Context, file config.File) []Entry {
 }
 
 type retiredProviderCandidate struct {
-	Name   string
-	Tables []string
+	Name                string
+	Tables              []string
+	RetireConfiguration bool
 }
 
 func retiredProviderCandidates(context Context, file config.File) []retiredProviderCandidate {
@@ -224,6 +241,7 @@ func retiredProviderCandidates(context Context, file config.File) []retiredProvi
 		}
 		candidate := candidates[normalized]
 		candidate.Name = normalized
+		candidate.RetireConfiguration = true
 		if table != "" && !slices.Contains(candidate.Tables, table) {
 			candidate.Tables = append(candidate.Tables, table)
 		}
@@ -242,7 +260,13 @@ func retiredProviderCandidates(context Context, file config.File) []retiredProvi
 	}
 	for name, path := range context.RetiredCredentialPaths {
 		if regularFile(path) {
-			add(name, "", path)
+			normalized := normalizeProviderName(name)
+			if normalized == "" {
+				continue
+			}
+			candidate := candidates[normalized]
+			candidate.Name = normalized
+			candidates[normalized] = candidate
 		}
 	}
 	ordered := make([]retiredProviderCandidate, 0, len(candidates))
@@ -366,12 +390,20 @@ func Run(context Context, registry []Entry, options Options) (Result, error) {
 				return result, fmt.Errorf("the value for %s is empty", entry.ID)
 			}
 		}
+		if entry.RetiredProvider != "" {
+			if err := RedactRecoveryBackups(context.RecoveryBackupPaths); err != nil {
+				return result, err
+			}
+		}
 		changes := substituteInput(entry.Proposal.Changes, input)
-		outcome, err := agentcfg.EditWithBackup("roca", context.ConfigPath, func(text string) (string, error) {
-			return config.ApplyText(text, changes)
-		}, config.RedactProviderSecrets, true)
-		if err != nil {
-			return result, err
+		var outcome agentcfg.Outcome
+		if len(changes) > 0 {
+			outcome, err = agentcfg.EditWithBackup("roca", context.ConfigPath, func(text string) (string, error) {
+				return config.ApplyText(text, changes)
+			}, config.RedactProviderSecrets, true)
+			if err != nil {
+				return result, err
+			}
 		}
 		if entry.RetiredProvider != "" {
 			if err := RemoveRetiredCredential(context.RetiredCredentialPaths[entry.RetiredProvider]); err != nil {
@@ -379,12 +411,17 @@ func Run(context Context, registry []Entry, options Options) (Result, error) {
 			}
 		}
 		result.Accepted++
-		result.Changes = append(result.Changes, outcome)
-		fmt.Fprintf(options.Out, "configuration updated: %s", outcome.Path)
-		if outcome.Backup != "" {
-			fmt.Fprintf(options.Out, " (backup: %s)", outcome.Backup)
+		if len(changes) > 0 {
+			result.Changes = append(result.Changes, outcome)
+			fmt.Fprintf(options.Out, "configuration updated: %s", outcome.Path)
+			if outcome.Backup != "" {
+				fmt.Fprintf(options.Out, " (backup: %s)", outcome.Backup)
+			}
+			fmt.Fprintln(options.Out)
+		} else {
+			fmt.Fprintf(options.Out, "retired credential removed: %s\n",
+				context.RetiredCredentialPaths[entry.RetiredProvider])
 		}
-		fmt.Fprintln(options.Out)
 	}
 	if !options.ListAll && result.Offered > 0 {
 		if err := writeStamps(context.StampPath, stamps); err != nil {
@@ -392,6 +429,15 @@ func Run(context Context, registry []Entry, options Options) (Result, error) {
 		}
 	}
 	return result, nil
+}
+
+func RedactRecoveryBackups(paths []string) error {
+	for _, path := range paths {
+		if err := agentcfg.Rewrite(path, config.RedactProviderSecrets); err != nil {
+			return fmt.Errorf("redact provider secrets from recovery backup %s: %w", path, err)
+		}
+	}
+	return nil
 }
 
 func RemoveRetiredCredential(path string) error {

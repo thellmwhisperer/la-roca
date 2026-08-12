@@ -19,11 +19,16 @@ func (env *cliEnv) reconciliationContext() (reconcile.Context, error) {
 	if err != nil {
 		return reconcile.Context{}, err
 	}
+	backups, err := recoveryBackups(paths.Config)
+	if err != nil {
+		return reconcile.Context{}, err
+	}
 	return reconcile.Context{
 		Version: env.build.Version, ConfigPath: paths.Config,
 		StampPath: paths.Reconciliation,
 		LookPath:  exec.LookPath, Env: os.Getenv, File: file,
 		RetiredCredentialPaths: legacyProviderCredentialPaths(dirOf(paths.DB)),
+		RecoveryBackupPaths:    backups,
 		Capabilities:           map[string]bool{reconcile.CapabilityAnthropicExport: true},
 	}, nil
 }

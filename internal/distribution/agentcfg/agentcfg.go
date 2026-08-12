@@ -237,6 +237,24 @@ func EditWithBackup(name, path string, transform, backupTransform func(string) (
 	return edit(name, path, transform, backupTransform, createMissing)
 }
 
+func Rewrite(path string, transform func(string) (string, error)) error {
+	previous, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	next, err := transform(string(previous))
+	if err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	if next == string(previous) {
+		return nil
+	}
+	return write(path, next, previous)
+}
+
 func edit(name, path string, transform, backupTransform func(string) (string, error),
 	createMissing bool) (Outcome, error) {
 	outcome := Outcome{Runtime: name, Path: path}

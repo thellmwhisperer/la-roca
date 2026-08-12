@@ -14,10 +14,12 @@ func TestRetiredProviderFirstRunAcceptAndDeclinePaths(t *testing.T) {
 		name, provider, body, answer, wantOrder, wantAlert, credentialFile string
 		binaries                                                           []string
 		wantLegacy                                                         bool
+		preexistingBackups                                                 bool
 	}{
 		{
 			name: "API key accept with CLI", provider: "xai", answer: "y\n", binaries: []string{"codex"},
 			body: legacyAPIConfig(), wantOrder: "codex,ollama", wantAlert: "migrate xai to codex", credentialFile: "xai.key",
+			preexistingBackups: true,
 		},
 		{
 			name: "API key decline with CLI", provider: "xai", answer: "n\n", binaries: []string{"codex"},
@@ -50,6 +52,16 @@ func TestRetiredProviderFirstRunAcceptAndDeclinePaths(t *testing.T) {
 			if err := os.WriteFile(path, []byte(tc.body), 0o600); err != nil {
 				t.Fatal(err)
 			}
+			var recoveryBackupPaths []string
+			if tc.preexistingBackups {
+				for _, suffix := range []string{".roca.bak", ".roca.bak.2"} {
+					backup := path + suffix
+					if err := os.WriteFile(backup, []byte(tc.body), 0o600); err != nil {
+						t.Fatal(err)
+					}
+					recoveryBackupPaths = append(recoveryBackupPaths, backup)
+				}
+			}
 			credentialPath := filepath.Join(root, "credentials", tc.credentialFile)
 			if err := os.MkdirAll(filepath.Dir(credentialPath), 0o700); err != nil {
 				t.Fatal(err)
@@ -67,6 +79,7 @@ func TestRetiredProviderFirstRunAcceptAndDeclinePaths(t *testing.T) {
 			result, err := Run(Context{
 				Version: "v2", ConfigPath: path, StampPath: filepath.Join(root, "stamp.json"),
 				LookPath: lookPathIn(bin), RetiredCredentialPaths: credentialPaths,
+				RecoveryBackupPaths: recoveryBackupPaths,
 			}, entries, Options{Interactive: true, In: strings.NewReader(tc.answer), Out: &out})
 			if err != nil {
 				t.Fatal(err)
@@ -95,9 +108,17 @@ func TestRetiredProviderFirstRunAcceptAndDeclinePaths(t *testing.T) {
 				t.Fatalf("accepted legacy credential survived: %v", credentialErr)
 			}
 			if !tc.wantLegacy && strings.Contains(tc.body, "legacy-secret") {
-				backup := mustRead(t, path+".roca.bak")
-				if strings.Contains(backup, "legacy-secret") {
-					t.Fatalf("provider secret survived in recovery backup:\n%s", backup)
+				backups := append([]string(nil), recoveryBackupPaths...)
+				for _, change := range result.Changes {
+					if change.Backup != "" {
+						backups = append(backups, change.Backup)
+					}
+				}
+				for _, backupPath := range backups {
+					backup := mustRead(t, backupPath)
+					if strings.Contains(backup, "legacy-secret") {
+						t.Fatalf("provider secret survived in recovery backup %s:\n%s", backupPath, backup)
+					}
 				}
 			}
 			if !strings.Contains(text, "# keep") {
@@ -127,24 +148,52 @@ func TestRetiredProviderNonTTYAlertIsOneLine(t *testing.T) {
 	}
 }
 
-func TestRetiredCredentialFileRemainsDiscoverableWithoutConfigMarker(t *testing.T) {
-	root := t.TempDir()
-	path := filepath.Join(root, "config.toml")
-	if err := os.WriteFile(path, []byte("[models]\norder = [\"codex\"]\n"), 0o600); err != nil {
-		t.Fatal(err)
+func TestRetiredCredentialFilesRemainDiscoverableWithoutRetiringCommands(t *testing.T) {
+	cases := []struct {
+		name, provider, credentialFile, body string
+		wantCommandAlert                     bool
+	}{
+		{name: "orphaned artifact", provider: "xai", credentialFile: "xai.key",
+			body: "[models]\norder = [\"codex\"]\n"},
+		{name: "explicit command", provider: "codex", credentialFile: "codex.json", wantCommandAlert: true,
+			body: "[models]\norder = [\"codex\"]\n\n[models.codex]\ncommand = [\"custom-codex\", \"exec\"]\nmodel = \"gpt-current\"\n"},
 	}
-	credential := filepath.Join(root, "credentials", "xai.key")
-	if err := os.MkdirAll(filepath.Dir(credential), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(credential, []byte("legacy-file-secret"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	context := Context{ConfigPath: path, LookPath: lookPathIn(t.TempDir()),
-		RetiredCredentialPaths: map[string]string{"xai": credential}}
-	entries := retiredEntries(Open(context, Registry()))
-	if len(entries) != 1 || entries[0].RetiredProvider != "xai" {
-		t.Fatalf("orphaned credential entries = %+v", entries)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "config.toml")
+			if err := os.WriteFile(path, []byte(tc.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			credential := filepath.Join(root, "credentials", tc.credentialFile)
+			if err := os.MkdirAll(filepath.Dir(credential), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(credential, []byte("legacy-file-secret"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			context := Context{Version: "v2", ConfigPath: path, StampPath: filepath.Join(root, "stamp.json"),
+				LookPath: lookPathIn(t.TempDir()), RetiredCredentialPaths: map[string]string{tc.provider: credential}}
+			entries := retiredEntries(Open(context, Registry()))
+			if len(entries) != 1 || entries[0].RetiredProvider != tc.provider || len(entries[0].Proposal.Changes) != 0 {
+				t.Fatalf("credential cleanup entries = %+v", entries)
+			}
+			if tc.wantCommandAlert && !strings.Contains(entries[0].Proposal.Alert, "command transport remains unchanged") {
+				t.Fatalf("command-preserving alert = %q", entries[0].Proposal.Alert)
+			}
+			result, err := Run(context, entries, Options{
+				Interactive: true, In: strings.NewReader("y\n"), Out: &strings.Builder{},
+			})
+			if err != nil || result.Accepted != 1 || len(result.Changes) != 0 {
+				t.Fatalf("result = %+v, err %v", result, err)
+			}
+			if updated := mustRead(t, path); updated != tc.body {
+				t.Fatalf("credential cleanup changed command configuration:\n%s", updated)
+			}
+			if _, err := os.Stat(credential); !os.IsNotExist(err) {
+				t.Fatalf("retired credential survived cleanup: %v", err)
+			}
+		})
 	}
 	if err := RemoveRetiredCredential(""); err != nil {
 		t.Fatalf("empty legacy credential path: %v", err)

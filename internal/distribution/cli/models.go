@@ -473,6 +473,15 @@ func writeInitModelChoice(paths config.Paths, file config.File, providerName, mo
 		}
 	}
 	changes = append(changes, config.Change{Kind: config.SetValue, Table: "models." + providerName, Key: "model", Value: model})
+	if retiring {
+		backups, err := recoveryBackups(paths.Config)
+		if err != nil {
+			return agentcfg.Outcome{}, err
+		}
+		if err := reconcile.RedactRecoveryBackups(backups); err != nil {
+			return agentcfg.Outcome{}, err
+		}
+	}
 	outcome, err := agentcfg.EditWithBackup("roca", paths.Config, func(text string) (string, error) {
 		return config.ApplyText(text, changes)
 	}, config.RedactProviderSecrets, true)

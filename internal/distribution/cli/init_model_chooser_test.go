@@ -187,6 +187,9 @@ func TestInitRetirementRedactsQuotedInlineKeyFromBackup(t *testing.T) {
 	if err := os.WriteFile(paths.Config, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(paths.Config+".roca.bak", []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	file, err := config.LoadFile(paths.Config)
 	if err != nil {
 		t.Fatal(err)
@@ -194,12 +197,14 @@ func TestInitRetirementRedactsQuotedInlineKeyFromBackup(t *testing.T) {
 	if _, err := writeInitModelChoice(paths, file, provider.NameCodex, "gpt-current"); err != nil {
 		t.Fatal(err)
 	}
-	backup, err := os.ReadFile(paths.Config + ".roca.bak")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(backup), "legacy-secret") || strings.Contains(string(backup), "api_key") {
-		t.Fatalf("quoted provider secret survived in recovery backup:\n%s", backup)
+	for _, backupPath := range []string{paths.Config + ".roca.bak", paths.Config + ".roca.bak.1"} {
+		backup, err := os.ReadFile(backupPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(backup), "legacy-secret") || strings.Contains(string(backup), "api_key") {
+			t.Fatalf("quoted provider secret survived in recovery backup %s:\n%s", backupPath, backup)
+		}
 	}
 }
 
