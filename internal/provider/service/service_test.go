@@ -50,6 +50,19 @@ func TestExecStopsAQueryThatExceedsTheCostBudget(t *testing.T) {
 	}
 }
 
+func TestExecNeverAppliesModelSQLRepairs(t *testing.T) {
+	svc, _ := serviceWithPaths(t)
+	for _, statement := range []string{
+		"```sql\nSELECT id FROM memories LIMIT 1\n```",
+		"Here is the query:\nSELECT id FROM memories LIMIT 1",
+		"SELECT id FROM memories ORDER BY id LIMIT 1 UNION ALL SELECT id FROM exchanges LIMIT 1",
+	} {
+		if _, err := svc.Exec(t.Context(), service.ExecRequest{SQL: statement}); err == nil {
+			t.Errorf("Exec silently repaired user SQL %q", statement)
+		}
+	}
+}
+
 func TestInitCreatesTheDatabaseAndSyncsTheLayerRegistry(t *testing.T) {
 	svc, _ := openService(t)
 	ctx := context.Background()
