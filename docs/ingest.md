@@ -50,10 +50,17 @@ openai_export_paths = [
 ]
 ```
 
-Then run `roca ingest`. Point to the extracted directory, not to
-`conversations.json`. Multiple export directories may be listed; a later export
+Then run `roca ingest`. Point to the extracted directory, not to an individual
+JSON file. La Roca reads both the legacy `conversations.json` layout and the
+newer `conversations-*.json` shards, and processes both when an export directory
+contains both shapes. Multiple export directories may be listed; a later export
 of the same account contributes only conversations and messages whose source
-identities have not already landed.
+identities have not already landed. When legacy and sharded snapshots overlap,
+the legacy snapshot is read first because it carries richer per-message signal;
+content reconciliation prevents a duplicate.
+
+A declared directory containing neither conversation shape is reported as an
+unrecognized OpenAI export layout, with the directory path in the ingest report.
 
 Each `conversation_id` becomes an unprojected `chatgpt-web` session. La Roca
 walks the `mapping` parent/children tree and pairs user messages with assistant
@@ -71,8 +78,10 @@ columns remain NULL. Epoch timestamps are normalized into the corpus's UTC ISO
 8601 format.
 
 `shared_conversations.json` and attachment files are counted in the ingest
-summary as out-of-scope exclusions. `chat.html` is another rendering of the
-conversation history and is ignored. La Roca does not open attachment bytes.
+summary as out-of-scope exclusions. The expected companions of a sharded export
+— `codex.json`, `conversation_asset_file_names.json`, `chat.html`, and
+`ads.json` — are ignored without warnings. La Roca does not open attachment
+bytes.
 
 ## What enters the corpus
 
