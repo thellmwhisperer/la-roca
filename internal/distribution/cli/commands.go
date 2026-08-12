@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"time"
 
@@ -346,7 +345,7 @@ func renderInitAnswer(env *cliEnv, result service.InitResult) {
 	line := fmt.Sprintf("answering: %s/%s (%s) · configuration: %s",
 		model.Provider, model.Model, modelChoiceSource(result.ConfigPath, model.Provider, model.Model),
 		result.ConfigPath)
-	if model.ExternalCredential {
+	if model.CommandTransport {
 		line += " · uses the existing local CLI session; no roca login required"
 	}
 	line += " · change with: " + initModelChange(model.Provider, model.Model, result.ConfigPath)
@@ -413,8 +412,6 @@ func initModelTransportOverride(name, path string, file config.File) string {
 	switch {
 	case len(cfg.Command) > 0:
 		return fmt.Sprintf("models.%s.command in %s", name, path)
-	case slices.Contains(provider.CommandPresetNames(), name) && cfg.BaseURL != "":
-		return fmt.Sprintf("models.%s.base_url in %s", name, path)
 	default:
 		return ""
 	}

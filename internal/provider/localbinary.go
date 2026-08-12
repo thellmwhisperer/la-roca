@@ -114,7 +114,7 @@ func (b *LocalBinary) ModelID() string { return b.model }
 
 func (b *LocalBinary) RequestTimeout() time.Duration { return b.timeout }
 
-func (b *LocalBinary) ExternalCredential() bool { return true }
+func (b *LocalBinary) CommandTransport() bool { return true }
 
 func (b *LocalBinary) ModelChoices() []string {
 	choices := append([]string(nil), b.models...)

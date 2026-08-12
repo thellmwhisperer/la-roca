@@ -196,9 +196,8 @@ type InitModel struct {
 	Reason   string `json:"reason,omitempty"`
 	Action   string `json:"action,omitempty"`
 	Disabled bool   `json:"disabled,omitempty"`
-	// ExternalCredential means the chosen command uses the agent CLI's own
-	// session and needs no La Roca login.
-	ExternalCredential bool `json:"external_credential,omitempty"`
+	// CommandTransport means the chosen model runs through an agent CLI.
+	CommandTransport bool `json:"command_transport,omitempty"`
 }
 
 const presentationPrompt = "## La Roca — local semantic memory\n" +
@@ -357,9 +356,9 @@ func (s *Service) modelGate(ctx context.Context) *InitModel {
 	gate := &InitModel{}
 	for i, attempt := range cascade.Diagnose(ctx) {
 		if attempt.Ready {
-			credential, external := cascade.Providers[i].(interface{ ExternalCredential() bool })
+			transport, command := cascade.Providers[i].(interface{ CommandTransport() bool })
 			return &InitModel{Ready: true, Provider: attempt.Name, Model: attempt.ModelID,
-				ExternalCredential: external && credential.ExternalCredential()}
+				CommandTransport: command && transport.CommandTransport()}
 		}
 		if gate.Reason == "" {
 			gate.Provider, gate.Reason, gate.Action = attempt.Name, attempt.Reason, attempt.Action

@@ -16,9 +16,13 @@ import (
 type ChangeKind string
 
 const (
-	SetValue      ChangeKind = "set"
-	PrependUnique ChangeKind = "prepend-unique"
-	ReplaceTable  ChangeKind = "replace-table"
+	SetValue         ChangeKind = "set"
+	PrependUnique    ChangeKind = "prepend-unique"
+	ReplaceTable     ChangeKind = "replace-table"
+	ReplaceListValue ChangeKind = "replace-list-value"
+	RemoveListValue  ChangeKind = "remove-list-value"
+	DeleteTable      ChangeKind = "delete-table"
+	DeleteValue      ChangeKind = "delete-value"
 )
 
 type Field struct {
@@ -35,6 +39,7 @@ type Change struct {
 	Table   string
 	Key     string
 	Value   any
+	Old     string
 	Default []string
 	Fields  []Field
 }
@@ -78,6 +83,42 @@ func ApplyText(text string, changes []Change) (string, error) {
 				}
 			}
 			updated = replaceTableText(updated, change.Table, fields)
+		case ReplaceListValue, RemoveListValue:
+			values := stringListAt(document, change.Table, change.Key)
+			if values == nil {
+				continue
+			}
+			kept := make([]string, 0, len(values))
+			seen := make(map[string]bool, len(values))
+			old := normalizeProviderName(change.Old)
+			for _, current := range values {
+				if normalizeProviderName(current) == old {
+					if change.Kind == ReplaceListValue {
+						replacement := strings.TrimSpace(fmt.Sprint(change.Value))
+						normalized := normalizeProviderName(replacement)
+						if normalized != "" && !seen[normalized] {
+							kept = append(kept, replacement)
+							seen[normalized] = true
+						}
+					}
+					continue
+				}
+				normalized := normalizeProviderName(current)
+				if normalized == "" || seen[normalized] {
+					continue
+				}
+				kept = append(kept, current)
+				seen[normalized] = true
+			}
+			if len(kept) == 0 {
+				updated = deleteTableValueText(updated, change.Table, change.Key)
+			} else {
+				updated = setTableValueText(updated, "["+change.Table+"]", change.Key, tomlLiteral(kept))
+			}
+		case DeleteTable:
+			updated = deleteTableText(updated, change.Table)
+		case DeleteValue:
+			updated = deleteTableValueText(updated, change.Table, change.Key)
 		default:
 			return "", fmt.Errorf("unknown configuration change %q", change.Kind)
 		}
@@ -88,14 +129,127 @@ func ApplyText(text string, changes []Change) (string, error) {
 	return updated, nil
 }
 
+func RedactProviderSecrets(text string) (string, error) {
+	var document map[string]any
+	if strings.TrimSpace(text) == "" {
+		return text, nil
+	}
+	if _, err := toml.Decode(text, &document); err != nil {
+		return "", fmt.Errorf("the configuration is not valid TOML: %w", err)
+	}
+	changes := redactProviderSecretDocument(document)
+	redacted, err := ApplyText(text, changes)
+	if err != nil {
+		return "", err
+	}
+	if err := verifyProviderSecretsRedacted(redacted); err == nil {
+		return redacted, nil
+	}
+	var encoded strings.Builder
+	if err := toml.NewEncoder(&encoded).Encode(document); err != nil {
+		return "", fmt.Errorf("encode redacted configuration: %w", err)
+	}
+	redacted = encoded.String()
+	if err := verifyProviderSecretsRedacted(redacted); err != nil {
+		return "", err
+	}
+	return redacted, nil
+}
+
+func redactProviderSecretDocument(document map[string]any) []Change {
+	models, _ := document["models"].(map[string]any)
+	changes := make([]Change, 0, len(models))
+	for name, value := range models {
+		table, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, present := table["api_key"]; present {
+			delete(table, "api_key")
+			changes = append(changes, Change{Kind: DeleteValue, Table: "models." + name, Key: "api_key"})
+		}
+	}
+	return changes
+}
+
+func verifyProviderSecretsRedacted(text string) error {
+	var document map[string]any
+	if _, err := toml.Decode(text, &document); err != nil {
+		return fmt.Errorf("verify redacted configuration: %w", err)
+	}
+	models, _ := document["models"].(map[string]any)
+	for name, value := range models {
+		if table, ok := value.(map[string]any); ok {
+			if _, present := table["api_key"]; present {
+				return fmt.Errorf("models.%s.api_key survived provider-secret redaction", name)
+			}
+		}
+	}
+	return nil
+}
+
+func deleteTableValueText(text, table, key string) string {
+	want := strings.ToLower(strings.TrimSpace(table)) + "." + key
+	return deleteKeyLines(text, func(candidate string) bool { return candidate == want })
+}
+
+// deleteKeyLines removes every assignment whose fully qualified key the caller
+// claims, wherever the operator declared it: under its own table header, or as a
+// dotted key written in an outer scope.
+func deleteKeyLines(text string, claimed func(string) bool) string {
+	var kept strings.Builder
+	scope := ""
+	for _, line := range strings.SplitAfter(text, "\n") {
+		clean := strings.TrimSpace(strings.SplitN(line, "#", 2)[0])
+		if strings.HasPrefix(clean, "[") {
+			scope = headerScope(clean)
+		} else if candidate, _ := documentKey(scope, line); candidate != "" && claimed(candidate) {
+			continue
+		}
+		kept.WriteString(line)
+	}
+	return kept.String()
+}
+
+func deleteTableText(text, table string) string {
+	want := strings.ToLower(strings.TrimSpace(table))
+	start, end, offset := -1, len(text), 0
+	for _, line := range strings.SplitAfter(text, "\n") {
+		candidate := tableKey(strings.TrimSpace(strings.SplitN(line, "#", 2)[0]))
+		if start < 0 && candidate == want {
+			start = offset
+		} else if start >= 0 && (candidate != "" || strings.HasPrefix(strings.TrimSpace(line), "[[")) {
+			end = offset
+			break
+		}
+		offset += len(line)
+	}
+	if start >= 0 {
+		for end < len(text) && text[end] == '\n' && start > 0 && text[start-1] == '\n' {
+			end++
+		}
+		text = text[:start] + text[end:]
+	}
+	// The same table spelled as dotted keys has no header to cut out, so its keys
+	// have to go one by one or the retired credential survives the retirement.
+	return deleteKeyLines(text, func(candidate string) bool {
+		return candidate == want || strings.HasPrefix(candidate, want+".")
+	})
+}
+
 func prependUnique(values []string, value string) []string {
 	out := []string{value}
+	want := normalizeProviderName(value)
 	for _, current := range values {
-		if current != value {
+		if normalizeProviderName(current) != want {
 			out = append(out, current)
 		}
 	}
 	return out
+}
+
+func normalizeProviderName(name string) string {
+	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(name)), "_", "-")
 }
 
 func tomlLiteral(value any) string {
@@ -160,6 +314,11 @@ func replaceTableText(text, table string, fields []Field) string {
 		offset += len(line)
 	}
 	if start < 0 {
+		// A table the operator spelled as dotted keys has no header to replace, and
+		// leaving those keys behind would declare the table twice.
+		text = deleteKeyLines(text, func(candidate string) bool {
+			return candidate == want || strings.HasPrefix(candidate, want+".")
+		})
 		if text == "" {
 			return block
 		}
@@ -265,62 +424,135 @@ func tableKey(line string) string {
 	return strings.ToLower(strings.Join(parts, "."))
 }
 
+// headerScope is the table a header line opens. An array-of-tables header opens
+// a table these edits never claim, so it scopes to a name no key can match.
+func headerScope(clean string) string {
+	if scope := tableKey(clean); scope != "" {
+		return scope
+	}
+	return clean
+}
+
+// documentKey is the fully qualified key an assignment line declares inside the
+// table scope open at that line, and the index of its `=`. The table part is
+// compared like a header, the final key exactly as the operator wrote it.
+func documentKey(scope, line string) (string, int) {
+	path, eq := tomlAssignment(line)
+	if path == "" {
+		return "", -1
+	}
+	if scope != "" {
+		path = scope + "." + path
+	}
+	if cut := strings.LastIndex(path, "."); cut > 0 {
+		path = strings.ToLower(path[:cut]) + path[cut:]
+	}
+	return path, eq
+}
+
 func setTableValueText(text, header, key, value string) string {
-	start, end, firstChild := -1, len(text), -1
-	// The operator wrote this file, and TOML spells one table several ways:
-	// `[models.xai]`, `[ models.xai ]` and `[models."xai"]` are the same table.
-	// Comparing the raw line text matched only the first, so an edit to either of
-	// the others appended a SECOND table for the same key and left the
-	// configuration unparseable.
+	// The operator wrote this file, and TOML spells one key several ways:
+	// `[models.xai]`, `[ models.xai ]` and `[models."xai"]` are the same table, and
+	// a top-level `models.xai.model = …` declares the same key as `model` under any
+	// of them. Comparing the raw line text matched only the first spelling, so an
+	// edit to any of the others appended a SECOND declaration of a table that
+	// already existed and left the configuration unparseable.
 	want := tableKey(header)
-	childPrefix := want + "."
-	offset := 0
+	target, childPrefix := want+"."+key, want+"."
+	inTable, dotted, firstChild, scope, offset := -1, -1, -1, "", 0
 	for _, line := range strings.SplitAfter(text, "\n") {
 		clean := strings.TrimSpace(strings.SplitN(line, "#", 2)[0])
-		candidate := tableKey(clean)
-		if candidate != "" && candidate == want {
-			start = offset + len(line)
-		} else if firstChild < 0 && candidate != "" && strings.HasPrefix(candidate, childPrefix) {
-			firstChild = offset
-		}
-		if start >= 0 && offset >= start && strings.HasPrefix(clean, "[") {
-			end = offset
-			break
-		}
-		offset += len(line)
-	}
-	if start == len(text) {
-		return text + "\n" + key + " = " + value + "\n"
-	}
-	if start < 0 {
-		block := header + "\n" + key + " = " + value + "\n"
-		if firstChild >= 0 {
-			return text[:firstChild] + block + "\n" + text[firstChild:]
-		}
-		if text == "" {
-			return block
-		}
-		separator := "\n"
-		if !strings.HasSuffix(text, "\n") {
-			separator = "\n\n"
-		}
-		return text + separator + block
-	}
-	offset = 0
-	for _, line := range strings.SplitAfter(text[start:end], "\n") {
-		eq := strings.IndexByte(line, '=')
-		if eq < 0 || strings.TrimSpace(line[:eq]) != key {
+		if strings.HasPrefix(clean, "[") {
+			scope = headerScope(clean)
+			if scope == want && inTable < 0 {
+				inTable = offset + len(line)
+			} else if firstChild < 0 && strings.HasPrefix(scope, childPrefix) {
+				firstChild = offset
+			}
 			offset += len(line)
 			continue
 		}
-		valueStart := eq + 1
-		for valueStart < len(line) && (line[valueStart] == ' ' || line[valueStart] == '\t') {
-			valueStart++
+		candidate, eq := documentKey(scope, line)
+		if candidate == target {
+			at := offset + eq + 1
+			for at < len(text) && (text[at] == ' ' || text[at] == '\t') {
+				at++
+			}
+			return text[:at] + value + text[at+tomlValueEnd(text[at:]):]
 		}
-		valueEnd := valueStart + tomlValueEnd(text[start+offset+valueStart:end])
-		return text[:start+offset+valueStart] + value + text[start+offset+valueEnd:]
+		// A scope shorter than the table means the table is written into the key
+		// itself, which is where a new key of that table has to go as well.
+		if dotted < 0 && len(scope) < len(want) && strings.HasPrefix(candidate, childPrefix) {
+			dotted = offset
+		}
+		offset += len(line)
 	}
-	return text[:start] + key + " = " + value + "\n" + text[start:]
+	block := header + "\n" + key + " = " + value + "\n"
+	switch {
+	case inTable == len(text):
+		return text + "\n" + key + " = " + value + "\n"
+	case inTable >= 0:
+		return text[:inTable] + key + " = " + value + "\n" + text[inTable:]
+	case dotted >= 0:
+		return text[:dotted] + want + "." + key + " = " + value + "\n" + text[dotted:]
+	case firstChild >= 0:
+		return text[:firstChild] + block + "\n" + text[firstChild:]
+	case text == "":
+		return block
+	}
+	separator := "\n"
+	if !strings.HasSuffix(text, "\n") {
+		separator = "\n\n"
+	}
+	return text + separator + block
+}
+
+// tomlAssignment is the key an assignment line declares, relative to the table
+// it sits in, and the index of its `=`. A dotted key reaches into a nested
+// table, so the answer is the whole path: `models.xai.api_key = …` written at
+// the top of a file declares the same key as `api_key` under `[models.xai]`.
+func tomlAssignment(line string) (string, int) {
+	quote := byte(0)
+	for index := 0; index < len(line); index++ {
+		char := line[index]
+		if quote != 0 {
+			if quote == '"' && char == '\\' {
+				index++
+				continue
+			}
+			if char == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch char {
+		case '\'', '"':
+			quote = char
+		case '#':
+			return "", -1
+		case '=':
+			raw := strings.TrimSpace(line[:index])
+			if raw == "" {
+				return "", -1
+			}
+			var document map[string]any
+			if _, err := toml.Decode(raw+" = 0", &document); err != nil {
+				return "", -1
+			}
+			var path []string
+			for current := document; len(current) == 1; {
+				key := sortedKeys(current)[0]
+				path = append(path, key)
+				nested, dotted := current[key].(map[string]any)
+				if !dotted {
+					return strings.Join(path, "."), index
+				}
+				current = nested
+			}
+			return "", -1
+		}
+	}
+	return "", -1
 }
 
 func tomlValueEnd(value string) int {
@@ -365,13 +597,12 @@ func tomlValueEnd(value string) int {
 	return len(strings.TrimRight(value, " \t\r\n"))
 }
 
-// FileConfig is the operator's configuration file and DirCredentials is where
-// subscription sessions live. Both hang off the data directory, so an adopted
-// database keeps its configuration next to the imported data.
+// FileConfig is the operator's configuration file. It hangs off the data
+// directory, so an adopted database keeps its configuration next to the
+// imported data.
 const (
-	FileConfig     = "config.toml"
-	DirCredentials = "credentials"
-	EnvConfig      = "ROCA_CONFIG"
+	FileConfig = "config.toml"
+	EnvConfig  = "ROCA_CONFIG"
 )
 
 // File is the operator's config, already read.
@@ -423,12 +654,10 @@ type ModelsConfig struct {
 
 // ProviderConfig is one provider's table.
 type ProviderConfig struct {
-	// Preset fills in endpoint and model from what this build knows about a
-	// named provider. Empty tries the provider's own name as a preset.
-	Preset  string   `toml:"preset"`
-	BaseURL string   `toml:"base_url"`
-	Command []string `toml:"command"`
-	Model   string   `toml:"model"`
+	TableName string   `toml:"-"`
+	BaseURL   string   `toml:"base_url"`
+	Command   []string `toml:"command"`
+	Model     string   `toml:"model"`
 	// ResponseFormat declares whether command stdout is plain text or a JSON
 	// envelope whose result field is the answer.
 	ResponseFormat string `toml:"response_format"`
@@ -436,12 +665,9 @@ type ProviderConfig struct {
 	// the millisecond-wide cascade budget because command startup is measured
 	// in seconds and has a deliberately generous default.
 	TimeoutSeconds int `toml:"timeout_seconds"`
-	// APIKey is the credential. It is read from here or from APIKeyEnv, never
-	// from the database, and it never travels to any output.
-	APIKey string `toml:"api_key"`
-	// APIKeyEnv is the environment variable the credential lives in, for an
-	// operator who would rather not write it on disk.
-	APIKeyEnv string `toml:"api_key_env"`
+	// RetiredCredential says a legacy provider table still carries a key field.
+	// The value is never retained; reconciliation uses only this marker.
+	RetiredCredential bool `toml:"-"`
 	// KeepAlive is how long the local model stays loaded.
 	KeepAlive string `toml:"keep_alive"`
 	// Think turns a local reasoning model's thinking back on. It is off by
@@ -459,9 +685,13 @@ var knownModelsKeys = map[string]bool{
 	"order": true, "interpret_order": true, "timeout_ms": true, "probe_ms": true,
 }
 
+// knownProviderKeys is this build's vocabulary inside a provider table. The
+// retired authentication keys are listed because they get their own, more
+// specific warning and must not also be reported as unknown.
 var knownProviderKeys = map[string]bool{
-	"preset": true, "base_url": true, "model": true,
-	"api_key": true, "api_key_env": true, "keep_alive": true, "think": true,
+	"base_url": true, "command": true, "model": true, "response_format": true,
+	"timeout_seconds": true, "keep_alive": true, "think": true, "preset": true,
+	"api_key": true, "api_key_env": true,
 }
 
 var knownQueryKeys = map[string]bool{"timeout_ms": true}
@@ -493,11 +723,6 @@ func LoadFile(path string) (File, error) {
 	models, _ := document["models"].(map[string]any)
 	file.Models = readModels(models, path, &file.Warnings)
 	for name, provider := range file.Models.Providers {
-		if provider.BaseURL != "" && len(provider.Command) > 0 {
-			return file, fmt.Errorf(
-				"provider %q in %s declares both models.%s.base_url and models.%s.command; choose exactly one transport",
-				name, path, name, name)
-		}
 		for _, placeholder := range CommandPlaceholders(provider.Command) {
 			if placeholder == "prompt" {
 				continue
@@ -553,7 +778,10 @@ func readModels(section map[string]any, path string, warnings *[]string) ModelsC
 	for _, key := range sortedKeys(section) {
 		value := section[key]
 		if table, isTable := value.(map[string]any); isTable {
-			models.Providers[strings.ToLower(key)] = readProvider(table)
+			name := normalizeProviderName(key)
+			provider := readProvider(table, name, path, warnings)
+			provider.TableName = key
+			models.Providers[name] = provider
 			continue
 		}
 		switch key {
@@ -574,30 +802,37 @@ func readModels(section map[string]any, path string, warnings *[]string) ModelsC
 	return models
 }
 
-func readProvider(table map[string]any) ProviderConfig {
+func readProvider(table map[string]any, name, path string, warnings *[]string) ProviderConfig {
 	cfg := ProviderConfig{Values: make(map[string]string, len(table))}
+	cfg.Command = readStrings(table["command"])
 	for _, key := range sortedKeys(table) {
 		text, _ := table[key].(string)
-		if key != "command" {
+		if key != "command" && key != "api_key" && key != "api_key_env" && key != "preset" && key != "base_url" {
 			cfg.Values[key] = templateString(table[key])
 		}
 		switch key {
-		case "preset":
-			cfg.Preset = text
 		case "base_url":
 			cfg.BaseURL = text
+			if name != "ollama" {
+				*warnings = append(*warnings, retiredProviderKey(name, key, path))
+			}
 		case "command":
-			cfg.Command = readStrings(table[key])
 		case "model":
 			cfg.Model = text
 		case "response_format":
 			cfg.ResponseFormat = text
 		case "timeout_seconds":
 			cfg.TimeoutSeconds = readInt(table[key])
-		case "api_key":
-			cfg.APIKey = text
-		case "api_key_env":
-			cfg.APIKeyEnv = text
+		case "preset":
+			if len(cfg.Command) > 0 {
+				cfg.Values[key] = templateString(table[key])
+				continue
+			}
+			cfg.RetiredCredential = true
+			*warnings = append(*warnings, retiredProviderKey(name, key, path))
+		case "api_key", "api_key_env":
+			cfg.RetiredCredential = true
+			*warnings = append(*warnings, retiredProviderKey(name, key, path))
 		case "keep_alive":
 			cfg.KeepAlive = text
 		case "think":
@@ -605,6 +840,12 @@ func readProvider(table map[string]any) ProviderConfig {
 		}
 	}
 	return cfg
+}
+
+func retiredProviderKey(provider, key, path string) string {
+	return fmt.Sprintf(
+		"models.%s.%s in %s belongs to a retired HTTP/credential transport: it is ignored; models authenticate through their own local CLIs",
+		provider, key, path)
 }
 
 func templateString(value any) string {

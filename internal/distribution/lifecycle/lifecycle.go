@@ -29,7 +29,8 @@ const BinaryName = "roca"
 // touched, which is why building it is the caller's job and applying it is not.
 type Plan struct {
 	// Owned are the exact paths Roca created: the database and its journals,
-	// the configuration, backups, legacy cache, credentials, and generated files.
+	// the configuration, backups, legacy cache, legacy provider credential
+	// files, and generated files.
 	// Each one is deleted whenever it exists, whether it was there when the
 	// plan was made or appeared afterwards.
 	Owned []string

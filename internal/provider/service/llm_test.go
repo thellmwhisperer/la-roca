@@ -19,21 +19,21 @@ type fakeProvider struct {
 	ready provider.Readiness
 	// sql is what it answers every time; answers is what it answers in
 	// sequence, for the tests about the retry. The last one repeats.
-	sql      string
-	answers  []string
-	fail     error
-	delay    time.Duration
-	requests int
-	external bool
+	sql              string
+	answers          []string
+	fail             error
+	delay            time.Duration
+	requests         int
+	commandTransport bool
 	// prompt is the last system message it received, and prompts is all of
 	// them: the retry has to be checkable for what it carries.
 	prompt  string
 	prompts []string
 }
 
-func (f *fakeProvider) Name() string             { return f.name }
-func (f *fakeProvider) ModelID() string          { return f.model }
-func (f *fakeProvider) ExternalCredential() bool { return f.external }
+func (f *fakeProvider) Name() string           { return f.name }
+func (f *fakeProvider) ModelID() string        { return f.model }
+func (f *fakeProvider) CommandTransport() bool { return f.commandTransport }
 
 func (f *fakeProvider) Models(context.Context) provider.ModelReport {
 	return provider.ModelReport{Ready: f.ready.Ready, Models: []string{f.model}}
@@ -342,7 +342,7 @@ func TestAProviderThatFailsMidRequestDegradesToTheKeywordRescue(t *testing.T) {
 
 func TestFactoryDefaultFailsForwardFromAnUnusableLocalCLI(t *testing.T) {
 	broken := answering("claude", "")
-	broken.external = true
+	broken.commandTransport = true
 	broken.fail = fmt.Errorf("local CLI account is signed out")
 	floor := answering("ollama", "SELECT content FROM memories WHERE supersedes IS NULL LIMIT 5")
 	svc := seededServiceWith(t, provider.Cascade{
@@ -792,7 +792,7 @@ func TestInterpretReusesTheSQLProviderUnlessAnExplicitOrderExists(t *testing.T) 
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			broken := answering("claude", "")
-			broken.external = true
+			broken.commandTransport = true
 			broken.fail = fmt.Errorf("local CLI account is signed out")
 			floor := answering("ollama", "factory summary")
 			main := provider.Cascade{

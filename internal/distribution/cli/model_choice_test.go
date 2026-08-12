@@ -81,21 +81,26 @@ func TestBuiltInModelSourceIsVisible(t *testing.T) {
 		}
 	})
 
-	// Negative: with an env var that sets the model, "built-in default" must
-	// NOT appear — the source is the env var.
-	t.Run("env source is not built-in", func(t *testing.T) {
-		t.Setenv("ROCA_CODEX_MODEL", "gpt-env-model")
-		var output strings.Builder
-		renderBootstrap(&cliEnv{out: &output}, service.InitResult{Model: &service.InitModel{
-			Ready: true, Provider: "codex", Model: "gpt-env-model",
-		}})
-		if strings.Contains(output.String(), "built-in default") {
-			t.Fatalf("source should not say built-in when an env var sets it:\n%s", output.String())
-		}
-		if !strings.Contains(output.String(), "from ROCA_CODEX_MODEL") {
-			t.Fatalf("env source should name the env var:\n%s", output.String())
-		}
-	})
+	// An environment variable is the source only where the provider reads it.
+	// Ollama does; a shipped CLI preset resolves its model from the file alone,
+	// so a variable that merely matches the answer is not what chose it. The
+	// rendered line carries exactly one source, so naming the expected one also
+	// pins that the other spelling is absent.
+	for _, source := range []struct{ name, key, provider, want string }{
+		{"ollama reads its environment override", "ROCA_OLLAMA_MODEL", "ollama", "from ROCA_OLLAMA_MODEL"},
+		{"codex ignores an environment override", "ROCA_CODEX_MODEL", "codex", "built-in default"},
+	} {
+		t.Run(source.name, func(t *testing.T) {
+			t.Setenv(source.key, "env-model")
+			var output strings.Builder
+			renderBootstrap(&cliEnv{out: &output}, service.InitResult{Model: &service.InitModel{
+				Ready: true, Provider: source.provider, Model: "env-model",
+			}})
+			if !strings.Contains(output.String(), source.want) {
+				t.Fatalf("model source should be %q:\n%s", source.want, output.String())
+			}
+		})
+	}
 }
 
 func TestInitSaysDetectedLocalCLIIsReadyWithoutRocaLogin(t *testing.T) {
@@ -104,7 +109,7 @@ func TestInitSaysDetectedLocalCLIIsReadyWithoutRocaLogin(t *testing.T) {
 		DetectedModelBinaries: []string{"claude", "codex"}, FactoryDefault: true,
 		FactoryDefaultProvider: "claude",
 		Model: &service.InitModel{
-			Ready: true, Provider: "claude", Model: "factory-model", ExternalCredential: true,
+			Ready: true, Provider: "claude", Model: "factory-model", CommandTransport: true,
 		},
 	})
 	for _, want := range []string{
@@ -118,14 +123,15 @@ func TestInitSaysDetectedLocalCLIIsReadyWithoutRocaLogin(t *testing.T) {
 }
 
 func TestDoctorExactProviderProbeNarration(t *testing.T) {
+	t.Setenv("ROCA_CODEX_MODEL", "")
 	var output strings.Builder
 	renderDoctor(&cliEnv{out: &output}, service.DoctorReport{
 		Version: "test", SourceSHA: "sha", DBPath: "/data/roca.db", ConfigPath: "/data/config.toml",
-		Providers: []service.DoctorProvider{{Name: "xai", Model: "grok-4", Credential: service.CredentialPresent,
-			Reason: "xAI received HTTP status 401", Action: "log in again"}},
+		Providers: []service.DoctorProvider{{Name: "codex", Model: "gpt-test",
+			Reason: "codex binary not found in PATH", Action: "install Codex CLI"}},
 	})
-	wantLine := "  [no] xai · model grok-4 (built-in default · change with: roca login xai --model <id> or models.xai.model in /data/config.toml) · credential present · probe present-but-failed\n" +
-		"      xAI received HTTP status 401\n      remedy: log in again\n"
+	wantLine := "  [no] codex · model gpt-test (built-in default · change with: roca model set <id> or models.codex.model in /data/config.toml) · probe failed\n" +
+		"      codex binary not found in PATH\n      remedy: install Codex CLI\n"
 	if !strings.Contains(output.String(), wantLine) {
 		t.Fatalf("doctor provider block changed:\n--- want block ---\n%s--- got ---\n%s", wantLine, output.String())
 	}

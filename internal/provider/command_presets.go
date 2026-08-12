@@ -2,6 +2,9 @@ package provider
 
 import "os/exec"
 
+// DefaultCodexModel is the model used by the shipped Codex CLI command.
+const DefaultCodexModel = "gpt-5.6-luna"
+
 // CommandPreset is shipped provider configuration for a local CLI. The
 // adapter does not branch on these names: adding another built-in is one row,
 // and an operator's provider table overrides every executable setting.

@@ -73,6 +73,6 @@ so CLI and MCP enforce the same boundary.
 ## Data directory
 
 The default data directory is `~/.roca`. It contains `roca.db`,
-configuration, credentials, backups, `prompt.md`, and operational JSONL under
+configuration, backups, `prompt.md`, and operational JSONL under
 `logs/`. La Roca does not edit agent instruction files; the operator decides
 whether to use the generated prompt or install the bundled skill.

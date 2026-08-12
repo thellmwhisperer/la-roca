@@ -2,15 +2,11 @@ package service_test
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider"
-	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 // Provider order comes from configuration, and doctor
@@ -47,7 +43,7 @@ func TestDoctorReportsTheProvidersInTheDeclaredOrder(t *testing.T) {
 
 func TestDoctorReportsDetectedBinariesAndTheFactorySelection(t *testing.T) {
 	local := answering("codex", "")
-	local.external = true
+	local.commandTransport = true
 	svc := seededServiceWith(t, provider.Cascade{
 		Providers:        []provider.Provider{local, answering("ollama", "")},
 		DetectedBinaries: []string{"codex"},
@@ -64,9 +60,6 @@ func TestDoctorReportsDetectedBinariesAndTheFactorySelection(t *testing.T) {
 		strings.Join(report.MissingModelBinaries, ",") != "claude" ||
 		!report.FactoryDefault || report.FactoryDefaultProvider != "codex" {
 		t.Fatalf("factory diagnosis = %+v", report)
-	}
-	if report.Providers[0].Credential != service.CredentialExternal {
-		t.Fatalf("credential = %q", report.Providers[0].Credential)
 	}
 }
 
@@ -117,92 +110,6 @@ func TestDoctorReportsTheOldestCorpusMomentAndItsProject(t *testing.T) {
 	}
 	if report.Bedrock.Timestamp != "2026-01-31T08:15:00Z" || report.Bedrock.Project != "bedrock-project" {
 		t.Fatalf("bedrock = %+v", report.Bedrock)
-	}
-}
-
-// The credential never appears in any output. Presence is reported,
-// the value never is.
-func TestDoctorReportsTheCredentialsPresenceAndNeverItsValue(t *testing.T) {
-	compatible, err := provider.NewOpenAICompatible(provider.OpenAIConfig{
-		Name: "deepseek", BaseURL: "http://127.0.0.1:1/v1", APIKey: "sk-do-not-print-me",
-	})
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-	svc := seededServiceWith(t, provider.Cascade{
-		Providers: []provider.Provider{compatible}, Probe: 200 * time.Millisecond,
-	})
-
-	report, err := svc.Doctor(context.Background())
-	if err != nil {
-		t.Fatalf("Doctor: %v", err)
-	}
-	if report.Providers[0].Credential != service.CredentialPresent {
-		t.Fatalf("credential %q", report.Providers[0].Credential)
-	}
-
-	rendered, err := json.Marshal(report)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if strings.Contains(string(rendered), "sk-do-not-print-me") {
-		t.Fatalf("the credential leaked into the report: %s", rendered)
-	}
-}
-
-func TestDoctorDistinguishesWorkingPresentButFailedAndAbsent(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") == "Bearer working" {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"data":[]}`))
-			return
-		}
-		http.Error(w, "dead", http.StatusUnauthorized)
-	}))
-	defer server.Close()
-	providers := make([]provider.Provider, 0, 3)
-	for _, tc := range []struct{ name, key string }{{"working", "working"}, {"dead", "dead"}, {"absent", ""}} {
-		p, err := provider.NewOpenAICompatible(provider.OpenAIConfig{
-			Name: tc.name, BaseURL: server.URL, Model: "m", APIKey: tc.key,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		providers = append(providers, p)
-	}
-	svc := seededServiceWith(t, provider.Cascade{Providers: providers, Probe: time.Second})
-	report, err := svc.Doctor(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []struct {
-		ready      bool
-		credential string
-	}{{true, service.CredentialPresent}, {false, service.CredentialPresent}, {false, service.CredentialAbsent}}
-	for i, verdict := range want {
-		if report.Providers[i].Ready != verdict.ready || report.Providers[i].Credential != verdict.credential {
-			t.Fatalf("provider %d = %+v, want ready=%v credential=%q", i, report.Providers[i], verdict.ready, verdict.credential)
-		}
-	}
-	if report.Providers[1].Reason != "dead received HTTP status 401" {
-		t.Fatalf("dead cause = %q", report.Providers[1].Reason)
-	}
-}
-
-func TestDoctorSaysWhenTheLocalFloorNeedsNoCredential(t *testing.T) {
-	svc := seededServiceWith(t, provider.Cascade{
-		Providers: []provider.Provider{provider.NewOllama(provider.OllamaConfig{
-			BaseURL: "http://127.0.0.1:1",
-		})},
-		Probe: 200 * time.Millisecond,
-	})
-
-	report, err := svc.Doctor(context.Background())
-	if err != nil {
-		t.Fatalf("Doctor: %v", err)
-	}
-	if report.Providers[0].Credential != service.CredentialNotNeeded {
-		t.Fatalf("credential %q", report.Providers[0].Credential)
 	}
 }
 

@@ -262,12 +262,6 @@ func TestChatReturnsWhatTheProviderAnswered(t *testing.T) {
 	}
 }
 
-func TestProbeCauseDistinguishesCancellationFromReachability(t *testing.T) {
-	if got := unreachable("gateway", context.Canceled); got != "request to gateway was canceled" {
-		t.Fatalf("cause = %q", got)
-	}
-}
-
 // `roca models` asks every provider for its catalogue and marks the model the
 // cascade would actually use, so an operator can see what is on offer without
 // firing a question. The provenance of the selected model travels from
