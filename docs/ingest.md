@@ -77,10 +77,12 @@ The fingerprint of every versioned source includes its parser revision. When a
 release teaches a parser to read more of a source, the next plain `roca ingest`
 reopens the files it had already synced. A replay identifies an existing turn
 within its session by its human and agent timestamps first, then by a fingerprint
-of the human and agent text when timestamps are absent or ambiguous. It backfills
-only fields that are still NULL after the content agrees; conflicting or
-ambiguous anchors are left untouched and reported as discards, so nothing that
-already landed is rewritten and no exchange is written twice.
+of the human and agent text when timestamps are absent or ambiguous. Timestamp
+anchors compare parsed RFC3339 instants, so equivalent UTC offsets and trailing
+fractional zeroes match; this also works for historical rows with no exchange
+number. It backfills only fields that are still NULL after the content agrees;
+conflicting or ambiguous anchors are left untouched and reported as discards, so
+nothing that already landed is rewritten and no exchange is written twice.
 
 ## Reading the summary
 
