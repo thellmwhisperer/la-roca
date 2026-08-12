@@ -74,11 +74,13 @@ The stable fields are:
   behind it may change without changing the line.
 - `correlation_id` on every surfaced failure, expected or not, so what the
   operator saw always names its log line: a read-only gate rejection, a rejected
-  SQL statement and a degraded query are correlated exactly like an unexpected
-  exception. An error carries the ID in its own text. A degraded query has no
-  error text to carry it, so the shell prints a `correlation_id` line under the
-  answer and a `correlation_id` field in `--json`, and the MCP surface appends
-  the same line to the tool result it marks as an error.
+  SQL statement, a degraded query and an external plugin that exited non-zero
+  are correlated exactly like an unexpected exception. An error carries the ID
+  in its own text. A failure with no error text to carry it, which is every
+  command that exits non-zero after reporting the failure itself, gets a
+  `correlation_id` line on the shell's error stream, where no answer is parsed
+  from; the MCP surface appends the same line to the tool result it marks as an
+  error.
 - Query calls add `question`, `sql`, `sql_provider`, `sql_model`, phase timings,
   and any `degraded`, `fallback_reason`, `retry_reason`, provider note, or
   `queryplan`. `sql` is the cleaned model-generated statement, including when a

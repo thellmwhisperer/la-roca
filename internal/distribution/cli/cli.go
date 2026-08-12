@@ -96,6 +96,8 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 			env.auditArgs = redactPluginArguments(args[1:])
 			if err != nil {
 				err = logfile.Correlate(err)
+			} else if code != ExitOK {
+				env.surfaceCorrelation()
 			}
 			if logErr := env.logExecution(nil, started, code, err); logErr != nil {
 				fmt.Fprintf(env.errOut,
@@ -132,7 +134,14 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 	// changes neither the answer nor the exit code. Returning it as the run's
 	// error made a query that had already printed its answer exit 1, so a script
 	// reading the code concluded the query failed while holding the answer.
+	//
+	// The ID is surfaced here and not earlier because it may only name a record
+	// this run is about to write: a command that logged itself already carries
+	// the verdict of what it wrote.
 	if !env.prelogged {
+		if err == nil && code != ExitOK {
+			env.surfaceCorrelation()
+		}
 		if logErr := env.logExecution(executed, started, code, err); logErr != nil {
 			fmt.Fprintf(env.errOut,
 				"warning: this run is not in the execution log: %v\n", logErr)
@@ -544,11 +553,19 @@ func (env *cliEnv) print(format string, args ...any) {
 	fmt.Fprintf(env.out, format+"\n", args...)
 }
 
-// printCorrelation names the log line of a run that failed without an error to
-// print. The shell's degraded answer is one: it exits non-zero and says why,
-// and an operator reading that has nothing else to match the audit record with.
-func (env *cliEnv) printCorrelation() {
-	if env.correlation != "" {
-		env.print("correlation_id: %s", env.correlation)
+// correlationID names this run's log line, minted once and reused, so what the
+// operator reads and what the audit record says are the same ID.
+func (env *cliEnv) correlationID() string {
+	if env.correlation == "" {
+		env.correlation = logfile.NewCorrelationID()
 	}
+	return env.correlation
+}
+
+// surfaceCorrelation is what a run that failed without an error value has
+// instead of the suffix Correlate writes inside an error message. It goes to the
+// error stream, which is the one stream no answer is parsed from: a --json
+// envelope stays valid and a plugin's own output stays its own.
+func (env *cliEnv) surfaceCorrelation() {
+	fmt.Fprintf(env.errOut, "correlation_id: %s\n", env.correlationID())
 }

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,5 +74,40 @@ func TestPluginCallsAreAuditedWithoutCredentialArguments(t *testing.T) {
 	}
 	if strings.Contains(text, "not-a-real-credential") {
 		t.Fatalf("plugin credential argument leaked: %s", text)
+	}
+	// A plugin that exited non-zero surfaced a failure roca never worded, so the
+	// boundary that logs it is the one that has to name the log line.
+	var record struct {
+		CorrelationID string `json:"correlation_id"`
+	}
+	if err := json.Unmarshal(raw, &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.CorrelationID == "" {
+		t.Fatalf("a failed plugin left no correlation id in its audit record: %s", text)
+	}
+	if !strings.Contains(warnings.String(), record.CorrelationID) {
+		t.Fatalf("the run does not name its audit line %q on the error stream: %q",
+			record.CorrelationID, warnings.String())
+	}
+}
+
+func TestASuccessfulRunIsNotCorrelated(t *testing.T) {
+	home := t.TempDir()
+	pluginsDir := t.TempDir()
+	plugin := filepath.Join(pluginsDir, "roca-synthetic-plugin")
+	if err := os.WriteFile(plugin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", pluginsDir)
+	t.Setenv("HOME", home)
+	var warnings strings.Builder
+	env := &cliEnv{out: &strings.Builder{}, errOut: &warnings}
+	code, err := executeWithOptions(env, []string{"synthetic-plugin"}, nil, true)
+	if err != nil || code != ExitOK {
+		t.Fatalf("plugin result = code %d err %v, want success", code, err)
+	}
+	if strings.Contains(warnings.String(), "correlation_id") || env.correlation != "" {
+		t.Fatalf("a successful run was correlated: %q", warnings.String())
 	}
 }

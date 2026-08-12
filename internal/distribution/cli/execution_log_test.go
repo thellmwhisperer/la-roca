@@ -166,9 +166,12 @@ func TestADegradedQueryNamesItsAuditLineWithoutAnError(t *testing.T) {
 	if record.CorrelationID == "" {
 		t.Fatalf("a degraded run left no correlation id in its audit record: %s", raw)
 	}
-	if !strings.Contains(out.String(), record.CorrelationID) {
-		t.Fatalf("the answer on screen does not name the audit line %q:\n%s",
-			record.CorrelationID, out.String())
+	if !strings.Contains(errs.String(), record.CorrelationID) {
+		t.Fatalf("the run does not name its audit line %q on the error stream:\n%s",
+			record.CorrelationID, errs.String())
+	}
+	if strings.Contains(out.String(), record.CorrelationID) {
+		t.Fatalf("the correlation id landed in the answer itself:\n%s", out.String())
 	}
 }
 
