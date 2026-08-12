@@ -134,10 +134,10 @@ func ParseSubagent(content []byte, meta FileMeta) (Records, error) {
 		switch entry.Type {
 		case "user":
 			pendingAgent = false
-			humans = append(humans, side{text: text, timestamp: entry.Timestamp, record: entry.record})
+			humans = append(humans, side{text: text, timestamp: validInstant(entry.Timestamp), record: entry.record})
 		case "assistant":
 			if !pendingAgent {
-				agents = append(agents, side{text: text, timestamp: entry.Timestamp, record: entry.record})
+				agents = append(agents, side{text: text, timestamp: validInstant(entry.Timestamp), record: entry.record})
 				pendingAgent = true
 			} else {
 				agents[len(agents)-1].text += "\n" + text

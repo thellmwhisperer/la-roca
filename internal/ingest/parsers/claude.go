@@ -397,7 +397,7 @@ func (b *claudeBuilder) finish() []Exchange {
 // stamp is the transcript's timestamp, or the audit's when that is what the file
 // writes.
 func (l claudeLine) stamp() string {
-	return firstNonEmpty(l.AuditTimestamp, l.Timestamp)
+	return validInstant(firstNonEmpty(l.AuditTimestamp, l.Timestamp))
 }
 
 // decodeContent reads a message's content, which is either a bare string or a
@@ -499,16 +499,15 @@ func latency(human, agent string) *int {
 	return &value
 }
 
-// parseISO reads the timestamp shapes the agents write. It is not the clock: it
-// reads what the file says, which is what keeps a parser deterministic.
+// parseISO accepts only timestamps that identify one instant. Zone-less and
+// otherwise non-RFC3339 spellings are rejected at the parser boundary because
+// guessing a zone would manufacture an anchor that the source never declared.
 func parseISO(value string) (time.Time, bool) {
 	if value == "" {
 		return time.Time{}, false
 	}
-	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05.999999999"} {
-		if parsed, err := time.Parse(layout, value); err == nil {
-			return parsed, true
-		}
+	if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return parsed, true
 	}
 	return time.Time{}, false
 }
