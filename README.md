@@ -364,10 +364,15 @@ discovered automatically, and `make accept-index` rejects any other layout. The
 Godog harness is compiled only with the `acceptance` build tag.
 
 `make eval` measures the recorded retrieval baseline against a synthetic
-fixture. It never opens the operator's corpus. Set `EVAL_FORMAT=json` for a
-machine report, `EVAL_FORMAT=markdown` for a release-note block, or
+fixture. With no extra arguments it never opens the operator's corpus. Every
+run automatically saves its complete, timestamped report under
+`.tmp/eval/logs/` and prints the path. Set `EVAL_FORMAT=json` for a machine
+report, `EVAL_FORMAT=markdown` for a release-note block, or
 `EVAL_MODE=live EVAL_PROVIDER=codex EVAL_MODEL=<id>` to generate plans live
 with an explicitly selected transport without reading operator configuration.
+To measure personal questions against an existing database, pass both
+`EVAL_CASES=/private/cases.json EVAL_DB=/private/roca.db`; that database is
+opened strictly read-only and neither personal file is part of the repository.
 See [Retrieval evaluation](docs/evaluation.md) for the golden-set
 contract and metric definitions.
 
