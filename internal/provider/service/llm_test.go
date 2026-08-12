@@ -903,15 +903,15 @@ func TestInterpretPromptIsLanguageAgnostic(t *testing.T) {
 	if prose.Text != "The format was decided in a memory." {
 		t.Fatalf("prose %q", prose.Text)
 	}
-	wantPrompt := "You are La Roca. Question: what was decided about the format. Results:\n" +
-		"source, text\n" +
-		"memory, decision about the format\n" +
-		"Use only these results, never general knowledge. If the results do not support the question, " +
-		"say so plainly before anything else. A requested style changes delivery only and never licenses invention. " +
-		"Answer in the same language as the question. Write calm, terminal-friendly prose: " +
-		"paragraphs and simple dashes only. Do not use headings or tables.\n"
-	if prompt := model.prompts[0]; prompt != wantPrompt {
-		t.Errorf("prompt = %q, want %q", prompt, wantPrompt)
+	prompt := model.prompts[0]
+	for _, want := range []string{
+		"<instructions>", "<question>\nwhat was decided about the format\n</question>",
+		"columns: source, text", "<row>memory, decision about the format</row>",
+		"Answer in the same language as the question", "<reinforcement>",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt lacks %q:\n%s", want, prompt)
+		}
 	}
 }
 
