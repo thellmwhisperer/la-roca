@@ -3,6 +3,23 @@
 First-time path: [install, detect an already signed-in agent CLI, and query
 without a La Roca login](lifecycle.md#install).
 
+## Memory authorship
+
+Every new memory stores a system-stamped harness, model and write surface in
+`memories.source_agent`, `source_model` and `source_surface`. MCP uses the
+connected client's handshake `clientInfo`; the CLI's primary path is explicit
+`roca store --agent <harness> --model <model>`. Best-effort CLI environment and
+process detection accepts only one unambiguous harness and otherwise records
+`unknown`. Existing rows remain NULL and are rendered as unknown; La Roca never
+retroactively guesses.
+
+`roca hooks install claude` adds a Claude Code `PreToolUse` hook for Bash. It
+signs `roca store` commands with `--agent claude` and the latest model recorded
+in Claude's own transcript, or `unknown` when that direct evidence is absent.
+Other harnesses can use the same client-side pattern: intercept the shell tool,
+read identity only from a harness-owned session source, and inject both flags;
+no other hook installer ships yet.
+
 Every CLI execution writes a redacted JSONL record under the selected data
 directory's `logs/`. A logging failure warns once on stderr but never changes
 a command or tool result.
