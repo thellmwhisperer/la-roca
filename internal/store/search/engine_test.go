@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca/data"
 	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 	"github.com/thellmwhisperer/la-roca/internal/provider/query/sqlgate"
 	"github.com/thellmwhisperer/la-roca/internal/store"
@@ -36,12 +37,14 @@ func TestLexicalIndexSearchFindsWhatWasSeeded(t *testing.T) {
 func TestLexicalIndexSearchFoldsDiacritics(t *testing.T) {
 	engine, _ := indexedWorld(t)
 
-	res, err := engine.Search(context.Background(), request("muller", search.MethodFTS))
-	if err != nil {
-		t.Fatalf("Search: %v", err)
-	}
-	if len(res.Rows) == 0 {
-		t.Error("asking without the diacritic did not find what was written with it")
+	for _, term := range []string{"muller", "MÜLLER", "cafe", "CAFÉ", "resume", "RÉSUMÉ", "jalapeno", "JALAPEÑO"} {
+		res, err := engine.Search(context.Background(), request(term, search.MethodFTS))
+		if err != nil {
+			t.Fatalf("Search(%q): %v", term, err)
+		}
+		if len(res.Rows) == 0 {
+			t.Errorf("asking for %q did not find its accented case variant", term)
+		}
 	}
 }
 
@@ -100,7 +103,7 @@ func TestIndexingTwiceRebuildsNothing(t *testing.T) {
 	ctx := context.Background()
 	db := seededWorld(t)
 
-	first, err := search.Index(ctx, db)
+	first, err := search.Index(ctx, db, nil)
 	if err != nil {
 		t.Fatalf("first indexing run: %v", err)
 	}
@@ -108,12 +111,59 @@ func TestIndexingTwiceRebuildsNothing(t *testing.T) {
 		t.Error("the first indexing run did not build the lexical index")
 	}
 
-	second, err := search.Index(ctx, db)
+	second, err := search.Index(ctx, db, nil)
 	if err != nil {
 		t.Fatalf("second indexing run: %v", err)
 	}
 	if second.LexicalBuilt {
 		t.Error("the second indexing run rebuilt the lexical index, which was already there")
+	}
+}
+
+func TestAnOldTokenizerIsRebuiltOnceWithoutTouchingSourceRows(t *testing.T) {
+	ctx := context.Background()
+	db := seededWorld(t)
+	oldSchema := strings.ReplaceAll(data.SearchSchema,
+		"tokenize='unicode61 remove_diacritics 2'",
+		"tokenize='unicode61 remove_diacritics 0'")
+	writeTo(t, db, oldSchema)
+	for _, table := range []string{"memories_fts", "exchanges_fts", "thinking_fts", "sessions_fts"} {
+		writeTo(t, db, "INSERT INTO "+table+"("+table+") VALUES ('rebuild')")
+		writeTo(t, db, `INSERT INTO search_state (key, value, updated_at)
+			VALUES ('lexical_index:`+table+`', 'built', datetime('now'))`)
+	}
+	writeTo(t, db, `INSERT INTO search_state (key, value, updated_at)
+		VALUES ('lexical_index', 'built', datetime('now'))`)
+
+	if n := ftsCount(t, db, `"cafe" AND "jalapeno"`); n != 0 {
+		t.Fatalf("the old tokenizer already ignores accents: matches = %d", n)
+	}
+
+	var progress []string
+	first, err := search.Index(ctx, db, func(line string) { progress = append(progress, line) })
+	if err != nil {
+		t.Fatalf("migrate old tokenizer: %v", err)
+	}
+	if !first.LexicalBuilt || !strings.Contains(strings.Join(progress, "\n"), "rebuilding") {
+		t.Fatalf("migration report = %+v, progress = %v", first, progress)
+	}
+	if n := ftsCount(t, db, `"cafe" AND "jalapeno"`); n != 1 {
+		t.Errorf("accent-free query after migration: matches = %d, want 1", n)
+	}
+	var content string
+	if err := db.SQL().QueryRow(`SELECT content FROM memories WHERE content LIKE '%jalapeño%'`).Scan(&content); err != nil {
+		t.Fatalf("read source after migration: %v", err)
+	}
+	if content != "the synthetic café serves a spicy jalapeño tasting" {
+		t.Errorf("source content changed to %q", content)
+	}
+
+	second, err := search.Index(ctx, db, func(line string) { progress = append(progress, line) })
+	if err != nil {
+		t.Fatalf("second indexing run: %v", err)
+	}
+	if second.LexicalBuilt {
+		t.Error("the migrated tokenizer rebuilt again")
 	}
 }
 
@@ -164,6 +214,8 @@ func seededWorld(t *testing.T) *store.DB {
 		INSERT INTO memories (layer, content, origin) VALUES
 		  ('fact', 'the team forbids long dashes in every deliverable', 'human'),
 		  ('fact', 'a naïve Müller façade sketch from the design review', 'agent'),
+		  ('fact', 'the synthetic café serves a spicy jalapeño tasting', 'human'),
+		  ('fact', 'the candidate sent a polished résumé for the design role', 'agent'),
 		  ('fact', 'the database opens in WAL mode with a busy timeout', 'agent');
 		INSERT INTO sessions (session_id, project, title) VALUES ('s1', 'roca', 'test session');
 		INSERT INTO exchanges (session_id, exchange_number, human_text, agent_text) VALUES
@@ -174,10 +226,21 @@ func seededWorld(t *testing.T) *store.DB {
 	return db
 }
 
+func ftsCount(t *testing.T, db *store.DB, expression string) int {
+	t.Helper()
+	var count int
+	if err := db.SQL().QueryRow(
+		`SELECT COUNT(*) FROM memories_fts WHERE memories_fts MATCH ?`, expression,
+	).Scan(&count); err != nil {
+		t.Fatalf("count FTS matches for %q: %v", expression, err)
+	}
+	return count
+}
+
 func indexedWorld(t *testing.T) (*search.Engine, *store.DB) {
 	t.Helper()
 	db := seededWorld(t)
-	if _, err := search.Index(context.Background(), db); err != nil {
+	if _, err := search.Index(context.Background(), db, nil); err != nil {
 		t.Fatalf("Index: %v", err)
 	}
 	return &search.Engine{DB: db, Validate: theGate(t)}, db
@@ -271,7 +334,7 @@ func TestSearchOverARealLabDatabase(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	if _, err := search.Index(context.Background(), db); err != nil {
+	if _, err := search.Index(context.Background(), db, nil); err != nil {
 		t.Fatalf("Index: %v", err)
 	}
 	engine := &search.Engine{DB: db, Validate: theGate(t)}
