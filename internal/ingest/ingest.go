@@ -93,7 +93,10 @@ type DiscardCategory struct {
 // source record stops being a report.
 const discardDetailBudget = 100
 
-const anchorConflictReason = "exchange anchor conflict"
+const (
+	anchorConflictReason        = "exchange anchor conflict"
+	thinkingWithoutNumberReason = "thinking block has no exchange number"
+)
 
 // Tables are the row counts of the five tables the ingest writes. Before, after,
 // and the difference: on a second pass over the same disk the difference is zero
@@ -363,6 +366,11 @@ func (r *Result) recordWritten(target Target, counts Counts) {
 		conflicts[i].Reason = anchorConflictReason
 	}
 	r.discard(target, conflicts)
+	thinking := make([]parsers.Discard, counts.ThinkingBlocksDiscarded)
+	for i := range thinking {
+		thinking[i].Reason = thinkingWithoutNumberReason
+	}
+	r.discard(target, thinking)
 }
 
 func normalizedSource(agent string) string {

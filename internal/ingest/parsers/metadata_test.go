@@ -114,6 +114,62 @@ func TestZeroEpochIsReportedAsMissing(t *testing.T) {
 	if got := ISOFromEpochSeconds(0); got != "" {
 		t.Fatalf("zero seconds became %q", got)
 	}
+	if got := validInstant("2026-08-01T10:00:00"); got != "" {
+		t.Fatalf("zone-less timestamp became %q", got)
+	}
+	if got := validInstant("2026-08-01T10:00:00Z"); got != "2026-08-01T10:00:00Z" {
+		t.Fatalf("RFC3339 timestamp became %q", got)
+	}
+}
+
+func TestParserBoundariesRejectZoneLessTimestamps(t *testing.T) {
+	tests := []struct {
+		name    string
+		kind    Kind
+		content string
+		meta    FileMeta
+	}{
+		{
+			name: "claude",
+			kind: KindClaudeSession,
+			content: `{"type":"user","timestamp":"2026-08-01T10:00:00","message":{"content":"question"}}
+{"type":"assistant","timestamp":"2026-08-01T10:00:01","message":{"content":"answer"}}`,
+			meta: FileMeta{SessionID: "claude-zone-less"},
+		},
+		{
+			name: "codex",
+			kind: KindCodexSession,
+			content: `{"type":"session_meta","timestamp":"2026-08-01T10:00:00","payload":{"id":"codex-zone-less","timestamp":"2026-08-01T10:00:00"}}
+{"type":"event_msg","timestamp":"2026-08-01T10:00:01","payload":{"type":"user_message","message":"question"}}
+{"type":"event_msg","timestamp":"2026-08-01T10:00:02","payload":{"type":"task_complete","last_agent_message":"answer"}}`,
+		},
+		{
+			name: "subagent",
+			kind: KindSubagent,
+			content: `{"type":"user","sessionId":"parent","agentId":"subagent-zone-less","timestamp":"2026-08-01T10:00:00","message":{"content":"question"}}
+{"type":"assistant","sessionId":"parent","agentId":"subagent-zone-less","timestamp":"2026-08-01T10:00:01","message":{"content":"answer"}}`,
+			meta: FileMeta{Path: "subagent-zone-less.jsonl"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			records, err := Parse(test.kind, []byte(test.content), test.meta)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(records.Sessions) != 1 || len(records.Sessions[0].Exchanges) != 1 {
+				t.Fatalf("records = %+v", records)
+			}
+			session := records.Sessions[0]
+			exchange := session.Exchanges[0]
+			if session.StartedAt != "" || session.EndedAt != "" ||
+				exchange.HumanTimestamp != "" || exchange.AgentTimestamp != "" {
+				t.Fatalf("zone-less timestamps landed: session %q..%q, exchange %q..%q",
+					session.StartedAt, session.EndedAt,
+					exchange.HumanTimestamp, exchange.AgentTimestamp)
+			}
+		})
+	}
 }
 
 const coworkAudit = `

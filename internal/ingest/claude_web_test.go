@@ -192,9 +192,9 @@ func TestMultipleClaudeWebExportsKeepNewestSnapshotAndOneMemory(t *testing.T) {
 	directories := []struct {
 		path, name, summary, updated, memory, memoryUpdated string
 	}{
-		{filepath.Join(t.TempDir(), "oldest"), "Oldest synthetic snapshot", "Oldest synthetic summary.", "2026-08-01T09:01:00", "Newest synthetic memory.", "2026-08-01T08:01:00"},
-		{filepath.Join(t.TempDir(), "newest"), "Newest synthetic snapshot", "Newest synthetic summary.", "2026-08-01T09:10:00", "Newest synthetic memory.", "2026-08-01T08:10:00"},
-		{filepath.Join(t.TempDir(), "middle"), "Middle synthetic snapshot", "Middle synthetic summary.", "2026-08-01T09:05:00", "Middle synthetic memory.", "2026-08-01T08:05:00"},
+		{filepath.Join(t.TempDir(), "oldest"), "Oldest synthetic snapshot", "Oldest synthetic summary.", "2026-08-01T09:01:00Z", "Newest synthetic memory.", "2026-08-01T08:01:00Z"},
+		{filepath.Join(t.TempDir(), "newest"), "Newest synthetic snapshot", "Newest synthetic summary.", "2026-08-01T09:10:00Z", "Newest synthetic memory.", "2026-08-01T08:10:00Z"},
+		{filepath.Join(t.TempDir(), "middle"), "Middle synthetic snapshot", "Middle synthetic summary.", "2026-08-01T09:05:00Z", "Middle synthetic memory.", "2026-08-01T08:05:00Z"},
 	}
 	for _, export := range directories {
 		if err := os.MkdirAll(export.path, 0o700); err != nil {
@@ -202,10 +202,10 @@ func TestMultipleClaudeWebExportsKeepNewestSnapshotAndOneMemory(t *testing.T) {
 		}
 		conversation, err := json.Marshal([]map[string]any{{
 			"uuid": "synthetic-overlap", "name": export.name, "summary": export.summary,
-			"created_at": "2026-08-01T09:00:00", "updated_at": export.updated,
+			"created_at": "2026-08-01T09:00:00Z", "updated_at": export.updated,
 			"chat_messages": []map[string]any{
-				{"uuid": "synthetic-human", "text": "Name the synthetic marker.", "sender": "human", "created_at": "2026-08-01T09:00:01"},
-				{"uuid": "synthetic-assistant", "text": "Glass Finch.", "sender": "assistant", "created_at": "2026-08-01T09:00:02", "parent_message_uuid": "synthetic-human"},
+				{"uuid": "synthetic-human", "text": "Name the synthetic marker.", "sender": "human", "created_at": "2026-08-01T09:00:01Z"},
+				{"uuid": "synthetic-assistant", "text": "Glass Finch.", "sender": "assistant", "created_at": "2026-08-01T09:00:02Z", "parent_message_uuid": "synthetic-human"},
 			},
 		}})
 		if err != nil {

@@ -107,7 +107,9 @@ export names its model and provider without stating usage.
 
 Thinking text stays in `thinking_blocks`, keyed to its session and exchange; it
 is not duplicated onto `exchanges`. Codex reasoning now lands there on the
-exchange that produced it, alongside the other sources' thinking blocks.
+exchange that produced it, alongside the other sources' thinking blocks. When a
+historical match has no exchange number, the schema has no key for replayed
+thinking blocks, so they are left out and each one is reported as a discard.
 
 The fingerprint of every versioned source includes its parser revision. When a
 release teaches a parser to read more of a source, the next plain `roca ingest`
@@ -116,9 +118,14 @@ within its session by its human and agent timestamps first, then by a fingerprin
 of the human and agent text when timestamps are absent or ambiguous. Timestamp
 anchors compare parsed RFC3339 instants, so equivalent UTC offsets and trailing
 fractional zeroes match; this also works for historical rows with no exchange
-number. It backfills only fields that are still NULL after the content agrees;
-conflicting or ambiguous anchors are left untouched and reported as discards, so
-nothing that already landed is rewritten and no exchange is written twice.
+number. String timestamps without an RFC3339 zone, or with another unsupported
+spelling, are omitted at the parser boundary instead of being assigned a guessed
+instant. In a same-instant collision, one numbered original may be selected over
+compatible numberless duplicates; numbered peers and conflicting text remain
+ambiguous. The replay backfills only fields that are still NULL after the
+content agrees. Every unresolved collision is left untouched and reported as a
+discard, so nothing that already landed is rewritten and no exchange is written
+twice.
 
 ## Reading the summary
 
