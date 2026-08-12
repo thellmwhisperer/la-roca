@@ -20,6 +20,14 @@ The selected transport generates every plan against that same fixture. Every
 live case and the report summary name the provider and model that produced its
 plan, so runs from different model configurations remain attributable.
 
+A live case is measuring a model, so a plan the provider fails to produce and a
+plan that passes the SELECT gate but cannot execute are both that case's miss:
+the error is kept in the case and attempt data, the attempt counts as an empty
+query, the human report marks the case `ERROR`, and the run continues to the
+last case. Replay has no model to measure, so a recorded plan that cannot run is
+a harness failure and stops the run. A live provider that resolves to nobody is
+a configuration failure and is refused before the run starts.
+
 Every successful replay and live run automatically writes a credential-safe
 JSONL record under `<work-dir>/logs/eval-YYYY-MM-DD.jsonl` (the default is
 `.tmp/eval/logs/`) and prints that path at the end. The record carries the UTC

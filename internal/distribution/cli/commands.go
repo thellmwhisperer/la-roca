@@ -750,6 +750,13 @@ func evaluationProviders(dataDir, providerName, model string) (provider.Cascade,
 	if err != nil {
 		return provider.Cascade{}, fmt.Errorf("build live eval provider %q: %w", providerName, err)
 	}
+	// A live run records what the asked model failed to plan, so a provider that
+	// resolves to nobody would be measured as a wall of misses. That is a
+	// configuration failure, and it stops the run before it starts.
+	if len(providers.Providers) == 0 {
+		return provider.Cascade{}, fmt.Errorf("live eval provider %q is unavailable: %s",
+			providerName, strings.Join(providers.Warnings, "; "))
+	}
 	return providers, nil
 }
 

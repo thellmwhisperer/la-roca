@@ -3,6 +3,7 @@ package evaluation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"os"
 	"path/filepath"
@@ -268,6 +269,72 @@ func TestQueriesToAnswerNamesAnsweredAndDeclaredRescueCases(t *testing.T) {
 	if err != nil || !strings.Contains(string(raw), `"answered_rescue_cases":1`) ||
 		!strings.Contains(string(raw), `"rescue_cases":2`) {
 		t.Fatalf("machine rescue denominator = %s, err=%v", raw, err)
+	}
+}
+
+// A live run measures models that fail: a plan the provider never produced and
+// a plan that passes the SELECT gate but cannot execute are both that case's
+// miss, and neither may discard what the run already measured.
+func TestLiveFailuresAreRecordedAndTheRunFinishes(t *testing.T) {
+	svc := fixtureService(t, provider.Cascade{})
+	suite := Suite{Fixture: "synthetic-v1", Cases: []Case{
+		{ID: "plan-fails", Question: "Who approved Aurora?", ExpectedKind: "row_contains",
+			ExpectedMarker: "Nora Vale"},
+		{ID: "exec-fails", Question: "Is there an Aurora handoff?", ExpectedKind: "row_contains",
+			ExpectedMarker: "Nora Vale"},
+		{ID: "later-case", Question: "Who approved Aurora?", ExpectedKind: "row_contains",
+			ExpectedMarker: "Nora Vale"},
+	}}
+	planner := plannerFunc(func(_ context.Context, golden Case, _ int, _ string) (Plan, error) {
+		switch golden.ID {
+		case "plan-fails":
+			return Plan{}, errors.New("no provider/model answered")
+		case "exec-fails":
+			return Plan{SQL: []string{"SELECT content AS text FROM memories WHERE content MATCH 'Aurora' LIMIT 5"},
+				Provider: "test", Model: "planner-v2"}, nil
+		}
+		return Plan{SQL: []string{"SELECT content AS text FROM memories WHERE content LIKE '%Nora Vale%' LIMIT 5"},
+			Provider: "test", Model: "planner-v2"}, nil
+	})
+
+	report, err := Run(context.Background(), svc, suite, planner, "live")
+	if err != nil {
+		t.Fatalf("a failing case aborted the live run: %v", err)
+	}
+	if len(report.Cases) != 3 || report.Metrics.Cases != 3 || !report.Cases[2].HitAt5 {
+		t.Fatalf("the run stopped short of the later case: %+v", report.Cases)
+	}
+	for _, index := range []int{0, 1} {
+		failed := report.Cases[index]
+		if failed.HitAt1 || failed.HitAt5 || failed.Error == "" ||
+			len(failed.Attempts) != 1 || failed.Attempts[0].Error == "" {
+			t.Fatalf("case %s lost its recorded failure: %+v", failed.ID, failed)
+		}
+	}
+	if !strings.Contains(report.Cases[1].Error, "MATCH") ||
+		report.Cases[1].Attempts[0].SQL == "" {
+		t.Fatalf("the non-executable plan and its error were not kept: %+v", report.Cases[1])
+	}
+	if report.Metrics.TotalQueries != 3 || report.Metrics.ZeroResultQueries != 2 ||
+		report.Metrics.HitAt5 != 1 {
+		t.Fatalf("failures were not counted as empty queries: %+v", report.Metrics)
+	}
+	archive, err := NewArchive(report, time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(archive.Report.Cases) != 3 || !strings.Contains(archive.Formats.JSON, "MATCH") {
+		t.Fatalf("the persisted archive is not the complete run: %s", archive.Formats.JSON)
+	}
+	if !strings.Contains(archive.Formats.Human, "ERROR exec-fails") {
+		t.Fatalf("the human report hides the failed case:\n%s", archive.Formats.Human)
+	}
+
+	for _, golden := range suite.Cases[:2] {
+		replayed := Suite{Fixture: suite.Fixture, Cases: []Case{golden}}
+		if _, err := Run(context.Background(), svc, replayed, planner, "replay"); err == nil {
+			t.Errorf("replay silently absorbed the %s failure", golden.ID)
+		}
 	}
 }
 

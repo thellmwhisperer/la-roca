@@ -53,11 +53,14 @@ func RenderHuman(report Report) string {
 	fmt.Fprintf(&out, "total wall time: %d ms\n", report.TotalWallMS)
 	for _, result := range report.Cases {
 		status := "PASS"
-		if !result.HitAt5 {
+		switch {
+		case result.Error != "":
+			status = "ERROR"
+		case result.HitAt5:
+		case result.Headroom != "":
+			status = "HEADROOM"
+		default:
 			status = "MISS"
-			if result.Headroom != "" {
-				status = "HEADROOM"
-			}
 		}
 		fmt.Fprintf(&out, "%s %s · hit@1=%t hit@5=%t queries=%d wall=%d ms\n",
 			status, result.ID, result.HitAt1, result.HitAt5, result.Queries, result.WallMS)

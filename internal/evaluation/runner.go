@@ -72,6 +72,7 @@ type AttemptResult struct {
 	HitAt1     bool             `json:"hit_at_1"`
 	HitAt5     bool             `json:"hit_at_5"`
 	WallMS     int64            `json:"wall_ms"`
+	Error      string           `json:"error,omitempty"`
 }
 
 type CaseResult struct {
@@ -86,6 +87,7 @@ type CaseResult struct {
 	Queries         int             `json:"queries"`
 	QueriesToAnswer int             `json:"queries_to_answer,omitempty"`
 	WallMS          int64           `json:"wall_ms"`
+	Error           string          `json:"error,omitempty"`
 	Attempts        []AttemptResult `json:"attempts"`
 }
 
@@ -127,7 +129,8 @@ func Run(ctx context.Context, svc *service.Service, suite Suite, planner Planner
 	producerCounts := map[string]int{}
 	qtaTotal := 0
 	for _, golden := range suite.Cases {
-		result, err := runCase(ctx, svc, planner, golden, producerCounts, &report.Metrics)
+		result, err := runCase(ctx, svc, planner, golden, producerCounts, &report.Metrics,
+			mode == "live")
 		if err != nil {
 			return report, err
 		}
@@ -164,8 +167,13 @@ func Run(ctx context.Context, svc *service.Service, suite Suite, planner Planner
 // to the first question alone: a rescue attempt that lands the marker on the
 // top row is reported by queries-to-answer, so the top-1 ruler keeps meaning
 // the same thing across prompt, query, and rescue-path revisions.
+//
+// recordFailures says what a model that cannot plan or whose plan cannot run
+// means. Live mode is measuring that model, so the failure is this case's miss
+// and the run keeps going with the error kept as evidence; replay has no model
+// to measure, so the same failure is a broken harness and stops the run.
 func runCase(ctx context.Context, svc *service.Service, planner Planner, golden Case,
-	producerCounts map[string]int, metrics *Metrics) (CaseResult, error) {
+	producerCounts map[string]int, metrics *Metrics, recordFailures bool) (CaseResult, error) {
 	started := time.Now()
 	result := CaseResult{ID: golden.ID, Category: golden.Category, Question: golden.Question,
 		ExpectedKind: golden.ExpectedKind, ExpectedMarker: golden.ExpectedMarker,
@@ -173,44 +181,65 @@ func runCase(ctx context.Context, svc *service.Service, planner Planner, golden 
 	questions := append([]string{golden.Question}, golden.RescuePath...)
 	for attempt, question := range questions {
 		attemptStarted := time.Now()
-		plan, err := planner.Plan(ctx, golden, attempt, question)
-		if err != nil {
+		record, err := runAttempt(ctx, svc, planner, golden, attempt, question)
+		record.WallMS = time.Since(attemptStarted).Milliseconds()
+		switch {
+		case err != nil && !recordFailures:
 			return result, err
-		}
-		if len(plan.SQL) != 1 {
-			return result, fmt.Errorf("planner returned %d statements for %s attempt %d",
-				len(plan.SQL), golden.ID, attempt+1)
-		}
-		executed, err := svc.Exec(ctx, service.ExecRequest{SQL: plan.SQL[0], MaxChars: maxChars})
-		if err != nil {
-			return result, fmt.Errorf("execute %s attempt %d: %w", golden.ID, attempt+1, err)
-		}
-		at1, at5, err := Match(golden, executed.Rows)
-		if err != nil {
-			return result, fmt.Errorf("match %s: %w", golden.ID, err)
+		case err != nil:
+			record.Error = err.Error()
+			if result.Error == "" {
+				result.Error = record.Error
+			}
+		default:
+			if record.HitAt1, record.HitAt5, err = Match(golden, record.ResultRows); err != nil {
+				return result, fmt.Errorf("match %s: %w", golden.ID, err)
+			}
 		}
 		metrics.TotalQueries++
-		if executed.RowCount == 0 {
+		if record.Rows == 0 {
 			metrics.ZeroResultQueries++
 		}
-		producerCounts[plan.Provider+"\x00"+plan.Model]++
-		result.Attempts = append(result.Attempts, AttemptResult{
-			Question: question, SQL: executed.SQL, Provider: plan.Provider, Model: plan.Model,
-			Degraded: plan.Degraded, Rows: executed.RowCount, Columns: executed.Columns,
-			ResultRows: executed.Rows, HitAt1: at1, HitAt5: at5,
-			WallMS: time.Since(attemptStarted).Milliseconds(),
-		})
-		result.Queries, result.HitAt5 = attempt+1, at5
-		if attempt == 0 {
-			result.HitAt1 = at1
+		if record.Provider != "" || record.Model != "" {
+			producerCounts[record.Provider+"\x00"+record.Model]++
 		}
-		if at5 {
+		result.Attempts = append(result.Attempts, record)
+		result.Queries, result.HitAt5 = attempt+1, record.HitAt5
+		if attempt == 0 {
+			result.HitAt1 = record.HitAt1
+		}
+		if record.HitAt5 {
 			result.QueriesToAnswer = attempt + 1
 			break
 		}
 	}
 	result.WallMS = time.Since(started).Milliseconds()
 	return result, nil
+}
+
+// runAttempt asks one question and returns what the plan and its execution
+// produced. The partial record travels with the error so a live failure is
+// still reported with the SQL and the labels that produced it.
+func runAttempt(ctx context.Context, svc *service.Service, planner Planner, golden Case,
+	attempt int, question string) (AttemptResult, error) {
+	record := AttemptResult{Question: question}
+	plan, err := planner.Plan(ctx, golden, attempt, question)
+	if err != nil {
+		return record, err
+	}
+	if len(plan.SQL) != 1 {
+		return record, fmt.Errorf("planner returned %d statements for %s attempt %d",
+			len(plan.SQL), golden.ID, attempt+1)
+	}
+	record.SQL, record.Provider = plan.SQL[0], plan.Provider
+	record.Model, record.Degraded = plan.Model, plan.Degraded
+	executed, err := svc.Exec(ctx, service.ExecRequest{SQL: plan.SQL[0], MaxChars: maxChars})
+	if err != nil {
+		return record, fmt.Errorf("execute %s attempt %d: %w", golden.ID, attempt+1, err)
+	}
+	record.SQL, record.Rows = executed.SQL, executed.RowCount
+	record.Columns, record.ResultRows = executed.Columns, executed.Rows
+	return record, nil
 }
 
 func Match(golden Case, rows []map[string]any) (bool, bool, error) {
