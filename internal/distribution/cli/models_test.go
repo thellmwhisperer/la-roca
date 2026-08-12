@@ -3,8 +3,6 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,19 +14,11 @@ import (
 // about providers, like login, so an operator can run it before init.
 func TestModelsListsEachProviderAndMarksTheSelected(t *testing.T) {
 	home := isolatedLoginHome(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/models" || r.Header.Get("Authorization") != "Bearer sk-test" {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		fmt.Fprint(w, `{"data":[{"id":"mycorp-7b"},{"id":"mycorp-mini"}]}`)
-	}))
-	defer server.Close()
-	writeProviderConfig(t, home, "mycorp", server.URL, "mycorp-7b")
+	writeCommandProviderConfig(t, home, "mycorp", "mycorp-7b", true)
 
 	out := runRoot(t, Build{Version: "test", Commit: "abc123"}, "models")
 
-	for _, want := range []string{"[ok] mycorp", "mycorp-7b (selected)", "mycorp-mini"} {
+	for _, want := range []string{"[ok] mycorp", "mycorp-7b (selected)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("models output missing %q:\n%s", want, out)
 		}
@@ -39,13 +29,13 @@ func TestModelsListsEachProviderAndMarksTheSelected(t *testing.T) {
 // the command keeps going instead of aborting on the first failure.
 func TestModelsKeepsGoingPastAProviderThatDoesNotAnswer(t *testing.T) {
 	home := isolatedLoginHome(t)
-	writeProviderConfig(t, home, "alpha", "http://127.0.0.1:1", "alpha-1")
+	writeCommandProviderConfig(t, home, "alpha", "alpha-1", false)
 
 	out := runRoot(t, Build{Version: "test"}, "models")
 	if !strings.Contains(out, "[no] alpha") {
 		t.Fatalf("an unreachable provider must be listed as not ready:\n%s", out)
 	}
-	if !strings.Contains(out, "127.0.0.1:1") {
+	if !strings.Contains(out, "alpha-agent binary not found in PATH") {
 		t.Fatalf("the reason must name where it looked:\n%s", out)
 	}
 }
@@ -54,11 +44,7 @@ func TestModelsKeepsGoingPastAProviderThatDoesNotAnswer(t *testing.T) {
 // and each provider reports its catalogue and its selected model.
 func TestModelsJSONContract(t *testing.T) {
 	home := isolatedLoginHome(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"data":[{"id":"mycorp-7b"},{"id":"mycorp-mini"}]}`)
-	}))
-	defer server.Close()
-	writeProviderConfig(t, home, "mycorp", server.URL, "mycorp-7b")
+	writeCommandProviderConfig(t, home, "mycorp", "mycorp-7b", true)
 
 	out := runRoot(t, Build{Version: "test", Commit: "abc123"}, "--json", "models")
 	var result map[string]any
@@ -80,19 +66,24 @@ func TestModelsJSONContract(t *testing.T) {
 		t.Fatalf("a reachable provider must be ready: %#v", row)
 	}
 	models, _ := row["models"].([]any)
-	if len(models) != 2 {
+	if len(models) != 1 {
 		t.Fatalf("the catalogue did not travel: %#v", models)
 	}
 }
 
-// writeProviderConfig declares a single OpenAI-compatible provider of the
-// operator's own, named and ordered, so the cascade builds it from the file the
-// way a real installation would.
-func writeProviderConfig(t *testing.T, home, name, baseURL, model string) {
+// writeCommandProviderConfig declares one local agent command provider.
+func writeCommandProviderConfig(t *testing.T, home, name, model string, available bool) {
 	t.Helper()
+	command := name + "-agent"
+	if available {
+		if err := os.WriteFile(filepath.Join(os.Getenv("PATH"), command),
+			[]byte("#!/bin/sh\nprintf 'SELECT 1\n'\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
 	writeConfig(t, home, fmt.Sprintf(
-		"[models]\norder = [%q]\n\n[models.%s]\nbase_url = %q\napi_key = \"sk-test\"\nmodel = %q\n",
-		name, name, baseURL, model))
+		"[models]\norder = [%q]\n\n[models.%s]\ncommand = [%q, \"{prompt}\"]\nmodel = %q\n",
+		name, name, command, model))
 }
 
 // writeConfig lays a configuration under an isolated home and says where it
@@ -115,7 +106,7 @@ func writeConfig(t *testing.T, home, body string) string {
 func TestDoctorReportsTheConfiguredInterpretationProvider(t *testing.T) {
 	home := isolatedLoginHome(t)
 	writeConfig(t, home, "[models]\norder = [\"mycorp\"]\ninterpret_order = [\"ollama\"]\nprobe_ms = 200\n"+
-		"\n[models.mycorp]\nbase_url = \"http://127.0.0.1:1/v1\"\napi_key = \"sk-test\"\nmodel = \"mycorp-7b\"\n"+
+		"\n[models.mycorp]\ncommand = [\"missing-mycorp-cli\", \"{prompt}\"]\nmodel = \"mycorp-7b\"\n"+
 		"\n[models.ollama]\nbase_url = \"http://127.0.0.1:1\"\nmodel = \"qwen3.5:4b\"\n")
 
 	build := Build{Version: "test", Commit: "abc123"}

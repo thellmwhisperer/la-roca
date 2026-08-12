@@ -11,16 +11,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 )
 
-// What doctor says about a provider's credential. Presence, never the value:
-// and it is enforced by there being no
-// field that could hold it.
-const (
-	CredentialPresent   = "present"
-	CredentialAbsent    = "absent"
-	CredentialNotNeeded = "not needed"
-	CredentialExternal  = "managed by local CLI; no roca login required"
-)
-
 // DoctorReport is the installation's diagnosis: where its data is, what it
 // understood of its configuration, and which model is going to answer.
 //
@@ -83,12 +73,6 @@ type DoctorProvider struct {
 	// Reason and Action are why it does not serve and what to do about it.
 	Reason string `json:"reason,omitempty"`
 	Action string `json:"action,omitempty"`
-	// Credential is presence only. There is no field for the value on purpose.
-	Credential string `json:"credential"`
-}
-
-type CredentialHolder interface {
-	HasCredential() bool
 }
 
 func (s *Service) Doctor(ctx context.Context) (DoctorReport, error) {
@@ -175,32 +159,17 @@ func (s *Service) bedrock(ctx context.Context) (*Bedrock, error) {
 func verdicts(ctx context.Context, cascade provider.Cascade) ([]DoctorProvider, string) {
 	var reported []DoctorProvider
 	var titular string
-	for i, attempt := range cascade.Diagnose(ctx) {
+	for _, attempt := range cascade.Diagnose(ctx) {
 		reported = append(reported, DoctorProvider{
-			Name:       attempt.Name,
-			Ready:      attempt.Ready,
-			Model:      attempt.ModelID,
-			Reason:     attempt.Reason,
-			Action:     attempt.Action,
-			Credential: credentialOf(cascade.Providers[i]),
+			Name:   attempt.Name,
+			Ready:  attempt.Ready,
+			Model:  attempt.ModelID,
+			Reason: attempt.Reason,
+			Action: attempt.Action,
 		})
 		if attempt.Ready && titular == "" {
 			titular = attempt.Name
 		}
 	}
 	return reported, titular
-}
-
-func credentialOf(p provider.Provider) string {
-	if external, ok := p.(interface{ ExternalCredential() bool }); ok && external.ExternalCredential() {
-		return CredentialExternal
-	}
-	holder, holds := p.(CredentialHolder)
-	if !holds {
-		return CredentialNotNeeded
-	}
-	if holder.HasCredential() {
-		return CredentialPresent
-	}
-	return CredentialAbsent
 }

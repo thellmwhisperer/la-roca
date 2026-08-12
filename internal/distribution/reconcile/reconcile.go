@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
@@ -20,7 +21,7 @@ import (
 
 const (
 	ProposalClaudeCLI       = "claude-cli-provider"
-	ProposalCodexCLI        = "codex-cli-transport"
+	ProposalRetiredProvider = "retired-provider"
 	ProposalAnthropicExport = "anthropic-export-path"
 
 	CapabilityAnthropicExport = "anthropic-export-ingester"
@@ -31,7 +32,6 @@ type ProviderCondition string
 
 const (
 	ProviderUnavailable ProviderCondition = "unavailable"
-	ProviderHTTP        ProviderCondition = "http"
 )
 
 // Detection is an AND of observable environment and configuration facts.
@@ -41,7 +41,7 @@ type Detection struct {
 	Binary           string
 	Provider         string
 	ProviderState    ProviderCondition
-	Credential       string
+	RetiredProvider  bool
 	DefaultListEmpty string
 }
 
@@ -55,20 +55,22 @@ type Proposal struct {
 }
 
 type Entry struct {
-	ID        string
-	Detection Detection
-	Proposal  Proposal
+	ID              string
+	Detection       Detection
+	Proposal        Proposal
+	RetiredProvider string
 }
 
 type Context struct {
-	Version         string
-	ConfigPath      string
-	StampPath       string
-	CredentialsPath string
-	LookPath        func(string) (string, error)
-	Env             func(string) string
-	File            config.File
-	Capabilities    map[string]bool
+	Version                string
+	ConfigPath             string
+	StampPath              string
+	LookPath               func(string) (string, error)
+	Env                    func(string) string
+	File                   config.File
+	Capabilities           map[string]bool
+	RetiredCredentialPaths map[string]string
+	RecoveryBackupPaths    []string
 }
 
 type Options struct {
@@ -101,22 +103,7 @@ func Registry() []Entry {
 					{Kind: config.ReplaceTable, Table: "models.claude"}},
 			},
 		},
-		{
-			ID: ProposalCodexCLI,
-			Detection: Detection{Binary: provider.NameCodex, Provider: provider.NameCodex,
-				ProviderState: ProviderHTTP, Credential: provider.FileCodexSession},
-			Proposal: Proposal{
-				Alert:  "Codex is using La Roca's OAuth/HTTP session while the Codex CLI is on PATH; the local-binary transport uses the same subscription without token refresh.",
-				Prompt: "Switch Codex to the local-binary transport?",
-				Changes: []config.Change{{Kind: config.ReplaceTable, Table: "models.codex",
-					Fields: []config.Field{
-						{Key: "command", Value: []string{"codex", "exec", "--model", "{model}",
-							"--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check",
-							"--ignore-user-config", "--ignore-rules", "--color", "never", "-"}},
-						{Key: "model", ValueFrom: "models.codex.model", Fallback: provider.DefaultCodexModel},
-					}}},
-			},
-		},
+		{ID: ProposalRetiredProvider, Detection: Detection{RetiredProvider: true}},
 		{
 			ID: ProposalAnthropicExport,
 			Detection: Detection{Capability: CapabilityAnthropicExport,
@@ -142,6 +129,10 @@ func Open(context Context, registry []Entry) []Entry {
 	}
 	var open []Entry
 	for _, entry := range registry {
+		if entry.ID == ProposalRetiredProvider && entry.Detection.RetiredProvider {
+			open = append(open, retiredProviderEntries(context, file)...)
+			continue
+		}
 		if detected(context, file, entry.Detection) {
 			open = append(open, entry)
 		}
@@ -156,9 +147,6 @@ func detected(context Context, file config.File, detection Detection) bool {
 	if detection.Binary != "" && !binaryOnPath(context, detection.Binary) {
 		return false
 	}
-	if detection.Credential != "" && !regularFile(filepath.Join(context.CredentialsPath, detection.Credential)) {
-		return false
-	}
 	if detection.DefaultListEmpty != "" && len(file.DefaultList(detection.DefaultListEmpty)) > 0 {
 		return false
 	}
@@ -171,10 +159,6 @@ func detected(context Context, file config.File, detection Detection) bool {
 		switch detection.ProviderState {
 		case ProviderUnavailable:
 			if providerUsable(context, file, detection.Provider, declared) {
-				return false
-			}
-		case ProviderHTTP:
-			if !declared || provider.UsesCommandTransport(file, detection.Provider) {
 				return false
 			}
 		}
@@ -197,33 +181,172 @@ func providerUsable(context Context, file config.File, name string, declared boo
 		}
 		return binaryOnPath(context, command[0])
 	}
-	env := func(key string) string {
-		if key == provider.EnvOrder || context.Env == nil {
-			return ""
-		}
-		return context.Env(key)
-	}
-	cascade, err := provider.BuildCascade(provider.Settings{
-		File: file, Credentials: context.CredentialsPath, Env: env,
-	})
-	if err != nil {
-		return false
-	}
-	for _, candidate := range cascade.Providers {
-		if candidate.Name() != name {
-			continue
-		}
-		if credentialed, ok := candidate.(interface{ HasCredential() bool }); ok {
-			return credentialed.HasCredential()
-		}
-		return true
-	}
 	return false
 }
 
+func retiredProviderEntries(context Context, file config.File) []Entry {
+	candidates := retiredProviderCandidates(context, file)
+	detected := provider.DetectedCommandPresets(context.LookPath)
+	entries := make([]Entry, 0, len(candidates))
+	for _, candidate := range candidates {
+		name := candidate.Name
+		configured, declared := providerConfiguration(file, name)
+		// An explicit command declaration is the operator's own transport. It is
+		// never a retired artifact, so it survives every proposal below.
+		ownCommand := declared && len(configured.Command) > 0
+		if !candidate.RetireConfiguration {
+			alert := fmt.Sprintf("Retired provider credential file detected for %s; no model configuration changes are needed.", name)
+			if ownCommand {
+				alert = fmt.Sprintf("Retired provider credential file detected for %s; its configured command transport remains unchanged.", name)
+			}
+			entries = append(entries, Entry{
+				ID: ProposalRetiredProvider + "-credential-" + name,
+				Proposal: Proposal{
+					Alert:  alert,
+					Prompt: fmt.Sprintf("Remove the retired %s credential file?", name),
+				},
+				RetiredProvider: name,
+			})
+			continue
+		}
+		target := ""
+		if ownCommand || slices.Contains(detected, name) {
+			target = name
+		} else if len(detected) > 0 {
+			target = detected[0]
+		}
+		changes := retiredProviderChanges(name, target, candidate.Tables)
+		entry := Entry{ID: ProposalRetiredProvider + "-" + name,
+			Proposal: Proposal{Changes: changes}, RetiredProvider: name}
+		switch target {
+		case "":
+			entry.Proposal.Alert = fmt.Sprintf("Retired credential-backed model provider detected: drop %s from the provider order; no local agent CLI is on PATH.", name)
+			entry.Proposal.Prompt = fmt.Sprintf("Drop %s from the model configuration?", name)
+		case name:
+			entry.Proposal.Alert = fmt.Sprintf("Retired credential-backed model provider detected: remove the retired %s authentication settings and keep the rest of its table; %s authenticates through its own CLI.", name, name)
+			entry.Proposal.Prompt = fmt.Sprintf("Remove the retired %s authentication settings?", name)
+		default:
+			entry.Proposal.Alert = fmt.Sprintf("Retired credential-backed model provider detected: migrate %s to %s, which authenticates through its own CLI.", name, target)
+			entry.Proposal.Prompt = fmt.Sprintf("Migrate %s to the %s local CLI?", name, target)
+		}
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+type retiredProviderCandidate struct {
+	Name                string
+	Tables              []string
+	RetireConfiguration bool
+}
+
+func retiredProviderCandidates(context Context, file config.File) []retiredProviderCandidate {
+	candidates := map[string]retiredProviderCandidate{}
+	add := func(name, table string) {
+		normalized := normalizeProviderName(name)
+		if normalized == "" || !RetiredProviderConfiguration(file, name) {
+			return
+		}
+		candidate := candidates[normalized]
+		candidate.Name = normalized
+		candidate.RetireConfiguration = true
+		if table != "" && !slices.Contains(candidate.Tables, table) {
+			candidate.Tables = append(candidate.Tables, table)
+		}
+		candidates[normalized] = candidate
+	}
+	for _, name := range append(append([]string(nil), file.Models.Order...), file.Models.InterpretOrder...) {
+		add(name, "")
+	}
+	for name, configured := range file.Models.Providers {
+		table := configured.TableName
+		if table == "" {
+			table = name
+		}
+		add(name, table)
+	}
+	for name, path := range context.RetiredCredentialPaths {
+		if regularFile(path) {
+			normalized := normalizeProviderName(name)
+			if normalized == "" {
+				continue
+			}
+			candidate := candidates[normalized]
+			candidate.Name = normalized
+			candidates[normalized] = candidate
+		}
+	}
+	ordered := make([]retiredProviderCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		sort.Strings(candidate.Tables)
+		ordered = append(ordered, candidate)
+	}
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Name < ordered[j].Name })
+	return ordered
+}
+
+// RetiredProviderConfiguration reports whether the operator's own configuration
+// still asks for a transport this build retired. A credential file left on disk
+// by an older release is not part of that answer: it is a stale artifact with
+// its own cleanup proposal, and it never disables a transport that works.
+func RetiredProviderConfiguration(file config.File, name string) bool {
+	normalized := normalizeProviderName(name)
+	if normalized == "" || normalized == provider.NameOllama {
+		return false
+	}
+	cfg, declared := providerConfiguration(file, name)
+	if len(cfg.Command) > 0 || provider.UsesCommandTransport(file, normalized) {
+		return declared && (cfg.BaseURL != "" || cfg.RetiredCredential)
+	}
+	return true
+}
+
+func providerConfiguration(file config.File, name string) (config.ProviderConfig, bool) {
+	if configured, declared := file.Models.Providers[strings.ToLower(strings.TrimSpace(name))]; declared {
+		return configured, true
+	}
+	normalized := normalizeProviderName(name)
+	for candidate, configured := range file.Models.Providers {
+		if normalizeProviderName(candidate) == normalized {
+			return configured, true
+		}
+	}
+	return config.ProviderConfig{}, false
+}
+
+func normalizeProviderName(name string) string {
+	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(name)), "_", "-")
+}
+
 func regularFile(path string) bool {
-	info, err := os.Stat(path)
+	if path == "" {
+		return false
+	}
+	info, err := os.Lstat(path)
 	return err == nil && info.Mode().IsRegular()
+}
+
+func retiredProviderChanges(name, target string, tables []string) []config.Change {
+	kind := config.RemoveListValue
+	if target != "" {
+		kind = config.ReplaceListValue
+	}
+	changes := []config.Change{
+		{Kind: kind, Table: "models", Key: "order", Old: name, Value: target},
+		{Kind: kind, Table: "models", Key: "interpret_order", Old: name, Value: target},
+	}
+	if target == name {
+		for _, table := range tables {
+			for _, key := range []string{"base_url", "api_key", "api_key_env", "preset"} {
+				changes = append(changes, config.Change{Kind: config.DeleteValue, Table: "models." + table, Key: key})
+			}
+		}
+	} else {
+		for _, table := range tables {
+			changes = append(changes, config.Change{Kind: config.DeleteTable, Table: "models." + table})
+		}
+	}
+	return changes
 }
 
 func Run(context Context, registry []Entry, options Options) (Result, error) {
@@ -275,20 +398,38 @@ func Run(context Context, registry []Entry, options Options) (Result, error) {
 				return result, fmt.Errorf("the value for %s is empty", entry.ID)
 			}
 		}
+		if entry.RetiredProvider != "" {
+			if err := RedactRecoveryBackups(context.RecoveryBackupPaths); err != nil {
+				return result, err
+			}
+		}
 		changes := substituteInput(entry.Proposal.Changes, input)
-		outcome, err := agentcfg.Edit("roca", context.ConfigPath, func(text string) (string, error) {
-			return config.ApplyText(text, changes)
-		}, true)
-		if err != nil {
-			return result, err
+		var outcome agentcfg.Outcome
+		if len(changes) > 0 {
+			outcome, err = agentcfg.EditWithBackup("roca", context.ConfigPath, func(text string) (string, error) {
+				return config.ApplyText(text, changes)
+			}, config.RedactProviderSecrets, true)
+			if err != nil {
+				return result, err
+			}
+		}
+		if entry.RetiredProvider != "" {
+			if err := RemoveRetiredCredential(context.RetiredCredentialPaths[entry.RetiredProvider]); err != nil {
+				return result, err
+			}
 		}
 		result.Accepted++
-		result.Changes = append(result.Changes, outcome)
-		fmt.Fprintf(options.Out, "configuration updated: %s", outcome.Path)
-		if outcome.Backup != "" {
-			fmt.Fprintf(options.Out, " (backup: %s)", outcome.Backup)
+		if len(changes) > 0 {
+			result.Changes = append(result.Changes, outcome)
+			fmt.Fprintf(options.Out, "configuration updated: %s", outcome.Path)
+			if outcome.Backup != "" {
+				fmt.Fprintf(options.Out, " (backup: %s)", outcome.Backup)
+			}
+			fmt.Fprintln(options.Out)
+		} else if entry.RetiredProvider != "" {
+			fmt.Fprintf(options.Out, "retired credential removed: %s\n",
+				context.RetiredCredentialPaths[entry.RetiredProvider])
 		}
-		fmt.Fprintln(options.Out)
 	}
 	if !options.ListAll && result.Offered > 0 {
 		if err := writeStamps(context.StampPath, stamps); err != nil {
@@ -296,6 +437,28 @@ func Run(context Context, registry []Entry, options Options) (Result, error) {
 		}
 	}
 	return result, nil
+}
+
+func RedactRecoveryBackups(paths []string) error {
+	for _, path := range paths {
+		if err := agentcfg.Rewrite(path, config.RedactProviderSecrets); err != nil {
+			return fmt.Errorf("redact provider secrets from recovery backup %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
+func RemoveRetiredCredential(path string) error {
+	if path == "" {
+		return nil
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("delete retired provider credential %s: %w", path, err)
+	}
+	if directory := filepath.Dir(path); filepath.Base(directory) == "credentials" {
+		_ = os.Remove(directory)
+	}
+	return nil
 }
 
 func askYesNo(reader *bufio.Reader, out io.Writer, prompt string) (bool, error) {

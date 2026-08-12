@@ -29,10 +29,6 @@ type Paths struct {
 	// Config is the operator's TOML. It hangs off the data directory so that an
 	// imported database keeps its config next to the data it imported.
 	Config string
-	// Credentials is where subscription sessions live, with the permissions of
-	// a secret. It never holds a platform key: those live in the config or in
-	// the environment.
-	Credentials string
 	// Reconciliation records which capability proposals this release already
 	// offered. It is disposable product state, separate from operator config.
 	Reconciliation string
@@ -73,7 +69,7 @@ func Resolve(in Input) (Paths, error) {
 	}, ownDir, in), nil
 }
 
-// inDataDir hangs the configuration and credentials off the data directory.
+// inDataDir hangs the configuration off the data directory.
 func inDataDir(paths Paths, dataDir string, in Input) Paths {
 	paths.Home = in.Home
 	paths.Runner = filepath.Join(dataDir, DirRunner)
@@ -81,7 +77,6 @@ func inDataDir(paths Paths, dataDir string, in Input) Paths {
 	if in.ConfigEnv != "" {
 		paths.Config = in.ConfigEnv
 	}
-	paths.Credentials = filepath.Join(dataDir, DirCredentials)
 	paths.Reconciliation = filepath.Join(dataDir, "reconciliation.json")
 	return paths
 }
