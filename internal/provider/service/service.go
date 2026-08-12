@@ -111,33 +111,35 @@ func (s *Service) Close() error {
 	return s.db.Close()
 }
 
-func (s *Service) ensureSchema(ctx context.Context) (bool, error) {
+func (s *Service) ensureSchema(ctx context.Context) (search.Report, error) {
 	s.schemaMu.Lock()
 	defer s.schemaMu.Unlock()
 	if s.schemaOK {
-		return false, nil
+		return search.Report{}, nil
 	}
-	var tokenizerMigrated bool
+	var index search.Report
 	if s.opts.ReadOnly {
 		report, err := store.Inspect(ctx, s.db)
 		if err != nil {
-			return false, err
+			return index, err
 		}
 		if report.Verdict != store.VerdictCurrent {
-			return false, fmt.Errorf("the database schema requires adoption, but La Roca is in read-only mode: %s", report.Reason)
+			return index, fmt.Errorf("the database schema requires adoption, but La Roca is in read-only mode: %s", report.Reason)
 		}
 	} else {
 		if _, err := store.Adopt(ctx, s.db, s.opts.BackupDir); err != nil {
-			return false, err
+			return index, err
 		}
+		started := time.Now()
 		var err error
-		tokenizerMigrated, err = search.EnsureTokenizer(ctx, s.db, s.opts.Progress)
+		index.LexicalBuilt, err = search.EnsureTokenizer(ctx, s.db, s.opts.Progress)
+		index.ElapsedMS = time.Since(started).Milliseconds()
 		if err != nil {
-			return false, err
+			return index, err
 		}
 	}
 	s.schemaOK = true
-	return tokenizerMigrated, nil
+	return index, nil
 }
 
 // theGate opens the read-only gate the first time it is needed. It is an

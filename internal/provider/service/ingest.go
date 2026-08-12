@@ -30,12 +30,13 @@ func (s *Service) Index(ctx context.Context) (search.Report, error) {
 	if s.opts.ReadOnly {
 		return search.Report{}, errReadOnly
 	}
-	tokenizerMigrated, err := s.ensureSchema(ctx)
+	prepared, err := s.ensureSchema(ctx)
 	if err != nil {
 		return search.Report{}, err
 	}
 	report, err := search.Index(ctx, s.db, s.opts.Progress)
-	report.LexicalBuilt = report.LexicalBuilt || tokenizerMigrated
+	report.LexicalBuilt = report.LexicalBuilt || prepared.LexicalBuilt
+	report.ElapsedMS += prepared.ElapsedMS
 	return report, err
 }
 
@@ -51,8 +52,11 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (IngestResult, 
 	if s.opts.ReadOnly && !req.DryRun {
 		return IngestResult{}, errReadOnly
 	}
+	var prepared search.Report
 	if !req.DryRun {
-		if _, err := s.ensureSchema(ctx); err != nil {
+		var err error
+		prepared, err = s.ensureSchema(ctx)
+		if err != nil {
 			return IngestResult{}, err
 		}
 	}
@@ -79,6 +83,8 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (IngestResult, 
 		result.TotalElapsedMS = time.Since(started).Milliseconds()
 		return result, err
 	}
+	index.LexicalBuilt = index.LexicalBuilt || prepared.LexicalBuilt
+	index.ElapsedMS += prepared.ElapsedMS
 	result.Index = &index
 	result.TotalElapsedMS = time.Since(started).Milliseconds()
 

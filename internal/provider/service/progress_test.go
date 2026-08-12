@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -35,14 +36,22 @@ func TestFirstOrdinaryCallUpgradesTheTokenizerWithProgress(t *testing.T) {
 
 	var progress []string
 	upgraded := serviceOn(t, paths, func(options *service.Options) {
-		options.Progress = func(line string) { progress = append(progress, line) }
+		options.Progress = func(line string) {
+			progress = append(progress, line)
+			if strings.Contains(line, "rebuilding for accent-insensitive search") {
+				time.Sleep(20 * time.Millisecond)
+			}
+		}
 	})
-	report, err := upgraded.Index(t.Context())
+	result, err := upgraded.Ingest(t.Context(), service.IngestRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !report.LexicalBuilt {
-		t.Fatal("index report did not include the automatic tokenizer rebuild")
+	if result.Index == nil || !result.Index.LexicalBuilt {
+		t.Fatalf("ingest index report did not include the automatic tokenizer rebuild: %+v", result.Index)
+	}
+	if result.Index.ElapsedMS < 20 {
+		t.Fatalf("ingest index elapsed time excluded the migration: %d ms", result.Index.ElapsedMS)
 	}
 	if !containsProgress(progress, "rebuilding for accent-insensitive search") {
 		t.Fatalf("upgrade progress is missing: %v", progress)
