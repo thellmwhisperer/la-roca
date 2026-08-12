@@ -1,0 +1,40 @@
+[
+  {
+    "conversation_id": "40000000-0000-4000-8000-000000000002",
+    "title": "Synthetic observatory checklist",
+    "create_time": 1767312000.25,
+    "update_time": 1767312002.75,
+    "default_model_slug": "gpt-synthetic-second-default",
+    "current_node": "44000000-0000-4000-8000-000000000001",
+    "mapping": {
+      "root-second": {
+        "id": "root-second",
+        "parent": null,
+        "children": ["43000000-0000-4000-8000-000000000001"],
+        "message": null
+      },
+      "43000000-0000-4000-8000-000000000001": {
+        "id": "43000000-0000-4000-8000-000000000001",
+        "parent": "root-second",
+        "children": ["44000000-0000-4000-8000-000000000001"],
+        "message": {
+          "author": {"role": "user"},
+          "content": {"content_type": "text", "parts": ["Name one synthetic observatory task."]},
+          "create_time": 1767312001.25,
+          "metadata": {}
+        }
+      },
+      "44000000-0000-4000-8000-000000000001": {
+        "id": "44000000-0000-4000-8000-000000000001",
+        "parent": "43000000-0000-4000-8000-000000000001",
+        "children": [],
+        "message": {
+          "author": {"role": "assistant"},
+          "content": {"content_type": "text", "parts": ["Calibrate the synthetic star tracker."]},
+          "create_time": 1767312002.75,
+          "metadata": {}
+        }
+      }
+    }
+  }
+]

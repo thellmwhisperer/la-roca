@@ -97,7 +97,7 @@ func Scan(roots Roots) Plan {
 	plan.add(scanSubagents(roots), "subagent_files")
 	plan.add(scanPiSessions(roots), "pi_session_files")
 	plan.add(scanClaudeWebExports(roots), "claude_web_export_files")
-	plan.add(scanChatGPTWebExports(roots), "chatgpt_web_export_files")
+	plan.add(scanChatGPTWebExports(roots, &plan), "chatgpt_web_export_files")
 	plan.add(existingFile(roots.OpenCodeDB, Target{
 		Kind: parsers.KindOpenCodeDB, SourceAgent: "opencode"}), "opencode_databases")
 	plan.add(existingFile(roots.HermesDB, Target{
@@ -180,35 +180,70 @@ func scanClaudeWebExports(roots Roots) []Target {
 	return targets
 }
 
-// scanChatGPTWebExports reads conversations.json and accounts for the export
-// records that this build deliberately leaves out. chat.html is only another
-// rendering of conversations.json and is neither opened nor counted.
-func scanChatGPTWebExports(roots Roots) []Target {
-	var targets []Target
+// scanChatGPTWebExports reads both generations of the export conversation
+// layout and accounts for the records that this build deliberately leaves out.
+//
+// A declaration nobody can read and a directory whose layout nobody recognizes
+// are different problems with different remedies, so they are diagnosed apart
+// and neither is passed over in silence.
+func scanChatGPTWebExports(roots Roots, plan *Plan) []Target {
+	var legacy, rest []Target
 	seen := map[string]bool{}
 	for _, root := range roots.ChatGPTWebExports {
-		for _, name := range filesIn(root) {
+		names, err := readFiles(root)
+		if err != nil {
+			plan.Warnings = append(plan.Warnings, fmt.Sprintf(
+				"declared OpenAI export path %q cannot be read (%v): point "+
+					"openai_export_paths at the extracted export directory and run the "+
+					"ingest again", root, err))
+			continue
+		}
+		recognized := false
+		for _, name := range names {
 			path := filepath.Join(root, name)
+			target := Target{Path: path, SourceAgent: "chatgpt-web", FileName: name}
+			isLegacy := false
+			switch {
+			case name == "conversations.json":
+				recognized, isLegacy = true, true
+				target.Kind = parsers.KindChatGPTWebConversations
+			case strings.HasPrefix(name, "conversations-") && strings.HasSuffix(name, ".json"):
+				recognized = true
+				target.Kind = parsers.KindChatGPTWebConversations
+			case name == "shared_conversations.json":
+				target.ExclusionReason = "shared ChatGPT conversations are out of scope"
+			case name == "codex.json":
+				// The one companion that carries conversations of its own. Counting it
+				// as left out by design is not a warning, and it is the only signal an
+				// operator gets that a whole content file went unread.
+				target.ExclusionReason = "Codex conversations in a ChatGPT export are out of scope"
+			case name == "conversation_asset_file_names.json" || name == "chat.html" ||
+				name == "ads.json":
+				continue
+			default:
+				target.ExclusionReason = "ChatGPT export attachment is out of scope"
+			}
 			key := realPath(path)
 			if seen[key] {
 				continue
 			}
 			seen[key] = true
-			target := Target{Path: path, SourceAgent: "chatgpt-web", FileName: name}
-			switch name {
-			case "conversations.json":
-				target.Kind = parsers.KindChatGPTWebConversations
-			case "shared_conversations.json":
-				target.ExclusionReason = "shared ChatGPT conversations are out of scope"
-			case "chat.html":
+			if isLegacy {
+				legacy = append(legacy, target)
 				continue
-			default:
-				target.ExclusionReason = "ChatGPT export attachment is out of scope"
 			}
-			targets = append(targets, target)
+			rest = append(rest, target)
+		}
+		if !recognized {
+			plan.Warnings = append(plan.Warnings, fmt.Sprintf(
+				"unrecognized OpenAI export layout at %q: expected conversations.json or conversations-*.json",
+				root))
 		}
 	}
-	return targets
+	// Legacy snapshots come first so a run reads them in the order it prefers
+	// them. Retaining their richer provenance is the writer's reconciliation and
+	// not this ordering, which says nothing about a snapshot ingested months ago.
+	return append(legacy, rest...)
 }
 
 func anyPathExists(paths []string) bool {
@@ -492,10 +527,21 @@ func subdirectories(root string) []string {
 	return names
 }
 
+// filesIn is the regular files of a directory a source may or may not have. A
+// missing or unreadable one is an empty answer, which is the normal state of a
+// machine that does not run that agent.
 func filesIn(dir string) []string {
+	names, _ := readFiles(dir)
+	return names
+}
+
+// readFiles is filesIn for a directory the operator declared, where being
+// unreadable is a fact about that declaration and not a machine without the
+// agent, so the caller can say so.
+func readFiles(dir string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var names []string
 	for _, entry := range entries {
@@ -504,7 +550,7 @@ func filesIn(dir string) []string {
 		}
 	}
 	sort.Strings(names)
-	return names
+	return names, nil
 }
 
 func jsonlIn(dir string) []string {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/cucumber/godog"
 )
@@ -41,6 +42,22 @@ func registerIngestIncrementalSteps(ctx *godog.ScenarioContext, w *ingestAccepta
 	ctx.Given(`^a declared OpenAI export is ready to ingest$`, func() error {
 		export := filepath.Join(w.home, "declared-openai-export-v1")
 		if err := copyOpenAIExportFixture(export, "openai-export-v1"); err != nil {
+			return err
+		}
+		return writeFixture(filepath.Join(w.home, ".roca", "config.toml"),
+			fmt.Sprintf("[defaults]\nopenai_export_paths = [%q]\n", export))
+	})
+	ctx.Given(`^a declared sharded OpenAI export is ready to ingest$`, func() error {
+		export := filepath.Join(w.home, "declared-openai-export-sharded")
+		if err := copyOpenAIExportFixture(export, "openai-export-sharded"); err != nil {
+			return err
+		}
+		return writeFixture(filepath.Join(w.home, ".roca", "config.toml"),
+			fmt.Sprintf("[defaults]\nopenai_export_paths = [%q]\n", export))
+	})
+	ctx.Given(`^a declared OpenAI export has no conversation layout$`, func() error {
+		export := filepath.Join(w.home, "declared-unrecognized-openai-export")
+		if err := os.MkdirAll(export, 0o700); err != nil {
 			return err
 		}
 		return writeFixture(filepath.Join(w.home, ".roca", "config.toml"),
@@ -159,14 +176,41 @@ func registerIngestIncrementalSteps(ctx *godog.ScenarioContext, w *ingestAccepta
 			WHERE s.source_agent = 'chatgpt-web' AND e.provider = 'openai'
 			  AND e.tokens_in IS NULL AND e.tokens_out IS NULL`, 4)
 	})
+	ctx.Then(`^every ChatGPT shard is ingested with OpenAI provenance$`, func() error {
+		if err := w.expectDelta(map[string]int{"sessions": 2, "exchanges": 3}); err != nil {
+			return err
+		}
+		return expectQueryCount(w, `SELECT COUNT(*) FROM exchanges e
+			JOIN sessions s ON s.session_id = e.session_id
+			WHERE s.source_agent = 'chatgpt-web' AND e.provider = 'openai'
+			  AND e.model IS NOT NULL`, 3)
+	})
+	ctx.Then(`^ingest names the unrecognized OpenAI export directory$`, func() error {
+		warnings, ok := w.last.doc["warnings"].([]any)
+		if !ok || len(warnings) != 1 {
+			return fmt.Errorf("warnings = %v, want one layout warning", w.last.doc["warnings"])
+		}
+		warning, _ := warnings[0].(string)
+		path := filepath.Join(w.home, "declared-unrecognized-openai-export")
+		if !strings.Contains(warning, "unrecognized OpenAI export layout") ||
+			!strings.Contains(warning, path) {
+			return fmt.Errorf("layout warning = %q, want path %q", warning, path)
+		}
+		return nil
+	})
 }
 
 func copyOpenAIExportFixture(target, fixtureName string) error {
 	fixture := filepath.Join("..", "..", "internal", "ingest", "testdata", fixtureName)
-	for _, name := range []string{
-		"conversations.json", "shared_conversations.json", "chat.html",
-		"file-synthetic-lighthouse.txt",
-	} {
+	entries, err := os.ReadDir(fixture)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() {
+			continue
+		}
+		name := entry.Name()
 		raw, err := os.ReadFile(filepath.Join(fixture, name))
 		if err != nil {
 			return err
