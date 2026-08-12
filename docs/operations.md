@@ -1,4 +1,4 @@
-# Operations: logs, redaction, retention
+# Operations: audit logs, redaction, retention
 
 First-time path: [install, detect an already signed-in agent CLI, and query
 without a La Roca login](lifecycle.md#install).
@@ -35,29 +35,66 @@ Other harnesses can use the same client-side pattern: intercept the shell tool,
 read identity only from a harness-owned session source, and inject both flags;
 no other hook installer ships yet.
 
-Every CLI execution writes a redacted JSONL record under the selected data
-directory's `logs/`. A logging failure warns once on stderr but never changes
-a command or tool result.
+Every CLI command and MCP tool call writes one redacted JSONL record under the
+selected data directory's `logs/`, whether it succeeds or fails. A logging
+failure warns on stderr but never changes the observed command or tool result.
+No operational log is stored in SQLite.
 
 ## Streams and contents
 
-The dated `executions`, `mcp-audit`, and `ingest` JSONL streams retain 30
-days.
+The dated `executions`, `mcp-audit`, `ingest`, and `migrations` JSONL streams
+retain at most 30 days. Each file is capped at 5 MiB and each stream keeps at
+most six files, so a busy installation cannot grow a stream beyond 30 MiB.
+Consumers should glob `<stream>-*.jsonl`; rotated segments have the same prefix.
+An individual record larger than the file cap is dropped under the same
+non-failing writer contract.
 
-Execution records store the command, changed flags, database path, duration,
-exit code, error and result metadata. Query records keep the question, route,
-provider, model, SQL, timings, degradation, provider failure text and row
-count; they never store result row contents. MCP audit records store the
-tool, redacted arguments, verdict, degraded state, duration and result row
-count. Query calls add the same stable attribution the execution stream
-keeps: route, retry outcome, the SQL that ran, the rejected SQL and the gate
-error that bought a correction, provider and model for both inferences, and
-per-phase timings; like execution records, they never store result row
-contents. Ingest records retain the complete ingest envelope, including every
-file error, exact excluded and discarded totals, collapsed reasons, and up to
-100 source-record details with their path, parser, record position and reason.
+`executions` and `mcp-audit` share one top-level call contract. Surface-specific
+fields are `command` plus `flags` for CLI and `tool` for MCP:
 
-No log is stored in SQLite and no run tables exist.
+```json
+{"timestamp":"2026-08-12T10:30:00Z","source":"mcp","tool":"roca_query","args":{"query":"find the synthetic lighthouse"},"ok":false,"error":"the generated SQL was rejected","error_type":"invalid_sql","duration_ms":184,"question":"find the synthetic lighthouse","sql":"SELECT missing FROM memories","raw_sql":"```sql\nSELECT missing FROM memories\n```","sql_provider":"codex","sql_model":"gpt-synthetic","row_count":0,"fallback_reason":"invalid_sql","retry_reason":"no such column: missing","correlation_id":"qf_0123456789abcdef"}
+```
+
+The stable fields are:
+
+- `timestamp`, `source`, `args`, `ok`, `duration_ms`, and `row_count` on every
+  call; `command` or `tool` identifies the operation.
+- `error` and `error_type` on failures. An unexpected surfaced error also has
+  an opaque `correlation_id`, and the same ID is printed in the user-facing
+  error.
+- Query calls add `question`, `sql`, `sql_provider`, `sql_model`, phase timings,
+  and any `degraded`, `fallback_reason`, `retry_reason`, provider note, or
+  `queryplan`. `sql` is the cleaned model-generated statement, including when a
+  deterministic rescue later answers the call. `raw_sql` is the model's exact
+  answer and is present only when it differs from `sql`. The provider field
+  names match the query result envelope; they do not depend on memory authorship
+  schema changes.
+- MCP query calls also record the route and retry provenance the CLI keeps in
+  its row-free `result` metadata: `path`, `retried`, `retried_sql`, `model_sql`,
+  the rejected `first_model_sql`, and the `sql_retry_inference_ms` and
+  `sql_retry_provider_latency_ms` subsets of the SQL phase.
+
+Optional fields are omitted when they do not apply. New compatible fields may
+be added, but the names and meanings above are the consumer contract. Query
+records never contain result row contents. The CLI's existing row-free `result`
+metadata remains for compatibility.
+
+`ingest` records retain each run's verdict and complete bounded ingest envelope,
+including file errors, exact excluded and discarded totals, collapsed reasons,
+and up to 100 source-record details with path, parser, record position, and
+reason. `migrations` records retain each `roca init` schema-adoption verdict,
+repairs, and failure. Both streams are plain files beside the call audit.
+
+## Reading query failures
+
+`roca doctor` reads the two call streams without touching the database. It
+reports the number of failed `query`/`roca_query`/`roca_sql` calls in the last
+24 hours and renders the five newest errors with their source, type, and
+correlation ID. `roca doctor --json` exposes the same data under
+`query_failures` for automation. Malformed historical lines are skipped and
+counted in `malformed_lines`; a log read failure is a warning, not a failed
+diagnosis.
 
 ## Redaction
 
@@ -67,7 +104,8 @@ and `github_pat_*`, Slack `xox*`, JWT `eyJ*`, AWS `AKIA*`, and Google `AIza*`
 credential shapes.
 
 Log directories and files are created with operator-only permissions.
-Retention and redaction are owned by `internal/distribution/logfile`.
+The contract, reader, rotation, retention, and redaction are owned by
+`internal/distribution/logfile`.
 
 ## Read-only boundary
 

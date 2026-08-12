@@ -91,9 +91,10 @@ result rows with each field truncated to 240 characters; the database, the
 full result set, and the search index never leave the machine. Configure
 only Ollama when no query content may leave it at all.
 
-Every execution writes a redacted JSONL record under `logs/`; query records
-never store result row contents. Details, retention, and the full redaction
-list live in [docs/operations.md](docs/operations.md). `ROCA_READ_ONLY=1`
+Every CLI command and MCP tool call writes a size-capped, redacted JSONL record
+under `logs/`; query records never store result row contents, and `roca doctor`
+summarizes recent query failures. The stable format, retention, and full
+redaction list live in [docs/operations.md](docs/operations.md). `ROCA_READ_ONLY=1`
 refuses writes in the shared service before database I/O, so CLI and MCP
 enforce the same boundary.
 
