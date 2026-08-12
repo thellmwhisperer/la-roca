@@ -110,7 +110,11 @@ func ApplyText(text string, changes []Change) (string, error) {
 				kept = append(kept, current)
 				seen[normalized] = true
 			}
-			updated = setTableValueText(updated, "["+change.Table+"]", change.Key, tomlLiteral(kept))
+			if len(kept) == 0 {
+				updated = deleteTableValueText(updated, change.Table, change.Key)
+			} else {
+				updated = setTableValueText(updated, "["+change.Table+"]", change.Key, tomlLiteral(kept))
+			}
 		case DeleteTable:
 			updated = deleteTableText(updated, change.Table)
 		case DeleteValue:
@@ -133,6 +137,26 @@ func RedactProviderSecrets(text string) (string, error) {
 	if _, err := toml.Decode(text, &document); err != nil {
 		return "", fmt.Errorf("the configuration is not valid TOML: %w", err)
 	}
+	changes := redactProviderSecretDocument(document)
+	redacted, err := ApplyText(text, changes)
+	if err != nil {
+		return "", err
+	}
+	if err := verifyProviderSecretsRedacted(redacted); err == nil {
+		return redacted, nil
+	}
+	var encoded strings.Builder
+	if err := toml.NewEncoder(&encoded).Encode(document); err != nil {
+		return "", fmt.Errorf("encode redacted configuration: %w", err)
+	}
+	redacted = encoded.String()
+	if err := verifyProviderSecretsRedacted(redacted); err != nil {
+		return "", err
+	}
+	return redacted, nil
+}
+
+func redactProviderSecretDocument(document map[string]any) []Change {
 	models, _ := document["models"].(map[string]any)
 	changes := make([]Change, 0, len(models))
 	for name, value := range models {
@@ -141,28 +165,27 @@ func RedactProviderSecrets(text string) (string, error) {
 			continue
 		}
 		if _, present := table["api_key"]; present {
+			delete(table, "api_key")
 			changes = append(changes, Change{Kind: DeleteValue, Table: "models." + name, Key: "api_key"})
 		}
 	}
-	redacted, err := ApplyText(text, changes)
-	if err != nil {
-		return "", err
+	return changes
+}
+
+func verifyProviderSecretsRedacted(text string) error {
+	var document map[string]any
+	if _, err := toml.Decode(text, &document); err != nil {
+		return fmt.Errorf("verify redacted configuration: %w", err)
 	}
-	var verified map[string]any
-	if _, err := toml.Decode(redacted, &verified); err != nil {
-		return "", fmt.Errorf("verify redacted configuration: %w", err)
-	}
-	verifiedModels, _ := verified["models"].(map[string]any)
-	for name, value := range verifiedModels {
-		table, ok := value.(map[string]any)
-		if !ok {
-			continue
-		}
-		if _, present := table["api_key"]; present {
-			return "", fmt.Errorf("models.%s.api_key survived provider-secret redaction", name)
+	models, _ := document["models"].(map[string]any)
+	for name, value := range models {
+		if table, ok := value.(map[string]any); ok {
+			if _, present := table["api_key"]; present {
+				return fmt.Errorf("models.%s.api_key survived provider-secret redaction", name)
+			}
 		}
 	}
-	return redacted, nil
+	return nil
 }
 
 func deleteTableValueText(text, table, key string) string {
@@ -474,7 +497,10 @@ func tomlAssignment(line string) (string, int) {
 			if _, err := toml.Decode(raw+" = 0", &document); err != nil || len(document) != 1 {
 				return "", -1
 			}
-			for key := range document {
+			for key, value := range document {
+				if _, nested := value.(map[string]any); nested {
+					return "", -1
+				}
 				return key, index
 			}
 		}
@@ -700,7 +726,7 @@ func readModels(section map[string]any, path string, warnings *[]string) ModelsC
 	for _, key := range sortedKeys(section) {
 		value := section[key]
 		if table, isTable := value.(map[string]any); isTable {
-			name := strings.ToLower(key)
+			name := normalizeProviderName(key)
 			provider := readProvider(table, name, path, warnings)
 			provider.TableName = key
 			models.Providers[name] = provider

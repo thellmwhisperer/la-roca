@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -397,7 +399,7 @@ func ownedPaths(paths config.Paths) []string {
 	credentialsDir := filepath.Join(dataDir, legacyCredentialsDir)
 	if realDirectory(credentialsDir) {
 		credentialPaths := legacyProviderCredentialPaths(dataDir)
-		for _, name := range []string{provider.NameCodex, "deepseek", "zai", "xai"} {
+		for _, name := range slices.Sorted(maps.Keys(credentialPaths)) {
 			owned = append(owned, credentialPaths[name])
 		}
 		owned = append(owned, credentialsDir)

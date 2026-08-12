@@ -418,7 +418,7 @@ func Run(context Context, registry []Entry, options Options) (Result, error) {
 				fmt.Fprintf(options.Out, " (backup: %s)", outcome.Backup)
 			}
 			fmt.Fprintln(options.Out)
-		} else {
+		} else if entry.RetiredProvider != "" {
 			fmt.Fprintf(options.Out, "retired credential removed: %s\n",
 				context.RetiredCredentialPaths[entry.RetiredProvider])
 		}
@@ -447,7 +447,9 @@ func RemoveRetiredCredential(path string) error {
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("delete retired provider credential %s: %w", path, err)
 	}
-	_ = os.Remove(filepath.Dir(path))
+	if directory := filepath.Dir(path); filepath.Base(directory) == "credentials" {
+		_ = os.Remove(directory)
+	}
 	return nil
 }
 

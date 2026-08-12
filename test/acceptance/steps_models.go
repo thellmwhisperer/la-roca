@@ -239,11 +239,7 @@ func (m *world) writeModelConfig() error {
 
 	if m.models.frontierModel != "" {
 		body.WriteString("\n[models." + theFrontierName + "]\n")
-		model := m.models.frontierModel
-		if model == "" {
-			model = "the-frontier-model"
-		}
-		body.WriteString("model = " + tomlString(model) + "\n")
+		body.WriteString("model = " + tomlString(m.models.frontierModel) + "\n")
 	}
 	if m.models.localURL != "" {
 		body.WriteString("\n[models.ollama]\n")

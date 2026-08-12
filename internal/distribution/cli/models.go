@@ -254,10 +254,10 @@ func effectiveInitModel(ctx context.Context, paths config.Paths) (*service.InitM
 	gate := &service.InitModel{}
 	for index, attempt := range cascade.Diagnose(ctx) {
 		if attempt.Ready {
-			transport, command := cascade.Providers[index].(interface{ CommandTransport() bool })
+			transport, isCommand := cascade.Providers[index].(interface{ CommandTransport() bool })
 			return &service.InitModel{
 				Ready: true, Provider: attempt.Name, Model: attempt.ModelID,
-				CommandTransport: command && transport.CommandTransport(),
+				CommandTransport: isCommand && transport.CommandTransport(),
 			}, nil
 		}
 		if gate.Reason == "" {
@@ -489,7 +489,9 @@ func writeInitModelChoice(paths config.Paths, file config.File, providerName, mo
 		return outcome, err
 	}
 	if err := reconcile.RemoveRetiredCredential(credential); err != nil {
-		return outcome, err
+		return outcome, fmt.Errorf(
+			"configuration updated at %s, but remove the retired credential file %s: %w",
+			outcome.Path, credential, err)
 	}
 	return outcome, nil
 }

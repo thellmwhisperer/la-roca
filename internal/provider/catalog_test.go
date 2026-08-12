@@ -22,7 +22,7 @@ func settings(t *testing.T, body string) Settings {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Settings{File: file, RunnerDir: t.TempDir(), Env: func(string) string { return "" }}
+	return Settings{File: file, RunnerDir: t.TempDir(), Env: func(string) string { return "" }, LookPath: lookPath()}
 }
 
 func lookPath(names ...string) LookPathFunc {
@@ -114,13 +114,20 @@ func TestRetiredCredentialConfigurationsNeverCrashAndDegradeHonestly(t *testing.
 }
 
 func TestCustomCommandProviderRemainsSupported(t *testing.T) {
-	s := settings(t, "[models]\norder = [\"fixture\"]\n[models.fixture]\ncommand = [\"fixture-agent\", \"{prompt}\"]\nmodel = \"fixture-model\"\n")
-	cascade, err := BuildCascade(s)
-	if err != nil || len(cascade.Providers) != 1 {
-		t.Fatalf("cascade=%+v err=%v", cascade, err)
-	}
-	if got := cascade.Providers[0]; got.Name() != "fixture" || got.ModelID() != "fixture-model" {
-		t.Fatalf("provider = %s/%s", got.Name(), got.ModelID())
+	for _, tc := range []struct{ raw, resolved string }{{"fixture", "fixture"}, {"my_agent", "my-agent"}} {
+		body := "[models]\norder = [\"" + tc.raw + "\"]\n[models." + tc.raw + "]\n" +
+			"command = [\"fixture-agent\", \"{prompt}\"]\nmodel = \"fixture-model\"\n"
+		s := settings(t, body)
+		cascade, err := BuildCascade(s)
+		if err != nil || len(cascade.Providers) != 1 {
+			t.Fatalf("%s: cascade=%+v err=%v", tc.raw, cascade, err)
+		}
+		if got := cascade.Providers[0]; got.Name() != tc.resolved || got.ModelID() != "fixture-model" {
+			t.Fatalf("%s: provider = %s/%s", tc.raw, got.Name(), got.ModelID())
+		}
+		if s.File.Models.Providers[tc.resolved].TableName != tc.raw {
+			t.Fatalf("%s: raw table identity was not preserved", tc.raw)
+		}
 	}
 }
 

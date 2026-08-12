@@ -1,7 +1,7 @@
 package provider
 
 import (
-	"fmt"
+	"errors"
 	"path/filepath"
 	"strings"
 	"time"
@@ -12,6 +12,8 @@ import (
 // EnvOrder is the provider order asked for out loud, right now. It wins over
 // the file and is treated as a contract.
 const EnvOrder = "ROCA_MODELS_ORDER"
+
+var errRetiredTransport = errors.New("its retired authentication transport is still configured and is ignored; accept or decline the migration proposal before using this provider")
 
 // Settings is everything needed to turn a configuration into a live cascade.
 type Settings struct {
@@ -120,7 +122,7 @@ func (s Settings) binaryPresetFactory(name string, preset CommandPreset) Factory
 	return func() (Provider, error) {
 		cfg := s.File.Models.Providers[name]
 		if retiredProviderConfig(name, cfg) {
-			return nil, fmt.Errorf("its retired authentication transport is still configured and is ignored; accept or decline the migration proposal before using this provider")
+			return nil, errRetiredTransport
 		}
 		command, action, responseFormat := cfg.Command, "", cfg.ResponseFormat
 		if len(command) == 0 {
@@ -150,7 +152,7 @@ func (s Settings) withCommand(name string, fallback Factory) Factory {
 	return func() (Provider, error) {
 		cfg := s.File.Models.Providers[name]
 		if retiredProviderConfig(name, cfg) {
-			return nil, fmt.Errorf("its retired authentication transport is still configured and is ignored; accept or decline the migration proposal before using this provider")
+			return nil, errRetiredTransport
 		}
 		if len(cfg.Command) == 0 {
 			if fallback == nil {

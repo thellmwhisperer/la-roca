@@ -100,6 +100,10 @@ func TestRetiredProviderFirstRunAcceptAndDeclinePaths(t *testing.T) {
 			if strings.Contains(tc.body, "legacy-secret") && hasLegacy != tc.wantLegacy {
 				t.Fatalf("legacy config present=%v, want %v\n%s", hasLegacy, tc.wantLegacy, text)
 			}
+			if tc.wantLegacy && strings.Contains(tc.body, "gpt-preserved") &&
+				!strings.Contains(text, `model = "gpt-preserved"`) {
+				t.Fatalf("declined OAuth configuration lost its model:\n%s", text)
+			}
 			_, credentialErr := os.Stat(credentialPath)
 			if tc.wantLegacy && credentialErr != nil {
 				t.Fatalf("declined legacy credential was removed: %v", credentialErr)
@@ -197,6 +201,17 @@ func TestRetiredCredentialFilesRemainDiscoverableWithoutRetiringCommands(t *test
 	}
 	if err := RemoveRetiredCredential(""); err != nil {
 		t.Fatalf("empty legacy credential path: %v", err)
+	}
+	root := t.TempDir()
+	direct := filepath.Join(root, "legacy.key")
+	if err := os.WriteFile(direct, []byte("legacy-secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveRetiredCredential(direct); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(root); err != nil {
+		t.Fatalf("credential cleanup removed a non-credential parent: %v", err)
 	}
 }
 

@@ -225,13 +225,8 @@ func initRetirementFixture(t *testing.T, body string, preexistingBackup, legacyC
 	if !legacyCredential {
 		return paths, ""
 	}
-	if err := os.MkdirAll(filepath.Join(root, "credentials"), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	credential := legacyProviderCredentialPaths(root)[provider.NameCodex]
-	if err := os.WriteFile(credential, []byte("legacy-file-secret"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeFile(t, credential, "legacy-file-secret")
 	return paths, credential
 }
 

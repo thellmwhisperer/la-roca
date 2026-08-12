@@ -113,16 +113,26 @@ model = "fixture-model"
 	}
 }
 
-func TestProviderSecretRedactionCanonicalizesQuotedKeys(t *testing.T) {
-	redacted, err := RedactProviderSecrets("[models.fixture]\n\"api_key\" = \"legacy-secret\"\nmodel = \"fixture\"\n")
-	if err != nil {
-		t.Fatal(err)
+func TestProviderSecretRedactionHandlesEveryValidTOMLShape(t *testing.T) {
+	if key, index := tomlAssignment(`model.name = "nested"`); key != "" || index != -1 {
+		t.Fatalf("dotted assignment parsed as scalar %q at %d", key, index)
 	}
-	if strings.Contains(redacted, "legacy-secret") || strings.Contains(redacted, "api_key") {
-		t.Fatalf("quoted provider secret survived redaction:\n%s", redacted)
-	}
-	if !strings.Contains(redacted, `model = "fixture"`) {
-		t.Fatalf("redaction removed provider configuration:\n%s", redacted)
+	for _, body := range []string{
+		"[models.fixture]\n\"api_key\" = \"legacy-secret\"\nmodel = \"fixture\"\n",
+		"models.fixture.api_key = \"legacy-secret\"\nmodels.fixture.model = \"fixture\"\n",
+		"models = { fixture = { api_key = \"legacy-secret\", model = \"fixture\" } }\n",
+	} {
+		redacted, err := RedactProviderSecrets(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(redacted, "legacy-secret") || strings.Contains(redacted, "api_key") {
+			t.Fatalf("provider secret survived redaction:\n%s", redacted)
+		}
+		path := write(t, redacted)
+		if file, err := LoadFile(path); err != nil || file.Models.Providers["fixture"].Model != "fixture" {
+			t.Fatalf("redaction lost provider configuration: file=%+v err=%v\n%s", file, err, redacted)
+		}
 	}
 }
 
@@ -136,6 +146,12 @@ func TestProviderMigrationDeduplicatesWithResolverNormalization(t *testing.T) {
 	}
 	if !strings.Contains(updated, `order = ["codex"]`) {
 		t.Fatalf("normalized duplicate survived migration:\n%s", updated)
+	}
+	updated, err = ApplyText("[models]\norder = [\"xai\"]\n", []Change{{
+		Kind: RemoveListValue, Table: "models", Key: "order", Old: "xai",
+	}})
+	if err != nil || strings.Contains(updated, "order =") {
+		t.Fatalf("removing the last provider left an explicit empty order: err=%v\n%s", err, updated)
 	}
 }
 
