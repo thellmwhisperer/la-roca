@@ -659,6 +659,7 @@ func evalCommand(env *cliEnv) *cobra.Command {
 }
 
 func evaluationProviders(dataDir, providerName, model string) (provider.Cascade, error) {
+	providerName = provider.CanonicalName(providerName)
 	file := config.File{
 		Path: filepath.Join(dataDir, "eval-model.toml"),
 		Models: config.ModelsConfig{

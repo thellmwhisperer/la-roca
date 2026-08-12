@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/evaluation"
+	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 )
 
@@ -81,5 +82,22 @@ func TestEvalCommandNeverUsesOperatorState(t *testing.T) {
 				t.Fatalf("eval touched operator state: %v", entries)
 			}
 		})
+	}
+}
+
+func TestLiveEvalCanonicalizesProviderAndPreservesModel(t *testing.T) {
+	providers, err := evaluationProviders(t.TempDir(), " CODEX ", "custom-eval-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(providers.Providers) != 1 {
+		t.Fatalf("providers = %d; want 1", len(providers.Providers))
+	}
+	want := struct{ name, model string }{provider.NameCodex, "custom-eval-model"}
+	got := struct{ name, model string }{
+		providers.Providers[0].Name(), providers.Providers[0].ModelID(),
+	}
+	if got != want {
+		t.Fatalf("provider/model = %q/%q; want %q/%q", got.name, got.model, want.name, want.model)
 	}
 }

@@ -305,6 +305,8 @@ func normalize(name string) string {
 	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(name)), "_", "-")
 }
 
+func CanonicalName(name string) string { return normalize(name) }
+
 // Cascade is the resolved order, ready to serve.
 type Cascade struct {
 	Providers []Provider
