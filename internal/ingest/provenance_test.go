@@ -116,24 +116,34 @@ func assertRecordedProvenance(t *testing.T, db *sql.DB) {
 	}
 }
 
-// The re-ingest that backfills. The shipped v1.7 corpus carries exchanges with
-// no provenance and v2 parser watermarks; bumping the version is what makes a
-// plain `roca ingest` read those files again, and the record-level idempotency
-// is what keeps it from writing a second copy of anything.
-func TestAPlainReingestBackfillsProvenanceWithoutDuplicating(t *testing.T) {
+// The re-ingest that backfills. Historical parsers did not always assign the
+// exchange number that today's parser does, so the fixture moves those rows to
+// numbers the current parse will not produce. The content and timestamps are
+// unchanged: they are the stable evidence that the old row is the same turn.
+func TestAPlainReingestMatchesHistoricalNumbersWithoutDuplicating(t *testing.T) {
 	_, db, ctx, options := seededWorld(t)
 
 	before := tableSnapshot(t, db.SQL())
-	// What v1.7 left behind: the columns it failed to fill and watermarks that
-	// already claimed the v2 parser revision.
+	// What v1.8.1 left behind: NULL provenance, parser-v3 watermarks, and rows
+	// numbered by the older Claude, Codex, Cowork, subagent and Hermes readers.
 	if err := db.Write(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `UPDATE exchanges SET model = NULL, provider = NULL,
 			tokens_in = NULL, tokens_out = NULL, tokens_reasoning = NULL, cost_usd = NULL`)
 		if err != nil {
 			return err
 		}
+		for _, table := range []string{"exchanges", "thinking_blocks", "tool_uses"} {
+			for _, offset := range []int{100, -99} {
+				_, err = tx.ExecContext(ctx, `UPDATE `+table+` SET exchange_number = exchange_number + ?
+					WHERE session_id IN (?, ?, ?, ?, ?)`, offset, fixtureSessionID, "child-1", "cowork-1",
+					"codex-thread-1", "h1")
+				if err != nil {
+					return err
+				}
+			}
+		}
 		_, err = tx.ExecContext(ctx,
-			`UPDATE ingest_file_state SET fingerprint = replace(fingerprint, '-v3', '-v2')
+			`UPDATE ingest_file_state SET fingerprint = replace(fingerprint, '-v4', '-v3')
 			 WHERE instr(fingerprint, ':parser:') > 0`)
 		return err
 	}); err != nil {
@@ -185,6 +195,244 @@ func TestTheBackfillNeverOverwritesProvenanceThatLanded(t *testing.T) {
 	}
 	if overwritten != 0 {
 		t.Errorf("%d exchanges had their model rewritten", overwritten)
+	}
+}
+
+func TestBackfillMatchesHistoricalAnchorsSafely(t *testing.T) {
+	type storedRow struct {
+		number                      int
+		humanText, agentText, model string
+	}
+	provenance := func(model string) parsers.Provenance {
+		return parsers.Provenance{Model: model}
+	}
+	tests := []struct {
+		name          string
+		stored        []parsers.Exchange
+		replay        []parsers.Exchange
+		wantInserted  int
+		wantConflicts int
+		want          []storedRow
+	}{
+		{
+			name: "timestamps precede a repeated content anchor",
+			stored: []parsers.Exchange{
+				{Number: 1, HumanText: "same turn", AgentText: "same answer",
+					HumanTimestamp: "2026-01-01T00:00:01Z", AgentTimestamp: "2026-01-01T00:00:02Z"},
+				{Number: 7, HumanText: "same turn", AgentText: "same answer",
+					HumanTimestamp: "2026-01-01T00:00:03Z", AgentTimestamp: "2026-01-01T00:00:04Z"},
+			},
+			replay: []parsers.Exchange{{
+				Number: 1, HumanText: "same turn", AgentText: "same answer",
+				HumanTimestamp: "2026-01-01T00:00:03Z", AgentTimestamp: "2026-01-01T00:00:04Z",
+				Provenance: provenance("timestamp-match"),
+			}},
+			want: []storedRow{
+				{number: 1, humanText: "same turn", agentText: "same answer"},
+				{number: 7, humanText: "same turn", agentText: "same answer", model: "timestamp-match"},
+			},
+		},
+		{
+			name: "unique timestamp conflicts stop matching",
+			stored: []parsers.Exchange{
+				{Number: 1, HumanText: "timestamp turn", AgentText: "timestamp answer",
+					HumanTimestamp: "2026-01-01T00:00:05Z", AgentTimestamp: "2026-01-01T00:00:06Z"},
+				{Number: 2, HumanText: "content turn", AgentText: "content answer",
+					HumanTimestamp: "2026-01-01T00:00:07Z", AgentTimestamp: "2026-01-01T00:00:08Z"},
+			},
+			replay: []parsers.Exchange{{
+				Number: 3, HumanText: "content turn", AgentText: "content answer",
+				HumanTimestamp: "2026-01-01T00:00:05Z", AgentTimestamp: "2026-01-01T00:00:06Z",
+				Provenance: provenance("must-not-land"),
+			}},
+			wantConflicts: 1,
+			want: []storedRow{
+				{number: 1, humanText: "timestamp turn", agentText: "timestamp answer"},
+				{number: 2, humanText: "content turn", agentText: "content answer"},
+			},
+		},
+		{
+			name: "historical rows are claimed once per replay",
+			stored: []parsers.Exchange{{
+				Number: 1, HumanText: "repeated turn", AgentText: "repeated answer",
+				HumanTimestamp: "2026-01-01T00:00:09Z", AgentTimestamp: "2026-01-01T00:00:10Z",
+			}},
+			replay: []parsers.Exchange{
+				{Number: 1, HumanText: "repeated turn", AgentText: "repeated answer",
+					HumanTimestamp: "2026-01-01T00:00:09Z", AgentTimestamp: "2026-01-01T00:00:10Z",
+					Provenance: provenance("historical-match")},
+				{Number: 2, HumanText: "repeated turn", AgentText: "repeated answer",
+					HumanTimestamp: "2026-01-01T00:00:11Z", AgentTimestamp: "2026-01-01T00:00:12Z",
+					Provenance: provenance("new-exchange")},
+			},
+			wantInserted: 1,
+			want: []storedRow{
+				{number: 1, humanText: "repeated turn", agentText: "repeated answer", model: "historical-match"},
+				{number: 2, humanText: "repeated turn", agentText: "repeated answer", model: "new-exchange"},
+			},
+		},
+		{
+			name: "one unclaimed timestamp candidate remains matchable",
+			stored: []parsers.Exchange{
+				{Number: 1, HumanText: "first timestamp turn", AgentText: "first timestamp answer",
+					HumanTimestamp: "2026-01-01T00:00:13Z", AgentTimestamp: "2026-01-01T00:00:14Z"},
+				{Number: 2, HumanText: "second timestamp turn", AgentText: "second timestamp answer",
+					HumanTimestamp: "2026-01-01T00:00:13Z", AgentTimestamp: "2026-01-01T00:00:14Z"},
+			},
+			replay: []parsers.Exchange{
+				{Number: 1, HumanText: "first timestamp turn", AgentText: "first timestamp answer",
+					HumanTimestamp: "2026-01-01T00:00:13Z", AgentTimestamp: "2026-01-01T00:00:14Z",
+					Provenance: provenance("first-match")},
+				{Number: 2, HumanText: "second timestamp turn", AgentText: "second timestamp answer",
+					HumanTimestamp: "2026-01-01T00:00:13Z", AgentTimestamp: "2026-01-01T00:00:14Z",
+					Provenance: provenance("second-match")},
+			},
+			want: []storedRow{
+				{number: 1, humanText: "first timestamp turn", agentText: "first timestamp answer", model: "first-match"},
+				{number: 2, humanText: "second timestamp turn", agentText: "second timestamp answer", model: "second-match"},
+			},
+		},
+		{
+			name: "incompatible remaining timestamp candidate reports conflict",
+			stored: []parsers.Exchange{
+				{Number: 1, HumanText: "claimed timestamp turn", AgentText: "claimed timestamp answer",
+					HumanTimestamp: "2026-01-01T00:00:15Z", AgentTimestamp: "2026-01-01T00:00:16Z"},
+				{Number: 2, HumanText: "remaining timestamp turn", AgentText: "remaining timestamp answer",
+					HumanTimestamp: "2026-01-01T00:00:15Z", AgentTimestamp: "2026-01-01T00:00:16Z"},
+			},
+			replay: []parsers.Exchange{
+				{Number: 1, HumanText: "claimed timestamp turn", AgentText: "claimed timestamp answer",
+					HumanTimestamp: "2026-01-01T00:00:15Z", AgentTimestamp: "2026-01-01T00:00:16Z",
+					Provenance: provenance("claimed-match")},
+				{Number: 2, HumanText: "different timestamp turn", AgentText: "different timestamp answer",
+					HumanTimestamp: "2026-01-01T00:00:15Z", AgentTimestamp: "2026-01-01T00:00:16Z",
+					Provenance: provenance("must-not-land")},
+			},
+			wantConflicts: 1,
+			want: []storedRow{
+				{number: 1, humanText: "claimed timestamp turn", agentText: "claimed timestamp answer", model: "claimed-match"},
+				{number: 2, humanText: "remaining timestamp turn", agentText: "remaining timestamp answer"},
+			},
+		},
+		{
+			name: "component boundaries cannot collide",
+			stored: []parsers.Exchange{{
+				Number: 1, HumanText: "a", AgentText: "\x00b",
+			}},
+			replay: []parsers.Exchange{{
+				Number: 1, HumanText: "a\x00", AgentText: "b", Provenance: provenance("new-turn"),
+			}},
+			wantInserted: 1,
+			want: []storedRow{
+				{number: 1, humanText: "a", agentText: "\x00b"},
+				{number: 2, humanText: "a\x00", agentText: "b", model: "new-turn"},
+			},
+		},
+		{
+			name: "occupied numbers preserve new exchanges",
+			stored: []parsers.Exchange{{
+				Number: 1, HumanText: "historical turn", AgentText: "historical answer",
+			}},
+			replay: []parsers.Exchange{
+				{Number: 1, HumanText: "new preceding turn", AgentText: "new preceding answer",
+					Provenance: provenance("new-exchange")},
+				{Number: 2, HumanText: "historical turn", AgentText: "historical answer",
+					Provenance: provenance("historical-match")},
+			},
+			wantInserted: 1,
+			want: []storedRow{
+				{number: 1, humanText: "historical turn", agentText: "historical answer", model: "historical-match"},
+				{number: 2, humanText: "new preceding turn", agentText: "new preceding answer", model: "new-exchange"},
+			},
+		},
+		{
+			name: "ambiguous anchors remain untouched",
+			stored: []parsers.Exchange{
+				{Number: 7, HumanText: "repeated turn", AgentText: "repeated answer"},
+				{Number: 8, HumanText: "repeated turn", AgentText: "repeated answer"},
+			},
+			replay: []parsers.Exchange{{
+				Number: 2, HumanText: "repeated turn", AgentText: "repeated answer",
+				Provenance: provenance("must-not-land"),
+			}},
+			wantConflicts: 1,
+			want: []storedRow{
+				{number: 7, humanText: "repeated turn", agentText: "repeated answer"},
+				{number: 8, humanText: "repeated turn", agentText: "repeated answer"},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db := rocaDatabase(t)
+			ctx := context.Background()
+			write := func(exchanges []parsers.Exchange) Counts {
+				t.Helper()
+				var counts Counts
+				err := db.Write(ctx, func(tx *sql.Tx) error {
+					var err error
+					counts, err = WriteRecords(ctx, tx, registry(t), parsers.Records{Sessions: []parsers.Session{{
+						ID: "synthetic-anchor-safety", Exchanges: exchanges,
+					}}})
+					return err
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return counts
+			}
+			write(test.stored)
+			if counts := write(test.replay); counts.Exchanges != test.wantInserted ||
+				counts.AnchorConflicts != test.wantConflicts {
+				t.Fatalf("first replay counts = %+v, want exchanges/conflicts = %d/%d",
+					counts, test.wantInserted, test.wantConflicts)
+			}
+			if counts := write(test.replay); counts.Exchanges != 0 ||
+				counts.AnchorConflicts != test.wantConflicts {
+				t.Fatalf("second replay counts = %+v, want exchanges/conflicts = 0/%d",
+					counts, test.wantConflicts)
+			}
+
+			rows, err := db.SQL().Query(`SELECT exchange_number, COALESCE(human_text, ''),
+				COALESCE(agent_text, ''), COALESCE(model, '') FROM exchanges
+				WHERE session_id = 'synthetic-anchor-safety' ORDER BY exchange_number`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rows.Close()
+			var got []storedRow
+			for rows.Next() {
+				var row storedRow
+				if err := rows.Scan(&row.number, &row.humanText, &row.agentText, &row.model); err != nil {
+					t.Fatal(err)
+				}
+				got = append(got, row)
+			}
+			if err := rows.Err(); err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != len(test.want) {
+				t.Fatalf("stored rows = %+v, want %+v", got, test.want)
+			}
+			for i := range got {
+				if got[i] != test.want[i] {
+					t.Fatalf("stored rows = %+v, want %+v", got, test.want)
+				}
+			}
+		})
+	}
+}
+
+func TestAnchorConflictsUseTheIngestDiscardReport(t *testing.T) {
+	target := Target{Path: "synthetic-session.jsonl", Kind: parsers.KindClaudeSession,
+		SourceAgent: "claude"}
+	result := Result{Sources: map[string]*Counts{}}
+	result.recordWritten(target, Counts{AnchorConflicts: 2})
+	if result.RecordsDiscarded != 2 || len(result.DiscardDetails) != 2 ||
+		len(result.DiscardSummary) != 1 || result.DiscardSummary[0].Count != 2 ||
+		result.DiscardSummary[0].Reason != anchorConflictReason ||
+		result.Sources["claude"].AnchorConflicts != 2 {
+		t.Fatalf("anchor conflict report = %+v", result)
 	}
 }
 

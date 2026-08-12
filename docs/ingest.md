@@ -75,9 +75,12 @@ exchange that produced it, alongside the other sources' thinking blocks.
 
 The fingerprint of every versioned source includes its parser revision. When a
 release teaches a parser to read more of a source, the next plain `roca ingest`
-reopens the files it had already synced and backfills only the columns that are
-still NULL; nothing that already landed is rewritten and no exchange is written
-twice.
+reopens the files it had already synced. A replay identifies an existing turn
+within its session by its human and agent timestamps first, then by a fingerprint
+of the human and agent text when timestamps are absent or ambiguous. It backfills
+only fields that are still NULL after the content agrees; conflicting or
+ambiguous anchors are left untouched and reported as discards, so nothing that
+already landed is rewritten and no exchange is written twice.
 
 ## Reading the summary
 
@@ -86,7 +89,8 @@ up to five reasons in each group for what was left out, with each reason
 collapsed to a count.
 The two groups are apart on purpose: `excluded` counts the records this build
 never meant to read, which is most of a runtime log and is not a problem, and
-`discards` counts the records it could not read, which is. `roca ingest
+`discards` counts records it could not read or safely match to an existing turn,
+which is. `roca ingest
 --verbose` adds the per-record detail with its absolute path for up to 100
 retained records. Totals and the complete collapsed summary remain exact in JSON
 output and the ingest log when a run leaves out more records than that; the log
