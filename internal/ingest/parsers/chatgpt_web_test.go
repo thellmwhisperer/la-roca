@@ -153,6 +153,35 @@ func TestChatGPTWebMalformedEnvelopePreservesValidParent(t *testing.T) {
 	}
 }
 
+func TestChatGPTWebMalformedConversationDoesNotPoisonExport(t *testing.T) {
+	raw := []byte(`[
+		{"conversation_id":"synthetic-readable-before","mapping":{}},
+		{"conversation_id":"synthetic-malformed-conversation","update_time":"corrupt","mapping":{}},
+		{"conversation_id":"synthetic-readable-after","mapping":{}}
+	]`)
+	records, err := ParseChatGPTWebConversations(bytes.NewReader(raw), FileMeta{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantIDs := []string{"synthetic-readable-before", "synthetic-readable-after"}
+	gotIDs := make([]string, 0, len(records.Sessions))
+	for _, session := range records.Sessions {
+		gotIDs = append(gotIDs, session.ID)
+	}
+	if !reflect.DeepEqual(gotIDs, wantIDs) {
+		t.Fatalf("surviving conversation ids = %v, want %v", gotIDs, wantIDs)
+	}
+	if len(records.Discards) != 1 {
+		t.Fatalf("discards = %+v, want malformed conversation only", records.Discards)
+	}
+	discard := records.Discards[0]
+	if discard.Record != 1 || discard.Category != "ChatGPT conversation is unreadable" ||
+		discard.ByDesign || !strings.Contains(discard.Reason, "conversation 2 is unreadable") ||
+		!strings.Contains(discard.Reason, "cannot unmarshal string") {
+		t.Fatalf("malformed conversation discard = %+v", discard)
+	}
+}
+
 func parseChatGPTWebFixture(t *testing.T, directory string) Records {
 	t.Helper()
 	path := filepath.Join("..", "testdata", directory, "conversations.json")
