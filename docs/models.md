@@ -340,12 +340,16 @@ down the process.
 
 ## What happens on a query
 
-1. A provider is chosen **by availability**, never by exception: each one is
+1. The question is checked before any model is called: it must contain text and
+   stay within a deliberately generous 1000-character cap, the same on the CLI
+   and over MCP.
+2. A provider is chosen **by availability**, never by exception: each one is
    asked `Ready` in order and the first yes serves. The ones behind it are not
    asked anything.
-2. The model generates SQL and that SQL **always** passes the two-halved gate.
-   A model is not above the gate.
-3. Whatever fails from there on degrades to the keyword rescue and says which of
+3. The model generates SQL, a repair step forgives known model-output mistakes,
+   and the result **always** passes the two-halved gate. A model is not above
+   the gate.
+4. Whatever fails from there on degrades to the keyword rescue and says which of
    four things went wrong: `model_unavailable`, `model_error`, `invalid_sql`,
    `sql_execution_error`.
 
@@ -377,12 +381,32 @@ purpose:
 |---|---|
 | `sql_provider_note` | who was asked: the providers ahead of this one were not available |
 | `message` | what came back: the state of this answer |
-| `model_sql` | what the model wrote, whether or not it ran |
+| `model_sql` | what the model wrote, untouched, whether or not it ran |
 
 Writing one over another is how an answer came to say *"the configured provider
 is not available"* while reporting that same provider as its `sql_provider`. And
 `model_sql` survives the keyword rescue answering over it: without it, a model
 that writes badly cannot be told from a rescue that fired for another reason.
+
+### The repairs between the model and the gate
+
+What the model wrote is repaired before the gate reads it, and only in ways
+that are deterministic and named: a `<think>` block goes (`thinking_block`), a
+single `sql` or bare Markdown fence is unwrapped (`code_fence`), prose before or
+after the one `SELECT` is dropped (`surrounding_prose`), a repetition loop is
+cut (`repetition_loop`), trailing semicolons are removed
+(`trailing_semicolon`), and a top-level `UNION ALL` branch `ORDER BY`, with its
+`LIMIT`, is taken out while the statement's final `ORDER BY` stays
+(`union_order_by`). That last one has an aggressive fallback for shapes the
+targeted pass cannot fix, and it is accepted only when what it produces parses
+as one `SELECT`, so truncated output is left exactly as it came.
+
+None of this authorizes execution: the gate then validates the repaired
+statement with its unchanged rules, and what is still invalid degrades to
+`invalid_sql` as before. `model_sql` keeps the untouched output and `repaired`
+names every repair applied, in the JSON envelope and in the narration above the
+rows, so the forgiveness is always auditable. SQL you wrote yourself and ran
+with `roca exec` never goes through this step.
 
 ## What the model is told
 
