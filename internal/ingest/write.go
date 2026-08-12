@@ -400,7 +400,14 @@ func (m *exchangeMatcher) match(number int, exchange parsers.Exchange) (int, exc
 		}
 	}
 	if !timestampsPresent || timestampsAmbiguous {
-		if stored, ok := m.byNumber[number]; ok && compatibleContent(stored, exchange) {
+		if stored, ok := m.byNumber[number]; ok {
+			matched, conflicts := compareContent(stored, exchange)
+			if matched && conflicts {
+				return 0, exchangeAnchorConflict
+			}
+			if !matched || conflicts {
+				return 0, exchangeUnmatched
+			}
 			if claim, claimed := m.claimed[number]; claimed {
 				if claim == identity {
 					return 0, exchangeAlreadyClaimed
