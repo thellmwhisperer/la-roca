@@ -204,16 +204,68 @@ func TestQueryAuditCarriesTheCurrentAttributionEnvelope(t *testing.T) {
 	callTool(t, connect(t, svc), "roca_query", map[string]any{"query": "how many memories"})
 	raw := readSingleLog(t, svc.DataDir(), logfile.MCPAudit)
 	text := string(raw)
-	for _, want := range []string{`"sql_provider":"fake"`, `"sql_model":"fake-model"`,
+	for _, want := range []string{`"path":"model"`, `"sql_provider":"fake"`, `"sql_model":"fake-model"`,
 		`"sql_inference_ms":`, `"execution_ms":`} {
 		if !strings.Contains(text, want) {
 			t.Errorf("query audit lacks %q: %s", want, text)
 		}
 	}
+	if strings.Contains(text, `"retried_sql":true`) || strings.Contains(text, `"retried":true`) {
+		t.Fatalf("first-shot success was logged as a retry or rescue: %s", text)
+	}
 	for _, obsolete := range []string{`"engine":`, `"model":`, `"interpret_engine":`, `"interpret_model":`} {
 		if strings.Contains(text, obsolete) {
 			t.Errorf("query audit returned obsolete key %q: %s", obsolete, text)
 		}
+	}
+}
+
+func TestQueryAuditDistinguishesRetrySuccessFromRescue(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		answers     []string
+		expectError bool
+		want        []string
+	}{
+		{
+			name: "retry success",
+			answers: []string{
+				"SELECT missing FROM memories LIMIT 1",
+				"SELECT content FROM memories WHERE supersedes IS NULL LIMIT 1",
+			},
+			want: []string{`"path":"model"`, `"retried_sql":true`,
+				`"first_model_sql":"SELECT missing FROM memories LIMIT 1"`,
+				`"model_sql":"SELECT content FROM memories WHERE supersedes IS NULL LIMIT 1"`,
+				`"retry_reason":"no such column:`, `missing`,
+				`"sql_retry_inference_ms":`, `"sql_retry_provider_latency_ms":`},
+		},
+		{
+			name: "rescue after retry",
+			answers: []string{
+				"SELECT missing FROM memories LIMIT 1",
+				"SELECT still_missing FROM memories LIMIT 1",
+			},
+			expectError: true,
+			want: []string{`"path":"keyword"`, `"retried":true`, `"retried_sql":true`,
+				`"degraded":"invalid_sql"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := seededServiceWithScriptedModel(t, tc.answers)
+			session := connect(t, svc)
+			args := map[string]any{"query": "what decisions were made about the long dashes"}
+			if tc.expectError {
+				callToolExpectingError(t, session, "roca_query", args)
+			} else {
+				callTool(t, session, "roca_query", args)
+			}
+			text := string(readSingleLog(t, svc.DataDir(), logfile.MCPAudit))
+			for _, want := range tc.want {
+				if !strings.Contains(text, want) {
+					t.Errorf("query audit lacks %q: %s", want, text)
+				}
+			}
+		})
 	}
 }
 
@@ -678,6 +730,25 @@ func (f fakeModel) Chat(context.Context, provider.ChatRequest) (provider.ChatRes
 	return provider.ChatResponse{Content: f.sql, Provider: "fake", ModelID: "fake-model"}, nil
 }
 
+type scriptedModel struct {
+	answers []string
+	calls   int
+}
+
+func (m *scriptedModel) Name() string    { return "fake" }
+func (m *scriptedModel) ModelID() string { return "fake-model" }
+func (m *scriptedModel) Ready(context.Context) provider.Readiness {
+	return provider.Readiness{Ready: true}
+}
+func (m *scriptedModel) Models(context.Context) provider.ModelReport {
+	return provider.ModelReport{Ready: true, Models: []string{"fake-model"}}
+}
+func (m *scriptedModel) Chat(context.Context, provider.ChatRequest) (provider.ChatResponse, error) {
+	answer := m.answers[min(m.calls, len(m.answers)-1)]
+	m.calls++
+	return provider.ChatResponse{Content: answer, Provider: m.Name(), ModelID: m.ModelID()}, nil
+}
+
 type unavailableModel struct{}
 
 func (unavailableModel) Name() string    { return "unavailable" }
@@ -710,6 +781,22 @@ func seededServiceWithModel(t *testing.T) *service.Service {
 	}})
 	if _, err := svc.Init(context.Background()); err != nil {
 		t.Fatalf("Init: %v", err)
+	}
+	return svc
+}
+
+func seededServiceWithScriptedModel(t *testing.T, answers []string) *service.Service {
+	t.Helper()
+	model := &scriptedModel{answers: answers}
+	svc := openServiceWith(t, false, provider.Cascade{Providers: []provider.Provider{model}})
+	if _, err := svc.Init(context.Background()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if _, err := svc.Store(context.Background(), service.StoreRequest{
+		Layer: "project", Content: "the team hates long dashes in generated text",
+		Authorship: service.Authorship{Surface: service.SurfaceMCP},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
 	}
 	return svc
 }

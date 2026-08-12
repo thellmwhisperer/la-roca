@@ -38,6 +38,9 @@ func QueryPreamble(res service.QueryResult) string {
 		appendLine(&b, fmt.Sprintf("SQL · provider %s · model %s · %s",
 			res.Engine, res.Model, Duration(res.SQLInferenceMS)))
 	}
+	if res.RetriedSQL {
+		appendLine(&b, "SQL retry after gate rejection · "+Duration(res.SQLRetryInferenceMS))
+	}
 	if res.Match != "" {
 		appendLine(&b, "search · "+Duration(res.ExecutionMS))
 	}

@@ -23,6 +23,7 @@ type fakeProvider struct {
 	answers          []string
 	fail             error
 	delay            time.Duration
+	latency          int64
 	requests         int
 	commandTransport bool
 	// prompt is the last system message it received, and prompts is all of
@@ -68,7 +69,9 @@ func (f *fakeProvider) Chat(ctx context.Context, req provider.ChatRequest) (prov
 	if f.fail != nil {
 		return provider.ChatResponse{}, f.fail
 	}
-	return provider.ChatResponse{Content: f.answer(), Provider: f.name, ModelID: f.model}, nil
+	return provider.ChatResponse{
+		Content: f.answer(), Provider: f.name, ModelID: f.model, LatencyMS: f.latency,
+	}, nil
 }
 
 // answer walks the declared sequence and then repeats its last one.
@@ -630,14 +633,16 @@ func TestNoNoteWhenTheTitularProviderServes(t *testing.T) {
 // error in front of it will not fix it on the fifth try either, and each try
 // costs seconds.
 func TestARejectedQueryEarnsOneRetryWithTheEnginesVerdict(t *testing.T) {
+	const first = "```sql\nSELECT tool_name FROM tool_uses WHERE source_agent = 'pi' LIMIT 10;\n```"
+	const corrected = "SELECT content FROM memories WHERE supersedes IS NULL LIMIT 5"
 	model := &fakeProvider{
 		name: "ollama", model: "qwen3.5:4b",
-		ready: provider.Readiness{Ready: true},
+		ready: provider.Readiness{Ready: true}, latency: 7,
 		answers: []string{
 			// What the real model writes: source_agent is not on tool_uses.
-			"SELECT tool_name FROM tool_uses WHERE source_agent = 'pi' LIMIT 10",
+			first,
 			// What it writes once it is told what was wrong.
-			"SELECT content FROM memories WHERE supersedes IS NULL LIMIT 5",
+			corrected,
 		},
 	}
 	svc := serviceWithModel(t, model)
@@ -658,6 +663,24 @@ func TestARejectedQueryEarnsOneRetryWithTheEnginesVerdict(t *testing.T) {
 	if model.requests != 2 {
 		t.Fatalf("%d requests: a rejection buys exactly one more", model.requests)
 	}
+	if !res.RetriedSQL || res.FirstModelSQL != first || res.ModelSQL != corrected {
+		t.Fatalf("retry provenance = %+v", res)
+	}
+	if strings.Join(res.FirstRepaired, ",") != "code_fence,trailing_semicolon" {
+		t.Fatalf("first repairs = %v", res.FirstRepaired)
+	}
+	if !strings.Contains(res.RetryReason, "source_agent") ||
+		!strings.Contains(res.RetryReason, "does not exist") {
+		t.Fatalf("retry reason lost the exact gate verdict: %q", res.RetryReason)
+	}
+	if res.SQLRetryProviderLatencyMS != 7 || res.LLMLatencyMS != 14 {
+		t.Fatalf("provider latency total/retry = %d/%d, want 14/7",
+			res.LLMLatencyMS, res.SQLRetryProviderLatencyMS)
+	}
+	if res.SQLRetryInferenceMS > res.SQLInferenceMS {
+		t.Fatalf("retry inference %d exceeds the whole SQL phase %d",
+			res.SQLRetryInferenceMS, res.SQLInferenceMS)
+	}
 
 	// The second prompt has to carry what the engine said and what was rejected,
 	// or the retry is just the same question asked twice.
@@ -667,6 +690,9 @@ func TestARejectedQueryEarnsOneRetryWithTheEnginesVerdict(t *testing.T) {
 	}
 	if !strings.Contains(second, "does not exist") {
 		t.Errorf("the retry does not carry the engine's verdict:\n%s", second)
+	}
+	if !strings.Contains(second, "<schema>") {
+		t.Errorf("the retry lost the first attempt's schema context:\n%s", second)
 	}
 }
 
@@ -695,6 +721,10 @@ func TestASecondRejectionIsNotRetriedAgain(t *testing.T) {
 	if res.ModelSQL != "DROP TABLE memories" {
 		t.Fatalf("model_sql %q", res.ModelSQL)
 	}
+	if !res.RetriedSQL || res.FirstModelSQL != "DELETE FROM memories" ||
+		res.RetryReason == "" {
+		t.Fatalf("the failed attempts were not both recorded: %+v", res)
+	}
 	if res.RowCount == 0 {
 		t.Fatal("the rescue still has to answer")
 	}
@@ -710,12 +740,17 @@ func TestAValidQueryIsNotAskedTwice(t *testing.T) {
 	}
 	svc := serviceWithModel(t, model)
 
-	if _, err := svc.Query(context.Background(),
-		service.QueryRequest{Question: theFreeQuestion}); err != nil {
+	res, err := svc.Query(context.Background(),
+		service.QueryRequest{Question: theFreeQuestion})
+	if err != nil {
 		t.Fatalf("Query: %v", err)
 	}
 	if model.requests != 1 {
 		t.Fatalf("%d requests for a query that was valid at once", model.requests)
+	}
+	if res.RetriedSQL || res.FirstModelSQL != "" || res.RetryReason != "" ||
+		res.SQLRetryInferenceMS != 0 || res.SQLRetryProviderLatencyMS != 0 {
+		t.Fatalf("first-shot result declares a retry: %+v", res)
 	}
 }
 

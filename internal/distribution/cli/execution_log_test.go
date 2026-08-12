@@ -17,7 +17,10 @@ import (
 func TestExecutionLogCarriesMetadataWithoutResultRowsAndRedactsFlags(t *testing.T) {
 	dataDir := t.TempDir()
 	dbPath := filepath.Join(dataDir, "roca.db")
-	frontier := &queryModeProvider{answers: []string{queryModeSQL}, name: "codex", model: "gpt-frontier"}
+	frontier := &queryModeProvider{
+		answers: []string{"SELECT missing FROM memories LIMIT 1", queryModeSQL},
+		name:    "codex", model: "gpt-frontier",
+	}
 	local := &queryModeProvider{answers: []string{queryModeProse}, name: "ollama", model: "qwen-local"}
 	answer, err := answerQuery(t.Context(), queryModeServiceWithTimeout(t, frontier, 0, local),
 		service.QueryRequest{Question: queryModeQuestion}, true)
@@ -48,6 +51,9 @@ func TestExecutionLogCarriesMetadataWithoutResultRowsAndRedactsFlags(t *testing.
 	text := string(raw)
 	for _, want := range []string{`"command":"query"`, `"database_path":"` + dbPath + `"`,
 		`"question":"` + queryModeQuestion + `"`, `"path":"model"`, `"row_count":1`,
+		`"retried_sql":true`, `"first_model_sql":"SELECT missing FROM memories LIMIT 1"`,
+		`"retry_reason":"no such column:`, `missing`, `"sql_retry_inference_ms":`,
+		`"sql_retry_provider_latency_ms":`,
 		`"sql_provider":"codex"`, `"sql_model":"gpt-frontier"`, `"sql_inference_ms":`,
 		`"execution_ms":`, `"interpretation_provider":"ollama"`,
 		`"interpretation_model":"qwen-local"`, `"interpretation_ms":`,

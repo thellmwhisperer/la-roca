@@ -51,7 +51,8 @@ func TestExecStopsAQueryThatExceedsTheCostBudget(t *testing.T) {
 }
 
 func TestExecNeverAppliesModelSQLRepairs(t *testing.T) {
-	svc, _ := serviceWithPaths(t)
+	model := answering("codex", "SELECT id FROM memories LIMIT 1")
+	svc := serviceWithModel(t, model)
 	for _, statement := range []string{
 		"```sql\nSELECT id FROM memories LIMIT 1\n```",
 		"Here is the query:\nSELECT id FROM memories LIMIT 1",
@@ -60,6 +61,9 @@ func TestExecNeverAppliesModelSQLRepairs(t *testing.T) {
 		if _, err := svc.Exec(t.Context(), service.ExecRequest{SQL: statement}); err == nil {
 			t.Errorf("Exec silently repaired user SQL %q", statement)
 		}
+	}
+	if model.requests != 0 {
+		t.Fatalf("Exec contacted the model %d times", model.requests)
 	}
 }
 

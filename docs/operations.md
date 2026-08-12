@@ -49,7 +49,11 @@ exit code, error and result metadata. Query records keep the question, route,
 provider, model, SQL, timings, degradation, provider failure text and row
 count; they never store result row contents. MCP audit records store the
 tool, redacted arguments, verdict, degraded state, duration and result row
-count. Ingest records retain the complete ingest envelope, including every
+count. Query calls add the same stable attribution the execution stream
+keeps: route, retry outcome, the SQL that ran, the rejected SQL and the gate
+error that bought a correction, provider and model for both inferences, and
+per-phase timings; like execution records, they never store result row
+contents. Ingest records retain the complete ingest envelope, including every
 file error, exact excluded and discarded totals, collapsed reasons, and up to
 100 source-record details with their path, parser, record position and reason.
 
