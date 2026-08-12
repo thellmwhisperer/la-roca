@@ -269,6 +269,53 @@ func TestQueryAuditDistinguishesRetrySuccessFromRescue(t *testing.T) {
 	}
 }
 
+func TestEverySQLDegradationPersistsTheCompleteAuditFailure(t *testing.T) {
+	for _, testCase := range []struct {
+		name, degraded, retryType, sql, errorText string
+	}{
+		{
+			name: "gate rejection", degraded: service.DegradedInvalidSQL,
+			retryType: service.RetryGateRejection,
+			sql:       "SELECT still_missing FROM memories LIMIT 1", errorText: "still_missing",
+		},
+		{
+			name: "execution error", degraded: service.DegradedExecution,
+			retryType: service.RetryExecutionError,
+			sql:       `SELECT rowid FROM memories_fts WHERE memories_fts MATCH '"synthetic" ("one" OR)' LIMIT 1`,
+			errorText: `fts5: syntax error near "OR"`,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			svc := seededServiceWithScriptedModel(t, []string{testCase.sql, testCase.sql})
+			result := callToolResult(t, connect(t, svc), "roca_query", map[string]any{
+				"query": "what decisions were made about the long dashes",
+			})
+			if !result.IsError {
+				t.Fatal("degraded query was not surfaced as a tool error")
+			}
+			var record map[string]any
+			raw := readSingleLog(t, svc.DataDir(), logfile.MCPAudit)
+			if err := json.Unmarshal(raw, &record); err != nil {
+				t.Fatal(err)
+			}
+			for _, field := range []string{
+				"error", "error_type", "model_sql", "sql", "fallback_reason",
+				"correlation_id", "duration_ms", "sql_provider_latency_ms",
+				"sql_inference_ms", "sql_retry_inference_ms", "execution_ms",
+			} {
+				if _, exists := record[field]; !exists {
+					t.Errorf("degraded audit omitted %q: %s", field, raw)
+				}
+			}
+			if record["error_type"] != testCase.degraded || record["model_sql"] != testCase.sql ||
+				record["fallback_reason"] != testCase.degraded || record["retry_type"] != testCase.retryType ||
+				!strings.Contains(fmt.Sprint(record["error"]), testCase.errorText) {
+				t.Errorf("degraded audit lost its diagnostic payload: %s", raw)
+			}
+		})
+	}
+}
+
 func readSingleLog(t *testing.T, dataDir, stream string) []byte {
 	t.Helper()
 	matches, err := filepath.Glob(filepath.Join(dataDir, logfile.DirName, stream+"-*.jsonl"))

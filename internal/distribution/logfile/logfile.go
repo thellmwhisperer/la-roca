@@ -46,23 +46,32 @@ type CallRecord struct {
 	DurationMS    int64     `json:"duration_ms"`
 	CorrelationID string    `json:"correlation_id,omitempty"`
 
-	Question       string `json:"question,omitempty"`
-	SQL            string `json:"sql,omitempty"`
-	RawSQL         string `json:"raw_sql,omitempty"`
-	SQLProvider    string `json:"sql_provider,omitempty"`
-	SQLModel       string `json:"sql_model,omitempty"`
-	RowCount       int    `json:"row_count"`
-	Degraded       string `json:"degraded,omitempty"`
-	FallbackReason string `json:"fallback_reason,omitempty"`
-	RetryReason    string `json:"retry_reason,omitempty"`
-	QueryPlan      any    `json:"queryplan,omitempty"`
-	ProviderNote   string `json:"sql_provider_note,omitempty"`
+	Question       string  `json:"question,omitempty"`
+	SQL            string  `json:"sql,omitempty"`
+	RawSQL         string  `json:"raw_sql,omitempty"`
+	SQLProvider    string  `json:"sql_provider,omitempty"`
+	SQLModel       string  `json:"sql_model,omitempty"`
+	RowCount       int     `json:"row_count"`
+	Degraded       string  `json:"degraded,omitempty"`
+	FallbackReason string  `json:"fallback_reason,omitempty"`
+	RetryReason    string  `json:"retry_reason,omitempty"`
+	QueryPlan      any     `json:"queryplan,omitempty"`
+	ProviderNote   string  `json:"sql_provider_note,omitempty"`
+	Path           string  `json:"path,omitempty"`
+	Retried        bool    `json:"retried,omitempty"`
+	RetriedSQL     bool    `json:"retried_sql,omitempty"`
+	RetryType      string  `json:"retry_type,omitempty"`
+	ModelSQL       *string `json:"model_sql,omitempty"`
+	FirstModelSQL  string  `json:"first_model_sql,omitempty"`
 
-	SQLInferenceMS         *int64 `json:"sql_inference_ms,omitempty"`
-	ExecutionMS            *int64 `json:"execution_ms,omitempty"`
-	InterpretationProvider string `json:"interpretation_provider,omitempty"`
-	InterpretationModel    string `json:"interpretation_model,omitempty"`
-	InterpretationMS       *int64 `json:"interpretation_ms,omitempty"`
+	SQLProviderLatencyMS      *int64 `json:"sql_provider_latency_ms,omitempty"`
+	SQLInferenceMS            *int64 `json:"sql_inference_ms,omitempty"`
+	SQLRetryProviderLatencyMS *int64 `json:"sql_retry_provider_latency_ms,omitempty"`
+	SQLRetryInferenceMS       *int64 `json:"sql_retry_inference_ms,omitempty"`
+	ExecutionMS               *int64 `json:"execution_ms,omitempty"`
+	InterpretationProvider    string `json:"interpretation_provider,omitempty"`
+	InterpretationModel       string `json:"interpretation_model,omitempty"`
+	InterpretationMS          *int64 `json:"interpretation_ms,omitempty"`
 }
 
 type ExecutionRecord struct {
@@ -77,16 +86,6 @@ type ExecutionRecord struct {
 type MCPRecord struct {
 	CallRecord
 	Tool string `json:"tool"`
-	// Path, the retry provenance and the retry timings are what the MCP surface
-	// alone can tell, because only a tool result carries the answer's own
-	// metadata about which road it took.
-	Path                      string `json:"path,omitempty"`
-	Retried                   bool   `json:"retried,omitempty"`
-	RetriedSQL                bool   `json:"retried_sql,omitempty"`
-	ModelSQL                  string `json:"model_sql,omitempty"`
-	FirstModelSQL             string `json:"first_model_sql,omitempty"`
-	SQLRetryInferenceMS       *int64 `json:"sql_retry_inference_ms,omitempty"`
-	SQLRetryProviderLatencyMS *int64 `json:"sql_retry_provider_latency_ms,omitempty"`
 }
 
 type RunRecord struct {

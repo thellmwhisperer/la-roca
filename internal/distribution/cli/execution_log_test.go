@@ -154,6 +154,60 @@ func TestADegradedQueryNamesItsAuditLineWithoutAnError(t *testing.T) {
 	}
 }
 
+func TestEverySQLDegradationWritesTheCompleteFailureContract(t *testing.T) {
+	for _, testCase := range []struct {
+		name, degraded, failure, sql string
+	}{
+		{"gate rejection", service.DegradedInvalidSQL, "synthetic gate rejection", "SELECT missing FROM memories"},
+		{"execution error", service.DegradedExecution, `fts5: syntax error near "OR"`,
+			`SELECT rowid FROM memories_fts WHERE memories_fts MATCH '"synthetic" ("one" OR)'`},
+		{"model error", service.DegradedLLMError, "synthetic provider stopped", ""},
+		{"model unavailable", service.DegradedUnavailable, "no synthetic model is available", ""},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			dataDir := t.TempDir()
+			result := service.QueryResult{
+				Question: "find the synthetic lighthouse", Path: service.PathKeyword,
+				ModelSQL: testCase.sql, CleanedSQL: testCase.sql,
+				Engine: "fixture", Model: "fixture-model", Degraded: testCase.degraded,
+				Message: testCase.failure, LLMLatencyMS: 2, SQLInferenceMS: 3, ExecutionMS: 5,
+			}
+			env := &cliEnv{
+				dbPath: filepath.Join(dataDir, "roca.db"), outcome: result,
+				auditQuery: &result, correlation: logfile.NewCorrelationID(),
+			}
+			root := &cobra.Command{Use: "roca"}
+			query := &cobra.Command{Use: "query"}
+			root.AddCommand(query)
+			if err := env.logExecution(query, time.Now(), ExitError, nil); err != nil {
+				t.Fatal(err)
+			}
+
+			var record map[string]any
+			raw := readAuditStream(t, dataDir, logfile.Executions)
+			if err := json.Unmarshal(raw, &record); err != nil {
+				t.Fatal(err)
+			}
+			for _, field := range []string{
+				"error", "error_type", "fallback_reason",
+				"correlation_id", "duration_ms", "sql_provider_latency_ms",
+				"sql_inference_ms", "execution_ms",
+			} {
+				if value, exists := record[field]; !exists || value == "" {
+					t.Errorf("degraded audit field %q = %#v; record: %s", field, value, raw)
+				}
+			}
+			if _, exists := record["model_sql"]; !exists {
+				t.Errorf("degraded audit omitted model_sql: %s", raw)
+			}
+			if record["error"] != testCase.failure || record["error_type"] != testCase.degraded ||
+				record["model_sql"] != testCase.sql || record["fallback_reason"] != testCase.degraded {
+				t.Errorf("degraded audit changed the failure payload: %s", raw)
+			}
+		})
+	}
+}
+
 func TestIngestAndMigrationRunsPersistSummariesAndErrorsOutsideSQLite(t *testing.T) {
 	tests := []struct {
 		name, command, stream string
