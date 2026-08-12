@@ -272,6 +272,49 @@ func TestBackfillMatchesHistoricalAnchorsSafely(t *testing.T) {
 			},
 		},
 		{
+			name: "one unclaimed timestamp candidate remains matchable",
+			stored: []parsers.Exchange{
+				{Number: 1, HumanText: "first timestamp turn", AgentText: "first timestamp answer",
+					HumanTimestamp: "2026-01-01T00:00:13Z", AgentTimestamp: "2026-01-01T00:00:14Z"},
+				{Number: 2, HumanText: "second timestamp turn", AgentText: "second timestamp answer",
+					HumanTimestamp: "2026-01-01T00:00:13Z", AgentTimestamp: "2026-01-01T00:00:14Z"},
+			},
+			replay: []parsers.Exchange{
+				{Number: 1, HumanText: "first timestamp turn", AgentText: "first timestamp answer",
+					HumanTimestamp: "2026-01-01T00:00:13Z", AgentTimestamp: "2026-01-01T00:00:14Z",
+					Provenance: provenance("first-match")},
+				{Number: 2, HumanText: "second timestamp turn", AgentText: "second timestamp answer",
+					HumanTimestamp: "2026-01-01T00:00:13Z", AgentTimestamp: "2026-01-01T00:00:14Z",
+					Provenance: provenance("second-match")},
+			},
+			want: []storedRow{
+				{number: 1, humanText: "first timestamp turn", agentText: "first timestamp answer", model: "first-match"},
+				{number: 2, humanText: "second timestamp turn", agentText: "second timestamp answer", model: "second-match"},
+			},
+		},
+		{
+			name: "incompatible remaining timestamp candidate reports conflict",
+			stored: []parsers.Exchange{
+				{Number: 1, HumanText: "claimed timestamp turn", AgentText: "claimed timestamp answer",
+					HumanTimestamp: "2026-01-01T00:00:15Z", AgentTimestamp: "2026-01-01T00:00:16Z"},
+				{Number: 2, HumanText: "remaining timestamp turn", AgentText: "remaining timestamp answer",
+					HumanTimestamp: "2026-01-01T00:00:15Z", AgentTimestamp: "2026-01-01T00:00:16Z"},
+			},
+			replay: []parsers.Exchange{
+				{Number: 1, HumanText: "claimed timestamp turn", AgentText: "claimed timestamp answer",
+					HumanTimestamp: "2026-01-01T00:00:15Z", AgentTimestamp: "2026-01-01T00:00:16Z",
+					Provenance: provenance("claimed-match")},
+				{Number: 2, HumanText: "different timestamp turn", AgentText: "different timestamp answer",
+					HumanTimestamp: "2026-01-01T00:00:15Z", AgentTimestamp: "2026-01-01T00:00:16Z",
+					Provenance: provenance("must-not-land")},
+			},
+			wantConflicts: 1,
+			want: []storedRow{
+				{number: 1, humanText: "claimed timestamp turn", agentText: "claimed timestamp answer", model: "claimed-match"},
+				{number: 2, humanText: "remaining timestamp turn", agentText: "remaining timestamp answer"},
+			},
+		},
+		{
 			name: "component boundaries cannot collide",
 			stored: []parsers.Exchange{{
 				Number: 1, HumanText: "a", AgentText: "\x00b",

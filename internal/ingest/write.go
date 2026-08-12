@@ -364,7 +364,13 @@ func (m *exchangeMatcher) match(number int, exchange parsers.Exchange) (int, exc
 	if key, ok := timestampAnchor(exchange.HumanTimestamp, exchange.AgentTimestamp); ok {
 		timestampsPresent = true
 		stored := m.byTimestamps[key]
-		candidates, sameClaim := m.unclaimed(stored, identity)
+		candidates, sameClaim, claimed := m.unclaimed(stored, identity)
+		if len(stored) > 1 && claimed {
+			if len(candidates) != 1 || !compatibleContent(candidates[0], exchange) {
+				return 0, exchangeAnchorConflict
+			}
+			return candidates[0].number, exchangeMatched
+		}
 		if sameClaim {
 			return 0, exchangeAlreadyClaimed
 		}
@@ -382,7 +388,7 @@ func (m *exchangeMatcher) match(number int, exchange parsers.Exchange) (int, exc
 	}
 	if key, ok := contentAnchor(exchange.HumanText, exchange.AgentText); ok {
 		stored := compatibleCandidates(m.byContent[key], exchange)
-		candidates, sameClaim := m.unclaimed(stored, identity)
+		candidates, sameClaim, _ := m.unclaimed(stored, identity)
 		if sameClaim {
 			return 0, exchangeAlreadyClaimed
 		}
@@ -415,18 +421,21 @@ func (m *exchangeMatcher) claim(number, incomingNumber int, exchange parsers.Exc
 }
 
 func (m *exchangeMatcher) unclaimed(candidates []storedExchange,
-	identity exchangeIdentity) ([]storedExchange, bool) {
+	identity exchangeIdentity) ([]storedExchange, bool, bool) {
 	available := make([]storedExchange, 0, len(candidates))
-	same := false
+	var same, claimedAny bool
 	for _, candidate := range candidates {
 		claim, claimed := m.claimed[candidate.number]
 		if !claimed {
 			available = append(available, candidate)
-		} else if claim == identity {
-			same = true
+		} else {
+			claimedAny = true
+			if claim == identity {
+				same = true
+			}
 		}
 	}
-	return available, same
+	return available, same, claimedAny
 }
 
 func incomingIdentity(number int, exchange parsers.Exchange) exchangeIdentity {
