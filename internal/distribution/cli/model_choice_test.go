@@ -81,21 +81,26 @@ func TestBuiltInModelSourceIsVisible(t *testing.T) {
 		}
 	})
 
-	// Negative: with an env var that sets the model, "built-in default" must
-	// NOT appear — the source is the env var.
-	t.Run("env source is not built-in", func(t *testing.T) {
-		t.Setenv("ROCA_CODEX_MODEL", "gpt-env-model")
-		var output strings.Builder
-		renderBootstrap(&cliEnv{out: &output}, service.InitResult{Model: &service.InitModel{
-			Ready: true, Provider: "codex", Model: "gpt-env-model",
-		}})
-		if strings.Contains(output.String(), "built-in default") {
-			t.Fatalf("source should not say built-in when an env var sets it:\n%s", output.String())
-		}
-		if !strings.Contains(output.String(), "from ROCA_CODEX_MODEL") {
-			t.Fatalf("env source should name the env var:\n%s", output.String())
-		}
-	})
+	// An environment variable is the source only where the provider reads it.
+	// Ollama does; a shipped CLI preset resolves its model from the file alone,
+	// so a variable that merely matches the answer is not what chose it. The
+	// rendered line carries exactly one source, so naming the expected one also
+	// pins that the other spelling is absent.
+	for _, source := range []struct{ name, key, provider, want string }{
+		{"ollama reads its environment override", "ROCA_OLLAMA_MODEL", "ollama", "from ROCA_OLLAMA_MODEL"},
+		{"codex ignores an environment override", "ROCA_CODEX_MODEL", "codex", "built-in default"},
+	} {
+		t.Run(source.name, func(t *testing.T) {
+			t.Setenv(source.key, "env-model")
+			var output strings.Builder
+			renderBootstrap(&cliEnv{out: &output}, service.InitResult{Model: &service.InitModel{
+				Ready: true, Provider: source.provider, Model: "env-model",
+			}})
+			if !strings.Contains(output.String(), source.want) {
+				t.Fatalf("model source should be %q:\n%s", source.want, output.String())
+			}
+		})
+	}
 }
 
 func TestInitSaysDetectedLocalCLIIsReadyWithoutRocaLogin(t *testing.T) {

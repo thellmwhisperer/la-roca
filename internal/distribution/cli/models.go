@@ -806,18 +806,25 @@ func modelChange(name, path string) string {
 	return fmt.Sprintf("models.%s.model in %s", name, path)
 }
 
+// modelChoiceSource names the setting that actually chose this model, so a
+// setting that merely coincides with the answer is never reported as its
+// source. Only Ollama reads an environment override; a shipped CLI preset
+// resolves models.<name>.model, then defaults.<name>_model, then the shipped
+// default, so neither an environment variable nor the loose defaults.model key
+// can be what chose it.
 func modelChoiceSource(path, name, model string) string {
 	for _, key := range map[string][]string{
-		provider.NameCodex: {"ROCA_CODEX_MODEL"}, provider.NameOllama: {"ROCA_OLLAMA_MODEL", "ROCA_MODEL"},
+		provider.NameOllama: {"ROCA_OLLAMA_MODEL", "ROCA_MODEL"},
 	}[name] {
 		if os.Getenv(key) == model {
 			return "from " + key
 		}
 	}
+	preset := slices.Contains(provider.CommandPresetNames(), name)
 	if file, err := config.LoadFile(path); err == nil {
 		cfg := file.Models.Providers[name]
 		if cfg.Model == model || file.Default(name+"_model") == model ||
-			(name != provider.NameCodex && file.Default("model") == model) {
+			(!preset && file.Default("model") == model) {
 			return "from " + path
 		}
 	}
