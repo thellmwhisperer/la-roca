@@ -19,11 +19,15 @@ The selected transport generates every plan against that same fixture. Every
 live case and the report summary name the provider and model that produced its
 plan, so runs from different model configurations remain attributable.
 
-The golden set is `internal/evaluation/testdata/golden.json`. Its stable case
-contract is:
+The golden set is `internal/evaluation/testdata/golden.json`. Every case has a
+unique `id` shared with its recorded plan and a reporting `category`; its stable
+retrieval contract is `question`, `expected_kind`, and the ID-independent
+`expected_marker`:
 
 ```json
 {
+  "id": "person-approval",
+  "category": "person",
   "question": "Who approved the Aurora launch?",
   "expected_kind": "row_contains",
   "expected_marker": "Nora Vale approved the Aurora launch"
