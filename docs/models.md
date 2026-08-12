@@ -306,8 +306,9 @@ shown with its own yes or no first.
 3. The model generates SQL, a repair step forgives known model-output mistakes,
    and the result **always** passes the two-halved gate. A model is not above
    the gate.
-4. A gate rejection sends the failed SQL and exact verdict back to that model
-   once, through the same repair and gate path.
+4. A gate rejection, or a failure when the validated statement runs, sends that
+   SQL and the engine's exact verdict back to the same model once, through the
+   same repair and gate path.
 5. Whatever still fails from there on degrades to the keyword rescue and says which of
    four things went wrong: `model_unavailable`, `model_error`, `invalid_sql`,
    `sql_execution_error`.
