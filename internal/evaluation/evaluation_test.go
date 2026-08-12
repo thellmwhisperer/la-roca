@@ -65,6 +65,15 @@ func TestExternalGoldenSetLoadsReplayPlansFromItsPrivateSidecar(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	broken := filepath.Join(dir, "broken-cases.json")
+	if err := os.WriteFile(broken, []byte(`{"schema_version":1,"cases":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadSuiteFile(broken); err == nil ||
+		!strings.Contains(err.Error(), broken) || !strings.Contains(err.Error(), "fixture") {
+		t.Fatalf("envelope error = %v; want the file and the missing key", err)
+	}
+
 	loaded, err := LoadSuiteFile(casesPath)
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +123,7 @@ func TestReplayMeasuresTheRecordedBaseline(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	if report.Metrics.Cases != 20 || report.Metrics.Passed != 17 ||
-		report.Metrics.HitAt1 != 16 || report.Metrics.HitAt5 != 17 {
+		report.Metrics.HitAt1 != 14 || report.Metrics.HitAt5 != 17 {
 		t.Fatalf("unexpected recorded baseline: %+v", report.Metrics)
 	}
 	if report.Metrics.ZeroResultQueries != 6 || report.Metrics.TotalQueries != 23 ||
@@ -246,6 +255,9 @@ func TestQueriesToAnswerNamesAnsweredAndDeclaredRescueCases(t *testing.T) {
 		report.Metrics.QueriesToAnswer != 2 {
 		t.Fatalf("rescue metrics = %+v", report.Metrics)
 	}
+	if report.Metrics.HitAt1 != 0 || report.Cases[0].HitAt1 || !report.Cases[0].HitAt5 {
+		t.Fatalf("a rescue attempt inflated hit@1: %+v", report.Cases[0])
+	}
 	for _, output := range []string{RenderHuman(report), RenderMarkdown(report)} {
 		if !strings.Contains(output, "2.00") ||
 			!strings.Contains(output, "1/2 answered rescue cases") {
@@ -256,6 +268,29 @@ func TestQueriesToAnswerNamesAnsweredAndDeclaredRescueCases(t *testing.T) {
 	if err != nil || !strings.Contains(string(raw), `"answered_rescue_cases":1`) ||
 		!strings.Contains(string(raw), `"rescue_cases":2`) {
 		t.Fatalf("machine rescue denominator = %s, err=%v", raw, err)
+	}
+}
+
+func TestMarkersAreFoundPastTheDisplayBudget(t *testing.T) {
+	svc := fixtureService(t, provider.Cascade{})
+	prefix := strings.Repeat("x", service.DefaultMaxChars+10)
+	suite := Suite{Fixture: "synthetic-v1", Cases: []Case{{ID: "long-field",
+		Question: "Who approved Aurora?", ExpectedKind: "row_contains",
+		ExpectedMarker: "Nora Vale"}}}
+	planner := plannerFunc(func(context.Context, Case, int, string) (Plan, error) {
+		return Plan{SQL: []string{"SELECT '" + prefix +
+			"' || content AS text FROM memories WHERE content LIKE '%Nora Vale%' LIMIT 5"},
+			Provider: "test", Model: "fixed"}, nil
+	})
+
+	report, err := Run(context.Background(), svc, suite, planner, "replay")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := report.Cases[0].Attempts[0].ResultRows
+	if report.Metrics.HitAt1 != 1 || len(rows) == 0 ||
+		!strings.Contains(rows[0]["text"].(string), "Nora Vale") {
+		t.Fatalf("a marker past the display budget was scored as a miss: %+v", report.Cases[0])
 	}
 }
 

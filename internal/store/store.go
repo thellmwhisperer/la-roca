@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"net/url"
 	"os"
@@ -65,9 +66,47 @@ func OpenStrictReadOnly(path string) (*DB, error) {
 	}
 	if err := handle.Ping(); err != nil {
 		handle.Close()
-		return nil, fmt.Errorf("open the read-only database %q: %w", abs, err)
+		return nil, fmt.Errorf("open the read-only database %q: %w",
+			abs, whyItCannotOpenReadOnly(abs, err))
 	}
 	return &DB{sql: handle, path: abs, readOnly: handle, strictReadOnly: true}, nil
+}
+
+// whyItCannotOpenReadOnly names the failure that only `mode=ro` adds. A WAL
+// database is read through a shared index beside the file, and a system-level
+// read-only connection can neither build that index nor replay a hot WAL, so
+// SQLite refuses a database this user can plainly read and says only that it
+// cannot open it.
+func whyItCannotOpenReadOnly(abs string, err error) error {
+	var serr *sqlite.Error
+	if !errors.As(err, &serr) {
+		return err
+	}
+	primary := serr.Code() & 0xff
+	if primary != 8 && primary != 14 { // SQLITE_READONLY, SQLITE_CANTOPEN
+		return err
+	}
+	if !usesWAL(abs) {
+		return err
+	}
+	return fmt.Errorf("%w. It is a WAL database, and reading one needs its "+
+		"shared index beside the file: close whatever is writing to it, or copy "+
+		"it into a directory this user can write and evaluate the copy", err)
+}
+
+// usesWAL reads the journal mode out of the database header, which is the one
+// place that answers it without opening the database.
+func usesWAL(abs string) bool {
+	file, err := os.Open(abs)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	header := make([]byte, 20)
+	if _, err := io.ReadFull(file, header); err != nil {
+		return false
+	}
+	return header[18] == 2
 }
 
 // Open opens the database at path, creating the file when it does not exist.

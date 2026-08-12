@@ -11,6 +11,11 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
+// maxChars is the text budget evaluation executes under. The ruler measures
+// what retrieval returned, not what a terminal would show, so a marker deep
+// inside a long field still counts as found.
+const maxChars = 1 << 22
+
 type Plan struct {
 	SQL      []string `json:"sql"`
 	Provider string   `json:"provider"`
@@ -155,6 +160,10 @@ func Run(ctx context.Context, svc *service.Service, suite Suite, planner Planner
 	return report, nil
 }
 
+// runCase walks the question and then its declared rescue path. hit@1 belongs
+// to the first question alone: a rescue attempt that lands the marker on the
+// top row is reported by queries-to-answer, so the top-1 ruler keeps meaning
+// the same thing across prompt, query, and rescue-path revisions.
 func runCase(ctx context.Context, svc *service.Service, planner Planner, golden Case,
 	producerCounts map[string]int, metrics *Metrics) (CaseResult, error) {
 	started := time.Now()
@@ -172,7 +181,7 @@ func runCase(ctx context.Context, svc *service.Service, planner Planner, golden 
 			return result, fmt.Errorf("planner returned %d statements for %s attempt %d",
 				len(plan.SQL), golden.ID, attempt+1)
 		}
-		executed, err := svc.Exec(ctx, service.ExecRequest{SQL: plan.SQL[0]})
+		executed, err := svc.Exec(ctx, service.ExecRequest{SQL: plan.SQL[0], MaxChars: maxChars})
 		if err != nil {
 			return result, fmt.Errorf("execute %s attempt %d: %w", golden.ID, attempt+1, err)
 		}
@@ -191,7 +200,10 @@ func runCase(ctx context.Context, svc *service.Service, planner Planner, golden 
 			ResultRows: executed.Rows, HitAt1: at1, HitAt5: at5,
 			WallMS: time.Since(attemptStarted).Milliseconds(),
 		})
-		result.Queries, result.HitAt1, result.HitAt5 = attempt+1, at1, at5
+		result.Queries, result.HitAt5 = attempt+1, at5
+		if attempt == 0 {
+			result.HitAt1 = at1
+		}
 		if at5 {
 			result.QueriesToAnswer = attempt + 1
 			break

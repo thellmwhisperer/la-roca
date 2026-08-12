@@ -27,10 +27,17 @@ timestamp, mode, producer labels, complete case and attempt data including the
 returned columns and rows, and the exact human, Markdown, and JSON renderings.
 Multiple runs on the same day append separate records.
 
-The golden set is `internal/evaluation/testdata/golden.json`. Every case has a
-unique `id` shared with its recorded plan and a reporting `category`; its stable
-retrieval contract is `question`, `expected_kind`, and the ID-independent
-`expected_marker`:
+The golden set is `internal/evaluation/testdata/golden.json`. The file is an
+envelope of `schema_version` (always `1`), `fixture` naming the corpus, and a
+`cases` array:
+
+```json
+{ "schema_version": 1, "fixture": "synthetic-v1", "cases": [] }
+```
+
+Every case has a unique `id` shared with its recorded plan and a reporting
+`category`; its stable retrieval contract is `question`, `expected_kind`, and
+the ID-independent `expected_marker`:
 
 ```json
 {
@@ -82,7 +89,12 @@ their report logs must not be committed.
 The report includes hit@1 and hit@5, the share of executed queries that
 returned zero rows, mean queries-to-answer for successful rescue cases,
 answered/declared rescue coverage, and wall time for every case and the full
-run. Three cases intentionally miss the recorded baseline: an unknown-word
+run. hit@1 is the first question's top row only: a rescue attempt that puts
+the marker first never counts towards it, so the number stays comparable when
+rescue paths change. hit@5 is the marker in the top five of any attempt, and
+rescue success is reported by queries-to-answer.
+
+Three cases intentionally miss the recorded baseline: an unknown-word
 paraphrase, a typo, and a term present only in a thinking block. They keep
 measurable headroom in the suite without making `make eval` fail.
 

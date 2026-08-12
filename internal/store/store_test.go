@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/store"
@@ -109,6 +110,37 @@ func TestOpenStrictReadOnlyCannotAlterTheDatabaseOrItsPermissions(t *testing.T) 
 	info, err := os.Stat(path)
 	if err != nil || info.Mode().Perm() != 0o644 {
 		t.Fatalf("external database mode = %v, err=%v; want unchanged 0644", info, err)
+	}
+}
+
+func TestOpenStrictReadOnlyExplainsTheWALSharedIndex(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the directory permissions this diagnosis needs")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "external.db")
+	writable, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writable.SQL().Exec("CREATE TABLE fixture (value TEXT)"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writable.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	db, err := store.OpenStrictReadOnly(path)
+	if err == nil {
+		db.Close()
+		t.Skip("this filesystem serves a WAL database read-only")
+	}
+	if !strings.Contains(err.Error(), "shared index") {
+		t.Fatalf("read-only open error = %v; want the WAL shared index named", err)
 	}
 }
 

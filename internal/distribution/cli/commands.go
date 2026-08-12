@@ -638,6 +638,9 @@ func evalCommand(env *cliEnv) *cobra.Command {
 			dbPath := externalDB
 			if personal {
 				dbPath, err = filepath.Abs(dbPath)
+				if err != nil {
+					return fmt.Errorf("resolve eval database %q: %w", externalDB, err)
+				}
 			} else {
 				dbPath, cleanup, err = evaluation.PrepareFixture(cmd.Context(), workDir)
 				if err != nil {
@@ -738,8 +741,7 @@ func evaluationProviders(dataDir, providerName, model string) (provider.Cascade,
 	providers, err := provider.BuildCascade(provider.Settings{
 		File: file, RunnerDir: filepath.Join(dataDir, config.DirRunner),
 		Env: func(key string) string {
-			if key == provider.EnvOrder || model != "" &&
-				(key == "ROCA_MODEL" || strings.HasSuffix(key, "_MODEL")) {
+			if key == provider.EnvOrder || strings.HasSuffix(key, "_MODEL") {
 				return ""
 			}
 			return os.Getenv(key)

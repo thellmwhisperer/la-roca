@@ -58,7 +58,7 @@ func LoadSuite() (Suite, error) {
 	if err := attachPlans(&suite, recorded); err != nil {
 		return suite, err
 	}
-	if err := validateCases(suite); err != nil {
+	if err := validateCases(suite, "embedded testdata/golden.json"); err != nil {
 		return suite, err
 	}
 	if err := ValidateReplay(suite); err != nil {
@@ -78,7 +78,7 @@ func LoadSuiteFile(path string) (Suite, error) {
 	if err := json.Unmarshal(raw, &suite); err != nil {
 		return suite, fmt.Errorf("decode golden cases %s: %w", path, err)
 	}
-	if err := validateCases(suite); err != nil {
+	if err := validateCases(suite, path); err != nil {
 		return suite, err
 	}
 	suite.PlansPath = RecordedPlansPath(path)
@@ -133,18 +133,28 @@ func readJSON(name string, target any) error {
 	return nil
 }
 
-func validateCases(suite Suite) error {
-	if suite.SchemaVersion != 1 || suite.Fixture == "" || len(suite.Cases) == 0 {
-		return fmt.Errorf("golden set metadata is incomplete")
+// validateCases names the file and the missing key, because the case file is
+// an envelope an operator writes by hand: `schema_version`, `fixture`, and a
+// `cases` array of the documented objects.
+func validateCases(suite Suite, source string) error {
+	switch {
+	case suite.SchemaVersion != 1:
+		return fmt.Errorf("golden set %s: schema_version must be 1, found %d",
+			source, suite.SchemaVersion)
+	case suite.Fixture == "":
+		return fmt.Errorf("golden set %s: fixture names the corpus and is required", source)
+	case len(suite.Cases) == 0:
+		return fmt.Errorf("golden set %s: cases is empty", source)
 	}
 	seen := make(map[string]bool, len(suite.Cases))
 	for _, golden := range suite.Cases {
 		if golden.ID == "" || golden.Question == "" || golden.ExpectedKind == "" ||
 			golden.ExpectedMarker == "" {
-			return fmt.Errorf("golden case %q is incomplete", golden.ID)
+			return fmt.Errorf("golden set %s: case %q needs id, question, "+
+				"expected_kind and expected_marker", source, golden.ID)
 		}
 		if seen[golden.ID] {
-			return fmt.Errorf("golden case %q appears more than once", golden.ID)
+			return fmt.Errorf("golden set %s: case %q appears more than once", source, golden.ID)
 		}
 		seen[golden.ID] = true
 	}

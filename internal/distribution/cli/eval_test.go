@@ -120,19 +120,32 @@ func TestEvalCommandNeverUsesOperatorState(t *testing.T) {
 }
 
 func TestLiveEvalCanonicalizesProviderAndPreservesModel(t *testing.T) {
-	providers, err := evaluationProviders(t.TempDir(), " CODEX ", "custom-eval-model")
-	if err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name, asked, want string
+	}{
+		{"explicit model", "custom-eval-model", "custom-eval-model"},
+		{"provider default", "", provider.DefaultCodexModel},
 	}
-	if len(providers.Providers) != 1 {
-		t.Fatalf("providers = %d; want 1", len(providers.Providers))
-	}
-	want := struct{ name, model string }{provider.NameCodex, "custom-eval-model"}
-	got := struct{ name, model string }{
-		providers.Providers[0].Name(), providers.Providers[0].ModelID(),
-	}
-	if got != want {
-		t.Fatalf("provider/model = %q/%q; want %q/%q", got.name, got.model, want.name, want.model)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("ROCA_CODEX_MODEL", "operator-environment-model")
+			t.Setenv("ROCA_MODEL", "operator-environment-model")
+			providers, err := evaluationProviders(t.TempDir(), " CODEX ", test.asked)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(providers.Providers) != 1 {
+				t.Fatalf("providers = %d; want 1", len(providers.Providers))
+			}
+			want := struct{ name, model string }{provider.NameCodex, test.want}
+			got := struct{ name, model string }{
+				providers.Providers[0].Name(), providers.Providers[0].ModelID(),
+			}
+			if got != want {
+				t.Fatalf("provider/model = %q/%q; want %q/%q",
+					got.name, got.model, want.name, want.model)
+			}
+		})
 	}
 }
 
