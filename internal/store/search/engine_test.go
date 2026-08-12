@@ -37,7 +37,7 @@ func TestLexicalIndexSearchFindsWhatWasSeeded(t *testing.T) {
 func TestLexicalIndexSearchFoldsDiacritics(t *testing.T) {
 	engine, _ := indexedWorld(t)
 
-	for _, term := range []string{"muller", "MÜLLER", "que+paso", "QUÉ+PASÓ", "ano", "AÑO"} {
+	for _, term := range []string{"muller", "MÜLLER", "cafe", "CAFÉ", "resume", "RÉSUMÉ", "jalapeno", "JALAPEÑO"} {
 		res, err := engine.Search(context.Background(), request(term, search.MethodFTS))
 		if err != nil {
 			t.Fatalf("Search(%q): %v", term, err)
@@ -135,7 +135,7 @@ func TestAnOldTokenizerIsRebuiltOnceWithoutTouchingSourceRows(t *testing.T) {
 	writeTo(t, db, `INSERT INTO search_state (key, value, updated_at)
 		VALUES ('lexical_index', 'built', datetime('now'))`)
 
-	if n := ftsCount(t, db, `"que" AND "paso"`); n != 0 {
+	if n := ftsCount(t, db, `"cafe" AND "jalapeno"`); n != 0 {
 		t.Fatalf("the old tokenizer already ignores accents: matches = %d", n)
 	}
 
@@ -147,14 +147,14 @@ func TestAnOldTokenizerIsRebuiltOnceWithoutTouchingSourceRows(t *testing.T) {
 	if !first.LexicalBuilt || !strings.Contains(strings.Join(progress, "\n"), "rebuilding") {
 		t.Fatalf("migration report = %+v, progress = %v", first, progress)
 	}
-	if n := ftsCount(t, db, `"que" AND "paso"`); n != 1 {
+	if n := ftsCount(t, db, `"cafe" AND "jalapeno"`); n != 1 {
 		t.Errorf("accent-free query after migration: matches = %d, want 1", n)
 	}
 	var content string
-	if err := db.SQL().QueryRow(`SELECT content FROM memories WHERE content LIKE '%pasó%'`).Scan(&content); err != nil {
+	if err := db.SQL().QueryRow(`SELECT content FROM memories WHERE content LIKE '%jalapeño%'`).Scan(&content); err != nil {
 		t.Fatalf("read source after migration: %v", err)
 	}
-	if content != "qué pasó during the synthetic year" {
+	if content != "the synthetic café serves a spicy jalapeño tasting" {
 		t.Errorf("source content changed to %q", content)
 	}
 
@@ -214,8 +214,8 @@ func seededWorld(t *testing.T) *store.DB {
 		INSERT INTO memories (layer, content, origin) VALUES
 		  ('fact', 'the team forbids long dashes in every deliverable', 'human'),
 		  ('fact', 'a naïve Müller façade sketch from the design review', 'agent'),
-		  ('fact', 'qué pasó during the synthetic year', 'human'),
-		  ('fact', 'the synthetic report covers the año marker', 'agent'),
+		  ('fact', 'the synthetic café serves a spicy jalapeño tasting', 'human'),
+		  ('fact', 'the candidate sent a polished résumé for the design role', 'agent'),
 		  ('fact', 'the database opens in WAL mode with a busy timeout', 'agent');
 		INSERT INTO sessions (session_id, project, title) VALUES ('s1', 'roca', 'test session');
 		INSERT INTO exchanges (session_id, exchange_number, human_text, agent_text) VALUES

@@ -17,7 +17,7 @@ func TestFirstOrdinaryCallUpgradesTheTokenizerWithProgress(t *testing.T) {
 	}
 	db := old.DB().SQL()
 	if _, err := db.Exec(`INSERT INTO memories (layer, content, origin)
-		VALUES ('project', 'qué pasó during the synthetic year', 'agent')`); err != nil {
+		VALUES ('project', 'the synthetic café serves a spicy jalapeño tasting', 'agent')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO memories_fts(memories_fts) VALUES ('delete-all')`); err != nil {
@@ -37,15 +37,19 @@ func TestFirstOrdinaryCallUpgradesTheTokenizerWithProgress(t *testing.T) {
 	upgraded := serviceOn(t, paths, func(options *service.Options) {
 		options.Progress = func(line string) { progress = append(progress, line) }
 	})
-	if _, err := upgraded.Health(t.Context(), service.HealthRequest{}); err != nil {
+	report, err := upgraded.Index(t.Context())
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !report.LexicalBuilt {
+		t.Fatal("index report did not include the automatic tokenizer rebuild")
 	}
 	if !containsProgress(progress, "rebuilding for accent-insensitive search") {
 		t.Fatalf("upgrade progress is missing: %v", progress)
 	}
 	var matches int
 	if err := upgraded.DB().SQL().QueryRow(
-		`SELECT COUNT(*) FROM memories_fts WHERE memories_fts MATCH '"que" AND "paso"'`,
+		`SELECT COUNT(*) FROM memories_fts WHERE memories_fts MATCH '"cafe" AND "jalapeno"'`,
 	).Scan(&matches); err != nil {
 		t.Fatal(err)
 	}

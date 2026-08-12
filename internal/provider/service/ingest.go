@@ -30,10 +30,13 @@ func (s *Service) Index(ctx context.Context) (search.Report, error) {
 	if s.opts.ReadOnly {
 		return search.Report{}, errReadOnly
 	}
-	if err := s.ensureSchema(ctx); err != nil {
+	tokenizerMigrated, err := s.ensureSchema(ctx)
+	if err != nil {
 		return search.Report{}, err
 	}
-	return search.Index(ctx, s.db, s.opts.Progress)
+	report, err := search.Index(ctx, s.db, s.opts.Progress)
+	report.LexicalBuilt = report.LexicalBuilt || tokenizerMigrated
+	return report, err
 }
 
 // Ingest reads every source of the matrix once and leaves what it wrote
@@ -49,7 +52,7 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (IngestResult, 
 		return IngestResult{}, errReadOnly
 	}
 	if !req.DryRun {
-		if err := s.ensureSchema(ctx); err != nil {
+		if _, err := s.ensureSchema(ctx); err != nil {
 			return IngestResult{}, err
 		}
 	}

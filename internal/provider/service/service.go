@@ -111,30 +111,33 @@ func (s *Service) Close() error {
 	return s.db.Close()
 }
 
-func (s *Service) ensureSchema(ctx context.Context) error {
+func (s *Service) ensureSchema(ctx context.Context) (bool, error) {
 	s.schemaMu.Lock()
 	defer s.schemaMu.Unlock()
 	if s.schemaOK {
-		return nil
+		return false, nil
 	}
+	var tokenizerMigrated bool
 	if s.opts.ReadOnly {
 		report, err := store.Inspect(ctx, s.db)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if report.Verdict != store.VerdictCurrent {
-			return fmt.Errorf("the database schema requires adoption, but La Roca is in read-only mode: %s", report.Reason)
+			return false, fmt.Errorf("the database schema requires adoption, but La Roca is in read-only mode: %s", report.Reason)
 		}
 	} else {
 		if _, err := store.Adopt(ctx, s.db, s.opts.BackupDir); err != nil {
-			return err
+			return false, err
 		}
-		if _, err := search.EnsureTokenizer(ctx, s.db, s.opts.Progress); err != nil {
-			return err
+		var err error
+		tokenizerMigrated, err = search.EnsureTokenizer(ctx, s.db, s.opts.Progress)
+		if err != nil {
+			return false, err
 		}
 	}
 	s.schemaOK = true
-	return nil
+	return tokenizerMigrated, nil
 }
 
 // theGate opens the read-only gate the first time it is needed. It is an
