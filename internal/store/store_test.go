@@ -74,6 +74,44 @@ func TestOpenAppliesWALAndBusyTimeout(t *testing.T) {
 	}
 }
 
+func TestOpenStrictReadOnlyCannotAlterTheDatabaseOrItsPermissions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "external.db")
+	writable, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writable.SQL().Exec("CREATE TABLE fixture (value TEXT); INSERT INTO fixture VALUES ('Ada owns Quartz')"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writable.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := store.OpenStrictReadOnly(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	reader, err := db.ReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var value string
+	if err := reader.QueryRow("SELECT value FROM fixture").Scan(&value); err != nil || value != "Ada owns Quartz" {
+		t.Fatalf("strict read = %q, err=%v", value, err)
+	}
+	if _, err := db.SQL().Exec("INSERT INTO fixture VALUES ('mutation')"); err == nil {
+		t.Fatal("strict read-only handle accepted a write")
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o644 {
+		t.Fatalf("external database mode = %v, err=%v; want unchanged 0644", info, err)
+	}
+}
+
 func TestApplySchemaCreatesTheSevenV1Tables(t *testing.T) {
 	db := openFresh(t)
 	if err := store.ApplySchema(context.Background(), db); err != nil {

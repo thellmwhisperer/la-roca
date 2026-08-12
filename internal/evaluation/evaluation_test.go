@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -44,6 +47,57 @@ func TestTheEmbeddedGoldenSetCarriesCoverageAndHeadroom(t *testing.T) {
 	}
 	if headroom < 3 || rescued == 0 {
 		t.Fatalf("headroom=%d rescued=%d; want at least 3 and at least 1", headroom, rescued)
+	}
+}
+
+func TestExternalGoldenSetLoadsReplayPlansFromItsPrivateSidecar(t *testing.T) {
+	dir := t.TempDir()
+	casesPath := filepath.Join(dir, "owner-cases.json")
+	suite := Suite{SchemaVersion: 1, Fixture: "owner-private", Cases: []Case{{
+		ID: "private-person", Category: "person", Question: "Who owns Quartz?",
+		ExpectedKind: "row_contains", ExpectedMarker: "Ada owns Quartz",
+	}}}
+	raw, err := json.Marshal(suite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(casesPath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := LoadSuiteFile(casesPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Fixture != "owner-private" || len(loaded.Cases) != 1 || len(loaded.Plans) != 0 {
+		t.Fatalf("external suite = %+v", loaded)
+	}
+	if err := ValidateReplay(loaded); err == nil || !strings.Contains(err.Error(), RecordedPlansPath(casesPath)) {
+		t.Fatalf("missing replay sidecar error = %v", err)
+	}
+	if err := os.WriteFile(RecordedPlansPath(casesPath), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadSuiteFile(casesPath); err != nil {
+		t.Fatalf("live case loading consulted replay sidecar: %v", err)
+	}
+	plans := `{"provider":"recorded","model":"owner-v1","plans":[{"case_id":"private-person","sql":["SELECT content FROM memories LIMIT 5"]}]}`
+	if err := os.WriteFile(RecordedPlansPath(casesPath), []byte(plans), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err = LoadSuiteFile(casesPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err = LoadReplayPlans(loaded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateReplay(loaded); err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Provider != "recorded" || loaded.Model != "owner-v1" || len(loaded.Plans) != 1 {
+		t.Fatalf("external replay labels/plans = %+v", loaded)
 	}
 }
 
@@ -125,6 +179,47 @@ func TestReportsAreHumanMachineAndReleaseNoteReady(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), `"hit_at_1"`) || !strings.Contains(string(raw), `"wall_ms"`) {
 		t.Fatalf("machine report lacks stable fields: %s", raw)
+	}
+}
+
+func TestArchivePreservesTheCompleteReportAndEveryFormat(t *testing.T) {
+	report := Report{
+		Mode: "live", Fixture: "synthetic-v1", LogPath: "/workspace/.tmp/eval/logs/eval-2026-08-12.jsonl",
+		Producers: []Producer{{Provider: "codex", Model: "gpt-eval", Plans: 2}},
+		Metrics:   Metrics{Cases: 2, Passed: 1},
+		Cases: []CaseResult{
+			{ID: "one", Question: "first", ExpectedKind: "row_contains", ExpectedMarker: "alpha",
+				Attempts: []AttemptResult{{Question: "first", SQL: "SELECT 'alpha'", Provider: "codex", Model: "gpt-eval",
+					Columns: []string{"answer"}, ResultRows: []map[string]any{{"answer": "alpha"}}}}},
+			{ID: "two", Question: "second", ExpectedKind: "field_equals", ExpectedMarker: "model=gpt-eval"},
+		},
+	}
+	stamp := time.Date(2026, 8, 12, 12, 34, 56, 0, time.UTC)
+	archive, err := NewArchive(report, stamp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !archive.Timestamp.Equal(stamp) || archive.Mode != "live" ||
+		len(archive.PlanProducers) != 1 || len(archive.Report.Cases) != 2 {
+		t.Fatalf("archive lost run source data: %+v", archive)
+	}
+	for name, output := range map[string]string{
+		"human": archive.Formats.Human, "markdown": archive.Formats.Markdown,
+		"json": archive.Formats.JSON,
+	} {
+		for _, marker := range []string{"live", "codex", "gpt-eval", report.LogPath} {
+			if !strings.Contains(output, marker) {
+				t.Errorf("%s archive omits %q:\n%s", name, marker, output)
+			}
+		}
+	}
+	var machine Report
+	if err := json.Unmarshal([]byte(archive.Formats.JSON), &machine); err != nil {
+		t.Fatalf("archived JSON is not the complete machine report: %v", err)
+	}
+	if len(machine.Cases) != len(report.Cases) || machine.Cases[0].Attempts[0].SQL == "" ||
+		len(machine.Cases[0].Attempts[0].ResultRows) != 1 {
+		t.Fatalf("archived JSON lost cases or attempts: %+v", machine)
 	}
 }
 

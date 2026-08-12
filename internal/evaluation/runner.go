@@ -56,15 +56,17 @@ func LivePlanner(svc *service.Service) Planner {
 }
 
 type AttemptResult struct {
-	Question string `json:"question"`
-	SQL      string `json:"sql"`
-	Provider string `json:"provider"`
-	Model    string `json:"model"`
-	Degraded string `json:"degraded,omitempty"`
-	Rows     int    `json:"rows"`
-	HitAt1   bool   `json:"hit_at_1"`
-	HitAt5   bool   `json:"hit_at_5"`
-	WallMS   int64  `json:"wall_ms"`
+	Question   string           `json:"question"`
+	SQL        string           `json:"sql"`
+	Provider   string           `json:"provider"`
+	Model      string           `json:"model"`
+	Degraded   string           `json:"degraded,omitempty"`
+	Rows       int              `json:"rows"`
+	Columns    []string         `json:"columns,omitempty"`
+	ResultRows []map[string]any `json:"result_rows,omitempty"`
+	HitAt1     bool             `json:"hit_at_1"`
+	HitAt5     bool             `json:"hit_at_5"`
+	WallMS     int64            `json:"wall_ms"`
 }
 
 type CaseResult struct {
@@ -111,6 +113,7 @@ type Report struct {
 	Metrics       Metrics      `json:"metrics"`
 	Cases         []CaseResult `json:"cases"`
 	TotalWallMS   int64        `json:"total_wall_ms"`
+	LogPath       string       `json:"log_path"`
 }
 
 func Run(ctx context.Context, svc *service.Service, suite Suite, planner Planner, mode string) (Report, error) {
@@ -184,7 +187,8 @@ func runCase(ctx context.Context, svc *service.Service, planner Planner, golden 
 		producerCounts[plan.Provider+"\x00"+plan.Model]++
 		result.Attempts = append(result.Attempts, AttemptResult{
 			Question: question, SQL: executed.SQL, Provider: plan.Provider, Model: plan.Model,
-			Degraded: plan.Degraded, Rows: executed.RowCount, HitAt1: at1, HitAt5: at5,
+			Degraded: plan.Degraded, Rows: executed.RowCount, Columns: executed.Columns,
+			ResultRows: executed.Rows, HitAt1: at1, HitAt5: at5,
 			WallMS: time.Since(attemptStarted).Milliseconds(),
 		})
 		result.Queries, result.HitAt1, result.HitAt5 = attempt+1, at1, at5

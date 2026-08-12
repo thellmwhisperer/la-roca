@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/evaluation"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
@@ -585,10 +587,10 @@ func queryCommand(env *cliEnv) *cobra.Command {
 }
 
 func evalCommand(env *cliEnv) *cobra.Command {
-	var mode, format, workDir, providerName, model string
+	var mode, format, workDir, providerName, model, casesPath, externalDB string
 	cmd := &cobra.Command{
 		Use:   "eval",
-		Short: "Measure retrieval against the synthetic golden set",
+		Short: "Measure retrieval against golden cases",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if mode != "replay" && mode != "live" {
@@ -603,26 +605,57 @@ func evalCommand(env *cliEnv) *cobra.Command {
 			if mode == "replay" && (providerName != "" || model != "") {
 				return fmt.Errorf("replay eval does not use --provider or --model")
 			}
-			suite, err := evaluation.LoadSuite()
+			if (casesPath == "") != (externalDB == "") {
+				return fmt.Errorf("personal evaluation requires --cases and --db together")
+			}
+			personal := casesPath != ""
+			var suite evaluation.Suite
+			var err error
+			if personal {
+				suite, err = evaluation.LoadSuiteFile(casesPath)
+			} else {
+				suite, err = evaluation.LoadSuite()
+			}
 			if err != nil {
 				return err
 			}
-			dbPath, cleanup, err := evaluation.PrepareFixture(cmd.Context(), workDir)
+			if mode == "replay" {
+				if personal {
+					suite, err = evaluation.LoadReplayPlans(suite)
+					if err != nil {
+						return err
+					}
+				}
+				if err := evaluation.ValidateReplay(suite); err != nil {
+					return err
+				}
+			}
+			workDir, err = filepath.Abs(workDir)
 			if err != nil {
-				return err
+				return fmt.Errorf("resolve eval work directory: %w", err)
+			}
+			cleanup := func() {}
+			dbPath := externalDB
+			if personal {
+				dbPath, err = filepath.Abs(dbPath)
+			} else {
+				dbPath, cleanup, err = evaluation.PrepareFixture(cmd.Context(), workDir)
+				if err != nil {
+					return err
+				}
 			}
 			defer cleanup()
 			providers := provider.Cascade{}
 			if mode == "live" {
-				providers, err = evaluationProviders(filepath.Dir(dbPath), providerName, model)
+				providers, err = evaluationProviders(workDir, providerName, model)
 				if err != nil {
 					return err
 				}
 			}
 			svc, err := service.Open(service.Options{
-				DBPath: dbPath, BackupDir: filepath.Join(filepath.Dir(dbPath), "backups"),
-				DataDir: filepath.Dir(dbPath), QueryTimeout: service.DefaultQueryTimeout,
-				Providers: providers, ReadOnly: true,
+				DBPath: dbPath, BackupDir: filepath.Join(workDir, "backups"),
+				DataDir: workDir, QueryTimeout: service.DefaultQueryTimeout,
+				Providers: providers, ReadOnly: true, StrictReadOnly: personal,
 			})
 			if err != nil {
 				return err
@@ -637,15 +670,20 @@ func evalCommand(env *cliEnv) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			archive, err := archiveEvaluation(workDir, &report, time.Now().UTC())
+			if err != nil {
+				return err
+			}
 			env.capture(report)
 			if env.json || format == "json" {
-				return env.printJSON(report)
-			}
-			if format == "markdown" {
-				env.print("%s", evaluation.RenderMarkdown(report))
+				env.print("%s", archive.Formats.JSON)
 				return nil
 			}
-			env.print("%s", evaluation.RenderHuman(report))
+			if format == "markdown" {
+				env.print("%s", archive.Formats.Markdown)
+				return nil
+			}
+			env.print("%s", archive.Formats.Human)
 			return nil
 		},
 	}
@@ -655,7 +693,35 @@ func evalCommand(env *cliEnv) *cobra.Command {
 		"directory for disposable fixture databases")
 	cmd.Flags().StringVar(&providerName, "provider", "", "live plan provider")
 	cmd.Flags().StringVar(&model, "model", "", "live plan model (provider default when empty)")
+	cmd.Flags().StringVar(&casesPath, "cases", "", "external golden case file (requires --db)")
+	cmd.Flags().StringVar(&externalDB, "db", "", "external La Roca database (requires --cases)")
 	return cmd
+}
+
+func archiveEvaluation(workDir string, report *evaluation.Report,
+	timestamp time.Time) (evaluation.Archive, error) {
+	writer := logfile.New(workDir)
+	report.LogPath = writer.PathAt(logfile.Evaluation, timestamp)
+	raw, err := json.Marshal(logfile.Redact(*report))
+	if err != nil {
+		return evaluation.Archive{}, fmt.Errorf("redact evaluation report: %w", err)
+	}
+	if err := json.Unmarshal(raw, report); err != nil {
+		return evaluation.Archive{}, fmt.Errorf("decode redacted evaluation report: %w", err)
+	}
+	archive, err := evaluation.NewArchive(*report, timestamp)
+	if err != nil {
+		return archive, err
+	}
+	path, err := writer.AppendAt(logfile.Evaluation, archive, timestamp)
+	if err != nil {
+		return archive, fmt.Errorf("persist complete evaluation report: %w", err)
+	}
+	if path != report.LogPath {
+		return archive, fmt.Errorf("evaluation report path changed from %s to %s",
+			report.LogPath, path)
+	}
+	return archive, nil
 }
 
 func evaluationProviders(dataDir, providerName, model string) (provider.Cascade, error) {

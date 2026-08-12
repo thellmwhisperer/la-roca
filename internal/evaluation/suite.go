@@ -33,6 +33,7 @@ type Suite struct {
 	Provider      string          `json:"-"`
 	Model         string          `json:"-"`
 	Plans         map[string]Plan `json:"-"`
+	PlansPath     string          `json:"-"`
 }
 
 type recordedPlans struct {
@@ -53,18 +54,72 @@ func LoadSuite() (Suite, error) {
 	if err := readJSON("testdata/recorded_plans.json", &recorded); err != nil {
 		return suite, err
 	}
+	suite.PlansPath = "embedded testdata/recorded_plans.json"
+	if err := attachPlans(&suite, recorded); err != nil {
+		return suite, err
+	}
+	if err := validateCases(suite); err != nil {
+		return suite, err
+	}
+	if err := ValidateReplay(suite); err != nil {
+		return suite, err
+	}
+	return suite, nil
+}
+
+// LoadSuiteFile loads an operator-owned golden set without consulting any plan
+// file. Live mode therefore cannot be affected by a stale replay sidecar.
+func LoadSuiteFile(path string) (Suite, error) {
+	var suite Suite
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return suite, fmt.Errorf("read golden cases %s: %w", path, err)
+	}
+	if err := json.Unmarshal(raw, &suite); err != nil {
+		return suite, fmt.Errorf("decode golden cases %s: %w", path, err)
+	}
+	if err := validateCases(suite); err != nil {
+		return suite, err
+	}
+	suite.PlansPath = RecordedPlansPath(path)
+	return suite, nil
+}
+
+// LoadReplayPlans attaches the private fixed-plan sidecar to an external suite.
+func LoadReplayPlans(suite Suite) (Suite, error) {
+	raw, err := os.ReadFile(suite.PlansPath)
+	if os.IsNotExist(err) {
+		return suite, nil
+	}
+	if err != nil {
+		return suite, fmt.Errorf("read recorded plans %s: %w", suite.PlansPath, err)
+	}
+	var recorded recordedPlans
+	if err := json.Unmarshal(raw, &recorded); err != nil {
+		return suite, fmt.Errorf("decode recorded plans %s: %w", suite.PlansPath, err)
+	}
+	if err := attachPlans(&suite, recorded); err != nil {
+		return suite, err
+	}
+	return suite, nil
+}
+
+// RecordedPlansPath names the private replay sidecar for an external case file.
+func RecordedPlansPath(casesPath string) string {
+	ext := filepath.Ext(casesPath)
+	return strings.TrimSuffix(casesPath, ext) + ".plans.json"
+}
+
+func attachPlans(suite *Suite, recorded recordedPlans) error {
 	suite.Provider, suite.Model = recorded.Provider, recorded.Model
 	suite.Plans = make(map[string]Plan, len(recorded.Plans))
 	for _, item := range recorded.Plans {
 		if _, exists := suite.Plans[item.CaseID]; exists {
-			return suite, fmt.Errorf("recorded plan %q appears more than once", item.CaseID)
+			return fmt.Errorf("recorded plan %q appears more than once", item.CaseID)
 		}
 		suite.Plans[item.CaseID] = Plan{SQL: item.SQL, Provider: recorded.Provider, Model: recorded.Model}
 	}
-	if err := validateSuite(suite); err != nil {
-		return suite, err
-	}
-	return suite, nil
+	return nil
 }
 
 func readJSON(name string, target any) error {
@@ -78,7 +133,7 @@ func readJSON(name string, target any) error {
 	return nil
 }
 
-func validateSuite(suite Suite) error {
+func validateCases(suite Suite) error {
 	if suite.SchemaVersion != 1 || suite.Fixture == "" || len(suite.Cases) == 0 {
 		return fmt.Errorf("golden set metadata is incomplete")
 	}
@@ -92,6 +147,20 @@ func validateSuite(suite Suite) error {
 			return fmt.Errorf("golden case %q appears more than once", golden.ID)
 		}
 		seen[golden.ID] = true
+	}
+	return nil
+}
+
+// ValidateReplay verifies that every question and rescue attempt has a fixed
+// statement, so replay never falls through to a model.
+func ValidateReplay(suite Suite) error {
+	if len(suite.Plans) == 0 {
+		return fmt.Errorf("replay requires recorded plans in %s", suite.PlansPath)
+	}
+	if suite.Provider == "" || suite.Model == "" {
+		return fmt.Errorf("recorded plans in %s must name provider and model", suite.PlansPath)
+	}
+	for _, golden := range suite.Cases {
 		plan, exists := suite.Plans[golden.ID]
 		if !exists || len(plan.SQL) != len(golden.RescuePath)+1 {
 			return fmt.Errorf("golden case %q has %d questions but %d recorded plans",

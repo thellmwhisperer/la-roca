@@ -39,6 +39,9 @@ type Options struct {
 	QueryTimeout time.Duration
 	// ReadOnly refuses in the service, before any database I/O.
 	ReadOnly bool
+	// StrictReadOnly also opens the file itself with SQLite mode=ro. It is for
+	// explicitly supplied external corpora, which this process must not alter.
+	StrictReadOnly bool
 	// Providers is the resolved model cascade. Its zero value is a service that
 	// contacts no provider, which is what an installation with no model
 	// configured needs.
@@ -89,7 +92,15 @@ func Open(opts Options) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	db, err := store.Open(opts.DBPath)
+	if opts.StrictReadOnly && !opts.ReadOnly {
+		return nil, fmt.Errorf("strict database read-only mode requires service read-only mode")
+	}
+	var db *store.DB
+	if opts.StrictReadOnly {
+		db, err = store.OpenStrictReadOnly(opts.DBPath)
+	} else {
+		db, err = store.Open(opts.DBPath)
+	}
 	if err != nil {
 		return nil, err
 	}

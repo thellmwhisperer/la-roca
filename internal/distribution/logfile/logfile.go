@@ -21,6 +21,7 @@ const (
 	MCPAudit      = "mcp-audit"
 	Ingest        = "ingest"
 	Migrations    = "migrations"
+	Evaluation    = "eval"
 	lockName      = ".roca.lock"
 	maxFileBytes  = int64(5 << 20)
 	maxFiles      = 6
@@ -109,11 +110,24 @@ func New(dataDir string) *Writer {
 }
 
 func (w *Writer) Append(stream string, record any) error {
-	return w.append(stream, record, true)
+	_, err := w.append(stream, record, true, w.now().UTC())
+	return err
 }
 
 func (w *Writer) AppendExisting(stream string, record any) error {
-	return w.append(stream, record, false)
+	_, err := w.append(stream, record, false, w.now().UTC())
+	return err
+}
+
+func (w *Writer) AppendAt(stream string, record any, at time.Time) (string, error) {
+	return w.append(stream, record, true, at.UTC())
+}
+
+func (w *Writer) PathAt(stream string, at time.Time) string {
+	if w == nil {
+		return ""
+	}
+	return filepath.Join(w.dir, stream+"-"+at.UTC().Format(time.DateOnly)+".jsonl")
 }
 
 func (w *Writer) Prepare() error {
@@ -148,57 +162,56 @@ func (w *Writer) LockPath() string {
 	return filepath.Join(w.dir, lockName)
 }
 
-func (w *Writer) append(stream string, record any, createDir bool) error {
+func (w *Writer) append(stream string, record any, createDir bool, now time.Time) (string, error) {
 	if w == nil || w.dir == "" {
-		return fmt.Errorf("the log directory is not configured")
+		return "", fmt.Errorf("the log directory is not configured")
 	}
 	if createDir {
 		if err := w.Prepare(); err != nil {
-			return err
+			return "", err
 		}
 	}
 	release, err := securefile.LockExisting(w.LockPath())
 	if err != nil {
-		return fmt.Errorf("lock the log directory: %w", err)
+		return "", fmt.Errorf("lock the log directory: %w", err)
 	}
 	defer release()
 	if info, err := os.Stat(w.dir); err != nil || !info.IsDir() {
 		if err == nil {
 			err = fmt.Errorf("not a directory")
 		}
-		return fmt.Errorf("open the log directory: %w", err)
+		return "", fmt.Errorf("open the log directory: %w", err)
 	}
-	now := w.now().UTC()
-	path := filepath.Join(w.dir, stream+"-"+now.Format(time.DateOnly)+".jsonl")
+	path := w.PathAt(stream, now)
 	line, err := json.Marshal(Redact(record))
 	if err != nil {
-		return fmt.Errorf("encode the %s log record: %w", stream, err)
+		return "", fmt.Errorf("encode the %s log record: %w", stream, err)
 	}
 	line = append(line, '\n')
 	if int64(len(line)) > w.maxFileBytes {
-		return fmt.Errorf("encode the %s log record: %d bytes exceeds the %d-byte record cap",
+		return "", fmt.Errorf("encode the %s log record: %d bytes exceeds the %d-byte record cap",
 			stream, len(line), w.maxFileBytes)
 	}
 	if err := w.rotate(path, int64(len(line))); err != nil {
-		return fmt.Errorf("rotate the %s log: %w", stream, err)
+		return "", fmt.Errorf("rotate the %s log: %w", stream, err)
 	}
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
-		return fmt.Errorf("open the %s log: %w", stream, err)
+		return "", fmt.Errorf("open the %s log: %w", stream, err)
 	}
 	_, writeErr := file.Write(line)
 	closeErr := file.Close()
 	if writeErr != nil {
-		return fmt.Errorf("append the %s log: %w", stream, writeErr)
+		return "", fmt.Errorf("append the %s log: %w", stream, writeErr)
 	}
 	if closeErr != nil {
-		return fmt.Errorf("close the %s log: %w", stream, closeErr)
+		return "", fmt.Errorf("close the %s log: %w", stream, closeErr)
 	}
 	// The record is written and closed, so the append succeeded. Rotation is
 	// housekeeping after the fact: a file that could not be removed is not a
 	// reason to tell the caller its trace was not written.
 	w.prune(stream, now)
-	return nil
+	return path, nil
 }
 
 func (w *Writer) rotate(path string, incoming int64) error {

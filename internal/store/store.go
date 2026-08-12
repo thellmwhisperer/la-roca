@@ -29,12 +29,45 @@ const (
 
 // DB is an open La Roca database.
 type DB struct {
-	sql  *sql.DB
-	path string
+	sql            *sql.DB
+	path           string
+	strictReadOnly bool
 
 	once        sync.Once
 	readOnly    *sql.DB
 	readOnlyErr error
+}
+
+// OpenStrictReadOnly opens an existing database with SQLite's mode=ro and
+// query_only protections. It never creates, adopts, chmods, or journals the
+// operator's database.
+func OpenStrictReadOnly(path string) (*DB, error) {
+	abs, dsn, err := sqliteFileDSN(path, url.Values{
+		"mode": {"ro"},
+		"_pragma": {
+			fmt.Sprintf("busy_timeout(%d)", busyTimeout.Milliseconds()),
+			"query_only(1)",
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("resolve the read-only database path %q: %w", path, err)
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return nil, fmt.Errorf("open the read-only database %q: %w", abs, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("open the read-only database %q: not a regular file", abs)
+	}
+	handle, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open the read-only database %q: %w", abs, err)
+	}
+	if err := handle.Ping(); err != nil {
+		handle.Close()
+		return nil, fmt.Errorf("open the read-only database %q: %w", abs, err)
+	}
+	return &DB{sql: handle, path: abs, readOnly: handle, strictReadOnly: true}, nil
 }
 
 // Open opens the database at path, creating the file when it does not exist.
@@ -119,6 +152,9 @@ func (db *DB) SQL() *sql.DB { return db.sql }
 // read-only connection cannot touch WAL's shared index, and a WAL database with
 // a reader like that fails to read.
 func (db *DB) ReadOnly() (*sql.DB, error) {
+	if db.strictReadOnly {
+		return db.sql, nil
+	}
 	db.once.Do(func() {
 		_, dsn, err := sqliteFileDSN(db.path, url.Values{
 			"_pragma": {
@@ -160,7 +196,7 @@ func (db *DB) Path() string { return db.path }
 
 // Close closes the database.
 func (db *DB) Close() error {
-	if db.readOnly != nil {
+	if db.readOnly != nil && db.readOnly != db.sql {
 		db.readOnly.Close()
 	}
 	return db.sql.Close()

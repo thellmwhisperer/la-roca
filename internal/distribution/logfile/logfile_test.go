@@ -37,6 +37,23 @@ func TestAppendWritesOneCredentialFreeDatedLine(t *testing.T) {
 	}
 }
 
+func TestAppendAtUsesTheNamedTimestampAndReturnsItsPath(t *testing.T) {
+	root := t.TempDir()
+	stamp := time.Date(2026, 8, 12, 23, 59, 0, 0, time.FixedZone("test", -7*60*60))
+	writer := New(root)
+	path, err := writer.AppendAt(Evaluation, map[string]any{"timestamp": stamp}, stamp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(root, DirName, "eval-2026-08-13.jsonl")
+	if path != want {
+		t.Fatalf("AppendAt path = %q; want %q", path, want)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("AppendAt did not write its returned path: %v", err)
+	}
+}
+
 func TestAppendExistingDoesNotRecreateRemovedDirectories(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "removed")
 	writer := New(root)

@@ -33,7 +33,7 @@ func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWor
 
 func (w *distributionWorld) runRecordedEvaluation() error {
 	w.last = w.runAt(w.root, w.binary, "eval", "--mode", "replay", "--format", "json",
-		"--work-dir", filepath.Join(w.home, "eval"))
+		"--work-dir", filepath.Join(w.root, "eval"))
 	return nil
 }
 
@@ -51,6 +51,7 @@ func (w *distributionWorld) recordedEvaluationIsLabelled() error {
 			Cases  int `json:"cases"`
 			Passed int `json:"passed"`
 		} `json:"metrics"`
+		LogPath string `json:"log_path"`
 	}
 	if err := json.Unmarshal([]byte(w.last.stdout), &report); err != nil {
 		return fmt.Errorf("decode recorded evaluation: %w", err)
@@ -59,6 +60,10 @@ func (w *distributionWorld) recordedEvaluationIsLabelled() error {
 		report.Producers[0].Provider != "recorded" || report.Producers[0].Model != "fixed-sql-v1" ||
 		report.Metrics.Cases != 20 || report.Metrics.Passed != 17 {
 		return fmt.Errorf("recorded evaluation is not the labelled baseline: %+v", report)
+	}
+	if _, err := os.Stat(report.LogPath); err != nil ||
+		!strings.HasPrefix(report.LogPath, filepath.Join(w.root, "eval", "logs")) {
+		return fmt.Errorf("recorded evaluation log %q is outside its work directory: %v", report.LogPath, err)
 	}
 	return nil
 }

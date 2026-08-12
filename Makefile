@@ -11,6 +11,8 @@ EVAL_MODE ?= replay
 EVAL_FORMAT ?= human
 EVAL_PROVIDER ?=
 EVAL_MODEL ?=
+EVAL_CASES ?=
+EVAL_DB ?=
 
 LDFLAGS := -s -w \
 	-X main.version=$(VERSION) \
@@ -51,7 +53,7 @@ test: ## Unit and contract tests
 .PHONY: eval
 eval: ## Measure retrieval against the synthetic golden set
 	@$(MAKE) --no-print-directory build >/dev/null
-	@$(BIN) eval --mode $(EVAL_MODE) --format $(EVAL_FORMAT) $(if $(EVAL_PROVIDER),--provider $(EVAL_PROVIDER)) $(if $(EVAL_MODEL),--model $(EVAL_MODEL))
+	@$(BIN) eval --mode $(EVAL_MODE) --format $(EVAL_FORMAT) $(if $(EVAL_PROVIDER),--provider "$(EVAL_PROVIDER)") $(if $(EVAL_MODEL),--model "$(EVAL_MODEL)") $(if $(EVAL_CASES),--cases "$(EVAL_CASES)") $(if $(EVAL_DB),--db "$(EVAL_DB)")
 
 .PHONY: accept accept-index
 accept: build accept-index ## The godog acceptance suites against the real binary

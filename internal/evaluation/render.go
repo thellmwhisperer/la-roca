@@ -1,9 +1,38 @@
 package evaluation
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
+
+type FormatSources struct {
+	Human    string `json:"human"`
+	Markdown string `json:"markdown"`
+	JSON     string `json:"json"`
+}
+
+type Archive struct {
+	Timestamp     time.Time     `json:"timestamp"`
+	Mode          string        `json:"mode"`
+	PlanProducers []Producer    `json:"plan_producers"`
+	Report        Report        `json:"report"`
+	Formats       FormatSources `json:"formats"`
+}
+
+func NewArchive(report Report, timestamp time.Time) (Archive, error) {
+	machine, err := RenderJSON(report)
+	if err != nil {
+		return Archive{}, err
+	}
+	return Archive{
+		Timestamp: timestamp.UTC(), Mode: report.Mode, PlanProducers: report.Producers,
+		Report: report, Formats: FormatSources{
+			Human: RenderHuman(report), Markdown: RenderMarkdown(report), JSON: machine,
+		},
+	}, nil
+}
 
 func RenderHuman(report Report) string {
 	var out strings.Builder
@@ -33,6 +62,9 @@ func RenderHuman(report Report) string {
 		fmt.Fprintf(&out, "%s %s · hit@1=%t hit@5=%t queries=%d wall=%d ms\n",
 			status, result.ID, result.HitAt1, result.HitAt5, result.Queries, result.WallMS)
 	}
+	if report.LogPath != "" {
+		fmt.Fprintf(&out, "report written: %s\n", report.LogPath)
+	}
 	return strings.TrimRight(out.String(), "\n")
 }
 
@@ -53,7 +85,18 @@ func RenderMarkdown(report Report) string {
 		report.Metrics.QueriesToAnswer, report.Metrics.AnsweredRescueCases,
 		report.Metrics.RescueCases)
 	fmt.Fprintf(&out, "| wall time | %d ms |\n", report.TotalWallMS)
+	if report.LogPath != "" {
+		fmt.Fprintf(&out, "\nFull report written to `%s`.\n", report.LogPath)
+	}
 	return strings.TrimRight(out.String(), "\n")
+}
+
+func RenderJSON(report Report) (string, error) {
+	raw, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("encode evaluation report: %w", err)
+	}
+	return string(raw), nil
 }
 
 func producerLine(producers []Producer) string {
