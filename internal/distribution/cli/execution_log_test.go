@@ -43,14 +43,7 @@ func TestExecutionLogCarriesMetadataWithoutResultRowsAndRedactsFlags(t *testing.
 	if err := env.logExecution(query, time.Now(), ExitOK, nil); err != nil {
 		t.Fatal(err)
 	}
-	matches, err := filepath.Glob(filepath.Join(dataDir, logfile.DirName, "executions-*.jsonl"))
-	if err != nil || len(matches) != 1 {
-		t.Fatalf("execution logs = %v, err=%v", matches, err)
-	}
-	raw, err := os.ReadFile(matches[0])
-	if err != nil {
-		t.Fatal(err)
-	}
+	raw := readAuditStream(t, dataDir, logfile.Executions)
 	text := string(raw)
 	for _, want := range []string{`"source":"cli"`, `"command":"query"`,
 		`"ok":true`, `"database_path":"` + dbPath + `"`,
@@ -100,14 +93,7 @@ func TestUnexpectedCLIErrorIsDurableAndUserVisibleByCorrelationID(t *testing.T) 
 	if code != ExitError || runErr == nil || !strings.Contains(runErr.Error(), "correlation_id") {
 		t.Fatalf("failure = code %d err %v, want a correlated user-visible error", code, runErr)
 	}
-	matches, err := filepath.Glob(filepath.Join(home, ".roca", logfile.DirName, "executions-*.jsonl"))
-	if err != nil || len(matches) == 0 {
-		t.Fatalf("execution logs = %v, err=%v", matches, err)
-	}
-	raw, err := os.ReadFile(matches[len(matches)-1])
-	if err != nil {
-		t.Fatal(err)
-	}
+	raw := readAuditStream(t, filepath.Join(home, ".roca"), logfile.Executions)
 	for _, want := range []string{
 		`"source":"cli"`, `"command":"exec"`, `"ok":false`, `"error_type":"`,
 		`"correlation_id":"`, "synthetic_missing_table",
@@ -144,14 +130,7 @@ func TestADegradedQueryNamesItsAuditLineWithoutAnError(t *testing.T) {
 	if code != ExitError {
 		t.Fatalf("exit code = %d, want %d: the question needed a model and had none", code, ExitError)
 	}
-	matches, err := filepath.Glob(filepath.Join(home, ".roca", logfile.DirName, "executions-*.jsonl"))
-	if err != nil || len(matches) == 0 {
-		t.Fatalf("execution logs = %v, err=%v", matches, err)
-	}
-	raw, err := os.ReadFile(matches[len(matches)-1])
-	if err != nil {
-		t.Fatal(err)
-	}
+	raw := readAuditStream(t, filepath.Join(home, ".roca"), logfile.Executions)
 	var record struct {
 		OK            bool   `json:"ok"`
 		ErrorType     string `json:"error_type"`
@@ -218,14 +197,7 @@ func TestIngestAndMigrationRunsPersistSummariesAndErrorsOutsideSQLite(t *testing
 			if err := env.logExecution(command, time.Now(), test.code, test.runErr); err != nil {
 				t.Fatal(err)
 			}
-			matches, err := filepath.Glob(filepath.Join(dataDir, logfile.DirName, test.stream+"-*.jsonl"))
-			if err != nil || len(matches) != 1 {
-				t.Fatalf("%s logs = %v, err=%v", test.stream, matches, err)
-			}
-			raw, err := os.ReadFile(matches[0])
-			if err != nil {
-				t.Fatal(err)
-			}
+			raw := readAuditStream(t, dataDir, test.stream)
 			for _, want := range test.want {
 				if !strings.Contains(string(raw), want) {
 					t.Errorf("%s log lacks %q: %s", test.stream, want, raw)
@@ -256,14 +228,7 @@ func TestDefaultTextInitRecordsItsSchemaAdoptionSummary(t *testing.T) {
 		t.Fatalf("the text narration changed:\n%s", out.String())
 	}
 
-	matches, err := filepath.Glob(filepath.Join(home, ".roca", logfile.DirName, logfile.Migrations+"-*.jsonl"))
-	if err != nil || len(matches) != 1 {
-		t.Fatalf("migration logs = %v, err=%v", matches, err)
-	}
-	raw, err := os.ReadFile(matches[0])
-	if err != nil {
-		t.Fatal(err)
-	}
+	raw := readAuditStream(t, filepath.Join(home, ".roca"), logfile.Migrations)
 	var record struct {
 		OK     bool `json:"ok"`
 		Result *struct {
@@ -328,4 +293,20 @@ func TestAnUnwritableLogDoesNotFailTheCommand(t *testing.T) {
 	if strings.Contains(out.String(), "warning:") {
 		t.Errorf("the warning leaked into stdout:\n%s", out.String())
 	}
+}
+
+// The stream a run appended to, read back whole. The file name carries the day,
+// so the assertion is on the newest match rather than on a fixed name, and a
+// data directory an earlier run already wrote to is not a failure.
+func readAuditStream(t *testing.T, dataDir, stream string) []byte {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(dataDir, logfile.DirName, stream+"-*.jsonl"))
+	if err != nil || len(matches) == 0 {
+		t.Fatalf("%s logs = %v, err=%v", stream, matches, err)
+	}
+	raw, err := os.ReadFile(matches[len(matches)-1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }

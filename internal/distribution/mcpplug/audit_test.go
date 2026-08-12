@@ -89,20 +89,13 @@ func TestAuditCorrelatesADegradedAnswerOnlyWhenItReachesTheAgentAsAnError(t *tes
 				t.Fatal(err)
 			}
 			text := result.(*mcp.CallToolResult).Content[0].(*mcp.TextContent).Text
-			matches, err := filepath.Glob(filepath.Join(root, logfile.DirName, "mcp-audit-*.jsonl"))
-			if err != nil || len(matches) != 1 {
-				t.Fatalf("audit files = %v, err=%v", matches, err)
-			}
-			raw, err := os.ReadFile(matches[0])
-			if err != nil {
-				t.Fatal(err)
-			}
-			logged := strings.Contains(string(raw), `"correlation_id":"`)
+			raw := readAuditLog(t, root)
+			logged := strings.Contains(raw, `"correlation_id":"`)
 			if logged != testCase.correlated || strings.Contains(text, "correlation_id") != testCase.correlated {
 				t.Fatalf("correlated on screen=%v, in the log=%v, want %v: %s",
 					strings.Contains(text, "correlation_id"), logged, testCase.correlated, raw)
 			}
-			if !strings.Contains(string(raw), `"error_type":"invalid_sql"`) {
+			if !strings.Contains(raw, `"error_type":"invalid_sql"`) {
 				t.Fatalf("the degraded reason is not the error type: %s", raw)
 			}
 		})
@@ -138,6 +131,24 @@ func TestAuditPersistsTheFullQueryFailureAndCorrelatesToolErrors(t *testing.T) {
 	if !strings.Contains(call.Content[0].(*mcp.TextContent).Text, "correlation_id") {
 		t.Fatalf("tool error does not expose its correlation id: %+v", call.Content)
 	}
+	raw := readAuditLog(t, root)
+	for _, want := range []string{
+		`"source":"mcp"`, `"tool":"roca_query"`, `"ok":false`,
+		`"error":"synthetic query engine explosion"`, `"error_type":"tool_error"`,
+		`"question":"find the synthetic lighthouse"`, `"sql":"SELECT 1 LIMIT 1000"`,
+		"\"raw_sql\":\"```sql\\nSELECT 1\\n```\"", `"sql_provider":"codex"`,
+		`"sql_model":"gpt-synthetic"`, `"correlation_id":"`,
+	} {
+		if !strings.Contains(raw, want) {
+			t.Errorf("audit record lacks %q: %s", want, raw)
+		}
+	}
+}
+
+// Every audit assertion reads back the single JSONL stream the middleware wrote
+// under the data directory it was handed.
+func readAuditLog(t *testing.T, root string) string {
+	t.Helper()
 	matches, err := filepath.Glob(filepath.Join(root, logfile.DirName, "mcp-audit-*.jsonl"))
 	if err != nil || len(matches) != 1 {
 		t.Fatalf("audit files = %v, err=%v", matches, err)
@@ -146,15 +157,5 @@ func TestAuditPersistsTheFullQueryFailureAndCorrelatesToolErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{
-		`"source":"mcp"`, `"tool":"roca_query"`, `"ok":false`,
-		`"error":"synthetic query engine explosion"`, `"error_type":"tool_error"`,
-		`"question":"find the synthetic lighthouse"`, `"sql":"SELECT 1 LIMIT 1000"`,
-		"\"raw_sql\":\"```sql\\nSELECT 1\\n```\"", `"sql_provider":"codex"`,
-		`"sql_model":"gpt-synthetic"`, `"correlation_id":"`,
-	} {
-		if !strings.Contains(string(raw), want) {
-			t.Errorf("audit record lacks %q: %s", want, raw)
-		}
-	}
+	return string(raw)
 }

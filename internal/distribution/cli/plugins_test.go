@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,32 +38,13 @@ func TestPluginsResolveFromAControlledPathAndNeverTheCurrentDirectory(t *testing
 }
 
 func TestPluginCallsAreAuditedWithoutCredentialArguments(t *testing.T) {
-	home := t.TempDir()
-	dataDir := filepath.Join(home, ".roca")
-	pluginsDir := t.TempDir()
-	plugin := filepath.Join(pluginsDir, "roca-synthetic-plugin")
-	if err := os.WriteFile(plugin, []byte("#!/bin/sh\nexit 23\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", pluginsDir)
-	t.Setenv("HOME", home)
-	var warnings strings.Builder
-	env := &cliEnv{
-		out: &strings.Builder{}, errOut: &warnings,
-	}
+	home, env, warnings := syntheticPluginInstallation(t, 23)
 	code, err := executeWithOptions(env,
 		[]string{"synthetic-plugin", "--api-token", "not-a-real-credential"}, nil, true)
 	if err != nil || code != 23 {
 		t.Fatalf("plugin result = code %d err %v, want its exit code", code, err)
 	}
-	matches, err := filepath.Glob(filepath.Join(dataDir, logfile.DirName, "executions-*.jsonl"))
-	if err != nil || len(matches) != 1 {
-		t.Fatalf("execution logs = %v, err=%v, warnings=%q", matches, err, warnings.String())
-	}
-	raw, err := os.ReadFile(matches[0])
-	if err != nil {
-		t.Fatal(err)
-	}
+	raw := readAuditStream(t, filepath.Join(home, ".roca"), logfile.Executions)
 	text := string(raw)
 	for _, want := range []string{
 		`"command":"synthetic-plugin"`, `"ok":false`, `"exit_code":23`,
@@ -93,16 +75,7 @@ func TestPluginCallsAreAuditedWithoutCredentialArguments(t *testing.T) {
 }
 
 func TestASuccessfulRunIsNotCorrelated(t *testing.T) {
-	home := t.TempDir()
-	pluginsDir := t.TempDir()
-	plugin := filepath.Join(pluginsDir, "roca-synthetic-plugin")
-	if err := os.WriteFile(plugin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", pluginsDir)
-	t.Setenv("HOME", home)
-	var warnings strings.Builder
-	env := &cliEnv{out: &strings.Builder{}, errOut: &warnings}
+	_, env, warnings := syntheticPluginInstallation(t, 0)
 	code, err := executeWithOptions(env, []string{"synthetic-plugin"}, nil, true)
 	if err != nil || code != ExitOK {
 		t.Fatalf("plugin result = code %d err %v, want success", code, err)
@@ -110,4 +83,20 @@ func TestASuccessfulRunIsNotCorrelated(t *testing.T) {
 	if strings.Contains(warnings.String(), "correlation_id") || env.correlation != "" {
 		t.Fatalf("a successful run was correlated: %q", warnings.String())
 	}
+}
+
+// An external plugin that exits with the given code, reachable only through a
+// controlled PATH, and a home whose data directory the audit stream lands in.
+func syntheticPluginInstallation(t *testing.T, exitCode int) (string, *cliEnv, *strings.Builder) {
+	t.Helper()
+	home := t.TempDir()
+	pluginsDir := t.TempDir()
+	plugin := filepath.Join(pluginsDir, "roca-synthetic-plugin")
+	if err := os.WriteFile(plugin, fmt.Appendf(nil, "#!/bin/sh\nexit %d\n", exitCode), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", pluginsDir)
+	t.Setenv("HOME", home)
+	warnings := &strings.Builder{}
+	return home, &cliEnv{out: &strings.Builder{}, errOut: warnings}, warnings
 }
