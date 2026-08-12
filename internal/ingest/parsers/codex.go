@@ -236,7 +236,7 @@ func (r *codexReader) sessionMeta(payload codexPayload) {
 	if payload.ID != "" {
 		r.session.ID = payload.ID
 	}
-	r.session.StartedAt = payload.Timestamp
+	r.session.StartedAt = validInstant(payload.Timestamp)
 	r.provider = payload.ModelProvider
 	putIfSet(r.session.Metadata, "cwd", payload.Cwd)
 	putIfSet(r.session.Metadata, "cli_version", payload.CLIVersion)
@@ -254,7 +254,7 @@ func (r *codexReader) event(record int, line codexLine, payload codexPayload) {
 				Reason: "turn superseded by a later question before it completed"})
 		}
 		r.open = &codexTurn{
-			opened: record, humanText: payload.Message, humanTS: line.Timestamp,
+			opened: record, humanText: payload.Message, humanTS: validInstant(line.Timestamp),
 			model: r.model, effort: r.effort,
 		}
 		r.resetTurnScope()
@@ -280,7 +280,7 @@ func (r *codexReader) event(record int, line codexLine, payload codexPayload) {
 		turn := *r.open
 		turn.closed = record
 		turn.agentText = firstNonEmpty(payload.LastAgentMessage, r.agentSaid)
-		turn.agentTS = line.Timestamp
+		turn.agentTS = validInstant(line.Timestamp)
 		r.turns = append(r.turns, turn)
 		r.open = nil
 		r.resetTurnScope()
@@ -363,7 +363,7 @@ func (r *codexReader) recover(record int, line codexLine, payload codexPayload) 
 	switch payload.Role {
 	case "user":
 		r.recovering = &codexTurn{
-			opened: record, humanText: text, humanTS: line.Timestamp,
+			opened: record, humanText: text, humanTS: validInstant(line.Timestamp),
 			model: r.model, effort: r.effort,
 		}
 	case "assistant":
@@ -373,7 +373,7 @@ func (r *codexReader) recover(record int, line codexLine, payload codexPayload) 
 		turn := *r.recovering
 		turn.closed = record
 		turn.agentText = text
-		turn.agentTS = line.Timestamp
+		turn.agentTS = validInstant(line.Timestamp)
 		r.recovered = append(r.recovered, turn)
 		r.recovering = nil
 	}

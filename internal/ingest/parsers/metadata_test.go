@@ -114,6 +114,12 @@ func TestZeroEpochIsReportedAsMissing(t *testing.T) {
 	if got := ISOFromEpochSeconds(0); got != "" {
 		t.Fatalf("zero seconds became %q", got)
 	}
+	if got := validInstant("2026-08-01T10:00:00"); got != "" {
+		t.Fatalf("zone-less timestamp became %q", got)
+	}
+	if got := validInstant("2026-08-01T10:00:00Z"); got != "2026-08-01T10:00:00Z" {
+		t.Fatalf("RFC3339 timestamp became %q", got)
+	}
 }
 
 const coworkAudit = `
