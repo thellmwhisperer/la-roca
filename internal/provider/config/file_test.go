@@ -32,7 +32,7 @@ func TestAMissingFileIsNotAFailure(t *testing.T) {
 func TestTheModelsSectionIsReadWhole(t *testing.T) {
 	path := write(t, `
 [models]
-order = ["deepseek", "ollama"]
+order = ["codex", "ollama"]
 interpret_order = ["ollama"]
 timeout_ms = 15000
 
@@ -42,10 +42,8 @@ model = "qwen3.5:4b"
 keep_alive = "10m"
 think = true
 
-[models.deepseek]
-preset = "deepseek"
-api_key = "sk-secret"
-model = "deepseek-reasoner"
+[models.codex]
+model = "gpt-test"
 `)
 	file, err := LoadFile(path)
 	if err != nil {
@@ -54,7 +52,7 @@ model = "deepseek-reasoner"
 	if !file.Exists || file.Path != path {
 		t.Fatalf("file %+v", file)
 	}
-	if got := strings.Join(file.Models.Order, ","); got != "deepseek,ollama" {
+	if got := strings.Join(file.Models.Order, ","); got != "codex,ollama" {
 		t.Fatalf("order %q", got)
 	}
 	if got := strings.Join(file.Models.InterpretOrder, ","); got != "ollama" {
@@ -66,15 +64,15 @@ model = "deepseek-reasoner"
 	if file.Models.TimeoutMS != 15000 {
 		t.Fatalf("timeout %d", file.Models.TimeoutMS)
 	}
-	deepseek := file.Models.Providers["deepseek"]
-	if deepseek.APIKey != "sk-secret" || deepseek.Model != "deepseek-reasoner" || deepseek.Preset != "deepseek" {
-		t.Fatalf("deepseek %+v", deepseek)
+	codex := file.Models.Providers["codex"]
+	if codex.Model != "gpt-test" {
+		t.Fatalf("codex %+v", codex)
 	}
 	ollama := file.Models.Providers["ollama"]
 	if ollama.BaseURL != "http://localhost:11434" || ollama.KeepAlive != "10m" || !ollama.Think {
 		t.Fatalf("ollama %+v", ollama)
 	}
-	if deepseek.Think {
+	if codex.Think {
 		t.Fatal("thinking is on for a provider that never asked for it")
 	}
 }
@@ -99,18 +97,122 @@ timeout_seconds = 45
 	}
 }
 
-func TestAProviderCannotDeclareBothTransports(t *testing.T) {
+func TestAnExplicitCommandKeepsPresetAsCommandConfiguration(t *testing.T) {
+	path := write(t, `[models.fixture]
+command = ["fixture", "--profile", "{preset}", "{prompt}"]
+preset = "operator-profile"
+model = "fixture-model"
+`)
+	file, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := file.Models.Providers["fixture"]
+	if cfg.RetiredCredential || cfg.Values["preset"] != "operator-profile" || len(file.Warnings) != 0 {
+		t.Fatalf("provider = %+v, warnings = %v", cfg, file.Warnings)
+	}
+}
+
+func TestProviderSecretRedactionHandlesEveryValidTOMLShape(t *testing.T) {
+	if key, index := tomlAssignment(`model.name = "nested"`); key != "model.name" || index != 11 {
+		t.Fatalf("dotted assignment resolved to %q at %d", key, index)
+	}
+	for _, body := range []string{
+		"[models.fixture]\n\"api_key\" = \"legacy-secret\"\nmodel = \"fixture\"\n",
+		"models.fixture.api_key = \"legacy-secret\"\nmodels.fixture.model = \"fixture\"\n",
+		"models = { fixture = { api_key = \"legacy-secret\", model = \"fixture\" } }\n",
+	} {
+		redacted, err := RedactProviderSecrets(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(redacted, "legacy-secret") || strings.Contains(redacted, "api_key") {
+			t.Fatalf("provider secret survived redaction:\n%s", redacted)
+		}
+		path := write(t, redacted)
+		if file, err := LoadFile(path); err != nil || file.Models.Providers["fixture"].Model != "fixture" {
+			t.Fatalf("redaction lost provider configuration: file=%+v err=%v\n%s", file, err, redacted)
+		}
+	}
+}
+
+func TestProviderMigrationDeduplicatesWithResolverNormalization(t *testing.T) {
+	text := "[models]\norder = [\"xai\", \"Codex\", \"codex\"]\n"
+	updated, err := ApplyText(text, []Change{{
+		Kind: ReplaceListValue, Table: "models", Key: "order", Old: "xai", Value: "codex",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(updated, `order = ["codex"]`) {
+		t.Fatalf("normalized duplicate survived migration:\n%s", updated)
+	}
+	updated, err = ApplyText("[models]\norder = [\"xai\"]\n", []Change{{
+		Kind: RemoveListValue, Table: "models", Key: "order", Old: "xai",
+	}})
+	if err != nil || strings.Contains(updated, "order =") {
+		t.Fatalf("removing the last provider left an explicit empty order: err=%v\n%s", err, updated)
+	}
+}
+
+// TOML spells one key several ways, and the operator wrote the file: a root
+// level `models.xai.api_key = …` is the same key as `api_key` under a
+// `[models.xai]` header. Only the header shape was matched, so on a dotted
+// configuration retirement appended a second `[models]` declaration, aborted on
+// the parser error it had just created, and left the secret in the file.
+func TestCredentialRetirementEditsEveryEquivalentKeyShape(t *testing.T) {
+	for _, before := range []string{
+		"# operator note\n[models]\norder = [\"xai\", \"ollama\"]\n\n[models.\"xai\"]\napi_key = \"legacy-secret\"\nmodel = \"grok-legacy\"\n",
+		"# operator note\nmodels.order = [\"xai\", \"ollama\"]\nmodels.xai.api_key = \"legacy-secret\"\nmodels.xai.model = \"grok-legacy\"\n",
+	} {
+		retired, err := ApplyText(before, []Change{
+			{Kind: ReplaceListValue, Table: "models", Key: "order", Old: "xai", Value: "codex"},
+			{Kind: ReplaceListValue, Table: "models", Key: "interpret_order", Old: "xai", Value: "codex"},
+			{Kind: DeleteTable, Table: "models.xai"},
+		})
+		if err != nil {
+			t.Fatalf("retirement refused the operator's file: %v\n%s", err, before)
+		}
+		if strings.Contains(retired, "legacy-secret") || !strings.Contains(retired, "# operator note") {
+			t.Fatalf("retirement kept the secret or lost the operator's own lines:\n%s", retired)
+		}
+		// Every later proposal edits the same file, so it must land on this shape too.
+		updated, err := ApplyText(retired, []Change{
+			{Kind: PrependUnique, Table: "models", Key: "order", Value: "claude", Default: []string{"codex"}},
+			{Kind: ReplaceTable, Table: "models.claude", Fields: []Field{{Key: "command", Value: []string{"claude"}}}},
+		})
+		if err != nil {
+			t.Fatalf("the next proposal refused the retired file: %v\n%s", err, retired)
+		}
+		file, err := LoadFile(write(t, updated))
+		if err != nil {
+			t.Fatalf("the edited configuration no longer parses: %v\n%s", err, updated)
+		}
+		if _, kept := file.Models.Providers["xai"]; kept ||
+			strings.Join(file.Models.Order, ",") != "claude,codex,ollama" ||
+			len(file.Models.Providers["claude"].Command) != 1 {
+			t.Fatalf("migration incomplete: %+v\n%s", file.Models, updated)
+		}
+	}
+}
+
+func TestALegacyHTTPAndKeyConfigIsToleratedButIgnored(t *testing.T) {
 	path := write(t, `[models.fixture]
 base_url = "https://example.invalid/v1"
 command = ["fixture", "{prompt}"]
+api_key = "legacy-secret"
 `)
-	_, err := LoadFile(path)
-	if err == nil {
-		t.Fatal("both transports were accepted")
+	file, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("legacy configuration crashed: %v", err)
 	}
-	for _, piece := range []string{"models.fixture.base_url", "models.fixture.command", path} {
-		if !strings.Contains(err.Error(), piece) {
-			t.Errorf("error does not name %q: %v", piece, err)
+	cfg := file.Models.Providers["fixture"]
+	if len(cfg.Command) == 0 || !cfg.RetiredCredential || cfg.Values["api_key"] != "" {
+		t.Fatalf("provider = %+v", cfg)
+	}
+	for _, piece := range []string{"models.fixture.base_url", "models.fixture.api_key", path} {
+		if !strings.Contains(strings.Join(file.Warnings, "\n"), piece) {
+			t.Errorf("warning does not name %q: %v", piece, file.Warnings)
 		}
 	}
 }
@@ -325,9 +427,6 @@ func TestTheConfigPathHangsOffTheDataDirectoryAndTheEnvironmentWins(t *testing.T
 	}
 	if want := filepath.Join(home, DirOwn, FileConfig); paths.Config != want {
 		t.Fatalf("config %q, want %q", paths.Config, want)
-	}
-	if want := filepath.Join(home, DirOwn, DirCredentials); paths.Credentials != want {
-		t.Fatalf("credentials %q, want %q", paths.Credentials, want)
 	}
 
 	t.Setenv(EnvConfig, "/elsewhere/roca.toml")

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider"
+	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 )
 
 func TestTTYInitListsDetectedModelsAndEnterKeepsTheFactoryDefault(t *testing.T) {
@@ -146,6 +147,85 @@ func TestTTYInitWritesSurgicallyWithBackupAndNamesIt(t *testing.T) {
 	}
 }
 
+// The model chooser persists a pair. It is not the retirement prompt: it writes
+// a secret-free recovery backup of its own, and it leaves every legacy setting
+// and every credential file an older release left behind exactly where they are,
+// because removing those is what the visible accept/decline proposal is for.
+func TestInitModelChoiceWritesTheChoiceAndRetiresNothing(t *testing.T) {
+	tests := []struct {
+		name, body       string
+		legacyCredential bool
+		preserved        []string
+	}{
+		{
+			name:             "leftover credential file",
+			body:             "[models]\norder = [\"codex\"]\n\n[models.codex]\nmodel = \"gpt-legacy\"\n",
+			legacyCredential: true,
+		},
+		{
+			name:      "quoted inline legacy key",
+			body:      "[models]\norder = [\"codex\"]\n\n[models.codex]\n\"api_key\" = \"legacy-secret\"\nmodel = \"gpt-legacy\"\n",
+			preserved: []string{"api_key"},
+		},
+		{
+			name:      "unrelated provider secret",
+			body:      "[models]\norder = [\"xai\"]\n\n[models.xai]\napi_key = \"unrelated-secret\"\nmodel = \"grok-legacy\"\n",
+			preserved: []string{"[models.xai]", "api_key"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			paths, credential := initRetirementFixture(t, test.body, test.legacyCredential)
+			if _, err := writeInitModelChoice(paths, provider.NameCodex, "gpt-current"); err != nil {
+				t.Fatal(err)
+			}
+
+			backup, err := os.ReadFile(paths.Config + ".roca.bak")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, secret := range []string{"legacy-secret", "unrelated-secret"} {
+				if strings.Contains(string(backup), secret) {
+					t.Fatalf("provider secret %q survived in the recovery backup:\n%s", secret, backup)
+				}
+			}
+			raw, err := os.ReadFile(paths.Config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(raw), `model = "gpt-current"`) {
+				t.Fatalf("the confirmed model was not persisted:\n%s", raw)
+			}
+			for _, kept := range test.preserved {
+				if !strings.Contains(string(raw), kept) {
+					t.Fatalf("the model choice deleted the legacy setting %q:\n%s", kept, raw)
+				}
+			}
+			if credential != "" {
+				if _, err := os.Stat(credential); err != nil {
+					t.Fatalf("the model choice removed a legacy credential file: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func initRetirementFixture(t *testing.T, body string, legacyCredential bool) (config.Paths, string) {
+	t.Helper()
+	root := t.TempDir()
+	paths := config.Paths{DB: filepath.Join(root, "roca.db"), Config: filepath.Join(root, "config.toml")}
+	if err := os.WriteFile(paths.Config, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !legacyCredential {
+		return paths, ""
+	}
+	credential := legacyProviderCredentialPaths(root)[provider.NameCodex]
+	writeFile(t, credential, "legacy-file-secret")
+	return paths, credential
+}
+
 func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -154,7 +234,7 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 		backend       chooserTestBackend
 		want          string
 		avoid         string
-		guidance      string
+		guidance      []string
 		avoidGuidance string
 		orderEnv      string
 		modelEnv      bool
@@ -169,7 +249,7 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 			input:         "sonnet\n\n",
 			want:          "answering: codex/" + provider.DefaultCodexModel,
 			avoid:         "answering: claude/sonnet",
-			guidance:      "unset ROCA_MODELS_ORDER before using models.<provider>.model",
+			guidance:      []string{"unset ROCA_MODELS_ORDER before using models.<provider>.model"},
 			avoidGuidance: "which makes",
 		},
 		{
@@ -180,7 +260,7 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 			}},
 			want:     "answering: ollama/environment-model",
 			avoid:    "answering: ollama/local-one",
-			guidance: "change ROCA_OLLAMA_MODEL directly; or unset ROCA_OLLAMA_MODEL and ROCA_MODEL before using roca model set",
+			guidance: []string{"change ROCA_OLLAMA_MODEL directly; or unset ROCA_OLLAMA_MODEL and ROCA_MODEL before using roca model set"},
 			modelEnv: true,
 		},
 		{
@@ -191,29 +271,22 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 			}},
 			want:          "answering: ollama/environment-model",
 			avoid:         "answering: ollama/local-one",
-			guidance:      "unset ROCA_MODELS_ORDER and ROCA_OLLAMA_MODEL and ROCA_MODEL before using models.<provider>.model",
+			guidance:      []string{"unset ROCA_MODELS_ORDER and ROCA_OLLAMA_MODEL and ROCA_MODEL before using models.<provider>.model"},
 			avoidGuidance: "which makes",
 			orderEnv:      provider.NameOllama,
 			modelEnv:      true,
 		},
 		{
-			name: "persisted base URL",
+			name: "retired base URL is retired by its own visible proposal",
 			prepare: func(t *testing.T, home, bin string) {
 				fakeModelCLI(t, bin, provider.NameClaude)
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if r.URL.Path != "/v1/models" {
-						http.NotFound(w, r)
-						return
-					}
-					_, _ = w.Write([]byte(`{"data":[]}`))
-				}))
-				t.Cleanup(server.Close)
-				writeConfig(t, home, fmt.Sprintf("[models]\norder = [\"ollama\"]\n\n[models.claude]\nbase_url = %q\napi_key = \"synthetic-key\"\nmodel = \"remote-old\"\n", server.URL+"/v1"))
+				writeConfig(t, home, "[models]\norder = [\"ollama\"]\n\n[models.claude]\nbase_url = \"https://example.invalid/v1\"\napi_key = \"synthetic-key\"\nmodel = \"remote-old\"\n")
 			},
-			input:    "sonnet\n\n",
-			want:     "answering: claude/sonnet",
-			avoid:    "uses the existing local CLI session",
-			guidance: "transport is governed by models.claude.base_url",
+			input: "sonnet\n\ny\n",
+			want:  "answering: claude/sonnet",
+			guidance: []string{"Remove the retired claude authentication settings?",
+				"uses the existing local CLI session"},
+			avoidGuidance: "transport is governed by models.claude.base_url",
 		},
 		{
 			name: "persisted custom command",
@@ -238,7 +311,7 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 			},
 			input:    "sonnet\n\n",
 			want:     "answering: claude/sonnet",
-			guidance: "transport is governed by models.claude.command",
+			guidance: []string{"transport is governed by models.claude.command"},
 		},
 	}
 
@@ -263,8 +336,10 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 			if !strings.Contains(out, test.want) || test.avoid != "" && strings.Contains(out, test.avoid) {
 				t.Fatalf("effective choice mismatch: want %q and avoid %q:\n%s", test.want, test.avoid, out)
 			}
-			if test.guidance != "" && !strings.Contains(out, test.guidance) {
-				t.Fatalf("effective guidance does not contain %q:\n%s", test.guidance, out)
+			for _, guidance := range test.guidance {
+				if !strings.Contains(out, guidance) {
+					t.Fatalf("effective guidance does not contain %q:\n%s", guidance, out)
+				}
 			}
 			if test.avoidGuidance != "" && strings.Contains(out, test.avoidGuidance) {
 				t.Fatalf("effective guidance still contains %q:\n%s", test.avoidGuidance, out)
@@ -409,6 +484,7 @@ func runInitChooser(t *testing.T, tty bool, input string, backend modelValidatio
 		build: Build{Version: "test", Commit: "test-sha"}, out: &out, errOut: &out,
 	})
 	env.skipInitChooser = false
+	env.skipReconciliation = false
 	env.modelBackend = backend
 	_, err := executeWithEnv(env, args, strings.NewReader(input))
 	return out.String(), err

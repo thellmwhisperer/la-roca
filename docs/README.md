@@ -6,7 +6,7 @@ Reading order, from operator to contributor:
    Roca detect an already signed-in agent CLI, and ask away with no La Roca
    login; then follow the verified update and consent-based uninstall flows.
 2. [Model providers](models.md): automatic agent CLI detection, provider order,
-   the local floor, fallback login flows, and how the two query inferences
+   the local floor, CLI-owned authentication, and how the two query inferences
    choose their models.
 3. [Ingest sources](ingest.md): declare downloaded data exports and understand
    their incremental boundary.
