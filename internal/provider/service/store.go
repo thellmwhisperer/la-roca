@@ -99,7 +99,7 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (StoreResult, err
 	if err != nil {
 		return StoreResult{}, err
 	}
-	if err := s.ensureSchema(ctx); err != nil {
+	if _, err := s.ensureSchema(ctx); err != nil {
 		return StoreResult{}, err
 	}
 
