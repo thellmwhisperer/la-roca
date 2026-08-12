@@ -127,14 +127,19 @@ func initCommand(env *cliEnv) *cobra.Command {
 			}
 			result.ModelElapsedMS += chooserElapsed
 			result.TotalElapsedMS = commandElapsed
+			// The schema-adoption summary belongs to the run, not to the
+			// rendering asked for, so the migrations record carries it whether
+			// this init prints text or JSON.
+			document := struct {
+				service.InitResult
+				Version       string `json:"version"`
+				SourceSHA     string `json:"source_sha"`
+				AdoptedByCopy bool   `json:"adopted_by_copy,omitempty"`
+				AdoptedFrom   string `json:"adopted_from,omitempty"`
+			}{result, env.build.Version, env.build.Commit, adoptedByCopy, source}
+			env.capture(document)
 			if env.json {
-				return env.printJSON(struct {
-					service.InitResult
-					Version       string `json:"version"`
-					SourceSHA     string `json:"source_sha"`
-					AdoptedByCopy bool   `json:"adopted_by_copy,omitempty"`
-					AdoptedFrom   string `json:"adopted_from,omitempty"`
-				}{result, env.build.Version, env.build.Commit, adoptedByCopy, source})
+				return env.printJSON(document)
 			}
 			env.print("setup: %s", axi.Duration(result.SetupElapsedMS))
 			env.print("  data directory: %s", dirOf(paths.DB))

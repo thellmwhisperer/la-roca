@@ -235,6 +235,55 @@ func TestIngestAndMigrationRunsPersistSummariesAndErrorsOutsideSQLite(t *testing
 	}
 }
 
+// The migrations stream is the schema-adoption record, and it belongs to the
+// run, not to the rendering the operator asked for. Capturing the result only
+// on the --json branch left every default text init writing "result": null,
+// so the audit trail depended on a display flag.
+func TestDefaultTextInitRecordsItsSchemaAdoptionSummary(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ROCA_DB_PATH", "")
+	t.Setenv("ROCA_CONFIG", "")
+	t.Setenv("ROCA_MODELS_ORDER", "none")
+
+	var out, errs strings.Builder
+	code, err := execute(contractBuild(), &out, &errs,
+		[]string{"init", "--db-path", filepath.Join(home, ".roca", "roca.db")})
+	if err != nil || code != ExitOK {
+		t.Fatalf("init = code %d err %v, want a clean run", code, err)
+	}
+	if !strings.Contains(out.String(), "database outcome: created") {
+		t.Fatalf("the text narration changed:\n%s", out.String())
+	}
+
+	matches, err := filepath.Glob(filepath.Join(home, ".roca", logfile.DirName, logfile.Migrations+"-*.jsonl"))
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("migration logs = %v, err=%v", matches, err)
+	}
+	raw, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record struct {
+		OK     bool `json:"ok"`
+		Result *struct {
+			Database   string   `json:"database"`
+			Verdict    string   `json:"verdict"`
+			Structures int      `json:"schema_structures"`
+			Repairs    []string `json:"repairs"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &record); err != nil {
+		t.Fatal(err)
+	}
+	if !record.OK || record.Result == nil {
+		t.Fatalf("default text init left no schema summary: %s", raw)
+	}
+	if record.Result.Verdict == "" || record.Result.Structures == 0 || record.Result.Database == "" {
+		t.Fatalf("migration record = %+v, want verdict, structures and outcome: %s", record.Result, raw)
+	}
+}
+
 // The trace is observability, and observability never fails the command.
 //
 // A log this run cannot write used to be returned as the run's error, so a query
