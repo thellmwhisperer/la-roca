@@ -36,13 +36,22 @@ type chatGPTMessage struct {
 	Content struct {
 		Parts []json.RawMessage `json:"parts"`
 	} `json:"content"`
-	CreateTime *float64        `json:"create_time"`
+	CreateTime *float64 `json:"create_time"`
+	// The fields from UpdateTime to Channel are read for one reason: they are what
+	// a legacy snapshot states about an answer and a mid-2026 shard does not, and
+	// counting them is how two readings of the same exchange are ordered.
+	UpdateTime *float64        `json:"update_time"`
+	Status     string          `json:"status"`
+	EndTurn    *bool           `json:"end_turn"`
+	Channel    string          `json:"channel"`
 	Metadata   chatGPTMetadata `json:"metadata"`
 }
 
 type chatGPTMetadata struct {
-	ModelSlug string `json:"model_slug"`
-	Hidden    bool   `json:"is_visually_hidden_from_conversation"`
+	ModelSlug      string `json:"model_slug"`
+	RequestID      string `json:"request_id"`
+	TurnExchangeID string `json:"turn_exchange_id"`
+	Hidden         bool   `json:"is_visually_hidden_from_conversation"`
 }
 
 type chatGPTDiscard struct {
@@ -116,6 +125,7 @@ func parseChatGPTConversation(payload chatGPTConversation, recordBase int) (Reco
 			HumanTimestamp: chatGPTInstant(human.Message.CreateTime),
 			AgentTimestamp: chatGPTInstant(node.Message.CreateTime),
 			Provenance:     usage.Provenance(model, "openai"),
+			Signal:         chatGPTSignal(node),
 		}
 		exchange.LatencyMS = latency(exchange.HumanTimestamp, exchange.AgentTimestamp)
 		exchange.Fingerprint = chatGPTExchangeFingerprint(exchange)
@@ -299,6 +309,32 @@ func chatGPTNodeReason(node chatGPTNode) chatGPTDiscard {
 			category: "message has unsupported author role",
 		}
 	}
+}
+
+// chatGPTSignal counts what the export stated about one answer. A legacy
+// snapshot states more per message than a mid-2026 shard does, and this count is
+// what the writer compares so the poorer reading of the same exchange never
+// takes the richer one's place, whichever run each arrived in.
+func chatGPTSignal(node chatGPTNode) *int {
+	if node.Message == nil {
+		return nil
+	}
+	message := node.Message
+	stated := 0
+	for _, present := range []bool{
+		message.UpdateTime != nil,
+		message.EndTurn != nil,
+		strings.TrimSpace(message.Status) != "",
+		strings.TrimSpace(message.Channel) != "",
+		strings.TrimSpace(message.Metadata.ModelSlug) != "",
+		strings.TrimSpace(message.Metadata.RequestID) != "",
+		strings.TrimSpace(message.Metadata.TurnExchangeID) != "",
+	} {
+		if present {
+			stated++
+		}
+	}
+	return &stated
 }
 
 func chatGPTNodeID(node chatGPTNode) string {

@@ -35,7 +35,15 @@
           "author": {"role": "assistant"},
           "content": {"content_type": "text", "parts": ["Call it Amber Kestrel."]},
           "create_time": 1767225602.625,
-          "metadata": {"model_slug": "gpt-synthetic-message"}
+          "update_time": 1767225602.75,
+          "status": "finished_successfully",
+          "end_turn": true,
+          "channel": "final",
+          "metadata": {
+            "model_slug": "gpt-synthetic-message",
+            "request_id": "synthetic-request-primary",
+            "turn_exchange_id": "synthetic-exchange-primary"
+          }
         }
       },
       "system-context": {
@@ -68,7 +76,14 @@
           "author": {"role": "assistant"},
           "content": {"content_type": "text", "parts": ["The alternate branch calls it Silver Heron."]},
           "create_time": 1767225604.875,
-          "metadata": {}
+          "update_time": 1767225605.0,
+          "status": "finished_successfully",
+          "end_turn": true,
+          "channel": "final",
+          "metadata": {
+            "request_id": "synthetic-request-alternate",
+            "turn_exchange_id": "synthetic-exchange-alternate"
+          }
         }
       }
     }

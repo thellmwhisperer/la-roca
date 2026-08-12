@@ -300,9 +300,10 @@ under `anthropic_export_paths` and run `roca ingest`; see
 [Ingest sources](docs/ingest.md#declare-an-anthropic-data-export).
 
 Downloaded OpenAI exports are opt-in too. Declare their extracted directories
-under `openai_export_paths`; La Roca reads `conversations.json`, imports only the
-delta across newer exports, and accounts for shared conversations and
-attachments as out-of-scope exclusions. See
+under `openai_export_paths`; La Roca reads legacy `conversations.json` exports
+and newer `conversations-*.json` shards, imports only the delta across newer
+exports, and reports declared paths it cannot read or whose layout it does not
+recognize. See
 [Ingest sources](docs/ingest.md#declare-an-openai-data-export).
 
 ## Agents plug in
