@@ -125,7 +125,11 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 		for {
 			inferenceStart := time.Now()
 			answer, err = cascade.Chat(ctx, chosen, provider.ChatRequest{Messages: messages})
-			res.SQLInferenceMS += time.Since(inferenceStart).Milliseconds()
+			inferenceMS := time.Since(inferenceStart).Milliseconds()
+			res.SQLInferenceMS += inferenceMS
+			if attempt > 0 {
+				res.SQLRetryInferenceMS += inferenceMS
+			}
 			if err == nil {
 				break
 			}
@@ -151,6 +155,9 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 			res.ProviderNote = noteAboutTheFall(chosen, res.Providers)
 		}
 		res.LLMLatencyMS += answer.LatencyMS
+		if attempt > 0 {
+			res.SQLRetryProviderLatencyMS += answer.LatencyMS
+		}
 		// The model's untouched output travels whether or not it runs. A distinct
 		// forgiveness step then repairs only declared, deterministic shapes before
 		// the unchanged gate sees the candidate.
@@ -175,6 +182,10 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 				fmt.Sprintf("the SQL %s generated does not pass the gate: %v",
 					chosen.Name(), rejection)), nil
 		}
+		res.RetriedSQL = true
+		res.FirstModelSQL = answer.Content
+		res.FirstRepaired = append([]string(nil), prepared.Repairs...)
+		res.RetryReason = rejection.Error()
 		// The engine said exactly what is wrong. Handing that back is not a
 		// repair invented here: it is the verdict of the same engine that would
 		// have run the query, and it is the one piece of information that fixes

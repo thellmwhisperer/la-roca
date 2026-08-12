@@ -56,9 +56,13 @@ func TestQueryDeclaresEveryModelSQLRepair(t *testing.T) {
 	got := axi.Query(service.QueryResult{
 		Question: "synthetic query", Path: service.PathLLM, Engine: "codex", Model: "test",
 		SQL: "SELECT id FROM memories LIMIT 5", Repaired: []string{"code_fence", "union_order_by"},
+		RetriedSQL: true, SQLRetryInferenceMS: 6,
 	}, "")
 	if !strings.Contains(got, "repaired: code_fence, union_order_by") {
 		t.Fatalf("repair declaration is missing:\n%s", got)
+	}
+	if !strings.Contains(got, "SQL retry after gate rejection · 6 ms") {
+		t.Fatalf("retry latency declaration is missing:\n%s", got)
 	}
 }
 
@@ -234,7 +238,11 @@ func TestQueryEnvelopeUsesHonestPhaseNames(t *testing.T) {
 	raw, err := json.Marshal(service.QueryResult{
 		Path: service.PathLLM, Engine: "codex", Model: "gpt",
 		InterpretEngine: "ollama", InterpretModel: "qwen",
-		SQLInferenceMS: 3, ExecutionMS: 2, InterpretationMS: 8,
+		RetriedSQL: true, FirstModelSQL: "SELECT missing FROM memories LIMIT 1",
+		RetryReason:    "the column missing does not exist",
+		FirstRepaired:  []string{"code_fence", "trailing_semicolon"},
+		SQLInferenceMS: 13, SQLRetryInferenceMS: 5, ExecutionMS: 2, InterpretationMS: 8,
+		LLMLatencyMS: 11, SQLRetryProviderLatencyMS: 4,
 		Repaired: []string{"code_fence", "union_order_by"},
 	})
 	if err != nil {
@@ -244,7 +252,13 @@ func TestQueryEnvelopeUsesHonestPhaseNames(t *testing.T) {
 	for _, want := range []string{
 		`"path":"model"`, `"sql_provider":"codex"`, `"sql_model":"gpt"`,
 		`"interpretation_provider":"ollama"`, `"interpretation_model":"qwen"`,
-		`"sql_inference_ms":3`, `"execution_ms":2`, `"interpretation_ms":8`,
+		`"retried_sql":true`,
+		`"first_model_sql":"SELECT missing FROM memories LIMIT 1"`,
+		`"retry_reason":"the column missing does not exist"`,
+		`"first_repaired":["code_fence","trailing_semicolon"]`,
+		`"sql_inference_ms":13`, `"sql_retry_inference_ms":5`,
+		`"sql_provider_latency_ms":11`, `"sql_retry_provider_latency_ms":4`,
+		`"execution_ms":2`, `"interpretation_ms":8`,
 		`"repaired":["code_fence","union_order_by"]`,
 	} {
 		if !strings.Contains(text, want) {
