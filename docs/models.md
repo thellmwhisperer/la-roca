@@ -417,7 +417,13 @@ the rejected attempt; `model_sql` and `repaired` describe the corrected attempt.
 `sql_retry_inference_ms` and `sql_retry_provider_latency_ms` attribute the retry
 subset. A retry success has `retried_sql` without degradation, a second
 rejection also has `invalid_sql` and falls through to the ordinary rescue, and a
-zero-result rescue keeps `retried_sql` false.
+rescue that fired for zero rows never asked for a correction of its own.
+
+The narration says the same thing above the rows: a query that paid for a
+correction gets its own `SQL retry after gate rejection` line with the time that
+correction took. The MCP audit stream records the identical distinction, and
+what it keeps is listed under
+[Operations](operations.md#streams-and-contents).
 
 ## Diagnosing
 
