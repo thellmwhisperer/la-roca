@@ -90,6 +90,11 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 		env.started = started
 	}
 	root := rootCommand(env)
+	target, _, _ := root.Find(args)
+	if target.Name() == "eval" {
+		env.prelogged = true
+		env.skipReconciliation = true
+	}
 	if plugins {
 		if handled, code, err := dispatchPlugin(root, args); handled {
 			env.auditCommand = args[0]

@@ -9,6 +9,8 @@ DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 BIN     ?= bin/roca
 EVAL_MODE ?= replay
 EVAL_FORMAT ?= human
+EVAL_PROVIDER ?=
+EVAL_MODEL ?=
 
 LDFLAGS := -s -w \
 	-X main.version=$(VERSION) \
@@ -49,7 +51,7 @@ test: ## Unit and contract tests
 .PHONY: eval
 eval: ## Measure retrieval against the synthetic golden set
 	@$(MAKE) --no-print-directory build >/dev/null
-	@$(BIN) eval --mode $(EVAL_MODE) --format $(EVAL_FORMAT)
+	@$(BIN) eval --mode $(EVAL_MODE) --format $(EVAL_FORMAT) $(if $(EVAL_PROVIDER),--provider $(EVAL_PROVIDER)) $(if $(EVAL_MODEL),--model $(EVAL_MODEL))
 
 .PHONY: accept accept-index
 accept: build accept-index ## The godog acceptance suites against the real binary

@@ -8,15 +8,16 @@ the operator's corpus, model configuration, and network access.
 make eval
 make eval EVAL_FORMAT=json
 make eval EVAL_FORMAT=markdown
-make eval EVAL_MODE=live EVAL_FORMAT=markdown
+make eval EVAL_MODE=live EVAL_PROVIDER=codex EVAL_MODEL=gpt-5.6-sol EVAL_FORMAT=markdown
 ```
 
 Replay is the deterministic default. It executes the fixed SQL in
 `internal/evaluation/testdata/recorded_plans.json` against the synthetic rows
-in `internal/evaluation/testdata/fixture.sql`. Live mode asks the configured
-provider to generate every plan against that same fixture. Every live case and
-the report summary name the provider and model that produced its plan, so runs
-from different model configurations remain attributable.
+in `internal/evaluation/testdata/fixture.sql`. Live mode requires an explicit
+provider and accepts an optional model; it does not read operator configuration.
+The selected transport generates every plan against that same fixture. Every
+live case and the report summary name the provider and model that produced its
+plan, so runs from different model configurations remain attributable.
 
 The golden set is `internal/evaluation/testdata/golden.json`. Its stable case
 contract is:
@@ -39,11 +40,11 @@ database IDs:
 - `count_gt` and `count_equals` check a returned count.
 
 The report includes hit@1 and hit@5, the share of executed queries that
-returned zero rows, mean queries-to-answer for successful rescue cases, and
-wall time for every case and the full run. Three cases intentionally miss the
-recorded baseline: an unknown-word paraphrase, a typo, and a term present only
-in a thinking block. They keep measurable headroom in the suite without making
-`make eval` fail.
+returned zero rows, mean queries-to-answer for successful rescue cases,
+answered/declared rescue coverage, and wall time for every case and the full
+run. Three cases intentionally miss the recorded baseline: an unknown-word
+paraphrase, a typo, and a term present only in a thinking block. They keep
+measurable headroom in the suite without making `make eval` fail.
 
 `EVAL_FORMAT=json` is the stable machine envelope. The human and Markdown
 formats carry the same summary; the Markdown block is ready to paste into a

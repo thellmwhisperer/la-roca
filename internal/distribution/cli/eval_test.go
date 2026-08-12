@@ -3,11 +3,13 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/evaluation"
+	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 )
 
 func TestEvalCommandRendersTheRecordedBaseline(t *testing.T) {
@@ -40,6 +42,43 @@ func TestEvalCommandRendersTheRecordedBaseline(t *testing.T) {
 				if report.Mode != "replay" || report.Metrics.Cases != 20 || report.Metrics.Passed != 17 {
 					t.Fatalf("unexpected report: %+v", report)
 				}
+			}
+		})
+	}
+}
+
+func TestEvalCommandNeverUsesOperatorState(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		wantError bool
+	}{
+		{name: "replay", args: []string{"eval"}},
+		{name: "validation failure", args: []string{"eval", "--mode", "invalid"}, wantError: true},
+		{name: "flag failure", args: []string{"eval", "--unknown"}, wantError: true},
+		{name: "live provider failure", args: []string{"eval", "--mode", "live", "--provider", "unknown"}, wantError: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			operatorDir := t.TempDir()
+			configPath := filepath.Join(operatorDir, config.FileConfig)
+			if err := os.WriteFile(configPath, []byte("malformed = ["), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv(config.EnvDBPath, filepath.Join(operatorDir, "operator.sqlite"))
+			t.Setenv(config.EnvConfig, configPath)
+			args := append(test.args, "--work-dir", filepath.Join(t.TempDir(), "eval"))
+			var out, stderr bytes.Buffer
+			code, err := execute(Build{Version: "test"}, &out, &stderr, args)
+			if test.wantError != (err != nil) || test.wantError != (code == ExitError) {
+				t.Fatalf("eval = code %d err %v stderr %q", code, err, stderr.String())
+			}
+			entries, err := os.ReadDir(operatorDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 1 || entries[0].Name() != config.FileConfig {
+				t.Fatalf("eval touched operator state: %v", entries)
 			}
 		})
 	}

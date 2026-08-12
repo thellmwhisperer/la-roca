@@ -64,6 +64,7 @@ func TestReplayMeasuresTheRecordedBaseline(t *testing.T) {
 		t.Fatalf("unexpected recorded baseline: %+v", report.Metrics)
 	}
 	if report.Metrics.ZeroResultQueries != 6 || report.Metrics.TotalQueries != 23 ||
+		report.Metrics.RescueCases != 2 || report.Metrics.AnsweredRescueCases != 2 ||
 		math.Abs(report.Metrics.QueriesToAnswer-2.5) > 0.001 {
 		t.Fatalf("unexpected rescue metrics: %+v", report.Metrics)
 	}
@@ -106,7 +107,8 @@ func TestReportsAreHumanMachineAndReleaseNoteReady(t *testing.T) {
 		Mode: "replay", Fixture: "synthetic-v1",
 		Producers: []Producer{{Provider: "recorded", Model: "fixed-sql-v1", Plans: 20}},
 		Metrics: Metrics{Cases: 20, Passed: 17, HitAt1: 16, HitAt5: 17,
-			ZeroResultRate: 0.2609, QueriesToAnswer: 2.5},
+			ZeroResultRate: 0.2609, RescueCases: 2, AnsweredRescueCases: 2,
+			QueriesToAnswer: 2.5},
 		Cases: []CaseResult{{ID: "person-approval", HitAt1: true, HitAt5: true}},
 	}
 
@@ -123,6 +125,42 @@ func TestReportsAreHumanMachineAndReleaseNoteReady(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), `"hit_at_1"`) || !strings.Contains(string(raw), `"wall_ms"`) {
 		t.Fatalf("machine report lacks stable fields: %s", raw)
+	}
+}
+
+func TestQueriesToAnswerNamesAnsweredAndDeclaredRescueCases(t *testing.T) {
+	svc := fixtureService(t, provider.Cascade{})
+	suite := Suite{Fixture: "synthetic-v1", Cases: []Case{
+		{ID: "answered", Question: "first", ExpectedKind: "row_contains",
+			ExpectedMarker: "Nora Vale", RescuePath: []string{"retry"}},
+		{ID: "missed", Question: "first", ExpectedKind: "row_contains",
+			ExpectedMarker: "absent marker", RescuePath: []string{"retry"}},
+	}}
+	planner := plannerFunc(func(_ context.Context, golden Case, attempt int, _ string) (Plan, error) {
+		sql := "SELECT content AS text FROM memories WHERE project = 'missing' LIMIT 5"
+		if golden.ID == "answered" && attempt == 1 {
+			sql = "SELECT content AS text FROM memories WHERE project = 'aurora' AND content LIKE '%Nora Vale%' LIMIT 5"
+		}
+		return Plan{SQL: []string{sql}, Provider: "test", Model: "fixed"}, nil
+	})
+	report, err := Run(context.Background(), svc, suite, planner, "live")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Metrics.RescueCases != 2 || report.Metrics.AnsweredRescueCases != 1 ||
+		report.Metrics.QueriesToAnswer != 2 {
+		t.Fatalf("rescue metrics = %+v", report.Metrics)
+	}
+	for _, output := range []string{RenderHuman(report), RenderMarkdown(report)} {
+		if !strings.Contains(output, "2.00") ||
+			!strings.Contains(output, "1/2 answered rescue cases") {
+			t.Fatalf("rescue denominator is unclear:\n%s", output)
+		}
+	}
+	raw, err := json.Marshal(report)
+	if err != nil || !strings.Contains(string(raw), `"answered_rescue_cases":1`) ||
+		!strings.Contains(string(raw), `"rescue_cases":2`) {
+		t.Fatalf("machine rescue denominator = %s, err=%v", raw, err)
 	}
 }
 

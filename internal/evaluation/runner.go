@@ -83,17 +83,18 @@ type CaseResult struct {
 }
 
 type Metrics struct {
-	Cases             int     `json:"cases"`
-	Passed            int     `json:"passed"`
-	HitAt1            int     `json:"hit_at_1"`
-	HitAt5            int     `json:"hit_at_5"`
-	HitAt1Rate        float64 `json:"hit_at_1_rate"`
-	HitAt5Rate        float64 `json:"hit_at_5_rate"`
-	TotalQueries      int     `json:"total_queries"`
-	ZeroResultQueries int     `json:"zero_result_queries"`
-	ZeroResultRate    float64 `json:"zero_result_rate"`
-	RescueCases       int     `json:"rescue_cases"`
-	QueriesToAnswer   float64 `json:"queries_to_answer"`
+	Cases               int     `json:"cases"`
+	Passed              int     `json:"passed"`
+	HitAt1              int     `json:"hit_at_1"`
+	HitAt5              int     `json:"hit_at_5"`
+	HitAt1Rate          float64 `json:"hit_at_1_rate"`
+	HitAt5Rate          float64 `json:"hit_at_5_rate"`
+	TotalQueries        int     `json:"total_queries"`
+	ZeroResultQueries   int     `json:"zero_result_queries"`
+	ZeroResultRate      float64 `json:"zero_result_rate"`
+	RescueCases         int     `json:"rescue_cases"`
+	AnsweredRescueCases int     `json:"answered_rescue_cases"`
+	QueriesToAnswer     float64 `json:"queries_to_answer"`
 }
 
 type Producer struct {
@@ -116,7 +117,7 @@ func Run(ctx context.Context, svc *service.Service, suite Suite, planner Planner
 	started := time.Now()
 	report := Report{SchemaVersion: 1, Mode: mode, Fixture: suite.Fixture}
 	producerCounts := map[string]int{}
-	qtaTotal, qtaAnswered := 0, 0
+	qtaTotal := 0
 	for _, golden := range suite.Cases {
 		result, err := runCase(ctx, svc, planner, golden, producerCounts, &report.Metrics)
 		if err != nil {
@@ -134,7 +135,7 @@ func Run(ctx context.Context, svc *service.Service, suite Suite, planner Planner
 			report.Metrics.RescueCases++
 			if result.QueriesToAnswer > 0 {
 				qtaTotal += result.QueriesToAnswer
-				qtaAnswered++
+				report.Metrics.AnsweredRescueCases++
 			}
 		}
 	}
@@ -142,8 +143,9 @@ func Run(ctx context.Context, svc *service.Service, suite Suite, planner Planner
 	report.Metrics.HitAt1Rate = ratio(report.Metrics.HitAt1, report.Metrics.Cases)
 	report.Metrics.HitAt5Rate = ratio(report.Metrics.HitAt5, report.Metrics.Cases)
 	report.Metrics.ZeroResultRate = ratio(report.Metrics.ZeroResultQueries, report.Metrics.TotalQueries)
-	if qtaAnswered > 0 {
-		report.Metrics.QueriesToAnswer = float64(qtaTotal) / float64(qtaAnswered)
+	if report.Metrics.AnsweredRescueCases > 0 {
+		report.Metrics.QueriesToAnswer = float64(qtaTotal) /
+			float64(report.Metrics.AnsweredRescueCases)
 	}
 	report.Producers = producers(producerCounts)
 	report.TotalWallMS = time.Since(started).Milliseconds()

@@ -18,8 +18,9 @@ func RenderHuman(report Report) string {
 	fmt.Fprintf(&out, "zero-result rate: %.1f%% (%d/%d queries)\n",
 		report.Metrics.ZeroResultRate*100, report.Metrics.ZeroResultQueries,
 		report.Metrics.TotalQueries)
-	fmt.Fprintf(&out, "queries-to-answer: %.2f across %d rescue cases\n",
-		report.Metrics.QueriesToAnswer, report.Metrics.RescueCases)
+	fmt.Fprintf(&out, "queries-to-answer: %.2f across %d/%d answered rescue cases\n",
+		report.Metrics.QueriesToAnswer, report.Metrics.AnsweredRescueCases,
+		report.Metrics.RescueCases)
 	fmt.Fprintf(&out, "total wall time: %d ms\n", report.TotalWallMS)
 	for _, result := range report.Cases {
 		status := "PASS"
@@ -48,8 +49,9 @@ func RenderMarkdown(report Report) string {
 	fmt.Fprintf(&out, "| zero-result rate | %.1f%% (%d/%d queries) |\n",
 		report.Metrics.ZeroResultRate*100, report.Metrics.ZeroResultQueries,
 		report.Metrics.TotalQueries)
-	fmt.Fprintf(&out, "| queries-to-answer | %.2f (%d rescue cases) |\n",
-		report.Metrics.QueriesToAnswer, report.Metrics.RescueCases)
+	fmt.Fprintf(&out, "| queries-to-answer | %.2f (%d/%d answered rescue cases) |\n",
+		report.Metrics.QueriesToAnswer, report.Metrics.AnsweredRescueCases,
+		report.Metrics.RescueCases)
 	fmt.Fprintf(&out, "| wall time | %d ms |\n", report.TotalWallMS)
 	return strings.TrimRight(out.String(), "\n")
 }

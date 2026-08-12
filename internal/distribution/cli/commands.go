@@ -585,7 +585,7 @@ func queryCommand(env *cliEnv) *cobra.Command {
 }
 
 func evalCommand(env *cliEnv) *cobra.Command {
-	var mode, format, workDir string
+	var mode, format, workDir, providerName, model string
 	cmd := &cobra.Command{
 		Use:   "eval",
 		Short: "Measure retrieval against the synthetic golden set",
@@ -597,11 +597,13 @@ func evalCommand(env *cliEnv) *cobra.Command {
 			if format != "human" && format != "markdown" && format != "json" {
 				return fmt.Errorf("eval format %q is not human, markdown or json", format)
 			}
-			suite, err := evaluation.LoadSuite()
-			if err != nil {
-				return err
+			if mode == "live" && providerName == "" {
+				return fmt.Errorf("live eval requires --provider")
 			}
-			paths, err := env.resolvePaths()
+			if mode == "replay" && (providerName != "" || model != "") {
+				return fmt.Errorf("replay eval does not use --provider or --model")
+			}
+			suite, err := evaluation.LoadSuite()
 			if err != nil {
 				return err
 			}
@@ -610,9 +612,18 @@ func evalCommand(env *cliEnv) *cobra.Command {
 				return err
 			}
 			defer cleanup()
-			paths.DB = dbPath
-			paths.Backups = filepath.Join(filepath.Dir(dbPath), "backups")
-			svc, err := env.openServiceWith(paths)
+			providers := provider.Cascade{}
+			if mode == "live" {
+				providers, err = evaluationProviders(filepath.Dir(dbPath), providerName, model)
+				if err != nil {
+					return err
+				}
+			}
+			svc, err := service.Open(service.Options{
+				DBPath: dbPath, BackupDir: filepath.Join(filepath.Dir(dbPath), "backups"),
+				DataDir: filepath.Dir(dbPath), QueryTimeout: service.DefaultQueryTimeout,
+				Providers: providers, ReadOnly: true,
+			})
 			if err != nil {
 				return err
 			}
@@ -627,9 +638,6 @@ func evalCommand(env *cliEnv) *cobra.Command {
 				return err
 			}
 			env.capture(report)
-			// Evaluation is a development measurement over a disposable database,
-			// not an operator query. Do not add it to the operator's execution log.
-			env.prelogged = true
 			if env.json || format == "json" {
 				return env.printJSON(report)
 			}
@@ -645,7 +653,35 @@ func evalCommand(env *cliEnv) *cobra.Command {
 	cmd.Flags().StringVar(&format, "format", "human", "report format: human, markdown or json")
 	cmd.Flags().StringVar(&workDir, "work-dir", filepath.Join(".tmp", "eval"),
 		"directory for disposable fixture databases")
+	cmd.Flags().StringVar(&providerName, "provider", "", "live plan provider")
+	cmd.Flags().StringVar(&model, "model", "", "live plan model (provider default when empty)")
 	return cmd
+}
+
+func evaluationProviders(dataDir, providerName, model string) (provider.Cascade, error) {
+	file := config.File{
+		Path: filepath.Join(dataDir, "eval-model.toml"),
+		Models: config.ModelsConfig{
+			Order: []string{providerName},
+			Providers: map[string]config.ProviderConfig{
+				providerName: {Model: model},
+			},
+		},
+	}
+	providers, err := provider.BuildCascade(provider.Settings{
+		File: file, RunnerDir: filepath.Join(dataDir, config.DirRunner),
+		Env: func(key string) string {
+			if key == provider.EnvOrder || model != "" &&
+				(key == "ROCA_MODEL" || strings.HasSuffix(key, "_MODEL")) {
+				return ""
+			}
+			return os.Getenv(key)
+		},
+	})
+	if err != nil {
+		return provider.Cascade{}, fmt.Errorf("build live eval provider %q: %w", providerName, err)
+	}
+	return providers, nil
 }
 
 // queryAnswer keeps the rows and the optional second inference together. The

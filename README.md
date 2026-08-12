@@ -366,8 +366,9 @@ Godog harness is compiled only with the `acceptance` build tag.
 `make eval` measures the recorded retrieval baseline against a synthetic
 fixture. It never opens the operator's corpus. Set `EVAL_FORMAT=json` for a
 machine report, `EVAL_FORMAT=markdown` for a release-note block, or
-`EVAL_MODE=live` to regenerate the plans with the configured provider and
-model. See [Retrieval evaluation](docs/evaluation.md) for the golden-set
+`EVAL_MODE=live EVAL_PROVIDER=codex EVAL_MODEL=<id>` to regenerate the plans
+with an explicitly selected transport without reading operator configuration.
+See [Retrieval evaluation](docs/evaluation.md) for the golden-set
 contract and metric definitions.
 
 ## License
