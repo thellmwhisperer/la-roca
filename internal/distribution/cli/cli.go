@@ -44,6 +44,10 @@ type cliEnv struct {
 	json               bool
 	code               int
 	outcome            any
+	auditQuery         *service.QueryResult
+	correlation        string
+	auditCommand       string
+	auditArgs          []string
 	started            time.Time
 	prelogged          bool
 	openedDir          string
@@ -88,6 +92,21 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 	root := rootCommand(env)
 	if plugins {
 		if handled, code, err := dispatchPlugin(root, args); handled {
+			env.auditCommand = args[0]
+			env.auditArgs = redactPluginArguments(args[1:])
+			if err != nil {
+				err = logfile.Correlate(err)
+			} else if code != ExitOK {
+				// The plugin exited non-zero on its own account, and its streams
+				// crossed this seam untouched. Naming the log line here would write
+				// a line roca invented into output the plugin owns, so the ID is
+				// minted for the audit record and read back through `roca doctor`.
+				env.correlationID()
+			}
+			if logErr := env.logExecution(nil, started, code, err); logErr != nil {
+				fmt.Fprintf(env.errOut,
+					"warning: this run is not in the execution log: %v\n", logErr)
+			}
 			return code, err
 		}
 	}
@@ -105,11 +124,13 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 			if len(args) > 0 && !strings.HasPrefix(args[0], "-") && !builtIn(root, args[0]) {
 				err = fmt.Errorf("%w; a `roca-%s` executable on your PATH would handle this", err, args[0])
 			}
+			err = logfile.Typed(err, logfile.ErrorInvalidUsage)
 		}
 	}
 	code := env.code
 	if err != nil {
 		code = ExitError
+		err = logfile.Correlate(err)
 	}
 	// The trace is observability, and observability never fails the command.
 	//
@@ -117,7 +138,14 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 	// changes neither the answer nor the exit code. Returning it as the run's
 	// error made a query that had already printed its answer exit 1, so a script
 	// reading the code concluded the query failed while holding the answer.
+	//
+	// The ID is surfaced here and not earlier because it may only name a record
+	// this run is about to write: a command that logged itself already carries
+	// the verdict of what it wrote.
 	if !env.prelogged {
+		if err == nil && code != ExitOK {
+			env.surfaceCorrelation()
+		}
 		if logErr := env.logExecution(executed, started, code, err); logErr != nil {
 			fmt.Fprintf(env.errOut,
 				"warning: this run is not in the execution log: %v\n", logErr)
@@ -349,8 +377,9 @@ func (env *cliEnv) openService() (*service.Service, config.Paths, error) {
 		return nil, paths, err
 	}
 	if !fileExists(paths.DB) {
-		return nil, paths, fmt.Errorf(
-			"no Roca database exists at %s; run `roca init` before this command", paths.DB)
+		return nil, paths, logfile.Typed(fmt.Errorf(
+			"no Roca database exists at %s; run `roca init` before this command", paths.DB),
+			logfile.ErrorNotInitialized)
 	}
 	svc, err := env.openServiceWith(paths)
 	return svc, paths, err
@@ -526,4 +555,22 @@ func (env *cliEnv) capture(value any) { env.outcome = value }
 
 func (env *cliEnv) print(format string, args ...any) {
 	fmt.Fprintf(env.out, format+"\n", args...)
+}
+
+// correlationID names this run's log line, minted once and reused, so what the
+// operator reads and what the audit record says are the same ID.
+func (env *cliEnv) correlationID() string {
+	if env.correlation == "" {
+		env.correlation = logfile.NewCorrelationID()
+	}
+	return env.correlation
+}
+
+// surfaceCorrelation is what a run that failed without an error value has
+// instead of the suffix Correlate writes inside an error message. It goes to the
+// error stream, which is the one stream no answer is parsed from, so a --json
+// envelope stays valid. It is only ever roca's own failure: a plugin owns both
+// of its streams, so the plugin seam mints the ID without printing it.
+func (env *cliEnv) surfaceCorrelation() {
+	fmt.Fprintf(env.errOut, "correlation_id: %s\n", env.correlationID())
 }
