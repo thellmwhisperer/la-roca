@@ -57,10 +57,12 @@ identities have not already landed.
 
 Each `conversation_id` becomes an unprojected `chatgpt-web` session. La Roca
 walks the `mapping` parent/children tree and pairs user messages with assistant
-replies, retaining alternate branches. A node that cannot be read is discarded
-on its own; readable descendants are reparented to its nearest surviving
-ancestor. System, tool, empty, and hidden nodes are excluded by design rather
-than reported as malformed.
+replies, retaining alternate branches. An unreadable conversation envelope is
+discarded on its own without stopping later conversations in the same file;
+only structurally unreadable top-level JSON fails the file. A node that cannot
+be read is also discarded on its own; readable descendants are reparented to
+its nearest surviving ancestor. System, tool, empty, and hidden nodes are
+excluded by design rather than reported as malformed.
 
 The assistant message's `metadata.model_slug` supplies the model when present,
 falling back to the conversation's `default_model_slug`; the provider is

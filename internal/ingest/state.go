@@ -103,7 +103,7 @@ var parserVersions = map[parsers.Kind]string{
 	parsers.KindOpenCodeDB:              "opencode-v6",
 	parsers.KindHermesDB:                "hermes-v6",
 	parsers.KindClaudeWebConversations:  "claude-web-conversations-v4",
-	parsers.KindChatGPTWebConversations: "chatgpt-web-conversations-v1",
+	parsers.KindChatGPTWebConversations: "chatgpt-web-conversations-v2",
 }
 
 func parserAwareFingerprint(kind parsers.Kind, fingerprint string) string {
