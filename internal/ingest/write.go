@@ -675,9 +675,9 @@ func keysItsOwnExchanges(session parsers.Session) bool {
 
 // exchange inserts one exchange and says whether it landed.
 //
-// INSERT OR IGNORE plus changes() is the whole record-level contract: the unique
-// index over (session_id, exchange_number) decides whether the normalized parent
-// is new or eligible only for additive enrichment.
+// The matcher has already ruled out a historical row and selected an unoccupied
+// number. INSERT OR IGNORE plus the unique index over (session_id,
+// exchange_number) remains the final guard against a concurrent duplicate.
 func (w *writer) exchange(ctx context.Context, sessionID string, number int,
 	exchange parsers.Exchange) (bool, error) {
 	provenance := exchange.Provenance

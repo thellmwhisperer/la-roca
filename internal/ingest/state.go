@@ -23,10 +23,11 @@ import (
 // `roca ingest` cheap, and the operator's real flow runs it repeatedly.
 //
 // **Record level.** A fingerprint is not enough for a log that grows: a session
-// file changes on every turn and its fingerprint changes whole. The second defence
-// is structural and lives in the schema: `idx_exchanges_session_number`, unique
-// over `(session_id, exchange_number)`. Re-reading a grown file inserts only the
-// new exchanges.
+// file changes on every turn and its fingerprint changes whole. The writer
+// matches replayed turns within their session before enrichment or insertion and
+// leaves conflicting or ambiguous anchors alone. The unique
+// `idx_exchanges_session_number` index is the final defence against a duplicate;
+// re-reading a grown file inserts only new exchanges.
 //
 // The debt v1 does not inherit is that this used to be two contracts: the live
 // route kept fingerprints and the full reconciliation did not, so the table was
@@ -86,9 +87,10 @@ func targetFingerprint(target Target) (string, error) {
 // travels inside the watermark, so a build that learned to read more of a source
 // re-reads the files it already synced instead of trusting a fingerprint earned
 // by a poorer reading. What actually lands is still decided record by record:
-// the unique index refuses a duplicate exchange and the provenance backfill only
-// fills columns that are NULL, so a plain `roca ingest` enriches a corpus
-// without ever writing a second copy of it.
+// the shared writer matches historical turns before additive enrichment, refuses
+// conflicting or ambiguous anchors, and leaves the unique index as the final
+// duplicate guard. The provenance backfill only fills columns that are NULL, so
+// a plain `roca ingest` enriches a corpus without writing a second copy of it.
 //
 // A kind absent from here is one whose reading has not changed since the
 // watermark was introduced, and its files stay skipped.
