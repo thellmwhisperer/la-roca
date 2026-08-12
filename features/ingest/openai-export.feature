@@ -12,3 +12,13 @@ Feature: Official OpenAI data export
     When I select the newer OpenAI export and run ingest
     Then only the new ChatGPT conversations and messages are added
     And the ChatGPT exchanges retain OpenAI provenance
+
+  Scenario: Every file in a sharded ChatGPT export is ingested
+    Given a declared sharded OpenAI export is ready to ingest
+    When I run ingest
+    Then every ChatGPT shard is ingested with OpenAI provenance
+
+  Scenario: A declared directory without a conversation layout is diagnosed
+    Given a declared OpenAI export has no conversation layout
+    When I run ingest
+    Then ingest names the unrecognized OpenAI export directory

@@ -10,7 +10,7 @@ import (
 )
 
 func TestChatGPTWebExportWalksBranchesAndFillsProvenance(t *testing.T) {
-	records := parseChatGPTWebFixture(t, "openai-export-v1")
+	records := parseChatGPTWebFixture(t, filepath.Join("openai-export-v1", "conversations.json"))
 	if len(records.Sessions) != 1 {
 		t.Fatalf("sessions = %d, want 1", len(records.Sessions))
 	}
@@ -60,8 +60,33 @@ func TestChatGPTWebExportWalksBranchesAndFillsProvenance(t *testing.T) {
 	}
 }
 
+// The additively read per-answer fields get no column of their own, so what they
+// are for is pinned here: the legacy snapshot states more about the same two
+// answers than a shard of them does, and a measured nothing is stated as zero.
+func TestChatGPTWebSignalCountsWhatEachShapeStated(t *testing.T) {
+	for fixture, want := range map[string][]int{
+		filepath.Join("openai-export-v1", "conversations.json"):          {7, 6},
+		filepath.Join("openai-export-sharded", "conversations-000.json"): {1, 0},
+		filepath.Join("openai-export-sharded", "conversations-001.json"): {0},
+	} {
+		exchanges := parseChatGPTWebFixture(t, fixture).Sessions[0].Exchanges
+		if len(exchanges) != len(want) {
+			t.Fatalf("%s exchanges = %d, want %d", fixture, len(exchanges), len(want))
+		}
+		for index, exchange := range exchanges {
+			if exchange.Signal == nil {
+				t.Fatalf("%s exchange %d measured no signal at all", fixture, index)
+			}
+			if *exchange.Signal != want[index] {
+				t.Errorf("%s exchange %d signal = %d, want %d", fixture, index,
+					*exchange.Signal, want[index])
+			}
+		}
+	}
+}
+
 func TestChatGPTWebDiscardedNodesDoNotPoisonDescendants(t *testing.T) {
-	records := parseChatGPTWebFixture(t, "openai-export-discarded")
+	records := parseChatGPTWebFixture(t, filepath.Join("openai-export-discarded", "conversations.json"))
 	session := records.Sessions[0]
 	wantIDs := []string{"visible-after-empty", "visible-after-hidden", "visible-after-bad-role"}
 	gotIDs := make([]string, 0, len(session.Exchanges))
@@ -182,15 +207,15 @@ func TestChatGPTWebMalformedConversationDoesNotPoisonExport(t *testing.T) {
 	}
 }
 
-func parseChatGPTWebFixture(t *testing.T, directory string) Records {
+func parseChatGPTWebFixture(t *testing.T, fixture string) Records {
 	t.Helper()
-	path := filepath.Join("..", "testdata", directory, "conversations.json")
+	path := filepath.Join("..", "testdata", fixture)
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	records, err := ParseChatGPTWebConversations(bytes.NewReader(raw), FileMeta{
-		Path: path, FileName: "conversations.json", SourceAgent: "chatgpt-web",
+		Path: path, FileName: filepath.Base(path), SourceAgent: "chatgpt-web",
 	})
 	if err != nil {
 		t.Fatal(err)
