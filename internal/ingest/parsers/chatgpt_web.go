@@ -11,21 +11,29 @@ import (
 )
 
 type chatGPTConversation struct {
-	ConversationID   string                 `json:"conversation_id"`
-	Title            string                 `json:"title"`
-	CreateTime       *float64               `json:"create_time"`
-	UpdateTime       *float64               `json:"update_time"`
-	DefaultModelSlug string                 `json:"default_model_slug"`
-	CurrentNode      string                 `json:"current_node"`
-	Mapping          map[string]chatGPTNode `json:"mapping"`
+	ConversationID   string                     `json:"conversation_id"`
+	Title            string                     `json:"title"`
+	CreateTime       *float64                   `json:"create_time"`
+	UpdateTime       *float64                   `json:"update_time"`
+	DefaultModelSlug string                     `json:"default_model_slug"`
+	CurrentNode      string                     `json:"current_node"`
+	Mapping          map[string]json.RawMessage `json:"mapping"`
 }
 
 type chatGPTNode struct {
 	key      string
+	ID       string
+	Parent   string
+	Children []string
+	Message  *chatGPTMessage
+	failure  chatGPTDiscard
+}
+
+type chatGPTRawNode struct {
 	ID       string          `json:"id"`
 	Parent   string          `json:"parent"`
 	Children []string        `json:"children"`
-	Message  *chatGPTMessage `json:"message"`
+	Message  json.RawMessage `json:"message"`
 }
 
 type chatGPTMessage struct {
@@ -138,18 +146,22 @@ func parseChatGPTConversation(payload chatGPTConversation, recordBase int) (Reco
 	}}, Discards: discards}, len(nodes)
 }
 
-func orderedChatGPTNodes(mapping map[string]chatGPTNode) []chatGPTNode {
+func orderedChatGPTNodes(mapping map[string]json.RawMessage) []chatGPTNode {
 	keys := make([]string, 0, len(mapping))
 	for key := range mapping {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
+	decoded := make(map[string]chatGPTNode, len(mapping))
+	for _, key := range keys {
+		decoded[key] = decodeChatGPTNode(key, mapping[key])
+	}
 	roots := make([]string, 0, len(keys))
 	for _, key := range keys {
-		parent := strings.TrimSpace(mapping[key].Parent)
+		parent := strings.TrimSpace(decoded[key].Parent)
 		if parent == "" {
 			roots = append(roots, key)
-		} else if _, found := mapping[parent]; !found {
+		} else if _, found := decoded[parent]; !found {
 			roots = append(roots, key)
 		}
 	}
@@ -160,12 +172,11 @@ func orderedChatGPTNodes(mapping map[string]chatGPTNode) []chatGPTNode {
 		if visited[key] {
 			return
 		}
-		node, found := mapping[key]
+		node, found := decoded[key]
 		if !found {
 			return
 		}
 		visited[key] = true
-		node.key = key
 		ordered = append(ordered, node)
 		for _, child := range node.Children {
 			walk(strings.TrimSpace(child))
@@ -178,6 +189,29 @@ func orderedChatGPTNodes(mapping map[string]chatGPTNode) []chatGPTNode {
 		walk(key)
 	}
 	return ordered
+}
+
+func decodeChatGPTNode(key string, payload json.RawMessage) chatGPTNode {
+	node := chatGPTNode{key: key}
+	var raw chatGPTRawNode
+	if err := json.Unmarshal(payload, &raw); err != nil {
+		node.failure = chatGPTDiscard{
+			reason:   fmt.Sprintf("conversation node %s is unreadable: %v", key, err),
+			category: "ChatGPT conversation node is unreadable",
+		}
+		return node
+	}
+	node.ID, node.Parent, node.Children = raw.ID, raw.Parent, raw.Children
+	if len(raw.Message) == 0 {
+		return node
+	}
+	if err := json.Unmarshal(raw.Message, &node.Message); err != nil {
+		node.failure = chatGPTDiscard{
+			reason:   fmt.Sprintf("message %s is unreadable: %v", chatGPTNodeID(node), err),
+			category: "ChatGPT message is unreadable",
+		}
+	}
+	return node
 }
 
 func chatGPTMessageGraph(nodes []chatGPTNode) ([]int, map[int]chatGPTDiscard) {
@@ -219,6 +253,9 @@ func chatGPTMessageGraph(nodes []chatGPTNode) ([]int, map[int]chatGPTDiscard) {
 
 func chatGPTNodeReason(node chatGPTNode) chatGPTDiscard {
 	id := chatGPTNodeID(node)
+	if node.failure.reason != "" {
+		return node.failure
+	}
 	if node.Message == nil {
 		return chatGPTDiscard{reason: "empty ChatGPT conversation node",
 			category: "empty ChatGPT conversation node", byDesign: true}

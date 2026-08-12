@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -86,6 +87,40 @@ func TestChatGPTWebDiscardedNodesDoNotPoisonDescendants(t *testing.T) {
 	}
 	if excluded != 3 || unreadable != 1 {
 		t.Fatalf("excluded/unreadable = %d/%d, want 3/1", excluded, unreadable)
+	}
+}
+
+func TestChatGPTWebMalformedMessageDoesNotPoisonConversation(t *testing.T) {
+	raw := []byte(`[{
+		"conversation_id":"synthetic-malformed-message",
+		"mapping":{
+			"root":{"id":"root","parent":null,"children":["user"],"message":null},
+			"user":{"id":"user","parent":"root","children":["broken","sibling"],"message":{"author":{"role":"user"},"content":{"parts":["Synthetic prompt."]}}},
+			"broken":{"id":"broken","parent":"user","children":["descendant"],"message":"corrupt"},
+			"descendant":{"id":"descendant","parent":"broken","children":[],"message":{"author":{"role":"assistant"},"content":{"parts":["Recovered descendant."]}}},
+			"sibling":{"id":"sibling","parent":"user","children":[],"message":{"author":{"role":"assistant"},"content":{"parts":["Readable sibling."]}}}
+		}
+	}]`)
+	records, err := ParseChatGPTWebConversations(bytes.NewReader(raw), FileMeta{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantIDs := []string{"descendant", "sibling"}
+	gotIDs := make([]string, 0, len(records.Sessions[0].Exchanges))
+	for _, exchange := range records.Sessions[0].Exchanges {
+		gotIDs = append(gotIDs, exchange.SourceID)
+	}
+	if !reflect.DeepEqual(gotIDs, wantIDs) {
+		t.Fatalf("recovered exchange ids = %v, want %v", gotIDs, wantIDs)
+	}
+	if len(records.Discards) != 2 {
+		t.Fatalf("discards = %+v, want root and malformed message", records.Discards)
+	}
+	malformed := records.Discards[1]
+	if malformed.Category != "ChatGPT message is unreadable" || malformed.ByDesign ||
+		!strings.Contains(malformed.Reason, "message broken is unreadable") ||
+		!strings.Contains(malformed.Reason, "cannot unmarshal string") {
+		t.Fatalf("malformed message discard = %+v", malformed)
 	}
 }
 
