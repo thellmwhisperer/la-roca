@@ -67,6 +67,10 @@ func TestTwoInferenceModelPath(t *testing.T) {
 		if got.Degraded != "" || got.Match != service.MatchEmpty || got.RowCount != 0 {
 			t.Fatalf("empty result was dressed up as an answer: %+v", got)
 		}
+		if len(fake.sqlRequests) != 1 || got.RetriedSQL {
+			t.Fatalf("zero rows triggered a SQL retry: calls=%d result=%+v",
+				len(fake.sqlRequests), got)
+		}
 		if len(fake.proseRequests) != 0 {
 			t.Fatalf("empty rows reached interpretation %d times", len(fake.proseRequests))
 		}
