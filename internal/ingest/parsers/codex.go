@@ -128,6 +128,9 @@ type codexTurn struct {
 // holds the question and the answer it got, and refusing to read them is what
 // left whole sessions ingested empty.
 func ParseCodexSession(content []byte, meta FileMeta) (Records, error) {
+	if looksLikeCodexHistory(content) {
+		return parseCodexHistory(content, meta), nil
+	}
 	reader := &codexReader{
 		session: Session{
 			ID:          meta.SessionID,

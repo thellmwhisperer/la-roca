@@ -330,7 +330,7 @@ not json
 {"session_id":"legacy-two","ts":1763372600,"text":"name the synthetic result"}
 {"session_id":"legacy-one","ts":1763372660,"text":"verify the synthetic archive"}
 {"session_id":"","ts":1763372700,"text":"orphaned input"}`
-	records, err := Parse(KindCodexHistory, []byte(content), FileMeta{})
+	records, err := Parse(KindCodexSession, []byte(content), FileMeta{})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

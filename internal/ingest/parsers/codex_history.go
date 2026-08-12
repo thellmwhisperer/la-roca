@@ -16,6 +16,27 @@ type codexHistoryLine struct {
 	Timestamp *float64 `json:"ts"`
 }
 
+func looksLikeCodexHistory(content []byte) bool {
+	for _, raw := range lines(content) {
+		var probe struct {
+			Type      string          `json:"type"`
+			SessionID string          `json:"session_id"`
+			Text      json.RawMessage `json:"text"`
+			Timestamp json.RawMessage `json:"ts"`
+		}
+		if json.Unmarshal([]byte(raw), &probe) != nil {
+			continue
+		}
+		if probe.Type != "" {
+			return false
+		}
+		if probe.SessionID != "" || len(probe.Text) > 0 || len(probe.Timestamp) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func parseCodexHistory(content []byte, meta FileMeta) Records {
 	records := Records{}
 	byID := map[string]int{}
