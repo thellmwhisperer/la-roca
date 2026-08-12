@@ -17,6 +17,7 @@ const (
 	TrailingSemicolon = "trailing_semicolon"
 	RepetitionLoop    = "repetition_loop"
 	UnionOrderBy      = "union_order_by"
+	FTSOrGroup        = "fts_or_group"
 )
 
 // Result is the candidate sent to the gate and every named repair used to
@@ -53,6 +54,10 @@ func Prepare(raw string) Result {
 		result.SQL = cleaned
 		result.add(RepetitionLoop)
 	}
+	if fixed, ok := explicitFTSGroupConjunction(result.SQL); ok {
+		result.SQL = fixed
+		result.add(FTSOrGroup)
+	}
 
 	result.SQL = strings.TrimSpace(result.SQL)
 	if cleaned, ok := stripLeadingProse(result.SQL); ok {
@@ -80,6 +85,44 @@ func Prepare(raw string) Result {
 	}
 	result.SQL = strings.TrimSpace(result.SQL)
 	return result
+}
+
+var (
+	matchLiteral = regexp.MustCompile(`(?is)\bMATCH\s*'(?:''|[^'])*'`)
+	ftsORGroup   = regexp.MustCompile(`(?i)("[^"]+"|[\p{L}\p{N}_]+)\s+(\(\s*(?:"[^"]+"|[\p{L}\p{N}_]+)(?:\s+OR\s+(?:"[^"]+"|[\p{L}\p{N}_]+))+\s*\))`)
+)
+
+// explicitFTSGroupConjunction fixes the narrow FTS5 grammar trap where an
+// atom is followed by a parenthesized OR group using implicit AND. SQLite
+// accepts the same expression with the conjunction made explicit. Only
+// single-quoted MATCH literals whose group is entirely phrases or bare terms
+// are eligible; arbitrary SQL strings and richer FTS expressions stay intact.
+func explicitFTSGroupConjunction(stmt string) (string, bool) {
+	changed := false
+	fixed := matchLiteral.ReplaceAllStringFunc(stmt, func(match string) string {
+		quote := strings.IndexByte(match, '\'')
+		if quote < 0 || len(match) <= quote+1 {
+			return match
+		}
+		body := match[quote+1 : len(match)-1]
+		repaired := ftsORGroup.ReplaceAllStringFunc(body, func(group string) string {
+			parts := ftsORGroup.FindStringSubmatch(group)
+			if len(parts) != 3 {
+				return group
+			}
+			switch strings.ToUpper(parts[1]) {
+			case "AND", "OR", "NOT", "NEAR":
+				return group
+			default:
+				return parts[1] + " AND " + parts[2]
+			}
+		})
+		if repaired != body {
+			changed = true
+		}
+		return match[:quote+1] + repaired + "'"
+	})
+	return fixed, changed
 }
 
 func (r *Result) add(name string) {

@@ -730,6 +730,51 @@ func TestASecondRejectionIsNotRetriedAgain(t *testing.T) {
 	}
 }
 
+func TestAnExecutionErrorEarnsTheSameSingleCorrectionAttempt(t *testing.T) {
+	const failing = `SELECT rowid FROM memories_fts WHERE memories_fts MATCH '"synthetic" ("one" OR)' LIMIT 5`
+	const corrected = "SELECT content FROM memories WHERE supersedes IS NULL LIMIT 1"
+	model := &fakeProvider{
+		name: "ollama", model: "qwen3.5:4b",
+		ready:   provider.Readiness{Ready: true},
+		answers: []string{failing, corrected},
+	}
+	svc := serviceWithModel(t, model)
+
+	res, err := svc.Query(t.Context(), service.QueryRequest{Question: theFreeQuestion})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Degraded != "" || res.Path != service.PathLLM || res.RowCount == 0 {
+		t.Fatalf("execution retry did not recover: %+v", res)
+	}
+	if model.requests != 2 || !res.RetriedSQL || res.RetryType != service.RetryExecutionError {
+		t.Fatalf("execution retry provenance = requests %d, result %+v", model.requests, res)
+	}
+	if res.FirstModelSQL != failing || res.ModelSQL != corrected ||
+		!strings.Contains(res.RetryReason, `fts5: syntax error near "OR"`) {
+		t.Fatalf("execution failure was not retained exactly: %+v", res)
+	}
+	second := model.prompts[1]
+	if !strings.Contains(second, failing) || !strings.Contains(second, `fts5: syntax error near "OR"`) ||
+		!strings.Contains(second, "failed during execution") {
+		t.Fatalf("correction prompt lost the statement or engine error:\n%s", second)
+	}
+}
+
+func TestExecNeverRetriesUserSuppliedSQL(t *testing.T) {
+	model := answering("codex", "SELECT content FROM memories LIMIT 1")
+	svc := serviceWithModel(t, model)
+	_, err := svc.Exec(t.Context(), service.ExecRequest{
+		SQL: `SELECT rowid FROM memories_fts WHERE memories_fts MATCH '"synthetic" ("one" OR)'`,
+	})
+	if err == nil || !strings.Contains(err.Error(), "fts5: syntax error") {
+		t.Fatalf("Exec error = %v, want the engine rejection without a model retry", err)
+	}
+	if model.requests != 0 {
+		t.Fatalf("Exec spent %d model calls correcting user SQL", model.requests)
+	}
+}
+
 // A query that is valid the first time costs exactly one request. The retry is
 // paid for only by the queries that need it.
 func TestAValidQueryIsNotAskedTwice(t *testing.T) {
@@ -928,6 +973,30 @@ func TestKnownUnionMistakesAreRepairedBeforeTheStrictGate(t *testing.T) {
 		t.Fatalf("audit SQL=%q; executed SQL=%q", res.ModelSQL, res.SQL)
 	}
 	if strings.Join(res.Repaired, ",") != "union_order_by" {
+		t.Fatalf("repaired = %v", res.Repaired)
+	}
+}
+
+func TestTheLiveFTSORGroupIsRepairedBeforeASecondModelCall(t *testing.T) {
+	raw := `SELECT content FROM memories WHERE id IN (` +
+		`SELECT rowid FROM memories_fts WHERE memories_fts MATCH '"Javi" ("objetivo" OR "propósito" OR "carrera" OR "impulsa" OR "motivación")') LIMIT 5`
+	model := answering("codex", raw)
+	svc := serviceWithModel(t, model)
+	if _, err := svc.Store(t.Context(), service.StoreRequest{
+		Layer: "project", Content: "Javi objetivo",
+		Authorship: service.Authorship{Surface: service.SurfaceCLI},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := svc.Query(t.Context(), service.QueryRequest{Question: theFreeQuestion})
+	if err != nil || res.Degraded != "" || res.RowCount == 0 {
+		t.Fatalf("repaired FTS query = %+v, err %v", res, err)
+	}
+	if model.requests != 1 || res.RetriedSQL || !strings.Contains(res.SQL, " AND (") {
+		t.Fatalf("repair spent a correction call or did not reach SQLite: requests=%d result=%+v", model.requests, res)
+	}
+	if strings.Join(res.Repaired, ",") != "fts_or_group" {
 		t.Fatalf("repaired = %v", res.Repaired)
 	}
 }
