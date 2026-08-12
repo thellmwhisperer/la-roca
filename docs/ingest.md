@@ -37,6 +37,41 @@ may be listed. It never scans Downloads or another broad directory for exports
 and ignores `projects/`, `design_chats/`, `users.json`, and
 `login_history.json`.
 
+## Declare an OpenAI data export
+
+Request the official export from ChatGPT under **Settings → Data Controls →
+Export Data**, download it, and extract the zip. Add the extracted directory to
+the configuration file in the selected data directory:
+
+```toml
+[defaults]
+openai_export_paths = [
+  "~/exports/chatgpt-data",
+]
+```
+
+Then run `roca ingest`. Point to the extracted directory, not to
+`conversations.json`. Multiple export directories may be listed; a later export
+of the same account contributes only conversations and messages whose source
+identities have not already landed.
+
+Each `conversation_id` becomes an unprojected `chatgpt-web` session. La Roca
+walks the `mapping` parent/children tree and pairs user messages with assistant
+replies, retaining alternate branches. A node that cannot be read is discarded
+on its own; readable descendants are reparented to its nearest surviving
+ancestor. System, tool, empty, and hidden nodes are excluded by design rather
+than reported as malformed.
+
+The assistant message's `metadata.model_slug` supplies the model when present,
+falling back to the conversation's `default_model_slug`; the provider is
+`openai`. The export carries no token or cost counts, so those provenance
+columns remain NULL. Epoch timestamps are normalized into the corpus's UTC ISO
+8601 format.
+
+`shared_conversations.json` and attachment files are counted in the ingest
+summary as out-of-scope exclusions. `chat.html` is another rendering of the
+conversation history and is ignored. La Roca does not open attachment bytes.
+
 ## What enters the corpus
 
 Each conversation UUID becomes an unprojected `claude-web` session whose name
@@ -67,7 +102,8 @@ is NULL wherever the source states nothing, which is normal and not missing
 data. Read them with `IS NOT NULL` and never as a zero: a Claude transcript
 counts tokens and names no provider, a Codex rollout counts the reasoning tokens
 apart, Pi and OpenCode also price the turn, Hermes measures a whole session
-rather than a turn, and the Claude web export states none of it.
+rather than a turn, the Claude web export states none of it, and the ChatGPT
+export names its model and provider without stating usage.
 
 Thinking text stays in `thinking_blocks`, keyed to its session and exchange; it
 is not duplicated onto `exchanges`. Codex reasoning now lands there on the

@@ -522,7 +522,8 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 	}
 
 	if target.Kind == parsers.KindClaudeWebConversations ||
-		target.Kind == parsers.KindClaudeWebMemories {
+		target.Kind == parsers.KindClaudeWebMemories ||
+		target.Kind == parsers.KindChatGPTWebConversations {
 		file, err := os.Open(target.Path)
 		if err != nil {
 			return parsers.Records{}, err.Error()
@@ -534,8 +535,10 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 		var records parsers.Records
 		if target.Kind == parsers.KindClaudeWebConversations {
 			records, err = parsers.ParseClaudeWebConversations(file, meta)
-		} else {
+		} else if target.Kind == parsers.KindClaudeWebMemories {
 			records, err = parsers.ParseClaudeWebMemories(file, meta)
+		} else {
+			records, err = parsers.ParseChatGPTWebConversations(file, meta)
 		}
 		if err != nil {
 			return parsers.Records{}, err.Error()
@@ -601,7 +604,8 @@ func resolveProjects(ctx context.Context, opts Options, target Target, records *
 	}
 	for i := range records.Sessions {
 		session := &records.Sessions[i]
-		if target.Kind == parsers.KindClaudeWebConversations {
+		if target.Kind == parsers.KindClaudeWebConversations ||
+			target.Kind == parsers.KindChatGPTWebConversations {
 			// An export path says nothing about the conversation's project. It is
 			// deliberately not passed through path heuristics in v1.
 			continue
@@ -679,6 +683,7 @@ func declaredRoots(roots Roots) map[string]string {
 		"pi_sessions":             roots.PiSessions,
 		"hermes_db":               roots.HermesDB,
 		"anthropic_export_paths":  strings.Join(roots.ClaudeWebExports, string(os.PathListSeparator)),
+		"openai_export_paths":     strings.Join(roots.ChatGPTWebExports, string(os.PathListSeparator)),
 	}
 	maps.DeleteFunc(declared, func(_, value string) bool { return value == "" })
 	return declared
