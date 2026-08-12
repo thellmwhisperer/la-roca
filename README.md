@@ -343,6 +343,8 @@ The [docs index](docs/README.md) orders the longer reads:
 - [The MCP plug](docs/mcp.md): tools, contract, integration targets.
 - [Install, update, and uninstall](docs/lifecycle.md): the binary's life.
 - [Operations](docs/operations.md): logs, redaction, retention.
+- [Retrieval evaluation](docs/evaluation.md): synthetic golden cases, replay
+  baselines, and labelled live comparisons.
 - [Releases](docs/releases.md): how versions are cut.
 
 ## Build and test
@@ -351,6 +353,7 @@ The [docs index](docs/README.md) orders the longer reads:
 make build
 make check
 make accept-index
+make eval
 make dist
 ```
 
@@ -359,6 +362,13 @@ the duplication gate. Acceptance contracts live directly under
 `features/{store,ingest,provider,distribution}/`; every feature there is
 discovered automatically, and `make accept-index` rejects any other layout. The
 Godog harness is compiled only with the `acceptance` build tag.
+
+`make eval` measures the recorded retrieval baseline against a synthetic
+fixture. It never opens the operator's corpus. Set `EVAL_FORMAT=json` for a
+machine report, `EVAL_FORMAT=markdown` for a release-note block, or
+`EVAL_MODE=live` to regenerate the plans with the configured provider and
+model. See [Retrieval evaluation](docs/evaluation.md) for the golden-set
+contract and metric definitions.
 
 ## License
 

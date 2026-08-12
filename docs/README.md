@@ -19,7 +19,9 @@ Reading order, from operator to contributor:
    the read-only boundary.
 7. [Architecture](architecture.md): the four internal domains and the import
    rule that keeps them honest.
-8. [Releases](releases.md): how versions are cut and artefacts are built.
+8. [Retrieval evaluation](evaluation.md): run the synthetic golden set in
+   deterministic replay or labelled live mode.
+9. [Releases](releases.md): how versions are cut and artefacts are built.
 
 The [README](../README.md) is the front page; these pages carry the depth.
 The [changelog](../CHANGELOG.md) is maintained by release automation, one
