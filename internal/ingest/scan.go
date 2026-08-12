@@ -94,6 +94,7 @@ func Scan(roots Roots) Plan {
 	plan.add(scanSubagents(roots), "subagent_files")
 	plan.add(scanPiSessions(roots), "pi_session_files")
 	plan.add(scanClaudeWebExports(roots), "claude_web_export_files")
+	plan.add(scanChatGPTWebExports(roots), "chatgpt_web_export_files")
 	plan.add(existingFile(roots.OpenCodeDB, Target{
 		Kind: parsers.KindOpenCodeDB, SourceAgent: "opencode"}), "opencode_databases")
 	plan.add(existingFile(roots.HermesDB, Target{
@@ -132,6 +133,7 @@ func DetectAgents(roots Roots) []string {
 		{"claude", claude},
 		{"claude-desktop", pathExists(roots.ClaudeDesktopSessions)},
 		{"claude-web", anyPathExists(roots.ClaudeWebExports)},
+		{"chatgpt-web", anyPathExists(roots.ChatGPTWebExports)},
 		{"cowork", pathExists(roots.CoworkSessions)},
 		{"codex", pathExists(roots.CodexRoot) || pathExists(roots.CodexSessions) || isFile(roots.CodexStateDB)},
 		{"opencode", isFile(roots.OpenCodeDB)},
@@ -170,6 +172,37 @@ func scanClaudeWebExports(roots Roots) []Target {
 				Path: path, Kind: shape.kind, SourceAgent: "claude-web",
 				FileName: shape.name,
 			})
+		}
+	}
+	return targets
+}
+
+// scanChatGPTWebExports reads conversations.json and accounts for the export
+// records that this build deliberately leaves out. chat.html is only another
+// rendering of conversations.json and is neither opened nor counted.
+func scanChatGPTWebExports(roots Roots) []Target {
+	var targets []Target
+	seen := map[string]bool{}
+	for _, root := range roots.ChatGPTWebExports {
+		for _, name := range filesIn(root) {
+			path := filepath.Join(root, name)
+			key := realPath(path)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			target := Target{Path: path, SourceAgent: "chatgpt-web", FileName: name}
+			switch name {
+			case "conversations.json":
+				target.Kind = parsers.KindChatGPTWebConversations
+			case "shared_conversations.json":
+				target.ExclusionReason = "shared ChatGPT conversations are out of scope"
+			case "chat.html":
+				continue
+			default:
+				target.ExclusionReason = "ChatGPT export attachment is out of scope"
+			}
+			targets = append(targets, target)
 		}
 	}
 	return targets
