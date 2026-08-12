@@ -156,6 +156,26 @@ func TestQuestionGateStopsBeforeTheProviderIsCalled(t *testing.T) {
 	}
 }
 
+func TestAMissingReferentReturnsTheAskBeforeCallingAModel(t *testing.T) {
+	model := answering("codex", "SELECT content FROM memories LIMIT 5")
+	svc := serviceWithModel(t, model)
+
+	res, err := svc.Query(t.Context(), service.QueryRequest{
+		Question: "what did agents decide for a specific project?",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model.requests != 0 || res.Path != service.PathAsk ||
+		!res.ClarificationRequired || res.MissingSlot != "project" {
+		t.Fatalf("ask result = requests %d, %+v", model.requests, res)
+	}
+	if res.SQL != "" || res.RowCount != 0 || res.Degraded != "" ||
+		res.Message != "Which project should I use? Please name it in the question." {
+		t.Fatalf("ask changed into a guessed query: %+v", res)
+	}
+}
+
 // The gate is not skipped because the SQL comes from the titular provider: what
 // does not pass does not touch the database.
 func TestTheModelsSQLAlwaysPassesTheGate(t *testing.T) {

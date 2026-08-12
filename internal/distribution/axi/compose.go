@@ -97,7 +97,7 @@ func MCPQuery(res service.QueryResult) string {
 }
 
 func composeQuery(res service.QueryResult, prose string, help func(service.QueryResult) string) string {
-	if res.Path == service.PathUnresolved {
+	if res.Path == service.PathUnresolved || res.Path == service.PathAsk {
 		return res.Message
 	}
 	var b strings.Builder

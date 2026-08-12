@@ -26,6 +26,7 @@ const (
 	PathKeyword    = "keyword"
 	PathUnresolved = "unresolved"
 	PathRefused    = "refused"
+	PathAsk        = "ask"
 )
 
 // Match states. Honest zero rows are declared as such instead of dressed up as
@@ -88,6 +89,10 @@ type QueryResult struct {
 	Match    string             `json:"match,omitempty"`
 	Search   *search.Provenance `json:"search,omitempty"`
 	Message  string             `json:"message,omitempty"`
+	// ClarificationRequired declares that no SQL was generated because the
+	// question named a generic slot without supplying its referent.
+	ClarificationRequired bool   `json:"clarification_required,omitempty"`
+	MissingSlot           string `json:"missing_slot,omitempty"`
 
 	// Engine and Model are the model path's provenance: which provider answered
 	// and with which model. Without them a poor answer cannot be attributed, and
@@ -270,6 +275,13 @@ func (s *Service) Query(ctx context.Context, req QueryRequest) (res QueryResult,
 		Warnings: slices.Clone(s.opts.Providers.Warnings),
 	}
 	defer func() { res.LatencyMS = time.Since(start).Milliseconds() }()
+	if missing, found := query.DetectMissingReferent(req.Question); found {
+		res.Path = PathAsk
+		res.Message = missing.Ask
+		res.ClarificationRequired = true
+		res.MissingSlot = missing.Slot
+		return res, nil
+	}
 	if _, err := s.ensureSchema(ctx); err != nil {
 		return res, err
 	}

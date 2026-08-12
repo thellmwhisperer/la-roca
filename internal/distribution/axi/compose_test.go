@@ -126,6 +126,17 @@ func TestQueryRefusalNamesItsRouteWithoutSuggestingASearch(t *testing.T) {
 	}
 }
 
+func TestQueryAskReturnsOnlyTheClarifyingQuestion(t *testing.T) {
+	result := service.QueryResult{
+		Question: "what happened in a specific project?", Path: service.PathAsk,
+		ClarificationRequired: true, MissingSlot: "project",
+		Message: "Which project should I use? Please name it in the question.",
+	}
+	if got := axi.Query(result, ""); got != result.Message {
+		t.Fatalf("ask output = %q, want %q", got, result.Message)
+	}
+}
+
 func TestExecRendersTheSQLRowsCountAndHelp(t *testing.T) {
 	res := service.ExecResult{
 		SQL:     "SELECT layer, COUNT(*) AS n FROM memories GROUP BY layer",
