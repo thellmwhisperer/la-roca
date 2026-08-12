@@ -114,8 +114,8 @@ model = "fixture-model"
 }
 
 func TestProviderSecretRedactionHandlesEveryValidTOMLShape(t *testing.T) {
-	if key, index := tomlAssignment(`model.name = "nested"`); key != "" || index != -1 {
-		t.Fatalf("dotted assignment parsed as scalar %q at %d", key, index)
+	if key, index := tomlAssignment(`model.name = "nested"`); key != "model.name" || index != 11 {
+		t.Fatalf("dotted assignment resolved to %q at %d", key, index)
 	}
 	for _, body := range []string{
 		"[models.fixture]\n\"api_key\" = \"legacy-secret\"\nmodel = \"fixture\"\n",
@@ -152,6 +152,47 @@ func TestProviderMigrationDeduplicatesWithResolverNormalization(t *testing.T) {
 	}})
 	if err != nil || strings.Contains(updated, "order =") {
 		t.Fatalf("removing the last provider left an explicit empty order: err=%v\n%s", err, updated)
+	}
+}
+
+// TOML spells one key several ways, and the operator wrote the file: a root
+// level `models.xai.api_key = …` is the same key as `api_key` under a
+// `[models.xai]` header. Only the header shape was matched, so on a dotted
+// configuration retirement appended a second `[models]` declaration, aborted on
+// the parser error it had just created, and left the secret in the file.
+func TestCredentialRetirementEditsEveryEquivalentKeyShape(t *testing.T) {
+	for _, before := range []string{
+		"# operator note\n[models]\norder = [\"xai\", \"ollama\"]\n\n[models.\"xai\"]\napi_key = \"legacy-secret\"\nmodel = \"grok-legacy\"\n",
+		"# operator note\nmodels.order = [\"xai\", \"ollama\"]\nmodels.xai.api_key = \"legacy-secret\"\nmodels.xai.model = \"grok-legacy\"\n",
+	} {
+		retired, err := ApplyText(before, []Change{
+			{Kind: ReplaceListValue, Table: "models", Key: "order", Old: "xai", Value: "codex"},
+			{Kind: ReplaceListValue, Table: "models", Key: "interpret_order", Old: "xai", Value: "codex"},
+			{Kind: DeleteTable, Table: "models.xai"},
+		})
+		if err != nil {
+			t.Fatalf("retirement refused the operator's file: %v\n%s", err, before)
+		}
+		if strings.Contains(retired, "legacy-secret") || !strings.Contains(retired, "# operator note") {
+			t.Fatalf("retirement kept the secret or lost the operator's own lines:\n%s", retired)
+		}
+		// Every later proposal edits the same file, so it must land on this shape too.
+		updated, err := ApplyText(retired, []Change{
+			{Kind: PrependUnique, Table: "models", Key: "order", Value: "claude", Default: []string{"codex"}},
+			{Kind: ReplaceTable, Table: "models.claude", Fields: []Field{{Key: "command", Value: []string{"claude"}}}},
+		})
+		if err != nil {
+			t.Fatalf("the next proposal refused the retired file: %v\n%s", err, retired)
+		}
+		file, err := LoadFile(write(t, updated))
+		if err != nil {
+			t.Fatalf("the edited configuration no longer parses: %v\n%s", err, updated)
+		}
+		if _, kept := file.Models.Providers["xai"]; kept ||
+			strings.Join(file.Models.Order, ",") != "claude,codex,ollama" ||
+			len(file.Models.Providers["claude"].Command) != 1 {
+			t.Fatalf("migration incomplete: %+v\n%s", file.Models, updated)
+		}
 	}
 }
 

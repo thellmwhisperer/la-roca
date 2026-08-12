@@ -279,7 +279,10 @@ when the provider has a transport of its own, to replace it with a detected CLI,
 or to drop it when no supported CLI is on `PATH`. A `command` you declared is a
 transport of your own, so it is never removed, never migrated away, and keeps
 answering while retired keys sit unread beside it. Declining changes nothing;
-non-terminal runs emit one plain alert.
+non-terminal runs emit one plain alert. A provider left with nothing but a
+retired transport becomes available again only by accepting that proposal or by
+removing the retired keys by hand, so declining deliberately keeps the
+configuration unusable.
 
 Old files under `~/.roca/credentials` are never read and never disable a
 provider that works: they get a cleanup proposal of their own, and a Codex or

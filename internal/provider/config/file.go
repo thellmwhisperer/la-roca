@@ -189,22 +189,26 @@ func verifyProviderSecretsRedacted(text string) error {
 }
 
 func deleteTableValueText(text, table, key string) string {
-	want, inside, offset := strings.ToLower(strings.TrimSpace(table)), false, 0
+	want := strings.ToLower(strings.TrimSpace(table)) + "." + key
+	return deleteKeyLines(text, func(candidate string) bool { return candidate == want })
+}
+
+// deleteKeyLines removes every assignment whose fully qualified key the caller
+// claims, wherever the operator declared it: under its own table header, or as a
+// dotted key written in an outer scope.
+func deleteKeyLines(text string, claimed func(string) bool) string {
+	var kept strings.Builder
+	scope := ""
 	for _, line := range strings.SplitAfter(text, "\n") {
 		clean := strings.TrimSpace(strings.SplitN(line, "#", 2)[0])
-		if candidate := tableKey(clean); candidate != "" {
-			inside = candidate == want
-			offset += len(line)
+		if strings.HasPrefix(clean, "[") {
+			scope = headerScope(clean)
+		} else if candidate, _ := documentKey(scope, line); candidate != "" && claimed(candidate) {
 			continue
 		}
-		if inside {
-			if candidate, _ := tomlAssignment(line); candidate == key {
-				return text[:offset] + text[offset+len(line):]
-			}
-		}
-		offset += len(line)
+		kept.WriteString(line)
 	}
-	return text
+	return kept.String()
 }
 
 func deleteTableText(text, table string) string {
@@ -220,13 +224,17 @@ func deleteTableText(text, table string) string {
 		}
 		offset += len(line)
 	}
-	if start < 0 {
-		return text
+	if start >= 0 {
+		for end < len(text) && text[end] == '\n' && start > 0 && text[start-1] == '\n' {
+			end++
+		}
+		text = text[:start] + text[end:]
 	}
-	for end < len(text) && text[end] == '\n' && start > 0 && text[start-1] == '\n' {
-		end++
-	}
-	return text[:start] + text[end:]
+	// The same table spelled as dotted keys has no header to cut out, so its keys
+	// have to go one by one or the retired credential survives the retirement.
+	return deleteKeyLines(text, func(candidate string) bool {
+		return candidate == want || strings.HasPrefix(candidate, want+".")
+	})
 }
 
 func prependUnique(values []string, value string) []string {
@@ -306,6 +314,11 @@ func replaceTableText(text, table string, fields []Field) string {
 		offset += len(line)
 	}
 	if start < 0 {
+		// A table the operator spelled as dotted keys has no header to replace, and
+		// leaving those keys behind would declare the table twice.
+		text = deleteKeyLines(text, func(candidate string) bool {
+			return candidate == want || strings.HasPrefix(candidate, want+".")
+		})
 		if text == "" {
 			return block
 		}
@@ -411,64 +424,93 @@ func tableKey(line string) string {
 	return strings.ToLower(strings.Join(parts, "."))
 }
 
+// headerScope is the table a header line opens. An array-of-tables header opens
+// a table these edits never claim, so it scopes to a name no key can match.
+func headerScope(clean string) string {
+	if scope := tableKey(clean); scope != "" {
+		return scope
+	}
+	return clean
+}
+
+// documentKey is the fully qualified key an assignment line declares inside the
+// table scope open at that line, and the index of its `=`. The table part is
+// compared like a header, the final key exactly as the operator wrote it.
+func documentKey(scope, line string) (string, int) {
+	path, eq := tomlAssignment(line)
+	if path == "" {
+		return "", -1
+	}
+	if scope != "" {
+		path = scope + "." + path
+	}
+	if cut := strings.LastIndex(path, "."); cut > 0 {
+		path = strings.ToLower(path[:cut]) + path[cut:]
+	}
+	return path, eq
+}
+
 func setTableValueText(text, header, key, value string) string {
-	start, end, firstChild := -1, len(text), -1
-	// The operator wrote this file, and TOML spells one table several ways:
-	// `[models.xai]`, `[ models.xai ]` and `[models."xai"]` are the same table.
-	// Comparing the raw line text matched only the first, so an edit to either of
-	// the others appended a SECOND table for the same key and left the
-	// configuration unparseable.
+	// The operator wrote this file, and TOML spells one key several ways:
+	// `[models.xai]`, `[ models.xai ]` and `[models."xai"]` are the same table, and
+	// a top-level `models.xai.model = …` declares the same key as `model` under any
+	// of them. Comparing the raw line text matched only the first spelling, so an
+	// edit to any of the others appended a SECOND declaration of a table that
+	// already existed and left the configuration unparseable.
 	want := tableKey(header)
-	childPrefix := want + "."
-	offset := 0
+	target, childPrefix := want+"."+key, want+"."
+	inTable, dotted, firstChild, scope, offset := -1, -1, -1, "", 0
 	for _, line := range strings.SplitAfter(text, "\n") {
 		clean := strings.TrimSpace(strings.SplitN(line, "#", 2)[0])
-		candidate := tableKey(clean)
-		if candidate != "" && candidate == want {
-			start = offset + len(line)
-		} else if firstChild < 0 && candidate != "" && strings.HasPrefix(candidate, childPrefix) {
-			firstChild = offset
-		}
-		if start >= 0 && offset >= start && strings.HasPrefix(clean, "[") {
-			end = offset
-			break
-		}
-		offset += len(line)
-	}
-	if start == len(text) {
-		return text + "\n" + key + " = " + value + "\n"
-	}
-	if start < 0 {
-		block := header + "\n" + key + " = " + value + "\n"
-		if firstChild >= 0 {
-			return text[:firstChild] + block + "\n" + text[firstChild:]
-		}
-		if text == "" {
-			return block
-		}
-		separator := "\n"
-		if !strings.HasSuffix(text, "\n") {
-			separator = "\n\n"
-		}
-		return text + separator + block
-	}
-	offset = 0
-	for _, line := range strings.SplitAfter(text[start:end], "\n") {
-		candidate, eq := tomlAssignment(line)
-		if candidate != key {
+		if strings.HasPrefix(clean, "[") {
+			scope = headerScope(clean)
+			if scope == want && inTable < 0 {
+				inTable = offset + len(line)
+			} else if firstChild < 0 && strings.HasPrefix(scope, childPrefix) {
+				firstChild = offset
+			}
 			offset += len(line)
 			continue
 		}
-		valueStart := eq + 1
-		for valueStart < len(line) && (line[valueStart] == ' ' || line[valueStart] == '\t') {
-			valueStart++
+		candidate, eq := documentKey(scope, line)
+		if candidate == target {
+			at := offset + eq + 1
+			for at < len(text) && (text[at] == ' ' || text[at] == '\t') {
+				at++
+			}
+			return text[:at] + value + text[at+tomlValueEnd(text[at:]):]
 		}
-		valueEnd := valueStart + tomlValueEnd(text[start+offset+valueStart:end])
-		return text[:start+offset+valueStart] + value + text[start+offset+valueEnd:]
+		// A scope shorter than the table means the table is written into the key
+		// itself, which is where a new key of that table has to go as well.
+		if dotted < 0 && len(scope) < len(want) && strings.HasPrefix(candidate, childPrefix) {
+			dotted = offset
+		}
+		offset += len(line)
 	}
-	return text[:start] + key + " = " + value + "\n" + text[start:]
+	block := header + "\n" + key + " = " + value + "\n"
+	switch {
+	case inTable == len(text):
+		return text + "\n" + key + " = " + value + "\n"
+	case inTable >= 0:
+		return text[:inTable] + key + " = " + value + "\n" + text[inTable:]
+	case dotted >= 0:
+		return text[:dotted] + want + "." + key + " = " + value + "\n" + text[dotted:]
+	case firstChild >= 0:
+		return text[:firstChild] + block + "\n" + text[firstChild:]
+	case text == "":
+		return block
+	}
+	separator := "\n"
+	if !strings.HasSuffix(text, "\n") {
+		separator = "\n\n"
+	}
+	return text + separator + block
 }
 
+// tomlAssignment is the key an assignment line declares, relative to the table
+// it sits in, and the index of its `=`. A dotted key reaches into a nested
+// table, so the answer is the whole path: `models.xai.api_key = …` written at
+// the top of a file declares the same key as `api_key` under `[models.xai]`.
 func tomlAssignment(line string) (string, int) {
 	quote := byte(0)
 	for index := 0; index < len(line); index++ {
@@ -494,15 +536,20 @@ func tomlAssignment(line string) (string, int) {
 				return "", -1
 			}
 			var document map[string]any
-			if _, err := toml.Decode(raw+" = 0", &document); err != nil || len(document) != 1 {
+			if _, err := toml.Decode(raw+" = 0", &document); err != nil {
 				return "", -1
 			}
-			for key, value := range document {
-				if _, nested := value.(map[string]any); nested {
-					return "", -1
+			var path []string
+			for current := document; len(current) == 1; {
+				key := sortedKeys(current)[0]
+				path = append(path, key)
+				nested, dotted := current[key].(map[string]any)
+				if !dotted {
+					return strings.Join(path, "."), index
 				}
-				return key, index
+				current = nested
 			}
+			return "", -1
 		}
 	}
 	return "", -1
