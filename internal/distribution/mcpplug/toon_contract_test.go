@@ -135,7 +135,8 @@ func TestAWideResultBudgetsTOONAndShipsNoRowsEnvelope(t *testing.T) {
 	wide := strings.Repeat("abcdefghij", 250) // ~2500 chars per memory
 	for i := range 40 {
 		if _, err := svc.Store(context.Background(), service.StoreRequest{
-			Layer: "discovery", Content: wide + " " + strconv.Itoa(i), Surface: service.SurfaceCLI,
+			Layer: "discovery", Content: wide + " " + strconv.Itoa(i),
+			Authorship: service.Authorship{Surface: service.SurfaceCLI},
 		}); err != nil {
 			t.Fatalf("seed a wide memory: %v", err)
 		}

@@ -157,7 +157,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 		execCommand(env), schemaCommand(env),
 		indexCommand(env), doctorCommand(env),
 		ingestCommand(env), storeCommand(env), healthCommand(env),
-		mcpCommand(env), skillCommand(env),
+		mcpCommand(env), skillCommand(env), hooksCommand(env),
 		loginCommand(env), logoutCommand(env), modelCommand(env),
 		updateCommand(env), uninstallCommand(env),
 		modelsCommand(env), pluginsCommand(env),
@@ -177,7 +177,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 
 func publicCommand(name string) bool {
 	switch name {
-	case "init", "query", "store", "ingest", "login", "doctor", "update", "uninstall", "plugins":
+	case "init", "query", "store", "ingest", "login", "doctor", "update", "uninstall", "plugins", "hooks":
 		return true
 	default:
 		return false

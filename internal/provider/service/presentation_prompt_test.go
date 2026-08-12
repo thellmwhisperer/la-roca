@@ -29,7 +29,7 @@ func TestInitWritesTheAgentPresentationPrompt(t *testing.T) {
 		"La Roca", "local semantic memory", "when to query",
 		"roca query \"<natural question>\"", "roca store",
 		"Data = `roca query`; human reading = `roca query --full`; raw SQL = `roca exec`.",
-		"roca_query", "roca_store",
+		"roca_query", "roca_store", "--agent", "--model", "authorship",
 	} {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("prompt does not carry %q:\n%s", want, body)

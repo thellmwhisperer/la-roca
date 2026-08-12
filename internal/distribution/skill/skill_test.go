@@ -28,6 +28,15 @@ func TestContentIsANamedRocaSkill(t *testing.T) {
 	}
 }
 
+func TestContentTeachesCLIAuthorshipFlags(t *testing.T) {
+	body := skill.Content()
+	for _, want := range []string{"--agent", "--model", "automatic", "MCP"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("skill does not teach %q in the authorship contract", want)
+		}
+	}
+}
+
 func TestContentCarriesOperatingCraft(t *testing.T) {
 	body := skill.Content()
 	for _, needle := range []string{

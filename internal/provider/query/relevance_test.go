@@ -58,7 +58,7 @@ func TestTheModelPromptKeepsSearchTextAndSourceRankAligned(t *testing.T) {
 		"{agent_text}",
 		"{human_text}",
 		"SELECT 'human'",
-		"SELECT 'exchange', rowid, agent_text",
+		"SELECT 'exchange', rowid, NULL AS author, agent_text",
 		"human_text NOT LIKE '<task-notification%'",
 	} {
 		if !strings.Contains(prompt, want) {

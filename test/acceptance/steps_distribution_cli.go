@@ -110,7 +110,7 @@ func (w *distributionWorld) helpIsComplete() error {
 	}
 	honest := map[string]string{
 		"doctor": "configuration", "ingest": "source", "init": "database",
-		"login": "model", "query": "memory", "store": "memory",
+		"hooks": "authorship", "login": "model", "query": "memory", "store": "memory",
 		"uninstall": "remove", "update": "release", "plugins": "plugin",
 	}
 	found := map[string]string{}
