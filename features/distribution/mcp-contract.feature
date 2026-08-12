@@ -56,7 +56,7 @@ Feature: The MCP is a thin plug over the same core
     Then the response is not an error
     When I run "roca exec 'SELECT COUNT(*) AS n FROM memories WHERE supersedes IS NULL' --json"
     Then the count has gone up by one
-    And the audit record of that write declares it came from the plug
+    And the identity card of that write declares it came from the plug
 
   @fast
   Scenario: A missing argument is answered as a tool error, not as a crash

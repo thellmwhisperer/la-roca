@@ -7,24 +7,36 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
 	"unicode"
 )
 
-// The two surfaces that write. It travels into the memory's own metadata
-// because v1 has no audit table and adding one would change the identity schema
-// every adoption compares: the row that was written is where the record of who
-// wrote it belongs.
+// The two surfaces that write. They travel in the memory row's canonical
+// authorship columns, beside the harness and model that made the write.
 const (
 	SurfaceCLI = "cli"
 	SurfaceMCP = "mcp"
+	// UnknownAuthor is an explicit absence of evidence. New writes use it
+	// instead of NULL; historical NULLs remain untouched and mean the same thing.
+	UnknownAuthor = "unknown"
 )
 
-// surfaceKey is the metadata key carrying the audit. It is reserved: a caller's
-// own metadata never overwrites it.
-const surfaceKey = "surface"
+var reservedAuthorshipMetadata = []string{"agent", "model", "surface"}
+
+// Authorship is the one identity card stamped on every memory write.
+type Authorship struct {
+	Agent   string `json:"agent"`
+	Model   string `json:"model"`
+	Surface string `json:"surface"`
+}
+
+func (a Authorship) normalized() Authorship {
+	return Authorship{
+		Agent: valueOr(a.Agent, UnknownAuthor), Model: valueOr(a.Model, UnknownAuthor),
+		Surface: valueOr(a.Surface, UnknownAuthor),
+	}
+}
 
 // What the schema's CHECK constraints admit. They are validated here, before
 // any database I/O, so both surfaces get the same message instead of a SQLite
@@ -40,15 +52,13 @@ type StoreRequest struct {
 	Content string
 	// Origin is who creates it: human, agent, cron or plugin:<name>. Empty means
 	// agent, which is what an MCP call is.
-	Origin      string
-	SourceAgent string
-	Project     string
+	Origin     string
+	Authorship Authorship
+	Project    string
 	// Status is active, pending or resolved. Empty means active.
 	Status     string
 	Supersedes int64
 	Metadata   map[string]any
-	// Surface is which of the two surfaces is writing, for the audit.
-	Surface string
 }
 
 // StoreResult is the identity of the memory that is now there, whether this
@@ -95,7 +105,7 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (StoreResult, err
 	// for: a `handover` is a `handoff` the moment it is stored, never at the
 	// moment somebody queries it.
 	physical := s.registry.Resolve(layer, layer)
-	metadata, err := encodeMetadata(req.Metadata, req.Surface)
+	metadata, err := encodeMetadata(req.Metadata)
 	if err != nil {
 		return StoreResult{}, err
 	}
@@ -108,6 +118,8 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (StoreResult, err
 		Version:   s.opts.Version,
 		SourceSHA: s.opts.Commit,
 	}
+	authorship := req.Authorship
+	authorship = authorship.normalized()
 	err = s.db.Write(ctx, func(tx *sql.Tx) error {
 		var existing int64
 		row := tx.QueryRowContext(ctx,
@@ -136,9 +148,10 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (StoreResult, err
 		}
 		outcome, err := tx.ExecContext(ctx,
 			`INSERT INTO memories (layer, content, metadata, origin, source_agent,
-			                       project, status, supersedes)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			physical, content, metadata, origin, orNull(req.SourceAgent),
+			                       source_model, source_surface, project, status, supersedes)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			physical, content, metadata, origin, authorship.Agent, authorship.Model,
+			authorship.Surface,
 			orNull(req.Project), status, orNull(req.Supersedes))
 		if pluginOrigin {
 			if _, closeErr := tx.ExecContext(context.WithoutCancel(ctx),
@@ -174,20 +187,24 @@ func validOrigin(origin string) bool {
 	return true
 }
 
-// encodeMetadata merges the caller's metadata with the audit of which surface
-// wrote it. The audit wins: it is not the caller's to declare.
-func encodeMetadata(metadata map[string]any, surface string) (string, error) {
-	merged := make(map[string]any, len(metadata)+1)
-	maps.Copy(merged, metadata)
-	// The reserved key is taken away from the caller BEFORE the audit is applied.
-	// Writing it only when a surface was supplied left a caller's own `surface`
-	// standing on every path that has none, which is a forged audit in the one
-	// field the caller may not author.
-	delete(merged, surfaceKey)
-	if surface != "" {
-		merged[surfaceKey] = surface
+// encodeMetadata keeps caller tags away from the canonical authorship columns.
+// A reserved key is refused rather than dropped: a write that silently loses a
+// tag the caller sent is a write whose result does not say what was stored.
+func encodeMetadata(metadata map[string]any) (string, error) {
+	for _, key := range reservedAuthorshipMetadata {
+		if _, reserved := metadata[key]; !reserved {
+			continue
+		}
+		return "", fmt.Errorf(
+			"metadata key %q is reserved: a memory's identity is system stamped into its own "+
+				"authorship columns, never taken from the metadata. Name the writer with "+
+				"`roca store --agent <harness> --model <model>` and store the rest under "+
+				"another key", key)
 	}
-	encoded, err := json.Marshal(merged)
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	encoded, err := json.Marshal(metadata)
 	if err != nil {
 		return "", fmt.Errorf("the metadata is not serializable: %w", err)
 	}

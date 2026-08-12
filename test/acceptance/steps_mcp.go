@@ -84,8 +84,8 @@ func registerMCPSteps(ctx *godog.ScenarioContext, m *world) {
 	ctx.Then(`^the response carries no structured content$`, m.theResponseCarriesNoStructuredContent)
 	ctx.Then(`^the readable response is plain AXI text$`, m.theReadableResponseIsPlainAXI)
 	ctx.Then(`^the count has gone up by one$`, m.theCountHasGoneUpByOne)
-	ctx.Then(`^the audit record of that write declares it came from the plug$`,
-		m.theAuditSaysItCameFromThePlug)
+	ctx.Then(`^the identity card of that write declares it came from the plug$`,
+		m.theIdentityCardSaysItCameFromThePlug)
 	ctx.Then(`^that error says the same as the command line said$`, m.bothSurfacesRefuseAlike)
 	ctx.Then(`^the output names read-only mode and the refused operation$`,
 		m.itNamesReadOnlyModeAndTheOperation)
@@ -371,22 +371,20 @@ func (m *world) theCountHasGoneUpByOne() error {
 	return nil
 }
 
-// The audit is on the row itself: v1 has no audit table, and the record of who
-// wrote a memory belongs with the memory.
-func (m *world) theAuditSaysItCameFromThePlug() error {
+func (m *world) theIdentityCardSaysItCameFromThePlug() error {
 	db, err := m.openDB()
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	var metadata string
+	var surface string
 	err = db.QueryRow(
-		`SELECT metadata FROM memories ORDER BY id DESC LIMIT 1`).Scan(&metadata)
+		`SELECT source_surface FROM memories ORDER BY id DESC LIMIT 1`).Scan(&surface)
 	if err != nil {
-		return fmt.Errorf("read the audit: %w", err)
+		return fmt.Errorf("read the identity card: %w", err)
 	}
-	if !strings.Contains(metadata, `"surface":"mcp"`) {
-		return fmt.Errorf("the audit %q does not say the write came from the plug", metadata)
+	if surface != "mcp" {
+		return fmt.Errorf("the identity card says surface %q, not mcp", surface)
 	}
 	return nil
 }
