@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
@@ -20,7 +20,7 @@ import (
 
 const (
 	ProposalClaudeCLI       = "claude-cli-provider"
-	ProposalCodexCLI        = "codex-cli-transport"
+	ProposalRetiredProvider = "retired-provider"
 	ProposalAnthropicExport = "anthropic-export-path"
 
 	CapabilityAnthropicExport = "anthropic-export-ingester"
@@ -31,7 +31,6 @@ type ProviderCondition string
 
 const (
 	ProviderUnavailable ProviderCondition = "unavailable"
-	ProviderHTTP        ProviderCondition = "http"
 )
 
 // Detection is an AND of observable environment and configuration facts.
@@ -41,7 +40,7 @@ type Detection struct {
 	Binary           string
 	Provider         string
 	ProviderState    ProviderCondition
-	Credential       string
+	RetiredProvider  bool
 	DefaultListEmpty string
 }
 
@@ -61,14 +60,13 @@ type Entry struct {
 }
 
 type Context struct {
-	Version         string
-	ConfigPath      string
-	StampPath       string
-	CredentialsPath string
-	LookPath        func(string) (string, error)
-	Env             func(string) string
-	File            config.File
-	Capabilities    map[string]bool
+	Version      string
+	ConfigPath   string
+	StampPath    string
+	LookPath     func(string) (string, error)
+	Env          func(string) string
+	File         config.File
+	Capabilities map[string]bool
 }
 
 type Options struct {
@@ -101,22 +99,7 @@ func Registry() []Entry {
 					{Kind: config.ReplaceTable, Table: "models.claude"}},
 			},
 		},
-		{
-			ID: ProposalCodexCLI,
-			Detection: Detection{Binary: provider.NameCodex, Provider: provider.NameCodex,
-				ProviderState: ProviderHTTP, Credential: provider.FileCodexSession},
-			Proposal: Proposal{
-				Alert:  "Codex is using La Roca's OAuth/HTTP session while the Codex CLI is on PATH; the local-binary transport uses the same subscription without token refresh.",
-				Prompt: "Switch Codex to the local-binary transport?",
-				Changes: []config.Change{{Kind: config.ReplaceTable, Table: "models.codex",
-					Fields: []config.Field{
-						{Key: "command", Value: []string{"codex", "exec", "--model", "{model}",
-							"--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check",
-							"--ignore-user-config", "--ignore-rules", "--color", "never", "-"}},
-						{Key: "model", ValueFrom: "models.codex.model", Fallback: provider.DefaultCodexModel},
-					}}},
-			},
-		},
+		{ID: ProposalRetiredProvider, Detection: Detection{RetiredProvider: true}},
 		{
 			ID: ProposalAnthropicExport,
 			Detection: Detection{Capability: CapabilityAnthropicExport,
@@ -142,6 +125,10 @@ func Open(context Context, registry []Entry) []Entry {
 	}
 	var open []Entry
 	for _, entry := range registry {
+		if entry.ID == ProposalRetiredProvider && entry.Detection.RetiredProvider {
+			open = append(open, retiredProviderEntries(context, file)...)
+			continue
+		}
 		if detected(context, file, entry.Detection) {
 			open = append(open, entry)
 		}
@@ -156,9 +143,6 @@ func detected(context Context, file config.File, detection Detection) bool {
 	if detection.Binary != "" && !binaryOnPath(context, detection.Binary) {
 		return false
 	}
-	if detection.Credential != "" && !regularFile(filepath.Join(context.CredentialsPath, detection.Credential)) {
-		return false
-	}
 	if detection.DefaultListEmpty != "" && len(file.DefaultList(detection.DefaultListEmpty)) > 0 {
 		return false
 	}
@@ -171,10 +155,6 @@ func detected(context Context, file config.File, detection Detection) bool {
 		switch detection.ProviderState {
 		case ProviderUnavailable:
 			if providerUsable(context, file, detection.Provider, declared) {
-				return false
-			}
-		case ProviderHTTP:
-			if !declared || provider.UsesCommandTransport(file, detection.Provider) {
 				return false
 			}
 		}
@@ -197,33 +177,83 @@ func providerUsable(context Context, file config.File, name string, declared boo
 		}
 		return binaryOnPath(context, command[0])
 	}
-	env := func(key string) string {
-		if key == provider.EnvOrder || context.Env == nil {
-			return ""
-		}
-		return context.Env(key)
-	}
-	cascade, err := provider.BuildCascade(provider.Settings{
-		File: file, Credentials: context.CredentialsPath, Env: env,
-	})
-	if err != nil {
-		return false
-	}
-	for _, candidate := range cascade.Providers {
-		if candidate.Name() != name {
-			continue
-		}
-		if credentialed, ok := candidate.(interface{ HasCredential() bool }); ok {
-			return credentialed.HasCredential()
-		}
-		return true
-	}
 	return false
 }
 
-func regularFile(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.Mode().IsRegular()
+func retiredProviderEntries(context Context, file config.File) []Entry {
+	names := retiredProviderNames(file)
+	detected := provider.DetectedCommandPresets(context.LookPath)
+	entries := make([]Entry, 0, len(names))
+	for _, name := range names {
+		target := ""
+		if slices.Contains(detected, name) {
+			target = name
+		} else if len(detected) > 0 {
+			target = detected[0]
+		}
+		changes := retiredProviderChanges(name, target)
+		entry := Entry{ID: ProposalRetiredProvider + "-" + name, Proposal: Proposal{Changes: changes}}
+		if target == "" {
+			entry.Proposal.Alert = fmt.Sprintf("Retired credential-backed model provider detected: drop %s from the provider order; no local agent CLI is on PATH.", name)
+			entry.Proposal.Prompt = fmt.Sprintf("Drop %s from the model configuration?", name)
+		} else {
+			entry.Proposal.Alert = fmt.Sprintf("Retired credential-backed model provider detected: migrate %s to %s, which authenticates through its own CLI.", name, target)
+			entry.Proposal.Prompt = fmt.Sprintf("Migrate %s to the %s local CLI?", name, target)
+		}
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+func retiredProviderNames(file config.File) []string {
+	names := map[string]bool{}
+	for _, name := range append(append([]string(nil), file.Models.Order...), file.Models.InterpretOrder...) {
+		name = strings.ToLower(strings.TrimSpace(name))
+		if retiredProvider(file, name) {
+			names[name] = true
+		}
+	}
+	for name := range file.Models.Providers {
+		if retiredProvider(file, name) {
+			names[name] = true
+		}
+	}
+	ordered := make([]string, 0, len(names))
+	for name := range names {
+		ordered = append(ordered, name)
+	}
+	sort.Strings(ordered)
+	return ordered
+}
+
+func retiredProvider(file config.File, name string) bool {
+	if name == "" || name == provider.NameOllama {
+		return false
+	}
+	cfg, declared := file.Models.Providers[name]
+	if provider.UsesCommandTransport(file, name) {
+		return declared && (cfg.BaseURL != "" || cfg.RetiredCredential)
+	}
+	return true
+}
+
+func retiredProviderChanges(name, target string) []config.Change {
+	kind := config.RemoveListValue
+	if target != "" {
+		kind = config.ReplaceListValue
+	}
+	changes := []config.Change{
+		{Kind: kind, Table: "models", Key: "order", Old: name, Value: target},
+		{Kind: kind, Table: "models", Key: "interpret_order", Old: name, Value: target},
+	}
+	if target == name {
+		for _, key := range []string{"base_url", "api_key", "api_key_env", "preset"} {
+			changes = append(changes, config.Change{Kind: config.DeleteValue, Table: "models." + name, Key: key})
+		}
+	} else {
+		changes = append(changes, config.Change{Kind: config.DeleteTable, Table: "models." + name})
+	}
+	return changes
 }
 
 func Run(context Context, registry []Entry, options Options) (Result, error) {

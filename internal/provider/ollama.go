@@ -32,7 +32,7 @@ type OllamaConfig struct {
 	Client *http.Client
 }
 
-// Ollama is the local floor: no credential, no network beyond localhost, and
+// Ollama is the local floor: no authentication, no network beyond localhost, and
 // available on every supported platform. That is why the default order ends
 // here.
 type Ollama struct {
@@ -62,7 +62,7 @@ func (o *Ollama) Name() string { return NameOllama }
 func (o *Ollama) ModelID() string { return o.model }
 
 // BaseURL is where it talks to Ollama. It is reported by doctor and it never
-// carries a credential, because this provider has none.
+// carries authentication state, because this provider has none.
 func (o *Ollama) BaseURL() string { return o.baseURL }
 
 // ollamaTag is one entry of the local runtime's model list, kept whole so Ready

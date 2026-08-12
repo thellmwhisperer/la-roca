@@ -104,7 +104,7 @@ func TestInitSaysDetectedLocalCLIIsReadyWithoutRocaLogin(t *testing.T) {
 		DetectedModelBinaries: []string{"claude", "codex"}, FactoryDefault: true,
 		FactoryDefaultProvider: "claude",
 		Model: &service.InitModel{
-			Ready: true, Provider: "claude", Model: "factory-model", ExternalCredential: true,
+			Ready: true, Provider: "claude", Model: "factory-model", CommandTransport: true,
 		},
 	})
 	for _, want := range []string{
@@ -118,14 +118,15 @@ func TestInitSaysDetectedLocalCLIIsReadyWithoutRocaLogin(t *testing.T) {
 }
 
 func TestDoctorExactProviderProbeNarration(t *testing.T) {
+	t.Setenv("ROCA_CODEX_MODEL", "")
 	var output strings.Builder
 	renderDoctor(&cliEnv{out: &output}, service.DoctorReport{
 		Version: "test", SourceSHA: "sha", DBPath: "/data/roca.db", ConfigPath: "/data/config.toml",
-		Providers: []service.DoctorProvider{{Name: "xai", Model: "grok-4", Credential: service.CredentialPresent,
-			Reason: "xAI received HTTP status 401", Action: "log in again"}},
+		Providers: []service.DoctorProvider{{Name: "codex", Model: "gpt-test",
+			Reason: "codex binary not found in PATH", Action: "install Codex CLI"}},
 	})
-	wantLine := "  [no] xai · model grok-4 (built-in default · change with: roca login xai --model <id> or models.xai.model in /data/config.toml) · credential present · probe present-but-failed\n" +
-		"      xAI received HTTP status 401\n      remedy: log in again\n"
+	wantLine := "  [no] codex · model gpt-test (built-in default · change with: roca model set <id> or models.codex.model in /data/config.toml) · probe failed\n" +
+		"      codex binary not found in PATH\n      remedy: install Codex CLI\n"
 	if !strings.Contains(output.String(), wantLine) {
 		t.Fatalf("doctor provider block changed:\n--- want block ---\n%s--- got ---\n%s", wantLine, output.String())
 	}

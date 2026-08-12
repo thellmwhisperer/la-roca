@@ -130,8 +130,8 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 				break
 			}
 			res.ProviderError = err.Error()
-			credential, localCLI := chosen.(interface{ ExternalCredential() bool })
-			if attempt != 0 || !cascade.FactoryDefault || !localCLI || !credential.ExternalCredential() {
+			transport, localCLI := chosen.(interface{ CommandTransport() bool })
+			if attempt != 0 || !cascade.FactoryDefault || !localCLI || !transport.CommandTransport() {
 				res.Providers = cascade.CompleteDiagnostics(res.Providers)
 				return s.rescue(ctx, req, res, DegradedLLMError,
 					fmt.Sprintf("%s could not answer: %v\n%s", chosen.Name(), err, tried(res.Providers))), nil

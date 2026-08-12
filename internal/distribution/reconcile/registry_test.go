@@ -6,124 +6,102 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 )
 
-func TestLaunchRegistryDetections(t *testing.T) {
-	root := t.TempDir()
-	bin := filepath.Join(root, "bin")
-	if err := os.MkdirAll(bin, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"claude", "codex"} {
-		if err := os.WriteFile(filepath.Join(bin, name), []byte("fixture"), 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	credentials := writeCodexCredential(t, root)
-
+func TestRetiredProviderFirstRunAcceptAndDeclinePaths(t *testing.T) {
 	cases := []struct {
-		name, configText, proposal string
-		want                       bool
+		name, provider, body, answer, wantOrder, wantAlert string
+		binaries                                           []string
+		wantLegacy                                         bool
 	}{
-		{"claude gap", "[models]\norder = [\"ollama\"]\n", ProposalClaudeCLI, true},
-		{"unusable claude HTTP", "[models]\norder = [\"claude\"]\n[models.claude]\nbase_url = \"https://example.invalid\"\nmodel = \"remote\"\n", ProposalClaudeCLI, true},
-		{"usable claude HTTP", "[models]\norder = [\"claude\"]\n[models.claude]\nbase_url = \"https://example.invalid\"\nmodel = \"remote\"\napi_key = \"synthetic-credential\"\n", ProposalClaudeCLI, false},
-		{"codex migration", "[models]\norder = [\"codex\"]\n[models.codex]\nbase_url = \"https://chatgpt.com/backend-api/codex\"\n", ProposalCodexCLI, true},
-		{"anthropic export gap", "[defaults]\n", ProposalAnthropicExport, true},
+		{
+			name: "API key accept with CLI", provider: "xai", answer: "y\n", binaries: []string{"codex"},
+			body: legacyAPIConfig(), wantOrder: "codex,ollama", wantAlert: "migrate xai to codex",
+		},
+		{
+			name: "API key decline with CLI", provider: "xai", answer: "n\n", binaries: []string{"codex"},
+			body: legacyAPIConfig(), wantOrder: "xai,ollama", wantAlert: "migrate xai to codex", wantLegacy: true,
+		},
+		{
+			name: "OAuth accept with CLI", provider: "codex", answer: "yes\n", binaries: []string{"codex"},
+			body: legacyOAuthConfig(), wantOrder: "codex,ollama", wantAlert: "migrate codex to codex",
+		},
+		{
+			name: "OAuth decline with CLI", provider: "codex", answer: "no\n", binaries: []string{"codex"},
+			body: legacyOAuthConfig(), wantOrder: "codex,ollama", wantAlert: "migrate codex to codex", wantLegacy: true,
+		},
+		{
+			name: "API key accept without CLI", provider: "xai", answer: "y\n",
+			body: legacyAPIConfig(), wantOrder: "ollama", wantAlert: "drop xai",
+		},
+		{
+			name: "OAuth accept without CLI", provider: "codex", answer: "y\n",
+			body: legacyOAuthConfig(), wantOrder: "ollama", wantAlert: "drop codex",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			path := filepath.Join(root, tc.name+".toml")
-			if err := os.WriteFile(path, []byte(tc.configText), 0o600); err != nil {
+			root, bin := t.TempDir(), t.TempDir()
+			for _, name := range tc.binaries {
+				writeExecutable(t, filepath.Join(bin, name))
+			}
+			path := filepath.Join(root, "config.toml")
+			if err := os.WriteFile(path, []byte(tc.body), 0o600); err != nil {
 				t.Fatal(err)
 			}
+			entries := retiredEntries(Open(Context{ConfigPath: path, LookPath: lookPathIn(bin)}, Registry()))
+			if len(entries) != 1 || !strings.Contains(entries[0].Proposal.Alert, tc.wantAlert) {
+				t.Fatalf("entries = %+v, want alert containing %q", entries, tc.wantAlert)
+			}
+			var out strings.Builder
+			result, err := Run(Context{
+				Version: "v2", ConfigPath: path, StampPath: filepath.Join(root, "stamp.json"),
+				LookPath: lookPathIn(bin),
+			}, entries, Options{Interactive: true, In: strings.NewReader(tc.answer), Out: &out})
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantAccepted := !tc.wantLegacy
+			if (result.Accepted == 1) != wantAccepted {
+				t.Fatalf("result = %+v", result)
+			}
+			text := mustRead(t, path)
 			file, err := config.LoadFile(path)
 			if err != nil {
 				t.Fatal(err)
 			}
-			open := Open(Context{
-				ConfigPath: path, CredentialsPath: credentials, File: file,
-				LookPath: lookPathIn(bin), Capabilities: map[string]bool{CapabilityAnthropicExport: true},
-			}, Registry())
-			if got := containsProposal(open, tc.proposal); got != tc.want {
-				t.Fatalf("open proposals = %v, contains %s = %v, want %v",
-					proposalIDs(open), tc.proposal, got, tc.want)
+			if got := strings.Join(file.Models.Order, ","); got != tc.wantOrder {
+				t.Fatalf("order = %q, want %q\n%s", got, tc.wantOrder, text)
+			}
+			hasLegacy := strings.Contains(text, "legacy-secret") || strings.Contains(text, "base_url")
+			if hasLegacy != tc.wantLegacy {
+				t.Fatalf("legacy config present=%v, want %v\n%s", hasLegacy, tc.wantLegacy, text)
+			}
+			if !strings.Contains(text, "# keep") {
+				t.Fatalf("operator comment was lost:\n%s", text)
 			}
 		})
 	}
 }
 
-func TestCodexMigrationReplacesHTTPSettingsWithTheDeclaredCommand(t *testing.T) {
-	root, bin := t.TempDir(), t.TempDir()
-	writeExecutable(t, filepath.Join(bin, "codex"))
-	credentials := writeCodexCredential(t, root)
+func TestRetiredProviderNonTTYAlertIsOneLine(t *testing.T) {
+	root := t.TempDir()
 	path := filepath.Join(root, "config.toml")
-	before := "# keep\n[models]\norder = [\"codex\"]\n\n[models.codex]\nbase_url = \"https://example.invalid\"\nmodel = \"gpt-preserved\"\n\n[[audit_entries]]\nname = \"keep-array\"\n"
-	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(legacyAPIConfig()), 0o600); err != nil {
 		t.Fatal(err)
 	}
-
 	var out strings.Builder
 	result, err := Run(Context{
 		Version: "v2", ConfigPath: path, StampPath: filepath.Join(root, "stamp.json"),
-		CredentialsPath: credentials, LookPath: lookPathIn(bin),
-		Capabilities: map[string]bool{CapabilityAnthropicExport: true},
-	}, only(ProposalCodexCLI), Options{Interactive: true, In: strings.NewReader("y\n"), Out: &out})
-	if err != nil {
-		t.Fatal(err)
+		LookPath: lookPathIn(t.TempDir()),
+	}, Registry(), Options{Out: &out})
+	if err != nil || result.Offered != 1 || result.Accepted != 0 {
+		t.Fatalf("result=%+v err=%v", result, err)
 	}
-	if result.Accepted != 1 || result.Changes[0].Backup == "" {
-		t.Fatalf("result = %+v", result)
-	}
-	raw, _ := os.ReadFile(path)
-	text := string(raw)
-	for _, want := range []string{"# keep", `command = ["codex", "exec"`,
-		`model = "gpt-preserved"`, "[[audit_entries]]", `name = "keep-array"`} {
-		if !strings.Contains(text, want) {
-			t.Errorf("migration omitted %q:\n%s", want, text)
-		}
-	}
-	if strings.Contains(text, "base_url") {
-		t.Errorf("HTTP transport survived migration:\n%s", text)
-	}
-}
-
-func TestClaudeProposalReplacesUnusableHTTPWithSonnetPreset(t *testing.T) {
-	root, bin := t.TempDir(), t.TempDir()
-	writeExecutable(t, filepath.Join(bin, "claude"))
-	path := filepath.Join(root, "config.toml")
-	before := "# keep\n[models]\norder = [\"claude\", \"ollama\"]\n\n[models.claude]\nbase_url = \"https://example.invalid\"\nmodel = \"remote\"\n"
-	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	result, err := Run(Context{
-		Version: "v2", ConfigPath: path, StampPath: filepath.Join(root, "stamp.json"),
-		CredentialsPath: filepath.Join(root, "credentials"), LookPath: lookPathIn(bin),
-	}, only(ProposalClaudeCLI), Options{
-		Interactive: true, In: strings.NewReader("y\n"), Out: &strings.Builder{},
-	})
-	if err != nil || result.Accepted != 1 {
-		t.Fatalf("result = %+v, err %v", result, err)
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), "# keep") || strings.Contains(string(raw), "base_url") ||
-		strings.Contains(string(raw), `model = "remote"`) {
-		t.Fatalf("Claude HTTP settings survived preset enablement:\n%s", raw)
-	}
-	file, err := config.LoadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cascade, err := provider.BuildCascade(provider.Settings{
-		File: file, RunnerDir: filepath.Join(root, "runner"),
-	})
-	if err != nil || len(cascade.Providers) == 0 || cascade.Providers[0].ModelID() != "sonnet" {
-		t.Fatalf("Claude preset = %+v, err %v", cascade, err)
+	if lines := strings.Count(strings.TrimSpace(out.String()), "\n") + 1; lines != 1 ||
+		!strings.HasPrefix(out.String(), "capability: ") {
+		t.Fatalf("non-TTY alert = %q", out.String())
 	}
 }
 
@@ -142,11 +120,28 @@ func TestAnthropicExportProposalWritesTheFolderTheOperatorTypes(t *testing.T) {
 	if err != nil || result.Accepted != 1 {
 		t.Fatalf("result = %+v, err %v", result, err)
 	}
-	raw, _ := os.ReadFile(path)
-	if !strings.Contains(string(raw), `anthropic_export_paths = ["~/exports/claude"]`) ||
-		!strings.Contains(string(raw), "# keep") {
-		t.Fatalf("export path was not surgically added:\n%s", raw)
+	text := mustRead(t, path)
+	if !strings.Contains(text, `anthropic_export_paths = ["~/exports/claude"]`) || !strings.Contains(text, "# keep") {
+		t.Fatalf("export path was not surgically added:\n%s", text)
 	}
+}
+
+func legacyAPIConfig() string {
+	return "# keep\n[models]\norder = [\"xai\", \"ollama\"]\n\n[models.xai]\nbase_url = \"https://example.invalid\"\napi_key = \"legacy-secret\"\nmodel = \"grok-legacy\"\n"
+}
+
+func legacyOAuthConfig() string {
+	return "# keep\n[models]\norder = [\"codex\", \"ollama\"]\n\n[models.codex]\nbase_url = \"https://chatgpt.com/backend-api/codex\"\napi_key = \"legacy-secret\"\nmodel = \"gpt-preserved\"\n"
+}
+
+func retiredEntries(entries []Entry) []Entry {
+	var retired []Entry
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.ID, ProposalRetiredProvider+"-") {
+			retired = append(retired, entry)
+		}
+	}
+	return retired
 }
 
 func only(id string) []Entry {
@@ -165,46 +160,6 @@ func writeExecutable(t *testing.T, path string) {
 	}
 }
 
-func writeCodexCredential(t *testing.T, root string) string {
-	t.Helper()
-	credentials := filepath.Join(root, "credentials")
-	if err := os.MkdirAll(credentials, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(credentials, "codex.json"), []byte("{}"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return credentials
-}
-
-func TestLaunchRegistryClosesConfiguredCases(t *testing.T) {
-	root := t.TempDir()
-	path := filepath.Join(root, "config.toml")
-	configured := `[defaults]
-anthropic_export_paths = ["/exports"]
-
-[models]
-order = ["claude", "codex"]
-
-[models.codex]
-command = ["codex", "exec", "-"]
-model = "gpt-test"
-`
-	if err := os.WriteFile(path, []byte(configured), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	file, err := config.LoadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if open := Open(Context{
-		ConfigPath: path, CredentialsPath: filepath.Join(root, "credentials"), File: file,
-		LookPath: lookPathIn(root), Capabilities: map[string]bool{CapabilityAnthropicExport: true},
-	}, Registry()); len(open) != 0 {
-		t.Fatalf("configured environment still has proposals: %v", proposalIDs(open))
-	}
-}
-
 func lookPathIn(directory string) func(string) (string, error) {
 	return func(name string) (string, error) {
 		path := filepath.Join(directory, name)
@@ -216,19 +171,11 @@ func lookPathIn(directory string) func(string) (string, error) {
 	}
 }
 
-func containsProposal(entries []Entry, id string) bool {
-	for _, entry := range entries {
-		if entry.ID == id {
-			return true
-		}
+func mustRead(t *testing.T, path string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	return false
-}
-
-func proposalIDs(entries []Entry) []string {
-	ids := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		ids = append(ids, entry.ID)
-	}
-	return ids
+	return string(raw)
 }

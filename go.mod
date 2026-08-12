@@ -5,6 +5,7 @@ go 1.25.5
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/charmbracelet/glamour v1.0.0
+	github.com/creack/pty v1.1.24
 	github.com/cucumber/godog v0.16.0
 	github.com/mattn/go-runewidth v0.0.17
 	github.com/modelcontextprotocol/go-sdk v1.7.0

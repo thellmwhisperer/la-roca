@@ -23,31 +23,17 @@ package provider
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 )
 
-func unreachable(label string, err error) string {
-	if errors.Is(err, context.Canceled) {
-		return fmt.Sprintf("request to %s was canceled", label)
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return fmt.Sprintf("request to %s timed out", label)
-	}
-	return fmt.Sprintf("%s is unreachable: %v", label, err)
-}
-
 // The names this build knows. They are normalized: lower case and hyphens.
 const (
-	NameOllama   = "ollama"
-	NameCodex    = "codex"
-	NameClaude   = "claude"
-	NameDeepSeek = "deepseek"
-	NameZAI      = "zai"
-	NameXAI      = "xai"
+	NameOllama = "ollama"
+	NameCodex  = "codex"
+	NameClaude = "claude"
 )
 
 // DefaultTimeout bounds a request to a provider. It leaves room for slower
@@ -64,7 +50,7 @@ type Provider interface {
 	ModelID() string
 	// Ready answers whether it can be used right now.
 	Ready(ctx context.Context) Readiness
-	// Models is its catalogue: which models the credential or the local runtime
+	// Models is its catalogue: which models the transport or the local runtime
 	// reaches. A provider that cannot be reached reports not ready with a reason,
 	// so `roca models` lists what it can and keeps going past what it cannot.
 	Models(ctx context.Context) ModelReport
@@ -139,7 +125,7 @@ type Attempt struct {
 }
 
 // ModelsListing is one provider's catalogue for `roca models`: the models the
-// credential or the local runtime reaches, with the model the cascade would
+// transport or the local runtime reaches, with the model the cascade would
 // actually use (ModelID) marked as Selected. It parallels Attempt, which is the
 // availability report this is the catalogue report.
 type ModelsListing struct {

@@ -24,19 +24,19 @@ func TestModelSetNeverWritesBeforeCatalogueAndProbePass(t *testing.T) {
 		wantErr    string
 		wantWrites bool
 	}{
-		{name: "unknown ID", model: "luna", wantErr: `model "luna" is not in xai's catalogue`},
+		{name: "unknown ID", model: "luna", wantErr: `model "luna" is not in codex's catalogue`},
 		{name: "account rejection", model: "grok-green", probeErr: errors.New(`server said: model is not enabled`), wantErr: "server said: model is not enabled"},
 		{name: "green probe", model: "grok-green", wantWrites: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			home := isolatedLoginHome(t)
 			path := modelConfigPath(home)
-			before := "# untouched\n[models.xai]\nmodel = \"grok-old\"\n"
+			before := "# untouched\n[models.codex]\nmodel = \"grok-old\"\n"
 			writeFile(t, path, before)
 			fake := &fakePickerProvider{models: []string{"grok-green", "grok-other"}, probeErr: test.probeErr}
 			env := validationEnv(t, fake)
 
-			err := env.modelSetContext(context.Background(), "xai", test.model)
+			err := env.modelSetContext(context.Background(), "codex", test.model)
 			if test.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
 					t.Fatalf("error = %v, want %q", err, test.wantErr)
@@ -67,7 +67,7 @@ func TestModelSetNeverWritesBeforeCatalogueAndProbePass(t *testing.T) {
 func TestModelSetOneArgumentTargetsTheFirstConfiguredProvider(t *testing.T) {
 	home := isolatedLoginHome(t)
 	path := modelConfigPath(home)
-	writeFile(t, path, "[models]\norder = [\"xai\", \"ollama\"]\n")
+	writeFile(t, path, "[models]\norder = [\"codex\", \"ollama\"]\n")
 	fake := &fakePickerProvider{models: []string{"grok-green"}}
 	env := validationEnv(t, fake)
 	root := rootCommand(env)
@@ -76,7 +76,7 @@ func TestModelSetOneArgumentTargetsTheFirstConfiguredProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	file, err := config.LoadFile(path)
-	if err != nil || file.Models.Providers["xai"].Model != "grok-green" {
+	if err != nil || file.Models.Providers["codex"].Model != "grok-green" {
 		t.Fatalf("file=%+v err=%v", file, err)
 	}
 }
@@ -92,7 +92,7 @@ func TestLoginPickerPersistsOnlyAfterItsProbe(t *testing.T) {
 		wantProbes int
 	}{
 		{name: "arrow choice", picked: "grok-other", wantModel: "grok-other", wantProbes: 1},
-		{name: "free text flag", requested: "luna", wantErr: "not in xai's catalogue"},
+		{name: "free text flag", requested: "luna", wantErr: "not in codex's catalogue"},
 		{name: "probe rejected", requested: "grok-green", probeErr: errors.New("account cannot reach it"), wantErr: "account cannot reach it", wantProbes: 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -106,20 +106,15 @@ func TestLoginPickerPersistsOnlyAfterItsProbe(t *testing.T) {
 				env.modelPicker = fixedModelPicker(test.picked)
 			}
 			root := rootCommand(env)
-			args := []string{"login", "xai"}
+			args := []string{"login", "codex"}
 			if test.requested != "" {
 				args = append(args, "--model", test.requested)
 			}
 			root.SetArgs(args)
-			root.SetIn(strings.NewReader("sk-synthetic\n"))
 			err := root.Execute()
 			if test.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
 					t.Fatalf("error = %v, want %q", err, test.wantErr)
-				}
-				credential := provider.APIKeyPath(filepath.Join(home, ".roca", "credentials"), "xai")
-				if !strings.Contains(err.Error(), "credential is stored at "+credential) {
-					t.Errorf("failure does not disclose the saved credential: %v", err)
 				}
 				raw, readErr := os.ReadFile(path)
 				if readErr != nil || string(raw) != before {
@@ -130,7 +125,7 @@ func TestLoginPickerPersistsOnlyAfterItsProbe(t *testing.T) {
 					t.Fatal(err)
 				}
 				file, loadErr := config.LoadFile(path)
-				if loadErr != nil || file.Models.Providers["xai"].Model != test.wantModel {
+				if loadErr != nil || file.Models.Providers["codex"].Model != test.wantModel {
 					t.Fatalf("persisted file=%+v err=%v", file, loadErr)
 				}
 			}
@@ -215,7 +210,7 @@ type fakePickerProvider struct {
 	probes   []provider.ChatRequest
 }
 
-func (p *fakePickerProvider) Name() string    { return provider.NameXAI }
+func (p *fakePickerProvider) Name() string    { return provider.NameCodex }
 func (p *fakePickerProvider) ModelID() string { return p.model }
 func (p *fakePickerProvider) Ready(context.Context) provider.Readiness {
 	return provider.Readiness{Ready: true, ModelID: p.model}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,9 +17,13 @@ import (
 type ChangeKind string
 
 const (
-	SetValue      ChangeKind = "set"
-	PrependUnique ChangeKind = "prepend-unique"
-	ReplaceTable  ChangeKind = "replace-table"
+	SetValue         ChangeKind = "set"
+	PrependUnique    ChangeKind = "prepend-unique"
+	ReplaceTable     ChangeKind = "replace-table"
+	ReplaceListValue ChangeKind = "replace-list-value"
+	RemoveListValue  ChangeKind = "remove-list-value"
+	DeleteTable      ChangeKind = "delete-table"
+	DeleteValue      ChangeKind = "delete-value"
 )
 
 type Field struct {
@@ -35,6 +40,7 @@ type Change struct {
 	Table   string
 	Key     string
 	Value   any
+	Old     string
 	Default []string
 	Fields  []Field
 }
@@ -78,6 +84,31 @@ func ApplyText(text string, changes []Change) (string, error) {
 				}
 			}
 			updated = replaceTableText(updated, change.Table, fields)
+		case ReplaceListValue, RemoveListValue:
+			values := stringListAt(document, change.Table, change.Key)
+			if values == nil {
+				continue
+			}
+			kept := make([]string, 0, len(values))
+			for _, current := range values {
+				if strings.EqualFold(strings.TrimSpace(current), strings.TrimSpace(change.Old)) {
+					if change.Kind == ReplaceListValue {
+						replacement := strings.TrimSpace(fmt.Sprint(change.Value))
+						if replacement != "" && !slices.Contains(kept, replacement) {
+							kept = append(kept, replacement)
+						}
+					}
+					continue
+				}
+				if !slices.Contains(kept, current) {
+					kept = append(kept, current)
+				}
+			}
+			updated = setTableValueText(updated, "["+change.Table+"]", change.Key, tomlLiteral(kept))
+		case DeleteTable:
+			updated = deleteTableText(updated, change.Table)
+		case DeleteValue:
+			updated = deleteTableValueText(updated, change.Table, change.Key)
 		default:
 			return "", fmt.Errorf("unknown configuration change %q", change.Kind)
 		}
@@ -86,6 +117,47 @@ func ApplyText(text string, changes []Change) (string, error) {
 		}
 	}
 	return updated, nil
+}
+
+func deleteTableValueText(text, table, key string) string {
+	want, inside, offset := strings.ToLower(strings.TrimSpace(table)), false, 0
+	for _, line := range strings.SplitAfter(text, "\n") {
+		clean := strings.TrimSpace(strings.SplitN(line, "#", 2)[0])
+		if candidate := tableKey(clean); candidate != "" {
+			inside = candidate == want
+			offset += len(line)
+			continue
+		}
+		if inside {
+			if eq := strings.IndexByte(clean, '='); eq >= 0 && strings.TrimSpace(clean[:eq]) == key {
+				return text[:offset] + text[offset+len(line):]
+			}
+		}
+		offset += len(line)
+	}
+	return text
+}
+
+func deleteTableText(text, table string) string {
+	want := strings.ToLower(strings.TrimSpace(table))
+	start, end, offset := -1, len(text), 0
+	for _, line := range strings.SplitAfter(text, "\n") {
+		candidate := tableKey(strings.TrimSpace(strings.SplitN(line, "#", 2)[0]))
+		if start < 0 && candidate == want {
+			start = offset
+		} else if start >= 0 && (candidate != "" || strings.HasPrefix(strings.TrimSpace(line), "[[")) {
+			end = offset
+			break
+		}
+		offset += len(line)
+	}
+	if start < 0 {
+		return text
+	}
+	for end < len(text) && text[end] == '\n' && start > 0 && text[start-1] == '\n' {
+		end++
+	}
+	return text[:start] + text[end:]
 }
 
 func prependUnique(values []string, value string) []string {
@@ -365,13 +437,12 @@ func tomlValueEnd(value string) int {
 	return len(strings.TrimRight(value, " \t\r\n"))
 }
 
-// FileConfig is the operator's configuration file and DirCredentials is where
-// subscription sessions live. Both hang off the data directory, so an adopted
-// database keeps its configuration next to the imported data.
+// FileConfig is the operator's configuration file. It hangs off the data
+// directory, so an adopted database keeps its configuration next to the
+// imported data.
 const (
-	FileConfig     = "config.toml"
-	DirCredentials = "credentials"
-	EnvConfig      = "ROCA_CONFIG"
+	FileConfig = "config.toml"
+	EnvConfig  = "ROCA_CONFIG"
 )
 
 // File is the operator's config, already read.
@@ -423,9 +494,6 @@ type ModelsConfig struct {
 
 // ProviderConfig is one provider's table.
 type ProviderConfig struct {
-	// Preset fills in endpoint and model from what this build knows about a
-	// named provider. Empty tries the provider's own name as a preset.
-	Preset  string   `toml:"preset"`
 	BaseURL string   `toml:"base_url"`
 	Command []string `toml:"command"`
 	Model   string   `toml:"model"`
@@ -436,12 +504,9 @@ type ProviderConfig struct {
 	// the millisecond-wide cascade budget because command startup is measured
 	// in seconds and has a deliberately generous default.
 	TimeoutSeconds int `toml:"timeout_seconds"`
-	// APIKey is the credential. It is read from here or from APIKeyEnv, never
-	// from the database, and it never travels to any output.
-	APIKey string `toml:"api_key"`
-	// APIKeyEnv is the environment variable the credential lives in, for an
-	// operator who would rather not write it on disk.
-	APIKeyEnv string `toml:"api_key_env"`
+	// RetiredCredential says a legacy provider table still carries a key field.
+	// The value is never retained; reconciliation uses only this marker.
+	RetiredCredential bool `toml:"-"`
 	// KeepAlive is how long the local model stays loaded.
 	KeepAlive string `toml:"keep_alive"`
 	// Think turns a local reasoning model's thinking back on. It is off by
@@ -460,8 +525,7 @@ var knownModelsKeys = map[string]bool{
 }
 
 var knownProviderKeys = map[string]bool{
-	"preset": true, "base_url": true, "model": true,
-	"api_key": true, "api_key_env": true, "keep_alive": true, "think": true,
+	"base_url": true, "model": true, "keep_alive": true, "think": true,
 }
 
 var knownQueryKeys = map[string]bool{"timeout_ms": true}
@@ -493,11 +557,6 @@ func LoadFile(path string) (File, error) {
 	models, _ := document["models"].(map[string]any)
 	file.Models = readModels(models, path, &file.Warnings)
 	for name, provider := range file.Models.Providers {
-		if provider.BaseURL != "" && len(provider.Command) > 0 {
-			return file, fmt.Errorf(
-				"provider %q in %s declares both models.%s.base_url and models.%s.command; choose exactly one transport",
-				name, path, name, name)
-		}
 		for _, placeholder := range CommandPlaceholders(provider.Command) {
 			if placeholder == "prompt" {
 				continue
@@ -553,7 +612,8 @@ func readModels(section map[string]any, path string, warnings *[]string) ModelsC
 	for _, key := range sortedKeys(section) {
 		value := section[key]
 		if table, isTable := value.(map[string]any); isTable {
-			models.Providers[strings.ToLower(key)] = readProvider(table)
+			name := strings.ToLower(key)
+			models.Providers[name] = readProvider(table, name, path, warnings)
 			continue
 		}
 		switch key {
@@ -574,18 +634,19 @@ func readModels(section map[string]any, path string, warnings *[]string) ModelsC
 	return models
 }
 
-func readProvider(table map[string]any) ProviderConfig {
+func readProvider(table map[string]any, name, path string, warnings *[]string) ProviderConfig {
 	cfg := ProviderConfig{Values: make(map[string]string, len(table))}
 	for _, key := range sortedKeys(table) {
 		text, _ := table[key].(string)
-		if key != "command" {
+		if key != "command" && key != "api_key" && key != "api_key_env" && key != "preset" && key != "base_url" {
 			cfg.Values[key] = templateString(table[key])
 		}
 		switch key {
-		case "preset":
-			cfg.Preset = text
 		case "base_url":
 			cfg.BaseURL = text
+			if name != "ollama" {
+				*warnings = append(*warnings, retiredProviderKey(name, key, path))
+			}
 		case "command":
 			cfg.Command = readStrings(table[key])
 		case "model":
@@ -594,10 +655,9 @@ func readProvider(table map[string]any) ProviderConfig {
 			cfg.ResponseFormat = text
 		case "timeout_seconds":
 			cfg.TimeoutSeconds = readInt(table[key])
-		case "api_key":
-			cfg.APIKey = text
-		case "api_key_env":
-			cfg.APIKeyEnv = text
+		case "api_key", "api_key_env", "preset":
+			cfg.RetiredCredential = true
+			*warnings = append(*warnings, retiredProviderKey(name, key, path))
 		case "keep_alive":
 			cfg.KeepAlive = text
 		case "think":
@@ -605,6 +665,12 @@ func readProvider(table map[string]any) ProviderConfig {
 		}
 	}
 	return cfg
+}
+
+func retiredProviderKey(provider, key, path string) string {
+	return fmt.Sprintf(
+		"models.%s.%s in %s belongs to a retired HTTP/credential transport: it is ignored; models authenticate through their own local CLIs",
+		provider, key, path)
 }
 
 func templateString(value any) string {

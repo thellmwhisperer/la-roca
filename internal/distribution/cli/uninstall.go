@@ -15,7 +15,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/lifecycle"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
-	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 )
 
@@ -384,13 +383,6 @@ func ownedPaths(paths config.Paths) []string {
 	cacheDir := filepath.Join(dataDir, "cache")
 	if realDirectory(cacheDir) {
 		owned = append(owned, filepath.Join(cacheDir, modelsDevCacheFile), cacheDir)
-	}
-	if realDirectory(paths.Credentials) {
-		owned = append(owned, filepath.Join(paths.Credentials, provider.FileCodexSession))
-		for _, name := range provider.KeyProviders() {
-			owned = append(owned, provider.APIKeyPath(paths.Credentials, name))
-		}
-		owned = append(owned, paths.Credentials)
 	}
 	logDir := filepath.Join(dataDir, logfile.DirName)
 	logs, logsExist := ownedFiles(logDir, ownedLogName)

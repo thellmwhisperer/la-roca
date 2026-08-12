@@ -21,8 +21,8 @@ func (env *cliEnv) reconciliationContext() (reconcile.Context, error) {
 	}
 	return reconcile.Context{
 		Version: env.build.Version, ConfigPath: paths.Config,
-		StampPath: paths.Reconciliation, CredentialsPath: paths.Credentials,
-		LookPath: exec.LookPath, Env: os.Getenv, File: file,
+		StampPath: paths.Reconciliation,
+		LookPath:  exec.LookPath, Env: os.Getenv, File: file,
 		Capabilities: map[string]bool{reconcile.CapabilityAnthropicExport: true},
 	}, nil
 }

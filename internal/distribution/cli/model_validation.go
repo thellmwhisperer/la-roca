@@ -178,7 +178,7 @@ func (b *providerModelBackend) candidate(name, model string) (provider.Provider,
 	file.Models.Providers[name] = providerConfig
 	file.Models.Order = []string{name}
 	cascade, err := provider.BuildCascade(provider.Settings{
-		File: file, Credentials: b.paths.Credentials, RunnerDir: b.paths.Runner,
+		File: file, RunnerDir: b.paths.Runner,
 		Env: validationEnvironment,
 	})
 	if err != nil {

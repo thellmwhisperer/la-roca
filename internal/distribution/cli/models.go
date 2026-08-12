@@ -14,9 +14,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
-	"github.com/thellmwhisperer/la-roca/internal/provider/oauth"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
-	"golang.org/x/term"
 )
 
 func doctorCommand(env *cliEnv) *cobra.Command {
@@ -25,8 +23,8 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 		Short: "Diagnose the configuration and which model is going to answer",
 		Long: "Reports where the data and the configuration are, which providers this\n" +
 			"installation declares, which of them are available and, for the ones that\n" +
-			"are not, the exact command that fixes it. It reports that a credential is\n" +
-			"present, never its value.",
+			"are not, the exact command that fixes it. Local agent models authenticate\n" +
+			"through their own CLIs; La Roca stores no secrets.",
 		RunE: env.serviceRunE(func(cmd *cobra.Command, _ []string, svc *service.Service) error {
 			report, err := svc.Doctor(cmd.Context())
 			if err != nil {
@@ -64,6 +62,7 @@ func renderDoctor(env *cliEnv, report service.DoctorReport) {
 	env.print("agents not found: %s", missingAgentsLine(report.DetectedAgents))
 	renderModelDetection(env, report.DetectedModelBinaries, report.MissingModelBinaries,
 		report.FactoryDefault, report.FactoryDefaultProvider)
+	env.print("authentication: local agent models use their own CLI sessions; La Roca stores no secrets")
 
 	for _, warning := range report.Warnings {
 		env.print("warning: %s", warning)
@@ -109,15 +108,11 @@ func renderProviders(env *cliEnv, configPath string, providers []service.DoctorP
 	for _, p := range providers {
 		status := "working"
 		if !p.Ready {
-			status = map[string]string{service.CredentialPresent: "present-but-failed",
-				service.CredentialAbsent: "absent"}[p.Credential]
-			if status == "" {
-				status = "failed"
-			}
+			status = "failed"
 		}
-		env.print("  %s %s · model %s (%s · change with: %s) · credential %s · probe %s",
+		env.print("  %s %s · model %s (%s · change with: %s) · probe %s",
 			env.mark(p.Ready), p.Name, orDash(p.Model), modelChoiceSource(configPath, p.Name, p.Model),
-			modelChange(p.Name, configPath), p.Credential, status)
+			modelChange(p.Name, configPath), status)
 		if !p.Ready {
 			env.print("      %s", orDash(p.Reason))
 			if p.Action != "" {
@@ -209,7 +204,7 @@ func (env *cliEnv) chooseInitModel(ctx context.Context, input *bufio.Reader,
 				harness, model, err)
 		}
 	}
-	outcome, err := writeInitModelChoice(paths.Config, harness, model)
+	outcome, err := writeInitModelChoice(paths.Config, file, harness, model)
 	if err != nil {
 		return result, false, err
 	}
@@ -241,7 +236,7 @@ func effectiveInitModel(ctx context.Context, paths config.Paths) (*service.InitM
 		return nil, err
 	}
 	cascade, err := provider.BuildCascade(provider.Settings{
-		File: file, Credentials: paths.Credentials, RunnerDir: paths.Runner, Env: os.Getenv,
+		File: file, RunnerDir: paths.Runner, Env: os.Getenv,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("resolve the effective model choice from %s: %w", paths.Config, err)
@@ -258,10 +253,10 @@ func effectiveInitModel(ctx context.Context, paths config.Paths) (*service.InitM
 	gate := &service.InitModel{}
 	for index, attempt := range cascade.Diagnose(ctx) {
 		if attempt.Ready {
-			credential, external := cascade.Providers[index].(interface{ ExternalCredential() bool })
+			transport, command := cascade.Providers[index].(interface{ CommandTransport() bool })
 			return &service.InitModel{
 				Ready: true, Provider: attempt.Name, Model: attempt.ModelID,
-				ExternalCredential: external && credential.ExternalCredential(),
+				CommandTransport: command && transport.CommandTransport(),
 			}, nil
 		}
 		if gate.Reason == "" {
@@ -464,12 +459,18 @@ func (env *cliEnv) readInitLine(input *bufio.Reader) (string, error) {
 	return answer, nil
 }
 
-func writeInitModelChoice(path, providerName, model string) (agentcfg.Outcome, error) {
+func writeInitModelChoice(path string, file config.File, providerName, model string) (agentcfg.Outcome, error) {
 	changes := []config.Change{
 		{Kind: config.PrependUnique, Table: "models", Key: "order", Value: providerName,
 			Default: provider.DefaultOrder(nil)},
-		{Kind: config.SetValue, Table: "models." + providerName, Key: "model", Value: model},
 	}
+	configured := file.Models.Providers[providerName]
+	if providerName != provider.NameOllama && (configured.BaseURL != "" || configured.RetiredCredential) {
+		for _, key := range []string{"base_url", "api_key", "api_key_env", "preset"} {
+			changes = append(changes, config.Change{Kind: config.DeleteValue, Table: "models." + providerName, Key: key})
+		}
+	}
+	changes = append(changes, config.Change{Kind: config.SetValue, Table: "models." + providerName, Key: "model", Value: model})
 	return agentcfg.Edit("roca", path, func(text string) (string, error) {
 		return config.ApplyText(text, changes)
 	}, true)
@@ -481,8 +482,8 @@ const modelsHelp = "" +
 	"\n" +
 	"  roca models           # every provider in the declared order\n" +
 	"\n" +
-	"A provider is asked for its catalogue (its /models endpoint for a key\n" +
-	"provider, /api/tags for Ollama). One that does not answer is shown as\n" +
+	"A provider is asked for its catalogue through its local agent CLI, or\n" +
+	"through /api/tags for Ollama. One that does not answer is shown as\n" +
 	"unavailable with its reason and the rest keep going: the command never\n" +
 	"fails on the first provider that is down. It needs no database, so it\n" +
 	"runs before `roca init`."
@@ -524,7 +525,7 @@ func (env *cliEnv) resolveModels(cmd *cobra.Command) ([]provider.ModelsListing, 
 		return nil, nil, err
 	}
 	cascade, err := provider.BuildCascade(provider.Settings{
-		File: file, Credentials: paths.Credentials, RunnerDir: paths.Runner, Env: os.Getenv,
+		File: file, RunnerDir: paths.Runner, Env: os.Getenv,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -534,7 +535,7 @@ func (env *cliEnv) resolveModels(cmd *cobra.Command) ([]provider.ModelsListing, 
 
 // renderModels is the readable form of the catalogue. The provider header names
 // the model the cascade would use (Selected); the list beneath it shows what the
-// credential or the local runtime reaches, with that model marked. A provider
+// command transport or the local runtime reaches, with that model marked. A provider
 // that could not be reached shows its reason instead of a list.
 func renderModels(env *cliEnv, listings []provider.ModelsListing, warnings []string) {
 	for _, warning := range warnings {
@@ -566,37 +567,25 @@ func renderModels(env *cliEnv, listings []provider.ModelsListing, warnings []str
 }
 
 const loginHelp = "" +
-	"Log in to a model provider. Same verb for every provider this build ships:\n" +
+	"Verify a model provider that runs through a local agent CLI:\n" +
 	"\n" +
-	"  local CLI session  roca login codex\n" +
-	"  local CLI session  roca login claude\n" +
-	"  API key            roca login xai\n" +
-	"  API key            roca login zai\n" +
-	"  API key            roca login deepseek\n" +
+	"  local CLI  roca login codex\n" +
+	"  local CLI  roca login claude\n" +
 	"\n" +
-	"A detected local CLI needs no La Roca login: its existing vendor session is\n" +
-	"used automatically. This command only verifies that binary and session.\n" +
+	"Models authenticate through their own CLI. La Roca reads and stores no secrets,\n" +
+	"and no roca login is required: detected CLIs are used automatically. This\n" +
+	"command is an optional probe of the binary and its existing vendor session.\n" +
 	"\n" +
-	"The configured Codex HTTP/OAuth subscription fallback opens the vendor's browser flow\n" +
-	"and leaves the session\n" +
-	"on this machine, readable only by you. It renews itself: you log in once.\n" +
-	"\n" +
-	"A key login prompts for the API key (no echo when the terminal supports it),\n" +
-	"stores it under the credentials directory at 0600, and never prints it back.\n" +
-	"Config-file api_key and the provider's environment variable keep working;\n" +
-	"a key stored by login takes precedence.\n" +
-	"\n" +
-	"After login, choose a model with the arrow keys. The choice is checked against\n" +
-	"the provider catalogue and probed with the new credential before config changes.\n" +
-	"Scripts can use --model <id>; the ID is subject to the same checks before it\n" +
+	"Choose a model with the arrow keys after a successful probe. Scripts can use\n" +
+	"--model <id>; the ID is checked through that CLI before it\n" +
 	"is written under [models.<provider>] in ~/.roca/config.toml.\n\n" +
-	"With no provider argument, lists what this build supports."
+	"With no provider argument, lists the supported local CLIs and model configuration."
 
 func loginCommand(env *cliEnv) *cobra.Command {
 	var model string
 	cmd := &cobra.Command{
 		Use:   "login [provider]",
-		Short: "Log in to a model provider",
+		Short: "Verify a local agent CLI model session",
 		Long:  loginHelp,
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -612,19 +601,12 @@ func loginCommand(env *cliEnv) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if provider.UsesCommandTransport(file, name) {
+			if slices.Contains([]string{provider.NameCodex, provider.NameClaude}, name) {
 				return env.loginLocalCommand(cmd, paths, file, name, model)
 			}
-			switch {
-			case name == provider.NameCodex:
-				return env.loginCodex(cmd, model)
-			case provider.IsKeyProvider(name):
-				return env.loginKey(cmd, name, model)
-			default:
-				return fmt.Errorf(
-					"there is no login for %q\n\n%s",
-					args[0], loginCatalogue())
-			}
+			return fmt.Errorf(
+				"there is no La Roca login for %q: models authenticate through their own CLI\n\n%s",
+				args[0], loginCatalogue())
 		},
 	}
 	cmd.Flags().StringVar(&model, "model", "", "model ID to persist for this provider")
@@ -641,26 +623,15 @@ type loginEntry struct {
 	Command string `json:"command"`
 }
 
-// loginEntries is the single source of what this build can log in to: local
-// sessions first, a configured subscription transport when present, then keys.
-func loginEntries(files ...config.File) []loginEntry {
-	codexFlow := "local_cli"
-	if len(files) > 0 && !provider.UsesCommandTransport(files[0], provider.NameCodex) {
-		codexFlow = "subscription"
-	}
-	entries := []loginEntry{{
-		Name: provider.NameCodex, Flow: codexFlow,
+// loginEntries is the single source of local CLI probes this build supports.
+func loginEntries(_ ...config.File) []loginEntry {
+	return []loginEntry{{
+		Name: provider.NameCodex, Flow: "local_cli",
 		Command: "roca login " + provider.NameCodex,
 	}, {
 		Name: provider.NameClaude, Flow: "local_cli",
 		Command: "roca login " + provider.NameClaude,
 	}}
-	for _, name := range provider.KeyProviders() {
-		entries = append(entries, loginEntry{
-			Name: name, Flow: "api_key", Command: "roca login " + name,
-		})
-	}
-	return entries
 }
 
 func loginCatalogue(files ...config.File) string {
@@ -676,12 +647,10 @@ func loginCatalogue(files ...config.File) string {
 // humanFlow is the terminal spelling of the machine-readable flow.
 func (e loginEntry) humanFlow() string {
 	switch e.Flow {
-	case "subscription":
-		return "subscription"
 	case "local_cli":
 		return "local CLI"
 	}
-	return "API key"
+	return e.Flow
 }
 
 func (env *cliEnv) showLoginOverview() error {
@@ -694,7 +663,7 @@ func (env *cliEnv) showLoginOverview() error {
 		return err
 	}
 	cascade, err := provider.BuildCascade(provider.Settings{
-		File: file, Credentials: paths.Credentials, RunnerDir: paths.Runner, Env: os.Getenv,
+		File: file, RunnerDir: paths.Runner, Env: os.Getenv,
 	})
 	if err != nil {
 		return err
@@ -709,31 +678,10 @@ func (env *cliEnv) showLoginOverview() error {
 	for _, p := range cascade.Providers {
 		order = append(order, p.Name())
 	}
-	store := provider.CodexStore(paths.Credentials)
-	codexState := "no session"
-	if token, loadErr := store.Load(); loadErr == nil {
-		codexState = "session present (no expiry reported)"
-		if !token.ExpiresAt.IsZero() {
-			codexState = "session present (expires " + token.ExpiresAt.UTC().Format("2006-01-02") + ")"
-		}
-	} else if !os.IsNotExist(loadErr) {
-		codexState = "session present but unreadable"
-	}
-	states := map[string]string{provider.NameCodex: codexState}
-	if provider.UsesCommandTransport(file, provider.NameCodex) {
-		states[provider.NameCodex] = localCLISessionState(provider.NameCodex, cascade.DetectedBinaries)
-	}
-	states[provider.NameClaude] = localCLISessionState(provider.NameClaude, cascade.DetectedBinaries)
-	for _, name := range provider.KeyProviders() {
-		states[name] = "no stored API key"
-		if fileExists(provider.APIKeyPath(paths.Credentials, name)) {
-			states[name] = "stored API key present"
-		}
-	}
-	states[provider.NameOllama] = "local runtime, no credential needed"
 	if env.json {
 		return env.printJSON(map[string]any{
-			"providers": loginEntries(file), "credentials": states,
+			"providers":      loginEntries(file),
+			"authentication": "models authenticate through their own CLIs; La Roca stores no secrets",
 			"configuration": map[string]any{"path": paths.Config, "order": order,
 				"order_source": orderSource},
 		})
@@ -746,19 +694,8 @@ func (env *cliEnv) showLoginOverview() error {
 		env.print("  %s: model %s (%s · change with: %s)",
 			p.Name(), p.ModelID(), modelChoiceSource(paths.Config, p.Name(), p.ModelID()), modelChange(p.Name(), paths.Config))
 	}
-	env.print("Credential and session state:")
-	for _, entry := range loginEntries(file) {
-		env.print("  %s: %s", entry.Name, states[entry.Name])
-	}
-	env.print("  %s: %s", provider.NameOllama, states[provider.NameOllama])
+	env.print("Authentication: models authenticate through their own CLIs; La Roca stores no secrets and no roca login is required.")
 	return nil
-}
-
-func localCLISessionState(name string, detected []string) string {
-	if !slices.Contains(detected, name) {
-		return name + " binary not found in PATH"
-	}
-	return name + " binary detected; session not verified (run `roca login " + name + "`)"
 }
 
 func renderModelDetection(env *cliEnv, detected, missing []string, factory bool, selected string) {
@@ -777,57 +714,6 @@ func renderModelDetection(env *cliEnv, detected, missing []string, factory bool,
 	}
 }
 
-func (env *cliEnv) loginCodex(cmd *cobra.Command, requestedModel string) error {
-	paths, err := env.resolvePaths()
-	if err != nil {
-		return err
-	}
-	file, err := config.LoadFile(paths.Config)
-	if err != nil {
-		return err
-	}
-	store := provider.CodexStore(paths.Credentials)
-	// The narrative (the address to open, the waiting line) is prompt output,
-	// so it travels on stderr: under --json stdout has to carry only the result
-	// envelope, and prompts on stdout are data a program cannot parse.
-	token, err := provider.CodexFlow().Login(cmd.Context(), oauth.LoginOptions{
-		Out: env.errOut,
-	})
-	if err != nil {
-		return err
-	}
-	if err := store.Save(token); err != nil {
-		return err
-	}
-	model, err := env.loginModel(cmd.Context(), cmd.InOrStdin(), paths, file,
-		provider.NameCodex, requestedModel)
-	if err != nil {
-		return fmt.Errorf("%w; the %s session is stored at %s, so rerun `roca model set <id>` to finish",
-			err, provider.NameCodex, store.Path)
-	}
-
-	if env.json {
-		return env.printJSON(map[string]any{
-			"provider":     provider.NameCodex,
-			"session":      store.Path,
-			"expires_at":   token.ExpiresAt,
-			"account_id":   token.AccountID,
-			"model":        model,
-			"model_source": modelChoiceSource(paths.Config, provider.NameCodex, model),
-		})
-	}
-	if token.AccountID != "" {
-		env.print("signed in to %s as account %s", provider.NameCodex, token.AccountID)
-	} else {
-		env.print("signed in to %s", provider.NameCodex)
-	}
-	env.print("the session is at %s and renews itself", store.Path)
-	env.print("%s", modelChoiceLine(provider.NameCodex, "selected", model, paths.Config))
-	env.print("%s", loginNext(paths, provider.NameCodex))
-	env.print("revoke it with `roca logout %s`", provider.NameCodex)
-	return nil
-}
-
 func (env *cliEnv) loginLocalCommand(cmd *cobra.Command, paths config.Paths,
 	file config.File, name, requestedModel string) error {
 	model, err := env.loginModel(cmd.Context(), cmd.InOrStdin(), paths, file,
@@ -838,58 +724,14 @@ func (env *cliEnv) loginLocalCommand(cmd *cobra.Command, paths config.Paths,
 	if env.json {
 		return env.printJSON(map[string]any{
 			"provider": name, "model": model,
-			"model_source":          modelChoiceSource(paths.Config, name, model),
-			"credential_managed_by": "local CLI", "credential_seen_by_roca": false,
+			"model_source":              modelChoiceSource(paths.Config, name, model),
+			"authentication_managed_by": "local CLI", "secrets_stored_by_roca": false,
 		})
 	}
 	env.print("%s's local command and its existing account session are working", name)
-	env.print("credential: managed by the local CLI; La Roca never reads or stores it")
+	env.print("authentication: managed by the local CLI; La Roca stores no secrets")
 	env.print("%s", modelChoiceLine(name, "selected", model, paths.Config))
 	env.print("%s", loginNext(paths, name))
-	return nil
-}
-
-func (env *cliEnv) loginKey(cmd *cobra.Command, name, requestedModel string) error {
-	paths, err := env.resolvePaths()
-	if err != nil {
-		return err
-	}
-	file, err := config.LoadFile(paths.Config)
-	if err != nil {
-		return err
-	}
-	preset, _ := provider.Preset(name)
-	label := preset.Label
-	if label == "" {
-		label = name
-	}
-	// The prompt is prompt output, not data: it goes to stderr so stdout stays a
-	// clean result envelope under --json.
-	key, err := readSecret(fmt.Sprintf("Paste your %s API key: ", label), cmd.InOrStdin(), env.errOut)
-	if err != nil {
-		return err
-	}
-	if err := provider.SaveAPIKey(paths.Credentials, name, key); err != nil {
-		return err
-	}
-	path := provider.APIKeyPath(paths.Credentials, name)
-	model, err := env.loginModel(cmd.Context(), cmd.InOrStdin(), paths, file, name, requestedModel)
-	if err != nil {
-		return fmt.Errorf("%w; the %s credential is stored at %s, so rerun `roca model set <id>` to finish",
-			err, name, path)
-	}
-	if env.json {
-		return env.printJSON(map[string]any{
-			"provider":     name,
-			"path":         path,
-			"model":        model,
-			"model_source": modelChoiceSource(paths.Config, name, model),
-		})
-	}
-	env.print("logged in to %s: the key is at %s", name, path)
-	env.print("%s", modelChoiceLine(name, "selected", model, paths.Config))
-	env.print("%s", loginNext(paths, name))
-	env.print("forget it with `roca logout %s`", name)
 	return nil
 }
 
@@ -928,18 +770,10 @@ func modelChoiceLine(name, status, model, path string) string {
 }
 
 func modelChange(name, path string) string {
-	if name == provider.NameCodex {
-		if file, err := config.LoadFile(path); err == nil && !provider.UsesCommandTransport(file, name) {
-			return fmt.Sprintf("roca login %s --model <id> or models.%s.model in %s", name, name, path)
-		}
-	}
 	if slices.Contains(provider.CommandPresetNames(), name) {
 		return fmt.Sprintf("roca model set <id> or models.%s.model in %s", name, path)
 	}
-	if name == provider.NameOllama || (!provider.IsKeyProvider(name) && name != provider.NameCodex) {
-		return fmt.Sprintf("models.%s.model in %s", name, path)
-	}
-	return fmt.Sprintf("roca login %s --model <id> or models.%s.model in %s", name, name, path)
+	return fmt.Sprintf("models.%s.model in %s", name, path)
 }
 
 func modelChoiceSource(path, name, model string) string {
@@ -960,96 +794,8 @@ func modelChoiceSource(path, name, model string) string {
 	return "built-in default"
 }
 
-func readSecret(prompt string, in io.Reader, out io.Writer) (string, error) {
-	fmt.Fprint(out, prompt)
-	if file, ok := in.(*os.File); ok {
-		fd := int(file.Fd())
-		if term.IsTerminal(fd) {
-			raw, err := term.ReadPassword(fd)
-			fmt.Fprintln(out)
-			if err != nil {
-				return "", err
-			}
-			key := strings.TrimSpace(string(raw))
-			if key == "" {
-				return "", fmt.Errorf("the API key is empty")
-			}
-			return key, nil
-		}
-	}
-	line, err := bufio.NewReader(in).ReadString('\n')
-	if err != nil && strings.TrimSpace(line) == "" {
-		return "", err
-	}
-	key := strings.TrimSpace(line)
-	if key == "" {
-		return "", fmt.Errorf("the API key is empty")
-	}
-	return key, nil
-}
-
-func logoutCommand(env *cliEnv) *cobra.Command {
-	return &cobra.Command{
-		Use:   "logout <provider>",
-		Short: "Forget a provider's credential",
-		Long: "Forgets a subscription session or a stored API key. Forgetting what\n" +
-			"was already forgotten is not a failure: the end state is the one asked for.",
-		Args: cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
-			name := strings.ToLower(strings.TrimSpace(args[0]))
-			switch {
-			case name == provider.NameCodex:
-				store, err := env.codexStore()
-				if err != nil {
-					return err
-				}
-				if err := store.Delete(); err != nil {
-					return err
-				}
-				return env.forget(name, "session")
-			case provider.IsKeyProvider(name):
-				paths, err := env.resolvePaths()
-				if err != nil {
-					return err
-				}
-				if err := provider.DeleteAPIKey(paths.Credentials, name); err != nil {
-					return err
-				}
-				return env.forget(name, "credential")
-			default:
-				return fmt.Errorf(
-					"there is no credential store for %q. Supported providers:\n%s",
-					args[0], loginCatalogue())
-			}
-		},
-	}
-}
-
-func (env *cliEnv) codexStore() (oauth.Store, error) {
-	paths, err := env.resolvePaths()
-	if err != nil {
-		return oauth.Store{}, err
-	}
-	return provider.CodexStore(paths.Credentials), nil
-}
-
-// forget is the one confirmation a logout prints: a document under --json
-// (provider, forgotten) and the same "<what> for <provider> forgotten" line a
-// human reads otherwise. The codex session and a stored key are different words
-// for the same end state.
-func (env *cliEnv) forget(name, what string) error {
-	if env.json {
-		return env.printJSON(map[string]any{"provider": name, "forgotten": true})
-	}
-	env.print("%s for %s forgotten", what, name)
-	return nil
-}
-
-// modelCommand is the no-login way to switch the answering model. It changes a
-// model assignment in the configuration without touching a credential: the
-// operator who already logged in picks a different model the same provider
-// serves, and re-running OAuth or re-entering a key to do that is the cost
-// `roca model set` exists to remove.
+// modelCommand switches the answering model without touching authentication,
+// which belongs entirely to the provider's own CLI.
 func modelCommand(env *cliEnv) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "model",
@@ -1065,9 +811,9 @@ func modelSetCommand(env *cliEnv) *cobra.Command {
 		Short: "Set a provider's answering model in the configuration",
 		Long: "Validates a model for the first provider in the configured order, then\n" +
 			"writes models.<provider>.model in ~/.roca/config.toml and leaves every\n" +
-			"other setting — the provider order, the credentials, unrelated tables —\n" +
+			"other setting — the provider order and unrelated tables —\n" +
 			"exactly where it was. It is the way to switch the answering model without\n" +
-			"re-running a login flow. The former two-argument spelling remains accepted.\n\n" +
+			"changing the provider CLI session. The former two-argument spelling remains accepted.\n\n" +
 			"  roca model set gpt-5.6-sol\n" +
 			"  roca model set ollama qwen3.5:4b",
 		Args: cobra.RangeArgs(1, 2),
@@ -1139,9 +885,6 @@ func knownProviderNames(file config.File) []string {
 	add(provider.NameCodex)
 	add(provider.NameOllama)
 	for _, name := range provider.CommandPresetNames() {
-		add(name)
-	}
-	for _, name := range provider.PresetNames() {
 		add(name)
 	}
 	for name := range file.Models.Providers {

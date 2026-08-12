@@ -123,7 +123,7 @@ func TestModelSetUnknownProviderListsKnownAndSuggestsDoctor(t *testing.T) {
 	if !strings.HasPrefix(msg, `there is no provider "nope"`) {
 		t.Errorf("error does not name the unknown provider upfront: %v", err)
 	}
-	for _, name := range []string{"codex", "ollama", "deepseek", "zai", "xai"} {
+	for _, name := range []string{"codex", "claude", "ollama"} {
 		if !strings.Contains(msg, name) {
 			t.Errorf("error does not list %q:\n%s", name, msg)
 		}

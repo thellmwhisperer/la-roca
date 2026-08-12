@@ -32,7 +32,7 @@ func TestAMissingFileIsNotAFailure(t *testing.T) {
 func TestTheModelsSectionIsReadWhole(t *testing.T) {
 	path := write(t, `
 [models]
-order = ["deepseek", "ollama"]
+order = ["codex", "ollama"]
 interpret_order = ["ollama"]
 timeout_ms = 15000
 
@@ -42,10 +42,8 @@ model = "qwen3.5:4b"
 keep_alive = "10m"
 think = true
 
-[models.deepseek]
-preset = "deepseek"
-api_key = "sk-secret"
-model = "deepseek-reasoner"
+[models.codex]
+model = "gpt-test"
 `)
 	file, err := LoadFile(path)
 	if err != nil {
@@ -54,7 +52,7 @@ model = "deepseek-reasoner"
 	if !file.Exists || file.Path != path {
 		t.Fatalf("file %+v", file)
 	}
-	if got := strings.Join(file.Models.Order, ","); got != "deepseek,ollama" {
+	if got := strings.Join(file.Models.Order, ","); got != "codex,ollama" {
 		t.Fatalf("order %q", got)
 	}
 	if got := strings.Join(file.Models.InterpretOrder, ","); got != "ollama" {
@@ -66,15 +64,15 @@ model = "deepseek-reasoner"
 	if file.Models.TimeoutMS != 15000 {
 		t.Fatalf("timeout %d", file.Models.TimeoutMS)
 	}
-	deepseek := file.Models.Providers["deepseek"]
-	if deepseek.APIKey != "sk-secret" || deepseek.Model != "deepseek-reasoner" || deepseek.Preset != "deepseek" {
-		t.Fatalf("deepseek %+v", deepseek)
+	codex := file.Models.Providers["codex"]
+	if codex.Model != "gpt-test" {
+		t.Fatalf("codex %+v", codex)
 	}
 	ollama := file.Models.Providers["ollama"]
 	if ollama.BaseURL != "http://localhost:11434" || ollama.KeepAlive != "10m" || !ollama.Think {
 		t.Fatalf("ollama %+v", ollama)
 	}
-	if deepseek.Think {
+	if codex.Think {
 		t.Fatal("thinking is on for a provider that never asked for it")
 	}
 }
@@ -99,18 +97,23 @@ timeout_seconds = 45
 	}
 }
 
-func TestAProviderCannotDeclareBothTransports(t *testing.T) {
+func TestALegacyHTTPAndKeyConfigIsToleratedButIgnored(t *testing.T) {
 	path := write(t, `[models.fixture]
 base_url = "https://example.invalid/v1"
 command = ["fixture", "{prompt}"]
+api_key = "legacy-secret"
 `)
-	_, err := LoadFile(path)
-	if err == nil {
-		t.Fatal("both transports were accepted")
+	file, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("legacy configuration crashed: %v", err)
 	}
-	for _, piece := range []string{"models.fixture.base_url", "models.fixture.command", path} {
-		if !strings.Contains(err.Error(), piece) {
-			t.Errorf("error does not name %q: %v", piece, err)
+	cfg := file.Models.Providers["fixture"]
+	if len(cfg.Command) == 0 || !cfg.RetiredCredential || cfg.Values["api_key"] != "" {
+		t.Fatalf("provider = %+v", cfg)
+	}
+	for _, piece := range []string{"models.fixture.base_url", "models.fixture.api_key", path} {
+		if !strings.Contains(strings.Join(file.Warnings, "\n"), piece) {
+			t.Errorf("warning does not name %q: %v", piece, file.Warnings)
 		}
 	}
 }
@@ -325,9 +328,6 @@ func TestTheConfigPathHangsOffTheDataDirectoryAndTheEnvironmentWins(t *testing.T
 	}
 	if want := filepath.Join(home, DirOwn, FileConfig); paths.Config != want {
 		t.Fatalf("config %q, want %q", paths.Config, want)
-	}
-	if want := filepath.Join(home, DirOwn, DirCredentials); paths.Credentials != want {
-		t.Fatalf("credentials %q, want %q", paths.Credentials, want)
 	}
 
 	t.Setenv(EnvConfig, "/elsewhere/roca.toml")

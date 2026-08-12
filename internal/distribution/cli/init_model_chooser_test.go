@@ -197,23 +197,15 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 			modelEnv:      true,
 		},
 		{
-			name: "persisted base URL",
+			name: "retired base URL falls to the detected CLI",
 			prepare: func(t *testing.T, home, bin string) {
 				fakeModelCLI(t, bin, provider.NameClaude)
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if r.URL.Path != "/v1/models" {
-						http.NotFound(w, r)
-						return
-					}
-					_, _ = w.Write([]byte(`{"data":[]}`))
-				}))
-				t.Cleanup(server.Close)
-				writeConfig(t, home, fmt.Sprintf("[models]\norder = [\"ollama\"]\n\n[models.claude]\nbase_url = %q\napi_key = \"synthetic-key\"\nmodel = \"remote-old\"\n", server.URL+"/v1"))
+				writeConfig(t, home, "[models]\norder = [\"ollama\"]\n\n[models.claude]\nbase_url = \"https://example.invalid/v1\"\napi_key = \"synthetic-key\"\nmodel = \"remote-old\"\n")
 			},
-			input:    "sonnet\n\n",
-			want:     "answering: claude/sonnet",
-			avoid:    "uses the existing local CLI session",
-			guidance: "transport is governed by models.claude.base_url",
+			input:         "sonnet\n\n",
+			want:          "answering: claude/sonnet",
+			guidance:      "uses the existing local CLI session",
+			avoidGuidance: "transport is governed by models.claude.base_url",
 		},
 		{
 			name: "persisted custom command",
