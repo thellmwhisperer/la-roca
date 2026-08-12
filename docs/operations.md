@@ -74,9 +74,10 @@ The stable fields are:
   behind it may change without changing the line.
 - `correlation_id` on every surfaced error, expected or not, printed unchanged
   in the user-facing error, so an error on screen always names its log line: a
-  read-only gate rejection and a rejected SQL statement are correlated exactly
-  like an unexpected exception. A degraded query that still answered is not a
-  surfaced error; it carries its `degraded` reason instead.
+  read-only gate rejection, a rejected SQL statement, and a degraded query the
+  MCP surface reports as a tool error are correlated exactly like an unexpected
+  exception. A degraded answer a surface still presents as an answer, as the
+  shell does, carries its `degraded` reason and no ID.
 - Query calls add `question`, `sql`, `sql_provider`, `sql_model`, phase timings,
   and any `degraded`, `fallback_reason`, `retry_reason`, provider note, or
   `queryplan`. `sql` is the cleaned model-generated statement, including when a

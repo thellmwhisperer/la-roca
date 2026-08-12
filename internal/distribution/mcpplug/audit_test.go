@@ -56,6 +56,59 @@ func TestAuditDoesNotRecreateARemovedLogDirectory(t *testing.T) {
 	}
 }
 
+func TestAuditCorrelatesADegradedAnswerOnlyWhenItReachesTheAgentAsAnError(t *testing.T) {
+	cases := []struct {
+		name       string
+		isError    bool
+		correlated bool
+	}{
+		{"a degraded failure is a tool error", true, true},
+		{"a degraded answer is still an answer", false, false},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			root := t.TempDir()
+			writer := logfile.New(root)
+			if err := writer.Prepare(); err != nil {
+				t.Fatal(err)
+			}
+			next := func(context.Context, string, mcp.Request) (mcp.Result, error) {
+				return &mcp.CallToolResult{
+					IsError: testCase.isError,
+					Content: []mcp.Content{&mcp.TextContent{Text: "synthetic degraded answer"}},
+					Meta: mcp.Meta{
+						"degraded": "invalid_sql", "error": "the generated SQL was rejected",
+						"error_type": "invalid_sql", "row_count": 0,
+					},
+				}, nil
+			}
+			request := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Name: "roca_query"}}
+			result, err := auditCalls(writer, &bytes.Buffer{})(next)(
+				context.Background(), "tools/call", request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			text := result.(*mcp.CallToolResult).Content[0].(*mcp.TextContent).Text
+			matches, err := filepath.Glob(filepath.Join(root, logfile.DirName, "mcp-audit-*.jsonl"))
+			if err != nil || len(matches) != 1 {
+				t.Fatalf("audit files = %v, err=%v", matches, err)
+			}
+			raw, err := os.ReadFile(matches[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			logged := strings.Contains(string(raw), `"correlation_id":"`)
+			if logged != testCase.correlated || strings.Contains(text, "correlation_id") != testCase.correlated {
+				t.Fatalf("correlated on screen=%v, in the log=%v, want %v: %s",
+					strings.Contains(text, "correlation_id"), logged, testCase.correlated, raw)
+			}
+			if !strings.Contains(string(raw), `"error_type":"invalid_sql"`) {
+				t.Fatalf("the degraded reason is not the error type: %s", raw)
+			}
+		})
+	}
+}
+
 func TestAuditPersistsTheFullQueryFailureAndCorrelatesToolErrors(t *testing.T) {
 	root := t.TempDir()
 	writer := logfile.New(root)

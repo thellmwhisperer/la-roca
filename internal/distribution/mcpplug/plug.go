@@ -115,8 +115,12 @@ func auditCalls(audit *logfile.Writer, warnings io.Writer) mcp.Middleware {
 			tool, args := toolCall(req)
 			result, err := next(ctx, method, req)
 			ok := err == nil
-			if callResult, isToolResult := result.(*mcp.CallToolResult); isToolResult {
-				ok = ok && !callResult.IsError
+			// What the client reads as an error is what needs an ID in it. A
+			// degraded answer this surface marks IsError is one of them, and it
+			// reaches the agent as an error like any other.
+			surfaced := err != nil
+			if callResult, isToolResult := result.(*mcp.CallToolResult); isToolResult && callResult.IsError {
+				ok, surfaced = false, true
 			}
 			degraded := resultDegraded(result)
 			ok = ok && degraded == ""
@@ -145,7 +149,6 @@ func auditCalls(audit *logfile.Writer, warnings io.Writer) mcp.Middleware {
 				call.Error, call.ErrorType = metaValue[string](result, "error"), metaValue[string](result, "error_type")
 				if err != nil {
 					call.Error, call.ErrorType = err.Error(), logfile.ErrorType(err)
-					call.CorrelationID = logfile.NewCorrelationID()
 				} else {
 					if call.Error == "" {
 						call.Error = resultErrorText(result)
@@ -156,9 +159,9 @@ func auditCalls(audit *logfile.Writer, warnings io.Writer) mcp.Middleware {
 					if call.ErrorType == "" {
 						call.ErrorType = logfile.ErrorToolError
 					}
-					if degraded == "" {
-						call.CorrelationID = logfile.NewCorrelationID()
-					}
+				}
+				if surfaced {
+					call.CorrelationID = logfile.NewCorrelationID()
 				}
 			}
 			if appendErr := audit.AppendExisting(logfile.MCPAudit, logfile.MCPRecord{
