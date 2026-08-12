@@ -37,9 +37,10 @@ type Counts struct {
 	// their own exchange identity report: one already landed identical, the other
 	// already landed and the source has since edited it. Neither is rewritten,
 	// because an exchange that already answered a query cannot change under it.
-	ExchangesUnchanged int `json:"exchanges_unchanged"`
-	ExchangesChanged   int `json:"exchanges_changed"`
-	AnchorConflicts    int `json:"anchor_conflicts"`
+	ExchangesUnchanged      int `json:"exchanges_unchanged"`
+	ExchangesChanged        int `json:"exchanges_changed"`
+	AnchorConflicts         int `json:"anchor_conflicts"`
+	ThinkingBlocksDiscarded int `json:"thinking_blocks_discarded"`
 }
 
 func (c *Counts) add(other Counts) {
@@ -54,6 +55,7 @@ func (c *Counts) add(other Counts) {
 	c.ExchangesUnchanged += other.ExchangesUnchanged
 	c.ExchangesChanged += other.ExchangesChanged
 	c.AnchorConflicts += other.AnchorConflicts
+	c.ThinkingBlocksDiscarded += other.ThinkingBlocksDiscarded
 }
 
 // layerResolver turns a declared layer name into the physical one. It is the
@@ -157,6 +159,9 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 		}
 		matched, outcome := matcher.match(number, exchange)
 		if outcome == exchangeMatched {
+			if !matched.numberValid {
+				counts.ThinkingBlocksDiscarded += len(exchange.Thinking)
+			}
 			thinking, err := w.enrichExchange(ctx, session.ID, matched, exchange)
 			if err != nil {
 				return counts, err
@@ -393,6 +398,9 @@ func (m *exchangeMatcher) match(number int, exchange parsers.Exchange) (storedEx
 			}
 			return candidates[0], exchangeMatched
 		}
+		if numbered, ok := numberedOriginal(candidates, number, exchange); ok {
+			return numbered, exchangeMatched
+		}
 		if len(candidates) == 0 && len(stored) > 0 {
 			return storedExchange{}, exchangeUnmatched
 		}
@@ -411,7 +419,7 @@ func (m *exchangeMatcher) match(number int, exchange parsers.Exchange) (storedEx
 			return storedExchange{}, exchangeAmbiguous
 		}
 	}
-	if !timestampsPresent || timestampsAmbiguous {
+	if !timestampsPresent {
 		if stored, ok := m.byNumber[number]; ok {
 			matched, conflicts := compareContent(stored, exchange)
 			if matched && conflicts {
@@ -433,6 +441,43 @@ func (m *exchangeMatcher) match(number int, exchange parsers.Exchange) (storedEx
 		return storedExchange{}, exchangeAmbiguous
 	}
 	return storedExchange{}, exchangeUnmatched
+}
+
+// numberedOriginal recognizes the historical repair shape: one numbered row
+// plus one or more numberless copies at the same instant. The number is a safe
+// tiebreaker only when every copy agrees with the original wherever both sides
+// carry text; groups of numbered peers remain ambiguous.
+func numberedOriginal(candidates []storedExchange, number int,
+	exchange parsers.Exchange) (storedExchange, bool) {
+	var numbered storedExchange
+	found := false
+	for _, candidate := range candidates {
+		if !candidate.numberValid {
+			continue
+		}
+		if found || candidate.number != number {
+			return storedExchange{}, false
+		}
+		numbered, found = candidate, true
+	}
+	if !found || len(candidates) < 2 {
+		return storedExchange{}, false
+	}
+	if _, conflicts := compareContent(numbered, exchange); conflicts {
+		return storedExchange{}, false
+	}
+	for _, candidate := range candidates {
+		if candidate.numberValid {
+			continue
+		}
+		duplicate := parsers.Exchange{
+			HumanText: candidate.humanText, AgentText: candidate.agentText,
+		}
+		if _, conflicts := compareContent(numbered, duplicate); conflicts {
+			return storedExchange{}, false
+		}
+	}
+	return numbered, true
 }
 
 func (m *exchangeMatcher) claim(stored storedExchange, incomingNumber int,
