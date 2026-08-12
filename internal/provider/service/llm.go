@@ -165,6 +165,9 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 		prepared := sqlrepair.Prepare(answer.Content)
 		res.Repaired = prepared.Repairs
 		sql := prepared.SQL
+		// The candidate the gate judged is what the audit trail calls the SQL,
+		// and it survives the rescue answering over it.
+		res.CleanedSQL = sql
 
 		validated, rejection = gate.Validate(sql)
 		if rejection == nil {

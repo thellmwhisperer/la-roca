@@ -542,6 +542,7 @@ func queryCommand(env *cliEnv) *cobra.Command {
 				return err
 			}
 			result := answer.result
+			env.auditQuery = &result
 			env.capture(result)
 			// A question that needed a model on a machine with no model
 			// available is not an answer, even when the keyword rescue found

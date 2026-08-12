@@ -120,29 +120,101 @@ func auditCalls(audit *logfile.Writer, warnings io.Writer) mcp.Middleware {
 			}
 			degraded := resultDegraded(result)
 			ok = ok && degraded == ""
+			call := logfile.CallRecord{
+				Timestamp: started.UTC(), Source: "mcp", Args: args, OK: ok,
+				DurationMS: time.Since(started).Milliseconds(), Question: metaValue[string](result, "question"),
+				SQL: metaValue[string](result, "sql"), RawSQL: metaValue[string](result, "raw_sql"),
+				SQLProvider: metaValue[string](result, "sql_provider"), SQLModel: metaValue[string](result, "sql_model"),
+				RowCount: resultRows(result), FallbackReason: metaValue[string](result, "fallback_reason"),
+				Degraded:    degraded,
+				RetryReason: metaValue[string](result, "retry_reason"), QueryPlan: metaValue[any](result, "queryplan"),
+				ProviderNote:           metaValue[string](result, "sql_provider_note"),
+				SQLInferenceMS:         resultMilliseconds(result, "sql_inference_ms"),
+				ExecutionMS:            resultMilliseconds(result, "execution_ms"),
+				InterpretationProvider: metaValue[string](result, "interpretation_provider"),
+				InterpretationModel:    metaValue[string](result, "interpretation_model"),
+				InterpretationMS:       resultMilliseconds(result, "interpretation_ms"),
+			}
+			if call.Question == "" && (tool == "roca_query" || tool == "roca_sql") {
+				call.Question = argumentString(args, "query")
+			}
+			if call.SQL == "" && tool == "roca_exec" {
+				call.SQL = argumentString(args, "sql")
+			}
+			if !ok {
+				call.Error, call.ErrorType = metaValue[string](result, "error"), metaValue[string](result, "error_type")
+				if err != nil {
+					call.Error, call.ErrorType = err.Error(), logfile.ErrorType(err)
+					call.CorrelationID = logfile.NewCorrelationID()
+				} else {
+					if call.Error == "" {
+						call.Error = resultErrorText(result)
+					}
+					if call.ErrorType == "" {
+						call.ErrorType = degraded
+					}
+					if call.ErrorType == "" {
+						call.ErrorType = "tool_error"
+					}
+					if degraded == "" {
+						call.CorrelationID = logfile.NewCorrelationID()
+					}
+				}
+			}
 			if appendErr := audit.AppendExisting(logfile.MCPAudit, logfile.MCPRecord{
-				Timestamp: started.UTC(), Tool: tool, Args: args, OK: ok,
-				DurationMS: time.Since(started).Milliseconds(), Path: metaValue[string](result, "path"),
-				RowCount: resultRows(result), Degraded: degraded,
+				CallRecord: call, Tool: tool, Path: metaValue[string](result, "path"),
 				Retried: metaValue[bool](result, "retried"), RetriedSQL: metaValue[bool](result, "retried_sql"),
 				ModelSQL:                  metaValue[string](result, "model_sql"),
 				FirstModelSQL:             metaValue[string](result, "first_model_sql"),
-				RetryReason:               metaValue[string](result, "retry_reason"),
-				SQLProvider:               metaValue[string](result, "sql_provider"),
-				SQLModel:                  metaValue[string](result, "sql_model"),
-				SQLInferenceMS:            resultMilliseconds(result, "sql_inference_ms"),
 				SQLRetryInferenceMS:       resultMilliseconds(result, "sql_retry_inference_ms"),
 				SQLRetryProviderLatencyMS: resultMilliseconds(result, "sql_retry_provider_latency_ms"),
-				ExecutionMS:               resultMilliseconds(result, "execution_ms"),
-				InterpretationProvider:    metaValue[string](result, "interpretation_provider"),
-				InterpretationModel:       metaValue[string](result, "interpretation_model"),
-				InterpretationMS:          resultMilliseconds(result, "interpretation_ms"),
 			}); appendErr != nil {
 				warned.Do(func() {
 					fmt.Fprintf(warnings, "warning: MCP calls are not being written to the audit log: %v\n", appendErr)
 				})
+			} else if call.CorrelationID != "" {
+				if err != nil {
+					err = fmt.Errorf("%w (correlation_id: %s)", err, call.CorrelationID)
+				} else {
+					appendResultCorrelation(result, call.CorrelationID)
+				}
 			}
 			return result, err
+		}
+	}
+}
+
+func argumentString(value any, key string) string {
+	fields, ok := value.(map[string]any)
+	if !ok {
+		return ""
+	}
+	text, _ := fields[key].(string)
+	return text
+}
+
+func resultErrorText(value any) string {
+	result, ok := value.(*mcp.CallToolResult)
+	if !ok {
+		return "tool call failed"
+	}
+	for _, content := range result.Content {
+		if text, ok := content.(*mcp.TextContent); ok && strings.TrimSpace(text.Text) != "" {
+			return text.Text
+		}
+	}
+	return "tool call failed"
+}
+
+func appendResultCorrelation(value any, correlationID string) {
+	result, ok := value.(*mcp.CallToolResult)
+	if !ok {
+		return
+	}
+	for _, content := range result.Content {
+		if text, ok := content.(*mcp.TextContent); ok {
+			text.Text = strings.TrimRight(text.Text, "\n") + "\ncorrelation_id: " + correlationID
+			return
 		}
 	}
 }
@@ -281,8 +353,8 @@ func metaRowCount(value any) int {
 // output value. The SDK serializes every non-nil typed output into
 // StructuredContent, which makes clients prefer a raw JSON envelope over the
 // compact text. Returning any(nil) omits both that envelope and the inferred
-// output schema. The metadata carries only the row count and degraded state
-// needed by the audit middleware; it never carries columns, rows or cell data.
+// output schema. Metadata carries only row-free audit fields; it never carries
+// columns, rows or cell data.
 func rendered[T any](res T, err error, paint func(T) string) (*mcp.CallToolResult, any, error) {
 	if err != nil {
 		return nil, nil, err
@@ -297,7 +369,11 @@ func rendered[T any](res T, err error, paint func(T) string) (*mcp.CallToolResul
 		metadata["retried_sql"] = query.RetriedSQL
 		metadata["model_sql"] = query.ModelSQL
 		metadata["first_model_sql"] = query.FirstModelSQL
-		metadata["retry_reason"] = query.RetryReason
+		metadata["question"] = query.Question
+		metadata["sql"] = query.CleanedSQL
+		if strings.TrimSpace(query.ModelSQL) != "" && strings.TrimSpace(query.ModelSQL) != strings.TrimSpace(query.CleanedSQL) {
+			metadata["raw_sql"] = query.ModelSQL
+		}
 		metadata["sql_provider"] = query.Engine
 		metadata["sql_model"] = query.Model
 		metadata["sql_inference_ms"] = query.SQLInferenceMS
@@ -307,6 +383,23 @@ func rendered[T any](res T, err error, paint func(T) string) (*mcp.CallToolResul
 		metadata["interpretation_provider"] = query.InterpretEngine
 		metadata["interpretation_model"] = query.InterpretModel
 		metadata["interpretation_ms"] = query.InterpretationMS
+		metadata["retry_reason"] = query.RetryReason
+		if query.QueryPlan != nil {
+			metadata["queryplan"] = query.QueryPlan
+		}
+		metadata["sql_provider_note"] = query.ProviderNote
+		fallback := query.Degraded
+		if fallback == "" && query.Retried {
+			fallback = "model_query_empty"
+		}
+		metadata["fallback_reason"] = fallback
+		if query.Degraded != "" {
+			metadata["error_type"] = query.Degraded
+			metadata["error"] = query.ProviderError
+			if metadata["error"] == "" {
+				metadata["error"] = query.Message
+			}
+		}
 	}
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: paint(res)}},

@@ -112,6 +112,10 @@ type QueryResult struct {
 	Repaired []string `json:"repaired,omitempty"`
 	// FirstRepaired does the same for the rejected first answer.
 	FirstRepaired []string `json:"first_repaired,omitempty"`
+	// CleanedSQL is the repaired candidate the gate judged, kept even when the
+	// gate rejected it. It is audit-only: the durable trace writes it as the
+	// statement the model meant, and keeps ModelSQL beside it when they differ.
+	CleanedSQL string `json:"-"`
 	// QueryPlan is the rescue's plan: the term it searched for, which the
 	// renderer uses to keep the match inside the excerpt.
 	QueryPlan *query.Plan `json:"queryplan,omitempty"`

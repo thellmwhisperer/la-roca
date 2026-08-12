@@ -3,7 +3,10 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 )
 
 func TestPluginsResolveFromAControlledPathAndNeverTheCurrentDirectory(t *testing.T) {
@@ -29,5 +32,46 @@ func TestPluginsResolveFromAControlledPathAndNeverTheCurrentDirectory(t *testing
 	plugins := listPlugins()
 	if len(plugins) != 2 || plugins[0].Name != "demo" || plugins[1].Name != "version" {
 		t.Fatalf("plugins = %+v", plugins)
+	}
+}
+
+func TestPluginCallsAreAuditedWithoutCredentialArguments(t *testing.T) {
+	home := t.TempDir()
+	dataDir := filepath.Join(home, ".roca")
+	pluginsDir := t.TempDir()
+	plugin := filepath.Join(pluginsDir, "roca-synthetic-plugin")
+	if err := os.WriteFile(plugin, []byte("#!/bin/sh\nexit 23\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", pluginsDir)
+	t.Setenv("HOME", home)
+	var warnings strings.Builder
+	env := &cliEnv{
+		out: &strings.Builder{}, errOut: &warnings,
+	}
+	code, err := executeWithOptions(env,
+		[]string{"synthetic-plugin", "--api-token", "not-a-real-credential"}, nil, true)
+	if err != nil || code != 23 {
+		t.Fatalf("plugin result = code %d err %v, want its exit code", code, err)
+	}
+	matches, err := filepath.Glob(filepath.Join(dataDir, logfile.DirName, "executions-*.jsonl"))
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("execution logs = %v, err=%v, warnings=%q", matches, err, warnings.String())
+	}
+	raw, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, want := range []string{
+		`"command":"synthetic-plugin"`, `"ok":false`, `"exit_code":23`,
+		`"args":["--api-token","[REDACTED]"]`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("plugin audit lacks %q: %s", want, text)
+		}
+	}
+	if strings.Contains(text, "not-a-real-credential") {
+		t.Fatalf("plugin credential argument leaked: %s", text)
 	}
 }

@@ -44,6 +44,9 @@ type cliEnv struct {
 	json               bool
 	code               int
 	outcome            any
+	auditQuery         *service.QueryResult
+	auditCommand       string
+	auditArgs          []string
 	started            time.Time
 	prelogged          bool
 	openedDir          string
@@ -88,6 +91,15 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 	root := rootCommand(env)
 	if plugins {
 		if handled, code, err := dispatchPlugin(root, args); handled {
+			env.auditCommand = args[0]
+			env.auditArgs = redactPluginArguments(args[1:])
+			if err != nil {
+				err = logfile.Correlate(err)
+			}
+			if logErr := env.logExecution(nil, started, code, err); logErr != nil {
+				fmt.Fprintf(env.errOut,
+					"warning: this run is not in the execution log: %v\n", logErr)
+			}
 			return code, err
 		}
 	}
@@ -110,6 +122,7 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 	code := env.code
 	if err != nil {
 		code = ExitError
+		err = logfile.Correlate(err)
 	}
 	// The trace is observability, and observability never fails the command.
 	//
