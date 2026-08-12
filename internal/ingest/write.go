@@ -109,6 +109,15 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 	if err != nil {
 		return counts, err
 	}
+	if session.HistoryFallback && exists {
+		hasExchanges, err := w.sessionHasExchanges(ctx, session.ID)
+		if err != nil {
+			return counts, err
+		}
+		if hasExchanges {
+			return counts, nil
+		}
+	}
 	storedMetadata, staleSnapshot := staleSnapshotMetadata(session, current)
 	if staleSnapshot {
 		session.Snapshot = false
@@ -248,6 +257,16 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 		}
 	}
 	return counts, nil
+}
+
+func (w *writer) sessionHasExchanges(ctx context.Context, sessionID string) (bool, error) {
+	var exists int
+	err := w.tx.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM exchanges WHERE session_id = ?)`, sessionID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("look for richer exchanges of %s: %w", sessionID, err)
+	}
+	return exists != 0, nil
 }
 
 type storedExchange struct {

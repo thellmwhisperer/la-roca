@@ -658,6 +658,15 @@ func enrichCodexSession(ctx context.Context, opts Options, target Target, sessio
 		session.SourceAgent = enrichment.SourceAgent
 		session.AgentMayUpgrade = true
 	}
+	if session.HistoryFallback {
+		model, _ := session.Metadata["model"].(string)
+		provider, _ := session.Metadata["model_provider"].(string)
+		var usage parsers.UsageTally
+		provenance := usage.Provenance(model, provider)
+		for i := range session.Exchanges {
+			session.Exchanges[i].Provenance = provenance
+		}
+	}
 }
 
 func tableCounts(ctx context.Context, db *sql.DB) (Tables, error) {

@@ -89,6 +89,9 @@ func Scan(roots Roots) Plan {
 	plan.addCodex(scanCodexFiles(roots))
 	plan.add(scanClaudeSessions(roots, &plan), "session_files")
 	plan.add(scanCodexSessions(roots), "codex_session_files")
+	plan.add(existingFile(filepath.Join(roots.CodexRoot, "history.jsonl"), Target{
+		Kind: parsers.KindCodexSession, SourceAgent: "codex",
+	}), "codex_history_files")
 	plan.add(scanDesktopSessions(roots), "claude_desktop_files")
 	plan.add(scanCoworkSessions(roots), "cowork_files")
 	plan.add(scanSubagents(roots), "subagent_files")
