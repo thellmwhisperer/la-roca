@@ -907,6 +907,9 @@ func TestTheModelsFencedSQLStillPassesTheGate(t *testing.T) {
 	if res.ModelSQL != raw {
 		t.Fatalf("model_sql = %q, want the untouched model output", res.ModelSQL)
 	}
+	if res.CleanedSQL == res.ModelSQL || !strings.HasPrefix(res.CleanedSQL, "SELECT content") {
+		t.Fatalf("the cleaned SQL was not retained beside the raw answer: %q", res.CleanedSQL)
+	}
 	wantRepairs := []string{"thinking_block", "code_fence", "trailing_semicolon"}
 	if strings.Join(res.Repaired, ",") != strings.Join(wantRepairs, ",") {
 		t.Fatalf("repaired = %v, want %v", res.Repaired, wantRepairs)

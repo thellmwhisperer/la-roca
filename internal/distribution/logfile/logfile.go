@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,57 +20,92 @@ const (
 	Executions    = "executions"
 	MCPAudit      = "mcp-audit"
 	Ingest        = "ingest"
+	Migrations    = "migrations"
 	lockName      = ".roca.lock"
+	maxFileBytes  = int64(5 << 20)
+	maxFiles      = 6
 )
 
 type Writer struct {
-	dir string
-	now func() time.Time
+	dir          string
+	now          func() time.Time
+	maxFileBytes int64
+	maxFiles     int
+}
+
+// CallRecord is the stable common contract shared by every CLI command and MCP
+// tool call. Query-only fields stay empty for other calls, while row_count is
+// always present so consumers never have to infer whether zero was omitted.
+type CallRecord struct {
+	Timestamp     time.Time `json:"timestamp"`
+	Source        string    `json:"source"`
+	Args          any       `json:"args"`
+	OK            bool      `json:"ok"`
+	Error         string    `json:"error,omitempty"`
+	ErrorType     string    `json:"error_type,omitempty"`
+	DurationMS    int64     `json:"duration_ms"`
+	CorrelationID string    `json:"correlation_id,omitempty"`
+
+	Question       string `json:"question,omitempty"`
+	SQL            string `json:"sql,omitempty"`
+	RawSQL         string `json:"raw_sql,omitempty"`
+	SQLProvider    string `json:"sql_provider,omitempty"`
+	SQLModel       string `json:"sql_model,omitempty"`
+	RowCount       int    `json:"row_count"`
+	Degraded       string `json:"degraded,omitempty"`
+	FallbackReason string `json:"fallback_reason,omitempty"`
+	RetryReason    string `json:"retry_reason,omitempty"`
+	QueryPlan      any    `json:"queryplan,omitempty"`
+	ProviderNote   string `json:"sql_provider_note,omitempty"`
+
+	SQLInferenceMS         *int64 `json:"sql_inference_ms,omitempty"`
+	ExecutionMS            *int64 `json:"execution_ms,omitempty"`
+	InterpretationProvider string `json:"interpretation_provider,omitempty"`
+	InterpretationModel    string `json:"interpretation_model,omitempty"`
+	InterpretationMS       *int64 `json:"interpretation_ms,omitempty"`
 }
 
 type ExecutionRecord struct {
-	Timestamp    time.Time      `json:"timestamp"`
+	CallRecord
 	Command      string         `json:"command"`
 	Flags        map[string]any `json:"flags"`
 	DatabasePath string         `json:"database_path,omitempty"`
-	DurationMS   int64          `json:"duration_ms"`
 	ExitCode     int            `json:"exit_code"`
 	Result       any            `json:"result,omitempty"`
-	Error        string         `json:"error,omitempty"`
 }
 
 type MCPRecord struct {
-	Timestamp                 time.Time `json:"timestamp"`
-	Tool                      string    `json:"tool"`
-	Args                      any       `json:"args"`
-	OK                        bool      `json:"ok"`
-	DurationMS                int64     `json:"duration_ms"`
-	Path                      string    `json:"path,omitempty"`
-	RowCount                  int       `json:"row_count"`
-	Degraded                  string    `json:"degraded,omitempty"`
-	Retried                   bool      `json:"retried,omitempty"`
-	RetriedSQL                bool      `json:"retried_sql,omitempty"`
-	ModelSQL                  string    `json:"model_sql,omitempty"`
-	FirstModelSQL             string    `json:"first_model_sql,omitempty"`
-	RetryReason               string    `json:"retry_reason,omitempty"`
-	SQLProvider               string    `json:"sql_provider,omitempty"`
-	SQLModel                  string    `json:"sql_model,omitempty"`
-	SQLInferenceMS            *int64    `json:"sql_inference_ms,omitempty"`
-	SQLRetryInferenceMS       *int64    `json:"sql_retry_inference_ms,omitempty"`
-	SQLRetryProviderLatencyMS *int64    `json:"sql_retry_provider_latency_ms,omitempty"`
-	ExecutionMS               *int64    `json:"execution_ms,omitempty"`
-	InterpretationProvider    string    `json:"interpretation_provider,omitempty"`
-	InterpretationModel       string    `json:"interpretation_model,omitempty"`
-	InterpretationMS          *int64    `json:"interpretation_ms,omitempty"`
+	CallRecord
+	Tool string `json:"tool"`
+	// Path, the retry provenance and the retry timings are what the MCP surface
+	// alone can tell, because only a tool result carries the answer's own
+	// metadata about which road it took.
+	Path                      string `json:"path,omitempty"`
+	Retried                   bool   `json:"retried,omitempty"`
+	RetriedSQL                bool   `json:"retried_sql,omitempty"`
+	ModelSQL                  string `json:"model_sql,omitempty"`
+	FirstModelSQL             string `json:"first_model_sql,omitempty"`
+	SQLRetryInferenceMS       *int64 `json:"sql_retry_inference_ms,omitempty"`
+	SQLRetryProviderLatencyMS *int64 `json:"sql_retry_provider_latency_ms,omitempty"`
 }
 
-type IngestRecord struct {
-	Timestamp time.Time `json:"timestamp"`
-	Result    any       `json:"result"`
+type RunRecord struct {
+	Timestamp  time.Time `json:"timestamp"`
+	OK         bool      `json:"ok"`
+	DurationMS int64     `json:"duration_ms"`
+	Error      string    `json:"error,omitempty"`
+	ErrorType  string    `json:"error_type,omitempty"`
+	Result     any       `json:"result"`
 }
+
+type IngestRecord = RunRecord
+type MigrationRecord = RunRecord
 
 func New(dataDir string) *Writer {
-	return &Writer{dir: filepath.Join(dataDir, DirName), now: time.Now}
+	return &Writer{
+		dir: filepath.Join(dataDir, DirName), now: time.Now,
+		maxFileBytes: maxFileBytes, maxFiles: maxFiles,
+	}
 }
 
 func (w *Writer) Append(stream string, record any) error {
@@ -139,6 +175,13 @@ func (w *Writer) append(stream string, record any, createDir bool) error {
 		return fmt.Errorf("encode the %s log record: %w", stream, err)
 	}
 	line = append(line, '\n')
+	if int64(len(line)) > w.maxFileBytes {
+		return fmt.Errorf("encode the %s log record: %d bytes exceeds the %d-byte record cap",
+			stream, len(line), w.maxFileBytes)
+	}
+	if err := w.rotate(path, int64(len(line))); err != nil {
+		return fmt.Errorf("rotate the %s log: %w", stream, err)
+	}
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return fmt.Errorf("open the %s log: %w", stream, err)
@@ -158,6 +201,28 @@ func (w *Writer) append(stream string, record any, createDir bool) error {
 	return nil
 }
 
+func (w *Writer) rotate(path string, incoming int64) error {
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Size() == 0 || info.Size()+incoming <= w.maxFileBytes {
+		return nil
+	}
+	stem := strings.TrimSuffix(path, ".jsonl")
+	for sequence := 1; ; sequence++ {
+		archive := fmt.Sprintf("%s-%d.jsonl", stem, sequence)
+		if _, err := os.Stat(archive); os.IsNotExist(err) {
+			return os.Rename(path, archive)
+		} else if err != nil {
+			return err
+		}
+	}
+}
+
 // prune drops the dated files past the retention window. It reports nothing: one
 // file it cannot remove must not stop it from removing the rest, and it must not
 // become the verdict of the append that called it.
@@ -168,10 +233,29 @@ func (w *Writer) prune(stream string, now time.Time) {
 	}
 	cutoff := now.AddDate(0, 0, -(RetentionDays - 1)).Format(time.DateOnly)
 	for _, path := range matches {
-		name := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(path), stream+"-"), ".jsonl")
-		if _, err := time.Parse(time.DateOnly, name); err != nil || name >= cutoff {
+		name := strings.TrimPrefix(filepath.Base(path), stream+"-")
+		if len(name) < len(time.DateOnly) {
 			continue
 		}
+		date := name[:len(time.DateOnly)]
+		if _, err := time.Parse(time.DateOnly, date); err != nil || date >= cutoff {
+			continue
+		}
+		os.Remove(path)
+	}
+	matches, err = filepath.Glob(filepath.Join(w.dir, stream+"-*.jsonl"))
+	if err != nil || len(matches) <= w.maxFiles {
+		return
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		left, leftErr := os.Stat(matches[i])
+		right, rightErr := os.Stat(matches[j])
+		if leftErr != nil || rightErr != nil || left.ModTime().Equal(right.ModTime()) {
+			return matches[i] < matches[j]
+		}
+		return left.ModTime().Before(right.ModTime())
+	})
+	for _, path := range matches[:len(matches)-w.maxFiles] {
 		os.Remove(path)
 	}
 }
