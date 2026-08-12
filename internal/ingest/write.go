@@ -354,11 +354,14 @@ func (m *exchangeMatcher) occupied(number int) bool {
 
 func (m *exchangeMatcher) occupy(id int64, number int, exchange parsers.Exchange,
 	historyFallback bool) {
-	m.addStored(storedExchange{
+	m.byNumber[number] = storedExchange{
 		id: id, number: number, numberValid: true, historyFallback: historyFallback,
 		humanText: exchange.HumanText, agentText: exchange.AgentText,
 		humanTimestamp: exchange.HumanTimestamp, agentTimestamp: exchange.AgentTimestamp,
-	})
+	}
+	if number >= m.nextNumber {
+		m.nextNumber = number + 1
+	}
 }
 
 func (m *exchangeMatcher) freshNumber() int {
