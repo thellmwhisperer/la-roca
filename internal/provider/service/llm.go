@@ -524,16 +524,21 @@ func (s *Service) searchByTerm(ctx context.Context, plan query.Plan, method stri
 		return columns, rows, validated, &result.Provenance, nil
 	}
 
-	columns = []string{"source", "id", "text", "created_at"}
+	columns = []string{"source", "id", "author", "text", "created_at"}
 	rows = make([]map[string]any, 0, len(result.Rows))
 	for _, row := range result.Rows {
 		var date any
 		if row.Date.Valid {
 			date = row.Date.String
 		}
+		var author any
+		if row.Author.Valid {
+			author = row.Author.String
+		}
 		rows = append(rows, map[string]any{
 			"source":     row.Source,
 			"id":         row.ID,
+			"author":     author,
 			"text":       truncate(row.Text, maxChars, plan.Term),
 			"created_at": date,
 		})

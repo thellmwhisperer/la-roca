@@ -143,6 +143,30 @@ func TestAMissingTableIsMigratableAndRepairedAfterBackup(t *testing.T) {
 	}
 }
 
+func TestAuthorshipColumnsAdoptWithoutGuessingHistoricalRows(t *testing.T) {
+	db := openFresh(t)
+	ctx := context.Background()
+	if err := store.ApplySchema(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	execute(t, db, "ALTER TABLE memories DROP COLUMN source_model")
+	execute(t, db, "ALTER TABLE memories DROP COLUMN source_surface")
+	seedIdentity(t, db)
+
+	if _, err := store.Adopt(ctx, db, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	var agent, model, surface sql.NullString
+	if err := db.SQL().QueryRow(
+		"SELECT source_agent, source_model, source_surface FROM memories WHERE content = 'anchor of adoption'",
+	).Scan(&agent, &model, &surface); err != nil {
+		t.Fatal(err)
+	}
+	if agent.Valid || model.Valid || surface.Valid {
+		t.Errorf("historical authorship was guessed: agent=%v model=%v surface=%v", agent, model, surface)
+	}
+}
+
 func TestAColumnWithAnotherShapeIsIncompatibleAndUntouched(t *testing.T) {
 	db := openFresh(t)
 	ctx := context.Background()

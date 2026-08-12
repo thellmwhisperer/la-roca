@@ -56,7 +56,7 @@ func renderFTS(plan Plan, coordinationLayers []string, limit int, joiner string)
 	}
 
 	memories := fmt.Sprintf(
-		"SELECT 'memory' AS source, m.id AS id, m.content AS text, "+
+		"SELECT 'memory' AS source, m.id AS id, "+memoryAuthor("m")+" AS author, m.content AS text, "+
 			"m.created_at AS created_at, 0 AS source_priority, f.rango AS rango "+
 			"FROM (%s) AS f JOIN memories AS m ON m.id = f.fila "+
 			"WHERE %s",
@@ -76,16 +76,16 @@ func renderFTS(plan Plan, coordinationLayers []string, limit int, joiner string)
 	parts := []string{
 		cappedBranch(memories, limit),
 		cappedBranch(fmt.Sprintf(
-			"SELECT 'exchange', e.id, e.agent_text, e.agent_timestamp, 1 AS source_priority, g.rango "+
+			"SELECT 'exchange', e.id, NULL, e.agent_text, e.agent_timestamp, 1 AS source_priority, g.rango "+
 				"FROM (%s) AS g JOIN exchanges AS e ON e.id = g.fila",
 			subquery("exchanges_fts", expression, "agent_text", "")), limit),
 		cappedBranch(fmt.Sprintf(
-			"SELECT 'human', h.id, h.human_text, h.human_timestamp, 1 AS source_priority, i.rango "+
+			"SELECT 'human', h.id, NULL, h.human_text, h.human_timestamp, 1 AS source_priority, i.rango "+
 				"FROM (%s) AS i JOIN exchanges AS h ON h.id = i.fila",
 			subquery("exchanges_fts", expression, "human_text",
 				"human_text NOT LIKE '<task-notification%'")), limit),
 		cappedBranch(fmt.Sprintf(
-			"SELECT 'thinking', t.id, t.full_text, NULL, 2 AS source_priority, j.rango "+
+			"SELECT 'thinking', t.id, NULL, t.full_text, NULL, 2 AS source_priority, j.rango "+
 				"FROM (%s) AS j JOIN thinking_blocks AS t ON t.id = j.fila",
 			subquery("thinking_fts", expression, "", "")), limit),
 	}
@@ -161,8 +161,8 @@ func RenderSQLLike(plan Plan, coordinationLayers []string) (string, error) {
 		return "", fmt.Errorf("the term search needs a term and the question offers none")
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "SELECT 'memory' AS source, id, content AS text, created_at "+
-		"FROM memories WHERE %s AND %s", likeClauses("content", plan.Term), supersedeExclusion("id"))
+	fmt.Fprintf(&b, "SELECT 'memory' AS source, id, %s AS author, content AS text, created_at "+
+		"FROM memories WHERE %s AND %s", memoryAuthor("memories"), likeClauses("content", plan.Term), supersedeExclusion("id"))
 	if plan.Layer != "" {
 		// A layer constraint is always respected, and the other three sources
 		// have no layer: returning them would be failing to respect it.
@@ -173,16 +173,24 @@ func RenderSQLLike(plan Plan, coordinationLayers []string) (string, error) {
 	if len(coordinationLayers) > 0 {
 		fmt.Fprintf(&b, " AND layer NOT IN (%s)", stringList(coordinationLayers))
 	}
-	fmt.Fprintf(&b, " UNION ALL SELECT 'exchange', id, agent_text, agent_timestamp AS created_at "+
+	fmt.Fprintf(&b, " UNION ALL SELECT 'exchange', id, NULL, agent_text, agent_timestamp AS created_at "+
 		"FROM exchanges WHERE %s", likeClauses("agent_text", plan.Term))
-	fmt.Fprintf(&b, " UNION ALL SELECT 'human', MIN(id) AS id, human_text, human_timestamp AS created_at "+
+	fmt.Fprintf(&b, " UNION ALL SELECT 'human', MIN(id) AS id, NULL, human_text, human_timestamp AS created_at "+
 		"FROM exchanges WHERE %s AND human_text NOT LIKE '<task-notification%%' "+
 		"GROUP BY session_id, human_timestamp, human_text",
 		likeClauses("human_text", plan.Term))
-	fmt.Fprintf(&b, " UNION ALL SELECT 'thinking', id, full_text, NULL "+
+	fmt.Fprintf(&b, " UNION ALL SELECT 'thinking', id, NULL, full_text, NULL "+
 		"FROM thinking_blocks WHERE %s", likeClauses("full_text", plan.Term))
 	fmt.Fprintf(&b, " ORDER BY created_at DESC%s", limitClause(plan, 10))
 	return b.String(), nil
+}
+
+func memoryAuthor(alias string) string {
+	column := func(name string) string {
+		return "COALESCE(NULLIF(" + alias + "." + name + ", ''), 'unknown')"
+	}
+	return column("source_agent") + " || '/' || " + column("source_model") +
+		" || ' via ' || " + column("source_surface")
 }
 
 // likeClauses require the column to match every word of the term: searching for

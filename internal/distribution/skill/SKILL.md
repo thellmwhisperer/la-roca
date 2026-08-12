@@ -34,7 +34,7 @@ roca query --full "what happened with Y"       # add prose for human reading
 roca query "what happened with Y" --json
 roca query "ffmpeg patterns" --sql-only        # the SQL the model would run, without running it
 roca exec "SELECT COUNT(*) AS memories FROM memories"  # run a gate-approved SELECT
-roca store --layer discovery --content "FTS ranks by bm25, created_at only for time questions" --origin agent
+roca store --layer discovery --content "FTS ranks by bm25, created_at only for time questions" --origin agent --agent codex --model gpt-5
 roca doctor                                    # diagnosis + remedies
 ```
 
@@ -57,8 +57,8 @@ $ roca query "what do we know about AXI output"
 route model
 SQL · provider ollama · model qwen3.5:4b · 4 ms
 search · 1 ms
-rows[1]{source,id,created_at,text}:
-  memory,1,"2026-08-07 17:39:43","AXI output uses TOON rows, stable fields, and contextual help."
+rows[1]{source,id,author,created_at,text}:
+  memory,1,"codex/gpt-5 via cli","2026-08-07 17:39:43","AXI output uses TOON rows, stable fields, and contextual help."
 help[2]:
   - "Run `roca query \"what do we know about AXI output\" --json` for the complete result envelope"
   - "Run `roca query \"what do we know about AXI output\" --sql-only`, then `roca exec \"<SELECT>\" --max-chars 2000` to inspect or expand rows"
@@ -78,7 +78,7 @@ the gate. Install them with `roca mcp install <runtime>`.
 | Past work / people / "have we…" | `roca query "<question>"` |
 | Programmatic parse | add `--json` |
 | Inspect SQL first | `roca query --sql-only` then `roca exec` |
-| Durable memory | `roca store --layer … --content …` |
+| Durable memory | `roca store --layer … --content … --agent … --model …` |
 | No shell | the MCP tools above |
 
 ## Operating craft
@@ -109,6 +109,10 @@ the gate. Install them with `roca mcp install <runtime>`.
   quote-heavy memories with `roca_store` over MCP, whose structured params
   avoid shell escaping. When shell permissions block a CLI call, the MCP
   tools are the frictionless path, not a fallback.
+- Authorship is automatic from MCP `clientInfo`. On CLI, always pass
+  `--agent <harness> --model <model>`; environment and ancestry detection are a
+  conservative bonus and ambiguous evidence is stored as `unknown`. `agent`,
+  `model` and `surface` are refused inside metadata: they are the identity card.
 - Use the layer filter deliberately: `handoff` for continuity and
   `feedback`/`pattern` for distilled lessons. Search coordination layers
   explicitly when tracing origins; ordinary knowledge search can skip them.
@@ -118,7 +122,7 @@ the gate. Install them with `roca mcp install <runtime>`.
 ```bash
 roca query "who is Ana"
 roca query "what feedback do we have" --json
-roca store --layer handoff --content "the ingest update left the gate in place" --origin agent
+roca store --layer handoff --content "the ingest update left the gate in place" --origin agent --agent claude --model sonnet
 ```
 
 ## Bad

@@ -285,6 +285,8 @@ func SQLSystemPrompt(schema Schema, layers []LayerHint, layerFilter []string) st
 				"thinking 2) and ORDER BY source_priority before the bm25 rank; curated "+
 				"memories answer before transcript and reasoning echoes",
 			"- In a result column named source use exactly memory, exchange, human or thinking",
+			"- When returning memory rows, include a compact author column from source_agent, "+
+				"source_model and source_surface; render NULL or empty historical values as unknown",
 			"- An exchanges_fts hit must match the text you return: when selecting agent_text "+
 				"use {agent_text} : (...) inside MATCH, and when selecting human_text use "+
 				"{human_text} : (...); never match one column and return the other",
@@ -311,19 +313,22 @@ func ftsExamples(schema Schema) string {
 	}
 	return "\n\n<examples>\n" +
 		"Term search for Ana across sources (token MATCH + bm25 — never LIKE '%Ana%'):\n" +
-		"SELECT 'memory' AS source, m.id, m.content AS text, 0 AS source_priority, f.rango AS rango\n" +
+		"SELECT 'memory' AS source, m.id, COALESCE(NULLIF(m.source_agent, ''), 'unknown') || '/' ||\n" +
+		"       COALESCE(NULLIF(m.source_model, ''), 'unknown') || ' via ' ||\n" +
+		"       COALESCE(NULLIF(m.source_surface, ''), 'unknown') AS author,\n" +
+		"       m.content AS text, 0 AS source_priority, f.rango AS rango\n" +
 		"FROM (SELECT rowid AS fila, bm25(memories_fts) AS rango FROM memories_fts\n" +
 		"      WHERE memories_fts MATCH '\"ana\"' ORDER BY rango LIMIT 20) AS f\n" +
 		"JOIN memories AS m ON m.id = f.fila WHERE m.id NOT IN (SELECT supersedes FROM memories WHERE supersedes IS NOT NULL)\n" +
 		"UNION ALL\n" +
-		"SELECT 'exchange', rowid, agent_text, 1 AS source_priority, bm25(exchanges_fts) AS rango\n" +
+		"SELECT 'exchange', rowid, NULL AS author, agent_text, 1 AS source_priority, bm25(exchanges_fts) AS rango\n" +
 		"FROM exchanges_fts WHERE exchanges_fts MATCH '{agent_text} : (\"ana\")'\n" +
 		"UNION ALL\n" +
-		"SELECT 'human', rowid, human_text, 1, bm25(exchanges_fts)\n" +
+		"SELECT 'human', rowid, NULL, human_text, 1, bm25(exchanges_fts)\n" +
 		"FROM exchanges_fts WHERE exchanges_fts MATCH '{human_text} : (\"ana\")'\n" +
 		"AND human_text NOT LIKE '<task-notification%'\n" +
 		"UNION ALL\n" +
-		"SELECT 'thinking', rowid, full_text, 2, bm25(thinking_fts)\n" +
+		"SELECT 'thinking', rowid, NULL, full_text, 2, bm25(thinking_fts)\n" +
 		"FROM thinking_fts WHERE thinking_fts MATCH '\"ana\"'\n" +
 		"ORDER BY source_priority, rango LIMIT 20\n\n" +
 		"Count on base tables (not FTS), with an explicit LIMIT:\n" +
