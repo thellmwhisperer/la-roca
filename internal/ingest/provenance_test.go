@@ -117,15 +117,15 @@ func assertRecordedProvenance(t *testing.T, db *sql.DB) {
 }
 
 // The re-ingest that backfills. Historical parsers did not always assign the
-// exchange number that today's parser does, so the fixture moves those rows to
-// numbers the current parse will not produce. The content and timestamps are
-// unchanged: they are the stable evidence that the old row is the same turn.
+// exchange number or timestamp spelling that today's parser does, so the fixture
+// recreates both differences. The underlying instants and content are stable
+// evidence that the old row is the same turn.
 func TestAPlainReingestMatchesHistoricalNumbersWithoutDuplicating(t *testing.T) {
 	_, db, ctx, options := seededWorld(t)
 
 	before := tableSnapshot(t, db.SQL())
-	// What v1.8.1 left behind: NULL provenance, parser-v3 watermarks, and rows
-	// numbered by the older Claude, Codex, Cowork, subagent and Hermes readers.
+	// What v1.8.2 left behind: NULL provenance, parser-v4 watermarks, and rows
+	// numbered or timestamped by older readers.
 	if err := db.Write(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `UPDATE exchanges SET model = NULL, provider = NULL,
 			tokens_in = NULL, tokens_out = NULL, tokens_reasoning = NULL, cost_usd = NULL`)
@@ -142,8 +142,16 @@ func TestAPlainReingestMatchesHistoricalNumbersWithoutDuplicating(t *testing.T) 
 				}
 			}
 		}
+		_, err = tx.ExecContext(ctx, `UPDATE exchanges SET exchange_number = NULL,
+			human_timestamp = replace(human_timestamp, 'Z', '.000000+00:00'),
+			agent_timestamp = replace(agent_timestamp, 'Z', '.000000+00:00')
+			WHERE id = (SELECT id FROM exchanges WHERE session_id = ?
+				ORDER BY exchange_number LIMIT 1)`, fixtureSessionID)
+		if err != nil {
+			return err
+		}
 		_, err = tx.ExecContext(ctx,
-			`UPDATE ingest_file_state SET fingerprint = replace(fingerprint, '-v4', '-v3')
+			`UPDATE ingest_file_state SET fingerprint = replace(fingerprint, '-v5', '-v4')
 			 WHERE instr(fingerprint, ':parser:') > 0`)
 		return err
 	}); err != nil {
@@ -201,6 +209,7 @@ func TestTheBackfillNeverOverwritesProvenanceThatLanded(t *testing.T) {
 func TestBackfillMatchesHistoricalAnchorsSafely(t *testing.T) {
 	type storedRow struct {
 		number                      int
+		numberNull                  bool
 		humanText, agentText, model string
 	}
 	provenance := func(model string) parsers.Provenance {
@@ -210,10 +219,50 @@ func TestBackfillMatchesHistoricalAnchorsSafely(t *testing.T) {
 		name          string
 		stored        []parsers.Exchange
 		replay        []parsers.Exchange
+		nullNumber    int
 		wantInserted  int
 		wantConflicts int
 		want          []storedRow
 	}{
+		{
+			name: "equivalent timestamp spellings precede a repeated content anchor",
+			stored: []parsers.Exchange{
+				{Number: 1, HumanText: "same formatted turn", AgentText: "same formatted answer",
+					HumanTimestamp: "2026-01-10T01:29:10.553000+00:00",
+					AgentTimestamp: "2026-01-10T01:29:10.653000+00:00"},
+				{Number: 7, HumanText: "same formatted turn", AgentText: "same formatted answer",
+					HumanTimestamp: "2026-01-10T01:29:10.554000+00:00",
+					AgentTimestamp: "2026-01-10T01:29:10.654000+00:00"},
+			},
+			replay: []parsers.Exchange{{
+				Number: 1, HumanText: "same formatted turn", AgentText: "same formatted answer",
+				HumanTimestamp: "2026-01-10T01:29:10.554Z",
+				AgentTimestamp: "2026-01-10T01:29:10.654Z",
+				Provenance:     provenance("normalized-timestamp-match"),
+			}},
+			want: []storedRow{
+				{number: 1, humanText: "same formatted turn", agentText: "same formatted answer"},
+				{number: 7, humanText: "same formatted turn", agentText: "same formatted answer",
+					model: "normalized-timestamp-match"},
+			},
+		},
+		{
+			name: "timestamp anchors match a historical row without an exchange number",
+			stored: []parsers.Exchange{{
+				Number: 9, HumanText: "numberless turn", AgentText: "numberless answer",
+				HumanTimestamp: "2026-01-10T01:29:10.554000+00:00",
+				AgentTimestamp: "2026-01-10T01:29:10.654000+00:00",
+			}},
+			replay: []parsers.Exchange{{
+				Number: 1, HumanText: "numberless turn", AgentText: "numberless answer",
+				HumanTimestamp: "2026-01-10T01:29:10.554Z",
+				AgentTimestamp: "2026-01-10T01:29:10.654Z",
+				Provenance:     provenance("numberless-match"),
+			}},
+			nullNumber: 9,
+			want: []storedRow{{numberNull: true, humanText: "numberless turn",
+				agentText: "numberless answer", model: "numberless-match"}},
+		},
 		{
 			name: "timestamps precede a repeated content anchor",
 			stored: []parsers.Exchange{
@@ -382,6 +431,13 @@ func TestBackfillMatchesHistoricalAnchorsSafely(t *testing.T) {
 				return counts
 			}
 			write(test.stored)
+			if test.nullNumber != 0 {
+				if _, err := db.SQL().Exec(`UPDATE exchanges SET exchange_number = NULL
+					WHERE session_id = 'synthetic-anchor-safety' AND exchange_number = ?`,
+					test.nullNumber); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if counts := write(test.replay); counts.Exchanges != test.wantInserted ||
 				counts.AnchorConflicts != test.wantConflicts {
 				t.Fatalf("first replay counts = %+v, want exchanges/conflicts = %d/%d",
@@ -403,9 +459,12 @@ func TestBackfillMatchesHistoricalAnchorsSafely(t *testing.T) {
 			var got []storedRow
 			for rows.Next() {
 				var row storedRow
-				if err := rows.Scan(&row.number, &row.humanText, &row.agentText, &row.model); err != nil {
+				var number sql.NullInt64
+				if err := rows.Scan(&number, &row.humanText, &row.agentText, &row.model); err != nil {
 					t.Fatal(err)
 				}
+				row.number = int(number.Int64)
+				row.numberNull = !number.Valid
 				got = append(got, row)
 			}
 			if err := rows.Err(); err != nil {
