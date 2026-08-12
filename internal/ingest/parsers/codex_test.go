@@ -322,3 +322,38 @@ func TestCodexNamesTheRecordsItLeavesOutByDesign(t *testing.T) {
 		}
 	}
 }
+
+func TestCodexReadsLegacyHistoryRecordsWithoutLosingTheRest(t *testing.T) {
+	content := `{"session_id":"legacy-one","ts":1763372540,"text":"inspect the synthetic archive"}
+not json
+{"session_id":"legacy-two","ts":1763372600,"text":"name the synthetic result"}
+{"session_id":"legacy-one","ts":1763372660,"text":"verify the synthetic archive"}
+{"session_id":"","ts":1763372700,"text":"orphaned input"}`
+	records, err := Parse(KindCodexSession, []byte(content), FileMeta{})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(records.Sessions) != 2 {
+		t.Fatalf("sessions = %d, want 2: %+v", len(records.Sessions), records.Sessions)
+	}
+	first := records.Sessions[0]
+	if first.ID != "legacy-one" || !first.HistoryFallback || len(first.Exchanges) != 2 {
+		t.Fatalf("first legacy session = %+v", first)
+	}
+	if first.StartedAt != "2025-11-17T09:42:20Z" || first.EndedAt != "2025-11-17T09:44:20Z" {
+		t.Errorf("legacy span = %q..%q", first.StartedAt, first.EndedAt)
+	}
+	if exchange := first.Exchanges[1]; exchange.Number != 2 ||
+		exchange.HumanText != "verify the synthetic archive" || exchange.AgentText != "" ||
+		exchange.HumanTimestamp != "2025-11-17T09:44:20Z" ||
+		exchange.AgentTimestamp != "" || !exchange.Provenance.Empty() {
+		t.Errorf("second legacy exchange = %+v", exchange)
+	}
+	if len(records.Discards) != 2 {
+		t.Fatalf("discards = %+v, want the malformed and orphaned records", records.Discards)
+	}
+	if records.Discards[0].Category != "invalid Codex history JSON" ||
+		records.Discards[1].Category != "invalid Codex history record" {
+		t.Errorf("discard categories = %+v", records.Discards)
+	}
+}

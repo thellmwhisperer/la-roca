@@ -120,6 +120,10 @@ type Session struct {
 	// artefact is a snapshot; re-parsing a grown transcript is not, because
 	// there the identity fields only fill NULLs.
 	Snapshot bool
+	// HistoryFallback marks the prompt-only history Codex kept for legacy
+	// sessions whose rollout contains metadata but no conversation. Writers use
+	// it only when the session has no exchanges from the richer rollout source.
+	HistoryFallback bool
 	// ParentID is the session that spawned this one, when the artefact declares
 	// it.
 	ParentID string
