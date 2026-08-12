@@ -116,8 +116,8 @@ func TestUnexpectedCLIErrorIsDurableAndUserVisibleByCorrelationID(t *testing.T) 
 func TestADegradedQueryNamesItsAuditLineWithoutAnError(t *testing.T) {
 	fixtureInstallation(t)
 	home := os.Getenv("HOME")
-	writeConfig(t, home, "[models]\nprobe_ms = 200\n\n"+
-		"[models.mycorp]\nbase_url = \"https://llm.invalid/v1\"\napi_key = \"sk-synthetic\"\n"+
+	writeConfig(t, home, "[models]\norder = [\"mycorp\"]\nprobe_ms = 200\n\n"+
+		"[models.mycorp]\ncommand = [\"missing-mycorp-cli\", \"{prompt}\"]\n"+
 		"model = \"internal-7b\"\n")
 	t.Setenv(provider.EnvOrder, "mycorp")
 
