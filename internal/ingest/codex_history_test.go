@@ -41,6 +41,7 @@ func TestCodexHistoryBackfillsMetadataOnlySessionsOnce(t *testing.T) {
 	world.write(t, filepath.Join(roots.CodexRoot, "history.jsonl"), `
 {"session_id":"legacy-codex","ts":1763372540,"text":"inspect the synthetic archive"}
 not json
+{"type":"session_meta","session_id":"noise","ts":1763372570,"text":"not history"}
 {"session_id":"codex-thread-1","ts":1785574801,"text":"this richer rollout already landed"}
 {"session_id":"legacy-codex","ts":1763372660,"text":"verify the synthetic archive"}
 {"session_id":"","ts":1763372700,"text":"orphaned input"}
@@ -50,18 +51,18 @@ not json
 		t.Fatalf("history backfill: %v", err)
 	}
 	if second.Scanned["codex_history_files"] != 1 || second.Delta.Sessions != 0 ||
-		second.Delta.Exchanges != 2 {
+		second.Delta.Exchanges != 3 {
 		t.Fatalf("history backfill = scanned:%d delta:%+v", second.Scanned["codex_history_files"], second.Delta)
 	}
-	if got := countRows(t, db.SQL(), "exchanges WHERE session_id = 'codex-thread-1'"); got != 1 {
-		t.Fatalf("richer rollout exchanges = %d, want 1 without a history duplicate", got)
+	if got := countRows(t, db.SQL(), "exchanges WHERE session_id = 'codex-thread-1'"); got != 2 {
+		t.Fatalf("richer rollout exchanges = %d, want its unmatched history prompt", got)
 	}
 	discardCounts := map[string]int{}
 	for _, category := range second.DiscardSummary {
 		discardCounts[category.Reason] = category.Count
 	}
 	if discardCounts["invalid Codex history JSON"] != 1 ||
-		discardCounts["invalid Codex history record"] != 1 {
+		discardCounts["invalid Codex history record"] != 2 {
 		t.Fatalf("history discard summary = %+v", second.DiscardSummary)
 	}
 
@@ -81,11 +82,51 @@ not json
 			human, agent, humanTS, model, provider, tokensIn, tokensOut)
 	}
 
+	world.write(t, filepath.Join(roots.CodexRoot, "history.jsonl"), `
+{"session_id":"legacy-codex","ts":1763372540,"text":"inspect the synthetic archive"}
+{"session_id":"legacy-codex","ts":1763372660,"text":"verify the synthetic archive"}
+{"session_id":"legacy-codex","ts":1763372780,"text":"report the synthetic archive"}
+`)
 	third, err := Run(ctx, db, registry(t), options)
+	if err != nil {
+		t.Fatalf("grown history ingest: %v", err)
+	}
+	if third.Delta.Exchanges != 1 || countRows(t, db.SQL(),
+		"exchanges WHERE session_id = 'legacy-codex'") != 3 {
+		t.Fatalf("grown history delta = %+v", third.Delta)
+	}
+
+	world.write(t, legacyPath, `
+{"type":"session_meta","timestamp":"2025-11-17T09:42:20Z","payload":{"id":"legacy-codex","cwd":"/synthetic/archive","timestamp":"2025-11-17T09:42:20Z","model_provider":"fixture-provider"}}
+{"type":"turn_context","timestamp":"2025-11-17T09:42:20Z","payload":{"model":"fixture-legacy-model"}}
+{"type":"event_msg","timestamp":"2025-11-17T09:42:20Z","payload":{"type":"user_message","message":"inspect the synthetic archive"}}
+{"type":"event_msg","timestamp":"2025-11-17T09:43:00Z","payload":{"type":"task_complete","last_agent_message":"archive inspected"}}
+{"type":"event_msg","timestamp":"2025-11-17T09:44:20Z","payload":{"type":"user_message","message":"verify the synthetic archive"}}
+{"type":"event_msg","timestamp":"2025-11-17T09:45:00Z","payload":{"type":"task_complete","last_agent_message":"archive verified"}}
+`)
+	fourth, err := Run(ctx, db, registry(t), options)
+	if err != nil {
+		t.Fatalf("richer rollout ingest: %v", err)
+	}
+	if fourth.Delta.Exchanges != 0 || countRows(t, db.SQL(),
+		"exchanges WHERE session_id = 'legacy-codex'") != 3 {
+		t.Fatalf("richer rollout duplicated fallback prompts: delta=%+v", fourth.Delta)
+	}
+	var answer, answeredAt string
+	err = db.SQL().QueryRow(`SELECT agent_text, agent_timestamp FROM exchanges
+		WHERE session_id = 'legacy-codex' AND exchange_number = 1`).Scan(&answer, &answeredAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "archive inspected" || answeredAt != "2025-11-17T09:43:00Z" {
+		t.Errorf("enriched fallback = %q at %q", answer, answeredAt)
+	}
+
+	fifth, err := Run(ctx, db, registry(t), options)
 	if err != nil {
 		t.Fatalf("idempotent ingest: %v", err)
 	}
-	if third.FilesRead != 0 || third.Delta != (Tables{}) {
-		t.Errorf("idempotent ingest read or wrote records: files=%d delta=%+v", third.FilesRead, third.Delta)
+	if fifth.FilesRead != 0 || fifth.Delta != (Tables{}) {
+		t.Errorf("idempotent ingest read or wrote records: files=%d delta=%+v", fifth.FilesRead, fifth.Delta)
 	}
 }

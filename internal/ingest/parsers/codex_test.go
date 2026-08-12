@@ -326,10 +326,11 @@ func TestCodexNamesTheRecordsItLeavesOutByDesign(t *testing.T) {
 func TestCodexReadsLegacyHistoryRecordsWithoutLosingTheRest(t *testing.T) {
 	content := `{"session_id":"legacy-one","ts":1763372540,"text":"inspect the synthetic archive"}
 not json
+{"type":"session_meta","session_id":"legacy-noise","ts":1763372570,"text":"not a history row"}
 {"session_id":"legacy-two","ts":1763372600,"text":"name the synthetic result"}
 {"session_id":"legacy-one","ts":1763372660,"text":"verify the synthetic archive"}
 {"session_id":"","ts":1763372700,"text":"orphaned input"}`
-	records, err := Parse(KindCodexSession, []byte(content), FileMeta{})
+	records, err := Parse(KindCodexHistory, []byte(content), FileMeta{})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -349,11 +350,12 @@ not json
 		exchange.AgentTimestamp != "" || !exchange.Provenance.Empty() {
 		t.Errorf("second legacy exchange = %+v", exchange)
 	}
-	if len(records.Discards) != 2 {
+	if len(records.Discards) != 3 {
 		t.Fatalf("discards = %+v, want the malformed and orphaned records", records.Discards)
 	}
 	if records.Discards[0].Category != "invalid Codex history JSON" ||
-		records.Discards[1].Category != "invalid Codex history record" {
+		records.Discards[1].Category != "invalid Codex history record" ||
+		records.Discards[2].Category != "invalid Codex history record" {
 		t.Errorf("discard categories = %+v", records.Discards)
 	}
 }

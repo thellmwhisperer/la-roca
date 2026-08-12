@@ -45,12 +45,12 @@ func TestCodexFingerprintCarriesTheHistoryParserRevision(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	fingerprint, err := targetFingerprint(Target{Path: path, Kind: parsers.KindCodexSession})
+	fingerprint, err := targetFingerprint(Target{Path: path, Kind: parsers.KindCodexHistory})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(fingerprint, ":parser:codex-session-v7") {
-		t.Fatalf("Codex fingerprint = %q, want the v7 history parser revision", fingerprint)
+	if !strings.HasSuffix(fingerprint, ":parser:codex-history-v1") {
+		t.Fatalf("Codex fingerprint = %q, want the v1 history parser revision", fingerprint)
 	}
 }
 

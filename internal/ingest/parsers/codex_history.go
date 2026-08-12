@@ -8,30 +8,10 @@ import (
 // codexHistoryLine is the prompt history older Codex sessions kept apart from
 // their metadata-only rollout. It records no answer or per-turn token usage.
 type codexHistoryLine struct {
+	Type      string   `json:"type"`
 	SessionID string   `json:"session_id"`
 	Text      string   `json:"text"`
 	Timestamp *float64 `json:"ts"`
-}
-
-func looksLikeCodexHistory(content []byte) bool {
-	for _, raw := range lines(content) {
-		var probe struct {
-			Type      string          `json:"type"`
-			SessionID string          `json:"session_id"`
-			Text      json.RawMessage `json:"text"`
-			Timestamp json.RawMessage `json:"ts"`
-		}
-		if json.Unmarshal([]byte(raw), &probe) != nil {
-			continue
-		}
-		if probe.Type != "" {
-			return false
-		}
-		if probe.SessionID != "" || len(probe.Text) > 0 || len(probe.Timestamp) > 0 {
-			return true
-		}
-	}
-	return false
 }
 
 func parseCodexHistory(content []byte, meta FileMeta) Records {
@@ -47,10 +27,10 @@ func parseCodexHistory(content []byte, meta FileMeta) Records {
 			})
 			continue
 		}
-		if line.SessionID == "" || strings.TrimSpace(line.Text) == "" ||
+		if line.Type != "" || line.SessionID == "" || strings.TrimSpace(line.Text) == "" ||
 			line.Timestamp == nil || *line.Timestamp <= 0 {
 			records.Discards = append(records.Discards, Discard{
-				Record: record, Reason: "Codex history record has no session_id, text, or timestamp",
+				Record: record, Reason: "Codex history record is not a valid prompt",
 				Category: "invalid Codex history record",
 			})
 			continue

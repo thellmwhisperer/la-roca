@@ -109,15 +109,6 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 	if err != nil {
 		return counts, err
 	}
-	if session.HistoryFallback && exists {
-		hasExchanges, err := w.sessionHasExchanges(ctx, session.ID)
-		if err != nil {
-			return counts, err
-		}
-		if hasExchanges {
-			return counts, nil
-		}
-	}
 	storedMetadata, staleSnapshot := staleSnapshotMetadata(session, current)
 	if staleSnapshot {
 		session.Snapshot = false
@@ -166,17 +157,18 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 				number = next
 			}
 		}
-		matched, outcome := matcher.match(number, exchange)
+		matched, outcome := matcher.match(number, exchange, session.HistoryFallback)
 		if outcome == exchangeMatched {
 			if !matched.numberValid {
 				counts.ThinkingBlocksDiscarded += len(exchange.Thinking)
 			}
-			thinking, err := w.enrichExchange(ctx, session.ID, matched, exchange)
+			thinking, tools, err := w.enrichExchange(ctx, session.ID, matched, exchange)
 			if err != nil {
 				return counts, err
 			}
 			matcher.claim(matched, number, exchange)
 			counts.ThinkingBlocks += thinking
+			counts.ToolUses += tools
 			if exchange.SourceID != "" && matched.numberValid {
 				assigned[exchange.SourceID] = exchangeKey{
 					Number: matched.number, Fingerprint: exchange.Fingerprint,
@@ -259,16 +251,6 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 	return counts, nil
 }
 
-func (w *writer) sessionHasExchanges(ctx context.Context, sessionID string) (bool, error) {
-	var exists int
-	err := w.tx.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM exchanges WHERE session_id = ?)`, sessionID).Scan(&exists)
-	if err != nil {
-		return false, fmt.Errorf("look for richer exchanges of %s: %w", sessionID, err)
-	}
-	return exists != 0, nil
-}
-
 type storedExchange struct {
 	id                             int64
 	number                         int
@@ -316,8 +298,14 @@ type exchangeMatcher struct {
 	byNumber     map[int]storedExchange
 	byTimestamps map[timestampPair][]storedExchange
 	byContent    map[[sha256.Size]byte][]storedExchange
+	byHuman      map[humanPrompt][]storedExchange
 	claimed      map[int64]exchangeIdentity
 	nextNumber   int
+}
+
+type humanPrompt struct {
+	text      string
+	timestamp timestampInstant
 }
 
 func (w *writer) exchangeMatcher(ctx context.Context, sessionID string) (*exchangeMatcher, error) {
@@ -325,6 +313,7 @@ func (w *writer) exchangeMatcher(ctx context.Context, sessionID string) (*exchan
 		byNumber:     map[int]storedExchange{},
 		byTimestamps: map[timestampPair][]storedExchange{},
 		byContent:    map[[sha256.Size]byte][]storedExchange{},
+		byHuman:      map[humanPrompt][]storedExchange{},
 		claimed:      map[int64]exchangeIdentity{},
 		nextNumber:   1,
 	}
@@ -361,14 +350,11 @@ func (m *exchangeMatcher) occupied(number int) bool {
 }
 
 func (m *exchangeMatcher) occupy(id int64, number int, exchange parsers.Exchange) {
-	m.byNumber[number] = storedExchange{
+	m.addStored(storedExchange{
 		id: id, number: number, numberValid: true,
 		humanText: exchange.HumanText, agentText: exchange.AgentText,
 		humanTimestamp: exchange.HumanTimestamp, agentTimestamp: exchange.AgentTimestamp,
-	}
-	if number >= m.nextNumber {
-		m.nextNumber = number + 1
-	}
+	})
 }
 
 func (m *exchangeMatcher) freshNumber() int {
@@ -391,9 +377,13 @@ func (m *exchangeMatcher) addStored(stored storedExchange) {
 	if key, ok := contentAnchor(stored.humanText, stored.agentText); ok {
 		m.byContent[key] = append(m.byContent[key], stored)
 	}
+	if key, ok := humanPromptAnchor(stored.humanText, stored.humanTimestamp); ok {
+		m.byHuman[key] = append(m.byHuman[key], stored)
+	}
 }
 
-func (m *exchangeMatcher) match(number int, exchange parsers.Exchange) (storedExchange, exchangeMatch) {
+func (m *exchangeMatcher) match(number int, exchange parsers.Exchange,
+	historyFallback bool) (storedExchange, exchangeMatch) {
 	identity := incomingIdentity(number, exchange)
 	timestampsPresent := false
 	timestampsAmbiguous := false
@@ -438,6 +428,22 @@ func (m *exchangeMatcher) match(number int, exchange parsers.Exchange) (storedEx
 			return storedExchange{}, exchangeAmbiguous
 		}
 	}
+	if key, ok := humanPromptAnchor(exchange.HumanText, exchange.HumanTimestamp); ok {
+		stored := m.byHuman[key]
+		if !historyFallback {
+			stored = promptOnly(stored)
+		}
+		candidates, sameClaim, _ := m.unclaimed(stored, identity)
+		if sameClaim {
+			return storedExchange{}, exchangeAlreadyClaimed
+		}
+		if len(candidates) == 1 && compatibleContent(candidates[0], exchange) {
+			return candidates[0], exchangeMatched
+		}
+		if len(candidates) > 1 {
+			return storedExchange{}, exchangeAmbiguous
+		}
+	}
 	if !timestampsPresent {
 		if stored, ok := m.byNumber[number]; ok {
 			matched, conflicts := compareContent(stored, exchange)
@@ -460,6 +466,16 @@ func (m *exchangeMatcher) match(number int, exchange parsers.Exchange) (storedEx
 		return storedExchange{}, exchangeAmbiguous
 	}
 	return storedExchange{}, exchangeUnmatched
+}
+
+func promptOnly(candidates []storedExchange) []storedExchange {
+	matched := make([]storedExchange, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.agentText == "" && candidate.agentTimestamp == "" {
+			matched = append(matched, candidate)
+		}
+	}
+	return matched
 }
 
 // numberedOriginal recognizes the historical repair shape: one numbered row
@@ -574,6 +590,14 @@ func timestampAnchor(human, agent string) (timestampPair, bool) {
 		return timestampPair{}, false
 	}
 	return timestampPair{human: humanInstant, agent: agentInstant}, true
+}
+
+func humanPromptAnchor(text, timestamp string) (humanPrompt, bool) {
+	instant, ok := parseTimestampInstant(timestamp)
+	if strings.TrimSpace(text) == "" || !ok || !instant.present {
+		return humanPrompt{}, false
+	}
+	return humanPrompt{text: text, timestamp: instant}, true
 }
 
 func parseTimestampInstant(value string) (timestampInstant, bool) {
@@ -815,11 +839,14 @@ func (w *writer) exchange(ctx context.Context, sessionID string, number int,
 }
 
 func (w *writer) enrichExchange(ctx context.Context, sessionID string, stored storedExchange,
-	exchange parsers.Exchange) (int, error) {
+	exchange parsers.Exchange) (int, int, error) {
 	provenance := exchange.Provenance
 	_, err := w.tx.ExecContext(ctx, `
 		UPDATE exchanges SET
 		  agent_text = COALESCE(agent_text, ?),
+		  agent_timestamp = COALESCE(agent_timestamp, ?),
+		  response_latency_ms = COALESCE(response_latency_ms, ?),
+		  is_after_compaction = MAX(COALESCE(is_after_compaction, 0), ?),
 		  model = COALESCE(model, ?),
 		  provider = COALESCE(provider, ?),
 		  tokens_in = COALESCE(tokens_in, ?),
@@ -827,16 +854,17 @@ func (w *writer) enrichExchange(ctx context.Context, sessionID string, stored st
 		  tokens_reasoning = COALESCE(tokens_reasoning, ?),
 		  cost_usd = COALESCE(cost_usd, ?)
 		WHERE id = ? AND session_id = ?`,
-		nullIfEmpty(exchange.AgentText),
+		nullIfEmpty(exchange.AgentText), nullIfEmpty(exchange.AgentTimestamp),
+		nullInt(exchange.LatencyMS), boolToInt(exchange.IsAfterCompaction),
 		nullIfEmpty(provenance.Model), nullIfEmpty(provenance.Provider),
 		nullInt(provenance.TokensIn), nullInt(provenance.TokensOut),
 		nullInt(provenance.TokensReasoning), nullFloat(provenance.CostUSD),
 		stored.id, sessionID)
 	if err != nil {
-		return 0, fmt.Errorf("enrich exchange row %d of %s: %w", stored.id, sessionID, err)
+		return 0, 0, fmt.Errorf("enrich exchange row %d of %s: %w", stored.id, sessionID, err)
 	}
 	if !stored.numberValid {
-		return 0, nil
+		return 0, 0, nil
 	}
 	number := stored.number
 	inserted := 0
@@ -854,15 +882,35 @@ func (w *writer) enrichExchange(ctx context.Context, sessionID string, stored st
 			boolToInt(block.IsAfterCompaction), block.Text,
 			sessionID, number, block.Text)
 		if err != nil {
-			return inserted, fmt.Errorf("enrich a thinking block of %s/%d: %w", sessionID, number, err)
+			return inserted, 0, fmt.Errorf("enrich a thinking block of %s/%d: %w", sessionID, number, err)
 		}
 		affected, err := result.RowsAffected()
 		if err != nil {
-			return inserted, fmt.Errorf("count an enriched thinking block of %s/%d: %w", sessionID, number, err)
+			return inserted, 0, fmt.Errorf("count an enriched thinking block of %s/%d: %w", sessionID, number, err)
 		}
 		inserted += int(affected)
 	}
-	return inserted, nil
+	if stored.agentText != "" || stored.agentTimestamp != "" {
+		return inserted, 0, nil
+	}
+	tools, err := w.insertTools(ctx, sessionID, number, exchange.Tools)
+	return inserted, tools, err
+}
+
+func (w *writer) insertTools(ctx context.Context, sessionID string, number int,
+	tools []parsers.ToolUse) (int, error) {
+	for _, tool := range tools {
+		_, err := w.tx.ExecContext(ctx, `
+			INSERT INTO tool_uses
+			  (session_id, exchange_number, tool_name, tool_params_summary, had_error, error_message)
+			VALUES (?, ?, ?, ?, ?, ?)`,
+			sessionID, number, tool.Name, nullIfEmpty(tool.ParamsSummary),
+			boolToInt(tool.HadError), nullIfEmpty(tool.ErrorMessage))
+		if err != nil {
+			return 0, fmt.Errorf("insert a tool use of %s/%d: %w", sessionID, number, err)
+		}
+	}
+	return len(tools), nil
 }
 
 func (w *writer) children(ctx context.Context, sessionID string, number int,
@@ -879,18 +927,11 @@ func (w *writer) children(ctx context.Context, sessionID string, number int,
 			return 0, 0, fmt.Errorf("insert a thinking block of %s/%d: %w", sessionID, number, err)
 		}
 	}
-	for _, tool := range exchange.Tools {
-		_, err := w.tx.ExecContext(ctx, `
-			INSERT INTO tool_uses
-			  (session_id, exchange_number, tool_name, tool_params_summary, had_error, error_message)
-			VALUES (?, ?, ?, ?, ?, ?)`,
-			sessionID, number, tool.Name, nullIfEmpty(tool.ParamsSummary),
-			boolToInt(tool.HadError), nullIfEmpty(tool.ErrorMessage))
-		if err != nil {
-			return 0, 0, fmt.Errorf("insert a tool use of %s/%d: %w", sessionID, number, err)
-		}
+	tools, err := w.insertTools(ctx, sessionID, number, exchange.Tools)
+	if err != nil {
+		return 0, 0, err
 	}
-	return len(exchange.Thinking), len(exchange.Tools), nil
+	return len(exchange.Thinking), tools, nil
 }
 
 // sessionThinking writes a block that hangs off the session. Its natural key is
