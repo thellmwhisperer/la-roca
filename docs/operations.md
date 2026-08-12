@@ -47,7 +47,10 @@ retain at most 30 days. Each file is capped at 5 MiB and each stream keeps at
 most six files, so a busy installation cannot grow a stream beyond 30 MiB.
 Consumers should glob `<stream>-*.jsonl`; rotated segments have the same prefix.
 An individual record larger than the file cap is dropped under the same
-non-failing writer contract.
+non-failing writer contract. `roca eval` writes a dated `eval` stream with the
+same retention, rotation, and redaction, but under its own work directory
+instead of the data directory; [retrieval evaluation](evaluation.md) owns what
+that record contains.
 
 `executions` and `mcp-audit` share one top-level call contract. Surface-specific
 fields are `command` plus `flags` for CLI and `tool` for MCP:

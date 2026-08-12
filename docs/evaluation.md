@@ -76,6 +76,11 @@ and every generated or replayed statement still passes through the SELECT
 gate. Logs and any live-provider runtime files go only to `--work-dir`, never
 beside the personal database.
 
+A La Roca database is in WAL mode, and reading one strictly read-only needs its
+shared index beside the file. While another process is writing to it the open
+fails and says so: stop the writer, or copy the database into a directory this
+user can write and evaluate the copy.
+
 Live mode needs only the case file and its explicit provider/model. Replay mode
 also reads fixed SQL from a private sidecar beside the cases. For
 `/private/owner-cases.json`, name it `/private/owner-cases.plans.json` and use

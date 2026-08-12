@@ -40,3 +40,7 @@ fixtures (an external test seam, never a product import).
 - `skill` sits under `distribution`, not `provider`: its only consumer is the
   CLI and it needs `agentcfg`; placing it in provider would force a
   provider→distribution edge.
+- `internal/evaluation/` is the retrieval ruler ([retrieval
+  evaluation](evaluation.md)), not a fifth domain: it sits between `provider`
+  and `distribution`, builds on `store` and `provider/service`, and leaves
+  persisting its report to the CLI so it never imports `distribution`.
