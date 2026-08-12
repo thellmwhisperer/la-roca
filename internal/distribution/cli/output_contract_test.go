@@ -308,6 +308,13 @@ func TestQueryRefusalIsHonestUnderJSON(t *testing.T) {
 	}
 }
 
+func TestQueryRejectsAWhitespaceQuestionBeforeAnyModelWork(t *testing.T) {
+	fixtureInstallation(t)
+	if err := failingRoot(t, "query", " \t "); !strings.Contains(err.Error(), "question is empty") {
+		t.Fatalf("query error = %v", err)
+	}
+}
+
 func TestStoreHumanJSONAndError(t *testing.T) {
 	fixtureInstallation(t)
 

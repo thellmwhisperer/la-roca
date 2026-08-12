@@ -222,6 +222,9 @@ func (r *QueryResult) unresolved(andAlso string) {
 // query.
 func (s *Service) Query(ctx context.Context, req QueryRequest) (res QueryResult, err error) {
 	start := time.Now()
+	if err := query.ValidateQuestion(req.Question); err != nil {
+		return res, err
+	}
 	res = QueryResult{
 		Question:  req.Question,
 		Version:   s.opts.Version,

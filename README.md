@@ -201,7 +201,8 @@ roca exec "SELECT source_agent, COUNT(*) AS sessions
 `roca query` compiles your question into one checked `SELECT` and shows it.
 `--sql-only` compiles without executing, `--full` adds a prose reading of the
 rows, `roca exec` runs your own `SELECT` through the same read-only gate, and
-`--json` returns the complete machine envelope.
+`--json` returns the complete machine envelope. Questions must contain text and
+have a generous 1000-character cap on both CLI and MCP query surfaces.
 
 ## Three ways to use it
 

@@ -150,6 +150,16 @@ func TestTheSQLToolCompilesWithoutRunning(t *testing.T) {
 	assertNoStructuredEnvelope(t, result)
 }
 
+func TestQuestionGateIsSharedByBothMCPQuestionTools(t *testing.T) {
+	session := connect(t, seededServiceWithModel(t))
+	for _, tool := range []string{"roca_query", "roca_sql"} {
+		got := callToolExpectingError(t, session, tool, map[string]any{"query": " \n "})
+		if !strings.Contains(got, "question is empty") {
+			t.Errorf("%s error = %q", tool, got)
+		}
+	}
+}
+
 func TestTheExecToolRunsTheSameValidatedSelectAsTheService(t *testing.T) {
 	svc := seededService(t)
 	session := connect(t, svc)
