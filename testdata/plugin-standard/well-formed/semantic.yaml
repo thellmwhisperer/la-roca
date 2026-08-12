@@ -1,0 +1,11 @@
+version: 1
+description: Synthetic purchase receipts and their totals.
+questions:
+  - Which receipts were recorded?
+  - How much did a purchase cost?
+tables:
+  - name: receipts
+    description: One row per synthetic purchase receipt.
+    questions:
+      - Which receipts were recorded?
+    columns: [id, title, amount_cents]

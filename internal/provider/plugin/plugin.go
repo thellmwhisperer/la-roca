@@ -1,0 +1,430 @@
+// Package plugin discovers and validates the read-only databases that extend a
+// La Roca query without sharing its writable store.
+package plugin
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"sort"
+	"strings"
+	"unicode"
+
+	"github.com/thellmwhisperer/la-roca/internal/provider/query"
+	"github.com/thellmwhisperer/la-roca/internal/provider/query/sqlgate"
+	"gopkg.in/yaml.v3"
+	_ "modernc.org/sqlite"
+)
+
+const (
+	SemanticFilename = "semantic.yaml"
+	MaxAttached      = 10
+)
+
+type Semantic struct {
+	Version     int             `yaml:"version" json:"version"`
+	Description string          `yaml:"description" json:"description"`
+	Questions   []string        `yaml:"questions" json:"questions,omitempty"`
+	Custody     bool            `yaml:"custody" json:"custody"`
+	Tables      []SemanticTable `yaml:"tables" json:"tables"`
+}
+
+type SemanticTable struct {
+	Name        string   `yaml:"name" json:"name"`
+	Description string   `yaml:"description" json:"description"`
+	Questions   []string `yaml:"questions" json:"questions,omitempty"`
+	Columns     []string `yaml:"columns" json:"columns"`
+}
+
+type Descriptor struct {
+	Name      string   `json:"name"`
+	Directory string   `json:"-"`
+	Database  string   `json:"-"`
+	Schema    string   `json:"schema"`
+	Semantic  Semantic `json:"semantic"`
+	relevance int
+}
+
+type Table struct {
+	Name        string
+	Columns     []string
+	Description string
+	Questions   []string
+}
+
+type Database struct {
+	Descriptor
+	Tables []Table
+}
+
+func (d Database) ReadOnlyURI() string {
+	return databaseURI(d.Database)
+}
+
+func (d Descriptor) Source() string { return "plugin:" + d.Name }
+
+func Discover(root string) ([]Descriptor, []string) {
+	if strings.TrimSpace(root) == "" {
+		return nil, nil
+	}
+	entries, err := os.ReadDir(root)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, []string{fmt.Sprintf("plugins could not be discovered: %v", err)}
+	}
+
+	var found []Descriptor
+	var warnings []string
+	for _, entry := range entries {
+		if !entry.IsDir() || !validPluginName(entry.Name()) {
+			continue
+		}
+		directory := filepath.Join(root, entry.Name())
+		semantic, err := readSemantic(filepath.Join(directory, SemanticFilename))
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("plugin %s is unavailable: %v", entry.Name(), err))
+			continue
+		}
+		database, err := soleDatabase(directory)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("plugin %s is unavailable: %v", entry.Name(), err))
+			continue
+		}
+		found = append(found, Descriptor{
+			Name: entry.Name(), Directory: directory, Database: database,
+			Schema: schemaName(entry.Name()), Semantic: semantic,
+		})
+	}
+	slices.SortFunc(found, func(a, b Descriptor) int { return strings.Compare(a.Name, b.Name) })
+	disambiguateSchemas(found)
+	return found, warnings
+}
+
+func disambiguateSchemas(descriptors []Descriptor) {
+	counts := make(map[string]int, len(descriptors))
+	for _, descriptor := range descriptors {
+		counts[descriptor.Schema]++
+	}
+	for index := range descriptors {
+		if counts[descriptors[index].Schema] < 2 {
+			continue
+		}
+		digest := sha256.Sum256([]byte(descriptors[index].Name))
+		descriptors[index].Schema += fmt.Sprintf("_%x", digest[:4])
+	}
+}
+
+func readSemantic(path string) (Semantic, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return Semantic{}, fmt.Errorf("read %s: %w", SemanticFilename, err)
+	}
+	defer file.Close()
+	decoder := yaml.NewDecoder(file)
+	decoder.KnownFields(true)
+	var semantic Semantic
+	if err := decoder.Decode(&semantic); err != nil {
+		return Semantic{}, fmt.Errorf("parse %s: %w", SemanticFilename, err)
+	}
+	if err := semantic.valid(); err != nil {
+		return Semantic{}, err
+	}
+	return semantic, nil
+}
+
+func (s Semantic) valid() error {
+	if s.Version != 1 {
+		return fmt.Errorf("%s version is %d, want 1", SemanticFilename, s.Version)
+	}
+	if strings.TrimSpace(s.Description) == "" {
+		return fmt.Errorf("%s has no description", SemanticFilename)
+	}
+	if len(s.Tables) == 0 {
+		return fmt.Errorf("%s describes no tables", SemanticFilename)
+	}
+	servesQuestions := len(s.Questions) > 0
+	seen := map[string]bool{}
+	for _, table := range s.Tables {
+		if !validIdentifier(table.Name) || seen[table.Name] {
+			return fmt.Errorf("%s has an invalid or repeated table %q", SemanticFilename, table.Name)
+		}
+		seen[table.Name] = true
+		if strings.TrimSpace(table.Description) == "" || len(table.Columns) == 0 {
+			return fmt.Errorf("table %s needs a description and columns", table.Name)
+		}
+		servesQuestions = servesQuestions || len(table.Questions) > 0
+		columns := map[string]bool{}
+		for _, column := range table.Columns {
+			if !validIdentifier(column) || columns[column] {
+				return fmt.Errorf("table %s has an invalid or repeated column %q", table.Name, column)
+			}
+			columns[column] = true
+		}
+	}
+	if !servesQuestions {
+		return fmt.Errorf("%s declares no questions it serves", SemanticFilename)
+	}
+	return nil
+}
+
+func soleDatabase(directory string) (string, error) {
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return "", err
+	}
+	var databases []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		extension := strings.ToLower(filepath.Ext(entry.Name()))
+		if extension == ".db" || extension == ".sqlite" || extension == ".sqlite3" {
+			databases = append(databases, filepath.Join(directory, entry.Name()))
+		}
+	}
+	if len(databases) != 1 {
+		return "", fmt.Errorf("expected one .db or .sqlite database, found %d", len(databases))
+	}
+	return databases[0], nil
+}
+
+func Relevant(question string, candidates []Descriptor, limit int) ([]Descriptor, []Descriptor) {
+	if limit < 0 {
+		limit = 0
+	}
+	ranked := make([]Descriptor, 0, len(candidates))
+	for _, candidate := range candidates {
+		candidate.relevance = relevance(question, candidate)
+		if candidate.relevance > 0 {
+			ranked = append(ranked, candidate)
+		}
+	}
+	slices.SortStableFunc(ranked, func(a, b Descriptor) int {
+		if a.relevance != b.relevance {
+			return b.relevance - a.relevance
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
+	if len(ranked) <= limit {
+		return ranked, nil
+	}
+	return ranked[:limit], ranked[limit:]
+}
+
+func Referenced(statement string, candidates []Descriptor, limit int) ([]Descriptor, []Descriptor) {
+	type hit struct {
+		descriptor Descriptor
+		position   int
+	}
+	var hits []hit
+	for _, candidate := range candidates {
+		pattern := regexp.MustCompile(`(?i)(?:\b` + regexp.QuoteMeta(candidate.Schema) +
+			`\b|"` + regexp.QuoteMeta(candidate.Schema) + `")\s*\.`)
+		if location := pattern.FindStringIndex(statement); location != nil {
+			hits = append(hits, hit{candidate, location[0]})
+		}
+	}
+	sort.SliceStable(hits, func(i, j int) bool { return hits[i].position < hits[j].position })
+	referenced := make([]Descriptor, 0, len(hits))
+	for _, item := range hits {
+		referenced = append(referenced, item.descriptor)
+	}
+	if len(referenced) <= limit {
+		return referenced, nil
+	}
+	return referenced[:limit], referenced[limit:]
+}
+
+func relevance(question string, candidate Descriptor) int {
+	normalized := query.Normalize(question)
+	wanted := tokenSet(normalized)
+	if len(wanted) == 0 {
+		return 0
+	}
+	texts := []string{candidate.Name, candidate.Semantic.Description}
+	for _, table := range candidate.Semantic.Tables {
+		texts = append(texts, table.Name, table.Description)
+	}
+	score := 0
+	for _, declared := range candidate.Semantic.Questions {
+		phrase := query.Normalize(declared)
+		if phrase != "" && (normalized == phrase || strings.Contains(normalized, phrase)) {
+			score += 1000
+		}
+	}
+	for _, table := range candidate.Semantic.Tables {
+		for _, declared := range table.Questions {
+			phrase := query.Normalize(declared)
+			if phrase != "" && (normalized == phrase || strings.Contains(normalized, phrase)) {
+				score += 1000
+			}
+		}
+	}
+	seen := map[string]bool{}
+	for token := range tokenSet(strings.Join(texts, " ")) {
+		if wanted[token] && !seen[token] {
+			score += 10
+			seen[token] = true
+		}
+	}
+	if wanted[query.Normalize(candidate.Name)] {
+		score += 30
+	}
+	return score
+}
+
+func tokenSet(text string) map[string]bool {
+	tokens := map[string]bool{}
+	for _, token := range strings.Fields(query.Normalize(text)) {
+		if len([]rune(token)) >= 3 {
+			tokens[token] = true
+		}
+	}
+	return tokens
+}
+
+func Validate(ctx context.Context, descriptor Descriptor) (Database, error) {
+	db, err := sql.Open("sqlite", databaseURI(descriptor.Database))
+	if err != nil {
+		return Database{}, fmt.Errorf("open plugin %s read-only: %w", descriptor.Name, err)
+	}
+	defer db.Close()
+	if err := db.PingContext(ctx); err != nil {
+		return Database{}, fmt.Errorf("open plugin %s read-only: %w", descriptor.Name, err)
+	}
+
+	actual, err := inspectTables(ctx, db)
+	if err != nil {
+		return Database{}, fmt.Errorf("inspect plugin %s: %w", descriptor.Name, err)
+	}
+	declared := make(map[string]SemanticTable, len(descriptor.Semantic.Tables))
+	for _, table := range descriptor.Semantic.Tables {
+		declared[table.Name] = table
+	}
+	for name, columns := range actual {
+		table, ok := declared[name]
+		if !ok {
+			return Database{}, fmt.Errorf("semantic layer omits database table %s", name)
+		}
+		if !slices.Equal(columns, table.Columns) {
+			return Database{}, fmt.Errorf("semantic layer columns for %s are %v but the database has %v",
+				name, table.Columns, columns)
+		}
+	}
+	for name := range declared {
+		if _, ok := actual[name]; !ok {
+			return Database{}, fmt.Errorf("semantic layer describes missing database table %s", name)
+		}
+	}
+
+	tables := make([]Table, 0, len(descriptor.Semantic.Tables))
+	for _, table := range descriptor.Semantic.Tables {
+		if sqlgate.IsHiddenTable(table.Name) {
+			continue
+		}
+		tables = append(tables, Table{
+			Name: table.Name, Columns: slices.Clone(table.Columns),
+			Description: table.Description, Questions: slices.Clone(table.Questions),
+		})
+	}
+	return Database{Descriptor: descriptor, Tables: tables}, nil
+}
+
+func databaseURI(path string) string {
+	uri := url.URL{Scheme: "file", Path: filepath.ToSlash(path),
+		RawQuery: url.Values{"mode": {"ro"}}.Encode()}
+	return uri.String()
+}
+
+func inspectTables(ctx context.Context, db *sql.DB) (map[string][]string, error) {
+	rows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_schema
+		WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	actual := make(map[string][]string, len(names))
+	for _, name := range names {
+		columns, err := db.QueryContext(ctx, "PRAGMA table_info("+quoteIdentifier(name)+")")
+		if err != nil {
+			return nil, err
+		}
+		for columns.Next() {
+			var cid, notNull, primaryKey int
+			var column, kind string
+			var defaultValue any
+			if err := columns.Scan(&cid, &column, &kind, &notNull, &defaultValue, &primaryKey); err != nil {
+				columns.Close()
+				return nil, err
+			}
+			actual[name] = append(actual[name], column)
+		}
+		if err := columns.Close(); err != nil {
+			return nil, err
+		}
+	}
+	return actual, nil
+}
+
+func schemaName(name string) string {
+	var b strings.Builder
+	b.WriteString("plugin_")
+	for _, char := range name {
+		if unicode.IsLetter(char) || unicode.IsDigit(char) || char == '_' {
+			b.WriteRune(char)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
+}
+
+func validPluginName(name string) bool {
+	if name == "" || name == "." || name == ".." {
+		return false
+	}
+	for _, char := range name {
+		if !unicode.IsLetter(char) && !unicode.IsDigit(char) && !strings.ContainsRune("-_.", char) {
+			return false
+		}
+	}
+	return true
+}
+
+func validIdentifier(name string) bool {
+	if name == "" {
+		return false
+	}
+	for index, char := range name {
+		if index == 0 && !unicode.IsLetter(char) && char != '_' {
+			return false
+		}
+		if index > 0 && !unicode.IsLetter(char) && !unicode.IsDigit(char) && char != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+func quoteIdentifier(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+}
