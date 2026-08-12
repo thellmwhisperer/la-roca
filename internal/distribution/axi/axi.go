@@ -260,29 +260,17 @@ func singleLine(text string) string {
 	return strings.Join(strings.Fields(strings.ReplaceAll(text, "\n", " ")), " ")
 }
 
-// excerpt clips a human field around its longest visible search term. It never
-// changes the row itself, so the structured envelope continues to carry the
-// complete text.
+// excerpt clips a human field to the width of a cell, keeping its leading
+// subject as well as its longest visible search term under the same policy the
+// stored row is clipped with. It never changes the row itself, so the
+// structured envelope continues to carry the complete text.
 func excerpt(text, terms string, width int) string {
 	text = singleLine(text)
-	runes := []rune(text)
-	if len(runes) <= width {
-		return text
-	}
 	position, matched := matchPosition(text, terms)
 	if position < 0 {
-		return trim(text, width)
+		return service.Excerpt(text, width, -1, -1)
 	}
-	start := max(0, position-(width-matched)/2)
-	start = min(start, len(runes)-width)
-	visible := runes[start : start+width]
-	if start > 0 {
-		visible[0] = '…'
-	}
-	if start+width < len(runes) {
-		visible[len(visible)-1] = '…'
-	}
-	return string(visible)
+	return service.Excerpt(text, width, position, position+matched)
 }
 
 func matchPosition(text, terms string) (int, int) {

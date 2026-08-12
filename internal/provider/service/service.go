@@ -449,9 +449,20 @@ func (s *Service) syncLayers(ctx context.Context) error {
 }
 
 // truncate clips a text to the requested budget while keeping both the leading
-// subject and the search match. When those segments do not fit together, the
-// ellipsis sits between them instead of silently replacing the subject.
+// subject and the search match.
 func truncate(text string, budget int, term string) string {
+	pos, matchEnd := matchSpan(text, term)
+	return Excerpt(text, budget, pos, matchEnd)
+}
+
+// Excerpt clips a text to the requested budget while keeping both the leading
+// subject and the match running from matchStart to matchEnd in runes, with a
+// negative matchStart for a text that carries no match. When those segments do
+// not fit together, the ellipsis sits between them instead of silently
+// replacing the subject, so no row can be read as being about whoever the match
+// names. This is the single owner of that policy: the stored envelope and the
+// rendered preview clip the same way.
+func Excerpt(text string, budget, matchStart, matchEnd int) string {
 	if budget <= 0 {
 		budget = DefaultMaxChars
 	}
@@ -465,14 +476,13 @@ func truncate(text string, budget int, term string) string {
 	if budget < 4 {
 		return string(runes[:budget-1]) + "…"
 	}
-	pos, matchEnd := matchSpan(text, term)
-	if pos < 0 || matchEnd <= budget-1 {
+	if matchStart < 0 || matchEnd <= budget-1 {
 		return string(runes[:budget-1]) + "…"
 	}
 
 	head := max(1, (budget-2)/2)
 	suffixBudget := budget - head - 1
-	start := pos
+	start := matchStart
 	if start+suffixBudget >= len(runes) {
 		start = max(head, len(runes)-suffixBudget)
 	}
