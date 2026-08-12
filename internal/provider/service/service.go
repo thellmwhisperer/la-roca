@@ -146,18 +146,19 @@ type InitResult struct {
 	// ConfigPath is where this installation reads its settings from, whether or
 	// not the file is there. An operator whose configuration is being ignored
 	// needs to know which file the product looked at before they edit another.
-	ConfigPath string         `json:"config_path"`
-	Database   string         `json:"database"`
-	Verdict    string         `json:"verdict"`
-	Structures int            `json:"schema_structures"`
-	Orphans    []string       `json:"orphans,omitempty"`
-	Repairs    []string       `json:"repairs,omitempty"`
-	BackupPath string         `json:"-"`
-	Layers     int            `json:"layers"`
-	Bytes      int64          `json:"database_bytes"`
-	Rows       ingest.Tables  `json:"rows"`
-	Bedrock    *Bedrock       `json:"bedrock"`
-	Search     *search.Report `json:"search_index,omitempty"`
+	ConfigPath   string            `json:"config_path"`
+	Database     string            `json:"database"`
+	Verdict      string            `json:"verdict"`
+	Structures   int               `json:"schema_structures"`
+	Orphans      []string          `json:"orphans,omitempty"`
+	Repairs      []string          `json:"repairs,omitempty"`
+	DatabaseDiet *store.DietReport `json:"database_diet,omitempty"`
+	BackupPath   string            `json:"-"`
+	Layers       int               `json:"layers"`
+	Bytes        int64             `json:"database_bytes"`
+	Rows         ingest.Tables     `json:"rows"`
+	Bedrock      *Bedrock          `json:"bedrock"`
+	Search       *search.Report    `json:"search_index,omitempty"`
 	// Model and Ingest are the rest of the bootstrap: whether a model is going
 	// to answer, and what the first read of the disk found. Neither can fail
 	// the command, and both report.
@@ -258,6 +259,7 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 		Structures:            adoption.RequiredStructures,
 		Orphans:               adoption.Orphans,
 		Repairs:               adoption.Repairs,
+		DatabaseDiet:          adoption.Diet,
 		BackupPath:            adoption.BackupPath,
 		Layers:                len(s.registry.Layers),
 		Bytes:                 bytes,

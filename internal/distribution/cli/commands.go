@@ -165,6 +165,11 @@ func initCommand(env *cliEnv) *cobra.Command {
 			} else {
 				env.print("  schema: %s required structures verified", axi.Number(int64(result.Structures)))
 			}
+			if diet := result.DatabaseDiet; diet != nil {
+				env.print("  database diet: %s -> %s bytes · embeddings=%t · indexes=%s · vacuum=%t",
+					axi.Number(diet.BytesBefore), axi.Number(diet.BytesAfter), diet.EmbeddingsDropped,
+					axi.Number(int64(diet.EmbeddingIndexesDropped)), diet.Vacuumed)
+			}
 			if len(result.Orphans) > 0 {
 				env.print("  tables outside v1, kept intact: %s",
 					strings.Join(result.Orphans, ", "))

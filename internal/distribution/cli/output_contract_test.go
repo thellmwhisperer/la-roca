@@ -21,6 +21,15 @@ const (
 
 func contractBuild() Build { return Build{Version: contractVersion, Commit: contractSHA} }
 
+func initializedDatabase(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	isolateRuntimeDirs(t, home)
+	dbPath := filepath.Join(home, ".roca", "roca.db")
+	runRoot(t, contractBuild(), "init", "--db-path", dbPath)
+	return dbPath
+}
+
 // mustJSON parses a command's output as a JSON object, failing the test with the
 // raw output when it is not. Every --json contract does this parse, so it lives
 // once instead of being re-typed until two copies drift apart.
@@ -165,10 +174,7 @@ func TestDoctorNarratesAndAnswersJSON(t *testing.T) {
 }
 
 func TestInitAndDoctorNarrateBedrockAndExposeItAsJSON(t *testing.T) {
-	home := t.TempDir()
-	isolateRuntimeDirs(t, home)
-	dbPath := filepath.Join(home, ".roca", "roca.db")
-	runRoot(t, contractBuild(), "init", "--db-path", dbPath)
+	dbPath := initializedDatabase(t)
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatal(err)
@@ -211,6 +217,30 @@ func TestInitAndDoctorTellTheTruthWhenTheCorpusIsEmpty(t *testing.T) {
 		if doc["bedrock"] != nil {
 			t.Errorf("%s empty bedrock JSON = %#v, want null", command, doc["bedrock"])
 		}
+	}
+}
+
+func TestInitReportsTheMeasuredEmbeddingsMigration(t *testing.T) {
+	dbPath := initializedDatabase(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE embeddings
+		(id INTEGER PRIMARY KEY, vector BLOB);
+		CREATE INDEX idx_embeddings_model ON embeddings(id);
+		INSERT INTO embeddings(vector) VALUES (zeroblob(1048576))`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	doc := mustJSON(t, runRoot(t, contractBuild(), "init", "--db-path", dbPath, "--json"))
+	diet, _ := doc["database_diet"].(map[string]any)
+	if diet["embeddings_dropped"] != true || diet["vacuumed"] != true ||
+		diet["bytes_before"].(float64) <= diet["bytes_after"].(float64) {
+		t.Errorf("database_diet = %#v", diet)
 	}
 }
 

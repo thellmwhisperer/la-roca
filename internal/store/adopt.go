@@ -61,9 +61,10 @@ type Report struct {
 // Adoption is what Adopt did with the database.
 type Adoption struct {
 	Report
-	Adopted    bool     `json:"adopted"`
-	Repairs    []string `json:"repairs,omitempty"`
-	BackupPath string   `json:"backup_path,omitempty"`
+	Adopted    bool        `json:"adopted"`
+	Repairs    []string    `json:"repairs,omitempty"`
+	BackupPath string      `json:"backup_path,omitempty"`
+	Diet       *DietReport `json:"database_diet,omitempty"`
 }
 
 // Inspect classifies the database by structure, never by the text of its create
@@ -101,11 +102,17 @@ func Adopt(ctx context.Context, db *DB, backupDir string) (Adoption, error) {
 		return Adoption{}, err
 	}
 	adoption := Adoption{Report: report}
+	diet, err := inspectDiet(ctx, db)
+	if err != nil {
+		return adoption, err
+	}
 
 	switch report.Verdict {
 	case VerdictCurrent:
-		adoption.Adopted = true
-		return adoption, nil
+		if diet == nil {
+			adoption.Adopted = true
+			return adoption, nil
+		}
 	case VerdictForeign, VerdictIncompatible:
 		return adoption, fmt.Errorf("the database %q is not adopted: %s", db.path, report.Reason)
 	}
@@ -120,6 +127,10 @@ func Adopt(ctx context.Context, db *DB, backupDir string) (Adoption, error) {
 
 	repairs, err := repair(ctx, db, report)
 	adoption.Repairs = repairs
+	if err != nil {
+		return adoption, err
+	}
+	adoption.Diet, err = applyDiet(ctx, db, diet)
 	if err != nil {
 		return adoption, err
 	}
