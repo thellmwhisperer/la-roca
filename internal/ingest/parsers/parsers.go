@@ -34,6 +34,8 @@ const (
 	KindCoworkAudit Kind = "cowork_audit"
 	// KindCodexSession is a Codex rollout.
 	KindCodexSession Kind = "codex_session"
+	// KindCodexHistory is Codex's global prompt history.
+	KindCodexHistory Kind = "codex_history"
 	// KindCodexFile is a Codex memory or rule.
 	KindCodexFile Kind = "codex_file"
 	// KindCodexMemoryAggregate is Codex's merged raw memory export. Unlike an
@@ -120,6 +122,9 @@ type Session struct {
 	// artefact is a snapshot; re-parsing a grown transcript is not, because
 	// there the identity fields only fill NULLs.
 	Snapshot bool
+	// HistoryFallback marks the prompt-only history Codex kept for legacy
+	// sessions whose rollout contains metadata but no conversation.
+	HistoryFallback bool
 	// ParentID is the session that spawned this one, when the artefact declares
 	// it.
 	ParentID string
@@ -301,10 +306,13 @@ type Memory struct {
 // decodes it. The two database kinds are absent because internal/ingest reads
 // them itself, and a kind with no entry here is a refusal by name.
 var byKind = map[Kind]func([]byte, FileMeta) (Records, error){
-	KindClaudeSession:        ParseClaudeSession,
-	KindCoworkAudit:          ParseCoworkAudit,
-	KindSessionMetadata:      ParseSessionMetadata,
-	KindCodexSession:         ParseCodexSession,
+	KindClaudeSession:   ParseClaudeSession,
+	KindCoworkAudit:     ParseCoworkAudit,
+	KindSessionMetadata: ParseSessionMetadata,
+	KindCodexSession:    ParseCodexSession,
+	KindCodexHistory: func(content []byte, meta FileMeta) (Records, error) {
+		return parseCodexHistory(content, meta), nil
+	},
 	KindSubagent:             ParseSubagent,
 	KindPiSession:            ParsePiSession,
 	KindClaudeMemory:         ParseClaudeMemory,
