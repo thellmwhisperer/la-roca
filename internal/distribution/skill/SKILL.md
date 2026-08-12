@@ -78,7 +78,7 @@ the gate. Install them with `roca mcp install <runtime>`.
 | Past work / people / "have we…" | `roca query "<question>"` |
 | Programmatic parse | add `--json` |
 | Inspect SQL first | `roca query --sql-only` then `roca exec` |
-| Durable memory | `roca store --layer … --content …` |
+| Durable memory | `roca store --layer … --content … --agent … --model …` |
 | No shell | the MCP tools above |
 
 ## Operating craft
@@ -122,7 +122,7 @@ the gate. Install them with `roca mcp install <runtime>`.
 ```bash
 roca query "who is Ana"
 roca query "what feedback do we have" --json
-roca store --layer handoff --content "the ingest update left the gate in place" --origin agent
+roca store --layer handoff --content "the ingest update left the gate in place" --origin agent --agent claude --model sonnet
 ```
 
 ## Bad

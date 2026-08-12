@@ -316,8 +316,11 @@ roca skill install claude  # ship the usage craft into a runtime's skills
 roca hooks install claude  # sign Claude Code shell writes before they run
 ```
 
-Supported integration targets are Codex, Claude, OpenCode, Hermes, and Pi.
-Configuration edits preserve unrelated bytes and create a recovery backup.
+Supported integration targets are Codex, Claude, OpenCode, Hermes, and Pi; the
+signing hook ships for Claude only, and
+[Memory authorship](docs/operations.md#memory-authorship) explains what it
+stamps. Configuration edits preserve unrelated bytes and create a recovery
+backup.
 
 
 ## Going deeper

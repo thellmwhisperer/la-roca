@@ -28,7 +28,9 @@ surfaces:
 - `roca store` for writes. Use the documented layers and pass
   `--origin plugin:<name>` so the plugin's records remain attributable and can
   be selected or purged by origin. Plugin names may contain letters, digits,
-  hyphens, underscores, and dots.
+  hyphens, underscores, and dots. Pass `--agent` and `--model` as well, or the
+  write is stored as an unknown author: see
+  [Memory authorship](operations.md#memory-authorship).
 - `roca mcp serve` when an MCP client is the more natural integration surface.
 
 There is no sandbox. A plugin is an executable chosen from your `PATH` and
