@@ -303,6 +303,7 @@ func TestEveryDeclaredDegradedModeIsAFailure(t *testing.T) {
 		service.DegradedLLMError,
 		service.DegradedInvalidSQL,
 		service.DegradedExecution,
+		service.DegradedTimeout,
 	} {
 		if !service.IsDegradedFailure(mode) {
 			t.Errorf("degraded mode %q is not classified as a failure", mode)
@@ -788,6 +789,33 @@ func TestACancelledCallerBuysNoCorrectionAttempt(t *testing.T) {
 	}
 	if !strings.Contains(res.Message, context.Canceled.Error()) {
 		t.Fatalf("the degraded reason does not name the cancellation: %q", res.Message)
+	}
+}
+
+func TestAModelQueryThatExceedsTheCostBudgetHasItsOwnDegradedReason(t *testing.T) {
+	model := answering("ollama", `
+		WITH RECURSIVE costly(n) AS (
+			SELECT 1 UNION ALL SELECT n + 1 FROM costly WHERE n < 100000000
+		) SELECT sum(n) FROM costly`)
+	paths := freshPaths(t)
+	svc := initialized(t, paths, func(options *service.Options) {
+		options.Providers = cascadeOf(model)
+		options.QueryTimeout = time.Millisecond
+	})
+	seedTheUsualMemories(t, svc)
+
+	res, err := svc.Query(t.Context(), service.QueryRequest{Question: theQuestionWithAMatch})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model.requests != 1 {
+		t.Fatalf("%d model requests: a timed-out statement was retried", model.requests)
+	}
+	if res.Degraded != service.DegradedTimeout || res.RetriedSQL || res.RetryType != "" {
+		t.Fatalf("timeout attribution = %+v", res)
+	}
+	if !strings.Contains(res.Message, "time limit") {
+		t.Fatalf("the degraded answer does not name the time limit: %q", res.Message)
 	}
 }
 

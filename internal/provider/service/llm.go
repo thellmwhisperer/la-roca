@@ -29,6 +29,8 @@ const (
 	DegradedInvalidSQL = "invalid_sql"
 	// DegradedExecution: the SQL passed the gate and blew up when it ran.
 	DegradedExecution = "sql_execution_error"
+	// DegradedTimeout: the SQL passed the gate but exceeded its configured work budget.
+	DegradedTimeout = "sql_execution_timeout"
 )
 
 // IsDegradedFailure is the one success contract shared by CLI exit codes and
@@ -36,7 +38,7 @@ const (
 // the model-backed operation failed.
 func IsDegradedFailure(mode string) bool {
 	return mode == DegradedUnavailable || mode == DegradedLLMError ||
-		mode == DegradedInvalidSQL || mode == DegradedExecution
+		mode == DegradedInvalidSQL || mode == DegradedExecution || mode == DegradedTimeout
 }
 
 // retriesOnSQLFailure is how many extra attempts a failed query buys.
@@ -192,6 +194,9 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 			columns, rows, failure = s.execute(ctx, validated, term, req.MaxChars)
 			res.ExecutionMS += time.Since(executionStart).Milliseconds()
 			if failure != nil {
+				if errors.Is(failure, errQueryTimeout) {
+					return s.rescue(ctx, req, res, DegradedTimeout, failure.Error()), nil
+				}
 				retryType = RetryExecutionError
 				failure = exactEngineError(failure)
 			}

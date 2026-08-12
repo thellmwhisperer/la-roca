@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -38,6 +39,8 @@ const (
 	RetryGateRejection  = "gate_rejection"
 	RetryExecutionError = "execution_error"
 )
+
+var errQueryTimeout = errors.New("the validated SQL exceeded the time limit")
 
 // QueryRequest is a question and the budget it is answered with.
 type QueryRequest struct {
@@ -311,7 +314,11 @@ func (s *Service) Exec(ctx context.Context, req ExecRequest) (ExecResult, error)
 	}
 	columns, rows, err := s.execute(ctx, validated, "", req.MaxChars)
 	if err != nil {
-		return ExecResult{}, logfile.Typed(err, DegradedExecution)
+		degraded := DegradedExecution
+		if errors.Is(err, errQueryTimeout) {
+			degraded = DegradedTimeout
+		}
+		return ExecResult{}, logfile.Typed(err, degraded)
 	}
 	return ExecResult{
 		SQL:       validated,
@@ -339,10 +346,21 @@ func (s *Service) execute(ctx context.Context, stmt, term string, maxChars int) 
 	}
 	rows, err := reader.QueryContext(queryCtx, stmt)
 	if err != nil {
-		return nil, nil, fmt.Errorf("run the validated query: %w", err)
+		return nil, nil, executionError(ctx, queryCtx, timeout, err)
 	}
 	defer rows.Close()
-	return scanRows(rows, maxChars, term)
+	columns, result, err := scanRows(rows, maxChars, term)
+	if err != nil {
+		return nil, nil, executionError(ctx, queryCtx, timeout, err)
+	}
+	return columns, result, nil
+}
+
+func executionError(parent, queryCtx context.Context, timeout time.Duration, err error) error {
+	if parent.Err() == nil && errors.Is(queryCtx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("%w after %s", errQueryTimeout, timeout)
+	}
+	return fmt.Errorf("run the validated query: %w", err)
 }
 
 // scanRows turns any result set into its column names and its rows of named
