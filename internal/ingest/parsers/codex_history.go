@@ -1,7 +1,9 @@
 package parsers
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"strings"
 )
 
@@ -47,8 +49,11 @@ func parseCodexHistory(content []byte, meta FileMeta) Records {
 		}
 		session := &records.Sessions[at]
 		timestamp := ISOFromEpochSeconds(*line.Timestamp)
+		identity, _ := json.Marshal([3]string{line.SessionID, timestamp, line.Text})
 		session.Exchanges = append(session.Exchanges, Exchange{
-			Number: len(session.Exchanges) + 1, HumanText: line.Text,
+			Number:         len(session.Exchanges) + 1,
+			SourceID:       "codex-history:" + fmt.Sprintf("%x", sha256.Sum256(identity)),
+			HumanText:      line.Text,
 			HumanTimestamp: timestamp,
 		})
 		if session.StartedAt == "" || timestamp < session.StartedAt {

@@ -49,8 +49,8 @@ func TestCodexFingerprintCarriesTheHistoryParserRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(fingerprint, ":parser:codex-history-v1") {
-		t.Fatalf("Codex fingerprint = %q, want the v1 history parser revision", fingerprint)
+	if !strings.HasSuffix(fingerprint, ":parser:codex-history-v2") {
+		t.Fatalf("Codex fingerprint = %q, want the v2 history parser revision", fingerprint)
 	}
 }
 

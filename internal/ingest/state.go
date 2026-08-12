@@ -99,7 +99,7 @@ var parserVersions = map[parsers.Kind]string{
 	parsers.KindCoworkAudit:             "cowork-audit-v6",
 	parsers.KindSubagent:                "subagent-v6",
 	parsers.KindCodexSession:            "codex-session-v7",
-	parsers.KindCodexHistory:            "codex-history-v1",
+	parsers.KindCodexHistory:            "codex-history-v2",
 	parsers.KindPiSession:               "pi-session-v6",
 	parsers.KindOpenCodeDB:              "opencode-v6",
 	parsers.KindHermesDB:                "hermes-v6",
