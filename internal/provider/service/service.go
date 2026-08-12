@@ -125,8 +125,13 @@ func (s *Service) ensureSchema(ctx context.Context) error {
 		if report.Verdict != store.VerdictCurrent {
 			return fmt.Errorf("the database schema requires adoption, but La Roca is in read-only mode: %s", report.Reason)
 		}
-	} else if _, err := store.Adopt(ctx, s.db, s.opts.BackupDir); err != nil {
-		return err
+	} else {
+		if _, err := store.Adopt(ctx, s.db, s.opts.BackupDir); err != nil {
+			return err
+		}
+		if _, err := search.EnsureTokenizer(ctx, s.db, s.opts.Progress); err != nil {
+			return err
+		}
 	}
 	s.schemaOK = true
 	return nil

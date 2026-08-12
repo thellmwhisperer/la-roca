@@ -9,6 +9,51 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
+func TestFirstOrdinaryCallUpgradesTheTokenizerWithProgress(t *testing.T) {
+	paths := freshPaths(t)
+	old := serviceOn(t, paths)
+	if _, err := old.Init(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	db := old.DB().SQL()
+	if _, err := db.Exec(`INSERT INTO memories (layer, content, origin)
+		VALUES ('project', 'qué pasó during the synthetic year', 'agent')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO memories_fts(memories_fts) VALUES ('delete-all')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM search_state
+		WHERE key = 'lexical_index' OR key LIKE 'lexical_index:%';
+		UPDATE search_state SET value = 'rebuilding-unicode61-remove-diacritics-2'
+		WHERE key = 'lexical_tokenizer'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := old.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var progress []string
+	upgraded := serviceOn(t, paths, func(options *service.Options) {
+		options.Progress = func(line string) { progress = append(progress, line) }
+	})
+	if _, err := upgraded.Health(t.Context(), service.HealthRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	if !containsProgress(progress, "rebuilding for accent-insensitive search") {
+		t.Fatalf("upgrade progress is missing: %v", progress)
+	}
+	var matches int
+	if err := upgraded.DB().SQL().QueryRow(
+		`SELECT COUNT(*) FROM memories_fts WHERE memories_fts MATCH '"que" AND "paso"'`,
+	).Scan(&matches); err != nil {
+		t.Fatal(err)
+	}
+	if matches != 1 {
+		t.Errorf("matches after automatic upgrade = %d, want 1", matches)
+	}
+}
+
 func TestIngestNarratesEachSourceAndItsDelta(t *testing.T) {
 	var progress []string
 	home := t.TempDir()

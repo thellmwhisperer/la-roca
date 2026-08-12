@@ -33,7 +33,7 @@ func (s *Service) Index(ctx context.Context) (search.Report, error) {
 	if err := s.ensureSchema(ctx); err != nil {
 		return search.Report{}, err
 	}
-	return search.Index(ctx, s.db)
+	return search.Index(ctx, s.db, s.opts.Progress)
 }
 
 // Ingest reads every source of the matrix once and leaves what it wrote
