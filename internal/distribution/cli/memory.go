@@ -41,7 +41,7 @@ func storeCommand(env *cliEnv) *cobra.Command {
 					return fmt.Errorf("--metadata is not a JSON object: it is null")
 				}
 			}
-			req.Authorship = resolveCLIAuthorship(agent, model, currentAuthorshipEvidence())
+			req.Authorship = resolveCLIAuthorship(agent, model, currentAuthorshipEvidence)
 			result, err := svc.Store(cmd.Context(), req)
 			if err != nil {
 				return err
@@ -77,13 +77,21 @@ type authorshipEvidence struct {
 	Processes   []authorshipProcess
 }
 
-func resolveCLIAuthorship(agent, model string, evidence authorshipEvidence) service.Authorship {
-	detectedAgent, detectedModel := detectCLIAuthorship(evidence)
+// resolveCLIAuthorship reads the evidence only when it can still change the
+// answer. The documented path passes both flags, and gathering process ancestry
+// to discard it costs a subprocess per generation of the tree on every write.
+func resolveCLIAuthorship(agent, model string, evidence func() authorshipEvidence) service.Authorship {
 	resolvedAgent := strings.TrimSpace(agent)
+	resolvedModel := strings.TrimSpace(model)
+	if resolvedAgent != "" && resolvedModel != "" {
+		return service.Authorship{
+			Agent: resolvedAgent, Model: resolvedModel, Surface: service.SurfaceCLI,
+		}
+	}
+	detectedAgent, detectedModel := detectCLIAuthorship(evidence())
 	if resolvedAgent == "" {
 		resolvedAgent = detectedAgent
 	}
-	resolvedModel := strings.TrimSpace(model)
 	if resolvedModel == "" && resolvedAgent == detectedAgent {
 		resolvedModel = detectedModel
 	}

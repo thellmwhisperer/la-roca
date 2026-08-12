@@ -11,11 +11,23 @@ connected client's handshake `clientInfo`; the CLI's primary path is explicit
 `roca store --agent <harness> --model <model>`. Best-effort CLI environment and
 process detection accepts only one unambiguous harness and otherwise records
 `unknown`. Existing rows remain NULL and are rendered as unknown; La Roca never
-retroactively guesses.
+retroactively guesses. The three names are reserved: `agent`, `model` and
+`surface` in `--metadata` are refused with the flags to use instead, so no tag
+is ever silently dropped.
 
 `roca hooks install claude` adds a Claude Code `PreToolUse` hook for Bash. It
 signs `roca store` commands with `--agent claude` and the latest model recorded
 in Claude's own transcript, or `unknown` when that direct evidence is absent.
+The entry launches this executable's absolute path, overridable with
+`--executable` or `ROCA_BIN`, because Claude runs hooks in a non-interactive
+shell that does not read an interactive `PATH`. Reinstalling repoints an entry
+whose binary moved instead of adding a second one.
+
+`roca hooks uninstall claude` withdraws that entry and leaves every other
+setting, and every hook that is not La Roca's, exactly as it was. `roca
+uninstall` does the same withdrawal before it unlinks the binary, so no hook
+survives calling a command that is gone.
+
 Other harnesses can use the same client-side pattern: intercept the shell tool,
 read identity only from a harness-owned session source, and inject both flags;
 no other hook installer ships yet.

@@ -111,7 +111,8 @@ the gate. Install them with `roca mcp install <runtime>`.
   tools are the frictionless path, not a fallback.
 - Authorship is automatic from MCP `clientInfo`. On CLI, always pass
   `--agent <harness> --model <model>`; environment and ancestry detection are a
-  conservative bonus and ambiguous evidence is stored as `unknown`.
+  conservative bonus and ambiguous evidence is stored as `unknown`. `agent`,
+  `model` and `surface` are refused inside metadata: they are the identity card.
 - Use the layer filter deliberately: `handoff` for continuity and
   `feedback`/`pattern` for distilled lessons. Search coordination layers
   explicitly when tracing origins; ordinary knowledge search can skip them.

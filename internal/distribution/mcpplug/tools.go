@@ -100,7 +100,7 @@ type storeArgs struct {
 	Project    string         `json:"project,omitempty" jsonschema:"project scope; omit for global"`
 	Status     string         `json:"status,omitempty" jsonschema:"active, pending or resolved,default=active"`
 	Supersedes int64          `json:"supersedes,omitempty" jsonschema:"id of the memory this one replaces"`
-	Metadata   map[string]any `json:"metadata,omitempty" jsonschema:"structured tags"`
+	Metadata   map[string]any `json:"metadata,omitempty" jsonschema:"structured tags; agent, model and surface belong to the identity card and are refused here"`
 }
 
 func (a storeArgs) request(authorship service.Authorship) service.StoreRequest {

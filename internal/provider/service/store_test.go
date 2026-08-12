@@ -93,7 +93,6 @@ func TestEveryNewMemoryCarriesSystemStampedAuthorship(t *testing.T) {
 			result, err := svc.Store(t.Context(), service.StoreRequest{
 				Layer: "discovery", Content: "synthetic " + test.name,
 				Authorship: test.authorship,
-				Metadata:   map[string]any{"surface": "forged", "agent": "forged", "model": "forged"},
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -107,17 +106,11 @@ func TestEveryNewMemoryCarriesSystemStampedAuthorship(t *testing.T) {
 			if got != test.want {
 				t.Errorf("stored authorship = %+v, want %+v", got, test.want)
 			}
-			metadata := metadataOf(t, svc, result.ID)
-			for _, key := range []string{"surface", "agent", "model"} {
-				if _, exists := metadata[key]; exists {
-					t.Errorf("caller forged reserved metadata key %q: %v", key, metadata)
-				}
-			}
 		})
 	}
 }
 
-func TestStoreKeepsTheMetadataTheCallerSentAlongsideTheAudit(t *testing.T) {
+func TestStoreKeepsTheCallerMetadataAndRefusesTheReservedKeys(t *testing.T) {
 	svc, _ := serviceWithPaths(t)
 
 	result, err := svc.Store(context.Background(), service.StoreRequest{
@@ -135,8 +128,22 @@ func TestStoreKeepsTheMetadataTheCallerSentAlongsideTheAudit(t *testing.T) {
 	if metadata["trigger"] != "session_end" {
 		t.Errorf("trigger = %v: the caller's metadata was lost", metadata["trigger"])
 	}
-	if _, exists := metadata["surface"]; exists {
-		t.Errorf("surface remained in caller metadata instead of its canonical column: %v", metadata)
+
+	// A reserved key is refused, never dropped: the memory's identity has its own
+	// columns, and a write that quietly loses a tag says it stored something else.
+	for _, key := range []string{"agent", "model", "surface"} {
+		refused, err := svc.Store(context.Background(), service.StoreRequest{
+			Layer: "handoff", Content: "a handoff naming " + key,
+			Metadata: map[string]any{key: "forged", "session_id": "abc-123"},
+		})
+		if err == nil {
+			t.Fatalf("metadata key %q was accepted as memory %d", key, refused.ID)
+		}
+		for _, want := range []string{key, "--agent", "--model"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal of %q does not name %q: %v", key, want, err)
+			}
+		}
 	}
 }
 

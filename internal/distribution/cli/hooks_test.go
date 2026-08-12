@@ -44,27 +44,39 @@ func TestClaudeHookSignsRocaStoreFromTheTranscriptIdentity(t *testing.T) {
 			}
 		})
 	}
-	command := "roca store --agent claude --model opus --layer handoff --content note"
-	if signed := signRocaStoreCommand(command, "sonnet"); signed != command {
-		t.Errorf("hook changed explicit identity flags: %s", signed)
+	untouched := []string{
+		"roca store --agent claude --model opus --layer handoff --content note",
+		// A separator inside a quoted value is text: cutting the segment there
+		// hid the explicit flags that follow it and duplicated them.
+		`roca store --content "a || b" --agent codex --model gpt-5`,
+		`echo 'roca store --layer handoff'`,
 	}
-	if signed := signRocaStoreCommand(`echo 'roca store --layer handoff'`, "sonnet"); signed != `echo 'roca store --layer handoff'` {
-		t.Errorf("hook changed text that is not an invocation: %s", signed)
+	for _, command := range untouched {
+		if signed := signRocaStoreCommand(command, "sonnet"); signed != command {
+			t.Errorf("hook rewrote a command it should have left alone: %s", signed)
+		}
 	}
-	command = `roca store --layer handoff --content '--agent is documentation'`
+	command := `roca store --layer handoff --content '--agent is documentation'`
 	if signed := signRocaStoreCommand(command, "sonnet"); !strings.Contains(signed, "--agent claude") {
 		t.Errorf("quoted content hid the missing agent flag: %s", signed)
+	}
+	command = `roca store --content "a || b" --layer handoff && echo done`
+	signed := signRocaStoreCommand(command, "sonnet")
+	if strings.Count(signed, "--agent") != 1 || strings.Count(signed, "--model") != 1 {
+		t.Errorf("hook duplicated identity flags across a quoted separator: %s", signed)
 	}
 }
 
 func TestClaudeHookInstallerPreservesSettingsAndIsIdempotent(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "settings.json")
+	home := t.TempDir()
+	path := filepath.Join(home, "settings.json")
+	binary := filepath.Join(home, "bin", "roca")
 	initial := `{"permissions":{"allow":["Read"]},"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[]}]}}`
 	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	for attempt, wantChanged := range []bool{true, false} {
-		outcome, err := installClaudeAuthorshipHook(path)
+		outcome, err := installClaudeAuthorshipHook(path, binary)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -75,21 +87,58 @@ func TestClaudeHookInstallerPreservesSettingsAndIsIdempotent(t *testing.T) {
 			t.Error("installer replaced settings without a recovery backup")
 		}
 	}
+	body := readSettings(t, path)
+	// The hook runs in Claude's non-interactive shell, where a bare `roca` is
+	// whatever PATH happens to hold, so the entry names this binary in full.
+	if !strings.Contains(body, `"permissions"`) ||
+		strings.Count(body, shellQuote(binary)+" hooks run claude") != 1 {
+		t.Errorf("installer lost existing settings or did not name the binary once: %s", body)
+	}
+
+	moved := filepath.Join(home, "opt", "roca")
+	if _, err := installClaudeAuthorshipHook(path, moved); err != nil {
+		t.Fatal(err)
+	}
+	body = readSettings(t, path)
+	if strings.Contains(body, binary) ||
+		strings.Count(body, shellQuote(moved)+" hooks run claude") != 1 {
+		t.Errorf("reinstall left the hook pointing at a binary that moved: %s", body)
+	}
+
+	outcome, err := uninstallClaudeAuthorshipHook(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !outcome.Changed {
+		t.Error("uninstall left the signing hook behind")
+	}
+	body = readSettings(t, path)
+	if strings.Contains(body, "hooks run claude") || !strings.Contains(body, `"permissions"`) ||
+		!strings.Contains(body, `"Write"`) {
+		t.Errorf("uninstall did not withdraw exactly its own hook: %s", body)
+	}
+	if again, err := uninstallClaudeAuthorshipHook(path); err != nil || again.Changed {
+		t.Errorf("uninstall is not idempotent: changed=%v err=%v", again.Changed, err)
+	}
+
+	root := rootCommand(&cliEnv{})
+	for _, verb := range []string{"install", "uninstall"} {
+		command, _, err := root.Find([]string{"hooks", verb, "claude"})
+		if err != nil || command == nil {
+			t.Fatalf("roca hooks %s claude is unavailable: %v", verb, err)
+		}
+	}
+}
+
+func readSettings(t *testing.T, path string) string {
+	t.Helper()
 	body, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var settings map[string]any
 	if err := json.Unmarshal(body, &settings); err != nil {
-		t.Fatal(err)
+		t.Fatalf("settings are no longer JSON: %v", err)
 	}
-	if !strings.Contains(string(body), `"permissions"`) || strings.Count(string(body), "roca hooks run claude") != 1 {
-		t.Errorf("installer lost existing settings or duplicated its hook: %s", body)
-	}
-
-	root := rootCommand(&cliEnv{})
-	command, _, err := root.Find([]string{"hooks", "install", "claude"})
-	if err != nil || command == nil {
-		t.Fatalf("roca hooks install claude is unavailable: %v", err)
-	}
+	return string(body)
 }

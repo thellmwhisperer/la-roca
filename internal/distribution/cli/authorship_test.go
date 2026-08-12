@@ -26,8 +26,8 @@ func TestCLIAuthorshipDetectionIsConservative(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got := resolveCLIAuthorship("", "", authorshipEvidence{
-				Environment: test.env, Processes: test.processes,
+			got := resolveCLIAuthorship("", "", func() authorshipEvidence {
+				return authorshipEvidence{Environment: test.env, Processes: test.processes}
 			})
 			if got.Agent != test.wantAgent || got.Model != test.wantModel || got.Surface != service.SurfaceCLI {
 				t.Errorf("authorship = %+v, want agent=%q model=%q surface=cli", got, test.wantAgent, test.wantModel)
@@ -37,12 +37,22 @@ func TestCLIAuthorshipDetectionIsConservative(t *testing.T) {
 }
 
 func TestCLIAuthorshipFlagsOverrideDetection(t *testing.T) {
-	evidence := authorshipEvidence{Environment: map[string]string{
-		"CODEX_THREAD_ID": "thread-1",
-	}}
+	probes := 0
+	evidence := func() authorshipEvidence {
+		probes++
+		return authorshipEvidence{Environment: map[string]string{"CODEX_THREAD_ID": "thread-1"}}
+	}
 	got := resolveCLIAuthorship("opencode", "chosen-model", evidence)
 	if got != (service.Authorship{Agent: "opencode", Model: "chosen-model", Surface: service.SurfaceCLI}) {
 		t.Fatalf("authorship = %+v: explicit flags did not win", got)
+	}
+	// Both flags decide the answer on their own, so the process-ancestry walk
+	// that every `roca store` would otherwise pay for is never started.
+	if probes != 0 {
+		t.Errorf("detection ran %d times although both identity flags were explicit", probes)
+	}
+	if got := resolveCLIAuthorship("opencode", "", evidence); got.Model != service.UnknownAuthor || probes != 1 {
+		t.Errorf("a missing model flag did not fall back to detection: %+v after %d probes", got, probes)
 	}
 
 	command := storeCommand(&cliEnv{})

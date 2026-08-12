@@ -188,14 +188,23 @@ func validOrigin(origin string) bool {
 }
 
 // encodeMetadata keeps caller tags away from the canonical authorship columns.
+// A reserved key is refused rather than dropped: a write that silently loses a
+// tag the caller sent is a write whose result does not say what was stored.
 func encodeMetadata(metadata map[string]any) (string, error) {
-	merged := make(map[string]any, len(metadata))
-	for key, value := range metadata {
-		if !slices.Contains(reservedAuthorshipMetadata, key) {
-			merged[key] = value
+	for _, key := range reservedAuthorshipMetadata {
+		if _, reserved := metadata[key]; !reserved {
+			continue
 		}
+		return "", fmt.Errorf(
+			"metadata key %q is reserved: a memory's identity is system stamped into its own "+
+				"authorship columns, never taken from the metadata. Name the writer with "+
+				"`roca store --agent <harness> --model <model>` and store the rest under "+
+				"another key", key)
 	}
-	encoded, err := json.Marshal(merged)
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	encoded, err := json.Marshal(metadata)
 	if err != nil {
 		return "", fmt.Errorf("the metadata is not serializable: %w", err)
 	}
