@@ -15,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/reconcile"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
@@ -492,10 +493,17 @@ func runtimeStatus[R any](
 // command is noise, and noise on stderr is what makes an operator stop reading
 // it.
 func buildProviders(file config.File, paths config.Paths) (provider.Cascade, provider.Cascade) {
-	for name, path := range legacyProviderCredentialPaths(dirOf(paths.DB)) {
-		info, err := os.Lstat(path)
+	names := make(map[string]bool, len(file.Models.Providers)+len(file.Models.Order)+len(file.Models.InterpretOrder))
+	for name := range file.Models.Providers {
+		names[name] = true
+	}
+	for _, name := range append(append([]string(nil), file.Models.Order...), file.Models.InterpretOrder...) {
+		names[strings.ReplaceAll(strings.ToLower(strings.TrimSpace(name)), "_", "-")] = true
+	}
+	credentialPaths := legacyProviderCredentialPaths(dirOf(paths.DB))
+	for name := range names {
 		configured := file.Models.Providers[name]
-		if err == nil && info.Mode().IsRegular() && len(configured.Command) == 0 {
+		if reconcile.RetiredProvider(file, name, credentialPaths[name]) {
 			configured.RetiredCredential = true
 			file.Models.Providers[name] = configured
 		}

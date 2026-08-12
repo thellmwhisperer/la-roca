@@ -113,6 +113,32 @@ model = "fixture-model"
 	}
 }
 
+func TestProviderSecretRedactionCanonicalizesQuotedKeys(t *testing.T) {
+	redacted, err := RedactProviderSecrets("[models.fixture]\n\"api_key\" = \"legacy-secret\"\nmodel = \"fixture\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(redacted, "legacy-secret") || strings.Contains(redacted, "api_key") {
+		t.Fatalf("quoted provider secret survived redaction:\n%s", redacted)
+	}
+	if !strings.Contains(redacted, `model = "fixture"`) {
+		t.Fatalf("redaction removed provider configuration:\n%s", redacted)
+	}
+}
+
+func TestProviderMigrationDeduplicatesWithResolverNormalization(t *testing.T) {
+	text := "[models]\norder = [\"xai\", \"Codex\", \"codex\"]\n"
+	updated, err := ApplyText(text, []Change{{
+		Kind: ReplaceListValue, Table: "models", Key: "order", Old: "xai", Value: "codex",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(updated, `order = ["codex"]`) {
+		t.Fatalf("normalized duplicate survived migration:\n%s", updated)
+	}
+}
+
 func TestALegacyHTTPAndKeyConfigIsToleratedButIgnored(t *testing.T) {
 	path := write(t, `[models.fixture]
 base_url = "https://example.invalid/v1"

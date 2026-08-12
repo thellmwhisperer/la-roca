@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"regexp"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -90,19 +89,26 @@ func ApplyText(text string, changes []Change) (string, error) {
 				continue
 			}
 			kept := make([]string, 0, len(values))
+			seen := make(map[string]bool, len(values))
+			old := normalizeProviderName(change.Old)
 			for _, current := range values {
-				if strings.EqualFold(strings.TrimSpace(current), strings.TrimSpace(change.Old)) {
+				if normalizeProviderName(current) == old {
 					if change.Kind == ReplaceListValue {
 						replacement := strings.TrimSpace(fmt.Sprint(change.Value))
-						if replacement != "" && !slices.Contains(kept, replacement) {
+						normalized := normalizeProviderName(replacement)
+						if normalized != "" && !seen[normalized] {
 							kept = append(kept, replacement)
+							seen[normalized] = true
 						}
 					}
 					continue
 				}
-				if !slices.Contains(kept, current) {
-					kept = append(kept, current)
+				normalized := normalizeProviderName(current)
+				if normalized == "" || seen[normalized] {
+					continue
 				}
+				kept = append(kept, current)
+				seen[normalized] = true
 			}
 			updated = setTableValueText(updated, "["+change.Table+"]", change.Key, tomlLiteral(kept))
 		case DeleteTable:
@@ -138,7 +144,25 @@ func RedactProviderSecrets(text string) (string, error) {
 			changes = append(changes, Change{Kind: DeleteValue, Table: "models." + name, Key: "api_key"})
 		}
 	}
-	return ApplyText(text, changes)
+	redacted, err := ApplyText(text, changes)
+	if err != nil {
+		return "", err
+	}
+	var verified map[string]any
+	if _, err := toml.Decode(redacted, &verified); err != nil {
+		return "", fmt.Errorf("verify redacted configuration: %w", err)
+	}
+	verifiedModels, _ := verified["models"].(map[string]any)
+	for name, value := range verifiedModels {
+		table, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, present := table["api_key"]; present {
+			return "", fmt.Errorf("models.%s.api_key survived provider-secret redaction", name)
+		}
+	}
+	return redacted, nil
 }
 
 func deleteTableValueText(text, table, key string) string {
@@ -151,7 +175,7 @@ func deleteTableValueText(text, table, key string) string {
 			continue
 		}
 		if inside {
-			if eq := strings.IndexByte(clean, '='); eq >= 0 && strings.TrimSpace(clean[:eq]) == key {
+			if candidate, _ := tomlAssignment(line); candidate == key {
 				return text[:offset] + text[offset+len(line):]
 			}
 		}
@@ -184,12 +208,17 @@ func deleteTableText(text, table string) string {
 
 func prependUnique(values []string, value string) []string {
 	out := []string{value}
+	want := normalizeProviderName(value)
 	for _, current := range values {
-		if current != value {
+		if normalizeProviderName(current) != want {
 			out = append(out, current)
 		}
 	}
 	return out
+}
+
+func normalizeProviderName(name string) string {
+	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(name)), "_", "-")
 }
 
 func tomlLiteral(value any) string {
@@ -402,8 +431,8 @@ func setTableValueText(text, header, key, value string) string {
 	}
 	offset = 0
 	for _, line := range strings.SplitAfter(text[start:end], "\n") {
-		eq := strings.IndexByte(line, '=')
-		if eq < 0 || strings.TrimSpace(line[:eq]) != key {
+		candidate, eq := tomlAssignment(line)
+		if candidate != key {
 			offset += len(line)
 			continue
 		}
@@ -415,6 +444,42 @@ func setTableValueText(text, header, key, value string) string {
 		return text[:start+offset+valueStart] + value + text[start+offset+valueEnd:]
 	}
 	return text[:start] + key + " = " + value + "\n" + text[start:]
+}
+
+func tomlAssignment(line string) (string, int) {
+	quote := byte(0)
+	for index := 0; index < len(line); index++ {
+		char := line[index]
+		if quote != 0 {
+			if quote == '"' && char == '\\' {
+				index++
+				continue
+			}
+			if char == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch char {
+		case '\'', '"':
+			quote = char
+		case '#':
+			return "", -1
+		case '=':
+			raw := strings.TrimSpace(line[:index])
+			if raw == "" {
+				return "", -1
+			}
+			var document map[string]any
+			if _, err := toml.Decode(raw+" = 0", &document); err != nil || len(document) != 1 {
+				return "", -1
+			}
+			for key := range document {
+				return key, index
+			}
+		}
+	}
+	return "", -1
 }
 
 func tomlValueEnd(value string) int {

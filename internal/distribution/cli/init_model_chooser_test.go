@@ -150,7 +150,7 @@ func TestTTYInitWritesSurgicallyWithBackupAndNamesIt(t *testing.T) {
 func TestInitRetirementEditRedactsBackupAndDeletesLegacyCredential(t *testing.T) {
 	root := t.TempDir()
 	paths := config.Paths{DB: filepath.Join(root, "roca.db"), Config: filepath.Join(root, "config.toml")}
-	body := "[models]\norder = [\"codex\"]\n\n[models.codex]\napi_key = \"legacy-secret\"\nmodel = \"gpt-legacy\"\n"
+	body := "[models]\norder = [\"codex\"]\n\n[models.codex]\nmodel = \"gpt-legacy\"\n"
 	if err := os.WriteFile(paths.Config, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -172,11 +172,34 @@ func TestInitRetirementEditRedactsBackupAndDeletesLegacyCredential(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(backup), "legacy-secret") {
-		t.Fatalf("provider secret survived in recovery backup:\n%s", backup)
+	if string(backup) != body {
+		t.Fatalf("historical configuration backup changed:\n%s", backup)
 	}
 	if _, err := os.Stat(credential); !os.IsNotExist(err) {
 		t.Fatalf("legacy credential survived init retirement: %v", err)
+	}
+}
+
+func TestInitRetirementRedactsQuotedInlineKeyFromBackup(t *testing.T) {
+	root := t.TempDir()
+	paths := config.Paths{DB: filepath.Join(root, "roca.db"), Config: filepath.Join(root, "config.toml")}
+	body := "[models]\norder = [\"codex\"]\n\n[models.codex]\n\"api_key\" = \"legacy-secret\"\nmodel = \"gpt-legacy\"\n"
+	if err := os.WriteFile(paths.Config, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := config.LoadFile(paths.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writeInitModelChoice(paths, file, provider.NameCodex, "gpt-current"); err != nil {
+		t.Fatal(err)
+	}
+	backup, err := os.ReadFile(paths.Config + ".roca.bak")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(backup), "legacy-secret") || strings.Contains(string(backup), "api_key") {
+		t.Fatalf("quoted provider secret survived in recovery backup:\n%s", backup)
 	}
 }
 

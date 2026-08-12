@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/reconcile"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -465,8 +465,8 @@ func writeInitModelChoice(paths config.Paths, file config.File, providerName, mo
 		{Kind: config.PrependUnique, Table: "models", Key: "order", Value: providerName,
 			Default: provider.DefaultOrder(nil)},
 	}
-	configured := file.Models.Providers[providerName]
-	retiring := providerName != provider.NameOllama && (configured.BaseURL != "" || configured.RetiredCredential)
+	credential := legacyProviderCredentialPaths(dirOf(paths.DB))[providerName]
+	retiring := reconcile.RetiredProvider(file, providerName, credential)
 	if retiring {
 		for _, key := range []string{"base_url", "api_key", "api_key_env", "preset"} {
 			changes = append(changes, config.Change{Kind: config.DeleteValue, Table: "models." + providerName, Key: key})
@@ -485,11 +485,9 @@ func writeInitModelChoice(paths config.Paths, file config.File, providerName, mo
 	if err != nil || !retiring {
 		return outcome, err
 	}
-	credential := legacyProviderCredentialPaths(dirOf(paths.DB))[providerName]
-	if err := os.Remove(credential); err != nil && !os.IsNotExist(err) {
-		return outcome, fmt.Errorf("delete retired provider credential %s: %w", credential, err)
+	if err := reconcile.RemoveRetiredCredential(credential); err != nil {
+		return outcome, err
 	}
-	_ = os.Remove(filepath.Dir(credential))
 	return outcome, nil
 }
 

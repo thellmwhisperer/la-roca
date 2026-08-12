@@ -212,13 +212,20 @@ func retiredProviderEntries(context Context, file config.File) []Entry {
 func retiredProviderNames(context Context, file config.File) []string {
 	names := map[string]bool{}
 	for _, name := range append(append([]string(nil), file.Models.Order...), file.Models.InterpretOrder...) {
-		name = strings.ToLower(strings.TrimSpace(name))
-		if retiredProvider(context, file, name) {
+		name = normalizeProviderName(name)
+		if RetiredProvider(file, name, context.RetiredCredentialPaths[name]) {
 			names[name] = true
 		}
 	}
 	for name := range file.Models.Providers {
-		if retiredProvider(context, file, name) {
+		name = normalizeProviderName(name)
+		if RetiredProvider(file, name, context.RetiredCredentialPaths[name]) {
+			names[name] = true
+		}
+	}
+	for name, path := range context.RetiredCredentialPaths {
+		name = normalizeProviderName(name)
+		if regularFile(path) && RetiredProvider(file, name, path) {
 			names[name] = true
 		}
 	}
@@ -230,18 +237,23 @@ func retiredProviderNames(context Context, file config.File) []string {
 	return ordered
 }
 
-func retiredProvider(context Context, file config.File, name string) bool {
+func RetiredProvider(file config.File, name, credentialPath string) bool {
+	name = normalizeProviderName(name)
 	if name == "" || name == provider.NameOllama {
 		return false
 	}
 	cfg, declared := file.Models.Providers[name]
-	if len(cfg.Command) == 0 && regularFile(context.RetiredCredentialPaths[name]) {
+	if len(cfg.Command) == 0 && regularFile(credentialPath) {
 		return true
 	}
 	if provider.UsesCommandTransport(file, name) {
 		return declared && (cfg.BaseURL != "" || cfg.RetiredCredential)
 	}
 	return true
+}
+
+func normalizeProviderName(name string) string {
+	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(name)), "_", "-")
 }
 
 func regularFile(path string) bool {
@@ -328,7 +340,7 @@ func Run(context Context, registry []Entry, options Options) (Result, error) {
 			return result, err
 		}
 		if entry.RetiredProvider != "" {
-			if err := removeRetiredCredential(context.RetiredCredentialPaths[entry.RetiredProvider]); err != nil {
+			if err := RemoveRetiredCredential(context.RetiredCredentialPaths[entry.RetiredProvider]); err != nil {
 				return result, err
 			}
 		}
@@ -348,7 +360,7 @@ func Run(context Context, registry []Entry, options Options) (Result, error) {
 	return result, nil
 }
 
-func removeRetiredCredential(path string) error {
+func RemoveRetiredCredential(path string) error {
 	if path == "" {
 		return nil
 	}

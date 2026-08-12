@@ -127,6 +127,30 @@ func TestRetiredProviderNonTTYAlertIsOneLine(t *testing.T) {
 	}
 }
 
+func TestRetiredCredentialFileRemainsDiscoverableWithoutConfigMarker(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "config.toml")
+	if err := os.WriteFile(path, []byte("[models]\norder = [\"codex\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	credential := filepath.Join(root, "credentials", "xai.key")
+	if err := os.MkdirAll(filepath.Dir(credential), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(credential, []byte("legacy-file-secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	context := Context{ConfigPath: path, LookPath: lookPathIn(t.TempDir()),
+		RetiredCredentialPaths: map[string]string{"xai": credential}}
+	entries := retiredEntries(Open(context, Registry()))
+	if len(entries) != 1 || entries[0].RetiredProvider != "xai" {
+		t.Fatalf("orphaned credential entries = %+v", entries)
+	}
+	if err := RemoveRetiredCredential(""); err != nil {
+		t.Fatalf("empty legacy credential path: %v", err)
+	}
+}
+
 func TestAnthropicExportProposalWritesTheFolderTheOperatorTypes(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "config.toml")
@@ -149,7 +173,7 @@ func TestAnthropicExportProposalWritesTheFolderTheOperatorTypes(t *testing.T) {
 }
 
 func legacyAPIConfig() string {
-	return "# keep\n[models]\norder = [\"xai\", \"ollama\"]\n\n[models.xai]\nbase_url = \"https://example.invalid\"\napi_key = \"legacy-secret\"\nmodel = \"grok-legacy\"\n"
+	return "# keep\n[models]\norder = [\"xai\", \"ollama\"]\n\n[models.xai]\nbase_url = \"https://example.invalid\"\n\"api_key\" = \"legacy-secret\"\nmodel = \"grok-legacy\"\n"
 }
 
 func legacyOAuthConfig() string {
