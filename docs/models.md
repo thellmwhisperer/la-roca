@@ -107,9 +107,11 @@ written down in the file.
 
 ### Splitting the two inferences
 
-A query costs two model calls. The first turns the question into SQL and
-receives the question and the schema. The second turns the rows that SQL
-returned into prose, and it is the only one that ever sees your data.
+A full query normally costs two model calls. The first turns the question into
+SQL and receives the question and the schema. The second turns the rows that SQL
+returned into prose, and it is the only one that ever sees your data. A gate
+rejection adds one correction call before the row-reading call; first-shot
+successes and zero-result rescues do not pay for it.
 
 `interpret_order` puts that second call on providers of its own:
 
@@ -304,7 +306,9 @@ shown with its own yes or no first.
 3. The model generates SQL, a repair step forgives known model-output mistakes,
    and the result **always** passes the two-halved gate. A model is not above
    the gate.
-4. Whatever fails from there on degrades to the keyword rescue and says which of
+4. A gate rejection sends the failed SQL and exact verdict back to that model
+   once, through the same repair and gate path.
+5. Whatever still fails from there on degrades to the keyword rescue and says which of
    four things went wrong: `model_unavailable`, `model_error`, `invalid_sql`,
    `sql_execution_error`.
 
@@ -403,6 +407,17 @@ and no more: a model that cannot fix it with the error in front of it will not
 fix it on the fifth try, and each try costs seconds.
 
 A query that is valid at once costs one request. Only the ones that need it pay.
+Zero rows keep their existing literal rescue and never trigger a SQL retry;
+`roca exec` SQL is user-authored and is never retried.
+
+The envelope makes all three outcomes distinguishable. `retried_sql` marks the
+correction call; `first_model_sql`, `first_repaired`, and `retry_reason` retain
+the rejected attempt; `model_sql` and `repaired` describe the corrected attempt.
+`sql_inference_ms` and `sql_provider_latency_ms` remain totals, while
+`sql_retry_inference_ms` and `sql_retry_provider_latency_ms` attribute the retry
+subset. A retry success has `retried_sql` without degradation, a second
+rejection also has `invalid_sql` and falls through to the ordinary rescue, and a
+zero-result rescue keeps `retried_sql` false.
 
 ## Diagnosing
 
