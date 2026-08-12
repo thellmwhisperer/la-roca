@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"maps"
 	"strings"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
 )
@@ -162,9 +163,9 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 			}
 			matcher.claim(matched, number, exchange)
 			counts.ThinkingBlocks += thinking
-			if exchange.SourceID != "" {
+			if exchange.SourceID != "" && matched.numberValid {
 				assigned[exchange.SourceID] = exchangeKey{
-					Number: matched, Fingerprint: exchange.Fingerprint,
+					Number: matched.number, Fingerprint: exchange.Fingerprint,
 				}
 			}
 			if identityKnown {
@@ -199,14 +200,14 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 		if number >= next {
 			next = number + 1
 		}
-		landed, err := w.exchange(ctx, session.ID, number, exchange)
+		exchangeID, landed, err := w.exchange(ctx, session.ID, number, exchange)
 		if err != nil {
 			return counts, err
 		}
 		if !landed {
 			continue
 		}
-		matcher.occupy(number, exchange)
+		matcher.occupy(exchangeID, number, exchange)
 		counts.Exchanges++
 		if exchange.SourceID != "" {
 			assigned[exchange.SourceID] = exchangeKey{
@@ -245,13 +246,21 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 }
 
 type storedExchange struct {
+	id                             int64
 	number                         int
+	numberValid                    bool
 	humanText, agentText           string
 	humanTimestamp, agentTimestamp string
 }
 
 type timestampPair struct {
-	human, agent string
+	human, agent timestampInstant
+}
+
+type timestampInstant struct {
+	seconds     int64
+	nanoseconds int
+	present     bool
 }
 
 type exchangeMatch uint8
@@ -283,7 +292,7 @@ type exchangeMatcher struct {
 	byNumber     map[int]storedExchange
 	byTimestamps map[timestampPair][]storedExchange
 	byContent    map[[sha256.Size]byte][]storedExchange
-	claimed      map[int]exchangeIdentity
+	claimed      map[int64]exchangeIdentity
 	nextNumber   int
 }
 
@@ -292,11 +301,11 @@ func (w *writer) exchangeMatcher(ctx context.Context, sessionID string) (*exchan
 		byNumber:     map[int]storedExchange{},
 		byTimestamps: map[timestampPair][]storedExchange{},
 		byContent:    map[[sha256.Size]byte][]storedExchange{},
-		claimed:      map[int]exchangeIdentity{},
+		claimed:      map[int64]exchangeIdentity{},
 		nextNumber:   1,
 	}
 	rows, err := w.tx.QueryContext(ctx, `
-		SELECT exchange_number, COALESCE(human_text, ''), COALESCE(agent_text, ''),
+		SELECT id, exchange_number, COALESCE(human_text, ''), COALESCE(agent_text, ''),
 		       COALESCE(human_timestamp, ''), COALESCE(agent_timestamp, '')
 		FROM exchanges WHERE session_id = ?`, sessionID)
 	if err != nil {
@@ -306,14 +315,14 @@ func (w *writer) exchangeMatcher(ctx context.Context, sessionID string) (*exchan
 	for rows.Next() {
 		var stored storedExchange
 		var number sql.NullInt64
-		if err := rows.Scan(&number, &stored.humanText, &stored.agentText,
+		if err := rows.Scan(&stored.id, &number, &stored.humanText, &stored.agentText,
 			&stored.humanTimestamp, &stored.agentTimestamp); err != nil {
 			return nil, fmt.Errorf("read an exchange anchor of %s: %w", sessionID, err)
 		}
-		if !number.Valid {
-			continue
+		if number.Valid {
+			stored.number = int(number.Int64)
+			stored.numberValid = true
 		}
-		stored.number = int(number.Int64)
 		m.addStored(stored)
 	}
 	if err := rows.Err(); err != nil {
@@ -327,9 +336,10 @@ func (m *exchangeMatcher) occupied(number int) bool {
 	return exists
 }
 
-func (m *exchangeMatcher) occupy(number int, exchange parsers.Exchange) {
+func (m *exchangeMatcher) occupy(id int64, number int, exchange parsers.Exchange) {
 	m.byNumber[number] = storedExchange{
-		number: number, humanText: exchange.HumanText, agentText: exchange.AgentText,
+		id: id, number: number, numberValid: true,
+		humanText: exchange.HumanText, agentText: exchange.AgentText,
 		humanTimestamp: exchange.HumanTimestamp, agentTimestamp: exchange.AgentTimestamp,
 	}
 	if number >= m.nextNumber {
@@ -345,9 +355,11 @@ func (m *exchangeMatcher) freshNumber() int {
 }
 
 func (m *exchangeMatcher) addStored(stored storedExchange) {
-	m.byNumber[stored.number] = stored
-	if stored.number >= m.nextNumber {
-		m.nextNumber = stored.number + 1
+	if stored.numberValid {
+		m.byNumber[stored.number] = stored
+		if stored.number >= m.nextNumber {
+			m.nextNumber = stored.number + 1
+		}
 	}
 	if key, ok := timestampAnchor(stored.humanTimestamp, stored.agentTimestamp); ok {
 		m.byTimestamps[key] = append(m.byTimestamps[key], stored)
@@ -357,7 +369,7 @@ func (m *exchangeMatcher) addStored(stored storedExchange) {
 	}
 }
 
-func (m *exchangeMatcher) match(number int, exchange parsers.Exchange) (int, exchangeMatch) {
+func (m *exchangeMatcher) match(number int, exchange parsers.Exchange) (storedExchange, exchangeMatch) {
 	identity := incomingIdentity(number, exchange)
 	timestampsPresent := false
 	timestampsAmbiguous := false
@@ -367,22 +379,22 @@ func (m *exchangeMatcher) match(number int, exchange parsers.Exchange) (int, exc
 		candidates, sameClaim, claimed := m.unclaimed(stored, identity)
 		if len(stored) > 1 && claimed {
 			if len(candidates) != 1 || !compatibleContent(candidates[0], exchange) {
-				return 0, exchangeAnchorConflict
+				return storedExchange{}, exchangeAnchorConflict
 			}
-			return candidates[0].number, exchangeMatched
+			return candidates[0], exchangeMatched
 		}
 		if sameClaim {
-			return 0, exchangeAlreadyClaimed
+			return storedExchange{}, exchangeAlreadyClaimed
 		}
 		if len(candidates) == 1 {
 			_, conflicts := compareContent(candidates[0], exchange)
 			if conflicts {
-				return 0, exchangeAnchorConflict
+				return storedExchange{}, exchangeAnchorConflict
 			}
-			return candidates[0].number, exchangeMatched
+			return candidates[0], exchangeMatched
 		}
 		if len(candidates) == 0 && len(stored) > 0 {
-			return 0, exchangeUnmatched
+			return storedExchange{}, exchangeUnmatched
 		}
 		timestampsAmbiguous = len(candidates) > 1
 	}
@@ -390,41 +402,42 @@ func (m *exchangeMatcher) match(number int, exchange parsers.Exchange) (int, exc
 		stored := compatibleCandidates(m.byContent[key], exchange)
 		candidates, sameClaim, _ := m.unclaimed(stored, identity)
 		if sameClaim {
-			return 0, exchangeAlreadyClaimed
+			return storedExchange{}, exchangeAlreadyClaimed
 		}
 		if len(candidates) == 1 {
-			return candidates[0].number, exchangeMatched
+			return candidates[0], exchangeMatched
 		}
 		if len(candidates) > 1 {
-			return 0, exchangeAmbiguous
+			return storedExchange{}, exchangeAmbiguous
 		}
 	}
 	if !timestampsPresent || timestampsAmbiguous {
 		if stored, ok := m.byNumber[number]; ok {
 			matched, conflicts := compareContent(stored, exchange)
 			if matched && conflicts {
-				return 0, exchangeAnchorConflict
+				return storedExchange{}, exchangeAnchorConflict
 			}
 			if !matched || conflicts {
-				return 0, exchangeUnmatched
+				return storedExchange{}, exchangeUnmatched
 			}
-			if claim, claimed := m.claimed[number]; claimed {
+			if claim, claimed := m.claimed[stored.id]; claimed {
 				if claim == identity {
-					return 0, exchangeAlreadyClaimed
+					return storedExchange{}, exchangeAlreadyClaimed
 				}
-				return 0, exchangeUnmatched
+				return storedExchange{}, exchangeUnmatched
 			}
-			return number, exchangeMatched
+			return stored, exchangeMatched
 		}
 	}
 	if timestampsAmbiguous {
-		return 0, exchangeAmbiguous
+		return storedExchange{}, exchangeAmbiguous
 	}
-	return 0, exchangeUnmatched
+	return storedExchange{}, exchangeUnmatched
 }
 
-func (m *exchangeMatcher) claim(number, incomingNumber int, exchange parsers.Exchange) {
-	m.claimed[number] = incomingIdentity(incomingNumber, exchange)
+func (m *exchangeMatcher) claim(stored storedExchange, incomingNumber int,
+	exchange parsers.Exchange) {
+	m.claimed[stored.id] = incomingIdentity(incomingNumber, exchange)
 }
 
 func (m *exchangeMatcher) unclaimed(candidates []storedExchange,
@@ -432,7 +445,7 @@ func (m *exchangeMatcher) unclaimed(candidates []storedExchange,
 	available := make([]storedExchange, 0, len(candidates))
 	var same, claimedAny bool
 	for _, candidate := range candidates {
-		claim, claimed := m.claimed[candidate.number]
+		claim, claimed := m.claimed[candidate.id]
 		if !claimed {
 			available = append(available, candidate)
 		} else {
@@ -491,7 +504,25 @@ func timestampAnchor(human, agent string) (timestampPair, bool) {
 	if human == "" && agent == "" {
 		return timestampPair{}, false
 	}
-	return timestampPair{human: human, agent: agent}, true
+	humanInstant, humanOK := parseTimestampInstant(human)
+	agentInstant, agentOK := parseTimestampInstant(agent)
+	if !humanOK || !agentOK {
+		return timestampPair{}, false
+	}
+	return timestampPair{human: humanInstant, agent: agentInstant}, true
+}
+
+func parseTimestampInstant(value string) (timestampInstant, bool) {
+	if value == "" {
+		return timestampInstant{}, true
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return timestampInstant{}, false
+	}
+	return timestampInstant{
+		seconds: parsed.Unix(), nanoseconds: parsed.Nanosecond(), present: true,
+	}, true
 }
 
 func contentAnchor(human, agent string) ([sha256.Size]byte, bool) {
@@ -686,7 +717,7 @@ func keysItsOwnExchanges(session parsers.Session) bool {
 // number. INSERT OR IGNORE plus the unique index over (session_id,
 // exchange_number) remains the final guard against a concurrent duplicate.
 func (w *writer) exchange(ctx context.Context, sessionID string, number int,
-	exchange parsers.Exchange) (bool, error) {
+	exchange parsers.Exchange) (int64, bool, error) {
 	provenance := exchange.Provenance
 	result, err := w.tx.ExecContext(ctx, `
 		INSERT OR IGNORE INTO exchanges
@@ -706,15 +737,20 @@ func (w *writer) exchange(ctx context.Context, sessionID string, number int,
 		affected, err = result.RowsAffected()
 	}
 	if err != nil {
-		return false, fmt.Errorf("insert the exchange %s/%d: %w", sessionID, number, err)
+		return 0, false, fmt.Errorf("insert the exchange %s/%d: %w", sessionID, number, err)
 	}
 	if affected > 0 {
-		return true, nil
+		id, err := result.LastInsertId()
+		if err != nil {
+			return 0, false, fmt.Errorf("read the inserted exchange id %s/%d: %w",
+				sessionID, number, err)
+		}
+		return id, true, nil
 	}
-	return false, nil
+	return 0, false, nil
 }
 
-func (w *writer) enrichExchange(ctx context.Context, sessionID string, number int,
+func (w *writer) enrichExchange(ctx context.Context, sessionID string, stored storedExchange,
 	exchange parsers.Exchange) (int, error) {
 	provenance := exchange.Provenance
 	_, err := w.tx.ExecContext(ctx, `
@@ -726,15 +762,19 @@ func (w *writer) enrichExchange(ctx context.Context, sessionID string, number in
 		  tokens_out = COALESCE(tokens_out, ?),
 		  tokens_reasoning = COALESCE(tokens_reasoning, ?),
 		  cost_usd = COALESCE(cost_usd, ?)
-		WHERE session_id = ? AND exchange_number = ?`,
+		WHERE id = ? AND session_id = ?`,
 		nullIfEmpty(exchange.AgentText),
 		nullIfEmpty(provenance.Model), nullIfEmpty(provenance.Provider),
 		nullInt(provenance.TokensIn), nullInt(provenance.TokensOut),
 		nullInt(provenance.TokensReasoning), nullFloat(provenance.CostUSD),
-		sessionID, number)
+		stored.id, sessionID)
 	if err != nil {
-		return 0, fmt.Errorf("enrich the exchange %s/%d: %w", sessionID, number, err)
+		return 0, fmt.Errorf("enrich exchange row %d of %s: %w", stored.id, sessionID, err)
 	}
+	if !stored.numberValid {
+		return 0, nil
+	}
+	number := stored.number
 	inserted := 0
 	for _, block := range exchange.Thinking {
 		result, err := w.tx.ExecContext(ctx, `
