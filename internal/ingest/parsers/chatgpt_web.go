@@ -61,9 +61,19 @@ func ParseChatGPTWebConversations(reader io.Reader, _ FileMeta) (Records, error)
 	records := Records{}
 	recordBase := 0
 	for conversation := 1; decoder.More(); conversation++ {
-		var payload chatGPTConversation
-		if err := decoder.Decode(&payload); err != nil {
+		var raw json.RawMessage
+		if err := decoder.Decode(&raw); err != nil {
 			return Records{}, fmt.Errorf("decode ChatGPT web conversation %d: %w", conversation, err)
+		}
+		var payload chatGPTConversation
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			records.Discards = append(records.Discards, Discard{
+				Record:   recordBase + 1,
+				Reason:   fmt.Sprintf("ChatGPT conversation %d is unreadable: %v", conversation, err),
+				Category: "ChatGPT conversation is unreadable",
+			})
+			recordBase++
+			continue
 		}
 		parsed, nodes := parseChatGPTConversation(payload, recordBase)
 		recordBase += nodes
