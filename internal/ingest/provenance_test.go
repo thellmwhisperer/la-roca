@@ -207,11 +207,12 @@ func TestBackfillMatchesHistoricalAnchorsSafely(t *testing.T) {
 		return parsers.Provenance{Model: model}
 	}
 	tests := []struct {
-		name         string
-		stored       []parsers.Exchange
-		replay       []parsers.Exchange
-		wantInserted int
-		want         []storedRow
+		name          string
+		stored        []parsers.Exchange
+		replay        []parsers.Exchange
+		wantInserted  int
+		wantConflicts int
+		want          []storedRow
 	}{
 		{
 			name: "timestamps precede a repeated content anchor",
@@ -229,6 +230,25 @@ func TestBackfillMatchesHistoricalAnchorsSafely(t *testing.T) {
 			want: []storedRow{
 				{number: 1, humanText: "same turn", agentText: "same answer"},
 				{number: 7, humanText: "same turn", agentText: "same answer", model: "timestamp-match"},
+			},
+		},
+		{
+			name: "unique timestamp conflicts stop matching",
+			stored: []parsers.Exchange{
+				{Number: 1, HumanText: "timestamp turn", AgentText: "timestamp answer",
+					HumanTimestamp: "2026-01-01T00:00:05Z", AgentTimestamp: "2026-01-01T00:00:06Z"},
+				{Number: 2, HumanText: "content turn", AgentText: "content answer",
+					HumanTimestamp: "2026-01-01T00:00:07Z", AgentTimestamp: "2026-01-01T00:00:08Z"},
+			},
+			replay: []parsers.Exchange{{
+				Number: 3, HumanText: "content turn", AgentText: "content answer",
+				HumanTimestamp: "2026-01-01T00:00:05Z", AgentTimestamp: "2026-01-01T00:00:06Z",
+				Provenance: provenance("must-not-land"),
+			}},
+			wantConflicts: 1,
+			want: []storedRow{
+				{number: 1, humanText: "timestamp turn", agentText: "timestamp answer"},
+				{number: 2, humanText: "content turn", agentText: "content answer"},
 			},
 		},
 		{
@@ -298,11 +318,15 @@ func TestBackfillMatchesHistoricalAnchorsSafely(t *testing.T) {
 				return counts
 			}
 			write(test.stored)
-			if counts := write(test.replay); counts.Exchanges != test.wantInserted {
-				t.Fatalf("first replay inserted %d exchanges, want %d", counts.Exchanges, test.wantInserted)
+			if counts := write(test.replay); counts.Exchanges != test.wantInserted ||
+				counts.AnchorConflicts != test.wantConflicts {
+				t.Fatalf("first replay counts = %+v, want exchanges/conflicts = %d/%d",
+					counts, test.wantInserted, test.wantConflicts)
 			}
-			if counts := write(test.replay); counts.Exchanges != 0 {
-				t.Fatalf("second replay inserted exchanges: %+v", counts)
+			if counts := write(test.replay); counts.Exchanges != 0 ||
+				counts.AnchorConflicts != test.wantConflicts {
+				t.Fatalf("second replay counts = %+v, want exchanges/conflicts = 0/%d",
+					counts, test.wantConflicts)
 			}
 
 			rows, err := db.SQL().Query(`SELECT exchange_number, COALESCE(human_text, ''),
@@ -332,6 +356,19 @@ func TestBackfillMatchesHistoricalAnchorsSafely(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestAnchorConflictsUseTheIngestDiscardReport(t *testing.T) {
+	target := Target{Path: "synthetic-session.jsonl", Kind: parsers.KindClaudeSession,
+		SourceAgent: "claude"}
+	result := Result{Sources: map[string]*Counts{}}
+	result.recordWritten(target, Counts{AnchorConflicts: 2})
+	if result.RecordsDiscarded != 2 || len(result.DiscardDetails) != 2 ||
+		len(result.DiscardSummary) != 1 || result.DiscardSummary[0].Count != 2 ||
+		result.DiscardSummary[0].Reason != anchorConflictReason ||
+		result.Sources["claude"].AnchorConflicts != 2 {
+		t.Fatalf("anchor conflict report = %+v", result)
 	}
 }
 

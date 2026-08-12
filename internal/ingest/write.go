@@ -38,6 +38,7 @@ type Counts struct {
 	// because an exchange that already answered a query cannot change under it.
 	ExchangesUnchanged int `json:"exchanges_unchanged"`
 	ExchangesChanged   int `json:"exchanges_changed"`
+	AnchorConflicts    int `json:"anchor_conflicts"`
 }
 
 func (c *Counts) add(other Counts) {
@@ -51,6 +52,7 @@ func (c *Counts) add(other Counts) {
 	c.MemoriesUnchanged += other.MemoriesUnchanged
 	c.ExchangesUnchanged += other.ExchangesUnchanged
 	c.ExchangesChanged += other.ExchangesChanged
+	c.AnchorConflicts += other.AnchorConflicts
 }
 
 // layerResolver turns a declared layer name into the physical one. It is the
@@ -152,8 +154,8 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 				number = next
 			}
 		}
-		matched, found, ambiguous := matcher.match(number, exchange)
-		if found {
+		matched, outcome := matcher.match(number, exchange)
+		if outcome == exchangeMatched {
 			thinking, err := w.enrichExchange(ctx, session.ID, matched, exchange)
 			if err != nil {
 				return counts, err
@@ -173,10 +175,14 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 			}
 			continue
 		}
+		if outcome == exchangeAnchorConflict {
+			counts.AnchorConflicts++
+			continue
+		}
 		// A known source identity or an ambiguous historical anchor may already be
 		// the historical row. Leaving it untouched is safer than manufacturing a
 		// second copy that a later ingest cannot distinguish from the first.
-		if identityKnown || ambiguous {
+		if identityKnown || outcome == exchangeAmbiguous {
 			if identityKnown {
 				if known.Fingerprint == exchange.Fingerprint {
 					counts.ExchangesUnchanged++
@@ -246,6 +252,15 @@ type storedExchange struct {
 type timestampPair struct {
 	human, agent string
 }
+
+type exchangeMatch uint8
+
+const (
+	exchangeUnmatched exchangeMatch = iota
+	exchangeMatched
+	exchangeAmbiguous
+	exchangeAnchorConflict
+)
 
 type exchangeMatcher struct {
 	byNumber     map[int]storedExchange
@@ -323,32 +338,39 @@ func (m *exchangeMatcher) addStored(stored storedExchange) {
 	}
 }
 
-func (m *exchangeMatcher) match(number int, exchange parsers.Exchange) (int, bool, bool) {
+func (m *exchangeMatcher) match(number int, exchange parsers.Exchange) (int, exchangeMatch) {
 	timestampsPresent := false
 	timestampsAmbiguous := false
 	if key, ok := timestampAnchor(exchange.HumanTimestamp, exchange.AgentTimestamp); ok {
 		timestampsPresent = true
 		candidates := m.byTimestamps[key]
-		if len(candidates) == 1 && compatibleContent(candidates[0], exchange) {
-			return candidates[0].number, true, false
+		if len(candidates) == 1 {
+			_, conflicts := compareContent(candidates[0], exchange)
+			if conflicts {
+				return 0, exchangeAnchorConflict
+			}
+			return candidates[0].number, exchangeMatched
 		}
 		timestampsAmbiguous = len(candidates) > 1
 	}
 	if key, ok := contentAnchor(exchange.HumanText, exchange.AgentText); ok {
 		candidates := compatibleCandidates(m.byContent[key], exchange)
 		if len(candidates) == 1 {
-			return candidates[0].number, true, false
+			return candidates[0].number, exchangeMatched
 		}
 		if len(candidates) > 1 {
-			return 0, false, true
+			return 0, exchangeAmbiguous
 		}
 	}
 	if !timestampsPresent || timestampsAmbiguous {
 		if stored, ok := m.byNumber[number]; ok && compatibleContent(stored, exchange) {
-			return number, true, false
+			return number, exchangeMatched
 		}
 	}
-	return 0, false, timestampsAmbiguous
+	if timestampsAmbiguous {
+		return 0, exchangeAmbiguous
+	}
+	return 0, exchangeUnmatched
 }
 
 func compatibleCandidates(candidates []storedExchange, exchange parsers.Exchange) []storedExchange {
@@ -362,6 +384,11 @@ func compatibleCandidates(candidates []storedExchange, exchange parsers.Exchange
 }
 
 func compatibleContent(stored storedExchange, exchange parsers.Exchange) bool {
+	matched, conflicts := compareContent(stored, exchange)
+	return matched && !conflicts
+}
+
+func compareContent(stored storedExchange, exchange parsers.Exchange) (bool, bool) {
 	matched := false
 	for _, pair := range [][2]string{
 		{stored.humanText, exchange.HumanText},
@@ -371,11 +398,11 @@ func compatibleContent(stored storedExchange, exchange parsers.Exchange) bool {
 			continue
 		}
 		if pair[0] != pair[1] {
-			return false
+			return matched, true
 		}
 		matched = true
 	}
-	return matched
+	return matched, false
 }
 
 func timestampAnchor(human, agent string) (timestampPair, bool) {
