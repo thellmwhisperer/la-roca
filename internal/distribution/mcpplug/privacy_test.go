@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/mcpplug"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
@@ -95,5 +96,17 @@ func TestScrubPath(t *testing.T) {
 	}
 	if !strings.Contains(scrubbed, "the database") {
 		t.Errorf("scrubbed message does not replace the path: %q", scrubbed)
+	}
+
+	// Removing the path must not remove what the error declared about itself:
+	// the audit line reads the category through the chain, not the message.
+	declared := mcpplug.ScrubPath(
+		logfile.Typed(errors.New("could not open "+dbPath), service.DegradedExecution), dbPath)
+	if strings.Contains(declared.Error(), dbPath) {
+		t.Errorf("a declared error kept the path: %q", declared)
+	}
+	if got := logfile.ErrorType(declared); got != service.DegradedExecution {
+		t.Errorf("scrubbing dropped the declared category: %q, want %q",
+			got, service.DegradedExecution)
 	}
 }

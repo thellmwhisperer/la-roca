@@ -9,14 +9,26 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/reconcile"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
+
+const (
+	doctorQueryFailureWindow = 24 * time.Hour
+	doctorQueryFailureLimit  = 5
+)
+
+type doctorReport struct {
+	service.DoctorReport
+	QueryFailures logfile.QueryFailureSummary `json:"query_failures"`
+}
 
 func doctorCommand(env *cliEnv) *cobra.Command {
 	return &cobra.Command{
@@ -38,16 +50,42 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 			for _, proposal := range proposals {
 				report.CapabilityProposals = append(report.CapabilityProposals, proposal.Proposal.Alert)
 			}
+			failures, logErr := logfile.New(svc.DataDir()).RecentQueryFailures(
+				time.Now(), doctorQueryFailureWindow, doctorQueryFailureLimit)
+			if logErr != nil {
+				report.Warnings = append(report.Warnings,
+					"query failure log could not be read: "+logErr.Error())
+			}
+			answer := doctorReport{DoctorReport: report, QueryFailures: failures}
 			if env.json {
-				return env.printJSON(report)
+				return env.printJSON(answer)
 			}
 			renderDoctor(env, report)
+			renderQueryFailures(env, failures)
 			if terminalInput(cmd.InOrStdin()) && !env.skipReconciliation {
 				_, err = env.reconcileCapabilities(cmd, true, true)
 			}
 			return err
 		}),
 	}
+}
+
+func renderQueryFailures(env *cliEnv, summary logfile.QueryFailureSummary) {
+	env.print("query failures (last 24h): %d", summary.Count)
+	if len(summary.Recent) == 0 {
+		return
+	}
+	rows := make([]map[string]any, 0, len(summary.Recent))
+	for _, failure := range summary.Recent {
+		rows = append(rows, map[string]any{
+			"time":   failure.Timestamp.UTC().Format(time.RFC3339),
+			"source": failure.Source, "call": failure.Operation,
+			"type": failure.ErrorType, "error": failure.Error,
+			"correlation_id": failure.CorrelationID,
+		})
+	}
+	env.print("%s", rowOutput(
+		[]string{"time", "source", "call", "type", "error", "correlation_id"}, rows))
 }
 
 func renderDoctor(env *cliEnv, report service.DoctorReport) {

@@ -8,7 +8,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - Public source, documentation, features, and fixtures are English-only; use unmistakably synthetic test data.
 - Never add Sherpa-style navigational comment blocks or numbered section maps to any file; the owner forbids them repository-wide.
 - Keep distribution ownership declarations centralized in `internal/distribution/cli/uninstall.go` (`ownedPaths` and recovery-backup handling).
-- Operational JSONL lives under the selected data directory's `logs/`; retention and redaction are owned by `internal/distribution/logfile`.
+- Operational JSONL lives under the selected data directory's `logs/`; the stable call contract, doctor reader, rotation, retention, and redaction are owned by `internal/distribution/logfile` and documented in `docs/operations.md`.
 - MCP answers are TOON-only text: never return row envelopes in `StructuredContent`; the contract lives in `internal/distribution/mcpplug/toon_contract_test.go`.
 - A query costs two inferences and only the second one sees result rows; they may run on different providers (`models.interpret_order`). Keep rows out of the SQL prompt: the guarantee is pinned in `internal/provider/service/two_inferences_test.go`.
 - Keep local-binary isolation and corpus exclusion synchronized: shipped command data lives in `internal/provider/command_presets.go`, the generic adapter in `internal/provider/localbinary.go`, and the runner ingest guard is pinned in `internal/ingest/detection_test.go`.

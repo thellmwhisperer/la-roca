@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 	"github.com/thellmwhisperer/la-roca/internal/store/search"
@@ -112,6 +113,10 @@ type QueryResult struct {
 	Repaired []string `json:"repaired,omitempty"`
 	// FirstRepaired does the same for the rejected first answer.
 	FirstRepaired []string `json:"first_repaired,omitempty"`
+	// CleanedSQL is the repaired candidate the gate judged, kept even when the
+	// gate rejected it. It is audit-only: the durable trace writes it as the
+	// statement the model meant, and keeps ModelSQL beside it when they differ.
+	CleanedSQL string `json:"-"`
 	// QueryPlan is the rescue's plan: the term it searched for, which the
 	// renderer uses to keep the match inside the excerpt.
 	QueryPlan *query.Plan `json:"queryplan,omitempty"`
@@ -290,13 +295,16 @@ func (s *Service) Exec(ctx context.Context, req ExecRequest) (ExecResult, error)
 	if err != nil {
 		return ExecResult{}, err
 	}
+	// The stage that failed is only knowable here, and it is the same
+	// distinction the degraded answers already declare: what the gate refused
+	// and what the engine could not run are two different fixes.
 	validated, err := gate.Validate(req.SQL)
 	if err != nil {
-		return ExecResult{}, err
+		return ExecResult{}, logfile.Typed(err, DegradedInvalidSQL)
 	}
 	columns, rows, err := s.execute(ctx, validated, "", req.MaxChars)
 	if err != nil {
-		return ExecResult{}, err
+		return ExecResult{}, logfile.Typed(err, DegradedExecution)
 	}
 	return ExecResult{
 		SQL:       validated,

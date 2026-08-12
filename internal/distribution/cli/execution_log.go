@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 func (env *cliEnv) logExecution(cmd *cobra.Command, started time.Time, code int, runErr error) error {
@@ -19,17 +20,39 @@ func (env *cliEnv) logExecution(cmd *cobra.Command, started time.Time, code int,
 	if err != nil {
 		return fmt.Errorf("resolve the execution log location: %w", err)
 	}
-	record := logfile.ExecutionRecord{
-		Timestamp:    started.UTC(),
-		Command:      commandName(cmd),
-		Flags:        changedFlags(cmd),
-		DatabasePath: paths.DB,
-		DurationMS:   time.Since(started).Milliseconds(),
-		ExitCode:     code,
-		Result:       resultWithoutRows(env.outcome),
+	operation := commandName(cmd)
+	args := commandArguments(cmd)
+	if env.auditCommand != "" {
+		operation, args = env.auditCommand, env.auditArgs
+	}
+	correlation := logfile.CorrelationID(runErr)
+	if correlation == "" {
+		correlation = env.correlation
+	}
+	call := logfile.CallRecord{
+		Timestamp: started.UTC(), Source: "cli", Args: args, OK: code == ExitOK,
+		DurationMS: time.Since(started).Milliseconds(), CorrelationID: correlation,
+	}
+	if operation == "query" {
+		call.Question = strings.Join(args, " ")
 	}
 	if runErr != nil {
-		record.Error = runErr.Error()
+		call.Error, call.ErrorType = runErr.Error(), logfile.ErrorType(runErr)
+	}
+	if env.auditQuery != nil {
+		addQueryAudit(&call, *env.auditQuery)
+	}
+	if !call.OK && call.Error == "" {
+		call.Error = fmt.Sprintf("command exited with code %d", code)
+		call.ErrorType = logfile.ErrorCommandFailure
+	}
+	record := logfile.ExecutionRecord{
+		CallRecord:   call,
+		Command:      operation,
+		Flags:        changedFlags(cmd),
+		DatabasePath: paths.DB,
+		ExitCode:     code,
+		Result:       resultWithoutRows(env.outcome),
 	}
 	writer := logfile.New(filepath.Dir(paths.DB))
 	appendRecord := writer.Append
@@ -42,10 +65,13 @@ func (env *cliEnv) logExecution(cmd *cobra.Command, started time.Time, code int,
 		}
 		return err
 	}
-	if commandName(cmd) == "ingest" && env.outcome != nil {
-		err := appendRecord(logfile.Ingest, logfile.IngestRecord{
-			Timestamp: started.UTC(), Result: env.outcome,
-		})
+	stream := map[string]string{"ingest": logfile.Ingest, "init": logfile.Migrations}[operation]
+	if stream != "" {
+		run := logfile.RunRecord{
+			Timestamp: started.UTC(), OK: code == ExitOK, DurationMS: call.DurationMS,
+			Error: call.Error, ErrorType: call.ErrorType, Result: env.outcome,
+		}
+		err := appendRecord(stream, run)
 		if env.openedDir != "" && os.IsNotExist(rootError(err)) {
 			return nil
 		}
@@ -53,6 +79,66 @@ func (env *cliEnv) logExecution(cmd *cobra.Command, started time.Time, code int,
 	}
 	return nil
 }
+
+func redactPluginArguments(args []string) []string {
+	redacted := append([]string(nil), args...)
+	for index, argument := range redacted {
+		if !strings.HasPrefix(argument, "-") {
+			continue
+		}
+		name, _, hasValue := strings.Cut(strings.TrimLeft(argument, "-"), "=")
+		if !logfile.SensitiveName(name) {
+			continue
+		}
+		if hasValue {
+			redacted[index] = argument[:strings.Index(argument, "=")+1] + "[REDACTED]"
+		} else if index+1 < len(redacted) {
+			redacted[index+1] = "[REDACTED]"
+		}
+	}
+	return redacted
+}
+
+func commandArguments(cmd *cobra.Command) []string {
+	if cmd == nil {
+		return []string{}
+	}
+	args := cmd.Flags().Args()
+	return append(make([]string, 0, len(args)), args...)
+}
+
+func addQueryAudit(record *logfile.CallRecord, query service.QueryResult) {
+	record.Question, record.SQL = query.Question, query.CleanedSQL
+	if strings.TrimSpace(query.ModelSQL) != "" && strings.TrimSpace(query.ModelSQL) != strings.TrimSpace(record.SQL) {
+		record.RawSQL = query.ModelSQL
+	}
+	record.SQLProvider, record.SQLModel = query.Engine, query.Model
+	record.RowCount, record.RetryReason = query.RowCount, query.RetryReason
+	if query.QueryPlan != nil {
+		record.QueryPlan = query.QueryPlan
+	}
+	record.ProviderNote = query.ProviderNote
+	record.SQLInferenceMS = milliseconds(query.SQLInferenceMS)
+	record.ExecutionMS = milliseconds(query.ExecutionMS)
+	record.InterpretationProvider, record.InterpretationModel = query.InterpretEngine, query.InterpretModel
+	record.InterpretationMS = milliseconds(query.InterpretationMS)
+	record.FallbackReason = query.Degraded
+	record.Degraded = query.Degraded
+	if record.FallbackReason == "" && query.Retried {
+		record.FallbackReason = "model_query_empty"
+	}
+	if record.OK || query.Degraded == "" {
+		return
+	}
+	record.ErrorType = query.Degraded
+	if query.ProviderError != "" {
+		record.Error = query.ProviderError
+	} else if query.Message != "" {
+		record.Error = query.Message
+	}
+}
+
+func milliseconds(value int64) *int64 { return &value }
 
 func rootError(err error) error {
 	for err != nil {
