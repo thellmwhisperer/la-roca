@@ -7,7 +7,7 @@ The way La Roca reaches an agent that is not typing commands: the MCP server it
 can call.
 
 `roca_query` uses the same factory order as the CLI: La Roca detects an already
-signed-in supported agent CLI and needs no separate login or MCP setup. Models
+signed-in supported agent CLI and needs no separate login or MCP credentials. Models
 authenticate through their own CLIs; La Roca stores no secrets. Ollama and the
 keyword rescue remain available when no agent CLI can serve.
 

@@ -232,11 +232,17 @@ func Edit(name, path string, transform func(string) (string, error),
 	return edit(name, path, transform, nil, createMissing)
 }
 
+// EditWithBackup applies a surgical edit while allowing the recovery copy to
+// be transformed before it is written. Credential retirement uses that hook
+// to make a deliberately non-byte-exact, secret-free backup.
 func EditWithBackup(name, path string, transform, backupTransform func(string) (string, error),
 	createMissing bool) (Outcome, error) {
 	return edit(name, path, transform, backupTransform, createMissing)
 }
 
+// Rewrite transforms an existing file in place without creating a backup or
+// returning a reportable Outcome. A missing file and an unchanged transform
+// are both no-ops.
 func Rewrite(path string, transform func(string) (string, error)) error {
 	previous, err := os.ReadFile(path)
 	if os.IsNotExist(err) {

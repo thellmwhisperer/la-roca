@@ -27,7 +27,8 @@ asks which harness to use when several match. The confirmed pair is probed when
 it differs from the already-ready default, then `models.order` and
 `models.<provider>.model` are edited in place. Existing files keep their
 comments and unrelated settings and receive a named recovery backup when the
-edit changes them. The complete question and automation contracts live in
+edit changes them. A backup created while retiring a credential-backed provider
+is credential-redacted rather than byte-exact. The complete question and automation contracts live in
 [Initialize](lifecycle.md#initialize).
 
 Plain Enter through the chooser preserves the effective selection the normal
