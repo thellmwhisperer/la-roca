@@ -100,7 +100,12 @@ type exchangeKey struct {
 	// Signal is how much the reading whose provenance the row carries had stated,
 	// remembered across runs so a poorer reading of the same exchange ingested
 	// later fills what is missing and takes nothing away.
-	Signal int `json:"signal,omitempty"`
+	//
+	// It is nil when nothing recorded it, which is every row a build before it
+	// wrote. That is not the same as a reading that stated nothing, and reading it
+	// as one would let any later reading take a provenance whose richness nobody
+	// can vouch for, so an unrecorded signal orders nothing.
+	Signal *int `json:"signal,omitempty"`
 }
 
 func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, error) {
@@ -168,8 +173,9 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 			}
 			// A reading that stated more about this answer than the one the row
 			// carries owns its provenance, in this run or in one months later.
-			// Anything else only fills what the row is missing.
-			richer := identityKnown && exchange.Signal > known.Signal
+			// Anything else, an unrecorded richness included, only fills what the
+			// row is missing.
+			richer := statedMore(exchange.Signal, known.Signal)
 			thinking, tools, err := w.enrichExchange(ctx, session.ID, matched, exchange, richer)
 			if err != nil {
 				return counts, err
@@ -178,9 +184,14 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 			counts.ThinkingBlocks += thinking
 			counts.ToolUses += tools
 			if exchange.SourceID != "" && matched.numberValid {
+				// The row keeps the richness of whichever reading its provenance came
+				// from, so a fill leaves that record exactly as it found it.
+				signal := known.Signal
+				if richer {
+					signal = exchange.Signal
+				}
 				assigned[exchange.SourceID] = exchangeKey{
-					Number: matched.number, Fingerprint: exchange.Fingerprint,
-					Signal: max(exchange.Signal, known.Signal),
+					Number: matched.number, Fingerprint: exchange.Fingerprint, Signal: signal,
 				}
 			}
 			if identityKnown {
@@ -1161,7 +1172,8 @@ func readExchangeMap(metadata, scope string) map[string]exchangeKey {
 			}
 		}
 		if signal, ok := signals[id].(float64); ok {
-			key.Signal = int(signal)
+			stated := int(signal)
+			key.Signal = &stated
 		}
 		if key.Number > 0 {
 			assigned[id] = key
@@ -1198,8 +1210,8 @@ func putExchangeMap(metadata map[string]any, scope string, assigned map[string]e
 			ids[id] = key.Number
 		}
 		fingerprints[id] = key.Fingerprint
-		if key.Signal > 0 {
-			signals[id] = key.Signal
+		if key.Signal != nil {
+			signals[id] = *key.Signal
 		}
 	}
 	into := metadata
@@ -1215,11 +1227,20 @@ func putExchangeMap(metadata map[string]any, scope string, assigned map[string]e
 		"source_exchange_ids":          ids,
 		"source_exchange_fingerprints": fingerprints,
 	})
-	// Only a source that states per-answer signal carries this key, so a source
-	// that states none keeps the metadata it always had.
+	// Only a source that measures per-answer richness carries this key, so a source
+	// that measures none keeps the metadata it always had. Every exchange of a
+	// source that does measure it is recorded, a measured zero included: leaving
+	// that one out is what would make "stated nothing" read as "nobody looked".
 	if len(signals) > 0 {
 		into["source_exchange_signal"] = signals
 	}
+}
+
+// statedMore says whether an incoming reading measurably said more about an
+// answer than the reading whose provenance the row carries. Two measurements are
+// needed to answer it: one that nobody recorded is not a low one.
+func statedMore(incoming, stored *int) bool {
+	return incoming != nil && stored != nil && *incoming > *stored
 }
 
 func boolToInt(value bool) int {

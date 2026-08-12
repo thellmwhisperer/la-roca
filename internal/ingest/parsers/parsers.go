@@ -174,8 +174,12 @@ type Exchange struct {
 	// exchange so the writer keeps the provenance of the one whose source said
 	// more, which is what a poorer snapshot of an old conversation must not undo.
 	// It is only ever compared between readings of one exchange, so its scale is
-	// the source's own and a parser that states nothing leaves it at zero.
-	Signal int
+	// the source's own.
+	//
+	// The pointer is what tells "this reading measured nothing stated" from "this
+	// reading does not measure it", and only the first of those is comparable: nil
+	// leaves the writer with nothing to order by, and it fills instead.
+	Signal *int
 }
 
 // Provenance is the unified shape every source fills with whatever it recorded

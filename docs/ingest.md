@@ -59,7 +59,10 @@ identities have not already landed. When legacy and sharded snapshots of the sam
 conversation overlap, content reconciliation lands no duplicate and keeps the
 provenance stated by whichever snapshot recorded more about each answer; the
 legacy layout is the richer one, and it wins whether both arrive in one run or
-months apart.
+months apart. An exchange an earlier release stored carries no record of how much
+its snapshot stated, and an absent record is not a low one: such a row is filled
+where it is empty and never overwritten, so an upgrade cannot cost a corpus
+provenance it already had.
 
 A declared directory containing neither conversation shape is reported as an
 unrecognized OpenAI export layout. A declared path that does not exist or cannot

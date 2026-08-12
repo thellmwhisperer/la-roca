@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
@@ -149,20 +150,65 @@ func TestOverlappingChatGPTExportsKeepTheRicherLegacyRows(t *testing.T) {
 			if got := countRows(t, db.SQL(), "exchanges"); got != 3 {
 				t.Fatalf("exchanges = %d, want 3", got)
 			}
-			for text, wantModel := range map[string]string{
-				"Call it Amber Kestrel.":                      "gpt-synthetic-message",
-				"The alternate branch calls it Silver Heron.": "gpt-synthetic-default",
-			} {
-				var model string
-				if err := db.SQL().QueryRow(`SELECT model FROM exchanges WHERE agent_text = ?`, text).
-					Scan(&model); err != nil {
-					t.Fatal(err)
-				}
-				if model != wantModel {
-					t.Errorf("%q kept model %q, want the richer legacy model %q", text, model, wantModel)
-				}
-			}
+			expectRicherLegacyModels(t, db.SQL())
 		})
+	}
+}
+
+// A row a build before the signal record wrote says nothing about how rich the
+// snapshot behind it was. Unrecorded is not zero: the row is filled and never
+// overwritten, so an upgrade cannot cost a corpus the provenance it already had.
+func TestChatGPTExchangesWithNoRecordedSignalAreOnlyFilled(t *testing.T) {
+	db := rocaDatabase(t)
+	ctx := context.Background()
+	for _, declared := range []string{"openai-export-v1", "openai-export-sharded"} {
+		if _, err := Run(ctx, db, registry(t), Options{Roots: Roots{
+			ChatGPTWebExports: []string{filepath.Join("testdata", declared)},
+		}}); err != nil {
+			t.Fatal(err)
+		}
+		if declared == "openai-export-v1" {
+			forgetRecordedSignals(t, db.SQL())
+		}
+	}
+	expectRicherLegacyModels(t, db.SQL())
+}
+
+// forgetRecordedSignals leaves the session metadata a build before the signal
+// record wrote: the exchange identities and their fingerprints, and no richness.
+func forgetRecordedSignals(t *testing.T, db *sql.DB) {
+	t.Helper()
+	recording := `sessions WHERE metadata LIKE '%source_exchange_signal%'`
+	if got := countRows(t, db, recording); got != 1 {
+		t.Fatalf("sessions recording a signal = %d, want the one to forget", got)
+	}
+	if _, err := db.Exec(`UPDATE sessions
+		SET metadata = json_remove(metadata, '$.chatgpt_web.source_exchange_signal')
+		WHERE source_agent = 'chatgpt-web'`); err != nil {
+		t.Fatal(err)
+	}
+	if got := countRows(t, db, recording); got != 0 {
+		t.Fatalf("sessions still recording a signal = %d", got)
+	}
+}
+
+// expectRicherLegacyModels is what the corpus shows once the legacy snapshot has
+// had its say: the model that snapshot states per message, and the conversation
+// default it falls back to.
+func expectRicherLegacyModels(t *testing.T, db *sql.DB) {
+	t.Helper()
+	for text, wantModel := range map[string]string{
+		"Call it Amber Kestrel.":                      "gpt-synthetic-message",
+		"The alternate branch calls it Silver Heron.": "gpt-synthetic-default",
+	} {
+		var model string
+		if err := db.QueryRow(`SELECT model FROM exchanges WHERE agent_text = ?`, text).
+			Scan(&model); err != nil {
+			t.Fatal(err)
+		}
+		if model != wantModel {
+			t.Errorf("%q kept model %q, want the richer legacy model %q", text, model, wantModel)
+		}
 	}
 }
 

@@ -315,9 +315,9 @@ func chatGPTNodeReason(node chatGPTNode) chatGPTDiscard {
 // snapshot states more per message than a mid-2026 shard does, and this count is
 // what the writer compares so the poorer reading of the same exchange never
 // takes the richer one's place, whichever run each arrived in.
-func chatGPTSignal(node chatGPTNode) int {
+func chatGPTSignal(node chatGPTNode) *int {
 	if node.Message == nil {
-		return 0
+		return nil
 	}
 	message := node.Message
 	stated := 0
@@ -334,7 +334,7 @@ func chatGPTSignal(node chatGPTNode) int {
 			stated++
 		}
 	}
-	return stated
+	return &stated
 }
 
 func chatGPTNodeID(node chatGPTNode) string {
