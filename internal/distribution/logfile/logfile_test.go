@@ -13,10 +13,10 @@ func TestAppendWritesOneCredentialFreeDatedLine(t *testing.T) {
 	root := t.TempDir()
 	writer := New(root)
 	writer.now = func() time.Time { return time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC) }
-	record := MCPRecord{
-		Timestamp: writer.now(), Tool: "roca_store", OK: true,
+	record := MCPRecord{CallRecord: CallRecord{
+		Timestamp: writer.now(), Source: "mcp", OK: true,
 		Args: map[string]any{"content": "token=top-secret", "api_key": "sk-private123"},
-	}
+	}, Tool: "roca_store"}
 	if err := writer.Append(MCPAudit, record); err != nil {
 		t.Fatal(err)
 	}
@@ -90,6 +90,33 @@ func TestAppendPrunesFilesOutsideTheRetentionWindow(t *testing.T) {
 	}
 	if _, err := os.Stat(kept); err != nil {
 		t.Fatalf("retained file is missing: %v", err)
+	}
+}
+
+func TestAppendRotatesAndCapsEveryStream(t *testing.T) {
+	root := t.TempDir()
+	writer := New(root)
+	writer.now = func() time.Time { return time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC) }
+	writer.maxFileBytes = 180
+	writer.maxFiles = 3
+	for index := range 10 {
+		if err := writer.Append(Executions, map[string]any{
+			"index": index, "payload": strings.Repeat("synthetic-audit-payload", 4),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	matches, err := filepath.Glob(filepath.Join(root, DirName, "executions-*.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != writer.maxFiles {
+		t.Fatalf("rotated files = %d, want hard cap %d: %v", len(matches), writer.maxFiles, matches)
+	}
+	for _, path := range matches {
+		if info, err := os.Stat(path); err != nil || info.Size() > writer.maxFileBytes {
+			t.Errorf("rotated file %s exceeds cap: info=%v err=%v", path, info, err)
+		}
 	}
 }
 

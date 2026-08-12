@@ -338,11 +338,14 @@ func TestTheExecToolRefusesAWriteWithTheGatesVerdict(t *testing.T) {
 	refused := callToolExpectingError(t, connect(t, svc), "roca_exec",
 		map[string]any{"sql": statement})
 
-	if refused != directErr.Error() {
-		t.Errorf("the plug says %q and the gate says %q", refused, directErr)
+	if !strings.Contains(refused, directErr.Error()) {
+		t.Errorf("the plug says %q and lost the gate verdict %q", refused, directErr)
 	}
 	if !strings.Contains(refused, "Only SELECT statements are allowed") {
 		t.Errorf("the refusal %q is not the gate's existing verdict", refused)
+	}
+	if !strings.Contains(refused, "correlation_id") {
+		t.Errorf("the refusal %q cannot be matched to its audit record", refused)
 	}
 }
 
@@ -367,6 +370,10 @@ func TestADegradedQueryIsAnMCPToolErrorWithoutAnEnvelope(t *testing.T) {
 		t.Fatalf("degraded answer omits %q: %s", service.DegradedInvalidSQL, renderedText(result))
 	}
 	assertNoStructuredEnvelope(t, result)
+	audit := string(readSingleLog(t, svc.DataDir(), logfile.MCPAudit))
+	if !strings.Contains(audit, `"sql":"DELETE FROM memories"`) {
+		t.Fatalf("audit lost the model-generated SQL behind the rescue: %s", audit)
+	}
 }
 
 func TestMCPWarningsScrubTheWholeDataDirectoryPrefix(t *testing.T) {

@@ -445,13 +445,25 @@ func realDirectory(path string) bool {
 }
 
 func ownedLogName(name string) bool {
-	for _, stream := range []string{logfile.Executions, logfile.MCPAudit, logfile.Ingest} {
+	for _, stream := range []string{
+		logfile.Executions, logfile.MCPAudit, logfile.Ingest, logfile.Migrations,
+	} {
 		prefix := stream + "-"
 		if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, ".jsonl") {
 			continue
 		}
 		stamp := strings.TrimSuffix(strings.TrimPrefix(name, prefix), ".jsonl")
-		if _, err := time.Parse(time.DateOnly, stamp); err == nil {
+		if len(stamp) < len(time.DateOnly) {
+			continue
+		}
+		if _, err := time.Parse(time.DateOnly, stamp[:len(time.DateOnly)]); err != nil {
+			continue
+		}
+		segment := strings.TrimPrefix(stamp[len(time.DateOnly):], "-")
+		if segment == "" && len(stamp) == len(time.DateOnly) {
+			return true
+		}
+		if _, err := strconv.ParseUint(segment, 10, 64); err == nil {
 			return true
 		}
 	}

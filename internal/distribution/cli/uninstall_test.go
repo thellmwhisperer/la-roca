@@ -340,6 +340,24 @@ func TestUnreadableRecoveryBackupDirectoryFailsTheReport(t *testing.T) {
 	}
 }
 
+func TestPurgeOwnsEveryDatedAndRotatedLogStream(t *testing.T) {
+	tests := map[string]bool{
+		"executions-2026-08-12.jsonl":    true,
+		"executions-2026-08-12-3.jsonl":  true,
+		"mcp-audit-2026-08-12-1.jsonl":   true,
+		"ingest-2026-08-12.jsonl":        true,
+		"migrations-2026-08-12.jsonl":    true,
+		"migrations-2026-08-12-x.jsonl":  false,
+		"migrations-2026-08-12-1.backup": false,
+		"operator-2026-08-12.jsonl":      false,
+	}
+	for name, want := range tests {
+		if got := ownedLogName(name); got != want {
+			t.Errorf("ownedLogName(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
 // --- helpers ---
 
 func preparedLogFixture(t *testing.T, paths config.Paths) (string, *logfile.Writer, string) {
