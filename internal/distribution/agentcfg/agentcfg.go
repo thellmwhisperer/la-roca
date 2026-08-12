@@ -229,6 +229,16 @@ func Status(name, path string) (Report, error) {
 // guarantees. Two edit paths would create two sets of ways to lose a file.
 func Edit(name, path string, transform func(string) (string, error),
 	createMissing bool) (Outcome, error) {
+	return edit(name, path, transform, nil, createMissing)
+}
+
+func EditWithBackup(name, path string, transform, backupTransform func(string) (string, error),
+	createMissing bool) (Outcome, error) {
+	return edit(name, path, transform, backupTransform, createMissing)
+}
+
+func edit(name, path string, transform, backupTransform func(string) (string, error),
+	createMissing bool) (Outcome, error) {
 	outcome := Outcome{Runtime: name, Path: path}
 
 	previous, err := os.ReadFile(path)
@@ -250,7 +260,15 @@ func Edit(name, path string, transform func(string) (string, error),
 	}
 
 	if previous != nil {
-		backup, err := backUp(path, previous)
+		backupContent := previous
+		if backupTransform != nil {
+			content, err := backupTransform(string(previous))
+			if err != nil {
+				return outcome, fmt.Errorf("prepare recovery backup for %s: %w", path, err)
+			}
+			backupContent = []byte(content)
+		}
+		backup, err := backUp(path, backupContent)
 		if err != nil {
 			return outcome, err
 		}

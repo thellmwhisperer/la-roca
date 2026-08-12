@@ -33,7 +33,7 @@ func (w *providerAcceptanceWorld) fakeAgentCLIOnPath(name string) error {
 	if err != nil {
 		return err
 	}
-	w.environment["PATH"] = filepath.Dir(path) + string(os.PathListSeparator) + "/usr/bin:/bin"
+	w.environment["PATH"] = filepath.Dir(path)
 	return nil
 }
 

@@ -11,33 +11,33 @@ import (
 
 func TestRetiredProviderFirstRunAcceptAndDeclinePaths(t *testing.T) {
 	cases := []struct {
-		name, provider, body, answer, wantOrder, wantAlert string
-		binaries                                           []string
-		wantLegacy                                         bool
+		name, provider, body, answer, wantOrder, wantAlert, credentialFile string
+		binaries                                                           []string
+		wantLegacy                                                         bool
 	}{
 		{
 			name: "API key accept with CLI", provider: "xai", answer: "y\n", binaries: []string{"codex"},
-			body: legacyAPIConfig(), wantOrder: "codex,ollama", wantAlert: "migrate xai to codex",
+			body: legacyAPIConfig(), wantOrder: "codex,ollama", wantAlert: "migrate xai to codex", credentialFile: "xai.key",
 		},
 		{
 			name: "API key decline with CLI", provider: "xai", answer: "n\n", binaries: []string{"codex"},
-			body: legacyAPIConfig(), wantOrder: "xai,ollama", wantAlert: "migrate xai to codex", wantLegacy: true,
+			body: legacyAPIConfig(), wantOrder: "xai,ollama", wantAlert: "migrate xai to codex", credentialFile: "xai.key", wantLegacy: true,
 		},
 		{
 			name: "OAuth accept with CLI", provider: "codex", answer: "yes\n", binaries: []string{"codex"},
-			body: legacyOAuthConfig(), wantOrder: "codex,ollama", wantAlert: "migrate codex to codex",
+			body: legacyOAuthConfig(), wantOrder: "codex,ollama", wantAlert: "migrate codex to codex", credentialFile: "codex.json",
 		},
 		{
 			name: "OAuth decline with CLI", provider: "codex", answer: "no\n", binaries: []string{"codex"},
-			body: legacyOAuthConfig(), wantOrder: "codex,ollama", wantAlert: "migrate codex to codex", wantLegacy: true,
+			body: legacyOAuthConfig(), wantOrder: "codex,ollama", wantAlert: "migrate codex to codex", credentialFile: "codex.json", wantLegacy: true,
 		},
 		{
 			name: "API key accept without CLI", provider: "xai", answer: "y\n",
-			body: legacyAPIConfig(), wantOrder: "ollama", wantAlert: "drop xai",
+			body: legacyAPIConfig(), wantOrder: "ollama", wantAlert: "drop xai", credentialFile: "xai.key",
 		},
 		{
 			name: "OAuth accept without CLI", provider: "codex", answer: "y\n",
-			body: legacyOAuthConfig(), wantOrder: "ollama", wantAlert: "drop codex",
+			body: legacyOAuthConfig(), wantOrder: "ollama", wantAlert: "drop codex", credentialFile: "codex.json",
 		},
 	}
 	for _, tc := range cases {
@@ -50,14 +50,23 @@ func TestRetiredProviderFirstRunAcceptAndDeclinePaths(t *testing.T) {
 			if err := os.WriteFile(path, []byte(tc.body), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			entries := retiredEntries(Open(Context{ConfigPath: path, LookPath: lookPathIn(bin)}, Registry()))
+			credentialPath := filepath.Join(root, "credentials", tc.credentialFile)
+			if err := os.MkdirAll(filepath.Dir(credentialPath), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(credentialPath, []byte("legacy-file-secret"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			credentialPaths := map[string]string{tc.provider: credentialPath}
+			entries := retiredEntries(Open(Context{ConfigPath: path, LookPath: lookPathIn(bin),
+				RetiredCredentialPaths: credentialPaths}, Registry()))
 			if len(entries) != 1 || !strings.Contains(entries[0].Proposal.Alert, tc.wantAlert) {
 				t.Fatalf("entries = %+v, want alert containing %q", entries, tc.wantAlert)
 			}
 			var out strings.Builder
 			result, err := Run(Context{
 				Version: "v2", ConfigPath: path, StampPath: filepath.Join(root, "stamp.json"),
-				LookPath: lookPathIn(bin),
+				LookPath: lookPathIn(bin), RetiredCredentialPaths: credentialPaths,
 			}, entries, Options{Interactive: true, In: strings.NewReader(tc.answer), Out: &out})
 			if err != nil {
 				t.Fatal(err)
@@ -75,8 +84,21 @@ func TestRetiredProviderFirstRunAcceptAndDeclinePaths(t *testing.T) {
 				t.Fatalf("order = %q, want %q\n%s", got, tc.wantOrder, text)
 			}
 			hasLegacy := strings.Contains(text, "legacy-secret") || strings.Contains(text, "base_url")
-			if hasLegacy != tc.wantLegacy {
+			if strings.Contains(tc.body, "legacy-secret") && hasLegacy != tc.wantLegacy {
 				t.Fatalf("legacy config present=%v, want %v\n%s", hasLegacy, tc.wantLegacy, text)
+			}
+			_, credentialErr := os.Stat(credentialPath)
+			if tc.wantLegacy && credentialErr != nil {
+				t.Fatalf("declined legacy credential was removed: %v", credentialErr)
+			}
+			if !tc.wantLegacy && !os.IsNotExist(credentialErr) {
+				t.Fatalf("accepted legacy credential survived: %v", credentialErr)
+			}
+			if !tc.wantLegacy && strings.Contains(tc.body, "legacy-secret") {
+				backup := mustRead(t, path+".roca.bak")
+				if strings.Contains(backup, "legacy-secret") {
+					t.Fatalf("provider secret survived in recovery backup:\n%s", backup)
+				}
 			}
 			if !strings.Contains(text, "# keep") {
 				t.Fatalf("operator comment was lost:\n%s", text)
@@ -131,7 +153,7 @@ func legacyAPIConfig() string {
 }
 
 func legacyOAuthConfig() string {
-	return "# keep\n[models]\norder = [\"codex\", \"ollama\"]\n\n[models.codex]\nbase_url = \"https://chatgpt.com/backend-api/codex\"\napi_key = \"legacy-secret\"\nmodel = \"gpt-preserved\"\n"
+	return "# keep\n[models]\norder = [\"codex\", \"ollama\"]\n\n[models.codex]\nmodel = \"gpt-preserved\"\n"
 }
 
 func retiredEntries(entries []Entry) []Entry {

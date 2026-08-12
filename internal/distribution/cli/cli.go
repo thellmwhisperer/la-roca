@@ -492,6 +492,14 @@ func runtimeStatus[R any](
 // command is noise, and noise on stderr is what makes an operator stop reading
 // it.
 func buildProviders(file config.File, paths config.Paths) (provider.Cascade, provider.Cascade) {
+	for name, path := range legacyProviderCredentialPaths(dirOf(paths.DB)) {
+		info, err := os.Lstat(path)
+		configured := file.Models.Providers[name]
+		if err == nil && info.Mode().IsRegular() && len(configured.Command) == 0 {
+			configured.RetiredCredential = true
+			file.Models.Providers[name] = configured
+		}
+	}
 	settings := provider.Settings{
 		File: file, RunnerDir: paths.Runner, Env: os.Getenv,
 	}

@@ -35,16 +35,18 @@ func registerProviderCredentialSteps(ctx *godog.ScenarioContext, w *providerAcce
 func (w *providerAcceptanceWorld) legacyProviderConfiguration(kind string) error {
 	w.legacyProvider = "xai"
 	table := "[models.xai]\nbase_url = \"https://example.invalid/v1\"\napi_key = \"legacy-acceptance-secret\"\nmodel = \"grok-legacy\"\n"
+	credentialFile := "xai.key"
 	if kind == "OAuth" {
 		w.legacyProvider = "codex"
-		table = "[models.codex]\nbase_url = \"https://chatgpt.com/backend-api/codex\"\nmodel = \"gpt-legacy\"\n"
-		legacyDir := filepath.Join(w.home, ".roca", "credentials")
-		if err := os.MkdirAll(legacyDir, 0o700); err != nil {
-			return err
-		}
-		if err := os.WriteFile(filepath.Join(legacyDir, "codex.json"), []byte(`{"access_token":"legacy-acceptance-secret"}`), 0o600); err != nil {
-			return err
-		}
+		table = "[models.codex]\nmodel = \"gpt-legacy\"\n"
+		credentialFile = "codex.json"
+	}
+	legacyDir := filepath.Join(w.home, ".roca", "credentials")
+	if err := os.MkdirAll(legacyDir, 0o700); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(legacyDir, credentialFile), []byte("legacy-acceptance-secret"), 0o600); err != nil {
+		return err
 	}
 	w.legacyConfig = "# operator note\n[models]\norder = [\"" + w.legacyProvider + "\", \"ollama\"]\ntimeout_ms = 250\nprobe_ms = 100\n\n" + table + "\n[models.ollama]\nbase_url = \"" + providerDeadEndpoint + "\"\nmodel = \"local-acceptance\"\n"
 	return w.writeConfig(w.legacyConfig)
@@ -112,6 +114,23 @@ func (w *providerAcceptanceWorld) legacyProviderMigrated(target string) error {
 			return fmt.Errorf("retired provider setting %q survived:\n%s", retired, text)
 		}
 	}
+	credentialFile := "xai.key"
+	if w.legacyProvider == "codex" {
+		credentialFile = "codex.json"
+	}
+	credential := filepath.Join(w.home, ".roca", "credentials", credentialFile)
+	if _, err := os.Stat(credential); !os.IsNotExist(err) {
+		return fmt.Errorf("retired credential survived at %s: %v", credential, err)
+	}
+	if w.legacyProvider != "codex" {
+		backup, err := os.ReadFile(w.configPath() + ".roca.bak")
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(backup), "legacy-acceptance-secret") {
+			return fmt.Errorf("provider secret survived in recovery backup: %s", backup)
+		}
+	}
 	return nil
 }
 
@@ -122,6 +141,13 @@ func (w *providerAcceptanceWorld) legacyProviderUnchanged() error {
 	}
 	if string(raw) != w.legacyConfig {
 		return fmt.Errorf("declined migration changed config:\n--- want ---\n%s--- got ---\n%s", w.legacyConfig, raw)
+	}
+	credentialFile := "xai.key"
+	if w.legacyProvider == "codex" {
+		credentialFile = "codex.json"
+	}
+	if _, err := os.Stat(filepath.Join(w.home, ".roca", "credentials", credentialFile)); err != nil {
+		return fmt.Errorf("declined migration removed legacy credential: %v", err)
 	}
 	return nil
 }
@@ -169,7 +195,7 @@ func (w *providerAcceptanceWorld) fakeClaudeBinary() error {
 	if err != nil {
 		return err
 	}
-	w.environment["PATH"] = filepath.Dir(path) + string(os.PathListSeparator) + "/usr/bin:/bin"
+	w.environment["PATH"] = filepath.Dir(path)
 	return nil
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -204,7 +205,7 @@ func (env *cliEnv) chooseInitModel(ctx context.Context, input *bufio.Reader,
 				harness, model, err)
 		}
 	}
-	outcome, err := writeInitModelChoice(paths.Config, file, harness, model)
+	outcome, err := writeInitModelChoice(paths, file, harness, model)
 	if err != nil {
 		return result, false, err
 	}
@@ -459,21 +460,37 @@ func (env *cliEnv) readInitLine(input *bufio.Reader) (string, error) {
 	return answer, nil
 }
 
-func writeInitModelChoice(path string, file config.File, providerName, model string) (agentcfg.Outcome, error) {
+func writeInitModelChoice(paths config.Paths, file config.File, providerName, model string) (agentcfg.Outcome, error) {
 	changes := []config.Change{
 		{Kind: config.PrependUnique, Table: "models", Key: "order", Value: providerName,
 			Default: provider.DefaultOrder(nil)},
 	}
 	configured := file.Models.Providers[providerName]
-	if providerName != provider.NameOllama && (configured.BaseURL != "" || configured.RetiredCredential) {
+	retiring := providerName != provider.NameOllama && (configured.BaseURL != "" || configured.RetiredCredential)
+	if retiring {
 		for _, key := range []string{"base_url", "api_key", "api_key_env", "preset"} {
 			changes = append(changes, config.Change{Kind: config.DeleteValue, Table: "models." + providerName, Key: key})
 		}
 	}
 	changes = append(changes, config.Change{Kind: config.SetValue, Table: "models." + providerName, Key: "model", Value: model})
-	return agentcfg.Edit("roca", path, func(text string) (string, error) {
+	edit := agentcfg.Edit
+	if retiring {
+		edit = func(name, path string, transform func(string) (string, error), createMissing bool) (agentcfg.Outcome, error) {
+			return agentcfg.EditWithBackup(name, path, transform, config.RedactProviderSecrets, createMissing)
+		}
+	}
+	outcome, err := edit("roca", paths.Config, func(text string) (string, error) {
 		return config.ApplyText(text, changes)
 	}, true)
+	if err != nil || !retiring {
+		return outcome, err
+	}
+	credential := legacyProviderCredentialPaths(dirOf(paths.DB))[providerName]
+	if err := os.Remove(credential); err != nil && !os.IsNotExist(err) {
+		return outcome, fmt.Errorf("delete retired provider credential %s: %w", credential, err)
+	}
+	_ = os.Remove(filepath.Dir(credential))
+	return outcome, nil
 }
 
 const modelsHelp = "" +

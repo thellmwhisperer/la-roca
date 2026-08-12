@@ -15,8 +15,18 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/lifecycle"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
+	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 )
+
+const legacyCredentialsDir = "credentials"
+
+var legacyProviderCredentialFiles = map[string]string{
+	provider.NameCodex: "codex.json",
+	"deepseek":         "deepseek.key",
+	"zai":              "zai.key",
+	"xai":              "xai.key",
+}
 
 // uninstallCommand leaves the machine as it was.
 //
@@ -384,6 +394,14 @@ func ownedPaths(paths config.Paths) []string {
 	if realDirectory(cacheDir) {
 		owned = append(owned, filepath.Join(cacheDir, modelsDevCacheFile), cacheDir)
 	}
+	credentialsDir := filepath.Join(dataDir, legacyCredentialsDir)
+	if realDirectory(credentialsDir) {
+		credentialPaths := legacyProviderCredentialPaths(dataDir)
+		for _, name := range []string{provider.NameCodex, "deepseek", "zai", "xai"} {
+			owned = append(owned, credentialPaths[name])
+		}
+		owned = append(owned, credentialsDir)
+	}
 	logDir := filepath.Join(dataDir, logfile.DirName)
 	logs, logsExist := ownedFiles(logDir, ownedLogName)
 	owned = append(owned, logs...)
@@ -391,6 +409,15 @@ func ownedPaths(paths config.Paths) []string {
 		owned = append(owned, logfile.New(dataDir).LockPath(), logDir)
 	}
 	return owned
+}
+
+func legacyProviderCredentialPaths(dataDir string) map[string]string {
+	directory := filepath.Join(dataDir, legacyCredentialsDir)
+	paths := make(map[string]string, len(legacyProviderCredentialFiles))
+	for name, file := range legacyProviderCredentialFiles {
+		paths[name] = filepath.Join(directory, file)
+	}
+	return paths
 }
 
 func ownedFiles(dir string, owns func(string) bool) ([]string, bool) {

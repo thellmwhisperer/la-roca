@@ -426,9 +426,13 @@ func (m *world) record(label string, command *exec.Cmd) error {
 // model world and the same read-only switch, so that the two surfaces are
 // really being compared and not two different installations.
 func (m *world) environment() []string {
+	path := filepath.Join(m.home, "bin") + ":/usr/bin:/bin:/usr/sbin:/sbin"
+	if m.models.factoryDefault {
+		path = filepath.Join(m.home, "bin")
+	}
 	environment := append([]string{
 		"HOME=" + m.home,
-		"PATH=" + filepath.Join(m.home, "bin") + ":/usr/bin:/bin:/usr/sbin:/sbin",
+		"PATH=" + path,
 		"TMPDIR=" + filepath.Join(m.home, "tmp"),
 	}, m.modelEnvironment()...)
 	if m.readOnly {

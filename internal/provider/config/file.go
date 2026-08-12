@@ -119,6 +119,28 @@ func ApplyText(text string, changes []Change) (string, error) {
 	return updated, nil
 }
 
+func RedactProviderSecrets(text string) (string, error) {
+	var document map[string]any
+	if strings.TrimSpace(text) == "" {
+		return text, nil
+	}
+	if _, err := toml.Decode(text, &document); err != nil {
+		return "", fmt.Errorf("the configuration is not valid TOML: %w", err)
+	}
+	models, _ := document["models"].(map[string]any)
+	changes := make([]Change, 0, len(models))
+	for name, value := range models {
+		table, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, present := table["api_key"]; present {
+			changes = append(changes, Change{Kind: DeleteValue, Table: "models." + name, Key: "api_key"})
+		}
+	}
+	return ApplyText(text, changes)
+}
+
 func deleteTableValueText(text, table, key string) string {
 	want, inside, offset := strings.ToLower(strings.TrimSpace(table)), false, 0
 	for _, line := range strings.SplitAfter(text, "\n") {
@@ -636,6 +658,7 @@ func readModels(section map[string]any, path string, warnings *[]string) ModelsC
 
 func readProvider(table map[string]any, name, path string, warnings *[]string) ProviderConfig {
 	cfg := ProviderConfig{Values: make(map[string]string, len(table))}
+	cfg.Command = readStrings(table["command"])
 	for _, key := range sortedKeys(table) {
 		text, _ := table[key].(string)
 		if key != "command" && key != "api_key" && key != "api_key_env" && key != "preset" && key != "base_url" {
@@ -648,14 +671,20 @@ func readProvider(table map[string]any, name, path string, warnings *[]string) P
 				*warnings = append(*warnings, retiredProviderKey(name, key, path))
 			}
 		case "command":
-			cfg.Command = readStrings(table[key])
 		case "model":
 			cfg.Model = text
 		case "response_format":
 			cfg.ResponseFormat = text
 		case "timeout_seconds":
 			cfg.TimeoutSeconds = readInt(table[key])
-		case "api_key", "api_key_env", "preset":
+		case "preset":
+			if len(cfg.Command) > 0 {
+				cfg.Values[key] = templateString(table[key])
+				continue
+			}
+			cfg.RetiredCredential = true
+			*warnings = append(*warnings, retiredProviderKey(name, key, path))
+		case "api_key", "api_key_env":
 			cfg.RetiredCredential = true
 			*warnings = append(*warnings, retiredProviderKey(name, key, path))
 		case "keep_alive":

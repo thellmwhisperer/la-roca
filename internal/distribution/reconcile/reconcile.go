@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -54,19 +55,21 @@ type Proposal struct {
 }
 
 type Entry struct {
-	ID        string
-	Detection Detection
-	Proposal  Proposal
+	ID              string
+	Detection       Detection
+	Proposal        Proposal
+	RetiredProvider string
 }
 
 type Context struct {
-	Version      string
-	ConfigPath   string
-	StampPath    string
-	LookPath     func(string) (string, error)
-	Env          func(string) string
-	File         config.File
-	Capabilities map[string]bool
+	Version                string
+	ConfigPath             string
+	StampPath              string
+	LookPath               func(string) (string, error)
+	Env                    func(string) string
+	File                   config.File
+	Capabilities           map[string]bool
+	RetiredCredentialPaths map[string]string
 }
 
 type Options struct {
@@ -181,7 +184,7 @@ func providerUsable(context Context, file config.File, name string, declared boo
 }
 
 func retiredProviderEntries(context Context, file config.File) []Entry {
-	names := retiredProviderNames(file)
+	names := retiredProviderNames(context, file)
 	detected := provider.DetectedCommandPresets(context.LookPath)
 	entries := make([]Entry, 0, len(names))
 	for _, name := range names {
@@ -192,7 +195,8 @@ func retiredProviderEntries(context Context, file config.File) []Entry {
 			target = detected[0]
 		}
 		changes := retiredProviderChanges(name, target)
-		entry := Entry{ID: ProposalRetiredProvider + "-" + name, Proposal: Proposal{Changes: changes}}
+		entry := Entry{ID: ProposalRetiredProvider + "-" + name,
+			Proposal: Proposal{Changes: changes}, RetiredProvider: name}
 		if target == "" {
 			entry.Proposal.Alert = fmt.Sprintf("Retired credential-backed model provider detected: drop %s from the provider order; no local agent CLI is on PATH.", name)
 			entry.Proposal.Prompt = fmt.Sprintf("Drop %s from the model configuration?", name)
@@ -205,16 +209,16 @@ func retiredProviderEntries(context Context, file config.File) []Entry {
 	return entries
 }
 
-func retiredProviderNames(file config.File) []string {
+func retiredProviderNames(context Context, file config.File) []string {
 	names := map[string]bool{}
 	for _, name := range append(append([]string(nil), file.Models.Order...), file.Models.InterpretOrder...) {
 		name = strings.ToLower(strings.TrimSpace(name))
-		if retiredProvider(file, name) {
+		if retiredProvider(context, file, name) {
 			names[name] = true
 		}
 	}
 	for name := range file.Models.Providers {
-		if retiredProvider(file, name) {
+		if retiredProvider(context, file, name) {
 			names[name] = true
 		}
 	}
@@ -226,15 +230,26 @@ func retiredProviderNames(file config.File) []string {
 	return ordered
 }
 
-func retiredProvider(file config.File, name string) bool {
+func retiredProvider(context Context, file config.File, name string) bool {
 	if name == "" || name == provider.NameOllama {
 		return false
 	}
 	cfg, declared := file.Models.Providers[name]
+	if len(cfg.Command) == 0 && regularFile(context.RetiredCredentialPaths[name]) {
+		return true
+	}
 	if provider.UsesCommandTransport(file, name) {
 		return declared && (cfg.BaseURL != "" || cfg.RetiredCredential)
 	}
 	return true
+}
+
+func regularFile(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Lstat(path)
+	return err == nil && info.Mode().IsRegular()
 }
 
 func retiredProviderChanges(name, target string) []config.Change {
@@ -306,11 +321,16 @@ func Run(context Context, registry []Entry, options Options) (Result, error) {
 			}
 		}
 		changes := substituteInput(entry.Proposal.Changes, input)
-		outcome, err := agentcfg.Edit("roca", context.ConfigPath, func(text string) (string, error) {
+		outcome, err := agentcfg.EditWithBackup("roca", context.ConfigPath, func(text string) (string, error) {
 			return config.ApplyText(text, changes)
-		}, true)
+		}, config.RedactProviderSecrets, true)
 		if err != nil {
 			return result, err
+		}
+		if entry.RetiredProvider != "" {
+			if err := removeRetiredCredential(context.RetiredCredentialPaths[entry.RetiredProvider]); err != nil {
+				return result, err
+			}
 		}
 		result.Accepted++
 		result.Changes = append(result.Changes, outcome)
@@ -326,6 +346,17 @@ func Run(context Context, registry []Entry, options Options) (Result, error) {
 		}
 	}
 	return result, nil
+}
+
+func removeRetiredCredential(path string) error {
+	if path == "" {
+		return nil
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("delete retired provider credential %s: %w", path, err)
+	}
+	_ = os.Remove(filepath.Dir(path))
+	return nil
 }
 
 func askYesNo(reader *bufio.Reader, out io.Writer, prompt string) (bool, error) {

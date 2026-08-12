@@ -97,6 +97,22 @@ timeout_seconds = 45
 	}
 }
 
+func TestAnExplicitCommandKeepsPresetAsCommandConfiguration(t *testing.T) {
+	path := write(t, `[models.fixture]
+command = ["fixture", "--profile", "{preset}", "{prompt}"]
+preset = "operator-profile"
+model = "fixture-model"
+`)
+	file, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := file.Models.Providers["fixture"]
+	if cfg.RetiredCredential || cfg.Values["preset"] != "operator-profile" || len(file.Warnings) != 0 {
+		t.Fatalf("provider = %+v, warnings = %v", cfg, file.Warnings)
+	}
+}
+
 func TestALegacyHTTPAndKeyConfigIsToleratedButIgnored(t *testing.T) {
 	path := write(t, `[models.fixture]
 base_url = "https://example.invalid/v1"

@@ -23,7 +23,8 @@ func (env *cliEnv) reconciliationContext() (reconcile.Context, error) {
 		Version: env.build.Version, ConfigPath: paths.Config,
 		StampPath: paths.Reconciliation,
 		LookPath:  exec.LookPath, Env: os.Getenv, File: file,
-		Capabilities: map[string]bool{reconcile.CapabilityAnthropicExport: true},
+		RetiredCredentialPaths: legacyProviderCredentialPaths(dirOf(paths.DB)),
+		Capabilities:           map[string]bool{reconcile.CapabilityAnthropicExport: true},
 	}, nil
 }
 

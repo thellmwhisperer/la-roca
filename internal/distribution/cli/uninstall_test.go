@@ -53,6 +53,30 @@ func TestAWiderInventoryStillDeletesNothingOfTheOperators(t *testing.T) {
 	}
 }
 
+func TestPurgeOwnsExactLegacyProviderCredentials(t *testing.T) {
+	home := t.TempDir()
+	paths := resolvedIn(t, home)
+	credentialPaths := legacyProviderCredentialPaths(dirOf(paths.DB))
+	for _, path := range credentialPaths {
+		writeFile(t, path, "legacy-secret")
+	}
+	foreign := filepath.Join(dirOf(paths.DB), legacyCredentialsDir, "operator.txt")
+	writeFile(t, foreign, "mine")
+
+	report := lifecycle.Plan{Owned: ownedPaths(paths), DataDir: dirOf(paths.DB)}.Apply()
+	for _, path := range credentialPaths {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("legacy credential survived at %s: %v", path, err)
+		}
+	}
+	if _, err := os.Stat(foreign); err != nil {
+		t.Fatalf("foreign credential-directory file was removed: %v", err)
+	}
+	if !slices.ContainsFunc(report.Kept, func(kept lifecycle.Kept) bool { return kept.Path == foreign }) {
+		t.Fatalf("foreign survivor was not named: %+v", report.Kept)
+	}
+}
+
 // Skill files live outside ~/.roca, under each runtime's own directory. The
 // purge inventory has to name them, or uninstall leaves them behind and the
 // surviving skill still instructs agents to call a binary that is gone.

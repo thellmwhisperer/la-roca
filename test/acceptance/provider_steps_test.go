@@ -122,7 +122,7 @@ func (w *providerAcceptanceWorld) runWithInput(input string, args ...string) err
 func (w *providerAcceptanceWorld) commandEnvironment() []string {
 	tmp := filepath.Join(w.home, "tmp")
 	_ = os.MkdirAll(tmp, 0o700)
-	path := "/usr/bin:/bin:/usr/sbin:/sbin"
+	path := filepath.Join(w.home, "bin")
 	if configured := w.environment["PATH"]; configured != "" {
 		path = configured
 	}
