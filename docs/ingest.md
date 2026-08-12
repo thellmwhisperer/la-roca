@@ -164,9 +164,13 @@ spelling, are omitted at the parser boundary instead of being assigned a guessed
 instant. In a same-instant collision, one numbered original may be selected over
 compatible numberless duplicates; numbered peers and conflicting text remain
 ambiguous. The replay backfills only fields that are still NULL after the
-content agrees. Every unresolved collision is left untouched and reported as a
-discard, so nothing that already landed is rewritten and no exchange is written
-twice.
+content agrees. The one exception is a source that measures how much each of its
+snapshots stated about an answer, which today is the ChatGPT export: a reading
+that measurably stated more than the one the row's provenance came from states
+the provenance columns instead of only filling them, under the rules in
+[Declare an OpenAI data export](#declare-an-openai-data-export). Every unresolved
+collision is left untouched and reported as a discard, so an ambiguous match
+rewrites nothing and no exchange is written twice.
 
 ## Reading the summary
 
