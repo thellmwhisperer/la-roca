@@ -2,7 +2,9 @@ package ingest
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,6 +38,7 @@ type Counts struct {
 	// because an exchange that already answered a query cannot change under it.
 	ExchangesUnchanged int `json:"exchanges_unchanged"`
 	ExchangesChanged   int `json:"exchanges_changed"`
+	AnchorConflicts    int `json:"anchor_conflicts"`
 }
 
 func (c *Counts) add(other Counts) {
@@ -49,6 +52,7 @@ func (c *Counts) add(other Counts) {
 	c.MemoriesUnchanged += other.MemoriesUnchanged
 	c.ExchangesUnchanged += other.ExchangesUnchanged
 	c.ExchangesChanged += other.ExchangesChanged
+	c.AnchorConflicts += other.AnchorConflicts
 }
 
 // layerResolver turns a declared layer name into the physical one. It is the
@@ -111,6 +115,10 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 	if err != nil {
 		return counts, err
 	}
+	matcher, err := w.exchangeMatcher(ctx, session.ID)
+	if err != nil {
+		return counts, err
+	}
 
 	metadata := map[string]any{}
 	maps.Copy(metadata, session.Metadata)
@@ -138,38 +146,67 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 
 	for _, exchange := range session.Exchanges {
 		number := exchange.Number
+		known, identityKnown := assigned[exchange.SourceID]
 		if exchange.SourceID != "" {
-			known, landed := assigned[exchange.SourceID]
-			if landed {
-				// It is already in. Whether the source has edited it since is
-				// reported, and fields that already landed are still not rewritten.
-				thinking, err := w.enrichExchange(ctx, session.ID, known.Number, exchange)
-				if err != nil {
-					return counts, err
+			if identityKnown {
+				number = known.Number
+			} else {
+				number = next
+			}
+		}
+		matched, outcome := matcher.match(number, exchange)
+		if outcome == exchangeMatched {
+			thinking, err := w.enrichExchange(ctx, session.ID, matched, exchange)
+			if err != nil {
+				return counts, err
+			}
+			matcher.claim(matched, number, exchange)
+			counts.ThinkingBlocks += thinking
+			if exchange.SourceID != "" {
+				assigned[exchange.SourceID] = exchangeKey{
+					Number: matched, Fingerprint: exchange.Fingerprint,
 				}
-				counts.ThinkingBlocks += thinking
+			}
+			if identityKnown {
 				if known.Fingerprint == exchange.Fingerprint {
 					counts.ExchangesUnchanged++
 				} else {
 					counts.ExchangesChanged++
 				}
-				continue
 			}
-			number = next
-			next++
+			continue
+		}
+		if outcome == exchangeAnchorConflict || outcome == exchangeAmbiguous {
+			counts.AnchorConflicts++
+			continue
+		}
+		// A known source identity or a claimed historical row may already be
+		// the historical row. Leaving it untouched is safer than manufacturing a
+		// second copy that a later ingest cannot distinguish from the first.
+		if identityKnown || outcome == exchangeAlreadyClaimed {
+			if identityKnown {
+				if known.Fingerprint == exchange.Fingerprint {
+					counts.ExchangesUnchanged++
+				} else {
+					counts.ExchangesChanged++
+				}
+			}
+			continue
+		}
+		if matcher.occupied(number) {
+			number = matcher.freshNumber()
+		}
+		if number >= next {
+			next = number + 1
 		}
 		landed, err := w.exchange(ctx, session.ID, number, exchange)
 		if err != nil {
 			return counts, err
 		}
 		if !landed {
-			thinking, err := w.enrichExchange(ctx, session.ID, number, exchange)
-			if err != nil {
-				return counts, err
-			}
-			counts.ThinkingBlocks += thinking
 			continue
 		}
+		matcher.occupy(number, exchange)
 		counts.Exchanges++
 		if exchange.SourceID != "" {
 			assigned[exchange.SourceID] = exchangeKey{
@@ -205,6 +242,272 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 		}
 	}
 	return counts, nil
+}
+
+type storedExchange struct {
+	number                         int
+	humanText, agentText           string
+	humanTimestamp, agentTimestamp string
+}
+
+type timestampPair struct {
+	human, agent string
+}
+
+type exchangeMatch uint8
+
+const (
+	exchangeUnmatched exchangeMatch = iota
+	exchangeMatched
+	exchangeAmbiguous
+	exchangeAnchorConflict
+	exchangeAlreadyClaimed
+)
+
+type exchangeIdentity struct {
+	sourceID   string
+	timestamps timestampPair
+	number     int
+	kind       exchangeIdentityKind
+}
+
+type exchangeIdentityKind uint8
+
+const (
+	identityBySource exchangeIdentityKind = iota + 1
+	identityByTimestamps
+	identityByNumber
+)
+
+type exchangeMatcher struct {
+	byNumber     map[int]storedExchange
+	byTimestamps map[timestampPair][]storedExchange
+	byContent    map[[sha256.Size]byte][]storedExchange
+	claimed      map[int]exchangeIdentity
+	nextNumber   int
+}
+
+func (w *writer) exchangeMatcher(ctx context.Context, sessionID string) (*exchangeMatcher, error) {
+	m := &exchangeMatcher{
+		byNumber:     map[int]storedExchange{},
+		byTimestamps: map[timestampPair][]storedExchange{},
+		byContent:    map[[sha256.Size]byte][]storedExchange{},
+		claimed:      map[int]exchangeIdentity{},
+		nextNumber:   1,
+	}
+	rows, err := w.tx.QueryContext(ctx, `
+		SELECT exchange_number, COALESCE(human_text, ''), COALESCE(agent_text, ''),
+		       COALESCE(human_timestamp, ''), COALESCE(agent_timestamp, '')
+		FROM exchanges WHERE session_id = ?`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("read the exchange anchors of %s: %w", sessionID, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var stored storedExchange
+		var number sql.NullInt64
+		if err := rows.Scan(&number, &stored.humanText, &stored.agentText,
+			&stored.humanTimestamp, &stored.agentTimestamp); err != nil {
+			return nil, fmt.Errorf("read an exchange anchor of %s: %w", sessionID, err)
+		}
+		if !number.Valid {
+			continue
+		}
+		stored.number = int(number.Int64)
+		m.addStored(stored)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read the exchange anchors of %s: %w", sessionID, err)
+	}
+	return m, nil
+}
+
+func (m *exchangeMatcher) occupied(number int) bool {
+	_, exists := m.byNumber[number]
+	return exists
+}
+
+func (m *exchangeMatcher) occupy(number int, exchange parsers.Exchange) {
+	m.byNumber[number] = storedExchange{
+		number: number, humanText: exchange.HumanText, agentText: exchange.AgentText,
+		humanTimestamp: exchange.HumanTimestamp, agentTimestamp: exchange.AgentTimestamp,
+	}
+	if number >= m.nextNumber {
+		m.nextNumber = number + 1
+	}
+}
+
+func (m *exchangeMatcher) freshNumber() int {
+	for m.occupied(m.nextNumber) {
+		m.nextNumber++
+	}
+	return m.nextNumber
+}
+
+func (m *exchangeMatcher) addStored(stored storedExchange) {
+	m.byNumber[stored.number] = stored
+	if stored.number >= m.nextNumber {
+		m.nextNumber = stored.number + 1
+	}
+	if key, ok := timestampAnchor(stored.humanTimestamp, stored.agentTimestamp); ok {
+		m.byTimestamps[key] = append(m.byTimestamps[key], stored)
+	}
+	if key, ok := contentAnchor(stored.humanText, stored.agentText); ok {
+		m.byContent[key] = append(m.byContent[key], stored)
+	}
+}
+
+func (m *exchangeMatcher) match(number int, exchange parsers.Exchange) (int, exchangeMatch) {
+	identity := incomingIdentity(number, exchange)
+	timestampsPresent := false
+	timestampsAmbiguous := false
+	if key, ok := timestampAnchor(exchange.HumanTimestamp, exchange.AgentTimestamp); ok {
+		timestampsPresent = true
+		stored := m.byTimestamps[key]
+		candidates, sameClaim, claimed := m.unclaimed(stored, identity)
+		if len(stored) > 1 && claimed {
+			if len(candidates) != 1 || !compatibleContent(candidates[0], exchange) {
+				return 0, exchangeAnchorConflict
+			}
+			return candidates[0].number, exchangeMatched
+		}
+		if sameClaim {
+			return 0, exchangeAlreadyClaimed
+		}
+		if len(candidates) == 1 {
+			_, conflicts := compareContent(candidates[0], exchange)
+			if conflicts {
+				return 0, exchangeAnchorConflict
+			}
+			return candidates[0].number, exchangeMatched
+		}
+		if len(candidates) == 0 && len(stored) > 0 {
+			return 0, exchangeUnmatched
+		}
+		timestampsAmbiguous = len(candidates) > 1
+	}
+	if key, ok := contentAnchor(exchange.HumanText, exchange.AgentText); ok {
+		stored := compatibleCandidates(m.byContent[key], exchange)
+		candidates, sameClaim, _ := m.unclaimed(stored, identity)
+		if sameClaim {
+			return 0, exchangeAlreadyClaimed
+		}
+		if len(candidates) == 1 {
+			return candidates[0].number, exchangeMatched
+		}
+		if len(candidates) > 1 {
+			return 0, exchangeAmbiguous
+		}
+	}
+	if !timestampsPresent || timestampsAmbiguous {
+		if stored, ok := m.byNumber[number]; ok {
+			matched, conflicts := compareContent(stored, exchange)
+			if matched && conflicts {
+				return 0, exchangeAnchorConflict
+			}
+			if !matched || conflicts {
+				return 0, exchangeUnmatched
+			}
+			if claim, claimed := m.claimed[number]; claimed {
+				if claim == identity {
+					return 0, exchangeAlreadyClaimed
+				}
+				return 0, exchangeUnmatched
+			}
+			return number, exchangeMatched
+		}
+	}
+	if timestampsAmbiguous {
+		return 0, exchangeAmbiguous
+	}
+	return 0, exchangeUnmatched
+}
+
+func (m *exchangeMatcher) claim(number, incomingNumber int, exchange parsers.Exchange) {
+	m.claimed[number] = incomingIdentity(incomingNumber, exchange)
+}
+
+func (m *exchangeMatcher) unclaimed(candidates []storedExchange,
+	identity exchangeIdentity) ([]storedExchange, bool, bool) {
+	available := make([]storedExchange, 0, len(candidates))
+	var same, claimedAny bool
+	for _, candidate := range candidates {
+		claim, claimed := m.claimed[candidate.number]
+		if !claimed {
+			available = append(available, candidate)
+		} else {
+			claimedAny = true
+			if claim == identity {
+				same = true
+			}
+		}
+	}
+	return available, same, claimedAny
+}
+
+func incomingIdentity(number int, exchange parsers.Exchange) exchangeIdentity {
+	if exchange.SourceID != "" {
+		return exchangeIdentity{kind: identityBySource, sourceID: exchange.SourceID}
+	}
+	if timestamps, ok := timestampAnchor(exchange.HumanTimestamp, exchange.AgentTimestamp); ok {
+		return exchangeIdentity{kind: identityByTimestamps, timestamps: timestamps}
+	}
+	return exchangeIdentity{kind: identityByNumber, number: number}
+}
+
+func compatibleCandidates(candidates []storedExchange, exchange parsers.Exchange) []storedExchange {
+	matched := make([]storedExchange, 0, len(candidates))
+	for _, candidate := range candidates {
+		if compatibleContent(candidate, exchange) {
+			matched = append(matched, candidate)
+		}
+	}
+	return matched
+}
+
+func compatibleContent(stored storedExchange, exchange parsers.Exchange) bool {
+	matched, conflicts := compareContent(stored, exchange)
+	return matched && !conflicts
+}
+
+func compareContent(stored storedExchange, exchange parsers.Exchange) (bool, bool) {
+	matched := false
+	for _, pair := range [][2]string{
+		{stored.humanText, exchange.HumanText},
+		{stored.agentText, exchange.AgentText},
+	} {
+		if pair[0] == "" || pair[1] == "" {
+			continue
+		}
+		if pair[0] != pair[1] {
+			return matched, true
+		}
+		matched = true
+	}
+	return matched, false
+}
+
+func timestampAnchor(human, agent string) (timestampPair, bool) {
+	if human == "" && agent == "" {
+		return timestampPair{}, false
+	}
+	return timestampPair{human: human, agent: agent}, true
+}
+
+func contentAnchor(human, agent string) ([sha256.Size]byte, bool) {
+	if human == "" && agent == "" {
+		return [sha256.Size]byte{}, false
+	}
+	hash := sha256.New()
+	var length [8]byte
+	for _, component := range []string{human, agent} {
+		binary.BigEndian.PutUint64(length[:], uint64(len(component)))
+		_, _ = hash.Write(length[:])
+		_, _ = hash.Write([]byte(component))
+	}
+	var anchor [sha256.Size]byte
+	copy(anchor[:], hash.Sum(nil))
+	return anchor, true
 }
 
 // currentSession is what the database already holds for this id.
@@ -379,9 +682,9 @@ func keysItsOwnExchanges(session parsers.Session) bool {
 
 // exchange inserts one exchange and says whether it landed.
 //
-// INSERT OR IGNORE plus changes() is the whole record-level contract: the unique
-// index over (session_id, exchange_number) decides whether the normalized parent
-// is new or eligible only for additive enrichment.
+// The matcher has already ruled out a historical row and selected an unoccupied
+// number. INSERT OR IGNORE plus the unique index over (session_id,
+// exchange_number) remains the final guard against a concurrent duplicate.
 func (w *writer) exchange(ctx context.Context, sessionID string, number int,
 	exchange parsers.Exchange) (bool, error) {
 	provenance := exchange.Provenance
