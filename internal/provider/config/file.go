@@ -581,9 +581,10 @@ type ModelsConfig struct {
 
 // ProviderConfig is one provider's table.
 type ProviderConfig struct {
-	BaseURL string   `toml:"base_url"`
-	Command []string `toml:"command"`
-	Model   string   `toml:"model"`
+	TableName string   `toml:"-"`
+	BaseURL   string   `toml:"base_url"`
+	Command   []string `toml:"command"`
+	Model     string   `toml:"model"`
 	// ResponseFormat declares whether command stdout is plain text or a JSON
 	// envelope whose result field is the answer.
 	ResponseFormat string `toml:"response_format"`
@@ -700,7 +701,9 @@ func readModels(section map[string]any, path string, warnings *[]string) ModelsC
 		value := section[key]
 		if table, isTable := value.(map[string]any); isTable {
 			name := strings.ToLower(key)
-			models.Providers[name] = readProvider(table, name, path, warnings)
+			provider := readProvider(table, name, path, warnings)
+			provider.TableName = key
+			models.Providers[name] = provider
 			continue
 		}
 		switch key {

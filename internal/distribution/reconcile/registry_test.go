@@ -151,6 +151,36 @@ func TestRetiredCredentialFileRemainsDiscoverableWithoutConfigMarker(t *testing.
 	}
 }
 
+func TestRetiredProviderEditsPreserveRawTableIdentity(t *testing.T) {
+	root, bin := t.TempDir(), t.TempDir()
+	writeExecutable(t, filepath.Join(bin, "codex"))
+	path := filepath.Join(root, "config.toml")
+	body := "[models]\norder = [\"open_router\", \"ollama\"]\n\n[models.open_router]\napi_key = \"legacy-secret\"\nmodel = \"legacy-model\"\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	context := Context{Version: "v2", ConfigPath: path,
+		StampPath: filepath.Join(root, "stamp.json"), LookPath: lookPathIn(bin)}
+	entries := retiredEntries(Open(context, Registry()))
+	if len(entries) != 1 || entries[0].RetiredProvider != "open-router" {
+		t.Fatalf("entries = %+v", entries)
+	}
+	result, err := Run(context, entries, Options{
+		Interactive: true, In: strings.NewReader("y\n"), Out: &strings.Builder{},
+	})
+	if err != nil || result.Accepted != 1 {
+		t.Fatalf("result = %+v, err %v", result, err)
+	}
+	updated := mustRead(t, path)
+	if strings.Contains(updated, "open_router") || strings.Contains(updated, "legacy-secret") {
+		t.Fatalf("raw legacy table survived migration:\n%s", updated)
+	}
+	backup := mustRead(t, path+".roca.bak")
+	if !strings.Contains(backup, "[models.open_router]") || strings.Contains(backup, "legacy-secret") {
+		t.Fatalf("backup rewrote raw identity or retained secret:\n%s", backup)
+	}
+}
+
 func TestAnthropicExportProposalWritesTheFolderTheOperatorTypes(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "config.toml")

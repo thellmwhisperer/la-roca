@@ -473,15 +473,9 @@ func writeInitModelChoice(paths config.Paths, file config.File, providerName, mo
 		}
 	}
 	changes = append(changes, config.Change{Kind: config.SetValue, Table: "models." + providerName, Key: "model", Value: model})
-	edit := agentcfg.Edit
-	if retiring {
-		edit = func(name, path string, transform func(string) (string, error), createMissing bool) (agentcfg.Outcome, error) {
-			return agentcfg.EditWithBackup(name, path, transform, config.RedactProviderSecrets, createMissing)
-		}
-	}
-	outcome, err := edit("roca", paths.Config, func(text string) (string, error) {
+	outcome, err := agentcfg.EditWithBackup("roca", paths.Config, func(text string) (string, error) {
 		return config.ApplyText(text, changes)
-	}, true)
+	}, config.RedactProviderSecrets, true)
 	if err != nil || !retiring {
 		return outcome, err
 	}

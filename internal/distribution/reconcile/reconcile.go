@@ -184,17 +184,18 @@ func providerUsable(context Context, file config.File, name string, declared boo
 }
 
 func retiredProviderEntries(context Context, file config.File) []Entry {
-	names := retiredProviderNames(context, file)
+	candidates := retiredProviderCandidates(context, file)
 	detected := provider.DetectedCommandPresets(context.LookPath)
-	entries := make([]Entry, 0, len(names))
-	for _, name := range names {
+	entries := make([]Entry, 0, len(candidates))
+	for _, candidate := range candidates {
+		name := candidate.Name
 		target := ""
 		if slices.Contains(detected, name) {
 			target = name
 		} else if len(detected) > 0 {
 			target = detected[0]
 		}
-		changes := retiredProviderChanges(name, target)
+		changes := retiredProviderChanges(name, target, candidate.Tables)
 		entry := Entry{ID: ProposalRetiredProvider + "-" + name,
 			Proposal: Proposal{Changes: changes}, RetiredProvider: name}
 		if target == "" {
@@ -209,47 +210,76 @@ func retiredProviderEntries(context Context, file config.File) []Entry {
 	return entries
 }
 
-func retiredProviderNames(context Context, file config.File) []string {
-	names := map[string]bool{}
-	for _, name := range append(append([]string(nil), file.Models.Order...), file.Models.InterpretOrder...) {
-		name = normalizeProviderName(name)
-		if RetiredProvider(file, name, context.RetiredCredentialPaths[name]) {
-			names[name] = true
+type retiredProviderCandidate struct {
+	Name   string
+	Tables []string
+}
+
+func retiredProviderCandidates(context Context, file config.File) []retiredProviderCandidate {
+	candidates := map[string]retiredProviderCandidate{}
+	add := func(name, table, credentialPath string) {
+		normalized := normalizeProviderName(name)
+		if normalized == "" || !RetiredProvider(file, name, credentialPath) {
+			return
 		}
+		candidate := candidates[normalized]
+		candidate.Name = normalized
+		if table != "" && !slices.Contains(candidate.Tables, table) {
+			candidate.Tables = append(candidate.Tables, table)
+		}
+		candidates[normalized] = candidate
 	}
-	for name := range file.Models.Providers {
-		name = normalizeProviderName(name)
-		if RetiredProvider(file, name, context.RetiredCredentialPaths[name]) {
-			names[name] = true
+	for _, name := range append(append([]string(nil), file.Models.Order...), file.Models.InterpretOrder...) {
+		normalized := normalizeProviderName(name)
+		add(name, "", context.RetiredCredentialPaths[normalized])
+	}
+	for name, configured := range file.Models.Providers {
+		table := configured.TableName
+		if table == "" {
+			table = name
 		}
+		add(name, table, context.RetiredCredentialPaths[normalizeProviderName(name)])
 	}
 	for name, path := range context.RetiredCredentialPaths {
-		name = normalizeProviderName(name)
-		if regularFile(path) && RetiredProvider(file, name, path) {
-			names[name] = true
+		if regularFile(path) {
+			add(name, "", path)
 		}
 	}
-	ordered := make([]string, 0, len(names))
-	for name := range names {
-		ordered = append(ordered, name)
+	ordered := make([]retiredProviderCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		sort.Strings(candidate.Tables)
+		ordered = append(ordered, candidate)
 	}
-	sort.Strings(ordered)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Name < ordered[j].Name })
 	return ordered
 }
 
 func RetiredProvider(file config.File, name, credentialPath string) bool {
-	name = normalizeProviderName(name)
-	if name == "" || name == provider.NameOllama {
+	normalized := normalizeProviderName(name)
+	if normalized == "" || normalized == provider.NameOllama {
 		return false
 	}
-	cfg, declared := file.Models.Providers[name]
+	cfg, declared := providerConfiguration(file, name)
 	if len(cfg.Command) == 0 && regularFile(credentialPath) {
 		return true
 	}
-	if provider.UsesCommandTransport(file, name) {
+	if len(cfg.Command) > 0 || provider.UsesCommandTransport(file, normalized) {
 		return declared && (cfg.BaseURL != "" || cfg.RetiredCredential)
 	}
 	return true
+}
+
+func providerConfiguration(file config.File, name string) (config.ProviderConfig, bool) {
+	if configured, declared := file.Models.Providers[strings.ToLower(strings.TrimSpace(name))]; declared {
+		return configured, true
+	}
+	normalized := normalizeProviderName(name)
+	for candidate, configured := range file.Models.Providers {
+		if normalizeProviderName(candidate) == normalized {
+			return configured, true
+		}
+	}
+	return config.ProviderConfig{}, false
 }
 
 func normalizeProviderName(name string) string {
@@ -264,7 +294,7 @@ func regularFile(path string) bool {
 	return err == nil && info.Mode().IsRegular()
 }
 
-func retiredProviderChanges(name, target string) []config.Change {
+func retiredProviderChanges(name, target string, tables []string) []config.Change {
 	kind := config.RemoveListValue
 	if target != "" {
 		kind = config.ReplaceListValue
@@ -274,11 +304,15 @@ func retiredProviderChanges(name, target string) []config.Change {
 		{Kind: kind, Table: "models", Key: "interpret_order", Old: name, Value: target},
 	}
 	if target == name {
-		for _, key := range []string{"base_url", "api_key", "api_key_env", "preset"} {
-			changes = append(changes, config.Change{Kind: config.DeleteValue, Table: "models." + name, Key: key})
+		for _, table := range tables {
+			for _, key := range []string{"base_url", "api_key", "api_key_env", "preset"} {
+				changes = append(changes, config.Change{Kind: config.DeleteValue, Table: "models." + table, Key: key})
+			}
 		}
 	} else {
-		changes = append(changes, config.Change{Kind: config.DeleteTable, Table: "models." + name})
+		for _, table := range tables {
+			changes = append(changes, config.Change{Kind: config.DeleteTable, Table: "models." + table})
+		}
 	}
 	return changes
 }

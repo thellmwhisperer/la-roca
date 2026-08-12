@@ -203,6 +203,29 @@ func TestInitRetirementRedactsQuotedInlineKeyFromBackup(t *testing.T) {
 	}
 }
 
+func TestInitAlwaysRedactsUnrelatedProviderSecretsFromBackup(t *testing.T) {
+	root := t.TempDir()
+	paths := config.Paths{DB: filepath.Join(root, "roca.db"), Config: filepath.Join(root, "config.toml")}
+	body := "[models]\norder = [\"xai\"]\n\n[models.xai]\napi_key = \"unrelated-secret\"\nmodel = \"grok-legacy\"\n"
+	if err := os.WriteFile(paths.Config, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := config.LoadFile(paths.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writeInitModelChoice(paths, file, provider.NameCodex, "gpt-current"); err != nil {
+		t.Fatal(err)
+	}
+	backup, err := os.ReadFile(paths.Config + ".roca.bak")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(backup), "unrelated-secret") || strings.Contains(string(backup), "api_key") {
+		t.Fatalf("unrelated provider secret survived in recovery backup:\n%s", backup)
+	}
+}
+
 func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 	tests := []struct {
 		name          string
