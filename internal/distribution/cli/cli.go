@@ -97,7 +97,11 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 			if err != nil {
 				err = logfile.Correlate(err)
 			} else if code != ExitOK {
-				env.surfaceCorrelation()
+				// The plugin exited non-zero on its own account, and its streams
+				// crossed this seam untouched. Naming the log line here would write
+				// a line roca invented into output the plugin owns, so the ID is
+				// minted for the audit record and read back through `roca doctor`.
+				env.correlationID()
 			}
 			if logErr := env.logExecution(nil, started, code, err); logErr != nil {
 				fmt.Fprintf(env.errOut,
@@ -564,8 +568,9 @@ func (env *cliEnv) correlationID() string {
 
 // surfaceCorrelation is what a run that failed without an error value has
 // instead of the suffix Correlate writes inside an error message. It goes to the
-// error stream, which is the one stream no answer is parsed from: a --json
-// envelope stays valid and a plugin's own output stays its own.
+// error stream, which is the one stream no answer is parsed from, so a --json
+// envelope stays valid. It is only ever roca's own failure: a plugin owns both
+// of its streams, so the plugin seam mints the ID without printing it.
 func (env *cliEnv) surfaceCorrelation() {
 	fmt.Fprintf(env.errOut, "correlation_id: %s\n", env.correlationID())
 }

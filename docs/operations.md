@@ -72,7 +72,7 @@ The stable fields are:
   `unclassified_error` when this build cannot categorize the failure. Further
   categories may be declared; the vocabulary is the contract, and the Go error
   behind it may change without changing the line.
-- `correlation_id` on every surfaced failure, expected or not, so what the
+- `correlation_id` on every recorded failure, expected or not, so what the
   operator saw always names its log line: a read-only gate rejection, a rejected
   SQL statement, a degraded query and an external plugin that exited non-zero
   are correlated exactly like an unexpected exception. An error carries the ID
@@ -80,7 +80,10 @@ The stable fields are:
   command that exits non-zero after reporting the failure itself, gets a
   `correlation_id` line on the shell's error stream, where no answer is parsed
   from; the MCP surface appends the same line to the tool result it marks as an
-  error.
+  error. The one failure that is recorded without being surfaced is an external
+  plugin's own non-zero exit: its arguments, streams and exit status cross the
+  plugin seam untouched, so its ID is read back from the log through
+  `roca doctor` rather than written into output the plugin owns.
 - Query calls add `question`, `sql`, `sql_provider`, `sql_model`, phase timings,
   and any `degraded`, `fallback_reason`, `retry_reason`, provider note, or
   `queryplan`. `sql` is the cleaned model-generated statement, including when a

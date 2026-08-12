@@ -57,8 +57,9 @@ func TestPluginCallsAreAuditedWithoutCredentialArguments(t *testing.T) {
 	if strings.Contains(text, "not-a-real-credential") {
 		t.Fatalf("plugin credential argument leaked: %s", text)
 	}
-	// A plugin that exited non-zero surfaced a failure roca never worded, so the
-	// boundary that logs it is the one that has to name the log line.
+	// A plugin that exited non-zero worded that failure itself, on its own
+	// streams. The audit record still names the run, but the seam stays untouched:
+	// roca adds no line of its own to what the plugin wrote.
 	var record struct {
 		CorrelationID string `json:"correlation_id"`
 	}
@@ -68,9 +69,8 @@ func TestPluginCallsAreAuditedWithoutCredentialArguments(t *testing.T) {
 	if record.CorrelationID == "" {
 		t.Fatalf("a failed plugin left no correlation id in its audit record: %s", text)
 	}
-	if !strings.Contains(warnings.String(), record.CorrelationID) {
-		t.Fatalf("the run does not name its audit line %q on the error stream: %q",
-			record.CorrelationID, warnings.String())
+	if warnings.Len() != 0 {
+		t.Fatalf("roca wrote to a failed plugin's error stream: %q", warnings.String())
 	}
 }
 
