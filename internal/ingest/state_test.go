@@ -49,28 +49,35 @@ func TestKnownFingerprintCanMatchMetadataWhenContentCannotBeRead(t *testing.T) {
 	}
 }
 
-func TestClaudeWebConversationFingerprintIncludesParserRevision(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "conversations.json")
-	if err := os.WriteFile(path, []byte("[]"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	legacy, err := Fingerprint(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	current, err := targetFingerprint(Target{Path: path, Kind: parsers.KindClaudeWebConversations})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if current == legacy {
-		t.Fatalf("parser revision did not change legacy fingerprint %q", legacy)
-	}
-	metadata, err := metadataFingerprint(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !unchangedMetadata(map[string]FileState{"export": {Fingerprint: current}}, "export", metadata) {
-		t.Fatal("parser-aware fingerprint lost its metadata prefix")
+func TestExportConversationFingerprintIncludesParserRevision(t *testing.T) {
+	for _, kind := range []parsers.Kind{
+		parsers.KindClaudeWebConversations,
+		parsers.KindChatGPTWebConversations,
+	} {
+		t.Run(string(kind), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "conversations.json")
+			if err := os.WriteFile(path, []byte("[]"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			legacy, err := Fingerprint(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			current, err := targetFingerprint(Target{Path: path, Kind: kind})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if current == legacy {
+				t.Fatalf("parser revision did not change legacy fingerprint %q", legacy)
+			}
+			metadata, err := metadataFingerprint(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !unchangedMetadata(map[string]FileState{"export": {Fingerprint: current}}, "export", metadata) {
+				t.Fatal("parser-aware fingerprint lost its metadata prefix")
+			}
+		})
 	}
 }
 
