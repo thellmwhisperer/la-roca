@@ -37,3 +37,7 @@ Feature: Distribution command line
   Scenario: Non-interactive init names the answering model without opening the chooser
     When the operator initializes non-interactively with a detected model CLI
     Then init prints one answering notice and writes no model configuration
+
+  Scenario: Retrieval evaluation is deterministic and independent of operator data
+    When the operator runs the recorded retrieval evaluation
+    Then the report names the synthetic fixture, fixed plans, and intentional headroom

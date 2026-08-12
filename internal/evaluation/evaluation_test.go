@@ -53,16 +53,7 @@ func TestReplayMeasuresTheRecordedBaseline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSuite: %v", err)
 	}
-	dbPath, cleanup, err := PrepareFixture(ctx, t.TempDir())
-	if err != nil {
-		t.Fatalf("PrepareFixture: %v", err)
-	}
-	defer cleanup()
-	svc, err := service.Open(service.Options{DBPath: dbPath, ReadOnly: true})
-	if err != nil {
-		t.Fatalf("open fixture: %v", err)
-	}
-	defer svc.Close()
+	svc := fixtureService(t, provider.Cascade{})
 
 	report, err := Run(ctx, svc, suite, ReplayPlanner(suite), "replay")
 	if err != nil {
@@ -137,17 +128,8 @@ func TestReportsAreHumanMachineAndReleaseNoteReady(t *testing.T) {
 
 func TestLivePlansNameTheirProviderAndModel(t *testing.T) {
 	ctx := context.Background()
-	dbPath, cleanup, err := PrepareFixture(ctx, t.TempDir())
-	if err != nil {
-		t.Fatalf("PrepareFixture: %v", err)
-	}
-	defer cleanup()
-	svc, err := service.Open(service.Options{DBPath: dbPath, ReadOnly: true,
-		Providers: provider.Cascade{Providers: []provider.Provider{fixedPlanProvider{}}}})
-	if err != nil {
-		t.Fatalf("open live fixture: %v", err)
-	}
-	defer svc.Close()
+	svc := fixtureService(t,
+		provider.Cascade{Providers: []provider.Provider{fixedPlanProvider{}}})
 
 	golden := Case{ID: "live", Question: "Who approved Aurora?",
 		ExpectedKind: "row_contains", ExpectedMarker: "Nora Vale"}
@@ -158,6 +140,21 @@ func TestLivePlansNameTheirProviderAndModel(t *testing.T) {
 	if plan.Provider != "test-provider" || plan.Model != "planner-v2" || len(plan.SQL) != 1 {
 		t.Fatalf("unlabelled live plan: %+v", plan)
 	}
+}
+
+func fixtureService(t *testing.T, providers provider.Cascade) *service.Service {
+	t.Helper()
+	dbPath, cleanup, err := PrepareFixture(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatalf("PrepareFixture: %v", err)
+	}
+	t.Cleanup(cleanup)
+	svc, err := service.Open(service.Options{DBPath: dbPath, ReadOnly: true, Providers: providers})
+	if err != nil {
+		t.Fatalf("open fixture: %v", err)
+	}
+	t.Cleanup(func() { _ = svc.Close() })
+	return svc
 }
 
 type fixedPlanProvider struct{}

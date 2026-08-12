@@ -27,6 +27,40 @@ func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWor
 	ctx.Then(`^init reports setup, ingest, index, model, and its total once in that order$`, w.initSummaryIsOrdered)
 	ctx.When(`^the operator initializes non-interactively with a detected model CLI$`, w.initWithDetectedModelCLI)
 	ctx.Then(`^init prints one answering notice and writes no model configuration$`, w.initHasOneAnsweringNotice)
+	ctx.When(`^the operator runs the recorded retrieval evaluation$`, w.runRecordedEvaluation)
+	ctx.Then(`^the report names the synthetic fixture, fixed plans, and intentional headroom$`, w.recordedEvaluationIsLabelled)
+}
+
+func (w *distributionWorld) runRecordedEvaluation() error {
+	w.last = w.runAt(w.root, w.binary, "eval", "--mode", "replay", "--format", "json",
+		"--work-dir", filepath.Join(w.home, "eval"))
+	return nil
+}
+
+func (w *distributionWorld) recordedEvaluationIsLabelled() error {
+	if w.last.code != 0 {
+		return fmt.Errorf("recorded evaluation exited %d: %s", w.last.code, w.last.stderr)
+	}
+	var report struct {
+		Fixture   string `json:"fixture"`
+		Producers []struct {
+			Provider string `json:"provider"`
+			Model    string `json:"model"`
+		} `json:"plan_producers"`
+		Metrics struct {
+			Cases  int `json:"cases"`
+			Passed int `json:"passed"`
+		} `json:"metrics"`
+	}
+	if err := json.Unmarshal([]byte(w.last.stdout), &report); err != nil {
+		return fmt.Errorf("decode recorded evaluation: %w", err)
+	}
+	if report.Fixture != "synthetic-v1" || len(report.Producers) != 1 ||
+		report.Producers[0].Provider != "recorded" || report.Producers[0].Model != "fixed-sql-v1" ||
+		report.Metrics.Cases != 20 || report.Metrics.Passed != 17 {
+		return fmt.Errorf("recorded evaluation is not the labelled baseline: %+v", report)
+	}
+	return nil
 }
 
 func (w *distributionWorld) initSummaryIsOrdered() error {
