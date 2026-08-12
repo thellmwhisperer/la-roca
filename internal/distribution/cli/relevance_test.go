@@ -17,8 +17,13 @@ func TestSearchExcerptKeepsTheMatchVisible(t *testing.T) {
 	if !strings.Contains(line, "resonancia") {
 		t.Fatalf("the visible excerpt hides the match:\n%s", line)
 	}
-	if !strings.Contains(line, ",…") {
-		t.Fatalf("the visible excerpt still starts at the beginning:\n%s", line)
+	// The match is reached by eliding the middle, never by dropping the opening
+	// of the text: a cell that starts at the match reads as being about it.
+	if strings.Contains(line, ",…") {
+		t.Fatalf("the visible excerpt dropped the start of the text:\n%s", line)
+	}
+	if !strings.Contains(line, "…") {
+		t.Fatalf("the visible excerpt does not mark what it cut:\n%s", line)
 	}
 	if row["text"] != full {
 		t.Fatal("human rendering changed the full text kept for JSON")

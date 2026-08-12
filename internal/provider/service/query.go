@@ -34,6 +34,11 @@ const (
 	noMatches  = "no matches in memory for that search"
 )
 
+const (
+	RetryGateRejection  = "gate_rejection"
+	RetryExecutionError = "execution_error"
+)
+
 // QueryRequest is a question and the budget it is answered with.
 type QueryRequest struct {
 	Question string
@@ -96,16 +101,18 @@ type QueryResult struct {
 	Degraded string `json:"degraded,omitempty"`
 	// Retried says the keyword rescue is what answered.
 	Retried bool `json:"retried,omitempty"`
-	// RetriedSQL says the first model-authored candidate was rejected and the
-	// model received one correction attempt with that verdict in hand.
-	RetriedSQL bool `json:"retried_sql,omitempty"`
+	// RetriedSQL says the first model-authored candidate failed and the model
+	// received one correction attempt with that verdict in hand. RetryType says
+	// whether the strict gate or execution produced it.
+	RetriedSQL bool   `json:"retried_sql,omitempty"`
+	RetryType  string `json:"retry_type,omitempty"`
 	// ModelSQL is what the model generated, whether or not it ran. It survives
 	// the rescue answering over it, because without it a model that writes badly
 	// cannot be told from a rescue that fired for another reason. Whether it ran
 	// is what Degraded says.
 	ModelSQL string `json:"model_sql,omitempty"`
 	// FirstModelSQL preserves the untouched first answer when ModelSQL is the
-	// corrected answer. RetryReason is the exact rejection that bought the retry.
+	// corrected answer. RetryReason is the exact failure that bought the retry.
 	FirstModelSQL string `json:"first_model_sql,omitempty"`
 	RetryReason   string `json:"retry_reason,omitempty"`
 	// Repaired names every deterministic repair applied before the strict gate.

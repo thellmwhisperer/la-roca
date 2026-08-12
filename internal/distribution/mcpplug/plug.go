@@ -132,15 +132,25 @@ func auditCalls(audit *logfile.Writer, warnings io.Writer) mcp.Middleware {
 				RowCount: resultRows(result), FallbackReason: metaValue[string](result, "fallback_reason"),
 				Degraded:    degraded,
 				RetryReason: metaValue[string](result, "retry_reason"), QueryPlan: metaValue[any](result, "queryplan"),
-				ProviderNote:           metaValue[string](result, "sql_provider_note"),
-				SQLInferenceMS:         resultMilliseconds(result, "sql_inference_ms"),
-				ExecutionMS:            resultMilliseconds(result, "execution_ms"),
-				InterpretationProvider: metaValue[string](result, "interpretation_provider"),
-				InterpretationModel:    metaValue[string](result, "interpretation_model"),
-				InterpretationMS:       resultMilliseconds(result, "interpretation_ms"),
+				Path: metaValue[string](result, "path"), Retried: metaValue[bool](result, "retried"),
+				RetriedSQL: metaValue[bool](result, "retried_sql"), RetryType: metaValue[string](result, "retry_type"),
+				FirstModelSQL:             metaValue[string](result, "first_model_sql"),
+				ProviderNote:              metaValue[string](result, "sql_provider_note"),
+				SQLProviderLatencyMS:      resultMilliseconds(result, "sql_provider_latency_ms"),
+				SQLInferenceMS:            resultMilliseconds(result, "sql_inference_ms"),
+				SQLRetryProviderLatencyMS: resultMilliseconds(result, "sql_retry_provider_latency_ms"),
+				SQLRetryInferenceMS:       resultMilliseconds(result, "sql_retry_inference_ms"),
+				ExecutionMS:               resultMilliseconds(result, "execution_ms"),
+				InterpretationProvider:    metaValue[string](result, "interpretation_provider"),
+				InterpretationModel:       metaValue[string](result, "interpretation_model"),
+				InterpretationMS:          resultMilliseconds(result, "interpretation_ms"),
 			}
 			if call.Question == "" && (tool == "roca_query" || tool == "roca_sql") {
 				call.Question = argumentString(args, "query")
+			}
+			if tool == "roca_query" || tool == "roca_sql" {
+				modelSQL := metaValue[string](result, "model_sql")
+				call.ModelSQL = &modelSQL
 			}
 			if call.SQL == "" && tool == "roca_exec" {
 				call.SQL = argumentString(args, "sql")
@@ -165,12 +175,7 @@ func auditCalls(audit *logfile.Writer, warnings io.Writer) mcp.Middleware {
 				}
 			}
 			if appendErr := audit.AppendExisting(logfile.MCPAudit, logfile.MCPRecord{
-				CallRecord: call, Tool: tool, Path: metaValue[string](result, "path"),
-				Retried: metaValue[bool](result, "retried"), RetriedSQL: metaValue[bool](result, "retried_sql"),
-				ModelSQL:                  metaValue[string](result, "model_sql"),
-				FirstModelSQL:             metaValue[string](result, "first_model_sql"),
-				SQLRetryInferenceMS:       resultMilliseconds(result, "sql_retry_inference_ms"),
-				SQLRetryProviderLatencyMS: resultMilliseconds(result, "sql_retry_provider_latency_ms"),
+				CallRecord: call, Tool: tool,
 			}); appendErr != nil {
 				warned.Do(func() {
 					fmt.Fprintf(warnings, "warning: MCP calls are not being written to the audit log: %v\n", appendErr)
@@ -379,6 +384,7 @@ func rendered[T any](res T, err error, paint func(T) string) (*mcp.CallToolResul
 		}
 		metadata["sql_provider"] = query.Engine
 		metadata["sql_model"] = query.Model
+		metadata["sql_provider_latency_ms"] = query.LLMLatencyMS
 		metadata["sql_inference_ms"] = query.SQLInferenceMS
 		metadata["sql_retry_inference_ms"] = query.SQLRetryInferenceMS
 		metadata["sql_retry_provider_latency_ms"] = query.SQLRetryProviderLatencyMS
@@ -387,6 +393,7 @@ func rendered[T any](res T, err error, paint func(T) string) (*mcp.CallToolResul
 		metadata["interpretation_model"] = query.InterpretModel
 		metadata["interpretation_ms"] = query.InterpretationMS
 		metadata["retry_reason"] = query.RetryReason
+		metadata["retry_type"] = query.RetryType
 		if query.QueryPlan != nil {
 			metadata["queryplan"] = query.QueryPlan
 		}
