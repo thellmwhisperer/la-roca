@@ -53,6 +53,8 @@ const (
 	// Claude-web memories as separate file-state targets.
 	KindClaudeWebConversations Kind = "claude_web_conversations"
 	KindClaudeWebMemories      Kind = "claude_web_memories"
+	// The official OpenAI data export contributes its ChatGPT mapping tree.
+	KindChatGPTWebConversations Kind = "chatgpt_web_conversations"
 )
 
 // FileMeta is what the scan already knows about an artefact: where it came from
@@ -313,6 +315,9 @@ var byKind = map[Kind]func([]byte, FileMeta) (Records, error){
 	},
 	KindClaudeWebMemories: func(content []byte, meta FileMeta) (Records, error) {
 		return ParseClaudeWebMemories(strings.NewReader(string(content)), meta)
+	},
+	KindChatGPTWebConversations: func(content []byte, meta FileMeta) (Records, error) {
+		return ParseChatGPTWebConversations(strings.NewReader(string(content)), meta)
 	},
 }
 

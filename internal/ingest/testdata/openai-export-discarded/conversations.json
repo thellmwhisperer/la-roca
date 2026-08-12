@@ -1,0 +1,42 @@
+[
+  {
+    "conversation_id": "discard-reparent-synthetic",
+    "title": "Synthetic discard recovery",
+    "create_time": 1767232800.0,
+    "update_time": 1767232808.0,
+    "default_model_slug": "gpt-synthetic-recovery",
+    "current_node": "visible-after-bad-role",
+    "mapping": {
+      "root": {"id": "root", "parent": null, "children": ["surviving-user"], "message": null},
+      "surviving-user": {
+        "id": "surviving-user", "parent": "root",
+        "children": ["empty-assistant", "hidden-assistant", "bad-role"],
+        "message": {"author": {"role": "user"}, "content": {"content_type": "text", "parts": ["Recover every synthetic reply."]}, "create_time": 1767232801.0, "metadata": {}}
+      },
+      "empty-assistant": {
+        "id": "empty-assistant", "parent": "surviving-user", "children": ["visible-after-empty"],
+        "message": {"author": {"role": "assistant"}, "content": {"content_type": "text", "parts": []}, "create_time": 1767232802.0, "metadata": {}}
+      },
+      "visible-after-empty": {
+        "id": "visible-after-empty", "parent": "empty-assistant", "children": [],
+        "message": {"author": {"role": "assistant"}, "content": {"content_type": "text", "parts": ["Recovered after the empty node."]}, "create_time": 1767232803.0, "metadata": {}}
+      },
+      "hidden-assistant": {
+        "id": "hidden-assistant", "parent": "surviving-user", "children": ["visible-after-hidden"],
+        "message": {"author": {"role": "assistant"}, "content": {"content_type": "text", "parts": ["Synthetic hidden answer."]}, "create_time": 1767232804.0, "metadata": {"is_visually_hidden_from_conversation": true}}
+      },
+      "visible-after-hidden": {
+        "id": "visible-after-hidden", "parent": "hidden-assistant", "children": [],
+        "message": {"author": {"role": "assistant"}, "content": {"content_type": "text", "parts": ["Recovered after the hidden node."]}, "create_time": 1767232805.0, "metadata": {}}
+      },
+      "bad-role": {
+        "id": "bad-role", "parent": "surviving-user", "children": ["visible-after-bad-role"],
+        "message": {"author": {"role": "critic"}, "content": {"content_type": "text", "parts": ["Synthetic unsupported role."]}, "create_time": 1767232806.0, "metadata": {}}
+      },
+      "visible-after-bad-role": {
+        "id": "visible-after-bad-role", "parent": "bad-role", "children": [],
+        "message": {"author": {"role": "assistant"}, "content": {"content_type": "text", "parts": ["Recovered after the unreadable node."]}, "create_time": 1767232807.0, "metadata": {}}
+      }
+    }
+  }
+]

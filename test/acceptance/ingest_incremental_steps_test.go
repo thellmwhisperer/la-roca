@@ -38,6 +38,14 @@ func registerIngestIncrementalSteps(ctx *godog.ScenarioContext, w *ingestAccepta
 		return writeFixture(filepath.Join(w.home, ".roca", "config.toml"),
 			fmt.Sprintf("[defaults]\nanthropic_export_paths = [%q]\n", export))
 	})
+	ctx.Given(`^a declared OpenAI export is ready to ingest$`, func() error {
+		export := filepath.Join(w.home, "declared-openai-export-v1")
+		if err := copyOpenAIExportFixture(export, "openai-export-v1"); err != nil {
+			return err
+		}
+		return writeFixture(filepath.Join(w.home, ".roca", "config.toml"),
+			fmt.Sprintf("[defaults]\nopenai_export_paths = [%q]\n", export))
+	})
 	ctx.Given(`^a Claude session with one exchange has already been ingested$`, func() error {
 		if err := w.seedClaudeSession("growing", 1, false, ""); err != nil {
 			return err
@@ -53,6 +61,17 @@ func registerIngestIncrementalSteps(ctx *godog.ScenarioContext, w *ingestAccepta
 	})
 	ctx.When(`^a second exchange is appended and I run ingest again$`, func() error {
 		if err := w.appendClaudeExchange(); err != nil {
+			return err
+		}
+		return w.runIngest(false)
+	})
+	ctx.When(`^I select the newer OpenAI export and run ingest$`, func() error {
+		export := filepath.Join(w.home, "declared-openai-export-v2")
+		if err := copyOpenAIExportFixture(export, "openai-export-v2"); err != nil {
+			return err
+		}
+		if err := writeFixture(filepath.Join(w.home, ".roca", "config.toml"),
+			fmt.Sprintf("[defaults]\nopenai_export_paths = [%q]\n", export)); err != nil {
 			return err
 		}
 		return w.runIngest(false)
@@ -115,6 +134,59 @@ func registerIngestIncrementalSteps(ctx *godog.ScenarioContext, w *ingestAccepta
 			"sessions": 0, "exchanges": 1, "thinking_blocks": 0, "tool_uses": 0, "memories": 0,
 		})
 	})
+	ctx.Then(`^only the new ChatGPT conversations and messages are added$`, func() error {
+		if err := w.expectDelta(map[string]int{"sessions": 1, "exchanges": 2}); err != nil {
+			return err
+		}
+		for query, want := range map[string]int{
+			`SELECT COUNT(*) FROM sessions WHERE source_agent = 'chatgpt-web'`: 2,
+			`SELECT COUNT(*) FROM exchanges e JOIN sessions s ON s.session_id = e.session_id
+			  WHERE s.source_agent = 'chatgpt-web'`: 4,
+		} {
+			got, err := w.queryInt(query)
+			if err != nil {
+				return err
+			}
+			if got != want {
+				return fmt.Errorf("query %q returned %d, want %d", query, got, want)
+			}
+		}
+		return nil
+	})
+	ctx.Then(`^the ChatGPT exchanges retain OpenAI provenance$`, func() error {
+		return expectQueryCount(w, `SELECT COUNT(*) FROM exchanges e
+			JOIN sessions s ON s.session_id = e.session_id
+			WHERE s.source_agent = 'chatgpt-web' AND e.provider = 'openai'
+			  AND e.tokens_in IS NULL AND e.tokens_out IS NULL`, 4)
+	})
+}
+
+func copyOpenAIExportFixture(target, fixtureName string) error {
+	fixture := filepath.Join("..", "..", "internal", "ingest", "testdata", fixtureName)
+	for _, name := range []string{
+		"conversations.json", "shared_conversations.json", "chat.html",
+		"file-synthetic-lighthouse.txt",
+	} {
+		raw, err := os.ReadFile(filepath.Join(fixture, name))
+		if err != nil {
+			return err
+		}
+		if err := writeFixture(filepath.Join(target, name), string(raw)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func expectQueryCount(w *ingestAcceptanceWorld, query string, want int) error {
+	got, err := w.queryInt(query)
+	if err != nil {
+		return err
+	}
+	if got != want {
+		return fmt.Errorf("query %q returned %d, want %d", query, got, want)
+	}
+	return nil
 }
 
 func (w *ingestAcceptanceWorld) expectDelta(want map[string]int) error {
