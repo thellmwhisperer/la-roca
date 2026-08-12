@@ -19,6 +19,14 @@ Feature: Legacy provider authentication migration
     And the legacy query output names the retired provider and why no model answered
     And the output contains no traceback
 
+  Scenario: A stale credential file alone never disables a detected local CLI
+    Given a pre-existing "stale credential" provider configuration
+    And a fake "codex" agent CLI binary is on PATH
+    When I inspect the model report
+    Then the command exits with code 0
+    And the retired provider remains usable
+    And its only open proposal offers to remove the retired credential file
+
   Scenario: The first-run API-key proposal can be accepted
     Given a pre-existing "API key" provider configuration
     And a fake "codex" agent CLI binary is on PATH

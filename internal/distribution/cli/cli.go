@@ -15,7 +15,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
-	"github.com/thellmwhisperer/la-roca/internal/distribution/reconcile"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
@@ -38,26 +37,25 @@ const (
 )
 
 type cliEnv struct {
-	build               Build
-	out                 io.Writer
-	errOut              io.Writer
-	dbPath              string
-	json                bool
-	code                int
-	outcome             any
-	started             time.Time
-	prelogged           bool
-	openedDir           string
-	liveIngest          *ingestRows
-	wantIngestProgress  bool
-	ingestStarted       time.Time
-	modelBackend        modelValidationBackend
-	modelPicker         modelPicker
-	modelCatalogRefresh modelCatalogRefresher
-	skipReconciliation  bool
-	skipInitChooser     bool
-	initPromptWait      time.Duration
-	initChooserElapsed  time.Duration
+	build              Build
+	out                io.Writer
+	errOut             io.Writer
+	dbPath             string
+	json               bool
+	code               int
+	outcome            any
+	started            time.Time
+	prelogged          bool
+	openedDir          string
+	liveIngest         *ingestRows
+	wantIngestProgress bool
+	ingestStarted      time.Time
+	modelBackend       modelValidationBackend
+	modelPicker        modelPicker
+	skipReconciliation bool
+	skipInitChooser    bool
+	initPromptWait     time.Duration
+	initChooserElapsed time.Duration
 }
 
 // Execute runs the CLI and returns the process exit code.
@@ -493,21 +491,6 @@ func runtimeStatus[R any](
 // command is noise, and noise on stderr is what makes an operator stop reading
 // it.
 func buildProviders(file config.File, paths config.Paths) (provider.Cascade, provider.Cascade) {
-	names := make(map[string]bool, len(file.Models.Providers)+len(file.Models.Order)+len(file.Models.InterpretOrder))
-	for name := range file.Models.Providers {
-		names[name] = true
-	}
-	for _, name := range append(append([]string(nil), file.Models.Order...), file.Models.InterpretOrder...) {
-		names[strings.ReplaceAll(strings.ToLower(strings.TrimSpace(name)), "_", "-")] = true
-	}
-	credentialPaths := legacyProviderCredentialPaths(dirOf(paths.DB))
-	for name := range names {
-		configured := file.Models.Providers[name]
-		if reconcile.RetiredProvider(file, name, credentialPaths[name]) {
-			configured.RetiredCredential = true
-			file.Models.Providers[name] = configured
-		}
-	}
 	settings := provider.Settings{
 		File: file, RunnerDir: paths.Runner, Env: os.Getenv,
 	}

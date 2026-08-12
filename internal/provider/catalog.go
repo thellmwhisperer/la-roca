@@ -2,7 +2,9 @@ package provider
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -49,8 +51,9 @@ func BuildCascade(s Settings) (Cascade, error) {
 		DetectedBinaries:    detected,
 		FallbackDiagnostics: missingBinaryDiagnostics(detected),
 		Disabled:            resolved.Disabled,
-		Warnings:            append(append([]string(nil), s.File.Warnings...), resolved.Warnings...),
-		FactoryDefault:      selection.Source == SourceCode,
+		Warnings: append(append(append([]string(nil), s.File.Warnings...),
+			s.providerKeyWarnings()...), resolved.Warnings...),
+		FactoryDefault: selection.Source == SourceCode,
 	}
 	return s.budgeted(cascade), nil
 }
@@ -148,6 +151,44 @@ func UsesCommandTransport(file config.File, name string) bool {
 	return preset
 }
 
+// providerKeyWarnings names the keys inside a provider table that this build
+// does not understand, so a typo is read once instead of ignored forever.
+//
+// A command template's own variables are keys of the operator's command and not
+// of this build's vocabulary, so the placeholders the effective command declares
+// are excluded: naming them would turn every legitimate substitution into a
+// warning.
+func (s Settings) providerKeyWarnings() []string {
+	names := make([]string, 0, len(s.File.Models.Providers))
+	for name := range s.File.Models.Providers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var warnings []string
+	for _, name := range names {
+		cfg := s.File.Models.Providers[name]
+		command := cfg.Command
+		if len(command) == 0 {
+			command = commandPresets[name].Command
+		}
+		templated := make(map[string]bool)
+		for _, placeholder := range config.CommandPlaceholders(command) {
+			templated[placeholder] = true
+		}
+		var unknown []string
+		for key := range cfg.Values {
+			if !config.KnownProviderKey(key) && !templated[key] {
+				unknown = append(unknown, key)
+			}
+		}
+		sort.Strings(unknown)
+		for _, key := range unknown {
+			warnings = append(warnings, config.UnknownKeyWarning("models."+name+"."+key, s.File.Path))
+		}
+	}
+	return warnings
+}
+
 func (s Settings) withCommand(name string, fallback Factory) Factory {
 	return func() (Provider, error) {
 		cfg := s.File.Models.Providers[name]
@@ -156,7 +197,8 @@ func (s Settings) withCommand(name string, fallback Factory) Factory {
 		}
 		if len(cfg.Command) == 0 {
 			if fallback == nil {
-				return nil, nil
+				return nil, fmt.Errorf(
+					"models.%s declares no command and this build has no built-in transport for it", name)
 			}
 			return fallback()
 		}

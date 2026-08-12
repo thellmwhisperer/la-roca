@@ -274,10 +274,18 @@ roca model set ollama qwen3.5:4b
 
 Existing configuration that names a retired remote provider remains readable.
 The provider is ignored with a warning and the rest of the cascade keeps
-working. On first run, reconciliation offers to replace it with a detected CLI,
-or to drop it when no supported CLI is on `PATH`. Declining changes nothing;
-non-terminal runs emit one plain alert. Old files under `~/.roca/credentials`
-are never read and may be removed after migration.
+working. On first run, reconciliation offers to remove those retired settings
+when the provider has a transport of its own, to replace it with a detected CLI,
+or to drop it when no supported CLI is on `PATH`. A `command` you declared is a
+transport of your own, so it is never removed and never migrated away. Declining
+changes nothing; non-terminal runs emit one plain alert.
+
+Old files under `~/.roca/credentials` are never read and never disable a
+provider that works: they get a cleanup proposal of their own, and a Codex or
+Claude CLI on `PATH` keeps answering whether or not you accept it. `roca init`
+retires nothing behind its model confirmation; when the provider you choose
+still carries retired settings or a leftover credential file, that proposal is
+shown with its own yes or no first.
 
 ## What happens on a query
 

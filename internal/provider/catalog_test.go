@@ -61,7 +61,9 @@ func TestFactoryOrderUsesDetectedCLIsThenOllama(t *testing.T) {
 }
 
 func TestConfiguredOrderWinsAndUnknownProvidersDegrade(t *testing.T) {
-	s := settings(t, "[models]\norder = [\"retired\", \"ollama\", \"codex\"]\n")
+	s := settings(t, "[models]\norder = [\"retired\", \"ollama\", \"codex\"]\n"+
+		"[models.codex]\ncommnad = [\"codex\"]\n"+
+		"[models.fixture]\ncommand = [\"fixture-agent\", \"{tone}\"]\ntone = \"dry\"\n")
 	s.LookPath = lookPath("codex")
 	cascade, err := BuildCascade(s)
 	if err != nil {
@@ -71,8 +73,14 @@ func TestConfiguredOrderWinsAndUnknownProvidersDegrade(t *testing.T) {
 		t.Fatalf("order = %q", got)
 	}
 	warnings := strings.Join(cascade.Warnings, "\n")
-	if !strings.Contains(warnings, `provider "retired"`) || !strings.Contains(warnings, "Available providers: claude, codex, ollama") {
+	if !strings.Contains(warnings, `provider "retired"`) ||
+		!strings.Contains(warnings, "Available providers: claude, codex, fixture, ollama") {
 		t.Fatalf("warnings = %v", cascade.Warnings)
+	}
+	// A typo inside a provider table is named. A command's own template variable
+	// is not: it is a key of that command and not of this build's vocabulary.
+	if !strings.Contains(warnings, "models.codex.commnad") || strings.Contains(warnings, "models.fixture.tone") {
+		t.Fatalf("provider key warnings = %v", cascade.Warnings)
 	}
 }
 

@@ -23,6 +23,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -254,10 +255,14 @@ func Resolve(sel Selection, catalog Catalog) (Resolved, error) {
 		}
 
 		built, err := build()
+		if err == nil && built == nil {
+			err = errors.New("this build produced no adapter for it")
+		}
 		if err != nil {
 			// A provider that cannot be built is one provider less, never a
 			// command that does not run: the fragility of one provider does not
-			// take down a query.
+			// take down a query. A factory that returns nothing at all is the
+			// same case: nothing nil ever reaches the cascade.
 			res.Warnings = append(res.Warnings, fmt.Sprintf(
 				"the provider %q cannot be used: %v", name, err))
 			continue

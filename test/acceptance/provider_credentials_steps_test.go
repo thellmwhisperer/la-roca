@@ -15,9 +15,12 @@ import (
 )
 
 func registerProviderCredentialSteps(ctx *godog.ScenarioContext, w *providerAcceptanceWorld) {
-	ctx.Given(`^a pre-existing "(API key|OAuth)" provider configuration$`, w.legacyProviderConfiguration)
+	ctx.Given(`^a pre-existing "(API key|OAuth|stale credential)" provider configuration$`, w.legacyProviderConfiguration)
 	ctx.Given(`^a fake Claude Code binary is available$`, w.fakeClaudeBinary)
 	ctx.When(`^I query through the legacy provider configuration$`, w.queryLegacyConfiguration)
+	ctx.When(`^I inspect the model report$`, w.inspectModelReport)
+	ctx.Then(`^the retired provider remains usable$`, w.retiredProviderRemainsUsable)
+	ctx.Then(`^its only open proposal offers to remove the retired credential file$`, w.onlyCredentialCleanupIsProposed)
 	ctx.When(`^I (accept|decline) the first-run migration proposal$`, w.answerMigrationProposal)
 	ctx.When(`^I inspect login and Doctor help$`, w.inspectAuthenticationHelp)
 	ctx.When(`^I log in to "([^\"]*)" with model "([^\"]*)"$`, w.verifyLocalCLI)
@@ -36,10 +39,21 @@ func (w *providerAcceptanceWorld) legacyProviderConfiguration(kind string) error
 	w.legacyProvider = "xai"
 	table := "[models.xai]\nbase_url = \"https://example.invalid/v1\"\napi_key = \"legacy-acceptance-secret\"\nmodel = \"grok-legacy\"\n"
 	credentialFile := "xai.key"
-	if kind == "OAuth" {
+	// Short budgets measure the decision, not the patience. The one kind that
+	// has to reach a real local CLI is given the time to start one.
+	budgets := "timeout_ms = 250\nprobe_ms = 100\n"
+	switch kind {
+	case "OAuth":
+		w.legacyProvider = "codex"
+		table = "[models.codex]\nbase_url = \"https://synthetic.invalid/backend-api/codex\"\nmodel = \"gpt-legacy\"\n"
+		credentialFile = "codex.json"
+	case "stale credential":
+		// Nothing retired is configured: the only leftover is the file an
+		// older release wrote, and a shipped CLI still serves this provider.
 		w.legacyProvider = "codex"
 		table = "[models.codex]\nmodel = \"gpt-legacy\"\n"
 		credentialFile = "codex.json"
+		budgets = "timeout_ms = 5000\nprobe_ms = 5000\n"
 	}
 	legacyDir := filepath.Join(w.home, ".roca", "credentials")
 	if err := os.MkdirAll(legacyDir, 0o700); err != nil {
@@ -48,7 +62,7 @@ func (w *providerAcceptanceWorld) legacyProviderConfiguration(kind string) error
 	if err := os.WriteFile(filepath.Join(legacyDir, credentialFile), []byte("legacy-acceptance-secret"), 0o600); err != nil {
 		return err
 	}
-	w.legacyConfig = "# operator note\n[models]\norder = [\"" + w.legacyProvider + "\", \"ollama\"]\ntimeout_ms = 250\nprobe_ms = 100\n\n" + table + "\n[models.ollama]\nbase_url = \"" + providerDeadEndpoint + "\"\nmodel = \"local-acceptance\"\n"
+	w.legacyConfig = "# operator note\n[models]\norder = [\"" + w.legacyProvider + "\", \"ollama\"]\n" + budgets + "\n" + table + "\n[models.ollama]\nbase_url = \"" + providerDeadEndpoint + "\"\nmodel = \"local-acceptance\"\n"
 	return w.writeConfig(w.legacyConfig)
 }
 
@@ -62,6 +76,49 @@ func (w *providerAcceptanceWorld) legacyQueryIsHonest() error {
 		if !strings.Contains(strings.ToLower(all), strings.ToLower(want)) {
 			return fmt.Errorf("legacy degradation omitted %q: %s", want, all)
 		}
+	}
+	return nil
+}
+
+func (w *providerAcceptanceWorld) inspectModelReport() error {
+	return w.run("doctor", "--json")
+}
+
+func (w *providerAcceptanceWorld) retiredProviderRemainsUsable() error {
+	document, err := w.lastJSON()
+	if err != nil {
+		return err
+	}
+	for _, entry := range objectList(document["providers"]) {
+		if name, _ := entry["provider"].(string); name != w.legacyProvider {
+			continue
+		}
+		if ready, _ := entry["ready"].(bool); !ready {
+			return fmt.Errorf("%s is not usable: %v", w.legacyProvider, entry["reason"])
+		}
+		return nil
+	}
+	return fmt.Errorf("a leftover credential file removed %s from the cascade: %s",
+		w.legacyProvider, w.last.stdout)
+}
+
+func (w *providerAcceptanceWorld) onlyCredentialCleanupIsProposed() error {
+	document, err := w.lastJSON()
+	if err != nil {
+		return err
+	}
+	proposals, _ := document["capability_proposals"].([]any)
+	var about []string
+	for _, raw := range proposals {
+		alert, _ := raw.(string)
+		if strings.Contains(alert, w.legacyProvider) {
+			about = append(about, alert)
+		}
+	}
+	if len(about) != 1 || !strings.Contains(about[0],
+		"Retired provider credential file detected for "+w.legacyProvider) {
+		return fmt.Errorf("proposals about %s = %v, want only the credential cleanup",
+			w.legacyProvider, about)
 	}
 	return nil
 }
@@ -109,7 +166,7 @@ func (w *providerAcceptanceWorld) legacyProviderMigrated(target string) error {
 	if !strings.Contains(text, "# operator note") || !strings.Contains(text, `order = ["`+target) {
 		return fmt.Errorf("migration did not preserve the document or select %s:\n%s", target, text)
 	}
-	for _, retired := range []string{"legacy-acceptance-secret", "base_url = \"https://chatgpt.com", "[models.xai]"} {
+	for _, retired := range []string{"legacy-acceptance-secret", "base_url = \"https://synthetic.invalid", "[models.xai]"} {
 		if strings.Contains(text, retired) {
 			return fmt.Errorf("retired provider setting %q survived:\n%s", retired, text)
 		}

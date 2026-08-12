@@ -11,7 +11,6 @@ func hermeticCLIEnv(env *cliEnv) *cliEnv {
 	env.skipInitChooser = true
 	env.modelBackend = testModelBackend{}
 	env.modelPicker = testModelPicker
-	env.modelCatalogRefresh = func(context.Context) error { return nil }
 	return env
 }
 

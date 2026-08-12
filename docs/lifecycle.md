@@ -126,8 +126,14 @@ The current proposals are:
   its default model is `sonnet`. An absent order already detects it as the
   factory default and needs no proposal.
 - When a configuration names a retired remote provider, offer migration to a
-  detected local agent CLI. If none is on `PATH`, offer to drop the retired
-  entry. Declining leaves the document unchanged and queries degrade honestly.
+  detected local agent CLI. A provider that declares its own `command`, or whose
+  own CLI is detected, is offered the removal of its retired authentication keys
+  instead: its transport and the rest of its table stay. If no CLI is on `PATH`,
+  offer to drop the retired entry. Declining leaves the document unchanged and
+  queries degrade honestly.
+- When only a credential file from an older release is left, offer to remove
+  that file alone. It changes no model configuration and never disables a
+  provider this build can still run.
 - When Anthropic export ingest is available but
   `defaults.anthropic_export_paths` is empty, ask for an extracted export
   directory and add that typed path. See [Ingest sources](ingest.md#declare-an-anthropic-data-export).

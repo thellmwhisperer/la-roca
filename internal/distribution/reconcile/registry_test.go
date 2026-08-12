@@ -13,6 +13,7 @@ func TestRetiredProviderFirstRunAcceptAndDeclinePaths(t *testing.T) {
 	cases := []struct {
 		name, provider, body, answer, wantOrder, wantAlert, credentialFile string
 		binaries                                                           []string
+		wantKept                                                           string
 		wantLegacy                                                         bool
 		preexistingBackups                                                 bool
 	}{
@@ -27,11 +28,13 @@ func TestRetiredProviderFirstRunAcceptAndDeclinePaths(t *testing.T) {
 		},
 		{
 			name: "OAuth accept with CLI", provider: "codex", answer: "yes\n", binaries: []string{"codex"},
-			body: legacyOAuthConfig(), wantOrder: "codex,ollama", wantAlert: "migrate codex to codex", credentialFile: "codex.json",
+			body: legacyOAuthConfig(), wantOrder: "codex,ollama", credentialFile: "codex.json",
+			wantAlert: "remove the retired codex authentication settings", wantKept: `model = "gpt-preserved"`,
 		},
 		{
 			name: "OAuth decline with CLI", provider: "codex", answer: "no\n", binaries: []string{"codex"},
-			body: legacyOAuthConfig(), wantOrder: "codex,ollama", wantAlert: "migrate codex to codex", credentialFile: "codex.json", wantLegacy: true,
+			body: legacyOAuthConfig(), wantOrder: "codex,ollama", credentialFile: "codex.json", wantLegacy: true,
+			wantAlert: "remove the retired codex authentication settings",
 		},
 		{
 			name: "API key accept without CLI", provider: "xai", answer: "y\n",
@@ -40,6 +43,14 @@ func TestRetiredProviderFirstRunAcceptAndDeclinePaths(t *testing.T) {
 		{
 			name: "OAuth accept without CLI", provider: "codex", answer: "y\n",
 			body: legacyOAuthConfig(), wantOrder: "ollama", wantAlert: "drop codex", credentialFile: "codex.json",
+		},
+		{
+			// The operator's own command is the transport, so migration never
+			// moves this provider elsewhere and never deletes its table.
+			name: "explicit command accept with another CLI", provider: "codex", answer: "y\n",
+			binaries: []string{"claude"}, body: legacyCommandConfig(), wantOrder: "codex,ollama",
+			wantAlert: "remove the retired codex authentication settings", credentialFile: "codex.json",
+			wantKept: `command = ["synthetic-codex", "exec"]`,
 		},
 	}
 	for _, tc := range cases {
@@ -125,6 +136,9 @@ func TestRetiredProviderFirstRunAcceptAndDeclinePaths(t *testing.T) {
 					}
 				}
 			}
+			if tc.wantKept != "" && !strings.Contains(text, tc.wantKept) {
+				t.Fatalf("retirement lost %q:\n%s", tc.wantKept, text)
+			}
 			if !strings.Contains(text, "# keep") {
 				t.Fatalf("operator comment was lost:\n%s", text)
 			}
@@ -161,6 +175,8 @@ func TestRetiredCredentialFilesRemainDiscoverableWithoutRetiringCommands(t *test
 			body: "[models]\norder = [\"codex\"]\n"},
 		{name: "explicit command", provider: "codex", credentialFile: "codex.json", wantCommandAlert: true,
 			body: "[models]\norder = [\"codex\"]\n\n[models.codex]\ncommand = [\"custom-codex\", \"exec\"]\nmodel = \"gpt-current\"\n"},
+		{name: "shipped CLI preset", provider: "codex", credentialFile: "codex.json",
+			body: "[models]\norder = [\"codex\", \"ollama\"]\n\n[models.codex]\nmodel = \"gpt-preserved\"\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -271,7 +287,13 @@ func legacyAPIConfig() string {
 }
 
 func legacyOAuthConfig() string {
-	return "# keep\n[models]\norder = [\"codex\", \"ollama\"]\n\n[models.codex]\nmodel = \"gpt-preserved\"\n"
+	return "# keep\n[models]\norder = [\"codex\", \"ollama\"]\n\n[models.codex]\n" +
+		"base_url = \"https://synthetic.invalid/backend-api/codex\"\nmodel = \"gpt-preserved\"\n"
+}
+
+func legacyCommandConfig() string {
+	return "# keep\n[models]\norder = [\"codex\", \"ollama\"]\n\n[models.codex]\n" +
+		"command = [\"synthetic-codex\", \"exec\"]\n\"api_key\" = \"legacy-secret\"\nmodel = \"gpt-preserved\"\n"
 }
 
 func retiredEntries(entries []Entry) []Entry {

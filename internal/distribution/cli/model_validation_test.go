@@ -4,10 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -136,58 +133,6 @@ func TestLoginPickerPersistsOnlyAfterItsProbe(t *testing.T) {
 	}
 }
 
-func TestCodexCatalogueUsesLiveModelsDevAndFallsBackHonestly(t *testing.T) {
-	t.Run("live catalogue", func(t *testing.T) {
-		server := catalogueServer(t, http.StatusOK, `{
-			"openai":{"models":{
-				"gpt-live":{"id":"gpt-live","status":"active","modalities":{"output":["text"]}},
-				"gpt-old":{"id":"gpt-old","status":"deprecated","modalities":{"output":["text"]}},
-				"image":{"id":"image","modalities":{"output":["image"]}}
-			}}
-		}`)
-		cache := filepath.Join(t.TempDir(), "cache", "models.dev.json")
-		catalogue, err := readCodexCatalogue(context.Background(), server.Client(), server.URL, cache)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if catalogue.Stale || !slices.Equal(catalogue.IDs, []string{"gpt-live"}) {
-			t.Fatalf("catalogue = %+v", catalogue)
-		}
-		if _, err := os.Stat(cache); err != nil {
-			t.Fatalf("live catalogue was not cached: %v", err)
-		}
-	})
-
-	t.Run("embedded fallback", func(t *testing.T) {
-		server := catalogueServer(t, http.StatusServiceUnavailable, `{"error":"maintenance"}`)
-		catalogue, err := readCodexCatalogue(context.Background(), server.Client(), server.URL,
-			filepath.Join(t.TempDir(), "missing", "models.dev.json"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !catalogue.Stale || !slices.Contains(catalogue.IDs, provider.DefaultCodexModel) {
-			t.Fatalf("fallback = %+v", catalogue)
-		}
-		for _, want := range []string{"503", "embedded snapshot", "possibly stale"} {
-			if !strings.Contains(catalogue.Notice, want) {
-				t.Errorf("notice %q does not contain %q", catalogue.Notice, want)
-			}
-		}
-	})
-
-	t.Run("update refresh", func(t *testing.T) {
-		server := catalogueServer(t, http.StatusOK, `{"openai":{"models":{"gpt-refreshed":{"id":"gpt-refreshed","modalities":{"output":["text"]}}}}}`)
-		cache := filepath.Join(t.TempDir(), "cache", "models.dev.json")
-		if err := refreshCodexCatalogue(context.Background(), server.Client(), server.URL, cache); err != nil {
-			t.Fatal(err)
-		}
-		models, err := readModelSnapshotFile(cache)
-		if err != nil || !slices.Equal(models, []string{"gpt-refreshed"}) {
-			t.Fatalf("refreshed models=%v err=%v", models, err)
-		}
-	})
-}
-
 func TestArrowModelPickerSelectsOnlyAListedID(t *testing.T) {
 	var output strings.Builder
 	chosen, err := readArrowModelChoice(strings.NewReader("\x1b[B\r"), &output,
@@ -235,14 +180,6 @@ func validationEnv(t *testing.T, fake *fakePickerProvider) *cliEnv {
 			},
 		},
 	}
-}
-
-func catalogueServer(t *testing.T, status int, body string) *httptest.Server {
-	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(status)
-		_, _ = w.Write([]byte(body))
-	}))
 }
 
 func fixedModelPicker(model string) modelPicker {

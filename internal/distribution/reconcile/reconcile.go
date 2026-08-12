@@ -190,9 +190,13 @@ func retiredProviderEntries(context Context, file config.File) []Entry {
 	entries := make([]Entry, 0, len(candidates))
 	for _, candidate := range candidates {
 		name := candidate.Name
+		configured, declared := providerConfiguration(file, name)
+		// An explicit command declaration is the operator's own transport. It is
+		// never a retired artifact, so it survives every proposal below.
+		ownCommand := declared && len(configured.Command) > 0
 		if !candidate.RetireConfiguration {
 			alert := fmt.Sprintf("Retired provider credential file detected for %s; no model configuration changes are needed.", name)
-			if configured, declared := providerConfiguration(file, name); declared && len(configured.Command) > 0 {
+			if ownCommand {
 				alert = fmt.Sprintf("Retired provider credential file detected for %s; its configured command transport remains unchanged.", name)
 			}
 			entries = append(entries, Entry{
@@ -206,7 +210,7 @@ func retiredProviderEntries(context Context, file config.File) []Entry {
 			continue
 		}
 		target := ""
-		if slices.Contains(detected, name) {
+		if ownCommand || slices.Contains(detected, name) {
 			target = name
 		} else if len(detected) > 0 {
 			target = detected[0]
@@ -214,10 +218,14 @@ func retiredProviderEntries(context Context, file config.File) []Entry {
 		changes := retiredProviderChanges(name, target, candidate.Tables)
 		entry := Entry{ID: ProposalRetiredProvider + "-" + name,
 			Proposal: Proposal{Changes: changes}, RetiredProvider: name}
-		if target == "" {
+		switch target {
+		case "":
 			entry.Proposal.Alert = fmt.Sprintf("Retired credential-backed model provider detected: drop %s from the provider order; no local agent CLI is on PATH.", name)
 			entry.Proposal.Prompt = fmt.Sprintf("Drop %s from the model configuration?", name)
-		} else {
+		case name:
+			entry.Proposal.Alert = fmt.Sprintf("Retired credential-backed model provider detected: remove the retired %s authentication settings and keep the rest of its table; %s authenticates through its own CLI.", name, name)
+			entry.Proposal.Prompt = fmt.Sprintf("Remove the retired %s authentication settings?", name)
+		default:
 			entry.Proposal.Alert = fmt.Sprintf("Retired credential-backed model provider detected: migrate %s to %s, which authenticates through its own CLI.", name, target)
 			entry.Proposal.Prompt = fmt.Sprintf("Migrate %s to the %s local CLI?", name, target)
 		}
@@ -234,9 +242,9 @@ type retiredProviderCandidate struct {
 
 func retiredProviderCandidates(context Context, file config.File) []retiredProviderCandidate {
 	candidates := map[string]retiredProviderCandidate{}
-	add := func(name, table, credentialPath string) {
+	add := func(name, table string) {
 		normalized := normalizeProviderName(name)
-		if normalized == "" || !RetiredProvider(file, name, credentialPath) {
+		if normalized == "" || !RetiredProviderConfiguration(file, name) {
 			return
 		}
 		candidate := candidates[normalized]
@@ -248,15 +256,14 @@ func retiredProviderCandidates(context Context, file config.File) []retiredProvi
 		candidates[normalized] = candidate
 	}
 	for _, name := range append(append([]string(nil), file.Models.Order...), file.Models.InterpretOrder...) {
-		normalized := normalizeProviderName(name)
-		add(name, "", context.RetiredCredentialPaths[normalized])
+		add(name, "")
 	}
 	for name, configured := range file.Models.Providers {
 		table := configured.TableName
 		if table == "" {
 			table = name
 		}
-		add(name, table, context.RetiredCredentialPaths[normalizeProviderName(name)])
+		add(name, table)
 	}
 	for name, path := range context.RetiredCredentialPaths {
 		if regularFile(path) {
@@ -278,15 +285,16 @@ func retiredProviderCandidates(context Context, file config.File) []retiredProvi
 	return ordered
 }
 
-func RetiredProvider(file config.File, name, credentialPath string) bool {
+// RetiredProviderConfiguration reports whether the operator's own configuration
+// still asks for a transport this build retired. A credential file left on disk
+// by an older release is not part of that answer: it is a stale artifact with
+// its own cleanup proposal, and it never disables a transport that works.
+func RetiredProviderConfiguration(file config.File, name string) bool {
 	normalized := normalizeProviderName(name)
 	if normalized == "" || normalized == provider.NameOllama {
 		return false
 	}
 	cfg, declared := providerConfiguration(file, name)
-	if len(cfg.Command) == 0 && regularFile(credentialPath) {
-		return true
-	}
 	if len(cfg.Command) > 0 || provider.UsesCommandTransport(file, normalized) {
 		return declared && (cfg.BaseURL != "" || cfg.RetiredCredential)
 	}

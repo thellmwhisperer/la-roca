@@ -638,8 +638,13 @@ var knownModelsKeys = map[string]bool{
 	"order": true, "interpret_order": true, "timeout_ms": true, "probe_ms": true,
 }
 
+// knownProviderKeys is this build's vocabulary inside a provider table. The
+// retired authentication keys are listed because they get their own, more
+// specific warning and must not also be reported as unknown.
 var knownProviderKeys = map[string]bool{
-	"base_url": true, "model": true, "keep_alive": true, "think": true,
+	"base_url": true, "command": true, "model": true, "response_format": true,
+	"timeout_seconds": true, "keep_alive": true, "think": true, "preset": true,
+	"api_key": true, "api_key_env": true,
 }
 
 var knownQueryKeys = map[string]bool{"timeout_ms": true}

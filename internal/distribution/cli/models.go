@@ -205,7 +205,10 @@ func (env *cliEnv) chooseInitModel(ctx context.Context, input *bufio.Reader,
 				harness, model, err)
 		}
 	}
-	outcome, err := writeInitModelChoice(paths, file, harness, model)
+	if err := env.offerRetirementFor(input, harness); err != nil {
+		return result, false, err
+	}
+	outcome, err := writeInitModelChoice(paths, harness, model)
 	if err != nil {
 		return result, false, err
 	}
@@ -460,40 +463,44 @@ func (env *cliEnv) readInitLine(input *bufio.Reader) (string, error) {
 	return answer, nil
 }
 
-func writeInitModelChoice(paths config.Paths, file config.File, providerName, model string) (agentcfg.Outcome, error) {
+// writeInitModelChoice persists the pair the operator confirmed and nothing
+// else. Retiring a legacy transport is a separate, visible accept/decline
+// proposal: a model-selection prompt never deletes an operator's settings or
+// the credential files an older release left behind.
+func writeInitModelChoice(paths config.Paths, providerName, model string) (agentcfg.Outcome, error) {
 	changes := []config.Change{
 		{Kind: config.PrependUnique, Table: "models", Key: "order", Value: providerName,
 			Default: provider.DefaultOrder(nil)},
+		{Kind: config.SetValue, Table: "models." + providerName, Key: "model", Value: model},
 	}
-	credential := legacyProviderCredentialPaths(dirOf(paths.DB))[providerName]
-	retiring := reconcile.RetiredProvider(file, providerName, credential)
-	if retiring {
-		for _, key := range []string{"base_url", "api_key", "api_key_env", "preset"} {
-			changes = append(changes, config.Change{Kind: config.DeleteValue, Table: "models." + providerName, Key: key})
-		}
-	}
-	changes = append(changes, config.Change{Kind: config.SetValue, Table: "models." + providerName, Key: "model", Value: model})
-	if retiring {
-		backups, err := recoveryBackups(paths.Config)
-		if err != nil {
-			return agentcfg.Outcome{}, err
-		}
-		if err := reconcile.RedactRecoveryBackups(backups); err != nil {
-			return agentcfg.Outcome{}, err
-		}
-	}
-	outcome, err := agentcfg.EditWithBackup("roca", paths.Config, func(text string) (string, error) {
+	return agentcfg.EditWithBackup("roca", paths.Config, func(text string) (string, error) {
 		return config.ApplyText(text, changes)
 	}, config.RedactProviderSecrets, true)
-	if err != nil || !retiring {
-		return outcome, err
+}
+
+// offerRetirementFor puts the reconciliation proposals that concern the chosen
+// provider in front of the operator, with their own alert and their own yes/no,
+// before init writes the choice. It is the only route by which init retires a
+// legacy transport, and it is always shown rather than stamped away, because
+// the operator has just asked for that provider to answer.
+func (env *cliEnv) offerRetirementFor(input *bufio.Reader, providerName string) error {
+	context, err := env.reconciliationContext()
+	if err != nil {
+		return err
 	}
-	if err := reconcile.RemoveRetiredCredential(credential); err != nil {
-		return outcome, fmt.Errorf(
-			"configuration updated at %s, but remove the retired credential file %s: %w",
-			outcome.Path, credential, err)
+	var open []reconcile.Entry
+	for _, entry := range reconcile.Open(context, reconcile.Registry()) {
+		if entry.RetiredProvider == providerName {
+			open = append(open, entry)
+		}
 	}
-	return outcome, nil
+	if len(open) == 0 {
+		return nil
+	}
+	_, err = reconcile.Run(context, open, reconcile.Options{
+		Interactive: true, ListAll: true, In: input, Out: env.errOut,
+	})
+	return err
 }
 
 const modelsHelp = "" +
