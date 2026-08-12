@@ -277,8 +277,9 @@ The provider is ignored with a warning and the rest of the cascade keeps
 working. On first run, reconciliation offers to remove those retired settings
 when the provider has a transport of its own, to replace it with a detected CLI,
 or to drop it when no supported CLI is on `PATH`. A `command` you declared is a
-transport of your own, so it is never removed and never migrated away. Declining
-changes nothing; non-terminal runs emit one plain alert.
+transport of your own, so it is never removed, never migrated away, and keeps
+answering while retired keys sit unread beside it. Declining changes nothing;
+non-terminal runs emit one plain alert.
 
 Old files under `~/.roca/credentials` are never read and never disable a
 provider that works: they get a cleanup proposal of their own, and a Codex or

@@ -484,6 +484,9 @@ func writeInitModelChoice(paths config.Paths, providerName, model string) (agent
 // legacy transport, and it is always shown rather than stamped away, because
 // the operator has just asked for that provider to answer.
 func (env *cliEnv) offerRetirementFor(input *bufio.Reader, providerName string) error {
+	if env.skipReconciliation {
+		return nil
+	}
 	context, err := env.reconciliationContext()
 	if err != nil {
 		return err

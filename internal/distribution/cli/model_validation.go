@@ -22,9 +22,8 @@ import (
 const modelsDevCacheFile = "models.dev.json"
 
 type modelCatalogue struct {
-	IDs    []string
-	Open   bool
-	Notice string
+	IDs  []string
+	Open bool
 }
 
 type modelValidationBackend interface {
@@ -49,9 +48,6 @@ func (env *cliEnv) validatedModel(ctx context.Context, in io.Reader, paths confi
 	catalogue, err := backend.Catalogue(ctx, name, current)
 	if err != nil {
 		return "", fmt.Errorf("read %s's model catalogue: %w; configuration was not changed", name, err)
-	}
-	if catalogue.Notice != "" {
-		fmt.Fprintln(env.errOut, "warning:", catalogue.Notice)
 	}
 	if len(catalogue.IDs) == 0 {
 		return "", fmt.Errorf("%s's model catalogue is empty; configuration was not changed", name)
@@ -171,6 +167,10 @@ func (b *providerModelBackend) candidate(name, model string) (provider.Provider,
 		return nil, err
 	}
 	if len(cascade.Providers) != 1 {
+		if len(cascade.Warnings) > 0 {
+			return nil, fmt.Errorf("provider %s cannot be built for validation: %s",
+				name, strings.Join(cascade.Warnings, "; "))
+		}
 		return nil, fmt.Errorf("provider %s cannot be built for validation", name)
 	}
 	return cascade.Providers[0], nil

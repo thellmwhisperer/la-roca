@@ -484,6 +484,7 @@ func runInitChooser(t *testing.T, tty bool, input string, backend modelValidatio
 		build: Build{Version: "test", Commit: "test-sha"}, out: &out, errOut: &out,
 	})
 	env.skipInitChooser = false
+	env.skipReconciliation = false
 	env.modelBackend = backend
 	_, err := executeWithEnv(env, args, strings.NewReader(input))
 	return out.String(), err

@@ -208,8 +208,15 @@ func (s Settings) withCommand(name string, fallback Factory) Factory {
 	}
 }
 
+// retiredProviderConfig is the transport side of the same rule reconciliation
+// applies: a declared command is the operator's own transport and is never a
+// retired artifact, so the retired keys beside it are ignored settings and not
+// a reason to refuse the provider. Removing them belongs to the proposal.
 func retiredProviderConfig(name string, cfg config.ProviderConfig) bool {
-	return name != NameOllama && (cfg.BaseURL != "" || cfg.RetiredCredential)
+	if name == NameOllama || len(cfg.Command) > 0 {
+		return false
+	}
+	return cfg.BaseURL != "" || cfg.RetiredCredential
 }
 
 func (s Settings) localBinary(name string, command []string, model string, models []string,

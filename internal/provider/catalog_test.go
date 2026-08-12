@@ -98,6 +98,12 @@ func TestRetiredCredentialConfigurationsNeverCrashAndDegradeHonestly(t *testing.
 			body:        "[models]\norder = [\"xai\", \"ollama\"]\n[models.xai]\napi_key = \"legacy-secret\"\n",
 			wantWarning: `provider "xai"`,
 		},
+		{
+			name: "vestigial key beside a declared command", wantProvider: NameCodex,
+			body: "[models]\norder = [\"codex\"]\n[models.codex]\ncommand = [\"synthetic-codex\", \"exec\"]\n" +
+				"api_key = \"legacy-secret\"\nmodel = \"gpt-preserved\"\n",
+			wantWarning: "belongs to a retired HTTP/credential transport",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
