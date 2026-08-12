@@ -1,0 +1,26 @@
+{
+  "provider": "recorded",
+  "model": "fixed-sql-v1",
+  "plans": [
+    {"case_id": "person-approval", "sql": ["SELECT content AS text FROM memories WHERE project = 'aurora' AND content LIKE '%Nora Vale%' ORDER BY id LIMIT 5"]},
+    {"case_id": "person-migration-lead", "sql": ["SELECT content AS text FROM memories WHERE project = 'orbit' AND content LIKE '%Iris Chen%' ORDER BY id LIMIT 5"]},
+    {"case_id": "history-storage-decision", "sql": ["SELECT content AS text FROM memories WHERE project = 'aurora' AND content LIKE '%SQLite WAL%' ORDER BY id LIMIT 5"]},
+    {"case_id": "history-rollback-result", "sql": ["SELECT content AS text FROM memories WHERE project = 'aurora' AND content LIKE '%restored service%' ORDER BY id LIMIT 5"]},
+    {"case_id": "count-aurora-sessions", "sql": ["SELECT COUNT(*) AS count FROM sessions WHERE project = 'aurora'"]},
+    {"case_id": "count-aurora-memories", "sql": ["SELECT COUNT(*) AS count FROM memories WHERE project = 'aurora' AND status = 'active'"]},
+    {"case_id": "count-model-answers", "sql": ["SELECT COUNT(*) AS count FROM exchanges WHERE model = 'gpt-5.4'"]},
+    {"case_id": "time-january-launch", "sql": ["SELECT title AS text, started_at FROM sessions WHERE started_at >= '2026-01-01' AND started_at < '2026-02-01' ORDER BY started_at LIMIT 5"]},
+    {"case_id": "time-after-april", "sql": ["SELECT title AS text, started_at FROM sessions WHERE started_at > '2026-04-20' ORDER BY started_at LIMIT 5"]},
+    {"case_id": "provenance-model", "sql": ["SELECT model, provider FROM exchanges WHERE session_id = 'syn-aurora-001' AND human_text LIKE '%latency%' ORDER BY exchange_number LIMIT 5"]},
+    {"case_id": "provenance-provider", "sql": ["SELECT provider, model FROM exchanges WHERE session_id = 'syn-aurora-001' AND agent_text LIKE '%launch answer%' ORDER BY exchange_number LIMIT 5"]},
+    {"case_id": "provenance-agent", "sql": ["SELECT source_agent, title FROM sessions WHERE project = 'orbit' ORDER BY started_at LIMIT 5"]},
+    {"case_id": "history-handoff-layer", "sql": ["SELECT layer, content AS text FROM memories WHERE project = 'aurora' AND layer = 'handoff' ORDER BY id LIMIT 5"]},
+    {"case_id": "history-session-title", "sql": ["SELECT title AS text FROM sessions WHERE project = 'orbit' ORDER BY started_at LIMIT 5"]},
+    {"case_id": "rescue-comet-signoff", "sql": ["SELECT content AS text FROM memories WHERE project = 'comet' AND content LIKE '%signed off%' ORDER BY id LIMIT 5", "SELECT content AS text FROM memories WHERE project = 'comet' AND content LIKE '%approved%' ORDER BY id LIMIT 5"]},
+    {"case_id": "rescue-harbor-review", "sql": ["SELECT content AS text FROM memories WHERE project = 'harbor' AND content LIKE '%checked defenses%' ORDER BY id LIMIT 5", "SELECT content AS text FROM memories WHERE project = 'harbor' AND content LIKE '%audited%' ORDER BY id LIMIT 5", "SELECT content AS text FROM memories WHERE project = 'harbor' AND content LIKE '%security review%' ORDER BY id LIMIT 5"]},
+    {"case_id": "rank-top-five", "sql": ["SELECT content AS text FROM memories WHERE project = 'aurora' ORDER BY id LIMIT 5"]},
+    {"case_id": "headroom-unknown-paraphrase", "sql": ["SELECT content AS text FROM memories WHERE project = 'nebula' AND content LIKE '%owned%' ORDER BY id LIMIT 5"]},
+    {"case_id": "headroom-typo", "sql": ["SELECT content AS text FROM memories WHERE project = 'nebula' AND content LIKE '%relese shedule%' ORDER BY id LIMIT 5"]},
+    {"case_id": "headroom-thinking-only", "sql": ["SELECT content AS text FROM memories WHERE project = 'harbor' AND content LIKE '%cobalt compass%' ORDER BY id LIMIT 5"]}
+  ]
+}

@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "fixture": "synthetic-v1",
+  "cases": [
+    {
+      "id": "person-approval",
+      "category": "person",
+      "question": "Who approved the Aurora launch?",
+      "expected_kind": "row_contains",
+      "expected_marker": "Nora Vale approved the Aurora launch"
+    },
+    {
+      "id": "person-migration-lead",
+      "category": "person",
+      "question": "Who led the Orbit migration?",
+      "expected_kind": "row_contains",
+      "expected_marker": "Iris Chen led the Orbit migration"
+    },
+    {
+      "id": "history-storage-decision",
+      "category": "history",
+      "question": "What storage decision did Aurora make?",
+      "expected_kind": "row_contains",
+      "expected_marker": "Aurora chose SQLite WAL"
+    },
+    {
+      "id": "history-rollback-result",
+      "category": "history",
+      "question": "What happened after Aurora's rollback rehearsal?",
+      "expected_kind": "row_contains",
+      "expected_marker": "restored service in seven minutes"
+    },
+    {
+      "id": "count-aurora-sessions",
+      "category": "count",
+      "question": "How many Aurora sessions were recorded?",
+      "expected_kind": "count_equals",
+      "expected_marker": "2"
+    },
+    {
+      "id": "count-aurora-memories",
+      "category": "count",
+      "question": "How many Aurora memories are active?",
+      "expected_kind": "count_equals",
+      "expected_marker": "5"
+    },
+    {
+      "id": "count-model-answers",
+      "category": "count",
+      "question": "Did any answers use gpt-5.4?",
+      "expected_kind": "count_gt",
+      "expected_marker": "0"
+    },
+    {
+      "id": "time-january-launch",
+      "category": "time",
+      "question": "Which project session started in January 2026?",
+      "expected_kind": "row_contains",
+      "expected_marker": "Aurora launch retrospective"
+    },
+    {
+      "id": "time-after-april",
+      "category": "time",
+      "question": "Which review happened after 20 April 2026?",
+      "expected_kind": "row_contains",
+      "expected_marker": "Harbor security review"
+    },
+    {
+      "id": "provenance-model",
+      "category": "provenance",
+      "question": "Which model answered Aurora's latency question?",
+      "expected_kind": "field_equals",
+      "expected_marker": "model=gpt-5.4"
+    },
+    {
+      "id": "provenance-provider",
+      "category": "provenance",
+      "question": "Which provider produced the Aurora launch answer?",
+      "expected_kind": "field_equals",
+      "expected_marker": "provider=codex"
+    },
+    {
+      "id": "provenance-agent",
+      "category": "provenance",
+      "question": "Which source agent recorded the Orbit session?",
+      "expected_kind": "field_equals",
+      "expected_marker": "source_agent=opencode"
+    },
+    {
+      "id": "history-handoff-layer",
+      "category": "history",
+      "question": "Is there an Aurora handoff?",
+      "expected_kind": "field_equals",
+      "expected_marker": "layer=handoff"
+    },
+    {
+      "id": "history-session-title",
+      "category": "history",
+      "question": "What was the Orbit planning session called?",
+      "expected_kind": "row_contains",
+      "expected_marker": "Orbit migration planning"
+    },
+    {
+      "id": "rescue-comet-signoff",
+      "category": "person",
+      "question": "Who signed off Project Comet?",
+      "expected_kind": "row_contains",
+      "expected_marker": "Jules Hart approved Project Comet",
+      "rescue_path": ["Who approved Project Comet?"]
+    },
+    {
+      "id": "rescue-harbor-review",
+      "category": "history",
+      "question": "Who checked Harbor defenses?",
+      "expected_kind": "row_contains",
+      "expected_marker": "Harbor security review was scheduled",
+      "rescue_path": [
+        "Who audited Harbor?",
+        "What security review was scheduled for Harbor?"
+      ]
+    },
+    {
+      "id": "rank-top-five",
+      "category": "history",
+      "question": "Show Aurora history with the rollback rehearsal.",
+      "expected_kind": "row_contains",
+      "expected_marker": "rollback rehearsal restored service"
+    },
+    {
+      "id": "headroom-unknown-paraphrase",
+      "category": "person",
+      "question": "Who owned the Nebula launch?",
+      "expected_kind": "row_contains",
+      "expected_marker": "Mara Quinn was the release coordinator for Nebula",
+      "headroom": "unknown-word paraphrase"
+    },
+    {
+      "id": "headroom-typo",
+      "category": "history",
+      "question": "What was the Nebula relese shedule?",
+      "expected_kind": "row_contains",
+      "expected_marker": "Nebula release schedule moved to Friday",
+      "headroom": "typo"
+    },
+    {
+      "id": "headroom-thinking-only",
+      "category": "history",
+      "question": "What did the cobalt compass mean for Harbor?",
+      "expected_kind": "row_contains",
+      "expected_marker": "cobalt compass meant delaying the Harbor cutover",
+      "headroom": "term only appears in thinking blocks"
+    }
+  ]
+}
