@@ -31,6 +31,9 @@ func TestRenderSQLFTSSearchesTheFourSources(t *testing.T) {
 	if !strings.Contains(stmt, "bm25") {
 		t.Errorf("the SQL does not order by bm25:\n%s", stmt)
 	}
+	if !strings.Contains(stmt, " AS author") || !strings.Contains(stmt, "source_model") || !strings.Contains(stmt, "source_surface") {
+		t.Errorf("memory results do not surface their author:\n%s", stmt)
+	}
 }
 
 func TestRenderSQLFTSRequiresEveryWord(t *testing.T) {

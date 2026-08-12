@@ -27,6 +27,7 @@ type Provenance struct {
 type Row struct {
 	Source string
 	ID     int64
+	Author sql.NullString
 	Text   string
 	Date   sql.NullString
 }
@@ -166,7 +167,7 @@ func collect(rows *sql.Rows, limit int, alsoSelected ...any) ([]Row, error) {
 	for rows.Next() && len(out) < limit {
 		var f Row
 		var text sql.NullString
-		into := append([]any{&f.Source, &f.ID, &text, &f.Date}, alsoSelected...)
+		into := append([]any{&f.Source, &f.ID, &f.Author, &text, &f.Date}, alsoSelected...)
 		if err := rows.Scan(into...); err != nil {
 			return nil, err
 		}

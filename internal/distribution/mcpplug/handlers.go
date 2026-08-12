@@ -35,9 +35,9 @@ func (p *plug) sql(ctx context.Context, _ *mcp.CallToolRequest,
 	return queryText(p.svc.Query(ctx, in.request()))
 }
 
-func (p *plug) store(ctx context.Context, _ *mcp.CallToolRequest,
+func (p *plug) store(ctx context.Context, req *mcp.CallToolRequest,
 	in storeArgs) (*mcp.CallToolResult, any, error) {
-	return storeText(p.svc.Store(ctx, in.request()))
+	return storeText(p.svc.Store(ctx, in.request(authorshipFromRequest(req))))
 }
 
 func (p *plug) health(ctx context.Context, _ *mcp.CallToolRequest,

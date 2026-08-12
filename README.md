@@ -213,7 +213,7 @@ you re-explaining the project.
 
 ```sh
 roca query "latest handoff for this project"
-roca store --layer handoff --content "token refresh done, retry pending"
+roca store --layer handoff --content "token refresh done, retry pending" --agent codex --model gpt-5
 ```
 
 ### 2. Chat with your data
@@ -313,10 +313,14 @@ Third parties extend the CLI with Git-style [`roca-<name>` neighbor executables]
 roca mcp install codex     # declare the server in a runtime's configuration
 roca mcp status            # which agents have La Roca configured
 roca skill install claude  # ship the usage craft into a runtime's skills
+roca hooks install claude  # sign Claude Code shell writes before they run
 ```
 
-Supported integration targets are Codex, Claude, OpenCode, Hermes, and Pi.
-Configuration edits preserve unrelated bytes and create a recovery backup.
+Supported integration targets are Codex, Claude, OpenCode, Hermes, and Pi; the
+signing hook ships for Claude only, and
+[Memory authorship](docs/operations.md#memory-authorship) explains what it
+stamps. Configuration edits preserve unrelated bytes and create a recovery
+backup.
 
 
 ## Going deeper

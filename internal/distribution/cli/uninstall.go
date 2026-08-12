@@ -237,6 +237,22 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		}
 	}
 
+	// The Claude signing hook lives in a different file from Claude's MCP
+	// declaration and names the binary this command is about to unlink, so a
+	// hook left behind fires `roca` on every Bash tool call and finds nothing.
+	if settings, err := claudeSettingsPath(); err != nil {
+		failed(report, "%s", err)
+	} else {
+		outcome, warning, err := uninstallClaudeAuthorshipHook(settings)
+		if warning != "" {
+			fmt.Fprintln(env.errOut, warning)
+		}
+		withdrawn("the Claude signing hook from "+settings, outcome, err)
+		if purge {
+			removeRecoveryBackups(report, settings)
+		}
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		failed(report, "home: %v", err)

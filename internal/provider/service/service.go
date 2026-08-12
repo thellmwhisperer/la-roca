@@ -207,9 +207,10 @@ const presentationPrompt = "## La Roca — local semantic memory\n" +
 	"when to query: at session start, before repeating research, and whenever prior " +
 	"context or a decision may exist.\n" +
 	"With a shell, use `roca query \"<natural question>\"`; preserve durable context " +
-	"with `roca store`.\n" +
+	"with `roca store --agent <harness> --model <model>` so CLI authorship is explicit.\n" +
 	"Data = `roca query`; human reading = `roca query --full`; raw SQL = `roca exec`.\n" +
 	"Without a shell, use the MCP equivalents: `roca_query` and `roca_store`.\n" +
+	"Authorship is automatic over MCP; CLI detection is conservative, so pass --agent and --model.\n" +
 	"On first bootstrap, `roca init` asks new or adopt, then chooses the answering model before its harness.\n" +
 	"La Roca never edits agent instruction files; a human chooses where to paste this block.\n"
 
