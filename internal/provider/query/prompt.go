@@ -22,8 +22,11 @@ type LayerHint struct {
 
 // Table is a table as the model may query it.
 type Table struct {
-	Name    string
-	Columns []string
+	Name        string
+	Columns     []string
+	Description string
+	Questions   []string
+	Database    string
 }
 
 // Column is one side of a join.
@@ -154,6 +157,15 @@ func (s Schema) Describe(layers []LayerHint) string {
 	out.WriteString("Tables you can query, with their columns:\n\n")
 	for _, table := range s.Tables {
 		out.WriteString("- " + table.Name + "(" + strings.Join(table.Columns, ", ") + ")\n")
+		if table.Description != "" {
+			out.WriteString("  contains: " + table.Description + "\n")
+		}
+		if len(table.Questions) > 0 {
+			out.WriteString("  serves: " + strings.Join(table.Questions, "; ") + "\n")
+		}
+		if table.Database != "" {
+			out.WriteString("  database: " + table.Database + "\n")
+		}
 	}
 
 	// How the tables connect. Without this a question about tools by agent has
@@ -266,6 +278,10 @@ func SQLSystemPrompt(schema Schema, layers []LayerHint, layerFilter []string) st
 	}
 	rules = append(rules,
 		"- Use only the tables and columns listed above, exactly as they are written there")
+	if databases := schema.databases(); len(databases) > 0 {
+		rules = append(rules,
+			"- Every result row must include a column written AS \"database\" (database is a keyword and must be quoted). Label rows from each table with its database value shown above; each UNION branch labels its own rows, and a join across databases uses a + joined label")
+	}
 	if len(schema.Joins) > 0 {
 		// The rule that stops the model inventing a column. A table has exactly
 		// the columns listed for it; anything else has to be reached with a JOIN
@@ -335,6 +351,16 @@ func SQLUserPrompt(question string) string {
 		"Follow the system rules and return only a single SQLite SELECT query, with no other text. " +
 		"If the question is outside the La Roca memory database, return only REFUSE.\n" +
 		"</reinforcement>"
+}
+
+func (s Schema) databases() []string {
+	var databases []string
+	for _, table := range s.Tables {
+		if table.Database != "" && !slices.Contains(databases, table.Database) {
+			databases = append(databases, table.Database)
+		}
+	}
+	return databases
 }
 
 // ftsExamples is the worked shape the compiler already emits: multi-source

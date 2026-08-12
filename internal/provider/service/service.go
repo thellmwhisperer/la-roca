@@ -48,6 +48,10 @@ type Options struct {
 	// own switch: an installation that wants the guess back does not thereby
 	// lose the signature gate it never asked to turn off.
 	DisableMissingReferentAsk bool
+	// PluginDir is the installation's ~/.roca/plugins directory. Empty disables
+	// plugin discovery, which keeps embedded and explicitly selected databases
+	// independent of the process HOME.
+	PluginDir string
 	// ReadOnly refuses in the service, before any database I/O.
 	ReadOnly bool
 	// Providers is the resolved model cascade. Its zero value is a service that

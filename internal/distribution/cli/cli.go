@@ -398,6 +398,10 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		return nil, err
 	}
 	home, _ := os.UserHomeDir()
+	pluginDir := ""
+	if home != "" {
+		pluginDir = filepath.Join(home, config.DirOwn, "plugins")
+	}
 	var ingestProgress func(ingest.SourceProgress)
 	if env.wantIngestProgress && !env.json && termAware(env.errOut) {
 		env.liveIngest = newIngestRows(env.errOut, true)
@@ -414,6 +418,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		QueryTimeoutSet:           file.Query.TimeoutSet,
 		DisableStrictInput:        !file.Features.StrictInput,
 		DisableMissingReferentAsk: !file.Features.AskMissingReferent,
+		PluginDir:                 pluginDir,
 		Providers:                 providers,
 		Interpreters:              interpreters,
 		ConfigPath:                paths.Config,
