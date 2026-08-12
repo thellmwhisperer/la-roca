@@ -204,6 +204,12 @@ rows, `roca exec` runs your own `SELECT` through the same read-only gate, and
 `--json` returns the complete machine envelope. Questions must contain text and
 have a generous 1000-character cap on both CLI and MCP query surfaces.
 
+Known model-output wrappers and malformed `UNION ALL` ordering are repaired
+before that gate, then validated with its unchanged rules. The JSON envelope
+keeps the untouched output in `model_sql` and names each applied repair in
+`repaired`; operator-authored `roca exec` SQL is never sent through this repair
+step.
+
 ## Three ways to use it
 
 ### 1. Shared context between agents
