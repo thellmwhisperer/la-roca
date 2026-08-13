@@ -109,9 +109,11 @@ arguments, standard streams, and exit status unchanged. Built-ins win. The
 current directory is never searched. `roca plugins` lists these executables;
 data-plugin discovery does not change dispatch.
 
-A plugin that intentionally writes a core memory uses `roca store` or MCP with
-`--origin plugin:<name>`. Direct writes to `roca.db` are outside the plugin
-contract. Executables run with the user's permissions and are not a sandbox.
+A plugin that intentionally writes a memory uses `roca store` or MCP with
+`--origin plugin:<name>`. That write lands in core, or in the operational store
+when [`features.roca_ops`](#the-bundled-roca-ops-plugin) routes it there. Direct
+writes to `roca.db` are outside the plugin contract. Executables run with the
+user's permissions and are not a sandbox.
 
 ## Verified packages and lifecycle
 
@@ -181,3 +183,49 @@ executable whose checksum changed outside the installer.
 Removing La Roca itself removes the installed packages and asks separately
 before it touches those archives: see
 [Uninstall](lifecycle.md#uninstall).
+
+## The bundled roca-ops plugin
+
+`roca-ops` is the first plugin La Roca ships with itself: a resident, data-only
+package that declares `custody: true` over what agents write. Every
+[installation and update](lifecycle.md#install) places it under
+`~/.roca/plugins/roca-ops/`, and it stays inert until a second experimental
+switch is set:
+
+```toml
+[features]
+roca_ops = true
+```
+
+With `features.roca_ops` absent or false, `roca store`, `roca query`, `roca
+exec`, and MCP `roca_store` behave exactly as they did before it existed and
+every write lands in core. With it true, La Roca keeps those external contracts,
+answer envelopes included, and routes each new write to the operational database
+instead, carrying the same [authorship
+stamp](operations.md#memory-authorship) core records. Core keeps the history it
+already holds and is read from without being written to.
+
+Reads are the union of the two halves. Resident attachment puts
+`plugin_roca_ops.memories` in front of the SQL model on every query, and the
+deterministic keyword rescue asks both databases, orders the merged rows by
+recency before it applies the shared limit, and declares the statement for both
+halves rather than the core one alone. Each row still names its origin in
+`database`. A half that cannot be read degrades to a warning instead of
+discarding the half that answered.
+
+A memory supersedes only what its own database holds. With the switch on, a
+write that names a core memory in `--supersedes` is refused: the exclusion is
+computed inside the database that stores the replacement, so the retirement
+would be reported without happening.
+
+Nothing expires by itself and there is no default lifetime. A write may declare
+an RFC3339 `expires_at` in its `--metadata`, and only an explicit drain removes
+the rows whose declared expiry is due:
+
+```sh
+roca ops drain                                 # what has already expired
+roca ops drain --before 2026-01-01T00:00:00Z   # what had expired by that instant
+```
+
+A row with no `expires_at` is never drained, and `ROCA_READ_ONLY` refuses the
+drain like any other write.
