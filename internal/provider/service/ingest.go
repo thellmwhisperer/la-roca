@@ -12,6 +12,9 @@ import (
 type IngestRequest struct {
 	// DryRun reports what would be read and writes nothing.
 	DryRun bool
+	// ExportPath is one extracted account export selected for this invocation.
+	// It is never retained in configuration or reused by a later ingest.
+	ExportPath string
 }
 
 // IngestResult is the run's report, with the search index's own beside it: what
@@ -52,6 +55,16 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (IngestResult, 
 	if s.opts.ReadOnly && !req.DryRun {
 		return IngestResult{}, errReadOnly
 	}
+	// The export is classified before anything is prepared, so a directory that
+	// is neither vendor's export costs the operator a refusal and not a run.
+	roots := s.opts.Sources
+	if req.ExportPath != "" {
+		selected, err := ingest.WithExportPath(roots, req.ExportPath)
+		if err != nil {
+			return IngestResult{}, err
+		}
+		roots = selected
+	}
 	var prepared search.Report
 	if !req.DryRun {
 		var err error
@@ -62,7 +75,7 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (IngestResult, 
 	}
 
 	report, err := ingest.Run(ctx, s.db, s.registry, ingest.Options{
-		Roots:        s.opts.Sources,
+		Roots:        roots,
 		DryRun:       req.DryRun,
 		Progress:     s.opts.Progress,
 		LiveProgress: s.opts.IngestProgress,

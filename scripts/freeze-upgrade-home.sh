@@ -62,7 +62,7 @@ esac
 
 # An explicit empty order keeps fixture production offline and proves that the
 # historical config continues to parse after an upgrade.
-printf '[defaults]\nanthropic_export_paths = ["/synthetic/upgrade-export"]\n\n[models]\norder = []\n' \
+printf '[models]\norder = []\n' \
   > "$home/.roca/config.toml"
 env -i HOME="$home" PATH=/usr/bin:/bin ROCA_MODELS_ORDER=none \
   "$stage/$asset" --db-path "$home/.roca/roca.db" --json init > "$stage/init.json"

@@ -29,7 +29,6 @@ func (env *cliEnv) reconciliationContext() (reconcile.Context, error) {
 		LookPath:  exec.LookPath, Env: os.Getenv, File: file,
 		RetiredCredentialPaths: legacyProviderCredentialPaths(dirOf(paths.DB)),
 		RecoveryBackupPaths:    backups,
-		Capabilities:           map[string]bool{reconcile.CapabilityAnthropicExport: true},
 	}, nil
 }
 
