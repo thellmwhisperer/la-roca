@@ -39,6 +39,9 @@ type Options struct {
 	// from an absent setting, which uses DefaultQueryTimeout.
 	QueryTimeout    time.Duration
 	QueryTimeoutSet bool
+	// DisableStrictInput is the opt-out escape hatch for the experimental
+	// prompt-attack signature gate. Its zero value keeps the gate enabled.
+	DisableStrictInput bool
 	// ReadOnly refuses in the service, before any database I/O.
 	ReadOnly bool
 	// Providers is the resolved model cascade. Its zero value is a service that

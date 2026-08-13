@@ -616,10 +616,11 @@ const (
 //     table.** A warning that says "invalid section" sends them to read code.
 type File struct {
 	// Path is where it was looked for, whether or not it was there.
-	Path   string
-	Exists bool
-	Models ModelsConfig
-	Query  QueryConfig
+	Path     string
+	Exists   bool
+	Models   ModelsConfig
+	Query    QueryConfig
+	Features FeaturesConfig
 	// Warnings are what this build did not understand, each one naming the key,
 	// the file and the remedy.
 	Warnings []string
@@ -632,6 +633,12 @@ type File struct {
 type QueryConfig struct {
 	TimeoutMS  int  `toml:"timeout_ms"`
 	TimeoutSet bool `toml:"-"`
+}
+
+// FeaturesConfig contains operational escape hatches for security behaviour.
+// StrictInput defaults on; false opts out of the experimental signature gate.
+type FeaturesConfig struct {
+	StrictInput bool `toml:"strict_input"`
 }
 
 // ModelsConfig is the [models] section: which providers, in what order, with
@@ -696,6 +703,7 @@ var knownProviderKeys = map[string]bool{
 }
 
 var knownQueryKeys = map[string]bool{"timeout_ms": true}
+var knownFeaturesKeys = map[string]bool{"strict_input": true}
 
 func KnownProviderKey(key string) bool { return knownProviderKeys[key] }
 
@@ -704,7 +712,7 @@ func UnknownKeyWarning(key, path string) string { return unknownKey(key, path) }
 // LoadFile reads the config. A file that is not there is a machine with
 // defaults, not a failure.
 func LoadFile(path string) (File, error) {
-	file := File{Path: path}
+	file := File{Path: path, Features: FeaturesConfig{StrictInput: true}}
 
 	raw, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -737,6 +745,8 @@ func LoadFile(path string) (File, error) {
 	}
 	query, _ := document["query"].(map[string]any)
 	file.Query = readQuery(query, path, &file.Warnings)
+	features, _ := document["features"].(map[string]any)
+	file.Features = readFeatures(features, path, &file.Warnings)
 	return file, nil
 }
 
@@ -767,6 +777,23 @@ func readQuery(section map[string]any, path string, warnings *[]string) QueryCon
 		}
 	}
 	return query
+}
+
+func readFeatures(section map[string]any, path string, warnings *[]string) FeaturesConfig {
+	features := FeaturesConfig{StrictInput: true}
+	for _, key := range sortedKeys(section) {
+		switch key {
+		case "strict_input":
+			if strict, ok := section[key].(bool); ok {
+				features.StrictInput = strict
+			}
+		default:
+			if !knownFeaturesKeys[key] {
+				*warnings = append(*warnings, unknownKey("features."+key, path))
+			}
+		}
+	}
+	return features
 }
 
 // readModels walks the [models] section by hand instead of letting a decoder

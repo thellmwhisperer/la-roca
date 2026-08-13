@@ -257,6 +257,21 @@ func TestQueryTimeoutDistinguishesAbsentFromExplicitZero(t *testing.T) {
 	}
 }
 
+func TestStrictInputFeatureDefaultsOnAndCanBeDisabled(t *testing.T) {
+	absent, err := LoadFile(write(t, "[models]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabled, err := LoadFile(write(t, "[features]\nstrict_input = false\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !absent.Features.StrictInput || disabled.Features.StrictInput || len(disabled.Warnings) != 0 {
+		t.Fatalf("absent = %+v, disabled = %+v, warnings = %v",
+			absent.Features, disabled.Features, disabled.Warnings)
+	}
+}
+
 func TestSetProviderModelCreatesAndSurgicallyEditsTheConfiguration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "config.toml")
 	if err := SetProviderModel(path, "xai", "grok-first"); err != nil {

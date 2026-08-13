@@ -40,13 +40,17 @@ var hostileQuestionPatterns = []*regexp.Regexp{
 // It rejects unusable shapes and the lineage's narrow set of known prompt
 // attacks. The strict SQL gate remains the execution boundary; this earlier
 // gate avoids sending recognizable jailbreak and encoding payloads to a model.
-func ValidateQuestion(question string) error {
+// Turning strict off skips only those signatures, never the basic shape checks.
+func ValidateQuestion(question string, strict bool) error {
 	if strings.TrimSpace(question) == "" {
 		return fmt.Errorf("question is empty; provide a natural-language question")
 	}
 	length := utf8.RuneCountInString(question)
 	if length > MaxQuestionChars {
 		return fmt.Errorf("question must be at most %d characters (got %d)", MaxQuestionChars, length)
+	}
+	if !strict {
+		return nil
 	}
 	for _, pattern := range hostileQuestionPatterns {
 		if pattern.MatchString(question) {

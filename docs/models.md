@@ -55,6 +55,11 @@ probe_ms   = 3000
 # default is 5000 ms when this key is absent. Set 0 to disable the bound.
 timeout_ms = 5000
 
+[features]
+# Experimental prompt-attack signatures are enabled by default. Set false only
+# as an opt-out escape hatch when an ordinary question is falsely rejected.
+strict_input = true
+
 [models.codex]
 model = "gpt-5.6-luna"
 

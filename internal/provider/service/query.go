@@ -261,7 +261,7 @@ func (r *QueryResult) unresolved(andAlso string) {
 // query.
 func (s *Service) Query(ctx context.Context, req QueryRequest) (res QueryResult, err error) {
 	start := time.Now()
-	if err := query.ValidateQuestion(req.Question); err != nil {
+	if err := query.ValidateQuestion(req.Question, !s.opts.DisableStrictInput); err != nil {
 		return res, err
 	}
 	res = QueryResult{
