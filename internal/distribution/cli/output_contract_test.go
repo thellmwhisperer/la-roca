@@ -76,7 +76,11 @@ func failingRoot(t *testing.T, args ...string) error {
 
 // The hidden compatibility alias has the same machine contract as model check:
 // a probe result with an explicit assurance that configuration did not change.
+// The probe reports whichever provider the cascade puts first, so the home and
+// the PATH are fixed here: a machine with no agent CLI installed answers with
+// its local runtime instead, and the contract would read as broken.
 func TestBareLoginHonoursTheJSONFlag(t *testing.T) {
+	isolatedLoginHome(t)
 	out := runRoot(t, contractBuild(), "login", "--json")
 
 	doc := mustJSON(t, out)
