@@ -38,7 +38,8 @@ session, which is why every diagnostic in this path writes to standard error.
 | `roca_sql` | Compiles a question into SQL without running it | Agents that need to inspect the SQL before `roca_exec` runs it |
 
 `roca_query` and `roca_sql` reject empty questions and share the CLI's generous
-1000-character cap before any model is called.
+1000-character cap before any model is called, and the rest of that same input
+gate with it: [what happens on a query](models.md#what-happens-on-a-query).
 
 `roca_list_runs` is **not** in v1: `runs` is v2 scope and this binary creates no
 such table. A tool with nothing behind it is a tool that lies.

@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -18,12 +19,14 @@ import (
 // Paths a question can leave by. v1 is model-only: every question is asked of
 // the model (PathLLM), and when the model cannot answer the keyword rescue
 // searches the FTS index with the question's own words (PathKeyword). There is
-// no compiler path and no refusal: a question the model cannot answer is
-// declared unresolved, not turned away at a gate.
+// no compiler path. A model can explicitly refuse an out-of-scope question;
+// that is a legitimate result, distinct from an unavailable model or bad SQL.
 const (
 	PathLLM        = "model"
 	PathKeyword    = "keyword"
 	PathUnresolved = "unresolved"
+	PathRefused    = "refused"
+	PathAsk        = "ask"
 )
 
 // Match states. Honest zero rows are declared as such instead of dressed up as
@@ -38,6 +41,8 @@ const (
 	RetryGateRejection  = "gate_rejection"
 	RetryExecutionError = "execution_error"
 )
+
+var errQueryTimeout = errors.New("the validated SQL exceeded the time limit")
 
 // QueryRequest is a question and the budget it is answered with.
 type QueryRequest struct {
@@ -84,6 +89,10 @@ type QueryResult struct {
 	Match    string             `json:"match,omitempty"`
 	Search   *search.Provenance `json:"search,omitempty"`
 	Message  string             `json:"message,omitempty"`
+	// ClarificationRequired declares that no SQL was generated because the
+	// question named a generic slot without supplying its referent.
+	ClarificationRequired bool   `json:"clarification_required,omitempty"`
+	MissingSlot           string `json:"missing_slot,omitempty"`
 
 	// Engine and Model are the model path's provenance: which provider answered
 	// and with which model. Without them a poor answer cannot be attributed, and
@@ -252,7 +261,7 @@ func (r *QueryResult) unresolved(andAlso string) {
 // query.
 func (s *Service) Query(ctx context.Context, req QueryRequest) (res QueryResult, err error) {
 	start := time.Now()
-	if err := query.ValidateQuestion(req.Question); err != nil {
+	if err := query.ValidateQuestion(req.Question, !s.opts.DisableStrictInput); err != nil {
 		return res, err
 	}
 	res = QueryResult{
@@ -266,6 +275,15 @@ func (s *Service) Query(ctx context.Context, req QueryRequest) (res QueryResult,
 		Warnings: slices.Clone(s.opts.Providers.Warnings),
 	}
 	defer func() { res.LatencyMS = time.Since(start).Milliseconds() }()
+	if !s.opts.DisableMissingReferentAsk {
+		if missing, found := query.DetectMissingReferent(req.Question); found {
+			res.Path = PathAsk
+			res.Message = missing.Ask
+			res.ClarificationRequired = true
+			res.MissingSlot = missing.Slot
+			return res, nil
+		}
+	}
 	if _, err := s.ensureSchema(ctx); err != nil {
 		return res, err
 	}
@@ -311,7 +329,11 @@ func (s *Service) Exec(ctx context.Context, req ExecRequest) (ExecResult, error)
 	}
 	columns, rows, err := s.execute(ctx, validated, "", req.MaxChars)
 	if err != nil {
-		return ExecResult{}, logfile.Typed(err, DegradedExecution)
+		degraded := DegradedExecution
+		if errors.Is(err, errQueryTimeout) {
+			degraded = DegradedTimeout
+		}
+		return ExecResult{}, logfile.Typed(err, degraded)
 	}
 	return ExecResult{
 		SQL:       validated,
@@ -327,11 +349,12 @@ func (s *Service) Exec(ctx context.Context, req ExecRequest) (ExecResult, error)
 // execute runs the validated SELECT and normalizes the rows into maps keyed by
 // column name, which is what both surfaces render.
 func (s *Service) execute(ctx context.Context, stmt, term string, maxChars int) ([]string, []map[string]any, error) {
-	timeout := s.opts.QueryTimeout
-	if timeout <= 0 {
-		timeout = DefaultQueryTimeout
+	timeout, bounded := s.queryExecutionBudget()
+	queryCtx := ctx
+	var cancel context.CancelFunc = func() {}
+	if bounded {
+		queryCtx, cancel = context.WithTimeout(ctx, timeout)
 	}
-	queryCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	reader, err := s.db.ReadOnly()
 	if err != nil {
@@ -339,10 +362,35 @@ func (s *Service) execute(ctx context.Context, stmt, term string, maxChars int) 
 	}
 	rows, err := reader.QueryContext(queryCtx, stmt)
 	if err != nil {
-		return nil, nil, fmt.Errorf("run the validated query: %w", err)
+		return nil, nil, executionError(ctx, queryCtx, timeout, err)
 	}
 	defer rows.Close()
-	return scanRows(rows, maxChars, term)
+	columns, result, err := scanRows(rows, maxChars, term)
+	if err != nil {
+		return nil, nil, executionError(ctx, queryCtx, timeout, err)
+	}
+	return columns, result, nil
+}
+
+// queryExecutionBudget is how long validated SQL may run, and whether it is
+// bounded at all. A positive budget is the one that was asked for; an explicit
+// zero is the operator removing the bound on purpose; anything else, including
+// a value no statement could meet, falls back to the shipped default.
+func (s *Service) queryExecutionBudget() (time.Duration, bool) {
+	if s.opts.QueryTimeout > 0 {
+		return s.opts.QueryTimeout, true
+	}
+	if s.opts.QueryTimeoutSet && s.opts.QueryTimeout == 0 {
+		return 0, false
+	}
+	return DefaultQueryTimeout, true
+}
+
+func executionError(parent, queryCtx context.Context, timeout time.Duration, err error) error {
+	if parent.Err() == nil && errors.Is(queryCtx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("%w after %s", errQueryTimeout, timeout)
+	}
+	return fmt.Errorf("run the validated query: %w", err)
 }
 
 // scanRows turns any result set into its column names and its rows of named
