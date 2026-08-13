@@ -112,9 +112,10 @@ repairs, and failure. Both streams are plain files beside the call audit.
 ## Reading query failures
 
 `roca doctor` reads the two call streams without touching the database. It
-reports the number of failed `query`/`roca_query`/`roca_sql` calls in the last
-24 hours and renders the five newest errors with their source, type, and
-correlation ID. `roca doctor --json` exposes the same data under
+reports the number of failed query calls in the last 24 hours, on either
+surface: `query`, `explore`, `roca_query`, `roca_explore`, and `roca_sql`. It
+renders the five newest errors with their source, type, and correlation
+ID. `roca doctor --json` exposes the same data under
 `query_failures` for automation. It only opens the dated segments that can hold
 a record inside the window. Malformed historical lines are skipped and counted
 in `malformed_lines`, and a segment that cannot be read is skipped and counted

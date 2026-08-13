@@ -124,10 +124,11 @@ func readQueryFailures(path string, since time.Time, summary *QueryFailureSummar
 func (r queryFailureRecord) queryFailure(since time.Time) (QueryFailure, bool) {
 	operation := r.Command
 	source := r.Source
-	queryCall := operation == "query"
+	queryCall := operation == "query" || operation == "explore"
 	if r.Source == "mcp" || operation == "" {
 		operation = r.Tool
-		queryCall = operation == "roca_query" || operation == "roca_sql"
+		queryCall = operation == "roca_query" || operation == "roca_sql" ||
+			operation == "roca_explore"
 		if source == "" {
 			source = "mcp"
 		}

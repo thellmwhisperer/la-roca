@@ -184,7 +184,7 @@ func TestDisabledEmptyAndBudgetedOrders(t *testing.T) {
 }
 
 func TestModelsAndInterpretationOrderUseOnlySupportedTransports(t *testing.T) {
-	s := settings(t, "[models]\norder = [\"codex\"]\ninterpret_order = [\"retired\", \"ollama\"]\n[models.codex]\nmodel = \"gpt-configured\"\n")
+	s := settings(t, "[models]\norder = [\"codex\"]\ninterpret_order = [\"retired\", \"ollama\"]\nexplore_order = [\"codex\"]\n[models.codex]\nmodel = \"gpt-configured\"\n")
 	s.LookPath = lookPath("codex")
 	main, err := BuildCascade(s)
 	if err != nil || main.Providers[0].ModelID() != "gpt-configured" {
@@ -194,5 +194,9 @@ func TestModelsAndInterpretationOrderUseOnlySupportedTransports(t *testing.T) {
 	if err != nil || strings.Join(names(interpreters.Providers), ",") != "ollama" ||
 		!strings.Contains(strings.Join(interpreters.Warnings, "\n"), "retired") {
 		t.Fatalf("interpreters=%+v err=%v", interpreters, err)
+	}
+	explorers, err := BuildExploreCascade(s)
+	if err != nil || strings.Join(names(explorers.Providers), ",") != "codex" {
+		t.Fatalf("explorers=%+v err=%v", explorers, err)
 	}
 }

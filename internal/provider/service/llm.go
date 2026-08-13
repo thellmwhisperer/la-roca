@@ -290,6 +290,21 @@ type Interpretation struct {
 	Note string
 }
 
+type InterpretationMission string
+
+const (
+	InterpretationAnswer      InterpretationMission = "answer"
+	InterpretationExplore     InterpretationMission = "investigation-light"
+	InterpretationExploreDeep InterpretationMission = "investigation-deep"
+)
+
+// InterpretationContext declares which mission occupies the interpreter seat
+// and carries only deterministic terrain facts for investigation missions.
+type InterpretationContext struct {
+	Mission InterpretationMission
+	Terrain Terrain
+}
+
 // Interpret is the second inference call of a query: the first turned the
 // question into SQL, this one turns that SQL's rows into a natural-language
 // answer in the question's language. The rows, capped at ten, travel in the
@@ -305,7 +320,8 @@ type Interpretation struct {
 func (s *Service) Interpret(ctx context.Context, question string,
 	columns []string, rows []map[string]any,
 	sqlInference time.Duration) (Interpretation, error) {
-	return s.InterpretStream(ctx, question, columns, rows, sqlInference, "", nil, nil)
+	return s.InterpretStream(ctx, question, columns, rows, sqlInference, "",
+		InterpretationContext{Mission: InterpretationAnswer}, nil, nil)
 }
 
 // InterpretStream is Interpret with a callback for the prose. Provider
@@ -315,9 +331,10 @@ func (s *Service) Interpret(ctx context.Context, question string,
 // providers keep the ordinary complete response.
 func (s *Service) InterpretStream(ctx context.Context, question string,
 	columns []string, rows []map[string]any, sqlInference time.Duration,
-	sqlProvider string, onStart func(bool), onDelta func(string)) (Interpretation, error) {
+	sqlProvider string, interpret InterpretationContext,
+	onStart func(bool), onDelta func(string)) (Interpretation, error) {
 
-	cascade, chosen, note, err := s.interpreter(ctx, sqlProvider)
+	cascade, chosen, note, err := s.interpreter(ctx, sqlProvider, interpret.Mission)
 	if err != nil {
 		return Interpretation{}, err
 	}
@@ -328,6 +345,12 @@ func (s *Service) InterpretStream(ctx context.Context, question string,
 	b.WriteString("Use only these results, never general knowledge. If the results do not support the question, say so plainly before anything else. ")
 	b.WriteString("A requested style changes delivery only and never licenses invention. Answer in the same language as the question. ")
 	b.WriteString("Write calm, terminal-friendly prose: paragraphs and simple dashes only. Do not use headings or tables.\n")
+	switch interpret.Mission {
+	case InterpretationExplore:
+		b.WriteString("mission: investigation-light. Answer what the rows support, then give short trail hints grounded only in the terrain facts. Use one concept per hint. Do not produce a full terrain map or invent statistics.\n")
+	case InterpretationExploreDeep:
+		b.WriteString("mission: investigation-deep. Answer what the rows support, then give a full terrain map covering source counts, date clusters, co-occurring terms, and negative space exactly as supplied. End with 2-3 next probes, each a single bare concept. Never invent or recalculate statistics.\n")
+	}
 	b.WriteString(query.EscapedTextNotice + "\n")
 	b.WriteString("</instructions>\n\n<question>\n")
 	b.WriteString(query.EscapePromptText(question))
@@ -343,7 +366,11 @@ func (s *Service) InterpretStream(ctx context.Context, question string,
 		b.WriteString(hint)
 		b.WriteByte('\n')
 	}
-	b.WriteString("</result_shape>\n\n<rows>\n")
+	b.WriteString("</result_shape>\n\n")
+	if interpret.Mission == InterpretationExplore || interpret.Mission == InterpretationExploreDeep {
+		writeTerrainFacts(&b, interpret.Terrain)
+	}
+	b.WriteString("<rows>\n")
 	limited := rows
 	if len(rows) > maxRowsToInterpret {
 		limited = rows[:maxRowsToInterpret]
@@ -404,19 +431,36 @@ func (s *Service) InterpretStream(ctx context.Context, question string,
 // with the fall declared. The cascade comes back with the chosen provider
 // because the budget travels in it, and asking one provider under another's
 // budget is how a local model gets a frontier model's timeout.
-func (s *Service) interpreter(ctx context.Context, sqlProvider string) (provider.Cascade, provider.Provider, string, error) {
+func (s *Service) interpreter(ctx context.Context, sqlProvider string,
+	mission InterpretationMission) (provider.Cascade, provider.Provider, string, error) {
 	main := s.opts.Providers
 	var note string
+	if mission == InterpretationExploreDeep && len(s.opts.Explorers.Providers) > 0 {
+		chosen, attempts := s.opts.Explorers.Pick(ctx)
+		if chosen != nil {
+			return s.opts.Explorers, chosen, "", nil
+		}
+		note = "the explore provider was not available (" + reasonsOf(attempts) + ")"
+	}
 	if split := s.opts.Interpreters; len(split.Providers) > 0 {
 		chosen, attempts := split.Pick(ctx)
 		if chosen != nil {
-			return split, chosen, "", nil
+			if note != "" {
+				note += ": the rows were read by " + chosen.Name()
+			}
+			return split, chosen, note, nil
 		}
-		note = "the interpretation provider was not available (" + reasonsOf(attempts) + ")"
+		if note != "" {
+			note += "; "
+		}
+		note += "the interpretation provider was not available (" + reasonsOf(attempts) + ")"
 	} else if main.FactoryDefault && sqlProvider != "" {
 		for _, chosen := range main.Providers {
 			if chosen.Name() == sqlProvider {
-				return main, chosen, "", nil
+				if note != "" {
+					note += ": the rows were read by " + chosen.Name()
+				}
+				return main, chosen, note, nil
 			}
 		}
 	}
@@ -428,6 +472,30 @@ func (s *Service) interpreter(ctx context.Context, sqlProvider string) (provider
 		note += ": the rows were read by " + chosen.Name()
 	}
 	return main, chosen, note, nil
+}
+
+func writeTerrainFacts(b *strings.Builder, terrain Terrain) {
+	b.WriteString("<terrain_facts>\n")
+	b.WriteString("These facts were computed deterministically from the returned rows. Phrase them; do not alter or extend them.\n")
+	fmt.Fprintf(b, "row_count: %d\n", terrain.RowCount)
+	writeTerrainCounts(b, "source counts", terrain.Sources)
+	writeTerrainCounts(b, "date clusters", terrain.DateClusters)
+	writeTerrainCounts(b, "co-occurring terms", terrain.Terms)
+	b.WriteString("negative space:\n")
+	for _, fact := range terrain.NegativeSpace {
+		b.WriteString("- ")
+		b.WriteString(query.EscapePromptText(fact))
+		b.WriteByte('\n')
+	}
+	b.WriteString("</terrain_facts>\n\n")
+}
+
+func writeTerrainCounts(b *strings.Builder, label string, counts []TerrainCount) {
+	b.WriteString(label)
+	b.WriteString(":\n")
+	for _, count := range counts {
+		fmt.Fprintf(b, "- %s: %d\n", query.EscapePromptText(count.Value), count.Count)
+	}
 }
 
 // pickOrFail is the main order asked for someone to read the rows, with the two

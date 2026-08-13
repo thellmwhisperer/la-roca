@@ -255,7 +255,9 @@ func retiredProviderCandidates(context Context, file config.File) []retiredProvi
 		}
 		candidates[normalized] = candidate
 	}
-	for _, name := range append(append([]string(nil), file.Models.Order...), file.Models.InterpretOrder...) {
+	declared := append(append(append([]string(nil), file.Models.Order...),
+		file.Models.InterpretOrder...), file.Models.ExploreOrder...)
+	for _, name := range declared {
 		add(name, "")
 	}
 	for name, configured := range file.Models.Providers {
@@ -334,6 +336,7 @@ func retiredProviderChanges(name, target string, tables []string) []config.Chang
 	changes := []config.Change{
 		{Kind: kind, Table: "models", Key: "order", Old: name, Value: target},
 		{Kind: kind, Table: "models", Key: "interpret_order", Old: name, Value: target},
+		{Kind: kind, Table: "models", Key: "explore_order", Old: name, Value: target},
 	}
 	if target == name {
 		for _, table := range tables {

@@ -81,8 +81,11 @@ func progress(req QueryRequest, phase QueryPhase) {
 // the model wrote bad SQL are fixed in different ways, and without the
 // provenance the operator does not know which of the two they are looking at.
 type QueryResult struct {
-	Question string             `json:"question"`
-	Path     string             `json:"path"`
+	Question string `json:"question"`
+	Path     string `json:"path"`
+	// Mode is set only by Explore. An ordinary query omits it, preserving the
+	// query envelope while every investigation declares plain or deep mode.
+	Mode     string             `json:"mode,omitempty"`
 	SQL      string             `json:"sql,omitempty"`
 	Columns  []string           `json:"columns,omitempty"`
 	Rows     []map[string]any   `json:"rows,omitempty"`
@@ -156,12 +159,13 @@ type QueryResult struct {
 	// correction call, so retry cost is distinguishable from a first shot.
 	SQLRetryProviderLatencyMS int64 `json:"sql_retry_provider_latency_ms"`
 	// SQLInferenceMS, ExecutionMS and InterpretationMS are the three query
-	// phases. Interpretation is populated by the CLI only when --full asks for it.
-	SQLInferenceMS      int64  `json:"sql_inference_ms"`
-	SQLRetryInferenceMS int64  `json:"sql_retry_inference_ms"`
-	ExecutionMS         int64  `json:"execution_ms"`
-	InterpretationMS    int64  `json:"interpretation_ms"`
-	Interpretation      string `json:"interpretation,omitempty"`
+	// phases. Interpretation is populated by query --full and every explore.
+	SQLInferenceMS      int64    `json:"sql_inference_ms"`
+	SQLRetryInferenceMS int64    `json:"sql_retry_inference_ms"`
+	ExecutionMS         int64    `json:"execution_ms"`
+	InterpretationMS    int64    `json:"interpretation_ms"`
+	Interpretation      string   `json:"interpretation,omitempty"`
+	Terrain             *Terrain `json:"terrain,omitempty"`
 	// InterpretEngine and InterpretModel are the second inference's own
 	// provenance: which provider read the result rows. They differ from Engine
 	// and Model on an installation that splits the two inferences, and that

@@ -1,8 +1,8 @@
 // Package mcpplug is La Roca's MCP surface: the plug, not the product.
 //
 // The CLI is the complete surface over the kernel. This package exists for the
-// agents that have no shell, and it carries exactly five tools, each one a
-// single call into the same service object `roca query` drives. There is no
+// agents that have no shell, and it carries six tools, each a single call into
+// the same service object the CLI drives. There is no
 // state between calls: the process is born when the agent launches it and dies
 // when the agent closes the pipe, matching the stateless protocol.
 //
@@ -37,7 +37,7 @@ const ServerName = "roca"
 // `roca_sql` to answer a question `roca_query` answers whole.
 const instructions = "La Roca is local semantic memory for agent fleets: it answers " +
 	"natural-language questions about what the agents on this machine have left " +
-	"behind. Ask with roca_query. Use roca_sql only to compile SQL, then roca_exec " +
+	"behind. Ask with roca_query; investigate with roca_explore. Use roca_sql only to compile SQL, then roca_exec " +
 	"to run it under the read-only gate. Write back what is worth remembering with roca_store."
 
 // Build is what the linker put inside the binary. The version the handshake
@@ -52,7 +52,7 @@ type Build struct {
 // it.
 type plug struct{ svc *service.Service }
 
-// New builds the server with the five tools of the decided surface, in the
+// New builds the server with the tools of the decided surface, in the
 // order they are declared here.
 //
 // Every handler is wrapped in sanitizing so that an MCP tool error never carries
@@ -75,6 +75,7 @@ func New(svc *service.Service, build Build) *mcp.Server {
 	audit := logfile.New(svc.DataDir())
 	_ = audit.Prepare()
 	mcp.AddTool(server, execTool, sanitizing(p.exec, dbPath, dataDir))
+	mcp.AddTool(server, exploreTool, sanitizing(p.explore, dbPath, dataDir))
 	mcp.AddTool(server, healthTool, sanitizing(p.health, dbPath, dataDir))
 	mcp.AddTool(server, queryTool, sanitizing(p.query, dbPath, dataDir))
 	mcp.AddTool(server, sqlTool, sanitizing(p.sql, dbPath, dataDir))
@@ -145,10 +146,10 @@ func auditCalls(audit *logfile.Writer, warnings io.Writer) mcp.Middleware {
 				InterpretationModel:       metaValue[string](result, "interpretation_model"),
 				InterpretationMS:          resultMilliseconds(result, "interpretation_ms"),
 			}
-			if call.Question == "" && (tool == "roca_query" || tool == "roca_sql") {
+			if call.Question == "" && (tool == "roca_query" || tool == "roca_sql" || tool == "roca_explore") {
 				call.Question = argumentString(args, "query")
 			}
-			if tool == "roca_query" || tool == "roca_sql" {
+			if tool == "roca_query" || tool == "roca_sql" || tool == "roca_explore" {
 				modelSQL := metaValue[string](result, "model_sql")
 				call.ModelSQL = &modelSQL
 			}
@@ -372,6 +373,9 @@ func rendered[T any](res T, err error, paint func(T) string) (*mcp.CallToolResul
 		"degraded":  resultDegraded(res),
 	}
 	if query, ok := any(res).(service.QueryResult); ok {
+		if query.Mode != "" {
+			metadata["mode"] = query.Mode
+		}
 		metadata["path"] = query.Path
 		metadata["retried"] = query.Retried
 		metadata["retried_sql"] = query.RetriedSQL
@@ -427,6 +431,14 @@ func rendered[T any](res T, err error, paint func(T) string) (*mcp.CallToolResul
 // wrapper.
 func queryText(res service.QueryResult, err error) (*mcp.CallToolResult, any, error) {
 	result, _, callErr := rendered(res, err, axi.MCPQuery)
+	if result != nil {
+		result.IsError = service.IsDegradedFailure(res.Degraded)
+	}
+	return result, nil, callErr
+}
+
+func exploreText(res service.QueryResult, err error) (*mcp.CallToolResult, any, error) {
+	result, _, callErr := rendered(res, err, axi.Explore)
 	if result != nil {
 		result.IsError = service.IsDegradedFailure(res.Degraded)
 	}

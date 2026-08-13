@@ -102,6 +102,44 @@ func MCPQuery(res service.QueryResult) string {
 	return composeQuery(res, "", MCPQueryHelp)
 }
 
+// Explore is the one text contract shared byte-for-byte by CLI and MCP. It
+// always declares the selected mode and the generated SQL before the grounded
+// investigation prose. Rows appear only as the failure floor when the second
+// inference could not answer.
+func Explore(res service.QueryResult) string {
+	var b strings.Builder
+	appendLine(&b, "mode: "+res.Mode)
+	if res.Path == service.PathUnresolved || res.Path == service.PathAsk {
+		appendLine(&b, res.Message)
+		return b.String()
+	}
+	appendLine(&b, QueryPreamble(res))
+	if res.Path == service.PathRefused {
+		appendLine(&b, res.Message)
+		return b.String()
+	}
+	generated := res.SQL
+	if generated == "" {
+		generated = res.CleanedSQL
+	}
+	if generated == "" {
+		generated = res.ModelSQL
+	}
+	if generated != "" {
+		appendLine(&b, "generated SQL:\n"+generated)
+	}
+	if res.Interpretation != "" {
+		appendLine(&b, res.Interpretation)
+		return b.String()
+	}
+	if res.RowCount == 0 {
+		appendLine(&b, res.Message)
+		return b.String()
+	}
+	appendLine(&b, RowOutput(res.Columns, res.Rows, res.Question))
+	return b.String()
+}
+
 func composeQuery(res service.QueryResult, prose string, help func(service.QueryResult) string) string {
 	if res.Path == service.PathUnresolved || res.Path == service.PathAsk {
 		return res.Message

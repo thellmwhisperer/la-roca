@@ -47,8 +47,8 @@ func TestEveryHandlerIsOneCallIntoTheService(t *testing.T) {
 			}
 		})
 	}
-	if handlers < 5 {
-		t.Errorf("%d handlers read, want the five tools of the decided surface", handlers)
+	if handlers < 6 {
+		t.Errorf("%d handlers read, want the six tools of the decided surface", handlers)
 	}
 }
 

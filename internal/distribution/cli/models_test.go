@@ -105,7 +105,7 @@ func writeConfig(t *testing.T, home, body string) string {
 // with the same verdict it gives the one that answers the question.
 func TestDoctorReportsTheConfiguredInterpretationProvider(t *testing.T) {
 	home := isolatedLoginHome(t)
-	writeConfig(t, home, "[models]\norder = [\"mycorp\"]\ninterpret_order = [\"ollama\"]\nprobe_ms = 200\n"+
+	writeConfig(t, home, "[models]\norder = [\"mycorp\"]\ninterpret_order = [\"ollama\"]\nexplore_order = [\"claude\"]\nprobe_ms = 200\n"+
 		"\n[models.mycorp]\ncommand = [\"missing-mycorp-cli\", \"{prompt}\"]\nmodel = \"mycorp-7b\"\n"+
 		"\n[models.ollama]\nbase_url = \"http://127.0.0.1:1\"\nmodel = \"qwen3.5:4b\"\n")
 
@@ -118,6 +118,9 @@ func TestDoctorReportsTheConfiguredInterpretationProvider(t *testing.T) {
 		"[no] ollama",
 		"remedy: start the local model with `ollama serve`",
 		"no interpretation provider is available: the result rows fall back to",
+		"deep exploration providers, in the declared order:",
+		"[no] claude",
+		"no deep exploration provider is available: deep mode falls back to interpretation order, then main order",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("doctor does not report the interpretation decision (%q):\n%s", want, out)

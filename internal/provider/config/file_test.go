@@ -34,6 +34,7 @@ func TestTheModelsSectionIsReadWhole(t *testing.T) {
 [models]
 order = ["codex", "ollama"]
 interpret_order = ["ollama"]
+explore_order = ["codex"]
 timeout_ms = 15000
 
 [models.ollama]
@@ -57,6 +58,9 @@ model = "gpt-test"
 	}
 	if got := strings.Join(file.Models.InterpretOrder, ","); got != "ollama" {
 		t.Fatalf("interpret order %q", got)
+	}
+	if got := strings.Join(file.Models.ExploreOrder, ","); got != "codex" {
+		t.Fatalf("explore order %q", got)
 	}
 	if len(file.Warnings) != 0 {
 		t.Fatalf("a known key was reported as unknown: %v", file.Warnings)

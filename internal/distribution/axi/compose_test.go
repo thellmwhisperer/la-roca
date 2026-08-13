@@ -110,6 +110,29 @@ func TestQueryWithProseOmitsEveryEvidenceRow(t *testing.T) {
 	}
 }
 
+func TestExploreAlwaysPrintsItsDeclaredModeGeneratedSQLAndProse(t *testing.T) {
+	res := service.QueryResult{
+		Question: "format", Mode: "explore_deep", Path: service.PathLLM,
+		Engine: "codex", Model: "gpt", Match: service.MatchFound,
+		SQL: "SELECT source, text FROM memories LIMIT 10", RowCount: 1,
+		Columns:        []string{"source", "text"},
+		Rows:           []map[string]any{{"source": "memory", "text": "raw evidence"}},
+		Interpretation: "The rows support one format decision.",
+	}
+	got := axi.Explore(res)
+	for _, want := range []string{
+		"mode: explore_deep", "generated SQL:\n" + res.SQL,
+		"The rows support one format decision.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("explore output lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "raw evidence") || strings.Contains(got, "rows[") {
+		t.Fatalf("successful explore dumped evidence after prose:\n%s", got)
+	}
+}
+
 func TestASqlOnlyQueryRendersTheSQLUnderTheRouteLine(t *testing.T) {
 	res := service.QueryResult{
 		Question: "count memories", Path: service.PathLLM, Engine: "ollama",

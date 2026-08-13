@@ -124,6 +124,7 @@ func renderDoctor(env *cliEnv, report service.DoctorReport) {
 			"will fall to the keyword rescue")
 	}
 	renderInterpretation(env, report)
+	renderExploration(env, report)
 	if report.PromptPath != "" {
 		if report.PromptExists {
 			env.print("agent prompt: %s (paste it into agent instructions)", report.PromptPath)
@@ -178,6 +179,20 @@ func renderInterpretation(env *cliEnv, report service.DoctorReport) {
 	}
 	env.print("no interpretation provider is available: the result rows fall back to " +
 		"the provider that writes the SQL")
+}
+
+func renderExploration(env *cliEnv, report service.DoctorReport) {
+	if len(report.Explorers) == 0 {
+		return
+	}
+	env.print("deep exploration providers, in the declared order:")
+	renderProviders(env, report.ConfigPath, report.Explorers)
+	if report.ExploreTitular != "" {
+		env.print("the one that is going to read deep exploration rows: %s", report.ExploreTitular)
+		return
+	}
+	env.print("no deep exploration provider is available: deep mode falls back to " +
+		"interpretation order, then main order")
 }
 
 func orDash(value string) string {

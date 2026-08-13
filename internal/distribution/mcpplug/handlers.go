@@ -6,7 +6,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// The five handlers. Each one is a single call into the service and nothing
+// The handlers. Each one is a single call into the service and nothing
 // else, and passthrough_test.go fails when that stops being true.
 //
 // The wrappers return any(nil) as the typed output so the SDK does not attach a
@@ -23,6 +23,11 @@ import (
 func (p *plug) exec(ctx context.Context, _ *mcp.CallToolRequest,
 	in execArgs) (*mcp.CallToolResult, any, error) {
 	return execText(p.svc.Exec(ctx, in.request()))
+}
+
+func (p *plug) explore(ctx context.Context, _ *mcp.CallToolRequest,
+	in exploreArgs) (*mcp.CallToolResult, any, error) {
+	return exploreText(p.svc.Explore(ctx, in.request()))
 }
 
 func (p *plug) query(ctx context.Context, _ *mcp.CallToolRequest,
