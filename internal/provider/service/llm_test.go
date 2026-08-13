@@ -1014,9 +1014,11 @@ func TestInterpretPromptIsLanguageAgnostic(t *testing.T) {
 }
 
 // Live prose is held until the guardian has read it, and no name the model gave
-// a column shortens that hold. An alias is the model's own word for what it
-// produced: honouring it as evidence would let the guarded model turn off its
-// own guard by writing AS ratio.
+// a column shortens that hold or changes a word of what the prompt says about
+// the rows. An alias is the model's own account of what it produced: honouring
+// it would let the guarded model turn off its own guard by writing AS ratio,
+// and doubting it would tell a model that computed a percentage that the
+// percentage in front of it is not there.
 func TestInterpretationGuardianHoldsLiveProseBackWhateverTheColumnsAreCalled(t *testing.T) {
 	const fabricated = "Alpha leads, more than the next two combined. Beta follows."
 	const checked = "Alpha leads. Beta follows."
@@ -1026,7 +1028,11 @@ func TestInterpretationGuardianHoldsLiveProseBackWhateverTheColumnsAreCalled(t *
 		wantHint            bool
 	}{
 		{
-			name: "raw rows are held back", measure: "count",
+			name: "an ordinary aggregate is held back", measure: "count",
+			want: checked, wantDeltas: 1, wantHint: true,
+		},
+		{
+			name: "a percentage the query really computed is held back", measure: "pct",
 			want: checked, wantDeltas: 1, wantHint: true,
 		},
 		{
@@ -1057,9 +1063,12 @@ func TestInterpretationGuardianHoldsLiveProseBackWhateverTheColumnsAreCalled(t *
 			if len(deltas) != testCase.wantDeltas {
 				t.Fatalf("published %d deltas, want %d: %q", len(deltas), testCase.wantDeltas, deltas)
 			}
-			hint := strings.Contains(model.prompts[0], "These are raw result rows.")
+			hint := strings.Contains(model.prompts[0], query.InterpretationShapeHint(3))
 			if hint != testCase.wantHint {
 				t.Fatalf("shape hint present = %v, want %v", hint, testCase.wantHint)
+			}
+			if strings.Contains(strings.ToLower(model.prompts[0]), "raw") {
+				t.Fatalf("the prompt told the model its own result was raw:\n%s", model.prompts[0])
 			}
 		})
 	}

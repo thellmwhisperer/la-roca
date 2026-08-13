@@ -40,16 +40,21 @@ type rankedRow struct {
 	magnitude float64
 }
 
-// InterpretationShapeHint warns whenever several rows travel to the model. The
-// warning is not conditioned on how the result names its columns: those names
-// are the aliases of the same model this hint addresses, so a claim of having
-// computed a comparison is not evidence that one was computed.
+// InterpretationShapeHint tells the model where the line between evidence and
+// invention runs for the rows it is holding. Everything the executed SQL
+// returned is on the evidence side, a percentage or a ratio it computed
+// included; arithmetic across rows that the result does not contain is not.
+// The line is drawn by what came back, never by what a column is called, so the
+// hint says the same thing whatever names the result carries. Below two rows
+// there is no cross-row arithmetic to bound.
 func InterpretationShapeHint(rowCount int) string {
 	if rowCount < 2 {
 		return ""
 	}
-	return "These are raw result rows. Do not invent ratios, combined totals, " +
-		"or cross-row arithmetic such as more than the next two combined."
+	return "The rows below are the executed SQL's own output, and every value in them " +
+		"is evidence, including any percentage or ratio the query computed. Arithmetic " +
+		"across rows is not: state no combined total, no proportion between rows and no " +
+		"claim such as more than the next two combined unless the result returned that value."
 }
 
 // SanitizeInterpretation deletes the comparison phrases the result never

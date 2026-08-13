@@ -1,6 +1,7 @@
 package query_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/query"
@@ -163,11 +164,26 @@ func TestInterpretationGuardianKeepsOnlyProvenComparisons(t *testing.T) {
 	}
 }
 
-func TestRawMultiRowShapeWarnsAgainstInventedComparisons(t *testing.T) {
-	if hint := query.InterpretationShapeHint(3); hint == "" {
-		t.Fatal("rows a comparison could be invented about carry no warning")
+// The hint is the model's account of the evidence in front of it, so it has to
+// be true of every result it travels with. A query that computed a percentage
+// returned data, and a prompt that answers it with "these are raw rows" is
+// telling the model to doubt a number it can read.
+func TestTheShapeHintBoundsClaimsWithoutDenyingWhatTheQueryComputed(t *testing.T) {
+	hint := query.InterpretationShapeHint(3)
+	if hint == "" {
+		t.Fatal("rows a comparison could be invented about carry no bound")
+	}
+	for _, denial := range []string{"raw", "no explicit", "without"} {
+		if strings.Contains(strings.ToLower(hint), denial) {
+			t.Errorf("the hint calls a computed value absent (%q): %q", denial, hint)
+		}
+	}
+	for _, want := range []string{"is evidence", "more than the next two combined"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("the hint does not say %q: %q", want, hint)
+		}
 	}
 	if hint := query.InterpretationShapeHint(1); hint != "" {
-		t.Fatalf("a single row was warned about cross-row arithmetic: %q", hint)
+		t.Fatalf("a single row was bounded against cross-row arithmetic: %q", hint)
 	}
 }
