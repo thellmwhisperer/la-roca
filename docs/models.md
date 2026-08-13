@@ -324,17 +324,30 @@ shown with its own yes or no first.
 
 1. The question is checked before any model is called: it must contain text and
    stay within a deliberately generous 1000-character cap, the same on the CLI
-   and over MCP.
-2. A provider is chosen **by availability**, never by exception: each one is
+   and over MCP. It is then read for the known jailbreak, role-hijack,
+   delimiter and encoding shapes, and a match is refused with one generic
+   message that never says which signature caught it. That message carries the
+   only remedy that discloses nothing, `features.strict_input = false`, which
+   skips those experimental signatures and keeps the text and length checks.
+2. A question that names a referent without supplying it, as in *a specific
+   project*, is answered with one clarifying question rather than a guess: the
+   route is `ask`, no model is called, and `--json` carries
+   `clarification_required` and the generic `missing_slot`. Setting
+   `features.ask_missing_referent = false` lets the model answer such a
+   question as written.
+3. A provider is chosen **by availability**, never by exception: each one is
    asked `Ready` in order and the first yes serves. The ones behind it are not
    asked anything.
-3. The model generates SQL, a repair step forgives known model-output mistakes,
+4. The model generates SQL, a repair step forgives known model-output mistakes,
    and the result **always** passes the two-halved gate. A model is not above
    the gate.
-4. A gate rejection, or a failure when the validated statement runs, sends that
+5. A model that answers `REFUSE` because the question is outside this database
+   is taken at its word: the route is `refused`, the answer says so, and no
+   keyword rescue answers over it. A refusal is a result, not a failure.
+6. A gate rejection, or a failure when the validated statement runs, sends that
    SQL and the engine's exact verdict back to the same model once, through the
    same repair and gate path.
-5. Whatever still fails from there on degrades to the keyword rescue and says which of
+7. Whatever still fails from there on degrades to the keyword rescue and says which of
    five things went wrong: `model_unavailable`, `model_error`, `invalid_sql`,
    `sql_execution_error`, `sql_execution_timeout`. A statement killed by the
    `query.timeout_ms` bound is the last one, and it is never retried.
@@ -421,6 +434,15 @@ One rule is about the dialect rather than the schema, and it is there for the
 same reason: `datetime('last month')` parses, evaluates to NULL and makes every
 comparison false. Valid SQL that can never match is worse than a rejection,
 because nothing complains.
+
+Nothing the model is given as data is given as instructions. Both prompts put
+untrusted text in a section of its own, the question in the SQL prompt and the
+question with the result rows in the interpretation prompt, and `&`, `<` and
+`>` are entity-escaped inside it so no memory content can close that section
+and speak as the prompt. The escaping is declared to the model in the same
+breath, so it decodes the entities back to your own characters when it quotes
+them and still never reads a decoded `<` as the start of a section. After the
+untrusted text, each prompt repeats what it is allowed to return.
 
 ## One retry with the engine's verdict
 
