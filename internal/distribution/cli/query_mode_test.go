@@ -277,6 +277,21 @@ func TestQueryHelpTeachesDataHumanAndSQLModes(t *testing.T) {
 	}
 }
 
+func TestExploreHelpDeclaresItsDeepMode(t *testing.T) {
+	var output strings.Builder
+	root := rootCommand(&cliEnv{})
+	root.SetOut(&output)
+	root.SetArgs([]string{"explore", "--help"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Investigate one concept", "--deep", "full terrain map"} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("explore help lacks %q:\n%s", want, output.String())
+		}
+	}
+}
+
 // An installation that splits the two inferences answers with two provenances:
 // the SQL provider and the one that read the rows. Both travel in the envelope
 // and both are printed, because "the rows never left this machine" is a claim

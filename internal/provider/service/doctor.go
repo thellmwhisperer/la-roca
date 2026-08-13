@@ -52,6 +52,11 @@ type DoctorReport struct {
 	// to whoever writes the SQL, which is the decision an operator who split
 	// them for privacy has to be able to see.
 	InterpretTitular string `json:"interpret_provider,omitempty"`
+	// Explorers are the optional providers declared for deep investigation.
+	// Empty means deep mode follows interpretation order and then main order.
+	Explorers []DoctorProvider `json:"explorers,omitempty"`
+	// ExploreTitular is the first available provider in explore_order.
+	ExploreTitular string `json:"explore_provider,omitempty"`
 	// ModelDisabled says the operator turned the model off on purpose, which is
 	// not the same as having none available.
 	ModelDisabled bool     `json:"model_disabled,omitempty"`
@@ -112,6 +117,7 @@ func (s *Service) Doctor(ctx context.Context) (DoctorReport, error) {
 	// the operator declared one: an installation that does not split the two
 	// inferences has no second decision to report.
 	report.Interpreters, report.InterpretTitular = verdicts(ctx, s.opts.Interpreters)
+	report.Explorers, report.ExploreTitular = verdicts(ctx, s.opts.Explorers)
 	return report, nil
 }
 

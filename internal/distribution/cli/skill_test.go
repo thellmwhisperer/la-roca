@@ -75,6 +75,20 @@ func TestInitMentionsTheSkillWithoutInstallingIt(t *testing.T) {
 	}
 }
 
+func TestSkillTeachesTheInvestigationFunnel(t *testing.T) {
+	body := skill.Content()
+	for _, want := range []string{
+		"## Investigation method", "Declare the purpose in one line",
+		"roca explore --deep", "single bare word", "Read the terrain",
+		"one concept per query", "FTS ANDs", "explicit OR", "whole corpus",
+		"--sql-only", "roca exec", "Verdict grounded in rows",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("investigator skill lacks %q", want)
+		}
+	}
+}
+
 func skillTestHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()

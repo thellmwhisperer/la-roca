@@ -57,6 +57,9 @@ order = ["codex", "claude", "ollama"]
 # the SQL also reads the rows, which is what every installation did before this
 # key existed.
 interpret_order = ["ollama"]
+# Optional. Deep explore tries this stronger order first, then
+# interpret_order, then order. Plain explore starts at interpret_order.
+explore_order = ["claude"]
 # Model budgets, in milliseconds. timeout_ms bounds a provider request;
 # probe_ms bounds the availability question asked before every one.
 timeout_ms = 90000
@@ -126,8 +129,8 @@ request or probe.
 
 `ROCA_MODELS_ORDER` overrides the order from the environment; `ROCA_MODELS_ORDER=none`
 turns the model off entirely. There is no environment override for
-`interpret_order`: it is a decision about where your data goes, and it is
-written down in the file.
+`interpret_order` or `explore_order`: they are decisions about where your data
+goes, and they are written down in the file.
 
 ### Splitting the two inferences
 
@@ -177,6 +180,48 @@ answer · provider ollama · model qwen3.5:4b · 4.7 s
 `roca doctor` reports that decision the same way it reports the main one: every
 declared interpretation provider with its verdict and its remedy, and the one
 that is going to read the rows.
+
+### Investigation missions and deep routing
+
+`roca explore` keeps the SQL role unchanged: the first inference sees the
+question and schema, emits one SELECT, and never sees returned rows. At the same
+`InterpretStream` call site used by `query --full`, an explicit explore context
+selects a different interpreter mission:
+
+- plain explore answers only what the rows support and adds short,
+  single-concept trail hints;
+- deep explore answers the rows, maps source counts, date clusters,
+  co-occurring terms and negative space, then proposes two or three bare-word
+  probes.
+
+Terrain facts are calculated deterministically from the actual returned result
+set before the second inference. They enter the prompt as fixed facts; the model
+may phrase them but may not invent, extend, or recalculate them. The terrain is
+computed locally over every returned row, and only its aggregates reach a
+provider: the ten-row cap and the 240-character field budget still govern the
+raw rows in the prompt, so an interpreter sees the capped row sample plus those
+aggregates and never the full result set as text. Terrain terms come only from
+cells a source stored as text, so a SQL NULL and a computed number contribute
+nothing, and the provenance labels a query surface synthesizes about who wrote a
+row (`author`, `agent`, `model`, `surface`, `provider`, `provenance`, and the
+`source_` columns) are left out too, so the fleet's own naming never outranks the
+corpus in a probe. Both CLI modes print the generated SQL as well as the prose
+so the investigator learns the schema and can graduate to `query --sql-only`
+plus `exec`.
+
+Deep mode may use a stronger row-reading model without moving ordinary prose:
+
+```toml
+[models]
+order           = ["codex"]
+interpret_order = ["ollama"]
+explore_order   = ["claude"]
+```
+
+Deep interpretation tries `explore_order`, falls back to `interpret_order`,
+then to the main `order`; every unavailable fall is declared in the answer.
+Plain explore starts with `interpret_order`. `roca doctor` diagnoses the deep
+order separately and names its first available provider.
 
 ### The prose arrives complete
 

@@ -22,7 +22,7 @@ import (
 // The surface this version decided, and no other. `roca_list_runs` is out
 // because `runs` is v2: a tool with no table behind it is a tool that lies.
 var theDecidedSurface = []string{
-	"roca_exec", "roca_health", "roca_query", "roca_sql", "roca_store",
+	"roca_exec", "roca_explore", "roca_health", "roca_query", "roca_sql", "roca_store",
 }
 
 // The tools the pruning withdrew. They are named here so that reintroducing one
@@ -169,6 +169,37 @@ func TestQuestionGateIsSharedByBothMCPQuestionTools(t *testing.T) {
 		if !strings.Contains(got, "question is empty") {
 			t.Errorf("%s error = %q", tool, got)
 		}
+	}
+}
+
+func TestExploreToolDeclaresModeAndReturnsProseWithGeneratedSQL(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		deep bool
+		mode string
+	}{
+		{name: "plain", mode: "explore"},
+		{name: "deep", deep: true, mode: "explore_deep"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := seededServiceWithScriptedModel(t, []string{
+				"SELECT 'memory' AS source, content AS text, created_at FROM memories LIMIT 2",
+				"The rows support one format trail and its next probes.",
+			})
+			result := callTool(t, connect(t, svc), "roca_explore", map[string]any{
+				"query": "format", "deep": tc.deep,
+			})
+			text := renderedText(result)
+			for _, want := range []string{
+				"mode: " + tc.mode, "generated SQL:\nSELECT",
+				"The rows support one format trail and its next probes.",
+			} {
+				if !strings.Contains(text, want) {
+					t.Errorf("explore tool lacks %q:\n%s", want, text)
+				}
+			}
+			assertNoStructuredEnvelope(t, result)
+		})
 	}
 }
 

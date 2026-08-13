@@ -183,7 +183,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 	root.PersistentFlags().StringVar(&env.dbPath, "db-path", "", "database to use")
 	root.PersistentFlags().BoolVar(&env.json, "json", false, "JSON output")
 	root.AddCommand(
-		versionCommand(env), initCommand(env), queryCommand(env),
+		versionCommand(env), initCommand(env), queryCommand(env), exploreCommand(env),
 		execCommand(env), schemaCommand(env),
 		indexCommand(env), doctorCommand(env),
 		ingestCommand(env), storeCommand(env), healthCommand(env),
@@ -207,7 +207,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 
 func publicCommand(name string) bool {
 	switch name {
-	case "init", "query", "store", "ingest", "login", "doctor", "update", "uninstall", "plugin", "plugins", "hooks":
+	case "init", "query", "explore", "store", "ingest", "login", "doctor", "update", "uninstall", "plugin", "plugins", "hooks":
 		return true
 	default:
 		return false
@@ -647,7 +647,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		env.liveIngest = newIngestRows(env.errOut, true)
 		ingestProgress = env.liveIngest.update
 	}
-	providers, interpreters := buildProviders(file, paths)
+	providers, interpreters, explorers := buildProviders(file, paths)
 	svc, err := service.Open(service.Options{
 		DBPath:                    paths.DB,
 		BackupDir:                 paths.Backups,
@@ -662,6 +662,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		PluginsEnabled:            file.Features.Plugins,
 		Providers:                 providers,
 		Interpreters:              interpreters,
+		Explorers:                 explorers,
 		ConfigPath:                paths.Config,
 		ConfigExists:              file.Exists,
 		Sources:                   ingestSources(file, home, paths.Runner),
@@ -759,16 +760,15 @@ func runtimeStatus[R any](
 	return nil
 }
 
-// buildProviders turns the configuration into the two model cascades: the one
-// that answers questions, and the one the result rows are handed to when the
-// operator declared an interpretation order of its own.
+// buildProviders turns the configuration into the main, interpretation, and
+// deep-exploration cascades.
 //
 // Whatever it has to say travels as data inside the cascade and comes out
 // through the answer and through `roca doctor`, which is where an operator
 // reads it. It is not also printed to the error stream: a copy on every single
 // command is noise, and noise on stderr is what makes an operator stop reading
 // it.
-func buildProviders(file config.File, paths config.Paths) (provider.Cascade, provider.Cascade) {
+func buildProviders(file config.File, paths config.Paths) (provider.Cascade, provider.Cascade, provider.Cascade) {
 	settings := provider.Settings{
 		File: file, RunnerDir: paths.Runner, Env: os.Getenv,
 	}
@@ -777,20 +777,29 @@ func buildProviders(file config.File, paths config.Paths) (provider.Cascade, pro
 		// No providers, but not "turned off": the operator did not turn the
 		// model off, they wrote an order this build cannot resolve, and doctor
 		// has to say which of the two it is looking at.
-		return provider.Cascade{Warnings: []string{err.Error()}}, provider.Cascade{}
+		return provider.Cascade{Warnings: []string{err.Error()}}, provider.Cascade{}, provider.Cascade{}
 	}
 	interpreters, err := provider.BuildInterpretCascade(settings)
 	if err != nil {
 		// An interpretation order this build cannot resolve leaves the two
 		// inferences together and says why. It never takes the query down.
 		cascade.Warnings = append(cascade.Warnings, err.Error())
-		return cascade, provider.Cascade{}
+		interpreters = provider.Cascade{}
+	}
+	explorers, err := provider.BuildExploreCascade(settings)
+	if err != nil {
+		// A deep order this build cannot resolve leaves deep investigation on
+		// the interpretation/main fallback and says why.
+		cascade.Warnings = append(cascade.Warnings, err.Error())
+		explorers = provider.Cascade{}
 	}
 	// What resolving that order had to say is about the same file, so it reaches
 	// the operator in the same place as the rest of the configuration.
 	cascade.Warnings = append(cascade.Warnings, interpreters.Warnings...)
+	cascade.Warnings = append(cascade.Warnings, explorers.Warnings...)
 	interpreters.Warnings = nil
-	return cascade, interpreters
+	explorers.Warnings = nil
+	return cascade, interpreters, explorers
 }
 
 func (env *cliEnv) printJSON(value any) error {

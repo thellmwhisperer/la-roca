@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider"
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 // Provider order comes from configuration, and doctor
@@ -137,15 +138,20 @@ func TestDoctorNamesTheDatabaseAndTheConfigurationFile(t *testing.T) {
 // extra, because nothing extra was decided.
 func TestDoctorReportsTheInterpretationDecision(t *testing.T) {
 	main := cascadeOf(answering("codex", ""))
-	svc := seededServiceWith(t, main, cascadeOf(
-		unavailable("ollama", "it does not answer", "start it"),
-		answering("mycorp", "")))
+	svc := initialized(t, freshPaths(t), func(options *service.Options) {
+		options.Providers = main
+		options.Interpreters = cascadeOf(
+			unavailable("ollama", "it does not answer", "start it"),
+			answering("mycorp", ""))
+		options.Explorers = cascadeOf(answering("claude", ""))
+	})
 
 	report, err := svc.Doctor(context.Background())
 	if err != nil {
 		t.Fatalf("Doctor: %v", err)
 	}
-	if report.Titular != "codex" || report.InterpretTitular != "mycorp" {
+	if report.Titular != "codex" || report.InterpretTitular != "mycorp" ||
+		report.ExploreTitular != "claude" || len(report.Explorers) != 1 {
 		t.Fatalf("the two decisions were not told apart: %+v", report)
 	}
 	if len(report.Interpreters) != 2 || report.Interpreters[0].Reason == "" ||
@@ -157,7 +163,8 @@ func TestDoctorReportsTheInterpretationDecision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Doctor: %v", err)
 	}
-	if len(together.Interpreters) != 0 || together.InterpretTitular != "" {
+	if len(together.Interpreters) != 0 || together.InterpretTitular != "" ||
+		len(together.Explorers) != 0 || together.ExploreTitular != "" {
 		t.Fatalf("an installation without the split reported one: %+v", together)
 	}
 }
