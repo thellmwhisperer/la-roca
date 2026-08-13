@@ -203,6 +203,39 @@ func TestExploreTerrainReadsOnlyStoredTextCells(t *testing.T) {
 	}
 }
 
+// Provenance columns are labels the query surface synthesizes about who wrote a
+// row, not text the row carried, so probes made of them would send the
+// investigation after the fleet's own naming instead of the corpus.
+func TestExploreTerrainExcludesSynthesizedProvenanceColumns(t *testing.T) {
+	fake := newTwoInferenceFake([]string{"SELECT 'memory' AS source, " +
+		"'fixture-agent/fixture-model via cli' AS author, 'cli' AS source_surface, " +
+		"'2026-08-09' AS created_at, 'cedar trail orbit' AS text LIMIT 10"}, "")
+	svc := serviceWithModel(t, fake)
+
+	result, err := svc.Explore(t.Context(), service.ExploreRequest{
+		QueryRequest: service.QueryRequest{Question: "orbit"}, Deep: true,
+	})
+	if err != nil {
+		t.Fatalf("Explore: %v", err)
+	}
+	_, probes, ok := strings.Cut(result.Interpretation, "Next probes:")
+	if !ok {
+		t.Fatalf("the deterministic fallback proposed no probes:\n%s", result.Interpretation)
+	}
+	for _, unwanted := range []string{"agent", "cli", "fixture", "model", "via"} {
+		if terrainCount(result.Terrain.Terms, unwanted) != 0 {
+			t.Errorf("terrain counted provenance term %q: %+v", unwanted, result.Terrain.Terms)
+		}
+		if strings.Contains(probes, unwanted) {
+			t.Errorf("next probes proposed provenance term %q: %s", unwanted, probes)
+		}
+	}
+	if terrainCount(result.Terrain.Terms, "cedar") != 1 ||
+		terrainCount(result.Terrain.Terms, "trail") != 1 {
+		t.Fatalf("terrain lost its text terms: %+v", result.Terrain.Terms)
+	}
+}
+
 func runDeepExplore(t *testing.T, main provider.Provider,
 	interpreters []provider.Provider, explorer provider.Provider) service.QueryResult {
 	t.Helper()

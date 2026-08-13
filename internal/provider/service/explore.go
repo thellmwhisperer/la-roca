@@ -180,6 +180,7 @@ func terrainFromRows(question string, columns []string, rows []map[string]any) T
 		for _, column := range columns {
 			name := strings.ToLower(column)
 			if column == sourceColumn || slices.Contains(dateColumns, column) ||
+				terrainProvenanceColumn(name) ||
 				name == "id" || strings.HasSuffix(name, "_id") || strings.Contains(name, "rank") ||
 				strings.Contains(name, "count") {
 				continue
@@ -245,6 +246,18 @@ func terrainColumns(columns []string, accept func(string) bool) []string {
 		}
 	}
 	return matches
+}
+
+// terrainProvenanceColumn tells apart the labels a query surface synthesizes
+// about who wrote a row from the text the row itself carries. The rescue
+// projects an author like "claude-code/opus via cli" on every row, so counting
+// it would make the fleet's own naming outrank the corpus in every probe.
+func terrainProvenanceColumn(name string) bool {
+	switch name {
+	case "author", "agent", "model", "surface", "provider", "provenance":
+		return true
+	}
+	return strings.HasPrefix(name, "source_")
 }
 
 // terrainText reads a cell only when the source itself stored text there. A
