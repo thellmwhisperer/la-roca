@@ -88,24 +88,36 @@ func Discover(root string) ([]Descriptor, []string) {
 			continue
 		}
 		directory := filepath.Join(root, entry.Name())
-		semantic, err := readSemantic(filepath.Join(directory, SemanticFilename))
+		descriptor, err := Inspect(entry.Name(), directory)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("plugin %s is unavailable: %v", entry.Name(), err))
 			continue
 		}
-		database, err := soleDatabase(directory)
-		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("plugin %s is unavailable: %v", entry.Name(), err))
-			continue
-		}
-		found = append(found, Descriptor{
-			Name: entry.Name(), Directory: directory, Database: database,
-			Schema: schemaName(entry.Name()), Semantic: semantic,
-		})
+		found = append(found, descriptor)
 	}
 	slices.SortFunc(found, func(a, b Descriptor) int { return strings.Compare(a.Name, b.Name) })
 	disambiguateSchemas(found)
 	return found, warnings
+}
+
+// Inspect parses one plugin directory without requiring it to be installed.
+// Installers use the same structural validation as query discovery.
+func Inspect(name, directory string) (Descriptor, error) {
+	if !validPluginName(name) {
+		return Descriptor{}, fmt.Errorf("invalid plugin name %q", name)
+	}
+	semantic, err := readSemantic(filepath.Join(directory, SemanticFilename))
+	if err != nil {
+		return Descriptor{}, err
+	}
+	database, err := soleDatabase(directory)
+	if err != nil {
+		return Descriptor{}, err
+	}
+	return Descriptor{
+		Name: name, Directory: directory, Database: database,
+		Schema: schemaName(name), Semantic: semantic,
+	}, nil
 }
 
 func disambiguateSchemas(descriptors []Descriptor) {
