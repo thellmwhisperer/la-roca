@@ -767,6 +767,7 @@ func (env *cliEnv) modelCheck(ctx context.Context, args []string) error {
 		})
 	}
 	env.print("%s model %s answered the probe; configuration was not changed", name, model)
+	env.print("authentication: %s answers through its own CLI session; La Roca stores no secrets", name)
 	return nil
 }
 
