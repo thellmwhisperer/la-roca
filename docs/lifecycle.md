@@ -127,8 +127,10 @@ too, and the command names the recovery copy that holds it.
 
 An edit inside SYSTEM is divergence, and so is a registered file the operator
 deleted. Update and `roca skill install` name that file, say which of the two
-happened, and give the force command for it, then leave it alone without
-prompting. Forcing a diverged artifact replaces SYSTEM and still preserves USER.
+happened, and give the force command for it (`roca update --force-artifacts`, or
+`roca skill install <runtime> --force` for one skill), then leave it alone
+without prompting. Forcing a diverged artifact replaces SYSTEM and still
+preserves USER.
 
 An artifact whose zone markers are there but broken is the one state no zone can
 be read from, so nothing can be transplanted: it is reported apart from

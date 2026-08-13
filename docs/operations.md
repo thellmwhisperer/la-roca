@@ -27,7 +27,10 @@ That exact command hook inside `PreToolUse` is the artifact's SYSTEM fragment;
 the enclosing group, surrounding Claude settings, and every other hook are its
 USER zone. Its `hooks run claude` command is the explicit ownership marker
 recorded in `~/.roca/artifacts.json`. Refresh never rewrites the surrounding
-settings.
+settings, and an edited fragment is left alone until
+`roca hooks install claude --force` replaces it. See
+[Update](lifecycle.md#update) for the shared zone, divergence and registry
+contract.
 
 `roca hooks uninstall claude` withdraws that entry and leaves every other
 setting, and every hook that is not La Roca's, exactly as it was. `roca
