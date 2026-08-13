@@ -659,6 +659,9 @@ type ModelsConfig struct {
 	// installation that never heard of this key. Declaring it separates the two
 	// inferences: the question and the schema go to Order, the rows go here.
 	InterpretOrder []string `toml:"interpret_order"`
+	// ExploreOrder is the optional provider order for the deep investigation
+	// mission. Empty falls through to InterpretOrder and then Order.
+	ExploreOrder []string `toml:"explore_order"`
 	// TimeoutMS bounds a model request. Zero is the adapter's default.
 	TimeoutMS int `toml:"timeout_ms"`
 	// ProbeMS bounds the availability question. Zero is the adapter's default.
@@ -697,7 +700,8 @@ type ProviderConfig struct {
 }
 
 var knownModelsKeys = map[string]bool{
-	"order": true, "interpret_order": true, "timeout_ms": true, "probe_ms": true,
+	"order": true, "interpret_order": true, "explore_order": true,
+	"timeout_ms": true, "probe_ms": true,
 }
 
 // knownProviderKeys is this build's vocabulary inside a provider table. The
@@ -843,6 +847,8 @@ func readModels(section map[string]any, path string, warnings *[]string) ModelsC
 			models.Order = readStrings(value)
 		case "interpret_order":
 			models.InterpretOrder = readStrings(value)
+		case "explore_order":
+			models.ExploreOrder = readStrings(value)
 		case "timeout_ms":
 			models.TimeoutMS = readInt(value)
 		case "probe_ms":

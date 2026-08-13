@@ -26,11 +26,14 @@ non-terminal init does not open the chooser or write model configuration.
 
 ## Shell commands
 
-Data = `roca query`; human reading = `roca query --full`; raw SQL = `roca exec`.
+Data = `roca query`; human reading = `roca query --full`; investigation =
+`roca explore`; raw SQL = `roca exec`.
 
 ```bash
 roca query "who is Ana"                        # natural-language search
 roca query --full "what happened with Y"       # add prose for human reading
+roca explore --deep "format"                   # launch a one-word investigation probe
+roca explore "rows"                            # follow one radius concept
 roca query "what happened with Y" --json
 roca query "ffmpeg patterns" --sql-only        # the SQL the model would run, without running it
 roca exec "SELECT COUNT(*) AS memories FROM memories"  # run a gate-approved SELECT
@@ -67,8 +70,11 @@ help[2]:
 
 ## MCP (shell-less agents)
 
-Five tools, same service as the CLI: `roca_query`, `roca_sql`, `roca_exec`,
-`roca_store`, `roca_health`. `roca_sql` is the shell-less form of
+Six tools, same service as the CLI: `roca_query`, `roca_explore`, `roca_sql`,
+`roca_exec`, `roca_store`, `roca_health`. `roca_explore` has full CLI parity:
+plain mode and `deep: true` both return the prose investigation and generated
+SQL, with the deep mission mapping the complete terrain and proposing probes.
+`roca_sql` is the shell-less form of
 `query --sql-only` (the SQL without running it); `roca_exec` runs that SQL under
 the gate. Install them with `roca mcp install <runtime>`.
 
@@ -77,10 +83,30 @@ the gate. Install them with `roca mcp install <runtime>`.
 | Situation | Action |
 |---|---|
 | Past work / people / "have we…" | `roca query "<question>"` |
+| Investigation | `roca explore --deep "<one bare word>"`, then plain radius explores |
 | Programmatic parse | add `--json` |
 | Inspect SQL first | `roca query --sql-only` then `roca exec` |
 | Durable memory | `roca store --layer … --content … --agent … --model …` |
 | No shell | the MCP tools above |
+
+## Investigation method
+
+Purpose: reach a verdict that is grounded in returned rows while learning the corpus terrain.
+
+1. Declare the purpose in one line before touching anything.
+2. Launch the first probe with `roca explore --deep "<one bare word>"`. Use a
+   single bare word: no hints and no phrases.
+3. Read the terrain, not just the answer: inspect sources, dates, vocabulary,
+   noise, and negative space.
+4. Work the radius with plain `roca explore`, one concept per query: a synonym,
+   adjacent frame, entity, or era. Never stack five terms; FTS ANDs them and
+   commonly produces zero rows.
+5. Widen only deliberately and say so out loud: use explicit OR, search the
+   whole corpus, or raise limits consciously.
+6. Graduate to `roca query --sql-only` plus `roca exec` once the printed plans
+   have shown the schema.
+7. End with a Verdict grounded in rows: state the claim, which row supports it,
+   and what stayed unanswered.
 
 ## Operating craft
 

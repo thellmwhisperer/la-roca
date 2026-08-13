@@ -74,6 +74,23 @@ func BuildInterpretCascade(s Settings) (Cascade, error) {
 	return s.budgeted(Cascade{Providers: resolved.Providers, Warnings: resolved.Warnings}), nil
 }
 
+// BuildExploreCascade turns models.explore_order into the optional stronger
+// cascade for deep investigation. Runtime fallback is owned by the service,
+// which tries interpretation order and then the main order after this one.
+func BuildExploreCascade(s Settings) (Cascade, error) {
+	order := s.File.Models.ExploreOrder
+	if len(order) == 0 {
+		return Cascade{}, nil
+	}
+	resolved, err := Resolve(Selection{
+		Names: order, Source: SourceConfig, File: s.File.Path, Key: "models.explore_order",
+	}, s.catalog())
+	if err != nil {
+		return Cascade{}, err
+	}
+	return s.budgeted(Cascade{Providers: resolved.Providers, Warnings: resolved.Warnings}), nil
+}
+
 func (s Settings) budgeted(cascade Cascade) Cascade {
 	if ms := s.File.Models.TimeoutMS; ms > 0 {
 		cascade.Timeout = time.Duration(ms) * time.Millisecond
