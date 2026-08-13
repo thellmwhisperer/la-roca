@@ -287,8 +287,8 @@ timeout_seconds = 120
 A custom provider declares `command`; built-in providers may omit it and use
 their shipped command preset. `base_url` is supported only for local Ollama.
 The generic command transport works in the SQL and interpretation cascades and
-through `roca doctor` and `roca model set <provider> <model>`. The `roca login`
-verification surface is reserved for the shipped Codex and Claude CLIs.
+through `roca doctor`, `roca model check <provider>`, and
+`roca model set <provider> <model>`.
 
 `claude` and `codex` are shipped command-preset entries, not special adapters.
 Their command, model, and timeout are all overridden by the same provider table
@@ -346,29 +346,32 @@ and reports a binary-specific remedy for anything missing or unusable.
 ## Authentication and model selection
 
 Models authenticate through their own CLIs. La Roca stores no secrets and a
-detected CLI needs no La Roca login. The retained `roca login` verb is an
-optional verification and model-selection surface for the two shipped CLIs:
+detected CLI needs no La Roca authentication command. Model checks and model
+selection are separate operations:
 
 ```sh
-roca login              # lists Codex and Claude local CLI verification
-roca login codex        # optionally verifies the existing Codex CLI session
-roca login claude       # optionally verifies the existing Claude Code session
-roca doctor             # diagnoses binaries, models, and remedies
+roca model check          # probes the first configured provider
+roca model check codex    # probes Codex without writing configuration
+roca model check claude   # probes Claude without writing configuration
+roca doctor               # diagnoses binaries, models, and remedies
 ```
 
-During verification, La Roca offers known model IDs and sends one minimal real
-request through the CLI before changing `config.toml`. Only a successful probe
-writes the ID; rejection prints the CLI's own error and leaves configuration
-unchanged. `--model <id>` uses the same path for non-interactive verification.
-The shared catalogue-and-probe gate lives in
+`model check` sends one minimal real request through the configured provider and
+never edits `config.toml` or provider order. `model set` reads the target
+provider's catalogue, refuses IDs outside it, and probes the selected ID before
+writing only `models.<provider>.model`. The shared catalogue-and-probe gate lives in
 `internal/distribution/cli/model_validation.go`.
 
 `roca model set <model-id>` validates and probes the first configured provider.
 The explicit `roca model set <provider> <model-id>` form remains available for
-another configured local command or Ollama.
+another configured local command or Ollama. With no ID, an interactive terminal
+offers the first provider's catalogue; pass only a provider name to choose from
+that provider's catalogue.
 
 ```sh
-roca model set gpt-5.6-sol
+roca model set
+roca model set claude
+roca model set gpt-5.6-luna
 roca model set ollama qwen3.5:4b
 ```
 

@@ -22,8 +22,7 @@ import (
 const modelsDevCacheFile = "models.dev.json"
 
 type modelCatalogue struct {
-	IDs  []string
-	Open bool
+	IDs []string
 }
 
 type modelValidationBackend interface {
@@ -34,9 +33,8 @@ type modelValidationBackend interface {
 type modelPicker func(io.Reader, io.Writer, []string, string) (string, error)
 
 // validatedModel is the only path from user input to a model ID a config edit
-// may receive. It proves exact membership for a closed catalogue, then account
-// reachability; an open local-binary catalogue accepts an explicit ID only after
-// that probe. Callers persist only the returned string.
+// may receive. It proves exact membership in the target provider's catalogue,
+// then account reachability. Callers persist only the returned string.
 func (env *cliEnv) validatedModel(ctx context.Context, in io.Reader, paths config.Paths,
 	file config.File, name, requested string) (string, error) {
 
@@ -58,7 +56,7 @@ func (env *cliEnv) validatedModel(ctx context.Context, in io.Reader, paths confi
 		picker := env.modelPicker
 		if picker == nil {
 			if env.json || !terminalInput(in) {
-				return "", fmt.Errorf("model selection needs an interactive terminal; rerun with --model <id>; configuration was not changed")
+				return "", fmt.Errorf("model selection needs an interactive terminal; rerun with an explicit model ID; configuration was not changed")
 			}
 			picker = terminalArrowModelPicker
 		}
@@ -67,7 +65,7 @@ func (env *cliEnv) validatedModel(ctx context.Context, in io.Reader, paths confi
 			return "", fmt.Errorf("choose a model: %w; configuration was not changed", err)
 		}
 	}
-	if !catalogue.Open && !slices.Contains(catalogue.IDs, model) {
+	if !slices.Contains(catalogue.IDs, model) {
 		return "", fmt.Errorf("model %q is not in %s's catalogue; configuration was not changed", model, name)
 	}
 	if err := backend.Probe(ctx, name, model); err != nil {
@@ -76,7 +74,7 @@ func (env *cliEnv) validatedModel(ctx context.Context, in io.Reader, paths confi
 	return model, nil
 }
 
-func (env *cliEnv) modelSetCurrent(ctx context.Context, model string) error {
+func (env *cliEnv) modelSetCurrentInput(ctx context.Context, in io.Reader, model string) error {
 	paths, err := env.resolvePaths()
 	if err != nil {
 		return err
@@ -90,9 +88,9 @@ func (env *cliEnv) modelSetCurrent(ctx context.Context, model string) error {
 		order = provider.DefaultOrder(nil)
 	}
 	if len(order) == 0 {
-		return fmt.Errorf("there is no provider to set a model for; log in to one first")
+		return fmt.Errorf("there is no provider to set a model for; run `roca doctor` to inspect the configuration")
 	}
-	return env.modelSetContext(ctx, order[0], model)
+	return env.modelSetContextInput(ctx, in, order[0], model)
 }
 
 type providerModelBackend struct {
@@ -116,7 +114,7 @@ func (b *providerModelBackend) Catalogue(ctx context.Context, name, current stri
 		return modelCatalogue{}, err
 	}
 	if flexible, ok := candidate.(interface{ ModelChoices() []string }); ok {
-		return modelCatalogue{IDs: canonicalModelIDs(flexible.ModelChoices()), Open: true}, nil
+		return modelCatalogue{IDs: canonicalModelIDs(flexible.ModelChoices())}, nil
 	}
 	report := candidate.Models(catalogueCtx)
 	if !report.Ready {

@@ -255,7 +255,7 @@ func (m *world) configurationChoosesFrontierModel(model string) error {
 	return m.writeModelConfig()
 }
 
-func (m *world) loginWithModel(name, model string) error {
+func (m *world) setProviderModel(name, model string) error {
 	if err := m.writeFrontierCLI("printf '%s' 'SELECT 1'"); err != nil {
 		return err
 	}
@@ -267,9 +267,9 @@ func (m *world) loginWithModel(name, model string) error {
 	if err := os.WriteFile(configPath, []byte(fixture), 0o600); err != nil {
 		return err
 	}
-	command := exec.Command(m.binaryPath(), "login", name, "--model", model)
+	command := exec.Command(m.binaryPath(), "model", "set", name, model)
 	command.Env = m.environment()
-	return m.record("roca login "+name+" --model "+model, command)
+	return m.record("roca model set "+name+" "+model, command)
 }
 
 func (m *world) configurationChoosesProviderModel(model, name string) error {

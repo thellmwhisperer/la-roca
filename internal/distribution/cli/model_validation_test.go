@@ -78,56 +78,52 @@ func TestModelSetOneArgumentTargetsTheFirstConfiguredProvider(t *testing.T) {
 	}
 }
 
-func TestLoginPickerPersistsOnlyAfterItsProbe(t *testing.T) {
+func TestModelCheckAndLoginAliasProbeWithoutWriting(t *testing.T) {
+	for _, command := range [][]string{{"model", "check", "codex"}, {"login", "codex"}} {
+		home := isolatedLoginHome(t)
+		path := modelConfigPath(home)
+		before := "# preserve the operator's order\n[models]\norder = [\"ollama\", \"codex\"]\n\n[models.codex]\nmodel = \"grok-green\"\n"
+		writeFile(t, path, before)
+		fake := &fakePickerProvider{models: []string{"grok-green", "grok-other"}}
+		env := validationEnv(t, fake)
+		root := rootCommand(env)
+		root.SetArgs(command)
+		if err := root.Execute(); err != nil {
+			t.Fatalf("%v: %v", command, err)
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil || string(raw) != before {
+			t.Fatalf("%v changed config: raw=%q err=%v", command, raw, err)
+		}
+		if len(fake.probes) != 1 || fake.model != "grok-green" {
+			t.Fatalf("%v probes=%v model=%q", command, fake.probes, fake.model)
+		}
+	}
+}
+
+func TestModelSetWithoutAnIDPicksFromTheTargetCatalogue(t *testing.T) {
 	for _, test := range []struct {
-		name       string
-		requested  string
-		picked     string
-		probeErr   error
-		wantModel  string
-		wantErr    string
-		wantProbes int
+		name, provider string
+		args           []string
 	}{
-		{name: "arrow choice", picked: "grok-other", wantModel: "grok-other", wantProbes: 1},
-		{name: "free text flag", requested: "luna", wantErr: "not in codex's catalogue"},
-		{name: "probe rejected", requested: "grok-green", probeErr: errors.New("account cannot reach it"), wantErr: "account cannot reach it", wantProbes: 1},
+		{name: "first configured provider", provider: "codex", args: []string{"model", "set"}},
+		{name: "named provider", provider: "claude", args: []string{"model", "set", "claude"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			home := isolatedLoginHome(t)
 			path := modelConfigPath(home)
-			before := "# login must preserve me\n"
-			writeFile(t, path, before)
-			fake := &fakePickerProvider{models: []string{"grok-green", "grok-other"}, probeErr: test.probeErr}
+			writeFile(t, path, "[models]\norder = [\"codex\", \"claude\"]\n\n[models.codex]\nmodel = \"grok-green\"\n\n[models.claude]\nmodel = \"grok-green\"\n")
+			fake := &fakePickerProvider{models: []string{"grok-green", "grok-other"}}
 			env := validationEnv(t, fake)
-			if test.picked != "" {
-				env.modelPicker = fixedModelPicker(test.picked)
-			}
+			env.modelPicker = fixedModelPicker("grok-other")
 			root := rootCommand(env)
-			args := []string{"login", "codex"}
-			if test.requested != "" {
-				args = append(args, "--model", test.requested)
+			root.SetArgs(test.args)
+			if err := root.Execute(); err != nil {
+				t.Fatal(err)
 			}
-			root.SetArgs(args)
-			err := root.Execute()
-			if test.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
-					t.Fatalf("error = %v, want %q", err, test.wantErr)
-				}
-				raw, readErr := os.ReadFile(path)
-				if readErr != nil || string(raw) != before {
-					t.Fatalf("failed login changed config: raw=%q err=%v", raw, readErr)
-				}
-			} else {
-				if err != nil {
-					t.Fatal(err)
-				}
-				file, loadErr := config.LoadFile(path)
-				if loadErr != nil || file.Models.Providers["codex"].Model != test.wantModel {
-					t.Fatalf("persisted file=%+v err=%v", file, loadErr)
-				}
-			}
-			if len(fake.probes) != test.wantProbes {
-				t.Fatalf("probes = %d, want %d", len(fake.probes), test.wantProbes)
+			file, err := config.LoadFile(path)
+			if err != nil || file.Models.Providers[test.provider].Model != "grok-other" {
+				t.Fatalf("file=%+v err=%v", file, err)
 			}
 		})
 	}

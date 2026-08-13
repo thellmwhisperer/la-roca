@@ -649,136 +649,18 @@ func renderModels(env *cliEnv, listings []provider.ModelsListing, warnings []str
 	}
 }
 
-const loginHelp = "" +
-	"Verify a model provider that runs through a local agent CLI:\n" +
-	"\n" +
-	"  local CLI  roca login codex\n" +
-	"  local CLI  roca login claude\n" +
-	"\n" +
-	"Models authenticate through their own CLI. La Roca reads and stores no secrets,\n" +
-	"and no roca login is required: detected CLIs are used automatically. This\n" +
-	"command is an optional probe of the binary and its existing vendor session.\n" +
-	"\n" +
-	"Choose a model with the arrow keys after a successful probe. Scripts can use\n" +
-	"--model <id>; the ID is checked through that CLI before it\n" +
-	"is written under [models.<provider>] in ~/.roca/config.toml.\n\n" +
-	"With no provider argument, lists the supported local CLIs and model configuration."
-
 func loginCommand(env *cliEnv) *cobra.Command {
-	var model string
-	cmd := &cobra.Command{
+	return &cobra.Command{
 		Use:   "login [provider]",
-		Short: "Verify a local agent CLI model session",
-		Long:  loginHelp,
-		Args:  cobra.MaximumNArgs(1),
+		Short: "Compatibility alias for model check",
+		Long: "Compatibility alias for `roca model check`. It probes the configured\n" +
+			"model through the provider's existing CLI session and never writes configuration.\n" +
+			"Models authenticate through their own CLIs; La Roca stores no secrets.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 {
-				return env.showLoginOverview()
-			}
-			name := strings.ToLower(strings.TrimSpace(args[0]))
-			paths, err := env.resolvePaths()
-			if err != nil {
-				return err
-			}
-			file, err := config.LoadFile(paths.Config)
-			if err != nil {
-				return err
-			}
-			if slices.Contains([]string{provider.NameCodex, provider.NameClaude}, name) {
-				return env.loginLocalCommand(cmd, paths, file, name, model)
-			}
-			return fmt.Errorf(
-				"there is no La Roca login for %q: models authenticate through their own CLI\n\n%s",
-				args[0], loginCatalogue())
+			return env.modelCheck(cmd.Context(), args)
 		},
 	}
-	cmd.Flags().StringVar(&model, "model", "", "model ID to persist for this provider")
-	return cmd
-}
-
-// loginEntry is one row of the catalogue bare `roca login` prints. The same
-// list answers the human listing and the JSON under --json, so a provider added
-// to one reaches the other instead of agreeing by luck. Flow is the machine
-// form; the human listing renders it.
-type loginEntry struct {
-	Name    string `json:"name"`
-	Flow    string `json:"flow"`
-	Command string `json:"command"`
-}
-
-// loginEntries is the single source of local CLI probes this build supports.
-func loginEntries(_ ...config.File) []loginEntry {
-	return []loginEntry{{
-		Name: provider.NameCodex, Flow: "local_cli",
-		Command: "roca login " + provider.NameCodex,
-	}, {
-		Name: provider.NameClaude, Flow: "local_cli",
-		Command: "roca login " + provider.NameClaude,
-	}}
-}
-
-func loginCatalogue(files ...config.File) string {
-	var b strings.Builder
-	b.WriteString("Supported providers:\n")
-	for _, entry := range loginEntries(files...) {
-		b.WriteString(fmt.Sprintf("  %-10s  %-12s  ·  %s\n",
-			entry.Name, entry.humanFlow(), entry.Command))
-	}
-	return strings.TrimRight(b.String(), "\n")
-}
-
-// humanFlow is the terminal spelling of the machine-readable flow.
-func (e loginEntry) humanFlow() string {
-	switch e.Flow {
-	case "local_cli":
-		return "local CLI"
-	}
-	return e.Flow
-}
-
-func (env *cliEnv) showLoginOverview() error {
-	paths, err := env.resolvePaths()
-	if err != nil {
-		return err
-	}
-	file, err := config.LoadFile(paths.Config)
-	if err != nil {
-		return err
-	}
-	cascade, err := provider.BuildCascade(provider.Settings{
-		File: file, RunnerDir: paths.Runner, Env: os.Getenv,
-	})
-	if err != nil {
-		return err
-	}
-	orderSource := "built-in default"
-	if os.Getenv(provider.EnvOrder) != "" {
-		orderSource = "from " + provider.EnvOrder
-	} else if file.Models.Order != nil {
-		orderSource = "from " + paths.Config
-	}
-	var order []string
-	for _, p := range cascade.Providers {
-		order = append(order, p.Name())
-	}
-	if env.json {
-		return env.printJSON(map[string]any{
-			"providers":      loginEntries(file),
-			"authentication": "models authenticate through their own CLIs; La Roca stores no secrets",
-			"configuration": map[string]any{"path": paths.Config, "order": order,
-				"order_source": orderSource},
-		})
-	}
-	env.print("%s", loginCatalogue(file))
-	env.print("Model configuration:")
-	env.print("  order: %s (%s · change with: models.order in %s)",
-		strings.Join(order, ", "), orderSource, paths.Config)
-	for _, p := range cascade.Providers {
-		env.print("  %s: model %s (%s · change with: %s)",
-			p.Name(), p.ModelID(), modelChoiceSource(paths.Config, p.Name(), p.ModelID()), modelChange(p.Name(), paths.Config))
-	}
-	env.print("Authentication: models authenticate through their own CLIs; La Roca stores no secrets and no roca login is required.")
-	return nil
 }
 
 func renderModelDetection(env *cliEnv, detected, missing []string, factory bool, selected string) {
@@ -795,61 +677,6 @@ func renderModelDetection(env *cliEnv, detected, missing []string, factory bool,
 	default:
 		env.print("factory default selected: %s (local runtime)", selected)
 	}
-}
-
-func (env *cliEnv) loginLocalCommand(cmd *cobra.Command, paths config.Paths,
-	file config.File, name, requestedModel string) error {
-	model, err := env.loginModel(cmd.Context(), cmd.InOrStdin(), paths, file,
-		name, requestedModel)
-	if err != nil {
-		return fmt.Errorf("verify the existing %s local CLI session: %w", name, err)
-	}
-	if env.json {
-		return env.printJSON(map[string]any{
-			"provider": name, "model": model,
-			"model_source":              modelChoiceSource(paths.Config, name, model),
-			"authentication_managed_by": "local CLI", "secrets_stored_by_roca": false,
-		})
-	}
-	env.print("%s's local command and its existing account session are working", name)
-	env.print("authentication: managed by the local CLI; La Roca stores no secrets")
-	env.print("%s", modelChoiceLine(name, "selected", model, paths.Config))
-	env.print("%s", loginNext(paths, name))
-	return nil
-}
-
-func (env *cliEnv) loginModel(ctx context.Context, in io.Reader, paths config.Paths,
-	file config.File, name, requested string) (string, error) {
-	model, err := env.validatedModel(ctx, in, paths, file, name, requested)
-	if err != nil {
-		return "", err
-	}
-	order := file.Models.Order
-	if len(order) == 0 {
-		order = provider.DefaultOrder(nil)
-	}
-	order = append([]string{name}, slices.DeleteFunc(slices.Clone(order), func(current string) bool {
-		return current == name
-	})...)
-	if err := config.SetProviderModel(paths.Config, name, model); err != nil {
-		return "", err
-	}
-	if err := config.SetModelOrder(paths.Config, order); err != nil {
-		return "", fmt.Errorf("model %s was validated and written, but update the provider order: %w", model, err)
-	}
-	return model, nil
-}
-
-func loginNext(paths config.Paths, name string) string {
-	if !fileExists(paths.DB) {
-		return fmt.Sprintf("run `roca init` next; %s will be probed before it answers", name)
-	}
-	return fmt.Sprintf("%s will be probed before it answers", name)
-}
-
-func modelChoiceLine(name, status, model, path string) string {
-	return fmt.Sprintf("model: %s %s (%s, %s · change with: %s)",
-		name, status, model, modelChoiceSource(path, name, model), modelChange(name, path))
 }
 
 func modelChange(name, path string) string {
@@ -889,41 +716,148 @@ func modelChoiceSource(path, name, model string) string {
 func modelCommand(env *cliEnv) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "model",
-		Short: "Change a provider's answering model without re-running login",
+		Short: "Check or set a provider's answering model",
 	}
-	cmd.AddCommand(modelSetCommand(env))
+	cmd.AddCommand(modelCheckCommand(env), modelSetCommand(env))
 	return cmd
+}
+
+func modelCheckCommand(env *cliEnv) *cobra.Command {
+	return &cobra.Command{
+		Use:   "check [provider]",
+		Short: "Probe whether a provider's configured model answers",
+		Long: "Probes the configured model through the provider's existing CLI session.\n" +
+			"Models authenticate through their own CLIs; La Roca stores no secrets.\n" +
+			"The probe never writes configuration or changes provider order.",
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return env.modelCheck(cmd.Context(), args)
+		},
+	}
+}
+
+func (env *cliEnv) modelCheck(ctx context.Context, args []string) error {
+	paths, err := env.resolvePaths()
+	if err != nil {
+		return err
+	}
+	file, err := config.LoadFile(paths.Config)
+	if err != nil {
+		return err
+	}
+	name, model, err := effectiveModelTarget(paths, file, args)
+	if err != nil {
+		return err
+	}
+	backend := env.modelBackend
+	if backend == nil {
+		backend = newProviderModelBackend(paths, file)
+	}
+	if err := backend.Probe(ctx, name, model); err != nil {
+		return fmt.Errorf("%s model %s failed its account probe: %w; configuration was not changed", name, model, err)
+	}
+	if env.json {
+		return env.printJSON(map[string]any{
+			"provider": name, "model": model, "ready": true,
+			"configuration_changed": false,
+		})
+	}
+	env.print("%s model %s answered the probe; configuration was not changed", name, model)
+	return nil
+}
+
+func effectiveModelTarget(paths config.Paths, file config.File, args []string) (string, string, error) {
+	if len(args) == 0 {
+		cascade, err := provider.BuildCascade(provider.Settings{
+			File: file, RunnerDir: paths.Runner, Env: os.Getenv,
+		})
+		if err != nil {
+			return "", "", err
+		}
+		if len(cascade.Providers) == 0 {
+			return "", "", fmt.Errorf("there is no provider to check; run `roca doctor` to inspect the configuration")
+		}
+		return cascade.Providers[0].Name(), cascade.Providers[0].ModelID(), nil
+	}
+	name := strings.ToLower(strings.TrimSpace(args[0]))
+	known := knownProviderNames(file)
+	if !slices.Contains(known, name) {
+		return "", "", fmt.Errorf("there is no provider %q\n\n%s", args[0], knownProvidersHelp(known))
+	}
+	model, err := effectiveProviderModel(paths, file, name)
+	return name, model, err
+}
+
+func effectiveProviderModel(paths config.Paths, file config.File, name string) (string, error) {
+	file.Models.Order = []string{name}
+	cascade, err := provider.BuildCascade(provider.Settings{
+		File: file, RunnerDir: paths.Runner,
+		Env: func(key string) string {
+			if key == provider.EnvOrder {
+				return ""
+			}
+			return os.Getenv(key)
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	for _, candidate := range cascade.Providers {
+		if candidate.Name() == name {
+			return candidate.ModelID(), nil
+		}
+	}
+	return "", fmt.Errorf("provider %s cannot be built for a model check", name)
 }
 
 func modelSetCommand(env *cliEnv) *cobra.Command {
 	return &cobra.Command{
-		Use:   "set <model-id>",
+		Use:   "set [model-id] | <provider> [model-id]",
 		Short: "Set a provider's answering model in the configuration",
 		Long: "Validates a model for the first provider in the configured order, then\n" +
 			"writes models.<provider>.model in ~/.roca/config.toml and leaves every\n" +
 			"other setting — the provider order and unrelated tables —\n" +
 			"exactly where it was. It is the way to switch the answering model without\n" +
-			"changing the provider CLI session. The former two-argument spelling remains accepted.\n\n" +
-			"  roca model set gpt-5.6-sol\n" +
+			"changing the provider CLI session. With no ID, an interactive terminal chooses\n" +
+			"from the first provider's catalogue; name a provider to choose from its catalogue.\n\n" +
+			"  roca model set gpt-5.6-luna\n" +
+			"  roca model set claude\n" +
 			"  roca model set ollama qwen3.5:4b",
-		Args: cobra.RangeArgs(1, 2),
+		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 1 {
-				return env.modelSetCurrent(cmd.Context(), args[0])
+			switch len(args) {
+			case 0:
+				return env.modelSetCurrentInput(cmd.Context(), cmd.InOrStdin(), "")
+			case 1:
+				return env.modelSetArgument(cmd.Context(), cmd.InOrStdin(), args[0])
+			default:
+				return env.modelSetContext(cmd.Context(), args[0], args[1])
 			}
-			return env.modelSetContext(cmd.Context(), args[0], args[1])
 		},
 	}
 }
 
-// modelSet changes one model assignment and nothing else. It does not open the
-// database and it does not rewrite the order: a provider already in the cascade
-// keeps its place, and only the model it answers with changes.
-func (env *cliEnv) modelSet(rawName, modelID string) error {
-	return env.modelSetContext(context.Background(), rawName, modelID)
+func (env *cliEnv) modelSetArgument(ctx context.Context, in io.Reader, argument string) error {
+	paths, err := env.resolvePaths()
+	if err != nil {
+		return err
+	}
+	file, err := config.LoadFile(paths.Config)
+	if err != nil {
+		return err
+	}
+	name := strings.ToLower(strings.TrimSpace(argument))
+	if slices.Contains(knownProviderNames(file), name) {
+		return env.modelSetContextInput(ctx, in, name, "")
+	}
+	return env.modelSetCurrentInput(ctx, in, argument)
 }
 
 func (env *cliEnv) modelSetContext(ctx context.Context, rawName, modelID string) error {
+	return env.modelSetContextInput(ctx, nil, rawName, modelID)
+}
+
+func (env *cliEnv) modelSetContextInput(ctx context.Context, in io.Reader, rawName, modelID string) error {
 	name := strings.ToLower(strings.TrimSpace(rawName))
 	paths, err := env.resolvePaths()
 	if err != nil {
@@ -938,7 +872,7 @@ func (env *cliEnv) modelSetContext(ctx context.Context, rawName, modelID string)
 		message := fmt.Sprintf("there is no provider %q\n\n%s", rawName, knownProvidersHelp(known))
 		return fmt.Errorf("%s", message)
 	}
-	model, err := env.validatedModel(ctx, nil, paths, file, name, modelID)
+	model, err := env.validatedModel(ctx, in, paths, file, name, modelID)
 	if err != nil {
 		return err
 	}

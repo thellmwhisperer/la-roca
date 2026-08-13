@@ -197,7 +197,7 @@ func registerModelSteps(ctx *godog.ScenarioContext, m *world) {
 	ctx.Given(`^the configuration chooses model "([^"]*)" for the frontier provider$`,
 		m.configurationChoosesFrontierModel)
 
-	ctx.When(`^I log in to "([^"]*)" with model "([^"]*)"$`, m.loginWithModel)
+	ctx.When(`^I set "([^"]*)" to model "([^"]*)"$`, m.setProviderModel)
 
 	ctx.Then(`^the JSON output has "([^"]*)" equal to the frontier provider$`, m.jsonKeyEqualToTheFrontier)
 	ctx.Then(`^the local provider has received no request$`, m.theLocalProviderReceivedNoRequest)
@@ -216,7 +216,7 @@ func registerModelSteps(ctx *godog.ScenarioContext, m *world) {
 	ctx.Then(`^that warning lists the available providers$`, m.thatWarningListsTheAvailableProviders)
 	ctx.Then(`^the configuration chooses model "([^"]*)" for provider "([^"]*)"$`,
 		m.configurationChoosesProviderModel)
-	ctx.Then(`^the login output names the model, its configuration source and both ways to change it$`,
+	ctx.Then(`^the model set output names the model and its configuration source$`,
 		func() error { return m.modelNarrationNames("gpt-5.6-luna", "codex") })
 	ctx.Then(`^the model narration names "([^"]*)", its configuration source and both ways to change it$`,
 		func(model string) error { return m.modelNarrationNames(model, theFrontierName) })
