@@ -1,6 +1,12 @@
 package ingest
 
-import "strings"
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
 
 // The roots are configuration, never constants. They come from
 // the home the process was given and from what the operator declared, and an
@@ -46,12 +52,6 @@ type Settings struct {
 	// RunnerDir is La Roca's neutral subprocess cwd. Any runtime artefact keyed
 	// to this directory is product traffic, never operator corpus.
 	RunnerDir string
-	// AnthropicExportPaths are directories the operator explicitly selected.
-	// There is no default and no environment fallback: exports are never
-	// discovered from Downloads or another broad location.
-	AnthropicExportPaths []string
-	// OpenAIExportPaths are explicitly selected extracted account exports.
-	OpenAIExportPaths []string
 	// WorkspaceRoots resolve project identity from encoded session paths. Files
 	// under them are never ingested as content.
 	WorkspaceRoots []string
@@ -119,10 +119,8 @@ func ResolveRoots(env Environment, settings Settings) Roots {
 			join(env, env.Home, ".pi", "agent", "sessions")),
 		HermesDB: pick(env, settings.HermesDB, envHermesDB,
 			join(env, env.Home, ".hermes", "state.db")),
-		RunnerDir:         expand(env, settings.RunnerDir),
-		ClaudeWebExports:  expandAll(env, settings.AnthropicExportPaths),
-		ChatGPTWebExports: expandAll(env, settings.OpenAIExportPaths),
-		Workspace:         ResolveWorkspaceRoots(expandAll(env, settings.WorkspaceRoots)),
+		RunnerDir: expand(env, settings.RunnerDir),
+		Workspace: ResolveWorkspaceRoots(expandAll(env, settings.WorkspaceRoots)),
 	}
 
 	roots.SubagentRoots = expandAll(env, settings.SubagentRoots)
@@ -130,6 +128,74 @@ func ResolveRoots(env Environment, settings Settings) Roots {
 		roots.SubagentRoots = []string{roots.ClaudeProjects}
 	}
 	return roots
+}
+
+// WithExportPath adds one extracted account export to this invocation. The
+// folder shape decides which parser owns conversations.json; the path is not
+// retained anywhere and a later plain ingest starts from the live roots again.
+//
+// The vendor is decided here and never fallen back to: a directory carrying
+// neither shape is refused naming both of them, because attributing it to
+// whichever vendor was tried last answers an operator importing one product
+// with a diagnosis about the other.
+func WithExportPath(roots Roots, path string) (Roots, error) {
+	switch {
+	case claudeExport(path):
+		roots.ClaudeWebExports = []string{path}
+	case chatGPTExport(path):
+		roots.ChatGPTWebExports = []string{path}
+	default:
+		return roots, fmt.Errorf("%q holds no extracted account export: a Claude "+
+			"export holds memories.json or a conversations.json of chat_messages "+
+			"records, and a ChatGPT export holds conversations.json or "+
+			"conversations-*.json", path)
+	}
+	return roots, nil
+}
+
+func claudeExport(root string) bool {
+	if isFile(filepath.Join(root, "memories.json")) {
+		return true
+	}
+	first := firstExportRecord(filepath.Join(root, "conversations.json"))
+	_, messages := first["chat_messages"]
+	_, uuid := first["uuid"]
+	return messages || uuid
+}
+
+// chatGPTExport is the layout left once Claude's own shapes are ruled out: the
+// legacy single file and the sharded generation, named here exactly as the scan
+// names them. It is a decision about the file names and not about their
+// contents, so a conversations.json nobody can decode reaches the parser that
+// can say why instead of being refused as no export at all.
+func chatGPTExport(root string) bool {
+	for _, name := range filesIn(root) {
+		if name == "conversations.json" ||
+			strings.HasPrefix(name, "conversations-") && strings.HasSuffix(name, ".json") {
+			return true
+		}
+	}
+	return false
+}
+
+// firstExportRecord is the first object of the array a conversations file holds,
+// and nothing at all for one that is absent, is not an array, or does not decode.
+func firstExportRecord(path string) map[string]json.RawMessage {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer file.Close()
+	decoder := json.NewDecoder(file)
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('[') || !decoder.More() {
+		return nil
+	}
+	var first map[string]json.RawMessage
+	if err := decoder.Decode(&first); err != nil {
+		return nil
+	}
+	return first
 }
 
 // under is the directory `name` inside the base a platform variable declares, or
