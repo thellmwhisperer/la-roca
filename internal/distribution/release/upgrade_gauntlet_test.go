@@ -11,10 +11,26 @@ import (
 	"testing"
 )
 
-var frozenUpgradeVersions = []string{"v1.3.1", "v1.6.0", "v1.8.3", "v1.9.2"}
+// frozenUpgradeVersions reads the same list the runner and both workflows do,
+// so a committed archive that nobody added to it, or a list entry with no
+// archive, fails here instead of going unvalidated.
+func frozenUpgradeVersions(t *testing.T) []string {
+	t.Helper()
+	var versions []string
+	listed := readRepoFile(t, filepath.Join("testdata", "upgrade", "versions.txt"))
+	for _, line := range strings.Split(listed, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			versions = append(versions, line)
+		}
+	}
+	if len(versions) == 0 {
+		t.Fatal("no frozen upgrade home is listed, so the gauntlet would pass over nothing")
+	}
+	return versions
+}
 
 func TestUpgradeGauntletOwnsReleasedHomesAndBothDeliveryPaths(t *testing.T) {
-	for _, version := range frozenUpgradeVersions {
+	for _, version := range frozenUpgradeVersions(t) {
 		t.Run(version, func(t *testing.T) {
 			fixture := filepath.Join("testdata", "upgrade", "homes", version+".tar.gz")
 			files := archiveFiles(t, fixture)
@@ -58,6 +74,13 @@ func TestUpgradeGauntletOwnsReleasedHomesAndBothDeliveryPaths(t *testing.T) {
 		if !strings.Contains(workflow, "upgrade-gauntlet") {
 			t.Errorf("%s do not run the upgrade gauntlet", name)
 		}
+		if !strings.Contains(workflow, "upgrade-gauntlet.sh --versions") ||
+			!strings.Contains(workflow, "matrix.version") {
+			t.Errorf("%s do not fan versions.txt out into one job per frozen home", name)
+		}
+	}
+	if !strings.Contains(release, "needs: upgrade-gauntlet") {
+		t.Error("publication does not wait for the frozen homes to upgrade")
 	}
 	docs := strings.ToLower(readRepoFile(t, "../../../docs/releases.md"))
 	if !strings.Contains(docs, "schema migration") || !strings.Contains(docs, "frozen upgrade home") {

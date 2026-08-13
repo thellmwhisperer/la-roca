@@ -18,19 +18,47 @@ permissions:
   contents: write
 
 jobs:
-  upgrade-gauntlet:
+  # Both gauntlet jobs only read the tag they extract archives from, so neither
+  # keeps the workflow's write-scoped token in its checkout.
+  upgrade-homes:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      versions: ${{ steps.frozen.outputs.versions }}
     steps:
       - uses: actions/checkout@v4
         with:
+          persist-credentials: false
+          ref: ${{ inputs.tag || github.ref_name }}
+      - id: frozen
+        run: echo "versions=$(./scripts/upgrade-gauntlet.sh --versions)" >> "$GITHUB_OUTPUT"
+
+  upgrade-gauntlet:
+    needs: upgrade-homes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ${{ fromJSON(needs.upgrade-homes.outputs.versions) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
           ref: ${{ inputs.tag || github.ref_name }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - name: Frozen old-version homes upgrade cleanly
-        run: make upgrade-gauntlet
+      - name: The frozen home upgrades cleanly
+        env:
+          UPGRADE_HOME: ${{ matrix.version }}
+        run: make upgrade-gauntlet UPGRADE_HOME="$UPGRADE_HOME"
 
+  # One red leg of the matrix fails the whole job, so no historical home can
+  # stop upgrading and still be published over.
   publish:
     needs: upgrade-gauntlet
     runs-on: ubuntu-latest

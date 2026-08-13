@@ -32,6 +32,7 @@ case "$(uname -s):$(uname -m)" in
     ;;
 esac
 
+mkdir -p .tmp
 stage="$(mktemp -d ".tmp/freeze-upgrade-home.${requested}.XXXXXX")"
 home="$stage/home"
 destination="internal/distribution/release/testdata/upgrade/homes/$requested.tar.gz"
