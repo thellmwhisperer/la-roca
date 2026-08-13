@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -66,6 +67,7 @@ func skillInstallCommand(env *cliEnv) *cobra.Command {
 				runtimes = skill.Runtimes()
 			}
 			outcomes := make([]skill.Outcome, 0, len(runtimes))
+			var refused []error
 			for _, runtime := range runtimes {
 				path, err := skillFileOf(runtime)
 				if err != nil {
@@ -80,14 +82,17 @@ func skillInstallCommand(env *cliEnv) *cobra.Command {
 					previous = entry.SystemSHA256
 				}
 				outcome, err := skill.InstallWithOptions(runtime, path, previous, force)
+				// One runtime this install cannot read or must not clobber never
+				// decides for the others: the refusal is collected, the remaining
+				// runtimes of an --all still install, and the command still fails.
 				if err != nil {
-					return err
+					refused = append(refused, fmt.Errorf("%w; run `%s` to replace it",
+						err, forceSkillInstall(runtime)))
+					continue
 				}
-				// A refusal leaves no file to read, so it is reported and the
-				// registry is left alone rather than asked about bytes that are
-				// not there. The remaining runtimes of an --all still install.
 				if outcome.Diverged {
-					fmt.Fprintf(env.errOut, "warning: %s\n", divergedSkillWarning(runtime, path, outcome.Missing))
+					fmt.Fprintf(env.errOut, "warning: %s\n",
+						divergedArtifactWarning(path, forceSkillInstall(runtime), outcome.Missing))
 					outcomes = append(outcomes, outcome)
 					continue
 				}
@@ -97,33 +102,45 @@ func skillInstallCommand(env *cliEnv) *cobra.Command {
 				outcomes = append(outcomes, outcome)
 			}
 			if env.json {
-				return env.printJSON(map[string]any{"runtimes": outcomes})
+				if err := env.printJSON(map[string]any{"runtimes": outcomes}); err != nil {
+					return err
+				}
+				return errors.Join(refused...)
 			}
 			for _, o := range outcomes {
 				verb := "unchanged"
 				if o.Changed {
 					verb = "wrote"
 				}
-				env.print("%s: %s %s", o.Runtime, verb, o.Path)
+				line := fmt.Sprintf("%s: %s %s", o.Runtime, verb, o.Path)
+				if o.Backup != "" {
+					line += fmt.Sprintf(" (replaced content kept at %s)", o.Backup)
+				}
+				env.print("%s", line)
 			}
-			return nil
+			return errors.Join(refused...)
 		},
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "install into every supported runtime")
-	cmd.Flags().BoolVar(&force, "force", false, "replace an edited SYSTEM zone")
+	cmd.Flags().BoolVar(&force, "force", false,
+		"replace an edited SYSTEM zone, or rewrite a skill whose zone markers are broken, keeping a recovery copy")
 	return cmd
 }
 
-// divergedSkillWarning names what actually happened to a registered skill this
-// install refused to write. A file that was deleted has no edited SYSTEM zone,
-// and saying it does sends the operator looking for edits that are not there.
-func divergedSkillWarning(runtime, path string, missing bool) string {
+// divergedArtifactWarning names what actually happened to a registered artifact
+// this run refused to write, and is the one place either command says it. An
+// artifact that was deleted has no edited SYSTEM zone, and saying it does sends
+// the operator looking for edits that are not there.
+func divergedArtifactWarning(path, forceCommand string, missing bool) string {
 	what := "has edits in its SYSTEM zone"
 	if missing {
 		what = "was removed after La Roca registered it"
 	}
-	return fmt.Sprintf("%s %s; run `roca skill install %s --force` to replace it",
-		path, what, runtime)
+	return fmt.Sprintf("%s %s; run `%s` to replace it", path, what, forceCommand)
+}
+
+func forceSkillInstall(runtime string) string {
+	return "roca skill install " + runtime + " --force"
 }
 
 func (env *cliEnv) listSkillDestinations() error {

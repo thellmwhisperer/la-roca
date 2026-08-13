@@ -239,6 +239,32 @@ func TestInstallReplacesAnEarlierReleasesSkill(t *testing.T) {
 	}
 }
 
+// Withdrawing only this release's exact bytes left an older release's SKILL.md
+// in the runtime's skills directory, still teaching agents to run a binary the
+// same uninstall just unlinked, and outside the data dir it was not even
+// reported as kept.
+func TestUninstallWithdrawsAnEarlierReleasesSkill(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "skills", "roca")
+	path := filepath.Join(dir, "SKILL.md")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	earlier := skill.LegacySignature() + "description: what v1 shipped\n---\n\nolder body\n"
+	if err := os.WriteFile(path, []byte(earlier), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := skill.UninstallWithChecksum("claude", path, shippedChecksum())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Changed {
+		t.Fatal("an earlier release's skill survived the withdrawal")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("the skill file is still there: %v", err)
+	}
+}
+
 func TestUninstallLeavesForeignContentAlone(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "roca")
 	path := filepath.Join(dir, "SKILL.md")

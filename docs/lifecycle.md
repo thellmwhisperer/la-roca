@@ -122,14 +122,20 @@ transplanting the USER zone byte for byte. A pre-zone file is recognized as this
 product's own by the opening every release of that artifact has carried, so the
 text an older release installed becomes SYSTEM instead of surviving as a stale
 copy; any unrecognized legacy bytes become USER content on the one-time
-migration.
+migration. A recognized file is replaced whole, so anything appended to it goes
+too, and the command names the recovery copy that holds it.
 
 An edit inside SYSTEM is divergence, and so is a registered file the operator
-deleted. Update and `roca skill install` name that file and the force command
-for it, then leave it alone without prompting. The force command replaces
-SYSTEM, still preserves USER, and is what repairs a file whose zone markers are
-broken. Every changed file gets a named `.roca.bak` recovery copy before
-publication.
+deleted. Update and `roca skill install` name that file, say which of the two
+happened, and give the force command for it, then leave it alone without
+prompting. Forcing a diverged artifact replaces SYSTEM and still preserves USER.
+
+An artifact whose zone markers are there but broken is the one state no zone can
+be read from, so nothing can be transplanted: it is reported apart from
+divergence, it never stops the other registered artifacts from being refreshed,
+and forcing it rewrites the whole file rather than preserving USER. Every
+changed file gets a named `.roca.bak` recovery copy before publication, and that
+copy is where the replaced bytes survive.
 
 The hook uses the same ownership split inside Claude's settings: the one entry
 whose command ends in `hooks run claude` is the explicitly marked SYSTEM

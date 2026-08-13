@@ -210,3 +210,57 @@ func TestArtifactRefreshHonoursTheDefaultOffGateAndSystemDivergence(t *testing.T
 		})
 	}
 }
+
+// The update report is what the operator is told, so it has to distinguish the
+// three states a refresh can refuse in: an edited SYSTEM zone, a file that is
+// no longer there, and one nothing can read. The unreadable one in particular
+// must not hide whether the other registered artifacts are current.
+func TestArtifactRefreshReportsDeletedAndUnreadableApartFromEdits(t *testing.T) {
+	home := skillTestHome(t)
+	deleted := filepath.Join(home, ".codex", "skills", "roca", "SKILL.md")
+	unreadable := filepath.Join(home, ".hermes", "skills", "roca", "SKILL.md")
+	current := filepath.Join(home, ".claude", "skills", "roca", "SKILL.md")
+	writeFile(t, unreadable, artifact.Zoned(skill.Content(), "")+"appended after the last marker\n")
+	writeFile(t, current, artifact.Zoned(skill.Content(), ""))
+	registryPath := filepath.Join(home, ".roca", "artifacts.json")
+	entryOf := func(runtime, path, checksum string) artifact.Entry {
+		return artifact.Entry{Kind: "skill", Runtime: runtime, Path: path, SystemSHA256: checksum}
+	}
+	shipped := artifact.Checksum(skill.Content())
+	if err := artifact.SaveRegistry(registryPath, artifact.Registry{Entries: []artifact.Entry{
+		entryOf("codex", deleted, shipped),
+		entryOf("hermes", unreadable, shipped),
+		entryOf("claude", current, shipped),
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(home, ".roca", "config.toml"), "[features]\nartifact_refresh = true\n")
+
+	env := &cliEnv{build: Build{Version: "v2.0.0"}}
+	report, err := env.refreshManagedArtifacts(filepath.Join(home, "bin", "roca"), false)
+	if err != nil {
+		t.Fatalf("one unreadable artifact aborted the refresh: %v", err)
+	}
+	if len(report.Diverged) != 1 || report.Diverged[0].Path != deleted || !report.Diverged[0].Missing {
+		t.Fatalf("a deleted artifact was not reported as deleted: %+v", report.Diverged)
+	}
+	if len(report.Unreadable) != 1 || report.Unreadable[0] != unreadable {
+		t.Fatalf("unreadable artifacts = %v", report.Unreadable)
+	}
+	registry, err := artifact.LoadRegistry(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry, _ := registry.Find("skill", "claude", current); entry.InstalledVersion != "v2.0.0" {
+		t.Fatalf("a readable artifact was left unchecked behind the broken one: %+v", entry)
+	}
+
+	var out, warnings strings.Builder
+	(&cliEnv{out: &out, errOut: &warnings}).renderArtifactRefresh(report)
+	if !strings.Contains(warnings.String(), deleted+" was removed after La Roca registered it") {
+		t.Fatalf("update called a deleted artifact an edit: %q", warnings.String())
+	}
+	if !strings.Contains(warnings.String(), unreadable+" could not be read") {
+		t.Fatalf("the unreadable artifact was not named: %q", warnings.String())
+	}
+}

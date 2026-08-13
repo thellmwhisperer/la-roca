@@ -156,12 +156,25 @@ func claudeHookSystem(path string) (string, bool, error) {
 	return "", false, nil
 }
 
+// divergedArtifact carries why an artifact was left alone, not only which one.
+// An edited SYSTEM zone and a deleted file both need the same consent to
+// replace, and they are not the same sentence to an operator.
+type divergedArtifact struct {
+	Path    string `json:"path"`
+	Missing bool   `json:"missing,omitempty"`
+}
+
 type artifactRefreshReport struct {
-	Enabled   bool     `json:"enabled"`
-	Outdated  int      `json:"outdated"`
-	Refreshed int      `json:"refreshed"`
-	Diverged  []string `json:"diverged"`
-	Proposals []string `json:"proposals"`
+	Enabled   bool               `json:"enabled"`
+	Outdated  int                `json:"outdated"`
+	Refreshed int                `json:"refreshed"`
+	Diverged  []divergedArtifact `json:"diverged"`
+	// Unreadable names each artifact whose zone markers are broken. It is the one
+	// state no refresh can read, and one of them must not hide the state of every
+	// other registered artifact.
+	Unreadable []string `json:"unreadable"`
+	Backups    []string `json:"backups"`
+	Proposals  []string `json:"proposals"`
 }
 
 func (env *cliEnv) refreshManagedArtifacts(executable string, force bool) (artifactRefreshReport, error) {
@@ -178,7 +191,8 @@ func (env *cliEnv) refreshManagedArtifacts(executable string, force bool) (artif
 		return artifactRefreshReport{}, err
 	}
 	report := artifactRefreshReport{Enabled: file.Features.ArtifactRefresh,
-		Diverged: []string{}, Proposals: []string{}}
+		Diverged: []divergedArtifact{}, Unreadable: []string{},
+		Backups: []string{}, Proposals: []string{}}
 	if err := env.adoptLegacyArtifacts(paths, executable, &registry, &report); err != nil {
 		return report, err
 	}
@@ -192,7 +206,8 @@ func (env *cliEnv) refreshManagedArtifacts(executable string, force bool) (artif
 				PreviousSystemSHA256: entry.SystemSHA256, Enabled: report.Enabled, Force: force,
 			})
 			if err != nil {
-				return report, err
+				report.unreadable(entry.Path)
+				continue
 			}
 			env.finishFileRefresh(entry, out, skill.Content(), &report)
 		case artifactKindPrompt:
@@ -202,19 +217,25 @@ func (env *cliEnv) refreshManagedArtifacts(executable string, force bool) (artif
 				PreviousSystemSHA256: entry.SystemSHA256, Enabled: report.Enabled, Force: force,
 			})
 			if err != nil {
-				return report, err
+				report.unreadable(entry.Path)
+				continue
 			}
 			env.finishFileRefresh(entry, out, service.PresentationPrompt(), &report)
 		case artifactKindHook:
 			out, err := refreshClaudeHook(entry.Path, executable, entry.SystemSHA256,
 				report.Enabled, force)
 			if err != nil {
-				return report, err
+				report.unreadable(entry.Path)
+				continue
 			}
 			env.finishHookRefresh(entry, out, &report)
 		}
 	}
-	sort.Strings(report.Diverged)
+	sort.Slice(report.Diverged, func(i, j int) bool {
+		return report.Diverged[i].Path < report.Diverged[j].Path
+	})
+	sort.Strings(report.Unreadable)
+	sort.Strings(report.Backups)
 	sort.Strings(report.Proposals)
 	if err := artifact.SaveRegistry(paths.Artifacts, registry); err != nil {
 		return report, err
@@ -222,15 +243,27 @@ func (env *cliEnv) refreshManagedArtifacts(executable string, force bool) (artif
 	return report, nil
 }
 
+func (report *artifactRefreshReport) unreadable(path string) {
+	report.Unreadable = append(report.Unreadable, path)
+	report.Outdated++
+}
+
+func (report *artifactRefreshReport) diverged(path string, missing bool) {
+	report.Diverged = append(report.Diverged, divergedArtifact{Path: path, Missing: missing})
+	report.Outdated++
+}
+
 func (env *cliEnv) finishFileRefresh(entry *artifact.Entry, out artifact.FileOutcome,
 	desired string, report *artifactRefreshReport) {
 	if out.Diverged {
-		report.Diverged = append(report.Diverged, entry.Path)
-		report.Outdated++
+		report.diverged(entry.Path, out.Missing)
 		return
 	}
 	if out.Changed {
 		report.Refreshed++
+	}
+	if out.Backup != "" {
+		report.Backups = append(report.Backups, out.Backup)
 	}
 	body, err := os.ReadFile(entry.Path)
 	if err != nil {
@@ -249,19 +282,24 @@ func (env *cliEnv) finishFileRefresh(entry *artifact.Entry, out artifact.FileOut
 
 type hookRefreshOutcome struct {
 	Changed, Diverged, Current bool
-	Backup                     string
-	SystemSHA256               string
+	// Missing means the registered entry is no longer in the settings document,
+	// which is a withdrawal by the operator rather than an edit to our fragment.
+	Missing      bool
+	Backup       string
+	SystemSHA256 string
 }
 
 func (env *cliEnv) finishHookRefresh(entry *artifact.Entry, out hookRefreshOutcome,
 	report *artifactRefreshReport) {
 	if out.Diverged {
-		report.Diverged = append(report.Diverged, entry.Path)
-		report.Outdated++
+		report.diverged(entry.Path, out.Missing)
 		return
 	}
 	if out.Changed {
 		report.Refreshed++
+	}
+	if out.Backup != "" {
+		report.Backups = append(report.Backups, out.Backup)
 	}
 	if !out.Current {
 		report.Outdated++
@@ -359,6 +397,7 @@ func refreshClaudeHook(path, executable, previousChecksum string,
 		currentCommand = commandOf(hook)
 	}
 	out.Diverged = currentChecksum != previousChecksum
+	out.Missing = !found
 	if out.Diverged && !force {
 		return out, nil
 	}

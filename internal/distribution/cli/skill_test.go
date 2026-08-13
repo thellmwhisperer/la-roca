@@ -98,6 +98,32 @@ func TestSkillInstallOverARemovedRegisteredFileAsksForForce(t *testing.T) {
 	}
 }
 
+// One runtime whose file nothing can read never decides for the others, and
+// the migration that replaced an operator's bytes says where they went.
+func TestSkillInstallAllSurvivesOneUnreadableRuntimeAndNamesTheBackup(t *testing.T) {
+	home := skillTestHome(t)
+	broken := filepath.Join(home, ".codex", "skills", "roca", "SKILL.md")
+	writeFile(t, broken, artifact.Zoned(skill.Content(), "")+"appended after the last marker\n")
+	migrated := filepath.Join(home, ".hermes", "skills", "roca", "SKILL.md")
+	writeFile(t, migrated, "an older release's skill\n")
+
+	var out, warnings strings.Builder
+	root := rootCommand(&cliEnv{out: &out, errOut: &warnings})
+	root.SetArgs([]string{"skill", "install", "--all"})
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "skill install codex --force") {
+		t.Fatalf("the unreadable runtime did not fail with its remedy: %v", err)
+	}
+	for _, runtime := range []string{"claude", "hermes", "opencode", "pi"} {
+		if !strings.Contains(out.String(), runtime+": wrote ") {
+			t.Fatalf("%s was skipped because codex could not be read:\n%s", runtime, out.String())
+		}
+	}
+	if !strings.Contains(out.String(), migrated+" (replaced content kept at ") {
+		t.Fatalf("the migration did not name the recovery copy:\n%s", out.String())
+	}
+}
+
 func TestSkillInstallAllNarratesEveryPath(t *testing.T) {
 	skillTestHome(t)
 	var output strings.Builder

@@ -117,13 +117,12 @@ func UninstallWithChecksum(name, path, systemSHA256 string) (Outcome, error) {
 		return out, fmt.Errorf("read %s: %w", path, err)
 	}
 	user := ""
-	if string(previous) != content {
-		zones, err := artifact.Parse(string(previous))
-		if err != nil || artifact.Checksum(zones.System) != systemSHA256 {
+	if zones, err := artifact.Parse(string(previous)); err == nil {
+		if artifact.Checksum(zones.System) != systemSHA256 {
 			return out, nil
 		}
 		user = zones.User
-	} else if artifact.Checksum(string(previous)) != systemSHA256 {
+	} else if !weWroteThisPreZoneSkill(string(previous), systemSHA256) {
 		return out, nil
 	}
 	if user != "" {
@@ -160,6 +159,15 @@ func UninstallWithChecksum(name, path, systemSHA256 string) (Outcome, error) {
 		}
 	}
 	return out, nil
+}
+
+// weWroteThisPreZoneSkill recognizes a SKILL.md installed before the zones
+// existed. Matching only this release's bytes left every earlier release's
+// skill behind after an uninstall: a file in the runtime's skills directory
+// still teaching agents to run a binary the same command just unlinked.
+func weWroteThisPreZoneSkill(body, systemSHA256 string) bool {
+	return artifact.Checksum(body) == systemSHA256 ||
+		strings.HasPrefix(body, LegacySignature())
 }
 
 // InstallWithOptions writes the zoned canonical skill at path. Idempotent

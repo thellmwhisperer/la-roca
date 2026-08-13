@@ -59,7 +59,7 @@ func updateCommand(env *cliEnv) *cobra.Command {
 	cmd.Flags().StringVar(&target, "binary", "", "the binary to replace (default: the one running)")
 	cmd.Flags().BoolVar(&check, "check", false, "report what is published without replacing anything")
 	cmd.Flags().BoolVar(&forceArtifacts, "force-artifacts", false,
-		"replace edited SYSTEM zones while refreshing registered artifacts")
+		"replace edited SYSTEM zones, and rewrite whole artifacts whose zone markers are broken, keeping a recovery copy")
 	return cmd
 }
 
@@ -256,14 +256,24 @@ func (env *cliEnv) reportUpdate(document map[string]any, pending int,
 	return nil
 }
 
+const forceArtifactRefresh = "roca update --force-artifacts"
+
 func (env *cliEnv) renderArtifactRefresh(report artifactRefreshReport) {
 	if report.Enabled {
 		env.print("agent artifacts: %d refreshed; %d outdated", report.Refreshed, report.Outdated)
 	} else {
 		env.print("agent artifacts: automatic refresh is off (features.artifact_refresh); %d outdated", report.Outdated)
 	}
-	for _, path := range report.Diverged {
-		fmt.Fprintf(env.errOut, "warning: %s has edits in its SYSTEM zone; run `roca update --force-artifacts` to replace it\n", path)
+	for _, artifact := range report.Diverged {
+		fmt.Fprintf(env.errOut, "warning: %s\n",
+			divergedArtifactWarning(artifact.Path, forceArtifactRefresh, artifact.Missing))
+	}
+	for _, path := range report.Unreadable {
+		fmt.Fprintf(env.errOut, "warning: %s could not be read as a managed artifact; "+
+			"run `%s` to replace it, keeping the file in its recovery copy\n", path, forceArtifactRefresh)
+	}
+	for _, backup := range report.Backups {
+		env.print("agent artifact: replaced content kept at %s", backup)
 	}
 	for _, proposal := range report.Proposals {
 		env.print("agent artifact available: run `%s`", proposal)
