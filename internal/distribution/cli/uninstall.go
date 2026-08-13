@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/lifecycle"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
@@ -21,6 +22,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 const legacyCredentialsDir = "credentials"
@@ -234,6 +236,13 @@ func failed(report *lifecycle.Report, format string, args ...any) {
 // five lines saying so on every uninstall is noise.
 func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool) []agentcfg.Outcome {
 	var outcomes []agentcfg.Outcome
+	registryPath, registry, registryErr := env.artifactRegistry()
+	registryExists := false
+	if registryErr != nil {
+		failed(report, "read managed artifact registry: %v", registryErr)
+	} else if _, err := os.Stat(registryPath); err == nil {
+		registryExists = true
+	}
 	// What changed is named, what failed is named, and what was left behind is
 	// named.
 	withdrawn := func(what string, outcome agentcfg.Outcome, err error) {
@@ -289,7 +298,11 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 			failed(report, "%s", err)
 			continue
 		}
-		outcome, err := skill.Uninstall(runtime, path)
+		checksum := artifact.Checksum(skill.Content())
+		if entry, found := registry.Find(artifactKindSkill, runtime, path); found {
+			checksum = entry.SystemSHA256
+		}
+		outcome, err := skill.UninstallWithChecksum(runtime, path, checksum)
 		if err != nil {
 			failed(report, "withdraw skill from %s: %v", runtime, err)
 			continue
@@ -297,8 +310,38 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		if outcome.Changed {
 			report.Deleted = append(report.Deleted, outcome.Removed...)
 		}
+		// The copy this withdrawal just made is spared from the purge and named
+		// like any other survivor: it holds the bytes the operator wrote, and the
+		// withdrawal made it precisely because they are left nowhere else.
+		if purge {
+			removeRecoveryBackups(report, path, outcome.Backup)
+			removeHollowSkillDirs(report, path)
+		}
+		nameSurvivingBackups(report, path)
+	}
+	if registryErr == nil && registryExists {
+		registry.RemoveKinds(artifactKindSkill, artifactKindHook)
+		if err := artifact.SaveRegistry(registryPath, registry); err != nil {
+			failed(report, "update managed artifact registry: %v", err)
+		}
 	}
 	return outcomes
+}
+
+// removeHollowSkillDirs takes back the chain a skill withdrawal could not,
+// because the recovery copies beside the file were still in it when the
+// withdrawal tried. Only an empty directory goes: os.Remove is the whole guard.
+func removeHollowSkillDirs(report *lifecycle.Report, skillFile string) {
+	dir := filepath.Dir(skillFile)
+	if filepath.Base(dir) != skill.SkillName {
+		return
+	}
+	for _, hollow := range []string{dir, filepath.Dir(dir)} {
+		if err := os.Remove(hollow); err != nil {
+			return
+		}
+		report.Deleted = append(report.Deleted, hollow)
+	}
 }
 
 // keepTheBackup names every recovery copy left beside a configuration file the
@@ -319,8 +362,16 @@ func keepTheBackup(report *lifecycle.Report, outcome agentcfg.Outcome) {
 // Roca created beside an agent configuration. A regular uninstall keeps and
 // names them; --purge removes the whole product-owned family, including copies
 // left by a previous interrupted withdrawal.
-func removeRecoveryBackups(report *lifecycle.Report, configFile string) {
+//
+// A copy named in spared is the exception the consent does not reach: what an
+// operator wrote is never this product's to delete, whatever it was authorized
+// to remove of its own. It is the same rule that keeps a prompt.md with content
+// in its USER zone out of the owned-path inventory.
+func removeRecoveryBackups(report *lifecycle.Report, configFile string, spared ...string) {
 	for _, path := range recoveryBackupsFor(report, configFile) {
+		if slices.Contains(spared, path) {
+			continue
+		}
 		if err := os.Remove(path); err != nil {
 			failed(report, "delete %s: %v", path, err)
 			continue
@@ -391,7 +442,31 @@ func ownedPaths(paths config.Paths) []string {
 	dataDir := dirOf(paths.DB)
 	owned := []string{
 		paths.DB, paths.DB + "-wal", paths.DB + "-shm", paths.DB + "-journal",
-		paths.Config, paths.Reconciliation, filepath.Join(dataDir, "prompt.md"),
+		paths.Config, paths.Reconciliation,
+	}
+	managed, err := artifact.OwnedPaths(paths.Artifacts)
+	if err != nil {
+		managed = []string{paths.Artifacts}
+	}
+	for _, path := range managed {
+		if !slices.Contains(owned, path) {
+			owned = append(owned, path)
+		}
+	}
+	prompt := filepath.Join(dataDir, "prompt.md")
+	if !slices.Contains(owned, prompt) {
+		if body, err := os.ReadFile(prompt); err == nil && promptWasGenerated(string(body)) {
+			owned = append(owned, prompt)
+		}
+	}
+	// Every refresh that rewrote a managed artifact left a recovery copy beside
+	// it. They are this product's files, and one left behind keeps the data
+	// directory alive while being reported as a file La Roca never created.
+	recovery, _ := recoveryBackups(prompt)
+	for _, path := range recovery {
+		if !slices.Contains(owned, path) {
+			owned = append(owned, path)
+		}
 	}
 	backupPrefix := strings.TrimSuffix(filepath.Base(paths.DB), ".db") + "."
 	backups, backupsExist := ownedFiles(paths.Backups, func(name string) bool {
@@ -425,6 +500,19 @@ func ownedPaths(paths config.Paths) []string {
 		owned = append(owned, logfile.New(dataDir).LockPath(), logDir)
 	}
 	return append(owned, installedPluginPaths(paths)...)
+}
+
+// promptWasGenerated recognizes prompt.md by the heading every release has
+// written, so a purge still owns the file an older release generated instead of
+// reporting a file init wrote as somebody else's. An operator zone with content
+// in it is never ours to delete, whatever release opened the file.
+func promptWasGenerated(body string) bool {
+	zones, err := artifact.Parse(body)
+	if err != nil {
+		return strings.HasPrefix(body, service.PresentationPromptSignature())
+	}
+	return zones.User == "" &&
+		strings.HasPrefix(zones.System, service.PresentationPromptSignature())
 }
 
 // The three trees the plugin system writes. They hang off ~/.roca and not off

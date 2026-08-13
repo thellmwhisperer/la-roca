@@ -9,11 +9,15 @@ import (
 	"strings"
 
 	"github.com/cucumber/godog"
+	"github.com/thellmwhisperer/la-roca/internal/artifact"
 )
 
 func registerDistributionSkillSteps(ctx *godog.ScenarioContext, w *distributionWorld) {
 	ctx.When(`^the operator installs the skill for "([^"]*)"$`, w.installSkillFor)
 	ctx.Then(`^only "([^"]*)" receives the canonical skill and the output names its path$`, w.onlyChosenAgentHasSkill)
+	ctx.When(`^the operator writes their own lines into the skill's operator zone$`, w.editSkillOperatorZone)
+	ctx.Then(`^the operator's lines survive, the product zone is canonical, and the registry records the skill$`,
+		w.skillIsARegisteredArtifact)
 	ctx.When(`^the operator requests a skill install without choosing an agent or all agents$`, w.installSkillWithoutChoice)
 	ctx.Then(`^the request fails and every agent home remains without the skill$`, w.noAgentReceivedSkill)
 	ctx.Given(`^synthetic agent instruction files with operator-owned content$`, w.syntheticInstructionFiles)
@@ -66,6 +70,57 @@ func (w *distributionWorld) onlyChosenAgentHasSkill(agent string) error {
 		if !os.IsNotExist(readErr) {
 			return fmt.Errorf("unchosen agent %s received %s", runtime, path)
 		}
+	}
+	return nil
+}
+
+const acceptanceOperatorSkillLine = "My own note beside the roca skill.\n"
+
+func (w *distributionWorld) editSkillOperatorZone() error {
+	path, err := distributionSkillPath("claude", w.home)
+	if err != nil {
+		return err
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	edited := strings.Replace(string(body), artifact.UserEnd,
+		acceptanceOperatorSkillLine+artifact.UserEnd, 1)
+	if edited == string(body) {
+		return fmt.Errorf("the installed skill has no operator zone to write into: %s", body)
+	}
+	return os.WriteFile(path, []byte(edited), 0o600)
+}
+
+func (w *distributionWorld) skillIsARegisteredArtifact() error {
+	if w.last.code != 0 {
+		return fmt.Errorf("the second skill install failed: %s", w.last.stderr)
+	}
+	path, err := distributionSkillPath("claude", w.home)
+	if err != nil {
+		return err
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	zones, err := artifact.Parse(string(body))
+	if err != nil {
+		return fmt.Errorf("the refreshed skill lost its zones: %v", err)
+	}
+	if zones.User != acceptanceOperatorSkillLine {
+		return fmt.Errorf("the operator zone was not transplanted verbatim: %q", zones.User)
+	}
+	if !strings.Contains(zones.System, "name: roca") {
+		return fmt.Errorf("the product zone is not the canonical skill: %q", zones.System)
+	}
+	registry, err := os.ReadFile(filepath.Join(w.home, ".roca", "artifacts.json"))
+	if err != nil {
+		return fmt.Errorf("the install registered no artifact: %v", err)
+	}
+	if !strings.Contains(string(registry), path) || !strings.Contains(string(registry), `"skill"`) {
+		return fmt.Errorf("the registry does not record the installed skill: %s", registry)
 	}
 	return nil
 }

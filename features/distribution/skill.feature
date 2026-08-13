@@ -17,6 +17,12 @@ Feature: Distribution agent teaching
       | opencode |
       | pi       |
 
+  Scenario: An installed skill is a registered artifact whose operator zone survives a refresh
+    When the operator installs the skill for "claude"
+    And the operator writes their own lines into the skill's operator zone
+    And the operator installs the skill for "claude"
+    Then the operator's lines survive, the product zone is canonical, and the registry records the skill
+
   Scenario: Nothing is ever installed into an agent without being asked
     When the operator requests a skill install without choosing an agent or all agents
     Then the request fails and every agent home remains without the skill
