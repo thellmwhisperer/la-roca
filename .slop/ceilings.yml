@@ -34,7 +34,7 @@ scopes:
 orphan_scopes:
   markdown:
     active_orphans_ceiling: 1
-  # Down one: the schema stopped being an orphan when the ingest documentation
-  # started naming the per-exchange provenance columns it declares.
+  # Down one again: the invocation-scoped export contract now names its CLI
+  # owner directly from committed project memory.
   public_surfaces:
-    active_orphans_ceiling: 11
+    active_orphans_ceiling: 10
