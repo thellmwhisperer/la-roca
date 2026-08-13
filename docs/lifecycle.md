@@ -204,9 +204,6 @@ The current proposals are:
 - When only a credential file from an older release is left, offer to remove
   that file alone. It changes no model configuration and never disables a
   provider this build can still run.
-- When Anthropic export ingest is available but
-  `defaults.anthropic_export_paths` is empty, ask for an extracted export
-  directory and add that typed path. See [Ingest sources](ingest.md#declare-an-anthropic-data-export).
 
 The update channel can be selected with the same repository and API environment
 variables used by installation.

@@ -316,16 +316,14 @@ Repository `AGENTS.md` and `CLAUDE.md` files are instructions and are never
 ingested as memories. Live databases are opened as guests with SQLite
 `query_only` enabled and a short busy timeout.
 
-Downloaded Anthropic exports are opt-in. Declare their extracted directories
-under `anthropic_export_paths` and run `roca ingest`; see
-[Ingest sources](docs/ingest.md#declare-an-anthropic-data-export).
+Downloaded Anthropic exports are one-shot imports. Run `roca ingest <path>` with
+the extracted directory; see
+[Ingest sources](docs/ingest.md#import-an-anthropic-data-export).
 
-Downloaded OpenAI exports are opt-in too. Declare their extracted directories
-under `openai_export_paths`; La Roca reads legacy `conversations.json` exports
-and newer `conversations-*.json` shards, imports only the delta across newer
-exports, and reports declared paths it cannot read or whose layout it does not
-recognize. See
-[Ingest sources](docs/ingest.md#declare-an-openai-data-export).
+Downloaded OpenAI exports use the same one-shot command. La Roca reads legacy
+`conversations.json` exports and newer `conversations-*.json` shards, imports
+only the delta across newer exports, and refuses paths it cannot read. See
+[Ingest sources](docs/ingest.md#import-an-openai-data-export).
 
 ## Agents plug in
 

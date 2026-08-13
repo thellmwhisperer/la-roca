@@ -20,6 +20,7 @@ import (
 type world struct {
 	home      string
 	workspace string
+	export    string
 	env       Environment
 	settings  Settings
 }
@@ -31,17 +32,19 @@ func newWorld(t *testing.T) *world {
 	w := &world{
 		home:      home,
 		workspace: workspace,
+		export:    filepath.Join(home, "explicit-anthropic-export"),
 		env:       Environment{GOOS: "darwin", Home: home},
-		settings: Settings{
-			WorkspaceRoots:       []string{workspace},
-			AnthropicExportPaths: []string{filepath.Join(home, "declared-anthropic-export")},
-		},
+		settings:  Settings{WorkspaceRoots: []string{workspace}},
 	}
 	w.seed(t)
 	return w
 }
 
-func (w *world) roots() Roots { return ResolveRoots(w.env, w.settings) }
+func (w *world) roots() Roots {
+	roots := ResolveRoots(w.env, w.settings)
+	roots.ClaudeWebExports = []string{w.export}
+	return roots
+}
 
 // seededWorld is the common preamble of the tests that measure a second reach
 // over the same disk: a fresh database with the synthetic world already

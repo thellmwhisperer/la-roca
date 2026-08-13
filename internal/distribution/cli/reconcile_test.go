@@ -30,7 +30,7 @@ func TestFirstTTYCommandOffersOpenCapabilitiesOnceForTheBuild(t *testing.T) {
 			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(path, []byte("[defaults]\nanthropic_export_paths = [\"/exports\"]\n\n[models]\norder = [\"ollama\"]\n"), 0o600); err != nil {
+			if err := os.WriteFile(path, []byte("[models]\norder = [\"ollama\"]\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			previous := terminalInput
@@ -72,7 +72,7 @@ func TestDoctorListsAnOpenProposalEvenAfterItsVersionStamp(t *testing.T) {
 	dbPath := filepath.Join(home, ".roca", "roca.db")
 	runRoot(t, contractBuild(), "init", "--db-path", dbPath)
 	path := filepath.Join(home, ".roca", "config.toml")
-	text := "[defaults]\nanthropic_export_paths = [\"/exports\"]\n\n[models]\norder = [\"ollama\"]\n"
+	text := "[models]\norder = [\"ollama\"]\n"
 	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
 		t.Fatal(err)
 	}

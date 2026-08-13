@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"runtime"
@@ -19,28 +21,32 @@ import (
 // These keys are read under [defaults] and at the document root, so a hand-written
 // config is not invisible.
 const (
-	keyWorkspaceRoots       = "workspace_roots"
-	keySubagentRoots        = "subagent_roots"
-	keyAnthropicExportPaths = "anthropic_export_paths"
-	keyOpenAIExportPaths    = "openai_export_paths"
+	keyWorkspaceRoots = "workspace_roots"
+	keySubagentRoots  = "subagent_roots"
 )
 
 func ingestCommand(env *cliEnv) *cobra.Command {
 	var req service.IngestRequest
 	var verbose bool
 	cmd := &cobra.Command{
-		Use:   "ingest",
+		Use:   "ingest [export-directory]",
 		Short: "Read every source of the matrix and normalize what changed",
 		Long: "Reads the artefact families of the agents detected on this machine, normalizes\n" +
 			"them into the database and refreshes the search index.\n\n" +
+			"Pass one extracted ChatGPT or Claude export directory to import that snapshot.\n" +
+			"Without a directory, only live agent sources are read.\n\n" +
 			"It is incremental: a file whose fingerprint has not changed is not even\n" +
 			"opened, so running it repeatedly is cheap and produces the same state.\n" +
 			"`--dry-run` reports what it would read and writes nothing.",
+		Args: validateIngestArgs,
 		PreRun: func(*cobra.Command, []string) {
 			env.wantIngestProgress = true
 			env.ingestStarted = time.Now()
 		},
-		RunE: env.serviceRunE(func(cmd *cobra.Command, _ []string, svc *service.Service) error {
+		RunE: env.serviceRunE(func(cmd *cobra.Command, args []string, svc *service.Service) error {
+			if len(args) == 1 {
+				req.ExportPath = args[0]
+			}
 			result, err := svc.Ingest(cmd.Context(), req)
 			env.finishIngestProgress()
 			env.capture(result)
@@ -62,6 +68,30 @@ func ingestCommand(env *cliEnv) *cobra.Command {
 	cmd.Flags().BoolVar(&verbose, "verbose", false,
 		"add up to 100 record details with paths; the ingest log has the full run report")
 	return cmd
+}
+
+func validateIngestArgs(cmd *cobra.Command, args []string) error {
+	if err := cobra.MaximumNArgs(1)(cmd, args); err != nil || len(args) == 0 {
+		return err
+	}
+	path := args[0]
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("cannot read export directory %q: %w", path, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("cannot read export directory %q: not a directory", path)
+	}
+	directory, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("cannot read export directory %q: %w", path, err)
+	}
+	defer directory.Close()
+	_, err = directory.Readdirnames(1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("cannot read export directory %q: %w", path, err)
+	}
+	return nil
 }
 
 // renderIngest is the readable output. The same report --json hands over whole.
@@ -259,7 +289,5 @@ func ingestSources(file config.File, home, runnerDir string) ingest.Roots {
 			RunnerDir:             runnerDir,
 			WorkspaceRoots:        file.DefaultList(keyWorkspaceRoots),
 			SubagentRoots:         file.DefaultList(keySubagentRoots),
-			AnthropicExportPaths:  file.DefaultList(keyAnthropicExportPaths),
-			OpenAIExportPaths:     file.DefaultList(keyOpenAIExportPaths),
 		})
 }

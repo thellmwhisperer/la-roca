@@ -193,9 +193,8 @@ func scanChatGPTWebExports(roots Roots, plan *Plan) []Target {
 		names, err := readFiles(root)
 		if err != nil {
 			plan.Warnings = append(plan.Warnings, fmt.Sprintf(
-				"declared OpenAI export path %q cannot be read (%v): point "+
-					"openai_export_paths at the extracted export directory and run the "+
-					"ingest again", root, err))
+				"OpenAI export path %q cannot be read (%v): pass the extracted "+
+					"export directory to `roca ingest` again", root, err))
 			continue
 		}
 		recognized := false

@@ -22,10 +22,8 @@ import (
 const (
 	ProposalClaudeCLI       = "claude-cli-provider"
 	ProposalRetiredProvider = "retired-provider"
-	ProposalAnthropicExport = "anthropic-export-path"
 
-	CapabilityAnthropicExport = "anthropic-export-ingester"
-	inputValue                = "{operator-input}"
+	inputValue = "{operator-input}"
 )
 
 type ProviderCondition string
@@ -104,17 +102,6 @@ func Registry() []Entry {
 			},
 		},
 		{ID: ProposalRetiredProvider, Detection: Detection{RetiredProvider: true}},
-		{
-			ID: ProposalAnthropicExport,
-			Detection: Detection{Capability: CapabilityAnthropicExport,
-				DefaultListEmpty: "anthropic_export_paths"},
-			Proposal: Proposal{
-				Alert:  "Anthropic export ingest is available but defaults.anthropic_export_paths is empty; point it at an extracted export folder (docs: https://github.com/thellmwhisperer/la-roca/blob/main/docs/ingest.md#declare-an-anthropic-data-export).",
-				Prompt: "Add an Anthropic export folder?", InputPrompt: "Export folder: ",
-				Changes: []config.Change{{Kind: config.SetValue, Table: "defaults",
-					Key: "anthropic_export_paths", Value: []string{inputValue}}},
-			},
-		},
 	}
 }
 

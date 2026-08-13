@@ -8,7 +8,7 @@ Reading order, from operator to contributor:
 2. [Model providers](models.md): automatic agent CLI detection, provider order,
    the local floor, CLI-owned authentication, and how the two query inferences
    choose their models.
-3. [Ingest sources](ingest.md): declare downloaded data exports and understand
+3. [Ingest sources](ingest.md): import downloaded data exports once and understand
    their incremental boundary.
 4. [Plugins](plugins.md): isolated SQLite data plugins and Git-style neighbor executables
    and compose the stable machine surfaces.
