@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/lifecycle"
 )
 
@@ -130,6 +131,143 @@ func TestClaudeHookInstallerPreservesSettingsAndIsIdempotent(t *testing.T) {
 			t.Fatalf("roca hooks %s claude is unavailable: %v", verb, err)
 		}
 	}
+}
+
+func TestHookCommandRegistersTheOwnedClaudeFragment(t *testing.T) {
+	home := skillTestHome(t)
+	binary := filepath.Join(home, "bin", "roca")
+	t.Setenv(EnvExecutable, binary)
+	var output strings.Builder
+	root := rootCommand(&cliEnv{out: &output, build: Build{Version: "v1.2.3"}})
+	root.SetArgs([]string{"hooks", "install", "claude"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	settings := filepath.Join(home, ".claude", "settings.json")
+	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := registry.Find("hook", "claude", settings)
+	if !ok || entry.InstalledVersion != "v1.2.3" || entry.SystemSHA256 == "" {
+		t.Fatalf("registered hook = %+v, found %v", entry, ok)
+	}
+
+	body, err := os.ReadFile(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operatorBinary := filepath.Join(home, "operator", "roca")
+	edited := strings.Replace(string(body), claudeHookCommand(binary),
+		claudeHookCommand(operatorBinary), 1)
+	if err := os.WriteFile(settings, []byte(edited), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var warning strings.Builder
+	root = rootCommand(&cliEnv{out: &output, errOut: &warning, build: Build{Version: "v1.2.3"}})
+	root.SetArgs([]string{"hooks", "install", "claude"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSettings(t, settings); !strings.Contains(got, operatorBinary) ||
+		!strings.Contains(warning.String(), "hooks install claude --force") {
+		t.Fatalf("diverged hook was overwritten or not warned: body=%s warning=%q", got, warning.String())
+	}
+
+	root = rootCommand(&cliEnv{out: &output, build: Build{Version: "v1.2.3"}})
+	root.SetArgs([]string{"hooks", "install", "claude", "--force"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSettings(t, settings); strings.Contains(got, operatorBinary) || !strings.Contains(got, binary) {
+		t.Fatalf("forced hook refresh did not restore SYSTEM: %s", got)
+	}
+
+	root = rootCommand(&cliEnv{out: &output, build: Build{Version: "v1.2.3"}})
+	root.SetArgs([]string{"hooks", "uninstall", "claude"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	registry, err = artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := registry.Find("hook", "claude", settings); ok {
+		t.Fatal("explicit hook uninstall left the artifact registered")
+	}
+}
+
+// The refresh rewrites the bytes of the command it registered and no others:
+// the operator's numeric spelling, spacing and trailing members survive. The
+// reader only ever looks inside PreToolUse, so the edit looks there too, and an
+// operator who declared the identical command under another event owns those
+// bytes: they are neither rewritten nor a reason to refuse the refresh.
+func TestHookRefreshChangesOnlyItsRegisteredCommandBytes(t *testing.T) {
+	home := t.TempDir()
+	oldBinary := filepath.Join(home, "old", "roca")
+	newBinary := filepath.Join(home, "new", "roca")
+	oldCommand := encodedJSONString(t, claudeHookCommand(oldBinary))
+	entry := `[{"matcher":"Bash","hooks":[{"type":"command","command":` + oldCommand + `}]}]`
+	for _, test := range []struct{ name, previous string }{
+		{"operator bytes around the entry",
+			`{"numeric_spelling":1e3,"hooks":{"PreToolUse":` + entry + `},"tail":"  keep  "}`},
+		{"the same command under another event",
+			`{"hooks":{"PreToolUse":` + entry + `,"PostToolUse":` + entry + `}}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "settings.json")
+			if err := os.WriteFile(path, []byte(test.previous), 0o640); err != nil {
+				t.Fatal(err)
+			}
+			system, found, err := claudeHookSystem(path)
+			if err != nil || !found {
+				t.Fatalf("read installed hook: found=%v err=%v", found, err)
+			}
+			outcome, err := refreshClaudeHook(path, newBinary, artifact.Checksum(system), true, false)
+			if err != nil {
+				t.Fatalf("an operator's own bytes blocked the refresh: %v", err)
+			}
+			want := strings.Replace(test.previous, oldCommand,
+				encodedJSONString(t, claudeHookCommand(newBinary)), 1)
+			if got := readSettings(t, path); !outcome.Changed || got != want {
+				t.Fatalf("refresh did not edit exactly its own registered command:\nwant %s\n got %s", want, got)
+			}
+		})
+	}
+}
+
+// With automatic refresh off, update records and reports outdated installs and
+// mutates nothing — including under --force-artifacts. Clearing the divergence
+// on that path made an edited hook fragment read as merely outdated and left it
+// unnamed, while a zoned file under the same two flags still named itself.
+func TestADisabledHookRefreshStillReportsDivergence(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, "settings.json")
+	previous := `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":` +
+		encodedJSONString(t, claudeHookCommand(filepath.Join(home, "operator", "roca"))) + `}]}]}}`
+	if err := os.WriteFile(path, []byte(previous), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	registered := artifact.Checksum(`{"command":"what we installed","type":"command"}`)
+	out, err := refreshClaudeHook(path, filepath.Join(home, "bin", "roca"), registered, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Diverged || out.Changed {
+		t.Fatalf("a forced refresh behind the off gate = %+v", out)
+	}
+	if got := readSettings(t, path); got != previous {
+		t.Fatalf("a disabled refresh edited the settings: %s", got)
+	}
+}
+
+func encodedJSONString(t *testing.T, value string) string {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded)
 }
 
 // Settings La Roca did not write are two different questions. Installing into

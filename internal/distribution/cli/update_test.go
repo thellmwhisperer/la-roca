@@ -2,10 +2,14 @@ package cli
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/release"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
 )
 
 func TestUpdateRefusesAnInsecureOrMalformedMirror(t *testing.T) {
@@ -141,5 +145,176 @@ func TestCapabilityCountUsesTheSelectedDatabase(t *testing.T) {
 	want := "/installed/roca _capabilities --json --db-path /custom/roca.db"
 	if got := strings.Join(command.Args, " "); got != want {
 		t.Fatalf("capability count command = %q, want %q", got, want)
+	}
+}
+
+func TestArtifactRefreshHonoursTheDefaultOffGateAndSystemDivergence(t *testing.T) {
+	tests := []struct {
+		name, config, current string
+		force                 bool
+		wantChanged, diverged bool
+		// wantSummary is the line update prints about this refresh. A gate that is
+		// off has to say so and still count what is outdated, or an operator who
+		// left it off is told nothing about the installs it did not touch.
+		wantSummary string
+	}{
+		{name: "flag off", current: "shipped-v1\n",
+			wantSummary: "agent artifacts: automatic refresh is off (features.artifact_refresh); 1 outdated"},
+		{name: "flag on", config: "[features]\nartifact_refresh = true\n", current: "shipped-v1\n", wantChanged: true,
+			wantSummary: "agent artifacts: 1 refreshed; 0 outdated"},
+		{name: "edited system", config: "[features]\nartifact_refresh = true\n", current: "operator edit\n", diverged: true,
+			wantSummary: "agent artifacts: 0 refreshed; 1 outdated"},
+		{name: "forced edit", config: "[features]\nartifact_refresh = true\n", current: "operator edit\n", force: true, wantChanged: true,
+			wantSummary: "agent artifacts: 1 refreshed; 0 outdated"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			home := skillTestHome(t)
+			path := filepath.Join(home, ".codex", "skills", "roca", "SKILL.md")
+			writeFile(t, path, artifact.Zoned(test.current, "operator bytes\n"))
+			registryPath := filepath.Join(home, ".roca", "artifacts.json")
+			if err := artifact.SaveRegistry(registryPath, artifact.Registry{Entries: []artifact.Entry{{
+				Kind: "skill", Runtime: "codex", Path: path, InstalledVersion: "v1.0.0",
+				SystemSHA256: artifact.Checksum("shipped-v1\n"),
+			}}}); err != nil {
+				t.Fatal(err)
+			}
+			if test.config != "" {
+				writeFile(t, filepath.Join(home, ".roca", "config.toml"), test.config)
+			}
+			env := &cliEnv{build: Build{Version: "v2.0.0"}}
+			report, err := env.refreshManagedArtifacts(filepath.Join(home, "bin", "roca"), test.force)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			zones, err := artifact.Parse(string(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := zones.System == skill.Content(); got != test.wantChanged {
+				t.Fatalf("system refreshed = %v, want %v; system=%q", got, test.wantChanged, zones.System)
+			}
+			if zones.User != "operator bytes\n" {
+				t.Fatalf("user zone changed: %q", zones.User)
+			}
+			if got := len(report.Diverged) == 1; got != test.diverged {
+				t.Fatalf("report = %+v", report)
+			}
+			if summary, _ := refreshOutput(report); !strings.Contains(summary, test.wantSummary) {
+				t.Fatalf("update told the operator %q, want %q", summary, test.wantSummary)
+			}
+			registry, err := artifact.LoadRegistry(registryPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entry, _ := registry.Find("skill", "codex", path)
+			if entry.AvailableVersion != "v2.0.0" {
+				t.Fatalf("outdated version was not recorded: %+v", entry)
+			}
+			if !test.wantChanged && entry.InstalledVersion != "v1.0.0" {
+				t.Fatalf("unrefreshed install version changed: %+v", entry)
+			}
+		})
+	}
+}
+
+// The update report is what the operator is told, so it has to distinguish the
+// three states a refresh can refuse in: an edited SYSTEM zone, a file that is
+// no longer there, and one nothing can read. The unreadable one in particular
+// must not hide whether the other registered artifacts are current.
+func TestArtifactRefreshReportsDeletedAndUnreadableApartFromEdits(t *testing.T) {
+	home := skillTestHome(t)
+	deleted := filepath.Join(home, ".codex", "skills", "roca", "SKILL.md")
+	unreadable := filepath.Join(home, ".hermes", "skills", "roca", "SKILL.md")
+	current := filepath.Join(home, ".claude", "skills", "roca", "SKILL.md")
+	writeFile(t, unreadable, artifact.Zoned(skill.Content(), "")+"appended after the last marker\n")
+	writeFile(t, current, artifact.Zoned(skill.Content(), ""))
+	registryPath := filepath.Join(home, ".roca", "artifacts.json")
+	entryOf := func(runtime, path, checksum string) artifact.Entry {
+		return artifact.Entry{Kind: "skill", Runtime: runtime, Path: path, SystemSHA256: checksum}
+	}
+	shipped := artifact.Checksum(skill.Content())
+	report := enabledRefresh(t, home,
+		entryOf("codex", deleted, shipped),
+		entryOf("hermes", unreadable, shipped),
+		entryOf("claude", current, shipped),
+	)
+	if len(report.Diverged) != 1 || report.Diverged[0].Path != deleted || !report.Diverged[0].Missing {
+		t.Fatalf("a deleted artifact was not reported as deleted: %+v", report.Diverged)
+	}
+	if len(report.Failed) != 1 || report.Failed[0].Path != unreadable || !report.Failed[0].Repairable {
+		t.Fatalf("failed artifacts = %+v", report.Failed)
+	}
+	registry, err := artifact.LoadRegistry(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry, _ := registry.Find("skill", "claude", current); entry.InstalledVersion != "v2.0.0" {
+		t.Fatalf("a readable artifact was left unchecked behind the broken one: %+v", entry)
+	}
+
+	_, warnings := refreshOutput(report)
+	if !strings.Contains(warnings, deleted+" was removed after La Roca registered it") {
+		t.Fatalf("update called a deleted artifact an edit: %q", warnings)
+	}
+	if !strings.Contains(warnings, unreadable) || !strings.Contains(warnings, forceArtifactRefresh) {
+		t.Fatalf("the unreadable artifact was not named with its remedy: %q", warnings)
+	}
+}
+
+// enabledRefresh registers the given artifacts in a home, turns automatic
+// refresh on, and runs one refresh of that home against a v2.0.0 build.
+func enabledRefresh(t *testing.T, home string, entries ...artifact.Entry) artifactRefreshReport {
+	t.Helper()
+	registryPath := filepath.Join(home, ".roca", "artifacts.json")
+	if err := artifact.SaveRegistry(registryPath, artifact.Registry{Entries: entries}); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(home, ".roca", "config.toml"), "[features]\nartifact_refresh = true\n")
+	env := &cliEnv{build: Build{Version: "v2.0.0"}}
+	report, err := env.refreshManagedArtifacts(filepath.Join(home, "bin", "roca"), false)
+	if err != nil {
+		t.Fatalf("the refresh aborted instead of reporting: %v", err)
+	}
+	return report
+}
+
+// refreshOutput is what one refresh tells the operator: the summary line update
+// prints, and the warnings it sends to stderr.
+func refreshOutput(report artifactRefreshReport) (string, string) {
+	var out, warnings strings.Builder
+	(&cliEnv{out: &out, errOut: &warnings}).renderArtifactRefresh(report)
+	return out.String(), warnings.String()
+}
+
+// Force repairs exactly one failure class. Offering it for a permission or a
+// concurrent-edit refusal is either useless or the clobber that refusal exists
+// to prevent, so a failure that force cannot fix carries its own reason alone.
+func TestARefreshFailureForceCannotFixIsNotAnsweredWithForce(t *testing.T) {
+	home := skillTestHome(t)
+	path := filepath.Join(home, ".codex", "skills", "roca", "SKILL.md")
+	writeFile(t, path, artifact.Zoned("shipped-v1\n", ""))
+	if err := os.Chmod(filepath.Dir(path), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(filepath.Dir(path), 0o700) })
+
+	report := enabledRefresh(t, home, artifact.Entry{
+		Kind: "skill", Runtime: "codex", Path: path,
+		SystemSHA256: artifact.Checksum("shipped-v1\n"),
+	})
+	if len(report.Failed) != 1 || report.Failed[0].Repairable {
+		t.Fatalf("a write failure was offered the force remedy: %+v", report.Failed)
+	}
+	_, warnings := refreshOutput(report)
+	if strings.Contains(warnings, forceArtifactRefresh) {
+		t.Fatalf("force was offered for a failure it cannot fix: %q", warnings)
+	}
+	if !strings.Contains(warnings, path) {
+		t.Fatalf("the failure does not name the artifact: %q", warnings)
 	}
 }
