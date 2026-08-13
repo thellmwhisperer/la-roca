@@ -75,11 +75,19 @@ func installBundledPluginsCommand(env *cliEnv) *cobra.Command {
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
-			paths, err := env.resolvePaths()
-			if err != nil {
-				return err
+			paths, pathErr := env.resolvePaths()
+			root := ""
+			if pathErr == nil {
+				root = pluginRoot(paths)
 			}
-			result, err := rocaops.Ensure(pluginRoot(paths), pluginExecutableDir(paths), env.build.Version)
+			// A machine with no home has nowhere to keep a bundled plugin, and
+			// the feature that reads it refuses to run there anyway. Saying so is
+			// the answer; failing the installation that just succeeded is not.
+			if root == "" {
+				return env.report(map[string]any{"installed": false, "plugin": rocaops.Name},
+					"no home directory: the bundled %s plugin was not placed", rocaops.Name)
+			}
+			result, err := rocaops.Ensure(root, pluginExecutableDir(paths), env.build.Version)
 			if err != nil {
 				return err
 			}

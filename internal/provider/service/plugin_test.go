@@ -403,6 +403,9 @@ func TestKeywordRescueSearchesRocaOpsWithoutQuestionRouting(t *testing.T) {
 	}) {
 		t.Fatalf("resident write was absent from keyword rescue: %+v", result)
 	}
+	if !strings.Contains(result.SQL, "plugin_roca_ops") {
+		t.Fatalf("the declared SQL omits the half that produced the resident rows: %s", result.SQL)
+	}
 }
 
 func TestRocaOpsDrainOnlyRemovesExplicitlyExpiredRows(t *testing.T) {

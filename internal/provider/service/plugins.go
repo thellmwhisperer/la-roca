@@ -119,7 +119,9 @@ func (s *Service) openResidents(ctx context.Context) error {
 			}
 		}
 	}
-	route := validatePluginRoute(ctx, candidates, warnings)
+	// Discovery runs again for every answer and its warnings travel with that
+	// per-query route. Keeping a copy here would report each of them twice.
+	route := validatePluginRoute(ctx, candidates, nil)
 	s.resident, s.residentOmitted, s.residentWarnings = route.databases, route.omitted, route.warnings
 
 	var opsDatabase *plugin.Database
@@ -131,12 +133,18 @@ func (s *Service) openResidents(ctx context.Context) error {
 			}
 		}
 		if opsDatabase == nil {
-			reason := strings.Join(route.warnings, "; ")
+			reason := strings.Join(append(slices.Clone(warnings), route.warnings...), "; ")
 			if reason == "" {
 				reason = "the bundled plugin is not installed or is not declared resident"
 			}
 			return fmt.Errorf("features.roca_ops is enabled but %s is unavailable: %s",
 				rocaOpsPluginName, reason)
+		}
+		// Read-only refuses every write before database I/O, and opening the
+		// operational store is itself one: it sets the journal mode and restricts
+		// the artefacts. Reads still reach it through the resident attachment.
+		if s.opts.ReadOnly {
+			return nil
 		}
 		var err error
 		s.ops, err = store.Open(opsDatabase.Database)
@@ -238,6 +246,14 @@ func schemaWithPlugins(databases []plugin.Database) query.Schema {
 
 func (s *Service) executeWithPlugins(ctx context.Context, statement, term string,
 	maxChars int, databases []plugin.Database) ([]string, []map[string]any, error) {
+	// The resident connection is shared, so the wait for it is queueing and not
+	// execution. Taking the lock first keeps the execution budget spent on the
+	// statement instead of on the query that ran before it.
+	resident := len(s.resident) > 0
+	if resident {
+		s.queryMu.Lock()
+		defer s.queryMu.Unlock()
+	}
 	timeout, bounded := s.queryExecutionBudget()
 	queryCtx := ctx
 	var cancel context.CancelFunc = func() {}
@@ -246,9 +262,7 @@ func (s *Service) executeWithPlugins(ctx context.Context, statement, term string
 	}
 	defer cancel()
 	var connection *sql.Conn
-	if len(s.resident) > 0 {
-		s.queryMu.Lock()
-		defer s.queryMu.Unlock()
+	if resident {
 		if err := s.openResidentConnection(queryCtx); err != nil {
 			return nil, nil, err
 		}

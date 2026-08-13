@@ -60,6 +60,21 @@ USAGE
 say()  { printf '%s\n' "$*"; }
 die()  { printf 'install.sh: %s\n' "$*" >&2; exit 1; }
 
+# The bundled data plugins are placed by the binary that was just installed.
+# This script is served from the default branch while --version pins an exact
+# release, so it also runs against binaries older than the command: a release
+# that never shipped bundled plugins has none to fail to place.
+install_bundled_plugins() {
+  BUNDLED_REPORT=$("$1" _install-bundled-plugins --json 2>&1) && return 0
+  case "$BUNDLED_REPORT" in
+    *"unknown command"*|*"unknown flag"*)
+      say "note: roca $TAG predates bundled plugins; none were placed"
+      return 0
+      ;;
+  esac
+  die "roca $TAG is installed, but its bundled plugins could not be placed: $BUNDLED_REPORT"
+}
+
 require_value() {
   [ "$#" -ge 2 ] || die "$1 needs a value"
   case "$2" in --*) die "$1 needs a value, not $2" ;; esac
@@ -320,8 +335,7 @@ SUMS_DOWNLOAD_URL="https://github.com/$REPO/releases/download/$TAG/checksums.txt
 if [ -x "$TARGET" ] && [ "$FORCE" -eq 0 ]; then
   INSTALLED_VERSION=$(version_of "$TARGET" | awk 'NR == 1 && $1 == "roca" { print $2 }')
   if [ "$INSTALLED_VERSION" = "$TAG" ]; then
-    "$TARGET" _install-bundled-plugins --json >/dev/null || \
-      die "roca $TAG is installed, but its bundled plugins could not be placed"
+    install_bundled_plugins "$TARGET"
     say "roca $TAG is already installed at $TARGET"
     exit 0
   fi
@@ -376,8 +390,7 @@ if ! "$STAGED" --version >/dev/null 2>&1; then
 fi
 mv -f "$STAGED" "$TARGET"
 
-"$TARGET" _install-bundled-plugins --json >/dev/null || \
-  die "roca $TAG is installed, but its bundled plugins could not be placed"
+install_bundled_plugins "$TARGET"
 
 say "binary: $TARGET"
 # There is no release tree and no `current` link, so the binary IS the entry on

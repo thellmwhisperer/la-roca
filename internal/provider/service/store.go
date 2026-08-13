@@ -131,6 +131,20 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (StoreResult, err
 	target := s.db
 	if s.opts.RocaOpsEnabled {
 		target = s.ops
+		// The exclusion a superseded row obeys is computed inside the database
+		// that holds it, so a replacement written here can only retire what is
+		// here. Naming a core memory would retire nothing and say it did.
+		if req.Supersedes != 0 {
+			known, err := memoryExists(ctx, s.ops.SQL(), req.Supersedes)
+			if err != nil {
+				return StoreResult{}, err
+			}
+			if !known {
+				return StoreResult{}, fmt.Errorf(
+					"memory %d is not an operational memory: with features.roca_ops enabled a new "+
+						"memory supersedes only what %s itself holds", req.Supersedes, rocaOpsPluginName)
+			}
+		}
 		if existing, found, err := identicalMemory(ctx, s.db.SQL(), physical, status, content, req.Project); err != nil {
 			return StoreResult{}, err
 		} else if found {
@@ -222,6 +236,19 @@ func identicalMemory(ctx context.Context, db memoryQuerier, layer, status, conte
 		return 0, false, nil
 	default:
 		return 0, false, fmt.Errorf("look for an identical memory: %w", err)
+	}
+}
+
+func memoryExists(ctx context.Context, db memoryQuerier, id int64) (bool, error) {
+	var existing int64
+	err := db.QueryRowContext(ctx, "SELECT id FROM memories WHERE id = ?", id).Scan(&existing)
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, sql.ErrNoRows):
+		return false, nil
+	default:
+		return false, fmt.Errorf("look for the superseded memory: %w", err)
 	}
 }
 

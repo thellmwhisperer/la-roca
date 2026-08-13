@@ -678,7 +678,9 @@ func (s *Service) searchByTerm(ctx context.Context, plan query.Plan, method stri
 		if err != nil {
 			return nil, nil, "", nil, err
 		}
-		return s.withResidentMemorySearch(ctx, plan, maxChars, matchAny, limit,
+		// The LIKE floor requires every word, so the attached half requires every
+		// word too: merging a looser search with a stricter one is not one search.
+		return s.withResidentMemorySearch(ctx, plan, maxChars, false, limit,
 			columns, rows, validated, &result.Provenance)
 	}
 
@@ -732,21 +734,62 @@ func (s *Service) withResidentMemorySearch(ctx context.Context, plan query.Plan,
 	if err != nil {
 		return nil, nil, "", nil, err
 	}
-	opsColumns, opsRows, err := s.executeWithPlugins(ctx, validated, plan.Term, maxChars,
+	_, opsRows, err := s.executeWithPlugins(ctx, validated, plan.Term, maxChars,
 		[]plugin.Database{*ops})
 	if err != nil {
 		return nil, nil, "", nil, err
 	}
 	columns, rows = ensureDatabaseColumn(columns, rows, "core")
-	if len(columns) == 0 {
-		columns = opsColumns
-	}
 	rows = append(rows, opsRows...)
 	rows = dedupRows(strings.ReplaceAll(plan.Term, "+", " "), columns, rows)
-	if len(rows) > limit {
-		rows = rows[:limit]
+	rows = shareSearchLimit(rows, limit, ops.Source())
+	return columns, rows, declaredSearchSQL(gate, stmt, validated, limit), provenance, nil
+}
+
+// shareSearchLimit cuts the merged answer to the limit while reserving part of
+// it for the attached half. The attached rows are appended behind the core ones
+// and rank beside them, so a plain truncation drops the newer operational
+// history whenever core alone fills the budget.
+func shareSearchLimit(rows []map[string]any, limit int, label string) []map[string]any {
+	if limit <= 0 || len(rows) <= limit {
+		return rows
 	}
-	return columns, rows, stmt, provenance, nil
+	attached := 0
+	for _, row := range rows {
+		if fmt.Sprint(row[plugin.ProvenanceColumn]) == label {
+			attached++
+		}
+	}
+	reserved := min(attached, limit/2)
+	core := limit - reserved
+	kept := make([]map[string]any, 0, limit)
+	for _, row := range rows {
+		budget := &core
+		if fmt.Sprint(row[plugin.ProvenanceColumn]) == label {
+			budget = &reserved
+		}
+		if *budget == 0 {
+			continue
+		}
+		*budget--
+		kept = append(kept, row)
+	}
+	return kept
+}
+
+// declaredSearchSQL reports both halves of the merged answer. Declaring the core
+// statement alone would hand the operator SQL that returns strictly fewer rows
+// than the answer it is supposed to explain.
+func declaredSearchSQL(gate *sqlgate.Gate, core, attached string, limit int) string {
+	merged, err := query.RenderSearchUnion(core, attached, limit)
+	if err != nil {
+		return core
+	}
+	validated, err := gate.Validate(merged)
+	if err != nil {
+		return core
+	}
+	return validated
 }
 
 // rescueSQL compiles the deterministic literal fallback without executing it.

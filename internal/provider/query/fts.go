@@ -198,7 +198,8 @@ func RenderSQLAttachedMemoryLike(plan Plan, coordinationLayers []string,
 	}
 	qualified := quoteIdentifier(schema) + ".memories"
 	var b strings.Builder
-	fmt.Fprintf(&b, "SELECT 'memory' AS source, m.id, %s AS author, m.content AS text, m.created_at "+
+	fmt.Fprintf(&b, "SELECT 'memory' AS source, m.id AS id, %s AS author, m.content AS text, "+
+		"m.created_at AS created_at "+
 		"FROM %s AS m WHERE %s AND m.id NOT IN "+
 		"(SELECT supersedes FROM %s WHERE supersedes IS NOT NULL)",
 		memoryAuthor("m"), qualified, clauses, qualified)
@@ -212,6 +213,23 @@ func RenderSQLAttachedMemoryLike(plan Plan, coordinationLayers []string,
 	}
 	fmt.Fprintf(&b, " ORDER BY m.created_at DESC LIMIT %d", limit)
 	return b.String(), nil
+}
+
+// RenderSearchUnion declares the two halves of a merged keyword answer as one
+// runnable statement. Each half is projected down to the presented columns,
+// because the ranked route carries ordering columns the literal route has not.
+func RenderSearchUnion(core, attached string, limit int) (string, error) {
+	core = strings.TrimRight(strings.TrimSpace(core), "; \t\n")
+	attached = strings.TrimRight(strings.TrimSpace(attached), "; \t\n")
+	if core == "" || attached == "" {
+		return "", fmt.Errorf("a merged search declares both of its halves")
+	}
+	if !isValidLimit(limit) {
+		limit = defaultLimit
+	}
+	const half = "SELECT source, id, author, text, created_at FROM (%s)"
+	return fmt.Sprintf(half+" UNION ALL "+half+" ORDER BY created_at DESC LIMIT %d",
+		core, attached, limit), nil
 }
 
 func likeAnyClauses(column, term string) string {

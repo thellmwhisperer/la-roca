@@ -68,4 +68,11 @@ func TestEnsureInstallsTheBundledResidentDataOnlyPluginAndPreservesItsDatabase(t
 	if expiresAt != 1 {
 		t.Fatal("the expiry mechanism is absent from the bundled schema")
 	}
+
+	if err := os.MkdirAll(filepath.Join(root, "."+rocaops.Name+".previous"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rocaops.Ensure(root, bin, "v-later"); err == nil {
+		t.Fatal("a refused bundled update was reported as a successful one")
+	}
 }

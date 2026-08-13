@@ -644,7 +644,11 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 	if home != "" {
 		pluginDir = filepath.Join(home, config.DirOwn, "plugins")
 	}
-	if file.Features.RocaOps {
+	readOnly := config.ReadOnly(os.Getenv(config.EnvReadOnly))
+	// Placing the bundled plugin writes a directory, a manifest and a schema.
+	// Read-only refuses writes before any of that, so an audit of a machine
+	// leaves it exactly as it found it.
+	if file.Features.RocaOps && !readOnly {
 		if pluginDir == "" {
 			return nil, fmt.Errorf("features.roca_ops needs a HOME for the bundled plugin")
 		}
@@ -677,7 +681,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		ConfigPath:                paths.Config,
 		ConfigExists:              file.Exists,
 		Sources:                   ingestSources(file, home, paths.Runner),
-		ReadOnly:                  config.ReadOnly(os.Getenv(config.EnvReadOnly)),
+		ReadOnly:                  readOnly,
 		Progress: func(line string) {
 			if !env.json && strings.HasPrefix(line, "index: rebuilding") {
 				env.initSay("%s", line)
