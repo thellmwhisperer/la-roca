@@ -16,6 +16,13 @@ and Cowork sources. It fingerprints each source file by path and content, so an
 explicit rerun of the same export is a zero delta and a newer export contributes
 only message identities that have not already landed.
 
+The directory decides which vendor's parser reads it: `memories.json`, or a
+`conversations.json` of `chat_messages` records, is a Claude export, and
+`conversations.json` or `conversations-*.json` otherwise is a ChatGPT one. A
+directory carrying neither is refused naming both layouts rather than attributed
+to one of the two, as is a path that does not exist, is not a directory, or
+cannot be read. Every refusal happens before ingest starts.
+
 Older configuration files may still contain `anthropic_export_paths` or
 `openai_export_paths`. Those keys are leftovers: ingest ignores them, and they
 can be removed.
@@ -37,8 +44,7 @@ Point to the extracted directory, not to an individual JSON file. La Roca reads
 `conversations.json` and `memories.json` when present. Import another snapshot
 with another explicit command. La Roca never scans Downloads or another broad
 directory for exports and ignores `projects/`, `design_chats/`, `users.json`, and
-`login_history.json`. The directory must exist, be readable, and contain the
-extracted files rather than the export zip itself.
+`login_history.json`.
 
 ## Import an OpenAI data export
 
@@ -53,22 +59,14 @@ Point to the extracted directory, not to an individual JSON file or the zip. La
 Roca reads both the legacy `conversations.json` layout and the newer
 `conversations-*.json` shards, and processes both when an export directory
 contains both shapes. A later export of the same account contributes only
-conversations and messages whose source
-identities have not already landed. When legacy and sharded snapshots of the same
-conversation overlap, content reconciliation lands no duplicate and keeps the
-provenance stated by whichever snapshot recorded more about each answer; the
-legacy layout is the richer one, and it wins whether both arrive in one run or
-months apart. An exchange an earlier release stored carries no record of how much
-its snapshot stated, and an absent record is not a low one: such a row is filled
-where it is empty and never overwritten, so an upgrade cannot cost a corpus
-provenance it already had.
-
-The directory decides which vendor's parser reads it: `memories.json`, or a
-`conversations.json` of `chat_messages` records, is a Claude export, and
-`conversations.json` or `conversations-*.json` otherwise is a ChatGPT one. A
-directory carrying neither is refused naming both layouts rather than attributed
-to one of the two, as is a path that does not exist, is not a directory, or
-cannot be read. Every refusal happens before ingest starts.
+conversations and messages whose source identities have not already landed. When
+legacy and sharded snapshots of the same conversation overlap, content
+reconciliation lands no duplicate and keeps the provenance stated by whichever
+snapshot recorded more about each answer; the legacy layout is the richer one,
+and it wins whether both arrive in one run or months apart. An exchange an
+earlier release stored carries no record of how much its snapshot stated, and an
+absent record is not a low one: such a row is filled where it is empty and never
+overwritten, so an upgrade cannot cost a corpus provenance it already had.
 
 Each `conversation_id` becomes an unprojected `chatgpt-web` session. La Roca
 walks the `mapping` parent/children tree and pairs user messages with assistant
