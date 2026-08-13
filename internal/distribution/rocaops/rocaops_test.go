@@ -91,3 +91,28 @@ func TestEnsureInstallsTheBundledResidentDataOnlyPluginAndPreservesItsDatabase(t
 		t.Fatal("a refused bundled update was reported as a successful one")
 	}
 }
+
+func TestEnsureLeavesTheWriteLockAloneWhenTheSchemaIsAlreadyThere(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "plugins")
+	bin := filepath.Join(t.TempDir(), "bin")
+	if _, err := rocaops.Ensure(root, bin, "v-test"); err != nil {
+		t.Fatal(err)
+	}
+	writer, err := sql.Open("sqlite", filepath.Join(root, rocaops.Name, rocaops.DatabaseFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	holding, err := writer.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holding.Rollback()
+	if _, err := holding.Exec(`INSERT INTO memories (layer, content, origin)
+		VALUES ('handoff', 'synthetic resident writer', 'agent')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rocaops.Ensure(root, bin, "v-test"); err != nil {
+		t.Fatalf("the schema check fought a resident writer for the write lock: %v", err)
+	}
+}
