@@ -112,6 +112,12 @@ func TestInitAdoptsAnUnrecognizedLegacyPromptWithoutLosingIt(t *testing.T) {
 	if zones.User != "operator legacy prompt\n" {
 		t.Fatalf("legacy prompt was not preserved verbatim: %q", zones.User)
 	}
+	// Nothing was replaced here — the operator's bytes are in USER — so the one
+	// warning both migrations share must not claim they were.
+	warnings := strings.Join(result.Warnings, "\n")
+	if !strings.Contains(warnings, path+".roca.bak") || strings.Contains(warnings, "replaced") {
+		t.Fatalf("init misdescribed an adopted prompt: %q", warnings)
+	}
 }
 
 func TestDoctorDistinguishesAMissingPrompt(t *testing.T) {

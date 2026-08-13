@@ -349,12 +349,14 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 	result.PromptPath = filepath.Join(s.dataDir(), "prompt.md")
 	var promptBackup string
 	result.Prompt, promptBackup, err = installPresentationPrompt(result.PromptPath)
-	// The recovery copy is named before the error is, and whether or not there
-	// was one: a migration that moved the operator's own bytes out of prompt.md
-	// is the only place those bytes are left, and init is where they are told.
+	// The recovery copy is named before the error is, and it says only what is
+	// true of every migration: the file was rewritten into zones and this copy
+	// holds what was there before. Whether the operator's bytes moved into USER
+	// or were text an older release wrote, init is where the copy is named.
 	if promptBackup != "" {
 		result.Warnings = append(result.Warnings,
-			fmt.Sprintf("the previous agent prompt was replaced; its content is kept at %s", promptBackup))
+			fmt.Sprintf("the agent prompt was migrated to its SYSTEM and USER zones; "+
+				"a copy of the previous file is kept at %s", promptBackup))
 	}
 	if err != nil {
 		failedPath := result.PromptPath

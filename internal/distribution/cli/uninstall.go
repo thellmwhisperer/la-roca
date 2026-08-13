@@ -310,16 +310,12 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		if outcome.Changed {
 			report.Deleted = append(report.Deleted, outcome.Removed...)
 		}
-		// The withdrawal's own copy is redundant only while the file it copied is
-		// still on disk without La Roca's zone in it. When the file went, that copy
-		// is the only place the operator's bytes are left.
-		if outcome.Changed && len(outcome.Removed) == 0 && outcome.Backup != "" {
-			_ = os.Remove(outcome.Backup)
-		}
+		// The copy this withdrawal just made is spared from the purge and named
+		// like any other survivor: it holds the bytes the operator wrote, and the
+		// withdrawal made it precisely because they are left nowhere else.
 		if purge {
-			removeRecoveryBackups(report, path)
+			removeRecoveryBackups(report, path, outcome.Backup)
 			removeHollowSkillDirs(report, path)
-			continue
 		}
 		nameSurvivingBackups(report, path)
 	}
@@ -366,8 +362,16 @@ func keepTheBackup(report *lifecycle.Report, outcome agentcfg.Outcome) {
 // Roca created beside an agent configuration. A regular uninstall keeps and
 // names them; --purge removes the whole product-owned family, including copies
 // left by a previous interrupted withdrawal.
-func removeRecoveryBackups(report *lifecycle.Report, configFile string) {
+//
+// A copy named in spared is the exception the consent does not reach: what an
+// operator wrote is never this product's to delete, whatever it was authorized
+// to remove of its own. It is the same rule that keeps a prompt.md with content
+// in its USER zone out of the owned-path inventory.
+func removeRecoveryBackups(report *lifecycle.Report, configFile string, spared ...string) {
 	for _, path := range recoveryBackupsFor(report, configFile) {
+		if slices.Contains(spared, path) {
+			continue
+		}
 		if err := os.Remove(path); err != nil {
 			failed(report, "delete %s: %v", path, err)
 			continue

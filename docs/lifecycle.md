@@ -229,6 +229,12 @@ named copy and the same way. Their lines are not left behind at `SKILL.md`,
 because a skill file kept there without its frontmatter is one the runtime goes
 on loading after La Roca is gone.
 
+That one copy is the exception a purge does not take. Everything else beside the
+skill goes under the same consent as the rest of the recovery family, but what
+an operator wrote is never this product's to delete, so the copy holding it is
+kept and named — the same rule that keeps a `prompt.md` with content in its USER
+zone out of the owned-path inventory. The directory holding it stays with it.
+
 A purge also removes the installed plugin packages under `~/.roca/plugins/` and
 the `roca-<name>` executables the installer placed, so no plugin code is left on
 a machine La Roca was removed from. A directory there is claimed only through the

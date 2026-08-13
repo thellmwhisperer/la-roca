@@ -74,31 +74,50 @@ func TestThePurgeOwnsTheRecoveryCopiesItsOwnRefreshesLeft(t *testing.T) {
 }
 
 func TestSkillWithdrawalAccountsForItsRecoveryCopies(t *testing.T) {
-	for _, purge := range []bool{false, true} {
-		t.Run(map[bool]string{false: "kept", true: "purged"}[purge], func(t *testing.T) {
+	for _, test := range []struct {
+		name, user  string
+		purge       bool
+		keepsRescue bool
+	}{
+		{name: "kept"},
+		{name: "purged", purge: true},
+		// The copy the withdrawal itself just made holds lines the operator wrote
+		// and nothing else has: the purge consent authorizes removing what this
+		// product created, and those bytes are not that.
+		{name: "purged around an operator zone",
+			user: "my own note\n", purge: true, keepsRescue: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			home := t.TempDir()
 			isolateRuntimeDirs(t, home)
 			path := filepath.Join(home, ".claude", "skills", "roca", "SKILL.md")
-			writeFile(t, path, artifact.Zoned(skill.Content(), ""))
+			writeFile(t, path, artifact.Zoned(skill.Content(), test.user))
 			stale := path + ".roca.bak"
 			writeFile(t, stale, "what an earlier refresh replaced\n")
 
 			report := lifecycle.Report{Purged: true, Deleted: []string{}}
 			env := &cliEnv{out: &strings.Builder{}, errOut: &strings.Builder{}}
-			env.withdrawTheIntegrations(&report, purge)
+			env.withdrawTheIntegrations(&report, test.purge)
 
 			_, err := os.Stat(stale)
-			if purge != os.IsNotExist(err) {
-				t.Fatalf("purge=%v left the recovery copy at %v", purge, err)
+			if test.purge != os.IsNotExist(err) {
+				t.Fatalf("purge=%v left the earlier recovery copy at %v", test.purge, err)
 			}
-			if !purge {
-				if !slices.ContainsFunc(report.Kept, func(k lifecycle.Kept) bool { return k.Path == stale }) {
-					t.Fatalf("the surviving recovery copy was not reported: %+v", report.Kept)
+			survivor := stale
+			if test.keepsRescue {
+				survivor = path + ".roca.bak.1"
+				if _, err := os.Stat(survivor); err != nil {
+					t.Fatalf("the purge deleted the operator's own withdrawn lines: %v", err)
+				}
+			}
+			if test.purge && !test.keepsRescue {
+				if _, err := os.Stat(filepath.Dir(path)); !os.IsNotExist(err) {
+					t.Fatalf("the skill directory survived its own recovery copies: %v", err)
 				}
 				return
 			}
-			if _, err := os.Stat(filepath.Dir(path)); !os.IsNotExist(err) {
-				t.Fatalf("the skill directory survived its own recovery copies: %v", err)
+			if !slices.ContainsFunc(report.Kept, func(k lifecycle.Kept) bool { return k.Path == survivor }) {
+				t.Fatalf("the surviving recovery copy was not reported: %+v", report.Kept)
 			}
 		})
 	}
