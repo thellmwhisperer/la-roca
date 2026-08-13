@@ -120,6 +120,12 @@ func initCommand(env *cliEnv) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if result.PromptPath != "" {
+				if err := env.registerZonedArtifact(artifactKindPrompt, "", result.PromptPath,
+					service.PresentationPrompt()); err != nil {
+					return err
+				}
+			}
 			commandElapsed := initMachineDuration(time.Since(commandStarted), env.initPromptWait).Milliseconds()
 			chooserElapsed := env.initChooserElapsed.Milliseconds()
 			if outsideService := commandElapsed - result.TotalElapsedMS - chooserElapsed; outsideService > 0 {

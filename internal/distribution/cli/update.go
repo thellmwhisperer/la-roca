@@ -35,7 +35,7 @@ const versionCheck = 20 * time.Second
 // kept until the new one has answered from its final place.
 func updateCommand(env *cliEnv) *cobra.Command {
 	var repo, tag, api, target string
-	var check bool
+	var check, forceArtifacts bool
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Replace this binary with the latest published release",
@@ -50,7 +50,7 @@ func updateCommand(env *cliEnv) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return env.update(cmd.Context(), source, tag, target, check)
+			return env.update(cmd.Context(), source, tag, target, check, forceArtifacts)
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", "", "the release repository, owner/name (or "+release.EnvRepo+")")
@@ -58,6 +58,8 @@ func updateCommand(env *cliEnv) *cobra.Command {
 	cmd.Flags().StringVar(&api, "api", "", "a trusted HTTPS test/mirror API base (or "+release.EnvAPI+")")
 	cmd.Flags().StringVar(&target, "binary", "", "the binary to replace (default: the one running)")
 	cmd.Flags().BoolVar(&check, "check", false, "report what is published without replacing anything")
+	cmd.Flags().BoolVar(&forceArtifacts, "force-artifacts", false,
+		"replace edited SYSTEM zones, and rewrite whole artifacts whose zone markers are broken, keeping a recovery copy")
 	return cmd
 }
 
@@ -115,7 +117,7 @@ func (env *cliEnv) refuseSelfReplacement(latest string) error {
 // update is the whole flow, in the order that keeps a working binary on the
 // machine at every step.
 func (env *cliEnv) update(ctx context.Context, source release.Source,
-	tag, target string, checkOnly bool) error {
+	tag, target string, checkOnly, forceArtifacts bool) error {
 
 	published, err := theRelease(ctx, source, tag)
 	if err != nil {
@@ -134,10 +136,18 @@ func (env *cliEnv) update(ctx context.Context, source release.Source,
 	}
 	if published.Tag == current {
 		if !checkOnly {
-			return env.reportUpdate(map[string]any{
+			document := map[string]any{
 				"updated": false, "version": current, "latest": published.Tag,
 				"reason": "already at the latest version",
-			}, lenOrZero(env.openCapabilityProposals()),
+			}
+			if installed, pathErr := binaryToReplace(target); pathErr == nil {
+				if artifacts, refreshErr := env.refreshManagedArtifacts(installed, forceArtifacts); refreshErr == nil {
+					document["artifacts"] = artifacts
+				} else {
+					fmt.Fprintf(env.errOut, "warning: registered artifacts could not be checked: %v\n", refreshErr)
+				}
+			}
+			return env.reportUpdate(document, lenOrZero(env.openCapabilityProposals()),
 				"roca %s is already the latest version", current)
 		}
 		return env.report(map[string]any{
@@ -198,6 +208,14 @@ func (env *cliEnv) update(ctx context.Context, source release.Source,
 		return err
 	}
 	paths, pathErr := env.resolvePaths()
+	var artifacts artifactRefreshReport
+	var artifactErr error
+	if pathErr == nil {
+		artifacts, artifactErr = artifactRefreshFromBinary(ctx, installed, paths.DB, forceArtifacts)
+		if artifactErr != nil {
+			fmt.Fprintf(env.errOut, "warning: the new binary could not refresh registered artifacts: %v\n", artifactErr)
+		}
+	}
 	pending, countErr := 0, pathErr
 	if pathErr == nil {
 		pending, countErr = capabilityCountFromBinary(ctx, installed, paths.DB)
@@ -206,10 +224,15 @@ func (env *cliEnv) update(ctx context.Context, source release.Source,
 		pending = lenOrZero(env.openCapabilityProposals())
 		fmt.Fprintf(env.errOut, "warning: the new binary could not count capability proposals: %v\n", countErr)
 	}
-	return env.reportUpdate(map[string]any{
+	document := map[string]any{
 		"updated": true, "version": published.Tag, "previous": current,
 		"binary": installed,
-	}, pending, "roca %s installed at %s (was %s)", published.Tag, installed, current)
+	}
+	if pathErr == nil && artifactErr == nil {
+		document["artifacts"] = artifacts
+	}
+	return env.reportUpdate(document, pending,
+		"roca %s installed at %s (was %s)", published.Tag, installed, current)
 }
 
 func lenOrZero(entries []reconcile.Entry, err error) int {
@@ -226,8 +249,57 @@ func (env *cliEnv) reportUpdate(document map[string]any, pending int,
 		return env.printJSON(document)
 	}
 	env.print(format, args...)
+	if artifacts, ok := document["artifacts"].(artifactRefreshReport); ok {
+		env.renderArtifactRefresh(artifacts)
+	}
 	env.print("%s", capabilityCountLine(pending))
 	return nil
+}
+
+const forceArtifactRefresh = "roca update --force-artifacts"
+
+func (env *cliEnv) renderArtifactRefresh(report artifactRefreshReport) {
+	if report.Enabled {
+		env.print("agent artifacts: %d refreshed; %d outdated", report.Refreshed, report.Outdated)
+	} else {
+		env.print("agent artifacts: automatic refresh is off (features.artifact_refresh); %d outdated", report.Outdated)
+	}
+	for _, artifact := range report.Diverged {
+		fmt.Fprintf(env.errOut, "warning: %s\n",
+			divergedArtifactWarning(artifact.Path, forceArtifactRefresh,
+				artifact.Missing, artifact.Unregistered))
+	}
+	for _, failure := range report.Failed {
+		remedy := ""
+		if failure.Repairable {
+			remedy = fmt.Sprintf("; run `%s` to replace it, keeping the file in its recovery copy",
+				forceArtifactRefresh)
+		}
+		fmt.Fprintf(env.errOut, "warning: %s%s\n", failure.Reason, remedy)
+	}
+	for _, backup := range report.Backups {
+		env.print("agent artifact: replaced content kept at %s", backup)
+	}
+	for _, proposal := range report.Proposals {
+		env.print("agent artifact available: run `%s`", proposal)
+	}
+}
+
+func artifactRefreshFromBinary(ctx context.Context, binary, dbPath string,
+	force bool) (artifactRefreshReport, error) {
+	args := []string{"_artifacts", "--json", "--db-path", dbPath, "--executable", binary}
+	if force {
+		args = append(args, "--force")
+	}
+	output, err := exec.CommandContext(ctx, binary, args...).Output()
+	if err != nil {
+		return artifactRefreshReport{}, err
+	}
+	var report artifactRefreshReport
+	if err := json.Unmarshal(output, &report); err != nil {
+		return report, fmt.Errorf("decode artifact refresh: %w", err)
+	}
+	return report, nil
 }
 
 func capabilityCountFromBinary(ctx context.Context, binary, dbPath string) (int, error) {
