@@ -12,7 +12,11 @@ import (
 
 func TestRefreshPreservesTheUserZoneAndGuardsTheSystemZone(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "SKILL.md")
-	user := "operator line one\noperator line two\n"
+	// The documentation teaches operators these markers, so one quoted inside
+	// their own lines is content and has to survive every round trip. Reading the
+	// first closing marker instead of the last one made that file unreadable from
+	// then on, with force the only way back.
+	user := "operator line one\n" + artifact.UserEnd + " is what closes my zone\n"
 	write(t, path, artifact.Zoned("shipped-v1\n", user))
 
 	out, err := artifact.RefreshFile(artifact.FileRequest{
@@ -134,25 +138,61 @@ func TestRegistryIsVersionedAndFeedsSafeOwnedPaths(t *testing.T) {
 	}
 }
 
-func TestADeletedRegisteredArtifactIsDivergence(t *testing.T) {
+// The three refusals need the same consent and are not the same sentence to an
+// operator: a file that is gone cannot be read back, and one no registry entry
+// stands behind was never proven to be ours, so neither may be reported as an
+// edit somebody has to go looking for.
+func TestDivergenceClassesAreToldApart(t *testing.T) {
+	for _, test := range []struct {
+		name, seeded, previous string
+		missing, unregistered  bool
+	}{
+		{name: "a registered artifact the operator deleted",
+			previous: artifact.Checksum("old\n"), missing: true},
+		{name: "a zoned artifact with no registry record",
+			seeded: artifact.Zoned("someone else's system\n", "mine\n"), unregistered: true},
+		{name: "an edited SYSTEM zone",
+			seeded:   artifact.Zoned("edited\n", "mine\n"),
+			previous: artifact.Checksum("old\n")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "artifact.md")
+			if test.seeded != "" {
+				write(t, path, test.seeded)
+			}
+			request := artifact.FileRequest{
+				Path: path, System: "system\n", PreviousSystemSHA256: test.previous, Enabled: true,
+			}
+			out, err := artifact.RefreshFile(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !out.Diverged || out.Changed ||
+				out.Missing != test.missing || out.Unregistered != test.unregistered {
+				t.Fatalf("refusal = %+v", out)
+			}
+			request.Force = true
+			out, err = artifact.RefreshFile(request)
+			if err != nil || !out.Changed || out.Diverged || out.Unregistered || out.Missing {
+				t.Fatalf("forced replacement = %+v, err %v", out, err)
+			}
+		})
+	}
+}
+
+// An install the operator typed by name is the consent a deleted artifact
+// needs. Force is for bytes that are still there to lose, and demanding it here
+// turned an explicit install of a file nobody has into a silent no-op.
+func TestARestoredMissingArtifactNeedsNoForce(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing.md")
-	request := artifact.FileRequest{
-		Path: path, System: "system\n", PreviousSystemSHA256: artifact.Checksum("old\n"), Enabled: true,
+	out, err := artifact.RefreshFile(artifact.FileRequest{
+		Path: path, System: "system\n", PreviousSystemSHA256: artifact.Checksum("old\n"),
+		Enabled: true, RestoreMissing: true,
+	})
+	if err != nil || !out.Changed || out.Diverged || out.Missing {
+		t.Fatalf("restored artifact = %+v, err %v", out, err)
 	}
-	out, err := artifact.RefreshFile(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Reported apart from an edited SYSTEM zone: the file is gone, so a caller
-	// can neither read it back nor tell the operator to go looking for edits.
-	if !out.Diverged || out.Changed || !out.Missing {
-		t.Fatalf("deleted registered artifact outcome = %+v", out)
-	}
-	request.Force = true
-	out, err = artifact.RefreshFile(request)
-	if err != nil || !out.Changed {
-		t.Fatalf("forced recreation = %+v, err %v", out, err)
-	}
+	assertZones(t, path, "system\n", "")
 }
 
 func TestMalformedZoneMarkersAreNeverAdoptedAsUserContent(t *testing.T) {

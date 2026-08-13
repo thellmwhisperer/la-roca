@@ -347,7 +347,15 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 		result.Bytes = info.Size()
 	}
 	result.PromptPath = filepath.Join(s.dataDir(), "prompt.md")
-	result.Prompt, err = installPresentationPrompt(result.PromptPath)
+	var promptBackup string
+	result.Prompt, promptBackup, err = installPresentationPrompt(result.PromptPath)
+	// The recovery copy is named before the error is, and whether or not there
+	// was one: a migration that moved the operator's own bytes out of prompt.md
+	// is the only place those bytes are left, and init is where they are told.
+	if promptBackup != "" {
+		result.Warnings = append(result.Warnings,
+			fmt.Sprintf("the previous agent prompt was replaced; its content is kept at %s", promptBackup))
+	}
 	if err != nil {
 		failedPath := result.PromptPath
 		result.PromptPath = ""
@@ -358,22 +366,25 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 	return result, nil
 }
 
-func installPresentationPrompt(path string) (string, error) {
+// installPresentationPrompt returns the prompt on disk and, when the one-time
+// migration made one, the recovery copy holding what was there before.
+func installPresentationPrompt(path string) (string, string, error) {
 	if body, err := os.ReadFile(path); err == nil {
 		if _, parseErr := artifact.Parse(string(body)); parseErr == nil {
-			return string(body), nil
+			return string(body), "", nil
 		}
 	} else if !os.IsNotExist(err) {
-		return "", err
+		return "", "", err
 	}
-	if _, err := artifact.RefreshFile(artifact.FileRequest{
+	out, err := artifact.RefreshFile(artifact.FileRequest{
 		Path: path, System: presentationPrompt,
 		LegacySignature: presentationPromptSignature, Enabled: true,
-	}); err != nil {
-		return "", err
+	})
+	if err != nil {
+		return "", out.Backup, err
 	}
 	body, err := os.ReadFile(path)
-	return string(body), err
+	return string(body), out.Backup, err
 }
 
 // bootstrapIngest is init's first read of the disk. It is incremental like every other

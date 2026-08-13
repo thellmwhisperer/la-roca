@@ -60,7 +60,10 @@ func Parse(content string) (Zones, error) {
 		systemEnd += systemStart
 	}
 	userStart := strings.Index(content, UserBegin+"\n")
-	userEnd := strings.Index(content, UserEnd)
+	// Zoned always writes the closing marker last, so the last one is the zone's
+	// end: an operator who quoted the marker inside their own lines still gets
+	// their file read back the way it was written.
+	userEnd := strings.LastIndex(content, UserEnd)
 	if systemEnd < 0 || userStart < 0 || userEnd < 0 {
 		return Zones{}, fmt.Errorf("artifact does not contain one ordered SYSTEM and USER zone")
 	}
@@ -91,15 +94,24 @@ type FileRequest struct {
 	PreviousSystemSHA256 string
 	Enabled              bool
 	Force                bool
+	// RestoreMissing writes a registered artifact that is no longer on disk
+	// instead of refusing it. An install the operator asked for by name carries
+	// that consent; an automatic refresh does not, and a deletion it finds is a
+	// withdrawal it leaves alone.
+	RestoreMissing bool
 }
 
 type FileOutcome struct {
-	Path         string `json:"path"`
-	Changed      bool   `json:"changed"`
-	Outdated     bool   `json:"outdated"`
-	Diverged     bool   `json:"diverged"`
-	Adopted      bool   `json:"adopted"`
-	Missing      bool   `json:"missing,omitempty"`
+	Path     string `json:"path"`
+	Changed  bool   `json:"changed"`
+	Outdated bool   `json:"outdated"`
+	Diverged bool   `json:"diverged"`
+	Adopted  bool   `json:"adopted"`
+	Missing  bool   `json:"missing,omitempty"`
+	// Unregistered is a divergence with no registry record behind it: the zones
+	// are intact and nothing says this product wrote them, which is not the same
+	// sentence as an operator having edited the SYSTEM zone.
+	Unregistered bool   `json:"unregistered,omitempty"`
 	Backup       string `json:"backup,omitempty"`
 	SystemSHA256 string `json:"system_sha256,omitempty"`
 }
@@ -120,6 +132,7 @@ func RefreshFile(request FileRequest) (FileOutcome, error) {
 			out.Outdated = currentChecksum != out.SystemSHA256
 			out.Diverged = currentChecksum != request.PreviousSystemSHA256 &&
 				(request.PreviousSystemSHA256 != "" || out.Outdated)
+			out.Unregistered = out.Diverged && request.PreviousSystemSHA256 == ""
 			if out.Diverged && !request.Force {
 				return out, nil
 			}
@@ -141,7 +154,7 @@ func RefreshFile(request FileRequest) (FileOutcome, error) {
 	} else {
 		out.Missing = true
 		out.Outdated = true
-		out.Diverged = request.PreviousSystemSHA256 != ""
+		out.Diverged = request.PreviousSystemSHA256 != "" && !request.RestoreMissing
 		if out.Diverged && !request.Force {
 			return out, nil
 		}
@@ -160,6 +173,7 @@ func RefreshFile(request FileRequest) (FileOutcome, error) {
 	out.Missing = false
 	out.Outdated = false
 	out.Diverged = false
+	out.Unregistered = false
 	return out, nil
 }
 

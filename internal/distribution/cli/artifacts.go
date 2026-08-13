@@ -158,11 +158,13 @@ func claudeHookSystem(path string) (string, bool, error) {
 }
 
 // divergedArtifact carries why an artifact was left alone, not only which one.
-// An edited SYSTEM zone and a deleted file both need the same consent to
-// replace, and they are not the same sentence to an operator.
+// An edited SYSTEM zone, a deleted file and a file no registry entry stands
+// behind all need the same consent to replace, and they are not the same
+// sentence to an operator.
 type divergedArtifact struct {
-	Path    string `json:"path"`
-	Missing bool   `json:"missing,omitempty"`
+	Path         string `json:"path"`
+	Missing      bool   `json:"missing,omitempty"`
+	Unregistered bool   `json:"unregistered,omitempty"`
 }
 
 // artifactFailure is one artifact this refresh could not finish, with the
@@ -269,8 +271,9 @@ func (report *artifactRefreshReport) failed(path string, err error, backup strin
 	report.Outdated++
 }
 
-func (report *artifactRefreshReport) diverged(path string, missing bool) {
-	report.Diverged = append(report.Diverged, divergedArtifact{Path: path, Missing: missing})
+func (report *artifactRefreshReport) diverged(path string, missing, unregistered bool) {
+	report.Diverged = append(report.Diverged,
+		divergedArtifact{Path: path, Missing: missing, Unregistered: unregistered})
 	report.Outdated++
 }
 
@@ -278,9 +281,9 @@ func (report *artifactRefreshReport) diverged(path string, missing bool) {
 // way, and answers whether the entry may still be stamped: a diverged artifact
 // was left alone, so nothing about it is this release's.
 func (report *artifactRefreshReport) noteRefresh(path string,
-	diverged, missing, changed bool, backup string) bool {
+	diverged, missing, unregistered, changed bool, backup string) bool {
 	if diverged {
-		report.diverged(path, missing)
+		report.diverged(path, missing, unregistered)
 		return false
 	}
 	if changed {
@@ -294,7 +297,8 @@ func (report *artifactRefreshReport) noteRefresh(path string,
 
 func (env *cliEnv) finishFileRefresh(entry *artifact.Entry, out artifact.FileOutcome,
 	desired string, report *artifactRefreshReport) {
-	if !report.noteRefresh(entry.Path, out.Diverged, out.Missing, out.Changed, out.Backup) {
+	if !report.noteRefresh(entry.Path, out.Diverged, out.Missing, out.Unregistered,
+		out.Changed, out.Backup) {
 		return
 	}
 	body, err := os.ReadFile(entry.Path)
@@ -323,7 +327,8 @@ type hookRefreshOutcome struct {
 
 func (env *cliEnv) finishHookRefresh(entry *artifact.Entry, out hookRefreshOutcome,
 	report *artifactRefreshReport) {
-	if !report.noteRefresh(entry.Path, out.Diverged, out.Missing, out.Changed, out.Backup) {
+	if !report.noteRefresh(entry.Path, out.Diverged, out.Missing, false,
+		out.Changed, out.Backup) {
 		return
 	}
 	if !out.Current {
@@ -431,8 +436,11 @@ func refreshClaudeHook(path, executable, previousChecksum string,
 		out.Diverged = false
 		return out, nil
 	}
+	// A refresh that is turned off reports what it found and mutates nothing, so
+	// the divergence stands: forcing while the feature is off must not turn an
+	// edited SYSTEM fragment into a file merely called outdated, which is how the
+	// hook came to say less about itself than a zoned file does.
 	if !enabled {
-		out.Diverged = false
 		return out, nil
 	}
 	changed, err := agentcfg.Edit("claude", path, func(previous string) (string, error) {

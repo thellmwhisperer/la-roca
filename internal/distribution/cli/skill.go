@@ -92,7 +92,8 @@ func skillInstallCommand(env *cliEnv) *cobra.Command {
 				}
 				if outcome.Diverged {
 					fmt.Fprintf(env.errOut, "warning: %s\n",
-						divergedArtifactWarning(path, forceSkillInstall(runtime), outcome.Missing))
+						divergedArtifactWarning(path, forceSkillInstall(runtime),
+							outcome.Missing, outcome.Unregistered))
 					outcomes = append(outcomes, outcome)
 					continue
 				}
@@ -129,12 +130,16 @@ func skillInstallCommand(env *cliEnv) *cobra.Command {
 
 // divergedArtifactWarning names what actually happened to a registered artifact
 // this run refused to write, and is the one place either command says it. An
-// artifact that was deleted has no edited SYSTEM zone, and saying it does sends
-// the operator looking for edits that are not there.
-func divergedArtifactWarning(path, forceCommand string, missing bool) string {
+// artifact that was deleted has no edited SYSTEM zone, and one no registry entry
+// stands behind was never proven to be ours in the first place; saying either is
+// an edit sends the operator looking for edits that are not there.
+func divergedArtifactWarning(path, forceCommand string, missing, unregistered bool) string {
 	what := "has edits in its SYSTEM zone"
-	if missing {
+	switch {
+	case missing:
 		what = "was removed after La Roca registered it"
+	case unregistered:
+		what = "has no record in La Roca's artifact registry, so its SYSTEM zone cannot be proven to be ours"
 	}
 	return fmt.Sprintf("%s %s; run `%s` to replace it", path, what, forceCommand)
 }

@@ -83,6 +83,15 @@ func TestInitReplacesAnEarlierReleasesPrompt(t *testing.T) {
 	if zones.System != service.PresentationPrompt() || zones.User != "" {
 		t.Fatalf("an earlier release's prompt survived the migration: %+v", zones)
 	}
+	// A recognized prompt is replaced whole, so anything appended to it goes with
+	// it. Init is where the operator is told which copy holds those bytes now.
+	backup := path + ".roca.bak"
+	if kept, err := os.ReadFile(backup); err != nil || string(kept) != earlier {
+		t.Fatalf("the migration kept no recovery copy of the previous prompt: %q, err %v", kept, err)
+	}
+	if !strings.Contains(strings.Join(result.Warnings, "\n"), backup) {
+		t.Fatalf("init did not name the recovery copy it made: %q", result.Warnings)
+	}
 }
 
 func TestInitAdoptsAnUnrecognizedLegacyPromptWithoutLosingIt(t *testing.T) {

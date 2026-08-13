@@ -266,7 +266,8 @@ func (env *cliEnv) renderArtifactRefresh(report artifactRefreshReport) {
 	}
 	for _, artifact := range report.Diverged {
 		fmt.Fprintf(env.errOut, "warning: %s\n",
-			divergedArtifactWarning(artifact.Path, forceArtifactRefresh, artifact.Missing))
+			divergedArtifactWarning(artifact.Path, forceArtifactRefresh,
+				artifact.Missing, artifact.Unregistered))
 	}
 	for _, failure := range report.Failed {
 		remedy := ""

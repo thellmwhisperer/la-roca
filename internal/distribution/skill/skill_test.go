@@ -247,6 +247,23 @@ func TestInstallMigratesPreZoneContentByWhoWroteIt(t *testing.T) {
 	}
 }
 
+// A registered skill the operator deleted is exactly what an explicit install
+// is for. Refusing it as divergence made `roca skill install <runtime>` write
+// nothing, say "unchanged" about a file that was not there, and exit clean.
+func TestInstallRewritesARegisteredSkillThatIsGone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".claude", "skills", "roca", "SKILL.md")
+	out, err := skill.InstallWithOptions("claude", path, shippedChecksum(), false)
+	if err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	if !out.Changed || out.Diverged || out.Missing {
+		t.Fatalf("install of a deleted registered skill = %+v", out)
+	}
+	if zones := zonesOf(t, path); zones.System != skill.Content() || zones.User != "" {
+		t.Fatalf("restored skill = %+v", zones)
+	}
+}
+
 // Withdrawing only this release's exact bytes left an older release's SKILL.md
 // in the runtime's skills directory, still teaching agents to run a binary the
 // same uninstall just unlinked, and outside the data dir it was not even
@@ -262,6 +279,11 @@ func TestUninstallWithdrawsWhatItRecognizesAndNothingElse(t *testing.T) {
 		// The exact bytes this release registered are provably ours, so nothing has
 		// to be left behind in the operator's skills directory.
 		{"our own registered bytes", skill.Content(), true, false},
+		{"our own registered zones", artifact.Zoned(skill.Content(), ""), true, false},
+		// Their own zone is theirs, and it leaves in the recovery copy rather than
+		// as a SKILL.md without frontmatter that the runtime goes on loading.
+		{"our bytes around a zone the operator wrote into",
+			artifact.Zoned(skill.Content(), "my own note\n"), true, true},
 		{"content this product never wrote", "not roca content", false, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {

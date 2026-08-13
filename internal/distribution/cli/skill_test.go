@@ -62,10 +62,13 @@ func TestSkillInstallWritesUnderTempHome(t *testing.T) {
 	}
 }
 
-// Deleting a registered skill needs consent to rewrite, the same as editing
-// one, but it is a different sentence and it must not take the command down
-// with it: registering an artifact reads the file, and the file is not there.
-func TestSkillInstallOverARemovedRegisteredFileAsksForForce(t *testing.T) {
+// The two refusals an explicit install can meet are not the same. A registered
+// file the operator deleted has no bytes of theirs to clobber and the install
+// they typed is the consent, so it is simply written again; refusing it printed
+// "unchanged" about a file that was not there and exited clean. A zoned file no
+// registry record stands behind is still refused, because its SYSTEM zone was
+// never proven to be ours — and it must not be reported as somebody's edit.
+func TestSkillInstallRestoresARemovedFileAndRefusesAnUnregisteredOne(t *testing.T) {
 	home := skillTestHome(t)
 	path := filepath.Join(home, ".claude", "skills", "roca", "SKILL.md")
 	var output strings.Builder
@@ -74,28 +77,57 @@ func TestSkillInstallOverARemovedRegisteredFileAsksForForce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var warning strings.Builder
-	root := rootCommand(&cliEnv{out: &output, errOut: &warning})
+	var restored, warning strings.Builder
+	root := rootCommand(&cliEnv{out: &restored, errOut: &warning})
 	root.SetArgs([]string{"skill", "install", "claude"})
 	if err := root.Execute(); err != nil {
 		t.Fatalf("reinstall over a removed file failed: %v", err)
 	}
-	if !strings.Contains(warning.String(), "was removed after La Roca registered it") ||
-		!strings.Contains(warning.String(), "skill install claude --force") {
-		t.Fatalf("the warning does not say what happened: %q", warning.String())
+	if warning.String() != "" {
+		t.Fatalf("an install the operator asked for by name warned instead of writing: %q", warning.String())
 	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatal("a removed skill was rewritten without consent")
+	if !strings.Contains(restored.String(), "claude: wrote "+path) {
+		t.Fatalf("the reinstall did not report the file it wrote:\n%s", restored.String())
+	}
+	if zones := installedZones(t, path); zones.System != skill.Content() {
+		t.Fatalf("the reinstall did not restore the skill: %+v", zones)
 	}
 
-	runSkill(t, &output, "skill", "install", "claude", "--force")
+	if err := os.Remove(filepath.Join(home, ".roca", "artifacts.json")); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, path, artifact.Zoned("an older release's system\n", "mine\n"))
+	warning.Reset()
+	root = rootCommand(&cliEnv{out: &restored, errOut: &warning})
+	root.SetArgs([]string{"skill", "install", "claude"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("install over an unregistered skill failed: %v", err)
+	}
+	if !strings.Contains(warning.String(), "no record in La Roca's artifact registry") ||
+		!strings.Contains(warning.String(), "skill install claude --force") {
+		t.Fatalf("an unregistered artifact was reported as an edit: %q", warning.String())
+	}
+	if zones := installedZones(t, path); zones.System != "an older release's system\n" {
+		t.Fatalf("an unregistered skill was replaced without consent: %+v", zones)
+	}
+
+	runSkill(t, &restored, "skill", "install", "claude", "--force")
+	if zones := installedZones(t, path); zones.System != skill.Content() || zones.User != "mine\n" {
+		t.Fatalf("the forced install did not replace SYSTEM and keep USER: %+v", zones)
+	}
+}
+
+func installedZones(t *testing.T, path string) artifact.Zones {
+	t.Helper()
 	body, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if zones, err := artifact.Parse(string(body)); err != nil || zones.System != skill.Content() {
-		t.Fatalf("forced reinstall did not restore the skill: %+v, err %v", zones, err)
+	zones, err := artifact.Parse(string(body))
+	if err != nil {
+		t.Fatalf("installed skill has no zones: %v", err)
 	}
+	return zones
 }
 
 // One runtime whose file nothing can read never decides for the others, and

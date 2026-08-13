@@ -236,6 +236,31 @@ func TestHookRefreshChangesOnlyItsRegisteredCommandBytes(t *testing.T) {
 	}
 }
 
+// With automatic refresh off, update records and reports outdated installs and
+// mutates nothing — including under --force-artifacts. Clearing the divergence
+// on that path made an edited hook fragment read as merely outdated and left it
+// unnamed, while a zoned file under the same two flags still named itself.
+func TestADisabledHookRefreshStillReportsDivergence(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, "settings.json")
+	previous := `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":` +
+		encodedJSONString(t, claudeHookCommand(filepath.Join(home, "operator", "roca"))) + `}]}]}}`
+	if err := os.WriteFile(path, []byte(previous), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	registered := artifact.Checksum(`{"command":"what we installed","type":"command"}`)
+	out, err := refreshClaudeHook(path, filepath.Join(home, "bin", "roca"), registered, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Diverged || out.Changed {
+		t.Fatalf("a forced refresh behind the off gate = %+v", out)
+	}
+	if got := readSettings(t, path); got != previous {
+		t.Fatalf("a disabled refresh edited the settings: %s", got)
+	}
+}
+
 func encodedJSONString(t *testing.T, value string) string {
 	t.Helper()
 	encoded, err := json.Marshal(value)

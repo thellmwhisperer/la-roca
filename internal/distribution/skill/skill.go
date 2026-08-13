@@ -35,7 +35,10 @@ type Outcome struct {
 	Diverged bool   `json:"diverged,omitempty"`
 	// Missing means the registered file was gone, so the divergence is a
 	// deletion rather than an edit and the two cannot be reported alike.
-	Missing      bool   `json:"missing,omitempty"`
+	Missing bool `json:"missing,omitempty"`
+	// Unregistered means no registry record stands behind the zones on disk, so
+	// the refusal is about provenance rather than about an edit.
+	Unregistered bool   `json:"unregistered,omitempty"`
 	SystemSHA256 string `json:"system_sha256,omitempty"`
 	// Removed lists every directory an uninstall took away: the roca skill
 	// directory and, when it left it hollow, the skills directory above it. It
@@ -129,25 +132,17 @@ func UninstallWithChecksum(name, path, systemSHA256 string) (Outcome, error) {
 		}
 		unproven = true
 	}
-	if user != "" {
-		changed, err := agentcfg.Edit("artifact", path, func(string) (string, error) {
-			return user, nil
-		}, false)
-		if err != nil {
-			return out, err
-		}
-		out.Changed = changed.Changed
-		out.Backup = changed.Backup
-		return out, nil
-	}
 	dir := filepath.Dir(path)
 	if filepath.Base(dir) != SkillName {
 		return out, nil
 	}
-	// A pre-zone file recognized by its opening alone is ours by convention, not
-	// by checksum: an operator who appended to it before the zones existed has
-	// bytes here that exist nowhere else, so the removal leaves a recovery copy.
-	if unproven {
+	// Two states hold bytes that exist nowhere else. A pre-zone file recognized
+	// by its opening alone is ours by convention, not by checksum, so anything an
+	// operator appended before the zones existed is only here; and a USER zone
+	// they wrote into is theirs outright. Both leave in a named recovery copy
+	// rather than at SKILL.md: a file kept there without its frontmatter is a
+	// broken skill the runtime goes on loading after La Roca is gone.
+	if unproven || user != "" {
 		backup, err := securefile.BackUp(path, previous)
 		if err != nil {
 			return out, err
@@ -178,6 +173,10 @@ func UninstallWithChecksum(name, path, systemSHA256 string) (Outcome, error) {
 // InstallWithOptions writes the zoned canonical skill at path. Idempotent
 // installs are left alone and legacy operator bytes are adopted into USER; a
 // changed SYSTEM zone is only overridden when force is explicit.
+//
+// A registered skill the operator deleted is written again without force: the
+// install they typed is the consent, and a file that is not there has no bytes
+// of theirs to clobber.
 func InstallWithOptions(name, path, previousSystemSHA256 string, force bool) (Outcome, error) {
 	if _, ok := rootOf[name]; !ok {
 		return Outcome{}, unknown(name)
@@ -186,6 +185,7 @@ func InstallWithOptions(name, path, previousSystemSHA256 string, force bool) (Ou
 	result, err := artifact.RefreshFile(artifact.FileRequest{
 		Path: path, System: content, LegacySignature: LegacySignature(),
 		PreviousSystemSHA256: previousSystemSHA256, Enabled: true, Force: force,
+		RestoreMissing: true,
 	})
 	out.Backup = result.Backup
 	if err != nil {
@@ -194,6 +194,7 @@ func InstallWithOptions(name, path, previousSystemSHA256 string, force bool) (Ou
 	out.Changed = result.Changed
 	out.Diverged = result.Diverged
 	out.Missing = result.Missing
+	out.Unregistered = result.Unregistered
 	out.SystemSHA256 = result.SystemSHA256
 	return out, nil
 }

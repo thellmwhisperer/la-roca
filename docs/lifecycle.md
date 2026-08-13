@@ -125,12 +125,19 @@ copy; any unrecognized legacy bytes become USER content on the one-time
 migration. A recognized file is replaced whole, so anything appended to it goes
 too, and the command names the recovery copy that holds it.
 
-An edit inside SYSTEM is divergence, and so is a registered file the operator
-deleted. Update and `roca skill install` name that file, say which of the two
-happened, and give the force command for it (`roca update --force-artifacts`, or
-`roca skill install <runtime> --force` for one skill), then leave it alone
-without prompting. Forcing a diverged artifact replaces SYSTEM and still
-preserves USER.
+An edit inside SYSTEM is divergence. So is a zoned file no registry entry stands
+behind, whose SYSTEM zone cannot be proven to be La Roca's, and so is a
+registered file the operator deleted between refreshes. Update and `roca skill
+install` name that file, say which of the three happened, and give the force
+command for it (`roca update --force-artifacts`, or `roca skill install
+<runtime> --force` for one skill), then leave it alone without prompting.
+Forcing a diverged artifact replaces SYSTEM and still preserves USER.
+
+A deleted skill is the one case an explicit install answers by itself: `roca
+skill install <runtime>` writes it again without force, because the operator
+asked for that file by name and a file that is gone has no bytes of theirs to
+overwrite. An automatic refresh has no such instruction and leaves the deletion
+alone.
 
 An artifact whose zone markers are there but broken is the one state no zone can
 be read from, so nothing can be transplanted: it is reported apart from
@@ -217,7 +224,10 @@ taken back too.
 A pre-zone skill an older release installed is recognized by its opening rather
 than by a checksum, so withdrawing one leaves a recovery copy of the file before
 removing it: anything an operator appended to it before the zones existed lives
-nowhere else.
+nowhere else. A skill whose USER zone the operator wrote into leaves the same
+named copy and the same way. Their lines are not left behind at `SKILL.md`,
+because a skill file kept there without its frontmatter is one the runtime goes
+on loading after La Roca is gone.
 
 A purge also removes the installed plugin packages under `~/.roca/plugins/` and
 the `roca-<name>` executables the installer placed, so no plugin code is left on
