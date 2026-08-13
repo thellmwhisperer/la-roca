@@ -74,6 +74,18 @@ func TestInstallUpdateAndUninstallPreservePluginOwnedData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	recovery := filepath.Join(root, ".synthetic.previous")
+	if err := os.Mkdir(recovery, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Update(updated); err == nil || !strings.Contains(err.Error(), recovery) {
+		t.Fatalf("update recovery directory is not hidden from discovery: %v", err)
+	}
+	if err := os.RemoveAll(recovery); err != nil {
+		t.Fatal(err)
+	}
+
 	if _, err := manager.Update(updated); err != nil {
 		t.Fatal(err)
 	}

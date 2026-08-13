@@ -42,12 +42,9 @@ func TestSemanticRelevanceIsStableAndBounded(t *testing.T) {
 		{Name: "exact", Semantic: plugin.Semantic{Questions: []string{"Which receipts were recorded?"}}},
 		{Name: "unrelated", Semantic: plugin.Semantic{Description: "weather observations"}},
 	}
-	selected, omitted := plugin.Relevant("Which receipts were recorded?", candidates, 1)
-	if len(selected) != 1 || selected[0].Name != "exact" {
+	selected := plugin.Relevant("Which receipts were recorded?", candidates)
+	if len(selected) != 2 || selected[0].Name != "exact" || selected[1].Name != "broad" {
 		t.Fatalf("selected = %+v", selected)
-	}
-	if len(omitted) != 1 || omitted[0].Name != "broad" {
-		t.Fatalf("omitted = %+v", omitted)
 	}
 }
 
@@ -58,7 +55,7 @@ func TestCommonQuestionFramingDoesNotRouteAnUnrelatedPlugin(t *testing.T) {
 			Questions:   []string{"Which weather observations were recorded?"},
 		},
 	}}
-	selected, _ := plugin.Relevant("Which receipts were recorded?", candidates, 10)
+	selected := plugin.Relevant("Which receipts were recorded?", candidates)
 	if len(selected) != 0 {
 		t.Fatalf("unrelated plugin selected through framing words: %+v", selected)
 	}
@@ -66,21 +63,8 @@ func TestCommonQuestionFramingDoesNotRouteAnUnrelatedPlugin(t *testing.T) {
 
 func TestSchemaNamesThatNormalizeTheSameRemainUnambiguous(t *testing.T) {
 	root := installedFixtures(t, "well-formed")
-	original := filepath.Join(root, "well-formed")
 	for _, name := range []string{"a-b", "a_b"} {
-		destination := filepath.Join(root, name)
-		if err := os.Mkdir(destination, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		for _, file := range []string{plugin.SemanticFilename, "plugin.db"} {
-			raw, err := os.ReadFile(filepath.Join(original, file))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(destination, file), raw, 0o600); err != nil {
-				t.Fatal(err)
-			}
-		}
+		copyPlugin(t, root, "well-formed", name)
 	}
 	found, warnings := plugin.Discover(root)
 	if len(warnings) != 0 {
@@ -94,6 +78,55 @@ func TestSchemaNamesThatNormalizeTheSameRemainUnambiguous(t *testing.T) {
 	}
 	if len(schemas) != 2 || schemas[0] == schemas[1] {
 		t.Fatalf("colliding schemas = %v", schemas)
+	}
+}
+
+func TestInstallerScratchDirectoriesAreNeverDiscoveredAsPlugins(t *testing.T) {
+	root := installedFixtures(t, "well-formed")
+	for _, scratch := range []string{".well-formed.previous", ".install-2451"} {
+		copyPlugin(t, root, "well-formed", scratch)
+	}
+	found, warnings := plugin.Discover(root)
+	if len(warnings) != 0 {
+		t.Fatalf("installer scratch produced warnings: %v", warnings)
+	}
+	if len(found) != 1 || found[0].Name != "well-formed" {
+		t.Fatalf("discovery = %+v", found)
+	}
+}
+
+func TestASemanticLayerMayNotClaimTheProvenanceColumn(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "shadow")
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	semantic := "version: 1\ndescription: Synthetic rows that shadow provenance.\n" +
+		"questions:\n  - \"Which synthetic rows exist?\"\ntables:\n  - name: rows\n" +
+		"    description: Synthetic rows.\n    columns: [id, " + plugin.ProvenanceColumn + "]\n"
+	if err := os.WriteFile(filepath.Join(directory, plugin.SemanticFilename), []byte(semantic), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plugin.Inspect("shadow", directory); err == nil ||
+		!strings.Contains(err.Error(), "reserved column") {
+		t.Fatalf("a semantic layer claimed the provenance column: %v", err)
+	}
+}
+
+func copyPlugin(t *testing.T, root, from, to string) {
+	t.Helper()
+	destination := filepath.Join(root, to)
+	if err := os.Mkdir(destination, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range []string{plugin.SemanticFilename, "plugin.db"} {
+		raw, err := os.ReadFile(filepath.Join(root, from, file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(destination, file), raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

@@ -393,7 +393,7 @@ func pluginInstallCommand(env *cliEnv, consented *bool) *cobra.Command {
 				return err
 			}
 			defer cleanup()
-			accepted, err := env.confirmPlugin(cmd.InOrStdin(), "install", candidate, *consented)
+			accepted, err := env.confirmPlugin(cmd.InOrStdin(), "install", candidate, "", *consented)
 			if err != nil || !accepted {
 				return err
 			}
@@ -429,7 +429,7 @@ func pluginUpdateCommand(env *cliEnv, consented *bool) *cobra.Command {
 				return fmt.Errorf("recorded source now names plugin %q, not %q; update refused",
 					candidate.Name, args[0])
 			}
-			accepted, err := env.confirmPlugin(cmd.InOrStdin(), "update", candidate, *consented)
+			accepted, err := env.confirmPlugin(cmd.InOrStdin(), "update", candidate, manifest.Checksum, *consented)
 			if err != nil || !accepted {
 				return err
 			}
@@ -460,7 +460,7 @@ func pluginUninstallCommand(env *cliEnv, consented *bool) *cobra.Command {
 				Name: manifest.Name, Version: manifest.Version, Source: manifest.Source,
 				Checksum: manifest.Checksum, Risk: manifest.Risk, Custody: manifest.Custody,
 			}
-			accepted, err := env.confirmPlugin(cmd.InOrStdin(), "uninstall", candidate, *consented)
+			accepted, err := env.confirmPlugin(cmd.InOrStdin(), "uninstall", candidate, "", *consented)
 			if err != nil || !accepted {
 				return err
 			}
@@ -514,7 +514,7 @@ func resolvePluginCandidate(ctx context.Context, reference, scratch string) (plu
 	return candidate, cleanup, nil
 }
 
-func pluginConsentText(action string, candidate plugininstall.Candidate) string {
+func pluginConsentText(action string, candidate plugininstall.Candidate, trusted string) string {
 	var risk string
 	switch candidate.Risk {
 	case plugininstall.Executable:
@@ -526,14 +526,29 @@ func pluginConsentText(action string, candidate plugininstall.Candidate) string 
 	if candidate.Custody {
 		custody = "\ncustody: protected; uninstall archives this directory instead of deleting it"
 	}
-	return fmt.Sprintf("Plugin %s consent\nsource: %s\nversion: %s\nchecksum: sha256:%s\nrisk: %s%s\n",
-		action, candidate.Source, candidate.Version, candidate.Checksum, risk, custody)
+	return fmt.Sprintf("Plugin %s consent\nsource: %s\nversion: %s\nchecksum: sha256:%s%s\nrisk: %s%s\n",
+		action, candidate.Source, candidate.Version, candidate.Checksum,
+		checksumComparison(candidate.Checksum, trusted), risk, custody)
+}
+
+// checksumComparison names what is being replaced. Without the recorded value a
+// source takeover and an ordinary version bump look identical on this screen:
+// both show one unfamiliar checksum.
+func checksumComparison(current, trusted string) string {
+	switch {
+	case trusted == "":
+		return ""
+	case trusted == current:
+		return " (unchanged since the recorded install)"
+	default:
+		return fmt.Sprintf(" (replaces the recorded sha256:%s)", trusted)
+	}
 }
 
 func (env *cliEnv) confirmPlugin(input io.Reader, action string, candidate plugininstall.Candidate,
-	consented bool) (bool, error) {
+	trusted string, consented bool) (bool, error) {
 
-	text := pluginConsentText(action, candidate)
+	text := pluginConsentText(action, candidate, trusted)
 	if consented {
 		if !env.json {
 			fmt.Fprint(env.errOut, text)

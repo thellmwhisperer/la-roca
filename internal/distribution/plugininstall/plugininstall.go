@@ -339,7 +339,7 @@ func (m Manager) Update(candidate Candidate) (Result, error) {
 		return Result{}, err
 	}
 	defer os.RemoveAll(staged)
-	backup := target + ".previous"
+	backup := filepath.Join(m.PluginRoot, "."+candidate.Name+".previous")
 	if _, err := os.Lstat(backup); err == nil {
 		return Result{}, fmt.Errorf("update recovery directory already exists at %s", backup)
 	}
@@ -614,9 +614,9 @@ func safeName(name string) bool {
 	return true
 }
 
+// safeFile only keeps a payload name inside its own directory. Which names a
+// package may actually carry is decided by verifyExactFiles, not here.
 func safeFile(name string) bool {
-	return safeName(strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(
-		name, ".sqlite3"), ".sqlite"), ".json"), ".yaml")) ||
-		name == ChecksumsFilename || name == "plugin.db" ||
-		(filepath.Base(name) == name && name != "." && name != ".." && !strings.ContainsAny(name, `/\\`))
+	return name != "" && name != "." && name != ".." &&
+		filepath.Base(name) == name && !strings.ContainsAny(name, `/\`)
 }

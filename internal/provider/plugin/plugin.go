@@ -25,6 +25,9 @@ import (
 const (
 	SemanticFilename = "semantic.yaml"
 	MaxAttached      = 10
+	// ProvenanceColumn names every row's source database, so a semantic layer
+	// may not declare a column that would be overwritten by it.
+	ProvenanceColumn = "database"
 )
 
 type Semantic struct {
@@ -178,6 +181,10 @@ func (s Semantic) valid() error {
 			if !validIdentifier(column) || columns[column] {
 				return fmt.Errorf("table %s has an invalid or repeated column %q", table.Name, column)
 			}
+			if strings.EqualFold(column, ProvenanceColumn) {
+				return fmt.Errorf("table %s declares the reserved column %q, which carries row provenance",
+					table.Name, column)
+			}
 			columns[column] = true
 		}
 	}
@@ -208,10 +215,10 @@ func soleDatabase(directory string) (string, error) {
 	return databases[0], nil
 }
 
-func Relevant(question string, candidates []Descriptor, limit int) ([]Descriptor, []Descriptor) {
-	if limit < 0 {
-		limit = 0
-	}
+// Relevant ranks every candidate whose semantic layer speaks to the question.
+// It does not truncate: the SQLite attachment cap has one owner, and it is the
+// caller that attaches.
+func Relevant(question string, candidates []Descriptor) []Descriptor {
 	ranked := make([]Descriptor, 0, len(candidates))
 	for _, candidate := range candidates {
 		candidate.relevance = relevance(question, candidate)
@@ -225,13 +232,10 @@ func Relevant(question string, candidates []Descriptor, limit int) ([]Descriptor
 		}
 		return strings.Compare(a.Name, b.Name)
 	})
-	if len(ranked) <= limit {
-		return ranked, nil
-	}
-	return ranked[:limit], ranked[limit:]
+	return ranked
 }
 
-func Referenced(statement string, candidates []Descriptor, limit int) ([]Descriptor, []Descriptor) {
+func Referenced(statement string, candidates []Descriptor) []Descriptor {
 	type hit struct {
 		descriptor Descriptor
 		position   int
@@ -249,10 +253,7 @@ func Referenced(statement string, candidates []Descriptor, limit int) ([]Descrip
 	for _, item := range hits {
 		referenced = append(referenced, item.descriptor)
 	}
-	if len(referenced) <= limit {
-		return referenced, nil
-	}
-	return referenced[:limit], referenced[limit:]
+	return referenced
 }
 
 func relevance(question string, candidate Descriptor) int {
@@ -410,8 +411,10 @@ func schemaName(name string) string {
 	return b.String()
 }
 
+// validPluginName refuses a leading dot: the plugin root also holds installer
+// scratch state, and only what an installer named without a dot is a plugin.
 func validPluginName(name string) bool {
-	if name == "" || name == "." || name == ".." {
+	if name == "" || strings.HasPrefix(name, ".") {
 		return false
 	}
 	for _, char := range name {

@@ -132,7 +132,7 @@ tables:
 	}
 }
 
-func TestExecCanAddressAnInstalledPluginUnderTheSameGate(t *testing.T) {
+func TestExecAddressesAPluginUnderTheSameGateAndNeverHidesACoreSource(t *testing.T) {
 	paths := freshPaths(t)
 	plugins := filepath.Join(paths.data, "plugins")
 	installQueryPlugin(t, plugins, "well-formed", `
@@ -165,6 +165,22 @@ INSERT INTO receipts (title) VALUES ('Synthetic observatory pass');`)
 		SQL: `SELECT missing FROM plugin_well_formed.receipts LIMIT 2`,
 	}); err == nil {
 		t.Fatal("the plugin escaped column validation")
+	}
+
+	seed(t, svc, "project", "synthetic core marker")
+	for _, statement := range []string{
+		`SELECT title AS text FROM plugin_well_formed.receipts UNION ALL SELECT content AS text FROM memories`,
+		`SELECT r.title AS text FROM plugin_well_formed.receipts r, memories m`,
+	} {
+		mixed, err := svc.Exec(t.Context(), service.ExecRequest{SQL: statement})
+		if err != nil {
+			t.Fatalf("%s: %v", statement, err)
+		}
+		for _, row := range mixed.Rows {
+			if row["database"] != "core+plugin:well-formed" {
+				t.Fatalf("%s: a row of mixed sources claims one of them: %+v", statement, row)
+			}
+		}
 	}
 }
 

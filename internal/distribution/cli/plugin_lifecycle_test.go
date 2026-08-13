@@ -23,23 +23,33 @@ func TestPluginInstallerIsInertBeforeTheExperimentalFlag(t *testing.T) {
 	}
 }
 
-func TestPluginConsentDistinguishesDataFromCode(t *testing.T) {
+func TestPluginConsentDistinguishesDataFromCodeAndNamesTheReplacedChecksum(t *testing.T) {
+	checksum, recorded := strings.Repeat("a", 64), strings.Repeat("b", 64)
 	tests := []struct {
-		risk plugininstall.Risk
-		want string
+		action  string
+		risk    plugininstall.Risk
+		trusted string
+		want    []string
 	}{
-		{plugininstall.DataOnly, "DATA-ONLY: near-harmless; its worst case is lying content"},
-		{plugininstall.Executable, "EXECUTABLE: FULL TRUST; it runs code with your user privileges"},
+		{"install", plugininstall.DataOnly, "",
+			[]string{"DATA-ONLY: near-harmless; its worst case is lying content", "sha256:" + checksum}},
+		{"install", plugininstall.Executable, "",
+			[]string{"EXECUTABLE: FULL TRUST; it runs code with your user privileges"}},
+		{"update", plugininstall.DataOnly, recorded,
+			[]string{"sha256:" + checksum, "replaces the recorded sha256:" + recorded}},
+		{"update", plugininstall.DataOnly, checksum,
+			[]string{"unchanged since the recorded install"}},
 	}
 	for _, test := range tests {
 		candidate := plugininstall.Candidate{
 			Name: "synthetic", Version: "1.2.3", Source: "owner/synthetic",
-			Checksum: strings.Repeat("a", 64), Risk: test.risk,
+			Checksum: checksum, Risk: test.risk,
 		}
-		text := pluginConsentText("install", candidate)
-		for _, want := range []string{"source: owner/synthetic", "version: 1.2.3", "sha256:" + candidate.Checksum, test.want} {
+		text := pluginConsentText(test.action, candidate, test.trusted)
+		wanted := append([]string{"source: owner/synthetic", "version: 1.2.3"}, test.want...)
+		for _, want := range wanted {
 			if !strings.Contains(text, want) {
-				t.Errorf("%s consent lacks %q:\n%s", test.risk, want, text)
+				t.Errorf("%s %s consent lacks %q:\n%s", test.action, test.risk, want, text)
 			}
 		}
 	}

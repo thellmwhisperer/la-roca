@@ -44,6 +44,8 @@ tables:
 `description`, at least one question, and every table's description and ordered
 column list are required. A plugin that holds user data moved out of core also
 declares `custody: true`; lifecycle tooling must treat that data as protected.
+No table may declare a column named `database`: that name is reserved for the
+row provenance every answer carries.
 
 At query time La Roca ranks installed semantic layers against the question and
 validates each selected declaration against the database's real tables and
@@ -63,6 +65,28 @@ Every query and explicit `roca exec` answer declares its consulted databases.
 Rows returned while plugins are in scope carry a `database` value such as
 `core` or `plugin:receipts`; cross-database rows use a `+`-joined label. This
 provenance also reaches MCP's TOON output.
+
+## Building against the stable surfaces
+
+A plugin should treat the `roca` process as its API and compose these public
+surfaces:
+
+- CLI commands with `--json` when it needs machine-shaped output.
+- `roca query`, `roca exec`, and `roca sql` for reads; explicit SQL still goes
+  through La Roca's read-only gate. Query inherits the detected-agent-CLI
+  factory default, so a plugin does not introduce a separate login step.
+- `roca store` for writes. Use the documented layers and pass
+  `--origin plugin:<name>` so the plugin's records remain attributable and can
+  be selected or purged by origin. Plugin names may contain letters, digits,
+  hyphens, underscores, and dots, and may not begin with a dot. Pass `--agent`
+  and `--model` as well, or the write is stored as an unknown author: see
+  [Memory authorship](operations.md#memory-authorship).
+- `roca mcp serve` when an MCP client is the more natural integration surface.
+
+Every answer these surfaces return declares the databases it consulted in
+`databases`, the relevant ones it could not attach in `omitted_databases`, and
+each degraded semantic layer in `warnings`. Each row carries its source in
+`database`. That envelope is the contract a plugin author may rely on.
 
 ## Commands and core-memory writes
 

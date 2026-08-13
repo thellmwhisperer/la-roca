@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -22,8 +23,7 @@ func (s *Service) pluginsForQuestion(ctx context.Context, question string) plugi
 		return pluginRoute{}
 	}
 	candidates, warnings := plugin.Discover(s.opts.PluginDir)
-	ranked, _ := plugin.Relevant(question, candidates, len(candidates))
-	return validatePluginRoute(ctx, ranked, warnings)
+	return validatePluginRoute(ctx, plugin.Relevant(question, candidates), warnings)
 }
 
 func (s *Service) pluginsForSQL(ctx context.Context, statement string) pluginRoute {
@@ -31,8 +31,7 @@ func (s *Service) pluginsForSQL(ctx context.Context, statement string) pluginRou
 		return pluginRoute{}
 	}
 	candidates, warnings := plugin.Discover(s.opts.PluginDir)
-	referenced, _ := plugin.Referenced(statement, candidates, len(candidates))
-	return validatePluginRoute(ctx, referenced, warnings)
+	return validatePluginRoute(ctx, plugin.Referenced(statement, candidates), warnings)
 }
 
 func validatePluginRoute(ctx context.Context, candidates []plugin.Descriptor,
@@ -178,9 +177,9 @@ func (s *Service) executeWithPlugins(ctx context.Context, statement, term string
 
 func ensureDatabaseColumn(columns []string, rows []map[string]any,
 	database string) ([]string, []map[string]any) {
-	present := slices.Contains(columns, "database")
+	present := slices.Contains(columns, plugin.ProvenanceColumn)
 	if !present {
-		columns = append(slices.Clone(columns), "database")
+		columns = append(slices.Clone(columns), plugin.ProvenanceColumn)
 	}
 	labels := strings.Split(database, "+")
 	allowed := make(map[string]bool, len(labels)+1)
@@ -189,9 +188,9 @@ func ensureDatabaseColumn(columns []string, rows []map[string]any,
 	}
 	allowed[database] = true
 	for _, row := range rows {
-		value := fmt.Sprint(row["database"])
+		value := fmt.Sprint(row[plugin.ProvenanceColumn])
 		if len(labels) == 1 || !present || !allowed[value] {
-			row["database"] = database
+			row[plugin.ProvenanceColumn] = database
 		}
 	}
 	return columns, rows
@@ -202,7 +201,7 @@ func fallbackDatabase(statement string, databases []plugin.Database) string {
 	for _, database := range databases {
 		descriptors = append(descriptors, database.Descriptor)
 	}
-	referenced, _ := plugin.Referenced(statement, descriptors, len(descriptors))
+	referenced := plugin.Referenced(statement, descriptors)
 	labels := make([]string, 0, len(referenced)+1)
 	if referencesCoreTable(statement) || len(referenced) == 0 {
 		labels = append(labels, "core")
@@ -213,12 +212,29 @@ func fallbackDatabase(statement string, databases []plugin.Database) string {
 	return strings.Join(labels, "+")
 }
 
+// tableSource opens a list of table references and clauseBoundary closes it.
+// What lies between the two is a comma-separated list, and a core table is any
+// unqualified entry in it, wherever it stands.
+var (
+	tableSource    = regexp.MustCompile(`(?i)\b(?:from|join)\b`)
+	clauseBoundary = regexp.MustCompile(
+		`(?i)\b(?:where|group|order|limit|offset|having|window|on|using|select|values|returning|union|intersect|except)\b`)
+)
+
 func referencesCoreTable(statement string) bool {
-	normalized := strings.NewReplacer("\n", " ", "\r", " ", "\t", " ", `"`, "", "`", "").Replace(strings.ToLower(statement))
+	normalized := strings.NewReplacer("\n", " ", "\r", " ", "\t", " ", `"`, "", "`", "",
+		"(", " ( ", ")", " ) ").Replace(strings.ToLower(statement))
+	core := make(map[string]bool)
 	for _, table := range theModelsSchema().Tables {
-		for _, lead := range []string{"from ", "join "} {
-			if strings.Contains(normalized, lead+table.Name+" ") ||
-				strings.Contains(normalized, lead+"main."+table.Name+" ") {
+		core[table.Name] = true
+	}
+	for _, clause := range tableSource.Split(normalized, -1)[1:] {
+		if end := clauseBoundary.FindStringIndex(clause); end != nil {
+			clause = clause[:end[0]]
+		}
+		for _, reference := range strings.Split(clause, ",") {
+			fields := strings.Fields(reference)
+			if len(fields) > 0 && core[strings.TrimPrefix(fields[0], "main.")] {
 				return true
 			}
 		}
