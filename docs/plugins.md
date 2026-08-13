@@ -3,6 +3,20 @@
 First-time path: [install, detect an already signed-in agent CLI, and query
 without a La Roca login](lifecycle.md#install).
 
+The plugin standard is experimental and defaults to off in this release. Enable
+data discovery, attach-based querying, and `roca plugin` lifecycle commands in
+`~/.roca/config.toml`:
+
+```toml
+[features]
+plugins = true
+```
+
+With `features.plugins` absent or false, La Roca does not inspect the plugins
+directory, route to a semantic layer, attach a plugin database, or resolve an
+installer source. Existing Git-style executable dispatch predates this standard
+and continues to behave as before.
+
 A data plugin is one directory under `~/.roca/plugins/<name>/`. It contains
 exactly one plain SQLite database (`.db`, `.sqlite`, or `.sqlite3`) and a
 `semantic.yaml` file. The database is the plugin's only writable store; La
@@ -61,3 +75,55 @@ data-plugin discovery does not change dispatch.
 A plugin that intentionally writes a core memory uses `roca store` or MCP with
 `--origin plugin:<name>`. Direct writes to `roca.db` are outside the plugin
 contract. Executables run with the user's permissions and are not a sandbox.
+
+## Verified packages and lifecycle
+
+An installable source is a local directory or the root of a Git repository. A
+URL is treated as a Git URL; `owner/repo` is cloned from GitHub using the user's
+existing Git credentials, including for private repositories. The source adds
+a `plugin.json` file:
+
+```json
+{
+  "schema": 1,
+  "name": "receipts",
+  "version": "1.2.3"
+}
+```
+
+A `checksums.txt` beside it publishes one SHA-256 for each payload file:
+`plugin.json`, `semantic.yaml`, the one SQLite database, and the optional
+`roca-<name>` executable. The installer rejects missing, extra, changed,
+symlinked, or non-regular payloads before it writes anything. Its displayed
+package checksum is the deterministic SHA-256 fingerprint of those verified
+source checksums.
+
+```text
+<sha256>  plugin.json
+<sha256>  semantic.yaml
+<sha256>  receipts.sqlite
+<sha256>  roca-receipts
+```
+
+Run `roca plugin install <path|url|owner/repo>`. The consent screen always names
+the source, version, checksum, and one of two risk levels:
+
+- **DATA-ONLY** has a database and semantic layer but no executable. It is
+  near-harmless; its worst case is lying content entering model context.
+- **EXECUTABLE** is full trust. It runs code with the user's privileges.
+
+The plugin folder is installed under `~/.roca/plugins/`. An executable goes to
+`$ROCA_PREFIX`, or `~/.local/bin` when that variable is absent. The generated
+`.roca-plugin.json` records source, version, package checksum, payload checksums,
+and installed paths.
+
+`roca plugin update <name>` re-resolves and verifies that recorded source. It
+refreshes immutable package files but preserves the installed SQLite database,
+because that file is the plugin's writable, user-owned state. A database filename
+change is refused instead of guessing at a migration.
+
+`roca plugin uninstall <name>` removes an ordinary verified installation. When
+`custody: true`, it never deletes the folder: it atomically moves the complete
+directory to `~/.roca/plugin-custody/<name>-<UTC timestamp>` and reports that
+path. A lifecycle operation also refuses to overwrite or delete an installed
+executable whose checksum changed outside the installer.
