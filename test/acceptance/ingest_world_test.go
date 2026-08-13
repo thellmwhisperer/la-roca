@@ -34,6 +34,7 @@ type ingestAcceptanceWorld struct {
 	previous ingestRun
 
 	fixturePath string
+	exportPath  string
 	sessionID   string
 	seeded      []string
 
@@ -63,7 +64,7 @@ func (w *ingestAcceptanceWorld) registerLifecycle(ctx *godog.ScenarioContext) {
 		}
 		w.dbPath = filepath.Join(home, ".roca", "roca.db")
 		w.last, w.previous = ingestRun{}, ingestRun{}
-		w.fixturePath, w.sessionID = "", ""
+		w.fixturePath, w.exportPath, w.sessionID = "", "", ""
 		w.seeded, w.expected = nil, nil
 		w.countsBefore, w.countsAfter = nil, nil
 		w.databaseHash = ""
@@ -114,12 +115,21 @@ func (w *ingestAcceptanceWorld) runCommand(args ...string) (ingestRun, error) {
 }
 
 func (w *ingestAcceptanceWorld) runIngest(dryRun bool) error {
+	return w.runIngestArgs(dryRun)
+}
+
+func (w *ingestAcceptanceWorld) runExportIngest(dryRun bool) error {
+	return w.runIngestArgs(dryRun, w.exportPath)
+}
+
+func (w *ingestAcceptanceWorld) runIngestArgs(dryRun bool, paths ...string) error {
 	before, err := w.tableCounts()
 	if err != nil {
 		return err
 	}
 	w.countsBefore = before
-	args := []string{"ingest", "--db-path", w.dbPath, "--json"}
+	args := append([]string{"ingest"}, paths...)
+	args = append(args, "--db-path", w.dbPath, "--json")
 	if dryRun {
 		args = append(args, "--dry-run")
 	}

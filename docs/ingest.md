@@ -3,58 +3,57 @@
 First-time path: [install, detect an already signed-in agent CLI, and query
 without a La Roca login](lifecycle.md#install).
 
-`roca ingest` reads agent stores from their configured platform locations and
-reads downloaded account exports only when you name them. It fingerprints each
-source file by path and content, so an unchanged rerun is a zero delta and a
-newer export contributes only message identities that have not already landed.
+`roca ingest` reads live agent stores from their platform locations. Pass one
+extracted account-export directory to import that snapshot in the same run:
 
-## Declare an Anthropic data export
+```sh
+roca ingest /path/to/extracted-export
+```
+
+The path belongs only to that invocation. A later `roca ingest` with no path,
+including the nightly run, reads only live Claude, Codex, Pi, OpenCode, Hermes,
+and Cowork sources. It fingerprints each source file by path and content, so an
+explicit rerun of the same export is a zero delta and a newer export contributes
+only message identities that have not already landed.
+
+Older configuration files may still contain `anthropic_export_paths` or
+`openai_export_paths`. Those keys are leftovers: ingest ignores them, and they
+can be removed.
+
+## Import an Anthropic data export
 
 Request the official export from Claude web or Desktop under **Settings →
 Privacy → Export data**, download it, and extract the zip. Anthropic documents
 the export action in its
 [data export guide](https://support.claude.com/en/articles/9450526-export-your-claude-data).
 
-Add the extracted directory to the configuration file in the selected data
-directory (normally `~/.roca/config.toml`):
-
-```toml
-[defaults]
-anthropic_export_paths = [
-  "~/exports/claude-data",
-]
-```
-
-Then run:
+Then pass the extracted directory directly:
 
 ```sh
-roca ingest
+roca ingest ~/exports/claude-data
 ```
 
 Point to the extracted directory, not to an individual JSON file. La Roca reads
-`conversations.json` and `memories.json` when present, and multiple directories
-may be listed. It never scans Downloads or another broad directory for exports
-and ignores `projects/`, `design_chats/`, `users.json`, and
-`login_history.json`.
+`conversations.json` and `memories.json` when present. Import another snapshot
+with another explicit command. La Roca never scans Downloads or another broad
+directory for exports and ignores `projects/`, `design_chats/`, `users.json`, and
+`login_history.json`. The directory must exist, be readable, and contain the
+extracted files rather than the export zip itself.
 
-## Declare an OpenAI data export
+## Import an OpenAI data export
 
 Request the official export from ChatGPT under **Settings → Data Controls →
-Export Data**, download it, and extract the zip. Add the extracted directory to
-the configuration file in the selected data directory:
+Export Data**, download it, extract the zip, and run:
 
-```toml
-[defaults]
-openai_export_paths = [
-  "~/exports/chatgpt-data",
-]
+```sh
+roca ingest ~/exports/chatgpt-data
 ```
 
-Then run `roca ingest`. Point to the extracted directory, not to an individual
-JSON file. La Roca reads both the legacy `conversations.json` layout and the
-newer `conversations-*.json` shards, and processes both when an export directory
-contains both shapes. Multiple export directories may be listed; a later export
-of the same account contributes only conversations and messages whose source
+Point to the extracted directory, not to an individual JSON file or the zip. La
+Roca reads both the legacy `conversations.json` layout and the newer
+`conversations-*.json` shards, and processes both when an export directory
+contains both shapes. A later export of the same account contributes only
+conversations and messages whose source
 identities have not already landed. When legacy and sharded snapshots of the same
 conversation overlap, content reconciliation lands no duplicate and keeps the
 provenance stated by whichever snapshot recorded more about each answer; the
@@ -64,11 +63,9 @@ its snapshot stated, and an absent record is not a low one: such a row is filled
 where it is empty and never overwritten, so an upgrade cannot cost a corpus
 provenance it already had.
 
-A declared directory containing neither conversation shape is reported as an
-unrecognized OpenAI export layout. A declared path that does not exist or cannot
-be read is reported as unreadable, which is a different remedy: point the setting
-at the extracted directory. Both name the path in the ingest report, and neither
-is passed over in silence.
+An explicit directory containing neither conversation shape is reported as an
+unrecognized OpenAI export layout. A path that does not exist, is not a
+directory, or cannot be read is refused before ingest starts.
 
 Each `conversation_id` becomes an unprojected `chatgpt-web` session. La Roca
 walks the `mapping` parent/children tree and pairs user messages with assistant
@@ -168,7 +165,7 @@ content agrees. The one exception is a source that measures how much each of its
 snapshots stated about an answer, which today is the ChatGPT export: a reading
 that measurably stated more than the one the row's provenance came from states
 the provenance columns instead of only filling them, under the rules in
-[Declare an OpenAI data export](#declare-an-openai-data-export). Every unresolved
+[Import an OpenAI data export](#import-an-openai-data-export). Every unresolved
 collision is left untouched and reported as a discard, so an ambiguous match
 rewrites nothing and no exchange is written twice.
 

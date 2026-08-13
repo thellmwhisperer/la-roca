@@ -261,27 +261,6 @@ func TestRetiredProviderEditsPreserveRawTableIdentity(t *testing.T) {
 	}
 }
 
-func TestAnthropicExportProposalWritesTheFolderTheOperatorTypes(t *testing.T) {
-	root := t.TempDir()
-	path := filepath.Join(root, "config.toml")
-	if err := os.WriteFile(path, []byte("# keep\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	result, err := Run(Context{
-		Version: "v2", ConfigPath: path, StampPath: filepath.Join(root, "stamp.json"),
-		Capabilities: map[string]bool{CapabilityAnthropicExport: true},
-	}, only(ProposalAnthropicExport), Options{
-		Interactive: true, In: strings.NewReader("yes\n~/exports/claude\n"), Out: &strings.Builder{},
-	})
-	if err != nil || result.Accepted != 1 {
-		t.Fatalf("result = %+v, err %v", result, err)
-	}
-	text := mustRead(t, path)
-	if !strings.Contains(text, `anthropic_export_paths = ["~/exports/claude"]`) || !strings.Contains(text, "# keep") {
-		t.Fatalf("export path was not surgically added:\n%s", text)
-	}
-}
-
 func legacyAPIConfig() string {
 	return "# keep\n[models]\norder = [\"xai\", \"ollama\"]\n\n[models.xai]\nbase_url = \"https://example.invalid\"\n\"api_key\" = \"legacy-secret\"\nmodel = \"grok-legacy\"\n"
 }

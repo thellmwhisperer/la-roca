@@ -151,33 +151,11 @@ func registerInstallSteps(ctx *godog.ScenarioContext, m *world) {
 	ctx.Then(`^the previous database and configuration are still intact$`, m.theDataSurvivedTheUpdate)
 	ctx.Then(`^the MCP entries in the agent configurations still point at a binary that exists$`,
 		m.theMCPEntriesStillPointSomewhere)
-	ctx.Then(`^the update names how many capability proposals await$`, m.updateNamesCapabilityProposals)
-	ctx.Then(`^doctor lists the open capability proposals$`, m.doctorListsCapabilityProposals)
 	ctx.Then(`^no agent configuration contains a Roca entry any more$`, m.noAgentConfigMentionsRoca)
 	ctx.Then(`^every agent configuration keeps the rest of its content byte for byte$`,
 		m.theAgentConfigsKeptTheirOwnBytes)
 	ctx.Then(`^no agent configuration file has been deleted$`, m.noAgentConfigWasDeleted)
 	ctx.Then(`^no Roca artefact is left in the HOME$`, m.noRocaArtefactInTheHome)
-}
-
-func (m *world) updateNamesCapabilityProposals() error {
-	output := m.last.stdout + m.last.stderr
-	for _, want := range []string{"1 new capability needs a look", "roca doctor"} {
-		if !strings.Contains(output, want) {
-			return fmt.Errorf("update does not contain %q: %s", want, output)
-		}
-	}
-	return nil
-}
-
-func (m *world) doctorListsCapabilityProposals() error {
-	output := m.last.stdout + m.last.stderr
-	for _, want := range []string{"open capability proposals", "anthropic_export_paths"} {
-		if !strings.Contains(output, want) {
-			return fmt.Errorf("doctor code %d does not contain %q: %s", m.last.code, want, output)
-		}
-	}
-	return nil
 }
 
 // theReleaseVersion is the clean tag a release-stamped acceptance binary reports.

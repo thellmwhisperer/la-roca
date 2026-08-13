@@ -699,8 +699,8 @@ func declaredRoots(roots Roots) map[string]string {
 		"opencode_db":             roots.OpenCodeDB,
 		"pi_sessions":             roots.PiSessions,
 		"hermes_db":               roots.HermesDB,
-		"anthropic_export_paths":  strings.Join(roots.ClaudeWebExports, string(os.PathListSeparator)),
-		"openai_export_paths":     strings.Join(roots.ChatGPTWebExports, string(os.PathListSeparator)),
+		"claude_export":           strings.Join(roots.ClaudeWebExports, string(os.PathListSeparator)),
+		"chatgpt_export":          strings.Join(roots.ChatGPTWebExports, string(os.PathListSeparator)),
 	}
 	maps.DeleteFunc(declared, func(_, value string) bool { return value == "" })
 	return declared

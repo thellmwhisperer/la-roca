@@ -24,44 +24,46 @@ func registerIngestIncrementalSteps(ctx *godog.ScenarioContext, w *ingestAccepta
 	ctx.Given(`^a Claude session is ready to ingest$`, func() error {
 		return w.seedClaudeSession("repeat", 1, false, "")
 	})
-	ctx.Given(`^a declared Anthropic export is ready to ingest$`, func() error {
+	ctx.Given(`^an extracted Anthropic export is ready to ingest$`, func() error {
 		export := filepath.Join(w.home, "declared-anthropic-export")
-		fixture := filepath.Join("..", "..", "internal", "ingest", "testdata", "anthropic-export")
-		for _, name := range []string{"conversations.json", "memories.json"} {
-			raw, err := os.ReadFile(filepath.Join(fixture, name))
-			if err != nil {
-				return err
-			}
-			if err := writeFixture(filepath.Join(export, name), string(raw)); err != nil {
-				return err
-			}
-		}
-		return writeFixture(filepath.Join(w.home, ".roca", "config.toml"),
-			fmt.Sprintf("[defaults]\nanthropic_export_paths = [%q]\n", export))
+		w.exportPath = export
+		return copyAnthropicExportFixture(export)
 	})
-	ctx.Given(`^a declared OpenAI export is ready to ingest$`, func() error {
+	ctx.Given(`^an extracted OpenAI export is ready to ingest$`, func() error {
 		export := filepath.Join(w.home, "declared-openai-export-v1")
+		w.exportPath = export
 		if err := copyOpenAIExportFixture(export, "openai-export-v1"); err != nil {
 			return err
 		}
-		return writeFixture(filepath.Join(w.home, ".roca", "config.toml"),
-			fmt.Sprintf("[defaults]\nopenai_export_paths = [%q]\n", export))
+		return nil
 	})
-	ctx.Given(`^a declared sharded OpenAI export is ready to ingest$`, func() error {
+	ctx.Given(`^an extracted sharded OpenAI export is ready to ingest$`, func() error {
 		export := filepath.Join(w.home, "declared-openai-export-sharded")
+		w.exportPath = export
 		if err := copyOpenAIExportFixture(export, "openai-export-sharded"); err != nil {
 			return err
 		}
-		return writeFixture(filepath.Join(w.home, ".roca", "config.toml"),
-			fmt.Sprintf("[defaults]\nopenai_export_paths = [%q]\n", export))
+		return nil
 	})
-	ctx.Given(`^a declared OpenAI export has no conversation layout$`, func() error {
+	ctx.Given(`^an extracted OpenAI export has no conversation layout$`, func() error {
 		export := filepath.Join(w.home, "declared-unrecognized-openai-export")
+		w.exportPath = export
 		if err := os.MkdirAll(export, 0o700); err != nil {
 			return err
 		}
-		return writeFixture(filepath.Join(w.home, ".roca", "config.toml"),
-			fmt.Sprintf("[defaults]\nopenai_export_paths = [%q]\n", export))
+		return nil
+	})
+	ctx.Given(`^standing export paths remain in config$`, func() error {
+		anthropic := filepath.Join(w.home, "leftover-anthropic-export")
+		openai := filepath.Join(w.home, "leftover-openai-export")
+		if err := copyOpenAIExportFixture(openai, "openai-export-v1"); err != nil {
+			return err
+		}
+		if err := copyAnthropicExportFixture(anthropic); err != nil {
+			return err
+		}
+		return writeFixture(filepath.Join(w.home, ".roca", "config.toml"), fmt.Sprintf(
+			"[defaults]\nanthropic_export_paths = [%q]\nopenai_export_paths = [%q]\n", anthropic, openai))
 	})
 	ctx.Given(`^a Claude session with one exchange has already been ingested$`, func() error {
 		if err := w.seedClaudeSession("growing", 1, false, ""); err != nil {
@@ -76,6 +78,15 @@ func registerIngestIncrementalSteps(ctx *godog.ScenarioContext, w *ingestAccepta
 		}
 		return w.runIngest(false)
 	})
+	ctx.When(`^I run ingest with the export path$`, func() error {
+		return w.runExportIngest(false)
+	})
+	ctx.When(`^I run ingest with the export path twice in a row$`, func() error {
+		if err := w.runExportIngest(false); err != nil {
+			return err
+		}
+		return w.runExportIngest(false)
+	})
 	ctx.When(`^a second exchange is appended and I run ingest again$`, func() error {
 		if err := w.appendClaudeExchange(); err != nil {
 			return err
@@ -84,14 +95,11 @@ func registerIngestIncrementalSteps(ctx *godog.ScenarioContext, w *ingestAccepta
 	})
 	ctx.When(`^I select the newer OpenAI export and run ingest$`, func() error {
 		export := filepath.Join(w.home, "declared-openai-export-v2")
+		w.exportPath = export
 		if err := copyOpenAIExportFixture(export, "openai-export-v2"); err != nil {
 			return err
 		}
-		if err := writeFixture(filepath.Join(w.home, ".roca", "config.toml"),
-			fmt.Sprintf("[defaults]\nopenai_export_paths = [%q]\n", export)); err != nil {
-			return err
-		}
-		return w.runIngest(false)
+		return w.runExportIngest(false)
 	})
 	ctx.Then(`^the file is skipped by fingerprint without an error$`, func() error {
 		skipped, errors, _, err := w.reportFileCounts()
@@ -114,7 +122,7 @@ func registerIngestIncrementalSteps(ctx *godog.ScenarioContext, w *ingestAccepta
 		}
 		return nil
 	})
-	ctx.Then(`^the declared Anthropic export is ingested$`, func() error {
+	ctx.Then(`^the explicit Anthropic export is ingested$`, func() error {
 		for query, want := range map[string]int{
 			`SELECT COUNT(*) FROM sessions WHERE source_agent = 'claude-web'`: 2,
 			`SELECT COUNT(*) FROM exchanges e JOIN sessions s ON s.session_id = e.session_id
@@ -198,6 +206,24 @@ func registerIngestIncrementalSteps(ctx *godog.ScenarioContext, w *ingestAccepta
 		}
 		return nil
 	})
+	ctx.Then(`^no standing export is scanned$`, func() error {
+		for _, source := range []string{"claude_web_export_files", "chatgpt_web_export_files"} {
+			got, err := ingestJSONNumber(w.last.doc, "scanned", source)
+			if err != nil {
+				return err
+			}
+			if got != 0 {
+				return fmt.Errorf("scanned.%s=%d, want 0", source, got)
+			}
+		}
+		return expectQueryCount(w, `SELECT COUNT(*) FROM sessions
+			WHERE source_agent IN ('claude-web', 'chatgpt-web')`, 0)
+	})
+}
+
+func copyAnthropicExportFixture(target string) error {
+	return copyExportFixture(target, "anthropic-export",
+		[]string{"conversations.json", "memories.json"})
 }
 
 func copyOpenAIExportFixture(target, fixtureName string) error {
@@ -206,11 +232,19 @@ func copyOpenAIExportFixture(target, fixtureName string) error {
 	if err != nil {
 		return err
 	}
+	var names []string
 	for _, entry := range entries {
 		if !entry.Type().IsRegular() {
 			continue
 		}
-		name := entry.Name()
+		names = append(names, entry.Name())
+	}
+	return copyExportFixture(target, fixtureName, names)
+}
+
+func copyExportFixture(target, fixtureName string, names []string) error {
+	fixture := filepath.Join("..", "..", "internal", "ingest", "testdata", fixtureName)
+	for _, name := range names {
 		raw, err := os.ReadFile(filepath.Join(fixture, name))
 		if err != nil {
 			return err

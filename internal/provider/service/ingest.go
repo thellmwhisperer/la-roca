@@ -12,6 +12,9 @@ import (
 type IngestRequest struct {
 	// DryRun reports what would be read and writes nothing.
 	DryRun bool
+	// ExportPath is one extracted account export selected for this invocation.
+	// It is never retained in configuration or reused by a later ingest.
+	ExportPath string
 }
 
 // IngestResult is the run's report, with the search index's own beside it: what
@@ -61,8 +64,12 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (IngestResult, 
 		}
 	}
 
+	roots := s.opts.Sources
+	if req.ExportPath != "" {
+		roots = ingest.WithExportPath(roots, req.ExportPath)
+	}
 	report, err := ingest.Run(ctx, s.db, s.registry, ingest.Options{
-		Roots:        s.opts.Sources,
+		Roots:        roots,
 		DryRun:       req.DryRun,
 		Progress:     s.opts.Progress,
 		LiveProgress: s.opts.IngestProgress,

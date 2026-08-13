@@ -1,6 +1,9 @@
 package ingest
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 // Every platform is resolved on any platform: the machine travels as data, so a
 // Linux or Windows layout is a table case and not a machine nobody has.
@@ -135,20 +138,36 @@ func TestTheEnvironmentWinsOverThePlatformDefault(t *testing.T) {
 
 func TestATildeInADeclaredRootIsExpandedAgainstTheDeclaredHome(t *testing.T) {
 	roots := ResolveRoots(Environment{GOOS: "linux", Home: "/home/op"},
-		Settings{
-			PiSessions: "~/sessions/pi", AnthropicExportPaths: []string{"~/exports/claude"},
-			OpenAIExportPaths: []string{"~/exports/chatgpt"},
-		})
+		Settings{PiSessions: "~/sessions/pi"})
 	if roots.PiSessions != "/home/op/sessions/pi" {
 		t.Errorf("pi = %q", roots.PiSessions)
 	}
-	if len(roots.ClaudeWebExports) != 1 ||
-		roots.ClaudeWebExports[0] != "/home/op/exports/claude" {
-		t.Errorf("Claude web exports = %v", roots.ClaudeWebExports)
+}
+
+func TestAnExplicitExportPathIsScopedToOneInvocationAndDetectedByShape(t *testing.T) {
+	base := ResolveRoots(Environment{GOOS: "linux", Home: "/home/op"}, Settings{})
+	if len(base.ClaudeWebExports) != 0 || len(base.ChatGPTWebExports) != 0 {
+		t.Fatalf("live roots contain standing exports: %+v", base)
 	}
-	if len(roots.ChatGPTWebExports) != 1 ||
-		roots.ChatGPTWebExports[0] != "/home/op/exports/chatgpt" {
-		t.Errorf("ChatGPT web exports = %v", roots.ChatGPTWebExports)
+	for _, test := range []struct {
+		name, fixture string
+		claude        bool
+	}{
+		{"Claude", "anthropic-export", true},
+		{"ChatGPT", "openai-export-v1", false},
+		{"sharded ChatGPT", "openai-export-sharded", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join("testdata", test.fixture)
+			got := WithExportPath(base, path)
+			if (len(got.ClaudeWebExports) == 1) != test.claude ||
+				(len(got.ChatGPTWebExports) == 1) == test.claude {
+				t.Fatalf("roots = %+v", got)
+			}
+			if len(base.ClaudeWebExports) != 0 || len(base.ChatGPTWebExports) != 0 {
+				t.Fatalf("base roots were mutated: %+v", base)
+			}
+		})
 	}
 }
 

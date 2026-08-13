@@ -1,6 +1,11 @@
 package ingest
 
-import "strings"
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+)
 
 // The roots are configuration, never constants. They come from
 // the home the process was given and from what the operator declared, and an
@@ -46,12 +51,6 @@ type Settings struct {
 	// RunnerDir is La Roca's neutral subprocess cwd. Any runtime artefact keyed
 	// to this directory is product traffic, never operator corpus.
 	RunnerDir string
-	// AnthropicExportPaths are directories the operator explicitly selected.
-	// There is no default and no environment fallback: exports are never
-	// discovered from Downloads or another broad location.
-	AnthropicExportPaths []string
-	// OpenAIExportPaths are explicitly selected extracted account exports.
-	OpenAIExportPaths []string
 	// WorkspaceRoots resolve project identity from encoded session paths. Files
 	// under them are never ingested as content.
 	WorkspaceRoots []string
@@ -119,10 +118,8 @@ func ResolveRoots(env Environment, settings Settings) Roots {
 			join(env, env.Home, ".pi", "agent", "sessions")),
 		HermesDB: pick(env, settings.HermesDB, envHermesDB,
 			join(env, env.Home, ".hermes", "state.db")),
-		RunnerDir:         expand(env, settings.RunnerDir),
-		ClaudeWebExports:  expandAll(env, settings.AnthropicExportPaths),
-		ChatGPTWebExports: expandAll(env, settings.OpenAIExportPaths),
-		Workspace:         ResolveWorkspaceRoots(expandAll(env, settings.WorkspaceRoots)),
+		RunnerDir: expand(env, settings.RunnerDir),
+		Workspace: ResolveWorkspaceRoots(expandAll(env, settings.WorkspaceRoots)),
 	}
 
 	roots.SubagentRoots = expandAll(env, settings.SubagentRoots)
@@ -130,6 +127,41 @@ func ResolveRoots(env Environment, settings Settings) Roots {
 		roots.SubagentRoots = []string{roots.ClaudeProjects}
 	}
 	return roots
+}
+
+// WithExportPath adds one extracted account export to this invocation. The
+// folder shape decides which parser owns conversations.json; the path is not
+// retained anywhere and a later plain ingest starts from the live roots again.
+func WithExportPath(roots Roots, path string) Roots {
+	if claudeExport(path) {
+		roots.ClaudeWebExports = []string{path}
+		return roots
+	}
+	roots.ChatGPTWebExports = []string{path}
+	return roots
+}
+
+func claudeExport(root string) bool {
+	if isFile(filepath.Join(root, "memories.json")) {
+		return true
+	}
+	file, err := os.Open(filepath.Join(root, "conversations.json"))
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	decoder := json.NewDecoder(file)
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('[') || !decoder.More() {
+		return false
+	}
+	var first map[string]json.RawMessage
+	if err := decoder.Decode(&first); err != nil {
+		return false
+	}
+	_, messages := first["chat_messages"]
+	_, uuid := first["uuid"]
+	return messages || uuid
 }
 
 // under is the directory `name` inside the base a platform variable declares, or
