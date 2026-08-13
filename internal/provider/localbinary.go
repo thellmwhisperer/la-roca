@@ -150,7 +150,7 @@ func (b *LocalBinary) DiagnoseReady(ctx context.Context) Readiness {
 	if err := ProbeModel(ctx, b); err != nil {
 		return Readiness{ModelID: b.model,
 			Reason: fmt.Sprintf("%s account probe failed: %v", b.name, err),
-			Action: "sign in with the local CLI, then run `roca login " + b.name + "` again"}
+			Action: "sign in with the local CLI, then run `roca model check " + b.name + "` again"}
 	}
 	return ready
 }

@@ -6,74 +6,46 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/thellmwhisperer/la-roca/internal/provider"
 )
 
-func TestBareLoginListsOnlyLocalCLIsAndNoCredentialState(t *testing.T) {
-	home := isolatedLoginHome(t)
-	configPath := filepath.Join(home, ".roca", "config.toml")
-	out := runRoot(t, Build{Version: "test"}, "login")
-	want := "Supported providers:\n" +
-		"  codex       local CLI     ·  roca login codex\n" +
-		"  claude      local CLI     ·  roca login claude\n" +
-		"Model configuration:\n" +
-		"  order: codex, ollama (built-in default · change with: models.order in " + configPath + ")\n" +
-		"  codex: model " + provider.DefaultCodexModel + " (built-in default · change with: roca model set <id> or models.codex.model in " + configPath + ")\n" +
-		"  ollama: model qwen3.5:4b (built-in default · change with: models.ollama.model in " + configPath + ")\n" +
-		"Authentication: models authenticate through their own CLIs; La Roca stores no secrets and no roca login is required."
-	if out != want {
-		t.Fatalf("bare login output changed:\n--- want ---\n%s\n--- got ---\n%s", want, out)
-	}
-}
-
-func TestLoginHelpExplainsThatOnlyLocalCLIsAuthenticate(t *testing.T) {
+func TestLoginHelpDeclaresTheReadOnlyCompatibilityAlias(t *testing.T) {
 	_ = isolatedLoginHome(t)
 	out := runRoot(t, Build{Version: "test"}, "login", "--help")
 	lower := strings.ToLower(out)
-	for _, retired := range []string{"api key", "oauth", "credentials directory", "credential and session state"} {
+	for _, retired := range []string{"api key", "oauth", "credentials directory", "model set", "--model"} {
 		if strings.Contains(lower, retired) {
 			t.Errorf("login help still mentions %q:\n%s", retired, out)
 		}
 	}
-	for _, want := range []string{"authenticate through their own cli", "no roca login is required", "roca login codex", "roca login claude"} {
+	for _, want := range []string{"compatibility alias", "roca model check", "never writes configuration", "authenticate through their own cli"} {
 		if !strings.Contains(lower, want) {
 			t.Errorf("login help omitted %q:\n%s", want, out)
 		}
 	}
-
-	_, err := runRootErr(t, Build{Version: "test"}, nil, "login", "xai")
-	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "authenticate through their own cli") {
-		t.Fatalf("retired provider error = %v", err)
-	}
 }
 
-func TestLocalCLILoginVerifiesWithoutStoringASecret(t *testing.T) {
+func TestLoginModelFlagIsRetiredWithoutWriting(t *testing.T) {
 	home := isolatedLoginHome(t)
-	bin := os.Getenv("PATH")
-	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte("#!/bin/sh\nprintf 'SELECT 1'\n"), 0o700); err != nil {
+	path := modelConfigPath(home)
+	before := "[models]\norder = [\"ollama\", \"codex\"]\n"
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	out, err := runRootErr(t, Build{Version: "test"}, nil,
-		"login", "--json", "--model", provider.DefaultCodexModel, "codex")
-	if err != nil {
-		t.Fatalf("login: %v\n%s", err, out)
+	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	var result map[string]any
-	if err := json.Unmarshal([]byte(out), &result); err != nil {
-		t.Fatalf("invalid JSON: %v\n%s", err, out)
+	_, err := runRootErr(t, Build{Version: "test"}, nil, "login", "codex", "--model", "invented")
+	if err == nil || !strings.Contains(err.Error(), "unknown flag: --model") {
+		t.Fatalf("error = %v", err)
 	}
-	if result["provider"] != provider.NameCodex || result["secrets_stored_by_roca"] != false ||
-		result["authentication_managed_by"] != "local CLI" {
-		t.Fatalf("result = %+v", result)
-	}
-	if _, err := os.Stat(filepath.Join(home, ".roca", "credentials")); !os.IsNotExist(err) {
-		t.Fatalf("credential directory exists: %v", err)
+	raw, readErr := os.ReadFile(path)
+	if readErr != nil || string(raw) != before {
+		t.Fatalf("retired flag changed config: raw=%q err=%v", raw, readErr)
 	}
 }
 
-func TestBareLoginJSONContainsNoCredentialState(t *testing.T) {
-	_ = isolatedLoginHome(t)
+func TestBareLoginJSONIsAReadOnlyModelCheck(t *testing.T) {
+	home := isolatedLoginHome(t)
 	out, err := runRootErr(t, Build{Version: "test"}, nil, "login", "--json")
 	if err != nil {
 		t.Fatal(err)
@@ -82,12 +54,11 @@ func TestBareLoginJSONContainsNoCredentialState(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &result); err != nil {
 		t.Fatal(err)
 	}
-	if _, exists := result["credentials"]; exists {
-		t.Fatalf("credential state survived: %+v", result)
+	if result["provider"] != "codex" || result["ready"] != true || result["configuration_changed"] != false {
+		t.Fatalf("result = %+v", result)
 	}
-	providers, _ := result["providers"].([]any)
-	if len(providers) != 2 {
-		t.Fatalf("providers = %+v", providers)
+	if _, err := os.Stat(filepath.Join(home, ".roca", "config.toml")); !os.IsNotExist(err) {
+		t.Fatalf("model check wrote config: %v", err)
 	}
 }
 

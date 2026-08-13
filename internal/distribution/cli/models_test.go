@@ -11,7 +11,7 @@ import (
 
 // `roca models` lists every configured provider's catalogue and marks the model
 // the cascade would actually use. It does not need a database: it is a question
-// about providers, like login, so an operator can run it before init.
+// about providers, like model check, so an operator can run it before init.
 func TestModelsListsEachProviderAndMarksTheSelected(t *testing.T) {
 	home := isolatedLoginHome(t)
 	writeCommandProviderConfig(t, home, "mycorp", "mycorp-7b", true)

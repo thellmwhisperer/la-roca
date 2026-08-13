@@ -3,6 +3,7 @@ package provider
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -130,7 +131,8 @@ func TestRetiredCredentialConfigurationsNeverCrashAndDegradeHonestly(t *testing.
 func TestCustomCommandProviderRemainsSupported(t *testing.T) {
 	for _, tc := range []struct{ raw, resolved string }{{"fixture", "fixture"}, {"my_agent", "my-agent"}} {
 		body := "[models]\norder = [\"" + tc.raw + "\"]\n[models." + tc.raw + "]\n" +
-			"command = [\"fixture-agent\", \"{prompt}\"]\nmodel = \"fixture-model\"\n"
+			"command = [\"fixture-agent\", \"{prompt}\"]\nmodel = \"fixture-model\"\n" +
+			"models = [\"fixture-model\", \"fixture-other\"]\n"
 		s := settings(t, body)
 		cascade, err := BuildCascade(s)
 		if err != nil || len(cascade.Providers) != 1 {
@@ -141,6 +143,30 @@ func TestCustomCommandProviderRemainsSupported(t *testing.T) {
 		}
 		if s.File.Models.Providers[tc.resolved].TableName != tc.raw {
 			t.Fatalf("%s: raw table identity was not preserved", tc.raw)
+		}
+		choices := cascade.Providers[0].(interface{ ModelChoices() []string }).ModelChoices()
+		if !slices.Contains(choices, "fixture-other") {
+			t.Fatalf("%s: declared catalogue = %v", tc.raw, choices)
+		}
+		if strings.Contains(strings.Join(cascade.Warnings, "\n"), "models."+tc.raw+".models") {
+			t.Fatalf("%s: the declared catalogue was read as an unknown key: %v", tc.raw, cascade.Warnings)
+		}
+	}
+}
+
+// A shipped preset keeps its aliases when the operator writes down the full
+// model IDs the same CLI accepts, so switching away from one is not one-way.
+func TestDeclaredModelsWidenAShippedPresetCatalogue(t *testing.T) {
+	s := settings(t, "[models]\norder = [\"claude\"]\n[models.claude]\n"+
+		"model = \"sonnet\"\nmodels = [\"claude-opus-5\"]\n")
+	cascade, err := BuildCascade(s)
+	if err != nil || len(cascade.Providers) != 1 {
+		t.Fatalf("cascade=%+v err=%v", cascade, err)
+	}
+	choices := cascade.Providers[0].(interface{ ModelChoices() []string }).ModelChoices()
+	for _, want := range []string{"sonnet", "opus", "haiku", "claude-opus-5"} {
+		if !slices.Contains(choices, want) {
+			t.Fatalf("catalogue %v omits %q", choices, want)
 		}
 	}
 }
