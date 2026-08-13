@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -604,7 +605,7 @@ func (s *Service) rescue(ctx context.Context, req QueryRequest, res QueryResult,
 
 	progress(req, QueryPhaseExecution)
 	executionStart := time.Now()
-	columns, rows, stmt, provenance, err := s.searchByTerm(ctx, plan, "", req.MaxChars, true)
+	columns, rows, stmt, provenance, warnings, err := s.searchByTerm(ctx, plan, "", req.MaxChars, true)
 	res.ExecutionMS += time.Since(executionStart).Milliseconds()
 	if err != nil {
 		// A rescue that fails is not a second failure to report: the query
@@ -612,6 +613,7 @@ func (s *Service) rescue(ctx context.Context, req QueryRequest, res QueryResult,
 		res.Match = MatchEmpty
 		return res
 	}
+	res.Warnings = append(res.Warnings, warnings...)
 	if len(rows) == 0 {
 		res.found(nil, nil)
 		return res
@@ -630,11 +632,11 @@ func (s *Service) rescue(ctx context.Context, req QueryRequest, res QueryResult,
 // and also returns the provenance of that decision.
 func (s *Service) searchByTerm(ctx context.Context, plan query.Plan, method string,
 	maxChars int, matchAny bool) (columns []string, rows []map[string]any, stmt string,
-	provenance *search.Provenance, err error) {
+	provenance *search.Provenance, warnings []string, err error) {
 
 	gate, err := s.theGate()
 	if err != nil {
-		return nil, nil, "", nil, err
+		return nil, nil, "", nil, nil, err
 	}
 	engine := &search.Engine{DB: s.db, Validate: gate.Validate}
 
@@ -651,7 +653,7 @@ func (s *Service) searchByTerm(ctx context.Context, plan query.Plan, method stri
 			sqlLexical, err = query.RenderSQLFTS(plan, s.registry.SearchExcluded(), limit)
 		}
 		if err != nil {
-			return nil, nil, "", nil, err
+			return nil, nil, "", nil, nil, err
 		}
 	}
 
@@ -662,23 +664,26 @@ func (s *Service) searchByTerm(ctx context.Context, plan query.Plan, method stri
 		Limit:      limit,
 	})
 	if err != nil {
-		return nil, nil, "", nil, err
+		return nil, nil, "", nil, nil, err
 	}
 
 	if result.Provenance.Method == search.MethodLike {
 		like, err := query.RenderSQLLike(plan, s.registry.SearchExcluded())
 		if err != nil {
-			return nil, nil, "", nil, err
+			return nil, nil, "", nil, nil, err
 		}
 		validated, err := gate.Validate(like)
 		if err != nil {
-			return nil, nil, "", nil, err
+			return nil, nil, "", nil, nil, err
 		}
 		columns, rows, err := s.execute(ctx, validated, plan.Term, maxChars)
 		if err != nil {
-			return nil, nil, "", nil, err
+			return nil, nil, "", nil, nil, err
 		}
-		return columns, rows, validated, &result.Provenance, nil
+		// The LIKE floor requires every word, so the attached half requires every
+		// word too: merging a looser search with a stricter one is not one search.
+		return s.withResidentMemorySearch(ctx, plan, maxChars, false, limit,
+			columns, rows, validated, &result.Provenance)
 	}
 
 	columns = []string{"source", "id", "author", "text", "created_at"}
@@ -700,7 +705,99 @@ func (s *Service) searchByTerm(ctx context.Context, plan query.Plan, method stri
 			"created_at": date,
 		})
 	}
-	return columns, rows, result.SQL, &result.Provenance, nil
+	return s.withResidentMemorySearch(ctx, plan, maxChars, matchAny, limit,
+		columns, rows, result.SQL, &result.Provenance)
+}
+
+// withResidentMemorySearch merges the operational half into a core answer that
+// already succeeded. A half that cannot be read is a warning and not a failure:
+// the rest of the plugin path skips what it cannot use, and a merged search that
+// answers nothing where the unmerged one answered is the worse of the two.
+func (s *Service) withResidentMemorySearch(ctx context.Context, plan query.Plan, maxChars int,
+	matchAny bool, limit int, columns []string, rows []map[string]any, stmt string,
+	provenance *search.Provenance) ([]string, []map[string]any, string, *search.Provenance,
+	[]string, error) {
+	var ops *plugin.Database
+	for index := range s.resident {
+		if s.resident[index].Name == rocaOpsPluginName {
+			ops = &s.resident[index]
+			break
+		}
+	}
+	if ops == nil {
+		return columns, rows, stmt, provenance, nil, nil
+	}
+	opsRows, declared, err := s.residentMemoryRows(ctx, plan, maxChars, matchAny, limit, *ops, stmt)
+	if err != nil {
+		return columns, rows, stmt, provenance, []string{fmt.Sprintf(
+			"%s could not be searched: %v; the answer carries core memories only",
+			ops.Source(), err)}, nil
+	}
+	columns, rows = ensureDatabaseColumn(columns, rows, "core")
+	rows = append(rows, opsRows...)
+	rows = dedupRows(strings.ReplaceAll(plan.Term, "+", " "), columns, rows)
+	rows = limitMergedSearchRows(rows, limit)
+	return columns, rows, declared, provenance, nil, nil
+}
+
+func (s *Service) residentMemoryRows(ctx context.Context, plan query.Plan, maxChars int,
+	matchAny bool, limit int, ops plugin.Database,
+	core string) ([]map[string]any, string, error) {
+	opsStatement, err := query.RenderSQLAttachedMemoryLike(plan,
+		s.registry.SearchExcluded(), ops.Schema, limit, matchAny)
+	if err != nil {
+		return nil, "", err
+	}
+	gate, closeGate, err := s.gateFor([]plugin.Database{ops})
+	if err != nil {
+		return nil, "", err
+	}
+	defer closeGate()
+	validated, err := gate.Validate(opsStatement)
+	if err != nil {
+		return nil, "", err
+	}
+	_, opsRows, err := s.executeWithPlugins(ctx, validated, plan.Term, maxChars,
+		[]plugin.Database{ops})
+	if err != nil {
+		return nil, "", err
+	}
+	return opsRows, declaredSearchSQL(gate, core, validated, limit), nil
+}
+
+// limitMergedSearchRows makes core and operational history compete under one
+// recency order before applying the shared limit. Appending one database behind
+// the other and then truncating would make source order decide recall.
+func limitMergedSearchRows(rows []map[string]any, limit int) []map[string]any {
+	ordered := slices.Clone(rows)
+	slices.SortStableFunc(ordered, func(a, b map[string]any) int {
+		created := func(row map[string]any) string {
+			if row["created_at"] == nil {
+				return ""
+			}
+			return fmt.Sprint(row["created_at"])
+		}
+		return strings.Compare(created(b), created(a))
+	})
+	if limit > 0 && len(ordered) > limit {
+		return ordered[:limit]
+	}
+	return ordered
+}
+
+// declaredSearchSQL reports both halves of the merged answer. Declaring the core
+// statement alone would hand the operator SQL that returns strictly fewer rows
+// than the answer it is supposed to explain.
+func declaredSearchSQL(gate *sqlgate.Gate, core, attached string, limit int) string {
+	merged, err := query.RenderSearchUnion(core, attached, limit)
+	if err != nil {
+		return core
+	}
+	validated, err := gate.Validate(merged)
+	if err != nil {
+		return core
+	}
+	return validated
 }
 
 // rescueSQL compiles the deterministic literal fallback without executing it.

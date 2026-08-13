@@ -298,13 +298,14 @@ func (s *Service) Query(ctx context.Context, req QueryRequest) (res QueryResult,
 		return res, err
 	}
 	route := s.pluginsForQuestion(ctx, req.Question)
-	if s.opts.PluginsEnabled {
+	if s.pluginsActive() {
 		res.Databases = route.consulted()
 	}
 	res.OmittedDatabases = route.omittedSources()
 	res.Warnings = append(res.Warnings, route.warnings...)
 	res, err = s.llmStage(ctx, req, res, route.databases)
-	if len(route.databases) > 0 && res.Path == PathKeyword {
+	if len(route.databases) > 0 && res.Path == PathKeyword &&
+		!slices.Contains(res.Columns, plugin.ProvenanceColumn) {
 		res.Columns, res.Rows = ensureDatabaseColumn(res.Columns, res.Rows, "core")
 	}
 	return res, err
@@ -373,7 +374,7 @@ func (s *Service) Exec(ctx context.Context, req ExecRequest) (ExecResult, error)
 		Version:   s.opts.Version,
 		SourceSHA: s.opts.Commit,
 	}
-	if s.opts.PluginsEnabled {
+	if s.pluginsActive() {
 		result.Databases = route.consulted()
 	}
 	return result, nil

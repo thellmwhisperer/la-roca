@@ -30,8 +30,16 @@ const (
 	ProvenanceColumn = "database"
 )
 
+type Attachment string
+
+const (
+	AttachmentOnDemand Attachment = "on-demand"
+	AttachmentResident Attachment = "resident"
+)
+
 type Semantic struct {
 	Version     int             `yaml:"version" json:"version"`
+	Attachment  Attachment      `yaml:"attachment" json:"attachment"`
 	Description string          `yaml:"description" json:"description"`
 	Questions   []string        `yaml:"questions" json:"questions,omitempty"`
 	Custody     bool            `yaml:"custody" json:"custody"`
@@ -149,6 +157,9 @@ func readSemantic(path string) (Semantic, error) {
 	if err := decoder.Decode(&semantic); err != nil {
 		return Semantic{}, fmt.Errorf("parse %s: %w", SemanticFilename, err)
 	}
+	if semantic.Attachment == "" {
+		semantic.Attachment = AttachmentOnDemand
+	}
 	if err := semantic.valid(); err != nil {
 		return Semantic{}, err
 	}
@@ -158,6 +169,10 @@ func readSemantic(path string) (Semantic, error) {
 func (s Semantic) valid() error {
 	if s.Version != 1 {
 		return fmt.Errorf("%s version is %d, want 1", SemanticFilename, s.Version)
+	}
+	if s.Attachment != AttachmentOnDemand && s.Attachment != AttachmentResident {
+		return fmt.Errorf("%s attachment is %q, want %q or %q", SemanticFilename,
+			s.Attachment, AttachmentResident, AttachmentOnDemand)
 	}
 	if strings.TrimSpace(s.Description) == "" {
 		return fmt.Errorf("%s has no description", SemanticFilename)
@@ -323,6 +338,9 @@ func Validate(ctx context.Context, descriptor Descriptor) (Database, error) {
 		declared[table.Name] = table
 	}
 	for name, columns := range actual {
+		if sqlgate.IsHiddenTable(name) {
+			continue
+		}
 		table, ok := declared[name]
 		if !ok {
 			return Database{}, fmt.Errorf("semantic layer omits database table %s", name)
@@ -333,6 +351,9 @@ func Validate(ctx context.Context, descriptor Descriptor) (Database, error) {
 		}
 	}
 	for name := range declared {
+		if sqlgate.IsHiddenTable(name) {
+			continue
+		}
 		if _, ok := actual[name]; !ok {
 			return Database{}, fmt.Errorf("semantic layer describes missing database table %s", name)
 		}

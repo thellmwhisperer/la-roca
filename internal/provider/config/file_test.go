@@ -343,21 +343,31 @@ func TestAValueOfTheWrongTypeKeepsTheDefaultAndWarns(t *testing.T) {
 	}
 }
 
-func TestPluginsAreExperimentalAndDefaultOff(t *testing.T) {
+func TestDataPluginsAreExperimentalAndDefaultOff(t *testing.T) {
 	missing, err := LoadFile(filepath.Join(t.TempDir(), "missing.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if missing.Features.Plugins {
-		t.Fatal("plugins defaulted on without a configuration file")
+	if missing.Features.Plugins || missing.Features.RocaOps {
+		t.Fatalf("data plugins defaulted on without a configuration file: %+v", missing.Features)
 	}
 
-	enabled, err := LoadFile(write(t, "[features]\nplugins = true\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !enabled.Features.Plugins || len(enabled.Warnings) != 0 {
-		t.Fatalf("features = %+v, warnings = %v", enabled.Features, enabled.Warnings)
+	for _, testCase := range []struct {
+		key   string
+		check func(FeaturesConfig) bool
+	}{
+		{key: "plugins", check: func(features FeaturesConfig) bool { return features.Plugins && !features.RocaOps }},
+		{key: "roca_ops", check: func(features FeaturesConfig) bool { return features.RocaOps && !features.Plugins }},
+	} {
+		t.Run(testCase.key, func(t *testing.T) {
+			enabled, err := LoadFile(write(t, "[features]\n"+testCase.key+" = true\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !testCase.check(enabled.Features) || len(enabled.Warnings) != 0 {
+				t.Fatalf("features = %+v, warnings = %v", enabled.Features, enabled.Warnings)
+			}
+		})
 	}
 }
 
