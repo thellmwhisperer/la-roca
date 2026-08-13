@@ -27,6 +27,16 @@ func TestRecentQueryFailuresReadsTheCommonContractAcrossSurfaces(t *testing.T) {
 			CorrelationID: "qf_mcp", Question: "count synthetic memories",
 		}, Tool: "roca_query"}},
 		{Executions, ExecutionRecord{CallRecord: CallRecord{
+			Timestamp: now.Add(-45 * time.Minute), Source: "cli", OK: false,
+			Error: "deep interpretation stopped", ErrorType: "model_error",
+			CorrelationID: "qf_explore_cli", Question: "synthetic",
+		}, Command: "explore"}},
+		{MCPAudit, MCPRecord{CallRecord: CallRecord{
+			Timestamp: now.Add(-40 * time.Minute), Source: "mcp", OK: false,
+			Error: "deep interpretation stopped", ErrorType: "model_error",
+			CorrelationID: "qf_explore_mcp", Question: "synthetic",
+		}, Tool: "roca_explore"}},
+		{Executions, ExecutionRecord{CallRecord: CallRecord{
 			Timestamp: now.Add(-30 * time.Minute), Source: "cli", OK: true,
 		}, Command: "query"}},
 		{Executions, ExecutionRecord{CallRecord: CallRecord{
@@ -44,10 +54,12 @@ func TestRecentQueryFailuresReadsTheCommonContractAcrossSurfaces(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if summary.Count != 2 || len(summary.Recent) != 2 {
-		t.Fatalf("summary = %+v, want two recent failures", summary)
+	if summary.Count != 4 || len(summary.Recent) != 4 {
+		t.Fatalf("summary = %+v, want four recent failures", summary)
 	}
-	if summary.Recent[0].CorrelationID != "qf_mcp" || summary.Recent[1].CorrelationID != "qf_cli" {
+	if summary.Recent[0].CorrelationID != "qf_explore_mcp" ||
+		summary.Recent[1].CorrelationID != "qf_explore_cli" ||
+		summary.Recent[2].CorrelationID != "qf_mcp" || summary.Recent[3].CorrelationID != "qf_cli" {
 		t.Fatalf("recent failures are not newest first: %+v", summary.Recent)
 	}
 
@@ -59,7 +71,7 @@ func TestRecentQueryFailuresReadsTheCommonContractAcrossSurfaces(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a segment dated before the window was opened: %v", err)
 	}
-	if bounded.Count != 2 || bounded.Unreadable != 0 {
+	if bounded.Count != 4 || bounded.Unreadable != 0 {
 		t.Fatalf("summary = %+v, want the window unchanged", bounded)
 	}
 
@@ -80,10 +92,10 @@ func TestRecentQueryFailuresReadsTheCommonContractAcrossSurfaces(t *testing.T) {
 		if err == nil {
 			t.Fatal("an unreadable segment was not reported as a warning")
 		}
-		if partial.Count != 2 || partial.Unreadable != 1 {
+		if partial.Count != 4 || partial.Unreadable != 1 {
 			t.Fatalf("summary = %+v, want two failures and one unreadable segment", partial)
 		}
-		if len(partial.Recent) != 1 || partial.Recent[0].CorrelationID != "qf_mcp" {
+		if len(partial.Recent) != 1 || partial.Recent[0].CorrelationID != "qf_explore_mcp" {
 			t.Fatalf("a partial reading was neither sorted nor cut: %+v", partial.Recent)
 		}
 	})

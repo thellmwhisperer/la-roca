@@ -27,19 +27,28 @@ roca mcp serve
 Nothing but the protocol goes to standard output. A print there corrupts the
 session, which is why every diagnostic in this path writes to standard error.
 
-### The five tools
+### The six tools
 
 | Tool | What it does | The caller that defends it |
 |---|---|---|
 | `roca_exec` | Runs a SELECT under the same gate as `roca exec` | Agents that received SQL from `roca_sql` and have no shell |
+| `roca_explore` | Runs plain or deep investigation with prose, terrain, next probes, and generated SQL | Agents following evidence without a shell |
 | `roca_query` | Answers a question from memory | The product's job, for an agent with no shell |
 | `roca_store` | Writes one memory back | The other half of the same job |
 | `roca_health` | The non-destructive checks over live data | An agent that cannot run `roca doctor` |
 | `roca_sql` | Compiles a question into SQL without running it | Agents that need to inspect the SQL before `roca_exec` runs it |
 
-`roca_query` and `roca_sql` reject empty questions and share the CLI's generous
+`roca_query`, `roca_explore`, and `roca_sql` reject empty questions and share the CLI's generous
 1000-character cap before any model is called, and the rest of that same input
 gate with it: [what happens on a query](models.md#what-happens-on-a-query).
+
+`roca_explore` is a separate tool rather than a mode on `roca_query`. That keeps
+the established query schema and rows-first answer untouched while making the
+investigation mode explicit at dispatch. Omitted or false `deep` is the plain
+radius mission; `deep: true` is the full terrain mission. Both call the same
+`Service.Explore` and `axi.Explore` as the CLI, so the MCP result has full output
+parity—prose and generated SQL, with terrain and next probes required by the
+selected mission—rather than returning rows for the agent to reinterpret.
 
 `roca_list_runs` is **not** in v1: `runs` is v2 scope and this binary creates no
 such table. A tool with nothing behind it is a tool that lies.
@@ -60,7 +69,8 @@ the service, and the file may contain no control flow at all. A handler that
 needs an `if` needs it in the service, where the shell can reach it too.
 
 Parity is measured, not asserted: the same question over both surfaces returns
-the same `sql`, the same `queryplan`, the same rows and the same build
+the same `sql`, the same `queryplan`, the same rows and the same build; explore
+also shares its service call and text renderer byte-for-byte
 (scenario F08-04, and `internal/distribution/mcpplug/plug_test.go`).
 
 ### On the protocol version
@@ -126,7 +136,7 @@ An agent learns La Roca three different ways. They stack; none replaces another.
 |---|---|---|
 | **Prompt** | A one-line aviso from `roca init` that a skill exists | Automatic on every init; install is never implied |
 | **Skill** | Canonical `SKILL.md` that teaches query/store/exec and the MCP tools | `roca skill install <runtime>` or `--all` — copies one file into each selected runtime's personal skills directory |
-| **MCP** | Five passthrough tools for agents with no shell | `roca mcp install <runtime>` |
+| **MCP** | Six passthrough tools for agents with no shell | `roca mcp install <runtime>` |
 
 ```
 roca skill                 # list runtimes and where the skill would land

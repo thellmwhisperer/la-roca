@@ -86,7 +86,7 @@ practically the same, sometimes better.
 
 One binary, one SQLite file in `~/.roca`, zero network in the ingest path.
 Providers are called only to answer the questions you ask, and the SQL phase
-never sees your rows. With `--full`, the prose phase receives at most ten
+never sees your rows. With `--full` or `explore`, the prose phase receives at most ten
 result rows with each field truncated to 240 characters; the database, the
 full result set, and the search index never leave the machine. Configure
 only Ollama when no query content may leave it at all.
@@ -205,6 +205,16 @@ rows, `roca exec` runs your own `SELECT` through the same read-only gate, and
 `--json` returns the complete machine envelope. Questions must contain text and
 have a generous 1000-character cap on both CLI and MCP query surfaces.
 
+For investigations, `roca explore "<term>"` uses the same checked query and
+second-inference seat but gives the interpreter an investigation mission. Every
+explore prints grounded prose and the generated SQL. Plain mode adds short trail
+hints; `roca explore --deep "<one bare word>"` also maps deterministic terrain
+from that run's rows—source counts, month clusters, co-occurring terms, and
+negative space—and proposes two or three single-concept probes. The mode is
+always explicit. `models.explore_order` can route deep interpretation to a
+stronger model, falling back to `models.interpret_order` and then the main
+order.
+
 Model-written SQL is repaired before that gate and then judged by its unchanged
 rules; the SQL you write yourself for `roca exec` never is. `model_sql` keeps
 the untouched model output and `repaired` names each repair applied, listed
@@ -316,8 +326,11 @@ commands in every answer. An agent never has to guess what it just got or
 what to run next.
 
 `roca mcp serve` runs a foreground stdio server owned by the calling agent,
-exposing five tools that call the same service as the CLI: `roca_query`,
-`roca_exec`, `roca_sql`, `roca_store`, and `roca_health`.
+exposing six tools that call the same service as the CLI: `roca_query`,
+`roca_explore`, `roca_exec`, `roca_sql`, `roca_store`, and `roca_health`.
+`roca_explore` accepts `deep: false|true` and returns the same prose, terrain
+mission, generated SQL, and next probes as the matching CLI mode; it is never a
+rows-only MCP shortcut.
 
 Behind the default-off experimental `features.plugins` flag, third parties extend
 queries with [isolated SQLite plugin databases and semantic layers](docs/plugins.md),

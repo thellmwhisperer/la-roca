@@ -41,7 +41,7 @@ func (w *distributionWorld) requestMCPToolsAndHealth() error {
 }
 
 func (w *distributionWorld) mcpToolsAndHealthAreSound() error {
-	want := []string{"roca_exec", "roca_health", "roca_query", "roca_sql", "roca_store"}
+	want := []string{"roca_exec", "roca_explore", "roca_health", "roca_query", "roca_sql", "roca_store"}
 	var got []string
 	for _, tool := range w.tools.Tools {
 		got = append(got, tool.Name)

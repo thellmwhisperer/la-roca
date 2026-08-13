@@ -67,6 +67,10 @@ type Options struct {
 	// what keeps the rows on this machine while the question goes to a frontier
 	// model.
 	Interpreters provider.Cascade
+	// Explorers is the optional stronger order for deep investigation prose.
+	// When it cannot serve, deep exploration falls through to Interpreters and
+	// then Providers; plain exploration starts at Interpreters.
+	Explorers provider.Cascade
 	// ConfigPath and ConfigExists are what doctor reports: every message about
 	// configuration names the file, never a TOML table.
 	ConfigPath   string
@@ -226,7 +230,8 @@ const presentationPrompt = "## La Roca — local semantic memory\n" +
 	"With a shell, use `roca query \"<natural question>\"`; preserve durable context " +
 	"with `roca store --agent <harness> --model <model>` so CLI authorship is explicit.\n" +
 	"Data = `roca query`; human reading = `roca query --full`; raw SQL = `roca exec`.\n" +
-	"Without a shell, use the MCP equivalents: `roca_query` and `roca_store`.\n" +
+	"Investigations start with `roca explore --deep \"<one bare word>\"`, then plain `roca explore` radius probes.\n" +
+	"Without a shell, use the MCP equivalents: `roca_query`, `roca_explore`, and `roca_store`.\n" +
 	"Authorship is automatic over MCP; CLI detection is conservative, so pass --agent and --model.\n" +
 	"On first bootstrap, `roca init` asks new or adopt, then chooses the answering model before its harness.\n" +
 	"La Roca never edits agent instruction files; a human chooses where to paste this block.\n"
