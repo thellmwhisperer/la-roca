@@ -118,14 +118,18 @@ With the key absent or false, `roca update` discovers legacy installs, records
 their state and reports outdated artifacts, but changes none of them. Proposals
 for another already-supported harness are informative only. Enabling the key
 lets update replace each unchanged SYSTEM zone with the new release while
-transplanting the USER zone byte for byte. A pre-zone file that exactly matches
-shipped content is adopted as SYSTEM; any unrecognized legacy bytes become
-USER content on the one-time migration.
+transplanting the USER zone byte for byte. A pre-zone file is recognized as this
+product's own by the opening every release of that artifact has carried, so the
+text an older release installed becomes SYSTEM instead of surviving as a stale
+copy; any unrecognized legacy bytes become USER content on the one-time
+migration.
 
-An edit inside SYSTEM is divergence. Update names that file and
-`roca update --force-artifacts`, then leaves it untouched without prompting.
-The force command replaces SYSTEM and still preserves USER. Every changed file
-gets a named `.roca.bak` recovery copy before publication.
+An edit inside SYSTEM is divergence, and so is a registered file the operator
+deleted. Update and `roca skill install` name that file and the force command
+for it, then leave it alone without prompting. The force command replaces
+SYSTEM, still preserves USER, and is what repairs a file whose zone markers are
+broken. Every changed file gets a named `.roca.bak` recovery copy before
+publication.
 
 The hook uses the same ownership split inside Claude's settings: the one entry
 whose command ends in `hooks run claude` is the explicitly marked SYSTEM

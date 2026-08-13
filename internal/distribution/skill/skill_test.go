@@ -11,6 +11,8 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
 )
 
+func shippedChecksum() string { return artifact.Checksum(skill.Content()) }
+
 func TestContentIsANamedRocaSkill(t *testing.T) {
 	body := skill.Content()
 	if !strings.HasPrefix(body, "---\n") {
@@ -18,6 +20,11 @@ func TestContentIsANamedRocaSkill(t *testing.T) {
 	}
 	if !strings.Contains(body, "name: roca") {
 		t.Fatal("skill name must be roca")
+	}
+	// The migration recognizes an older release's SKILL.md by this opening, so a
+	// shipped skill that stopped carrying it would be adopted as operator bytes.
+	if !strings.HasPrefix(body, skill.LegacySignature()) {
+		t.Fatalf("the shipped skill no longer opens with %q", skill.LegacySignature())
 	}
 	for _, needle := range []string{
 		"roca query", "roca exec", "roca store",
@@ -122,7 +129,7 @@ func TestInstallWritesTheSkillAndIsIdempotent(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, ".claude", "skills", "roca", "SKILL.md")
 
-	first, err := skill.Install("claude", path)
+	first, err := skill.InstallWithOptions("claude", path, "", false)
 	if err != nil {
 		t.Fatalf("first install: %v", err)
 	}
@@ -141,7 +148,7 @@ func TestInstallWritesTheSkillAndIsIdempotent(t *testing.T) {
 		t.Fatalf("written skill zones = %+v, err %v", zones, err)
 	}
 
-	second, err := skill.Install("claude", path)
+	second, err := skill.InstallWithOptions("claude", path, "", false)
 	if err != nil {
 		t.Fatalf("second install: %v", err)
 	}
@@ -149,7 +156,7 @@ func TestInstallWritesTheSkillAndIsIdempotent(t *testing.T) {
 		t.Fatal("reinstall rewrote an identical skill")
 	}
 
-	out, err := skill.Uninstall("claude", path)
+	out, err := skill.UninstallWithChecksum("claude", path, shippedChecksum())
 	if err != nil {
 		t.Fatalf("uninstall: %v", err)
 	}
@@ -163,7 +170,7 @@ func TestInstallWritesTheSkillAndIsIdempotent(t *testing.T) {
 		t.Fatal("skill directory survived uninstall")
 	}
 
-	reuninstall, err := skill.Uninstall("claude", path)
+	reuninstall, err := skill.UninstallWithChecksum("claude", path, shippedChecksum())
 	if err != nil {
 		t.Fatalf("re-uninstall: %v", err)
 	}
@@ -173,7 +180,7 @@ func TestInstallWritesTheSkillAndIsIdempotent(t *testing.T) {
 }
 
 func TestInstallRefusesAnUnknownRuntime(t *testing.T) {
-	_, err := skill.Install("windsurf", filepath.Join(t.TempDir(), "SKILL.md"))
+	_, err := skill.InstallWithOptions("windsurf", filepath.Join(t.TempDir(), "SKILL.md"), "", false)
 	if err == nil {
 		t.Fatal("unknown runtime was accepted")
 	}
@@ -190,7 +197,7 @@ func TestInstallAdoptsUnrecognizedLegacyContentIntoTheUserZone(t *testing.T) {
 	if err := os.WriteFile(path, []byte("stale\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out, err := skill.Install("codex", path)
+	out, err := skill.InstallWithOptions("codex", path, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,6 +214,31 @@ func TestInstallAdoptsUnrecognizedLegacyContentIntoTheUserZone(t *testing.T) {
 	}
 }
 
+// Every pre-zone install on a real machine was written by an older release, so
+// migrating one must not keep a whole stale copy of the skill beside the
+// current one, preserved forever as though the operator had written it.
+func TestInstallReplacesAnEarlierReleasesSkill(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "skills", "roca", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	earlier := skill.LegacySignature() + "description: what v1 shipped\n---\n\nolder body\n"
+	if err := os.WriteFile(path, []byte(earlier), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := skill.InstallWithOptions("codex", path, "", false); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := os.ReadFile(path)
+	zones, err := artifact.Parse(string(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if zones.System != skill.Content() || zones.User != "" {
+		t.Fatalf("an earlier release's skill survived the migration: %+v", zones)
+	}
+}
+
 func TestUninstallLeavesForeignContentAlone(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "roca")
 	path := filepath.Join(dir, "SKILL.md")
@@ -216,7 +248,7 @@ func TestUninstallLeavesForeignContentAlone(t *testing.T) {
 	if err := os.WriteFile(path, []byte("not roca content"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := skill.Uninstall("claude", path); err != nil {
+	if out, err := skill.UninstallWithChecksum("claude", path, shippedChecksum()); err != nil {
 		t.Fatalf("uninstall: %v", err)
 	} else if out.Changed {
 		t.Fatal("uninstall removed a skill it did not write")
@@ -237,7 +269,7 @@ func TestWithdrawingASkillLeavesTheOperatorsOwnFilesAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := skill.Install(agentcfg.RuntimeClaude, path); err != nil {
+	if _, err := skill.InstallWithOptions(agentcfg.RuntimeClaude, path, "", false); err != nil {
 		t.Fatalf("install: %v", err)
 	}
 	mine := filepath.Join(filepath.Dir(path), "notes-of-mine.md")
@@ -245,7 +277,7 @@ func TestWithdrawingASkillLeavesTheOperatorsOwnFilesAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, err := skill.Uninstall(agentcfg.RuntimeClaude, path)
+	out, err := skill.UninstallWithChecksum(agentcfg.RuntimeClaude, path, shippedChecksum())
 	if err != nil {
 		t.Fatalf("uninstall: %v", err)
 	}

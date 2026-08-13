@@ -32,6 +32,21 @@ func TestThePurgeOwnsTheGeneratedAgentPrompt(t *testing.T) {
 	}
 }
 
+// A prompt.md an older release generated is still a file init wrote. Owning
+// only this release's exact bytes left it behind and reported it as somebody
+// else's, which is a false statement about a file this product created.
+func TestThePurgeOwnsAnEarlierReleasesPrompt(t *testing.T) {
+	paths := resolvedIn(t, t.TempDir())
+	prompt := filepath.Join(dirOf(paths.DB), "prompt.md")
+	earlier := service.PresentationPromptSignature() + "what an older release said\n"
+	for _, body := range []string{earlier, artifact.Zoned(earlier, "")} {
+		writeFile(t, prompt, body)
+		if !slices.Contains(ownedPaths(paths), prompt) {
+			t.Fatalf("the purge disowned a prompt this product generated: %q", body)
+		}
+	}
+}
+
 func TestThePurgeDoesNotClaimAnOperatorPromptZone(t *testing.T) {
 	paths := resolvedIn(t, t.TempDir())
 	prompt := filepath.Join(dirOf(paths.DB), "prompt.md")

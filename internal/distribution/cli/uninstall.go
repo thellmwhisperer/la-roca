@@ -426,12 +426,8 @@ func ownedPaths(paths config.Paths) []string {
 	}
 	prompt := filepath.Join(dataDir, "prompt.md")
 	if !slices.Contains(owned, prompt) {
-		if body, err := os.ReadFile(prompt); err == nil {
-			zones, zoneErr := artifact.Parse(string(body))
-			if string(body) == service.PresentationPrompt() ||
-				(zoneErr == nil && zones.User == "" && zones.System == service.PresentationPrompt()) {
-				owned = append(owned, prompt)
-			}
+		if body, err := os.ReadFile(prompt); err == nil && promptWasGenerated(string(body)) {
+			owned = append(owned, prompt)
 		}
 	}
 	backupPrefix := strings.TrimSuffix(filepath.Base(paths.DB), ".db") + "."
@@ -466,6 +462,19 @@ func ownedPaths(paths config.Paths) []string {
 		owned = append(owned, logfile.New(dataDir).LockPath(), logDir)
 	}
 	return append(owned, installedPluginPaths(paths)...)
+}
+
+// promptWasGenerated recognizes prompt.md by the heading every release has
+// written, so a purge still owns the file an older release generated instead of
+// reporting a file init wrote as somebody else's. An operator zone with content
+// in it is never ours to delete, whatever release opened the file.
+func promptWasGenerated(body string) bool {
+	zones, err := artifact.Parse(body)
+	if err != nil {
+		return strings.HasPrefix(body, service.PresentationPromptSignature())
+	}
+	return zones.User == "" &&
+		strings.HasPrefix(zones.System, service.PresentationPromptSignature())
 }
 
 // The three trees the plugin system writes. They hang off ~/.roca and not off

@@ -223,7 +223,10 @@ type InitModel struct {
 	CommandTransport bool `json:"command_transport,omitempty"`
 }
 
-const presentationPrompt = "## La Roca — local semantic memory\n" +
+// presentationPromptSignature opens every prompt.md this product has written.
+const presentationPromptSignature = "## La Roca — local semantic memory\n"
+
+const presentationPrompt = presentationPromptSignature +
 	"La Roca contains local session history, curated memories, handoffs, decisions, " +
 	"and tool traces from your agents.\n" +
 	"when to query: at session start, before repeating research, and whenever prior " +
@@ -240,6 +243,11 @@ const presentationPrompt = "## La Roca — local semantic memory\n" +
 // PresentationPrompt is the product-owned part of prompt.md. Distribution
 // lifecycle code uses the same bytes service.Init installs.
 func PresentationPrompt() string { return presentationPrompt }
+
+// PresentationPromptSignature is how a prompt.md an earlier release generated
+// is recognized as this product's own text rather than the operator's, so a
+// migration replaces it and a purge still owns it.
+func PresentationPromptSignature() string { return presentationPromptSignature }
 
 // Init leaves the database ready: it creates the new one or adopts the one that
 // is there, and resyncs the layer registry. It is idempotent by contract,
@@ -359,7 +367,8 @@ func installPresentationPrompt(path string) (string, error) {
 		return "", err
 	}
 	if _, err := artifact.RefreshFile(artifact.FileRequest{
-		Path: path, System: presentationPrompt, LegacySystems: []string{presentationPrompt}, Enabled: true,
+		Path: path, System: presentationPrompt,
+		LegacySignature: presentationPromptSignature, Enabled: true,
 	}); err != nil {
 		return "", err
 	}

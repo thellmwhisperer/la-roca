@@ -62,6 +62,42 @@ func TestSkillInstallWritesUnderTempHome(t *testing.T) {
 	}
 }
 
+// Deleting a registered skill needs consent to rewrite, the same as editing
+// one, but it is a different sentence and it must not take the command down
+// with it: registering an artifact reads the file, and the file is not there.
+func TestSkillInstallOverARemovedRegisteredFileAsksForForce(t *testing.T) {
+	home := skillTestHome(t)
+	path := filepath.Join(home, ".claude", "skills", "roca", "SKILL.md")
+	var output strings.Builder
+	runSkill(t, &output, "skill", "install", "claude")
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+
+	var warning strings.Builder
+	root := rootCommand(&cliEnv{out: &output, errOut: &warning})
+	root.SetArgs([]string{"skill", "install", "claude"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("reinstall over a removed file failed: %v", err)
+	}
+	if !strings.Contains(warning.String(), "was removed after La Roca registered it") ||
+		!strings.Contains(warning.String(), "skill install claude --force") {
+		t.Fatalf("the warning does not say what happened: %q", warning.String())
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("a removed skill was rewritten without consent")
+	}
+
+	runSkill(t, &output, "skill", "install", "claude", "--force")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if zones, err := artifact.Parse(string(body)); err != nil || zones.System != skill.Content() {
+		t.Fatalf("forced reinstall did not restore the skill: %+v, err %v", zones, err)
+	}
+}
+
 func TestSkillInstallAllNarratesEveryPath(t *testing.T) {
 	skillTestHome(t)
 	var output strings.Builder

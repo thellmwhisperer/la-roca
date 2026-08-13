@@ -226,6 +226,37 @@ func TestHookRefreshChangesOnlyItsRegisteredCommandBytes(t *testing.T) {
 	}
 }
 
+// The reader only ever looks inside PreToolUse, so the byte-preserving edit
+// looks there too. An operator who declared the identical command under another
+// event owns those bytes: they are neither rewritten nor a reason to refuse the
+// refresh over the entry this product actually registered.
+func TestHookRefreshIgnoresTheSameCommandUnderAnotherEvent(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, "settings.json")
+	oldBinary := filepath.Join(home, "old", "roca")
+	newBinary := filepath.Join(home, "new", "roca")
+	entry := `[{"matcher":"Bash","hooks":[{"type":"command","command":` +
+		encodedJSONString(t, claudeHookCommand(oldBinary)) + `}]}]`
+	previous := `{"hooks":{"PreToolUse":` + entry + `,"PostToolUse":` + entry + `}}`
+	if err := os.WriteFile(path, []byte(previous), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	system, found, err := claudeHookSystem(path)
+	if err != nil || !found {
+		t.Fatalf("read installed hook: found=%v err=%v", found, err)
+	}
+
+	outcome, err := refreshClaudeHook(path, newBinary, artifact.Checksum(system), true, false)
+	if err != nil {
+		t.Fatalf("an operator's own copy blocked the refresh: %v", err)
+	}
+	body := readSettings(t, path)
+	if !outcome.Changed || strings.Count(body, claudeHookCommand(newBinary)) != 1 ||
+		strings.Count(body, claudeHookCommand(oldBinary)) != 1 {
+		t.Fatalf("refresh did not edit exactly its own registered entry: %s", body)
+	}
+}
+
 func encodedJSONString(t *testing.T, value string) string {
 	t.Helper()
 	encoded, err := json.Marshal(value)

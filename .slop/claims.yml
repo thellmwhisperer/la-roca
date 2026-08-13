@@ -7,7 +7,7 @@ claims:
   internal/distribution/cli/artifacts.go:
     contract:
       file: features/distribution/skill.feature
-      item: "Skill install places the skill where the chosen agent discovers it, and says where"
+      item: "An installed skill is a registered artifact whose operator zone survives a refresh"
   internal/distribution/cli/commands.go:
     contract:
       file: features/distribution/cli.feature

@@ -70,9 +70,12 @@ func Checksum(content string) string {
 }
 
 type FileRequest struct {
-	Path                 string
-	System               string
-	LegacySystems        []string
+	Path   string
+	System string
+	// LegacySignature opens every version of this artifact the product has ever
+	// shipped. A pre-zone file that carries it is this product's own text from an
+	// older release, whatever bytes followed; anything else is the operator's.
+	LegacySignature      string
 	PreviousSystemSHA256 string
 	Enabled              bool
 	Force                bool
@@ -84,6 +87,7 @@ type FileOutcome struct {
 	Outdated     bool   `json:"outdated"`
 	Diverged     bool   `json:"diverged"`
 	Adopted      bool   `json:"adopted"`
+	Missing      bool   `json:"missing,omitempty"`
 	Backup       string `json:"backup,omitempty"`
 	SystemSHA256 string `json:"system_sha256,omitempty"`
 }
@@ -108,24 +112,22 @@ func RefreshFile(request FileRequest) (FileOutcome, error) {
 				return out, nil
 			}
 			next = Zoned(request.System, zones.User)
-		} else {
-			if strings.Contains(current, "<!-- ROCA ") || strings.Contains(current, frontmatterBegin) {
+		} else if markersArePresent(current) {
+			// Markers that are there but broken are the one state no zone can be
+			// read from, so nothing can be transplanted. Force is the documented
+			// remedy for a broken artifact and it must reach this file too: the
+			// replaced bytes survive in the backup replaceFile writes.
+			if !request.Force {
 				return out, fmt.Errorf("read zones from %s: %w", request.Path, parseErr)
 			}
 			out.Outdated = true
-			recognized := false
-			for _, shipped := range request.LegacySystems {
-				if current == shipped {
-					recognized = true
-					break
-				}
-			}
-			if !recognized {
-				next = Zoned(request.System, current)
-			}
+		} else {
+			out.Outdated = true
+			next = legacyZoned(current, request)
 			out.Adopted = request.Enabled
 		}
 	} else {
+		out.Missing = true
 		out.Outdated = true
 		out.Diverged = request.PreviousSystemSHA256 != ""
 		if out.Diverged && !request.Force {
@@ -141,9 +143,25 @@ func RefreshFile(request FileRequest) (FileOutcome, error) {
 	}
 	out.Changed = changed
 	out.Backup = backup
+	out.Missing = false
 	out.Outdated = false
 	out.Diverged = false
 	return out, nil
+}
+
+func markersArePresent(content string) bool {
+	return strings.Contains(content, "<!-- ROCA ") || strings.Contains(content, frontmatterBegin)
+}
+
+// legacyZoned decides what a pre-zone file becomes. Text this product
+// recognizes as its own earlier shipped artifact is replaced outright, because
+// keeping it would preserve a stale copy of the product beside the current one
+// forever. Everything else is the operator's and moves into USER verbatim.
+func legacyZoned(current string, request FileRequest) string {
+	if request.LegacySignature != "" && strings.HasPrefix(current, request.LegacySignature) {
+		return Zoned(request.System, "")
+	}
+	return Zoned(request.System, current)
 }
 
 func replaceFile(path, next string, previous []byte) (bool, string, error) {

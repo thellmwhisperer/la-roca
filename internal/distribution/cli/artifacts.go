@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/artifact"
@@ -187,7 +188,7 @@ func (env *cliEnv) refreshManagedArtifacts(executable string, force bool) (artif
 		switch entry.Kind {
 		case artifactKindSkill:
 			out, err := artifact.RefreshFile(artifact.FileRequest{
-				Path: entry.Path, System: skill.Content(), LegacySystems: []string{skill.Content()},
+				Path: entry.Path, System: skill.Content(), LegacySignature: skill.LegacySignature(),
 				PreviousSystemSHA256: entry.SystemSHA256, Enabled: report.Enabled, Force: force,
 			})
 			if err != nil {
@@ -197,7 +198,7 @@ func (env *cliEnv) refreshManagedArtifacts(executable string, force bool) (artif
 		case artifactKindPrompt:
 			out, err := artifact.RefreshFile(artifact.FileRequest{
 				Path: entry.Path, System: service.PresentationPrompt(),
-				LegacySystems:        []string{service.PresentationPrompt()},
+				LegacySignature:      service.PresentationPromptSignature(),
 				PreviousSystemSHA256: entry.SystemSHA256, Enabled: report.Enabled, Force: force,
 			})
 			if err != nil {
@@ -283,7 +284,7 @@ func (env *cliEnv) adoptLegacyArtifacts(paths config.Paths, executable string,
 		}
 		if body, err := os.ReadFile(path); err == nil {
 			registry.Upsert(discoveredFileEntry(artifactKindSkill, runtime, path,
-				string(body), skill.Content(), env.build.Version))
+				string(body), env.build.Version))
 			continue
 		}
 		root := filepath.Dir(filepath.Dir(filepath.Dir(path)))
@@ -295,7 +296,7 @@ func (env *cliEnv) adoptLegacyArtifacts(paths config.Paths, executable string,
 	if _, exists := registry.Find(artifactKindPrompt, "", prompt); !exists {
 		if body, err := os.ReadFile(prompt); err == nil {
 			registry.Upsert(discoveredFileEntry(artifactKindPrompt, "", prompt,
-				string(body), service.PresentationPrompt(), env.build.Version))
+				string(body), env.build.Version))
 		}
 	}
 	settings, err := claudeSettingsPath()
@@ -318,8 +319,11 @@ func (env *cliEnv) adoptLegacyArtifacts(paths config.Paths, executable string,
 	return nil
 }
 
-func discoveredFileEntry(kind, runtime, path, body, desired, version string) artifact.Entry {
-	checksum, format := artifact.Checksum(desired), "legacy"
+// discoveredFileEntry records what is on disk, not what this release wants: a
+// registry that stated the desired checksum for a pre-zone file would be
+// claiming an install that never happened.
+func discoveredFileEntry(kind, runtime, path, body, version string) artifact.Entry {
+	checksum, format := artifact.Checksum(body), "legacy"
 	if zones, err := artifact.Parse(body); err == nil {
 		checksum, format = artifact.Checksum(zones.System), "zoned-v1"
 	}
@@ -406,21 +410,66 @@ func refreshClaudeHook(path, executable, previousChecksum string,
 	return out, nil
 }
 
+// claudePreToolUseSpan is the byte range the registered hook lives in. The
+// reader only ever looks inside PreToolUse, so the byte-preserving edit looks
+// there too: an operator who declared the same command under another event owns
+// those bytes, and their copy is neither rewritten nor a reason to refuse.
+// A span that cannot be located falls back to the whole document, where an
+// ambiguous match is still refused rather than guessed at.
+func claudePreToolUseSpan(document string) (int, int) {
+	var settings, hooks map[string]json.RawMessage
+	if json.Unmarshal([]byte(document), &settings) != nil {
+		return 0, len(document)
+	}
+	if json.Unmarshal(settings["hooks"], &hooks) != nil {
+		return 0, len(document)
+	}
+	span := string(hooks["PreToolUse"])
+	if span == "" {
+		return 0, len(document)
+	}
+	for offset := 0; offset < len(document); {
+		start := strings.Index(document[offset:], span)
+		if start < 0 {
+			break
+		}
+		start += offset
+		if keyPrecedes(document[:start], "PreToolUse") {
+			return start, start + len(span)
+		}
+		offset = start + 1
+	}
+	return 0, len(document)
+}
+
+// keyPrecedes reports whether `"<key>":` is what sits immediately before a
+// value, which is how the raw bytes of one member are told apart from an
+// identical value the operator stored under a different key.
+func keyPrecedes(before, key string) bool {
+	trimmed := strings.TrimRight(before, " \t\r\n")
+	if !strings.HasSuffix(trimmed, ":") {
+		return false
+	}
+	trimmed = strings.TrimRight(strings.TrimSuffix(trimmed, ":"), " \t\r\n")
+	return strings.HasSuffix(trimmed, `"`+key+`"`)
+}
+
 var claudeCommandField = regexp.MustCompile(
 	`("command"[ \t\r\n]*:[ \t\r\n]*)("(?:\\.|[^"\\])*")`,
 )
 
 func replaceClaudeHookCommand(document, current, desired string) (string, error) {
+	from, to := claudePreToolUseSpan(document)
 	start, end := -1, -1
-	for _, location := range claudeCommandField.FindAllStringSubmatchIndex(document, -1) {
+	for _, location := range claudeCommandField.FindAllStringSubmatchIndex(document[from:to], -1) {
 		var decoded string
-		if err := json.Unmarshal([]byte(document[location[4]:location[5]]), &decoded); err != nil || decoded != current {
+		if err := json.Unmarshal([]byte(document[from+location[4]:from+location[5]]), &decoded); err != nil || decoded != current {
 			continue
 		}
 		if start >= 0 {
 			return "", fmt.Errorf("Claude settings contain the registered hook command more than once")
 		}
-		start, end = location[4], location[5]
+		start, end = from+location[4], from+location[5]
 	}
 	if start < 0 {
 		return "", fmt.Errorf("the registered Claude hook command could not be located in its source file")

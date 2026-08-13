@@ -83,8 +83,13 @@ func skillInstallCommand(env *cliEnv) *cobra.Command {
 				if err != nil {
 					return err
 				}
+				// A refusal leaves no file to read, so it is reported and the
+				// registry is left alone rather than asked about bytes that are
+				// not there. The remaining runtimes of an --all still install.
 				if outcome.Diverged {
-					fmt.Fprintf(env.errOut, "warning: %s has edits in its SYSTEM zone; run `roca skill install %s --force` to replace it\n", path, runtime)
+					fmt.Fprintf(env.errOut, "warning: %s\n", divergedSkillWarning(runtime, path, outcome.Missing))
+					outcomes = append(outcomes, outcome)
+					continue
 				}
 				if err := env.registerZonedArtifact(artifactKindSkill, runtime, path, skill.Content()); err != nil {
 					return err
@@ -107,6 +112,18 @@ func skillInstallCommand(env *cliEnv) *cobra.Command {
 	cmd.Flags().BoolVar(&all, "all", false, "install into every supported runtime")
 	cmd.Flags().BoolVar(&force, "force", false, "replace an edited SYSTEM zone")
 	return cmd
+}
+
+// divergedSkillWarning names what actually happened to a registered skill this
+// install refused to write. A file that was deleted has no edited SYSTEM zone,
+// and saying it does sends the operator looking for edits that are not there.
+func divergedSkillWarning(runtime, path string, missing bool) string {
+	what := "has edits in its SYSTEM zone"
+	if missing {
+		what = "was removed after La Roca registered it"
+	}
+	return fmt.Sprintf("%s %s; run `roca skill install %s --force` to replace it",
+		path, what, runtime)
 }
 
 func (env *cliEnv) listSkillDestinations() error {

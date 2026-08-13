@@ -60,7 +60,11 @@ func TestLegacyAdoptionAndDisabledRefreshAreNonDestructive(t *testing.T) {
 	tests := []struct {
 		name, previous, wantUser string
 	}{
-		{name: "recognized shipped content", previous: "shipped-v1\n"},
+		{name: "recognized shipped content", previous: "## shipped\nv1\n"},
+		// Every earlier release carried the signature and none of their bodies
+		// are known here, so recognition cannot be an equality test against the
+		// bytes this build happens to ship.
+		{name: "recognized older release", previous: "## shipped\nv0 said something else\n"},
 		{name: "unrecognized content", previous: "operator legacy bytes\n", wantUser: "operator legacy bytes\n"},
 	}
 	for _, test := range tests {
@@ -68,7 +72,7 @@ func TestLegacyAdoptionAndDisabledRefreshAreNonDestructive(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "prompt.md")
 			write(t, path, test.previous)
 			request := artifact.FileRequest{
-				Path: path, System: "shipped-v2\n", LegacySystems: []string{"shipped-v1\n"},
+				Path: path, System: "## shipped\nv2\n", LegacySignature: "## shipped\n",
 			}
 			out, err := artifact.RefreshFile(request)
 			if err != nil {
@@ -86,7 +90,7 @@ func TestLegacyAdoptionAndDisabledRefreshAreNonDestructive(t *testing.T) {
 			if !out.Changed || !out.Adopted {
 				t.Fatalf("legacy adoption outcome = %+v", out)
 			}
-			assertZones(t, path, "shipped-v2\n", test.wantUser)
+			assertZones(t, path, "## shipped\nv2\n", test.wantUser)
 		})
 	}
 }
@@ -139,7 +143,9 @@ func TestADeletedRegisteredArtifactIsDivergence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !out.Diverged || out.Changed {
+	// Reported apart from an edited SYSTEM zone: the file is gone, so a caller
+	// can neither read it back nor tell the operator to go looking for edits.
+	if !out.Diverged || out.Changed || !out.Missing {
 		t.Fatalf("deleted registered artifact outcome = %+v", out)
 	}
 	request.Force = true
@@ -160,6 +166,30 @@ func TestMalformedZoneMarkersAreNeverAdoptedAsUserContent(t *testing.T) {
 		if err == nil || read(t, path) != body {
 			t.Fatalf("malformed artifact was adopted: err=%v body=%q", err, read(t, path))
 		}
+	}
+}
+
+// Force is the documented remedy for a broken artifact, so it has to reach the
+// one file nothing else can repair: bytes appended after the last marker are
+// the most natural way an operator breaks the zones, and before this the file
+// could never be installed, refreshed, or withdrawn again.
+func TestForceRepairsAFileWhoseMarkersAreBroken(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "SKILL.md")
+	broken := artifact.Zoned("shipped-v1\n", "mine\n") + "appended after the last marker\n"
+	write(t, path, broken)
+
+	out, err := artifact.RefreshFile(artifact.FileRequest{
+		Path: path, System: "shipped-v2\n", Enabled: true, Force: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Changed || out.Backup == "" {
+		t.Fatalf("forced repair outcome = %+v", out)
+	}
+	assertZones(t, path, "shipped-v2\n", "")
+	if got := read(t, out.Backup); got != broken {
+		t.Fatalf("the replaced bytes were not preserved in the backup: %q", got)
 	}
 }
 

@@ -76,13 +76,25 @@ func Resolve(in Input) (Paths, error) {
 func inDataDir(paths Paths, dataDir string, in Input) Paths {
 	paths.Home = in.Home
 	paths.Runner = filepath.Join(dataDir, DirRunner)
-	paths.Artifacts = filepath.Join(in.Home, DirOwn, "artifacts.json")
+	paths.Artifacts = filepath.Join(artifactRoot(dataDir, in.Home), "artifacts.json")
 	paths.Config = filepath.Join(dataDir, FileConfig)
 	if in.ConfigEnv != "" {
 		paths.Config = in.ConfigEnv
 	}
 	paths.Reconciliation = filepath.Join(dataDir, "reconciliation.json")
 	return paths
+}
+
+// artifactRoot keeps the machine-wide registry under ~/.roca, and falls back to
+// the selected data directory when the operator named a database without a home
+// to hang it off. Joining an empty home would make the registry relative, so a
+// command would create `.roca` in whatever directory it ran from and a later
+// purge would delete that path relative to wherever it ran from instead.
+func artifactRoot(dataDir, home string) string {
+	if home == "" {
+		return dataDir
+	}
+	return filepath.Join(home, DirOwn)
 }
 
 func firstNonEmpty(values ...string) string {
