@@ -305,9 +305,11 @@ func (s *Service) Interpret(ctx context.Context, question string,
 	return s.InterpretStream(ctx, question, columns, rows, sqlInference, "", nil, nil)
 }
 
-// InterpretStream is Interpret with live prose callbacks. Streaming is used
-// only when the caller asks for deltas and the chosen provider supports it;
-// machine callers and buffered providers keep the ordinary complete response.
+// InterpretStream is Interpret with a callback for the prose. Provider
+// streaming is transport, never display: it is used only when the caller asks
+// for deltas and the chosen provider supports it, and what the callback
+// receives is the complete guarded text, once. Machine callers and buffered
+// providers keep the ordinary complete response.
 func (s *Service) InterpretStream(ctx context.Context, question string,
 	columns []string, rows []map[string]any, sqlInference time.Duration,
 	sqlProvider string, onStart func(bool), onDelta func(string)) (Interpretation, error) {

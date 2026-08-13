@@ -1013,12 +1013,14 @@ func TestInterpretPromptIsLanguageAgnostic(t *testing.T) {
 	}
 }
 
-// Live prose is held until the guardian has read it, and no name the model gave
-// a column shortens that hold or changes a word of what the prompt says about
-// the rows. An alias is the model's own account of what it produced: honouring
-// it would let the guarded model turn off its own guard by writing AS ratio,
-// and doubting it would tell a model that computed a percentage that the
-// percentage in front of it is not there.
+// Prose is held until the guardian has read it, so a provider stream is
+// transport and never display: the model's chunks arrive, and the caller is
+// handed the checked text once. No name the model gave a column shortens that
+// hold or changes a word of what the prompt says about the rows. An alias is
+// the model's own account of what it produced: honouring it would let the
+// guarded model turn off its own guard by writing AS ratio, and doubting it
+// would tell a model that computed a percentage that the percentage in front of
+// it is not there.
 func TestInterpretationGuardianHoldsLiveProseBackWhateverTheColumnsAreCalled(t *testing.T) {
 	const fabricated = "Alpha leads, more than the next two combined. Beta follows."
 	const checked = "Alpha leads. Beta follows."
@@ -1062,6 +1064,10 @@ func TestInterpretationGuardianHoldsLiveProseBackWhateverTheColumnsAreCalled(t *
 			}
 			if len(deltas) != testCase.wantDeltas {
 				t.Fatalf("published %d deltas, want %d: %q", len(deltas), testCase.wantDeltas, deltas)
+			}
+			if len(model.rawDeltas) < 2 {
+				t.Fatalf("the provider streamed %d chunks, so nothing was held back: %q",
+					len(model.rawDeltas), model.rawDeltas)
 			}
 			hint := strings.Contains(model.prompts[0], query.InterpretationShapeHint(3))
 			if hint != testCase.wantHint {

@@ -166,6 +166,19 @@ answer · provider ollama · model qwen3.5:4b · 4.7 s
 declared interpretation provider with its verdict and its remedy, and the one
 that is going to read the rows.
 
+### The prose arrives complete
+
+An interpretation provider may deliver its answer as a stream, and La Roca uses
+that stream as internal transport only. The prose you see is always held until
+the response is complete and the guardian has checked it against the rows, and
+it is then published in one piece. That is deliberate: the guardian needs whole
+sentences before it can prove a comparison against the same subject, the same
+measured column and the same rows, and delete what those rows do not support.
+Printing words as they arrive would put unproven prose on your terminal that no
+later correction can take back, so the wait is the price of never showing a
+claim the evidence has not proved. Buffered providers, `--json` and every
+machine caller take the same path, and the answer is identical.
+
 ## The providers
 
 | Name | Transport | Authentication | Default model |
