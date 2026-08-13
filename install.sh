@@ -1,8 +1,9 @@
 #!/bin/sh
-# La Roca installer. Installing is copying one binary onto the PATH.
+# La Roca installer. One binary goes on PATH; bundled data plugins go under ~/.roca.
 #
-# There is no release tree, no `current` symlink and no swap dance, because
-# there is nothing to make atomic: the artefact IS the product. What this script
+# There is no release tree or `current` symlink: the artefact IS the product.
+# A short-lived copy keeps the previous binary recoverable until bundled plugin
+# placement succeeds. What this script
 # owes the operator is three things, and they are the ones the campaign paid
 # for:
 #
@@ -59,6 +60,21 @@ USAGE
 
 say()  { printf '%s\n' "$*"; }
 die()  { printf 'install.sh: %s\n' "$*" >&2; exit 1; }
+
+# The bundled data plugins are placed by the binary that was just installed.
+# This script is served from the default branch while --version pins an exact
+# release, so it also runs against binaries older than the command: a release
+# that never shipped bundled plugins has none to fail to place.
+install_bundled_plugins() {
+  BUNDLED_REPORT=$("$1" _install-bundled-plugins --json 2>&1) && return 0
+  case "$BUNDLED_REPORT" in
+    *"unknown command"*|*"unknown flag"*)
+      say "note: roca $TAG predates bundled plugins; none were placed"
+      return 0
+      ;;
+  esac
+  return 1
+}
 
 require_value() {
   [ "$#" -ge 2 ] || die "$1 needs a value"
@@ -271,7 +287,15 @@ rm -f "$PROBE"
 # Converge over an interrupted run: whatever a previous kill left staged in the
 # prefix is this script's and goes now: what we own
 # is deleted whenever it is there, and nothing else is touched.
-rm -f "$PREFIX"/.roca-install.* 2>/dev/null || true
+#
+# A `.previous` is not swept. It only exists when even putting the previous
+# binary back failed, and then it is the one copy the operator has left, so the
+# next run may not be what destroys it.
+for leftover in "$PREFIX"/.roca-install.*; do
+  [ -e "$leftover" ] || continue
+  case "$leftover" in *.previous) continue ;; esac
+  rm -f "$leftover" 2>/dev/null || true
+done
 
 # A working directory to build in. The template carries its own X's because GNU
 # mktemp refuses one without them (`-t roca-install` is "too few X's"), where BSD
@@ -320,6 +344,8 @@ SUMS_DOWNLOAD_URL="https://github.com/$REPO/releases/download/$TAG/checksums.txt
 if [ -x "$TARGET" ] && [ "$FORCE" -eq 0 ]; then
   INSTALLED_VERSION=$(version_of "$TARGET" | awk 'NR == 1 && $1 == "roca" { print $2 }')
   if [ "$INSTALLED_VERSION" = "$TAG" ]; then
+    install_bundled_plugins "$TARGET" || \
+      die "roca $TAG is installed, but its bundled plugins could not be placed: $BUNDLED_REPORT"
     say "roca $TAG is already installed at $TARGET"
     exit 0
   fi
@@ -364,7 +390,8 @@ esac
 
 # Staged inside the prefix so the move that follows stays on one filesystem and
 # is therefore atomic. A kill before this point leaves the previous binary in
-# place, answering; a kill after it is a complete installation.
+# place, answering. The previous binary remains recoverable until bundled
+# plugin placement has also succeeded.
 STAGED="$PREFIX/.roca-install.$$"
 cp "$FOUND" "$STAGED"
 chmod 755 "$STAGED"
@@ -372,7 +399,29 @@ if ! "$STAGED" --version >/dev/null 2>&1; then
   rm -f "$STAGED"
   die "the downloaded binary does not answer --version. Nothing was installed"
 fi
-mv -f "$STAGED" "$TARGET"
+PREVIOUS=""
+if [ -e "$TARGET" ]; then
+  PREVIOUS="$PREFIX/.roca-install.$$.previous"
+  cp -p "$TARGET" "$PREVIOUS" || die "I cannot preserve the previous binary. Nothing was replaced"
+fi
+if ! mv -f "$STAGED" "$TARGET"; then
+  [ -z "$PREVIOUS" ] || rm -f "$PREVIOUS"
+  die "I cannot put the verified binary at $TARGET. Nothing was replaced"
+fi
+
+if ! install_bundled_plugins "$TARGET"; then
+  if [ -n "$PREVIOUS" ] && mv -f "$PREVIOUS" "$TARGET"; then
+    die "roca $TAG bundled plugins could not be placed: $BUNDLED_REPORT. The previous binary is back"
+  fi
+  if [ -n "$PREVIOUS" ]; then
+    die "roca $TAG bundled plugins could not be placed: $BUNDLED_REPORT. Your previous binary is kept at $PREVIOUS: put it back at $TARGET yourself"
+  fi
+  if rm -f "$TARGET"; then
+    die "roca $TAG bundled plugins could not be placed: $BUNDLED_REPORT. Nothing was installed"
+  fi
+  die "roca $TAG bundled plugins could not be placed: $BUNDLED_REPORT. Remove the incomplete binary at $TARGET"
+fi
+[ -z "$PREVIOUS" ] || rm -f "$PREVIOUS"
 
 say "binary: $TARGET"
 # There is no release tree and no `current` link, so the binary IS the entry on

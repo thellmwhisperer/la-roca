@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"github.com/cucumber/godog"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
+	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 )
 
 // Steps for the installation cycle: features 01 and 02.
@@ -111,6 +113,8 @@ func registerInstallSteps(ctx *godog.ScenarioContext, m *world) {
 
 	ctx.Then(`^there is exactly one executable file "roca" in the binaries directory$`,
 		m.exactlyOneExecutableRoca)
+	ctx.Then(`^the bundled resident plugin "([^"]*)" is installed without an executable$`,
+		m.bundledResidentPluginIsInstalled)
 	ctx.Then(`^that file is a static binary with no third-party dynamic dependencies$`,
 		m.aStaticBinary)
 	ctx.Then(`^there is no Python virtual environment in the HOME$`, m.noVirtualEnvironment)
@@ -723,6 +727,29 @@ func (m *world) exactlyOneExecutableRoca() error {
 	}
 	if len(executables) != 1 || executables[0] != "roca" {
 		return fmt.Errorf("the binaries directory carries %v, want exactly [roca]", executables)
+	}
+	return nil
+}
+
+func (m *world) bundledResidentPluginIsInstalled(name string) error {
+	directory := filepath.Join(m.home, ".roca", "plugins", name)
+	manifest, err := plugininstall.ReadManifest(directory)
+	if err != nil {
+		return err
+	}
+	if manifest.Risk != plugininstall.DataOnly || manifest.Executable != "" {
+		return fmt.Errorf("bundled plugin manifest = %+v, want data-only without executable", manifest)
+	}
+	if executable := filepath.Join(theBinariesDirectory(m.home), "roca-"+name); exists(executable) {
+		return fmt.Errorf("bundled data plugin installed an executable at %s", executable)
+	}
+	descriptor, err := plugin.Inspect(name, directory)
+	if err != nil {
+		return err
+	}
+	if descriptor.Semantic.Attachment != plugin.AttachmentResident {
+		return fmt.Errorf("bundled plugin attachment = %q, want resident",
+			descriptor.Semantic.Attachment)
 	}
 	return nil
 }
