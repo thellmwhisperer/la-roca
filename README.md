@@ -266,7 +266,12 @@ comes with its whole story: the how, the why, and the failed attempts behind
 the final answer, one question away.
 
 `roca skill install` ships the operating craft into each runtime today. The
-`pill` layer is built for what comes next: condensed artifacts distilled
+installed skill and generated prompt keep shipped SYSTEM content separate from
+an operator-owned USER zone, and `roca update` tracks their release in
+`~/.roca/artifacts.json`. Automatic refresh is available behind the default-off
+`features.artifact_refresh` key.
+
+The `pill` layer is built for what comes next: condensed artifacts distilled
 from your own history and injected through hooks, charging an agent with
 exactly the information the task needs instead of a whole skill.
 

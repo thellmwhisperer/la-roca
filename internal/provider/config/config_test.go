@@ -23,6 +23,9 @@ func TestTheDefaultDatabaseLivesUnderTheHome(t *testing.T) {
 	if paths.Reconciliation != filepath.Join(home, ".roca", "reconciliation.json") {
 		t.Errorf("reconciliation = %q", paths.Reconciliation)
 	}
+	if paths.Artifacts != filepath.Join(home, ".roca", "artifacts.json") {
+		t.Errorf("artifact registry = %q", paths.Artifacts)
+	}
 }
 
 func TestTheFlagBeatsTheEnvironmentAndTheHome(t *testing.T) {

@@ -2,10 +2,14 @@ package cli
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/release"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
 )
 
 func TestUpdateRefusesAnInsecureOrMalformedMirror(t *testing.T) {
@@ -141,5 +145,68 @@ func TestCapabilityCountUsesTheSelectedDatabase(t *testing.T) {
 	want := "/installed/roca _capabilities --json --db-path /custom/roca.db"
 	if got := strings.Join(command.Args, " "); got != want {
 		t.Fatalf("capability count command = %q, want %q", got, want)
+	}
+}
+
+func TestArtifactRefreshHonoursTheDefaultOffGateAndSystemDivergence(t *testing.T) {
+	tests := []struct {
+		name, config, current string
+		force                 bool
+		wantChanged, diverged bool
+	}{
+		{name: "flag off", current: "shipped-v1\n"},
+		{name: "flag on", config: "[features]\nartifact_refresh = true\n", current: "shipped-v1\n", wantChanged: true},
+		{name: "edited system", config: "[features]\nartifact_refresh = true\n", current: "operator edit\n", diverged: true},
+		{name: "forced edit", config: "[features]\nartifact_refresh = true\n", current: "operator edit\n", force: true, wantChanged: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			home := skillTestHome(t)
+			path := filepath.Join(home, ".codex", "skills", "roca", "SKILL.md")
+			writeFile(t, path, artifact.Zoned(test.current, "operator bytes\n"))
+			registryPath := filepath.Join(home, ".roca", "artifacts.json")
+			if err := artifact.SaveRegistry(registryPath, artifact.Registry{Entries: []artifact.Entry{{
+				Kind: "skill", Runtime: "codex", Path: path, InstalledVersion: "v1.0.0",
+				SystemSHA256: artifact.Checksum("shipped-v1\n"),
+			}}}); err != nil {
+				t.Fatal(err)
+			}
+			if test.config != "" {
+				writeFile(t, filepath.Join(home, ".roca", "config.toml"), test.config)
+			}
+			env := &cliEnv{build: Build{Version: "v2.0.0"}}
+			report, err := env.refreshManagedArtifacts(filepath.Join(home, "bin", "roca"), test.force)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			zones, err := artifact.Parse(string(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := zones.System == skill.Content(); got != test.wantChanged {
+				t.Fatalf("system refreshed = %v, want %v; system=%q", got, test.wantChanged, zones.System)
+			}
+			if zones.User != "operator bytes\n" {
+				t.Fatalf("user zone changed: %q", zones.User)
+			}
+			if got := len(report.Diverged) == 1; got != test.diverged {
+				t.Fatalf("report = %+v", report)
+			}
+			registry, err := artifact.LoadRegistry(registryPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entry, _ := registry.Find("skill", "codex", path)
+			if entry.AvailableVersion != "v2.0.0" {
+				t.Fatalf("outdated version was not recorded: %+v", entry)
+			}
+			if !test.wantChanged && entry.InstalledVersion != "v1.0.0" {
+				t.Fatalf("unrefreshed install version changed: %+v", entry)
+			}
+		})
 	}
 }

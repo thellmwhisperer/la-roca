@@ -64,10 +64,11 @@ A normal fresh init asks for the database, model, and confirmation. An ambiguous
 harness adds one question; adoption separately asks for its source path. It uses
 the agent CLI's existing session and does not add a login step.
 
-Init also writes `prompt.md` in the selected data directory. If that optional
-write fails, init reports a warning and leaves the prepared database usable. It
-does not edit agent instruction files or install integrations without a
-separate command.
+Init also writes and registers `prompt.md` in the selected data directory. Its
+marked SYSTEM zone is shipped by La Roca; its marked USER zone belongs to the
+operator. If that optional write fails, init reports a warning and leaves the
+prepared database usable. It does not edit agent instruction files or install
+integrations without a separate command.
 
 A successful human-readable init reports the corpus floor: the oldest ingested
 moment, the bedrock your memory reaches back to. An empty database says so
@@ -99,6 +100,41 @@ Update resolves the selected release, verifies its checksum, runs the staged
 binary's version check, and swaps it into place by rename. The existing data,
 configuration and agent integrations remain in place. If any verification
 fails, the active executable is unchanged.
+
+The roca skill, `prompt.md`, and the Claude authorship hook are registered in
+the schema-versioned `~/.roca/artifacts.json`. Each entry records its harness,
+path, installed release, available release, format, and SYSTEM checksum. The
+same registry feeds uninstall's central owned-path inventory; an artifact with
+operator bytes in its USER zone is not claimed as a whole file.
+
+Automatic artifact refresh is a default-off rollout:
+
+```toml
+[features]
+artifact_refresh = true
+```
+
+With the key absent or false, `roca update` discovers legacy installs, records
+their state and reports outdated artifacts, but changes none of them. Proposals
+for another already-supported harness are informative only. Enabling the key
+lets update replace each unchanged SYSTEM zone with the new release while
+transplanting the USER zone byte for byte. A pre-zone file that exactly matches
+shipped content is adopted as SYSTEM; any unrecognized legacy bytes become
+USER content on the one-time migration.
+
+An edit inside SYSTEM is divergence. Update names that file and
+`roca update --force-artifacts`, then leaves it untouched without prompting.
+The force command replaces SYSTEM and still preserves USER. Every changed file
+gets a named `.roca.bak` recovery copy before publication.
+
+The hook uses the same ownership split inside Claude's settings: the one entry
+whose command ends in `hooks run claude` is the explicitly marked SYSTEM
+fragment, while the surrounding settings and other hook entries are USER. No
+new harness target is introduced by this lifecycle.
+
+This registry is only for the artifacts La Roca itself ships. Third-party
+skills, skill marketplaces, and remote artifact distribution are not part of
+this feature.
 
 If an existing database uses the legacy search tokenizer, the first writable
 command after the update automatically rebuilds only the derived full-text

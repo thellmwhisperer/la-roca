@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
 )
@@ -132,8 +133,12 @@ func TestInstallWritesTheSkillAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(body) != skill.Content() {
-		t.Fatal("written skill does not match the embedded canonical text")
+	if !strings.HasPrefix(string(body), "---\n# ROCA SYSTEM BEGIN\n") {
+		t.Fatalf("installed skill no longer opens with YAML frontmatter: %q", string(body[:min(len(body), 40)]))
+	}
+	zones, err := artifact.Parse(string(body))
+	if err != nil || zones.System != skill.Content() || zones.User != "" {
+		t.Fatalf("written skill zones = %+v, err %v", zones, err)
 	}
 
 	second, err := skill.Install("claude", path)
@@ -177,7 +182,7 @@ func TestInstallRefusesAnUnknownRuntime(t *testing.T) {
 	}
 }
 
-func TestInstallReplacesStaleContent(t *testing.T) {
+func TestInstallAdoptsUnrecognizedLegacyContentIntoTheUserZone(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "skills", "roca", "SKILL.md")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
@@ -193,8 +198,12 @@ func TestInstallReplacesStaleContent(t *testing.T) {
 		t.Fatal("stale skill was left in place")
 	}
 	body, _ := os.ReadFile(path)
-	if string(body) != skill.Content() {
-		t.Fatal("stale skill was not replaced")
+	zones, err := artifact.Parse(string(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if zones.System != skill.Content() || zones.User != "stale\n" {
+		t.Fatalf("legacy adoption = %+v", zones)
 	}
 }
 

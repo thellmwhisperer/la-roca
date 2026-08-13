@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thellmwhisperer/la-roca/internal/artifact"
 )
 
 func TestInitWritesTheAgentPresentationPrompt(t *testing.T) {
@@ -24,6 +26,10 @@ func TestInitWritesTheAgentPresentationPrompt(t *testing.T) {
 	}
 	if result.Prompt != string(body) {
 		t.Error("init did not return the exact prompt it wrote")
+	}
+	zones, err := artifact.Parse(string(body))
+	if err != nil || zones.User != "" {
+		t.Fatalf("prompt zones = %+v, err %v", zones, err)
 	}
 	for _, want := range []string{
 		"La Roca", "local semantic memory", "when to query",
@@ -51,6 +57,26 @@ func TestInitWritesTheAgentPresentationPrompt(t *testing.T) {
 	}
 	if !report.PromptExists {
 		t.Fatal("doctor says the generated prompt is missing")
+	}
+}
+
+func TestInitAdoptsAnUnrecognizedLegacyPromptWithoutLosingIt(t *testing.T) {
+	paths := freshPaths(t)
+	path := filepath.Join(paths.data, "prompt.md")
+	if err := os.WriteFile(path, []byte("operator legacy prompt\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	svc := serviceOn(t, paths)
+	result, err := svc.Init(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	zones, err := artifact.Parse(result.Prompt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if zones.User != "operator legacy prompt\n" {
+		t.Fatalf("legacy prompt was not preserved verbatim: %q", zones.User)
 	}
 }
 

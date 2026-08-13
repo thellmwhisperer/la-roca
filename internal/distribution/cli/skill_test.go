@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
@@ -41,8 +42,17 @@ func TestSkillInstallWritesUnderTempHome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(body) != skill.Content() {
-		t.Fatal("installed file does not match the embedded skill")
+	zones, err := artifact.Parse(string(body))
+	if err != nil || zones.System != skill.Content() || zones.User != "" {
+		t.Fatalf("installed zones = %+v, err %v", zones, err)
+	}
+	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := registry.Find("skill", "claude", want)
+	if !ok || entry.SystemSHA256 != artifact.Checksum(skill.Content()) {
+		t.Fatalf("registered skill = %+v, found %v", entry, ok)
 	}
 
 	var again strings.Builder

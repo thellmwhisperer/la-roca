@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/layers"
@@ -236,6 +237,10 @@ const presentationPrompt = "## La Roca — local semantic memory\n" +
 	"On first bootstrap, `roca init` asks new or adopt, then chooses the answering model before its harness.\n" +
 	"La Roca never edits agent instruction files; a human chooses where to paste this block.\n"
 
+// PresentationPrompt is the product-owned part of prompt.md. Distribution
+// lifecycle code uses the same bytes service.Init installs.
+func PresentationPrompt() string { return presentationPrompt }
+
 // Init leaves the database ready: it creates the new one or adopts the one that
 // is there, and resyncs the layer registry. It is idempotent by contract,
 // because the real flow runs it more than once.
@@ -334,8 +339,8 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 		result.Bytes = info.Size()
 	}
 	result.PromptPath = filepath.Join(s.dataDir(), "prompt.md")
-	result.Prompt = presentationPrompt
-	if err := os.WriteFile(result.PromptPath, []byte(result.Prompt), 0o600); err != nil {
+	result.Prompt, err = installPresentationPrompt(result.PromptPath)
+	if err != nil {
 		failedPath := result.PromptPath
 		result.PromptPath = ""
 		result.Warnings = append(result.Warnings,
@@ -343,6 +348,23 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 	}
 	result.TotalElapsedMS = time.Since(started).Milliseconds()
 	return result, nil
+}
+
+func installPresentationPrompt(path string) (string, error) {
+	if body, err := os.ReadFile(path); err == nil {
+		if _, parseErr := artifact.Parse(string(body)); parseErr == nil {
+			return string(body), nil
+		}
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	if _, err := artifact.RefreshFile(artifact.FileRequest{
+		Path: path, System: presentationPrompt, LegacySystems: []string{presentationPrompt}, Enabled: true,
+	}); err != nil {
+		return "", err
+	}
+	body, err := os.ReadFile(path)
+	return string(body), err
 }
 
 // bootstrapIngest is init's first read of the disk. It is incremental like every other

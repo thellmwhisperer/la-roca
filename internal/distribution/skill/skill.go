@@ -14,6 +14,7 @@ import (
 
 	_ "embed"
 
+	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 )
 
@@ -26,9 +27,12 @@ const SkillName = "roca"
 // Outcome is what one install did. Changed false means the file already held
 // the canonical text — the normal result of a second install.
 type Outcome struct {
-	Runtime string `json:"runtime"`
-	Path    string `json:"path"`
-	Changed bool   `json:"changed"`
+	Runtime      string `json:"runtime"`
+	Path         string `json:"path"`
+	Changed      bool   `json:"changed"`
+	Backup       string `json:"backup,omitempty"`
+	Diverged     bool   `json:"diverged,omitempty"`
+	SystemSHA256 string `json:"system_sha256,omitempty"`
 	// Removed lists every directory an uninstall took away: the roca skill
 	// directory and, when it left it hollow, the skills directory above it. It
 	// is empty for an install and for an uninstall that changed nothing.
@@ -52,6 +56,10 @@ var rootOf = map[string]struct {
 
 // Content is the canonical SKILL.md body shipped inside the binary.
 func Content() string { return content }
+
+// InstalledContent is the whole managed file, including the operator-owned
+// zone that refreshes transplant byte for byte.
+func InstalledContent() string { return artifact.Zoned(content, "") }
 
 // Runtimes are the supported agents, sorted — the same five agentcfg knows.
 func Runtimes() []string {
@@ -92,6 +100,12 @@ func Path(name, home string, env func(string) string) (string, error) {
 // withdrawing the skill leaves no empty chain behind: os.Remove is the whole
 // guard, since another skill's directory keeps it from being empty.
 func Uninstall(name, path string) (Outcome, error) {
+	return UninstallWithChecksum(name, path, artifact.Checksum(content))
+}
+
+// UninstallWithChecksum withdraws the exact registered SYSTEM zone even when
+// a newer binary ships different skill text.
+func UninstallWithChecksum(name, path, systemSHA256 string) (Outcome, error) {
 	if _, ok := rootOf[name]; !ok {
 		return Outcome{}, unknown(name)
 	}
@@ -103,7 +117,25 @@ func Uninstall(name, path string) (Outcome, error) {
 	if err != nil {
 		return out, fmt.Errorf("read %s: %w", path, err)
 	}
+	user := ""
 	if string(previous) != content {
+		zones, err := artifact.Parse(string(previous))
+		if err != nil || artifact.Checksum(zones.System) != systemSHA256 {
+			return out, nil
+		}
+		user = zones.User
+	} else if artifact.Checksum(string(previous)) != systemSHA256 {
+		return out, nil
+	}
+	if user != "" {
+		changed, err := agentcfg.Edit("artifact", path, func(string) (string, error) {
+			return user, nil
+		}, false)
+		if err != nil {
+			return out, err
+		}
+		out.Changed = changed.Changed
+		out.Backup = changed.Backup
 		return out, nil
 	}
 	dir := filepath.Dir(path)
@@ -131,27 +163,30 @@ func Uninstall(name, path string) (Outcome, error) {
 	return out, nil
 }
 
-// Install writes the canonical skill at path. Idempotent: identical bytes are
-// left alone and Changed is false. Only this file is created or replaced.
+// Install writes the zoned canonical skill at path. Idempotent installs are
+// left alone; legacy operator bytes are adopted into USER.
 func Install(name, path string) (Outcome, error) {
+	return InstallWithOptions(name, path, "", false)
+}
+
+// InstallWithOptions refreshes a registered skill and only overrides a
+// changed SYSTEM zone when force is explicit.
+func InstallWithOptions(name, path, previousSystemSHA256 string, force bool) (Outcome, error) {
 	if _, ok := rootOf[name]; !ok {
 		return Outcome{}, unknown(name)
 	}
 	out := Outcome{Runtime: name, Path: path}
-	previous, err := os.ReadFile(path)
-	switch {
-	case err == nil && string(previous) == content:
-		return out, nil
-	case err != nil && !os.IsNotExist(err):
-		return out, fmt.Errorf("read %s: %w", path, err)
+	result, err := artifact.RefreshFile(artifact.FileRequest{
+		Path: path, System: content, LegacySystems: []string{content},
+		PreviousSystemSHA256: previousSystemSHA256, Enabled: true, Force: force,
+	})
+	if err != nil {
+		return out, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return out, fmt.Errorf("create the directory of %s: %w", path, err)
-	}
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		return out, fmt.Errorf("write %s: %w", path, err)
-	}
-	out.Changed = true
+	out.Changed = result.Changed
+	out.Backup = result.Backup
+	out.Diverged = result.Diverged
+	out.SystemSHA256 = result.SystemSHA256
 	return out, nil
 }
 

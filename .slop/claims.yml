@@ -4,6 +4,10 @@ claims:
     contract:
       file: features/distribution/cli.feature
       item: "Help lists every command with one honest line each"
+  internal/distribution/cli/artifacts.go:
+    contract:
+      file: features/distribution/skill.feature
+      item: "Skill install places the skill where the chosen agent discovers it, and says where"
   internal/distribution/cli/commands.go:
     contract:
       file: features/distribution/cli.feature

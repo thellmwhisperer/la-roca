@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/lifecycle"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
@@ -21,6 +22,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 const legacyCredentialsDir = "credentials"
@@ -234,6 +236,13 @@ func failed(report *lifecycle.Report, format string, args ...any) {
 // five lines saying so on every uninstall is noise.
 func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool) []agentcfg.Outcome {
 	var outcomes []agentcfg.Outcome
+	registryPath, registry, registryErr := env.artifactRegistry()
+	registryExists := false
+	if registryErr != nil {
+		failed(report, "read managed artifact registry: %v", registryErr)
+	} else if _, err := os.Stat(registryPath); err == nil {
+		registryExists = true
+	}
 	// What changed is named, what failed is named, and what was left behind is
 	// named.
 	withdrawn := func(what string, outcome agentcfg.Outcome, err error) {
@@ -289,13 +298,26 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 			failed(report, "%s", err)
 			continue
 		}
-		outcome, err := skill.Uninstall(runtime, path)
+		checksum := artifact.Checksum(skill.Content())
+		if entry, found := registry.Find(artifactKindSkill, runtime, path); found {
+			checksum = entry.SystemSHA256
+		}
+		outcome, err := skill.UninstallWithChecksum(runtime, path, checksum)
 		if err != nil {
 			failed(report, "withdraw skill from %s: %v", runtime, err)
 			continue
 		}
 		if outcome.Changed {
 			report.Deleted = append(report.Deleted, outcome.Removed...)
+			if outcome.Backup != "" {
+				_ = os.Remove(outcome.Backup)
+			}
+		}
+	}
+	if registryErr == nil && registryExists {
+		registry.RemoveKinds(artifactKindSkill, artifactKindHook)
+		if err := artifact.SaveRegistry(registryPath, registry); err != nil {
+			failed(report, "update managed artifact registry: %v", err)
 		}
 	}
 	return outcomes
@@ -391,7 +413,26 @@ func ownedPaths(paths config.Paths) []string {
 	dataDir := dirOf(paths.DB)
 	owned := []string{
 		paths.DB, paths.DB + "-wal", paths.DB + "-shm", paths.DB + "-journal",
-		paths.Config, paths.Reconciliation, filepath.Join(dataDir, "prompt.md"),
+		paths.Config, paths.Reconciliation,
+	}
+	managed, err := artifact.OwnedPaths(paths.Artifacts)
+	if err != nil {
+		managed = []string{paths.Artifacts}
+	}
+	for _, path := range managed {
+		if !slices.Contains(owned, path) {
+			owned = append(owned, path)
+		}
+	}
+	prompt := filepath.Join(dataDir, "prompt.md")
+	if !slices.Contains(owned, prompt) {
+		if body, err := os.ReadFile(prompt); err == nil {
+			zones, zoneErr := artifact.Parse(string(body))
+			if string(body) == service.PresentationPrompt() ||
+				(zoneErr == nil && zones.User == "" && zones.System == service.PresentationPrompt()) {
+				owned = append(owned, prompt)
+			}
+		}
 	}
 	backupPrefix := strings.TrimSuffix(filepath.Base(paths.DB), ".db") + "."
 	backups, backupsExist := ownedFiles(paths.Backups, func(name string) bool {

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/lifecycle"
 )
 
@@ -130,6 +131,108 @@ func TestClaudeHookInstallerPreservesSettingsAndIsIdempotent(t *testing.T) {
 			t.Fatalf("roca hooks %s claude is unavailable: %v", verb, err)
 		}
 	}
+}
+
+func TestHookCommandRegistersTheOwnedClaudeFragment(t *testing.T) {
+	home := skillTestHome(t)
+	binary := filepath.Join(home, "bin", "roca")
+	t.Setenv(EnvExecutable, binary)
+	var output strings.Builder
+	root := rootCommand(&cliEnv{out: &output, build: Build{Version: "v1.2.3"}})
+	root.SetArgs([]string{"hooks", "install", "claude"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	settings := filepath.Join(home, ".claude", "settings.json")
+	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := registry.Find("hook", "claude", settings)
+	if !ok || entry.InstalledVersion != "v1.2.3" || entry.SystemSHA256 == "" {
+		t.Fatalf("registered hook = %+v, found %v", entry, ok)
+	}
+
+	body, err := os.ReadFile(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operatorBinary := filepath.Join(home, "operator", "roca")
+	edited := strings.Replace(string(body), claudeHookCommand(binary),
+		claudeHookCommand(operatorBinary), 1)
+	if err := os.WriteFile(settings, []byte(edited), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var warning strings.Builder
+	root = rootCommand(&cliEnv{out: &output, errOut: &warning, build: Build{Version: "v1.2.3"}})
+	root.SetArgs([]string{"hooks", "install", "claude"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSettings(t, settings); !strings.Contains(got, operatorBinary) ||
+		!strings.Contains(warning.String(), "hooks install claude --force") {
+		t.Fatalf("diverged hook was overwritten or not warned: body=%s warning=%q", got, warning.String())
+	}
+
+	root = rootCommand(&cliEnv{out: &output, build: Build{Version: "v1.2.3"}})
+	root.SetArgs([]string{"hooks", "install", "claude", "--force"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSettings(t, settings); strings.Contains(got, operatorBinary) || !strings.Contains(got, binary) {
+		t.Fatalf("forced hook refresh did not restore SYSTEM: %s", got)
+	}
+
+	root = rootCommand(&cliEnv{out: &output, build: Build{Version: "v1.2.3"}})
+	root.SetArgs([]string{"hooks", "uninstall", "claude"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	registry, err = artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := registry.Find("hook", "claude", settings); ok {
+		t.Fatal("explicit hook uninstall left the artifact registered")
+	}
+}
+
+func TestHookRefreshChangesOnlyItsRegisteredCommandBytes(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, "settings.json")
+	oldBinary := filepath.Join(home, "old", "roca")
+	newBinary := filepath.Join(home, "new", "roca")
+	oldCommand := claudeHookCommand(oldBinary)
+	previous := `{"numeric_spelling":1e3,"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":` +
+		encodedJSONString(t, oldCommand) + `}]}]},"tail":"  keep  "}`
+	if err := os.WriteFile(path, []byte(previous), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	system, found, err := claudeHookSystem(path)
+	if err != nil || !found {
+		t.Fatalf("read installed hook: found=%v err=%v", found, err)
+	}
+	outcome, err := refreshClaudeHook(path, newBinary, artifact.Checksum(system), true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Replace(previous, encodedJSONString(t, oldCommand), encodedJSONString(t, claudeHookCommand(newBinary)), 1)
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !outcome.Changed || string(body) != want {
+		t.Fatalf("refresh changed USER bytes:\nwant %s\n got %s", want, body)
+	}
+}
+
+func encodedJSONString(t *testing.T, value string) string {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded)
 }
 
 // Settings La Roca did not write are two different questions. Installing into
