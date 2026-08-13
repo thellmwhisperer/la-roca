@@ -20,7 +20,8 @@ and continues to behave as before.
 A data plugin is one directory under `~/.roca/plugins/<name>/`. It contains
 exactly one plain SQLite database (`.db`, `.sqlite`, or `.sqlite3`) and a
 `semantic.yaml` file. The database is the plugin's only writable store; La
-Roca opens it read-only only when its semantic layer is relevant to a question.
+Roca opens it read-only, either when its semantic layer is relevant to a
+question or, for a resident plugin, for every query.
 SQLite extensions, including `sqlite-vec`, are not part of this contract.
 
 ## Semantic layer
@@ -57,7 +58,9 @@ row provenance every answer carries.
 
 At query time La Roca ranks installed semantic layers against the question and
 validates each selected declaration against the database's real tables and
-columns. A mismatch skips that plugin and travels as a warning. Valid tables
+columns. SQLite's own internal tables are outside that comparison, so a
+database that uses `AUTOINCREMENT` does not declare `sqlite_sequence`. A
+mismatch skips that plugin and travels as a warning. Valid tables
 are shown to the SQL model with a qualified schema such as
 `plugin_receipts.receipts`. Punctuation in a plugin name becomes `_`; the rare
 collision receives a deterministic suffix.
@@ -155,6 +158,13 @@ The plugin folder is installed under `~/.roca/plugins/`. An executable goes to
 `$ROCA_PREFIX`, or `~/.local/bin` when that variable is absent. The generated
 `.roca-plugin.json` records source, version, package checksum, payload checksums,
 and installed paths.
+
+A plugin bundled with the binary asks for no consent and resolves no source:
+[installation and update](lifecycle.md#install) place it from the release
+artefact itself, verify the same checksums, and write the same manifest. Because
+nothing but its packaged files changes between versions, it is refreshed inside
+the directory it already occupies, so the database it owns is never unlinked
+from a process that holds it open.
 
 `roca plugin update <name>` re-resolves and verifies that recorded source. It
 refreshes immutable package files but preserves the installed SQLite database,
