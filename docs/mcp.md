@@ -136,7 +136,7 @@ An agent learns La Roca three different ways. They stack; none replaces another.
 | Layer | What it is | How the operator turns it on |
 |---|---|---|
 | **Prompt** | A one-line aviso from `roca init` that a skill exists | Automatic on every init; install is never implied |
-| **Skill** | Canonical `SKILL.md` that teaches query/explore/store/exec, the investigation method, and the MCP tools | `roca skill install <runtime>` or `--all` — copies one file into each selected runtime's personal skills directory |
+| **Skill** | Canonical `SKILL.md` that teaches query/explore/store/exec, the investigation method, and the MCP tools | `roca skill install <runtime>` or `--all` — installs one registered, zoned file in each selected runtime's personal skills directory |
 | **MCP** | Six passthrough tools for agents with no shell | `roca mcp install <runtime>` |
 
 ```
@@ -155,9 +155,12 @@ Paths (personal/global only — Roca never writes a project-local skill):
 | `hermes` | `$HERMES_HOME`/`~/.hermes/skills/roca/SKILL.md` |
 | `pi` | `$PI_CODING_AGENT_DIR`/`~/.pi/agent/skills/roca/SKILL.md` |
 
-Only that file is created or replaced. Re-running is a no-op when the bytes
-already match the embedded canonical text. The skill body lives in
-`internal/distribution/skill/SKILL.md` and ships inside the binary via `go:embed`.
+Only that file is created or refreshed. Explicit markers divide its shipped
+SYSTEM zone from the operator's USER zone. Re-running is a no-op when SYSTEM
+already matches; otherwise USER is transplanted verbatim and the previous file
+is backed up. An edited SYSTEM zone is left alone unless the operator passes
+`--force`. The skill body lives in `internal/distribution/skill/SKILL.md` and
+ships inside the binary via `go:embed`.
 
 ---
 

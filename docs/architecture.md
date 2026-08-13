@@ -42,3 +42,8 @@ fixtures (an external test seam, never a product import).
 - `skill` sits under `distribution`, not `provider`: its only consumer is the
   CLI and it needs `agentcfg`; placing it in provider would force a
   provider→distribution edge.
+- `internal/artifact` is a shared file primitive below those domains: both init
+  and distribution use its zones and registry without creating a
+  provider→distribution edge.
+- `internal/distribution/cli/artifacts.go` orchestrates discovery, rollout
+  gating, refresh reports, and the post-swap handoff to the new binary.

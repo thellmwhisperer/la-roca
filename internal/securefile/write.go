@@ -1,4 +1,4 @@
-// Package securefile owns the small file primitives used for operator secrets.
+// Package securefile owns the small file primitives used for operator state.
 package securefile
 
 import (
@@ -10,12 +10,55 @@ import (
 
 // Write replaces path atomically after the new bytes and permissions are durable.
 func Write(path string, data []byte, mode, dirMode os.FileMode) (err error) {
+	return publish(path, data, nil, mode, dirMode, true)
+}
+
+// Replace atomically replaces an operator-owned file while preserving its mode.
+// When previous is non-nil, a concurrent change makes the replacement fail.
+func Replace(path string, data, previous []byte) error {
+	mode := os.FileMode(0o600)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	}
+	return publish(path, data, previous, mode, 0o700, false)
+}
+
+// BackUp preserves previous bytes beside path without overwriting older copies.
+func BackUp(path string, previous []byte) (string, error) {
+	for index := 0; ; index++ {
+		backup := path + ".roca.bak"
+		if index > 0 {
+			backup = fmt.Sprintf("%s.roca.bak.%d", path, index)
+		}
+		file, err := os.OpenFile(backup, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if os.IsExist(err) {
+			continue
+		}
+		if err != nil {
+			return "", fmt.Errorf("inspect backup %s: %w", backup, err)
+		}
+		if _, err := file.Write(previous); err != nil {
+			file.Close()
+			os.Remove(backup)
+			return "", fmt.Errorf("back up %s: %w", path, err)
+		}
+		if err := file.Close(); err != nil {
+			os.Remove(backup)
+			return "", fmt.Errorf("close backup %s: %w", backup, err)
+		}
+		return backup, nil
+	}
+}
+
+func publish(path string, data, previous []byte, mode, dirMode os.FileMode, restrictDir bool) (err error) {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, dirMode); err != nil {
 		return err
 	}
-	if err := os.Chmod(dir, dirMode); err != nil {
-		return fmt.Errorf("restrict directory permissions: %w", err)
+	if restrictDir {
+		if err := os.Chmod(dir, dirMode); err != nil {
+			return fmt.Errorf("restrict directory permissions: %w", err)
+		}
 	}
 	temporary, err := os.CreateTemp(dir, "."+filepath.Base(path)+"-*")
 	if err != nil {
@@ -39,6 +82,17 @@ func Write(path string, data []byte, mode, dirMode os.FileMode) (err error) {
 	}
 	if err = temporary.Close(); err != nil {
 		return err
+	}
+	if previous != nil {
+		current, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return fmt.Errorf("re-read %s: %w", path, readErr)
+		}
+		if string(current) != string(previous) {
+			return fmt.Errorf(
+				"%s changed while it was being edited: close the runtime that owns it and try again",
+				path)
+		}
 	}
 	if err = os.Rename(staged, path); err != nil {
 		return err

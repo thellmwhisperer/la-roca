@@ -30,6 +30,18 @@ the `roca plugin` installer commands. See [Plugins](plugins.md) for the package
 and trust contract. Leave the key absent or false for the release-default
 behavior.
 
+Managed agent-artifact refresh is independently default-off. The registry is
+still updated and outdated installs are reported when this key is absent:
+
+```toml
+[features]
+artifact_refresh = true
+```
+
+Enabling it lets `roca update` refresh unchanged SYSTEM zones while preserving
+USER zones. See [Update](lifecycle.md#update) for legacy adoption, divergence,
+backup, and force behavior.
+
 An interactive `roca init` is the shortest way to create those overrides. It
 starts with models rather than provider names: detected agent CLIs are grouped
 as origins with their shipped default and a free-text option, while Ollama

@@ -191,7 +191,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 		loginCommand(env), modelCommand(env),
 		updateCommand(env), uninstallCommand(env),
 		modelsCommand(env), pluginCommand(env), pluginsCommand(env),
-		capabilitiesCommand(env),
+		capabilitiesCommand(env), artifactsCommand(env),
 	)
 	root.InitDefaultHelpCmd()
 	for _, command := range root.Commands() {
