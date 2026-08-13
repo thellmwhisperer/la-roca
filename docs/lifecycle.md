@@ -15,6 +15,17 @@ the SHA-256 digest, and only then replaces the target by rename. It refuses to
 overwrite an unrelated executable and converges safely after an interrupted
 run.
 
+The installed binary then places its own bundled data plugins under
+`~/.roca/plugins/`. Each one carries no executable, starts as an empty SQLite
+database, is verified and recorded like any other [installed
+package](plugins.md#verified-packages-and-lifecycle), and is removed by a purge
+with the rest of that tree. The first one it ships is
+[`roca-ops`](plugins.md#the-bundled-roca-ops-plugin). If they cannot be placed,
+the installer puts the previous binary back and reports the reason, so no
+partial update is left behind; when even that restore fails it names the copy it
+kept for the operator to move back by hand. A `--version` older than bundled
+plugins reports that none were placed.
+
 | Flag | Default |
 |---|---|
 | `--repo owner/name` | `thellmwhisperer/la-roca`, or `ROCA_REPO` |
@@ -99,8 +110,10 @@ roca update
 ```
 
 Update resolves the selected release, verifies its checksum, runs the staged
-binary's version check, and swaps it into place by rename. The existing data,
-configuration and agent integrations remain in place. If any verification
+binary's version check, and swaps it into place by rename. The swapped binary
+then places its bundled data plugins exactly as installation does, refreshing
+the packaged files and keeping the database they already own. The existing
+data, configuration and agent integrations remain in place. If any verification
 fails, the active executable is unchanged.
 
 The roca skill, `prompt.md`, and the Claude authorship hook are registered in

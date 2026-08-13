@@ -9,7 +9,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	_ "modernc.org/sqlite"
@@ -64,6 +66,41 @@ INSERT INTO receipts (title) VALUES ('synthetic hidden-by-flag marker')`)
 	}
 }
 
+func TestRocaOpsOffLeavesTheBundledPluginCompletelyInert(t *testing.T) {
+	paths := freshPaths(t)
+	plugins := ensureRocaOps(t, paths)
+	model := answering("fixture", `SELECT content AS text FROM memories LIMIT 5`)
+	svc := initialized(t, paths, func(options *service.Options) {
+		options.PluginDir = plugins
+		options.Providers = cascadeOf(model)
+	})
+	stored, err := svc.Store(t.Context(), service.StoreRequest{
+		Layer: "handoff", Content: "synthetic flag-off marker",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var coreRows int
+	if err := svc.DB().SQL().QueryRow("SELECT COUNT(*) FROM memories WHERE id = ?", stored.ID).Scan(&coreRows); err != nil {
+		t.Fatal(err)
+	}
+	opsDB := openRocaOps(t, plugins)
+	defer opsDB.Close()
+	var opsRows int
+	if err := opsDB.QueryRow("SELECT COUNT(*) FROM memories").Scan(&opsRows); err != nil {
+		t.Fatal(err)
+	}
+	result, err := svc.Query(t.Context(), service.QueryRequest{Question: "show the synthetic flag off marker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if coreRows != 1 || opsRows != 0 || len(result.Databases) != 0 ||
+		strings.Contains(model.prompt, "plugin_roca_ops") {
+		t.Fatalf("flag off changed behavior: core=%d ops=%d databases=%v prompt=%s",
+			coreRows, opsRows, result.Databases, model.prompt)
+	}
+}
+
 func TestARelevantPluginIsQualifiedValidatedAndMarkedInEveryResultRow(t *testing.T) {
 	paths := freshPaths(t)
 	plugins := filepath.Join(paths.data, "plugins")
@@ -95,6 +132,44 @@ INSERT INTO receipts (title, amount_cents) VALUES ('Synthetic telescope parts', 
 		if !strings.Contains(model.prompt, want) {
 			t.Errorf("plugin prompt lacks %q:\n%s", want, model.prompt)
 		}
+	}
+}
+
+func TestAResidentPluginIsAvailableWithoutQuestionRouting(t *testing.T) {
+	paths := freshPaths(t)
+	plugins := filepath.Join(paths.data, "plugins")
+	installQueryPlugin(t, plugins, "resident-fixture", `
+version: 1
+attachment: resident
+description: Synthetic resident inventory.
+questions:
+  - "Which resident inventory exists?"
+tables:
+  - name: inventory
+    description: Synthetic resident records.
+    columns: [id, label]
+`, `CREATE TABLE inventory (id INTEGER PRIMARY KEY, label TEXT);
+INSERT INTO inventory (label) VALUES ('Synthetic resident marker');`)
+	model := answering("codex",
+		`SELECT label AS text FROM plugin_resident_fixture.inventory LIMIT 5`)
+	svc := initialized(t, paths, func(options *service.Options) {
+		options.PluginDir = plugins
+		options.PluginsEnabled = true
+		options.Providers = cascadeOf(model)
+	})
+
+	result, err := svc.Query(t.Context(), service.QueryRequest{
+		Question: "show the unrelated telescope schedule",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(result.Databases, []string{"core", "plugin:resident-fixture"}) ||
+		result.RowCount != 1 || result.Rows[0]["database"] != "plugin:resident-fixture" {
+		t.Fatalf("resident result = %+v", result)
+	}
+	if !strings.Contains(model.prompt, "plugin_resident_fixture.inventory") {
+		t.Fatalf("resident schema was routed by question instead of connection lifetime:\n%s", model.prompt)
 	}
 }
 
@@ -246,6 +321,171 @@ tables:
 	}
 }
 
+func TestRocaOpsRoutesStoresAndQueriesCoreHistoryTogetherWithNewWrites(t *testing.T) {
+	paths := freshPaths(t)
+	plugins := ensureRocaOps(t, paths)
+	model := answering("codex", `
+		SELECT 'core' AS "database", id, content AS text FROM memories
+		WHERE content = 'synthetic historical handoff'
+		UNION ALL
+		SELECT 'plugin:roca-ops' AS "database", id, content AS text
+		FROM plugin_roca_ops.memories
+		WHERE content = 'synthetic resident handoff'
+		LIMIT 10`)
+	svc := initialized(t, paths, func(options *service.Options) {
+		options.PluginDir = plugins
+		options.RocaOpsEnabled = true
+		options.Providers = cascadeOf(model)
+	})
+	seed(t, svc, "handoff", "synthetic historical handoff")
+	// Core history can contain the same text as a new operational write. Its id
+	// is from another namespace and must never be returned for the ops write.
+	seed(t, svc, "handoff", "synthetic resident handoff")
+
+	stored, err := svc.Store(t.Context(), service.StoreRequest{
+		Layer: "handoff", Content: "synthetic resident handoff",
+		Authorship: service.Authorship{Agent: "codex", Model: "gpt-test", Surface: service.SurfaceMCP},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Skipped {
+		t.Fatalf("core history suppressed the extracted write: %+v", stored)
+	}
+	var coreRows int
+	if err := svc.DB().SQL().QueryRow(
+		"SELECT COUNT(*) FROM memories WHERE content = 'synthetic resident handoff'").Scan(&coreRows); err != nil {
+		t.Fatal(err)
+	}
+	if coreRows != 1 {
+		t.Fatalf("the extracted write changed core history: rows = %d, want the one seeded row", coreRows)
+	}
+
+	opsDB := openRocaOps(t, plugins)
+	defer opsDB.Close()
+	var agent, modelID, surface string
+	if err := opsDB.QueryRow(`SELECT source_agent, source_model, source_surface
+		FROM memories WHERE id = ?`, stored.ID).Scan(&agent, &modelID, &surface); err != nil {
+		t.Fatal(err)
+	}
+	if agent != "codex" || modelID != "gpt-test" || surface != service.SurfaceMCP {
+		t.Fatalf("authorship = %s/%s via %s", agent, modelID, surface)
+	}
+
+	result, err := svc.Query(t.Context(), service.QueryRequest{Question: "show the synthetic handoff history"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(result.Databases, []string{"core", "plugin:roca-ops"}) || result.RowCount != 2 {
+		t.Fatalf("union result = %+v", result)
+	}
+	if !strings.Contains(model.prompt, "plugin_roca_ops.memories") {
+		t.Fatalf("resident ops schema is absent from the query prompt:\n%s", model.prompt)
+	}
+}
+
+func TestKeywordRescueSearchesRocaOpsWithoutQuestionRouting(t *testing.T) {
+	paths := freshPaths(t)
+	plugins := ensureRocaOps(t, paths)
+	svc := initialized(t, paths, func(options *service.Options) {
+		options.PluginDir = plugins
+		options.RocaOpsEnabled = true
+		options.Providers = cascadeOf(unavailable("fixture", "offline", "start fixture"))
+	})
+	if _, err := svc.Store(t.Context(), service.StoreRequest{
+		Layer: "handoff", Content: "synthetic zircon falcon handoff",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := svc.Query(t.Context(), service.QueryRequest{
+		Question: "what happened with zircon falcon",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Path != service.PathKeyword || !slices.ContainsFunc(result.Rows, func(row map[string]any) bool {
+		return row["database"] == "plugin:roca-ops" && strings.Contains(fmt.Sprint(row["text"]), "zircon falcon")
+	}) {
+		t.Fatalf("resident write was absent from keyword rescue: %+v", result)
+	}
+	if !strings.Contains(result.SQL, "plugin_roca_ops") {
+		t.Fatalf("the declared SQL omits the half that produced the resident rows: %s", result.SQL)
+	}
+}
+
+func TestRocaOpsDrainOnlyRemovesExplicitlyExpiredRows(t *testing.T) {
+	paths := freshPaths(t)
+	plugins := ensureRocaOps(t, paths)
+	svc := initialized(t, paths, func(options *service.Options) {
+		options.PluginDir = plugins
+		options.RocaOpsEnabled = true
+	})
+	for _, testCase := range []struct {
+		content   string
+		expiresAt string
+	}{
+		{content: "synthetic expired handoff", expiresAt: "2026-08-12T00:00:00Z"},
+		{content: "synthetic future handoff", expiresAt: "2026-08-14T00:00:00Z"},
+		{content: "synthetic immortal handoff"},
+	} {
+		metadata := map[string]any{}
+		if testCase.expiresAt != "" {
+			metadata["expires_at"] = testCase.expiresAt
+		}
+		_, err := svc.Store(t.Context(), service.StoreRequest{
+			Layer: "handoff", Content: testCase.content, Metadata: metadata,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	result, err := svc.DrainRocaOps(t.Context(), time.Date(2026, 8, 13, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Removed != 1 {
+		t.Fatalf("drain = %+v, want one removed row", result)
+	}
+	opsDB := openRocaOps(t, plugins)
+	defer opsDB.Close()
+	var remaining int
+	if err := opsDB.QueryRow("SELECT COUNT(*) FROM memories").Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 2 {
+		t.Fatalf("remaining = %d, want future and immortal rows", remaining)
+	}
+}
+
+func ensureRocaOps(t *testing.T, paths testPaths) string {
+	t.Helper()
+	root := filepath.Join(paths.data, "plugins")
+	if _, err := rocaops.Ensure(root, filepath.Join(paths.data, "bin"), "v-test"); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func openRocaOps(t *testing.T, root string) *sql.DB {
+	t.Helper()
+	descriptor, err := plugin.Inspect(rocaops.Name, filepath.Join(root, rocaops.Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return openSQLite(t, descriptor.Database)
+}
+
+func openSQLite(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db
+}
+
 func installQueryPlugin(t *testing.T, root, name, semantic, ddl string) {
 	t.Helper()
 	directory := filepath.Join(root, name)
@@ -255,16 +495,14 @@ func installQueryPlugin(t *testing.T, root, name, semantic, ddl string) {
 	if err := os.WriteFile(filepath.Join(directory, plugin.SemanticFilename), []byte(semantic), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	db, err := sql.Open("sqlite", filepath.Join(directory, "plugin.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := openSQLite(t, filepath.Join(directory, "plugin.db"))
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}()
 	if _, err := db.Exec(ddl); err != nil {
-		db.Close()
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
+		t.Fatalf("create synthetic plugin database: %v", err)
 	}
 }
 

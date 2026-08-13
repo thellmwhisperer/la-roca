@@ -185,6 +185,73 @@ func RenderSQLLike(plan Plan, coordinationLayers []string) (string, error) {
 	return b.String(), nil
 }
 
+// RenderSQLAttachedMemoryLike compiles the literal search for one attached
+// memory database. It is the resident-plugin half of the keyword rescue.
+func RenderSQLAttachedMemoryLike(plan Plan, coordinationLayers []string,
+	schema string, limit int, matchAny bool) (string, error) {
+	clauses := likeClauses("m.content", plan.Term)
+	if matchAny {
+		clauses = likeAnyClauses("m.content", plan.Term)
+	}
+	if strings.TrimSpace(plan.Term) == "" || clauses == "" {
+		return "", fmt.Errorf("the term search needs a term and the question offers none")
+	}
+	qualified := quoteIdentifier(schema) + ".memories"
+	var b strings.Builder
+	fmt.Fprintf(&b, "SELECT 'memory' AS source, m.id AS id, %s AS author, m.content AS text, "+
+		"m.created_at AS created_at "+
+		"FROM %s AS m WHERE %s AND m.id NOT IN "+
+		"(SELECT supersedes FROM %s WHERE supersedes IS NOT NULL)",
+		memoryAuthor("m"), qualified, clauses, qualified)
+	if plan.Layer != "" {
+		fmt.Fprintf(&b, " AND m.layer = %s", literal(plan.Layer))
+	} else if len(coordinationLayers) > 0 {
+		fmt.Fprintf(&b, " AND m.layer NOT IN (%s)", stringList(coordinationLayers))
+	}
+	if !isValidLimit(limit) {
+		limit = defaultLimit
+	}
+	fmt.Fprintf(&b, " ORDER BY m.created_at DESC LIMIT %d", limit)
+	return b.String(), nil
+}
+
+// RenderSearchUnion declares the two halves of a merged keyword answer as one
+// runnable statement. Each half is projected down to the presented columns,
+// because the ranked route carries ordering columns the literal route has not.
+func RenderSearchUnion(core, attached string, limit int) (string, error) {
+	core = strings.TrimRight(strings.TrimSpace(core), "; \t\n")
+	attached = strings.TrimRight(strings.TrimSpace(attached), "; \t\n")
+	if core == "" || attached == "" {
+		return "", fmt.Errorf("a merged search declares both of its halves")
+	}
+	if !isValidLimit(limit) {
+		limit = defaultLimit
+	}
+	const half = "SELECT source, id, author, text, created_at FROM (%s)"
+	return fmt.Sprintf(half+" UNION ALL "+half+" ORDER BY created_at DESC LIMIT %d",
+		core, attached, limit), nil
+}
+
+func likeAnyClauses(column, term string) string {
+	return joinedLikeClauses(column, term, " OR ")
+}
+
+func joinedLikeClauses(column, term, separator string) string {
+	parts := strings.Split(term, "+")
+	clauses := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			clauses = append(clauses, likeClause(column, part))
+		}
+	}
+	return strings.Join(clauses, separator)
+}
+
+func quoteIdentifier(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+}
+
 func memoryAuthor(alias string) string {
 	column := func(name string) string {
 		return "COALESCE(NULLIF(" + alias + "." + name + ", ''), 'unknown')"
@@ -196,16 +263,7 @@ func memoryAuthor(alias string) string {
 // likeClauses require the column to match every word of the term: searching for
 // "long dashes" is not searching for "long" or "dashes".
 func likeClauses(column, term string) string {
-	parts := strings.Split(term, "+")
-	clauses := make([]string, 0, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		clauses = append(clauses, likeClause(column, part))
-	}
-	return strings.Join(clauses, " AND ")
+	return joinedLikeClauses(column, term, " AND ")
 }
 
 // likeClause looks for the word as it was written and, when it carries

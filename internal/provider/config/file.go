@@ -642,6 +642,7 @@ type FeaturesConfig struct {
 	AskMissingReferent bool `toml:"ask_missing_referent"`
 	Plugins            bool `toml:"plugins"`
 	ArtifactRefresh    bool `toml:"artifact_refresh"`
+	RocaOps            bool `toml:"roca_ops"`
 }
 
 // defaultFeatures is the belt as shipped: everything on.
@@ -809,6 +810,7 @@ func readFeatures(section map[string]any, path string, warnings *[]string) Featu
 		"ask_missing_referent": &features.AskMissingReferent,
 		"plugins":              &features.Plugins,
 		"artifact_refresh":     &features.ArtifactRefresh,
+		"roca_ops":             &features.RocaOps,
 	}
 	for _, key := range sortedKeys(section) {
 		enabled, known := switches[key]
