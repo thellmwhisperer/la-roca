@@ -1,5 +1,5 @@
 #!/bin/sh
-# La Roca installer. Installing is copying one binary onto the PATH.
+# La Roca installer. One binary goes on PATH; bundled data plugins go under ~/.roca.
 #
 # There is no release tree, no `current` symlink and no swap dance, because
 # there is nothing to make atomic: the artefact IS the product. What this script
@@ -320,6 +320,8 @@ SUMS_DOWNLOAD_URL="https://github.com/$REPO/releases/download/$TAG/checksums.txt
 if [ -x "$TARGET" ] && [ "$FORCE" -eq 0 ]; then
   INSTALLED_VERSION=$(version_of "$TARGET" | awk 'NR == 1 && $1 == "roca" { print $2 }')
   if [ "$INSTALLED_VERSION" = "$TAG" ]; then
+    "$TARGET" _install-bundled-plugins --json >/dev/null || \
+      die "roca $TAG is installed, but its bundled plugins could not be placed"
     say "roca $TAG is already installed at $TARGET"
     exit 0
   fi
@@ -373,6 +375,9 @@ if ! "$STAGED" --version >/dev/null 2>&1; then
   die "the downloaded binary does not answer --version. Nothing was installed"
 fi
 mv -f "$STAGED" "$TARGET"
+
+"$TARGET" _install-bundled-plugins --json >/dev/null || \
+  die "roca $TAG is installed, but its bundled plugins could not be placed"
 
 say "binary: $TARGET"
 # There is no release tree and no `current` link, so the binary IS the entry on

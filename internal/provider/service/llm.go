@@ -678,7 +678,8 @@ func (s *Service) searchByTerm(ctx context.Context, plan query.Plan, method stri
 		if err != nil {
 			return nil, nil, "", nil, err
 		}
-		return columns, rows, validated, &result.Provenance, nil
+		return s.withResidentMemorySearch(ctx, plan, maxChars, matchAny, limit,
+			columns, rows, validated, &result.Provenance)
 	}
 
 	columns = []string{"source", "id", "author", "text", "created_at"}
@@ -700,7 +701,52 @@ func (s *Service) searchByTerm(ctx context.Context, plan query.Plan, method stri
 			"created_at": date,
 		})
 	}
-	return columns, rows, result.SQL, &result.Provenance, nil
+	return s.withResidentMemorySearch(ctx, plan, maxChars, matchAny, limit,
+		columns, rows, result.SQL, &result.Provenance)
+}
+
+func (s *Service) withResidentMemorySearch(ctx context.Context, plan query.Plan, maxChars int,
+	matchAny bool, limit int, columns []string, rows []map[string]any, stmt string,
+	provenance *search.Provenance) ([]string, []map[string]any, string, *search.Provenance, error) {
+	var ops *plugin.Database
+	for index := range s.resident {
+		if s.resident[index].Name == rocaOpsPluginName {
+			ops = &s.resident[index]
+			break
+		}
+	}
+	if ops == nil {
+		return columns, rows, stmt, provenance, nil
+	}
+	opsStatement, err := query.RenderSQLAttachedMemoryLike(plan,
+		s.registry.SearchExcluded(), ops.Schema, limit, matchAny)
+	if err != nil {
+		return nil, nil, "", nil, err
+	}
+	gate, closeGate, err := s.gateFor([]plugin.Database{*ops})
+	if err != nil {
+		return nil, nil, "", nil, err
+	}
+	defer closeGate()
+	validated, err := gate.Validate(opsStatement)
+	if err != nil {
+		return nil, nil, "", nil, err
+	}
+	opsColumns, opsRows, err := s.executeWithPlugins(ctx, validated, plan.Term, maxChars,
+		[]plugin.Database{*ops})
+	if err != nil {
+		return nil, nil, "", nil, err
+	}
+	columns, rows = ensureDatabaseColumn(columns, rows, "core")
+	if len(columns) == 0 {
+		columns = opsColumns
+	}
+	rows = append(rows, opsRows...)
+	rows = dedupRows(strings.ReplaceAll(plan.Term, "+", " "), columns, rows)
+	if len(rows) > limit {
+		rows = rows[:limit]
+	}
+	return columns, rows, stmt, provenance, nil
 }
 
 // rescueSQL compiles the deterministic literal fallback without executing it.

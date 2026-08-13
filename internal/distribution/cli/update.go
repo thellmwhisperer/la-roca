@@ -207,6 +207,10 @@ func (env *cliEnv) update(ctx context.Context, source release.Source,
 	if err := release.Swap(installed, binary, answersItsVersion); err != nil {
 		return err
 	}
+	if output, err := exec.CommandContext(ctx, installed, "_install-bundled-plugins", "--json").CombinedOutput(); err != nil {
+		return fmt.Errorf("roca %s is installed, but its bundled plugins could not be placed: %w: %s",
+			published.Tag, err, strings.TrimSpace(string(output)))
+	}
 	paths, pathErr := env.resolvePaths()
 	var artifacts artifactRefreshReport
 	var artifactErr error

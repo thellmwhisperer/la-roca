@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -109,6 +110,13 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (StoreResult, err
 	if err != nil {
 		return StoreResult{}, err
 	}
+	var expiresAt any
+	if s.opts.RocaOpsEnabled {
+		expiresAt, err = explicitExpiry(req.Metadata)
+		if err != nil {
+			return StoreResult{}, err
+		}
+	}
 	if _, err := s.ensureSchema(ctx); err != nil {
 		return StoreResult{}, err
 	}
@@ -120,21 +128,22 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (StoreResult, err
 	}
 	authorship := req.Authorship
 	authorship = authorship.normalized()
-	err = s.db.Write(ctx, func(tx *sql.Tx) error {
-		var existing int64
-		row := tx.QueryRowContext(ctx,
-			`SELECT id FROM memories
-			 WHERE id NOT IN (SELECT supersedes FROM memories WHERE supersedes IS NOT NULL)
-			   AND layer = ? AND status = ? AND content = ?
-			   AND (project = ? OR (project IS NULL AND ? IS NULL))
-			 LIMIT 1`,
-			physical, status, content, orNull(req.Project), orNull(req.Project))
-		switch err := row.Scan(&existing); {
-		case err == nil:
+	target := s.db
+	if s.opts.RocaOpsEnabled {
+		target = s.ops
+		if existing, found, err := identicalMemory(ctx, s.db.SQL(), physical, status, content, req.Project); err != nil {
+			return StoreResult{}, err
+		} else if found {
+			result.ID, result.Skipped = existing, true
+			return result, nil
+		}
+	}
+	err = target.Write(ctx, func(tx *sql.Tx) error {
+		if existing, found, err := identicalMemory(ctx, tx, physical, status, content, req.Project); err != nil {
+			return err
+		} else if found {
 			result.ID, result.Skipped = existing, true
 			return nil
-		case !errors.Is(err, sql.ErrNoRows):
-			return fmt.Errorf("look for an identical memory: %w", err)
 		}
 
 		// Released v1 databases carry the original three-value CHECK. The service
@@ -146,13 +155,18 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (StoreResult, err
 				return fmt.Errorf("open the plugin origin compatibility gate: %w", err)
 			}
 		}
-		outcome, err := tx.ExecContext(ctx,
-			`INSERT INTO memories (layer, content, metadata, origin, source_agent,
+		statement := `INSERT INTO memories (layer, content, metadata, origin, source_agent,
 			                       source_model, source_surface, project, status, supersedes)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			physical, content, metadata, origin, authorship.Agent, authorship.Model,
-			authorship.Surface,
-			orNull(req.Project), status, orNull(req.Supersedes))
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		arguments := []any{physical, content, metadata, origin, authorship.Agent, authorship.Model,
+			authorship.Surface, orNull(req.Project), status, orNull(req.Supersedes)}
+		if s.opts.RocaOpsEnabled {
+			statement = `INSERT INTO memories (layer, content, metadata, origin, source_agent,
+			                       source_model, source_surface, project, status, supersedes, expires_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			arguments = append(arguments, expiresAt)
+		}
+		outcome, err := tx.ExecContext(ctx, statement, arguments...)
 		if pluginOrigin {
 			if _, closeErr := tx.ExecContext(context.WithoutCancel(ctx),
 				"PRAGMA ignore_check_constraints = OFF"); closeErr != nil {
@@ -169,6 +183,77 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (StoreResult, err
 		return StoreResult{}, err
 	}
 	return result, nil
+}
+
+func explicitExpiry(metadata map[string]any) (any, error) {
+	value, present := metadata["expires_at"]
+	if !present || value == nil {
+		return nil, nil
+	}
+	written, ok := value.(string)
+	if !ok {
+		return nil, fmt.Errorf("metadata expires_at must be an RFC3339 string")
+	}
+	parsed, err := time.Parse(time.RFC3339, written)
+	if err != nil {
+		return nil, fmt.Errorf("metadata expires_at must be an RFC3339 string: %w", err)
+	}
+	return parsed.UTC().Format(time.RFC3339Nano), nil
+}
+
+type memoryQuerier interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func identicalMemory(ctx context.Context, db memoryQuerier, layer, status, content,
+	project string) (int64, bool, error) {
+	var existing int64
+	err := db.QueryRowContext(ctx,
+		`SELECT id FROM memories
+		 WHERE id NOT IN (SELECT supersedes FROM memories WHERE supersedes IS NOT NULL)
+		   AND layer = ? AND status = ? AND content = ?
+		   AND (project = ? OR (project IS NULL AND ? IS NULL))
+		 LIMIT 1`,
+		layer, status, content, orNull(project), orNull(project)).Scan(&existing)
+	switch {
+	case err == nil:
+		return existing, true, nil
+	case errors.Is(err, sql.ErrNoRows):
+		return 0, false, nil
+	default:
+		return 0, false, fmt.Errorf("look for an identical memory: %w", err)
+	}
+}
+
+type RocaOpsDrainResult struct {
+	Before  string `json:"before"`
+	Removed int64  `json:"removed"`
+}
+
+// DrainRocaOps removes only rows carrying an explicit expiry at or before the
+// operator-supplied instant. Nothing calls it automatically.
+func (s *Service) DrainRocaOps(ctx context.Context, before time.Time) (RocaOpsDrainResult, error) {
+	if s.opts.ReadOnly {
+		return RocaOpsDrainResult{}, refuseReadOnly("drain roca-ops")
+	}
+	if !s.opts.RocaOpsEnabled || s.ops == nil {
+		return RocaOpsDrainResult{}, fmt.Errorf("features.roca_ops is disabled")
+	}
+	if before.IsZero() {
+		return RocaOpsDrainResult{}, fmt.Errorf("a drain cutoff is required")
+	}
+	cutoff := before.UTC().Format(time.RFC3339Nano)
+	result := RocaOpsDrainResult{Before: cutoff}
+	err := s.ops.Write(ctx, func(tx *sql.Tx) error {
+		outcome, err := tx.ExecContext(ctx, `DELETE FROM memories
+			WHERE expires_at IS NOT NULL AND julianday(expires_at) <= julianday(?)`, cutoff)
+		if err != nil {
+			return fmt.Errorf("drain expired roca-ops memories: %w", err)
+		}
+		result.Removed, err = outcome.RowsAffected()
+		return err
+	})
+	return result, err
 }
 
 func validOrigin(origin string) bool {

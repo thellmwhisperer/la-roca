@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
@@ -191,6 +192,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 		loginCommand(env), modelCommand(env),
 		updateCommand(env), uninstallCommand(env),
 		modelsCommand(env), pluginCommand(env), pluginsCommand(env),
+		opsCommand(env), installBundledPluginsCommand(env),
 		capabilitiesCommand(env), artifactsCommand(env),
 	)
 	root.InitDefaultHelpCmd()
@@ -642,6 +644,14 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 	if home != "" {
 		pluginDir = filepath.Join(home, config.DirOwn, "plugins")
 	}
+	if file.Features.RocaOps {
+		if pluginDir == "" {
+			return nil, fmt.Errorf("features.roca_ops needs a HOME for the bundled plugin")
+		}
+		if _, err := rocaops.Ensure(pluginDir, pluginExecutableDir(paths), env.build.Version); err != nil {
+			return nil, fmt.Errorf("install bundled roca-ops plugin: %w", err)
+		}
+	}
 	var ingestProgress func(ingest.SourceProgress)
 	if env.wantIngestProgress && !env.json && termAware(env.errOut) {
 		env.liveIngest = newIngestRows(env.errOut, true)
@@ -660,6 +670,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		DisableMissingReferentAsk: !file.Features.AskMissingReferent,
 		PluginDir:                 pluginDir,
 		PluginsEnabled:            file.Features.Plugins,
+		RocaOpsEnabled:            file.Features.RocaOps,
 		Providers:                 providers,
 		Interpreters:              interpreters,
 		Explorers:                 explorers,

@@ -185,6 +185,51 @@ func RenderSQLLike(plan Plan, coordinationLayers []string) (string, error) {
 	return b.String(), nil
 }
 
+// RenderSQLAttachedMemoryLike compiles the literal search for one attached
+// memory database. It is the resident-plugin half of the keyword rescue.
+func RenderSQLAttachedMemoryLike(plan Plan, coordinationLayers []string,
+	schema string, limit int, matchAny bool) (string, error) {
+	clauses := likeClauses("m.content", plan.Term)
+	if matchAny {
+		clauses = likeAnyClauses("m.content", plan.Term)
+	}
+	if strings.TrimSpace(plan.Term) == "" || clauses == "" {
+		return "", fmt.Errorf("the term search needs a term and the question offers none")
+	}
+	qualified := quoteIdentifier(schema) + ".memories"
+	var b strings.Builder
+	fmt.Fprintf(&b, "SELECT 'memory' AS source, m.id, %s AS author, m.content AS text, m.created_at "+
+		"FROM %s AS m WHERE %s AND m.id NOT IN "+
+		"(SELECT supersedes FROM %s WHERE supersedes IS NOT NULL)",
+		memoryAuthor("m"), qualified, clauses, qualified)
+	if plan.Layer != "" {
+		fmt.Fprintf(&b, " AND m.layer = %s", literal(plan.Layer))
+	} else if len(coordinationLayers) > 0 {
+		fmt.Fprintf(&b, " AND m.layer NOT IN (%s)", stringList(coordinationLayers))
+	}
+	if !isValidLimit(limit) {
+		limit = defaultLimit
+	}
+	fmt.Fprintf(&b, " ORDER BY m.created_at DESC LIMIT %d", limit)
+	return b.String(), nil
+}
+
+func likeAnyClauses(column, term string) string {
+	parts := strings.Split(term, "+")
+	clauses := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			clauses = append(clauses, likeClause(column, part))
+		}
+	}
+	return strings.Join(clauses, " OR ")
+}
+
+func quoteIdentifier(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+}
+
 func memoryAuthor(alias string) string {
 	column := func(name string) string {
 		return "COALESCE(NULLIF(" + alias + "." + name + ", ''), 'unknown')"
