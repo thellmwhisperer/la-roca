@@ -112,21 +112,21 @@ func deleteUnprovenClaims(text string, claim comparisonClaim, ranked []rankedRow
 // span is a half-open byte range of the prose.
 type span struct{ start, end int }
 
-// deleteClaim removes the phrase and, when what is left of its clause no longer
-// stands as language, the clause or the sentence that carried it. It is still
-// deletion and nothing else: no word is rewritten, no meaning is synthesized,
-// and a neighbouring sentence that stands on its own is never touched.
+// deleteClaim removes the phrase and, when what is left of the sentence no
+// longer reads as one, the clause or the whole sentence that carried it. It is
+// still deletion and nothing else: no word is rewritten, no meaning is
+// synthesized, and a neighbouring sentence that stands on its own is untouched.
 func deleteClaim(text string, body span) string {
 	sentence := sentenceAround(text, body)
 	clause := clauseAround(text, sentence, body)
-	if !isFragment(text[clause.start:body.start] + text[body.end:clause.end]) {
+	if standsAlone(text[clause.start:body.start] + text[body.end:clause.end]) {
 		return text[:body.start] + text[body.end:]
 	}
 	cut := clauseCut(text, sentence, clause)
 	if cut.start <= sentence.start && cut.end >= sentence.end {
 		return deleteSentence(text, sentence)
 	}
-	if isFragment(text[sentence.start:cut.start] + text[cut.end:sentence.end]) {
+	if !standsAlone(text[sentence.start:cut.start] + text[cut.end:sentence.end]) {
 		return deleteSentence(text, sentence)
 	}
 	return text[:cut.start] + text[cut.end:]
@@ -186,6 +186,8 @@ func clauseCut(text string, sentence, clause span) span {
 
 // deleteSentence takes the sentence with its terminator and the space that
 // followed it, which is what keeps the sentences around it exactly as they were.
+// A sentence that had a line to itself takes that line break too, or what is
+// left of the answer is a blank line where a paragraph used to be.
 func deleteSentence(text string, sentence span) string {
 	end := sentence.end
 	if end < len(text) && strings.ContainsRune(".!?", rune(text[end])) {
@@ -194,7 +196,22 @@ func deleteSentence(text string, sentence span) string {
 	for end < len(text) && (text[end] == ' ' || text[end] == '\t') {
 		end++
 	}
+	if end < len(text) && text[end] == '\n' && startsItsOwnLine(text, sentence.start) {
+		end++
+	}
 	return text[:sentence.start] + text[end:]
+}
+
+func startsItsOwnLine(text string, start int) bool {
+	for at := start - 1; at >= 0; at-- {
+		if text[at] == '\n' {
+			return true
+		}
+		if !isBlank(text[at]) {
+			return false
+		}
+	}
+	return true
 }
 
 // danglingWords end a clause that was leaning on what has just been deleted.
@@ -207,15 +224,32 @@ var danglingWords = set(
 	"by", "to", "at", "in", "on", "for", "from", "as", "that", "which",
 	"while", "so", "because", "its", "their", "his", "her", "our", "your", "my")
 
-// isFragment says the remainder no longer stands as language: nothing left, one
-// bare word, or a tail that was leading somewhere the deletion took away.
-func isFragment(remainder string) bool {
+// leadingConjunctions open a clause that hung from something the deletion took
+// away. In lower case they are the other half of the same defect: a remainder
+// that starts on one is the second half of a sentence, not a sentence.
+var leadingConjunctions = set("and", "or", "but", "nor", "yet", "so", "because",
+	"while", "than", "then", "which", "that", "though", "although", "whereas")
+
+// standsAlone is the one rule every deletion answers to: what is left either
+// reads as a sentence of its own or does not stay at all. It leans on neither
+// end, because a remainder can be left hanging from either one.
+func standsAlone(remainder string) bool {
 	words := strings.Fields(strings.Trim(remainder, " \t\r\n.,;:!?—-"))
 	if len(words) < 2 {
-		return true
+		return false
 	}
-	last := strings.Trim(strings.ToLower(words[len(words)-1]), `.,;:!?"'()`)
-	return danglingWords[last]
+	first := bareWord(words[0])
+	if startsLower(first) && leadingConjunctions[strings.ToLower(first)] {
+		return false
+	}
+	return !danglingWords[strings.ToLower(bareWord(words[len(words)-1]))]
+}
+
+func bareWord(word string) string { return strings.Trim(word, `.,;:!?"'()`) }
+
+func startsLower(word string) bool {
+	first, _ := utf8.DecodeRuneInString(word)
+	return unicode.IsLower(first)
 }
 
 func isSentenceBreak(r rune) bool { return r == '.' || r == '!' || r == '?' || r == '\n' }

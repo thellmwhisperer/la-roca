@@ -60,6 +60,18 @@ func TestInterpretationGuardianKeepsOnlyProvenComparisons(t *testing.T) {
 			want: "Alpha leads. Gamma trails.",
 		},
 		{
+			name: "a remainder left hanging from a conjunction goes with its sentence",
+			columns: []string{"project", "sessions"}, rows: counted(100, 20, 15, 10),
+			text: "Beta is more than the next two combined, and Gamma trails. Alpha leads.",
+			want: "Alpha leads.",
+		},
+		{
+			name: "a deleted sentence that had a line to itself takes the line",
+			columns: []string{"project", "sessions"}, rows: counted(100, 20, 15, 10),
+			text: "Alpha leads.\nBeta is more than the next two combined.\nGamma trails.",
+			want: "Alpha leads.\nGamma trails.",
+		},
+		{
 			name: "an unrelated numeric column proves nothing",
 			columns: []string{"project", "sessions", "tokens"},
 			rows: []map[string]any{
