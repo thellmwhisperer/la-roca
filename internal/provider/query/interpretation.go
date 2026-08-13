@@ -11,9 +11,6 @@ import (
 	"unicode/utf8"
 )
 
-var explicitComparisonColumn = regexp.MustCompile(
-	`(?i)(?:^|_)(?:ratio|percentage?|percent|pct|difference|diff|delta|combined|multiple|times)(?:_|$)`)
-
 // comparisonClaim is one phrase the guardian knows how to check. The pattern
 // captures what the claim asserts and the punctuation that must survive its
 // deletion; proven reads that assertion against the ranked rows, starting from
@@ -43,21 +40,17 @@ type rankedRow struct {
 	magnitude float64
 }
 
-// InterpretationShapeHint warns only when several raw rows carry no explicit
-// comparison result. A comparison column makes the arithmetic part of the
-// evidence and therefore needs no blanket warning.
-func InterpretationShapeHint(columns []string, rowCount int) string {
-	if rowCount < 2 || hasExplicitComparison(columns) {
+// InterpretationShapeHint warns whenever several rows travel to the model. The
+// warning is not conditioned on how the result names its columns: those names
+// are the aliases of the same model this hint addresses, so a claim of having
+// computed a comparison is not evidence that one was computed.
+func InterpretationShapeHint(rowCount int) string {
+	if rowCount < 2 {
 		return ""
 	}
-	return "These are raw rows without an explicit comparison column. Do not invent ratios, " +
-		"combined totals, or cross-row arithmetic such as more than the next two combined."
+	return "These are raw result rows. Do not invent ratios, combined totals, " +
+		"or cross-row arithmetic such as more than the next two combined."
 }
-
-// InterpretationMayBeSanitized says the guardian could still delete a phrase
-// from prose about this result. It is what tells a live caller whether the
-// text can be published as it arrives or has to be held until it is complete.
-func InterpretationMayBeSanitized(columns []string) bool { return !hasExplicitComparison(columns) }
 
 // SanitizeInterpretation deletes the comparison phrases the result never
 // computed and the rows do not prove. What survives is proven, and proven
@@ -67,9 +60,6 @@ func InterpretationMayBeSanitized(columns []string) bool { return !hasExplicitCo
 // not proven goes. It never substitutes a softer claim or changes numbers:
 // everything outside the matched phrase stays.
 func SanitizeInterpretation(text string, columns []string, rows []map[string]any) string {
-	if !InterpretationMayBeSanitized(columns) {
-		return text
-	}
 	ranked := rankedEvidence(columns, rows)
 	sanitized := text
 	for _, claim := range comparisonClaims {
@@ -472,14 +462,4 @@ func numeric(value any) (float64, bool) {
 		return number, err == nil
 	}
 	return 0, false
-}
-
-func hasExplicitComparison(columns []string) bool {
-	for _, column := range columns {
-		normalized := strings.ReplaceAll(strings.ToLower(column), "-", "_")
-		if explicitComparisonColumn.MatchString(normalized) {
-			return true
-		}
-	}
-	return false
 }

@@ -636,9 +636,18 @@ type QueryConfig struct {
 }
 
 // FeaturesConfig contains operational escape hatches for security behaviour.
-// StrictInput defaults on; false opts out of the experimental signature gate.
+// Every one of them defaults on: StrictInput false opts out of the experimental
+// signature gate, and AskMissingReferent false opts out of asking the operator
+// to name a referent the question left generic. One is not the other, so an
+// installation that needs one of the two keeps the other.
 type FeaturesConfig struct {
-	StrictInput bool `toml:"strict_input"`
+	StrictInput        bool `toml:"strict_input"`
+	AskMissingReferent bool `toml:"ask_missing_referent"`
+}
+
+// defaultFeatures is the belt as shipped: everything on.
+func defaultFeatures() FeaturesConfig {
+	return FeaturesConfig{StrictInput: true, AskMissingReferent: true}
 }
 
 // ModelsConfig is the [models] section: which providers, in what order, with
@@ -703,7 +712,6 @@ var knownProviderKeys = map[string]bool{
 }
 
 var knownQueryKeys = map[string]bool{"timeout_ms": true}
-var knownFeaturesKeys = map[string]bool{"strict_input": true}
 
 func KnownProviderKey(key string) bool { return knownProviderKeys[key] }
 
@@ -712,7 +720,7 @@ func UnknownKeyWarning(key, path string) string { return unknownKey(key, path) }
 // LoadFile reads the config. A file that is not there is a machine with
 // defaults, not a failure.
 func LoadFile(path string) (File, error) {
-	file := File{Path: path, Features: FeaturesConfig{StrictInput: true}}
+	file := File{Path: path, Features: defaultFeatures()}
 
 	raw, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -768,14 +776,16 @@ func readQuery(section map[string]any, path string, warnings *[]string) QueryCon
 	for _, key := range sortedKeys(section) {
 		switch key {
 		case "timeout_ms":
-			// Only a value that really decoded as a number is a setting. The
-			// presence of the key is not: `timeout_ms = "5000"` decodes as zero,
-			// and a zero that was never written is an execution bound removed by a
-			// typo. What did not decode keeps the default and says so.
+			// Only a value that really decoded as a number a bound can be
+			// expressed in is a setting. The presence of the key is not:
+			// `timeout_ms = "5000"` decodes as zero, and a zero that was never
+			// written is an execution bound removed by a typo. A negative one is a
+			// bound no statement can meet and this build will not silently read it
+			// as the default. What is not a setting keeps the default and says so.
 			milliseconds, ok := readNumber(section[key])
-			if !ok {
-				*warnings = append(*warnings,
-					invalidValue("query.timeout_ms", path, "a whole number of milliseconds"))
+			if !ok || milliseconds < 0 {
+				*warnings = append(*warnings, invalidValue("query.timeout_ms", path,
+					"a whole number of milliseconds, zero or more"))
 				continue
 			}
 			query.TimeoutMS = milliseconds
@@ -790,25 +800,26 @@ func readQuery(section map[string]any, path string, warnings *[]string) QueryCon
 }
 
 func readFeatures(section map[string]any, path string, warnings *[]string) FeaturesConfig {
-	features := FeaturesConfig{StrictInput: true}
+	features := defaultFeatures()
+	switches := map[string]*bool{
+		"strict_input":         &features.StrictInput,
+		"ask_missing_referent": &features.AskMissingReferent,
+	}
 	for _, key := range sortedKeys(section) {
-		switch key {
-		case "strict_input":
-			// The gate stays on for anything that is not a boolean, because a
-			// misspelled opt-out must not be an opt-out. The operator is told, or
-			// the escape hatch silently does nothing.
-			strict, ok := section[key].(bool)
-			if !ok {
-				*warnings = append(*warnings,
-					invalidValue("features.strict_input", path, "true or false"))
-				continue
-			}
-			features.StrictInput = strict
-		default:
-			if !knownFeaturesKeys[key] {
-				*warnings = append(*warnings, unknownKey("features."+key, path))
-			}
+		enabled, known := switches[key]
+		if !known {
+			*warnings = append(*warnings, unknownKey("features."+key, path))
+			continue
 		}
+		// A switch stays on for anything that is not a boolean, because a
+		// misspelled opt-out must not be an opt-out. The operator is told, or the
+		// escape hatch silently does nothing.
+		written, ok := section[key].(bool)
+		if !ok {
+			*warnings = append(*warnings, invalidValue("features."+key, path, "true or false"))
+			continue
+		}
+		*enabled = written
 	}
 	return features
 }

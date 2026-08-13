@@ -8,9 +8,14 @@ import (
 var indefiniteReferent = regexp.MustCompile(
 	`(?i)\b(?:a|an)\s+(?:specific|particular|given|named)\s+([a-z][a-z0-9_-]*)\b`)
 
+// referentValueAfter are the shapes in which the question already supplied the
+// value, so there is nothing to ask for. A quoted word right after the noun is
+// one of them: "a specific project 'synthetic-orchid'" names its project as
+// plainly as "called synthetic-orchid" does.
 var referentValueAfter = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)^\s+(?:called|named|with\s+(?:the\s+)?(?:name|id|key|value))\s+["']?[a-z0-9]`),
 	regexp.MustCompile(`(?i)^\s*[:,]\s*["']?[a-z0-9]`),
+	regexp.MustCompile(`(?i)^\s*["'][a-z0-9]`),
 }
 
 // MissingReferent is the generic slot named by the question itself and the

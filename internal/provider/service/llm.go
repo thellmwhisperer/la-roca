@@ -333,7 +333,7 @@ func (s *Service) InterpretStream(ctx context.Context, question string,
 	}
 	b.WriteString(strings.Join(escapedColumns, ", "))
 	fmt.Fprintf(&b, "\nrow_count: %d\n", len(rows))
-	if hint := query.InterpretationShapeHint(columns, len(rows)); hint != "" {
+	if hint := query.InterpretationShapeHint(len(rows)); hint != "" {
 		b.WriteString("guardian_hint: ")
 		b.WriteString(hint)
 		b.WriteByte('\n')
@@ -370,21 +370,17 @@ func (s *Service) InterpretStream(ctx context.Context, question string,
 	_, nativeStream := chosen.(provider.StreamingProvider)
 	stream := onDelta != nil && nativeStream
 	// The guardian needs the complete sentence before it can remove a fabricated
-	// comparison, so a result it may still rewrite is held back and published
-	// once. A result it cannot touch keeps the live prose the operator reads as
-	// it is written: buffering everything would pay the whole cost of the
-	// guardian on every answer it never edits.
-	buffered := stream && query.InterpretationMayBeSanitized(columns)
+	// comparison, so live prose is held back and published once, after it has
+	// been checked. Nothing the model itself wrote is allowed to shorten that
+	// hold: the column names of a result are its own aliases, and a result that
+	// calls a column ratio has not thereby proved a ratio.
 	if onStart != nil {
 		onStart(stream)
 	}
 	var answer provider.ChatResponse
-	switch {
-	case buffered:
+	if stream {
 		answer, err = cascade.ChatStream(ctx, chosen, request, func(string) {})
-	case stream:
-		answer, err = cascade.ChatStream(ctx, chosen, request, onDelta)
-	default:
+	} else {
 		answer, err = cascade.Chat(ctx, chosen, request)
 	}
 	if err != nil {
@@ -392,7 +388,7 @@ func (s *Service) InterpretStream(ctx context.Context, question string,
 	}
 	// Prose keeps its fences and its punctuation; only the reasoning goes.
 	answered.Text = query.SanitizeInterpretation(provider.CleanProse(answer.Content), columns, limited)
-	if buffered {
+	if stream {
 		onDelta(answered.Text)
 	}
 	return answered, nil

@@ -257,24 +257,42 @@ func TestQueryTimeoutDistinguishesAbsentFromExplicitZero(t *testing.T) {
 	}
 }
 
-func TestStrictInputFeatureDefaultsOnAndCanBeDisabled(t *testing.T) {
+// Every switch of the belt ships on, and each one is turned off by itself: an
+// operator who opts out of one keeps the other.
+func TestEachSecurityFeatureDefaultsOnAndIsDisabledAlone(t *testing.T) {
 	absent, err := LoadFile(write(t, "[models]\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	disabled, err := LoadFile(write(t, "[features]\nstrict_input = false\n"))
-	if err != nil {
-		t.Fatal(err)
+	if !absent.Features.StrictInput || !absent.Features.AskMissingReferent {
+		t.Fatalf("a switch shipped off: %+v", absent.Features)
 	}
-	if !absent.Features.StrictInput || disabled.Features.StrictInput || len(disabled.Warnings) != 0 {
-		t.Fatalf("absent = %+v, disabled = %+v, warnings = %v",
-			absent.Features, disabled.Features, disabled.Warnings)
+	for _, testCase := range []struct {
+		body string
+		want FeaturesConfig
+	}{
+		{body: "[features]\nstrict_input = false\n",
+			want: FeaturesConfig{AskMissingReferent: true}},
+		{body: "[features]\nask_missing_referent = false\n",
+			want: FeaturesConfig{StrictInput: true}},
+	} {
+		t.Run(testCase.body, func(t *testing.T) {
+			file, err := LoadFile(write(t, testCase.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if file.Features != testCase.want || len(file.Warnings) != 0 {
+				t.Fatalf("features = %+v, warnings = %v; want %+v and none",
+					file.Features, file.Warnings, testCase.want)
+			}
+		})
 	}
 }
 
-// A value this build cannot read is not a setting. Reading it as one is how
-// `timeout_ms = "5000"` became a zero that removed the execution bound, and how
-// a misspelled `strict_input` became an opt-out nobody asked for.
+// A value this build cannot use is not a setting. Reading it as one is how
+// `timeout_ms = "5000"` became a zero that removed the execution bound, how a
+// negative bound became a default the operator never saw, and how a misspelled
+// `strict_input` became an opt-out nobody asked for.
 func TestAValueOfTheWrongTypeKeepsTheDefaultAndWarns(t *testing.T) {
 	for _, testCase := range []struct {
 		name, body, wants string
@@ -284,6 +302,16 @@ func TestAValueOfTheWrongTypeKeepsTheDefaultAndWarns(t *testing.T) {
 			name: "quoted timeout", body: "[query]\ntimeout_ms = \"5000\"\n",
 			wants: "query.timeout_ms",
 			check: func(file File) bool { return !file.Query.TimeoutSet && file.Query.TimeoutMS == 0 },
+		},
+		{
+			name: "negative timeout", body: "[query]\ntimeout_ms = -5000\n",
+			wants: "query.timeout_ms",
+			check: func(file File) bool { return !file.Query.TimeoutSet && file.Query.TimeoutMS == 0 },
+		},
+		{
+			name: "quoted ask_missing_referent", body: "[features]\nask_missing_referent = \"false\"\n",
+			wants: "features.ask_missing_referent",
+			check: func(file File) bool { return file.Features.AskMissingReferent },
 		},
 		{
 			name: "quoted strict_input", body: "[features]\nstrict_input = \"false\"\n",

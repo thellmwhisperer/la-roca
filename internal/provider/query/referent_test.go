@@ -29,6 +29,7 @@ func TestMissingReferentDetectorStaysNarrow(t *testing.T) {
 		"What are the top providers?",
 		"Show sessions from a specific project called synthetic-orchid",
 		`Show sessions from a specific project: "synthetic-orchid"`,
+		`Show sessions from a specific project "synthetic-orchid"`,
 	} {
 		if missing, found := query.DetectMissingReferent(question); found {
 			t.Errorf("DetectMissingReferent(%q) = %+v, want no ask", question, missing)

@@ -275,12 +275,14 @@ func (s *Service) Query(ctx context.Context, req QueryRequest) (res QueryResult,
 		Warnings: slices.Clone(s.opts.Providers.Warnings),
 	}
 	defer func() { res.LatencyMS = time.Since(start).Milliseconds() }()
-	if missing, found := query.DetectMissingReferent(req.Question); found {
-		res.Path = PathAsk
-		res.Message = missing.Ask
-		res.ClarificationRequired = true
-		res.MissingSlot = missing.Slot
-		return res, nil
+	if !s.opts.DisableMissingReferentAsk {
+		if missing, found := query.DetectMissingReferent(req.Question); found {
+			res.Path = PathAsk
+			res.Message = missing.Ask
+			res.ClarificationRequired = true
+			res.MissingSlot = missing.Slot
+			return res, nil
+		}
 	}
 	if _, err := s.ensureSchema(ctx); err != nil {
 		return res, err
@@ -370,17 +372,16 @@ func (s *Service) execute(ctx context.Context, stmt, term string, maxChars int) 
 	return columns, result, nil
 }
 
+// queryExecutionBudget is how long validated SQL may run, and whether it is
+// bounded at all. A positive budget is the one that was asked for; an explicit
+// zero is the operator removing the bound on purpose; anything else, including
+// a value no statement could meet, falls back to the shipped default.
 func (s *Service) queryExecutionBudget() (time.Duration, bool) {
-	if s.opts.QueryTimeoutSet {
-		if s.opts.QueryTimeout == 0 {
-			return 0, false
-		}
-		if s.opts.QueryTimeout > 0 {
-			return s.opts.QueryTimeout, true
-		}
-	}
 	if s.opts.QueryTimeout > 0 {
 		return s.opts.QueryTimeout, true
+	}
+	if s.opts.QueryTimeoutSet && s.opts.QueryTimeout == 0 {
+		return 0, false
 	}
 	return DefaultQueryTimeout, true
 }

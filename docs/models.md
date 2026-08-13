@@ -52,13 +52,20 @@ probe_ms   = 3000
 
 [query]
 # SQL that passed the read-only gate may execute for this long. The working
-# default is 5000 ms when this key is absent. Set 0 to disable the bound.
+# default is 5000 ms when this key is absent. Set 0 to disable the bound. A
+# value that is not a whole number of milliseconds, zero or more, is warned
+# about and the default applies.
 timeout_ms = 5000
 
 [features]
-# Experimental prompt-attack signatures are enabled by default. Set false only
-# as an opt-out escape hatch when an ordinary question is falsely rejected.
-strict_input = true
+# Both switches are enabled by default and each one is its own escape hatch.
+# strict_input false skips the experimental prompt-attack signatures, for when
+# an ordinary question is falsely rejected. ask_missing_referent false stops
+# La Roca asking which project, release or provider a question left generic and
+# lets the model answer the question as written. Anything that is not true or
+# false is warned about and leaves the switch on.
+strict_input         = true
+ask_missing_referent = true
 
 [models.codex]
 model = "gpt-5.6-luna"

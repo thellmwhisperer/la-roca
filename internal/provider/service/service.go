@@ -42,6 +42,12 @@ type Options struct {
 	// DisableStrictInput is the opt-out escape hatch for the experimental
 	// prompt-attack signature gate. Its zero value keeps the gate enabled.
 	DisableStrictInput bool
+	// DisableMissingReferentAsk is the opt-out escape hatch for asking the
+	// operator to name a referent the question left generic instead of letting
+	// the model guess one. Its zero value keeps the ask enabled, and it is its
+	// own switch: an installation that wants the guess back does not thereby
+	// lose the signature gate it never asked to turn off.
+	DisableMissingReferentAsk bool
 	// ReadOnly refuses in the service, before any database I/O.
 	ReadOnly bool
 	// Providers is the resolved model cascade. Its zero value is a service that

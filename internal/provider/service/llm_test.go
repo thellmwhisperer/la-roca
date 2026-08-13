@@ -185,23 +185,47 @@ func TestStrictInputCanBeDisabled(t *testing.T) {
 	}
 }
 
-func TestAMissingReferentReturnsTheAskBeforeCallingAModel(t *testing.T) {
-	model := answering("codex", "SELECT content FROM memories LIMIT 5")
-	svc := serviceWithModel(t, model)
+// Asking which project is meant beats guessing one, and it is on by default.
+// Its opt-out is its own: an installation that would rather have the guess back
+// turns off the ask and nothing else.
+func TestAMissingReferentIsAskedAboutByDefaultAndCanBeOptedOutOf(t *testing.T) {
+	const question = "what did agents decide for a specific project?"
+	for _, testCase := range []struct {
+		name     string
+		disabled bool
+		requests int
+	}{
+		{name: "default asks before calling a model"},
+		{name: "opted out, the question is answered as written", disabled: true, requests: 1},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			model := answering("codex", "SELECT content FROM memories LIMIT 5")
+			svc := initialized(t, freshPaths(t), func(options *service.Options) {
+				options.Providers = cascadeOf(model)
+				options.DisableMissingReferentAsk = testCase.disabled
+			})
 
-	res, err := svc.Query(t.Context(), service.QueryRequest{
-		Question: "what did agents decide for a specific project?",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if model.requests != 0 || res.Path != service.PathAsk ||
-		!res.ClarificationRequired || res.MissingSlot != "project" {
-		t.Fatalf("ask result = requests %d, %+v", model.requests, res)
-	}
-	if res.SQL != "" || res.RowCount != 0 || res.Degraded != "" ||
-		res.Message != "Which project should I use? Please name it in the question." {
-		t.Fatalf("ask changed into a guessed query: %+v", res)
+			res, err := svc.Query(t.Context(), service.QueryRequest{Question: question})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if model.requests != testCase.requests {
+				t.Fatalf("the provider was called %d times, want %d", model.requests, testCase.requests)
+			}
+			if testCase.disabled {
+				if res.Path == service.PathAsk || res.ClarificationRequired || res.MissingSlot != "" {
+					t.Fatalf("the opt-out still asked: %+v", res)
+				}
+				return
+			}
+			if res.Path != service.PathAsk || !res.ClarificationRequired || res.MissingSlot != "project" {
+				t.Fatalf("ask result = %+v", res)
+			}
+			if res.SQL != "" || res.RowCount != 0 || res.Degraded != "" ||
+				res.Message != "Which project should I use? Please name it in the question." {
+				t.Fatalf("ask changed into a guessed query: %+v", res)
+			}
+		})
 	}
 }
 
@@ -989,11 +1013,13 @@ func TestInterpretPromptIsLanguageAgnostic(t *testing.T) {
 	}
 }
 
-// What the guardian may still rewrite is held until it is complete, and what
-// it can never touch reaches the operator as the model writes it. Buffering
-// both would cost every answer the live prose to protect the ones that need it.
-func TestInterpretationGuardianBuffersOnlyWhatItMayStillRewrite(t *testing.T) {
+// Live prose is held until the guardian has read it, and no name the model gave
+// a column shortens that hold. An alias is the model's own word for what it
+// produced: honouring it as evidence would let the guarded model turn off its
+// own guard by writing AS ratio.
+func TestInterpretationGuardianHoldsLiveProseBackWhateverTheColumnsAreCalled(t *testing.T) {
 	const fabricated = "Alpha leads, more than the next two combined. Beta follows."
+	const checked = "Alpha leads. Beta follows."
 	for _, testCase := range []struct {
 		name, measure, want string
 		wantDeltas          int
@@ -1001,11 +1027,11 @@ func TestInterpretationGuardianBuffersOnlyWhatItMayStillRewrite(t *testing.T) {
 	}{
 		{
 			name: "raw rows are held back", measure: "count",
-			want: "Alpha leads. Beta follows.", wantDeltas: 1, wantHint: true,
+			want: checked, wantDeltas: 1, wantHint: true,
 		},
 		{
-			name: "an explicit comparison column streams live", measure: "combined_total",
-			want: fabricated, wantDeltas: 2,
+			name: "a column named after a comparison is held back too", measure: "combined_total",
+			want: checked, wantDeltas: 1, wantHint: true,
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -1031,7 +1057,7 @@ func TestInterpretationGuardianBuffersOnlyWhatItMayStillRewrite(t *testing.T) {
 			if len(deltas) != testCase.wantDeltas {
 				t.Fatalf("published %d deltas, want %d: %q", len(deltas), testCase.wantDeltas, deltas)
 			}
-			hint := strings.Contains(model.prompts[0], "raw rows without an explicit comparison column")
+			hint := strings.Contains(model.prompts[0], "These are raw result rows.")
 			if hint != testCase.wantHint {
 				t.Fatalf("shape hint present = %v, want %v", hint, testCase.wantHint)
 			}
