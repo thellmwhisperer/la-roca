@@ -88,8 +88,13 @@ One binary, one SQLite file in `~/.roca`, zero network in the ingest path.
 Providers are called only to answer the questions you ask, and the SQL phase
 never sees your rows. With `--full` or `explore`, the prose phase receives at most ten
 result rows with each field truncated to 240 characters; the database, the
-full result set, and the search index never leave the machine. Configure
-only Ollama when no query content may leave it at all.
+full result set, and the search index never leave the machine. Explore reads
+the whole result set locally to compute its terrain, and only the aggregates
+travel: row counts per source, month clusters, co-occurring terms, and negative
+space. The ten-row cap governs raw row content in every model prompt, so an
+interpreter sees that capped sample plus those precomputed aggregates, never
+the full result set as text. Configure only Ollama when no query content may
+leave it at all.
 
 Every CLI command and MCP tool call writes a size-capped, redacted JSONL record
 under `logs/`; query records never store result row contents, and `roca doctor`

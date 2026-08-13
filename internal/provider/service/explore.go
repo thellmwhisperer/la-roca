@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -12,6 +13,18 @@ import (
 const (
 	ExploreModePlain = "explore"
 	ExploreModeDeep  = "explore_deep"
+)
+
+// The three ways an explore can end without model prose are told apart,
+// because an installation with no available model and an interpreter that
+// failed or said nothing usable are fixed differently.
+const (
+	exploreNoModel = "No model was available to read the returned rows, " +
+		"so no prose claim can be made beyond them."
+	exploreNoAnswer = "The interpretation provider did not answer, " +
+		"so no prose claim can be made beyond the returned rows."
+	exploreNoProse = "The interpretation provider returned no usable prose, " +
+		"so no prose claim can be made beyond the returned rows."
 )
 
 // ExploreRequest declares the investigation mode around an ordinary query.
@@ -55,7 +68,7 @@ func (s *Service) Explore(ctx context.Context, req ExploreRequest) (QueryResult,
 	terrain := terrainFromRows(result.Question, result.Columns, result.Rows)
 	result.Terrain = &terrain
 	if result.Engine == "" {
-		result.Interpretation = fallbackExploreInterpretation(terrain, req.Deep)
+		result.Interpretation = fallbackExploreInterpretation(exploreNoModel, terrain, req.Deep)
 		return result, nil
 	}
 	if req.Progress != nil {
@@ -79,16 +92,19 @@ func (s *Service) Explore(ctx context.Context, req ExploreRequest) (QueryResult,
 	result.InterpretEngine = answer.Engine
 	result.InterpretModel = answer.Model
 	result.InterpretNote = answer.Note
-	if interpretErr != nil {
+	switch {
+	case interpretErr != nil:
 		result.ProviderError = interpretErr.Error()
-		result.Interpretation = fallbackExploreInterpretation(terrain, req.Deep)
+		result.Interpretation = fallbackExploreInterpretation(exploreNoAnswer, terrain, req.Deep)
+	case strings.TrimSpace(result.Interpretation) == "":
+		result.Interpretation = fallbackExploreInterpretation(exploreNoProse, terrain, req.Deep)
 	}
 	return result, nil
 }
 
-func fallbackExploreInterpretation(terrain Terrain, deep bool) string {
+func fallbackExploreInterpretation(reason string, terrain Terrain, deep bool) string {
 	var b strings.Builder
-	b.WriteString("The interpretation provider did not answer, so no prose claim can be made beyond the returned rows.")
+	b.WriteString(reason)
 	fmt.Fprintf(&b, "\n\nTerrain from %d returned rows", terrain.RowCount)
 	writeTerrainSentence(&b, "source counts", terrain.Sources)
 	writeTerrainSentence(&b, "date clusters", terrain.DateClusters)
@@ -138,7 +154,7 @@ func terrainFromRows(question string, columns []string, rows []map[string]any) T
 		return name == "source" || name == "database"
 	})
 	dateColumns := terrainColumns(columns, func(name string) bool {
-		return name == "date" || strings.Contains(name, "date") ||
+		return strings.Contains(name, "date") ||
 			strings.Contains(name, "time") || strings.HasSuffix(name, "_at")
 	})
 
@@ -146,13 +162,13 @@ func terrainFromRows(question string, columns []string, rows []map[string]any) T
 	questionTerms := tokenSet(question)
 	for _, row := range rows {
 		if sourceColumn != "" {
-			if value := strings.TrimSpace(fmt.Sprint(row[sourceColumn])); value != "" && value != "<nil>" {
+			if value := strings.TrimSpace(terrainText(row[sourceColumn])); value != "" {
 				sources[strings.ToLower(value)]++
 			}
 		}
 		seenDates := map[string]bool{}
 		for _, column := range dateColumns {
-			if cluster := monthCluster(fmt.Sprint(row[column])); cluster != "" {
+			if cluster := monthCluster(terrainText(row[column])); cluster != "" {
 				seenDates[cluster] = true
 			}
 		}
@@ -163,13 +179,14 @@ func terrainFromRows(question string, columns []string, rows []map[string]any) T
 		seenTerms := map[string]bool{}
 		for _, column := range columns {
 			name := strings.ToLower(column)
-			if column == sourceColumn || contains(dateColumns, column) ||
+			if column == sourceColumn || slices.Contains(dateColumns, column) ||
 				name == "id" || strings.HasSuffix(name, "_id") || strings.Contains(name, "rank") ||
 				strings.Contains(name, "count") {
 				continue
 			}
-			for term := range tokenSet(fmt.Sprint(row[column])) {
-				if !questionTerms[term] && !terrainStopWords[term] && len([]rune(term)) >= 3 {
+			for term := range tokenSet(terrainText(row[column])) {
+				if !questionTerms[term] && !terrainStopWords[term] &&
+					len([]rune(term)) >= 3 && strings.IndexFunc(term, unicode.IsLetter) >= 0 {
 					seenTerms[term] = true
 				}
 			}
@@ -230,6 +247,19 @@ func terrainColumns(columns []string, accept func(string) bool) []string {
 	return matches
 }
 
+// terrainText reads a cell only when the source itself stored text there. A
+// SQL NULL and a computed number are not content, and rendering them would
+// hand the interpreter tokens no row ever contained.
+func terrainText(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case []byte:
+		return string(typed)
+	}
+	return ""
+}
+
 func monthCluster(value string) string {
 	for i := 0; i+7 <= len(value); i++ {
 		candidate := value[i : i+7]
@@ -284,15 +314,6 @@ func sortedTerrainCounts(values map[string]int, limit int) []TerrainCount {
 		counts = counts[:limit]
 	}
 	return counts
-}
-
-func contains(values []string, wanted string) bool {
-	for _, value := range values {
-		if value == wanted {
-			return true
-		}
-	}
-	return false
 }
 
 func joinedWords(words []string) string {

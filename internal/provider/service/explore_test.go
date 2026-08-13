@@ -145,21 +145,61 @@ func TestDeepExploreFallsFromExploreOrderToMainWhenNoInterpretOrderExists(t *tes
 	}
 }
 
-func TestExploreNeverBecomesRowsOnlyWhenTheInterpreterFails(t *testing.T) {
-	frontier := newTwoInferenceFake([]string{exploreSQL}, "unused")
-	broken := answering("ollama", "")
-	broken.fail = errors.New("interpretation stopped")
-	result := runDeepExplore(t, frontier, []provider.Provider{broken}, nil)
-	for _, want := range []string{
-		"The interpretation provider did not answer", "2 returned rows",
-		"memory: 1", "2026-07: 1", "cedar: 2", "Next probes:",
+func TestExploreNeverBecomesRowsOnlyWhenNoModelProseArrives(t *testing.T) {
+	for _, tc := range []struct {
+		name, prose, reason, providerError string
+		failure                            error
+	}{
+		{
+			name: "the interpreter never answered", failure: errors.New("interpretation stopped"),
+			reason: "The interpretation provider did not answer", providerError: "interpretation stopped",
+		},
+		{
+			name: "the guardian left no prose standing", prose: "...",
+			reason: "The interpretation provider returned no usable prose",
+		},
 	} {
-		if !strings.Contains(result.Interpretation, want) {
-			t.Errorf("deterministic fallback lacks %q:\n%s", want, result.Interpretation)
+		t.Run(tc.name, func(t *testing.T) {
+			frontier := newTwoInferenceFake([]string{exploreSQL}, "unused")
+			silent := answering("ollama", tc.prose)
+			silent.fail = tc.failure
+			result := runDeepExplore(t, frontier, []provider.Provider{silent}, nil)
+			for _, want := range []string{
+				tc.reason, "2 returned rows",
+				"memory: 1", "2026-07: 1", "cedar: 2", "Next probes:",
+			} {
+				if !strings.Contains(result.Interpretation, want) {
+					t.Errorf("deterministic fallback lacks %q:\n%s", want, result.Interpretation)
+				}
+			}
+			if result.ProviderError != tc.providerError {
+				t.Fatalf("provider error = %q", result.ProviderError)
+			}
+		})
+	}
+}
+
+// The keyword rescue projects a NULL author and a bm25 float, and neither is
+// content a row ever carried.
+func TestExploreTerrainReadsOnlyStoredTextCells(t *testing.T) {
+	fake := newTwoInferenceFake([]string{"SELECT 'exchange' AS source, NULL AS author, " +
+		"'2026-08-09' AS created_at, 'cedar trail orbit' AS text, 3.1416 AS rango LIMIT 10"},
+		"A grounded investigation answer.")
+	svc := serviceWithModel(t, fake)
+
+	result, err := svc.Explore(t.Context(), service.ExploreRequest{
+		QueryRequest: service.QueryRequest{Question: "orbit"}, Deep: true,
+	})
+	if err != nil {
+		t.Fatalf("Explore: %v", err)
+	}
+	for _, unwanted := range []string{"nil", "null", "1416"} {
+		if terrainCount(result.Terrain.Terms, unwanted) != 0 {
+			t.Errorf("terrain terms invented %q: %+v", unwanted, result.Terrain.Terms)
 		}
 	}
-	if result.ProviderError != "interpretation stopped" {
-		t.Fatalf("provider error = %q", result.ProviderError)
+	if terrainCount(result.Terrain.Terms, "cedar") != 1 {
+		t.Fatalf("terrain lost its text terms: %+v", result.Terrain.Terms)
 	}
 }
 

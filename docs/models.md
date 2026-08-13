@@ -196,7 +196,13 @@ selects a different interpreter mission:
 
 Terrain facts are calculated deterministically from the actual returned result
 set before the second inference. They enter the prompt as fixed facts; the model
-may phrase them but may not invent, extend, or recalculate them. Both CLI modes
+may phrase them but may not invent, extend, or recalculate them. The terrain is
+computed locally over every returned row, and only its aggregates reach a
+provider: the ten-row cap and the 240-character field budget still govern the
+raw rows in the prompt, so an interpreter sees the capped row sample plus those
+aggregates and never the full result set as text. Terrain terms come only from
+cells a source stored as text, so a SQL NULL and a computed number contribute
+nothing. Both CLI modes
 print the generated SQL as well as the prose so the investigator learns the
 schema and can graduate to `query --sql-only` plus `exec`.
 
