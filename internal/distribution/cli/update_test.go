@@ -153,11 +153,19 @@ func TestArtifactRefreshHonoursTheDefaultOffGateAndSystemDivergence(t *testing.T
 		name, config, current string
 		force                 bool
 		wantChanged, diverged bool
+		// wantSummary is the line update prints about this refresh. A gate that is
+		// off has to say so and still count what is outdated, or an operator who
+		// left it off is told nothing about the installs it did not touch.
+		wantSummary string
 	}{
-		{name: "flag off", current: "shipped-v1\n"},
-		{name: "flag on", config: "[features]\nartifact_refresh = true\n", current: "shipped-v1\n", wantChanged: true},
-		{name: "edited system", config: "[features]\nartifact_refresh = true\n", current: "operator edit\n", diverged: true},
-		{name: "forced edit", config: "[features]\nartifact_refresh = true\n", current: "operator edit\n", force: true, wantChanged: true},
+		{name: "flag off", current: "shipped-v1\n",
+			wantSummary: "agent artifacts: automatic refresh is off (features.artifact_refresh); 1 outdated"},
+		{name: "flag on", config: "[features]\nartifact_refresh = true\n", current: "shipped-v1\n", wantChanged: true,
+			wantSummary: "agent artifacts: 1 refreshed; 0 outdated"},
+		{name: "edited system", config: "[features]\nartifact_refresh = true\n", current: "operator edit\n", diverged: true,
+			wantSummary: "agent artifacts: 0 refreshed; 1 outdated"},
+		{name: "forced edit", config: "[features]\nartifact_refresh = true\n", current: "operator edit\n", force: true, wantChanged: true,
+			wantSummary: "agent artifacts: 1 refreshed; 0 outdated"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -195,6 +203,9 @@ func TestArtifactRefreshHonoursTheDefaultOffGateAndSystemDivergence(t *testing.T
 			}
 			if got := len(report.Diverged) == 1; got != test.diverged {
 				t.Fatalf("report = %+v", report)
+			}
+			if summary, _ := refreshOutput(report); !strings.Contains(summary, test.wantSummary) {
+				t.Fatalf("update told the operator %q, want %q", summary, test.wantSummary)
 			}
 			registry, err := artifact.LoadRegistry(registryPath)
 			if err != nil {
@@ -246,7 +257,7 @@ func TestArtifactRefreshReportsDeletedAndUnreadableApartFromEdits(t *testing.T) 
 		t.Fatalf("a readable artifact was left unchecked behind the broken one: %+v", entry)
 	}
 
-	warnings := refreshWarnings(report)
+	_, warnings := refreshOutput(report)
 	if !strings.Contains(warnings, deleted+" was removed after La Roca registered it") {
 		t.Fatalf("update called a deleted artifact an edit: %q", warnings)
 	}
@@ -272,10 +283,12 @@ func enabledRefresh(t *testing.T, home string, entries ...artifact.Entry) artifa
 	return report
 }
 
-func refreshWarnings(report artifactRefreshReport) string {
+// refreshOutput is what one refresh tells the operator: the summary line update
+// prints, and the warnings it sends to stderr.
+func refreshOutput(report artifactRefreshReport) (string, string) {
 	var out, warnings strings.Builder
 	(&cliEnv{out: &out, errOut: &warnings}).renderArtifactRefresh(report)
-	return warnings.String()
+	return out.String(), warnings.String()
 }
 
 // Force repairs exactly one failure class. Offering it for a permission or a
@@ -297,7 +310,7 @@ func TestARefreshFailureForceCannotFixIsNotAnsweredWithForce(t *testing.T) {
 	if len(report.Failed) != 1 || report.Failed[0].Repairable {
 		t.Fatalf("a write failure was offered the force remedy: %+v", report.Failed)
 	}
-	warnings := refreshWarnings(report)
+	_, warnings := refreshOutput(report)
 	if strings.Contains(warnings, forceArtifactRefresh) {
 		t.Fatalf("force was offered for a failure it cannot fix: %q", warnings)
 	}

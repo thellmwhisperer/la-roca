@@ -66,9 +66,11 @@ the agent CLI's existing session and does not add a login step.
 
 Init also writes and registers `prompt.md` in the selected data directory. Its
 marked SYSTEM zone is shipped by La Roca; its marked USER zone belongs to the
-operator. If that optional write fails, init reports a warning and leaves the
-prepared database usable. It does not edit agent instruction files or install
-integrations without a separate command.
+operator. A file an earlier release wrote is moved into those zones once, and
+init names the recovery copy holding the previous file; [Update](#update) owns
+that migration's rules. If that optional write fails, init reports a warning and
+leaves the prepared database usable. It does not edit agent instruction files or
+install integrations without a separate command.
 
 A successful human-readable init reports the corpus floor: the oldest ingested
 moment, the bedrock your memory reaches back to. An empty database says so
