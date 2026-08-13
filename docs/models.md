@@ -18,6 +18,18 @@ Most installations do not need this file for model access: the examples below
 are overrides for operators who want a fixed order, split inference, or a
 custom local command.
 
+Experimental plugin support is an explicit, default-off feature:
+
+```toml
+[features]
+plugins = true
+```
+
+This activates plugin discovery, read-only attachment, semantic routing, and
+the `roca plugin` installer commands. See [Plugins](plugins.md) for the package
+and trust contract. Leave the key absent or false for the release-default
+behavior.
+
 An interactive `roca init` is the shortest way to create those overrides. It
 starts with models rather than provider names: detected agent CLIs are grouped
 as origins with their shipped default and a free-text option, while Ollama

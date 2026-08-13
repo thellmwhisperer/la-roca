@@ -144,3 +144,7 @@ The default data directory is `~/.roca`. It contains `roca.db`,
 configuration, backups, `prompt.md`, and operational JSONL under
 `logs/`. La Roca does not edit agent instruction files; the operator decides
 whether to use the generated prompt or install the bundled skill.
+
+Experimental plugin packages are not part of the selected data directory: they
+live under `~/.roca/plugins`, and protected removals are archived beside them.
+See [Plugins](plugins.md).

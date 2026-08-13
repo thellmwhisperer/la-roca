@@ -11,6 +11,7 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/data"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
+	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 	"github.com/thellmwhisperer/la-roca/internal/provider/query/sqlgate"
 	"github.com/thellmwhisperer/la-roca/internal/provider/query/sqlrepair"
@@ -84,7 +85,8 @@ func correction(failure error, retryType string) string {
 // Configured orders never retry a provider failure with the next provider. The
 // factory local-CLI exception is declared in the attempts and applies only to
 // the first request, before any SQL answer exists.
-func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResult) (QueryResult, error) {
+func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResult,
+	plugins []plugin.Database) (QueryResult, error) {
 	progress(req, QueryPhaseSQL)
 	cascade := s.opts.Providers
 
@@ -115,12 +117,13 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 	// overwrite it, nor be mistaken for it.
 	res.ProviderNote = noteAboutTheFall(chosen, attempts)
 
-	gate, err := s.theGate()
+	gate, closeGate, err := s.gateFor(plugins)
 	if err != nil {
 		return res, err
 	}
+	defer closeGate()
 
-	prompt := s.sqlPrompt(req.Layer)
+	prompt := s.sqlPrompt(req.Layer, plugins)
 	messages := []provider.Message{
 		{Role: provider.RoleSystem, Content: prompt},
 		{Role: provider.RoleUser, Content: query.SQLUserPrompt(req.Question)},
@@ -198,7 +201,7 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 			term := query.SearchTerm(req.Question)
 			progress(req, QueryPhaseExecution)
 			executionStart := time.Now()
-			columns, rows, failure = s.execute(ctx, validated, term, req.MaxChars)
+			columns, rows, failure = s.executeWithPlugins(ctx, validated, term, req.MaxChars, plugins)
 			res.ExecutionMS += time.Since(executionStart).Milliseconds()
 			if failure != nil {
 				if errors.Is(failure, errQueryTimeout) {
@@ -661,7 +664,7 @@ func (s *Service) rescueSQL(plan query.Plan, res QueryResult) QueryResult {
 // validation database with, minus the SAME tables the gate hides. That is not
 // tidiness: a prompt that announces a schema the gate does not have produces
 // SQL that is born rejected, and it did. See internal/query/prompt.go.
-func (s *Service) sqlPrompt(layer string) string {
+func (s *Service) sqlPrompt(layer string, plugins []plugin.Database) string {
 	hints := make([]query.LayerHint, 0, len(s.registry.Layers))
 	for _, declared := range s.registry.Layers {
 		if declared.Deprecated || declared.AliasOf != "" {
@@ -676,7 +679,7 @@ func (s *Service) sqlPrompt(layer string) string {
 	if layer != "" {
 		filter = []string{layer}
 	}
-	return query.SQLSystemPrompt(theModelsSchema(), query.SortedLayerHints(hints), filter)
+	return query.SQLSystemPrompt(schemaWithPlugins(plugins), query.SortedLayerHints(hints), filter)
 }
 
 // theModelsSchema is read once: it never changes for a given build, and parsing

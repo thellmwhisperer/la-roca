@@ -12,6 +12,7 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
+	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 	"github.com/thellmwhisperer/la-roca/internal/store/search"
 )
@@ -93,6 +94,11 @@ type QueryResult struct {
 	// question named a generic slot without supplying its referent.
 	ClarificationRequired bool   `json:"clarification_required,omitempty"`
 	MissingSlot           string `json:"missing_slot,omitempty"`
+	// Databases declares the core and plugin stores made available to this
+	// query. OmittedDatabases names relevant plugins beyond SQLite's attachment
+	// limit; paths never enter either field.
+	Databases        []string `json:"databases,omitempty"`
+	OmittedDatabases []string `json:"omitted_databases,omitempty"`
 
 	// Engine and Model are the model path's provenance: which provider answered
 	// and with which model. Without them a poor answer cannot be attributed, and
@@ -287,7 +293,17 @@ func (s *Service) Query(ctx context.Context, req QueryRequest) (res QueryResult,
 	if _, err := s.ensureSchema(ctx); err != nil {
 		return res, err
 	}
-	return s.llmStage(ctx, req, res)
+	route := s.pluginsForQuestion(ctx, req.Question)
+	if s.opts.PluginsEnabled {
+		res.Databases = route.consulted()
+	}
+	res.OmittedDatabases = route.omittedSources()
+	res.Warnings = append(res.Warnings, route.warnings...)
+	res, err = s.llmStage(ctx, req, res, route.databases)
+	if len(route.databases) > 0 && res.Path == PathKeyword {
+		res.Columns, res.Rows = ensureDatabaseColumn(res.Columns, res.Rows, "core")
+	}
+	return res, err
 }
 
 // ExecRequest is a SELECT the caller wants to run as it is. It is the natural
@@ -299,13 +315,15 @@ type ExecRequest struct {
 
 // ExecResult is what that SELECT returned, with the SQL that actually ran.
 type ExecResult struct {
-	SQL       string           `json:"sql"`
-	Columns   []string         `json:"columns,omitempty"`
-	Rows      []map[string]any `json:"rows,omitempty"`
-	RowCount  int              `json:"row_count"`
-	LatencyMS int64            `json:"latency_ms"`
-	Version   string           `json:"version"`
-	SourceSHA string           `json:"source_sha"`
+	SQL              string           `json:"sql"`
+	Columns          []string         `json:"columns,omitempty"`
+	Rows             []map[string]any `json:"rows,omitempty"`
+	RowCount         int              `json:"row_count"`
+	Databases        []string         `json:"databases,omitempty"`
+	OmittedDatabases []string         `json:"omitted_databases,omitempty"`
+	LatencyMS        int64            `json:"latency_ms"`
+	Version          string           `json:"version"`
+	SourceSHA        string           `json:"source_sha"`
 }
 
 // Exec validates and runs a SELECT. What does not pass the gate does not touch
@@ -316,10 +334,17 @@ func (s *Service) Exec(ctx context.Context, req ExecRequest) (ExecResult, error)
 	if _, err := s.ensureSchema(ctx); err != nil {
 		return ExecResult{}, err
 	}
-	gate, err := s.theGate()
+	route := s.pluginsForSQL(ctx, req.SQL)
+	if len(route.omitted) > 0 {
+		return ExecResult{}, logfile.Typed(fmt.Errorf(
+			"the SELECT references more than SQLite's %d attached databases; split the query (omitted: %s)",
+			plugin.MaxAttached, strings.Join(route.omittedSources(), ", ")), DegradedInvalidSQL)
+	}
+	gate, closeGate, err := s.gateFor(route.databases)
 	if err != nil {
 		return ExecResult{}, err
 	}
+	defer closeGate()
 	// The stage that failed is only knowable here, and it is the same
 	// distinction the degraded answers already declare: what the gate refused
 	// and what the engine could not run are two different fixes.
@@ -327,7 +352,7 @@ func (s *Service) Exec(ctx context.Context, req ExecRequest) (ExecResult, error)
 	if err != nil {
 		return ExecResult{}, logfile.Typed(err, DegradedInvalidSQL)
 	}
-	columns, rows, err := s.execute(ctx, validated, "", req.MaxChars)
+	columns, rows, err := s.executeWithPlugins(ctx, validated, "", req.MaxChars, route.databases)
 	if err != nil {
 		degraded := DegradedExecution
 		if errors.Is(err, errQueryTimeout) {
@@ -335,7 +360,7 @@ func (s *Service) Exec(ctx context.Context, req ExecRequest) (ExecResult, error)
 		}
 		return ExecResult{}, logfile.Typed(err, degraded)
 	}
-	return ExecResult{
+	result := ExecResult{
 		SQL:       validated,
 		Columns:   columns,
 		Rows:      rows,
@@ -343,33 +368,17 @@ func (s *Service) Exec(ctx context.Context, req ExecRequest) (ExecResult, error)
 		LatencyMS: time.Since(start).Milliseconds(),
 		Version:   s.opts.Version,
 		SourceSHA: s.opts.Commit,
-	}, nil
+	}
+	if s.opts.PluginsEnabled {
+		result.Databases = route.consulted()
+	}
+	return result, nil
 }
 
 // execute runs the validated SELECT and normalizes the rows into maps keyed by
 // column name, which is what both surfaces render.
 func (s *Service) execute(ctx context.Context, stmt, term string, maxChars int) ([]string, []map[string]any, error) {
-	timeout, bounded := s.queryExecutionBudget()
-	queryCtx := ctx
-	var cancel context.CancelFunc = func() {}
-	if bounded {
-		queryCtx, cancel = context.WithTimeout(ctx, timeout)
-	}
-	defer cancel()
-	reader, err := s.db.ReadOnly()
-	if err != nil {
-		return nil, nil, err
-	}
-	rows, err := reader.QueryContext(queryCtx, stmt)
-	if err != nil {
-		return nil, nil, executionError(ctx, queryCtx, timeout, err)
-	}
-	defer rows.Close()
-	columns, result, err := scanRows(rows, maxChars, term)
-	if err != nil {
-		return nil, nil, executionError(ctx, queryCtx, timeout, err)
-	}
-	return columns, result, nil
+	return s.executeWithPlugins(ctx, stmt, term, maxChars, nil)
 }
 
 // queryExecutionBudget is how long validated SQL may run, and whether it is
