@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -38,8 +40,8 @@ func skillCommand(env *cliEnv) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "skill",
 		Short: "Install the agent skill that teaches runtimes how to use La Roca",
-		Long: "One embedded SKILL.md, copied into each runtime's personal skills\n" +
-			"directory. Nothing else is edited.\n\n" +
+		Long: "One embedded SKILL.md, installed into each runtime's personal skills\n" +
+			"directory with separate SYSTEM and USER zones and a versioned registry.\n\n" +
 			"Supported runtimes: " + strings.Join(skill.Runtimes(), ", "),
 		Args: cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
@@ -51,7 +53,7 @@ func skillCommand(env *cliEnv) *cobra.Command {
 }
 
 func skillInstallCommand(env *cliEnv) *cobra.Command {
-	var all bool
+	var all, force bool
 	cmd := &cobra.Command{
 		Use:   "install [runtime]",
 		Short: "Write the roca skill into one runtime, or every supported one",
@@ -66,32 +68,99 @@ func skillInstallCommand(env *cliEnv) *cobra.Command {
 				runtimes = skill.Runtimes()
 			}
 			outcomes := make([]skill.Outcome, 0, len(runtimes))
+			var refused []error
 			for _, runtime := range runtimes {
 				path, err := skillFileOf(runtime)
 				if err != nil {
 					return err
 				}
-				outcome, err := skill.Install(runtime, path)
+				entry, found, err := env.registeredArtifact(artifactKindSkill, runtime, path)
 				if err != nil {
+					return err
+				}
+				previous := ""
+				if found {
+					previous = entry.SystemSHA256
+				}
+				outcome, err := skill.InstallWithOptions(runtime, path, previous, force)
+				// One runtime this install cannot read or must not clobber never
+				// decides for the others: the refusal is collected, the remaining
+				// runtimes of an --all still install, and the command still fails.
+				if err != nil {
+					refused = append(refused, skillInstallFailure(err, runtime, outcome.Backup))
+					continue
+				}
+				if outcome.Diverged {
+					fmt.Fprintf(env.errOut, "warning: %s\n",
+						divergedArtifactWarning(path, forceSkillInstall(runtime),
+							outcome.Missing, outcome.Unregistered))
+					outcomes = append(outcomes, outcome)
+					continue
+				}
+				if err := env.registerZonedArtifact(artifactKindSkill, runtime, path, skill.Content()); err != nil {
 					return err
 				}
 				outcomes = append(outcomes, outcome)
 			}
 			if env.json {
-				return env.printJSON(map[string]any{"runtimes": outcomes})
+				if err := env.printJSON(map[string]any{"runtimes": outcomes}); err != nil {
+					return err
+				}
+				return errors.Join(refused...)
 			}
 			for _, o := range outcomes {
 				verb := "unchanged"
 				if o.Changed {
 					verb = "wrote"
 				}
-				env.print("%s: %s %s", o.Runtime, verb, o.Path)
+				line := fmt.Sprintf("%s: %s %s", o.Runtime, verb, o.Path)
+				if o.Backup != "" {
+					line += fmt.Sprintf(" (replaced content kept at %s)", o.Backup)
+				}
+				env.print("%s", line)
 			}
-			return nil
+			return errors.Join(refused...)
 		},
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "install into every supported runtime")
+	cmd.Flags().BoolVar(&force, "force", false,
+		"replace an edited SYSTEM zone, or rewrite a skill whose zone markers are broken, keeping a recovery copy")
 	return cmd
+}
+
+// divergedArtifactWarning names what actually happened to a registered artifact
+// this run refused to write, and is the one place either command says it. An
+// artifact that was deleted has no edited SYSTEM zone, and one no registry entry
+// stands behind was never proven to be ours in the first place; saying either is
+// an edit sends the operator looking for edits that are not there.
+func divergedArtifactWarning(path, forceCommand string, missing, unregistered bool) string {
+	what := "has edits in its SYSTEM zone"
+	switch {
+	case missing:
+		what = "was removed after La Roca registered it"
+	case unregistered:
+		what = "has no record in La Roca's artifact registry, so its SYSTEM zone cannot be proven to be ours"
+	}
+	return fmt.Sprintf("%s %s; run `%s` to replace it", path, what, forceCommand)
+}
+
+func forceSkillInstall(runtime string) string {
+	return "roca skill install " + runtime + " --force"
+}
+
+// skillInstallFailure says what went wrong and offers the force remedy only for
+// the one class it repairs. A permission error is not fixed by forcing, and
+// re-running a write the runtime interrupted is the clobber that refusal
+// exists to prevent, so neither is answered with a command to run again.
+func skillInstallFailure(err error, runtime, backup string) error {
+	if backup != "" {
+		err = fmt.Errorf("%w (previous content kept at %s)", err, backup)
+	}
+	if !errors.Is(err, artifact.ErrBrokenZones) {
+		return err
+	}
+	return fmt.Errorf("%w; run `%s` to replace it, keeping the file in its recovery copy",
+		err, forceSkillInstall(runtime))
 }
 
 func (env *cliEnv) listSkillDestinations() error {
@@ -180,23 +249,66 @@ func hooksEditCommand(env *cliEnv, use, short, verb string,
 
 func hooksInstallCommand(env *cliEnv) *cobra.Command {
 	var executable string
+	var force bool
 	cmd := hooksEditCommand(env, "install [runtime]",
 		"Install the Claude Code roca-store signing hook", "updated",
 		func(path string) (agentcfg.Outcome, string, error) {
-			// Installing into settings this product cannot read is refused, not
-			// warned about: an installer that cannot parse a file cannot edit it.
-			outcome, err := installClaudeAuthorshipHook(path, executable)
-			return outcome, "", err
+			declared := chosenExecutable(executable)
+			if !filepath.IsAbs(declared) {
+				return agentcfg.Outcome{Runtime: "claude", Path: path}, "",
+					fmt.Errorf("resolve the running executable %q to an absolute path", declared)
+			}
+			entry, registered, err := env.registeredArtifact(artifactKindHook, "claude", path)
+			if err != nil {
+				return agentcfg.Outcome{Runtime: "claude", Path: path}, "", err
+			}
+			var outcome agentcfg.Outcome
+			if registered {
+				refreshed, err := refreshClaudeHook(path, declared, entry.SystemSHA256, true, force)
+				outcome = agentcfg.Outcome{Runtime: "claude", Path: path,
+					Changed: refreshed.Changed, Backup: refreshed.Backup}
+				if err != nil {
+					return outcome, "", err
+				}
+				if refreshed.Diverged {
+					return outcome, fmt.Sprintf("warning: %s has edits in its SYSTEM fragment; run `roca hooks install claude --force` to replace it", path), nil
+				}
+				if !refreshed.Current {
+					return outcome, "", fmt.Errorf("the installed Claude hook was not found in %s", path)
+				}
+			} else {
+				// Installing into settings this product cannot read is refused, not
+				// warned about: an installer that cannot parse a file cannot edit it.
+				outcome, err = installClaudeAuthorshipHook(path, declared)
+				if err != nil {
+					return outcome, "", err
+				}
+			}
+			system, found, err := claudeHookSystem(path)
+			if err != nil || !found {
+				if err == nil {
+					err = fmt.Errorf("the installed Claude hook was not found in %s", path)
+				}
+				return outcome, "", err
+			}
+			return outcome, "", env.registerHook(path, "claude", system)
 		})
 	cmd.Flags().StringVar(&executable, "executable", "",
 		"the binary the hook launches (default: this executable; override with "+EnvExecutable+")")
+	cmd.Flags().BoolVar(&force, "force", false, "replace an edited SYSTEM fragment")
 	return cmd
 }
 
 func hooksUninstallCommand(env *cliEnv) *cobra.Command {
 	return hooksEditCommand(env, "uninstall [runtime]",
 		"Withdraw the Claude Code roca-store signing hook, leaving the rest of the settings as they were",
-		"withdrawn", uninstallClaudeAuthorshipHook)
+		"withdrawn", func(path string) (agentcfg.Outcome, string, error) {
+			outcome, warning, err := uninstallClaudeAuthorshipHook(path)
+			if err == nil {
+				err = env.unregisterArtifact(artifactKindHook, "claude", path)
+			}
+			return outcome, warning, err
+		})
 }
 
 func supportedHookRuntime(name string) error {
@@ -244,8 +356,8 @@ func claudeSettingsPath() (string, error) {
 	return filepath.Join(root, "settings.json"), nil
 }
 
-// The hook is intentionally one hard-coded Claude artifact. Versioned hook and
-// skill lifecycle belongs to issue #58; this feature does not grow that registry.
+// The hook is intentionally one hard-coded Claude artifact. Its command object
+// is the registered SYSTEM fragment; every neighbouring setting stays USER.
 //
 // The entry launches the absolute path of this executable, the way `roca mcp
 // install` declares the server: Claude runs a PreToolUse hook in a
@@ -271,14 +383,22 @@ func installClaudeAuthorshipHook(path, executable string) (agentcfg.Outcome, err
 			return previous, nil
 		}
 		if !found {
-			entries = append(entries, map[string]any{
-				"matcher": "Bash",
-				"hooks":   []any{map[string]any{"type": "command", "command": command}},
-			})
+			entries = append(entries, claudeAuthorshipHookEntry(command))
 		}
 		hooks["PreToolUse"] = entries
 		return encodeClaudeSettings(settings)
 	}, true)
+}
+
+func claudeAuthorshipHookEntry(command string) map[string]any {
+	return map[string]any{
+		"matcher": "Bash",
+		"hooks":   []any{claudeAuthorshipCommandHook(command)},
+	}
+}
+
+func claudeAuthorshipCommandHook(command string) map[string]any {
+	return map[string]any{"type": "command", "command": command}
 }
 
 // uninstallClaudeAuthorshipHook takes the PreToolUse entry back out and leaves

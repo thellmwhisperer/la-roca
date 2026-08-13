@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 // The supported runtimes.
@@ -258,7 +260,7 @@ func Rewrite(path string, transform func(string) (string, error)) error {
 	if next == string(previous) {
 		return nil
 	}
-	return write(path, next, previous)
+	return securefile.Replace(path, []byte(next), previous)
 }
 
 func edit(name, path string, transform, backupTransform func(string) (string, error),
@@ -292,7 +294,7 @@ func edit(name, path string, transform, backupTransform func(string) (string, er
 			}
 			backupContent = []byte(content)
 		}
-		backup, err := backUp(path, backupContent)
+		backup, err := securefile.BackUp(path, backupContent)
 		if err != nil {
 			return outcome, err
 		}
@@ -301,69 +303,11 @@ func edit(name, path string, transform, backupTransform func(string) (string, er
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return outcome, fmt.Errorf("create the directory of %s: %w", path, err)
 	}
-	if err := write(path, next, previous); err != nil {
+	if err := securefile.Replace(path, []byte(next), previous); err != nil {
 		return outcome, err
 	}
 	outcome.Changed = true
 	return outcome, nil
-}
-
-// backUp copies the previous bytes aside before anything is replaced. An
-// earlier recovery copy outranks a later one, so `.bak` is never overwritten.
-func backUp(path string, previous []byte) (string, error) {
-	backup := path + ".roca.bak"
-	for index := 1; ; index++ {
-		if _, err := os.Stat(backup); os.IsNotExist(err) {
-			break
-		} else if err != nil {
-			return "", fmt.Errorf("inspect backup %s: %w", backup, err)
-		}
-		backup = fmt.Sprintf("%s.roca.bak.%d", path, index)
-	}
-	if err := os.WriteFile(backup, previous, 0o600); err != nil {
-		return "", fmt.Errorf("back up %s: %w", path, err)
-	}
-	return backup, nil
-}
-
-// write publishes the new text through a temporary file in the same directory
-// and a rename, so a runtime reading the config never sees half of it. The
-// previous file's permissions are kept: this file is the operator's.
-func write(path, content string, previous []byte) error {
-	mode := os.FileMode(0o600)
-	if info, err := os.Stat(path); err == nil {
-		mode = info.Mode().Perm()
-	}
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".roca-config-*")
-	if err != nil {
-		return fmt.Errorf("stage the write of %s: %w", path, err)
-	}
-	staged := temporary.Name()
-	temporary.Close()
-	defer os.Remove(staged)
-	if err := os.WriteFile(staged, []byte(content), mode); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	// os.WriteFile applies its mode only when it CREATES the file, and CreateTemp
-	// already made this one at 0600, so the computed mode has to be applied here
-	// or the operator's own permissions are silently tightened by every edit.
-	if err := os.Chmod(staged, mode); err != nil {
-		return fmt.Errorf("keep the permissions of %s: %w", path, err)
-	}
-	// The file may have changed under us between the read and here. Refusing
-	// then is better than clobbering the runtime that owns it.
-	if previous != nil {
-		current, err := os.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("re-read %s: %w", path, err)
-		}
-		if string(current) != string(previous) {
-			return fmt.Errorf(
-				"%s changed while it was being edited: close the runtime that owns it and try again",
-				path)
-		}
-	}
-	return os.Rename(staged, path)
 }
 
 func find(name string) (runtime, error) {

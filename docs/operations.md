@@ -23,6 +23,15 @@ The entry launches this executable's absolute path, overridable with
 shell that does not read an interactive `PATH`. Reinstalling repoints an entry
 whose binary moved instead of adding a second one.
 
+That exact command hook inside `PreToolUse` is the artifact's SYSTEM fragment;
+the enclosing group, surrounding Claude settings, and every other hook are its
+USER zone. Its `hooks run claude` command is the explicit ownership marker
+recorded in `~/.roca/artifacts.json`. Refresh never rewrites the surrounding
+settings, and an edited fragment is left alone until
+`roca hooks install claude --force` replaces it. See
+[Update](lifecycle.md#update) for the shared zone, divergence and registry
+contract.
+
 `roca hooks uninstall claude` withdraws that entry and leaves every other
 setting, and every hook that is not La Roca's, exactly as it was. `roca
 uninstall` does the same withdrawal before it unlinks the binary, so no hook
@@ -143,8 +152,10 @@ so CLI and MCP enforce the same boundary.
 
 The default data directory is `~/.roca`. It contains `roca.db`,
 configuration, backups, `prompt.md`, and operational JSONL under
-`logs/`. La Roca does not edit agent instruction files; the operator decides
-whether to use the generated prompt or install the bundled skill.
+`logs/`. The machine-wide managed-artifact registry is `artifacts.json` in the
+default `~/.roca` home even when a database is selected elsewhere. La Roca does
+not edit agent instruction files; the operator decides whether to use the
+generated prompt or install the bundled skill.
 
 Experimental plugin packages are not part of the selected data directory: they
 live under `~/.roca/plugins`, and protected removals are archived beside them.
