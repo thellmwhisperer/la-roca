@@ -46,9 +46,10 @@ tables:
 `attachment` is `on-demand` or `resident`; omitting it keeps the version 1
 default, `on-demand`. An on-demand database is attached only when its semantic
 layer matches the question or an explicit SQL statement names it. A resident
-database is attached once when the read connection opens and stays available to
-every query. Resident plugins still pass the same schema validation, read-only
-URI, gate, timeout, provenance, and ten-database attachment cap.
+database is attached whenever a read connection is acquired and stays available
+for that connection's query. Resident plugins still pass the same schema
+validation, read-only URI, gate, timeout, provenance, and ten-database attachment
+cap.
 
 `description`, at least one question, and every table's description and ordered
 column list are required. A plugin that holds user data moved out of core also
@@ -67,11 +68,11 @@ collision receives a deterministic suffix.
 
 The same read-only gate validates core and qualified plugin SQL. Hidden table
 names and forbidden functions stay forbidden in every attached schema. Plugin
-databases are attached with SQLite's read-only URI mode. On-demand databases
-are detached after execution; resident databases remain on the read connection.
-The execution timeout still applies. When more eligible plugins exist than
-SQLite can attach, La Roca uses at most ten and declares the omitted databases
-in the answer.
+databases are attached with SQLite's read-only URI mode. On-demand and resident
+databases remain attached throughout execution and are detached before the read
+connection is returned. The execution timeout still applies. When more eligible
+plugins exist than SQLite can attach, La Roca uses at most ten and declares the
+omitted databases in the answer.
 
 Every query and explicit `roca exec` answer declares its consulted databases.
 Rows returned while plugins are in scope carry a `database` value such as

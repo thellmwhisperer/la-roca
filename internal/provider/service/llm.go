@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -735,7 +736,7 @@ func (s *Service) withResidentMemorySearch(ctx context.Context, plan query.Plan,
 	columns, rows = ensureDatabaseColumn(columns, rows, "core")
 	rows = append(rows, opsRows...)
 	rows = dedupRows(strings.ReplaceAll(plan.Term, "+", " "), columns, rows)
-	rows = shareSearchLimit(rows, limit, ops.Source())
+	rows = limitMergedSearchRows(rows, limit)
 	return columns, rows, declared, provenance, nil, nil
 }
 
@@ -764,39 +765,24 @@ func (s *Service) residentMemoryRows(ctx context.Context, plan query.Plan, maxCh
 	return opsRows, declaredSearchSQL(gate, core, validated, limit), nil
 }
 
-// shareSearchLimit cuts the merged answer to the limit while reserving part of
-// it for the attached half. The attached rows are appended behind the core ones
-// and rank beside them, so a plain truncation drops the newer operational
-// history whenever core alone fills the budget.
-//
-// The reserve is a floor and never a ceiling: what one half does not have to
-// offer, the other one spends, so a shared limit still answers with as many
-// rows as an unshared one.
-func shareSearchLimit(rows []map[string]any, limit int, label string) []map[string]any {
-	if limit <= 0 || len(rows) <= limit {
-		return rows
-	}
-	attached := 0
-	for _, row := range rows {
-		if fmt.Sprint(row[plugin.ProvenanceColumn]) == label {
-			attached++
+// limitMergedSearchRows makes core and operational history compete under one
+// recency order before applying the shared limit. Appending one database behind
+// the other and then truncating would make source order decide recall.
+func limitMergedSearchRows(rows []map[string]any, limit int) []map[string]any {
+	ordered := slices.Clone(rows)
+	slices.SortStableFunc(ordered, func(a, b map[string]any) int {
+		created := func(row map[string]any) string {
+			if row["created_at"] == nil {
+				return ""
+			}
+			return fmt.Sprint(row["created_at"])
 		}
+		return strings.Compare(created(b), created(a))
+	})
+	if limit > 0 && len(ordered) > limit {
+		return ordered[:limit]
 	}
-	core := min(len(rows)-attached, limit-min(attached, limit/2))
-	reserved := min(attached, limit-core)
-	kept := make([]map[string]any, 0, limit)
-	for _, row := range rows {
-		budget := &core
-		if fmt.Sprint(row[plugin.ProvenanceColumn]) == label {
-			budget = &reserved
-		}
-		if *budget == 0 {
-			continue
-		}
-		*budget--
-		kept = append(kept, row)
-	}
-	return kept
+	return ordered
 }
 
 // declaredSearchSQL reports both halves of the merged answer. Declaring the core

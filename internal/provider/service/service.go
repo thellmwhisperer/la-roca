@@ -97,6 +97,8 @@ type Options struct {
 // consuming resources indefinitely without requiring configuration.
 const DefaultQueryTimeout = 5 * time.Second
 
+const residentInitializationTimeout = 10 * time.Second
+
 // Service opens the database once and answers both surfaces.
 type Service struct {
 	db       *store.DB
@@ -106,8 +108,6 @@ type Service struct {
 	schemaMu sync.Mutex
 	schemaOK bool
 
-	queryMu          sync.Mutex
-	residentConn     *sql.Conn
 	resident         []plugin.Database
 	residentOmitted  []plugin.Descriptor
 	residentWarnings []string
@@ -119,6 +119,12 @@ type Service struct {
 
 // Open opens the database. Its schema is adopted before the first data operation.
 func Open(opts Options) (*Service, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), residentInitializationTimeout)
+	defer cancel()
+	return openWithContext(ctx, opts)
+}
+
+func openWithContext(ctx context.Context, opts Options) (*Service, error) {
 	registry, err := layers.Load()
 	if err != nil {
 		return nil, err
@@ -128,7 +134,7 @@ func Open(opts Options) (*Service, error) {
 		return nil, err
 	}
 	svc := &Service{db: db, opts: opts, registry: registry}
-	if err := svc.openResidents(context.Background()); err != nil {
+	if err := svc.openResidents(ctx); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -146,9 +152,6 @@ func (s *Service) DataDir() string { return s.dataDir() }
 func (s *Service) Close() error {
 	if s.gate != nil {
 		s.gate.Close()
-	}
-	if s.residentConn != nil {
-		s.residentConn.Close()
 	}
 	if s.ops != nil {
 		s.ops.Close()

@@ -740,6 +740,9 @@ func (m *world) bundledResidentPluginIsInstalled(name string) error {
 	if manifest.Risk != plugininstall.DataOnly || manifest.Executable != "" {
 		return fmt.Errorf("bundled plugin manifest = %+v, want data-only without executable", manifest)
 	}
+	if executable := filepath.Join(theBinariesDirectory(m.home), "roca-"+name); exists(executable) {
+		return fmt.Errorf("bundled data plugin installed an executable at %s", executable)
+	}
 	descriptor, err := plugin.Inspect(name, directory)
 	if err != nil {
 		return err

@@ -46,43 +46,31 @@ func TestSearchRowsWithIdenticalSourceAndTextAreDeduplicated(t *testing.T) {
 	}
 }
 
-func TestSharedSearchLimitReservesForTheAttachedHalfAndStillFillsTheLimit(t *testing.T) {
+func TestMergedSearchLimitOrdersCoreAndAttachedRowsTogetherBeforeTruncating(t *testing.T) {
 	const label = "plugin:roca-ops"
-	merged := func(core, attached int) []map[string]any {
-		rows := make([]map[string]any, 0, core+attached)
-		for index := range core {
-			rows = append(rows, map[string]any{"id": int64(index), plugin.ProvenanceColumn: "core"})
-		}
-		for index := range attached {
-			rows = append(rows, map[string]any{
-				"id": int64(100 + index), plugin.ProvenanceColumn: label,
-			})
-		}
-		return rows
+	merged := []map[string]any{
+		{"id": int64(1), "created_at": "2026-08-10T12:00:00Z", plugin.ProvenanceColumn: "core"},
+		{"id": int64(2), "created_at": "2026-08-12T12:00:00Z", plugin.ProvenanceColumn: "core"},
+		{"id": int64(3), "created_at": "2026-08-11T12:00:00Z", plugin.ProvenanceColumn: label},
+		{"id": int64(4), "created_at": "2026-08-13T12:00:00Z", plugin.ProvenanceColumn: label},
 	}
 	for _, one := range []struct {
-		name                   string
-		core, attached, limit  int
-		wantCore, wantAttached int
+		name    string
+		limit   int
+		wantIDs []int64
 	}{
-		{"an attached row survives a core half that fills the limit", 20, 1, 10, 9, 1},
-		{"core spends what the attached half does not have", 20, 3, 10, 7, 3},
-		{"the attached half spends what core does not have", 2, 10, 10, 2, 8},
-		{"the attached half alone still answers", 0, 5, 3, 0, 3},
-		{"both halves split an even budget", 20, 6, 10, 5, 5},
+		{"a global limit keeps the newest rows from both databases", 3, []int64{4, 2, 3}},
+		{"an ample limit still returns every row in recency order", 10, []int64{4, 2, 3, 1}},
 	} {
 		t.Run(one.name, func(t *testing.T) {
-			core, attached := 0, 0
-			for _, row := range shareSearchLimit(merged(one.core, one.attached), one.limit, label) {
-				if row[plugin.ProvenanceColumn] == label {
-					attached++
-					continue
-				}
-				core++
+			got := limitMergedSearchRows(merged, one.limit)
+			if len(got) != len(one.wantIDs) {
+				t.Fatalf("rows = %v, want ids %v", got, one.wantIDs)
 			}
-			if core != one.wantCore || attached != one.wantAttached {
-				t.Fatalf("kept %d core and %d attached rows, want %d and %d",
-					core, attached, one.wantCore, one.wantAttached)
+			for index, want := range one.wantIDs {
+				if got[index]["id"] != want {
+					t.Fatalf("row %d id = %v, want %d; rows = %v", index, got[index]["id"], want, got)
+				}
 			}
 		})
 	}

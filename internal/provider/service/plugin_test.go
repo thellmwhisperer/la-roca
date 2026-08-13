@@ -338,6 +338,9 @@ func TestRocaOpsRoutesStoresAndQueriesCoreHistoryTogetherWithNewWrites(t *testin
 		options.Providers = cascadeOf(model)
 	})
 	seed(t, svc, "handoff", "synthetic historical handoff")
+	// Core history can contain the same text as a new operational write. Its id
+	// is from another namespace and must never be returned for the ops write.
+	seed(t, svc, "handoff", "synthetic resident handoff")
 
 	stored, err := svc.Store(t.Context(), service.StoreRequest{
 		Layer: "handoff", Content: "synthetic resident handoff",
@@ -346,13 +349,16 @@ func TestRocaOpsRoutesStoresAndQueriesCoreHistoryTogetherWithNewWrites(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
+	if stored.Skipped {
+		t.Fatalf("core history suppressed the extracted write: %+v", stored)
+	}
 	var coreRows int
 	if err := svc.DB().SQL().QueryRow(
 		"SELECT COUNT(*) FROM memories WHERE content = 'synthetic resident handoff'").Scan(&coreRows); err != nil {
 		t.Fatal(err)
 	}
-	if coreRows != 0 {
-		t.Fatal("the extracted write still landed in core")
+	if coreRows != 1 {
+		t.Fatalf("the extracted write changed core history: rows = %d, want the one seeded row", coreRows)
 	}
 
 	opsDB := openRocaOps(t, plugins)

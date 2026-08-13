@@ -92,7 +92,7 @@ func TestEnsureInstallsTheBundledResidentDataOnlyPluginAndPreservesItsDatabase(t
 	}
 }
 
-func TestEnsureLeavesTheWriteLockAloneWhenTheSchemaIsAlreadyThere(t *testing.T) {
+func TestEnsureDoesNotTouchTheDatabaseWhenTheInstalledVersionMatches(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "plugins")
 	bin := filepath.Join(t.TempDir(), "bin")
 	if _, err := rocaops.Ensure(root, bin, "v-test"); err != nil {
@@ -102,17 +102,36 @@ func TestEnsureLeavesTheWriteLockAloneWhenTheSchemaIsAlreadyThere(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer writer.Close()
 	holding, err := writer.Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer holding.Rollback()
 	if _, err := holding.Exec(`INSERT INTO memories (layer, content, origin)
 		VALUES ('handoff', 'synthetic resident writer', 'agent')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := rocaops.Ensure(root, bin, "v-test"); err != nil {
 		t.Fatalf("the schema check fought a resident writer for the write lock: %v", err)
+	}
+	if err := holding.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	database := filepath.Join(root, rocaops.Name, rocaops.DatabaseFilename)
+	sentinel := []byte("custody database bytes are not an install-time migration target")
+	if err := os.WriteFile(database, sentinel, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rocaops.Ensure(root, bin, "v-test"); err != nil {
+		t.Fatalf("same-version ensure inspected or rewrote the custody database: %v", err)
+	}
+	got, err := os.ReadFile(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(sentinel) {
+		t.Fatalf("same-version ensure changed the custody database: %q", got)
 	}
 }

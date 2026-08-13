@@ -145,12 +145,6 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (StoreResult, err
 						"memory supersedes only what %s itself holds", req.Supersedes, rocaOpsPluginName)
 			}
 		}
-		if existing, found, err := identicalMemory(ctx, s.db.SQL(), physical, status, content, req.Project); err != nil {
-			return StoreResult{}, err
-		} else if found {
-			result.ID, result.Skipped = existing, true
-			return result, nil
-		}
 	}
 	err = target.Write(ctx, func(tx *sql.Tx) error {
 		if existing, found, err := identicalMemory(ctx, tx, physical, status, content, req.Project); err != nil {

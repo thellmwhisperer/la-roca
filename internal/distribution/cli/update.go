@@ -204,16 +204,9 @@ func (env *cliEnv) update(ctx context.Context, source release.Source,
 	if err != nil {
 		return err
 	}
-	if err := release.Swap(installed, binary, answersItsVersion); err != nil {
+	if err := release.Swap(installed, binary,
+		releaseReadiness(ctx, installed, published.Tag)); err != nil {
 		return err
-	}
-	// `--version` also pins an older release, and one that predates the command
-	// has no bundled plugins to fail to place.
-	if output, err := exec.CommandContext(ctx, installed,
-		"_install-bundled-plugins", "--json").CombinedOutput(); err != nil &&
-		!strings.Contains(string(output), "unknown command") {
-		return fmt.Errorf("roca %s is installed, but its bundled plugins could not be placed: %w: %s",
-			published.Tag, err, strings.TrimSpace(string(output)))
 	}
 	paths, pathErr := env.resolvePaths()
 	var artifacts artifactRefreshReport
@@ -241,6 +234,26 @@ func (env *cliEnv) update(ctx context.Context, source release.Source,
 	}
 	return env.reportUpdate(document, pending,
 		"roca %s installed at %s (was %s)", published.Tag, installed, current)
+}
+
+func releaseReadiness(ctx context.Context, installed, tag string) func(string) error {
+	return func(path string) error {
+		if err := answersItsVersion(path); err != nil {
+			return err
+		}
+		// Swap checks the staged binary first. It has no authority to install into
+		// the live home until it occupies the final path and can still be rolled back.
+		if filepath.Clean(path) != filepath.Clean(installed) {
+			return nil
+		}
+		output, err := exec.CommandContext(ctx, path,
+			"_install-bundled-plugins", "--json").CombinedOutput()
+		if err == nil || strings.Contains(string(output), "unknown command") {
+			return nil
+		}
+		return fmt.Errorf("roca %s bundled plugins could not be placed: %w: %s",
+			tag, err, strings.TrimSpace(string(output)))
+	}
 }
 
 func lenOrZero(entries []reconcile.Entry, err error) int {

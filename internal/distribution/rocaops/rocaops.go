@@ -36,9 +36,6 @@ func Ensure(root, binDir, version string) (plugininstall.Result, error) {
 				"the bundled %s plugin collides with an installation from %q", Name, manifest.Source)
 		}
 		if manifest.Version == version {
-			if err := applySchema(filepath.Join(target, manifest.Database)); err != nil {
-				return plugininstall.Result{}, err
-			}
 			return resultFromManifest(target, manifest), nil
 		}
 	} else if _, statErr := os.Lstat(target); statErr == nil {
@@ -144,10 +141,9 @@ func applySchema(path string) error {
 	return os.Chmod(path, 0o600)
 }
 
-// openDatabase gives the installer's own connection the lock discipline every
-// other connection to this file already has. An installer that refuses the
-// moment somebody else holds the write lock is an installer that runs before
-// every answer and fails whenever the machine is busy.
+// openDatabase gives install and version-update work the same lock discipline
+// as every other connection to this file. A running service can still own a
+// short write lock while the bundled payload is being refreshed.
 func openDatabase(path string) (*sql.DB, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {

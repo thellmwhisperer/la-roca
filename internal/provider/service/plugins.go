@@ -155,27 +155,33 @@ func (s *Service) openResidents(ctx context.Context) error {
 	return nil
 }
 
-func (s *Service) openResidentConnection(ctx context.Context) error {
-	if s.residentConn != nil || len(s.resident) == 0 {
-		return nil
-	}
+func (s *Service) openQueryConnection(ctx context.Context) (*sql.Conn, []string, error) {
 	reader, err := s.db.ReadOnly()
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	connection, err := reader.Conn(ctx)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
+	attached := make([]string, 0, len(s.resident))
 	for _, database := range s.resident {
 		if _, err := connection.ExecContext(ctx,
 			"ATTACH DATABASE ? AS "+quoteSchema(database.Schema), database.ReadOnlyURI()); err != nil {
-			connection.Close()
-			return fmt.Errorf("attach resident plugin %s read-only: %w", database.Name, err)
+			closeQueryConnection(connection, attached)
+			return nil, nil, fmt.Errorf("attach resident plugin %s read-only: %w", database.Name, err)
 		}
+		attached = append(attached, database.Schema)
 	}
-	s.residentConn = connection
-	return nil
+	return connection, attached, nil
+}
+
+func closeQueryConnection(connection *sql.Conn, attached []string) {
+	for index := len(attached) - 1; index >= 0; index-- {
+		_, _ = connection.ExecContext(context.Background(),
+			"DETACH DATABASE "+quoteSchema(attached[index]))
+	}
+	_ = connection.Close()
 }
 
 func (r pluginRoute) consulted() []string {
@@ -246,14 +252,6 @@ func schemaWithPlugins(databases []plugin.Database) query.Schema {
 
 func (s *Service) executeWithPlugins(ctx context.Context, statement, term string,
 	maxChars int, databases []plugin.Database) ([]string, []map[string]any, error) {
-	// The resident connection is shared, so the wait for it is queueing and not
-	// execution. Taking the lock first keeps the execution budget spent on the
-	// statement instead of on the query that ran before it.
-	resident := len(s.resident) > 0
-	if resident {
-		s.queryMu.Lock()
-		defer s.queryMu.Unlock()
-	}
 	timeout, bounded := s.queryExecutionBudget()
 	queryCtx := ctx
 	var cancel context.CancelFunc = func() {}
@@ -261,30 +259,11 @@ func (s *Service) executeWithPlugins(ctx context.Context, statement, term string
 		queryCtx, cancel = context.WithTimeout(ctx, timeout)
 	}
 	defer cancel()
-	var connection *sql.Conn
-	if resident {
-		if err := s.openResidentConnection(queryCtx); err != nil {
-			return nil, nil, err
-		}
-		connection = s.residentConn
-	} else {
-		reader, err := s.db.ReadOnly()
-		if err != nil {
-			return nil, nil, err
-		}
-		connection, err = reader.Conn(queryCtx)
-		if err != nil {
-			return nil, nil, err
-		}
-		defer connection.Close()
+	connection, attached, err := s.openQueryConnection(queryCtx)
+	if err != nil {
+		return nil, nil, executionError(ctx, queryCtx, timeout, err)
 	}
-	attached := make([]string, 0, len(databases))
-	defer func() {
-		for index := len(attached) - 1; index >= 0; index-- {
-			_, _ = connection.ExecContext(context.Background(),
-				"DETACH DATABASE "+quoteSchema(attached[index]))
-		}
-	}()
+	defer func() { closeQueryConnection(connection, attached) }()
 	for _, database := range databases {
 		if database.Semantic.Attachment == plugin.AttachmentResident {
 			continue

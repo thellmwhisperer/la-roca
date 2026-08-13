@@ -62,16 +62,22 @@ func TestRocaOpsFeatureRoutesTheExistingCLIStoreContractAndDrainsOnlyOnCommand(t
 	}
 
 	opsPath := filepath.Join(dataDir, "plugins", rocaops.Name, rocaops.DatabaseFilename)
-	if output, err := run("ops", "drain", "--db-path", dbPath,
-		"--before", "2026-08-13T00:00:00Z"); err != nil {
-		t.Fatalf("drain: %v\n%s", err, output)
-	}
 	ops, err := sql.Open("sqlite", opsPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ops.Close()
 	var remaining int
+	if err := ops.QueryRow("SELECT COUNT(*) FROM memories").Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 1 {
+		t.Fatalf("before explicit drain the operational store has %d rows, want 1", remaining)
+	}
+	if output, err := run("ops", "drain", "--db-path", dbPath,
+		"--before", "2026-08-13T00:00:00Z"); err != nil {
+		t.Fatalf("drain: %v\n%s", err, output)
+	}
 	if err := ops.QueryRow("SELECT COUNT(*) FROM memories").Scan(&remaining); err != nil {
 		t.Fatal(err)
 	}
