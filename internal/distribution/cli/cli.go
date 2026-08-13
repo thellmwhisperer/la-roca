@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
@@ -187,7 +190,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 		mcpCommand(env), skillCommand(env), hooksCommand(env),
 		loginCommand(env), modelCommand(env),
 		updateCommand(env), uninstallCommand(env),
-		modelsCommand(env), pluginsCommand(env),
+		modelsCommand(env), pluginCommand(env), pluginsCommand(env),
 		capabilitiesCommand(env),
 	)
 	root.InitDefaultHelpCmd()
@@ -204,7 +207,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 
 func publicCommand(name string) bool {
 	switch name {
-	case "init", "query", "store", "ingest", "login", "doctor", "update", "uninstall", "plugins", "hooks":
+	case "init", "query", "store", "ingest", "login", "doctor", "update", "uninstall", "plugin", "plugins", "hooks":
 		return true
 	default:
 		return false
@@ -355,6 +358,243 @@ func isExecutable(path string) bool {
 	return runtime.GOOS == "windows" || info.Mode().Perm()&0o111 != 0
 }
 
+const envRocaPrefix = "ROCA_PREFIX"
+
+func pluginCommand(env *cliEnv) *cobra.Command {
+	var consented bool
+	command := &cobra.Command{
+		Use:   "plugin",
+		Short: "Install, update, or uninstall an experimental plugin",
+		Long: "Manages verified plugin packages from a local directory, a Git URL, or\n" +
+			"an owner/repo source. This experimental surface requires features.plugins=true.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
+		},
+	}
+	command.PersistentFlags().BoolVar(&consented, "yes", false, "accept the displayed plugin risk without prompting")
+	command.AddCommand(pluginInstallCommand(env, &consented), pluginUpdateCommand(env, &consented),
+		pluginUninstallCommand(env, &consented))
+	return command
+}
+
+func pluginInstallCommand(env *cliEnv, consented *bool) *cobra.Command {
+	return &cobra.Command{
+		Use:   "install <path|url|owner/repo>",
+		Short: "Verify a source and install its plugin",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			manager, scratch, err := env.pluginManager()
+			if err != nil {
+				return err
+			}
+			candidate, cleanup, err := resolvePluginCandidate(cmd.Context(), args[0], scratch)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			accepted, err := env.confirmPlugin(cmd.InOrStdin(), "install", candidate, "", *consented)
+			if err != nil || !accepted {
+				return err
+			}
+			result, err := manager.Install(candidate)
+			if err != nil {
+				return err
+			}
+			return env.reportPlugin("installed", result)
+		},
+	}
+}
+
+func pluginUpdateCommand(env *cliEnv, consented *bool) *cobra.Command {
+	return &cobra.Command{
+		Use:   "update <name>",
+		Short: "Refresh a plugin from its recorded source",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			manager, scratch, err := env.pluginManager()
+			if err != nil {
+				return err
+			}
+			manifest, err := plugininstall.ReadManifest(filepath.Join(manager.PluginRoot, args[0]))
+			if err != nil {
+				return err
+			}
+			candidate, cleanup, err := resolvePluginCandidate(cmd.Context(), manifest.Source, scratch)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			if candidate.Name != args[0] {
+				return fmt.Errorf("recorded source now names plugin %q, not %q; update refused",
+					candidate.Name, args[0])
+			}
+			accepted, err := env.confirmPlugin(cmd.InOrStdin(), "update", candidate, manifest.Checksum, *consented)
+			if err != nil || !accepted {
+				return err
+			}
+			result, err := manager.Update(candidate)
+			if err != nil {
+				return err
+			}
+			return env.reportPlugin("updated", result)
+		},
+	}
+}
+
+func pluginUninstallCommand(env *cliEnv, consented *bool) *cobra.Command {
+	return &cobra.Command{
+		Use:   "uninstall <name>",
+		Short: "Remove a plugin, protecting custodial data",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			manager, _, err := env.pluginManager()
+			if err != nil {
+				return err
+			}
+			manifest, err := plugininstall.ReadManifest(filepath.Join(manager.PluginRoot, args[0]))
+			if err != nil {
+				return err
+			}
+			candidate := plugininstall.Candidate{
+				Name: manifest.Name, Version: manifest.Version, Source: manifest.Source,
+				Checksum: manifest.Checksum, Risk: manifest.Risk, Custody: manifest.Custody,
+			}
+			accepted, err := env.confirmPlugin(cmd.InOrStdin(), "uninstall", candidate, "", *consented)
+			if err != nil || !accepted {
+				return err
+			}
+			result, err := manager.Uninstall(args[0])
+			if err != nil {
+				return err
+			}
+			return env.reportPlugin("uninstalled", result)
+		},
+	}
+}
+
+func (env *cliEnv) pluginManager() (plugininstall.Manager, string, error) {
+	paths, err := env.resolvePaths()
+	if err != nil {
+		return plugininstall.Manager{}, "", err
+	}
+	file, err := config.LoadFile(paths.Config)
+	if err != nil {
+		return plugininstall.Manager{}, "", err
+	}
+	if !file.Features.Plugins {
+		return plugininstall.Manager{}, "", fmt.Errorf(
+			"the experimental plugin system is disabled; set features.plugins = true in %s",
+			paths.Config)
+	}
+	if paths.Home == "" {
+		return plugininstall.Manager{}, "", fmt.Errorf("I do not know where your HOME is; plugin installation requires ~/.roca/plugins")
+	}
+	return plugininstall.Manager{
+		PluginRoot: pluginRoot(paths), BinDir: pluginExecutableDir(paths),
+		ArchiveRoot: custodyRoot(paths),
+	}, pluginDownloads(paths), nil
+}
+
+func resolvePluginCandidate(ctx context.Context, reference, scratch string) (plugininstall.Candidate, func(), error) {
+	resolved, cleanup, err := plugininstall.Resolve(ctx, reference, scratch)
+	if err != nil {
+		return plugininstall.Candidate{}, func() {}, err
+	}
+	candidate, err := plugininstall.Inspect(resolved.Reference, resolved.Directory)
+	if err != nil {
+		cleanup()
+		return plugininstall.Candidate{}, func() {}, err
+	}
+	return candidate, cleanup, nil
+}
+
+func pluginConsentText(action string, candidate plugininstall.Candidate, trusted string) string {
+	var risk string
+	switch candidate.Risk {
+	case plugininstall.Executable:
+		risk = "EXECUTABLE: FULL TRUST; it runs code with your user privileges."
+	default:
+		risk = "DATA-ONLY: near-harmless; its worst case is lying content returned from its database."
+	}
+	custody := ""
+	if candidate.Custody {
+		custody = "\ncustody: protected; uninstall archives this directory instead of deleting it"
+	}
+	return fmt.Sprintf("Plugin %s consent\nsource: %s\nversion: %s\nchecksum: sha256:%s%s\nrisk: %s%s\n",
+		action, candidate.Source, candidate.Version, candidate.Checksum,
+		checksumComparison(candidate.Checksum, trusted), risk, custody)
+}
+
+// checksumComparison names what is being replaced. Without the recorded value a
+// source takeover and an ordinary version bump look identical on this screen:
+// both show one unfamiliar checksum.
+func checksumComparison(current, trusted string) string {
+	switch {
+	case trusted == "":
+		return ""
+	case trusted == current:
+		return " (unchanged since the recorded install)"
+	default:
+		return fmt.Sprintf(" (replaces the recorded sha256:%s)", trusted)
+	}
+}
+
+func (env *cliEnv) confirmPlugin(input io.Reader, action string, candidate plugininstall.Candidate,
+	trusted string, consented bool) (bool, error) {
+
+	text := pluginConsentText(action, candidate, trusted)
+	if consented {
+		if !env.json {
+			fmt.Fprint(env.errOut, text)
+			fmt.Fprintln(env.errOut, "consent: accepted by --yes")
+		}
+		return true, nil
+	}
+	if env.json {
+		return false, fmt.Errorf("plugin %s needs consent; inspect it without --json or pass --yes", action)
+	}
+	fmt.Fprint(env.errOut, text)
+	fmt.Fprintf(env.errOut, "Proceed with plugin %s? [y/N] ", action)
+	line, err := bufio.NewReader(input).ReadString('\n')
+	if err != nil && line == "" {
+		return false, fmt.Errorf("read plugin consent: %w", err)
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes":
+		return true, nil
+	case "", "n", "no":
+		if !env.json {
+			env.print("plugin %s canceled", action)
+		}
+		return false, nil
+	default:
+		return false, fmt.Errorf("plugin consent %q is not valid; answer yes or no", strings.TrimSpace(line))
+	}
+}
+
+func (env *cliEnv) reportPlugin(action string, result plugininstall.Result) error {
+	document := map[string]any{
+		"action": action, "name": result.Name, "version": result.Version,
+		"checksum": result.Checksum, "risk": result.Risk, "directory": result.Directory,
+	}
+	if result.Executable != "" {
+		document["executable"] = result.Executable
+	}
+	if result.ArchivedTo != "" {
+		document["archived_to"] = result.ArchivedTo
+	}
+	if env.json {
+		return env.printJSON(document)
+	}
+	if result.ArchivedTo != "" {
+		env.print("plugin %s %s; custodial data archived at %s", result.Name, action, result.ArchivedTo)
+		return nil
+	}
+	env.print("plugin %s %s at %s", result.Name, action, result.Directory)
+	return nil
+}
+
 // resolvePaths decides where everything of this installation lives, without
 // touching the database. Commands that only need a path (such as login) pay
 // nothing for it.
@@ -398,6 +638,10 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		return nil, err
 	}
 	home, _ := os.UserHomeDir()
+	pluginDir := ""
+	if home != "" {
+		pluginDir = filepath.Join(home, config.DirOwn, "plugins")
+	}
 	var ingestProgress func(ingest.SourceProgress)
 	if env.wantIngestProgress && !env.json && termAware(env.errOut) {
 		env.liveIngest = newIngestRows(env.errOut, true)
@@ -414,6 +658,8 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		QueryTimeoutSet:           file.Query.TimeoutSet,
 		DisableStrictInput:        !file.Features.StrictInput,
 		DisableMissingReferentAsk: !file.Features.AskMissingReferent,
+		PluginDir:                 pluginDir,
+		PluginsEnabled:            file.Features.Plugins,
 		Providers:                 providers,
 		Interpreters:              interpreters,
 		ConfigPath:                paths.Config,

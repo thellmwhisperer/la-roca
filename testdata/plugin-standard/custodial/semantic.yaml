@@ -1,0 +1,9 @@
+version: 1
+description: Synthetic archive that custodies user-owned messages.
+custody: true
+questions:
+  - Which archived messages mention the synthetic beacon?
+tables:
+  - name: archived_messages
+    description: User-owned messages moved into this plugin's custody.
+    columns: [id, body]

@@ -62,13 +62,40 @@ var ftsShadowSuffixes = []string{
 // stale.
 func HiddenTables() []string { return slices.Clone(invisibleTables) }
 
+// IsHiddenTable applies the gate's per-schema table rule. Plugin schema
+// validation and prompt construction use it so a name hidden in core does not
+// become visible merely because it appears behind another qualifier.
+func IsHiddenTable(name string) bool {
+	lower := strings.ToLower(name)
+	return slices.Contains(invisibleTables, lower) || strings.HasPrefix(lower, "sqlite_") ||
+		strings.HasPrefix(lower, "pragma_") || hasAnySuffix(lower, ftsShadowSuffixes)
+}
+
 // Gate keeps open the in-memory database statements are prepared against.
 type Gate struct {
 	db *sql.DB
 }
 
+// Schema is one attached database as the validation engine sees it. Only the
+// declared visible tables are created; hidden names stay absent in every schema.
+type Schema struct {
+	Name   string
+	Tables []Table
+}
+
+type Table struct {
+	Name    string
+	Columns []string
+}
+
 // Open creates the validation database: the v1 schema minus what is invisible.
 func Open() (*Gate, error) {
+	return OpenWithSchemas(nil)
+}
+
+// OpenWithSchemas creates the core validation database and the qualified
+// schemas selected by the plugin semantic router.
+func OpenWithSchemas(schemas []Schema) (*Gate, error) {
 	db, err := sql.Open("sqlite", "file::memory:?_pragma=query_only(0)")
 	if err != nil {
 		return nil, fmt.Errorf("open the validation database: %w", err)
@@ -95,7 +122,44 @@ func Open() (*Gate, error) {
 			return nil, fmt.Errorf("hide table %q: %w", table, err)
 		}
 	}
+	for _, schema := range schemas {
+		if err := addSchema(db, schema); err != nil {
+			db.Close()
+			return nil, err
+		}
+	}
 	return &Gate{db: db}, nil
+}
+
+func addSchema(db *sql.DB, schema Schema) error {
+	if schema.Name == "" || strings.EqualFold(schema.Name, "main") || strings.EqualFold(schema.Name, "temp") {
+		return fmt.Errorf("invalid attached schema name %q", schema.Name)
+	}
+	if _, err := db.Exec("ATTACH DATABASE ':memory:' AS " + quoteIdentifier(schema.Name)); err != nil {
+		return fmt.Errorf("create validation schema %q: %w", schema.Name, err)
+	}
+	for _, table := range schema.Tables {
+		if IsHiddenTable(table.Name) {
+			continue
+		}
+		if len(table.Columns) == 0 {
+			return fmt.Errorf("validation table %s.%s has no columns", schema.Name, table.Name)
+		}
+		columns := make([]string, len(table.Columns))
+		for index, column := range table.Columns {
+			columns[index] = quoteIdentifier(column) + " BLOB"
+		}
+		statement := "CREATE TABLE " + quoteIdentifier(schema.Name) + "." +
+			quoteIdentifier(table.Name) + " (" + strings.Join(columns, ", ") + ")"
+		if _, err := db.Exec(statement); err != nil {
+			return fmt.Errorf("create validation table %s.%s: %w", schema.Name, table.Name, err)
+		}
+	}
+	return nil
+}
+
+func quoteIdentifier(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
 // Close closes the validation database.

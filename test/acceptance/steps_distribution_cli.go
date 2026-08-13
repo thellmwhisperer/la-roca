@@ -24,9 +24,30 @@ func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWor
 	ctx.When(`^the operator exercises the plugin dispatch contract$`, w.exercisePluginDispatch)
 	ctx.Then(`^arguments, standard input, output, and exit status cross the plugin seam untouched$`, w.pluginForwardsProcessContract)
 	ctx.Then(`^built-ins win, missing plugins explain the convention, and plugins lists the fixtures$`, w.pluginBoundariesAreHonest)
+	ctx.When(`^the operator tries to install a plugin without enabling experimental plugins$`, w.tryDisabledPluginInstall)
+	ctx.Then(`^the installer is inert and names the feature flag$`, w.disabledPluginInstallerIsInert)
 	ctx.Then(`^init reports setup, ingest, index, model, and its total once in that order$`, w.initSummaryIsOrdered)
 	ctx.When(`^the operator initializes non-interactively with a detected model CLI$`, w.initWithDetectedModelCLI)
 	ctx.Then(`^init prints one answering notice and writes no model configuration$`, w.initHasOneAnsweringNotice)
+}
+
+func (w *distributionWorld) tryDisabledPluginInstall() error {
+	if err := w.prepare("disabled-plugin-install"); err != nil {
+		return err
+	}
+	w.last = w.runAtInput(w.home, w.installed, "yes\n", nil,
+		"plugin", "install", filepath.Join(w.home, "source-that-does-not-exist"))
+	return nil
+}
+
+func (w *distributionWorld) disabledPluginInstallerIsInert() error {
+	if w.last.code == 0 || !strings.Contains(w.last.stderr, "features.plugins") {
+		return fmt.Errorf("disabled plugin install = %+v", w.last)
+	}
+	if _, err := os.Stat(filepath.Join(w.home, ".roca", "plugins")); !os.IsNotExist(err) {
+		return fmt.Errorf("disabled plugin installer touched its directory: %v", err)
+	}
+	return nil
 }
 
 func (w *distributionWorld) initSummaryIsOrdered() error {
@@ -111,7 +132,7 @@ func (w *distributionWorld) helpIsComplete() error {
 	honest := map[string]string{
 		"doctor": "configuration", "ingest": "source", "init": "database",
 		"hooks": "authorship", "login": "model", "query": "memory", "store": "memory",
-		"uninstall": "remove", "update": "release", "plugins": "plugin",
+		"uninstall": "remove", "update": "release", "plugin": "plugin", "plugins": "plugin",
 	}
 	found := map[string]string{}
 	inCommands := false

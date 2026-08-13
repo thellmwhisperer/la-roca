@@ -3,14 +3,20 @@
 package acceptance
 
 import (
+	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/cucumber/godog"
+	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
+	_ "modernc.org/sqlite"
 )
 
 func registerProviderQuerySteps(ctx *godog.ScenarioContext, w *providerAcceptanceWorld) {
 	ctx.Given(`^the memory "([^"]*)" exists$`, w.memoryExists)
+	ctx.Given(`^the synthetic plugin "([^"]*)" is installed$`, w.syntheticPluginInstalled)
 	ctx.When(`^I ask "([^"]*)"$`, w.ask)
 	ctx.When(`^I ask only for SQL for "([^"]*)"$`, w.askForSQL)
 	ctx.When(`^I submit the SQL "([^"]*)"$`, w.submitSQL)
@@ -27,6 +33,81 @@ func registerProviderQuerySteps(ctx *godog.ScenarioContext, w *providerAcceptanc
 	ctx.Then(`^the result used the model SQL path$`, w.usedModelSQL)
 	ctx.Then(`^exactly (\d+) rows? (?:is|are) reported$`, w.exactRowsReported)
 	ctx.Then(`^the degraded reason is "([^"]*)"$`, w.degradedReason)
+	ctx.Then(`^the consulted databases are "([^"]*)"$`, w.consultedDatabases)
+	ctx.Then(`^the first row declares database "([^"]*)"$`, w.firstRowDatabase)
+	ctx.Then(`^a warning names the plugin "([^"]*)" and column "([^"]*)"$`, w.pluginWarning)
+}
+
+func (w *providerAcceptanceWorld) syntheticPluginInstalled(name string) error {
+	w.pluginsEnabled = true
+	source := filepath.Join("..", "..", "testdata", "plugin-standard", name)
+	destination := filepath.Join(w.home, ".roca", "plugins", name)
+	if err := os.MkdirAll(destination, 0o700); err != nil {
+		return err
+	}
+	semantic, err := os.ReadFile(filepath.Join(source, plugin.SemanticFilename))
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(destination, plugin.SemanticFilename), semantic, 0o600); err != nil {
+		return err
+	}
+	ddl, err := os.ReadFile(filepath.Join(source, "schema.sql"))
+	if err != nil {
+		return err
+	}
+	database, err := sql.Open("sqlite", filepath.Join(destination, "plugin.db"))
+	if err != nil {
+		return err
+	}
+	if _, err := database.Exec(string(ddl)); err != nil {
+		database.Close()
+		return err
+	}
+	return database.Close()
+}
+
+func (w *providerAcceptanceWorld) consultedDatabases(want string) error {
+	document, err := w.lastJSON()
+	if err != nil {
+		return err
+	}
+	values, _ := document["databases"].([]any)
+	got := make([]string, 0, len(values))
+	for _, value := range values {
+		got = append(got, fmt.Sprint(value))
+	}
+	if strings.Join(got, ", ") != want {
+		return fmt.Errorf("consulted databases = %q, want %q", strings.Join(got, ", "), want)
+	}
+	return nil
+}
+
+func (w *providerAcceptanceWorld) firstRowDatabase(want string) error {
+	document, err := w.lastJSON()
+	if err != nil {
+		return err
+	}
+	rows := objectList(document["rows"])
+	if len(rows) == 0 || fmt.Sprint(rows[0]["database"]) != want {
+		return fmt.Errorf("first row database = %v, want %q", rows, want)
+	}
+	return nil
+}
+
+func (w *providerAcceptanceWorld) pluginWarning(name, column string) error {
+	document, err := w.lastJSON()
+	if err != nil {
+		return err
+	}
+	warnings, _ := document["warnings"].([]any)
+	for _, warning := range warnings {
+		text := fmt.Sprint(warning)
+		if strings.Contains(text, name) && strings.Contains(text, column) {
+			return nil
+		}
+	}
+	return fmt.Errorf("warnings do not name plugin %q and column %q: %v", name, column, warnings)
 }
 
 func (w *providerAcceptanceWorld) usedModelSQL() error {

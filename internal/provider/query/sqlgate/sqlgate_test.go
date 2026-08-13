@@ -100,6 +100,44 @@ func TestTheEngineIsTheOneThatSaysWhatDoesNotExist(t *testing.T) {
 	}
 }
 
+func TestAnAttachedSchemaUsesTheSameTableColumnAndFunctionGate(t *testing.T) {
+	g, err := sqlgate.OpenWithSchemas([]sqlgate.Schema{{
+		Name: "plugin_receipts",
+		Tables: []sqlgate.Table{
+			{Name: "receipts", Columns: []string{"id", "title"}},
+			{Name: "ingest_file_state", Columns: []string{"path"}},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { g.Close() })
+
+	if _, err := g.Validate(`SELECT title FROM plugin_receipts.receipts LIMIT 5`); err != nil {
+		t.Fatalf("valid plugin read was rejected: %v", err)
+	}
+	for _, statement := range []string{
+		`SELECT invented FROM plugin_receipts.receipts LIMIT 5`,
+		`SELECT path FROM plugin_receipts.ingest_file_state LIMIT 5`,
+		`SELECT readfile(title) FROM plugin_receipts.receipts LIMIT 5`,
+	} {
+		if _, err := g.Validate(statement); err == nil {
+			t.Errorf("plugin statement escaped the gate: %s", statement)
+		}
+	}
+}
+
+func TestHiddenTableClassificationIsSharedAcrossSchemas(t *testing.T) {
+	for _, name := range []string{"ingest_file_state", "sqlite_master", "pragma_database_list", "notes_fts_data"} {
+		if !sqlgate.IsHiddenTable(name) {
+			t.Errorf("%q is not hidden", name)
+		}
+	}
+	if sqlgate.IsHiddenTable("receipts") {
+		t.Fatal("ordinary plugin table is hidden")
+	}
+}
+
 func TestTheGateRejectsFunctionsNotOnTheList(t *testing.T) {
 	for _, benchCase := range []string{
 		"SELECT load_extension('x') FROM memories LIMIT 1",
