@@ -52,7 +52,7 @@ probe_ms   = 3000
 
 [query]
 # SQL that passed the read-only gate may execute for this long. The working
-# default is 5000 ms when this section is absent.
+# default is 5000 ms when this key is absent. Set 0 to disable the bound.
 timeout_ms = 5000
 
 [models.codex]

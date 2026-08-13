@@ -347,11 +347,12 @@ func (s *Service) Exec(ctx context.Context, req ExecRequest) (ExecResult, error)
 // execute runs the validated SELECT and normalizes the rows into maps keyed by
 // column name, which is what both surfaces render.
 func (s *Service) execute(ctx context.Context, stmt, term string, maxChars int) ([]string, []map[string]any, error) {
-	timeout := s.opts.QueryTimeout
-	if timeout <= 0 {
-		timeout = DefaultQueryTimeout
+	timeout, bounded := s.queryExecutionBudget()
+	queryCtx := ctx
+	var cancel context.CancelFunc = func() {}
+	if bounded {
+		queryCtx, cancel = context.WithTimeout(ctx, timeout)
 	}
-	queryCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	reader, err := s.db.ReadOnly()
 	if err != nil {
@@ -367,6 +368,21 @@ func (s *Service) execute(ctx context.Context, stmt, term string, maxChars int) 
 		return nil, nil, executionError(ctx, queryCtx, timeout, err)
 	}
 	return columns, result, nil
+}
+
+func (s *Service) queryExecutionBudget() (time.Duration, bool) {
+	if s.opts.QueryTimeoutSet {
+		if s.opts.QueryTimeout == 0 {
+			return 0, false
+		}
+		if s.opts.QueryTimeout > 0 {
+			return s.opts.QueryTimeout, true
+		}
+	}
+	if s.opts.QueryTimeout > 0 {
+		return s.opts.QueryTimeout, true
+	}
+	return DefaultQueryTimeout, true
 }
 
 func executionError(parent, queryCtx context.Context, timeout time.Duration, err error) error {

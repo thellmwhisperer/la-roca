@@ -34,9 +34,11 @@ type Options struct {
 	DataDir string
 	Version string
 	Commit  string
-	// QueryTimeout bounds execution after SQL passes the read-only gate. Zero
-	// uses DefaultQueryTimeout.
-	QueryTimeout time.Duration
+	// QueryTimeout bounds execution after SQL passes the read-only gate.
+	// QueryTimeoutSet distinguishes an explicit zero, which disables the bound,
+	// from an absent setting, which uses DefaultQueryTimeout.
+	QueryTimeout    time.Duration
+	QueryTimeoutSet bool
 	// ReadOnly refuses in the service, before any database I/O.
 	ReadOnly bool
 	// Providers is the resolved model cascade. Its zero value is a service that

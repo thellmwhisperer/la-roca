@@ -238,8 +238,22 @@ func TestTheQueryCostBudgetIsReadFromConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if file.Query.TimeoutMS != 2750 {
-		t.Fatalf("query timeout = %dms, want 2750ms", file.Query.TimeoutMS)
+	if file.Query.TimeoutMS != 2750 || !file.Query.TimeoutSet {
+		t.Fatalf("query timeout = %+v, want an explicit 2750ms", file.Query)
+	}
+}
+
+func TestQueryTimeoutDistinguishesAbsentFromExplicitZero(t *testing.T) {
+	absent, err := LoadFile(write(t, "[query]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabled, err := LoadFile(write(t, "[query]\ntimeout_ms = 0\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if absent.Query.TimeoutSet || !disabled.Query.TimeoutSet || disabled.Query.TimeoutMS != 0 {
+		t.Fatalf("absent = %+v, disabled = %+v", absent.Query, disabled.Query)
 	}
 }
 

@@ -630,7 +630,8 @@ type File struct {
 
 // QueryConfig bounds execution of SQL that passed the read-only gate.
 type QueryConfig struct {
-	TimeoutMS int `toml:"timeout_ms"`
+	TimeoutMS  int  `toml:"timeout_ms"`
+	TimeoutSet bool `toml:"-"`
 }
 
 // ModelsConfig is the [models] section: which providers, in what order, with
@@ -758,6 +759,7 @@ func readQuery(section map[string]any, path string, warnings *[]string) QueryCon
 		switch key {
 		case "timeout_ms":
 			query.TimeoutMS = readInt(section[key])
+			query.TimeoutSet = true
 		default:
 			if !knownQueryKeys[key] {
 				*warnings = append(*warnings, unknownKey("query."+key, path))
