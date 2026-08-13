@@ -16,6 +16,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/layers"
+	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/query/sqlgate"
 	"github.com/thellmwhisperer/la-roca/internal/store"
 	"github.com/thellmwhisperer/la-roca/internal/store/search"
@@ -56,6 +57,9 @@ type Options struct {
 	// PluginsEnabled is the experimental features.plugins gate. False makes the
 	// entire plugin query path inert even when PluginDir exists.
 	PluginsEnabled bool
+	// RocaOpsEnabled extracts the agent-facing write surface into the bundled
+	// resident roca-ops plugin. Its zero value preserves the core-only product.
+	RocaOpsEnabled bool
 	// ReadOnly refuses in the service, before any database I/O.
 	ReadOnly bool
 	// Providers is the resolved model cascade. Its zero value is a service that
@@ -93,13 +97,20 @@ type Options struct {
 // consuming resources indefinitely without requiring configuration.
 const DefaultQueryTimeout = 5 * time.Second
 
+const residentInitializationTimeout = 10 * time.Second
+
 // Service opens the database once and answers both surfaces.
 type Service struct {
 	db       *store.DB
+	ops      *store.DB
 	opts     Options
 	registry layers.Registry
 	schemaMu sync.Mutex
 	schemaOK bool
+
+	resident         []plugin.Database
+	residentOmitted  []plugin.Descriptor
+	residentWarnings []string
 
 	gateOnce    sync.Once
 	gate        *sqlgate.Gate
@@ -108,6 +119,12 @@ type Service struct {
 
 // Open opens the database. Its schema is adopted before the first data operation.
 func Open(opts Options) (*Service, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), residentInitializationTimeout)
+	defer cancel()
+	return openWithContext(ctx, opts)
+}
+
+func openWithContext(ctx context.Context, opts Options) (*Service, error) {
 	registry, err := layers.Load()
 	if err != nil {
 		return nil, err
@@ -116,7 +133,12 @@ func Open(opts Options) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Service{db: db, opts: opts, registry: registry}, nil
+	svc := &Service{db: db, opts: opts, registry: registry}
+	if err := svc.openResidents(ctx); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return svc, nil
 }
 
 // DB exposes the database for whatever has no method of its own in the service
@@ -130,6 +152,9 @@ func (s *Service) DataDir() string { return s.dataDir() }
 func (s *Service) Close() error {
 	if s.gate != nil {
 		s.gate.Close()
+	}
+	if s.ops != nil {
+		s.ops.Close()
 	}
 	return s.db.Close()
 }

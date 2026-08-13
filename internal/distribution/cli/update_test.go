@@ -318,3 +318,32 @@ func TestARefreshFailureForceCannotFixIsNotAnsweredWithForce(t *testing.T) {
 		t.Fatalf("the failure does not name the artifact: %q", warnings)
 	}
 }
+
+func TestBundledPluginFailureRestoresThePreviousUpdatedBinary(t *testing.T) {
+	directory := t.TempDir()
+	current := filepath.Join(directory, "roca")
+	previous := []byte("#!/bin/sh\necho 'roca v1.0.0'\n")
+	if err := os.WriteFile(current, previous, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	next := []byte(`#!/bin/sh
+case "$1" in
+  --version) echo 'roca v2.0.0'; exit 0 ;;
+  _install-bundled-plugins) echo 'synthetic plugin placement failure' >&2; exit 1 ;;
+esac
+exit 1
+`)
+
+	err := release.Swap(current, next,
+		releaseReadiness(t.Context(), current, "v2.0.0"))
+	if err == nil || !strings.Contains(err.Error(), "bundled plugins") {
+		t.Fatalf("plugin placement failure = %v", err)
+	}
+	got, readErr := os.ReadFile(current)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(got) != string(previous) {
+		t.Fatalf("failed update left the new binary active:\n%s", got)
+	}
+}
