@@ -597,8 +597,8 @@ func modelsCommand(env *cliEnv) *cobra.Command {
 }
 
 // resolveModels builds the cascade from the configuration alone and asks every
-// provider for its catalogue. It mirrors the login overview: a question about
-// providers, not memory, so it never opens the database and runs before init.
+// provider for its catalogue. It is a question about providers, not memory, so
+// it never opens the database and runs before init.
 func (env *cliEnv) resolveModels(cmd *cobra.Command) ([]provider.ModelsListing, []string, error) {
 	paths, err := env.resolvePaths()
 	if err != nil {
@@ -674,7 +674,8 @@ func renderModelDetection(env *cliEnv, detected, missing []string, factory bool,
 	case selected == "":
 		env.print("factory default selected: none (no model provider is ready)")
 	case slices.Contains(detected, selected):
-		env.print("factory default selected: %s (existing local CLI session; no roca login required)", selected)
+		env.print("factory default selected: %s (existing local CLI session; confirm it with roca model check %s)",
+			selected, selected)
 	default:
 		env.print("factory default selected: %s (local runtime)", selected)
 	}

@@ -349,8 +349,8 @@ independent of command arguments, so a CLI may accept JSON input while returning
 text. Non-zero exits, malformed JSON, missing binaries, and timeouts are ordinary
 provider failures: they produce the same honest degraded query path as any
 unavailable model. `roca doctor` lists every detected shipped binary, identifies
-the provider the factory order selected, says that no La Roca login is required,
-and reports a binary-specific remedy for anything missing or unusable.
+the provider the factory order selected and the `roca model check` that confirms
+it, and reports a binary-specific remedy for anything missing or unusable.
 
 ## Authentication and model selection
 
