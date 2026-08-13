@@ -60,6 +60,12 @@ accept-index: ## List and verify the per-domain acceptance scenarios
 .PHONY: check
 check: build fmt vet test accept slop ## What CI requires before merging
 
+# UPGRADE_HOME selects a single frozen version; empty runs every one of them,
+# which is what a contributor wants locally and what CI splits across runners.
+.PHONY: upgrade-gauntlet
+upgrade-gauntlet: build ## Upgrade frozen old-version homes through the current binary
+	./scripts/upgrade-gauntlet.sh $(BIN) $(UPGRADE_HOME)
+
 # The slop gate blocks duplication and orphan regressions, and verifies every
 # catalogued public surface still has a live acceptance claim. `--enforce` fails
 # both ways on a ceiling: over is a regression, under is an uncommitted

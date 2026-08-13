@@ -33,3 +33,26 @@ After `1.0.0`, normal Conventional Commits choose the next version:
 - `feat:` produces a minor release.
 - A commit with `!` after its type, such as `feat!:`, or a
   `BREAKING CHANGE:` footer produces a major release.
+
+## Schema migration definition of done
+
+A release that changes `data/schema.sql` in a way an existing database must
+adopt also adds one new frozen upgrade home:
+
+1. Add the newest published pre-migration version to
+   `internal/distribution/release/testdata/upgrade/versions.txt`. That file is
+   the only list of frozen homes, and the helper refuses a version it does not
+   already name.
+2. Run `scripts/freeze-upgrade-home.sh vX.Y.Z` and commit its single `tar.gz`
+   fixture, which holds the byte-exact synthetic database, config, prompt, and
+   `origin.json`.
+3. Run `make upgrade-gauntlet` for every committed home, or
+   `make upgrade-gauntlet UPGRADE_HOME=vX.Y.Z` for the new one alone.
+
+The helper downloads and verifies the real release binary, runs `init` plus a
+small synthetic ingest in an isolated HOME, and records no operator data. Both
+workflows read `versions.txt` and give every committed home a job of its own,
+which upgrades it with the current binary, performs another synthetic ingest,
+executes deterministic SQL reads, and runs doctor and data health checks. The
+release workflow publishes only once all of those jobs are green, so a failed
+compound migration blocks the release.
