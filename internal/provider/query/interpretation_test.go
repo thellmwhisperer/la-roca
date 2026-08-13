@@ -45,7 +45,19 @@ func TestInterpretationGuardianKeepsOnlyProvenComparisons(t *testing.T) {
 			name: "a false claim about a named subject is not saved by the leader",
 			columns: []string{"project", "sessions"}, rows: counted(100, 20, 15, 10),
 			text: "Alpha leads. Beta is more than the next two combined.",
-			want: "Alpha leads. Beta is.",
+			want: "Alpha leads.",
+		},
+		{
+			name: "a deletion mid-sentence takes the clause that leaned on it",
+			columns: []string{"project", "sessions"}, rows: counted(100, 20, 15, 10),
+			text: "Alpha leads, Beta is more than the next two combined, and Gamma trails.",
+			want: "Alpha leads, and Gamma trails.",
+		},
+		{
+			name: "the sentences around a deleted one are left as they were",
+			columns: []string{"project", "sessions"}, rows: counted(100, 20, 15, 10),
+			text: "Alpha leads. Beta is more than the next two combined. Gamma trails.",
+			want: "Alpha leads. Gamma trails.",
 		},
 		{
 			name: "an unrelated numeric column proves nothing",
@@ -62,7 +74,7 @@ func TestInterpretationGuardianKeepsOnlyProvenComparisons(t *testing.T) {
 			name: "a coincidental maximum with no subject named proves nothing",
 			columns: []string{"project", "sessions"}, rows: counted(100, 20, 15),
 			text: "The leader is more than the next two combined.",
-			want: "The leader is.",
+			want: "",
 		},
 		{
 			name: "no measured quantity at all",
