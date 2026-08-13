@@ -1,0 +1,13 @@
+version: 1
+attachment: resident
+description: Agent-written operational and proposed knowledge memories.
+custody: true
+questions:
+  - What did agents write or hand off?
+  - Which operational decisions, questions, reviews, or issues exist?
+tables:
+  - name: memories
+    description: Agent-written handoffs, coordination, and proposed knowledge with system-stamped authorship and explicit expiry.
+    questions:
+      - What did agents write or hand off?
+    columns: [id, layer, content, metadata, origin, source_agent, source_model, source_surface, source_session, source_sequence, project, status, supersedes, created_at, expires_at]

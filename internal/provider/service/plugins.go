@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"regexp"
 	"slices"
@@ -10,7 +11,10 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 	"github.com/thellmwhisperer/la-roca/internal/provider/query/sqlgate"
+	"github.com/thellmwhisperer/la-roca/internal/store"
 )
+
+const rocaOpsPluginName = "roca-ops"
 
 type pluginRoute struct {
 	databases []plugin.Database
@@ -19,26 +23,34 @@ type pluginRoute struct {
 }
 
 func (s *Service) pluginsForQuestion(ctx context.Context, question string) pluginRoute {
-	if !s.opts.PluginsEnabled {
-		return pluginRoute{}
-	}
-	candidates, warnings := plugin.Discover(s.opts.PluginDir)
-	return validatePluginRoute(ctx, plugin.Relevant(question, candidates), warnings)
+	return s.pluginsFor(ctx, question, plugin.Relevant)
 }
 
 func (s *Service) pluginsForSQL(ctx context.Context, statement string) pluginRoute {
-	if !s.opts.PluginsEnabled {
+	return s.pluginsFor(ctx, statement, plugin.Referenced)
+}
+
+func (s *Service) pluginsFor(ctx context.Context, input string,
+	selectPlugins func(string, []plugin.Descriptor) []plugin.Descriptor) pluginRoute {
+	if !s.pluginsActive() {
 		return pluginRoute{}
 	}
 	candidates, warnings := plugin.Discover(s.opts.PluginDir)
-	return validatePluginRoute(ctx, plugin.Referenced(statement, candidates), warnings)
+	candidates = s.onDemand(candidates)
+	return s.withResidents(validatePluginRouteLimit(ctx,
+		selectPlugins(input, candidates), warnings, plugin.MaxAttached-len(s.resident)))
 }
 
 func validatePluginRoute(ctx context.Context, candidates []plugin.Descriptor,
 	warnings []string) pluginRoute {
+	return validatePluginRouteLimit(ctx, candidates, warnings, plugin.MaxAttached)
+}
+
+func validatePluginRouteLimit(ctx context.Context, candidates []plugin.Descriptor,
+	warnings []string, limit int) pluginRoute {
 	route := pluginRoute{warnings: slices.Clone(warnings)}
 	for _, candidate := range candidates {
-		if len(route.databases) == plugin.MaxAttached {
+		if len(route.databases) == limit {
 			route.omitted = append(route.omitted, candidate)
 			continue
 		}
@@ -57,6 +69,119 @@ func validatePluginRoute(ctx context.Context, candidates []plugin.Descriptor,
 			plugin.MaxAttached, strings.Join(route.omittedSources(), ", ")))
 	}
 	return route
+}
+
+func (s *Service) pluginsActive() bool {
+	return s.opts.PluginsEnabled || s.opts.RocaOpsEnabled
+}
+
+func (s *Service) onDemand(candidates []plugin.Descriptor) []plugin.Descriptor {
+	selected := make([]plugin.Descriptor, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.Semantic.Attachment != plugin.AttachmentOnDemand {
+			continue
+		}
+		if candidate.Name == rocaOpsPluginName || !s.opts.PluginsEnabled {
+			continue
+		}
+		selected = append(selected, candidate)
+	}
+	return selected
+}
+
+func (s *Service) withResidents(route pluginRoute) pluginRoute {
+	if len(s.resident) == 0 {
+		return route
+	}
+	route.databases = append(slices.Clone(s.resident), route.databases...)
+	route.omitted = append(slices.Clone(s.residentOmitted), route.omitted...)
+	route.warnings = append(slices.Clone(s.residentWarnings), route.warnings...)
+	return route
+}
+
+func (s *Service) openResidents(ctx context.Context) error {
+	if !s.pluginsActive() {
+		return nil
+	}
+	descriptors, warnings := plugin.Discover(s.opts.PluginDir)
+	var candidates []plugin.Descriptor
+	if s.opts.RocaOpsEnabled {
+		for _, descriptor := range descriptors {
+			if descriptor.Name == rocaOpsPluginName && descriptor.Semantic.Attachment == plugin.AttachmentResident {
+				candidates = append(candidates, descriptor)
+			}
+		}
+	}
+	if s.opts.PluginsEnabled {
+		for _, descriptor := range descriptors {
+			if descriptor.Name != rocaOpsPluginName && descriptor.Semantic.Attachment == plugin.AttachmentResident {
+				candidates = append(candidates, descriptor)
+			}
+		}
+	}
+	// Discovery runs again for every answer and its warnings travel with that
+	// per-query route. Keeping a copy here would report each of them twice.
+	route := validatePluginRoute(ctx, candidates, nil)
+	s.resident, s.residentOmitted, s.residentWarnings = route.databases, route.omitted, route.warnings
+
+	var opsDatabase *plugin.Database
+	if s.opts.RocaOpsEnabled {
+		for index := range s.resident {
+			if s.resident[index].Name == rocaOpsPluginName {
+				opsDatabase = &s.resident[index]
+				break
+			}
+		}
+		if opsDatabase == nil {
+			reason := strings.Join(append(slices.Clone(warnings), route.warnings...), "; ")
+			if reason == "" {
+				reason = "the bundled plugin is not installed or is not declared resident"
+			}
+			return fmt.Errorf("features.roca_ops is enabled but %s is unavailable: %s",
+				rocaOpsPluginName, reason)
+		}
+		// Read-only refuses every write before database I/O, and opening the
+		// operational store is itself one: it sets the journal mode and restricts
+		// the artefacts. Reads still reach it through the resident attachment.
+		if s.opts.ReadOnly {
+			return nil
+		}
+		var err error
+		s.ops, err = store.Open(opsDatabase.Database)
+		if err != nil {
+			return fmt.Errorf("open %s for operational writes: %w", rocaOpsPluginName, err)
+		}
+	}
+	return nil
+}
+
+func (s *Service) openQueryConnection(ctx context.Context) (*sql.Conn, []string, error) {
+	reader, err := s.db.ReadOnly()
+	if err != nil {
+		return nil, nil, err
+	}
+	connection, err := reader.Conn(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	attached := make([]string, 0, len(s.resident))
+	for _, database := range s.resident {
+		if _, err := connection.ExecContext(ctx,
+			"ATTACH DATABASE ? AS "+quoteSchema(database.Schema), database.ReadOnlyURI()); err != nil {
+			closeQueryConnection(connection, attached)
+			return nil, nil, fmt.Errorf("attach resident plugin %s read-only: %w", database.Name, err)
+		}
+		attached = append(attached, database.Schema)
+	}
+	return connection, attached, nil
+}
+
+func closeQueryConnection(connection *sql.Conn, attached []string) {
+	for index := len(attached) - 1; index >= 0; index-- {
+		_, _ = connection.ExecContext(context.Background(),
+			"DETACH DATABASE "+quoteSchema(attached[index]))
+	}
+	_ = connection.Close()
 }
 
 func (r pluginRoute) consulted() []string {
@@ -134,23 +259,15 @@ func (s *Service) executeWithPlugins(ctx context.Context, statement, term string
 		queryCtx, cancel = context.WithTimeout(ctx, timeout)
 	}
 	defer cancel()
-	reader, err := s.db.ReadOnly()
+	connection, attached, err := s.openQueryConnection(queryCtx)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, executionError(ctx, queryCtx, timeout, err)
 	}
-	connection, err := reader.Conn(queryCtx)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer connection.Close()
-	attached := make([]string, 0, len(databases))
-	defer func() {
-		for index := len(attached) - 1; index >= 0; index-- {
-			_, _ = connection.ExecContext(context.Background(),
-				"DETACH DATABASE "+quoteSchema(attached[index]))
-		}
-	}()
+	defer func() { closeQueryConnection(connection, attached) }()
 	for _, database := range databases {
+		if database.Semantic.Attachment == plugin.AttachmentResident {
+			continue
+		}
 		if _, err := connection.ExecContext(queryCtx,
 			"ATTACH DATABASE ? AS "+quoteSchema(database.Schema), database.ReadOnlyURI()); err != nil {
 			return nil, nil, fmt.Errorf("attach plugin %s read-only: %w", database.Name, err)

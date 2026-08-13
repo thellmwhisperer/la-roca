@@ -1,6 +1,10 @@
 package service
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
+)
 
 func TestSearchRowsPreferAnswersOverEchoesAndThinking(t *testing.T) {
 	res := QueryResult{Question: "who is Ana"}
@@ -39,6 +43,36 @@ func TestSearchRowsWithIdenticalSourceAndTextAreDeduplicated(t *testing.T) {
 	})
 	if res.RowCount != 1 || res.Rows[0]["id"] != int64(1) {
 		t.Fatalf("duplicate rows survived: count=%d rows=%v", res.RowCount, res.Rows)
+	}
+}
+
+func TestMergedSearchLimitOrdersCoreAndAttachedRowsTogetherBeforeTruncating(t *testing.T) {
+	const label = "plugin:roca-ops"
+	merged := []map[string]any{
+		{"id": int64(1), "created_at": "2026-08-10T12:00:00Z", plugin.ProvenanceColumn: "core"},
+		{"id": int64(2), "created_at": "2026-08-12T12:00:00Z", plugin.ProvenanceColumn: "core"},
+		{"id": int64(3), "created_at": "2026-08-11T12:00:00Z", plugin.ProvenanceColumn: label},
+		{"id": int64(4), "created_at": "2026-08-13T12:00:00Z", plugin.ProvenanceColumn: label},
+	}
+	for _, one := range []struct {
+		name    string
+		limit   int
+		wantIDs []int64
+	}{
+		{"a global limit keeps the newest rows from both databases", 3, []int64{4, 2, 3}},
+		{"an ample limit still returns every row in recency order", 10, []int64{4, 2, 3, 1}},
+	} {
+		t.Run(one.name, func(t *testing.T) {
+			got := limitMergedSearchRows(merged, one.limit)
+			if len(got) != len(one.wantIDs) {
+				t.Fatalf("rows = %v, want ids %v", got, one.wantIDs)
+			}
+			for index, want := range one.wantIDs {
+				if got[index]["id"] != want {
+					t.Fatalf("row %d id = %v, want %d; rows = %v", index, got[index]["id"], want, got)
+				}
+			}
+		})
 	}
 }
 

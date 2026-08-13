@@ -61,6 +61,62 @@ func TestCommonQuestionFramingDoesNotRouteAnUnrelatedPlugin(t *testing.T) {
 	}
 }
 
+func TestSemanticLayerDeclaresResidentOrOnDemandAttachment(t *testing.T) {
+	for _, testCase := range []struct {
+		name        string
+		declaration string
+		want        plugin.Attachment
+		wantError   bool
+	}{
+		{name: "default remains on demand", want: plugin.AttachmentOnDemand},
+		{name: "explicit on demand", declaration: "attachment: on-demand\n", want: plugin.AttachmentOnDemand},
+		{name: "resident", declaration: "attachment: resident\n", want: plugin.AttachmentResident},
+		{name: "unknown mode", declaration: "attachment: sometimes\n", wantError: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			directory := filepath.Join(t.TempDir(), "synthetic")
+			if err := os.MkdirAll(directory, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			semantic := "version: 1\n" + testCase.declaration + `description: Synthetic records.
+questions: ["Which synthetic records exist?"]
+tables:
+  - name: records
+    description: Synthetic records.
+    columns: [id, value]
+`
+			if err := os.WriteFile(filepath.Join(directory, plugin.SemanticFilename), []byte(semantic), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			db, err := sql.Open("sqlite", filepath.Join(directory, "plugin.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec("CREATE TABLE records (id INTEGER PRIMARY KEY, value TEXT)"); err != nil {
+				db.Close()
+				t.Fatal(err)
+			}
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			descriptor, err := plugin.Inspect("synthetic", directory)
+			if testCase.wantError {
+				if err == nil {
+					t.Fatalf("attachment %q was accepted", testCase.declaration)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if descriptor.Semantic.Attachment != testCase.want {
+				t.Fatalf("attachment = %q, want %q", descriptor.Semantic.Attachment, testCase.want)
+			}
+		})
+	}
+}
+
 func TestSchemaNamesThatNormalizeTheSameRemainUnambiguous(t *testing.T) {
 	root := installedFixtures(t, "well-formed")
 	for _, name := range []string{"a-b", "a_b"} {

@@ -20,7 +20,8 @@ and continues to behave as before.
 A data plugin is one directory under `~/.roca/plugins/<name>/`. It contains
 exactly one plain SQLite database (`.db`, `.sqlite`, or `.sqlite3`) and a
 `semantic.yaml` file. The database is the plugin's only writable store; La
-Roca opens it read-only only when its semantic layer is relevant to a question.
+Roca opens it read-only, either when its semantic layer is relevant to a
+question or, for a resident plugin, for every query.
 SQLite extensions, including `sqlite-vec`, are not part of this contract.
 
 ## Semantic layer
@@ -30,6 +31,7 @@ questions it can answer:
 
 ```yaml
 version: 1
+attachment: on-demand
 description: Purchase receipts and their totals.
 questions:
   - Which receipts were recorded?
@@ -41,6 +43,14 @@ tables:
     columns: [id, title, amount_cents]
 ```
 
+`attachment` is `on-demand` or `resident`; omitting it keeps the version 1
+default, `on-demand`. An on-demand database is attached only when its semantic
+layer matches the question or an explicit SQL statement names it. A resident
+database is attached whenever a read connection is acquired and stays available
+for that connection's query. Resident plugins still pass the same schema
+validation, read-only URI, gate, timeout, provenance, and ten-database attachment
+cap.
+
 `description`, at least one question, and every table's description and ordered
 column list are required. A plugin that holds user data moved out of core also
 declares `custody: true`; lifecycle tooling must treat that data as protected.
@@ -49,17 +59,20 @@ row provenance every answer carries.
 
 At query time La Roca ranks installed semantic layers against the question and
 validates each selected declaration against the database's real tables and
-columns. A mismatch skips that plugin and travels as a warning. Valid tables
+columns. SQLite's own internal tables are outside that comparison, so a
+database that uses `AUTOINCREMENT` does not declare `sqlite_sequence`. A
+mismatch skips that plugin and travels as a warning. Valid tables
 are shown to the SQL model with a qualified schema such as
 `plugin_receipts.receipts`. Punctuation in a plugin name becomes `_`; the rare
 collision receives a deterministic suffix.
 
 The same read-only gate validates core and qualified plugin SQL. Hidden table
 names and forbidden functions stay forbidden in every attached schema. Plugin
-databases are attached with SQLite's read-only URI mode only for the execution,
-then detached. The execution timeout still applies. When more relevant plugins
-exist than SQLite can attach, La Roca uses the ten highest-ranked ones and
-declares the omitted databases in the answer.
+databases are attached with SQLite's read-only URI mode. On-demand and resident
+databases remain attached throughout execution and are detached before the read
+connection is returned. The execution timeout still applies. When more eligible
+plugins exist than SQLite can attach, La Roca uses at most ten and declares the
+omitted databases in the answer.
 
 Every query and explicit `roca exec` answer declares its consulted databases.
 Rows returned while plugins are in scope carry a `database` value such as
@@ -96,9 +109,11 @@ arguments, standard streams, and exit status unchanged. Built-ins win. The
 current directory is never searched. `roca plugins` lists these executables;
 data-plugin discovery does not change dispatch.
 
-A plugin that intentionally writes a core memory uses `roca store` or MCP with
-`--origin plugin:<name>`. Direct writes to `roca.db` are outside the plugin
-contract. Executables run with the user's permissions and are not a sandbox.
+A plugin that intentionally writes a memory uses `roca store` or MCP with
+`--origin plugin:<name>`. That write lands in core, or in the operational store
+when [`features.roca_ops`](#the-bundled-roca-ops-plugin) routes it there. Direct
+writes to `roca.db` are outside the plugin contract. Executables run with the
+user's permissions and are not a sandbox.
 
 ## Verified packages and lifecycle
 
@@ -147,6 +162,13 @@ The plugin folder is installed under `~/.roca/plugins/`. An executable goes to
 `.roca-plugin.json` records source, version, package checksum, payload checksums,
 and installed paths.
 
+A plugin bundled with the binary asks for no consent and resolves no source:
+[installation and update](lifecycle.md#install) place it from the release
+artefact itself, verify the same checksums, and write the same manifest. Because
+nothing but its packaged files changes between versions, it is refreshed inside
+the directory it already occupies, so the database it owns is never unlinked
+from a process that holds it open.
+
 `roca plugin update <name>` re-resolves and verifies that recorded source. It
 refreshes immutable package files but preserves the installed SQLite database,
 because that file is the plugin's writable, user-owned state. A database filename
@@ -161,3 +183,49 @@ executable whose checksum changed outside the installer.
 Removing La Roca itself removes the installed packages and asks separately
 before it touches those archives: see
 [Uninstall](lifecycle.md#uninstall).
+
+## The bundled roca-ops plugin
+
+`roca-ops` is the first plugin La Roca ships with itself: a resident, data-only
+package that declares `custody: true` over what agents write. Every
+[installation and update](lifecycle.md#install) places it under
+`~/.roca/plugins/roca-ops/`, and it stays inert until a second experimental
+switch is set:
+
+```toml
+[features]
+roca_ops = true
+```
+
+With `features.roca_ops` absent or false, `roca store`, `roca query`, `roca
+exec`, and MCP `roca_store` behave exactly as they did before it existed and
+every write lands in core. With it true, La Roca keeps those external contracts,
+answer envelopes included, and routes each new write to the operational database
+instead, carrying the same [authorship
+stamp](operations.md#memory-authorship) core records. Core keeps the history it
+already holds and is read from without being written to.
+
+Reads are the union of the two halves. Resident attachment puts
+`plugin_roca_ops.memories` in front of the SQL model on every query, and the
+deterministic keyword rescue asks both databases, orders the merged rows by
+recency before it applies the shared limit, and declares the statement for both
+halves rather than the core one alone. Each row still names its origin in
+`database`. A half that cannot be read degrades to a warning instead of
+discarding the half that answered.
+
+A memory supersedes only what its own database holds. With the switch on, a
+write that names a core memory in `--supersedes` is refused: the exclusion is
+computed inside the database that stores the replacement, so the retirement
+would be reported without happening.
+
+Nothing expires by itself and there is no default lifetime. A write may declare
+an RFC3339 `expires_at` in its `--metadata`, and only an explicit drain removes
+the rows whose declared expiry is due:
+
+```sh
+roca ops drain                                 # what has already expired
+roca ops drain --before 2026-01-01T00:00:00Z   # what had expired by that instant
+```
+
+A row with no `expires_at` is never drained, and `ROCA_READ_ONLY` refuses the
+drain like any other write.

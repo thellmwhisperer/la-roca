@@ -8,9 +8,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
@@ -65,6 +67,90 @@ func storeCommand(env *cliEnv) *cobra.Command {
 	cmd.MarkFlagRequired("layer")
 	cmd.MarkFlagRequired("content")
 	return cmd
+}
+
+func installBundledPluginsCommand(env *cliEnv) *cobra.Command {
+	return &cobra.Command{
+		Use:    "_install-bundled-plugins",
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			paths, pathErr := env.resolvePaths()
+			root := ""
+			if pathErr == nil {
+				root = pluginRoot(paths)
+			}
+			// A machine with no home has nowhere to keep a bundled plugin, and
+			// the feature that reads it refuses to run there anyway. Saying so is
+			// the answer; failing the installation that just succeeded is not.
+			if root == "" {
+				reason := "no home directory"
+				if pathErr != nil {
+					reason = pathErr.Error()
+				}
+				return env.report(map[string]any{
+					"installed": false, "plugin": rocaops.Name, "reason": reason,
+				}, "%s: the bundled %s plugin was not placed", reason, rocaops.Name)
+			}
+			result, err := rocaops.Ensure(root, pluginExecutableDir(paths), env.build.Version)
+			if err != nil {
+				return err
+			}
+			return env.report(map[string]any{
+				"installed": true, "plugin": result.Name, "version": result.Version,
+				"risk": result.Risk, "resident": true,
+			}, "bundled plugin %s %s at %s", result.Name, result.Version, result.Directory)
+		},
+	}
+}
+
+func opsCommand(env *cliEnv) *cobra.Command {
+	command := &cobra.Command{
+		Use:   "ops",
+		Short: "Operate the experimental resident operational store",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
+		},
+	}
+	command.AddCommand(opsDrainCommand(env))
+	return command
+}
+
+func opsDrainCommand(env *cliEnv) *cobra.Command {
+	var before string
+	command := &cobra.Command{
+		Use:   "drain",
+		Short: "Remove operational rows whose explicit expiry is due",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cutoff := time.Now().UTC()
+			if before != "" {
+				var err error
+				cutoff, err = time.Parse(time.RFC3339, before)
+				if err != nil {
+					return fmt.Errorf("--before must be RFC3339: %w", err)
+				}
+			}
+			svc, _, err := env.openService()
+			if err != nil {
+				return err
+			}
+			defer svc.Close()
+			result, err := svc.DrainRocaOps(cmd.Context(), cutoff)
+			if err != nil {
+				return err
+			}
+			if env.json {
+				return env.printJSON(result)
+			}
+			env.print("roca-ops drain: %d expired memories removed before %s",
+				result.Removed, result.Before)
+			return nil
+		},
+	}
+	command.Flags().StringVar(&before, "before", "", "RFC3339 cutoff (default: now)")
+	return command
 }
 
 type authorshipProcess struct {

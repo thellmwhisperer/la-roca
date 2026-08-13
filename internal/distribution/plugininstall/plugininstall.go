@@ -468,7 +468,13 @@ func (m Manager) stage(candidate Candidate, preservedDatabase string) (string, e
 			return failed(fmt.Errorf("preserve plugin database: %w", err))
 		}
 	}
-	executable := m.executablePath(candidate)
+	if err := writeManifest(staged, candidate, m.executablePath(candidate)); err != nil {
+		return failed(err)
+	}
+	return staged, nil
+}
+
+func writeManifest(directory string, candidate Candidate, executable string) error {
 	manifest := Manifest{
 		Schema: manifestSchema, Name: candidate.Name, Source: candidate.Source,
 		Version: candidate.Version, Checksum: candidate.Checksum, Risk: candidate.Risk,
@@ -477,13 +483,76 @@ func (m Manager) stage(candidate Candidate, preservedDatabase string) (string, e
 	}
 	manifestRaw, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
-		return failed(fmt.Errorf("encode plugin manifest: %w", err))
+		return fmt.Errorf("encode plugin manifest: %w", err)
 	}
 	manifestRaw = append(manifestRaw, '\n')
-	if err := os.WriteFile(filepath.Join(staged, ManifestFilename), manifestRaw, 0o600); err != nil {
-		return failed(fmt.Errorf("write plugin manifest: %w", err))
+	if err := os.WriteFile(filepath.Join(directory, ManifestFilename), manifestRaw, 0o600); err != nil {
+		return fmt.Errorf("write plugin manifest: %w", err)
 	}
-	return staged, nil
+	return nil
+}
+
+// UpdateInPlace refreshes a data-only plugin's payload inside the directory it
+// already occupies. A staged update replaces the directory, which unlinks the
+// custody database out from under any process that already holds it open: its
+// writes land in an inode nobody can reach again. Nothing but the payload
+// changes between versions of such a plugin, so nothing else has to move.
+func (m Manager) UpdateInPlace(candidate Candidate) (Result, error) {
+	if err := m.valid(); err != nil {
+		return Result{}, err
+	}
+	if candidate.Risk != DataOnly || candidate.Executable != "" {
+		return Result{}, fmt.Errorf(
+			"plugin %s carries an executable; an in-place update is refused", candidate.Name)
+	}
+	target := filepath.Join(m.PluginRoot, candidate.Name)
+	previous, err := ReadManifest(target)
+	if err != nil {
+		return Result{}, fmt.Errorf("update plugin %s: %w", candidate.Name, err)
+	}
+	if previous.Executable != "" {
+		return Result{}, fmt.Errorf(
+			"plugin %s was installed with an executable; an in-place update is refused", candidate.Name)
+	}
+	if previous.Database != candidate.Database {
+		return Result{}, fmt.Errorf(
+			"plugin %s changed its database filename from %s to %s; update refused to protect data",
+			candidate.Name, previous.Database, candidate.Database)
+	}
+	payload := make([]string, 0, len(candidate.Files))
+	for name := range candidate.Files {
+		if name == candidate.Database {
+			continue
+		}
+		payload = append(payload, name)
+		if err := installFile(filepath.Join(candidate.Directory, name),
+			filepath.Join(target, name), 0o600); err != nil {
+			return Result{}, err
+		}
+	}
+	if err := installFile(filepath.Join(candidate.Directory, ChecksumsFilename),
+		filepath.Join(target, ChecksumsFilename), 0o600); err != nil {
+		return Result{}, err
+	}
+	replaced := make(map[string]string, len(payload))
+	for _, name := range payload {
+		replaced[name] = candidate.Files[name]
+	}
+	if err := verifyChecksummedFiles(target, replaced); err != nil {
+		return Result{}, fmt.Errorf("verify updated plugin: %w", err)
+	}
+	for name := range previous.Files {
+		if _, kept := candidate.Files[name]; kept || name == previous.Database {
+			continue
+		}
+		if err := os.Remove(filepath.Join(target, name)); err != nil && !os.IsNotExist(err) {
+			return Result{}, fmt.Errorf("remove retired plugin file %s: %w", name, err)
+		}
+	}
+	if err := writeManifest(target, candidate, ""); err != nil {
+		return Result{}, err
+	}
+	return resultFor(candidate, target, ""), nil
 }
 
 func ReadManifest(directory string) (Manifest, error) {
