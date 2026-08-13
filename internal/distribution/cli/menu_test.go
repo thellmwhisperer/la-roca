@@ -10,7 +10,7 @@ import (
 
 func TestRootMenuShowsExactlyThePublicCommands(t *testing.T) {
 	want := []string{
-		"doctor", "explore", "hooks", "ingest", "init", "login", "plugin", "plugins", "query", "store", "uninstall", "update",
+		"doctor", "explore", "hooks", "ingest", "init", "model", "plugin", "plugins", "query", "store", "uninstall", "update",
 	}
 	root := rootCommand(&cliEnv{})
 	root.InitDefaultHelpCmd()
@@ -53,7 +53,7 @@ func TestRootMenuShowsExactlyThePublicCommands(t *testing.T) {
 
 func TestHiddenCommandsStillHaveHelp(t *testing.T) {
 	for _, name := range []string{
-		"exec", "health", "index", "mcp", "models", "schema", "skill", "version",
+		"exec", "health", "index", "login", "mcp", "models", "schema", "skill", "version",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := rootCommand(&cliEnv{})

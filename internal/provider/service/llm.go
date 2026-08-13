@@ -156,7 +156,7 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 			res.Providers[len(res.Providers)-1].Ready = false
 			res.Providers[len(res.Providers)-1].Reason = err.Error()
 			res.Providers[len(res.Providers)-1].Action =
-				"verify the existing local CLI session with `roca login " + chosen.Name() + "`"
+				"verify the existing local CLI session with `roca model check " + chosen.Name() + "`"
 			next, further := cascade.PickAfter(ctx, chosen.Name())
 			res.Providers = append(res.Providers, further...)
 			if next == nil {
