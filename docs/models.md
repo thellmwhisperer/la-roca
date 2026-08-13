@@ -202,9 +202,12 @@ provider: the ten-row cap and the 240-character field budget still govern the
 raw rows in the prompt, so an interpreter sees the capped row sample plus those
 aggregates and never the full result set as text. Terrain terms come only from
 cells a source stored as text, so a SQL NULL and a computed number contribute
-nothing. Both CLI modes
-print the generated SQL as well as the prose so the investigator learns the
-schema and can graduate to `query --sql-only` plus `exec`.
+nothing, and the provenance labels a query surface synthesizes about who wrote a
+row (`author`, `agent`, `model`, `surface`, `provider`, `provenance`, and the
+`source_` columns) are left out too, so the fleet's own naming never outranks the
+corpus in a probe. Both CLI modes print the generated SQL as well as the prose
+so the investigator learns the schema and can graduate to `query --sql-only`
+plus `exec`.
 
 Deep mode may use a stronger row-reading model without moving ordinary prose:
 

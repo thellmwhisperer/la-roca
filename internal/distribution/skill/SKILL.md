@@ -32,8 +32,8 @@ Data = `roca query`; human reading = `roca query --full`; investigation =
 ```bash
 roca query "who is Ana"                        # natural-language search
 roca query --full "what happened with Y"       # add prose for human reading
-roca explore --deep "format"                    # launch a one-word investigation probe
-roca explore "rows"                             # follow one radius concept
+roca explore --deep "format"                   # launch a one-word investigation probe
+roca explore "rows"                            # follow one radius concept
 roca query "what happened with Y" --json
 roca query "ffmpeg patterns" --sql-only        # the SQL the model would run, without running it
 roca exec "SELECT COUNT(*) AS memories FROM memories"  # run a gate-approved SELECT

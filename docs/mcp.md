@@ -38,17 +38,18 @@ session, which is why every diagnostic in this path writes to standard error.
 | `roca_health` | The non-destructive checks over live data | An agent that cannot run `roca doctor` |
 | `roca_sql` | Compiles a question into SQL without running it | Agents that need to inspect the SQL before `roca_exec` runs it |
 
-`roca_query`, `roca_explore`, and `roca_sql` reject empty questions and share the CLI's generous
-1000-character cap before any model is called, and the rest of that same input
-gate with it: [what happens on a query](models.md#what-happens-on-a-query).
+`roca_query`, `roca_explore`, and `roca_sql` reject empty questions and share
+the CLI's generous 1000-character cap before any model is called, and the rest
+of that same input gate with it:
+[what happens on a query](models.md#what-happens-on-a-query).
 
 `roca_explore` is a separate tool rather than a mode on `roca_query`. That keeps
 the established query schema and rows-first answer untouched while making the
 investigation mode explicit at dispatch. Omitted or false `deep` is the plain
 radius mission; `deep: true` is the full terrain mission. Both call the same
 `Service.Explore` and `axi.Explore` as the CLI, so the MCP result has full output
-parity—prose and generated SQL, with terrain and next probes required by the
-selected mission—rather than returning rows for the agent to reinterpret.
+parity: prose and generated SQL, with terrain and next probes required by the
+selected mission, rather than returning rows for the agent to reinterpret.
 
 `roca_list_runs` is **not** in v1: `runs` is v2 scope and this binary creates no
 such table. A tool with nothing behind it is a tool that lies.
@@ -135,7 +136,7 @@ An agent learns La Roca three different ways. They stack; none replaces another.
 | Layer | What it is | How the operator turns it on |
 |---|---|---|
 | **Prompt** | A one-line aviso from `roca init` that a skill exists | Automatic on every init; install is never implied |
-| **Skill** | Canonical `SKILL.md` that teaches query/store/exec and the MCP tools | `roca skill install <runtime>` or `--all` — copies one file into each selected runtime's personal skills directory |
+| **Skill** | Canonical `SKILL.md` that teaches query/explore/store/exec, the investigation method, and the MCP tools | `roca skill install <runtime>` or `--all` — copies one file into each selected runtime's personal skills directory |
 | **MCP** | Six passthrough tools for agents with no shell | `roca mcp install <runtime>` |
 
 ```
@@ -165,5 +166,5 @@ already match the embedded canonical text. The skill body lives in
 `ROCA_READ_ONLY=1` refuses every write **in the service, before any database
 I/O**, so both surfaces refuse with the same words and only render them
 differently. Measured in scenario F08-08. Anything that does not write —
-`query`, `health` — still answers, which is exactly when an operator who
-suspects something reaches for it.
+`query`, `explore`, `health` — still answers, which is exactly when an operator
+who suspects something reaches for it.

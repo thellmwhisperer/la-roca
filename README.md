@@ -86,9 +86,9 @@ practically the same, sometimes better.
 
 One binary, one SQLite file in `~/.roca`, zero network in the ingest path.
 Providers are called only to answer the questions you ask, and the SQL phase
-never sees your rows. With `--full` or `explore`, the prose phase receives at most ten
-result rows with each field truncated to 240 characters; the database, the
-full result set, and the search index never leave the machine. Explore reads
+never sees your rows. With `--full` or `explore`, the prose phase receives at
+most ten result rows with each field truncated to 240 characters; the database,
+the full result set, and the search index never leave the machine. Explore reads
 the whole result set locally to compute its terrain, and only the aggregates
 travel: row counts per source, month clusters, co-occurring terms, and negative
 space. The ten-row cap governs raw row content in every model prompt, so an
@@ -214,8 +214,8 @@ For investigations, `roca explore "<term>"` uses the same checked query and
 second-inference seat but gives the interpreter an investigation mission. Every
 explore prints grounded prose and the generated SQL. Plain mode adds short trail
 hints; `roca explore --deep "<one bare word>"` also maps deterministic terrain
-from that run's rows—source counts, month clusters, co-occurring terms, and
-negative space—and proposes two or three single-concept probes. The mode is
+from that run's rows (source counts, month clusters, co-occurring terms, and
+negative space) and proposes two or three single-concept probes. The mode is
 always explicit. `models.explore_order` can route deep interpretation to a
 stronger model, falling back to `models.interpret_order` and then the main
 order.
