@@ -292,10 +292,8 @@ func (m Manager) Install(candidate Candidate) (Result, error) {
 			candidate.Name, candidate.Name)
 	}
 	executable := m.executablePath(candidate)
-	if executable != "" {
-		if _, err := os.Lstat(executable); err == nil || !os.IsNotExist(err) {
-			return Result{}, fmt.Errorf("refusing to overwrite existing executable %s", executable)
-		}
+	if err := refuseExecutableCollision(executable); err != nil {
+		return Result{}, err
 	}
 	staged, err := m.stage(candidate, "")
 	if err != nil {
@@ -332,8 +330,8 @@ func (m Manager) Update(candidate Candidate) (Result, error) {
 	}
 	executable := m.executablePath(candidate)
 	if previousManifest.Executable == "" && executable != "" {
-		if _, err := os.Lstat(executable); err == nil || !os.IsNotExist(err) {
-			return Result{}, fmt.Errorf("refusing to overwrite existing executable %s", executable)
+		if err := refuseExecutableCollision(executable); err != nil {
+			return Result{}, err
 		}
 	}
 	staged, err := m.stage(candidate, filepath.Join(target, previousManifest.Database))
@@ -530,6 +528,16 @@ func (m Manager) verifyOwnedExecutable(manifest Manifest) error {
 func resultFor(candidate Candidate, directory, executable string) Result {
 	return Result{Name: candidate.Name, Version: candidate.Version, Checksum: candidate.Checksum,
 		Risk: candidate.Risk, Directory: directory, Executable: executable}
+}
+
+func refuseExecutableCollision(path string) error {
+	if path == "" {
+		return nil
+	}
+	if _, err := os.Lstat(path); err == nil || !os.IsNotExist(err) {
+		return fmt.Errorf("refusing to overwrite existing executable %s", path)
+	}
+	return nil
 }
 
 func installFile(source, destination string, mode os.FileMode) error {

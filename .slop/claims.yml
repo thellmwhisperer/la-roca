@@ -20,10 +20,6 @@ claims:
     contract:
       file: features/store/write.feature
       item: "Store writes one memory with layer, origin and project"
-  internal/distribution/cli/plugin_lifecycle.go:
-    contract:
-      file: features/distribution/cli.feature
-      item: "Plugin lifecycle is inert until the experimental feature is enabled"
   internal/distribution/cli/models.go:
     contract:
       file: features/provider/selection.feature
