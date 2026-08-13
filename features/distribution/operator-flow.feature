@@ -44,6 +44,7 @@ Feature: The operator's real flow
   @fast
   Scenario: Update announces pending capabilities and doctor keeps listing them
     Given La Roca is installed at an earlier release version
+    And its configuration still asks for a retired model provider
     When I run "roca update"
     Then the update names how many capability proposals await
     When I run "roca doctor"
