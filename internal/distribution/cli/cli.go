@@ -187,7 +187,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 		mcpCommand(env), skillCommand(env), hooksCommand(env),
 		loginCommand(env), modelCommand(env),
 		updateCommand(env), uninstallCommand(env),
-		modelsCommand(env), pluginsCommand(env),
+		modelsCommand(env), pluginCommand(env), pluginsCommand(env),
 		capabilitiesCommand(env),
 	)
 	root.InitDefaultHelpCmd()
@@ -204,7 +204,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 
 func publicCommand(name string) bool {
 	switch name {
-	case "init", "query", "store", "ingest", "login", "doctor", "update", "uninstall", "plugins", "hooks":
+	case "init", "query", "store", "ingest", "login", "doctor", "update", "uninstall", "plugin", "plugins", "hooks":
 		return true
 	default:
 		return false
