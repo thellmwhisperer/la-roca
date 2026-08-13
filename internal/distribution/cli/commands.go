@@ -547,21 +547,13 @@ func queryCommand(env *cliEnv) *cobra.Command {
 				return err
 			}
 			result := answer.result
-			env.auditQuery = &result
-			env.capture(result)
 			// A question that needed a model on a machine with no model
 			// available is not an answer, even when the keyword rescue found
 			// rows. The rows are a courtesy; the exit code tells the truth, so
 			// a script does not read "it worked" from a machine that has
 			// nothing to answer with.
-			if service.IsDegradedFailure(result.Degraded) {
-				env.code = ExitError
-			}
-			if env.json {
-				return env.printJSON(struct {
-					service.QueryResult
-					DatabasePath string `json:"database_path"`
-				}{result, svc.DB().Path()})
+			if printed, err := env.recordQueryResult(&result, svc); printed || err != nil {
+				return err
 			}
 			if live.finish(answer) {
 				return nil
@@ -581,6 +573,66 @@ func queryCommand(env *cliEnv) *cobra.Command {
 	cmd.Flags().BoolVar(&req.SQLOnly, "sql-only", false, "return the SQL without running it")
 	cmd.Flags().BoolVar(&full, "full", false, "add a prose interpretation for human reading")
 	return cmd
+}
+
+func exploreCommand(env *cliEnv) *cobra.Command {
+	var req service.QueryRequest
+	var deep bool
+	cmd := &cobra.Command{
+		Use:   "explore <term>",
+		Short: "Investigate one concept through grounded memory",
+		Long: "Investigate one concept with prose, deterministic terrain facts, and the generated SQL. " +
+			"Use --deep for the full terrain map and 2-3 next probes.",
+		Args: cobra.MinimumNArgs(1),
+		RunE: env.serviceRunE(func(cmd *cobra.Command, args []string, svc *service.Service) error {
+			req.Question = strings.Join(args, " ")
+			spin := startSpinner(env, spinnerShaping)
+			req.Progress = func(phase service.QueryPhase) {
+				switch phase {
+				case service.QueryPhaseExecution:
+					spin.phase(spinnerSearching)
+				case service.QueryPhaseInterpretation:
+					spin.phase(spinnerComposing)
+				default:
+					spin.phase(spinnerShaping)
+				}
+			}
+			result, err := svc.Explore(cmd.Context(), service.ExploreRequest{
+				QueryRequest: req, Deep: deep,
+			})
+			spin.finish()
+			if err != nil {
+				return err
+			}
+			if printed, err := env.recordQueryResult(&result, svc); printed || err != nil {
+				return err
+			}
+			result.Interpretation = formatInterpretation(result.Interpretation, termAware(env.out),
+				terminalWidth(env.out), colorOn(env.out))
+			env.print("%s", axi.Explore(result))
+			return nil
+		}),
+	}
+	cmd.Flags().StringVar(&req.Layer, "layer", "", "restrict the investigation to one layer")
+	cmd.Flags().IntVar(&req.MaxChars, "max-chars", service.DefaultMaxChars, "character budget per text field")
+	cmd.Flags().BoolVar(&deep, "deep", false, "use the full terrain map and propose 2-3 next probes")
+	return cmd
+}
+
+func (env *cliEnv) recordQueryResult(result *service.QueryResult,
+	svc *service.Service) (bool, error) {
+	env.auditQuery = result
+	env.capture(*result)
+	if service.IsDegradedFailure(result.Degraded) {
+		env.code = ExitError
+	}
+	if !env.json {
+		return false, nil
+	}
+	return true, env.printJSON(struct {
+		service.QueryResult
+		DatabasePath string `json:"database_path"`
+	}{*result, svc.DB().Path()})
 }
 
 // queryAnswer keeps the rows and the optional second inference together. The
@@ -613,7 +665,8 @@ func answerQuery(ctx context.Context, svc *service.Service, req service.QueryReq
 	interpretation, err := svc.InterpretStream(
 		ctx, result.Question, result.Columns, result.Rows,
 		time.Duration(result.SQLInferenceMS)*time.Millisecond,
-		result.Engine, onStart, req.InterpretationDelta)
+		result.Engine, service.InterpretationContext{Mission: service.InterpretationAnswer},
+		onStart, req.InterpretationDelta)
 	answer.prose, answer.interpretErr = interpretation.Text, err
 	answer.result.InterpretationMS = time.Since(started).Milliseconds()
 	answer.result.LatencyMS += answer.result.InterpretationMS

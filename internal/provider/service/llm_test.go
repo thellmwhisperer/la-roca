@@ -1054,7 +1054,8 @@ func TestInterpretationGuardianHoldsLiveProseBackWhateverTheColumnsAreCalled(t *
 					{"name": "Alpha", testCase.measure: 30},
 					{"name": "Beta", testCase.measure: 20},
 					{"name": "Gamma", testCase.measure: 15},
-				}, 0, "codex", nil, func(delta string) { deltas = append(deltas, delta) })
+				}, 0, "codex", service.InterpretationContext{Mission: service.InterpretationAnswer}, nil,
+				func(delta string) { deltas = append(deltas, delta) })
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1141,7 +1142,7 @@ func TestInterpretReusesTheSQLProviderUnlessAnExplicitOrderExists(t *testing.T) 
 			}
 			svc := seededServiceWith(t, main, tc.interpreters...)
 			got, err := svc.InterpretStream(t.Context(), "what was decided", []string{"text"}, rows,
-				0, "ollama", nil, nil)
+				0, "ollama", service.InterpretationContext{Mission: service.InterpretationAnswer}, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
