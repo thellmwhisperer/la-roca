@@ -211,11 +211,7 @@ func seedSkill(t *testing.T, content string) string {
 
 func zonesOf(t *testing.T, path string) artifact.Zones {
 	t.Helper()
-	body, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	zones, err := artifact.Parse(string(body))
+	zones, err := artifact.ParseFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}

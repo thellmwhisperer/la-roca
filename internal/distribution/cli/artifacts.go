@@ -60,11 +60,7 @@ func (env *cliEnv) registerZonedArtifact(kind, runtime, path, desiredSystem stri
 	if err != nil {
 		return err
 	}
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("register managed artifact %s: %w", path, err)
-	}
-	zones, err := artifact.Parse(string(body))
+	zones, err := artifact.ParseFile(path)
 	if err != nil {
 		return fmt.Errorf("register managed artifact %s: %w", path, err)
 	}
@@ -301,12 +297,7 @@ func (env *cliEnv) finishFileRefresh(entry *artifact.Entry, out artifact.FileOut
 		out.Changed, out.Backup) {
 		return
 	}
-	body, err := os.ReadFile(entry.Path)
-	if err != nil {
-		report.Outdated++
-		return
-	}
-	zones, err := artifact.Parse(string(body))
+	zones, err := artifact.ParseFile(entry.Path)
 	if err != nil || artifact.Checksum(zones.System) != artifact.Checksum(desired) {
 		report.Outdated++
 		return

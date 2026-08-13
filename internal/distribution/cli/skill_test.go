@@ -38,11 +38,7 @@ func TestSkillInstallWritesUnderTempHome(t *testing.T) {
 	if !strings.Contains(output.String(), "wrote "+want) {
 		t.Fatalf("install did not narrate the write:\n%s", output.String())
 	}
-	body, err := os.ReadFile(want)
-	if err != nil {
-		t.Fatal(err)
-	}
-	zones, err := artifact.Parse(string(body))
+	zones, err := artifact.ParseFile(want)
 	if err != nil || zones.System != skill.Content() || zones.User != "" {
 		t.Fatalf("installed zones = %+v, err %v", zones, err)
 	}
@@ -119,11 +115,7 @@ func TestSkillInstallRestoresARemovedFileAndRefusesAnUnregisteredOne(t *testing.
 
 func installedZones(t *testing.T, path string) artifact.Zones {
 	t.Helper()
-	body, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	zones, err := artifact.Parse(string(body))
+	zones, err := artifact.ParseFile(path)
 	if err != nil {
 		t.Fatalf("installed skill has no zones: %v", err)
 	}

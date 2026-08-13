@@ -79,6 +79,17 @@ func Parse(content string) (Zones, error) {
 	return Zones{System: prefix + content[systemStart:systemEnd], User: content[userStart:userEnd]}, nil
 }
 
+// ParseFile reads one artifact from disk and returns its zones. Every caller
+// that holds a path rather than bytes reads and parses in the same breath, so
+// the pair has one owner here instead of a copy on each side.
+func ParseFile(path string) (Zones, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return Zones{}, err
+	}
+	return Parse(string(body))
+}
+
 func Checksum(content string) string {
 	sum := sha256.Sum256([]byte(content))
 	return hex.EncodeToString(sum[:])
@@ -311,11 +322,7 @@ func OwnedPaths(registryPath string) ([]string, error) {
 		if entry.Kind == "hook" {
 			continue
 		}
-		body, err := os.ReadFile(entry.Path)
-		if err != nil {
-			continue
-		}
-		zones, err := Parse(string(body))
+		zones, err := ParseFile(entry.Path)
 		if err == nil && zones.User == "" && Checksum(zones.System) == entry.SystemSHA256 {
 			owned = append(owned, entry.Path)
 		}
