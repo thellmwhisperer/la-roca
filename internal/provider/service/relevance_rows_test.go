@@ -1,6 +1,10 @@
 package service
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
+)
 
 func TestSearchRowsPreferAnswersOverEchoesAndThinking(t *testing.T) {
 	res := QueryResult{Question: "who is Ana"}
@@ -39,6 +43,48 @@ func TestSearchRowsWithIdenticalSourceAndTextAreDeduplicated(t *testing.T) {
 	})
 	if res.RowCount != 1 || res.Rows[0]["id"] != int64(1) {
 		t.Fatalf("duplicate rows survived: count=%d rows=%v", res.RowCount, res.Rows)
+	}
+}
+
+func TestSharedSearchLimitReservesForTheAttachedHalfAndStillFillsTheLimit(t *testing.T) {
+	const label = "plugin:roca-ops"
+	merged := func(core, attached int) []map[string]any {
+		rows := make([]map[string]any, 0, core+attached)
+		for index := range core {
+			rows = append(rows, map[string]any{"id": int64(index), plugin.ProvenanceColumn: "core"})
+		}
+		for index := range attached {
+			rows = append(rows, map[string]any{
+				"id": int64(100 + index), plugin.ProvenanceColumn: label,
+			})
+		}
+		return rows
+	}
+	for _, one := range []struct {
+		name                   string
+		core, attached, limit  int
+		wantCore, wantAttached int
+	}{
+		{"an attached row survives a core half that fills the limit", 20, 1, 10, 9, 1},
+		{"core spends what the attached half does not have", 20, 3, 10, 7, 3},
+		{"the attached half spends what core does not have", 2, 10, 10, 2, 8},
+		{"the attached half alone still answers", 0, 5, 3, 0, 3},
+		{"both halves split an even budget", 20, 6, 10, 5, 5},
+	} {
+		t.Run(one.name, func(t *testing.T) {
+			core, attached := 0, 0
+			for _, row := range shareSearchLimit(merged(one.core, one.attached), one.limit, label) {
+				if row[plugin.ProvenanceColumn] == label {
+					attached++
+					continue
+				}
+				core++
+			}
+			if core != one.wantCore || attached != one.wantAttached {
+				t.Fatalf("kept %d core and %d attached rows, want %d and %d",
+					core, attached, one.wantCore, one.wantAttached)
+			}
+		})
 	}
 }
 

@@ -84,8 +84,13 @@ func installBundledPluginsCommand(env *cliEnv) *cobra.Command {
 			// the feature that reads it refuses to run there anyway. Saying so is
 			// the answer; failing the installation that just succeeded is not.
 			if root == "" {
-				return env.report(map[string]any{"installed": false, "plugin": rocaops.Name},
-					"no home directory: the bundled %s plugin was not placed", rocaops.Name)
+				reason := "no home directory"
+				if pathErr != nil {
+					reason = pathErr.Error()
+				}
+				return env.report(map[string]any{
+					"installed": false, "plugin": rocaops.Name, "reason": reason,
+				}, "%s: the bundled %s plugin was not placed", reason, rocaops.Name)
 			}
 			result, err := rocaops.Ensure(root, pluginExecutableDir(paths), env.build.Version)
 			if err != nil {

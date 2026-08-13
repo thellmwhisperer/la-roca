@@ -54,10 +54,7 @@ func Ensure(root, binDir, version string) (plugininstall.Result, error) {
 	if _, statErr := os.Lstat(target); os.IsNotExist(statErr) {
 		result, err = manager.Install(candidate)
 	} else {
-		if foldErr := checkpoint(filepath.Join(target, DatabaseFilename)); foldErr != nil {
-			return plugininstall.Result{}, foldErr
-		}
-		result, err = manager.Update(candidate)
+		result, err = manager.UpdateInPlace(candidate)
 	}
 	if err != nil {
 		return plugininstall.Result{}, err
@@ -134,37 +131,6 @@ func applySchema(path string) error {
 		return fmt.Errorf("close bundled %s database: %w", Name, err)
 	}
 	return os.Chmod(path, 0o600)
-}
-
-// checkpoint folds the write-ahead log back into the database file. An update
-// preserves that one file, so frames still living in the sidecar are rows the
-// next version would never see again.
-func checkpoint(path string) error {
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		return fmt.Errorf("open bundled %s database: %w", Name, err)
-	}
-	var blocked, logged, folded int
-	if err := db.QueryRow("PRAGMA wal_checkpoint(TRUNCATE)").
-		Scan(&blocked, &logged, &folded); err != nil {
-		db.Close()
-		return fmt.Errorf("checkpoint bundled %s database: %w", Name, err)
-	}
-	if err := db.Close(); err != nil {
-		return fmt.Errorf("close bundled %s database: %w", Name, err)
-	}
-	if blocked != 0 {
-		return fmt.Errorf("the bundled %s database is in use and its write-ahead log cannot be "+
-			"folded in; updating now would discard operational rows. Stop what is reading it "+
-			"and run the update again", Name)
-	}
-	return nil
 }
 
 func resultFromManifest(directory string, manifest plugininstall.Manifest) plugininstall.Result {

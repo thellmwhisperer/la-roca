@@ -49,8 +49,26 @@ func TestEnsureInstallsTheBundledResidentDataOnlyPluginAndPreservesItsDatabase(t
 		t.Fatal(err)
 	}
 
+	before, err := os.Stat(descriptor.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := rocaops.Ensure(root, bin, "v-next"); err != nil {
 		t.Fatal(err)
+	}
+	after, err := os.Stat(descriptor.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Fatal("the bundled update replaced the custody database whoever holds it open is writing to")
+	}
+	updated, err := plugininstall.ReadManifest(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Version != "v-next" {
+		t.Fatalf("in-place update left the manifest at %q", updated.Version)
 	}
 	db, err = sql.Open("sqlite", descriptor.Database)
 	if err != nil {
@@ -69,10 +87,7 @@ func TestEnsureInstallsTheBundledResidentDataOnlyPluginAndPreservesItsDatabase(t
 		t.Fatal("the expiry mechanism is absent from the bundled schema")
 	}
 
-	if err := os.MkdirAll(filepath.Join(root, "."+rocaops.Name+".previous"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := rocaops.Ensure(root, bin, "v-later"); err == nil {
+	if _, err := rocaops.Ensure(root, "", "v-later"); err == nil {
 		t.Fatal("a refused bundled update was reported as a successful one")
 	}
 }

@@ -604,7 +604,7 @@ func (s *Service) rescue(ctx context.Context, req QueryRequest, res QueryResult,
 
 	progress(req, QueryPhaseExecution)
 	executionStart := time.Now()
-	columns, rows, stmt, provenance, err := s.searchByTerm(ctx, plan, "", req.MaxChars, true)
+	columns, rows, stmt, provenance, warnings, err := s.searchByTerm(ctx, plan, "", req.MaxChars, true)
 	res.ExecutionMS += time.Since(executionStart).Milliseconds()
 	if err != nil {
 		// A rescue that fails is not a second failure to report: the query
@@ -612,6 +612,7 @@ func (s *Service) rescue(ctx context.Context, req QueryRequest, res QueryResult,
 		res.Match = MatchEmpty
 		return res
 	}
+	res.Warnings = append(res.Warnings, warnings...)
 	if len(rows) == 0 {
 		res.found(nil, nil)
 		return res
@@ -630,11 +631,11 @@ func (s *Service) rescue(ctx context.Context, req QueryRequest, res QueryResult,
 // and also returns the provenance of that decision.
 func (s *Service) searchByTerm(ctx context.Context, plan query.Plan, method string,
 	maxChars int, matchAny bool) (columns []string, rows []map[string]any, stmt string,
-	provenance *search.Provenance, err error) {
+	provenance *search.Provenance, warnings []string, err error) {
 
 	gate, err := s.theGate()
 	if err != nil {
-		return nil, nil, "", nil, err
+		return nil, nil, "", nil, nil, err
 	}
 	engine := &search.Engine{DB: s.db, Validate: gate.Validate}
 
@@ -651,7 +652,7 @@ func (s *Service) searchByTerm(ctx context.Context, plan query.Plan, method stri
 			sqlLexical, err = query.RenderSQLFTS(plan, s.registry.SearchExcluded(), limit)
 		}
 		if err != nil {
-			return nil, nil, "", nil, err
+			return nil, nil, "", nil, nil, err
 		}
 	}
 
@@ -662,21 +663,21 @@ func (s *Service) searchByTerm(ctx context.Context, plan query.Plan, method stri
 		Limit:      limit,
 	})
 	if err != nil {
-		return nil, nil, "", nil, err
+		return nil, nil, "", nil, nil, err
 	}
 
 	if result.Provenance.Method == search.MethodLike {
 		like, err := query.RenderSQLLike(plan, s.registry.SearchExcluded())
 		if err != nil {
-			return nil, nil, "", nil, err
+			return nil, nil, "", nil, nil, err
 		}
 		validated, err := gate.Validate(like)
 		if err != nil {
-			return nil, nil, "", nil, err
+			return nil, nil, "", nil, nil, err
 		}
 		columns, rows, err := s.execute(ctx, validated, plan.Term, maxChars)
 		if err != nil {
-			return nil, nil, "", nil, err
+			return nil, nil, "", nil, nil, err
 		}
 		// The LIKE floor requires every word, so the attached half requires every
 		// word too: merging a looser search with a stricter one is not one search.
@@ -707,9 +708,14 @@ func (s *Service) searchByTerm(ctx context.Context, plan query.Plan, method stri
 		columns, rows, result.SQL, &result.Provenance)
 }
 
+// withResidentMemorySearch merges the operational half into a core answer that
+// already succeeded. A half that cannot be read is a warning and not a failure:
+// the rest of the plugin path skips what it cannot use, and a merged search that
+// answers nothing where the unmerged one answered is the worse of the two.
 func (s *Service) withResidentMemorySearch(ctx context.Context, plan query.Plan, maxChars int,
 	matchAny bool, limit int, columns []string, rows []map[string]any, stmt string,
-	provenance *search.Provenance) ([]string, []map[string]any, string, *search.Provenance, error) {
+	provenance *search.Provenance) ([]string, []map[string]any, string, *search.Provenance,
+	[]string, error) {
 	var ops *plugin.Database
 	for index := range s.resident {
 		if s.resident[index].Name == rocaOpsPluginName {
@@ -718,38 +724,54 @@ func (s *Service) withResidentMemorySearch(ctx context.Context, plan query.Plan,
 		}
 	}
 	if ops == nil {
-		return columns, rows, stmt, provenance, nil
+		return columns, rows, stmt, provenance, nil, nil
 	}
-	opsStatement, err := query.RenderSQLAttachedMemoryLike(plan,
-		s.registry.SearchExcluded(), ops.Schema, limit, matchAny)
+	opsRows, declared, err := s.residentMemoryRows(ctx, plan, maxChars, matchAny, limit, *ops, stmt)
 	if err != nil {
-		return nil, nil, "", nil, err
-	}
-	gate, closeGate, err := s.gateFor([]plugin.Database{*ops})
-	if err != nil {
-		return nil, nil, "", nil, err
-	}
-	defer closeGate()
-	validated, err := gate.Validate(opsStatement)
-	if err != nil {
-		return nil, nil, "", nil, err
-	}
-	_, opsRows, err := s.executeWithPlugins(ctx, validated, plan.Term, maxChars,
-		[]plugin.Database{*ops})
-	if err != nil {
-		return nil, nil, "", nil, err
+		return columns, rows, stmt, provenance, []string{fmt.Sprintf(
+			"%s could not be searched: %v; the answer carries core memories only",
+			ops.Source(), err)}, nil
 	}
 	columns, rows = ensureDatabaseColumn(columns, rows, "core")
 	rows = append(rows, opsRows...)
 	rows = dedupRows(strings.ReplaceAll(plan.Term, "+", " "), columns, rows)
 	rows = shareSearchLimit(rows, limit, ops.Source())
-	return columns, rows, declaredSearchSQL(gate, stmt, validated, limit), provenance, nil
+	return columns, rows, declared, provenance, nil, nil
+}
+
+func (s *Service) residentMemoryRows(ctx context.Context, plan query.Plan, maxChars int,
+	matchAny bool, limit int, ops plugin.Database,
+	core string) ([]map[string]any, string, error) {
+	opsStatement, err := query.RenderSQLAttachedMemoryLike(plan,
+		s.registry.SearchExcluded(), ops.Schema, limit, matchAny)
+	if err != nil {
+		return nil, "", err
+	}
+	gate, closeGate, err := s.gateFor([]plugin.Database{ops})
+	if err != nil {
+		return nil, "", err
+	}
+	defer closeGate()
+	validated, err := gate.Validate(opsStatement)
+	if err != nil {
+		return nil, "", err
+	}
+	_, opsRows, err := s.executeWithPlugins(ctx, validated, plan.Term, maxChars,
+		[]plugin.Database{ops})
+	if err != nil {
+		return nil, "", err
+	}
+	return opsRows, declaredSearchSQL(gate, core, validated, limit), nil
 }
 
 // shareSearchLimit cuts the merged answer to the limit while reserving part of
 // it for the attached half. The attached rows are appended behind the core ones
 // and rank beside them, so a plain truncation drops the newer operational
 // history whenever core alone fills the budget.
+//
+// The reserve is a floor and never a ceiling: what one half does not have to
+// offer, the other one spends, so a shared limit still answers with as many
+// rows as an unshared one.
 func shareSearchLimit(rows []map[string]any, limit int, label string) []map[string]any {
 	if limit <= 0 || len(rows) <= limit {
 		return rows
@@ -760,8 +782,8 @@ func shareSearchLimit(rows []map[string]any, limit int, label string) []map[stri
 			attached++
 		}
 	}
-	reserved := min(attached, limit/2)
-	core := limit - reserved
+	core := min(len(rows)-attached, limit-min(attached, limit/2))
+	reserved := min(attached, limit-core)
 	kept := make([]map[string]any, 0, limit)
 	for _, row := range rows {
 		budget := &core
