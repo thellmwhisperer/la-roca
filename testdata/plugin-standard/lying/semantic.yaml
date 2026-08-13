@@ -1,0 +1,8 @@
+version: 1
+description: Synthetic invoices described with a column the database does not have.
+questions:
+  - Which synthetic invoices are outstanding?
+tables:
+  - name: invoices
+    description: One row per synthetic invoice.
+    columns: [id, label, outstanding_cents]

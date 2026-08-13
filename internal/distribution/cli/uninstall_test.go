@@ -493,7 +493,7 @@ func TestAFailedWithdrawalIsNotReportedAsAPurge(t *testing.T) {
 
 	var out strings.Builder
 	env := &cliEnv{out: &out, errOut: &out, started: time.Now()}
-	if err := env.uninstall(uninstallCommand(env), true); err != nil {
+	if err := env.uninstall(uninstallCommand(env), strings.NewReader(""), true); err != nil {
 		t.Fatalf("uninstall returned an error instead of a report: %v", err)
 	}
 

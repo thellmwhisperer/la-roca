@@ -33,6 +33,12 @@ func QueryPreamble(res service.QueryResult) string {
 		appendLine(&b, "warning: "+warning)
 	}
 	appendLine(&b, res.ProviderNote)
+	if len(res.Databases) > 0 {
+		appendLine(&b, "databases: "+strings.Join(res.Databases, ", "))
+	}
+	if len(res.OmittedDatabases) > 0 {
+		appendLine(&b, "databases omitted: "+strings.Join(res.OmittedDatabases, ", "))
+	}
 	appendLine(&b, "route "+res.Path)
 	if res.Engine != "" {
 		appendLine(&b, fmt.Sprintf("SQL · provider %s · model %s · %s",
@@ -135,6 +141,9 @@ func MCPExec(res service.ExecResult) string {
 func exec(res service.ExecResult, shell bool) string {
 	var b strings.Builder
 	appendLine(&b, res.SQL)
+	if len(res.Databases) > 0 {
+		appendLine(&b, "databases: "+strings.Join(res.Databases, ", "))
+	}
 	appendLine(&b, RowOutput(res.Columns, res.Rows))
 	appendLine(&b, fmt.Sprintf("%s · %s",
 		Quantity(int64(res.RowCount), "row"), Duration(res.LatencyMS)))

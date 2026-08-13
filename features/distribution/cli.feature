@@ -30,6 +30,10 @@ Feature: Distribution command line
     Then arguments, standard input, output, and exit status cross the plugin seam untouched
     And built-ins win, missing plugins explain the convention, and plugins lists the fixtures
 
+  Scenario: Plugin lifecycle is inert until the experimental feature is enabled
+    When the operator tries to install a plugin without enabling experimental plugins
+    Then the installer is inert and names the feature flag
+
   Scenario: Init closes with one ordered, fully timed summary
     When the operator exercises the "init" command in human and JSON form
     Then init reports setup, ingest, index, model, and its total once in that order

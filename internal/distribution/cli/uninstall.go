@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/lifecycle"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
@@ -51,15 +53,19 @@ func uninstallCommand(env *cliEnv) *cobra.Command {
 			if keepData && purge {
 				return fmt.Errorf("--keep-data and --purge ask for opposite things")
 			}
+			// One reader for both questions. A second buffered reader over the
+			// same standard input finds the answer to the second question
+			// already swallowed by the first, and reads a `y` as silence.
+			input := bufio.NewReader(cmd.InOrStdin())
 			wipe := purge
 			if !keepData && !purge {
-				answer, err := env.askAboutTheData(cmd.InOrStdin())
+				answer, err := env.askAboutTheData(input)
 				if err != nil {
 					return err
 				}
 				wipe = answer
 			}
-			return env.uninstall(cmd, wipe)
+			return env.uninstall(cmd, input, wipe)
 		},
 	}
 	cmd.Flags().BoolVar(&keepData, "keep-data", false, "remove the binary and keep the database")
@@ -93,7 +99,7 @@ func (env *cliEnv) askAboutTheData(in io.Reader) (bool, error) {
 // The integrations go first, and on purpose: they name the binary, so an agent
 // left pointing at a file that is gone is the one residue an operator does not
 // find until their next session fails to start.
-func (env *cliEnv) uninstall(cmd *cobra.Command, purge bool) error {
+func (env *cliEnv) uninstall(cmd *cobra.Command, in io.Reader, purge bool) error {
 	paths, err := env.resolvePaths()
 	if err != nil {
 		return err
@@ -123,9 +129,17 @@ func (env *cliEnv) uninstall(cmd *cobra.Command, purge bool) error {
 			env.prelogged = true
 		}
 		dataDir := dirOf(paths.DB)
+		// The archived plugin data is decided before the sweep and stays outside
+		// the inventory unless the operator just said so with their own answer.
+		archives, keptArchives := env.consentToCustody(in, paths)
+		report.Kept = append(report.Kept, keptArchives...)
 		applied = applyPurge(dataDir, func() lifecycle.Plan {
-			return lifecycle.Plan{Binary: running, Owned: ownedPaths(paths), DataDir: dataDir}
+			return lifecycle.Plan{Binary: running,
+				Owned: append(ownedPaths(paths), archives...), DataDir: dataDir}
 		})
+		if len(keptArchives) > 0 {
+			applied.Kept = exceptCustodyTree(applied.Kept, custodyRoot(paths))
+		}
 	} else {
 		applied = plan.Apply()
 	}
@@ -410,7 +424,180 @@ func ownedPaths(paths config.Paths) []string {
 	if logsExist {
 		owned = append(owned, logfile.New(dataDir).LockPath(), logDir)
 	}
-	return owned
+	return append(owned, installedPluginPaths(paths)...)
+}
+
+// The three trees the plugin system writes. They hang off ~/.roca and not off
+// the resolved data directory: a plugin is installed for the operator, not for
+// one database, and an operator who moved their database with `--db-path` still
+// finds their plugins here.
+const (
+	pluginDirName        = "plugins"
+	pluginCustodyDirName = "plugin-custody"
+	pluginDownloadsDir   = ".plugin-downloads"
+)
+
+func pluginRoot(paths config.Paths) string { return ownedTree(paths, pluginDirName) }
+
+func custodyRoot(paths config.Paths) string { return ownedTree(paths, pluginCustodyDirName) }
+
+func pluginDownloads(paths config.Paths) string { return ownedTree(paths, pluginDownloadsDir) }
+
+func ownedTree(paths config.Paths, name string) string {
+	if paths.Home == "" {
+		return ""
+	}
+	return filepath.Join(paths.Home, config.DirOwn, name)
+}
+
+// pluginExecutableDir is where the installer put `roca-<name>`, resolved the way
+// `roca plugin install` resolved it. The purge deletes an executable only from
+// here, which is the containment an update already refuses to cross.
+func pluginExecutableDir(paths config.Paths) string {
+	if bin := os.Getenv(envRocaPrefix); bin != "" {
+		return bin
+	}
+	if paths.Home == "" {
+		return ""
+	}
+	return filepath.Join(paths.Home, ".local", "bin")
+}
+
+// installedPluginPaths declares the plugin packages a purge removes, so that no
+// plugin code is quietly kept on a machine La Roca was removed from.
+//
+// A directory is claimed only through the manifest the installer generated in
+// it: the payload files that manifest records, its database journals, and the
+// `roca-<name>` executable while that file is still the verified one. A
+// directory with no manifest was not installed by this product and is left
+// alone with everything in it, like any other path the operator put there.
+func installedPluginPaths(paths config.Paths) []string {
+	root := pluginRoot(paths)
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	bin := pluginExecutableDir(paths)
+	var owned []string
+	for _, entry := range entries {
+		directory := filepath.Join(root, entry.Name())
+		manifest, err := plugininstall.ReadManifest(directory)
+		if err != nil {
+			continue
+		}
+		for name := range manifest.Files {
+			owned = append(owned, filepath.Join(directory, name))
+		}
+		database := filepath.Join(directory, manifest.Database)
+		owned = append(owned, database+"-wal", database+"-shm", database+"-journal",
+			filepath.Join(directory, plugininstall.ManifestFilename),
+			filepath.Join(directory, plugininstall.ChecksumsFilename), directory)
+		executable := plugininstall.InstalledExecutable(manifest)
+		if executable != "" && filepath.Dir(executable) == filepath.Clean(bin) {
+			owned = append(owned, executable)
+		}
+	}
+	return append(owned, pluginDownloads(paths), root)
+}
+
+// custodyArchive is one protected removal: the complete plugin directory a
+// `roca plugin uninstall` moved aside instead of deleting, with the weight of
+// the operator's data inside it.
+type custodyArchive struct {
+	path    string
+	bytes   int64
+	entries []string
+}
+
+func custodyArchives(paths config.Paths) []custodyArchive {
+	root := custodyRoot(paths)
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	archives := make([]custodyArchive, 0, len(entries))
+	for _, entry := range entries {
+		archive := custodyArchive{path: filepath.Join(root, entry.Name())}
+		_ = filepath.WalkDir(archive.path, func(path string, item fs.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			archive.entries = append(archive.entries, path)
+			if info, err := item.Info(); err == nil && info.Mode().IsRegular() {
+				archive.bytes += info.Size()
+			}
+			return nil
+		})
+		archives = append(archives, archive)
+	}
+	return archives
+}
+
+// consentToCustody splits the archived plugin data in two: what the operator
+// just authorized this purge to own, and what stays with its location named.
+//
+// The split exists because the archives are the product of a refusal. A
+// custodial plugin was archived instead of deleted precisely so its data would
+// outlive the uninstall of the plugin, and a flag the operator passed for La
+// Roca's own artefacts is not the answer to that question.
+func (env *cliEnv) consentToCustody(in io.Reader, paths config.Paths) ([]string, []lifecycle.Kept) {
+	archives := custodyArchives(paths)
+	if len(archives) == 0 {
+		return nil, nil
+	}
+	if env.askAboutTheCustodyArchives(in, archives) {
+		owned := []string{custodyRoot(paths)}
+		for _, archive := range archives {
+			owned = append(owned, archive.entries...)
+		}
+		return owned, nil
+	}
+	kept := make([]lifecycle.Kept, 0, len(archives))
+	for _, archive := range archives {
+		kept = append(kept, lifecycle.Kept{Path: archive.path, Reason: fmt.Sprintf(
+			"archived plugin data (%d bytes) you did not consent to delete: it stays here",
+			archive.bytes)})
+	}
+	return nil, kept
+}
+
+// askAboutTheCustodyArchives names every archive with its size and waits. `y`
+// deletes; Enter keeps, and so does a run with nobody at the terminal, because
+// this data may never leave without somebody saying it in this run.
+func (env *cliEnv) askAboutTheCustodyArchives(in io.Reader, archives []custodyArchive) bool {
+	if env.json {
+		return false
+	}
+	fmt.Fprintln(env.errOut, "Archived plugin data a protected removal kept for you:")
+	for _, archive := range archives {
+		fmt.Fprintf(env.errOut, "  %s (%d bytes)\n", archive.path, archive.bytes)
+	}
+	fmt.Fprint(env.errOut, "Delete this archived plugin data too? [y/N]: ")
+	line, err := bufio.NewReader(in).ReadString('\n')
+	answer := strings.ToLower(strings.TrimSpace(line))
+	if err != nil && answer == "" {
+		fmt.Fprintln(env.errOut, "no answer: your archived plugin data stays where it is")
+		return false
+	}
+	return answer == "y" || answer == "yes"
+}
+
+// exceptCustodyTree drops the data-directory walk's generic line for anything
+// inside an archive this report already named. One accurate sentence about the
+// archive is what the operator needs; one "La Roca did not create it" per file
+// inside it is both noise and false.
+func exceptCustodyTree(kept []lifecycle.Kept, root string) []lifecycle.Kept {
+	if root == "" {
+		return kept
+	}
+	out := make([]lifecycle.Kept, 0, len(kept))
+	for _, survivor := range kept {
+		if survivor.Path != root &&
+			!strings.HasPrefix(survivor.Path, root+string(os.PathSeparator)) {
+			out = append(out, survivor)
+		}
+	}
+	return out
 }
 
 func legacyProviderCredentialPaths(dataDir string) map[string]string {
