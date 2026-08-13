@@ -67,8 +67,8 @@ func TestExecStopsAQueryThatExceedsTheCostBudget(t *testing.T) {
 	if err == nil {
 		t.Fatal("runaway recursive query completed without the cost budget")
 	}
-	if got := logfile.ErrorType(err); got != service.DegradedExecution {
-		t.Fatalf("error_type = %q, want %q", got, service.DegradedExecution)
+	if got := logfile.ErrorType(err); got != service.DegradedTimeout {
+		t.Fatalf("error_type = %q, want %q", got, service.DegradedTimeout)
 	}
 	if time.Since(started) > time.Second {
 		t.Fatalf("query timeout took too long: %v", time.Since(started))

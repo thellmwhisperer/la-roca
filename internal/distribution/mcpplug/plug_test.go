@@ -125,6 +125,18 @@ func TestTheSameQuestionThroughThePlugAndThroughTheServiceIsTheSameAnswer(t *tes
 	}
 }
 
+func TestAClarificationAskTravelsAsSuccessfulMetadata(t *testing.T) {
+	result := callTool(t, connect(t, seededService(t)), "roca_query", map[string]any{
+		"query": "what happened in a specific project?",
+	})
+	if result.IsError || renderedText(result) != "Which project should I use? Please name it in the question." {
+		t.Fatalf("clarification result = error %v, text %q", result.IsError, renderedText(result))
+	}
+	if result.Meta["clarification_required"] != true || result.Meta["missing_slot"] != "project" {
+		t.Fatalf("clarification metadata = %#v", result.Meta)
+	}
+}
+
 // The compile-without-running tool is the same cascade with the SQL kept back,
 // which is what makes it a probe for the compiler and not a second compiler.
 func TestTheSQLToolCompilesWithoutRunning(t *testing.T) {
