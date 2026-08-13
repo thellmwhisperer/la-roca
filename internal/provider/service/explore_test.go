@@ -179,60 +179,66 @@ func TestExploreNeverBecomesRowsOnlyWhenNoModelProseArrives(t *testing.T) {
 	}
 }
 
-// The keyword rescue projects a NULL author and a bm25 float, and neither is
-// content a row ever carried.
-func TestExploreTerrainReadsOnlyStoredTextCells(t *testing.T) {
-	fake := newTwoInferenceFake([]string{"SELECT 'exchange' AS source, NULL AS author, " +
-		"'2026-08-09' AS created_at, 'cedar trail orbit' AS text, 3.1416 AS rango LIMIT 10"},
-		"A grounded investigation answer.")
-	svc := serviceWithModel(t, fake)
-
-	result, err := svc.Explore(t.Context(), service.ExploreRequest{
-		QueryRequest: service.QueryRequest{Question: "orbit"}, Deep: true,
-	})
-	if err != nil {
-		t.Fatalf("Explore: %v", err)
-	}
-	for _, unwanted := range []string{"nil", "null", "1416"} {
-		if terrainCount(result.Terrain.Terms, unwanted) != 0 {
-			t.Errorf("terrain terms invented %q: %+v", unwanted, result.Terrain.Terms)
-		}
-	}
-	if terrainCount(result.Terrain.Terms, "cedar") != 1 {
-		t.Fatalf("terrain lost its text terms: %+v", result.Terrain.Terms)
-	}
-}
-
-// Provenance columns are labels the query surface synthesizes about who wrote a
-// row, not text the row carried, so probes made of them would send the
+// The keyword rescue projects a NULL author and a bm25 float, and provenance
+// columns are labels the query surface synthesizes about who wrote a row.
+// None of it is content a row carried, so probes made of it would send the
 // investigation after the fleet's own naming instead of the corpus.
-func TestExploreTerrainExcludesSynthesizedProvenanceColumns(t *testing.T) {
-	fake := newTwoInferenceFake([]string{"SELECT 'memory' AS source, " +
-		"'fixture-agent/fixture-model via cli' AS author, 'cli' AS source_surface, " +
-		"'2026-08-09' AS created_at, 'cedar trail orbit' AS text LIMIT 10"}, "")
-	svc := serviceWithModel(t, fake)
+func TestExploreTerrainReadsOnlyStoredTextCells(t *testing.T) {
+	for _, tc := range []struct {
+		name, sql, prose string
+		unwanted         []string
+		wantTerms        []string
+		wantProbes       bool
+	}{
+		{
+			name: "the keyword rescue projects a NULL author and a bm25 score",
+			sql: "SELECT 'exchange' AS source, NULL AS author, " +
+				"'2026-08-09' AS created_at, 'cedar trail orbit' AS text, 3.1416 AS rango LIMIT 10",
+			prose:     "A grounded investigation answer.",
+			unwanted:  []string{"nil", "null", "1416"},
+			wantTerms: []string{"cedar"},
+		},
+		{
+			name: "the query surface synthesizes provenance labels",
+			sql: "SELECT 'memory' AS source, " +
+				"'fixture-agent/fixture-model via cli' AS author, 'cli' AS source_surface, " +
+				"'2026-08-09' AS created_at, 'cedar trail orbit' AS text LIMIT 10",
+			unwanted:   []string{"agent", "cli", "fixture", "model", "via"},
+			wantTerms:  []string{"cedar", "trail"},
+			wantProbes: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newTwoInferenceFake([]string{tc.sql}, tc.prose)
+			svc := serviceWithModel(t, fake)
 
-	result, err := svc.Explore(t.Context(), service.ExploreRequest{
-		QueryRequest: service.QueryRequest{Question: "orbit"}, Deep: true,
-	})
-	if err != nil {
-		t.Fatalf("Explore: %v", err)
-	}
-	_, probes, ok := strings.Cut(result.Interpretation, "Next probes:")
-	if !ok {
-		t.Fatalf("the deterministic fallback proposed no probes:\n%s", result.Interpretation)
-	}
-	for _, unwanted := range []string{"agent", "cli", "fixture", "model", "via"} {
-		if terrainCount(result.Terrain.Terms, unwanted) != 0 {
-			t.Errorf("terrain counted provenance term %q: %+v", unwanted, result.Terrain.Terms)
-		}
-		if strings.Contains(probes, unwanted) {
-			t.Errorf("next probes proposed provenance term %q: %s", unwanted, probes)
-		}
-	}
-	if terrainCount(result.Terrain.Terms, "cedar") != 1 ||
-		terrainCount(result.Terrain.Terms, "trail") != 1 {
-		t.Fatalf("terrain lost its text terms: %+v", result.Terrain.Terms)
+			result, err := svc.Explore(t.Context(), service.ExploreRequest{
+				QueryRequest: service.QueryRequest{Question: "orbit"}, Deep: true,
+			})
+			if err != nil {
+				t.Fatalf("Explore: %v", err)
+			}
+			var probes string
+			if tc.wantProbes {
+				cut := false
+				if _, probes, cut = strings.Cut(result.Interpretation, "Next probes:"); !cut {
+					t.Fatalf("the deterministic fallback proposed no probes:\n%s", result.Interpretation)
+				}
+			}
+			for _, unwanted := range tc.unwanted {
+				if terrainCount(result.Terrain.Terms, unwanted) != 0 {
+					t.Errorf("terrain counted %q outside stored text: %+v", unwanted, result.Terrain.Terms)
+				}
+				if tc.wantProbes && strings.Contains(probes, unwanted) {
+					t.Errorf("next probes proposed %q: %s", unwanted, probes)
+				}
+			}
+			for _, want := range tc.wantTerms {
+				if terrainCount(result.Terrain.Terms, want) != 1 {
+					t.Fatalf("terrain lost the text term %q: %+v", want, result.Terrain.Terms)
+				}
+			}
+		})
 	}
 }
 
