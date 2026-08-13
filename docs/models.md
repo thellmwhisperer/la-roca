@@ -134,10 +134,11 @@ shipped CLI preset takes no environment override for its model: it reads
 `models.<provider>.model`, then `defaults.<provider>_model` (for example
 `codex_model`), then the shipped default.
 
-Local-binary `command`, `response_format`, `timeout_seconds`, and custom
-substitution values have no environment override. Their provider table wins
-over shipped preset data; an omitted custom-command timeout uses the 120-second
-adapter default. When `[models].timeout_ms` or `probe_ms` is set, that shared
+Local-binary `command`, `models`, `response_format`, `timeout_seconds`, and
+custom substitution values have no environment override. Their provider table
+wins over shipped preset data, except `models`, which is added to the shipped
+catalogue; an omitted custom-command timeout uses the 120-second adapter
+default. When `[models].timeout_ms` or `probe_ms` is set, that shared
 cascade budget takes precedence over the command timeout for the corresponding
 request or probe.
 
@@ -280,6 +281,7 @@ order = ["my-local-cli", "ollama"]
 [models.my-local-cli]
 command = ["my-local-cli", "--model", "{model}", "--effort", "{effort}"]
 model = "local-smart"
+models = ["local-smart", "local-fast"]
 effort = "high"
 timeout_seconds = 120
 ```
@@ -287,8 +289,14 @@ timeout_seconds = 120
 A custom provider declares `command`; built-in providers may omit it and use
 their shipped command preset. `base_url` is supported only for local Ollama.
 The generic command transport works in the SQL and interpretation cascades and
-through `roca doctor` and `roca model set <provider> <model>`. The `roca login`
-verification surface is reserved for the shipped Codex and Claude CLIs.
+through `roca doctor`, `roca model check <provider>`, and
+`roca model set <provider> <model>`.
+
+A local CLI publishes no catalogue, so `models` is what `roca model set` may
+choose from for that provider. Omit it and the only offer is the model already
+configured, which makes the command a no-op for a custom provider. A shipped
+preset is widened, never replaced: its aliases stay on offer beside whatever
+the table declares.
 
 `claude` and `codex` are shipped command-preset entries, not special adapters.
 Their command, model, and timeout are all overridden by the same provider table
@@ -302,7 +310,8 @@ order = ["claude", "ollama"]
 interpret_order = ["ollama"]
 
 [models.claude]
-model = "sonnet" # aliases and full Claude model IDs are both accepted
+model = "sonnet"           # aliases and full Claude model IDs both run
+models = ["claude-opus-5"] # what `roca model set claude` offers beside the aliases
 ```
 
 The built-in command is pinned to Claude Code's non-interactive, single-turn
@@ -340,35 +349,43 @@ independent of command arguments, so a CLI may accept JSON input while returning
 text. Non-zero exits, malformed JSON, missing binaries, and timeouts are ordinary
 provider failures: they produce the same honest degraded query path as any
 unavailable model. `roca doctor` lists every detected shipped binary, identifies
-the provider the factory order selected, says that no La Roca login is required,
-and reports a binary-specific remedy for anything missing or unusable.
+the provider the factory order selected and the `roca model check` that confirms
+it, and reports a binary-specific remedy for anything missing or unusable.
 
 ## Authentication and model selection
 
 Models authenticate through their own CLIs. La Roca stores no secrets and a
-detected CLI needs no La Roca login. The retained `roca login` verb is an
-optional verification and model-selection surface for the two shipped CLIs:
+detected CLI needs no La Roca authentication command. Model checks and model
+selection are separate operations:
 
 ```sh
-roca login              # lists Codex and Claude local CLI verification
-roca login codex        # optionally verifies the existing Codex CLI session
-roca login claude       # optionally verifies the existing Claude Code session
-roca doctor             # diagnoses binaries, models, and remedies
+roca model check          # probes the first configured provider
+roca model check codex    # probes Codex without writing configuration
+roca model check claude   # probes Claude without writing configuration
+roca doctor               # diagnoses binaries, models, and remedies
 ```
 
-During verification, La Roca offers known model IDs and sends one minimal real
-request through the CLI before changing `config.toml`. Only a successful probe
-writes the ID; rejection prints the CLI's own error and leaves configuration
-unchanged. `--model <id>` uses the same path for non-interactive verification.
-The shared catalogue-and-probe gate lives in
+`model check` sends one minimal real request through the configured provider and
+never edits `config.toml` or provider order. When no provider is declared at all,
+or the order is turned off with `ROCA_MODELS_ORDER=none`, it says so and succeeds:
+an empty cascade is a configuration answer, not a failed probe. `model set` reads
+the target provider's catalogue, refuses IDs outside it, and probes the selected
+ID before writing only `models.<provider>.model`. A refused ID names the
+catalogue it missed and how to widen it: declare it in `models.<provider>.models`
+for a command transport, or pull it into Ollama first. The shared
+catalogue-and-probe gate lives in
 `internal/distribution/cli/model_validation.go`.
 
 `roca model set <model-id>` validates and probes the first configured provider.
 The explicit `roca model set <provider> <model-id>` form remains available for
-another configured local command or Ollama.
+another configured local command or Ollama. With no ID, an interactive terminal
+offers the first provider's catalogue; pass only a provider name to choose from
+that provider's catalogue.
 
 ```sh
-roca model set gpt-5.6-sol
+roca model set
+roca model set claude
+roca model set gpt-5.6-luna
 roca model set ollama qwen3.5:4b
 ```
 

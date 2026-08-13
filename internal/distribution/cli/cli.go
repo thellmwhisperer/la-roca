@@ -209,7 +209,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 
 func publicCommand(name string) bool {
 	switch name {
-	case "init", "query", "explore", "store", "ingest", "login", "doctor", "update", "uninstall", "plugin", "plugins", "hooks":
+	case "init", "query", "explore", "store", "ingest", "model", "doctor", "update", "uninstall", "plugin", "plugins", "hooks":
 		return true
 	default:
 		return false
@@ -598,7 +598,7 @@ func (env *cliEnv) reportPlugin(action string, result plugininstall.Result) erro
 }
 
 // resolvePaths decides where everything of this installation lives, without
-// touching the database. Commands that only need a path (such as login) pay
+// touching the database. Commands that only need a path (such as model) pay
 // nothing for it.
 func (env *cliEnv) resolvePaths() (config.Paths, error) {
 	home, _ := os.UserHomeDir()
@@ -717,7 +717,7 @@ func (env *cliEnv) finishIngestProgress() {
 // handle over SQLite in WAL is a failure that shows up somewhere else, in another
 // process, much later.
 //
-// The commands that also need the resolved paths (init, and the login pair that
+// The commands that also need the resolved paths (init and model commands that
 // never opens a database at all) call openService or resolvePaths themselves.
 func (env *cliEnv) serviceRunE(
 	run func(cmd *cobra.Command, args []string, svc *service.Service) error,

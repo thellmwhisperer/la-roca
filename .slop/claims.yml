@@ -31,7 +31,7 @@ claims:
   internal/distribution/cli/model_validation.go:
     contract:
       file: features/provider/model-adapters.feature
-      item: "Login verifies a CLI and persists its answering model without storing authentication"
+      item: "Model set verifies a CLI and persists its answering model without storing authentication"
   internal/distribution/cli/serve.go:
     contract:
       file: features/distribution/mcp-contract.feature

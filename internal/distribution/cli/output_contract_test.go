@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/thellmwhisperer/la-roca/internal/provider"
 )
 
 // A build the whole file shares for its assertions. The version travels into
@@ -34,7 +32,7 @@ func mustJSON(t *testing.T, out string) map[string]any {
 }
 
 // runRootSplit captures stdout and stderr apart. It wires only the env's own
-// writers (not cobra's SetOut/SetErr), which is all the login prompt contract
+// writers (not cobra's SetOut/SetErr), which is all the interactive prompt contract
 // needs: the prompt writes through env.errOut and the JSON through env.out, and
 // a program reads stdout alone.
 func runRootSplit(t *testing.T, build Build, in io.Reader, args ...string) (string, string) {
@@ -76,26 +74,18 @@ func failingRoot(t *testing.T, args ...string) error {
 	return err
 }
 
-// `roca login --json` with no provider used to print the human catalogue
-// regardless of the flag. The flag is a contract: a program asking for JSON may
-// not be handed prose it then has to parse.
+// The hidden compatibility alias has the same machine contract as model check:
+// a probe result with an explicit assurance that configuration did not change.
+// The probe reports whichever provider the cascade puts first, so the home and
+// the PATH are fixed here: a machine with no agent CLI installed answers with
+// its local runtime instead, and the contract would read as broken.
 func TestBareLoginHonoursTheJSONFlag(t *testing.T) {
+	isolatedLoginHome(t)
 	out := runRoot(t, contractBuild(), "login", "--json")
 
-	if strings.Contains(out, "Supported providers:") {
-		t.Fatalf("bare login --json printed the human catalogue:\n%s", out)
-	}
 	doc := mustJSON(t, out)
-	providers, _ := doc["providers"].([]any)
-	if len(providers) == 0 {
-		t.Fatalf("bare login --json lists no providers:\n%s", out)
-	}
-	first, _ := providers[0].(map[string]any)
-	if first["name"] != provider.NameCodex || first["flow"] != "local_cli" {
-		t.Errorf("first provider is not codex/local_cli: %v", first)
-	}
-	if !strings.Contains(first["command"].(string), "roca login codex") {
-		t.Errorf("first command does not name the login verb: %v", first)
+	if doc["provider"] != "codex" || doc["ready"] != true || doc["configuration_changed"] != false {
+		t.Fatalf("login alias JSON = %v", doc)
 	}
 }
 

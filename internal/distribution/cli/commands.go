@@ -357,7 +357,7 @@ func renderInitAnswer(env *cliEnv, result service.InitResult) {
 		model.Provider, model.Model, modelChoiceSource(result.ConfigPath, model.Provider, model.Model),
 		result.ConfigPath)
 	if model.CommandTransport {
-		line += " · uses the existing local CLI session; no roca login required"
+		line += " · uses the existing local CLI session; confirm it with roca model check"
 	}
 	line += " · change with: " + initModelChange(model.Provider, model.Model, result.ConfigPath)
 	env.print("%s", line)

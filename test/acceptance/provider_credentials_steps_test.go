@@ -22,8 +22,8 @@ func registerProviderCredentialSteps(ctx *godog.ScenarioContext, w *providerAcce
 	ctx.Then(`^the retired provider remains usable$`, w.retiredProviderRemainsUsable)
 	ctx.Then(`^its only open proposal offers to remove the retired credential file$`, w.onlyCredentialCleanupIsProposed)
 	ctx.When(`^I (accept|decline) the first-run migration proposal$`, w.answerMigrationProposal)
-	ctx.When(`^I inspect login and Doctor help$`, w.inspectAuthenticationHelp)
-	ctx.When(`^I log in to "([^\"]*)" with model "([^\"]*)"$`, w.verifyLocalCLI)
+	ctx.When(`^I inspect model check and Doctor help$`, w.inspectAuthenticationHelp)
+	ctx.When(`^I check model "([^\"]*)"$`, w.verifyLocalCLI)
 	ctx.Then(`^the legacy query output names the retired provider and why no model answered$`, w.legacyQueryIsHonest)
 	ctx.Then(`^the legacy provider is migrated to "([^\"]*)"$`, w.legacyProviderMigrated)
 	ctx.Then(`^the legacy provider configuration is unchanged$`, w.legacyProviderUnchanged)
@@ -31,6 +31,7 @@ func registerProviderCredentialSteps(ctx *godog.ScenarioContext, w *providerAcce
 	ctx.Then(`^neither help surface advertises a stored model credential$`, w.helpHasNoStoredCredentialFlow)
 	ctx.Then(`^the configuration chooses model "([^\"]*)" for "([^\"]*)"$`, w.configurationChoosesModel)
 	ctx.Then(`^the output says La Roca stores no secrets$`, w.outputSaysNoSecrets)
+	ctx.Then(`^the output says configuration was not changed$`, w.outputSaysConfigurationUnchanged)
 	ctx.Then(`^no model credential directory exists$`, w.noModelCredentialDirectory)
 	ctx.Then(`^the output contains no traceback$`, w.providerOutputHasNoTraceback)
 }
@@ -211,7 +212,7 @@ func (w *providerAcceptanceWorld) legacyProviderUnchanged() error {
 
 func (w *providerAcceptanceWorld) inspectAuthenticationHelp() error {
 	w.statements = nil
-	for _, args := range [][]string{{"login", "--help"}, {"doctor", "--help"}} {
+	for _, args := range [][]string{{"model", "check", "--help"}, {"doctor", "--help"}} {
 		if err := w.run(args...); err != nil {
 			return err
 		}
@@ -256,8 +257,8 @@ func (w *providerAcceptanceWorld) fakeClaudeBinary() error {
 	return nil
 }
 
-func (w *providerAcceptanceWorld) verifyLocalCLI(name, model string) error {
-	return w.run("login", name, "--model", model)
+func (w *providerAcceptanceWorld) verifyLocalCLI(name string) error {
+	return w.run("model", "check", name)
 }
 
 func (w *providerAcceptanceWorld) configurationChoosesModel(model, name string) error {
@@ -285,6 +286,13 @@ func (w *providerAcceptanceWorld) configurationChoosesModel(model, name string) 
 func (w *providerAcceptanceWorld) outputSaysNoSecrets() error {
 	if !strings.Contains(strings.ToLower(w.last.stdout+w.last.stderr), "stores no secrets") {
 		return fmt.Errorf("output omitted zero-secret boundary: %s%s", w.last.stdout, w.last.stderr)
+	}
+	return nil
+}
+
+func (w *providerAcceptanceWorld) outputSaysConfigurationUnchanged() error {
+	if !strings.Contains(strings.ToLower(w.last.stdout+w.last.stderr), "configuration was not changed") {
+		return fmt.Errorf("output omitted the no-write result: %s%s", w.last.stdout, w.last.stderr)
 	}
 	return nil
 }

@@ -87,26 +87,28 @@ func TestModelSetAnswersAJSONEnvelope(t *testing.T) {
 	}
 }
 
-// A provider the operator declared a table for is a valid target even though it
-// is not a built-in name: the table is what makes it known.
-func TestModelSetAcceptsACustomDeclaredProvider(t *testing.T) {
+// A declared command provider cannot be assigned a made-up ID. Its live
+// catalogue contains the model the target binary is configured to offer, so a
+// different free-text value is refused and the file stays byte-for-byte intact.
+func TestModelSetRefusesAnIDOutsideTheTargetCatalogue(t *testing.T) {
 	home := isolatedLoginHome(t)
 	path := modelConfigPath(home)
 	writeFile(t, path, "[models]\norder = [\"mycorp\"]\n\n[models.mycorp]\nbase_url = \"https://llm.invalid/v1\"\nmodel = \"internal-7b\"\n")
 
-	out := runRoot(t, Build{Version: "test"}, "model", "set", "mycorp", "internal-9b")
-	if !strings.Contains(out, "internal-9b") {
-		t.Fatalf("custom provider model not narrated:\n%s", out)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = runRootErr(t, Build{Version: "test"}, nil, "model", "set", "mycorp", "internal-9b")
+	if err == nil || !strings.Contains(err.Error(), `model "internal-9b" is not in mycorp's catalogue`) {
+		t.Fatalf("error = %v", err)
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), "model = \"internal-9b\"") {
-		t.Fatalf("custom provider model not persisted:\n%s", raw)
-	}
-	if !strings.Contains(string(raw), "base_url = \"https://llm.invalid/v1\"") {
-		t.Fatalf("an unrelated key was lost:\n%s", raw)
+	if string(raw) != string(before) {
+		t.Fatalf("rejected model changed config:\n--- want ---\n%s--- got ---\n%s", before, raw)
 	}
 }
 

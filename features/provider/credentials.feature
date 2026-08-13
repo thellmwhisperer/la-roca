@@ -55,15 +55,15 @@ Feature: Legacy provider authentication migration
     Then the command exits with code 0
     And the legacy provider configuration is unchanged
 
-  Scenario: Login and Doctor explain the external authentication boundary
-    When I inspect login and Doctor help
+  Scenario: Model check and Doctor explain the external authentication boundary
+    When I inspect model check and Doctor help
     Then both help surfaces say models authenticate through their own CLIs
     And neither help surface advertises a stored model credential
 
-  Scenario: Claude login only verifies the existing local session
+  Scenario: Claude model check only verifies the existing local session
     Given a fake Claude Code binary is available
-    When I log in to "claude" with model "sonnet"
+    When I check model "claude"
     Then the command exits with code 0
-    And the configuration chooses model "sonnet" for "claude"
+    And the output says configuration was not changed
     And the output says La Roca stores no secrets
     And no model credential directory exists

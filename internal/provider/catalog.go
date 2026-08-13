@@ -152,7 +152,8 @@ func (s Settings) binaryPresetFactory(name string, preset CommandPreset) Factory
 			}
 		}
 		return s.localBinary(name, command, firstNonEmpty(
-			cfg.Model, s.File.Default(name+"_model"), preset.Model), preset.Models,
+			cfg.Model, s.File.Default(name+"_model"), preset.Model),
+			declaredModels(preset.Models, cfg.Models),
 			cfg.Values, firstNonZero(cfg.TimeoutSeconds, preset.TimeoutSeconds), action, responseFormat)
 	}
 }
@@ -220,9 +221,19 @@ func (s Settings) withCommand(name string, fallback Factory) Factory {
 			return fallback()
 		}
 		return s.localBinary(name, cfg.Command, firstNonEmpty(
-			cfg.Model, s.File.Default(name+"_model"), s.File.Default("model")), nil,
+			cfg.Model, s.File.Default(name+"_model"), s.File.Default("model")), cfg.Models,
 			cfg.Values, cfg.TimeoutSeconds, "", cfg.ResponseFormat)
 	}
+}
+
+// declaredModels is the catalogue a model choice may pick from: what the build
+// ships for this preset, widened by what the provider table declares. A shipped
+// alias never disappears because an operator wrote down a full model ID.
+func declaredModels(shipped, declared []string) []string {
+	if len(declared) == 0 {
+		return shipped
+	}
+	return append(append([]string(nil), shipped...), declared...)
 }
 
 // retiredProviderConfig is the transport side of the same rule reconciliation

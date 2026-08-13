@@ -255,7 +255,7 @@ func (m *world) configurationChoosesFrontierModel(model string) error {
 	return m.writeModelConfig()
 }
 
-func (m *world) loginWithModel(name, model string) error {
+func (m *world) setProviderModel(name, model string) error {
 	if err := m.writeFrontierCLI("printf '%s' 'SELECT 1'"); err != nil {
 		return err
 	}
@@ -267,9 +267,9 @@ func (m *world) loginWithModel(name, model string) error {
 	if err := os.WriteFile(configPath, []byte(fixture), 0o600); err != nil {
 		return err
 	}
-	command := exec.Command(m.binaryPath(), "login", name, "--model", model)
+	command := exec.Command(m.binaryPath(), "model", "set", name, model)
 	command.Env = m.environment()
-	return m.record("roca login "+name+" --model "+model, command)
+	return m.record("roca model set "+name+" "+model, command)
 }
 
 func (m *world) configurationChoosesProviderModel(model, name string) error {
@@ -286,12 +286,24 @@ func (m *world) configurationChoosesProviderModel(model, name string) error {
 }
 
 func (m *world) modelNarrationNames(model, name string) error {
+	return m.narrationCarries(model, "from "+m.configPath(),
+		"models."+name+".model", "roca model set <id>")
+}
+
+// modelSetNarrationNames is what `roca model set` owes its operator: the model
+// it wrote and where it wrote it. Naming every way to change it again belongs
+// to Doctor, which is the surface that reports the configuration.
+func (m *world) modelSetNarrationNames(model string) error {
+	return m.narrationCarries(model, "from "+m.configPath())
+}
+
+func (m *world) configPath() string {
+	return filepath.Join(m.home, ".roca", "config.toml")
+}
+
+func (m *world) narrationCarries(wants ...string) error {
 	all := m.last.stdout + m.last.stderr
-	path := filepath.Join(m.home, ".roca", "config.toml")
-	for _, want := range []string{
-		model, "from " + path, "models." + name + ".model",
-		"roca model set <id>",
-	} {
+	for _, want := range wants {
 		if !strings.Contains(all, want) {
 			return fmt.Errorf("model narration does not carry %q:\n%s", want, all)
 		}
