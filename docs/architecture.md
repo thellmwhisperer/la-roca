@@ -32,7 +32,8 @@ fixtures (an external test seam, never a product import).
   service orchestration (`service`).
 - `internal/distribution/` — the plumbing: CLI (`cli`), MCP stdio (`mcpplug`),
   install/uninstall of the binary and of agent configs (`agentcfg`, `release`,
-  `lifecycle`), redacted JSONL traces (`logfile`), and skill install (`skill`).
+  `lifecycle`), verified plugin packages (`plugininstall`), redacted JSONL
+  traces (`logfile`), and skill install (`skill`).
 
 ## Notable placements
 

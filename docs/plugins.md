@@ -136,6 +136,12 @@ the source, version, checksum, and one of two risk levels:
   near-harmless; its worst case is lying content entering model context.
 - **EXECUTABLE** is full trust. It runs code with the user's privileges.
 
+Install, update, and uninstall all show that screen and wait for an answer.
+`--yes` accepts that risk without prompting; `--json` never prompts and
+refuses the operation until `--yes` states the decision, so no script consents
+by accident. An update also names the checksum it replaces, because a source
+takeover and an ordinary version bump otherwise look the same.
+
 The plugin folder is installed under `~/.roca/plugins/`. An executable goes to
 `$ROCA_PREFIX`, or `~/.local/bin` when that variable is absent. The generated
 `.roca-plugin.json` records source, version, package checksum, payload checksums,
