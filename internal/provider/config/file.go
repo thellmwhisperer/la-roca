@@ -678,6 +678,10 @@ type ProviderConfig struct {
 	BaseURL   string   `toml:"base_url"`
 	Command   []string `toml:"command"`
 	Model     string   `toml:"model"`
+	// Models is the catalogue this provider offers a model choice from. A local
+	// CLI publishes no catalogue of its own, so an operator writes down what it
+	// accepts; it widens the shipped preset list instead of replacing it.
+	Models []string `toml:"models"`
 	// ResponseFormat declares whether command stdout is plain text or a JSON
 	// envelope whose result field is the answer.
 	ResponseFormat string `toml:"response_format"`
@@ -710,7 +714,7 @@ var knownModelsKeys = map[string]bool{
 // retired authentication keys are listed because they get their own, more
 // specific warning and must not also be reported as unknown.
 var knownProviderKeys = map[string]bool{
-	"base_url": true, "command": true, "model": true, "response_format": true,
+	"base_url": true, "command": true, "model": true, "models": true, "response_format": true,
 	"timeout_seconds": true, "keep_alive": true, "think": true, "preset": true,
 	"api_key": true, "api_key_env": true,
 }
@@ -869,9 +873,11 @@ func readModels(section map[string]any, path string, warnings *[]string) ModelsC
 func readProvider(table map[string]any, name, path string, warnings *[]string) ProviderConfig {
 	cfg := ProviderConfig{Values: make(map[string]string, len(table))}
 	cfg.Command = readStrings(table["command"])
+	cfg.Models = readStrings(table["models"])
 	for _, key := range sortedKeys(table) {
 		text, _ := table[key].(string)
-		if key != "command" && key != "api_key" && key != "api_key_env" && key != "preset" && key != "base_url" {
+		if key != "command" && key != "models" && key != "api_key" &&
+			key != "api_key_env" && key != "preset" && key != "base_url" {
 			cfg.Values[key] = templateString(table[key])
 		}
 		switch key {
@@ -880,7 +886,7 @@ func readProvider(table map[string]any, name, path string, warnings *[]string) P
 			if name != "ollama" {
 				*warnings = append(*warnings, retiredProviderKey(name, key, path))
 			}
-		case "command":
+		case "command", "models":
 		case "model":
 			cfg.Model = text
 		case "response_format":

@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -746,6 +747,9 @@ func (env *cliEnv) modelCheck(ctx context.Context, args []string) error {
 		return err
 	}
 	name, model, err := effectiveModelTarget(paths, file, args)
+	if errors.Is(err, errNoProviderDeclared) {
+		return env.reportNothingToCheck()
+	}
 	if err != nil {
 		return err
 	}
@@ -758,11 +762,29 @@ func (env *cliEnv) modelCheck(ctx context.Context, args []string) error {
 	}
 	if env.json {
 		return env.printJSON(map[string]any{
-			"provider": name, "model": model, "ready": true,
+			"provider": name, "model": model, "ready": true, "reason": "",
 			"configuration_changed": false,
 		})
 	}
 	env.print("%s model %s answered the probe; configuration was not changed", name, model)
+	return nil
+}
+
+// errNoProviderDeclared is a configuration state, not a failed probe: the
+// cascade is empty because none was declared or because the order is off.
+var errNoProviderDeclared = errors.New("no provider is declared")
+
+// reportNothingToCheck answers an empty cascade the way `roca models` does,
+// with the answer itself rather than an error: there is no session to probe.
+func (env *cliEnv) reportNothingToCheck() error {
+	if env.json {
+		return env.printJSON(map[string]any{
+			"provider": "", "model": "", "ready": false,
+			"reason": errNoProviderDeclared.Error(), "configuration_changed": false,
+		})
+	}
+	env.print("%s, so there is no model to probe; configuration was not changed",
+		errNoProviderDeclared.Error())
 	return nil
 }
 
@@ -775,7 +797,7 @@ func effectiveModelTarget(paths config.Paths, file config.File, args []string) (
 			return "", "", err
 		}
 		if len(cascade.Providers) == 0 {
-			return "", "", fmt.Errorf("there is no provider to check; run `roca doctor` to inspect the configuration")
+			return "", "", errNoProviderDeclared
 		}
 		return cascade.Providers[0].Name(), cascade.Providers[0].ModelID(), nil
 	}

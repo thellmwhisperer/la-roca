@@ -134,10 +134,11 @@ shipped CLI preset takes no environment override for its model: it reads
 `models.<provider>.model`, then `defaults.<provider>_model` (for example
 `codex_model`), then the shipped default.
 
-Local-binary `command`, `response_format`, `timeout_seconds`, and custom
-substitution values have no environment override. Their provider table wins
-over shipped preset data; an omitted custom-command timeout uses the 120-second
-adapter default. When `[models].timeout_ms` or `probe_ms` is set, that shared
+Local-binary `command`, `models`, `response_format`, `timeout_seconds`, and
+custom substitution values have no environment override. Their provider table
+wins over shipped preset data, except `models`, which is added to the shipped
+catalogue; an omitted custom-command timeout uses the 120-second adapter
+default. When `[models].timeout_ms` or `probe_ms` is set, that shared
 cascade budget takes precedence over the command timeout for the corresponding
 request or probe.
 
@@ -280,6 +281,7 @@ order = ["my-local-cli", "ollama"]
 [models.my-local-cli]
 command = ["my-local-cli", "--model", "{model}", "--effort", "{effort}"]
 model = "local-smart"
+models = ["local-smart", "local-fast"]
 effort = "high"
 timeout_seconds = 120
 ```
@@ -289,6 +291,12 @@ their shipped command preset. `base_url` is supported only for local Ollama.
 The generic command transport works in the SQL and interpretation cascades and
 through `roca doctor`, `roca model check <provider>`, and
 `roca model set <provider> <model>`.
+
+A local CLI publishes no catalogue, so `models` is what `roca model set` may
+choose from for that provider. Omit it and the only offer is the model already
+configured, which makes the command a no-op for a custom provider. A shipped
+preset is widened, never replaced: its aliases stay on offer beside whatever
+the table declares.
 
 `claude` and `codex` are shipped command-preset entries, not special adapters.
 Their command, model, and timeout are all overridden by the same provider table
@@ -302,7 +310,8 @@ order = ["claude", "ollama"]
 interpret_order = ["ollama"]
 
 [models.claude]
-model = "sonnet" # aliases and full Claude model IDs are both accepted
+model = "sonnet"           # aliases and full Claude model IDs both run
+models = ["claude-opus-5"] # what `roca model set claude` offers beside the aliases
 ```
 
 The built-in command is pinned to Claude Code's non-interactive, single-turn
@@ -357,9 +366,11 @@ roca doctor               # diagnoses binaries, models, and remedies
 ```
 
 `model check` sends one minimal real request through the configured provider and
-never edits `config.toml` or provider order. `model set` reads the target
-provider's catalogue, refuses IDs outside it, and probes the selected ID before
-writing only `models.<provider>.model`. The shared catalogue-and-probe gate lives in
+never edits `config.toml` or provider order. When no provider is declared at all,
+or the order is turned off with `ROCA_MODELS_ORDER=none`, it says so and succeeds:
+an empty cascade is a configuration answer, not a failed probe. `model set` reads
+the target provider's catalogue, refuses IDs outside it, and probes the selected
+ID before writing only `models.<provider>.model`. The shared catalogue-and-probe gate lives in
 `internal/distribution/cli/model_validation.go`.
 
 `roca model set <model-id>` validates and probes the first configured provider.

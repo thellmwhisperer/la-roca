@@ -66,12 +66,24 @@ func (env *cliEnv) validatedModel(ctx context.Context, in io.Reader, paths confi
 		}
 	}
 	if !slices.Contains(catalogue.IDs, model) {
-		return "", fmt.Errorf("model %q is not in %s's catalogue; configuration was not changed", model, name)
+		return "", fmt.Errorf("model %q is not in %s's catalogue (%s); %s; configuration was not changed",
+			model, name, strings.Join(catalogue.IDs, ", "), catalogueRemedy(file, name))
 	}
 	if err := backend.Probe(ctx, name, model); err != nil {
 		return "", fmt.Errorf("%s model %s failed its account probe: %w; configuration was not changed", name, model, err)
 	}
 	return model, nil
+}
+
+// catalogueRemedy names where a refused ID can be made acceptable. A command
+// transport publishes no catalogue of its own, so the provider table is what
+// widens it; Ollama answers from its own local runtime and is widened by
+// pulling the model there.
+func catalogueRemedy(file config.File, name string) string {
+	if provider.UsesCommandTransport(file, name) {
+		return fmt.Sprintf("declare it in models.%s.models to offer it", name)
+	}
+	return fmt.Sprintf("pull it into %s first", name)
 }
 
 func (env *cliEnv) modelSetCurrentInput(ctx context.Context, in io.Reader, model string) error {

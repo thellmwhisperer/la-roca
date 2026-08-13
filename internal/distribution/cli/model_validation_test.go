@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -97,6 +98,37 @@ func TestModelCheckAndLoginAliasProbeWithoutWriting(t *testing.T) {
 		}
 		if len(fake.probes) != 1 || fake.model != "grok-green" {
 			t.Fatalf("%v probes=%v model=%q", command, fake.probes, fake.model)
+		}
+	}
+}
+
+// An empty cascade is a configuration answer, not a failed probe: there is no
+// session to reach, so `model check` says so and still succeeds.
+func TestModelCheckAnswersAnEmptyCascadeWithoutFailing(t *testing.T) {
+	for _, machine := range []bool{false, true} {
+		isolatedLoginHome(t)
+		t.Setenv("ROCA_MODELS_ORDER", "none")
+		args := []string{"model", "check"}
+		if machine {
+			args = append(args, "--json")
+		}
+		out, err := runRootErr(t, Build{Version: "test"}, nil, args...)
+		if err != nil {
+			t.Fatalf("json=%v: %v\n%s", machine, err, out)
+		}
+		if !machine {
+			if !strings.Contains(out, "no provider is declared") {
+				t.Fatalf("human output = %q", out)
+			}
+			continue
+		}
+		var result map[string]any
+		if err := json.Unmarshal([]byte(out), &result); err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+		if result["ready"] != false || result["configuration_changed"] != false ||
+			result["reason"] != "no provider is declared" {
+			t.Fatalf("result = %+v", result)
 		}
 	}
 }
