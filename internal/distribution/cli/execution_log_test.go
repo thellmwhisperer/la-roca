@@ -161,6 +161,8 @@ func TestEverySQLDegradationWritesTheCompleteFailureContract(t *testing.T) {
 		{"gate rejection", service.DegradedInvalidSQL, "synthetic gate rejection", "SELECT missing FROM memories"},
 		{"execution error", service.DegradedExecution, `fts5: syntax error near "OR"`,
 			`SELECT rowid FROM memories_fts WHERE memories_fts MATCH '"synthetic" ("one" OR)'`},
+		{"execution timeout", service.DegradedTimeout, "the validated SQL exceeded the time limit",
+			"SELECT sum(value) FROM synthetic_costly_query"},
 		{"model error", service.DegradedLLMError, "synthetic provider stopped", ""},
 		{"model unavailable", service.DegradedUnavailable, "no synthetic model is available", ""},
 	} {

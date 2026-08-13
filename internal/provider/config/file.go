@@ -616,10 +616,11 @@ const (
 //     table.** A warning that says "invalid section" sends them to read code.
 type File struct {
 	// Path is where it was looked for, whether or not it was there.
-	Path   string
-	Exists bool
-	Models ModelsConfig
-	Query  QueryConfig
+	Path     string
+	Exists   bool
+	Models   ModelsConfig
+	Query    QueryConfig
+	Features FeaturesConfig
 	// Warnings are what this build did not understand, each one naming the key,
 	// the file and the remedy.
 	Warnings []string
@@ -630,7 +631,23 @@ type File struct {
 
 // QueryConfig bounds execution of SQL that passed the read-only gate.
 type QueryConfig struct {
-	TimeoutMS int `toml:"timeout_ms"`
+	TimeoutMS  int  `toml:"timeout_ms"`
+	TimeoutSet bool `toml:"-"`
+}
+
+// FeaturesConfig contains operational escape hatches for security behaviour.
+// Every one of them defaults on: StrictInput false opts out of the experimental
+// signature gate, and AskMissingReferent false opts out of asking the operator
+// to name a referent the question left generic. One is not the other, so an
+// installation that needs one of the two keeps the other.
+type FeaturesConfig struct {
+	StrictInput        bool `toml:"strict_input"`
+	AskMissingReferent bool `toml:"ask_missing_referent"`
+}
+
+// defaultFeatures is the belt as shipped: everything on.
+func defaultFeatures() FeaturesConfig {
+	return FeaturesConfig{StrictInput: true, AskMissingReferent: true}
 }
 
 // ModelsConfig is the [models] section: which providers, in what order, with
@@ -703,7 +720,7 @@ func UnknownKeyWarning(key, path string) string { return unknownKey(key, path) }
 // LoadFile reads the config. A file that is not there is a machine with
 // defaults, not a failure.
 func LoadFile(path string) (File, error) {
-	file := File{Path: path}
+	file := File{Path: path, Features: defaultFeatures()}
 
 	raw, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -736,6 +753,8 @@ func LoadFile(path string) (File, error) {
 	}
 	query, _ := document["query"].(map[string]any)
 	file.Query = readQuery(query, path, &file.Warnings)
+	features, _ := document["features"].(map[string]any)
+	file.Features = readFeatures(features, path, &file.Warnings)
 	return file, nil
 }
 
@@ -757,7 +776,20 @@ func readQuery(section map[string]any, path string, warnings *[]string) QueryCon
 	for _, key := range sortedKeys(section) {
 		switch key {
 		case "timeout_ms":
-			query.TimeoutMS = readInt(section[key])
+			// Only a value that really decoded as a number a bound can be
+			// expressed in is a setting. The presence of the key is not:
+			// `timeout_ms = "5000"` decodes as zero, and a zero that was never
+			// written is an execution bound removed by a typo. A negative one is a
+			// bound no statement can meet and this build will not silently read it
+			// as the default. What is not a setting keeps the default and says so.
+			milliseconds, ok := readNumber(section[key])
+			if !ok || milliseconds < 0 {
+				*warnings = append(*warnings, invalidValue("query.timeout_ms", path,
+					"a whole number of milliseconds, zero or more"))
+				continue
+			}
+			query.TimeoutMS = milliseconds
+			query.TimeoutSet = true
 		default:
 			if !knownQueryKeys[key] {
 				*warnings = append(*warnings, unknownKey("query."+key, path))
@@ -765,6 +797,31 @@ func readQuery(section map[string]any, path string, warnings *[]string) QueryCon
 		}
 	}
 	return query
+}
+
+func readFeatures(section map[string]any, path string, warnings *[]string) FeaturesConfig {
+	features := defaultFeatures()
+	switches := map[string]*bool{
+		"strict_input":         &features.StrictInput,
+		"ask_missing_referent": &features.AskMissingReferent,
+	}
+	for _, key := range sortedKeys(section) {
+		enabled, known := switches[key]
+		if !known {
+			*warnings = append(*warnings, unknownKey("features."+key, path))
+			continue
+		}
+		// A switch stays on for anything that is not a boolean, because a
+		// misspelled opt-out must not be an opt-out. The operator is told, or the
+		// escape hatch silently does nothing.
+		written, ok := section[key].(bool)
+		if !ok {
+			*warnings = append(*warnings, invalidValue("features."+key, path, "true or false"))
+			continue
+		}
+		*enabled = written
+	}
+	return features
 }
 
 // readModels walks the [models] section by hand instead of letting a decoder
@@ -868,6 +925,17 @@ func unknownKey(key, path string) string {
 		key, path)
 }
 
+// invalidValue is the warning for a key this version understands written with
+// a value it cannot read. It names what was expected and says which behaviour
+// applies meanwhile, because the alternative is a setting that quietly is not
+// the one the operator wrote.
+func invalidValue(key, path, want string) string {
+	return fmt.Sprintf(
+		"the key %s of %s is not %s: it is ignored and the built-in default applies. "+
+			"Correct that line, or check `roca doctor` for the values this version accepts",
+		key, path, want)
+}
+
 // Default resolves a loose key under [defaults].
 func (f File) Default(key string) string {
 	if value, ok := f.defaults[key]; ok {
@@ -955,13 +1023,21 @@ func readStrings(value any) []string {
 }
 
 func readInt(value any) int {
+	number, _ := readNumber(value)
+	return number
+}
+
+// readNumber also says whether the value really was one. A caller that treats
+// the presence of a key as the setting needs that answer: without it, a value
+// TOML decoded as text is indistinguishable from a written zero.
+func readNumber(value any) (int, bool) {
 	switch typed := value.(type) {
 	case int64:
-		return int(typed)
+		return int(typed), true
 	case float64:
-		return int(typed)
+		return int(typed), true
 	}
-	return 0
+	return 0, false
 }
 
 func sortedKeys(table map[string]any) []string {
