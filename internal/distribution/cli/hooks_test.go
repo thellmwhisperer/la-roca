@@ -197,63 +197,42 @@ func TestHookCommandRegistersTheOwnedClaudeFragment(t *testing.T) {
 	}
 }
 
+// The refresh rewrites the bytes of the command it registered and no others:
+// the operator's numeric spelling, spacing and trailing members survive. The
+// reader only ever looks inside PreToolUse, so the edit looks there too, and an
+// operator who declared the identical command under another event owns those
+// bytes: they are neither rewritten nor a reason to refuse the refresh.
 func TestHookRefreshChangesOnlyItsRegisteredCommandBytes(t *testing.T) {
 	home := t.TempDir()
-	path := filepath.Join(home, "settings.json")
 	oldBinary := filepath.Join(home, "old", "roca")
 	newBinary := filepath.Join(home, "new", "roca")
-	oldCommand := claudeHookCommand(oldBinary)
-	previous := `{"numeric_spelling":1e3,"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":` +
-		encodedJSONString(t, oldCommand) + `}]}]},"tail":"  keep  "}`
-	if err := os.WriteFile(path, []byte(previous), 0o640); err != nil {
-		t.Fatal(err)
-	}
-	system, found, err := claudeHookSystem(path)
-	if err != nil || !found {
-		t.Fatalf("read installed hook: found=%v err=%v", found, err)
-	}
-	outcome, err := refreshClaudeHook(path, newBinary, artifact.Checksum(system), true, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := strings.Replace(previous, encodedJSONString(t, oldCommand), encodedJSONString(t, claudeHookCommand(newBinary)), 1)
-	body, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !outcome.Changed || string(body) != want {
-		t.Fatalf("refresh changed USER bytes:\nwant %s\n got %s", want, body)
-	}
-}
-
-// The reader only ever looks inside PreToolUse, so the byte-preserving edit
-// looks there too. An operator who declared the identical command under another
-// event owns those bytes: they are neither rewritten nor a reason to refuse the
-// refresh over the entry this product actually registered.
-func TestHookRefreshIgnoresTheSameCommandUnderAnotherEvent(t *testing.T) {
-	home := t.TempDir()
-	path := filepath.Join(home, "settings.json")
-	oldBinary := filepath.Join(home, "old", "roca")
-	newBinary := filepath.Join(home, "new", "roca")
-	entry := `[{"matcher":"Bash","hooks":[{"type":"command","command":` +
-		encodedJSONString(t, claudeHookCommand(oldBinary)) + `}]}]`
-	previous := `{"hooks":{"PreToolUse":` + entry + `,"PostToolUse":` + entry + `}}`
-	if err := os.WriteFile(path, []byte(previous), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	system, found, err := claudeHookSystem(path)
-	if err != nil || !found {
-		t.Fatalf("read installed hook: found=%v err=%v", found, err)
-	}
-
-	outcome, err := refreshClaudeHook(path, newBinary, artifact.Checksum(system), true, false)
-	if err != nil {
-		t.Fatalf("an operator's own copy blocked the refresh: %v", err)
-	}
-	body := readSettings(t, path)
-	if !outcome.Changed || strings.Count(body, claudeHookCommand(newBinary)) != 1 ||
-		strings.Count(body, claudeHookCommand(oldBinary)) != 1 {
-		t.Fatalf("refresh did not edit exactly its own registered entry: %s", body)
+	oldCommand := encodedJSONString(t, claudeHookCommand(oldBinary))
+	entry := `[{"matcher":"Bash","hooks":[{"type":"command","command":` + oldCommand + `}]}]`
+	for _, test := range []struct{ name, previous string }{
+		{"operator bytes around the entry",
+			`{"numeric_spelling":1e3,"hooks":{"PreToolUse":` + entry + `},"tail":"  keep  "}`},
+		{"the same command under another event",
+			`{"hooks":{"PreToolUse":` + entry + `,"PostToolUse":` + entry + `}}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "settings.json")
+			if err := os.WriteFile(path, []byte(test.previous), 0o640); err != nil {
+				t.Fatal(err)
+			}
+			system, found, err := claudeHookSystem(path)
+			if err != nil || !found {
+				t.Fatalf("read installed hook: found=%v err=%v", found, err)
+			}
+			outcome, err := refreshClaudeHook(path, newBinary, artifact.Checksum(system), true, false)
+			if err != nil {
+				t.Fatalf("an operator's own bytes blocked the refresh: %v", err)
+			}
+			want := strings.Replace(test.previous, oldCommand,
+				encodedJSONString(t, claudeHookCommand(newBinary)), 1)
+			if got := readSettings(t, path); !outcome.Changed || got != want {
+				t.Fatalf("refresh did not edit exactly its own registered command:\nwant %s\n got %s", want, got)
+			}
+		})
 	}
 }
 

@@ -210,27 +210,17 @@ func (env *cliEnv) refreshManagedArtifacts(executable string, force bool) (artif
 		entry := &registry.Entries[index]
 		entry.AvailableVersion = env.build.Version
 		switch entry.Kind {
-		case artifactKindSkill:
+		case artifactKindSkill, artifactKindPrompt:
+			desired, signature := shippedFileContent(entry.Kind)
 			out, err := artifact.RefreshFile(artifact.FileRequest{
-				Path: entry.Path, System: skill.Content(), LegacySignature: skill.LegacySignature(),
+				Path: entry.Path, System: desired, LegacySignature: signature,
 				PreviousSystemSHA256: entry.SystemSHA256, Enabled: report.Enabled, Force: force,
 			})
 			if err != nil {
 				report.failed(entry.Path, err, out.Backup)
 				continue
 			}
-			env.finishFileRefresh(entry, out, skill.Content(), &report)
-		case artifactKindPrompt:
-			out, err := artifact.RefreshFile(artifact.FileRequest{
-				Path: entry.Path, System: service.PresentationPrompt(),
-				LegacySignature:      service.PresentationPromptSignature(),
-				PreviousSystemSHA256: entry.SystemSHA256, Enabled: report.Enabled, Force: force,
-			})
-			if err != nil {
-				report.failed(entry.Path, err, out.Backup)
-				continue
-			}
-			env.finishFileRefresh(entry, out, service.PresentationPrompt(), &report)
+			env.finishFileRefresh(entry, out, desired, &report)
 		case artifactKindHook:
 			out, err := refreshClaudeHook(entry.Path, executable, entry.SystemSHA256,
 				report.Enabled, force)
@@ -255,6 +245,16 @@ func (env *cliEnv) refreshManagedArtifacts(executable string, force bool) (artif
 	return report, nil
 }
 
+// shippedFileContent is the single place that says what this release wants a
+// zoned file artifact to hold, and which older shipped text it still recognizes
+// as its own. Both file kinds refresh identically, so only the content differs.
+func shippedFileContent(kind string) (string, string) {
+	if kind == artifactKindPrompt {
+		return service.PresentationPrompt(), service.PresentationPromptSignature()
+	}
+	return skill.Content(), skill.LegacySignature()
+}
+
 func (report *artifactRefreshReport) failed(path string, err error, backup string) {
 	reason := err.Error()
 	if !strings.Contains(reason, path) {
@@ -274,17 +274,28 @@ func (report *artifactRefreshReport) diverged(path string, missing bool) {
 	report.Outdated++
 }
 
-func (env *cliEnv) finishFileRefresh(entry *artifact.Entry, out artifact.FileOutcome,
-	desired string, report *artifactRefreshReport) {
-	if out.Diverged {
-		report.diverged(entry.Path, out.Missing)
-		return
+// noteRefresh records the part of an outcome a file and a hook report the same
+// way, and answers whether the entry may still be stamped: a diverged artifact
+// was left alone, so nothing about it is this release's.
+func (report *artifactRefreshReport) noteRefresh(path string,
+	diverged, missing, changed bool, backup string) bool {
+	if diverged {
+		report.diverged(path, missing)
+		return false
 	}
-	if out.Changed {
+	if changed {
 		report.Refreshed++
 	}
-	if out.Backup != "" {
-		report.Backups = append(report.Backups, out.Backup)
+	if backup != "" {
+		report.Backups = append(report.Backups, backup)
+	}
+	return true
+}
+
+func (env *cliEnv) finishFileRefresh(entry *artifact.Entry, out artifact.FileOutcome,
+	desired string, report *artifactRefreshReport) {
+	if !report.noteRefresh(entry.Path, out.Diverged, out.Missing, out.Changed, out.Backup) {
+		return
 	}
 	body, err := os.ReadFile(entry.Path)
 	if err != nil {
@@ -312,15 +323,8 @@ type hookRefreshOutcome struct {
 
 func (env *cliEnv) finishHookRefresh(entry *artifact.Entry, out hookRefreshOutcome,
 	report *artifactRefreshReport) {
-	if out.Diverged {
-		report.diverged(entry.Path, out.Missing)
+	if !report.noteRefresh(entry.Path, out.Diverged, out.Missing, out.Changed, out.Backup) {
 		return
-	}
-	if out.Changed {
-		report.Refreshed++
-	}
-	if out.Backup != "" {
-		report.Backups = append(report.Backups, out.Backup)
 	}
 	if !out.Current {
 		report.Outdated++

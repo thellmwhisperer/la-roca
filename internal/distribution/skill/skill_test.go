@@ -189,127 +189,110 @@ func TestInstallRefusesAnUnknownRuntime(t *testing.T) {
 	}
 }
 
-func TestInstallAdoptsUnrecognizedLegacyContentIntoTheUserZone(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "skills", "roca", "SKILL.md")
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte("stale\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	out, err := skill.InstallWithOptions("codex", path, "", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !out.Changed {
-		t.Fatal("stale skill was left in place")
-	}
-	body, _ := os.ReadFile(path)
-	zones, err := artifact.Parse(string(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if zones.System != skill.Content() || zones.User != "stale\n" {
-		t.Fatalf("legacy adoption = %+v", zones)
-	}
+// earlierRelease is what an older release of this product wrote: recognizable
+// by its opening alone, because pre-zone installs carry no markers.
+func earlierRelease() string {
+	return skill.LegacySignature() + "description: what v1 shipped\n---\n\nolder body\n"
 }
 
-// Every pre-zone install on a real machine was written by an older release, so
-// migrating one must not keep a whole stale copy of the skill beside the
-// current one, preserved forever as though the operator had written it.
-func TestInstallReplacesAnEarlierReleasesSkill(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "skills", "roca", "SKILL.md")
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+// seedSkill puts a pre-zone SKILL.md in a fresh skills directory of its own.
+func seedSkill(t *testing.T, content string) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "skills", "roca")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	earlier := skill.LegacySignature() + "description: what v1 shipped\n---\n\nolder body\n"
-	if err := os.WriteFile(path, []byte(earlier), 0o600); err != nil {
+	path := filepath.Join(dir, "SKILL.md")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := skill.InstallWithOptions("codex", path, "", false); err != nil {
+	return path
+}
+
+func zonesOf(t *testing.T, path string) artifact.Zones {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
 		t.Fatal(err)
 	}
-	body, _ := os.ReadFile(path)
 	zones, err := artifact.Parse(string(body))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if zones.System != skill.Content() || zones.User != "" {
-		t.Fatalf("an earlier release's skill survived the migration: %+v", zones)
+	return zones
+}
+
+// Every pre-zone install on a real machine is either an older release's text or
+// the operator's. Migrating one must not keep a whole stale copy of the skill
+// beside the current one, preserved forever as though the operator wrote it,
+// and must not throw away bytes the operator did write.
+func TestInstallMigratesPreZoneContentByWhoWroteIt(t *testing.T) {
+	for _, test := range []struct{ name, seeded, user string }{
+		{"unrecognized bytes are the operator's", "stale\n", "stale\n"},
+		{"an earlier release's skill is replaced", earlierRelease(), ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := seedSkill(t, test.seeded)
+			out, err := skill.InstallWithOptions("codex", path, "", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !out.Changed {
+				t.Fatal("the pre-zone skill was left in place")
+			}
+			if zones := zonesOf(t, path); zones.System != skill.Content() || zones.User != test.user {
+				t.Fatalf("migration = %+v", zones)
+			}
+		})
 	}
 }
 
 // Withdrawing only this release's exact bytes left an older release's SKILL.md
 // in the runtime's skills directory, still teaching agents to run a binary the
 // same uninstall just unlinked, and outside the data dir it was not even
-// reported as kept.
-func TestUninstallWithdrawsAnEarlierReleasesSkill(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "skills", "roca")
-	path := filepath.Join(dir, "SKILL.md")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	earlier := skill.LegacySignature() + "description: what v1 shipped\n---\n\nolder body\n"
-	if err := os.WriteFile(path, []byte(earlier), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	out, err := skill.UninstallWithChecksum("claude", path, shippedChecksum())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !out.Changed {
-		t.Fatal("an earlier release's skill survived the withdrawal")
-	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("the skill file is still there: %v", err)
-	}
-	// Its opening is all that recognized it, so any lines the operator appended
-	// to it before the zones existed have nowhere else to survive.
-	if out.Backup == "" {
-		t.Fatal("a file recognized by convention alone was deleted with no recovery copy")
-	}
-	kept, err := os.ReadFile(out.Backup)
-	if err != nil || string(kept) != earlier {
-		t.Fatalf("the recovery copy does not hold the withdrawn file: %q, err %v", kept, err)
-	}
-}
-
-// The exact bytes this release registered are provably ours, so withdrawing
-// them needs no recovery copy left behind in the operator's skills directory.
-func TestUninstallOfOurOwnRegisteredBytesLeavesNoRecoveryCopy(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "skills", "roca")
-	path := filepath.Join(dir, "SKILL.md")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(skill.Content()), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	out, err := skill.UninstallWithChecksum("claude", path, shippedChecksum())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !out.Changed || out.Backup != "" {
-		t.Fatalf("withdrawal of our own bytes = %+v", out)
-	}
-}
-
-func TestUninstallLeavesForeignContentAlone(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "roca")
-	path := filepath.Join(dir, "SKILL.md")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte("not roca content"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if out, err := skill.UninstallWithChecksum("claude", path, shippedChecksum()); err != nil {
-		t.Fatalf("uninstall: %v", err)
-	} else if out.Changed {
-		t.Fatal("uninstall removed a skill it did not write")
-	}
-	if _, err := os.Stat(dir); err != nil {
-		t.Fatal("foreign skill dir was removed")
+// reported as kept. What La Roca never wrote is still never removed.
+func TestUninstallWithdrawsWhatItRecognizesAndNothingElse(t *testing.T) {
+	for _, test := range []struct {
+		name, seeded        string
+		withdrawn, recovery bool
+	}{
+		// Its opening is all that recognized it, so any lines the operator appended
+		// to it before the zones existed have nowhere else to survive.
+		{"an earlier release's skill", earlierRelease(), true, true},
+		// The exact bytes this release registered are provably ours, so nothing has
+		// to be left behind in the operator's skills directory.
+		{"our own registered bytes", skill.Content(), true, false},
+		{"content this product never wrote", "not roca content", false, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := seedSkill(t, test.seeded)
+			out, err := skill.UninstallWithChecksum("claude", path, shippedChecksum())
+			if err != nil {
+				t.Fatalf("uninstall: %v", err)
+			}
+			if out.Changed != test.withdrawn {
+				t.Fatalf("withdrawal = %+v, want changed %v", out, test.withdrawn)
+			}
+			if _, err := os.Stat(path); os.IsNotExist(err) != test.withdrawn {
+				t.Fatalf("the skill file's survival contradicts the withdrawal: %v", err)
+			}
+			if !test.withdrawn {
+				if _, err := os.Stat(filepath.Dir(path)); err != nil {
+					t.Fatalf("a directory holding a foreign skill was removed: %v", err)
+				}
+				return
+			}
+			if (out.Backup != "") != test.recovery {
+				t.Fatalf("recovery copy = %q, want one: %v", out.Backup, test.recovery)
+			}
+			if !test.recovery {
+				return
+			}
+			kept, err := os.ReadFile(out.Backup)
+			if err != nil || string(kept) != test.seeded {
+				t.Fatalf("the recovery copy does not hold the withdrawn file: %q, err %v", kept, err)
+			}
+		})
 	}
 }
 

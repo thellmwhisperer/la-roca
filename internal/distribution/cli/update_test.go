@@ -227,20 +227,11 @@ func TestArtifactRefreshReportsDeletedAndUnreadableApartFromEdits(t *testing.T) 
 		return artifact.Entry{Kind: "skill", Runtime: runtime, Path: path, SystemSHA256: checksum}
 	}
 	shipped := artifact.Checksum(skill.Content())
-	if err := artifact.SaveRegistry(registryPath, artifact.Registry{Entries: []artifact.Entry{
+	report := enabledRefresh(t, home,
 		entryOf("codex", deleted, shipped),
 		entryOf("hermes", unreadable, shipped),
 		entryOf("claude", current, shipped),
-	}}); err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, filepath.Join(home, ".roca", "config.toml"), "[features]\nartifact_refresh = true\n")
-
-	env := &cliEnv{build: Build{Version: "v2.0.0"}}
-	report, err := env.refreshManagedArtifacts(filepath.Join(home, "bin", "roca"), false)
-	if err != nil {
-		t.Fatalf("one unreadable artifact aborted the refresh: %v", err)
-	}
+	)
 	if len(report.Diverged) != 1 || report.Diverged[0].Path != deleted || !report.Diverged[0].Missing {
 		t.Fatalf("a deleted artifact was not reported as deleted: %+v", report.Diverged)
 	}
@@ -255,15 +246,36 @@ func TestArtifactRefreshReportsDeletedAndUnreadableApartFromEdits(t *testing.T) 
 		t.Fatalf("a readable artifact was left unchecked behind the broken one: %+v", entry)
 	}
 
+	warnings := refreshWarnings(report)
+	if !strings.Contains(warnings, deleted+" was removed after La Roca registered it") {
+		t.Fatalf("update called a deleted artifact an edit: %q", warnings)
+	}
+	if !strings.Contains(warnings, unreadable) || !strings.Contains(warnings, forceArtifactRefresh) {
+		t.Fatalf("the unreadable artifact was not named with its remedy: %q", warnings)
+	}
+}
+
+// enabledRefresh registers the given artifacts in a home, turns automatic
+// refresh on, and runs one refresh of that home against a v2.0.0 build.
+func enabledRefresh(t *testing.T, home string, entries ...artifact.Entry) artifactRefreshReport {
+	t.Helper()
+	registryPath := filepath.Join(home, ".roca", "artifacts.json")
+	if err := artifact.SaveRegistry(registryPath, artifact.Registry{Entries: entries}); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(home, ".roca", "config.toml"), "[features]\nartifact_refresh = true\n")
+	env := &cliEnv{build: Build{Version: "v2.0.0"}}
+	report, err := env.refreshManagedArtifacts(filepath.Join(home, "bin", "roca"), false)
+	if err != nil {
+		t.Fatalf("the refresh aborted instead of reporting: %v", err)
+	}
+	return report
+}
+
+func refreshWarnings(report artifactRefreshReport) string {
 	var out, warnings strings.Builder
 	(&cliEnv{out: &out, errOut: &warnings}).renderArtifactRefresh(report)
-	if !strings.Contains(warnings.String(), deleted+" was removed after La Roca registered it") {
-		t.Fatalf("update called a deleted artifact an edit: %q", warnings.String())
-	}
-	if !strings.Contains(warnings.String(), unreadable) ||
-		!strings.Contains(warnings.String(), forceArtifactRefresh) {
-		t.Fatalf("the unreadable artifact was not named with its remedy: %q", warnings.String())
-	}
+	return warnings.String()
 }
 
 // Force repairs exactly one failure class. Offering it for a permission or a
@@ -277,29 +289,19 @@ func TestARefreshFailureForceCannotFixIsNotAnsweredWithForce(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(filepath.Dir(path), 0o700) })
-	registryPath := filepath.Join(home, ".roca", "artifacts.json")
-	if err := artifact.SaveRegistry(registryPath, artifact.Registry{Entries: []artifact.Entry{{
+
+	report := enabledRefresh(t, home, artifact.Entry{
 		Kind: "skill", Runtime: "codex", Path: path,
 		SystemSHA256: artifact.Checksum("shipped-v1\n"),
-	}}}); err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, filepath.Join(home, ".roca", "config.toml"), "[features]\nartifact_refresh = true\n")
-
-	env := &cliEnv{build: Build{Version: "v2.0.0"}}
-	report, err := env.refreshManagedArtifacts(filepath.Join(home, "bin", "roca"), false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	})
 	if len(report.Failed) != 1 || report.Failed[0].Repairable {
 		t.Fatalf("a write failure was offered the force remedy: %+v", report.Failed)
 	}
-	var out, warnings strings.Builder
-	(&cliEnv{out: &out, errOut: &warnings}).renderArtifactRefresh(report)
-	if strings.Contains(warnings.String(), forceArtifactRefresh) {
-		t.Fatalf("force was offered for a failure it cannot fix: %q", warnings.String())
+	warnings := refreshWarnings(report)
+	if strings.Contains(warnings, forceArtifactRefresh) {
+		t.Fatalf("force was offered for a failure it cannot fix: %q", warnings)
 	}
-	if !strings.Contains(warnings.String(), path) {
-		t.Fatalf("the failure does not name the artifact: %q", warnings.String())
+	if !strings.Contains(warnings, path) {
+		t.Fatalf("the failure does not name the artifact: %q", warnings)
 	}
 }
