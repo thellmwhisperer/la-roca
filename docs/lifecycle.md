@@ -207,7 +207,15 @@ terminal. `--keep-data` removes the executable and integrations while retaining
 the data directory. `--purge` removes every artefact La Roca owns, including the
 database, configuration, indexes, logs, generated prompt, backups, skills, and
 integration recovery copies, plus the credential files and model catalogue cache
-that older releases left behind.
+that older releases left behind. The recovery copies a refresh left beside a
+managed artifact belong to the same family: a regular uninstall names them as
+kept, and a purge takes them with the rest, so the directory holding them can be
+taken back too.
+
+A pre-zone skill an older release installed is recognized by its opening rather
+than by a checksum, so withdrawing one leaves a recovery copy of the file before
+removing it: anything an operator appended to it before the zones existed lives
+nowhere else.
 
 A purge also removes the installed plugin packages under `~/.roca/plugins/` and
 the `roca-<name>` executables the installer placed, so no plugin code is left on

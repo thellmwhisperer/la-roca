@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -22,6 +23,13 @@ const (
 	frontmatter      = "---\n"
 	frontmatterBegin = "# ROCA SYSTEM BEGIN"
 )
+
+// ErrBrokenZones is the one refresh failure force repairs: the markers are
+// there and no zone can be read from between them. Every other failure — a
+// permission, a disk, a concurrent-edit refusal — is told apart from it,
+// because offering force for those is either useless or the clobber the
+// refusal exists to prevent.
+var ErrBrokenZones = errors.New("zone markers are broken")
 
 type Zones struct {
 	System string
@@ -118,7 +126,7 @@ func RefreshFile(request FileRequest) (FileOutcome, error) {
 			// remedy for a broken artifact and it must reach this file too: the
 			// replaced bytes survive in the backup replaceFile writes.
 			if !request.Force {
-				return out, fmt.Errorf("read zones from %s: %w", request.Path, parseErr)
+				return out, fmt.Errorf("read zones from %s: %w: %w", request.Path, ErrBrokenZones, parseErr)
 			}
 			out.Outdated = true
 		} else {
@@ -138,11 +146,13 @@ func RefreshFile(request FileRequest) (FileOutcome, error) {
 		return out, nil
 	}
 	changed, backup, err := replaceFile(request.Path, next, previous)
+	// The recovery copy is reported even when the write that followed it failed:
+	// it holds the operator's file and naming it is the whole point of making it.
+	out.Backup = backup
 	if err != nil {
 		return out, err
 	}
 	out.Changed = changed
-	out.Backup = backup
 	out.Missing = false
 	out.Outdated = false
 	out.Diverged = false

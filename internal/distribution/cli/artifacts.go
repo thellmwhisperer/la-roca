@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -164,17 +165,26 @@ type divergedArtifact struct {
 	Missing bool   `json:"missing,omitempty"`
 }
 
+// artifactFailure is one artifact this refresh could not finish, with the
+// reason it could not. Repairable marks the single class force can fix, so a
+// permission error, a disk failure or a concurrent-edit refusal is never
+// answered with a force command that cannot help or must not be run twice.
+type artifactFailure struct {
+	Path       string `json:"path"`
+	Reason     string `json:"reason"`
+	Repairable bool   `json:"repairable,omitempty"`
+}
+
 type artifactRefreshReport struct {
 	Enabled   bool               `json:"enabled"`
 	Outdated  int                `json:"outdated"`
 	Refreshed int                `json:"refreshed"`
 	Diverged  []divergedArtifact `json:"diverged"`
-	// Unreadable names each artifact whose zone markers are broken. It is the one
-	// state no refresh can read, and one of them must not hide the state of every
-	// other registered artifact.
-	Unreadable []string `json:"unreadable"`
-	Backups    []string `json:"backups"`
-	Proposals  []string `json:"proposals"`
+	// Failed names each artifact this refresh could not finish. One of them must
+	// not hide the state of every other registered artifact.
+	Failed    []artifactFailure `json:"failed"`
+	Backups   []string          `json:"backups"`
+	Proposals []string          `json:"proposals"`
 }
 
 func (env *cliEnv) refreshManagedArtifacts(executable string, force bool) (artifactRefreshReport, error) {
@@ -191,7 +201,7 @@ func (env *cliEnv) refreshManagedArtifacts(executable string, force bool) (artif
 		return artifactRefreshReport{}, err
 	}
 	report := artifactRefreshReport{Enabled: file.Features.ArtifactRefresh,
-		Diverged: []divergedArtifact{}, Unreadable: []string{},
+		Diverged: []divergedArtifact{}, Failed: []artifactFailure{},
 		Backups: []string{}, Proposals: []string{}}
 	if err := env.adoptLegacyArtifacts(paths, executable, &registry, &report); err != nil {
 		return report, err
@@ -206,7 +216,7 @@ func (env *cliEnv) refreshManagedArtifacts(executable string, force bool) (artif
 				PreviousSystemSHA256: entry.SystemSHA256, Enabled: report.Enabled, Force: force,
 			})
 			if err != nil {
-				report.unreadable(entry.Path)
+				report.failed(entry.Path, err, out.Backup)
 				continue
 			}
 			env.finishFileRefresh(entry, out, skill.Content(), &report)
@@ -217,7 +227,7 @@ func (env *cliEnv) refreshManagedArtifacts(executable string, force bool) (artif
 				PreviousSystemSHA256: entry.SystemSHA256, Enabled: report.Enabled, Force: force,
 			})
 			if err != nil {
-				report.unreadable(entry.Path)
+				report.failed(entry.Path, err, out.Backup)
 				continue
 			}
 			env.finishFileRefresh(entry, out, service.PresentationPrompt(), &report)
@@ -225,7 +235,7 @@ func (env *cliEnv) refreshManagedArtifacts(executable string, force bool) (artif
 			out, err := refreshClaudeHook(entry.Path, executable, entry.SystemSHA256,
 				report.Enabled, force)
 			if err != nil {
-				report.unreadable(entry.Path)
+				report.failed(entry.Path, err, out.Backup)
 				continue
 			}
 			env.finishHookRefresh(entry, out, &report)
@@ -234,7 +244,9 @@ func (env *cliEnv) refreshManagedArtifacts(executable string, force bool) (artif
 	sort.Slice(report.Diverged, func(i, j int) bool {
 		return report.Diverged[i].Path < report.Diverged[j].Path
 	})
-	sort.Strings(report.Unreadable)
+	sort.Slice(report.Failed, func(i, j int) bool {
+		return report.Failed[i].Path < report.Failed[j].Path
+	})
 	sort.Strings(report.Backups)
 	sort.Strings(report.Proposals)
 	if err := artifact.SaveRegistry(paths.Artifacts, registry); err != nil {
@@ -243,8 +255,17 @@ func (env *cliEnv) refreshManagedArtifacts(executable string, force bool) (artif
 	return report, nil
 }
 
-func (report *artifactRefreshReport) unreadable(path string) {
-	report.Unreadable = append(report.Unreadable, path)
+func (report *artifactRefreshReport) failed(path string, err error, backup string) {
+	reason := err.Error()
+	if !strings.Contains(reason, path) {
+		reason = path + ": " + reason
+	}
+	report.Failed = append(report.Failed, artifactFailure{
+		Path: path, Reason: reason, Repairable: errors.Is(err, artifact.ErrBrokenZones),
+	})
+	if backup != "" {
+		report.Backups = append(report.Backups, backup)
+	}
 	report.Outdated++
 }
 

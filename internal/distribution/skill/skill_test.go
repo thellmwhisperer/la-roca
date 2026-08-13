@@ -263,6 +263,35 @@ func TestUninstallWithdrawsAnEarlierReleasesSkill(t *testing.T) {
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("the skill file is still there: %v", err)
 	}
+	// Its opening is all that recognized it, so any lines the operator appended
+	// to it before the zones existed have nowhere else to survive.
+	if out.Backup == "" {
+		t.Fatal("a file recognized by convention alone was deleted with no recovery copy")
+	}
+	kept, err := os.ReadFile(out.Backup)
+	if err != nil || string(kept) != earlier {
+		t.Fatalf("the recovery copy does not hold the withdrawn file: %q, err %v", kept, err)
+	}
+}
+
+// The exact bytes this release registered are provably ours, so withdrawing
+// them needs no recovery copy left behind in the operator's skills directory.
+func TestUninstallOfOurOwnRegisteredBytesLeavesNoRecoveryCopy(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "skills", "roca")
+	path := filepath.Join(dir, "SKILL.md")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(skill.Content()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := skill.UninstallWithChecksum("claude", path, shippedChecksum())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Changed || out.Backup != "" {
+		t.Fatalf("withdrawal of our own bytes = %+v", out)
+	}
 }
 
 func TestUninstallLeavesForeignContentAlone(t *testing.T) {

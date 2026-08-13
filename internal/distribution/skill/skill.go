@@ -16,6 +16,7 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
+	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 //go:embed SKILL.md
@@ -116,14 +117,17 @@ func UninstallWithChecksum(name, path, systemSHA256 string) (Outcome, error) {
 	if err != nil {
 		return out, fmt.Errorf("read %s: %w", path, err)
 	}
-	user := ""
+	user, unproven := "", false
 	if zones, err := artifact.Parse(string(previous)); err == nil {
 		if artifact.Checksum(zones.System) != systemSHA256 {
 			return out, nil
 		}
 		user = zones.User
-	} else if !weWroteThisPreZoneSkill(string(previous), systemSHA256) {
-		return out, nil
+	} else if artifact.Checksum(string(previous)) != systemSHA256 {
+		if !strings.HasPrefix(string(previous), LegacySignature()) {
+			return out, nil
+		}
+		unproven = true
 	}
 	if user != "" {
 		changed, err := agentcfg.Edit("artifact", path, func(string) (string, error) {
@@ -139,6 +143,16 @@ func UninstallWithChecksum(name, path, systemSHA256 string) (Outcome, error) {
 	dir := filepath.Dir(path)
 	if filepath.Base(dir) != SkillName {
 		return out, nil
+	}
+	// A pre-zone file recognized by its opening alone is ours by convention, not
+	// by checksum: an operator who appended to it before the zones existed has
+	// bytes here that exist nowhere else, so the removal leaves a recovery copy.
+	if unproven {
+		backup, err := securefile.BackUp(path, previous)
+		if err != nil {
+			return out, err
+		}
+		out.Backup = backup
 	}
 	// The canonical file is ours and goes. The directory only follows when
 	// nothing else is left in it: RemoveAll took whatever the operator had put
@@ -161,15 +175,6 @@ func UninstallWithChecksum(name, path, systemSHA256 string) (Outcome, error) {
 	return out, nil
 }
 
-// weWroteThisPreZoneSkill recognizes a SKILL.md installed before the zones
-// existed. Matching only this release's bytes left every earlier release's
-// skill behind after an uninstall: a file in the runtime's skills directory
-// still teaching agents to run a binary the same command just unlinked.
-func weWroteThisPreZoneSkill(body, systemSHA256 string) bool {
-	return artifact.Checksum(body) == systemSHA256 ||
-		strings.HasPrefix(body, LegacySignature())
-}
-
 // InstallWithOptions writes the zoned canonical skill at path. Idempotent
 // installs are left alone and legacy operator bytes are adopted into USER; a
 // changed SYSTEM zone is only overridden when force is explicit.
@@ -182,11 +187,11 @@ func InstallWithOptions(name, path, previousSystemSHA256 string, force bool) (Ou
 		Path: path, System: content, LegacySignature: LegacySignature(),
 		PreviousSystemSHA256: previousSystemSHA256, Enabled: true, Force: force,
 	})
+	out.Backup = result.Backup
 	if err != nil {
 		return out, err
 	}
 	out.Changed = result.Changed
-	out.Backup = result.Backup
 	out.Diverged = result.Diverged
 	out.Missing = result.Missing
 	out.SystemSHA256 = result.SystemSHA256

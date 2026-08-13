@@ -309,10 +309,19 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		}
 		if outcome.Changed {
 			report.Deleted = append(report.Deleted, outcome.Removed...)
-			if outcome.Backup != "" {
-				_ = os.Remove(outcome.Backup)
-			}
 		}
+		// The withdrawal's own copy is redundant only while the file it copied is
+		// still on disk without La Roca's zone in it. When the file went, that copy
+		// is the only place the operator's bytes are left.
+		if outcome.Changed && len(outcome.Removed) == 0 && outcome.Backup != "" {
+			_ = os.Remove(outcome.Backup)
+		}
+		if purge {
+			removeRecoveryBackups(report, path)
+			removeHollowSkillDirs(report, path)
+			continue
+		}
+		nameSurvivingBackups(report, path)
 	}
 	if registryErr == nil && registryExists {
 		registry.RemoveKinds(artifactKindSkill, artifactKindHook)
@@ -321,6 +330,22 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		}
 	}
 	return outcomes
+}
+
+// removeHollowSkillDirs takes back the chain a skill withdrawal could not,
+// because the recovery copies beside the file were still in it when the
+// withdrawal tried. Only an empty directory goes: os.Remove is the whole guard.
+func removeHollowSkillDirs(report *lifecycle.Report, skillFile string) {
+	dir := filepath.Dir(skillFile)
+	if filepath.Base(dir) != skill.SkillName {
+		return
+	}
+	for _, hollow := range []string{dir, filepath.Dir(dir)} {
+		if err := os.Remove(hollow); err != nil {
+			return
+		}
+		report.Deleted = append(report.Deleted, hollow)
+	}
 }
 
 // keepTheBackup names every recovery copy left beside a configuration file the
@@ -428,6 +453,15 @@ func ownedPaths(paths config.Paths) []string {
 	if !slices.Contains(owned, prompt) {
 		if body, err := os.ReadFile(prompt); err == nil && promptWasGenerated(string(body)) {
 			owned = append(owned, prompt)
+		}
+	}
+	// Every refresh that rewrote a managed artifact left a recovery copy beside
+	// it. They are this product's files, and one left behind keeps the data
+	// directory alive while being reported as a file La Roca never created.
+	recovery, _ := recoveryBackups(prompt)
+	for _, path := range recovery {
+		if !slices.Contains(owned, path) {
+			owned = append(owned, path)
 		}
 	}
 	backupPrefix := strings.TrimSuffix(filepath.Base(paths.DB), ".db") + "."

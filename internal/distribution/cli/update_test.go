@@ -244,8 +244,8 @@ func TestArtifactRefreshReportsDeletedAndUnreadableApartFromEdits(t *testing.T) 
 	if len(report.Diverged) != 1 || report.Diverged[0].Path != deleted || !report.Diverged[0].Missing {
 		t.Fatalf("a deleted artifact was not reported as deleted: %+v", report.Diverged)
 	}
-	if len(report.Unreadable) != 1 || report.Unreadable[0] != unreadable {
-		t.Fatalf("unreadable artifacts = %v", report.Unreadable)
+	if len(report.Failed) != 1 || report.Failed[0].Path != unreadable || !report.Failed[0].Repairable {
+		t.Fatalf("failed artifacts = %+v", report.Failed)
 	}
 	registry, err := artifact.LoadRegistry(registryPath)
 	if err != nil {
@@ -260,7 +260,46 @@ func TestArtifactRefreshReportsDeletedAndUnreadableApartFromEdits(t *testing.T) 
 	if !strings.Contains(warnings.String(), deleted+" was removed after La Roca registered it") {
 		t.Fatalf("update called a deleted artifact an edit: %q", warnings.String())
 	}
-	if !strings.Contains(warnings.String(), unreadable+" could not be read") {
-		t.Fatalf("the unreadable artifact was not named: %q", warnings.String())
+	if !strings.Contains(warnings.String(), unreadable) ||
+		!strings.Contains(warnings.String(), forceArtifactRefresh) {
+		t.Fatalf("the unreadable artifact was not named with its remedy: %q", warnings.String())
+	}
+}
+
+// Force repairs exactly one failure class. Offering it for a permission or a
+// concurrent-edit refusal is either useless or the clobber that refusal exists
+// to prevent, so a failure that force cannot fix carries its own reason alone.
+func TestARefreshFailureForceCannotFixIsNotAnsweredWithForce(t *testing.T) {
+	home := skillTestHome(t)
+	path := filepath.Join(home, ".codex", "skills", "roca", "SKILL.md")
+	writeFile(t, path, artifact.Zoned("shipped-v1\n", ""))
+	if err := os.Chmod(filepath.Dir(path), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(filepath.Dir(path), 0o700) })
+	registryPath := filepath.Join(home, ".roca", "artifacts.json")
+	if err := artifact.SaveRegistry(registryPath, artifact.Registry{Entries: []artifact.Entry{{
+		Kind: "skill", Runtime: "codex", Path: path,
+		SystemSHA256: artifact.Checksum("shipped-v1\n"),
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(home, ".roca", "config.toml"), "[features]\nartifact_refresh = true\n")
+
+	env := &cliEnv{build: Build{Version: "v2.0.0"}}
+	report, err := env.refreshManagedArtifacts(filepath.Join(home, "bin", "roca"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Failed) != 1 || report.Failed[0].Repairable {
+		t.Fatalf("a write failure was offered the force remedy: %+v", report.Failed)
+	}
+	var out, warnings strings.Builder
+	(&cliEnv{out: &out, errOut: &warnings}).renderArtifactRefresh(report)
+	if strings.Contains(warnings.String(), forceArtifactRefresh) {
+		t.Fatalf("force was offered for a failure it cannot fix: %q", warnings.String())
+	}
+	if !strings.Contains(warnings.String(), path) {
+		t.Fatalf("the failure does not name the artifact: %q", warnings.String())
 	}
 }

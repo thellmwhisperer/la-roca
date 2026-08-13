@@ -4,10 +4,12 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/lifecycle"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
@@ -53,6 +55,52 @@ func TestThePurgeDoesNotClaimAnOperatorPromptZone(t *testing.T) {
 	writeFile(t, prompt, artifact.Zoned(service.PresentationPrompt(), "keep me\n"))
 	if slices.Contains(ownedPaths(paths), prompt) {
 		t.Fatal("the central inventory claimed an operator-owned prompt zone")
+	}
+}
+
+// Every refresh that rewrote a managed artifact left a `.roca.bak` beside it.
+// Owned by nobody, one of them kept the data directory alive through a purge
+// while being reported as a file La Roca never created, and the ones beside a
+// skill kept its directory from being taken back.
+func TestThePurgeOwnsTheRecoveryCopiesItsOwnRefreshesLeft(t *testing.T) {
+	paths := resolvedIn(t, t.TempDir())
+	prompt := filepath.Join(dirOf(paths.DB), "prompt.md")
+	writeFile(t, prompt, artifact.Zoned(service.PresentationPrompt(), ""))
+	backup := prompt + ".roca.bak"
+	writeFile(t, backup, "what the migration replaced\n")
+	if !slices.Contains(ownedPaths(paths), backup) {
+		t.Fatalf("the purge disowned its own recovery copy: %v", ownedPaths(paths))
+	}
+}
+
+func TestSkillWithdrawalAccountsForItsRecoveryCopies(t *testing.T) {
+	for _, purge := range []bool{false, true} {
+		t.Run(map[bool]string{false: "kept", true: "purged"}[purge], func(t *testing.T) {
+			home := t.TempDir()
+			isolateRuntimeDirs(t, home)
+			path := filepath.Join(home, ".claude", "skills", "roca", "SKILL.md")
+			writeFile(t, path, artifact.Zoned(skill.Content(), ""))
+			stale := path + ".roca.bak"
+			writeFile(t, stale, "what an earlier refresh replaced\n")
+
+			report := lifecycle.Report{Purged: true, Deleted: []string{}}
+			env := &cliEnv{out: &strings.Builder{}, errOut: &strings.Builder{}}
+			env.withdrawTheIntegrations(&report, purge)
+
+			_, err := os.Stat(stale)
+			if purge != os.IsNotExist(err) {
+				t.Fatalf("purge=%v left the recovery copy at %v", purge, err)
+			}
+			if !purge {
+				if !slices.ContainsFunc(report.Kept, func(k lifecycle.Kept) bool { return k.Path == stale }) {
+					t.Fatalf("the surviving recovery copy was not reported: %+v", report.Kept)
+				}
+				return
+			}
+			if _, err := os.Stat(filepath.Dir(path)); !os.IsNotExist(err) {
+				t.Fatalf("the skill directory survived its own recovery copies: %v", err)
+			}
+		})
 	}
 }
 

@@ -268,9 +268,13 @@ func (env *cliEnv) renderArtifactRefresh(report artifactRefreshReport) {
 		fmt.Fprintf(env.errOut, "warning: %s\n",
 			divergedArtifactWarning(artifact.Path, forceArtifactRefresh, artifact.Missing))
 	}
-	for _, path := range report.Unreadable {
-		fmt.Fprintf(env.errOut, "warning: %s could not be read as a managed artifact; "+
-			"run `%s` to replace it, keeping the file in its recovery copy\n", path, forceArtifactRefresh)
+	for _, failure := range report.Failed {
+		remedy := ""
+		if failure.Repairable {
+			remedy = fmt.Sprintf("; run `%s` to replace it, keeping the file in its recovery copy",
+				forceArtifactRefresh)
+		}
+		fmt.Fprintf(env.errOut, "warning: %s%s\n", failure.Reason, remedy)
 	}
 	for _, backup := range report.Backups {
 		env.print("agent artifact: replaced content kept at %s", backup)

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -86,8 +87,7 @@ func skillInstallCommand(env *cliEnv) *cobra.Command {
 				// decides for the others: the refusal is collected, the remaining
 				// runtimes of an --all still install, and the command still fails.
 				if err != nil {
-					refused = append(refused, fmt.Errorf("%w; run `%s` to replace it",
-						err, forceSkillInstall(runtime)))
+					refused = append(refused, skillInstallFailure(err, runtime, outcome.Backup))
 					continue
 				}
 				if outcome.Diverged {
@@ -141,6 +141,21 @@ func divergedArtifactWarning(path, forceCommand string, missing bool) string {
 
 func forceSkillInstall(runtime string) string {
 	return "roca skill install " + runtime + " --force"
+}
+
+// skillInstallFailure says what went wrong and offers the force remedy only for
+// the one class it repairs. A permission error is not fixed by forcing, and
+// re-running a write the runtime interrupted is the clobber that refusal
+// exists to prevent, so neither is answered with a command to run again.
+func skillInstallFailure(err error, runtime, backup string) error {
+	if backup != "" {
+		err = fmt.Errorf("%w (previous content kept at %s)", err, backup)
+	}
+	if !errors.Is(err, artifact.ErrBrokenZones) {
+		return err
+	}
+	return fmt.Errorf("%w; run `%s` to replace it, keeping the file in its recovery copy",
+		err, forceSkillInstall(runtime))
 }
 
 func (env *cliEnv) listSkillDestinations() error {
