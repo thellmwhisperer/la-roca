@@ -95,6 +95,8 @@ func registerInstallSteps(ctx *godog.ScenarioContext, m *world) {
 		m.installedAtAnEarlierDevelopmentBuild)
 	ctx.Given(`^La Roca is installed at an earlier release version$`,
 		m.installedAtAnEarlierReleaseVersion)
+	ctx.Given(`^its configuration still asks for a retired model provider$`,
+		m.aRetiredProviderIsStillConfigured)
 	ctx.Given(`^there is a regular file named "roca" in the binaries directory$`, m.aStrangersFileNamedRoca)
 	ctx.Given(`^the runtime is not started$`, m.theRuntimeIsNotStarted)
 	ctx.Given(`^La Roca is installed in the configurations of "([^"]*)", "([^"]*)" and "([^"]*)"$`,
@@ -148,6 +150,8 @@ func registerInstallSteps(ctx *godog.ScenarioContext, m *world) {
 	ctx.Then(`^every check appears with its verdict$`, m.everyCheckHasItsVerdict)
 	ctx.Then(`^every check whose verdict is not correct names its exact remedy$`,
 		m.everyFailedCheckNamesItsRemedy)
+	ctx.Then(`^the update names how many capability proposals await$`, m.updateNamesCapabilityProposals)
+	ctx.Then(`^doctor lists the open capability proposals$`, m.doctorListsCapabilityProposals)
 	ctx.Then(`^the previous database and configuration are still intact$`, m.theDataSurvivedTheUpdate)
 	ctx.Then(`^the MCP entries in the agent configurations still point at a binary that exists$`,
 		m.theMCPEntriesStillPointSomewhere)
@@ -156,6 +160,39 @@ func registerInstallSteps(ctx *godog.ScenarioContext, m *world) {
 		m.theAgentConfigsKeptTheirOwnBytes)
 	ctx.Then(`^no agent configuration file has been deleted$`, m.noAgentConfigWasDeleted)
 	ctx.Then(`^no Roca artefact is left in the HOME$`, m.noRocaArtefactInTheHome)
+}
+
+// theRetiredProvider is the configuration this build no longer runs, and the
+// standing capability proposal the update flow has to announce. It is written
+// whole so the count the scenario asserts is the scenario's own and not
+// whatever the machine happens to have on its PATH.
+const theRetiredProvider = "[models]\norder = [\"xai\"]\n\n[models.xai]\n" +
+	"base_url = \"https://synthetic.invalid/v1\"\napi_key = \"synthetic-acceptance-key\"\n" +
+	"model = \"grok-synthetic\"\n"
+
+func (m *world) aRetiredProviderIsStillConfigured() error {
+	return os.WriteFile(filepath.Join(m.home, ".roca", "config.toml"),
+		[]byte(theRetiredProvider), 0o600)
+}
+
+func (m *world) updateNamesCapabilityProposals() error {
+	output := m.last.stdout + m.last.stderr
+	for _, want := range []string{"1 new capability needs a look", "roca doctor"} {
+		if !strings.Contains(output, want) {
+			return fmt.Errorf("update does not contain %q: %s", want, output)
+		}
+	}
+	return nil
+}
+
+func (m *world) doctorListsCapabilityProposals() error {
+	output := m.last.stdout + m.last.stderr
+	for _, want := range []string{"open capability proposals", "xai"} {
+		if !strings.Contains(output, want) {
+			return fmt.Errorf("doctor code %d does not contain %q: %s", m.last.code, want, output)
+		}
+	}
+	return nil
 }
 
 // theReleaseVersion is the clean tag a release-stamped acceptance binary reports.

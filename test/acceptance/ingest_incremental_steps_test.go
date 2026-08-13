@@ -45,13 +45,10 @@ func registerIngestIncrementalSteps(ctx *godog.ScenarioContext, w *ingestAccepta
 		}
 		return nil
 	})
-	ctx.Given(`^an extracted OpenAI export has no conversation layout$`, func() error {
-		export := filepath.Join(w.home, "declared-unrecognized-openai-export")
+	ctx.Given(`^an extracted export directory has no conversation layout$`, func() error {
+		export := filepath.Join(w.home, "unrecognized-account-export")
 		w.exportPath = export
-		if err := os.MkdirAll(export, 0o700); err != nil {
-			return err
-		}
-		return nil
+		return os.MkdirAll(export, 0o700)
 	})
 	ctx.Given(`^standing export paths remain in config$`, func() error {
 		anthropic := filepath.Join(w.home, "leftover-anthropic-export")
@@ -80,6 +77,16 @@ func registerIngestIncrementalSteps(ctx *godog.ScenarioContext, w *ingestAccepta
 	})
 	ctx.When(`^I run ingest with the export path$`, func() error {
 		return w.runExportIngest(false)
+	})
+	ctx.When(`^I run ingest with the export path and it is refused$`, func() error {
+		result, err := w.runCommand("ingest", w.exportPath, "--db-path", w.dbPath)
+		if err != nil {
+			return err
+		}
+		if result.code == 0 {
+			return fmt.Errorf("ingest accepted %q: %s", w.exportPath, result.stdout)
+		}
+		return nil
 	})
 	ctx.When(`^I run ingest with the export path twice in a row$`, func() error {
 		if err := w.runExportIngest(false); err != nil {
@@ -193,16 +200,12 @@ func registerIngestIncrementalSteps(ctx *godog.ScenarioContext, w *ingestAccepta
 			WHERE s.source_agent = 'chatgpt-web' AND e.provider = 'openai'
 			  AND e.model IS NOT NULL`, 3)
 	})
-	ctx.Then(`^ingest names the unrecognized OpenAI export directory$`, func() error {
-		warnings, ok := w.last.doc["warnings"].([]any)
-		if !ok || len(warnings) != 1 {
-			return fmt.Errorf("warnings = %v, want one layout warning", w.last.doc["warnings"])
-		}
-		warning, _ := warnings[0].(string)
-		path := filepath.Join(w.home, "declared-unrecognized-openai-export")
-		if !strings.Contains(warning, "unrecognized OpenAI export layout") ||
-			!strings.Contains(warning, path) {
-			return fmt.Errorf("layout warning = %q, want path %q", warning, path)
+	ctx.Then(`^ingest names the directory and both export layouts$`, func() error {
+		refusal := w.last.stdout + w.last.stderr
+		for _, want := range []string{w.exportPath, "memories.json", "conversations-*.json"} {
+			if !strings.Contains(refusal, want) {
+				return fmt.Errorf("refusal does not name %q: %s", want, refusal)
+			}
 		}
 		return nil
 	})

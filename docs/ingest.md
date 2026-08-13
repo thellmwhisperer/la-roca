@@ -63,9 +63,12 @@ its snapshot stated, and an absent record is not a low one: such a row is filled
 where it is empty and never overwritten, so an upgrade cannot cost a corpus
 provenance it already had.
 
-An explicit directory containing neither conversation shape is reported as an
-unrecognized OpenAI export layout. A path that does not exist, is not a
-directory, or cannot be read is refused before ingest starts.
+The directory decides which vendor's parser reads it: `memories.json`, or a
+`conversations.json` of `chat_messages` records, is a Claude export, and
+`conversations.json` or `conversations-*.json` otherwise is a ChatGPT one. A
+directory carrying neither is refused naming both layouts rather than attributed
+to one of the two, as is a path that does not exist, is not a directory, or
+cannot be read. Every refusal happens before ingest starts.
 
 Each `conversation_id` becomes an unprojected `chatgpt-web` session. La Roca
 walks the `mapping` parent/children tree and pairs user messages with assistant

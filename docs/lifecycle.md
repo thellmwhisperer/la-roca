@@ -204,6 +204,7 @@ The current proposals are:
 - When only a credential file from an older release is left, offer to remove
   that file alone. It changes no model configuration and never disables a
   provider this build can still run.
+
 The update channel can be selected with the same repository and API environment
 variables used by installation.
 

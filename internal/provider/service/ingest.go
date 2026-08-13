@@ -55,6 +55,16 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (IngestResult, 
 	if s.opts.ReadOnly && !req.DryRun {
 		return IngestResult{}, errReadOnly
 	}
+	// The export is classified before anything is prepared, so a directory that
+	// is neither vendor's export costs the operator a refusal and not a run.
+	roots := s.opts.Sources
+	if req.ExportPath != "" {
+		selected, err := ingest.WithExportPath(roots, req.ExportPath)
+		if err != nil {
+			return IngestResult{}, err
+		}
+		roots = selected
+	}
 	var prepared search.Report
 	if !req.DryRun {
 		var err error
@@ -64,10 +74,6 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (IngestResult, 
 		}
 	}
 
-	roots := s.opts.Sources
-	if req.ExportPath != "" {
-		roots = ingest.WithExportPath(roots, req.ExportPath)
-	}
 	report, err := ingest.Run(ctx, s.db, s.registry, ingest.Options{
 		Roots:        roots,
 		DryRun:       req.DryRun,

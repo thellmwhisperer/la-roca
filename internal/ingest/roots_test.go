@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -159,13 +160,39 @@ func TestAnExplicitExportPathIsScopedToOneInvocationAndDetectedByShape(t *testin
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			path := filepath.Join("testdata", test.fixture)
-			got := WithExportPath(base, path)
+			got, err := WithExportPath(base, path)
+			if err != nil {
+				t.Fatalf("export %q: %v", path, err)
+			}
 			if (len(got.ClaudeWebExports) == 1) != test.claude ||
 				(len(got.ChatGPTWebExports) == 1) == test.claude {
 				t.Fatalf("roots = %+v", got)
 			}
 			if len(base.ClaudeWebExports) != 0 || len(base.ChatGPTWebExports) != 0 {
 				t.Fatalf("base roots were mutated: %+v", base)
+			}
+		})
+	}
+}
+
+// A vendor nobody can read off the folder is nobody's vendor. The refusal names
+// both layouts, because the operator knows which product they exported and the
+// binary does not.
+func TestADirectoryWithNeitherExportShapeIsRefusedNamingBothOfThem(t *testing.T) {
+	base := ResolveRoots(Environment{GOOS: "linux", Home: "/home/op"}, Settings{})
+	for _, test := range []struct{ name, root string }{
+		{"empty directory", t.TempDir()},
+		{"the export's parent", "testdata"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := WithExportPath(base, test.root)
+			if err == nil {
+				t.Fatalf("roots = %+v, want a refusal", got)
+			}
+			for _, shape := range []string{"memories.json", "conversations-*.json"} {
+				if !strings.Contains(err.Error(), shape) {
+					t.Errorf("refusal %q does not name %q", err, shape)
+				}
 			}
 		})
 	}

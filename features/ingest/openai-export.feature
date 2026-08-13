@@ -18,10 +18,10 @@ Feature: Official OpenAI data export
     When I run ingest with the export path
     Then every ChatGPT shard is ingested with OpenAI provenance
 
-  Scenario: An explicit directory without a conversation layout is diagnosed
-    Given an extracted OpenAI export has no conversation layout
-    When I run ingest with the export path
-    Then ingest names the unrecognized OpenAI export directory
+  Scenario: An explicit directory without a conversation layout is refused
+    Given an extracted export directory has no conversation layout
+    When I run ingest with the export path and it is refused
+    Then ingest names the directory and both export layouts
 
   Scenario: A plain nightly ingest ignores leftover export configuration
     Given standing export paths remain in config
