@@ -58,10 +58,10 @@ Feature: Frontier through local agent CLIs with a local floor
     And that warning lists the available providers
 
   @fast
-  Scenario: Login verifies a CLI and persists its answering model without storing authentication
-    When I log in to "codex" with model "gpt-5.6-luna"
+  Scenario: Model set verifies a CLI and persists its answering model without storing authentication
+    When I set "codex" to model "gpt-5.6-luna"
     Then the configuration chooses model "gpt-5.6-luna" for provider "codex"
-    And the login output names the model, its configuration source and both ways to change it
+    And the model set output names the model and its configuration source
 
   @fast
   Scenario: Doctor names the chosen CLI model, its source and both ways to change it

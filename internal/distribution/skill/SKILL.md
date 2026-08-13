@@ -41,11 +41,13 @@ roca store --layer discovery --content "FTS ranks by bm25, created_at only for t
 roca doctor                                    # diagnosis + remedies
 ```
 
-To change the answering model later without logging in, run
-`roca model set <id>`. `roca login codex --model <id>` and
-`roca login claude --model <id>` optionally verify the CLI's existing session
-before persisting `models.<provider>.model` in `~/.roca/config.toml`; La Roca
-does not handle the authentication or store its secrets.
+To verify that the configured provider session answers without changing any
+configuration, run `roca model check [provider]`. To change the answering model,
+run `roca model set [id]`; with no ID, an interactive terminal chooses from the
+first provider's catalogue, while `roca model set <provider>` chooses from that
+provider's catalogue. An unknown ID is refused, and a successful set
+writes only `models.<provider>.model` without changing provider order. La Roca
+does not handle authentication or store its secrets.
 
 `roca exec` runs exactly what `query --sql-only` prints, under the same
 read-only gate; nothing that is not a SELECT reaches the database.

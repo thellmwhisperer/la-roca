@@ -20,7 +20,7 @@ func (testModelBackend) Catalogue(_ context.Context, _, current string) (modelCa
 	models := []string{
 		"claude-test",
 		"deepseek-chat", "gpt-5.6-luna", "gpt-5.6-sol", "grok-4", "grok-chosen",
-		"internal-7b", "internal-9b", "qwen3.5:4b",
+		"internal-7b", "qwen3.5:4b",
 	}
 	if current != "" && !slices.Contains(models, current) {
 		models = append(models, current)
