@@ -465,7 +465,12 @@ func openRocaOps(t *testing.T, root string) *sql.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db, err := sql.Open("sqlite", descriptor.Database)
+	return openSQLite(t, descriptor.Database)
+}
+
+func openSQLite(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -481,16 +486,14 @@ func installQueryPlugin(t *testing.T, root, name, semantic, ddl string) {
 	if err := os.WriteFile(filepath.Join(directory, plugin.SemanticFilename), []byte(semantic), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	db, err := sql.Open("sqlite", filepath.Join(directory, "plugin.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := openSQLite(t, filepath.Join(directory, "plugin.db"))
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}()
 	if _, err := db.Exec(ddl); err != nil {
-		db.Close()
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
+		t.Fatalf("create synthetic plugin database: %v", err)
 	}
 }
 

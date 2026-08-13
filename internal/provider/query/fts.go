@@ -215,6 +215,10 @@ func RenderSQLAttachedMemoryLike(plan Plan, coordinationLayers []string,
 }
 
 func likeAnyClauses(column, term string) string {
+	return joinedLikeClauses(column, term, " OR ")
+}
+
+func joinedLikeClauses(column, term, separator string) string {
 	parts := strings.Split(term, "+")
 	clauses := make([]string, 0, len(parts))
 	for _, part := range parts {
@@ -223,7 +227,7 @@ func likeAnyClauses(column, term string) string {
 			clauses = append(clauses, likeClause(column, part))
 		}
 	}
-	return strings.Join(clauses, " OR ")
+	return strings.Join(clauses, separator)
 }
 
 func quoteIdentifier(name string) string {
@@ -241,16 +245,7 @@ func memoryAuthor(alias string) string {
 // likeClauses require the column to match every word of the term: searching for
 // "long dashes" is not searching for "long" or "dashes".
 func likeClauses(column, term string) string {
-	parts := strings.Split(term, "+")
-	clauses := make([]string, 0, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		clauses = append(clauses, likeClause(column, part))
-	}
-	return strings.Join(clauses, " AND ")
+	return joinedLikeClauses(column, term, " AND ")
 }
 
 // likeClause looks for the word as it was written and, when it carries

@@ -23,23 +23,22 @@ type pluginRoute struct {
 }
 
 func (s *Service) pluginsForQuestion(ctx context.Context, question string) pluginRoute {
-	if !s.pluginsActive() {
-		return pluginRoute{}
-	}
-	candidates, warnings := plugin.Discover(s.opts.PluginDir)
-	candidates = s.onDemand(candidates)
-	return s.withResidents(validatePluginRouteLimit(ctx,
-		plugin.Relevant(question, candidates), warnings, plugin.MaxAttached-len(s.resident)))
+	return s.pluginsFor(ctx, question, plugin.Relevant)
 }
 
 func (s *Service) pluginsForSQL(ctx context.Context, statement string) pluginRoute {
+	return s.pluginsFor(ctx, statement, plugin.Referenced)
+}
+
+func (s *Service) pluginsFor(ctx context.Context, input string,
+	selectPlugins func(string, []plugin.Descriptor) []plugin.Descriptor) pluginRoute {
 	if !s.pluginsActive() {
 		return pluginRoute{}
 	}
 	candidates, warnings := plugin.Discover(s.opts.PluginDir)
 	candidates = s.onDemand(candidates)
 	return s.withResidents(validatePluginRouteLimit(ctx,
-		plugin.Referenced(statement, candidates), warnings, plugin.MaxAttached-len(s.resident)))
+		selectPlugins(input, candidates), warnings, plugin.MaxAttached-len(s.resident)))
 }
 
 func validatePluginRoute(ctx context.Context, candidates []plugin.Descriptor,
