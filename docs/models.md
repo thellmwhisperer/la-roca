@@ -315,8 +315,9 @@ shown with its own yes or no first.
    SQL and the engine's exact verdict back to the same model once, through the
    same repair and gate path.
 5. Whatever still fails from there on degrades to the keyword rescue and says which of
-   four things went wrong: `model_unavailable`, `model_error`, `invalid_sql`,
-   `sql_execution_error`.
+   five things went wrong: `model_unavailable`, `model_error`, `invalid_sql`,
+   `sql_execution_error`, `sql_execution_timeout`. A statement killed by the
+   `query.timeout_ms` bound is the last one, and it is never retried.
 
 A provider in an explicit order that says it is available and then fails is
 **not** silently retried with the next one. The factory order has one declared

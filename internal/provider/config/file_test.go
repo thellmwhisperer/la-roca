@@ -272,6 +272,45 @@ func TestStrictInputFeatureDefaultsOnAndCanBeDisabled(t *testing.T) {
 	}
 }
 
+// A value this build cannot read is not a setting. Reading it as one is how
+// `timeout_ms = "5000"` became a zero that removed the execution bound, and how
+// a misspelled `strict_input` became an opt-out nobody asked for.
+func TestAValueOfTheWrongTypeKeepsTheDefaultAndWarns(t *testing.T) {
+	for _, testCase := range []struct {
+		name, body, wants string
+		check             func(File) bool
+	}{
+		{
+			name: "quoted timeout", body: "[query]\ntimeout_ms = \"5000\"\n",
+			wants: "query.timeout_ms",
+			check: func(file File) bool { return !file.Query.TimeoutSet && file.Query.TimeoutMS == 0 },
+		},
+		{
+			name: "quoted strict_input", body: "[features]\nstrict_input = \"false\"\n",
+			wants: "features.strict_input",
+			check: func(file File) bool { return file.Features.StrictInput },
+		},
+		{
+			name: "numeric strict_input", body: "[features]\nstrict_input = 0\n",
+			wants: "features.strict_input",
+			check: func(file File) bool { return file.Features.StrictInput },
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			file, err := LoadFile(write(t, testCase.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !testCase.check(file) {
+				t.Fatalf("a malformed value became a setting: %+v", file)
+			}
+			if len(file.Warnings) != 1 || !strings.Contains(file.Warnings[0], testCase.wants) {
+				t.Fatalf("warnings = %v, want one naming %q", file.Warnings, testCase.wants)
+			}
+		})
+	}
+}
+
 func TestSetProviderModelCreatesAndSurgicallyEditsTheConfiguration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "config.toml")
 	if err := SetProviderModel(path, "xai", "grok-first"); err != nil {

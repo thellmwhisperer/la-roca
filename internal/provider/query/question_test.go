@@ -61,8 +61,24 @@ func TestQuestionGateRejectsSecurityPatternsWithoutDisclosingWhichMatched(t *tes
 			t.Errorf("attack %q returned %v, want the generic rejection", attack, err)
 			continue
 		}
-		if err.Error() != "invalid question" {
+		// One text for every signature is what makes the rejection say nothing:
+		// a message that varied with the match would be the disclosure itself.
+		if err.Error() != query.ErrQuestionRejected.Error() {
 			t.Errorf("attack %q leaked its matched pattern: %v", attack, err)
+		}
+	}
+}
+
+// The rejection stays generic and still has to be actionable: a false positive
+// with no named way out is a question the operator cannot ask at all.
+func TestTheGenericRejectionNamesTheOptOutAndNothingElse(t *testing.T) {
+	message := query.ErrQuestionRejected.Error()
+	if !strings.Contains(message, "features.strict_input = false") {
+		t.Fatalf("the rejection does not name its opt-out: %q", message)
+	}
+	for _, signature := range []string{"jailbreak", "base64", "DAN", "system prompt", "pattern"} {
+		if strings.Contains(strings.ToLower(message), strings.ToLower(signature)) {
+			t.Errorf("the rejection discloses %q: %q", signature, message)
 		}
 	}
 }

@@ -106,6 +106,12 @@ func TestTheUserQuestionIsEscapedAndFollowedByReinforcement(t *testing.T) {
 		!strings.Contains(prompt[reinforcement:], "single SQLite SELECT") {
 		t.Fatalf("reinforcement does not restate the trust boundary:\n%s", prompt)
 	}
+	// The escaping isolates the question and nothing more. Unless the prompt
+	// says it happened, the model reads `&amp;` as the operator's own text and
+	// quotes it back at them.
+	if !strings.Contains(prompt[reinforcement:], EscapedTextNotice) {
+		t.Fatalf("the prompt escapes the question without declaring it:\n%s", prompt)
+	}
 }
 
 func TestThePromptsDeclareRefusalForQuestionsOutsideMemory(t *testing.T) {

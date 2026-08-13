@@ -14,8 +14,12 @@ import (
 const MaxQuestionChars = 1000
 
 // ErrQuestionRejected is deliberately generic: callers learn that the input
-// gate refused the question, never which signature it matched.
-var ErrQuestionRejected = errors.New("invalid question")
+// gate refused the question, never which signature it matched. It carries the
+// one remedy that discloses nothing, the operator's own opt-out, because a
+// rejection with no way out sends a false positive nowhere. The text is the
+// same for every signature, so nothing about the match leaks through it.
+var ErrQuestionRejected = errors.New("invalid question; if this is an ordinary question, " +
+	"opt out of the experimental input gate with features.strict_input = false in the config")
 
 var hostileQuestionPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)ignore\s+(?:(?:all|previous|prior|above|my|the|your|these)\s+)*(instructions?|prompts?|rules?)`),

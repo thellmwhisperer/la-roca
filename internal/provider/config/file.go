@@ -768,7 +768,17 @@ func readQuery(section map[string]any, path string, warnings *[]string) QueryCon
 	for _, key := range sortedKeys(section) {
 		switch key {
 		case "timeout_ms":
-			query.TimeoutMS = readInt(section[key])
+			// Only a value that really decoded as a number is a setting. The
+			// presence of the key is not: `timeout_ms = "5000"` decodes as zero,
+			// and a zero that was never written is an execution bound removed by a
+			// typo. What did not decode keeps the default and says so.
+			milliseconds, ok := readNumber(section[key])
+			if !ok {
+				*warnings = append(*warnings,
+					invalidValue("query.timeout_ms", path, "a whole number of milliseconds"))
+				continue
+			}
+			query.TimeoutMS = milliseconds
 			query.TimeoutSet = true
 		default:
 			if !knownQueryKeys[key] {
@@ -784,9 +794,16 @@ func readFeatures(section map[string]any, path string, warnings *[]string) Featu
 	for _, key := range sortedKeys(section) {
 		switch key {
 		case "strict_input":
-			if strict, ok := section[key].(bool); ok {
-				features.StrictInput = strict
+			// The gate stays on for anything that is not a boolean, because a
+			// misspelled opt-out must not be an opt-out. The operator is told, or
+			// the escape hatch silently does nothing.
+			strict, ok := section[key].(bool)
+			if !ok {
+				*warnings = append(*warnings,
+					invalidValue("features.strict_input", path, "true or false"))
+				continue
 			}
+			features.StrictInput = strict
 		default:
 			if !knownFeaturesKeys[key] {
 				*warnings = append(*warnings, unknownKey("features."+key, path))
@@ -897,6 +914,17 @@ func unknownKey(key, path string) string {
 		key, path)
 }
 
+// invalidValue is the warning for a key this version understands written with
+// a value it cannot read. It names what was expected and says which behaviour
+// applies meanwhile, because the alternative is a setting that quietly is not
+// the one the operator wrote.
+func invalidValue(key, path, want string) string {
+	return fmt.Sprintf(
+		"the key %s of %s is not %s: it is ignored and the built-in default applies. "+
+			"Correct that line, or check `roca doctor` for the values this version accepts",
+		key, path, want)
+}
+
 // Default resolves a loose key under [defaults].
 func (f File) Default(key string) string {
 	if value, ok := f.defaults[key]; ok {
@@ -984,13 +1012,21 @@ func readStrings(value any) []string {
 }
 
 func readInt(value any) int {
+	number, _ := readNumber(value)
+	return number
+}
+
+// readNumber also says whether the value really was one. A caller that treats
+// the presence of a key as the setting needs that answer: without it, a value
+// TOML decoded as text is indistinguishable from a written zero.
+func readNumber(value any) (int, bool) {
 	switch typed := value.(type) {
 	case int64:
-		return int(typed)
+		return int(typed), true
 	case float64:
-		return int(typed)
+		return int(typed), true
 	}
-	return 0
+	return 0, false
 }
 
 func sortedKeys(table map[string]any) []string {

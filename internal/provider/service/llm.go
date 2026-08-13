@@ -76,8 +76,10 @@ func correction(failure error, retryType string) string {
 //     gate. A model is not above the gate: if it were, "everything that runs has
 //     been validated" would stop being true.
 //  3. Whatever fails from here on degrades to the keyword rescue instead of
-//     failing, and it says which of the four things went wrong. The fragility of
-//     a provider never takes down a query.
+//     failing, and it says which of the declared things went wrong. The
+//     fragility of a provider never takes down a query. An explicit refusal is
+//     not one of them: the model answered, so the question ends there and no
+//     rescue searches for rows the model already said are out of scope.
 //
 // Configured orders never retry a provider failure with the next provider. The
 // factory local-CLI exception is declared in the attempts and applies only to
@@ -321,6 +323,7 @@ func (s *Service) InterpretStream(ctx context.Context, question string,
 	b.WriteString("Use only these results, never general knowledge. If the results do not support the question, say so plainly before anything else. ")
 	b.WriteString("A requested style changes delivery only and never licenses invention. Answer in the same language as the question. ")
 	b.WriteString("Write calm, terminal-friendly prose: paragraphs and simple dashes only. Do not use headings or tables.\n")
+	b.WriteString(query.EscapedTextNotice + "\n")
 	b.WriteString("</instructions>\n\n<question>\n")
 	b.WriteString(query.EscapePromptText(question))
 	b.WriteString("\n</question>\n\n<result_shape>\ncolumns: ")
@@ -366,24 +369,30 @@ func (s *Service) InterpretStream(ctx context.Context, question string,
 	}
 	_, nativeStream := chosen.(provider.StreamingProvider)
 	stream := onDelta != nil && nativeStream
+	// The guardian needs the complete sentence before it can remove a fabricated
+	// comparison, so a result it may still rewrite is held back and published
+	// once. A result it cannot touch keeps the live prose the operator reads as
+	// it is written: buffering everything would pay the whole cost of the
+	// guardian on every answer it never edits.
+	buffered := stream && query.InterpretationMayBeSanitized(columns)
 	if onStart != nil {
 		onStart(stream)
 	}
 	var answer provider.ChatResponse
-	if stream {
-		// The guardian needs the complete sentence before it can remove a known
-		// fabricated comparison. Keep native transport streaming, but buffer its
-		// untrusted deltas and publish only the sanitized final prose.
+	switch {
+	case buffered:
 		answer, err = cascade.ChatStream(ctx, chosen, request, func(string) {})
-	} else {
+	case stream:
+		answer, err = cascade.ChatStream(ctx, chosen, request, onDelta)
+	default:
 		answer, err = cascade.Chat(ctx, chosen, request)
 	}
 	if err != nil {
 		return Interpretation{}, err
 	}
 	// Prose keeps its fences and its punctuation; only the reasoning goes.
-	answered.Text = query.SanitizeInterpretation(provider.CleanProse(answer.Content), columns)
-	if stream {
+	answered.Text = query.SanitizeInterpretation(provider.CleanProse(answer.Content), columns, limited)
+	if buffered {
 		onDelta(answered.Text)
 	}
 	return answered, nil

@@ -228,18 +228,25 @@ func TestTheModelsSQLAlwaysPassesTheGate(t *testing.T) {
 	}
 }
 
+// A refusal is terminal. The question is asked with words the seeded database
+// does match, so the keyword rescue WOULD have rows to offer: answering with
+// them would be overriding the only party that read the question with a search
+// the model already said is beside the point.
 func TestARefusalIsAnHonestNonSQLResult(t *testing.T) {
 	const answer = "REFUSE because the question is outside the memory database"
 	model := answering("codex", answer)
 	svc := serviceWithModel(t, model)
 
-	res, err := svc.Query(t.Context(), service.QueryRequest{Question: "what is the tallest mountain?"})
+	res, err := svc.Query(t.Context(), service.QueryRequest{Question: theQuestionWithAMatch})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if model.requests != 1 || res.Path != service.PathRefused || res.Degraded != "" ||
 		res.RetriedSQL || res.SQL != "" || res.RowCount != 0 {
 		t.Fatalf("refusal result = requests %d, %+v", model.requests, res)
+	}
+	if res.Retried || res.QueryPlan != nil || res.Match != "" || len(res.Rows) != 0 {
+		t.Fatalf("a refusal fell through to the keyword rescue: %+v", res)
 	}
 	if res.ModelSQL != answer || !strings.Contains(res.Message, "outside") {
 		t.Fatalf("refusal provenance = %+v", res)
@@ -982,27 +989,72 @@ func TestInterpretPromptIsLanguageAgnostic(t *testing.T) {
 	}
 }
 
-func TestInterpretationGuardianScrubsBeforeReturningOrStreaming(t *testing.T) {
-	model := &streamingInterpretationProvider{fakeProvider: fakeProvider{
-		name: "codex", model: "codex-model", ready: provider.Readiness{Ready: true},
-		sql: "Alpha leads, more than the next two combined. Beta follows.",
-	}}
+// What the guardian may still rewrite is held until it is complete, and what
+// it can never touch reaches the operator as the model writes it. Buffering
+// both would cost every answer the live prose to protect the ones that need it.
+func TestInterpretationGuardianBuffersOnlyWhatItMayStillRewrite(t *testing.T) {
+	const fabricated = "Alpha leads, more than the next two combined. Beta follows."
+	for _, testCase := range []struct {
+		name, measure, want string
+		wantDeltas          int
+		wantHint            bool
+	}{
+		{
+			name: "raw rows are held back", measure: "count",
+			want: "Alpha leads. Beta follows.", wantDeltas: 1, wantHint: true,
+		},
+		{
+			name: "an explicit comparison column streams live", measure: "combined_total",
+			want: fabricated, wantDeltas: 2,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			model := &streamingInterpretationProvider{fakeProvider: fakeProvider{
+				name: "codex", model: "codex-model",
+				ready: provider.Readiness{Ready: true}, sql: fabricated,
+			}}
+			svc := serviceWithModel(t, model)
+			var deltas []string
+			got, err := svc.InterpretStream(t.Context(), "which names lead?",
+				[]string{"name", testCase.measure}, []map[string]any{
+					{"name": "Alpha", testCase.measure: 30},
+					{"name": "Beta", testCase.measure: 20},
+					{"name": "Gamma", testCase.measure: 15},
+				}, 0, "codex", nil, func(delta string) { deltas = append(deltas, delta) })
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Text != testCase.want || strings.Join(deltas, "") != testCase.want {
+				t.Fatalf("guardian returned %q and streamed %q, want %q",
+					got.Text, strings.Join(deltas, ""), testCase.want)
+			}
+			if len(deltas) != testCase.wantDeltas {
+				t.Fatalf("published %d deltas, want %d: %q", len(deltas), testCase.wantDeltas, deltas)
+			}
+			hint := strings.Contains(model.prompts[0], "raw rows without an explicit comparison column")
+			if hint != testCase.wantHint {
+				t.Fatalf("shape hint present = %v, want %v", hint, testCase.wantHint)
+			}
+		})
+	}
+}
+
+// A claim the rows do bear out is evidence, not invention: deleting it would
+// be the guardian rewriting a true answer.
+func TestTheGuardianKeepsAComparisonTheRowsSupport(t *testing.T) {
+	const claim = "Alpha leads, more than the next two combined. Beta follows."
+	model := answering("codex", claim)
 	svc := serviceWithModel(t, model)
-	var deltas []string
-	got, err := svc.InterpretStream(t.Context(), "which names lead?",
+
+	got, err := svc.Interpret(t.Context(), "which names lead?",
 		[]string{"name", "count"}, []map[string]any{
-			{"name": "Alpha", "count": 30}, {"name": "Beta", "count": 20}, {"name": "Gamma", "count": 15},
-		}, 0, "codex", nil, func(delta string) { deltas = append(deltas, delta) })
+			{"name": "Alpha", "count": 100}, {"name": "Beta", "count": 20}, {"name": "Gamma", "count": 15},
+		}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = "Alpha leads. Beta follows."
-	if got.Text != want || strings.Join(deltas, "") != want {
-		t.Fatalf("guardian returned %q and streamed %q, want %q", got.Text, strings.Join(deltas, ""), want)
-	}
-	if strings.Contains(strings.Join(model.rawDeltas, ""), want) ||
-		!strings.Contains(model.prompts[0], "raw rows without an explicit comparison column") {
-		t.Fatalf("guardian did not buffer the raw stream or add its shape hint: %+v", model)
+	if got.Text != claim {
+		t.Fatalf("the guardian deleted a claim the rows support: %q", got.Text)
 	}
 }
 
