@@ -7,7 +7,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
-// The five tools of v1 each have a concrete caller. Adding one changes the
+// The tools of v1 each have a concrete caller. Adding one changes the
 // product surface; `roca_list_runs` is out because
 // `runs` is v2 and this binary creates no such table.
 var (
@@ -15,6 +15,12 @@ var (
 		Name: "roca_exec",
 		Description: "Run SQL returned by roca_sql under the same read-only gate as " +
 			"roca exec. Every statement is validated before it reaches the database.",
+	}
+	exploreTool = &mcp.Tool{
+		Name: "roca_explore",
+		Description: "Investigate one concept with the same full output as roca explore: " +
+			"grounded prose, deterministic terrain, next trail hints, and the generated SQL. " +
+			"Set deep for the full terrain map and 2-3 next probes.",
 	}
 	queryTool = &mcp.Tool{
 		Name: "roca_query",
@@ -64,6 +70,24 @@ type queryArgs struct {
 	Query    string `json:"query" jsonschema:"non-empty natural-language question, preferably under 15 words, maximum 1000 characters"`
 	Layer    string `json:"layer,omitempty" jsonschema:"restrict the answer to one memory layer"`
 	MaxChars int    `json:"max_chars,omitempty" jsonschema:"character budget per text field"`
+}
+
+// exploreArgs declares the investigation mission. The tool name declares
+// exploration; Deep distinguishes its light and full-care variants.
+type exploreArgs struct {
+	Query    string `json:"query" jsonschema:"one non-empty concept, preferably a single bare word, maximum 1000 characters"`
+	Layer    string `json:"layer,omitempty" jsonschema:"restrict the investigation to one memory layer"`
+	MaxChars int    `json:"max_chars,omitempty" jsonschema:"character budget per text field"`
+	Deep     bool   `json:"deep,omitempty" jsonschema:"use the full terrain map and propose 2-3 next probes"`
+}
+
+func (a exploreArgs) request() service.ExploreRequest {
+	return service.ExploreRequest{
+		QueryRequest: service.QueryRequest{
+			Question: a.Query, Layer: a.Layer, MaxChars: a.MaxChars,
+		},
+		Deep: a.Deep,
+	}
 }
 
 func (a queryArgs) request() service.QueryRequest {
