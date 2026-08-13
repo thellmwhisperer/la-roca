@@ -10,7 +10,7 @@ Reading order, from operator to contributor:
    choose their models.
 3. [Ingest sources](ingest.md): declare downloaded data exports and understand
    their incremental boundary.
-4. [Plugins](plugins.md): extend the CLI with Git-style neighbor executables
+4. [Plugins](plugins.md): isolated SQLite data plugins and Git-style neighbor executables
    and compose the stable machine surfaces.
 5. [The MCP plug](mcp.md): the stdio server, its five tools, the TOON answer
    contract, and the supported integration targets.

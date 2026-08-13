@@ -52,6 +52,24 @@ func TestQueryRendersTheRouteLineTOONRowsAndHelp(t *testing.T) {
 	}
 }
 
+func TestQueryAndExecDeclareConsultedDatabases(t *testing.T) {
+	queryText := axi.Query(service.QueryResult{
+		Path: service.PathLLM, Match: service.MatchFound,
+		Databases: []string{"core", "plugin:receipts"},
+		Columns:   []string{"text", "database"}, RowCount: 1,
+		Rows: []map[string]any{{"text": "synthetic", "database": "plugin:receipts"}},
+	}, "")
+	if !strings.Contains(queryText, "databases: core, plugin:receipts") {
+		t.Fatalf("query databases are absent:\n%s", queryText)
+	}
+	execText := axi.Exec(service.ExecResult{
+		SQL: "SELECT 1", Databases: []string{"core", "plugin:receipts"},
+	})
+	if !strings.Contains(execText, "databases: core, plugin:receipts") {
+		t.Fatalf("exec databases are absent:\n%s", execText)
+	}
+}
+
 func TestQueryDeclaresEveryModelSQLRepair(t *testing.T) {
 	got := axi.Query(service.QueryResult{
 		Question: "synthetic query", Path: service.PathLLM, Engine: "codex", Model: "test",

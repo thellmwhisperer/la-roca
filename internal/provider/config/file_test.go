@@ -339,6 +339,24 @@ func TestAValueOfTheWrongTypeKeepsTheDefaultAndWarns(t *testing.T) {
 	}
 }
 
+func TestPluginsAreExperimentalAndDefaultOff(t *testing.T) {
+	missing, err := LoadFile(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if missing.Features.Plugins {
+		t.Fatal("plugins defaulted on without a configuration file")
+	}
+
+	enabled, err := LoadFile(write(t, "[features]\nplugins = true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !enabled.Features.Plugins || len(enabled.Warnings) != 0 {
+		t.Fatalf("features = %+v, warnings = %v", enabled.Features, enabled.Warnings)
+	}
+}
+
 func TestSetProviderModelCreatesAndSurgicallyEditsTheConfiguration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "config.toml")
 	if err := SetProviderModel(path, "xai", "grok-first"); err != nil {
