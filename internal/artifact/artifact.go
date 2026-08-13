@@ -61,8 +61,12 @@ func Parse(content string) (Zones, error) {
 	}
 	userStart := strings.Index(content, UserBegin+"\n")
 	userEnd := strings.Index(content, UserEnd)
-	if systemEnd < 0 || userStart < 0 || userEnd < 0 ||
-		systemEnd >= userStart || userStart >= userEnd || userEnd+len(UserEnd) > len(content) {
+	if systemEnd < 0 || userStart < 0 || userEnd < 0 {
+		return Zones{}, fmt.Errorf("artifact does not contain one ordered SYSTEM and USER zone")
+	}
+	expectedUserStart := systemEnd + len(SystemEnd) + 1
+	if userStart != expectedUserStart || userStart >= userEnd ||
+		userEnd+len(UserEnd) > len(content) {
 		return Zones{}, fmt.Errorf("artifact does not contain one ordered SYSTEM and USER zone")
 	}
 	userStart += len(UserBegin) + 1

@@ -25,19 +25,29 @@ func Replace(path string, data, previous []byte) error {
 
 // BackUp preserves previous bytes beside path without overwriting older copies.
 func BackUp(path string, previous []byte) (string, error) {
-	backup := path + ".roca.bak"
-	for index := 1; ; index++ {
-		if _, err := os.Stat(backup); os.IsNotExist(err) {
-			break
-		} else if err != nil {
+	for index := 0; ; index++ {
+		backup := path + ".roca.bak"
+		if index > 0 {
+			backup = fmt.Sprintf("%s.roca.bak.%d", path, index)
+		}
+		file, err := os.OpenFile(backup, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if os.IsExist(err) {
+			continue
+		}
+		if err != nil {
 			return "", fmt.Errorf("inspect backup %s: %w", backup, err)
 		}
-		backup = fmt.Sprintf("%s.roca.bak.%d", path, index)
+		if _, err := file.Write(previous); err != nil {
+			file.Close()
+			os.Remove(backup)
+			return "", fmt.Errorf("back up %s: %w", path, err)
+		}
+		if err := file.Close(); err != nil {
+			os.Remove(backup)
+			return "", fmt.Errorf("close backup %s: %w", backup, err)
+		}
+		return backup, nil
 	}
-	if err := os.WriteFile(backup, previous, 0o600); err != nil {
-		return "", fmt.Errorf("back up %s: %w", path, err)
-	}
-	return backup, nil
 }
 
 func publish(path string, data, previous []byte, mode, dirMode os.FileMode, restrictDir bool) (err error) {

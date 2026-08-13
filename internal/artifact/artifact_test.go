@@ -159,6 +159,8 @@ func TestMalformedZoneMarkersAreNeverAdoptedAsUserContent(t *testing.T) {
 	for _, body := range []string{
 		"<!-- ROCA SYSTEM BEGIN -->\nmissing the remaining markers\n",
 		"---\n# ROCA SYSTEM BEGIN\nmissing the remaining markers\n",
+		artifact.SystemBegin + "\nsystem\n" + artifact.SystemEnd + "\nunowned bytes\n" +
+			artifact.UserBegin + "\nuser\n" + artifact.UserEnd + "\n",
 	} {
 		path := filepath.Join(t.TempDir(), "artifact.md")
 		write(t, path, body)
