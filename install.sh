@@ -287,7 +287,15 @@ rm -f "$PROBE"
 # Converge over an interrupted run: whatever a previous kill left staged in the
 # prefix is this script's and goes now: what we own
 # is deleted whenever it is there, and nothing else is touched.
-rm -f "$PREFIX"/.roca-install.* 2>/dev/null || true
+#
+# A `.previous` is not swept. It only exists when even putting the previous
+# binary back failed, and then it is the one copy the operator has left, so the
+# next run may not be what destroys it.
+for leftover in "$PREFIX"/.roca-install.*; do
+  [ -e "$leftover" ] || continue
+  case "$leftover" in *.previous) continue ;; esac
+  rm -f "$leftover" 2>/dev/null || true
+done
 
 # A working directory to build in. The template carries its own X's because GNU
 # mktemp refuses one without them (`-t roca-install` is "too few X's"), where BSD
@@ -393,7 +401,7 @@ if ! "$STAGED" --version >/dev/null 2>&1; then
 fi
 PREVIOUS=""
 if [ -e "$TARGET" ]; then
-  PREVIOUS="$PREFIX/.roca-install.previous.$$"
+  PREVIOUS="$PREFIX/.roca-install.$$.previous"
   cp -p "$TARGET" "$PREVIOUS" || die "I cannot preserve the previous binary. Nothing was replaced"
 fi
 if ! mv -f "$STAGED" "$TARGET"; then
@@ -406,7 +414,7 @@ if ! install_bundled_plugins "$TARGET"; then
     die "roca $TAG bundled plugins could not be placed: $BUNDLED_REPORT. The previous binary is back"
   fi
   if [ -n "$PREVIOUS" ]; then
-    die "roca $TAG bundled plugins could not be placed: $BUNDLED_REPORT. Your previous binary is kept at $PREVIOUS"
+    die "roca $TAG bundled plugins could not be placed: $BUNDLED_REPORT. Your previous binary is kept at $PREVIOUS: put it back at $TARGET yourself"
   fi
   if rm -f "$TARGET"; then
     die "roca $TAG bundled plugins could not be placed: $BUNDLED_REPORT. Nothing was installed"
