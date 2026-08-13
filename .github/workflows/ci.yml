@@ -9,6 +9,38 @@ permissions:
   contents: read
 
 jobs:
+  # versions.txt is the only list of frozen homes. Reading it here turns each
+  # committed archive into its own runner, so a failure names the exact
+  # historical version in the job list and a new archive adds a job by itself.
+  upgrade-homes:
+    runs-on: ubuntu-latest
+    outputs:
+      versions: ${{ steps.frozen.outputs.versions }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: frozen
+        run: echo "versions=$(./scripts/upgrade-gauntlet.sh --versions)" >> "$GITHUB_OUTPUT"
+
+  upgrade-gauntlet:
+    needs: upgrade-homes
+    runs-on: ubuntu-latest
+    strategy:
+      # Every historical home is judged: the first red one must not hide which
+      # of the others also stopped upgrading.
+      fail-fast: false
+      matrix:
+        version: ${{ fromJSON(needs.upgrade-homes.outputs.versions) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: The frozen home upgrades cleanly
+        env:
+          UPGRADE_HOME: ${{ matrix.version }}
+        run: make upgrade-gauntlet UPGRADE_HOME="$UPGRADE_HOME"
+
   check:
     runs-on: ubuntu-latest
     steps:

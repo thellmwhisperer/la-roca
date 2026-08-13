@@ -355,6 +355,7 @@ The [docs index](docs/README.md) orders the longer reads:
 make build
 make check
 make accept-index
+make upgrade-gauntlet
 make dist
 ```
 
@@ -363,6 +364,11 @@ the duplication gate. Acceptance contracts live directly under
 `features/{store,ingest,provider,distribution}/`; every feature there is
 discovered automatically, and `make accept-index` rejects any other layout. The
 Godog harness is compiled only with the `acceptance` build tag.
+
+`make upgrade-gauntlet` is the second gate every pull request has to pass: it
+upgrades the committed homes of older releases through the binary you just
+built. [Releases](docs/releases.md#schema-migration-definition-of-done) explains
+when a change owes the gauntlet a new frozen home.
 
 ## License
 
