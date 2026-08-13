@@ -66,9 +66,9 @@ The stable fields are:
   text as a string when that payload is not valid JSON.
 - `error` and `error_type` on failures. `error_type` is a declared category and
   never a Go type name: `invalid_sql`, `model_error`, `model_unavailable`,
-  `sql_execution_error`, `not_initialized`, `invalid_usage`, `not_found`,
-  `permission_denied`, `already_exists`, `timeout`, `canceled`,
-  `command_failure`, `tool_error`, or
+  `sql_execution_error`, `sql_execution_timeout`, `not_initialized`,
+  `invalid_usage`, `not_found`, `permission_denied`, `already_exists`,
+  `timeout`, `canceled`, `command_failure`, `tool_error`, or
   `unclassified_error` when this build cannot categorize the failure. Further
   categories may be declared; the vocabulary is the contract, and the Go error
   behind it may change without changing the line.

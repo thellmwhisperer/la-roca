@@ -405,18 +405,21 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 	}
 	providers, interpreters := buildProviders(file, paths)
 	svc, err := service.Open(service.Options{
-		DBPath:       paths.DB,
-		BackupDir:    paths.Backups,
-		DataDir:      filepath.Dir(paths.DB),
-		Version:      env.build.Version,
-		Commit:       env.build.Commit,
-		QueryTimeout: time.Duration(file.Query.TimeoutMS) * time.Millisecond,
-		Providers:    providers,
-		Interpreters: interpreters,
-		ConfigPath:   paths.Config,
-		ConfigExists: file.Exists,
-		Sources:      ingestSources(file, home, paths.Runner),
-		ReadOnly:     config.ReadOnly(os.Getenv(config.EnvReadOnly)),
+		DBPath:                    paths.DB,
+		BackupDir:                 paths.Backups,
+		DataDir:                   filepath.Dir(paths.DB),
+		Version:                   env.build.Version,
+		Commit:                    env.build.Commit,
+		QueryTimeout:              time.Duration(file.Query.TimeoutMS) * time.Millisecond,
+		QueryTimeoutSet:           file.Query.TimeoutSet,
+		DisableStrictInput:        !file.Features.StrictInput,
+		DisableMissingReferentAsk: !file.Features.AskMissingReferent,
+		Providers:                 providers,
+		Interpreters:              interpreters,
+		ConfigPath:                paths.Config,
+		ConfigExists:              file.Exists,
+		Sources:                   ingestSources(file, home, paths.Runner),
+		ReadOnly:                  config.ReadOnly(os.Getenv(config.EnvReadOnly)),
 		Progress: func(line string) {
 			if !env.json && strings.HasPrefix(line, "index: rebuilding") {
 				env.initSay("%s", line)

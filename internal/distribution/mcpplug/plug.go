@@ -394,6 +394,10 @@ func rendered[T any](res T, err error, paint func(T) string) (*mcp.CallToolResul
 		metadata["interpretation_ms"] = query.InterpretationMS
 		metadata["retry_reason"] = query.RetryReason
 		metadata["retry_type"] = query.RetryType
+		if query.ClarificationRequired {
+			metadata["clarification_required"] = true
+			metadata["missing_slot"] = query.MissingSlot
+		}
 		if query.QueryPlan != nil {
 			metadata["queryplan"] = query.QueryPlan
 		}

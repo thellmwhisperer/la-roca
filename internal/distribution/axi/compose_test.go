@@ -109,6 +109,34 @@ func TestASqlOnlyQueryRendersTheSQLUnderTheRouteLine(t *testing.T) {
 	}
 }
 
+func TestQueryRefusalNamesItsRouteWithoutSuggestingASearch(t *testing.T) {
+	result := service.QueryResult{
+		Question: "what is the tallest mountain?", Path: service.PathRefused,
+		Engine: "codex", Model: "synthetic-model",
+		Message: "The question is outside the scope of the La Roca memory database.",
+	}
+	got := axi.Query(result, "")
+	for _, want := range []string{"route refused", "SQL · provider codex", result.Message} {
+		if !strings.Contains(got, want) {
+			t.Errorf("refusal output lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "help[") || strings.Contains(got, "search ·") {
+		t.Fatalf("refusal was rendered as a failed search:\n%s", got)
+	}
+}
+
+func TestQueryAskReturnsOnlyTheClarifyingQuestion(t *testing.T) {
+	result := service.QueryResult{
+		Question: "what happened in a specific project?", Path: service.PathAsk,
+		ClarificationRequired: true, MissingSlot: "project",
+		Message: "Which project should I use? Please name it in the question.",
+	}
+	if got := axi.Query(result, ""); got != result.Message {
+		t.Fatalf("ask output = %q, want %q", got, result.Message)
+	}
+}
+
 func TestExecRendersTheSQLRowsCountAndHelp(t *testing.T) {
 	res := service.ExecResult{
 		SQL:     "SELECT layer, COUNT(*) AS n FROM memories GROUP BY layer",
