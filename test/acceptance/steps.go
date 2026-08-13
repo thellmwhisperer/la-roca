@@ -217,7 +217,7 @@ func registerModelSteps(ctx *godog.ScenarioContext, m *world) {
 	ctx.Then(`^the configuration chooses model "([^"]*)" for provider "([^"]*)"$`,
 		m.configurationChoosesProviderModel)
 	ctx.Then(`^the model set output names the model and its configuration source$`,
-		func() error { return m.modelNarrationNames("gpt-5.6-luna", "codex") })
+		func() error { return m.modelSetNarrationNames("gpt-5.6-luna") })
 	ctx.Then(`^the model narration names "([^"]*)", its configuration source and both ways to change it$`,
 		func(model string) error { return m.modelNarrationNames(model, theFrontierName) })
 }

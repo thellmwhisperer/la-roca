@@ -370,7 +370,10 @@ never edits `config.toml` or provider order. When no provider is declared at all
 or the order is turned off with `ROCA_MODELS_ORDER=none`, it says so and succeeds:
 an empty cascade is a configuration answer, not a failed probe. `model set` reads
 the target provider's catalogue, refuses IDs outside it, and probes the selected
-ID before writing only `models.<provider>.model`. The shared catalogue-and-probe gate lives in
+ID before writing only `models.<provider>.model`. A refused ID names the
+catalogue it missed and how to widen it: declare it in `models.<provider>.models`
+for a command transport, or pull it into Ollama first. The shared
+catalogue-and-probe gate lives in
 `internal/distribution/cli/model_validation.go`.
 
 `roca model set <model-id>` validates and probes the first configured provider.
