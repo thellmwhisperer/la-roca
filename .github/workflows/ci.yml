@@ -9,6 +9,17 @@ permissions:
   contents: read
 
 jobs:
+  upgrade-gauntlet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Frozen old-version homes upgrade cleanly
+        run: make upgrade-gauntlet
+
   check:
     runs-on: ubuntu-latest
     steps:
