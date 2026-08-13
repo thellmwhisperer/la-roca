@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,55 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	_ "modernc.org/sqlite"
 )
+
+func TestPluginsOffMakesAnInstalledDirectoryObservableNowhere(t *testing.T) {
+	paths := freshPaths(t)
+	plugins := filepath.Join(paths.data, "plugins")
+	installQueryPlugin(t, plugins, "well-formed", `
+version: 1
+description: Synthetic purchase receipts.
+questions: [Which receipts were recorded?]
+tables:
+  - name: receipts
+    description: Synthetic receipts.
+    columns: [id, title]
+`, `CREATE TABLE receipts (id INTEGER PRIMARY KEY, title TEXT NOT NULL);
+INSERT INTO receipts (title) VALUES ('synthetic hidden-by-flag marker')`)
+
+	model := answering("fixture", `SELECT 1 AS answer LIMIT 1`)
+	svc := initialized(t, paths, func(options *service.Options) {
+		options.PluginDir = plugins
+		options.PluginsEnabled = false
+		options.Providers = cascadeOf(model)
+	})
+	result, err := svc.Query(t.Context(), service.QueryRequest{Question: "Which receipts were recorded?"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Databases) != 0 || len(result.Warnings) != 0 ||
+		strings.Contains(model.prompt, "plugin_well_formed") || strings.Contains(model.prompt, "purchase receipts") {
+		t.Fatalf("disabled plugin changed query: databases=%v warnings=%v prompt=%s",
+			result.Databases, result.Warnings, model.prompt)
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"databases"`) || strings.Contains(string(raw), `"database"`) {
+		t.Fatalf("disabled plugin added an envelope field: %s", raw)
+	}
+	executed, err := svc.Exec(t.Context(), service.ExecRequest{SQL: "SELECT 1 AS answer LIMIT 1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err = json.Marshal(executed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"databases"`) {
+		t.Fatalf("disabled plugin changed exec envelope: %s", raw)
+	}
+}
 
 func TestARelevantPluginIsQualifiedValidatedAndMarkedInEveryResultRow(t *testing.T) {
 	paths := freshPaths(t)
@@ -96,7 +146,10 @@ tables:
     columns: [id, title]
 `, `CREATE TABLE receipts (id INTEGER PRIMARY KEY, title TEXT);
 INSERT INTO receipts (title) VALUES ('Synthetic observatory pass');`)
-	svc := initialized(t, paths, func(options *service.Options) { options.PluginDir = plugins })
+	svc := initialized(t, paths, func(options *service.Options) {
+		options.PluginDir = plugins
+		options.PluginsEnabled = true
+	})
 
 	result, err := svc.Exec(t.Context(), service.ExecRequest{
 		SQL: `SELECT title AS text FROM plugin_well_formed.receipts LIMIT 2`,
@@ -204,6 +257,7 @@ func pluginModelService(t *testing.T, paths testPaths, plugins, statement string
 	model := answering("codex", statement)
 	svc := initialized(t, paths, func(options *service.Options) {
 		options.PluginDir = plugins
+		options.PluginsEnabled = true
 		options.Providers = cascadeOf(model)
 	})
 	return svc, model

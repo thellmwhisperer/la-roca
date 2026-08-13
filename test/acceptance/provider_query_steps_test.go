@@ -39,6 +39,7 @@ func registerProviderQuerySteps(ctx *godog.ScenarioContext, w *providerAcceptanc
 }
 
 func (w *providerAcceptanceWorld) syntheticPluginInstalled(name string) error {
+	w.pluginsEnabled = true
 	source := filepath.Join("..", "..", "testdata", "plugin-standard", name)
 	destination := filepath.Join(w.home, ".roca", "plugins", name)
 	if err := os.MkdirAll(destination, 0o700); err != nil {

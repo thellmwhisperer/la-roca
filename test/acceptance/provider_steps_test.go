@@ -27,6 +27,7 @@ type providerAcceptanceWorld struct {
 	legacyProvider string
 	legacyConfig   string
 	modelSQL       string
+	pluginsEnabled bool
 	readyServers   []*httptest.Server
 }
 
@@ -60,6 +61,7 @@ func registerProviderAcceptanceSteps(ctx *godog.ScenarioContext, binary string) 
 		w.legacyProvider = ""
 		w.legacyConfig = ""
 		w.modelSQL = ""
+		w.pluginsEnabled = false
 		w.readyServers = nil
 		return c, nil
 	})
@@ -149,6 +151,9 @@ func (w *providerAcceptanceWorld) lastJSON() (map[string]any, error) {
 }
 
 func (w *providerAcceptanceWorld) writeConfig(body string) error {
+	if w.pluginsEnabled && !strings.Contains(body, "[features]") {
+		body += "\n[features]\nplugins = true\n"
+	}
 	if err := os.MkdirAll(filepath.Dir(w.configPath()), 0o700); err != nil {
 		return err
 	}

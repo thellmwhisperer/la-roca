@@ -97,7 +97,7 @@ type QueryResult struct {
 	// Databases declares the core and plugin stores made available to this
 	// query. OmittedDatabases names relevant plugins beyond SQLite's attachment
 	// limit; paths never enter either field.
-	Databases        []string `json:"databases"`
+	Databases        []string `json:"databases,omitempty"`
 	OmittedDatabases []string `json:"omitted_databases,omitempty"`
 
 	// Engine and Model are the model path's provenance: which provider answered
@@ -274,7 +274,6 @@ func (s *Service) Query(ctx context.Context, req QueryRequest) (res QueryResult,
 		Question:  req.Question,
 		Version:   s.opts.Version,
 		SourceSHA: s.opts.Commit,
-		Databases: []string{"core"},
 		// What the configuration said that this build did not understand travels
 		// with every answer: a question is exactly where an operator would
 		// otherwise never find out that half their [models] section is being
@@ -295,7 +294,9 @@ func (s *Service) Query(ctx context.Context, req QueryRequest) (res QueryResult,
 		return res, err
 	}
 	route := s.pluginsForQuestion(ctx, req.Question)
-	res.Databases = route.consulted()
+	if s.opts.PluginsEnabled {
+		res.Databases = route.consulted()
+	}
 	res.OmittedDatabases = route.omittedSources()
 	res.Warnings = append(res.Warnings, route.warnings...)
 	res, err = s.llmStage(ctx, req, res, route.databases)
@@ -318,7 +319,7 @@ type ExecResult struct {
 	Columns          []string         `json:"columns,omitempty"`
 	Rows             []map[string]any `json:"rows,omitempty"`
 	RowCount         int              `json:"row_count"`
-	Databases        []string         `json:"databases"`
+	Databases        []string         `json:"databases,omitempty"`
 	OmittedDatabases []string         `json:"omitted_databases,omitempty"`
 	LatencyMS        int64            `json:"latency_ms"`
 	Version          string           `json:"version"`
@@ -359,16 +360,19 @@ func (s *Service) Exec(ctx context.Context, req ExecRequest) (ExecResult, error)
 		}
 		return ExecResult{}, logfile.Typed(err, degraded)
 	}
-	return ExecResult{
+	result := ExecResult{
 		SQL:       validated,
 		Columns:   columns,
 		Rows:      rows,
 		RowCount:  len(rows),
-		Databases: route.consulted(),
 		LatencyMS: time.Since(start).Milliseconds(),
 		Version:   s.opts.Version,
 		SourceSHA: s.opts.Commit,
-	}, nil
+	}
+	if s.opts.PluginsEnabled {
+		result.Databases = route.consulted()
+	}
+	return result, nil
 }
 
 // execute runs the validated SELECT and normalizes the rows into maps keyed by

@@ -419,6 +419,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		DisableStrictInput:        !file.Features.StrictInput,
 		DisableMissingReferentAsk: !file.Features.AskMissingReferent,
 		PluginDir:                 pluginDir,
+		PluginsEnabled:            file.Features.Plugins,
 		Providers:                 providers,
 		Interpreters:              interpreters,
 		ConfigPath:                paths.Config,

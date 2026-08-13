@@ -18,12 +18,18 @@ type pluginRoute struct {
 }
 
 func (s *Service) pluginsForQuestion(ctx context.Context, question string) pluginRoute {
+	if !s.opts.PluginsEnabled {
+		return pluginRoute{}
+	}
 	candidates, warnings := plugin.Discover(s.opts.PluginDir)
 	ranked, _ := plugin.Relevant(question, candidates, len(candidates))
 	return validatePluginRoute(ctx, ranked, warnings)
 }
 
 func (s *Service) pluginsForSQL(ctx context.Context, statement string) pluginRoute {
+	if !s.opts.PluginsEnabled {
+		return pluginRoute{}
+	}
 	candidates, warnings := plugin.Discover(s.opts.PluginDir)
 	referenced, _ := plugin.Referenced(statement, candidates, len(candidates))
 	return validatePluginRoute(ctx, referenced, warnings)

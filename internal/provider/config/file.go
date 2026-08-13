@@ -635,14 +635,12 @@ type QueryConfig struct {
 	TimeoutSet bool `toml:"-"`
 }
 
-// FeaturesConfig contains operational escape hatches for security behaviour.
-// Every one of them defaults on: StrictInput false opts out of the experimental
-// signature gate, and AskMissingReferent false opts out of asking the operator
-// to name a referent the question left generic. One is not the other, so an
-// installation that needs one of the two keeps the other.
+// FeaturesConfig contains operational escape hatches and experimental
+// surfaces. The belt controls default on; plugins default off.
 type FeaturesConfig struct {
 	StrictInput        bool `toml:"strict_input"`
 	AskMissingReferent bool `toml:"ask_missing_referent"`
+	Plugins            bool `toml:"plugins"`
 }
 
 // defaultFeatures is the belt as shipped: everything on.
@@ -804,6 +802,7 @@ func readFeatures(section map[string]any, path string, warnings *[]string) Featu
 	switches := map[string]*bool{
 		"strict_input":         &features.StrictInput,
 		"ask_missing_referent": &features.AskMissingReferent,
+		"plugins":              &features.Plugins,
 	}
 	for _, key := range sortedKeys(section) {
 		enabled, known := switches[key]
@@ -811,9 +810,7 @@ func readFeatures(section map[string]any, path string, warnings *[]string) Featu
 			*warnings = append(*warnings, unknownKey("features."+key, path))
 			continue
 		}
-		// A switch stays on for anything that is not a boolean, because a
-		// misspelled opt-out must not be an opt-out. The operator is told, or the
-		// escape hatch silently does nothing.
+		// An invalid switch keeps its shipped default and tells the operator.
 		written, ok := section[key].(bool)
 		if !ok {
 			*warnings = append(*warnings, invalidValue("features."+key, path, "true or false"))
