@@ -152,7 +152,9 @@ func (s *spinner) finish() {
 }
 
 // liveInterpretation owns the TTY-only transition from the phase line to the
-// provider's real prose. Pipes, JSON and buffered providers never activate it.
+// prose. What it writes is the guarded answer the service publishes once, after
+// the whole response has been checked, not the provider's text as it arrives.
+// Pipes, JSON and buffered providers never activate it.
 type liveInterpretation struct {
 	env       *cliEnv
 	spin      *spinner
