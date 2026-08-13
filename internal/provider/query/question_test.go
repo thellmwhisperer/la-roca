@@ -74,6 +74,7 @@ func TestQuestionGateKeepsNearbyOrdinaryLanguage(t *testing.T) {
 		"What system recorded the session?",
 		"Decode this rise in token use since June",
 		"What did Dan decide about the release?",
+		"What did we decide about base64 encoding?",
 	} {
 		if err := query.ValidateQuestion(question); err != nil {
 			t.Errorf("ordinary question %q was rejected: %v", question, err)

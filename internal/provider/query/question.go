@@ -31,7 +31,7 @@ var hostileQuestionPatterns = []*regexp.Regexp{
 	regexp.MustCompile("```"),
 	regexp.MustCompile(`(?i)\[INST\]`),
 	regexp.MustCompile(`(?i)<<SYS>>`),
-	regexp.MustCompile(`(?i)\bbase64\b`),
+	regexp.MustCompile(`(?i)\b(?:base64|hex)\s+decode\s+(?:this|the|it)(?:\s+(?:string|payload|text|code))?\b`),
 	regexp.MustCompile(`(?i)\bdecode\s+(this|the|it)\s+(string|payload|text|base64|hex|code)\b`),
 	regexp.MustCompile(`(?i)\b0x[0-9a-f]{8,}\b`),
 }
