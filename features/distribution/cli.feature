@@ -19,7 +19,7 @@ Feature: Distribution command line
       | query     |
       | store     |
       | ingest    |
-      | login     |
+      | model     |
       | doctor    |
       | update    |
       | uninstall |

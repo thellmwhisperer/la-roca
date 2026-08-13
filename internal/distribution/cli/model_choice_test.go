@@ -114,7 +114,7 @@ func TestInitSaysDetectedLocalCLIIsReadyWithoutRocaLogin(t *testing.T) {
 	})
 	for _, want := range []string{
 		"model binaries detected: claude, codex", "factory default selected: claude",
-		"no roca login required", "uses the existing local CLI session", "roca query",
+		"confirm it with roca model check", "uses the existing local CLI session", "roca query",
 	} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("init output does not contain %q:\n%s", want, output.String())
