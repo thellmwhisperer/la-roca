@@ -163,6 +163,20 @@ database, configuration, indexes, logs, generated prompt, backups, skills, and
 integration recovery copies, plus the credential files and model catalogue cache
 that older releases left behind.
 
+A purge also removes the installed plugin packages under `~/.roca/plugins/` and
+the `roca-<name>` executables the installer placed, so no plugin code is left on
+a machine La Roca was removed from. A directory there is claimed only through the
+manifest the installer generated in it, and anything else under that path
+survives untouched. An executable whose bytes changed since its install is no
+longer the file La Roca placed, so it survives too.
+
+Archived plugin data is the one thing a purge asks about separately.
+`~/.roca/plugin-custody/` holds the directories a custodial [plugin
+uninstall](plugins.md#verified-packages-and-lifecycle) refused to delete, so this
+command names each archive with its size and removes it only after an explicit
+`y`. Declining, and any run with nobody at the terminal or with `--json`, leaves
+the archives untouched and names where each one remains.
+
 Uninstall edits each supported agent configuration surgically, preserving all
 unrelated bytes. It refuses to delete files it cannot identify as product-owned
 and reports them with a reason. Re-running uninstall is safe.

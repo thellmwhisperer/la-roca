@@ -420,6 +420,21 @@ func (m Manager) Uninstall(name string) (Result, error) {
 	return result, nil
 }
 
+// InstalledExecutable is the executable a caller may delete as this product's
+// own: the path the manifest recorded, and only while the file is still the
+// verified one. An executable somebody replaced after the install is theirs,
+// which is the same refusal verifyOwnedExecutable makes during an update.
+func InstalledExecutable(manifest Manifest) string {
+	if manifest.Executable == "" {
+		return ""
+	}
+	digest, err := fileChecksum(manifest.Executable)
+	if err != nil || digest != manifest.Files[manifest.ExecutableFile] {
+		return ""
+	}
+	return manifest.Executable
+}
+
 func (m Manager) stage(candidate Candidate, preservedDatabase string) (string, error) {
 	if err := os.MkdirAll(m.PluginRoot, 0o700); err != nil {
 		return "", fmt.Errorf("create plugin directory: %w", err)

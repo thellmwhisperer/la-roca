@@ -490,15 +490,10 @@ func (env *cliEnv) pluginManager() (plugininstall.Manager, string, error) {
 	if paths.Home == "" {
 		return plugininstall.Manager{}, "", fmt.Errorf("I do not know where your HOME is; plugin installation requires ~/.roca/plugins")
 	}
-	bin := os.Getenv(envRocaPrefix)
-	if bin == "" {
-		bin = filepath.Join(paths.Home, ".local", "bin")
-	}
-	root := filepath.Join(paths.Home, config.DirOwn)
 	return plugininstall.Manager{
-		PluginRoot: filepath.Join(root, "plugins"), BinDir: bin,
-		ArchiveRoot: filepath.Join(root, "plugin-custody"),
-	}, filepath.Join(root, ".plugin-downloads"), nil
+		PluginRoot: pluginRoot(paths), BinDir: pluginExecutableDir(paths),
+		ArchiveRoot: custodyRoot(paths),
+	}, pluginDownloads(paths), nil
 }
 
 func resolvePluginCandidate(ctx context.Context, reference, scratch string) (plugininstall.Candidate, func(), error) {

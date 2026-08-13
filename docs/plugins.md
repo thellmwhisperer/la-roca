@@ -157,3 +157,7 @@ change is refused instead of guessing at a migration.
 directory to `~/.roca/plugin-custody/<name>-<UTC timestamp>` and reports that
 path. A lifecycle operation also refuses to overwrite or delete an installed
 executable whose checksum changed outside the installer.
+
+Removing La Roca itself removes the installed packages and asks separately
+before it touches those archives: see
+[Uninstall](lifecycle.md#uninstall).
