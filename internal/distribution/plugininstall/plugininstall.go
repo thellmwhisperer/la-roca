@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -27,6 +28,8 @@ const (
 	ManifestFilename  = ".roca-plugin.json"
 	manifestSchema    = 1
 )
+
+var errSourceNotRegular = errors.New("source is not a regular file")
 
 type Risk string
 
@@ -265,13 +268,20 @@ func verifyExactFiles(directory string, required []string, checksums map[string]
 func verifyChecksummedFiles(directory string, checksums map[string]string) error {
 	for name, expected := range checksums {
 		path := filepath.Join(directory, name)
-		info, err := os.Lstat(path)
-		if err != nil || !info.Mode().IsRegular() {
+		file, err := openRegularSource(path)
+		if errors.Is(err, errSourceNotRegular) {
 			return fmt.Errorf("checksum source file %s is not a regular file", name)
 		}
-		digest, err := fileChecksum(path)
 		if err != nil {
 			return err
+		}
+		digest, checksumErr := openFileChecksum(file, path)
+		closeErr := file.Close()
+		if checksumErr != nil {
+			return checksumErr
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close checksum source file %s: %w", name, closeErr)
 		}
 		if digest != expected {
 			return fmt.Errorf("checksum mismatch for %s: source declares %s, file is %s",
@@ -459,12 +469,13 @@ func (m Manager) stage(candidate Candidate, preservedDatabase string) (string, e
 		_ = os.RemoveAll(staged)
 		return "", err
 	}
-	for name := range candidate.Files {
+	for name, expected := range candidate.Files {
 		mode := os.FileMode(0o600)
 		if name == candidate.Executable {
 			mode = 0o700
 		}
-		if err := installFile(filepath.Join(candidate.Directory, name), filepath.Join(staged, name), mode); err != nil {
+		if err := installChecksummedFile(filepath.Join(candidate.Directory, name),
+			filepath.Join(staged, name), mode, name, expected); err != nil {
 			return failed(err)
 		}
 	}
@@ -537,8 +548,8 @@ func (m Manager) UpdateInPlace(candidate Candidate) (Result, error) {
 			continue
 		}
 		payload = append(payload, name)
-		if err := installFile(filepath.Join(candidate.Directory, name),
-			filepath.Join(target, name), 0o600); err != nil {
+		if err := installChecksummedFile(filepath.Join(candidate.Directory, name),
+			filepath.Join(target, name), 0o600, name, candidate.Files[name]); err != nil {
 			return Result{}, err
 		}
 	}
@@ -706,11 +717,27 @@ func refuseExecutableCollision(path string) error {
 }
 
 func installFile(source, destination string, mode os.FileMode) error {
-	input, err := os.Open(source)
+	input, err := openRegularSource(source)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", source, err)
 	}
 	defer input.Close()
+	return installOpenFile(input, destination, mode, "", "")
+}
+
+func installChecksummedFile(source, destination string, mode os.FileMode, name, expected string) error {
+	input, err := openRegularSource(source)
+	if errors.Is(err, errSourceNotRegular) {
+		return fmt.Errorf("checksum source file %s is not a regular file", name)
+	}
+	if err != nil {
+		return fmt.Errorf("read %s: %w", source, err)
+	}
+	defer input.Close()
+	return installOpenFile(input, destination, mode, name, expected)
+}
+
+func installOpenFile(input *os.File, destination string, mode os.FileMode, name, expected string) error {
 	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
 		return fmt.Errorf("create directory for %s: %w", destination, err)
 	}
@@ -724,9 +751,22 @@ func installFile(source, destination string, mode os.FileMode) error {
 		temporary.Close()
 		return fmt.Errorf("set permissions for %s: %w", destination, err)
 	}
-	if _, err := io.Copy(temporary, input); err != nil {
+	writer := io.Writer(temporary)
+	hash := sha256.New()
+	if expected != "" {
+		writer = io.MultiWriter(temporary, hash)
+	}
+	if _, err := io.Copy(writer, input); err != nil {
 		temporary.Close()
 		return fmt.Errorf("write %s: %w", destination, err)
+	}
+	if expected != "" {
+		digest := hex.EncodeToString(hash.Sum(nil))
+		if digest != expected {
+			temporary.Close()
+			return fmt.Errorf("checksum mismatch for %s: source declares %s, file is %s",
+				name, expected, digest)
+		}
 	}
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("close %s: %w", destination, err)
@@ -743,6 +783,10 @@ func fileChecksum(path string) (string, error) {
 		return "", err
 	}
 	defer file.Close()
+	return openFileChecksum(file, path)
+}
+
+func openFileChecksum(file *os.File, path string) (string, error) {
 	hash := sha256.New()
 	if _, err := io.Copy(hash, file); err != nil {
 		return "", fmt.Errorf("checksum %s: %w", path, err)

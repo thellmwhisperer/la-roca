@@ -80,6 +80,8 @@ const (
 // than written to the operator's disk.
 const maxArtefact = 256 << 20
 
+const maxReleaseRedirects = 3
+
 // Source is the release channel.
 type Source struct {
 	// API is the base URL. Empty is DefaultAPI.
@@ -318,26 +320,41 @@ func (s Source) ValidateAsset(raw string) error {
 }
 
 func (s Source) client() (*http.Client, error) {
+	var client *http.Client
 	if s.HTTP != nil {
-		return s.HTTP, nil
+		copy := *s.HTTP
+		client = &copy
+	} else {
+		client = &http.Client{Timeout: 5 * time.Minute}
 	}
-	client := &http.Client{Timeout: 5 * time.Minute}
-	certificateFile := os.Getenv("SSL_CERT_FILE")
-	if certificateFile == "" {
-		return client, nil
+	previousRedirectPolicy := client.CheckRedirect
+	client.CheckRedirect = func(request *http.Request, via []*http.Request) error {
+		if len(via) > maxReleaseRedirects {
+			return fmt.Errorf("release channel refused more than %d redirects", maxReleaseRedirects)
+		}
+		if previousRedirectPolicy != nil {
+			return previousRedirectPolicy(request, via)
+		}
+		return nil
 	}
-	roots, err := x509.SystemCertPool()
-	if err != nil {
-		return nil, fmt.Errorf("load system certificates for the release channel: %w", err)
+	if s.HTTP == nil {
+		certificateFile := os.Getenv("SSL_CERT_FILE")
+		if certificateFile == "" {
+			return client, nil
+		}
+		roots, err := x509.SystemCertPool()
+		if err != nil {
+			return nil, fmt.Errorf("load system certificates for the release channel: %w", err)
+		}
+		pem, err := os.ReadFile(certificateFile)
+		if err != nil {
+			return nil, fmt.Errorf("read SSL_CERT_FILE for the release channel: %w", err)
+		}
+		if !roots.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("SSL_CERT_FILE contains no certificates for the release channel")
+		}
+		client.Transport = &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots}}
 	}
-	pem, err := os.ReadFile(certificateFile)
-	if err != nil {
-		return nil, fmt.Errorf("read SSL_CERT_FILE for the release channel: %w", err)
-	}
-	if !roots.AppendCertsFromPEM(pem) {
-		return nil, fmt.Errorf("SSL_CERT_FILE contains no certificates for the release channel")
-	}
-	client.Transport = &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots}}
 	return client, nil
 }
 
