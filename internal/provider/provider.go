@@ -193,6 +193,12 @@ type Catalog map[string]Factory
 type Resolved struct {
 	Providers []Provider
 	Warnings  []string
+	// Dropped names the providers the order asked for and this resolution could
+	// not keep. Warnings say more than that alone: the configuration produces
+	// warnings about keys nobody put in the order, so only this list answers
+	// whether an empty result is an order that named nothing or an order whose
+	// every entry was refused.
+	Dropped []string
 	// Disabled says the operator turned the model off on purpose. It is not the
 	// same as having nothing available, and the message to the operator differs.
 	Disabled bool
@@ -247,6 +253,7 @@ func Resolve(sel Selection, catalog Catalog) (Resolved, error) {
 				res.Warnings = append(res.Warnings, fmt.Sprintf(
 					"this version does not know the provider %q%s: it is ignored and the rest keep working. Available providers: %s",
 					name, where(sel), strings.Join(available(catalog), ", ")))
+				res.Dropped = append(res.Dropped, name)
 				continue
 			}
 			return Resolved{}, fmt.Errorf(
@@ -265,6 +272,7 @@ func Resolve(sel Selection, catalog Catalog) (Resolved, error) {
 			// same case: nothing nil ever reaches the cascade.
 			res.Warnings = append(res.Warnings, fmt.Sprintf(
 				"the provider %q cannot be used: %v", name, err))
+			res.Dropped = append(res.Dropped, name)
 			continue
 		}
 		res.Providers = append(res.Providers, built)
@@ -324,6 +332,10 @@ type Cascade struct {
 	Probe time.Duration
 	// Warnings are what resolving the order had to say.
 	Warnings []string
+	// Dropped names the declared providers this build refused. An empty cascade
+	// with nothing dropped declared nothing; an empty cascade with names here
+	// declared providers and lost all of them.
+	Dropped []string
 	// Disabled says the operator turned the model off on purpose.
 	Disabled bool
 }

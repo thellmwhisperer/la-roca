@@ -759,8 +759,8 @@ func (env *cliEnv) finishIngestProgress() {
 // handle over SQLite in WAL is a failure that shows up somewhere else, in another
 // process, much later.
 //
-// The commands that also need the resolved paths (init and model commands that
-// never opens a database at all) call openService or resolvePaths themselves.
+// The commands that also need the resolved paths (init, and the model commands
+// that never open a database at all) call openService or resolvePaths themselves.
 func (env *cliEnv) serviceRunE(
 	run func(cmd *cobra.Command, args []string, svc *service.Service) error,
 ) func(*cobra.Command, []string) error {

@@ -174,7 +174,7 @@ func TestNoneDisablesTheModelWithoutBeingAnUnknownName(t *testing.T) {
 // The fall is by availability, not by exception: each provider is asked Ready
 // before use.
 func TestPickTakesTheFirstAvailableAndDeclaresWhyTheOthersAreNot(t *testing.T) {
-	frontier := notReady("codex", "there is no Codex session", "run `roca login codex`")
+	frontier := notReady("codex", "there is no Codex session", "run `roca model check codex`")
 	floor := ready("ollama", "qwen3.5:4b")
 	cascade := Cascade{Providers: []Provider{frontier, floor}}
 
@@ -214,7 +214,7 @@ func TestPickDoesNotAskTheOnesBehindTheChosenOne(t *testing.T) {
 
 func TestPickWithNobodyAvailableReturnsNothingAndTheWholeDiagnosis(t *testing.T) {
 	cascade := Cascade{Providers: []Provider{
-		notReady("codex", "there is no session", "run `roca login codex`"),
+		notReady("codex", "there is no session", "run `roca model check codex`"),
 		notReady("ollama", "Ollama does not answer", "start it with `ollama serve`"),
 	}}
 
