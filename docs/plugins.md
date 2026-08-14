@@ -291,8 +291,8 @@ separate follow-up phase.
 
 ## The bundled roca-ops plugin
 
-`roca-ops` is the operational plugin La Roca ships with itself: a resident, data-only
-package that declares `custody: true` over what agents write. Every
+`roca-ops` is the operational plugin La Roca ships with itself: a resident,
+data-only package that declares `custody: true` over what agents write. Every
 [installation and update](lifecycle.md#install) places it under
 `~/.roca/plugins/roca-ops/`, and it stays inert until a second experimental
 switch is set:

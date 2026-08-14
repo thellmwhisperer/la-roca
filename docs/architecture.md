@@ -3,6 +3,10 @@
 First-time path: [install, detect an already signed-in agent CLI, and query
 without a La Roca login](lifecycle.md#install).
 
+`internal/` is four layers, bottom up. **No domain imports the one above it.**
+A package that reaches upward is a defect to fix by moving code, not by a
+shortcut.
+
 ## Data domains
 
 The engine and its data domains are separate contracts. Bundled domain plugins
@@ -13,10 +17,6 @@ reasoning, tool uses, and harvested files; its first structural release is
 installed but remains inert behind the default-off `features.corpus` rollout
 boundary. Core remains the active store until the separate activation and
 migration phase lands.
-
-`internal/` is four layers, bottom up. **No domain imports the one above it.**
-A package that reaches upward is a defect to fix by moving code, not by a
-shortcut.
 
 ## The dependency rule
 
