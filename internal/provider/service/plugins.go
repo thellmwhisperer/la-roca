@@ -14,7 +14,19 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/store"
 )
 
-const rocaOpsPluginName = "roca-ops"
+const (
+	rocaOpsPluginName    = "roca-ops"
+	rocaCorpusPluginName = "roca-corpus"
+)
+
+// selfGated names the packages La Roca ships and whose attachment it owns
+// itself. Each one reaches a connection through its own feature flag, never
+// through the generic selection that carries third-party plugins, so an
+// installed but unactivated package costs neither an attachment slot nor a
+// place in the schema every answer is written against.
+func selfGated(name string) bool {
+	return name == rocaOpsPluginName || name == rocaCorpusPluginName
+}
 
 type pluginRoute struct {
 	databases []plugin.Database
@@ -81,7 +93,7 @@ func (s *Service) onDemand(candidates []plugin.Descriptor) []plugin.Descriptor {
 		if candidate.Semantic.Attachment != plugin.AttachmentOnDemand {
 			continue
 		}
-		if candidate.Name == rocaOpsPluginName || !s.opts.PluginsEnabled {
+		if selfGated(candidate.Name) || !s.opts.PluginsEnabled {
 			continue
 		}
 		selected = append(selected, candidate)
@@ -114,7 +126,7 @@ func (s *Service) openResidents(ctx context.Context) error {
 	}
 	if s.opts.PluginsEnabled {
 		for _, descriptor := range descriptors {
-			if descriptor.Name != rocaOpsPluginName && descriptor.Semantic.Attachment == plugin.AttachmentResident {
+			if !selfGated(descriptor.Name) && descriptor.Semantic.Attachment == plugin.AttachmentResident {
 				candidates = append(candidates, descriptor)
 			}
 		}
