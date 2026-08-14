@@ -131,7 +131,8 @@ func installedPluginFixture(t *testing.T, paths config.Paths, name string) (stri
 	writeFile(t, filepath.Join(directory, plugininstall.ChecksumsFilename), "listed in the manifest")
 	manifest, err := json.Marshal(plugininstall.Manifest{
 		Schema: 1, Name: name, Source: "owner/" + name, Version: "1.0.0",
-		Checksum: strings.Repeat("c", 64), Database: database, Executable: executable,
+		Checksum: strings.Repeat("c", 64), Risk: plugininstall.Executable,
+		Database: database, Executable: executable,
 		ExecutableFile: executableFile, Files: files,
 	})
 	if err != nil {
@@ -139,6 +140,25 @@ func installedPluginFixture(t *testing.T, paths config.Paths, name string) (stri
 	}
 	writeFile(t, filepath.Join(directory, plugininstall.ManifestFilename), string(manifest))
 	return directory, executable
+}
+
+func TestUninstallConsentDescribesTheInstalledPackageItWouldRemove(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	paths := resolvedIn(t, home)
+	installedPluginFixture(t, paths, "synthetic")
+	writeFile(t, paths.Config, "[features]\nplugins = true\n")
+
+	var output, narration strings.Builder
+	env := &cliEnv{out: &output, errOut: &narration}
+	code, err := executeWithEnv(env, []string{"plugin", "uninstall", "synthetic"}, strings.NewReader("no\n"))
+	if err != nil || code != ExitOK {
+		t.Fatalf("declined uninstall = code %d err %v", code, err)
+	}
+	if !strings.Contains(narration.String(),
+		"EXECUTABLE: FULL TRUST; it runs code with your user privileges") {
+		t.Fatalf("uninstall consent misreads the installed package:\n%s", narration.String())
+	}
 }
 
 func TestPluginConsentDistinguishesDataFromCodeAndNamesTheReplacedChecksum(t *testing.T) {

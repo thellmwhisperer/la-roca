@@ -455,14 +455,12 @@ func pluginUninstallCommand(env *cliEnv, consented *bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			manifest, err := plugininstall.ReadManifest(filepath.Join(manager.PluginRoot, args[0]))
+			directory := filepath.Join(manager.PluginRoot, args[0])
+			manifest, err := plugininstall.ReadManifest(directory)
 			if err != nil {
 				return err
 			}
-			candidate := plugininstall.Candidate{
-				Name: manifest.Name, Version: manifest.Version, Source: manifest.Source,
-				Checksum: manifest.Checksum, Risk: manifest.Risk, Custody: manifest.Custody,
-			}
+			candidate := plugininstall.CandidateFromManifest(manifest, directory)
 			accepted, err := env.confirmPlugin(cmd.InOrStdin(), "uninstall", candidate, "", *consented)
 			if err != nil || !accepted {
 				return err

@@ -567,6 +567,19 @@ func (m Manager) UpdateInPlace(candidate Candidate) (Result, error) {
 	return resultFor(candidate, target, ""), nil
 }
 
+// CandidateFromManifest describes an installed plugin the way Inspect describes
+// a source, so a caller that only has the manifest asks the operator about the
+// same package. Manifest.Executable is the installed path; the candidate names
+// the payload file it came from.
+func CandidateFromManifest(manifest Manifest, directory string) Candidate {
+	return Candidate{
+		Name: manifest.Name, Version: manifest.Version, Source: manifest.Source,
+		Directory: directory, Checksum: manifest.Checksum, Risk: manifest.Risk,
+		Custody: manifest.Custody, Database: manifest.Database,
+		Executable: manifest.ExecutableFile, Files: manifest.Files,
+	}
+}
+
 func ReadManifest(directory string) (Manifest, error) {
 	file, err := os.Open(filepath.Join(directory, ManifestFilename))
 	if err != nil {
