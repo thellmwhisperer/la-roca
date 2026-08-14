@@ -377,7 +377,11 @@ or the order is turned off with `ROCA_MODELS_ORDER=none`, it says so and succeed
 an empty cascade is a configuration answer, not a failed probe. An order that
 declares providers this build cannot use is the other empty cascade and gets its
 own answer, with the warning that explains each drop; it is never reported as a
-configuration that declared nothing. `model set` reads
+configuration that declared nothing. The two are told apart by the providers the
+cascade actually dropped (`Cascade.Dropped`) and never by whether the
+configuration produced a warning, because a retired key of a provider the order
+never named warns without dropping anything. `roca models` and `model set` make
+the same distinction from the same field. `model set` reads
 the target provider's catalogue, refuses IDs outside it, and probes the selected
 ID before writing only `models.<provider>.model`. A refused ID names the
 catalogue it missed and how to widen it: declare it in `models.<provider>.models`

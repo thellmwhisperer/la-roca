@@ -159,6 +159,12 @@ func TestModelCheckAnswersAnEmptyCascadeWithoutFailing(t *testing.T) {
 			wantReason: "no declared provider can be used by this build",
 			wantHuman:  `this version does not know the provider "nosuch"`,
 		},
+		{
+			name:       "an empty order beside a warning about a provider it never named",
+			file:       "[models]\norder = []\n\n[models.codex]\napi_key = \"synthetic-not-a-key\"\n",
+			wantReason: "no provider is declared",
+			wantHuman:  "no provider is declared, so there is no model to probe",
+		},
 	} {
 		for _, machine := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/json=%v", test.name, machine), func(t *testing.T) {
@@ -197,6 +203,49 @@ func TestModelCheckAnswersAnEmptyCascadeWithoutFailing(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// The empty cascade `model check` narrates is the state `model set` has to
+// refuse: there is no provider to write a model for. It owes the same
+// distinction between the two causes, the warnings that explain a drop, and an
+// untouched configuration.
+func TestModelSetRefusesAnEmptyCascadeWithoutWriting(t *testing.T) {
+	for _, test := range []struct{ name, envOrder, file, wantErr string }{
+		{
+			name: "the order is turned off", envOrder: "none",
+			wantErr: "there is no provider to set a model for: no provider is declared;",
+		},
+		{
+			name: "every declared provider was dropped", file: "[models]\norder = [\"nosuch\"]\n",
+			wantErr: "there is no provider to set a model for: no declared provider can be used by this build: " +
+				`this version does not know the provider "nosuch"`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := isolatedLoginHome(t)
+			path := modelConfigPath(home)
+			if test.envOrder != "" {
+				t.Setenv("ROCA_MODELS_ORDER", test.envOrder)
+			}
+			if test.file != "" {
+				writeFile(t, path, test.file)
+			}
+			out, err := runRootErr(t, Build{Version: "test"}, nil, "model", "set", "grok-green")
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("error = %v, want %q\n%s", err, test.wantErr, out)
+			}
+			raw, readErr := os.ReadFile(path)
+			if test.file == "" {
+				if !os.IsNotExist(readErr) {
+					t.Fatalf("the refusal wrote a configuration: raw=%q err=%v", raw, readErr)
+				}
+				return
+			}
+			if readErr != nil || string(raw) != test.file {
+				t.Fatalf("the refusal changed the configuration: raw=%q err=%v", raw, readErr)
+			}
+		})
 	}
 }
 

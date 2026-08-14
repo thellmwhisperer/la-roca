@@ -69,6 +69,42 @@ func TestModelsJSONContract(t *testing.T) {
 	if len(models) != 1 {
 		t.Fatalf("the catalogue did not travel: %#v", models)
 	}
+	if warnings, ok := result["warnings"].([]any); !ok || len(warnings) != 0 {
+		t.Fatalf("a clean configuration must still answer with an empty warning list: %#v", result["warnings"])
+	}
+}
+
+// An empty catalogue names which empty cascade it is, the same distinction
+// `model check` makes: an order that declared nothing is not an order whose
+// every entry this build had to drop, and a warning about a key the order never
+// named tells the two apart for neither.
+func TestModelsNamesWhichEmptyCascadeItIs(t *testing.T) {
+	for _, test := range []struct{ name, envOrder, file, want string }{
+		{name: "the order is turned off", envOrder: "none", want: "no provider is declared"},
+		{
+			name: "an empty order beside a warning about a provider it never named",
+			file: "[models]\norder = []\n\n[models.codex]\napi_key = \"synthetic-not-a-key\"\n",
+			want: "no provider is declared",
+		},
+		{
+			name: "every declared provider was dropped", file: "[models]\norder = [\"nosuch\"]\n",
+			want: "no declared provider can be used by this build",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := isolatedLoginHome(t)
+			if test.envOrder != "" {
+				t.Setenv("ROCA_MODELS_ORDER", test.envOrder)
+			}
+			if test.file != "" {
+				writeConfig(t, home, test.file)
+			}
+			out := runRoot(t, Build{Version: "test"}, "models")
+			if !strings.Contains(out, test.want) {
+				t.Fatalf("models output = %q, want %q", out, test.want)
+			}
+		})
+	}
 }
 
 // writeCommandProviderConfig declares one local agent command provider.

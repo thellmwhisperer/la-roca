@@ -578,7 +578,7 @@ func modelsCommand(env *cliEnv) *cobra.Command {
 		Short: "List the models each configured provider offers",
 		Long:  modelsHelp,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			listings, warnings, err := env.resolveModels(cmd)
+			cascade, listings, err := env.resolveModels(cmd)
 			if err != nil {
 				return err
 			}
@@ -587,10 +587,10 @@ func modelsCommand(env *cliEnv) *cobra.Command {
 					"version":    env.build.Version,
 					"source_sha": env.build.Commit,
 					"providers":  listings,
-					"warnings":   warnings,
+					"warnings":   orNoWarnings(cascade.Warnings),
 				})
 			}
-			renderModels(env, listings, warnings)
+			renderModels(env, cascade, listings)
 			return nil
 		},
 	}
@@ -599,34 +599,33 @@ func modelsCommand(env *cliEnv) *cobra.Command {
 // resolveModels builds the cascade from the configuration alone and asks every
 // provider for its catalogue. It is a question about providers, not memory, so
 // it never opens the database and runs before init.
-func (env *cliEnv) resolveModels(cmd *cobra.Command) ([]provider.ModelsListing, []string, error) {
+func (env *cliEnv) resolveModels(cmd *cobra.Command) (provider.Cascade, []provider.ModelsListing, error) {
 	paths, err := env.resolvePaths()
 	if err != nil {
-		return nil, nil, err
+		return provider.Cascade{}, nil, err
 	}
 	file, err := config.LoadFile(paths.Config)
 	if err != nil {
-		return nil, nil, err
+		return provider.Cascade{}, nil, err
 	}
 	cascade, err := provider.BuildCascade(provider.Settings{
 		File: file, RunnerDir: paths.Runner, Env: os.Getenv,
 	})
 	if err != nil {
-		return nil, nil, err
+		return provider.Cascade{}, nil, err
 	}
-	return cascade.Models(cmd.Context()), cascade.Warnings, nil
+	return cascade, cascade.Models(cmd.Context()), nil
 }
 
 // renderModels is the readable form of the catalogue. The provider header names
 // the model the cascade would use (Selected); the list beneath it shows what the
 // command transport or the local runtime reaches, with that model marked. A provider
-// that could not be reached shows its reason instead of a list.
-func renderModels(env *cliEnv, listings []provider.ModelsListing, warnings []string) {
-	for _, warning := range warnings {
-		env.print("warning: %s", warning)
-	}
+// that could not be reached shows its reason instead of a list. An empty catalogue
+// names which empty cascade it is, the same distinction `model check` makes.
+func renderModels(env *cliEnv, cascade provider.Cascade, listings []provider.ModelsListing) {
+	env.printCascadeWarnings(cascade.Warnings)
 	if len(listings) == 0 {
-		env.print("no provider is declared")
+		env.print("%s", emptyCascadeReason(cascade))
 		return
 	}
 	env.print("providers, in the declared order:")
@@ -840,12 +839,21 @@ func firstCascadeProvider(paths config.Paths, file config.File) (string, string,
 		return "", "", nil, err
 	}
 	if len(cascade.Providers) == 0 {
-		if cascade.Disabled || len(cascade.Warnings) == 0 {
-			return "", "", cascade.Warnings, errNoProviderDeclared
-		}
-		return "", "", cascade.Warnings, errNoProviderUsable
+		return "", "", cascade.Warnings, emptyCascadeReason(cascade)
 	}
 	return cascade.Providers[0].Name(), cascade.Providers[0].ModelID(), cascade.Warnings, nil
+}
+
+// emptyCascadeReason tells the two empty cascades apart from what the cascade
+// itself dropped, never from its warnings: those also carry retired keys and
+// unknown keys of providers the order never named, so a configuration that
+// declared nothing but wrote one stale key would be reported as an order this
+// build refused.
+func emptyCascadeReason(cascade provider.Cascade) error {
+	if cascade.Disabled || len(cascade.Dropped) == 0 {
+		return errNoProviderDeclared
+	}
+	return errNoProviderUsable
 }
 
 func effectiveProviderModel(paths config.Paths, file config.File, name string) (string, []string, error) {
