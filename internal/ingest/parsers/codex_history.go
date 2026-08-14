@@ -16,25 +16,27 @@ type codexHistoryLine struct {
 	Timestamp *float64 `json:"ts"`
 }
 
-func looksLikeCodexHistory(content []byte) bool {
-	for _, raw := range lines(content) {
-		var probe struct {
-			Type      string          `json:"type"`
-			SessionID string          `json:"session_id"`
-			Text      json.RawMessage `json:"text"`
-			Timestamp json.RawMessage `json:"ts"`
-		}
-		if json.Unmarshal([]byte(raw), &probe) != nil {
-			continue
-		}
-		if probe.Type != "" {
-			return false
-		}
-		if probe.SessionID != "" || len(probe.Text) > 0 || len(probe.Timestamp) > 0 {
-			return true
-		}
+// prompt reports whether the record is a legacy prompt row. A record carrying a
+// type is the runtime's own log line and never one of these, which is what lets
+// the two shapes share a file without either reading being decided by whichever
+// of them the file happens to open with.
+func (l codexHistoryLine) prompt() bool {
+	return l.Type == "" && strings.TrimSpace(l.Text) != "" &&
+		l.Timestamp != nil && *l.Timestamp > 0
+}
+
+// historyExchange normalizes one legacy prompt. Its identity is the source's own
+// words at their own instant inside their own session, so the same prompt read
+// from the rollout it lived in and from `history.jsonl` lands as one row.
+func historyExchange(number int, sessionID string, line codexHistoryLine) Exchange {
+	timestamp := ISOFromEpochSeconds(*line.Timestamp)
+	identity, _ := json.Marshal([3]string{sessionID, timestamp, line.Text})
+	return Exchange{
+		Number:         number,
+		SourceID:       "codex-history:" + fmt.Sprintf("%x", sha256.Sum256(identity)),
+		HumanText:      line.Text,
+		HumanTimestamp: timestamp,
 	}
-	return false
 }
 
 func parseCodexHistory(content []byte, meta FileMeta) Records {
@@ -50,8 +52,15 @@ func parseCodexHistory(content []byte, meta FileMeta) Records {
 			})
 			continue
 		}
-		if line.Type != "" || line.SessionID == "" || strings.TrimSpace(line.Text) == "" ||
-			line.Timestamp == nil || *line.Timestamp <= 0 {
+		if line.Type != "" {
+			records.Discards = append(records.Discards, Discard{
+				Record: record, ByDesign: true,
+				Reason:   "codex runtime record not ingested from history: " + line.Type,
+				Category: "codex runtime record not ingested from history",
+			})
+			continue
+		}
+		if line.SessionID == "" || !line.prompt() {
 			records.Discards = append(records.Discards, Discard{
 				Record: record, Reason: "Codex history record is not a valid prompt",
 				Category: "invalid Codex history record",
@@ -69,14 +78,9 @@ func parseCodexHistory(content []byte, meta FileMeta) Records {
 			})
 		}
 		session := &records.Sessions[at]
-		timestamp := ISOFromEpochSeconds(*line.Timestamp)
-		identity, _ := json.Marshal([3]string{line.SessionID, timestamp, line.Text})
-		session.Exchanges = append(session.Exchanges, Exchange{
-			Number:         len(session.Exchanges) + 1,
-			SourceID:       "codex-history:" + fmt.Sprintf("%x", sha256.Sum256(identity)),
-			HumanText:      line.Text,
-			HumanTimestamp: timestamp,
-		})
+		exchange := historyExchange(len(session.Exchanges)+1, line.SessionID, line)
+		session.Exchanges = append(session.Exchanges, exchange)
+		timestamp := exchange.HumanTimestamp
 		if session.StartedAt == "" || timestamp < session.StartedAt {
 			session.StartedAt = timestamp
 		}

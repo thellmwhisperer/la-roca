@@ -117,11 +117,14 @@ origin `cron` and source `claude-web`.
 ## Codex legacy history
 
 The oldest Codex rollouts can contain only `session_meta`; their submitted
-prompts survive separately in `~/.codex/history.jsonl`. La Roca uses those
-history records as a prompt-level fallback. Exact prompts close in time are
-reconciled with richer rollout exchanges, regardless of which source lands
-first, and the richer answer enriches the existing row instead of creating a
-duplicate. History prompts with no matching rollout turn remain as prompt-only
+prompts survive separately in `~/.codex/history.jsonl`. Some of those rollouts
+also kept prompt records of their own, in the same typeless shape, beside their
+metadata. Those are recognized record by record inside the rollout, so the file
+keeps both what its header states and the prompts it recovered, in whichever
+order the older build wrote them. La Roca uses either set of history records as
+a prompt-level fallback. Exact prompts close in time are reconciled with richer
+rollout exchanges, regardless of which source lands first, and the richer
+answer enriches the existing row instead of creating a duplicate. History prompts with no matching rollout turn remain as prompt-only
 exchanges even when the same session has other richer exchanges. Malformed
 records are discarded independently and grouped under stable history reasons in
 the ingest summary.

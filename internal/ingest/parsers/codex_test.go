@@ -323,39 +323,48 @@ func TestCodexNamesTheRecordsItLeavesOutByDesign(t *testing.T) {
 	}
 }
 
-func TestCodexReadsLegacyHistoryRecordsWithoutLosingTheRest(t *testing.T) {
-	content := `{"session_id":"legacy-one","ts":1763372540,"text":"inspect the synthetic archive"}
+// A fossil rollout states its own metadata and keeps its prompts as the typeless
+// records the older build wrote. Both live in the same file, in whichever order
+// that build left them, and reading one may not cost the other.
+func TestCodexRecoversLegacyPromptsFromAMetadataBearingRollout(t *testing.T) {
+	content := `{"type":"session_meta","timestamp":"2025-11-17T09:42:00Z","payload":{"id":"legacy-one","cwd":"/synthetic/archive","timestamp":"2025-11-17T09:42:00Z","cli_version":"0.58.0","model_provider":"fixture-provider"}}
+{"session_id":"legacy-one","ts":1763372540,"text":"inspect the synthetic archive"}
 not json
-{"type":"session_meta","session_id":"legacy-noise","ts":1763372570,"text":"not a history row"}
-{"session_id":"legacy-two","ts":1763372600,"text":"name the synthetic result"}
+{"type":"compacted","payload":{}}
 {"session_id":"legacy-one","ts":1763372660,"text":"verify the synthetic archive"}
-{"session_id":"","ts":1763372700,"text":"orphaned input"}`
-	records, err := Parse(KindCodexSession, []byte(content), FileMeta{})
+{"ts":1763372700,"text":"   "}`
+	records, err := Parse(KindCodexSession, []byte(content), FileMeta{SessionID: "fossil"})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if len(records.Sessions) != 2 {
-		t.Fatalf("sessions = %d, want 2: %+v", len(records.Sessions), records.Sessions)
+	if len(records.Sessions) != 1 {
+		t.Fatalf("sessions = %d, want the rollout's own: %+v", len(records.Sessions), records.Sessions)
 	}
-	first := records.Sessions[0]
-	if first.ID != "legacy-one" || !first.HistoryFallback || len(first.Exchanges) != 2 {
-		t.Fatalf("first legacy session = %+v", first)
+	session := records.Sessions[0]
+	if session.ID != "legacy-one" || !session.HistoryFallback || len(session.Exchanges) != 2 {
+		t.Fatalf("fossil session = %+v", session)
 	}
-	if first.StartedAt != "2025-11-17T09:42:20Z" || first.EndedAt != "2025-11-17T09:44:20Z" {
-		t.Errorf("legacy span = %q..%q", first.StartedAt, first.EndedAt)
+	if session.Metadata["cwd"] != "/synthetic/archive" ||
+		session.Metadata["cli_version"] != "0.58.0" ||
+		session.Metadata["model_provider"] != "fixture-provider" {
+		t.Errorf("fossil metadata = %+v", session.Metadata)
 	}
-	if exchange := first.Exchanges[1]; exchange.Number != 2 ||
+	if session.StartedAt != "2025-11-17T09:42:00Z" || session.EndedAt != "2025-11-17T09:44:20Z" {
+		t.Errorf("fossil span = %q..%q", session.StartedAt, session.EndedAt)
+	}
+	if exchange := session.Exchanges[1]; exchange.Number != 2 ||
 		exchange.HumanText != "verify the synthetic archive" || exchange.AgentText != "" ||
 		exchange.HumanTimestamp != "2025-11-17T09:44:20Z" ||
-		exchange.AgentTimestamp != "" || !exchange.Provenance.Empty() {
-		t.Errorf("second legacy exchange = %+v", exchange)
+		exchange.AgentTimestamp != "" || !exchange.Provenance.Empty() ||
+		!strings.HasPrefix(exchange.SourceID, "codex-history:") {
+		t.Errorf("second recovered exchange = %+v", exchange)
 	}
 	if len(records.Discards) != 3 {
-		t.Fatalf("discards = %+v, want the malformed and orphaned records", records.Discards)
+		t.Fatalf("discards = %+v, want the malformed line and the two unread records",
+			records.Discards)
 	}
-	if records.Discards[0].Category != "invalid Codex history JSON" ||
-		records.Discards[1].Category != "invalid Codex history record" ||
-		records.Discards[2].Category != "invalid Codex history record" {
-		t.Errorf("discard categories = %+v", records.Discards)
+	if records.Discards[0].ByDesign || !records.Discards[1].ByDesign ||
+		!records.Discards[2].ByDesign {
+		t.Errorf("discards report an exclusion as a failure to read: %+v", records.Discards)
 	}
 }
