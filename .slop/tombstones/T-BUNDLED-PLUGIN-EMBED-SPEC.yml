@@ -1,0 +1,45 @@
+schema: 1
+id: T-BUNDLED-PLUGIN-EMBED-SPEC
+status: accepted
+category: duplication
+title: "A bundled plugin package declares its own go:embed payload"
+created_at: 2026-08-14
+incident:
+  pattern: >-
+    Two bundled data-plugin packages open with the same seventeen lines: the
+    `_ "embed"` import, the `//go:embed semantic.yaml` and
+    `//go:embed schema.sql` variables, and the one-expression function that
+    names the package's own Name, DatabaseFilename, BundledSource, semantic
+    bytes and applySchema in a bundledplugin.Spec.
+  what_went_wrong: >-
+    Bundling the inert roca-corpus package made the second instance of a shape
+    roca-ops already had, and the production scope moved from zero active
+    clones to one.
+  root_cause: >-
+    The shared implementation is already owned once. Install, verified update,
+    manifest collision and schema application all live in
+    internal/distribution/bundledplugin; what repeats is only the part Go
+    refuses to share. A `//go:embed` directive reads files relative to the
+    package that declares it, so the embedded semantic manifest and schema
+    cannot be declared anywhere but in the package that ships them, and the
+    Spec literal exists to hand those package-local values to the shared owner.
+    Collapsing the file into the single-file roca-cron shape was tried and only
+    moved the clone onto rocacron/bundle.go, which is the proof that the residue
+    is the embed declaration itself and not the layout around it.
+  rule_established: >-
+    Behaviour shared by bundled plugins goes to
+    internal/distribution/bundledplugin and nowhere else. Only the embed
+    declarations and the Spec literal that forwards them may repeat per package,
+    and only while they stay this thin. This record accepts one exact
+    fingerprint, so growing either side, or adding logic beside the embeds,
+    makes it stale and fails the gate.
+  evidence:
+    - family: clone_fingerprint
+      example: >-
+        internal/distribution/rocaops/embed.go:4-20 against
+        internal/distribution/rocacorpus/embed.go:4-20, 17 lines and 91 tokens.
+      artifact: internal/distribution/rocacorpus/embed.go
+match:
+  family: clone_fingerprint
+  scope: go_production
+  fingerprint: bc5952fa7061754bb9e805770b21fc666c976574cf3f33f0e4a947adc10d3ea1
