@@ -12,16 +12,18 @@ data discovery, attach-based querying, and `roca plugin` lifecycle commands in
 plugins = true
 ```
 
-With `features.plugins` absent or false, La Roca does not inspect the plugins
-directory, route to a semantic layer, attach a plugin database, or resolve an
-installer source. Existing Git-style executable dispatch predates this standard
-and continues to behave as before.
+With `features.plugins` absent or false, La Roca does not route to a semantic
+layer, attach a plugin database, or resolve an installer source; the only
+reader of the plugins directory left is the [cron train](#cron-rides). Existing
+Git-style executable dispatch predates this standard and continues to behave as
+before.
 
 A data plugin is one directory under `~/.roca/plugins/<name>/`. It contains
 exactly one plain SQLite database (`.db`, `.sqlite`, or `.sqlite3`) and a
-`semantic.yaml` file. The database is the plugin's only writable store; La
-Roca opens it read-only, either when its semantic layer is relevant to a
-question or, for a resident plugin, for every query.
+`semantic.yaml` file, and may also declare scheduled rides in `rides.toml`.
+The database is the plugin's only writable store; La Roca opens it read-only,
+either when its semantic layer is relevant to a question or, for a resident
+plugin, for every query.
 SQLite extensions, including `sqlite-vec`, are not part of this contract.
 
 ## Semantic layer
@@ -79,6 +81,79 @@ Rows returned while plugins are in scope carry a `database` value such as
 `core` or `plugin:receipts`; cross-database rows use a `+`-joined label. This
 provenance also reaches MCP's TOON output.
 
+## Cron rides
+
+`roca cron` is the lightweight train: an external observer that invokes work
+already owned by core or a plugin. It does not ingest, embed, or keep a daemon
+alive. System cron can call `roca cron run`; omitting the train selects
+`nightly`. Core registers its existing direct `roca ingest` command as the
+first nightly ride, so direct ingest remains available unchanged. The train
+itself is not behind `features.plugins`: it reads verified ride manifests from
+installed plugin payloads and records journeys whether or not the plugin
+standard is enabled. An unmanaged directory, a changed payload, an installation
+whose manifest and checksums no longer agree, or one whose recorded consent is
+[data-only](#verified-packages-and-lifecycle) contributes no rides. That check
+re-reads every declared payload except the plugin's own writable database, and
+a directory named `core` contributes nothing either: that ride namespace is
+reserved for the built-in rides.
+
+A plugin opts in with `rides.toml`. Ride, train, and gate names are identifier
+style; use underscores rather than hyphens. `train` defaults to `nightly`:
+
+```toml
+[ride.delta_ingest]
+command = "roca vector ingest --delta"
+gate = "after_ingest"
+```
+
+`roca cron list` aggregates core and every installed plugin manifest in stable
+plugin/ride order. `roca cron run [train] --dry-run` prints that order and each
+gate's current status without invoking or recording anything. A gate named
+`after_<ride>` opens only when that dependency's latest recorded journey ended
+with exit code zero. The dependency is the ride of that name declared by the
+same plugin, so two plugins may name a ride alike without deciding each other's
+gates. `after_ingest` is the sole cross-plugin exception: when the plugin does
+not declare its own `ingest` ride, it reads the core ingest journey. Any other
+gate whose dependency is absent from that plugin is reported as an unusable
+manifest rather than deferred forever. The train does not reorder rides into a
+dependency graph, and one ride it cannot observe or record is
+reported against that ride while the rides behind it still take their trip.
+
+Before each invocation the train probes core's existing `logs/.roca.lock`
+flock and releases the probe immediately. It never keeps or creates that lock.
+That flock guards core's log directory rather than a whole ingest, so an
+occupied probe means core is writing a record or a purge holds the tree, not
+that some long command is halfway through: it is a courtesy check rather than
+mutual exclusion, which is why rides must stay idempotent. An occupied lock or
+closed dependency defers the ride to the next train instead of waiting in a
+daemon. Invoked commands keep their standard behavior while the train observes
+exit code, duration, streams, and timestamps from outside. This version
+intentionally imposes no per-ride timeout: timeout policy belongs to each ride
+or its external scheduler, not to the observer.
+
+Every attempted or deferred trip is stored in the bundled custodial
+`roca-cron` plugin database at
+`~/.roca/plugins/roca-cron/roca-cron.db`. Its `journeys` table is the canonical
+cross-plugin signal and includes train, ride, plugin, timestamps, duration,
+exit code, error, gate status, stdout, and stderr. Both streams are kept as a
+redacted excerpt of at most 64 KiB, with the dropped byte count noted in place,
+so a talkative ride can neither grow the database without bound nor leave a
+credential in a queryable column. Dry-runs write no journey, and
+`ROCA_READ_ONLY=1` refuses a train run because recording one is a write, while
+leaving `roca cron list` and `--dry-run` available. Journey history is kept
+whole in this version: unlike the operational log, it is neither rotated nor
+pruned.
+
+The train expects an ordinary crontab entry. Core's own ride addresses the
+running binary by its absolute path, so it survives cron's minimal environment;
+a plugin ride command is resolved by the shell, so give it an absolute path or
+declare `PATH` in the crontab:
+
+```crontab
+PATH=/usr/bin:/bin:/home/you/.local/bin
+17 3 * * * /home/you/.local/bin/roca cron run nightly
+```
+
 ## Building against the stable surfaces
 
 A plugin should treat the `roca` process as its API and compose these public
@@ -131,25 +206,30 @@ a `plugin.json` file:
 ```
 
 A `checksums.txt` beside it publishes one SHA-256 for each payload file:
-`plugin.json`, `semantic.yaml`, the one SQLite database, and the optional
-`roca-<name>` executable. The installer rejects missing, extra, changed,
-symlinked, or non-regular payloads before it writes anything. Its displayed
-package checksum is the deterministic SHA-256 fingerprint of those verified
-source checksums.
+`plugin.json`, `semantic.yaml`, the one SQLite database, optional `rides.toml`,
+and the optional `roca-<name>` executable. The installer rejects missing,
+extra, changed, symlinked, or non-regular payloads before it writes anything.
+Its displayed package checksum is the deterministic SHA-256 fingerprint of
+those verified source checksums.
 
 ```text
 <sha256>  plugin.json
 <sha256>  semantic.yaml
 <sha256>  receipts.sqlite
+<sha256>  rides.toml
 <sha256>  roca-receipts
 ```
 
 Run `roca plugin install <path|url|owner/repo>`. The consent screen always names
 the source, version, checksum, and one of two risk levels:
 
-- **DATA-ONLY** has a database and semantic layer but no executable. It is
-  near-harmless; its worst case is lying content entering model context.
-- **EXECUTABLE** is full trust. It runs code with the user's privileges.
+- **DATA-ONLY** has a database and semantic layer, no executable, and no ride
+  manifest. It is near-harmless; its worst case is lying content entering model
+  context.
+- **EXECUTABLE** is full trust. It runs code with the user's privileges, either
+  from its `roca-<name>` executable or from the ride commands the [cron
+  train](#cron-rides) hands to a shell. The train runs a plugin's rides only
+  while its manifest records that consent.
 
 Install, update, and uninstall all show that screen and wait for an answer.
 `--yes` accepts that risk without prompting; `--json` never prompts and
