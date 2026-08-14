@@ -291,10 +291,13 @@ exactly the information the task needs instead of a whole skill.
   already on `PATH` and uses their existing signed-in sessions without reading,
   copying, or storing secrets. No La Roca login is required. For machines
   without a usable local CLI, the local Ollama floor and keyword rescue remain.
-- **Exact retrieval, no embeddings.** Recovery is SQL plus a local FTS5 index
-  with diacritic folding; a plain `LIKE` fallback works before the index
+- **Exact retrieval, no embeddings in core.** Recovery is SQL plus a local FTS5
+  index with diacritic folding; a plain `LIKE` fallback works before the index
   exists. If you want semantics, your model supplies it at question time; the
-  retrieval itself stays exact and auditable.
+  retrieval itself stays exact and auditable. Embedding search is never part of
+  core: it exists only as an optional executable package you build and install
+  yourself, described in
+  [plugins](docs/plugins.md#worked-executable-example-vector-search).
 - **Honest degradation.** No usable provider, or SQL that cannot run, falls
   back to literal search and says so in the result.
 
