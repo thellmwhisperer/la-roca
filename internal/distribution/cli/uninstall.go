@@ -573,13 +573,7 @@ func installedPluginPaths(paths config.Paths) []string {
 		if err != nil {
 			continue
 		}
-		for name := range manifest.Files {
-			owned = append(owned, filepath.Join(directory, name))
-		}
-		database := filepath.Join(directory, manifest.Database)
-		owned = append(owned, database+"-wal", database+"-shm", database+"-journal",
-			filepath.Join(directory, plugininstall.ManifestFilename),
-			filepath.Join(directory, plugininstall.ChecksumsFilename), directory)
+		owned = append(owned, plugininstall.InstalledPaths(directory, manifest)...)
 		executable := plugininstall.InstalledExecutable(manifest)
 		if executable != "" && filepath.Dir(executable) == filepath.Clean(bin) {
 			owned = append(owned, executable)

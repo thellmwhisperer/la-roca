@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -24,6 +25,9 @@ import (
 
 const (
 	SemanticFilename = "semantic.yaml"
+	// ManifestFilename is the installed package manifest every installer writes
+	// and discovery reads, so both sides name the same file.
+	ManifestFilename = ".roca-plugin.json"
 	MaxAttached      = 10
 	// ProvenanceColumn names every row's source database, so a semantic layer
 	// may not declare a column that would be overwritten by it.
@@ -99,6 +103,9 @@ func Discover(root string) ([]Descriptor, []string) {
 			continue
 		}
 		directory := filepath.Join(root, entry.Name())
+		if executablePackage(directory) {
+			continue
+		}
 		descriptor, err := Inspect(entry.Name(), directory)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("plugin %s is unavailable: %v", entry.Name(), err))
@@ -109,6 +116,20 @@ func Discover(root string) ([]Descriptor, []string) {
 	slices.SortFunc(found, func(a, b Descriptor) int { return strings.Compare(a.Name, b.Name) })
 	disambiguateSchemas(found)
 	return found, warnings
+}
+
+func executablePackage(directory string) bool {
+	file, err := os.Open(filepath.Join(directory, ManifestFilename))
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	var manifest struct {
+		Schema int    `json:"schema"`
+		Kind   string `json:"kind"`
+	}
+	return json.NewDecoder(file).Decode(&manifest) == nil &&
+		manifest.Schema == 1 && manifest.Kind == "executable"
 }
 
 // Inspect parses one plugin directory without requiring it to be installed.
@@ -372,7 +393,13 @@ func Validate(ctx context.Context, descriptor Descriptor) (Database, error) {
 	return Database{Descriptor: descriptor, Tables: tables}, nil
 }
 
+// databaseURI resolves the path first because a plugin root reached through a
+// relative path would put its first segment in the URI authority, which SQLite
+// refuses to open at all.
 func databaseURI(path string) string {
+	if absolute, err := filepath.Abs(path); err == nil {
+		path = absolute
+	}
 	uri := url.URL{Scheme: "file", Path: filepath.ToSlash(path),
 		RawQuery: url.Values{"mode": {"ro"}}.Encode()}
 	return uri.String()

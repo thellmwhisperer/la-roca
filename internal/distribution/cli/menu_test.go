@@ -6,11 +6,12 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 )
 
 func TestRootMenuShowsExactlyThePublicCommands(t *testing.T) {
 	want := []string{
-		"cron", "doctor", "explore", "hooks", "ingest", "init", "model", "plugin", "plugins", "query", "store", "uninstall", "update",
+		"doctor", "explore", "hooks", "ingest", "init", "model", "plugin", "plugins", "query", "store", "uninstall", "update",
 	}
 	root := rootCommand(&cliEnv{})
 	root.InitDefaultHelpCmd()
@@ -48,6 +49,15 @@ func TestRootMenuShowsExactlyThePublicCommands(t *testing.T) {
 	help.SetArgs([]string{"help", "query"})
 	if err := help.Execute(); err != nil {
 		t.Fatalf("the hidden standalone help command no longer executes: %v", err)
+	}
+}
+
+func TestCronAppearsInTheMenuOnlyWhenEnabled(t *testing.T) {
+	env := &cliEnv{features: config.FeaturesConfig{Cron: true}, featuresLoaded: true}
+	root := rootCommand(env)
+	command, _, err := root.Find([]string{"cron"})
+	if err != nil || command.Name() != "cron" || command.Hidden {
+		t.Fatalf("enabled cron command = %v, err %v", command, err)
 	}
 }
 

@@ -146,7 +146,10 @@ The contract, reader, rotation, retention, and redaction are owned by
 ## Read-only boundary
 
 `ROCA_READ_ONLY=1` refuses writes in the shared service before database I/O,
-so CLI and MCP enforce the same boundary.
+so CLI and MCP enforce the same boundary. Installing the bundled
+[`roca-corpus`](plugins.md#the-bundled-roca-corpus-plugin) archive is itself a
+write, so a read-only run never places it: on an installation that does not have
+it yet, answers cover core only and carry that omission as a warning.
 
 ## Data directory
 
