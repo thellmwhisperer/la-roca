@@ -131,7 +131,8 @@ func installedPluginFixture(t *testing.T, paths config.Paths, name string) (stri
 	writeFile(t, filepath.Join(directory, plugininstall.ChecksumsFilename), "listed in the manifest")
 	manifest, err := json.Marshal(plugininstall.Manifest{
 		Schema: 1, Name: name, Source: "owner/" + name, Version: "1.0.0",
-		Checksum: strings.Repeat("c", 64), Database: database, Executable: executable,
+		Checksum: strings.Repeat("c", 64), Risk: plugininstall.Executable,
+		Database: database, Executable: executable,
 		ExecutableFile: executableFile, Files: files,
 	})
 	if err != nil {
@@ -141,27 +142,49 @@ func installedPluginFixture(t *testing.T, paths config.Paths, name string) (stri
 	return directory, executable
 }
 
+func TestUninstallConsentDescribesTheInstalledPackageItWouldRemove(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	paths := resolvedIn(t, home)
+	installedPluginFixture(t, paths, "synthetic")
+	writeFile(t, paths.Config, "[features]\nplugins = true\n")
+
+	var output, narration strings.Builder
+	env := &cliEnv{out: &output, errOut: &narration}
+	code, err := executeWithEnv(env, []string{"plugin", "uninstall", "synthetic"}, strings.NewReader("no\n"))
+	if err != nil || code != ExitOK {
+		t.Fatalf("declined uninstall = code %d err %v", code, err)
+	}
+	if !strings.Contains(narration.String(),
+		"EXECUTABLE: FULL TRUST; it runs code with your user privileges") {
+		t.Fatalf("uninstall consent misreads the installed package:\n%s", narration.String())
+	}
+}
+
 func TestPluginConsentDistinguishesDataFromCodeAndNamesTheReplacedChecksum(t *testing.T) {
 	checksum, recorded := strings.Repeat("a", 64), strings.Repeat("b", 64)
 	tests := []struct {
-		action  string
-		risk    plugininstall.Risk
-		trusted string
-		want    []string
+		action     string
+		risk       plugininstall.Risk
+		executable string
+		trusted    string
+		want       []string
 	}{
-		{"install", plugininstall.DataOnly, "",
+		{"install", plugininstall.DataOnly, "", "",
 			[]string{"DATA-ONLY: near-harmless; its worst case is lying content", "sha256:" + checksum}},
-		{"install", plugininstall.Executable, "",
+		{"install", plugininstall.Executable, "roca-synthetic", "",
 			[]string{"EXECUTABLE: FULL TRUST; it runs code with your user privileges"}},
-		{"update", plugininstall.DataOnly, recorded,
+		{"install", plugininstall.Executable, "", "",
+			[]string{"EXECUTABLE: FULL TRUST; its cron rides run commands with your user privileges"}},
+		{"update", plugininstall.DataOnly, "", recorded,
 			[]string{"sha256:" + checksum, "replaces the recorded sha256:" + recorded}},
-		{"update", plugininstall.DataOnly, checksum,
+		{"update", plugininstall.DataOnly, "", checksum,
 			[]string{"unchanged since the recorded install"}},
 	}
 	for _, test := range tests {
 		candidate := plugininstall.Candidate{
 			Name: "synthetic", Version: "1.2.3", Source: "owner/synthetic",
-			Checksum: checksum, Risk: test.risk,
+			Checksum: checksum, Risk: test.risk, Executable: test.executable,
 		}
 		text := pluginConsentText(test.action, candidate, test.trusted)
 		wanted := append([]string{"source: owner/synthetic", "version: 1.2.3"}, test.want...)

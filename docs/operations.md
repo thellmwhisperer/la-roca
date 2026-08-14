@@ -159,4 +159,6 @@ generated prompt or install the bundled skill.
 
 Experimental plugin packages are not part of the selected data directory: they
 live under `~/.roca/plugins`, and protected removals are archived beside them.
-See [Plugins](plugins.md).
+The bundled `roca-cron` plugin keeps its canonical journey database there too;
+it observes the selected data directory's existing `logs/.roca.lock` without
+owning it. See [Plugins](plugins.md#cron-rides).
