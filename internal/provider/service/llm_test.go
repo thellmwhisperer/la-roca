@@ -347,7 +347,7 @@ func TestWithoutNetworkItFallsToTheLocalFloorAndDeclaresIt(t *testing.T) {
 // traceback.
 func TestWithNoProviderAtAllTheFailureNamesEverythingTried(t *testing.T) {
 	svc := serviceWithModel(t,
-		unavailable("codex", "there is no Codex session", "log in with `roca login codex`"),
+		unavailable("codex", "there is no Codex session", "verify it with `roca model check codex`"),
 		unavailable("ollama", "Ollama does not answer at localhost:11434",
 			"start the local model with `ollama serve`"),
 	)
@@ -1186,7 +1186,7 @@ func TestInterpretCapsTheRowsItHandsTheModel(t *testing.T) {
 func TestInterpretFallsBackWhenNoModelServes(t *testing.T) {
 	for name, providers := range map[string][]provider.Provider{
 		"none configured": nil,
-		"unavailable":     {unavailable("codex", "no key", "roca login codex")},
+		"unavailable":     {unavailable("codex", "no key", "roca model check codex")},
 	} {
 		t.Run(name, func(t *testing.T) {
 			svc := serviceWithModel(t, providers...)

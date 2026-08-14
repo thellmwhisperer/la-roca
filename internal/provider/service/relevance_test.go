@@ -39,7 +39,7 @@ func TestAnEmptyModelPlanLabelsTheLiteralFallback(t *testing.T) {
 }
 
 func TestUnavailableModelStillLabelsTheLiteralFallback(t *testing.T) {
-	svc := serviceWithModel(t, unavailable("codex", "not signed in", "roca login codex"))
+	svc := serviceWithModel(t, unavailable("codex", "not signed in", "roca model check codex"))
 
 	res, err := svc.Query(context.Background(), service.QueryRequest{Question: theQuestionWithAMatch})
 	if err != nil {

@@ -747,12 +747,15 @@ func (env *cliEnv) modelCheck(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	name, model, err := effectiveModelTarget(paths, file, args)
-	if errors.Is(err, errNoProviderDeclared) {
-		return env.reportNothingToCheck()
+	name, model, warnings, err := effectiveModelTarget(paths, file, args)
+	if errors.Is(err, errNoProviderDeclared) || errors.Is(err, errNoProviderUsable) {
+		return env.reportNothingToCheck(err, warnings)
 	}
 	if err != nil {
 		return err
+	}
+	if !env.json {
+		env.printCascadeWarnings(warnings)
 	}
 	backend := env.modelBackend
 	if backend == nil {
@@ -764,7 +767,7 @@ func (env *cliEnv) modelCheck(ctx context.Context, args []string) error {
 	if env.json {
 		return env.printJSON(map[string]any{
 			"provider": name, "model": model, "ready": true, "reason": "",
-			"configuration_changed": false,
+			"warnings": orNoWarnings(warnings), "configuration_changed": false,
 		})
 	}
 	env.print("%s model %s answered the probe; configuration was not changed", name, model)
@@ -772,47 +775,80 @@ func (env *cliEnv) modelCheck(ctx context.Context, args []string) error {
 	return nil
 }
 
-// errNoProviderDeclared is a configuration state, not a failed probe: the
-// cascade is empty because none was declared or because the order is off.
-var errNoProviderDeclared = errors.New("no provider is declared")
+// The empty cascade has two causes and they are not the same answer. One is the
+// operator's own decision: nothing declared, or the order turned off. The other
+// is this build dropping every provider the configuration named, which is a
+// state the warnings explain and which reporting as "nothing was declared"
+// would deny.
+var (
+	errNoProviderDeclared = errors.New("no provider is declared")
+	errNoProviderUsable   = errors.New("no declared provider can be used by this build")
+)
 
 // reportNothingToCheck answers an empty cascade the way `roca models` does,
 // with the answer itself rather than an error: there is no session to probe.
-func (env *cliEnv) reportNothingToCheck() error {
+func (env *cliEnv) reportNothingToCheck(reason error, warnings []string) error {
 	if env.json {
 		return env.printJSON(map[string]any{
 			"provider": "", "model": "", "ready": false,
-			"reason": errNoProviderDeclared.Error(), "configuration_changed": false,
+			"reason": reason.Error(), "warnings": orNoWarnings(warnings),
+			"configuration_changed": false,
 		})
 	}
-	env.print("%s, so there is no model to probe; configuration was not changed",
-		errNoProviderDeclared.Error())
+	env.printCascadeWarnings(warnings)
+	env.print("%s, so there is no model to probe; configuration was not changed", reason.Error())
 	return nil
 }
 
-func effectiveModelTarget(paths config.Paths, file config.File, args []string) (string, string, error) {
+func (env *cliEnv) printCascadeWarnings(warnings []string) {
+	for _, warning := range warnings {
+		env.print("warning: %s", warning)
+	}
+}
+
+// orNoWarnings keeps the machine field a list in every answer, so a reader that
+// ranges over it never has to tell an absent key from an empty one.
+func orNoWarnings(warnings []string) []string {
+	if warnings == nil {
+		return []string{}
+	}
+	return warnings
+}
+
+func effectiveModelTarget(paths config.Paths, file config.File, args []string) (string, string, []string, error) {
 	if len(args) == 0 {
-		cascade, err := provider.BuildCascade(provider.Settings{
-			File: file, RunnerDir: paths.Runner, Env: os.Getenv,
-		})
-		if err != nil {
-			return "", "", err
-		}
-		if len(cascade.Providers) == 0 {
-			return "", "", errNoProviderDeclared
-		}
-		return cascade.Providers[0].Name(), cascade.Providers[0].ModelID(), nil
+		return firstCascadeProvider(paths, file)
 	}
 	name := strings.ToLower(strings.TrimSpace(args[0]))
 	known := knownProviderNames(file)
 	if !slices.Contains(known, name) {
-		return "", "", fmt.Errorf("there is no provider %q\n\n%s", args[0], knownProvidersHelp(known))
+		return "", "", nil, fmt.Errorf("there is no provider %q\n\n%s", args[0], knownProvidersHelp(known))
 	}
-	model, err := effectiveProviderModel(paths, file, name)
-	return name, model, err
+	model, warnings, err := effectiveProviderModel(paths, file, name)
+	return name, model, warnings, err
 }
 
-func effectiveProviderModel(paths config.Paths, file config.File, name string) (string, error) {
+// firstCascadeProvider is the provider a model command acts on when the operator
+// names none. `model check` and `model set` both resolve it here, through the
+// live cascade rather than the raw models.order key, so the two never disagree
+// about which provider is first when the environment sets the order.
+func firstCascadeProvider(paths config.Paths, file config.File) (string, string, []string, error) {
+	cascade, err := provider.BuildCascade(provider.Settings{
+		File: file, RunnerDir: paths.Runner, Env: os.Getenv,
+	})
+	if err != nil {
+		return "", "", nil, err
+	}
+	if len(cascade.Providers) == 0 {
+		if cascade.Disabled || len(cascade.Warnings) == 0 {
+			return "", "", cascade.Warnings, errNoProviderDeclared
+		}
+		return "", "", cascade.Warnings, errNoProviderUsable
+	}
+	return cascade.Providers[0].Name(), cascade.Providers[0].ModelID(), cascade.Warnings, nil
+}
+
+func effectiveProviderModel(paths config.Paths, file config.File, name string) (string, []string, error) {
 	file.Models.Order = []string{name}
 	cascade, err := provider.BuildCascade(provider.Settings{
 		File: file, RunnerDir: paths.Runner,
@@ -824,14 +860,25 @@ func effectiveProviderModel(paths config.Paths, file config.File, name string) (
 		},
 	})
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	for _, candidate := range cascade.Providers {
 		if candidate.Name() == name {
-			return candidate.ModelID(), nil
+			return candidate.ModelID(), cascade.Warnings, nil
 		}
 	}
-	return "", fmt.Errorf("provider %s cannot be built for a model check", name)
+	return "", cascade.Warnings, fmt.Errorf("provider %s cannot be built for a model check%s",
+		name, warningDetail(cascade.Warnings))
+}
+
+// warningDetail appends the cascade's own account of what it dropped to a
+// failure that would otherwise name only the provider. Every drop is narrated in
+// a warning; a bare "cannot be built" hides the one thing the operator can act on.
+func warningDetail(warnings []string) string {
+	if len(warnings) == 0 {
+		return ""
+	}
+	return ": " + strings.Join(warnings, "; ")
 }
 
 func modelSetCommand(env *cliEnv) *cobra.Command {
@@ -855,7 +902,7 @@ func modelSetCommand(env *cliEnv) *cobra.Command {
 			case 1:
 				return env.modelSetArgument(cmd.Context(), cmd.InOrStdin(), args[0])
 			default:
-				return env.modelSetContext(cmd.Context(), args[0], args[1])
+				return env.modelSetContext(cmd.Context(), cmd.InOrStdin(), args[0], args[1])
 			}
 		},
 	}
@@ -872,16 +919,12 @@ func (env *cliEnv) modelSetArgument(ctx context.Context, in io.Reader, argument 
 	}
 	name := strings.ToLower(strings.TrimSpace(argument))
 	if slices.Contains(knownProviderNames(file), name) {
-		return env.modelSetContextInput(ctx, in, name, "")
+		return env.modelSetContext(ctx, in, name, "")
 	}
 	return env.modelSetCurrentInput(ctx, in, argument)
 }
 
-func (env *cliEnv) modelSetContext(ctx context.Context, rawName, modelID string) error {
-	return env.modelSetContextInput(ctx, nil, rawName, modelID)
-}
-
-func (env *cliEnv) modelSetContextInput(ctx context.Context, in io.Reader, rawName, modelID string) error {
+func (env *cliEnv) modelSetContext(ctx context.Context, in io.Reader, rawName, modelID string) error {
 	name := strings.ToLower(strings.TrimSpace(rawName))
 	paths, err := env.resolvePaths()
 	if err != nil {

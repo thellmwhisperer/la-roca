@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"slices"
@@ -34,7 +35,7 @@ func TestModelSetNeverWritesBeforeCatalogueAndProbePass(t *testing.T) {
 			fake := &fakePickerProvider{models: []string{"grok-green", "grok-other"}, probeErr: test.probeErr}
 			env := validationEnv(t, fake)
 
-			err := env.modelSetContext(context.Background(), "codex", test.model)
+			err := env.modelSetContext(context.Background(), nil, "codex", test.model)
 			if test.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
 					t.Fatalf("error = %v, want %q", err, test.wantErr)
@@ -62,73 +63,156 @@ func TestModelSetNeverWritesBeforeCatalogueAndProbePass(t *testing.T) {
 	}
 }
 
+// `model set` with no provider named targets the same provider `model check`
+// probes: the first one the live cascade builds. Reading models.order straight
+// out of the file made the two disagree whenever the environment set the order.
 func TestModelSetOneArgumentTargetsTheFirstConfiguredProvider(t *testing.T) {
-	home := isolatedLoginHome(t)
-	path := modelConfigPath(home)
-	writeFile(t, path, "[models]\norder = [\"codex\", \"ollama\"]\n")
-	fake := &fakePickerProvider{models: []string{"grok-green"}}
-	env := validationEnv(t, fake)
-	root := rootCommand(env)
-	root.SetArgs([]string{"model", "set", "grok-green"})
-	if err := root.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	file, err := config.LoadFile(path)
-	if err != nil || file.Models.Providers["codex"].Model != "grok-green" {
-		t.Fatalf("file=%+v err=%v", file, err)
+	for _, test := range []struct{ name, envOrder, want string }{
+		{name: "configured order", want: "codex"},
+		{name: "environment order wins", envOrder: "claude", want: "claude"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := isolatedLoginHome(t)
+			path := modelConfigPath(home)
+			writeFile(t, path, "[models]\norder = [\"codex\", \"ollama\"]\n")
+			if test.envOrder != "" {
+				t.Setenv("ROCA_MODELS_ORDER", test.envOrder)
+			}
+			fake := &fakePickerProvider{models: []string{"grok-green"}}
+			env := validationEnv(t, fake)
+			root := rootCommand(env)
+			root.SetArgs([]string{"model", "set", "grok-green"})
+			if err := root.Execute(); err != nil {
+				t.Fatal(err)
+			}
+			file, err := config.LoadFile(path)
+			if err != nil || file.Models.Providers[test.want].Model != "grok-green" {
+				t.Fatalf("file=%+v err=%v", file, err)
+			}
+		})
 	}
 }
 
 func TestModelCheckAndLoginAliasProbeWithoutWriting(t *testing.T) {
-	for _, command := range [][]string{{"model", "check", "codex"}, {"login", "codex"}} {
-		home := isolatedLoginHome(t)
-		path := modelConfigPath(home)
-		before := "# preserve the operator's order\n[models]\norder = [\"ollama\", \"codex\"]\n\n[models.codex]\nmodel = \"grok-green\"\n"
-		writeFile(t, path, before)
-		fake := &fakePickerProvider{models: []string{"grok-green", "grok-other"}}
-		env := validationEnv(t, fake)
-		root := rootCommand(env)
-		root.SetArgs(command)
-		if err := root.Execute(); err != nil {
-			t.Fatalf("%v: %v", command, err)
-		}
-		raw, err := os.ReadFile(path)
-		if err != nil || string(raw) != before {
-			t.Fatalf("%v changed config: raw=%q err=%v", command, raw, err)
-		}
-		if len(fake.probes) != 1 || fake.model != "grok-green" {
-			t.Fatalf("%v probes=%v model=%q", command, fake.probes, fake.model)
-		}
+	for _, test := range []struct {
+		name     string
+		command  []string
+		probeErr error
+		wantErr  string
+	}{
+		{name: "model check", command: []string{"model", "check", "codex"}},
+		{name: "login alias", command: []string{"login", "codex"}},
+		{
+			name: "rejected probe", command: []string{"model", "check", "codex"},
+			probeErr: errors.New("account cannot reach it"),
+			wantErr:  "codex model grok-green failed its account probe: account cannot reach it",
+		},
+		{
+			name: "unknown provider", command: []string{"model", "check", "nosuch"},
+			wantErr: `there is no provider "nosuch"`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := isolatedLoginHome(t)
+			path := modelConfigPath(home)
+			before := "# preserve the operator's order\n[models]\norder = [\"ollama\", \"codex\"]\n\n[models.codex]\nmodel = \"grok-green\"\n"
+			writeFile(t, path, before)
+			fake := &fakePickerProvider{models: []string{"grok-green", "grok-other"}, probeErr: test.probeErr}
+			env := validationEnv(t, fake)
+			root := rootCommand(env)
+			root.SetArgs(test.command)
+			err := root.Execute()
+			if test.wantErr == "" && err != nil {
+				t.Fatal(err)
+			}
+			if test.wantErr != "" && (err == nil || !strings.Contains(err.Error(), test.wantErr)) {
+				t.Fatalf("error = %v, want %q", err, test.wantErr)
+			}
+			raw, readErr := os.ReadFile(path)
+			if readErr != nil || string(raw) != before {
+				t.Fatalf("changed config: raw=%q err=%v", raw, readErr)
+			}
+			if test.wantErr == "" && (len(fake.probes) != 1 || fake.model != "grok-green") {
+				t.Fatalf("probes=%v model=%q", fake.probes, fake.model)
+			}
+		})
 	}
 }
 
 // An empty cascade is a configuration answer, not a failed probe: there is no
-// session to reach, so `model check` says so and still succeeds.
+// session to reach, so `model check` says so and still succeeds. Which answer it
+// is matters, though: an order that was turned off is not an order whose every
+// entry this build had to drop, and reporting the second as the first denies the
+// operator the file they wrote.
 func TestModelCheckAnswersAnEmptyCascadeWithoutFailing(t *testing.T) {
-	for _, machine := range []bool{false, true} {
-		isolatedLoginHome(t)
-		t.Setenv("ROCA_MODELS_ORDER", "none")
-		args := []string{"model", "check"}
-		if machine {
-			args = append(args, "--json")
+	for _, test := range []struct {
+		name, envOrder, file, wantReason, wantHuman string
+	}{
+		{
+			name: "the order is turned off", envOrder: "none",
+			wantReason: "no provider is declared",
+			wantHuman:  "no provider is declared, so there is no model to probe",
+		},
+		{
+			name:       "every declared provider was dropped",
+			file:       "[models]\norder = [\"nosuch\"]\n",
+			wantReason: "no declared provider can be used by this build",
+			wantHuman:  `this version does not know the provider "nosuch"`,
+		},
+	} {
+		for _, machine := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/json=%v", test.name, machine), func(t *testing.T) {
+				home := isolatedLoginHome(t)
+				if test.envOrder != "" {
+					t.Setenv("ROCA_MODELS_ORDER", test.envOrder)
+				}
+				if test.file != "" {
+					writeFile(t, modelConfigPath(home), test.file)
+				}
+				args := []string{"model", "check"}
+				if machine {
+					args = append(args, "--json")
+				}
+				out, err := runRootErr(t, Build{Version: "test"}, nil, args...)
+				if err != nil {
+					t.Fatalf("%v\n%s", err, out)
+				}
+				if !machine {
+					if !strings.Contains(out, test.wantHuman) {
+						t.Fatalf("human output = %q", out)
+					}
+					return
+				}
+				var result map[string]any
+				if err := json.Unmarshal([]byte(out), &result); err != nil {
+					t.Fatalf("%v: %s", err, out)
+				}
+				if result["ready"] != false || result["configuration_changed"] != false ||
+					result["reason"] != test.wantReason {
+					t.Fatalf("result = %+v", result)
+				}
+				warnings, _ := result["warnings"].([]any)
+				if test.file != "" && len(warnings) == 0 {
+					t.Fatalf("the dropped provider was not narrated: %+v", result)
+				}
+			})
 		}
-		out, err := runRootErr(t, Build{Version: "test"}, nil, args...)
-		if err != nil {
-			t.Fatalf("json=%v: %v\n%s", machine, err, out)
-		}
-		if !machine {
-			if !strings.Contains(out, "no provider is declared") {
-				t.Fatalf("human output = %q", out)
-			}
-			continue
-		}
-		var result map[string]any
-		if err := json.Unmarshal([]byte(out), &result); err != nil {
-			t.Fatalf("%v: %s", err, out)
-		}
-		if result["ready"] != false || result["configuration_changed"] != false ||
-			result["reason"] != "no provider is declared" {
-			t.Fatalf("result = %+v", result)
+	}
+}
+
+// A provider the operator declared but this build cannot use owes the reason:
+// the sibling `model set` path already carries the cascade's own explanation,
+// and naming only the provider leaves nothing to act on.
+func TestModelCheckNamesWhyADeclaredProviderCannotBeBuilt(t *testing.T) {
+	home := isolatedLoginHome(t)
+	writeFile(t, modelConfigPath(home), "[models]\norder = [\"nosuch\"]\n")
+	out, err := runRootErr(t, Build{Version: "test"}, nil, "model", "check", "nosuch")
+	if err == nil {
+		t.Fatalf("unusable provider succeeded:\n%s", out)
+	}
+	for _, want := range []string{"nosuch", "does not know the provider"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error omits %q: %v", want, err)
 		}
 	}
 }
