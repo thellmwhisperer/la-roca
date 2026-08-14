@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
+	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 )
 
 func TestPluginsResolveFromAControlledPathAndNeverTheCurrentDirectory(t *testing.T) {
@@ -31,9 +32,34 @@ func TestPluginsResolveFromAControlledPathAndNeverTheCurrentDirectory(t *testing
 	if !found || path != filepath.Join(fixtures, "roca-demo") {
 		t.Fatalf("demo plugin = %q, found=%v", path, found)
 	}
-	plugins := listPlugins()
+	plugins := listPlugins(config.FeaturesConfig{})
 	if len(plugins) != 2 || plugins[0].Name != "demo" || plugins[1].Name != "version" {
 		t.Fatalf("plugins = %+v", plugins)
+	}
+}
+
+func TestVectorExecutableDispatchAndListingRequireItsFeature(t *testing.T) {
+	directory := t.TempDir()
+	vector := filepath.Join(directory, "roca-vector")
+	if err := os.WriteFile(vector, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", directory)
+	root := rootCommand(&cliEnv{})
+
+	if handled, _, err := dispatchPlugin(root, []string{"vector"}, config.FeaturesConfig{}); handled || err != nil {
+		t.Fatalf("disabled vector dispatch = handled %v, err %v", handled, err)
+	}
+	if plugins := listPlugins(config.FeaturesConfig{}); len(plugins) != 0 {
+		t.Fatalf("disabled vector appeared in plugin listing: %+v", plugins)
+	}
+
+	enabled := config.FeaturesConfig{Vector: true}
+	if handled, code, err := dispatchPlugin(root, []string{"vector"}, enabled); !handled || code != ExitOK || err != nil {
+		t.Fatalf("enabled vector dispatch = handled %v, code %d, err %v", handled, code, err)
+	}
+	if plugins := listPlugins(enabled); len(plugins) != 1 || plugins[0].Name != "vector" {
+		t.Fatalf("enabled vector listing = %+v", plugins)
 	}
 }
 

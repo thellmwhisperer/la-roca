@@ -2,13 +2,15 @@
 
 This file is the project's committed home for project-intrinsic agent knowledge: build, test, release, architecture, and sharp-edge notes that should travel with the code.
 
-- Run the canonical local gate with `make check`; inspect the Gherkin catalogue with `make accept-index`.
+- Run the canonical local gate with `make check`; inspect the Gherkin catalogue with `make accept-index`. That gate stops at the root module, so a change under `plugins/<name>/` also owes `make -C plugins/<name> check`.
 - Per-domain acceptance lives under `features/<domain>/`; the Godog harness is enabled only by the `acceptance` build tag.
 - The slop gate ratchets over test code too, so new tests alone can fail `make check`: fold paired cases into one table-driven test rather than raise the ceiling in `.slop/`.
 - Public source, documentation, features, and fixtures are English-only; use unmistakably synthetic test data.
 - Never add Sherpa-style navigational comment blocks or numbered section maps to any file; the owner forbids them repository-wide.
 - Keep distribution ownership declarations centralized in `internal/distribution/cli/uninstall.go` (`ownedPaths`, the `~/.roca` plugin trees, and recovery-backup handling); archived custodial plugin data is the one tree a purge owns only after its own consent.
 - Managed agent artifacts use the shared zones and schema-versioned registry in `internal/artifact`; installers register skill, prompt, and hook ownership, and `ownedPaths` consumes that registry rather than growing a second install inventory.
+- Verified executable-only plugin packages declare their kind and optional writable state directory in `plugin.json`; `internal/distribution/plugininstall` preserves that manifest-owned namespace across updates and supplies purge ownership. Keep them out of data-plugin discovery; the contract and worked example live in `docs/plugins.md`.
+- The bundled corpus has no feature flag: the CLI always installs and attaches it, new ingest and lexical indexing target its database, and historical core rows remain readable without an implicit migration. The seams live in `internal/distribution/cli/cli.go` and `internal/provider/service/{ingest,plugins}.go`.
 - Operational JSONL lives under the selected data directory's `logs/`; the stable call contract, doctor reader, rotation, retention, and redaction are owned by `internal/distribution/logfile` and documented in `docs/operations.md`.
 - MCP answers are TOON-only text: never return row envelopes in `StructuredContent`; the contract lives in `internal/distribution/mcpplug/toon_contract_test.go`.
 - A prose query or explore costs two inferences and only the second one sees result rows; `models.interpret_order` routes that seat, while deep explore may try `models.explore_order` first. Keep rows out of the SQL prompt and terrain facts derived from the run's returned rows; the contracts live in `internal/provider/service/two_inferences_test.go` and `explore_test.go`.

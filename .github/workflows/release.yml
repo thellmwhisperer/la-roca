@@ -84,6 +84,12 @@ jobs:
       - name: Build, format, vet, tests and slop gate
         run: make check
 
+      # The vector plugin module is outside the root module, so its own gate is
+      # replayed over the tag too: a release must not ship a source tree whose
+      # installable package no longer builds or passes its tests.
+      - name: Format, vet, tests and build of the vector module
+        run: make -C plugins/vector check
+
       # The version the binary reports IS the tag, injected through the
       # Makefile's ldflags. Everything downstream depends on it: the artefact
       # names carry it, `roca update` compares against it to decide whether it
