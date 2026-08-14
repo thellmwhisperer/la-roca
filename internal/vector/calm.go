@@ -16,26 +16,41 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
+const (
+	defaultCalmPoll    = time.Second
+	defaultCalmQuiet   = 2 * time.Second
+	defaultCalmTimeout = 5 * time.Minute
+)
+
 type CalmGate struct {
 	DataDir      string
 	JourneyPaths []string
 	QuietPeriod  time.Duration
 	PollInterval time.Duration
+	Timeout      time.Duration
 	Now          func() time.Time
 }
 
 func (g CalmGate) Wait(ctx context.Context) error {
 	poll := g.PollInterval
 	if poll <= 0 {
-		poll = time.Second
+		poll = defaultCalmPoll
 	}
+	timeout := g.Timeout
+	if timeout <= 0 {
+		timeout = defaultCalmTimeout
+	}
+	deadline := time.Now().Add(timeout)
 	for {
-		calm, err := g.calm(ctx)
+		calm, blocker, err := g.calm(ctx)
 		if err != nil {
 			return err
 		}
 		if calm {
 			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("waited %s for %s to settle and it is still busy; rerun once it is idle", timeout, blocker)
 		}
 		timer := time.NewTimer(poll)
 		select {
@@ -47,18 +62,18 @@ func (g CalmGate) Wait(ctx context.Context) error {
 	}
 }
 
-func (g CalmGate) calm(ctx context.Context) (bool, error) {
+func (g CalmGate) calm(ctx context.Context) (bool, string, error) {
 	lockPath := logfile.New(g.DataDir).LockPath()
 	if _, err := os.Stat(lockPath); err == nil {
 		release, err := securefile.LockExisting(lockPath)
 		if err != nil {
-			return false, fmt.Errorf("wait for core lock: %w", err)
+			return false, "", fmt.Errorf("wait for core lock: %w", err)
 		}
 		if err := release(); err != nil {
-			return false, fmt.Errorf("release core lock: %w", err)
+			return false, "", fmt.Errorf("release core lock: %w", err)
 		}
 	} else if !os.IsNotExist(err) {
-		return false, fmt.Errorf("inspect core lock: %w", err)
+		return false, "", fmt.Errorf("inspect core lock: %w", err)
 	}
 
 	for _, path := range g.JourneyPaths {
@@ -68,11 +83,19 @@ func (g CalmGate) calm(ctx context.Context) (bool, error) {
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			continue
 		} else if err != nil {
-			return false, fmt.Errorf("inspect roca-cron journey database: %w", err)
+			return false, "", fmt.Errorf("inspect roca-cron journey database: %w", err)
 		}
-		return journeyCalm(ctx, path)
+		calm, recognized, err := journeyCalm(ctx, path)
+		if err != nil {
+			return false, "", err
+		}
+		if !recognized {
+			continue
+		}
+		return calm, "the active roca-cron ingest journeys in " + path, nil
 	}
-	return g.ingestLogCalm()
+	calm, err := g.ingestLogCalm()
+	return calm, "core ingest activity in " + filepath.Join(g.DataDir, logfile.DirName), err
 }
 
 func DefaultJourneyPaths(dataDir, home, override string) []string {
@@ -86,34 +109,36 @@ func DefaultJourneyPaths(dataDir, home, override string) []string {
 	return slices.Compact(paths)
 }
 
-func journeyCalm(ctx context.Context, path string) (bool, error) {
+func journeyCalm(ctx context.Context, path string) (bool, bool, error) {
 	db, err := openSQLite(path, true)
 	if err != nil {
-		return false, fmt.Errorf("open roca-cron journey database: %w", err)
+		return false, false, fmt.Errorf("open roca-cron journey database: %w", err)
 	}
 	defer db.Close()
 	rows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND lower(name) LIKE '%journey%'`)
 	if err != nil {
-		return false, fmt.Errorf("read roca-cron journey database: %w", err)
+		return false, false, fmt.Errorf("read roca-cron journey database: %w", err)
 	}
 	var tables []string
 	for rows.Next() {
 		var table string
 		if err := rows.Scan(&table); err != nil {
 			rows.Close()
-			return false, err
+			return false, false, err
 		}
 		tables = append(tables, table)
 	}
 	rows.Close()
+	recognized := false
 	for _, table := range tables {
 		status, operation, err := journeyColumns(ctx, db, table)
 		if err != nil {
-			return false, err
+			return false, false, err
 		}
 		if status == "" {
 			continue
 		}
+		recognized = true
 		predicate := fmt.Sprintf(`lower(%s) IN ('running','started','in_progress','active')`, quoteIdentifier(status))
 		if operation != "" {
 			predicate += fmt.Sprintf(` AND lower(%s) LIKE '%%ingest%%'`, quoteIdentifier(operation))
@@ -121,13 +146,13 @@ func journeyCalm(ctx context.Context, path string) (bool, error) {
 		var count int
 		query := fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE %s`, quoteIdentifier(table), predicate)
 		if err := db.QueryRowContext(ctx, query).Scan(&count); err != nil {
-			return false, fmt.Errorf("read active roca-cron journeys: %w", err)
+			return false, false, fmt.Errorf("read active roca-cron journeys: %w", err)
 		}
 		if count > 0 {
-			return false, nil
+			return false, true, nil
 		}
 	}
-	return true, nil
+	return true, recognized, nil
 }
 
 func journeyColumns(ctx context.Context, db *sql.DB, table string) (string, string, error) {
@@ -196,7 +221,7 @@ func (g CalmGate) ingestLogCalm() (bool, error) {
 	}
 	quiet := g.QuietPeriod
 	if quiet <= 0 {
-		quiet = 2 * time.Second
+		quiet = defaultCalmQuiet
 	}
 	now := time.Now
 	if g.Now != nil {

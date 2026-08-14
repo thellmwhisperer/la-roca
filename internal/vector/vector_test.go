@@ -47,17 +47,26 @@ func TestChunksOverlapWithoutRepeatingTerminalChunk(t *testing.T) {
 }
 
 func TestStableSourceIDsUseCoreNaturalKeys(t *testing.T) {
-	memory := sourceRow{kind: "memories", sessionID: "session/a", ordinal: 3}
+	memory := sourceRow{kind: "memories", sessionID: "session/a", ordinal: 3, hasOrdinal: true}
 	if got, want := memory.stableID(), "memories/session/session%2Fa/3"; got != want {
 		t.Fatalf("memory stable id = %q, want %q", got, want)
 	}
-	exchange := sourceRow{kind: "exchanges", sessionID: "session/a", ordinal: 7}
+	exchange := sourceRow{kind: "exchanges", sessionID: "session/a", ordinal: 7, hasOrdinal: true}
 	if got, want := exchange.stableID(), "exchanges/session%2Fa/7"; got != want {
 		t.Fatalf("exchange stable id = %q, want %q", got, want)
 	}
-	thinking := sourceRow{kind: "thinking_blocks", sessionID: "session/a", ordinal: 7, position: "1.5"}
+	thinking := sourceRow{kind: "thinking_blocks", sessionID: "session/a", ordinal: 7, hasOrdinal: true, position: "1.5"}
 	if got, want := thinking.stableID(), "thinking_blocks/session%2Fa/7/1.5"; got != want {
 		t.Fatalf("thinking stable id = %q, want %q", got, want)
+	}
+	unkeyed := sourceRow{kind: "thinking_blocks", sessionID: "session/a", text: "session reasoning"}
+	sibling := sourceRow{kind: "thinking_blocks", sessionID: "session/a", text: "other session reasoning"}
+	if unkeyed.stableID() == sibling.stableID() {
+		t.Fatalf("un-numbered thinking blocks share stable id %q", unkeyed.stableID())
+	}
+	unsequenced := sourceRow{kind: "memories", sessionID: "session/a", text: "unsequenced"}
+	if got := unsequenced.stableID(); !strings.HasPrefix(got, "memories/direct/") {
+		t.Fatalf("memory without a sequence has stable id %q", got)
 	}
 	direct := sourceRow{kind: "memories", text: "stored memory", layer: "discovery", origin: "human", createdAt: "2026-08-14"}
 	if got := direct.stableID(); !strings.HasPrefix(got, "memories/direct/") || strings.Contains(got, "/id/") {
@@ -76,14 +85,14 @@ func TestDeltaIndexIsIdempotentAndMapsResultsBackToCore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Added != 4 || first.Updated != 0 || first.Removed != 0 {
+	if first.Added != 7 || first.Updated != 0 || first.Removed != 0 {
 		t.Fatalf("first delta = %+v", first)
 	}
 	second, err := index.Ingest(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.Added != 0 || second.Updated != 0 || second.Removed != 0 || second.Unchanged != 4 {
+	if second.Added != 0 || second.Updated != 0 || second.Removed != 0 || second.Unchanged != 7 {
 		t.Fatalf("idempotent delta = %+v", second)
 	}
 
@@ -122,10 +131,32 @@ func TestDeltaIndexIsIdempotentAndMapsResultsBackToCore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if changed.Updated != 1 || changed.Removed != 1 || changed.Added != 0 {
+	if changed.Updated != 1 || changed.Removed != 3 || changed.Added != 0 {
 		t.Fatalf("changed delta = %+v", changed)
 	}
 	assertVectorStoreHasNoCorpusText(t, vectorPath)
+}
+
+func TestSourcesWithoutNaturalKeysStaySeparateAndResolve(t *testing.T) {
+	ctx := context.Background()
+	index := Index{CorePath: createCoreFixture(t), VectorPath: filepath.Join(t.TempDir(), "vector.db"),
+		Model: DefaultModel, Embedder: &recordingEmbedder{}}
+	if _, err := index.Ingest(ctx); err != nil {
+		t.Fatal(err)
+	}
+	results, err := index.Query(ctx, "unkeyed sources", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := map[string]bool{}
+	for _, result := range results {
+		resolved[result.Text] = true
+	}
+	for _, want := range []string{"delta session reasoning", "zeta session reasoning", "epsilon unsequenced memory"} {
+		if !resolved[want] {
+			t.Fatalf("source %q was indexed but never resolved: %+v", want, results)
+		}
+	}
 }
 
 func TestQueryDeduplicatesChunksByStableSource(t *testing.T) {
@@ -176,8 +207,11 @@ func createCoreFixture(t *testing.T) string {
 		CREATE TABLE thinking_blocks(id INTEGER PRIMARY KEY, session_id TEXT, exchange_number INTEGER, position_in_session REAL, full_text TEXT);
 		INSERT INTO sessions VALUES ('s1', 'synthetic-agent', 'synthetic-project', '2026-01-01', '2026-01-01', 1, 'gamma session', '{}');
 		INSERT INTO memories VALUES (1, 'discovery', 'alpha memory', '{}', 'agent', 'synthetic-agent', NULL, NULL, NULL, NULL, 'synthetic-project', 'active', NULL, '2026-01-01');
+		INSERT INTO memories VALUES (2, 'discovery', 'epsilon unsequenced memory', '{}', 'agent', 'synthetic-agent', NULL, NULL, 's1', NULL, 'synthetic-project', 'active', NULL, '2026-01-01');
 		INSERT INTO exchanges VALUES (1, 's1', 2, 'beta question', 'gamma answer');
 		INSERT INTO thinking_blocks VALUES (1, 's1', 2, 1.5, 'beta reasoning');
+		INSERT INTO thinking_blocks VALUES (2, 's1', NULL, NULL, 'delta session reasoning');
+		INSERT INTO thinking_blocks VALUES (3, 's1', NULL, NULL, 'zeta session reasoning');
 	`
 	if _, err := db.Exec(ddl); err != nil {
 		t.Fatal(err)

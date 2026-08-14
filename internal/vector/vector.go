@@ -25,6 +25,7 @@ const (
 	defaultChunkSize = 4000
 	defaultOverlap   = 400
 	defaultBatchSize = 64
+	walkPageSize     = 500
 )
 
 type Index struct {
@@ -56,6 +57,7 @@ type sourceRow struct {
 	text       string
 	sessionID  string
 	ordinal    int64
+	hasOrdinal bool
 	position   string
 	cronSource string
 	filePath   string
@@ -67,6 +69,7 @@ type sourceRow struct {
 type locator struct {
 	SessionID  string `json:"session_id,omitempty"`
 	Ordinal    int64  `json:"ordinal,omitempty"`
+	HasOrdinal bool   `json:"has_ordinal,omitempty"`
 	Position   string `json:"position,omitempty"`
 	CronSource string `json:"cron_source,omitempty"`
 	FilePath   string `json:"file_path,omitempty"`
@@ -322,18 +325,21 @@ func (s sourceRow) stableID() string {
 			return "sessions/" + escape(s.sessionID)
 		}
 	case "exchanges":
-		if s.sessionID != "" {
+		if s.sessionID != "" && s.hasOrdinal {
 			return fmt.Sprintf("exchanges/%s/%d", escape(s.sessionID), s.ordinal)
 		}
 	case "thinking_blocks":
-		if s.sessionID != "" && s.position != "" {
+		if s.sessionID != "" && s.hasOrdinal && s.position != "" {
 			return fmt.Sprintf("thinking_blocks/%s/%d/%s", escape(s.sessionID), s.ordinal, escape(s.position))
+		}
+		if s.sessionID != "" {
+			return "thinking_blocks/" + escape(s.sessionID) + "/unkeyed/" + s.identity()
 		}
 	case "memories":
 		switch {
 		case s.cronSource != "" && s.filePath != "":
 			return "memories/cron/" + escape(s.cronSource) + "/" + escape(s.filePath)
-		case s.sessionID != "":
+		case s.sessionID != "" && s.hasOrdinal:
 			return fmt.Sprintf("memories/session/%s/%d", escape(s.sessionID), s.ordinal)
 		default:
 			return "memories/direct/" + s.identity()
@@ -343,7 +349,7 @@ func (s sourceRow) stableID() string {
 }
 
 func (s sourceRow) locator() locator {
-	return locator{SessionID: s.sessionID, Ordinal: s.ordinal,
+	return locator{SessionID: s.sessionID, Ordinal: s.ordinal, HasOrdinal: s.hasOrdinal,
 		Position: s.position, CronSource: s.cronSource, FilePath: s.filePath,
 		Layer: s.layer, Origin: s.origin, CreatedAt: s.createdAt, Identity: s.identity()}
 }
@@ -352,22 +358,83 @@ func (s sourceRow) identity() string {
 	return fingerprint(strings.Join([]string{s.kind, s.layer, s.origin, s.createdAt, s.text}, "\x00"))
 }
 
-func walkSources(ctx context.Context, db *sql.DB, visit func(sourceRow) error) error {
-	memories, err := db.QueryContext(ctx, `SELECT content, COALESCE(source_session,''),
-		COALESCE(source_sequence,0), COALESCE(source_agent,''), COALESCE(metadata,'{}'),
-		COALESCE(layer,''), COALESCE(origin,''), COALESCE(created_at,'') FROM memories
-		WHERE COALESCE(content,'') <> ''`)
-	if err != nil {
-		return fmt.Errorf("read core memories: %w", err)
+type pagedSource struct {
+	kind  string
+	start any
+	sql   string
+}
+
+func pagedSources() []pagedSource {
+	return []pagedSource{
+		{"memories", int64(0), `SELECT id, content, COALESCE(source_session,''), source_sequence,
+			COALESCE(source_agent,''), COALESCE(metadata,'{}'), COALESCE(layer,''),
+			COALESCE(origin,''), COALESCE(created_at,'') FROM memories
+			WHERE COALESCE(content,'') <> '' AND id > ? ORDER BY id LIMIT ?`},
+		{"exchanges", int64(0), `SELECT id, COALESCE(session_id,''), exchange_number,
+			trim(COALESCE(human_text,'') || CASE WHEN human_text IS NOT NULL AND agent_text IS NOT NULL THEN char(10)||char(10) ELSE '' END || COALESCE(agent_text,''))
+			FROM exchanges WHERE (COALESCE(human_text,'') <> '' OR COALESCE(agent_text,'') <> '')
+			AND id > ? ORDER BY id LIMIT ?`},
+		{"thinking_blocks", int64(0), `SELECT id, COALESCE(session_id,''), exchange_number,
+			position_in_session, COALESCE(full_text,'') FROM thinking_blocks
+			WHERE COALESCE(full_text,'') <> '' AND id > ? ORDER BY id LIMIT ?`},
+		{"sessions", "", `SELECT session_id, trim(COALESCE(title,'') || char(10) || COALESCE(project,'') || char(10) || COALESCE(metadata,''))
+			FROM sessions WHERE (COALESCE(title,'') <> '' OR COALESCE(project,'') <> '' OR COALESCE(metadata,'') NOT IN ('','{}'))
+			AND session_id > ? ORDER BY session_id LIMIT ?`},
 	}
-	for memories.Next() {
-		var row sourceRow
+}
+
+func walkSources(ctx context.Context, db *sql.DB, visit func(sourceRow) error) error {
+	for _, source := range pagedSources() {
+		cursor := source.start
+		for {
+			page, next, err := readPage(ctx, db, source, cursor)
+			if err != nil {
+				return fmt.Errorf("read core %s: %w", source.kind, err)
+			}
+			for _, row := range page {
+				if err := visit(row); err != nil {
+					return err
+				}
+			}
+			if len(page) < walkPageSize {
+				break
+			}
+			cursor = next
+		}
+	}
+	return nil
+}
+
+func readPage(ctx context.Context, db *sql.DB, source pagedSource, cursor any) ([]sourceRow, any, error) {
+	rows, err := db.QueryContext(ctx, source.sql, cursor, walkPageSize)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	page := make([]sourceRow, 0, walkPageSize)
+	for rows.Next() {
+		row := sourceRow{kind: source.kind}
+		next, err := scanSource(rows, &row)
+		if err != nil {
+			return nil, nil, err
+		}
+		page, cursor = append(page, row), next
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	return page, cursor, rows.Close()
+}
+
+func scanSource(rows *sql.Rows, row *sourceRow) (any, error) {
+	var id int64
+	var ordinal sql.NullInt64
+	switch row.kind {
+	case "memories":
 		var metadata, agent string
-		row.kind = "memories"
-		if err := memories.Scan(&row.text, &row.sessionID, &row.ordinal, &agent, &metadata,
+		if err := rows.Scan(&id, &row.text, &row.sessionID, &ordinal, &agent, &metadata,
 			&row.layer, &row.origin, &row.createdAt); err != nil {
-			memories.Close()
-			return err
+			return nil, err
 		}
 		var tags map[string]any
 		if json.Unmarshal([]byte(metadata), &tags) == nil {
@@ -377,63 +444,26 @@ func walkSources(ctx context.Context, db *sql.DB, visit func(sourceRow) error) e
 		if row.cronSource == "" {
 			row.cronSource = agent
 		}
-		if err := visit(row); err != nil {
-			memories.Close()
-			return err
+	case "thinking_blocks":
+		var position sql.NullFloat64
+		if err := rows.Scan(&id, &row.sessionID, &ordinal, &position, &row.text); err != nil {
+			return nil, err
+		}
+		if position.Valid {
+			row.position = strconv.FormatFloat(position.Float64, 'g', -1, 64)
+		}
+	case "sessions":
+		if err := rows.Scan(&row.sessionID, &row.text); err != nil {
+			return nil, err
+		}
+		return row.sessionID, nil
+	default:
+		if err := rows.Scan(&id, &row.sessionID, &ordinal, &row.text); err != nil {
+			return nil, err
 		}
 	}
-	if err := memories.Err(); err != nil {
-		memories.Close()
-		return err
-	}
-	if err := memories.Close(); err != nil {
-		return err
-	}
-
-	queries := []struct {
-		kind string
-		sql  string
-	}{
-		{"exchanges", `SELECT COALESCE(session_id,''), COALESCE(exchange_number,0),
-			trim(COALESCE(human_text,'') || CASE WHEN human_text IS NOT NULL AND agent_text IS NOT NULL THEN char(10)||char(10) ELSE '' END || COALESCE(agent_text,''))
-			FROM exchanges WHERE COALESCE(human_text,'') <> '' OR COALESCE(agent_text,'') <> ''`},
-		{"thinking_blocks", `SELECT COALESCE(session_id,''), COALESCE(exchange_number,0),
-			COALESCE(position_in_session,0), COALESCE(full_text,'') FROM thinking_blocks WHERE COALESCE(full_text,'') <> ''`},
-		{"sessions", `SELECT session_id, 0, trim(COALESCE(title,'') || char(10) || COALESCE(project,'') || char(10) || COALESCE(metadata,''))
-			FROM sessions WHERE COALESCE(title,'') <> '' OR COALESCE(project,'') <> '' OR COALESCE(metadata,'') NOT IN ('','{}')`},
-	}
-	for _, query := range queries {
-		rows, err := db.QueryContext(ctx, query.sql)
-		if err != nil {
-			return fmt.Errorf("read core %s: %w", query.kind, err)
-		}
-		for rows.Next() {
-			row := sourceRow{kind: query.kind}
-			if query.kind == "thinking_blocks" {
-				var position float64
-				if err := rows.Scan(&row.sessionID, &row.ordinal, &position, &row.text); err != nil {
-					rows.Close()
-					return err
-				}
-				row.position = strconv.FormatFloat(position, 'g', -1, 64)
-			} else if err := rows.Scan(&row.sessionID, &row.ordinal, &row.text); err != nil {
-				rows.Close()
-				return err
-			}
-			if err := visit(row); err != nil {
-				rows.Close()
-				return err
-			}
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return err
-		}
-		if err := rows.Close(); err != nil {
-			return err
-		}
-	}
-	return nil
+	row.ordinal, row.hasOrdinal = ordinal.Int64, ordinal.Valid
+	return id, nil
 }
 
 func ensureParent(path string) error {
@@ -670,11 +700,17 @@ func resolveSource(ctx context.Context, db *sql.DB, kind string, where locator) 
 	case "exchanges":
 		row = db.QueryRowContext(ctx, `SELECT trim(COALESCE(human_text,'') || CASE WHEN human_text IS NOT NULL AND agent_text IS NOT NULL THEN char(10)||char(10) ELSE '' END || COALESCE(agent_text,'')) FROM exchanges WHERE session_id=? AND exchange_number=? ORDER BY id DESC LIMIT 1`, where.SessionID, where.Ordinal)
 	case "thinking_blocks":
-		position, _ := strconv.ParseFloat(where.Position, 64)
+		if !where.HasOrdinal || where.Position == "" {
+			return resolveUnkeyedThinking(ctx, db, where)
+		}
+		position, err := strconv.ParseFloat(where.Position, 64)
+		if err != nil {
+			return "", fmt.Errorf("decode thinking block position %q: %w", where.Position, err)
+		}
 		row = db.QueryRowContext(ctx, `SELECT COALESCE(full_text,'') FROM thinking_blocks WHERE session_id=? AND exchange_number=? AND position_in_session=? ORDER BY id DESC LIMIT 1`, where.SessionID, where.Ordinal, position)
 	case "memories":
 		switch {
-		case where.SessionID != "" && where.Ordinal != 0:
+		case where.SessionID != "" && where.HasOrdinal:
 			row = db.QueryRowContext(ctx, `SELECT content FROM memories WHERE source_session=? AND source_sequence=? ORDER BY id DESC LIMIT 1`, where.SessionID, where.Ordinal)
 		case where.FilePath != "" && where.CronSource != "":
 			row = db.QueryRowContext(ctx, `SELECT content FROM memories WHERE json_extract(metadata,'$.file_path')=? AND (json_extract(metadata,'$._cron_source')=? OR source_agent=?) ORDER BY id DESC LIMIT 1`, where.FilePath, where.CronSource, where.CronSource)
@@ -694,11 +730,30 @@ func resolveSource(ctx context.Context, db *sql.DB, kind string, where locator) 
 }
 
 func resolveDirectMemory(ctx context.Context, db *sql.DB, where locator) (string, error) {
-	rows, err := db.QueryContext(ctx, `SELECT content FROM memories
-		WHERE COALESCE(layer,'')=? AND COALESCE(origin,'')=? AND COALESCE(created_at,'')=?`,
+	build := func(text string) sourceRow {
+		return sourceRow{kind: "memories", text: text, layer: where.Layer,
+			origin: where.Origin, createdAt: where.CreatedAt}
+	}
+	return resolveByIdentity(ctx, db, where.Identity, build,
+		`SELECT content FROM memories WHERE layer=? AND origin=? AND COALESCE(created_at,'')=?`,
 		where.Layer, where.Origin, where.CreatedAt)
+}
+
+func resolveUnkeyedThinking(ctx context.Context, db *sql.DB, where locator) (string, error) {
+	build := func(text string) sourceRow {
+		return sourceRow{kind: "thinking_blocks", text: text}
+	}
+	return resolveByIdentity(ctx, db, where.Identity, build,
+		`SELECT COALESCE(full_text,'') FROM thinking_blocks
+			WHERE session_id=? AND (exchange_number IS NULL OR position_in_session IS NULL)`,
+		where.SessionID)
+}
+
+func resolveByIdentity(ctx context.Context, db *sql.DB, identity string,
+	build func(string) sourceRow, query string, arguments ...any) (string, error) {
+	rows, err := db.QueryContext(ctx, query, arguments...)
 	if err != nil {
-		return "", fmt.Errorf("resolve direct memory source: %w", err)
+		return "", fmt.Errorf("resolve source without a natural key: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -706,9 +761,7 @@ func resolveDirectMemory(ctx context.Context, db *sql.DB, where locator) (string
 		if err := rows.Scan(&text); err != nil {
 			return "", err
 		}
-		candidate := sourceRow{kind: "memories", text: text, layer: where.Layer,
-			origin: where.Origin, createdAt: where.CreatedAt}
-		if candidate.identity() == where.Identity {
+		if build(text).identity() == identity {
 			return text, nil
 		}
 	}
@@ -721,11 +774,4 @@ func vectorBlob(vector []float32) []byte {
 		binary.LittleEndian.PutUint32(result[n*4:], math.Float32bits(value))
 	}
 	return result
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

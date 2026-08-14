@@ -33,9 +33,11 @@ roca vector ingest --delta
 
 This is the command to run after core `roca ingest`. It waits for the core
 `.roca.lock` and for ingest activity to settle. When a roca-cron journey
-database is available, the gate reads its active ingest journeys; otherwise it
-uses the latest core ingest JSONL record. Set `ROCA_CRON_JOURNEY_DB` when the
-journey database lives outside the conventional local paths.
+database is available and exposes a status column, the gate reads its active
+ingest journeys; otherwise it uses the latest core ingest JSONL record. The wait
+is bounded: after five minutes the command fails with the signal it was watching
+instead of polling forever behind a crashed run. Set `ROCA_CRON_JOURNEY_DB` when
+the journey database lives outside the conventional local paths.
 
 Only new or changed chunks are embedded. Removed core sources are removed from
 the vector store, and an identical rerun performs no embedding work.
@@ -58,4 +60,7 @@ text for automation.
 The four source families are `memories`, `exchanges`, `thinking_blocks`, and
 `sessions`. Their IDs use natural ingest keys such as session ID, exchange
 number, thinking position, and imported-file provenance; SQLite rowids are not
-part of the cross-database contract.
+part of the cross-database contract. A source whose natural key the core left
+unset, such as a thinking block that hangs off a session rather than an exchange
+or a memory stored without a sequence, is keyed and resolved by its own content
+digest instead, so those rows stay distinct and still map back.
