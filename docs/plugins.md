@@ -208,9 +208,11 @@ a `plugin.json` file:
 A `checksums.txt` beside it publishes one SHA-256 for each payload file:
 `plugin.json`, `semantic.yaml`, the one SQLite database, optional `rides.toml`,
 and the optional `roca-<name>` executable. The installer rejects missing,
-extra, changed, symlinked, or non-regular payloads before it writes anything.
-Its displayed package checksum is the deterministic SHA-256 fingerprint of
-those verified source checksums.
+extra, changed, symlinked, or non-regular payloads before it writes anything,
+and it installs each payload from the same open file it verifies, so a source
+swapped for a symlink or another file between the consent screen and the copy
+is refused rather than installed. Its displayed package checksum is the
+deterministic SHA-256 fingerprint of those verified source checksums.
 
 ```text
 <sha256>  plugin.json
