@@ -12,14 +12,16 @@ Reading order, from operator to contributor:
    their incremental boundary.
 4. [Plugins](plugins.md): isolated SQLite data plugins and Git-style neighbor executables
    and compose the stable machine surfaces.
-5. [The MCP plug](mcp.md): the stdio server, its six tools, the TOON answer
+5. [Vector search](vector.md): optional local embeddings, background indexing,
+   delta rides, and ranked semantic queries.
+6. [The MCP plug](mcp.md): the stdio server, its six tools, the TOON answer
    contract, and the supported integration targets.
-6. [Operations](operations.md): the audit log contract for every CLI and MCP
+7. [Operations](operations.md): the audit log contract for every CLI and MCP
    call, the query failures `roca doctor` reports, redaction, retention, and
    the read-only boundary.
-7. [Architecture](architecture.md): the four internal domains and the import
+8. [Architecture](architecture.md): the four internal domains and the import
    rule that keeps them honest.
-8. [Releases](releases.md): how versions are cut and artefacts are built.
+9. [Releases](releases.md): how versions are cut and artefacts are built.
 
 The [README](../README.md) is the front page; these pages carry the depth.
 The [changelog](../CHANGELOG.md) is maintained by release automation, one

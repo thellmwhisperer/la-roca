@@ -47,3 +47,8 @@ fixtures (an external test seam, never a product import).
   provider→distribution edge.
 - `internal/distribution/cli/artifacts.go` orchestrates discovery, rollout
   gating, refresh reports, and the post-swap handoff to the new binary.
+- `internal/vector` sits at the distribution layer, not below it: the optional
+  [vector search](vector.md) index owns a database of its own, reads the core
+  one with its own read-only SQL instead of through `store`, and imports
+  `distribution/logfile` for the ingest lock and log paths. The CLI is its only
+  consumer.
