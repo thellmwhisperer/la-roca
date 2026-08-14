@@ -193,7 +193,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 		updateCommand(env), uninstallCommand(env),
 		modelsCommand(env), pluginCommand(env), pluginsCommand(env),
 		opsCommand(env), installBundledPluginsCommand(env),
-		capabilitiesCommand(env), artifactsCommand(env),
+		capabilitiesCommand(env), artifactsCommand(env), vectorCommand(env),
 	)
 	root.InitDefaultHelpCmd()
 	for _, command := range root.Commands() {
@@ -209,7 +209,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 
 func publicCommand(name string) bool {
 	switch name {
-	case "init", "query", "explore", "store", "ingest", "model", "doctor", "update", "uninstall", "plugin", "plugins", "hooks":
+	case "init", "query", "explore", "store", "ingest", "model", "doctor", "update", "uninstall", "plugin", "plugins", "hooks", "vector":
 		return true
 	default:
 		return false

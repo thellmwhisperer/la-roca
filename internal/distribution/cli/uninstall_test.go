@@ -14,6 +14,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/lifecycle"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
+	"github.com/thellmwhisperer/la-roca/internal/vector"
 )
 
 // The inventory is a declaration, so what is missing from it is invisible until
@@ -50,6 +51,37 @@ func TestAWiderInventoryStillDeletesNothingOfTheOperators(t *testing.T) {
 	}
 	if !named {
 		t.Errorf("the purge left %s behind without naming it: %+v", theirs, report.Kept)
+	}
+}
+
+func TestPurgeOwnsVectorStateWithoutClaimingNeighborFiles(t *testing.T) {
+	home := t.TempDir()
+	paths := resolvedIn(t, home)
+	directory := vectorDataDir(paths)
+	owned := []string{
+		vector.DatabaseFilename, vector.DatabaseFilename + "-wal",
+		vector.DatabaseFilename + "-shm", vector.DatabaseFilename + "-journal",
+		vector.CompletionFilename, vector.WorkerLogFilename,
+		vector.WorkerClaimFilename, vector.DatabaseFilename + ".index.lock",
+		".completion.tmp",
+	}
+	for _, name := range owned {
+		writeFile(t, filepath.Join(directory, name), "product")
+	}
+	foreign := filepath.Join(directory, "operator-notes.txt")
+	writeFile(t, foreign, "mine")
+
+	report := lifecycle.Plan{Owned: ownedPaths(paths), DataDir: dirOf(paths.DB)}.Apply()
+	for _, name := range owned {
+		if _, err := os.Stat(filepath.Join(directory, name)); !os.IsNotExist(err) {
+			t.Errorf("vector artifact %s survived: %v", name, err)
+		}
+	}
+	if _, err := os.Stat(foreign); err != nil {
+		t.Fatalf("foreign vector neighbor was removed: %v", err)
+	}
+	if !slices.ContainsFunc(report.Kept, func(kept lifecycle.Kept) bool { return kept.Path == foreign }) {
+		t.Fatalf("foreign vector neighbor was not named: %+v", report.Kept)
 	}
 }
 

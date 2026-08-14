@@ -10,7 +10,7 @@ import (
 
 func TestRootMenuShowsExactlyThePublicCommands(t *testing.T) {
 	want := []string{
-		"doctor", "explore", "hooks", "ingest", "init", "model", "plugin", "plugins", "query", "store", "uninstall", "update",
+		"doctor", "explore", "hooks", "ingest", "init", "model", "plugin", "plugins", "query", "store", "uninstall", "update", "vector",
 	}
 	root := rootCommand(&cliEnv{})
 	root.InitDefaultHelpCmd()
