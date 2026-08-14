@@ -23,7 +23,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
-	"github.com/thellmwhisperer/la-roca/internal/vector"
 )
 
 const legacyCredentialsDir = "credentials"
@@ -499,17 +498,6 @@ func ownedPaths(paths config.Paths) []string {
 	owned = append(owned, logs...)
 	if logsExist {
 		owned = append(owned, logfile.New(dataDir).LockPath(), logDir)
-	}
-	vectorDir := vectorDataDir(paths)
-	if realDirectory(vectorDir) {
-		vectorDB := filepath.Join(vectorDir, vector.DatabaseFilename)
-		owned = append(owned,
-			vectorDB, vectorDB+"-wal", vectorDB+"-shm", vectorDB+"-journal",
-			vectorDB+".index.lock", filepath.Join(vectorDir, vector.CompletionFilename),
-			filepath.Join(vectorDir, vector.WorkerLogFilename),
-			filepath.Join(vectorDir, vector.WorkerClaimFilename),
-			filepath.Join(vectorDir, ".completion.tmp"), vectorDir,
-		)
 	}
 	return append(owned, installedPluginPaths(paths)...)
 }

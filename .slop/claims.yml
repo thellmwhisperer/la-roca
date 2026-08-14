@@ -48,10 +48,6 @@ claims:
     contract:
       file: features/distribution/lifecycle.feature
       item: "Update without a reachable release fails plainly"
-  internal/distribution/cli/vector.go:
-    contract:
-      file: features/distribution/cli.feature
-      item: "Optional vector search is discoverable without being enabled"
   internal/distribution/mcpplug/tools.go:
     contract:
       file: features/distribution/mcp-contract.feature
