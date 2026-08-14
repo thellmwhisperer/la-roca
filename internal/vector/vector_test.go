@@ -68,6 +68,10 @@ func TestStableSourceIDsUseCoreNaturalKeys(t *testing.T) {
 	if got := unsequenced.stableID(); !strings.HasPrefix(got, "memories/direct/") {
 		t.Fatalf("memory without a sequence has stable id %q", got)
 	}
+	unnumbered := sourceRow{kind: "exchanges", sessionID: "session/a", text: "unnumbered"}
+	if got := unnumbered.stableID(); !strings.HasPrefix(got, "exchanges/session%2Fa/unkeyed/") {
+		t.Fatalf("exchange without a number has stable id %q", got)
+	}
 	direct := sourceRow{kind: "memories", text: "stored memory", layer: "discovery", origin: "human", createdAt: "2026-08-14"}
 	if got := direct.stableID(); !strings.HasPrefix(got, "memories/direct/") || strings.Contains(got, "/id/") {
 		t.Fatalf("direct memory stable id = %q", got)
@@ -85,14 +89,14 @@ func TestDeltaIndexIsIdempotentAndMapsResultsBackToCore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Added != 7 || first.Updated != 0 || first.Removed != 0 {
+	if first.Added != 8 || first.Updated != 0 || first.Removed != 0 {
 		t.Fatalf("first delta = %+v", first)
 	}
 	second, err := index.Ingest(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.Added != 0 || second.Updated != 0 || second.Removed != 0 || second.Unchanged != 7 {
+	if second.Added != 0 || second.Updated != 0 || second.Removed != 0 || second.Unchanged != 8 {
 		t.Fatalf("idempotent delta = %+v", second)
 	}
 
@@ -152,7 +156,8 @@ func TestSourcesWithoutNaturalKeysStaySeparateAndResolve(t *testing.T) {
 	for _, result := range results {
 		resolved[result.Text] = true
 	}
-	for _, want := range []string{"delta session reasoning", "zeta session reasoning", "epsilon unsequenced memory"} {
+	for _, want := range []string{"delta session reasoning", "zeta session reasoning",
+		"epsilon unsequenced memory", "eta question\n\neta answer"} {
 		if !resolved[want] {
 			t.Fatalf("source %q was indexed but never resolved: %+v", want, results)
 		}
@@ -209,6 +214,7 @@ func createCoreFixture(t *testing.T) string {
 		INSERT INTO memories VALUES (1, 'discovery', 'alpha memory', '{}', 'agent', 'synthetic-agent', NULL, NULL, NULL, NULL, 'synthetic-project', 'active', NULL, '2026-01-01');
 		INSERT INTO memories VALUES (2, 'discovery', 'epsilon unsequenced memory', '{}', 'agent', 'synthetic-agent', NULL, NULL, 's1', NULL, 'synthetic-project', 'active', NULL, '2026-01-01');
 		INSERT INTO exchanges VALUES (1, 's1', 2, 'beta question', 'gamma answer');
+		INSERT INTO exchanges VALUES (2, 's1', NULL, 'eta question', 'eta answer');
 		INSERT INTO thinking_blocks VALUES (1, 's1', 2, 1.5, 'beta reasoning');
 		INSERT INTO thinking_blocks VALUES (2, 's1', NULL, NULL, 'delta session reasoning');
 		INSERT INTO thinking_blocks VALUES (3, 's1', NULL, NULL, 'zeta session reasoning');

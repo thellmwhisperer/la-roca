@@ -3,6 +3,7 @@ package vector
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,7 +39,7 @@ func TestCalmPrefersJourneyDatabaseAndFallsBackWhenItsSchemaIsUnknown(t *testing
 			db.Close()
 			now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
 			if test.busyLog {
-				writeIngestLog(t, directory, now.Add(-time.Second))
+				writeIngestLog(t, directory, now.Add(-time.Second), 0)
 			}
 			gate := CalmGate{DataDir: directory, JourneyPaths: []string{journeyPath},
 				QuietPeriod: 2 * time.Second, Now: func() time.Time { return now }}
@@ -55,7 +56,7 @@ func TestCalmPrefersJourneyDatabaseAndFallsBackWhenItsSchemaIsUnknown(t *testing
 
 func TestWaitGivesUpWithABoundedTimeoutThatNamesTheBlocker(t *testing.T) {
 	directory := t.TempDir()
-	writeIngestLog(t, directory, time.Now().UTC())
+	writeIngestLog(t, directory, time.Now().UTC(), 0)
 	gate := CalmGate{DataDir: directory, QuietPeriod: time.Hour,
 		PollInterval: time.Millisecond, Timeout: 20 * time.Millisecond}
 	err := gate.Wait(context.Background())
@@ -67,36 +68,54 @@ func TestWaitGivesUpWithABoundedTimeoutThatNamesTheBlocker(t *testing.T) {
 	}
 }
 
-func writeIngestLog(t *testing.T, directory string, stamp time.Time) {
+func writeIngestLog(t *testing.T, directory string, started time.Time, duration time.Duration) {
 	t.Helper()
 	logs := filepath.Join(directory, "logs")
 	if err := os.MkdirAll(logs, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	record := `{"timestamp":"` + stamp.Format(time.RFC3339Nano) + `","ok":true}` + "\n"
-	if err := os.WriteFile(filepath.Join(logs, "ingest-2026-08-14.jsonl"), []byte(record), 0o600); err != nil {
+	path := filepath.Join(logs, "ingest-2026-08-14.jsonl")
+	record := fmt.Sprintf("{\"timestamp\":%q,\"ok\":true,\"duration_ms\":%d}\n",
+		started.Format(time.RFC3339Nano), duration.Milliseconds())
+	if err := os.WriteFile(path, []byte(record), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	finished := started.Add(duration)
+	if err := os.Chtimes(path, finished, finished); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestCalmFallsBackToLatestCoreIngestLog(t *testing.T) {
-	directory := t.TempDir()
-	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
-	writeIngestLog(t, directory, now.Add(-time.Second))
-	gate := CalmGate{DataDir: directory, QuietPeriod: 2 * time.Second, Now: func() time.Time { return now }}
-	calm, _, err := gate.calm(context.Background())
-	if err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name     string
+		started  time.Duration
+		duration time.Duration
+	}{
+		{name: "a run that just finished", started: -time.Second},
+		{name: "a long run whose record carries an old start stamp", started: -90 * time.Second, duration: 90 * time.Second},
 	}
-	if calm {
-		t.Fatal("fresh ingest log was reported calm")
-	}
-	gate.Now = func() time.Time { return now.Add(3 * time.Second) }
-	calm, _, err = gate.calm(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !calm {
-		t.Fatal("settled ingest log was not reported calm")
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			directory := t.TempDir()
+			now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+			writeIngestLog(t, directory, now.Add(test.started), test.duration)
+			gate := CalmGate{DataDir: directory, QuietPeriod: 2 * time.Second, Now: func() time.Time { return now }}
+			calm, _, err := gate.calm(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if calm {
+				t.Fatal("an ingest that finished inside the quiet period was reported calm")
+			}
+			gate.Now = func() time.Time { return now.Add(3 * time.Second) }
+			calm, _, err = gate.calm(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !calm {
+				t.Fatal("settled ingest log was not reported calm")
+			}
+		})
 	}
 }

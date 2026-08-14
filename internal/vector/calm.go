@@ -198,6 +198,10 @@ func (g CalmGate) ingestLogCalm() (bool, error) {
 		return false, err
 	}
 	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return false, fmt.Errorf("inspect core ingest log: %w", err)
+	}
 	var last string
 	scanner := bufio.NewScanner(file)
 	buffer := make([]byte, 64*1024)
@@ -214,7 +218,8 @@ func (g CalmGate) ingestLogCalm() (bool, error) {
 		return true, nil
 	}
 	var record struct {
-		Timestamp time.Time `json:"timestamp"`
+		Timestamp  time.Time `json:"timestamp"`
+		DurationMS int64     `json:"duration_ms"`
 	}
 	if err := json.Unmarshal([]byte(last), &record); err != nil {
 		return false, fmt.Errorf("read latest core ingest record: %w", err)
@@ -227,5 +232,16 @@ func (g CalmGate) ingestLogCalm() (bool, error) {
 	if g.Now != nil {
 		now = g.Now
 	}
-	return record.Timestamp.IsZero() || !now().UTC().Before(record.Timestamp.Add(quiet)), nil
+	return !now().UTC().Before(ingestFinished(record.Timestamp, record.DurationMS, info.ModTime()).Add(quiet)), nil
+}
+
+func ingestFinished(started time.Time, durationMS int64, appended time.Time) time.Time {
+	finished := appended.UTC()
+	if started.IsZero() {
+		return finished
+	}
+	if ended := started.UTC().Add(time.Duration(durationMS) * time.Millisecond); ended.After(finished) {
+		finished = ended
+	}
+	return finished
 }

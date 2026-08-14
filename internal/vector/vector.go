@@ -328,6 +328,9 @@ func (s sourceRow) stableID() string {
 		if s.sessionID != "" && s.hasOrdinal {
 			return fmt.Sprintf("exchanges/%s/%d", escape(s.sessionID), s.ordinal)
 		}
+		if s.sessionID != "" {
+			return "exchanges/" + escape(s.sessionID) + "/unkeyed/" + s.identity()
+		}
 	case "thinking_blocks":
 		if s.sessionID != "" && s.hasOrdinal && s.position != "" {
 			return fmt.Sprintf("thinking_blocks/%s/%d/%s", escape(s.sessionID), s.ordinal, escape(s.position))
@@ -358,6 +361,11 @@ func (s sourceRow) identity() string {
 	return fingerprint(strings.Join([]string{s.kind, s.layer, s.origin, s.createdAt, s.text}, "\x00"))
 }
 
+const (
+	exchangeText = `trim(COALESCE(human_text,'') || CASE WHEN human_text IS NOT NULL AND agent_text IS NOT NULL THEN char(10)||char(10) ELSE '' END || COALESCE(agent_text,''))`
+	sessionText  = `trim(COALESCE(title,'') || char(10) || COALESCE(project,'') || char(10) || COALESCE(metadata,''))`
+)
+
 type pagedSource struct {
 	kind  string
 	start any
@@ -370,14 +378,13 @@ func pagedSources() []pagedSource {
 			COALESCE(source_agent,''), COALESCE(metadata,'{}'), COALESCE(layer,''),
 			COALESCE(origin,''), COALESCE(created_at,'') FROM memories
 			WHERE COALESCE(content,'') <> '' AND id > ? ORDER BY id LIMIT ?`},
-		{"exchanges", int64(0), `SELECT id, COALESCE(session_id,''), exchange_number,
-			trim(COALESCE(human_text,'') || CASE WHEN human_text IS NOT NULL AND agent_text IS NOT NULL THEN char(10)||char(10) ELSE '' END || COALESCE(agent_text,''))
+		{"exchanges", int64(0), `SELECT id, COALESCE(session_id,''), exchange_number, ` + exchangeText + `
 			FROM exchanges WHERE (COALESCE(human_text,'') <> '' OR COALESCE(agent_text,'') <> '')
 			AND id > ? ORDER BY id LIMIT ?`},
 		{"thinking_blocks", int64(0), `SELECT id, COALESCE(session_id,''), exchange_number,
 			position_in_session, COALESCE(full_text,'') FROM thinking_blocks
 			WHERE COALESCE(full_text,'') <> '' AND id > ? ORDER BY id LIMIT ?`},
-		{"sessions", "", `SELECT session_id, trim(COALESCE(title,'') || char(10) || COALESCE(project,'') || char(10) || COALESCE(metadata,''))
+		{"sessions", "", `SELECT session_id, ` + sessionText + `
 			FROM sessions WHERE (COALESCE(title,'') <> '' OR COALESCE(project,'') <> '' OR COALESCE(metadata,'') NOT IN ('','{}'))
 			AND session_id > ? ORDER BY session_id LIMIT ?`},
 	}
@@ -696,12 +703,17 @@ func resolveSource(ctx context.Context, db *sql.DB, kind string, where locator) 
 	var row *sql.Row
 	switch kind {
 	case "sessions":
-		row = db.QueryRowContext(ctx, `SELECT trim(COALESCE(title,'') || char(10) || COALESCE(project,'') || char(10) || COALESCE(metadata,'')) FROM sessions WHERE session_id=?`, where.SessionID)
+		row = db.QueryRowContext(ctx, `SELECT `+sessionText+` FROM sessions WHERE session_id=?`, where.SessionID)
 	case "exchanges":
-		row = db.QueryRowContext(ctx, `SELECT trim(COALESCE(human_text,'') || CASE WHEN human_text IS NOT NULL AND agent_text IS NOT NULL THEN char(10)||char(10) ELSE '' END || COALESCE(agent_text,'')) FROM exchanges WHERE session_id=? AND exchange_number=? ORDER BY id DESC LIMIT 1`, where.SessionID, where.Ordinal)
+		if !where.HasOrdinal {
+			return resolveUnkeyed(ctx, db, kind, `SELECT `+exchangeText+` FROM exchanges
+				WHERE session_id=? AND exchange_number IS NULL`, where)
+		}
+		row = db.QueryRowContext(ctx, `SELECT `+exchangeText+` FROM exchanges WHERE session_id=? AND exchange_number=? ORDER BY id DESC LIMIT 1`, where.SessionID, where.Ordinal)
 	case "thinking_blocks":
 		if !where.HasOrdinal || where.Position == "" {
-			return resolveUnkeyedThinking(ctx, db, where)
+			return resolveUnkeyed(ctx, db, kind, `SELECT COALESCE(full_text,'') FROM thinking_blocks
+				WHERE session_id=? AND (exchange_number IS NULL OR position_in_session IS NULL)`, where)
 		}
 		position, err := strconv.ParseFloat(where.Position, 64)
 		if err != nil {
@@ -739,14 +751,11 @@ func resolveDirectMemory(ctx context.Context, db *sql.DB, where locator) (string
 		where.Layer, where.Origin, where.CreatedAt)
 }
 
-func resolveUnkeyedThinking(ctx context.Context, db *sql.DB, where locator) (string, error) {
+func resolveUnkeyed(ctx context.Context, db *sql.DB, kind, query string, where locator) (string, error) {
 	build := func(text string) sourceRow {
-		return sourceRow{kind: "thinking_blocks", text: text}
+		return sourceRow{kind: kind, text: text}
 	}
-	return resolveByIdentity(ctx, db, where.Identity, build,
-		`SELECT COALESCE(full_text,'') FROM thinking_blocks
-			WHERE session_id=? AND (exchange_number IS NULL OR position_in_session IS NULL)`,
-		where.SessionID)
+	return resolveByIdentity(ctx, db, where.Identity, build, query, where.SessionID)
 }
 
 func resolveByIdentity(ctx context.Context, db *sql.DB, identity string,

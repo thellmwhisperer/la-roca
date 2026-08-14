@@ -24,10 +24,10 @@ func TestWorkerRecordsAndNotifiesSuccessfulCompletion(t *testing.T) {
 		WaitForCalm: func(context.Context) error { return nil },
 	}
 	completion := worker.Run(context.Background())
-	if completion.ExitStatus != 0 || completion.Delta.Added != 7 {
+	if completion.ExitStatus != 0 || completion.Delta.Added != 8 {
 		t.Fatalf("completion = %+v", completion)
 	}
-	if notifier.notification.ExitStatus != 0 || notifier.notification.Delta.Added != 7 {
+	if notifier.notification.ExitStatus != 0 || notifier.notification.Delta.Added != 8 {
 		t.Fatalf("notification = %+v", notifier.notification)
 	}
 	if _, err := os.Stat(filepath.Join(directory, CompletionFilename)); err != nil {
