@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,7 +13,11 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacron"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
+	"github.com/thellmwhisperer/la-roca/internal/provider/config"
+	pluginstd "github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
@@ -89,19 +94,148 @@ func installBundledPluginsCommand(env *cliEnv) *cobra.Command {
 					reason = pathErr.Error()
 				}
 				return env.report(map[string]any{
-					"installed": false, "plugin": rocaops.Name, "reason": reason,
-				}, "%s: the bundled %s plugin was not placed", reason, rocaops.Name)
+					"installed": false, "plugins": []string{rocaops.Name, rocacron.Name}, "reason": reason,
+				}, "%s: bundled plugins were not placed", reason)
 			}
-			result, err := rocaops.Ensure(root, pluginExecutableDir(paths), env.build.Version)
+			binDir := pluginExecutableDir(paths)
+			ops, err := rocaops.Ensure(root, binDir, env.build.Version)
+			if err != nil {
+				return err
+			}
+			cron, err := rocacron.Ensure(root, binDir, env.build.Version)
 			if err != nil {
 				return err
 			}
 			return env.report(map[string]any{
-				"installed": true, "plugin": result.Name, "version": result.Version,
-				"risk": result.Risk, "resident": true,
-			}, "bundled plugin %s %s at %s", result.Name, result.Version, result.Directory)
+				"installed": true, "plugins": []any{
+					map[string]any{"name": ops.Name, "version": ops.Version, "risk": ops.Risk, "resident": true},
+					map[string]any{"name": cron.Name, "version": cron.Version, "risk": cron.Risk, "resident": false},
+				},
+			}, "bundled plugins %s and %s installed", ops.Name, cron.Name)
 		},
 	}
+}
+
+func cronCommand(env *cliEnv) *cobra.Command {
+	command := &cobra.Command{
+		Use:   "cron",
+		Short: "Run and inspect plugin ride trains",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
+		},
+	}
+	command.AddCommand(cronListCommand(env), cronRunCommand(env))
+	return command
+}
+
+func cronListCommand(env *cliEnv) *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List registered rides and their trains",
+		Args:  cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			service, err := env.openCronService(config.ReadOnly(os.Getenv(config.EnvReadOnly)))
+			if err != nil {
+				return err
+			}
+			defer service.Close()
+			rides, warnings := service.List()
+			for _, warning := range warnings {
+				fmt.Fprintf(env.errOut, "warning: %s\n", warning)
+			}
+			if env.json {
+				return env.printJSON(map[string]any{"rides": rides, "warnings": warnings})
+			}
+			for _, ride := range rides {
+				gate := ride.Gate
+				if gate == "" {
+					gate = "-"
+				}
+				env.print("%s\t%s\t%s\t%s\t%s", ride.Plugin, ride.Name, ride.Train, gate, ride.Command)
+			}
+			return nil
+		},
+	}
+}
+
+func cronRunCommand(env *cliEnv) *cobra.Command {
+	var dryRun bool
+	command := &cobra.Command{
+		Use:   "run [train]",
+		Short: "Run one train or preview its gates",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			readOnly := config.ReadOnly(os.Getenv(config.EnvReadOnly))
+			if readOnly && !dryRun {
+				return fmt.Errorf("%s refuses cron runs because they record journeys", config.EnvReadOnly)
+			}
+			service, err := env.openCronService(readOnly)
+			if err != nil {
+				return err
+			}
+			defer service.Close()
+			train := pluginstd.DefaultTrain
+			if len(args) == 1 {
+				train = args[0]
+			}
+			report, err := service.Run(cmd.Context(), train, dryRun)
+			if err != nil {
+				return err
+			}
+			if env.json {
+				if report.Failed > 0 {
+					env.code = ExitError
+				}
+				return env.printJSON(report)
+			}
+			for _, ride := range report.Rides {
+				exit := "-"
+				if ride.ExitCode != nil {
+					exit = fmt.Sprint(*ride.ExitCode)
+				}
+				env.print("%s\t%s\t%s\texit=%s\t%s", ride.Plugin, ride.Ride,
+					ride.GateStatus, exit, ride.Command)
+			}
+			env.print("train %s: %d rides, %d failed, %d deferred",
+				report.Train, len(report.Rides), report.Failed, report.Deferred)
+			if report.Failed > 0 {
+				env.code = ExitError
+			}
+			return nil
+		},
+	}
+	command.Flags().BoolVar(&dryRun, "dry-run", false,
+		"preview ride order and gate status without executing or recording")
+	return command
+}
+
+func (env *cliEnv) openCronService(readOnly bool) (*rocacron.Service, error) {
+	paths, err := env.resolvePaths()
+	if err != nil {
+		return nil, err
+	}
+	root := pluginRoot(paths)
+	if root == "" {
+		return nil, fmt.Errorf("I do not know where your HOME is; %s needs ~/.roca/plugins", rocacron.Name)
+	}
+	if !readOnly {
+		if _, err := rocacron.Ensure(root, pluginExecutableDir(paths), env.build.Version); err != nil {
+			return nil, fmt.Errorf("install bundled %s plugin: %w", rocacron.Name, err)
+		}
+	}
+	out, errOut := io.Writer(env.out), io.Writer(env.errOut)
+	if env.json {
+		out, errOut = io.Discard, io.Discard
+	}
+	return rocacron.Open(rocacron.Options{
+		PluginRoot: root,
+		Database:   filepath.Join(root, rocacron.Name, rocacron.DatabaseFilename),
+		LockPath:   logfile.New(filepath.Dir(paths.DB)).LockPath(),
+		ReadOnly:   readOnly,
+		Out:        out,
+		ErrOut:     errOut,
+	})
 }
 
 func opsCommand(env *cliEnv) *cobra.Command {

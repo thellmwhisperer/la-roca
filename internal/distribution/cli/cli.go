@@ -192,6 +192,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 		loginCommand(env), modelCommand(env),
 		updateCommand(env), uninstallCommand(env),
 		modelsCommand(env), pluginCommand(env), pluginsCommand(env),
+		cronCommand(env),
 		opsCommand(env), installBundledPluginsCommand(env),
 		capabilitiesCommand(env), artifactsCommand(env),
 	)
@@ -209,7 +210,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 
 func publicCommand(name string) bool {
 	switch name {
-	case "init", "query", "explore", "store", "ingest", "model", "doctor", "update", "uninstall", "plugin", "plugins", "hooks":
+	case "init", "query", "explore", "store", "ingest", "model", "doctor", "update", "uninstall", "plugin", "plugins", "hooks", "cron":
 		return true
 	default:
 		return false
@@ -454,14 +455,12 @@ func pluginUninstallCommand(env *cliEnv, consented *bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			manifest, err := plugininstall.ReadManifest(filepath.Join(manager.PluginRoot, args[0]))
+			directory := filepath.Join(manager.PluginRoot, args[0])
+			manifest, err := plugininstall.ReadManifest(directory)
 			if err != nil {
 				return err
 			}
-			candidate := plugininstall.Candidate{
-				Name: manifest.Name, Version: manifest.Version, Source: manifest.Source,
-				Checksum: manifest.Checksum, Risk: manifest.Risk, Custody: manifest.Custody,
-			}
+			candidate := plugininstall.CandidateFromManifest(manifest, directory)
 			accepted, err := env.confirmPlugin(cmd.InOrStdin(), "uninstall", candidate, "", *consented)
 			if err != nil || !accepted {
 				return err
@@ -513,11 +512,13 @@ func resolvePluginCandidate(ctx context.Context, reference, scratch string) (plu
 
 func pluginConsentText(action string, candidate plugininstall.Candidate, trusted string) string {
 	var risk string
-	switch candidate.Risk {
-	case plugininstall.Executable:
-		risk = "EXECUTABLE: FULL TRUST; it runs code with your user privileges."
-	default:
+	switch {
+	case candidate.Risk != plugininstall.Executable:
 		risk = "DATA-ONLY: near-harmless; its worst case is lying content returned from its database."
+	case candidate.Executable == "":
+		risk = "EXECUTABLE: FULL TRUST; its cron rides run commands with your user privileges."
+	default:
+		risk = "EXECUTABLE: FULL TRUST; it runs code with your user privileges."
 	}
 	custody := ""
 	if candidate.Custody {
