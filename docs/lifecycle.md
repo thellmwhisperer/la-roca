@@ -215,7 +215,10 @@ mirrors. A custom base must be HTTPS, contain no credentials, query or fragment,
 and is combined only with an `owner/name` repository path. Setting either
 redirects release metadata and downloads, so do not point it at an origin you
 do not trust. A trusted mirror with a private CA can use the standard
-`SSL_CERT_FILE` environment variable.
+`SSL_CERT_FILE` environment variable. The requests the binary itself makes to
+that channel follow at most three redirects: enough for the hop an authenticated
+asset URL makes to its storage host, and short of a chain that loops or drags
+the download somewhere else.
 
 ## Uninstall
 

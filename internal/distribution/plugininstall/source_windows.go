@@ -8,6 +8,11 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// openRegularSource is the Windows half of the contract source_nofollow.go
+// states. There is no O_NOFOLLOW here: FILE_FLAG_OPEN_REPARSE_POINT opens the
+// reparse point itself instead of what it points at, which turns a symlink or
+// junction into a handle this can inspect and refuse rather than one that has
+// already followed the operator somewhere else.
 func openRegularSource(path string) (*os.File, error) {
 	name, err := windows.UTF16PtrFromString(path)
 	if err != nil {

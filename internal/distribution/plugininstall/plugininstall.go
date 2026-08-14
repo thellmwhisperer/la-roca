@@ -725,6 +725,12 @@ func installFile(source, destination string, mode os.FileMode) error {
 	return installOpenFile(input, destination, mode, "", "")
 }
 
+// installChecksummedFile writes a payload the source published a checksum for.
+// The digest is taken from the bytes it copies out of this one open file rather
+// than from a second look at the path, because the path is what an attacker can
+// still change between the verification the consent screen showed and this copy:
+// binding both to a single descriptor leaves no moment where the file checked
+// and the file installed can differ.
 func installChecksummedFile(source, destination string, mode os.FileMode, name, expected string) error {
 	input, err := openRegularSource(source)
 	if errors.Is(err, errSourceNotRegular) {

@@ -80,6 +80,11 @@ const (
 // than written to the operator's disk.
 const maxArtefact = 256 << 20
 
+// maxReleaseRedirects bounds a download's redirect chain. It is not zero because
+// an authenticated GitHub release asset URL legitimately answers with a redirect
+// to a separate storage host, so refusing every cross-host hop would refuse the
+// ordinary download. Three leaves room for that hop and still stops a chain that
+// loops or spends the operator's bandwidth going nowhere.
 const maxReleaseRedirects = 3
 
 // Source is the release channel.
