@@ -126,7 +126,8 @@ type codexTurn struct {
 // When that event stream recognizes no turn at all the response items are read
 // instead: a rollout whose process died before writing a `task_complete` still
 // holds the question and the answer it got, and refusing to read them is what
-// left whole sessions ingested empty.
+// left whole sessions ingested empty. A fossil whose prompts survive only as the
+// typeless records an older build wrote is the last reading of the same file.
 func ParseCodexSession(content []byte, meta FileMeta) (Records, error) {
 	reader := &codexReader{
 		session: Session{
@@ -147,6 +148,21 @@ func ParseCodexSession(content []byte, meta FileMeta) (Records, error) {
 	PlaceThinking(exchanges)
 
 	session := reader.session
+	if len(exchanges) == 0 && len(reader.legacy) > 0 {
+		// The prompt-only reading carries no answer, so the session is marked for
+		// the reconciliation a richer rollout of it later gets, and the last
+		// question is the last instant the session is known to have reached.
+		exchanges = reader.legacy
+		session.HistoryFallback = true
+		for _, exchange := range exchanges {
+			if session.StartedAt == "" || exchange.HumanTimestamp < session.StartedAt {
+				session.StartedAt = exchange.HumanTimestamp
+			}
+			if exchange.HumanTimestamp > session.EndedAt {
+				session.EndedAt = exchange.HumanTimestamp
+			}
+		}
+	}
 	for _, exchange := range exchanges {
 		if ts := exchange.AgentTimestamp; ts != "" && ts > session.EndedAt {
 			session.EndedAt = ts
@@ -174,6 +190,12 @@ type codexReader struct {
 	turns    []codexTurn
 	discards []Discard
 	deferred int
+
+	// legacy is the prompt-only reading: the typeless records an older build
+	// wrote inside the rollout, recognized one record at a time so a fossil that
+	// opens with its own metadata keeps both what that header states and what
+	// those records recover.
+	legacy []Exchange
 
 	pending map[string]*ToolUse
 
@@ -217,6 +239,10 @@ func (r *codexReader) read(content []byte) {
 			r.event(record, line, payload)
 		case "response_item":
 			r.responseItem(record, line, payload)
+		case "":
+			if !r.legacyPrompt(raw) {
+				r.exclude(record, "record type", "")
+			}
 		default:
 			r.exclude(record, "record type", line.Type)
 		}
@@ -230,6 +256,20 @@ func (r *codexReader) read(content []byte) {
 	if r.recovering != nil && len(r.turns) == 0 {
 		r.deferred++
 	}
+}
+
+// legacyPrompt reads the typeless record an older Codex build wrote: the prompt
+// alone, with no answer and no usage. The session it names is its own, falling
+// back to the rollout that carries it, so its identity matches the one the same
+// prompt gets from `history.jsonl` and neither copy is filed twice.
+func (r *codexReader) legacyPrompt(raw string) bool {
+	var line codexHistoryLine
+	if json.Unmarshal([]byte(raw), &line) != nil || !line.prompt() {
+		return false
+	}
+	r.legacy = append(r.legacy,
+		historyExchange(len(r.legacy)+1, firstNonEmpty(line.SessionID, r.session.ID), line))
+	return true
 }
 
 func (r *codexReader) sessionMeta(payload codexPayload) {
