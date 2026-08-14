@@ -84,7 +84,7 @@ func validatePluginRouteLimit(ctx context.Context, candidates []plugin.Descripto
 }
 
 func (s *Service) pluginsActive() bool {
-	return s.opts.PluginsEnabled || s.opts.RocaOpsEnabled
+	return s.opts.PluginsEnabled || s.opts.RocaOpsEnabled || s.opts.CorpusEnabled
 }
 
 func (s *Service) onDemand(candidates []plugin.Descriptor) []plugin.Descriptor {
@@ -102,7 +102,9 @@ func (s *Service) onDemand(candidates []plugin.Descriptor) []plugin.Descriptor {
 }
 
 func (s *Service) withResidents(route pluginRoute) pluginRoute {
-	if len(s.resident) == 0 {
+	// A resident half that could not be opened has no database and still owes the
+	// answer its warning, so the count of databases alone does not decide this.
+	if len(s.resident) == 0 && len(s.residentOmitted) == 0 && len(s.residentWarnings) == 0 {
 		return route
 	}
 	route.databases = append(slices.Clone(s.resident), route.databases...)
@@ -120,6 +122,14 @@ func (s *Service) openResidents(ctx context.Context) error {
 	if s.opts.RocaOpsEnabled {
 		for _, descriptor := range descriptors {
 			if descriptor.Name == rocaOpsPluginName && descriptor.Semantic.Attachment == plugin.AttachmentResident {
+				candidates = append(candidates, descriptor)
+			}
+		}
+	}
+	if s.opts.CorpusEnabled {
+		for _, descriptor := range descriptors {
+			if descriptor.Name == rocaCorpusPluginName &&
+				descriptor.Semantic.Attachment == plugin.AttachmentResident {
 				candidates = append(candidates, descriptor)
 			}
 		}
@@ -155,13 +165,57 @@ func (s *Service) openResidents(ctx context.Context) error {
 		// Read-only refuses every write before database I/O, and opening the
 		// operational store is itself one: it sets the journal mode and restricts
 		// the artefacts. Reads still reach it through the resident attachment.
-		if s.opts.ReadOnly {
-			return nil
+		if !s.opts.ReadOnly {
+			var err error
+			s.ops, err = store.Open(opsDatabase.Database)
+			if err != nil {
+				return fmt.Errorf("open %s for operational writes: %w", rocaOpsPluginName, err)
+			}
 		}
-		var err error
-		s.ops, err = store.Open(opsDatabase.Database)
-		if err != nil {
-			return fmt.Errorf("open %s for operational writes: %w", rocaOpsPluginName, err)
+	}
+	if s.opts.CorpusEnabled {
+		var corpusDatabase *plugin.Database
+		for index := range s.resident {
+			if s.resident[index].Name == rocaCorpusPluginName {
+				corpusDatabase = &s.resident[index]
+				break
+			}
+		}
+		if corpusDatabase == nil {
+			reason := strings.Join(append(slices.Clone(warnings), route.warnings...), "; ")
+			if reason == "" {
+				reason = "the bundled plugin is not installed or is not declared resident"
+			}
+			// Read-only cannot install the package it would be demanding, so an
+			// installation without it still answers from core and says so. Failing
+			// the open would break every read on a machine under audit.
+			if s.opts.ReadOnly {
+				s.residentWarnings = append(s.residentWarnings, fmt.Sprintf(
+					"the bundled %s plugin is unavailable: %s; the answer covers core only",
+					rocaCorpusPluginName, reason))
+				return nil
+			}
+			return fmt.Errorf("the bundled %s plugin is unavailable: %s",
+				rocaCorpusPluginName, reason)
+		}
+		if !s.opts.ReadOnly {
+			var err error
+			s.corpus, err = store.Open(corpusDatabase.Database)
+			if err != nil {
+				return fmt.Errorf("open %s for perennial ingest: %w", rocaCorpusPluginName, err)
+			}
+		}
+	}
+	return nil
+}
+
+// residentCorpus is the attached bundled corpus, or nil when this installation
+// has none. It is the only handle read-only has on that database, which it
+// never opens for writing.
+func (s *Service) residentCorpus() *plugin.Database {
+	for index := range s.resident {
+		if s.resident[index].Name == rocaCorpusPluginName {
+			return &s.resident[index]
 		}
 	}
 	return nil

@@ -20,8 +20,8 @@ The installed binary then places its own bundled data plugins under
 database, is verified and recorded like any other [installed
 package](plugins.md#verified-packages-and-lifecycle), and is removed by a purge
 with the rest of that tree. It ships the resident
-[`roca-ops`](plugins.md#the-bundled-roca-ops-plugin) store, the structural
-[`roca-corpus`](plugins.md#the-bundled-roca-corpus-plugin) package and the
+[`roca-ops`](plugins.md#the-bundled-roca-ops-plugin) store, the resident
+[`roca-corpus`](plugins.md#the-bundled-roca-corpus-plugin) archive and the
 custodial [`roca-cron`](plugins.md#cron-rides) journey store. If they cannot be
 placed, the installer puts the previous binary back and reports the reason, so
 no partial update is left behind; when even that restore fails it names the copy
@@ -257,7 +257,8 @@ zone out of the owned-path inventory. The directory holding it stays with it.
 A purge also removes the installed plugin packages under `~/.roca/plugins/` and
 the `roca-<name>` executables the installer placed, so no plugin code is left on
 a machine La Roca was removed from. A directory there is claimed only through the
-manifest the installer generated in it, and anything else under that path
+manifest the installer generated in it, whose declared writable state directory
+is a package-owned namespace claimed whole, and anything else under that path
 survives untouched. An executable whose bytes changed since its install is no
 longer the file La Roca placed, so it survives too.
 

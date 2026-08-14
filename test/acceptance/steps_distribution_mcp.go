@@ -85,7 +85,8 @@ func (w *distributionWorld) queryRowsOnBothSurfaces() error {
 func (w *distributionWorld) toonRowsHaveParity() error {
 	terminal, agent := w.human.stdout, renderedText(w.tool)
 	for _, answer := range []string{terminal, agent} {
-		if !strings.Contains(answer, "rows[1]{id,content}") || !strings.Contains(answer, toonParityContent) {
+		if !strings.Contains(answer, "rows[1]{id,content,database}") ||
+			!strings.Contains(answer, toonParityContent+",core") {
 			return fmt.Errorf("readable answer lacks the expected TOON shape and cell: %q", answer)
 		}
 	}

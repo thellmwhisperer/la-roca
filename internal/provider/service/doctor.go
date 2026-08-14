@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
@@ -99,7 +100,7 @@ func (s *Service) Doctor(ctx context.Context) (DoctorReport, error) {
 		ConfigExists:          s.opts.ConfigExists,
 		ModelDisabled:         cascade.Disabled,
 		Warnings:              cascade.Warnings,
-		Memories:              s.countOf(ctx, "memories"),
+		Memories:              s.memoryCount(ctx),
 		Bedrock:               bedrock,
 		DetectedAgents:        ingest.DetectAgents(s.opts.Sources),
 		DetectedModelBinaries: append([]string(nil), cascade.DetectedBinaries...),
@@ -130,27 +131,47 @@ type Bedrock struct {
 }
 
 func (s *Service) bedrock(ctx context.Context) (*Bedrock, error) {
-	const query = `
-		WITH candidates(timestamp, project) AS (
-			SELECT started_at, project FROM sessions WHERE julianday(started_at) IS NOT NULL
+	candidate := func(schema string) string {
+		prefix := ""
+		if schema != "" {
+			prefix = quoteSchema(schema) + "."
+		}
+		return fmt.Sprintf(`
+			SELECT started_at, project FROM %[1]ssessions WHERE julianday(started_at) IS NOT NULL
 			UNION ALL
-			SELECT e.human_timestamp, s.project FROM exchanges e
-			LEFT JOIN sessions s ON s.session_id = e.session_id
+			SELECT e.human_timestamp, s.project FROM %[1]sexchanges e
+			LEFT JOIN %[1]ssessions s ON s.session_id = e.session_id
 			WHERE julianday(e.human_timestamp) IS NOT NULL
 			UNION ALL
-			SELECT e.agent_timestamp, s.project FROM exchanges e
-			LEFT JOIN sessions s ON s.session_id = e.session_id
+			SELECT e.agent_timestamp, s.project FROM %[1]sexchanges e
+			LEFT JOIN %[1]ssessions s ON s.session_id = e.session_id
 			WHERE julianday(e.agent_timestamp) IS NOT NULL
 			UNION ALL
-			SELECT created_at, project FROM memories WHERE julianday(created_at) IS NOT NULL
+			SELECT created_at, project FROM %[1]smemories WHERE julianday(created_at) IS NOT NULL`, prefix)
+	}
+	parts := []string{candidate("")}
+	for _, database := range s.resident {
+		if database.Name == rocaCorpusPluginName {
+			parts = append(parts, candidate(database.Schema))
+			break
+		}
+	}
+	query := `
+		WITH candidates(timestamp, project) AS (
+			` + strings.Join(parts, " UNION ALL ") + `
 		), floor(value) AS (SELECT MIN(julianday(timestamp)) FROM candidates)
 		SELECT c.timestamp, COALESCE(c.project, '')
 		FROM candidates c, floor
 		WHERE julianday(c.timestamp) = floor.value
 		ORDER BY c.project IS NULL, c.project
 		LIMIT 1`
+	connection, attached, err := s.openQueryConnection(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("open corpus for bedrock: %w", err)
+	}
+	defer closeQueryConnection(connection, attached)
 	var result Bedrock
-	err := s.db.SQL().QueryRowContext(ctx, query).Scan(&result.Timestamp, &result.Project)
+	err = connection.QueryRowContext(ctx, query).Scan(&result.Timestamp, &result.Project)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -158,6 +179,35 @@ func (s *Service) bedrock(ctx context.Context) (*Bedrock, error) {
 		return nil, fmt.Errorf("read corpus bedrock: %w", err)
 	}
 	return &result, nil
+}
+
+func (s *Service) memoryCount(ctx context.Context) int {
+	statement := "SELECT COUNT(*) FROM memories"
+	for _, database := range s.resident {
+		if database.Name == rocaCorpusPluginName {
+			statement += " UNION ALL SELECT COUNT(*) FROM " + quoteSchema(database.Schema) + ".memories"
+			break
+		}
+	}
+	connection, attached, err := s.openQueryConnection(ctx)
+	if err != nil {
+		return 0
+	}
+	defer closeQueryConnection(connection, attached)
+	rows, err := connection.QueryContext(ctx, statement)
+	if err != nil {
+		return 0
+	}
+	defer rows.Close()
+	total := 0
+	for rows.Next() {
+		var count int
+		if rows.Scan(&count) != nil {
+			return 0
+		}
+		total += count
+	}
+	return total
 }
 
 // verdicts is one cascade diagnosed: every provider with its verdict, in the

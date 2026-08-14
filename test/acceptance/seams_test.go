@@ -174,7 +174,8 @@ func theStamps(output string) []string {
 	var stamps []string
 	inRows := false
 	for _, line := range strings.Split(output, "\n") {
-		if strings.HasPrefix(line, "rows[") && strings.HasSuffix(line, "{created_at}:") {
+		if strings.HasPrefix(line, "rows[") &&
+			(strings.HasSuffix(line, "{created_at}:") || strings.HasSuffix(line, "{created_at,database}:")) {
 			inRows = true
 			continue
 		}
@@ -185,6 +186,7 @@ func theStamps(output string) []string {
 			break
 		}
 		value := strings.TrimSpace(line)
+		value = strings.TrimSuffix(value, ",core")
 		if unquoted, err := strconv.Unquote(value); err == nil {
 			value = unquoted
 		}
