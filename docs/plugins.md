@@ -266,9 +266,32 @@ Removing La Roca itself removes the installed packages and asks separately
 before it touches those archives: see
 [Uninstall](lifecycle.md#uninstall).
 
+## The bundled roca-corpus plugin
+
+`roca-corpus` is the resident, data-only custody package for the perennial
+harvest: sessions, exchanges, reasoning blocks, tool uses, and files harvested
+as memories. Its memory schema admits only `harvest-corpus` and `harvest-file`
+as first-class provenance values instead of encoding that boundary as layers.
+Operational and curated `agent` and `promoted` records remain in core during
+this split.
+
+Every [installation and update](lifecycle.md#install) places the empty package
+under `~/.roca/plugins/roca-corpus/`. This structural phase does not attach it,
+route ingest into it, or move existing data. The rollout boundary is accepted
+in configuration and remains off by default:
+
+```toml
+[features]
+corpus = false
+```
+
+With that default, every CLI and MCP behavior remains on the existing core and
+operational paths byte for byte. Activation and custody migration belong to the
+separate follow-up phase.
+
 ## The bundled roca-ops plugin
 
-`roca-ops` is the first plugin La Roca ships with itself: a resident, data-only
+`roca-ops` is the operational plugin La Roca ships with itself: a resident, data-only
 package that declares `custody: true` over what agents write. Every
 [installation and update](lifecycle.md#install) places it under
 `~/.roca/plugins/roca-ops/`, and it stays inert until a second experimental

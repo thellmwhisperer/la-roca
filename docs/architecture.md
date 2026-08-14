@@ -3,6 +3,17 @@
 First-time path: [install, detect an already signed-in agent CLI, and query
 without a La Roca login](lifecycle.md#install).
 
+## Data domains
+
+The engine and its data domains are separate contracts. Bundled domain plugins
+live under `internal/distribution/`, own one custody database and describe its
+query surface in `semantic.yaml`. `roca-ops` owns operational agent writes.
+`roca-corpus` declares the perennial-harvest schema for sessions, exchanges,
+reasoning, tool uses, and harvested files; its first structural release is
+installed but remains inert behind the default-off `features.corpus` rollout
+boundary. Core remains the active store until the separate activation and
+migration phase lands.
+
 `internal/` is four layers, bottom up. **No domain imports the one above it.**
 A package that reaches upward is a defect to fix by moving code, not by a
 shortcut.
