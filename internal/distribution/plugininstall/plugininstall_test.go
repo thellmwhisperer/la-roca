@@ -49,7 +49,6 @@ func TestInspectAcceptsAndVerifiesAnOptionalRideManifest(t *testing.T) {
 	source := writePackage(t, "synthetic", "1.2.3", false, false)
 	rides := []byte("[ride.ingest]\ncommand = \"roca synthetic ingest\"\n")
 	addRideManifest(t, source, rides)
-
 	candidate, err := plugininstall.Inspect(source, source)
 	if err != nil {
 		t.Fatal(err)
@@ -126,6 +125,42 @@ func addRideManifest(t *testing.T, source string, rides []byte) {
 	}
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestInstallRefusesASourceFileSwappedForASymlinkAfterInspection(t *testing.T) {
+	source := writePackage(t, "synthetic", "1.2.3", false, false)
+	candidate, err := plugininstall.Inspect(source, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	semantic := filepath.Join(source, "semantic.yaml")
+	published, err := os.ReadFile(semantic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	external := filepath.Join(t.TempDir(), "semantic.yaml")
+	if err := os.WriteFile(external, published, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(semantic); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, semantic); err != nil {
+		t.Skipf("symlinks are unavailable: %v", err)
+	}
+
+	manager := plugininstall.Manager{
+		PluginRoot: filepath.Join(t.TempDir(), "plugins"),
+		BinDir:     filepath.Join(t.TempDir(), "bin"),
+	}
+	_, err = manager.Install(candidate)
+	if err == nil {
+		t.Fatal("install accepted a checksummed source file swapped for a symlink")
+	}
+	if !strings.Contains(err.Error(), "checksum source file semantic.yaml is not a regular file") {
+		t.Fatalf("err = %v, want the contractual non-regular source refusal", err)
 	}
 }
 
