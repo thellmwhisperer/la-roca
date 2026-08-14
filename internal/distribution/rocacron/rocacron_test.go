@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacron"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	_ "modernc.org/sqlite"
@@ -249,6 +250,65 @@ func TestReadOnlyDryRunDoesNotCreateJourneyState(t *testing.T) {
 	}
 	if _, err := os.Stat(database); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("read-only dry run created a database: %v", err)
+	}
+}
+
+// The other lock scenarios inject a decision; this one exercises the real
+// probe against the core writer, because the train is only an observer if it
+// leaves the lock exactly as it found it: absent when absent, free afterwards.
+func TestTheRealCoreLockProbeNeitherCreatesNorKeepsTheLock(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "plugins")
+	core := logfile.New(t.TempDir())
+	// The log directory exists before any train runs, so an absent lock file
+	// there is the probe's own restraint rather than a missing parent.
+	if err := os.MkdirAll(filepath.Dir(core.LockPath()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	service, err := rocacron.Open(rocacron.Options{
+		PluginRoot: root,
+		Database:   filepath.Join(t.TempDir(), rocacron.DatabaseFilename),
+		LockPath:   core.LockPath(),
+		RunCommand: func(context.Context, string, io.Writer, io.Writer) (int, error) { return 0, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+
+	preview := func() string {
+		t.Helper()
+		report, err := service.Run(context.Background(), plugin.DefaultTrain, true)
+		if err != nil || len(report.Rides) != 1 {
+			t.Fatalf("preview = %+v, %v", report, err)
+		}
+		return report.Rides[0].GateStatus
+	}
+
+	if status := preview(); status != rocacron.GateReady {
+		t.Fatalf("an absent core lock previewed %q", status)
+	}
+	if _, err := os.Stat(core.LockPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the probe created the core lock: %v", err)
+	}
+
+	release, err := core.Lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status := preview(); status != rocacron.GateDeferredLocked {
+		t.Fatalf("a busy core lock previewed %q", status)
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+
+	// The second of these two previews is the one that matters: a probe that
+	// kept what the first took would collide with itself, because a second
+	// descriptor cannot flock the file the first one still holds.
+	for _, status := range []string{preview(), preview()} {
+		if status != rocacron.GateReady {
+			t.Fatalf("a released core lock previewed %q", status)
+		}
 	}
 }
 

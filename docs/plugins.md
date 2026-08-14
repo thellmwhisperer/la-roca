@@ -12,10 +12,11 @@ data discovery, attach-based querying, and `roca plugin` lifecycle commands in
 plugins = true
 ```
 
-With `features.plugins` absent or false, La Roca does not inspect the plugins
-directory, route to a semantic layer, attach a plugin database, or resolve an
-installer source. Existing Git-style executable dispatch predates this standard
-and continues to behave as before.
+With `features.plugins` absent or false, La Roca does not route to a semantic
+layer, attach a plugin database, or resolve an installer source; the only
+reader of the plugins directory left is the [cron train](#cron-rides). Existing
+Git-style executable dispatch predates this standard and continues to behave as
+before.
 
 A data plugin is one directory under `~/.roca/plugins/<name>/`. It contains
 exactly one plain SQLite database (`.db`, `.sqlite`, or `.sqlite3`) and a
@@ -86,7 +87,9 @@ provenance also reaches MCP's TOON output.
 already owned by core or a plugin. It does not ingest, embed, or keep a daemon
 alive. System cron can call `roca cron run`; omitting the train selects
 `nightly`. Core registers its existing direct `roca ingest` command as the
-first nightly ride, so direct ingest remains available unchanged.
+first nightly ride, so direct ingest remains available unchanged. The train
+itself is not behind `features.plugins`: it reads the ride manifests it finds
+and records journeys whether or not the plugin standard is enabled.
 
 A plugin opts in with `rides.toml`. Ride, train, and gate names are identifier
 style; use underscores rather than hyphens. `train` defaults to `nightly`:
