@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -103,6 +104,52 @@ func TestAnAssetWithNoDeclaredSizeIsStillDownloaded(t *testing.T) {
 	}
 	if string(body) != "the whole artefact" {
 		t.Fatalf("body = %q", body)
+	}
+}
+
+func TestReleaseDownloadBoundsRedirectChains(t *testing.T) {
+	var requests atomic.Int32
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		http.Redirect(w, r, server.URL+"/again", http.StatusFound)
+	}))
+	defer server.Close()
+
+	_, err := Source{Repo: "owner/name", ReleaseRedirects: true}.Download(context.Background(),
+		Asset{Name: theArtefactName, URL: server.URL + "/asset"})
+	if err == nil {
+		t.Fatal("an unbounded redirect chain was followed")
+	}
+	if !strings.Contains(err.Error(), "release channel refused more than 3 redirects") {
+		t.Fatalf("err = %v, want the contractual redirect limit refusal", err)
+	}
+	if got := requests.Load(); got != 4 {
+		t.Fatalf("requests = %d, want the initial request plus 3 redirects", got)
+	}
+}
+
+func TestReleaseDownloadKeepsPreviousRedirectBehaviorWhenBoundIsOff(t *testing.T) {
+	var requests atomic.Int32
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) <= maxReleaseRedirects {
+			http.Redirect(w, r, server.URL+"/again", http.StatusFound)
+			return
+		}
+		w.Write([]byte("the whole artefact"))
+	}))
+	defer server.Close()
+
+	body, err := theArtefact(t, server.URL+"/asset", 0)
+	if err != nil {
+		t.Fatalf("the previous redirect behavior was replaced while the feature was off: %v", err)
+	}
+	if string(body) != "the whole artefact" {
+		t.Fatalf("body = %q", body)
+	}
+	if got := requests.Load(); got != maxReleaseRedirects+1 {
+		t.Fatalf("requests = %d, want a chain beyond the experimental bound", got)
 	}
 }
 
