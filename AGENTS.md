@@ -18,8 +18,6 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - Teaching a parser to read more of a source means bumping its entry in `parserVersions` (`internal/ingest/state.go`): the version rides in the watermark so a plain `roca ingest` re-reads synced files, and `internal/ingest/provenance_test.go` pins that the re-read backfills without duplicating.
 - Per-exchange provenance is filled only from what a source itself recorded; a column NULL means the source said nothing, never zero. Use `parsers.UsageTally` rather than assembling `parsers.Provenance` by hand.
 - Records left out are reported apart: `parsers.Discard.ByDesign` is what this build never meant to read, and everything else is what it could not read. Collapsing the two is what made a healthy ingest report thousands of failures.
-- Optional semantic search keeps its corpus-free store and resumable delta logic in [`internal/vector`](internal/vector), its command lifecycle in [`internal/distribution/cli/vector.go`](internal/distribution/cli/vector.go), and its operator contract in [`docs/vector.md`](docs/vector.md).
-- The repository's exception bar for irreducible slop findings is documented in [the tombstone policy](.slop/tombstones/README.md).
 
 ## Maintaining this file
 
