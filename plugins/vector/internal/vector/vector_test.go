@@ -169,6 +169,10 @@ func TestQueryDeduplicatesChunksByStableSource(t *testing.T) {
 			corpus.sources[index].text = long
 		}
 	}
+	stale := sourceRow{kind: "memories", text: strings.Repeat("alpha stale ", defaultChunkSize/4),
+		layer: "discovery", origin: "agent", createdAt: "2026-01-02", cronSource: "synthetic-agent",
+		filePath: "stale.md"}
+	corpus.sources = append(corpus.sources, stale)
 	index := Index{
 		Corpus: corpus, VectorPath: filepath.Join(t.TempDir(), "vector.db"),
 		Model: DefaultModel, Embedder: &recordingEmbedder{},
@@ -176,6 +180,7 @@ func TestQueryDeduplicatesChunksByStableSource(t *testing.T) {
 	if _, err := index.Ingest(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	corpus.sources = corpus.sources[:len(corpus.sources)-1]
 	results, err := index.Query(context.Background(), "alpha", 20)
 	if err != nil {
 		t.Fatal(err)
@@ -187,9 +192,15 @@ func TestQueryDeduplicatesChunksByStableSource(t *testing.T) {
 		}
 		seen[result.SourceID] = true
 	}
+	if calls := corpus.resolves[stale.locator().Identity]; calls != 1 {
+		t.Fatalf("source that no longer resolves was resolved %d times, want 1", calls)
+	}
 }
 
-type memoryCorpus struct{ sources []sourceRow }
+type memoryCorpus struct {
+	sources  []sourceRow
+	resolves map[string]int
+}
 
 func (m *memoryCorpus) WalkSources(_ context.Context, visit func(sourceRow) error) error {
 	for _, source := range m.sources {
@@ -201,6 +212,10 @@ func (m *memoryCorpus) WalkSources(_ context.Context, visit func(sourceRow) erro
 }
 
 func (m *memoryCorpus) ResolveSource(_ context.Context, kind string, where locator) (string, error) {
+	if m.resolves == nil {
+		m.resolves = map[string]int{}
+	}
+	m.resolves[where.Identity]++
 	for _, source := range m.sources {
 		if source.kind == kind && source.locator().Identity == where.Identity {
 			return source.text, nil

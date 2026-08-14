@@ -25,7 +25,7 @@ import (
 const (
 	PackageFilename   = "plugin.json"
 	ChecksumsFilename = "checksums.txt"
-	ManifestFilename  = ".roca-plugin.json"
+	ManifestFilename  = plugin.ManifestFilename
 	manifestSchema    = 1
 )
 
@@ -372,11 +372,9 @@ func (m Manager) Install(candidate Candidate) (Result, error) {
 	if err := os.Rename(staged, target); err != nil {
 		return Result{}, fmt.Errorf("install plugin directory: %w", err)
 	}
-	if candidate.StateDir != "" {
-		if err := os.Mkdir(filepath.Join(target, candidate.StateDir), 0o700); err != nil {
-			_ = os.RemoveAll(target)
-			return Result{}, fmt.Errorf("create plugin state directory: %w", err)
-		}
+	if err := createStateDir(target, candidate.StateDir); err != nil {
+		_ = os.RemoveAll(target)
+		return Result{}, err
 	}
 	if executable != "" {
 		if err := installFile(filepath.Join(target, candidate.Executable), executable, 0o700); err != nil {
@@ -385,6 +383,16 @@ func (m Manager) Install(candidate Candidate) (Result, error) {
 		}
 	}
 	return resultFor(candidate, target, executable), nil
+}
+
+func createStateDir(target, name string) error {
+	if name == "" {
+		return nil
+	}
+	if err := os.Mkdir(filepath.Join(target, name), 0o700); err != nil && !os.IsExist(err) {
+		return fmt.Errorf("create plugin state directory: %w", err)
+	}
+	return nil
 }
 
 func (m Manager) Update(candidate Candidate) (Result, error) {
@@ -440,12 +448,21 @@ func (m Manager) Update(candidate Candidate) (Result, error) {
 	stateMoved := false
 	if candidate.StateDir != "" {
 		state := filepath.Join(backup, candidate.StateDir)
-		if err := os.Rename(state, filepath.Join(target, candidate.StateDir)); err != nil {
+		err := os.Rename(state, filepath.Join(target, candidate.StateDir))
+		switch {
+		case err == nil:
+			stateMoved = true
+		case os.IsNotExist(err):
+			if err := createStateDir(target, candidate.StateDir); err != nil {
+				_ = os.RemoveAll(target)
+				_ = os.Rename(backup, target)
+				return Result{}, err
+			}
+		default:
 			_ = os.RemoveAll(target)
 			_ = os.Rename(backup, target)
 			return Result{}, fmt.Errorf("preserve plugin state directory: %w", err)
 		}
-		stateMoved = true
 	}
 	rollback := func() {
 		if stateMoved {

@@ -25,6 +25,9 @@ import (
 
 const (
 	SemanticFilename = "semantic.yaml"
+	// ManifestFilename is the installed package manifest every installer writes
+	// and discovery reads, so both sides name the same file.
+	ManifestFilename = ".roca-plugin.json"
 	MaxAttached      = 10
 	// ProvenanceColumn names every row's source database, so a semantic layer
 	// may not declare a column that would be overwritten by it.
@@ -116,7 +119,7 @@ func Discover(root string) ([]Descriptor, []string) {
 }
 
 func executablePackage(directory string) bool {
-	file, err := os.Open(filepath.Join(directory, ".roca-plugin.json"))
+	file, err := os.Open(filepath.Join(directory, ManifestFilename))
 	if err != nil {
 		return false
 	}

@@ -258,6 +258,23 @@ func TestExecutableOnlyPackageOwnsAndPreservesItsStateDirectory(t *testing.T) {
 	if raw, err := os.ReadFile(stateFile); err != nil || string(raw) != "derived index" {
 		t.Fatalf("preserved state = %q, err=%v", raw, err)
 	}
+
+	if err := os.RemoveAll(filepath.Join(root, "synthetic-exec", "state")); err != nil {
+		t.Fatal(err)
+	}
+	writeExecutablePackageAt(t, source, "synthetic-exec", "3.0.0", "state")
+	rebuilt, err := plugininstall.Inspect(source, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Update(rebuilt); err != nil {
+		t.Fatalf("update after the operator reclaimed the rebuildable state: %v", err)
+	}
+	if info, err := os.Stat(filepath.Join(root, "synthetic-exec", "state")); err != nil || !info.IsDir() {
+		t.Fatalf("state directory was not recreated: %v, err=%v", info, err)
+	}
+	writeFixtureFile(t, stateFile, []byte("derived index"), 0o600)
+
 	manifest, err := plugininstall.ReadManifest(filepath.Join(root, "synthetic-exec"))
 	if err != nil {
 		t.Fatal(err)

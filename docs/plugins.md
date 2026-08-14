@@ -306,12 +306,10 @@ The marker adds no vector path to core and does not override generic executable
 dispatch. In this isolated phase, explicit package installation and its
 **EXECUTABLE** consent are the activation boundary.
 
-The source lives in `plugins/vector/` as its own Go module. Build a verified
-package for the current machine, then install it through the ordinary full-trust
-consent path:
-
-Its [module README](../plugins/vector/README.md) covers the binary's complete
-command, storage, and quality-test contract.
+The source lives in `plugins/vector/` as its own Go module, and its
+[module README](../plugins/vector/README.md) covers the binary's complete
+command, storage, and quality-test contract. Build a verified package for the
+current machine, then install it through the ordinary full-trust consent path:
 
 ```sh
 make -C plugins/vector package

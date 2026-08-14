@@ -32,6 +32,7 @@ type Index struct {
 	VectorPath string
 	Model      string
 	Embedder   Embedder
+	Notice     func(string)
 }
 
 type Corpus interface {
@@ -117,7 +118,7 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 	if err := ensureParent(i.VectorPath); err != nil {
 		return Delta{}, err
 	}
-	release, err := lockFile(i.VectorPath + ".index.lock")
+	release, err := lockIndex(ctx, i.VectorPath+".index.lock", i.waitingForIndex)
 	if err != nil {
 		return Delta{}, fmt.Errorf("lock vector index: %w", err)
 	}
@@ -262,6 +263,7 @@ func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) 
 		if seen[candidate.sourceID] {
 			continue
 		}
+		seen[candidate.sourceID] = true
 		body, err := i.Corpus.ResolveSource(ctx, candidate.kind, candidate.where)
 		if err != nil {
 			return nil, err
@@ -269,7 +271,6 @@ func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) 
 		if body == "" {
 			continue
 		}
-		seen[candidate.sourceID] = true
 		results = append(results, Result{
 			Rank: len(results) + 1, Score: 1 - candidate.distance,
 			Source: candidate.kind, SourceID: candidate.sourceID, Text: body,
@@ -279,6 +280,12 @@ func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) 
 		}
 	}
 	return results, nil
+}
+
+func (i Index) waitingForIndex(path string) {
+	if i.Notice != nil {
+		i.Notice(fmt.Sprintf("another indexing run holds %s; waiting for it to finish", path))
+	}
 }
 
 func (i Index) validate() error {

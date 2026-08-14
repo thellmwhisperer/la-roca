@@ -250,7 +250,8 @@ func (env *environment) index(model string) (vector.Index, error) {
 		return vector.Index{}, err
 	}
 	return vector.Index{Corpus: core, VectorPath: filepath.Join(state, vector.DatabaseFilename),
-		Model: model, Embedder: vector.Ollama{BaseURL: os.Getenv("OLLAMA_HOST")}}, nil
+		Model: model, Embedder: vector.Ollama{BaseURL: os.Getenv("OLLAMA_HOST")},
+		Notice: func(message string) { fmt.Fprintln(os.Stderr, message) }}, nil
 }
 
 func (env *environment) core() (vector.CoreCLI, error) {
