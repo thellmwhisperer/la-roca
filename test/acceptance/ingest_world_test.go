@@ -177,7 +177,11 @@ func (w *ingestAcceptanceWorld) writeConfig(workspace string) error {
 }
 
 func (w *ingestAcceptanceWorld) openDB() (*sql.DB, error) {
-	return sql.Open("sqlite", "file:"+w.dbPath+"?_pragma=busy_timeout(5000)")
+	return sql.Open("sqlite", "file:"+w.corpusPath()+"?_pragma=busy_timeout(5000)")
+}
+
+func (w *ingestAcceptanceWorld) corpusPath() string {
+	return filepath.Join(w.home, ".roca", "plugins", "roca-corpus", "roca-corpus.db")
 }
 
 func (w *ingestAcceptanceWorld) queryInt(statement string, args ...any) (int, error) {
@@ -231,7 +235,7 @@ func (w *ingestAcceptanceWorld) tableCounts() (map[string]int, error) {
 }
 
 func (w *ingestAcceptanceWorld) databaseBytes() (string, error) {
-	raw, err := os.ReadFile(w.dbPath)
+	raw, err := os.ReadFile(w.corpusPath())
 	if err != nil {
 		return "", err
 	}

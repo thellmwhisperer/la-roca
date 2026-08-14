@@ -11,8 +11,8 @@ Reading order, from operator to contributor:
 3. [Ingest sources](ingest.md): import downloaded data exports once and understand
    their incremental boundary.
 4. [Plugins](plugins.md): isolated SQLite data plugins, verified executable-only
-   packages such as vector search, cron ride manifests, Git-style neighbor
-   executables, and the stable machine surfaces they compose.
+   packages, cron ride manifests, Git-style neighbor executables, and the stable
+   machine surfaces they compose.
 5. [The MCP plug](mcp.md): the stdio server, its six tools, the TOON answer
    contract, and the supported integration targets.
 6. [Operations](operations.md): the audit log contract for every CLI and MCP

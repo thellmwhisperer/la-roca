@@ -40,6 +40,12 @@ func (s *Service) Index(ctx context.Context) (search.Report, error) {
 	report, err := search.Index(ctx, s.db, s.opts.Progress)
 	report.LexicalBuilt = report.LexicalBuilt || prepared.LexicalBuilt
 	report.ElapsedMS += prepared.ElapsedMS
+	if err == nil && s.opts.CorpusEnabled && s.corpus != nil {
+		corpus, corpusErr := search.Index(ctx, s.corpus, s.opts.Progress)
+		report.LexicalBuilt = report.LexicalBuilt || corpus.LexicalBuilt
+		report.ElapsedMS += corpus.ElapsedMS
+		err = corpusErr
+	}
 	return report, err
 }
 
@@ -74,7 +80,11 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (IngestResult, 
 		}
 	}
 
-	report, err := ingest.Run(ctx, s.db, s.registry, ingest.Options{
+	target := s.db
+	if s.opts.CorpusEnabled && s.corpus != nil {
+		target = s.corpus
+	}
+	report, err := ingest.Run(ctx, target, s.registry, ingest.Options{
 		Roots:        roots,
 		DryRun:       req.DryRun,
 		Progress:     s.opts.Progress,

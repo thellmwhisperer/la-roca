@@ -36,6 +36,39 @@ func TestRenderSQLFTSSearchesTheFourSources(t *testing.T) {
 	}
 }
 
+func TestRenderSQLAttachedCorpusLikeSearchesEveryCorpusSource(t *testing.T) {
+	stmt, err := query.RenderSQLAttachedCorpusLike(termPlan("cobalt+atlas"),
+		[]string{"question"}, "plugin_roca_corpus", 10, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{
+		`"plugin_roca_corpus".memories`,
+		`"plugin_roca_corpus".exchanges`,
+		`"plugin_roca_corpus".thinking_blocks`,
+		"OR m.content LIKE '%atlas%'",
+		"m.layer NOT IN ('question')",
+	} {
+		if !strings.Contains(stmt, fragment) {
+			t.Errorf("attached corpus SQL lacks %q:\n%s", fragment, stmt)
+		}
+	}
+}
+
+func TestRenderSearchUnionPartsDeclaresEveryDatabase(t *testing.T) {
+	stmt, err := query.RenderSearchUnionParts([]string{
+		"SELECT 'memory' source, 1 id, NULL author, 'core' text, NULL created_at",
+		"SELECT 'memory' source, 2 id, NULL author, 'ops' text, NULL created_at",
+		"SELECT 'exchange' source, 3 id, NULL author, 'corpus' text, NULL created_at",
+	}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(stmt, "SELECT source, id, author, text, created_at FROM"); got != 3 {
+		t.Fatalf("projected parts = %d, want 3:\n%s", got, stmt)
+	}
+}
+
 func TestRenderSQLFTSRequiresEveryWord(t *testing.T) {
 	stmt, err := query.RenderSQLFTS(termPlan("long+dashes"), nil, 10)
 	if err != nil {

@@ -636,16 +636,16 @@ type QueryConfig struct {
 }
 
 // FeaturesConfig contains operational escape hatches and experimental
-// surfaces. The safety belt defaults on; plugins, vector and artifact refresh default off.
+// surfaces. The safety belt defaults on; new optional surfaces default off.
 type FeaturesConfig struct {
 	StrictInput        bool `toml:"strict_input"`
 	AskMissingReferent bool `toml:"ask_missing_referent"`
 	Plugins            bool `toml:"plugins"`
 	Vector             bool `toml:"vector"`
+	Cron               bool `toml:"cron"`
 	ArtifactRefresh    bool `toml:"artifact_refresh"`
 	RocaOps            bool `toml:"roca_ops"`
 	ReleaseRedirects   bool `toml:"release_redirects"`
-	Corpus             bool `toml:"corpus"`
 }
 
 // defaultFeatures is the belt as shipped: everything on.
@@ -817,10 +817,10 @@ func readFeatures(section map[string]any, path string, warnings *[]string) Featu
 		"ask_missing_referent": &features.AskMissingReferent,
 		"plugins":              &features.Plugins,
 		"vector":               &features.Vector,
+		"cron":                 &features.Cron,
 		"artifact_refresh":     &features.ArtifactRefresh,
 		"roca_ops":             &features.RocaOps,
 		"release_redirects":    &features.ReleaseRedirects,
-		"corpus":               &features.Corpus,
 	}
 	for _, key := range sortedKeys(section) {
 		enabled, known := switches[key]

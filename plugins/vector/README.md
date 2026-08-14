@@ -20,10 +20,9 @@ roca plugin install .tmp/vector-package
 
 This package is intentionally installable rather than bundled. Installation is
 an explicit full-trust consent event and an ordinary La Roca install or update
-does not place the binary. Core also accepts a default-off `features.vector`
-rollout marker; like the initial `features.corpus` marker, it adds no core
-execution path. Installing the verified executable package remains the
-activation boundary.
+does not place the binary. Set `features.vector = true` as well: absent or false
+hides `roca vector` dispatch and its `roca plugins` entry even when the binary
+is on `PATH`. Installation supplies the package; the switch activates it.
 
 ## Use
 
@@ -36,7 +35,8 @@ roca vector ingest --delta
 roca vector query "which decision kept inference local" 5
 ```
 
-`install` pulls the model and starts a resumable background build. `ingest
+`install` is the plugin's adopt/init command: it pulls the model, prepares the
+plugin-owned index, and starts a resumable background build. `ingest
 --delta` embeds only new or changed chunks and removes missing sources. Both
 writing commands honor `ROCA_READ_ONLY`. `query` uses binary ANN candidates,
 exact cosine reranking, stable source deduplication, and live text resolution.

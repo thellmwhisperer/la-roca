@@ -56,6 +56,9 @@ func budgetedValues(output string) []string {
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, budgetMarker) {
+			if split := strings.LastIndexByte(line, ','); split >= 0 {
+				line = line[:split]
+			}
 			values = append(values, line)
 		}
 	}

@@ -84,7 +84,7 @@ func validatePluginRouteLimit(ctx context.Context, candidates []plugin.Descripto
 }
 
 func (s *Service) pluginsActive() bool {
-	return s.opts.PluginsEnabled || s.opts.RocaOpsEnabled
+	return s.opts.PluginsEnabled || s.opts.RocaOpsEnabled || s.opts.CorpusEnabled
 }
 
 func (s *Service) onDemand(candidates []plugin.Descriptor) []plugin.Descriptor {
@@ -124,6 +124,14 @@ func (s *Service) openResidents(ctx context.Context) error {
 			}
 		}
 	}
+	if s.opts.CorpusEnabled {
+		for _, descriptor := range descriptors {
+			if descriptor.Name == rocaCorpusPluginName &&
+				descriptor.Semantic.Attachment == plugin.AttachmentResident {
+				candidates = append(candidates, descriptor)
+			}
+		}
+	}
 	if s.opts.PluginsEnabled {
 		for _, descriptor := range descriptors {
 			if !selfGated(descriptor.Name) && descriptor.Semantic.Attachment == plugin.AttachmentResident {
@@ -155,13 +163,36 @@ func (s *Service) openResidents(ctx context.Context) error {
 		// Read-only refuses every write before database I/O, and opening the
 		// operational store is itself one: it sets the journal mode and restricts
 		// the artefacts. Reads still reach it through the resident attachment.
-		if s.opts.ReadOnly {
-			return nil
+		if !s.opts.ReadOnly {
+			var err error
+			s.ops, err = store.Open(opsDatabase.Database)
+			if err != nil {
+				return fmt.Errorf("open %s for operational writes: %w", rocaOpsPluginName, err)
+			}
 		}
-		var err error
-		s.ops, err = store.Open(opsDatabase.Database)
-		if err != nil {
-			return fmt.Errorf("open %s for operational writes: %w", rocaOpsPluginName, err)
+	}
+	if s.opts.CorpusEnabled {
+		var corpusDatabase *plugin.Database
+		for index := range s.resident {
+			if s.resident[index].Name == rocaCorpusPluginName {
+				corpusDatabase = &s.resident[index]
+				break
+			}
+		}
+		if corpusDatabase == nil {
+			reason := strings.Join(append(slices.Clone(warnings), route.warnings...), "; ")
+			if reason == "" {
+				reason = "the bundled plugin is not installed or is not declared resident"
+			}
+			return fmt.Errorf("the bundled %s plugin is unavailable: %s",
+				rocaCorpusPluginName, reason)
+		}
+		if !s.opts.ReadOnly {
+			var err error
+			s.corpus, err = store.Open(corpusDatabase.Database)
+			if err != nil {
+				return fmt.Errorf("open %s for perennial ingest: %w", rocaCorpusPluginName, err)
+			}
 		}
 	}
 	return nil

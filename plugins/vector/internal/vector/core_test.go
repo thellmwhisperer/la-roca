@@ -22,18 +22,18 @@ func TestCoreCLIWalksEverySourceThroughRocaExec(t *testing.T) {
 		queries = append(queries, statement)
 		var rows []map[string]any
 		switch {
-		case strings.Contains(statement, "FROM memories"):
+		case strings.Contains(statement, "FROM "+corpusTable("memories")):
 			rows = []map[string]any{{"id": 1, "content": "alpha memory", "source_session": "",
 				"source_sequence": nil, "source_agent": "synthetic-agent",
 				"metadata": `{"file_path":"notes.md"}`, "layer": "discovery",
 				"origin": "agent", "created_at": "2026-08-14"}}
-		case strings.Contains(statement, "FROM exchanges"):
+		case strings.Contains(statement, "FROM "+corpusTable("exchanges")):
 			rows = []map[string]any{{"id": 2, "session_id": "s1", "exchange_number": 4,
 				"text": "beta question\n\nbeta answer"}}
-		case strings.Contains(statement, "FROM thinking_blocks"):
+		case strings.Contains(statement, "FROM "+corpusTable("thinking_blocks")):
 			rows = []map[string]any{{"id": 3, "session_id": "s1", "exchange_number": nil,
 				"position_in_session": nil, "text": "gamma reasoning"}}
-		case strings.Contains(statement, "FROM sessions"):
+		case strings.Contains(statement, "FROM "+corpusTable("sessions")):
 			rows = []map[string]any{{"session_id": "s1", "text": "delta session"}}
 		default:
 			return nil, fmt.Errorf("unexpected statement %s", statement)

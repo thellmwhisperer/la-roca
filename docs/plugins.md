@@ -12,11 +12,12 @@ data discovery, attach-based querying, and `roca plugin` lifecycle commands in
 plugins = true
 ```
 
-With `features.plugins` absent or false, La Roca does not route to a semantic
-layer, attach a plugin database, or resolve an installer source; the only
-reader of the plugins directory left is the [cron train](#cron-rides). Existing
-Git-style executable dispatch predates this standard and continues to behave as
-before.
+With `features.plugins` absent or false, La Roca does not route to a third-party
+semantic layer or resolve an installer source. The bundled corpus remains
+resident, and separately gated bundled domains keep their own activation
+rules. Existing Git-style executable dispatch predates this standard and
+continues to behave as before, except for the default-off vector executable
+described in its worked example below.
 
 There are two package kinds. A data plugin is one directory under
 `~/.roca/plugins/<name>/`. It contains
@@ -90,10 +91,19 @@ provenance also reaches MCP's TOON output.
 
 ## Cron rides
 
-`roca cron` is the lightweight train: an external observer that invokes work
+`roca cron` is a default-off lightweight train: an external observer that invokes work
 already owned by core or a plugin. It does not ingest, embed, or keep a daemon
 alive. System cron can call `roca cron run`; omitting the train selects
-`nightly`. Core registers its existing direct `roca ingest` command as the
+`nightly`. Enable the command explicitly:
+
+```toml
+[features]
+cron = true
+```
+
+With `features.cron` absent or false, the command is not registered and behaves
+as though it does not exist. Enabling it installs its bundled journey store on
+first use. Core registers its existing direct `roca ingest` command as the
 first nightly ride, so direct ingest remains available unchanged. The train
 itself is not behind `features.plugins`: it reads verified ride manifests from
 installed plugin payloads and records journeys whether or not the plugin
@@ -288,23 +298,22 @@ before it touches those archives: see
 ## Worked executable example: vector search
 
 Vector search is deliberately an installable executable package, not a bundled
-feature and not a data plugin. The core binary has no vector command, model,
-index, or uninstall inventory. With the package absent, nothing vector-specific
-is discovered or activated. `features.plugins` gates the verified install
-lifecycle; generic executable dispatch works only after an operator has placed
-the package's binary on `PATH` through that explicit lifecycle.
-
-Core accepts `features.vector` as a default-off rollout marker, in the same
-structural shape as `features.corpus`:
+feature and not a data plugin. The core binary has no vector implementation,
+model, index, or uninstall inventory. `features.plugins` gates the verified
+install lifecycle, while its own default-off switch gates every vector command
+surface:
 
 ```toml
 [features]
-vector = false
+plugins = true
+vector = true
 ```
 
-The marker adds no vector path to core and does not override generic executable
-dispatch. In this isolated phase, explicit package installation and its
-**EXECUTABLE** consent are the activation boundary.
+With `features.vector` absent or false, `roca vector` does not dispatch even if
+a `roca-vector` binary is on `PATH`, and `roca plugins` does not list it. This is
+the same absent/false activation contract as `features.roca_ops`; it does not
+silently edit configuration during install or update. Explicit verified package
+installation and its **EXECUTABLE** consent remain a separate prerequisite.
 
 The source lives in `plugins/vector/` as its own Go module, and its
 [module README](../plugins/vector/README.md) covers the binary's complete
@@ -316,17 +325,23 @@ make -C plugins/vector package
 roca plugin install .tmp/vector-package
 ```
 
-The installed `roca-vector` binary makes `roca vector` available through
-executable dispatch. It reads corpus pages through the public `roca exec --json`
-boundary and owns its sqlite-vec index, completion record, worker log, and locks
-under `~/.roca/plugins/vector/state/`. Core neither imports the implementation
-nor opens that index.
+Once the package is installed and `features.vector = true`, its `roca-vector`
+binary makes `roca vector` available through executable dispatch. It reads
+corpus pages through the public `roca exec --json` boundary and owns its
+sqlite-vec index, completion record, worker log, and locks under
+`~/.roca/plugins/vector/state/`. Core neither imports the implementation nor
+opens that index.
 
 ```sh
 roca vector install
 roca vector ingest --delta
 roca vector query "the decision about local model routing" 10
 ```
+
+`roca vector install` is the plugin's adopt/init boundary: it prepares the
+plugin-owned database and embedding model, then starts the resumable initial
+build. The package manifest declares `state/`, so verified update preserves it
+and plugin uninstall or purge—not core's owned-path inventory—owns it.
 
 The package ships OFF: release and ordinary installation do not place it. An
 operator must first enable the experimental plugin lifecycle, explicitly
@@ -341,19 +356,12 @@ as first-class provenance values instead of encoding that boundary as layers.
 Operational and curated `agent` and `promoted` records remain in core during
 this split.
 
-Every [installation and update](lifecycle.md#install) places the empty package
-under `~/.roca/plugins/roca-corpus/`. This structural phase does not attach it,
-route ingest into it, or move existing data. The rollout boundary is accepted
-in configuration and remains off by default:
-
-```toml
-[features]
-corpus = false
-```
-
-With that default, every CLI and MCP behavior remains on the existing core and
-operational paths byte for byte. Activation and custody migration belong to the
-separate follow-up phase.
+Every [installation and update](lifecycle.md#install) places the package under
+`~/.roca/plugins/roca-corpus/` without changing the operator's configuration.
+Corpus has no feature flag: it is always resident in the normal CLI and MCP
+world, every new ingest writes and indexes its database, and both model-backed
+queries and deterministic keyword rescue can read it. Existing historical rows
+in core remain readable; this activation does not move or delete them.
 
 ## The bundled roca-ops plugin
 
@@ -389,14 +397,6 @@ write that names a core memory in `--supersedes` is refused: the exclusion is
 computed inside the database that stores the replacement, so the retirement
 would be reported without happening.
 
-Nothing expires by itself and there is no default lifetime. A write may declare
-an RFC3339 `expires_at` in its `--metadata`, and only an explicit drain removes
-the rows whose declared expiry is due:
-
-```sh
-roca ops drain                                 # what has already expired
-roca ops drain --before 2026-01-01T00:00:00Z   # what had expired by that instant
-```
-
-A row with no `expires_at` is never drained, and `ROCA_READ_ONLY` refuses the
-drain like any other write.
+Nothing expires by itself and there is no default lifetime. A write may carry
+an RFC3339 `expires_at` in its metadata for an external custodian to interpret;
+this release exposes no user-facing OPS drain command.

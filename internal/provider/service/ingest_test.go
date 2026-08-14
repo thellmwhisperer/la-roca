@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	"github.com/thellmwhisperer/la-roca/internal/store"
@@ -19,7 +20,7 @@ func TestPlainIngestAdoptsThePreviousSchemaAndFillsProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := serviceOverTheSources(t, home, legacy)
+	svc := serviceOverTheSources(t, home, false, legacy)
 	result, err := svc.Ingest(t.Context(), service.IngestRequest{})
 	if err != nil {
 		t.Fatalf("plain ingest: %v", err)
@@ -49,7 +50,7 @@ func TestPlainIngestAdoptsThePreviousSchemaAndFillsProvenance(t *testing.T) {
 // reads as data loss.
 func TestWhatTheIngestWritesIsSearchableAtOnce(t *testing.T) {
 	home := t.TempDir()
-	svc := serviceOverTheSources(t, home)
+	svc := serviceOverTheSources(t, home, true)
 	ctx := context.Background()
 
 	if _, err := svc.Init(ctx); err != nil {
@@ -74,23 +75,48 @@ func TestWhatTheIngestWritesIsSearchableAtOnce(t *testing.T) {
 		t.Fatal("the ingest did not refresh the index")
 	}
 
-	// The full-text index has the exchange the transcript carried.
-	var hits int
+	var coreRows int
 	if err := svc.DB().SQL().QueryRow(
-		`SELECT COUNT(*) FROM exchanges_fts WHERE exchanges_fts MATCH 'sextant'`).
+		"SELECT (SELECT COUNT(*) FROM exchanges) + (SELECT COUNT(*) FROM memories)").
+		Scan(&coreRows); err != nil {
+		t.Fatal(err)
+	}
+	if coreRows != 0 {
+		t.Fatalf("perennial ingest wrote %d rows into core", coreRows)
+	}
+	corpus, err := store.Open(filepath.Join(
+		home, ".roca", "plugins", rocacorpus.Name, rocacorpus.DatabaseFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer corpus.Close()
+	var corpusRows, hits int
+	if err := corpus.SQL().QueryRow(
+		"SELECT (SELECT COUNT(*) FROM exchanges) + (SELECT COUNT(*) FROM memories)").
+		Scan(&corpusRows); err != nil {
+		t.Fatal(err)
+	}
+	if err := corpus.SQL().QueryRow(
+		"SELECT COUNT(*) FROM exchanges_fts WHERE exchanges_fts MATCH 'sextant'").
 		Scan(&hits); err != nil {
-		t.Fatalf("search the index: %v", err)
+		t.Fatal(err)
 	}
-	if hits == 0 {
-		t.Error("what the ingest wrote is not in the full-text index")
+	if corpusRows == 0 || hits == 0 {
+		t.Fatalf("corpus rows = %d, indexed sextant hits = %d", corpusRows, hits)
 	}
-
+	doctor, err := svc.Doctor(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doctor.Memories == 0 || doctor.Bedrock == nil || doctor.Bedrock.Timestamp != "2026-08-01T10:00:00Z" {
+		t.Fatalf("doctor over the resident corpus = %+v", doctor)
+	}
 }
 
 // A dry run through the service writes nothing and refreshes no index.
 func TestTheDryRunThroughTheServiceTouchesNothing(t *testing.T) {
 	home := t.TempDir()
-	svc := serviceOverTheSources(t, home)
+	svc := serviceOverTheSources(t, home, false)
 	ctx := context.Background()
 	if _, err := svc.Init(ctx); err != nil {
 		t.Fatalf("init: %v", err)
@@ -151,7 +177,7 @@ func TestInitBedrockIncludesTheDeclaredAnthropicExport(t *testing.T) {
 
 // serviceOverTheSources opens an installation whose sources are the sandbox home's,
 // with no model cascade: the ingest never needs one.
-func serviceOverTheSources(t *testing.T, home string, legacySchema ...[]byte) *service.Service {
+func serviceOverTheSources(t *testing.T, home string, corpus bool, legacySchema ...[]byte) *service.Service {
 	t.Helper()
 	paths := freshPaths(t)
 	if len(legacySchema) > 0 {
@@ -166,6 +192,13 @@ func serviceOverTheSources(t *testing.T, home string, legacySchema ...[]byte) *s
 			t.Fatal(err)
 		}
 	}
+	plugins := ""
+	if corpus {
+		plugins = filepath.Join(home, ".roca", "plugins")
+		if _, err := rocacorpus.Ensure(plugins, filepath.Join(home, ".local", "bin"), "v-test"); err != nil {
+			t.Fatal(err)
+		}
+	}
 	svc, err := service.Open(service.Options{
 		DBPath:    paths.db,
 		BackupDir: paths.backups,
@@ -175,6 +208,7 @@ func serviceOverTheSources(t *testing.T, home string, legacySchema ...[]byte) *s
 		Sources: ingest.ResolveRoots(
 			ingest.Environment{GOOS: "darwin", Home: home},
 			ingest.Settings{WorkspaceRoots: []string{filepath.Join(home, "w")}}),
+		PluginDir: plugins, CorpusEnabled: corpus,
 	})
 	if err != nil {
 		t.Fatalf("open: %v", err)

@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
@@ -64,6 +65,8 @@ type cliEnv struct {
 	skipInitChooser    bool
 	initPromptWait     time.Duration
 	initChooserElapsed time.Duration
+	features           config.FeaturesConfig
+	featuresLoaded     bool
 }
 
 // Execute runs the CLI and returns the process exit code.
@@ -93,9 +96,10 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 		started = time.Now()
 		env.started = started
 	}
+	env.loadCommandFeatures()
 	root := rootCommand(env)
 	if plugins {
-		if handled, code, err := dispatchPlugin(root, args); handled {
+		if handled, code, err := dispatchPlugin(root, args, env.features); handled {
 			env.auditCommand = args[0]
 			env.auditArgs = redactPluginArguments(args[1:])
 			if err != nil {
@@ -183,7 +187,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 	root.SetVersionTemplate(versionLine(env.build) + "\n")
 	root.PersistentFlags().StringVar(&env.dbPath, "db-path", "", "database to use")
 	root.PersistentFlags().BoolVar(&env.json, "json", false, "JSON output")
-	root.AddCommand(
+	commands := []*cobra.Command{
 		versionCommand(env), initCommand(env), queryCommand(env), exploreCommand(env),
 		execCommand(env), schemaCommand(env),
 		indexCommand(env), doctorCommand(env),
@@ -192,10 +196,13 @@ func rootCommand(env *cliEnv) *cobra.Command {
 		loginCommand(env), modelCommand(env),
 		updateCommand(env), uninstallCommand(env),
 		modelsCommand(env), pluginCommand(env), pluginsCommand(env),
-		cronCommand(env),
-		opsCommand(env), installBundledPluginsCommand(env),
+		installBundledPluginsCommand(env),
 		capabilitiesCommand(env), artifactsCommand(env),
-	)
+	}
+	if env.features.Cron {
+		commands = append(commands, cronCommand(env))
+	}
+	root.AddCommand(commands...)
 	root.InitDefaultHelpCmd()
 	for _, command := range root.Commands() {
 		if command.Name() == "help" {
@@ -222,8 +229,11 @@ type plugin struct {
 	Path string `json:"path"`
 }
 
-func dispatchPlugin(root *cobra.Command, args []string) (bool, int, error) {
+func dispatchPlugin(root *cobra.Command, args []string, features config.FeaturesConfig) (bool, int, error) {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") || builtIn(root, args[0]) {
+		return false, 0, nil
+	}
+	if args[0] == "vector" && !features.Vector {
 		return false, 0, nil
 	}
 	path, found := findPlugin(args[0])
@@ -270,7 +280,7 @@ func pluginsCommand(env *cliEnv) *cobra.Command {
 		Short: "List neighbor plugin executables on PATH",
 		Args:  cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
-			plugins := listPlugins()
+			plugins := listPlugins(env.features)
 			if env.json {
 				return env.printJSON(map[string]any{"plugins": plugins})
 			}
@@ -282,7 +292,7 @@ func pluginsCommand(env *cliEnv) *cobra.Command {
 	}
 }
 
-func listPlugins() []plugin {
+func listPlugins(features config.FeaturesConfig) []plugin {
 	found := []plugin{}
 	for _, directory := range pluginPathDirectories() {
 		entries, err := os.ReadDir(directory)
@@ -292,7 +302,7 @@ func listPlugins() []plugin {
 		for _, entry := range entries {
 			name, ok := pluginName(entry.Name())
 			path := filepath.Join(directory, entry.Name())
-			if ok && isExecutable(path) {
+			if ok && isExecutable(path) && (name != "vector" || features.Vector) {
 				found = append(found, plugin{Name: name, Path: path})
 			}
 		}
@@ -611,6 +621,25 @@ func (env *cliEnv) resolvePaths() (config.Paths, error) {
 	})
 }
 
+// loadCommandFeatures resolves only the switches that decide whether a command
+// exists. A malformed or unreachable configuration exposes no optional surface;
+// the command that eventually opens the configuration reports the underlying
+// error in its usual place.
+func (env *cliEnv) loadCommandFeatures() {
+	if env.featuresLoaded {
+		return
+	}
+	env.featuresLoaded = true
+	paths, err := env.resolvePaths()
+	if err != nil {
+		return
+	}
+	file, err := config.LoadFile(paths.Config)
+	if err == nil {
+		env.features = file.Features
+	}
+}
+
 // openService resolves the paths, reads the configuration and opens the
 // database. It neither creates nor adopts it: that is what init asks for
 // explicitly.
@@ -657,6 +686,19 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 			return nil, fmt.Errorf("install bundled roca-ops plugin: %w", err)
 		}
 	}
+	if !readOnly {
+		if pluginDir == "" {
+			return nil, fmt.Errorf("the bundled corpus needs a HOME for its database")
+		}
+		corpusDir := filepath.Join(pluginDir, rocacorpus.Name)
+		if _, err := os.Stat(corpusDir); os.IsNotExist(err) {
+			if _, err := rocacorpus.Ensure(pluginDir, pluginExecutableDir(paths), env.build.Version); err != nil {
+				return nil, fmt.Errorf("install bundled corpus plugin: %w", err)
+			}
+		} else if err != nil {
+			return nil, fmt.Errorf("inspect bundled corpus plugin: %w", err)
+		}
+	}
 	var ingestProgress func(ingest.SourceProgress)
 	if env.wantIngestProgress && !env.json && termAware(env.errOut) {
 		env.liveIngest = newIngestRows(env.errOut, true)
@@ -676,6 +718,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		PluginDir:                 pluginDir,
 		PluginsEnabled:            file.Features.Plugins,
 		RocaOpsEnabled:            file.Features.RocaOps,
+		CorpusEnabled:             true,
 		Providers:                 providers,
 		Interpreters:              interpreters,
 		Explorers:                 explorers,

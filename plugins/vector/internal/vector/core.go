@@ -36,7 +36,10 @@ type corePage struct {
 const (
 	exchangeText = `trim(COALESCE(human_text,'') || CASE WHEN human_text IS NOT NULL AND agent_text IS NOT NULL THEN char(10)||char(10) ELSE '' END || COALESCE(agent_text,''))`
 	sessionText  = `trim(COALESCE(title,'') || char(10) || COALESCE(project,'') || char(10) || COALESCE(metadata,''))`
+	corpusSchema = "plugin_roca_corpus"
 )
+
+func corpusTable(name string) string { return corpusSchema + "." + name }
 
 func (c CoreCLI) WalkSources(ctx context.Context, visit func(sourceRow) error) error {
 	for _, source := range corePages() {
@@ -73,8 +76,8 @@ func corePages() []corePage {
 					source_sequence,COALESCE(source_agent,'') AS source_agent,
 					COALESCE(metadata,'{}') AS metadata,COALESCE(layer,'') AS layer,
 					COALESCE(origin,'') AS origin,COALESCE(created_at,'') AS created_at
-					FROM memories WHERE COALESCE(content,'') <> '' AND id > %s ORDER BY id LIMIT %d`,
-					cursor, walkPageSize)
+					FROM %s WHERE COALESCE(content,'') <> '' AND id > %s ORDER BY id LIMIT %d`,
+					corpusTable("memories"), cursor, walkPageSize)
 			},
 			decode: decodeMemory,
 		},
@@ -82,9 +85,9 @@ func corePages() []corePage {
 			kind: "exchanges", initial: "0",
 			query: func(cursor string) string {
 				return fmt.Sprintf(`SELECT id,COALESCE(session_id,'') AS session_id,exchange_number,
-					%s AS text FROM exchanges
+					%s AS text FROM %s
 					WHERE (COALESCE(human_text,'') <> '' OR COALESCE(agent_text,'') <> '')
-					AND id > %s ORDER BY id LIMIT %d`, exchangeText, cursor, walkPageSize)
+					AND id > %s ORDER BY id LIMIT %d`, exchangeText, corpusTable("exchanges"), cursor, walkPageSize)
 			},
 			decode: decodeExchange,
 		},
@@ -92,19 +95,19 @@ func corePages() []corePage {
 			kind: "thinking_blocks", initial: "0",
 			query: func(cursor string) string {
 				return fmt.Sprintf(`SELECT id,COALESCE(session_id,'') AS session_id,exchange_number,
-					position_in_session,COALESCE(full_text,'') AS text FROM thinking_blocks
+					position_in_session,COALESCE(full_text,'') AS text FROM %s
 					WHERE COALESCE(full_text,'') <> '' AND id > %s ORDER BY id LIMIT %d`,
-					cursor, walkPageSize)
+					corpusTable("thinking_blocks"), cursor, walkPageSize)
 			},
 			decode: decodeThinking,
 		},
 		{
 			kind: "sessions", initial: "",
 			query: func(cursor string) string {
-				return fmt.Sprintf(`SELECT session_id,%s AS text FROM sessions
+				return fmt.Sprintf(`SELECT session_id,%s AS text FROM %s
 					WHERE (COALESCE(title,'') <> '' OR COALESCE(project,'') <> '' OR COALESCE(metadata,'') NOT IN ('','{}'))
 					AND session_id > %s ORDER BY session_id LIMIT %d`, sessionText,
-					sqlLiteral(cursor), walkPageSize)
+					corpusTable("sessions"), sqlLiteral(cursor), walkPageSize)
 			},
 			decode: decodeSession,
 		},
@@ -168,38 +171,43 @@ func (c CoreCLI) ResolveSource(ctx context.Context, kind string, where locator) 
 	var statement string
 	switch kind {
 	case "sessions":
-		statement = `SELECT ` + sessionText + ` AS text FROM sessions WHERE session_id=` + sqlLiteral(where.SessionID)
+		statement = `SELECT ` + sessionText + ` AS text FROM ` + corpusTable("sessions") +
+			` WHERE session_id=` + sqlLiteral(where.SessionID)
 	case "exchanges":
 		if !where.HasOrdinal {
-			statement = `SELECT ` + exchangeText + ` AS text FROM exchanges WHERE session_id=` +
-				sqlLiteral(where.SessionID) + ` AND exchange_number IS NULL`
+			statement = `SELECT ` + exchangeText + ` AS text FROM ` + corpusTable("exchanges") +
+				` WHERE session_id=` + sqlLiteral(where.SessionID) + ` AND exchange_number IS NULL`
 			return c.resolveIdentity(ctx, kind, where, statement)
 		}
-		statement = fmt.Sprintf(`SELECT %s AS text FROM exchanges WHERE session_id=%s AND exchange_number=%d ORDER BY id DESC LIMIT 1`,
-			exchangeText, sqlLiteral(where.SessionID), where.Ordinal)
+		statement = fmt.Sprintf(`SELECT %s AS text FROM %s WHERE session_id=%s AND exchange_number=%d ORDER BY id DESC LIMIT 1`,
+			exchangeText, corpusTable("exchanges"), sqlLiteral(where.SessionID), where.Ordinal)
 	case "thinking_blocks":
 		if !where.HasOrdinal || where.Position == "" {
-			statement = `SELECT COALESCE(full_text,'') AS text FROM thinking_blocks WHERE session_id=` +
-				sqlLiteral(where.SessionID) + ` AND (exchange_number IS NULL OR position_in_session IS NULL)`
+			statement = `SELECT COALESCE(full_text,'') AS text FROM ` + corpusTable("thinking_blocks") +
+				` WHERE session_id=` + sqlLiteral(where.SessionID) +
+				` AND (exchange_number IS NULL OR position_in_session IS NULL)`
 			return c.resolveIdentity(ctx, kind, where, statement)
 		}
 		position, err := strconv.ParseFloat(where.Position, 64)
 		if err != nil {
 			return "", fmt.Errorf("decode thinking block position %q: %w", where.Position, err)
 		}
-		statement = fmt.Sprintf(`SELECT COALESCE(full_text,'') AS text FROM thinking_blocks WHERE session_id=%s AND exchange_number=%d AND position_in_session=%s ORDER BY id DESC LIMIT 1`,
-			sqlLiteral(where.SessionID), where.Ordinal, strconv.FormatFloat(position, 'g', -1, 64))
+		statement = fmt.Sprintf(`SELECT COALESCE(full_text,'') AS text FROM %s WHERE session_id=%s AND exchange_number=%d AND position_in_session=%s ORDER BY id DESC LIMIT 1`,
+			corpusTable("thinking_blocks"), sqlLiteral(where.SessionID), where.Ordinal,
+			strconv.FormatFloat(position, 'g', -1, 64))
 	case "memories":
 		switch {
 		case where.SessionID != "" && where.HasOrdinal:
-			statement = fmt.Sprintf(`SELECT content AS text FROM memories WHERE source_session=%s AND source_sequence=%d ORDER BY id DESC LIMIT 1`,
-				sqlLiteral(where.SessionID), where.Ordinal)
+			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE source_session=%s AND source_sequence=%d ORDER BY id DESC LIMIT 1`,
+				corpusTable("memories"), sqlLiteral(where.SessionID), where.Ordinal)
 		case where.FilePath != "" && where.CronSource != "":
-			statement = fmt.Sprintf(`SELECT content AS text FROM memories WHERE json_extract(metadata,'$.file_path')=%s AND (json_extract(metadata,'$._cron_source')=%s OR source_agent=%s) ORDER BY id DESC LIMIT 1`,
-				sqlLiteral(where.FilePath), sqlLiteral(where.CronSource), sqlLiteral(where.CronSource))
+			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE json_extract(metadata,'$.file_path')=%s AND (json_extract(metadata,'$._cron_source')=%s OR source_agent=%s) ORDER BY id DESC LIMIT 1`,
+				corpusTable("memories"), sqlLiteral(where.FilePath), sqlLiteral(where.CronSource),
+				sqlLiteral(where.CronSource))
 		default:
-			statement = fmt.Sprintf(`SELECT content AS text FROM memories WHERE layer=%s AND origin=%s AND COALESCE(created_at,'')=%s`,
-				sqlLiteral(where.Layer), sqlLiteral(where.Origin), sqlLiteral(where.CreatedAt))
+			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE layer=%s AND origin=%s AND COALESCE(created_at,'')=%s`,
+				corpusTable("memories"), sqlLiteral(where.Layer), sqlLiteral(where.Origin),
+				sqlLiteral(where.CreatedAt))
 			return c.resolveIdentity(ctx, kind, where, statement)
 		}
 	default:

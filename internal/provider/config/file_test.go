@@ -348,8 +348,8 @@ func TestExperimentalFeaturesDefaultOffAndAreEnabledAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if missing.Features.Plugins || missing.Features.RocaOps || missing.Features.Corpus ||
-		missing.Features.Vector || missing.Features.ArtifactRefresh || missing.Features.ReleaseRedirects {
+	if missing.Features.Plugins || missing.Features.RocaOps || missing.Features.Vector ||
+		missing.Features.Cron || missing.Features.ArtifactRefresh || missing.Features.ReleaseRedirects {
 		t.Fatalf("an experimental feature defaulted on without a configuration file: %+v", missing.Features)
 	}
 
@@ -359,8 +359,8 @@ func TestExperimentalFeaturesDefaultOffAndAreEnabledAlone(t *testing.T) {
 	}{
 		{key: "plugins", read: func(features FeaturesConfig) bool { return features.Plugins }},
 		{key: "roca_ops", read: func(features FeaturesConfig) bool { return features.RocaOps }},
-		{key: "corpus", read: func(features FeaturesConfig) bool { return features.Corpus }},
 		{key: "vector", read: func(features FeaturesConfig) bool { return features.Vector }},
+		{key: "cron", read: func(features FeaturesConfig) bool { return features.Cron }},
 		{key: "artifact_refresh", read: func(features FeaturesConfig) bool { return features.ArtifactRefresh }},
 		{key: "release_redirects", read: func(features FeaturesConfig) bool { return features.ReleaseRedirects }},
 	}

@@ -230,7 +230,8 @@ func TestQueryPaintsTOONRowsAndARouteLine(t *testing.T) {
 	// without needing a model in the hermetic fixture.
 	human := runRoot(t, contractBuild(), "exec",
 		"SELECT 'memory' AS source, id, content AS text, created_at FROM memories LIMIT 1")
-	if !strings.Contains(human, "rows[1]{source,id,created_at,text}") {
+	if !strings.Contains(human, "rows[1]{source,id,created_at,text,database}") ||
+		!strings.Contains(human, "databases: core, plugin:roca-corpus") {
 		t.Errorf("the TOON row header changed shape:\n%s", human)
 	}
 	if !strings.Contains(human, "ffmpeg patterns for trimming video") {
