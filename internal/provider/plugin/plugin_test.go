@@ -151,6 +151,22 @@ func TestInstallerScratchDirectoriesAreNeverDiscoveredAsPlugins(t *testing.T) {
 	}
 }
 
+func TestExecutableOnlyPackagesAreNotDataPlugins(t *testing.T) {
+	root := installedFixtures(t, "well-formed")
+	directory := filepath.Join(root, "synthetic-exec")
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"schema":1,"kind":"executable"}`
+	if err := os.WriteFile(filepath.Join(directory, ".roca-plugin.json"), []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	found, warnings := plugin.Discover(root)
+	if len(warnings) != 0 || len(found) != 1 || found[0].Name != "well-formed" {
+		t.Fatalf("executable package entered data discovery: found=%+v warnings=%v", found, warnings)
+	}
+}
+
 func TestASemanticLayerMayNotClaimTheProvenanceColumn(t *testing.T) {
 	root := t.TempDir()
 	directory := filepath.Join(root, "shadow")

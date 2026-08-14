@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -228,6 +229,50 @@ func TestInstallUpdateAndUninstallPreservePluginOwnedData(t *testing.T) {
 	}
 }
 
+func TestExecutableOnlyPackageOwnsAndPreservesItsStateDirectory(t *testing.T) {
+	root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
+	manager := plugininstall.Manager{PluginRoot: root, BinDir: bin}
+	source := writeExecutablePackage(t, "synthetic-exec", "1.0.0", "state")
+	candidate, err := plugininstall.Inspect(source, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if candidate.Kind != plugininstall.ExecutablePackage || candidate.Database != "" ||
+		candidate.StateDir != "state" || candidate.Risk != plugininstall.Executable {
+		t.Fatalf("candidate = %+v", candidate)
+	}
+	if _, err := manager.Install(candidate); err != nil {
+		t.Fatal(err)
+	}
+	stateFile := filepath.Join(root, "synthetic-exec", "state", "index.db")
+	writeFixtureFile(t, stateFile, []byte("derived index"), 0o600)
+
+	writeExecutablePackageAt(t, source, "synthetic-exec", "2.0.0", "state")
+	updated, err := plugininstall.Inspect(source, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Update(updated); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err := os.ReadFile(stateFile); err != nil || string(raw) != "derived index" {
+		t.Fatalf("preserved state = %q, err=%v", raw, err)
+	}
+	manifest, err := plugininstall.ReadManifest(filepath.Join(root, "synthetic-exec"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(plugininstall.InstalledPaths(filepath.Join(root, "synthetic-exec"), manifest), stateFile) {
+		t.Fatalf("manifest inventory does not own %s", stateFile)
+	}
+	if _, err := manager.Uninstall("synthetic-exec"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stateFile); !os.IsNotExist(err) {
+		t.Fatalf("uninstall kept executable state: %v", err)
+	}
+}
+
 func TestCustodialUninstallArchivesTheWholePlugin(t *testing.T) {
 	base := t.TempDir()
 	manager := plugininstall.Manager{
@@ -284,15 +329,8 @@ func writePackage(t *testing.T, name, version string, custody, executable bool) 
 
 func writePackageAt(t *testing.T, directory, name, version string, custody, executable bool) {
 	t.Helper()
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	metadata, err := json.Marshal(map[string]any{"schema": 1, "name": name, "version": version})
-	if err != nil {
-		t.Fatal(err)
-	}
+	writePackageMetadata(t, directory, map[string]any{"schema": 1, "name": name, "version": version})
 	semantic := fmt.Sprintf("version: 1\ndescription: Synthetic records.\ncustody: %t\nquestions:\n  - Which synthetic records exist?\ntables:\n  - name: records\n    description: Synthetic records only.\n    columns: [id, value]\n", custody)
-	writeFixtureFile(t, filepath.Join(directory, "plugin.json"), append(metadata, '\n'), 0o600)
 	writeFixtureFile(t, filepath.Join(directory, "semantic.yaml"), []byte(semantic), 0o600)
 	if err := os.Remove(filepath.Join(directory, "plugin.db")); err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
@@ -320,6 +358,41 @@ func writePackageAt(t *testing.T, directory, name, version string, custody, exec
 	if executable {
 		files = append(files, "roca-"+name)
 	}
+	writeChecksums(t, directory, files)
+}
+
+func writeExecutablePackage(t *testing.T, name, version, stateDir string) string {
+	t.Helper()
+	directory := filepath.Join(t.TempDir(), name)
+	writeExecutablePackageAt(t, directory, name, version, stateDir)
+	return directory
+}
+
+func writeExecutablePackageAt(t *testing.T, directory, name, version, stateDir string) {
+	t.Helper()
+	writePackageMetadata(t, directory, map[string]any{
+		"schema": 1, "name": name, "version": version,
+		"kind": "executable", "state_directory": stateDir,
+	})
+	executable := "roca-" + name
+	writeFixtureFile(t, filepath.Join(directory, executable), []byte("#!/bin/sh\nexit 0\n"), 0o700)
+	writeChecksums(t, directory, []string{"plugin.json", executable})
+}
+
+func writePackageMetadata(t *testing.T, directory string, fields map[string]any) {
+	t.Helper()
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixtureFile(t, filepath.Join(directory, "plugin.json"), append(metadata, '\n'), 0o600)
+}
+
+func writeChecksums(t *testing.T, directory string, files []string) {
+	t.Helper()
 	var checksums strings.Builder
 	for _, file := range files {
 		raw, err := os.ReadFile(filepath.Join(directory, file))

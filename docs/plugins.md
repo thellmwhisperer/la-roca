@@ -18,13 +18,20 @@ reader of the plugins directory left is the [cron train](#cron-rides). Existing
 Git-style executable dispatch predates this standard and continues to behave as
 before.
 
-A data plugin is one directory under `~/.roca/plugins/<name>/`. It contains
+There are two package kinds. A data plugin is one directory under
+`~/.roca/plugins/<name>/`. It contains
 exactly one plain SQLite database (`.db`, `.sqlite`, or `.sqlite3`) and a
 `semantic.yaml` file, and may also declare scheduled rides in `rides.toml`.
 The database is the plugin's only writable store; La Roca opens it read-only,
 either when its semantic layer is relevant to a question or, for a resident
 plugin, for every query.
 SQLite extensions, including `sqlite-vec`, are not part of this contract.
+
+An executable-only plugin contains a `roca-<name>` binary instead of a semantic
+layer and database. It may declare one writable `state_directory`; the installer
+creates that directory, preserves it across package updates, and records the
+namespace in the installed manifest so uninstall and purge own its contents.
+Executable-only packages never enter data-plugin discovery or attachment.
 
 ## Semantic layer
 
@@ -201,18 +208,28 @@ a `plugin.json` file:
 {
   "schema": 1,
   "name": "receipts",
-  "version": "1.2.3"
+  "version": "1.2.3",
+  "kind": "data"
 }
 ```
 
+`kind` defaults to `data` for compatibility. An executable-only package uses
+`"kind": "executable"` and may add a safe, single-component
+`state_directory`. Data-package custody remains in `semantic.yaml`; an
+executable-only package may set `custody: true` in `plugin.json` when its state
+cannot be regenerated.
+
 A `checksums.txt` beside it publishes one SHA-256 for each payload file:
 `plugin.json`, `semantic.yaml`, the one SQLite database, optional `rides.toml`,
-and the optional `roca-<name>` executable. The installer rejects missing,
-extra, changed, symlinked, or non-regular payloads before it writes anything,
-and it installs each payload from the same open file it verifies, so a source
-swapped for a symlink or another file between the consent screen and the copy
-is refused rather than installed. Its displayed package checksum is the
-deterministic SHA-256 fingerprint of those verified source checksums.
+and the optional `roca-<name>` executable. For an executable-only package it
+lists exactly `plugin.json` and `roca-<name>`; the writable state directory is
+created only after verification and is not a published payload. The installer
+rejects missing, extra, changed, symlinked, or non-regular payloads before it
+writes anything, and it installs each payload from the same open file it
+verifies, so a source swapped for a symlink or another file between the consent
+screen and the copy is refused rather than installed. Its displayed package
+checksum is the deterministic SHA-256 fingerprint of those verified source
+checksums.
 
 ```text
 <sha256>  plugin.json
@@ -254,7 +271,9 @@ from a process that holds it open.
 `roca plugin update <name>` re-resolves and verifies that recorded source. It
 refreshes immutable package files but preserves the installed SQLite database,
 because that file is the plugin's writable, user-owned state. A database filename
-change is refused instead of guessing at a migration.
+change is refused instead of guessing at a migration. For an executable-only
+package it likewise preserves the manifest-declared state directory and refuses
+a directory-name change.
 
 `roca plugin uninstall <name>` removes an ordinary verified installation. When
 `custody: true`, it never deletes the folder: it atomically moves the complete
@@ -265,6 +284,41 @@ executable whose checksum changed outside the installer.
 Removing La Roca itself removes the installed packages and asks separately
 before it touches those archives: see
 [Uninstall](lifecycle.md#uninstall).
+
+## Worked executable example: vector search
+
+Vector search is deliberately an installable executable package, not a bundled
+feature and not a data plugin. The core binary has no vector command, model,
+index, or uninstall inventory. With `features.plugins` false—or with the package
+absent—nothing is discovered or activated.
+
+The source lives in `plugins/vector/` as its own Go module. Build a verified
+package for the current machine, then install it through the ordinary full-trust
+consent path:
+
+Its [module README](../plugins/vector/README.md) covers the binary's complete
+command, storage, and quality-test contract.
+
+```sh
+make -C plugins/vector package
+roca plugin install .tmp/vector-package
+```
+
+The installed `roca-vector` binary makes `roca vector` available through
+executable dispatch. It reads corpus pages through the public `roca exec --json`
+boundary and owns its sqlite-vec index, completion record, worker log, and locks
+under `~/.roca/plugins/vector/state/`. Core neither imports the implementation
+nor opens that index.
+
+```sh
+roca vector install
+roca vector ingest --delta
+roca vector query "the decision about local model routing" 10
+```
+
+The package ships OFF: release and ordinary installation do not place it. An
+operator must first enable the experimental plugin lifecycle, explicitly
+install the executable package, and accept its **EXECUTABLE** risk prompt.
 
 ## The bundled roca-corpus plugin
 
