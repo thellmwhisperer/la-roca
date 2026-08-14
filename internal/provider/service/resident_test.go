@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 )
 
@@ -50,6 +51,33 @@ func TestResidentQueriesAcquireIndependentReadConnections(t *testing.T) {
 			"SELECT COUNT(*) FROM plugin_roca_ops.memories").Scan(&rows); err != nil {
 			t.Fatalf("resident database is unavailable on an acquired connection: %v", err)
 		}
+	}
+}
+
+func TestBundledCorpusIsNotAttachedByTheGenericPluginFlag(t *testing.T) {
+	directory := t.TempDir()
+	plugins := filepath.Join(directory, "plugins")
+	if _, err := rocacorpus.Ensure(plugins, filepath.Join(directory, "bin"), "v-test"); err != nil {
+		t.Fatal(err)
+	}
+	svc, err := openWithContext(t.Context(), Options{
+		DBPath: filepath.Join(directory, "roca.db"), PluginDir: plugins, PluginsEnabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+
+	if len(svc.resident) != 0 || len(svc.residentWarnings) != 0 {
+		t.Fatalf("resident = %+v, warnings = %v; the corpus package is inert while features.corpus is off",
+			svc.resident, svc.residentWarnings)
+	}
+	route := svc.pluginsForQuestion(t.Context(), "which sessions and exchanges were harvested?")
+	if len(route.databases) != 0 {
+		t.Fatalf("routed databases = %+v, want none", route.databases)
+	}
+	if consulted := route.consulted(); len(consulted) != 1 || consulted[0] != "core" {
+		t.Fatalf("consulted = %v, want core alone", consulted)
 	}
 }
 

@@ -10,11 +10,12 @@ Feature: The full installation cycle
     Given a clean HOME with no trace of Roca
 
   @fast @acceptance
-  Scenario: Installing bundles one binary and the resident operations store
+  Scenario: Installing bundles one binary and both resident domain stores
     When I run the installer for the current platform
     Then the command exits with code 0
     And there is exactly one executable file "roca" in the binaries directory
     And the bundled resident plugin "roca-ops" is installed without an executable
+    And the bundled resident plugin "roca-corpus" is installed without an executable
     And the bundled journey plugin "roca-cron" is installed without an executable
     And that file is a static binary with no third-party dynamic dependencies
     And there is no Python virtual environment in the HOME
