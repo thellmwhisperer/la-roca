@@ -45,6 +45,39 @@ func TestInspectVerifiesTheSourceAndClassifiesItsRisk(t *testing.T) {
 	}
 }
 
+func TestInspectAcceptsAndVerifiesAnOptionalRideManifest(t *testing.T) {
+	source := writePackage(t, "synthetic", "1.2.3", false, false)
+	rides := []byte("[ride.ingest]\ncommand = \"roca synthetic ingest\"\n")
+	writeFixtureFile(t, filepath.Join(source, "rides.toml"), rides, 0o600)
+	digest := sha256.Sum256(rides)
+	checksums := filepath.Join(source, "checksums.txt")
+	file, err := os.OpenFile(checksums, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fmt.Fprintf(file, "%s  rides.toml\n", hex.EncodeToString(digest[:])); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	candidate, err := plugininstall.Inspect(source, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if candidate.Files["rides.toml"] == "" {
+		t.Fatalf("candidate does not own rides.toml: %+v", candidate.Files)
+	}
+	if err := os.WriteFile(filepath.Join(source, "rides.toml"), []byte("changed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plugininstall.Inspect(source, source); err == nil || !strings.Contains(err.Error(), "checksum") {
+		t.Fatalf("tampered rides passed with %v", err)
+	}
+}
+
 func TestInstallUpdateAndUninstallPreservePluginOwnedData(t *testing.T) {
 	root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
 	manager := plugininstall.Manager{PluginRoot: root, BinDir: bin}

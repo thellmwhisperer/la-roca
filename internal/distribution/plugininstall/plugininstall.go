@@ -176,6 +176,10 @@ func Inspect(source, directory string) (Candidate, error) {
 	if err != nil {
 		return Candidate{}, fmt.Errorf("inspect plugin package: %w", err)
 	}
+	rides, err := plugin.InspectRides(metadata.Name, directory)
+	if err != nil {
+		return Candidate{}, fmt.Errorf("inspect plugin package: %w", err)
+	}
 
 	executable := ""
 	for _, name := range executableNames(metadata.Name) {
@@ -189,6 +193,9 @@ func Inspect(source, directory string) (Candidate, error) {
 		}
 	}
 	required := []string{PackageFilename, plugin.SemanticFilename, filepath.Base(descriptor.Database)}
+	if len(rides) > 0 {
+		required = append(required, plugin.RidesFilename)
+	}
 	risk := DataOnly
 	if executable != "" {
 		required = append(required, executable)

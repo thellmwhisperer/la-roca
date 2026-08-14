@@ -4,6 +4,7 @@ package acceptance
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -117,6 +118,8 @@ func registerInstallSteps(ctx *godog.ScenarioContext, m *world) {
 		m.exactlyOneExecutableRoca)
 	ctx.Then(`^the bundled resident plugin "([^"]*)" is installed without an executable$`,
 		m.bundledResidentPluginIsInstalled)
+	ctx.Then(`^the bundled journey plugin "([^"]*)" is installed without an executable$`,
+		m.bundledJourneyPluginIsInstalled)
 	ctx.Then(`^that file is a static binary with no third-party dynamic dependencies$`,
 		m.aStaticBinary)
 	ctx.Then(`^there is no Python virtual environment in the HOME$`, m.noVirtualEnvironment)
@@ -747,18 +750,7 @@ func (m *world) exactlyOneExecutableRoca() error {
 }
 
 func (m *world) bundledResidentPluginIsInstalled(name string) error {
-	directory := filepath.Join(m.home, ".roca", "plugins", name)
-	manifest, err := plugininstall.ReadManifest(directory)
-	if err != nil {
-		return err
-	}
-	if manifest.Risk != plugininstall.DataOnly || manifest.Executable != "" {
-		return fmt.Errorf("bundled plugin manifest = %+v, want data-only without executable", manifest)
-	}
-	if executable := filepath.Join(theBinariesDirectory(m.home), "roca-"+name); exists(executable) {
-		return fmt.Errorf("bundled data plugin installed an executable at %s", executable)
-	}
-	descriptor, err := plugin.Inspect(name, directory)
+	descriptor, err := m.bundledDataPlugin(name)
 	if err != nil {
 		return err
 	}
@@ -767,6 +759,45 @@ func (m *world) bundledResidentPluginIsInstalled(name string) error {
 			descriptor.Semantic.Attachment)
 	}
 	return nil
+}
+
+func (m *world) bundledJourneyPluginIsInstalled(name string) error {
+	descriptor, err := m.bundledDataPlugin(name)
+	if err != nil {
+		return err
+	}
+	if descriptor.Semantic.Attachment != plugin.AttachmentOnDemand || !descriptor.Semantic.Custody {
+		return fmt.Errorf("bundled journey plugin semantic contract = %+v", descriptor.Semantic)
+	}
+	db, err := sql.Open("sqlite", descriptor.Database)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	var journeys int
+	if err := db.QueryRow("SELECT count(*) FROM pragma_table_info('journeys')").Scan(&journeys); err != nil {
+		return err
+	}
+	if journeys < 9 {
+		return fmt.Errorf("bundled journey schema has %d columns", journeys)
+	}
+	return nil
+}
+
+func (m *world) bundledDataPlugin(name string) (plugin.Descriptor, error) {
+	directory := filepath.Join(m.home, ".roca", "plugins", name)
+	manifest, err := plugininstall.ReadManifest(directory)
+	if err != nil {
+		return plugin.Descriptor{}, err
+	}
+	if manifest.Risk != plugininstall.DataOnly || manifest.Executable != "" {
+		return plugin.Descriptor{}, fmt.Errorf(
+			"bundled plugin manifest = %+v, want data-only without executable", manifest)
+	}
+	if executable := filepath.Join(theBinariesDirectory(m.home), "roca-"+name); exists(executable) {
+		return plugin.Descriptor{}, fmt.Errorf("bundled data plugin installed an executable at %s", executable)
+	}
+	return plugin.Inspect(name, directory)
 }
 
 // aStaticBinary: nothing outside the platform's own libraries. A Go binary

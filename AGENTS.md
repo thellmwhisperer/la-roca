@@ -18,6 +18,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - Teaching a parser to read more of a source means bumping its entry in `parserVersions` (`internal/ingest/state.go`): the version rides in the watermark so a plain `roca ingest` re-reads synced files, and `internal/ingest/provenance_test.go` pins that the re-read backfills without duplicating.
 - Per-exchange provenance is filled only from what a source itself recorded; a column NULL means the source said nothing, never zero. Use `parsers.UsageTally` rather than assembling `parsers.Provenance` by hand.
 - Records left out are reported apart: `parsers.Discard.ByDesign` is what this build never meant to read, and everything else is what it could not read. Collapsing the two is what made a healthy ingest report thousands of failures.
+- Cron ride manifests are optional `rides.toml` plugin payloads; `internal/provider/plugin/rides.go` owns discovery, while the observer and canonical custodial journey database live in `internal/distribution/rocacron`. The train probes but never holds the core log lock.
 
 ## Maintaining this file
 

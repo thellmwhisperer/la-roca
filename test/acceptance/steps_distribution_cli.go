@@ -3,6 +3,7 @@
 package acceptance
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -29,6 +30,66 @@ func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWor
 	ctx.Then(`^init reports setup, ingest, index, model, and its total once in that order$`, w.initSummaryIsOrdered)
 	ctx.When(`^the operator initializes non-interactively with a detected model CLI$`, w.initWithDetectedModelCLI)
 	ctx.Then(`^init prints one answering notice and writes no model configuration$`, w.initHasOneAnsweringNotice)
+	ctx.When(`^the operator previews the default cron train with a gated plugin ride$`, w.previewDefaultCronTrain)
+	ctx.Then(`^core ingest appears before the plugin ride and its dependency gate is closed$`,
+		w.cronPreviewIsOrderedAndGated)
+	ctx.Then(`^dry-run executes no ride and records no journey$`, w.cronDryRunIsInert)
+}
+
+func (w *distributionWorld) previewDefaultCronTrain() error {
+	if err := w.prepare("cron-preview"); err != nil {
+		return err
+	}
+	installed := w.runAt(w.home, w.installed, "_install-bundled-plugins", "--json")
+	if installed.code != 0 {
+		return fmt.Errorf("install bundled plugins: %+v", installed)
+	}
+	vector := filepath.Join(w.home, ".roca", "plugins", "vector")
+	if err := os.MkdirAll(vector, 0o700); err != nil {
+		return err
+	}
+	manifest := "[ride.vector_delta]\ncommand = \"roca vector ingest --delta\"\ngate = \"after_ingest\"\n"
+	if err := os.WriteFile(filepath.Join(vector, "rides.toml"), []byte(manifest), 0o600); err != nil {
+		return err
+	}
+	w.state["cron-list"] = w.runAt(w.home, w.installed, "cron", "list")
+	w.last = w.runAt(w.home, w.installed, "cron", "run", "--dry-run")
+	database := filepath.Join(w.home, ".roca", "plugins", "roca-cron", "roca-cron.db")
+	db, err := sql.Open("sqlite", database)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	var journeys int
+	if err := db.QueryRow("SELECT count(*) FROM journeys").Scan(&journeys); err != nil {
+		return err
+	}
+	w.state["cron-journeys"] = journeys
+	return nil
+}
+
+func (w *distributionWorld) cronPreviewIsOrderedAndGated() error {
+	listed, ok := w.state["cron-list"].(distributionRun)
+	if !ok || listed.code != 0 {
+		return fmt.Errorf("cron list = %+v", w.state["cron-list"])
+	}
+	core := strings.Index(listed.stdout, "core\tingest\tnightly")
+	vector := strings.Index(listed.stdout, "vector\tvector_delta\tnightly\tafter_ingest")
+	if core < 0 || vector <= core {
+		return fmt.Errorf("cron list is not ordered core then plugin:\n%s", listed.stdout)
+	}
+	if w.last.code != 0 || !strings.Contains(w.last.stdout, "core\tingest\tready") ||
+		!strings.Contains(w.last.stdout, "vector\tvector_delta\tdeferred_after_ingest") {
+		return fmt.Errorf("cron preview = %+v", w.last)
+	}
+	return nil
+}
+
+func (w *distributionWorld) cronDryRunIsInert() error {
+	if journeys, ok := w.state["cron-journeys"].(int); !ok || journeys != 0 {
+		return fmt.Errorf("dry-run journey count = %#v", w.state["cron-journeys"])
+	}
+	return nil
 }
 
 func (w *distributionWorld) tryDisabledPluginInstall() error {
@@ -130,7 +191,7 @@ func (w *distributionWorld) helpIsComplete() error {
 		return fmt.Errorf("help exited %d: %s", w.last.code, w.last.stderr)
 	}
 	honest := map[string]string{
-		"doctor": "configuration", "ingest": "source", "init": "database",
+		"cron": "ride", "doctor": "configuration", "ingest": "source", "init": "database",
 		"hooks": "authorship", "model": "model", "query": "memory", "explore": "concept", "store": "memory",
 		"uninstall": "remove", "update": "release", "plugin": "plugin", "plugins": "plugin",
 	}
