@@ -393,7 +393,13 @@ func Validate(ctx context.Context, descriptor Descriptor) (Database, error) {
 	return Database{Descriptor: descriptor, Tables: tables}, nil
 }
 
+// databaseURI resolves the path first because a plugin root reached through a
+// relative path would put its first segment in the URI authority, which SQLite
+// refuses to open at all.
 func databaseURI(path string) string {
+	if absolute, err := filepath.Abs(path); err == nil {
+		path = absolute
+	}
 	uri := url.URL{Scheme: "file", Path: filepath.ToSlash(path),
 		RawQuery: url.Values{"mode": {"ro"}}.Encode()}
 	return uri.String()

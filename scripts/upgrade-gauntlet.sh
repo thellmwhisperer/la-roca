@@ -102,8 +102,11 @@ JSONL
     > "$work/old-exchange.json"
   assert_json "$work/old-exchange.json" '"old_exchanges": 1' "$version historical exchange"
 
+  # New ingest lands in the bundled corpus the upgrade installs, so the frozen
+  # core keeps only its history and the current run is asserted where it is
+  # written.
   run_roca "$home" exec \
-    "SELECT COUNT(*) AS current_exchanges FROM exchanges WHERE session_id = '99999999-8888-7777-6666-555555555555' AND model = 'fixture-current-model' AND tokens_in = 11 AND tokens_out = 7" \
+    "SELECT COUNT(*) AS current_exchanges FROM plugin_roca_corpus.exchanges WHERE session_id = '99999999-8888-7777-6666-555555555555' AND model = 'fixture-current-model' AND tokens_in = 11 AND tokens_out = 7" \
     > "$work/current-exchange.json"
   assert_json "$work/current-exchange.json" '"current_exchanges": 1' "$version current ingest"
 
