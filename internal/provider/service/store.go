@@ -81,7 +81,7 @@ type StoreResult struct {
 // memories.
 func (s *Service) Store(ctx context.Context, req StoreRequest) (StoreResult, error) {
 	if s.opts.ReadOnly {
-		return StoreResult{}, refuseReadOnly("store")
+		return StoreResult{}, RefuseReadOnly("store")
 	}
 	layer := strings.TrimSpace(req.Layer)
 	if layer == "" {
@@ -255,7 +255,7 @@ type RocaOpsDrainResult struct {
 // operator-supplied instant. Nothing calls it automatically.
 func (s *Service) DrainRocaOps(ctx context.Context, before time.Time) (RocaOpsDrainResult, error) {
 	if s.opts.ReadOnly {
-		return RocaOpsDrainResult{}, refuseReadOnly("drain roca-ops")
+		return RocaOpsDrainResult{}, RefuseReadOnly("drain roca-ops")
 	}
 	if !s.opts.RocaOpsEnabled || s.ops == nil {
 		return RocaOpsDrainResult{}, fmt.Errorf("features.roca_ops is disabled")
