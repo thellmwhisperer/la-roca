@@ -15,7 +15,7 @@ import (
 func TestDoctorReportsTheProvidersInTheDeclaredOrder(t *testing.T) {
 	svc := seededServiceWith(t, provider.Cascade{
 		Providers: []provider.Provider{
-			unavailable("codex", "there is no Codex session", "log in with `roca login codex`"),
+			unavailable("codex", "there is no Codex session", "verify it with `roca model check codex`"),
 			answering("ollama", ""),
 		},
 		Probe: time.Second,

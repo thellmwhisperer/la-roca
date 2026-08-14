@@ -29,7 +29,6 @@ func registerProviderCredentialSteps(ctx *godog.ScenarioContext, w *providerAcce
 	ctx.Then(`^the legacy provider configuration is unchanged$`, w.legacyProviderUnchanged)
 	ctx.Then(`^both help surfaces say models authenticate through their own CLIs$`, w.helpExplainsExternalAuthentication)
 	ctx.Then(`^neither help surface advertises a stored model credential$`, w.helpHasNoStoredCredentialFlow)
-	ctx.Then(`^the configuration chooses model "([^\"]*)" for "([^\"]*)"$`, w.configurationChoosesModel)
 	ctx.Then(`^the output says La Roca stores no secrets$`, w.outputSaysNoSecrets)
 	ctx.Then(`^the output says configuration was not changed$`, w.outputSaysConfigurationUnchanged)
 	ctx.Then(`^no model credential directory exists$`, w.noModelCredentialDirectory)
@@ -259,28 +258,6 @@ func (w *providerAcceptanceWorld) fakeClaudeBinary() error {
 
 func (w *providerAcceptanceWorld) verifyLocalCLI(name string) error {
 	return w.run("model", "check", name)
-}
-
-func (w *providerAcceptanceWorld) configurationChoosesModel(model, name string) error {
-	raw, err := os.ReadFile(w.configPath())
-	if err != nil {
-		return err
-	}
-	text := string(raw)
-	table := "[models." + name + "]"
-	start := strings.Index(text, table)
-	if start < 0 {
-		return fmt.Errorf("configuration omitted %q:\n%s", table, text)
-	}
-	section := text[start+len(table):]
-	if next := strings.Index(section, "\n["); next >= 0 {
-		section = section[:next]
-	}
-	want := `model = "` + model + `"`
-	if !strings.Contains(section, want) {
-		return fmt.Errorf("configuration omitted %q from %q:\n%s", want, table, text)
-	}
-	return nil
 }
 
 func (w *providerAcceptanceWorld) outputSaysNoSecrets() error {
