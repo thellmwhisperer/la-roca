@@ -366,10 +366,27 @@ roca model check claude   # probes Claude without writing configuration
 roca doctor               # diagnoses binaries, models, and remedies
 ```
 
+`roca login` survives only as a hidden read-only alias for `roca model check`.
+It takes no `--model` and writes nothing, so a script that used to select a model
+with `roca login <provider> --model <id>` moves to
+`roca model set <provider> <model-id>`.
+
 `model check` sends one minimal real request through the configured provider and
 never edits `config.toml` or provider order. When no provider is declared at all,
 or the order is turned off with `ROCA_MODELS_ORDER=none`, it says so and succeeds:
-an empty cascade is a configuration answer, not a failed probe. `model set` reads
+an empty cascade is a configuration answer, not a failed probe. An order that
+declares providers this build cannot use is the other empty cascade and gets its
+own answer, with the warning that explains each drop; it is never reported as a
+configuration that declared nothing. The two are told apart by the providers the
+cascade actually dropped (`Cascade.Dropped`) and never by whether the
+configuration produced a warning, because a retired key of a provider the order
+never named warns without dropping anything. `roca models` and `model set` make
+the same distinction from the same field. Under `--json`, an empty provider list
+looks identical for both causes, so `roca models` carries the answer in a
+`reason` field of its own, empty exactly when there is a catalogue to report;
+`model check --json` reports it in the `reason` it already had. Both commands
+always emit `warnings` as a list, empty rather than absent, so a script can
+range over it without checking for the key. `model set` reads
 the target provider's catalogue, refuses IDs outside it, and probes the selected
 ID before writing only `models.<provider>.model`. A refused ID names the
 catalogue it missed and how to widen it: declare it in `models.<provider>.models`
@@ -378,10 +395,12 @@ catalogue-and-probe gate lives in
 `internal/distribution/cli/model_validation.go`.
 
 `roca model set <model-id>` validates and probes the first configured provider.
-The explicit `roca model set <provider> <model-id>` form remains available for
-another configured local command or Ollama. With no ID, an interactive terminal
-offers the first provider's catalogue; pass only a provider name to choose from
-that provider's catalogue.
+Both commands read "first" from the same live cascade, so `ROCA_MODELS_ORDER`
+moves the check and the write together and neither acts on a provider the other
+would skip. The explicit `roca model set <provider> <model-id>` form remains
+available for another configured local command or Ollama. With no ID, an
+interactive terminal offers the first provider's catalogue; pass only a provider
+name to choose from that provider's catalogue.
 
 ```sh
 roca model set
