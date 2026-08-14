@@ -709,7 +709,7 @@ func (s *Service) searchByTerm(ctx context.Context, plan query.Plan, method stri
 		columns, rows, result.SQL, &result.Provenance)
 }
 
-// withResidentMemorySearch merges the operational half into a core answer that
+// withResidentMemorySearch merges the bundled data halves into a core answer that
 // already succeeded. A half that cannot be read is a warning and not a failure:
 // the rest of the plugin path skips what it cannot use, and a merged search that
 // answers nothing where the unmerged one answered is the worse of the two.
@@ -717,52 +717,72 @@ func (s *Service) withResidentMemorySearch(ctx context.Context, plan query.Plan,
 	matchAny bool, limit int, columns []string, rows []map[string]any, stmt string,
 	provenance *search.Provenance) ([]string, []map[string]any, string, *search.Provenance,
 	[]string, error) {
-	var ops *plugin.Database
+	var databases []plugin.Database
 	for index := range s.resident {
-		if s.resident[index].Name == rocaOpsPluginName {
-			ops = &s.resident[index]
-			break
+		if s.resident[index].Name == rocaOpsPluginName ||
+			s.resident[index].Name == rocaCorpusPluginName {
+			databases = append(databases, s.resident[index])
 		}
 	}
-	if ops == nil {
+	if len(databases) == 0 {
 		return columns, rows, stmt, provenance, nil, nil
 	}
-	opsRows, declared, err := s.residentMemoryRows(ctx, plan, maxChars, matchAny, limit, *ops, stmt)
-	if err != nil {
-		return columns, rows, stmt, provenance, []string{fmt.Sprintf(
-			"%s could not be searched: %v; the answer carries core memories only",
-			ops.Source(), err)}, nil
-	}
+	// The provenance column belongs to the answer's shape and not to its content:
+	// once a bundled database is in scope, every run of the same command declares
+	// the same header, whether or not that half matched anything this time.
 	columns, rows = ensureDatabaseColumn(columns, rows, "core")
-	rows = append(rows, opsRows...)
+	residentRows, declared, warnings, err := s.residentMemoryRows(
+		ctx, plan, maxChars, matchAny, limit, databases, stmt)
+	if err != nil {
+		return columns, rows, stmt, provenance, warnings, nil
+	}
+	if len(residentRows) == 0 {
+		return columns, rows, stmt, provenance, warnings, nil
+	}
+	rows = append(rows, residentRows...)
 	rows = dedupRows(strings.ReplaceAll(plan.Term, "+", " "), columns, rows)
 	rows = limitMergedSearchRows(rows, limit)
-	return columns, rows, declared, provenance, nil, nil
+	return columns, rows, declared, provenance, warnings, nil
 }
 
 func (s *Service) residentMemoryRows(ctx context.Context, plan query.Plan, maxChars int,
-	matchAny bool, limit int, ops plugin.Database,
-	core string) ([]map[string]any, string, error) {
-	opsStatement, err := query.RenderSQLAttachedMemoryLike(plan,
-		s.registry.SearchExcluded(), ops.Schema, limit, matchAny)
+	matchAny bool, limit int, databases []plugin.Database,
+	core string) ([]map[string]any, string, []string, error) {
+	gate, closeGate, err := s.gateFor(databases)
 	if err != nil {
-		return nil, "", err
-	}
-	gate, closeGate, err := s.gateFor([]plugin.Database{ops})
-	if err != nil {
-		return nil, "", err
+		return nil, core, nil, err
 	}
 	defer closeGate()
-	validated, err := gate.Validate(opsStatement)
-	if err != nil {
-		return nil, "", err
+	statements := []string{core}
+	var rows []map[string]any
+	var warnings []string
+	for _, database := range databases {
+		var statement string
+		switch database.Name {
+		case rocaOpsPluginName:
+			statement, err = query.RenderSQLAttachedMemoryLike(plan,
+				s.registry.SearchExcluded(), database.Schema, limit, matchAny)
+		case rocaCorpusPluginName:
+			statement, err = query.RenderSQLAttachedCorpusLike(plan,
+				s.registry.SearchExcluded(), database.Schema, limit, matchAny)
+		}
+		if err == nil {
+			statement, err = gate.Validate(statement)
+		}
+		var found []map[string]any
+		if err == nil {
+			_, found, err = s.executeWithPlugins(ctx, statement, plan.Term, maxChars, databases)
+		}
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf(
+				"%s could not be searched: %v; the answer omits that database",
+				database.Source(), err))
+			continue
+		}
+		rows = append(rows, found...)
+		statements = append(statements, statement)
 	}
-	_, opsRows, err := s.executeWithPlugins(ctx, validated, plan.Term, maxChars,
-		[]plugin.Database{ops})
-	if err != nil {
-		return nil, "", err
-	}
-	return opsRows, declaredSearchSQL(gate, core, validated, limit), nil
+	return rows, declaredSearchSQL(gate, statements, limit), warnings, nil
 }
 
 // limitMergedSearchRows makes core and operational history compete under one
@@ -788,14 +808,17 @@ func limitMergedSearchRows(rows []map[string]any, limit int) []map[string]any {
 // declaredSearchSQL reports both halves of the merged answer. Declaring the core
 // statement alone would hand the operator SQL that returns strictly fewer rows
 // than the answer it is supposed to explain.
-func declaredSearchSQL(gate *sqlgate.Gate, core, attached string, limit int) string {
-	merged, err := query.RenderSearchUnion(core, attached, limit)
+func declaredSearchSQL(gate *sqlgate.Gate, statements []string, limit int) string {
+	if len(statements) < 2 {
+		return statements[0]
+	}
+	merged, err := query.RenderSearchUnionParts(statements, limit)
 	if err != nil {
-		return core
+		return statements[0]
 	}
 	validated, err := gate.Validate(merged)
 	if err != nil {
-		return core
+		return statements[0]
 	}
 	return validated
 }

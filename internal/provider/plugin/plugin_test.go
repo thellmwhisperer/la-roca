@@ -151,6 +151,46 @@ func TestInstallerScratchDirectoriesAreNeverDiscoveredAsPlugins(t *testing.T) {
 	}
 }
 
+func TestExecutableOnlyPackagesAreNotDataPlugins(t *testing.T) {
+	root := installedFixtures(t, "well-formed")
+	directory := filepath.Join(root, "synthetic-exec")
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"schema":1,"kind":"executable"}`
+	if err := os.WriteFile(filepath.Join(directory, ".roca-plugin.json"), []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	found, warnings := plugin.Discover(root)
+	if len(warnings) != 0 || len(found) != 1 || found[0].Name != "well-formed" {
+		t.Fatalf("executable package entered data discovery: found=%+v warnings=%v", found, warnings)
+	}
+}
+
+func TestAPluginReachedThroughARelativeRootStillOpensReadOnly(t *testing.T) {
+	root := installedFixtures(t, "well-formed")
+	t.Chdir(filepath.Dir(root))
+	found, warnings := plugin.Discover(filepath.Base(root))
+	if len(warnings) != 0 || len(found) != 1 {
+		t.Fatalf("discovery = %+v, warnings %v", found, warnings)
+	}
+	database, err := plugin.Validate(t.Context(), found[0])
+	if err != nil {
+		t.Fatalf("validate under a relative root: %v", err)
+	}
+	// An attachment has to reach the same file, and the first segment of a
+	// relative path would otherwise be read as the URI authority.
+	handle, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+	if _, err := handle.ExecContext(t.Context(),
+		"ATTACH DATABASE ? AS probe", database.ReadOnlyURI()); err != nil {
+		t.Fatalf("attach under a relative root: %v", err)
+	}
+}
+
 func TestASemanticLayerMayNotClaimTheProvenanceColumn(t *testing.T) {
 	root := t.TempDir()
 	directory := filepath.Join(root, "shadow")

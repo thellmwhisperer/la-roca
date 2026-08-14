@@ -13,6 +13,7 @@ func TestCronListsAndPreviewsTheBundledCoreRide(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("ROCA_MODELS_ORDER", "none")
+	writeConfig(t, home, "[features]\ncron = true\n")
 	if _, err := rocacron.Ensure(filepath.Join(home, ".roca", "plugins"),
 		filepath.Join(home, ".local", "bin"), "test"); err != nil {
 		t.Fatal(err)
@@ -50,6 +51,7 @@ func TestCronListAndDryRunRemainAvailableInReadOnlyMode(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("ROCA_MODELS_ORDER", "none")
 	t.Setenv("ROCA_READ_ONLY", "1")
+	writeConfig(t, home, "[features]\ncron = true\n")
 
 	var output, warnings strings.Builder
 	env := &cliEnv{build: Build{Version: "test"}, out: &output, errOut: &warnings}
@@ -64,5 +66,18 @@ func TestCronListAndDryRunRemainAvailableInReadOnlyMode(t *testing.T) {
 	pluginDirectory := filepath.Join(home, ".roca", "plugins", rocacron.Name)
 	if _, err := os.Stat(pluginDirectory); !os.IsNotExist(err) {
 		t.Fatalf("read-only inspection installed the plugin: %v", err)
+	}
+}
+
+func TestCronCommandDoesNotExistUntilItsFeatureIsEnabled(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for _, body := range []string{"", "[features]\ncron = false\n"} {
+		writeConfig(t, home, body)
+		var output strings.Builder
+		code, err := executeWithEnv(&cliEnv{out: &output, errOut: &output}, []string{"cron", "list"}, nil)
+		if err == nil || code == ExitOK || !strings.Contains(err.Error(), "unknown command") {
+			t.Fatalf("cron with config %q = code %d err %v: %s", body, code, err, output.String())
+		}
 	}
 }

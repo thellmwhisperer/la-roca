@@ -196,6 +196,7 @@ func RenderSQLAttachedMemoryLike(plan Plan, coordinationLayers []string,
 	if strings.TrimSpace(plan.Term) == "" || clauses == "" {
 		return "", fmt.Errorf("the term search needs a term and the question offers none")
 	}
+	clauses = "(" + clauses + ")"
 	qualified := quoteIdentifier(schema) + ".memories"
 	var b strings.Builder
 	fmt.Fprintf(&b, "SELECT 'memory' AS source, m.id AS id, %s AS author, m.content AS text, "+
@@ -215,21 +216,81 @@ func RenderSQLAttachedMemoryLike(plan Plan, coordinationLayers []string,
 	return b.String(), nil
 }
 
+// RenderSQLAttachedCorpusLike compiles the literal rescue across every text
+// source owned by the perennial corpus. Unlike the operational database, the
+// corpus carries exchanges and thinking as well as memories.
+func RenderSQLAttachedCorpusLike(plan Plan, coordinationLayers []string,
+	schema string, limit int, matchAny bool) (string, error) {
+	clause := func(column string) string {
+		var clauses string
+		if matchAny {
+			clauses = likeAnyClauses(column, plan.Term)
+		} else {
+			clauses = likeClauses(column, plan.Term)
+		}
+		return "(" + clauses + ")"
+	}
+	if strings.TrimSpace(plan.Term) == "" || likeClauses("m.content", plan.Term) == "" {
+		return "", fmt.Errorf("the term search needs a term and the question offers none")
+	}
+	if !isValidLimit(limit) {
+		limit = defaultLimit
+	}
+	table := func(name string) string { return quoteIdentifier(schema) + "." + name }
+	memories := fmt.Sprintf(
+		"SELECT 'memory' AS source, m.id AS id, %s AS author, m.content AS text, "+
+			"m.created_at AS created_at FROM %s AS m WHERE %s AND m.id NOT IN "+
+			"(SELECT supersedes FROM %s WHERE supersedes IS NOT NULL)",
+		memoryAuthor("m"), table("memories"), clause("m.content"), table("memories"))
+	if plan.Layer != "" {
+		return fmt.Sprintf("%s AND m.layer = %s ORDER BY m.created_at DESC LIMIT %d",
+			memories, literal(plan.Layer), limit), nil
+	}
+	if len(coordinationLayers) > 0 {
+		memories += fmt.Sprintf(" AND m.layer NOT IN (%s)", stringList(coordinationLayers))
+	}
+	parts := []string{
+		memories,
+		fmt.Sprintf("SELECT 'exchange', e.id, NULL, e.agent_text, e.agent_timestamp FROM %s AS e WHERE %s",
+			table("exchanges"), clause("e.agent_text")),
+		fmt.Sprintf("SELECT 'human', MIN(h.id), NULL, h.human_text, h.human_timestamp FROM %s AS h "+
+			"WHERE %s AND h.human_text NOT LIKE '<task-notification%%' "+
+			"GROUP BY h.session_id, h.human_timestamp, h.human_text",
+			table("exchanges"), clause("h.human_text")),
+		fmt.Sprintf("SELECT 'thinking', t.id, NULL, t.full_text, NULL FROM %s AS t WHERE %s",
+			table("thinking_blocks"), clause("t.full_text")),
+	}
+	return strings.Join(parts, " UNION ALL ") +
+		fmt.Sprintf(" ORDER BY created_at DESC LIMIT %d", limit), nil
+}
+
 // RenderSearchUnion declares the two halves of a merged keyword answer as one
 // runnable statement. Each half is projected down to the presented columns,
 // because the ranked route carries ordering columns the literal route has not.
 func RenderSearchUnion(core, attached string, limit int) (string, error) {
-	core = strings.TrimRight(strings.TrimSpace(core), "; \t\n")
-	attached = strings.TrimRight(strings.TrimSpace(attached), "; \t\n")
-	if core == "" || attached == "" {
-		return "", fmt.Errorf("a merged search declares both of its halves")
+	return RenderSearchUnionParts([]string{core, attached}, limit)
+}
+
+// RenderSearchUnionParts declares every database half of a merged keyword
+// answer as one runnable statement.
+func RenderSearchUnionParts(parts []string, limit int) (string, error) {
+	if len(parts) < 2 {
+		return "", fmt.Errorf("a merged search declares at least two parts")
 	}
 	if !isValidLimit(limit) {
 		limit = defaultLimit
 	}
 	const half = "SELECT source, id, author, text, created_at FROM (%s)"
-	return fmt.Sprintf(half+" UNION ALL "+half+" ORDER BY created_at DESC LIMIT %d",
-		core, attached, limit), nil
+	projected := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimRight(strings.TrimSpace(part), "; \t\n")
+		if part == "" {
+			return "", fmt.Errorf("a merged search declares every part")
+		}
+		projected = append(projected, fmt.Sprintf(half, part))
+	}
+	return strings.Join(projected, " UNION ALL ") +
+		fmt.Sprintf(" ORDER BY created_at DESC LIMIT %d", limit), nil
 }
 
 func likeAnyClauses(column, term string) string {

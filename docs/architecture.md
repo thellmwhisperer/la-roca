@@ -13,10 +13,10 @@ The engine and its data domains are separate contracts. Bundled domain plugins
 live under `internal/distribution/`, own one custody database and describe its
 query surface in `semantic.yaml`. `roca-ops` owns operational agent writes.
 `roca-corpus` declares the perennial-harvest schema for sessions, exchanges,
-reasoning, tool uses, and harvested files; its first structural release is
-installed but remains inert behind the default-off `features.corpus` rollout
-boundary. Core remains the active store until the separate activation and
-migration phase lands.
+reasoning, tool uses, and harvested files. It is always resident in the CLI,
+owns new ingest writes and its lexical index, and participates in model and
+deterministic retrieval. Historical core rows remain readable without an
+implicit custody migration.
 
 ## The dependency rule
 
@@ -59,3 +59,8 @@ fixtures (an external test seam, never a product import).
   provider→distribution edge.
 - `internal/distribution/cli/artifacts.go` orchestrates discovery, rollout
   gating, refresh reports, and the post-swap handoff to the new binary.
+- `plugins/<name>/` sits outside `internal/` and outside the root Go module:
+  each one is its own module and binary, installed as a verified package
+  instead of linked in, so no core package imports it and the root `make check`
+  does not reach it. `plugins/vector/` is the worked example, described in
+  [Plugins](plugins.md#worked-executable-example-vector-search).

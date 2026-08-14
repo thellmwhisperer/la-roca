@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
@@ -40,8 +42,48 @@ func (s *Service) Index(ctx context.Context) (search.Report, error) {
 	report, err := search.Index(ctx, s.db, s.opts.Progress)
 	report.LexicalBuilt = report.LexicalBuilt || prepared.LexicalBuilt
 	report.ElapsedMS += prepared.ElapsedMS
+	if err == nil && s.opts.CorpusEnabled && s.corpus != nil {
+		corpus, corpusErr := search.Index(ctx, s.corpus, s.opts.Progress)
+		report.LexicalBuilt = report.LexicalBuilt || corpus.LexicalBuilt
+		report.ElapsedMS += corpus.ElapsedMS
+		err = corpusErr
+	}
 	return report, err
 }
+
+// ingestTarget is the database a run reads its watermarks from and writes to.
+//
+// Read-only never opens the corpus for writing, and a dry run there still has to
+// answer about the database the rows actually live in: reporting core's
+// watermarks would preview as pending every file a normal run has already read.
+// So it reaches the same corpus through a read-only handle, which a dry run
+// never needs to write to.
+func (s *Service) ingestTarget() (ingest.Database, func(), error) {
+	noop := func() {}
+	if !s.opts.CorpusEnabled {
+		return s.db, noop, nil
+	}
+	if s.corpus != nil {
+		return s.corpus, noop, nil
+	}
+	resident := s.residentCorpus()
+	if resident == nil {
+		return s.db, noop, nil
+	}
+	handle, err := sql.Open("sqlite", resident.ReadOnlyURI())
+	if err != nil {
+		return nil, noop, fmt.Errorf("open %s read-only: %w", rocaCorpusPluginName, err)
+	}
+	return readOnlyIngest{handle: handle}, func() { handle.Close() }, nil
+}
+
+// readOnlyIngest carries the corpus into a dry run without a writable handle.
+// Every write refuses with the mode's own error rather than reaching the disk.
+type readOnlyIngest struct{ handle *sql.DB }
+
+func (r readOnlyIngest) SQL() *sql.DB { return r.handle }
+
+func (r readOnlyIngest) Write(context.Context, func(*sql.Tx) error) error { return errReadOnly }
 
 // Ingest reads every source of the matrix once and leaves what it wrote
 // answerable.
@@ -74,7 +116,12 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (IngestResult, 
 		}
 	}
 
-	report, err := ingest.Run(ctx, s.db, s.registry, ingest.Options{
+	target, closeTarget, err := s.ingestTarget()
+	if err != nil {
+		return IngestResult{}, err
+	}
+	defer closeTarget()
+	report, err := ingest.Run(ctx, target, s.registry, ingest.Options{
 		Roots:        roots,
 		DryRun:       req.DryRun,
 		Progress:     s.opts.Progress,

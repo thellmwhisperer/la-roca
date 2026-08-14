@@ -60,6 +60,11 @@ type Options struct {
 	// RocaOpsEnabled extracts the agent-facing write surface into the bundled
 	// resident roca-ops plugin. Its zero value preserves the core-only product.
 	RocaOpsEnabled bool
+	// CorpusEnabled routes perennial ingest into the bundled corpus database and
+	// attaches that archive to every query. The CLI always enables it; the zero
+	// value keeps the engine usable with no bundled domains in package tests and
+	// other embeddings.
+	CorpusEnabled bool
 	// ReadOnly refuses in the service, before any database I/O.
 	ReadOnly bool
 	// Providers is the resolved model cascade. Its zero value is a service that
@@ -103,6 +108,7 @@ const residentInitializationTimeout = 10 * time.Second
 type Service struct {
 	db       *store.DB
 	ops      *store.DB
+	corpus   *store.DB
 	opts     Options
 	registry layers.Registry
 	schemaMu sync.Mutex
@@ -155,6 +161,9 @@ func (s *Service) Close() error {
 	}
 	if s.ops != nil {
 		s.ops.Close()
+	}
+	if s.corpus != nil {
+		s.corpus.Close()
 	}
 	return s.db.Close()
 }
