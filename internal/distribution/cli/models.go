@@ -587,6 +587,7 @@ func modelsCommand(env *cliEnv) *cobra.Command {
 					"version":    env.build.Version,
 					"source_sha": env.build.Commit,
 					"providers":  listings,
+					"reason":     emptyCascadeText(cascade, listings),
 					"warnings":   orNoWarnings(cascade.Warnings),
 				})
 			}
@@ -854,6 +855,17 @@ func emptyCascadeReason(cascade provider.Cascade) error {
 		return errNoProviderDeclared
 	}
 	return errNoProviderUsable
+}
+
+// emptyCascadeText is the machine form of that same distinction, and it is
+// empty exactly when there was a catalogue to report. A reader of `roca models
+// --json` sees an empty provider list for both causes, and the warning list is
+// what cannot tell them apart, so the reason has to travel as its own field.
+func emptyCascadeText(cascade provider.Cascade, listings []provider.ModelsListing) string {
+	if len(listings) > 0 {
+		return ""
+	}
+	return emptyCascadeReason(cascade).Error()
 }
 
 func effectiveProviderModel(paths config.Paths, file config.File, name string) (string, []string, error) {

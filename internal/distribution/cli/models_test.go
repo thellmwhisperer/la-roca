@@ -72,12 +72,17 @@ func TestModelsJSONContract(t *testing.T) {
 	if warnings, ok := result["warnings"].([]any); !ok || len(warnings) != 0 {
 		t.Fatalf("a clean configuration must still answer with an empty warning list: %#v", result["warnings"])
 	}
+	if reason, ok := result["reason"].(string); !ok || reason != "" {
+		t.Fatalf("a cascade that listed providers carries no empty-cascade reason: %#v", result["reason"])
+	}
 }
 
-// An empty catalogue names which empty cascade it is, the same distinction
-// `model check` makes: an order that declared nothing is not an order whose
-// every entry this build had to drop, and a warning about a key the order never
-// named tells the two apart for neither.
+// An empty catalogue names which empty cascade it is on both surfaces, the same
+// distinction `model check` makes: an order that declared nothing is not an
+// order whose every entry this build had to drop, and a warning about a key the
+// order never named tells the two apart for neither. The machine answer carries
+// that reason as its own field, because an empty provider list plus a warning
+// list is exactly what cannot tell the two causes apart.
 func TestModelsNamesWhichEmptyCascadeItIs(t *testing.T) {
 	for _, test := range []struct{ name, envOrder, file, want string }{
 		{name: "the order is turned off", envOrder: "none", want: "no provider is declared"},
@@ -102,6 +107,17 @@ func TestModelsNamesWhichEmptyCascadeItIs(t *testing.T) {
 			out := runRoot(t, Build{Version: "test"}, "models")
 			if !strings.Contains(out, test.want) {
 				t.Fatalf("models output = %q, want %q", out, test.want)
+			}
+			var result map[string]any
+			machine := runRoot(t, Build{Version: "test"}, "--json", "models")
+			if err := json.Unmarshal([]byte(machine), &result); err != nil {
+				t.Fatalf("not JSON: %v\n%s", err, machine)
+			}
+			if providers, _ := result["providers"].([]any); len(providers) != 0 {
+				t.Fatalf("an empty cascade lists no provider: %#v", result["providers"])
+			}
+			if result["reason"] != test.want {
+				t.Fatalf("models --json reason = %#v, want %q", result["reason"], test.want)
 			}
 		})
 	}
