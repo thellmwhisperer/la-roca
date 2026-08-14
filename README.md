@@ -346,10 +346,11 @@ queries with [isolated SQLite plugin databases and semantic layers](docs/plugins
 and may add Git-style `roca-<name>` neighbor executables for commands.
 
 Installed plugins may also declare idempotent rides for the lightweight
-[`roca cron` train](docs/plugins.md#cron-rides). The train invokes and observes
-those commands in order, defers on the core lock or a closed dependency gate,
-and records each journey in its own plugin database. It is designed for an
-ordinary system-cron entry, not a resident daemon:
+[`roca cron` train](docs/plugins.md#cron-rides), which reads those manifests
+whether or not that flag is set. The train invokes and observes those commands
+in order, defers on the core lock or a closed dependency gate, and records each
+journey in its own plugin database. It is designed for an ordinary system-cron
+entry, not a resident daemon:
 
 ```sh
 roca cron list

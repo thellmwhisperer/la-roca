@@ -128,7 +128,11 @@ cross-plugin signal and includes train, ride, plugin, timestamps, duration,
 exit code, error, gate status, stdout, and stderr. Both streams are kept as a
 redacted excerpt of at most 64 KiB, with the dropped byte count noted in place,
 so a talkative ride can neither grow the database without bound nor leave a
-credential in a queryable column. Dry-runs write no journey.
+credential in a queryable column. Dry-runs write no journey, and
+`ROCA_READ_ONLY=1` refuses a train run because recording one is a write, while
+leaving `roca cron list` and `--dry-run` available. Journey history is kept
+whole in this version: unlike the operational log, it is neither rotated nor
+pruned.
 
 The train expects an ordinary crontab entry. Core's own ride addresses the
 running binary by its absolute path, so it survives cron's minimal environment;
