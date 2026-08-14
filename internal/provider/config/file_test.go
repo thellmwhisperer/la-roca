@@ -348,35 +348,35 @@ func TestExperimentalFeaturesDefaultOffAndAreEnabledAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if missing.Features.Plugins || missing.Features.RocaOps ||
+	if missing.Features.Plugins || missing.Features.RocaOps || missing.Features.Corpus ||
 		missing.Features.ArtifactRefresh || missing.Features.ReleaseRedirects {
 		t.Fatalf("an experimental feature defaulted on without a configuration file: %+v", missing.Features)
 	}
 
-	for _, testCase := range []struct {
-		key   string
-		check func(FeaturesConfig) bool
+	experimental := []struct {
+		key  string
+		read func(FeaturesConfig) bool
 	}{
-		{key: "plugins", check: func(features FeaturesConfig) bool {
-			return features.Plugins && !features.RocaOps && !features.ArtifactRefresh && !features.ReleaseRedirects
-		}},
-		{key: "roca_ops", check: func(features FeaturesConfig) bool {
-			return features.RocaOps && !features.Plugins && !features.ArtifactRefresh && !features.ReleaseRedirects
-		}},
-		{key: "artifact_refresh", check: func(features FeaturesConfig) bool {
-			return features.ArtifactRefresh && !features.Plugins && !features.RocaOps && !features.ReleaseRedirects
-		}},
-		{key: "release_redirects", check: func(features FeaturesConfig) bool {
-			return features.ReleaseRedirects && !features.Plugins && !features.RocaOps && !features.ArtifactRefresh
-		}},
-	} {
+		{key: "plugins", read: func(features FeaturesConfig) bool { return features.Plugins }},
+		{key: "roca_ops", read: func(features FeaturesConfig) bool { return features.RocaOps }},
+		{key: "corpus", read: func(features FeaturesConfig) bool { return features.Corpus }},
+		{key: "artifact_refresh", read: func(features FeaturesConfig) bool { return features.ArtifactRefresh }},
+		{key: "release_redirects", read: func(features FeaturesConfig) bool { return features.ReleaseRedirects }},
+	}
+	for _, testCase := range experimental {
 		t.Run(testCase.key, func(t *testing.T) {
 			enabled, err := LoadFile(write(t, "[features]\n"+testCase.key+" = true\n"))
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !testCase.check(enabled.Features) || len(enabled.Warnings) != 0 {
+			if len(enabled.Warnings) != 0 {
 				t.Fatalf("features = %+v, warnings = %v", enabled.Features, enabled.Warnings)
+			}
+			// One key on turns that key on and leaves every sibling off.
+			for _, other := range experimental {
+				if want := other.key == testCase.key; other.read(enabled.Features) != want {
+					t.Fatalf("%s = %v with only %s written: %+v", other.key, !want, testCase.key, enabled.Features)
+				}
 			}
 		})
 	}

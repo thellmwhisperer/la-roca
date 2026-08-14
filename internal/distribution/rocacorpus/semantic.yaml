@@ -1,0 +1,45 @@
+version: 1
+attachment: resident
+description: Immutable perennial harvest from agent transcripts and harvested files.
+custody: true
+questions:
+  - What did the harvested agent corpus record?
+  - Which sessions, exchanges, reasoning blocks, tool uses, or files were harvested?
+tables:
+  - name: sessions
+    description: Harvested conversation sessions with source, project, timing, title, and source metadata.
+    questions:
+      - Which sessions were harvested?
+    columns: [session_id, source_agent, project, started_at, ended_at, duration_minutes, title, metadata]
+  - name: memories
+    description: Harvested files with a first-class provenance that distinguishes their route into the archive.
+    questions:
+      - Which files or durable records were harvested?
+    columns: [id, layer, content, metadata, origin, provenance, source_agent, source_model, source_surface, source_session, source_sequence, project, status, supersedes, created_at]
+  - name: exchanges
+    description: Immutable human and agent exchanges with timestamps and source-recorded model usage provenance.
+    questions:
+      - What was said in harvested conversations?
+    columns: [id, session_id, exchange_number, is_after_compaction, human_text, agent_text, human_timestamp, agent_timestamp, response_latency_ms, model, provider, tokens_in, tokens_out, tokens_reasoning, cost_usd]
+  - name: tool_uses
+    description: Tool calls harvested from exchanges, including failures and initiative classification.
+    questions:
+      - Which tools were used and which calls failed?
+    columns: [id, session_id, exchange_number, tool_name, tool_params_summary, had_error, error_message, initiative_type]
+  - name: thinking_blocks
+    description: Reasoning blocks harvested from sessions and exchanges.
+    questions:
+      - What reasoning was recorded in the harvested corpus?
+    columns: [id, session_id, exchange_number, position_in_session, depth, caution_ratio, word_count, is_after_compaction, full_text]
+  - name: memories_fts
+    description: Accent-insensitive full-text index over harvested file content.
+    columns: [content]
+  - name: exchanges_fts
+    description: Accent-insensitive full-text index over harvested human and agent exchange text.
+    columns: [human_text, agent_text]
+  - name: thinking_fts
+    description: Accent-insensitive full-text index over harvested reasoning.
+    columns: [full_text]
+  - name: sessions_fts
+    description: Accent-insensitive full-text index over harvested session titles and projects.
+    columns: [title, project]
