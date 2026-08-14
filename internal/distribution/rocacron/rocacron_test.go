@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -60,11 +61,12 @@ gate = "after_ingest"
 		return 0, nil
 	})
 
+	registered, _ := service.List()
 	report, err := service.Run(context.Background(), plugin.DefaultTrain, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"roca ingest", "roca vector ingest --delta"}
+	want := []string{registered[0].Command, "roca vector ingest --delta"}
 	if !slices.Equal(invoked, want) || report.Failed != 0 || report.Deferred != 0 {
 		t.Fatalf("run = %+v invoked = %v", report, invoked)
 	}
@@ -85,7 +87,7 @@ command = "roca vector ingest --delta"
 gate = "after_ingest"
 `)
 	service := newService(t, root, database, func(_ context.Context, command string, _, errOut io.Writer) (int, error) {
-		if command == "roca ingest" {
+		if strings.HasSuffix(command, " ingest") {
 			fmt.Fprint(errOut, "synthetic ingest failure")
 			return 7, fmt.Errorf("exit status 7")
 		}
@@ -142,6 +144,90 @@ command = "roca vector ingest --delta"
 	if rides[0].Plugin != "core" || rides[1].Plugin != "vector" || rides[1].Train != "hourly" {
 		t.Fatalf("rides = %+v", rides)
 	}
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "'" + binary + "' ingest"; runtime.GOOS != "windows" && rides[0].Command != want {
+		t.Fatalf("core ride command = %q, want the absolute %q that system cron can find", rides[0].Command, want)
+	}
+}
+
+func TestAGateReadsItsOwnPluginsRideBeforeASharedName(t *testing.T) {
+	root, database := cronWorld(t, "")
+	writeRides(t, root, "archive", `[ride.compact]
+command = "roca archive compact"
+
+[ride.prune]
+train = "hourly"
+command = "roca archive prune"
+gate = "after_compact"
+`)
+	service := newService(t, root, database, func(context.Context, string, io.Writer, io.Writer) (int, error) {
+		return 0, nil
+	})
+	if _, err := service.Run(context.Background(), plugin.DefaultTrain, false); err != nil {
+		t.Fatal(err)
+	}
+	insertJourney(t, database, "vector", "compact", 4)
+
+	report, err := service.Run(context.Background(), "hourly", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Rides) != 1 || report.Rides[0].GateStatus != "after_compact_ok" || !report.Rides[0].Executed {
+		t.Fatalf("another plugin's compact decided this gate: %+v", report.Rides)
+	}
+}
+
+func TestARideTheTrainCannotObserveDoesNotStopTheRidesBehindIt(t *testing.T) {
+	root, database := cronWorld(t, `[ride.vector_delta]
+command = "roca vector ingest --delta"
+`)
+	service := newService(t, root, database, func(context.Context, string, io.Writer, io.Writer) (int, error) {
+		return 0, nil
+	})
+	service.LockFree = func(string) (bool, error) { return false, errors.New("the lock is unreadable") }
+
+	report, err := service.Run(context.Background(), plugin.DefaultTrain, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Rides) != 2 || report.Failed != 2 || len(report.Warnings) != 2 {
+		t.Fatalf("an unobservable first ride cancelled the train: %+v", report)
+	}
+	for _, ride := range report.Rides {
+		if ride.GateStatus != rocacron.GateUnobserved || ride.Error == "" {
+			t.Fatalf("ride = %+v", ride)
+		}
+	}
+}
+
+func TestRecordedStreamsAreBoundedAndRedacted(t *testing.T) {
+	root, database := cronWorld(t, "")
+	secret := "ghp_" + strings.Repeat("s3cr3t", 4)
+	service := newService(t, root, database, func(_ context.Context, _ string, out, errOut io.Writer) (int, error) {
+		fmt.Fprint(out, strings.Repeat("chatter ", 40_000))
+		fmt.Fprint(errOut, "the ride echoed "+secret+" out loud")
+		return 0, nil
+	})
+
+	if _, err := service.Run(context.Background(), plugin.DefaultTrain, false); err != nil {
+		t.Fatal(err)
+	}
+	journeys := readJourneys(t, database)
+	if len(journeys) != 1 {
+		t.Fatalf("journeys = %+v", journeys)
+	}
+	if size := len(journeys[0].Stdout); size > (64<<10)+64 {
+		t.Errorf("recorded stdout = %d bytes, want a bounded excerpt", size)
+	}
+	if !strings.Contains(journeys[0].Stdout, "bytes were not kept") {
+		t.Errorf("a truncated stream did not say so: %q", journeys[0].Stdout[max(0, len(journeys[0].Stdout)-80):])
+	}
+	if strings.Contains(journeys[0].Stderr, secret) {
+		t.Errorf("the journey kept a credential: %q", journeys[0].Stderr)
+	}
 }
 
 func TestReadOnlyDryRunDoesNotCreateJourneyState(t *testing.T) {
@@ -170,15 +256,35 @@ func cronWorld(t *testing.T, vectorRides string) (string, string) {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "plugins")
 	if vectorRides != "" {
-		directory := filepath.Join(root, "vector")
-		if err := os.MkdirAll(directory, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(directory, plugin.RidesFilename), []byte(vectorRides), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		writeRides(t, root, "vector", vectorRides)
 	}
 	return root, filepath.Join(t.TempDir(), rocacron.DatabaseFilename)
+}
+
+func writeRides(t *testing.T, root, pluginName, manifest string) {
+	t.Helper()
+	directory := filepath.Join(root, pluginName)
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, plugin.RidesFilename), []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func insertJourney(t *testing.T, path, pluginName, ride string, exitCode int) {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	when := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := db.Exec(`INSERT INTO journeys
+		(train, ride, plugin, started_at, ended_at, duration_ms, exit_code, gate_status)
+		VALUES ('nightly', ?, ?, ?, ?, 1, ?, 'ready')`, ride, pluginName, when, when, exitCode); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func newService(t *testing.T, root, database string, runner rocacron.CommandRunner) *rocacron.Service {

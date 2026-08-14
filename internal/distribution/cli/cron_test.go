@@ -24,7 +24,11 @@ func TestCronListsAndPreviewsTheBundledCoreRide(t *testing.T) {
 	if err != nil || code != ExitOK {
 		t.Fatalf("cron list = code %d err %v: %s", code, err, warnings.String())
 	}
-	for _, want := range []string{"core", "ingest", "nightly", "roca ingest"} {
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"core", "ingest", "nightly", binary} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("cron list lacks %q: %s", want, output.String())
 		}

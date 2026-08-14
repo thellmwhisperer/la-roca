@@ -101,20 +101,41 @@ gate = "after_ingest"
 plugin/ride order. `roca cron run [train] --dry-run` prints that order and each
 gate's current status without invoking or recording anything. A gate named
 `after_<ride>` opens only when that dependency's latest recorded journey ended
-with exit code zero; `after_ingest` reads the core ingest journey. The train
-does not reorder rides into a dependency graph.
+with exit code zero. The dependency is the ride of that name declared by the
+same plugin, so two plugins may name a ride alike without deciding each other's
+gates; a plugin that declares no ride of that name reads core's, which is what
+makes `after_ingest` read the core ingest journey. The train does not reorder
+rides into a dependency graph, and one ride it cannot observe or record is
+reported against that ride while the rides behind it still take their trip.
 
 Before each invocation the train probes core's existing `logs/.roca.lock`
 flock and releases the probe immediately. It never keeps or creates that lock.
-An occupied lock or closed dependency defers the ride to the next train instead
-of waiting in a daemon. Invoked commands keep their standard behavior while
-the train observes exit code, duration, streams, and timestamps from outside.
+That flock guards core's log directory rather than a whole ingest, so an
+occupied probe means core is writing a record or a purge holds the tree, not
+that some long command is halfway through: it is a courtesy check rather than
+mutual exclusion, which is why rides must stay idempotent. An occupied lock or
+closed dependency defers the ride to the next train instead of waiting in a
+daemon. Invoked commands keep their standard behavior while the train observes
+exit code, duration, streams, and timestamps from outside.
 
 Every attempted or deferred trip is stored in the bundled custodial
 `roca-cron` plugin database at
 `~/.roca/plugins/roca-cron/roca-cron.db`. Its `journeys` table is the canonical
 cross-plugin signal and includes train, ride, plugin, timestamps, duration,
-exit code, error, gate status, stdout, and stderr. Dry-runs write no journey.
+exit code, error, gate status, stdout, and stderr. Both streams are kept as a
+redacted excerpt of at most 64 KiB, with the dropped byte count noted in place,
+so a talkative ride can neither grow the database without bound nor leave a
+credential in a queryable column. Dry-runs write no journey.
+
+The train expects an ordinary crontab entry. Core's own ride addresses the
+running binary by its absolute path, so it survives cron's minimal environment;
+a plugin ride command is resolved by the shell, so give it an absolute path or
+declare `PATH` in the crontab:
+
+```crontab
+PATH=/usr/bin:/bin:/home/you/.local/bin
+17 3 * * * /home/you/.local/bin/roca cron run nightly
+```
 
 ## Building against the stable surfaces
 

@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	_ "modernc.org/sqlite"
 )
@@ -30,6 +31,13 @@ const (
 	GateAfterIngestOK       = "after_ingest_ok"
 	GateDeferredAfterIngest = "deferred_after_ingest"
 	GateDeferredLocked      = "deferred_locked"
+	GateUnobserved          = "unobserved"
+
+	corePlugin = "core"
+
+	// A journey keeps a bounded, redacted excerpt of what it observed: the
+	// streams belong to somebody else's command and are queryable afterwards.
+	maxStreamBytes = 64 << 10
 )
 
 //go:embed schema.sql
@@ -70,6 +78,7 @@ type RideResult struct {
 	Executed   bool   `json:"executed"`
 	ExitCode   *int   `json:"exit_code,omitempty"`
 	DurationMS int64  `json:"duration_ms"`
+	Error      string `json:"error,omitempty"`
 }
 
 type Report struct {
@@ -181,8 +190,31 @@ func (s *Service) List() ([]plugin.Ride, []string) {
 
 func coreIngestRide() plugin.Ride {
 	return plugin.Ride{
-		Name: "ingest", Plugin: "core", Train: plugin.DefaultTrain, Command: "roca ingest",
+		Name: "ingest", Plugin: corePlugin, Train: plugin.DefaultTrain,
+		Command: coreCommand("ingest"),
 	}
+}
+
+// coreCommand addresses the running binary by its own absolute path. System
+// cron runs with a minimal PATH that does not contain the default install
+// prefix, so a bare name would fail the nightly ride with exit 127.
+func coreCommand(subcommand string) string {
+	executable, err := os.Executable()
+	if err != nil {
+		return "roca " + subcommand
+	}
+	absolute, err := filepath.Abs(executable)
+	if err != nil {
+		return "roca " + subcommand
+	}
+	return shellQuote(absolute) + " " + subcommand
+}
+
+func shellQuote(value string) string {
+	if runtime.GOOS == "windows" {
+		return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
+	}
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
 func (s *Service) Run(ctx context.Context, train string, dryRun bool) (Report, error) {
@@ -194,14 +226,29 @@ func (s *Service) Run(ctx context.Context, train string, dryRun bool) (Report, e
 		train = plugin.DefaultTrain
 	}
 	all, warnings := s.List()
+	declared := make(map[string]bool, len(all))
+	for _, ride := range all {
+		declared[rideKey(ride.Plugin, ride.Name)] = true
+	}
 	report := Report{Train: train, DryRun: dryRun, Warnings: warnings}
 	for _, ride := range all {
 		if ride.Train != train {
 			continue
 		}
-		result, err := s.runRide(ctx, ride, dryRun)
+		result, err := s.runRide(ctx, ride, declared, dryRun)
 		if err != nil {
-			return report, err
+			// One ride the train could not observe or record is that ride's
+			// verdict, not the train's: the rides behind it are unrelated and
+			// still deserve their trip.
+			if result.GateStatus == "" {
+				result.GateStatus = GateUnobserved
+			}
+			result.Error = err.Error()
+			report.Warnings = append(report.Warnings,
+				fmt.Sprintf("ride %s/%s: %v", ride.Plugin, ride.Name, err))
+			report.Rides = append(report.Rides, result)
+			report.Failed++
+			continue
 		}
 		report.Rides = append(report.Rides, result)
 		if dryRun {
@@ -220,7 +267,7 @@ func (s *Service) Run(ctx context.Context, train string, dryRun bool) (Report, e
 	return report, nil
 }
 
-func (s *Service) runRide(ctx context.Context, ride plugin.Ride, dryRun bool) (RideResult, error) {
+func (s *Service) runRide(ctx context.Context, ride plugin.Ride, declared map[string]bool, dryRun bool) (RideResult, error) {
 	result := RideResult{
 		Plugin: ride.Plugin, Ride: ride.Name, Train: ride.Train,
 		Command: ride.Command, Gate: ride.Gate,
@@ -234,9 +281,9 @@ func (s *Service) runRide(ctx context.Context, ride plugin.Ride, dryRun bool) (R
 		if dryRun {
 			return result, nil
 		}
-		return result, s.recordDeferred(ride, result.GateStatus, "the core lock is busy")
+		return result, s.recordDeferred(ride, result.GateStatus, "the core log lock is busy")
 	}
-	status, open, err := s.gateStatus(ctx, ride.Gate)
+	status, open, err := s.gateStatus(ctx, ride, declared)
 	if err != nil {
 		return result, err
 	}
@@ -249,7 +296,7 @@ func (s *Service) runRide(ctx context.Context, ride plugin.Ride, dryRun bool) (R
 	}
 
 	started := s.now().UTC()
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr excerpt
 	exitCode, runErr := s.runCommand(ctx, ride.Command,
 		io.MultiWriter(s.out, &stdout), io.MultiWriter(s.errOut, &stderr))
 	ended := s.now().UTC()
@@ -271,42 +318,48 @@ func (s *Service) runRide(ctx context.Context, ride plugin.Ride, dryRun bool) (R
 	return result, nil
 }
 
-func (s *Service) gateStatus(ctx context.Context, gate string) (string, bool, error) {
-	if gate == "" {
+func (s *Service) gateStatus(ctx context.Context, ride plugin.Ride, declared map[string]bool) (string, bool, error) {
+	if ride.Gate == "" {
 		return GateReady, true, nil
 	}
-	dependency, found := strings.CutPrefix(gate, "after_")
+	dependency, found := strings.CutPrefix(ride.Gate, "after_")
 	if !found || dependency == "" {
-		return "deferred_" + gate, false, nil
+		return "deferred_" + ride.Gate, false, nil
 	}
-	ok, err := s.lastJourneyOK(ctx, dependency)
+	ok, err := s.lastJourneyOK(ctx, gateOwner(ride, dependency, declared), dependency)
 	if err != nil {
 		return "", false, err
 	}
 	if ok {
-		return gate + "_ok", true, nil
+		return ride.Gate + "_ok", true, nil
 	}
-	return "deferred_" + gate, false, nil
+	return "deferred_" + ride.Gate, false, nil
 }
 
-func (s *Service) lastJourneyOK(ctx context.Context, ride string) (bool, error) {
+// gateOwner keeps a gate inside its own plugin. Two plugins may name a ride
+// alike, so `after_<ride>` means that plugin's own ride when it declares one
+// and core's otherwise, which is what makes `after_ingest` read core ingest.
+func gateOwner(ride plugin.Ride, dependency string, declared map[string]bool) string {
+	if declared[rideKey(ride.Plugin, dependency)] {
+		return ride.Plugin
+	}
+	return corePlugin
+}
+
+func rideKey(pluginName, ride string) string { return pluginName + "\x00" + ride }
+
+func (s *Service) lastJourneyOK(ctx context.Context, owner, ride string) (bool, error) {
 	if s.db == nil {
 		return false, nil
 	}
 	var exitCode *int
-	var err error
-	if ride == "ingest" {
-		err = s.db.QueryRowContext(ctx, `SELECT exit_code FROM journeys
-			WHERE ride = ? AND plugin = 'core' ORDER BY id DESC LIMIT 1`, ride).Scan(&exitCode)
-	} else {
-		err = s.db.QueryRowContext(ctx, `SELECT exit_code FROM journeys
-			WHERE ride = ? ORDER BY id DESC LIMIT 1`, ride).Scan(&exitCode)
-	}
+	err := s.db.QueryRowContext(ctx, `SELECT exit_code FROM journeys
+		WHERE ride = ? AND plugin = ? ORDER BY id DESC LIMIT 1`, ride, owner).Scan(&exitCode)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("read the last %s journey: %w", ride, err)
+		return false, fmt.Errorf("read the last %s/%s journey: %w", owner, ride, err)
 	}
 	return exitCode != nil && *exitCode == 0, nil
 }
@@ -345,6 +398,43 @@ func (s *Service) record(journey journeyRecord) error {
 		return fmt.Errorf("record the %s/%s journey: %w", journey.Ride.Plugin, journey.Ride.Name, err)
 	}
 	return nil
+}
+
+// excerpt keeps the head of an observed stream and counts the rest away, so a
+// chatty ride can neither exhaust memory nor grow the journey database without
+// bound. The invoked command still writes its whole stream to the real output.
+type excerpt struct {
+	head    bytes.Buffer
+	dropped int
+}
+
+func (e *excerpt) Write(payload []byte) (int, error) {
+	if room := maxStreamBytes - e.head.Len(); room > 0 {
+		if len(payload) <= room {
+			e.head.Write(payload)
+			return len(payload), nil
+		}
+		e.head.Write(payload[:room])
+		e.dropped += len(payload) - room
+		return len(payload), nil
+	}
+	e.dropped += len(payload)
+	return len(payload), nil
+}
+
+// String redacts before it stores: a ride's diagnostic can echo a credential
+// and the journeys table is queryable, so it holds the same shape of secret
+// the operational log already refuses to keep.
+func (e *excerpt) String() string {
+	text := strings.ToValidUTF8(e.head.String(), "")
+	redacted, ok := logfile.Redact(text).(string)
+	if !ok {
+		redacted = "[REDACTED]"
+	}
+	if e.dropped > 0 {
+		redacted += fmt.Sprintf("\n[%d more bytes were not kept]", e.dropped)
+	}
+	return redacted
 }
 
 func runShellCommand(ctx context.Context, command string, out, errOut io.Writer) (int, error) {
