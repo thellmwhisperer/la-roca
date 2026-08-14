@@ -97,6 +97,8 @@ type Source struct {
 	// saying which flag names one. Resolving the default is the CLI's job.
 	Repo  string
 	Token string
+	// ReleaseRedirects enables the experimental bound on redirect chains.
+	ReleaseRedirects bool
 	// HTTP is the client. Its zero value is a client with a bounded timeout.
 	HTTP *http.Client
 }
@@ -332,15 +334,17 @@ func (s Source) client() (*http.Client, error) {
 	} else {
 		client = &http.Client{Timeout: 5 * time.Minute}
 	}
-	previousRedirectPolicy := client.CheckRedirect
-	client.CheckRedirect = func(request *http.Request, via []*http.Request) error {
-		if len(via) > maxReleaseRedirects {
-			return fmt.Errorf("release channel refused more than %d redirects", maxReleaseRedirects)
+	if s.ReleaseRedirects {
+		previousRedirectPolicy := client.CheckRedirect
+		client.CheckRedirect = func(request *http.Request, via []*http.Request) error {
+			if len(via) > maxReleaseRedirects {
+				return fmt.Errorf("release channel refused more than %d redirects", maxReleaseRedirects)
+			}
+			if previousRedirectPolicy != nil {
+				return previousRedirectPolicy(request, via)
+			}
+			return nil
 		}
-		if previousRedirectPolicy != nil {
-			return previousRedirectPolicy(request, via)
-		}
-		return nil
 	}
 	if s.HTTP == nil {
 		certificateFile := os.Getenv("SSL_CERT_FILE")
