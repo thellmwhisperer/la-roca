@@ -86,8 +86,11 @@ omitted databases in the answer.
 
 Every query and explicit `roca exec` answer declares its consulted databases.
 Rows returned while plugins are in scope carry a `database` value such as
-`core` or `plugin:receipts`; cross-database rows use a `+`-joined label. This
-provenance also reaches MCP's TOON output.
+`core` or `plugin:receipts`; cross-database rows use a `+`-joined label. The
+resident bundled corpus is always in scope, so an ordinary answer carries that
+column whether or not `features.plugins` is set, and whether or not every
+database in scope contributed a row to this run. This provenance also reaches
+MCP's TOON output.
 
 ## Cron rides
 
@@ -340,8 +343,8 @@ roca vector query "the decision about local model routing" 10
 
 `roca vector install` is the plugin's adopt/init boundary: it prepares the
 plugin-owned database and embedding model, then starts the resumable initial
-build. The package manifest declares `state/`, so verified update preserves it
-and plugin uninstall or purge—not core's owned-path inventory—owns it.
+build. The package manifest declares `state/`, so verified update preserves it,
+and plugin uninstall or purge owns it rather than core's owned-path inventory.
 
 The package ships OFF: release and ordinary installation do not place it. An
 operator must first enable the experimental plugin lifecycle, explicitly

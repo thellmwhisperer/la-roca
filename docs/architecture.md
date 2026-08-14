@@ -59,3 +59,8 @@ fixtures (an external test seam, never a product import).
   provider→distribution edge.
 - `internal/distribution/cli/artifacts.go` orchestrates discovery, rollout
   gating, refresh reports, and the post-swap handoff to the new binary.
+- `plugins/<name>/` sits outside `internal/` and outside the root Go module:
+  each one is its own module and binary, installed as a verified package
+  instead of linked in, so no core package imports it and the root `make check`
+  does not reach it. `plugins/vector/` is the worked example, described in
+  [Plugins](plugins.md#worked-executable-example-vector-search).
