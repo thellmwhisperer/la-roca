@@ -381,7 +381,12 @@ configuration that declared nothing. The two are told apart by the providers the
 cascade actually dropped (`Cascade.Dropped`) and never by whether the
 configuration produced a warning, because a retired key of a provider the order
 never named warns without dropping anything. `roca models` and `model set` make
-the same distinction from the same field. `model set` reads
+the same distinction from the same field. Under `--json`, an empty provider list
+looks identical for both causes, so `roca models` carries the answer in a
+`reason` field of its own, empty exactly when there is a catalogue to report;
+`model check --json` reports it in the `reason` it already had. Both commands
+always emit `warnings` as a list, empty rather than absent, so a script can
+range over it without checking for the key. `model set` reads
 the target provider's catalogue, refuses IDs outside it, and probes the selected
 ID before writing only `models.<provider>.model`. A refused ID names the
 catalogue it missed and how to widen it: declare it in `models.<provider>.models`
