@@ -50,6 +50,46 @@ func TestThePurgeOwnsInstalledPluginPackagesAndNothingBesideThem(t *testing.T) {
 	}
 }
 
+func TestThePurgeOwnsExecutableOnlyStateDeclaredByTheManifest(t *testing.T) {
+	home := t.TempDir()
+	paths := resolvedIn(t, home)
+	directory := filepath.Join(pluginRoot(paths), "synthetic-exec")
+	executableFile := "roca-synthetic-exec"
+	executable := filepath.Join(paths.Home, ".local", "bin", executableFile)
+	payload := "#!/bin/sh\nexit 0\n"
+	writeFile(t, filepath.Join(directory, plugininstall.PackageFilename),
+		`{"schema":1,"name":"synthetic-exec","version":"1.0.0","kind":"executable","state_directory":"state"}`)
+	writeFile(t, filepath.Join(directory, executableFile), payload)
+	writeFile(t, executable, payload)
+	writeFile(t, filepath.Join(directory, plugininstall.ChecksumsFilename), "listed in the manifest")
+	state := filepath.Join(directory, "state", "nested", "index.db")
+	writeFile(t, state, "derived index")
+	digest := sha256.Sum256([]byte(payload))
+	manifest, err := json.Marshal(plugininstall.Manifest{
+		Schema: 1, Name: "synthetic-exec", Source: "owner/synthetic-exec", Version: "1.0.0",
+		Checksum: strings.Repeat("c", 64), Kind: plugininstall.ExecutablePackage,
+		Risk: plugininstall.Executable, Executable: executable, ExecutableFile: executableFile,
+		StateDir: "state", Files: map[string]string{
+			plugininstall.PackageFilename: strings.Repeat("a", 64),
+			executableFile:                hex.EncodeToString(digest[:]),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(directory, plugininstall.ManifestFilename), string(manifest))
+
+	report := lifecycle.Plan{Owned: ownedPaths(paths), DataDir: dirOf(paths.DB)}.Apply()
+	if !report.Purged {
+		t.Fatalf("purge = %+v", report)
+	}
+	for _, path := range []string{state, directory, executable} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("manifest-owned path remains at %s: %v", path, err)
+		}
+	}
+}
+
 // The archives exist because a plugin uninstall refused to delete custodial data
 // as a plain folder. The flag the operator passed for La Roca's own artefacts is
 // not the answer to that question, so this data leaves only on its own yes.

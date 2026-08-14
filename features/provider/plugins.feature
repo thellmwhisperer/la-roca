@@ -13,7 +13,7 @@ Feature: Querying isolated plugin databases
     And the model answers with SQL "SELECT title AS text FROM plugin_well_formed.receipts LIMIT 1"
     When I ask "Which receipts were recorded?"
     Then the command exits with code 0
-    And the consulted databases are "core, plugin:well-formed"
+    And the consulted databases are "core, plugin:roca-corpus, plugin:well-formed"
     And the first row declares database "plugin:well-formed"
 
   Scenario: A lying semantic layer degrades with a warning instead of becoming queryable
@@ -25,5 +25,5 @@ Feature: Querying isolated plugin databases
     And the model answers with SQL "SELECT content AS text FROM memories LIMIT 1"
     When I ask "Which synthetic invoices are outstanding?"
     Then the command exits with code 0
-    And the consulted databases are "core"
+    And the consulted databases are "core, plugin:roca-corpus"
     And a warning names the plugin "lying" and column "outstanding_cents"

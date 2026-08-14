@@ -56,7 +56,9 @@ func budgetedValues(output string) []string {
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, budgetMarker) {
-			values = append(values, line)
+			// Only the provenance cell is dropped. Truncating at the last comma
+			// would eat the budgeted prose itself, which routinely contains one.
+			values = append(values, strings.TrimSuffix(line, ",core"))
 		}
 	}
 	return values

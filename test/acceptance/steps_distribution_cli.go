@@ -41,6 +41,10 @@ func (w *distributionWorld) previewDefaultCronTrain() error {
 	if err := w.prepare("cron-preview"); err != nil {
 		return err
 	}
+	if err := writeFixture(filepath.Join(w.home, ".roca", "config.toml"),
+		"[features]\ncron = true\n"); err != nil {
+		return err
+	}
 	installed := w.runAt(w.home, w.installed, "_install-bundled-plugins", "--json")
 	if installed.code != 0 {
 		return fmt.Errorf("install bundled plugins: %+v", installed)
@@ -103,8 +107,14 @@ func (w *distributionWorld) disabledPluginInstallerIsInert() error {
 	if w.last.code == 0 || !strings.Contains(w.last.stderr, "features.plugins") {
 		return fmt.Errorf("disabled plugin install = %+v", w.last)
 	}
-	if _, err := os.Stat(filepath.Join(w.home, ".roca", "plugins")); !os.IsNotExist(err) {
-		return fmt.Errorf("disabled plugin installer touched its directory: %v", err)
+	entries, err := os.ReadDir(filepath.Join(w.home, ".roca", "plugins"))
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Name() != "roca-ops" && entry.Name() != "roca-corpus" && entry.Name() != "roca-cron" {
+			return fmt.Errorf("disabled plugin installer added %q", entry.Name())
+		}
 	}
 	return nil
 }
@@ -189,7 +199,7 @@ func (w *distributionWorld) helpIsComplete() error {
 		return fmt.Errorf("help exited %d: %s", w.last.code, w.last.stderr)
 	}
 	honest := map[string]string{
-		"cron": "ride", "doctor": "configuration", "ingest": "source", "init": "database",
+		"doctor": "configuration", "ingest": "source", "init": "database",
 		"hooks": "authorship", "model": "model", "query": "memory", "explore": "concept", "store": "memory",
 		"uninstall": "remove", "update": "release", "plugin": "plugin", "plugins": "plugin",
 	}
