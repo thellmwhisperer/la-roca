@@ -3,10 +3,7 @@ package rocaops
 import (
 	"database/sql"
 	"fmt"
-	"net/url"
 	"os"
-	"path/filepath"
-	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
@@ -17,8 +14,6 @@ const (
 	Name             = "roca-ops"
 	DatabaseFilename = "roca-ops.db"
 	BundledSource    = "bundled:roca"
-
-	busyTimeout = 15 * time.Second
 )
 
 func Ensure(root, binDir, version string) (plugininstall.Result, error) {
@@ -51,14 +46,7 @@ func applySchema(path string) error {
 // as every other connection to this file. A running service can still own a
 // short write lock while the bundled payload is being refreshed.
 func openDatabase(path string) (*sql.DB, error) {
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return nil, fmt.Errorf("resolve the bundled %s database path: %w", Name, err)
-	}
-	dsn := url.URL{Scheme: "file", Path: filepath.ToSlash(absolute), RawQuery: url.Values{
-		"_pragma": {fmt.Sprintf("busy_timeout(%d)", busyTimeout.Milliseconds())},
-	}.Encode()}
-	db, err := sql.Open("sqlite", dsn.String())
+	db, err := bundledplugin.OpenDatabase(path, false)
 	if err != nil {
 		return nil, fmt.Errorf("open bundled %s database: %w", Name, err)
 	}

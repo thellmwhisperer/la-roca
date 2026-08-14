@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,9 +17,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
-	_ "modernc.org/sqlite"
 )
 
 const (
@@ -106,7 +106,7 @@ func Open(options Options) (*Service, error) {
 			return nil, fmt.Errorf("create the journey database directory: %w", err)
 		}
 		var err error
-		db, err = openDatabase(options.Database, false)
+		db, err = bundledplugin.OpenDatabase(options.Database, false)
 		if err != nil {
 			return nil, err
 		}
@@ -148,30 +148,13 @@ func openExistingDatabase(path string) (*sql.DB, error) {
 	} else if err != nil {
 		return nil, fmt.Errorf("inspect the journey database: %w", err)
 	}
-	db, err := openDatabase(path, true)
+	db, err := bundledplugin.OpenDatabase(path, true)
 	if err != nil {
 		return nil, err
 	}
 	if err := db.Ping(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("open the journey database read-only: %w", err)
-	}
-	return db, nil
-}
-
-func openDatabase(path string, readOnly bool) (*sql.DB, error) {
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return nil, fmt.Errorf("resolve the journey database: %w", err)
-	}
-	query := url.Values{"_pragma": {"busy_timeout(15000)"}}
-	if readOnly {
-		query.Set("mode", "ro")
-	}
-	dsn := url.URL{Scheme: "file", Path: filepath.ToSlash(absolute), RawQuery: query.Encode()}
-	db, err := sql.Open("sqlite", dsn.String())
-	if err != nil {
-		return nil, fmt.Errorf("open the journey database: %w", err)
 	}
 	return db, nil
 }
@@ -184,8 +167,16 @@ func (s *Service) Close() error {
 }
 
 func (s *Service) List() ([]plugin.Ride, []string) {
-	discovered, warnings := plugin.DiscoverRides(s.pluginRoot)
+	discovered, warnings := plugin.DiscoverRides(s.pluginRoot, verifyInstalledRides)
 	return append([]plugin.Ride{coreIngestRide()}, discovered...), warnings
+}
+
+func verifyInstalledRides(pluginName, directory string) error {
+	if pluginName == corePlugin {
+		return fmt.Errorf("plugin name %q is reserved for the built-in ride namespace", corePlugin)
+	}
+	_, err := plugininstall.VerifyInstalledPayload(pluginName, directory)
+	return err
 }
 
 func coreIngestRide() plugin.Ride {
@@ -326,7 +317,12 @@ func (s *Service) gateStatus(ctx context.Context, ride plugin.Ride, declared map
 	if !found || dependency == "" {
 		return "deferred_" + ride.Gate, false, nil
 	}
-	ok, err := s.lastJourneyOK(ctx, gateOwner(ride, dependency, declared), dependency)
+	owner, resolved := gateOwner(ride, dependency, declared)
+	if !resolved {
+		return "", false, fmt.Errorf(
+			"ride %s/%s gate %s has no declared dependency", ride.Plugin, ride.Name, ride.Gate)
+	}
+	ok, err := s.lastJourneyOK(ctx, owner, dependency)
 	if err != nil {
 		return "", false, err
 	}
@@ -336,14 +332,17 @@ func (s *Service) gateStatus(ctx context.Context, ride plugin.Ride, declared map
 	return "deferred_" + ride.Gate, false, nil
 }
 
-// gateOwner keeps a gate inside its own plugin. Two plugins may name a ride
-// alike, so `after_<ride>` means that plugin's own ride when it declares one
-// and core's otherwise, which is what makes `after_ingest` read core ingest.
-func gateOwner(ride plugin.Ride, dependency string, declared map[string]bool) string {
+// gateOwner keeps a gate inside its own plugin. Core ingest is the sole
+// cross-plugin exception; every other absent dependency is unresolved rather
+// than a core journey that can never exist.
+func gateOwner(ride plugin.Ride, dependency string, declared map[string]bool) (string, bool) {
 	if declared[rideKey(ride.Plugin, dependency)] {
-		return ride.Plugin
+		return ride.Plugin, true
 	}
-	return corePlugin
+	if dependency == "ingest" && declared[rideKey(corePlugin, dependency)] {
+		return corePlugin, true
+	}
+	return "", false
 }
 
 func rideKey(pluginName, ride string) string { return pluginName + "\x00" + ride }

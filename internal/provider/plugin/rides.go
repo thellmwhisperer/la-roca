@@ -23,6 +23,8 @@ type Ride struct {
 	Gate    string `json:"gate,omitempty"`
 }
 
+type RideVerifier func(pluginName, directory string) error
+
 type rideDocument struct {
 	Rides map[string]rideConfig `toml:"ride"`
 }
@@ -35,7 +37,7 @@ type rideConfig struct {
 
 // DiscoverRides reads the optional ride manifest from every installed plugin.
 // A bad plugin is reported without hiding the valid rides beside it.
-func DiscoverRides(root string) ([]Ride, []string) {
+func DiscoverRides(root string, verify RideVerifier) ([]Ride, []string) {
 	entries, err := os.ReadDir(root)
 	if os.IsNotExist(err) || strings.TrimSpace(root) == "" {
 		return nil, nil
@@ -50,7 +52,18 @@ func DiscoverRides(root string) ([]Ride, []string) {
 		if !entry.IsDir() || !validPluginName(entry.Name()) {
 			continue
 		}
-		found, err := InspectRides(entry.Name(), filepath.Join(root, entry.Name()))
+		directory := filepath.Join(root, entry.Name())
+		if verify == nil {
+			warnings = append(warnings,
+				fmt.Sprintf("plugin %s rides cannot be trusted without installer verification", entry.Name()))
+			continue
+		}
+		if err := verify(entry.Name(), directory); err != nil {
+			warnings = append(warnings,
+				fmt.Sprintf("plugin %s rides are not from a verified installation: %v", entry.Name(), err))
+			continue
+		}
+		found, err := InspectRides(entry.Name(), directory)
 		if err != nil {
 			warnings = append(warnings,
 				fmt.Sprintf("plugin %s has no usable %s: %v", entry.Name(), RidesFilename, err))
@@ -108,6 +121,13 @@ func readRides(pluginName, path string) ([]Ride, error) {
 			return nil, fmt.Errorf(
 				"%s ride %q needs safe ride, train, and gate names plus a command",
 				RidesFilename, name)
+		}
+		if gated && dependency != "ingest" {
+			if _, declared := document.Rides[dependency]; !declared {
+				return nil, fmt.Errorf(
+					"%s ride %q gate %q does not resolve to a ride in the same plugin",
+					RidesFilename, name, gate)
+			}
 		}
 		rides = append(rides, Ride{
 			Name: name, Plugin: pluginName, Train: train, Command: command, Gate: gate,

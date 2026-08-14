@@ -1,6 +1,7 @@
 package plugin_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,7 +24,7 @@ command = "roca archive compact"
 		t.Fatal(err)
 	}
 
-	rides, warnings := plugin.DiscoverRides(root)
+	rides, warnings := plugin.DiscoverRides(root, allowInstalledRideFixture)
 	if len(warnings) != 0 {
 		t.Fatalf("ride warnings = %v", warnings)
 	}
@@ -53,7 +54,7 @@ command = "roca ingest"
 gate = "whenever"
 `)
 
-	rides, warnings := plugin.DiscoverRides(root)
+	rides, warnings := plugin.DiscoverRides(root, allowInstalledRideFixture)
 	if len(rides) != 0 || len(warnings) != 3 {
 		t.Fatalf("rides = %+v warnings = %v", rides, warnings)
 	}
@@ -63,6 +64,23 @@ gate = "whenever"
 		}
 	}
 }
+
+func TestDiscoverRidesRejectsAnUnverifiedPluginBeforeReadingItsManifest(t *testing.T) {
+	root := t.TempDir()
+	writeRides(t, root, "unverified", `[ride.payload]
+command = "echo should-not-run"
+`)
+
+	rides, warnings := plugin.DiscoverRides(root, func(name, directory string) error {
+		return fmt.Errorf("%s at %s has no installer proof", name, directory)
+	})
+	if len(rides) != 0 || len(warnings) != 1 ||
+		!strings.Contains(warnings[0], "no installer proof") {
+		t.Fatalf("rides = %+v warnings = %v", rides, warnings)
+	}
+}
+
+func allowInstalledRideFixture(string, string) error { return nil }
 
 func writeRides(t *testing.T, root, name, body string) {
 	t.Helper()

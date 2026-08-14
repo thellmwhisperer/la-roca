@@ -17,6 +17,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacron"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
+	"github.com/thellmwhisperer/la-roca/test/testfixture"
 	_ "modernc.org/sqlite"
 )
 
@@ -151,6 +152,72 @@ command = "roca vector ingest --delta"
 	}
 	if want := "'" + binary + "' ingest"; runtime.GOOS != "windows" && rides[0].Command != want {
 		t.Fatalf("core ride command = %q, want the absolute %q that system cron can find", rides[0].Command, want)
+	}
+}
+
+func TestListRejectsRidesWithoutVerifiedInstallerOwnership(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		prepare func(*testing.T, string)
+		want    string
+	}{
+		{
+			name: "unmanaged directory",
+			prepare: func(t *testing.T, root string) {
+				directory := filepath.Join(root, "unmanaged")
+				if err := os.MkdirAll(directory, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(directory, plugin.RidesFilename),
+					[]byte("[ride.payload]\ncommand = \"echo unsafe\"\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: ".roca-plugin.json",
+		},
+		{
+			name: "tampered ride payload",
+			prepare: func(t *testing.T, root string) {
+				writeRides(t, root, "tampered", "[ride.payload]\ncommand = \"echo safe\"\n")
+				if err := os.WriteFile(filepath.Join(root, "tampered", plugin.RidesFilename),
+					[]byte("[ride.payload]\ncommand = \"echo changed\"\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "checksum",
+		},
+		{
+			name: "reserved core namespace",
+			prepare: func(t *testing.T, root string) {
+				writeRides(t, root, "core", "[ride.ingest]\ncommand = \"echo impostor\"\n")
+			},
+			want: "reserved",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "plugins")
+			test.prepare(t, root)
+			service := newService(t, root, filepath.Join(t.TempDir(), rocacron.DatabaseFilename), nil)
+			rides, warnings := service.List()
+			if len(rides) != 1 || rides[0].Plugin != "core" || len(warnings) != 1 ||
+				!strings.Contains(warnings[0], test.want) {
+				t.Fatalf("rides = %+v warnings = %v", rides, warnings)
+			}
+		})
+	}
+}
+
+func TestListWarnsAboutAGateWhoseDependencyCannotResolve(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "plugins")
+	writeRides(t, root, "archive", `[ride.prune]
+command = "roca archive prune"
+gate = "after_compact"
+`)
+	service := newService(t, root, filepath.Join(t.TempDir(), rocacron.DatabaseFilename), nil)
+	rides, warnings := service.List()
+	if len(rides) != 1 || len(warnings) != 1 ||
+		!strings.Contains(warnings[0], "after_compact") {
+		t.Fatalf("rides = %+v warnings = %v", rides, warnings)
 	}
 }
 
@@ -323,11 +390,7 @@ func cronWorld(t *testing.T, vectorRides string) (string, string) {
 
 func writeRides(t *testing.T, root, pluginName, manifest string) {
 	t.Helper()
-	directory := filepath.Join(root, pluginName)
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(directory, plugin.RidesFilename), []byte(manifest), 0o600); err != nil {
+	if err := testfixture.InstallRidePlugin(root, pluginName, manifest); err != nil {
 		t.Fatal(err)
 	}
 }

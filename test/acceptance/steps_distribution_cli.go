@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/cucumber/godog"
+	"github.com/thellmwhisperer/la-roca/test/testfixture"
 )
 
 func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWorld) {
@@ -44,12 +45,9 @@ func (w *distributionWorld) previewDefaultCronTrain() error {
 	if installed.code != 0 {
 		return fmt.Errorf("install bundled plugins: %+v", installed)
 	}
-	vector := filepath.Join(w.home, ".roca", "plugins", "vector")
-	if err := os.MkdirAll(vector, 0o700); err != nil {
-		return err
-	}
 	manifest := "[ride.vector_delta]\ncommand = \"roca vector ingest --delta\"\ngate = \"after_ingest\"\n"
-	if err := os.WriteFile(filepath.Join(vector, "rides.toml"), []byte(manifest), 0o600); err != nil {
+	if err := testfixture.InstallRidePlugin(
+		filepath.Join(w.home, ".roca", "plugins"), "vector", manifest); err != nil {
 		return err
 	}
 	w.state["cron-list"] = w.runAt(w.home, w.installed, "cron", "list")

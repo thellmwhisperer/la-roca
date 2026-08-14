@@ -48,20 +48,7 @@ func TestInspectVerifiesTheSourceAndClassifiesItsRisk(t *testing.T) {
 func TestInspectAcceptsAndVerifiesAnOptionalRideManifest(t *testing.T) {
 	source := writePackage(t, "synthetic", "1.2.3", false, false)
 	rides := []byte("[ride.ingest]\ncommand = \"roca synthetic ingest\"\n")
-	writeFixtureFile(t, filepath.Join(source, "rides.toml"), rides, 0o600)
-	digest := sha256.Sum256(rides)
-	checksums := filepath.Join(source, "checksums.txt")
-	file, err := os.OpenFile(checksums, os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fmt.Fprintf(file, "%s  rides.toml\n", hex.EncodeToString(digest[:])); err != nil {
-		file.Close()
-		t.Fatal(err)
-	}
-	if err := file.Close(); err != nil {
-		t.Fatal(err)
-	}
+	addRideManifest(t, source, rides)
 
 	candidate, err := plugininstall.Inspect(source, source)
 	if err != nil {
@@ -75,6 +62,59 @@ func TestInspectAcceptsAndVerifiesAnOptionalRideManifest(t *testing.T) {
 	}
 	if _, err := plugininstall.Inspect(source, source); err == nil || !strings.Contains(err.Error(), "checksum") {
 		t.Fatalf("tampered rides passed with %v", err)
+	}
+}
+
+func TestVerifyInstalledPayloadRejectsTamperedRidesAndManifestIdentity(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "plugins")
+	bin := filepath.Join(t.TempDir(), "bin")
+	source := writePackage(t, "synthetic", "1.2.3", false, false)
+	addRideManifest(t, source, []byte("[ride.delta]\ncommand = \"roca synthetic delta\"\n"))
+	candidate, err := plugininstall.Inspect(source, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (plugininstall.Manager{PluginRoot: root, BinDir: bin}).Install(candidate); err != nil {
+		t.Fatal(err)
+	}
+	installed := filepath.Join(root, "synthetic")
+	if _, err := plugininstall.VerifyInstalledPayload("synthetic", installed); err != nil {
+		t.Fatalf("verified install was rejected: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(installed, "rides.toml"), []byte("changed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plugininstall.VerifyInstalledPayload("synthetic", installed); err == nil ||
+		!strings.Contains(err.Error(), "checksum") {
+		t.Fatalf("tampered rides passed with %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(installed, "rides.toml"),
+		[]byte("[ride.delta]\ncommand = \"roca synthetic delta\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plugininstall.VerifyInstalledPayload("different", installed); err == nil ||
+		!strings.Contains(err.Error(), "different") {
+		t.Fatalf("mismatched manifest identity passed with %v", err)
+	}
+}
+
+func addRideManifest(t *testing.T, source string, rides []byte) {
+	t.Helper()
+	writeFixtureFile(t, filepath.Join(source, "rides.toml"), rides, 0o600)
+	digest := sha256.Sum256(rides)
+	checksums := filepath.Join(source, "checksums.txt")
+	file, err := os.OpenFile(checksums, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fmt.Fprintf(file, "%s  rides.toml\n", hex.EncodeToString(digest[:])); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -88,8 +88,11 @@ already owned by core or a plugin. It does not ingest, embed, or keep a daemon
 alive. System cron can call `roca cron run`; omitting the train selects
 `nightly`. Core registers its existing direct `roca ingest` command as the
 first nightly ride, so direct ingest remains available unchanged. The train
-itself is not behind `features.plugins`: it reads the ride manifests it finds
-and records journeys whether or not the plugin standard is enabled.
+itself is not behind `features.plugins`: it reads verified ride manifests from
+installed plugin payloads and records journeys whether or not the plugin
+standard is enabled. An unmanaged directory, a changed payload, or an
+installation whose manifest and checksums no longer agree contributes no
+rides.
 
 A plugin opts in with `rides.toml`. Ride, train, and gate names are identifier
 style; use underscores rather than hyphens. `train` defaults to `nightly`:
@@ -106,9 +109,11 @@ gate's current status without invoking or recording anything. A gate named
 `after_<ride>` opens only when that dependency's latest recorded journey ended
 with exit code zero. The dependency is the ride of that name declared by the
 same plugin, so two plugins may name a ride alike without deciding each other's
-gates; a plugin that declares no ride of that name reads core's, which is what
-makes `after_ingest` read the core ingest journey. The train does not reorder
-rides into a dependency graph, and one ride it cannot observe or record is
+gates. `after_ingest` is the sole cross-plugin exception: when the plugin does
+not declare its own `ingest` ride, it reads the core ingest journey. Any other
+gate whose dependency is absent from that plugin is reported as an unusable
+manifest rather than deferred forever. The train does not reorder rides into a
+dependency graph, and one ride it cannot observe or record is
 reported against that ride while the rides behind it still take their trip.
 
 Before each invocation the train probes core's existing `logs/.roca.lock`
@@ -119,7 +124,9 @@ that some long command is halfway through: it is a courtesy check rather than
 mutual exclusion, which is why rides must stay idempotent. An occupied lock or
 closed dependency defers the ride to the next train instead of waiting in a
 daemon. Invoked commands keep their standard behavior while the train observes
-exit code, duration, streams, and timestamps from outside.
+exit code, duration, streams, and timestamps from outside. This version
+intentionally imposes no per-ride timeout: timeout policy belongs to each ride
+or its external scheduler, not to the observer.
 
 Every attempted or deferred trip is stored in the bundled custodial
 `roca-cron` plugin database at
