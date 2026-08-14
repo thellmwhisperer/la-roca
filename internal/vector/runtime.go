@@ -139,7 +139,8 @@ func Launch(request LaunchRequest) (LaunchResult, error) {
 	if err := command.Start(); err != nil {
 		return LaunchResult{}, fmt.Errorf("start vector worker: %w", err)
 	}
-	if _, err := fmt.Fprintf(claim, "%d\n", command.Process.Pid); err != nil {
+	pid := command.Process.Pid
+	if _, err := fmt.Fprintf(claim, "%d\n", pid); err != nil {
 		_ = command.Process.Kill()
 		return LaunchResult{}, err
 	}
@@ -151,7 +152,7 @@ func Launch(request LaunchRequest) (LaunchResult, error) {
 		return LaunchResult{}, err
 	}
 	removeClaim = false
-	return LaunchResult{PID: command.Process.Pid, LogPath: logPath}, nil
+	return LaunchResult{PID: pid, LogPath: logPath}, nil
 }
 
 func claimWorker(path string) (*os.File, error) {

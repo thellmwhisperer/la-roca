@@ -14,7 +14,7 @@ roca vector install
 ```
 
 Install returns after starting a background worker. The worker downloads
-`nomic-embed-text-v2` through local Ollama, indexes the existing corpus in
+`nomic-embed-text-v2-moe` through local Ollama, indexes the existing corpus in
 resumable batches, and sends a desktop notification with its exit status and
 added, updated, removed, and total chunk counts. Progress and errors remain in
 `vector/worker.log`; the same completion data is written to

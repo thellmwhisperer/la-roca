@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	DefaultModel   = "nomic-embed-text-v2"
+	DefaultModel   = "nomic-embed-text-v2-moe"
 	DocumentPrefix = "search_document: "
 	QueryPrefix    = "search_query: "
 	defaultOllama  = "http://127.0.0.1:11434"

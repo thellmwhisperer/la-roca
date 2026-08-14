@@ -3,6 +3,7 @@ package vector
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -32,6 +33,21 @@ func TestWorkerRecordsAndNotifiesSuccessfulCompletion(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(directory, CompletionFilename)); err != nil {
 		t.Fatalf("completion record: %v", err)
+	}
+}
+
+func TestLaunchReportsTheClaimedWorkerPID(t *testing.T) {
+	shell, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skipf("no shell to launch: %v", err)
+	}
+	directory := t.TempDir()
+	result, err := Launch(LaunchRequest{Executable: shell, Arguments: []string{"-c", "exit 0"}, DataDir: directory})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed := ReadWorkerPID(directory); result.PID <= 0 || result.PID != claimed {
+		t.Fatalf("reported pid %d, claim file pid %d", result.PID, claimed)
 	}
 }
 

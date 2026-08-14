@@ -38,6 +38,9 @@ func TestOllamaPullAndBatchEmbeddingContract(t *testing.T) {
 	}))
 	defer server.Close()
 
+	if DefaultModel != "nomic-embed-text-v2-moe" {
+		t.Fatalf("default model %q is not the model name the Ollama library publishes", DefaultModel)
+	}
 	client := Ollama{BaseURL: server.URL, Client: server.Client()}
 	if err := client.Pull(context.Background(), DefaultModel); err != nil {
 		t.Fatal(err)
