@@ -53,6 +53,7 @@ func BuildCascade(s Settings) (Cascade, error) {
 		Disabled:            resolved.Disabled,
 		Warnings: append(append(append([]string(nil), s.File.Warnings...),
 			s.providerKeyWarnings()...), resolved.Warnings...),
+		Dropped:        resolved.Dropped,
 		FactoryDefault: selection.Source == SourceCode,
 	}
 	return s.budgeted(cascade), nil
@@ -61,34 +62,32 @@ func BuildCascade(s Settings) (Cascade, error) {
 // BuildInterpretCascade turns models.interpret_order into the cascade of the
 // second inference, the only one that sees result rows.
 func BuildInterpretCascade(s Settings) (Cascade, error) {
-	order := s.File.Models.InterpretOrder
-	if len(order) == 0 {
-		return Cascade{}, nil
-	}
-	resolved, err := Resolve(Selection{
-		Names: order, Source: SourceConfig, File: s.File.Path, Key: "models.interpret_order",
-	}, s.catalog())
-	if err != nil {
-		return Cascade{}, err
-	}
-	return s.budgeted(Cascade{Providers: resolved.Providers, Warnings: resolved.Warnings}), nil
+	return s.orderedCascade(s.File.Models.InterpretOrder, "models.interpret_order")
 }
 
 // BuildExploreCascade turns models.explore_order into the optional stronger
 // cascade for deep investigation. Runtime fallback is owned by the service,
 // which tries interpretation order and then the main order after this one.
 func BuildExploreCascade(s Settings) (Cascade, error) {
-	order := s.File.Models.ExploreOrder
+	return s.orderedCascade(s.File.Models.ExploreOrder, "models.explore_order")
+}
+
+// orderedCascade resolves one of the seat-specific orders. An order nobody wrote
+// is an empty cascade and not an error: the seat is optional and the service
+// owns the fallback.
+func (s Settings) orderedCascade(order []string, key string) (Cascade, error) {
 	if len(order) == 0 {
 		return Cascade{}, nil
 	}
 	resolved, err := Resolve(Selection{
-		Names: order, Source: SourceConfig, File: s.File.Path, Key: "models.explore_order",
+		Names: order, Source: SourceConfig, File: s.File.Path, Key: key,
 	}, s.catalog())
 	if err != nil {
 		return Cascade{}, err
 	}
-	return s.budgeted(Cascade{Providers: resolved.Providers, Warnings: resolved.Warnings}), nil
+	return s.budgeted(Cascade{
+		Providers: resolved.Providers, Warnings: resolved.Warnings, Dropped: resolved.Dropped,
+	}), nil
 }
 
 func (s Settings) budgeted(cascade Cascade) Cascade {
