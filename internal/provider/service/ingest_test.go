@@ -180,23 +180,9 @@ func TestInitBedrockIncludesTheDeclaredAnthropicExport(t *testing.T) {
 // corpus has already been given.
 func TestTheReadOnlyDryRunPreviewsAgainstTheCorpusWatermarks(t *testing.T) {
 	home := t.TempDir()
-	paths := freshPaths(t)
-	plugins := filepath.Join(home, ".roca", "plugins")
-	if _, err := rocacorpus.Ensure(plugins, filepath.Join(home, ".local", "bin"), "v-test"); err != nil {
-		t.Fatal(err)
-	}
-	options := func(readOnly bool) service.Options {
-		return service.Options{
-			DBPath: paths.db, BackupDir: paths.backups, DataDir: paths.data,
-			Version: "0.0.0-test", Commit: "0123456789abcdef",
-			Sources: ingest.ResolveRoots(
-				ingest.Environment{GOOS: "darwin", Home: home},
-				ingest.Settings{WorkspaceRoots: []string{filepath.Join(home, "w")}}),
-			PluginDir: plugins, CorpusEnabled: true, ReadOnly: readOnly,
-		}
-	}
+	options := optionsOverTheSources(t, freshPaths(t), home, true)
 	ctx := context.Background()
-	writable, err := service.Open(options(false))
+	writable, err := service.Open(options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +201,8 @@ func TestTheReadOnlyDryRunPreviewsAgainstTheCorpusWatermarks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	audit, err := service.Open(options(true))
+	options.ReadOnly = true
+	audit, err := service.Open(options)
 	if err != nil {
 		t.Fatalf("read-only open: %v", err)
 	}
@@ -247,6 +234,18 @@ func serviceOverTheSources(t *testing.T, home string, corpus bool, legacySchema 
 			t.Fatal(err)
 		}
 	}
+	svc, err := service.Open(optionsOverTheSources(t, paths, home, corpus))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { svc.Close() })
+	return svc
+}
+
+// optionsOverTheSources describes that installation, and installs the perennial
+// corpus when the caller asked for one.
+func optionsOverTheSources(t *testing.T, paths testPaths, home string, corpus bool) service.Options {
+	t.Helper()
 	plugins := ""
 	if corpus {
 		plugins = filepath.Join(home, ".roca", "plugins")
@@ -254,7 +253,7 @@ func serviceOverTheSources(t *testing.T, home string, corpus bool, legacySchema 
 			t.Fatal(err)
 		}
 	}
-	svc, err := service.Open(service.Options{
+	return service.Options{
 		DBPath:    paths.db,
 		BackupDir: paths.backups,
 		DataDir:   paths.data,
@@ -264,12 +263,7 @@ func serviceOverTheSources(t *testing.T, home string, corpus bool, legacySchema 
 			ingest.Environment{GOOS: "darwin", Home: home},
 			ingest.Settings{WorkspaceRoots: []string{filepath.Join(home, "w")}}),
 		PluginDir: plugins, CorpusEnabled: corpus,
-	})
-	if err != nil {
-		t.Fatalf("open: %v", err)
 	}
-	t.Cleanup(func() { svc.Close() })
-	return svc
 }
 
 // seedATranscript writes one Claude transcript and one memory file, both invented.
