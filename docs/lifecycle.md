@@ -257,7 +257,8 @@ zone out of the owned-path inventory. The directory holding it stays with it.
 A purge also removes the installed plugin packages under `~/.roca/plugins/` and
 the `roca-<name>` executables the installer placed, so no plugin code is left on
 a machine La Roca was removed from. A directory there is claimed only through the
-manifest the installer generated in it, and anything else under that path
+manifest the installer generated in it, whose declared writable state directory
+is a package-owned namespace claimed whole, and anything else under that path
 survives untouched. An executable whose bytes changed since its install is no
 longer the file La Roca placed, so it survives too.
 

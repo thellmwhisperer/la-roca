@@ -2,7 +2,7 @@
 
 This file is the project's committed home for project-intrinsic agent knowledge: build, test, release, architecture, and sharp-edge notes that should travel with the code.
 
-- Run the canonical local gate with `make check`; inspect the Gherkin catalogue with `make accept-index`.
+- Run the canonical local gate with `make check`; inspect the Gherkin catalogue with `make accept-index`. That gate stops at the root module, so a change under `plugins/<name>/` also owes `make -C plugins/<name> check`.
 - Per-domain acceptance lives under `features/<domain>/`; the Godog harness is enabled only by the `acceptance` build tag.
 - The slop gate ratchets over test code too, so new tests alone can fail `make check`: fold paired cases into one table-driven test rather than raise the ceiling in `.slop/`.
 - Public source, documentation, features, and fixtures are English-only; use unmistakably synthetic test data.
