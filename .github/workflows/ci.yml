@@ -41,6 +41,22 @@ jobs:
           UPGRADE_HOME: ${{ matrix.version }}
         run: make upgrade-gauntlet UPGRADE_HOME="$UPGRADE_HOME"
 
+  # The vector plugin is its own Go module, so the root `make check` never sees
+  # it: `go vet ./...` and `go test ./...` stop at the module boundary. Its own
+  # gate is a job of its own, and a red one names the plugin and not the core.
+  vector-plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: plugins/vector/go.mod
+          cache-dependency-path: plugins/vector/go.sum
+          cache: true
+
+      - name: Format, vet, tests and build of the vector module
+        run: make -C plugins/vector check
+
   check:
     runs-on: ubuntu-latest
     steps:
