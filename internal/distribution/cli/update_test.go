@@ -42,6 +42,31 @@ func TestUpdateAcceptsATrustedHTTPSMirrorShape(t *testing.T) {
 	}
 }
 
+func TestReleaseRedirectBoundFollowsItsDefaultOffFeature(t *testing.T) {
+	for _, testCase := range []struct {
+		name, config string
+		want         bool
+	}{
+		{name: "missing config"},
+		{name: "enabled", config: "[features]\nrelease_redirects = true\n", want: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			if testCase.config != "" {
+				writeFile(t, filepath.Join(home, ".roca", "config.toml"), testCase.config)
+			}
+			source, err := (&cliEnv{}).releaseSource("owner/repo", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if source.ReleaseRedirects != testCase.want {
+				t.Fatalf("ReleaseRedirects = %v, want %v", source.ReleaseRedirects, testCase.want)
+			}
+		})
+	}
+}
+
 // An operator who installed this product and types `roca update` has already
 // said which repository they trust: the one the binary they are running came
 // from. Making them repeat it in a flag is redundant. Precedence is the flag,

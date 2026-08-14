@@ -643,6 +643,7 @@ type FeaturesConfig struct {
 	Plugins            bool `toml:"plugins"`
 	ArtifactRefresh    bool `toml:"artifact_refresh"`
 	RocaOps            bool `toml:"roca_ops"`
+	ReleaseRedirects   bool `toml:"release_redirects"`
 }
 
 // defaultFeatures is the belt as shipped: everything on.
@@ -815,6 +816,7 @@ func readFeatures(section map[string]any, path string, warnings *[]string) Featu
 		"plugins":              &features.Plugins,
 		"artifact_refresh":     &features.ArtifactRefresh,
 		"roca_ops":             &features.RocaOps,
+		"release_redirects":    &features.ReleaseRedirects,
 	}
 	for _, key := range sortedKeys(section) {
 		enabled, known := switches[key]

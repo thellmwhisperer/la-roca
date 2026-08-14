@@ -80,7 +80,8 @@ func (env *cliEnv) releaseSource(repo, api string) (release.Source, error) {
 		API: firstNonEmpty(api, os.Getenv(release.EnvAPI)),
 		Repo: firstNonEmpty(repo, os.Getenv(release.EnvRepo),
 			file.Default(keyReleaseRepo), release.DefaultRepo),
-		Token: os.Getenv(release.EnvToken),
+		Token:            os.Getenv(release.EnvToken),
+		ReleaseRedirects: file.Features.ReleaseRedirects,
 	}
 	if err := release.ValidateMirror(source.API, source.Repo); err != nil {
 		return release.Source{}, err
