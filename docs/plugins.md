@@ -92,7 +92,10 @@ itself is not behind `features.plugins`: it reads verified ride manifests from
 installed plugin payloads and records journeys whether or not the plugin
 standard is enabled. An unmanaged directory, a changed payload, an installation
 whose manifest and checksums no longer agree, or one whose recorded consent is
-[data-only](#verified-packages-and-lifecycle) contributes no rides.
+[data-only](#verified-packages-and-lifecycle) contributes no rides. That check
+re-reads every declared payload except the plugin's own writable database, and
+a directory named `core` contributes nothing either: that ride namespace is
+reserved for the built-in rides.
 
 A plugin opts in with `rides.toml`. Ride, train, and gate names are identifier
 style; use underscores rather than hyphens. `train` defaults to `nightly`:
