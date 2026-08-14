@@ -171,12 +171,25 @@ func (s *Service) List() ([]plugin.Ride, []string) {
 	return append([]plugin.Ride{coreIngestRide()}, discovered...), warnings
 }
 
+// verifyInstalledRides admits a payload the installer still owns and whose
+// recorded consent covers running code. A ride manifest installed under the
+// data-only screen was accepted as near-harmless content, and the train does
+// not upgrade that answer on the operator's behalf.
 func verifyInstalledRides(pluginName, directory string) error {
 	if pluginName == corePlugin {
 		return fmt.Errorf("plugin name %q is reserved for the built-in ride namespace", corePlugin)
 	}
-	_, err := plugininstall.VerifyInstalledPayload(pluginName, directory)
-	return err
+	manifest, err := plugininstall.VerifyInstalledPayload(pluginName, directory)
+	if err != nil {
+		return err
+	}
+	if _, declared := manifest.Files[plugin.RidesFilename]; declared &&
+		manifest.Risk != plugininstall.Executable {
+		return fmt.Errorf(
+			"its rides were installed as %s; reinstall it to consent to running them",
+			manifest.Risk)
+	}
+	return nil
 }
 
 func coreIngestRide() plugin.Ride {

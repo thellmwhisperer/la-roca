@@ -514,11 +514,13 @@ func resolvePluginCandidate(ctx context.Context, reference, scratch string) (plu
 
 func pluginConsentText(action string, candidate plugininstall.Candidate, trusted string) string {
 	var risk string
-	switch candidate.Risk {
-	case plugininstall.Executable:
-		risk = "EXECUTABLE: FULL TRUST; it runs code with your user privileges."
-	default:
+	switch {
+	case candidate.Risk != plugininstall.Executable:
 		risk = "DATA-ONLY: near-harmless; its worst case is lying content returned from its database."
+	case candidate.Executable == "":
+		risk = "EXECUTABLE: FULL TRUST; its cron rides run commands with your user privileges."
+	default:
+		risk = "EXECUTABLE: FULL TRUST; it runs code with your user privileges."
 	}
 	custody := ""
 	if candidate.Custody {

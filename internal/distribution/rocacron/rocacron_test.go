@@ -3,6 +3,7 @@ package rocacron_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacron"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/test/testfixture"
@@ -193,6 +195,14 @@ func TestListRejectsRidesWithoutVerifiedInstallerOwnership(t *testing.T) {
 			},
 			want: "reserved",
 		},
+		{
+			name: "consent recorded without execution",
+			prepare: func(t *testing.T, root string) {
+				writeRides(t, root, "trusted", "[ride.payload]\ncommand = \"echo unconsented\"\n")
+				downgradeRecordedRisk(t, filepath.Join(root, "trusted"))
+			},
+			want: string(plugininstall.DataOnly),
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "plugins")
@@ -207,16 +217,18 @@ func TestListRejectsRidesWithoutVerifiedInstallerOwnership(t *testing.T) {
 	}
 }
 
-func TestListWarnsAboutAGateWhoseDependencyCannotResolve(t *testing.T) {
+func TestAGateWhoseDependencyCannotResolveNeverReachesTheTrain(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "plugins")
-	writeRides(t, root, "archive", `[ride.prune]
+	err := testfixture.InstallRidePlugin(root, "archive", `[ride.prune]
 command = "roca archive prune"
 gate = "after_compact"
 `)
+	if err == nil || !strings.Contains(err.Error(), "after_compact") {
+		t.Fatalf("an unresolvable gate was installed: %v", err)
+	}
 	service := newService(t, root, filepath.Join(t.TempDir(), rocacron.DatabaseFilename), nil)
 	rides, warnings := service.List()
-	if len(rides) != 1 || len(warnings) != 1 ||
-		!strings.Contains(warnings[0], "after_compact") {
+	if len(rides) != 1 || rides[0].Plugin != "core" || len(warnings) != 0 {
 		t.Fatalf("rides = %+v warnings = %v", rides, warnings)
 	}
 }
@@ -391,6 +403,22 @@ func cronWorld(t *testing.T, vectorRides string) (string, string) {
 func writeRides(t *testing.T, root, pluginName, manifest string) {
 	t.Helper()
 	if err := testfixture.InstallRidePlugin(root, pluginName, manifest); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func downgradeRecordedRisk(t *testing.T, directory string) {
+	t.Helper()
+	manifest, err := plugininstall.ReadManifest(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.Risk = plugininstall.DataOnly
+	raw, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, plugininstall.ManifestFilename), raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

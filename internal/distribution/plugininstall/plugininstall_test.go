@@ -57,11 +57,22 @@ func TestInspectAcceptsAndVerifiesAnOptionalRideManifest(t *testing.T) {
 	if candidate.Files["rides.toml"] == "" {
 		t.Fatalf("candidate does not own rides.toml: %+v", candidate.Files)
 	}
+	if candidate.Risk != plugininstall.Executable {
+		t.Fatalf("a package whose rides run shell commands is classified %q", candidate.Risk)
+	}
 	if err := os.WriteFile(filepath.Join(source, "rides.toml"), []byte("changed\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := plugininstall.Inspect(source, source); err == nil || !strings.Contains(err.Error(), "checksum") {
 		t.Fatalf("tampered rides passed with %v", err)
+	}
+
+	unresolvable := writePackage(t, "synthetic", "1.2.3", false, false)
+	addRideManifest(t, unresolvable,
+		[]byte("[ride.prune]\ncommand = \"roca synthetic prune\"\ngate = \"after_compact\"\n"))
+	if _, err := plugininstall.Inspect(unresolvable, unresolvable); err == nil ||
+		!strings.Contains(err.Error(), "after_compact") {
+		t.Fatalf("an unresolvable gate passed with %v", err)
 	}
 }
 

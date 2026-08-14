@@ -53,9 +53,13 @@ command = "roca ingest"
 command = "roca ingest"
 gate = "whenever"
 `)
+	writeRides(t, root, "unresolvable-gate", `[ride.prune]
+command = "roca archive prune"
+gate = "after_compact"
+`)
 
 	rides, warnings := plugin.DiscoverRides(root, allowInstalledRideFixture)
-	if len(rides) != 0 || len(warnings) != 3 {
+	if len(rides) != 0 || len(warnings) != 4 {
 		t.Fatalf("rides = %+v warnings = %v", rides, warnings)
 	}
 	for _, warning := range warnings {

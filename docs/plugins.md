@@ -90,9 +90,9 @@ alive. System cron can call `roca cron run`; omitting the train selects
 first nightly ride, so direct ingest remains available unchanged. The train
 itself is not behind `features.plugins`: it reads verified ride manifests from
 installed plugin payloads and records journeys whether or not the plugin
-standard is enabled. An unmanaged directory, a changed payload, or an
-installation whose manifest and checksums no longer agree contributes no
-rides.
+standard is enabled. An unmanaged directory, a changed payload, an installation
+whose manifest and checksums no longer agree, or one whose recorded consent is
+[data-only](#verified-packages-and-lifecycle) contributes no rides.
 
 A plugin opts in with `rides.toml`. Ride, train, and gate names are identifier
 style; use underscores rather than hyphens. `train` defaults to `nightly`:
@@ -220,9 +220,13 @@ those verified source checksums.
 Run `roca plugin install <path|url|owner/repo>`. The consent screen always names
 the source, version, checksum, and one of two risk levels:
 
-- **DATA-ONLY** has a database and semantic layer but no executable. It is
-  near-harmless; its worst case is lying content entering model context.
-- **EXECUTABLE** is full trust. It runs code with the user's privileges.
+- **DATA-ONLY** has a database and semantic layer, no executable, and no ride
+  manifest. It is near-harmless; its worst case is lying content entering model
+  context.
+- **EXECUTABLE** is full trust. It runs code with the user's privileges, either
+  from its `roca-<name>` executable or from the ride commands the [cron
+  train](#cron-rides) hands to a shell. The train runs a plugin's rides only
+  while its manifest records that consent.
 
 Install, update, and uninstall all show that screen and wait for an answer.
 `--yes` accepts that risk without prompting; `--json` never prompts and

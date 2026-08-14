@@ -194,10 +194,14 @@ func Inspect(source, directory string) (Candidate, error) {
 		}
 	}
 	required := []string{PackageFilename, plugin.SemanticFilename, filepath.Base(descriptor.Database)}
+	risk := DataOnly
+	// A ride manifest is an execution surface as much as a shipped binary is:
+	// the cron train hands every declared command to a shell under the
+	// operator's own privileges, so such a package is never data-only.
 	if len(rides) > 0 {
 		required = append(required, plugin.RidesFilename)
+		risk = Executable
 	}
-	risk := DataOnly
 	if executable != "" {
 		required = append(required, executable)
 		risk = Executable
@@ -511,7 +515,7 @@ func (m Manager) UpdateInPlace(candidate Candidate) (Result, error) {
 	}
 	if candidate.Risk != DataOnly || candidate.Executable != "" {
 		return Result{}, fmt.Errorf(
-			"plugin %s carries an executable; an in-place update is refused", candidate.Name)
+			"plugin %s can run code; an in-place update is refused", candidate.Name)
 	}
 	target := filepath.Join(m.PluginRoot, candidate.Name)
 	previous, err := ReadManifest(target)

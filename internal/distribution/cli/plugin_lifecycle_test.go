@@ -144,24 +144,27 @@ func installedPluginFixture(t *testing.T, paths config.Paths, name string) (stri
 func TestPluginConsentDistinguishesDataFromCodeAndNamesTheReplacedChecksum(t *testing.T) {
 	checksum, recorded := strings.Repeat("a", 64), strings.Repeat("b", 64)
 	tests := []struct {
-		action  string
-		risk    plugininstall.Risk
-		trusted string
-		want    []string
+		action     string
+		risk       plugininstall.Risk
+		executable string
+		trusted    string
+		want       []string
 	}{
-		{"install", plugininstall.DataOnly, "",
+		{"install", plugininstall.DataOnly, "", "",
 			[]string{"DATA-ONLY: near-harmless; its worst case is lying content", "sha256:" + checksum}},
-		{"install", plugininstall.Executable, "",
+		{"install", plugininstall.Executable, "roca-synthetic", "",
 			[]string{"EXECUTABLE: FULL TRUST; it runs code with your user privileges"}},
-		{"update", plugininstall.DataOnly, recorded,
+		{"install", plugininstall.Executable, "", "",
+			[]string{"EXECUTABLE: FULL TRUST; its cron rides run commands with your user privileges"}},
+		{"update", plugininstall.DataOnly, "", recorded,
 			[]string{"sha256:" + checksum, "replaces the recorded sha256:" + recorded}},
-		{"update", plugininstall.DataOnly, checksum,
+		{"update", plugininstall.DataOnly, "", checksum,
 			[]string{"unchanged since the recorded install"}},
 	}
 	for _, test := range tests {
 		candidate := plugininstall.Candidate{
 			Name: "synthetic", Version: "1.2.3", Source: "owner/synthetic",
-			Checksum: checksum, Risk: test.risk,
+			Checksum: checksum, Risk: test.risk, Executable: test.executable,
 		}
 		text := pluginConsentText(test.action, candidate, test.trusted)
 		wanted := append([]string{"source: owner/synthetic", "version: 1.2.3"}, test.want...)
