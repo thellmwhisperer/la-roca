@@ -43,11 +43,7 @@ func TestCalmPrefersJourneyDatabaseAndFallsBackWhenItsSchemaIsUnknown(t *testing
 			}
 			gate := CalmGate{DataDir: directory, JourneyPaths: []string{journeyPath},
 				QuietPeriod: 2 * time.Second, Now: func() time.Time { return now }}
-			calm, _, err := gate.calm(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
-			if calm != test.want {
+			if calm := calmNow(t, gate); calm != test.want {
 				t.Fatalf("calm = %t, want %t", calm, test.want)
 			}
 		})
@@ -66,6 +62,18 @@ func TestWaitGivesUpWithABoundedTimeoutThatNamesTheBlocker(t *testing.T) {
 	if !strings.Contains(err.Error(), "core ingest activity") {
 		t.Fatalf("timeout error does not name what it waited on: %v", err)
 	}
+}
+
+// calmNow reads the gate's verdict at the instant its clock reports. Every
+// calm case asks the same question, and a failure to read the signals at all is
+// never one of the answers under test.
+func calmNow(t *testing.T, gate CalmGate) bool {
+	t.Helper()
+	calm, _, err := gate.calm(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return calm
 }
 
 func writeIngestLog(t *testing.T, directory string, started time.Time, duration time.Duration) {
@@ -101,19 +109,11 @@ func TestCalmFallsBackToLatestCoreIngestLog(t *testing.T) {
 			now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
 			writeIngestLog(t, directory, now.Add(test.started), test.duration)
 			gate := CalmGate{DataDir: directory, QuietPeriod: 2 * time.Second, Now: func() time.Time { return now }}
-			calm, _, err := gate.calm(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
-			if calm {
+			if calmNow(t, gate) {
 				t.Fatal("an ingest that finished inside the quiet period was reported calm")
 			}
 			gate.Now = func() time.Time { return now.Add(3 * time.Second) }
-			calm, _, err = gate.calm(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !calm {
+			if !calmNow(t, gate) {
 				t.Fatal("settled ingest log was not reported calm")
 			}
 		})

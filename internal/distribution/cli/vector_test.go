@@ -7,8 +7,20 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/vector"
 )
+
+// syntheticCoreDatabase is the file the vector commands only stat: an empty
+// core database is enough for everything they decide before touching SQLite.
+func syntheticCoreDatabase(t *testing.T) string {
+	t.Helper()
+	corePath := filepath.Join(t.TempDir(), "roca.db")
+	if err := os.WriteFile(corePath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return corePath
+}
 
 func TestVectorInstallLaunchesOneBackgroundWorker(t *testing.T) {
 	oldLaunch, oldExecutable := launchVectorWorker, vectorExecutable
@@ -20,18 +32,14 @@ func TestVectorInstallLaunchesOneBackgroundWorker(t *testing.T) {
 	}
 	vectorExecutable = func() (string, error) { return "/synthetic/roca", nil }
 
-	directory := t.TempDir()
-	corePath := filepath.Join(directory, "roca.db")
-	if err := os.WriteFile(corePath, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	corePath := syntheticCoreDatabase(t)
 	out := &bytes.Buffer{}
 	env := &cliEnv{out: out, errOut: &bytes.Buffer{}, dbPath: corePath, skipReconciliation: true}
 	code, err := executeWithEnv(env, []string{"--db-path", corePath, "vector", "install"}, strings.NewReader(""))
 	if err != nil || code != 0 {
 		t.Fatalf("install: code=%d err=%v", code, err)
 	}
-	if request.Executable != "/synthetic/roca" || request.DataDir != filepath.Join(directory, "vector") {
+	if request.Executable != "/synthetic/roca" || request.DataDir != filepath.Join(filepath.Dir(corePath), "vector") {
 		t.Fatalf("launch request = %+v", request)
 	}
 	wantArgs := strings.Join(vector.WorkerArguments(corePath, vector.DefaultModel), "\x00")
@@ -48,6 +56,41 @@ func TestVectorDeltaFlagIsExplicit(t *testing.T) {
 	code, err := executeWithEnv(env, []string{"--db-path", env.dbPath, "vector", "ingest"}, strings.NewReader(""))
 	if err == nil || code == 0 || !strings.Contains(err.Error(), "--delta") {
 		t.Fatalf("ingest without delta: code=%d err=%v", code, err)
+	}
+}
+
+func TestVectorWritesRefuseReadOnlyMode(t *testing.T) {
+	oldLaunch := launchVectorWorker
+	t.Cleanup(func() { launchVectorWorker = oldLaunch })
+	launched := false
+	launchVectorWorker = func(vector.LaunchRequest) (vector.LaunchResult, error) {
+		launched = true
+		return vector.LaunchResult{}, nil
+	}
+	corePath := syntheticCoreDatabase(t)
+	t.Setenv(config.EnvReadOnly, "1")
+
+	for _, testCase := range []struct {
+		name      string
+		arguments []string
+		operation string
+	}{
+		{name: "install", arguments: []string{"vector", "install"}, operation: "vector install"},
+		{name: "delta", arguments: []string{"vector", "ingest", "--delta"}, operation: "vector ingest --delta"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := &cliEnv{out: &bytes.Buffer{}, errOut: &bytes.Buffer{}, dbPath: corePath, skipReconciliation: true}
+			code, err := executeWithEnv(env, append([]string{"--db-path", corePath}, testCase.arguments...), strings.NewReader(""))
+			if err == nil || code == 0 {
+				t.Fatalf("%s under read-only: code=%d err=%v", testCase.name, code, err)
+			}
+			if !strings.Contains(err.Error(), "read-only mode") || !strings.Contains(err.Error(), testCase.operation) {
+				t.Fatalf("%s error = %v", testCase.name, err)
+			}
+		})
+	}
+	if launched {
+		t.Fatal("read-only install launched a background worker")
 	}
 }
 

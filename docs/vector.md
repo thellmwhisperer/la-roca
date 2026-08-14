@@ -8,6 +8,10 @@ separate `vector/vector.db` beside the selected core database. That store
 contains embeddings, fingerprints, and stable source locators; it does not copy
 corpus text.
 
+Install and the delta ride write, so both refuse under the
+[read-only boundary](operations.md#read-only-boundary); query reads and stays
+available there.
+
 ## Install
 
 ```sh

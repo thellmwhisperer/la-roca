@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	"github.com/thellmwhisperer/la-roca/internal/vector"
 )
 
@@ -42,6 +43,9 @@ func vectorInstallCommand(env *cliEnv) *cobra.Command {
 		Short: "Download the embedding model and build the index in the background",
 		Args:  cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
+			if err := refuseVectorWriteWhenReadOnly("vector install"); err != nil {
+				return err
+			}
 			paths, err := env.resolvePaths()
 			if err != nil {
 				return err
@@ -92,6 +96,9 @@ func vectorIngestCommand(env *cliEnv) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !delta {
 				return fmt.Errorf("vector ingest is incremental; pass --delta")
+			}
+			if err := refuseVectorWriteWhenReadOnly("vector ingest --delta"); err != nil {
+				return err
 			}
 			paths, err := env.resolvePaths()
 			if err != nil {
@@ -201,6 +208,19 @@ func vectorWorkerCommand(env *cliEnv) *cobra.Command {
 	}
 	command.Flags().StringVar(&model, "model", model, "local Ollama embedding model")
 	return command
+}
+
+// refuseVectorWriteWhenReadOnly holds the operator's boundary over the vector
+// store, which is a database of its own outside the shared service, so the
+// service's refusal never sees these calls. The check has to happen here,
+// before a background worker is launched or a single embedding is written, or
+// read-only mode would mean one thing for the corpus and another for the index
+// built from it.
+func refuseVectorWriteWhenReadOnly(operation string) error {
+	if !config.ReadOnly(os.Getenv(config.EnvReadOnly)) {
+		return nil
+	}
+	return service.RefuseReadOnly(operation)
 }
 
 func vectorDataDir(paths config.Paths) string {
