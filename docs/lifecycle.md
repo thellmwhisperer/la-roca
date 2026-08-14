@@ -19,8 +19,9 @@ The installed binary then places its own bundled data plugins under
 `~/.roca/plugins/`. Each one carries no executable, starts as an empty SQLite
 database, is verified and recorded like any other [installed
 package](plugins.md#verified-packages-and-lifecycle), and is removed by a purge
-with the rest of that tree. The first one it ships is
-[`roca-ops`](plugins.md#the-bundled-roca-ops-plugin). If they cannot be placed,
+with the rest of that tree. It ships the resident
+[`roca-ops`](plugins.md#the-bundled-roca-ops-plugin) store and the custodial
+[`roca-cron`](plugins.md#cron-rides) journey store. If they cannot be placed,
 the installer puts the previous binary back and reports the reason, so no
 partial update is left behind; when even that restore fails it names the copy it
 kept for the operator to move back by hand. A `--version` older than bundled

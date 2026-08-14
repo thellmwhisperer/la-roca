@@ -1,0 +1,22 @@
+version: 1
+attachment: on-demand
+description: Recorded cron train journeys and their observed outcomes.
+custody: true
+questions:
+  - Which cron rides ran and what happened?
+tables:
+  - name: journeys
+    description: One observed invocation or deferred ride in a cron train.
+    columns:
+      - id
+      - train
+      - ride
+      - plugin
+      - started_at
+      - ended_at
+      - duration_ms
+      - exit_code
+      - error
+      - gate_status
+      - stdout
+      - stderr
