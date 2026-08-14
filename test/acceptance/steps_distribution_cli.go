@@ -133,7 +133,6 @@ func (w *distributionWorld) helpIsComplete() error {
 		"doctor": "configuration", "ingest": "source", "init": "database",
 		"hooks": "authorship", "model": "model", "query": "memory", "explore": "concept", "store": "memory",
 		"uninstall": "remove", "update": "release", "plugin": "plugin", "plugins": "plugin",
-		"vector": "semantic",
 	}
 	found := map[string]string{}
 	inCommands := false
