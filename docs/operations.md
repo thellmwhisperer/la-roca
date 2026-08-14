@@ -148,14 +148,21 @@ The contract, reader, rotation, retention, and redaction are owned by
 `ROCA_READ_ONLY=1` refuses writes in the shared service before database I/O,
 so CLI and MCP enforce the same boundary.
 
+That refusal lives in the service, so a write that never reaches it needs a
+check of its own. Optional [vector search](vector.md) keeps a store outside the
+service and carries one: `roca vector install` refuses before launching the
+background worker, and `roca vector ingest --delta` refuses before embedding
+anything. `roca vector query` reads, so it stays available.
+
 ## Data directory
 
 The default data directory is `~/.roca`. It contains `roca.db`,
 configuration, backups, `prompt.md`, and operational JSONL under
-`logs/`. The machine-wide managed-artifact registry is `artifacts.json` in the
-default `~/.roca` home even when a database is selected elsewhere. La Roca does
-not edit agent instruction files; the operator decides whether to use the
-generated prompt or install the bundled skill.
+`logs/`. Optional [vector search](vector.md) adds its own store under `vector/`
+once it is installed. The machine-wide managed-artifact registry is
+`artifacts.json` in the default `~/.roca` home even when a database is selected
+elsewhere. La Roca does not edit agent instruction files; the operator decides
+whether to use the generated prompt or install the bundled skill.
 
 Experimental plugin packages are not part of the selected data directory: they
 live under `~/.roca/plugins`, and protected removals are archived beside them.

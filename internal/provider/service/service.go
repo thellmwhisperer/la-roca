@@ -493,10 +493,11 @@ func (s *Service) SchemaStatus(ctx context.Context) (store.Report, error) {
 
 var errReadOnly = fmt.Errorf("La Roca is in read-only mode: this operation writes")
 
-// refuseReadOnly is that same refusal naming the operation it refused. The
-// message belongs to the service and neither surface rewrites it: a shell and a
-// plug that answer read-only mode with different words are two products.
-func refuseReadOnly(operation string) error {
+// RefuseReadOnly is that same refusal naming the operation it refused. The
+// message belongs to the service and no caller rewrites it: a shell, a plug and
+// a command whose store lives outside the service that answer read-only mode
+// with different words are three products.
+func RefuseReadOnly(operation string) error {
 	return fmt.Errorf("%w (operation: %s)", errReadOnly, operation)
 }
 
