@@ -105,7 +105,7 @@ refuses writes in the shared service before database I/O, so CLI and MCP
 enforce the same boundary.
 
 For local semantic similarity without a model-generated SQL step, the optional
-[`roca vector`](docs/vector.md) plugin downloads an Ollama embedding model and
+[`roca vector`](docs/vector.md) command downloads an Ollama embedding model and
 builds its own SQLite vector store in the background. It stays off until
 `roca vector install` and never duplicates corpus text.
 
@@ -296,10 +296,11 @@ exactly the information the task needs instead of a whole skill.
   already on `PATH` and uses their existing signed-in sessions without reading,
   copying, or storing secrets. No La Roca login is required. For machines
   without a usable local CLI, the local Ollama floor and keyword rescue remain.
-- **Exact retrieval, no embeddings.** Recovery is SQL plus a local FTS5 index
+- **Exact retrieval by default.** Recovery is SQL plus a local FTS5 index
   with diacritic folding; a plain `LIKE` fallback works before the index
   exists. If you want semantics, your model supplies it at question time; the
-  retrieval itself stays exact and auditable.
+  retrieval itself stays exact and auditable. Embeddings exist only if you ask
+  for them, through the optional [`roca vector`](docs/vector.md).
 - **Honest degradation.** No usable provider, or SQL that cannot run, falls
   back to literal search and says so in the result.
 

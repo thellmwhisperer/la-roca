@@ -2,10 +2,11 @@
 
 `roca vector` adds semantic similarity search without changing the core
 database or sending corpus text to a cloud service. It is off by default. The
-plugin uses a local Ollama embedding model and an in-process SQLite vector
-index in a separate `vector/vector.db` beside the selected core database.
-That store contains embeddings, fingerprints, and stable source locators; it
-does not copy corpus text.
+command is built into the binary, not a [plugin package](plugins.md), and it
+uses a local Ollama embedding model with an in-process SQLite vector index in a
+separate `vector/vector.db` beside the selected core database. That store
+contains embeddings, fingerprints, and stable source locators; it does not copy
+corpus text.
 
 ## Install
 
@@ -54,8 +55,8 @@ model's asymmetric `search_query:` prefix. An in-process sqlite-vec ANN pass
 selects binary-quantized candidates, then reranks those candidates by exact
 cosine distance before deduplicating by stable source ID. The final text is read
 from the current core row, so results cannot return a stale copy held by the
-plugin. `--json` returns rank, cosine score, source table, stable source ID, and
-text for automation.
+vector store. `--json` returns rank, cosine score, source table, stable source
+ID, and text for automation.
 
 The four source families are `memories`, `exchanges`, `thinking_blocks`, and
 `sessions`. Their IDs use natural ingest keys such as session ID, exchange
