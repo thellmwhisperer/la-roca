@@ -3,6 +3,7 @@ package vector
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"math"
 	"path/filepath"
 	"strings"
@@ -194,6 +195,35 @@ func TestQueryDeduplicatesChunksByStableSource(t *testing.T) {
 	}
 	if calls := corpus.resolves[stale.locator().Identity]; calls != 1 {
 		t.Fatalf("source that no longer resolves was resolved %d times, want 1", calls)
+	}
+}
+
+func TestQueryStopsWalkingAnIndexTheCorpusMovedUnder(t *testing.T) {
+	corpus := createCoreFixture(t)
+	for ordinal := 0; ordinal < 200; ordinal++ {
+		corpus.sources = append(corpus.sources, sourceRow{kind: "exchanges", sessionID: "s2",
+			ordinal: int64(ordinal), hasOrdinal: true,
+			text: fmt.Sprintf("alpha question %d\n\nalpha answer %d", ordinal, ordinal)})
+	}
+	index := Index{
+		Corpus: corpus, VectorPath: filepath.Join(t.TempDir(), "vector.db"),
+		Model: DefaultModel, Embedder: &recordingEmbedder{},
+	}
+	if _, err := index.Ingest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	corpus.sources = nil
+	corpus.resolves = map[string]int{}
+	results, err := index.Query(context.Background(), "alpha", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("an index nothing resolves under answered %d results", len(results))
+	}
+	if len(corpus.resolves) > maxUnresolvedCandidates {
+		t.Fatalf("stale index cost %d resolutions, want at most %d",
+			len(corpus.resolves), maxUnresolvedCandidates)
 	}
 }
 

@@ -101,6 +101,33 @@ func TestKeywordSearchReadsExchangesFromTheResidentCorpus(t *testing.T) {
 	}
 }
 
+// Read-only can never install the package it would be demanding, so an
+// installation that has no bundled corpus yet still opens, answers from core and
+// carries the omission into every answer instead of failing every read.
+func TestReadOnlyAnswersFromCoreWithoutTheBundledCorpus(t *testing.T) {
+	directory := t.TempDir()
+	svc, err := openWithContext(t.Context(), Options{
+		DBPath:        filepath.Join(directory, "roca.db"),
+		PluginDir:     filepath.Join(directory, "plugins"),
+		CorpusEnabled: true,
+		ReadOnly:      true,
+	})
+	if err != nil {
+		t.Fatalf("read-only open without the bundled corpus: %v", err)
+	}
+	defer svc.Close()
+
+	if len(svc.resident) != 0 || len(svc.residentWarnings) != 1 ||
+		!strings.Contains(svc.residentWarnings[0], rocacorpus.Name) {
+		t.Fatalf("resident = %+v, warnings = %v", svc.resident, svc.residentWarnings)
+	}
+	route := svc.pluginsForQuestion(t.Context(), "which sessions were harvested?")
+	if len(route.databases) != 0 || len(route.warnings) != 1 {
+		t.Fatalf("routed databases = %+v, warnings = %v; the omission must travel",
+			route.databases, route.warnings)
+	}
+}
+
 func corpusResidentService(t *testing.T) *Service {
 	t.Helper()
 	directory := t.TempDir()

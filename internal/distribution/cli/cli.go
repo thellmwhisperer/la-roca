@@ -690,13 +690,11 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		if pluginDir == "" {
 			return nil, fmt.Errorf("the bundled corpus needs a HOME for its database")
 		}
-		corpusDir := filepath.Join(pluginDir, rocacorpus.Name)
-		if _, err := os.Stat(corpusDir); os.IsNotExist(err) {
-			if _, err := rocacorpus.Ensure(pluginDir, pluginExecutableDir(paths), env.build.Version); err != nil {
-				return nil, fmt.Errorf("install bundled corpus plugin: %w", err)
-			}
-		} else if err != nil {
-			return nil, fmt.Errorf("inspect bundled corpus plugin: %w", err)
+		// Ensure runs on every open and not only on the first one: it returns early
+		// when the recorded version already matches, and it is the only thing that
+		// re-applies the corpus schema after the binary is upgraded in place.
+		if _, err := rocacorpus.Ensure(pluginDir, pluginExecutableDir(paths), env.build.Version); err != nil {
+			return nil, fmt.Errorf("install bundled corpus plugin: %w", err)
 		}
 	}
 	var ingestProgress func(ingest.SourceProgress)

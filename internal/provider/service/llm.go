@@ -727,6 +727,10 @@ func (s *Service) withResidentMemorySearch(ctx context.Context, plan query.Plan,
 	if len(databases) == 0 {
 		return columns, rows, stmt, provenance, nil, nil
 	}
+	// The provenance column belongs to the answer's shape and not to its content:
+	// once a bundled database is in scope, every run of the same command declares
+	// the same header, whether or not that half matched anything this time.
+	columns, rows = ensureDatabaseColumn(columns, rows, "core")
 	residentRows, declared, warnings, err := s.residentMemoryRows(
 		ctx, plan, maxChars, matchAny, limit, databases, stmt)
 	if err != nil {
@@ -735,7 +739,6 @@ func (s *Service) withResidentMemorySearch(ctx context.Context, plan query.Plan,
 	if len(residentRows) == 0 {
 		return columns, rows, stmt, provenance, warnings, nil
 	}
-	columns, rows = ensureDatabaseColumn(columns, rows, "core")
 	rows = append(rows, residentRows...)
 	rows = dedupRows(strings.ReplaceAll(plan.Term, "+", " "), columns, rows)
 	rows = limitMergedSearchRows(rows, limit)

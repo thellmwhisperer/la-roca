@@ -175,6 +175,61 @@ func TestInitBedrockIncludesTheDeclaredAnthropicExport(t *testing.T) {
 	}
 }
 
+// A read-only dry run previews against the database the rows live in. Reading
+// core's watermarks instead would report as pending every file the perennial
+// corpus has already been given.
+func TestTheReadOnlyDryRunPreviewsAgainstTheCorpusWatermarks(t *testing.T) {
+	home := t.TempDir()
+	paths := freshPaths(t)
+	plugins := filepath.Join(home, ".roca", "plugins")
+	if _, err := rocacorpus.Ensure(plugins, filepath.Join(home, ".local", "bin"), "v-test"); err != nil {
+		t.Fatal(err)
+	}
+	options := func(readOnly bool) service.Options {
+		return service.Options{
+			DBPath: paths.db, BackupDir: paths.backups, DataDir: paths.data,
+			Version: "0.0.0-test", Commit: "0123456789abcdef",
+			Sources: ingest.ResolveRoots(
+				ingest.Environment{GOOS: "darwin", Home: home},
+				ingest.Settings{WorkspaceRoots: []string{filepath.Join(home, "w")}}),
+			PluginDir: plugins, CorpusEnabled: true, ReadOnly: readOnly,
+		}
+	}
+	ctx := context.Background()
+	writable, err := service.Open(options(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writable.Init(ctx); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	seedATranscript(t, home)
+	ingested, err := writable.Ingest(ctx, service.IngestRequest{})
+	if err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	if ingested.FilesRead == 0 {
+		t.Fatal("the seeding run read no file, so there is no watermark to preview against")
+	}
+	if err := writable.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	audit, err := service.Open(options(true))
+	if err != nil {
+		t.Fatalf("read-only open: %v", err)
+	}
+	defer audit.Close()
+	preview, err := audit.Ingest(ctx, service.IngestRequest{DryRun: true})
+	if err != nil {
+		t.Fatalf("read-only dry run: %v", err)
+	}
+	if preview.FilesRead != 0 || preview.FilesSkipped != ingested.FilesRead {
+		t.Fatalf("read-only dry run = %d pending and %d skipped, want 0 and %d",
+			preview.FilesRead, preview.FilesSkipped, ingested.FilesRead)
+	}
+}
+
 // serviceOverTheSources opens an installation whose sources are the sandbox home's,
 // with no model cascade: the ingest never needs one.
 func serviceOverTheSources(t *testing.T, home string, corpus bool, legacySchema ...[]byte) *service.Service {

@@ -25,6 +25,10 @@ const (
 	defaultOverlap   = 400
 	defaultBatchSize = 64
 	walkPageSize     = 500
+	// maxUnresolvedCandidates bounds a query against an index the corpus has moved
+	// under. Each resolution is one `roca exec` process, so a wholly stale index
+	// would otherwise spend one process per candidate to answer nothing.
+	maxUnresolvedCandidates = 32
 )
 
 type Index struct {
@@ -259,6 +263,7 @@ func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) 
 	}
 	results := make([]Result, 0, k)
 	seen := map[string]bool{}
+	misses := 0
 	for _, candidate := range candidates {
 		if seen[candidate.sourceID] {
 			continue
@@ -269,6 +274,10 @@ func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) 
 			return nil, err
 		}
 		if body == "" {
+			misses++
+			if misses == maxUnresolvedCandidates {
+				break
+			}
 			continue
 		}
 		results = append(results, Result{
