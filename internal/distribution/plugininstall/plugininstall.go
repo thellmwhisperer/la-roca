@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -176,6 +177,10 @@ func Inspect(source, directory string) (Candidate, error) {
 	if err != nil {
 		return Candidate{}, fmt.Errorf("inspect plugin package: %w", err)
 	}
+	rides, err := plugin.InspectRides(metadata.Name, directory)
+	if err != nil {
+		return Candidate{}, fmt.Errorf("inspect plugin package: %w", err)
+	}
 
 	executable := ""
 	for _, name := range executableNames(metadata.Name) {
@@ -190,6 +195,13 @@ func Inspect(source, directory string) (Candidate, error) {
 	}
 	required := []string{PackageFilename, plugin.SemanticFilename, filepath.Base(descriptor.Database)}
 	risk := DataOnly
+	// A ride manifest is an execution surface as much as a shipped binary is:
+	// the cron train hands every declared command to a shell under the
+	// operator's own privileges, so such a package is never data-only.
+	if len(rides) > 0 {
+		required = append(required, plugin.RidesFilename)
+		risk = Executable
+	}
 	if executable != "" {
 		required = append(required, executable)
 		risk = Executable
@@ -503,7 +515,7 @@ func (m Manager) UpdateInPlace(candidate Candidate) (Result, error) {
 	}
 	if candidate.Risk != DataOnly || candidate.Executable != "" {
 		return Result{}, fmt.Errorf(
-			"plugin %s carries an executable; an in-place update is refused", candidate.Name)
+			"plugin %s can run code; an in-place update is refused", candidate.Name)
 	}
 	target := filepath.Join(m.PluginRoot, candidate.Name)
 	previous, err := ReadManifest(target)
@@ -555,6 +567,19 @@ func (m Manager) UpdateInPlace(candidate Candidate) (Result, error) {
 	return resultFor(candidate, target, ""), nil
 }
 
+// CandidateFromManifest describes an installed plugin the way Inspect describes
+// a source, so a caller that only has the manifest asks the operator about the
+// same package. Manifest.Executable is the installed path; the candidate names
+// the payload file it came from.
+func CandidateFromManifest(manifest Manifest, directory string) Candidate {
+	return Candidate{
+		Name: manifest.Name, Version: manifest.Version, Source: manifest.Source,
+		Directory: directory, Checksum: manifest.Checksum, Risk: manifest.Risk,
+		Custody: manifest.Custody, Database: manifest.Database,
+		Executable: manifest.ExecutableFile, Files: manifest.Files,
+	}
+}
+
 func ReadManifest(directory string) (Manifest, error) {
 	file, err := os.Open(filepath.Join(directory, ManifestFilename))
 	if err != nil {
@@ -570,6 +595,62 @@ func ReadManifest(directory string) (Manifest, error) {
 	if manifest.Schema != manifestSchema || !safeName(manifest.Name) || manifest.Source == "" ||
 		manifest.Version == "" || manifest.Checksum == "" || !safeFile(manifest.Database) {
 		return Manifest{}, fmt.Errorf("%s is incomplete or unsupported", ManifestFilename)
+	}
+	return manifest, nil
+}
+
+// VerifyInstalledPayload proves that an installed directory still matches the
+// manifest and checksums written by the installer. The database is excluded
+// because it is the plugin's mutable user-owned state; every executable or
+// declarative payload, including rides.toml, remains immutable and verified.
+func VerifyInstalledPayload(expectedName, directory string) (Manifest, error) {
+	for _, name := range []string{ManifestFilename, ChecksumsFilename} {
+		info, err := os.Lstat(filepath.Join(directory, name))
+		if err != nil || !info.Mode().IsRegular() {
+			return Manifest{}, fmt.Errorf("installed %s is not a regular file", name)
+		}
+	}
+	manifest, err := ReadManifest(directory)
+	if err != nil {
+		return Manifest{}, err
+	}
+	if manifest.Name != expectedName {
+		return Manifest{}, fmt.Errorf(
+			"%s names plugin %s, not directory %s", ManifestFilename, manifest.Name, expectedName)
+	}
+	checksums, err := readChecksums(filepath.Join(directory, ChecksumsFilename))
+	if err != nil {
+		return Manifest{}, err
+	}
+	if !maps.Equal(manifest.Files, checksums) {
+		return Manifest{}, fmt.Errorf(
+			"%s payload checksums differ from %s", ManifestFilename, ChecksumsFilename)
+	}
+	if checksum := packageChecksum(checksums); manifest.Checksum != checksum {
+		return Manifest{}, fmt.Errorf(
+			"%s package checksum is %s, want %s", ManifestFilename, manifest.Checksum, checksum)
+	}
+	for _, name := range []string{PackageFilename, plugin.SemanticFilename, manifest.Database} {
+		if _, declared := checksums[name]; !declared {
+			return Manifest{}, fmt.Errorf("%s does not own required payload %s", ManifestFilename, name)
+		}
+	}
+	immutable := maps.Clone(checksums)
+	delete(immutable, manifest.Database)
+	if err := verifyChecksummedFiles(directory, immutable); err != nil {
+		return Manifest{}, err
+	}
+	if info, err := os.Lstat(filepath.Join(directory, manifest.Database)); err != nil ||
+		!info.Mode().IsRegular() {
+		return Manifest{}, fmt.Errorf("installed database %s is not a regular file", manifest.Database)
+	}
+	if _, err := os.Lstat(filepath.Join(directory, plugin.RidesFilename)); err == nil {
+		if _, declared := immutable[plugin.RidesFilename]; !declared {
+			return Manifest{}, fmt.Errorf(
+				"%s is not owned by %s", plugin.RidesFilename, ManifestFilename)
+		}
+	} else if !os.IsNotExist(err) {
+		return Manifest{}, fmt.Errorf("inspect %s: %w", plugin.RidesFilename, err)
 	}
 	return manifest, nil
 }
