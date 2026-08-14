@@ -289,8 +289,22 @@ before it touches those archives: see
 
 Vector search is deliberately an installable executable package, not a bundled
 feature and not a data plugin. The core binary has no vector command, model,
-index, or uninstall inventory. With `features.plugins` false—or with the package
-absent—nothing is discovered or activated.
+index, or uninstall inventory. With the package absent, nothing vector-specific
+is discovered or activated. `features.plugins` gates the verified install
+lifecycle; generic executable dispatch works only after an operator has placed
+the package's binary on `PATH` through that explicit lifecycle.
+
+Core accepts `features.vector` as a default-off rollout marker, in the same
+structural shape as `features.corpus`:
+
+```toml
+[features]
+vector = false
+```
+
+The marker adds no vector path to core and does not override generic executable
+dispatch. In this isolated phase, explicit package installation and its
+**EXECUTABLE** consent are the activation boundary.
 
 The source lives in `plugins/vector/` as its own Go module. Build a verified
 package for the current machine, then install it through the ordinary full-trust

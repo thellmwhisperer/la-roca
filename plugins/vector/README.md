@@ -20,7 +20,10 @@ roca plugin install .tmp/vector-package
 
 This package is intentionally installable rather than bundled. Installation is
 an explicit full-trust consent event and an ordinary La Roca install or update
-does not place the binary.
+does not place the binary. Core also accepts a default-off `features.vector`
+rollout marker; like the initial `features.corpus` marker, it adds no core
+execution path. Installing the verified executable package remains the
+activation boundary.
 
 ## Use
 
