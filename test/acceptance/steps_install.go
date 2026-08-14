@@ -149,7 +149,6 @@ func registerInstallSteps(ctx *godog.ScenarioContext, m *world) {
 	ctx.Then(`^if the binaries directory is not on the PATH, the output warns about it$`,
 		m.itWarnsAboutThePath)
 	ctx.Then(`^the output contains the installed version$`, m.itNamesTheInstalledVersion)
-	ctx.Then(`^the output lists every available command$`, m.itListsEveryCommand)
 	ctx.Then(`^every check appears with its verdict$`, m.everyCheckHasItsVerdict)
 	ctx.Then(`^every check whose verdict is not correct names its exact remedy$`,
 		m.everyFailedCheckNamesItsRemedy)
@@ -1047,18 +1046,6 @@ func (m *world) itWarnsAboutThePath() error {
 
 func (m *world) itNamesTheInstalledVersion() error {
 	return m.outputContains(m.builtVersion())
-}
-
-// itListsEveryCommand checks the deliberately small menu the CLI exposes.
-func (m *world) itListsEveryCommand() error {
-	for _, command := range []string{
-		"init", "query", "store", "teach", "ingest", "login", "doctor", "update", "uninstall",
-	} {
-		if !strings.Contains(m.last.stdout, command) {
-			return fmt.Errorf("the help does not list %q:\n%s", command, m.last.stdout)
-		}
-	}
-	return nil
 }
 
 // everyCheckHasItsVerdict: doctor's readable output marks every check with

@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -95,14 +96,15 @@ func (env *cliEnv) modelSetCurrentInput(ctx context.Context, in io.Reader, model
 	if err != nil {
 		return err
 	}
-	order := file.Models.Order
-	if len(order) == 0 {
-		order = provider.DefaultOrder(nil)
+	name, _, warnings, err := firstCascadeProvider(paths, file)
+	if errors.Is(err, errNoProviderDeclared) || errors.Is(err, errNoProviderUsable) {
+		return fmt.Errorf("there is no provider to set a model for: %s%s; run `roca doctor` to inspect the configuration",
+			err, warningDetail(warnings))
 	}
-	if len(order) == 0 {
-		return fmt.Errorf("there is no provider to set a model for; run `roca doctor` to inspect the configuration")
+	if err != nil {
+		return err
 	}
-	return env.modelSetContextInput(ctx, in, order[0], model)
+	return env.modelSetContext(ctx, in, name, model)
 }
 
 type providerModelBackend struct {
