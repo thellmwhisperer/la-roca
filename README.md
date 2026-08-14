@@ -104,6 +104,11 @@ redaction list live in [docs/operations.md](docs/operations.md). `ROCA_READ_ONLY
 refuses writes in the shared service before database I/O, so CLI and MCP
 enforce the same boundary.
 
+For local semantic similarity without a model-generated SQL step, the optional
+[`roca vector`](docs/vector.md) plugin downloads an Ollama embedding model and
+builds its own SQLite vector store in the background. It stays off until
+`roca vector install` and never duplicates corpus text.
+
 ## What you can ask
 
 Things that are one question away once your history is a database.
