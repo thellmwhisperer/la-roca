@@ -135,7 +135,7 @@ func (r *grokReader) consume(record int, line grokUpdateLine) {
 	switch line.Params.Update.SessionUpdate {
 	case "user_message_chunk":
 		promptIndex := rawText(line.Params.Update.Meta.PromptIndex)
-		if r.current == nil || (promptIndex != "" && promptIndex != r.current.promptIndex) {
+		if r.current == nil || r.current.answered(promptIndex) {
 			// A following prompt proves the previous user turn is closed even when
 			// Grok recorded no agent activity for it. Only the final unanswered
 			// prompt can still be in flight and therefore deferred.
@@ -189,7 +189,8 @@ func (r *grokReader) consume(record int, line grokUpdateLine) {
 		})
 	case "tool_call_update":
 		if r.current == nil {
-			r.exclude(record, "orphan tool update", line.Params.Update.ToolCallID)
+			r.unreadable(record, "grok tool update arrived before any user prompt: "+
+				firstNonEmpty(line.Params.Update.ToolCallID, "unnamed"))
 			return
 		}
 		r.current.agentTS = lastInstant(r.current.agentTS, timestamp)
@@ -213,9 +214,24 @@ func (r *grokReader) consume(record int, line grokUpdateLine) {
 	}
 }
 
+// answered says whether an arriving user chunk belongs to a later turn than the
+// open one. A different prompt index proves it outright. Without an index, the
+// agent having already answered proves it just as well: a prompt that drew a
+// reply is closed, and appending to it would fuse a whole stream into one
+// exchange. Only chunks of a prompt nobody has answered yet keep joining it.
+func (t *grokTurn) answered(promptIndex string) bool {
+	if promptIndex != "" {
+		return promptIndex != t.promptIndex
+	}
+	return t.blocks > 0
+}
+
 func (r *grokReader) claim(record int, timestamp string, fill func(*grokTurn) bool) {
 	if r.current == nil {
-		r.exclude(record, "orphan content update", "before first user prompt")
+		// Agent content this build does read, which no prompt in this file can
+		// hold: a stream that begins mid-conversation loses turns, and that is a
+		// failure to report and not machinery excluded by design.
+		r.unreadable(record, "grok content update arrived before any user prompt")
 		return
 	}
 	if fill(r.current) {

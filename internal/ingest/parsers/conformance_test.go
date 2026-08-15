@@ -120,14 +120,25 @@ func TestRegisteredParsersConform(t *testing.T) {
 	}
 }
 
+// realHarvestEnv opts this machine into the real-surface smoke. The stores it
+// walks are the operator's own private conversation history, so the shared gate
+// never reads them and no contributor is judged on what an unrelated agent left
+// in their home directory. A parser author runs it deliberately, on a machine
+// where the agent is installed, and reports its yield in the pull request.
+const realHarvestEnv = "ROCA_REAL_HARVEST"
+
 // TestRegisteredParsersHarvestPresentAgentStores is the real-surface guard the
 // synthetic catalogue cannot provide. A contribution's Locations opt it in;
-// established scanners may opt in with HarvestLocations. When that agent store
-// exists on the test machine, the harness walks it read-only, asks Detect about
-// every regular file, parses every claim and reports the normalized yield. A
-// detector that chose a tiny secondary surface in a large store cannot pass on
-// the author's own machine merely because its invented fixture agrees with it.
+// established scanners may opt in with HarvestLocations. When ROCA_REAL_HARVEST
+// asks for it and that agent store exists on the machine, the harness walks it
+// read-only, asks Detect about every regular file, parses every claim and
+// reports the normalized yield. A detector that chose a tiny secondary surface
+// in a large store cannot pass on the author's own machine merely because its
+// invented fixture agrees with it.
 func TestRegisteredParsersHarvestPresentAgentStores(t *testing.T) {
+	if os.Getenv(realHarvestEnv) != "1" {
+		t.Skip("set " + realHarvestEnv + "=1 to walk the present agent stores read-only")
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatal(err)

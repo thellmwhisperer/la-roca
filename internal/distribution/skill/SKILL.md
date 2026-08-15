@@ -172,8 +172,10 @@ data.
    both. File encoding is an implementation detail, never the destination.
 3. Add its registry line and run
    `go test ./internal/ingest/parsers -run TestRegisteredParsersConform`, then
-   `go test -v ./internal/ingest/parsers -run TestRegisteredParsersHarvestPresentAgentStores`,
-   `go test ./internal/ingest/parsers` and `make check`.
+   `ROCA_REAL_HARVEST=1 go test -v ./internal/ingest/parsers -run TestRegisteredParsersHarvestPresentAgentStores`
+   on a machine where that agent is installed (the smoke reads private stores, so
+   it stays out of the shared gate), `go test ./internal/ingest/parsers` and
+   `make check`.
 4. Open a pull request with the synthetic fixture, parser, and registry line.
    Include the real-harvest yield summary; do not attach or quote the real source
    file in the pull request.

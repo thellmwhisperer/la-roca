@@ -113,13 +113,17 @@ itself, and anything climbing out of it are refused: the harness fails the
 registry line and a shipped one warns the operator instead of walking the
 machine.
 
-The same locations opt the parser into
-`TestRegisteredParsersHarvestPresentAgentStores`. When the declared store exists
-on the test machine, that smoke walks it read-only, runs `Detect` and `Parse`,
-and reports store bytes, detected files, sessions, exchanges, memories,
-thinking, tools and discards. A large store with a near-zero conversation or
-memory yield fails. Established source-specific scanners declare
-`HarvestLocations` for this smoke without entering the generic scan route.
+The same locations name what `TestRegisteredParsersHarvestPresentAgentStores`
+reads. That smoke is opt-in twice over: it runs only when you set
+`ROCA_REAL_HARVEST=1`, and then only for the declared stores that exist on the
+machine. It never runs inside `make check`, because the stores it walks are the
+operator's private conversation history and nobody else's work should be judged
+on what is in them. When you do ask for it, it walks the store read-only, runs
+`Detect` and `Parse`, and reports store bytes, detected files, sessions,
+exchanges, memories, thinking, tools and discards. A large store with a
+near-zero conversation or memory yield fails. Established source-specific
+scanners declare `HarvestLocations` for this smoke without entering the generic
+scan route.
 
 `Version` is the reading your parser currently gives that source. It rides
 inside the ingest watermark, so when a later change teaches `Detect` or `Parse`
@@ -137,7 +141,8 @@ writer.
 Run the parser suite, then the repository gate:
 
 ```sh
-go test -v ./internal/ingest/parsers -run TestRegisteredParsersHarvestPresentAgentStores
+ROCA_REAL_HARVEST=1 go test -v ./internal/ingest/parsers \
+  -run TestRegisteredParsersHarvestPresentAgentStores
 go test ./internal/ingest/parsers
 make check
 ```

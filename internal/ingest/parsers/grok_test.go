@@ -97,6 +97,19 @@ func TestGrokUpdateShapes(t *testing.T) {
 			exchanges: 1,
 		},
 		{
+			name: "an unindexed prompt after an answer opens the next turn",
+			stream: `{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"first question"}}},"timestamp":1785585600}` + "\n" +
+				`{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"first answer"}}},"timestamp":1785585601}` + "\n" +
+				`{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"second question"}}},"timestamp":1785585602}` + "\n" +
+				`{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"second answer"}}},"timestamp":1785585603}`,
+			exchanges: 2,
+		},
+		{
+			name:            "agent content before any prompt is a failure, not an exclusion",
+			stream:          `{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"orphan answer"}}},"timestamp":1785585600}`,
+			discardContains: "before any user prompt",
+		},
+		{
 			name: "a malformed line does not cost the rest of the file",
 			stream: "{not-json}\n" +
 				`{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"question"},"_meta":{"promptIndex":1}}},"timestamp":1785585600}` + "\n" +
