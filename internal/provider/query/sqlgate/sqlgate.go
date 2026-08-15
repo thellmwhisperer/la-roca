@@ -46,6 +46,13 @@ const MaxLimit = 1000
 var invisibleTables = []string{
 	"ingest_file_state", "search_state",
 	"plugin_schema", "migration_batches", "custody_memberships",
+	"corpus_source_snapshots", "corpus_source_tables", "corpus_source_rows",
+	"session_versions", "exchange_versions", "tool_use_versions", "thinking_block_versions",
+	"ingest_file_state_versions", "ingest_file_state_heads",
+	"session_versions_fts", "exchange_versions_fts", "thinking_block_versions_fts",
+	"session_version_memberships", "exchange_version_memberships",
+	"tool_use_version_memberships", "thinking_block_version_memberships",
+	"ingest_file_state_version_memberships",
 }
 
 // ftsShadowSuffixes name the shadow tables FTS5 creates behind each virtual
