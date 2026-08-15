@@ -415,8 +415,9 @@ when a change owes the gauntlet a new frozen home.
 executable definition of zero behavior change for CLI and MCP users that
 `make check` already runs with the rest of the acceptance suite. It drives the
 binary you just built against a fully synthetic fixture, normalizes away run
-noise (timestamps, durations, correlation ids, home paths), and compares the
-recording against the Ed25519-signed goldens in `testdata/data-split-oracle/`.
+noise (timestamps, durations, correlation ids, home paths, and the build's own
+version and source sha), and compares the recording against the Ed25519-signed
+goldens in `testdata/data-split-oracle/`.
 The oracle never reads a real `~/.roca` database and never writes user data: it
 records into a temporary home and keeps the recording under the project's
 `.tmp/` only when it differs from the seal. A difference is reported, never
