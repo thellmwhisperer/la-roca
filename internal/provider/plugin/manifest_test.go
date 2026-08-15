@@ -18,10 +18,10 @@ func TestManifestValidationRejectsMalformedDeclarationsActionably(t *testing.T) 
   "schema": 1,
   "name": "synthetic",
   "version": "1.0.0",
-  "binary": "roca-synthetic",
+  "binary": "roca-proxy0",
   "databases": [{
     "name": "records",
-    "path": "records.db",
+    "path": "index0.db",
     "alias": "plugin_synthetic_records",
     "attachment": "resident",
     "retention": "The plugin retains every synthetic record."
@@ -35,6 +35,9 @@ func TestManifestValidationRejectsMalformedDeclarationsActionably(t *testing.T) 
   "verbs": [{"name": "inspect", "description": "Inspect synthetic records.", "capability": "inspect"}],
   "capabilities": [{"name": "inspect", "command": ["inspect"]}]
 }`)
+	if _, err := plugin.DecodeManifest(strings.NewReader(valid)); err != nil {
+		t.Fatalf("valid manifest with x and 0 in filenames: %v", err)
+	}
 
 	tests := []struct {
 		name string
@@ -51,6 +54,15 @@ func TestManifestValidationRejectsMalformedDeclarationsActionably(t *testing.T) 
 		{"verb capability missing", func(raw string) string {
 			return strings.Replace(raw, `"capability": "inspect"`, `"capability": "absent"`, 1)
 		}, "absent"},
+		{"capability command missing", func(raw string) string {
+			return strings.Replace(raw, `"command": ["inspect"]`, `"command": []`, 1)
+		}, "has no command"},
+		{"nul in filename", func(raw string) string {
+			return strings.Replace(raw, "roca-proxy0", `roca-\u0000proxy`, 1)
+		}, "invalid binary"},
+		{"manifest semantic source", func(raw string) string {
+			return strings.Replace(raw, `"tables": [{"name": "records"`, `"tables": [{"name": "bad-name"`, 1)
+		}, "plugin.json has an invalid or repeated table"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

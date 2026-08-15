@@ -315,7 +315,7 @@ func (s Semantic) validFor(source string) error {
 	seen := map[string]bool{}
 	for _, table := range s.Tables {
 		if !validIdentifier(table.Name) || seen[table.Name] {
-			return fmt.Errorf("%s has an invalid or repeated table %q", SemanticFilename, table.Name)
+			return fmt.Errorf("%s has an invalid or repeated table %q", source, table.Name)
 		}
 		seen[table.Name] = true
 		if strings.TrimSpace(table.Description) == "" || len(table.Columns) == 0 {

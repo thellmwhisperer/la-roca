@@ -194,6 +194,9 @@ func (m Manifest) Valid() error {
 		if !validIdentifier(capability.Name) || capabilities[capability.Name].Name != "" {
 			return fmt.Errorf("%s has invalid or repeated capability %q", PackageFilename, capability.Name)
 		}
+		if len(capability.Command) == 0 {
+			return fmt.Errorf("capability %s has no command", capability.Name)
+		}
 		for _, argument := range capability.Command {
 			if strings.TrimSpace(argument) == "" {
 				return fmt.Errorf("capability %s has an empty command argument", capability.Name)
@@ -219,7 +222,7 @@ func (m Manifest) Valid() error {
 
 func safeManifestFile(name string) bool {
 	return name != "" && filepath.Base(name) == name && name != "." && name != ".." &&
-		!strings.ContainsAny(name, `/\\\x00`)
+		!strings.ContainsAny(name, "/\\\x00")
 }
 
 func (m Manifest) semanticFor(name string) (Semantic, bool) {
