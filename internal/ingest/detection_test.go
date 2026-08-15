@@ -262,14 +262,14 @@ func TestGrokSessionsDecodeTheirProjectAndTheRunnerIsExcluded(t *testing.T) {
 	} {
 		w.write(t, filepath.Join(dir, "summary.json"),
 			`{"info":{"id":"grok-fixture-1","cwd":"`+project+`"}}`)
-		w.write(t, filepath.Join(dir, "chat_history.jsonl"),
-			`{"type":"user","content":[{"type":"text","text":"synthetic question"}]}`+"\n")
+		w.write(t, filepath.Join(dir, "updates.jsonl"),
+			`{"method":"session/update","params":{"sessionId":"grok-fixture-1","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"synthetic question"},"_meta":{"promptIndex":1}}},"timestamp":1785592800}`+"\n")
 	}
 
 	plan := Scan(roots)
 	var decoded *Target
 	var excluded *Target
-	runnerTranscript := filepath.Join(roots.GrokSessions, runnerDir, session, "chat_history.jsonl")
+	runnerTranscript := filepath.Join(roots.GrokSessions, runnerDir, session, "updates.jsonl")
 	for i := range plan.Targets {
 		target := &plan.Targets[i]
 		if target.Kind != parsers.KindGrokSession {
@@ -278,7 +278,7 @@ func TestGrokSessionsDecodeTheirProjectAndTheRunnerIsExcluded(t *testing.T) {
 		if target.Path == runnerTranscript {
 			t.Fatal("the runner Grok transcript entered the ingest plan")
 		}
-		if strings.HasPrefix(filepath.Base(target.Path), "chat") && target.SessionID == session {
+		if filepath.Base(target.Path) == "updates.jsonl" && target.SessionID == session {
 			decoded = target
 		}
 	}

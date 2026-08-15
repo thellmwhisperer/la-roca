@@ -538,10 +538,15 @@ func scanPiSessions(roots Roots) []Target {
 
 // scanGrokSessions walks Grok Build's session store, which files sessions by the
 // URL-encoded working directory they ran in: each project directory holds one
-// directory per session, and a session holds its transcript and its metadata
-// side by side. The metadata comes first on purpose, exactly as it does for
-// Cowork: it declares the session's identity and span, and the transcript merges
-// over it.
+// directory per session, and a session holds its update stream and metadata side
+// by side. The metadata comes first on purpose, exactly as it does for Cowork:
+// it declares the session's identity and span, and the update stream merges over
+// it.
+//
+// updates.jsonl is the only primary content surface. events.jsonl is lifecycle
+// telemetry without conversation text. compaction_requests/ and recap_requests/
+// are repeated snapshots assembled from this same update stream; reading them
+// would duplicate turns rather than recover ones absent from updates.jsonl.
 func scanGrokSessions(roots Roots) []Target {
 	var targets []Target
 	for _, encodedDir := range subdirectories(roots.GrokSessions) {
@@ -561,15 +566,15 @@ func scanGrokSessions(roots Roots) []Target {
 					FileName: "summary.json", ExclusionReason: exclusion,
 				})
 			}
-			chat := filepath.Join(full, session, "chat_history.jsonl")
-			if isFile(chat) {
+			updates := filepath.Join(full, session, "updates.jsonl")
+			if isFile(updates) {
 				targets = append(targets, Target{
-					Path: chat, Kind: parsers.KindGrokSession,
+					Path: updates, Kind: parsers.KindGrokSession,
 					SourceAgent: "grok", Project: project, SessionID: session,
-					FileName: "chat_history.jsonl", ExclusionReason: exclusion,
+					FileName: "updates.jsonl", ExclusionReason: exclusion,
 				})
 				if hasSummary {
-					// A session without its metadata still ingests: the transcript
+					// A session without its metadata still ingests: the update stream
 					// falls back to the session directory's own identity, and the
 					// pair is only ever offered when it is actually there.
 					targets[len(targets)-1].SidecarPath = summary

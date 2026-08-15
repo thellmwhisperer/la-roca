@@ -1,8 +1,8 @@
 {
   "parser": "grok_session",
   "destination": "corpus",
-  "source": "chat.data",
-  "meta": {"Path":"/synthetic/grok/chat.data","SessionID":"fixture-grok","Project":"lighthouse","SourceAgent":"grok"},
+  "source": "updates.data",
+  "meta": {"Path":"/synthetic/home/.grok/sessions/%2Fsynthetic%2Flighthouse/fixture-grok/updates.jsonl","SourceAgent":"grok"},
   "want": {
     "sessions": [{"id":"fixture-grok","source_agent":"grok","project":"lighthouse","exchanges":[{"human_text":"Count the invented beacons.","agent_text":"Three beacons."}]}],
     "memories": []
