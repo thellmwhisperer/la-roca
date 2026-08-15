@@ -51,13 +51,7 @@ const syntheticHome = "/synthetic/home"
 // names a registered parser, its own source file, the declared destination and
 // the normalized records that must result.
 func TestRegisteredParsersConform(t *testing.T) {
-	fixtures, err := filepath.Glob(filepath.Join("testdata", "conformance", "*", "fixture.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(fixtures) == 0 {
-		t.Fatal("the parser conformance catalogue is empty")
-	}
+	fixtures := conformanceFixturePaths(t)
 
 	covered := map[string]bool{}
 	registeredNames := map[string]bool{}
@@ -161,16 +155,8 @@ func TestDestinationsRejectCrossSurfaceRecords(t *testing.T) {
 // failure the guide warns about, and the catalogue of synthetic fixtures is the
 // only place it can be caught before a real machine pays for it.
 func TestRegisteredDetectorsRejectEveryForeignFixture(t *testing.T) {
-	fixtures, err := filepath.Glob(filepath.Join("testdata", "conformance", "*", "fixture.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(fixtures) == 0 {
-		t.Fatal("the parser conformance catalogue is empty")
-	}
-
 	catalogue := map[string]File{}
-	for _, path := range fixtures {
+	for _, path := range conformanceFixturePaths(t) {
 		fixture := readConformanceFixture(t, path)
 		content, err := os.ReadFile(filepath.Join(filepath.Dir(path), fixture.Source))
 		if err != nil {
@@ -189,6 +175,18 @@ func TestRegisteredDetectorsRejectEveryForeignFixture(t *testing.T) {
 			}
 		}
 	}
+}
+
+func conformanceFixturePaths(t *testing.T) []string {
+	t.Helper()
+	fixtures, err := filepath.Glob(filepath.Join("testdata", "conformance", "*", "fixture.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fixtures) == 0 {
+		t.Fatal("the parser conformance catalogue is empty")
+	}
+	return fixtures
 }
 
 func readConformanceFixture(t *testing.T, path string) conformanceFixture {
