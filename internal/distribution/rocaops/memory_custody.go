@@ -136,17 +136,27 @@ func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (Me
 
 	for _, source := range sources {
 		rows := rowsBySource[source.name]
+		imported, importedErr := importedMemoryDigests(ctx, ops, source.name)
+		if importedErr != nil {
+			return MemoryCustodyReport{Snapshots: snapshots}, importedErr
+		}
+		pending := make([]memoryRow, 0, len(rows))
+		for _, row := range rows {
+			storedDigest, found := imported[row.id]
+			if !found {
+				pending = append(pending, row)
+				continue
+			}
+			if storedDigest != row.digest {
+				return MemoryCustodyReport{Snapshots: snapshots}, fmt.Errorf(
+					"%s memory %d changed after its custody batch committed", source.name, row.id)
+			}
+		}
+		rows = pending
 		for first := 0; first < len(rows); first += batchSize {
 			last := min(first+batchSize, len(rows))
 			group := rows[first:last]
 			batchID := memoryBatchID(source.name, group[0].id, group[len(group)-1].id)
-			committed, committedErr := memoryBatchCommitted(ctx, ops, batchID)
-			if committedErr != nil {
-				return MemoryCustodyReport{Snapshots: snapshots}, committedErr
-			}
-			if committed {
-				continue
-			}
 			batch, beginErr := migrationledger.BeginBatch(ctx, ops, migrationledger.BatchSpec{
 				ID: batchID, SourceDatabase: source.name, SourceTable: "memories",
 			})
@@ -428,13 +438,29 @@ func memoryBatchID(source string, first, last int64) string {
 	return fmt.Sprintf("data2-%s-memories-%020d-%020d", name, first, last)
 }
 
-func memoryBatchCommitted(ctx context.Context, db *sql.DB, id string) (bool, error) {
-	var count int
-	if err := db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM migration_batches WHERE batch_id = ?", id).Scan(&count); err != nil {
-		return false, fmt.Errorf("inspect ops memory batch %q: %w", id, err)
+func importedMemoryDigests(ctx context.Context, db *sql.DB, source string) (map[int64]string, error) {
+	rows, err := db.QueryContext(ctx, `SELECT source_key, canonical_digest
+		FROM custody_memberships WHERE source_database = ? AND source_table = 'memories'`, source)
+	if err != nil {
+		return nil, fmt.Errorf("read imported %s memory identities: %w", source, err)
 	}
-	return count != 0, nil
+	defer rows.Close()
+	imported := make(map[int64]string)
+	for rows.Next() {
+		var sourceKey, digest string
+		if err := rows.Scan(&sourceKey, &digest); err != nil {
+			return nil, fmt.Errorf("read imported %s memory identity: %w", source, err)
+		}
+		id, err := strconv.ParseInt(sourceKey, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("read imported %s memory key %q: %w", source, sourceKey, err)
+		}
+		imported[id] = digest
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read imported %s memory identities: %w", source, err)
+	}
+	return imported, nil
 }
 
 func verifyMemoryCustody(ctx context.Context, ops *sql.DB,

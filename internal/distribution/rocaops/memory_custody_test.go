@@ -142,13 +142,22 @@ func TestDATA2ResumesAfterACommittedBatchWithoutHalfRows(t *testing.T) {
 	if state != string(migrationledger.StateBatchInProgress) {
 		t.Fatalf("interrupted state = %q", state)
 	}
+	core := openCustodyDB(t, fixture.core)
+	if _, err := core.Exec(`INSERT INTO memories
+		(id, layer, content, metadata, origin, status, created_at)
+		VALUES (14, 'project', 'core appended between runs', '{}', 'agent', 'active', '2026-08-01')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	options.AfterBatch = nil
 	report, err := MigrateMemoryCustody(t.Context(), options)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.State != migrationledger.StateVerified || report.Memberships != 8 || report.PhysicalRecords != 6 {
+	if report.State != migrationledger.StateVerified || report.Memberships != 9 || report.PhysicalRecords != 7 {
 		t.Fatalf("resumed report = %+v", report)
 	}
 }
