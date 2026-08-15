@@ -13,7 +13,6 @@
 package parsers
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -349,20 +348,20 @@ func lines(content []byte) []string {
 }
 
 // eachJSONLine feeds every JSON record of a JSONL artefact to the consumer, in
-// record order. A line that is not valid JSON is reported as a discard and never
+// record order. The consumer decodes the record into the shape its own parser
+// reads and the error it returns is reported as a discard: a record that does
+// not decode is unreadable, not a record left out by design. One such line never
 // stops the file, because a live transcript can be mid-write.
-func eachJSONLine(content []byte, consume func(record int, raw string)) ([]Discard, int) {
+func eachJSONLine(content []byte, consume func(record int, raw string) error) ([]Discard, int) {
 	var discards []Discard
 	valid := 0
 	for index, raw := range lines(content) {
-		var probe any
-		if err := json.Unmarshal([]byte(raw), &probe); err != nil {
+		if err := consume(index+1, raw); err != nil {
 			discards = append(discards, Discard{Record: index + 1,
 				Reason: "invalid JSON: " + err.Error(), Category: "invalid JSON"})
 			continue
 		}
 		valid++
-		consume(index+1, raw)
 	}
 	return discards, valid
 }

@@ -100,13 +100,17 @@ func ParseGrokSession(content []byte, meta FileMeta) (Records, error) {
 	}, nil
 }
 
-// consumeGrokLines feeds every record to the reader. One invalid line is a
-// discard and never the whole file: a live transcript can be mid-write.
+// consumeGrokLines feeds every record to the reader. A record the transcript's
+// shape cannot read is a discard and never the whole file: a live transcript can
+// be mid-write.
 func consumeGrokLines(content []byte, consume func(int, grokLine)) ([]Discard, int) {
-	return eachJSONLine(content, func(record int, raw string) {
+	return eachJSONLine(content, func(record int, raw string) error {
 		var line grokLine
-		_ = json.Unmarshal([]byte(raw), &line)
+		if err := json.Unmarshal([]byte(raw), &line); err != nil {
+			return err
+		}
 		consume(record, line)
+		return nil
 	})
 }
 
@@ -156,7 +160,7 @@ func (r *grokReader) consume(record int, line grokLine) {
 		// question nobody answered into an exchange, and the assistant line that
 		// issued the call already counted the turn.
 		if r.current != nil {
-			r.verdict(record, line.ToolCallID, string(line.Content))
+			r.verdict(record, line.ToolCallID, rawText(line.Content))
 		}
 	default:
 		r.exclude(record, "record type", line.Type)

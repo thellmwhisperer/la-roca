@@ -252,9 +252,13 @@ func TestGrokSessionsDecodeTheirProjectAndTheRunnerIsExcluded(t *testing.T) {
 	roots := w.roots()
 	project := filepath.Join(w.workspace, "demo")
 	session := "99999999-8888-7777-6666-555555555555"
+	// The runner store is written with lowercase percent hex, which decodes to
+	// the same path but is not the escaping Go emits: the exclusion holds on what
+	// the name means and never on one encoder's conventions.
+	runnerDir := strings.ReplaceAll(url.PathEscape(roots.RunnerDir), "%2F", "%2f")
 	for _, dir := range []string{
 		filepath.Join(roots.GrokSessions, url.PathEscape(project), session),
-		filepath.Join(roots.GrokSessions, url.PathEscape(roots.RunnerDir), session),
+		filepath.Join(roots.GrokSessions, runnerDir, session),
 	} {
 		w.write(t, filepath.Join(dir, "summary.json"),
 			`{"info":{"id":"grok-fixture-1","cwd":"`+project+`"}}`)
@@ -265,7 +269,7 @@ func TestGrokSessionsDecodeTheirProjectAndTheRunnerIsExcluded(t *testing.T) {
 	plan := Scan(roots)
 	var decoded *Target
 	var excluded *Target
-	runnerTranscript := filepath.Join(roots.GrokSessions, url.PathEscape(roots.RunnerDir), session, "chat_history.jsonl")
+	runnerTranscript := filepath.Join(roots.GrokSessions, runnerDir, session, "chat_history.jsonl")
 	for i := range plan.Targets {
 		target := &plan.Targets[i]
 		if target.Kind != parsers.KindGrokSession {

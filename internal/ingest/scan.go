@@ -593,12 +593,20 @@ func projectFromGrokDir(name string) string {
 }
 
 // runnerExclusionGrok is runnerExclusion for Grok's URL-escaped directory names.
+// It decodes the directory instead of re-escaping the runner root, so the runner
+// store stays excluded even when Grok escapes a path differently from Go.
 func runnerExclusionGrok(roots Roots, encodedDir string) string {
-	if roots.RunnerDir != "" {
-		for _, path := range []string{roots.RunnerDir, realPath(roots.RunnerDir)} {
-			if encodedDir == url.PathEscape(cleanRoot(path)) {
-				return "La Roca local-binary runner session is excluded"
-			}
+	if roots.RunnerDir == "" {
+		return ""
+	}
+	decoded, err := url.PathUnescape(encodedDir)
+	if err != nil || decoded == "" {
+		return ""
+	}
+	decoded = cleanRoot(decoded)
+	for _, path := range []string{roots.RunnerDir, realPath(roots.RunnerDir)} {
+		if decoded == cleanRoot(path) {
+			return "La Roca local-binary runner session is excluded"
 		}
 	}
 	return ""

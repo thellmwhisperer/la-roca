@@ -60,6 +60,9 @@ func TestGrokSessionReadsTheActiveExchangeWithItsThinkingToolsAndModel(t *testin
 	if first.Name != "shell" || !first.HadError {
 		t.Errorf("failed tool = %+v", first)
 	}
+	if first.ErrorMessage != "exit: 1 Error: target build not found" {
+		t.Errorf("error message = %q, want the result's text and not its JSON", first.ErrorMessage)
+	}
 	if second.Name != "read_file" || second.HadError {
 		t.Errorf("clean tool = %+v", second)
 	}
@@ -103,7 +106,18 @@ func TestGrokTranscriptShapes(t *testing.T) {
 		exchanges       int
 		deferred        int
 		discardContains string
+		discardByDesign bool
 	}{
+		{
+			name: "a record of another shape is unreadable and not left out by design",
+			transcript: `
+{"type":"user","content":[{"type":"text","text":"read the fixture"}]}
+{"type":["assistant"],"content":"a record of another shape"}
+`,
+			exchanges:       0,
+			deferred:        1,
+			discardContains: "invalid JSON",
+		},
 		{
 			name: "an open question is deferred and unreadable reasoning is excluded",
 			transcript: `
@@ -113,6 +127,7 @@ func TestGrokTranscriptShapes(t *testing.T) {
 			exchanges:       0,
 			deferred:        1,
 			discardContains: "kept no readable summary",
+			discardByDesign: true,
 		},
 		{
 			name: "an orphan verdict is discarded and never closes a turn",
@@ -162,6 +177,10 @@ func TestGrokTranscriptShapes(t *testing.T) {
 				for _, discard := range records.Discards {
 					if strings.Contains(discard.Reason, tc.discardContains) {
 						found = true
+						if discard.ByDesign != tc.discardByDesign {
+							t.Errorf("discard %+v: by design = %v, want %v",
+								discard, discard.ByDesign, tc.discardByDesign)
+						}
 					}
 				}
 				if !found {
