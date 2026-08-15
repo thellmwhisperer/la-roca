@@ -31,9 +31,9 @@ func TestEnsureInstallsTheBundledResidentDataOnlyPluginAndPreservesItsDatabase(t
 	if descriptor.Semantic.Attachment != plugin.AttachmentResident || !descriptor.Semantic.Custody {
 		t.Fatalf("semantic contract = %+v", descriptor.Semantic)
 	}
-	validated, err := plugin.Validate(t.Context(), descriptor)
-	if err != nil {
-		t.Fatal(err)
+	validated, validationErr := plugin.Validate(t.Context(), descriptor)
+	if validationErr != nil {
+		t.Fatal(validationErr)
 	}
 	if len(validated.Tables) != 6 {
 		t.Fatalf("visible ops tables = %d, want 6", len(validated.Tables))

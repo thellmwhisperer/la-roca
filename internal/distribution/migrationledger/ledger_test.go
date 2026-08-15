@@ -20,10 +20,7 @@ func TestPrepareIsIdempotentAndASchemaUpgradeReturnsToPrepared(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := Inspect(context.Background(), db)
-	if err != nil {
-		t.Fatal(err)
-	}
+	got := inspectState(t, db)
 	if got.Plugin != definition.Plugin || got.SchemaVersion != 1 || got.IndexVersion != 2 || got.State != StatePrepared {
 		t.Fatalf("prepared database = %+v", got)
 	}
@@ -35,10 +32,7 @@ func TestPrepareIsIdempotentAndASchemaUpgradeReturnsToPrepared(t *testing.T) {
 	if err := Prepare(context.Background(), db, definition); err != nil {
 		t.Fatal(err)
 	}
-	got, err = Inspect(context.Background(), db)
-	if err != nil {
-		t.Fatal(err)
-	}
+	got = inspectState(t, db)
 	if got.State != StateVerified {
 		t.Fatalf("same schema replay changed state to %q", got.State)
 	}
@@ -47,10 +41,7 @@ func TestPrepareIsIdempotentAndASchemaUpgradeReturnsToPrepared(t *testing.T) {
 	if err := Prepare(context.Background(), db, definition); err != nil {
 		t.Fatal(err)
 	}
-	got, err = Inspect(context.Background(), db)
-	if err != nil {
-		t.Fatal(err)
-	}
+	got = inspectState(t, db)
 	if got.SchemaVersion != 2 || got.State != StatePrepared || got.VerificationDigest != "" {
 		t.Fatalf("schema upgrade = %+v", got)
 	}
@@ -98,10 +89,7 @@ func TestInterruptedBatchIsAbsentAndTheSameBatchResumes(t *testing.T) {
 	assertCount(t, db, "migration_batches", 0)
 	assertCount(t, db, "custody_memberships", 0)
 	assertCount(t, db, "destination_rows", 0)
-	state, err := Inspect(context.Background(), db)
-	if err != nil {
-		t.Fatal(err)
-	}
+	state := inspectState(t, db)
 	if state.State != StatePrepared {
 		t.Fatalf("state after interruption = %q", state.State)
 	}
@@ -131,10 +119,7 @@ func TestInterruptedBatchIsAbsentAndTheSameBatchResumes(t *testing.T) {
 	assertCount(t, db, "migration_batches", 1)
 	assertCount(t, db, "custody_memberships", 1)
 	assertCount(t, db, "destination_rows", 1)
-	state, err = Inspect(context.Background(), db)
-	if err != nil {
-		t.Fatal(err)
-	}
+	state = inspectState(t, db)
 	if state.State != StateBatchInProgress {
 		t.Fatalf("state after committed batch = %q", state.State)
 	}
@@ -200,6 +185,15 @@ func assertCount(t *testing.T, db *sql.DB, table string, want int) {
 	if got != want {
 		t.Fatalf("%s rows = %d, want %d", table, got, want)
 	}
+}
+
+func inspectState(t *testing.T, db *sql.DB) Snapshot {
+	t.Helper()
+	state, err := Inspect(context.Background(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return state
 }
 
 func fixtureDigest(character byte) string {

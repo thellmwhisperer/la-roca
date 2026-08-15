@@ -1,0 +1,108 @@
+package bundledplugin_test
+
+import (
+	"database/sql"
+	"path/filepath"
+	"testing"
+
+	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacron"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
+	_ "modernc.org/sqlite"
+)
+
+func TestApplyingPluginSchemasTwicePreservesOldFrozenHomes(t *testing.T) {
+	for _, fixture := range []struct {
+		name, filename, oldSchema, insert, count, indexCount string
+		apply                                                func(string) error
+	}{
+		{
+			name: "ops", filename: rocaops.DatabaseFilename, apply: rocaops.ApplySchema,
+			oldSchema: `CREATE TABLE memories (
+				id INTEGER PRIMARY KEY AUTOINCREMENT, layer TEXT NOT NULL, content TEXT NOT NULL,
+				metadata TEXT DEFAULT '{}', origin TEXT NOT NULL, source_agent TEXT, source_model TEXT,
+				source_surface TEXT, source_session TEXT, source_sequence INTEGER, project TEXT,
+				status TEXT DEFAULT 'active', supersedes INTEGER,
+				created_at TEXT DEFAULT (datetime('now')), expires_at TEXT)`,
+			insert:     `INSERT INTO memories (layer, content, origin) VALUES ('handoff', 'frozen ops row', 'agent')`,
+			count:      `SELECT COUNT(*) FROM memories WHERE content = 'frozen ops row'`,
+			indexCount: `SELECT COUNT(*) FROM memories_fts WHERE memories_fts MATCH 'frozen'`,
+		},
+		{
+			name: "corpus", filename: rocacorpus.DatabaseFilename, apply: rocacorpus.ApplySchema,
+			oldSchema: `CREATE TABLE sessions (
+				session_id TEXT PRIMARY KEY, source_agent TEXT DEFAULT 'claude-code', project TEXT,
+				started_at TEXT, ended_at TEXT, duration_minutes INTEGER, title TEXT,
+				metadata TEXT DEFAULT '{}')`,
+			insert: `INSERT INTO sessions (session_id, title) VALUES ('frozen-session', 'frozen corpus row')`,
+			count:  `SELECT COUNT(*) FROM sessions WHERE title = 'frozen corpus row'`,
+		},
+		{
+			name: "cron", filename: rocacron.DatabaseFilename, apply: rocacron.ApplySchema,
+			oldSchema: `CREATE TABLE journeys (
+				id INTEGER PRIMARY KEY AUTOINCREMENT, train TEXT NOT NULL, ride TEXT NOT NULL,
+				plugin TEXT NOT NULL, started_at TEXT NOT NULL, ended_at TEXT NOT NULL,
+				duration_ms INTEGER NOT NULL, exit_code INTEGER, error TEXT NOT NULL DEFAULT '',
+				gate_status TEXT NOT NULL, stdout TEXT NOT NULL DEFAULT '', stderr TEXT NOT NULL DEFAULT '')`,
+			insert: `INSERT INTO journeys
+				(train, ride, plugin, started_at, ended_at, duration_ms, gate_status)
+				VALUES ('nightly', 'frozen-cron-row', 'synthetic', 'start', 'end', 1, 'ready')`,
+			count: `SELECT COUNT(*) FROM journeys WHERE ride = 'frozen-cron-row'`,
+		},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), fixture.filename)
+			db := openFixture(t, path)
+			if _, err := db.Exec(fixture.oldSchema); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(fixture.insert); err != nil {
+				t.Fatal(err)
+			}
+			assertQueryCount(t, db, fixture.count, 1)
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			for range 2 {
+				if err := fixture.apply(path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			db = openFixture(t, path)
+			defer db.Close()
+			assertQueryCount(t, db, fixture.count, 1)
+			if fixture.indexCount != "" {
+				assertQueryCount(t, db, fixture.indexCount, 1)
+			}
+			state, err := migrationledger.Inspect(t.Context(), db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if state.State != migrationledger.StatePrepared {
+				t.Fatalf("migration state = %q, want prepared", state.State)
+			}
+		})
+	}
+}
+
+func openFixture(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db
+}
+
+func assertQueryCount(t *testing.T, db *sql.DB, query string, want int) {
+	t.Helper()
+	var got int
+	if err := db.QueryRow(query).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("row count = %d, want %d", got, want)
+	}
+}
