@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -23,7 +24,7 @@ import (
 )
 
 const (
-	PackageFilename   = "plugin.json"
+	PackageFilename   = plugin.PackageFilename
 	ChecksumsFilename = "checksums.txt"
 	ManifestFilename  = plugin.ManifestFilename
 	manifestSchema    = 1
@@ -55,6 +56,7 @@ type Candidate struct {
 	Risk       Risk
 	Custody    bool
 	Database   string
+	Databases  []string
 	Executable string
 	StateDir   string
 	Files      map[string]string
@@ -70,6 +72,7 @@ type Manifest struct {
 	Risk           Risk              `json:"risk"`
 	Custody        bool              `json:"custody"`
 	Database       string            `json:"database,omitempty"`
+	Databases      []string          `json:"databases,omitempty"`
 	Executable     string            `json:"executable,omitempty"`
 	ExecutableFile string            `json:"executable_file,omitempty"`
 	StateDir       string            `json:"state_directory,omitempty"`
@@ -96,6 +99,26 @@ type Manager struct {
 type Resolved struct {
 	Reference string
 	Directory string
+}
+
+func candidateDatabaseFiles(candidate Candidate) []string {
+	if len(candidate.Databases) > 0 {
+		return slices.Clone(candidate.Databases)
+	}
+	if candidate.Database != "" {
+		return []string{candidate.Database}
+	}
+	return nil
+}
+
+func manifestDatabaseFiles(manifest Manifest) []string {
+	if len(manifest.Databases) > 0 {
+		return slices.Clone(manifest.Databases)
+	}
+	if manifest.Database != "" {
+		return []string{manifest.Database}
+	}
+	return nil
 }
 
 type packageMetadata struct {
@@ -180,15 +203,30 @@ func Inspect(source, directory string) (Candidate, error) {
 	if err != nil {
 		return Candidate{}, fmt.Errorf("read %s: %w", PackageFilename, err)
 	}
-	var metadata packageMetadata
-	decoder := json.NewDecoder(strings.NewReader(string(raw)))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&metadata); err != nil {
+	var shape map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &shape); err != nil {
 		return Candidate{}, fmt.Errorf("parse %s: %w", PackageFilename, err)
 	}
-	if metadata.Schema != 1 || !safeName(metadata.Name) || strings.TrimSpace(metadata.Version) == "" {
-		return Candidate{}, fmt.Errorf(
-			"%s needs schema 1, a safe name, and a version", PackageFilename)
+	fullManifest := shape["databases"] != nil
+	var metadata packageMetadata
+	var federation plugin.Manifest
+	if fullManifest {
+		federation, err = plugin.ReadManifest(metadataPath)
+		if err != nil {
+			return Candidate{}, err
+		}
+		metadata = packageMetadata{Schema: federation.Schema, Name: federation.Name,
+			Version: federation.Version, Kind: DataPackage}
+	} else {
+		decoder := json.NewDecoder(strings.NewReader(string(raw)))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&metadata); err != nil {
+			return Candidate{}, fmt.Errorf("parse %s: %w", PackageFilename, err)
+		}
+		if metadata.Schema != 1 || !safeName(metadata.Name) || strings.TrimSpace(metadata.Version) == "" {
+			return Candidate{}, fmt.Errorf(
+				"%s needs schema 1, a safe name, and a version", PackageFilename)
+		}
 	}
 	rides, err := plugin.InspectRides(metadata.Name, directory)
 	if err != nil {
@@ -205,6 +243,10 @@ func Inspect(source, directory string) (Candidate, error) {
 			executable = name
 			break
 		}
+	}
+	if fullManifest && federation.Binary != "roca" && executable != federation.Binary {
+		return Candidate{}, fmt.Errorf("%s declares binary %q but the package supplies %q",
+			PackageFilename, federation.Binary, executable)
 	}
 	kind := metadata.Kind
 	if kind == "" {
@@ -224,19 +266,27 @@ func Inspect(source, directory string) (Candidate, error) {
 	}
 	switch kind {
 	case DataPackage:
-		if metadata.Custody || metadata.StateDir != "" {
+		if !fullManifest && (metadata.Custody || metadata.StateDir != "") {
 			return Candidate{}, fmt.Errorf(
 				"%s data packages declare custody and writable state in %s",
 				PackageFilename, plugin.SemanticFilename)
 		}
-		descriptor, err := plugin.Inspect(metadata.Name, directory)
+		descriptors, err := plugin.InspectAll(metadata.Name, directory)
 		if err != nil {
 			return Candidate{}, fmt.Errorf("inspect plugin package: %w", err)
 		}
-		candidate.Custody = descriptor.Semantic.Custody
-		candidate.Database = filepath.Base(descriptor.Database)
+		for _, descriptor := range descriptors {
+			candidate.Custody = candidate.Custody || descriptor.Semantic.Custody
+			candidate.Databases = append(candidate.Databases, filepath.Base(descriptor.Database))
+		}
+		if len(candidate.Databases) == 1 {
+			candidate.Database = candidate.Databases[0]
+		}
 		candidate.Risk = DataOnly
-		required = append(required, plugin.SemanticFilename, candidate.Database)
+		if !fullManifest {
+			required = append(required, plugin.SemanticFilename)
+		}
+		required = append(required, candidate.Databases...)
 		if executable != "" {
 			required = append(required, executable)
 		}
@@ -364,7 +414,7 @@ func (m Manager) Install(candidate Candidate) (Result, error) {
 	if err := refuseExecutableCollision(executable); err != nil {
 		return Result{}, err
 	}
-	staged, err := m.stage(candidate, "")
+	staged, err := m.stage(candidate, nil)
 	if err != nil {
 		return Result{}, err
 	}
@@ -408,9 +458,11 @@ func (m Manager) Update(candidate Candidate) (Result, error) {
 		return Result{}, fmt.Errorf("plugin %s changed its package kind from %s to %s; update refused",
 			candidate.Name, previousManifest.Kind, candidate.Kind)
 	}
-	if previousManifest.Database != candidate.Database {
-		return Result{}, fmt.Errorf("plugin %s changed its database filename from %s to %s; update refused to protect data",
-			candidate.Name, previousManifest.Database, candidate.Database)
+	previousDatabases := manifestDatabaseFiles(previousManifest)
+	candidateDatabases := candidateDatabaseFiles(candidate)
+	if !slices.Equal(previousDatabases, candidateDatabases) {
+		return Result{}, fmt.Errorf("plugin %s changed its database files from %v to %v; update refused to protect data",
+			candidate.Name, previousDatabases, candidateDatabases)
 	}
 	if previousManifest.StateDir != candidate.StateDir {
 		return Result{}, fmt.Errorf("plugin %s changed its state directory from %s to %s; update refused to protect data",
@@ -425,11 +477,11 @@ func (m Manager) Update(candidate Candidate) (Result, error) {
 			return Result{}, err
 		}
 	}
-	preservedDatabase := ""
-	if previousManifest.Database != "" {
-		preservedDatabase = filepath.Join(target, previousManifest.Database)
+	preservedDatabases := make(map[string]string, len(previousDatabases))
+	for _, database := range previousDatabases {
+		preservedDatabases[database] = filepath.Join(target, database)
 	}
-	staged, err := m.stage(candidate, preservedDatabase)
+	staged, err := m.stage(candidate, preservedDatabases)
 	if err != nil {
 		return Result{}, err
 	}
@@ -554,7 +606,7 @@ func InstalledExecutable(manifest Manifest) string {
 	return manifest.Executable
 }
 
-func (m Manager) stage(candidate Candidate, preservedDatabase string) (string, error) {
+func (m Manager) stage(candidate Candidate, preservedDatabases map[string]string) (string, error) {
 	if err := os.MkdirAll(m.PluginRoot, 0o700); err != nil {
 		return "", fmt.Errorf("create plugin directory: %w", err)
 	}
@@ -583,9 +635,9 @@ func (m Manager) stage(candidate Candidate, preservedDatabase string) (string, e
 	if err := verifyExactFiles(staged, mapKeys(candidate.Files), candidate.Files); err != nil {
 		return failed(fmt.Errorf("verify staged plugin: %w", err))
 	}
-	if preservedDatabase != "" {
-		if err := installFile(preservedDatabase, filepath.Join(staged, candidate.Database), 0o600); err != nil {
-			return failed(fmt.Errorf("preserve plugin database: %w", err))
+	for name, source := range preservedDatabases {
+		if err := installFile(source, filepath.Join(staged, name), 0o600); err != nil {
+			return failed(fmt.Errorf("preserve plugin database %s: %w", name, err))
 		}
 	}
 	if err := writeManifest(staged, candidate, m.executablePath(candidate)); err != nil {
@@ -600,6 +652,10 @@ func writeManifest(directory string, candidate Candidate, executable string) err
 		Version: candidate.Version, Checksum: candidate.Checksum, Kind: candidate.Kind, Risk: candidate.Risk,
 		Custody: candidate.Custody, Database: candidate.Database, Executable: executable,
 		ExecutableFile: candidate.Executable, StateDir: candidate.StateDir, Files: candidate.Files,
+	}
+	if databases := candidateDatabaseFiles(candidate); len(databases) > 1 {
+		manifest.Database = ""
+		manifest.Databases = databases
 	}
 	manifestRaw, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
@@ -638,14 +694,20 @@ func (m Manager) UpdateInPlace(candidate Candidate) (Result, error) {
 		return Result{}, fmt.Errorf(
 			"plugin %s is not a data package; an in-place update is refused", candidate.Name)
 	}
-	if previous.Database != candidate.Database {
+	previousDatabases := manifestDatabaseFiles(previous)
+	candidateDatabases := candidateDatabaseFiles(candidate)
+	if !slices.Equal(previousDatabases, candidateDatabases) {
 		return Result{}, fmt.Errorf(
-			"plugin %s changed its database filename from %s to %s; update refused to protect data",
-			candidate.Name, previous.Database, candidate.Database)
+			"plugin %s changed its database files from %v to %v; update refused to protect data",
+			candidate.Name, previousDatabases, candidateDatabases)
+	}
+	databaseSet := make(map[string]bool, len(candidateDatabases))
+	for _, database := range candidateDatabases {
+		databaseSet[database] = true
 	}
 	payload := make([]string, 0, len(candidate.Files))
 	for name := range candidate.Files {
-		if name == candidate.Database {
+		if databaseSet[name] {
 			continue
 		}
 		payload = append(payload, name)
@@ -666,7 +728,7 @@ func (m Manager) UpdateInPlace(candidate Candidate) (Result, error) {
 		return Result{}, fmt.Errorf("verify updated plugin: %w", err)
 	}
 	for name := range previous.Files {
-		if _, kept := candidate.Files[name]; kept || name == previous.Database {
+		if _, kept := candidate.Files[name]; kept || slices.Contains(previousDatabases, name) {
 			continue
 		}
 		if err := os.Remove(filepath.Join(target, name)); err != nil && !os.IsNotExist(err) {
@@ -687,8 +749,8 @@ func CandidateFromManifest(manifest Manifest, directory string) Candidate {
 	return Candidate{
 		Name: manifest.Name, Version: manifest.Version, Source: manifest.Source,
 		Directory: directory, Checksum: manifest.Checksum, Risk: manifest.Risk,
-		Custody: manifest.Custody, Database: manifest.Database,
-		Executable: manifest.ExecutableFile, Files: manifest.Files,
+		Custody: manifest.Custody, Database: manifest.Database, Databases: manifestDatabaseFiles(manifest),
+		Executable: manifest.ExecutableFile, StateDir: manifest.StateDir, Kind: manifest.Kind, Files: manifest.Files,
 	}
 }
 
@@ -707,8 +769,13 @@ func ReadManifest(directory string) (Manifest, error) {
 	if manifest.Kind == "" {
 		manifest.Kind = DataPackage
 	}
-	validShape := manifest.Kind == DataPackage && safeFile(manifest.Database) ||
-		manifest.Kind == ExecutablePackage && manifest.Database == "" &&
+	databaseFiles := manifestDatabaseFiles(manifest)
+	validDatabases := len(databaseFiles) > 0
+	for _, database := range databaseFiles {
+		validDatabases = validDatabases && safeFile(database)
+	}
+	validShape := manifest.Kind == DataPackage && validDatabases ||
+		manifest.Kind == ExecutablePackage && len(databaseFiles) == 0 &&
 			manifest.Risk == Executable && manifest.Executable != "" && safeFile(manifest.ExecutableFile) &&
 			(manifest.StateDir == "" || safeFile(manifest.StateDir))
 	for name := range manifest.Files {
@@ -752,7 +819,11 @@ func VerifyInstalledPayload(expectedName, directory string) (Manifest, error) {
 		return Manifest{}, fmt.Errorf(
 			"%s package checksum is %s, want %s", ManifestFilename, manifest.Checksum, checksum)
 	}
-	payload := []string{PackageFilename, plugin.SemanticFilename, manifest.Database}
+	databaseFiles := manifestDatabaseFiles(manifest)
+	payload := append([]string{PackageFilename}, databaseFiles...)
+	if _, legacy := checksums[plugin.SemanticFilename]; legacy {
+		payload = append(payload, plugin.SemanticFilename)
+	}
 	if manifest.Kind == ExecutablePackage {
 		payload = []string{PackageFilename, manifest.ExecutableFile}
 	}
@@ -762,14 +833,16 @@ func VerifyInstalledPayload(expectedName, directory string) (Manifest, error) {
 		}
 	}
 	immutable := maps.Clone(checksums)
-	delete(immutable, manifest.Database)
+	for _, database := range databaseFiles {
+		delete(immutable, database)
+	}
 	if err := verifyChecksummedFiles(directory, immutable); err != nil {
 		return Manifest{}, err
 	}
-	if manifest.Database != "" {
-		if info, err := os.Lstat(filepath.Join(directory, manifest.Database)); err != nil ||
+	for _, database := range databaseFiles {
+		if info, err := os.Lstat(filepath.Join(directory, database)); err != nil ||
 			!info.Mode().IsRegular() {
-			return Manifest{}, fmt.Errorf("installed database %s is not a regular file", manifest.Database)
+			return Manifest{}, fmt.Errorf("installed database %s is not a regular file", database)
 		}
 	}
 	if _, err := os.Lstat(filepath.Join(directory, plugin.RidesFilename)); err == nil {
@@ -792,8 +865,8 @@ func InstalledPaths(directory string, manifest Manifest) []string {
 	for name := range manifest.Files {
 		paths = append(paths, filepath.Join(directory, name))
 	}
-	if manifest.Database != "" {
-		database := filepath.Join(directory, manifest.Database)
+	for _, name := range manifestDatabaseFiles(manifest) {
+		database := filepath.Join(directory, name)
 		paths = append(paths, database+"-wal", database+"-shm", database+"-journal")
 	}
 	if manifest.StateDir != "" {

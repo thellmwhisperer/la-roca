@@ -1,405 +1,292 @@
 # Plugins
 
-First-time path: [install, detect an already signed-in agent CLI, and query
-without a La Roca login](lifecycle.md#install).
+La Roca is a federating kernel. A plugin owns its durable databases and
+describes them in a `plugin.json` manifest; the kernel validates those
+declarations, attaches the databases read-only to an in-memory SQLite hub, and
+composes their table descriptions into the catalog used by natural-language
+queries.
 
-The plugin standard is experimental and defaults to off in this release. Enable
-data discovery, attach-based querying, and `roca plugin` lifecycle commands in
-`~/.roca/config.toml`:
+The kernel does not own a domain database. Its durable state is configuration
+and installed manifests. Database retention, pruning, compaction, and scale are
+plugin policy: one plugin cannot prune another plugin's history.
 
-```toml
-[features]
-plugins = true
+The manifest engine is landing incrementally. `roca-corpus` is its first
+manifest-backed consumer. `roca-ops` and `roca-cron` already own separate
+databases and are the next bundled domains to move from their legacy package
+descriptors. Existing data that has not yet moved remains readable during this
+transition; that compatibility path is not a plugin API.
+
+## Current system map
+
+```text
+CLI and MCP
+    |
+    v
++----------------------------------------------------------+
+| kernel                                                   |
+| init | manifest validation | read-only gate | NL-to-SQL |
+| config + manifests on disk | SQLite attach hub in memory |
++--------------------------+-------------------------------+
+                           |
+             read-only attachments and executable calls
+             +-------------+-------------+
+             |                           |
+             v                           v
+    +------------------+       +------------------+
+    | roca-corpus      |       | roca-ops         |
+    | ingest           |       | store/query/SQL  |
+    | corpus database  |       | ops database     |
+    | archive policy   |       | operations policy|
+    +------------------+       +------------------+
+
+    roca-cron owns its own journey database for run history and errors.
 ```
 
-With `features.plugins` absent or false, La Roca does not route to a third-party
-semantic layer or resolve an installer source. The bundled corpus remains
-resident, and separately gated bundled domains keep their own activation
-rules. Existing Git-style executable dispatch predates this standard and
-continues to behave as before, except for the default-off vector executable
-described in its worked example below.
+`roca-corpus` proves the engine without changing the product contract: it is
+resident, ingest still writes and indexes the same data, query results are
+unchanged, and readable query output still begins with the same consulted
+database list.
 
-There are two package kinds. A data plugin is one directory under
-`~/.roca/plugins/<name>/`. It contains
-exactly one plain SQLite database (`.db`, `.sqlite`, or `.sqlite3`) and a
-`semantic.yaml` file, and may also declare scheduled rides in `rides.toml`.
-The database is the plugin's only writable store; La Roca opens it read-only,
-either when its semantic layer is relevant to a question or, for a resident
-plugin, for every query.
-SQLite extensions, including `sqlite-vec`, are not part of this contract.
+## The manifest
 
-An executable-only plugin contains a `roca-<name>` binary instead of a semantic
-layer and database. It may declare one writable `state_directory`; the installer
-creates that directory, preserves it across package updates, and records the
-namespace in the installed manifest so uninstall and purge own its contents.
-Executable-only packages never enter data-plugin discovery or attachment.
+`plugin.json` schema 1 has five required parts:
 
-## Semantic layer
+- identity: `name`, `version`, and `binary`;
+- databases: every SQLite file, its declared attach alias, attachment mode,
+  custody, and plugin-owned retention policy;
+- semantic fragment: the tables and questions served by each database;
+- verbs: one canonical command name and description, projected to CLI and MCP;
+- capabilities: named executable calls used when SQL cannot perform the work.
 
-The version 1 document describes what the database actually contains and the
-questions it can answer:
+The canonical verb `inspect`, for example, registers as CLI command `inspect`
+and MCP tool `roca_inspect`. Both resolve to the same capability. A manifest
+cannot give the two surfaces different implementations.
 
-```yaml
-version: 1
-attachment: on-demand
-description: Purchase receipts and their totals.
-questions:
-  - Which receipts were recorded?
-tables:
-  - name: receipts
-    description: One row per purchase receipt.
-    questions:
-      - How much did a purchase cost?
-    columns: [id, title, amount_cents]
-```
-
-`attachment` is `on-demand` or `resident`; omitting it keeps the version 1
-default, `on-demand`. An on-demand database is attached only when its semantic
-layer matches the question or an explicit SQL statement names it. A resident
-database is attached whenever a read connection is acquired and stays available
-for that connection's query. Resident plugins still pass the same schema
-validation, read-only URI, gate, timeout, provenance, and ten-database attachment
-cap.
-
-`description`, at least one question, and every table's description and ordered
-column list are required. A plugin that holds user data moved out of core also
-declares `custody: true`; lifecycle tooling must treat that data as protected.
-No table may declare a column named `database`: that name is reserved for the
-row provenance every answer carries.
-
-At query time La Roca ranks installed semantic layers against the question and
-validates each selected declaration against the database's real tables and
-columns. SQLite's own internal tables are outside that comparison, so a
-database that uses `AUTOINCREMENT` does not declare `sqlite_sequence`. A
-mismatch skips that plugin and travels as a warning. Valid tables
-are shown to the SQL model with a qualified schema such as
-`plugin_receipts.receipts`. Punctuation in a plugin name becomes `_`; the rare
-collision receives a deterministic suffix.
-
-The same read-only gate validates core and qualified plugin SQL. Hidden table
-names and forbidden functions stay forbidden in every attached schema. Plugin
-databases are attached with SQLite's read-only URI mode. On-demand and resident
-databases remain attached throughout execution and are detached before the read
-connection is returned. The execution timeout still applies. When more eligible
-plugins exist than SQLite can attach, La Roca uses at most ten and declares the
-omitted databases in the answer.
-
-Every query and explicit `roca exec` answer declares its consulted databases.
-Rows returned while plugins are in scope carry a `database` value such as
-`core` or `plugin:receipts`; cross-database rows use a `+`-joined label. The
-resident bundled corpus is always in scope, so an ordinary answer carries that
-column whether or not `features.plugins` is set, and whether or not every
-database in scope contributed a row to this run. This provenance also reaches
-MCP's TOON output.
-
-## Cron rides
-
-`roca cron` is a default-off lightweight train: an external observer that invokes work
-already owned by core or a plugin. It does not ingest, embed, or keep a daemon
-alive. System cron can call `roca cron run`; omitting the train selects
-`nightly`. Enable the command explicitly:
-
-```toml
-[features]
-cron = true
-```
-
-With `features.cron` absent or false, the command is not registered and behaves
-as though it does not exist. Enabling it installs its bundled journey store on
-first use. Core registers its existing direct `roca ingest` command as the
-first nightly ride, so direct ingest remains available unchanged. The train
-itself is not behind `features.plugins`: it reads verified ride manifests from
-installed plugin payloads and records journeys whether or not the plugin
-standard is enabled. An unmanaged directory, a changed payload, an installation
-whose manifest and checksums no longer agree, or one whose recorded consent is
-[data-only](#verified-packages-and-lifecycle) contributes no rides. That check
-re-reads every declared payload except the plugin's own writable database, and
-a directory named `core` contributes nothing either: that ride namespace is
-reserved for the built-in rides.
-
-A plugin opts in with `rides.toml`. Ride, train, and gate names are identifier
-style; use underscores rather than hyphens. `train` defaults to `nightly`:
-
-```toml
-[ride.delta_ingest]
-command = "roca vector ingest --delta"
-gate = "after_ingest"
-```
-
-`roca cron list` aggregates core and every installed plugin manifest in stable
-plugin/ride order. `roca cron run [train] --dry-run` prints that order and each
-gate's current status without invoking or recording anything. A gate named
-`after_<ride>` opens only when that dependency's latest recorded journey ended
-with exit code zero. The dependency is the ride of that name declared by the
-same plugin, so two plugins may name a ride alike without deciding each other's
-gates. `after_ingest` is the sole cross-plugin exception: when the plugin does
-not declare its own `ingest` ride, it reads the core ingest journey. Any other
-gate whose dependency is absent from that plugin is reported as an unusable
-manifest rather than deferred forever. The train does not reorder rides into a
-dependency graph, and one ride it cannot observe or record is
-reported against that ride while the rides behind it still take their trip.
-
-Before each invocation the train probes core's existing `logs/.roca.lock`
-flock and releases the probe immediately. It never keeps or creates that lock.
-That flock guards core's log directory rather than a whole ingest, so an
-occupied probe means core is writing a record or a purge holds the tree, not
-that some long command is halfway through: it is a courtesy check rather than
-mutual exclusion, which is why rides must stay idempotent. An occupied lock or
-closed dependency defers the ride to the next train instead of waiting in a
-daemon. Invoked commands keep their standard behavior while the train observes
-exit code, duration, streams, and timestamps from outside. This version
-intentionally imposes no per-ride timeout: timeout policy belongs to each ride
-or its external scheduler, not to the observer.
-
-Every attempted or deferred trip is stored in the bundled custodial
-`roca-cron` plugin database at
-`~/.roca/plugins/roca-cron/roca-cron.db`. Its `journeys` table is the canonical
-cross-plugin signal and includes train, ride, plugin, timestamps, duration,
-exit code, error, gate status, stdout, and stderr. Both streams are kept as a
-redacted excerpt of at most 64 KiB, with the dropped byte count noted in place,
-so a talkative ride can neither grow the database without bound nor leave a
-credential in a queryable column. Dry-runs write no journey, and
-`ROCA_READ_ONLY=1` refuses a train run because recording one is a write, while
-leaving `roca cron list` and `--dry-run` available. Journey history is kept
-whole in this version: unlike the operational log, it is neither rotated nor
-pruned.
-
-The train expects an ordinary crontab entry. Core's own ride addresses the
-running binary by its absolute path, so it survives cron's minimal environment;
-a plugin ride command is resolved by the shell, so give it an absolute path or
-declare `PATH` in the crontab:
-
-```crontab
-PATH=/usr/bin:/bin:/home/you/.local/bin
-17 3 * * * /home/you/.local/bin/roca cron run nightly
-```
-
-## Building against the stable surfaces
-
-A plugin should treat the `roca` process as its API and compose these public
-surfaces:
-
-- CLI commands with `--json` when it needs machine-shaped output.
-- `roca query`, `roca exec`, and `roca sql` for reads; explicit SQL still goes
-  through La Roca's read-only gate. Query inherits the detected-agent-CLI
-  factory default, so a plugin does not introduce a separate login step.
-- `roca store` for writes. Use the documented layers and pass
-  `--origin plugin:<name>` so the plugin's records remain attributable and can
-  be selected or purged by origin. Plugin names may contain letters, digits,
-  hyphens, underscores, and dots, and may not begin with a dot. Pass `--agent`
-  and `--model` as well, or the write is stored as an unknown author: see
-  [Memory authorship](operations.md#memory-authorship).
-- `roca mcp serve` when an MCP client is the more natural integration surface.
-
-Every answer these surfaces return declares the databases it consulted in
-`databases`, the relevant ones it could not attach in `omitted_databases`, and
-each degraded semantic layer in `warnings`. Each row carries its source in
-`database`. That envelope is the contract a plugin author may rely on.
-
-## Commands and core-memory writes
-
-An optional `roca-<name>` executable on `PATH` remains the command surface.
-When `roca <name>` is not built in, La Roca hands that executable the remaining
-arguments, standard streams, and exit status unchanged. Built-ins win. The
-current directory is never searched. `roca plugins` lists these executables;
-data-plugin discovery does not change dispatch.
-
-A plugin that intentionally writes a memory uses `roca store` or MCP with
-`--origin plugin:<name>`. That write lands in core, or in the operational store
-when [`features.roca_ops`](#the-bundled-roca-ops-plugin) routes it there. Direct
-writes to `roca.db` are outside the plugin contract. Executables run with the
-user's permissions and are not a sandbox.
-
-## Verified packages and lifecycle
-
-An installable source is a local directory or the root of a Git repository. A
-URL is treated as a Git URL; `owner/repo` is cloned from GitHub using the user's
-existing Git credentials, including for private repositories. The source adds
-a `plugin.json` file:
+Here is a complete two-database plugin. The second database demonstrates the
+same shape used by a scheduler that keeps run history and errors apart from its
+domain records.
 
 ```json
 {
   "schema": 1,
   "name": "receipts",
-  "version": "1.2.3",
-  "kind": "data"
+  "version": "1.0.0",
+  "binary": "roca-receipts",
+  "databases": [
+    {
+      "name": "records",
+      "path": "receipts.db",
+      "alias": "receipts_records",
+      "attachment": "on-demand",
+      "custody": true,
+      "retention": "Keep receipt records until the operator removes them."
+    },
+    {
+      "name": "runs",
+      "path": "receipts-runs.db",
+      "alias": "receipts_runs",
+      "attachment": "on-demand",
+      "retention": "Keep failures; prune successful runs after 30 days."
+    }
+  ],
+  "semantic": {
+    "databases": [
+      {
+        "database": "records",
+        "description": "Purchase receipts and their totals.",
+        "questions": ["Which receipts were recorded?"],
+        "tables": [
+          {
+            "name": "receipts",
+            "description": "One row per purchase receipt.",
+            "questions": ["How much did a purchase cost?"],
+            "columns": ["id", "title", "amount_cents"]
+          }
+        ]
+      },
+      {
+        "database": "runs",
+        "description": "Import attempts and their errors.",
+        "questions": ["Which receipt imports failed?"],
+        "tables": [
+          {
+            "name": "import_runs",
+            "description": "One receipt import attempt.",
+            "columns": ["id", "started_at", "error"]
+          }
+        ]
+      }
+    ]
+  },
+  "verbs": [
+    {
+      "name": "receipts",
+      "description": "Import and inspect purchase receipts.",
+      "capability": "receipts"
+    }
+  ],
+  "capabilities": [
+    {
+      "name": "receipts",
+      "command": ["receipts"]
+    }
+  ]
 }
 ```
 
-`kind` defaults to `data` for compatibility. An executable-only package uses
-`"kind": "executable"` and may add a safe, single-component
-`state_directory`. Data-package custody remains in `semantic.yaml`; an
-executable-only package may set `custody: true` in `plugin.json` when its state
-cannot be regenerated.
+The engine rejects unknown fields, unsupported schema versions, unsafe paths or
+aliases, repeated names, a semantic fragment that names an undeclared
+database, a table declaration that disagrees with the real SQLite schema, and
+a verb that names a missing capability. Discovery reports malformed manifests
+as actionable errors; it never silently ignores them. Attach aliases are
+explicit and collisions are errors rather than names the kernel rewrites.
 
-A `checksums.txt` beside it publishes one SHA-256 for each payload file:
-`plugin.json`, `semantic.yaml`, the one SQLite database, optional `rides.toml`,
-and the optional `roca-<name>` executable. For an executable-only package it
-lists exactly `plugin.json` and `roca-<name>`; the writable state directory is
-created only after verification and is not a published payload. The installer
-rejects missing, extra, changed, symlinked, or non-regular payloads before it
-writes anything, and it installs each payload from the same open file it
-verifies, so a source swapped for a symlink or another file between the consent
-screen and the copy is refused rather than installed. Its displayed package
-checksum is the deterministic SHA-256 fingerprint of those verified source
-checksums.
+### Database declarations
+
+`path` is one regular file shipped in the package. It must be a safe filename,
+not a path outside the package. `alias` is the exact SQLite schema used in
+qualified SQL, such as `receipts_records.receipts`.
+
+`attachment` is `resident` or `on-demand`. A resident database is available to
+every query connection. An on-demand database is selected when its semantic
+fragment matches the question or explicit SQL names its alias. Both modes use
+SQLite read-only URI mode, the same SQL gate and timeout, and the same
+attachment limit.
+
+`custody: true` says the database contains operator-owned data that uninstall
+must archive instead of delete. `retention` documents the policy owned and
+implemented by the plugin. The kernel displays and validates the declaration;
+it does not enforce another plugin's pruning rules.
+
+When a plugin declares one database, result provenance is `plugin:<name>`.
+With several databases, provenance is `plugin:<name>/<database>`. Filesystem
+paths never enter query output.
+
+### Semantic fragments
+
+Every database needs exactly one semantic entry. Its description, at least one
+question across the database or its tables, every visible table description,
+and each ordered column list are required. The declaration is checked against
+the actual database before it reaches the model.
+
+SQLite internal tables and La Roca's hidden bookkeeping tables stay outside the
+catalog. No plugin table may declare a column named `database`; that name is
+reserved for row provenance.
+
+### Verbs and capabilities
+
+A verb is the public name. A capability is the executable call behind it. The
+engine derives the MCP name from the canonical verb and registers both surfaces
+from one record. A capability's `command` is prepended to the arguments the
+caller supplies and executed through the declared `binary`.
+
+SQL remains the preferred path for reads. Capabilities are for work SQL cannot
+perform, such as importing a source, contacting a device, or producing a
+derived artifact. Executable capabilities run with the user's permissions and
+are not a sandbox.
+
+## Build your own plugin
+
+1. Create the SQLite files and executable named by the manifest.
+2. Write `plugin.json`, including a semantic entry for every database.
+3. Publish a `checksums.txt` containing one SHA-256 for every immutable payload
+   and every initial database file.
+4. Test that each declared table and ordered column list matches the database.
+5. Install from a local directory while developing, then publish the same
+   directory in a Git repository.
+
+A source package for the example above contains:
+
+```text
+plugin.json
+receipts.db
+receipts-runs.db
+roca-receipts
+checksums.txt
+```
+
+Its checksum file is:
 
 ```text
 <sha256>  plugin.json
-<sha256>  semantic.yaml
-<sha256>  receipts.sqlite
-<sha256>  rides.toml
+<sha256>  receipts.db
+<sha256>  receipts-runs.db
 <sha256>  roca-receipts
 ```
 
-Run `roca plugin install <path|url|owner/repo>`. The consent screen always names
-the source, version, checksum, and one of two risk levels:
-
-- **DATA-ONLY** has a database and semantic layer, no executable, and no ride
-  manifest. It is near-harmless; its worst case is lying content entering model
-  context.
-- **EXECUTABLE** is full trust. It runs code with the user's privileges, either
-  from its `roca-<name>` executable or from the ride commands the [cron
-  train](#cron-rides) hands to a shell. The train runs a plugin's rides only
-  while its manifest records that consent.
-
-Install, update, and uninstall all show that screen and wait for an answer.
-`--yes` accepts that risk without prompting; `--json` never prompts and
-refuses the operation until `--yes` states the decision, so no script consents
-by accident. An update also names the checksum it replaces, because a source
-takeover and an ordinary version bump otherwise look the same.
-
-The plugin folder is installed under `~/.roca/plugins/`. An executable goes to
-`$ROCA_PREFIX`, or `~/.local/bin` when that variable is absent. The generated
-`.roca-plugin.json` records source, version, package checksum, payload checksums,
-and installed paths.
-
-A plugin bundled with the binary asks for no consent and resolves no source:
-[installation and update](lifecycle.md#install) place it from the release
-artefact itself, verify the same checksums, and write the same manifest. Because
-nothing but its packaged files changes between versions, it is refreshed inside
-the directory it already occupies, so the database it owns is never unlinked
-from a process that holds it open.
-
-`roca plugin update <name>` re-resolves and verifies that recorded source. It
-refreshes immutable package files but preserves the installed SQLite database,
-because that file is the plugin's writable, user-owned state. A database filename
-change is refused instead of guessing at a migration. For an executable-only
-package it likewise preserves the manifest-declared state directory and refuses
-a directory-name change.
-
-`roca plugin uninstall <name>` removes an ordinary verified installation. When
-`custody: true`, it never deletes the folder: it atomically moves the complete
-directory to `~/.roca/plugin-custody/<name>-<UTC timestamp>` and reports that
-path. A lifecycle operation also refuses to overwrite or delete an installed
-executable whose checksum changed outside the installer.
-
-Removing La Roca itself removes the installed packages and asks separately
-before it touches those archives: see
-[Uninstall](lifecycle.md#uninstall).
-
-## Worked executable example: vector search
-
-Vector search is deliberately an installable executable package, not a bundled
-feature and not a data plugin. The core binary has no vector implementation,
-model, index, or uninstall inventory. `features.plugins` gates the verified
-install lifecycle, while its own default-off switch gates every vector command
-surface:
+Enable third-party plugin lifecycle commands, then install the directory:
 
 ```toml
 [features]
 plugins = true
-vector = true
 ```
-
-With `features.vector` absent or false, `roca vector` does not dispatch even if
-a `roca-vector` binary is on `PATH`, and `roca plugins` does not list it. This is
-the same absent/false activation contract as `features.roca_ops`; it does not
-silently edit configuration during install or update. Explicit verified package
-installation and its **EXECUTABLE** consent remain a separate prerequisite.
-
-The source lives in `plugins/vector/` as its own Go module, and its
-[module README](../plugins/vector/README.md) covers the binary's complete
-command, storage, and quality-test contract. Build a verified package for the
-current machine, then install it through the ordinary full-trust consent path:
 
 ```sh
-make -C plugins/vector package
-roca plugin install .tmp/vector-package
+roca plugin install ./receipts-plugin
 ```
 
-Once the package is installed and `features.vector = true`, its `roca-vector`
-binary makes `roca vector` available through executable dispatch. It reads
-corpus pages through the public `roca exec --json` boundary and owns its
-sqlite-vec index, completion record, worker log, and locks under
-`~/.roca/plugins/vector/state/`. Core neither imports the implementation nor
-opens that index.
+The installer verifies every payload before asking for consent. A package with
+only declarative data is classified **DATA-ONLY**. A package with an executable
+capability or scheduled ride is **EXECUTABLE** and receives the full-trust
+consent screen. Missing, extra, changed, symlinked, or non-regular payloads are
+refused.
 
-```sh
-roca vector install
-roca vector ingest --delta
-roca vector query "the decision about local model routing" 10
-```
+An update replaces immutable files but preserves every declared database.
+Changing the database file list is refused rather than guessing at a data
+migration. Uninstall removes an ordinary package; if any database declares
+custody, the complete plugin directory is moved to the custody archive.
 
-`roca vector install` is the plugin's adopt/init boundary: it prepares the
-plugin-owned database and embedding model, then starts the resumable initial
-build. The package manifest declares `state/`, so verified update preserves it,
-and plugin uninstall or purge owns it rather than core's owned-path inventory.
+The generated `.roca-plugin.json` is local installation inventory. Plugin
+authors write `plugin.json`; they must not write or distribute the local
+inventory file.
 
-The package ships OFF: release and ordinary installation do not place it. An
-operator must first enable the experimental plugin lifecycle, explicitly
-install the executable package, and accept its **EXECUTABLE** risk prompt.
+## Stable integration surfaces
+
+Plugins should treat the `roca` process as the public API:
+
+- use `roca query`, `roca sql`, and `roca exec` for gated reads;
+- use `roca store --origin plugin:<name>` for attributed operational writes;
+- use `--json` for machine-shaped CLI output;
+- use `roca mcp serve` when MCP is the natural transport.
+
+Every query and explicit SQL answer declares consulted databases, omitted
+databases, warnings, and row provenance. Direct writes to another plugin's
+database are outside the contract.
 
 ## The bundled roca-corpus plugin
 
-`roca-corpus` is the resident, data-only custody package for the perennial
-harvest: sessions, exchanges, reasoning blocks, tool uses, and files harvested
-as memories. Its memory schema admits only `harvest-corpus` and `harvest-file`
-as first-class provenance values instead of encoding that boundary as layers.
-Operational and curated `agent` and `promoted` records remain in core during
-this split.
+`roca-corpus` is the resident first consumer of the manifest engine. It owns
+the perennial archive: sessions, exchanges, reasoning blocks, tool uses, and
+files harvested as memories. Installation places its manifest and database
+under `~/.roca/plugins/roca-corpus/`; no feature flag is required.
 
-Every [installation and update](lifecycle.md#install) places the package under
-`~/.roca/plugins/roca-corpus/` without changing the operator's configuration.
-Corpus has no feature flag: it is always resident in the normal CLI and MCP
-world, every new ingest writes and indexes its database, and both model-backed
-queries and deterministic keyword rescue can read it. Existing historical rows
-in core remain readable; this activation does not move or delete them.
+Its manifest declares the `ingest` verb, the `plugin_roca_corpus` attach alias,
+the semantic fragment used by NL-to-SQL, custody, and plugin-owned archive
+retention. Existing ingest and query behavior is unchanged by the migration.
 
 ## The bundled roca-ops plugin
 
-`roca-ops` is the operational plugin La Roca ships with itself: a resident,
-data-only package that declares `custody: true` over what agents write. Every
-[installation and update](lifecycle.md#install) places it under
-`~/.roca/plugins/roca-ops/`, and it stays inert until a second experimental
-switch is set:
+`roca-ops` owns operational agent writes and their query surface. It has a
+separate custodial database so its retention policy can differ from the corpus.
+In the current staged rollout it remains behind:
 
 ```toml
 [features]
 roca_ops = true
 ```
 
-With `features.roca_ops` absent or false, `roca store`, `roca query`, `roca
-exec`, and MCP `roca_store` behave exactly as they did before it existed and
-every write lands in core. With it true, La Roca keeps those external contracts,
-answer envelopes included, and routes each new write to the operational database
-instead, carrying the same [authorship
-stamp](operations.md#memory-authorship) core records. Core keeps the history it
-already holds and is read from without being written to.
+Its manifest migration follows corpus. Until that step lands, its legacy
+descriptor preserves the existing `store`, `query`, `sql`, and `exec`
+contracts without turning the compatibility database into kernel ownership.
 
-Reads are the union of the two halves. Resident attachment puts
-`plugin_roca_ops.memories` in front of the SQL model on every query, and the
-deterministic keyword rescue asks both databases, orders the merged rows by
-recency before it applies the shared limit, and declares the statement for both
-halves rather than the core one alone. Each row still names its origin in
-`database`. A half that cannot be read degrades to a warning instead of
-discarding the half that answered.
+## Scheduled rides
 
-A memory supersedes only what its own database holds. With the switch on, a
-write that names a core memory in `--supersedes` is refused: the exclusion is
-computed inside the database that stores the replacement, so the retirement
-would be reported without happening.
+`roca-cron` owns a separate journey database for persisted run history,
+failures, and errors. The manifest schema can describe that database and its
+retention independently from corpus and ops; migrating cron to the manifest is
+a later federation step.
 
-Nothing expires by itself and there is no default lifetime. A write may carry
-an RFC3339 `expires_at` in its metadata for an external custodian to interpret;
-this release exposes no user-facing OPS drain command.
+Verified executable packages may also ship `rides.toml`. `roca cron list` and
+`roca cron run` accept only checksum-verified ride declarations whose install
+record carries executable consent. See [Operations](operations.md) for logs,
+redaction, and read-only behavior.

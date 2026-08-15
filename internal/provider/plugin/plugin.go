@@ -58,12 +58,16 @@ type SemanticTable struct {
 }
 
 type Descriptor struct {
-	Name      string   `json:"name"`
-	Directory string   `json:"-"`
-	Database  string   `json:"-"`
-	Schema    string   `json:"schema"`
-	Semantic  Semantic `json:"semantic"`
-	relevance int
+	Name         string    `json:"name"`
+	Directory    string    `json:"-"`
+	Database     string    `json:"-"`
+	DatabaseName string    `json:"database_name,omitempty"`
+	Schema       string    `json:"schema"`
+	Retention    string    `json:"retention,omitempty"`
+	Semantic     Semantic  `json:"semantic"`
+	Manifest     *Manifest `json:"-"`
+	SourceLabel  string    `json:"-"`
+	relevance    int
 }
 
 type Table struct {
@@ -82,7 +86,12 @@ func (d Database) ReadOnlyURI() string {
 	return databaseURI(d.Database)
 }
 
-func (d Descriptor) Source() string { return "plugin:" + d.Name }
+func (d Descriptor) Source() string {
+	if d.SourceLabel != "" {
+		return d.SourceLabel
+	}
+	return "plugin:" + d.Name
+}
 
 func Discover(root string) ([]Descriptor, []string) {
 	if strings.TrimSpace(root) == "" {
@@ -106,15 +115,21 @@ func Discover(root string) ([]Descriptor, []string) {
 		if executablePackage(directory) {
 			continue
 		}
-		descriptor, err := Inspect(entry.Name(), directory)
+		descriptors, err := InspectAll(entry.Name(), directory)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("plugin %s is unavailable: %v", entry.Name(), err))
 			continue
 		}
-		found = append(found, descriptor)
+		found = append(found, descriptors...)
 	}
-	slices.SortFunc(found, func(a, b Descriptor) int { return strings.Compare(a.Name, b.Name) })
-	disambiguateSchemas(found)
+	found, schemaWarnings := resolveSchemas(found)
+	warnings = append(warnings, schemaWarnings...)
+	slices.SortFunc(found, func(a, b Descriptor) int {
+		if compared := strings.Compare(a.Name, b.Name); compared != 0 {
+			return compared
+		}
+		return strings.Compare(a.DatabaseName, b.DatabaseName)
+	})
 	return found, warnings
 }
 
@@ -135,21 +150,71 @@ func executablePackage(directory string) bool {
 // Inspect parses one plugin directory without requiring it to be installed.
 // Installers use the same structural validation as query discovery.
 func Inspect(name, directory string) (Descriptor, error) {
+	descriptors, err := InspectAll(name, directory)
+	if err != nil {
+		return Descriptor{}, err
+	}
+	if len(descriptors) != 1 {
+		return Descriptor{}, fmt.Errorf("plugin %s declares %d databases; inspect all of them", name, len(descriptors))
+	}
+	return descriptors[0], nil
+}
+
+// InspectAll parses every database declaration in a plugin. A directory that
+// has not migrated yet continues through the legacy semantic.yaml reader;
+// manifest-backed plugins never fall back when their declaration is malformed.
+func InspectAll(name, directory string) ([]Descriptor, error) {
 	if !validPluginName(name) {
-		return Descriptor{}, fmt.Errorf("invalid plugin name %q", name)
+		return nil, fmt.Errorf("invalid plugin name %q", name)
+	}
+	manifestPath := filepath.Join(directory, PackageFilename)
+	if raw, err := os.ReadFile(manifestPath); err == nil {
+		var shape map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &shape); err != nil {
+			return nil, fmt.Errorf("parse %s: %w", PackageFilename, err)
+		}
+		federated := shape["databases"] != nil || shape["binary"] != nil ||
+			shape["semantic"] != nil || shape["verbs"] != nil || shape["capabilities"] != nil
+		if federated {
+			manifest, err := ReadManifest(manifestPath)
+			if err != nil {
+				return nil, err
+			}
+			if manifest.Name != name {
+				return nil, fmt.Errorf("%s names plugin %q, not directory %q", PackageFilename, manifest.Name, name)
+			}
+			descriptors := make([]Descriptor, 0, len(manifest.Databases))
+			multiple := len(manifest.Databases) > 1
+			for _, declaration := range manifest.Databases {
+				semantic, _ := manifest.semanticFor(declaration.Name)
+				source := "plugin:" + name
+				if multiple {
+					source += "/" + declaration.Name
+				}
+				descriptors = append(descriptors, Descriptor{
+					Name: name, Directory: directory,
+					Database: filepath.Join(directory, declaration.Path), DatabaseName: declaration.Name,
+					Schema: declaration.Alias, Retention: declaration.Retention,
+					Semantic: semantic, Manifest: &manifest, SourceLabel: source,
+				})
+			}
+			return descriptors, nil
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("read %s: %w", PackageFilename, err)
 	}
 	semantic, err := readSemantic(filepath.Join(directory, SemanticFilename))
 	if err != nil {
-		return Descriptor{}, err
+		return nil, err
 	}
 	database, err := soleDatabase(directory)
 	if err != nil {
-		return Descriptor{}, err
+		return nil, err
 	}
-	return Descriptor{
+	return []Descriptor{{
 		Name: name, Directory: directory, Database: database,
 		Schema: schemaName(name), Semantic: semantic,
-	}, nil
+	}}, nil
 }
 
 func disambiguateSchemas(descriptors []Descriptor) {
@@ -164,6 +229,47 @@ func disambiguateSchemas(descriptors []Descriptor) {
 		digest := sha256.Sum256([]byte(descriptors[index].Name))
 		descriptors[index].Schema += fmt.Sprintf("_%x", digest[:4])
 	}
+}
+
+func resolveSchemas(descriptors []Descriptor) ([]Descriptor, []string) {
+	var legacy []Descriptor
+	for _, descriptor := range descriptors {
+		if descriptor.Manifest == nil {
+			legacy = append(legacy, descriptor)
+		}
+	}
+	disambiguateSchemas(legacy)
+	legacyIndex := 0
+	for index := range descriptors {
+		if descriptors[index].Manifest == nil {
+			descriptors[index].Schema = legacy[legacyIndex].Schema
+			legacyIndex++
+		}
+	}
+	counts := make(map[string]int, len(descriptors))
+	for _, descriptor := range descriptors {
+		counts[descriptor.Schema]++
+	}
+	conflicts := map[string]bool{}
+	var found []Descriptor
+	for _, descriptor := range descriptors {
+		if counts[descriptor.Schema] > 1 {
+			conflicts[descriptor.Schema] = true
+			continue
+		}
+		found = append(found, descriptor)
+	}
+	aliases := make([]string, 0, len(conflicts))
+	for alias := range conflicts {
+		aliases = append(aliases, alias)
+	}
+	slices.Sort(aliases)
+	var warnings []string
+	for _, alias := range aliases {
+		warnings = append(warnings, fmt.Sprintf(
+			"plugin attach alias %q is declared more than once; conflicting plugins are unavailable", alias))
+	}
+	return found, warnings
 }
 
 func readSemantic(path string) (Semantic, error) {
@@ -188,18 +294,22 @@ func readSemantic(path string) (Semantic, error) {
 }
 
 func (s Semantic) valid() error {
+	return s.validFor(SemanticFilename)
+}
+
+func (s Semantic) validFor(source string) error {
 	if s.Version != 1 {
-		return fmt.Errorf("%s version is %d, want 1", SemanticFilename, s.Version)
+		return fmt.Errorf("%s semantic version is %d, want 1", source, s.Version)
 	}
 	if s.Attachment != AttachmentOnDemand && s.Attachment != AttachmentResident {
-		return fmt.Errorf("%s attachment is %q, want %q or %q", SemanticFilename,
+		return fmt.Errorf("%s attachment is %q, want %q or %q", source,
 			s.Attachment, AttachmentResident, AttachmentOnDemand)
 	}
 	if strings.TrimSpace(s.Description) == "" {
-		return fmt.Errorf("%s has no description", SemanticFilename)
+		return fmt.Errorf("%s has no description", source)
 	}
 	if len(s.Tables) == 0 {
-		return fmt.Errorf("%s describes no tables", SemanticFilename)
+		return fmt.Errorf("%s describes no tables", source)
 	}
 	servesQuestions := len(s.Questions) > 0
 	seen := map[string]bool{}
@@ -225,7 +335,7 @@ func (s Semantic) valid() error {
 		}
 	}
 	if !servesQuestions {
-		return fmt.Errorf("%s declares no questions it serves", SemanticFilename)
+		return fmt.Errorf("%s declares no questions it serves", source)
 	}
 	return nil
 }

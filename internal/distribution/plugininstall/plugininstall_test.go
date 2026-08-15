@@ -229,6 +229,53 @@ func TestInstallUpdateAndUninstallPreservePluginOwnedData(t *testing.T) {
 	}
 }
 
+func TestFederatedManifestInstallsAndPreservesEveryDeclaredDatabase(t *testing.T) {
+	root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
+	manager := plugininstall.Manager{PluginRoot: root, BinDir: bin}
+	source := filepath.Join(t.TempDir(), "federated")
+	writeFederatedPackage(t, source, "1.0.0")
+	candidate, err := plugininstall.Inspect(source, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(candidate.Databases, []string{"records.db", "runs.db"}) {
+		t.Fatalf("declared databases = %v", candidate.Databases)
+	}
+	if _, err := manager.Install(candidate); err != nil {
+		t.Fatal(err)
+	}
+	for _, database := range candidate.Databases {
+		withPackageDatabase(t, filepath.Join(root, "federated", database), func(db *sql.DB) {
+			if _, err := db.Exec(`INSERT INTO entries (value) VALUES ('preserved')`); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+
+	writeFederatedPackage(t, source, "2.0.0")
+	updated, err := plugininstall.Inspect(source, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.UpdateInPlace(updated); err != nil {
+		t.Fatal(err)
+	}
+	for _, database := range candidate.Databases {
+		var count int
+		withPackageDatabase(t, filepath.Join(root, "federated", database), func(db *sql.DB) {
+			if err := db.QueryRow(`SELECT count(*) FROM entries WHERE value = 'preserved'`).Scan(&count); err != nil {
+				t.Fatal(err)
+			}
+		})
+		if count != 1 {
+			t.Fatalf("database %s lost its plugin-owned rows", database)
+		}
+	}
+	if _, err := plugininstall.VerifyInstalledPayload("federated", filepath.Join(root, "federated")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestExecutableOnlyPackageOwnsAndPreservesItsStateDirectory(t *testing.T) {
 	root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
 	manager := plugininstall.Manager{PluginRoot: root, BinDir: bin}
@@ -376,6 +423,64 @@ func writePackageAt(t *testing.T, directory, name, version string, custody, exec
 		files = append(files, "roca-"+name)
 	}
 	writeChecksums(t, directory, files)
+}
+
+func writeFederatedPackage(t *testing.T, directory, version string) {
+	t.Helper()
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manifest := map[string]any{
+		"schema": 1, "name": "federated", "version": version, "binary": "roca",
+		"databases": []map[string]any{
+			{"name": "records", "path": "records.db", "alias": "federated_records", "attachment": "resident", "retention": "Plugin managed."},
+			{"name": "runs", "path": "runs.db", "alias": "federated_runs", "attachment": "resident", "retention": "Plugin managed."},
+		},
+		"semantic": map[string]any{
+			"databases": []map[string]any{
+				{
+					"database": "records", "description": "Synthetic records.",
+					"questions": []string{"Which records exist?"},
+					"tables": []map[string]any{{
+						"name": "entries", "description": "Synthetic entries.",
+						"columns": []string{"id", "value"},
+					}},
+				},
+				{
+					"database": "runs", "description": "Synthetic runs.",
+					"questions": []string{"Which runs exist?"},
+					"tables": []map[string]any{{
+						"name": "entries", "description": "Synthetic run entries.",
+						"columns": []string{"id", "value"},
+					}},
+				},
+			},
+		},
+		"verbs":        []map[string]any{},
+		"capabilities": []map[string]any{},
+	}
+	writePackageMetadata(t, directory, manifest)
+	for _, name := range []string{"records.db", "runs.db"} {
+		if err := os.Remove(filepath.Join(directory, name)); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		withPackageDatabase(t, filepath.Join(directory, name), func(db *sql.DB) {
+			if _, err := db.Exec(`CREATE TABLE entries (id INTEGER PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	writeChecksums(t, directory, []string{"plugin.json", "records.db", "runs.db"})
+}
+
+func withPackageDatabase(t *testing.T, path string, action func(*sql.DB)) {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	action(db)
 }
 
 func writeExecutablePackage(t *testing.T, name, version, stateDir string) string {
