@@ -6,13 +6,16 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
+	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	_ "modernc.org/sqlite"
 )
 
 const (
 	Name             = "roca-corpus"
 	DatabaseFilename = "roca-corpus.db"
-	BundledSource    = "bundled:roca"
+	// BundledSource is what the installer records for this package, and it is
+	// what discovery reads to know the corpus attach alias is the kernel's own.
+	BundledSource = plugin.BundledSource
 )
 
 func Ensure(root, binDir, version string) (plugininstall.Result, error) {

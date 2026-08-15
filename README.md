@@ -194,8 +194,8 @@ cheap, local, and secure.
 
 ### Exact SQL, when you want it
 
-Because it is a real database, not a search box. No grep and no vector
-store can answer this:
+Because it is a real database, not a search box. A text search cannot answer
+this:
 
 ```sh
 roca exec "SELECT source_agent, COUNT(*) AS sessions
@@ -291,13 +291,11 @@ exactly the information the task needs instead of a whole skill.
   already on `PATH` and uses their existing signed-in sessions without reading,
   copying, or storing secrets. No La Roca login is required. For machines
   without a usable local CLI, the local Ollama floor and keyword rescue remain.
-- **Exact retrieval, no embeddings in core.** Recovery is SQL plus a local FTS5
-  index with diacritic folding; a plain `LIKE` fallback works before the index
-  exists. If you want semantics, your model supplies it at question time; the
-  retrieval itself stays exact and auditable. Embedding search is never part of
-  core: it exists only as an optional executable package you build and install
-  yourself, described in
-  [plugins](docs/plugins.md#worked-executable-example-vector-search).
+- **Exact retrieval.** Recovery is SQL plus a local FTS5 index with diacritic
+  folding; a plain `LIKE` fallback works before the index exists. If you want
+  semantics, your model supplies it at question time; the retrieval itself
+  stays exact and auditable. Domain extensions are described in
+  [plugins](docs/plugins.md).
 - **Honest degradation.** No usable provider, or SQL that cannot run, falls
   back to literal search and says so in the result.
 
@@ -346,11 +344,11 @@ mission, generated SQL, and next probes as the matching CLI mode; it is never a
 rows-only MCP shortcut.
 
 Behind the default-off experimental `features.plugins` flag, third parties extend
-queries with [isolated SQLite plugin databases and semantic layers](docs/plugins.md),
+queries with [isolated SQLite plugin databases declared in a manifest](docs/plugins.md),
 and may add Git-style `roca-<name>` neighbor executables for commands.
 
 Installed plugins may also declare idempotent rides for the default-off
-[`roca cron` train](docs/plugins.md#cron-rides). Set `features.cron = true` to
+[`roca cron` train](docs/plugins.md#scheduled-rides). Set `features.cron = true` to
 expose it; absent or false, the command does not exist. The train reads ride
 manifests whether or not `features.plugins` is set, invokes and observes those
 commands in order, defers on the core lock or a closed dependency gate, and
@@ -381,7 +379,8 @@ backup.
 
 The [docs index](docs/README.md) orders the longer reads:
 
-- [Architecture](docs/architecture.md): the four internal domains.
+- [Architecture](docs/architecture.md): the kernel, its plugins, and the four
+  internal domains.
 - [Model providers](docs/models.md): automatic CLI detection, provider order,
   local floor, and CLI-owned authentication.
 - [The MCP plug](docs/mcp.md): tools, contract, integration targets.
