@@ -73,9 +73,9 @@ repair without removing chunks from other tables. Per-table chunking hints are
 part of the fingerprinted contract.
 
 Queries remove retired `rocodata_*` chunks from an existing index when writes
-are enabled. Under `ROCA_READ_ONLY`, a query leaves such chunks untouched and
-filters them from results; run `roca vector ingest --delta` with writes enabled
-to reconcile the index.
+are enabled. Under `ROCA_READ_ONLY`, a query refuses an index that still has
+such chunks; run `roca vector ingest --delta` with writes enabled to reconcile
+it.
 
 For a non-default core database, export `ROCA_DB_PATH` or pass the plugin flag
 after dispatch: `roca vector --db-path /path/to/roca.db query "..."`.

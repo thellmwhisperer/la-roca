@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -53,6 +54,10 @@ func TestEverySkillExampleIsValidAgainstTheRealCLI(t *testing.T) {
 			continue
 		}
 		if isOptionalPluginInvocation(tokens[1:]) {
+			if err := validateVectorInvocation(tokens[1:]); err != nil {
+				t.Errorf("optional plugin example has invalid vector arguments: %v:\n  %s", err, line)
+				continue
+			}
 			if code, out := fixture.run(tokens[1:]); code != ExitOK {
 				t.Errorf("optional plugin example did not exit 0 (code %d):\n  %s\n%s",
 					code, line, out)
@@ -333,6 +338,134 @@ func findChild(cmd *cobra.Command, name string) *cobra.Command {
 // supplies a controlled executable so the examples are still executed.
 func isOptionalPluginInvocation(tokens []string) bool {
 	return taughtPluginDispatch(tokens)
+}
+
+func validateVectorInvocation(tokens []string) error {
+	if len(tokens) == 0 || tokens[0] != "vector" {
+		return fmt.Errorf("missing vector command")
+	}
+	command := ""
+	positionals := []string{}
+	delta := false
+	for index := 1; index < len(tokens); index++ {
+		token := tokens[index]
+		if strings.HasPrefix(token, "-") && token != "-" {
+			name, value, hasValue := splitFlag(token)
+			switch name {
+			case "json":
+				if hasValue {
+					parsed, err := strconv.ParseBool(value)
+					if err != nil {
+						return fmt.Errorf("--json expects a boolean")
+					}
+					if !parsed {
+						return fmt.Errorf("--json must be enabled")
+					}
+				}
+			case "db-path":
+				_, nextIndex, err := vectorFlagValue(tokens, index, value, hasValue)
+				if err != nil {
+					return fmt.Errorf("--db-path: %w", err)
+				}
+				index = nextIndex
+			case "model":
+				if command != "install" && command != "ingest" {
+					return fmt.Errorf("--model is only valid for install or ingest")
+				}
+				_, nextIndex, err := vectorFlagValue(tokens, index, value, hasValue)
+				if err != nil {
+					return fmt.Errorf("--model: %w", err)
+				}
+				index = nextIndex
+			case "delta":
+				if command != "ingest" {
+					return fmt.Errorf("--delta is only valid for ingest")
+				}
+				if hasValue {
+					parsed, err := strconv.ParseBool(value)
+					if err != nil || !parsed {
+						return fmt.Errorf("--delta must be enabled")
+					}
+				}
+				delta = true
+			default:
+				return fmt.Errorf("unknown flag --%s", name)
+			}
+			continue
+		}
+		if command == "" {
+			command = token
+			if command != "install" && command != "ingest" && command != "query" {
+				return fmt.Errorf("unknown command %q", command)
+			}
+			continue
+		}
+		positionals = append(positionals, token)
+	}
+	if command == "" {
+		return fmt.Errorf("missing subcommand")
+	}
+	switch command {
+	case "install":
+		if len(positionals) != 0 {
+			return fmt.Errorf("install does not accept positional arguments")
+		}
+	case "ingest":
+		if !delta {
+			return fmt.Errorf("ingest requires --delta")
+		}
+		if len(positionals) != 0 {
+			return fmt.Errorf("ingest does not accept positional arguments")
+		}
+	case "query":
+		if len(positionals) < 1 || len(positionals) > 2 || strings.TrimSpace(positionals[0]) == "" {
+			return fmt.Errorf("query requires text and an optional k")
+		}
+		if len(positionals) == 2 {
+			k, err := strconv.Atoi(positionals[1])
+			if err != nil || k < 1 || k > 100 {
+				return fmt.Errorf("query k must be an integer between 1 and 100")
+			}
+		}
+	}
+	return nil
+}
+
+func vectorFlagValue(tokens []string, index int, value string, hasValue bool) (string, int, error) {
+	if !hasValue {
+		if index+1 >= len(tokens) || strings.HasPrefix(tokens[index+1], "-") {
+			return "", index, fmt.Errorf("requires a value")
+		}
+		index++
+		value = tokens[index]
+	}
+	if value == "" {
+		return "", index, fmt.Errorf("requires a value")
+	}
+	return value, index, nil
+}
+
+func TestVectorSkillInvocationValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{name: "documented query", args: []string{"vector", "--json", "query", "<bare concept>", "8"}},
+		{name: "database override", args: []string{"vector", "--db-path", "/tmp/synthetic.db", "query", "concept", "5"}},
+		{name: "missing query text", args: []string{"vector", "--json", "query"}, want: true},
+		{name: "unknown flag", args: []string{"vector", "--json", "query", "concept", "--unknown"}, want: true},
+		{name: "invalid k", args: []string{"vector", "--json", "query", "concept", "0"}, want: true},
+		{name: "ingest needs delta", args: []string{"vector", "ingest"}, want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateVectorInvocation(test.args)
+			if (err != nil) != test.want {
+				t.Fatalf("validateVectorInvocation(%q) = %v, want error %v", test.args, err, test.want)
+			}
+		})
+	}
 }
 
 // validateExampleFlags checks that every flag the example uses exists on the

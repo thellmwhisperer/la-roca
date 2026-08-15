@@ -216,6 +216,52 @@ func TestDeltaIndexIsIdempotentAndMapsResultsBackToCore(t *testing.T) {
 	assertVectorStoreHasNoCorpusText(t, vectorPath)
 }
 
+func TestDeltaRefreshesStaleLocatorWithoutReembedding(t *testing.T) {
+	source := sourceRow{kind: "memories", text: "same canonical memory", layer: "discovery",
+		origin: "agent", createdAt: "2026-01-01", cronSource: "synthetic-agent", filePath: "memory.md"}
+	corpus := &memoryCorpus{sources: []sourceRow{source}}
+	embedder := &recordingEmbedder{}
+	path := filepath.Join(t.TempDir(), "vector.db")
+	index := Index{Corpus: corpus, VectorPath: path, Model: DefaultModel, Embedder: embedder}
+	if _, err := index.Ingest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`UPDATE chunks SET locator=json_set(locator, '$.layer', 'rocodata_legacy') WHERE source_kind='memories' AND source_id=?`, source.stableID())
+	if closeErr := db.Close(); err == nil && closeErr != nil {
+		err = closeErr
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	embedCalls := len(embedder.inputs)
+	report, err := index.Ingest(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Added != 0 || report.Updated != 1 || report.Unchanged != 0 || report.Removed != 0 {
+		t.Fatalf("locator refresh delta = %+v", report)
+	}
+	if len(embedder.inputs) != embedCalls {
+		t.Fatalf("locator refresh re-embedded %d batches", len(embedder.inputs)-embedCalls)
+	}
+
+	readOnly := index
+	readOnly.ReadOnly = true
+	results, err := readOnly.Query(context.Background(), "canonical memory", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Locator.Layer != "discovery" {
+		t.Fatalf("refreshed result = %+v", results)
+	}
+}
+
 func TestDeprecatedMemoryLayersStayOutOfTheIndexAndResults(t *testing.T) {
 	corpus := createCoreFixture(t)
 	deprecated := sourceRow{kind: "memories", text: "alpha deprecated memory", layer: "RocoData_legacy",
