@@ -409,9 +409,13 @@ resume. A row whose payload changed is carried forward as a further version of
 the same legacy ID rather than refused, a row that disappeared keeps the
 membership its batch truthfully recorded, and both are reported as drift events;
 membership counts are verified against what the committed batches recorded, not
-against the live source. Each source's frozen copy is named once per migration
-generation, so retries overwrite their own snapshot instead of accumulating a
-full database per attempt.
+against the live source. A home whose three sources are all empty verifies as
+`verified-empty` rather than `verified`: nothing was carried, so the ledger stays
+open and a later run still carries whatever the sources hold by then. Each
+source's frozen copy is named once per migration generation and published by
+renaming a validated sibling copy over it, so retries replace their own snapshot
+instead of accumulating a full database per attempt, a failed replacement leaves
+the previously verified copy intact, and no reader sees a half-written database.
 
 ## Scheduled rides
 

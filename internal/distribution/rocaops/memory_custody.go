@@ -151,8 +151,10 @@ func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (Me
 	if state.State == migrationledger.StateVerified {
 		return inspectMemoryCustody(ctx, ops, state)
 	}
-	if state.State != migrationledger.StatePrepared && state.State != migrationledger.StateBatchInProgress {
-		return MemoryCustodyReport{}, fmt.Errorf("ops memory custody is %q, want prepared or batch-in-progress", state.State)
+	if state.State != migrationledger.StatePrepared && state.State != migrationledger.StateBatchInProgress &&
+		state.State != migrationledger.StateVerifiedEmpty {
+		return MemoryCustodyReport{}, fmt.Errorf(
+			"ops memory custody is %q, want prepared, batch-in-progress, or verified-empty", state.State)
 	}
 
 	sources := []memorySource{
@@ -223,10 +225,11 @@ func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (Me
 	if err != nil {
 		return custodyFailure(ctx, ops, snapshots, drift, err)
 	}
-	if err := recordMemoryVerification(ctx, ops, digest); err != nil {
+	verified, err := recordMemoryVerification(ctx, ops, digest)
+	if err != nil {
 		return custodyFailure(ctx, ops, snapshots, drift, err)
 	}
-	report.State = migrationledger.StateVerified
+	report.State = verified
 	report.VerificationDigest = digest
 	report.Snapshots = snapshots
 	report.Drift = drift
@@ -274,17 +277,25 @@ func pendingMemories(source string, rows []memoryRow,
 }
 
 // recordMemoryVerification separates the two verified outcomes: a population
-// that carried batches, and a virgin home where all three sources were empty
-// and there was nothing to carry at all.
-func recordMemoryVerification(ctx context.Context, ops *sql.DB, digest string) error {
+// that carried batches reaches the terminal verified state, while a home whose
+// three sources were all empty reaches verified-empty, which stays open so the
+// rows it may hold later are still carried instead of silently skipped.
+func recordMemoryVerification(ctx context.Context, ops *sql.DB,
+	digest string) (migrationledger.State, error) {
 	committed, err := migrationledger.CommittedBatches(ctx, ops)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if committed == 0 {
-		return migrationledger.VerifyEmpty(ctx, ops, digest)
+		if err := migrationledger.VerifyEmpty(ctx, ops, digest); err != nil {
+			return "", err
+		}
+		return migrationledger.StateVerifiedEmpty, nil
 	}
-	return migrationledger.Verify(ctx, ops, digest)
+	if err := migrationledger.Verify(ctx, ops, digest); err != nil {
+		return "", err
+	}
+	return migrationledger.StateVerified, nil
 }
 
 // custodyFailure keeps a failed report honest about the ledger on disk, so a
@@ -325,7 +336,7 @@ func custodyLock(path string) (func() error, error) {
 }
 
 // memorySnapshotPath names one source's frozen copy deterministically per
-// migration generation, so a retried or resumed run overwrites its own previous
+// migration generation, so a retried or resumed run replaces its own previous
 // copy instead of leaving another full database behind on every attempt. The
 // name is known before the copy exists, which lets the caller register the path
 // first and never orphan a partially written snapshot.
@@ -335,27 +346,43 @@ func memorySnapshotPath(directory, source string, state migrationledger.Snapshot
 		fmt.Sprintf(".%s-schema%d-index%d.snapshot.db", name, state.SchemaVersion, state.IndexVersion))
 }
 
+// snapshotMemories freezes one source onto its registered generation path by way
+// of a sibling partial copy: the replacement is written and verified first, then
+// renamed into place. A failed copy therefore leaves the previously verified
+// snapshot intact, and no reader of the registered path can ever observe a
+// half-written database.
 func snapshotMemories(ctx context.Context, source memorySource, path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create memory snapshot directory: %w", err)
 	}
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("replace the previous %s memory snapshot: %w", source.name, err)
+	partial := path + ".partial"
+	defer os.Remove(partial)
+	if err := os.Remove(partial); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("clear the previous partial %s memory snapshot: %w", source.name, err)
 	}
+	if err := freezeMemorySnapshot(ctx, source, partial); err != nil {
+		return err
+	}
+	if err := os.Rename(partial, path); err != nil {
+		return fmt.Errorf("publish the %s memory snapshot: %w", source.name, err)
+	}
+	return nil
+}
 
+func freezeMemorySnapshot(ctx context.Context, source memorySource, partial string) error {
 	sourceDB, err := bundledplugin.OpenDatabase(source.path, true)
 	if err != nil {
 		return fmt.Errorf("open %s memory source: %w", source.name, err)
 	}
 	defer sourceDB.Close()
-	if _, err := sourceDB.ExecContext(ctx, "VACUUM INTO ?", path); err != nil {
+	if _, err := sourceDB.ExecContext(ctx, "VACUUM INTO ?", partial); err != nil {
 		return fmt.Errorf("freeze %s memories: %w", source.name, err)
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
+	if err := os.Chmod(partial, 0o600); err != nil {
 		return fmt.Errorf("restrict %s memory snapshot: %w", source.name, err)
 	}
 
-	copyDB, err := bundledplugin.OpenDatabase(path, true)
+	copyDB, err := bundledplugin.OpenDatabase(partial, true)
 	if err != nil {
 		return fmt.Errorf("open %s memory snapshot: %w", source.name, err)
 	}

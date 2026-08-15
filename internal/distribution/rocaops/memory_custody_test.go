@@ -216,7 +216,7 @@ func TestDATA2VerifiesAVirginHomeWithNothingToCarry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.State != migrationledger.StateVerified || report.Memberships != 0 ||
+	if report.State != migrationledger.StateVerifiedEmpty || report.Memberships != 0 ||
 		report.PhysicalRecords != 0 || report.VerificationDigest == "" {
 		t.Fatalf("virgin home report = %+v", report)
 	}
@@ -224,8 +224,64 @@ func TestDATA2VerifiesAVirginHomeWithNothingToCarry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again.State != migrationledger.StateVerified || again.Memberships != 0 {
+	if again.State != migrationledger.StateVerifiedEmpty || again.Memberships != 0 {
 		t.Fatalf("virgin home rerun = %+v", again)
+	}
+
+	core := openCustodyDB(t, fixture.core)
+	if _, err := core.Exec(`INSERT INTO memories
+		(id, layer, content, metadata, origin, status, created_at)
+		VALUES (7, 'project', 'written long after the empty verification', '{}', 'agent', 'active', '2026-08-05')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.Close(); err != nil {
+		t.Fatal(err)
+	}
+	populated, err := MigrateMemoryCustody(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if populated.State != migrationledger.StateVerified || populated.Memberships != 1 ||
+		populated.PhysicalRecords != 1 || populated.FTSRecords != 1 {
+		t.Fatalf("populated after an empty verification = %+v", populated)
+	}
+}
+
+func TestDATA2KeepsTheVerifiedSnapshotWhenAReplacementFails(t *testing.T) {
+	fixture := smallCustodyFixture(t)
+	options := MemoryCustodyOptions{
+		CorePath: fixture.core, CorpusPath: fixture.corpus, OpsPath: fixture.ops,
+		SnapshotDir: fixture.snapshots, BatchSize: 2,
+		AfterBatch: func(MemoryBatch) error { return errors.New("synthetic stop") },
+	}
+	if _, err := MigrateMemoryCustody(t.Context(), options); err == nil {
+		t.Fatal("expected the interrupted migration to fail")
+	}
+	frozen := filepath.Join(fixture.snapshots, ".core-schema2-index2.snapshot.db")
+	before, err := os.ReadFile(frozen)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	options.CorePath = filepath.Join(fixture.snapshots, "missing-core.db")
+	if _, err := MigrateMemoryCustody(t.Context(), options); err == nil {
+		t.Fatal("expected the failed replacement to be reported")
+	}
+	after, err := os.ReadFile(frozen)
+	if err != nil {
+		t.Fatalf("the previously verified core snapshot did not survive: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("core snapshot size = %d, want the %d bytes the prior run verified", len(after), len(before))
+	}
+	entries, err := os.ReadDir(fixture.snapshots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".partial") {
+			t.Fatalf("a partial snapshot was left behind: %s", entry.Name())
+		}
 	}
 }
 

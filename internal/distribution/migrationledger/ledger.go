@@ -18,6 +18,13 @@ const (
 	StatePrepared        State = "prepared"
 	StateBatchInProgress State = "batch-in-progress"
 	StateVerified        State = "verified"
+	// StateVerifiedEmpty reports a migration that verified with nothing to
+	// carry. It is derived, never stored: databases shipped before this state
+	// existed constrain `migration_state` to the three stored values, so an
+	// empty verification keeps `prepared` on disk and is recognized by its
+	// recorded verification beside zero committed batches. That is what makes
+	// it re-openable rather than terminal, unlike StateVerified.
+	StateVerifiedEmpty State = "verified-empty"
 )
 
 var (
@@ -209,9 +216,10 @@ func BeginBatch(ctx context.Context, db *sql.DB, spec BatchSpec) (*Batch, error)
 	if current.State == StateVerified {
 		return fail(ErrVerified)
 	}
-	if current.State != StatePrepared && current.State != StateBatchInProgress {
-		return fail(fmt.Errorf("plugin migration state is %q, want %q or %q",
-			current.State, StatePrepared, StateBatchInProgress))
+	if current.State != StatePrepared && current.State != StateBatchInProgress &&
+		current.State != StateVerifiedEmpty {
+		return fail(fmt.Errorf("plugin migration state is %q, want %q, %q, or %q",
+			current.State, StatePrepared, StateBatchInProgress, StateVerifiedEmpty))
 	}
 	var committed int
 	if err := batch.tx.QueryRowContext(ctx,
@@ -222,7 +230,8 @@ func BeginBatch(ctx context.Context, db *sql.DB, spec BatchSpec) (*Batch, error)
 		return fail(fmt.Errorf("%w: %s", ErrBatchCommitted, spec.ID))
 	}
 	if _, err := batch.tx.ExecContext(ctx, `UPDATE plugin_schema SET migration_state = ?,
-		updated_at = datetime('now') WHERE singleton = 1`, StateBatchInProgress); err != nil {
+		verification_digest = NULL, verified_at = NULL, updated_at = datetime('now')
+		WHERE singleton = 1`, StateBatchInProgress); err != nil {
 		return fail(fmt.Errorf("mark migration batch in progress: %w", err))
 	}
 	return batch, nil
@@ -334,11 +343,16 @@ func Verify(ctx context.Context, db *sql.DB, digest string) error {
 	return nil
 }
 
-// VerifyEmpty records the verified state of a migration whose source population
-// was empty. Verify deliberately demands a committed batch, so a migration that
-// had nothing to carry could never leave `prepared`; this is the narrow,
-// explicitly requested counterpart, refusing any database that did commit a
-// batch so the ordinary guard keeps its strength for every other migration.
+// VerifyEmpty records that a migration verified with nothing to carry. Verify
+// deliberately demands a committed batch, so a migration over an empty
+// population could never leave `prepared`; this is the narrow counterpart,
+// refusing any database that did commit a batch so the ordinary guard keeps its
+// strength for every other migration.
+//
+// It deliberately does not seal the ledger. A home whose sources are empty today
+// may hold rows tomorrow, so the stored state remains `prepared` and only the
+// recorded verification marks the outcome: Inspect reports StateVerifiedEmpty,
+// and BeginBatch reopens the migration as soon as there is something to carry.
 func VerifyEmpty(ctx context.Context, db *sql.DB, digest string) error {
 	if !hexDigest.MatchString(digest) {
 		return fmt.Errorf("verification digest must be a lowercase SHA-256 digest")
@@ -347,7 +361,7 @@ func VerifyEmpty(ctx context.Context, db *sql.DB, digest string) error {
 		verification_digest = ?, verified_at = datetime('now'), updated_at = datetime('now')
 		WHERE singleton = 1 AND migration_state <> ?
 		  AND NOT EXISTS (SELECT 1 FROM migration_batches)
-		  AND NOT EXISTS (SELECT 1 FROM custody_memberships)`, StateVerified, digest, StateVerified)
+		  AND NOT EXISTS (SELECT 1 FROM custody_memberships)`, StatePrepared, digest, StateVerified)
 	if err != nil {
 		return fmt.Errorf("verify empty plugin migration: %w", err)
 	}
@@ -396,11 +410,11 @@ func inspect(ctx context.Context, querier rowQuerier) (Snapshot, bool, error) {
 		return Snapshot{}, false, nil
 	}
 	var snapshot Snapshot
-	var verification sql.NullString
+	var verification, verifiedAt sql.NullString
 	err := querier.QueryRowContext(ctx, `SELECT plugin_name, schema_version, index_version,
-		migration_state, verification_digest FROM plugin_schema WHERE singleton = 1`).Scan(
+		migration_state, verification_digest, verified_at FROM plugin_schema WHERE singleton = 1`).Scan(
 		&snapshot.Plugin, &snapshot.SchemaVersion, &snapshot.IndexVersion,
-		&snapshot.State, &verification)
+		&snapshot.State, &verification, &verifiedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Snapshot{}, false, nil
 	}
@@ -408,6 +422,9 @@ func inspect(ctx context.Context, querier rowQuerier) (Snapshot, bool, error) {
 		return Snapshot{}, false, fmt.Errorf("read plugin migration state: %w", err)
 	}
 	snapshot.VerificationDigest = verification.String
+	if snapshot.State == StatePrepared && verifiedAt.Valid {
+		snapshot.State = StateVerifiedEmpty
+	}
 	return snapshot, true, nil
 }
 
