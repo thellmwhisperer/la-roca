@@ -173,6 +173,13 @@ also a compacted secondary view and is not the conversation source.
 
 ## Per-exchange provenance
 
+Every session also carries `source_surface`, the canonical harness known from
+the detector and parser family that opened it (`Claude Code`, `Codex CLI`,
+`OpenCode`, `Grok Build`, and so on). It is first-class provenance, not metadata
+read from the artifact. Harvested memories use the existing `source_surface`
+column under the same rule and keep `source_model` NULL unless their source
+actually recorded a model.
+
 Every exchange carries what its own source recorded about how the answer was
 produced: `model`, `provider`, `tokens_in`, `tokens_out`, `tokens_reasoning` and
 `cost_usd`. They are filled from the artefact and from nothing else, so a column

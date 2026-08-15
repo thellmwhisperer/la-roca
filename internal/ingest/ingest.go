@@ -526,6 +526,7 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 		for _, complaint := range complaints {
 			records.Discards = append(records.Discards, foreignDiscard(complaint))
 		}
+		parsers.ApplyCanonicalHarness(target.Kind, &records)
 		return records, ""
 	}
 
@@ -554,6 +555,7 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 		if err := parsers.Conform(target.Kind, records); err != nil {
 			return parsers.Records{}, err.Error()
 		}
+		parsers.ApplyCanonicalHarness(target.Kind, &records)
 		resolveProjects(ctx, opts, target, &records)
 		return records, ""
 	}
@@ -605,6 +607,7 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 	if err != nil {
 		return parsers.Records{}, err.Error()
 	}
+	parsers.ApplyCanonicalHarness(target.Kind, &records)
 	resolveProjects(ctx, opts, target, &records)
 	return records, ""
 }

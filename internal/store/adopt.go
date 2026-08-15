@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/thellmwhisperer/la-roca/data"
+	"github.com/thellmwhisperer/la-roca/internal/ingestprovenance"
 )
 
 // Verdict of the structural comparison between the database that is there and
@@ -122,6 +123,11 @@ func Adopt(ctx context.Context, db *DB, backupDir string) (Adoption, error) {
 	adoption.Repairs = repairs
 	if err != nil {
 		return adoption, err
+	}
+	if err := db.Write(ctx, func(tx *sql.Tx) error {
+		return ingestprovenance.Backfill(ctx, tx)
+	}); err != nil {
+		return adoption, fmt.Errorf("backfill ingest provenance: %w", err)
 	}
 
 	after, err := Inspect(ctx, db)

@@ -37,9 +37,15 @@ func TestApplyingPluginSchemasTwicePreservesOldFrozenHomes(t *testing.T) {
 			oldSchema: `CREATE TABLE sessions (
 				session_id TEXT PRIMARY KEY, source_agent TEXT DEFAULT 'claude-code', project TEXT,
 				started_at TEXT, ended_at TEXT, duration_minutes INTEGER, title TEXT,
-				metadata TEXT DEFAULT '{}')`,
-			insert: `INSERT INTO sessions (session_id, title) VALUES ('frozen-session', 'frozen corpus row')`,
-			count:  `SELECT COUNT(*) FROM sessions WHERE title = 'frozen corpus row'`,
+				metadata TEXT DEFAULT '{}');
+				CREATE TABLE exchanges (
+				id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, exchange_number INTEGER,
+				human_text TEXT, agent_text TEXT, model TEXT, provider TEXT)`,
+			insert: `INSERT INTO sessions (session_id, source_agent, title)
+				VALUES ('frozen-session', 'grok', 'frozen corpus row');
+				INSERT INTO exchanges (session_id, exchange_number, model)
+				VALUES ('frozen-session', 1, 'grok-4.6-build')`,
+			count: `SELECT COUNT(*) FROM sessions WHERE title = 'frozen corpus row'`,
 		},
 		{
 			name: "cron", filename: rocacron.DatabaseFilename, apply: rocacron.ApplySchema,
@@ -78,6 +84,18 @@ func TestApplyingPluginSchemasTwicePreservesOldFrozenHomes(t *testing.T) {
 			assertQueryCount(t, db, fixture.count, 1)
 			if fixture.indexCount != "" {
 				assertQueryCount(t, db, fixture.indexCount, 1)
+			}
+			if fixture.name == "corpus" {
+				var surface, model string
+				var provider sql.NullString
+				if err := db.QueryRow(`SELECT s.source_surface, e.model, e.provider
+					FROM sessions s JOIN exchanges e USING (session_id)`).
+					Scan(&surface, &model, &provider); err != nil {
+					t.Fatal(err)
+				}
+				if surface != "Grok Build" || model != "grok-4.6" || provider.Valid {
+					t.Fatalf("corpus provenance = %q/%q provider=%v", surface, model, provider)
+				}
 			}
 			state, err := migrationledger.Inspect(t.Context(), db)
 			if err != nil {

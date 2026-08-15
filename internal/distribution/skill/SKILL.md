@@ -170,7 +170,10 @@ data.
 2. Add one parser file implementing `Detect` and `Parse`; declare whether its
    output belongs to the conversation corpus, the distilled-memory store, or
    both. File encoding is an implementation detail, never the destination.
-3. Add its registry line and run
+3. Add its registry line with the product's canonical harness. The harness is
+   known by the ingestion surface, never discovered in JSON; keep the model
+   exactly as the source recorded it and empty when the source recorded none.
+   Then run
    `go test ./internal/ingest/parsers -run TestRegisteredParsersConform`, then
    `ROCA_REAL_HARVEST=1 go test -v ./internal/ingest/parsers -run TestRegisteredParsersHarvestPresentAgentStores`
    on a machine where that agent is installed (the smoke reads private stores, so

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -144,11 +145,7 @@ func TestAMissingTableIsMigratableAndRepairedAfterBackup(t *testing.T) {
 }
 
 func TestAuthorshipColumnsAdoptWithoutGuessingHistoricalRows(t *testing.T) {
-	db := openFresh(t)
-	ctx := context.Background()
-	if err := store.ApplySchema(ctx, db); err != nil {
-		t.Fatal(err)
-	}
+	db, ctx := schemaReadyDatabase(t)
 	execute(t, db, "ALTER TABLE memories DROP COLUMN source_model")
 	execute(t, db, "ALTER TABLE memories DROP COLUMN source_surface")
 	seedIdentity(t, db)
@@ -165,6 +162,55 @@ func TestAuthorshipColumnsAdoptWithoutGuessingHistoricalRows(t *testing.T) {
 	if agent.Valid || model.Valid || surface.Valid {
 		t.Errorf("historical authorship was guessed: agent=%v model=%v surface=%v", agent, model, surface)
 	}
+}
+
+func TestIngestSurfaceAdoptsAndSanitizesOnlyDerivableHistoricalRows(t *testing.T) {
+	db, ctx := schemaReadyDatabase(t)
+	execute(t, db, "ALTER TABLE sessions DROP COLUMN source_surface")
+	execute(t, db, `INSERT INTO sessions (session_id, source_agent) VALUES
+		('grok-session', 'grok'), ('unknown-session', 'synthetic-unknown')`)
+	execute(t, db, `INSERT INTO exchanges (session_id, exchange_number, model) VALUES
+		('grok-session', 1, 'grok-4.6-build'),
+		('grok-session', 2, 'grok-4.5-build'),
+		('unknown-session', 1, 'grok-4.6-build')`)
+
+	if _, err := store.Adopt(ctx, db, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.SQL().Query(`
+		SELECT s.session_id, COALESCE(s.source_surface, ''), e.model, COALESCE(e.provider, '')
+		FROM sessions s JOIN exchanges e USING (session_id)
+		ORDER BY s.session_id, e.exchange_number`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	want := [][4]string{
+		{"grok-session", "Grok Build", "grok-4.6", ""},
+		{"grok-session", "Grok Build", "grok-4.5", ""},
+		{"unknown-session", "", "grok-4.6-build", ""},
+	}
+	var got [][4]string
+	for rows.Next() {
+		var row [4]string
+		if err := rows.Scan(&row[0], &row[1], &row[2], &row[3]); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, row)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("sanitized provenance = %#v, want %#v", got, want)
+	}
+}
+
+func schemaReadyDatabase(t *testing.T) (*store.DB, context.Context) {
+	t.Helper()
+	db := openFresh(t)
+	ctx := context.Background()
+	if err := store.ApplySchema(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	return db, ctx
 }
 
 func TestAColumnWithAnotherShapeIsIncompatibleAndUntouched(t *testing.T) {
