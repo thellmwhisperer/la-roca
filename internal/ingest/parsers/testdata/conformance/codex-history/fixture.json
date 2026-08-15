@@ -1,0 +1,10 @@
+{
+  "parser": "codex_history",
+  "destination": "corpus",
+  "source": "history.data",
+  "meta": {"Path":"/synthetic/codex/history.data","Project":"lighthouse","SourceAgent":"codex"},
+  "want": {
+    "sessions": [{"id":"fixture-history","source_agent":"codex","project":"lighthouse","exchanges":[{"human_text":"Remember the synthetic compass.","agent_text":""}]}],
+    "memories": []
+  }
+}

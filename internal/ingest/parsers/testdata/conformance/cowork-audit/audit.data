@@ -1,0 +1,2 @@
+{"type":"user","session_id":"fixture-cowork","_audit_timestamp":"2026-08-01T11:00:00Z","message":{"content":"Inspect the fictional lens."}}
+{"type":"assistant","session_id":"fixture-cowork","_audit_timestamp":"2026-08-01T11:00:01Z","message":{"content":"The lens is clear."}}
