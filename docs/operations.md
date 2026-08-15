@@ -44,10 +44,11 @@ Other harnesses can use the same client-side pattern: intercept the shell tool,
 read identity only from a harness-owned session source, and inject both flags;
 no other hook installer ships yet.
 
-Every CLI command and MCP tool call writes one redacted JSONL record under the
-selected data directory's `logs/`, whether it succeeds or fails. A logging
-failure warns on stderr but never changes the observed command or tool result.
-No operational log is stored in SQLite.
+Every CLI command and MCP tool call dual-writes one redacted record to the
+bundled ops database and to JSONL under the selected data directory's `logs/`,
+whether it succeeds or fails. Either sink may fail independently: the surviving
+sink is still written, one warning is emitted, and the observed command or tool
+result never changes. Query result rows are written to neither sink.
 
 ## Streams and contents
 
@@ -56,7 +57,10 @@ retain at most 30 days. Each file is capped at 5 MiB and each stream keeps at
 most six files, so a busy installation cannot grow a stream beyond 30 MiB.
 Consumers should glob `<stream>-*.jsonl`; rotated segments have the same prefix.
 An individual record larger than the file cap is dropped under the same
-non-failing writer contract.
+non-failing writer contract. This DATA SPLIT stage deliberately keeps rotation
+and both call-stream writes unchanged as the rollback path; retiring those two
+JSONL streams requires a separately proven rollback transition. The ops copy
+has no automatic expiry, and its retention policy cannot prune corpus or cron.
 
 `executions` and `mcp-audit` share one top-level call contract. Surface-specific
 fields are `command` plus `flags` for CLI and `tool` for MCP:
@@ -65,6 +69,8 @@ fields are `command` plus `flags` for CLI and `tool` for MCP:
 {"timestamp":"2026-08-12T10:30:00Z","source":"mcp","tool":"roca_query","args":{"query":"find the synthetic lighthouse"},"ok":false,"error":"the generated SQL was rejected","error_type":"invalid_sql","duration_ms":184,"question":"find the synthetic lighthouse","sql":"SELECT missing FROM memories","model_sql":"SELECT missing FROM memories","sql_provider":"codex","sql_model":"gpt-synthetic","row_count":0,"fallback_reason":"invalid_sql","retry_type":"gate_rejection","retry_reason":"no such column: missing","correlation_id":"qf_0123456789abcdef"}
 ```
 
+The additive `call_id` is the durable ops identity: it equals the correlation ID
+when one exists and otherwise is derived from the retained segment and line.
 The stable fields are:
 
 - `timestamp`, `source`, `args`, `ok`, `duration_ms`, and `row_count` on every
@@ -120,8 +126,14 @@ repairs, and failure. Both streams are plain files beside the call audit.
 
 ## Reading query failures
 
-`roca doctor` reads the two call streams without touching the database. It
-reports the number of failed query calls in the last 24 hours, on either
+Retained `executions` and `mcp-audit` segments are backfilled into ops in one
+bounded transaction per segment. Segment digests and source-line identities
+make a retry idempotent and resumable; parseable rows commit once, while
+malformed and unreadable counts keep their existing meaning. `roca doctor` switches to the
+ops reader only after that retained set reaches parity. If the ops parity or
+read fails, it rolls back to the JSONL reader without changing the diagnosis.
+
+Doctor reports the number of failed query calls in the last 24 hours, on either
 surface: `query`, `explore`, `roca_query`, `roca_explore`, and `roca_sql`. It
 renders the five newest errors with their source, type, and correlation
 ID. `roca doctor --json` exposes the same data under
@@ -134,14 +146,16 @@ diagnosis.
 
 ## Redaction
 
-Before a line reaches disk, redaction covers sensitive field names; bearer
+Before a record reaches either sink, redaction covers sensitive field names; bearer
 and key/value secrets; PEM private keys; OpenAI `sk-*`, GitHub `gh[pousr]_*`
 and `github_pat_*`, Slack `xox*`, JWT `eyJ*`, AWS `AKIA*`, and Google `AIza*`
 credential shapes.
 
 Log directories and files are created with operator-only permissions.
-The contract, reader, rotation, retention, and redaction are owned by
-`internal/distribution/logfile`.
+The public contract, JSONL adapter, rotation, retention, and redaction are owned
+by `internal/distribution/logfile`; durable ops persistence is owned by
+`internal/distribution/callhistory` and the schema in
+`internal/distribution/rocaops/schema.sql`.
 
 ## Read-only boundary
 

@@ -56,6 +56,7 @@ type cliEnv struct {
 	started            time.Time
 	prelogged          bool
 	openedDir          string
+	auditOpsDatabase   string
 	liveIngest         *ingestRows
 	wantIngestProgress bool
 	ingestStarted      time.Time
@@ -97,6 +98,11 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 		env.started = started
 	}
 	env.loadCommandFeatures()
+	if paths, err := env.resolvePaths(); err == nil {
+		if root := pluginRoot(paths); root != "" {
+			env.auditOpsDatabase = filepath.Join(root, rocaops.Name, rocaops.DatabaseFilename)
+		}
+	}
 	root := rootCommand(env)
 	if plugins {
 		if handled, code, err := dispatchPlugin(root, args, env.features); handled {
@@ -694,20 +700,17 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		pluginDir = filepath.Join(home, config.DirOwn, "plugins")
 	}
 	readOnly := config.ReadOnly(os.Getenv(config.EnvReadOnly))
-	// Placing the bundled plugin writes a directory, a manifest and a schema.
+	// Placing the bundled plugins writes directories, manifests and schemas.
 	// Read-only refuses writes before any of that, so an audit of a machine
-	// leaves it exactly as it found it.
-	if file.Features.RocaOps && !readOnly {
+	// leaves it exactly as it found it. The ops package is always present for
+	// durable call history; features.roca_ops still controls only its agent-memory
+	// write and query routes during the staged split.
+	if !readOnly {
 		if pluginDir == "" {
-			return nil, fmt.Errorf("features.roca_ops needs a HOME for the bundled plugin")
+			return nil, fmt.Errorf("the bundled ops plugin needs a HOME for its database")
 		}
 		if _, err := rocaops.Ensure(pluginDir, pluginExecutableDir(paths), env.build.Version); err != nil {
 			return nil, fmt.Errorf("install bundled roca-ops plugin: %w", err)
-		}
-	}
-	if !readOnly {
-		if pluginDir == "" {
-			return nil, fmt.Errorf("the bundled corpus needs a HOME for its database")
 		}
 		// Ensure runs on every open and not only on the first one: it returns early
 		// when the recorded version already matches, and it is the only thing that
@@ -754,7 +757,14 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		env.finishIngestProgress()
 		return nil, err
 	}
-	_ = logfile.New(filepath.Dir(paths.DB)).Prepare()
+	audit := logfile.New(filepath.Dir(paths.DB))
+	if pluginDir != "" {
+		env.auditOpsDatabase = filepath.Join(pluginDir, rocaops.Name, rocaops.DatabaseFilename)
+		audit = logfile.NewWithOps(filepath.Dir(paths.DB),
+			env.auditOpsDatabase)
+	}
+	_ = audit.Prepare()
+	_ = audit.BackfillIfNeeded()
 	env.openedDir = filepath.Dir(paths.DB)
 	return svc, nil
 }

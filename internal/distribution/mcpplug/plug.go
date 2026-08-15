@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -74,7 +75,12 @@ func New(svc *service.Service, build Build) *mcp.Server {
 	dbPath := svc.DB().Path()
 	dataDir := svc.DataDir()
 	audit := logfile.New(svc.DataDir())
+	if svc.PluginDir() != "" {
+		audit = logfile.NewWithOps(svc.DataDir(), filepath.Join(
+			svc.PluginDir(), rocaops.Name, rocaops.DatabaseFilename))
+	}
 	_ = audit.Prepare()
+	_ = audit.BackfillIfNeeded()
 	manifest, err := rocaops.Manifest(build.Version)
 	if err != nil {
 		panic(fmt.Sprintf("invalid bundled ops manifest: %v", err))

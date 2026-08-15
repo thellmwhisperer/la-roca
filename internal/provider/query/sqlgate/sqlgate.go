@@ -50,9 +50,14 @@ const MaxLimit = 1000
 // are migration machinery until the cutover makes them the serving surface, so
 // nothing here answers a question yet.
 //
-// The memory names close the list for the same reason: DATA-2's custody tables
-// and compatibility view stay shadow-only until the atomic federation cutover
-// selects them.
+// The memory names continue the list for the same reason: DATA-2's custody
+// tables and compatibility view stay shadow-only until the atomic federation
+// cutover selects them.
+//
+// `call_history_segments` and `call_history_state` close the list: they record
+// which retained call segment the ops backfill already read and whether its
+// parity check passed, which is the backfill's own bookkeeping and never a call
+// anyone made.
 var invisibleTables = []string{
 	"ingest_file_state", "search_state",
 	"plugin_schema", "plugin_migrations", "migration_batches", "custody_memberships",
@@ -64,6 +69,7 @@ var invisibleTables = []string{
 	"tool_use_version_memberships", "thinking_block_version_memberships",
 	"ingest_file_state_version_memberships",
 	"memory_records", "memory_records_fts", "memory_provenance", "memory_compatibility",
+	"call_history_segments", "call_history_state",
 }
 
 // ftsShadowSuffixes name the shadow tables FTS5 creates behind each virtual

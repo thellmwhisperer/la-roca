@@ -154,6 +154,9 @@ func (s *Service) DB() *store.DB { return s.db }
 // DataDir is the operator-owned directory where file traces live.
 func (s *Service) DataDir() string { return s.dataDir() }
 
+// PluginDir is the operator-owned root containing bundled domain databases.
+func (s *Service) PluginDir() string { return s.opts.PluginDir }
+
 // Close closes the database.
 func (s *Service) Close() error {
 	if s.gate != nil {
