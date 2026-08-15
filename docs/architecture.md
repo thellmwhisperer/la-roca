@@ -10,7 +10,8 @@ database.
 
 The migration to that shape is incremental. The current release has a
 manifest-backed `roca-corpus`, a separate `roca-ops` domain still using its
-legacy descriptor, and a separate `roca-cron` journey store. Historical rows
+legacy descriptor, and a separate `roca-cron` journey store; ops and cron are
+the next bundled domains to leave their descriptors. Historical rows
 that have not moved yet remain readable through a compatibility connection, and
 queries still attach to that connection rather than to the in-memory hub. It
 preserves behavior during the rollout; it is not new kernel ownership and plugin

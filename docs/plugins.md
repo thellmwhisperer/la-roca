@@ -5,51 +5,21 @@ describes them in a `plugin.json` manifest; the kernel validates those
 declarations, attaches the databases read-only, and composes their table
 descriptions into the catalog used by natural-language queries.
 
-The kernel's own attach point is an empty in-memory SQLite database. While the
-migration below is in progress, queries still attach to the compatibility
-connection that holds the rows no plugin owns yet. Either way a plugin database
-is opened read-only and reached only through its declared alias.
-
 The kernel does not own a domain database. Its durable state is configuration
 and installed manifests. Database retention, pruning, compaction, and scale are
 plugin policy: one plugin cannot prune another plugin's history.
 
-The manifest engine is landing incrementally. `roca-corpus` is its first
-manifest-backed consumer. `roca-ops` and `roca-cron` already own separate
-databases and are the next bundled domains to move from their legacy package
-descriptors. Existing data that has not yet moved remains readable during this
-transition; that compatibility path is not a plugin API.
+The kernel's own attach point is an empty in-memory SQLite database. Which
+bundled domains have moved to a manifest, and the compatibility connection
+queries still attach to for the rows no plugin owns yet, are tracked by the
+runtime map in [Architecture](architecture.md#runtime-map); that compatibility
+path is not a plugin API. Either way a plugin database is opened read-only and
+reached only through its declared alias.
 
-## Current system map
-
-```text
-CLI and MCP
-    |
-    v
-+----------------------------------------------------------+
-| kernel                                                   |
-| init | manifest validation | read-only gate | NL-to-SQL  |
-| config + manifests on disk | SQLite attach hub in memory |
-+--------------------------+-------------------------------+
-                           |
-             read-only attachments and executable calls
-             +-------------+-------------+
-             |                           |
-             v                           v
-    +------------------+       +------------------+
-    | roca-corpus      |       | roca-ops         |
-    | ingest           |       | store/query/SQL  |
-    | corpus database  |       | ops database     |
-    | archive policy   |       | operations policy|
-    +------------------+       +------------------+
-
-    roca-cron owns its own journey database for run history and errors.
-```
-
-`roca-corpus` proves the engine without changing the product contract: it is
-resident, ingest still writes and indexes the same data, query results are
-unchanged, and readable query output still begins with the same consulted
-database list.
+`roca-corpus`, the engine's first manifest-backed consumer, proves it without
+changing the product contract: it is resident, ingest still writes and indexes
+the same data, query results are unchanged, and readable query output still
+begins with the same consulted database list.
 
 ## The manifest
 
