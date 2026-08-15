@@ -27,6 +27,14 @@ const (
 	opsMemorySource    = "plugin:roca-ops"
 )
 
+// memoryCustodyMigration is DATA-2's stable name in the ops ledger. Every read
+// and write this engine makes is keyed by it, so a migration another rung hosts
+// in the same database neither counts toward nor overwrites this one.
+const (
+	memoryCustodyMigration   = "data2-memory-custody"
+	memoryCustodyDestination = "memory_records"
+)
+
 // MemoryCustodyOptions names the three databases DATA-2 freezes and the ops
 // database that receives their memory identities. SnapshotDir is intentionally
 // explicit: callers keep the verified VACUUM copies beside their other Roca
@@ -144,7 +152,16 @@ func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (Me
 		return MemoryCustodyReport{}, fmt.Errorf("open ops memory custody: %w", err)
 	}
 	defer ops.Close()
-	state, err := migrationledger.Inspect(ctx, ops)
+	plugin, err := migrationledger.Inspect(ctx, ops)
+	if err != nil {
+		return MemoryCustodyReport{}, err
+	}
+	if err := migrationledger.PrepareMigration(ctx, ops, migrationledger.Migration{
+		Name: memoryCustodyMigration, DestinationTable: memoryCustodyDestination,
+	}); err != nil {
+		return MemoryCustodyReport{}, err
+	}
+	state, err := migrationledger.InspectMigration(ctx, ops, memoryCustodyMigration)
 	if err != nil {
 		return MemoryCustodyReport{}, err
 	}
@@ -166,7 +183,7 @@ func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (Me
 	rowsBySource := make(map[string][]memoryRow, len(sources))
 	var drift []MemoryDrift
 	for _, source := range sources {
-		snapshot := memorySnapshotPath(options.SnapshotDir, source.name, state)
+		snapshot := memorySnapshotPath(options.SnapshotDir, source.name, plugin)
 		snapshots = append(snapshots, snapshot)
 		if snapshotErr := snapshotMemories(ctx, source, snapshot); snapshotErr != nil {
 			return custodyFailure(ctx, ops, snapshots, drift, snapshotErr)
@@ -191,7 +208,8 @@ func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (Me
 			group := pending[first:last]
 			batchID := memoryBatchID(source.name, group)
 			batch, beginErr := migrationledger.BeginBatch(ctx, ops, migrationledger.BatchSpec{
-				ID: batchID, SourceDatabase: source.name, SourceTable: "memories",
+				Migration: memoryCustodyMigration, ID: batchID,
+				SourceDatabase: source.name, SourceTable: "memories",
 			})
 			if beginErr != nil {
 				if errors.Is(beginErr, migrationledger.ErrBatchCommitted) {
@@ -288,12 +306,13 @@ func pendingMemories(source string, rows []memoryRow,
 func recordMemoryVerification(ctx context.Context, ops *sql.DB, digest string,
 	memberships int) (migrationledger.State, error) {
 	if memberships == 0 {
-		if err := migrationledger.VerifyEmpty(ctx, ops, digest, "memory_records"); err != nil {
+		if err := migrationledger.VerifyMigrationEmpty(ctx, ops,
+			memoryCustodyMigration, digest); err != nil {
 			return "", err
 		}
 		return migrationledger.StateVerifiedEmpty, nil
 	}
-	if err := migrationledger.Verify(ctx, ops, digest); err != nil {
+	if err := migrationledger.VerifyMigration(ctx, ops, memoryCustodyMigration, digest); err != nil {
 		return "", err
 	}
 	return migrationledger.StateVerified, nil
@@ -305,7 +324,8 @@ func recordMemoryVerification(ctx context.Context, ops *sql.DB, digest string,
 func custodyFailure(ctx context.Context, ops *sql.DB, snapshots []string,
 	drift []MemoryDrift, err error) (MemoryCustodyReport, error) {
 	report := MemoryCustodyReport{Snapshots: snapshots, Drift: drift}
-	if state, inspectErr := migrationledger.Inspect(ctx, ops); inspectErr == nil {
+	if state, inspectErr := migrationledger.InspectMigration(ctx, ops,
+		memoryCustodyMigration); inspectErr == nil {
 		report.State = state.State
 	}
 	return report, err
@@ -532,16 +552,17 @@ func aliasDestination(ctx context.Context, ops *sql.DB, source, digest string,
 	rows, err := ops.QueryContext(ctx, `SELECT records.id
 		FROM memory_records AS records
 		JOIN custody_memberships AS represented
-		  ON represented.destination_table = 'memory_records'
+		  ON represented.migration = ?
 		 AND CAST(represented.destination_key AS INTEGER) = records.id
 		WHERE records.canonical_digest = ?
 		  AND represented.source_database <> ?
 		  AND NOT EXISTS (
 		    SELECT 1 FROM custody_memberships AS same_source
-		    WHERE same_source.destination_table = 'memory_records'
+		    WHERE same_source.migration = ?
 		      AND CAST(same_source.destination_key AS INTEGER) = records.id
 		      AND same_source.source_database = ?)
-		ORDER BY records.id`, digest, source, source)
+		ORDER BY records.id`, memoryCustodyMigration, digest, source,
+		memoryCustodyMigration, source)
 	if err != nil {
 		return 0, false, fmt.Errorf("look for an exact cross-source memory: %w", err)
 	}
@@ -606,7 +627,9 @@ func parseMemorySourceKey(key string) (int64, int, error) {
 // without discarding what an earlier batch truthfully recorded.
 func importedMemoryHistory(ctx context.Context, db *sql.DB, source string) (map[int64][]memoryVersion, error) {
 	rows, err := db.QueryContext(ctx, `SELECT source_key, canonical_digest
-		FROM custody_memberships WHERE source_database = ? AND source_table = 'memories'`, source)
+		FROM custody_memberships
+		WHERE migration = ? AND source_database = ? AND source_table = 'memories'`,
+		memoryCustodyMigration, source)
 	if err != nil {
 		return nil, fmt.Errorf("read imported %s memory identities: %w", source, err)
 	}
@@ -655,28 +678,31 @@ func verifyMemoryCustody(ctx context.Context, ops *sql.DB,
 	var foreignKeys, memberships, physical, expectedPhysical, fts, orphans, missingFTS int
 	checks := []struct {
 		query string
+		args  []any
 		into  *int
 	}{
-		{"SELECT COUNT(*) FROM pragma_foreign_key_check", &foreignKeys},
-		{"SELECT COUNT(*) FROM custody_memberships WHERE destination_table = 'memory_records'", &memberships},
-		{"SELECT COUNT(*) FROM memory_records", &physical},
-		{`SELECT COALESCE(SUM(maximum), 0) FROM (
+		{query: "SELECT COUNT(*) FROM pragma_foreign_key_check", into: &foreignKeys},
+		{query: "SELECT COUNT(*) FROM custody_memberships WHERE migration = ?",
+			args: []any{memoryCustodyMigration}, into: &memberships},
+		{query: "SELECT COUNT(*) FROM memory_records", into: &physical},
+		{query: `SELECT COALESCE(SUM(maximum), 0) FROM (
 			SELECT canonical_digest, MAX(source_count) AS maximum FROM (
 				SELECT canonical_digest, source_database, COUNT(*) AS source_count
-				FROM custody_memberships WHERE destination_table = 'memory_records'
+				FROM custody_memberships WHERE migration = ?
 				GROUP BY canonical_digest, source_database)
-			GROUP BY canonical_digest)`, &expectedPhysical},
-		{"SELECT COUNT(*) FROM memory_records_fts_docsize", &fts},
-		{`SELECT COUNT(*) FROM memory_records AS records
+			GROUP BY canonical_digest)`, args: []any{memoryCustodyMigration}, into: &expectedPhysical},
+		{query: "SELECT COUNT(*) FROM memory_records_fts_docsize", into: &fts},
+		{query: `SELECT COUNT(*) FROM memory_records AS records
 			WHERE NOT EXISTS (SELECT 1 FROM custody_memberships AS memberships
-				WHERE memberships.destination_table = 'memory_records'
-				  AND CAST(memberships.destination_key AS INTEGER) = records.id)`, &orphans},
-		{`SELECT COUNT(*) FROM memory_records AS records
+				WHERE memberships.migration = ?
+				  AND CAST(memberships.destination_key AS INTEGER) = records.id)`,
+			args: []any{memoryCustodyMigration}, into: &orphans},
+		{query: `SELECT COUNT(*) FROM memory_records AS records
 			LEFT JOIN memory_records_fts_docsize AS indexed ON indexed.id = records.id
-			WHERE indexed.id IS NULL`, &missingFTS},
+			WHERE indexed.id IS NULL`, into: &missingFTS},
 	}
 	for _, check := range checks {
-		if err := ops.QueryRowContext(ctx, check.query).Scan(check.into); err != nil {
+		if err := ops.QueryRowContext(ctx, check.query, check.args...).Scan(check.into); err != nil {
 			return MemoryCustodyReport{}, "", fmt.Errorf("verify ops memory custody: %w", err)
 		}
 	}
@@ -695,11 +721,13 @@ func verifyMemoryCustody(ctx context.Context, ops *sql.DB,
 		}
 		var recorded, got int
 		if err := ops.QueryRowContext(ctx, `SELECT COALESCE(SUM(row_count), 0) FROM migration_batches
-			WHERE source_database = ? AND source_table = 'memories'`, source).Scan(&recorded); err != nil {
+			WHERE migration = ? AND source_database = ? AND source_table = 'memories'`,
+			memoryCustodyMigration, source).Scan(&recorded); err != nil {
 			return MemoryCustodyReport{}, "", err
 		}
 		if err := ops.QueryRowContext(ctx, `SELECT COUNT(*) FROM custody_memberships
-			WHERE destination_table = 'memory_records' AND source_database = ?`, source).Scan(&got); err != nil {
+			WHERE migration = ? AND source_database = ?`,
+			memoryCustodyMigration, source).Scan(&got); err != nil {
 			return MemoryCustodyReport{}, "", err
 		}
 		if got != recorded {
@@ -727,18 +755,20 @@ func verifyMemoryCustody(ctx context.Context, ops *sql.DB,
 }
 
 func inspectMemoryCustody(ctx context.Context, ops *sql.DB,
-	state migrationledger.Snapshot) (MemoryCustodyReport, error) {
+	state migrationledger.MigrationSnapshot) (MemoryCustodyReport, error) {
 	report := MemoryCustodyReport{State: state.State, VerificationDigest: state.VerificationDigest}
 	queries := []struct {
 		statement string
+		args      []any
 		target    *int
 	}{
-		{"SELECT COUNT(*) FROM custody_memberships WHERE destination_table = 'memory_records'", &report.Memberships},
-		{"SELECT COUNT(*) FROM memory_records", &report.PhysicalRecords},
-		{"SELECT COUNT(*) FROM memory_records_fts_docsize", &report.FTSRecords},
+		{statement: "SELECT COUNT(*) FROM custody_memberships WHERE migration = ?",
+			args: []any{memoryCustodyMigration}, target: &report.Memberships},
+		{statement: "SELECT COUNT(*) FROM memory_records", target: &report.PhysicalRecords},
+		{statement: "SELECT COUNT(*) FROM memory_records_fts_docsize", target: &report.FTSRecords},
 	}
 	for _, query := range queries {
-		if err := ops.QueryRowContext(ctx, query.statement).Scan(query.target); err != nil {
+		if err := ops.QueryRowContext(ctx, query.statement, query.args...).Scan(query.target); err != nil {
 			return MemoryCustodyReport{}, err
 		}
 	}
@@ -752,7 +782,8 @@ func memoryVerificationDigest(ctx context.Context, ops *sql.DB,
 		writeField(digest, strconv.Itoa(value))
 	}
 	rows, err := ops.QueryContext(ctx, `SELECT batch_id, source_database, source_table,
-		row_count, canonical_digest, high_water_mark FROM migration_batches ORDER BY batch_id`)
+		row_count, canonical_digest, high_water_mark FROM migration_batches
+		WHERE migration = ? ORDER BY batch_id`, memoryCustodyMigration)
 	if err != nil {
 		return "", err
 	}

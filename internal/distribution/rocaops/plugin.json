@@ -45,14 +45,19 @@
             "columns": ["singleton", "plugin_name", "schema_version", "index_version", "migration_state", "verification_digest", "prepared_at", "verified_at", "updated_at"]
           },
           {
+            "name": "plugin_migrations",
+            "description": "Lifecycle and verification outcome of every named custody migration this database hosts.",
+            "columns": ["migration", "destination_table", "migration_state", "verification_digest", "prepared_at", "verified_at", "updated_at"]
+          },
+          {
             "name": "migration_batches",
             "description": "Fully committed, checksummed source batches imported into ops custody.",
-            "columns": ["batch_id", "source_database", "source_table", "row_count", "canonical_digest", "high_water_mark", "committed_at"]
+            "columns": ["batch_id", "migration", "destination_table", "source_database", "source_table", "row_count", "canonical_digest", "high_water_mark", "committed_at"]
           },
           {
             "name": "custody_memberships",
             "description": "Source identities represented by each physical row in ops custody.",
-            "columns": ["source_database", "source_table", "source_key", "destination_table", "destination_key", "canonical_digest", "batch_id"]
+            "columns": ["migration", "source_database", "source_table", "source_key", "destination_table", "destination_key", "canonical_digest", "batch_id"]
           },
           {
             "name": "memory_records",

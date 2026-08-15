@@ -410,15 +410,27 @@ the same legacy ID rather than refused, a row that disappeared keeps the
 membership its batch truthfully recorded, and both are reported as drift events;
 membership counts are verified against what the committed batches recorded, not
 against the live source. A home whose three sources are all empty verifies as
-`verified-empty` rather than `verified`: nothing was carried, so the ledger stays
-open and a later run still carries whatever the sources hold by then, while the
-home counts as cutover-ready because there is nothing left to carry. That
-outcome is decided by this migration's own memberships, never by a batch another
-rung commits into the same plugin database. Each
+`verified-empty` rather than `verified`: nothing was carried, so the migration
+stays open and a later run still carries whatever the sources hold by then, while
+the home counts as cutover-ready because there is nothing left to carry. Each
 source's frozen copy is named once per migration generation and published by
 renaming a validated sibling copy over it, so retries replace their own snapshot
 instead of accumulating a full database per attempt, a failed replacement leaves
 the previously verified copy intact, and no reader sees a half-written database.
+
+A plugin database hosts as many custody migrations as it needs. `plugin_schema`
+keeps the plugin's schema and index versions; `plugin_migrations` keys every
+lifecycle transition and verification outcome by a stable migration name, and
+both batches and memberships carry that name beside the destination the
+migration owns. Two migrations in one database therefore prepare, batch, resume
+and verify independently: neither counts the other's batches, reuses its
+destination, nor overwrites its state, and each reaches `verified` or
+`verified-empty` on its own. DATA-2 owns `data2-memory-custody` over
+`memory_records`. A DATA-1 database adopts this in place on the next
+`Prepare` — the rows it already held stay under an unclaimed empty name, so
+they can never stand in for a migration that has not run. A plugin schema or
+index bump reopens every named migration, because the destination those
+migrations fill may have moved under them.
 
 ## Scheduled rides
 

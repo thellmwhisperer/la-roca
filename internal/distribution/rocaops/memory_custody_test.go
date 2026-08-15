@@ -146,7 +146,8 @@ func TestDATA2ResumesAfterACommittedBatchWithoutHalfRows(t *testing.T) {
 	assertCustodyCount(t, db, "SELECT COUNT(*) FROM custody_memberships", 3)
 	assertCustodyCount(t, db, "SELECT COUNT(*) FROM memory_records", 3)
 	var state string
-	if err := db.QueryRow("SELECT migration_state FROM plugin_schema").Scan(&state); err != nil {
+	if err := db.QueryRow("SELECT migration_state FROM plugin_migrations WHERE migration = ?",
+		memoryCustodyMigration).Scan(&state); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
@@ -291,11 +292,19 @@ func TestDATA2VerifiesEmptyMemoriesBesideAnUnrelatedPluginBatch(t *testing.T) {
 	}
 }
 
+// commitUnrelatedBatch stands in for a sibling rung that hosts its own named
+// migration in the same ops database, carrying rows into its own destination.
 func commitUnrelatedBatch(t *testing.T, path string) {
 	t.Helper()
 	db := openCustodyDB(t, path)
+	if err := migrationledger.PrepareMigration(t.Context(), db, migrationledger.Migration{
+		Name: "data5-call-history", DestinationTable: "legacy_records",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	batch, err := migrationledger.BeginBatch(t.Context(), db, migrationledger.BatchSpec{
-		ID: "unrelated-legacy-0001", SourceDatabase: "core", SourceTable: "legacy",
+		Migration: "data5-call-history", ID: "unrelated-legacy-0001",
+		SourceDatabase: "core", SourceTable: "memories",
 	})
 	if err != nil {
 		t.Fatal(err)
