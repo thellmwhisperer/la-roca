@@ -18,12 +18,17 @@ const (
 	StatePrepared        State = "prepared"
 	StateBatchInProgress State = "batch-in-progress"
 	StateVerified        State = "verified"
+	// StateVerifiedEmpty reports a migration that verified with nothing to
+	// carry. Unlike StateVerified it is not terminal: a home whose sources are
+	// empty today may hold rows tomorrow, so BeginBatch reopens it.
+	StateVerifiedEmpty State = "verified-empty"
 )
 
 var (
 	ErrBatchCommitted = errors.New("migration batch is already committed")
-	ErrVerified       = errors.New("verified plugin database cannot accept another batch")
+	ErrVerified       = errors.New("verified migration cannot accept another batch")
 	identifier        = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+	tableIdentifier   = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 	hexDigest         = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
 
@@ -33,15 +38,34 @@ type Definition struct {
 	IndexVersion  int
 }
 
+// Snapshot is the plugin database's own identity. It deliberately carries no
+// migration state: since named migrations, `plugin_migrations` is the only
+// authoritative lifecycle, and InspectMigration is how a caller reads it.
 type Snapshot struct {
-	Plugin             string
-	SchemaVersion      int
-	IndexVersion       int
+	Plugin        string
+	SchemaVersion int
+	IndexVersion  int
+}
+
+// Migration names one custody migration inside a plugin database and the single
+// destination it owns. A plugin database hosts as many as it needs: the ledger
+// keys every lifecycle transition, batch and verification by this name, so two
+// migrations in one database advance, resume and verify without reading or
+// overwriting each other's state.
+type Migration struct {
+	Name             string
+	DestinationTable string
+}
+
+type MigrationSnapshot struct {
+	Name               string
+	DestinationTable   string
 	State              State
 	VerificationDigest string
 }
 
 type BatchSpec struct {
+	Migration      string
 	ID             string
 	SourceDatabase string
 	SourceTable    string
@@ -64,11 +88,16 @@ type Batch struct {
 	conn        *sql.Conn
 	tx          *sql.Tx
 	spec        BatchSpec
+	destination string
 	foreignKeys int
 	done        bool
 }
 
-const schema = `
+// pluginTables hold the plugin's own identity. `plugin_schema.migration_state`
+// and its verification columns are legacy: DATA-1 kept one lifecycle per plugin
+// database there, and the columns survive only for the databases that already
+// have them. `plugin_migrations` is where a migration's state actually lives.
+const pluginTables = `
 CREATE TABLE IF NOT EXISTS plugin_schema (
   singleton           INTEGER PRIMARY KEY CHECK (singleton = 1),
   plugin_name         TEXT NOT NULL UNIQUE,
@@ -81,35 +110,72 @@ CREATE TABLE IF NOT EXISTS plugin_schema (
   updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS plugin_migrations (
+  migration           TEXT PRIMARY KEY,
+  destination_table   TEXT NOT NULL,
+  migration_state     TEXT NOT NULL CHECK (migration_state IN
+                        ('prepared', 'batch-in-progress', 'verified', 'verified-empty')),
+  verification_digest TEXT,
+  prepared_at         TEXT NOT NULL DEFAULT (datetime('now')),
+  verified_at         TEXT,
+  updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+`
+
+// custodyTables key a batch by the migration that carried it, not by its id
+// alone, so two migrations in one database may number their batches however
+// they like without one being mistaken for the other.
+const custodyTables = `
 CREATE TABLE IF NOT EXISTS migration_batches (
-  batch_id            TEXT PRIMARY KEY,
+  migration           TEXT NOT NULL DEFAULT '',
+  batch_id            TEXT NOT NULL,
+  destination_table   TEXT NOT NULL DEFAULT '',
   source_database     TEXT NOT NULL,
   source_table        TEXT NOT NULL,
   row_count           INTEGER NOT NULL CHECK (row_count >= 0),
   canonical_digest    TEXT NOT NULL,
   high_water_mark     TEXT NOT NULL,
-  committed_at        TEXT NOT NULL DEFAULT (datetime('now'))
+  committed_at        TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (migration, batch_id)
 );
 
 CREATE TABLE IF NOT EXISTS custody_memberships (
+  migration           TEXT NOT NULL DEFAULT '',
   source_database     TEXT NOT NULL,
   source_table        TEXT NOT NULL,
   source_key          TEXT NOT NULL,
   destination_table   TEXT NOT NULL,
   destination_key     TEXT NOT NULL,
   canonical_digest    TEXT NOT NULL,
-  batch_id            TEXT NOT NULL REFERENCES migration_batches(batch_id)
-                        DEFERRABLE INITIALLY DEFERRED,
-  PRIMARY KEY (source_database, source_table, source_key)
+  batch_id            TEXT NOT NULL,
+  PRIMARY KEY (migration, source_database, source_table, source_key),
+  FOREIGN KEY (migration, batch_id) REFERENCES migration_batches(migration, batch_id)
+    DEFERRABLE INITIALLY DEFERRED
 );
+`
 
+const tables = pluginTables + custodyTables
+
+const indexes = `
+CREATE INDEX IF NOT EXISTS migration_batches_migration
+  ON migration_batches(migration);
 CREATE INDEX IF NOT EXISTS custody_memberships_destination
   ON custody_memberships(destination_table, destination_key);
 CREATE INDEX IF NOT EXISTS custody_memberships_digest
   ON custody_memberships(canonical_digest);
 CREATE INDEX IF NOT EXISTS custody_memberships_batch
-  ON custody_memberships(batch_id);
+  ON custody_memberships(migration, batch_id);
+CREATE INDEX IF NOT EXISTS custody_memberships_migration
+  ON custody_memberships(migration);
 `
+
+// batchKeyColumns and membershipKeyColumns are how many columns each custody
+// table's primary key carries once it is keyed by migration. A table that
+// reports anything else predates named migrations and still owes adoption.
+const (
+	batchKeyColumns      = 2
+	membershipKeyColumns = 4
+)
 
 func Prepare(ctx context.Context, db *sql.DB, definition Definition) error {
 	if err := definition.valid(); err != nil {
@@ -120,8 +186,14 @@ func Prepare(ctx context.Context, db *sql.DB, definition Definition) error {
 		return fmt.Errorf("begin plugin migration preparation: %w", err)
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, schema); err != nil {
+	if _, err := tx.ExecContext(ctx, tables); err != nil {
 		return fmt.Errorf("prepare plugin migration ledger: %w", err)
+	}
+	if err := adopt(ctx, tx); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, indexes); err != nil {
+		return fmt.Errorf("index plugin migration ledger: %w", err)
 	}
 
 	current, found, err := inspect(ctx, tx)
@@ -146,12 +218,18 @@ func Prepare(ctx context.Context, db *sql.DB, definition Definition) error {
 		}
 		if current.SchemaVersion != definition.SchemaVersion || current.IndexVersion != definition.IndexVersion {
 			_, err = tx.ExecContext(ctx, `UPDATE plugin_schema SET
-				schema_version = ?, index_version = ?, migration_state = ?,
-				verification_digest = NULL, verified_at = NULL,
+				schema_version = ?, index_version = ?,
 				prepared_at = datetime('now'), updated_at = datetime('now')
-				WHERE singleton = 1`, definition.SchemaVersion, definition.IndexVersion, StatePrepared)
+				WHERE singleton = 1`, definition.SchemaVersion, definition.IndexVersion)
 			if err != nil {
 				return fmt.Errorf("advance plugin schema identity: %w", err)
+			}
+			// A destination's shape may have moved under the migrations that
+			// fill it, so every recorded verification is stale until re-proven.
+			if _, err = tx.ExecContext(ctx, `UPDATE plugin_migrations SET migration_state = ?,
+				verification_digest = NULL, verified_at = NULL, updated_at = datetime('now')
+				WHERE migration_state <> ?`, StatePrepared, StatePrepared); err != nil {
+				return fmt.Errorf("reopen named migrations after a schema change: %w", err)
 			}
 		}
 	}
@@ -161,13 +239,76 @@ func Prepare(ctx context.Context, db *sql.DB, definition Definition) error {
 	return nil
 }
 
+// PrepareMigration declares one named migration and the destination it owns.
+// It is idempotent, and it never disturbs a migration that already exists, so a
+// plugin can declare all of its migrations on every install without resetting
+// the ones that already carried rows.
+func PrepareMigration(ctx context.Context, db *sql.DB, migration Migration) error {
+	if err := migration.valid(); err != nil {
+		return err
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin named migration preparation: %w", err)
+	}
+	defer tx.Rollback()
+	present, err := ledgerPresent(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if !present {
+		return fmt.Errorf("plugin migration ledger is absent")
+	}
+	current, found, err := inspectMigration(ctx, tx, migration.Name)
+	if err != nil {
+		return err
+	}
+	switch {
+	case !found:
+		if _, err := tx.ExecContext(ctx, `INSERT INTO plugin_migrations
+			(migration, destination_table, migration_state) VALUES (?, ?, ?)`,
+			migration.Name, migration.DestinationTable, StatePrepared); err != nil {
+			return fmt.Errorf("declare migration %q: %w", migration.Name, err)
+		}
+	case current.DestinationTable != migration.DestinationTable:
+		return fmt.Errorf("migration %q owns destination %q, not %q",
+			migration.Name, current.DestinationTable, migration.DestinationTable)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit named migration preparation: %w", err)
+	}
+	return nil
+}
+
+// Inspect reads the plugin database's identity. A database that never had a
+// ledger yields the zero Snapshot, whose empty Plugin is what marks it absent.
 func Inspect(ctx context.Context, db *sql.DB) (Snapshot, error) {
 	snapshot, found, err := inspect(ctx, db)
 	if err != nil {
 		return Snapshot{}, err
 	}
 	if !found {
-		return Snapshot{State: StateAbsent}, nil
+		return Snapshot{}, nil
+	}
+	return snapshot, nil
+}
+
+// InspectMigration reports one named migration's own lifecycle, independent of
+// every other migration the same plugin database hosts.
+func InspectMigration(ctx context.Context, db *sql.DB, name string) (MigrationSnapshot, error) {
+	present, err := ledgerPresent(ctx, db)
+	if err != nil {
+		return MigrationSnapshot{}, err
+	}
+	if !present {
+		return MigrationSnapshot{Name: name, State: StateAbsent}, nil
+	}
+	snapshot, found, err := inspectMigration(ctx, db, name)
+	if err != nil {
+		return MigrationSnapshot{}, err
+	}
+	if !found {
+		return MigrationSnapshot{Name: name, State: StateAbsent}, nil
 	}
 	return snapshot, nil
 }
@@ -199,30 +340,41 @@ func BeginBatch(ctx context.Context, db *sql.DB, spec BatchSpec) (*Batch, error)
 	if err != nil {
 		return fail(fmt.Errorf("begin plugin migration batch: %w", err))
 	}
-	current, found, err := inspect(ctx, batch.tx)
+	present, err := ledgerPresent(ctx, batch.tx)
+	if err != nil {
+		return fail(err)
+	}
+	if !present {
+		return fail(fmt.Errorf("plugin migration ledger is absent"))
+	}
+	current, found, err := inspectMigration(ctx, batch.tx, spec.Migration)
 	if err != nil {
 		return fail(err)
 	}
 	if !found {
-		return fail(fmt.Errorf("plugin migration ledger is absent"))
+		return fail(fmt.Errorf("migration %q is not prepared", spec.Migration))
 	}
 	if current.State == StateVerified {
 		return fail(ErrVerified)
 	}
-	if current.State != StatePrepared && current.State != StateBatchInProgress {
-		return fail(fmt.Errorf("plugin migration state is %q, want %q or %q",
-			current.State, StatePrepared, StateBatchInProgress))
+	if current.State != StatePrepared && current.State != StateBatchInProgress &&
+		current.State != StateVerifiedEmpty {
+		return fail(fmt.Errorf("migration %q state is %q, want %q, %q, or %q",
+			spec.Migration, current.State, StatePrepared, StateBatchInProgress, StateVerifiedEmpty))
 	}
+	batch.destination = current.DestinationTable
 	var committed int
 	if err := batch.tx.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM migration_batches WHERE batch_id = ?", spec.ID).Scan(&committed); err != nil {
+		"SELECT COUNT(*) FROM migration_batches WHERE migration = ? AND batch_id = ?",
+		spec.Migration, spec.ID).Scan(&committed); err != nil {
 		return fail(fmt.Errorf("inspect migration batch %q: %w", spec.ID, err))
 	}
 	if committed != 0 {
 		return fail(fmt.Errorf("%w: %s", ErrBatchCommitted, spec.ID))
 	}
-	if _, err := batch.tx.ExecContext(ctx, `UPDATE plugin_schema SET migration_state = ?,
-		updated_at = datetime('now') WHERE singleton = 1`, StateBatchInProgress); err != nil {
+	if _, err := batch.tx.ExecContext(ctx, `UPDATE plugin_migrations SET migration_state = ?,
+		verification_digest = NULL, verified_at = NULL, updated_at = datetime('now')
+		WHERE migration = ?`, StateBatchInProgress, spec.Migration); err != nil {
 		return fail(fmt.Errorf("mark migration batch in progress: %w", err))
 	}
 	return batch, nil
@@ -242,12 +394,16 @@ func (batch *Batch) AddMembership(ctx context.Context, membership Membership) er
 	if err := membership.valid(); err != nil {
 		return err
 	}
+	if membership.DestinationTable != batch.destination {
+		return fmt.Errorf("migration %q owns destination %q and cannot write into %q",
+			batch.spec.Migration, batch.destination, membership.DestinationTable)
+	}
 	_, err := batch.tx.ExecContext(ctx, `INSERT INTO custody_memberships
-		(source_database, source_table, source_key, destination_table, destination_key,
-		 canonical_digest, batch_id) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		batch.spec.SourceDatabase, batch.spec.SourceTable, membership.SourceKey,
-		membership.DestinationTable, membership.DestinationKey, membership.CanonicalDigest,
-		batch.spec.ID)
+		(migration, source_database, source_table, source_key, destination_table,
+		 destination_key, canonical_digest, batch_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		batch.spec.Migration, batch.spec.SourceDatabase, batch.spec.SourceTable,
+		membership.SourceKey, membership.DestinationTable, membership.DestinationKey,
+		membership.CanonicalDigest, batch.spec.ID)
 	if err != nil {
 		return fmt.Errorf("record custody membership: %w", err)
 	}
@@ -263,7 +419,8 @@ func (batch *Batch) Commit(ctx context.Context, commit BatchCommit) error {
 	}
 	var memberships int
 	if err := batch.tx.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM custody_memberships WHERE batch_id = ?", batch.spec.ID).Scan(&memberships); err != nil {
+		"SELECT COUNT(*) FROM custody_memberships WHERE migration = ? AND batch_id = ?",
+		batch.spec.Migration, batch.spec.ID).Scan(&memberships); err != nil {
 		return batch.fail(fmt.Errorf("count migration batch memberships: %w", err))
 	}
 	if memberships != commit.RowCount {
@@ -271,9 +428,11 @@ func (batch *Batch) Commit(ctx context.Context, commit BatchCommit) error {
 			commit.RowCount, memberships))
 	}
 	if _, err := batch.tx.ExecContext(ctx, `INSERT INTO migration_batches
-		(batch_id, source_database, source_table, row_count, canonical_digest, high_water_mark)
-		VALUES (?, ?, ?, ?, ?, ?)`, batch.spec.ID, batch.spec.SourceDatabase,
-		batch.spec.SourceTable, commit.RowCount, commit.CanonicalDigest, commit.HighWaterMark); err != nil {
+		(batch_id, migration, destination_table, source_database, source_table,
+		 row_count, canonical_digest, high_water_mark)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, batch.spec.ID, batch.spec.Migration,
+		batch.destination, batch.spec.SourceDatabase, batch.spec.SourceTable,
+		commit.RowCount, commit.CanonicalDigest, commit.HighWaterMark); err != nil {
 		return batch.fail(fmt.Errorf("commit migration batch record: %w", err))
 	}
 	if err := batch.tx.Commit(); err != nil {
@@ -313,33 +472,81 @@ func (batch *Batch) fail(err error) error {
 	return err
 }
 
-func Verify(ctx context.Context, db *sql.DB, digest string) error {
-	if !hexDigest.MatchString(digest) {
-		return fmt.Errorf("verification digest must be a lowercase SHA-256 digest")
-	}
-	result, err := db.ExecContext(ctx, `UPDATE plugin_schema SET migration_state = ?,
-		verification_digest = ?, verified_at = datetime('now'), updated_at = datetime('now')
-		WHERE singleton = 1 AND migration_state <> ?
-		  AND EXISTS (SELECT 1 FROM migration_batches)`, StateVerified, digest, StateVerified)
+// VerifyMigration seals one named migration that carried rows. The guard is
+// scoped to that migration's own committed batches, so a sibling migration's
+// work can never stand in for it.
+func VerifyMigration(ctx context.Context, db *sql.DB, name, digest string) error {
+	changed, err := recordVerification(ctx, db, name, digest, StateVerified,
+		"EXISTS (SELECT 1 FROM migration_batches WHERE migration = ?)", "verify migration")
 	if err != nil {
-		return fmt.Errorf("verify plugin migration: %w", err)
-	}
-	changed, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("read plugin verification result: %w", err)
+		return err
 	}
 	if changed != 1 {
-		return fmt.Errorf("plugin migration has no committed batch to verify")
+		return fmt.Errorf("migration %q has no committed batch to verify", name)
 	}
 	return nil
 }
 
-func CutoverEligible(ctx context.Context, db *sql.DB) (bool, error) {
-	snapshot, err := Inspect(ctx, db)
+// recordVerification is the one transition that records a verification outcome.
+// Both outcomes write the same columns under the same non-repeatable guard and
+// differ only in the population they demand, so the population clause is the
+// caller's and the statement stays single-owner.
+func recordVerification(ctx context.Context, db *sql.DB, name, digest string,
+	state State, population, action string) (int64, error) {
+	if !identifier.MatchString(name) {
+		return 0, fmt.Errorf("migration name must be lowercase")
+	}
+	if !hexDigest.MatchString(digest) {
+		return 0, fmt.Errorf("verification digest must be a lowercase SHA-256 digest")
+	}
+	result, err := db.ExecContext(ctx, `UPDATE plugin_migrations SET migration_state = ?,
+		verification_digest = ?, verified_at = datetime('now'), updated_at = datetime('now')
+		WHERE migration = ? AND migration_state <> ?
+		  AND `+population, state, digest, name, StateVerified, name)
+	if err != nil {
+		return 0, fmt.Errorf("%s %q: %w", action, name, err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("read plugin verification result: %w", err)
+	}
+	return changed, nil
+}
+
+// VerifyMigrationEmpty records that one named migration verified with nothing to
+// carry. VerifyMigration deliberately demands a committed batch, so a migration
+// over an empty population could never leave `prepared`; this is the narrow
+// counterpart, refusing any migration that did carry a row.
+//
+// It deliberately does not seal the migration. A home whose sources are empty
+// today may hold rows tomorrow, so the recorded state is verified-empty and
+// BeginBatch reopens it as soon as there is something to carry.
+func VerifyMigrationEmpty(ctx context.Context, db *sql.DB, name, digest string) error {
+	changed, err := recordVerification(ctx, db, name, digest, StateVerifiedEmpty,
+		"NOT EXISTS (SELECT 1 FROM custody_memberships WHERE migration = ?)",
+		"verify empty migration")
+	if err != nil {
+		return err
+	}
+	if changed != 1 {
+		return fmt.Errorf("migration %q is not an empty population", name)
+	}
+	return nil
+}
+
+// MigrationCutoverEligible answers for both verified outcomes. A migration that
+// verified with nothing to carry is as ready for the federated cutover as one
+// that carried rows: the cutover is simply a no-op there. It stays re-openable
+// until then, so rows written before the cutover are still carried.
+func MigrationCutoverEligible(ctx context.Context, db *sql.DB, name string) (bool, error) {
+	snapshot, err := InspectMigration(ctx, db, name)
 	if err != nil {
 		return false, err
 	}
-	return snapshot.State == StateVerified && snapshot.VerificationDigest != "", nil
+	if snapshot.State != StateVerified && snapshot.State != StateVerifiedEmpty {
+		return false, nil
+	}
+	return snapshot.VerificationDigest != "", nil
 }
 
 type rowQuerier interface {
@@ -349,28 +556,135 @@ type rowQuerier interface {
 // inspect probes for the ledger before reading it, so a database that never had
 // one is reported as absent instead of failing on a missing table.
 func inspect(ctx context.Context, querier rowQuerier) (Snapshot, bool, error) {
-	var exists int
-	if err := querier.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master
-		WHERE type = 'table' AND name = 'plugin_schema'`).Scan(&exists); err != nil {
-		return Snapshot{}, false, fmt.Errorf("inspect plugin migration ledger: %w", err)
+	present, err := tablePresent(ctx, querier, "plugin_schema")
+	if err != nil {
+		return Snapshot{}, false, err
 	}
-	if exists == 0 {
+	if !present {
 		return Snapshot{}, false, nil
 	}
 	var snapshot Snapshot
-	var verification sql.NullString
-	err := querier.QueryRowContext(ctx, `SELECT plugin_name, schema_version, index_version,
-		migration_state, verification_digest FROM plugin_schema WHERE singleton = 1`).Scan(
-		&snapshot.Plugin, &snapshot.SchemaVersion, &snapshot.IndexVersion,
-		&snapshot.State, &verification)
+	err = querier.QueryRowContext(ctx, `SELECT plugin_name, schema_version, index_version
+		FROM plugin_schema WHERE singleton = 1`).Scan(
+		&snapshot.Plugin, &snapshot.SchemaVersion, &snapshot.IndexVersion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Snapshot{}, false, nil
 	}
 	if err != nil {
 		return Snapshot{}, false, fmt.Errorf("read plugin migration state: %w", err)
 	}
+	return snapshot, true, nil
+}
+
+func inspectMigration(ctx context.Context, querier rowQuerier,
+	name string) (MigrationSnapshot, bool, error) {
+	snapshot := MigrationSnapshot{Name: name}
+	var verification sql.NullString
+	err := querier.QueryRowContext(ctx, `SELECT destination_table, migration_state,
+		verification_digest FROM plugin_migrations WHERE migration = ?`, name).Scan(
+		&snapshot.DestinationTable, &snapshot.State, &verification)
+	if errors.Is(err, sql.ErrNoRows) {
+		return MigrationSnapshot{}, false, nil
+	}
+	if err != nil {
+		return MigrationSnapshot{}, false, fmt.Errorf("read migration %q state: %w", name, err)
+	}
 	snapshot.VerificationDigest = verification.String
 	return snapshot, true, nil
+}
+
+func ledgerPresent(ctx context.Context, querier rowQuerier) (bool, error) {
+	return tablePresent(ctx, querier, "plugin_migrations")
+}
+
+func tablePresent(ctx context.Context, querier rowQuerier, name string) (bool, error) {
+	var exists int
+	if err := querier.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master
+		WHERE type = 'table' AND name = ?`, name).Scan(&exists); err != nil {
+		return false, fmt.Errorf("inspect plugin migration ledger: %w", err)
+	}
+	return exists != 0, nil
+}
+
+// adopt brings a DATA-1 ledger up to named migrations without a migration
+// runner. Both custody tables are keyed by migration, which SQLite cannot add to
+// a primary key in place, so the rows are staged, the tables are recreated from
+// the same declaration a fresh database gets, and the rows return under the
+// empty name no migration can claim. It is idempotent: once both primary keys
+// carry their migration, there is nothing left to do.
+func adopt(ctx context.Context, tx *sql.Tx) error {
+	batchKeys, err := primaryKeyColumns(ctx, tx, "migration_batches")
+	if err != nil {
+		return err
+	}
+	membershipKeys, err := primaryKeyColumns(ctx, tx, "custody_memberships")
+	if err != nil {
+		return err
+	}
+	if batchKeys == batchKeyColumns && membershipKeys == membershipKeyColumns {
+		return nil
+	}
+	batchMigration, err := adoptedColumn(ctx, tx, "migration_batches", "migration")
+	if err != nil {
+		return err
+	}
+	batchDestination, err := adoptedColumn(ctx, tx, "migration_batches", "destination_table")
+	if err != nil {
+		return err
+	}
+	membershipMigration, err := adoptedColumn(ctx, tx, "custody_memberships", "migration")
+	if err != nil {
+		return err
+	}
+	rebuild := fmt.Sprintf(`
+CREATE TABLE migration_batches_adopted AS SELECT %s AS migration, batch_id,
+  %s AS destination_table, source_database, source_table, row_count,
+  canonical_digest, high_water_mark, committed_at FROM migration_batches;
+CREATE TABLE custody_memberships_adopted AS SELECT %s AS migration, source_database,
+  source_table, source_key, destination_table, destination_key, canonical_digest,
+  batch_id FROM custody_memberships;
+DROP TABLE custody_memberships;
+DROP TABLE migration_batches;
+%s
+INSERT INTO migration_batches (migration, batch_id, destination_table, source_database,
+  source_table, row_count, canonical_digest, high_water_mark, committed_at)
+  SELECT migration, batch_id, destination_table, source_database, source_table,
+         row_count, canonical_digest, high_water_mark, committed_at
+  FROM migration_batches_adopted;
+INSERT INTO custody_memberships (migration, source_database, source_table, source_key,
+  destination_table, destination_key, canonical_digest, batch_id)
+  SELECT migration, source_database, source_table, source_key, destination_table,
+         destination_key, canonical_digest, batch_id FROM custody_memberships_adopted;
+DROP TABLE migration_batches_adopted;
+DROP TABLE custody_memberships_adopted;
+`, batchMigration, batchDestination, membershipMigration, custodyTables)
+	if _, err := tx.ExecContext(ctx, rebuild); err != nil {
+		return fmt.Errorf("adopt custody tables into named migrations: %w", err)
+	}
+	return nil
+}
+
+// adoptedColumn keeps a column a previous shape already carried and supplies the
+// unclaimed empty name for one it never had.
+func adoptedColumn(ctx context.Context, tx *sql.Tx, table, column string) (string, error) {
+	var found int
+	if err := tx.QueryRowContext(ctx, fmt.Sprintf(
+		`SELECT COUNT(*) FROM pragma_table_info('%s') WHERE name = ?`, table), column).Scan(&found); err != nil {
+		return "", fmt.Errorf("inspect %s columns: %w", table, err)
+	}
+	if found == 0 {
+		return "''", nil
+	}
+	return column, nil
+}
+
+func primaryKeyColumns(ctx context.Context, tx *sql.Tx, table string) (int, error) {
+	var keys int
+	if err := tx.QueryRowContext(ctx, fmt.Sprintf(
+		`SELECT COUNT(*) FROM pragma_table_info('%s') WHERE pk > 0`, table)).Scan(&keys); err != nil {
+		return 0, fmt.Errorf("inspect %s key: %w", table, err)
+	}
+	return keys, nil
 }
 
 func (definition Definition) valid() error {
@@ -380,7 +694,18 @@ func (definition Definition) valid() error {
 	return nil
 }
 
+func (migration Migration) valid() error {
+	if !identifier.MatchString(migration.Name) ||
+		!tableIdentifier.MatchString(migration.DestinationTable) {
+		return fmt.Errorf("migration needs a lowercase name and a destination table")
+	}
+	return nil
+}
+
 func (spec BatchSpec) valid() error {
+	if !identifier.MatchString(spec.Migration) {
+		return fmt.Errorf("migration batch needs a lowercase migration name")
+	}
 	if strings.TrimSpace(spec.ID) == "" || strings.TrimSpace(spec.SourceDatabase) == "" ||
 		strings.TrimSpace(spec.SourceTable) == "" {
 		return fmt.Errorf("migration batch needs an id, source database, and source table")
