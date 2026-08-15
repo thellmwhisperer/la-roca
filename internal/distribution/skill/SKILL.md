@@ -100,6 +100,13 @@ For project, decision, and agent questions, prefer the narrowest true layer
 and project filter. Store a durable handoff or decision only after the result
 has been checked against its source rows.
 
+If the project has a semantic profile, apply it after recovering live source
+context. A profile supplies project-specific source authority, finding types,
+review states, required evidence fields, and complete/unresolved criteria; it
+never replaces the source locator, provenance, contradiction report, or core
+resolution. The first profile is the Libro de Economía contract documented in
+`docs/semantic-profiles/libro-economia.md` in the La Roca repository.
+
 ## Default row output
 
 Rows use the same compact TOON shape as other AXI tools. The route narration
