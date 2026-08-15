@@ -259,13 +259,7 @@ func TestDATA2VerifiesEmptyMemoriesBesideAnUnrelatedPluginBatch(t *testing.T) {
 	insertOpsMemories(t, fixture.ops, 0)
 	commitUnrelatedBatch(t, fixture.ops)
 
-	report, err := MigrateMemoryCustody(t.Context(), MemoryCustodyOptions{
-		CorePath: fixture.core, CorpusPath: fixture.corpus, OpsPath: fixture.ops,
-		SnapshotDir: fixture.snapshots,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	report := carryCustody(t, fixture)
 	if report.State != migrationledger.StateVerifiedEmpty || report.Memberships != 0 ||
 		report.PhysicalRecords != 0 {
 		t.Fatalf("empty memories beside an unrelated batch = %+v", report)
@@ -280,16 +274,24 @@ func TestDATA2VerifiesEmptyMemoriesBesideAnUnrelatedPluginBatch(t *testing.T) {
 	if err := core.Close(); err != nil {
 		t.Fatal(err)
 	}
-	carried, err := MigrateMemoryCustody(t.Context(), MemoryCustodyOptions{
+	carried := carryCustody(t, fixture)
+	if carried.State != migrationledger.StateVerified || carried.Memberships != 1 {
+		t.Fatalf("memories carried beside an unrelated batch = %+v", carried)
+	}
+}
+
+// carryCustody runs the migration over a fixture with default options, so a
+// case that only reopens a state states the report it expects and nothing else.
+func carryCustody(t *testing.T, fixture custodyFixture) MemoryCustodyReport {
+	t.Helper()
+	report, err := MigrateMemoryCustody(t.Context(), MemoryCustodyOptions{
 		CorePath: fixture.core, CorpusPath: fixture.corpus, OpsPath: fixture.ops,
 		SnapshotDir: fixture.snapshots,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if carried.State != migrationledger.StateVerified || carried.Memberships != 1 {
-		t.Fatalf("memories carried beside an unrelated batch = %+v", carried)
-	}
+	return report
 }
 
 // commitUnrelatedBatch stands in for a sibling rung that hosts its own named
