@@ -65,6 +65,23 @@ func TestContentCarriesOperatingCraft(t *testing.T) {
 	}
 }
 
+func TestContentCanSelfOnboardAnUnsupportedAgent(t *testing.T) {
+	body := skill.Content()
+	for _, needle := range []string{
+		"Unsupported agent self-onboarding",
+		"Never copy real conversation data into a fixture",
+		"docs/agent-parsers.md",
+		"Detect",
+		"Parse",
+		"go test ./internal/ingest/parsers",
+		"Open a pull request",
+	} {
+		if !strings.Contains(body, needle) {
+			t.Errorf("skill self-onboarding section missing %q", needle)
+		}
+	}
+}
+
 func TestRuntimesMatchTheFiveAgentcfgKnows(t *testing.T) {
 	want := []string{"claude", "codex", "hermes", "opencode", "pi"}
 	got := skill.Runtimes()

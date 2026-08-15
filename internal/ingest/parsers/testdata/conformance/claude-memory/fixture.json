@@ -1,0 +1,10 @@
+{
+  "parser": "claude_memory",
+  "destination": "store",
+  "source": "memory.data",
+  "meta": {"Path":"/synthetic/claude/memory.data","FileName":"memory.data","Project":"lighthouse","SourceAgent":"claude"},
+  "want": {
+    "sessions": [],
+    "memories": [{"layer":"project","content":"The synthetic beacon is cobalt.","source_agent":"claude-code","project":"lighthouse"}]
+  }
+}

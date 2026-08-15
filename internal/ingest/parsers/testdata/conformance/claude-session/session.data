@@ -1,0 +1,2 @@
+{"type":"user","timestamp":"2026-08-01T10:00:00Z","cwd":"/synthetic/lighthouse","message":{"content":"Count the invented beacons."}}
+{"type":"assistant","timestamp":"2026-08-01T10:00:01Z","message":{"model":"synthetic-claude","content":[{"type":"text","text":"Three beacons."}]}}

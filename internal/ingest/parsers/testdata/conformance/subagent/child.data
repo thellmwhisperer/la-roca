@@ -1,0 +1,2 @@
+{"type":"user","sessionId":"fixture-parent","agentId":"fixture-child","timestamp":"2026-08-01T14:00:00Z","message":{"content":"Find the invented chart."}}
+{"type":"assistant","sessionId":"fixture-parent","agentId":"fixture-child","timestamp":"2026-08-01T14:00:01Z","message":{"content":"Chart found."}}

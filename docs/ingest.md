@@ -23,6 +23,10 @@ directory carrying neither is refused naming both layouts rather than attributed
 to one of the two, as is a path that does not exist, is not a directory, or
 cannot be read. Every refusal happens before ingest starts.
 
+To add another agent source to the single binary, follow the public
+[agent parser contribution kit](agent-parsers.md). Its conformance suite pins
+detection, normalization, and destination routing with synthetic fixtures.
+
 Older configuration files may still contain `anthropic_export_paths` or
 `openai_export_paths`. Those keys are leftovers: ingest ignores them, and they
 can be removed.
