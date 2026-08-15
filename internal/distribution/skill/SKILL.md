@@ -52,6 +52,59 @@ does not handle authentication or store its secrets.
 `roca exec` runs exactly what `query --sql-only` prints, under the same
 read-only gate; nothing that is not a SELECT reaches the database.
 
+## Semantic-first retrieval
+
+Use semantic retrieval for questions about concepts, similar past work, or
+memories expressed with different words. Do not present a literal keyword
+rescue as if it were a semantic answer.
+
+When the optional local vector plugin is installed and ready, use it as the
+candidate retriever:
+
+```bash
+roca-vector --json query "<bare concept>" 8
+```
+
+The vector result is a locator and relevance signal, not final evidence. For
+each useful candidate, recover the live source text through the core query or
+`roca exec`, then inspect enough surrounding context to establish what the
+source actually says. Keep the source kind, stable source id, layer, project,
+date, and provenance with the finding.
+
+If the vector route is unavailable, say that semantic retrieval is unavailable
+and name the missing route. Use exact SQL or literal search only when the user
+explicitly asks for a literal lookup, and label that result as exact rather
+than semantic. Never silently downgrade a conceptual question to keyword
+matching.
+
+The vector route requires explicit local setup (`features.plugins = true`,
+`features.vector = true`, an installed `roca-vector` package, and its local
+embedding model). It must remain optional and local; the core database keeps
+the authoritative text and the vector index keeps only embeddings, fingerprints,
+and source locators.
+
+## Evidence-first investigation
+
+For a question that needs more than one remembered fact, use the same
+discipline as a corpus skill:
+
+1. State the investigation purpose in one line.
+2. Start with one bare semantic concept, without steering hints.
+3. Expand deliberately through synonyms, adjacent concepts, entities, or time
+   periods rather than stacking many terms into one query.
+4. Recover the source context around promising candidates; a score or snippet
+   is never enough.
+5. Separate observed facts, interpretations, hypotheses, decisions, and
+   unanswered questions.
+6. Deduplicate by stable source id while preserving distinct contexts and
+   contradictions.
+7. End with a verdict grounded in the returned evidence, including coverage
+   limits and the next probe when the evidence is incomplete.
+
+For project, decision, and agent questions, prefer the narrowest true layer
+and project filter. Store a durable handoff or decision only after the result
+has been checked against its source rows.
+
 ## Default row output
 
 Rows use the same compact TOON shape as other AXI tools. The route narration
