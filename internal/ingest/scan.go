@@ -121,23 +121,21 @@ func addRegisteredParsers(roots Roots, plan *Plan, registered []parsers.Registra
 		if source == "" {
 			source = contribution.Name
 		}
+		shape := Target{Kind: parsers.Kind(contribution.Name), SourceAgent: source}
+		declared, refused := contribution.ResolveLocations(roots.Home)
+		for _, location := range refused {
+			plan.Warnings = append(plan.Warnings, fmt.Sprintf(
+				"parser %q declares the unusable location %q", contribution.Name, location))
+		}
+		var targets []Target
 		present := false
-		for _, declared := range contribution.Locations {
-			root := declared
-			if !filepath.IsAbs(root) {
-				if roots.Home == "" {
-					continue
-				}
-				root = filepath.Join(roots.Home, root)
-			}
+		for _, root := range declared {
 			if pathExists(root) {
 				present = true
 			}
-			for _, path := range regularFilesUnder(root) {
-				plan.add([]Target{{Path: path, FileName: filepath.Base(path),
-					Kind: parsers.Kind(contribution.Name), SourceAgent: source}}, contribution.Name+"_files")
-			}
+			targets = append(targets, filesUnder(root, "", shape)...)
 		}
+		plan.add(targets, contribution.Name+"_files")
 		if present && !slices.Contains(plan.DetectedAgents, source) {
 			plan.DetectedAgents = append(plan.DetectedAgents, source)
 		}
@@ -620,21 +618,6 @@ func filesUnder(root, extension string, shape Target) []Target {
 		return nil
 	})
 	return targets
-}
-
-func regularFilesUnder(root string) []string {
-	if root == "" {
-		return nil
-	}
-	var paths []string
-	filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-		if err == nil && entry.Type().IsRegular() {
-			paths = append(paths, path)
-		}
-		return nil
-	})
-	sort.Strings(paths)
-	return paths
 }
 
 func isFile(path string) bool {

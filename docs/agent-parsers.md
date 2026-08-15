@@ -70,6 +70,7 @@ where its normalized records belong:
 Registration{
     Name: "nova", SourceAgent: "nova",
     Locations: []string{".nova/sessions"},
+    Version: "nova-v1",
     Destination: DestinationCorpus,
     Parser: novaParser{},
 }
@@ -80,7 +81,17 @@ home (or absolute locations when the agent has one platform-independent path).
 The generic scanner walks only those roots, asks `Detect` about each regular
 file after the unchanged-file fingerprint gate, and routes claimed files
 through this registration. You do not add a filename extension, decoder, or
-second scanner switch anywhere else.
+second scanner switch anywhere else. An empty location, the home directory
+itself, and anything climbing out of it are refused: the harness fails the
+registry line and a shipped one warns the operator instead of walking the
+machine.
+
+`Version` is the reading your parser currently gives that source. It rides
+inside the ingest watermark, so when a later change teaches `Detect` or `Parse`
+to read more, bump it. Files already synced under the poorer reading are then
+read again by a plain `roca ingest` instead of staying skipped forever behind
+the fingerprint they earned. Leave it empty only while the reading has never
+changed.
 
 Choose `DestinationCorpus` for raw conversations, `DestinationStore` for
 distilled memories, or `DestinationBoth` only when one agent source genuinely

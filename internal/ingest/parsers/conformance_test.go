@@ -42,6 +42,10 @@ type conformanceMemory struct {
 	Project     string `json:"project,omitempty"`
 }
 
+// syntheticHome stands in for the operator's home while the harness checks that
+// a registry line's declared locations resolve to a store and not to the machine.
+const syntheticHome = "/synthetic/home"
+
 // TestRegisteredParsersConform is the contribution harness. Every directory in
 // testdata/conformance is a complete, synthetic worked example: its manifest
 // names a registered parser, its own source file, the declared destination and
@@ -65,6 +69,9 @@ func TestRegisteredParsersConform(t *testing.T) {
 			t.Fatalf("parser %q is registered more than once", registered.Name)
 		}
 		registeredNames[registered.Name] = true
+		if _, refused := registered.ResolveLocations(syntheticHome); len(refused) > 0 {
+			t.Fatalf("parser %q declares the unusable locations %v", registered.Name, refused)
+		}
 	}
 	for _, path := range fixtures {
 		path := path
@@ -122,21 +129,65 @@ func TestDestinationsRejectCrossSurfaceRecords(t *testing.T) {
 		name        string
 		destination Destination
 		records     Records
-		wantError   bool
+		wantError   string
 	}{
-		{"corpus to corpus", DestinationCorpus, corpus, false},
-		{"store to corpus", DestinationCorpus, store, true},
-		{"store to store", DestinationStore, store, false},
-		{"corpus to store", DestinationStore, corpus, true},
-		{"corpus to both", DestinationBoth, corpus, false},
-		{"store to both", DestinationBoth, store, false},
+		{"corpus to corpus", DestinationCorpus, corpus, ""},
+		{"store to corpus", DestinationCorpus, store, "corpus parser produced store memories"},
+		{"store to store", DestinationStore, store, ""},
+		{"corpus to store", DestinationStore, corpus, "store parser produced corpus sessions"},
+		{"corpus to both", DestinationBoth, corpus, ""},
+		{"store to both", DestinationBoth, store, ""},
+		{"undeclared destination", 0, corpus, "parser declares invalid destination 0"},
+		{"unknown destination bit", DestinationBoth | 1<<4, store,
+			"parser declares invalid destination 19"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			err := testCase.destination.Conforms(testCase.records)
-			if (err != nil) != testCase.wantError {
-				t.Fatalf("Conforms() error = %v, want error %t", err, testCase.wantError)
+			if testCase.wantError == "" {
+				if err != nil {
+					t.Fatalf("Conforms() error = %v, want none", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != testCase.wantError {
+				t.Fatalf("Conforms() error = %v, want %q", err, testCase.wantError)
 			}
 		})
+	}
+}
+
+// TestRegisteredDetectorsRejectEveryForeignFixture is what keeps an ownership
+// marker honest. A detector that claims a file another parser owns is the
+// failure the guide warns about, and the catalogue of synthetic fixtures is the
+// only place it can be caught before a real machine pays for it.
+func TestRegisteredDetectorsRejectEveryForeignFixture(t *testing.T) {
+	fixtures, err := filepath.Glob(filepath.Join("testdata", "conformance", "*", "fixture.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fixtures) == 0 {
+		t.Fatal("the parser conformance catalogue is empty")
+	}
+
+	catalogue := map[string]File{}
+	for _, path := range fixtures {
+		fixture := readConformanceFixture(t, path)
+		content, err := os.ReadFile(filepath.Join(filepath.Dir(path), fixture.Source))
+		if err != nil {
+			t.Fatal(err)
+		}
+		catalogue[fixture.Parser] = File{Content: content, Meta: fixture.Meta}
+	}
+
+	for _, registered := range Registered() {
+		for owner, file := range catalogue {
+			if owner == registered.Name {
+				continue
+			}
+			if registered.Parser.Detect(file) {
+				t.Errorf("parser %q claimed the fixture owned by %q", registered.Name, owner)
+			}
+		}
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -34,14 +35,14 @@ func (d Destination) String() string {
 // Conforms checks that normalized records can only reach the destination the
 // parser declared. Empty results and discards are valid for every destination.
 func (d Destination) Conforms(records Records) error {
+	if d == 0 || d&^DestinationBoth != 0 {
+		return fmt.Errorf("parser declares invalid destination %d", d)
+	}
 	if d&DestinationCorpus == 0 && len(records.Sessions) > 0 {
 		return fmt.Errorf("%s parser produced corpus sessions", d.String())
 	}
 	if d&DestinationStore == 0 && len(records.Memories) > 0 {
 		return fmt.Errorf("%s parser produced store memories", d.String())
-	}
-	if d == 0 || d&^DestinationBoth != 0 {
-		return fmt.Errorf("parser declares invalid destination %d", d)
 	}
 	return nil
 }
@@ -71,9 +72,46 @@ type Registration struct {
 	// ingest scanner walks only these declared roots; unchanged fingerprints are
 	// still skipped before Detect sees candidate bytes. Established adapters with
 	// specialized scanners leave it empty.
-	Locations   []string
+	Locations []string
+	// Version is the reading this parser currently gives its source. It rides
+	// inside the ingest watermark, so bumping it is what makes a build that
+	// learned to read more re-read the files it already synced. An empty version
+	// is a reading that has never changed, and its files stay skipped.
+	Version     string
 	Destination Destination
 	Parser      Parser
+}
+
+// ResolveLocations turns the declared locations into absolute roots and reports
+// the ones it refuses. A location must name a store inside the tree it declares:
+// an empty entry, a bare home, and one that climbs out of the home directory all
+// resolve to somewhere far wider than any agent's session store, and a scan that
+// wide would fingerprint the operator's whole machine.
+func (r Registration) ResolveLocations(home string) (roots, refused []string) {
+	for _, declared := range r.Locations {
+		root, usable := resolveLocation(home, declared)
+		if !usable {
+			refused = append(refused, declared)
+			continue
+		}
+		roots = append(roots, root)
+	}
+	return roots, refused
+}
+
+func resolveLocation(home, declared string) (string, bool) {
+	if strings.TrimSpace(declared) == "" {
+		return "", false
+	}
+	cleaned := filepath.Clean(declared)
+	if filepath.IsAbs(cleaned) {
+		return cleaned, filepath.Dir(cleaned) != cleaned
+	}
+	if home == "" || cleaned == "." || cleaned == ".." ||
+		strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return filepath.Join(home, cleaned), true
 }
 
 // Parse normalizes one file and enforces the declared routing boundary before

@@ -179,4 +179,54 @@ func TestRegisteredParserLocationsFeedTheIngestPlan(t *testing.T) {
 	if plan.Scanned["nova_files"] != 2 || !slices.Contains(plan.DetectedAgents, "nova") {
 		t.Fatalf("contributed plan = %+v", plan)
 	}
+	if len(plan.Warnings) != 0 {
+		t.Fatalf("a well declared location warned the operator: %v", plan.Warnings)
+	}
+}
+
+// TestContributedLocationsStayInsideTheirDeclaredStore pins the two halves of
+// the contribution boundary: a location that would widen the walk beyond an
+// agent's session store is refused out loud, and a location that is merely
+// absent or empty still reports its counter at zero rather than vanishing from
+// the report as a root nobody looked at.
+func TestContributedLocationsStayInsideTheirDeclaredStore(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "private.source"),
+		[]byte("synthetic-nova-session"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".nova", "empty"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, testCase := range []struct {
+		name        string
+		locations   []string
+		wantWarning bool
+	}{
+		{"an empty location", []string{""}, true},
+		{"the home directory itself", []string{"."}, true},
+		{"a location climbing out of home", []string{"../.."}, true},
+		{"the filesystem root", []string{string(filepath.Separator)}, true},
+		{"an absent store", []string{".nova/sessions"}, false},
+		{"an existing but empty store", []string{".nova/empty"}, false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			plan := Plan{Scanned: map[string]int{}}
+			addRegisteredParsers(Roots{Home: home}, &plan, []parsers.Registration{{
+				Name: "nova", SourceAgent: "nova", Locations: testCase.locations,
+				Destination: parsers.DestinationCorpus, Parser: syntheticContributionParser{},
+			}})
+			if len(plan.Targets) != 0 {
+				t.Fatalf("contributed targets = %+v", plan.Targets)
+			}
+			count, registeredKey := plan.Scanned["nova_files"]
+			if !registeredKey || count != 0 {
+				t.Fatalf("nova_files = %d (present %t), want a registered zero", count, registeredKey)
+			}
+			if warned := len(plan.Warnings) > 0; warned != testCase.wantWarning {
+				t.Fatalf("warnings = %v, want a warning %t", plan.Warnings, testCase.wantWarning)
+			}
+		})
+	}
 }
