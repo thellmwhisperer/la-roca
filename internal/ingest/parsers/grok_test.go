@@ -90,6 +90,13 @@ func TestGrokUpdateShapes(t *testing.T) {
 			deferred: 1,
 		},
 		{
+			name: "user chunks without a prompt index remain one turn",
+			stream: `{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"split "}}},"timestamp":1785585600}` + "\n" +
+				`{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"question"}}},"timestamp":1785585600}` + "\n" +
+				`{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"one answer"}}},"timestamp":1785585601}`,
+			exchanges: 1,
+		},
+		{
 			name: "a malformed line does not cost the rest of the file",
 			stream: "{not-json}\n" +
 				`{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"question"},"_meta":{"promptIndex":1}}},"timestamp":1785585600}` + "\n" +

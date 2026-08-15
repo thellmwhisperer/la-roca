@@ -135,7 +135,7 @@ func (r *grokReader) consume(record int, line grokUpdateLine) {
 	switch line.Params.Update.SessionUpdate {
 	case "user_message_chunk":
 		promptIndex := rawText(line.Params.Update.Meta.PromptIndex)
-		if r.current == nil || promptIndex == "" || promptIndex != r.current.promptIndex {
+		if r.current == nil || (promptIndex != "" && promptIndex != r.current.promptIndex) {
 			// A following prompt proves the previous user turn is closed even when
 			// Grok recorded no agent activity for it. Only the final unanswered
 			// prompt can still be in flight and therefore deferred.
