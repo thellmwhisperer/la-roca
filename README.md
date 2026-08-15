@@ -296,9 +296,10 @@ exactly the information the task needs instead of a whole skill.
   before the index exists, and this route stays exact and auditable. If you want
   semantics, your model can supply them at question time; semantic candidate
   retrieval is an optional executable package you build and install yourself,
-  with its embedding index remaining outside core. See
-  [plugins](docs/plugins.md#worked-executable-example-vector-search) for
-  domain extensions and the plugin contract.
+  with its embedding index remaining outside core. See the [executable plugin
+  contract](docs/plugins.md#executable-only-packages) and the
+  [roca-vector package guide](plugins/vector/README.md) for the setup and
+  domain-extension boundary.
 - **Semantic-first agent craft.** The installed skill can use the optional
   local vector package to retrieve conceptual candidates when both
   `features.plugins` and `features.vector` are enabled, then resolve their
