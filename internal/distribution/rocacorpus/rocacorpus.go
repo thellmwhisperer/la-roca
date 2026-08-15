@@ -12,8 +12,8 @@ const (
 	// BundledSource is what the installer records for this package, and it is
 	// what discovery reads to know the corpus attach alias is the kernel's own.
 	BundledSource = plugin.BundledSource
-	SchemaVersion = 1
-	IndexVersion  = 1
+	SchemaVersion = 2
+	IndexVersion  = 2
 )
 
 func Ensure(root, binDir, version string) (plugininstall.Result, error) {
