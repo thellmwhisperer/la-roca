@@ -1,0 +1,10 @@
+{
+  "parser": "grok_session_metadata",
+  "destination": "corpus",
+  "source": "summary.data",
+  "meta": {"Path":"/synthetic/grok/summary.data","Project":"lighthouse","SourceAgent":"grok"},
+  "want": {
+    "sessions": [{"id":"fixture-grok","source_agent":"grok","project":"lighthouse","title":"Synthetic beacon count","exchanges":[]}],
+    "memories": []
+  }
+}

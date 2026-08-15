@@ -15,6 +15,7 @@ Feature: Knowing what lives on this machine
       | opencode        |
       | pi              |
       | hermes          |
+      | grok            |
     When I inspect ingest without writing
     Then exactly those agent families are detected
 

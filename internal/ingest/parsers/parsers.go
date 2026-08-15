@@ -57,6 +57,11 @@ const (
 	KindClaudeWebMemories      Kind = "claude_web_memories"
 	// The official OpenAI data export contributes its ChatGPT mapping tree.
 	KindChatGPTWebConversations Kind = "chatgpt_web_conversations"
+	// KindGrokSession is a Grok Build chat_history.jsonl transcript.
+	KindGrokSession Kind = "grok_session"
+	// KindGrokSessionMetadata is the summary.json a Grok Build session pairs
+	// with its transcript.
+	KindGrokSessionMetadata Kind = "grok_session_metadata"
 )
 
 // FileMeta is what the scan already knows about an artefact: where it came from
@@ -340,6 +345,38 @@ func lines(content []byte) []string {
 		}
 	}
 	return out
+}
+
+// eachJSONLine feeds every JSON record of a JSONL artefact to the consumer, in
+// record order. The consumer decodes the record into the shape its own parser
+// reads and the error it returns is reported as a discard: a record that does
+// not decode is unreadable, not a record left out by design. One such line never
+// stops the file, because a live transcript can be mid-write.
+func eachJSONLine(content []byte, consume func(record int, raw string) error) ([]Discard, int) {
+	var discards []Discard
+	valid := 0
+	for index, raw := range lines(content) {
+		if err := consume(index+1, raw); err != nil {
+			discards = append(discards, Discard{Record: index + 1,
+				Reason: "invalid JSON: " + err.Error(), Category: "invalid JSON"})
+			continue
+		}
+		valid++
+	}
+	return discards, valid
+}
+
+// joinBlockTexts joins the non-empty text a block slice declares, with the
+// separator one reading wants. Empty blocks are skipped, never stored as blank
+// joins.
+func joinBlockTexts[T any](blocks []T, text func(T) string, separator string) string {
+	parts := make([]string, 0, len(blocks))
+	for _, block := range blocks {
+		if value := text(block); value != "" {
+			parts = append(parts, value)
+		}
+	}
+	return strings.Join(parts, separator)
 }
 
 // wordCount counts whitespace-separated words.
