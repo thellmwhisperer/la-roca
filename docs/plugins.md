@@ -62,9 +62,10 @@ database list.
 - verbs: one canonical command name and description, projected to CLI and MCP;
 - capabilities: named executable calls used when SQL cannot perform the work.
 
-The canonical verb `inspect`, for example, registers as CLI command `inspect`
-and MCP tool `roca_inspect`. Both resolve to the same capability. A manifest
-cannot give the two surfaces different implementations.
+The canonical verb `inspect`, for example, names CLI command `inspect` and MCP
+tool `roca_inspect`. Both resolve to the same capability. A manifest cannot give
+the two surfaces different implementations. Registration lands in steps: this
+build seats a declared verb as a CLI command for bundled manifest plugins only.
 
 Here is a complete two-database plugin. The second database demonstrates the
 same shape used by a scheduler that keeps run history and errors apart from its
@@ -181,10 +182,12 @@ reserved for row provenance.
 
 A verb is the public name. A capability is the executable call behind it. The
 engine derives both public names from that one record, so a verb cannot reach
-the two surfaces as two different contracts. The current build registers the CLI
-surface from the record; the MCP server still declares its own tool list until
-its own migration step. A capability's `command` is prepended to the arguments
-the caller supplies and executed through the declared `binary`.
+the two surfaces as two different contracts. The current build registers that
+CLI command from the record for bundled manifest plugins. A third-party verb is
+validated and reserved, and until its own registration step lands it reaches the
+CLI only when a `roca-<verb>` executable sits on `PATH`; the MCP server likewise
+still declares its own tool list. A capability's `command` is prepended to the
+arguments the caller supplies and executed through the declared `binary`.
 
 SQL remains the preferred path for reads. Capabilities are for work SQL cannot
 perform, such as importing a source, contacting a device, or producing a
