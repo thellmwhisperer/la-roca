@@ -52,10 +52,6 @@ func TestLegacyOrphansResumeIntoExplicitQuarantineWithoutChangingJourneys(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !first.SourceValid || !first.DestinationValid || len(first.Undisposed) != 0 {
-		t.Fatalf("source valid = %t, destination valid = %t, undisposed = %v",
-			first.SourceValid, first.DestinationValid, first.Undisposed)
-	}
 	wantRows := map[string]int{
 		"runs": 3, "run_logs": 4, "garden_channels": 1, "garden_memberships": 1,
 		"garden_messages": 2, "garden_read_cursors": 1, "garden_voice_leases": 1,
@@ -128,6 +124,12 @@ func TestLegacyImportRefusesAnUnratifiedDispositionBeforeCreatingDestinations(t 
 	}{
 		{name: "unknown table", schema: `CREATE TABLE forgotten_rows (id INTEGER PRIMARY KEY)`, want: "undisposed tables: forgotten_rows"},
 		{name: "nonempty messages", schema: `CREATE TABLE messages (id INTEGER PRIMARY KEY); INSERT INTO messages VALUES (1)`, want: "messages has 1 source rows"},
+		{name: "blank identity", schema: `CREATE TABLE garden_channels (id TEXT PRIMARY KEY, name TEXT);
+			INSERT INTO garden_channels VALUES ('chan', 'Synthetic channel'), ('  ', 'Synthetic blank')`,
+			want: "garden_channels has 1 rows whose identity (id) is NULL or blank"},
+		{name: "null identity", schema: `CREATE TABLE garden_messages (id INTEGER, channel_id TEXT);
+			INSERT INTO garden_messages VALUES (NULL, 'chan')`,
+			want: "garden_messages has 1 rows whose identity (id) is NULL or blank"},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			directory := t.TempDir()

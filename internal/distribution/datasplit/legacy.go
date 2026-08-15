@@ -47,10 +47,8 @@ type LegacyTableResult struct {
 }
 
 type LegacyReport struct {
-	Tables           []LegacyTableResult
-	Undisposed       []string
-	SourceValid      bool
-	DestinationValid bool
+	Tables     []LegacyTableResult
+	Undisposed []string
 }
 
 type destination string
@@ -113,6 +111,8 @@ type legacyImporter struct {
 
 // ImportLegacyOrphans copies only ratified DATA-4 tables from an immutable
 // source snapshot. It never changes the serving route or the source database.
+// No CLI or MCP verb reaches it: the split's cutover orchestration owns that
+// wiring, so until then only Go callers and this package's tests invoke it.
 func ImportLegacyOrphans(ctx context.Context, options LegacyOptions) (LegacyReport, error) {
 	return importLegacyOrphans(ctx, options, defaultBatchSize, nil)
 }
@@ -131,11 +131,10 @@ func importLegacyOrphans(ctx context.Context, options LegacyOptions, batchSize i
 	defer source.Close()
 	source.SetMaxOpenConns(1)
 
-	valid, err := validateSource(ctx, source)
-	if err != nil {
+	if err := validateDatabase(ctx, source, "DATA SPLIT source"); err != nil {
 		return LegacyReport{}, err
 	}
-	report := LegacyReport{SourceValid: valid}
+	var report LegacyReport
 	undisposed, present, err := inspectSourceInventory(ctx, source)
 	if err != nil {
 		return report, err
@@ -166,6 +165,9 @@ func importLegacyOrphans(ctx context.Context, options LegacyOptions, batchSize i
 		})
 	}
 
+	if err := inspectSourceIdentities(ctx, source, present); err != nil {
+		return report, err
+	}
 	if err := prepareDestinations(options); err != nil {
 		return report, err
 	}
@@ -186,15 +188,11 @@ func importLegacyOrphans(ctx context.Context, options LegacyOptions, batchSize i
 		}
 		report.Tables = append(report.Tables, result)
 	}
-	destinationValid := true
 	for owner, db := range destinations {
-		valid, err := validateDatabase(ctx, db, "DATA-4 "+string(owner)+" destination")
-		if err != nil {
+		if err := validateDatabase(ctx, db, "DATA-4 "+string(owner)+" destination"); err != nil {
 			return report, err
 		}
-		destinationValid = destinationValid && valid
 	}
-	report.DestinationValid = destinationValid
 	sort.Slice(report.Tables, func(i, j int) bool {
 		return report.Tables[i].SourceTable < report.Tables[j].SourceTable
 	})
@@ -228,26 +226,22 @@ func (options LegacyOptions) valid() error {
 	return nil
 }
 
-func validateSource(ctx context.Context, source *sql.DB) (bool, error) {
-	return validateDatabase(ctx, source, "DATA SPLIT source")
-}
-
-func validateDatabase(ctx context.Context, database *sql.DB, label string) (bool, error) {
+func validateDatabase(ctx context.Context, database *sql.DB, label string) error {
 	var integrity string
 	if err := database.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&integrity); err != nil {
-		return false, fmt.Errorf("check %s integrity: %w", label, err)
+		return fmt.Errorf("check %s integrity: %w", label, err)
 	}
 	if integrity != "ok" {
-		return false, fmt.Errorf("%s integrity is %q", label, integrity)
+		return fmt.Errorf("%s integrity is %q", label, integrity)
 	}
 	var foreignKeyFailures int
 	if err := database.QueryRowContext(ctx, "SELECT COUNT(*) FROM pragma_foreign_key_check").Scan(&foreignKeyFailures); err != nil {
-		return false, fmt.Errorf("check %s foreign keys: %w", label, err)
+		return fmt.Errorf("check %s foreign keys: %w", label, err)
 	}
 	if foreignKeyFailures != 0 {
-		return false, fmt.Errorf("%s has %d foreign key failures", label, foreignKeyFailures)
+		return fmt.Errorf("%s has %d foreign key failures", label, foreignKeyFailures)
 	}
-	return true, nil
+	return nil
 }
 
 func inspectSourceInventory(ctx context.Context, source *sql.DB) ([]string, map[string]bool, error) {
@@ -279,6 +273,39 @@ func inspectSourceInventory(ctx context.Context, source *sql.DB) ([]string, map[
 		return nil, nil, fmt.Errorf("read DATA SPLIT source inventory: %w", err)
 	}
 	return undisposed, present, nil
+}
+
+func inspectSourceIdentities(ctx context.Context, source *sql.DB, present map[string]bool) error {
+	for _, plan := range legacyPlans {
+		if !present[plan.sourceTable] {
+			continue
+		}
+		columns, err := tableColumns(ctx, source, plan.sourceTable)
+		if err != nil {
+			return err
+		}
+		if err := requireColumns(columns, plan); err != nil {
+			return err
+		}
+		predicates := make([]string, 0, len(plan.keyColumns))
+		for _, column := range plan.keyColumns {
+			quoted := quoteIdentifier(column)
+			predicates = append(predicates,
+				fmt.Sprintf("%s IS NULL OR trim(CAST(%s AS TEXT), char(32,9,10,11,12,13,133,160)) = ''", quoted, quoted))
+		}
+		query := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s",
+			quoteIdentifier(plan.sourceTable), strings.Join(predicates, " OR "))
+		var unaddressable int
+		if err := source.QueryRowContext(ctx, query).Scan(&unaddressable); err != nil {
+			return fmt.Errorf("check legacy %s identities: %w", plan.sourceTable, err)
+		}
+		if unaddressable != 0 {
+			return fmt.Errorf("legacy source table %s has %d rows whose identity (%s) is NULL or blank: "+
+				"DATA-4 quarantines no row it cannot address, so give those rows an identity in the snapshot first",
+				plan.sourceTable, unaddressable, strings.Join(plan.keyColumns, ", "))
+		}
+	}
+	return nil
 }
 
 func prepareDestinations(options LegacyOptions) error {
@@ -464,7 +491,7 @@ func (importer legacyImporter) verifyTable(ctx context.Context, plan legacyPlan,
 	missingQuery := fmt.Sprintf(`SELECT COUNT(*) FROM custody_memberships AS membership
 		LEFT JOIN %s AS destination ON destination.canonical_digest = membership.destination_key
 		WHERE membership.source_database = ? AND membership.source_table = ?
-		AND (destination.canonical_digest IS NULL OR membership.destination_key <> membership.canonical_digest)`,
+		AND destination.canonical_digest IS NULL`,
 		quoteIdentifier(plan.destinationTable))
 	if err := db.QueryRowContext(ctx, missingQuery, args...).Scan(&missing); err != nil {
 		return 0, fmt.Errorf("verify legacy %s destination rows: %w", plan.sourceTable, err)
@@ -569,6 +596,9 @@ func scanLegacyRow(rows *sql.Rows, columns, keyColumns []string) (legacyRow, err
 	key, err := encodeSourceKey(keyValues)
 	if err != nil {
 		return legacyRow{}, err
+	}
+	if strings.TrimSpace(key) == "" {
+		return legacyRow{}, fmt.Errorf("source identity (%s) is blank", strings.Join(keyColumns, ", "))
 	}
 	digest := sha256.Sum256(encoded)
 	return legacyRow{sourceKey: key, payload: string(encoded), digest: hex.EncodeToString(digest[:])}, nil

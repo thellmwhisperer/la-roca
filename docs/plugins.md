@@ -334,8 +334,12 @@ reshaping them into an active surface. Bumping one of those versions is a
 schema change a released database has to adopt, so it owes what
 [releases](releases.md#schema-migration-definition-of-done) requires of one.
 
-The DATA SPLIT orphan import reads a verified core snapshot in read-only mode.
-It keeps old `runs` and `run_logs` as legacy cron payloads; the garden
+The DATA SPLIT orphan import is staged and not invocable yet: no command, MCP
+tool or make target reaches it, so for now only the split's own Go code and
+tests run it, and the cutover orchestration step is what will give it an
+operator surface. What follows is what it does once that step lands.
+
+The import reads a verified core snapshot in read-only mode. It keeps old `runs` and `run_logs` as legacy cron payloads; the garden
 coordination tables, proposals with their annotations, and the query-plan
 teaching examples as typed ops legacy records; and `flow_patterns` in corpus
 quarantine. Their original columns, nulls, source keys, and table names stay
