@@ -327,20 +327,27 @@ func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) 
 	}
 	if !reconciled {
 		if i.ReadOnly {
-			return nil, fmt.Errorf("vector index requires writable reconciliation; run `roca vector ingest --delta`")
-		}
-		store.Close()
-		if err := i.purgeDeprecatedChunks(ctx); err != nil {
-			return nil, fmt.Errorf("purge deprecated vector chunks: %w", err)
-		}
-		store, err = openSQLite(i.VectorPath, true)
-		if err != nil {
-			return nil, fmt.Errorf("reopen vector database: %w", err)
-		}
-		defer store.Close()
-		_, model, dimensions, err = readIndexState(store)
-		if err != nil {
-			return nil, fmt.Errorf("read vector index after reconciliation: %w; run `roca vector install`", err)
+			deprecated, err := deprecatedChunksExist(ctx, store)
+			if err != nil {
+				return nil, fmt.Errorf("inspect deprecated vector chunks: %w", err)
+			}
+			if deprecated {
+				return nil, fmt.Errorf("vector index contains retired chunks; run `roca vector ingest --delta` with writes enabled")
+			}
+		} else {
+			store.Close()
+			if err := i.purgeDeprecatedChunks(ctx); err != nil {
+				return nil, fmt.Errorf("purge deprecated vector chunks: %w", err)
+			}
+			store, err = openSQLite(i.VectorPath, true)
+			if err != nil {
+				return nil, fmt.Errorf("reopen vector database: %w", err)
+			}
+			defer store.Close()
+			_, model, dimensions, err = readIndexState(store)
+			if err != nil {
+				return nil, fmt.Errorf("read vector index after reconciliation: %w; run `roca vector install`", err)
+			}
 		}
 	}
 	vectors, err := i.Embedder.Embed(ctx, model, []string{QueryPrefix + text})
@@ -813,6 +820,12 @@ func deprecatedLayersReconciled(ctx context.Context, db *sql.DB) (bool, error) {
 		return false, err
 	}
 	return value == "1", nil
+}
+
+func deprecatedChunksExist(ctx context.Context, db *sql.DB) (bool, error) {
+	var exists int
+	err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM chunks WHERE source_kind='memories' AND lower(COALESCE(json_extract(locator,'$.layer'),'')) LIKE 'rocodata\_%' ESCAPE '\' LIMIT 1)`).Scan(&exists)
+	return exists != 0, err
 }
 
 func markDeprecatedLayersReconciled(ctx context.Context, db *sql.DB) error {

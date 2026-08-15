@@ -280,13 +280,10 @@ func TestReadOnlyQueryLeavesRetiredChunksUntouched(t *testing.T) {
 	if _, err := index.Ingest(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	readOnly := index
+	readOnly.ReadOnly = true
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
-		t.Fatal(err)
-	}
-	active := sourceRow{kind: "memories", text: "alpha memory", layer: "discovery", origin: "agent", createdAt: "2026-01-01"}
-	if _, err := db.Exec(`UPDATE chunks SET locator=json_set(locator, '$.layer', 'rocodata_legacy') WHERE source_kind='memories' AND source_id=?`, active.stableID()); err != nil {
-		db.Close()
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`DELETE FROM meta WHERE key=?`, deprecatedLayerReconciliationKey); err != nil {
@@ -296,11 +293,25 @@ func TestReadOnlyQueryLeavesRetiredChunksUntouched(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := readOnly.Query(context.Background(), "alpha", 5); err != nil {
+		t.Fatalf("clean unreconciled read-only query: %v", err)
+	}
 
-	readOnly := index
-	readOnly.ReadOnly = true
+	db, err = sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active := sourceRow{kind: "memories", text: "alpha memory", layer: "discovery", origin: "agent", createdAt: "2026-01-01"}
+	if _, err := db.Exec(`UPDATE chunks SET locator=json_set(locator, '$.layer', 'rocodata_legacy') WHERE source_kind='memories' AND source_id=?`, active.stableID()); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
 	if _, err := readOnly.Query(context.Background(), "alpha", 5); err == nil ||
-		!strings.Contains(err.Error(), "requires writable reconciliation") {
+		!strings.Contains(err.Error(), "contains retired chunks") {
 		t.Fatalf("read-only query error = %v", err)
 	}
 	db, err = sql.Open("sqlite", path)
