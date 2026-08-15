@@ -41,7 +41,7 @@ type Index struct {
 
 type Corpus interface {
 	WalkSources(context.Context, func(sourceRow) error) error
-	ResolveSource(context.Context, string, locator) (string, error)
+	ResolveSource(context.Context, string, Locator) (string, error)
 }
 
 type Delta struct {
@@ -58,6 +58,7 @@ type Result struct {
 	Score    float64 `json:"score"`
 	Source   string  `json:"source"`
 	SourceID string  `json:"source_id"`
+	Locator  Locator `json:"locator"`
 	Text     string  `json:"text"`
 }
 
@@ -75,7 +76,7 @@ type sourceRow struct {
 	createdAt  string
 }
 
-type locator struct {
+type Locator struct {
 	SessionID  string `json:"session_id,omitempty"`
 	Ordinal    int64  `json:"ordinal,omitempty"`
 	HasOrdinal bool   `json:"has_ordinal,omitempty"`
@@ -93,7 +94,7 @@ type desiredChunk struct {
 	sourceID    string
 	index       int
 	fingerprint string
-	locator     locator
+	locator     Locator
 	text        string
 }
 
@@ -189,6 +190,9 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 	}
 
 	err = i.Corpus.WalkSources(ctx, func(source sourceRow) error {
+		if !source.indexable() {
+			return nil
+		}
 		report.Sources++
 		for chunkIndex, text := range chunks(source.text, defaultChunkSize, defaultOverlap) {
 			chunk := desiredChunk{
@@ -282,7 +286,7 @@ func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) 
 		}
 		results = append(results, Result{
 			Rank: len(results) + 1, Score: 1 - candidate.distance,
-			Source: candidate.kind, SourceID: candidate.sourceID, Text: body,
+			Source: candidate.kind, SourceID: candidate.sourceID, Locator: candidate.where, Text: body,
 		})
 		if len(results) == k {
 			break
@@ -360,10 +364,18 @@ func (s sourceRow) stableID() string {
 	return s.kind + "/direct/" + s.identity()
 }
 
-func (s sourceRow) locator() locator {
-	return locator{SessionID: s.sessionID, Ordinal: s.ordinal, HasOrdinal: s.hasOrdinal,
+func (s sourceRow) locator() Locator {
+	return Locator{SessionID: s.sessionID, Ordinal: s.ordinal, HasOrdinal: s.hasOrdinal,
 		Position: s.position, CronSource: s.cronSource, FilePath: s.filePath,
 		Layer: s.layer, Origin: s.origin, CreatedAt: s.createdAt, Identity: s.identity()}
+}
+
+func (s sourceRow) indexable() bool {
+	return s.kind != "memories" || !deprecatedMemoryLayer(s.layer)
+}
+
+func deprecatedMemoryLayer(layer string) bool {
+	return strings.HasPrefix(strings.ToLower(layer), "rocodata_")
 }
 
 func (s sourceRow) identity() string {
@@ -564,7 +576,7 @@ type neighbor struct {
 	kind     string
 	sourceID string
 	distance float64
-	where    locator
+	where    Locator
 }
 
 func nearest(ctx context.Context, db *sql.DB, vector []byte, k int) ([]neighbor, error) {
@@ -576,6 +588,7 @@ func nearest(ctx context.Context, db *sql.DB, vector []byte, k int) ([]neighbor,
 		FROM candidates a
 		JOIN embeddings e ON e.rowid=a.rowid
 		JOIN chunks c ON c.id=a.rowid
+		WHERE c.source_kind <> 'memories' OR lower(COALESCE(json_extract(c.locator,'$.layer'),'')) NOT LIKE 'rocodata\_%' ESCAPE '\'
 		ORDER BY distance`, vector, k, vector)
 	if err != nil {
 		return nil, fmt.Errorf("search sqlite-vec index: %w", err)

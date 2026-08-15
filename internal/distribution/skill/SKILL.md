@@ -68,12 +68,13 @@ roca vector --json query "<bare concept>" 8
 For a non-default core database, add `--db-path /path/to/roca.db` after
 `vector`.
 
-The vector result is a locator and relevance signal, not final evidence. For
-each useful candidate, recover the live source text through the core query or
-`roca exec`, then inspect enough surrounding context to establish what the
-source actually says. Keep available source kind, stable source id, layer,
-project, date, and provenance with the finding; a missing provenance value
-means the source said nothing.
+The vector result includes the source kind, stable source id, persisted locator,
+score, and live source text. It is a locator and relevance signal, not final
+evidence. For each useful candidate, use the locator with the core query or
+`roca exec` to recover the live source context, then inspect enough surrounding
+context to establish what the source actually says. Keep available source
+kind, stable source id, layer, project, date, and provenance with the finding; a
+missing provenance value means the source said nothing.
 
 If the vector route is unavailable, say that semantic retrieval is unavailable
 and name the missing route. Use exact SQL or literal search only when the user

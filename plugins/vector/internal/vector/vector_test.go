@@ -3,6 +3,7 @@ package vector
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"math"
 	"path/filepath"
@@ -108,8 +109,13 @@ func TestDeltaIndexIsIdempotentAndMapsResultsBackToCore(t *testing.T) {
 	if len(results) != 3 {
 		t.Fatalf("results = %d, want 3", len(results))
 	}
-	if results[0].Source != "memories" || results[0].Text != "alpha memory" {
+	if results[0].Source != "memories" || results[0].Text != "alpha memory" ||
+		results[0].Locator.Layer != "discovery" || results[0].Locator.Identity == "" {
 		t.Fatalf("first result = %+v", results[0])
+	}
+	encoded, err := json.Marshal(results[0])
+	if err != nil || !strings.Contains(string(encoded), `"locator"`) {
+		t.Fatalf("result JSON does not expose its locator: %s", encoded)
 	}
 	if math.Abs(results[0].Score-1) > 0.0001 {
 		t.Fatalf("first score = %f, want 1", results[0].Score)
@@ -137,6 +143,45 @@ func TestDeltaIndexIsIdempotentAndMapsResultsBackToCore(t *testing.T) {
 		t.Fatalf("changed delta = %+v", changed)
 	}
 	assertVectorStoreHasNoCorpusText(t, vectorPath)
+}
+
+func TestDeprecatedMemoryLayersStayOutOfTheIndexAndResults(t *testing.T) {
+	corpus := createCoreFixture(t)
+	deprecated := sourceRow{kind: "memories", text: "alpha deprecated memory", layer: "RocoData_legacy",
+		origin: "agent", createdAt: "2026-08-14"}
+	corpus.sources = append(corpus.sources, deprecated)
+	path := filepath.Join(t.TempDir(), "vector.db")
+	index := Index{Corpus: corpus, VectorPath: path, Model: DefaultModel, Embedder: &recordingEmbedder{}}
+	report, err := index.Ingest(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Added != 8 || report.Sources != 8 {
+		t.Fatalf("deprecated memory entered the index: %+v", report)
+	}
+
+	active := sourceRow{kind: "memories", text: "alpha memory", layer: "discovery", origin: "agent", createdAt: "2026-01-01"}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`UPDATE chunks SET locator=json_set(locator, '$.layer', 'rocodata_legacy') WHERE source_kind='memories' AND source_id=?`, active.stableID())
+	if closeErr := db.Close(); err == nil && closeErr != nil {
+		err = closeErr
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := index.Query(context.Background(), "alpha", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, result := range results {
+		if result.SourceID == deprecated.stableID() || deprecatedMemoryLayer(result.Locator.Layer) {
+			t.Fatalf("deprecated memory returned: %+v", result)
+		}
+	}
 }
 
 func TestSourcesWithoutNaturalKeysStaySeparateAndResolve(t *testing.T) {
@@ -241,7 +286,7 @@ func (m *memoryCorpus) WalkSources(_ context.Context, visit func(sourceRow) erro
 	return nil
 }
 
-func (m *memoryCorpus) ResolveSource(_ context.Context, kind string, where locator) (string, error) {
+func (m *memoryCorpus) ResolveSource(_ context.Context, kind string, where Locator) (string, error) {
 	if m.resolves == nil {
 		m.resolves = map[string]int{}
 	}

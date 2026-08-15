@@ -66,7 +66,7 @@ func TestCoreCLIResolvesLiveTextAndQuotesStoredLocators(t *testing.T) {
 		statement = args[len(args)-1]
 		return json.Marshal(map[string]any{"rows": []map[string]any{{"text": "current answer"}}})
 	}}
-	text, err := core.ResolveSource(context.Background(), "exchanges", locator{
+	text, err := core.ResolveSource(context.Background(), "exchanges", Locator{
 		SessionID: "operator's-session", Ordinal: 7, HasOrdinal: true,
 	})
 	if err != nil {
@@ -77,6 +77,23 @@ func TestCoreCLIResolvesLiveTextAndQuotesStoredLocators(t *testing.T) {
 	}
 	if !strings.Contains(statement, "session_id='operator''s-session'") {
 		t.Fatalf("stored locator was not SQL-quoted: %s", statement)
+	}
+}
+
+func TestCoreCLIResolutionExcludesDeprecatedMemoryLayers(t *testing.T) {
+	var statement string
+	core := CoreCLI{Executable: "roca", Run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		statement = args[len(args)-1]
+		return []byte(`{"rows":[]}`), nil
+	}}
+	_, err := core.ResolveSource(context.Background(), "memories", Locator{
+		Layer: "rocodata_legacy", Origin: "agent", CreatedAt: "2026-08-14", Identity: "synthetic",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(statement, "NOT LIKE 'rocodata\\_%' ESCAPE '\\'") {
+		t.Fatalf("memory resolution does not exclude deprecated RocoData layers: %s", statement)
 	}
 }
 
