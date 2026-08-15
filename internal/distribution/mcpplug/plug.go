@@ -25,6 +25,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
@@ -74,12 +75,24 @@ func New(svc *service.Service, build Build) *mcp.Server {
 	dataDir := svc.DataDir()
 	audit := logfile.New(svc.DataDir())
 	_ = audit.Prepare()
-	mcp.AddTool(server, execTool, sanitizing(p.exec, dbPath, dataDir))
+	manifest, err := rocaops.Manifest(build.Version)
+	if err != nil {
+		panic(fmt.Sprintf("invalid bundled ops manifest: %v", err))
+	}
+	if manifest.HasVerb(service.ExecVerb) {
+		mcp.AddTool(server, execTool, sanitizing(p.exec, dbPath, dataDir))
+	}
 	mcp.AddTool(server, exploreTool, sanitizing(p.explore, dbPath, dataDir))
 	mcp.AddTool(server, healthTool, sanitizing(p.health, dbPath, dataDir))
-	mcp.AddTool(server, queryTool, sanitizing(p.query, dbPath, dataDir))
-	mcp.AddTool(server, sqlTool, sanitizing(p.sql, dbPath, dataDir))
-	mcp.AddTool(server, storeTool, sanitizing(p.store, dbPath, dataDir))
+	if manifest.HasVerb(service.QueryVerb) {
+		mcp.AddTool(server, queryTool, sanitizing(p.query, dbPath, dataDir))
+	}
+	if manifest.HasVerb(service.SQLVerb) {
+		mcp.AddTool(server, sqlTool, sanitizing(p.sql, dbPath, dataDir))
+	}
+	if manifest.HasVerb(service.StoreVerb) {
+		mcp.AddTool(server, storeTool, sanitizing(p.store, dbPath, dataDir))
+	}
 	server.AddReceivingMiddleware(auditCalls(audit, os.Stderr))
 	return server
 }
