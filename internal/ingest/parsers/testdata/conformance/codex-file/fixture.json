@@ -1,0 +1,10 @@
+{
+  "parser": "codex_file",
+  "destination": "store",
+  "source": "memory.data",
+  "meta": {"Path":"/synthetic/codex/memory.data","FileName":"memory.data","SourceAgent":"codex","SourceType":"memory"},
+  "want": {
+    "sessions": [],
+    "memories": [{"layer":"feedback","content":"The synthetic compass points east.","source_agent":"codex"}]
+  }
+}

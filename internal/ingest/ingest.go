@@ -551,6 +551,9 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 		if err != nil {
 			return parsers.Records{}, err.Error()
 		}
+		if err := parsers.Conform(target.Kind, records); err != nil {
+			return parsers.Records{}, err.Error()
+		}
 		resolveProjects(ctx, opts, target, &records)
 		return records, ""
 	}
