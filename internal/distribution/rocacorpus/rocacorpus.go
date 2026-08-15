@@ -69,7 +69,7 @@ func prepareIngestProvenance(path string) error {
 	}
 	columnPresent := false
 	if tablePresent {
-		columnPresent, err = columnExists(tx, "sessions", "source_surface")
+		columnPresent, err = columnExists(context.Background(), tx, "sessions", "source_surface")
 		if err != nil {
 			return err
 		}
@@ -143,22 +143,10 @@ func tableExists(db *sql.Tx, table string) (bool, error) {
 	return count == 1, nil
 }
 
-func columnExists(db *sql.Tx, table, column string) (bool, error) {
-	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
+func columnExists(ctx context.Context, db *sql.Tx, table, column string) (bool, error) {
+	columns, err := bundledplugin.TableColumns(ctx, db, table)
 	if err != nil {
 		return false, fmt.Errorf("inspect %s columns: %w", table, err)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var cid, notNull, primaryKey int
-		var name, kind string
-		var defaultValue any
-		if err := rows.Scan(&cid, &name, &kind, &notNull, &defaultValue, &primaryKey); err != nil {
-			return false, err
-		}
-		if name == column {
-			return true, nil
-		}
-	}
-	return false, rows.Err()
+	return columns[column], nil
 }
