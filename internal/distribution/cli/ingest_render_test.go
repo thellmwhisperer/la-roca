@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
+	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
@@ -124,5 +125,20 @@ func TestAHealthySourceRowCarriesNoDiscardCount(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "7 exchanges") {
 		t.Errorf("the source row lost its ingested counts:\n%s", output.String())
+	}
+}
+
+// A store-backed reader reports what it saw before normalization, so an
+// operator can tell "converted everything" from "only looked at part of it".
+func TestAStoreBackedSourceRowShowsWhatItSaw(t *testing.T) {
+	var output strings.Builder
+	renderIngestSources(&cliEnv{out: &output}, service.IngestResult{Result: ingest.Result{
+		Sources:     map[string]*ingest.Counts{"hermes": {Sessions: 2, Exchanges: 7}},
+		SourceStats: map[string]*ingest.SourceStats{"hermes": {Read: 1}},
+		Seen:        map[string]parsers.Seen{"hermes": {Sessions: 2, Messages: 28152}},
+	}})
+	if !strings.Contains(output.String(), "saw 2 sessions") ||
+		!strings.Contains(output.String(), "28,152 messages") {
+		t.Errorf("the source row lost its seen counts:\n%s", output.String())
 	}
 }

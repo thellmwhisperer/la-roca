@@ -142,6 +142,33 @@ not record answers or per-exchange usage. Its session-wide `tokens_used` value
 therefore remains session metadata, while the exchange's answer and token
 columns remain NULL instead of receiving guessed values.
 
+## Hermes database
+
+Hermes keeps its conversations in `~/.hermes/state.db`, a SQLite database La
+Roca opens read-only: a `query_only` connection that never writes and never
+blocks the owning process. Override the location with `hermes_db_path` in the
+configuration or the `HERMES_DB_PATH` environment variable.
+
+Every session is read, closed or not. Hermes writes `ended_at` only when a
+session winds down cleanly, so sessions that were killed, abandoned, or run
+through a channel that never closes them (acp, most TUI and CLI runs) carry
+their messages and no ending. The end of such a session is its last recorded
+message. A human turn with no recorded answer is still in flight: it is
+deferred and re-read on the next run, never stored with an answer this build
+invented.
+
+Human and assistant text become exchanges, assistant reasoning becomes
+thinking, and tool calls are paired with their results by the call id Hermes
+records on both sides, each result carrying its call's summarized arguments and
+its own error verdict. The session's `model` and `billing_provider` columns name
+the provenance of every exchange; a missing model stays empty rather than
+becoming a placeholder.
+
+The memory files under `~/.hermes/memories` are deliberately not read, and the
+other Hermes SQLite databases (`kanban.db`, `cron/executions.db`,
+`verification_evidence.db`, `projects.db`) hold no conversation content and are
+not read either.
+
 ## Grok Build
 
 Grok Build keeps each session under `~/.grok/sessions/<encoded-cwd>/<session-id>/`,

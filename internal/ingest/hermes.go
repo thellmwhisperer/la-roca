@@ -26,11 +26,15 @@ var hermesSchema = []foreignTable{
 	{"messages", []string{"session_id", "role", "content", "timestamp"}},
 }
 
-// ReadHermes projects the completed Hermes sessions onto normalized records.
+// ReadHermes projects the Hermes sessions onto normalized records.
 //
-// Only the sessions Hermes has closed are read. A live one is read on the next
-// run, when it has an ending: half a session is a session whose last answer is
-// missing, and nothing later can tell that from an answer that was never given.
+// Every session is read, closed or not. Hermes only writes `ended_at` when a
+// session winds down cleanly, so a session that was killed, abandoned, or run
+// through a channel that never closes it (acp, most TUI and CLI runs) has its
+// messages and no ending; skipping those was what reduced six hundred sessions
+// to ninety. The span of such a session is its last recorded message, and a
+// human turn with no recorded answer is still in flight, so it is deferred and
+// re-read on the next run rather than stored as an answer that was never given.
 func ReadHermes(ctx context.Context, path string) (parsers.Records, []string, error) {
 	db, err := openForeignSource(ctx, "Hermes", path, hermesSchema)
 	if err != nil {
@@ -48,12 +52,9 @@ func ReadHermes(ctx context.Context, path string) (parsers.Records, []string, er
 	}
 
 	var records parsers.Records
+	records.Seen.Sessions = len(sessions)
 	var complaints []string
 	for _, source := range sessions {
-		if !source.has("ended_at") {
-			records.Deferred++
-			continue
-		}
 		id := source.text("id")
 		if id == "" {
 			complaints = append(complaints, "Hermes: a session with no id was skipped")
@@ -64,8 +65,10 @@ func ReadHermes(ctx context.Context, path string) (parsers.Records, []string, er
 			complaints = append(complaints, fmt.Sprintf("Hermes session %s: %v", id, err))
 			continue
 		}
-		session, orphaned := hermesSession(source, messages)
+		records.Seen.Messages += len(messages)
+		session, orphaned, deferred := hermesSession(source, messages)
 		records.Sessions = append(records.Sessions, session)
+		records.Deferred += deferred
 		for range orphaned {
 			records.Discards = append(records.Discards, parsers.Discard{
 				Reason:   fmt.Sprintf("Hermes session %s: assistant content has no open human turn", id),
@@ -89,7 +92,20 @@ func hermesMessages(ctx context.Context, db *sql.DB, columns map[string]bool, se
 		` ORDER BY timestamp ASC, `+order+` ASC`, sessionID)
 }
 
-func hermesSession(source row, messages []row) (parsers.Session, int) {
+// hermesLastMessageTime is the newest message timestamp a session recorded, or
+// zero when it has no messages. It is the end of a session Hermes never closed.
+func hermesLastMessageTime(messages []row) float64 {
+	var latest float64
+	for _, message := range messages {
+		at, _ := message.number("timestamp")
+		if at > latest {
+			latest = at
+		}
+	}
+	return latest
+}
+
+func hermesSession(source row, messages []row) (parsers.Session, int, int) {
 	model := source.text("model")
 	if model == "" {
 		model = "unknown"
@@ -102,6 +118,11 @@ func hermesSession(source row, messages []row) (parsers.Session, int) {
 	}
 	if hasEnded {
 		endedAt = parsers.ISOFromEpochSeconds(ended)
+	} else if last := hermesLastMessageTime(messages); last > 0 {
+		// Hermes records the end of a session only when it winds down cleanly. A
+		// session with no recorded ending still has one: its last message.
+		ended = last
+		endedAt = parsers.ISOFromEpochSeconds(last)
 	}
 
 	session := parsers.Session{
@@ -114,7 +135,8 @@ func hermesSession(source row, messages []row) (parsers.Session, int) {
 		Snapshot:    true,
 	}
 	orphaned := 0
-	session.Exchanges, orphaned = hermesExchanges(source.text("id"), messages)
+	deferred := 0
+	session.Exchanges, orphaned, deferred = hermesExchanges(source.text("id"), messages)
 	// Hermes prices and counts a whole session and never a turn, so every turn of
 	// it carries the model and the provider that answered and no invented split
 	// of the totals. Those totals travel beside the session in the same
@@ -129,7 +151,7 @@ func hermesSession(source row, messages []row) (parsers.Session, int) {
 	for i := range session.Exchanges {
 		session.Exchanges[i].Provenance = provenance
 	}
-	if hasStarted && hasEnded && started > 0 && ended >= started {
+	if hasStarted && started > 0 && ended >= started {
 		minutes := int((ended - started) / 60)
 		session.DurationMinutes = &minutes
 	}
@@ -138,7 +160,7 @@ func hermesSession(source row, messages []row) (parsers.Session, int) {
 		"hermes": hermesMetadata(source, messages),
 		"usage":  hermesUsage(source),
 	}
-	return session, orphaned
+	return session, orphaned, deferred
 }
 
 // hermesUsage restates the session totals under the names the per-exchange
@@ -197,23 +219,41 @@ func hermesMetadata(source row, messages []row) map[string]any {
 //
 // A tool call embedded in an assistant message is not counted: only the result
 // message is, because that is the one that knows whether it worked. Counting both
-// would double every tool use in the corpus.
-func hermesExchanges(sessionID string, messages []row) ([]parsers.Exchange, int) {
+// would double every tool use in the corpus. A human turn with no recorded
+// answer at all is still in flight, so it is deferred instead of being stored
+// with an answer this build invented.
+func hermesExchanges(sessionID string, messages []row) ([]parsers.Exchange, int, int) {
 	var exchanges []parsers.Exchange
 	var current *parsers.Exchange
 	number := 0
 	orphaned := 0
-	// pendingParams carries the arguments from the assistant message that asked
-	// for a tool to the result message that answers it.
-	pendingParams := map[string]string{}
+	deferred := 0
+	// pendingByName and pendingByCall carry the arguments from the assistant
+	// messages that asked for a tool to the result messages that answer them.
+	// Hermes writes the call id on both sides, so the id is the key; the name is
+	// the fallback for the older payload that had no id.
+	pendingByName := map[string]string{}
+	pendingByCall := map[string]hermesToolCall{}
+	// hasResponse records whether the open exchange has seen any assistant
+	// content: text, reasoning or a tool call. A human turn with none is still
+	// being answered and is deferred.
+	hasResponse := false
 
 	closeCurrent := func() {
 		if current == nil {
 			return
 		}
+		if !hasResponse {
+			deferred++
+			current = nil
+			pendingByName = map[string]string{}
+			pendingByCall = map[string]hermesToolCall{}
+			return
+		}
 		finalizeHermes(current)
 		exchanges = append(exchanges, *current)
 		current = nil
+		hasResponse = false
 	}
 
 	for _, message := range messages {
@@ -221,7 +261,9 @@ func hermesExchanges(sessionID string, messages []row) ([]parsers.Exchange, int)
 		case "user":
 			closeCurrent()
 			number++
-			pendingParams = map[string]string{}
+			pendingByName = map[string]string{}
+			pendingByCall = map[string]hermesToolCall{}
+			hasResponse = false
 			at, _ := message.number("timestamp")
 			current = &parsers.Exchange{
 				Number:         number,
@@ -231,37 +273,59 @@ func hermesExchanges(sessionID string, messages []row) ([]parsers.Exchange, int)
 		case "assistant":
 			if current == nil {
 				if strings.TrimSpace(message.text("content")) != "" ||
-					strings.TrimSpace(message.text("reasoning_content")) != "" {
+					strings.TrimSpace(message.text("reasoning_content")) != "" ||
+					strings.TrimSpace(message.text("tool_calls")) != "" {
 					orphaned++
 				}
 				continue
 			}
-			if reasoning := strings.TrimSpace(message.text("reasoning_content")); reasoning != "" {
+			reasoning := strings.TrimSpace(message.text("reasoning_content"))
+			content := strings.TrimSpace(message.text("content"))
+			rawCalls := strings.TrimSpace(message.text("tool_calls"))
+			calls := hermesToolCalls(message.text("tool_calls"))
+			if reasoning == "" && content == "" && rawCalls == "" {
+				continue
+			}
+			hasResponse = true
+			if reasoning != "" {
 				current.Thinking = append(current.Thinking, parsers.Thinking{
 					Text:      reasoning,
 					WordCount: len(strings.Fields(reasoning)),
 					Position:  float64(number),
 				})
 			}
-			if content := strings.TrimSpace(message.text("content")); content != "" {
+			if content != "" {
 				// The last answer with text in it is the answer.
 				current.AgentText = content
 				at, _ := message.number("timestamp")
 				current.AgentTimestamp = parsers.ISOFromEpochSeconds(at)
 			}
-			maps.Copy(pendingParams, hermesToolParams(message.text("tool_calls")))
+			for _, call := range calls {
+				pendingByName[call.name] = call.summary
+				if call.id != "" {
+					pendingByCall[call.id] = call
+				}
+			}
 		case "tool":
 			if current == nil {
 				continue
 			}
+			hasResponse = true
 			name := message.text("tool_name")
+			summary := pendingByName[name]
+			if callID := message.text("tool_call_id"); callID != "" {
+				if call, ok := pendingByCall[callID]; ok {
+					name = call.name
+					summary = call.summary
+				}
+			}
 			if name == "" {
 				name = "unknown"
 			}
 			hadError, errorMessage := hermesToolVerdict(message.text("content"))
 			current.Tools = append(current.Tools, parsers.ToolUse{
 				Name:          name,
-				ParamsSummary: pendingParams[name],
+				ParamsSummary: summary,
 				HadError:      hadError,
 				ErrorMessage:  errorMessage,
 			})
@@ -270,7 +334,7 @@ func hermesExchanges(sessionID string, messages []row) ([]parsers.Exchange, int)
 	closeCurrent()
 
 	parsers.PlaceThinking(exchanges)
-	return exchanges, orphaned
+	return exchanges, orphaned, deferred
 }
 
 // finalizeHermes gives an exchange with no prose an honest label. A turn that only
@@ -287,13 +351,24 @@ func finalizeHermes(exchange *parsers.Exchange) {
 	exchange.AgentText = "[tool use]"
 }
 
-// hermesToolParams summarizes the arguments of each call an assistant message
-// asked for.
-func hermesToolParams(payload string) map[string]string {
+// hermesToolCall is one call an assistant message asked for, decoded from its
+// tool_calls payload, with the summary the result message will carry.
+type hermesToolCall struct {
+	id      string
+	name    string
+	summary string
+}
+
+// hermesToolCalls parses the tool_calls payload of one assistant message into
+// the calls it asked for. Hermes writes the OpenAI Responses shape, with the
+// call id beside the function; a payload that does not parse contributes nothing.
+func hermesToolCalls(payload string) []hermesToolCall {
 	if strings.TrimSpace(payload) == "" {
 		return nil
 	}
 	var calls []struct {
+		ID       string `json:"id"`
+		CallID   string `json:"call_id"`
 		Function struct {
 			Name      string          `json:"name"`
 			Arguments json.RawMessage `json:"arguments"`
@@ -302,15 +377,23 @@ func hermesToolParams(payload string) map[string]string {
 	if err := json.Unmarshal([]byte(payload), &calls); err != nil {
 		return nil
 	}
-	summaries := map[string]string{}
+	out := make([]hermesToolCall, 0, len(calls))
 	for _, call := range calls {
 		name := call.Function.Name
 		if name == "" {
 			continue
 		}
-		summaries[name] = hermesArgumentSummary(call.Function.Arguments)
+		id := call.ID
+		if id == "" {
+			id = call.CallID
+		}
+		out = append(out, hermesToolCall{
+			id:      id,
+			name:    name,
+			summary: hermesArgumentSummary(call.Function.Arguments),
+		})
 	}
-	return summaries
+	return out
 }
 
 // hermesArgumentSummary reads the arguments, which Hermes writes as a JSON string
