@@ -44,6 +44,10 @@ plugin-owned index, and starts a resumable background build. `ingest
 --delta` embeds only new or changed chunks and removes missing sources. Both
 writing commands honor `ROCA_READ_ONLY`. `query` uses binary ANN candidates,
 exact cosine reranking, stable source deduplication, and live text resolution.
+It also removes retired `rocodata_*` chunks from an existing index when writes
+are enabled. Under `ROCA_READ_ONLY`, a query refuses an index that still has
+such chunks; run `roca vector ingest --delta` with writes enabled to reconcile
+it.
 
 For a non-default core database, export `ROCA_DB_PATH` or pass the plugin flag
 after dispatch: `roca vector --db-path /path/to/roca.db query "..."`.

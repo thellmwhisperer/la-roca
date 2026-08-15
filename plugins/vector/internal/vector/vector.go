@@ -21,10 +21,10 @@ import (
 )
 
 const (
-	defaultChunkSize = 4000
-	defaultOverlap   = 400
-	defaultBatchSize = 64
-	walkPageSize     = 500
+	defaultChunkSize                 = 4000
+	defaultOverlap                   = 400
+	defaultBatchSize                 = 64
+	walkPageSize                     = 500
 	deprecatedLayerReconciliationKey = "deprecated_layers_reconciled_v1"
 	// maxUnresolvedCandidates bounds a query against an index the corpus has moved
 	// under. Each resolution is one `roca exec` process, so a wholly stale index
