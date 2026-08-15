@@ -417,6 +417,34 @@ func TestQueryStopsWalkingAnIndexTheCorpusMovedUnder(t *testing.T) {
 	}
 }
 
+func TestNearestCandidateLimitRefillsForRetiredChunks(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE chunks(source_kind TEXT, locator TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 30; index++ {
+		if _, err := db.Exec(`INSERT INTO chunks(source_kind,locator) VALUES ('exchanges','{}')`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for index := 0; index < 5; index++ {
+		if _, err := db.Exec(`INSERT INTO chunks(source_kind,locator) VALUES ('memories',?)`, `{"layer":"rocodata_legacy"}`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	limit, err := nearestCandidateLimit(context.Background(), db, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if limit != 21 {
+		t.Fatalf("candidate limit = %d, want 21", limit)
+	}
+}
+
 func TestCompactRebuildsDenseEquivalentStoreAndRefusesAnActiveIngest(t *testing.T) {
 	t.Run("dense equivalent store", func(t *testing.T) {
 		ctx := context.Background()
