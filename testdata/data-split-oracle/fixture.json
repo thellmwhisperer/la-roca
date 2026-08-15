@@ -1,0 +1,51 @@
+{
+  "schema": "la-roca.data-split-oracle-fixture/v1",
+  "memories": [
+    {
+      "id": 101,
+      "layer": "project",
+      "content": "Quartz orchard launch plan for the synthetic Alder team.",
+      "project": "synthetic-alder",
+      "created_at": "2026-01-02 03:04:05",
+      "source_agent": "oracle-synthetic",
+      "source_model": "fixture-v1",
+      "source_surface": "fixture"
+    },
+    {
+      "id": 102,
+      "layer": "discovery",
+      "content": "Quartz orchard duplicate beacon with invented content.",
+      "project": "synthetic-alder",
+      "created_at": "2026-01-02 03:05:05",
+      "source_agent": "oracle-synthetic",
+      "source_model": "fixture-v1",
+      "source_surface": "fixture"
+    },
+    {
+      "id": 103,
+      "layer": "discovery",
+      "content": "Quartz orchard duplicate beacon with invented content.",
+      "project": "synthetic-alder",
+      "created_at": "2026-01-02 03:06:05",
+      "source_agent": "oracle-synthetic",
+      "source_model": "fixture-v1",
+      "source_surface": "fixture"
+    },
+    {
+      "id": 104,
+      "layer": "pattern",
+      "content": "Quartz quartz quartz orchard ranking beacon for a fictional observatory.",
+      "project": "synthetic-birch",
+      "created_at": "2026-01-02 03:07:05",
+      "source_agent": "oracle-synthetic",
+      "source_model": "fixture-v1",
+      "source_surface": "fixture"
+    }
+  ],
+  "model_question": "Which synthetic Alder memories mention the quartz orchard?",
+  "model_sql": "SELECT 'memory' AS source, id, layer, content AS text, project, created_at FROM memories WHERE project = 'synthetic-alder' ORDER BY id LIMIT 10",
+  "literal_question": "quartz orchard",
+  "missing_question": "ultraviolet platypus absent",
+  "store_content": "Synthetic idempotence beacon for DATA SPLIT.",
+  "mcp_store_content": "Synthetic MCP idempotence beacon for DATA SPLIT."
+}
