@@ -191,6 +191,35 @@ func TestDeltaRefreshesStaleLocatorWithoutReembedding(t *testing.T) {
 	}
 }
 
+func TestDuplicateSourcesKeepTheFinalLocatorForChangedText(t *testing.T) {
+	initial := sourceRow{kind: "memories", text: "alpha old canonical", layer: "discovery",
+		origin: "agent", createdAt: "2026-01-01", cronSource: "synthetic-agent", filePath: "memory.md"}
+	corpus := &memoryCorpus{sources: []sourceRow{initial}}
+	index := Index{Corpus: corpus, VectorPath: filepath.Join(t.TempDir(), "vector.db"),
+		Model: DefaultModel, Embedder: &recordingEmbedder{}}
+	if _, err := index.Ingest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	corpus.sources = []sourceRow{
+		{kind: "memories", text: "alpha old canonical", layer: "handoff", origin: "agent",
+			createdAt: "2026-01-01", cronSource: "synthetic-agent", filePath: "memory.md"},
+		{kind: "memories", text: "alpha new canonical", layer: "discovery", origin: "agent",
+			createdAt: "2026-01-01", cronSource: "synthetic-agent", filePath: "memory.md"},
+	}
+	if _, err := index.Ingest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := index.Query(context.Background(), "alpha new canonical", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Locator.Layer != "discovery" || results[0].Text != "alpha new canonical" {
+		t.Fatalf("duplicate-source result = %+v", results)
+	}
+}
+
 func TestDeprecatedMemoryLayersStayOutOfTheIndexAndResults(t *testing.T) {
 	corpus := createCoreFixture(t)
 	deprecated := sourceRow{kind: "memories", text: "alpha deprecated memory", layer: "RocoData_legacy",
