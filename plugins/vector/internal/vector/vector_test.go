@@ -261,7 +261,7 @@ func TestDeprecatedMemoryLayersStayOutOfTheIndexAndResults(t *testing.T) {
 		t.Fatal(err)
 	}
 	var retired int
-	err = db.QueryRow(`SELECT COUNT(*) FROM chunks WHERE source_kind='memories' AND lower(COALESCE(json_extract(locator,'$.layer'),'')) LIKE 'rocodata\\_%' ESCAPE '\\'`).Scan(&retired)
+	err = db.QueryRow(`SELECT COUNT(*) FROM chunks WHERE source_kind='memories' AND lower(COALESCE(json_extract(locator,'$.layer'),'')) LIKE 'rocodata\_%' ESCAPE '\'`).Scan(&retired)
 	if closeErr := db.Close(); err == nil && closeErr != nil {
 		err = closeErr
 	}
@@ -319,7 +319,7 @@ func TestReadOnlyQueryLeavesRetiredChunksUntouched(t *testing.T) {
 		t.Fatal(err)
 	}
 	var retired int
-	err = db.QueryRow(`SELECT COUNT(*) FROM chunks WHERE source_kind='memories' AND lower(COALESCE(json_extract(locator,'$.layer'),'')) LIKE 'rocodata\\_%' ESCAPE '\\'`).Scan(&retired)
+	err = db.QueryRow(`SELECT COUNT(*) FROM chunks WHERE source_kind='memories' AND lower(COALESCE(json_extract(locator,'$.layer'),'')) LIKE 'rocodata\_%' ESCAPE '\'`).Scan(&retired)
 	if closeErr := db.Close(); err == nil && closeErr != nil {
 		err = closeErr
 	}
