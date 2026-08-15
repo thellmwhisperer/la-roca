@@ -54,7 +54,7 @@ func TestContentIsANamedRocaSkill(t *testing.T) {
 	for _, needle := range []string{
 		"Must-read on install", "roca init", "roca query", "roca exec",
 		"La Roca is an AI agent memory",
-		"roca-vector", "semantic layer", "hybrid loop",
+		"roca-vector", "roca vector", "semantic layer", "hybrid loop",
 	} {
 		if !strings.Contains(body, needle) {
 			t.Errorf("skill body missing %q", needle)
