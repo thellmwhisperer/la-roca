@@ -466,8 +466,11 @@ func importedMemoryDigests(ctx context.Context, db *sql.DB, source string) (map[
 func verifyMemoryCustody(ctx context.Context, ops *sql.DB,
 	rowsBySource map[string][]memoryRow) (MemoryCustodyReport, string, error) {
 	var integrity string
-	if err := ops.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&integrity); err != nil || integrity != "ok" {
-		return MemoryCustodyReport{}, "", fmt.Errorf("ops memory integrity check = %q: %w", integrity, err)
+	if err := ops.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&integrity); err != nil {
+		return MemoryCustodyReport{}, "", fmt.Errorf("read ops memory integrity check: %w", err)
+	}
+	if integrity != "ok" {
+		return MemoryCustodyReport{}, "", fmt.Errorf("ops memory integrity check = %q", integrity)
 	}
 	var foreignKeys, memberships, physical, expectedPhysical, fts, orphans, missingFTS int
 	checks := []struct {
@@ -483,14 +486,14 @@ func verifyMemoryCustody(ctx context.Context, ops *sql.DB,
 				FROM custody_memberships WHERE destination_table = 'memory_records'
 				GROUP BY canonical_digest, source_database)
 			GROUP BY canonical_digest)`, &expectedPhysical},
-		{"SELECT COUNT(*) FROM memory_records_fts", &fts},
+		{"SELECT COUNT(*) FROM memory_records_fts_docsize", &fts},
 		{`SELECT COUNT(*) FROM memory_records AS records
 			WHERE NOT EXISTS (SELECT 1 FROM custody_memberships AS memberships
 				WHERE memberships.destination_table = 'memory_records'
 				  AND CAST(memberships.destination_key AS INTEGER) = records.id)`, &orphans},
 		{`SELECT COUNT(*) FROM memory_records AS records
-			LEFT JOIN memory_records_fts AS indexed ON indexed.rowid = records.id
-			WHERE indexed.rowid IS NULL`, &missingFTS},
+			LEFT JOIN memory_records_fts_docsize AS indexed ON indexed.id = records.id
+			WHERE indexed.id IS NULL`, &missingFTS},
 	}
 	for _, check := range checks {
 		if err := ops.QueryRowContext(ctx, check.query).Scan(check.into); err != nil {
@@ -536,7 +539,7 @@ func inspectMemoryCustody(ctx context.Context, ops *sql.DB,
 	}{
 		{"SELECT COUNT(*) FROM custody_memberships WHERE destination_table = 'memory_records'", &report.Memberships},
 		{"SELECT COUNT(*) FROM memory_records", &report.PhysicalRecords},
-		{"SELECT COUNT(*) FROM memory_records_fts", &report.FTSRecords},
+		{"SELECT COUNT(*) FROM memory_records_fts_docsize", &report.FTSRecords},
 	}
 	for _, query := range queries {
 		if err := ops.QueryRowContext(ctx, query.statement).Scan(query.target); err != nil {
