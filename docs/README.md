@@ -24,14 +24,16 @@ Reading order, from operator to contributor:
    executable capabilities, package lifecycle, and a build-your-own example.
 8. [The MCP plug](mcp.md): the stdio server, its six tools, the TOON answer
    contract, and the supported integration targets.
-9. [Operations](operations.md): memory-layer validation and repair, the audit
+9. [Semantic retrieval](semantic-retrieval.md): semantic-first candidate
+   retrieval, context recovery, evidence, and honest degradation.
+10. [Operations](operations.md): memory-layer validation and repair, the audit
    log contract for every CLI and MCP call, the query failures `roca doctor`
    reports, the privacy-safe `roca doctor --report` support snapshot,
    redaction, retention, and the read-only boundary.
-10. [Architecture](architecture.md): the database-neutral kernel, current domain
+11. [Architecture](architecture.md): the database-neutral kernel, current domain
    map, query path, and internal import rule.
-11. [Releases](releases.md): how versions are cut and artefacts are built.
-12. [Project memory](project-memory.md): contributor-agent notes that travel
+12. [Releases](releases.md): how versions are cut and artefacts are built.
+13. [Project memory](project-memory.md): contributor-agent notes that travel
     with the code (build, test, release, architecture, and sharp edges).
 
 The [README](../README.md) is the front page; these pages carry the depth.
