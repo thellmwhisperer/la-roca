@@ -469,10 +469,10 @@ func (importer legacyImporter) verifyTable(ctx context.Context, plan legacyPlan,
 	if err := db.QueryRowContext(ctx, missingQuery, args...).Scan(&missing); err != nil {
 		return 0, fmt.Errorf("verify legacy %s destination rows: %w", plan.sourceTable, err)
 	}
-	physicalQuery := fmt.Sprintf(`SELECT COUNT(*) FROM %s AS destination
-		WHERE EXISTS (SELECT 1 FROM custody_memberships AS membership
-			WHERE membership.destination_key = destination.canonical_digest
-			AND membership.source_database = ? AND membership.source_table = ?)`,
+	physicalQuery := fmt.Sprintf(`SELECT COUNT(*) FROM
+		(SELECT DISTINCT destination_key FROM custody_memberships
+			WHERE source_database = ? AND source_table = ?) AS membership
+		JOIN %s AS destination ON destination.canonical_digest = membership.destination_key`,
 		quoteIdentifier(plan.destinationTable))
 	if err := db.QueryRowContext(ctx, physicalQuery, args...).Scan(&physical); err != nil {
 		return 0, fmt.Errorf("count physical legacy %s rows: %w", plan.sourceTable, err)
