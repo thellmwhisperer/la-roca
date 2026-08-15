@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -102,7 +103,45 @@ func Scan(roots Roots) Plan {
 		Kind: parsers.KindOpenCodeDB, SourceAgent: "opencode"}), "opencode_databases")
 	plan.add(existingFile(roots.HermesDB, Target{
 		Kind: parsers.KindHermesDB, SourceAgent: "hermes"}), "hermes_databases")
+	addRegisteredParsers(roots, &plan, parsers.Registered())
 	return plan
+}
+
+// addRegisteredParsers is the generic contribution route. A registry line may
+// declare narrow session-store locations; the scanner turns every regular file
+// under them into the same Target the established source-specific scanners
+// emit. Detect runs only after the fingerprint gate, so an unchanged file is
+// still never opened for parsing. Syntax never appears here.
+func addRegisteredParsers(roots Roots, plan *Plan, registered []parsers.Registration) {
+	for _, contribution := range registered {
+		if contribution.Name == "" || contribution.Parser == nil || len(contribution.Locations) == 0 {
+			continue
+		}
+		source := contribution.SourceAgent
+		if source == "" {
+			source = contribution.Name
+		}
+		present := false
+		for _, declared := range contribution.Locations {
+			root := declared
+			if !filepath.IsAbs(root) {
+				if roots.Home == "" {
+					continue
+				}
+				root = filepath.Join(roots.Home, root)
+			}
+			if pathExists(root) {
+				present = true
+			}
+			for _, path := range regularFilesUnder(root) {
+				plan.add([]Target{{Path: path, FileName: filepath.Base(path),
+					Kind: parsers.Kind(contribution.Name), SourceAgent: source}}, contribution.Name+"_files")
+			}
+		}
+		if present && !slices.Contains(plan.DetectedAgents, source) {
+			plan.DetectedAgents = append(plan.DetectedAgents, source)
+		}
+	}
 }
 
 func (p *Plan) addCodex(found []Target) {
@@ -581,6 +620,21 @@ func filesUnder(root, extension string, shape Target) []Target {
 		return nil
 	})
 	return targets
+}
+
+func regularFilesUnder(root string) []string {
+	if root == "" {
+		return nil
+	}
+	var paths []string
+	filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err == nil && entry.Type().IsRegular() {
+			paths = append(paths, path)
+		}
+		return nil
+	})
+	sort.Strings(paths)
+	return paths
 }
 
 func isFile(path string) bool {

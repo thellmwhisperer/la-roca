@@ -61,18 +61,26 @@ contact a service, or invent missing provenance. A source that says nothing
 about a value leaves it absent. Report an independently unreadable source record
 as a `Discard`; do not lose the rest of a valid file.
 
-Use a stable `Kind` value in that file when the current ingest scanner needs to
-name the source for fingerprints and reports. The kind is internal dispatch,
-not a declaration of file format.
-
 ## 3. Add one registry line
 
 Add the parser to `registry` in `internal/ingest/parsers/registry.go`. Declare
 where its normalized records belong:
 
 ```go
-fileParser(KindNova, DestinationCorpus, detectNova, ParseNova)
+Registration{
+    Name: "nova", SourceAgent: "nova",
+    Locations: []string{".nova/sessions"},
+    Destination: DestinationCorpus,
+    Parser: novaParser{},
+}
 ```
+
+`Locations` are narrow session-store directories relative to the operator's
+home (or absolute locations when the agent has one platform-independent path).
+The generic scanner walks only those roots, asks `Detect` about each regular
+file after the unchanged-file fingerprint gate, and routes claimed files
+through this registration. You do not add a filename extension, decoder, or
+second scanner switch anywhere else.
 
 Choose `DestinationCorpus` for raw conversations, `DestinationStore` for
 distilled memories, or `DestinationBoth` only when one agent source genuinely

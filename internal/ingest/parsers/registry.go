@@ -65,6 +65,13 @@ type Parser interface {
 // Name is not a file format; a parser may recognize any encoding internally.
 type Registration struct {
 	Name        string
+	SourceAgent string
+	// Locations are session-store directories relative to the operator's home,
+	// or absolute paths when an agent has a platform-independent location. The
+	// ingest scanner walks only these declared roots; unchanged fingerprints are
+	// still skipped before Detect sees candidate bytes. Established adapters with
+	// specialized scanners leave it empty.
+	Locations   []string
 	Destination Destination
 	Parser      Parser
 }
@@ -73,7 +80,9 @@ type Registration struct {
 // records can reach a writer.
 func (r Registration) Parse(file File) (Records, error) {
 	if !r.Parser.Detect(file) {
-		return Records{}, fmt.Errorf("parser %q did not claim the file", r.Name)
+		return Records{Discards: []Discard{
+			Excluded("file is not claimed by the registered parser"),
+		}}, nil
 	}
 	return r.parseClaimed(file)
 }
