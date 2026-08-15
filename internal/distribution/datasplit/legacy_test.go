@@ -52,8 +52,9 @@ func TestLegacyOrphansResumeIntoExplicitQuarantineWithoutChangingJourneys(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !first.SourceValid || len(first.Undisposed) != 0 {
-		t.Fatalf("source valid = %t, undisposed = %v", first.SourceValid, first.Undisposed)
+	if !first.SourceValid || !first.DestinationValid || len(first.Undisposed) != 0 {
+		t.Fatalf("source valid = %t, destination valid = %t, undisposed = %v",
+			first.SourceValid, first.DestinationValid, first.Undisposed)
 	}
 	wantRows := map[string]int{
 		"runs": 3, "run_logs": 4, "garden_channels": 1, "garden_memberships": 1,
@@ -83,6 +84,9 @@ func TestLegacyOrphansResumeIntoExplicitQuarantineWithoutChangingJourneys(t *tes
 	assertPayload(t, cron, "legacy_runs", 2, map[string]any{
 		"error": "synthetic timeout", "started_at": "2026-08-14T09:00:00Z",
 		"completed_at": "2026-08-14T09:01:00Z", "raw": map[string]any{"$blob": "00ff"},
+	}, []string{"train", "ride", "gate_status"})
+	assertPayload(t, cron, "legacy_runs", 3, map[string]any{
+		"name": map[string]any{"$text_blob": "7468ff7264"},
 	}, []string{"train", "ride", "gate_status"})
 	assertPayload(t, cron, "legacy_run_logs", 4, map[string]any{
 		"run_id": float64(2), "level": "error", "created_at": "2026-08-14T09:00:30Z",
@@ -205,7 +209,7 @@ func legacyFixture(t *testing.T) LegacyOptions {
 		INSERT INTO runs VALUES
 			(1, 'first', 'completed', 'synthetic', 'fixture', '{}', '2026-08-14T08:00:00Z', '2026-08-14T08:01:00Z', NULL, NULL, '2026-08-14T08:00:00Z', X'01'),
 			(2, 'second', 'failed', 'synthetic', 'fixture', '{}', '2026-08-14T09:00:00Z', '2026-08-14T09:01:00Z', NULL, 'synthetic timeout', '2026-08-14T09:00:00Z', X'00ff'),
-			(3, 'third', 'cancelled', NULL, NULL, '{}', NULL, NULL, NULL, NULL, '2026-08-14T10:00:00Z', NULL);
+			(3, CAST(x'7468ff7264' AS TEXT), 'cancelled', NULL, NULL, '{}', NULL, NULL, NULL, NULL, '2026-08-14T10:00:00Z', NULL);
 		INSERT INTO run_logs VALUES
 			(1, 1, 'info', 'started', '{}', '2026-08-14T08:00:01Z'),
 			(2, 1, 'info', 'finished', '{}', '2026-08-14T08:00:59Z'),

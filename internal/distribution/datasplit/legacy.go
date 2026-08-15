@@ -47,9 +47,10 @@ type LegacyTableResult struct {
 }
 
 type LegacyReport struct {
-	Tables      []LegacyTableResult
-	Undisposed  []string
-	SourceValid bool
+	Tables           []LegacyTableResult
+	Undisposed       []string
+	SourceValid      bool
+	DestinationValid bool
 }
 
 type destination string
@@ -185,11 +186,15 @@ func importLegacyOrphans(ctx context.Context, options LegacyOptions, batchSize i
 		}
 		report.Tables = append(report.Tables, result)
 	}
+	destinationValid := true
 	for owner, db := range destinations {
-		if _, err := validateDatabase(ctx, db, "DATA-4 "+string(owner)+" destination"); err != nil {
+		valid, err := validateDatabase(ctx, db, "DATA-4 "+string(owner)+" destination")
+		if err != nil {
 			return report, err
 		}
+		destinationValid = destinationValid && valid
 	}
+	report.DestinationValid = destinationValid
 	sort.Slice(report.Tables, func(i, j int) bool {
 		return report.Tables[i].SourceTable < report.Tables[j].SourceTable
 	})
@@ -425,7 +430,8 @@ func (importer legacyImporter) applyBatch(ctx context.Context, plan legacyPlan, 
 			SourceKey: record.sourceKey, DestinationTable: plan.destinationTable,
 			DestinationKey: record.digest, CanonicalDigest: record.digest,
 		}); err != nil {
-			return fmt.Errorf("record legacy %s custody: %w", plan.sourceTable, err)
+			return fmt.Errorf("record legacy %s custody for identity (%s) source key %s: %w",
+				plan.sourceTable, strings.Join(plan.keyColumns, ", "), record.sourceKey, err)
 		}
 	}
 	if err := batch.Commit(ctx, commit); err != nil {
@@ -458,13 +464,17 @@ func (importer legacyImporter) verifyTable(ctx context.Context, plan legacyPlan,
 	missingQuery := fmt.Sprintf(`SELECT COUNT(*) FROM custody_memberships AS membership
 		LEFT JOIN %s AS destination ON destination.canonical_digest = membership.destination_key
 		WHERE membership.source_database = ? AND membership.source_table = ?
-		AND (destination.canonical_digest IS NULL OR destination.canonical_digest <> membership.canonical_digest)`,
+		AND (destination.canonical_digest IS NULL OR membership.destination_key <> membership.canonical_digest)`,
 		quoteIdentifier(plan.destinationTable))
 	if err := db.QueryRowContext(ctx, missingQuery, args...).Scan(&missing); err != nil {
 		return 0, fmt.Errorf("verify legacy %s destination rows: %w", plan.sourceTable, err)
 	}
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT destination_key)
-		FROM custody_memberships WHERE source_database = ? AND source_table = ?`, args...).Scan(&physical); err != nil {
+	physicalQuery := fmt.Sprintf(`SELECT COUNT(*) FROM %s AS destination
+		WHERE EXISTS (SELECT 1 FROM custody_memberships AS membership
+			WHERE membership.destination_key = destination.canonical_digest
+			AND membership.source_database = ? AND membership.source_table = ?)`,
+		quoteIdentifier(plan.destinationTable))
+	if err := db.QueryRowContext(ctx, physicalQuery, args...).Scan(&physical); err != nil {
 		return 0, fmt.Errorf("count physical legacy %s rows: %w", plan.sourceTable, err)
 	}
 	rows, err := db.QueryContext(ctx, `SELECT source_key, canonical_digest FROM custody_memberships
@@ -541,11 +551,7 @@ func scanLegacyRow(rows *sql.Rows, columns, keyColumns []string) (legacyRow, err
 	}
 	payload := make(map[string]any, len(columns))
 	for index, column := range columns {
-		encoded, err := encodeSourceValue(values[index])
-		if err != nil {
-			return legacyRow{}, fmt.Errorf("encode source column %s: %w", column, err)
-		}
-		payload[column] = encoded
+		payload[column] = encodeSourceValue(values[index])
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -555,7 +561,8 @@ func scanLegacyRow(rows *sql.Rows, columns, keyColumns []string) (legacyRow, err
 	for index, column := range keyColumns {
 		value, ok := payload[column]
 		if !ok || value == nil {
-			return legacyRow{}, fmt.Errorf("source identity column %s is NULL", column)
+			return legacyRow{}, fmt.Errorf("source identity column %s is NULL in identity (%s)",
+				column, strings.Join(keyColumns, ", "))
 		}
 		keyValues[index] = value
 	}
@@ -567,16 +574,16 @@ func scanLegacyRow(rows *sql.Rows, columns, keyColumns []string) (legacyRow, err
 	return legacyRow{sourceKey: key, payload: string(encoded), digest: hex.EncodeToString(digest[:])}, nil
 }
 
-func encodeSourceValue(value any) (any, error) {
+func encodeSourceValue(value any) any {
 	switch typed := value.(type) {
 	case []byte:
-		return map[string]string{"$blob": hex.EncodeToString(typed)}, nil
+		return map[string]string{"$blob": hex.EncodeToString(typed)}
 	case string:
 		if !utf8.ValidString(typed) {
-			return nil, fmt.Errorf("source text is not valid UTF-8")
+			return map[string]string{"$text_blob": hex.EncodeToString([]byte(typed))}
 		}
 	}
-	return value, nil
+	return value
 }
 
 func encodeSourceKey(values []any) (string, error) {
