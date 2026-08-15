@@ -291,6 +291,62 @@ func TestDuplicateSourcesKeepTheFinalLocatorForChangedText(t *testing.T) {
 	}
 }
 
+func TestDuplicateSourcesCoalesceBeforeDiffing(t *testing.T) {
+	t.Run("later persisted row wins", func(t *testing.T) {
+		initial := sourceRow{kind: "memories", text: "alpha old canonical", layer: "discovery",
+			origin: "agent", createdAt: "2026-01-01", cronSource: "synthetic-agent", filePath: "memory.md"}
+		corpus := &memoryCorpus{sources: []sourceRow{initial}}
+		index := Index{Corpus: corpus, VectorPath: filepath.Join(t.TempDir(), "vector.db"),
+			Model: DefaultModel, Embedder: &recordingEmbedder{}}
+		if _, err := index.Ingest(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+
+		corpus.sources = []sourceRow{
+			{kind: "memories", text: "alpha new canonical", layer: "handoff", origin: "agent",
+				createdAt: "2026-01-01", cronSource: "synthetic-agent", filePath: "memory.md"},
+			initial,
+		}
+		if _, err := index.Ingest(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+
+		results, err := index.Query(context.Background(), "alpha old canonical", 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(results) != 1 || results[0].Locator.Layer != "discovery" || results[0].Text != initial.text {
+			t.Fatalf("coalesced result = %+v", results)
+		}
+	})
+
+	t.Run("later shorter row removes tail", func(t *testing.T) {
+		longText := strings.Repeat("alpha old ", defaultChunkSize/4)
+		initial := sourceRow{kind: "memories", text: longText, layer: "discovery",
+			origin: "agent", createdAt: "2026-01-01", cronSource: "synthetic-agent", filePath: "memory.md"}
+		corpus := &memoryCorpus{sources: []sourceRow{initial}}
+		index := Index{Corpus: corpus, VectorPath: filepath.Join(t.TempDir(), "vector.db"),
+			Model: DefaultModel, Embedder: &recordingEmbedder{}}
+		if _, err := index.Ingest(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+
+		corpus.sources = []sourceRow{
+			{kind: "memories", text: strings.Repeat("alpha changed ", defaultChunkSize/4), layer: "handoff",
+				origin: "agent", createdAt: "2026-01-01", cronSource: "synthetic-agent", filePath: "memory.md"},
+			{kind: "memories", text: "alpha short", layer: "discovery", origin: "agent",
+				createdAt: "2026-01-01", cronSource: "synthetic-agent", filePath: "memory.md"},
+		}
+		report, err := index.Ingest(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if report.Updated != 1 || report.Removed != len(chunks(longText, defaultChunkSize, defaultOverlap))-1 {
+			t.Fatalf("shorter duplicate delta = %+v", report)
+		}
+	})
+}
+
 func TestDeprecatedMemoryLayersStayOutOfTheIndexAndResults(t *testing.T) {
 	corpus := createCoreFixture(t)
 	deprecated := sourceRow{kind: "memories", text: "alpha deprecated memory", layer: "RocoData_legacy",

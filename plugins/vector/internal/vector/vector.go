@@ -195,6 +195,8 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 	desiredFingerprints := make(map[string]string, len(existing))
 	pending := make([]desiredChunk, 0, defaultBatchSize)
 	locatorUpdates := make(map[int64]locatorUpdate)
+	desiredSources := make(map[string][]desiredChunk)
+	sourceOrder := make([]string, 0)
 	flush := func() error {
 		if len(pending) == 0 {
 			return nil
@@ -233,12 +235,28 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 			return nil
 		}
 		report.Sources++
+		sourceID := source.stableID()
+		groupKey := sourceKey(source.kind, sourceID)
+		if _, ok := desiredSources[groupKey]; !ok {
+			sourceOrder = append(sourceOrder, groupKey)
+		}
+		desired := make([]desiredChunk, 0)
 		chunkSize, overlap := source.chunking()
 		for chunkIndex, text := range chunks(source.text, chunkSize, overlap) {
 			chunk := desiredChunk{
-				sourceKind: source.kind, sourceID: source.stableID(), index: chunkIndex,
+				sourceKind: source.kind, sourceID: sourceID, index: chunkIndex,
 				fingerprint: source.embeddingFingerprint(text), locator: source.locator(), text: text,
 			}
+			desired = append(desired, chunk)
+		}
+		desiredSources[groupKey] = desired
+		return nil
+	})
+	if err != nil {
+		return Delta{}, err
+	}
+	for _, groupKey := range sourceOrder {
+		for _, chunk := range desiredSources[groupKey] {
 			key := chunkKey(chunk.sourceKind, chunk.sourceID, chunk.index)
 			desiredFingerprints[key] = chunk.fingerprint
 			if old, ok := existing[key]; ok && old.fingerprint == chunk.fingerprint {
@@ -254,14 +272,10 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 			pending = append(pending, chunk)
 			if len(pending) == defaultBatchSize {
 				if err := flush(); err != nil {
-					return err
+					return Delta{}, err
 				}
 			}
 		}
-		return nil
-	})
-	if err != nil {
-		return Delta{}, err
 	}
 	if err := flush(); err != nil {
 		return Delta{}, err
@@ -584,7 +598,11 @@ func (s sourceRow) chunking() (int, int) {
 }
 
 func chunkKey(kind, sourceID string, index int) string {
-	return kind + "\x00" + sourceID + "\x00" + strconv.Itoa(index)
+	return sourceKey(kind, sourceID) + "\x00" + strconv.Itoa(index)
+}
+
+func sourceKey(kind, sourceID string) string {
+	return kind + "\x00" + sourceID
 }
 
 func openSQLite(path string, readOnly bool) (*sql.DB, error) {

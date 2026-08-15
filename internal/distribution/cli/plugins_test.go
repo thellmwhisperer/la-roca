@@ -55,7 +55,15 @@ func TestVectorExecutableDispatchAndListingRequireItsFeature(t *testing.T) {
 		t.Fatalf("disabled vector appeared in plugin listing: %+v", plugins)
 	}
 
-	enabled := config.FeaturesConfig{Vector: true}
+	vectorOnly := config.FeaturesConfig{Vector: true}
+	if handled, _, err := dispatchPlugin(root, []string{"vector"}, vectorOnly); handled || err != nil {
+		t.Fatalf("vector-only dispatch = handled %v, err %v", handled, err)
+	}
+	if plugins := listPlugins(vectorOnly); len(plugins) != 0 {
+		t.Fatalf("vector-only listing = %+v", plugins)
+	}
+
+	enabled := config.FeaturesConfig{Plugins: true, Vector: true}
 	if handled, code, err := dispatchPlugin(root, []string{"vector"}, enabled); !handled || code != ExitOK || err != nil {
 		t.Fatalf("enabled vector dispatch = handled %v, code %d, err %v", handled, code, err)
 	}
