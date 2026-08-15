@@ -4,15 +4,17 @@ First-time path: [install, detect an already signed-in agent CLI, and query
 without a La Roca login](lifecycle.md#install).
 
 La Roca is a federating kernel surrounded by domain plugins. The kernel owns no
-domain database. Its durable state is configuration and plugin manifests; its
-database hub exists in memory and attaches plugin-owned SQLite files read-only.
+domain database. Its durable state is configuration and plugin manifests, and
+the hub it attaches plugin-owned SQLite files to read-only is an empty in-memory
+database.
 
 The migration to that shape is incremental. The current release has a
 manifest-backed `roca-corpus`, a separate `roca-ops` domain still using its
 legacy descriptor, and a separate `roca-cron` journey store. Historical rows
-that have not moved yet remain readable through a compatibility connection.
-That connection preserves behavior during the rollout; it is not new kernel
-ownership and plugin authors must not depend on it.
+that have not moved yet remain readable through a compatibility connection, and
+queries still attach to that connection rather than to the in-memory hub. It
+preserves behavior during the rollout; it is not new kernel ownership and plugin
+authors must not depend on it.
 
 ## Runtime map
 
@@ -69,8 +71,8 @@ fixtures.
 - `internal/ingest/` owns source detection, pure parsers, provenance, and
   fingerprinted incremental writes.
 - `internal/provider/plugin/` is the manifest engine: declarations, discovery,
-  schema truth checks, the in-memory hub, semantic composition, and verb and
-  capability registration.
+  schema truth checks, semantic composition, verb and capability registration,
+  and the in-memory hub the attach point is moving to.
 - `internal/provider/query/` owns prompt construction and the SQL read gate;
   `internal/provider/service/` orchestrates the compatibility product surface.
 - `internal/distribution/plugininstall/` verifies packages and preserves every

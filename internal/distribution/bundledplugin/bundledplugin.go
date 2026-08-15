@@ -3,6 +3,7 @@
 package bundledplugin
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -93,11 +94,9 @@ func materialize(root, version string, spec Spec) (plugininstall.Candidate, func
 
 	var metadata []byte
 	if len(spec.Manifest) > 0 {
-		decoder := json.NewDecoder(strings.NewReader(string(spec.Manifest)))
-		decoder.DisallowUnknownFields()
-		var manifest plugin.Manifest
-		if err := decoder.Decode(&manifest); err != nil {
-			return fail(fmt.Errorf("parse bundled %s: %w", plugin.PackageFilename, err))
+		manifest, decodeErr := plugin.DecodeUnvalidatedManifest(bytes.NewReader(spec.Manifest))
+		if decodeErr != nil {
+			return fail(fmt.Errorf("parse bundled %s: %w", plugin.PackageFilename, decodeErr))
 		}
 		manifest.Name, manifest.Version = spec.Name, version
 		if err := manifest.Valid(); err != nil {

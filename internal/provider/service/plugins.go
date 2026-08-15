@@ -16,9 +16,19 @@ import (
 
 const (
 	rocaOpsPluginName    = "roca-ops"
-	rocaCorpusPluginName = "roca-corpus" // transitional data-routing compatibility, not attachment discovery
+	rocaCorpusPluginName = "roca-corpus" // the package La Roca ships to own perennial ingest
 	ingestVerb           = "ingest"
 )
+
+// ownsVerb reports whether a discovered package holds the seat the kernel
+// routes a verb into. The manifest declares the verb, and the name La Roca
+// ships bounds it: an installed third party may not take the seat by declaring
+// the same verb, and a package installed before manifests existed, which
+// declares nothing, keeps the seat it already had.
+func ownsVerb(descriptor plugin.Descriptor, verb, packageName string) bool {
+	return descriptor.Name == packageName &&
+		(descriptor.Manifest == nil || descriptor.Manifest.HasVerb(verb))
+}
 
 // selfGated names the packages La Roca ships and whose attachment it owns
 // itself. Each one reaches a connection through its own feature flag, never
@@ -129,7 +139,7 @@ func (s *Service) openResidents(ctx context.Context) error {
 	}
 	if s.opts.CorpusEnabled {
 		for _, descriptor := range descriptors {
-			if descriptor.Manifest != nil && descriptor.Manifest.HasVerb(ingestVerb) &&
+			if ownsVerb(descriptor, ingestVerb, rocaCorpusPluginName) &&
 				descriptor.Semantic.Attachment == plugin.AttachmentResident {
 				candidates = append(candidates, descriptor)
 			}
@@ -138,7 +148,7 @@ func (s *Service) openResidents(ctx context.Context) error {
 	if s.opts.PluginsEnabled {
 		for _, descriptor := range descriptors {
 			if !selfGated(descriptor.Name) &&
-				(descriptor.Manifest == nil || !descriptor.Manifest.HasVerb(ingestVerb)) &&
+				!ownsVerb(descriptor, ingestVerb, rocaCorpusPluginName) &&
 				descriptor.Semantic.Attachment == plugin.AttachmentResident {
 				candidates = append(candidates, descriptor)
 			}
@@ -177,7 +187,7 @@ func (s *Service) openResidents(ctx context.Context) error {
 		}
 	}
 	if s.opts.CorpusEnabled {
-		corpusDatabase, corpusOwner := databaseForVerb(s.resident, ingestVerb)
+		corpusDatabase, corpusOwner := databaseForVerb(s.resident, ingestVerb, rocaCorpusPluginName)
 		if corpusDatabase == nil {
 			reason := strings.Join(append(slices.Clone(warnings), route.warnings...), "; ")
 			if reason == "" {
@@ -210,22 +220,22 @@ func (s *Service) openResidents(ctx context.Context) error {
 // has none. It is the only handle read-only has on that database, which it
 // never opens for writing.
 func (s *Service) residentCorpus() *plugin.Database {
-	database, _ := databaseForVerb(s.resident, ingestVerb)
+	database, _ := databaseForVerb(s.resident, ingestVerb, rocaCorpusPluginName)
 	return database
 }
 
-func databaseForVerb(databases []plugin.Database, verb string) (*plugin.Database, string) {
+// databaseForVerb resolves the single database a verb writes into. A package
+// that declares the verb over several databases names no seat at all, because
+// the kernel would otherwise pick one of them by discovery order.
+func databaseForVerb(databases []plugin.Database, verb,
+	packageName string) (*plugin.Database, string) {
 	var selected *plugin.Database
 	owner := ""
 	for index := range databases {
-		manifest := databases[index].Manifest
-		if manifest == nil || !manifest.HasVerb(verb) {
+		if !ownsVerb(databases[index].Descriptor, verb, packageName) {
 			continue
 		}
-		if owner != "" && owner != manifest.Name {
-			return nil, ""
-		}
-		owner = manifest.Name
+		owner = databases[index].Name
 		if selected != nil {
 			return nil, owner
 		}
@@ -298,6 +308,10 @@ func schemaWithPlugins(databases []plugin.Database) query.Schema {
 	if len(databases) == 0 {
 		return base
 	}
+	// The parsed schema is read once per process and handed out by value, so
+	// labeling its tables in place would brand the shared copy for every later
+	// answer, including the ones that consult no plugin at all.
+	base.Tables = slices.Clone(base.Tables)
 	for index := range base.Tables {
 		base.Tables[index].Database = "core"
 	}

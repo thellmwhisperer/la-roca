@@ -2,9 +2,13 @@
 
 La Roca is a federating kernel. A plugin owns its durable databases and
 describes them in a `plugin.json` manifest; the kernel validates those
-declarations, attaches the databases read-only to an in-memory SQLite hub, and
-composes their table descriptions into the catalog used by natural-language
-queries.
+declarations, attaches the databases read-only, and composes their table
+descriptions into the catalog used by natural-language queries.
+
+The kernel's own attach point is an empty in-memory SQLite database. While the
+migration below is in progress, queries still attach to the compatibility
+connection that holds the rows no plugin owns yet. Either way a plugin database
+is opened read-only and reached only through its declared alias.
 
 The kernel does not own a domain database. Its durable state is configuration
 and installed manifests. Database retention, pruning, compaction, and scale are
@@ -176,9 +180,11 @@ reserved for row provenance.
 ### Verbs and capabilities
 
 A verb is the public name. A capability is the executable call behind it. The
-engine derives the MCP name from the canonical verb and registers both surfaces
-from one record. A capability's `command` is prepended to the arguments the
-caller supplies and executed through the declared `binary`.
+engine derives both public names from that one record, so a verb cannot reach
+the two surfaces as two different contracts. The current build registers the CLI
+surface from the record; the MCP server still declares its own tool list until
+its own migration step. A capability's `command` is prepended to the arguments
+the caller supplies and executed through the declared `binary`.
 
 SQL remains the preferred path for reads. Capabilities are for work SQL cannot
 perform, such as importing a source, contacting a device, or producing a
@@ -239,6 +245,33 @@ custody, the complete plugin directory is moved to the custody archive.
 The generated `.roca-plugin.json` is local installation inventory. Plugin
 authors write `plugin.json`; they must not write or distribute the local
 inventory file.
+
+## Executable-only packages
+
+A package that ships a command instead of data owns no database and needs no
+semantic fragment. Its `plugin.json` declares identity and the kind:
+
+```json
+{
+  "schema": 1,
+  "name": "receipts",
+  "version": "1.0.0",
+  "kind": "executable"
+}
+```
+
+Its `checksums.txt` lists exactly `plugin.json` and the `roca-<name>`
+executable. The package may declare one `state_directory`, a safe
+single-component name for state the command derives and rewrites. The installer
+creates it after verification, preserves it across updates, refuses a rename,
+and records the namespace in the installed manifest, so uninstall and purge own
+its contents. It is derived rather than published, so it carries no checksum;
+a package whose derived state cannot be regenerated sets `custody: true`
+alongside the kind.
+
+Such a package is always classified **EXECUTABLE**. It never enters data-plugin
+discovery, attachment, or the semantic catalog: it is reached only by running
+its command.
 
 ## Stable integration surfaces
 

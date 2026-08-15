@@ -111,6 +111,24 @@ func candidateDatabaseFiles(candidate Candidate) []string {
 	return nil
 }
 
+// sameDatabaseFiles compares the two declarations as sets. The guard exists to
+// protect installed data, and a manifest that lists the same files in another
+// order moves none of it.
+func sameDatabaseFiles(previous, candidate []string) bool {
+	declared, offered := slices.Clone(previous), slices.Clone(candidate)
+	slices.Sort(declared)
+	slices.Sort(offered)
+	return slices.Equal(declared, offered)
+}
+
+func federatedPackage(directory string) (bool, error) {
+	raw, err := os.ReadFile(filepath.Join(directory, PackageFilename))
+	if err != nil {
+		return false, fmt.Errorf("read %s: %w", PackageFilename, err)
+	}
+	return plugin.Federated(raw)
+}
+
 func manifestDatabaseFiles(manifest Manifest) []string {
 	if len(manifest.Databases) > 0 {
 		return slices.Clone(manifest.Databases)
@@ -203,11 +221,10 @@ func Inspect(source, directory string) (Candidate, error) {
 	if err != nil {
 		return Candidate{}, fmt.Errorf("read %s: %w", PackageFilename, err)
 	}
-	var shape map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &shape); err != nil {
-		return Candidate{}, fmt.Errorf("parse %s: %w", PackageFilename, err)
+	fullManifest, err := plugin.Federated(raw)
+	if err != nil {
+		return Candidate{}, err
 	}
-	fullManifest := shape["databases"] != nil
 	var metadata packageMetadata
 	var federation plugin.Manifest
 	if fullManifest {
@@ -460,7 +477,7 @@ func (m Manager) Update(candidate Candidate) (Result, error) {
 	}
 	previousDatabases := manifestDatabaseFiles(previousManifest)
 	candidateDatabases := candidateDatabaseFiles(candidate)
-	if !slices.Equal(previousDatabases, candidateDatabases) {
+	if !sameDatabaseFiles(previousDatabases, candidateDatabases) {
 		return Result{}, fmt.Errorf("plugin %s changed its database files from %v to %v; update refused to protect data",
 			candidate.Name, previousDatabases, candidateDatabases)
 	}
@@ -696,7 +713,7 @@ func (m Manager) UpdateInPlace(candidate Candidate) (Result, error) {
 	}
 	previousDatabases := manifestDatabaseFiles(previous)
 	candidateDatabases := candidateDatabaseFiles(candidate)
-	if !slices.Equal(previousDatabases, candidateDatabases) {
+	if !sameDatabaseFiles(previousDatabases, candidateDatabases) {
 		return Result{}, fmt.Errorf(
 			"plugin %s changed its database files from %v to %v; update refused to protect data",
 			candidate.Name, previousDatabases, candidateDatabases)
@@ -821,8 +838,17 @@ func VerifyInstalledPayload(expectedName, directory string) (Manifest, error) {
 	}
 	databaseFiles := manifestDatabaseFiles(manifest)
 	payload := append([]string{PackageFilename}, databaseFiles...)
-	if _, legacy := checksums[plugin.SemanticFilename]; legacy {
-		payload = append(payload, plugin.SemanticFilename)
+	if manifest.Kind == DataPackage {
+		// A data package whose plugin.json is not a federation manifest carries
+		// its meaning in a separate semantic layer, and that file is as required
+		// as the database it describes.
+		federated, err := federatedPackage(directory)
+		if err != nil {
+			return Manifest{}, err
+		}
+		if !federated {
+			payload = append(payload, plugin.SemanticFilename)
+		}
 	}
 	if manifest.Kind == ExecutablePackage {
 		payload = []string{PackageFilename, manifest.ExecutableFile}

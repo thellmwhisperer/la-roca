@@ -169,12 +169,10 @@ func InspectAll(name, directory string) ([]Descriptor, error) {
 	}
 	manifestPath := filepath.Join(directory, PackageFilename)
 	if raw, err := os.ReadFile(manifestPath); err == nil {
-		var shape map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &shape); err != nil {
-			return nil, fmt.Errorf("parse %s: %w", PackageFilename, err)
+		federated, err := Federated(raw)
+		if err != nil {
+			return nil, err
 		}
-		federated := shape["databases"] != nil || shape["binary"] != nil ||
-			shape["semantic"] != nil || shape["verbs"] != nil || shape["capabilities"] != nil
 		if federated {
 			manifest, err := ReadManifest(manifestPath)
 			if err != nil {

@@ -91,6 +91,21 @@ func ReadManifest(path string) (Manifest, error) {
 }
 
 func DecodeManifest(reader io.Reader) (Manifest, error) {
+	manifest, err := DecodeUnvalidatedManifest(reader)
+	if err != nil {
+		return Manifest{}, err
+	}
+	if err := manifest.Valid(); err != nil {
+		return Manifest{}, err
+	}
+	return manifest, nil
+}
+
+// DecodeUnvalidatedManifest reads a manifest strictly but leaves it unchecked,
+// for the bundled packages whose identity is stamped from the running build
+// rather than from the file they embed. Every such caller owes Valid before it
+// writes the result.
+func DecodeUnvalidatedManifest(reader io.Reader) (Manifest, error) {
 	decoder := json.NewDecoder(reader)
 	decoder.DisallowUnknownFields()
 	var manifest Manifest
@@ -100,10 +115,25 @@ func DecodeManifest(reader io.Reader) (Manifest, error) {
 	if err := requireJSONEnd(decoder); err != nil {
 		return Manifest{}, err
 	}
-	if err := manifest.Valid(); err != nil {
-		return Manifest{}, err
-	}
 	return manifest, nil
+}
+
+// Federated reports whether a plugin.json declares a federation manifest rather
+// than the installer's legacy package metadata. Discovery and installation ask
+// this one question, so a manifest that names any federated part is read and
+// refused as a manifest on both sides instead of failing as unknown legacy
+// fields on one of them.
+func Federated(raw []byte) (bool, error) {
+	var shape map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &shape); err != nil {
+		return false, fmt.Errorf("parse %s: %w", PackageFilename, err)
+	}
+	for _, part := range []string{"databases", "binary", "semantic", "verbs", "capabilities"} {
+		if shape[part] != nil {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (r Registration) CommandContext(ctx context.Context, arguments ...string) *exec.Cmd {
