@@ -344,11 +344,11 @@ mission, generated SQL, and next probes as the matching CLI mode; it is never a
 rows-only MCP shortcut.
 
 Behind the default-off experimental `features.plugins` flag, third parties extend
-queries with [isolated SQLite plugin databases and semantic layers](docs/plugins.md),
+queries with [isolated SQLite plugin databases declared in a manifest](docs/plugins.md),
 and may add Git-style `roca-<name>` neighbor executables for commands.
 
 Installed plugins may also declare idempotent rides for the default-off
-[`roca cron` train](docs/plugins.md#cron-rides). Set `features.cron = true` to
+[`roca cron` train](docs/plugins.md#scheduled-rides). Set `features.cron = true` to
 expose it; absent or false, the command does not exist. The train reads ride
 manifests whether or not `features.plugins` is set, invokes and observes those
 commands in order, defers on the core lock or a closed dependency gate, and
@@ -379,7 +379,8 @@ backup.
 
 The [docs index](docs/README.md) orders the longer reads:
 
-- [Architecture](docs/architecture.md): the four internal domains.
+- [Architecture](docs/architecture.md): the kernel, its plugins, and the four
+  internal domains.
 - [Model providers](docs/models.md): automatic CLI detection, provider order,
   local floor, and CLI-owned authentication.
 - [The MCP plug](docs/mcp.md): tools, contract, integration targets.

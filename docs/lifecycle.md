@@ -18,11 +18,11 @@ run.
 The installed binary then places its own bundled data plugins under
 `~/.roca/plugins/`. Each one carries no executable, starts as an empty SQLite
 database, is verified and recorded like any other [installed
-package](plugins.md#verified-packages-and-lifecycle), and is removed by a purge
+package](plugins.md#build-your-own-plugin), and is removed by a purge
 with the rest of that tree. It ships the resident
 [`roca-ops`](plugins.md#the-bundled-roca-ops-plugin) store, the resident
 [`roca-corpus`](plugins.md#the-bundled-roca-corpus-plugin) archive and the
-custodial [`roca-cron`](plugins.md#cron-rides) journey store. If they cannot be
+custodial [`roca-cron`](plugins.md#scheduled-rides) journey store. If they cannot be
 placed, the installer puts the previous binary back and reports the reason, so
 no partial update is left behind; when even that restore fails it names the copy
 it kept for the operator to move back by hand. A `--version` older than bundled
@@ -264,7 +264,7 @@ longer the file La Roca placed, so it survives too.
 
 Archived plugin data is the one thing a purge asks about separately.
 `~/.roca/plugin-custody/` holds the directories a custodial [plugin
-uninstall](plugins.md#verified-packages-and-lifecycle) refused to delete, so this
+uninstall](plugins.md#build-your-own-plugin) refused to delete, so this
 command names each archive with its size and removes it only after an explicit
 `y`. Declining, and any run with nobody at the terminal or with `--json`, leaves
 the archives untouched and names where each one remains.
