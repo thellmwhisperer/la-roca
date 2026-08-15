@@ -50,18 +50,11 @@ var supportedIngestFamilies = []string{
 
 func (w *ingestAcceptanceWorld) registerLifecycle(ctx *godog.ScenarioContext) {
 	ctx.Before(func(c context.Context, _ *godog.Scenario) (context.Context, error) {
-		root := filepath.Join("..", "..", ".tmp")
-		if err := os.MkdirAll(root, 0o700); err != nil {
-			return c, err
-		}
-		home, err := os.MkdirTemp(root, "ingest-acceptance-")
+		home, err := acceptanceTempDir("ingest-acceptance-")
 		if err != nil {
 			return c, err
 		}
-		w.home, err = filepath.Abs(home)
-		if err != nil {
-			return c, err
-		}
+		w.home = home
 		w.dbPath = filepath.Join(home, ".roca", "roca.db")
 		w.last, w.previous = ingestRun{}, ingestRun{}
 		w.fixturePath, w.exportPath, w.sessionID = "", "", ""
