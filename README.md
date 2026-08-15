@@ -194,8 +194,8 @@ cheap, local, and secure.
 
 ### Exact SQL, when you want it
 
-Because it is a real database, not a search box. A text search cannot answer
-this:
+Because it is a real database, not a search box. A keyword or vector index
+cannot replace an exact SQL query for this:
 
 ```sh
 roca exec "SELECT source_agent, COUNT(*) AS sessions
@@ -300,7 +300,8 @@ exactly the information the task needs instead of a whole skill.
   [plugins](docs/plugins.md#worked-executable-example-vector-search) for
   domain extensions and the plugin contract.
 - **Semantic-first agent craft.** The installed skill can use the optional
-  local vector package to retrieve conceptual candidates, then resolve their
+  local vector package to retrieve conceptual candidates when both
+  `features.plugins` and `features.vector` are enabled, then resolve their
   source context through core before forming a verdict. A vector score is not
   evidence, and literal rescue is never silently presented as semantic
   retrieval. See [Semantic retrieval](docs/semantic-retrieval.md).
