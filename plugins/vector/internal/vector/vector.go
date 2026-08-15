@@ -263,7 +263,10 @@ func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) 
 	if err != nil {
 		return nil, fmt.Errorf("inspect vector reconciliation: %w", err)
 	}
-	if !reconciled && !i.ReadOnly {
+	if !reconciled {
+		if i.ReadOnly {
+			return nil, fmt.Errorf("vector index requires writable reconciliation; run `roca vector ingest --delta`")
+		}
 		store.Close()
 		if err := i.purgeDeprecatedChunks(ctx); err != nil {
 			return nil, fmt.Errorf("purge deprecated vector chunks: %w", err)

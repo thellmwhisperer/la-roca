@@ -225,8 +225,9 @@ func TestReadOnlyQueryLeavesRetiredChunksUntouched(t *testing.T) {
 
 	readOnly := index
 	readOnly.ReadOnly = true
-	if _, err := readOnly.Query(context.Background(), "alpha", 5); err != nil {
-		t.Fatal(err)
+	if _, err := readOnly.Query(context.Background(), "alpha", 5); err == nil ||
+		!strings.Contains(err.Error(), "requires writable reconciliation") {
+		t.Fatalf("read-only query error = %v", err)
 	}
 	db, err = sql.Open("sqlite", path)
 	if err != nil {
