@@ -366,7 +366,7 @@ func stripSessionJSON(value string) string {
 	return clean.String()
 }
 
-func (c CoreCLI) ResolveSource(ctx context.Context, kind string, where locator) (string, error) {
+func (c CoreCLI) ResolveSource(ctx context.Context, kind string, where Locator) (string, error) {
 	var statement string
 	switch kind {
 	case "sessions":
@@ -411,15 +411,15 @@ func (c CoreCLI) ResolveSource(ctx context.Context, kind string, where locator) 
 	case "memories":
 		switch {
 		case where.SessionID != "" && where.HasOrdinal:
-			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE source_session=%s AND source_sequence=%d`,
-				corpusTable("memories"), sqlLiteral(where.SessionID), where.Ordinal)
+			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE %s AND source_session=%s AND source_sequence=%d ORDER BY id DESC LIMIT 1`,
+				corpusTable("memories"), activeMemory, sqlLiteral(where.SessionID), where.Ordinal)
 		case where.FilePath != "" && where.CronSource != "":
-			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE json_extract(metadata,'$.file_path')=%s AND (json_extract(metadata,'$._cron_source')=%s OR source_agent=%s)`,
-				corpusTable("memories"), sqlLiteral(where.FilePath), sqlLiteral(where.CronSource),
+			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE %s AND json_extract(metadata,'$.file_path')=%s AND (json_extract(metadata,'$._cron_source')=%s OR source_agent=%s) ORDER BY id DESC LIMIT 1`,
+				corpusTable("memories"), activeMemory, sqlLiteral(where.FilePath), sqlLiteral(where.CronSource),
 				sqlLiteral(where.CronSource))
 		default:
-			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE layer=%s AND origin=%s AND COALESCE(created_at,'')=%s`,
-				corpusTable("memories"), sqlLiteral(where.Layer), sqlLiteral(where.Origin),
+			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE %s AND layer=%s AND origin=%s AND COALESCE(created_at,'')=%s`,
+				corpusTable("memories"), activeMemory, sqlLiteral(where.Layer), sqlLiteral(where.Origin),
 				sqlLiteral(where.CreatedAt))
 		}
 		return c.resolveIdentity(ctx, kind, where, statement)
@@ -428,7 +428,7 @@ func (c CoreCLI) ResolveSource(ctx context.Context, kind string, where locator) 
 	}
 }
 
-func (c CoreCLI) resolveIdentity(ctx context.Context, kind string, where locator, statement string) (string, error) {
+func (c CoreCLI) resolveIdentity(ctx context.Context, kind string, where Locator, statement string) (string, error) {
 	rows, err := c.query(ctx, statement)
 	if err != nil {
 		return "", err

@@ -187,7 +187,7 @@ func TestCoreCLIResolvesSessionWithHumanProjectName(t *testing.T) {
 			"project_name": "Synthetic orchard",
 		}}})
 	}}
-	text, err := core.ResolveSource(context.Background(), "sessions", locator{
+	text, err := core.ResolveSource(context.Background(), "sessions", Locator{
 		SessionID: "session-design", Identity: want.identity(),
 	})
 	if err != nil {
@@ -211,7 +211,7 @@ func TestCoreCLIResolvesLiveTextAndQuotesStoredLocators(t *testing.T) {
 			{"text": "previous answer"}, {"text": "current answer"},
 		}})
 	}}
-	text, err := core.ResolveSource(context.Background(), "exchanges", locator{
+	text, err := core.ResolveSource(context.Background(), "exchanges", Locator{
 		SessionID: "operator's-session", Ordinal: 7, HasOrdinal: true, Identity: want.identity(),
 	})
 	if err != nil {
@@ -228,6 +228,23 @@ func TestCoreCLIResolvesLiveTextAndQuotesStoredLocators(t *testing.T) {
 	}
 }
 
+func TestCoreCLIResolutionExcludesDeprecatedMemoryLayers(t *testing.T) {
+	var statement string
+	core := CoreCLI{Executable: "roca", Run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		statement = args[len(args)-1]
+		return []byte(`{"rows":[]}`), nil
+	}}
+	_, err := core.ResolveSource(context.Background(), "memories", Locator{
+		Layer: "rocodata_legacy", Origin: "agent", CreatedAt: "2026-08-14", Identity: "synthetic",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(statement, "NOT LIKE 'rocodata\\_%' ESCAPE '\\'") {
+		t.Fatalf("memory resolution does not exclude deprecated RocoData layers: %s", statement)
+	}
+}
+
 func TestCoreCLIResolvesDistinctMemoriesSharingALocator(t *testing.T) {
 	want := sourceRow{kind: "memories", text: "first memory", layer: "discovery",
 		origin: "agent", createdAt: "2026-08-17"}
@@ -238,7 +255,7 @@ func TestCoreCLIResolvesDistinctMemoriesSharingALocator(t *testing.T) {
 			{"text": "first memory"}, {"text": "second memory"},
 		}})
 	}}
-	text, err := core.ResolveSource(context.Background(), "memories", locator{
+	text, err := core.ResolveSource(context.Background(), "memories", Locator{
 		SessionID: "shared-session", Ordinal: 2, HasOrdinal: true, Layer: want.layer,
 		Origin: want.origin, CreatedAt: want.createdAt, Identity: want.identity(),
 	})
@@ -262,7 +279,7 @@ func TestCoreCLIResolvesDistinctThinkingBlocksSharingALocator(t *testing.T) {
 			{"text": "first reasoning"}, {"text": "second reasoning"},
 		}})
 	}}
-	text, err := core.ResolveSource(context.Background(), "thinking_blocks", locator{
+	text, err := core.ResolveSource(context.Background(), "thinking_blocks", Locator{
 		SessionID: "shared-session", Ordinal: 2, HasOrdinal: true,
 		Position: "0.5", Identity: want.identity(),
 	})
