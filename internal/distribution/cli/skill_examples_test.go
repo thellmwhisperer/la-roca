@@ -17,9 +17,10 @@ import (
 
 // The embedded skills are the manuals whose commands this guard must prove
 // runnable; the generated semantic catalog carries no CLI examples. Every
-// command they show has to run and every layer they name has to exist, or the
-// agent is led to an invocation the product refuses. This guard checks each
-// example against the real command tree and layer registry.
+// core command they show has to run and every layer they name has to exist, or
+// the agent is led to an invocation the product refuses. Optional plugin
+// commands are checked through the production plugin dispatcher instead of the
+// core Cobra command tree.
 //
 // The three embedded skill bodies live in internal/distribution/skill/. The
 // definitive roca skill is generated from the AGENTS.md payload; a pin test
@@ -51,7 +52,11 @@ func TestEverySkillExampleIsValidAgainstTheRealCLI(t *testing.T) {
 		if len(tokens) == 0 || tokens[0] != "roca" {
 			continue
 		}
-		if taughtPluginDispatch(tokens[1:]) {
+		if isOptionalPluginInvocation(tokens[1:]) {
+			if code, out := fixture.run(tokens[1:]); code != ExitOK {
+				t.Errorf("optional plugin example did not exit 0 (code %d):\n  %s\n%s",
+					code, line, out)
+			}
 			continue
 		}
 		cmd, args := resolve(root, tokens[1:])
@@ -81,7 +86,7 @@ func TestSkillTeachesOnlyCommandsTheCLIHas(t *testing.T) {
 		if len(tokens) == 1 {
 			continue
 		}
-		if taughtPluginDispatch(tokens[1:]) {
+		if isOptionalPluginInvocation(tokens[1:]) {
 			continue
 		}
 		cmd, _ := resolve(root, tokens[1:])
@@ -322,6 +327,14 @@ func findChild(cmd *cobra.Command, name string) *cobra.Command {
 	return nil
 }
 
+// isOptionalPluginInvocation identifies commands that are intentionally absent
+// from the core Cobra tree. The production dispatcher exposes these only when
+// their feature gate is enabled; fixtureInstallation enables that gate and
+// supplies a controlled executable so the examples are still executed.
+func isOptionalPluginInvocation(tokens []string) bool {
+	return taughtPluginDispatch(tokens)
+}
+
 // validateExampleFlags checks that every flag the example uses exists on the
 // resolved command (including inherited persistent flags) and that --layer and
 // --template name something real. Nothing is executed: the gate's job is to
@@ -436,6 +449,17 @@ func fixtureInstallation(t *testing.T) skillFixture {
 	isolateRuntimeDirs(t, home)
 	runRoot(t, Build{Version: "test", Commit: "test-sha"},
 		"init", "--db-path", filepath.Join(home, ".roca", "roca.db"))
+	// Optional skill commands are exercised through the real dispatcher with
+	// both feature switches enabled. The executable is deliberately a small
+	// controlled stand-in; the vector module owns its own behavior tests.
+	writeFile(t, filepath.Join(home, ".roca", "config.toml"),
+		"[features]\nplugins = true\nvector = true\n")
+	pluginDir := t.TempDir()
+	plugin := filepath.Join(pluginDir, "roca-vector")
+	if err := os.WriteFile(plugin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", pluginDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return skillFixture{home: home}
 }
 
@@ -444,13 +468,10 @@ func fixtureInstallation(t *testing.T) skillFixture {
 // here: the caller decides what exit 0 means.
 func (skillFixture) run(args []string) (int, string) {
 	var out strings.Builder
-	env := &cliEnv{out: &out, errOut: &out}
-	root := rootCommand(env)
-	root.SetArgs(args)
-	err := root.Execute()
+	code, err := executeCommand(Build{Version: "test", Commit: "test-sha"}, &out, &out, args, true)
 	if err != nil {
 		fmt.Fprintf(&out, "error: %v", err)
 		return ExitError, out.String()
 	}
-	return env.code, out.String()
+	return code, out.String()
 }
