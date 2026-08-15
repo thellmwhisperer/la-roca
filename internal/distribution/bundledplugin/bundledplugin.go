@@ -3,6 +3,7 @@
 package bundledplugin
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -21,6 +22,7 @@ type Spec struct {
 	DatabaseFilename string
 	Source           string
 	Semantic         []byte
+	Manifest         []byte
 	ApplySchema      func(string) error
 }
 
@@ -69,9 +71,9 @@ func Ensure(root, binDir, version string, spec Spec) (plugininstall.Result, erro
 }
 
 func (spec Spec) valid() error {
-	if spec.Name == "" || spec.DatabaseFilename == "" || spec.Source == "" ||
-		len(spec.Semantic) == 0 || spec.ApplySchema == nil {
-		return fmt.Errorf("a bundled plugin needs a name, database, source, semantic layer, and schema owner")
+	if spec.Name == "" || spec.DatabaseFilename == "" || spec.Source == "" || spec.ApplySchema == nil ||
+		(len(spec.Semantic) == 0) == (len(spec.Manifest) == 0) {
+		return fmt.Errorf("a bundled plugin needs a name, database, source, one manifest format, and schema owner")
 	}
 	return nil
 }
@@ -90,14 +92,28 @@ func materialize(root, version string, spec Spec) (plugininstall.Candidate, func
 		return plugininstall.Candidate{}, func() {}, err
 	}
 
-	metadata, err := json.Marshal(map[string]any{"schema": 1, "name": spec.Name, "version": version})
+	var metadata []byte
+	if len(spec.Manifest) > 0 {
+		manifest, decodeErr := plugin.DecodeUnvalidatedManifest(bytes.NewReader(spec.Manifest))
+		if decodeErr != nil {
+			return fail(fmt.Errorf("parse bundled %s: %w", plugin.PackageFilename, decodeErr))
+		}
+		manifest.Name, manifest.Version = spec.Name, version
+		if err := manifest.Valid(); err != nil {
+			return fail(err)
+		}
+		metadata, err = json.MarshalIndent(manifest, "", "  ")
+	} else {
+		metadata, err = json.Marshal(map[string]any{"schema": 1, "name": spec.Name, "version": version})
+	}
 	if err != nil {
 		return fail(err)
 	}
-	for name, body := range map[string][]byte{
-		plugininstall.PackageFilename: append(metadata, '\n'),
-		plugin.SemanticFilename:       spec.Semantic,
-	} {
+	payload := map[string][]byte{plugininstall.PackageFilename: append(metadata, '\n')}
+	if len(spec.Semantic) > 0 {
+		payload[plugin.SemanticFilename] = spec.Semantic
+	}
+	for name, body := range payload {
 		if err := os.WriteFile(filepath.Join(directory, name), body, 0o600); err != nil {
 			return fail(fmt.Errorf("write bundled %s: %w", name, err))
 		}
@@ -106,7 +122,10 @@ func materialize(root, version string, spec Spec) (plugininstall.Candidate, func
 		return fail(err)
 	}
 
-	names := []string{plugininstall.PackageFilename, plugin.SemanticFilename, spec.DatabaseFilename}
+	names := []string{plugininstall.PackageFilename, spec.DatabaseFilename}
+	if len(spec.Semantic) > 0 {
+		names = append(names, plugin.SemanticFilename)
+	}
 	sort.Strings(names)
 	var checksums strings.Builder
 	for _, name := range names {

@@ -28,7 +28,11 @@ const (
 	// ManifestFilename is the installed package manifest every installer writes
 	// and discovery reads, so both sides name the same file.
 	ManifestFilename = ".roca-plugin.json"
-	MaxAttached      = 10
+	// BundledSource is the installed source only this build's own installer
+	// writes. An installable third-party reference is a directory, a URL, or
+	// owner/repo, so no installation an operator asks for can record it.
+	BundledSource = "bundled:roca"
+	MaxAttached   = 10
 	// ProvenanceColumn names every row's source database, so a semantic layer
 	// may not declare a column that would be overwritten by it.
 	ProvenanceColumn = "database"
@@ -58,12 +62,16 @@ type SemanticTable struct {
 }
 
 type Descriptor struct {
-	Name      string   `json:"name"`
-	Directory string   `json:"-"`
-	Database  string   `json:"-"`
-	Schema    string   `json:"schema"`
-	Semantic  Semantic `json:"semantic"`
-	relevance int
+	Name         string    `json:"name"`
+	Directory    string    `json:"-"`
+	Database     string    `json:"-"`
+	DatabaseName string    `json:"database_name,omitempty"`
+	Schema       string    `json:"schema"`
+	Retention    string    `json:"retention,omitempty"`
+	Semantic     Semantic  `json:"semantic"`
+	Manifest     *Manifest `json:"-"`
+	SourceLabel  string    `json:"-"`
+	relevance    int
 }
 
 type Table struct {
@@ -82,7 +90,22 @@ func (d Database) ReadOnlyURI() string {
 	return databaseURI(d.Database)
 }
 
-func (d Descriptor) Source() string { return "plugin:" + d.Name }
+func (d Descriptor) Source() string {
+	if d.SourceLabel != "" {
+		return d.SourceLabel
+	}
+	return "plugin:" + d.Name
+}
+
+// databaseLabel names one database inside its package. A descriptor that has
+// not migrated to a manifest declares no database name, so the alias it is
+// attached under is the only name it has.
+func (d Descriptor) databaseLabel() string {
+	if d.DatabaseName != "" {
+		return d.DatabaseName
+	}
+	return d.Schema
+}
 
 func Discover(root string) ([]Descriptor, []string) {
 	if strings.TrimSpace(root) == "" {
@@ -106,64 +129,213 @@ func Discover(root string) ([]Descriptor, []string) {
 		if executablePackage(directory) {
 			continue
 		}
-		descriptor, err := Inspect(entry.Name(), directory)
+		descriptors, err := InspectAll(entry.Name(), directory)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("plugin %s is unavailable: %v", entry.Name(), err))
 			continue
 		}
-		found = append(found, descriptor)
+		found = append(found, descriptors...)
 	}
-	slices.SortFunc(found, func(a, b Descriptor) int { return strings.Compare(a.Name, b.Name) })
-	disambiguateSchemas(found)
+	found, schemaWarnings := resolveSchemas(found)
+	warnings = append(warnings, schemaWarnings...)
+	slices.SortFunc(found, func(a, b Descriptor) int {
+		if compared := strings.Compare(a.Name, b.Name); compared != 0 {
+			return compared
+		}
+		return strings.Compare(a.DatabaseName, b.DatabaseName)
+	})
 	return found, warnings
 }
 
-func executablePackage(directory string) bool {
+// installedPackage is the part of the local installation inventory discovery
+// reads: the kind that decides whether a directory is a data plugin at all, and
+// the source that says whether this build installed it itself.
+type installedPackage struct {
+	Schema int    `json:"schema"`
+	Kind   string `json:"kind"`
+	Source string `json:"source"`
+}
+
+func readInstalledPackage(directory string) (installedPackage, bool) {
 	file, err := os.Open(filepath.Join(directory, ManifestFilename))
 	if err != nil {
-		return false
+		return installedPackage{}, false
 	}
 	defer file.Close()
-	var manifest struct {
-		Schema int    `json:"schema"`
-		Kind   string `json:"kind"`
+	var manifest installedPackage
+	if err := json.NewDecoder(file).Decode(&manifest); err != nil {
+		return installedPackage{}, false
 	}
-	return json.NewDecoder(file).Decode(&manifest) == nil &&
-		manifest.Schema == 1 && manifest.Kind == "executable"
+	return manifest, true
+}
+
+func executablePackage(directory string) bool {
+	manifest, ok := readInstalledPackage(directory)
+	return ok && manifest.Schema == 1 && manifest.Kind == "executable"
+}
+
+func bundledPackage(directory string) bool {
+	manifest, ok := readInstalledPackage(directory)
+	return ok && manifest.Source == BundledSource
 }
 
 // Inspect parses one plugin directory without requiring it to be installed.
 // Installers use the same structural validation as query discovery.
 func Inspect(name, directory string) (Descriptor, error) {
+	descriptors, err := InspectAll(name, directory)
+	if err != nil {
+		return Descriptor{}, err
+	}
+	if len(descriptors) != 1 {
+		return Descriptor{}, fmt.Errorf("plugin %s declares %d databases; inspect all of them", name, len(descriptors))
+	}
+	return descriptors[0], nil
+}
+
+// InspectAll parses every database declaration in a plugin. A directory that
+// has not migrated yet continues through the legacy semantic.yaml reader;
+// manifest-backed plugins never fall back when their declaration is malformed.
+func InspectAll(name, directory string) ([]Descriptor, error) {
 	if !validPluginName(name) {
-		return Descriptor{}, fmt.Errorf("invalid plugin name %q", name)
+		return nil, fmt.Errorf("invalid plugin name %q", name)
+	}
+	manifestPath := filepath.Join(directory, PackageFilename)
+	if raw, err := os.ReadFile(manifestPath); err == nil {
+		federated, err := Federated(raw)
+		if err != nil {
+			return nil, err
+		}
+		if federated {
+			manifest, err := ReadManifest(manifestPath)
+			if err != nil {
+				return nil, err
+			}
+			if manifest.Name != name {
+				return nil, fmt.Errorf("%s names plugin %q, not directory %q", PackageFilename, manifest.Name, name)
+			}
+			descriptors := make([]Descriptor, 0, len(manifest.Databases))
+			multiple := len(manifest.Databases) > 1
+			for _, declaration := range manifest.Databases {
+				semantic, _ := manifest.semanticFor(declaration.Name)
+				source := "plugin:" + name
+				if multiple {
+					source += "/" + declaration.Name
+				}
+				descriptors = append(descriptors, Descriptor{
+					Name: name, Directory: directory,
+					Database: filepath.Join(directory, declaration.Path), DatabaseName: declaration.Name,
+					Schema: declaration.Alias, Retention: declaration.Retention,
+					Semantic: semantic, Manifest: &manifest, SourceLabel: source,
+				})
+			}
+			return descriptors, nil
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("read %s: %w", PackageFilename, err)
 	}
 	semantic, err := readSemantic(filepath.Join(directory, SemanticFilename))
 	if err != nil {
-		return Descriptor{}, err
+		return nil, err
 	}
 	database, err := soleDatabase(directory)
 	if err != nil {
-		return Descriptor{}, err
+		return nil, err
 	}
-	return Descriptor{
+	return []Descriptor{{
 		Name: name, Directory: directory, Database: database,
 		Schema: schemaName(name), Semantic: semantic,
-	}, nil
+	}}, nil
 }
 
+// disambiguateSchemas rewrites only the aliases discovery derives from a
+// directory name, and it weighs them against every alias in play: a derived
+// alias yields to a declared one, so a legacy directory can never collide the
+// manifest that named the same alias out of the catalogue.
 func disambiguateSchemas(descriptors []Descriptor) {
-	counts := make(map[string]int, len(descriptors))
-	for _, descriptor := range descriptors {
-		counts[descriptor.Schema]++
-	}
+	counts := schemaCounts(descriptors)
 	for index := range descriptors {
-		if counts[descriptors[index].Schema] < 2 {
+		if descriptors[index].Manifest != nil || counts[descriptors[index].Schema] < 2 {
 			continue
 		}
 		digest := sha256.Sum256([]byte(descriptors[index].Name))
 		descriptors[index].Schema += fmt.Sprintf("_%x", digest[:4])
 	}
+}
+
+func schemaCounts(descriptors []Descriptor) map[string]int {
+	counts := make(map[string]int, len(descriptors))
+	for _, descriptor := range descriptors {
+		counts[descriptor.Schema]++
+	}
+	return counts
+}
+
+// resolveSchemas settles every alias more than one descriptor declares, and
+// names the plugins that declared it so the operator knows which installation
+// to act on. A package this build installed itself keeps the alias it declared:
+// a third-party declaration may make itself unavailable, never the bundled seat
+// it collides with. Between equals the collision stays an error, because a
+// declared alias is not a name the kernel rewrites.
+func resolveSchemas(descriptors []Descriptor) ([]Descriptor, []string) {
+	disambiguateSchemas(descriptors)
+	counts := schemaCounts(descriptors)
+	claims := map[string][]Descriptor{}
+	var found []Descriptor
+	for _, descriptor := range descriptors {
+		if counts[descriptor.Schema] < 2 {
+			found = append(found, descriptor)
+			continue
+		}
+		claims[descriptor.Schema] = append(claims[descriptor.Schema], descriptor)
+	}
+	aliases := make([]string, 0, len(claims))
+	for alias := range claims {
+		aliases = append(aliases, alias)
+	}
+	slices.Sort(aliases)
+	var warnings []string
+	for _, alias := range aliases {
+		kept, evicted := settleClaim(claims[alias])
+		if kept == nil {
+			warnings = append(warnings, fmt.Sprintf(
+				"plugin attach alias %q is declared by %s; those plugins are unavailable",
+				alias, strings.Join(pluginNames(evicted), ", ")))
+			continue
+		}
+		found = append(found, *kept)
+		warnings = append(warnings, fmt.Sprintf(
+			"plugin attach alias %q belongs to the bundled %s plugin; %s is unavailable",
+			alias, kept.Name, strings.Join(pluginNames(evicted), ", ")))
+	}
+	return found, warnings
+}
+
+// settleClaim answers which claimant, if any, keeps a contested alias. Exactly
+// one bundled claimant wins it; anything else leaves every claimant without it.
+func settleClaim(claimants []Descriptor) (*Descriptor, []Descriptor) {
+	var bundled, others []Descriptor
+	for _, claimant := range claimants {
+		if bundledPackage(claimant.Directory) {
+			bundled = append(bundled, claimant)
+			continue
+		}
+		others = append(others, claimant)
+	}
+	if len(bundled) != 1 {
+		return nil, claimants
+	}
+	return &bundled[0], others
+}
+
+func pluginNames(descriptors []Descriptor) []string {
+	names := make([]string, 0, len(descriptors))
+	for _, descriptor := range descriptors {
+		if !slices.Contains(names, descriptor.Name) {
+			names = append(names, descriptor.Name)
+		}
+	}
+	slices.Sort(names)
+	return names
 }
 
 func readSemantic(path string) (Semantic, error) {
@@ -188,24 +360,28 @@ func readSemantic(path string) (Semantic, error) {
 }
 
 func (s Semantic) valid() error {
+	return s.validFor(SemanticFilename)
+}
+
+func (s Semantic) validFor(source string) error {
 	if s.Version != 1 {
-		return fmt.Errorf("%s version is %d, want 1", SemanticFilename, s.Version)
+		return fmt.Errorf("%s semantic version is %d, want 1", source, s.Version)
 	}
 	if s.Attachment != AttachmentOnDemand && s.Attachment != AttachmentResident {
-		return fmt.Errorf("%s attachment is %q, want %q or %q", SemanticFilename,
+		return fmt.Errorf("%s attachment is %q, want %q or %q", source,
 			s.Attachment, AttachmentResident, AttachmentOnDemand)
 	}
 	if strings.TrimSpace(s.Description) == "" {
-		return fmt.Errorf("%s has no description", SemanticFilename)
+		return fmt.Errorf("%s has no description", source)
 	}
 	if len(s.Tables) == 0 {
-		return fmt.Errorf("%s describes no tables", SemanticFilename)
+		return fmt.Errorf("%s describes no tables", source)
 	}
 	servesQuestions := len(s.Questions) > 0
 	seen := map[string]bool{}
 	for _, table := range s.Tables {
 		if !validIdentifier(table.Name) || seen[table.Name] {
-			return fmt.Errorf("%s has an invalid or repeated table %q", SemanticFilename, table.Name)
+			return fmt.Errorf("%s has an invalid or repeated table %q", source, table.Name)
 		}
 		seen[table.Name] = true
 		if strings.TrimSpace(table.Description) == "" || len(table.Columns) == 0 {
@@ -225,7 +401,7 @@ func (s Semantic) valid() error {
 		}
 	}
 	if !servesQuestions {
-		return fmt.Errorf("%s declares no questions it serves", SemanticFilename)
+		return fmt.Errorf("%s declares no questions it serves", source)
 	}
 	return nil
 }

@@ -2,6 +2,7 @@ package rocacorpus_test
 
 import (
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -19,6 +20,22 @@ func TestTheBundledCorpusOwnsThePerennialHarvestSchema(t *testing.T) {
 	}
 	if installed.Risk != plugininstall.DataOnly || installed.Executable != "" {
 		t.Fatalf("bundle risk = %s, executable = %q", installed.Risk, installed.Executable)
+	}
+	if _, err := os.Stat(filepath.Join(installed.Directory, plugin.SemanticFilename)); !os.IsNotExist(err) {
+		t.Fatalf("corpus still ships the legacy semantic layer: %v", err)
+	}
+	manifest, err := plugin.ReadManifest(filepath.Join(installed.Directory, plugin.PackageFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	registrations, err := plugin.Register(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Name != rocacorpus.Name || manifest.Version != "v-test" || manifest.Binary != "roca" ||
+		len(manifest.Databases) != 1 || manifest.Databases[0].Alias != "plugin_roca_corpus" ||
+		len(registrations) != 1 || registrations[0].CLI != "ingest" || registrations[0].MCP != "roca_ingest" {
+		t.Fatalf("corpus manifest = %+v, registrations = %+v", manifest, registrations)
 	}
 
 	descriptor, err := plugin.Inspect(installed.Name, installed.Directory)

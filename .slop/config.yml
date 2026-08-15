@@ -56,6 +56,12 @@ scopes:
 orphan_scopes:
   markdown:
     files: ["**/*.md"]
+    # `plugins/vector/` is an independent module whose README is that module's
+    # own entry point, and the kernel's public documentation deliberately does
+    # not advertise it. The exemption names that one file: every other plugin
+    # README is a new public surface and stays active debt until something
+    # outside itself consumes it.
+    ignore: ["plugins/vector/README.md"]
 
   public_surfaces:
     files:
