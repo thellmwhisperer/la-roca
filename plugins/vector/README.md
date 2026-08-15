@@ -24,6 +24,10 @@ does not place the binary. Set `features.vector = true` as well: absent or false
 hides `roca vector` dispatch and its `roca plugins` entry even when the binary
 is on `PATH`. Installation supplies the package; the switch activates it.
 
+The corpus walk excludes deprecated `rocodata_*` memory layers. Historical
+RocoData imports therefore cannot enter a new vector index; the canonical La
+Roca corpus remains the only memory source used by semantic retrieval.
+
 ## Use
 
 Ollama must be running locally. The default model is
