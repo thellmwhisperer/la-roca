@@ -2,9 +2,11 @@ package ingest
 
 import (
 	"bytes"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
@@ -33,6 +35,7 @@ func TestDetectedAgentsFollowExistingStores(t *testing.T) {
 		roots.CoworkSessions,
 		roots.CodexRoot,
 		roots.PiSessions,
+		roots.GrokSessions,
 	} {
 		if err := os.MkdirAll(path, 0o700); err != nil {
 			t.Fatal(err)
@@ -48,7 +51,7 @@ func TestDetectedAgentsFollowExistingStores(t *testing.T) {
 	}
 
 	plan := Scan(roots)
-	want := []string{"claude", "claude-desktop", "cowork", "codex", "opencode", "pi", "hermes"}
+	want := []string{"claude", "claude-desktop", "cowork", "codex", "opencode", "pi", "hermes", "grok"}
 	if !slices.Equal(plan.DetectedAgents, want) {
 		t.Fatalf("detected agents = %v, want %v", plan.DetectedAgents, want)
 	}
@@ -228,5 +231,67 @@ func TestContributedLocationsStayInsideTheirDeclaredStore(t *testing.T) {
 				t.Fatalf("warnings = %v, want a warning %t", plan.Warnings, testCase.wantWarning)
 			}
 		})
+	}
+}
+
+// The Grok store files sessions by the URL-escaped working directory they ran
+// in. The escape is lossless, so the project decodes from the directory name
+// alone, and the La Roca runner store is excluded exactly as every other
+// source's is.
+func TestGrokSessionsDecodeTheirProjectAndTheRunnerIsExcluded(t *testing.T) {
+	home := t.TempDir()
+	w := &world{
+		home:      home,
+		workspace: filepath.Join(home, "w"),
+		env:       Environment{GOOS: "darwin", Home: home},
+		settings: Settings{
+			WorkspaceRoots: []string{filepath.Join(home, "w")},
+			RunnerDir:      filepath.Join(home, ".roca", "runner"),
+		},
+	}
+	roots := w.roots()
+	project := filepath.Join(w.workspace, "demo")
+	session := "99999999-8888-7777-6666-555555555555"
+	for _, dir := range []string{
+		filepath.Join(roots.GrokSessions, url.PathEscape(project), session),
+		filepath.Join(roots.GrokSessions, url.PathEscape(roots.RunnerDir), session),
+	} {
+		w.write(t, filepath.Join(dir, "summary.json"),
+			`{"info":{"id":"grok-fixture-1","cwd":"`+project+`"}}`)
+		w.write(t, filepath.Join(dir, "chat_history.jsonl"),
+			`{"type":"user","content":[{"type":"text","text":"synthetic question"}]}`+"\n")
+	}
+
+	plan := Scan(roots)
+	var decoded *Target
+	var excluded *Target
+	for i := range plan.Targets {
+		target := &plan.Targets[i]
+		if target.Kind != parsers.KindGrokSession {
+			continue
+		}
+		if strings.HasPrefix(filepath.Base(target.Path), "chat") && target.SessionID == session {
+			decoded = target
+		}
+	}
+	for i := range plan.Excluded {
+		if strings.Contains(plan.Excluded[i].Path, "runner") {
+			excluded = &plan.Excluded[i]
+		}
+	}
+	if decoded == nil {
+		t.Fatal("the demo Grok transcript was not scanned")
+	}
+	if decoded.Project != "demo" {
+		t.Errorf("project = %q, want demo", decoded.Project)
+	}
+	if decoded.SidecarPath == "" || !strings.HasSuffix(decoded.SidecarPath, "summary.json") {
+		t.Errorf("sidecar = %q, want the paired summary.json", decoded.SidecarPath)
+	}
+	if excluded == nil {
+		t.Fatal("the runner Grok session was not excluded")
+	}
+	if len(plan.Warnings) != 0 {
+		t.Fatalf("the excluded runner created an operator warning: %v", plan.Warnings)
 	}
 }

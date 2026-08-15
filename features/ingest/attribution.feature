@@ -33,3 +33,4 @@ Feature: Who wrote what
       | claude-desktop |
       | codex          |
       | hermes         |
+      | grok           |

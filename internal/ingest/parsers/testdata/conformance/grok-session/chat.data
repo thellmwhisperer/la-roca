@@ -1,0 +1,4 @@
+{"type":"system","content":"You are Grok Build, a synthetic fixture assistant."}
+{"type":"user","content":[{"type":"text","text":"Count the invented beacons."}]}
+{"type":"reasoning","summary":[{"type":"summary_text","text":"Three were invented."}]}
+{"type":"assistant","content":"Three beacons.","model_id":"grok-fixture-model"}
