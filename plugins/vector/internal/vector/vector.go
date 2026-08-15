@@ -194,7 +194,7 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 	report := Delta{}
 	desiredFingerprints := make(map[string]string, len(existing))
 	pending := make([]desiredChunk, 0, defaultBatchSize)
-	locatorUpdates := make([]locatorUpdate, 0)
+	locatorUpdates := make(map[int64]locatorUpdate)
 	flush := func() error {
 		if len(pending) == 0 {
 			return nil
@@ -221,7 +221,7 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 				return fmt.Errorf("embedding %d has %d dimensions, want %d", n, len(vectors[n]), dimensions)
 			}
 		}
-		if err := writeBatch(ctx, store, pending, vectors, existing, &report); err != nil {
+		if err := writeBatch(ctx, store, pending, vectors, existing, locatorUpdates, &report); err != nil {
 			return err
 		}
 		pending = pending[:0]
@@ -243,7 +243,7 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 			desiredFingerprints[key] = chunk.fingerprint
 			if old, ok := existing[key]; ok && old.fingerprint == chunk.fingerprint {
 				if old.locator != chunk.locator {
-					locatorUpdates = append(locatorUpdates, locatorUpdate{id: old.id, locator: chunk.locator})
+					locatorUpdates[old.id] = locatorUpdate{id: old.id, locator: chunk.locator}
 					existing[key] = storedChunk{id: old.id, sourceKind: old.sourceKind, fingerprint: old.fingerprint, locator: chunk.locator}
 					report.Updated++
 				} else {
@@ -704,7 +704,7 @@ func ensureVectorTables(db *sql.DB, dimensions int, model string) error {
 }
 
 func writeBatch(ctx context.Context, db *sql.DB, chunks []desiredChunk, vectors [][]float32,
-	existing map[string]storedChunk, report *Delta) error {
+	existing map[string]storedChunk, locatorUpdates map[int64]locatorUpdate, report *Delta) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -730,7 +730,8 @@ func writeBatch(ctx context.Context, db *sql.DB, chunks []desiredChunk, vectors 
 				return err
 			}
 			report.Updated++
-		existing[key] = storedChunk{id: old.id, sourceKind: chunk.sourceKind, fingerprint: chunk.fingerprint, locator: chunk.locator}
+			locatorUpdates[old.id] = locatorUpdate{id: old.id, locator: chunk.locator}
+			existing[key] = storedChunk{id: old.id, sourceKind: chunk.sourceKind, fingerprint: chunk.fingerprint, locator: chunk.locator}
 			continue
 		}
 		result, err := tx.ExecContext(ctx, `INSERT INTO chunks(source_kind,source_id,chunk_index,fingerprint,locator) VALUES (?,?,?,?,?)`,
@@ -754,7 +755,7 @@ func writeBatch(ctx context.Context, db *sql.DB, chunks []desiredChunk, vectors 
 	return tx.Commit()
 }
 
-func updateLocators(ctx context.Context, db *sql.DB, updates []locatorUpdate) error {
+func updateLocators(ctx context.Context, db *sql.DB, updates map[int64]locatorUpdate) error {
 	if len(updates) == 0 {
 		return nil
 	}
