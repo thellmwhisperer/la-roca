@@ -206,13 +206,7 @@ func TestEitherCallSinkCanFailWithoutLosingTheOther(t *testing.T) {
 
 	t.Run("ops failure leaves the JSONL call", func(t *testing.T) {
 		root, database := historyFixture(t)
-		db := openHistoryDB(t, database)
-		if _, err := db.Exec(`DROP TABLE call_history`); err != nil {
-			t.Fatal(err)
-		}
-		if err := db.Close(); err != nil {
-			t.Fatal(err)
-		}
+		dropHistoryTable(t, database)
 		writer := NewWithOps(root, database)
 		err := writer.Append(MCPAudit, MCPRecord{CallRecord: CallRecord{
 			Timestamp: time.Now(), Source: "mcp", Args: map[string]any{}, OK: true,
@@ -241,16 +235,21 @@ func TestDoctorRollsBackToJSONLWhenTheVerifiedOpsReadBreaks(t *testing.T) {
 	if err := writer.Backfill(); err != nil {
 		t.Fatal(err)
 	}
+	dropHistoryTable(t, database)
+	summary, err := writer.RecentQueryFailures(now.Add(time.Minute), 24*time.Hour, 5)
+	if err != nil || summary.Count != 1 || summary.Recent[0].CorrelationID != "qf_doctor_rollback" {
+		t.Fatalf("JSONL rollback summary = %+v, err %v", summary, err)
+	}
+}
+
+func dropHistoryTable(t *testing.T, database string) {
+	t.Helper()
 	db := openHistoryDB(t, database)
 	if _, err := db.Exec(`DROP TABLE call_history`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
-	}
-	summary, err := writer.RecentQueryFailures(now.Add(time.Minute), 24*time.Hour, 5)
-	if err != nil || summary.Count != 1 || summary.Recent[0].CorrelationID != "qf_doctor_rollback" {
-		t.Fatalf("JSONL rollback summary = %+v, err %v", summary, err)
 	}
 }
 

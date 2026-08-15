@@ -74,11 +74,11 @@ func New(svc *service.Service, build Build) *mcp.Server {
 
 	dbPath := svc.DB().Path()
 	dataDir := svc.DataDir()
-	audit := logfile.New(svc.DataDir())
-	if svc.PluginDir() != "" {
-		audit = logfile.NewWithOps(svc.DataDir(), filepath.Join(
-			svc.PluginDir(), rocaops.Name, rocaops.DatabaseFilename))
+	opsDatabase := ""
+	if pluginDir := svc.PluginDir(); pluginDir != "" {
+		opsDatabase = filepath.Join(pluginDir, rocaops.Name, rocaops.DatabaseFilename)
 	}
+	audit := logfile.NewWithOps(dataDir, opsDatabase)
 	_ = audit.Prepare()
 	_ = audit.BackfillIfNeeded()
 	manifest, err := rocaops.Manifest(build.Version)
