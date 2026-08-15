@@ -1,0 +1,10 @@
+{
+  "parser": "claude_web_memories",
+  "destination": "store",
+  "source": "memories.data",
+  "meta": {"Path":"/synthetic/claude-web/memories.data","FileName":"memories.data","SourceAgent":"claude-web"},
+  "want": {
+    "sessions": [],
+    "memories": [{"layer":"user","content":"The fictional observatory uses cobalt glass.","source_agent":"claude-web"}]
+  }
+}

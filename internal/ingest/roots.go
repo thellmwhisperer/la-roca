@@ -62,6 +62,8 @@ type Settings struct {
 
 // Roots are the resolved locations of every source in the v1 matrix.
 type Roots struct {
+	// Home anchors home-relative locations declared by contributed parsers.
+	Home                  string
 	ClaudeProjects        string
 	ClaudeDesktopSessions string
 	CoworkSessions        string
@@ -102,6 +104,7 @@ func ResolveRoots(env Environment, settings Settings) Roots {
 	appSupport := claudeAppSupport(env)
 
 	roots := Roots{
+		Home: env.Home,
 		ClaudeProjects: pick(env, settings.ClaudeProjects, envClaudeProjects,
 			join(env, claude, "projects")),
 		ClaudeDesktopSessions: expand(env, firstNonEmpty(settings.ClaudeDesktopSessions,

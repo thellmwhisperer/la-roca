@@ -1,0 +1,3 @@
+{"type":"session_meta","timestamp":"2026-08-01T12:00:00Z","payload":{"id":"fixture-codex","cwd":"/synthetic/lighthouse","timestamp":"2026-08-01T12:00:00Z"}}
+{"type":"event_msg","timestamp":"2026-08-01T12:00:01Z","payload":{"type":"user_message","message":"Open the imaginary hatch."}}
+{"type":"event_msg","timestamp":"2026-08-01T12:00:02Z","payload":{"type":"task_complete","last_agent_message":"The hatch is open."}}
