@@ -56,6 +56,9 @@ func TestCoreCLIWalksEverySourceThroughRocaExec(t *testing.T) {
 	if len(queries) != 4 || len(sources) != 4 {
 		t.Fatalf("queries=%d sources=%+v", len(queries), sources)
 	}
+	if !strings.Contains(queries[0], "NOT LIKE 'rocodata\\_%' ESCAPE '\\'") {
+		t.Fatalf("memory walk does not exclude deprecated RocoData layers: %s", queries[0])
+	}
 	if sources[0].filePath != "notes.md" || sources[1].stableID() != "exchanges/s1/4/"+sources[1].identity() ||
 		!strings.Contains(sources[2].stableID(), "/unkeyed/") || sources[3].stableID() != "sessions/s1/"+sources[3].identity() ||
 		sources[3].text != "delta session\nSynthetic orchard" {

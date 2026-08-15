@@ -28,6 +28,9 @@ make -C plugins/vector package
 roca plugin install .tmp/vector-package
 ```
 
+The corpus walk excludes deprecated `rocodata_*` memory layers. Historical
+RocoData imports therefore cannot enter a new vector index; the canonical La
+Roca corpus remains the only memory source used by semantic retrieval.
 ## Use
 
 Ollama must be running locally. The default model is

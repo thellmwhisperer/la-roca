@@ -50,6 +50,7 @@ const (
 	exchangeText       = `trim(COALESCE(human_text,'') || CASE WHEN human_text IS NOT NULL AND agent_text IS NOT NULL THEN char(10)||char(10) ELSE '' END || COALESCE(agent_text,''))`
 	sessionProjectName = `CASE WHEN json_valid(COALESCE(metadata,'')) THEN CASE WHEN json_type(metadata,'$.project_name')='text' THEN COALESCE(json_extract(metadata,'$.project_name'),'') ELSE '' END ELSE '' END`
 	corpusSchema       = "plugin_roca_corpus"
+    activeMemory       = `COALESCE(content,'') <> '' AND lower(COALESCE(layer,'')) NOT LIKE 'rocodata\_%' ESCAPE '\'`
 )
 
 var (
@@ -134,8 +135,8 @@ func corePages() []corePage {
 					source_sequence,COALESCE(source_agent,'') AS source_agent,
 					COALESCE(metadata,'{}') AS metadata,COALESCE(layer,'') AS layer,
 					COALESCE(origin,'') AS origin,COALESCE(created_at,'') AS created_at
-					FROM %s WHERE COALESCE(content,'') <> '' AND id > %s ORDER BY id LIMIT %d`,
-					corpusTable("memories"), cursor, walkPageSize)
+					FROM %s WHERE %s AND id > %s ORDER BY id LIMIT %d`,
+					corpusTable("memories"), activeMemory, cursor, walkPageSize)
 			},
 			decode: decodeMemory,
 		},
