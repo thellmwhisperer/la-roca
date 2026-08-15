@@ -180,6 +180,11 @@ func sourceIs(meta FileMeta, allowed ...string) bool {
 }
 
 func firstObject(content []byte) map[string]json.RawMessage {
+	var object map[string]json.RawMessage
+	if json.Unmarshal(content, &object) == nil && object != nil {
+		return object
+	}
+
 	decoder := json.NewDecoder(bytes.NewReader(content))
 	token, err := decoder.Token()
 	if err != nil {
