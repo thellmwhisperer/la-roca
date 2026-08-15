@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
@@ -36,14 +37,11 @@ func TestEnsureInstallsTheBundledResidentDataOnlyPluginAndPreservesItsDatabase(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantVerbs := map[string]struct {
-		command    []string
-		ownCommand bool
-	}{
-		"store": {command: []string{"store"}, ownCommand: true},
-		"query": {command: []string{"query"}, ownCommand: true},
-		"exec":  {command: []string{"exec"}, ownCommand: true},
-		"sql":   {command: []string{"query", "--sql-only"}},
+	wantVerbs := map[string][]string{
+		"store": {"store"},
+		"query": {"query"},
+		"exec":  {"exec"},
+		"sql":   {"query", "--sql-only"},
 	}
 	if manifest.Name != rocaops.Name || manifest.Version != "v-test" || manifest.Binary != "roca" ||
 		len(manifest.Databases) != 1 || manifest.Databases[0].Alias != "plugin_roca_ops" ||
@@ -53,8 +51,8 @@ func TestEnsureInstallsTheBundledResidentDataOnlyPluginAndPreservesItsDatabase(t
 	for _, registration := range registrations {
 		want, exists := wantVerbs[registration.Name]
 		if !exists || registration.MCP != "roca_"+registration.Name ||
-			!slices.Equal(registration.Command, want.command) ||
-			(registration.CLI == registration.Command[0]) != want.ownCommand {
+			!slices.Equal(registration.Command, want) ||
+			registration.CLI != strings.Join(want, " ") {
 			t.Fatalf("ops verb registration = %+v", registration)
 		}
 		delete(wantVerbs, registration.Name)

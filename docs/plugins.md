@@ -169,8 +169,11 @@ never reaches the SQL model. No plugin table may declare a column named
 
 A verb is the public name. A capability is the executable call behind it. The
 engine derives both public names from that one record, so a verb cannot reach
-the two surfaces as two different contracts. The current build registers that
-CLI command from the record for bundled manifest plugins. A third-party verb is
+the two surfaces as two different contracts. The MCP tool is always
+`roca_<verb>`; the CLI name is the capability's own call, so a verb that rides
+an existing command names that command with its flags instead of advertising
+one the binary does not have. The current build registers that CLI command from
+the record for bundled manifest plugins. A third-party verb is
 validated and reserved, and until its own registration step lands it reaches the
 CLI only when a `roca-<verb>` executable sits on `PATH`; the MCP server likewise
 still declares its own tool list. A capability's `command` is prepended to the
@@ -337,7 +340,7 @@ before it touches those archives: see [Uninstall](lifecycle.md#uninstall).
 
 Plugins should treat the `roca` process as the public API:
 
-- use `roca query`, `roca sql`, and `roca exec` for gated reads;
+- use `roca query`, `roca query --sql-only`, and `roca exec` for gated reads;
 - use `roca store --origin plugin:<name>` for attributed operational writes;
 - use `--json` for machine-shaped CLI output;
 - use `roca mcp serve` when MCP is the natural transport.
