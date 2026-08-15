@@ -149,10 +149,14 @@ incremental, idempotent, read-only against live stores.
 - **A query is two inferences.** The first sees the schema, never your rows,
   and writes one `SELECT`. The second sees only result rows. Either can be
   a local model.
-- **Exact retrieval, no embeddings in core.** Recovery is SQL plus a local FTS5
-  index with diacritic folding; a plain `LIKE` fallback works before the index
-  exists. Embedding search is optional and stays outside the core database,
-  while retrieval remains exact and auditable.
+- **Exact core retrieval; optional semantic plugin.** Core recovery is SQL plus
+  a local FTS5 index with diacritic folding; a plain `LIKE` fallback works
+  before the index exists, and this route stays exact and auditable. If you want
+  semantics, your model can supply them at question time; semantic candidate
+  retrieval is an optional executable package you build and install yourself,
+  with its embedding index remaining outside core. See
+  [plugins](docs/plugins.md#worked-executable-example-vector-search) for
+  domain extensions and the plugin contract.
 - **Semantic-first agent craft.** The installed skill can use the optional
   local vector package to retrieve conceptual candidates, then resolve their
   source context through core before forming a verdict. A vector score is not
