@@ -182,6 +182,21 @@ func TestDeprecatedMemoryLayersStayOutOfTheIndexAndResults(t *testing.T) {
 			t.Fatalf("deprecated memory returned: %+v", result)
 		}
 	}
+	db, err = sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var retired int
+	err = db.QueryRow(`SELECT COUNT(*) FROM chunks WHERE source_kind='memories' AND lower(COALESCE(json_extract(locator,'$.layer'),'')) LIKE 'rocodata\\_%' ESCAPE '\\'`).Scan(&retired)
+	if closeErr := db.Close(); err == nil && closeErr != nil {
+		err = closeErr
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retired != 0 {
+		t.Fatalf("retired chunks left after query reconciliation: %d", retired)
+	}
 }
 
 func TestSourcesWithoutNaturalKeysStaySeparateAndResolve(t *testing.T) {
@@ -269,34 +284,6 @@ func TestQueryStopsWalkingAnIndexTheCorpusMovedUnder(t *testing.T) {
 	if len(corpus.resolves) > maxUnresolvedCandidates {
 		t.Fatalf("stale index cost %d resolutions, want at most %d",
 			len(corpus.resolves), maxUnresolvedCandidates)
-	}
-}
-
-func TestNearestCandidateLimitRefillsForRetiredChunks(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	if _, err := db.Exec(`CREATE TABLE chunks(source_kind TEXT, locator TEXT)`); err != nil {
-		t.Fatal(err)
-	}
-	for index := 0; index < 30; index++ {
-		if _, err := db.Exec(`INSERT INTO chunks(source_kind,locator) VALUES ('exchanges','{}')`); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for index := 0; index < 5; index++ {
-		if _, err := db.Exec(`INSERT INTO chunks(source_kind,locator) VALUES ('memories',?)`, `{"layer":"rocodata_legacy"}`); err != nil {
-			t.Fatal(err)
-		}
-	}
-	limit, err := nearestCandidateLimit(context.Background(), db, 2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if limit != 21 {
-		t.Fatalf("candidate limit = %d, want 21", limit)
 	}
 }
 

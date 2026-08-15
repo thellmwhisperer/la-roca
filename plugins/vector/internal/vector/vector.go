@@ -242,6 +242,9 @@ func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) 
 	} else if err != nil {
 		return nil, fmt.Errorf("inspect vector database: %w", err)
 	}
+	if err := i.purgeDeprecatedChunks(ctx); err != nil {
+		return nil, fmt.Errorf("purge deprecated vector chunks: %w", err)
+	}
 	store, err := openSQLite(i.VectorPath, true)
 	if err != nil {
 		return nil, fmt.Errorf("open vector database: %w", err)
@@ -261,11 +264,7 @@ func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) 
 	if len(vectors) != 1 || len(vectors[0]) != dimensions {
 		return nil, fmt.Errorf("query embedding has the wrong dimensions")
 	}
-	candidateLimit, err := nearestCandidateLimit(ctx, store, k)
-	if err != nil {
-		return nil, fmt.Errorf("count vector candidates: %w", err)
-	}
-	candidates, err := nearest(ctx, store, vectorBlob(vectors[0]), candidateLimit)
+	candidates, err := nearest(ctx, store, vectorBlob(vectors[0]), min(k*8, 800))
 	if err != nil {
 		return nil, err
 	}
@@ -303,6 +302,21 @@ func (i Index) waitingForIndex(path string) {
 	if i.Notice != nil {
 		i.Notice(fmt.Sprintf("another indexing run holds %s; waiting for it to finish", path))
 	}
+}
+
+func (i Index) purgeDeprecatedChunks(ctx context.Context) error {
+	release, err := lockIndex(ctx, i.VectorPath+".index.lock", i.waitingForIndex)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	store, err := openSQLite(i.VectorPath, false)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	return purgeDeprecatedChunks(ctx, store)
 }
 
 func (i Index) validate() error {
@@ -576,20 +590,51 @@ func deleteEmbeddings(ctx context.Context, tx *sql.Tx, rowID int64) error {
 	return nil
 }
 
-func nearestCandidateLimit(ctx context.Context, db *sql.DB, k int) (int, error) {
-	base := int64(min(k*8, 800))
-	var total, retired int64
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(CASE WHEN source_kind='memories' AND lower(COALESCE(json_extract(locator,'$.layer'),'')) LIKE 'rocodata\_%' ESCAPE '\' THEN 1 ELSE 0 END),0) FROM chunks`).Scan(&total, &retired); err != nil {
-		return 0, err
+func purgeDeprecatedChunks(ctx context.Context, db *sql.DB) error {
+	var chunksTable int
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='chunks')`).Scan(&chunksTable); err != nil {
+		return err
 	}
-	if total == 0 {
-		return int(base), nil
+	if chunksTable == 0 {
+		return nil
 	}
-	limit := base + retired
-	if limit > total {
-		limit = total
+	rows, err := db.QueryContext(ctx, `SELECT id FROM chunks WHERE source_kind='memories' AND lower(COALESCE(json_extract(locator,'$.layer'),'')) LIKE 'rocodata\_%' ESCAPE '\'`)
+	if err != nil {
+		return err
 	}
-	return int(limit), nil
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, id := range ids {
+		if err := deleteEmbeddings(ctx, tx, id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM chunks WHERE id=?`, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 type neighbor struct {
