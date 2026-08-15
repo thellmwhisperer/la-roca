@@ -1,66 +1,110 @@
-# Architecture: the four domains
+# Architecture
 
 First-time path: [install, detect an already signed-in agent CLI, and query
 without a La Roca login](lifecycle.md#install).
 
-`internal/` is four layers, bottom up. **No domain imports the one above it.**
-A package that reaches upward is a defect to fix by moving code, not by a
-shortcut.
+La Roca is a federating kernel surrounded by domain plugins. The kernel owns no
+domain database. Its durable state is configuration and plugin manifests, and
+the hub it attaches plugin-owned SQLite files to read-only is an empty in-memory
+database.
 
-## Data domains
+The migration to that shape is incremental. The current release has a
+manifest-backed `roca-corpus`, a separate `roca-ops` domain still using its
+legacy descriptor, and a separate `roca-cron` journey store; ops and cron are
+the next bundled domains to leave their descriptors. Historical rows
+that have not moved yet remain readable through a compatibility connection, and
+queries still attach to that connection rather than to the in-memory hub. It
+preserves behavior during the rollout; it is not new kernel ownership and plugin
+authors must not depend on it.
 
-The engine and its data domains are separate contracts. Bundled domain plugins
-live under `internal/distribution/`, own one custody database and describe its
-query surface in `semantic.yaml`. `roca-ops` owns operational agent writes.
-`roca-corpus` declares the perennial-harvest schema for sessions, exchanges,
-reasoning, tool uses, and harvested files. It is always resident in the CLI,
-owns new ingest writes and its lexical index, and participates in model and
-deterministic retrieval. Historical core rows remain readable without an
-implicit custody migration.
+## Runtime map
 
-## The dependency rule
+```text
+                         CLI and MCP
+                              |
+                              v
+  +-------------------------------------------------------+
+  | kernel                                                |
+  | init | manifest engine | read-only gate | NL-to-SQL   |
+  | config + manifests | in-memory SQLite attachment hub  |
+  +---------------------------+---------------------------+
+                              |
+              +---------------+----------------+
+              |                                |
+              v                                v
+  +---------------------------+    +---------------------------+
+  | roca-corpus               |    | roca-ops                  |
+  | ingest + perennial archive|    | operational writes/reads  |
+  | corpus-owned database     |    | ops-owned database        |
+  | corpus retention policy   |    | ops retention policy      |
+  +---------------------------+    +---------------------------+
 
+  roca-cron owns a third database for run history and persisted errors.
 ```
-store        — the bottom. Nothing imports it from below.
-ingest       — depends on store.
-provider     — depends on store + ingest.
-distribution — depends on provider (and therefore everything below it).
+
+The manifest engine owns discovery, strict schema validation, read-only
+attachment, semantic catalog composition, and the canonical registry for verbs
+and executable capabilities. Removing a plugin removes its databases and
+surface declarations without requiring edits to the kernel.
+
+Retention and scale follow the same boundary. Corpus may preserve a perennial
+archive, ops may keep a shorter operational window, and cron may prune
+successful journeys while retaining failures. No global kernel policy silently
+applies one domain's diet to another.
+
+## The internal dependency rule
+
+`internal/` has four layers, bottom up. No domain imports the one above it.
+
+```text
+store        - SQLite primitives and lexical indexing
+ingest       - source scanning, parsers, and idempotent writes
+provider     - models, manifests, semantic catalog, gate, and services
+distribution - CLI, MCP, installers, lifecycle, and release plumbing
 ```
 
 Production imports obey the rule; test files may reach upward to build
-fixtures (an external test seam, never a product import).
+fixtures.
 
-## What lives in each
+## What lives where
 
-- `internal/store/` — SQLite, schema, backups, adopting foreign databases,
-  and the lexical FTS search engine (`store/search`: engine, index, match).
-- `internal/ingest/` — source scanning, pure parsers (`parsers/`), idempotent
-  writes keyed by fingerprint.
-- `internal/provider/` — the capabilities: detected local agent CLI providers,
-  Ollama, custom local commands, the model catalog, the semantic layer
-  (`layers`), isolated plugin schemas (`plugin`), configuration (`config`), the
-  query/NL-to-SQL surface (`query` with `query/sqlgate`), prompts, FTS, and
-  service orchestration (`service`).
-- `internal/distribution/` — the plumbing: CLI (`cli`), MCP stdio (`mcpplug`),
-  install/uninstall of the binary and of agent configs (`agentcfg`, `release`,
-  `lifecycle`), verified plugin packages (`plugininstall`), redacted JSONL
-  traces (`logfile`), the external ride train and its journey plugin
-  (`rocacron`), and skill install (`skill`).
+- `internal/store/` owns SQLite access, schema adoption, backups, and FTS.
+- `internal/ingest/` owns source detection, pure parsers, provenance, and
+  fingerprinted incremental writes.
+- `internal/provider/plugin/` is the manifest engine: declarations, discovery,
+  schema truth checks, semantic composition, verb and capability registration,
+  and the in-memory hub the attach point is moving to.
+- `internal/provider/query/` owns prompt construction and the SQL read gate;
+  `internal/provider/service/` orchestrates the compatibility product surface.
+- `internal/distribution/plugininstall/` verifies packages and preserves every
+  manifest-declared database across updates.
+- `internal/distribution/rocacorpus/` ships the first public manifest and owns
+  the corpus schema. `rocaops/` and `rocacron/` retain their current descriptors
+  until their scheduled manifest migrations.
+- `internal/distribution/cli/` and `mcpplug/` project the shared service and
+  plugin registry onto the two agent surfaces.
+- `internal/distribution/cli/artifacts.go` owns artifact discovery, rollout
+  gating, refresh reports, and the post-update handoff to the new binary.
 
-## Notable placements
+`internal/artifact` remains a shared file primitive below init and
+distribution. External plugin source trees may live under `plugins/<name>/` as
+independent modules; the root Go module does not import them.
 
-- `search` sits under `store`: its production code imports only `store`, and
-  `provider/query` and `provider/service` build on it.
-- `skill` sits under `distribution`, not `provider`: its only consumer is the
-  CLI and it needs `agentcfg`; placing it in provider would force a
-  provider→distribution edge.
-- `internal/artifact` is a shared file primitive below those domains: both init
-  and distribution use its zones and registry without creating a
-  provider→distribution edge.
-- `internal/distribution/cli/artifacts.go` orchestrates discovery, rollout
-  gating, refresh reports, and the post-swap handoff to the new binary.
-- `plugins/<name>/` sits outside `internal/` and outside the root Go module:
-  each one is its own module and binary, installed as a verified package
-  instead of linked in, so no core package imports it and the root `make check`
-  does not reach it. `plugins/vector/` is the worked example, described in
-  [Plugins](plugins.md#worked-executable-example-vector-search).
+## Query path
+
+1. Discovery reads installed manifests and reports malformed declarations.
+2. The semantic router selects resident databases plus relevant on-demand
+   databases.
+3. The engine checks declared tables and ordered columns against each real
+   SQLite schema.
+4. The validated fragments are composed into the catalog shown to NL-to-SQL.
+5. The kernel attaches selected files read-only and validates the generated
+   `SELECT` under the same gate used for explicit SQL.
+6. Results declare consulted and omitted databases and carry row provenance.
+
+The first inference sees schema, never result rows. The optional interpretation
+inference sees only returned rows. Moving schema ownership into manifests does
+not change that privacy boundary or the behavior of `roca query`.
+
+See [Plugins](plugins.md) for the manifest schema and a complete build-your-own
+package.
