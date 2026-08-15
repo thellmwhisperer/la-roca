@@ -24,8 +24,8 @@ authors must not depend on it.
                               v
   +-------------------------------------------------------+
   | kernel                                                |
-  | init | manifest engine | read-only gate | NL-to-SQL  |
-  | config + manifests | in-memory SQLite attachment hub |
+  | init | manifest engine | read-only gate | NL-to-SQL   |
+  | config + manifests | in-memory SQLite attachment hub  |
   +---------------------------+---------------------------+
                               |
               +---------------+----------------+

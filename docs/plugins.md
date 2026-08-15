@@ -28,7 +28,7 @@ CLI and MCP
     v
 +----------------------------------------------------------+
 | kernel                                                   |
-| init | manifest validation | read-only gate | NL-to-SQL |
+| init | manifest validation | read-only gate | NL-to-SQL  |
 | config + manifests on disk | SQLite attach hub in memory |
 +--------------------------+-------------------------------+
                            |
