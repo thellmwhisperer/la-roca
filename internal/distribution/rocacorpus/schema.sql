@@ -177,3 +177,8 @@ CREATE TABLE IF NOT EXISTS search_state (
   value      TEXT NOT NULL,
   updated_at TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS legacy_flow_patterns (
+  canonical_digest TEXT PRIMARY KEY,
+  payload           TEXT NOT NULL CHECK (json_valid(payload))
+);

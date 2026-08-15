@@ -30,6 +30,13 @@ func TestEnsureInstallsTheCustodialJourneyPluginAndPreservesItsDatabase(t *testi
 	if !descriptor.Semantic.Custody || descriptor.Semantic.Attachment != plugin.AttachmentOnDemand {
 		t.Fatalf("semantic contract = %+v", descriptor.Semantic)
 	}
+	validated, err := plugin.Validate(t.Context(), descriptor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(validated.Tables) != 3 {
+		t.Fatalf("visible cron tables = %d, want 3", len(validated.Tables))
+	}
 	db, err := sql.Open("sqlite", descriptor.Database)
 	if err != nil {
 		t.Fatal(err)
