@@ -71,8 +71,8 @@ func TestEnsureInstallsTheBundledResidentDataOnlyPluginAndPreservesItsDatabase(t
 	if validationErr != nil {
 		t.Fatal(validationErr)
 	}
-	if len(validated.Tables) != 3 {
-		t.Fatalf("visible ops tables = %d, want 3", len(validated.Tables))
+	if len(validated.Tables) != 4 {
+		t.Fatalf("visible ops tables = %d, want 4", len(validated.Tables))
 	}
 	if _, err := os.Stat(filepath.Join(directory, "roca-"+rocaops.Name)); !os.IsNotExist(err) {
 		t.Fatalf("bundled data plugin carries an executable: %v", err)

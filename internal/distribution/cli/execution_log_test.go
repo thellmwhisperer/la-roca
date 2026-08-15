@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -348,6 +350,40 @@ func TestAnUnwritableLogDoesNotFailTheCommand(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "warning:") {
 		t.Errorf("the warning leaked into stdout:\n%s", out.String())
+	}
+}
+
+func TestAnUnwritableOpsHistoryDoesNotFailTheCommand(t *testing.T) {
+	fixtureInstallation(t)
+	home := os.Getenv("HOME")
+	database := filepath.Join(home, ".roca", "plugins", rocaops.Name, rocaops.DatabaseFilename)
+	db, err := sql.Open("sqlite", database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER reject_synthetic_call_history
+		BEFORE INSERT ON call_history BEGIN
+		SELECT RAISE(ABORT, 'synthetic ops write failure');
+	END`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errs strings.Builder
+	code, runErr := execute(contractBuild(), &out, &errs,
+		[]string{"query", "how many memories are there"})
+	if runErr != nil || code != ExitOK || out.Len() == 0 {
+		t.Fatalf("ops logging failure changed command result: code=%d err=%v out=%q", code, runErr, out.String())
+	}
+	if got := strings.Count(errs.String(), "warning:"); got != 1 ||
+		!strings.Contains(errs.String(), "durable call") {
+		t.Fatalf("ops logging warning = %q", errs.String())
+	}
+	if raw := readAuditStream(t, filepath.Join(home, ".roca"), logfile.Executions); !strings.Contains(string(raw), `"command":"query"`) {
+		t.Fatalf("JSONL rollback lost the call: %s", raw)
 	}
 }
 
