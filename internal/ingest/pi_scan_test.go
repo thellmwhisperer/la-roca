@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -62,5 +63,12 @@ func TestPiScanAccountsForTheCompleteStore(t *testing.T) {
 		if reasons[family] == 0 {
 			t.Errorf("coverage reasons = %v, missing %q", reasons, family)
 		}
+	}
+}
+
+func TestPiScanReportsTraversalFailures(t *testing.T) {
+	plan := Scan(Roots{PiRoot: "synthetic\x00pi-root"})
+	if len(plan.Warnings) != 1 || !strings.Contains(plan.Warnings[0], "Pi root cannot be read") {
+		t.Fatalf("warnings = %v, want the Pi traversal failure", plan.Warnings)
 	}
 }

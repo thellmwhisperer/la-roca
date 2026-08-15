@@ -97,7 +97,7 @@ func Scan(roots Roots) Plan {
 	plan.add(scanDesktopSessions(roots), "claude_desktop_files")
 	plan.add(scanCoworkSessions(roots), "cowork_files")
 	plan.add(scanSubagents(roots), "subagent_files")
-	piFiles := scanPiStore(roots)
+	piFiles := scanPiStore(roots, &plan)
 	plan.Scanned["pi_files"] += len(piFiles)
 	var piSessions []Target
 	for _, target := range piFiles {
@@ -532,13 +532,20 @@ func runnerExclusion(roots Roots, encodedDir string) string {
 // because Pi extensions keep child runs below the parent session; everything
 // else is named as configuration, runtime state, or an unrecognized artefact.
 // WalkDir does not follow symlinks, so a link cannot expand the declared root.
-func scanPiStore(roots Roots) []Target {
+func scanPiStore(roots Roots, plan *Plan) []Target {
 	root := roots.PiRoot
 	var targets []Target
 	seen := map[string]bool{}
 	if root != "" {
 		filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-			if err != nil || !entry.Type().IsRegular() {
+			if err != nil {
+				if !os.IsNotExist(err) {
+					plan.Warnings = append(plan.Warnings,
+						fmt.Sprintf("Pi root cannot be read at %q (%v)", path, err))
+				}
+				return nil
+			}
+			if !entry.Type().IsRegular() {
 				return nil
 			}
 			relative, relativeErr := filepath.Rel(root, path)
