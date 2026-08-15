@@ -396,6 +396,7 @@ make build
 make check
 make accept-index
 make upgrade-gauntlet
+make split-oracle
 make dist
 ```
 
@@ -409,6 +410,18 @@ Godog harness is compiled only with the `acceptance` build tag.
 upgrades the committed homes of older releases through the binary you just
 built. [Releases](docs/releases.md#schema-migration-definition-of-done) explains
 when a change owes the gauntlet a new frozen home.
+
+`make split-oracle` replays the DATA SPLIT compatibility oracle on its own, the
+executable definition of zero behavior change for CLI and MCP users that
+`make check` already runs with the rest of the acceptance suite. It drives the
+binary you just built against a fully synthetic fixture, normalizes away run
+noise (timestamps, durations, correlation ids, home paths), and compares the
+recording against the Ed25519-signed goldens in `testdata/data-split-oracle/`.
+The oracle never reads a real `~/.roca` database and never writes user data: it
+records into a temporary home and keeps the recording under the project's
+`.tmp/` only when it differs from the seal. A difference is reported, never
+absorbed, because an intended behavior change is resealed by the owner instead
+of edited into the golden.
 
 ## License
 
