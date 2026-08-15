@@ -89,18 +89,34 @@ run_fixture() {
 {"type":"assistant","sessionId":"99999999-8888-7777-6666-555555555555","timestamp":"2026-08-02T10:00:01Z","message":{"model":"fixture-current-model","usage":{"input_tokens":11,"output_tokens":7},"content":[{"type":"text","text":"the current jade sextant is recorded"}]}}
 JSONL
 
+  # Which database the frozen release wrote its own history to is read from the
+  # extracted home, before the upgrade installs anything: a home frozen before
+  # the bundled corpus kept that history in core, one frozen after it kept the
+  # same history in the corpus, and an upgrade owes both the answer and the
+  # place. Counting the two separately fails a silent relocation that a single
+  # total would accept.
+  if [ -e "$home/.roca/plugins/roca-corpus/roca-corpus.db" ]; then
+    frozen_in_core=0
+    frozen_in_corpus=1
+  else
+    frozen_in_core=1
+    frozen_in_corpus=0
+  fi
+
   run_roca "$home" ingest > "$work/ingest.json"
   assert_json "$work/ingest.json" '"errors": 0' "$version ingest"
 
   run_roca "$home" exec \
-    "SELECT COUNT(*) AS old_sessions FROM sessions WHERE session_id = '11111111-2222-3333-4444-555555555555'" \
+    "SELECT (SELECT COUNT(*) FROM sessions WHERE session_id = '11111111-2222-3333-4444-555555555555') AS core_sessions, (SELECT COUNT(*) FROM plugin_roca_corpus.sessions WHERE session_id = '11111111-2222-3333-4444-555555555555') AS corpus_sessions" \
     > "$work/old-session.json"
-  assert_json "$work/old-session.json" '"old_sessions": 1' "$version historical session"
+  assert_json "$work/old-session.json" "\"core_sessions\": $frozen_in_core" "$version historical session in core"
+  assert_json "$work/old-session.json" "\"corpus_sessions\": $frozen_in_corpus" "$version historical session in corpus"
 
   run_roca "$home" exec \
-    "SELECT COUNT(*) AS old_exchanges FROM exchanges WHERE human_text = 'remember the frozen amber compass' AND agent_text = 'the frozen amber compass is recorded'" \
+    "SELECT (SELECT COUNT(*) FROM exchanges WHERE human_text = 'remember the frozen amber compass' AND agent_text = 'the frozen amber compass is recorded') AS core_exchanges, (SELECT COUNT(*) FROM plugin_roca_corpus.exchanges WHERE human_text = 'remember the frozen amber compass' AND agent_text = 'the frozen amber compass is recorded') AS corpus_exchanges" \
     > "$work/old-exchange.json"
-  assert_json "$work/old-exchange.json" '"old_exchanges": 1' "$version historical exchange"
+  assert_json "$work/old-exchange.json" "\"core_exchanges\": $frozen_in_core" "$version historical exchange in core"
+  assert_json "$work/old-exchange.json" "\"corpus_exchanges\": $frozen_in_corpus" "$version historical exchange in corpus"
 
   # New ingest lands in the bundled corpus the upgrade installs, so the frozen
   # core keeps only its history and the current run is asserted where it is

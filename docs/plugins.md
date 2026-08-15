@@ -360,6 +360,13 @@ Its manifest declares the `ingest` verb, the `plugin_roca_corpus` attach alias,
 the semantic fragment used by NL-to-SQL, custody, and plugin-owned archive
 retention. Existing ingest and query behavior is unchanged by the migration.
 
+Its schema also declares the shadow archive the retired core history is copied
+into: one version table per family, full-text indexes rebuilt over the ones
+that carry text, and the evidence tying each version back to the source row it
+came from. Those tables are migration machinery rather than fleet memory, so
+they stay hidden from every query surface, and the served tables above keep
+answering exactly as before until the later atomic cutover.
+
 ## The bundled roca-ops plugin
 
 `roca-ops` owns operational agent writes and their query surface. It has a
