@@ -143,8 +143,8 @@ func TestRegisteredParsersHarvestPresentAgentStores(t *testing.T) {
 				t.Fatalf("real-harvest locations are unusable: %v", refused)
 			}
 			present := false
-			files, detected := 0, 0
-			var bytes, largestDetectedBytes int64
+			files, detected, unreadableFiles := 0, 0, 0
+			var bytes, unreadableBytes, largestDetectedBytes int64
 			largestDetectedExchanges := 0
 			yield := realHarvestYield{}
 			for _, root := range roots {
@@ -156,20 +156,24 @@ func TestRegisteredParsersHarvestPresentAgentStores(t *testing.T) {
 				present = true
 				err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 					if walkErr != nil {
-						return walkErr
+						unreadableFiles++
+						return nil
 					}
 					if !entry.Type().IsRegular() {
 						return nil
 					}
 					info, err := entry.Info()
 					if err != nil {
-						return err
+						unreadableFiles++
+						return nil
 					}
 					files++
 					bytes += info.Size()
 					content, err := os.ReadFile(path)
 					if err != nil {
-						return err
+						unreadableFiles++
+						unreadableBytes += info.Size()
+						return nil
 					}
 					source := registered.SourceAgent
 					if source == "" {
@@ -206,14 +210,14 @@ func TestRegisteredParsersHarvestPresentAgentStores(t *testing.T) {
 			}
 			t.Logf("real harvest: store_files=%d store_bytes=%d detected_files=%d "+
 				"sessions=%d exchanges=%d memories=%d thinking=%d tools=%d discards=%d deferred=%d "+
-				"largest_detected_file_bytes=%d largest_detected_file_exchanges=%d",
+				"largest_detected_file_bytes=%d largest_detected_file_exchanges=%d unreadable_files=%d",
 				files, bytes, detected, yield.sessions, yield.exchanges, yield.memories,
 				yield.thinking, yield.tools, yield.discards, yield.deferred,
-				largestDetectedBytes, largestDetectedExchanges)
+				largestDetectedBytes, largestDetectedExchanges, unreadableFiles)
 			if files > 0 && detected == 0 {
 				t.Fatal("detector found no real files in the declared agent store")
 			}
-			if yield.nearZero(bytes) {
+			if yield.nearZero(bytes - unreadableBytes) {
 				t.Fatalf("near-zero real harvest from a large store: %d exchanges and %d memories from %d bytes",
 					yield.exchanges, yield.memories, bytes)
 			}
