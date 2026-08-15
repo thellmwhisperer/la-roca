@@ -20,6 +20,7 @@ func TestRootsOnMacOS(t *testing.T) {
 		"opencode":        "/Users/op/.local/share/opencode/opencode.db",
 		"pi":              "/Users/op/.pi/agent/sessions",
 		"hermes":          "/Users/op/.hermes/state.db",
+		"grok":            "/Users/op/.grok/sessions",
 	}
 	got := map[string]string{
 		"claude projects": roots.ClaudeProjects,
@@ -30,6 +31,7 @@ func TestRootsOnMacOS(t *testing.T) {
 		"opencode":        roots.OpenCodeDB,
 		"pi":              roots.PiSessions,
 		"hermes":          roots.HermesDB,
+		"grok":            roots.GrokSessions,
 	}
 	for name, expected := range want {
 		if got[name] != expected {
@@ -61,6 +63,19 @@ func TestRootsOnLinuxFollowTheXDGDirectories(t *testing.T) {
 	}
 	if moved.OpenCodeDB != "/home/op/data/opencode/opencode.db" {
 		t.Errorf("opencode = %q", moved.OpenCodeDB)
+	}
+}
+
+func TestGrokSessionsFollowTheEnvironment(t *testing.T) {
+	roots := ResolveRoots(Environment{
+		GOOS: "linux",
+		Home: "/home/op",
+		Getenv: environmentOf(map[string]string{
+			"GROK_SESSIONS_ROOT": "/home/op/data/grok-sessions",
+		}),
+	}, Settings{})
+	if roots.GrokSessions != "/home/op/data/grok-sessions" {
+		t.Errorf("grok sessions = %q", roots.GrokSessions)
 	}
 }
 

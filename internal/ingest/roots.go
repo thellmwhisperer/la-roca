@@ -49,6 +49,8 @@ type Settings struct {
 	OpenCodeDB            string
 	PiSessions            string
 	HermesDB              string
+	// GrokSessions is Grok Build's session store.
+	GrokSessions string
 	// RunnerDir is La Roca's neutral subprocess cwd. Any runtime artefact keyed
 	// to this directory is product traffic, never operator corpus.
 	RunnerDir string
@@ -71,10 +73,12 @@ type Roots struct {
 	CodexSessions         string
 	// CodexStateDB is Codex's own SQLite state. It is read only to enrich a
 	// session with the model and the agent nickname it ran under.
-	CodexStateDB      string
-	OpenCodeDB        string
-	PiSessions        string
-	HermesDB          string
+	CodexStateDB string
+	OpenCodeDB   string
+	PiSessions   string
+	HermesDB     string
+	// GrokSessions is Grok Build's session store.
+	GrokSessions      string
 	RunnerDir         string
 	ClaudeWebExports  []string
 	ChatGPTWebExports []string
@@ -91,6 +95,7 @@ const (
 	envOpenCodeDB     = "OPENCODE_DB_PATH"
 	envPiSessions     = "PI_SESSIONS_ROOT"
 	envHermesDB       = "HERMES_DB_PATH"
+	envGrokSessions   = "GROK_SESSIONS_ROOT"
 	envXDGConfig      = "XDG_CONFIG_HOME"
 	envXDGData        = "XDG_DATA_HOME"
 	envAppData        = "APPDATA"
@@ -122,6 +127,8 @@ func ResolveRoots(env Environment, settings Settings) Roots {
 			join(env, env.Home, ".pi", "agent", "sessions")),
 		HermesDB: pick(env, settings.HermesDB, envHermesDB,
 			join(env, env.Home, ".hermes", "state.db")),
+		GrokSessions: pick(env, settings.GrokSessions, envGrokSessions,
+			join(env, env.Home, ".grok", "sessions")),
 		RunnerDir: expand(env, settings.RunnerDir),
 		Workspace: ResolveWorkspaceRoots(expandAll(env, settings.WorkspaceRoots)),
 	}

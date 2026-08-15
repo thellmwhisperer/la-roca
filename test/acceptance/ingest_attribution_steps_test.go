@@ -103,6 +103,7 @@ func (w *ingestAcceptanceWorld) seedEverySupportedSession() error {
 		w.seedOpenCodeSession,
 		w.seedPiSession,
 		func() error { return w.seedHermesSession("") },
+		w.seedGrokSession,
 	}
 	for _, build := range builders {
 		if err := build(); err != nil {
@@ -122,6 +123,8 @@ func (w *ingestAcceptanceWorld) seedModelSession(family, model string) error {
 		return w.seedCodexSession(model)
 	case "hermes":
 		return w.seedHermesSession(model)
+	case "grok":
+		return w.seedGrokSessionWithModel(model)
 	default:
 		return fmt.Errorf("no model-declaring fixture for %q", family)
 	}

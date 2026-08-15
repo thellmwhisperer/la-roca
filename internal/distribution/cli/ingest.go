@@ -286,6 +286,7 @@ func ingestSources(file config.File, home, runnerDir string) ingest.Roots {
 			OpenCodeDB:            file.Default("opencode_db_path"),
 			PiSessions:            file.Default("pi_sessions_root"),
 			HermesDB:              file.Default("hermes_db_path"),
+			GrokSessions:          file.Default("grok_sessions_root"),
 			RunnerDir:             runnerDir,
 			WorkspaceRoots:        file.DefaultList(keyWorkspaceRoots),
 			SubagentRoots:         file.DefaultList(keySubagentRoots),

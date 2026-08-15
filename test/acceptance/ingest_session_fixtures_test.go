@@ -4,6 +4,7 @@ package acceptance
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -13,6 +14,7 @@ import (
 const (
 	claudeAcceptanceSession = "11111111-2222-3333-4444-555555555555"
 	codexAcceptanceSession  = "codex-acceptance-session"
+	grokAcceptanceSession   = "22222222-3333-4444-5555-666666666666"
 )
 
 func (w *ingestAcceptanceWorld) seedClaudeSession(project string, exchanges int, rich bool, model string) error {
@@ -133,6 +135,26 @@ func (w *ingestAcceptanceWorld) seedPiSession() error {
 	path := filepath.Join(w.home, ".pi", "agent", "sessions", encodeAgentPath(cwd), "session.jsonl")
 	w.fixturePath = path
 	return writeFixture(path, body)
+}
+
+func (w *ingestAcceptanceWorld) seedGrokSession() error {
+	return w.seedGrokSessionWithModel("")
+}
+
+func (w *ingestAcceptanceWorld) seedGrokSessionWithModel(model string) error {
+	w.sessionID = grokAcceptanceSession
+	cwd := filepath.Join(w.home, "workspace", "grok-project")
+	root := filepath.Join(w.home, ".grok", "sessions", url.PathEscape(cwd), grokAcceptanceSession)
+	if err := writeFixture(filepath.Join(root, "summary.json"), fmt.Sprintf(
+		`{"info":{"id":%q,"cwd":%q},"created_at":"2026-08-01T15:00:00Z","updated_at":"2026-08-01T15:00:01Z","generated_title":"grok","current_model_id":%q}`,
+		w.sessionID, cwd, model)); err != nil {
+		return err
+	}
+	path := filepath.Join(root, "chat_history.jsonl")
+	w.fixturePath = path
+	return writeFixture(path,
+		`{"type":"user","content":[{"type":"text","text":"question"}]}`+"\n"+
+			`{"type":"assistant","content":"answer","model_id":"grok-model"}`+"\n")
 }
 
 func encodeAgentPath(path string) string {

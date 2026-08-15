@@ -632,7 +632,8 @@ func resolveProjects(ctx context.Context, opts Options, target Target, records *
 		cwd, _ := session.Metadata["cwd"].(string)
 		fromContent := ""
 		switch target.Kind {
-		case parsers.KindCodexSession, parsers.KindCodexHistory, parsers.KindPiSession:
+		case parsers.KindCodexSession, parsers.KindCodexHistory, parsers.KindPiSession,
+			parsers.KindGrokSession, parsers.KindGrokSessionMetadata:
 			fromContent = ProjectFromCwd(cwd)
 		default:
 			fromContent = ProjectFromMetadataCwd(cwd)
@@ -710,6 +711,7 @@ func declaredRoots(roots Roots) map[string]string {
 		"opencode_db":             roots.OpenCodeDB,
 		"pi_sessions":             roots.PiSessions,
 		"hermes_db":               roots.HermesDB,
+		"grok_sessions":           roots.GrokSessions,
 		"claude_export":           strings.Join(roots.ClaudeWebExports, string(os.PathListSeparator)),
 		"chatgpt_export":          strings.Join(roots.ChatGPTWebExports, string(os.PathListSeparator)),
 	}
