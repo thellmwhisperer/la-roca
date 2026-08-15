@@ -247,6 +247,75 @@ func TestDATA2VerifiesAVirginHomeWithNothingToCarry(t *testing.T) {
 	}
 }
 
+// TestDATA2VerifiesEmptyMemoriesBesideAnUnrelatedPluginBatch pins that the
+// empty-versus-carried decision reads this migration's own memberships: a batch
+// another rung commits into the same ops ledger must not make a zero-memory
+// population look carried and seal it.
+func TestDATA2VerifiesEmptyMemoriesBesideAnUnrelatedPluginBatch(t *testing.T) {
+	fixture := newCustodyFixture(t)
+	insertFixtureMemories(t, fixture.core, false, nil)
+	insertFixtureMemories(t, fixture.corpus, true, nil)
+	insertOpsMemories(t, fixture.ops, 0)
+	commitUnrelatedBatch(t, fixture.ops)
+
+	report, err := MigrateMemoryCustody(t.Context(), MemoryCustodyOptions{
+		CorePath: fixture.core, CorpusPath: fixture.corpus, OpsPath: fixture.ops,
+		SnapshotDir: fixture.snapshots,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.State != migrationledger.StateVerifiedEmpty || report.Memberships != 0 ||
+		report.PhysicalRecords != 0 {
+		t.Fatalf("empty memories beside an unrelated batch = %+v", report)
+	}
+
+	core := openCustodyDB(t, fixture.core)
+	if _, err := core.Exec(`INSERT INTO memories
+		(id, layer, content, metadata, origin, status, created_at)
+		VALUES (3, 'project', 'written after the unrelated batch', '{}', 'agent', 'active', '2026-08-06')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.Close(); err != nil {
+		t.Fatal(err)
+	}
+	carried, err := MigrateMemoryCustody(t.Context(), MemoryCustodyOptions{
+		CorePath: fixture.core, CorpusPath: fixture.corpus, OpsPath: fixture.ops,
+		SnapshotDir: fixture.snapshots,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if carried.State != migrationledger.StateVerified || carried.Memberships != 1 {
+		t.Fatalf("memories carried beside an unrelated batch = %+v", carried)
+	}
+}
+
+func commitUnrelatedBatch(t *testing.T, path string) {
+	t.Helper()
+	db := openCustodyDB(t, path)
+	batch, err := migrationledger.BeginBatch(t.Context(), db, migrationledger.BatchSpec{
+		ID: "unrelated-legacy-0001", SourceDatabase: "core", SourceTable: "legacy",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := batch.AddMembership(t.Context(), migrationledger.Membership{
+		SourceKey: "1", DestinationTable: "legacy_records", DestinationKey: "1",
+		CanonicalDigest: strings.Repeat("a", 64),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := batch.Commit(t.Context(), migrationledger.BatchCommit{
+		RowCount: 1, CanonicalDigest: strings.Repeat("b", 64), HighWaterMark: "1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDATA2KeepsTheVerifiedSnapshotWhenAReplacementFails(t *testing.T) {
 	fixture := smallCustodyFixture(t)
 	options := MemoryCustodyOptions{

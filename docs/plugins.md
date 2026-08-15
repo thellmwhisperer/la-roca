@@ -411,7 +411,10 @@ membership its batch truthfully recorded, and both are reported as drift events;
 membership counts are verified against what the committed batches recorded, not
 against the live source. A home whose three sources are all empty verifies as
 `verified-empty` rather than `verified`: nothing was carried, so the ledger stays
-open and a later run still carries whatever the sources hold by then. Each
+open and a later run still carries whatever the sources hold by then, while the
+home counts as cutover-ready because there is nothing left to carry. That
+outcome is decided by this migration's own memberships, never by a batch another
+rung commits into the same plugin database. Each
 source's frozen copy is named once per migration generation and published by
 renaming a validated sibling copy over it, so retries replace their own snapshot
 instead of accumulating a full database per attempt, a failed replacement leaves

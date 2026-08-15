@@ -193,6 +193,45 @@ func TestOnlyVerifiedDatabasesAreCutoverEligible(t *testing.T) {
 	}
 }
 
+func TestAnEmptyMigrationVerifiesPerDestinationAndStaysCutoverReady(t *testing.T) {
+	db := openTestDatabase(t)
+	if err := Prepare(context.Background(), db, Definition{
+		Plugin: "synthetic", SchemaVersion: 1, IndexVersion: 0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyEmpty(context.Background(), db, fixtureDigest('a'), "shadow_rows"); err != nil {
+		t.Fatal(err)
+	}
+	if state := inspectState(t, db); state.State != StateVerifiedEmpty {
+		t.Fatalf("state after an empty verification = %q", state.State)
+	}
+	eligible, err := CutoverEligible(context.Background(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !eligible {
+		t.Fatal("a verified-empty database is not cutover eligible")
+	}
+
+	commitFixtureBatch(t, db, "core-rows-0001", "1")
+	if err := VerifyEmpty(context.Background(), db, fixtureDigest('b'), "shadow_rows"); err != nil {
+		t.Fatalf("another destination's committed batch blocked an empty verification: %v", err)
+	}
+	if err := VerifyEmpty(context.Background(), db, fixtureDigest('c'), "rows"); err == nil {
+		t.Fatal("a destination that carried a row verified as empty")
+	}
+	batch, err := BeginBatch(context.Background(), db, BatchSpec{
+		ID: "late-rows-0002", SourceDatabase: "core", SourceTable: "rows",
+	})
+	if err != nil {
+		t.Fatalf("a verified-empty database refused the rows it later held: %v", err)
+	}
+	if err := batch.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestAKilledProcessResumesTheSameBatch interrupts a batch the way a machine
 // does, by killing the process that holds it open, so the resume path is proven
 // against a database no rollback call ever reached.

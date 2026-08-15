@@ -225,7 +225,7 @@ func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (Me
 	if err != nil {
 		return custodyFailure(ctx, ops, snapshots, drift, err)
 	}
-	verified, err := recordMemoryVerification(ctx, ops, digest)
+	verified, err := recordMemoryVerification(ctx, ops, digest, report.Memberships)
 	if err != nil {
 		return custodyFailure(ctx, ops, snapshots, drift, err)
 	}
@@ -277,17 +277,18 @@ func pendingMemories(source string, rows []memoryRow,
 }
 
 // recordMemoryVerification separates the two verified outcomes: a population
-// that carried batches reaches the terminal verified state, while a home whose
+// that carried memories reaches the terminal verified state, while a home whose
 // three sources were all empty reaches verified-empty, which stays open so the
 // rows it may hold later are still carried instead of silently skipped.
-func recordMemoryVerification(ctx context.Context, ops *sql.DB,
-	digest string) (migrationledger.State, error) {
-	committed, err := migrationledger.CommittedBatches(ctx, ops)
-	if err != nil {
-		return "", err
-	}
-	if committed == 0 {
-		if err := migrationledger.VerifyEmpty(ctx, ops, digest); err != nil {
+//
+// The two are told apart by this migration's own membership count rather than by
+// any batch the ops ledger holds, so a batch some other rung commits into the
+// same plugin database can never make an empty memory population look carried
+// and seal it.
+func recordMemoryVerification(ctx context.Context, ops *sql.DB, digest string,
+	memberships int) (migrationledger.State, error) {
+	if memberships == 0 {
+		if err := migrationledger.VerifyEmpty(ctx, ops, digest, "memory_records"); err != nil {
 			return "", err
 		}
 		return migrationledger.StateVerifiedEmpty, nil

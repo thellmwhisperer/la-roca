@@ -343,25 +343,32 @@ func Verify(ctx context.Context, db *sql.DB, digest string) error {
 	return nil
 }
 
-// VerifyEmpty records that a migration verified with nothing to carry. Verify
-// deliberately demands a committed batch, so a migration over an empty
-// population could never leave `prepared`; this is the narrow counterpart,
-// refusing any database that did commit a batch so the ordinary guard keeps its
-// strength for every other migration.
+// VerifyEmpty records that the migration filling destinationTable verified with
+// nothing to carry. Verify deliberately demands a committed batch, so a
+// migration over an empty population could never leave `prepared`; this is the
+// narrow counterpart, refusing any destination that did receive a row so the
+// ordinary guard keeps its strength for every other migration.
+//
+// The guard is scoped to one destination rather than the whole plugin database:
+// a plugin that hosts more than one migration must be able to record that this
+// one had nothing to carry while another has already carried rows.
 //
 // It deliberately does not seal the ledger. A home whose sources are empty today
 // may hold rows tomorrow, so the stored state remains `prepared` and only the
 // recorded verification marks the outcome: Inspect reports StateVerifiedEmpty,
 // and BeginBatch reopens the migration as soon as there is something to carry.
-func VerifyEmpty(ctx context.Context, db *sql.DB, digest string) error {
+func VerifyEmpty(ctx context.Context, db *sql.DB, digest, destinationTable string) error {
 	if !hexDigest.MatchString(digest) {
 		return fmt.Errorf("verification digest must be a lowercase SHA-256 digest")
+	}
+	if strings.TrimSpace(destinationTable) == "" {
+		return fmt.Errorf("empty plugin migration verification needs a destination table")
 	}
 	result, err := db.ExecContext(ctx, `UPDATE plugin_schema SET migration_state = ?,
 		verification_digest = ?, verified_at = datetime('now'), updated_at = datetime('now')
 		WHERE singleton = 1 AND migration_state <> ?
-		  AND NOT EXISTS (SELECT 1 FROM migration_batches)
-		  AND NOT EXISTS (SELECT 1 FROM custody_memberships)`, StatePrepared, digest, StateVerified)
+		  AND NOT EXISTS (SELECT 1 FROM custody_memberships
+		    WHERE destination_table = ?)`, StatePrepared, digest, StateVerified, destinationTable)
 	if err != nil {
 		return fmt.Errorf("verify empty plugin migration: %w", err)
 	}
@@ -370,28 +377,24 @@ func VerifyEmpty(ctx context.Context, db *sql.DB, digest string) error {
 		return fmt.Errorf("read plugin verification result: %w", err)
 	}
 	if changed != 1 {
-		return fmt.Errorf("plugin migration is not an empty population")
+		return fmt.Errorf("plugin migration into %q is not an empty population", destinationTable)
 	}
 	return nil
 }
 
-// CommittedBatches counts the batches a plugin database has already carried, so
-// a driver can tell an empty population from an interrupted migration.
-func CommittedBatches(ctx context.Context, db *sql.DB) (int, error) {
-	var committed int
-	if err := db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM migration_batches").Scan(&committed); err != nil {
-		return 0, fmt.Errorf("count committed migration batches: %w", err)
-	}
-	return committed, nil
-}
-
+// CutoverEligible answers for both verified outcomes. A home that verified with
+// nothing to carry is as ready for the federated cutover as one that carried
+// rows: the cutover is simply a no-op there. It stays re-openable until then, so
+// rows written before the cutover are still carried.
 func CutoverEligible(ctx context.Context, db *sql.DB) (bool, error) {
 	snapshot, err := Inspect(ctx, db)
 	if err != nil {
 		return false, err
 	}
-	return snapshot.State == StateVerified && snapshot.VerificationDigest != "", nil
+	if snapshot.State != StateVerified && snapshot.State != StateVerifiedEmpty {
+		return false, nil
+	}
+	return snapshot.VerificationDigest != "", nil
 }
 
 type rowQuerier interface {
