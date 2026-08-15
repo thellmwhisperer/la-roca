@@ -401,6 +401,18 @@ physical versions. Plugin-local custody memberships and
 mode, so the served `memories`/`memories_fts` route and source databases remain
 untouched until a later atomic cutover.
 
+DATA-2 ships that engine and its frozen-home proof with no caller on purpose,
+the way DATA-1 shipped the ledger with only `Prepare` wired: no installer and no
+command invokes the copy, and deciding when a real home runs it belongs to the
+DATA-6 cutover rung. Sources are free to move between an interrupted run and its
+resume. A row whose payload changed is carried forward as a further version of
+the same legacy ID rather than refused, a row that disappeared keeps the
+membership its batch truthfully recorded, and both are reported as drift events;
+membership counts are verified against what the committed batches recorded, not
+against the live source. Each source's frozen copy is named once per migration
+generation, so retries overwrite their own snapshot instead of accumulating a
+full database per attempt.
+
 ## Scheduled rides
 
 `roca cron` is a lightweight train: an external observer that invokes work

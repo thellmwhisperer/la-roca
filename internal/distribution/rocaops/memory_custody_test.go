@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
@@ -120,18 +122,29 @@ func TestDATA2MovesEveryMemoryIdentityIntoVerifiedOpsShadowCustody(t *testing.T)
 func TestDATA2ResumesAfterACommittedBatchWithoutHalfRows(t *testing.T) {
 	fixture := smallCustodyFixture(t)
 	interrupted := errors.New("synthetic stop after a committed batch")
+	committed := 0
 	options := MemoryCustodyOptions{
 		CorePath: fixture.core, CorpusPath: fixture.corpus, OpsPath: fixture.ops,
 		SnapshotDir: fixture.snapshots, BatchSize: 2,
-		AfterBatch: func(MemoryBatch) error { return interrupted },
+		AfterBatch: func(MemoryBatch) error {
+			committed++
+			if committed < 2 {
+				return nil
+			}
+			return interrupted
+		},
 	}
-	if _, err := MigrateMemoryCustody(t.Context(), options); !errors.Is(err, interrupted) {
+	stopped, err := MigrateMemoryCustody(t.Context(), options)
+	if !errors.Is(err, interrupted) {
 		t.Fatalf("interrupted migration = %v", err)
 	}
+	if stopped.State != migrationledger.StateBatchInProgress || len(stopped.Snapshots) != 3 {
+		t.Fatalf("interrupted report = %+v", stopped)
+	}
 	db := openCustodyDB(t, fixture.ops)
-	assertCustodyCount(t, db, "SELECT COUNT(*) FROM migration_batches", 1)
-	assertCustodyCount(t, db, "SELECT COUNT(*) FROM custody_memberships", 1)
-	assertCustodyCount(t, db, "SELECT COUNT(*) FROM memory_records", 1)
+	assertCustodyCount(t, db, "SELECT COUNT(*) FROM migration_batches", 2)
+	assertCustodyCount(t, db, "SELECT COUNT(*) FROM custody_memberships", 3)
+	assertCustodyCount(t, db, "SELECT COUNT(*) FROM memory_records", 3)
 	var state string
 	if err := db.QueryRow("SELECT migration_state FROM plugin_schema").Scan(&state); err != nil {
 		t.Fatal(err)
@@ -142,23 +155,98 @@ func TestDATA2ResumesAfterACommittedBatchWithoutHalfRows(t *testing.T) {
 	if state != string(migrationledger.StateBatchInProgress) {
 		t.Fatalf("interrupted state = %q", state)
 	}
-	core := openCustodyDB(t, fixture.core)
-	if _, err := core.Exec(`INSERT INTO memories
-		(id, layer, content, metadata, origin, status, created_at)
-		VALUES (14, 'project', 'core appended between runs', '{}', 'agent', 'active', '2026-08-01')`); err != nil {
-		t.Fatal(err)
-	}
-	if err := core.Close(); err != nil {
-		t.Fatal(err)
-	}
+	driftCore(t, fixture.core)
 
 	options.AfterBatch = nil
+	beforeSnapshots := snapshotCount(t, fixture.snapshots)
 	report, err := MigrateMemoryCustody(t.Context(), options)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.State != migrationledger.StateVerified || report.Memberships != 9 || report.PhysicalRecords != 7 {
-		t.Fatalf("resumed report = %+v", report)
+	if report.State != migrationledger.StateVerified || report.Memberships != 10 ||
+		report.PhysicalRecords != 8 || report.FTSRecords != 8 ||
+		snapshotCount(t, fixture.snapshots) != beforeSnapshots {
+		t.Fatalf("resumed report = %+v; snapshots before=%d after=%d", report,
+			beforeSnapshots, snapshotCount(t, fixture.snapshots))
+	}
+	want := []MemoryDrift{
+		{SourceDatabase: coreMemorySource, SourceKey: "10#2", Kind: MemoryDriftMutated},
+		{SourceDatabase: coreMemorySource, SourceKey: "11", Kind: MemoryDriftDeleted},
+	}
+	got := make([]MemoryDrift, 0, len(report.Drift))
+	for _, event := range report.Drift {
+		got = append(got, MemoryDrift{SourceDatabase: event.SourceDatabase,
+			SourceKey: event.SourceKey, Kind: event.Kind})
+	}
+	slices.SortFunc(got, func(left, right MemoryDrift) int {
+		return strings.Compare(left.SourceKey, right.SourceKey)
+	})
+	if !slices.Equal(got, want) {
+		t.Fatalf("drift = %+v, want %+v", got, want)
+	}
+
+	resumed := openCustodyDB(t, fixture.ops)
+	defer resumed.Close()
+	probes := []struct {
+		name, query string
+		want        int
+	}{
+		{"the mutated row keeps both versions under one legacy id",
+			"SELECT COUNT(*) FROM memory_compatibility WHERE source_database = 'core' AND id = 10", 2},
+		{"the deleted row keeps the membership its batch recorded",
+			"SELECT COUNT(*) FROM memory_compatibility WHERE source_database = 'core' AND id = 11", 1},
+		{"the rewritten payload is searchable in the shadow index",
+			`SELECT COUNT(*) FROM memory_records_fts WHERE memory_records_fts MATCH 'rewritten'`, 1},
+	}
+	for _, probe := range probes {
+		t.Run(probe.name, func(t *testing.T) { assertCustodyCount(t, resumed, probe.query, probe.want) })
+	}
+}
+
+func TestDATA2VerifiesAVirginHomeWithNothingToCarry(t *testing.T) {
+	fixture := newCustodyFixture(t)
+	insertFixtureMemories(t, fixture.core, false, nil)
+	insertFixtureMemories(t, fixture.corpus, true, nil)
+	insertOpsMemories(t, fixture.ops, 0)
+	options := MemoryCustodyOptions{
+		CorePath: fixture.core, CorpusPath: fixture.corpus, OpsPath: fixture.ops,
+		SnapshotDir: fixture.snapshots,
+	}
+	report, err := MigrateMemoryCustody(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.State != migrationledger.StateVerified || report.Memberships != 0 ||
+		report.PhysicalRecords != 0 || report.VerificationDigest == "" {
+		t.Fatalf("virgin home report = %+v", report)
+	}
+	again, err := MigrateMemoryCustody(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.State != migrationledger.StateVerified || again.Memberships != 0 {
+		t.Fatalf("virgin home rerun = %+v", again)
+	}
+}
+
+// driftCore moves the source under an interrupted migration the way an ordinary
+// ingest would: one committed row is rewritten, one is dropped, one is appended.
+func driftCore(t *testing.T, path string) {
+	t.Helper()
+	core := openCustodyDB(t, path)
+	statements := []string{
+		`UPDATE memories SET content = 'core alpha rewritten' WHERE id = 10`,
+		`DELETE FROM memories WHERE id = 11`,
+		`INSERT INTO memories (id, layer, content, metadata, origin, status, created_at)
+			VALUES (14, 'project', 'core appended between runs', '{}', 'agent', 'active', '2026-08-01')`,
+	}
+	for _, statement := range statements {
+		if _, err := core.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := core.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 

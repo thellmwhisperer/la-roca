@@ -334,6 +334,44 @@ func Verify(ctx context.Context, db *sql.DB, digest string) error {
 	return nil
 }
 
+// VerifyEmpty records the verified state of a migration whose source population
+// was empty. Verify deliberately demands a committed batch, so a migration that
+// had nothing to carry could never leave `prepared`; this is the narrow,
+// explicitly requested counterpart, refusing any database that did commit a
+// batch so the ordinary guard keeps its strength for every other migration.
+func VerifyEmpty(ctx context.Context, db *sql.DB, digest string) error {
+	if !hexDigest.MatchString(digest) {
+		return fmt.Errorf("verification digest must be a lowercase SHA-256 digest")
+	}
+	result, err := db.ExecContext(ctx, `UPDATE plugin_schema SET migration_state = ?,
+		verification_digest = ?, verified_at = datetime('now'), updated_at = datetime('now')
+		WHERE singleton = 1 AND migration_state <> ?
+		  AND NOT EXISTS (SELECT 1 FROM migration_batches)
+		  AND NOT EXISTS (SELECT 1 FROM custody_memberships)`, StateVerified, digest, StateVerified)
+	if err != nil {
+		return fmt.Errorf("verify empty plugin migration: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read plugin verification result: %w", err)
+	}
+	if changed != 1 {
+		return fmt.Errorf("plugin migration is not an empty population")
+	}
+	return nil
+}
+
+// CommittedBatches counts the batches a plugin database has already carried, so
+// a driver can tell an empty population from an interrupted migration.
+func CommittedBatches(ctx context.Context, db *sql.DB) (int, error) {
+	var committed int
+	if err := db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM migration_batches").Scan(&committed); err != nil {
+		return 0, fmt.Errorf("count committed migration batches: %w", err)
+	}
+	return committed, nil
+}
+
 func CutoverEligible(ctx context.Context, db *sql.DB) (bool, error) {
 	snapshot, err := Inspect(ctx, db)
 	if err != nil {

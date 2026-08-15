@@ -7,8 +7,10 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -46,6 +48,26 @@ type MemoryBatch struct {
 	HighWaterMark  string
 }
 
+const (
+	// MemoryDriftMutated names a source row whose payload changed after a
+	// custody batch had already committed its identity.
+	MemoryDriftMutated = "mutated"
+	// MemoryDriftDeleted names a source row that disappeared from the source
+	// database after a custody batch had already committed its identity.
+	MemoryDriftDeleted = "deleted"
+)
+
+// MemoryDrift is one source change observed between an interrupted run and its
+// resume. Drift is reported rather than fatal: the committed membership stays as
+// truthful history, and a mutation is carried forward as an additional version.
+type MemoryDrift struct {
+	SourceDatabase string
+	SourceKey      string
+	Kind           string
+	PriorDigest    string
+	Digest         string
+}
+
 type MemoryCustodyReport struct {
 	State              migrationledger.State
 	Memberships        int
@@ -53,10 +75,24 @@ type MemoryCustodyReport struct {
 	FTSRecords         int
 	VerificationDigest string
 	Snapshots          []string
+	Drift              []MemoryDrift
 }
 
 type memorySource struct {
 	name, path string
+}
+
+// memoryVersion is one committed identity of a source row. A source key holds
+// its base id for the first version and an id#n suffix for later ones, so
+// `memory_compatibility` still casts every version back to its legacy id.
+type memoryVersion struct {
+	version int
+	digest  string
+}
+
+type pendingMemory struct {
+	row       memoryRow
+	sourceKey string
 }
 
 type memoryRow struct {
@@ -83,6 +119,11 @@ type memoryRow struct {
 // ops' hidden DATA-2 tables. The currently served memories and FTS tables are
 // never selected as a destination, so a completed shadow migration cannot
 // change an answer before cutover.
+//
+// DATA-2 deliberately ships this engine and its frozen-home proof with no
+// caller: nothing in the installer or the CLI invokes it, exactly as DATA-1
+// shipped the ledger with only Prepare wired. Choosing when a real home runs
+// the copy, and serving the result, belongs to the DATA-6 cutover rung.
 func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (MemoryCustodyReport, error) {
 	if err := options.valid(); err != nil {
 		return MemoryCustodyReport{}, err
@@ -121,42 +162,32 @@ func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (Me
 	}
 	snapshots := make([]string, 0, len(sources))
 	rowsBySource := make(map[string][]memoryRow, len(sources))
+	var drift []MemoryDrift
 	for _, source := range sources {
-		snapshot, snapshotErr := snapshotMemories(ctx, source, options.SnapshotDir)
-		if snapshotErr != nil {
-			return MemoryCustodyReport{Snapshots: snapshots}, snapshotErr
-		}
+		snapshot := memorySnapshotPath(options.SnapshotDir, source.name, state)
 		snapshots = append(snapshots, snapshot)
+		if snapshotErr := snapshotMemories(ctx, source, snapshot); snapshotErr != nil {
+			return custodyFailure(ctx, ops, snapshots, drift, snapshotErr)
+		}
 		rows, readErr := readMemoryRows(ctx, source.name, snapshot)
 		if readErr != nil {
-			return MemoryCustodyReport{Snapshots: snapshots}, readErr
+			return custodyFailure(ctx, ops, snapshots, drift, readErr)
 		}
 		rowsBySource[source.name] = rows
 	}
 
 	for _, source := range sources {
 		rows := rowsBySource[source.name]
-		imported, importedErr := importedMemoryDigests(ctx, ops, source.name)
-		if importedErr != nil {
-			return MemoryCustodyReport{Snapshots: snapshots}, importedErr
+		history, historyErr := importedMemoryHistory(ctx, ops, source.name)
+		if historyErr != nil {
+			return custodyFailure(ctx, ops, snapshots, drift, historyErr)
 		}
-		pending := make([]memoryRow, 0, len(rows))
-		for _, row := range rows {
-			storedDigest, found := imported[row.id]
-			if !found {
-				pending = append(pending, row)
-				continue
-			}
-			if storedDigest != row.digest {
-				return MemoryCustodyReport{Snapshots: snapshots}, fmt.Errorf(
-					"%s memory %d changed after its custody batch committed", source.name, row.id)
-			}
-		}
-		rows = pending
-		for first := 0; first < len(rows); first += batchSize {
-			last := min(first+batchSize, len(rows))
-			group := rows[first:last]
-			batchID := memoryBatchID(source.name, group[0].id, group[len(group)-1].id)
+		pending, sourceDrift := pendingMemories(source.name, rows, history)
+		drift = append(drift, sourceDrift...)
+		for first := 0; first < len(pending); first += batchSize {
+			last := min(first+batchSize, len(pending))
+			group := pending[first:last]
+			batchID := memoryBatchID(source.name, group)
 			batch, beginErr := migrationledger.BeginBatch(ctx, ops, migrationledger.BatchSpec{
 				ID: batchID, SourceDatabase: source.name, SourceTable: "memories",
 			})
@@ -164,22 +195,21 @@ func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (Me
 				if errors.Is(beginErr, migrationledger.ErrBatchCommitted) {
 					continue
 				}
-				return MemoryCustodyReport{Snapshots: snapshots}, beginErr
+				return custodyFailure(ctx, ops, snapshots, drift, beginErr)
 			}
 			commit, importErr := importMemoryBatch(ctx, ops, batch, source.name, group)
 			if importErr != nil {
 				_ = batch.Rollback()
-				return MemoryCustodyReport{Snapshots: snapshots}, importErr
+				return custodyFailure(ctx, ops, snapshots, drift, importErr)
 			}
 			if commitErr := batch.Commit(ctx, commit); commitErr != nil {
-				return MemoryCustodyReport{Snapshots: snapshots}, commitErr
+				return custodyFailure(ctx, ops, snapshots, drift, commitErr)
 			}
 			if options.AfterBatch != nil {
 				progress := MemoryBatch{ID: batchID, SourceDatabase: source.name,
 					RowCount: len(group), HighWaterMark: commit.HighWaterMark}
 				if callbackErr := options.AfterBatch(progress); callbackErr != nil {
-					return MemoryCustodyReport{State: migrationledger.StateBatchInProgress,
-						Snapshots: snapshots}, callbackErr
+					return custodyFailure(ctx, ops, snapshots, drift, callbackErr)
 				}
 			}
 		}
@@ -187,19 +217,86 @@ func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (Me
 
 	if _, err := ops.ExecContext(ctx,
 		"INSERT INTO memory_records_fts(memory_records_fts) VALUES ('rebuild')"); err != nil {
-		return MemoryCustodyReport{Snapshots: snapshots}, fmt.Errorf("rebuild ops memory FTS: %w", err)
+		return custodyFailure(ctx, ops, snapshots, drift, fmt.Errorf("rebuild ops memory FTS: %w", err))
 	}
 	report, digest, err := verifyMemoryCustody(ctx, ops, rowsBySource)
 	if err != nil {
-		return MemoryCustodyReport{Snapshots: snapshots}, err
+		return custodyFailure(ctx, ops, snapshots, drift, err)
 	}
-	if err := migrationledger.Verify(ctx, ops, digest); err != nil {
-		return MemoryCustodyReport{Snapshots: snapshots}, err
+	if err := recordMemoryVerification(ctx, ops, digest); err != nil {
+		return custodyFailure(ctx, ops, snapshots, drift, err)
 	}
 	report.State = migrationledger.StateVerified
 	report.VerificationDigest = digest
 	report.Snapshots = snapshots
+	report.Drift = drift
 	return report, nil
+}
+
+// pendingMemories decides what each live source row still owes ops custody.
+// A row whose latest committed digest already matches is done; a row that has
+// drifted is carried forward as a further version rather than refused, so an
+// ordinary ingest between an interruption and its resume cannot wedge the
+// migration. Rows that vanished from the source keep their committed
+// membership: custody records what a source once held, not only what it holds.
+func pendingMemories(source string, rows []memoryRow,
+	history map[int64][]memoryVersion) ([]pendingMemory, []MemoryDrift) {
+	pending := make([]pendingMemory, 0, len(rows))
+	var drift []MemoryDrift
+	live := make(map[int64]struct{}, len(rows))
+	for _, row := range rows {
+		live[row.id] = struct{}{}
+		versions, found := history[row.id]
+		if !found {
+			pending = append(pending, pendingMemory{row: row, sourceKey: memorySourceKey(row.id, 1)})
+			continue
+		}
+		latest := versions[len(versions)-1]
+		if latest.digest == row.digest {
+			continue
+		}
+		next := latest.version + 1
+		pending = append(pending, pendingMemory{row: row, sourceKey: memorySourceKey(row.id, next)})
+		drift = append(drift, MemoryDrift{SourceDatabase: source, SourceKey: memorySourceKey(row.id, next),
+			Kind: MemoryDriftMutated, PriorDigest: latest.digest, Digest: row.digest})
+	}
+	for id, versions := range history {
+		if _, found := live[id]; found {
+			continue
+		}
+		latest := versions[len(versions)-1]
+		drift = append(drift, MemoryDrift{SourceDatabase: source,
+			SourceKey: memorySourceKey(id, latest.version), Kind: MemoryDriftDeleted,
+			PriorDigest: latest.digest})
+	}
+	sortMemoryDrift(drift)
+	return pending, drift
+}
+
+// recordMemoryVerification separates the two verified outcomes: a population
+// that carried batches, and a virgin home where all three sources were empty
+// and there was nothing to carry at all.
+func recordMemoryVerification(ctx context.Context, ops *sql.DB, digest string) error {
+	committed, err := migrationledger.CommittedBatches(ctx, ops)
+	if err != nil {
+		return err
+	}
+	if committed == 0 {
+		return migrationledger.VerifyEmpty(ctx, ops, digest)
+	}
+	return migrationledger.Verify(ctx, ops, digest)
+}
+
+// custodyFailure keeps a failed report honest about the ledger on disk, so a
+// driver can tell "nothing was committed" from "some batches committed" without
+// a second inspection.
+func custodyFailure(ctx context.Context, ops *sql.DB, snapshots []string,
+	drift []MemoryDrift, err error) (MemoryCustodyReport, error) {
+	report := MemoryCustodyReport{Snapshots: snapshots, Drift: drift}
+	if state, inspectErr := migrationledger.Inspect(ctx, ops); inspectErr == nil {
+		report.State = state.State
+	}
+	return report, err
 }
 
 func (options MemoryCustodyOptions) valid() error {
@@ -227,56 +324,58 @@ func custodyLock(path string) (func() error, error) {
 	return release, nil
 }
 
-func snapshotMemories(ctx context.Context, source memorySource, directory string) (string, error) {
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		return "", fmt.Errorf("create memory snapshot directory: %w", err)
+// memorySnapshotPath names one source's frozen copy deterministically per
+// migration generation, so a retried or resumed run overwrites its own previous
+// copy instead of leaving another full database behind on every attempt. The
+// name is known before the copy exists, which lets the caller register the path
+// first and never orphan a partially written snapshot.
+func memorySnapshotPath(directory, source string, state migrationledger.Snapshot) string {
+	name := strings.NewReplacer(":", "-", "/", "-").Replace(source)
+	return filepath.Join(directory,
+		fmt.Sprintf(".%s-schema%d-index%d.snapshot.db", name, state.SchemaVersion, state.IndexVersion))
+}
+
+func snapshotMemories(ctx context.Context, source memorySource, path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create memory snapshot directory: %w", err)
 	}
-	prefix := "." + strings.NewReplacer(":", "-", "/", "-").Replace(source.name) + "-"
-	placeholder, err := os.CreateTemp(directory, prefix+"*.snapshot.db")
-	if err != nil {
-		return "", fmt.Errorf("reserve memory snapshot path: %w", err)
-	}
-	path := placeholder.Name()
-	if closeErr := placeholder.Close(); closeErr != nil {
-		return "", closeErr
-	}
-	if removeErr := os.Remove(path); removeErr != nil {
-		return "", removeErr
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("replace the previous %s memory snapshot: %w", source.name, err)
 	}
 
 	sourceDB, err := bundledplugin.OpenDatabase(source.path, true)
 	if err != nil {
-		return "", fmt.Errorf("open %s memory source: %w", source.name, err)
+		return fmt.Errorf("open %s memory source: %w", source.name, err)
 	}
 	defer sourceDB.Close()
 	if _, err := sourceDB.ExecContext(ctx, "VACUUM INTO ?", path); err != nil {
-		return "", fmt.Errorf("freeze %s memories: %w", source.name, err)
+		return fmt.Errorf("freeze %s memories: %w", source.name, err)
 	}
 	if err := os.Chmod(path, 0o600); err != nil {
-		return "", fmt.Errorf("restrict %s memory snapshot: %w", source.name, err)
+		return fmt.Errorf("restrict %s memory snapshot: %w", source.name, err)
 	}
 
 	copyDB, err := bundledplugin.OpenDatabase(path, true)
 	if err != nil {
-		return "", fmt.Errorf("open %s memory snapshot: %w", source.name, err)
+		return fmt.Errorf("open %s memory snapshot: %w", source.name, err)
 	}
 	defer copyDB.Close()
 	var sourceCount, copyCount int
 	var integrity string
 	if err := sourceDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM memories").Scan(&sourceCount); err != nil {
-		return "", fmt.Errorf("count %s source memories: %w", source.name, err)
+		return fmt.Errorf("count %s source memories: %w", source.name, err)
 	}
 	if err := copyDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM memories").Scan(&copyCount); err != nil {
-		return "", fmt.Errorf("count %s snapshot memories: %w", source.name, err)
+		return fmt.Errorf("count %s snapshot memories: %w", source.name, err)
 	}
 	if err := copyDB.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&integrity); err != nil {
-		return "", fmt.Errorf("check %s memory snapshot: %w", source.name, err)
+		return fmt.Errorf("check %s memory snapshot: %w", source.name, err)
 	}
 	if sourceCount != copyCount || integrity != "ok" {
-		return "", fmt.Errorf("%s memory snapshot verification failed: source=%d copy=%d integrity=%s",
+		return fmt.Errorf("%s memory snapshot verification failed: source=%d copy=%d integrity=%s",
 			source.name, sourceCount, copyCount, integrity)
 	}
-	return path, nil
+	return nil
 }
 
 func readMemoryRows(ctx context.Context, source, path string) ([]memoryRow, error) {
@@ -343,10 +442,11 @@ func memoryColumns(ctx context.Context, db *sql.DB) (map[string]bool, error) {
 }
 
 func importMemoryBatch(ctx context.Context, ops *sql.DB, batch *migrationledger.Batch,
-	source string, rows []memoryRow) (migrationledger.BatchCommit, error) {
+	source string, rows []pendingMemory) (migrationledger.BatchCommit, error) {
 	digest := sha256.New()
 	reserved := make(map[int64]struct{})
-	for _, row := range rows {
+	for _, pending := range rows {
+		row := pending.row
 		destination, found, err := aliasDestination(ctx, ops, source, row.digest, reserved)
 		if err != nil {
 			return migrationledger.BatchCommit{}, err
@@ -372,7 +472,7 @@ func importMemoryBatch(ctx context.Context, ops *sql.DB, batch *migrationledger.
 			}
 		}
 		reserved[destination] = struct{}{}
-		sourceKey := strconv.FormatInt(row.id, 10)
+		sourceKey := pending.sourceKey
 		if _, err := batch.ExecContext(ctx, `INSERT INTO memory_provenance
 			(source_database, source_key, provenance) VALUES (?, ?, ?)`, source, sourceKey,
 			nullableString(row.provenance)); err != nil {
@@ -391,7 +491,7 @@ func importMemoryBatch(ctx context.Context, ops *sql.DB, batch *migrationledger.
 	}
 	return migrationledger.BatchCommit{
 		RowCount: len(rows), CanonicalDigest: fmt.Sprintf("%x", digest.Sum(nil)),
-		HighWaterMark: strconv.FormatInt(rows[len(rows)-1].id, 10),
+		HighWaterMark: strconv.FormatInt(rows[len(rows)-1].row.id, 10),
 	}, nil
 }
 
@@ -433,34 +533,86 @@ func aliasDestination(ctx context.Context, ops *sql.DB, source, digest string,
 	return 0, false, nil
 }
 
-func memoryBatchID(source string, first, last int64) string {
+// memoryBatchID is derived from the source keys the batch actually carries, so
+// re-importing a drifted row as a further version never collides with the batch
+// that carried its earlier version, while an identical retry stays recognized as
+// already committed.
+func memoryBatchID(source string, rows []pendingMemory) string {
 	name := strings.NewReplacer(":", "-", "/", "-").Replace(source)
-	return fmt.Sprintf("data2-%s-memories-%020d-%020d", name, first, last)
+	keys := sha256.New()
+	for _, pending := range rows {
+		writeField(keys, pending.sourceKey)
+	}
+	return fmt.Sprintf("data2-%s-memories-%020d-%020d-%x", name, rows[0].row.id,
+		rows[len(rows)-1].row.id, keys.Sum(nil)[:8])
 }
 
-func importedMemoryDigests(ctx context.Context, db *sql.DB, source string) (map[int64]string, error) {
+func memorySourceKey(id int64, version int) string {
+	if version <= 1 {
+		return strconv.FormatInt(id, 10)
+	}
+	return strconv.FormatInt(id, 10) + "#" + strconv.Itoa(version)
+}
+
+func parseMemorySourceKey(key string) (int64, int, error) {
+	base, suffix, versioned := strings.Cut(key, "#")
+	id, err := strconv.ParseInt(base, 10, 64)
+	if err != nil {
+		return 0, 0, err
+	}
+	if !versioned {
+		return id, 1, nil
+	}
+	version, err := strconv.Atoi(suffix)
+	if err != nil {
+		return 0, 0, err
+	}
+	if version < 2 {
+		return 0, 0, fmt.Errorf("versioned memory key %q must count from 2", key)
+	}
+	return id, version, nil
+}
+
+// importedMemoryHistory reads every committed identity of every source row,
+// newest version last, so a resume can tell an unchanged row from a drifted one
+// without discarding what an earlier batch truthfully recorded.
+func importedMemoryHistory(ctx context.Context, db *sql.DB, source string) (map[int64][]memoryVersion, error) {
 	rows, err := db.QueryContext(ctx, `SELECT source_key, canonical_digest
 		FROM custody_memberships WHERE source_database = ? AND source_table = 'memories'`, source)
 	if err != nil {
 		return nil, fmt.Errorf("read imported %s memory identities: %w", source, err)
 	}
 	defer rows.Close()
-	imported := make(map[int64]string)
+	imported := make(map[int64][]memoryVersion)
 	for rows.Next() {
 		var sourceKey, digest string
 		if err := rows.Scan(&sourceKey, &digest); err != nil {
 			return nil, fmt.Errorf("read imported %s memory identity: %w", source, err)
 		}
-		id, err := strconv.ParseInt(sourceKey, 10, 64)
+		id, version, err := parseMemorySourceKey(sourceKey)
 		if err != nil {
 			return nil, fmt.Errorf("read imported %s memory key %q: %w", source, sourceKey, err)
 		}
-		imported[id] = digest
+		imported[id] = append(imported[id], memoryVersion{version: version, digest: digest})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("read imported %s memory identities: %w", source, err)
 	}
+	for id := range imported {
+		slices.SortFunc(imported[id], func(left, right memoryVersion) int {
+			return left.version - right.version
+		})
+	}
 	return imported, nil
+}
+
+func sortMemoryDrift(drift []MemoryDrift) {
+	slices.SortFunc(drift, func(left, right MemoryDrift) int {
+		if left.Kind != right.Kind {
+			return strings.Compare(left.Kind, right.Kind)
+		}
+		return strings.Compare(left.SourceKey, right.SourceKey)
+	})
 }
 
 func verifyMemoryCustody(ctx context.Context, ops *sql.DB,
@@ -502,15 +654,31 @@ func verifyMemoryCustody(ctx context.Context, ops *sql.DB,
 	}
 	expectedMemberships := 0
 	for source, rows := range rowsBySource {
-		expectedMemberships += len(rows)
-		var got int
+		history, err := importedMemoryHistory(ctx, ops, source)
+		if err != nil {
+			return MemoryCustodyReport{}, "", err
+		}
+		for _, row := range rows {
+			versions, found := history[row.id]
+			if !found || versions[len(versions)-1].digest != row.digest {
+				return MemoryCustodyReport{}, "",
+					fmt.Errorf("%s memory %d is not held in its current version by ops custody", source, row.id)
+			}
+		}
+		var recorded, got int
+		if err := ops.QueryRowContext(ctx, `SELECT COALESCE(SUM(row_count), 0) FROM migration_batches
+			WHERE source_database = ? AND source_table = 'memories'`, source).Scan(&recorded); err != nil {
+			return MemoryCustodyReport{}, "", err
+		}
 		if err := ops.QueryRowContext(ctx, `SELECT COUNT(*) FROM custody_memberships
 			WHERE destination_table = 'memory_records' AND source_database = ?`, source).Scan(&got); err != nil {
 			return MemoryCustodyReport{}, "", err
 		}
-		if got != len(rows) {
-			return MemoryCustodyReport{}, "", fmt.Errorf("%s memory memberships = %d, want %d", source, got, len(rows))
+		if got != recorded {
+			return MemoryCustodyReport{}, "",
+				fmt.Errorf("%s memory memberships = %d, want the %d its batches recorded", source, got, recorded)
 		}
+		expectedMemberships += recorded
 	}
 	if foreignKeys != 0 || memberships != expectedMemberships || physical != expectedPhysical ||
 		fts != physical || orphans != 0 || missingFTS != 0 {
@@ -596,18 +764,14 @@ func (row memoryRow) canonicalDigest() string {
 	return fmt.Sprintf("%x", digest.Sum(nil))
 }
 
-type fieldWriter interface {
-	Write([]byte) (int, error)
-}
-
-func writeField(writer fieldWriter, value string) {
+func writeField(writer io.Writer, value string) {
 	var size [8]byte
 	binary.BigEndian.PutUint64(size[:], uint64(len(value)))
 	_, _ = writer.Write(size[:])
 	_, _ = writer.Write([]byte(value))
 }
 
-func writeNullString(writer fieldWriter, value sql.NullString) {
+func writeNullString(writer io.Writer, value sql.NullString) {
 	if !value.Valid {
 		writeField(writer, "\x00")
 		return
@@ -615,7 +779,7 @@ func writeNullString(writer fieldWriter, value sql.NullString) {
 	writeField(writer, "\x01"+value.String)
 }
 
-func writeNullInt(writer fieldWriter, value sql.NullInt64) {
+func writeNullInt(writer io.Writer, value sql.NullInt64) {
 	if !value.Valid {
 		writeField(writer, "\x00")
 		return
