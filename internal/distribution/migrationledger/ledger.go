@@ -476,28 +476,41 @@ func (batch *Batch) fail(err error) error {
 // scoped to that migration's own committed batches, so a sibling migration's
 // work can never stand in for it.
 func VerifyMigration(ctx context.Context, db *sql.DB, name, digest string) error {
-	if !identifier.MatchString(name) {
-		return fmt.Errorf("migration name must be lowercase")
-	}
-	if !hexDigest.MatchString(digest) {
-		return fmt.Errorf("verification digest must be a lowercase SHA-256 digest")
-	}
-	result, err := db.ExecContext(ctx, `UPDATE plugin_migrations SET migration_state = ?,
-		verification_digest = ?, verified_at = datetime('now'), updated_at = datetime('now')
-		WHERE migration = ? AND migration_state <> ?
-		  AND EXISTS (SELECT 1 FROM migration_batches WHERE migration = ?)`,
-		StateVerified, digest, name, StateVerified, name)
+	changed, err := recordVerification(ctx, db, name, digest, StateVerified,
+		"EXISTS (SELECT 1 FROM migration_batches WHERE migration = ?)", "verify migration")
 	if err != nil {
-		return fmt.Errorf("verify migration %q: %w", name, err)
-	}
-	changed, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("read plugin verification result: %w", err)
+		return err
 	}
 	if changed != 1 {
 		return fmt.Errorf("migration %q has no committed batch to verify", name)
 	}
 	return nil
+}
+
+// recordVerification is the one transition that records a verification outcome.
+// Both outcomes write the same columns under the same non-repeatable guard and
+// differ only in the population they demand, so the population clause is the
+// caller's and the statement stays single-owner.
+func recordVerification(ctx context.Context, db *sql.DB, name, digest string,
+	state State, population, action string) (int64, error) {
+	if !identifier.MatchString(name) {
+		return 0, fmt.Errorf("migration name must be lowercase")
+	}
+	if !hexDigest.MatchString(digest) {
+		return 0, fmt.Errorf("verification digest must be a lowercase SHA-256 digest")
+	}
+	result, err := db.ExecContext(ctx, `UPDATE plugin_migrations SET migration_state = ?,
+		verification_digest = ?, verified_at = datetime('now'), updated_at = datetime('now')
+		WHERE migration = ? AND migration_state <> ?
+		  AND `+population, state, digest, name, StateVerified, name)
+	if err != nil {
+		return 0, fmt.Errorf("%s %q: %w", action, name, err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("read plugin verification result: %w", err)
+	}
+	return changed, nil
 }
 
 // VerifyMigrationEmpty records that one named migration verified with nothing to
@@ -509,23 +522,11 @@ func VerifyMigration(ctx context.Context, db *sql.DB, name, digest string) error
 // today may hold rows tomorrow, so the recorded state is verified-empty and
 // BeginBatch reopens it as soon as there is something to carry.
 func VerifyMigrationEmpty(ctx context.Context, db *sql.DB, name, digest string) error {
-	if !identifier.MatchString(name) {
-		return fmt.Errorf("migration name must be lowercase")
-	}
-	if !hexDigest.MatchString(digest) {
-		return fmt.Errorf("verification digest must be a lowercase SHA-256 digest")
-	}
-	result, err := db.ExecContext(ctx, `UPDATE plugin_migrations SET migration_state = ?,
-		verification_digest = ?, verified_at = datetime('now'), updated_at = datetime('now')
-		WHERE migration = ? AND migration_state <> ?
-		  AND NOT EXISTS (SELECT 1 FROM custody_memberships WHERE migration = ?)`,
-		StateVerifiedEmpty, digest, name, StateVerified, name)
+	changed, err := recordVerification(ctx, db, name, digest, StateVerifiedEmpty,
+		"NOT EXISTS (SELECT 1 FROM custody_memberships WHERE migration = ?)",
+		"verify empty migration")
 	if err != nil {
-		return fmt.Errorf("verify empty migration %q: %w", name, err)
-	}
-	changed, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("read plugin verification result: %w", err)
+		return err
 	}
 	if changed != 1 {
 		return fmt.Errorf("migration %q is not an empty population", name)

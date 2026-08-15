@@ -320,13 +320,14 @@ upgrade is retried by the next run instead of being reported as done; every
 declaration it replays is additive and leaves the existing rows in place.
 
 Each bundled database also describes itself. It carries its own schema and index
-version, the state of its custody migration, the source batches already
-committed into it, and the source identity behind each row it holds. Those
-`plugin_schema`, `migration_batches`, and `custody_memberships` tables are
-custody bookkeeping rather than fleet memory, so they stay hidden from every
-attached schema. A batch is recorded only once it is fully committed: an
-interrupted one leaves nothing half-migrated behind and resumes from where it
-stopped, and only a verified database becomes eligible for cutover. A bundled
+version, the state of every named custody migration it hosts, the source batches
+already committed into it, and the source identity behind each row it holds.
+Those `plugin_schema`, `plugin_migrations`, `migration_batches`, and
+`custody_memberships` tables are custody bookkeeping rather than fleet memory,
+so they stay hidden from every attached schema. A batch is recorded only once it
+is fully committed: an interrupted one leaves nothing half-migrated behind and
+resumes from where it stopped, and only a verified migration becomes eligible
+for cutover. A bundled
 database may also declare `legacy_*` quarantine tables, which keep
 owner-specific records verbatim beside their canonical digest instead of
 reshaping them into an active surface. Bumping one of those versions is a
