@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -162,8 +163,48 @@ func (w *world) seed(t *testing.T) {
 {"id":"p2","parentId":"p1","type":"message","timestamp":"2026-08-01T13:00:02Z","message":{"role":"assistant","stopReason":"stop","model":"fixture-pi-model","provider":"fixture-pi-provider","usage":{"input":12,"output":5,"reasoning":2,"cacheRead":3,"cost":{"total":0.25}},"content":[{"type":"text","text":"nine"}]}}
 `, w.demoCwd()))
 
+	// Grok Build, which files each session under the URL-escaped working
+	// directory it ran in, with the transcript and its metadata side by side.
+	w.seedGrok(t, roots)
+
 	w.seedOpenCode(t, roots.OpenCodeDB)
 	w.seedHermes(t, roots.HermesDB)
+}
+
+func (w *world) seedGrok(t *testing.T, roots Roots) {
+	t.Helper()
+	const grokSessionID = "22222222-3333-4444-5555-666666666666"
+	session := filepath.Join(roots.GrokSessions, url.PathEscape(w.demoCwd()), grokSessionID)
+	w.write(t, filepath.Join(session, "summary.json"), fmt.Sprintf(`{
+  "info": {"id": %q, "cwd": %q},
+  "session_summary": "Synthetic Grok fixture.",
+  "created_at": "2026-08-01T14:00:00.123456Z",
+  "updated_at": "2026-08-01T14:00:30Z",
+  "last_active_at": "2026-08-01T14:00:30Z",
+  "num_messages": 6,
+  "num_chat_messages": 6,
+  "current_model_id": "fixture-grok-model",
+  "git_root_dir": %q,
+  "git_remotes": ["https://synthetic.example/la-roca"],
+  "head_commit": "0123456789abcdef",
+  "head_branch": "main",
+  "agent_name": "fixture-grok-agent",
+  "sandbox_profile": "off",
+  "reasoning_effort": "high",
+  "request_id": "req-fixture-grok",
+  "chat_format_version": 1,
+  "generated_title": "the ninth fixture"
+}`, grokSessionID, w.demoCwd(), w.demoCwd()))
+	w.write(t, filepath.Join(session, "chat_history.jsonl"), `
+{"type":"system","content":"You are Grok Build, a synthetic fixture assistant."}
+{"type":"user","content":[{"type":"text","text":"Ignore the compacted history of the fixture."}],"synthetic_reason":"compaction_meta"}
+{"type":"user","content":[{"type":"text","text":"how many sources does the fixture have"}]}
+{"type":"reasoning","id":"reason-fixture-1","summary":[{"type":"summary_text","text":"the matrix has nine sources"}],"encrypted_content":"ciphertext","status":"completed"}
+{"type":"assistant","content":"let me count them","tool_calls":[{"id":"call-grok-1","name":"read_file","arguments":"{\"target_file\":\"/synthetic/demo/plan.md\"}"}],"model_id":"fixture-grok-model","model_fingerprint":"fp-fixture","reasoning_effort":"high"}
+{"type":"tool_result","tool_call_id":"call-grok-1","content":"exit: 0 [truncated: showing the synthetic fixture plan]"}
+{"type":"reasoning","id":"reason-fixture-2","summary":[{"type":"summary_text","text":"nine sources verified"}],"encrypted_content":"ciphertext","status":"completed"}
+{"type":"assistant","content":"nine sources, and none is lost","model_id":"fixture-grok-model","reasoning_effort":"high"}
+`)
 }
 
 func (w *world) seedOpenCode(t *testing.T, path string) {

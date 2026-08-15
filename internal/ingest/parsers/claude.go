@@ -185,19 +185,14 @@ func boolCount(value bool) int {
 }
 
 func consumeClaudeLines(content []byte, consume func(claudeLine)) ([]Discard, int) {
-	var discards []Discard
-	valid := 0
-	for index, raw := range lines(content) {
+	return eachJSONLine(content, func(_ int, raw string) error {
 		var line claudeLine
 		if err := json.Unmarshal([]byte(raw), &line); err != nil {
-			discards = append(discards, Discard{Record: index + 1,
-				Reason: "invalid JSON: " + err.Error(), Category: "invalid JSON"})
-			continue
+			return err
 		}
-		valid++
 		consume(line)
-	}
-	return discards, valid
+		return nil
+	})
 }
 
 func (b *claudeBuilder) consume(line claudeLine) {
