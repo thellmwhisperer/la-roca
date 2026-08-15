@@ -229,6 +229,97 @@ func TestInstallUpdateAndUninstallPreservePluginOwnedData(t *testing.T) {
 	}
 }
 
+func TestFederatedManifestInstallsAndPreservesEveryDeclaredDatabase(t *testing.T) {
+	root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
+	manager := plugininstall.Manager{PluginRoot: root, BinDir: bin}
+	source := filepath.Join(t.TempDir(), "federated")
+	writeFederatedPackage(t, source, "federated", "1.0.0")
+	candidate, err := plugininstall.Inspect(source, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(candidate.Databases, []string{"records.db", "runs.db"}) {
+		t.Fatalf("declared databases = %v", candidate.Databases)
+	}
+	if _, err := manager.Install(candidate); err != nil {
+		t.Fatal(err)
+	}
+	for _, database := range candidate.Databases {
+		withPackageDatabase(t, filepath.Join(root, "federated", database), func(db *sql.DB) {
+			if _, err := db.Exec(`INSERT INTO entries (value) VALUES ('preserved')`); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+
+	writeFederatedPackage(t, source, "federated", "2.0.0")
+	updated, err := plugininstall.Inspect(source, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.UpdateInPlace(updated); err != nil {
+		t.Fatal(err)
+	}
+	for _, database := range candidate.Databases {
+		var count int
+		withPackageDatabase(t, filepath.Join(root, "federated", database), func(db *sql.DB) {
+			if err := db.QueryRow(`SELECT count(*) FROM entries WHERE value = 'preserved'`).Scan(&count); err != nil {
+				t.Fatal(err)
+			}
+		})
+		if count != 1 {
+			t.Fatalf("database %s lost its plugin-owned rows", database)
+		}
+	}
+	if _, err := plugininstall.VerifyInstalledPayload("federated", filepath.Join(root, "federated")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A package that ships no executable is authorable from the published contract:
+// it declares the host binary and stays data-only, while a package that names an
+// executable it does not supply is refused.
+func TestAFederatedPackageDeclaresEitherTheHostBinaryOrOneItShips(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "federated")
+	writeFederatedPackage(t, source, "federated", "1.0.0")
+	candidate, err := plugininstall.Inspect(source, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if candidate.Risk != plugininstall.DataOnly || candidate.Executable != "" {
+		t.Fatalf("host-binary package risk = %s, executable = %q", candidate.Risk, candidate.Executable)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(source, "plugin.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixtureFile(t, filepath.Join(source, "plugin.json"),
+		[]byte(strings.Replace(string(raw), `"binary":"roca"`, `"binary":"roca-federated"`, 1)), 0o600)
+	writeChecksums(t, source, []string{"plugin.json", "records.db", "runs.db"})
+	if _, err := plugininstall.Inspect(source, source); err == nil ||
+		!strings.Contains(err.Error(), "declares binary") {
+		t.Fatalf("package that supplies no declared executable = %v", err)
+	}
+
+	docs, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "plugins.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(docs), "declares `roca`, the host binary") {
+		t.Error("the plugin contract does not document what a package without an executable declares")
+	}
+}
+
+func TestFederatedManifestNamesMustSurviveTheWholeLifecycle(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "package")
+	writeFederatedPackage(t, source, "roca.corpus", "1.0.0")
+	if _, err := plugininstall.Inspect(source, source); err == nil ||
+		!strings.Contains(err.Error(), "safe name") {
+		t.Fatalf("inspect of an unmanageable manifest name = %v", err)
+	}
+}
+
 func TestExecutableOnlyPackageOwnsAndPreservesItsStateDirectory(t *testing.T) {
 	root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
 	manager := plugininstall.Manager{PluginRoot: root, BinDir: bin}
@@ -376,6 +467,64 @@ func writePackageAt(t *testing.T, directory, name, version string, custody, exec
 		files = append(files, "roca-"+name)
 	}
 	writeChecksums(t, directory, files)
+}
+
+func writeFederatedPackage(t *testing.T, directory, name, version string) {
+	t.Helper()
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manifest := map[string]any{
+		"schema": 1, "name": name, "version": version, "binary": "roca",
+		"databases": []map[string]any{
+			{"name": "records", "path": "records.db", "alias": "federated_records", "attachment": "resident", "retention": "Plugin managed."},
+			{"name": "runs", "path": "runs.db", "alias": "federated_runs", "attachment": "resident", "retention": "Plugin managed."},
+		},
+		"semantic": map[string]any{
+			"databases": []map[string]any{
+				{
+					"database": "records", "description": "Synthetic records.",
+					"questions": []string{"Which records exist?"},
+					"tables": []map[string]any{{
+						"name": "entries", "description": "Synthetic entries.",
+						"columns": []string{"id", "value"},
+					}},
+				},
+				{
+					"database": "runs", "description": "Synthetic runs.",
+					"questions": []string{"Which runs exist?"},
+					"tables": []map[string]any{{
+						"name": "entries", "description": "Synthetic run entries.",
+						"columns": []string{"id", "value"},
+					}},
+				},
+			},
+		},
+		"verbs":        []map[string]any{},
+		"capabilities": []map[string]any{},
+	}
+	writePackageMetadata(t, directory, manifest)
+	for _, name := range []string{"records.db", "runs.db"} {
+		if err := os.Remove(filepath.Join(directory, name)); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		withPackageDatabase(t, filepath.Join(directory, name), func(db *sql.DB) {
+			if _, err := db.Exec(`CREATE TABLE entries (id INTEGER PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	writeChecksums(t, directory, []string{"plugin.json", "records.db", "runs.db"})
+}
+
+func withPackageDatabase(t *testing.T, path string, action func(*sql.DB)) {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	action(db)
 }
 
 func writeExecutablePackage(t *testing.T, name, version, stateDir string) string {

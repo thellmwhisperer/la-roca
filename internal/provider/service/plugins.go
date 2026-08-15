@@ -16,8 +16,22 @@ import (
 
 const (
 	rocaOpsPluginName    = "roca-ops"
-	rocaCorpusPluginName = "roca-corpus"
+	rocaCorpusPluginName = "roca-corpus" // the package La Roca ships to own perennial ingest
+	// IngestVerb is the canonical verb the bundled corpus manifest declares and
+	// this kernel routes. The command surface asks the same manifest for it, so
+	// the seat and the CLI command it appears as are named once.
+	IngestVerb = "ingest"
 )
+
+// ownsVerb reports whether a discovered package holds the seat the kernel
+// routes a verb into. The manifest declares the verb, and the name La Roca
+// ships bounds it: an installed third party may not take the seat by declaring
+// the same verb, and a package installed before manifests existed, which
+// declares nothing, keeps the seat it already had.
+func ownsVerb(descriptor plugin.Descriptor, verb, packageName string) bool {
+	return descriptor.Name == packageName &&
+		(descriptor.Manifest == nil || descriptor.Manifest.HasVerb(verb))
+}
 
 // selfGated names the packages La Roca ships and whose attachment it owns
 // itself. Each one reaches a connection through its own feature flag, never
@@ -25,7 +39,7 @@ const (
 // installed but unactivated package costs neither an attachment slot nor a
 // place in the schema every answer is written against.
 func selfGated(name string) bool {
-	return name == rocaOpsPluginName || name == rocaCorpusPluginName
+	return name == rocaOpsPluginName
 }
 
 type pluginRoute struct {
@@ -128,7 +142,7 @@ func (s *Service) openResidents(ctx context.Context) error {
 	}
 	if s.opts.CorpusEnabled {
 		for _, descriptor := range descriptors {
-			if descriptor.Name == rocaCorpusPluginName &&
+			if ownsVerb(descriptor, IngestVerb, rocaCorpusPluginName) &&
 				descriptor.Semantic.Attachment == plugin.AttachmentResident {
 				candidates = append(candidates, descriptor)
 			}
@@ -136,7 +150,9 @@ func (s *Service) openResidents(ctx context.Context) error {
 	}
 	if s.opts.PluginsEnabled {
 		for _, descriptor := range descriptors {
-			if !selfGated(descriptor.Name) && descriptor.Semantic.Attachment == plugin.AttachmentResident {
+			if !selfGated(descriptor.Name) &&
+				!ownsVerb(descriptor, IngestVerb, rocaCorpusPluginName) &&
+				descriptor.Semantic.Attachment == plugin.AttachmentResident {
 				candidates = append(candidates, descriptor)
 			}
 		}
@@ -174,13 +190,7 @@ func (s *Service) openResidents(ctx context.Context) error {
 		}
 	}
 	if s.opts.CorpusEnabled {
-		var corpusDatabase *plugin.Database
-		for index := range s.resident {
-			if s.resident[index].Name == rocaCorpusPluginName {
-				corpusDatabase = &s.resident[index]
-				break
-			}
-		}
+		corpusDatabase := databaseForVerb(s.resident, IngestVerb, rocaCorpusPluginName)
 		if corpusDatabase == nil {
 			reason := strings.Join(append(slices.Clone(warnings), route.warnings...), "; ")
 			if reason == "" {
@@ -191,12 +201,12 @@ func (s *Service) openResidents(ctx context.Context) error {
 			// the open would break every read on a machine under audit.
 			if s.opts.ReadOnly {
 				s.residentWarnings = append(s.residentWarnings, fmt.Sprintf(
-					"the bundled %s plugin is unavailable: %s; the answer covers core only",
-					rocaCorpusPluginName, reason))
+					"the bundled %s plugin that owns %s is unavailable: %s; the answer covers core only",
+					rocaCorpusPluginName, IngestVerb, reason))
 				return nil
 			}
-			return fmt.Errorf("the bundled %s plugin is unavailable: %s",
-				rocaCorpusPluginName, reason)
+			return fmt.Errorf("the bundled %s plugin that owns %s is unavailable: %s",
+				rocaCorpusPluginName, IngestVerb, reason)
 		}
 		if !s.opts.ReadOnly {
 			var err error
@@ -213,12 +223,24 @@ func (s *Service) openResidents(ctx context.Context) error {
 // has none. It is the only handle read-only has on that database, which it
 // never opens for writing.
 func (s *Service) residentCorpus() *plugin.Database {
-	for index := range s.resident {
-		if s.resident[index].Name == rocaCorpusPluginName {
-			return &s.resident[index]
+	return databaseForVerb(s.resident, IngestVerb, rocaCorpusPluginName)
+}
+
+// databaseForVerb resolves the single database a verb writes into. A package
+// that declares the verb over several databases names no seat at all, because
+// the kernel would otherwise pick one of them by discovery order.
+func databaseForVerb(databases []plugin.Database, verb, packageName string) *plugin.Database {
+	var selected *plugin.Database
+	for index := range databases {
+		if !ownsVerb(databases[index].Descriptor, verb, packageName) {
+			continue
 		}
+		if selected != nil {
+			return nil
+		}
+		selected = &databases[index]
 	}
-	return nil
+	return selected
 }
 
 func (s *Service) openQueryConnection(ctx context.Context) (*sql.Conn, []string, error) {
@@ -230,23 +252,16 @@ func (s *Service) openQueryConnection(ctx context.Context) (*sql.Conn, []string,
 	if err != nil {
 		return nil, nil, err
 	}
-	attached := make([]string, 0, len(s.resident))
-	for _, database := range s.resident {
-		if _, err := connection.ExecContext(ctx,
-			"ATTACH DATABASE ? AS "+quoteSchema(database.Schema), database.ReadOnlyURI()); err != nil {
-			closeQueryConnection(connection, attached)
-			return nil, nil, fmt.Errorf("attach resident plugin %s read-only: %w", database.Name, err)
-		}
-		attached = append(attached, database.Schema)
+	attached, err := plugin.Attach(ctx, connection, s.resident)
+	if err != nil {
+		_ = connection.Close()
+		return nil, nil, err
 	}
 	return connection, attached, nil
 }
 
 func closeQueryConnection(connection *sql.Conn, attached []string) {
-	for index := len(attached) - 1; index >= 0; index-- {
-		_, _ = connection.ExecContext(context.Background(),
-			"DETACH DATABASE "+quoteSchema(attached[index]))
-	}
+	plugin.Detach(context.Background(), connection, attached)
 	_ = connection.Close()
 }
 
@@ -292,28 +307,14 @@ func schemaWithPlugins(databases []plugin.Database) query.Schema {
 	if len(databases) == 0 {
 		return base
 	}
-	schema := query.Schema{
-		Tables: make([]query.Table, len(base.Tables), len(base.Tables)+len(databases)),
-		Joins:  slices.Clone(base.Joins),
+	// The parsed schema is read once per process and handed out by value, so
+	// labeling its tables in place would brand the shared copy for every later
+	// answer, including the ones that consult no plugin at all.
+	base.Tables = slices.Clone(base.Tables)
+	for index := range base.Tables {
+		base.Tables[index].Database = "core"
 	}
-	copy(schema.Tables, base.Tables)
-	for index := range schema.Tables {
-		schema.Tables[index].Columns = slices.Clone(schema.Tables[index].Columns)
-		schema.Tables[index].Database = "core"
-	}
-	for _, database := range databases {
-		for _, table := range database.Tables {
-			questions := append(slices.Clone(database.Semantic.Questions), table.Questions...)
-			schema.Tables = append(schema.Tables, query.Table{
-				Name:        database.Schema + "." + table.Name,
-				Columns:     slices.Clone(table.Columns),
-				Description: database.Semantic.Description + " " + table.Description,
-				Questions:   questions,
-				Database:    database.Source(),
-			})
-		}
-	}
-	return schema
+	return plugin.Compose(base, databases)
 }
 
 func (s *Service) executeWithPlugins(ctx context.Context, statement, term string,
@@ -330,16 +331,17 @@ func (s *Service) executeWithPlugins(ctx context.Context, statement, term string
 		return nil, nil, executionError(ctx, queryCtx, timeout, err)
 	}
 	defer func() { closeQueryConnection(connection, attached) }()
+	var onDemand []plugin.Database
 	for _, database := range databases {
-		if database.Semantic.Attachment == plugin.AttachmentResident {
-			continue
+		if database.Semantic.Attachment != plugin.AttachmentResident {
+			onDemand = append(onDemand, database)
 		}
-		if _, err := connection.ExecContext(queryCtx,
-			"ATTACH DATABASE ? AS "+quoteSchema(database.Schema), database.ReadOnlyURI()); err != nil {
-			return nil, nil, fmt.Errorf("attach plugin %s read-only: %w", database.Name, err)
-		}
-		attached = append(attached, database.Schema)
 	}
+	newlyAttached, err := plugin.Attach(queryCtx, connection, onDemand)
+	if err != nil {
+		return nil, nil, err
+	}
+	attached = append(attached, newlyAttached...)
 	rows, err := connection.QueryContext(queryCtx, statement)
 	if err != nil {
 		return nil, nil, executionError(ctx, queryCtx, timeout, err)
