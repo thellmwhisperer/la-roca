@@ -100,14 +100,23 @@ func TestLegacyOrphansResumeIntoExplicitQuarantineWithoutChangingJourneys(t *tes
 	corpus := openDatabase(t, options.CorpusDatabase)
 	defer corpus.Close()
 	assertCount(t, corpus, "legacy_flow_patterns", 3)
-	for _, db := range []*sql.DB{cron, ops, corpus} {
-		assertCountWhere(t, db, "sqlite_schema", "type = 'table' AND name = 'messages'", 0)
-		state, err := migrationledger.Inspect(context.Background(), db)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if state.State != migrationledger.StateBatchInProgress {
-			t.Fatalf("shadow destination state = %q, want batch-in-progress", state.State)
+	for _, check := range []struct {
+		db         *sql.DB
+		migrations []string
+	}{
+		{db: cron, migrations: []string{legacyRunsMigration, legacyRunLogsMigration}},
+		{db: ops, migrations: []string{legacyRecordsMigration}},
+		{db: corpus, migrations: []string{legacyFlowPatternsMigration}},
+	} {
+		assertCountWhere(t, check.db, "sqlite_schema", "type = 'table' AND name = 'messages'", 0)
+		for _, name := range check.migrations {
+			state, err := migrationledger.InspectMigration(context.Background(), check.db, name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if state.State != migrationledger.StateBatchInProgress {
+				t.Fatalf("shadow destination migration %q state = %q, want batch-in-progress", name, state.State)
+			}
 		}
 	}
 

@@ -385,17 +385,19 @@ func BeginBatch(ctx context.Context, db *sql.DB, spec BatchSpec) (*Batch, error)
 	return batch, nil
 }
 
-// LookupBatch returns the immutable receipt for one committed batch. Importers
-// use it to prove that replaying the same frozen source is a no-op rather than
-// trusting the batch id alone.
-func LookupBatch(ctx context.Context, db *sql.DB, id string) (CommittedBatch, bool, error) {
+// LookupBatch returns the immutable receipt for one committed batch, scoped to
+// the migration that carried it. Importers use it to prove that replaying the
+// same frozen source is a no-op rather than trusting the batch id alone.
+func LookupBatch(ctx context.Context, db *sql.DB, migration, id string) (CommittedBatch, bool, error) {
 	if strings.TrimSpace(id) == "" {
 		return CommittedBatch{}, false, fmt.Errorf("migration batch lookup needs an id")
 	}
 	var record CommittedBatch
+	record.Migration = migration
 	record.ID = id
 	err := db.QueryRowContext(ctx, `SELECT source_database, source_table, row_count,
-		canonical_digest, high_water_mark FROM migration_batches WHERE batch_id = ?`, id).Scan(
+		canonical_digest, high_water_mark FROM migration_batches
+		WHERE migration = ? AND batch_id = ?`, migration, id).Scan(
 		&record.SourceDatabase, &record.SourceTable, &record.RowCount,
 		&record.CanonicalDigest, &record.HighWaterMark)
 	if errors.Is(err, sql.ErrNoRows) {

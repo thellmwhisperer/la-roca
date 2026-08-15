@@ -27,6 +27,13 @@ import (
 const (
 	defaultBatchSize = 500
 	coreSource       = "core"
+
+	// Each legacy migration name owns one destination table, so two migrations
+	// coexist in the same plugin database without sharing lifecycle state.
+	legacyRunsMigration         = "data4-legacy-runs"
+	legacyRunLogsMigration      = "data4-legacy-run-logs"
+	legacyRecordsMigration      = "data4-legacy-records"
+	legacyFlowPatternsMigration = "data4-legacy-flow-patterns"
 )
 
 type LegacyOptions struct {
@@ -65,20 +72,21 @@ type legacyPlan struct {
 	destination      destination
 	destinationTable string
 	recordType       string
+	migration        string
 }
 
 var legacyPlans = []legacyPlan{
-	{sourceTable: "runs", keyColumns: []string{"id"}, destination: destinationCron, destinationTable: "legacy_runs"},
-	{sourceTable: "run_logs", keyColumns: []string{"id"}, destination: destinationCron, destinationTable: "legacy_run_logs"},
-	{sourceTable: "garden_channels", keyColumns: []string{"id"}, destination: destinationOps, destinationTable: "legacy_records", recordType: "garden_channels"},
-	{sourceTable: "garden_memberships", keyColumns: []string{"channel_id", "nick"}, destination: destinationOps, destinationTable: "legacy_records", recordType: "garden_memberships"},
-	{sourceTable: "garden_messages", keyColumns: []string{"id"}, destination: destinationOps, destinationTable: "legacy_records", recordType: "garden_messages"},
-	{sourceTable: "garden_read_cursors", keyColumns: []string{"channel_id", "nick"}, destination: destinationOps, destinationTable: "legacy_records", recordType: "garden_read_cursors"},
-	{sourceTable: "garden_voice_leases", keyColumns: []string{"id"}, destination: destinationOps, destinationTable: "legacy_records", recordType: "garden_voice_leases"},
-	{sourceTable: "proposals", keyColumns: []string{"id"}, destination: destinationOps, destinationTable: "legacy_records", recordType: "proposals"},
-	{sourceTable: "proposal_annotations", keyColumns: []string{"id"}, destination: destinationOps, destinationTable: "legacy_records", recordType: "proposal_annotations"},
-	{sourceTable: "queryplan_teach_examples", keyColumns: []string{"id"}, destination: destinationOps, destinationTable: "legacy_records", recordType: "queryplan_teach_examples"},
-	{sourceTable: "flow_patterns", keyColumns: []string{"id"}, destination: destinationCorpus, destinationTable: "legacy_flow_patterns"},
+	{sourceTable: "runs", keyColumns: []string{"id"}, destination: destinationCron, destinationTable: "legacy_runs", migration: legacyRunsMigration},
+	{sourceTable: "run_logs", keyColumns: []string{"id"}, destination: destinationCron, destinationTable: "legacy_run_logs", migration: legacyRunLogsMigration},
+	{sourceTable: "garden_channels", keyColumns: []string{"id"}, destination: destinationOps, destinationTable: "legacy_records", recordType: "garden_channels", migration: legacyRecordsMigration},
+	{sourceTable: "garden_memberships", keyColumns: []string{"channel_id", "nick"}, destination: destinationOps, destinationTable: "legacy_records", recordType: "garden_memberships", migration: legacyRecordsMigration},
+	{sourceTable: "garden_messages", keyColumns: []string{"id"}, destination: destinationOps, destinationTable: "legacy_records", recordType: "garden_messages", migration: legacyRecordsMigration},
+	{sourceTable: "garden_read_cursors", keyColumns: []string{"channel_id", "nick"}, destination: destinationOps, destinationTable: "legacy_records", recordType: "garden_read_cursors", migration: legacyRecordsMigration},
+	{sourceTable: "garden_voice_leases", keyColumns: []string{"id"}, destination: destinationOps, destinationTable: "legacy_records", recordType: "garden_voice_leases", migration: legacyRecordsMigration},
+	{sourceTable: "proposals", keyColumns: []string{"id"}, destination: destinationOps, destinationTable: "legacy_records", recordType: "proposals", migration: legacyRecordsMigration},
+	{sourceTable: "proposal_annotations", keyColumns: []string{"id"}, destination: destinationOps, destinationTable: "legacy_records", recordType: "proposal_annotations", migration: legacyRecordsMigration},
+	{sourceTable: "queryplan_teach_examples", keyColumns: []string{"id"}, destination: destinationOps, destinationTable: "legacy_records", recordType: "queryplan_teach_examples", migration: legacyRecordsMigration},
+	{sourceTable: "flow_patterns", keyColumns: []string{"id"}, destination: destinationCorpus, destinationTable: "legacy_flow_patterns", migration: legacyFlowPatternsMigration},
 }
 
 var sourceTablesOwnedElsewhere = map[string]struct{}{
@@ -176,6 +184,9 @@ func importLegacyOrphans(ctx context.Context, options LegacyOptions, batchSize i
 		return report, err
 	}
 	defer closeDatabases(destinations)
+	if err := prepareLegacyMigrations(ctx, destinations); err != nil {
+		return report, err
+	}
 	importer := legacyImporter{options: options, batchSize: batchSize,
 		source: source, dest: destinations, afterBatch: afterBatch}
 	for _, plan := range legacyPlans {
@@ -353,6 +364,27 @@ func closeDatabases(databases map[destination]*sql.DB) {
 	}
 }
 
+// prepareLegacyMigrations declares the named migration that owns each legacy
+// destination table. Declaration is idempotent and never disturbs a migration
+// that already carried rows, so a resumable replay re-declares them all safely.
+func prepareLegacyMigrations(ctx context.Context, destinations map[destination]*sql.DB) error {
+	seen := make(map[string]struct{})
+	for _, plan := range legacyPlans {
+		key := string(plan.destination) + "/" + plan.migration
+		if _, declared := seen[key]; declared {
+			continue
+		}
+		seen[key] = struct{}{}
+		if err := migrationledger.PrepareMigration(ctx, destinations[plan.destination], migrationledger.Migration{
+			Name: plan.migration, DestinationTable: plan.destinationTable,
+		}); err != nil {
+			return fmt.Errorf("declare the DATA-4 %s migration %q: %w",
+				plan.destination, plan.migration, err)
+		}
+	}
+	return nil
+}
+
 func (importer legacyImporter) importTable(ctx context.Context, plan legacyPlan) (LegacyTableResult, error) {
 	columns, err := tableColumns(ctx, importer.source, plan.sourceTable)
 	if err != nil {
@@ -431,7 +463,7 @@ func (importer legacyImporter) applyBatch(ctx context.Context, plan legacyPlan, 
 	} else {
 		commit.HighWaterMark = records[len(records)-1].sourceKey
 	}
-	existing, found, err := migrationledger.LookupBatch(ctx, db, id)
+	existing, found, err := migrationledger.LookupBatch(ctx, db, plan.migration, id)
 	if err != nil {
 		return err
 	}
@@ -443,7 +475,7 @@ func (importer legacyImporter) applyBatch(ctx context.Context, plan legacyPlan, 
 		return nil
 	}
 	batch, err := migrationledger.BeginBatch(ctx, db, migrationledger.BatchSpec{
-		ID: id, SourceDatabase: coreSource, SourceTable: plan.sourceTable,
+		Migration: plan.migration, ID: id, SourceDatabase: coreSource, SourceTable: plan.sourceTable,
 	})
 	if err != nil {
 		return fmt.Errorf("begin legacy %s batch %d: %w", plan.sourceTable, number, err)
@@ -483,14 +515,14 @@ func insertLegacyRecord(ctx context.Context, batch *migrationledger.Batch, plan 
 func (importer legacyImporter) verifyTable(ctx context.Context, plan legacyPlan, result LegacyTableResult) (int, error) {
 	db := importer.dest[plan.destination]
 	var memberships, missing, physical int
-	args := []any{coreSource, plan.sourceTable}
+	args := []any{plan.migration, coreSource, plan.sourceTable}
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM custody_memberships
-		WHERE source_database = ? AND source_table = ?`, args...).Scan(&memberships); err != nil {
+		WHERE migration = ? AND source_database = ? AND source_table = ?`, args...).Scan(&memberships); err != nil {
 		return 0, fmt.Errorf("count legacy %s memberships: %w", plan.sourceTable, err)
 	}
 	missingQuery := fmt.Sprintf(`SELECT COUNT(*) FROM custody_memberships AS membership
 		LEFT JOIN %s AS destination ON destination.canonical_digest = membership.destination_key
-		WHERE membership.source_database = ? AND membership.source_table = ?
+		WHERE membership.migration = ? AND membership.source_database = ? AND membership.source_table = ?
 		AND destination.canonical_digest IS NULL`,
 		quoteIdentifier(plan.destinationTable))
 	if err := db.QueryRowContext(ctx, missingQuery, args...).Scan(&missing); err != nil {
@@ -498,14 +530,14 @@ func (importer legacyImporter) verifyTable(ctx context.Context, plan legacyPlan,
 	}
 	physicalQuery := fmt.Sprintf(`SELECT COUNT(*) FROM
 		(SELECT DISTINCT destination_key FROM custody_memberships
-			WHERE source_database = ? AND source_table = ?) AS membership
+			WHERE migration = ? AND source_database = ? AND source_table = ?) AS membership
 		JOIN %s AS destination ON destination.canonical_digest = membership.destination_key`,
 		quoteIdentifier(plan.destinationTable))
 	if err := db.QueryRowContext(ctx, physicalQuery, args...).Scan(&physical); err != nil {
 		return 0, fmt.Errorf("count physical legacy %s rows: %w", plan.sourceTable, err)
 	}
 	rows, err := db.QueryContext(ctx, `SELECT source_key, canonical_digest FROM custody_memberships
-		WHERE source_database = ? AND source_table = ? ORDER BY source_key`, args...)
+		WHERE migration = ? AND source_database = ? AND source_table = ? ORDER BY source_key`, args...)
 	if err != nil {
 		return 0, fmt.Errorf("verify legacy %s digests: %w", plan.sourceTable, err)
 	}
