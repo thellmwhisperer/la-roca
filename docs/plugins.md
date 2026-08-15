@@ -361,19 +361,21 @@ retention. Existing ingest and query behavior is unchanged by the migration.
 
 `roca-ops` owns operational agent writes and their query surface. It has a
 separate custodial database so its retention policy can differ from the corpus.
-In the current staged rollout it remains behind:
+The database remains behind its existing rollout switch:
 
 ```toml
 [features]
 roca_ops = true
 ```
 
-Its manifest migration follows corpus. Until that step lands, its legacy
-descriptor preserves the existing `store`, `query`, `sql`, and `exec`
-contracts without turning the compatibility database into kernel ownership. It
-owns an accent-insensitive `memories_fts` index over its own memories, rebuilt
-on every schema apply so a database that predates the index answers for the
-rows it already held.
+Its resident manifest declares the `plugin_roca_ops` attach alias, the
+operational memory semantic fragment, custody and retention, and the `store`,
+`query`, `sql`, and `exec` verbs. Those declarations grant the existing CLI
+commands and MCP tools their seats without changing their handlers or output.
+Historical operational rows in the compatibility database remain readable;
+the manifest migration does not move data. It owns an accent-insensitive
+`memories_fts` index over its own memories, rebuilt on every schema apply so a
+database that predates the index answers for the rows it already held.
 
 ## Scheduled rides
 

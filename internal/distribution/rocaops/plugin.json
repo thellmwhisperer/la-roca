@@ -1,0 +1,101 @@
+{
+  "schema": 1,
+  "name": "roca-ops",
+  "version": "dev",
+  "binary": "roca",
+  "databases": [
+    {
+      "name": "ops",
+      "path": "roca-ops.db",
+      "alias": "plugin_roca_ops",
+      "attachment": "resident",
+      "custody": true,
+      "retention": "The ops plugin owns retention for agent-written operational memory."
+    }
+  ],
+  "semantic": {
+    "databases": [
+      {
+        "database": "ops",
+        "description": "Agent-written operational and proposed knowledge memories.",
+        "questions": [
+          "What did agents write or hand off?",
+          "Which operational decisions, questions, reviews, or issues exist?"
+        ],
+        "tables": [
+          {
+            "name": "memories",
+            "description": "Agent-written handoffs, coordination, and proposed knowledge with system-stamped authorship and explicit expiry.",
+            "questions": ["What did agents write or hand off?"],
+            "columns": ["id", "layer", "content", "metadata", "origin", "source_agent", "source_model", "source_surface", "source_session", "source_sequence", "project", "status", "supersedes", "created_at", "expires_at"]
+          },
+          {
+            "name": "memories_fts",
+            "description": "Accent-insensitive full-text index over operational memory content.",
+            "columns": ["content"]
+          },
+          {
+            "name": "legacy_records",
+            "description": "Quarantined agent-coordination and query-teaching records retained without pretending they are active v1 surfaces.",
+            "columns": ["canonical_digest", "record_type", "payload"]
+          },
+          {
+            "name": "plugin_schema",
+            "description": "The ops database schema and index versions together with its migration state.",
+            "columns": ["singleton", "plugin_name", "schema_version", "index_version", "migration_state", "verification_digest", "prepared_at", "verified_at", "updated_at"]
+          },
+          {
+            "name": "migration_batches",
+            "description": "Fully committed, checksummed source batches imported into ops custody.",
+            "columns": ["batch_id", "source_database", "source_table", "row_count", "canonical_digest", "high_water_mark", "committed_at"]
+          },
+          {
+            "name": "custody_memberships",
+            "description": "Source identities represented by each physical row in ops custody.",
+            "columns": ["source_database", "source_table", "source_key", "destination_table", "destination_key", "canonical_digest", "batch_id"]
+          }
+        ]
+      }
+    ]
+  },
+  "verbs": [
+    {
+      "name": "store",
+      "description": "Write an operational memory with authorship and lifecycle metadata.",
+      "capability": "store"
+    },
+    {
+      "name": "query",
+      "description": "Answer a natural-language question over federated memory.",
+      "capability": "query"
+    },
+    {
+      "name": "exec",
+      "description": "Run a read-only SQL statement under the shared gate.",
+      "capability": "exec"
+    },
+    {
+      "name": "sql",
+      "description": "Compile a natural-language question into read-only SQL without running it.",
+      "capability": "sql"
+    }
+  ],
+  "capabilities": [
+    {
+      "name": "store",
+      "command": ["store"]
+    },
+    {
+      "name": "query",
+      "command": ["query"]
+    },
+    {
+      "name": "exec",
+      "command": ["exec"]
+    },
+    {
+      "name": "sql",
+      "command": ["query", "--sql-only"]
+    }
+  ]
+}

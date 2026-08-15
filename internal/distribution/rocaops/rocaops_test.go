@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
@@ -24,6 +25,40 @@ func TestEnsureInstallsTheBundledResidentDataOnlyPluginAndPreservesItsDatabase(t
 	}
 
 	directory := filepath.Join(root, rocaops.Name)
+	if _, err := os.Stat(filepath.Join(directory, plugin.SemanticFilename)); !os.IsNotExist(err) {
+		t.Fatalf("ops still ships the legacy semantic layer: %v", err)
+	}
+	manifest, err := plugin.ReadManifest(filepath.Join(directory, plugin.PackageFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	registrations, err := plugin.Register(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantVerbs := map[string][]string{
+		"store": {"store"},
+		"query": {"query"},
+		"exec":  {"exec"},
+		"sql":   {"query", "--sql-only"},
+	}
+	if manifest.Name != rocaops.Name || manifest.Version != "v-test" || manifest.Binary != "roca" ||
+		len(manifest.Databases) != 1 || manifest.Databases[0].Alias != "plugin_roca_ops" ||
+		len(registrations) != len(wantVerbs) {
+		t.Fatalf("ops manifest = %+v, registrations = %+v", manifest, registrations)
+	}
+	for _, registration := range registrations {
+		command, exists := wantVerbs[registration.Name]
+		if !exists || registration.CLI != registration.Name ||
+			registration.MCP != "roca_"+registration.Name ||
+			!slices.Equal(registration.Command, command) {
+			t.Fatalf("ops verb registration = %+v", registration)
+		}
+		delete(wantVerbs, registration.Name)
+	}
+	if len(wantVerbs) != 0 {
+		t.Fatalf("ops manifest is missing verbs: %v", wantVerbs)
+	}
 	descriptor, err := plugin.Inspect(rocaops.Name, directory)
 	if err != nil {
 		t.Fatal(err)
