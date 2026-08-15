@@ -182,3 +182,190 @@ CREATE TABLE IF NOT EXISTS legacy_flow_patterns (
   canonical_digest TEXT PRIMARY KEY,
   payload           TEXT NOT NULL CHECK (json_valid(payload))
 );
+
+-- DATA SPLIT shadow archive. These tables are deliberately separate from the
+-- currently served harvest tables above: copying the retired core archive must
+-- not change an answer before the later atomic cutover.
+CREATE TABLE IF NOT EXISTS corpus_source_snapshots (
+  source_database     TEXT PRIMARY KEY,
+  snapshot_digest     TEXT NOT NULL CHECK (length(snapshot_digest) = 64),
+  destination_source INTEGER NOT NULL DEFAULT 0 CHECK (destination_source IN (0, 1)),
+  batch_size         INTEGER NOT NULL CHECK (batch_size > 0)
+);
+
+CREATE TABLE IF NOT EXISTS corpus_source_tables (
+  source_database TEXT NOT NULL REFERENCES corpus_source_snapshots(source_database),
+  source_table    TEXT NOT NULL,
+  expected_rows   INTEGER NOT NULL CHECK (expected_rows >= 0),
+  PRIMARY KEY (source_database, source_table)
+);
+
+CREATE TABLE IF NOT EXISTS session_versions (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  version_digest   TEXT NOT NULL UNIQUE CHECK (length(version_digest) = 64),
+  session_id       TEXT NOT NULL,
+  source_agent     TEXT,
+  project          TEXT,
+  started_at       TEXT,
+  ended_at         TEXT,
+  duration_minutes INTEGER,
+  title            TEXT,
+  metadata         TEXT
+);
+
+CREATE TABLE IF NOT EXISTS exchange_versions (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  version_digest      TEXT NOT NULL UNIQUE CHECK (length(version_digest) = 64),
+  session_id          TEXT NOT NULL,
+  exchange_number     INTEGER,
+  is_after_compaction INTEGER,
+  human_text          TEXT,
+  agent_text          TEXT,
+  human_timestamp     TEXT,
+  agent_timestamp     TEXT,
+  response_latency_ms INTEGER,
+  model               TEXT,
+  provider            TEXT,
+  tokens_in           INTEGER,
+  tokens_out          INTEGER,
+  tokens_reasoning    INTEGER,
+  cost_usd            REAL
+);
+
+CREATE TABLE IF NOT EXISTS tool_use_versions (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  version_digest      TEXT NOT NULL UNIQUE CHECK (length(version_digest) = 64),
+  session_id          TEXT NOT NULL,
+  exchange_number     INTEGER,
+  tool_name           TEXT,
+  tool_params_summary TEXT,
+  had_error           INTEGER,
+  error_message       TEXT,
+  initiative_type     TEXT
+);
+
+CREATE TABLE IF NOT EXISTS thinking_block_versions (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  version_digest      TEXT NOT NULL UNIQUE CHECK (length(version_digest) = 64),
+  session_id          TEXT NOT NULL,
+  exchange_number     INTEGER,
+  position_in_session REAL,
+  depth               TEXT,
+  caution_ratio       REAL,
+  word_count          INTEGER,
+  is_after_compaction INTEGER,
+  full_text           TEXT
+);
+
+CREATE TABLE IF NOT EXISTS ingest_file_state_versions (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  version_digest   TEXT NOT NULL UNIQUE CHECK (length(version_digest) = 64),
+  path             TEXT NOT NULL,
+  source_kind      TEXT,
+  source_agent     TEXT,
+  project          TEXT,
+  fingerprint      TEXT,
+  last_synced_at   TEXT,
+  last_error       TEXT,
+  metadata         TEXT
+);
+
+CREATE TABLE IF NOT EXISTS ingest_file_state_heads (
+  path                 TEXT PRIMARY KEY,
+  version_digest       TEXT NOT NULL REFERENCES ingest_file_state_versions(version_digest),
+  source_database      TEXT NOT NULL,
+  destination_priority INTEGER NOT NULL CHECK (destination_priority IN (0, 1))
+);
+
+-- source_key is the natural session/exchange key, or for tool/thinking rows the
+-- canonical payload digest plus its occurrence ordinal inside the parent turn.
+-- source_row_id is evidence for the old compatibility envelope, never identity.
+CREATE TABLE IF NOT EXISTS corpus_source_rows (
+  source_database   TEXT NOT NULL,
+  source_table      TEXT NOT NULL,
+  source_key        TEXT NOT NULL,
+  destination_table TEXT NOT NULL,
+  version_digest    TEXT NOT NULL CHECK (length(version_digest) = 64),
+  source_row_id     INTEGER,
+  session_id        TEXT,
+  exchange_number   INTEGER,
+  occurrence_ordinal INTEGER,
+  PRIMARY KEY (source_database, source_table, source_key)
+);
+
+CREATE INDEX IF NOT EXISTS session_versions_logical_id
+  ON session_versions(session_id);
+CREATE INDEX IF NOT EXISTS exchange_versions_logical_key
+  ON exchange_versions(session_id, exchange_number);
+CREATE INDEX IF NOT EXISTS tool_use_versions_parent
+  ON tool_use_versions(session_id, exchange_number);
+CREATE INDEX IF NOT EXISTS thinking_block_versions_parent
+  ON thinking_block_versions(session_id, exchange_number);
+CREATE INDEX IF NOT EXISTS ingest_file_state_versions_path
+  ON ingest_file_state_versions(path);
+CREATE INDEX IF NOT EXISTS corpus_source_rows_destination
+  ON corpus_source_rows(destination_table, version_digest);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS session_versions_fts USING fts5(
+  title,
+  project,
+  content='session_versions',
+  content_rowid='id',
+  tokenize='unicode61 remove_diacritics 2'
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS exchange_versions_fts USING fts5(
+  human_text,
+  agent_text,
+  content='exchange_versions',
+  content_rowid='id',
+  tokenize='unicode61 remove_diacritics 2'
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS thinking_block_versions_fts USING fts5(
+  full_text,
+  content='thinking_block_versions',
+  content_rowid='id',
+  tokenize='unicode61 remove_diacritics 2'
+);
+
+CREATE VIEW IF NOT EXISTS session_version_memberships AS
+SELECT m.source_database, r.session_id AS source_session_id,
+       r.source_row_id, v.*
+FROM custody_memberships AS m
+JOIN corpus_source_rows AS r
+  USING (source_database, source_table, source_key)
+JOIN session_versions AS v ON v.version_digest = m.destination_key
+WHERE m.destination_table = 'session_versions';
+
+CREATE VIEW IF NOT EXISTS exchange_version_memberships AS
+SELECT m.source_database, r.source_row_id, r.occurrence_ordinal, v.*
+FROM custody_memberships AS m
+JOIN corpus_source_rows AS r
+  USING (source_database, source_table, source_key)
+JOIN exchange_versions AS v ON v.version_digest = m.destination_key
+WHERE m.destination_table = 'exchange_versions';
+
+CREATE VIEW IF NOT EXISTS tool_use_version_memberships AS
+SELECT m.source_database, r.source_row_id, r.occurrence_ordinal, v.*
+FROM custody_memberships AS m
+JOIN corpus_source_rows AS r
+  USING (source_database, source_table, source_key)
+JOIN tool_use_versions AS v ON v.version_digest = m.destination_key
+WHERE m.destination_table = 'tool_use_versions';
+
+CREATE VIEW IF NOT EXISTS thinking_block_version_memberships AS
+SELECT m.source_database, r.source_row_id, r.occurrence_ordinal, v.*
+FROM custody_memberships AS m
+JOIN corpus_source_rows AS r
+  USING (source_database, source_table, source_key)
+JOIN thinking_block_versions AS v ON v.version_digest = m.destination_key
+WHERE m.destination_table = 'thinking_block_versions';
+
+CREATE VIEW IF NOT EXISTS ingest_file_state_version_memberships AS
+SELECT m.source_database, v.*,
+       h.version_digest = v.version_digest AS is_selected
+FROM custody_memberships AS m
+JOIN ingest_file_state_versions AS v ON v.version_digest = m.destination_key
+LEFT JOIN ingest_file_state_heads AS h ON h.path = v.path
+WHERE m.destination_table = 'ingest_file_state_versions';
