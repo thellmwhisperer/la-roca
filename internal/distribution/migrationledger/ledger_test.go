@@ -251,8 +251,42 @@ func TestTwoNamedMigrationsAdvanceIndependently(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a sibling's batch id closed a verified-empty migration: %v", err)
 	}
-	if err := reopened.Rollback(); err != nil {
+	if _, err := reopened.ExecContext(context.Background(),
+		`INSERT INTO destination_rows VALUES ('20', 'carried')`); err != nil {
 		t.Fatal(err)
+	}
+	if err := reopened.AddMembership(context.Background(), Membership{
+		SourceKey: "1", DestinationTable: "destination_rows", DestinationKey: "20",
+		CanonicalDigest: fixtureDigest('a'),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := reopened.Commit(context.Background(), BatchCommit{
+		RowCount: 1, CanonicalDigest: fixtureDigest('b'), HighWaterMark: "1",
+	}); err != nil {
+		t.Fatalf("a sibling's batch id blocked the commit of an identically named batch: %v", err)
+	}
+
+	assertCount(t, db, "migration_batches", 2)
+	assertCount(t, db, "custody_memberships", 2)
+	for _, owner := range []struct {
+		migration string
+		state     State
+	}{{rowsMigration, StateVerified}, {destinationMigration, StateBatchInProgress}} {
+		var batches, memberships int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM migration_batches
+			WHERE migration = ? AND batch_id = 'core-rows-0001'`, owner.migration).Scan(&batches); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.QueryRow(`SELECT COUNT(*) FROM custody_memberships
+			WHERE migration = ?`, owner.migration).Scan(&memberships); err != nil {
+			t.Fatal(err)
+		}
+		got := inspectMigrationState(t, db, owner.migration)
+		if batches != 1 || memberships != 1 || got.State != owner.state {
+			t.Fatalf("%s holds %d batches and %d memberships in state %q, want 1/1/%q",
+				owner.migration, batches, memberships, got.State, owner.state)
+		}
 	}
 }
 

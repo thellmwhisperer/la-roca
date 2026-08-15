@@ -38,11 +38,13 @@ type Definition struct {
 	IndexVersion  int
 }
 
+// Snapshot is the plugin database's own identity. It deliberately carries no
+// migration state: since named migrations, `plugin_migrations` is the only
+// authoritative lifecycle, and InspectMigration is how a caller reads it.
 type Snapshot struct {
 	Plugin        string
 	SchemaVersion int
 	IndexVersion  int
-	State         State
 }
 
 // Migration names one custody migration inside a plugin database and the single
@@ -91,11 +93,11 @@ type Batch struct {
 	done        bool
 }
 
-// tables holds the plugin identity beside the per-migration lifecycle. The
-// `plugin_schema` columns that once carried a migration state stay for the
-// databases that already have them, but a named migration in `plugin_migrations`
-// is what advances now.
-const tables = `
+// pluginTables hold the plugin's own identity. `plugin_schema.migration_state`
+// and its verification columns are legacy: DATA-1 kept one lifecycle per plugin
+// database there, and the columns survive only for the databases that already
+// have them. `plugin_migrations` is where a migration's state actually lives.
+const pluginTables = `
 CREATE TABLE IF NOT EXISTS plugin_schema (
   singleton           INTEGER PRIMARY KEY CHECK (singleton = 1),
   plugin_name         TEXT NOT NULL UNIQUE,
@@ -118,17 +120,23 @@ CREATE TABLE IF NOT EXISTS plugin_migrations (
   verified_at         TEXT,
   updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
 );
+`
 
+// custodyTables key a batch by the migration that carried it, not by its id
+// alone, so two migrations in one database may number their batches however
+// they like without one being mistaken for the other.
+const custodyTables = `
 CREATE TABLE IF NOT EXISTS migration_batches (
-  batch_id            TEXT PRIMARY KEY,
   migration           TEXT NOT NULL DEFAULT '',
+  batch_id            TEXT NOT NULL,
   destination_table   TEXT NOT NULL DEFAULT '',
   source_database     TEXT NOT NULL,
   source_table        TEXT NOT NULL,
   row_count           INTEGER NOT NULL CHECK (row_count >= 0),
   canonical_digest    TEXT NOT NULL,
   high_water_mark     TEXT NOT NULL,
-  committed_at        TEXT NOT NULL DEFAULT (datetime('now'))
+  committed_at        TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (migration, batch_id)
 );
 
 CREATE TABLE IF NOT EXISTS custody_memberships (
@@ -139,11 +147,14 @@ CREATE TABLE IF NOT EXISTS custody_memberships (
   destination_table   TEXT NOT NULL,
   destination_key     TEXT NOT NULL,
   canonical_digest    TEXT NOT NULL,
-  batch_id            TEXT NOT NULL REFERENCES migration_batches(batch_id)
-                        DEFERRABLE INITIALLY DEFERRED,
-  PRIMARY KEY (migration, source_database, source_table, source_key)
+  batch_id            TEXT NOT NULL,
+  PRIMARY KEY (migration, source_database, source_table, source_key),
+  FOREIGN KEY (migration, batch_id) REFERENCES migration_batches(migration, batch_id)
+    DEFERRABLE INITIALLY DEFERRED
 );
 `
+
+const tables = pluginTables + custodyTables
 
 const indexes = `
 CREATE INDEX IF NOT EXISTS migration_batches_migration
@@ -153,37 +164,18 @@ CREATE INDEX IF NOT EXISTS custody_memberships_destination
 CREATE INDEX IF NOT EXISTS custody_memberships_digest
   ON custody_memberships(canonical_digest);
 CREATE INDEX IF NOT EXISTS custody_memberships_batch
-  ON custody_memberships(batch_id);
+  ON custody_memberships(migration, batch_id);
 CREATE INDEX IF NOT EXISTS custody_memberships_migration
   ON custody_memberships(migration);
 `
 
-// adoptMemberships rebuilds a DATA-1 membership table that predates named
-// migrations. Its primary key has to grow the migration column, which SQLite
-// cannot add in place, so the rows are carried across under the empty name no
-// migration can claim.
-const adoptMemberships = `
-CREATE TABLE custody_memberships_adopted (
-  migration           TEXT NOT NULL DEFAULT '',
-  source_database     TEXT NOT NULL,
-  source_table        TEXT NOT NULL,
-  source_key          TEXT NOT NULL,
-  destination_table   TEXT NOT NULL,
-  destination_key     TEXT NOT NULL,
-  canonical_digest    TEXT NOT NULL,
-  batch_id            TEXT NOT NULL REFERENCES migration_batches(batch_id)
-                        DEFERRABLE INITIALLY DEFERRED,
-  PRIMARY KEY (migration, source_database, source_table, source_key)
-);
-INSERT INTO custody_memberships_adopted
-  (migration, source_database, source_table, source_key,
-   destination_table, destination_key, canonical_digest, batch_id)
-  SELECT '', source_database, source_table, source_key,
-         destination_table, destination_key, canonical_digest, batch_id
-  FROM custody_memberships;
-DROP TABLE custody_memberships;
-ALTER TABLE custody_memberships_adopted RENAME TO custody_memberships;
-`
+// batchKeyColumns and membershipKeyColumns are how many columns each custody
+// table's primary key carries once it is keyed by migration. A table that
+// reports anything else predates named migrations and still owes adoption.
+const (
+	batchKeyColumns      = 2
+	membershipKeyColumns = 4
+)
 
 func Prepare(ctx context.Context, db *sql.DB, definition Definition) error {
 	if err := definition.valid(); err != nil {
@@ -288,13 +280,15 @@ func PrepareMigration(ctx context.Context, db *sql.DB, migration Migration) erro
 	return nil
 }
 
+// Inspect reads the plugin database's identity. A database that never had a
+// ledger yields the zero Snapshot, whose empty Plugin is what marks it absent.
 func Inspect(ctx context.Context, db *sql.DB) (Snapshot, error) {
 	snapshot, found, err := inspect(ctx, db)
 	if err != nil {
 		return Snapshot{}, err
 	}
 	if !found {
-		return Snapshot{State: StateAbsent}, nil
+		return Snapshot{}, nil
 	}
 	return snapshot, nil
 }
@@ -569,9 +563,9 @@ func inspect(ctx context.Context, querier rowQuerier) (Snapshot, bool, error) {
 		return Snapshot{}, false, nil
 	}
 	var snapshot Snapshot
-	err = querier.QueryRowContext(ctx, `SELECT plugin_name, schema_version, index_version,
-		migration_state FROM plugin_schema WHERE singleton = 1`).Scan(
-		&snapshot.Plugin, &snapshot.SchemaVersion, &snapshot.IndexVersion, &snapshot.State)
+	err = querier.QueryRowContext(ctx, `SELECT plugin_name, schema_version, index_version
+		FROM plugin_schema WHERE singleton = 1`).Scan(
+		&snapshot.Plugin, &snapshot.SchemaVersion, &snapshot.IndexVersion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Snapshot{}, false, nil
 	}
@@ -612,40 +606,84 @@ func tablePresent(ctx context.Context, querier rowQuerier, name string) (bool, e
 }
 
 // adopt brings a DATA-1 ledger up to named migrations without a migration
-// runner: every step is idempotent and skipped once its column exists.
+// runner. Both custody tables are keyed by migration, which SQLite cannot add to
+// a primary key in place, so the rows are staged, the tables are recreated from
+// the same declaration a fresh database gets, and the rows return under the
+// empty name no migration can claim. It is idempotent: once both primary keys
+// carry their migration, there is nothing left to do.
 func adopt(ctx context.Context, tx *sql.Tx) error {
-	memberships, err := hasColumn(ctx, tx, "custody_memberships", "migration")
+	batchKeys, err := primaryKeyColumns(ctx, tx, "migration_batches")
 	if err != nil {
 		return err
 	}
-	if !memberships {
-		if _, err := tx.ExecContext(ctx, adoptMemberships); err != nil {
-			return fmt.Errorf("adopt custody memberships into named migrations: %w", err)
-		}
+	membershipKeys, err := primaryKeyColumns(ctx, tx, "custody_memberships")
+	if err != nil {
+		return err
 	}
-	for _, column := range []string{"migration", "destination_table"} {
-		present, err := hasColumn(ctx, tx, "migration_batches", column)
-		if err != nil {
-			return err
-		}
-		if present {
-			continue
-		}
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(
-			`ALTER TABLE migration_batches ADD COLUMN %s TEXT NOT NULL DEFAULT ''`, column)); err != nil {
-			return fmt.Errorf("adopt migration batches into named migrations: %w", err)
-		}
+	if batchKeys == batchKeyColumns && membershipKeys == membershipKeyColumns {
+		return nil
+	}
+	batchMigration, err := adoptedColumn(ctx, tx, "migration_batches", "migration")
+	if err != nil {
+		return err
+	}
+	batchDestination, err := adoptedColumn(ctx, tx, "migration_batches", "destination_table")
+	if err != nil {
+		return err
+	}
+	membershipMigration, err := adoptedColumn(ctx, tx, "custody_memberships", "migration")
+	if err != nil {
+		return err
+	}
+	rebuild := fmt.Sprintf(`
+CREATE TABLE migration_batches_adopted AS SELECT %s AS migration, batch_id,
+  %s AS destination_table, source_database, source_table, row_count,
+  canonical_digest, high_water_mark, committed_at FROM migration_batches;
+CREATE TABLE custody_memberships_adopted AS SELECT %s AS migration, source_database,
+  source_table, source_key, destination_table, destination_key, canonical_digest,
+  batch_id FROM custody_memberships;
+DROP TABLE custody_memberships;
+DROP TABLE migration_batches;
+%s
+INSERT INTO migration_batches (migration, batch_id, destination_table, source_database,
+  source_table, row_count, canonical_digest, high_water_mark, committed_at)
+  SELECT migration, batch_id, destination_table, source_database, source_table,
+         row_count, canonical_digest, high_water_mark, committed_at
+  FROM migration_batches_adopted;
+INSERT INTO custody_memberships (migration, source_database, source_table, source_key,
+  destination_table, destination_key, canonical_digest, batch_id)
+  SELECT migration, source_database, source_table, source_key, destination_table,
+         destination_key, canonical_digest, batch_id FROM custody_memberships_adopted;
+DROP TABLE migration_batches_adopted;
+DROP TABLE custody_memberships_adopted;
+`, batchMigration, batchDestination, membershipMigration, custodyTables)
+	if _, err := tx.ExecContext(ctx, rebuild); err != nil {
+		return fmt.Errorf("adopt custody tables into named migrations: %w", err)
 	}
 	return nil
 }
 
-func hasColumn(ctx context.Context, tx *sql.Tx, table, column string) (bool, error) {
+// adoptedColumn keeps a column a previous shape already carried and supplies the
+// unclaimed empty name for one it never had.
+func adoptedColumn(ctx context.Context, tx *sql.Tx, table, column string) (string, error) {
 	var found int
 	if err := tx.QueryRowContext(ctx, fmt.Sprintf(
 		`SELECT COUNT(*) FROM pragma_table_info('%s') WHERE name = ?`, table), column).Scan(&found); err != nil {
-		return false, fmt.Errorf("inspect %s columns: %w", table, err)
+		return "", fmt.Errorf("inspect %s columns: %w", table, err)
 	}
-	return found != 0, nil
+	if found == 0 {
+		return "''", nil
+	}
+	return column, nil
+}
+
+func primaryKeyColumns(ctx context.Context, tx *sql.Tx, table string) (int, error) {
+	var keys int
+	if err := tx.QueryRowContext(ctx, fmt.Sprintf(
+		`SELECT COUNT(*) FROM pragma_table_info('%s') WHERE pk > 0`, table)).Scan(&keys); err != nil {
+		return 0, fmt.Errorf("inspect %s key: %w", table, err)
+	}
+	return keys, nil
 }
 
 func (definition Definition) valid() error {

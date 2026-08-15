@@ -80,7 +80,7 @@
           },
           {
             "name": "plugin_schema",
-            "description": "The corpus database schema and index versions together with its migration state.",
+            "description": "The corpus database schema and index versions; its migration lifecycle lives in plugin_migrations.",
             "columns": ["singleton", "plugin_name", "schema_version", "index_version", "migration_state", "verification_digest", "prepared_at", "verified_at", "updated_at"]
           },
           {
@@ -91,7 +91,7 @@
           {
             "name": "migration_batches",
             "description": "Fully committed, checksummed source batches imported into corpus custody.",
-            "columns": ["batch_id", "migration", "destination_table", "source_database", "source_table", "row_count", "canonical_digest", "high_water_mark", "committed_at"]
+            "columns": ["migration", "batch_id", "destination_table", "source_database", "source_table", "row_count", "canonical_digest", "high_water_mark", "committed_at"]
           },
           {
             "name": "custody_memberships",

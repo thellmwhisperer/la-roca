@@ -419,18 +419,21 @@ instead of accumulating a full database per attempt, a failed replacement leaves
 the previously verified copy intact, and no reader sees a half-written database.
 
 A plugin database hosts as many custody migrations as it needs. `plugin_schema`
-keeps the plugin's schema and index versions; `plugin_migrations` keys every
+keeps the plugin's schema and index versions and nothing else that is current:
+its `migration_state` and verification columns are the DATA-1 shape, kept only
+for the databases that already carry them. `plugin_migrations` keys every
 lifecycle transition and verification outcome by a stable migration name, and
-both batches and memberships carry that name beside the destination the
-migration owns. Two migrations in one database therefore prepare, batch, resume
-and verify independently: neither counts the other's batches, reuses its
-destination, nor overwrites its state, and each reaches `verified` or
-`verified-empty` on its own. DATA-2 owns `data2-memory-custody` over
-`memory_records`. A DATA-1 database adopts this in place on the next
-`Prepare` — the rows it already held stay under an unclaimed empty name, so
-they can never stand in for a migration that has not run. A plugin schema or
-index bump reopens every named migration, because the destination those
-migrations fill may have moved under them.
+both batches and memberships are keyed by that name beside the destination the
+migration owns. Batch identity is local to its migration, so two migrations may
+number their batches however they like and still commit the same id. Two
+migrations in one database therefore prepare, batch, resume and verify
+independently: neither counts the other's batches, reuses its destination, nor
+overwrites its state, and each reaches `verified` or `verified-empty` on its
+own. DATA-2 owns `data2-memory-custody` over `memory_records`. A DATA-1 database
+adopts this in place on the next `Prepare` — the rows it already held stay under
+an unclaimed empty name, so they can never stand in for a migration that has not
+run. A plugin schema or index bump reopens every named migration, because the
+destination those migrations fill may have moved under them.
 
 ## Scheduled rides
 
