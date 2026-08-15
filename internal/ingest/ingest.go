@@ -366,6 +366,9 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 
 func (r *Result) sourceStats(agent string) *SourceStats {
 	agent = normalizedSource(agent)
+	if r.SourceStats == nil {
+		r.SourceStats = map[string]*SourceStats{}
+	}
 	if stats, ok := r.SourceStats[agent]; ok {
 		return stats
 	}
