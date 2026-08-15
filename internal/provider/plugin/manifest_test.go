@@ -183,8 +183,22 @@ func TestManifestAliasCollisionsAreReportedInsteadOfSilentlyRewritten(t *testing
 		createManifestDatabase(t, filepath.Join(directory, "data.db"), `CREATE TABLE data (id INTEGER PRIMARY KEY)`)
 	}
 	found, warnings := plugin.Discover(root)
-	if len(found) != 0 || len(warnings) != 1 || !strings.Contains(warnings[0], "shared_alias") {
+	if len(found) != 0 || len(warnings) != 1 || !strings.Contains(warnings[0], "shared_alias") ||
+		!strings.Contains(warnings[0], "alpha, beta") {
 		t.Fatalf("colliding discovery = %+v, warnings = %v", found, warnings)
+	}
+
+	// Only the bundled installer records that source, and the alias such a
+	// package declared is the kernel's own seat: a third-party claim on it may
+	// not take the bundled package out of the catalogue too.
+	if err := os.WriteFile(filepath.Join(root, "alpha", plugin.ManifestFilename),
+		[]byte(`{"schema":1,"source":"`+plugin.BundledSource+`"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	found, warnings = plugin.Discover(root)
+	if len(found) != 1 || found[0].Name != "alpha" || found[0].Schema != "shared_alias" ||
+		len(warnings) != 1 || !strings.Contains(warnings[0], "beta is unavailable") {
+		t.Fatalf("bundled seat discovery = %+v, warnings = %v", found, warnings)
 	}
 }
 

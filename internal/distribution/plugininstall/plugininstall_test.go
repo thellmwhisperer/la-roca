@@ -276,6 +276,41 @@ func TestFederatedManifestInstallsAndPreservesEveryDeclaredDatabase(t *testing.T
 	}
 }
 
+// A package that ships no executable is authorable from the published contract:
+// it declares the host binary and stays data-only, while a package that names an
+// executable it does not supply is refused.
+func TestAFederatedPackageDeclaresEitherTheHostBinaryOrOneItShips(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "federated")
+	writeFederatedPackage(t, source, "federated", "1.0.0")
+	candidate, err := plugininstall.Inspect(source, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if candidate.Risk != plugininstall.DataOnly || candidate.Executable != "" {
+		t.Fatalf("host-binary package risk = %s, executable = %q", candidate.Risk, candidate.Executable)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(source, "plugin.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixtureFile(t, filepath.Join(source, "plugin.json"),
+		[]byte(strings.Replace(string(raw), `"binary":"roca"`, `"binary":"roca-federated"`, 1)), 0o600)
+	writeChecksums(t, source, []string{"plugin.json", "records.db", "runs.db"})
+	if _, err := plugininstall.Inspect(source, source); err == nil ||
+		!strings.Contains(err.Error(), "declares binary") {
+		t.Fatalf("package that supplies no declared executable = %v", err)
+	}
+
+	docs, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "plugins.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(docs), "declares `roca`, the host binary") {
+		t.Error("the plugin contract does not document what a package without an executable declares")
+	}
+}
+
 func TestFederatedManifestNamesMustSurviveTheWholeLifecycle(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "package")
 	writeFederatedPackage(t, source, "roca.corpus", "1.0.0")

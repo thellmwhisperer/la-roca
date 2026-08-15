@@ -23,7 +23,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
-	pluginengine "github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
@@ -204,13 +203,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 	if err != nil {
 		panic(fmt.Sprintf("invalid bundled corpus manifest: %v", err))
 	}
-	registrations, err := pluginengine.Register(manifest)
-	if err != nil {
-		panic(fmt.Sprintf("register bundled corpus verbs: %v", err))
-	}
-	if slices.ContainsFunc(registrations, func(registration pluginengine.Registration) bool {
-		return registration.CLI == "ingest"
-	}) {
+	if manifest.HasVerb(service.IngestVerb) {
 		commands = append(commands, ingestCommand(env))
 	}
 	if env.features.Cron {

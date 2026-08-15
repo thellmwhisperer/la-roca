@@ -264,7 +264,7 @@ func Inspect(source, directory string) (Candidate, error) {
 			break
 		}
 	}
-	if fullManifest && federation.Binary != "roca" && executable != federation.Binary {
+	if fullManifest && federation.Binary != plugin.HostBinary && executable != federation.Binary {
 		return Candidate{}, fmt.Errorf("%s declares binary %q but the package supplies %q",
 			PackageFilename, federation.Binary, executable)
 	}

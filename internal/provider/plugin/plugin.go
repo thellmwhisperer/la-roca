@@ -28,7 +28,11 @@ const (
 	// ManifestFilename is the installed package manifest every installer writes
 	// and discovery reads, so both sides name the same file.
 	ManifestFilename = ".roca-plugin.json"
-	MaxAttached      = 10
+	// BundledSource is the installed source only this build's own installer
+	// writes. An installable third-party reference is a directory, a URL, or
+	// owner/repo, so no installation an operator asks for can record it.
+	BundledSource = "bundled:roca"
+	MaxAttached   = 10
 	// ProvenanceColumn names every row's source database, so a semantic layer
 	// may not declare a column that would be overwritten by it.
 	ProvenanceColumn = "database"
@@ -93,6 +97,16 @@ func (d Descriptor) Source() string {
 	return "plugin:" + d.Name
 }
 
+// databaseLabel names one database inside its package. A descriptor that has
+// not migrated to a manifest declares no database name, so the alias it is
+// attached under is the only name it has.
+func (d Descriptor) databaseLabel() string {
+	if d.DatabaseName != "" {
+		return d.DatabaseName
+	}
+	return d.Schema
+}
+
 func Discover(root string) ([]Descriptor, []string) {
 	if strings.TrimSpace(root) == "" {
 		return nil, nil
@@ -133,18 +147,36 @@ func Discover(root string) ([]Descriptor, []string) {
 	return found, warnings
 }
 
-func executablePackage(directory string) bool {
+// installedPackage is the part of the local installation inventory discovery
+// reads: the kind that decides whether a directory is a data plugin at all, and
+// the source that says whether this build installed it itself.
+type installedPackage struct {
+	Schema int    `json:"schema"`
+	Kind   string `json:"kind"`
+	Source string `json:"source"`
+}
+
+func readInstalledPackage(directory string) (installedPackage, bool) {
 	file, err := os.Open(filepath.Join(directory, ManifestFilename))
 	if err != nil {
-		return false
+		return installedPackage{}, false
 	}
 	defer file.Close()
-	var manifest struct {
-		Schema int    `json:"schema"`
-		Kind   string `json:"kind"`
+	var manifest installedPackage
+	if err := json.NewDecoder(file).Decode(&manifest); err != nil {
+		return installedPackage{}, false
 	}
-	return json.NewDecoder(file).Decode(&manifest) == nil &&
-		manifest.Schema == 1 && manifest.Kind == "executable"
+	return manifest, true
+}
+
+func executablePackage(directory string) bool {
+	manifest, ok := readInstalledPackage(directory)
+	return ok && manifest.Schema == 1 && manifest.Kind == "executable"
+}
+
+func bundledPackage(directory string) bool {
+	manifest, ok := readInstalledPackage(directory)
+	return ok && manifest.Source == BundledSource
 }
 
 // Inspect parses one plugin directory without requiring it to be installed.
@@ -238,29 +270,72 @@ func schemaCounts(descriptors []Descriptor) map[string]int {
 	return counts
 }
 
+// resolveSchemas settles every alias more than one descriptor declares, and
+// names the plugins that declared it so the operator knows which installation
+// to act on. A package this build installed itself keeps the alias it declared:
+// a third-party declaration may make itself unavailable, never the bundled seat
+// it collides with. Between equals the collision stays an error, because a
+// declared alias is not a name the kernel rewrites.
 func resolveSchemas(descriptors []Descriptor) ([]Descriptor, []string) {
 	disambiguateSchemas(descriptors)
 	counts := schemaCounts(descriptors)
-	conflicts := map[string]bool{}
+	claims := map[string][]Descriptor{}
 	var found []Descriptor
 	for _, descriptor := range descriptors {
-		if counts[descriptor.Schema] > 1 {
-			conflicts[descriptor.Schema] = true
+		if counts[descriptor.Schema] < 2 {
+			found = append(found, descriptor)
 			continue
 		}
-		found = append(found, descriptor)
+		claims[descriptor.Schema] = append(claims[descriptor.Schema], descriptor)
 	}
-	aliases := make([]string, 0, len(conflicts))
-	for alias := range conflicts {
+	aliases := make([]string, 0, len(claims))
+	for alias := range claims {
 		aliases = append(aliases, alias)
 	}
 	slices.Sort(aliases)
 	var warnings []string
 	for _, alias := range aliases {
+		kept, evicted := settleClaim(claims[alias])
+		if kept == nil {
+			warnings = append(warnings, fmt.Sprintf(
+				"plugin attach alias %q is declared by %s; those plugins are unavailable",
+				alias, strings.Join(pluginNames(evicted), ", ")))
+			continue
+		}
+		found = append(found, *kept)
 		warnings = append(warnings, fmt.Sprintf(
-			"plugin attach alias %q is declared more than once; conflicting plugins are unavailable", alias))
+			"plugin attach alias %q belongs to the bundled %s plugin; %s is unavailable",
+			alias, kept.Name, strings.Join(pluginNames(evicted), ", ")))
 	}
 	return found, warnings
+}
+
+// settleClaim answers which claimant, if any, keeps a contested alias. Exactly
+// one bundled claimant wins it; anything else leaves every claimant without it.
+func settleClaim(claimants []Descriptor) (*Descriptor, []Descriptor) {
+	var bundled, others []Descriptor
+	for _, claimant := range claimants {
+		if bundledPackage(claimant.Directory) {
+			bundled = append(bundled, claimant)
+			continue
+		}
+		others = append(others, claimant)
+	}
+	if len(bundled) != 1 {
+		return nil, claimants
+	}
+	return &bundled[0], others
+}
+
+func pluginNames(descriptors []Descriptor) []string {
+	names := make([]string, 0, len(descriptors))
+	for _, descriptor := range descriptors {
+		if !slices.Contains(names, descriptor.Name) {
+			names = append(names, descriptor.Name)
+		}
+	}
+	slices.Sort(names)
+	return names
 }
 
 func readSemantic(path string) (Semantic, error) {

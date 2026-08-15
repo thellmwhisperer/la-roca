@@ -16,7 +16,15 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 )
 
-const PackageFilename = "plugin.json"
+const (
+	PackageFilename = "plugin.json"
+	// HostBinary is what a package declares when its capabilities are commands
+	// of the La Roca binary itself rather than of an executable it ships. It is
+	// the one binary a manifest may name without supplying that file, so a
+	// package with no executable payload stays data-only instead of having to
+	// ship code to become installable.
+	HostBinary = "roca"
+)
 
 // Manifest is the complete declaration a federated plugin ships. The kernel
 // reads this file; it does not infer a plugin's databases, command surface, or
@@ -280,8 +288,7 @@ func (m Manifest) HasVerb(name string) bool {
 }
 
 func Register(manifests ...Manifest) ([]Registration, error) {
-	seenCLI := map[string]string{}
-	seenMCP := map[string]string{}
+	seen := map[string]string{}
 	var registrations []Registration
 	for _, manifest := range manifests {
 		if err := manifest.Valid(); err != nil {
@@ -292,20 +299,19 @@ func Register(manifests ...Manifest) ([]Registration, error) {
 			capabilities[capability.Name] = capability
 		}
 		for _, verb := range manifest.Verbs {
-			mcpName := "roca_" + verb.Name
-			if owner := seenCLI[verb.Name]; owner != "" {
-				return nil, fmt.Errorf("CLI verb %q is declared by both %s and %s", verb.Name, owner, manifest.Name)
-			}
-			if owner := seenMCP[mcpName]; owner != "" {
-				return nil, fmt.Errorf("MCP verb %q is declared by both %s and %s", mcpName, owner, manifest.Name)
+			// Both public names are derived from this one, so a single owner per
+			// verb is what keeps the CLI command and its MCP twin from being
+			// claimed by two plugins.
+			if owner := seen[verb.Name]; owner != "" {
+				return nil, fmt.Errorf("verb %q is declared by both %s and %s", verb.Name, owner, manifest.Name)
 			}
 			capability := capabilities[verb.Capability]
 			registrations = append(registrations, Registration{
 				Plugin: manifest.Name, Name: verb.Name, Description: verb.Description,
-				CLI: verb.Name, MCP: mcpName, Capability: capability.Name,
+				CLI: verb.Name, MCP: "roca_" + verb.Name, Capability: capability.Name,
 				Binary: manifest.Binary, Command: slices.Clone(capability.Command),
 			})
-			seenCLI[verb.Name], seenMCP[mcpName] = manifest.Name, manifest.Name
+			seen[verb.Name] = manifest.Name
 		}
 	}
 	return registrations, nil
@@ -344,7 +350,7 @@ func Attach(ctx context.Context, executor statementExecutor, databases []Databas
 			database.ReadOnlyURI()); err != nil {
 			Detach(context.Background(), executor, attached)
 			return nil, fmt.Errorf("attach plugin %s database %s read-only: %w",
-				database.Name, database.DatabaseName, err)
+				database.Name, database.databaseLabel(), err)
 		}
 		attached = append(attached, database.Schema)
 	}

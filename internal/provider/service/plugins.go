@@ -17,7 +17,10 @@ import (
 const (
 	rocaOpsPluginName    = "roca-ops"
 	rocaCorpusPluginName = "roca-corpus" // the package La Roca ships to own perennial ingest
-	ingestVerb           = "ingest"
+	// IngestVerb is the canonical verb the bundled corpus manifest declares and
+	// this kernel routes. The command surface asks the same manifest for it, so
+	// the seat and the CLI command it appears as are named once.
+	IngestVerb = "ingest"
 )
 
 // ownsVerb reports whether a discovered package holds the seat the kernel
@@ -139,7 +142,7 @@ func (s *Service) openResidents(ctx context.Context) error {
 	}
 	if s.opts.CorpusEnabled {
 		for _, descriptor := range descriptors {
-			if ownsVerb(descriptor, ingestVerb, rocaCorpusPluginName) &&
+			if ownsVerb(descriptor, IngestVerb, rocaCorpusPluginName) &&
 				descriptor.Semantic.Attachment == plugin.AttachmentResident {
 				candidates = append(candidates, descriptor)
 			}
@@ -148,7 +151,7 @@ func (s *Service) openResidents(ctx context.Context) error {
 	if s.opts.PluginsEnabled {
 		for _, descriptor := range descriptors {
 			if !selfGated(descriptor.Name) &&
-				!ownsVerb(descriptor, ingestVerb, rocaCorpusPluginName) &&
+				!ownsVerb(descriptor, IngestVerb, rocaCorpusPluginName) &&
 				descriptor.Semantic.Attachment == plugin.AttachmentResident {
 				candidates = append(candidates, descriptor)
 			}
@@ -187,7 +190,7 @@ func (s *Service) openResidents(ctx context.Context) error {
 		}
 	}
 	if s.opts.CorpusEnabled {
-		corpusDatabase := databaseForVerb(s.resident, ingestVerb, rocaCorpusPluginName)
+		corpusDatabase := databaseForVerb(s.resident, IngestVerb, rocaCorpusPluginName)
 		if corpusDatabase == nil {
 			reason := strings.Join(append(slices.Clone(warnings), route.warnings...), "; ")
 			if reason == "" {
@@ -199,11 +202,11 @@ func (s *Service) openResidents(ctx context.Context) error {
 			if s.opts.ReadOnly {
 				s.residentWarnings = append(s.residentWarnings, fmt.Sprintf(
 					"the bundled %s plugin that owns %s is unavailable: %s; the answer covers core only",
-					rocaCorpusPluginName, ingestVerb, reason))
+					rocaCorpusPluginName, IngestVerb, reason))
 				return nil
 			}
 			return fmt.Errorf("the bundled %s plugin that owns %s is unavailable: %s",
-				rocaCorpusPluginName, ingestVerb, reason)
+				rocaCorpusPluginName, IngestVerb, reason)
 		}
 		if !s.opts.ReadOnly {
 			var err error
@@ -220,7 +223,7 @@ func (s *Service) openResidents(ctx context.Context) error {
 // has none. It is the only handle read-only has on that database, which it
 // never opens for writing.
 func (s *Service) residentCorpus() *plugin.Database {
-	return databaseForVerb(s.resident, ingestVerb, rocaCorpusPluginName)
+	return databaseForVerb(s.resident, IngestVerb, rocaCorpusPluginName)
 }
 
 // databaseForVerb resolves the single database a verb writes into. A package
