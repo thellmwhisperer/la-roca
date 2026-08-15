@@ -129,9 +129,10 @@ repairs, and failure. Both streams are plain files beside the call audit.
 Retained `executions` and `mcp-audit` segments are backfilled into ops in one
 bounded transaction per segment. Segment digests and source-line identities
 make a retry idempotent and resumable; parseable rows commit once, while
-malformed and unreadable counts keep their existing meaning. `roca doctor` switches to the
-ops reader only after that retained set reaches parity. If the ops parity or
-read fails, it rolls back to the JSONL reader without changing the diagnosis.
+malformed and unreadable counts keep their existing meaning. `roca doctor`
+switches to the ops reader only after that retained set reaches parity. If the
+ops parity or read fails, it rolls back to the JSONL reader without changing
+the diagnosis.
 
 Doctor reports the number of failed query calls in the last 24 hours, on either
 surface: `query`, `explore`, `roca_query`, `roca_explore`, and `roca_sql`. It
@@ -146,10 +147,10 @@ diagnosis.
 
 ## Redaction
 
-Before a record reaches either sink, redaction covers sensitive field names; bearer
-and key/value secrets; PEM private keys; OpenAI `sk-*`, GitHub `gh[pousr]_*`
-and `github_pat_*`, Slack `xox*`, JWT `eyJ*`, AWS `AKIA*`, and Google `AIza*`
-credential shapes.
+Before a record reaches either sink, redaction covers sensitive field names;
+bearer and key/value secrets; PEM private keys; OpenAI `sk-*`, GitHub
+`gh[pousr]_*` and `github_pat_*`, Slack `xox*`, JWT `eyJ*`, AWS `AKIA*`, and
+Google `AIza*` credential shapes.
 
 Log directories and files are created with operator-only permissions.
 The public contract, JSONL adapter, rotation, retention, and redaction are owned
@@ -181,4 +182,6 @@ Experimental plugin packages are not part of the selected data directory: they
 live under `~/.roca/plugins`, and protected removals are archived beside them.
 The bundled `roca-cron` plugin keeps its canonical journey database there too;
 it observes the selected data directory's existing `logs/.roca.lock` without
-owning it. See [Plugins](plugins.md#scheduled-rides).
+owning it. The durable half of the call log is plugin-owned the same way: it
+lives in `roca-ops/roca-ops.db` under that tree whichever data directory the
+JSONL copy is written to. See [Plugins](plugins.md#scheduled-rides).
