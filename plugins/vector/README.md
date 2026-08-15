@@ -20,9 +20,11 @@ roca plugin install .tmp/vector-package
 
 This package is intentionally installable rather than bundled. Installation is
 an explicit full-trust consent event and an ordinary La Roca install or update
-does not place the binary. Set `features.vector = true` as well: absent or false
-hides `roca vector` dispatch and its `roca plugins` entry even when the binary
-is on `PATH`. Installation supplies the package; the switch activates it.
+does not place the binary. Set `features.vector = true` as well: both switches
+are required, with `features.plugins` as the master gate. If either is absent
+or false, `roca vector` dispatch and its `roca plugins` entry stay hidden even
+when the binary is on `PATH`. Installation supplies the package; the vector
+switch activates it.
 
 The corpus walk excludes deprecated `rocodata_*` memory layers. Historical
 RocoData imports therefore cannot enter a new vector index; the canonical La
