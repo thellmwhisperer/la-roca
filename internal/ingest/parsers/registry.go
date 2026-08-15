@@ -73,6 +73,11 @@ type Registration struct {
 	// still skipped before Detect sees candidate bytes. Established adapters with
 	// specialized scanners leave it empty.
 	Locations []string
+	// HarvestLocations opt an established, source-specific scanner into the
+	// present-agent smoke test. Contributions already use Locations for both
+	// ingest and smoke; this separate list lets an established scanner prove its
+	// real surface without also entering the generic scan route.
+	HarvestLocations []string
 	// Version is the reading this parser currently gives its source. It rides
 	// inside the ingest watermark, so bumping it is what makes a build that
 	// learned to read more re-read the files it already synced. An empty version
@@ -89,6 +94,25 @@ type Registration struct {
 // wide would fingerprint the operator's whole machine.
 func (r Registration) ResolveLocations(home string) (roots, refused []string) {
 	for _, declared := range r.Locations {
+		root, usable := resolveLocation(home, declared)
+		if !usable {
+			refused = append(refused, declared)
+			continue
+		}
+		roots = append(roots, root)
+	}
+	return roots, refused
+}
+
+// ResolveHarvestLocations returns the narrow roots the present-agent smoke
+// reads. A contributed parser's declared ingest locations are its smoke roots;
+// an established parser can declare HarvestLocations without changing scans.
+func (r Registration) ResolveHarvestLocations(home string) (roots, refused []string) {
+	locations := r.HarvestLocations
+	if len(locations) == 0 {
+		locations = r.Locations
+	}
+	for _, declared := range locations {
 		root, usable := resolveLocation(home, declared)
 		if !usable {
 			refused = append(refused, declared)
@@ -173,7 +197,12 @@ var registry = []Registration{
 		func(content []byte, meta FileMeta) (Records, error) {
 			return ParseChatGPTWebConversations(bytes.NewReader(content), meta)
 		}),
-	fileParser(KindGrokSession, DestinationCorpus, detectGrokSession, ParseGrokSession),
+	{
+		Name: string(KindGrokSession), SourceAgent: "grok",
+		HarvestLocations: []string{".grok/sessions"}, Version: "grok-session-v2",
+		Destination: DestinationCorpus,
+		Parser:      parserFunctions{detect: detectGrokSession, parse: ParseGrokSession},
+	},
 	fileParser(KindGrokSessionMetadata, DestinationCorpus, detectGrokSessionMetadata,
 		ParseGrokSessionMetadata),
 }
@@ -363,11 +392,14 @@ func detectGrokSession(file File) bool {
 	if !sourceIs(file.Meta, "grok") {
 		return false
 	}
-	switch stringField(firstObject(file.Content), "type") {
-	case "user", "assistant", "reasoning", "tool_result", "system":
-		return true
+	var line grokUpdateLine
+	if object := firstObject(file.Content); object == nil {
+		return false
+	} else if raw, err := json.Marshal(object); err != nil || json.Unmarshal(raw, &line) != nil {
+		return false
 	}
-	return false
+	return (line.Method == "session/update" || line.Method == "_x.ai/session/update") &&
+		line.Params.SessionID != "" && line.Params.Update.SessionUpdate != ""
 }
 
 func detectGrokSessionMetadata(file File) bool {

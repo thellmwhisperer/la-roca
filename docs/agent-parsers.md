@@ -1,14 +1,35 @@
-# Support your agent in three steps
+# Support your agent in four steps
 
 La Roca ships its agent parsers in the same binary. Supporting another agent is
-a normal pull request: one synthetic fixture folder, one parser file, and one
-registry line. There is no external parser loading or plugin installation.
+a normal pull request: one real-store measurement, one synthetic fixture folder,
+one parser file, and one registry line. There is no external parser loading or
+plugin installation.
 
 > **Privacy rule: never copy real conversation data into a fixture.** Reproduce
 > the real structure, field names, ordering, and edge cases with entirely
 > invented identities and content. Remove tokens, account IDs, local paths,
 > repository names, prompts, answers, and other user data. A fixture that is not
 > unmistakably synthetic cannot be accepted.
+
+## 0. Measure the real store before writing a fixture
+
+This step is mandatory. On a machine where the agent has real sessions, inspect
+its store read-only before inventing any test data. Record all of the following:
+
+- the store and session path layout, including the primary content filename;
+- total file count and total bytes, plus counts and sizes for candidate content
+  files;
+- record-type counts inside the primary candidates;
+- which secondary surfaces were checked and whether they add unique records or
+  only repeat primary data.
+
+Put those aggregate measurements in the pull request under a **Real-store
+measurement** heading. Never quote conversation text, identifiers, account data
+or literal local paths. A fixture that cannot be traced from its field names,
+nesting and record types back to this measured shape is invalid, even when the
+synthetic conformance test passes. If no populated real store is available, the
+parser is not ready to contribute: do not substitute documentation, guessed
+JSON or an author-invented fixture for measurement.
 
 ## 1. Add a synthetic fixture folder
 
@@ -92,6 +113,14 @@ itself, and anything climbing out of it are refused: the harness fails the
 registry line and a shipped one warns the operator instead of walking the
 machine.
 
+The same locations opt the parser into
+`TestRegisteredParsersHarvestPresentAgentStores`. When the declared store exists
+on the test machine, that smoke walks it read-only, runs `Detect` and `Parse`,
+and reports store bytes, detected files, sessions, exchanges, memories,
+thinking, tools and discards. A large store with a near-zero conversation or
+memory yield fails. Established source-specific scanners declare
+`HarvestLocations` for this smoke without entering the generic scan route.
+
 `Version` is the reading your parser currently gives that source. It rides
 inside the ingest watermark, so when a later change teaches `Detect` or `Parse`
 to read more, bump it. Files already synced under the poorer reading are then
@@ -108,10 +137,12 @@ writer.
 Run the parser suite, then the repository gate:
 
 ```sh
+go test -v ./internal/ingest/parsers -run TestRegisteredParsersHarvestPresentAgentStores
 go test ./internal/ingest/parsers
 make check
 ```
 
-Open a pull request containing the fixture, parser, and registry line together.
-The existing fixture directories are the canonical worked examples; keep a new
+Open a pull request containing the real-store aggregate measurements, fixture,
+parser, and registry line together. Include the smoke's yield summary. The
+existing fixture directories are the canonical worked examples; keep a new
 contribution as small and synthetic as they are.

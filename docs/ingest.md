@@ -149,25 +149,24 @@ filing the sessions of a working directory under that directory's URL-escaped
 absolute path. Override the root with `grok_sessions_root` in the configuration
 or the `GROK_SESSIONS_ROOT` environment variable. Each session directory carries
 two read artefacts side by side: `summary.json`, the session's metadata, and
-`chat_history.jsonl`, its active conversation. The metadata is read first, as a
+`updates.jsonl`, its durable protocol stream. The metadata is read first, as a
 snapshot that names the session, its span, title, working directory, model and
-git state; the transcript merges over it, so a summary without a transcript
-still records the session and a re-read of either file updates only itself.
+git state; the update stream merges over it, so a summary without updates still
+records the session and a re-read of either file updates only itself.
 
-A real human message opens an exchange, and the agent's reasoning summaries, its
-answers and its tool calls fill it until the next real human message. The
-records Grok injects as user turns for its own machinery (the compacted history
-and the system reminders, marked `synthetic_reason`) and the `system` prompt
-line are runtime material, excluded by design rather than stored as questions
-nobody asked. The transcript names the model on each assistant record, so the
-exchange's `model` column carries it.
+`session/update` records carry `user_message_chunk`, `agent_message_chunk`,
+`agent_thought_chunk`, `tool_call`, `tool_call_update` and `plan` updates. User
+chunks with one prompt index open one exchange; answer and thought chunks are
+reassembled in record order, tool updates complete the tool use they name, and
+the next prompt closes the exchange. Record timestamps anchor each side and the
+session span, while the prompt's model identifies the answer. Parallel
+`_x.ai/session/update` records are runtime machinery and are excluded by design.
 
-`chat_history.jsonl` is the active window of a session, not its whole history:
-older turns are compacted into markdown segments and the raw protocol stream,
-which this reading deliberately leaves alone. There are therefore no
-per-exchange timestamps in the transcript; the session's start and end come from
-the metadata file. A tool result that states a failing exit code (`exit: N`) is
-stored as a failed tool use; a result that states no exit code is not an error.
+`events.jsonl` contains lifecycle telemetry rather than conversation content.
+`compaction_requests/` and `recap_requests/` contain repeated snapshots derived
+from the same update stream; they are not mined because they duplicate primary
+turns rather than add turns absent from `updates.jsonl`. `chat_history.jsonl` is
+also a compacted secondary view and is not the conversation source.
 
 ## Per-exchange provenance
 

@@ -1,0 +1,4 @@
+{"method":"_x.ai/session/update","params":{"sessionId":"fixture-grok","update":{"sessionUpdate":"hook_execution","event_name":"synthetic_hook"}},"timestamp":1785592800}
+{"method":"session/update","params":{"sessionId":"fixture-grok","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"Count the invented beacons."},"_meta":{"modelId":"grok-fixture-model","promptIndex":1}}},"timestamp":1785592801}
+{"method":"session/update","params":{"sessionId":"fixture-grok","_meta":{"promptId":"prompt-fixture"},"update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"Three were invented."}}},"timestamp":1785592802}
+{"method":"session/update","params":{"sessionId":"fixture-grok","_meta":{"promptId":"prompt-fixture"},"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Three beacons."}}},"timestamp":1785592803}
