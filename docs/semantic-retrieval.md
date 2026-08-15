@@ -20,8 +20,9 @@ For a conceptual question:
 1. State the investigation purpose.
 2. Run one bare semantic probe with `roca vector --json query`; add
    `--db-path /path/to/roca.db` after `vector` for a non-default core database.
-3. Inspect the returned source ids, scores, projects, layers, and dates.
-4. Resolve the live source rows with core and recover neighbouring context.
+3. Inspect the returned source ids and scores as candidate locators.
+4. Resolve the live source rows with core, recover their project, layer, date,
+   and provenance, and inspect neighbouring context.
 5. Run deliberate radius probes for synonyms, adjacent concepts, entities,
    and relevant periods.
 6. Deduplicate by stable source id without discarding distinct contexts.
