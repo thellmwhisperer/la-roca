@@ -179,6 +179,9 @@ func (w *oracleWorld) record() ([]byte, error) {
 	if err := os.MkdirAll(filepath.Join(home, "tmp"), 0o700); err != nil {
 		return nil, err
 	}
+	if err := os.MkdirAll(filepath.Join(home, "bin"), 0o700); err != nil {
+		return nil, err
+	}
 	runner := &oracleRunner{binary: w.binary, home: home, normalizer: compatibility.Normalizer{Home: home}}
 	if err := runner.writeConfig("http://127.0.0.1:1"); err != nil {
 		return nil, err
@@ -274,7 +277,7 @@ func (r *oracleRunner) dbPath() string { return filepath.Join(r.home, ".roca", "
 func (r *oracleRunner) environment(readOnly bool) []string {
 	env := []string{
 		"HOME=" + r.home,
-		"PATH=/usr/bin:/bin:/usr/sbin:/sbin",
+		"PATH=" + filepath.Join(r.home, "bin"),
 		"TMPDIR=" + filepath.Join(r.home, "tmp"),
 	}
 	if readOnly {
