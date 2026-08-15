@@ -32,7 +32,7 @@ func TestLegacyOrphansResumeIntoExplicitQuarantineWithoutChangingJourneys(t *tes
 	}
 
 	interrupted := errors.New("synthetic interruption between committed batches")
-	_, err := importLegacyOrphans(context.Background(), options, func(table string, batch int) error {
+	_, err := importLegacyOrphans(context.Background(), options, 2, func(table string, batch int) error {
 		if table == "runs" && batch == 1 {
 			return interrupted
 		}
@@ -48,7 +48,7 @@ func TestLegacyOrphansResumeIntoExplicitQuarantineWithoutChangingJourneys(t *tes
 		t.Fatal(err)
 	}
 
-	first, err := ImportLegacyOrphans(context.Background(), options)
+	first, err := importLegacyOrphans(context.Background(), options, 2, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestLegacyOrphansResumeIntoExplicitQuarantineWithoutChangingJourneys(t *tes
 	assertReportCounts(t, first, wantRows)
 
 	beforeBatches := destinationBatchCounts(t, options)
-	second, err := ImportLegacyOrphans(context.Background(), options)
+	second, err := importLegacyOrphans(context.Background(), options, 2, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,9 +231,7 @@ func legacyFixture(t *testing.T) LegacyOptions {
 	if err := source.Close(); err != nil {
 		t.Fatal(err)
 	}
-	options := fixtureOptions(directory, sourcePath)
-	options.BatchSize = 2
-	return options
+	return fixtureOptions(directory, sourcePath)
 }
 
 func fixtureOptions(directory, source string) LegacyOptions {

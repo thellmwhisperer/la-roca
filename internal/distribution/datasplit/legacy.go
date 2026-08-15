@@ -34,7 +34,6 @@ type LegacyOptions struct {
 	CronDatabase   string
 	OpsDatabase    string
 	CorpusDatabase string
-	BatchSize      int
 }
 
 type LegacyTableResult struct {
@@ -105,6 +104,7 @@ type legacyRow struct {
 
 type legacyImporter struct {
 	options    LegacyOptions
+	batchSize  int
 	source     *sql.DB
 	dest       map[destination]*sql.DB
 	afterBatch func(string, int) error
@@ -113,12 +113,12 @@ type legacyImporter struct {
 // ImportLegacyOrphans copies only ratified DATA-4 tables from an immutable
 // source snapshot. It never changes the serving route or the source database.
 func ImportLegacyOrphans(ctx context.Context, options LegacyOptions) (LegacyReport, error) {
-	return importLegacyOrphans(ctx, options, nil)
+	return importLegacyOrphans(ctx, options, defaultBatchSize, nil)
 }
 
-func importLegacyOrphans(ctx context.Context, options LegacyOptions, afterBatch func(string, int) error) (LegacyReport, error) {
-	if options.BatchSize == 0 {
-		options.BatchSize = defaultBatchSize
+func importLegacyOrphans(ctx context.Context, options LegacyOptions, batchSize int, afterBatch func(string, int) error) (LegacyReport, error) {
+	if batchSize < 1 {
+		return LegacyReport{}, fmt.Errorf("DATA-4 batch size must be positive")
 	}
 	if err := options.valid(); err != nil {
 		return LegacyReport{}, err
@@ -173,7 +173,8 @@ func importLegacyOrphans(ctx context.Context, options LegacyOptions, afterBatch 
 		return report, err
 	}
 	defer closeDatabases(destinations)
-	importer := legacyImporter{options: options, source: source, dest: destinations, afterBatch: afterBatch}
+	importer := legacyImporter{options: options, batchSize: batchSize,
+		source: source, dest: destinations, afterBatch: afterBatch}
 	for _, plan := range legacyPlans {
 		if !present[plan.sourceTable] {
 			continue
@@ -199,9 +200,6 @@ func (options LegacyOptions) valid() error {
 	if strings.TrimSpace(options.SourceClone) == "" || strings.TrimSpace(options.CronDatabase) == "" ||
 		strings.TrimSpace(options.OpsDatabase) == "" || strings.TrimSpace(options.CorpusDatabase) == "" {
 		return fmt.Errorf("DATA-4 needs a source clone and cron, ops, and corpus destination databases")
-	}
-	if options.BatchSize < 0 {
-		return fmt.Errorf("DATA-4 batch size must be positive")
 	}
 	paths := []string{options.SourceClone, options.CronDatabase, options.OpsDatabase, options.CorpusDatabase}
 	seen := make(map[string]struct{}, len(paths))
@@ -343,7 +341,7 @@ func (importer legacyImporter) importTable(ctx context.Context, plan legacyPlan)
 		DestinationTable: plan.destinationTable, Disposition: string(plan.destination)}
 	var digestRecords []legacyRow
 	batchNumber := 0
-	chunk := make([]legacyRow, 0, importer.options.BatchSize)
+	chunk := make([]legacyRow, 0, importer.batchSize)
 	flush := func() error {
 		batchNumber++
 		if err := importer.applyBatch(ctx, plan, batchNumber, chunk); err != nil {
@@ -369,7 +367,7 @@ func (importer legacyImporter) importTable(ctx context.Context, plan legacyPlan)
 		digestRecords = append(digestRecords, legacyRow{sourceKey: record.sourceKey, digest: record.digest})
 		result.SourceRows++
 		chunk = append(chunk, record)
-		if len(chunk) == importer.options.BatchSize {
+		if len(chunk) == importer.batchSize {
 			if err := flush(); err != nil {
 				return LegacyTableResult{}, err
 			}
