@@ -75,7 +75,7 @@ func New(svc *service.Service, build Build) *mcp.Server {
 	dbPath := svc.DB().Path()
 	dataDir := svc.DataDir()
 	opsDatabase := ""
-	if pluginDir := svc.PluginDir(); pluginDir != "" {
+	if pluginDir := svc.PluginDir(); pluginDir != "" && !svc.ReadOnly() {
 		opsDatabase = filepath.Join(pluginDir, rocaops.Name, rocaops.DatabaseFilename)
 	}
 	audit := logfile.NewWithOps(dataDir, opsDatabase)
@@ -194,13 +194,19 @@ func auditCalls(audit *logfile.Writer, warnings io.Writer) mcp.Middleware {
 					call.CorrelationID = logfile.NewCorrelationID()
 				}
 			}
-			if appendErr := audit.AppendExisting(logfile.MCPAudit, logfile.MCPRecord{
+			appendErr := audit.AppendExisting(logfile.MCPAudit, logfile.MCPRecord{
 				CallRecord: call, Tool: tool,
-			}); appendErr != nil {
+			})
+			if appendErr != nil {
 				warned.Do(func() {
 					fmt.Fprintf(warnings, "warning: MCP calls are not being written to the audit log: %v\n", appendErr)
 				})
-			} else if call.CorrelationID != "" {
+			}
+			// The ID is named to the caller because the record that carries it
+			// exists. Only the JSONL line answers that question: a durable sink
+			// that refused is a second copy missing, never a reason to hand back a
+			// different tool result.
+			if !logfile.FileAppendFailed(appendErr) && call.CorrelationID != "" {
 				if err != nil {
 					err = fmt.Errorf("%w (correlation_id: %s)", err, call.CorrelationID)
 				} else {

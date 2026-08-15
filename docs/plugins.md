@@ -376,9 +376,10 @@ than accepted.
 
 `roca-ops` owns operational agent writes, durable redacted CLI/MCP call history,
 and their query surfaces. It has a separate custodial database so its retention
-policy can differ from the corpus and cron. The package is always installed for
-call-history dual-write; the database and staged agent-memory route remain
-behind their existing rollout switch:
+policy can differ from the corpus and cron. The package and its database are
+always installed for call-history dual-write, on every run that is not
+read-only; only the staged agent-memory write and query routes remain behind
+the existing rollout switch:
 
 ```toml
 [features]

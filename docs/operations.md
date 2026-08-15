@@ -163,7 +163,10 @@ by `internal/distribution/logfile`; durable ops persistence is owned by
 so CLI and MCP enforce the same boundary. Installing the bundled
 [`roca-corpus`](plugins.md#the-bundled-roca-corpus-plugin) archive is itself a
 write, so a read-only run never places it: on an installation that does not have
-it yet, answers cover core only and carry that omission as a warning.
+it yet, answers cover core only and carry that omission as a warning. The
+durable half of the call log is database I/O under the same rule: a read-only
+run writes and backfills no call history, and `roca doctor` reads its failure
+history from JSONL, so an audit leaves the machine exactly as it found it.
 
 ## Data directory
 

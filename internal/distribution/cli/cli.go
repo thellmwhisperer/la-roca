@@ -98,9 +98,14 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 		env.started = started
 	}
 	env.loadCommandFeatures()
-	if paths, err := env.resolvePaths(); err == nil {
-		if root := pluginRoot(paths); root != "" {
-			env.auditOpsDatabase = filepath.Join(root, rocaops.Name, rocaops.DatabaseFilename)
+	// The durable half of the call log is database I/O like any other, so a
+	// read-only run keeps the JSONL sink alone and leaves the ops database
+	// exactly as it found it.
+	if !config.ReadOnly(os.Getenv(config.EnvReadOnly)) {
+		if paths, err := env.resolvePaths(); err == nil {
+			if root := pluginRoot(paths); root != "" {
+				env.auditOpsDatabase = filepath.Join(root, rocaops.Name, rocaops.DatabaseFilename)
+			}
 		}
 	}
 	root := rootCommand(env)
@@ -758,7 +763,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		return nil, err
 	}
 	audit := logfile.New(filepath.Dir(paths.DB))
-	if pluginDir != "" {
+	if pluginDir != "" && !readOnly {
 		env.auditOpsDatabase = filepath.Join(pluginDir, rocaops.Name, rocaops.DatabaseFilename)
 		audit = logfile.NewWithOps(filepath.Dir(paths.DB),
 			env.auditOpsDatabase)

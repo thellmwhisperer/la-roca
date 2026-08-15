@@ -52,6 +52,9 @@ func (w *Writer) BackfillIfNeeded() error {
 }
 
 func (w *Writer) backfillLocked(ctx context.Context) error {
+	if w == nil || !callhistory.Available(w.opsDatabase) {
+		return nil
+	}
 	source := callhistory.Import{CheckedAt: w.now().UTC()}
 	imported, err := callhistory.ImportedSegments(ctx, w.opsDatabase)
 	if err != nil {
@@ -66,13 +69,12 @@ func (w *Writer) backfillLocked(ctx context.Context) error {
 		sort.Strings(matches)
 		for _, path := range matches {
 			segment, readable := readHistorySegment(stream, path, imported)
-			if !readable {
+			// A segment whose read stopped short is unreadable and stays out of the
+			// import: recording its digest would claim the unread tail as imported
+			// and let parity arm over a hole.
+			if !readable || segment.LineCount < 0 {
 				source.Unreadable++
 				continue
-			}
-			if segment.LineCount < 0 {
-				source.Unreadable++
-				segment.LineCount = len(segment.Records) + segment.Malformed
 			}
 			source.Segments = append(source.Segments, segment)
 		}
@@ -81,7 +83,7 @@ func (w *Writer) backfillLocked(ctx context.Context) error {
 }
 
 func readHistorySegment(stream, path string,
-	imported map[string]callhistory.Segment) (callhistory.Segment, bool) {
+	imported callhistory.Imported) (callhistory.Segment, bool) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return callhistory.Segment{}, false
@@ -91,13 +93,19 @@ func readHistorySegment(stream, path string,
 		Stream: stream, SourceFile: filepath.Base(path), ByteSize: int64(len(raw)),
 		Digest: hex.EncodeToString(digest[:]),
 	}
-	if previous, exists := imported[segment.Digest]; exists && previous.ByteSize == segment.ByteSize {
+	if previous, exists := imported.ByDigest[segment.Digest]; exists && previous.ByteSize == segment.ByteSize {
 		segment.LineCount, segment.Parsed, segment.Malformed =
 			previous.LineCount, previous.Parsed, previous.Malformed
 		segment.Unchanged = previous.SourceFile == segment.SourceFile
 		return segment, true
 	}
-	scanner := bufio.NewScanner(bytes.NewReader(raw))
+	offset := resumeOffset(raw, imported.ByFile[segment.SourceFile])
+	if offset > 0 {
+		previous := imported.ByFile[segment.SourceFile]
+		segment.LineCount, segment.Parsed, segment.Malformed =
+			previous.LineCount, previous.Parsed, previous.Malformed
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(raw[offset:]))
 	scanner.Buffer(make([]byte, 64*1024), int(maxFileBytes)+1)
 	for scanner.Scan() {
 		segment.LineCount++
@@ -113,6 +121,23 @@ func readHistorySegment(stream, path string,
 		segment.LineCount = -1
 	}
 	return segment, true
+}
+
+// resumeOffset is the byte a growing segment resumes at. The prefix a previous
+// backfill read must still be the same bytes and must end a line, so the tail
+// keeps the source-line identities the stored rows already hold; anything else
+// is read from zero.
+func resumeOffset(raw []byte, previous callhistory.Segment) int64 {
+	if previous.Digest == "" || previous.LineCount < 0 ||
+		previous.ByteSize <= 0 || previous.ByteSize >= int64(len(raw)) ||
+		raw[previous.ByteSize-1] != '\n' {
+		return 0
+	}
+	prefix := sha256.Sum256(raw[:previous.ByteSize])
+	if hex.EncodeToString(prefix[:]) != previous.Digest {
+		return 0
+	}
+	return previous.ByteSize
 }
 
 func durableRecord(stream, sourceFile string, sourceLine int, raw []byte) (callhistory.Record, error) {
@@ -227,8 +252,10 @@ func (w *Writer) recentDurableQueryFailures(now time.Time, window time.Duration,
 	if err := w.Backfill(); err != nil {
 		return QueryFailureSummary{}, false, err
 	}
+	since := now.UTC().Add(-window)
 	durable, ready, err := callhistory.RecentQueryFailures(
-		context.Background(), w.opsDatabase, now, window, limit)
+		context.Background(), w.opsDatabase, now, window, limit,
+		func(sourceFile, stream string) bool { return reaches(sourceFile, stream, since) })
 	if err != nil || !ready {
 		return QueryFailureSummary{}, ready, err
 	}
@@ -247,10 +274,32 @@ func (w *Writer) recentDurableQueryFailures(now time.Time, window time.Duration,
 	return summary, true, nil
 }
 
+// durableSinkError marks an append the JSONL sink completed and only the
+// durable sink refused. Callers warn on any append error, but one that carries
+// this marker still has its record on disk, so what the caller shows its user
+// must not change because the other sink failed.
+type durableSinkError struct{ err error }
+
+func (e durableSinkError) Error() string { return e.err.Error() }
+
+func (e durableSinkError) Unwrap() error { return e.err }
+
+// FileAppendFailed answers whether the JSONL record itself was not written. It
+// is false for a nil error and for a durable-only failure.
+func FileAppendFailed(err error) bool {
+	if err == nil {
+		return false
+	}
+	var durable durableSinkError
+	return !errors.As(err, &durable)
+}
+
 func combineLogErrors(fileErr, databaseErr error) error {
 	switch {
+	case fileErr == nil && databaseErr == nil:
+		return nil
 	case fileErr == nil:
-		return databaseErr
+		return durableSinkError{databaseErr}
 	case databaseErr == nil:
 		return fileErr
 	default:

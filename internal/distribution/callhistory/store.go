@@ -50,6 +50,15 @@ type Import struct {
 	CheckedAt  time.Time
 }
 
+// Imported is what a previous backfill already recorded. ByDigest answers
+// whether a whole file is already in, including under an older name after
+// rotation; ByFile answers how much of a file that is still growing was read,
+// so the next backfill resumes at that byte instead of parsing from zero.
+type Imported struct {
+	ByDigest map[string]Segment
+	ByFile   map[string]Segment
+}
+
 type QueryFailure struct {
 	Timestamp     time.Time
 	Source        string
@@ -88,21 +97,21 @@ func PayloadDigest(payload []byte) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func ImportedSegments(ctx context.Context, path string) (map[string]Segment, error) {
-	imported := map[string]Segment{}
+func ImportedSegments(ctx context.Context, path string) (Imported, error) {
+	imported := Imported{ByDigest: map[string]Segment{}, ByFile: map[string]Segment{}}
 	if !Available(path) {
 		return imported, nil
 	}
 	db, err := bundledplugin.OpenDatabase(path, true)
 	if err != nil {
-		return nil, err
+		return Imported{}, err
 	}
 	defer db.Close()
 	rows, err := db.QueryContext(ctx, `SELECT source_file, stream, content_digest,
 		byte_size, line_count, parsed_count, malformed_count
 		FROM call_history_segments ORDER BY imported_at, source_file`)
 	if err != nil {
-		return nil, fmt.Errorf("read call history segment identities: %w", err)
+		return Imported{}, fmt.Errorf("read call history segment identities: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -110,13 +119,17 @@ func ImportedSegments(ctx context.Context, path string) (map[string]Segment, err
 		if err := rows.Scan(&segment.SourceFile, &segment.Stream, &segment.Digest,
 			&segment.ByteSize, &segment.LineCount, &segment.Parsed,
 			&segment.Malformed); err != nil {
-			return nil, fmt.Errorf("scan call history segment identity: %w", err)
+			return Imported{}, fmt.Errorf("scan call history segment identity: %w", err)
 		}
-		if _, exists := imported[segment.Digest]; !exists {
-			imported[segment.Digest] = segment
+		if _, exists := imported.ByDigest[segment.Digest]; !exists {
+			imported.ByDigest[segment.Digest] = segment
 		}
+		imported.ByFile[segment.SourceFile] = segment
 	}
-	return imported, rows.Err()
+	if err := rows.Err(); err != nil {
+		return Imported{}, err
+	}
+	return imported, nil
 }
 
 func HasParityState(ctx context.Context, path string) (bool, error) {
@@ -235,8 +248,14 @@ func setParity(ctx context.Context, db *sql.DB, parity bool, malformed, unreadab
 	return nil
 }
 
+// RecentQueryFailures answers the durable half of doctor's failure history.
+// reaches decides which retained segment a file name belongs to relative to the
+// window, so the malformed count keeps the population the JSONL reader counts:
+// the segments that can hold a record inside the window, not every segment the
+// retention still keeps.
 func RecentQueryFailures(ctx context.Context, path string, now time.Time,
-	window time.Duration, limit int) (FailureSummary, bool, error) {
+	window time.Duration, limit int,
+	reaches func(sourceFile, stream string) bool) (FailureSummary, bool, error) {
 	summary := FailureSummary{Since: now.UTC().Add(-window)}
 	if !Available(path) {
 		return summary, false, nil
@@ -257,6 +276,12 @@ func RecentQueryFailures(ctx context.Context, path string, now time.Time,
 	}
 	if !parity {
 		return summary, false, nil
+	}
+	if reaches != nil {
+		summary.Malformed, err = malformedInWindow(ctx, db, reaches)
+		if err != nil {
+			return summary, false, err
+		}
 	}
 	const predicate = `timestamp >= ? AND ok = 0 AND
 		((source = 'cli' AND operation IN ('query', 'explore')) OR
@@ -296,6 +321,31 @@ func RecentQueryFailures(ctx context.Context, path string, now time.Time,
 		return summary, false, fmt.Errorf("read durable query failures: %w", err)
 	}
 	return summary, true, nil
+}
+
+func malformedInWindow(ctx context.Context, db *sql.DB,
+	reaches func(sourceFile, stream string) bool) (int, error) {
+	rows, err := db.QueryContext(ctx, `SELECT source_file, stream, malformed_count
+		FROM call_history_segments`)
+	if err != nil {
+		return 0, fmt.Errorf("read call history segment malformed counts: %w", err)
+	}
+	defer rows.Close()
+	malformed := 0
+	for rows.Next() {
+		var sourceFile, stream string
+		var count int
+		if err := rows.Scan(&sourceFile, &stream, &count); err != nil {
+			return 0, fmt.Errorf("scan call history segment malformed count: %w", err)
+		}
+		if reaches(sourceFile, stream) {
+			malformed += count
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("read call history segment malformed counts: %w", err)
+	}
+	return malformed, nil
 }
 
 func insertRecord(ctx context.Context, tx *sql.Tx, record Record) error {
@@ -342,12 +392,18 @@ func insertRecord(ctx context.Context, tx *sql.Tx, record Record) error {
 	if err != nil || inserted != 0 {
 		return err
 	}
-	var digest string
-	if err := tx.QueryRowContext(ctx, `SELECT record_digest FROM call_history WHERE id = ?`,
-		record.ID).Scan(&digest); err != nil {
+	var digest, sourceFile string
+	var sourceLine int
+	if err := tx.QueryRowContext(ctx, `SELECT record_digest, source_file, source_line
+		FROM call_history WHERE id = ?`, record.ID).Scan(&digest, &sourceFile, &sourceLine); err != nil {
 		return fmt.Errorf("verify durable call identity: %w", err)
 	}
-	if digest != record.RecordDigest {
+	// A stored row derived from the same retained line is the same call, so a
+	// payload the current build redacts or encodes differently keeps the row it
+	// already has. Only the same identity claimed by a different line is a real
+	// collision, and that is what must stop the segment.
+	if digest != record.RecordDigest &&
+		(sourceFile != record.SourceFile || sourceLine != record.SourceLine) {
 		return fmt.Errorf("call history identity %q has conflicting payloads", record.ID)
 	}
 	return nil

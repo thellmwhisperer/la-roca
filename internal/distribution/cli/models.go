@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -17,7 +16,6 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/reconcile"
-	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -54,9 +52,8 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 				report.CapabilityProposals = append(report.CapabilityProposals, proposal.Proposal.Alert)
 			}
 			audit := logfile.New(svc.DataDir())
-			if svc.PluginDir() != "" {
-				audit = logfile.NewWithOps(svc.DataDir(), filepath.Join(
-					svc.PluginDir(), rocaops.Name, rocaops.DatabaseFilename))
+			if env.auditOpsDatabase != "" {
+				audit = logfile.NewWithOps(svc.DataDir(), env.auditOpsDatabase)
 			}
 			failures, logErr := audit.RecentQueryFailures(
 				time.Now(), doctorQueryFailureWindow, doctorQueryFailureLimit)

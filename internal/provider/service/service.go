@@ -157,6 +157,10 @@ func (s *Service) DataDir() string { return s.dataDir() }
 // PluginDir is the operator-owned root containing bundled domain databases.
 func (s *Service) PluginDir() string { return s.opts.PluginDir }
 
+// ReadOnly reports whether this run refuses writes, so a caller that writes
+// beside the shared service leaves the machine as it found it too.
+func (s *Service) ReadOnly() bool { return s.opts.ReadOnly }
+
 // Close closes the database.
 func (s *Service) Close() error {
 	if s.gate != nil {

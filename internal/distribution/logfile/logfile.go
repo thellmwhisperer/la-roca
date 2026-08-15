@@ -168,6 +168,12 @@ func (w *Writer) append(stream string, record any, createDir bool) error {
 			stream, len(line)+1, w.maxFileBytes)
 	}
 	sourceLine := 0
+	// Only the two call streams carry a durable twin, and only an installation
+	// that has the ops database needs the line that identifies it. Everything
+	// else must not pay a second full read of the segment to learn a number
+	// nobody consumes.
+	durable := (stream == Executions || stream == MCPAudit) &&
+		callhistory.Available(w.opsDatabase)
 	var historyErr error
 	fileErr := func() error {
 		if createDir {
@@ -190,17 +196,17 @@ func (w *Writer) append(stream string, record any, createDir bool) error {
 		if err != nil {
 			return fmt.Errorf("inspect the %s log for rotation: %w", stream, err)
 		}
-		if rotating && (stream == Executions || stream == MCPAudit) {
+		if rotating && durable {
 			historyErr = w.backfillLocked(context.Background())
 		}
 		if err := w.rotate(path, int64(len(line)+1)); err != nil {
 			return fmt.Errorf("rotate the %s log: %w", stream, err)
 		}
-		sourceLine, err = nextSourceLine(path)
-		if err != nil {
-			return fmt.Errorf("inspect the %s log: %w", stream, err)
-		}
-		if (stream == Executions || stream == MCPAudit) && callhistory.Available(w.opsDatabase) {
+		if durable {
+			sourceLine, err = nextSourceLine(path)
+			if err != nil {
+				return fmt.Errorf("inspect the %s log: %w", stream, err)
+			}
 			line, err = withCallID(stream, filepath.Base(path), sourceLine, line)
 			if err != nil {
 				return fmt.Errorf("identify the %s log record: %w", stream, err)

@@ -1,6 +1,7 @@
 package logfile
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/callhistory"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	_ "modernc.org/sqlite"
 )
@@ -155,6 +157,88 @@ func TestRetainedSegmentsBackfillOnceAndGateDurableDoctorReads(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertHistoryCount(t, db, 2)
+}
+
+func TestAGrowingSegmentResumesAtTheBytesAlreadyImported(t *testing.T) {
+	cases := []struct {
+		name     string
+		previous callhistory.Segment
+		raw      string
+		want     int64
+	}{
+		{"no previous import reads from zero", callhistory.Segment{}, "a\nb\n", 0},
+		{"a rewritten prefix reads from zero", callhistory.Segment{
+			Digest: callhistory.PayloadDigest([]byte("x\n")), ByteSize: 2}, "a\nb\n", 0},
+		{"a prefix that is not a whole line reads from zero", callhistory.Segment{
+			Digest: callhistory.PayloadDigest([]byte("a")), ByteSize: 1}, "a\nb\n", 0},
+		{"an unchanged prefix resumes after it", callhistory.Segment{
+			Digest: callhistory.PayloadDigest([]byte("a\n")), ByteSize: 2}, "a\nb\n", 2},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := resumeOffset([]byte(testCase.raw), testCase.previous); got != testCase.want {
+				t.Fatalf("resume offset = %d, want %d", got, testCase.want)
+			}
+		})
+	}
+}
+
+func TestABackfillThatCannotReadAWholeSegmentDoesNotArmParity(t *testing.T) {
+	root, database := historyFixture(t)
+	now := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	writer := NewWithOps(root, database)
+	writer.now = func() time.Time { return now }
+	if err := writer.Prepare(); err != nil {
+		t.Fatal(err)
+	}
+	oversized := append(bytes.Repeat([]byte("x"), int(maxFileBytes)+2), '\n')
+	if err := os.WriteFile(filepath.Join(root, DirName, "executions-2026-08-15.jsonl"),
+		oversized, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Backfill(); err != nil {
+		t.Fatal(err)
+	}
+
+	db := openHistoryDB(t, database)
+	defer db.Close()
+	var parity bool
+	var unreadable, segments int
+	if err := db.QueryRow(`SELECT parity_verified, unreadable_files
+		FROM call_history_state WHERE singleton = 1`).Scan(&parity, &unreadable); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM call_history_segments`).Scan(&segments); err != nil {
+		t.Fatal(err)
+	}
+	if parity || unreadable != 1 || segments != 0 {
+		t.Fatalf("parity/unreadable/segments = %v/%d/%d", parity, unreadable, segments)
+	}
+}
+
+func TestTheDurableMalformedCountKeepsTheWindowTheJSONLReaderCounts(t *testing.T) {
+	root, database := historyFixture(t)
+	now := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	writer := NewWithOps(root, database)
+	writer.now = func() time.Time { return now }
+	if err := writer.Append(Executions, ExecutionRecord{CallRecord: CallRecord{
+		Timestamp: now, Source: "cli", Args: []string{}, OK: false,
+		Error: "synthetic invalid SQL", ErrorType: "invalid_sql",
+		CorrelationID: "qf_windowed_failure",
+	}, Command: "query", ExitCode: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, DirName, "executions-2026-07-28.jsonl"),
+		[]byte("{malformed retained line}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Backfill(); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := writer.RecentQueryFailures(now, 24*time.Hour, 5)
+	if err != nil || summary.Count != 1 || summary.Malformed != 0 {
+		t.Fatalf("windowed durable summary = %+v, err %v", summary, err)
+	}
 }
 
 func TestDurableFailureWindowUsesChronologicalFractionalSeconds(t *testing.T) {
