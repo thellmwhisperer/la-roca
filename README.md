@@ -42,9 +42,8 @@ $ roca init
 $ roca query --full "what did we decide about the retention window"
 SQL · codex · gpt-5.6-luna · 3.1 s / search · 2 ms / answer · codex · gpt-5.6-luna · 9.8 s
 
-You decided it on 2 August: operational logs keep 30 days, in dated streams,
-never stored in SQLite. Your own words that night: "30 days and out. I do
-not want eternal logs."
+You decided it on 2 August: operational logs keep 30 days, in dated streams.
+Your own words that night: "30 days and out. I do not want eternal logs."
 ```
 
 If an already signed-in agent CLI is on `PATH`, that is the factory default:
@@ -97,12 +96,13 @@ interpreter sees that capped sample plus those precomputed aggregates, never
 the full result set as text. Configure only Ollama when no query content may
 leave it at all.
 
-Every CLI command and MCP tool call writes a size-capped, redacted JSONL record
-under `logs/`; query records never store result row contents, and `roca doctor`
-summarizes recent query failures. The stable format, retention, and full
-redaction list live in [docs/operations.md](docs/operations.md). `ROCA_READ_ONLY=1`
-refuses writes in the shared service before database I/O, so CLI and MCP
-enforce the same boundary.
+Every CLI command and MCP tool call writes a size-capped, redacted record to
+the bundled ops database and to JSONL under `logs/`; query records never store
+result row contents, and `roca doctor` summarizes recent query failures. The
+stable format, retention, and full redaction list live in
+[docs/operations.md](docs/operations.md). `ROCA_READ_ONLY=1` refuses writes in
+the shared service before database I/O, so CLI and MCP enforce the same
+boundary.
 
 ## What you can ask
 
@@ -150,7 +150,7 @@ rows[1]{source,created_at,text}:
 ```text
 $ roca query "what did we decide about the retention window"
 rows[2]{source,created_at,text}:
-  memory,"2026-08-02 21:14:09","Decision: operational logs keep 30 days, dated streams, never stored in SQLite"
+  memory,"2026-08-02 21:14:09","Decision: operational logs keep 30 days, in dated streams"
   exchange,"2026-08-02 21:02:44","30 days and out. I do not want eternal logs."
 ```
 
