@@ -150,11 +150,13 @@ func (w *ingestAcceptanceWorld) seedGrokSessionWithModel(model string) error {
 		w.sessionID, cwd, model)); err != nil {
 		return err
 	}
-	path := filepath.Join(root, "chat_history.jsonl")
+	path := filepath.Join(root, "updates.jsonl")
 	w.fixturePath = path
-	return writeFixture(path,
-		`{"type":"user","content":[{"type":"text","text":"question"}]}`+"\n"+
-			`{"type":"assistant","content":"answer","model_id":"grok-model"}`+"\n")
+	return writeFixture(path, fmt.Sprintf(
+		`{"method":"_x.ai/session/update","params":{"sessionId":%[1]q,"update":{"sessionUpdate":"turn_completed"}},"timestamp":1785596400}`+"\n"+
+			`{"method":"session/update","params":{"sessionId":%[1]q,"update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"question"},"_meta":{"modelId":"grok-model","promptIndex":1}}},"timestamp":1785596400}`+"\n"+
+			`{"method":"session/update","params":{"sessionId":%[1]q,"_meta":{"promptId":"grok-acceptance-prompt"},"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"answer"}}},"timestamp":1785596401}`+"\n",
+		w.sessionID))
 }
 
 func encodeAgentPath(path string) string {
