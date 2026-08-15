@@ -74,6 +74,22 @@ func Ensure(root, binDir, version string, spec Spec) (plugininstall.Result, erro
 	return result, nil
 }
 
+// Manifest loads one bundled declaration and stamps the running build version
+// through the same validation path used when the installer materializes it.
+func Manifest(raw []byte, version string) (plugin.Manifest, error) {
+	declaration, err := plugin.DecodeManifest(bytes.NewReader(raw))
+	if err != nil {
+		return plugin.Manifest{}, err
+	}
+	if strings.TrimSpace(version) != "" {
+		declaration.Version = version
+	}
+	if err := declaration.Valid(); err != nil {
+		return plugin.Manifest{}, err
+	}
+	return declaration, nil
+}
+
 func (spec Spec) valid() error {
 	if spec.Name == "" || spec.DatabaseFilename == "" || spec.Source == "" || spec.ApplySchema == nil ||
 		(len(spec.Semantic) == 0) == (len(spec.Manifest) == 0) {
