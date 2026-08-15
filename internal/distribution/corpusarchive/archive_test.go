@@ -78,12 +78,16 @@ func TestMergePreservesAliasesDivergenceAndSourceScopedChildIdentity(t *testing.
 		WHERE source_table IN ('tool_uses', 'thinking_blocks')
 		  AND source_key IN ('1', '2', '10', '11')`, 0)
 
-	state, err := migrationledger.Inspect(t.Context(), db)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if state.State != migrationledger.StateVerified || state.VerificationDigest != report.VerificationDigest {
-		t.Fatalf("migration state = %+v", state)
+	for _, table := range archiveSourceTables {
+		state, err := migrationledger.InspectMigration(t.Context(), db, table.migration)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state.State != migrationledger.StateVerified ||
+			state.DestinationTable != table.destinationTable ||
+			state.VerificationDigest != report.VerificationDigest {
+			t.Fatalf("migration state = %+v", state)
+		}
 	}
 	var batches int
 	if err := db.QueryRow("SELECT COUNT(*) FROM migration_batches").Scan(&batches); err != nil {

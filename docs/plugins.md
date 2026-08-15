@@ -366,7 +366,11 @@ into: one version table per family, full-text indexes rebuilt over the ones
 that carry text, and the evidence tying each version back to the source row it
 came from. Those tables are migration machinery rather than fleet memory, so
 they stay hidden from every query surface, and the served tables above keep
-answering exactly as before until the later atomic cutover.
+answering exactly as before until the later atomic cutover. Each family is a
+named custody migration of its own, `corpus-archive-<family>`, because a
+migration owns exactly one destination; the merge seals all five against the
+same verification digest, so a partially sealed archive is merged again rather
+than accepted.
 
 ## The bundled roca-ops plugin
 
@@ -430,10 +434,11 @@ number their batches however they like and still commit the same id. Two
 migrations in one database therefore prepare, batch, resume and verify
 independently: neither counts the other's batches, reuses its destination, nor
 overwrites its state, and each reaches `verified` or `verified-empty` on its
-own. DATA-2 owns `data2-memory-custody` over `memory_records`. A DATA-1 database
-adopts this in place on the next `Prepare` — the rows it already held stay under
-an unclaimed empty name, so they can never stand in for a migration that has not
-run. A plugin schema or index bump reopens every named migration, because the
+own. DATA-2 owns `data2-memory-custody` over `memory_records`, and the corpus
+shadow archive owns one `corpus-archive-<family>` name per version table. A
+DATA-1 database adopts this in place on the next `Prepare` — the rows it already
+held stay under an unclaimed empty name, so they can never stand in for a
+migration that has not run. A plugin schema or index bump reopens every named migration, because the
 destination those migrations fill may have moved under them.
 
 ## Scheduled rides

@@ -87,15 +87,15 @@ func Merge(ctx context.Context, destinationPath string, sources []Source, option
 	}
 	defer destination.Close()
 	destination.SetMaxOpenConns(1)
-	state, err := migrationledger.Inspect(ctx, destination)
+	states, err := prepareArchiveMigrations(ctx, destination)
 	if err != nil {
 		return Report{}, err
 	}
-	if err := validateRecordedSources(ctx, destination, prepared, options.BatchSize,
-		state.State == migrationledger.StateVerified); err != nil {
+	verified := archiveVerified(states)
+	if err := validateRecordedSources(ctx, destination, prepared, options.BatchSize, verified); err != nil {
 		return Report{}, err
 	}
-	if state.State != migrationledger.StateVerified {
+	if !verified {
 		for _, source := range prepared {
 			if err := importSource(ctx, destination, source, options.BatchSize); err != nil {
 				return Report{}, err
@@ -113,16 +113,66 @@ func Merge(ctx context.Context, destinationPath string, sources []Source, option
 	if err != nil {
 		return Report{}, err
 	}
-	if state.State == migrationledger.StateVerified {
-		if state.VerificationDigest != digest {
-			return Report{}, fmt.Errorf("verified corpus archive digest is %s, rebuilt report is %s",
-				state.VerificationDigest, digest)
-		}
-	} else if err := migrationledger.Verify(ctx, destination, digest); err != nil {
+	if err := recordArchiveVerification(ctx, destination, states, digest); err != nil {
 		return Report{}, err
 	}
 	report.VerificationDigest = digest
 	return report, nil
+}
+
+// prepareArchiveMigrations declares one named migration per family and reports
+// what each of them already recorded. Declaring is idempotent and leaves a
+// family that already carried rows exactly where it was.
+func prepareArchiveMigrations(ctx context.Context, destination *sql.DB,
+) ([]migrationledger.MigrationSnapshot, error) {
+	states := make([]migrationledger.MigrationSnapshot, 0, len(archiveSourceTables))
+	for _, table := range archiveSourceTables {
+		if err := migrationledger.PrepareMigration(ctx, destination, migrationledger.Migration{
+			Name: table.migration, DestinationTable: table.destinationTable,
+		}); err != nil {
+			return nil, err
+		}
+		state, err := migrationledger.InspectMigration(ctx, destination, table.migration)
+		if err != nil {
+			return nil, err
+		}
+		states = append(states, state)
+	}
+	return states, nil
+}
+
+// archiveVerified reports the archive as verified only when every family is.
+// The report and its digest cover all five together, so a run that sealed some
+// of them and stopped still owes the whole merge again.
+func archiveVerified(states []migrationledger.MigrationSnapshot) bool {
+	for _, state := range states {
+		if state.State != migrationledger.StateVerified {
+			return false
+		}
+	}
+	return true
+}
+
+// recordArchiveVerification seals the families that are not sealed yet and
+// holds the ones that are to the digest they recorded, so a replay of a
+// verified archive that no longer reproduces its report is refused rather than
+// re-sealed.
+func recordArchiveVerification(ctx context.Context, destination *sql.DB,
+	states []migrationledger.MigrationSnapshot, digest string,
+) error {
+	for _, state := range states {
+		if state.State == migrationledger.StateVerified {
+			if state.VerificationDigest != digest {
+				return fmt.Errorf("verified corpus archive digest is %s, rebuilt report is %s",
+					state.VerificationDigest, digest)
+			}
+			continue
+		}
+		if err := migrationledger.VerifyMigration(ctx, destination, state.Name, digest); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func prepareSources(ctx context.Context, destinationPath string, sources []Source) ([]preparedSource, error) {
