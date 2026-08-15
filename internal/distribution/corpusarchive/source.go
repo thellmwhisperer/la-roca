@@ -405,7 +405,8 @@ func scanIngestState(rows *sql.Rows, _ *occurrenceTracker) (archiveRecord, error
 	}
 	values := []any{path, kind, agent, project, fingerprint, syncedAt, lastError, metadata}
 	return archiveRecord{
-		sourceKey: path, digest: canonicalDigest("ingest-file-state", values...),
+		sourceKey:        canonicalDigest("ingest-file-state-key", path),
+		digest:           canonicalDigest("ingest-file-state", values...),
 		destinationTable: "ingest_file_state_versions", values: values,
 		statePath: sql.NullString{String: path, Valid: true},
 	}, nil

@@ -92,13 +92,17 @@ JSONL
   run_roca "$home" ingest > "$work/ingest.json"
   assert_json "$work/ingest.json" '"errors": 0' "$version ingest"
 
+  # A home frozen before the bundled corpus kept its history in core; one frozen
+  # after it kept the same history in the corpus. What the upgrade owes is the
+  # answer, not the database the old release wrote it to, so both assertions
+  # count the frozen row across the two.
   run_roca "$home" exec \
-    "SELECT COUNT(*) AS old_sessions FROM sessions WHERE session_id = '11111111-2222-3333-4444-555555555555'" \
+    "SELECT (SELECT COUNT(*) FROM sessions WHERE session_id = '11111111-2222-3333-4444-555555555555') + (SELECT COUNT(*) FROM plugin_roca_corpus.sessions WHERE session_id = '11111111-2222-3333-4444-555555555555') AS old_sessions" \
     > "$work/old-session.json"
   assert_json "$work/old-session.json" '"old_sessions": 1' "$version historical session"
 
   run_roca "$home" exec \
-    "SELECT COUNT(*) AS old_exchanges FROM exchanges WHERE human_text = 'remember the frozen amber compass' AND agent_text = 'the frozen amber compass is recorded'" \
+    "SELECT (SELECT COUNT(*) FROM exchanges WHERE human_text = 'remember the frozen amber compass' AND agent_text = 'the frozen amber compass is recorded') + (SELECT COUNT(*) FROM plugin_roca_corpus.exchanges WHERE human_text = 'remember the frozen amber compass' AND agent_text = 'the frozen amber compass is recorded') AS old_exchanges" \
     > "$work/old-exchange.json"
   assert_json "$work/old-exchange.json" '"old_exchanges": 1' "$version historical exchange"
 

@@ -40,9 +40,15 @@ const MaxLimit = 1000
 // the tool's internal state, not the fleet's memory. They are dropped from the
 // validation database, so asking about them is asking about what does not exist.
 //
-// The last three are the plugin-local DATA SPLIT ledger. A plugin declares them
-// so its database stays self-describing, but which batch carried which row is
-// custody bookkeeping and never an answer about the fleet.
+// `plugin_schema`, `migration_batches` and `custody_memberships` are the
+// plugin-local DATA SPLIT ledger. A plugin declares them so its database stays
+// self-describing, but which batch carried which row is custody bookkeeping and
+// never an answer about the fleet.
+//
+// The block after them is the corpus archive shadow: the version tables, their
+// rebuilt FTS indexes, the source evidence, and the compatibility views. They
+// are migration machinery until the cutover makes them the serving surface, so
+// nothing here answers a question yet.
 var invisibleTables = []string{
 	"ingest_file_state", "search_state",
 	"plugin_schema", "migration_batches", "custody_memberships",

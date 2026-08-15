@@ -7,7 +7,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
+	"os"
 	"path/filepath"
 	"sort"
 
@@ -175,7 +177,31 @@ func prepareSources(ctx context.Context, destinationPath string, sources []Sourc
 	return prepared, nil
 }
 
+// refuseLiveSidecars keeps the immutable read honest. `immutable=1` reads the
+// main database file alone, so a clone copied while a rollback journal or a
+// WAL still held committed pages would be read as its pre-sidecar prefix, and
+// every count below would agree on the truncated view.
+func refuseLiveSidecars(path string) error {
+	for _, suffix := range []string{"-wal", "-journal"} {
+		info, err := os.Stat(path + suffix)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect frozen corpus source %q: %w", path+suffix, err)
+		}
+		if info.Size() > 0 {
+			return fmt.Errorf("frozen corpus source %q carries a non-empty %s sidecar, "+
+				"so it is not a checkpointed clone", path, suffix)
+		}
+	}
+	return nil
+}
+
 func openFrozenSource(path string) (*sql.DB, error) {
+	if err := refuseLiveSidecars(path); err != nil {
+		return nil, err
+	}
 	query := url.Values{"mode": {"ro"}, "immutable": {"1"}}
 	dsn := url.URL{Scheme: "file", Path: filepath.ToSlash(path), RawQuery: query.Encode()}
 	db, err := sql.Open("sqlite", dsn.String())

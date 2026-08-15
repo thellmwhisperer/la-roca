@@ -2,6 +2,7 @@ package corpusarchive
 
 import (
 	"database/sql"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -120,22 +121,43 @@ func TestMergePreservesAliasesDivergenceAndSourceScopedChildIdentity(t *testing.
 }
 
 func TestMergeRejectsAnUnverifiedOrWritableSourceIdentity(t *testing.T) {
-	directory := t.TempDir()
-	source := createFrozenSource(t, filepath.Join(directory, "source.db"), seedExistingCorpusArchive)
-	destination := filepath.Join(directory, "destination.db")
-
-	_, err := Merge(t.Context(), destination, []Source{{
-		Database: "plugin:roca-corpus", Path: source.path,
-		SnapshotDigest: strings.Repeat("0", 64), ExistingCorpus: true,
-	}}, Options{})
-	if err == nil || !strings.Contains(err.Error(), "digest is") {
-		t.Fatalf("wrong snapshot digest error = %v", err)
-	}
-	if _, err := Merge(t.Context(), source.path, []Source{{
-		Database: "plugin:roca-corpus", Path: source.path,
-		SnapshotDigest: source.digest, ExistingCorpus: true,
-	}}, Options{}); err == nil || !strings.Contains(err.Error(), "writable destination") {
-		t.Fatalf("source equals destination error = %v", err)
+	for _, testCase := range []struct {
+		name, want string
+		arrange    func(*testing.T, frozenFixture, string) (string, Source)
+	}{
+		{
+			name: "wrong snapshot digest", want: "digest is",
+			arrange: func(_ *testing.T, fixture frozenFixture, destination string) (string, Source) {
+				source := frozenSource(fixture)
+				source.SnapshotDigest = strings.Repeat("0", 64)
+				return destination, source
+			},
+		},
+		{
+			name: "writable destination", want: "writable destination",
+			arrange: func(_ *testing.T, fixture frozenFixture, _ string) (string, Source) {
+				return fixture.path, frozenSource(fixture)
+			},
+		},
+		{
+			name: "uncheckpointed sidecar", want: "-wal sidecar",
+			arrange: func(t *testing.T, fixture frozenFixture, destination string) (string, Source) {
+				if err := os.WriteFile(fixture.path+"-wal", []byte("committed pages"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				return destination, frozenSource(fixture)
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			directory := t.TempDir()
+			fixture := createFrozenSource(t, filepath.Join(directory, "source.db"), seedExistingCorpusArchive)
+			destination, source := testCase.arrange(t, fixture, filepath.Join(directory, "destination.db"))
+			_, err := Merge(t.Context(), destination, []Source{source}, Options{})
+			if err == nil || !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("error = %v, want one naming %q", err, testCase.want)
+			}
+		})
 	}
 }
 
@@ -145,16 +167,14 @@ func TestMergeRefusesAChildWithoutDeterministicParentIdentity(t *testing.T) {
 		execTest(t, db, `INSERT INTO tool_uses
 			(id, session_id, exchange_number, tool_name) VALUES (1, NULL, NULL, 'Read')`)
 	})
-	_, err := Merge(t.Context(), filepath.Join(directory, "destination.db"), []Source{{
-		Database: "plugin:roca-corpus", Path: source.path,
-		SnapshotDigest: source.digest, ExistingCorpus: true,
-	}}, Options{BatchSize: 1})
+	_, err := Merge(t.Context(), filepath.Join(directory, "destination.db"),
+		[]Source{frozenSource(source)}, Options{BatchSize: 1})
 	if err == nil || !strings.Contains(err.Error(), "no deterministic parent turn") {
 		t.Fatalf("missing child identity error = %v", err)
 	}
 }
 
-func TestMergeEncodesAnEmptyLegacySessionIDAsANonemptyMembership(t *testing.T) {
+func TestMergeEncodesEmptyLegacyIdentitiesAsNonemptyMemberships(t *testing.T) {
 	_, db := mergeSoleSource(t, func(t *testing.T, db *sql.DB) {
 		seedSession(t, db, "", "empty legacy identity")
 		execTest(t, db, `INSERT INTO exchanges
@@ -164,14 +184,25 @@ func TestMergeEncodesAnEmptyLegacySessionIDAsANonemptyMembership(t *testing.T) {
 			(id, session_id, exchange_number, tool_name) VALUES (1, '', NULL, 'Read')`)
 		execTest(t, db, `INSERT INTO thinking_blocks
 			(id, session_id, exchange_number, full_text) VALUES (1, '', NULL, 'legacy thought')`)
+		seedState(t, db, "", "empty legacy path")
 	})
-	var sourceKey, legacyID string
-	if err := db.QueryRow(`SELECT source_key, session_id FROM corpus_source_rows
-		WHERE source_table = 'sessions'`).Scan(&sourceKey, &legacyID); err != nil {
+	for _, table := range []string{"sessions", "ingest_file_state"} {
+		var sourceKey string
+		if err := db.QueryRow(`SELECT source_key FROM corpus_source_rows
+			WHERE source_table = ?`, table).Scan(&sourceKey); err != nil {
+			t.Fatal(err)
+		}
+		if sourceKey == "" {
+			t.Fatalf("%s encoded an empty source key", table)
+		}
+	}
+	var legacyID string
+	if err := db.QueryRow(`SELECT session_id FROM corpus_source_rows
+		WHERE source_table = 'sessions'`).Scan(&legacyID); err != nil {
 		t.Fatal(err)
 	}
-	if sourceKey == "" || legacyID != "" {
-		t.Fatalf("encoded source key = %q, legacy id = %q", sourceKey, legacyID)
+	if legacyID != "" {
+		t.Fatalf("legacy id = %q, want the source value kept as evidence", legacyID)
 	}
 	assertCountQuery(t, db, `SELECT COUNT(*) FROM corpus_source_rows
 		WHERE source_table IN ('exchanges', 'tool_uses', 'thinking_blocks')
@@ -201,14 +232,18 @@ func mergeSoleSource(t *testing.T, seed func(*testing.T, *sql.DB)) (Report, *sql
 	directory := t.TempDir()
 	source := createFrozenSource(t, filepath.Join(directory, "source.db"), seed)
 	destination := filepath.Join(directory, "destination.db")
-	report, err := Merge(t.Context(), destination, []Source{{
-		Database: "plugin:roca-corpus", Path: source.path,
-		SnapshotDigest: source.digest, ExistingCorpus: true,
-	}}, Options{BatchSize: 1})
+	report, err := Merge(t.Context(), destination, []Source{frozenSource(source)}, Options{BatchSize: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return report, openTestDB(t, destination)
+}
+
+func frozenSource(fixture frozenFixture) Source {
+	return Source{
+		Database: "plugin:roca-corpus", Path: fixture.path,
+		SnapshotDigest: fixture.digest, ExistingCorpus: true,
+	}
 }
 
 func createFrozenSource(t *testing.T, path string, seed func(*testing.T, *sql.DB)) frozenFixture {
