@@ -265,7 +265,7 @@ func dispatchPlugin(root *cobra.Command, args []string, features config.Features
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") || builtIn(root, args[0]) {
 		return false, 0, nil
 	}
-	if args[0] == "vector" && !features.Vector {
+	if args[0] == "vector" && (!features.Plugins || !features.Vector) {
 		return false, 0, nil
 	}
 	path, found := findPlugin(args[0])
@@ -334,7 +334,7 @@ func listPlugins(features config.FeaturesConfig) []plugin {
 		for _, entry := range entries {
 			name, ok := pluginName(entry.Name())
 			path := filepath.Join(directory, entry.Name())
-			if ok && isExecutable(path) && (name != "vector" || features.Vector) {
+			if ok && isExecutable(path) && (name != "vector" || (features.Plugins && features.Vector)) {
 				found = append(found, plugin{Name: name, Path: path})
 			}
 		}

@@ -165,6 +165,8 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 	seen := make(map[string]bool, len(existing))
 	pending := make([]desiredChunk, 0, defaultBatchSize)
 	locatorUpdates := make(map[int64]locatorUpdate)
+	desiredSources := make(map[string][]desiredChunk)
+	sourceOrder := make([]string, 0)
 	flush := func() error {
 		if len(pending) == 0 {
 			return nil
@@ -203,11 +205,27 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 			return nil
 		}
 		report.Sources++
+		sourceID := source.stableID()
+		groupKey := sourceKey(source.kind, sourceID)
+		if _, ok := desiredSources[groupKey]; !ok {
+			sourceOrder = append(sourceOrder, groupKey)
+		}
+		desired := make([]desiredChunk, 0)
 		for chunkIndex, text := range chunks(source.text, defaultChunkSize, defaultOverlap) {
 			chunk := desiredChunk{
-				sourceKind: source.kind, sourceID: source.stableID(), index: chunkIndex,
+				sourceKind: source.kind, sourceID: sourceID, index: chunkIndex,
 				fingerprint: fingerprint(text), locator: source.locator(), text: text,
 			}
+			desired = append(desired, chunk)
+		}
+		desiredSources[groupKey] = desired
+		return nil
+	})
+	if err != nil {
+		return Delta{}, err
+	}
+	for _, groupKey := range sourceOrder {
+		for _, chunk := range desiredSources[groupKey] {
 			key := chunkKey(chunk.sourceKind, chunk.sourceID, chunk.index)
 			seen[key] = true
 			if old, ok := existing[key]; ok && old.fingerprint == chunk.fingerprint {
@@ -223,14 +241,10 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 			pending = append(pending, chunk)
 			if len(pending) == defaultBatchSize {
 				if err := flush(); err != nil {
-					return err
+					return Delta{}, err
 				}
 			}
 		}
-		return nil
-	})
-	if err != nil {
-		return Delta{}, err
 	}
 	if err := flush(); err != nil {
 		return Delta{}, err
@@ -474,7 +488,11 @@ func fingerprint(text string) string {
 }
 
 func chunkKey(kind, sourceID string, index int) string {
-	return kind + "\x00" + sourceID + "\x00" + strconv.Itoa(index)
+	return sourceKey(kind, sourceID) + "\x00" + strconv.Itoa(index)
+}
+
+func sourceKey(kind, sourceID string) string {
+	return kind + "\x00" + sourceID
 }
 
 func openSQLite(path string, readOnly bool) (*sql.DB, error) {

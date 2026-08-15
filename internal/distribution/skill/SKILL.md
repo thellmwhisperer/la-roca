@@ -84,7 +84,8 @@ matching.
 
 The vector route requires explicit local setup: `features.plugins = true`,
 `features.vector = true`, an installed package, and its local embedding model.
-It must remain optional and local. See the [semantic retrieval and evidence
+The plugins switch is the master gate; the vector switch opts into this
+executable. It must remain optional and local. See the [semantic retrieval and evidence
 workflow](https://github.com/thellmwhisperer/la-roca/blob/main/docs/semantic-retrieval.md)
 for the complete setup, degradation, and evidence contract.
 
