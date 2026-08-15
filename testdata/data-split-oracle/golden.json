@@ -1,0 +1,135 @@
+{
+  "schema": "la-roca.data-split-oracle-golden/v1",
+  "cases": [
+    {
+      "name": "cli.query.model.json",
+      "surface": "cli",
+      "operation": "query",
+      "output": "{\n  \"columns\": [\n    \"source\",\n    \"id\",\n    \"layer\",\n    \"text\",\n    \"project\",\n    \"created_at\",\n    \"database\"\n  ],\n  \"database_path\": \"<home>/.roca/roca.db\",\n  \"databases\": [\n    \"core\",\n    \"plugin:roca-corpus\"\n  ],\n  \"execution_ms\": \"<duration_ms>\",\n  \"interpretation_ms\": \"<duration_ms>\",\n  \"latency_ms\": \"<duration_ms>\",\n  \"match\": \"found\",\n  \"model_sql\": \"SELECT 'memory' AS source, id, layer, content AS text, project, created_at FROM memories WHERE project = 'synthetic-alder' ORDER BY id LIMIT 10\",\n  \"path\": \"model\",\n  \"providers\": [\n    {\n      \"model\": \"oracle-model\",\n      \"provider\": \"ollama\",\n      \"ready\": true\n    }\n  ],\n  \"question\": \"Which synthetic Alder memories mention the quartz orchard?\",\n  \"row_count\": 3,\n  \"rows\": [\n    {\n      \"created_at\": \"<timestamp>\",\n      \"database\": \"core\",\n      \"id\": 101,\n      \"layer\": \"project\",\n      \"project\": \"synthetic-alder\",\n      \"source\": \"memory\",\n      \"text\": \"Quartz orchard launch plan for the synthetic Alder team.\"\n    },\n    {\n      \"created_at\": \"<timestamp>\",\n      \"database\": \"core\",\n      \"id\": 102,\n      \"layer\": \"discovery\",\n      \"project\": \"synthetic-alder\",\n      \"source\": \"memory\",\n      \"text\": \"Quartz orchard duplicate beacon with invented content.\"\n    },\n    {\n      \"created_at\": \"<timestamp>\",\n      \"database\": \"core\",\n      \"id\": 103,\n      \"layer\": \"discovery\",\n      \"project\": \"synthetic-alder\",\n      \"source\": \"memory\",\n      \"text\": \"Quartz orchard duplicate beacon with invented content.\"\n    }\n  ],\n  \"source_sha\": \"<source_sha>\",\n  \"sql\": \"SELECT 'memory' AS source, id, layer, content AS text, project, created_at FROM memories WHERE project = 'synthetic-alder' ORDER BY id LIMIT 10\",\n  \"sql_inference_ms\": \"<duration_ms>\",\n  \"sql_model\": \"oracle-model\",\n  \"sql_provider\": \"ollama\",\n  \"sql_provider_latency_ms\": \"<duration_ms>\",\n  \"sql_retry_inference_ms\": \"<duration_ms>\",\n  \"sql_retry_provider_latency_ms\": \"<duration_ms>\",\n  \"version\": \"<version>\",\n  \"warnings\": [\n    \"this version does not understand the key features.oracle_shadow of <home>/.roca/config.toml: it is ignored. Remove that line, or check `roca doctor` for the keys this version does understand\"\n  ]\n}\n"
+    },
+    {
+      "name": "cli.query.model.toon",
+      "surface": "cli",
+      "operation": "query",
+      "output": "database: <home>/.roca/roca.db\nwarning: this version does not understand the key features.oracle_shadow of <home>/.roca/config.toml: it is ignored. Remove that line, or check `roca doctor` for the keys this version does understand\ndatabases: core, plugin:roca-corpus\nroute model\nSQL · provider ollama · model oracle-model · <duration>\nsearch · <duration>\nrows[3]{source,id,created_at,text,layer,project,database}:\n  memory,101,\"<timestamp>\",Quartz orchard launch plan for the synthetic Alder team.,project,synthetic-alder,core\n  memory,102,\"<timestamp>\",Quartz orchard duplicate beacon with invented content.,discovery,synthetic-alder,core\n  memory,103,\"<timestamp>\",Quartz orchard duplicate beacon with invented content.,discovery,synthetic-alder,core\nhelp[2]:\n  - \"Run `roca query \\\"Which synthetic Alder memories mention the quartz orchard?\\\" --json` for the complete result envelope\"\n  - \"Run `roca query \\\"Which synthetic Alder memories mention the quartz orchard?\\\" --sql-only`, then `roca exec \\\"<SELECT>\\\" --max-chars 2000` to inspect or expand rows\"\n"
+    },
+    {
+      "name": "cli.sql-only",
+      "surface": "cli",
+      "operation": "sql",
+      "output": "{\n  \"database_path\": \"<home>/.roca/roca.db\",\n  \"databases\": [\n    \"core\",\n    \"plugin:roca-corpus\"\n  ],\n  \"execution_ms\": \"<duration_ms>\",\n  \"interpretation_ms\": \"<duration_ms>\",\n  \"latency_ms\": \"<duration_ms>\",\n  \"model_sql\": \"SELECT 'memory' AS source, id, layer, content AS text, project, created_at FROM memories WHERE project = 'synthetic-alder' ORDER BY id LIMIT 10\",\n  \"path\": \"\",\n  \"providers\": [\n    {\n      \"model\": \"oracle-model\",\n      \"provider\": \"ollama\",\n      \"ready\": true\n    }\n  ],\n  \"question\": \"Which synthetic Alder memories mention the quartz orchard?\",\n  \"row_count\": 0,\n  \"source_sha\": \"<source_sha>\",\n  \"sql\": \"SELECT 'memory' AS source, id, layer, content AS text, project, created_at FROM memories WHERE project = 'synthetic-alder' ORDER BY id LIMIT 10\",\n  \"sql_inference_ms\": \"<duration_ms>\",\n  \"sql_model\": \"oracle-model\",\n  \"sql_provider\": \"ollama\",\n  \"sql_provider_latency_ms\": \"<duration_ms>\",\n  \"sql_retry_inference_ms\": \"<duration_ms>\",\n  \"sql_retry_provider_latency_ms\": \"<duration_ms>\",\n  \"version\": \"<version>\",\n  \"warnings\": [\n    \"this version does not understand the key features.oracle_shadow of <home>/.roca/config.toml: it is ignored. Remove that line, or check `roca doctor` for the keys this version does understand\"\n  ]\n}\n"
+    },
+    {
+      "name": "cli.exec.generated",
+      "surface": "cli",
+      "operation": "exec",
+      "output": "{\n  \"columns\": [\n    \"source\",\n    \"id\",\n    \"layer\",\n    \"text\",\n    \"project\",\n    \"created_at\",\n    \"database\"\n  ],\n  \"databases\": [\n    \"core\",\n    \"plugin:roca-corpus\"\n  ],\n  \"latency_ms\": \"<duration_ms>\",\n  \"row_count\": 3,\n  \"rows\": [\n    {\n      \"created_at\": \"<timestamp>\",\n      \"database\": \"core\",\n      \"id\": 101,\n      \"layer\": \"project\",\n      \"project\": \"synthetic-alder\",\n      \"source\": \"memory\",\n      \"text\": \"Quartz orchard launch plan for the synthetic Alder team.\"\n    },\n    {\n      \"created_at\": \"<timestamp>\",\n      \"database\": \"core\",\n      \"id\": 102,\n      \"layer\": \"discovery\",\n      \"project\": \"synthetic-alder\",\n      \"source\": \"memory\",\n      \"text\": \"Quartz orchard duplicate beacon with invented content.\"\n    },\n    {\n      \"created_at\": \"<timestamp>\",\n      \"database\": \"core\",\n      \"id\": 103,\n      \"layer\": \"discovery\",\n      \"project\": \"synthetic-alder\",\n      \"source\": \"memory\",\n      \"text\": \"Quartz orchard duplicate beacon with invented content.\"\n    }\n  ],\n  \"source_sha\": \"<source_sha>\",\n  \"sql\": \"SELECT 'memory' AS source, id, layer, content AS text, project, created_at FROM memories WHERE project = 'synthetic-alder' ORDER BY id LIMIT 10\",\n  \"version\": \"<version>\"\n}\n"
+    },
+    {
+      "name": "cli.fts-ranking",
+      "surface": "cli",
+      "operation": "exec",
+      "output": "{\n  \"columns\": [\n    \"source\",\n    \"id\",\n    \"layer\",\n    \"text\",\n    \"rank\",\n    \"database\"\n  ],\n  \"databases\": [\n    \"core\",\n    \"plugin:roca-corpus\"\n  ],\n  \"latency_ms\": \"<duration_ms>\",\n  \"row_count\": 4,\n  \"rows\": [\n    {\n      \"database\": \"core\",\n      \"id\": 104,\n      \"layer\": \"pattern\",\n      \"rank\": -0.0000015031055900621119,\n      \"source\": \"memory\",\n      \"text\": \"Quartz quartz quartz orchard ranking beacon for a fictional observatory.\"\n    },\n    {\n      \"database\": \"core\",\n      \"id\": 102,\n      \"layer\": \"discovery\",\n      \"rank\": -0.000001066079295154185,\n      \"source\": \"memory\",\n      \"text\": \"Quartz orchard duplicate beacon with invented content.\"\n    },\n    {\n      \"database\": \"core\",\n      \"id\": 103,\n      \"layer\": \"discovery\",\n      \"rank\": -0.000001066079295154185,\n      \"source\": \"memory\",\n      \"text\": \"Quartz orchard duplicate beacon with invented content.\"\n    },\n    {\n      \"database\": \"core\",\n      \"id\": 101,\n      \"layer\": \"project\",\n      \"rank\": -9.641434262948206e-7,\n      \"source\": \"memory\",\n      \"text\": \"Quartz orchard launch plan for the synthetic Alder team.\"\n    }\n  ],\n  \"source_sha\": \"<source_sha>\",\n  \"sql\": \"SELECT 'memory' AS source, m.id, m.layer, m.content AS text, f.rank FROM (SELECT rowid AS fila, bm25(memories_fts) AS rank FROM memories_fts WHERE memories_fts MATCH '\\\"quartz\\\"') AS f JOIN memories AS m ON m.id = f.fila ORDER BY f.rank, m.id LIMIT 10\",\n  \"version\": \"<version>\"\n}\n"
+    },
+    {
+      "name": "cli.store.first",
+      "surface": "cli",
+      "operation": "store",
+      "output": "{\n  \"id\": 105,\n  \"layer\": \"discovery\",\n  \"source_sha\": \"<source_sha>\",\n  \"version\": \"<version>\"\n}\n"
+    },
+    {
+      "name": "cli.store.idempotent",
+      "surface": "cli",
+      "operation": "store",
+      "output": "{\n  \"id\": 105,\n  \"layer\": \"discovery\",\n  \"skipped\": true,\n  \"source_sha\": \"<source_sha>\",\n  \"version\": \"<version>\"\n}\n"
+    },
+    {
+      "name": "cli.store.count",
+      "surface": "cli",
+      "operation": "exec",
+      "output": "{\n  \"columns\": [\n    \"copies\",\n    \"database\"\n  ],\n  \"databases\": [\n    \"core\",\n    \"plugin:roca-corpus\"\n  ],\n  \"latency_ms\": \"<duration_ms>\",\n  \"row_count\": 1,\n  \"rows\": [\n    {\n      \"copies\": 1,\n      \"database\": \"core\"\n    }\n  ],\n  \"source_sha\": \"<source_sha>\",\n  \"sql\": \"SELECT COUNT(*) AS copies FROM memories WHERE content = 'Synthetic idempotence beacon for DATA SPLIT.' LIMIT 1000\",\n  \"version\": \"<version>\"\n}\n"
+    },
+    {
+      "name": "cli.exec.write-refused",
+      "surface": "cli",
+      "operation": "exec",
+      "exit_code": 1,
+      "output": "",
+      "stderr": "error: Only SELECT statements are allowed (correlation_id: <correlation_id>)\n"
+    },
+    {
+      "name": "cli.store.read-only",
+      "surface": "cli",
+      "operation": "store",
+      "exit_code": 1,
+      "output": "",
+      "stderr": "error: La Roca is in read-only mode: this operation writes (operation: store) (correlation_id: <correlation_id>)\n"
+    },
+    {
+      "name": "cli.store.read-only-count",
+      "surface": "cli",
+      "operation": "exec",
+      "output": "{\n  \"columns\": [\n    \"copies\",\n    \"database\"\n  ],\n  \"databases\": [\n    \"core\",\n    \"plugin:roca-corpus\"\n  ],\n  \"latency_ms\": \"<duration_ms>\",\n  \"row_count\": 1,\n  \"rows\": [\n    {\n      \"copies\": 0,\n      \"database\": \"core\"\n    }\n  ],\n  \"source_sha\": \"<source_sha>\",\n  \"sql\": \"SELECT COUNT(*) AS copies FROM memories WHERE content = 'Synthetic refused write.' LIMIT 1000\",\n  \"version\": \"<version>\"\n}\n"
+    },
+    {
+      "name": "cli.query.literal-rescue",
+      "surface": "cli",
+      "operation": "query",
+      "exit_code": 1,
+      "output": "{\n  \"columns\": [\n    \"source\",\n    \"id\",\n    \"author\",\n    \"text\",\n    \"created_at\",\n    \"database\"\n  ],\n  \"database_path\": \"<home>/.roca/roca.db\",\n  \"databases\": [\n    \"core\",\n    \"plugin:roca-corpus\"\n  ],\n  \"degraded\": \"model_unavailable\",\n  \"execution_ms\": \"<duration_ms>\",\n  \"interpretation_ms\": \"<duration_ms>\",\n  \"latency_ms\": \"<duration_ms>\",\n  \"match\": \"found\",\n  \"message\": \"no model is available and this question needs one.\\n  · ollama: Ollama does not answer at 127.0.0.1:1\\n    remedy: start the local model with `ollama serve` (if you do not have it, install it from https://ollama.com/download)\\n  · claude: claude binary not found in PATH\\n    remedy: install Claude Code or put `claude` on PATH\\n  · codex: codex binary not found in PATH\\n    remedy: install Codex CLI or put `codex` on PATH\\nfalling back to literal term search: quartz orchard\",\n  \"path\": \"keyword\",\n  \"providers\": [\n    {\n      \"action\": \"start the local model with `ollama serve` (if you do not have it, install it from https://ollama.com/download)\",\n      \"provider\": \"ollama\",\n      \"ready\": false,\n      \"reason\": \"Ollama does not answer at 127.0.0.1:1\"\n    },\n    {\n      \"action\": \"install Claude Code or put `claude` on PATH\",\n      \"model\": \"sonnet\",\n      \"provider\": \"claude\",\n      \"ready\": false,\n      \"reason\": \"claude binary not found in PATH\"\n    },\n    {\n      \"action\": \"install Codex CLI or put `codex` on PATH\",\n      \"model\": \"gpt-5.6-luna\",\n      \"provider\": \"codex\",\n      \"ready\": false,\n      \"reason\": \"codex binary not found in PATH\"\n    }\n  ],\n  \"queryplan\": {\n    \"template\": \"search_all_sources_by_term\",\n    \"term\": \"quartz+orchard\"\n  },\n  \"question\": \"quartz orchard\",\n  \"retried\": true,\n  \"row_count\": 3,\n  \"rows\": [\n    {\n      \"author\": \"oracle-synthetic/fixture-v1 via fixture\",\n      \"created_at\": \"<timestamp>\",\n      \"database\": \"core\",\n      \"id\": 104,\n      \"source\": \"memory\",\n      \"text\": \"Quartz quartz quartz orchard ranking beacon for a fictional observatory.\"\n    },\n    {\n      \"author\": \"oracle-synthetic/fixture-v1 via fixture\",\n      \"created_at\": \"<timestamp>\",\n      \"database\": \"core\",\n      \"id\": 102,\n      \"source\": \"memory\",\n      \"text\": \"Quartz orchard duplicate beacon with invented content.\"\n    },\n    {\n      \"author\": \"oracle-synthetic/fixture-v1 via fixture\",\n      \"created_at\": \"<timestamp>\",\n      \"database\": \"core\",\n      \"id\": 101,\n      \"source\": \"memory\",\n      \"text\": \"Quartz orchard launch plan for the synthetic Alder team.\"\n    }\n  ],\n  \"search\": {\n    \"search_method\": \"fts\"\n  },\n  \"source_sha\": \"<source_sha>\",\n  \"sql\": \"SELECT * FROM (SELECT 'memory' AS source, m.id AS id, COALESCE(NULLIF(m.source_agent, ''), 'unknown') || '/' || COALESCE(NULLIF(m.source_model, ''), 'unknown') || ' via ' || COALESCE(NULLIF(m.source_surface, ''), 'unknown') AS author, m.content AS text, m.created_at AS created_at, 0 AS source_priority, f.rango AS rango FROM (SELECT rowid AS fila, bm25(memories_fts) AS rango FROM memories_fts WHERE memories_fts MATCH '\\\"quartz\\\" OR \\\"orchard\\\"') AS f JOIN memories AS m ON m.id = f.fila WHERE m.id NOT IN (SELECT supersedes FROM memories WHERE supersedes IS NOT NULL) AND m.layer NOT IN ('question', 'review', 'issue') ORDER BY rango LIMIT 10) UNION ALL SELECT * FROM (SELECT 'exchange', e.id, NULL, e.agent_text, e.agent_timestamp, 1 AS source_priority, g.rango FROM (SELECT rowid AS fila, bm25(exchanges_fts) AS rango FROM exchanges_fts WHERE exchanges_fts MATCH '{agent_text} : (\\\"quartz\\\" OR \\\"orchard\\\")') AS g JOIN exchanges AS e ON e.id = g.fila ORDER BY rango LIMIT 10) UNION ALL SELECT * FROM (SELECT 'human', h.id, NULL, h.human_text, h.human_timestamp, 1 AS source_priority, i.rango FROM (SELECT rowid AS fila, bm25(exchanges_fts) AS rango FROM exchanges_fts WHERE exchanges_fts MATCH '{human_text} : (\\\"quartz\\\" OR \\\"orchard\\\")' AND human_text NOT LIKE '<task-notification%') AS i JOIN exchanges AS h ON h.id = i.fila ORDER BY rango LIMIT 10) UNION ALL SELECT * FROM (SELECT 'thinking', t.id, NULL, t.full_text, NULL, 2 AS source_priority, j.rango FROM (SELECT rowid AS fila, bm25(thinking_fts) AS rango FROM thinking_fts WHERE thinking_fts MATCH '\\\"quartz\\\" OR \\\"orchard\\\"') AS j JOIN thinking_blocks AS t ON t.id = j.fila ORDER BY rango LIMIT 10) ORDER BY source_priority, rango LIMIT 10\",\n  \"sql_inference_ms\": \"<duration_ms>\",\n  \"sql_provider_latency_ms\": \"<duration_ms>\",\n  \"sql_retry_inference_ms\": \"<duration_ms>\",\n  \"sql_retry_provider_latency_ms\": \"<duration_ms>\",\n  \"version\": \"<version>\",\n  \"warnings\": [\n    \"this version does not understand the key features.oracle_shadow of <home>/.roca/config.toml: it is ignored. Remove that line, or check `roca doctor` for the keys this version does understand\"\n  ]\n}\n",
+      "stderr": "correlation_id: <correlation_id>\n"
+    },
+    {
+      "name": "cli.query.empty-failure",
+      "surface": "cli",
+      "operation": "query",
+      "exit_code": 1,
+      "output": "{\n  \"database_path\": \"<home>/.roca/roca.db\",\n  \"databases\": [\n    \"core\",\n    \"plugin:roca-corpus\"\n  ],\n  \"degraded\": \"model_unavailable\",\n  \"execution_ms\": \"<duration_ms>\",\n  \"interpretation_ms\": \"<duration_ms>\",\n  \"latency_ms\": \"<duration_ms>\",\n  \"match\": \"empty\",\n  \"message\": \"no model is available and this question needs one.\\n  · ollama: Ollama does not answer at 127.0.0.1:1\\n    remedy: start the local model with `ollama serve` (if you do not have it, install it from https://ollama.com/download)\\n  · claude: claude binary not found in PATH\\n    remedy: install Claude Code or put `claude` on PATH\\n  · codex: codex binary not found in PATH\\n    remedy: install Codex CLI or put `codex` on PATH\\nfalling back to literal term search: ultraviolet platypus absent\",\n  \"path\": \"\",\n  \"providers\": [\n    {\n      \"action\": \"start the local model with `ollama serve` (if you do not have it, install it from https://ollama.com/download)\",\n      \"provider\": \"ollama\",\n      \"ready\": false,\n      \"reason\": \"Ollama does not answer at 127.0.0.1:1\"\n    },\n    {\n      \"action\": \"install Claude Code or put `claude` on PATH\",\n      \"model\": \"sonnet\",\n      \"provider\": \"claude\",\n      \"ready\": false,\n      \"reason\": \"claude binary not found in PATH\"\n    },\n    {\n      \"action\": \"install Codex CLI or put `codex` on PATH\",\n      \"model\": \"gpt-5.6-luna\",\n      \"provider\": \"codex\",\n      \"ready\": false,\n      \"reason\": \"codex binary not found in PATH\"\n    }\n  ],\n  \"question\": \"ultraviolet platypus absent\",\n  \"row_count\": 0,\n  \"source_sha\": \"<source_sha>\",\n  \"sql_inference_ms\": \"<duration_ms>\",\n  \"sql_provider_latency_ms\": \"<duration_ms>\",\n  \"sql_retry_inference_ms\": \"<duration_ms>\",\n  \"sql_retry_provider_latency_ms\": \"<duration_ms>\",\n  \"version\": \"<version>\",\n  \"warnings\": [\n    \"this version does not understand the key features.oracle_shadow of <home>/.roca/config.toml: it is ignored. Remove that line, or check `roca doctor` for the keys this version does understand\"\n  ]\n}\n",
+      "stderr": "correlation_id: <correlation_id>\n"
+    },
+    {
+      "name": "mcp.query",
+      "surface": "mcp",
+      "operation": "query",
+      "output": "warning: this version does not understand the key features.oracle_shadow of the data directory/config.toml: it is ignored. Remove that line, or check `roca doctor` for the keys this version does understand\ndatabases: core, plugin:roca-corpus\nroute model\nSQL · provider ollama · model oracle-model · <duration>\nsearch · <duration>\nrows[3]{source,id,created_at,text,layer,project,database}:\n  memory,101,\"<timestamp>\",Quartz orchard launch plan for the synthetic Alder team.,project,synthetic-alder,core\n  memory,102,\"<timestamp>\",Quartz orchard duplicate beacon with invented content.,discovery,synthetic-alder,core\n  memory,103,\"<timestamp>\",Quartz orchard duplicate beacon with invented content.,discovery,synthetic-alder,core\nhelp[1]:\n  - \"Call roca_sql with the same question, then pass its SELECT to roca_exec with max_chars 2000\"\n"
+    },
+    {
+      "name": "mcp.exec",
+      "surface": "mcp",
+      "operation": "exec",
+      "output": "SELECT 'memory' AS source, m.id, m.layer, m.content AS text, f.rank FROM (SELECT rowid AS fila, bm25(memories_fts) AS rank FROM memories_fts WHERE memories_fts MATCH '\"quartz\"') AS f JOIN memories AS m ON m.id = f.fila ORDER BY f.rank, m.id LIMIT 10\ndatabases: core, plugin:roca-corpus\nrows[4]{source,id,layer,text,rank,database}:\n  memory,104,pattern,Quartz quartz quartz orchard ranking beacon for a fictional observatory.,-1.48187e-06,core\n  memory,102,discovery,Quartz orchard duplicate beacon with invented content.,-1.0438e-06,core\n  memory,103,discovery,Quartz orchard duplicate beacon with invented content.,-1.0438e-06,core\n  memory,101,project,Quartz orchard launch plan for the synthetic Alder team.,-9.40789e-07,core\n4 rows · <duration>\nhelp[1]:\n  - Call roca_exec again with max_chars 2000 to expand text fields\n"
+    },
+    {
+      "name": "mcp.store.first",
+      "surface": "mcp",
+      "operation": "store",
+      "output": "stored: memory 106 in layer discovery\n"
+    },
+    {
+      "name": "mcp.store.idempotent",
+      "surface": "mcp",
+      "operation": "store",
+      "output": "already stored: memory 106 in layer discovery\n"
+    },
+    {
+      "name": "mcp.query.missing-argument",
+      "surface": "mcp",
+      "operation": "failure",
+      "is_error": true,
+      "output": "validating \"arguments\": validating root: required: missing properties: [\"query\"]\ncorrelation_id: <correlation_id>\n"
+    },
+    {
+      "name": "mcp.store.read-only",
+      "surface": "mcp",
+      "operation": "store",
+      "is_error": true,
+      "output": "La Roca is in read-only mode: this operation writes (operation: store)\ncorrelation_id: <correlation_id>\n"
+    },
+    {
+      "name": "mcp.store.read-only-count",
+      "surface": "mcp",
+      "operation": "exec",
+      "output": "SELECT COUNT(*) AS copies FROM memories WHERE content = 'Synthetic refused MCP write.' LIMIT 1000\ndatabases: core, plugin:roca-corpus\nrows[1]{copies,database}:\n  0,core\n1 row · <duration>\nhelp[1]:\n  - Call roca_exec again with max_chars 2000 to expand text fields\n"
+    }
+  ]
+}
