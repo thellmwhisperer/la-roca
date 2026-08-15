@@ -55,6 +55,7 @@ type SourceStats struct {
 	Processed        int
 	Read             int
 	FilesExcluded    int
+	FilesErrored     int
 	RecordsDiscarded int
 	RecordsExcluded  int
 	ElapsedMS        int64
@@ -422,6 +423,7 @@ func (r *Result) fingerprintFailure(target Target, err error) {
 		return
 	}
 	r.categorizeFile("error", "fingerprint failed")
+	r.sourceStats(target.SourceAgent).FilesErrored++
 	r.fail(target, "fingerprint: "+err.Error())
 }
 
