@@ -3,7 +3,8 @@
 This file is the project's committed home for project-intrinsic agent knowledge: build, test, release, architecture, and sharp-edge notes that should travel with the code.
 
 - Run the canonical local gate with `make check`; inspect the Gherkin catalogue with `make accept-index`. That gate stops at the root module, so a change under `plugins/<name>/` also owes `make -C plugins/<name> check`.
-- Per-domain acceptance lives under `features/<domain>/`; the Godog harness is enabled only by the `acceptance` build tag.
+- Per-domain acceptance lives under `features/<domain>/`; the Godog harness is enabled only by the `acceptance` build tag. A feature carrying a routing tag (`@journey`, `@data-split-oracle`) is excluded from its domain suite and driven by its own harness in `test/acceptance/`.
+- The DATA SPLIT compatibility oracle (`make split-oracle`, `test/acceptance/data_split_oracle_test.go`, normalizer and seal in `test/compatibility/`) freezes what CLI and MCP users observe as an Ed25519-signed bundle under `testdata/data-split-oracle/`. When it reports a difference, never edit or reseal a golden to make it pass: the recording it keeps under `.tmp/` is evidence for an owner decision. README's build and test section owns the contributor-facing description.
 - The slop gate ratchets over test code too, so new tests alone can fail `make check`: fold paired cases into one table-driven test rather than raise the ceiling in `.slop/`.
 - Public source, documentation, features, and fixtures are English-only; use unmistakably synthetic test data.
 - Never add Sherpa-style navigational comment blocks or numbered section maps to any file; the owner forbids them repository-wide.
