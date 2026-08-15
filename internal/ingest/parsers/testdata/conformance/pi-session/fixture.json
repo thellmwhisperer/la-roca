@@ -1,0 +1,10 @@
+{
+  "parser": "pi_session",
+  "destination": "corpus",
+  "source": "session.data",
+  "meta": {"Path":"/synthetic/pi/session.data","SourceAgent":"pi"},
+  "want": {
+    "sessions": [{"id":"pi:fixture-pi","source_agent":"pi","project":"lighthouse","exchanges":[{"human_text":"Measure the fictional tower.","agent_text":"Seven metres."}]}],
+    "memories": []
+  }
+}

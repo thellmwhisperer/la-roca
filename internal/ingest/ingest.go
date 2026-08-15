@@ -551,6 +551,9 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 		if err != nil {
 			return parsers.Records{}, err.Error()
 		}
+		if err := parsers.Conform(target.Kind, records); err != nil {
+			return parsers.Records{}, err.Error()
+		}
 		resolveProjects(ctx, opts, target, &records)
 		return records, ""
 	}
@@ -588,6 +591,14 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 		if err != nil {
 			result.fail(Target{Path: target.SidecarPath, Kind: parsers.KindSessionMetadata}, err.Error())
 		}
+	}
+	if registered, ok := parsers.Lookup(string(target.Kind)); ok && len(registered.Locations) > 0 {
+		records, err := registered.Parse(parsers.File{Content: content, Meta: meta})
+		if err != nil {
+			return parsers.Records{}, err.Error()
+		}
+		resolveProjects(ctx, opts, target, &records)
+		return records, ""
 	}
 
 	records, err := parsers.Parse(target.Kind, content, meta)

@@ -54,6 +54,36 @@ func TestCodexFingerprintCarriesTheHistoryParserRevision(t *testing.T) {
 	}
 }
 
+// TestContributedParserVersionRidesInTheFingerprint pins the re-read escape
+// hatch a contributed parser has: the reading it declares in its own registry
+// line is what the watermark carries, so a build that learned to read more of
+// that source stops trusting the fingerprint the poorer reading earned.
+func TestContributedParserVersionRidesInTheFingerprint(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.source")
+	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	target := Target{Path: path, Kind: parsers.Kind("nova")}
+	unversioned, err := targetFingerprint(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	registeredParser = func(name string) (parsers.Registration, bool) {
+		return parsers.Registration{Name: name, Version: "nova-v2"}, name == "nova"
+	}
+	t.Cleanup(func() { registeredParser = parsers.Lookup })
+
+	versioned, err := targetFingerprint(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if versioned == unversioned || !strings.HasSuffix(versioned, ":parser:nova-v2") {
+		t.Fatalf("contributed fingerprint = %q, want the declared reading past %q",
+			versioned, unversioned)
+	}
+}
+
 func TestKnownFingerprintCanMatchMetadataWhenContentCannotBeRead(t *testing.T) {
 	state := map[string]FileState{"session": {Fingerprint: "5:10:digest"}}
 	if !unchangedMetadata(state, "session", "5:10") {

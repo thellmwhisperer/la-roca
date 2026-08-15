@@ -1,0 +1,10 @@
+{
+  "parser": "claude_session",
+  "destination": "corpus",
+  "source": "session.data",
+  "meta": {"Path":"/synthetic/claude/session.data","SessionID":"fixture-claude","Project":"lighthouse","SourceAgent":"claude"},
+  "want": {
+    "sessions": [{"id":"fixture-claude","source_agent":"claude","project":"lighthouse","exchanges":[{"human_text":"Count the invented beacons.","agent_text":"Three beacons."}]}],
+    "memories": []
+  }
+}
