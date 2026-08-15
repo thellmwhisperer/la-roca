@@ -11,6 +11,8 @@ func TestNormalizeJSONKeepsBehaviorAndMasksOnlyRunNoise(t *testing.T) {
   "source": "memory",
   "database": "core",
   "rank": -1.25,
+  "copies": 3.0,
+  "large_id": 9007199254740993,
   "warnings": ["synthetic warning"],
   "created_at": "2026-08-15T12:34:56Z",
   "latency_ms": 9,
@@ -24,7 +26,8 @@ func TestNormalizeJSONKeepsBehaviorAndMasksOnlyRunNoise(t *testing.T) {
 	}
 	for _, kept := range []string{
 		`"id": 17`, `"source": "memory"`, `"database": "core"`,
-		`"rank": -1.25`, `"synthetic warning"`,
+		`"rank": -1.25`, `"copies": 3.0`, `"large_id": 9007199254740993`,
+		`"synthetic warning"`,
 	} {
 		if !strings.Contains(got, kept) {
 			t.Errorf("normalized JSON lost %s:\n%s", kept, got)

@@ -84,3 +84,16 @@ func rocaBinary() (string, error) {
 	}
 	return path, nil
 }
+
+// acceptanceTempDir creates a scratch directory under the project's ignored
+// .tmp/, so a suite never writes outside the repository.
+func acceptanceTempDir(prefix string) (string, error) {
+	root, err := filepath.Abs(filepath.Join("..", "..", ".tmp"))
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return "", err
+	}
+	return os.MkdirTemp(root, prefix)
+}

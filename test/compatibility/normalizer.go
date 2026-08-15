@@ -20,9 +20,14 @@ type Normalizer struct {
 }
 
 func (n Normalizer) JSON(raw []byte) (string, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
 	var value any
-	if err := json.Unmarshal(raw, &value); err != nil {
+	if err := decoder.Decode(&value); err != nil {
 		return "", fmt.Errorf("decode oracle JSON: %w", err)
+	}
+	if decoder.More() {
+		return "", fmt.Errorf("decode oracle JSON: more than one document")
 	}
 	value = n.normalizeValue("", value)
 	var normalized bytes.Buffer

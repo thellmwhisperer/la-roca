@@ -143,31 +143,16 @@ func (w *oracleWorld) recordAndReplay() error {
 	if err != nil {
 		return err
 	}
-	recordingRoot, cleanup, err := oracleTempDir("recording-")
-	if err != nil {
-		return err
-	}
-	keepRecording := false
-	defer func() {
-		if !keepRecording {
-			cleanup()
-		}
-	}()
-	recording := filepath.Join(recordingRoot, "recorded.json")
-	if err := os.WriteFile(recording, actual, 0o600); err != nil {
-		return err
-	}
-	recorded, err := os.ReadFile(recording)
-	if err != nil {
-		return err
-	}
 	want, err := os.ReadFile(filepath.Join(w.root, manifest.Golden.Path))
 	if err != nil {
 		return err
 	}
-	if !bytes.Equal(recorded, want) {
-		keepRecording = true
-		return fmt.Errorf("recorded behavior differs from the sealed golden (-want +got):\n%s\nthe complete recording is kept at %s for owner review", compactDiff(string(want), string(recorded)), recording)
+	if !bytes.Equal(actual, want) {
+		recording, err := keepOracleRecording(actual)
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("recorded behavior differs from the sealed golden (-want +got):\n%s\nthe complete recording is kept at %s for owner review", compactDiff(string(want), string(actual)), recording)
 	}
 	if err := json.Unmarshal(want, &w.bundle); err != nil {
 		return err
@@ -177,12 +162,24 @@ func (w *oracleWorld) recordAndReplay() error {
 	return nil
 }
 
+func keepOracleRecording(actual []byte) (string, error) {
+	root, err := acceptanceTempDir("data-split-oracle-recording-")
+	if err != nil {
+		return "", err
+	}
+	recording := filepath.Join(root, "recorded.json")
+	if err := os.WriteFile(recording, actual, 0o600); err != nil {
+		return "", err
+	}
+	return recording, nil
+}
+
 func (w *oracleWorld) record() ([]byte, error) {
-	home, cleanup, err := oracleTempDir("home-")
+	home, err := acceptanceTempDir("data-split-oracle-home-")
 	if err != nil {
 		return nil, err
 	}
-	defer cleanup()
+	defer func() { _ = os.RemoveAll(home) }()
 	if err := os.MkdirAll(filepath.Join(home, ".roca"), 0o700); err != nil {
 		return nil, err
 	}
@@ -513,11 +510,11 @@ func (w *oracleWorld) changeSignedGolden() error {
 	if _, err := compatibility.VerifyBundle(w.root, public); err != nil {
 		return err
 	}
-	tampered, cleanup, err := oracleTempDir("tampered-")
+	tampered, err := acceptanceTempDir("data-split-oracle-tampered-")
 	if err != nil {
 		return err
 	}
-	defer cleanup()
+	defer func() { _ = os.RemoveAll(tampered) }()
 	for _, name := range []string{"fixture.json", "golden.json", "manifest.json"} {
 		raw, err := os.ReadFile(filepath.Join(w.root, name))
 		if err != nil {
@@ -532,21 +529,6 @@ func (w *oracleWorld) changeSignedGolden() error {
 	}
 	_, w.err = compatibility.VerifyBundle(tampered, public)
 	return nil
-}
-
-func oracleTempDir(prefix string) (string, func(), error) {
-	root, err := filepath.Abs(filepath.Join("..", "..", ".tmp"))
-	if err != nil {
-		return "", func() {}, err
-	}
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		return "", func() {}, err
-	}
-	directory, err := os.MkdirTemp(root, "data-split-oracle-"+prefix)
-	if err != nil {
-		return "", func() {}, err
-	}
-	return directory, func() { _ = os.RemoveAll(directory) }, nil
 }
 
 func (w *oracleWorld) changedGoldenRejected() error {

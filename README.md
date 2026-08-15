@@ -423,13 +423,19 @@ records into a temporary home and keeps the recording under the project's
 absorbed, because an intended behavior change is resealed by the owner instead
 of edited into the golden.
 
-Resealing is the owner's decision and cannot be performed from a clone. It means
-replacing `golden.json` with the reviewed recording, recomputing the fixture and
-golden SHA-256 digests in `manifest.json`, and signing that manifest payload
-again with the Ed25519 private key the owner holds outside this repository. Only
-the public half of the key is committed, pinned both in `manifest.json` and in
-the oracle test, so a bundle edited without it fails verification rather than
-passing quietly.
+Resealing is the owner's decision. It means replacing `golden.json` with the
+reviewed recording, recomputing the fixture and golden SHA-256 digests in
+`manifest.json`, and signing that manifest payload again with the Ed25519
+private key the owner holds outside this repository. Only the public half of the
+key is committed, pinned both in `manifest.json` and in the oracle test's
+`oraclePublicKeyBase64`, so a bundle edited without that private key fails
+verification rather than passing quietly.
+
+The seal is tamper evidence, not a capability barrier. A branch that replaces the
+pinned public key along with the goldens verifies against its own fresh key, so
+what protects the contract is review: any diff touching `oraclePublicKeyBase64`
+or `testdata/data-split-oracle/` is a reseal, and it needs the owner's eyes
+before it merges.
 
 ## License
 
