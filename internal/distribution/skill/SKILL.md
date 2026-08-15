@@ -159,6 +159,12 @@ invented identities, paths, prompts, answers, timestamps, and metadata. Remove
 tokens, account identifiers, repository names, and every other piece of user
 data.
 
+0. Before writing a fixture, measure a populated real store read-only: record
+   its path layout, file count, byte size, primary candidate sizes and record-type
+   counts, and check whether secondary surfaces add unique records. Put only
+   those aggregate measurements in the pull request under **Real-store
+   measurement**. A fixture not traceable to that measured shape is invalid; if
+   no populated real store is available, do not guess the format.
 1. Read `docs/agent-parsers.md` and copy a synthetic worked-example folder under
    `internal/ingest/parsers/testdata/conformance/`.
 2. Add one parser file implementing `Detect` and `Parse`; declare whether its
@@ -166,9 +172,13 @@ data.
    both. File encoding is an implementation detail, never the destination.
 3. Add its registry line and run
    `go test ./internal/ingest/parsers -run TestRegisteredParsersConform`, then
-   `go test ./internal/ingest/parsers` and `make check`.
+   `ROCA_REAL_HARVEST=1 go test -v ./internal/ingest/parsers -run TestRegisteredParsersHarvestPresentAgentStores`
+   on a machine where that agent is installed (the smoke reads private stores, so
+   it stays out of the shared gate), `go test ./internal/ingest/parsers` and
+   `make check`.
 4. Open a pull request with the synthetic fixture, parser, and registry line.
-   Do not attach or quote the real source file in the pull request.
+   Include the real-harvest yield summary; do not attach or quote the real source
+   file in the pull request.
 
 ## Good
 

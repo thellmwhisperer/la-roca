@@ -5,187 +5,168 @@ import (
 	"testing"
 )
 
-// grokTranscript is a synthetic Grok Build chat_history.jsonl: real shape,
-// invented content. The system prompt and the compaction history injected as a
-// synthetic user turn are runtime machinery, and only the one real human
-// message opens an exchange.
-const grokTranscript = `
-{"type":"system","content":"You are Grok Build, a synthetic fixture assistant."}
-{"type":"user","content":[{"type":"text","text":"Ignore the compacted history of the fixture."}],"synthetic_reason":"compaction_meta"}
-{"type":"user","content":[{"type":"text","text":"compile the fixture binary"}]}
-{"type":"reasoning","id":"r1","summary":[{"type":"summary_text","text":"we have to"},{"type":"summary_text","text":"compile it"}],"encrypted_content":"ciphertext","status":"completed"}
-{"type":"assistant","content":"let me try","tool_calls":[{"id":"call-grok-1","name":"shell","arguments":"{\"cmd\":\"make build\"}"},{"id":"call-grok-2","name":"read_file","arguments":"{\"target_file\":\"/synthetic/demo/Makefile\"}"}],"model_id":"grok-fixture-model","model_fingerprint":"fp-fixture","reasoning_effort":"high"}
-{"type":"tool_result","tool_call_id":"call-grok-1","content":"exit: 1 Error: target build not found"}
-{"type":"tool_result","tool_call_id":"call-grok-2","content":"1->---\nname: fixture"}
-{"type":"reasoning","id":"r2","summary":[{"type":"summary_text","text":"the binary failed to compile"}],"encrypted_content":"ciphertext","status":"completed"}
-{"type":"assistant","content":"the build failed","model_id":"grok-fixture-model","reasoning_effort":"high"}
+// grokUpdates is a synthetic updates.jsonl stream with the structure measured
+// from Grok Build's real session store. All identities, paths and content are
+// invented.
+const grokUpdates = `
+{"method":"_x.ai/session/update","params":{"sessionId":"fixture-session","update":{"sessionUpdate":"hook_execution","event_name":"synthetic_hook"}},"timestamp":1785585600}
+{"method":"session/update","params":{"sessionId":"fixture-session","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"compile the fixture"},"_meta":{"modelId":"grok-fixture-model","promptIndex":1}}},"timestamp":1785585601}
+{"method":"session/update","params":{"sessionId":"fixture-session","update":{"sessionUpdate":"user_message_chunk","content":{"type":"image","mimeType":"image/png","uri":"fixture://invented-image"},"_meta":{"modelId":"grok-fixture-model","promptIndex":1}}},"timestamp":1785585601}
+{"method":"session/update","params":{"sessionId":"fixture-session","_meta":{"promptId":"prompt-1"},"update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"inspect "}}},"timestamp":1785585602}
+{"method":"session/update","params":{"sessionId":"fixture-session","_meta":{"promptId":"prompt-1"},"update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"the target"}}},"timestamp":1785585603}
+{"method":"session/update","params":{"sessionId":"fixture-session","_meta":{"promptId":"prompt-1"},"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"I will "}}},"timestamp":1785585604}
+{"method":"session/update","params":{"sessionId":"fixture-session","_meta":{"promptId":"prompt-1"},"update":{"sessionUpdate":"tool_call","toolCallId":"tool-1","title":"Run synthetic command","rawInput":{"command":"make fixture"},"_meta":{"x.ai/tool":{"name":"run_terminal_command"}}}},"timestamp":1785585605}
+{"method":"session/update","params":{"sessionId":"fixture-session","_meta":{"promptId":"prompt-1"},"update":{"sessionUpdate":"tool_call_update","toolCallId":"tool-1","status":"failed","rawOutput":{"message":"synthetic failure"}}},"timestamp":1785585606}
+{"method":"session/update","params":{"sessionId":"fixture-session","_meta":{"promptId":"prompt-1"},"update":{"sessionUpdate":"plan","entries":[{"content":"Inspect the fixture","status":"completed"},{"content":"Repair the fixture","status":"pending"}]}},"timestamp":1785585607}
+{"method":"session/update","params":{"sessionId":"fixture-session","_meta":{"promptId":"prompt-1"},"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"repair it."}}},"timestamp":1785585608}
+{"method":"session/update","params":{"sessionId":"fixture-session","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"verify the fixture"},"_meta":{"modelId":"grok-fixture-model","promptIndex":2}}},"timestamp":1785585610}
+{"method":"session/update","params":{"sessionId":"fixture-session","_meta":{"promptId":"prompt-2"},"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"verified."}}},"timestamp":1785585611}
 `
 
-func TestGrokSessionReadsTheActiveExchangeWithItsThinkingToolsAndModel(t *testing.T) {
-	records, err := Parse(KindGrokSession, []byte(grokTranscript), FileMeta{SessionID: "from-the-path"})
+func TestGrokSessionReassemblesTheMeasuredUpdateStream(t *testing.T) {
+	path := "/synthetic/home/.grok/sessions/%2Fsynthetic%2Flighthouse/fixture-session/updates.jsonl"
+	records, err := Parse(KindGrokSession, []byte(grokUpdates), FileMeta{Path: path})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	session := records.Sessions[0]
-	if session.SourceAgent != "grok" {
-		t.Errorf("source agent = %q, want grok", session.SourceAgent)
+	if session.ID != "fixture-session" || session.SourceAgent != "grok" ||
+		session.Project != "lighthouse" {
+		t.Fatalf("session identity = %+v", session)
 	}
-	if session.ID != "from-the-path" {
-		t.Errorf("session id = %q, want the file name identity without a sidecar", session.ID)
+	if session.Metadata["cwd"] != "/synthetic/lighthouse" {
+		t.Errorf("workspace metadata = %+v", session.Metadata)
 	}
-	if len(session.Exchanges) != 1 {
-		t.Fatalf("exchanges = %d, want the one real human turn", len(session.Exchanges))
+	if len(session.Exchanges) != 2 {
+		t.Fatalf("exchanges = %d, want two prompts", len(session.Exchanges))
 	}
-	exchange := session.Exchanges[0]
-	if exchange.HumanText != "compile the fixture binary" {
-		t.Errorf("human text = %q", exchange.HumanText)
+	first := session.Exchanges[0]
+	if first.SourceID != "grok-prompt:1" || first.HumanText != "compile the fixture" ||
+		first.AgentText != "I will repair it." {
+		t.Errorf("first exchange = %+v", first)
 	}
-	if exchange.AgentText != "let me try\nthe build failed" {
-		t.Errorf("agent text = %q", exchange.AgentText)
+	if first.HumanTimestamp != ISOFromEpochSeconds(1785585601) ||
+		first.AgentTimestamp != ISOFromEpochSeconds(1785585608) || first.LatencyMS == nil {
+		t.Errorf("first timestamps = %q..%q (%v)",
+			first.HumanTimestamp, first.AgentTimestamp, first.LatencyMS)
 	}
-	if len(exchange.Thinking) != 2 || exchange.Thinking[0].Text != "we have to compile it" {
-		t.Fatalf("thinking = %+v", exchange.Thinking)
+	if first.Provenance.Model != "grok-fixture-model" || first.Provenance.Provider != "xai" {
+		t.Errorf("provenance = %+v", first.Provenance)
 	}
-	if exchange.Thinking[1].Text != "the binary failed to compile" {
-		t.Errorf("second thinking = %+v", exchange.Thinking[1])
+	if len(first.Thinking) != 2 || first.Thinking[0].Text != "inspect the target" ||
+		first.Thinking[1].Text != "Inspect the fixture\nRepair the fixture" {
+		t.Errorf("thinking = %+v", first.Thinking)
 	}
-	if exchange.Provenance.Model != "grok-fixture-model" {
-		t.Errorf("model = %q", exchange.Provenance.Model)
+	if len(first.Tools) != 1 || first.Tools[0].Name != "run_terminal_command" ||
+		!first.Tools[0].HadError || !strings.Contains(first.Tools[0].ErrorMessage, "synthetic failure") {
+		t.Errorf("tools = %+v", first.Tools)
 	}
-	if len(exchange.Tools) != 2 {
-		t.Fatalf("tools = %+v", exchange.Tools)
+	if session.StartedAt != first.HumanTimestamp ||
+		session.EndedAt != session.Exchanges[1].AgentTimestamp {
+		t.Errorf("session span = %q..%q", session.StartedAt, session.EndedAt)
 	}
-	// The verdict comes from the stated exit code and from nowhere else.
-	first, second := exchange.Tools[0], exchange.Tools[1]
-	if first.Name != "shell" || !first.HadError {
-		t.Errorf("failed tool = %+v", first)
-	}
-	if first.ErrorMessage != "exit: 1 Error: target build not found" {
-		t.Errorf("error message = %q, want the result's text and not its JSON", first.ErrorMessage)
-	}
-	if second.Name != "read_file" || second.HadError {
-		t.Errorf("clean tool = %+v", second)
-	}
-	// The system prompt and the injected compaction history are runtime
-	// machinery, excluded by name and never exchanges.
 	if len(records.Discards) != 2 {
 		t.Fatalf("discards = %+v", records.Discards)
 	}
 	for _, discard := range records.Discards {
 		if !discard.ByDesign {
-			t.Errorf("runtime record counted as unreadable: %+v", discard)
+			t.Errorf("expected only runtime/attachment exclusions: %+v", discard)
 		}
 	}
 }
 
-func TestGrokExitCodeStatesAFailureAndNothingElseDoes(t *testing.T) {
-	for _, content := range []string{
-		"exit: 0 [truncated: showing the fixture]",
-		"1->---\nname: stow",
-		"the build printed the word error but exited cleanly",
-	} {
-		if failedGrokExit(content) {
-			t.Errorf("exit code found in %q", content)
-		}
-	}
-	for _, content := range []string{"exit: 1 Error: unable to open", "exit: 127 command not found"} {
-		if !failedGrokExit(content) {
-			t.Errorf("no failing exit code found in %q", content)
-		}
-	}
-}
-
-// grokTranscriptShapes pins the transcripts that must not land whole: a question
-// still in flight, an orphan verdict, activity before any question, and two
-// complete turns. They are one table because they share one shape — a synthetic
-// transcript and the exchanges, deferred count and discard it must produce.
-func TestGrokTranscriptShapes(t *testing.T) {
+func TestGrokUpdateShapes(t *testing.T) {
 	cases := []struct {
 		name            string
-		transcript      string
+		stream          string
 		exchanges       int
 		deferred        int
 		discardContains string
 		discardByDesign bool
 	}{
 		{
-			name: "a record of another shape is unreadable and not left out by design",
-			transcript: `
-{"type":"user","content":[{"type":"text","text":"read the fixture"}]}
-{"type":["assistant"],"content":"a record of another shape"}
-`,
-			exchanges:       0,
-			deferred:        1,
-			discardContains: "invalid JSON",
+			name:     "a live prompt without agent activity is deferred",
+			stream:   `{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"wait"},"_meta":{"promptIndex":1}}},"timestamp":1785585600}`,
+			deferred: 1,
 		},
 		{
-			name: "an open question is deferred and unreadable reasoning is excluded",
-			transcript: `
-{"type":"user","content":[{"type":"text","text":"finish this fixture"}]}
-{"type":"reasoning","id":"r1","summary":[],"encrypted_content":"ciphertext","status":"completed"}
-`,
-			exchanges:       0,
-			deferred:        1,
-			discardContains: "kept no readable summary",
-			discardByDesign: true,
+			name: "user chunks without a prompt index remain one turn",
+			stream: `{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"split "}}},"timestamp":1785585600}` + "\n" +
+				`{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"question"}}},"timestamp":1785585600}` + "\n" +
+				`{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"one answer"}}},"timestamp":1785585601}`,
+			exchanges: 1,
 		},
 		{
-			name: "an orphan verdict is discarded and never closes a turn",
-			transcript: `
-{"type":"user","content":[{"type":"text","text":"run the fixture"}]}
-{"type":"assistant","content":"running","tool_calls":[],"model_id":"grok-fixture-model"}
-{"type":"tool_result","tool_call_id":"call-nobody-made","content":"exit: 0"}
-`,
-			exchanges:       1,
-			discardContains: "unknown call_id",
-		},
-		{
-			name: "agent activity before any human turn is ignored",
-			transcript: `
-{"type":"assistant","content":"orphaned","tool_calls":[],"model_id":"grok-fixture-model"}
-{"type":"reasoning","summary":[{"type":"summary_text","text":"orphaned"}]}
-{"type":"tool_result","tool_call_id":"call-orphan","content":"exit: 0"}
-`,
-			exchanges: 0,
-		},
-		{
-			name: "two real turns make two exchanges",
-			transcript: `
-{"type":"user","content":[{"type":"text","text":"first fixture question"}]}
-{"type":"assistant","content":"first answer","model_id":"grok-fixture-model"}
-{"type":"user","content":[{"type":"text","text":"second fixture question"}]}
-{"type":"assistant","content":"second answer","model_id":"grok-fixture-model"}
-`,
+			name: "an unindexed prompt after an answer opens the next turn",
+			stream: `{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"first question"}}},"timestamp":1785585600}` + "\n" +
+				`{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"first answer"}}},"timestamp":1785585601}` + "\n" +
+				`{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"second question"}}},"timestamp":1785585602}` + "\n" +
+				`{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"second answer"}}},"timestamp":1785585603}`,
 			exchanges: 2,
 		},
+		{
+			name:            "agent content before any prompt is a failure, not an exclusion",
+			stream:          `{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"orphan answer"}}},"timestamp":1785585600}`,
+			discardContains: "before any user prompt",
+		},
+		{
+			name: "a malformed line does not cost the rest of the file",
+			stream: "{not-json}\n" +
+				`{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"question"},"_meta":{"promptIndex":1}}},"timestamp":1785585600}` + "\n" +
+				`{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"answer"}}},"timestamp":1785585601}`,
+			exchanges: 1, discardContains: "invalid JSON",
+		},
+		{
+			name: "an agent attachment is left out by design and still reported",
+			stream: `{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"question"},"_meta":{"promptIndex":1}}},"timestamp":1785585600}` + "\n" +
+				`{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"resource_link","uri":"fixture://invented"}}},"timestamp":1785585601}`,
+			deferred:        1,
+			discardContains: "grok agent attachment not ingested: resource_link", discardByDesign: true,
+		},
+		{
+			name: "agent content that does not decode is a failure",
+			stream: `{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"question"},"_meta":{"promptIndex":1}}},"timestamp":1785585600}` + "\n" +
+				`{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"agent_thought_chunk","content":"not an object"}},"timestamp":1785585601}`,
+			deferred:        1,
+			discardContains: "invalid Grok agent thought content",
+		},
+		{
+			name:            "an unknown content update is unreadable",
+			stream:          `{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"future_semantic_surface"}},"timestamp":1785585600}`,
+			discardContains: "unknown Grok content update",
+		},
+		{
+			name:            "runtime machinery stays excluded",
+			stream:          `{"method":"_x.ai/session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"turn_completed"}},"timestamp":1785585600}`,
+			discardContains: "runtime update", discardByDesign: true,
+		},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			records, err := Parse(KindGrokSession, []byte(tc.transcript), FileMeta{})
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			records, err := Parse(KindGrokSession, []byte(testCase.stream), FileMeta{SessionID: "fixture"})
 			if err != nil {
-				t.Fatalf("parse: %v", err)
+				t.Fatal(err)
 			}
-			exchanges := records.Sessions[0].Exchanges
-			if len(exchanges) != tc.exchanges {
-				t.Fatalf("exchanges = %d, want %d", len(exchanges), tc.exchanges)
+			if got := len(records.Sessions[0].Exchanges); got != testCase.exchanges {
+				t.Errorf("exchanges = %d, want %d", got, testCase.exchanges)
 			}
-			if records.Deferred != tc.deferred {
-				t.Errorf("deferred = %d, want %d", records.Deferred, tc.deferred)
+			if records.Deferred != testCase.deferred {
+				t.Errorf("deferred = %d, want %d", records.Deferred, testCase.deferred)
 			}
-			if tc.discardContains != "" {
-				found := false
-				for _, discard := range records.Discards {
-					if strings.Contains(discard.Reason, tc.discardContains) {
-						found = true
-						if discard.ByDesign != tc.discardByDesign {
-							t.Errorf("discard %+v: by design = %v, want %v",
-								discard, discard.ByDesign, tc.discardByDesign)
-						}
+			if testCase.discardContains == "" {
+				return
+			}
+			found := false
+			for _, discard := range records.Discards {
+				if strings.Contains(discard.Reason, testCase.discardContains) {
+					found = true
+					if discard.ByDesign != testCase.discardByDesign {
+						t.Errorf("discard = %+v", discard)
 					}
 				}
-				if !found {
-					t.Errorf("discards = %+v, want one naming %q", records.Discards, tc.discardContains)
-				}
+			}
+			if !found {
+				t.Errorf("discards = %+v, want %q", records.Discards, testCase.discardContains)
 			}
 		})
 	}
@@ -235,43 +216,91 @@ func TestGrokSessionMetadataSnapshotsTheSessionsIdentityAndSpan(t *testing.T) {
 	if session.Metadata["model"] != "grok-fixture-model" || session.Metadata["cwd"] != "/w/demo" {
 		t.Errorf("metadata = %+v", session.Metadata)
 	}
-	if session.Metadata["head_commit"] != "0123456789abcdef" {
-		t.Errorf("head commit missing: %+v", session.Metadata)
-	}
 }
 
-func TestGrokSessionTakesItsIdentityAndSpanFromTheSidecar(t *testing.T) {
+func TestGrokUpdateStreamTakesOnlyItsTitleFromTheSidecar(t *testing.T) {
 	sidecar := `{
-  "info": {"id": "22222222-3333-4444-5555-666666666666", "cwd": "/w/demo"},
+  "info": {"id": "another-id", "cwd": "/w/demo"},
   "created_at": "2026-08-01T14:00:00Z",
   "updated_at": "2026-08-01T14:00:30Z",
   "generated_title": "the ninth fixture"
 }`
-	records, err := Parse(KindGrokSession, []byte(grokTranscript), FileMeta{
-		SessionID: "from-the-path",
-		Sidecar:   []byte(sidecar),
+	records, err := Parse(KindGrokSession, []byte(grokUpdates), FileMeta{
+		Path:    "/home/op/.grok/sessions/%2Fw%2Fdemo/path-session/updates.jsonl",
+		Sidecar: []byte(sidecar),
 	})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	session := records.Sessions[0]
-	if session.ID != "22222222-3333-4444-5555-666666666666" {
-		t.Errorf("session id = %q, want the sidecar's", session.ID)
+	if session.ID != "path-session" {
+		t.Errorf("session id = %q, want directory identity", session.ID)
 	}
 	if session.Title != "the ninth fixture" {
 		t.Errorf("title = %q", session.Title)
 	}
-	if session.StartedAt != "2026-08-01T14:00:00Z" || session.EndedAt != "2026-08-01T14:00:30Z" {
-		t.Errorf("span = %q..%q", session.StartedAt, session.EndedAt)
+	if session.StartedAt == "2026-08-01T14:00:00Z" || session.EndedAt == "2026-08-01T14:00:30Z" {
+		t.Errorf("primary stream took sidecar timestamps: %q..%q", session.StartedAt, session.EndedAt)
 	}
 }
 
-func TestGrokSessionMetadataWithoutIdentityIsDiscarded(t *testing.T) {
-	records, err := Parse(KindGrokSessionMetadata, []byte(`{"info":{"cwd":"/w/demo"}}`), FileMeta{})
+// A failed tool that only ever carried its terminal status on the call itself
+// still reaches the corpus with the evidence of what failed, even when its
+// output is a block shape holding no text.
+func TestGrokToolCallCarriesItsOwnFailure(t *testing.T) {
+	stream := `{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"patch it"},"_meta":{"promptIndex":1}}},"timestamp":1785585600}` + "\n" +
+		`{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"tool_call","toolCallId":"tool-1","status":"failed","kind":"edit","content":[{"type":"diff","path":"/synthetic/fixture.go"}]}},"timestamp":1785585601}`
+	records, err := Parse(KindGrokSession, []byte(stream), FileMeta{SessionID: "fixture"})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if len(records.Sessions) != 0 || len(records.Discards) != 1 {
-		t.Fatalf("records = %+v", records)
+	tools := records.Sessions[0].Exchanges[0].Tools
+	if len(tools) != 1 || !tools[0].HadError {
+		t.Fatalf("tools = %+v", tools)
+	}
+	if !strings.Contains(tools[0].ErrorMessage, "/synthetic/fixture.go") {
+		t.Errorf("error message = %q, want the only evidence of the failure", tools[0].ErrorMessage)
+	}
+}
+
+func TestGrokSessionMetadataIdentity(t *testing.T) {
+	cases := []struct {
+		name      string
+		summary   string
+		sessionID string
+		wantID    string
+	}{
+		{
+			name:    "a summary read alone falls back to its own payload identity",
+			summary: `{"info":{"id":"payload-id","cwd":"/w/demo"}}`,
+			wantID:  "payload-id",
+		},
+		{
+			name:      "the session directory owns the identity of a paired summary",
+			summary:   `{"info":{"id":"payload-id","cwd":"/w/demo"}}`,
+			sessionID: "directory-session", wantID: "directory-session",
+		},
+		{
+			name:    "a summary with no identity at all is discarded",
+			summary: `{"info":{"cwd":"/w/demo"}}`,
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			records, err := Parse(KindGrokSessionMetadata, []byte(testCase.summary),
+				FileMeta{SourceAgent: "grok", SessionID: testCase.sessionID})
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if testCase.wantID == "" {
+				if len(records.Sessions) != 0 || len(records.Discards) != 1 {
+					t.Fatalf("records = %+v", records)
+				}
+				return
+			}
+			if len(records.Sessions) != 1 || records.Sessions[0].ID != testCase.wantID {
+				t.Fatalf("sessions = %+v, want id %q", records.Sessions, testCase.wantID)
+			}
+		})
 	}
 }
