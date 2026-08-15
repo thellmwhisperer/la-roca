@@ -265,10 +265,14 @@ func TestGrokSessionsDecodeTheirProjectAndTheRunnerIsExcluded(t *testing.T) {
 	plan := Scan(roots)
 	var decoded *Target
 	var excluded *Target
+	runnerTranscript := filepath.Join(roots.GrokSessions, url.PathEscape(roots.RunnerDir), session, "chat_history.jsonl")
 	for i := range plan.Targets {
 		target := &plan.Targets[i]
 		if target.Kind != parsers.KindGrokSession {
 			continue
+		}
+		if target.Path == runnerTranscript {
+			t.Fatal("the runner Grok transcript entered the ingest plan")
 		}
 		if strings.HasPrefix(filepath.Base(target.Path), "chat") && target.SessionID == session {
 			decoded = target

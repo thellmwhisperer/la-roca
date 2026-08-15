@@ -92,79 +92,83 @@ func TestGrokExitCodeStatesAFailureAndNothingElseDoes(t *testing.T) {
 	}
 }
 
-func TestGrokDefersAnOpenQuestionAndDiscardsUnreadableReasoning(t *testing.T) {
-	content := `
+// grokTranscriptShapes pins the transcripts that must not land whole: a question
+// still in flight, an orphan verdict, activity before any question, and two
+// complete turns. They are one table because they share one shape — a synthetic
+// transcript and the exchanges, deferred count and discard it must produce.
+func TestGrokTranscriptShapes(t *testing.T) {
+	cases := []struct {
+		name            string
+		transcript      string
+		exchanges       int
+		deferred        int
+		discardContains string
+	}{
+		{
+			name: "an open question is deferred and unreadable reasoning is excluded",
+			transcript: `
 {"type":"user","content":[{"type":"text","text":"finish this fixture"}]}
 {"type":"reasoning","id":"r1","summary":[],"encrypted_content":"ciphertext","status":"completed"}
-`
-	records, err := Parse(KindGrokSession, []byte(content), FileMeta{})
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if records.Deferred != 1 {
-		t.Errorf("deferred = %d, want the open question", records.Deferred)
-	}
-	if len(records.Sessions[0].Exchanges) != 0 {
-		t.Fatalf("exchanges = %+v, want none: half a turn is worse than no turn", records.Sessions[0].Exchanges)
-	}
-	if len(records.Discards) != 1 || records.Discards[0].Reason != "grok reasoning kept no readable summary" {
-		t.Fatalf("discards = %+v", records.Discards)
-	}
-}
-
-func TestGrokVerdictWithoutACallIsDiscardedNotFiled(t *testing.T) {
-	content := `
+`,
+			exchanges:       0,
+			deferred:        1,
+			discardContains: "kept no readable summary",
+		},
+		{
+			name: "an orphan verdict is discarded and never closes a turn",
+			transcript: `
 {"type":"user","content":[{"type":"text","text":"run the fixture"}]}
 {"type":"assistant","content":"running","tool_calls":[],"model_id":"grok-fixture-model"}
 {"type":"tool_result","tool_call_id":"call-nobody-made","content":"exit: 0"}
-`
-	records, err := Parse(KindGrokSession, []byte(content), FileMeta{})
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	found := false
-	for _, discard := range records.Discards {
-		if strings.Contains(discard.Reason, "unknown call_id") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("discards = %+v, want the orphan verdict named", records.Discards)
-	}
-}
-
-func TestGrokAgentActivityBeforeAnyHumanTurnIsIgnored(t *testing.T) {
-	content := `
+`,
+			exchanges:       1,
+			discardContains: "unknown call_id",
+		},
+		{
+			name: "agent activity before any human turn is ignored",
+			transcript: `
 {"type":"assistant","content":"orphaned","tool_calls":[],"model_id":"grok-fixture-model"}
 {"type":"reasoning","summary":[{"type":"summary_text","text":"orphaned"}]}
 {"type":"tool_result","tool_call_id":"call-orphan","content":"exit: 0"}
-`
-	records, err := Parse(KindGrokSession, []byte(content), FileMeta{})
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if len(records.Sessions[0].Exchanges) != 0 {
-		t.Errorf("exchanges = %+v, want none for activity without a question", records.Sessions[0].Exchanges)
-	}
-}
-
-func TestGrokTwoRealTurnsMakeTwoExchanges(t *testing.T) {
-	content := `
+`,
+			exchanges: 0,
+		},
+		{
+			name: "two real turns make two exchanges",
+			transcript: `
 {"type":"user","content":[{"type":"text","text":"first fixture question"}]}
 {"type":"assistant","content":"first answer","model_id":"grok-fixture-model"}
 {"type":"user","content":[{"type":"text","text":"second fixture question"}]}
 {"type":"assistant","content":"second answer","model_id":"grok-fixture-model"}
-`
-	records, err := Parse(KindGrokSession, []byte(content), FileMeta{})
-	if err != nil {
-		t.Fatalf("parse: %v", err)
+`,
+			exchanges: 2,
+		},
 	}
-	exchanges := records.Sessions[0].Exchanges
-	if len(exchanges) != 2 {
-		t.Fatalf("exchanges = %d, want 2", len(exchanges))
-	}
-	if exchanges[1].Number != 2 || exchanges[1].HumanText != "second fixture question" {
-		t.Errorf("second exchange = %+v", exchanges[1])
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			records, err := Parse(KindGrokSession, []byte(tc.transcript), FileMeta{})
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			exchanges := records.Sessions[0].Exchanges
+			if len(exchanges) != tc.exchanges {
+				t.Fatalf("exchanges = %d, want %d", len(exchanges), tc.exchanges)
+			}
+			if records.Deferred != tc.deferred {
+				t.Errorf("deferred = %d, want %d", records.Deferred, tc.deferred)
+			}
+			if tc.discardContains != "" {
+				found := false
+				for _, discard := range records.Discards {
+					if strings.Contains(discard.Reason, tc.discardContains) {
+						found = true
+					}
+				}
+				if !found {
+					t.Errorf("discards = %+v, want one naming %q", records.Discards, tc.discardContains)
+				}
+			}
+		})
 	}
 }
 

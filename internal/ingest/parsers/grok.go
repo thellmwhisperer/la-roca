@@ -151,9 +151,13 @@ func (r *grokReader) consume(record int, line grokLine) {
 			}
 		})
 	case "tool_result":
-		r.claim(func(turn *grokTurn) {
+		// A tool result is the verdict on a call the assistant already claimed, so
+		// it is not a turn's activity of its own: an orphan verdict never turns a
+		// question nobody answered into an exchange, and the assistant line that
+		// issued the call already counted the turn.
+		if r.current != nil {
 			r.verdict(record, line.ToolCallID, string(line.Content))
-		})
+		}
 	default:
 		r.exclude(record, "record type", line.Type)
 	}
@@ -196,12 +200,13 @@ func (r *grokReader) flush() {
 		r.pending = map[string]*ToolUse{}
 		return
 	}
+	var usage UsageTally
 	exchange := Exchange{
 		Number:     len(r.exchanges) + 1,
 		HumanText:  r.current.humanText,
 		AgentText:  strings.Join(r.current.agentText, "\n"),
 		Thinking:   r.current.thinking,
-		Provenance: Provenance{Model: r.current.model},
+		Provenance: usage.Provenance(r.current.model, ""),
 	}
 	// The calls stay pointers until the turn is closed so a verdict that arrives
 	// in time still lands; the copies are only made here.
