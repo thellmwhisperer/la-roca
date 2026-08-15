@@ -66,6 +66,10 @@ func TestRegisteredParsersConform(t *testing.T) {
 		if _, refused := registered.ResolveLocations(syntheticHome); len(refused) > 0 {
 			t.Fatalf("parser %q declares the unusable locations %v", registered.Name, refused)
 		}
+		if _, refused := registered.ResolveHarvestLocations(syntheticHome); len(refused) > 0 {
+			t.Fatalf("parser %q declares the unusable real-harvest locations %v",
+				registered.Name, refused)
+		}
 	}
 	for _, path := range fixtures {
 		path := path
@@ -113,6 +117,168 @@ func TestRegisteredParsersConform(t *testing.T) {
 		if !covered[registered.Name] {
 			t.Errorf("registered parser %q has no synthetic conformance fixture", registered.Name)
 		}
+	}
+}
+
+// realHarvestEnv opts this machine into the real-surface smoke. The stores it
+// walks are the operator's own private conversation history, so the shared gate
+// never reads them and no contributor is judged on what an unrelated agent left
+// in their home directory. A parser author runs it deliberately, on a machine
+// where the agent is installed, and reports its yield in the pull request.
+const realHarvestEnv = "ROCA_REAL_HARVEST"
+
+// TestRegisteredParsersHarvestPresentAgentStores is the real-surface guard the
+// synthetic catalogue cannot provide. A contribution's Locations opt it in;
+// established scanners may opt in with HarvestLocations. When ROCA_REAL_HARVEST
+// asks for it and that agent store exists on the machine, the harness walks it
+// read-only, asks Detect about every regular file, parses every claim and
+// reports the normalized yield. A detector that chose a tiny secondary surface
+// in a large store cannot pass on the author's own machine merely because its
+// invented fixture agrees with it.
+func TestRegisteredParsersHarvestPresentAgentStores(t *testing.T) {
+	if os.Getenv(realHarvestEnv) != "1" {
+		t.Skip("set " + realHarvestEnv + "=1 to walk the present agent stores read-only")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, registered := range Registered() {
+		if len(registered.Locations) == 0 && len(registered.HarvestLocations) == 0 {
+			continue
+		}
+		registered := registered
+		t.Run(registered.Name, func(t *testing.T) {
+			roots, refused := registered.ResolveHarvestLocations(home)
+			if len(refused) > 0 {
+				t.Fatalf("real-harvest locations are unusable: %v", refused)
+			}
+			present := false
+			files, detected, unreadableFiles := 0, 0, 0
+			var bytes, unreadableBytes, largestDetectedBytes int64
+			largestDetectedExchanges := 0
+			yield := realHarvestYield{}
+			for _, root := range roots {
+				if _, err := os.Stat(root); os.IsNotExist(err) {
+					continue
+				} else if err != nil {
+					t.Fatalf("inspect real store %s: %v", root, err)
+				}
+				present = true
+				err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+					if walkErr != nil {
+						unreadableFiles++
+						return nil
+					}
+					if !entry.Type().IsRegular() {
+						return nil
+					}
+					info, err := entry.Info()
+					if err != nil {
+						unreadableFiles++
+						return nil
+					}
+					files++
+					bytes += info.Size()
+					content, err := os.ReadFile(path)
+					if err != nil {
+						unreadableFiles++
+						unreadableBytes += info.Size()
+						return nil
+					}
+					source := registered.SourceAgent
+					if source == "" {
+						source = registered.Name
+					}
+					file := File{Content: content, Meta: FileMeta{
+						Path: path, FileName: filepath.Base(path), SourceAgent: source,
+					}}
+					if !registered.Parser.Detect(file) {
+						return nil
+					}
+					detected++
+					records, err := registered.Parse(file)
+					if err != nil {
+						return err
+					}
+					fileExchanges := 0
+					for _, session := range records.Sessions {
+						fileExchanges += len(session.Exchanges)
+					}
+					if info.Size() > largestDetectedBytes {
+						largestDetectedBytes = info.Size()
+						largestDetectedExchanges = fileExchanges
+					}
+					yield.add(records)
+					return nil
+				})
+				if err != nil {
+					t.Fatalf("read-only real harvest under %s: %v", root, err)
+				}
+			}
+			if !present {
+				t.Skip("agent store is not present on this machine")
+			}
+			t.Logf("real harvest: store_files=%d store_bytes=%d detected_files=%d "+
+				"sessions=%d exchanges=%d memories=%d thinking=%d tools=%d discards=%d deferred=%d "+
+				"largest_detected_file_bytes=%d largest_detected_file_exchanges=%d unreadable_files=%d",
+				files, bytes, detected, yield.sessions, yield.exchanges, yield.memories,
+				yield.thinking, yield.tools, yield.discards, yield.deferred,
+				largestDetectedBytes, largestDetectedExchanges, unreadableFiles)
+			if files > 0 && detected == 0 {
+				t.Fatal("detector found no real files in the declared agent store")
+			}
+			if yield.nearZero(bytes - unreadableBytes) {
+				t.Fatalf("near-zero real harvest from a large store: %d exchanges and %d memories from %d bytes",
+					yield.exchanges, yield.memories, bytes)
+			}
+		})
+	}
+}
+
+type realHarvestYield struct {
+	sessions, exchanges, memories int
+	thinking, tools, discards     int
+	deferred                      int
+}
+
+func (y *realHarvestYield) add(records Records) {
+	y.sessions += len(records.Sessions)
+	y.memories += len(records.Memories)
+	y.discards += len(records.Discards)
+	y.deferred += records.Deferred
+	for _, session := range records.Sessions {
+		y.exchanges += len(session.Exchanges)
+		for _, exchange := range session.Exchanges {
+			y.thinking += len(exchange.Thinking)
+			y.tools += len(exchange.Tools)
+		}
+	}
+}
+
+func (y realHarvestYield) nearZero(storeBytes int64) bool {
+	return storeBytes >= 1<<20 && y.exchanges+y.memories < 10
+}
+
+func TestLargeRealStoreCannotPassWithNearZeroYield(t *testing.T) {
+	for _, testCase := range []struct {
+		name      string
+		bytes     int64
+		exchanges int
+		memories  int
+		want      bool
+	}{
+		{"large store with nine turns", 1 << 20, 9, 0, true},
+		{"large store with ten turns", 1 << 20, 10, 0, false},
+		{"large memory store", 2 << 20, 0, 12, false},
+		{"small store", 1<<20 - 1, 0, 0, false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			yield := realHarvestYield{exchanges: testCase.exchanges, memories: testCase.memories}
+			if got := yield.nearZero(testCase.bytes); got != testCase.want {
+				t.Errorf("nearZero() = %t, want %t", got, testCase.want)
+			}
+		})
 	}
 }
 

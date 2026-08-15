@@ -57,10 +57,10 @@ const (
 	KindClaudeWebMemories      Kind = "claude_web_memories"
 	// The official OpenAI data export contributes its ChatGPT mapping tree.
 	KindChatGPTWebConversations Kind = "chatgpt_web_conversations"
-	// KindGrokSession is a Grok Build chat_history.jsonl transcript.
+	// KindGrokSession is a Grok Build updates.jsonl session stream.
 	KindGrokSession Kind = "grok_session"
 	// KindGrokSessionMetadata is the summary.json a Grok Build session pairs
-	// with its transcript.
+	// with its update stream.
 	KindGrokSessionMetadata Kind = "grok_session_metadata"
 )
 

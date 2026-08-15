@@ -164,7 +164,7 @@ func (w *world) seed(t *testing.T) {
 `, w.demoCwd()))
 
 	// Grok Build, which files each session under the URL-escaped working
-	// directory it ran in, with the transcript and its metadata side by side.
+	// directory it ran in, with the update stream and its metadata side by side.
 	w.seedGrok(t, roots)
 
 	w.seedOpenCode(t, roots.OpenCodeDB)
@@ -195,15 +195,16 @@ func (w *world) seedGrok(t *testing.T, roots Roots) {
   "chat_format_version": 1,
   "generated_title": "the ninth fixture"
 }`, grokSessionID, w.demoCwd(), w.demoCwd()))
-	w.write(t, filepath.Join(session, "chat_history.jsonl"), `
-{"type":"system","content":"You are Grok Build, a synthetic fixture assistant."}
-{"type":"user","content":[{"type":"text","text":"Ignore the compacted history of the fixture."}],"synthetic_reason":"compaction_meta"}
-{"type":"user","content":[{"type":"text","text":"how many sources does the fixture have"}]}
-{"type":"reasoning","id":"reason-fixture-1","summary":[{"type":"summary_text","text":"the matrix has nine sources"}],"encrypted_content":"ciphertext","status":"completed"}
-{"type":"assistant","content":"let me count them","tool_calls":[{"id":"call-grok-1","name":"read_file","arguments":"{\"target_file\":\"/synthetic/demo/plan.md\"}"}],"model_id":"fixture-grok-model","model_fingerprint":"fp-fixture","reasoning_effort":"high"}
-{"type":"tool_result","tool_call_id":"call-grok-1","content":"exit: 0 [truncated: showing the synthetic fixture plan]"}
-{"type":"reasoning","id":"reason-fixture-2","summary":[{"type":"summary_text","text":"nine sources verified"}],"encrypted_content":"ciphertext","status":"completed"}
-{"type":"assistant","content":"nine sources, and none is lost","model_id":"fixture-grok-model","reasoning_effort":"high"}
+	w.write(t, filepath.Join(session, "updates.jsonl"), `
+{"method":"_x.ai/session/update","params":{"sessionId":"22222222-3333-4444-5555-666666666666","update":{"sessionUpdate":"hook_execution","event_name":"synthetic_hook"}},"timestamp":1785592800}
+{"method":"_x.ai/session/update","params":{"sessionId":"22222222-3333-4444-5555-666666666666","update":{"sessionUpdate":"turn_completed"}},"timestamp":1785592800}
+{"method":"session/update","params":{"sessionId":"22222222-3333-4444-5555-666666666666","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"how many sources does the fixture have"},"_meta":{"modelId":"fixture-grok-model","promptIndex":1}}},"timestamp":1785592801}
+{"method":"session/update","params":{"sessionId":"22222222-3333-4444-5555-666666666666","_meta":{"promptId":"fixture-prompt"},"update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"the matrix has nine sources"}}},"timestamp":1785592802}
+{"method":"session/update","params":{"sessionId":"22222222-3333-4444-5555-666666666666","_meta":{"promptId":"fixture-prompt"},"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"let me count them"}}},"timestamp":1785592803}
+{"method":"session/update","params":{"sessionId":"22222222-3333-4444-5555-666666666666","_meta":{"promptId":"fixture-prompt"},"update":{"sessionUpdate":"tool_call","toolCallId":"call-grok-1","title":"Read fixture","rawInput":{"target_file":"/synthetic/demo/plan.md"},"_meta":{"x.ai/tool":{"name":"read_file"}}}},"timestamp":1785592804}
+{"method":"session/update","params":{"sessionId":"22222222-3333-4444-5555-666666666666","_meta":{"promptId":"fixture-prompt"},"update":{"sessionUpdate":"tool_call_update","toolCallId":"call-grok-1","status":"completed","rawOutput":{"content":"synthetic fixture plan"}}},"timestamp":1785592805}
+{"method":"session/update","params":{"sessionId":"22222222-3333-4444-5555-666666666666","_meta":{"promptId":"fixture-prompt"},"update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"nine sources verified"}}},"timestamp":1785592806}
+{"method":"session/update","params":{"sessionId":"22222222-3333-4444-5555-666666666666","_meta":{"promptId":"fixture-prompt"},"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"nine sources, and none is lost"}}},"timestamp":1785592807}
 `)
 }
 

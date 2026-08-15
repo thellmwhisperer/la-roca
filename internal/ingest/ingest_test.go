@@ -40,7 +40,7 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 		"cowork_files":            2, // the metadata and the audit transcript it pairs with
 		"subagent_files":          1,
 		"pi_session_files":        1,
-		"grok_session_files":      2, // the metadata snapshot and the transcript it pairs with
+		"grok_session_files":      2, // the metadata snapshot and the update stream it pairs with
 		"opencode_databases":      1,
 		"hermes_databases":        1,
 		"claude_web_export_files": 2,
@@ -66,7 +66,7 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 
 	// Nine sessions: the agent runtimes plus the explicitly declared Claude web
 	// export. Desktop metadata names the Claude transcript instead of opening
-	// another session, and the Grok metadata and transcript are one session
+	// another session, and the Grok metadata and update stream are one session
 	// merged. The count is asserted whole so a source that stops writing is
 	// visible here and not three waves later.
 	if result.Delta.Sessions != 9 {
