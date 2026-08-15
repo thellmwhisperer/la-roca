@@ -165,6 +165,17 @@ func TestInterruptedBatchIsAbsentAndTheSameBatchResumes(t *testing.T) {
 	}); !errors.Is(err, ErrBatchCommitted) {
 		t.Fatalf("committed batch replay error = %v", err)
 	}
+	record, found, err := LookupBatch(context.Background(), db, "core-memories-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || record.SourceDatabase != "core" || record.SourceTable != "memories" ||
+		record.RowCount != 1 || record.CanonicalDigest != fixtureDigest('b') || record.HighWaterMark != "10" {
+		t.Fatalf("committed batch = %+v, found = %t", record, found)
+	}
+	if _, found, err := LookupBatch(context.Background(), db, "absent"); err != nil || found {
+		t.Fatalf("absent batch found = %t, error = %v", found, err)
+	}
 }
 
 func TestOnlyVerifiedDatabasesAreCutoverEligible(t *testing.T) {
