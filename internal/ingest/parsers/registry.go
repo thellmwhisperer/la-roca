@@ -199,9 +199,9 @@ var registry = []Registration{
 	{
 		Name: string(KindGrokSession), SourceAgent: "grok",
 		CanonicalHarness: ingestprovenance.GrokBuild,
-		HarvestLocations: []string{".grok/sessions"}, Version: "grok-session-v2",
-		Destination: DestinationCorpus,
-		Parser:      parserFunctions{detect: detectGrokSession, parse: ParseGrokSession},
+		HarvestLocations: []string{".grok/sessions"},
+		Destination:      DestinationCorpus,
+		Parser:           parserFunctions{detect: detectGrokSession, parse: ParseGrokSession},
 	},
 	fileParser(KindGrokSessionMetadata, DestinationCorpus, ingestprovenance.GrokBuild, detectGrokSessionMetadata,
 		ParseGrokSessionMetadata),

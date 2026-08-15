@@ -253,7 +253,7 @@ func (r *grokReader) flush(closed bool) {
 		HumanTimestamp: r.current.humanTS,
 		AgentTimestamp: r.current.agentTS,
 		LatencyMS:      latency(r.current.humanTS, r.current.agentTS),
-		Provenance:     usage.Provenance(r.current.model, "xai"),
+		Provenance:     usage.Provenance(r.current.model, ""),
 	}
 	if text := strings.TrimSpace(r.current.thoughtText.String()); text != "" {
 		exchange.Thinking = append(exchange.Thinking, Thinking{Text: text, WordCount: wordCount(text)})

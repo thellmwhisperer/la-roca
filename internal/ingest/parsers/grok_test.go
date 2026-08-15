@@ -50,7 +50,7 @@ func TestGrokSessionReassemblesTheMeasuredUpdateStream(t *testing.T) {
 		t.Errorf("first timestamps = %q..%q (%v)",
 			first.HumanTimestamp, first.AgentTimestamp, first.LatencyMS)
 	}
-	if first.Provenance.Model != "grok-fixture-model" || first.Provenance.Provider != "xai" {
+	if first.Provenance.Model != "grok-fixture-model" || first.Provenance.Provider != "" {
 		t.Errorf("provenance = %+v", first.Provenance)
 	}
 	if len(first.Thinking) != 2 || first.Thinking[0].Text != "inspect the target" ||
