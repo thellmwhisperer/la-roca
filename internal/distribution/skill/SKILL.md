@@ -71,8 +71,9 @@ For a non-default core database, add `--db-path /path/to/roca.db` after
 The vector result is a locator and relevance signal, not final evidence. For
 each useful candidate, recover the live source text through the core query or
 `roca exec`, then inspect enough surrounding context to establish what the
-source actually says. Keep the source kind, stable source id, layer, project,
-date, and provenance with the finding.
+source actually says. Keep available source kind, stable source id, layer,
+project, date, and provenance with the finding; a missing provenance value
+means the source said nothing.
 
 If the vector route is unavailable, say that semantic retrieval is unavailable
 and name the missing route. Use exact SQL or literal search only when the user
@@ -141,7 +142,8 @@ the gate. Install them with `roca mcp install <runtime>`.
 | Situation | Action |
 |---|---|
 | Past work / people / "have we…" | `roca query "<question>"` |
-| Investigation | `roca explore --deep "<one bare word>"`, then plain radius explores |
+| Conceptual investigation | Follow Semantic-first retrieval; report an unavailable vector route before using any exact fallback |
+| Exact or terrain investigation | `roca explore --deep "<one bare word>"`, then plain radius explores |
 | Programmatic parse | add `--json` |
 | Inspect SQL first | `roca query --sql-only` then `roca exec` |
 | Durable memory | `roca store --layer … --content … --agent … --model …` |
@@ -152,8 +154,9 @@ the gate. Install them with `roca mcp install <runtime>`.
 Purpose: reach a verdict that is grounded in returned rows while learning the corpus terrain.
 
 1. Declare the purpose in one line before touching anything.
-2. Launch the first probe with `roca explore --deep "<one bare word>"`. Use a
-   single bare word: no hints and no phrases.
+2. For a conceptual question, follow Semantic-first retrieval above. Use
+   `roca explore --deep "<one bare word>"` only for exact or terrain
+   investigation, with a single bare word and no hints or phrases.
 3. Read the terrain, not just the answer: inspect sources, dates, vocabulary,
    noise, and negative space.
 4. Work the radius with plain `roca explore`, one concept per query: a synonym,
