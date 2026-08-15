@@ -414,7 +414,7 @@ func (env *environment) index(model string) (vector.Index, error) {
 		return vector.Index{}, err
 	}
 	return vector.Index{Corpus: core, VectorPath: filepath.Join(state, vector.DatabaseFilename),
-		Model: model, Embedder: vector.Ollama{BaseURL: os.Getenv("OLLAMA_HOST")},
+		Model: model, Embedder: vector.Ollama{BaseURL: os.Getenv("OLLAMA_HOST")}, ReadOnly: readOnly(),
 		Notice: func(message string) { fmt.Fprintln(os.Stderr, message) }, Database: "corpus"}, nil
 }
 

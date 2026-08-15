@@ -237,6 +237,9 @@ func TestDeprecatedMemoryLayersStayOutOfTheIndexAndResults(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = db.Exec(`UPDATE chunks SET locator=json_set(locator, '$.layer', 'rocodata_legacy') WHERE source_kind='memories' AND source_id=?`, active.stableID())
+	if err == nil {
+		_, err = db.Exec(`DELETE FROM meta WHERE key=?`, deprecatedLayerReconciliationKey)
+	}
 	if closeErr := db.Close(); err == nil && closeErr != nil {
 		err = closeErr
 	}
@@ -267,6 +270,52 @@ func TestDeprecatedMemoryLayersStayOutOfTheIndexAndResults(t *testing.T) {
 	}
 	if retired != 0 {
 		t.Fatalf("retired chunks left after query reconciliation: %d", retired)
+	}
+}
+
+func TestReadOnlyQueryLeavesRetiredChunksUntouched(t *testing.T) {
+	corpus := createCoreFixture(t)
+	path := filepath.Join(t.TempDir(), "vector.db")
+	index := Index{Corpus: corpus, VectorPath: path, Model: DefaultModel, Embedder: &recordingEmbedder{}}
+	if _, err := index.Ingest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active := sourceRow{kind: "memories", text: "alpha memory", layer: "discovery", origin: "agent", createdAt: "2026-01-01"}
+	if _, err := db.Exec(`UPDATE chunks SET locator=json_set(locator, '$.layer', 'rocodata_legacy') WHERE source_kind='memories' AND source_id=?`, active.stableID()); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM meta WHERE key=?`, deprecatedLayerReconciliationKey); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	readOnly := index
+	readOnly.ReadOnly = true
+	if _, err := readOnly.Query(context.Background(), "alpha", 5); err != nil {
+		t.Fatal(err)
+	}
+	db, err = sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var retired int
+	err = db.QueryRow(`SELECT COUNT(*) FROM chunks WHERE source_kind='memories' AND lower(COALESCE(json_extract(locator,'$.layer'),'')) LIKE 'rocodata\\_%' ESCAPE '\\'`).Scan(&retired)
+	if closeErr := db.Close(); err == nil && closeErr != nil {
+		err = closeErr
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retired != 1 {
+		t.Fatalf("read-only query changed retired chunks: %d", retired)
 	}
 }
 
