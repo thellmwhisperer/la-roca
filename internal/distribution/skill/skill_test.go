@@ -29,7 +29,7 @@ func TestContentIsANamedRocaSkill(t *testing.T) {
 	for _, needle := range []string{
 		"roca query", "roca exec", "roca store",
 		"roca_query", "who is", "have we done",
-		"Semantic-first retrieval", "roca-vector", "literal keyword",
+		"Semantic-first retrieval", "roca-vector", "roca vector", "literal keyword",
 		"source context", "stable source id", "Evidence-first investigation",
 		"coverage", "limits",
 	} {

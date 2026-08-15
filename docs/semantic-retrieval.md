@@ -18,7 +18,8 @@ text through core before treating it as evidence.
 For a conceptual question:
 
 1. State the investigation purpose.
-2. Run one bare semantic probe with `roca-vector --json query`.
+2. Run one bare semantic probe with `roca vector --json query`; add
+   `--db-path /path/to/roca.db` after `vector` for a non-default core database.
 3. Inspect the returned source ids, scores, projects, layers, and dates.
 4. Resolve the live source rows with core and recover neighbouring context.
 5. Run deliberate radius probes for synonyms, adjacent concepts, entities,
