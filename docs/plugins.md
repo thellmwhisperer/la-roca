@@ -335,17 +335,20 @@ schema change a released database has to adopt, so it owes what
 [releases](releases.md#schema-migration-definition-of-done) requires of one.
 
 The DATA SPLIT orphan import reads a verified core snapshot in read-only mode.
-It keeps old `runs` and `run_logs` as legacy cron payloads, agent-coordination
-tables as typed ops legacy records, and `flow_patterns` in corpus quarantine.
-Their original columns, nulls, source keys, and table names stay reproducible
-through the payloads and custody memberships; they are not reshaped into
-`journeys` or another current surface. Values JSON cannot carry are kept
-losslessly as hex: `{"$blob": "…"}` for a stored blob and
+It keeps old `runs` and `run_logs` as legacy cron payloads; the garden
+coordination tables, proposals with their annotations, and the query-plan
+teaching examples as typed ops legacy records; and `flow_patterns` in corpus
+quarantine. Their original columns, nulls, source keys, and table names stay
+reproducible through the payloads and custody memberships; they are not
+reshaped into `journeys` or another current surface. Values JSON cannot carry
+are kept losslessly as hex: `{"$blob": "…"}` for a stored blob and
 `{"$text_blob": "…"}` for text whose bytes are not valid UTF-8, so a byte the
 source recorded is never dropped or replaced. The empty withdrawn `messages`
-table creates no destination object. Each checksummed batch is replay-safe,
-and the plugin databases deliberately remain in shadow migration state until the
-whole split is independently verified for cutover.
+table creates no destination object, and the derived `search_state` is rebuilt
+by its owner rather than copied. The import refuses to start at all while the
+snapshot still holds a table nobody disposed of. Each checksummed batch is
+replay-safe, and the plugin databases deliberately remain in shadow migration
+state until the whole split is independently verified for cutover.
 
 Removing La Roca itself removes the installed packages and asks separately
 before it touches those archives: see [Uninstall](lifecycle.md#uninstall).
