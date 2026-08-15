@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cucumber/godog"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -327,6 +328,8 @@ func (r *oracleRunner) normalizeOutput(raw []byte) string {
 }
 
 func (r *oracleRunner) recordMCP(fixture oracleFixture) ([]oracleCase, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
 	session, closeSession, err := r.openMCP(false)
 	if err != nil {
 		return nil, err
@@ -334,7 +337,7 @@ func (r *oracleRunner) recordMCP(fixture oracleFixture) ([]oracleCase, error) {
 	defer closeSession()
 	var cases []oracleCase
 	call := func(name, operation, tool string, arguments map[string]any) error {
-		result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: tool, Arguments: arguments})
+		result, err := callOracleTool(ctx, session, tool, arguments)
 		if err != nil {
 			return err
 		}
@@ -367,9 +370,8 @@ func (r *oracleRunner) recordMCP(fixture oracleFixture) ([]oracleCase, error) {
 		return nil, err
 	}
 	defer closeReadOnly()
-	result, err := readOnly.CallTool(context.Background(), &mcp.CallToolParams{
-		Name: "roca_store", Arguments: map[string]any{"layer": "discovery", "content": "Synthetic refused MCP write."},
-	})
+	result, err := callOracleTool(ctx, readOnly, "roca_store",
+		map[string]any{"layer": "discovery", "content": "Synthetic refused MCP write."})
 	if err != nil {
 		return nil, err
 	}
@@ -377,9 +379,8 @@ func (r *oracleRunner) recordMCP(fixture oracleFixture) ([]oracleCase, error) {
 		Name: "mcp.store.read-only", Surface: "mcp", Operation: "store", IsError: result.IsError,
 		Output: r.normalizer.Text(renderedText(result)),
 	})
-	result, err = readOnly.CallTool(context.Background(), &mcp.CallToolParams{
-		Name: "roca_exec", Arguments: map[string]any{"sql": "SELECT COUNT(*) AS copies FROM memories WHERE content = 'Synthetic refused MCP write.'"},
-	})
+	result, err = callOracleTool(ctx, readOnly, "roca_exec",
+		map[string]any{"sql": "SELECT COUNT(*) AS copies FROM memories WHERE content = 'Synthetic refused MCP write.'"})
 	if err != nil {
 		return nil, err
 	}
@@ -388,6 +389,13 @@ func (r *oracleRunner) recordMCP(fixture oracleFixture) ([]oracleCase, error) {
 		Output: r.normalizer.Text(renderedText(result)),
 	})
 	return cases, nil
+}
+
+func callOracleTool(ctx context.Context, session *mcp.ClientSession, name string,
+	arguments map[string]any) (*mcp.CallToolResult, error) {
+	callCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	return session.CallTool(callCtx, &mcp.CallToolParams{Name: name, Arguments: arguments})
 }
 
 func (r *oracleRunner) openMCP(readOnly bool) (*mcp.ClientSession, func(), error) {
