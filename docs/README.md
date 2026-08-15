@@ -12,16 +12,15 @@ Reading order, from operator to contributor:
    their incremental boundary.
 4. [Agent parser contribution kit](agent-parsers.md): support another agent with
    a synthetic fixture, one parser file, and one registry line.
-5. [Plugins](plugins.md): isolated SQLite data plugins, verified executable-only
-   packages, cron ride manifests, Git-style neighbor executables, and the stable
-   machine surfaces they compose.
+5. [Plugins](plugins.md): the manifest engine, isolated plugin-owned databases,
+   executable capabilities, package lifecycle, and a build-your-own example.
 6. [The MCP plug](mcp.md): the stdio server, its six tools, the TOON answer
    contract, and the supported integration targets.
 7. [Operations](operations.md): the audit log contract for every CLI and MCP
    call, the query failures `roca doctor` reports, redaction, retention, and
    the read-only boundary.
-8. [Architecture](architecture.md): the four internal domains and the import
-   rule that keeps them honest.
+8. [Architecture](architecture.md): the database-neutral kernel, current domain
+   map, query path, and internal import rule.
 9. [Releases](releases.md): how versions are cut and artefacts are built.
 
 The [README](../README.md) is the front page; these pages carry the depth.

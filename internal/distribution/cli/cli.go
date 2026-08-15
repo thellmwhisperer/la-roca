@@ -191,13 +191,20 @@ func rootCommand(env *cliEnv) *cobra.Command {
 		versionCommand(env), initCommand(env), queryCommand(env), exploreCommand(env),
 		execCommand(env), schemaCommand(env),
 		indexCommand(env), doctorCommand(env),
-		ingestCommand(env), storeCommand(env), healthCommand(env),
+		storeCommand(env), healthCommand(env),
 		mcpCommand(env), skillCommand(env), hooksCommand(env),
 		loginCommand(env), modelCommand(env),
 		updateCommand(env), uninstallCommand(env),
 		modelsCommand(env), pluginCommand(env), pluginsCommand(env),
 		installBundledPluginsCommand(env),
 		capabilitiesCommand(env), artifactsCommand(env),
+	}
+	manifest, err := rocacorpus.Manifest(env.build.Version)
+	if err != nil {
+		panic(fmt.Sprintf("invalid bundled corpus manifest: %v", err))
+	}
+	if manifest.HasVerb(service.IngestVerb) {
+		commands = append(commands, ingestCommand(env))
 	}
 	if env.features.Cron {
 		commands = append(commands, cronCommand(env))
