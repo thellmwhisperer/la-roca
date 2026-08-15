@@ -15,11 +15,11 @@ var semantic []byte
 func Ensure(root, binDir, version string) (plugininstall.Result, error) {
 	return bundledplugin.Ensure(root, binDir, version, bundledplugin.Spec{
 		Name: Name, DatabaseFilename: DatabaseFilename, Source: BundledSource,
-		Semantic: semantic, ApplySchema: applySchema,
+		Semantic: semantic, ApplySchema: ApplySchema,
 	})
 }
 
-func applySchema(path string) error {
+func ApplySchema(path string) error {
 	service, err := Open(Options{Database: path})
 	if err != nil {
 		return err
