@@ -34,8 +34,8 @@ func TestCodexAggregateIngestSplitsExcludesAndReingestsIdempotently(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.FilesExcluded != 3 || first.RecordsExcluded != 3 {
-		t.Fatalf("excluded files/records = %d/%d, want 3/3: %+v",
+	if first.FilesExcluded != 3 || first.RecordsExcluded != 5 {
+		t.Fatalf("excluded files/records = %d/%d, want 3/5: %+v",
 			first.FilesExcluded, first.RecordsExcluded, first.DiscardSummary)
 	}
 	if first.Scanned["codex_files"] != 6 {

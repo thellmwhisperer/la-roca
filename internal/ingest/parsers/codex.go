@@ -485,13 +485,7 @@ func (r *codexReader) exchanges(turns []codexTurn) []Exchange {
 }
 
 func codexContentText(blocks []codexContent) string {
-	parts := make([]string, 0, len(blocks))
-	for _, block := range blocks {
-		if block.Text != "" {
-			parts = append(parts, block.Text)
-		}
-	}
-	return strings.Join(parts, "\n")
+	return joinBlockTexts(blocks, func(block codexContent) string { return block.Text }, "\n")
 }
 
 // rawText reads a value Codex writes either as a JSON string or as the document

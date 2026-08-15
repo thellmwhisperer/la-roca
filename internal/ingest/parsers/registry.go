@@ -173,6 +173,9 @@ var registry = []Registration{
 		func(content []byte, meta FileMeta) (Records, error) {
 			return ParseChatGPTWebConversations(bytes.NewReader(content), meta)
 		}),
+	fileParser(KindGrokSession, DestinationCorpus, detectGrokSession, ParseGrokSession),
+	fileParser(KindGrokSessionMetadata, DestinationCorpus, detectGrokSessionMetadata,
+		ParseGrokSessionMetadata),
 }
 
 func fileParser(kind Kind, destination Destination, detect func(File) bool,
@@ -354,4 +357,23 @@ func detectClaudeWebMemories(file File) bool {
 
 func detectChatGPTWebConversations(file File) bool {
 	return sourceIs(file.Meta, "chatgpt-web") && has(firstObject(file.Content), "mapping", "conversation_id")
+}
+
+func detectGrokSession(file File) bool {
+	if !sourceIs(file.Meta, "grok") {
+		return false
+	}
+	switch stringField(firstObject(file.Content), "type") {
+	case "user", "assistant", "reasoning", "tool_result", "system":
+		return true
+	}
+	return false
+}
+
+func detectGrokSessionMetadata(file File) bool {
+	if !sourceIs(file.Meta, "grok") {
+		return false
+	}
+	object := firstObject(file.Content)
+	return has(object, "info") && has(object, "chat_format_version", "session_summary", "created_at")
 }

@@ -12,9 +12,9 @@ roca ingest /path/to/extracted-export
 
 The path belongs only to that invocation. A later `roca ingest` with no path,
 including the nightly run, reads only live Claude, Codex, Pi, OpenCode, Hermes,
-and Cowork sources. It fingerprints each source file by path and content, so an
-explicit rerun of the same export is a zero delta and a newer export contributes
-only message identities that have not already landed.
+Grok Build, and Cowork sources. It fingerprints each source file by path and
+content, so an explicit rerun of the same export is a zero delta and a newer
+export contributes only message identities that have not already landed.
 
 The directory decides which vendor's parser reads it: `memories.json`, or a
 `conversations.json` of `chat_messages` records, is a Claude export, and
@@ -141,6 +141,33 @@ that provenance is retained on its recovered exchanges. The history format does
 not record answers or per-exchange usage. Its session-wide `tokens_used` value
 therefore remains session metadata, while the exchange's answer and token
 columns remain NULL instead of receiving guessed values.
+
+## Grok Build
+
+Grok Build keeps each session under `~/.grok/sessions/<encoded-cwd>/<session-id>/`,
+filing the sessions of a working directory under that directory's URL-escaped
+absolute path. Override the root with `grok_sessions_root` in the configuration
+or the `GROK_SESSIONS_ROOT` environment variable. Each session directory carries
+two read artefacts side by side: `summary.json`, the session's metadata, and
+`chat_history.jsonl`, its active conversation. The metadata is read first, as a
+snapshot that names the session, its span, title, working directory, model and
+git state; the transcript merges over it, so a summary without a transcript
+still records the session and a re-read of either file updates only itself.
+
+A real human message opens an exchange, and the agent's reasoning summaries, its
+answers and its tool calls fill it until the next real human message. The
+records Grok injects as user turns for its own machinery (the compacted history
+and the system reminders, marked `synthetic_reason`) and the `system` prompt
+line are runtime material, excluded by design rather than stored as questions
+nobody asked. The transcript names the model on each assistant record, so the
+exchange's `model` column carries it.
+
+`chat_history.jsonl` is the active window of a session, not its whole history:
+older turns are compacted into markdown segments and the raw protocol stream,
+which this reading deliberately leaves alone. There are therefore no
+per-exchange timestamps in the transcript; the session's start and end come from
+the metadata file. A tool result that states a failing exit code (`exit: N`) is
+stored as a failed tool use; a result that states no exit code is not an error.
 
 ## Per-exchange provenance
 

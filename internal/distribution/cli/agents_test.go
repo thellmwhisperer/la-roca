@@ -8,10 +8,10 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
-var allAgents = []string{"claude", "claude-desktop", "cowork", "codex", "opencode", "pi", "hermes"}
+var allAgents = []string{"claude", "claude-desktop", "cowork", "codex", "opencode", "pi", "hermes", "grok"}
 
 // init renders the full roster: every detected agent, every missing agent.
-// A test that checks only a subset of the seven agents is a placebo — it stays
+// A test that checks only a subset of the eight agents is a placebo — it stays
 // green when an agent is silently dropped from the list.
 func TestInitNamesDetectedAgents(t *testing.T) {
 	t.Run("all detected", func(t *testing.T) {
