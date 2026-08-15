@@ -8,8 +8,9 @@ La Roca has two different jobs that must not be confused:
    distinguish evidence from interpretation, and report uncertainty.
 
 The optional `roca-vector` executable supplies semantic candidates for the
-second job. Its install, storage, and trust boundary are defined by the
-[worked vector-plugin contract](plugins.md#worked-executable-example-vector-search).
+second job. Its install and trust boundary are defined by the
+[executable plugin contract](plugins.md#executable-only-packages), and its
+setup is documented in the [roca-vector package guide](../plugins/vector/README.md).
 When a candidate is returned, the agent must resolve the source text through
 core before treating it as evidence; the vector index is not a replacement for
 the core database.

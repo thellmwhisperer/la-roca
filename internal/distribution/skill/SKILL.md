@@ -85,13 +85,13 @@ matching.
 The vector route requires explicit local setup: `features.plugins = true`,
 `features.vector = true`, an installed package, and its local embedding model.
 It must remain optional and local. See the [semantic retrieval and evidence
-workflow](../../../docs/semantic-retrieval.md) for the complete setup,
-degradation, and evidence contract.
+workflow](https://github.com/thellmwhisperer/la-roca/blob/main/docs/semantic-retrieval.md)
+for the complete setup, degradation, and evidence contract.
 
 ## Evidence-first investigation
 
 For a question that needs more than one remembered fact, apply the [semantic
-retrieval and evidence workflow](../../../docs/semantic-retrieval.md): recover
+retrieval and evidence workflow](https://github.com/thellmwhisperer/la-roca/blob/main/docs/semantic-retrieval.md): recover
 source context, preserve the stable source id, separate observations from
 interpretation, and end with evidence, contradictions, coverage limits, and
 the next probe.
@@ -104,8 +104,7 @@ If the project has a semantic profile, apply it after recovering live source
 context. A profile supplies project-specific source authority, finding types,
 review states, required evidence fields, and complete/unresolved criteria; it
 never replaces the source locator, provenance, contradiction report, or core
-resolution. The first profile is the Libro de Economía contract documented in
-`docs/semantic-profiles/libro-economia.md` in the La Roca repository.
+resolution. The first profile is the [Libro de Economía contract](https://github.com/thellmwhisperer/la-roca/blob/main/docs/semantic-profiles/libro-economia.md).
 
 ## Default row output
 

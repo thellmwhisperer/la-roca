@@ -103,6 +103,12 @@ type desiredChunk struct {
 type storedChunk struct {
 	id          int64
 	fingerprint string
+	locator     Locator
+}
+
+type locatorUpdate struct {
+	id      int64
+	locator Locator
 }
 
 func ConfiguredModel(path string) string {
@@ -158,6 +164,7 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 	report := Delta{}
 	seen := make(map[string]bool, len(existing))
 	pending := make([]desiredChunk, 0, defaultBatchSize)
+	locatorUpdates := make([]locatorUpdate, 0)
 	flush := func() error {
 		if len(pending) == 0 {
 			return nil
@@ -204,7 +211,13 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 			key := chunkKey(chunk.sourceKind, chunk.sourceID, chunk.index)
 			seen[key] = true
 			if old, ok := existing[key]; ok && old.fingerprint == chunk.fingerprint {
-				report.Unchanged++
+				if old.locator != chunk.locator {
+					locatorUpdates = append(locatorUpdates, locatorUpdate{id: old.id, locator: chunk.locator})
+					existing[key] = storedChunk{id: old.id, fingerprint: old.fingerprint, locator: chunk.locator}
+					report.Updated++
+				} else {
+					report.Unchanged++
+				}
 				continue
 			}
 			pending = append(pending, chunk)
@@ -220,6 +233,9 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 		return Delta{}, err
 	}
 	if err := flush(); err != nil {
+		return Delta{}, err
+	}
+	if err := updateLocators(ctx, store, locatorUpdates); err != nil {
 		return Delta{}, err
 	}
 	if err := removeMissing(ctx, store, existing, seen, &report); err != nil {
@@ -518,13 +534,10 @@ func readIndexState(db *sql.DB) (map[string]storedChunk, string, int, bool, erro
 			rows.Close()
 			return nil, "", 0, false, err
 		}
-		state[chunkKey(kind, sourceID, index)] = item
-		if kind == "memories" {
-			var where Locator
-			if json.Unmarshal([]byte(rawLocator), &where) == nil && deprecatedMemoryLayer(where.Layer) {
-				deprecated = true
-			}
+		if json.Unmarshal([]byte(rawLocator), &item.locator) == nil && kind == "memories" && deprecatedMemoryLayer(item.locator.Layer) {
+			deprecated = true
 		}
+		state[chunkKey(kind, sourceID, index)] = item
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -593,7 +606,7 @@ func writeBatch(ctx context.Context, db *sql.DB, chunks []desiredChunk, vectors 
 				return err
 			}
 			report.Updated++
-			existing[key] = storedChunk{id: old.id, fingerprint: chunk.fingerprint}
+			existing[key] = storedChunk{id: old.id, fingerprint: chunk.fingerprint, locator: chunk.locator}
 			continue
 		}
 		result, err := tx.ExecContext(ctx, `INSERT INTO chunks(source_kind,source_id,chunk_index,fingerprint,locator) VALUES (?,?,?,?,?)`,
@@ -612,7 +625,28 @@ func writeBatch(ctx context.Context, db *sql.DB, chunks []desiredChunk, vectors 
 			return err
 		}
 		report.Added++
-		existing[key] = storedChunk{id: id, fingerprint: chunk.fingerprint}
+		existing[key] = storedChunk{id: id, fingerprint: chunk.fingerprint, locator: chunk.locator}
+	}
+	return tx.Commit()
+}
+
+func updateLocators(ctx context.Context, db *sql.DB, updates []locatorUpdate) error {
+	if len(updates) == 0 {
+		return nil
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, update := range updates {
+		where, err := json.Marshal(update.locator)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE chunks SET locator=?,updated_at=datetime('now') WHERE id=?`, string(where), update.id); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
