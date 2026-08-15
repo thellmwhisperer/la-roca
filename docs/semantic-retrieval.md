@@ -8,10 +8,11 @@ La Roca has two different jobs that must not be confused:
    distinguish evidence from interpretation, and report uncertainty.
 
 The optional `roca-vector` executable supplies semantic candidates for the
-second job. It is not a replacement database and it does not own corpus text.
-It stores embeddings, fingerprints, and stable locators in its own state
-directory. When a candidate is returned, the agent must resolve the source
-text through core before treating it as evidence.
+second job. Its install, storage, and trust boundary are defined by the
+[worked vector-plugin contract](plugins.md#worked-executable-example-vector-search).
+When a candidate is returned, the agent must resolve the source text through
+core before treating it as evidence; the vector index is not a replacement for
+the core database.
 
 ## Recommended route
 
@@ -21,8 +22,9 @@ For a conceptual question:
 2. Run one bare semantic probe with `roca vector --json query`; add
    `--db-path /path/to/roca.db` after `vector` for a non-default core database.
 3. Inspect the returned source ids and scores as candidate locators.
-4. Resolve the live source rows with core, recover their project, layer, date,
-   and provenance, and inspect neighbouring context.
+4. Resolve the live source rows with core, recover the available project, layer,
+   date, and provenance fields, and inspect neighbouring context. Preserve a
+   missing provenance value as “the source said nothing”.
 5. Run deliberate radius probes for synonyms, adjacent concepts, entities,
    and relevant periods.
 6. Deduplicate by stable source id without discarding distinct contexts.
@@ -34,8 +36,8 @@ without recovered source context is not evidence.
 
 ## Degraded routes
 
-If the vector plugin or its local embedding model is unavailable, La Roca must
-say so. Literal FTS/SQL remains useful for explicit exact lookups and for
+If the vector plugin or its local embedding model is unavailable, the agent
+must say so. Literal FTS/SQL remains useful for explicit exact lookups and for
 diagnostics, but it must not be silently presented as semantic retrieval for a
 conceptual question.
 

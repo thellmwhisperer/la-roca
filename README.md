@@ -291,14 +291,14 @@ exactly the information the task needs instead of a whole skill.
   already on `PATH` and uses their existing signed-in sessions without reading,
   copying, or storing secrets. No La Roca login is required. For machines
   without a usable local CLI, the local Ollama floor and keyword rescue remain.
-- **Exact retrieval, no embeddings in core.** Recovery is SQL plus a local FTS5
-  index with diacritic folding; a plain `LIKE` fallback works before the index
-  exists. If you want semantics, your model supplies it at question time; the
-  retrieval itself stays exact and auditable. Embedding search is never part of
-  core: it exists only as an optional executable package you build and install
-  yourself, described in
-  [plugins](docs/plugins.md#worked-executable-example-vector-search). Domain
-  extensions are described in [plugins](docs/plugins.md).
+- **Exact core retrieval; optional semantic plugin.** Core recovery is SQL plus
+  a local FTS5 index with diacritic folding; a plain `LIKE` fallback works
+  before the index exists, and this route stays exact and auditable. If you want
+  semantics, your model can supply them at question time; semantic candidate
+  retrieval is an optional executable package you build and install yourself,
+  with its embedding index remaining outside core. See
+  [plugins](docs/plugins.md#worked-executable-example-vector-search) for
+  domain extensions and the plugin contract.
 - **Semantic-first agent craft.** The installed skill can use the optional
   local vector package to retrieve conceptual candidates, then resolve their
   source context through core before forming a verdict. A vector score is not
