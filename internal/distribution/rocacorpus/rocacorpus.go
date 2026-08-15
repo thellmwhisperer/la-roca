@@ -17,7 +17,7 @@ const (
 	// BundledSource is what the installer records for this package, and it is
 	// what discovery reads to know the corpus attach alias is the kernel's own.
 	BundledSource = plugin.BundledSource
-	SchemaVersion = 2
+	SchemaVersion = 3
 	IndexVersion  = 2
 )
 

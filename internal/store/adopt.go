@@ -119,12 +119,11 @@ func Adopt(ctx context.Context, db *DB, backupDir string) (Adoption, error) {
 		if err != nil {
 			return adoption, err
 		}
-	}
-
-	if err := db.Write(ctx, func(tx *sql.Tx) error {
-		return ingestprovenance.Backfill(ctx, tx)
-	}); err != nil {
-		return adoption, fmt.Errorf("backfill ingest provenance: %w", err)
+		if err := db.Write(ctx, func(tx *sql.Tx) error {
+			return ingestprovenance.Backfill(ctx, tx)
+		}); err != nil {
+			return adoption, fmt.Errorf("backfill ingest provenance: %w", err)
+		}
 	}
 
 	after, err := Inspect(ctx, db)
