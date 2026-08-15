@@ -84,14 +84,7 @@ func TestABatchNamesAnAbsentLedgerAndLeavesForeignKeysAsItFoundThem(t *testing.T
 
 func TestInterruptedBatchIsAbsentAndTheSameBatchResumes(t *testing.T) {
 	db := openTestDatabase(t)
-	if err := Prepare(context.Background(), db, Definition{
-		Plugin: "synthetic", SchemaVersion: 1, IndexVersion: 1,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`CREATE TABLE destination_rows (id TEXT PRIMARY KEY, payload TEXT NOT NULL)`); err != nil {
-		t.Fatal(err)
-	}
+	prepareWithDestination(t, db)
 
 	pending, err := BeginBatch(context.Background(), db, BatchSpec{
 		ID: "core-memories-0001", SourceDatabase: "core", SourceTable: "memories",
@@ -210,14 +203,7 @@ func TestAKilledProcessResumesTheSameBatch(t *testing.T) {
 	}
 	path := filepath.Join(t.TempDir(), "plugin.db")
 	db := openDatabaseAt(t, path)
-	if err := Prepare(context.Background(), db, Definition{
-		Plugin: "synthetic", SchemaVersion: 1, IndexVersion: 1,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`CREATE TABLE destination_rows (id TEXT PRIMARY KEY, payload TEXT NOT NULL)`); err != nil {
-		t.Fatal(err)
-	}
+	prepareWithDestination(t, db)
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -283,6 +269,20 @@ func openDatabaseAt(t *testing.T, path string) *sql.DB {
 	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = db.Close() })
 	return db
+}
+
+// prepareWithDestination prepares a synthetic ledger and creates the table the
+// batch tests write their rows into.
+func prepareWithDestination(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if err := Prepare(context.Background(), db, Definition{
+		Plugin: "synthetic", SchemaVersion: 1, IndexVersion: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE destination_rows (id TEXT PRIMARY KEY, payload TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func assertCount(t *testing.T, db *sql.DB, table string, want int) {
