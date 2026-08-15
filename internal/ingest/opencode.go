@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -24,6 +25,11 @@ import (
 // already carry it there; reading it anywhere else would
 // renumber exchanges that already landed and duplicate the lot.
 const openCodeScope = "opencode"
+
+const (
+	openCodeParamsBudget = 500
+	openCodeErrorBudget  = 1000
+)
 
 // openCodeSchema is the shape this build reads.
 var openCodeSchema = []foreignTable{
@@ -65,6 +71,8 @@ type openCodePart struct {
 	Type  string          `json:"type"`
 	Text  string          `json:"text"`
 	Tool  string          `json:"tool"`
+	Hash  string          `json:"hash"`
+	Files []string        `json:"files"`
 	State json.RawMessage `json:"state"`
 }
 
@@ -85,6 +93,23 @@ func (p openCodePart) status() string {
 		return text
 	}
 	return ""
+}
+
+func (p openCodePart) toolState() (input, failure string) {
+	var state struct {
+		Input json.RawMessage `json:"input"`
+		Error string          `json:"error"`
+	}
+	if json.Unmarshal(p.State, &state) != nil {
+		return "", ""
+	}
+	if len(state.Input) > 0 && string(state.Input) != "null" {
+		var compact bytes.Buffer
+		if json.Compact(&compact, state.Input) == nil {
+			input = compact.String()
+		}
+	}
+	return parsers.Clip(input, openCodeParamsBudget), parsers.Clip(state.Error, openCodeErrorBudget)
 }
 
 type openCodeRow struct {
@@ -136,6 +161,10 @@ func ReadOpenCode(ctx context.Context, path string) (parsers.Records, []string, 
 	if err != nil {
 		return parsers.Records{}, nil, err
 	}
+	todosBySession, err := openCodeTodos(ctx, db)
+	if err != nil {
+		return parsers.Records{}, nil, err
+	}
 
 	// A session with one unreadable row is left alone whole. Ingesting the rest of
 	// it would produce a conversation with a hole in it that nothing later can
@@ -152,26 +181,47 @@ func ReadOpenCode(ctx context.Context, path string) (parsers.Records, []string, 
 		partsBySession[part.sessionID] = append(partsBySession[part.sessionID], part)
 	}
 
-	var records parsers.Records
+	records := parsers.Records{MessageCoverage: &parsers.MessageCoverage{
+		Seen: len(messages), Skipped: map[string]int{},
+	}}
 	var complaints []string
 	for _, id := range slices.Sorted(maps.Keys(malformed)) {
 		complaints = append(complaints, fmt.Sprintf("OpenCode session %s: %s", id, malformed[id]))
 	}
 
+	seenSessions := map[string]bool{}
 	for _, source := range sessions {
 		native := source.text("id")
+		seenSessions[native] = true
 		if _, broken := malformed[native]; broken {
+			records.MessageCoverage.Skipped["session contains malformed JSON"] +=
+				len(messagesBySession[native])
 			continue
 		}
 		if !source.has("time_created") || !source.has("time_updated") {
 			complaints = append(complaints,
 				fmt.Sprintf("OpenCode session %s: it declares no timestamps", native))
+			records.MessageCoverage.Skipped["session declares no timestamps"] +=
+				len(messagesBySession[native])
 			continue
 		}
 		session, deferred := openCodeSession(path, source, worktrees,
-			messagesBySession[native], partsBySession[native])
+			messagesBySession[native], partsBySession[native], todosBySession[native],
+			records.MessageCoverage)
 		records.Sessions = append(records.Sessions, session)
 		records.Deferred += deferred
+	}
+	for sessionID, unseen := range messagesBySession {
+		if !seenSessions[sessionID] {
+			records.MessageCoverage.Skipped["message references a missing session"] += len(unseen)
+		}
+	}
+	for _, part := range parts {
+		switch part.part.Type {
+		case "step-start", "step-finish":
+			records.Discards = append(records.Discards,
+				parsers.Excluded("OpenCode step telemetry"))
+		}
 	}
 	return records, complaints, nil
 }
@@ -204,6 +254,7 @@ func openCodeDocuments(ctx context.Context, db *sql.DB, statement string, isMess
 		}
 		if err := json.Unmarshal([]byte(record.text("data")), document); err != nil {
 			malformed[item.sessionID] = "malformed_json"
+			out = append(out, item)
 			continue
 		}
 		out = append(out, item)
@@ -211,21 +262,59 @@ func openCodeDocuments(ctx context.Context, db *sql.DB, statement string, isMess
 	return out, malformed, nil
 }
 
+// openCodeTodos reads the optional task-list table. Older OpenCode databases
+// predate it, so absence means no task list; a present table must have the shape
+// this build reads or the source is refused rather than guessed at.
+func openCodeTodos(ctx context.Context, db *sql.DB) (map[string][]map[string]any, error) {
+	columns, err := tableColumns(ctx, db, "todo")
+	if err != nil {
+		return nil, err
+	}
+	if len(columns) == 0 {
+		return map[string][]map[string]any{}, nil
+	}
+	required := []string{"session_id", "content", "status", "priority", "position",
+		"time_created", "time_updated"}
+	if err := requireColumns(ctx, db, "todo", required); err != nil {
+		return nil, fmt.Errorf("OpenCode: %w", err)
+	}
+	rows, err := queryRows(ctx, db, `SELECT session_id, content, status, priority, position,
+		time_created, time_updated FROM todo ORDER BY session_id, position`)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string][]map[string]any{}
+	for _, item := range rows {
+		created, _ := item.number("time_created")
+		updated, _ := item.number("time_updated")
+		position, _ := item.number("position")
+		todo := parsers.WithoutEmpty(map[string]any{
+			"content": item.text("content"), "status": item.text("status"),
+			"priority": item.text("priority"), "position": int(position),
+			"created_at": isoFromMS(created), "updated_at": isoFromMS(updated),
+		})
+		out[item.text("session_id")] = append(out[item.text("session_id")], todo)
+	}
+	return out, nil
+}
+
 func openCodeSession(path string, source row, worktrees map[string]string,
-	messages, parts []openCodeRow) (parsers.Session, int) {
+	messages, parts []openCodeRow, todos []map[string]any,
+	coverage *parsers.MessageCoverage) (parsers.Session, int) {
 	native := source.text("id")
 	worktree := worktrees[source.text("project_id")]
 	created, _ := source.number("time_created")
 	updated, _ := source.number("time_updated")
 
 	session := parsers.Session{
-		ID:               openCodeScope + ":" + native,
-		SourceAgent:      openCodeSourceAgent(source.text("agent")),
-		Project:          firstNonEmpty(baseName(worktree), baseName(source.text("directory"))),
-		StartedAt:        isoFromMS(created),
-		EndedAt:          isoFromMS(updated),
-		Snapshot:         true,
-		ExchangeKeyScope: openCodeScope,
+		ID:                     openCodeScope + ":" + native,
+		SourceAgent:            openCodeSourceAgent(source.text("agent")),
+		Project:                firstNonEmpty(baseName(worktree), baseName(source.text("directory"))),
+		StartedAt:              isoFromMS(created),
+		EndedAt:                isoFromMS(updated),
+		Snapshot:               true,
+		ExchangeKeyScope:       openCodeScope,
+		PruneUnmappedExchanges: true,
 	}
 	if minutes := int((updated - created) / 60000); minutes >= 0 {
 		session.DurationMinutes = &minutes
@@ -242,15 +331,18 @@ func openCodeSession(path string, source row, worktrees map[string]string,
 		"session_directory": source.text("directory"),
 		"version":           source.text("version"),
 		"agent":             source.text("agent"),
+		"todos":             todos,
 	})
 	var sessionDeferred int
-	session.Exchanges, sessionDeferred = openCodeExchanges(messages, parts)
+	session.Exchanges, sessionDeferred = openCodeExchanges(messages, parts, coverage)
 	return session, sessionDeferred
 }
 
-// openCodeExchanges groups each human message with the assistant messages that
-// answered it, and admits only the groups that are finished.
-func openCodeExchanges(messages, parts []openCodeRow) ([]parsers.Exchange, int) {
+// openCodeExchanges preserves one exchange per durable message. OpenCode may
+// write several assistant messages below one user parent, and grouping those
+// siblings loses their independent model, content and tool/reasoning records.
+func openCodeExchanges(messages, parts []openCodeRow,
+	coverage *parsers.MessageCoverage) ([]parsers.Exchange, int) {
 	partsByMessage := map[string][]openCodeRow{}
 	var compactions []float64
 	for _, part := range parts {
@@ -259,53 +351,38 @@ func openCodeExchanges(messages, parts []openCodeRow) ([]parsers.Exchange, int) 
 			compactions = append(compactions, *part.created)
 		}
 	}
-	assistantsByParent := map[string][]openCodeRow{}
-	var users []openCodeRow
-	for _, message := range messages {
-		switch message.message.Role {
-		case "user":
-			users = append(users, message)
-		case "assistant":
-			parent := message.message.ParentID
-			assistantsByParent[parent] = append(assistantsByParent[parent], message)
-		}
-	}
-
 	var exchanges []parsers.Exchange
 	deferred := 0
 	number := 0
-	for _, user := range users {
-		answers := assistantsByParent[user.id]
-		if len(answers) == 0 || !allCompleted(answers) {
-			deferred++
-			continue // the agent has not finished answering
+	for _, message := range messages {
+		messageParts := partsByMessage[message.id]
+		role := message.message.Role
+		if role != "user" && role != "assistant" {
+			coverage.Skipped["unsupported message role: "+role]++
+			continue
 		}
-		var answerParts []openCodeRow
-		for _, answer := range answers {
-			answerParts = append(answerParts, partsByMessage[answer.id]...)
-		}
-		if anyLiveTool(answerParts) {
+		if role == "assistant" && (message.message.Time.Completed == nil || anyLiveTool(messageParts)) {
 			deferred++
+			coverage.Skipped["assistant message still being written"]++
 			continue
 		}
 		number++
 		exchange := parsers.Exchange{
 			Number:            number,
-			SourceID:          user.id,
-			Fingerprint:       openCodeFingerprint(user, answers, answerParts),
-			IsAfterCompaction: startedAfterACompaction(user, compactions),
-			HumanText:         textOfParts(partsByMessage[user.id], "text"),
-			AgentText:         textOfParts(answerParts, "text"),
+			SourceID:          message.id,
+			Fingerprint:       openCodeFingerprint(message, messageParts),
+			IsAfterCompaction: startedAfterACompaction(message, compactions),
 		}
-		exchange.Provenance = openCodeProvenance(answers)
-		human := completionOf(user.message.Time.Created, user.created)
-		agent := lastCompletion(answers)
-		exchange.HumanTimestamp = isoFromMS(human)
-		exchange.AgentTimestamp = isoFromMS(agent)
-		if elapsed := int(agent - human); human > 0 && agent > 0 && elapsed >= 0 {
-			exchange.LatencyMS = &elapsed
+		if role == "user" {
+			exchange.HumanText = textOfParts(messageParts, "text")
+			exchange.HumanTimestamp = isoFromMS(completionOf(message.message.Time.Created, message.created))
+			exchange.RewriteOnIdentityChange = true
+		} else {
+			exchange.AgentText = assistantContent(messageParts)
+			exchange.AgentTimestamp = isoFromMS(completionOf(message.message.Time.Completed, message.updated))
+			exchange.Provenance = openCodeProvenance([]openCodeRow{message})
 		}
-		for _, part := range answerParts {
+		for _, part := range messageParts {
 			switch part.part.Type {
 			case "reasoning":
 				if part.part.Text == "" {
@@ -323,16 +400,38 @@ func openCodeExchanges(messages, parts []openCodeRow) ([]parsers.Exchange, int) 
 				if status != "completed" && status != "error" {
 					continue
 				}
-				tool := parsers.ToolUse{Name: part.part.Tool, HadError: status == "error"}
-				if tool.HadError {
-					tool.ErrorMessage = "tool_error"
-				}
+				params, failure := part.part.toolState()
+				tool := parsers.ToolUse{Name: part.part.Tool, ParamsSummary: params,
+					HadError: status == "error", ErrorMessage: failure}
 				exchange.Tools = append(exchange.Tools, tool)
 			}
 		}
 		exchanges = append(exchanges, exchange)
+		coverage.Converted++
 	}
 	return exchanges, deferred
+}
+
+func assistantContent(parts []openCodeRow) string {
+	var content []string
+	if text := textOfParts(parts, "text"); text != "" {
+		content = append(content, text)
+	}
+	for _, part := range parts {
+		if part.part.Type != "patch" {
+			continue
+		}
+		patch := "[patch"
+		if part.part.Hash != "" {
+			patch += " " + part.part.Hash
+		}
+		patch += "]"
+		if len(part.part.Files) > 0 {
+			patch += "\n" + strings.Join(part.part.Files, "\n")
+		}
+		content = append(content, patch)
+	}
+	return strings.Join(content, "\n\n")
 }
 
 // openCodeProvenance adds up what the assistant messages of one turn declared.
@@ -383,12 +482,6 @@ func roundToInt(value *float64) int {
 	return int(*value)
 }
 
-func allCompleted(answers []openCodeRow) bool {
-	return !slices.ContainsFunc(answers, func(answer openCodeRow) bool {
-		return answer.message.Time.Completed == nil
-	})
-}
-
 func anyLiveTool(parts []openCodeRow) bool {
 	return slices.ContainsFunc(parts, func(part openCodeRow) bool {
 		status := part.part.status()
@@ -424,33 +517,26 @@ func completionOf(nested *float64, fallback *float64) float64 {
 	return 0
 }
 
-func lastCompletion(answers []openCodeRow) float64 {
-	latest := 0.0
-	for _, answer := range answers {
-		latest = max(latest, completionOf(answer.message.Time.Completed, answer.updated))
-	}
-	return latest
-}
-
-// openCodeFingerprint hashes a projection of the turn and never its payload as
+// openCodeFingerprint hashes a projection of the message and never its payload as
 // stored: the hash lives in the session metadata, and metadata is not where a
 // conversation's text belongs.
-func openCodeFingerprint(user openCodeRow, answers, parts []openCodeRow) string {
+func openCodeFingerprint(message openCodeRow, parts []openCodeRow) string {
 	projection := struct {
-		User       string     `json:"user"`
-		Assistants []string   `json:"assistants"`
-		Parts      [][]string `json:"parts"`
-	}{User: user.id}
-	for _, answer := range answers {
-		projection.Assistants = append(projection.Assistants, answer.id)
-	}
+		ID      string          `json:"id"`
+		Message openCodeMessage `json:"message"`
+		Parts   [][]string      `json:"parts"`
+	}{ID: message.id, Message: message.message}
 	for _, part := range parts {
 		text := ""
-		if part.part.Type == "text" || part.part.Type == "reasoning" {
+		if part.part.Type == "text" || part.part.Type == "reasoning" || part.part.Type == "patch" {
 			text = part.part.Text
+			if part.part.Type == "patch" {
+				text = part.part.Hash + "\x00" + strings.Join(part.part.Files, "\x00")
+			}
 		}
+		params, failure := part.part.toolState()
 		projection.Parts = append(projection.Parts,
-			[]string{part.id, part.part.Type, text, part.part.Tool, part.part.status()})
+			[]string{part.id, part.part.Type, text, part.part.Tool, part.part.status(), params, failure})
 	}
 	encoded, err := json.Marshal(projection)
 	if err != nil {
