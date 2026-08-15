@@ -62,8 +62,11 @@ When the optional local vector plugin is installed and ready, use it as the
 candidate retriever:
 
 ```bash
-roca-vector --json query "<bare concept>" 8
+roca vector --json query "<bare concept>" 8
 ```
+
+For a non-default core database, add `--db-path /path/to/roca.db` after
+`vector`.
 
 The vector result is a locator and relevance signal, not final evidence. For
 each useful candidate, recover the live source text through the core query or
