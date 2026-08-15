@@ -320,13 +320,14 @@ upgrade is retried by the next run instead of being reported as done; every
 declaration it replays is additive and leaves the existing rows in place.
 
 Each bundled database also describes itself. It carries its own schema and index
-version, the state of its custody migration, the source batches already
-committed into it, and the source identity behind each row it holds. Those
-`plugin_schema`, `migration_batches`, and `custody_memberships` tables are
-custody bookkeeping rather than fleet memory, so they stay hidden from every
-attached schema. A batch is recorded only once it is fully committed: an
-interrupted one leaves nothing half-migrated behind and resumes from where it
-stopped, and only a verified database becomes eligible for cutover. A bundled
+version, the state of every named custody migration it hosts, the source batches
+already committed into it, and the source identity behind each row it holds.
+Those `plugin_schema`, `plugin_migrations`, `migration_batches`, and
+`custody_memberships` tables are custody bookkeeping rather than fleet memory,
+so they stay hidden from every attached schema. A batch is recorded only once it
+is fully committed: an interrupted one leaves nothing half-migrated behind and
+resumes from where it stopped, and only a verified migration becomes eligible
+for cutover. A bundled
 database may also declare `legacy_*` quarantine tables, which keep
 owner-specific records verbatim beside their canonical digest instead of
 reshaping them into an active surface. Bumping one of those versions is a
@@ -365,7 +366,11 @@ into: one version table per family, full-text indexes rebuilt over the ones
 that carry text, and the evidence tying each version back to the source row it
 came from. Those tables are migration machinery rather than fleet memory, so
 they stay hidden from every query surface, and the served tables above keep
-answering exactly as before until the later atomic cutover.
+answering exactly as before until the later atomic cutover. Each family is a
+named custody migration of its own, `corpus-archive-<family>`, because a
+migration owns exactly one destination; the merge seals all five against the
+same verification digest, so a partially sealed archive is merged again rather
+than accepted.
 
 ## The bundled roca-ops plugin
 
@@ -389,6 +394,52 @@ database remain readable; the manifest migration does not move data. It owns an
 accent-insensitive `memories_fts` index over its own memories, rebuilt on every
 schema apply so a database that predates the index answers for the rows it
 already held.
+
+DATA-2 also prepares a second, hidden memory route in that same custodial
+database. `memory_records` holds the multiset union of ops, core, and harvested
+corpus payloads: byte-equivalent identities from different sources share one
+record, while duplicates within a source and divergent payloads remain
+physical versions. Plugin-local custody memberships and
+`memory_compatibility` retain every legacy database label and ID. Its derived
+`memory_records_fts` is rebuilt and checked before the ledger becomes
+`verified`. These names stay outside prompts and the SQL gate during shadow
+mode, so the served `memories`/`memories_fts` route and source databases remain
+untouched until a later atomic cutover.
+
+DATA-2 ships that engine and its frozen-home proof with no caller on purpose,
+the way DATA-1 shipped the ledger with only `Prepare` wired: no installer and no
+command invokes the copy, and deciding when a real home runs it belongs to the
+DATA-6 cutover rung. Sources are free to move between an interrupted run and its
+resume. A row whose payload changed is carried forward as a further version of
+the same legacy ID rather than refused, a row that disappeared keeps the
+membership its batch truthfully recorded, and both are reported as drift events;
+membership counts are verified against what the committed batches recorded, not
+against the live source. A home whose three sources are all empty verifies as
+`verified-empty` rather than `verified`: nothing was carried, so the migration
+stays open and a later run still carries whatever the sources hold by then, while
+the home counts as cutover-ready because there is nothing left to carry. Each
+source's frozen copy is named once per migration generation and published by
+renaming a validated sibling copy over it, so retries replace their own snapshot
+instead of accumulating a full database per attempt, a failed replacement leaves
+the previously verified copy intact, and no reader sees a half-written database.
+
+A plugin database hosts as many custody migrations as it needs. `plugin_schema`
+keeps the plugin's schema and index versions and nothing else that is current:
+its `migration_state` and verification columns are the DATA-1 shape, kept only
+for the databases that already carry them. `plugin_migrations` keys every
+lifecycle transition and verification outcome by a stable migration name, and
+both batches and memberships are keyed by that name beside the destination the
+migration owns. Batch identity is local to its migration, so two migrations may
+number their batches however they like and still commit the same id. Two
+migrations in one database therefore prepare, batch, resume and verify
+independently: neither counts the other's batches, reuses its destination, nor
+overwrites its state, and each reaches `verified` or `verified-empty` on its
+own. DATA-2 owns `data2-memory-custody` over `memory_records`, and the corpus
+shadow archive owns one `corpus-archive-<family>` name per version table. A
+DATA-1 database adopts this in place on the next `Prepare` — the rows it already
+held stay under an unclaimed empty name, so they can never stand in for a
+migration that has not run. A plugin schema or index bump reopens every named migration, because the
+destination those migrations fill may have moved under them.
 
 ## Scheduled rides
 

@@ -27,11 +27,14 @@ tables:
     description: Quarantined legacy run messages retained with their source payload.
     columns: [canonical_digest, payload]
   - name: plugin_schema
-    description: The cron database schema version and migration state; cron has no derived index.
+    description: The cron database schema version; cron has no derived index and its migration lifecycle lives in plugin_migrations.
     columns: [singleton, plugin_name, schema_version, index_version, migration_state, verification_digest, prepared_at, verified_at, updated_at]
+  - name: plugin_migrations
+    description: Lifecycle and verification outcome of every named custody migration this database hosts.
+    columns: [migration, destination_table, migration_state, verification_digest, prepared_at, verified_at, updated_at]
   - name: migration_batches
     description: Fully committed, checksummed source batches imported into cron custody.
-    columns: [batch_id, source_database, source_table, row_count, canonical_digest, high_water_mark, committed_at]
+    columns: [migration, batch_id, destination_table, source_database, source_table, row_count, canonical_digest, high_water_mark, committed_at]
   - name: custody_memberships
     description: Source identities represented by each physical row in cron custody.
-    columns: [source_database, source_table, source_key, destination_table, destination_key, canonical_digest, batch_id]
+    columns: [migration, source_database, source_table, source_key, destination_table, destination_key, canonical_digest, batch_id]
