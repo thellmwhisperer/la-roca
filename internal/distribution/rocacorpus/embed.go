@@ -2,9 +2,7 @@
 package rocacorpus
 
 import (
-	"bytes"
 	_ "embed"
-	"strings"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
@@ -23,15 +21,5 @@ func bundleSpec() bundledplugin.Spec {
 }
 
 func Manifest(version string) (plugin.Manifest, error) {
-	declaration, err := plugin.DecodeManifest(bytes.NewReader(manifest))
-	if err != nil {
-		return plugin.Manifest{}, err
-	}
-	if strings.TrimSpace(version) != "" {
-		declaration.Version = version
-	}
-	if err := declaration.Valid(); err != nil {
-		return plugin.Manifest{}, err
-	}
-	return declaration, nil
+	return bundledplugin.Manifest(manifest, version)
 }

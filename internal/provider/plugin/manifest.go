@@ -73,7 +73,8 @@ type Capability struct {
 
 // Registration is the one canonical verb projected onto both public surfaces.
 // Keeping the names derived here prevents a CLI command and its MCP twin from
-// drifting into separate contracts.
+// drifting into separate contracts. CLI is the capability call as it is typed,
+// which is the verb name only when the verb owns a command of its own.
 type Registration struct {
 	Plugin      string
 	Name        string
@@ -301,14 +302,16 @@ func Register(manifests ...Manifest) ([]Registration, error) {
 		for _, verb := range manifest.Verbs {
 			// Both public names are derived from this one, so a single owner per
 			// verb is what keeps the CLI command and its MCP twin from being
-			// claimed by two plugins.
+			// claimed by two plugins. The CLI name is the capability's own call,
+			// so a verb riding an existing command names that command rather
+			// than advertising one the binary does not have.
 			if owner := seen[verb.Name]; owner != "" {
 				return nil, fmt.Errorf("verb %q is declared by both %s and %s", verb.Name, owner, manifest.Name)
 			}
 			capability := capabilities[verb.Capability]
 			registrations = append(registrations, Registration{
 				Plugin: manifest.Name, Name: verb.Name, Description: verb.Description,
-				CLI: verb.Name, MCP: "roca_" + verb.Name, Capability: capability.Name,
+				CLI: strings.Join(capability.Command, " "), MCP: "roca_" + verb.Name, Capability: capability.Name,
 				Binary: manifest.Binary, Command: slices.Clone(capability.Command),
 			})
 			seen[verb.Name] = manifest.Name
