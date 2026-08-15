@@ -11,11 +11,22 @@ import (
 // published contract may not promise a third-party author a registered command.
 func TestOnlyBundledManifestVerbsTakeACLISeat(t *testing.T) {
 	root := rootCommand(&cliEnv{})
-	if !builtIn(root, "ingest") {
-		t.Error("the bundled corpus manifest did not seat its ingest verb")
+	seats := []struct {
+		verb   string
+		seated bool
+		reason string
+	}{
+		{"ingest", true, "the bundled corpus manifest did not seat its ingest verb"},
+		{"query", true, "the bundled ops manifest did not seat its query verb"},
+		{"exec", true, "the bundled ops manifest did not seat its exec verb"},
+		{"store", true, "the bundled ops manifest did not seat its store verb"},
+		{"sql", false, "the sql verb rides `query --sql-only` and owns no command of its own"},
+		{"receipts", false, "the documented third-party verb took a seat this build does not register"},
 	}
-	if builtIn(root, "receipts") {
-		t.Error("the documented third-party verb took a seat this build does not register")
+	for _, seat := range seats {
+		if builtIn(root, seat.verb) != seat.seated {
+			t.Error(seat.reason)
+		}
 	}
 
 	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "plugins.md"))

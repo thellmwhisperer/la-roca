@@ -188,16 +188,28 @@ func rootCommand(env *cliEnv) *cobra.Command {
 	root.PersistentFlags().StringVar(&env.dbPath, "db-path", "", "database to use")
 	root.PersistentFlags().BoolVar(&env.json, "json", false, "JSON output")
 	commands := []*cobra.Command{
-		versionCommand(env), initCommand(env), queryCommand(env), exploreCommand(env),
-		execCommand(env), schemaCommand(env),
+		versionCommand(env), initCommand(env), exploreCommand(env), schemaCommand(env),
 		indexCommand(env), doctorCommand(env),
-		storeCommand(env), healthCommand(env),
+		healthCommand(env),
 		mcpCommand(env), skillCommand(env), hooksCommand(env),
 		loginCommand(env), modelCommand(env),
 		updateCommand(env), uninstallCommand(env),
 		modelsCommand(env), pluginCommand(env), pluginsCommand(env),
 		installBundledPluginsCommand(env),
 		capabilitiesCommand(env), artifactsCommand(env),
+	}
+	opsManifest, err := rocaops.Manifest(env.build.Version)
+	if err != nil {
+		panic(fmt.Sprintf("invalid bundled ops manifest: %v", err))
+	}
+	if opsManifest.HasVerb(service.QueryVerb) {
+		commands = append(commands, queryCommand(env))
+	}
+	if opsManifest.HasVerb(service.ExecVerb) {
+		commands = append(commands, execCommand(env))
+	}
+	if opsManifest.HasVerb(service.StoreVerb) {
+		commands = append(commands, storeCommand(env))
 	}
 	manifest, err := rocacorpus.Manifest(env.build.Version)
 	if err != nil {

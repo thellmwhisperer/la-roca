@@ -5,16 +5,15 @@ import (
 	_ "embed"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
+	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 )
 
-var (
-	//go:embed semantic.yaml
-	semantic []byte
-	//go:embed schema.sql
-	schema string
-)
+//go:embed plugin.json
+var manifest []byte
 
-func bundleSpec() bundledplugin.Spec {
-	return bundledplugin.Spec{Name: Name, DatabaseFilename: DatabaseFilename,
-		Source: BundledSource, Semantic: semantic, ApplySchema: ApplySchema}
+//go:embed schema.sql
+var schema string
+
+func Manifest(version string) (plugin.Manifest, error) {
+	return bundledplugin.Manifest(manifest, version)
 }
