@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/callhistory"
+	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 func NewWithOps(dataDir, database string) *Writer {
@@ -27,11 +28,15 @@ func (w *Writer) Backfill() error {
 	if w == nil || !callhistory.Available(w.opsDatabase) {
 		return nil
 	}
-	release, err := w.Lock()
+	release, err := securefile.LockExisting(w.LockPath())
 	if err != nil {
-		return err
+		if _, statErr := os.Stat(w.dir); os.IsNotExist(statErr) {
+			return callhistory.ImportSegments(context.Background(), w.opsDatabase,
+				callhistory.Import{CheckedAt: w.now().UTC()})
+		}
+		return fmt.Errorf("lock the log directory: %w", err)
 	}
-	defer release()
+	defer func() { _ = release() }()
 	return w.backfillLocked(context.Background())
 }
 
@@ -48,7 +53,7 @@ func (w *Writer) BackfillIfNeeded() error {
 
 func (w *Writer) backfillLocked(ctx context.Context) error {
 	source := callhistory.Import{CheckedAt: w.now().UTC()}
-	canonical, err := callhistory.CanonicalSegmentSources(ctx, w.opsDatabase)
+	imported, err := callhistory.ImportedSegments(ctx, w.opsDatabase)
 	if err != nil {
 		return err
 	}
@@ -60,7 +65,7 @@ func (w *Writer) backfillLocked(ctx context.Context) error {
 		}
 		sort.Strings(matches)
 		for _, path := range matches {
-			segment, readable := readHistorySegment(stream, path)
+			segment, readable := readHistorySegment(stream, path, imported)
 			if !readable {
 				source.Unreadable++
 				continue
@@ -69,22 +74,14 @@ func (w *Writer) backfillLocked(ctx context.Context) error {
 				source.Unreadable++
 				segment.LineCount = len(segment.Records) + segment.Malformed
 			}
-			if sourceFile := canonical[segment.Digest]; sourceFile != "" {
-				for index := range segment.Records {
-					record := &segment.Records[index]
-					if !record.PinnedID {
-						record.ID = callhistory.RecordID("", record.Stream,
-							sourceFile, record.SourceLine, record.RecordJSON)
-					}
-				}
-			}
 			source.Segments = append(source.Segments, segment)
 		}
 	}
 	return callhistory.ImportSegments(ctx, w.opsDatabase, source)
 }
 
-func readHistorySegment(stream, path string) (callhistory.Segment, bool) {
+func readHistorySegment(stream, path string,
+	imported map[string]callhistory.Segment) (callhistory.Segment, bool) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return callhistory.Segment{}, false
@@ -93,6 +90,12 @@ func readHistorySegment(stream, path string) (callhistory.Segment, bool) {
 	segment := callhistory.Segment{
 		Stream: stream, SourceFile: filepath.Base(path), ByteSize: int64(len(raw)),
 		Digest: hex.EncodeToString(digest[:]),
+	}
+	if previous, exists := imported[segment.Digest]; exists && previous.ByteSize == segment.ByteSize {
+		segment.LineCount, segment.Parsed, segment.Malformed =
+			previous.LineCount, previous.Parsed, previous.Malformed
+		segment.Unchanged = previous.SourceFile == segment.SourceFile
+		return segment, true
 	}
 	scanner := bufio.NewScanner(bytes.NewReader(raw))
 	scanner.Buffer(make([]byte, 64*1024), int(maxFileBytes)+1)
@@ -185,7 +188,6 @@ func durableRecord(stream, sourceFile string, sourceLine int, raw []byte) (callh
 		}
 	}
 	record.ID = call.CallID
-	record.PinnedID = record.ID != "" || call.CorrelationID != ""
 	if record.ID == "" {
 		record.ID = callhistory.RecordID(call.CorrelationID, stream, sourceFile, sourceLine, payload)
 	}

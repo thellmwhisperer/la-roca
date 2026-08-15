@@ -34,7 +34,6 @@ type Record struct {
 	SQLRetryProviderLatencyMS, SQLRetryInferenceMS          *int64
 	ExecutionMS, InterpretationMS                           *int64
 	InterpretationProvider, InterpretationModel             string
-	PinnedID                                                bool
 }
 
 type Segment struct {
@@ -42,6 +41,7 @@ type Segment struct {
 	ByteSize                     int64
 	LineCount, Parsed, Malformed int
 	Records                      []Record
+	Unchanged                    bool
 }
 
 type Import struct {
@@ -88,32 +88,35 @@ func PayloadDigest(payload []byte) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func CanonicalSegmentSources(ctx context.Context, path string) (map[string]string, error) {
-	canonical := map[string]string{}
+func ImportedSegments(ctx context.Context, path string) (map[string]Segment, error) {
+	imported := map[string]Segment{}
 	if !Available(path) {
-		return canonical, nil
+		return imported, nil
 	}
 	db, err := bundledplugin.OpenDatabase(path, true)
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	rows, err := db.QueryContext(ctx, `SELECT content_digest, source_file
+	rows, err := db.QueryContext(ctx, `SELECT source_file, stream, content_digest,
+		byte_size, line_count, parsed_count, malformed_count
 		FROM call_history_segments ORDER BY imported_at, source_file`)
 	if err != nil {
 		return nil, fmt.Errorf("read call history segment identities: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var digest, sourceFile string
-		if err := rows.Scan(&digest, &sourceFile); err != nil {
+		var segment Segment
+		if err := rows.Scan(&segment.SourceFile, &segment.Stream, &segment.Digest,
+			&segment.ByteSize, &segment.LineCount, &segment.Parsed,
+			&segment.Malformed); err != nil {
 			return nil, fmt.Errorf("scan call history segment identity: %w", err)
 		}
-		if _, exists := canonical[digest]; !exists {
-			canonical[digest] = sourceFile
+		if _, exists := imported[segment.Digest]; !exists {
+			imported[segment.Digest] = segment
 		}
 	}
-	return canonical, rows.Err()
+	return imported, rows.Err()
 }
 
 func HasParityState(ctx context.Context, path string) (bool, error) {
@@ -173,6 +176,9 @@ func ImportSegments(ctx context.Context, path string, source Import) error {
 		return err
 	}
 	for _, segment := range source.Segments {
+		if segment.Unchanged {
+			continue
+		}
 		if err := importSegment(ctx, db, segment, source.CheckedAt); err != nil {
 			return err
 		}
@@ -202,7 +208,7 @@ func importSegment(ctx context.Context, db *sql.DB, segment Segment, checkedAt t
 			parsed_count=excluded.parsed_count, malformed_count=excluded.malformed_count,
 			imported_at=excluded.imported_at`, segment.SourceFile, segment.Stream,
 		segment.Digest, segment.ByteSize, segment.LineCount, segment.Parsed,
-		segment.Malformed, checkedAt.UTC().Format(time.RFC3339Nano))
+		segment.Malformed, formatTimestamp(checkedAt))
 	if err != nil {
 		return fmt.Errorf("record call history segment %s: %w", segment.SourceFile, err)
 	}
@@ -222,7 +228,7 @@ func setParity(ctx context.Context, db *sql.DB, parity bool, malformed, unreadab
 		malformed_lines=excluded.malformed_lines,
 		unreadable_files=excluded.unreadable_files,
 		checked_at=excluded.checked_at`, parity, malformed, unreadable,
-		checkedAt.UTC().Format(time.RFC3339Nano))
+		formatTimestamp(checkedAt))
 	if err != nil {
 		return fmt.Errorf("record call history parity: %w", err)
 	}
@@ -256,13 +262,13 @@ func RecentQueryFailures(ctx context.Context, path string, now time.Time,
 		((source = 'cli' AND operation IN ('query', 'explore')) OR
 		 (source = 'mcp' AND operation IN ('roca_query', 'roca_explore', 'roca_sql')))`
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM call_history WHERE `+predicate,
-		summary.Since.Format(time.RFC3339Nano)).Scan(&summary.Count); err != nil {
+		formatTimestamp(summary.Since)).Scan(&summary.Count); err != nil {
 		return summary, false, fmt.Errorf("count durable query failures: %w", err)
 	}
 	query := `SELECT timestamp, source, operation, question, error, error_type,
 		correlation_id FROM call_history WHERE ` + predicate + `
 		ORDER BY timestamp DESC, id DESC`
-	args := []any{summary.Since.Format(time.RFC3339Nano)}
+	args := []any{formatTimestamp(summary.Since)}
 	if limit >= 0 {
 		query += " LIMIT ?"
 		args = append(args, limit)
@@ -317,7 +323,7 @@ func insertRecord(ctx context.Context, tx *sql.Tx, record Record) error {
 		source_file, source_line, record_digest, record_json)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		record.ID, record.Timestamp.UTC().Format(time.RFC3339Nano), record.Stream,
+		record.ID, formatTimestamp(record.Timestamp), record.Stream,
 		record.Source, record.Operation, string(record.Args), record.OK, record.Error,
 		record.ErrorType, record.DurationMS, record.CorrelationID, record.Question,
 		record.SQL, record.RawSQL, record.SQLProvider, record.SQLModel, record.RowCount,
@@ -345,4 +351,10 @@ func insertRecord(ctx context.Context, tx *sql.Tx, record Record) error {
 		return fmt.Errorf("call history identity %q has conflicting payloads", record.ID)
 	}
 	return nil
+}
+
+const timestampLayout = "2006-01-02T15:04:05.000000000Z"
+
+func formatTimestamp(value time.Time) string {
+	return value.UTC().Format(timestampLayout)
 }

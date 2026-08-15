@@ -108,15 +108,30 @@ func TestRetainedSegmentsBackfillOnceAndGateDurableDoctorReads(t *testing.T) {
 	_, database := historyFixtureAt(t, root)
 	writer := NewWithOps(root, database)
 	writer.now = func() time.Time { return now }
-	for range 2 {
-		if err := writer.Backfill(); err != nil {
-			t.Fatal(err)
-		}
+	if err := writer.Backfill(); err != nil {
+		t.Fatal(err)
 	}
 
 	db := openHistoryDB(t, database)
 	defer db.Close()
 	assertHistoryCount(t, db, 2)
+	var importedAt string
+	if err := db.QueryRow(`SELECT imported_at FROM call_history_segments
+		WHERE source_file = 'mcp-audit-2026-08-15.jsonl'`).Scan(&importedAt); err != nil {
+		t.Fatal(err)
+	}
+	writer.now = func() time.Time { return now.Add(time.Hour) }
+	if err := writer.Backfill(); err != nil {
+		t.Fatal(err)
+	}
+	var importedAgain string
+	if err := db.QueryRow(`SELECT imported_at FROM call_history_segments
+		WHERE source_file = 'mcp-audit-2026-08-15.jsonl'`).Scan(&importedAgain); err != nil {
+		t.Fatal(err)
+	}
+	if importedAgain != importedAt {
+		t.Fatalf("unchanged segment was re-imported: %q then %q", importedAt, importedAgain)
+	}
 	var parity bool
 	var malformed, unreadable int
 	if err := db.QueryRow(`SELECT parity_verified, malformed_lines, unreadable_files
@@ -140,6 +155,35 @@ func TestRetainedSegmentsBackfillOnceAndGateDurableDoctorReads(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertHistoryCount(t, db, 2)
+}
+
+func TestDurableFailureWindowUsesChronologicalFractionalSeconds(t *testing.T) {
+	root, database := historyFixture(t)
+	writer := NewWithOps(root, database)
+	base := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	if err := writer.Append(Executions, ExecutionRecord{CallRecord: CallRecord{
+		Timestamp: base.Add(500 * time.Millisecond), Source: "cli", Args: []string{},
+		OK: false, Error: "fractional failure", ErrorType: "invalid_sql",
+		CorrelationID: "qf_fractional_failure",
+	}, Command: "query", ExitCode: 1}); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := writer.RecentQueryFailures(base.Add(time.Second), time.Second, 5)
+	if err != nil || summary.Count != 1 || len(summary.Recent) != 1 ||
+		summary.Recent[0].CorrelationID != "qf_fractional_failure" {
+		t.Fatalf("fractional failure window = %+v, err %v", summary, err)
+	}
+}
+
+func TestBackfillReadDoesNotCreateTheLogDirectory(t *testing.T) {
+	root, database := historyFixture(t)
+	writer := NewWithOps(root, database)
+	if err := writer.Backfill(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, DirName)); !os.IsNotExist(err) {
+		t.Fatalf("backfill read created logs: %v", err)
+	}
 }
 
 func TestEitherCallSinkCanFailWithoutLosingTheOther(t *testing.T) {
