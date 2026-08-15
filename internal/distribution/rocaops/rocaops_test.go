@@ -36,11 +36,14 @@ func TestEnsureInstallsTheBundledResidentDataOnlyPluginAndPreservesItsDatabase(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantVerbs := map[string][]string{
-		"store": {"store"},
-		"query": {"query"},
-		"exec":  {"exec"},
-		"sql":   {"query", "--sql-only"},
+	wantVerbs := map[string]struct {
+		command    []string
+		ownCommand bool
+	}{
+		"store": {command: []string{"store"}, ownCommand: true},
+		"query": {command: []string{"query"}, ownCommand: true},
+		"exec":  {command: []string{"exec"}, ownCommand: true},
+		"sql":   {command: []string{"query", "--sql-only"}},
 	}
 	if manifest.Name != rocaops.Name || manifest.Version != "v-test" || manifest.Binary != "roca" ||
 		len(manifest.Databases) != 1 || manifest.Databases[0].Alias != "plugin_roca_ops" ||
@@ -48,10 +51,10 @@ func TestEnsureInstallsTheBundledResidentDataOnlyPluginAndPreservesItsDatabase(t
 		t.Fatalf("ops manifest = %+v, registrations = %+v", manifest, registrations)
 	}
 	for _, registration := range registrations {
-		command, exists := wantVerbs[registration.Name]
-		if !exists || registration.CLI != registration.Name ||
-			registration.MCP != "roca_"+registration.Name ||
-			!slices.Equal(registration.Command, command) {
+		want, exists := wantVerbs[registration.Name]
+		if !exists || registration.MCP != "roca_"+registration.Name ||
+			!slices.Equal(registration.Command, want.command) ||
+			(registration.CLI == registration.Command[0]) != want.ownCommand {
 			t.Fatalf("ops verb registration = %+v", registration)
 		}
 		delete(wantVerbs, registration.Name)

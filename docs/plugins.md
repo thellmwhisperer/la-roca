@@ -372,10 +372,13 @@ Its resident manifest declares the `plugin_roca_ops` attach alias, the
 operational memory semantic fragment, custody and retention, and the `store`,
 `query`, `sql`, and `exec` verbs. Those declarations grant the existing CLI
 commands and MCP tools their seats without changing their handlers or output.
-Historical operational rows in the compatibility database remain readable;
-the manifest migration does not move data. It owns an accent-insensitive
-`memories_fts` index over its own memories, rebuilt on every schema apply so a
-database that predates the index answers for the rows it already held.
+`sql` is the exception to a verb naming a command of its own: its capability
+names `roca query --sql-only`, which stays its only CLI surface, while MCP
+keeps the `roca_sql` tool. Historical operational rows in the compatibility
+database remain readable; the manifest migration does not move data. It owns an
+accent-insensitive `memories_fts` index over its own memories, rebuilt on every
+schema apply so a database that predates the index answers for the rows it
+already held.
 
 ## Scheduled rides
 

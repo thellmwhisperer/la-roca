@@ -202,7 +202,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 	if err != nil {
 		panic(fmt.Sprintf("invalid bundled ops manifest: %v", err))
 	}
-	if opsManifest.HasVerb(service.QueryVerb) && opsManifest.HasVerb(service.SQLVerb) {
+	if opsManifest.HasVerb(service.QueryVerb) {
 		commands = append(commands, queryCommand(env))
 	}
 	if opsManifest.HasVerb(service.ExecVerb) {
