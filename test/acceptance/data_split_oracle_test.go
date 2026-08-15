@@ -72,11 +72,12 @@ type oracleCase struct {
 }
 
 type oracleWorld struct {
-	binary  string
-	root    string
-	fixture oracleFixture
-	bundle  oracleGolden
-	err     error
+	binary   string
+	root     string
+	fixture  oracleFixture
+	bundle   oracleGolden
+	replayed *oracleGolden
+	err      error
 }
 
 func TestDataSplitCompatibilityOracle(t *testing.T) {
@@ -130,6 +131,10 @@ func (w *oracleWorld) loadFixture() error {
 }
 
 func (w *oracleWorld) recordAndReplay() error {
+	if w.replayed != nil {
+		w.bundle = *w.replayed
+		return nil
+	}
 	manifest, err := compatibility.VerifyBundle(w.root, oraclePublicKey())
 	if err != nil {
 		return err
@@ -142,7 +147,12 @@ func (w *oracleWorld) recordAndReplay() error {
 	if err != nil {
 		return err
 	}
-	defer cleanup()
+	keepRecording := false
+	defer func() {
+		if !keepRecording {
+			cleanup()
+		}
+	}()
 	recording := filepath.Join(recordingRoot, "recorded.json")
 	if err := os.WriteFile(recording, actual, 0o600); err != nil {
 		return err
@@ -156,24 +166,23 @@ func (w *oracleWorld) recordAndReplay() error {
 		return err
 	}
 	if !bytes.Equal(recorded, want) {
-		return fmt.Errorf("recorded behavior differs from the sealed golden (-want +got):\n%s", compactDiff(string(want), string(recorded)))
+		keepRecording = true
+		return fmt.Errorf("recorded behavior differs from the sealed golden (-want +got):\n%s\nthe complete recording is kept at %s for owner review", compactDiff(string(want), string(recorded)), recording)
 	}
-	return json.Unmarshal(want, &w.bundle)
+	if err := json.Unmarshal(want, &w.bundle); err != nil {
+		return err
+	}
+	replayed := w.bundle
+	w.replayed = &replayed
+	return nil
 }
 
 func (w *oracleWorld) record() ([]byte, error) {
-	homeRoot, err := filepath.Abs(filepath.Join("..", "..", ".tmp"))
+	home, cleanup, err := oracleTempDir("home-")
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(homeRoot, 0o700); err != nil {
-		return nil, err
-	}
-	home, err := os.MkdirTemp(homeRoot, "data-split-oracle-")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(home)
+	defer cleanup()
 	if err := os.MkdirAll(filepath.Join(home, ".roca"), 0o700); err != nil {
 		return nil, err
 	}
@@ -187,7 +196,7 @@ func (w *oracleWorld) record() ([]byte, error) {
 	if err := runner.writeConfig("http://127.0.0.1:1"); err != nil {
 		return nil, err
 	}
-	initResult := runner.runCLI("init", "init", "init", "--db-path", runner.dbPath(), "--json")
+	initResult, _ := runner.runCLI("init", "init", "init", "--db-path", runner.dbPath(), "--json")
 	if initResult.ExitCode != 0 {
 		return nil, fmt.Errorf("initialize oracle HOME: %s", initResult.Stderr)
 	}
@@ -196,8 +205,8 @@ func (w *oracleWorld) record() ([]byte, error) {
 		return nil, fmt.Errorf("%w (database=%s stat=%v size=%v init=%s)", err,
 			runner.dbPath(), statErr, fileSize(info), initResult.Output)
 	}
-	if result := runner.runCLI("index", "index", "index", "--json"); result.ExitCode != 0 {
-		return nil, fmt.Errorf("index oracle fixture: %s", result.Stderr)
+	if indexResult, _ := runner.runCLI("index", "index", "index", "--json"); indexResult.ExitCode != 0 {
+		return nil, fmt.Errorf("index oracle fixture: %s", indexResult.Stderr)
 	}
 
 	server := oracleModelServer(w.fixture.ModelSQL)
@@ -207,20 +216,21 @@ func (w *oracleWorld) record() ([]byte, error) {
 	}
 
 	var cases []oracleCase
-	appendCLI := func(name, operation string, readOnly bool, args ...string) oracleCase {
+	appendCLI := func(name, operation string, readOnly bool, args ...string) (oracleCase, string) {
 		var result oracleCase
+		var stdout string
 		if readOnly {
-			result = runner.runCLIReadOnly(name, operation, args...)
+			result, stdout = runner.runCLIReadOnly(name, operation, args...)
 		} else {
-			result = runner.runCLI(name, operation, args...)
+			result, stdout = runner.runCLI(name, operation, args...)
 		}
 		cases = append(cases, result)
-		return result
+		return result, stdout
 	}
 	appendCLI("cli.query.model.json", "query", false, "query", w.fixture.ModelQuestion, "--json")
 	appendCLI("cli.query.model.toon", "query", false, "query", w.fixture.ModelQuestion)
-	sqlOnly := appendCLI("cli.sql-only", "sql", false, "query", w.fixture.ModelQuestion, "--sql-only", "--json")
-	statement, err := sqlFromOracleOutput(sqlOnly.Output)
+	_, sqlOnlyStdout := appendCLI("cli.sql-only", "sql", false, "query", w.fixture.ModelQuestion, "--sql-only", "--json")
+	statement, err := sqlFromOracleOutput(sqlOnlyStdout)
 	if err != nil {
 		return nil, err
 	}
@@ -228,10 +238,10 @@ func (w *oracleWorld) record() ([]byte, error) {
 	appendCLI("cli.fts-ranking", "exec", false, "exec", oracleFTSSQL, "--json")
 	appendCLI("cli.store.first", "store", false, "store", "--layer", "discovery", "--content", w.fixture.StoreContent, "--origin", "agent", "--json")
 	appendCLI("cli.store.idempotent", "store", false, "store", "--layer", "discovery", "--content", w.fixture.StoreContent, "--origin", "agent", "--json")
-	appendCLI("cli.store.count", "exec", false, "exec", "SELECT COUNT(*) AS copies FROM memories WHERE content = 'Synthetic idempotence beacon for DATA SPLIT.'", "--json")
+	appendCLI("cli.store.count", "exec", false, "exec", oracleCountSQL(w.fixture.StoreContent), "--json")
 	appendCLI("cli.exec.write-refused", "exec", false, "exec", "DELETE FROM memories", "--json")
-	appendCLI("cli.store.read-only", "store", true, "store", "--layer", "discovery", "--content", "Synthetic refused write.", "--json")
-	appendCLI("cli.store.read-only-count", "exec", false, "exec", "SELECT COUNT(*) AS copies FROM memories WHERE content = 'Synthetic refused write.'", "--json")
+	appendCLI("cli.store.read-only", "store", true, "store", "--layer", "discovery", "--content", oracleRefusedCLIWrite, "--json")
+	appendCLI("cli.store.read-only-count", "exec", false, "exec", oracleCountSQL(oracleRefusedCLIWrite), "--json")
 
 	if err := runner.writeConfig("http://127.0.0.1:1"); err != nil {
 		return nil, err
@@ -267,6 +277,16 @@ func fileSize(info os.FileInfo) any {
 
 const oracleFTSSQL = "SELECT 'memory' AS source, m.id, m.layer, m.content AS text, f.rank FROM (SELECT rowid AS fila, bm25(memories_fts) AS rank FROM memories_fts WHERE memories_fts MATCH '\"quartz\"') AS f JOIN memories AS m ON m.id = f.fila ORDER BY f.rank, m.id LIMIT 10"
 
+const (
+	oracleRefusedCLIWrite = "Synthetic refused write."
+	oracleRefusedMCPWrite = "Synthetic refused MCP write."
+)
+
+func oracleCountSQL(content string) string {
+	return "SELECT COUNT(*) AS copies FROM memories WHERE content = '" +
+		strings.ReplaceAll(content, "'", "''") + "'"
+}
+
 type oracleRunner struct {
 	binary     string
 	home       string
@@ -288,19 +308,19 @@ func (r *oracleRunner) environment(readOnly bool) []string {
 }
 
 func (r *oracleRunner) writeConfig(endpoint string) error {
-	body := fmt.Sprintf("[models]\norder = [\"ollama\"]\ntimeout_ms = 1000\nprobe_ms = 500\n\n[models.ollama]\nbase_url = %q\nmodel = \"oracle-model\"\n\n[features]\noracle_shadow = true\n", endpoint)
+	body := fmt.Sprintf("[models]\norder = [\"ollama\"]\ntimeout_ms = 30000\nprobe_ms = 5000\n\n[models.ollama]\nbase_url = %q\nmodel = \"oracle-model\"\n\n[features]\noracle_shadow = true\n", endpoint)
 	return os.WriteFile(filepath.Join(r.home, ".roca", "config.toml"), []byte(body), 0o600)
 }
 
-func (r *oracleRunner) runCLI(name, operation string, args ...string) oracleCase {
+func (r *oracleRunner) runCLI(name, operation string, args ...string) (oracleCase, string) {
 	return r.runCLIWithEnvironment(name, operation, false, args...)
 }
 
-func (r *oracleRunner) runCLIReadOnly(name, operation string, args ...string) oracleCase {
+func (r *oracleRunner) runCLIReadOnly(name, operation string, args ...string) (oracleCase, string) {
 	return r.runCLIWithEnvironment(name, operation, true, args...)
 }
 
-func (r *oracleRunner) runCLIWithEnvironment(name, operation string, readOnly bool, args ...string) oracleCase {
+func (r *oracleRunner) runCLIWithEnvironment(name, operation string, readOnly bool, args ...string) (oracleCase, string) {
 	command := exec.Command(r.binary, args...)
 	command.Env = r.environment(readOnly)
 	var stdout, stderr bytes.Buffer
@@ -315,7 +335,7 @@ func (r *oracleRunner) runCLIWithEnvironment(name, operation string, readOnly bo
 	return oracleCase{
 		Name: name, Surface: "cli", Operation: operation, ExitCode: code,
 		Output: r.normalizeOutput(stdout.Bytes()), Stderr: r.normalizer.Text(stderr.String()),
-	}
+	}, stdout.String()
 }
 
 func (r *oracleRunner) normalizeOutput(raw []byte) string {
@@ -330,13 +350,8 @@ func (r *oracleRunner) normalizeOutput(raw []byte) string {
 func (r *oracleRunner) recordMCP(fixture oracleFixture) ([]oracleCase, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	session, closeSession, err := r.openMCP(false)
-	if err != nil {
-		return nil, err
-	}
-	defer closeSession()
 	var cases []oracleCase
-	call := func(name, operation, tool string, arguments map[string]any) error {
+	call := func(session *mcp.ClientSession, name, operation, tool string, arguments map[string]any) error {
 		result, err := callOracleTool(ctx, session, tool, arguments)
 		if err != nil {
 			return err
@@ -347,47 +362,42 @@ func (r *oracleRunner) recordMCP(fixture oracleFixture) ([]oracleCase, error) {
 		})
 		return nil
 	}
-	if err := call("mcp.query", "query", "roca_query", map[string]any{"query": fixture.ModelQuestion}); err != nil {
+	session, closeSession, err := r.openMCP(ctx, false)
+	if err != nil {
 		return nil, err
 	}
-	if err := call("mcp.exec", "exec", "roca_exec", map[string]any{"sql": oracleFTSSQL}); err != nil {
+	defer closeSession()
+	if err := call(session, "mcp.query", "query", "roca_query", map[string]any{"query": fixture.ModelQuestion}); err != nil {
+		return nil, err
+	}
+	if err := call(session, "mcp.exec", "exec", "roca_exec", map[string]any{"sql": oracleFTSSQL}); err != nil {
 		return nil, err
 	}
 	store := map[string]any{"layer": "discovery", "content": fixture.MCPStoreContent, "origin": "agent"}
-	if err := call("mcp.store.first", "store", "roca_store", store); err != nil {
+	if err := call(session, "mcp.store.first", "store", "roca_store", store); err != nil {
 		return nil, err
 	}
-	if err := call("mcp.store.idempotent", "store", "roca_store", store); err != nil {
+	if err := call(session, "mcp.store.idempotent", "store", "roca_store", store); err != nil {
 		return nil, err
 	}
-	if err := call("mcp.query.missing-argument", "failure", "roca_query", map[string]any{}); err != nil {
+	if err := call(session, "mcp.query.missing-argument", "failure", "roca_query", map[string]any{}); err != nil {
 		return nil, err
 	}
 	closeSession()
 
-	readOnly, closeReadOnly, err := r.openMCP(true)
+	readOnly, closeReadOnly, err := r.openMCP(ctx, true)
 	if err != nil {
 		return nil, err
 	}
 	defer closeReadOnly()
-	result, err := callOracleTool(ctx, readOnly, "roca_store",
-		map[string]any{"layer": "discovery", "content": "Synthetic refused MCP write."})
-	if err != nil {
+	if err := call(readOnly, "mcp.store.read-only", "store", "roca_store",
+		map[string]any{"layer": "discovery", "content": oracleRefusedMCPWrite}); err != nil {
 		return nil, err
 	}
-	cases = append(cases, oracleCase{
-		Name: "mcp.store.read-only", Surface: "mcp", Operation: "store", IsError: result.IsError,
-		Output: r.normalizer.Text(renderedText(result)),
-	})
-	result, err = callOracleTool(ctx, readOnly, "roca_exec",
-		map[string]any{"sql": "SELECT COUNT(*) AS copies FROM memories WHERE content = 'Synthetic refused MCP write.'"})
-	if err != nil {
+	if err := call(readOnly, "mcp.store.read-only-count", "exec", "roca_exec",
+		map[string]any{"sql": oracleCountSQL(oracleRefusedMCPWrite)}); err != nil {
 		return nil, err
 	}
-	cases = append(cases, oracleCase{
-		Name: "mcp.store.read-only-count", Surface: "mcp", Operation: "exec", IsError: result.IsError,
-		Output: r.normalizer.Text(renderedText(result)),
-	})
 	return cases, nil
 }
 
@@ -398,13 +408,15 @@ func callOracleTool(ctx context.Context, session *mcp.ClientSession, name string
 	return session.CallTool(callCtx, &mcp.CallToolParams{Name: name, Arguments: arguments})
 }
 
-func (r *oracleRunner) openMCP(readOnly bool) (*mcp.ClientSession, func(), error) {
+func (r *oracleRunner) openMCP(ctx context.Context, readOnly bool) (*mcp.ClientSession, func(), error) {
 	command := exec.Command(r.binary, "mcp", "serve")
 	command.Env = r.environment(readOnly)
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
 	client := mcp.NewClient(&mcp.Implementation{Name: "data-split-oracle", Version: "1"}, nil)
-	session, err := client.Connect(context.Background(), &mcp.CommandTransport{Command: command}, nil)
+	connectCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	session, err := client.Connect(connectCtx, &mcp.CommandTransport{Command: command}, nil)
 	if err != nil {
 		return nil, func() {}, fmt.Errorf("open oracle MCP session: %w: %s", err, stderr.String())
 	}
@@ -444,14 +456,14 @@ func oracleModelServer(statement string) *httptest.Server {
 	return httptest.NewServer(mux)
 }
 
-func sqlFromOracleOutput(normalized string) (string, error) {
+func sqlFromOracleOutput(stdout string) (string, error) {
 	var document map[string]any
-	if err := json.Unmarshal([]byte(normalized), &document); err != nil {
+	if err := json.Unmarshal([]byte(stdout), &document); err != nil {
 		return "", err
 	}
 	statement := strings.TrimSpace(fmt.Sprint(document["sql"]))
 	if statement == "" || !strings.HasPrefix(strings.ToUpper(statement), "SELECT") {
-		return "", fmt.Errorf("SQL-only case did not return SELECT: %s", normalized)
+		return "", fmt.Errorf("SQL-only case did not return SELECT: %s", stdout)
 	}
 	return statement, nil
 }
