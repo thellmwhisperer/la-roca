@@ -16,10 +16,10 @@ runtime map in [Architecture](architecture.md#runtime-map); that compatibility
 path is not a plugin API. Either way a plugin database is opened read-only and
 reached only through its declared alias.
 
-`roca-corpus`, the engine's first manifest-backed consumer, proves it without
-changing the product contract: it is resident, ingest still writes and indexes
-the same data, query results are unchanged, and readable query output still
-begins with the same consulted database list.
+`roca-corpus` and `roca-ops`, the engine's manifest-backed bundled consumers,
+prove it without changing the product contract: both are resident, ingest and
+operational writes still land in the same data, query results are unchanged,
+and readable query output still begins with the same consulted database list.
 
 ## The manifest
 
@@ -351,9 +351,9 @@ database are outside the contract.
 
 ## The bundled roca-corpus plugin
 
-`roca-corpus` is the resident first consumer of the manifest engine. It owns
-the perennial archive: sessions, exchanges, reasoning blocks, tool uses, and
-files harvested as memories. Installation places its manifest and database
+`roca-corpus` is a resident manifest plugin. It owns the perennial archive:
+sessions, exchanges, reasoning blocks, tool uses, and files harvested as
+memories. Installation places its manifest and database
 under `~/.roca/plugins/roca-corpus/`; no feature flag is required.
 
 Its manifest declares the `ingest` verb, the `plugin_roca_corpus` attach alias,
