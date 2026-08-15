@@ -139,7 +139,7 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 	if err := ensureBaseSchema(store); err != nil {
 		return Delta{}, err
 	}
-	existing, model, dimensions, err := readIndexState(store)
+	existing, model, dimensions, _, err := readIndexState(store)
 	if err != nil {
 		return Delta{}, err
 	}
@@ -252,7 +252,7 @@ func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) 
 		return nil, fmt.Errorf("open vector database: %w", err)
 	}
 	defer store.Close()
-	_, model, dimensions, err := readIndexState(store)
+	_, model, dimensions, deprecated, err := readIndexState(store)
 	if err != nil {
 		return nil, fmt.Errorf("read vector index: %w; run `roca vector install`", err)
 	}
@@ -263,29 +263,28 @@ func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) 
 	if err != nil {
 		return nil, fmt.Errorf("inspect vector reconciliation: %w", err)
 	}
-	if !reconciled {
-		if i.ReadOnly {
-			deprecated, err := deprecatedChunksExist(ctx, store)
-			if err != nil {
-				return nil, fmt.Errorf("inspect deprecated vector chunks: %w", err)
-			}
-			if deprecated {
-				return nil, fmt.Errorf("vector index contains retired chunks; run `roca vector ingest --delta` with writes enabled")
-			}
+	if deprecated && i.ReadOnly {
+		return nil, fmt.Errorf("vector index contains retired chunks; run `roca vector ingest --delta` with writes enabled")
+	}
+	if !i.ReadOnly && (!reconciled || deprecated) {
+		store.Close()
+		var reconcileErr error
+		if deprecated {
+			reconcileErr = i.purgeDeprecatedChunks(ctx)
 		} else {
-			store.Close()
-			if err := i.purgeDeprecatedChunks(ctx); err != nil {
-				return nil, fmt.Errorf("purge deprecated vector chunks: %w", err)
-			}
-			store, err = openSQLite(i.VectorPath, true)
-			if err != nil {
-				return nil, fmt.Errorf("reopen vector database: %w", err)
-			}
-			defer store.Close()
-			_, model, dimensions, err = readIndexState(store)
-			if err != nil {
-				return nil, fmt.Errorf("read vector index after reconciliation: %w; run `roca vector install`", err)
-			}
+			reconcileErr = i.markDeprecatedLayersReconciled(ctx)
+		}
+		if reconcileErr != nil {
+			return nil, fmt.Errorf("reconcile deprecated vector chunks: %w", reconcileErr)
+		}
+		store, err = openSQLite(i.VectorPath, true)
+		if err != nil {
+			return nil, fmt.Errorf("reopen vector database: %w", err)
+		}
+		defer store.Close()
+		_, model, dimensions, _, err = readIndexState(store)
+		if err != nil {
+			return nil, fmt.Errorf("read vector index after reconciliation: %w; run `roca vector install`", err)
 		}
 	}
 	vectors, err := i.Embedder.Embed(ctx, model, []string{QueryPrefix + text})
@@ -348,6 +347,21 @@ func (i Index) purgeDeprecatedChunks(ctx context.Context) error {
 	}
 	defer store.Close()
 	return purgeDeprecatedChunks(ctx, store)
+}
+
+func (i Index) markDeprecatedLayersReconciled(ctx context.Context) error {
+	release, err := lockIndex(ctx, i.VectorPath+".index.lock", i.waitingForIndex)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	store, err := openSQLite(i.VectorPath, false)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	return markDeprecatedLayersReconciled(ctx, store)
 }
 
 func (i Index) validate() error {
@@ -488,31 +502,43 @@ func ensureBaseSchema(db *sql.DB) error {
 	return nil
 }
 
-func readIndexState(db *sql.DB) (map[string]storedChunk, string, int, error) {
+func readIndexState(db *sql.DB) (map[string]storedChunk, string, int, bool, error) {
 	state := map[string]storedChunk{}
-	rows, err := db.Query(`SELECT id, source_kind, source_id, chunk_index, fingerprint FROM chunks`)
+	rows, err := db.Query(`SELECT id, source_kind, source_id, chunk_index, fingerprint, locator FROM chunks`)
 	if err != nil {
-		return nil, "", 0, err
+		return nil, "", 0, false, err
 	}
+	deprecated := false
 	for rows.Next() {
 		var item storedChunk
 		var kind, sourceID string
 		var index int
-		if err := rows.Scan(&item.id, &kind, &sourceID, &index, &item.fingerprint); err != nil {
+		var rawLocator string
+		if err := rows.Scan(&item.id, &kind, &sourceID, &index, &item.fingerprint, &rawLocator); err != nil {
 			rows.Close()
-			return nil, "", 0, err
+			return nil, "", 0, false, err
 		}
 		state[chunkKey(kind, sourceID, index)] = item
+		if kind == "memories" {
+			var where Locator
+			if json.Unmarshal([]byte(rawLocator), &where) == nil && deprecatedMemoryLayer(where.Layer) {
+				deprecated = true
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, "", 0, false, err
 	}
 	if err := rows.Close(); err != nil {
-		return nil, "", 0, err
+		return nil, "", 0, false, err
 	}
 	var model string
 	_ = db.QueryRow(`SELECT value FROM meta WHERE key='model'`).Scan(&model)
 	var dimensionText string
 	_ = db.QueryRow(`SELECT value FROM meta WHERE key='dimensions'`).Scan(&dimensionText)
 	dimensions, _ := strconv.Atoi(dimensionText)
-	return state, model, dimensions, nil
+	return state, model, dimensions, deprecated, nil
 }
 
 func resetIndex(db *sql.DB) error {
@@ -681,12 +707,6 @@ func deprecatedLayersReconciled(ctx context.Context, db *sql.DB) (bool, error) {
 		return false, err
 	}
 	return value == "1", nil
-}
-
-func deprecatedChunksExist(ctx context.Context, db *sql.DB) (bool, error) {
-	var exists int
-	err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM chunks WHERE source_kind='memories' AND lower(COALESCE(json_extract(locator,'$.layer'),'')) LIKE 'rocodata\_%' ESCAPE '\' LIMIT 1)`).Scan(&exists)
-	return exists != 0, err
 }
 
 func markDeprecatedLayersReconciled(ctx context.Context, db *sql.DB) error {
