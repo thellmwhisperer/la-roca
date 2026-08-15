@@ -26,7 +26,7 @@ func TestProviderAcceptanceSuite(t *testing.T) {
 			Output:   os.Stdout,
 			Strict:   true,
 			TestingT: t,
-			Tags:     "~@journey",
+			Tags:     "~@journey && ~@data-split-oracle",
 		},
 	}
 	if suite.Run() != 0 {

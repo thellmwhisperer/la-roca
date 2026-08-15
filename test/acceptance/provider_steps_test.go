@@ -42,14 +42,7 @@ func registerProviderAcceptanceSteps(ctx *godog.ScenarioContext, binary string) 
 	w := &providerAcceptanceWorld{binary: binary}
 
 	ctx.Before(func(c context.Context, _ *godog.Scenario) (context.Context, error) {
-		root, err := filepath.Abs(filepath.Join("..", "..", ".tmp"))
-		if err != nil {
-			return c, err
-		}
-		if err := os.MkdirAll(root, 0o700); err != nil {
-			return c, err
-		}
-		home, err := os.MkdirTemp(root, "provider-acceptance-")
+		home, err := acceptanceTempDir("provider-acceptance-")
 		if err != nil {
 			return c, err
 		}

@@ -1,0 +1,17 @@
+{
+  "schema": "la-roca.data-split-oracle-manifest/v1",
+  "sealed": true,
+  "fixture": {
+    "path": "fixture.json",
+    "sha256": "4f4a3042b532668881156d5515b03c1fdb1c5f8b95dcb5b7e2bc685c9ea0560c"
+  },
+  "golden": {
+    "path": "golden.json",
+    "sha256": "16114e2046be2e70b470e653acad6ab60b65c7376b108c1aa4aceb457cf3f673"
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "public_key": "HfdYb438IgjL6HuHpfj0FlxVE67kr1AdPVmDJCBafpQ=",
+    "value": "olIyR0dtsldXL3wZMlFx5rR2x43QEFWymDyYgCaFn6Y2wEPyaUd17gCQIxr2ZfCJakv2zH9SlQxVRQkGWy8wBA=="
+  }
+}
