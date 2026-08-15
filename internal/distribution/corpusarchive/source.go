@@ -340,16 +340,10 @@ func scanExchange(rows *sql.Rows, tracker *occurrenceTracker) (archiveRecord, er
 	values := []any{sessionID.String, number, compacted, human, agent, humanAt,
 		agentAt, latency, model, provider, tokensIn, tokensOut, reasoning, cost}
 	digest := canonicalDigest("exchange", values...)
-	sourceKey := ""
-	var ordinal sql.NullInt64
-	if number.Valid {
-		sourceKey = canonicalDigest("exchange-key", sessionID.String, number.Int64)
-	} else {
-		ordinal = sql.NullInt64{Int64: tracker.next(sessionID, number, digest), Valid: true}
-		sourceKey = occurrenceKey("exchange", sessionID, number, digest, ordinal.Int64)
-	}
+	ordinal := sql.NullInt64{Int64: tracker.next(sessionID, number, digest), Valid: true}
 	return archiveRecord{
-		sourceKey: sourceKey, digest: digest, destinationTable: "exchange_versions",
+		sourceKey: occurrenceKey("exchange", sessionID, number, digest, ordinal.Int64),
+		digest:    digest, destinationTable: "exchange_versions",
 		values: values, sourceRowID: sql.NullInt64{Int64: id, Valid: true},
 		sessionID: sessionID, exchangeNumber: number, ordinal: ordinal,
 	}, nil

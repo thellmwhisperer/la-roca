@@ -77,7 +77,8 @@ func Merge(ctx context.Context, destinationPath string, sources []Source, option
 	if err != nil {
 		return Report{}, err
 	}
-	if err := validateRecordedSources(ctx, destination, prepared, options.BatchSize); err != nil {
+	if err := validateRecordedSources(ctx, destination, prepared, options.BatchSize,
+		state.State == migrationledger.StateVerified); err != nil {
 		return Report{}, err
 	}
 	if state.State != migrationledger.StateVerified {
@@ -217,7 +218,7 @@ func closeSources(sources []preparedSource) {
 }
 
 func validateRecordedSources(ctx context.Context, destination *sql.DB,
-	sources []preparedSource, batchSize int,
+	sources []preparedSource, batchSize int, requireRecorded bool,
 ) error {
 	for _, source := range sources {
 		var digest string
@@ -226,6 +227,9 @@ func validateRecordedSources(ctx context.Context, destination *sql.DB,
 			FROM corpus_source_snapshots WHERE source_database = ?`, source.Database).
 			Scan(&digest, &existingCorpus, &recordedBatchSize)
 		if errors.Is(err, sql.ErrNoRows) {
+			if requireRecorded {
+				return fmt.Errorf("corpus source %q is absent from the verified archive", source.Database)
+			}
 			continue
 		}
 		if err != nil {

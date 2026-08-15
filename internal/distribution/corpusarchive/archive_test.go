@@ -107,6 +107,16 @@ func TestMergePreservesAliasesDivergenceAndSourceScopedChildIdentity(t *testing.
 	if replayedBatches != batches {
 		t.Fatalf("replay batches = %d, want %d", replayedBatches, batches)
 	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	additional := createFrozenSource(t, filepath.Join(directory, "additional.db"), func(*testing.T, *sql.DB) {})
+	_, err = Merge(t.Context(), destination, append(sources, Source{
+		Database: "plugin:additional-corpus", Path: additional.path, SnapshotDigest: additional.digest,
+	}), Options{BatchSize: 1})
+	if err == nil || !strings.Contains(err.Error(), "absent from the verified archive") {
+		t.Fatalf("verified archive accepted an additional source: %v", err)
+	}
 }
 
 func TestMergeRejectsAnUnverifiedOrWritableSourceIdentity(t *testing.T) {
@@ -145,8 +155,7 @@ func TestMergeRefusesAChildWithoutDeterministicParentIdentity(t *testing.T) {
 }
 
 func TestMergeEncodesAnEmptyLegacySessionIDAsANonemptyMembership(t *testing.T) {
-	directory := t.TempDir()
-	source := createFrozenSource(t, filepath.Join(directory, "source.db"), func(t *testing.T, db *sql.DB) {
+	_, db := mergeSoleSource(t, func(t *testing.T, db *sql.DB) {
 		seedSession(t, db, "", "empty legacy identity")
 		execTest(t, db, `INSERT INTO exchanges
 			(id, session_id, exchange_number, human_text, agent_text)
@@ -156,15 +165,6 @@ func TestMergeEncodesAnEmptyLegacySessionIDAsANonemptyMembership(t *testing.T) {
 		execTest(t, db, `INSERT INTO thinking_blocks
 			(id, session_id, exchange_number, full_text) VALUES (1, '', NULL, 'legacy thought')`)
 	})
-	destination := filepath.Join(directory, "destination.db")
-	_, err := Merge(t.Context(), destination, []Source{{
-		Database: "plugin:roca-corpus", Path: source.path,
-		SnapshotDigest: source.digest, ExistingCorpus: true,
-	}}, Options{BatchSize: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	db := openTestDB(t, destination)
 	var sourceKey, legacyID string
 	if err := db.QueryRow(`SELECT source_key, session_id FROM corpus_source_rows
 		WHERE source_table = 'sessions'`).Scan(&sourceKey, &legacyID); err != nil {
@@ -178,8 +178,37 @@ func TestMergeEncodesAnEmptyLegacySessionIDAsANonemptyMembership(t *testing.T) {
 		  AND exchange_number IS NULL AND occurrence_ordinal = 0`, 3)
 }
 
+func TestMergePreservesDuplicateNumberedExchangeOccurrences(t *testing.T) {
+	report, db := mergeSoleSource(t, func(t *testing.T, db *sql.DB) {
+		execTest(t, db, `DROP INDEX idx_exchanges_session_number`)
+		seedSession(t, db, "duplicate-turn", "duplicate numbered exchange")
+		seedExchange(t, db, 1, "duplicate-turn", 1, "same question", "same answer")
+		seedExchange(t, db, 2, "duplicate-turn", 1, "same question", "same answer")
+	})
+	assertFamily(t, report, "exchanges", FamilyReport{
+		Identities: 2, PhysicalRows: 1, ExactAliases: 1, FTSRows: 1,
+	})
+	assertCountQuery(t, db, `SELECT COUNT(*) FROM corpus_source_rows
+		WHERE source_table = 'exchanges' AND occurrence_ordinal IN (0, 1)`, 2)
+}
+
 type frozenFixture struct {
 	path, digest string
+}
+
+func mergeSoleSource(t *testing.T, seed func(*testing.T, *sql.DB)) (Report, *sql.DB) {
+	t.Helper()
+	directory := t.TempDir()
+	source := createFrozenSource(t, filepath.Join(directory, "source.db"), seed)
+	destination := filepath.Join(directory, "destination.db")
+	report, err := Merge(t.Context(), destination, []Source{{
+		Database: "plugin:roca-corpus", Path: source.path,
+		SnapshotDigest: source.digest, ExistingCorpus: true,
+	}}, Options{BatchSize: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return report, openTestDB(t, destination)
 }
 
 func createFrozenSource(t *testing.T, path string, seed func(*testing.T, *sql.DB)) frozenFixture {
