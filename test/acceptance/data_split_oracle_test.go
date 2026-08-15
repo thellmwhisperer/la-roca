@@ -190,7 +190,7 @@ func (w *oracleWorld) record() ([]byte, error) {
 		return nil, err
 	}
 	runner := &oracleRunner{binary: w.binary, home: home, normalizer: compatibility.Normalizer{Home: home}}
-	if err := runner.writeConfig("http://127.0.0.1:1"); err != nil {
+	if err := runner.writeConfig(providerDeadEndpoint); err != nil {
 		return nil, err
 	}
 	initResult, _ := runner.runCLI("init", "init", "init", "--db-path", runner.dbPath(), "--json")
@@ -240,7 +240,7 @@ func (w *oracleWorld) record() ([]byte, error) {
 	appendCLI("cli.store.read-only", "store", true, "store", "--layer", "discovery", "--content", oracleRefusedCLIWrite, "--json")
 	appendCLI("cli.store.read-only-count", "exec", false, "exec", oracleCountSQL(oracleRefusedCLIWrite), "--json")
 
-	if err := runner.writeConfig("http://127.0.0.1:1"); err != nil {
+	if err := runner.writeConfig(providerDeadEndpoint); err != nil {
 		return nil, err
 	}
 	appendCLI("cli.query.literal-rescue", "query", false, "query", w.fixture.LiteralQuestion, "--json")
@@ -415,9 +415,17 @@ func (r *oracleRunner) openMCP(ctx context.Context, readOnly bool) (*mcp.ClientS
 	defer cancel()
 	session, err := client.Connect(connectCtx, &mcp.CommandTransport{Command: command}, nil)
 	if err != nil {
-		return nil, func() {}, fmt.Errorf("open oracle MCP session: %w: %s", err, stderr.String())
+		return nil, func() {}, fmt.Errorf("open oracle MCP session: %w: %s", err, reapOracleServer(command, &stderr))
 	}
 	return session, func() { _ = session.Close() }, nil
+}
+
+func reapOracleServer(command *exec.Cmd, stderr *bytes.Buffer) string {
+	if command.Process != nil {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+	}
+	return strings.TrimSpace(stderr.String())
 }
 
 func seedOracleMemories(path string, memories []oracleMemory) error {
