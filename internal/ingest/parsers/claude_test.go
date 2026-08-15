@@ -162,6 +162,7 @@ func TestClaudeSessionSurvivesGarbage(t *testing.T) {
 	// A live transcript can be truncated mid-line, and a corrupt line cannot
 	// cost the whole file.
 	broken := "{not json\n" +
+		`{"type":42,"message":{"content":"a record of another shape"}}` + "\n" +
 		`{"type":"user","timestamp":"2026-08-01T10:00:00Z","message":{"content":"hello"}}` + "\n" +
 		`{"type":"assistant","timestamp":"2026-08-01T10:00:01Z","message":{"content":[{"type":"text","text":"bye"}]}}` + "\n" +
 		`{"type":"assistant","timestamp":"2026`
@@ -171,6 +172,17 @@ func TestClaudeSessionSurvivesGarbage(t *testing.T) {
 	}
 	if len(records.Sessions[0].Exchanges) != 1 {
 		t.Fatalf("exchanges = %d, want 1", len(records.Sessions[0].Exchanges))
+	}
+	// A record whose fields have another shape is unreadable, exactly as a
+	// truncated one is, and never a half-read line counted as valid.
+	unreadable := 0
+	for _, discard := range records.Discards {
+		if discard.Category == "invalid JSON" {
+			unreadable++
+		}
+	}
+	if unreadable != 3 {
+		t.Fatalf("unreadable records = %d, want 3: %+v", unreadable, records.Discards)
 	}
 }
 
