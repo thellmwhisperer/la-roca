@@ -14,6 +14,12 @@ When a candidate is returned, the agent must resolve the source text through
 core before treating it as evidence; the vector index is not a replacement for
 the core database.
 
+The route is available only when the package is installed and both
+`features.plugins = true` and `features.vector = true` are set. Its local
+embedding model must also be ready. If any prerequisite is missing, follow
+[Degraded routes](#degraded-routes) instead of presenting a literal result as
+semantic retrieval.
+
 ## Recommended route
 
 For a conceptual question:
