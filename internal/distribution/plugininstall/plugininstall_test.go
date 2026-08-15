@@ -233,7 +233,7 @@ func TestFederatedManifestInstallsAndPreservesEveryDeclaredDatabase(t *testing.T
 	root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
 	manager := plugininstall.Manager{PluginRoot: root, BinDir: bin}
 	source := filepath.Join(t.TempDir(), "federated")
-	writeFederatedPackage(t, source, "1.0.0")
+	writeFederatedPackage(t, source, "federated", "1.0.0")
 	candidate, err := plugininstall.Inspect(source, source)
 	if err != nil {
 		t.Fatal(err)
@@ -252,7 +252,7 @@ func TestFederatedManifestInstallsAndPreservesEveryDeclaredDatabase(t *testing.T
 		})
 	}
 
-	writeFederatedPackage(t, source, "2.0.0")
+	writeFederatedPackage(t, source, "federated", "2.0.0")
 	updated, err := plugininstall.Inspect(source, source)
 	if err != nil {
 		t.Fatal(err)
@@ -273,6 +273,15 @@ func TestFederatedManifestInstallsAndPreservesEveryDeclaredDatabase(t *testing.T
 	}
 	if _, err := plugininstall.VerifyInstalledPayload("federated", filepath.Join(root, "federated")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestFederatedManifestNamesMustSurviveTheWholeLifecycle(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "package")
+	writeFederatedPackage(t, source, "roca.corpus", "1.0.0")
+	if _, err := plugininstall.Inspect(source, source); err == nil ||
+		!strings.Contains(err.Error(), "safe name") {
+		t.Fatalf("inspect of an unmanageable manifest name = %v", err)
 	}
 }
 
@@ -425,13 +434,13 @@ func writePackageAt(t *testing.T, directory, name, version string, custody, exec
 	writeChecksums(t, directory, files)
 }
 
-func writeFederatedPackage(t *testing.T, directory, version string) {
+func writeFederatedPackage(t *testing.T, directory, name, version string) {
 	t.Helper()
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	manifest := map[string]any{
-		"schema": 1, "name": "federated", "version": version, "binary": "roca",
+		"schema": 1, "name": name, "version": version, "binary": "roca",
 		"databases": []map[string]any{
 			{"name": "records", "path": "records.db", "alias": "federated_records", "attachment": "resident", "retention": "Plugin managed."},
 			{"name": "runs", "path": "runs.db", "alias": "federated_runs", "attachment": "resident", "retention": "Plugin managed."},

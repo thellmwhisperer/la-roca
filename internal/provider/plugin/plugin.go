@@ -215,13 +215,14 @@ func InspectAll(name, directory string) ([]Descriptor, error) {
 	}}, nil
 }
 
+// disambiguateSchemas rewrites only the aliases discovery derives from a
+// directory name, and it weighs them against every alias in play: a derived
+// alias yields to a declared one, so a legacy directory can never collide the
+// manifest that named the same alias out of the catalogue.
 func disambiguateSchemas(descriptors []Descriptor) {
-	counts := make(map[string]int, len(descriptors))
-	for _, descriptor := range descriptors {
-		counts[descriptor.Schema]++
-	}
+	counts := schemaCounts(descriptors)
 	for index := range descriptors {
-		if counts[descriptors[index].Schema] < 2 {
+		if descriptors[index].Manifest != nil || counts[descriptors[index].Schema] < 2 {
 			continue
 		}
 		digest := sha256.Sum256([]byte(descriptors[index].Name))
@@ -229,25 +230,17 @@ func disambiguateSchemas(descriptors []Descriptor) {
 	}
 }
 
-func resolveSchemas(descriptors []Descriptor) ([]Descriptor, []string) {
-	var legacy []Descriptor
-	for _, descriptor := range descriptors {
-		if descriptor.Manifest == nil {
-			legacy = append(legacy, descriptor)
-		}
-	}
-	disambiguateSchemas(legacy)
-	legacyIndex := 0
-	for index := range descriptors {
-		if descriptors[index].Manifest == nil {
-			descriptors[index].Schema = legacy[legacyIndex].Schema
-			legacyIndex++
-		}
-	}
+func schemaCounts(descriptors []Descriptor) map[string]int {
 	counts := make(map[string]int, len(descriptors))
 	for _, descriptor := range descriptors {
 		counts[descriptor.Schema]++
 	}
+	return counts
+}
+
+func resolveSchemas(descriptors []Descriptor) ([]Descriptor, []string) {
+	disambiguateSchemas(descriptors)
+	counts := schemaCounts(descriptors)
 	conflicts := map[string]bool{}
 	var found []Descriptor
 	for _, descriptor := range descriptors {

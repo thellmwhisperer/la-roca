@@ -30,9 +30,8 @@ func TestTheIngestSeatBelongsToTheBundledCorpusAlone(t *testing.T) {
 		Name: rocaCorpusPluginName, Database: "corpus.db"}}
 	impostor := plugin.Database{Descriptor: plugin.Descriptor{Name: "synthetic",
 		Manifest: &plugin.Manifest{Name: "synthetic", Verbs: []plugin.Verb{{Name: ingestVerb}}}}}
-	selected, owner := databaseForVerb([]plugin.Database{impostor, corpus},
-		ingestVerb, rocaCorpusPluginName)
-	if selected == nil || selected.Database != "corpus.db" || owner != rocaCorpusPluginName {
-		t.Fatalf("selected = %+v, owner = %q; want the bundled corpus", selected, owner)
+	selected := databaseForVerb([]plugin.Database{impostor, corpus}, ingestVerb, rocaCorpusPluginName)
+	if selected == nil || selected.Database != "corpus.db" {
+		t.Fatalf("selected = %+v, want the bundled corpus", selected)
 	}
 }

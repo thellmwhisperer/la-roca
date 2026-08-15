@@ -240,10 +240,13 @@ func Inspect(source, directory string) (Candidate, error) {
 		if err := decoder.Decode(&metadata); err != nil {
 			return Candidate{}, fmt.Errorf("parse %s: %w", PackageFilename, err)
 		}
-		if metadata.Schema != 1 || !safeName(metadata.Name) || strings.TrimSpace(metadata.Version) == "" {
-			return Candidate{}, fmt.Errorf(
-				"%s needs schema 1, a safe name, and a version", PackageFilename)
-		}
+	}
+	// Every later lifecycle step reads the installed manifest back through
+	// safeName, so a package whose name only clears the discovery predicate
+	// would install into a directory update, verify, and uninstall refuse.
+	if metadata.Schema != 1 || !safeName(metadata.Name) || strings.TrimSpace(metadata.Version) == "" {
+		return Candidate{}, fmt.Errorf(
+			"%s needs schema 1, a safe name, and a version", PackageFilename)
 	}
 	rides, err := plugin.InspectRides(metadata.Name, directory)
 	if err != nil {

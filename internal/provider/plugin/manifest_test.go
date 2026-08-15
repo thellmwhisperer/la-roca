@@ -188,6 +188,53 @@ func TestManifestAliasCollisionsAreReportedInsteadOfSilentlyRewritten(t *testing
 	}
 }
 
+func TestADerivedAliasYieldsToTheDeclaredAliasItCollidesWith(t *testing.T) {
+	root := t.TempDir()
+	legacy := filepath.Join(root, "roca_corpus")
+	if err := os.Mkdir(legacy, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacy, plugin.SemanticFilename), []byte(`
+version: 1
+description: Synthetic legacy records.
+questions: ["Which legacy records exist?"]
+tables:
+  - name: records
+    description: Synthetic legacy records.
+    columns: [id]
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	createManifestDatabase(t, filepath.Join(legacy, "records.db"), `CREATE TABLE records (id INTEGER PRIMARY KEY)`)
+
+	declared := filepath.Join(root, "declared")
+	if err := os.Mkdir(declared, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(declared, plugin.PackageFilename), []byte(manifestFixture(`{
+  "schema": 1, "name": "declared", "version": "1", "binary": "roca-declared",
+  "databases": [{"name": "data", "path": "data.db", "alias": "plugin_roca_corpus", "attachment": "resident", "retention": "Plugin managed."}],
+  "semantic": {"databases": [{"database": "data", "description": "Synthetic declared data.", "questions": ["Which declared data exists?"], "tables": [{"name": "data", "description": "Synthetic declared data.", "columns": ["id"]}]}]},
+  "verbs": [], "capabilities": []
+}`)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	createManifestDatabase(t, filepath.Join(declared, "data.db"), `CREATE TABLE data (id INTEGER PRIMARY KEY)`)
+
+	found, warnings := plugin.Discover(root)
+	if len(found) != 2 || len(warnings) != 0 {
+		t.Fatalf("discovery = %+v, warnings = %v", found, warnings)
+	}
+	aliases := map[string]string{}
+	for _, descriptor := range found {
+		aliases[descriptor.Name] = descriptor.Schema
+	}
+	if aliases["declared"] != "plugin_roca_corpus" ||
+		!strings.HasPrefix(aliases["roca_corpus"], "plugin_roca_corpus_") {
+		t.Fatalf("resolved aliases = %v", aliases)
+	}
+}
+
 func TestMalformedManifestNeverFallsBackToALegacySemanticFile(t *testing.T) {
 	root := t.TempDir()
 	directory := filepath.Join(root, "synthetic")

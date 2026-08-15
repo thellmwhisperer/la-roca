@@ -187,7 +187,7 @@ func (s *Service) openResidents(ctx context.Context) error {
 		}
 	}
 	if s.opts.CorpusEnabled {
-		corpusDatabase, corpusOwner := databaseForVerb(s.resident, ingestVerb, rocaCorpusPluginName)
+		corpusDatabase := databaseForVerb(s.resident, ingestVerb, rocaCorpusPluginName)
 		if corpusDatabase == nil {
 			reason := strings.Join(append(slices.Clone(warnings), route.warnings...), "; ")
 			if reason == "" {
@@ -209,7 +209,7 @@ func (s *Service) openResidents(ctx context.Context) error {
 			var err error
 			s.corpus, err = store.Open(corpusDatabase.Database)
 			if err != nil {
-				return fmt.Errorf("open %s for perennial ingest: %w", corpusOwner, err)
+				return fmt.Errorf("open %s for perennial ingest: %w", rocaCorpusPluginName, err)
 			}
 		}
 	}
@@ -220,28 +220,24 @@ func (s *Service) openResidents(ctx context.Context) error {
 // has none. It is the only handle read-only has on that database, which it
 // never opens for writing.
 func (s *Service) residentCorpus() *plugin.Database {
-	database, _ := databaseForVerb(s.resident, ingestVerb, rocaCorpusPluginName)
-	return database
+	return databaseForVerb(s.resident, ingestVerb, rocaCorpusPluginName)
 }
 
 // databaseForVerb resolves the single database a verb writes into. A package
 // that declares the verb over several databases names no seat at all, because
 // the kernel would otherwise pick one of them by discovery order.
-func databaseForVerb(databases []plugin.Database, verb,
-	packageName string) (*plugin.Database, string) {
+func databaseForVerb(databases []plugin.Database, verb, packageName string) *plugin.Database {
 	var selected *plugin.Database
-	owner := ""
 	for index := range databases {
 		if !ownsVerb(databases[index].Descriptor, verb, packageName) {
 			continue
 		}
-		owner = databases[index].Name
 		if selected != nil {
-			return nil, owner
+			return nil
 		}
 		selected = &databases[index]
 	}
-	return selected, owner
+	return selected
 }
 
 func (s *Service) openQueryConnection(ctx context.Context) (*sql.Conn, []string, error) {
