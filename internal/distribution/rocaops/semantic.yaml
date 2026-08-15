@@ -11,3 +11,18 @@ tables:
     questions:
       - What did agents write or hand off?
     columns: [id, layer, content, metadata, origin, source_agent, source_model, source_surface, source_session, source_sequence, project, status, supersedes, created_at, expires_at]
+  - name: memories_fts
+    description: Accent-insensitive full-text index over operational memory content.
+    columns: [content]
+  - name: legacy_records
+    description: Quarantined agent-coordination and query-teaching records retained without pretending they are active v1 surfaces.
+    columns: [canonical_digest, record_type, payload]
+  - name: plugin_schema
+    description: The ops database schema and index versions together with its migration state.
+    columns: [singleton, plugin_name, schema_version, index_version, migration_state, verification_digest, prepared_at, verified_at, updated_at]
+  - name: migration_batches
+    description: Fully committed, checksummed source batches imported into ops custody.
+    columns: [batch_id, source_database, source_table, row_count, canonical_digest, high_water_mark, committed_at]
+  - name: custody_memberships
+    description: Source identities represented by each physical row in ops custody.
+    columns: [source_database, source_table, source_key, destination_table, destination_key, canonical_digest, batch_id]

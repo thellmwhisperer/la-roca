@@ -128,7 +128,8 @@ func TestAnAttachedSchemaUsesTheSameTableColumnAndFunctionGate(t *testing.T) {
 }
 
 func TestHiddenTableClassificationIsSharedAcrossSchemas(t *testing.T) {
-	for _, name := range []string{"ingest_file_state", "sqlite_master", "pragma_database_list", "notes_fts_data"} {
+	for _, name := range []string{"ingest_file_state", "sqlite_master", "pragma_database_list", "notes_fts_data",
+		"plugin_schema", "migration_batches", "custody_memberships"} {
 		if !sqlgate.IsHiddenTable(name) {
 			t.Errorf("%q is not hidden", name)
 		}
