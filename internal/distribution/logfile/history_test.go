@@ -184,10 +184,8 @@ func TestAGrowingSegmentResumesAtTheBytesAlreadyImported(t *testing.T) {
 }
 
 func TestABackfillThatCannotReadAWholeSegmentDoesNotArmParity(t *testing.T) {
-	root, database := historyFixture(t)
 	now := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
-	writer := NewWithOps(root, database)
-	writer.now = func() time.Time { return now }
+	root, database, writer := pinnedHistoryFixture(t, now)
 	if err := writer.Prepare(); err != nil {
 		t.Fatal(err)
 	}
@@ -217,10 +215,8 @@ func TestABackfillThatCannotReadAWholeSegmentDoesNotArmParity(t *testing.T) {
 }
 
 func TestTheDurableMalformedCountKeepsTheWindowTheJSONLReaderCounts(t *testing.T) {
-	root, database := historyFixture(t)
 	now := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
-	writer := NewWithOps(root, database)
-	writer.now = func() time.Time { return now }
+	root, _, writer := pinnedHistoryFixture(t, now)
 	if err := writer.Append(Executions, ExecutionRecord{CallRecord: CallRecord{
 		Timestamp: now, Source: "cli", Args: []string{}, OK: false,
 		Error: "synthetic invalid SQL", ErrorType: "invalid_sql",
@@ -340,6 +336,14 @@ func dropHistoryTable(t *testing.T, database string) {
 func historyFixture(t *testing.T) (string, string) {
 	t.Helper()
 	return historyFixtureAt(t, t.TempDir())
+}
+
+func pinnedHistoryFixture(t *testing.T, now time.Time) (string, string, *Writer) {
+	t.Helper()
+	root, database := historyFixture(t)
+	writer := NewWithOps(root, database)
+	writer.now = func() time.Time { return now }
+	return root, database, writer
 }
 
 func historyFixtureAt(t *testing.T, root string) (string, string) {
