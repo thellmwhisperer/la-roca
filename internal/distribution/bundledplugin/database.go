@@ -1,12 +1,15 @@
 package bundledplugin
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
 	_ "modernc.org/sqlite"
 )
 
@@ -31,4 +34,28 @@ func OpenDatabase(path string, readOnly bool) (*sql.DB, error) {
 		return nil, fmt.Errorf("open the bundled plugin database: %w", err)
 	}
 	return db, nil
+}
+
+// ApplySchema upgrades one bundled plugin's owned database in place, then
+// prepares its plugin-local DATA SPLIT ledger. Every declaration it executes is
+// additive and idempotent; source rows remain the caller's custody throughout.
+func ApplySchema(path, pluginName, declaration string, schemaVersion, indexVersion int) error {
+	db, err := OpenDatabase(path, false)
+	if err != nil {
+		return fmt.Errorf("open bundled %s database: %w", pluginName, err)
+	}
+	if _, err := db.Exec(declaration); err != nil {
+		db.Close()
+		return fmt.Errorf("apply bundled %s schema: %w", pluginName, err)
+	}
+	if err := migrationledger.Prepare(context.Background(), db, migrationledger.Definition{
+		Plugin: pluginName, SchemaVersion: schemaVersion, IndexVersion: indexVersion,
+	}); err != nil {
+		db.Close()
+		return fmt.Errorf("prepare bundled %s migration ledger: %w", pluginName, err)
+	}
+	if err := db.Close(); err != nil {
+		return fmt.Errorf("close bundled %s database: %w", pluginName, err)
+	}
+	return os.Chmod(path, 0o600)
 }

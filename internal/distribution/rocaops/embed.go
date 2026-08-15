@@ -16,5 +16,5 @@ var (
 
 func bundleSpec() bundledplugin.Spec {
 	return bundledplugin.Spec{Name: Name, DatabaseFilename: DatabaseFilename,
-		Source: BundledSource, Semantic: semantic, ApplySchema: applySchema}
+		Source: BundledSource, Semantic: semantic, ApplySchema: ApplySchema}
 }
