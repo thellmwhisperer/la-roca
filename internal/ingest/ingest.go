@@ -54,6 +54,7 @@ type SourceProgress struct {
 type SourceStats struct {
 	Processed        int
 	Read             int
+	FilesExcluded    int
 	RecordsDiscarded int
 	RecordsExcluded  int
 	ElapsedMS        int64
@@ -86,6 +87,15 @@ type DiscardCategory struct {
 	// ByDesign separates what this build never meant to read from what it could
 	// not read. Only the second is a problem anybody has to look at.
 	ByDesign bool `json:"by_design"`
+}
+
+// FileCategory accounts for every artefact a scan found without leaking its
+// path. Status is parsed, pending, skipped, excluded, or error; Reason explains why
+// the latter three did not produce a parse in this run.
+type FileCategory struct {
+	Status string `json:"status"`
+	Reason string `json:"reason"`
+	Count  int    `json:"count"`
 }
 
 // discardDetailBudget caps the per-record list. The counts are always exact;
@@ -154,10 +164,12 @@ type Result struct {
 	Sources map[string]*Counts `json:"sources"`
 	// Files says how the run divided its work: what it read, what it skipped by
 	// fingerprint, and what a source is still writing.
-	FilesRead     int `json:"files_read"`
-	FilesSkipped  int `json:"files_skipped"`
-	FilesExcluded int `json:"files_excluded"`
-	ExchangesHeld int `json:"exchanges_deferred"`
+	FilesRead     int            `json:"files_read"`
+	FilesSkipped  int            `json:"files_skipped"`
+	FilesExcluded int            `json:"files_excluded"`
+	FilesSeen     int            `json:"files_seen"`
+	FileCoverage  []FileCategory `json:"file_coverage,omitempty"`
+	ExchangesHeld int            `json:"exchanges_deferred"`
 
 	// Seen is how many source rows each store-backed reader observed before
 	// normalization, keyed by source agent: the denominator a coverage report
@@ -176,7 +188,8 @@ type Result struct {
 	ElapsedMS      int64                   `json:"elapsed_ms"`
 	SourceStats    map[string]*SourceStats `json:"-"`
 	// categories indexes DiscardSummary while the run is collapsing into it.
-	categories map[string]int `json:"-"`
+	categories     map[string]int `json:"-"`
+	fileCategories map[string]int `json:"-"`
 }
 
 // Run reads every source in the matrix once and writes what changed.
@@ -203,6 +216,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		Roots:          declaredRoots(opts.Roots),
 		Warnings:       plan.Warnings,
 		SourceStats:    map[string]*SourceStats{},
+		FilesSeen:      len(plan.Targets) + len(plan.Excluded),
 	}
 	announced := map[string]bool{}
 	liveStarted := map[string]bool{}
@@ -220,7 +234,9 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		result.source(target.SourceAgent)
 		stats := result.sourceStats(target.SourceAgent)
 		stats.RecordsExcluded++
+		stats.FilesExcluded++
 		result.FilesExcluded++
+		result.categorizeFile("excluded", target.ExclusionReason)
 		// A file the scan refuses on purpose is not a failure to read one: it is
 		// this build declining to ingest something it decided is not corpus.
 		result.discard(target, []parsers.Discard{parsers.Excluded(target.ExclusionReason)})
@@ -290,6 +306,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 			isDatabase := target.Kind == parsers.KindOpenCodeDB || target.Kind == parsers.KindHermesDB
 			if metadataErr == nil && !isDatabase && unchangedMetadata(state, target.Path, metadata) {
 				result.FilesSkipped++
+				result.categorizeFile("skipped", "unchanged fingerprint")
 				finishTarget()
 				continue
 			}
@@ -299,11 +316,13 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		}
 		if Unchanged(state, target.Path, fingerprint) {
 			result.FilesSkipped++
+			result.categorizeFile("skipped", "unchanged fingerprint")
 			finishTarget()
 			continue
 		}
 		if opts.DryRun {
 			result.FilesRead++
+			result.categorizeFile("pending", "new or changed fingerprint")
 			stats.Read++
 			finishTarget()
 			continue
@@ -313,6 +332,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 			announced[source] = true
 		}
 		result.FilesRead++
+		result.categorizeFile("parsed", "new or changed fingerprint")
 		stats.Read++
 		discardsBefore, excludedBefore := result.RecordsDiscarded, result.RecordsExcluded
 		err = ingestOne(ctx, db, layers, opts, target, fingerprint, &result)
@@ -398,9 +418,24 @@ func (r *Result) fingerprintFailure(target Target, err error) {
 		// The file was there when the scan ran and is not there now. That is a
 		// live disk, not an error worth a red run.
 		r.FilesSkipped++
+		r.categorizeFile("skipped", "disappeared after scan")
 		return
 	}
+	r.categorizeFile("error", "fingerprint failed")
 	r.fail(target, "fingerprint: "+err.Error())
+}
+
+func (r *Result) categorizeFile(status, reason string) {
+	if r.fileCategories == nil {
+		r.fileCategories = map[string]int{}
+	}
+	key := status + "\x00" + reason
+	if at, ok := r.fileCategories[key]; ok {
+		r.FileCoverage[at].Count++
+		return
+	}
+	r.fileCategories[key] = len(r.FileCoverage)
+	r.FileCoverage = append(r.FileCoverage, FileCategory{Status: status, Reason: reason, Count: 1})
 }
 
 // foreignDiscard turns one foreign-database complaint into a counted discard.
@@ -725,6 +760,7 @@ func declaredRoots(roots Roots) map[string]string {
 		"codex_root":              roots.CodexRoot,
 		"codex_sessions":          roots.CodexSessions,
 		"opencode_db":             roots.OpenCodeDB,
+		"pi_root":                 roots.PiRoot,
 		"pi_sessions":             roots.PiSessions,
 		"hermes_db":               roots.HermesDB,
 		"grok_sessions":           roots.GrokSessions,
