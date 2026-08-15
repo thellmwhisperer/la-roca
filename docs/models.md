@@ -87,7 +87,7 @@ timeout_ms = 5000
 [features]
 # The two model-facing switches are enabled by default and each one is its own
 # escape hatch. The default-off experimental ones are documented with the
-# subsystem they gate: plugins, roca_ops and cron in docs/plugins.md,
+# subsystem they gate: plugins, roca_ops, cron and vector in docs/plugins.md,
 # artifact_refresh and release_redirects in docs/lifecycle.md.
 # strict_input false skips the experimental prompt-attack signatures, for when
 # an ordinary question is falsely rejected. ask_missing_referent false stops

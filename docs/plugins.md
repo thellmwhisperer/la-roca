@@ -146,11 +146,17 @@ a verb that names a missing capability. Discovery reports malformed manifests
 as actionable errors; it never silently ignores them. Attach aliases are
 explicit and collisions are errors rather than names the kernel rewrites.
 
+`name` travels through the install directory, the `roca-<name>` executable, and
+every lifecycle argument, so an installable package restricts it to ASCII
+letters, digits, `-`, and `_`. A manifest the engine would read but the
+installer could not manage is refused at install time, not after.
+
 ### Database declarations
 
-`path` is one regular file shipped in the package. It must be a safe filename,
-not a path outside the package. `alias` is the exact SQLite schema used in
-qualified SQL, such as `receipts_records.receipts`.
+`path` is one regular file shipped in the package. It must be a safe filename
+ending in `.db`, `.sqlite`, or `.sqlite3`, not a path outside the package.
+`alias` is the exact SQLite schema used in qualified SQL, such as
+`receipts_records.receipts`.
 
 `attachment` is `resident` or `on-demand`. A resident database is available to
 every query connection. An on-demand database is selected when its semantic
@@ -265,6 +271,30 @@ alongside the kind.
 Such a package is always classified **EXECUTABLE**. It never enters data-plugin
 discovery, attachment, or the semantic catalog: it is reached only by running
 its command.
+
+### Worked executable example: vector search
+
+Vector search is deliberately an installable executable package, not a bundled
+feature and not a data plugin. The core binary has no vector implementation,
+model, or index. `features.plugins` gates the verified install lifecycle, while
+its own default-off switch gates every vector command surface:
+
+```toml
+[features]
+plugins = true
+vector = true
+```
+
+With `features.vector` absent or false, `roca vector` does not dispatch even if
+a `roca-vector` binary is on `PATH`, and `roca plugins` does not list it.
+Installation supplies the package and the switch activates it; neither install
+nor update edits configuration to turn it on, and the **EXECUTABLE** consent
+prompt remains a separate prerequisite.
+
+The source lives in `plugins/vector/` as its own Go module, and its [module
+README](../plugins/vector/README.md) owns the binary's build, command, storage,
+and quality-test contract. The generated package declares `state`, so an update
+preserves that directory and plugin uninstall or purge owns its contents.
 
 ## Verified packages and lifecycle
 
