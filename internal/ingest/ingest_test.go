@@ -40,6 +40,7 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 		"cowork_files":            2, // the metadata and the audit transcript it pairs with
 		"subagent_files":          1,
 		"pi_session_files":        1,
+		"grok_session_files":      2, // the metadata snapshot and the transcript it pairs with
 		"opencode_databases":      1,
 		"hermes_databases":        1,
 		"claude_web_export_files": 2,
@@ -51,7 +52,7 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 
 	// The families, by the source agent each of them writes under.
 	for _, agent := range []string{
-		"claude", "claude-desktop", "claude-web", "cowork", "codex", "pi", "opencode", "hermes",
+		"claude", "claude-desktop", "claude-web", "cowork", "codex", "pi", "opencode", "hermes", "grok",
 	} {
 		counts, ok := result.Sources[agent]
 		if !ok {
@@ -63,12 +64,13 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 		}
 	}
 
-	// Eight sessions: the agent runtimes plus the explicitly declared Claude web
+	// Nine sessions: the agent runtimes plus the explicitly declared Claude web
 	// export. Desktop metadata names the Claude transcript instead of opening
-	// another session. The count is asserted whole so a source that stops writing
-	// is visible here and not three waves later.
-	if result.Delta.Sessions != 8 {
-		t.Errorf("sessions = %d, want 8", result.Delta.Sessions)
+	// another session, and the Grok metadata and transcript are one session
+	// merged. The count is asserted whole so a source that stops writing is
+	// visible here and not three waves later.
+	if result.Delta.Sessions != 9 {
+		t.Errorf("sessions = %d, want 9", result.Delta.Sessions)
 	}
 	// Four memories: the Claude and Codex files plus the one exported Claude web
 	// memory. SKILL.md, the global CLAUDE.md and repository instructions are
@@ -77,9 +79,11 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 		t.Errorf("memories = %d, want 4", result.Delta.Memories)
 	}
 	// A file the scan refuses on purpose is an exclusion and not a failure to read
-	// one: the report keeps the two apart so a healthy run reads as healthy.
-	if result.FilesExcluded != 1 || result.RecordsExcluded != 1 || result.RecordsDiscarded != 0 {
-		t.Errorf("excluded files/records and discards = %d/%d/%d, want 1/1/0: %+v",
+	// one: the report keeps the two apart so a healthy run reads as healthy. The
+	// Grok runtime records (the system prompt and the compaction history injected
+	// as a synthetic user turn) are the same kind of deliberate exclusion.
+	if result.FilesExcluded != 1 || result.RecordsExcluded != 3 || result.RecordsDiscarded != 0 {
+		t.Errorf("excluded files/records and discards = %d/%d/%d, want 1/3/0: %+v",
 			result.FilesExcluded, result.RecordsExcluded, result.RecordsDiscarded, result.DiscardSummary)
 	}
 	if got := countRows(t, db.SQL(), "memories WHERE source_agent = 'config'"); got != 0 {
@@ -220,8 +224,8 @@ func TestEveryPathOfEverySourceIsFingerprinted(t *testing.T) {
 	kinds := queryColumn(t, db.SQL(), `SELECT DISTINCT source_kind FROM ingest_file_state ORDER BY 1`)
 	for _, kind := range []string{
 		"claude_memory", "claude_session", "codex_file", "codex_session",
-		"cowork_audit", "hermes_database", "opencode_database", "pi_session",
-		"session_metadata", "subagent",
+		"cowork_audit", "grok_session", "grok_session_metadata", "hermes_database",
+		"opencode_database", "pi_session", "session_metadata", "subagent",
 	} {
 		if !containsString(kinds, kind) {
 			t.Errorf("the source kind %q has no state row: %v", kind, kinds)

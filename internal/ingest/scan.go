@@ -3,6 +3,7 @@ package ingest
 import (
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -57,7 +58,7 @@ type Plan struct {
 }
 
 var supportedAgentFamilies = []string{
-	"claude", "claude-desktop", "cowork", "codex", "opencode", "pi", "hermes",
+	"claude", "claude-desktop", "cowork", "codex", "opencode", "pi", "hermes", "grok",
 }
 
 // MissingAgentFamilies returns the supported families not present in detected,
@@ -97,6 +98,7 @@ func Scan(roots Roots) Plan {
 	plan.add(scanCoworkSessions(roots), "cowork_files")
 	plan.add(scanSubagents(roots), "subagent_files")
 	plan.add(scanPiSessions(roots), "pi_session_files")
+	plan.add(scanGrokSessions(roots), "grok_session_files")
 	plan.add(scanClaudeWebExports(roots), "claude_web_export_files")
 	plan.add(scanChatGPTWebExports(roots, &plan), "chatgpt_web_export_files")
 	plan.add(existingFile(roots.OpenCodeDB, Target{
@@ -179,6 +181,7 @@ func DetectAgents(roots Roots) []string {
 		{"opencode", isFile(roots.OpenCodeDB)},
 		{"pi", pathExists(roots.PiSessions)},
 		{"hermes", isFile(roots.HermesDB)},
+		{"grok", pathExists(roots.GrokSessions)},
 	}
 	detected := make([]string, 0, len(candidates))
 	for _, candidate := range candidates {
@@ -531,6 +534,82 @@ func scanPiSessions(roots Roots) []Target {
 		}
 	}
 	return targets
+}
+
+// scanGrokSessions walks Grok Build's session store, which files sessions by the
+// URL-encoded working directory they ran in: each project directory holds one
+// directory per session, and a session holds its transcript and its metadata
+// side by side. The metadata comes first on purpose, exactly as it does for
+// Cowork: it declares the session's identity and span, and the transcript merges
+// over it.
+func scanGrokSessions(roots Roots) []Target {
+	var targets []Target
+	for _, encodedDir := range subdirectories(roots.GrokSessions) {
+		project := projectFromGrokDir(encodedDir)
+		exclusion := runnerExclusionGrok(roots, encodedDir)
+		full := filepath.Join(roots.GrokSessions, encodedDir)
+		for _, session := range subdirectories(full) {
+			if !sessionFileName.MatchString(session) {
+				continue
+			}
+			summary := filepath.Join(full, session, "summary.json")
+			hasSummary := isFile(summary)
+			if hasSummary {
+				targets = append(targets, Target{
+					Path: summary, Kind: parsers.KindGrokSessionMetadata,
+					SourceAgent: "grok", Project: project, SessionID: session,
+					FileName: "summary.json", ExclusionReason: exclusion,
+				})
+			}
+			chat := filepath.Join(full, session, "chat_history.jsonl")
+			if isFile(chat) {
+				targets = append(targets, Target{
+					Path: chat, Kind: parsers.KindGrokSession,
+					SourceAgent: "grok", Project: project, SessionID: session,
+					FileName: "chat_history.jsonl", ExclusionReason: exclusion,
+				})
+				if hasSummary {
+					// A session without its metadata still ingests: the transcript
+					// falls back to the session directory's own identity, and the
+					// pair is only ever offered when it is actually there.
+					targets[len(targets)-1].SidecarPath = summary
+				}
+			}
+		}
+	}
+	return targets
+}
+
+// projectFromGrokDir decodes the URL-escaped working directory a Grok project
+// directory names. Grok's encoding is lossless, so the decoded path is the real
+// one and its last segment is the project; there is no ambiguity for a declared
+// root to resolve.
+func projectFromGrokDir(name string) string {
+	decoded, err := url.PathUnescape(name)
+	if err != nil || decoded == "" {
+		return ""
+	}
+	return ProjectFromCwd(decoded)
+}
+
+// runnerExclusionGrok is runnerExclusion for Grok's URL-escaped directory names.
+// It decodes the directory instead of re-escaping the runner root, so the runner
+// store stays excluded even when Grok escapes a path differently from Go.
+func runnerExclusionGrok(roots Roots, encodedDir string) string {
+	if roots.RunnerDir == "" {
+		return ""
+	}
+	decoded, err := url.PathUnescape(encodedDir)
+	if err != nil || decoded == "" {
+		return ""
+	}
+	decoded = cleanRoot(decoded)
+	for _, path := range []string{roots.RunnerDir, realPath(roots.RunnerDir)} {
+		if decoded == cleanRoot(path) {
+			return "La Roca local-binary runner session is excluded"
+		}
+	}
+	return ""
 }
 
 // existingFile is one target for a path that is there and nothing for one that
