@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
@@ -542,7 +543,11 @@ func scanLegacyRow(rows *sql.Rows, columns, keyColumns []string) (legacyRow, err
 	}
 	payload := make(map[string]any, len(columns))
 	for index, column := range columns {
-		payload[column] = values[index]
+		encoded, err := encodeSourceValue(values[index])
+		if err != nil {
+			return legacyRow{}, fmt.Errorf("encode source column %s: %w", column, err)
+		}
+		payload[column] = encoded
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -562,6 +567,18 @@ func scanLegacyRow(rows *sql.Rows, columns, keyColumns []string) (legacyRow, err
 	}
 	digest := sha256.Sum256(encoded)
 	return legacyRow{sourceKey: key, payload: string(encoded), digest: hex.EncodeToString(digest[:])}, nil
+}
+
+func encodeSourceValue(value any) (any, error) {
+	switch typed := value.(type) {
+	case []byte:
+		return map[string]string{"$blob": hex.EncodeToString(typed)}, nil
+	case string:
+		if !utf8.ValidString(typed) {
+			return nil, fmt.Errorf("source text is not valid UTF-8")
+		}
+	}
+	return value, nil
 }
 
 func encodeSourceKey(values []any) (string, error) {

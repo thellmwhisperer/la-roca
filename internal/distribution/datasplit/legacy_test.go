@@ -82,7 +82,7 @@ func TestLegacyOrphansResumeIntoExplicitQuarantineWithoutChangingJourneys(t *tes
 	assertCount(t, cron, "legacy_run_logs", 4)
 	assertPayload(t, cron, "legacy_runs", 2, map[string]any{
 		"error": "synthetic timeout", "started_at": "2026-08-14T09:00:00Z",
-		"completed_at": "2026-08-14T09:01:00Z",
+		"completed_at": "2026-08-14T09:01:00Z", "raw": map[string]any{"$blob": "00ff"},
 	}, []string{"train", "ride", "gate_status"})
 	assertPayload(t, cron, "legacy_run_logs", 4, map[string]any{
 		"run_id": float64(2), "level": "error", "created_at": "2026-08-14T09:00:30Z",
@@ -175,7 +175,7 @@ func legacyFixture(t *testing.T) LegacyOptions {
 	schema := `
 		CREATE TABLE runs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, status TEXT NOT NULL,
 			project TEXT, source_agent TEXT, metadata TEXT, started_at TEXT, completed_at TEXT,
-			heartbeat_at TEXT, error TEXT, created_at TEXT);
+			heartbeat_at TEXT, error TEXT, created_at TEXT, raw BLOB);
 		CREATE TABLE run_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER NOT NULL,
 			level TEXT NOT NULL, message TEXT NOT NULL, metadata TEXT, created_at TEXT);
 		CREATE TABLE garden_channels (id TEXT PRIMARY KEY, name TEXT, topic TEXT, kind TEXT, mode TEXT,
@@ -203,9 +203,9 @@ func legacyFixture(t *testing.T) LegacyOptions {
 			sequence INTEGER, role TEXT, content TEXT, timestamp TEXT);
 		CREATE TABLE search_state (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT);
 		INSERT INTO runs VALUES
-			(1, 'first', 'completed', 'synthetic', 'fixture', '{}', '2026-08-14T08:00:00Z', '2026-08-14T08:01:00Z', NULL, NULL, '2026-08-14T08:00:00Z'),
-			(2, 'second', 'failed', 'synthetic', 'fixture', '{}', '2026-08-14T09:00:00Z', '2026-08-14T09:01:00Z', NULL, 'synthetic timeout', '2026-08-14T09:00:00Z'),
-			(3, 'third', 'cancelled', NULL, NULL, '{}', NULL, NULL, NULL, NULL, '2026-08-14T10:00:00Z');
+			(1, 'first', 'completed', 'synthetic', 'fixture', '{}', '2026-08-14T08:00:00Z', '2026-08-14T08:01:00Z', NULL, NULL, '2026-08-14T08:00:00Z', X'01'),
+			(2, 'second', 'failed', 'synthetic', 'fixture', '{}', '2026-08-14T09:00:00Z', '2026-08-14T09:01:00Z', NULL, 'synthetic timeout', '2026-08-14T09:00:00Z', X'00ff'),
+			(3, 'third', 'cancelled', NULL, NULL, '{}', NULL, NULL, NULL, NULL, '2026-08-14T10:00:00Z', NULL);
 		INSERT INTO run_logs VALUES
 			(1, 1, 'info', 'started', '{}', '2026-08-14T08:00:01Z'),
 			(2, 1, 'info', 'finished', '{}', '2026-08-14T08:00:59Z'),
