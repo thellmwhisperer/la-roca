@@ -8,14 +8,13 @@ domain database. Its durable state is configuration and plugin manifests, and
 the hub it attaches plugin-owned SQLite files to read-only is an empty in-memory
 database.
 
-The migration to that shape is incremental. The current release has a
-manifest-backed `roca-corpus`, a separate `roca-ops` domain still using its
-legacy descriptor, and a separate `roca-cron` journey store; ops and cron are
-the next bundled domains to leave their descriptors. Historical rows
-that have not moved yet remain readable through a compatibility connection, and
-queries still attach to that connection rather than to the in-memory hub. It
-preserves behavior during the rollout; it is not new kernel ownership and plugin
-authors must not depend on it.
+The migration to that shape is incremental. The current release has
+manifest-backed `roca-corpus` and `roca-ops` domains, plus a separate
+`roca-cron` journey store that still uses its legacy descriptor. Historical
+rows that have not moved yet remain readable through a compatibility
+connection, and queries still attach to that connection rather than to the
+in-memory hub. It preserves behavior during the rollout; it is not new kernel
+ownership and plugin authors must not depend on it.
 
 ## Runtime map
 
@@ -78,9 +77,9 @@ fixtures.
   `internal/provider/service/` orchestrates the compatibility product surface.
 - `internal/distribution/plugininstall/` verifies packages and preserves every
   manifest-declared database across updates.
-- `internal/distribution/rocacorpus/` ships the first public manifest and owns
-  the corpus schema. `rocaops/` and `rocacron/` retain their current descriptors
-  until their scheduled manifest migrations.
+- `internal/distribution/{rocacorpus,rocaops}/` ship resident manifests and own
+  their respective schemas. `rocacron/` retains its descriptor until its
+  scheduled manifest migration.
 - `internal/distribution/cli/` and `mcpplug/` project the shared service and
   plugin registry onto the two agent surfaces.
 - `internal/distribution/cli/artifacts.go` owns artifact discovery, rollout

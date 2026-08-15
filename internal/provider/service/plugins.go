@@ -17,6 +17,10 @@ import (
 const (
 	rocaOpsPluginName    = "roca-ops"
 	rocaCorpusPluginName = "roca-corpus" // the package La Roca ships to own perennial ingest
+	StoreVerb            = "store"
+	QueryVerb            = "query"
+	ExecVerb             = "exec"
+	SQLVerb              = "sql"
 	// IngestVerb is the canonical verb the bundled corpus manifest declares and
 	// this kernel routes. The command surface asks the same manifest for it, so
 	// the seat and the CLI command it appears as are named once.
@@ -135,7 +139,8 @@ func (s *Service) openResidents(ctx context.Context) error {
 	var candidates []plugin.Descriptor
 	if s.opts.RocaOpsEnabled {
 		for _, descriptor := range descriptors {
-			if descriptor.Name == rocaOpsPluginName && descriptor.Semantic.Attachment == plugin.AttachmentResident {
+			if ownsVerb(descriptor, StoreVerb, rocaOpsPluginName) &&
+				descriptor.Semantic.Attachment == plugin.AttachmentResident {
 				candidates = append(candidates, descriptor)
 			}
 		}
@@ -164,12 +169,7 @@ func (s *Service) openResidents(ctx context.Context) error {
 
 	var opsDatabase *plugin.Database
 	if s.opts.RocaOpsEnabled {
-		for index := range s.resident {
-			if s.resident[index].Name == rocaOpsPluginName {
-				opsDatabase = &s.resident[index]
-				break
-			}
-		}
+		opsDatabase = databaseForVerb(s.resident, StoreVerb, rocaOpsPluginName)
 		if opsDatabase == nil {
 			reason := strings.Join(append(slices.Clone(warnings), route.warnings...), "; ")
 			if reason == "" {
