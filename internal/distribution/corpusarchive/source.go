@@ -12,6 +12,7 @@ import (
 
 type archiveTable struct {
 	sourceTable      string
+	migration        string
 	destinationTable string
 	query            string
 	scan             func(*sql.Rows, *occurrenceTracker) (archiveRecord, error)
@@ -34,15 +35,21 @@ type occurrenceTracker struct {
 	counts map[string]int64
 }
 
+// Each family is its own named custody migration. The ledger keys a migration
+// to the single destination it owns, and the archive fills five of them, so one
+// name per family is what lets them commit, resume and verify side by side in
+// the corpus database.
 var archiveSourceTables = []archiveTable{
 	{
-		sourceTable: "sessions", destinationTable: "session_versions",
+		sourceTable: "sessions", migration: "corpus-archive-sessions",
+		destinationTable: "session_versions",
 		query: `SELECT session_id, source_agent, project, started_at, ended_at,
 			duration_minutes, title, metadata FROM sessions ORDER BY session_id`,
 		scan: scanSession,
 	},
 	{
-		sourceTable: "exchanges", destinationTable: "exchange_versions",
+		sourceTable: "exchanges", migration: "corpus-archive-exchanges",
+		destinationTable: "exchange_versions",
 		query: `SELECT id, session_id, exchange_number, is_after_compaction,
 			human_text, agent_text, human_timestamp, agent_timestamp,
 			response_latency_ms, model, provider, tokens_in, tokens_out,
@@ -51,21 +58,24 @@ var archiveSourceTables = []archiveTable{
 		scan: scanExchange,
 	},
 	{
-		sourceTable: "tool_uses", destinationTable: "tool_use_versions",
+		sourceTable: "tool_uses", migration: "corpus-archive-tool-uses",
+		destinationTable: "tool_use_versions",
 		query: `SELECT id, session_id, exchange_number, tool_name,
 			tool_params_summary, had_error, error_message, initiative_type
 			FROM tool_uses ORDER BY session_id, exchange_number, id`,
 		scan: scanToolUse,
 	},
 	{
-		sourceTable: "thinking_blocks", destinationTable: "thinking_block_versions",
+		sourceTable: "thinking_blocks", migration: "corpus-archive-thinking-blocks",
+		destinationTable: "thinking_block_versions",
 		query: `SELECT id, session_id, exchange_number, position_in_session, depth,
 			caution_ratio, word_count, is_after_compaction, full_text
 			FROM thinking_blocks ORDER BY session_id, exchange_number, id`,
 		scan: scanThinkingBlock,
 	},
 	{
-		sourceTable: "ingest_file_state", destinationTable: "ingest_file_state_versions",
+		sourceTable: "ingest_file_state", migration: "corpus-archive-ingest-file-state",
+		destinationTable: "ingest_file_state_versions",
 		query: `SELECT path, source_kind, source_agent, project, fingerprint,
 			last_synced_at, last_error, metadata FROM ingest_file_state ORDER BY path`,
 		scan: scanIngestState,
@@ -153,10 +163,11 @@ func commitBatch(ctx context.Context, destination *sql.DB, source preparedSource
 		HighWaterMark: highWaterMark,
 	}
 	batch, err := migrationledger.BeginBatch(ctx, destination, migrationledger.BatchSpec{
-		ID: id, SourceDatabase: source.Database, SourceTable: table.sourceTable,
+		Migration: table.migration, ID: id,
+		SourceDatabase: source.Database, SourceTable: table.sourceTable,
 	})
 	if errors.Is(err, migrationledger.ErrBatchCommitted) {
-		return verifyCommittedBatch(ctx, destination, id, source.Database, table.sourceTable, commit)
+		return verifyCommittedBatch(ctx, destination, table, id, source.Database, commit)
 	}
 	if err != nil {
 		return err
@@ -190,18 +201,19 @@ func commitBatch(ctx context.Context, destination *sql.DB, source preparedSource
 	return batch.Commit(ctx, commit)
 }
 
-func verifyCommittedBatch(ctx context.Context, destination *sql.DB, id, database, table string,
-	want migrationledger.BatchCommit,
+func verifyCommittedBatch(ctx context.Context, destination *sql.DB, table archiveTable,
+	id, database string, want migrationledger.BatchCommit,
 ) error {
 	var gotDatabase, gotTable, gotDigest, gotHighWater string
 	var gotRows int
 	err := destination.QueryRowContext(ctx, `SELECT source_database, source_table, row_count,
-		canonical_digest, high_water_mark FROM migration_batches WHERE batch_id = ?`, id).
+		canonical_digest, high_water_mark FROM migration_batches
+		WHERE migration = ? AND batch_id = ?`, table.migration, id).
 		Scan(&gotDatabase, &gotTable, &gotRows, &gotDigest, &gotHighWater)
 	if err != nil {
 		return fmt.Errorf("verify committed corpus batch %q: %w", id, err)
 	}
-	if gotDatabase != database || gotTable != table || gotRows != want.RowCount ||
+	if gotDatabase != database || gotTable != table.sourceTable || gotRows != want.RowCount ||
 		gotDigest != want.CanonicalDigest || gotHighWater != want.HighWaterMark {
 		return fmt.Errorf("committed corpus batch %q does not match its frozen source", id)
 	}

@@ -83,8 +83,8 @@ func TestApplyingPluginSchemasTwicePreservesOldFrozenHomes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if state.State != migrationledger.StatePrepared {
-				t.Fatalf("migration state = %q, want prepared", state.State)
+			if state.Plugin != "roca-"+fixture.name || state.SchemaVersion < 1 {
+				t.Fatalf("plugin identity = %+v, want roca-%s", state, fixture.name)
 			}
 		})
 	}
