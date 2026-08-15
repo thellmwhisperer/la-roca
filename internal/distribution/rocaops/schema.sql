@@ -147,3 +147,72 @@ JOIN memory_records AS records
 LEFT JOIN memory_provenance AS source
   ON source.source_database = memberships.source_database
  AND source.source_key = memberships.source_key;
+
+CREATE TABLE IF NOT EXISTS call_history (
+  id                            TEXT PRIMARY KEY,
+  timestamp                     TEXT NOT NULL,
+  stream                        TEXT NOT NULL CHECK (stream IN ('executions', 'mcp-audit')),
+  source                        TEXT NOT NULL,
+  operation                     TEXT NOT NULL,
+  args                          TEXT NOT NULL CHECK (json_valid(args)),
+  ok                            INTEGER NOT NULL CHECK (ok IN (0, 1)),
+  error                         TEXT NOT NULL DEFAULT '',
+  error_type                    TEXT NOT NULL DEFAULT '',
+  duration_ms                   INTEGER NOT NULL,
+  correlation_id                TEXT NOT NULL DEFAULT '',
+  question                      TEXT NOT NULL DEFAULT '',
+  sql                           TEXT NOT NULL DEFAULT '',
+  raw_sql                       TEXT NOT NULL DEFAULT '',
+  sql_provider                  TEXT NOT NULL DEFAULT '',
+  sql_model                     TEXT NOT NULL DEFAULT '',
+  row_count                     INTEGER NOT NULL,
+  degraded                      TEXT NOT NULL DEFAULT '',
+  fallback_reason               TEXT NOT NULL DEFAULT '',
+  retry_reason                  TEXT NOT NULL DEFAULT '',
+  queryplan                     TEXT CHECK (queryplan IS NULL OR json_valid(queryplan)),
+  provider_note                 TEXT NOT NULL DEFAULT '',
+  path                          TEXT NOT NULL DEFAULT '',
+  retried                       INTEGER NOT NULL CHECK (retried IN (0, 1)),
+  retried_sql                   INTEGER NOT NULL CHECK (retried_sql IN (0, 1)),
+  retry_type                    TEXT NOT NULL DEFAULT '',
+  model_sql                     TEXT,
+  model_sql_present             INTEGER NOT NULL CHECK (model_sql_present IN (0, 1)),
+  first_model_sql               TEXT NOT NULL DEFAULT '',
+  sql_provider_latency_ms       INTEGER,
+  sql_inference_ms              INTEGER,
+  sql_retry_provider_latency_ms INTEGER,
+  sql_retry_inference_ms        INTEGER,
+  execution_ms                  INTEGER,
+  interpretation_provider       TEXT NOT NULL DEFAULT '',
+  interpretation_model          TEXT NOT NULL DEFAULT '',
+  interpretation_ms             INTEGER,
+  source_file                   TEXT NOT NULL,
+  source_line                   INTEGER NOT NULL CHECK (source_line >= 0),
+  record_digest                 TEXT NOT NULL,
+  record_json                   TEXT NOT NULL CHECK (json_valid(record_json)),
+  created_at                    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_call_history_timestamp ON call_history(timestamp);
+CREATE INDEX IF NOT EXISTS idx_call_history_failure ON call_history(ok, source, operation, timestamp);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_call_history_correlation
+  ON call_history(correlation_id) WHERE correlation_id <> '';
+
+CREATE TABLE IF NOT EXISTS call_history_segments (
+  source_file     TEXT PRIMARY KEY,
+  stream          TEXT NOT NULL CHECK (stream IN ('executions', 'mcp-audit')),
+  content_digest  TEXT NOT NULL,
+  byte_size       INTEGER NOT NULL CHECK (byte_size >= 0),
+  line_count      INTEGER NOT NULL CHECK (line_count >= 0),
+  parsed_count    INTEGER NOT NULL CHECK (parsed_count >= 0),
+  malformed_count INTEGER NOT NULL CHECK (malformed_count >= 0),
+  imported_at     TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS call_history_state (
+  singleton       INTEGER PRIMARY KEY CHECK (singleton = 1),
+  parity_verified INTEGER NOT NULL CHECK (parity_verified IN (0, 1)),
+  malformed_lines INTEGER NOT NULL CHECK (malformed_lines >= 0),
+  unreadable_files INTEGER NOT NULL CHECK (unreadable_files >= 0),
+  checked_at      TEXT NOT NULL
+);
