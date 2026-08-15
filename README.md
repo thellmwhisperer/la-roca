@@ -313,7 +313,7 @@ exactly the information the task needs instead of a whole skill.
 | OpenCode | Sessions and exchanges, distilled from its local database |
 | Pi | Session files |
 | Hermes | Sessions, distilled from its state database |
-| Grok Build | Sessions, from the active transcript and its metadata sidecar |
+| Grok Build | Sessions, from the session update stream and its metadata sidecar |
 
 Repository `AGENTS.md` and `CLAUDE.md` files are instructions and are never
 ingested as memories. Live databases are opened as guests with SQLite
