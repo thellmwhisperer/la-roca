@@ -46,8 +46,9 @@ each bundled plugin's own
 `internal/distribution/{rocaops,rocacron,rocacorpus}/schema.sql`: a plugin
 schema change comes with a bump of that plugin's `SchemaVersion` or
 `IndexVersion` constant, which the next update adopts through
-`bundledplugin.ApplySchema`, returning the installed database to the `prepared`
-state and clearing its verification. The steps are the same either way:
+`bundledplugin.ApplySchema`, reopening every named custody migration the
+installed database hosts to the `prepared` state and clearing its verification.
+The steps are the same either way:
 
 1. Add the newest published pre-migration version to
    `internal/distribution/release/testdata/upgrade/versions.txt`. That file is

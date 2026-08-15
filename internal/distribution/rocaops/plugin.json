@@ -41,18 +41,43 @@
           },
           {
             "name": "plugin_schema",
-            "description": "The ops database schema and index versions together with its migration state.",
+            "description": "The ops database schema and index versions; its migration lifecycle lives in plugin_migrations.",
             "columns": ["singleton", "plugin_name", "schema_version", "index_version", "migration_state", "verification_digest", "prepared_at", "verified_at", "updated_at"]
+          },
+          {
+            "name": "plugin_migrations",
+            "description": "Lifecycle and verification outcome of every named custody migration this database hosts.",
+            "columns": ["migration", "destination_table", "migration_state", "verification_digest", "prepared_at", "verified_at", "updated_at"]
           },
           {
             "name": "migration_batches",
             "description": "Fully committed, checksummed source batches imported into ops custody.",
-            "columns": ["batch_id", "source_database", "source_table", "row_count", "canonical_digest", "high_water_mark", "committed_at"]
+            "columns": ["migration", "batch_id", "destination_table", "source_database", "source_table", "row_count", "canonical_digest", "high_water_mark", "committed_at"]
           },
           {
             "name": "custody_memberships",
             "description": "Source identities represented by each physical row in ops custody.",
-            "columns": ["source_database", "source_table", "source_key", "destination_table", "destination_key", "canonical_digest", "batch_id"]
+            "columns": ["migration", "source_database", "source_table", "source_key", "destination_table", "destination_key", "canonical_digest", "batch_id"]
+          },
+          {
+            "name": "memory_records",
+            "description": "Canonical physical memory payloads prepared for the future federated route.",
+            "columns": ["id", "canonical_digest", "provenance", "layer", "content", "metadata", "origin", "source_agent", "source_model", "source_surface", "source_session", "source_sequence", "project", "status", "supersedes", "created_at", "expires_at"]
+          },
+          {
+            "name": "memory_records_fts",
+            "description": "Derived accent-insensitive full-text shadow index over canonical memory payloads.",
+            "columns": ["content"]
+          },
+          {
+            "name": "memory_provenance",
+            "description": "Source-specific harvest provenance retained beside canonical physical payloads.",
+            "columns": ["source_database", "source_key", "provenance"]
+          },
+          {
+            "name": "memory_compatibility",
+            "description": "Shadow-only projection that reproduces every legacy database label and memory ID.",
+            "columns": ["source_database", "id", "physical_id", "layer", "content", "metadata", "origin", "provenance", "source_agent", "source_model", "source_surface", "source_session", "source_sequence", "project", "status", "supersedes", "created_at", "expires_at"]
           }
         ]
       }

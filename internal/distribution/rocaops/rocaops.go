@@ -10,8 +10,8 @@ const (
 	Name             = "roca-ops"
 	DatabaseFilename = "roca-ops.db"
 	BundledSource    = plugin.BundledSource
-	SchemaVersion    = 1
-	IndexVersion     = 1
+	SchemaVersion    = 2
+	IndexVersion     = 2
 )
 
 func Ensure(root, binDir, version string) (plugininstall.Result, error) {
