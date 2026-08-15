@@ -4,11 +4,18 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
+)
+
+const (
+	killedBatchDatabase = "ROCA_LEDGER_KILLED_BATCH_DATABASE"
+	killedBatchID       = "core-rows-0001"
 )
 
 func TestPrepareIsIdempotentAndASchemaUpgradeReturnsToPrepared(t *testing.T) {
@@ -193,9 +200,83 @@ func TestOnlyVerifiedDatabasesAreCutoverEligible(t *testing.T) {
 	}
 }
 
+// TestAKilledProcessResumesTheSameBatch interrupts a batch the way a machine
+// does, by killing the process that holds it open, so the resume path is proven
+// against a database no rollback call ever reached.
+func TestAKilledProcessResumesTheSameBatch(t *testing.T) {
+	if path := os.Getenv(killedBatchDatabase); path != "" {
+		killedBatchChild(path)
+		return
+	}
+	path := filepath.Join(t.TempDir(), "plugin.db")
+	db := openDatabaseAt(t, path)
+	if err := Prepare(context.Background(), db, Definition{
+		Plugin: "synthetic", SchemaVersion: 1, IndexVersion: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE destination_rows (id TEXT PRIMARY KEY, payload TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	child := exec.Command(os.Args[0], "-test.run=^TestAKilledProcessResumesTheSameBatch$")
+	child.Env = append(os.Environ(), killedBatchDatabase+"="+path)
+	output, err := child.CombinedOutput()
+	// Exit code 1 is the child dying inside the open batch; anything else means
+	// it never got that far, and the resume below would prove nothing.
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+		t.Fatalf("child interruption = %v: %s", err, output)
+	}
+
+	db = openDatabaseAt(t, path)
+	assertCount(t, db, "migration_batches", 0)
+	assertCount(t, db, "custody_memberships", 0)
+	assertCount(t, db, "destination_rows", 0)
+	if state := inspectState(t, db); state.State != StatePrepared {
+		t.Fatalf("state after a killed batch = %q", state.State)
+	}
+	commitFixtureBatch(t, db, killedBatchID, "1")
+	assertCount(t, db, "migration_batches", 1)
+	assertCount(t, db, "custody_memberships", 1)
+}
+
+// killedBatchChild opens a batch, writes into it and dies without committing.
+func killedBatchChild(path string) {
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		os.Exit(2)
+	}
+	batch, err := BeginBatch(context.Background(), db, BatchSpec{
+		ID: killedBatchID, SourceDatabase: "core", SourceTable: "rows",
+	})
+	if err != nil {
+		os.Exit(2)
+	}
+	if _, err := batch.ExecContext(context.Background(),
+		`INSERT INTO destination_rows VALUES ('20', 'interrupted')`); err != nil {
+		os.Exit(2)
+	}
+	if err := batch.AddMembership(context.Background(), Membership{
+		SourceKey: "1", DestinationTable: "destination_rows", DestinationKey: "20",
+		CanonicalDigest: fixtureDigest('a'),
+	}); err != nil {
+		os.Exit(2)
+	}
+	os.Exit(1)
+}
+
 func openTestDatabase(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "plugin.db"))
+	return openDatabaseAt(t, filepath.Join(t.TempDir(), "plugin.db"))
+}
+
+func openDatabaseAt(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
 	}

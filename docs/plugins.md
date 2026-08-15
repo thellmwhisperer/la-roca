@@ -161,8 +161,9 @@ and each ordered column list are required. The declaration is checked against
 the actual database before it reaches the model.
 
 SQLite internal tables and La Roca's hidden bookkeeping tables stay outside the
-catalog. No plugin table may declare a column named `database`; that name is
-reserved for row provenance.
+catalog: declaring one is allowed and omitting it is allowed, and either way it
+never reaches the SQL model. No plugin table may declare a column named
+`database`; that name is reserved for row provenance.
 
 ### Verbs and capabilities
 
@@ -310,7 +311,22 @@ A plugin bundled with the binary asks for no consent and resolves no source:
 artefact itself, verify the same checksums, and write the same manifest. Because
 nothing but its packaged files changes between versions, it is refreshed inside
 the directory it already occupies, so the database it owns is never unlinked
-from a process that holds it open.
+from a process that holds it open. An update applies the plugin's own schema to
+that database before the manifest records the new version, so an interrupted
+upgrade is retried by the next run instead of being reported as done; every
+declaration it replays is additive and leaves the existing rows in place.
+
+Each bundled database also describes itself. It carries its own schema and index
+version, the state of its custody migration, the source batches already
+committed into it, and the source identity behind each row it holds. Those
+`plugin_schema`, `migration_batches`, and `custody_memberships` tables are
+custody bookkeeping rather than fleet memory, so they stay hidden from every
+attached schema. A batch is recorded only once it is fully committed: an
+interrupted one leaves nothing half-migrated behind and resumes from where it
+stopped, and only a verified database becomes eligible for cutover. A bundled
+database may also declare `legacy_*` quarantine tables, which keep
+owner-specific records verbatim beside their canonical digest instead of
+reshaping them into an active surface.
 
 Removing La Roca itself removes the installed packages and asks separately
 before it touches those archives: see [Uninstall](lifecycle.md#uninstall).
@@ -352,7 +368,10 @@ roca_ops = true
 
 Its manifest migration follows corpus. Until that step lands, its legacy
 descriptor preserves the existing `store`, `query`, `sql`, and `exec`
-contracts without turning the compatibility database into kernel ownership.
+contracts without turning the compatibility database into kernel ownership. It
+owns an accent-insensitive `memories_fts` index over its own memories, rebuilt
+on every schema apply so a database that predates the index answers for the
+rows it already held.
 
 ## Scheduled rides
 
