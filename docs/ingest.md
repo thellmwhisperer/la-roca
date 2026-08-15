@@ -159,8 +159,11 @@ records the session and a re-read of either file updates only itself.
 chunks with one prompt index open one exchange; answer and thought chunks are
 reassembled in record order, tool updates complete the tool use they name, and
 the next prompt closes the exchange. Record timestamps anchor each side and the
-session span, while the prompt's model identifies the answer. Parallel
-`_x.ai/session/update` records are runtime machinery and are excluded by design.
+session span, while the prompt's model identifies the answer. A tool whose
+status reports a failure is stored as a failed tool use carrying its output, and
+plan entries are kept as thinking beside the agent's reasoning. Parallel
+`_x.ai/session/update` records are runtime machinery and are excluded by design,
+as is a content block that is not text, such as an attachment on either side.
 
 `events.jsonl` contains lifecycle telemetry rather than conversation content.
 `compaction_requests/` and `recap_requests/` contain repeated snapshots derived
