@@ -52,6 +52,9 @@ type queryFailureRecord struct {
 
 func (w *Writer) RecentQueryFailures(now time.Time, window time.Duration,
 	limit int) (QueryFailureSummary, error) {
+	if durable, ready, err := w.recentDurableQueryFailures(now, window, limit); err == nil && ready {
+		return durable, nil
+	}
 	summary := QueryFailureSummary{Since: now.UTC().Add(-window)}
 	// A segment this reader cannot open is a gap in the sample, never the
 	// verdict: the rest of the window is still the operator's best answer, and

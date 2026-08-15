@@ -398,9 +398,12 @@ than accepted.
 
 ## The bundled roca-ops plugin
 
-`roca-ops` owns operational agent writes and their query surface. It has a
-separate custodial database so its retention policy can differ from the corpus.
-The database remains behind its existing rollout switch:
+`roca-ops` owns operational agent writes, durable redacted CLI/MCP call history,
+and their query surfaces. It has a separate custodial database so its retention
+policy can differ from the corpus and cron. The package and its database are
+always installed for call-history dual-write, on every run that is not
+read-only; only the staged agent-memory write and query routes remain behind
+the existing rollout switch:
 
 ```toml
 [features]
@@ -417,7 +420,10 @@ keeps the `roca_sql` tool. Historical operational rows in the compatibility
 database remain readable; the manifest migration does not move data. It owns an
 accent-insensitive `memories_fts` index over its own memories, rebuilt on every
 schema apply so a database that predates the index answers for the rows it
-already held.
+already held. Its `call_history` table retains every current `CallRecord` field
+plus the redacted surface record. Checksummed segment and parity tables are
+internal migration bookkeeping; they do not enter generated SQL or the
+read-only query surface.
 
 DATA-2 also prepares a second, hidden memory route in that same custodial
 database. `memory_records` holds the multiset union of ops, core, and harvested

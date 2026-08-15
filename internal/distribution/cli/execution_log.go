@@ -55,6 +55,9 @@ func (env *cliEnv) logExecution(cmd *cobra.Command, started time.Time, code int,
 		Result:       resultWithoutRows(env.outcome),
 	}
 	writer := logfile.New(filepath.Dir(paths.DB))
+	if env.auditOpsDatabase != "" {
+		writer = logfile.NewWithOps(filepath.Dir(paths.DB), env.auditOpsDatabase)
+	}
 	appendRecord := writer.Append
 	if env.openedDir != "" {
 		appendRecord = writer.AppendExisting
