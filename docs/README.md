@@ -10,17 +10,19 @@ Reading order, from operator to contributor:
    choose their models.
 3. [Ingest sources](ingest.md): import downloaded data exports once and understand
    their incremental boundary.
-4. [Plugins](plugins.md): isolated SQLite data plugins, verified executable-only
+4. [Agent parser contribution kit](agent-parsers.md): support another agent with
+   a synthetic fixture, one parser file, and one registry line.
+5. [Plugins](plugins.md): isolated SQLite data plugins, verified executable-only
    packages, cron ride manifests, Git-style neighbor executables, and the stable
    machine surfaces they compose.
-5. [The MCP plug](mcp.md): the stdio server, its six tools, the TOON answer
+6. [The MCP plug](mcp.md): the stdio server, its six tools, the TOON answer
    contract, and the supported integration targets.
-6. [Operations](operations.md): the audit log contract for every CLI and MCP
+7. [Operations](operations.md): the audit log contract for every CLI and MCP
    call, the query failures `roca doctor` reports, redaction, retention, and
    the read-only boundary.
-7. [Architecture](architecture.md): the four internal domains and the import
+8. [Architecture](architecture.md): the four internal domains and the import
    rule that keeps them honest.
-8. [Releases](releases.md): how versions are cut and artefacts are built.
+9. [Releases](releases.md): how versions are cut and artefacts are built.
 
 The [README](../README.md) is the front page; these pages carry the depth.
 The [changelog](../CHANGELOG.md) is maintained by release automation, one

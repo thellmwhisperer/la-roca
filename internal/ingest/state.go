@@ -93,7 +93,9 @@ func targetFingerprint(target Target) (string, error) {
 // a plain `roca ingest` enriches a corpus without writing a second copy of it.
 //
 // A kind absent from here is one whose reading has not changed since the
-// watermark was introduced, and its files stay skipped.
+// watermark was introduced, and its files stay skipped. A contributed parser
+// declares its reading in its own registry line instead, so the contribution
+// kit stays one fixture folder, one parser file and one registry line.
 var parserVersions = map[parsers.Kind]string{
 	parsers.KindClaudeSession:           "claude-session-v6",
 	parsers.KindCoworkAudit:             "cowork-audit-v6",
@@ -107,10 +109,18 @@ var parserVersions = map[parsers.Kind]string{
 	parsers.KindChatGPTWebConversations: "chatgpt-web-conversations-v3",
 }
 
+// registeredParser is the compiled-in catalogue, bound here so the watermark can
+// be exercised against a contributed registration without shipping one.
+var registeredParser = parsers.Lookup
+
 func parserAwareFingerprint(kind parsers.Kind, fingerprint string) string {
 	version, versioned := parserVersions[kind]
 	if !versioned {
-		return fingerprint
+		registered, found := registeredParser(string(kind))
+		if !found || registered.Version == "" {
+			return fingerprint
+		}
+		version = registered.Version
 	}
 	return fingerprint + ":parser:" + version
 }

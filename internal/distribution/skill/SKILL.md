@@ -146,6 +146,30 @@ Purpose: reach a verdict that is grounded in returned rows while learning the co
   `feedback`/`pattern` for distilled lessons. Search coordination layers
   explicitly when tracing origins; ordinary knowledge search can skip them.
 
+## Unsupported agent self-onboarding
+
+If this runtime's session files are not supported, teach La Roca through the
+repository contribution kit instead of converting or uploading the user's
+history.
+
+**Never copy real conversation data into a fixture.** Inspect only enough of
+your own session-file structure to identify stable ownership markers and the
+fields needed for normalization. Then fabricate the same structure with
+invented identities, paths, prompts, answers, timestamps, and metadata. Remove
+tokens, account identifiers, repository names, and every other piece of user
+data.
+
+1. Read `docs/agent-parsers.md` and copy a synthetic worked-example folder under
+   `internal/ingest/parsers/testdata/conformance/`.
+2. Add one parser file implementing `Detect` and `Parse`; declare whether its
+   output belongs to the conversation corpus, the distilled-memory store, or
+   both. File encoding is an implementation detail, never the destination.
+3. Add its registry line and run
+   `go test ./internal/ingest/parsers -run TestRegisteredParsersConform`, then
+   `go test ./internal/ingest/parsers` and `make check`.
+4. Open a pull request with the synthetic fixture, parser, and registry line.
+   Do not attach or quote the real source file in the pull request.
+
 ## Good
 
 ```bash

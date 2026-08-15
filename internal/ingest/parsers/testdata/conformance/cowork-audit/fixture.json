@@ -1,0 +1,10 @@
+{
+  "parser": "cowork_audit",
+  "destination": "corpus",
+  "source": "audit.data",
+  "meta": {"Path":"/synthetic/cowork/audit.data","Project":"lighthouse","SourceAgent":"cowork"},
+  "want": {
+    "sessions": [{"id":"fixture-cowork","source_agent":"cowork","project":"lighthouse","exchanges":[{"human_text":"Inspect the fictional lens.","agent_text":"The lens is clear."}]}],
+    "memories": []
+  }
+}

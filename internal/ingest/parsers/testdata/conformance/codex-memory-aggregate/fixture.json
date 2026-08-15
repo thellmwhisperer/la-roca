@@ -1,0 +1,10 @@
+{
+  "parser": "codex_memory_aggregate",
+  "destination": "store",
+  "source": "aggregate.data",
+  "meta": {"Path":"/synthetic/codex/aggregate.data","FileName":"aggregate.data","SourceAgent":"codex"},
+  "want": {
+    "sessions": [],
+    "memories": [{"layer":"feedback","content":"## Thread `fixture-thread`\nupdated_at: 2026-08-01T13:00:00Z\ncwd: /synthetic/lighthouse\nA fabricated thread memory.","source_agent":"codex"}]
+  }
+}

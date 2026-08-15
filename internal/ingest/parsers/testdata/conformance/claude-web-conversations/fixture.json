@@ -1,0 +1,10 @@
+{
+  "parser": "claude_web_conversations",
+  "destination": "corpus",
+  "source": "conversations.data",
+  "meta": {"Path":"/synthetic/claude-web/conversations.data","SourceAgent":"claude-web"},
+  "want": {
+    "sessions": [{"id":"fixture-claude-web","source_agent":"claude-web","title":"Synthetic observatory","exchanges":[{"human_text":"Name the fictional star.","agent_text":"Cobalt Finch."}]}],
+    "memories": []
+  }
+}

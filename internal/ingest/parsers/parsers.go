@@ -313,42 +313,19 @@ type Memory struct {
 	CreatedAt string
 }
 
-// byKind is the whole matrix of file artefacts: one kind, one function that
-// decodes it. The two database kinds are absent because internal/ingest reads
-// them itself, and a kind with no entry here is a refusal by name.
-var byKind = map[Kind]func([]byte, FileMeta) (Records, error){
-	KindClaudeSession:   ParseClaudeSession,
-	KindCoworkAudit:     ParseCoworkAudit,
-	KindSessionMetadata: ParseSessionMetadata,
-	KindCodexSession:    ParseCodexSession,
-	KindCodexHistory: func(content []byte, meta FileMeta) (Records, error) {
-		return parseCodexHistory(content, meta), nil
-	},
-	KindSubagent:             ParseSubagent,
-	KindPiSession:            ParsePiSession,
-	KindClaudeMemory:         ParseClaudeMemory,
-	KindCodexFile:            ParseCodexFile,
-	KindCodexMemoryAggregate: ParseCodexMemoryAggregate,
-	KindClaudeWebConversations: func(content []byte, meta FileMeta) (Records, error) {
-		return ParseClaudeWebConversations(strings.NewReader(string(content)), meta)
-	},
-	KindClaudeWebMemories: func(content []byte, meta FileMeta) (Records, error) {
-		return ParseClaudeWebMemories(strings.NewReader(string(content)), meta)
-	},
-	KindChatGPTWebConversations: func(content []byte, meta FileMeta) (Records, error) {
-		return ParseChatGPTWebConversations(strings.NewReader(string(content)), meta)
-	},
-}
-
 // Parse turns an artefact into normalized records. It does not open the
 // database, it does not consult the clock, and it is deterministic: same
 // content, same result.
 func Parse(kind Kind, content []byte, meta FileMeta) (Records, error) {
-	parse, known := byKind[kind]
+	registered, known := Lookup(string(kind))
 	if !known {
 		return Records{}, fmt.Errorf("there is no parser for source kind %q", kind)
 	}
-	return parse(content, meta)
+	// The current scanner already selected this stable source kind. New
+	// contribution callers use Registration.Parse, which also asks Detect; this
+	// compatibility route preserves record-level diagnostics for malformed files
+	// that the established scanner deliberately handed to its parser.
+	return registered.parseClaimed(File{Content: content, Meta: meta})
 }
 
 // lines splits a JSONL artefact, dropping the blank lines. A line that is not

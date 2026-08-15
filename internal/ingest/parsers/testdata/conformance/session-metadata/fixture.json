@@ -1,0 +1,10 @@
+{
+  "parser": "session_metadata",
+  "destination": "corpus",
+  "source": "metadata.data",
+  "meta": {"Path":"/synthetic/desktop/metadata.data","Project":"lighthouse","SourceAgent":"claude-desktop"},
+  "want": {
+    "sessions": [{"id":"fixture-desktop","source_agent":"claude-desktop","project":"lighthouse","title":"Synthetic desk","exchanges":[]}],
+    "memories": []
+  }
+}
