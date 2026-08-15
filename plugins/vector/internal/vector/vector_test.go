@@ -253,6 +253,21 @@ func TestDeprecatedMemoryLayersStayOutOfTheIndexAndResults(t *testing.T) {
 			t.Fatalf("deprecated memory returned: %+v", result)
 		}
 	}
+	db, err = sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var retired int
+	err = db.QueryRow(`SELECT COUNT(*) FROM chunks WHERE source_kind='memories' AND lower(COALESCE(json_extract(locator,'$.layer'),'')) LIKE 'rocodata\\_%' ESCAPE '\\'`).Scan(&retired)
+	if closeErr := db.Close(); err == nil && closeErr != nil {
+		err = closeErr
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retired != 0 {
+		t.Fatalf("retired chunks left after query reconciliation: %d", retired)
+	}
 }
 
 func TestTargetedSessionDeltaInvalidatesOldTextOnce(t *testing.T) {

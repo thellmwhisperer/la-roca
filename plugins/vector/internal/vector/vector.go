@@ -304,6 +304,9 @@ func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) 
 	} else if err != nil {
 		return nil, fmt.Errorf("inspect vector database: %w", err)
 	}
+	if err := i.purgeDeprecatedChunks(ctx); err != nil {
+		return nil, fmt.Errorf("purge deprecated vector chunks: %w", err)
+	}
 	store, err := openSQLite(i.VectorPath, true)
 	if err != nil {
 		return nil, fmt.Errorf("open vector database: %w", err)
@@ -377,6 +380,21 @@ func (i Index) waitingForIndex(path string) {
 	if i.Notice != nil {
 		i.Notice(fmt.Sprintf("another indexing run holds %s; waiting for it to finish", path))
 	}
+}
+
+func (i Index) purgeDeprecatedChunks(ctx context.Context) error {
+	release, err := lockIndex(ctx, i.VectorPath+".index.lock", i.waitingForIndex)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	store, err := openSQLite(i.VectorPath, false)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	return purgeDeprecatedChunks(ctx, store)
 }
 
 func (i Index) validate() error {
@@ -709,6 +727,53 @@ func nearestCandidateLimit(ctx context.Context, db *sql.DB, k int) (int, error) 
 		limit = total
 	}
 	return int(limit), nil
+}
+
+func purgeDeprecatedChunks(ctx context.Context, db *sql.DB) error {
+	var chunksTable int
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='chunks')`).Scan(&chunksTable); err != nil {
+		return err
+	}
+	if chunksTable == 0 {
+		return nil
+	}
+	rows, err := db.QueryContext(ctx, `SELECT id FROM chunks WHERE source_kind='memories' AND lower(COALESCE(json_extract(locator,'$.layer'),'')) LIKE 'rocodata\_%' ESCAPE '\'`)
+	if err != nil {
+		return err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, id := range ids {
+		if err := deleteEmbeddings(ctx, tx, id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM chunks WHERE id=?`, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 type neighbor struct {
