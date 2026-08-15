@@ -10,7 +10,7 @@ const (
 	Name             = "roca-ops"
 	DatabaseFilename = "roca-ops.db"
 	BundledSource    = plugin.BundledSource
-	SchemaVersion    = 2
+	SchemaVersion    = 3
 	IndexVersion     = 2
 )
 

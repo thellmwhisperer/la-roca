@@ -337,7 +337,8 @@ func TestDATA2KeepsTheVerifiedSnapshotWhenAReplacementFails(t *testing.T) {
 	if _, err := MigrateMemoryCustody(t.Context(), options); err == nil {
 		t.Fatal("expected the interrupted migration to fail")
 	}
-	frozen := filepath.Join(fixture.snapshots, ".core-schema2-index2.snapshot.db")
+	frozen := filepath.Join(fixture.snapshots,
+		fmt.Sprintf(".core-schema%d-index%d.snapshot.db", SchemaVersion, IndexVersion))
 	before, err := os.ReadFile(frozen)
 	if err != nil {
 		t.Fatal(err)

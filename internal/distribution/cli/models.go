@@ -51,7 +51,11 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 			for _, proposal := range proposals {
 				report.CapabilityProposals = append(report.CapabilityProposals, proposal.Proposal.Alert)
 			}
-			failures, logErr := logfile.New(svc.DataDir()).RecentQueryFailures(
+			audit := logfile.New(svc.DataDir())
+			if env.auditOpsDatabase != "" {
+				audit = logfile.NewWithOps(svc.DataDir(), env.auditOpsDatabase)
+			}
+			failures, logErr := audit.RecentQueryFailures(
 				time.Now(), doctorQueryFailureWindow, doctorQueryFailureLimit)
 			if logErr != nil {
 				report.Warnings = append(report.Warnings,
