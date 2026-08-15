@@ -61,10 +61,11 @@ type BatchCommit struct {
 }
 
 type Batch struct {
-	conn *sql.Conn
-	tx   *sql.Tx
-	spec BatchSpec
-	done bool
+	conn        *sql.Conn
+	tx          *sql.Tx
+	spec        BatchSpec
+	foreignKeys int
+	done        bool
 }
 
 const schema = `
@@ -161,15 +162,14 @@ func Prepare(ctx context.Context, db *sql.DB, definition Definition) error {
 }
 
 func Inspect(ctx context.Context, db *sql.DB) (Snapshot, error) {
-	var exists int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master
-		WHERE type = 'table' AND name = 'plugin_schema'`).Scan(&exists); err != nil {
-		return Snapshot{}, fmt.Errorf("inspect plugin migration ledger: %w", err)
+	snapshot, found, err := inspect(ctx, db)
+	if err != nil {
+		return Snapshot{}, err
 	}
-	if exists == 0 {
+	if !found {
 		return Snapshot{State: StateAbsent}, nil
 	}
-	return inspectDatabase(ctx, db)
+	return snapshot, nil
 }
 
 func BeginBatch(ctx context.Context, db *sql.DB, spec BatchSpec) (*Batch, error) {
@@ -180,51 +180,52 @@ func BeginBatch(ctx context.Context, db *sql.DB, spec BatchSpec) (*Batch, error)
 	if err != nil {
 		return nil, fmt.Errorf("reserve plugin migration connection: %w", err)
 	}
-	fail := func(err error) (*Batch, error) {
+	batch := &Batch{conn: conn, spec: spec}
+	if err := conn.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&batch.foreignKeys); err != nil {
 		conn.Close()
+		return nil, fmt.Errorf("read plugin migration foreign key mode: %w", err)
+	}
+	fail := func(err error) (*Batch, error) {
+		if batch.tx != nil {
+			batch.tx.Rollback()
+		}
+		batch.release()
 		return nil, err
 	}
 	if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
 		return fail(fmt.Errorf("enable plugin migration foreign keys: %w", err))
 	}
-	tx, err := conn.BeginTx(ctx, nil)
+	batch.tx, err = conn.BeginTx(ctx, nil)
 	if err != nil {
 		return fail(fmt.Errorf("begin plugin migration batch: %w", err))
 	}
-	failTx := func(err error) (*Batch, error) {
-		tx.Rollback()
+	current, found, err := inspect(ctx, batch.tx)
+	if err != nil {
 		return fail(err)
 	}
-	current, found, err := inspect(ctx, tx)
-	if err != nil {
-		return failTx(err)
-	}
 	if !found {
-		return failTx(fmt.Errorf("plugin migration ledger is absent"))
+		return fail(fmt.Errorf("plugin migration ledger is absent"))
 	}
 	if current.State == StateVerified {
-		return failTx(ErrVerified)
+		return fail(ErrVerified)
 	}
 	if current.State != StatePrepared && current.State != StateBatchInProgress {
-		return failTx(fmt.Errorf("plugin migration state is %q, want %q or %q",
+		return fail(fmt.Errorf("plugin migration state is %q, want %q or %q",
 			current.State, StatePrepared, StateBatchInProgress))
 	}
 	var committed int
-	if err := tx.QueryRowContext(ctx,
+	if err := batch.tx.QueryRowContext(ctx,
 		"SELECT COUNT(*) FROM migration_batches WHERE batch_id = ?", spec.ID).Scan(&committed); err != nil {
-		return failTx(fmt.Errorf("inspect migration batch %q: %w", spec.ID, err))
+		return fail(fmt.Errorf("inspect migration batch %q: %w", spec.ID, err))
 	}
 	if committed != 0 {
-		return failTx(fmt.Errorf("%w: %s", ErrBatchCommitted, spec.ID))
+		return fail(fmt.Errorf("%w: %s", ErrBatchCommitted, spec.ID))
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE plugin_schema SET migration_state = ?,
+	if _, err := batch.tx.ExecContext(ctx, `UPDATE plugin_schema SET migration_state = ?,
 		updated_at = datetime('now') WHERE singleton = 1`, StateBatchInProgress); err != nil {
-		return failTx(fmt.Errorf("mark migration batch in progress: %w", err))
+		return fail(fmt.Errorf("mark migration batch in progress: %w", err))
 	}
-	if _, err := tx.ExecContext(ctx, "PRAGMA defer_foreign_keys = ON"); err != nil {
-		return failTx(fmt.Errorf("defer plugin migration foreign keys: %w", err))
-	}
-	return &Batch{conn: conn, tx: tx, spec: spec}, nil
+	return batch, nil
 }
 
 func (batch *Batch) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
@@ -275,15 +276,11 @@ func (batch *Batch) Commit(ctx context.Context, commit BatchCommit) error {
 		batch.spec.SourceTable, commit.RowCount, commit.CanonicalDigest, commit.HighWaterMark); err != nil {
 		return batch.fail(fmt.Errorf("commit migration batch record: %w", err))
 	}
-	if _, err := batch.tx.ExecContext(ctx, `UPDATE plugin_schema SET migration_state = ?,
-		updated_at = datetime('now') WHERE singleton = 1`, StateBatchInProgress); err != nil {
-		return batch.fail(fmt.Errorf("finish migration batch: %w", err))
-	}
 	if err := batch.tx.Commit(); err != nil {
 		return batch.fail(fmt.Errorf("commit migration batch: %w", err))
 	}
 	batch.done = true
-	return batch.conn.Close()
+	return batch.release()
 }
 
 func (batch *Batch) Rollback() error {
@@ -292,11 +289,20 @@ func (batch *Batch) Rollback() error {
 	}
 	batch.done = true
 	err := batch.tx.Rollback()
-	closeErr := batch.conn.Close()
+	releaseErr := batch.release()
 	if err != nil && !errors.Is(err, sql.ErrTxDone) {
 		return err
 	}
-	return closeErr
+	return releaseErr
+}
+
+// release restores the connection's foreign key enforcement before handing it
+// back to the pool: the batch borrows a pooled connection, and a pragma left
+// behind would enforce constraints on whatever unrelated write reuses it.
+func (batch *Batch) release() error {
+	_, err := batch.conn.ExecContext(context.Background(),
+		fmt.Sprintf("PRAGMA foreign_keys = %d", batch.foreignKeys))
+	return errors.Join(err, batch.conn.Close())
 }
 
 func (batch *Batch) fail(err error) error {
@@ -313,7 +319,8 @@ func Verify(ctx context.Context, db *sql.DB, digest string) error {
 	}
 	result, err := db.ExecContext(ctx, `UPDATE plugin_schema SET migration_state = ?,
 		verification_digest = ?, verified_at = datetime('now'), updated_at = datetime('now')
-		WHERE singleton = 1 AND migration_state = ?`, StateVerified, digest, StateBatchInProgress)
+		WHERE singleton = 1 AND migration_state <> ?
+		  AND EXISTS (SELECT 1 FROM migration_batches)`, StateVerified, digest, StateVerified)
 	if err != nil {
 		return fmt.Errorf("verify plugin migration: %w", err)
 	}
@@ -339,40 +346,31 @@ type rowQuerier interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
+// inspect probes for the ledger before reading it, so a database that never had
+// one is reported as absent instead of failing on a missing table.
 func inspect(ctx context.Context, querier rowQuerier) (Snapshot, bool, error) {
-	snapshot, err := inspectWith(ctx, querier)
-	if errors.Is(err, sql.ErrNoRows) {
+	var exists int
+	if err := querier.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master
+		WHERE type = 'table' AND name = 'plugin_schema'`).Scan(&exists); err != nil {
+		return Snapshot{}, false, fmt.Errorf("inspect plugin migration ledger: %w", err)
+	}
+	if exists == 0 {
 		return Snapshot{}, false, nil
 	}
-	return snapshot, err == nil, err
-}
-
-func inspectDatabase(ctx context.Context, db *sql.DB) (Snapshot, error) {
-	snapshot, found, err := inspect(ctx, db)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	if !found {
-		return Snapshot{State: StateAbsent}, nil
-	}
-	return snapshot, nil
-}
-
-func inspectWith(ctx context.Context, querier rowQuerier) (Snapshot, error) {
 	var snapshot Snapshot
 	var verification sql.NullString
 	err := querier.QueryRowContext(ctx, `SELECT plugin_name, schema_version, index_version,
 		migration_state, verification_digest FROM plugin_schema WHERE singleton = 1`).Scan(
 		&snapshot.Plugin, &snapshot.SchemaVersion, &snapshot.IndexVersion,
 		&snapshot.State, &verification)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Snapshot{}, false, nil
+	}
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return Snapshot{}, err
-		}
-		return Snapshot{}, fmt.Errorf("read plugin migration state: %w", err)
+		return Snapshot{}, false, fmt.Errorf("read plugin migration state: %w", err)
 	}
 	snapshot.VerificationDigest = verification.String
-	return snapshot, nil
+	return snapshot, true, nil
 }
 
 func (definition Definition) valid() error {

@@ -2,10 +2,13 @@ package bundledplugin_test
 
 import (
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacron"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
@@ -84,6 +87,43 @@ func TestApplyingPluginSchemasTwicePreservesOldFrozenHomes(t *testing.T) {
 				t.Fatalf("migration state = %q, want prepared", state.State)
 			}
 		})
+	}
+}
+
+func TestAnInterruptedUpgradeLeavesTheManifestOnTheVersionItsSchemaReached(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "plugins")
+	directory := filepath.Join(root, "synthetic-ledger")
+	live := filepath.Join(directory, "synthetic.db")
+	interrupted := false
+	spec := bundledplugin.Spec{
+		Name: "synthetic-ledger", DatabaseFilename: "synthetic.db",
+		Source: "bundled:roca",
+		Semantic: []byte("version: 1\nattachment: on-demand\n" +
+			"description: Synthetic bundle whose schema upgrade is interrupted.\n" +
+			"questions:\n  - Which synthetic rows exist?\n" +
+			"tables:\n  - name: records\n    description: Synthetic rows.\n    columns: [id]\n"),
+		ApplySchema: func(path string) error {
+			if interrupted && path == live {
+				return errors.New("synthetic interruption")
+			}
+			return bundledplugin.ApplySchema(path, "synthetic-ledger",
+				`CREATE TABLE IF NOT EXISTS records (id INTEGER PRIMARY KEY)`, 1, 0)
+		},
+	}
+	if _, err := bundledplugin.Ensure(root, t.TempDir(), "v-one", spec); err != nil {
+		t.Fatal(err)
+	}
+
+	interrupted = true
+	if _, err := bundledplugin.Ensure(root, t.TempDir(), "v-two", spec); err == nil {
+		t.Fatal("an interrupted schema upgrade was reported as a successful install")
+	}
+	manifest, err := plugininstall.ReadManifest(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Version != "v-one" {
+		t.Fatalf("manifest version = %q, but its schema never reached that version", manifest.Version)
 	}
 }
 

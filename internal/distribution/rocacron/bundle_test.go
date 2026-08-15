@@ -34,8 +34,8 @@ func TestEnsureInstallsTheCustodialJourneyPluginAndPreservesItsDatabase(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(validated.Tables) != 6 {
-		t.Fatalf("visible cron tables = %d, want 6", len(validated.Tables))
+	if len(validated.Tables) != 3 {
+		t.Fatalf("visible cron tables = %d, want 3", len(validated.Tables))
 	}
 	db, err := sql.Open("sqlite", descriptor.Database)
 	if err != nil {

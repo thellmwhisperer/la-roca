@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -44,6 +45,33 @@ func TestPrepareIsIdempotentAndASchemaUpgradeReturnsToPrepared(t *testing.T) {
 	got = inspectState(t, db)
 	if got.SchemaVersion != 2 || got.State != StatePrepared || got.VerificationDigest != "" {
 		t.Fatalf("schema upgrade = %+v", got)
+	}
+	if err := Verify(context.Background(), db, fixtureDigest('a')); err != nil {
+		t.Fatalf("committed batches cannot be verified after a schema upgrade: %v", err)
+	}
+}
+
+func TestABatchNamesAnAbsentLedgerAndLeavesForeignKeysAsItFoundThem(t *testing.T) {
+	db := openTestDatabase(t)
+	_, err := BeginBatch(context.Background(), db, BatchSpec{
+		ID: "core-rows-0001", SourceDatabase: "core", SourceTable: "rows",
+	})
+	if err == nil || !strings.Contains(err.Error(), "plugin migration ledger is absent") {
+		t.Fatalf("batch against a database without a ledger = %v", err)
+	}
+	if err := Prepare(context.Background(), db, Definition{
+		Plugin: "synthetic", SchemaVersion: 1, IndexVersion: 0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	commitFixtureBatch(t, db, "core-rows-0001", "1")
+
+	var enforced int
+	if err := db.QueryRow("PRAGMA foreign_keys").Scan(&enforced); err != nil {
+		t.Fatal(err)
+	}
+	if enforced != 0 {
+		t.Fatal("a committed batch left foreign key enforcement on the pooled connection")
 	}
 }
 

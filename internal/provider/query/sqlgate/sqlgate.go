@@ -39,8 +39,13 @@ const MaxLimit = 1000
 // invisibleTables are the ones that exist in the schema but are not queryable:
 // the tool's internal state, not the fleet's memory. They are dropped from the
 // validation database, so asking about them is asking about what does not exist.
+//
+// The last three are the plugin-local DATA SPLIT ledger. A plugin declares them
+// so its database stays self-describing, but which batch carried which row is
+// custody bookkeeping and never an answer about the fleet.
 var invisibleTables = []string{
 	"ingest_file_state", "search_state",
+	"plugin_schema", "migration_batches", "custody_memberships",
 }
 
 // ftsShadowSuffixes name the shadow tables FTS5 creates behind each virtual
