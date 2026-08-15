@@ -11,10 +11,11 @@ roca ingest /path/to/extracted-export
 ```
 
 The path belongs only to that invocation. A later `roca ingest` with no path,
-including the nightly run, reads only live Claude, Codex, Pi, OpenCode, Hermes,
-Grok Build, and Cowork sources. It fingerprints each source file by path and
-content, so an explicit rerun of the same export is a zero delta and a newer
-export contributes only message identities that have not already landed.
+including the nightly run, reads only live Claude, Codex, Qwen Code, GLM, Pi,
+OpenCode, Hermes, Grok Build, and Cowork sources. It fingerprints each source
+file by path and content, so an explicit rerun of the same export is a zero
+delta and a newer export contributes only message identities that have not
+already landed.
 
 The directory decides which vendor's parser reads it: `memories.json`, or a
 `conversations.json` of `chat_messages` records, is a Claude export, and
@@ -26,6 +27,12 @@ cannot be read. Every refusal happens before ingest starts.
 To add another agent source to the single binary, follow the public
 [agent parser contribution kit](agent-parsers.md). Its conformance suite pins
 detection, normalization, and destination routing with synthetic fixtures.
+
+Qwen Code project chats under `~/.qwen/projects` become sessions with complete
+turns, tool calls, usage, and the model each assistant record states. Runtime
+and debug records stay outside the corpus. GLM Markdown under `~/.glm/skills`
+becomes user-layer memory, one stable record per file; GLM records no model for
+those documents, so their model provenance remains empty.
 
 Older configuration files may still contain `anthropic_export_paths` or
 `openai_export_paths`. Those keys are leftovers: ingest ignores them, and they
@@ -245,8 +252,9 @@ produced: `model`, `provider`, `tokens_in`, `tokens_out`, `tokens_reasoning` and
 is NULL wherever the source states nothing, which is normal and not missing
 data. Read them with `IS NOT NULL` and never as a zero: a Claude transcript
 counts tokens and names no provider, a Codex rollout counts the reasoning tokens
-apart, Pi and OpenCode also price the turn, Hermes measures a whole session
-rather than a turn, the Claude web export states none of it, and the ChatGPT
+apart, Qwen Code names the model and counts each request in a tool loop, Pi and
+OpenCode also price the turn, Hermes measures a whole session rather than a turn,
+the Claude web export states none of it, and the ChatGPT
 export names its model and provider without stating usage.
 
 Thinking text stays in `thinking_blocks`, keyed to its session and exchange; it
