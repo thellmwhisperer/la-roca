@@ -47,7 +47,7 @@ func TestTheBundledCorpusOwnsThePerennialHarvestSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	if descriptor.Semantic.Attachment != plugin.AttachmentResident ||
-		!descriptor.Semantic.Custody || len(validated.Tables) != 9 {
+		!descriptor.Semantic.Custody || len(validated.Tables) != 13 {
 		t.Fatalf("corpus contract = %+v, visible tables = %d",
 			descriptor.Semantic, len(validated.Tables))
 	}

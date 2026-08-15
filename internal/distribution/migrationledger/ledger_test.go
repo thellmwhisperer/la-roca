@@ -1,0 +1,232 @@
+package migrationledger
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"path/filepath"
+	"testing"
+
+	_ "modernc.org/sqlite"
+)
+
+func TestPrepareIsIdempotentAndASchemaUpgradeReturnsToPrepared(t *testing.T) {
+	db := openTestDatabase(t)
+	definition := Definition{Plugin: "synthetic", SchemaVersion: 1, IndexVersion: 2}
+	if err := Prepare(context.Background(), db, definition); err != nil {
+		t.Fatal(err)
+	}
+	if err := Prepare(context.Background(), db, definition); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Inspect(context.Background(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Plugin != definition.Plugin || got.SchemaVersion != 1 || got.IndexVersion != 2 || got.State != StatePrepared {
+		t.Fatalf("prepared database = %+v", got)
+	}
+
+	commitFixtureBatch(t, db, "before-verification", "1")
+	if err := Verify(context.Background(), db, fixtureDigest('d')); err != nil {
+		t.Fatal(err)
+	}
+	if err := Prepare(context.Background(), db, definition); err != nil {
+		t.Fatal(err)
+	}
+	got, err = Inspect(context.Background(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != StateVerified {
+		t.Fatalf("same schema replay changed state to %q", got.State)
+	}
+
+	definition.SchemaVersion++
+	if err := Prepare(context.Background(), db, definition); err != nil {
+		t.Fatal(err)
+	}
+	got, err = Inspect(context.Background(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SchemaVersion != 2 || got.State != StatePrepared || got.VerificationDigest != "" {
+		t.Fatalf("schema upgrade = %+v", got)
+	}
+}
+
+func TestInterruptedBatchIsAbsentAndTheSameBatchResumes(t *testing.T) {
+	db := openTestDatabase(t)
+	if err := Prepare(context.Background(), db, Definition{
+		Plugin: "synthetic", SchemaVersion: 1, IndexVersion: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE destination_rows (id TEXT PRIMARY KEY, payload TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+
+	pending, err := BeginBatch(context.Background(), db, BatchSpec{
+		ID: "core-memories-0001", SourceDatabase: "core", SourceTable: "memories",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inProgress State
+	if err := pending.tx.QueryRowContext(context.Background(),
+		`SELECT migration_state FROM plugin_schema WHERE singleton = 1`).Scan(&inProgress); err != nil {
+		t.Fatal(err)
+	}
+	if inProgress != StateBatchInProgress {
+		t.Fatalf("transactional state = %q", inProgress)
+	}
+	if _, err := pending.ExecContext(context.Background(),
+		`INSERT INTO destination_rows VALUES ('20', 'interrupted')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := pending.AddMembership(context.Background(), Membership{
+		SourceKey: "10", DestinationTable: "destination_rows", DestinationKey: "20",
+		CanonicalDigest: fixtureDigest('a'),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pending.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+
+	assertCount(t, db, "migration_batches", 0)
+	assertCount(t, db, "custody_memberships", 0)
+	assertCount(t, db, "destination_rows", 0)
+	state, err := Inspect(context.Background(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.State != StatePrepared {
+		t.Fatalf("state after interruption = %q", state.State)
+	}
+
+	resumed, err := BeginBatch(context.Background(), db, BatchSpec{
+		ID: "core-memories-0001", SourceDatabase: "core", SourceTable: "memories",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resumed.ExecContext(context.Background(),
+		`INSERT INTO destination_rows VALUES ('20', 'committed')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := resumed.AddMembership(context.Background(), Membership{
+		SourceKey: "10", DestinationTable: "destination_rows", DestinationKey: "20",
+		CanonicalDigest: fixtureDigest('a'),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := resumed.Commit(context.Background(), BatchCommit{
+		RowCount: 1, CanonicalDigest: fixtureDigest('b'), HighWaterMark: "10",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	assertCount(t, db, "migration_batches", 1)
+	assertCount(t, db, "custody_memberships", 1)
+	assertCount(t, db, "destination_rows", 1)
+	state, err = Inspect(context.Background(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.State != StateBatchInProgress {
+		t.Fatalf("state after committed batch = %q", state.State)
+	}
+	if _, err := BeginBatch(context.Background(), db, BatchSpec{
+		ID: "core-memories-0001", SourceDatabase: "core", SourceTable: "memories",
+	}); !errors.Is(err, ErrBatchCommitted) {
+		t.Fatalf("committed batch replay error = %v", err)
+	}
+}
+
+func TestOnlyVerifiedDatabasesAreCutoverEligible(t *testing.T) {
+	db := openTestDatabase(t)
+	if err := Prepare(context.Background(), db, Definition{
+		Plugin: "synthetic", SchemaVersion: 1, IndexVersion: 0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	eligible, err := CutoverEligible(context.Background(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eligible {
+		t.Fatal("a merely prepared database is cutover eligible")
+	}
+	if err := Verify(context.Background(), db, fixtureDigest('c')); err == nil {
+		t.Fatal("a database with no committed batch was verified")
+	}
+	commitFixtureBatch(t, db, "core-rows-0001", "1")
+	if err := Verify(context.Background(), db, fixtureDigest('c')); err != nil {
+		t.Fatal(err)
+	}
+	eligible, err = CutoverEligible(context.Background(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !eligible {
+		t.Fatal("a verified database is not cutover eligible")
+	}
+	if _, err := BeginBatch(context.Background(), db, BatchSpec{
+		ID: "late", SourceDatabase: "core", SourceTable: "rows",
+	}); !errors.Is(err, ErrVerified) {
+		t.Fatalf("batch after verification error = %v", err)
+	}
+}
+
+func openTestDatabase(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "plugin.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
+func assertCount(t *testing.T, db *sql.DB, table string, want int) {
+	t.Helper()
+	var got int
+	if err := db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("%s rows = %d, want %d", table, got, want)
+	}
+}
+
+func fixtureDigest(character byte) string {
+	value := make([]byte, 64)
+	for index := range value {
+		value[index] = character
+	}
+	return string(value)
+}
+
+func commitFixtureBatch(t *testing.T, db *sql.DB, id, sourceKey string) {
+	t.Helper()
+	batch, err := BeginBatch(context.Background(), db, BatchSpec{
+		ID: id, SourceDatabase: "core", SourceTable: "rows",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := batch.AddMembership(context.Background(), Membership{
+		SourceKey: sourceKey, DestinationTable: "rows", DestinationKey: sourceKey,
+		CanonicalDigest: fixtureDigest('e'),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := batch.Commit(context.Background(), BatchCommit{
+		RowCount: 1, CanonicalDigest: fixtureDigest('f'), HighWaterMark: sourceKey,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -1,10 +1,12 @@
 package rocacorpus
 
 import (
+	"context"
 	"fmt"
 	"os"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	_ "modernc.org/sqlite"
@@ -16,6 +18,8 @@ const (
 	// BundledSource is what the installer records for this package, and it is
 	// what discovery reads to know the corpus attach alias is the kernel's own.
 	BundledSource = plugin.BundledSource
+	SchemaVersion = 1
+	IndexVersion  = 1
 )
 
 func Ensure(root, binDir, version string) (plugininstall.Result, error) {
@@ -33,6 +37,12 @@ func applySchema(path string) error {
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return fmt.Errorf("apply bundled %s schema: %w", Name, err)
+	}
+	if err := migrationledger.Prepare(context.Background(), db, migrationledger.Definition{
+		Plugin: Name, SchemaVersion: SchemaVersion, IndexVersion: IndexVersion,
+	}); err != nil {
+		db.Close()
+		return fmt.Errorf("prepare bundled %s migration ledger: %w", Name, err)
 	}
 	if err := db.Close(); err != nil {
 		return fmt.Errorf("close bundled %s database: %w", Name, err)

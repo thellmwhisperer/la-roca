@@ -1,11 +1,13 @@
 package rocaops
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
 	_ "modernc.org/sqlite"
 )
@@ -14,6 +16,8 @@ const (
 	Name             = "roca-ops"
 	DatabaseFilename = "roca-ops.db"
 	BundledSource    = "bundled:roca"
+	SchemaVersion    = 1
+	IndexVersion     = 1
 )
 
 func Ensure(root, binDir, version string) (plugininstall.Result, error) {
@@ -25,16 +29,15 @@ func applySchema(path string) error {
 	if err != nil {
 		return err
 	}
-	applied, err := schemaApplied(db)
-	if err != nil {
+	if _, err := db.Exec(schema); err != nil {
 		db.Close()
-		return err
+		return fmt.Errorf("apply bundled %s schema: %w", Name, err)
 	}
-	if !applied {
-		if _, err := db.Exec(schema); err != nil {
-			db.Close()
-			return fmt.Errorf("apply bundled %s schema: %w", Name, err)
-		}
+	if err := migrationledger.Prepare(context.Background(), db, migrationledger.Definition{
+		Plugin: Name, SchemaVersion: SchemaVersion, IndexVersion: IndexVersion,
+	}); err != nil {
+		db.Close()
+		return fmt.Errorf("prepare bundled %s migration ledger: %w", Name, err)
 	}
 	if err := db.Close(); err != nil {
 		return fmt.Errorf("close bundled %s database: %w", Name, err)
@@ -51,25 +54,4 @@ func openDatabase(path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("open bundled %s database: %w", Name, err)
 	}
 	return db, nil
-}
-
-// schemaApplied answers with a read, so the common case never asks for the write
-// lock. It looks for the identifier seed because schema.sql writes it last: what
-// carries it carries everything the schema declares before it, and a database
-// that lost the seed would hand out identifiers that collide with core's.
-func schemaApplied(db *sql.DB) (bool, error) {
-	var counters int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master
-		WHERE type = 'table' AND name = 'sqlite_sequence'`).Scan(&counters); err != nil {
-		return false, fmt.Errorf("read the bundled %s schema: %w", Name, err)
-	}
-	if counters == 0 {
-		return false, nil
-	}
-	var seeded int
-	if err := db.QueryRow(
-		"SELECT COUNT(*) FROM sqlite_sequence WHERE name = 'memories'").Scan(&seeded); err != nil {
-		return false, fmt.Errorf("read the bundled %s identifier seed: %w", Name, err)
-	}
-	return seeded == 1, nil
 }
