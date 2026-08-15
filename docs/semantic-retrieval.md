@@ -68,3 +68,8 @@ reporting, or the distinction between a candidate and an accepted finding.
 Adopter-specific corpus skills are an example of this separation: the
 shared workflow owns coverage and context recovery, while the project owns its
 chapters, editorial categories, and verification rules.
+
+Project-specific profiles are maintained by adopters, outside core.
+Apply it after recovering live source context, not as a replacement for that
+context. Future profiles, such as Satélites, should reuse this contract and
+remain separate from the Vigilante Económico project.
