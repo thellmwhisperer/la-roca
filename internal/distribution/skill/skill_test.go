@@ -70,6 +70,8 @@ func TestContentCanSelfOnboardAnUnsupportedAgent(t *testing.T) {
 	for _, needle := range []string{
 		"Unsupported agent self-onboarding",
 		"Never copy real conversation data into a fixture",
+		"Before writing a fixture, measure a populated real store read-only",
+		"TestRegisteredParsersHarvestPresentAgentStores",
 		"docs/agent-parsers.md",
 		"Detect",
 		"Parse",

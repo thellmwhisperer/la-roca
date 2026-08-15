@@ -92,10 +92,11 @@ func targetFingerprint(target Target) (string, error) {
 // duplicate guard. The provenance backfill only fills columns that are NULL, so
 // a plain `roca ingest` enriches a corpus without writing a second copy of it.
 //
-// A kind absent from here is one whose reading has not changed since the
-// watermark was introduced, and its files stay skipped. A contributed parser
-// declares its reading in its own registry line instead, so the contribution
-// kit stays one fixture folder, one parser file and one registry line.
+// A kind absent from here declares its reading in its own registry line, or has
+// no reading to declare because it never changed since the watermark was
+// introduced, in which case its files stay skipped. The registry line is where a
+// contributed parser always declares it, so the contribution kit stays one
+// fixture folder, one parser file and one registry line.
 var parserVersions = map[parsers.Kind]string{
 	parsers.KindClaudeSession:           "claude-session-v6",
 	parsers.KindCoworkAudit:             "cowork-audit-v6",

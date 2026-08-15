@@ -2,58 +2,75 @@ package parsers
 
 import (
 	"encoding/json"
-	"fmt"
-	"regexp"
+	"net/url"
+	"path/filepath"
 	"strings"
 )
 
-// grokLine is one record of a Grok Build chat_history.jsonl. The file is the
-// agent's active conversation: a compacted window of the last exchange, not the
-// whole session. Older turns are written elsewhere (compaction segments and the
-// raw protocol stream), so this parser reads exactly what the transcript keeps.
-type grokLine struct {
-	Type            string          `json:"type"`
-	Content         json.RawMessage `json:"content"`
-	SyntheticReason string          `json:"synthetic_reason"`
-	Summary         json.RawMessage `json:"summary"`
-	ToolCalls       []grokToolCall  `json:"tool_calls"`
-	ModelID         string          `json:"model_id"`
-	ToolCallID      string          `json:"tool_call_id"`
+// grokUpdateLine is one record from updates.jsonl, Grok Build's durable session
+// stream. Content updates use method session/update. The parallel
+// _x.ai/session/update method carries hooks, scheduling and other runtime state
+// and is deliberately kept out of conversations.
+type grokUpdateLine struct {
+	Method string `json:"method"`
+	Params struct {
+		SessionID string `json:"sessionId"`
+		Meta      struct {
+			EventID  string `json:"eventId"`
+			PromptID string `json:"promptId"`
+		} `json:"_meta"`
+		Update grokUpdate `json:"update"`
+	} `json:"params"`
+	Timestamp *float64 `json:"timestamp"`
 }
 
-type grokToolCall struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
+type grokUpdate struct {
+	SessionUpdate string          `json:"sessionUpdate"`
+	Content       json.RawMessage `json:"content"`
+	RawInput      json.RawMessage `json:"rawInput"`
+	RawOutput     json.RawMessage `json:"rawOutput"`
+	ToolCallID    string          `json:"toolCallId"`
+	Title         string          `json:"title"`
+	Kind          string          `json:"kind"`
+	Status        string          `json:"status"`
+	Entries       []grokPlanEntry `json:"entries"`
+	Meta          struct {
+		ModelID     string          `json:"modelId"`
+		PromptIndex json.RawMessage `json:"promptIndex"`
+		Tool        struct {
+			Name string `json:"name"`
+		} `json:"x.ai/tool"`
+	} `json:"_meta"`
 }
 
-// grokSummaryBlock is one element of a reasoning record's `summary` array. The
-// full reasoning text is written separately as `encrypted_content`, which this
-// build cannot read; the summary is the readable part.
-type grokSummaryBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+type grokContent struct {
+	Type     string `json:"type"`
+	Text     string `json:"text"`
+	URI      string `json:"uri"`
+	MIMEType string `json:"mimeType"`
 }
 
-// grokExitCode finds the exit status a tool result states. Grok writes tool
-// verdicts as text, and a result that ran a shell command states its exit code
-// as `exit: N` near the start of the text. Only that explicit statement counts
-// as a failure: guessing one out of the words would file every result that
-// printed "error" as a failed call.
-var grokExitCode = regexp.MustCompile(`\bexit:\s*(-?\d+)`)
+type grokPlanEntry struct {
+	Content string `json:"content"`
+	Status  string `json:"status"`
+}
 
-// grokTurn is one human turn and the agent activity it drew, from the human
-// message to the next one.
+// grokTurn is one user prompt and the chunk streams it drew. updates.jsonl
+// writes answer and thought fragments separately, so strings are assembled in
+// record order and only become an Exchange when the next prompt arrives.
 type grokTurn struct {
-	humanText string
-	model     string
-	agentText []string
-	thinking  []Thinking
-	tools     []*ToolUse
-	blocks    int
+	promptIndex string
+	humanText   strings.Builder
+	agentText   strings.Builder
+	thoughtText strings.Builder
+	planText    string
+	humanTS     string
+	agentTS     string
+	model       string
+	tools       []*ToolUse
+	blocks      int
 }
 
-// grokReader walks one chat_history.jsonl.
 type grokReader struct {
 	pending   map[string]*ToolUse
 	current   *grokTurn
@@ -62,36 +79,29 @@ type grokReader struct {
 	deferred  int
 }
 
-// ParseGrokSession turns a Grok Build chat_history.jsonl into one session.
-//
-// A real human message opens a turn and the agent's reasoning, answers and tool
-// calls fill it until the next real human message closes it. The records Grok
-// injects as user turns for its own machinery — compaction history and system
-// reminders — are marked `synthetic_reason` and are not human turns, so they are
-// excluded by name instead of being stored as questions nobody asked.
+// ParseGrokSession turns one updates.jsonl stream into one session. The session
+// UUID and workspace are path identity, not mutable payload metadata. summary.json
+// remains a title sidecar; timestamps come from the primary stream itself.
 func ParseGrokSession(content []byte, meta FileMeta) (Records, error) {
 	reader := &grokReader{pending: map[string]*ToolUse{}}
-	discards, _ := consumeGrokLines(content, reader.consume)
+	discards, _ := consumeGrokUpdates(content, reader.consume)
 	unanswered := reader.current != nil && reader.current.blocks == 0
-	reader.flush()
+	reader.flush(false)
 	if unanswered {
 		reader.deferred++
 	}
 
+	pathSession, pathProject, workspace := grokPathIdentity(meta.Path)
 	sidecar := readGrokSummary(meta.Sidecar)
 	session := Session{
-		ID:          firstNonEmpty(sidecar.ID, meta.SessionID),
+		ID:          firstNonEmpty(pathSession, meta.SessionID),
 		SourceAgent: firstNonEmpty(meta.SourceAgent, "grok"),
-		Project:     meta.Project,
+		Project:     firstNonEmpty(meta.Project, pathProject),
 		Title:       sidecar.Title,
-		StartedAt:   sidecar.StartedAt,
-		EndedAt:     sidecar.EndedAt,
-		Metadata:    map[string]any{},
+		Metadata:    WithoutEmpty(map[string]any{"cwd": workspace}),
 		Exchanges:   reader.exchanges,
 	}
-	if session.StartedAt != "" && session.EndedAt != "" {
-		session.DurationMinutes = minutesBetween(session.StartedAt, session.EndedAt)
-	}
+	session.StartedAt, session.EndedAt, session.DurationMinutes = span(session.Exchanges)
 	PlaceThinking(session.Exchanges)
 	return Records{
 		Sessions: []Session{session},
@@ -100,12 +110,9 @@ func ParseGrokSession(content []byte, meta FileMeta) (Records, error) {
 	}, nil
 }
 
-// consumeGrokLines feeds every record to the reader. A record the transcript's
-// shape cannot read is a discard and never the whole file: a live transcript can
-// be mid-write.
-func consumeGrokLines(content []byte, consume func(int, grokLine)) ([]Discard, int) {
+func consumeGrokUpdates(content []byte, consume func(int, grokUpdateLine)) ([]Discard, int) {
 	return eachJSONLine(content, func(record int, raw string) error {
-		var line grokLine
+		var line grokUpdateLine
 		if err := json.Unmarshal([]byte(raw), &line); err != nil {
 			return err
 		}
@@ -114,106 +121,146 @@ func consumeGrokLines(content []byte, consume func(int, grokLine)) ([]Discard, i
 	})
 }
 
-func (r *grokReader) consume(record int, line grokLine) {
-	switch line.Type {
-	case "system":
-		r.exclude(record, "runtime prompt", "")
-	case "user":
-		if line.SyntheticReason != "" {
-			r.exclude(record, "runtime machinery injected as a user turn", line.SyntheticReason)
+func (r *grokReader) consume(record int, line grokUpdateLine) {
+	if line.Method == "_x.ai/session/update" {
+		r.exclude(record, "runtime update", line.Params.Update.SessionUpdate)
+		return
+	}
+	if line.Method != "session/update" {
+		r.unreadable(record, "unknown Grok update method: "+firstNonEmpty(line.Method, "unnamed"))
+		return
+	}
+
+	timestamp := grokTimestamp(line.Timestamp)
+	switch line.Params.Update.SessionUpdate {
+	case "user_message_chunk":
+		promptIndex := rawText(line.Params.Update.Meta.PromptIndex)
+		if r.current == nil || r.current.answered(promptIndex) {
+			// A following prompt proves the previous user turn is closed even when
+			// Grok recorded no agent activity for it. Only the final unanswered
+			// prompt can still be in flight and therefore deferred.
+			r.flush(true)
+			r.current = &grokTurn{
+				promptIndex: promptIndex,
+				humanTS:     timestamp,
+				model:       line.Params.Update.Meta.ModelID,
+			}
+		}
+		block, ok := readGrokContent(line.Params.Update.Content)
+		if !ok {
+			r.unreadable(record, "invalid Grok user content")
 			return
 		}
-		r.flush()
-		r.current = &grokTurn{humanText: grokUserText(line.Content)}
-	case "reasoning":
-		text := grokReasoningText(line.Summary)
-		if strings.TrimSpace(text) == "" {
-			// The transcript keeps the reasoning encrypted and writes no summary of
-			// it, so there was never anything to read. It is an exclusion and not a
-			// failure, exactly as Codex's unreadable reasoning is.
-			r.excludeRecord(record, "grok reasoning kept no readable summary")
+		if block.Type != "text" {
+			r.exclude(record, "user attachment", firstNonEmpty(block.Type, block.MIMEType))
 			return
 		}
-		r.claim(func(turn *grokTurn) {
-			turn.thinking = append(turn.thinking, Thinking{Text: text, WordCount: wordCount(text)})
+		r.current.humanText.WriteString(block.Text)
+	case "agent_message_chunk":
+		r.claim(record, timestamp, func(turn *grokTurn) bool {
+			return r.writeGrokText(record, "agent", line.Params.Update.Content, &turn.agentText)
 		})
-	case "assistant":
-		text := grokAssistantText(line.Content)
-		r.claim(func(turn *grokTurn) {
-			if turn.model == "" {
-				turn.model = line.ModelID
-			}
-			if strings.TrimSpace(text) != "" {
-				turn.agentText = append(turn.agentText, text)
-			}
-			for _, call := range line.ToolCalls {
-				tool := &ToolUse{Name: call.Name, ParamsSummary: Clip(call.Arguments, paramsBudget)}
-				turn.tools = append(turn.tools, tool)
-				if call.ID != "" {
-					r.pending[call.ID] = tool
-				}
-			}
+	case "agent_thought_chunk":
+		r.claim(record, timestamp, func(turn *grokTurn) bool {
+			return r.writeGrokText(record, "agent thought", line.Params.Update.Content, &turn.thoughtText)
 		})
-	case "tool_result":
-		// A tool result is the verdict on a call the assistant already claimed, so
-		// it is not a turn's activity of its own: an orphan verdict never turns a
-		// question nobody answered into an exchange, and the assistant line that
-		// issued the call already counted the turn.
-		if r.current != nil {
-			r.verdict(record, line.ToolCallID, rawText(line.Content))
+	case "tool_call":
+		r.claim(record, timestamp, func(turn *grokTurn) bool {
+			update := line.Params.Update
+			tool := &ToolUse{
+				Name:          firstNonEmpty(update.Meta.Tool.Name, update.Kind, update.Title),
+				ParamsSummary: Clip(rawText(update.RawInput), paramsBudget),
+			}
+			if grokFailedStatus(update.Status) {
+				tool.HadError = true
+				tool.ErrorMessage = Clip(grokToolOutput(update), errorBudget)
+			}
+			turn.tools = append(turn.tools, tool)
+			if update.ToolCallID != "" {
+				r.pending[update.ToolCallID] = tool
+			}
+			return true
+		})
+	case "tool_call_update":
+		if r.current == nil {
+			r.unreadable(record, "grok tool update arrived before any user prompt: "+
+				firstNonEmpty(line.Params.Update.ToolCallID, "unnamed"))
+			return
 		}
+		r.current.agentTS = lastInstant(r.current.agentTS, timestamp)
+		tool, ok := r.pending[line.Params.Update.ToolCallID]
+		if !ok {
+			r.unreadable(record, "tool update has unknown toolCallId: "+line.Params.Update.ToolCallID)
+			return
+		}
+		if grokFailedStatus(line.Params.Update.Status) {
+			tool.HadError = true
+			tool.ErrorMessage = Clip(grokToolOutput(line.Params.Update), errorBudget)
+		}
+	case "plan":
+		r.claim(record, timestamp, func(turn *grokTurn) bool {
+			turn.planText = grokPlanText(line.Params.Update.Entries)
+			return turn.planText != ""
+		})
 	default:
-		r.exclude(record, "record type", line.Type)
+		r.unreadable(record, "unknown Grok content update: "+
+			firstNonEmpty(line.Params.Update.SessionUpdate, "unnamed"))
 	}
 }
 
-// claim counts one record of agent activity into the open turn. A record with no
-// open human turn is an orphan: the agent answered a question the transcript
-// never kept, and nothing can be the exchange it belonged to.
-func (r *grokReader) claim(fill func(*grokTurn)) {
+// answered says whether an arriving user chunk belongs to a later turn than the
+// open one. A different prompt index proves it outright. Without an index, the
+// agent having already answered proves it just as well: a prompt that drew a
+// reply is closed, and appending to it would fuse a whole stream into one
+// exchange. Only chunks of a prompt nobody has answered yet keep joining it.
+func (t *grokTurn) answered(promptIndex string) bool {
+	if promptIndex != "" {
+		return promptIndex != t.promptIndex
+	}
+	return t.blocks > 0
+}
+
+func (r *grokReader) claim(record int, timestamp string, fill func(*grokTurn) bool) {
 	if r.current == nil {
+		// Agent content this build does read, which no prompt in this file can
+		// hold: a stream that begins mid-conversation loses turns, and that is a
+		// failure to report and not machinery excluded by design.
+		r.unreadable(record, "grok content update arrived before any user prompt")
 		return
 	}
-	fill(r.current)
-	r.current.blocks++
-}
-
-// verdict carries a tool result's exit status back to the call it answered.
-// Without it every tool use would look successful, because the call itself never
-// says how it went.
-func (r *grokReader) verdict(record int, callID string, content string) {
-	tool, ok := r.pending[callID]
-	if !ok {
-		r.discards = append(r.discards, Discard{Record: record,
-			Reason:   "tool verdict has unknown call_id: " + callID,
-			Category: "tool verdict has unknown call_id"})
-		return
-	}
-	if failedGrokExit(content) {
-		tool.HadError = true
-		tool.ErrorMessage = Clip(content, errorBudget)
+	if fill(r.current) {
+		r.current.blocks++
+		r.current.agentTS = lastInstant(r.current.agentTS, timestamp)
 	}
 }
 
-// flush closes the open turn into an exchange. A human turn with no agent
-// activity is not an exchange yet: it is a question still in flight, and the
-// next ingest of the grown file lands it.
-func (r *grokReader) flush() {
-	if r.current == nil || r.current.blocks == 0 {
+func (r *grokReader) flush(closed bool) {
+	if r.current == nil || (r.current.blocks == 0 && !closed) {
 		r.current = nil
 		r.pending = map[string]*ToolUse{}
 		return
 	}
 	var usage UsageTally
-	exchange := Exchange{
-		Number:     len(r.exchanges) + 1,
-		HumanText:  r.current.humanText,
-		AgentText:  strings.Join(r.current.agentText, "\n"),
-		Thinking:   r.current.thinking,
-		Provenance: usage.Provenance(r.current.model, ""),
+	sourceID := ""
+	if r.current.promptIndex != "" {
+		sourceID = "grok-prompt:" + r.current.promptIndex
 	}
-	// The calls stay pointers until the turn is closed so a verdict that arrives
-	// in time still lands; the copies are only made here.
+	exchange := Exchange{
+		Number:         len(r.exchanges) + 1,
+		SourceID:       sourceID,
+		HumanText:      r.current.humanText.String(),
+		AgentText:      r.current.agentText.String(),
+		HumanTimestamp: r.current.humanTS,
+		AgentTimestamp: r.current.agentTS,
+		LatencyMS:      latency(r.current.humanTS, r.current.agentTS),
+		Provenance:     usage.Provenance(r.current.model, "xai"),
+	}
+	if text := strings.TrimSpace(r.current.thoughtText.String()); text != "" {
+		exchange.Thinking = append(exchange.Thinking, Thinking{Text: text, WordCount: wordCount(text)})
+	}
+	if text := strings.TrimSpace(r.current.planText); text != "" {
+		exchange.Thinking = append(exchange.Thinking, Thinking{Text: text, WordCount: wordCount(text)})
+	}
 	for _, tool := range r.current.tools {
 		exchange.Tools = append(exchange.Tools, *tool)
 	}
@@ -222,63 +269,102 @@ func (r *grokReader) flush() {
 	r.pending = map[string]*ToolUse{}
 }
 
+// writeGrokText appends one agent content block to the text it belongs to, and
+// reports every block it does not append: a shape this build never reads is left
+// out by design, one that will not decode is a failure. Agent content is
+// accounted for exactly as user content is, so a stream that lost part of an
+// answer can never read as a clean file.
+func (r *grokReader) writeGrokText(record int, kind string, raw json.RawMessage,
+	into *strings.Builder) bool {
+	block, ok := readGrokContent(raw)
+	if !ok {
+		r.unreadable(record, "invalid Grok "+kind+" content")
+		return false
+	}
+	if block.Type != "text" {
+		r.exclude(record, kind+" attachment", firstNonEmpty(block.Type, block.MIMEType))
+		return false
+	}
+	into.WriteString(block.Text)
+	return block.Text != ""
+}
+
 func (r *grokReader) exclude(record int, kind, name string) {
 	r.discards = append(r.discards, Discard{
 		Record: record, ByDesign: true,
-		Reason:   "grok runtime " + kind + " not ingested: " + firstNonEmpty(name, "unnamed"),
-		Category: "grok runtime " + kind + " not ingested",
+		Reason:   "grok " + kind + " not ingested: " + firstNonEmpty(name, "unnamed"),
+		Category: "grok " + kind + " not ingested",
 	})
 }
 
-func (r *grokReader) excludeRecord(record int, reason string) {
-	r.discards = append(r.discards, Discard{Record: record, Reason: reason, ByDesign: true})
+func (r *grokReader) unreadable(record int, reason string) {
+	r.discards = append(r.discards, Discard{Record: record, Reason: reason})
 }
 
-// grokUserText joins the content blocks of a real human message.
-func grokUserText(content json.RawMessage) string {
-	var blocks []grokSummaryBlock
-	if err := json.Unmarshal(content, &blocks); err != nil {
+func readGrokContent(raw json.RawMessage) (grokContent, bool) {
+	var content grokContent
+	return content, len(raw) > 0 && json.Unmarshal(raw, &content) == nil
+}
+
+func grokTimestamp(value *float64) string {
+	if value == nil {
 		return ""
 	}
-	return joinBlockTexts(blocks, func(block grokSummaryBlock) string { return block.Text }, "\n")
+	return ISOFromEpochSeconds(*value)
 }
 
-// grokAssistantText reads the agent's answer, which Grok writes as a bare string.
-func grokAssistantText(content json.RawMessage) string {
-	var text string
-	if err := json.Unmarshal(content, &text); err != nil {
-		return ""
+func lastInstant(current, candidate string) string {
+	if candidate > current {
+		return candidate
 	}
-	return text
+	return current
 }
 
-// grokReasoningText joins the readable summaries of one reasoning record. The
-// summaries are fragments of one stream of thought, so they are joined with a
-// space rather than a line break, exactly as Codex's reasoning is.
-func grokReasoningText(summary json.RawMessage) string {
-	var blocks []grokSummaryBlock
-	if err := json.Unmarshal(summary, &blocks); err != nil {
-		return ""
-	}
-	return joinBlockTexts(blocks, func(block grokSummaryBlock) string { return block.Text }, " ")
+func grokFailedStatus(status string) bool {
+	return status == "failed" || status == "error"
 }
 
-// failedGrokExit is true only when a tool result explicitly states a failing
-// exit code. A result that states no exit code is not an error.
-func failedGrokExit(content string) bool {
-	window := content
-	if len(window) > 300 {
-		window = window[:300]
+func grokToolOutput(update grokUpdate) string {
+	if output := rawText(update.RawOutput); output != "" {
+		return output
 	}
-	match := grokExitCode.FindStringSubmatch(window)
-	if len(match) != 2 {
-		return false
+	var blocks []struct {
+		Content string `json:"content"`
 	}
-	var code int
-	if _, err := fmt.Sscanf(match[1], "%d", &code); err != nil {
-		return false
+	if json.Unmarshal(update.Content, &blocks) == nil {
+		if joined := joinBlockTexts(blocks, func(block struct {
+			Content string `json:"content"`
+		}) string {
+			return block.Content
+		}, "\n"); joined != "" {
+			return joined
+		}
 	}
-	return code != 0
+	return rawText(update.Content)
+}
+
+func grokPlanText(entries []grokPlanEntry) string {
+	parts := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if text := strings.TrimSpace(entry.Content); text != "" {
+			parts = append(parts, text)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func grokPathIdentity(path string) (sessionID, project, workspace string) {
+	if filepath.Base(path) != "updates.jsonl" {
+		return "", "", ""
+	}
+	sessionDir := filepath.Dir(path)
+	sessionID = filepath.Base(sessionDir)
+	encodedWorkspace := filepath.Base(filepath.Dir(sessionDir))
+	decoded, err := url.PathUnescape(encodedWorkspace)
+	if err != nil || decoded == "" || decoded == encodedWorkspace {
+		return sessionID, "", ""
+	}
+	return sessionID, filepath.Base(decoded), decoded
 }
 
 // grokSummary is the structured session metadata Grok writes as summary.json.
@@ -308,13 +394,8 @@ type grokSummary struct {
 	LastTurnSummaryPrompt string   `json:"last_turn_summary_prompt_id"`
 }
 
-// grokSummaryView is the little the transcript path needs from its paired
-// summary.json.
 type grokSummaryView struct {
-	ID        string
-	Title     string
-	StartedAt string
-	EndedAt   string
+	Title string
 }
 
 func readGrokSummary(content []byte) grokSummaryView {
@@ -325,24 +406,22 @@ func readGrokSummary(content []byte) grokSummaryView {
 	if err := json.Unmarshal(content, &summary); err != nil {
 		return grokSummaryView{}
 	}
-	return grokSummaryView{
-		ID:        summary.Info.ID,
-		Title:     strings.TrimSpace(summary.GeneratedTitle),
-		StartedAt: validInstant(summary.CreatedAt),
-		EndedAt:   validInstant(firstNonEmpty(summary.LastActiveAt, summary.UpdatedAt)),
-	}
+	return grokSummaryView{Title: strings.TrimSpace(summary.GeneratedTitle)}
 }
 
 // ParseGrokSessionMetadata turns a Grok Build summary.json into a session
 // snapshot: no exchange, and every field it does know merged over whatever the
-// transcript already wrote.
+// primary update stream already wrote. Identity is the session directory the
+// scanner named, exactly as it is for the update stream, so the two readings of
+// one session can never disagree and split it into two rows. Only a summary read
+// outside that pairing falls back to the payload's own info.id.
 func ParseGrokSessionMetadata(content []byte, meta FileMeta) (Records, error) {
 	var summary grokSummary
 	if err := json.Unmarshal(content, &summary); err != nil {
 		return Records{Discards: []Discard{{Record: 1,
 			Reason: "invalid metadata JSON: " + err.Error(), Category: "invalid metadata JSON"}}}, nil
 	}
-	sessionID := firstNonEmpty(summary.Info.ID, meta.SessionID)
+	sessionID := firstNonEmpty(meta.SessionID, summary.Info.ID)
 	if sessionID == "" {
 		return Records{Discards: []Discard{{Record: 1,
 			Reason: "grok session metadata has no identity (info.id)"}}}, nil
