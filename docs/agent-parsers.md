@@ -26,7 +26,8 @@ agent's real structural markers but only fabricated content. The shared suite
 automatically discovers every fixture folder and checks that the registered
 parser:
 
-- claims its own fixture and rejects a foreign control;
+- claims its own fixture, and rejects both a foreign control and every fixture
+  another registered parser owns;
 - returns the golden normalized sessions, exchanges, or memories;
 - emits no record outside its declared destination;
 - has exactly the registry entry named by the fixture.
@@ -75,6 +76,11 @@ Registration{
     Parser: novaParser{},
 }
 ```
+
+`Name` is the stable identifier the ingest fingerprint and the fixture manifest
+share. `SourceAgent` is the agent this source belongs to: it names the line in
+the ingest summary and rides in the scan metadata your parser receives, and it
+falls back to `Name` when left empty.
 
 `Locations` are narrow session-store directories relative to the operator's
 home (or absolute locations when the agent has one platform-independent path).
