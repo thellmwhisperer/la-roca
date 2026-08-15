@@ -25,6 +25,7 @@ const (
 	defaultOverlap   = 400
 	defaultBatchSize = 64
 	walkPageSize     = 500
+	deprecatedLayerReconciliationKey = "deprecated_layers_reconciled_v1"
 	// maxUnresolvedCandidates bounds a query against an index the corpus has moved
 	// under. Each resolution is one `roca exec` process, so a wholly stale index
 	// would otherwise spend one process per candidate to answer nothing.
@@ -37,6 +38,7 @@ type Index struct {
 	Model      string
 	Embedder   Embedder
 	Notice     func(string)
+	ReadOnly   bool
 }
 
 type Corpus interface {
@@ -223,6 +225,9 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 	if err := removeMissing(ctx, store, existing, seen, &report); err != nil {
 		return Delta{}, err
 	}
+	if err := markDeprecatedLayersReconciled(ctx, store); err != nil {
+		return Delta{}, err
+	}
 	report.Chunks = report.Added + report.Updated + report.Unchanged
 	return report, nil
 }
@@ -242,9 +247,6 @@ func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) 
 	} else if err != nil {
 		return nil, fmt.Errorf("inspect vector database: %w", err)
 	}
-	if err := i.purgeDeprecatedChunks(ctx); err != nil {
-		return nil, fmt.Errorf("purge deprecated vector chunks: %w", err)
-	}
 	store, err := openSQLite(i.VectorPath, true)
 	if err != nil {
 		return nil, fmt.Errorf("open vector database: %w", err)
@@ -256,6 +258,25 @@ func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) 
 	}
 	if model == "" || dimensions == 0 {
 		return nil, fmt.Errorf("vector index is not ready; run `roca vector install`")
+	}
+	reconciled, err := deprecatedLayersReconciled(ctx, store)
+	if err != nil {
+		return nil, fmt.Errorf("inspect vector reconciliation: %w", err)
+	}
+	if !reconciled && !i.ReadOnly {
+		store.Close()
+		if err := i.purgeDeprecatedChunks(ctx); err != nil {
+			return nil, fmt.Errorf("purge deprecated vector chunks: %w", err)
+		}
+		store, err = openSQLite(i.VectorPath, true)
+		if err != nil {
+			return nil, fmt.Errorf("reopen vector database: %w", err)
+		}
+		defer store.Close()
+		_, model, dimensions, err = readIndexState(store)
+		if err != nil {
+			return nil, fmt.Errorf("read vector index after reconciliation: %w; run `roca vector install`", err)
+		}
 	}
 	vectors, err := i.Embedder.Embed(ctx, model, []string{QueryPrefix + text})
 	if err != nil {
@@ -619,7 +640,7 @@ func purgeDeprecatedChunks(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	if len(ids) == 0 {
-		return nil
+		return markDeprecatedLayersReconciled(ctx, db)
 	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -634,7 +655,27 @@ func purgeDeprecatedChunks(ctx context.Context, db *sql.DB) error {
 			return err
 		}
 	}
+	if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)`, deprecatedLayerReconciliationKey, "1"); err != nil {
+		return err
+	}
 	return tx.Commit()
+}
+
+func deprecatedLayersReconciled(ctx context.Context, db *sql.DB) (bool, error) {
+	var value string
+	err := db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key=?`, deprecatedLayerReconciliationKey).Scan(&value)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return value == "1", nil
+}
+
+func markDeprecatedLayersReconciled(ctx context.Context, db *sql.DB) error {
+	_, err := db.ExecContext(ctx, `INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)`, deprecatedLayerReconciliationKey, "1")
+	return err
 }
 
 type neighbor struct {
