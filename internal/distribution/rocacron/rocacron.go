@@ -19,6 +19,7 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 )
@@ -26,6 +27,8 @@ import (
 const (
 	Name             = "roca-cron"
 	DatabaseFilename = "roca-cron.db"
+	SchemaVersion    = 1
+	IndexVersion     = 0
 
 	GateReady               = "ready"
 	GateAfterIngestOK       = "after_ingest_ok"
@@ -113,6 +116,12 @@ func Open(options Options) (*Service, error) {
 		if _, err := db.Exec(schema); err != nil {
 			db.Close()
 			return nil, fmt.Errorf("apply the %s schema: %w", Name, err)
+		}
+		if err := migrationledger.Prepare(context.Background(), db, migrationledger.Definition{
+			Plugin: Name, SchemaVersion: SchemaVersion, IndexVersion: IndexVersion,
+		}); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("prepare the %s migration ledger: %w", Name, err)
 		}
 		if err := os.Chmod(options.Database, 0o600); err != nil {
 			db.Close()

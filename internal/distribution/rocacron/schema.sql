@@ -15,3 +15,13 @@ CREATE TABLE IF NOT EXISTS journeys (
 
 CREATE INDEX IF NOT EXISTS journeys_dependency_latest
   ON journeys (ride, plugin, id DESC);
+
+CREATE TABLE IF NOT EXISTS legacy_runs (
+  canonical_digest TEXT PRIMARY KEY,
+  payload           TEXT NOT NULL CHECK (json_valid(payload))
+);
+
+CREATE TABLE IF NOT EXISTS legacy_run_logs (
+  canonical_digest TEXT PRIMARY KEY,
+  payload           TEXT NOT NULL CHECK (json_valid(payload))
+);

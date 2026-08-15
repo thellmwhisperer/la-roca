@@ -40,8 +40,14 @@ After `1.0.0`, normal Conventional Commits choose the next version:
 
 ## Schema migration definition of done
 
-A release that changes `data/schema.sql` in a way an existing database must
-adopt also adds one new frozen upgrade home:
+A release that changes a shipped schema in a way an existing database must adopt
+also adds one new frozen upgrade home. That covers core's `data/schema.sql` and
+each bundled plugin's own
+`internal/distribution/{rocaops,rocacron,rocacorpus}/schema.sql`: a plugin
+schema change comes with a bump of that plugin's `SchemaVersion` or
+`IndexVersion` constant, which the next update adopts through
+`bundledplugin.ApplySchema`, returning the installed database to the `prepared`
+state and clearing its verification. The steps are the same either way:
 
 1. Add the newest published pre-migration version to
    `internal/distribution/release/testdata/upgrade/versions.txt`. That file is

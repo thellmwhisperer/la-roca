@@ -54,17 +54,21 @@ func Ensure(root, binDir, version string, spec Spec) (plugininstall.Result, erro
 		return plugininstall.Result{}, err
 	}
 	defer cleanup()
+	// The staged candidate already carries its declaration, so only an update
+	// has a live database to upgrade. It is upgraded before the manifest records
+	// the new version: a manifest that ran ahead of its schema would short-circuit
+	// every later run and leave the interrupted upgrade unfinished forever.
 	manager := plugininstall.Manager{PluginRoot: root, BinDir: binDir}
 	var result plugininstall.Result
 	if _, statErr := os.Lstat(target); os.IsNotExist(statErr) {
 		result, err = manager.Install(candidate)
 	} else {
+		if err := spec.ApplySchema(filepath.Join(target, spec.DatabaseFilename)); err != nil {
+			return plugininstall.Result{}, err
+		}
 		result, err = manager.UpdateInPlace(candidate)
 	}
 	if err != nil {
-		return plugininstall.Result{}, err
-	}
-	if err := spec.ApplySchema(filepath.Join(target, spec.DatabaseFilename)); err != nil {
 		return plugininstall.Result{}, err
 	}
 	return result, nil
