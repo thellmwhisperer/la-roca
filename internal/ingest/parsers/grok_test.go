@@ -117,6 +117,20 @@ func TestGrokUpdateShapes(t *testing.T) {
 			exchanges: 1, discardContains: "invalid JSON",
 		},
 		{
+			name: "an agent attachment is left out by design and still reported",
+			stream: `{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"question"},"_meta":{"promptIndex":1}}},"timestamp":1785585600}` + "\n" +
+				`{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"resource_link","uri":"fixture://invented"}}},"timestamp":1785585601}`,
+			deferred:        1,
+			discardContains: "grok agent attachment not ingested: resource_link", discardByDesign: true,
+		},
+		{
+			name: "agent content that does not decode is a failure",
+			stream: `{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"question"},"_meta":{"promptIndex":1}}},"timestamp":1785585600}` + "\n" +
+				`{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"agent_thought_chunk","content":"not an object"}},"timestamp":1785585601}`,
+			deferred:        1,
+			discardContains: "invalid Grok agent thought content",
+		},
+		{
 			name:            "an unknown content update is unreadable",
 			stream:          `{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"future_semantic_surface"}},"timestamp":1785585600}`,
 			discardContains: "unknown Grok content update",
@@ -230,12 +244,63 @@ func TestGrokUpdateStreamTakesOnlyItsTitleFromTheSidecar(t *testing.T) {
 	}
 }
 
-func TestGrokSessionMetadataWithoutIdentityIsDiscarded(t *testing.T) {
-	records, err := Parse(KindGrokSessionMetadata, []byte(`{"info":{"cwd":"/w/demo"}}`), FileMeta{})
+// A failed tool that only ever carried its terminal status on the call itself
+// still reaches the corpus with the evidence of what failed, even when its
+// output is a block shape holding no text.
+func TestGrokToolCallCarriesItsOwnFailure(t *testing.T) {
+	stream := `{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"patch it"},"_meta":{"promptIndex":1}}},"timestamp":1785585600}` + "\n" +
+		`{"method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"tool_call","toolCallId":"tool-1","status":"failed","kind":"edit","content":[{"type":"diff","path":"/synthetic/fixture.go"}]}},"timestamp":1785585601}`
+	records, err := Parse(KindGrokSession, []byte(stream), FileMeta{SessionID: "fixture"})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if len(records.Sessions) != 0 || len(records.Discards) != 1 {
-		t.Fatalf("records = %+v", records)
+	tools := records.Sessions[0].Exchanges[0].Tools
+	if len(tools) != 1 || !tools[0].HadError {
+		t.Fatalf("tools = %+v", tools)
+	}
+	if !strings.Contains(tools[0].ErrorMessage, "/synthetic/fixture.go") {
+		t.Errorf("error message = %q, want the only evidence of the failure", tools[0].ErrorMessage)
+	}
+}
+
+func TestGrokSessionMetadataIdentity(t *testing.T) {
+	cases := []struct {
+		name      string
+		summary   string
+		sessionID string
+		wantID    string
+	}{
+		{
+			name:    "a summary read alone falls back to its own payload identity",
+			summary: `{"info":{"id":"payload-id","cwd":"/w/demo"}}`,
+			wantID:  "payload-id",
+		},
+		{
+			name:      "the session directory owns the identity of a paired summary",
+			summary:   `{"info":{"id":"payload-id","cwd":"/w/demo"}}`,
+			sessionID: "directory-session", wantID: "directory-session",
+		},
+		{
+			name:    "a summary with no identity at all is discarded",
+			summary: `{"info":{"cwd":"/w/demo"}}`,
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			records, err := Parse(KindGrokSessionMetadata, []byte(testCase.summary),
+				FileMeta{SourceAgent: "grok", SessionID: testCase.sessionID})
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if testCase.wantID == "" {
+				if len(records.Sessions) != 0 || len(records.Discards) != 1 {
+					t.Fatalf("records = %+v", records)
+				}
+				return
+			}
+			if len(records.Sessions) != 1 || records.Sessions[0].ID != testCase.wantID {
+				t.Fatalf("sessions = %+v, want id %q", records.Sessions, testCase.wantID)
+			}
+		})
 	}
 }

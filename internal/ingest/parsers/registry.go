@@ -93,29 +93,24 @@ type Registration struct {
 // resolve to somewhere far wider than any agent's session store, and a scan that
 // wide would fingerprint the operator's whole machine.
 func (r Registration) ResolveLocations(home string) (roots, refused []string) {
-	for _, declared := range r.Locations {
-		root, usable := resolveLocation(home, declared)
-		if !usable {
-			refused = append(refused, declared)
-			continue
-		}
-		roots = append(roots, root)
-	}
-	return roots, refused
+	return resolveLocations(home, r.Locations)
 }
 
 // ResolveHarvestLocations returns the narrow roots the present-agent smoke
 // reads. A contributed parser's declared ingest locations are its smoke roots;
 // an established parser can declare HarvestLocations without changing scans.
 func (r Registration) ResolveHarvestLocations(home string) (roots, refused []string) {
-	locations := r.HarvestLocations
-	if len(locations) == 0 {
-		locations = r.Locations
+	if len(r.HarvestLocations) == 0 {
+		return r.ResolveLocations(home)
 	}
-	for _, declared := range locations {
-		root, usable := resolveLocation(home, declared)
+	return resolveLocations(home, r.HarvestLocations)
+}
+
+func resolveLocations(home string, declared []string) (roots, refused []string) {
+	for _, location := range declared {
+		root, usable := resolveLocation(home, location)
 		if !usable {
-			refused = append(refused, declared)
+			refused = append(refused, location)
 			continue
 		}
 		roots = append(roots, root)

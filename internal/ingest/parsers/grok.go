@@ -158,21 +158,11 @@ func (r *grokReader) consume(record int, line grokUpdateLine) {
 		r.current.humanText.WriteString(block.Text)
 	case "agent_message_chunk":
 		r.claim(record, timestamp, func(turn *grokTurn) bool {
-			block, ok := readGrokContent(line.Params.Update.Content)
-			if !ok || block.Type != "text" {
-				return false
-			}
-			turn.agentText.WriteString(block.Text)
-			return block.Text != ""
+			return r.writeGrokText(record, "agent", line.Params.Update.Content, &turn.agentText)
 		})
 	case "agent_thought_chunk":
 		r.claim(record, timestamp, func(turn *grokTurn) bool {
-			block, ok := readGrokContent(line.Params.Update.Content)
-			if !ok || block.Type != "text" {
-				return false
-			}
-			turn.thoughtText.WriteString(block.Text)
-			return block.Text != ""
+			return r.writeGrokText(record, "agent thought", line.Params.Update.Content, &turn.thoughtText)
 		})
 	case "tool_call":
 		r.claim(record, timestamp, func(turn *grokTurn) bool {
@@ -180,6 +170,10 @@ func (r *grokReader) consume(record int, line grokUpdateLine) {
 			tool := &ToolUse{
 				Name:          firstNonEmpty(update.Meta.Tool.Name, update.Kind, update.Title),
 				ParamsSummary: Clip(rawText(update.RawInput), paramsBudget),
+			}
+			if grokFailedStatus(update.Status) {
+				tool.HadError = true
+				tool.ErrorMessage = Clip(grokToolOutput(update), errorBudget)
 			}
 			turn.tools = append(turn.tools, tool)
 			if update.ToolCallID != "" {
@@ -275,6 +269,26 @@ func (r *grokReader) flush(closed bool) {
 	r.pending = map[string]*ToolUse{}
 }
 
+// writeGrokText appends one agent content block to the text it belongs to, and
+// reports every block it does not append: a shape this build never reads is left
+// out by design, one that will not decode is a failure. Agent content is
+// accounted for exactly as user content is, so a stream that lost part of an
+// answer can never read as a clean file.
+func (r *grokReader) writeGrokText(record int, kind string, raw json.RawMessage,
+	into *strings.Builder) bool {
+	block, ok := readGrokContent(raw)
+	if !ok {
+		r.unreadable(record, "invalid Grok "+kind+" content")
+		return false
+	}
+	if block.Type != "text" {
+		r.exclude(record, kind+" attachment", firstNonEmpty(block.Type, block.MIMEType))
+		return false
+	}
+	into.WriteString(block.Text)
+	return block.Text != ""
+}
+
 func (r *grokReader) exclude(record int, kind, name string) {
 	r.discards = append(r.discards, Discard{
 		Record: record, ByDesign: true,
@@ -318,11 +332,13 @@ func grokToolOutput(update grokUpdate) string {
 		Content string `json:"content"`
 	}
 	if json.Unmarshal(update.Content, &blocks) == nil {
-		return joinBlockTexts(blocks, func(block struct {
+		if joined := joinBlockTexts(blocks, func(block struct {
 			Content string `json:"content"`
 		}) string {
 			return block.Content
-		}, "\n")
+		}, "\n"); joined != "" {
+			return joined
+		}
 	}
 	return rawText(update.Content)
 }
@@ -395,14 +411,17 @@ func readGrokSummary(content []byte) grokSummaryView {
 
 // ParseGrokSessionMetadata turns a Grok Build summary.json into a session
 // snapshot: no exchange, and every field it does know merged over whatever the
-// primary update stream already wrote.
+// primary update stream already wrote. Identity is the session directory the
+// scanner named, exactly as it is for the update stream, so the two readings of
+// one session can never disagree and split it into two rows. Only a summary read
+// outside that pairing falls back to the payload's own info.id.
 func ParseGrokSessionMetadata(content []byte, meta FileMeta) (Records, error) {
 	var summary grokSummary
 	if err := json.Unmarshal(content, &summary); err != nil {
 		return Records{Discards: []Discard{{Record: 1,
 			Reason: "invalid metadata JSON: " + err.Error(), Category: "invalid metadata JSON"}}}, nil
 	}
-	sessionID := firstNonEmpty(summary.Info.ID, meta.SessionID)
+	sessionID := firstNonEmpty(meta.SessionID, summary.Info.ID)
 	if sessionID == "" {
 		return Records{Discards: []Discard{{Record: 1,
 			Reason: "grok session metadata has no identity (info.id)"}}}, nil
