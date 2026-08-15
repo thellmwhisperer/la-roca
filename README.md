@@ -14,9 +14,9 @@ https://github.com/user-attachments/assets/f27d377b-e4ad-4c59-beb6-86dd02af4f84
 
 Your coding agents write thousands of sessions, reasoning traces, tool calls,
 and memory notes to disk, then forget all of it. La Roca reads what Claude
-Code, Codex, OpenCode, Pi, Hermes, and Claude Desktop leave behind, normalizes
-it into one SQLite database on your machine, and answers questions about it:
-from your terminal, or from the agents themselves over MCP.
+Code, Codex, OpenCode, Pi, Hermes, Grok Build, and Claude Desktop leave behind,
+normalizes it into one SQLite database on your machine, and answers questions
+about it: from your terminal, or from the agents themselves over MCP.
 
 Every answer shows its proof: the SQL that produced it and the rows that
 back it.
@@ -315,6 +315,7 @@ exactly the information the task needs instead of a whole skill.
 | OpenCode | Sessions and exchanges, distilled from its local database |
 | Pi | Session files |
 | Hermes | Sessions, distilled from its state database |
+| Grok Build | Sessions, from the active transcript and its metadata sidecar |
 
 Repository `AGENTS.md` and `CLAUDE.md` files are instructions and are never
 ingested as memories. Live databases are opened as guests with SQLite
