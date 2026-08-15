@@ -326,7 +326,9 @@ interrupted one leaves nothing half-migrated behind and resumes from where it
 stopped, and only a verified database becomes eligible for cutover. A bundled
 database may also declare `legacy_*` quarantine tables, which keep
 owner-specific records verbatim beside their canonical digest instead of
-reshaping them into an active surface.
+reshaping them into an active surface. Bumping one of those versions is a
+schema change a released database has to adopt, so it owes what
+[releases](releases.md#schema-migration-definition-of-done) requires of one.
 
 Removing La Roca itself removes the installed packages and asks separately
 before it touches those archives: see [Uninstall](lifecycle.md#uninstall).
