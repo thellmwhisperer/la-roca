@@ -1,0 +1,10 @@
+{
+  "parser": "subagent",
+  "destination": "corpus",
+  "source": "child.data",
+  "meta": {"Path":"/synthetic/claude/subagent-child.data","Project":"lighthouse","SourceAgent":"claude"},
+  "want": {
+    "sessions": [{"id":"fixture-child","source_agent":"claude","project":"lighthouse","parent_id":"fixture-parent","exchanges":[{"human_text":"Find the invented chart.","agent_text":"Chart found."}]}],
+    "memories": []
+  }
+}

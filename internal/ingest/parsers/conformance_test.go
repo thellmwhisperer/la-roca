@@ -1,0 +1,230 @@
+package parsers
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"reflect"
+	"testing"
+)
+
+type conformanceFixture struct {
+	Parser      string          `json:"parser"`
+	Destination string          `json:"destination"`
+	Source      string          `json:"source"`
+	Meta        FileMeta        `json:"meta"`
+	Want        conformanceWant `json:"want"`
+}
+
+type conformanceWant struct {
+	Sessions []conformanceSession `json:"sessions"`
+	Memories []conformanceMemory  `json:"memories"`
+}
+
+type conformanceSession struct {
+	ID          string                `json:"id"`
+	SourceAgent string                `json:"source_agent"`
+	Project     string                `json:"project,omitempty"`
+	Title       string                `json:"title,omitempty"`
+	ParentID    string                `json:"parent_id,omitempty"`
+	Exchanges   []conformanceExchange `json:"exchanges"`
+}
+
+type conformanceExchange struct {
+	HumanText string `json:"human_text"`
+	AgentText string `json:"agent_text"`
+}
+
+type conformanceMemory struct {
+	Layer       string `json:"layer"`
+	Content     string `json:"content"`
+	SourceAgent string `json:"source_agent"`
+	Project     string `json:"project,omitempty"`
+}
+
+// syntheticHome stands in for the operator's home while the harness checks that
+// a registry line's declared locations resolve to a store and not to the machine.
+const syntheticHome = "/synthetic/home"
+
+// TestRegisteredParsersConform is the contribution harness. Every directory in
+// testdata/conformance is a complete, synthetic worked example: its manifest
+// names a registered parser, its own source file, the declared destination and
+// the normalized records that must result.
+func TestRegisteredParsersConform(t *testing.T) {
+	fixtures := conformanceFixturePaths(t)
+
+	covered := map[string]bool{}
+	registeredNames := map[string]bool{}
+	for _, registered := range Registered() {
+		if registered.Name == "" || registered.Parser == nil {
+			t.Fatalf("incomplete parser registration: %+v", registered)
+		}
+		if registeredNames[registered.Name] {
+			t.Fatalf("parser %q is registered more than once", registered.Name)
+		}
+		registeredNames[registered.Name] = true
+		if _, refused := registered.ResolveLocations(syntheticHome); len(refused) > 0 {
+			t.Fatalf("parser %q declares the unusable locations %v", registered.Name, refused)
+		}
+	}
+	for _, path := range fixtures {
+		path := path
+		t.Run(filepath.Base(filepath.Dir(path)), func(t *testing.T) {
+			fixture := readConformanceFixture(t, path)
+			registered, ok := Lookup(fixture.Parser)
+			if !ok {
+				t.Fatalf("parser %q has no registry line", fixture.Parser)
+			}
+			covered[registered.Name] = true
+			if got := registered.Destination.String(); got != fixture.Destination {
+				t.Fatalf("destination = %q, want %q", got, fixture.Destination)
+			}
+
+			content, err := os.ReadFile(filepath.Join(filepath.Dir(path), fixture.Source))
+			if err != nil {
+				t.Fatal(err)
+			}
+			file := File{Content: content, Meta: fixture.Meta}
+			if !registered.Parser.Detect(file) {
+				t.Fatal("detector rejected its own synthetic fixture")
+			}
+			foreign := File{Content: []byte(`{"synthetic_foreign_fixture":true}`),
+				Meta: FileMeta{SourceAgent: "synthetic-foreign"}}
+			if registered.Parser.Detect(foreign) {
+				t.Fatal("detector claimed the foreign control fixture")
+			}
+
+			records, err := registered.Parse(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := registered.Destination.Conforms(records); err != nil {
+				t.Fatalf("destination routing: %v", err)
+			}
+			if got := conformanceProjection(records); !reflect.DeepEqual(got, fixture.Want) {
+				gotJSON, _ := json.MarshalIndent(got, "", "  ")
+				wantJSON, _ := json.MarshalIndent(fixture.Want, "", "  ")
+				t.Fatalf("normalized records differ\ngot:  %s\nwant: %s", gotJSON, wantJSON)
+			}
+		})
+	}
+
+	for _, registered := range Registered() {
+		if !covered[registered.Name] {
+			t.Errorf("registered parser %q has no synthetic conformance fixture", registered.Name)
+		}
+	}
+}
+
+func TestDestinationsRejectCrossSurfaceRecords(t *testing.T) {
+	corpus := Records{Sessions: []Session{{ID: "synthetic-session"}}}
+	store := Records{Memories: []Memory{{Content: "synthetic memory"}}}
+	for _, testCase := range []struct {
+		name        string
+		destination Destination
+		records     Records
+		wantError   string
+	}{
+		{"corpus to corpus", DestinationCorpus, corpus, ""},
+		{"store to corpus", DestinationCorpus, store, "corpus parser produced store memories"},
+		{"store to store", DestinationStore, store, ""},
+		{"corpus to store", DestinationStore, corpus, "store parser produced corpus sessions"},
+		{"corpus to both", DestinationBoth, corpus, ""},
+		{"store to both", DestinationBoth, store, ""},
+		{"undeclared destination", 0, corpus, "parser declares invalid destination 0"},
+		{"unknown destination bit", DestinationBoth | 1<<4, store,
+			"parser declares invalid destination 19"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := testCase.destination.Conforms(testCase.records)
+			if testCase.wantError == "" {
+				if err != nil {
+					t.Fatalf("Conforms() error = %v, want none", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != testCase.wantError {
+				t.Fatalf("Conforms() error = %v, want %q", err, testCase.wantError)
+			}
+		})
+	}
+}
+
+// TestRegisteredDetectorsRejectEveryForeignFixture is what keeps an ownership
+// marker honest. A detector that claims a file another parser owns is the
+// failure the guide warns about, and the catalogue of synthetic fixtures is the
+// only place it can be caught before a real machine pays for it.
+func TestRegisteredDetectorsRejectEveryForeignFixture(t *testing.T) {
+	catalogue := map[string]File{}
+	for _, path := range conformanceFixturePaths(t) {
+		fixture := readConformanceFixture(t, path)
+		content, err := os.ReadFile(filepath.Join(filepath.Dir(path), fixture.Source))
+		if err != nil {
+			t.Fatal(err)
+		}
+		catalogue[fixture.Parser] = File{Content: content, Meta: fixture.Meta}
+	}
+
+	for _, registered := range Registered() {
+		for owner, file := range catalogue {
+			if owner == registered.Name {
+				continue
+			}
+			if registered.Parser.Detect(file) {
+				t.Errorf("parser %q claimed the fixture owned by %q", registered.Name, owner)
+			}
+		}
+	}
+}
+
+func conformanceFixturePaths(t *testing.T) []string {
+	t.Helper()
+	fixtures, err := filepath.Glob(filepath.Join("testdata", "conformance", "*", "fixture.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fixtures) == 0 {
+		t.Fatal("the parser conformance catalogue is empty")
+	}
+	return fixtures
+}
+
+func readConformanceFixture(t *testing.T, path string) conformanceFixture {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture conformanceFixture
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	return fixture
+}
+
+func conformanceProjection(records Records) conformanceWant {
+	got := conformanceWant{
+		Sessions: make([]conformanceSession, 0, len(records.Sessions)),
+		Memories: make([]conformanceMemory, 0, len(records.Memories)),
+	}
+	for _, session := range records.Sessions {
+		projected := conformanceSession{
+			ID: session.ID, SourceAgent: session.SourceAgent, Project: session.Project,
+			Title: session.Title, ParentID: session.ParentID,
+			Exchanges: make([]conformanceExchange, 0, len(session.Exchanges)),
+		}
+		for _, exchange := range session.Exchanges {
+			projected.Exchanges = append(projected.Exchanges, conformanceExchange{
+				HumanText: exchange.HumanText, AgentText: exchange.AgentText,
+			})
+		}
+		got.Sessions = append(got.Sessions, projected)
+	}
+	for _, memory := range records.Memories {
+		got.Memories = append(got.Memories, conformanceMemory{
+			Layer: memory.Layer, Content: memory.Content,
+			SourceAgent: memory.SourceAgent, Project: memory.Project,
+		})
+	}
+	return got
+}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -102,7 +103,43 @@ func Scan(roots Roots) Plan {
 		Kind: parsers.KindOpenCodeDB, SourceAgent: "opencode"}), "opencode_databases")
 	plan.add(existingFile(roots.HermesDB, Target{
 		Kind: parsers.KindHermesDB, SourceAgent: "hermes"}), "hermes_databases")
+	addRegisteredParsers(roots, &plan, parsers.Registered())
 	return plan
+}
+
+// addRegisteredParsers is the generic contribution route. A registry line may
+// declare narrow session-store locations; the scanner turns every regular file
+// under them into the same Target the established source-specific scanners
+// emit. Detect runs only after the fingerprint gate, so an unchanged file is
+// still never opened for parsing. Syntax never appears here.
+func addRegisteredParsers(roots Roots, plan *Plan, registered []parsers.Registration) {
+	for _, contribution := range registered {
+		if contribution.Name == "" || contribution.Parser == nil || len(contribution.Locations) == 0 {
+			continue
+		}
+		source := contribution.SourceAgent
+		if source == "" {
+			source = contribution.Name
+		}
+		shape := Target{Kind: parsers.Kind(contribution.Name), SourceAgent: source}
+		declared, refused := contribution.ResolveLocations(roots.Home)
+		for _, location := range refused {
+			plan.Warnings = append(plan.Warnings, fmt.Sprintf(
+				"parser %q declares the unusable location %q", contribution.Name, location))
+		}
+		var targets []Target
+		present := false
+		for _, root := range declared {
+			if pathExists(root) {
+				present = true
+			}
+			targets = append(targets, filesUnder(root, "", shape)...)
+		}
+		plan.add(targets, contribution.Name+"_files")
+		if present && !slices.Contains(plan.DetectedAgents, source) {
+			plan.DetectedAgents = append(plan.DetectedAgents, source)
+		}
+	}
 }
 
 func (p *Plan) addCodex(found []Target) {

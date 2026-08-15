@@ -1,11 +1,24 @@
 package ingest
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"slices"
 	"testing"
+
+	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
 )
+
+type syntheticContributionParser struct{}
+
+func (syntheticContributionParser) Detect(file parsers.File) bool {
+	return bytes.Contains(file.Content, []byte("synthetic-nova-session"))
+}
+
+func (syntheticContributionParser) Parse(parsers.File) (parsers.Records, error) {
+	return parsers.Records{Sessions: []parsers.Session{{ID: "synthetic-nova"}}}, nil
+}
 
 func TestDetectedAgentsFollowExistingStores(t *testing.T) {
 	home := t.TempDir()
@@ -108,5 +121,112 @@ func TestTheLocalBinaryRunnerIsNeverIngested(t *testing.T) {
 	}
 	if len(plan.Warnings) != 0 {
 		t.Fatalf("the excluded runner created an operator warning: %v", plan.Warnings)
+	}
+}
+
+func TestRegisteredParserLocationsFeedTheIngestPlan(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(home, ".nova", "sessions")
+	if err := os.MkdirAll(filepath.Join(root, "nested"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	wanted := filepath.Join(root, "nested", "kept.source")
+	for path, content := range map[string]string{
+		wanted:                                "synthetic-nova-session",
+		filepath.Join(root, "foreign.source"): "another agent",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	registered := parsers.Registration{
+		Name: "nova", SourceAgent: "nova", Locations: []string{".nova/sessions"},
+		Destination: parsers.DestinationCorpus, Parser: syntheticContributionParser{},
+	}
+	plan := Plan{Scanned: map[string]int{}}
+	addRegisteredParsers(Roots{Home: home}, &plan, []parsers.Registration{registered})
+	if len(plan.Targets) != 2 {
+		t.Fatalf("contributed targets = %+v", plan.Targets)
+	}
+	var claimed []string
+	excluded := 0
+	for _, target := range plan.Targets {
+		content, err := os.ReadFile(target.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if target.Kind != parsers.Kind("nova") || target.SourceAgent != "nova" {
+			t.Fatalf("contributed target = %+v", target)
+		}
+		records, err := registered.Parse(parsers.File{Content: content,
+			Meta: parsers.FileMeta{Path: target.Path, SourceAgent: target.SourceAgent}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(records.Sessions) == 1 {
+			claimed = append(claimed, target.Path)
+		} else if len(records.Discards) == 1 && records.Discards[0].ByDesign {
+			excluded++
+		}
+	}
+	if !slices.Equal(claimed, []string{wanted}) {
+		t.Fatalf("claimed targets = %v, want %s", claimed, wanted)
+	}
+	if excluded != 1 {
+		t.Fatalf("excluded targets = %d, want the foreign candidate", excluded)
+	}
+	if plan.Scanned["nova_files"] != 2 || !slices.Contains(plan.DetectedAgents, "nova") {
+		t.Fatalf("contributed plan = %+v", plan)
+	}
+	if len(plan.Warnings) != 0 {
+		t.Fatalf("a well declared location warned the operator: %v", plan.Warnings)
+	}
+}
+
+// TestContributedLocationsStayInsideTheirDeclaredStore pins the two halves of
+// the contribution boundary: a location that would widen the walk beyond an
+// agent's session store is refused out loud, and a location that is merely
+// absent or empty still reports its counter at zero rather than vanishing from
+// the report as a root nobody looked at.
+func TestContributedLocationsStayInsideTheirDeclaredStore(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "private.source"),
+		[]byte("synthetic-nova-session"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".nova", "empty"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, testCase := range []struct {
+		name        string
+		locations   []string
+		wantWarning bool
+	}{
+		{"an empty location", []string{""}, true},
+		{"the home directory itself", []string{"."}, true},
+		{"a location climbing out of home", []string{"../.."}, true},
+		{"the filesystem root", []string{string(filepath.Separator)}, true},
+		{"an absent store", []string{".nova/sessions"}, false},
+		{"an existing but empty store", []string{".nova/empty"}, false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			plan := Plan{Scanned: map[string]int{}}
+			addRegisteredParsers(Roots{Home: home}, &plan, []parsers.Registration{{
+				Name: "nova", SourceAgent: "nova", Locations: testCase.locations,
+				Destination: parsers.DestinationCorpus, Parser: syntheticContributionParser{},
+			}})
+			if len(plan.Targets) != 0 {
+				t.Fatalf("contributed targets = %+v", plan.Targets)
+			}
+			count, registeredKey := plan.Scanned["nova_files"]
+			if !registeredKey || count != 0 {
+				t.Fatalf("nova_files = %d (present %t), want a registered zero", count, registeredKey)
+			}
+			if warned := len(plan.Warnings) > 0; warned != testCase.wantWarning {
+				t.Fatalf("warnings = %v, want a warning %t", plan.Warnings, testCase.wantWarning)
+			}
+		})
 	}
 }
