@@ -261,7 +261,11 @@ func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) 
 	if len(vectors) != 1 || len(vectors[0]) != dimensions {
 		return nil, fmt.Errorf("query embedding has the wrong dimensions")
 	}
-	candidates, err := nearest(ctx, store, vectorBlob(vectors[0]), min(k*8, 800))
+	candidateLimit, err := nearestCandidateLimit(ctx, store, k)
+	if err != nil {
+		return nil, fmt.Errorf("count vector candidates: %w", err)
+	}
+	candidates, err := nearest(ctx, store, vectorBlob(vectors[0]), candidateLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -570,6 +574,22 @@ func deleteEmbeddings(ctx context.Context, tx *sql.Tx, rowID int64) error {
 		}
 	}
 	return nil
+}
+
+func nearestCandidateLimit(ctx context.Context, db *sql.DB, k int) (int, error) {
+	base := int64(min(k*8, 800))
+	var total, retired int64
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(CASE WHEN source_kind='memories' AND lower(COALESCE(json_extract(locator,'$.layer'),'')) LIKE 'rocodata\_%' ESCAPE '\' THEN 1 ELSE 0 END),0) FROM chunks`).Scan(&total, &retired); err != nil {
+		return 0, err
+	}
+	if total == 0 {
+		return int(base), nil
+	}
+	limit := base + retired
+	if limit > total {
+		limit = total
+	}
+	return int(limit), nil
 }
 
 type neighbor struct {
