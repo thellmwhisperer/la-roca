@@ -161,6 +161,26 @@ func TestMergeRejectsAnUnverifiedOrWritableSourceIdentity(t *testing.T) {
 	}
 }
 
+func TestMergeRefusesARawWriteAheadLogCopyAndTakesItsVacuumedClone(t *testing.T) {
+	directory := t.TempDir()
+	copied := createSource(t, filepath.Join(directory, "copied.db"), "wal", seedExistingCorpusArchive)
+	destination := filepath.Join(directory, "destination.db")
+
+	if info, err := os.Stat(copied.path + "-wal"); err == nil && info.Size() > 0 {
+		t.Fatal("the copy kept a sidecar, so its refusal would not come from the clone itself")
+	}
+	_, err := Merge(t.Context(), destination, []Source{frozenSource(copied)}, Options{BatchSize: 1})
+	if err == nil || !strings.Contains(err.Error(), "VACUUM INTO") {
+		t.Fatalf("raw write-ahead-log copy error = %v, want one naming the remedy", err)
+	}
+	clone := vacuumInto(t, copied, filepath.Join(directory, "clone.db"))
+	report, err := Merge(t.Context(), destination, []Source{frozenSource(clone)}, Options{BatchSize: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFamily(t, report, "sessions", FamilyReport{Identities: 3, PhysicalRows: 3, FTSRows: 3})
+}
+
 func TestMergeRefusesAChildWithoutDeterministicParentIdentity(t *testing.T) {
 	directory := t.TempDir()
 	source := createFrozenSource(t, filepath.Join(directory, "source.db"), func(t *testing.T, db *sql.DB) {
@@ -248,7 +268,15 @@ func frozenSource(fixture frozenFixture) Source {
 
 func createFrozenSource(t *testing.T, path string, seed func(*testing.T, *sql.DB)) frozenFixture {
 	t.Helper()
+	return createSource(t, path, "delete", seed)
+}
+
+func createSource(t *testing.T, path, journalMode string, seed func(*testing.T, *sql.DB)) frozenFixture {
+	t.Helper()
 	db := openTestDB(t, path)
+	if _, err := db.Exec("PRAGMA journal_mode=" + journalMode); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(data.Schema); err != nil {
 		t.Fatal(err)
 	}
@@ -256,11 +284,28 @@ func createFrozenSource(t *testing.T, path string, seed func(*testing.T, *sql.DB
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
+	return frozenFixture{path: path, digest: sourceDigest(t, path)}
+}
+
+func vacuumInto(t *testing.T, source frozenFixture, path string) frozenFixture {
+	t.Helper()
+	db := openTestDB(t, source.path)
+	if _, err := db.Exec("VACUUM INTO '" + path + "'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return frozenFixture{path: path, digest: sourceDigest(t, path)}
+}
+
+func sourceDigest(t *testing.T, path string) string {
+	t.Helper()
 	digest, err := SnapshotDigest(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return frozenFixture{path: path, digest: digest}
+	return digest
 }
 
 func seedCoreArchive(t *testing.T, db *sql.DB) {

@@ -1,12 +1,16 @@
 // Package corpusarchive merges frozen core and plugin session archives into
-// corpus-owned shadow versions without changing the serving route.
+// corpus-owned shadow versions without changing the serving route. A source is
+// accepted only as a complete standalone clone, which is what `VACUUM INTO`
+// produces and what a file copy of a live database is not.
 package corpusarchive
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/url"
 	"os"
@@ -20,6 +24,14 @@ import (
 )
 
 const DefaultBatchSize = 1000
+
+const (
+	sqliteHeaderMagic   = "SQLite format 3\x00"
+	sqliteHeaderLength  = 100
+	sqliteReadVersion   = 18
+	sqliteWriteVersion  = 19
+	sqliteLegacyJournal = 1
+)
 
 type Source struct {
 	Database       string
@@ -177,11 +189,17 @@ func prepareSources(ctx context.Context, destinationPath string, sources []Sourc
 	return prepared, nil
 }
 
-// refuseLiveSidecars keeps the immutable read honest. `immutable=1` reads the
-// main database file alone, so a clone copied while a rollback journal or a
-// WAL still held committed pages would be read as its pre-sidecar prefix, and
-// every count below would agree on the truncated view.
-func refuseLiveSidecars(path string) error {
+// vacuumRemedy is the one accepted way to produce a frozen source. `VACUUM
+// INTO` writes a complete standalone database, folding whatever a write-ahead
+// log still held into the clone, which a file copy leaves behind.
+const vacuumRemedy = "produce it with SQLite `VACUUM INTO`, which writes one complete standalone clone"
+
+// acceptStandaloneClone keeps the immutable read honest. `immutable=1` reads
+// the main database file alone, so a copy taken while a log held committed
+// pages is read as its pre-log prefix, and every count below agrees with that
+// truncated view: the completeness has to be established before the read, from
+// how the clone was made.
+func acceptStandaloneClone(path string) error {
 	for _, suffix := range []string{"-wal", "-journal"} {
 		info, err := os.Stat(path + suffix)
 		if errors.Is(err, fs.ErrNotExist) {
@@ -192,14 +210,32 @@ func refuseLiveSidecars(path string) error {
 		}
 		if info.Size() > 0 {
 			return fmt.Errorf("frozen corpus source %q carries a non-empty %s sidecar, "+
-				"so it is not a checkpointed clone", path, suffix)
+				"so it is not a standalone clone: %s", path, suffix, vacuumRemedy)
 		}
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open frozen corpus source %q: %w", path, err)
+	}
+	defer file.Close()
+	header := make([]byte, sqliteHeaderLength)
+	if _, err := io.ReadFull(file, header); err != nil {
+		return fmt.Errorf("read the frozen corpus source header of %q: %w", path, err)
+	}
+	if !bytes.HasPrefix(header, []byte(sqliteHeaderMagic)) {
+		return fmt.Errorf("frozen corpus source %q is not a SQLite database", path)
+	}
+	if header[sqliteReadVersion] != sqliteLegacyJournal ||
+		header[sqliteWriteVersion] != sqliteLegacyJournal {
+		return fmt.Errorf("frozen corpus source %q is a raw copy of a write-ahead-log database, "+
+			"whose committed pages can still live in a sidecar this read never sees: %s",
+			path, vacuumRemedy)
 	}
 	return nil
 }
 
 func openFrozenSource(path string) (*sql.DB, error) {
-	if err := refuseLiveSidecars(path); err != nil {
+	if err := acceptStandaloneClone(path); err != nil {
 		return nil, err
 	}
 	query := url.Values{"mode": {"ro"}, "immutable": {"1"}}
