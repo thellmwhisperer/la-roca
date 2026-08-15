@@ -53,6 +53,26 @@
             "name": "custody_memberships",
             "description": "Source identities represented by each physical row in ops custody.",
             "columns": ["source_database", "source_table", "source_key", "destination_table", "destination_key", "canonical_digest", "batch_id"]
+          },
+          {
+            "name": "memory_records",
+            "description": "Canonical physical memory payloads prepared for the future federated route.",
+            "columns": ["id", "canonical_digest", "provenance", "layer", "content", "metadata", "origin", "source_agent", "source_model", "source_surface", "source_session", "source_sequence", "project", "status", "supersedes", "created_at", "expires_at"]
+          },
+          {
+            "name": "memory_records_fts",
+            "description": "Derived accent-insensitive full-text shadow index over canonical memory payloads.",
+            "columns": ["content"]
+          },
+          {
+            "name": "memory_provenance",
+            "description": "Source-specific harvest provenance retained beside canonical physical payloads.",
+            "columns": ["source_database", "source_key", "provenance"]
+          },
+          {
+            "name": "memory_compatibility",
+            "description": "Shadow-only projection that reproduces every legacy database label and memory ID.",
+            "columns": ["source_database", "id", "physical_id", "layer", "content", "metadata", "origin", "provenance", "source_agent", "source_model", "source_surface", "source_session", "source_sequence", "project", "status", "supersedes", "created_at", "expires_at"]
           }
         ]
       }

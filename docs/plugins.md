@@ -390,6 +390,17 @@ accent-insensitive `memories_fts` index over its own memories, rebuilt on every
 schema apply so a database that predates the index answers for the rows it
 already held.
 
+DATA-2 also prepares a second, hidden memory route in that same custodial
+database. `memory_records` holds the multiset union of ops, core, and harvested
+corpus payloads: byte-equivalent identities from different sources share one
+record, while duplicates within a source and divergent payloads remain
+physical versions. Plugin-local custody memberships and
+`memory_compatibility` retain every legacy database label and ID. Its derived
+`memory_records_fts` is rebuilt and checked before the ledger becomes
+`verified`. These names stay outside prompts and the SQL gate during shadow
+mode, so the served `memories`/`memories_fts` route and source databases remain
+untouched until a later atomic cutover.
+
 ## Scheduled rides
 
 `roca cron` is a lightweight train: an external observer that invokes work
