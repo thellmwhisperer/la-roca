@@ -23,9 +23,13 @@ output, and the action runs only when that output says the token is present.
 
 ## Version policy
 
-The release manifest and `plugin.json` both start at `1.0.0`. Release Please
-updates the plugin version through `extra-files`, so the plugin manifest has no
-independent version lifecycle and no permanently pinned release override.
+The release manifest and the repository-root `plugin.json` both start at
+`1.0.0`. Release Please updates the plugin version through `extra-files`, so
+the plugin manifest has no independent version lifecycle and no permanently
+pinned release override. A bundled plugin's federation manifest, such as
+`internal/distribution/rocacorpus/plugin.json`, is not an `extra-files` target:
+the installer stamps it with the running build's version, so its checked-in
+placeholder never ships.
 
 After `1.0.0`, normal Conventional Commits choose the next version:
 

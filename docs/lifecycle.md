@@ -22,7 +22,7 @@ package](plugins.md#verified-packages-and-lifecycle), and is removed by a purge
 with the rest of that tree. It ships the resident
 [`roca-ops`](plugins.md#the-bundled-roca-ops-plugin) store, the resident
 [`roca-corpus`](plugins.md#the-bundled-roca-corpus-plugin) archive and the
-custodial [`roca-cron`](plugins.md#cron-rides) journey store. If they cannot be
+custodial [`roca-cron`](plugins.md#scheduled-rides) journey store. If they cannot be
 placed, the installer puts the previous binary back and reports the reason, so
 no partial update is left behind; when even that restore fails it names the copy
 it kept for the operator to move back by hand. A `--version` older than bundled
