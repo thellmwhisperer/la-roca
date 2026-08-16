@@ -99,6 +99,27 @@ func registerIngestReportSteps(ctx *godog.ScenarioContext, w *ingestAcceptanceWo
 		}
 		return nil
 	})
+	ctx.Then(`^one coverage block closes the file accounting and explains the manifest skip$`, func() error {
+		pattern := regexp.MustCompile(`(?m)^coverage: ([0-9,]+) seen · ([0-9,]+) claimed · ([0-9,]+) ingested · ([0-9,]+) skipped$`)
+		matches := pattern.FindAllStringSubmatch(w.last.stdout, -1)
+		if len(matches) != 1 {
+			return fmt.Errorf("coverage block count=%d:\n%s", len(matches), w.last.stdout)
+		}
+		var seen, claimed, ingested, skipped int
+		if _, err := fmt.Sscanf(strings.ReplaceAll(strings.Join(matches[0][1:], " "), ",", ""),
+			"%d %d %d %d", &seen, &claimed, &ingested, &skipped); err != nil {
+			return err
+		}
+		if seen != ingested+skipped || claimed > seen {
+			return fmt.Errorf("coverage does not close: seen=%d claimed=%d ingested=%d skipped=%d",
+				seen, claimed, ingested, skipped)
+		}
+		if !strings.Contains(w.last.stdout,
+			"skipped: Claude memory completeness manifest is not corpus content · 1") {
+			return fmt.Errorf("coverage does not explain the manifest skip:\n%s", w.last.stdout)
+		}
+		return nil
+	})
 	ctx.Then(`^the Claude source summary reports (\d+) discarded records$`, func(want int) error {
 		needle := fmt.Sprintf(" · %d discarded · ", want)
 		for _, line := range strings.Split(w.last.stdout, "\n") {
@@ -166,6 +187,9 @@ func (w *ingestAcceptanceWorld) seedClaudeAndCodex() error {
 		return err
 	}
 	if err := writeFixture(filepath.Join(w.home, ".claude", "projects", encodeAgentPath(filepath.Join(w.home, "workspace", "report")), "memory", "report.md"), "report memory\n"); err != nil {
+		return err
+	}
+	if err := writeFixture(filepath.Join(w.home, ".claude", "projects", encodeAgentPath(filepath.Join(w.home, "workspace", "report")), "memory", "MEMORY.md"), "- [report](report.md)\n"); err != nil {
 		return err
 	}
 	if err := w.seedCodexSession(""); err != nil {

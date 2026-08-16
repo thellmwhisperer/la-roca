@@ -160,5 +160,15 @@ func (w *ingestAcceptanceWorld) seedGrokSessionWithModel(model string) error {
 }
 
 func encodeAgentPath(path string) string {
-	return strings.NewReplacer(":", "-", `\`, "-", "/", "-").Replace(path)
+	var encoded strings.Builder
+	encoded.Grow(len(path))
+	for _, char := range path {
+		if char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' ||
+			char >= '0' && char <= '9' {
+			encoded.WriteRune(char)
+		} else {
+			encoded.WriteByte('-')
+		}
+	}
+	return encoded.String()
 }
