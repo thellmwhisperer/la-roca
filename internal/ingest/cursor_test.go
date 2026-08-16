@@ -66,10 +66,12 @@ func TestCursorIngestReportsCoverageAndIsIdempotent(t *testing.T) {
 
 func TestCursorReaderSerializesAConsistentWALSnapshotWithoutChangingTheSource(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.vscdb")
-	copyCursorFixture(t, path)
 	db := openSynthetic(t, path)
 	defer db.Close()
+	exec(t, db, `CREATE TABLE unrelated (id INTEGER PRIMARY KEY)`)
 	exec(t, db, `PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0`)
+	exec(t, db, `CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value TEXT)`)
+	exec(t, db, `CREATE TABLE cursorDiskKV (key TEXT PRIMARY KEY, value TEXT)`)
 	exec(t, db, `INSERT INTO cursorDiskKV VALUES (
 		'composerData:33333333-4444-5555-6666-777777777777',
 		'{"composerId":"33333333-4444-5555-6666-777777777777","createdAt":1785589400000,
@@ -97,11 +99,24 @@ func TestCursorReaderSerializesAConsistentWALSnapshotWithoutChangingTheSource(t 
 	if err != nil {
 		t.Fatal(err)
 	}
+	mainOnly, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registered, ok := parsers.Lookup("cursor_database")
+	if !ok {
+		t.Fatal("Cursor database parser is not registered")
+	}
+	if registered.Parser.Detect(parsers.File{Content: mainOnly, Meta: parsers.FileMeta{
+		FileName: "state.vscdb", SourceAgent: "cursor",
+	}}) {
+		t.Fatal("Cursor markers escaped the WAL into the main database")
+	}
 	records, complaints, err := ReadCursor(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(complaints) != 0 || len(records.Sessions) != 2 {
+	if len(complaints) != 0 || len(records.Sessions) != 1 {
 		t.Fatalf("snapshot read = sessions:%d complaints:%v", len(records.Sessions), complaints)
 	}
 	mainAfter, _ := Fingerprint(path)

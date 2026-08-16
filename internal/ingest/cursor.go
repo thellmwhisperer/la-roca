@@ -27,7 +27,8 @@ func ReadCursor(ctx context.Context, path string) (parsers.Records, []string, er
 	}
 	meta := parsers.FileMeta{Path: path, FileName: filepath.Base(path), SourceAgent: "cursor"}
 	file := parsers.File{Content: raw, Meta: meta}
-	if !registered.Parser.Detect(file) {
+	if (meta.FileName != "state.vscdb" && meta.FileName != "ai-code-tracking.db") ||
+		len(raw) < 16 || string(raw[:16]) != "SQLite format 3\x00" {
 		records, err := registered.Parse(file)
 		return records, nil, err
 	}
@@ -35,7 +36,7 @@ func ReadCursor(ctx context.Context, path string) (parsers.Records, []string, er
 	if err != nil {
 		return parsers.Records{}, nil, err
 	}
-	records, err := parsers.Parse(parsers.KindCursorDB, snapshot, meta)
+	records, err := registered.Parse(parsers.File{Content: snapshot, Meta: meta})
 	return records, nil, err
 }
 
