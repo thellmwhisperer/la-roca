@@ -124,7 +124,8 @@ timestamp-ordered thread when none survives. A missing parent and an unpaired
 readable message are not malformed records and do not poison later exchanges.
 
 Each `projects/<uuid>.json` file becomes a named project entity (uuid, name,
-description, prompt_template, timestamps) and one content row per `docs` item.
+description, prompt_template, timestamps) and one content row per `docs` item,
+both on the `project` layer.
 `memories.json` contributes `conversations_memory`, `project_memories` keyed by
 project uuid, and each `memory_files` entry. A `design_chats/*.json` record
 keeps the `project {uuid,name}` relation the export states; its session project
