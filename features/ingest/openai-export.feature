@@ -13,6 +13,12 @@ Feature: Official OpenAI data export
     Then only the new ChatGPT conversations and messages are added
     And the ChatGPT exchanges retain OpenAI provenance
 
+  Scenario: Project chats become virtual projects and Custom GPTs do not
+    Given an extracted OpenAI export with project chats is ready to ingest
+    When I run ingest with the export path
+    Then ChatGPT snorlax chats share a virtual project keyed by gizmo id
+    And Custom GPT chats stay unprojected
+
   Scenario: Every file in a sharded ChatGPT export is ingested
     Given an extracted sharded OpenAI export is ready to ingest
     When I run ingest with the export path

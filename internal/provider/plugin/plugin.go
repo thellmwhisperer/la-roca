@@ -15,6 +15,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/query"
@@ -36,6 +37,11 @@ const (
 	// ProvenanceColumn names every row's source database, so a semantic layer
 	// may not declare a column that would be overwritten by it.
 	ProvenanceColumn = "database"
+	// busyTimeout is how long a read-only open waits on a plugin database that
+	// another process is recovering or writing, instead of failing the open with
+	// "database is locked". Two agents can start at once, and both open the
+	// resident plugins.
+	busyTimeout = 15 * time.Second
 )
 
 type Attachment string
@@ -571,13 +577,18 @@ func Validate(ctx context.Context, descriptor Descriptor) (Database, error) {
 
 // databaseURI resolves the path first because a plugin root reached through a
 // relative path would put its first segment in the URI authority, which SQLite
-// refuses to open at all.
+// refuses to open at all. It is always read-only, and it waits on the busy
+// timeout instead of failing the open the moment another process holds a write
+// lock on the same plugin database.
 func databaseURI(path string) string {
 	if absolute, err := filepath.Abs(path); err == nil {
 		path = absolute
 	}
 	uri := url.URL{Scheme: "file", Path: filepath.ToSlash(path),
-		RawQuery: url.Values{"mode": {"ro"}}.Encode()}
+		RawQuery: url.Values{
+			"mode":    {"ro"},
+			"_pragma": {fmt.Sprintf("busy_timeout(%d)", busyTimeout.Milliseconds())},
+		}.Encode()}
 	return uri.String()
 }
 

@@ -283,6 +283,80 @@ func copyClaudeWebFixtureInto(t *testing.T, target string) {
 	}
 }
 
+func TestDeclaredClaudeWebExportIngestsProjectsDocsMemoriesAndDesignChats(t *testing.T) {
+	db := rocaDatabase(t)
+	root := filepath.Join("testdata", "anthropic-export-projects")
+	result, err := Run(context.Background(), db, registry(t), Options{
+		Roots: Roots{ClaudeWebExports: []string{root}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Delta.Sessions != 3 || result.Delta.Exchanges != 2 {
+		t.Fatalf("project export sessions/exchanges = %+v, want 3 sessions and 2 exchanges", result.Delta)
+	}
+	if result.Delta.Memories != 9 {
+		t.Fatalf("project export memories = %d, want 9", result.Delta.Memories)
+	}
+
+	var ordinary string
+	if err := db.SQL().QueryRow(
+		"SELECT COALESCE(project, '') FROM sessions WHERE session_id = ?",
+		"10000000-0000-4000-8000-000000000099").Scan(&ordinary); err != nil {
+		t.Fatal(err)
+	}
+	if ordinary != "" {
+		t.Fatalf("ordinary conversation project = %q, want unset", ordinary)
+	}
+
+	var designProject string
+	if err := db.SQL().QueryRow(
+		"SELECT COALESCE(project, '') FROM sessions WHERE session_id = ?",
+		"cccccccc-0000-4000-8000-000000000001").Scan(&designProject); err != nil {
+		t.Fatal(err)
+	}
+	if designProject != "aaaaaaaa-0000-4000-8000-000000000001" {
+		t.Fatalf("design chat project = %q", designProject)
+	}
+
+	counts := map[string]int{}
+	rows, err := db.SQL().Query(`SELECT layer, COUNT(*) FROM memories
+		WHERE source_agent = 'claude-web' GROUP BY layer`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var layer string
+		var n int
+		if err := rows.Scan(&layer, &n); err != nil {
+			t.Fatal(err)
+		}
+		counts[layer] = n
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if counts["user"] != 5 || counts["project"] != 4 {
+		t.Fatalf("memory layers = %v, want user=5 project=4", counts)
+	}
+
+	var projected int
+	if err := db.SQL().QueryRow(`SELECT COUNT(*) FROM memories
+		WHERE source_agent = 'claude-web' AND project = 'aaaaaaaa-0000-4000-8000-000000000001'`).
+		Scan(&projected); err != nil {
+		t.Fatal(err)
+	}
+	if projected != 4 {
+		t.Fatalf("orchard-keyed memories = %d, want entity+2 docs+1 project memory", projected)
+	}
+
+	plan := Scan(Roots{ClaudeWebExports: []string{root}})
+	if plan.Scanned["claude_web_export_files"] != 6 {
+		t.Fatalf("scanned export files = %d, want 6", plan.Scanned["claude_web_export_files"])
+	}
+}
+
 func TestClaudeWebExportIsNeverDiscoveredWithoutADeclaration(t *testing.T) {
 	home := t.TempDir()
 	copyClaudeWebFixtureInto(t, filepath.Join(home, "Downloads", "claude-export"))

@@ -1,0 +1,33 @@
+[
+  {
+    "uuid": "10000000-0000-4000-8000-000000000099",
+    "name": "Synthetic unprojected orchard talk",
+    "summary": "An ordinary export conversation with no project join.",
+    "created_at": "2026-08-01T09:00:00.000Z",
+    "updated_at": "2026-08-01T09:00:02.000Z",
+    "chat_messages": [
+      {
+        "uuid": "20000000-0000-4000-8000-000000000099",
+        "text": "Name the invented sensor.",
+        "content": [],
+        "sender": "human",
+        "created_at": "2026-08-01T09:00:01.000Z",
+        "updated_at": "2026-08-01T09:00:01.000Z",
+        "attachments": [],
+        "files": [],
+        "parent_message_uuid": null
+      },
+      {
+        "uuid": "20000000-0000-4000-8000-000000000098",
+        "text": "Amber Finch.",
+        "content": [],
+        "sender": "assistant",
+        "created_at": "2026-08-01T09:00:02.000Z",
+        "updated_at": "2026-08-01T09:00:02.000Z",
+        "attachments": [],
+        "files": [],
+        "parent_message_uuid": "20000000-0000-4000-8000-000000000099"
+      }
+    ]
+  }
+]

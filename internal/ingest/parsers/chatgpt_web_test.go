@@ -2,6 +2,7 @@ package parsers
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -204,6 +205,72 @@ func TestChatGPTWebMalformedConversationDoesNotPoisonExport(t *testing.T) {
 		discard.ByDesign || !strings.Contains(discard.Reason, "conversation 2 is unreadable") ||
 		!strings.Contains(discard.Reason, "cannot unmarshal string") {
 		t.Fatalf("malformed conversation discard = %+v", discard)
+	}
+}
+
+func TestChatGPTWebSnorlaxBecomesVirtualProjectAndCustomGPTDoesNot(t *testing.T) {
+	tests := []struct {
+		name, gizmoType, gizmoID, templateID, memoryScope, wantProject string
+	}{
+		{
+			name: "snorlax project", gizmoType: "snorlax",
+			gizmoID:     "g-p-syntheticorchard000000000000",
+			templateID:  "g-p-syntheticorchard000000000000",
+			memoryScope: "project_enabled",
+			wantProject: "g-p-syntheticorchard000000000000",
+		},
+		{
+			name: "custom gpt", gizmoType: "gpt",
+			gizmoID:    "g-syntheticcustomgpt000000000000",
+			templateID: "g-syntheticcustomgpt000000000000",
+		},
+		{name: "no gizmo"},
+		{name: "snorlax without id", gizmoType: "snorlax", memoryScope: "project"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw := []byte(fmt.Sprintf(`[{
+				"conversation_id":"synthetic-%s",
+				"title":"Synthetic gizmo case",
+				"gizmo_type":%q,
+				"gizmo_id":%q,
+				"conversation_template_id":%q,
+				"memory_scope":%q,
+				"mapping":{
+					"root":{"id":"root","parent":null,"children":["user"],"message":null},
+					"user":{"id":"user","parent":"root","children":["agent"],"message":{"author":{"role":"user"},"content":{"parts":["Synthetic prompt."]}}},
+					"agent":{"id":"agent","parent":"user","children":[],"message":{"author":{"role":"assistant"},"content":{"parts":["Synthetic answer."]}}}
+				}
+			}]`, strings.ReplaceAll(test.name, " ", "-"),
+				test.gizmoType, test.gizmoID, test.templateID, test.memoryScope))
+			records, err := ParseChatGPTWebConversations(bytes.NewReader(raw), FileMeta{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(records.Sessions) != 1 {
+				t.Fatalf("sessions = %d, want 1", len(records.Sessions))
+			}
+			session := records.Sessions[0]
+			if session.Project != test.wantProject {
+				t.Fatalf("project = %q, want %q", session.Project, test.wantProject)
+			}
+			if test.gizmoType != "" && session.Metadata["gizmo_type"] != test.gizmoType {
+				t.Errorf("gizmo_type metadata = %v", session.Metadata["gizmo_type"])
+			}
+			if test.gizmoID != "" && session.Metadata["gizmo_id"] != test.gizmoID {
+				t.Errorf("gizmo_id metadata = %v", session.Metadata["gizmo_id"])
+			}
+			if test.templateID != "" && session.Metadata["conversation_template_id"] != test.templateID {
+				t.Errorf("conversation_template_id metadata = %v", session.Metadata["conversation_template_id"])
+			}
+			if test.memoryScope != "" && session.Metadata["memory_scope"] != test.memoryScope {
+				t.Errorf("memory_scope metadata = %v", session.Metadata["memory_scope"])
+			}
+			if strings.Contains(fmt.Sprint(session.Metadata), "salud") ||
+				strings.Contains(fmt.Sprint(session.Metadata), "trabajo") {
+				t.Fatal("parser invented a display name")
+			}
+		})
 	}
 }
 

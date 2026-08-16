@@ -218,6 +218,10 @@ var registry = []Registration{
 		func(content []byte, meta FileMeta) (Records, error) {
 			return ParseClaudeWebMemories(bytes.NewReader(content), meta)
 		}),
+	fileParser(KindClaudeWebProjects, DestinationStore, ingestprovenance.ClaudeWeb, detectClaudeWebProjects,
+		ParseClaudeWebProject),
+	fileParser(KindClaudeWebDesignChats, DestinationCorpus, ingestprovenance.ClaudeWeb, detectClaudeWebDesignChats,
+		ParseClaudeWebDesignChat),
 	fileParser(KindChatGPTWebConversations, DestinationCorpus, ingestprovenance.ChatGPT, detectChatGPTWebConversations,
 		func(content []byte, meta FileMeta) (Records, error) {
 			return ParseChatGPTWebConversations(bytes.NewReader(content), meta)
@@ -468,7 +472,20 @@ func detectClaudeWebConversations(file File) bool {
 }
 
 func detectClaudeWebMemories(file File) bool {
-	return sourceIs(file.Meta, "claude-web") && has(firstObject(file.Content), "memory")
+	return sourceIs(file.Meta, "claude-web") && has(firstObject(file.Content),
+		"memory", "content", "text", "conversations_memory", "project_memories", "memory_files")
+}
+
+func detectClaudeWebProjects(file File) bool {
+	object := firstObject(file.Content)
+	return sourceIs(file.Meta, "claude-web") && has(object, "docs") &&
+		has(object, "uuid") && has(object, "prompt_template")
+}
+
+func detectClaudeWebDesignChats(file File) bool {
+	object := firstObject(file.Content)
+	return sourceIs(file.Meta, "claude-web") && has(object, "messages") &&
+		has(object, "project") && has(object, "uuid")
 }
 
 func detectChatGPTWebConversations(file File) bool {
