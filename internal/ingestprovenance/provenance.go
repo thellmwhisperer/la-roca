@@ -17,9 +17,11 @@ const (
 	CodexCLI      = "Codex CLI"
 	Cowork        = "Cowork"
 	GrokBuild     = "Grok Build"
+	GLM           = "GLM"
 	Hermes        = "Hermes"
 	OpenCode      = "OpenCode"
 	Pi            = "Pi"
+	QwenCode      = "Qwen Code"
 )
 
 // HarnessForSource returns the canonical harness known from an ingestion
@@ -47,6 +49,10 @@ func HarnessForSource(source string) string {
 		return Hermes
 	case source == "grok" || strings.HasPrefix(source, "grok-"):
 		return GrokBuild
+	case source == "glm" || strings.HasPrefix(source, "glm-"):
+		return GLM
+	case source == "qwen-code" || strings.HasPrefix(source, "qwen-code-"):
+		return QwenCode
 	default:
 		return ""
 	}

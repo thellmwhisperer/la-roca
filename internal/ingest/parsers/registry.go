@@ -191,6 +191,20 @@ var registry = []Registration{
 		Destination:      DestinationCorpus,
 		Parser:           parserFunctions{detect: detectPiSession, parse: ParsePiSession},
 	},
+	{
+		Name: string(KindQwenCode), SourceAgent: "qwen-code",
+		CanonicalHarness: ingestprovenance.QwenCode,
+		Locations:        []string{".qwen/projects"}, Version: "qwen-code-v1",
+		Destination: DestinationCorpus,
+		Parser:      parserFunctions{detect: detectQwenCode, parse: ParseQwenCode},
+	},
+	{
+		Name: string(KindGLMSkill), SourceAgent: "glm",
+		CanonicalHarness: ingestprovenance.GLM,
+		Locations:        []string{".glm/skills"}, Version: "glm-skill-v1",
+		Destination: DestinationStore,
+		Parser:      parserFunctions{detect: detectGLMSkill, parse: ParseGLMSkill},
+	},
 	fileParser(KindClaudeWebConversations, DestinationCorpus, ingestprovenance.ClaudeWeb, detectClaudeWebConversations,
 		func(content []byte, meta FileMeta) (Records, error) {
 			return ParseClaudeWebConversations(bytes.NewReader(content), meta)

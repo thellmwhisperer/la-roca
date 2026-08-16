@@ -1,0 +1,10 @@
+{
+  "parser": "qwen_code",
+  "destination": "corpus",
+  "source": "session.data",
+  "meta": {"Path":"/synthetic/home/.qwen/projects/-synthetic-orbit/chats/fixture-qwen.jsonl","FileName":"fixture-qwen.jsonl","SourceAgent":"qwen-code"},
+  "want": {
+    "sessions": [{"id":"fixture-qwen","source_agent":"qwen-code","project":"orbit","exchanges":[{"human_text":"Chart the invented moon.","agent_text":"The moon is cobalt."}]}],
+    "memories": []
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "parser": "glm_skill",
+  "destination": "store",
+  "source": "skill.data",
+  "meta": {"Path":"/synthetic/home/.glm/skills/synthetic-compass/SKILL.md","FileName":"SKILL.md","SourceAgent":"glm"},
+  "want": {
+    "sessions": [],
+    "memories": [{"layer":"user","content":"---\nname: synthetic-compass\ndescription: Navigate an entirely invented archipelago.\n---\n\n# Synthetic Compass\n\nPoint the fictional vessel toward the cobalt moon.","source_agent":"glm"}]
+  }
+}
