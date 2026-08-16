@@ -15,6 +15,8 @@ import (
 func registerDistributionSkillSteps(ctx *godog.ScenarioContext, w *distributionWorld) {
 	ctx.When(`^the operator installs the skill for "([^"]*)"$`, w.installSkillFor)
 	ctx.Then(`^only "([^"]*)" receives the canonical skill and the output names its path$`, w.onlyChosenAgentHasSkill)
+	ctx.Then(`^only "([^"]*)" receives the generated semantic catalog and no other runtime does$`,
+		w.onlyChosenAgentHasCatalog)
 	ctx.When(`^the operator writes their own lines into the skill's operator zone$`, w.editSkillOperatorZone)
 	ctx.Then(`^the operator's lines survive, the product zone is canonical, and the registry records the skill$`,
 		w.skillIsARegisteredArtifact)
@@ -69,6 +71,29 @@ func (w *distributionWorld) onlyChosenAgentHasSkill(agent string) error {
 		}
 		if !os.IsNotExist(readErr) {
 			return fmt.Errorf("unchosen agent %s received %s", runtime, path)
+		}
+	}
+	return nil
+}
+
+// The install writes the suite's second skill — the semantic catalog generated
+// from the installed plugin manifests — beside the canonical one, so the same
+// chosen-runtime discipline holds for it.
+func (w *distributionWorld) onlyChosenAgentHasCatalog(agent string) error {
+	if w.last.code != 0 {
+		return fmt.Errorf("skill install failed: %s", w.last.stderr)
+	}
+	for _, runtime := range distributionAgents {
+		path, _ := distributionCatalogSkillPath(runtime, w.home)
+		body, readErr := os.ReadFile(path)
+		if runtime == agent {
+			if readErr != nil || !strings.Contains(string(body), "name: roca-semantica") {
+				return fmt.Errorf("%s did not receive the catalog skill at %s: %v", runtime, path, readErr)
+			}
+			continue
+		}
+		if !os.IsNotExist(readErr) {
+			return fmt.Errorf("unchosen agent %s received the catalog skill at %s", runtime, path)
 		}
 	}
 	return nil
@@ -142,6 +167,10 @@ func (w *distributionWorld) noAgentReceivedSkill() error {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			return fmt.Errorf("%s received a skill without being selected: %v", runtime, err)
 		}
+		catalog, _ := distributionCatalogSkillPath(runtime, w.home)
+		if _, err := os.Stat(catalog); !os.IsNotExist(err) {
+			return fmt.Errorf("%s received the catalog skill without being selected: %v", runtime, err)
+		}
 	}
 	return nil
 }
@@ -201,12 +230,20 @@ func (w *distributionWorld) promptIsSeparateFromInstructions() error {
 	return nil
 }
 
-var distributionAgents = []string{"claude", "codex", "hermes", "opencode", "pi"}
+var distributionAgents = []string{"claude", "codex", "grok", "hermes", "opencode", "pi", "qwen"}
 
 func distributionSkillPath(agent, home string) (string, error) {
+	return distributionSkillFile(agent, home, "roca")
+}
+
+func distributionCatalogSkillPath(agent, home string) (string, error) {
+	return distributionSkillFile(agent, home, "roca-semantica")
+}
+
+func distributionSkillFile(agent, home, skill string) (string, error) {
 	var parts []string
 	switch agent {
-	case "claude", "codex", "hermes":
+	case "claude", "codex", "grok", "hermes", "qwen":
 		parts = []string{"." + agent}
 	case "opencode":
 		parts = []string{".config", "opencode"}
@@ -215,5 +252,5 @@ func distributionSkillPath(agent, home string) (string, error) {
 	default:
 		return "", fmt.Errorf("unknown agent %q", agent)
 	}
-	return filepath.Join(append([]string{home}, append(parts, "skills", "roca", "SKILL.md")...)...), nil
+	return filepath.Join(append([]string{home}, append(parts, "skills", skill, "SKILL.md")...)...), nil
 }

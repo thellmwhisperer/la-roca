@@ -256,7 +256,10 @@ func publicCommand(name string) bool {
 	}
 }
 
-type plugin struct {
+// pathPlugin is one neighbor `roca-<name>` executable on PATH, which is a
+// different surface from the federated plugin packages internal/provider/plugin
+// owns.
+type pathPlugin struct {
 	Name string `json:"name"`
 	Path string `json:"path"`
 }
@@ -324,8 +327,8 @@ func pluginsCommand(env *cliEnv) *cobra.Command {
 	}
 }
 
-func listPlugins(features config.FeaturesConfig) []plugin {
-	found := []plugin{}
+func listPlugins(features config.FeaturesConfig) []pathPlugin {
+	found := []pathPlugin{}
 	for _, directory := range pluginPathDirectories() {
 		entries, err := os.ReadDir(directory)
 		if err != nil {
@@ -335,11 +338,11 @@ func listPlugins(features config.FeaturesConfig) []plugin {
 			name, ok := pluginName(entry.Name())
 			path := filepath.Join(directory, entry.Name())
 			if ok && isExecutable(path) && (name != "vector" || features.Vector) {
-				found = append(found, plugin{Name: name, Path: path})
+				found = append(found, pathPlugin{Name: name, Path: path})
 			}
 		}
 	}
-	slices.SortFunc(found, func(a, b plugin) int {
+	slices.SortFunc(found, func(a, b pathPlugin) int {
 		return strings.Compare(a.Path, b.Path)
 	})
 	return found
@@ -446,6 +449,10 @@ func pluginInstallCommand(env *cliEnv, consented *bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// The new plugin's semantic fragments teach every runtime that has
+			// the skills installed; the catalog is regenerated last so it sees
+			// the plugin this run just placed.
+			env.refreshCatalogSkills()
 			return env.reportPlugin("installed", result)
 		},
 	}
@@ -482,6 +489,7 @@ func pluginUpdateCommand(env *cliEnv, consented *bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			env.refreshCatalogSkills()
 			return env.reportPlugin("updated", result)
 		},
 	}
@@ -511,6 +519,7 @@ func pluginUninstallCommand(env *cliEnv, consented *bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			env.refreshCatalogSkills()
 			return env.reportPlugin("uninstalled", result)
 		},
 	}
