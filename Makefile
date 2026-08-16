@@ -48,7 +48,7 @@ test: ## Unit and contract tests
 accept: build accept-index ## The godog acceptance suites against the real binary
 	go test -tags=acceptance ./test/acceptance -count=1
 
-split-oracle: build ## Record and replay the sealed DATA SPLIT compatibility goldens
+split-oracle: build ## Record and replay the DATA SPLIT compatibility goldens
 	go test -tags=acceptance ./test/acceptance -run '^TestDataSplitCompatibilityOracle$$' -count=1
 
 accept-index: ## List and verify the per-domain acceptance scenarios
