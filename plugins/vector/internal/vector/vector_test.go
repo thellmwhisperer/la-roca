@@ -216,6 +216,33 @@ func TestDeltaIndexIsIdempotentAndMapsResultsBackToCore(t *testing.T) {
 	assertVectorStoreHasNoCorpusText(t, vectorPath)
 }
 
+func TestIngestKeepsCompletedBatchesWhenWalkFails(t *testing.T) {
+	sources := make([]sourceRow, defaultBatchSize)
+	for index := range sources {
+		sources[index] = sourceRow{kind: "memories", text: fmt.Sprintf("synthetic progress %d", index),
+			layer: "discovery", origin: "agent", createdAt: "2026-01-01"}
+	}
+	path := filepath.Join(t.TempDir(), "vector.db")
+	index := Index{Corpus: &failingCorpus{sources: sources}, VectorPath: path,
+		Model: DefaultModel, Embedder: &recordingEmbedder{}}
+	if _, err := index.Ingest(context.Background()); err == nil {
+		t.Fatal("walk failure was not returned")
+	}
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM chunks`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != defaultBatchSize {
+		t.Fatalf("completed chunks = %d, want %d", count, defaultBatchSize)
+	}
+}
+
 func TestDeltaRefreshesStaleLocatorWithoutReembedding(t *testing.T) {
 	source := sourceRow{kind: "memories", text: "same canonical memory", layer: "discovery",
 		origin: "agent", createdAt: "2026-01-01", cronSource: "synthetic-agent", filePath: "memory.md"}
@@ -903,6 +930,22 @@ func chunkCountsByKind(t *testing.T, path string) map[string]int64 {
 type memoryCorpus struct {
 	sources  []sourceRow
 	resolves map[string]int
+}
+
+type failingCorpus struct {
+	sources []sourceRow
+}
+
+func (f *failingCorpus) WalkSources(_ context.Context, sourceKind string, visit func(sourceRow) error) error {
+	for _, source := range f.sources {
+		if sourceKind != "" && source.kind != sourceKind {
+			continue
+		}
+		if err := visit(source); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("synthetic walk failure")
 }
 
 func (m *memoryCorpus) WalkSources(_ context.Context, sourceKind string, visit func(sourceRow) error) error {
