@@ -68,6 +68,7 @@ type qwenCodeTurn struct {
 	usage     UsageTally
 	tools     []*ToolUse
 	pending   map[string]*ToolUse
+	openCalls int
 	signal    int
 	answered  bool
 }
@@ -178,7 +179,6 @@ func (r *qwenCodeReader) consume(record int, line qwenCodeRecord) {
 func (t *qwenCodeTurn) claim(line qwenCodeRecord) {
 	appendQwenCodeText(&t.agentText, line.Message.Parts)
 	t.agentTS = lastInstant(t.agentTS, line.Timestamp)
-	t.answered = true
 	if t.model == "" {
 		t.model = line.Model
 	}
@@ -205,17 +205,21 @@ func (t *qwenCodeTurn) claim(line qwenCodeRecord) {
 			t.signal++
 		}
 	}
+	hasCall := false
 	for _, part := range line.Message.Parts {
 		call := part.FunctionCall
 		if call == nil {
 			continue
 		}
+		hasCall = true
 		tool := &ToolUse{Name: call.Name, ParamsSummary: paramsSummary(call.Args)}
 		t.tools = append(t.tools, tool)
+		t.openCalls++
 		if call.ID != "" {
 			t.pending[call.ID] = tool
 		}
 	}
+	t.answered = !hasCall
 }
 
 func (r *qwenCodeReader) claimToolResult(record int, line qwenCodeRecord) {
@@ -233,6 +237,8 @@ func (r *qwenCodeReader) claimToolResult(record int, line qwenCodeRecord) {
 			r.unreadable(record, "Qwen Code tool result has no matching call")
 			continue
 		}
+		delete(r.current.pending, response.ID)
+		r.current.openCalls--
 		failed := line.ToolResult.Status != "" && line.ToolResult.Status != "success"
 		message := firstNonEmpty(rawText(line.ToolResult.Error), rawText(response.Response.Error))
 		tool.HadError = failed || message != ""
@@ -246,7 +252,7 @@ func (r *qwenCodeReader) flush() {
 	if r.current == nil {
 		return
 	}
-	if !r.current.answered {
+	if !r.current.answered || r.current.openCalls > 0 {
 		r.deferred++
 		r.current = nil
 		return
