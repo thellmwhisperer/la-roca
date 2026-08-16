@@ -47,9 +47,10 @@ type Outcome struct {
 	// the refusal is about provenance rather than about an edit.
 	Unregistered bool   `json:"unregistered,omitempty"`
 	SystemSHA256 string `json:"system_sha256,omitempty"`
-	// Removed lists every directory an uninstall took away: the roca skill
-	// directory and, when it left it hollow, the skills directory above it. It
-	// is empty for an install and for an uninstall that changed nothing.
+	// Removed lists every directory an uninstall took away: the skill's
+	// directory (roca or roca-semantica) and, when it left it hollow, the skills
+	// directory above it. It is empty for an install and for an uninstall that
+	// changed nothing.
 	Removed []string `json:"removed,omitempty"`
 }
 
