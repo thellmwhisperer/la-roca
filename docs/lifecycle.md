@@ -119,8 +119,9 @@ the packaged files and keeping the database they already own. The existing
 data, configuration and agent integrations remain in place. If any verification
 fails, the active executable is unchanged.
 
-The roca skill, `prompt.md`, and the Claude authorship hook are registered in
-the schema-versioned `~/.roca/artifacts.json`. Each entry records its harness,
+The roca skill, the generated `roca-semantica` catalog skill, `prompt.md`, and
+the Claude authorship hook are registered in the schema-versioned
+`~/.roca/artifacts.json`. Each entry records its harness,
 path, installed release, available release, format, and SYSTEM checksum. The
 same registry feeds uninstall's central owned-path inventory; an artifact with
 operator bytes in its USER zone is not claimed as a whole file.
