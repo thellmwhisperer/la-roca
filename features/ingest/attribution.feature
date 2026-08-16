@@ -16,6 +16,12 @@ Feature: Who wrote what
     Then that session has no project
     And the ingest report explains the global attribution
 
+  Scenario: A punctuation-bearing project path is attributed from its own session cwd
+    Given a Claude project directory ".treehouse/Here comes the sun" is attributed from its session cwd
+    When I run ingest
+    Then that session belongs to project "Here comes the sun"
+    And that project's memory belongs to project "Here comes the sun"
+
   Scenario: Every session records which agent family wrote it, from the supported list
     Given one session from every supported agent family is ready to ingest
     When I run ingest
