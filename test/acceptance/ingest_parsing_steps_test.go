@@ -18,6 +18,8 @@ func registerIngestParsingSteps(ctx *godog.ScenarioContext, w *ingestAcceptanceW
 	})
 	ctx.Given(`^a "([^"]*)" memory file with durable content is ready to ingest$`, w.seedMemoryFile)
 	ctx.Given(`^a Codex session is ready to ingest$`, func() error { return w.seedCodexSession("") })
+	ctx.Given(`^an OpenCode session with message content and telemetry is ready to ingest$`,
+		w.seedOpenCodeSession)
 	ctx.Given(`^a markdown memory with declared metadata is ready to ingest$`, func() error {
 		workspace := filepath.Join(w.home, "workspace")
 		if err := w.writeConfig(workspace); err != nil {
@@ -63,6 +65,63 @@ func registerIngestParsingSteps(ctx *godog.ScenarioContext, w *ingestAcceptanceW
 		}
 		if got != 1 {
 			return fmt.Errorf("Codex session/exchange pairs=%d, want 1", got)
+		}
+		return nil
+	})
+	ctx.Then(`^every finished OpenCode message and its content exists once$`, func() error {
+		checks := []struct {
+			query string
+			want  int
+		}{
+			{`SELECT COUNT(*) FROM exchanges WHERE session_id = 'opencode:opencode-acceptance-session'`, 3},
+			{`SELECT COUNT(*) FROM exchanges WHERE session_id = 'opencode:opencode-acceptance-session'
+			  AND model IN ('synthetic-opencode-a','synthetic-opencode-b')`, 2},
+			{`SELECT COUNT(*) FROM thinking_blocks WHERE session_id = 'opencode:opencode-acceptance-session'
+			  AND full_text = 'synthetic reasoning'`, 1},
+			{`SELECT COUNT(*) FROM tool_uses WHERE session_id = 'opencode:opencode-acceptance-session'
+			  AND tool_name = 'read' AND tool_params_summary = '{"filePath":"synthetic.txt"}'`, 1},
+			{`SELECT COUNT(*) FROM exchanges WHERE session_id = 'opencode:opencode-acceptance-session'
+			  AND agent_text LIKE '%synthetic-hash%' AND agent_text LIKE '%synthetic.txt%'`, 1},
+			{`SELECT json_array_length(json_extract(metadata, '$.todos')) FROM sessions
+			  WHERE session_id = 'opencode:opencode-acceptance-session'`, 1},
+		}
+		for _, check := range checks {
+			got, err := w.queryInt(check.query)
+			if err != nil {
+				return err
+			}
+			if got != check.want {
+				return fmt.Errorf("OpenCode content query returned %d, want %d: %s",
+					got, check.want, check.query)
+			}
+		}
+		return nil
+	})
+	ctx.Then(`^the OpenCode report names its message coverage$`, func() error {
+		seen, err := ingestJSONNumber(w.last.doc, "message_coverage", "opencode", "seen")
+		if err != nil {
+			return err
+		}
+		converted, err := ingestJSONNumber(w.last.doc, "message_coverage", "opencode", "converted")
+		if err != nil {
+			return err
+		}
+		if seen != 3 || converted != 3 {
+			return fmt.Errorf("OpenCode coverage seen/converted=%d/%d, want 3/3", seen, converted)
+		}
+		return nil
+	})
+	ctx.Then(`^no OpenCode telemetry entered the corpus$`, func() error {
+		got, err := w.queryInt(`SELECT
+			(SELECT COUNT(*) FROM exchanges WHERE COALESCE(human_text,'') LIKE '%OPENCODE-%-SENTINEL%'
+			 OR COALESCE(agent_text,'') LIKE '%OPENCODE-%-SENTINEL%') +
+			(SELECT COUNT(*) FROM thinking_blocks WHERE COALESCE(full_text,'') LIKE '%OPENCODE-%-SENTINEL%') +
+			(SELECT COUNT(*) FROM tool_uses WHERE COALESCE(tool_params_summary,'') LIKE '%OPENCODE-%-SENTINEL%')`)
+		if err != nil {
+			return err
+		}
+		if got != 0 {
+			return fmt.Errorf("OpenCode telemetry rows=%d, want zero", got)
 		}
 		return nil
 	})

@@ -86,6 +86,10 @@ type FileMeta struct {
 type Records struct {
 	Sessions []Session
 	Memories []Memory
+	// MessageCoverage is filled by sources whose durable store is message-shaped.
+	// It lets an ingest report the conversion ratio without treating principled
+	// skips, such as a message still being written, as parser failures.
+	MessageCoverage *MessageCoverage
 	// Discards are source records the parser deliberately left out, each with
 	// the record position and the reason it could not be normalized.
 	Discards []Discard
@@ -104,6 +108,15 @@ type Records struct {
 type Seen struct {
 	Sessions int `json:"sessions"`
 	Messages int `json:"messages"`
+}
+
+// MessageCoverage accounts for every source message a reader saw. Skipped is
+// keyed by a stable operator-facing reason so Seen always equals Converted plus
+// the skipped counts.
+type MessageCoverage struct {
+	Seen      int            `json:"seen"`
+	Converted int            `json:"converted"`
+	Skipped   map[string]int `json:"skipped_by_reason"`
 }
 
 type Discard struct {
@@ -159,7 +172,12 @@ type Session struct {
 	// place, and reading them anywhere else would renumber exchanges that already
 	// landed.
 	ExchangeKeyScope string
-	Exchanges        []Exchange
+	// PruneUnmappedExchanges lets an authoritative snapshot remove historical
+	// rows that no longer belong to any explicit source identity after a
+	// projection migration. It is safe only when every current exchange has a
+	// unique SourceID mapping; the writer verifies that before deleting anything.
+	PruneUnmappedExchanges bool
+	Exchanges              []Exchange
 	// Thinking are the blocks that hang off the session and not off an exchange:
 	// a subagent compact summary is the only one.
 	Thinking []Thinking
@@ -177,15 +195,20 @@ type Exchange struct {
 	SourceID string
 	// Fingerprint is the hash of the source projection, so an exchange that
 	// already landed is not rewritten when it did not change.
-	Fingerprint       string
-	IsAfterCompaction bool
-	HumanText         string
-	AgentText         string
-	HumanTimestamp    string
-	AgentTimestamp    string
-	LatencyMS         *int
-	Thinking          []Thinking
-	Tools             []ToolUse
+	Fingerprint string
+	// RewriteOnIdentityChange lets a source replace the historical projection of
+	// the same explicit SourceID after a parser revision changes the unit being
+	// normalized. It is deliberately narrower than ordinary enrichment: without
+	// the source identity and a changed fingerprint, landed content stays frozen.
+	RewriteOnIdentityChange bool
+	IsAfterCompaction       bool
+	HumanText               string
+	AgentText               string
+	HumanTimestamp          string
+	AgentTimestamp          string
+	LatencyMS               *int
+	Thinking                []Thinking
+	Tools                   []ToolUse
 	// Provenance is what the source recorded about how this answer was produced.
 	Provenance Provenance
 	// Signal counts the fields the source stated about this answer, whether or not
