@@ -46,6 +46,24 @@ type conformanceMemory struct {
 // a registry line's declared locations resolve to a store and not to the machine.
 const syntheticHome = "/synthetic/home"
 
+var expectedCanonicalHarnesses = map[Kind]string{
+	KindClaudeSession:           "Claude Code",
+	KindClaudeMemory:            "Claude Code",
+	KindSessionMetadata:         "Claude Desktop",
+	KindCoworkAudit:             "Cowork",
+	KindCodexSession:            "Codex CLI",
+	KindCodexHistory:            "Codex CLI",
+	KindCodexFile:               "Codex CLI",
+	KindCodexMemoryAggregate:    "Codex CLI",
+	KindSubagent:                "Claude Code",
+	KindPiSession:               "Pi",
+	KindClaudeWebConversations:  "Claude Web",
+	KindClaudeWebMemories:       "Claude Web",
+	KindChatGPTWebConversations: "ChatGPT",
+	KindGrokSession:             "Grok Build",
+	KindGrokSessionMetadata:     "Grok Build",
+}
+
 // TestRegisteredParsersConform is the contribution harness. Every directory in
 // testdata/conformance is a complete, synthetic worked example: its manifest
 // names a registered parser, its own source file, the declared destination and
@@ -56,8 +74,12 @@ func TestRegisteredParsersConform(t *testing.T) {
 	covered := map[string]bool{}
 	registeredNames := map[string]bool{}
 	for _, registered := range Registered() {
-		if registered.Name == "" || registered.Parser == nil {
+		if registered.Name == "" || registered.CanonicalHarness == "" || registered.Parser == nil {
 			t.Fatalf("incomplete parser registration: %+v", registered)
+		}
+		if want, ok := expectedCanonicalHarnesses[Kind(registered.Name)]; !ok || registered.CanonicalHarness != want {
+			t.Fatalf("parser %q harness = %q, want %q",
+				registered.Name, registered.CanonicalHarness, want)
 		}
 		if registeredNames[registered.Name] {
 			t.Fatalf("parser %q is registered more than once", registered.Name)
@@ -104,6 +126,20 @@ func TestRegisteredParsersConform(t *testing.T) {
 			}
 			if err := registered.Destination.Conforms(records); err != nil {
 				t.Fatalf("destination routing: %v", err)
+			}
+			for _, session := range records.Sessions {
+				want := CanonicalHarness(Kind(registered.Name), session.SourceAgent)
+				if session.SourceSurface != want || want == "" {
+					t.Errorf("session %q harness = %q, want %q",
+						session.ID, session.SourceSurface, want)
+				}
+			}
+			for _, memory := range records.Memories {
+				want := CanonicalHarness(Kind(registered.Name), memory.SourceAgent)
+				if memory.SourceSurface != want || want == "" {
+					t.Errorf("memory %q harness = %q, want %q",
+						memory.FilePath, memory.SourceSurface, want)
+				}
 			}
 			if got := conformanceProjection(records); !reflect.DeepEqual(got, fixture.Want) {
 				gotJSON, _ := json.MarshalIndent(got, "", "  ")

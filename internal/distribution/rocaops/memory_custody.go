@@ -471,22 +471,7 @@ func readMemoryRows(ctx context.Context, source, path string) ([]memoryRow, erro
 }
 
 func memoryColumns(ctx context.Context, db *sql.DB) (map[string]bool, error) {
-	rows, err := db.QueryContext(ctx, "PRAGMA table_info('memories')")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	columns := make(map[string]bool)
-	for rows.Next() {
-		var cid, notNull, primaryKey int
-		var name, kind string
-		var defaultValue any
-		if err := rows.Scan(&cid, &name, &kind, &notNull, &defaultValue, &primaryKey); err != nil {
-			return nil, err
-		}
-		columns[name] = true
-	}
-	return columns, rows.Err()
+	return bundledplugin.TableColumns(ctx, db, "memories")
 }
 
 func importMemoryBatch(ctx context.Context, ops *sql.DB, batch *migrationledger.Batch,
