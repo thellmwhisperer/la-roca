@@ -5,6 +5,7 @@ package acceptance
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -18,8 +19,20 @@ func registerIngestAttributionSteps(ctx *godog.ScenarioContext, w *ingestAccepta
 	ctx.Given(`^a Claude session path has no recognizable project$`, func() error {
 		return w.seedClaudeSession("", 1, false, "")
 	})
+	ctx.Given(`^a Claude project directory "([^"]*)" is attributed from its session cwd$`, w.seedClaudeCwdProject)
 	ctx.Given(`^one session from every supported agent family is ready to ingest$`, w.seedEverySupportedSession)
 	ctx.Given(`^a "([^"]*)" session declares model "([^"]*)"$`, w.seedModelSession)
+	ctx.Then(`^that project's memory belongs to project "([^"]*)"$`, func(project string) error {
+		got, err := w.queryInt(`SELECT COUNT(*) FROM memories
+			WHERE json_extract(metadata, '$.file_name') = 'fact.md' AND project = ?`, project)
+		if err != nil {
+			return err
+		}
+		if got != 1 {
+			return fmt.Errorf("memory is not attributed to %q: got %d", project, got)
+		}
+		return nil
+	})
 	ctx.Then(`^that session belongs to project "([^"]*)"$`, func(project string) error {
 		got, err := w.queryInt("SELECT COUNT(*) FROM sessions WHERE session_id = ? AND project = ?", w.sessionID, project)
 		if err != nil {
@@ -126,6 +139,25 @@ func registerIngestAttributionSteps(ctx *godog.ScenarioContext, w *ingestAccepta
 		}
 		return nil
 	})
+}
+
+func (w *ingestAcceptanceWorld) seedClaudeCwdProject(dir string) error {
+	workspace := filepath.Join(w.home, "workspace")
+	cwd := filepath.Join(workspace, dir)
+	if err := w.writeConfig(workspace); err != nil {
+		return err
+	}
+	encoded := encodeAgentPath(cwd)
+	session := filepath.Join(w.home, ".claude", "projects", encoded, claudeAcceptanceSession+".jsonl")
+	if err := writeFixture(session, claudeExchange(1, cwd, false, "")); err != nil {
+		return err
+	}
+	memory := filepath.Join(w.home, ".claude", "projects", encoded, "memory", "fact.md")
+	if err := writeFixture(memory, "---\nname: fact\ntype: project\n---\nA synthetic attributed fact.\n"); err != nil {
+		return err
+	}
+	w.fixturePath, w.sessionID = session, claudeAcceptanceSession
+	return nil
 }
 
 func (w *ingestAcceptanceWorld) seedEverySupportedSession() error {

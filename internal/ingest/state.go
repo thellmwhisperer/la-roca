@@ -99,6 +99,7 @@ func targetFingerprint(target Target) (string, error) {
 // contributed parser always declares it, so the contribution kit stays one
 // fixture folder, one parser file and one registry line.
 var parserVersions = map[parsers.Kind]string{
+	parsers.KindClaudeMemory:            "claude-memory-v2",
 	parsers.KindClaudeSession:           "claude-session-v6",
 	parsers.KindCoworkAudit:             "cowork-audit-v6",
 	parsers.KindSubagent:                "subagent-v6",

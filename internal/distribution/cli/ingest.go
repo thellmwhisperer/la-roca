@@ -124,6 +124,7 @@ func renderIngest(env *cliEnv, result service.IngestResult, verbose bool) {
 	renderIngestSources(env, result)
 	renderIngestMessageCoverage(env, result)
 	renderIngestDelta(env, result.Delta)
+	renderIngestCoverage(env, result.Coverage, verbose)
 	if result.ExchangesHeld > 0 {
 		env.print("  %s still being written and left for the next run",
 			axi.Quantity(int64(result.ExchangesHeld), "exchange"))
@@ -156,6 +157,47 @@ func renderIngestMessageCoverage(env *cliEnv, result service.IngestResult) {
 	}
 }
 
+func renderIngestCoverage(env *cliEnv, coverage ingest.CoverageReport, verbose bool) {
+	env.print("coverage: %s seen · %s claimed · %s ingested · %s skipped",
+		axi.Number(int64(coverage.Files.Seen)), axi.Number(int64(coverage.Files.Claimed)),
+		axi.Number(int64(coverage.Files.Ingested)), axi.Number(int64(coverage.Files.Skipped)))
+	for _, category := range coverage.Files.Skips {
+		env.print("  skipped: %s · %s", category.Reason, axi.Number(int64(category.Count)))
+	}
+	for _, category := range coverage.Gaps {
+		env.print("  gap: %s · %s", category.Reason, axi.Number(int64(category.Count)))
+	}
+	if len(coverage.Records.Excluded) > 0 {
+		for _, category := range coverage.Records.Excluded {
+			env.print("  records excluded: %s · %s", category.Reason, axi.Number(int64(category.Count)))
+		}
+	}
+	if len(coverage.OpenCode.Store) > 0 || len(coverage.OpenCode.Extracted) > 0 {
+		env.print("  opencode: store %s · extracted %s",
+			coverageCounters(coverage.OpenCode.Store), coverageCounters(coverage.OpenCode.Extracted))
+	}
+	if verbose {
+		for _, detail := range coverage.Details {
+			env.print("  coverage detail: %s: %s", detail.Path, detail.Reason)
+		}
+	}
+}
+
+func coverageCounters(counts map[string]int) string {
+	keys := make([]string, 0, len(counts))
+	for key := range counts {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%s", key, axi.Number(int64(counts[key]))))
+	}
+	if len(parts) == 0 {
+		return "none"
+	}
+	return strings.Join(parts, " ")
+}
 func renderIngestSources(env *cliEnv, result service.IngestResult) {
 	for _, name := range ingest.SortedSources(result.Sources) {
 		counts := result.Sources[name]

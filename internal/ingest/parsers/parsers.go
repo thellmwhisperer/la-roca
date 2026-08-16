@@ -76,11 +76,15 @@ const (
 // and the identity it declared for it. A parser overrides a declared value only
 // with something the content itself says.
 type FileMeta struct {
-	Path        string
-	FileName    string
-	SessionID   string
-	Project     string
-	SourceAgent string
+	Path      string
+	FileName  string
+	SessionID string
+	Project   string
+	// ProjectFromCwd marks a project recovered from a session transcript's
+	// recorded working directory, which is exact and outranks the lossy
+	// directory-name or config fallbacks on re-read.
+	ProjectFromCwd bool
+	SourceAgent    string
 	// Sidecar is the paired metadata JSON of a Cowork audit transcript. It
 	// travels as content so the parser stays off the disk.
 	Sidecar []byte
@@ -355,7 +359,11 @@ type Memory struct {
 	// ingestion surface. It is not metadata from the file.
 	SourceSurface string
 	Project       string
-	Metadata      map[string]any
+	// ProjectFromCwd marks a project recovered from a session transcript's
+	// recorded working directory, which is exact and may correct a stale stored
+	// project on re-read.
+	ProjectFromCwd bool
+	Metadata       map[string]any
 	// Source and FilePath are the pair that makes re-ingesting a file update its
 	// memory instead of duplicating it. They also travel inside Metadata as
 	// `_cron_source` and `file_path`, which identifies rows across re-ingests.

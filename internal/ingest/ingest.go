@@ -191,6 +191,7 @@ type Result struct {
 	Warnings       []string                `json:"warnings,omitempty"`
 	ElapsedMS      int64                   `json:"elapsed_ms"`
 	SourceStats    map[string]*SourceStats `json:"-"`
+	Coverage       CoverageReport          `json:"coverage"`
 	// categories indexes DiscardSummary while the run is collapsing into it.
 	categories     map[string]int `json:"-"`
 	fileCategories map[string]int `json:"-"`
@@ -221,6 +222,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		Warnings:       plan.Warnings,
 		SourceStats:    map[string]*SourceStats{},
 		FilesSeen:      len(plan.Targets) + len(plan.Excluded),
+		Coverage:       newCoverage(plan),
 	}
 	announced := map[string]bool{}
 	liveStarted := map[string]bool{}
@@ -237,13 +239,16 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 	for _, target := range plan.Excluded {
 		result.source(target.SourceAgent)
 		stats := result.sourceStats(target.SourceAgent)
-		stats.RecordsExcluded++
+		records := excludedRecordCount(target)
+		stats.RecordsExcluded += records
 		stats.FilesExcluded++
 		result.FilesExcluded++
 		result.categorizeFile("excluded", target.ExclusionReason)
 		// A file the scan refuses on purpose is not a failure to read one: it is
 		// this build declining to ingest something it decided is not corpus.
-		result.discard(target, []parsers.Discard{parsers.Excluded(target.ExclusionReason)})
+		for range records {
+			result.discard(target, []parsers.Discard{parsers.Excluded(target.ExclusionReason)})
+		}
 	}
 
 	// The state is read even on a dry run: telling an operator that eight hundred
@@ -311,10 +316,16 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 			if metadataErr == nil && !isDatabase && unchangedMetadata(state, target.Path, metadata) {
 				result.FilesSkipped++
 				result.categorizeFile("skipped", "unchanged fingerprint")
+				result.Coverage.skip(target.Path, "unchanged metadata after fingerprint failure")
 				finishTarget()
 				continue
 			}
 			result.fingerprintFailure(target, err)
+			if os.IsNotExist(err) {
+				result.Coverage.skip(target.Path, "disappeared after scan")
+			} else {
+				result.Coverage.skip(target.Path, "fingerprint failed")
+			}
 			finishTarget()
 			continue
 		}
@@ -322,6 +333,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 			result.addMessageCoverage(source, state[target.Path].MessageCoverage)
 			result.FilesSkipped++
 			result.categorizeFile("skipped", "unchanged fingerprint")
+			result.Coverage.skip(target.Path, "unchanged fingerprint")
 			finishTarget()
 			continue
 		}
@@ -329,6 +341,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 			result.FilesRead++
 			result.categorizeFile("pending", "new or changed fingerprint")
 			stats.Read++
+			result.Coverage.skip(target.Path, "dry run pending")
 			finishTarget()
 			continue
 		}
@@ -340,12 +353,18 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		result.categorizeFile("parsed", "new or changed fingerprint")
 		stats.Read++
 		discardsBefore, excludedBefore := result.RecordsDiscarded, result.RecordsExcluded
-		err = ingestOne(ctx, db, layers, opts, target, fingerprint, &result)
+		ingested, err := ingestOne(ctx, db, layers, opts, target, fingerprint, &result)
 		stats.RecordsDiscarded += result.RecordsDiscarded - discardsBefore
 		stats.RecordsExcluded += result.RecordsExcluded - excludedBefore
 		finishTarget()
 		if err != nil {
+			result.Coverage.skip(target.Path, "write failed")
 			return result, err
+		}
+		if ingested {
+			result.Coverage.Files.Ingested++
+		} else {
+			result.Coverage.skip(target.Path, "read or parse failed")
 		}
 	}
 
@@ -357,6 +376,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		result.After = after
 		result.Delta = after.minus(before)
 	}
+	finalizeCoverage(ctx, db.SQL(), opts.Roots, plan, &result)
 	if opts.Progress != nil {
 		for _, name := range SortedSources(result.Sources) {
 			counts := result.Sources[name]
@@ -366,6 +386,13 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		}
 	}
 	return result, nil
+}
+
+func excludedRecordCount(target Target) int {
+	if target.ExcludedRecordsKnown {
+		return target.ExcludedRecords
+	}
+	return 1
 }
 
 func (r *Result) sourceStats(agent string) *SourceStats {
@@ -528,18 +555,21 @@ func (r *Result) categorize(discard parsers.Discard) {
 }
 
 // ingestOne reads one artefact and writes it, with its state, in one transaction.
+// The first value reports whether the artefact's own content was read, parsed and
+// written; a companion failure such as an unreadable metadata sidecar leaves it
+// false only when the artefact itself could not be read.
 //
 // State and data commit together on purpose: committing the state apart would let
 // a crash between the two leave a fingerprint saying "synced" over data that was
 // never written, and that file would then be skipped forever.
 func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Options,
-	target Target, fingerprint string, result *Result) error {
+	target Target, fingerprint string, result *Result) (bool, error) {
 	records, reason := read(ctx, opts, target, result)
 	if reason != "" {
 		result.fail(target, reason)
 		// The failure is recorded against the path so the next run reads the file
 		// again instead of trusting a fingerprint it never earned.
-		return db.Write(ctx, func(tx *sql.Tx) error {
+		return false, db.Write(ctx, func(tx *sql.Tx) error {
 			return RecordState(ctx, tx, target, fingerprint, reason, nil)
 		})
 	}
@@ -582,8 +612,9 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 	})
 	if err == nil {
 		result.recordWritten(target, counts)
+		return true, nil
 	}
-	return err
+	return false, err
 }
 
 // read turns one artefact into records; what the content declares outranks what
@@ -662,12 +693,13 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 	}
 
 	meta := parsers.FileMeta{
-		Path:        target.Path,
-		FileName:    target.FileName,
-		SessionID:   target.SessionID,
-		Project:     target.Project,
-		SourceAgent: target.SourceAgent,
-		SourceType:  target.SourceType,
+		Path:           target.Path,
+		FileName:       target.FileName,
+		SessionID:      target.SessionID,
+		Project:        target.Project,
+		ProjectFromCwd: target.ProjectFromCwd,
+		SourceAgent:    target.SourceAgent,
+		SourceType:     target.SourceType,
 	}
 	if target.SidecarPath != "" {
 		meta.Sidecar, err = os.ReadFile(target.SidecarPath)
@@ -788,6 +820,7 @@ func tableCounts(ctx context.Context, db *sql.DB) (Tables, error) {
 func declaredRoots(roots Roots) map[string]string {
 	declared := map[string]string{
 		"claude_projects":         roots.ClaudeProjects,
+		"claude_project_config":   roots.ClaudeConfig,
 		"claude_desktop_sessions": roots.ClaudeDesktopSessions,
 		"cowork_sessions":         roots.CoworkSessions,
 		"codex_root":              roots.CodexRoot,
@@ -797,6 +830,7 @@ func declaredRoots(roots Roots) map[string]string {
 		"pi_sessions":             roots.PiSessions,
 		"hermes_db":               roots.HermesDB,
 		"grok_sessions":           roots.GrokSessions,
+		"grok_memtrace":           roots.GrokMemtrace,
 		"claude_export":           strings.Join(roots.ClaudeWebExports, string(os.PathListSeparator)),
 		"chatgpt_export":          strings.Join(roots.ChatGPTWebExports, string(os.PathListSeparator)),
 	}
