@@ -2,36 +2,21 @@ package ingest
 
 import (
 	"bufio"
-	"context"
 	"errors"
-	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-const cwdFixtureSessionID = "99999999-8888-7777-6666-555555555555"
-
 func TestClaudeCwdAttributionNamesAPunctuationBearingProject(t *testing.T) {
 	world := newWorld(t)
 	roots := world.roots()
 	cwd := filepath.Join(world.home, ".treehouse", "Here comes the sun")
-	dir := encodeRoot(cwd)
-	world.write(t, filepath.Join(roots.ClaudeProjects, dir, cwdFixtureSessionID+".jsonl"),
-		fmt.Sprintf("{\"type\":\"user\",\"timestamp\":\"2026-08-01T10:00:00Z\",\"cwd\":%q,\"message\":{\"content\":\"question\"}}\n"+
-			"{\"type\":\"assistant\",\"timestamp\":\"2026-08-01T10:00:01Z\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"answer\"}]}}\n", cwd))
-	memory := filepath.Join(roots.ClaudeProjects, dir, "memory", "fact.md")
-	world.write(t, memory, "---\nname: fact\ntype: project\n---\nA synthetic attributed fact.\n")
+	memory := claudeMemoryFixture(t, world, roots, cwd)
+	claudeSessionFixture(t, world, roots, cwd)
 
-	db := rocaDatabase(t)
-	result, err := Run(context.Background(), db, registry(t), Options{Roots: roots})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Sources["claude"].MemoriesInserted == 0 {
-		t.Fatalf("Claude counts = %+v", result.Sources["claude"])
-	}
-	assertMemoryProject(t, db.SQL(), memory, "Here comes the sun")
+	db, result := runIngest(t, roots)
+	assertClaudeMemoryInserted(t, result, db, memory, "Here comes the sun")
 	var project string
 	if err := db.SQL().QueryRow(`SELECT COALESCE(project, '') FROM sessions WHERE session_id = ?`,
 		cwdFixtureSessionID).Scan(&project); err != nil {
@@ -51,18 +36,12 @@ func TestClaudeCwdAttributionOutranksTheConfigMapping(t *testing.T) {
 		t.Fatalf("fixture cwds do not share an encoding: %q vs %q",
 			encodeRoot(sessionCwd), encodeRoot(configCwd))
 	}
-	dir := encodeRoot(sessionCwd)
-	world.write(t, filepath.Join(roots.ClaudeProjects, dir, cwdFixtureSessionID+".jsonl"),
-		fmt.Sprintf("{\"type\":\"user\",\"timestamp\":\"2026-08-01T10:00:00Z\",\"cwd\":%q,\"message\":{\"content\":\"question\"}}\n"+
-			"{\"type\":\"assistant\",\"timestamp\":\"2026-08-01T10:00:01Z\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"answer\"}]}}\n", sessionCwd))
-	memory := filepath.Join(roots.ClaudeProjects, dir, "memory", "fact.md")
-	world.write(t, memory, "---\nname: fact\ntype: project\n---\nA synthetic attributed fact.\n")
-	world.write(t, roots.ClaudeConfig, `{"projects":{"`+configCwd+`":{}}}`)
+	memory := claudeMemoryFixture(t, world, roots, sessionCwd)
+	claudeSessionFixture(t, world, roots, sessionCwd)
+	claudeConfigFixture(t, world, roots, configCwd)
 
 	db := rocaDatabase(t)
-	if _, err := Run(context.Background(), db, registry(t), Options{Roots: roots}); err != nil {
-		t.Fatal(err)
-	}
+	runIngestOn(t, db, roots)
 	assertMemoryProject(t, db.SQL(), memory, "project")
 }
 
