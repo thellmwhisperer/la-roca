@@ -16,9 +16,11 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/datasplit"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacron"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
@@ -678,7 +680,11 @@ func (env *cliEnv) openService() (*service.Service, config.Paths, error) {
 	if err != nil {
 		return nil, paths, err
 	}
-	if !fileExists(paths.DB) {
+	file, configErr := config.LoadFile(paths.Config)
+	if configErr != nil {
+		return nil, paths, configErr
+	}
+	if !fileExists(paths.DB) && file.Layout.Serving != config.LayoutCutover {
 		return nil, paths, logfile.Typed(fmt.Errorf(
 			"no Roca database exists at %s; run `roca init` before this command", paths.DB),
 			logfile.ErrorNotInitialized)
@@ -730,6 +736,56 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		ingestProgress = env.liveIngest.update
 	}
 	providers, interpreters, explorers := buildProviders(file, paths)
+	readLayout := service.ReadLayout(file.Layout.Serving)
+	opsDatabase, corpusDatabase := "", ""
+	if pluginDir != "" {
+		opsDatabase = filepath.Join(pluginDir, rocaops.Name, rocaops.DatabaseFilename)
+		corpusDatabase = filepath.Join(pluginDir, rocacorpus.Name, rocacorpus.DatabaseFilename)
+	}
+	if !readOnly && readLayout != service.LayoutLegacyServing && fileExists(paths.DB) {
+		if _, err := rocacron.Ensure(pluginDir, pluginExecutableDir(paths), env.build.Version); err != nil {
+			return nil, fmt.Errorf("install bundled cron plugin for DATA SPLIT: %w", err)
+		}
+		_, prepareErr := datasplit.PrepareHub(context.Background(), datasplit.HubOptions{
+			CoreDatabase: paths.DB, OpsDatabase: opsDatabase, CorpusDatabase: corpusDatabase,
+			CronDatabase: filepath.Join(pluginDir, rocacron.Name, rocacron.DatabaseFilename),
+			SnapshotDir:  filepath.Join(paths.Backups, "data-split"),
+			LockPath:     logfile.New(filepath.Dir(paths.DB)).LockPath(),
+		})
+		if prepareErr != nil {
+			if rollbackErr := config.SetServingLayout(paths.Config, config.LayoutLegacyServing); rollbackErr != nil {
+				return nil, errors.Join(prepareErr,
+					fmt.Errorf("roll back the DATA SPLIT serving marker: %w", rollbackErr))
+			}
+			return nil, fmt.Errorf("prepare the federation hub; serving marker returned to legacy-serving: %w",
+				prepareErr)
+		}
+	}
+	writerFenced := false
+	if fileExists(opsDatabase) {
+		writerFenced, err = rocaops.MemoryCustodyWriterFenced(context.Background(), opsDatabase)
+		if err != nil {
+			return nil, fmt.Errorf("inspect the DATA SPLIT writer fence: %w", err)
+		}
+	}
+	rocaOpsEnabled := file.Features.RocaOps || readLayout != service.LayoutLegacyServing || writerFenced
+	var rollbackLayout func(error) error
+	var recordShadowMismatch func(error)
+	if !readOnly {
+		rollbackLayout = func(error) error {
+			return config.SetServingLayout(paths.Config, config.LayoutLegacyServing)
+		}
+		recordShadowMismatch = func(reason error) {
+			writer := logfile.NewWithOps(filepath.Dir(paths.DB), opsDatabase)
+			_ = writer.Append(logfile.Executions, logfile.ExecutionRecord{
+				CallRecord: logfile.CallRecord{
+					Timestamp: time.Now().UTC(), Source: "kernel", Args: []string{}, OK: false,
+					Error: reason.Error(), ErrorType: "shadow_mismatch",
+				},
+				Command: "shadow-compare", DatabasePath: paths.DB, ExitCode: ExitError,
+			})
+		}
+	}
 	svc, err := service.Open(service.Options{
 		DBPath:                    paths.DB,
 		BackupDir:                 paths.Backups,
@@ -742,8 +798,11 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		DisableMissingReferentAsk: !file.Features.AskMissingReferent,
 		PluginDir:                 pluginDir,
 		PluginsEnabled:            file.Features.Plugins,
-		RocaOpsEnabled:            file.Features.RocaOps,
+		RocaOpsEnabled:            rocaOpsEnabled,
 		CorpusEnabled:             true,
+		ReadLayout:                readLayout,
+		RollbackLayout:            rollbackLayout,
+		RecordShadowMismatch:      recordShadowMismatch,
 		Providers:                 providers,
 		Interpreters:              interpreters,
 		Explorers:                 explorers,

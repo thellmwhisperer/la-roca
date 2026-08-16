@@ -31,6 +31,11 @@ const (
 type DB struct {
 	sql  *sql.DB
 	path string
+	// transient is an in-memory compatibility main owned by the federation
+	// hub. It can be read through the ordinary store contract, but it is never a
+	// durable write target and its handle is closed by the hub that attached the
+	// plugin databases.
+	transient bool
 
 	once        sync.Once
 	readOnly    *sql.DB
@@ -77,6 +82,20 @@ func Open(path string) (*DB, error) {
 	return &DB{sql: handle, path: abs}, nil
 }
 
+// Transient exposes an already-open in-memory federation main through the read
+// side of DB. logicalPath preserves the public database-path envelope during
+// the reversible cutover; no file is opened or created there.
+func Transient(handle *sql.DB, logicalPath string) (*DB, error) {
+	if handle == nil {
+		return nil, fmt.Errorf("the transient database handle is nil")
+	}
+	abs, err := filepath.Abs(logicalPath)
+	if err != nil {
+		return nil, fmt.Errorf("resolve the logical database path %q: %w", logicalPath, err)
+	}
+	return &DB{sql: handle, path: abs, transient: true}, nil
+}
+
 // whyItCannotOpen turns the engine's answer into the operator's.
 //
 // SQLite reports a missing directory and a directory this user cannot write in
@@ -119,6 +138,9 @@ func (db *DB) SQL() *sql.DB { return db.sql }
 // read-only connection cannot touch WAL's shared index, and a WAL database with
 // a reader like that fails to read.
 func (db *DB) ReadOnly() (*sql.DB, error) {
+	if db.transient {
+		return db.sql, nil
+	}
 	db.once.Do(func() {
 		_, dsn, err := sqliteFileDSN(db.path, url.Values{
 			"_pragma": {
@@ -160,6 +182,9 @@ func (db *DB) Path() string { return db.path }
 
 // Close closes the database.
 func (db *DB) Close() error {
+	if db.transient {
+		return nil
+	}
 	if db.readOnly != nil {
 		db.readOnly.Close()
 	}
@@ -170,6 +195,9 @@ func (db *DB) Close() error {
 // write lock is busy. If fn returns an error, the whole transaction is rolled
 // back.
 func (db *DB) Write(ctx context.Context, fn func(*sql.Tx) error) error {
+	if db.transient {
+		return fmt.Errorf("the in-memory federation main is read-only")
+	}
 	var last error
 	for attempt := range writeRetries {
 		tx, err := db.sql.BeginTx(ctx, nil)

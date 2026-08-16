@@ -359,6 +359,17 @@ func SetModelOrder(path string, providers []string) error {
 	})
 }
 
+// SetServingLayout atomically replaces the one read-route marker while
+// preserving every unrelated byte in the operator's configuration.
+func SetServingLayout(path string, layout ServingLayout) error {
+	if !validServingLayout(layout) {
+		return fmt.Errorf("invalid serving layout %q", layout)
+	}
+	return editFile(path, func(text string) string {
+		return setTableValueText(text, "[layout]", "serving", strconv.Quote(string(layout)))
+	})
+}
+
 func editFile(path string, update func(string) string) error {
 	raw, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
@@ -621,6 +632,7 @@ type File struct {
 	Models   ModelsConfig
 	Query    QueryConfig
 	Features FeaturesConfig
+	Layout   LayoutConfig
 	// Warnings are what this build did not understand, each one naming the key,
 	// the file and the remedy.
 	Warnings []string
@@ -628,6 +640,23 @@ type File struct {
 	// defaults holds the supported loose scalar keys.
 	defaults map[string]any
 }
+
+// ServingLayout is the one durable selector for the DATA SPLIT read route.
+// Writers have their plugin-owned destinations independently of this marker,
+// so returning to legacy reads never returns writes to the kernel database.
+type ServingLayout string
+
+const (
+	LayoutLegacyServing ServingLayout = "legacy-serving"
+	LayoutShadowEqual   ServingLayout = "shadow-equal"
+	LayoutCutover       ServingLayout = "cutover"
+)
+
+type LayoutConfig struct {
+	Serving ServingLayout `toml:"serving"`
+}
+
+func defaultLayout() LayoutConfig { return LayoutConfig{Serving: LayoutLegacyServing} }
 
 // QueryConfig bounds execution of SQL that passed the read-only gate.
 type QueryConfig struct {
@@ -731,7 +760,7 @@ func UnknownKeyWarning(key, path string) string { return unknownKey(key, path) }
 // LoadFile reads the config. A file that is not there is a machine with
 // defaults, not a failure.
 func LoadFile(path string) (File, error) {
-	file := File{Path: path, Features: defaultFeatures()}
+	file := File{Path: path, Features: defaultFeatures(), Layout: defaultLayout()}
 
 	raw, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -766,7 +795,32 @@ func LoadFile(path string) (File, error) {
 	file.Query = readQuery(query, path, &file.Warnings)
 	features, _ := document["features"].(map[string]any)
 	file.Features = readFeatures(features, path, &file.Warnings)
+	layout, _ := document["layout"].(map[string]any)
+	file.Layout = readLayout(layout, path, &file.Warnings)
 	return file, nil
+}
+
+func readLayout(section map[string]any, path string, warnings *[]string) LayoutConfig {
+	layout := defaultLayout()
+	for _, key := range sortedKeys(section) {
+		if key != "serving" {
+			*warnings = append(*warnings, unknownKey("layout."+key, path))
+			continue
+		}
+		written, ok := section[key].(string)
+		candidate := ServingLayout(strings.TrimSpace(written))
+		if !ok || !validServingLayout(candidate) {
+			*warnings = append(*warnings, invalidValue("layout.serving", path,
+				"legacy-serving, shadow-equal, or cutover"))
+			continue
+		}
+		layout.Serving = candidate
+	}
+	return layout
+}
+
+func validServingLayout(layout ServingLayout) bool {
+	return layout == LayoutLegacyServing || layout == LayoutShadowEqual || layout == LayoutCutover
 }
 
 var commandPlaceholder = regexp.MustCompile(`\{([A-Za-z_][A-Za-z0-9_-]*)\}`)
