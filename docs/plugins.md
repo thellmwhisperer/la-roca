@@ -203,8 +203,8 @@ uninstall then archives the directory rather than deleting it — see
   <path>` — you skipped step 1. The error names the exact file to edit.
 - `checksum mismatch for …` — you changed a file after generating
   `checksums.txt`. Regenerate it (step 2, file 3) and install again.
-- `plugin first-receipts is already installed; run 'roca plugin update
-  first-receipts'` — one install per name. Uninstall first, or update.
+- ``plugin first-receipts is already installed; run `roca plugin update
+  first-receipts``` — one install per name. Uninstall first, or update.
 - Your table does not appear and the `databases:` line omits the plugin — the
   semantic declaration disagrees with the real database (a wrong or reordered
   column list is the usual cause). The plugin is skipped with a warning.
