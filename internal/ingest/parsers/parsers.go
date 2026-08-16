@@ -55,6 +55,10 @@ const (
 	// names every source the ingest state table can hold.
 	KindOpenCodeDB Kind = "opencode_database"
 	KindHermesDB   Kind = "hermes_database"
+	// KindCursorDB is Cursor's SQLite state store. Its JSON conversation rows
+	// are normalized by the registered parser after ingest freezes the live
+	// database into an in-memory snapshot.
+	KindCursorDB Kind = "cursor_database"
 	// The official Anthropic data export contributes its conversations and
 	// Claude-web memories as separate file-state targets.
 	KindClaudeWebConversations Kind = "claude_web_conversations"
