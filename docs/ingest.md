@@ -145,9 +145,10 @@ columns remain NULL instead of receiving guessed values.
 ## Hermes database
 
 Hermes keeps its conversations in `~/.hermes/state.db`, a SQLite database La
-Roca opens read-only: a `query_only` connection that never writes and never
-blocks the owning process. Override the location with `hermes_db_path` in the
-configuration or the `HERMES_DB_PATH` environment variable.
+Roca opens read-only: a `query_only` connection that never writes and waits at
+most a quarter second for the owner's lock before giving up. Override the
+location with `hermes_db_path` in the configuration or the `HERMES_DB_PATH`
+environment variable.
 
 Every session is read, closed or not. Hermes writes `ended_at` only when a
 session winds down cleanly, so sessions that were killed, abandoned, or run

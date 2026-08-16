@@ -92,17 +92,23 @@ func hermesMessages(ctx context.Context, db *sql.DB, columns map[string]bool, se
 		` ORDER BY timestamp ASC, `+order+` ASC`, sessionID)
 }
 
-// hermesLastMessageTime is the newest message timestamp a session recorded, or
-// zero when it has no messages. It is the end of a session Hermes never closed.
-func hermesLastMessageTime(messages []row) float64 {
+// hermesLastMessageTime is the newest message timestamp a session recorded, and
+// whether any message recorded one. It is the end of a session Hermes never
+// closed.
+func hermesLastMessageTime(messages []row) (float64, bool) {
 	var latest float64
+	found := false
 	for _, message := range messages {
-		at, _ := message.number("timestamp")
-		if at > latest {
+		at, ok := message.number("timestamp")
+		if !ok {
+			continue
+		}
+		if !found || at > latest {
 			latest = at
 		}
+		found = true
 	}
-	return latest
+	return latest, found
 }
 
 func hermesSession(source row, messages []row) (parsers.Session, int, int) {
@@ -118,7 +124,7 @@ func hermesSession(source row, messages []row) (parsers.Session, int, int) {
 	}
 	if hasEnded {
 		endedAt = parsers.ISOFromEpochSeconds(ended)
-	} else if last := hermesLastMessageTime(messages); last > 0 {
+	} else if last, ok := hermesLastMessageTime(messages); ok {
 		// Hermes records the end of a session only when it winds down cleanly. A
 		// session with no recorded ending still has one: its last message.
 		ended = last
