@@ -142,3 +142,18 @@ func TestAStoreBackedSourceRowShowsWhatItSaw(t *testing.T) {
 		t.Errorf("the source row lost its seen counts:\n%s", output.String())
 	}
 }
+
+func TestASourceRowDoesNotCallFingerprintErrorsSkipped(t *testing.T) {
+	var output strings.Builder
+	renderIngestSources(&cliEnv{out: &output}, service.IngestResult{Result: ingest.Result{
+		Sources: map[string]*ingest.Counts{"pi": {}},
+		SourceStats: map[string]*ingest.SourceStats{"pi": {
+			Processed: 3, Read: 1, FilesErrored: 1,
+		}},
+	}})
+	for _, want := range []string{"3 files seen", "1 parsed", "1 skipped", "1 error"} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("source row does not carry %q: %q", want, output.String())
+		}
+	}
+}
