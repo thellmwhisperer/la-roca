@@ -462,9 +462,9 @@ func assistantContent(parts []openCodeRow) string {
 	return strings.Join(content, "\n\n")
 }
 
-// openCodeProvenance adds up what the assistant messages of one turn declared.
-// OpenCode is the source that states everything: the model, who served it, the
-// tokens with the reasoning ones apart, and the price of the call.
+// openCodeProvenance adds up what one assistant message declared. OpenCode is
+// the source that states everything: the model, who served it, the tokens with
+// the reasoning ones apart, and the price of the call.
 func openCodeProvenance(answers []openCodeRow) parsers.Provenance {
 	var tally parsers.UsageTally
 	model, provider := "", ""
