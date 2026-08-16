@@ -63,9 +63,10 @@ func newCoverage(plan Plan) CoverageReport {
 	}
 	for _, target := range plan.Excluded {
 		report.skip(target.Path, target.ExclusionReason)
-		if target.ExcludedRecords > 0 {
+		records := excludedRecordCount(target)
+		if records > 0 {
 			report.addCategory(&report.Records.Excluded, report.recordIndex,
-				target.ExclusionReason, target.ExcludedRecords)
+				target.ExclusionReason, records)
 		}
 	}
 	return report
@@ -101,17 +102,21 @@ func (*CoverageReport) addCategory(categories *[]CoverageCategory, index map[str
 
 func finalizeCoverage(ctx context.Context, db *sql.DB, roots Roots, plan Plan,
 	result *Result) {
-	landed, err := corpusMemoryPaths(ctx, db)
-	if err != nil {
-		result.Warnings = append(result.Warnings,
-			fmt.Sprintf("memory manifest coverage could not read corpus paths: %v", err))
-	} else {
-		for _, link := range plan.ManifestLinks {
-			switch {
-			case !link.Exists:
-				result.Coverage.gap(link.Path, "Claude memory manifest link is absent from disk")
-			case !result.DryRun && !landed[link.Path]:
-				result.Coverage.gap(link.Path, "Claude memory manifest link is absent from corpus")
+	for _, link := range plan.ManifestLinks {
+		if !link.Exists {
+			result.Coverage.gap(link.Path, "Claude memory manifest link is absent from disk")
+		}
+	}
+	if !result.DryRun {
+		landed, err := corpusMemoryPaths(ctx, db)
+		if err != nil {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("memory manifest coverage could not read corpus paths: %v", err))
+		} else {
+			for _, link := range plan.ManifestLinks {
+				if link.Exists && !landed[link.Path] {
+					result.Coverage.gap(link.Path, "Claude memory manifest link is absent from corpus")
+				}
 			}
 		}
 	}

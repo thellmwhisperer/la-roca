@@ -239,10 +239,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 	for _, target := range plan.Excluded {
 		result.source(target.SourceAgent)
 		stats := result.sourceStats(target.SourceAgent)
-		records := target.ExcludedRecords
-		if records == 0 {
-			records = 1
-		}
+		records := excludedRecordCount(target)
 		stats.RecordsExcluded += records
 		stats.FilesExcluded++
 		result.FilesExcluded++
@@ -390,6 +387,13 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		}
 	}
 	return result, nil
+}
+
+func excludedRecordCount(target Target) int {
+	if target.ExcludedRecordsKnown {
+		return target.ExcludedRecords
+	}
+	return 1
 }
 
 func (r *Result) sourceStats(agent string) *SourceStats {

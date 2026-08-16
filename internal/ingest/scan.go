@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/url"
 	"os"
@@ -45,6 +46,9 @@ type Target struct {
 	// ExcludedRecords is the number of source records represented by an excluded
 	// file when it is cheaply knowable without parsing it as corpus.
 	ExcludedRecords int
+	// ExcludedRecordsKnown distinguishes a measured empty source file from an
+	// exclusion whose record count defaults to one file-level declaration.
+	ExcludedRecordsKnown bool
 }
 
 type manifestLink struct {
@@ -123,7 +127,7 @@ func Scan(roots Roots) Plan {
 	}
 	plan.add(piSessions, "pi_session_files")
 	plan.add(scanGrokSessions(roots), "grok_session_files")
-	plan.add(scanGrokMemtrace(roots), "grok_memtrace_files")
+	plan.add(scanGrokMemtrace(roots, &plan), "grok_memtrace_files")
 	plan.add(scanClaudeWebExports(roots), "claude_web_export_files")
 	plan.add(scanChatGPTWebExports(roots, &plan), "chatgpt_web_export_files")
 	plan.add(existingFile(roots.OpenCodeDB, Target{
@@ -746,36 +750,49 @@ func scanGrokSessions(roots Roots) []Target {
 	return targets
 }
 
-func scanGrokMemtrace(roots Roots) []Target {
+func scanGrokMemtrace(roots Roots, plan *Plan) []Target {
 	var targets []Target
 	for _, name := range filesIn(roots.GrokMemtrace) {
 		if !strings.HasSuffix(name, ".jsonl") {
 			continue
 		}
 		path := filepath.Join(roots.GrokMemtrace, name)
+		records, err := nonEmptyLines(path)
+		known := err == nil
+		if err != nil {
+			plan.Warnings = append(plan.Warnings,
+				fmt.Sprintf("Grok memtrace %q record count is unavailable: %v", path, err))
+		}
 		targets = append(targets, Target{
 			Path: path, Kind: parsers.Kind("grok_memtrace"), SourceAgent: "grok",
 			FileName: name, ExclusionReason: "Grok process memory telemetry is not conversation content",
-			ExcludedRecords: nonEmptyLines(path),
+			ExcludedRecords: records, ExcludedRecordsKnown: known,
 		})
 	}
 	return targets
 }
 
-func nonEmptyLines(path string) int {
+func nonEmptyLines(path string) (int, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return 0
+		return 0, err
 	}
 	defer file.Close()
 	count := 0
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		if strings.TrimSpace(scanner.Text()) != "" {
+	reader := bufio.NewReader(file)
+	for {
+		line, err := reader.ReadString('\n')
+		if strings.TrimSpace(line) != "" {
 			count++
 		}
+		if err == nil {
+			continue
+		}
+		if err == io.EOF {
+			return count, nil
+		}
+		return 0, err
 	}
-	return count
 }
 
 // projectFromGrokDir decodes the URL-escaped working directory a Grok project

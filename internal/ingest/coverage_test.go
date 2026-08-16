@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
@@ -52,6 +53,21 @@ func TestManifestReportsAContentFileMarkedSeenWithoutALandedMemory(t *testing.T)
 	}
 	assertCoverageReason(t, result.Coverage.Gaps,
 		"Claude memory manifest link is absent from corpus", 1)
+}
+
+func TestDryRunReportsAbsentDiskManifestLinksWithoutCorpusTables(t *testing.T) {
+	world := newWorld(t)
+	roots := world.roots()
+	manifest := filepath.Join(roots.ClaudeProjects, world.projectDir(), "memory", "MEMORY.md")
+	world.write(t, manifest, "- [missing](missing.md)\n")
+
+	result, err := Run(context.Background(), emptyDatabase(t), registry(t),
+		Options{Roots: roots, DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCoverageReason(t, result.Coverage.Gaps,
+		"Claude memory manifest link is absent from disk", 1)
 }
 
 func TestClaudeConfigAttributesExistingMemoriesOnANormalIngest(t *testing.T) {
@@ -130,15 +146,56 @@ func TestCoverageAccountsForEverySeenFileAndGrokMemtraceRecord(t *testing.T) {
 	}
 }
 
-func assertCoverageReason(t *testing.T, categories []CoverageCategory, reason string, want int) {
-	t.Helper()
+func TestMemtraceRecordCountDistinguishesEmptyAndLargeFiles(t *testing.T) {
+	for _, test := range []struct {
+		name, content string
+		want          int
+	}{
+		{name: "empty", content: "", want: 0},
+		{name: "large line", content: `{"kind":"sample","payload":"` + strings.Repeat("x", 70_000) + `"}`,
+			want: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			world := newWorld(t)
+			roots := world.roots()
+			world.write(t, filepath.Join(roots.GrokMemtrace, "trace.jsonl"), test.content)
+			result, err := Run(context.Background(), rocaDatabase(t), registry(t), Options{Roots: roots})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := coverageReasonCount(result.Coverage.Records.Excluded,
+				"Grok process memory telemetry is not conversation content"); got != test.want {
+				t.Errorf("record coverage = %d, want %d", got, test.want)
+			}
+			if got := discardReasonCount(result.DiscardSummary,
+				"Grok process memory telemetry is not conversation content"); got != test.want {
+				t.Errorf("excluded records = %d, want %d", got, test.want)
+			}
+		})
+	}
+}
+
+func discardReasonCount(categories []DiscardCategory, reason string) int {
 	for _, category := range categories {
 		if category.Reason == reason {
-			if category.Count != want {
-				t.Errorf("coverage %q = %d, want %d", reason, category.Count, want)
-			}
-			return
+			return category.Count
 		}
 	}
-	t.Errorf("coverage reason %q missing from %+v", reason, categories)
+	return 0
+}
+
+func assertCoverageReason(t *testing.T, categories []CoverageCategory, reason string, want int) {
+	t.Helper()
+	if got := coverageReasonCount(categories, reason); got != want {
+		t.Errorf("coverage %q = %d, want %d in %+v", reason, got, want, categories)
+	}
+}
+
+func coverageReasonCount(categories []CoverageCategory, reason string) int {
+	for _, category := range categories {
+		if category.Reason == reason {
+			return category.Count
+		}
+	}
+	return 0
 }
