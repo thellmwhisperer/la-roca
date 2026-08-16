@@ -30,6 +30,30 @@ func TestTheDeferredLineCountsHeldExchangesInProse(t *testing.T) {
 	}
 }
 
+func TestMessageCoverageReportsTheConversionRatioAndReasons(t *testing.T) {
+	var output strings.Builder
+	renderIngest(&cliEnv{out: &output}, service.IngestResult{Result: ingest.Result{
+		MessageCoverage: map[string]parsers.MessageCoverage{
+			"opencode": {
+				Seen: 5, Converted: 3,
+				Skipped: map[string]int{
+					"assistant message still being written": 1,
+					"unsupported message role: system":      1,
+				},
+			},
+		},
+	}}, false)
+	for _, want := range []string{
+		"coverage: opencode messages seen=5 converted=3 skipped=2",
+		"skipped: assistant message still being written · 1",
+		"skipped: unsupported message role: system · 1",
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("want %q in\n%s", want, output.String())
+		}
+	}
+}
+
 // One source that answered is "claude-code" on every line of the same run.
 // The label was derived from that source's session count, so the live rows
 // called it "claude" until the first session landed and "claude-code"

@@ -25,6 +25,13 @@ Feature: Normalizing each family
     When I run ingest
     Then one Codex session and one exchange exist
 
+  Scenario: OpenCode preserves message content and excludes telemetry
+    Given an OpenCode session with message content and telemetry is ready to ingest
+    When I run ingest
+    Then every finished OpenCode message and its content exists once
+    And the OpenCode report names its message coverage
+    And no OpenCode telemetry entered the corpus
+
   Scenario: An exchange carries the provenance its own source recorded
     Given a Codex rollout with runtime machinery is ready to ingest
     When I run ingest
