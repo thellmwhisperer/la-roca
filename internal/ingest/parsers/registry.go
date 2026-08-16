@@ -226,6 +226,17 @@ var registry = []Registration{
 	},
 	fileParser(KindGrokSessionMetadata, DestinationCorpus, ingestprovenance.GrokBuild, detectGrokSessionMetadata,
 		ParseGrokSessionMetadata),
+	{
+		Name: string(KindCursorDB), SourceAgent: "cursor",
+		CanonicalHarness: ingestprovenance.Cursor,
+		Locations: []string{
+			"Library/Application Support/Cursor/User/globalStorage/state.vscdb",
+			"Library/Application Support/Cursor/User/workspaceStorage",
+			".cursor/ai-tracking/ai-code-tracking.db",
+		},
+		Version: "cursor-database-v1", Destination: DestinationCorpus,
+		Parser: cursorParser{},
+	},
 }
 
 func fileParser(kind Kind, destination Destination, harness string, detect func(File) bool,

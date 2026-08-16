@@ -11,8 +11,8 @@ roca ingest /path/to/extracted-export
 ```
 
 The path belongs only to that invocation. A later `roca ingest` with no path,
-including the nightly run, reads only live Claude, Codex, Qwen Code, GLM, Pi,
-OpenCode, Hermes, Grok Build, and Cowork sources. It fingerprints each source
+including the nightly run, reads only live Claude, Codex, Qwen Code, GLM, Cursor,
+Pi, OpenCode, Hermes, Grok Build, and Cowork sources. It fingerprints each source
 file by path and content, so an explicit rerun of the same export is a zero
 delta and a newer export contributes only message identities that have not
 already landed.
@@ -208,6 +208,27 @@ Pi currently exposes no separate durable memory store; the parser therefore
 declares the corpus destination and invents no memories from configuration or
 index metadata.
 
+## Cursor
+
+Cursor keeps active composer conversations as JSON values inside SQLite rather
+than as loose transcript files. La Roca reads the global
+`~/Library/Application Support/Cursor/User/globalStorage/state.vscdb`, workspace
+`state.vscdb` stores under `workspaceStorage/`, and
+`~/.cursor/ai-tracking/ai-code-tracking.db`. It establishes a read-only SQLite
+snapshot and serializes it before parsing, which includes committed WAL content
+without writing, checkpointing, or otherwise changing Cursor's files.
+
+The global store is the primary conversation surface. Its active composer
+headers order user prompts and assistant bubbles into exchanges; assistant text,
+thinking, named tools, timestamps, and the model and token counts recorded on
+those bubbles enter the corpus. Workspace prompt and generation arrays duplicate
+that primary history, and AI tracking rows describe code attribution rather than
+conversations, so both are reported as exclusions instead of producing duplicate
+turns. Empty composers and bubbles outside the active headers are likewise
+counted as exclusions. Every ingest summary therefore reports the whole reading,
+including what was intentionally left out, and an unchanged rerun is a zero
+delta.
+
 ## Grok Build
 
 Grok Build keeps each session under `~/.grok/sessions/<encoded-cwd>/<session-id>/`,
@@ -276,9 +297,10 @@ produced: `model`, `provider`, `tokens_in`, `tokens_out`, `tokens_reasoning` and
 is NULL wherever the source states nothing, which is normal and not missing
 data. Read them with `IS NOT NULL` and never as a zero: a Claude transcript
 counts tokens and names no provider, a Codex rollout counts the reasoning tokens
-apart, Qwen Code names the model and counts each request in a tool loop, Pi and
-OpenCode also price the turn, Hermes measures a whole session rather than a turn,
-the Claude web export states none of it, and the ChatGPT
+apart, Qwen Code names the model and counts each request in a tool loop, Cursor
+names the model and usage only when its answer bubbles do, Pi and OpenCode also
+price the turn, Hermes measures a whole session rather than a turn, the Claude
+web export states none of it, and the ChatGPT
 export names its model and provider without stating usage.
 
 Thinking text stays in `thinking_blocks`, keyed to its session and exchange; it
