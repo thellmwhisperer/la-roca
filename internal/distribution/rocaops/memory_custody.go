@@ -193,8 +193,32 @@ func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (Me
 	if err != nil {
 		return MemoryCustodyReport{}, err
 	}
+	sources := []memorySource{
+		{name: opsMemorySource, path: options.OpsPath},
+		{name: coreMemorySource, path: options.CorePath},
+		{name: corpusMemorySource, path: options.CorpusPath},
+	}
 	if state.State == migrationledger.StateVerified {
-		return inspectMemoryCustody(ctx, ops, state, options.SnapshotDir, plugin)
+		report, err := inspectMemoryCustody(ctx, ops, state, options.SnapshotDir, plugin)
+		if err != nil {
+			return MemoryCustodyReport{}, err
+		}
+		for _, source := range sources {
+			path := report.SnapshotPaths[source.name]
+			info, statErr := os.Stat(path)
+			switch {
+			case statErr == nil && info.Mode().IsRegular():
+				continue
+			case statErr == nil:
+				return MemoryCustodyReport{}, fmt.Errorf("%s memory snapshot is not a regular file", source.name)
+			case !errors.Is(statErr, os.ErrNotExist):
+				return MemoryCustodyReport{}, fmt.Errorf("inspect %s memory snapshot: %w", source.name, statErr)
+			}
+			if err := snapshotMemories(ctx, source, path); err != nil {
+				return MemoryCustodyReport{}, err
+			}
+		}
+		return report, nil
 	}
 	if state.State != migrationledger.StatePrepared && state.State != migrationledger.StateBatchInProgress &&
 		state.State != migrationledger.StateVerifiedEmpty {
@@ -202,11 +226,6 @@ func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (Me
 			"ops memory custody is %q, want prepared, batch-in-progress, or verified-empty", state.State)
 	}
 
-	sources := []memorySource{
-		{name: opsMemorySource, path: options.OpsPath},
-		{name: coreMemorySource, path: options.CorePath},
-		{name: corpusMemorySource, path: options.CorpusPath},
-	}
 	snapshots := make([]string, 0, len(sources))
 	snapshotPaths := make(map[string]string, len(sources))
 	rowsBySource := make(map[string][]memoryRow, len(sources))

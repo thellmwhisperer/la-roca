@@ -156,6 +156,9 @@ func legacyCutoverEligible(ctx context.Context, options HubOptions) (bool, error
 		}
 		var batches, rows, memberships int
 		db := destinations[plan.destination]
+		if db == nil {
+			return false, fmt.Errorf("DATA-4 destination %q is not open", plan.destination)
+		}
 		if err := db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(row_count), 0)
 			FROM migration_batches WHERE migration = ? AND source_database = 'core' AND source_table = ?`,
 			plan.migration, plan.sourceTable).Scan(&batches, &rows); err != nil {

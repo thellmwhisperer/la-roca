@@ -737,8 +737,11 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 	}
 	providers, interpreters, explorers := buildProviders(file, paths)
 	readLayout := service.ReadLayout(file.Layout.Serving)
-	opsDatabase := filepath.Join(pluginDir, rocaops.Name, rocaops.DatabaseFilename)
-	corpusDatabase := filepath.Join(pluginDir, rocacorpus.Name, rocacorpus.DatabaseFilename)
+	opsDatabase, corpusDatabase := "", ""
+	if pluginDir != "" {
+		opsDatabase = filepath.Join(pluginDir, rocaops.Name, rocaops.DatabaseFilename)
+		corpusDatabase = filepath.Join(pluginDir, rocacorpus.Name, rocacorpus.DatabaseFilename)
+	}
 	if !readOnly && readLayout != service.LayoutLegacyServing && fileExists(paths.DB) {
 		if _, err := rocacron.Ensure(pluginDir, pluginExecutableDir(paths), env.build.Version); err != nil {
 			return nil, fmt.Errorf("install bundled cron plugin for DATA SPLIT: %w", err)
