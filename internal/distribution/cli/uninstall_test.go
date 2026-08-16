@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/lifecycle"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
@@ -324,6 +325,27 @@ func TestUninstallCleansTheEmptySkillChainAndNamesEverySurvivor(t *testing.T) {
 	if len(unnamed) > 0 {
 		t.Errorf("the uninstall left surviving files unnamed:\n  %s\noutput:\n%s",
 			strings.Join(unnamed, "\n  "), out)
+	}
+}
+
+// A catalog file no registry entry stands behind cannot be proven to be this
+// product's: the generated catalog has no shipped bytes, so the withdrawal
+// falls back to an empty checksum and refuses, the same safe reading the
+// canonical skill gives an edited SYSTEM zone it cannot prove.
+func TestUninstallLeavesAnUnregisteredCatalogFileAlone(t *testing.T) {
+	home := t.TempDir()
+	isolateRuntimeDirs(t, home)
+	t.Setenv("GROK_HOME", "")
+	t.Setenv("QWEN_HOME", "")
+
+	catalog := filepath.Join(home, ".claude", "skills", "roca-semantica", "SKILL.md")
+	writeFile(t, catalog, artifact.Zoned("an operator's SYSTEM content\n", ""))
+
+	build := Build{Version: "test", Commit: "test-sha"}
+	runRoot(t, build, "uninstall", "--keep-data")
+
+	if _, err := os.Stat(catalog); os.IsNotExist(err) {
+		t.Fatal("an unregistered catalog file was withdrawn without proof it was ours")
 	}
 }
 

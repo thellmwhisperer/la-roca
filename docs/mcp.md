@@ -136,7 +136,7 @@ An agent learns La Roca three different ways. They stack; none replaces another.
 | Layer | What it is | How the operator turns it on |
 |---|---|---|
 | **Prompt** | A one-line aviso from `roca init` that a skill exists | Automatic on every init; install is never implied |
-| **Skill** | Canonical `SKILL.md` that teaches query/explore/store/exec, the investigation method, and the MCP tools | `roca skill install <runtime>` or `--all` — installs one registered, zoned file in each selected runtime's personal skills directory |
+| **Skill** | Two skills: the canonical `SKILL.md` that teaches query/explore/store/exec, the investigation method, and the MCP tools, plus `roca-semantica`, the semantic catalog generated from the installed plugin manifests | `roca skill install <runtime>` or `--all` — installs both as registered, zoned files in each selected runtime's personal skills directory |
 | **MCP** | Six passthrough tools for agents with no shell | `roca mcp install <runtime>` |
 
 ```
@@ -145,22 +145,54 @@ roca skill install --all   # every supported runtime, explicitly selected
 roca skill install claude  # one runtime
 ```
 
-Paths (personal/global only — Roca never writes a project-local skill):
+Paths (personal/global only — Roca never writes a project-local skill). Each
+runtime receives the canonical skill at `skills/roca/SKILL.md` and the
+generated catalog at `skills/roca-semantica/SKILL.md` under the same root:
 
-| Runtime | Skill file |
+| Runtime | Skill root |
 |---|---|
-| `claude` | `$CLAUDE_CONFIG_DIR`/`~/.claude/skills/roca/SKILL.md` |
-| `codex` | `$CODEX_HOME`/`~/.codex/skills/roca/SKILL.md` |
-| `opencode` | beside `$OPENCODE_CONFIG`, else `~/.config/opencode/skills/roca/SKILL.md` |
-| `hermes` | `$HERMES_HOME`/`~/.hermes/skills/roca/SKILL.md` |
-| `pi` | `$PI_CODING_AGENT_DIR`/`~/.pi/agent/skills/roca/SKILL.md` |
+| `claude` | `$CLAUDE_CONFIG_DIR`/`~/.claude` |
+| `codex` | `$CODEX_HOME`/`~/.codex` |
+| `grok` | `$GROK_HOME`/`~/.grok` |
+| `opencode` | beside `$OPENCODE_CONFIG`, else `~/.config/opencode` |
+| `hermes` | `$HERMES_HOME`/`~/.hermes` |
+| `pi` | `$PI_CODING_AGENT_DIR`/`~/.pi/agent` |
+| `qwen` | `$QWEN_HOME`/`~/.qwen` |
 
-Only that file is created or refreshed. Explicit markers divide its shipped
+Only those files are created or refreshed. Explicit markers divide the shipped
 SYSTEM zone from the operator's USER zone. Re-running is a no-op when SYSTEM
 already matches; otherwise USER is transplanted verbatim and the previous file
 is backed up. An edited SYSTEM zone is left alone unless the operator passes
-`--force`. The skill body lives in `internal/distribution/skill/SKILL.md` and
-ships inside the binary via `go:embed`.
+`--force`. The canonical skill body lives in
+`internal/distribution/skill/SKILL.md` and ships inside the binary via
+`go:embed`; the catalog body is composed at install time from the semantic
+fragments of the installed plugin manifests, the same fragments the query
+catalog composes, and every `roca plugin install`, `update` and `uninstall`
+regenerates it in each runtime where it is registered.
+
+### How a runtime earns a skill seat
+
+A runtime is added only after its user-skill surface is measured on a real
+machine, the same discipline `docs/agent-parsers.md` demands of a parser
+store. The measurements behind the current list:
+
+- **grok** (Grok Build): `grok inspect` lists skills that exist only under
+  `~/.grok/skills/` as discovered `user` skills — both the ones this machine
+  already held there before the change and `roca`/`roca-semantica` after
+  `roca skill install grok`, on a machine where neither `~/.claude/skills/`
+  nor `~/.agents/skills/` held them. Skills installed only under
+  `~/.claude/skills/` are discovered through grok's compatibility tier,
+  tagged `[claude]`, and `GROK_HOME` moves the native tier.
+- **qwen** (Qwen Code): with `QWEN_HOME` pointed at a probe directory holding
+  `skills/probe-skill/SKILL.md`, qwen's skill-manager debug log records
+  "Loading user level skills from" that directory.
+- **glm**: not claimed. `~/.glm/skills/` holds skill files on this machine, but
+  no `glm` binary exists anywhere measured (PATH, npm globals, shell aliases),
+  so no reader can be verified; the GLM plan is used through Claude Code with
+  `CLAUDE_CONFIG_DIR`, which the `claude` seat already honors.
+- **cursor**: not claimed. `~/.cursor` has no `skills/` directory and the
+  `cursor-agent` CLI is not installed, so its user-skill surface is not
+  measurable here.
 
 ---
 
