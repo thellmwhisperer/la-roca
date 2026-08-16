@@ -1280,13 +1280,17 @@ func (w *writer) memory(ctx context.Context, memory parsers.Memory) (Counts, err
 	}
 
 	var id int64
-	var stored, storedMetadata string
+	var stored, storedMetadata, storedProject string
 	err = w.tx.QueryRowContext(ctx, `
-		SELECT id, content, metadata FROM memories
+		SELECT id, content, metadata, COALESCE(project, '') FROM memories
 		WHERE json_extract(metadata, '$._cron_source') = ?
 		  AND json_extract(metadata, '$.file_path') = ?
-		ORDER BY id LIMIT 1`, memory.Source, memory.FilePath).Scan(&id, &stored, &storedMetadata)
+		ORDER BY id LIMIT 1`, memory.Source, memory.FilePath).
+		Scan(&id, &stored, &storedMetadata, &storedProject)
 	freshness := claudeWebMemoryFreshness(memory, storedMetadata)
+	authoritative := memory.ProjectFromCwd && memory.Project != ""
+	projectChange := memory.Project != "" && storedProject != memory.Project &&
+		(storedProject == "" || authoritative)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		layer := w.layers.Resolve(memory.Layer, defaultLayer)
@@ -1304,18 +1308,30 @@ func (w *writer) memory(ctx context.Context, memory parsers.Memory) (Counts, err
 		counts.MemoriesInserted = 1
 	case err != nil:
 		return counts, fmt.Errorf("look up the memory of %s: %w", memory.FilePath, err)
+	case (freshness < 0 || stored == memory.Content && freshness <= 0) && projectChange:
+		_, err := w.tx.ExecContext(ctx,
+			`UPDATE memories SET project = ? WHERE id = ?`, memory.Project, id)
+		if err != nil {
+			return counts, fmt.Errorf("attribute the memory of %s: %w", memory.FilePath, err)
+		}
+		counts.MemoriesUpdated = 1
 	case freshness < 0 || stored == memory.Content && freshness <= 0:
 		// Same file, same text: nothing to do, and nothing written either. This is
 		// what makes a second pass leave the database byte for byte as it was.
 		counts.MemoriesUnchanged = 1
 	default:
+		project := memory.Project
+		if !authoritative && storedProject != "" {
+			project = storedProject
+		}
 		_, err := w.tx.ExecContext(ctx,
 			`UPDATE memories SET content = ?, metadata = ?,
 			 source_model = COALESCE(source_model, ?),
 			 source_surface = COALESCE(source_surface, ?),
+			 project = ?,
 			 created_at = COALESCE(NULLIF(?, ''), created_at) WHERE id = ?`,
 			memory.Content, string(metadata), nullIfEmpty(memory.SourceModel),
-			nullIfEmpty(memory.SourceSurface), memory.CreatedAt, id)
+			nullIfEmpty(memory.SourceSurface), nullIfEmpty(project), memory.CreatedAt, id)
 		if err != nil {
 			return counts, fmt.Errorf("update the memory of %s: %w", memory.FilePath, err)
 		}

@@ -63,6 +63,41 @@ func seededWorld(t *testing.T) (*world, *store.DB, context.Context, Options) {
 	return w, db, ctx, options
 }
 
+const cwdFixtureSessionID = "99999999-8888-7777-6666-555555555555"
+
+// claudeMemoryFixture writes one synthetic Claude memory under the encoded
+// directory of cwd and returns its path.
+func claudeMemoryFixture(t *testing.T, world *world, roots Roots, cwd string) string {
+	t.Helper()
+	memory := filepath.Join(roots.ClaudeProjects, encodeRoot(cwd), "memory", "fact.md")
+	world.write(t, memory, "---\nname: fact\ntype: project\n---\nA synthetic attributed fact.\n")
+	return memory
+}
+
+// claudeSessionFixture writes one synthetic Claude transcript attributed to cwd.
+func claudeSessionFixture(t *testing.T, world *world, roots Roots, cwd string) {
+	t.Helper()
+	world.write(t, filepath.Join(roots.ClaudeProjects, encodeRoot(cwd), cwdFixtureSessionID+".jsonl"),
+		fmt.Sprintf("{\"type\":\"user\",\"timestamp\":\"2026-08-01T10:00:00Z\",\"cwd\":%q,\"message\":{\"content\":\"question\"}}\n"+
+			"{\"type\":\"assistant\",\"timestamp\":\"2026-08-01T10:00:01Z\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"answer\"}]}}\n", cwd))
+}
+
+// claudeConfigFixture maps cwd in the Claude config so a normal ingest has a
+// project mapping to attribute memories against.
+func claudeConfigFixture(t *testing.T, world *world, roots Roots, cwd string) {
+	t.Helper()
+	world.write(t, roots.ClaudeConfig, `{"projects":{"`+cwd+`":{}}}`)
+}
+
+// claudeAttributedMemoryFixture writes a synthetic Claude memory and a config
+// mapping for the same cwd, returning the memory path.
+func claudeAttributedMemoryFixture(t *testing.T, world *world, roots Roots, cwd string) string {
+	t.Helper()
+	memory := claudeMemoryFixture(t, world, roots, cwd)
+	claudeConfigFixture(t, world, roots, cwd)
+	return memory
+}
+
 // projectDir is the directory name an agent would have encoded the demo project's
 // working directory as, so the project decodes against the declared root.
 func (w *world) projectDir() string { return encodeRoot(w.demoCwd()) }
@@ -305,4 +340,45 @@ func registry(t *testing.T) layers.Registry {
 		t.Fatalf("layers: %v", err)
 	}
 	return loaded
+}
+
+// runIngestOn runs one normal ingest over an already-open database.
+func runIngestOn(t *testing.T, db *store.DB, roots Roots) Result {
+	t.Helper()
+	result, err := Run(context.Background(), db, registry(t), Options{Roots: roots})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+// runIngest opens a fresh database and runs one normal ingest over roots,
+// returning the database for post-run assertions.
+func runIngest(t *testing.T, roots Roots) (*store.DB, Result) {
+	t.Helper()
+	db := rocaDatabase(t)
+	return db, runIngestOn(t, db, roots)
+}
+
+// assertMemoryProject asserts the memory's project attribution.
+func assertMemoryProject(t *testing.T, db *sql.DB, path, want string) {
+	t.Helper()
+	var project string
+	if err := db.QueryRow(`SELECT COALESCE(project, '') FROM memories
+		WHERE json_extract(metadata, '$.file_path') = ?`, path).Scan(&project); err != nil {
+		t.Fatal(err)
+	}
+	if project != want {
+		t.Errorf("project = %q, want %q", project, want)
+	}
+}
+
+// assertClaudeMemoryInserted asserts a normal ingest landed the memory and
+// attributed it to the given project.
+func assertClaudeMemoryInserted(t *testing.T, result Result, db *store.DB, memory, project string) {
+	t.Helper()
+	if result.Sources["claude"].MemoriesInserted == 0 {
+		t.Fatalf("Claude counts = %+v", result.Sources["claude"])
+	}
+	assertMemoryProject(t, db.SQL(), memory, project)
 }

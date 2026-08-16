@@ -84,14 +84,15 @@ func memoryRecord(source, layer, body string, meta FileMeta, declared map[string
 	}
 	maps.Copy(metadata, declared)
 	return Records{Memories: []Memory{{
-		Layer:       layer,
-		Content:     body,
-		Origin:      "cron",
-		SourceAgent: source,
-		Project:     meta.Project,
-		Metadata:    metadata,
-		Source:      source,
-		FilePath:    meta.Path,
+		Layer:          layer,
+		Content:        body,
+		Origin:         "cron",
+		SourceAgent:    source,
+		Project:        meta.Project,
+		ProjectFromCwd: meta.ProjectFromCwd,
+		Metadata:       metadata,
+		Source:         source,
+		FilePath:       meta.Path,
 	}}}
 }
 
