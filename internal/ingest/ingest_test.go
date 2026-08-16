@@ -64,13 +64,15 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 		}
 	}
 
-	// Nine sessions: the agent runtimes plus the explicitly declared Claude web
+	// Ten sessions: the agent runtimes plus the explicitly declared Claude web
 	// export. Desktop metadata names the Claude transcript instead of opening
 	// another session, and the Grok metadata and update stream are one session
-	// merged. The count is asserted whole so a source that stops writing is
-	// visible here and not three waves later.
-	if result.Delta.Sessions != 9 {
-		t.Errorf("sessions = %d, want 9", result.Delta.Sessions)
+	// merged. Hermes contributes both of its sessions: the closed one and the
+	// unclosed one, whose lone human turn has no recorded answer yet. The count
+	// is asserted whole so a source that stops writing is visible here and not
+	// three waves later.
+	if result.Delta.Sessions != 10 {
+		t.Errorf("sessions = %d, want 10", result.Delta.Sessions)
 	}
 	// Four memories: the Claude and Codex files plus the one exported Claude web
 	// memory. SKILL.md, the global CLAUDE.md and repository instructions are
@@ -118,9 +120,20 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 		t.Error("no tool use was written")
 	}
 
-	// The Hermes session Hermes has not closed is not read.
-	if containsString(queryColumn(t, db.SQL(), `SELECT session_id FROM sessions`), "h2") {
-		t.Error("a live Hermes session was ingested before it had an ending")
+	// The unclosed Hermes session is read: its session row lands, and its lone
+	// human turn, which has no recorded answer, is deferred rather than stored
+	// as an answer that was never given.
+	if !containsString(queryColumn(t, db.SQL(), `SELECT session_id FROM sessions`), "h2") {
+		t.Error("the unclosed Hermes session was not read")
+	}
+	if result.ExchangesHeld != 1 {
+		t.Errorf("held exchanges = %d, want the one unanswered Hermes turn", result.ExchangesHeld)
+	}
+	if countRows(t, db.SQL(), `exchanges WHERE session_id = 'h2'`) != 0 {
+		t.Error("an unanswered Hermes turn was stored as an exchange")
+	}
+	if seen := result.Seen["hermes"]; seen.Sessions != 2 || seen.Messages != 4 {
+		t.Errorf("hermes seen = %+v, want 2 sessions and 4 messages", seen)
 	}
 }
 
@@ -856,7 +869,7 @@ func TestDiscardCategoriesStayStableAndShareOneDetailBudget(t *testing.T) {
 }
 
 func TestHermesMissingStartDoesNotBecomeTheUnixEpoch(t *testing.T) {
-	session, _ := hermesSession(row{"id": "h-missing", "started_at": nil, "ended_at": float64(10)}, nil)
+	session, _, _ := hermesSession(row{"id": "h-missing", "started_at": nil, "ended_at": float64(10)}, nil)
 	if session.StartedAt != "" {
 		t.Fatalf("missing started_at became %q", session.StartedAt)
 	}
@@ -866,7 +879,7 @@ func TestHermesMissingStartDoesNotBecomeTheUnixEpoch(t *testing.T) {
 }
 
 func TestHermesCountsAssistantContentWithoutAHumanTurn(t *testing.T) {
-	_, orphaned := hermesSession(row{"id": "h-orphan"}, []row{{
+	_, orphaned, _ := hermesSession(row{"id": "h-orphan"}, []row{{
 		"role": "assistant", "content": "orphan answer",
 	}})
 	if orphaned != 1 {
@@ -875,7 +888,7 @@ func TestHermesCountsAssistantContentWithoutAHumanTurn(t *testing.T) {
 }
 
 func TestHermesDoesNotStoreNegativeDuration(t *testing.T) {
-	session, _ := hermesSession(row{
+	session, _, _ := hermesSession(row{
 		"id": "h-reversed", "started_at": float64(120), "ended_at": float64(60),
 	}, nil)
 	if session.DurationMinutes != nil {
@@ -910,6 +923,99 @@ func TestHermesKeepsActiveFilterWhenMessagesHaveNoID(t *testing.T) {
 	}
 }
 
+func TestHermesDerivesTheEndFromItsLastMessage(t *testing.T) {
+	session, _, _ := hermesSession(row{"id": "h-open", "started_at": float64(10)}, []row{
+		{"role": "user", "content": "question", "timestamp": float64(11)},
+		{"role": "assistant", "content": "answer", "timestamp": float64(30)},
+	})
+	if session.EndedAt != "1970-01-01T00:00:30Z" {
+		t.Fatalf("EndedAt = %q, want the last message time", session.EndedAt)
+	}
+	if session.DurationMinutes == nil || *session.DurationMinutes != 0 {
+		t.Fatalf("duration = %v, want 0 minutes", session.DurationMinutes)
+	}
+}
+
+func TestHermesPairsToolResultsByTheirCallID(t *testing.T) {
+	session, _, _ := hermesSession(row{"id": "h-tools", "started_at": float64(10), "ended_at": float64(30)}, []row{
+		{"role": "user", "content": "read two files", "timestamp": float64(10)},
+		{"role": "assistant", "content": "", "timestamp": float64(11),
+			"tool_calls": `[{"id":"call_1","function":{"name":"read_file","arguments":"{\"path\":\"a.txt\"}"}},{"id":"call_2","function":{"name":"read_file","arguments":"{\"path\":\"b.txt\"}"}}]`},
+		{"role": "tool", "tool_call_id": "call_1", "tool_name": "read_file", "content": `{"ok":true}`, "timestamp": float64(12)},
+		{"role": "tool", "tool_call_id": "call_2", "tool_name": "", "content": `{"ok":true}`, "timestamp": float64(13)},
+	})
+	if len(session.Exchanges) != 1 || len(session.Exchanges[0].Tools) != 2 {
+		t.Fatalf("exchanges/tools = %d/%d, want 1/2", len(session.Exchanges), len(session.Exchanges[0].Tools))
+	}
+	tools := session.Exchanges[0].Tools
+	if tools[0].Name != "read_file" || !strings.Contains(tools[0].ParamsSummary, "path=a.txt") {
+		t.Errorf("first tool = %+v, want read_file with path=a.txt", tools[0])
+	}
+	if tools[1].Name != "read_file" || !strings.Contains(tools[1].ParamsSummary, "path=b.txt") {
+		t.Errorf("second tool = %+v, want read_file recovered from its call id with path=b.txt", tools[1])
+	}
+}
+
+func TestHermesClosedSessionKeepsItsUnansweredTurn(t *testing.T) {
+	session, _, deferred := hermesSession(row{"id": "h-closed", "started_at": float64(10), "ended_at": float64(20)}, []row{
+		{"role": "user", "content": "hello?", "timestamp": float64(10)},
+	})
+	if deferred != 0 {
+		t.Fatalf("deferred = %d, want 0 for a closed session", deferred)
+	}
+	if len(session.Exchanges) != 1 {
+		t.Fatalf("exchanges = %d, want 1", len(session.Exchanges))
+	}
+	if session.Exchanges[0].HumanText != "hello?" {
+		t.Fatalf("human text = %q, want hello?", session.Exchanges[0].HumanText)
+	}
+	if session.Exchanges[0].AgentText != "" {
+		t.Fatalf("agent text = %q, want empty (no invented answer)", session.Exchanges[0].AgentText)
+	}
+}
+
+func TestHermesEmptyToolCallsDoNotFabricateToolUse(t *testing.T) {
+	session, _, deferred := hermesSession(row{"id": "h-empty-tools", "started_at": float64(10), "ended_at": float64(20)}, []row{
+		{"role": "user", "content": "do a thing", "timestamp": float64(10)},
+		{"role": "assistant", "content": "", "reasoning_content": "", "tool_calls": "[]", "timestamp": float64(11)},
+	})
+	if deferred != 0 {
+		t.Fatalf("deferred = %d, want 0", deferred)
+	}
+	if len(session.Exchanges) != 1 {
+		t.Fatalf("exchanges = %d, want 1", len(session.Exchanges))
+	}
+	if session.Exchanges[0].AgentText != "" {
+		t.Fatalf("agent text = %q, want empty (no fabricated tool use)", session.Exchanges[0].AgentText)
+	}
+	if len(session.Exchanges[0].Tools) != 0 {
+		t.Fatalf("tools = %d, want 0", len(session.Exchanges[0].Tools))
+	}
+}
+
+func TestReadHermesReportsTheSessionsAndMessagesItSaw(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hermes.db")
+	db := openSynthetic(t, path)
+	exec(t, db, `CREATE TABLE sessions (id TEXT, started_at REAL, ended_at REAL)`)
+	exec(t, db, `CREATE TABLE messages (session_id TEXT, role TEXT, content TEXT, timestamp REAL)`)
+	exec(t, db, `INSERT INTO sessions VALUES ('s1', 10, 20)`)
+	exec(t, db, `INSERT INTO sessions VALUES ('s2', 10, NULL)`)
+	exec(t, db, `INSERT INTO messages VALUES ('s1', 'user', 'q', 10)`)
+	exec(t, db, `INSERT INTO messages VALUES ('s1', 'assistant', 'a', 11)`)
+	exec(t, db, `INSERT INTO messages VALUES ('s2', 'user', 'in flight', 12)`)
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	records, _, err := ReadHermes(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if records.Seen.Sessions != 2 || records.Seen.Messages != 3 {
+		t.Fatalf("seen = %d sessions / %d messages, want 2/3",
+			records.Seen.Sessions, records.Seen.Messages)
+	}
+}
+
 func TestDatabaseReadersCountLiveTurnsAsDeferred(t *testing.T) {
 	user := openCodeRow{id: "user-1"}
 	user.message.Role = "user"
@@ -923,6 +1029,7 @@ func TestDatabaseReadersCountLiveTurnsAsDeferred(t *testing.T) {
 	exec(t, db, `CREATE TABLE sessions (id TEXT, started_at REAL, ended_at REAL)`)
 	exec(t, db, `CREATE TABLE messages (session_id TEXT, role TEXT, content TEXT, timestamp REAL)`)
 	exec(t, db, `INSERT INTO sessions VALUES ('live', 10, NULL)`)
+	exec(t, db, `INSERT INTO messages VALUES ('live', 'user', 'in flight', 11)`)
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -930,8 +1037,12 @@ func TestDatabaseReadersCountLiveTurnsAsDeferred(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if records.Deferred != 1 || len(records.Sessions) != 0 {
-		t.Fatalf("Hermes deferred = %d, sessions = %d", records.Deferred, len(records.Sessions))
+	// The unclosed session is read whole, and its unanswered human turn is the
+	// one thing still in flight: deferred, never stored as an answer.
+	if records.Deferred != 1 || len(records.Sessions) != 1 ||
+		len(records.Sessions[0].Exchanges) != 0 {
+		t.Fatalf("Hermes deferred = %d, sessions = %d, exchanges = %d",
+			records.Deferred, len(records.Sessions), len(records.Sessions[0].Exchanges))
 	}
 }
 
