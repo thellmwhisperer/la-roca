@@ -203,6 +203,37 @@ func TestIngestRetainsMissingChunksUntilWalkCompletes(t *testing.T) {
 	}
 }
 
+func TestIngestRetriesTheInFlightSourceAfterEmbeddingFailure(t *testing.T) {
+	sources := make([]sourceRow, defaultBatchSize)
+	for index := range sources[:defaultBatchSize-1] {
+		sources[index] = sourceRow{kind: "memories", text: fmt.Sprintf("synthetic progress %d", index),
+			layer: "discovery", origin: "agent", createdAt: "2026-01-01"}
+	}
+	sources[defaultBatchSize-1] = sourceRow{kind: "memories", text: strings.Repeat("alpha current ", defaultChunkSize+1),
+		layer: "discovery", origin: "agent", createdAt: "2026-01-01"}
+	embedder := &failOnceEmbedder{}
+	path := filepath.Join(t.TempDir(), "vector.db")
+	index := Index{Corpus: &failingCorpus{sources: sources}, VectorPath: path,
+		Model: DefaultModel, Embedder: embedder}
+	if _, err := index.Ingest(context.Background()); err == nil {
+		t.Fatal("walk failure was not returned")
+	}
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM chunks`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	want := defaultBatchSize - 1 + len(chunks(sources[defaultBatchSize-1].text, defaultChunkSize, defaultOverlap))
+	if count != want {
+		t.Fatalf("chunks after source retry = %d, want %d", count, want)
+	}
+}
+
 func TestDeltaRefreshesStaleLocatorWithoutReembedding(t *testing.T) {
 	source := sourceRow{kind: "memories", text: "same canonical memory", layer: "discovery",
 		origin: "agent", createdAt: "2026-01-01", cronSource: "synthetic-agent", filePath: "memory.md"}
@@ -541,6 +572,21 @@ type memoryCorpus struct {
 
 type failingCorpus struct {
 	sources []sourceRow
+}
+
+type failOnceEmbedder struct {
+	recordingEmbedder
+	failed bool
+}
+
+func (e *failOnceEmbedder) Pull(context.Context, string) error { return nil }
+
+func (e *failOnceEmbedder) Embed(ctx context.Context, model string, input []string) ([][]float32, error) {
+	if !e.failed {
+		e.failed = true
+		return nil, fmt.Errorf("synthetic embedding failure")
+	}
+	return e.recordingEmbedder.Embed(ctx, model, input)
 }
 
 func (f *failingCorpus) WalkSources(_ context.Context, visit func(sourceRow) error) error {
