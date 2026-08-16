@@ -236,29 +236,47 @@ func DetectAgents(roots Roots) []string {
 	return detected
 }
 
-// scanClaudeWebExports reads only the two v1 files from directories the
-// operator declared. In particular it never walks projects/ or design_chats/.
+// scanClaudeWebExports reads the operator-declared export files: the two root
+// conversation and memory arrays, each projects/<uuid>.json entity, and each
+// design_chats/*.json record. users.json and login_history.json stay unread.
 func scanClaudeWebExports(roots Roots) []Target {
 	var targets []Target
 	seen := map[string]bool{}
+	add := func(path string, kind parsers.Kind, name string) {
+		key := realPath(path)
+		if !isFile(path) || seen[key] {
+			return
+		}
+		seen[key] = true
+		targets = append(targets, Target{
+			Path: path, Kind: kind, SourceAgent: "claude-web", FileName: name,
+		})
+	}
 	for _, root := range roots.ClaudeWebExports {
-		for _, shape := range []struct {
-			name string
+		add(filepath.Join(root, "memories.json"), parsers.KindClaudeWebMemories, "memories.json")
+		add(filepath.Join(root, "conversations.json"), parsers.KindClaudeWebConversations, "conversations.json")
+		for _, extra := range []struct {
+			dir  string
 			kind parsers.Kind
 		}{
-			{"memories.json", parsers.KindClaudeWebMemories},
-			{"conversations.json", parsers.KindClaudeWebConversations},
+			{"projects", parsers.KindClaudeWebProjects},
+			{"design_chats", parsers.KindClaudeWebDesignChats},
 		} {
-			path := filepath.Join(root, shape.name)
-			key := realPath(path)
-			if !isFile(path) || seen[key] {
+			entries, err := os.ReadDir(filepath.Join(root, extra.dir))
+			if err != nil {
 				continue
 			}
-			seen[key] = true
-			targets = append(targets, Target{
-				Path: path, Kind: shape.kind, SourceAgent: "claude-web",
-				FileName: shape.name,
-			})
+			names := make([]string, 0, len(entries))
+			for _, entry := range entries {
+				if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+					continue
+				}
+				names = append(names, entry.Name())
+			}
+			sort.Strings(names)
+			for _, name := range names {
+				add(filepath.Join(root, extra.dir, name), extra.kind, name)
+			}
 		}
 	}
 	return targets

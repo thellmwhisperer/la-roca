@@ -245,6 +245,196 @@ func TestClaudeWebMemoryIdentityUsesUUIDOrScopedPosition(t *testing.T) {
 	}
 }
 
+func TestClaudeWebMemoriesReadEverySurfaceAndReportUnreadableOnes(t *testing.T) {
+	tests := []struct {
+		name           string
+		raw            string
+		want           []struct{ content, project, pathSuffix string }
+		wantCategories []string
+	}{
+		{
+			name: "legacy string",
+			raw:  `["Synthetic legacy string memory."]`,
+			want: []struct{ content, project, pathSuffix string }{
+				{content: "Synthetic legacy string memory.", pathSuffix: "#memory=entry-1"},
+			},
+		},
+		{
+			name: "legacy object",
+			raw:  `[{"uuid":"synthetic-memory-1","memory":"Synthetic preference.","created_at":"2025-04-02T07:00:00.000Z"}]`,
+			want: []struct{ content, project, pathSuffix string }{
+				{content: "Synthetic preference.", pathSuffix: "memory-uuid:synthetic-memory-1"},
+			},
+		},
+		{
+			name: "current account",
+			raw: `[
+				{
+					"account_uuid":"aaaaaaaa-0000-4000-8000-000000000099",
+					"conversations_memory":"Synthetic account conversation memory.",
+					"project_memories":{
+						"aaaaaaaa-0000-4000-8000-000000000001":"Synthetic orchard project memory.",
+						"aaaaaaaa-0000-4000-8000-000000000002":"Synthetic atlas project memory."
+					},
+					"memory_files":[
+						{"content":"Synthetic memory file.","path":"memories/synthetic-atlas.md","updated_at":"2026-08-01T16:31:00Z"}
+					]
+				}
+			]`,
+			want: []struct{ content, project, pathSuffix string }{
+				{content: "Synthetic account conversation memory.", pathSuffix: "memory-account:aaaaaaaa-0000-4000-8000-000000000099"},
+				{content: "Synthetic orchard project memory.", project: "aaaaaaaa-0000-4000-8000-000000000001", pathSuffix: "memory-project:aaaaaaaa-0000-4000-8000-000000000001"},
+				{content: "Synthetic atlas project memory.", project: "aaaaaaaa-0000-4000-8000-000000000002", pathSuffix: "memory-project:aaaaaaaa-0000-4000-8000-000000000002"},
+				{content: "Synthetic memory file.", pathSuffix: "memory-file:memories/synthetic-atlas.md"},
+			},
+		},
+		{
+			name: "scalar project_memories keeps memory_files",
+			raw: `[{"account_uuid":"aaaaaaaa-0000-4000-8000-000000000099",
+				"project_memories":"not-an-object",
+				"memory_files":[{"content":"Synthetic memory file.","path":"memories/synthetic-atlas.md"}]}]`,
+			want: []struct{ content, project, pathSuffix string }{
+				{content: "Synthetic memory file.", pathSuffix: "memory-file:memories/synthetic-atlas.md"},
+			},
+			wantCategories: []string{"claude-web project_memories is unreadable"},
+		},
+		{
+			name: "malformed memory_files entry reports the surface",
+			raw: `[{"account_uuid":"aaaaaaaa-0000-4000-8000-000000000099",
+				"project_memories":{"aaaaaaaa-0000-4000-8000-000000000001":"Synthetic orchard project memory."},
+				"memory_files":["not-an-object"]}]`,
+			want: []struct{ content, project, pathSuffix string }{
+				{content: "Synthetic orchard project memory.", project: "aaaaaaaa-0000-4000-8000-000000000001", pathSuffix: "memory-project:aaaaaaaa-0000-4000-8000-000000000001"},
+			},
+			wantCategories: []string{"claude-web memory_files is unreadable"},
+		},
+		{
+			name: "both unreadable surfaces report each without a no-text fallback",
+			raw: `[{"account_uuid":"aaaaaaaa-0000-4000-8000-000000000099",
+				"project_memories":42,
+				"memory_files":{"content":"not-an-array"}}]`,
+			wantCategories: []string{
+				"claude-web project_memories is unreadable",
+				"claude-web memory_files is unreadable",
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			records, err := ParseClaudeWebMemories(bytes.NewReader([]byte(test.raw)), FileMeta{
+				Path: "/declared/export/memories.json", FileName: "memories.json",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(records.Memories) != len(test.want) {
+				t.Fatalf("memories = %+v, want %d", records.Memories, len(test.want))
+			}
+			for i, want := range test.want {
+				got := records.Memories[i]
+				if got.Content != want.content || got.Project != want.project ||
+					got.Layer != "user" || !strings.Contains(got.FilePath, want.pathSuffix) {
+					t.Errorf("memory %d = content %q project %q path %q, want content %q project %q path containing %q",
+						i, got.Content, got.Project, got.FilePath, want.content, want.project, want.pathSuffix)
+				}
+			}
+			if len(records.Discards) != len(test.wantCategories) {
+				t.Fatalf("discards = %+v, want %d", records.Discards, len(test.wantCategories))
+			}
+			for i, category := range test.wantCategories {
+				if got := records.Discards[i]; got.Category != category || got.ByDesign ||
+					!strings.Contains(got.Reason, "is unreadable") {
+					t.Errorf("discard %d = %+v, want category %q and an unreadable reason", i, got, category)
+				}
+			}
+		})
+	}
+}
+
+func TestClaudeWebProjectEntitiesAndDocsBecomeStoreRows(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "testdata", "anthropic-export-projects",
+		"projects", "aaaaaaaa-0000-4000-8000-000000000001.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	records, err := ParseClaudeWebProject(raw, FileMeta{
+		Path:     "/declared/export/projects/aaaaaaaa-0000-4000-8000-000000000001.json",
+		FileName: "aaaaaaaa-0000-4000-8000-000000000001.json", SourceAgent: "claude-web",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records.Sessions) != 0 {
+		t.Fatalf("project file produced sessions: %+v", records.Sessions)
+	}
+	if len(records.Memories) != 3 {
+		t.Fatalf("memories = %+v, want entity plus two docs", records.Memories)
+	}
+	entity := records.Memories[0]
+	if entity.Layer != "project" || entity.Project != "aaaaaaaa-0000-4000-8000-000000000001" ||
+		entity.Content != "A fictional indoor orchard sensor programme." ||
+		entity.Metadata["name"] != "Synthetic orchard" ||
+		entity.Metadata["prompt_template"] != "Answer only about the invented orchard." {
+		t.Fatalf("project entity = %+v", entity)
+	}
+	if records.Memories[1].Content != "The invented sensor is called Amber Finch." ||
+		records.Memories[1].Project != entity.Project || records.Memories[1].Layer != "project" {
+		t.Fatalf("first doc = %+v", records.Memories[1])
+	}
+	if records.Memories[2].Metadata["filename"] != "synthetic-wiring.md" {
+		t.Fatalf("second doc metadata = %+v", records.Memories[2].Metadata)
+	}
+}
+
+func TestClaudeWebNamelessProjectUsesNameAsContentAndKeepsUnresolvedHonesty(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "testdata", "anthropic-export-projects",
+		"projects", "aaaaaaaa-0000-4000-8000-000000000002.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	records, err := ParseClaudeWebProject(raw, FileMeta{SourceAgent: "claude-web"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records.Memories) != 1 || records.Memories[0].Content != "Synthetic atlas" {
+		t.Fatalf("nameless description fallback = %+v", records.Memories)
+	}
+}
+
+func TestClaudeWebDesignChatKeepsProjectUUIDAndOrdinaryConversationsStayUnprojected(t *testing.T) {
+	chat, err := os.ReadFile(filepath.Join("..", "testdata", "anthropic-export-projects",
+		"design_chats", "cccccccc-0000-4000-8000-000000000001.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	records, err := ParseClaudeWebDesignChat(chat, FileMeta{SourceAgent: "claude-web"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records.Sessions) != 1 {
+		t.Fatalf("sessions = %d", len(records.Sessions))
+	}
+	session := records.Sessions[0]
+	if session.Project != "aaaaaaaa-0000-4000-8000-000000000001" {
+		t.Fatalf("design chat project = %q, want the uuid not the label", session.Project)
+	}
+	if session.Title != "Synthetic orchard canvas" || len(session.Exchanges) != 1 ||
+		session.Exchanges[0].HumanText != "Sketch the invented sensor." ||
+		session.Exchanges[0].AgentText != "A cobalt ring around an amber lens." {
+		t.Fatalf("design chat session = %+v", session)
+	}
+	if session.Metadata["project_name"] != "Synthetic orchard" {
+		t.Fatalf("design chat did not keep the source project name: %+v", session.Metadata)
+	}
+
+	ordinary := parseClaudeWebFixture(t, "conversations.json")
+	for _, session := range ordinary.Sessions {
+		if session.Project != "" {
+			t.Fatalf("ordinary conversation %s was assigned project %q", session.ID, session.Project)
+		}
+	}
+}
+
 func parseClaudeWebFixture(t *testing.T, name string) Records {
 	t.Helper()
 	raw := readClaudeWebFixture(t, name)
