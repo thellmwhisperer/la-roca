@@ -108,6 +108,50 @@ func TestAReReadBackfillsAClaudeMemoryProjectWithoutChangingItsContent(t *testin
 	assertMemoryProject(t, db.SQL(), memory, "demo")
 }
 
+func TestAReReadCorrectsAStaleClaudeMemoryProjectFromSessionCwd(t *testing.T) {
+	world, db, ctx, options := seededWorld(t)
+	memory := filepath.Join(options.Roots.ClaudeProjects, world.projectDir(), "memory", "note.md")
+	exec(t, db.SQL(), `UPDATE memories SET project = 'stale'
+		WHERE json_extract(metadata, '$.file_path') = ?`, memory)
+	exec(t, db.SQL(), `UPDATE ingest_file_state
+		SET fingerprint = replace(fingerprint, ':parser:claude-memory-v2', '') WHERE path = ?`, memory)
+
+	result, err := Run(ctx, db, registry(t), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Sources["claude"].MemoriesUpdated != 1 {
+		t.Fatalf("Claude counts = %+v", result.Sources["claude"])
+	}
+	assertMemoryProject(t, db.SQL(), memory, "demo")
+}
+
+func TestFallbackAttributionDoesNotClobberAnExistingClaudeMemoryProject(t *testing.T) {
+	world := newWorld(t)
+	roots := world.roots()
+	cwd := filepath.Join(world.home, ".treehouse", "Here comes the sun")
+	dir := encodeRoot(cwd)
+	memory := filepath.Join(roots.ClaudeProjects, dir, "memory", "fact.md")
+	world.write(t, memory, "A synthetic attributed fact.\n")
+	world.write(t, roots.ClaudeConfig, `{"projects":{"`+cwd+`":{}}}`)
+
+	db := rocaDatabase(t)
+	if _, err := Run(context.Background(), db, registry(t), Options{Roots: roots}); err != nil {
+		t.Fatal(err)
+	}
+	assertMemoryProject(t, db.SQL(), memory, "Here comes the sun")
+
+	exec(t, db.SQL(), `UPDATE memories SET project = 'stale'
+		WHERE json_extract(metadata, '$.file_path') = ?`, memory)
+	exec(t, db.SQL(), `UPDATE ingest_file_state
+		SET fingerprint = replace(fingerprint, ':parser:claude-memory-v2', '') WHERE path = ?`, memory)
+
+	if _, err := Run(context.Background(), db, registry(t), Options{Roots: roots}); err != nil {
+		t.Fatal(err)
+	}
+	assertMemoryProject(t, db.SQL(), memory, "stale")
+}
+
 func assertMemoryProject(t *testing.T, db *sql.DB, path, want string) {
 	t.Helper()
 	var project string

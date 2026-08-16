@@ -1288,7 +1288,9 @@ func (w *writer) memory(ctx context.Context, memory parsers.Memory) (Counts, err
 		ORDER BY id LIMIT 1`, memory.Source, memory.FilePath).
 		Scan(&id, &stored, &storedMetadata, &storedProject)
 	freshness := claudeWebMemoryFreshness(memory, storedMetadata)
-	projectBackfill := storedProject == "" && memory.Project != ""
+	authoritative := memory.ProjectFromCwd && memory.Project != ""
+	projectChange := memory.Project != "" && storedProject != memory.Project &&
+		(storedProject == "" || authoritative)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		layer := w.layers.Resolve(memory.Layer, defaultLayer)
@@ -1306,7 +1308,7 @@ func (w *writer) memory(ctx context.Context, memory parsers.Memory) (Counts, err
 		counts.MemoriesInserted = 1
 	case err != nil:
 		return counts, fmt.Errorf("look up the memory of %s: %w", memory.FilePath, err)
-	case (freshness < 0 || stored == memory.Content && freshness <= 0) && projectBackfill:
+	case (freshness < 0 || stored == memory.Content && freshness <= 0) && projectChange:
 		_, err := w.tx.ExecContext(ctx,
 			`UPDATE memories SET project = ? WHERE id = ?`, memory.Project, id)
 		if err != nil {
@@ -1318,14 +1320,18 @@ func (w *writer) memory(ctx context.Context, memory parsers.Memory) (Counts, err
 		// what makes a second pass leave the database byte for byte as it was.
 		counts.MemoriesUnchanged = 1
 	default:
+		project := memory.Project
+		if !authoritative && storedProject != "" {
+			project = storedProject
+		}
 		_, err := w.tx.ExecContext(ctx,
 			`UPDATE memories SET content = ?, metadata = ?,
 			 source_model = COALESCE(source_model, ?),
 			 source_surface = COALESCE(source_surface, ?),
-			 project = COALESCE(NULLIF(project, ''), NULLIF(?, '')),
+			 project = ?,
 			 created_at = COALESCE(NULLIF(?, ''), created_at) WHERE id = ?`,
 			memory.Content, string(metadata), nullIfEmpty(memory.SourceModel),
-			nullIfEmpty(memory.SourceSurface), memory.Project, memory.CreatedAt, id)
+			nullIfEmpty(memory.SourceSurface), nullIfEmpty(project), memory.CreatedAt, id)
 		if err != nil {
 			return counts, fmt.Errorf("update the memory of %s: %w", memory.FilePath, err)
 		}

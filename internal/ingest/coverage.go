@@ -107,7 +107,7 @@ func finalizeCoverage(ctx context.Context, db *sql.DB, roots Roots, plan Plan,
 			result.Coverage.gap(link.Path, "Claude memory manifest link is absent from disk")
 		}
 	}
-	if !result.DryRun {
+	if !result.DryRun && len(plan.ManifestLinks) > 0 {
 		landed, err := corpusMemoryPaths(ctx, db)
 		if err != nil {
 			result.Warnings = append(result.Warnings,

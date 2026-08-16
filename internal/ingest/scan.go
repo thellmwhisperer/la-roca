@@ -35,9 +35,13 @@ type Target struct {
 	// wrong one is worse than an absent one.
 	SourceAgent string
 	Project     string
-	SessionID   string
-	FileName    string
-	SourceType  string
+	// ProjectFromCwd marks a project recovered from a session transcript's
+	// recorded working directory, which is exact and outranks the lossy
+	// directory-name or config fallbacks.
+	ProjectFromCwd bool
+	SessionID      string
+	FileName       string
+	SourceType     string
 	// SidecarPath is the metadata file paired with a Cowork audit transcript.
 	SidecarPath string
 	// ExclusionReason marks a discovered artefact that policy counts but never
@@ -349,6 +353,7 @@ func scanClaudeMemories(roots Roots, projects map[string]string, attribution map
 	var targets []Target
 	for _, dir := range subdirectories(roots.ClaudeProjects) {
 		project, _ := projectForClaudeDir(dir, roots.Workspace, projects, attribution)
+		_, fromCwd := attribution[dir]
 		exclusion := runnerExclusion(roots, dir)
 		memoryDir := filepath.Join(roots.ClaudeProjects, dir, "memory")
 		for _, name := range filesIn(memoryDir) {
@@ -374,6 +379,7 @@ func scanClaudeMemories(roots Roots, projects map[string]string, attribution map
 				Kind:            parsers.KindClaudeMemory,
 				SourceAgent:     "claude",
 				Project:         project,
+				ProjectFromCwd:  fromCwd,
 				FileName:        name,
 				ExclusionReason: exclusion,
 			})
@@ -455,8 +461,8 @@ func claudeCwdAttribution(roots Roots) map[string]string {
 			}
 			if project := ProjectFromMetadataCwd(cwd); project != "" {
 				attribution[dir] = project
+				break
 			}
-			break
 		}
 	}
 	return attribution
