@@ -1029,9 +1029,10 @@ func TestReadHermesReportsTheSessionsAndMessagesItSaw(t *testing.T) {
 }
 
 func TestDatabaseReadersCountLiveTurnsAsDeferred(t *testing.T) {
-	user := openCodeRow{id: "user-1"}
-	user.message.Role = "user"
-	exchanges, deferred := openCodeExchanges([]openCodeRow{user}, nil)
+	answer := openCodeRow{id: "assistant-live"}
+	answer.message.Role = "assistant"
+	coverage := &parsers.MessageCoverage{Skipped: map[string]int{}}
+	exchanges, deferred := openCodeExchanges([]openCodeRow{answer}, nil, coverage)
 	if deferred != 1 || len(exchanges) != 0 {
 		t.Fatalf("OpenCode deferred = %d, exchanges = %d", deferred, len(exchanges))
 	}
@@ -1058,7 +1059,7 @@ func TestDatabaseReadersCountLiveTurnsAsDeferred(t *testing.T) {
 	}
 }
 
-func TestOpenCodeLatencyRequiresBothTimestamps(t *testing.T) {
+func TestOpenCodeMessageProjectionDoesNotInventLatency(t *testing.T) {
 	completed := 2000.0
 	user := openCodeRow{id: "u"}
 	user.message.Role = "user"
@@ -1066,12 +1067,13 @@ func TestOpenCodeLatencyRequiresBothTimestamps(t *testing.T) {
 	answer.message.Role = "assistant"
 	answer.message.ParentID = "u"
 	answer.message.Time.Completed = &completed
-	exchanges, deferred := openCodeExchanges([]openCodeRow{user, answer}, nil)
-	if deferred != 0 || len(exchanges) != 1 {
+	coverage := &parsers.MessageCoverage{Skipped: map[string]int{}}
+	exchanges, deferred := openCodeExchanges([]openCodeRow{user, answer}, nil, coverage)
+	if deferred != 0 || len(exchanges) != 2 {
 		t.Fatalf("exchanges=%d deferred=%d", len(exchanges), deferred)
 	}
-	if exchanges[0].LatencyMS != nil {
-		t.Fatalf("latency without a human timestamp = %v", *exchanges[0].LatencyMS)
+	if exchanges[1].LatencyMS != nil {
+		t.Fatalf("message-only assistant latency = %v", *exchanges[1].LatencyMS)
 	}
 }
 

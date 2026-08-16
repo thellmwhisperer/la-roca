@@ -230,6 +230,30 @@ from the same update stream; they are not mined because they duplicate primary
 turns rather than add turns absent from `updates.jsonl`. `chat_history.jsonl` is
 also a compacted secondary view and is not the conversation source.
 
+## OpenCode
+
+OpenCode's SQLite store is read as a snapshot through a query-only connection.
+Every finished durable message becomes its own exchange: user text occupies the
+human side, while each assistant message keeps its own text, model, provider,
+usage and cost on the agent side. This message-level identity matters because a
+single user parent can have several assistant children produced by different
+models. An assistant message with no completion or with a running tool remains
+deferred for the next ingest rather than landing half-written.
+
+Assistant `reasoning` parts become queryable thinking blocks. Completed and
+failed `tool` parts become structured tool uses with their recorded input and
+error, and `patch` parts contribute their source-recorded hash and changed-file
+list to searchable agent text. The session's `todo` rows are retained as the
+ordered `todos` list in session metadata. Step-start and step-finish parts are
+reported as excluded runtime telemetry; the event table is never read.
+
+The OpenCode parser revision is part of the database fingerprint. The first
+plain ingest after this reading upgrade splits historical paired rows by source
+message identity, removes assistant content formerly attached to the user row,
+and adds the recovered assistant messages once. Later runs are zero-delta. The
+summary prints messages seen, converted and skipped, with a count for each skip
+reason, so coverage does not have to be inferred from exchange totals.
+
 ## Per-exchange provenance
 
 Every session also carries `source_surface`, the canonical harness known from

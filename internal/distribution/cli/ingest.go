@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"regexp"
 	"runtime"
@@ -121,6 +122,7 @@ func renderIngest(env *cliEnv, result service.IngestResult, verbose bool) {
 			axi.Quantity(int64(result.Errors), "error"), axi.Duration(result.ElapsedMS))
 	}
 	renderIngestSources(env, result)
+	renderIngestMessageCoverage(env, result)
 	renderIngestDelta(env, result.Delta)
 	if result.ExchangesHeld > 0 {
 		env.print("  %s still being written and left for the next run",
@@ -135,6 +137,22 @@ func renderIngest(env *cliEnv, result service.IngestResult, verbose bool) {
 		env.print("next: run `roca ingest` to write the pending files")
 	} else {
 		env.print("next: run `roca query \"<natural question>\"`")
+	}
+}
+
+func renderIngestMessageCoverage(env *cliEnv, result service.IngestResult) {
+	for _, source := range slices.Sorted(maps.Keys(result.MessageCoverage)) {
+		coverage := result.MessageCoverage[source]
+		skipped := 0
+		for _, count := range coverage.Skipped {
+			skipped += count
+		}
+		env.print("coverage: %s messages seen=%s converted=%s skipped=%s",
+			ingestSourceLabel(source), axi.Number(int64(coverage.Seen)),
+			axi.Number(int64(coverage.Converted)), axi.Number(int64(skipped)))
+		for _, reason := range slices.Sorted(maps.Keys(coverage.Skipped)) {
+			env.print("  · skipped: %s · %s", reason, axi.Number(int64(coverage.Skipped[reason])))
+		}
 	}
 }
 
