@@ -341,13 +341,7 @@ func (s *Service) executeWithPlugins(ctx context.Context, statement, term string
 	}
 	hubColumns, hubRows, hubErr := s.executeWithDatabase(
 		ctx, statement, term, maxChars, databases, s.hubDB)
-	if hubErr != nil || !s.shadowEqual(columns, rows, hubColumns, hubRows) {
-		reason := hubErr
-		if reason == nil {
-			reason = fmt.Errorf("shadow rows differ")
-		}
-		s.rollbackShadow(reason)
-	}
+	s.compareShadow(s.shadowEqual(columns, rows, hubColumns, hubRows), hubErr, "shadow rows differ")
 	return columns, rows, nil
 }
 

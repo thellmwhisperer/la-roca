@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -636,7 +637,11 @@ func (s *Service) searchByTerm(ctx context.Context, plan query.Plan, method stri
 
 	if s.servingLayout() != LayoutLegacyServing && method != search.MethodLike {
 		if err := s.ensureHubSearch(ctx); err != nil {
-			return nil, nil, "", nil, nil, err
+			if s.servingLayout() == LayoutShadowEqual {
+				s.rollbackShadow(fmt.Errorf("shadow hub search differs: %w", err))
+			} else {
+				return nil, nil, "", nil, nil, err
+			}
 		}
 	}
 	gate, err := s.theGate()
@@ -662,36 +667,22 @@ func (s *Service) searchByTerm(ctx context.Context, plan query.Plan, method stri
 		}
 	}
 
-	result, err := engine.Search(ctx, search.Request{
+	request := search.Request{
 		Term:       plan.Term,
 		SQLLexical: sqlLexical,
 		Method:     method,
 		Limit:      limit,
-	})
+	}
+	result, err := engine.Search(ctx, request)
 	if err != nil {
 		return nil, nil, "", nil, nil, err
 	}
 	if result.Provenance.Method == search.MethodFTS && s.servingLayout() == LayoutShadowEqual {
-		validated, validateErr := gate.Validate(result.SQL)
-		if validateErr != nil {
-			s.rollbackShadow(fmt.Errorf("shadow lexical gate differs: %w", validateErr))
-		} else {
-			legacyColumns, legacyRows, legacyErr := s.executeWithDatabase(
-				ctx, validated, plan.Term, maxChars, nil, s.db)
-			hubColumns, hubRows, hubErr := s.executeWithDatabase(
-				ctx, validated, plan.Term, maxChars, nil, s.hubDB)
-			if legacyErr != nil || hubErr != nil ||
-				!s.shadowEqual(legacyColumns, legacyRows, hubColumns, hubRows) {
-				reason := hubErr
-				if reason == nil {
-					reason = legacyErr
-				}
-				if reason == nil {
-					reason = fmt.Errorf("shadow lexical rows differ")
-				}
-				s.rollbackShadow(reason)
-			}
-		}
+		hubEngine := &search.Engine{DB: s.hubDB, Validate: gate.Validate}
+		hubResult, hubErr := hubEngine.Search(ctx, request)
+		equal := hubResult.Provenance.Method == result.Provenance.Method &&
+			reflect.DeepEqual(result.Rows, hubResult.Rows)
+		s.compareShadow(equal, hubErr, "shadow lexical rows differ")
 	}
 
 	if result.Provenance.Method == search.MethodLike {

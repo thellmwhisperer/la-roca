@@ -1,15 +1,19 @@
 package service
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
+	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 	"github.com/thellmwhisperer/la-roca/internal/store"
 	"github.com/thellmwhisperer/la-roca/internal/store/search"
 	_ "modernc.org/sqlite"
@@ -139,10 +143,77 @@ func TestShadowFTSRankingIsExactlyEqualBeforeCutover(t *testing.T) {
 	}
 }
 
+func TestHubSearchRetriesAfterTheBuildingRequestIsCanceled(t *testing.T) {
+	fixture := newHubFixture(t)
+	seedHubCoreMemory(t, fixture.plugins, 105, "Synthetic quartz retry marker")
+	svc := openHubService(t, fixture, LayoutCutover, nil)
+
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := svc.ensureHubSearch(canceled); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled index build = %v", err)
+	}
+	result := executeHubSQL(t, svc, hubFTSStatement)
+	if result.RowCount != 1 || fmt.Sprint(result.Rows[0]["id"]) != "105" {
+		t.Fatalf("retried hub search = %+v", result)
+	}
+}
+
+func TestShadowSearchServesLegacyWhenTheHubIndexIsUnavailable(t *testing.T) {
+	fixture := newHubFixture(t)
+	seedHubCoreMemory(t, fixture.plugins, 106, "Synthetic quartz hub marker")
+	seedLegacyCore(t, fixture, func(core *store.DB) {
+		if _, err := core.SQL().Exec(`INSERT INTO memories
+			(id, layer, content, metadata, origin, status, created_at)
+			VALUES (106, 'project', 'Synthetic quartz legacy marker', '{}', 'agent',
+			'active', '2026-08-15T10:00:00Z')`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := search.Index(t.Context(), core, nil); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var rollback error
+	svc := openHubService(t, fixture, LayoutShadowEqual, func(options *Options) {
+		options.RollbackLayout = func(reason error) error { rollback = reason; return nil }
+	})
+	if err := svc.hub.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, rows, _, _, _, err := svc.searchByTerm(t.Context(), query.Plan{
+		Term: "quartz", Limit: 10,
+	}, "", DefaultMaxChars, false)
+	if err != nil || len(rows) != 1 || rows[0]["text"] != "Synthetic quartz legacy marker" || rollback == nil {
+		t.Fatalf("shadow fallback rows = %+v, error = %v, rollback = %v", rows, err, rollback)
+	}
+}
+
+func TestShadowRollbackReleasesTheLayoutLockBeforePersistence(t *testing.T) {
+	svc := &Service{readLayout: LayoutShadowEqual}
+	observed := make(chan ReadLayout, 1)
+	svc.opts.RollbackLayout = func(error) error {
+		observed <- svc.servingLayout()
+		return nil
+	}
+	done := make(chan struct{})
+	go func() {
+		svc.rollbackShadow(errors.New("synthetic mismatch"))
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("shadow rollback held the layout lock during persistence")
+	}
+	if layout := <-observed; layout != LayoutLegacyServing {
+		t.Fatalf("layout observed during persistence = %q", layout)
+	}
+}
+
 const hubFTSStatement = `SELECT m.id, m.content, f.rank FROM
-	(SELECT rowid AS fila, bm25(memories_fts) AS rank FROM memories_fts
+	(SELECT rowid AS row_id, bm25(memories_fts) AS rank FROM memories_fts
 	 WHERE memories_fts MATCH '"quartz"') AS f
-	JOIN memories AS m ON m.id = f.fila ORDER BY f.rank, m.id LIMIT 10`
+	JOIN memories AS m ON m.id = f.row_id ORDER BY f.rank, m.id LIMIT 10`
 
 type hubFixture struct {
 	directory string

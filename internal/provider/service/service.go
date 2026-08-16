@@ -146,7 +146,8 @@ type Service struct {
 
 	layoutMu         sync.Mutex
 	readLayout       ReadLayout
-	hubSearchOnce    sync.Once
+	hubSearchMu      sync.Mutex
+	hubSearchReady   bool
 	hubSearchFailure error
 }
 
@@ -198,7 +199,7 @@ func (s *Service) rollbackOpen(ctx context.Context, reason error) (*Service, err
 		return nil, reason
 	}
 	if err := s.opts.RollbackLayout(fmt.Errorf("%s reopen failed: %w", s.readLayout, reason)); err != nil {
-		return nil, fmt.Errorf("%v; roll back the serving marker: %w", reason, err)
+		return nil, errors.Join(reason, fmt.Errorf("roll back the serving marker: %w", err))
 	}
 	opts := s.opts
 	opts.ReadLayout = LayoutLegacyServing
@@ -232,10 +233,13 @@ func (s *Service) shadowEqual(columns []string, rows []map[string]any,
 
 func (s *Service) rollbackShadow(reason error) {
 	s.layoutMu.Lock()
-	defer s.layoutMu.Unlock()
 	if s.readLayout != LayoutShadowEqual {
+		s.layoutMu.Unlock()
 		return
 	}
+	s.readLayout = LayoutLegacyServing
+	s.layoutMu.Unlock()
+
 	recorded := reason
 	if s.opts.RollbackLayout != nil {
 		if err := s.opts.RollbackLayout(fmt.Errorf("shadow comparison failed: %w", reason)); err != nil {
@@ -245,7 +249,16 @@ func (s *Service) rollbackShadow(reason error) {
 	if s.opts.RecordShadowMismatch != nil {
 		s.opts.RecordShadowMismatch(recorded)
 	}
-	s.readLayout = LayoutLegacyServing
+}
+
+func (s *Service) compareShadow(equal bool, hubErr error, mismatch string) {
+	if hubErr == nil && equal {
+		return
+	}
+	if hubErr == nil {
+		hubErr = errors.New(mismatch)
+	}
+	s.rollbackShadow(hubErr)
 }
 
 func (s *Service) servingLayout() ReadLayout {

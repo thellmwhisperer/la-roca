@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -95,48 +96,75 @@ func (s *Service) ensureHubSearch(ctx context.Context) error {
 	if s.hub == nil {
 		return nil
 	}
-	s.hubSearchOnce.Do(func() {
-		if _, err := s.hub.ExecContext(ctx, "PRAGMA query_only = OFF"); err != nil {
+	s.hubSearchMu.Lock()
+	defer s.hubSearchMu.Unlock()
+	if s.hubSearchReady || s.hubSearchFailure != nil {
+		return s.hubSearchFailure
+	}
+	err := s.buildHubSearch(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
 			s.hubSearchFailure = err
-			return
 		}
-		defer func() {
-			if _, err := s.hub.ExecContext(context.WithoutCancel(ctx), "PRAGMA query_only = ON"); s.hubSearchFailure == nil && err != nil {
-				s.hubSearchFailure = err
-			}
-		}()
-		statements := []string{
-			`CREATE VIRTUAL TABLE temp.memories_fts USING fts5(content,
-			 content='memories', content_rowid='id', tokenize='unicode61 remove_diacritics 2')`,
-			`CREATE VIRTUAL TABLE temp.exchanges_fts USING fts5(human_text, agent_text,
+		return err
+	}
+	s.hubSearchReady = true
+	return nil
+}
+
+func (s *Service) buildHubSearch(ctx context.Context) (resultErr error) {
+	connection, err := s.hub.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer connection.Close()
+	if _, err := connection.ExecContext(ctx, "PRAGMA query_only = OFF"); err != nil {
+		return err
+	}
+	defer func() {
+		if _, err := connection.ExecContext(context.WithoutCancel(ctx), "PRAGMA query_only = ON"); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("restore the federation hub read fence: %w", err))
+		}
+	}()
+
+	transaction, err := connection.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	statements := []string{
+		`CREATE VIRTUAL TABLE temp.memories_fts USING fts5(content,
+				 content='memories', content_rowid='id', tokenize='unicode61 remove_diacritics 2')`,
+		`CREATE VIRTUAL TABLE temp.exchanges_fts USING fts5(human_text, agent_text,
 			 content='exchanges', content_rowid='id', tokenize='unicode61 remove_diacritics 2')`,
-			`CREATE VIRTUAL TABLE temp.thinking_fts USING fts5(full_text,
+		`CREATE VIRTUAL TABLE temp.thinking_fts USING fts5(full_text,
 			 content='thinking_blocks', content_rowid='id', tokenize='unicode61 remove_diacritics 2')`,
-			`CREATE TEMP TABLE hub_session_fts_content
+		`CREATE TEMP TABLE hub_session_fts_content
 			 (rowid INTEGER PRIMARY KEY, title TEXT, project TEXT)`,
-			`INSERT INTO hub_session_fts_content(rowid, title, project)
+		`INSERT INTO hub_session_fts_content(rowid, title, project)
 			 SELECT source_row_id, title, project FROM ` + quoteSchema(s.corpusSchema()) +
-				`.session_version_memberships WHERE source_database = 'core'`,
-			`CREATE VIRTUAL TABLE temp.sessions_fts USING fts5(title, project,
+			`.session_version_memberships WHERE source_database = 'core'`,
+		`CREATE VIRTUAL TABLE temp.sessions_fts USING fts5(title, project,
 			 content='hub_session_fts_content', content_rowid='rowid',
 			 tokenize='unicode61 remove_diacritics 2')`,
-			`INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')`,
-			`INSERT INTO exchanges_fts(exchanges_fts) VALUES ('rebuild')`,
-			`INSERT INTO thinking_fts(thinking_fts) VALUES ('rebuild')`,
-			`INSERT INTO sessions_fts(sessions_fts) VALUES ('rebuild')`,
-			`CREATE TEMP TABLE search_state
+		`INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')`,
+		`INSERT INTO exchanges_fts(exchanges_fts) VALUES ('rebuild')`,
+		`INSERT INTO thinking_fts(thinking_fts) VALUES ('rebuild')`,
+		`INSERT INTO sessions_fts(sessions_fts) VALUES ('rebuild')`,
+		`CREATE TEMP TABLE search_state
 			 (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT)`,
-			`INSERT INTO search_state(key, value) VALUES
-			 ('lexical_index', 'built'), ('lexical_tokenizer', 'unicode61-remove-diacritics-2')`,
+		`INSERT INTO search_state(key, value) VALUES
+				 ('lexical_index', 'built'), ('lexical_tokenizer', 'unicode61-remove-diacritics-2')`,
+	}
+	for _, statement := range statements {
+		if _, err := transaction.ExecContext(ctx, statement); err != nil {
+			_ = transaction.Rollback()
+			return fmt.Errorf("build the in-memory compatibility index: %w", err)
 		}
-		for _, statement := range statements {
-			if _, err := s.hub.ExecContext(ctx, statement); err != nil {
-				s.hubSearchFailure = fmt.Errorf("build the in-memory compatibility index: %w", err)
-				return
-			}
-		}
-	})
-	return s.hubSearchFailure
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("publish the in-memory compatibility index: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) corpusSchema() string {
