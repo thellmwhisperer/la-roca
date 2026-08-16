@@ -107,6 +107,7 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 		started = time.Now()
 		env.started = started
 	}
+	env.resolveDatabaseFlag(args)
 	env.loadCommandFeatures()
 	// The durable half of the call log is database I/O like any other, so a
 	// read-only run keeps the JSONL sink alone and leaves the ops database
@@ -183,6 +184,25 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 		}
 	}
 	return code, err
+}
+
+func (env *cliEnv) resolveDatabaseFlag(args []string) {
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		if argument == "--" {
+			return
+		}
+		if argument == "--db-path" {
+			if index+1 < len(args) && args[index+1] != "--" {
+				env.dbPath = args[index+1]
+				index++
+			}
+			continue
+		}
+		if strings.HasPrefix(argument, "--db-path=") {
+			env.dbPath = strings.TrimPrefix(argument, "--db-path=")
+		}
+	}
 }
 
 func rootCommand(env *cliEnv) *cobra.Command {

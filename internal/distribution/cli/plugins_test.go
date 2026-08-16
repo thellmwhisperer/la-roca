@@ -72,6 +72,27 @@ func TestVectorExecutableDispatchAndListingRequireItsFeature(t *testing.T) {
 	}
 }
 
+func TestVectorDispatchUsesTheSelectedDatabaseConfiguration(t *testing.T) {
+	home := t.TempDir()
+	selectedDir := t.TempDir()
+	selectedDB := filepath.Join(selectedDir, "roca.db")
+	if err := os.WriteFile(filepath.Join(selectedDir, "config.toml"),
+		[]byte("[features]\nplugins = true\nvector = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pluginDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(pluginDir, "roca-vector"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", pluginDir)
+	env := &cliEnv{out: &strings.Builder{}, errOut: &strings.Builder{}}
+	code, err := executeWithOptions(env, []string{"vector", "--db-path", selectedDB}, nil, true)
+	if err != nil || code != ExitOK {
+		t.Fatalf("selected database plugin result = code %d err %v", code, err)
+	}
+}
+
 func TestPluginCallsAreAuditedWithoutCredentialArguments(t *testing.T) {
 	home, env, warnings := syntheticPluginInstallation(t, 23)
 	code, err := executeWithOptions(env,
