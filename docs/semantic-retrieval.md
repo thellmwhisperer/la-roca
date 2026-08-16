@@ -68,11 +68,11 @@ profile can define:
 It may not remove source locators, context recovery, provenance, contradiction
 reporting, or the distinction between a candidate and an accepted finding.
 
-The Libro de Economía's corpus skills are an example of this separation: the
-shared workflow owns coverage and context recovery, while the project owns its
-chapters, editorial categories, and verification rules.
+An adopter-owned domain profile is an example of this separation: the shared
+workflow owns coverage and context recovery, while the project owns its
+preferred sources, finding categories, and verification rules.
 
-The first concrete profile is [Libro de Economía](semantic-profiles/libro-economia.md).
-Apply it after recovering live source context, not as a replacement for that
-context. Future profiles, such as Satélites, should reuse this contract and
-remain separate from the Vigilante Económico project.
+Use the [domain profile template](semantic-profiles/domain-profile-template.md)
+when a project needs this extra layer. Apply a profile after recovering live
+source context, not as a replacement for that context. Domain profiles remain
+local to the adopters that own their source authority and review policy.
