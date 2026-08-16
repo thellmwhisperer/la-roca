@@ -10,8 +10,8 @@ import (
 // invented.
 const grokUpdates = `
 {"method":"_x.ai/session/update","params":{"sessionId":"fixture-session","update":{"sessionUpdate":"hook_execution","event_name":"synthetic_hook"}},"timestamp":1785585600}
-{"method":"session/update","params":{"sessionId":"fixture-session","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"compile the fixture"},"_meta":{"modelId":"grok-fixture-model","promptIndex":1}}},"timestamp":1785585601}
-{"method":"session/update","params":{"sessionId":"fixture-session","update":{"sessionUpdate":"user_message_chunk","content":{"type":"image","mimeType":"image/png","uri":"fixture://invented-image"},"_meta":{"modelId":"grok-fixture-model","promptIndex":1}}},"timestamp":1785585601}
+{"method":"session/update","params":{"sessionId":"fixture-session","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"compile the fixture"},"_meta":{"modelId":"grok-fixture-model-build","promptIndex":1}}},"timestamp":1785585601}
+{"method":"session/update","params":{"sessionId":"fixture-session","update":{"sessionUpdate":"user_message_chunk","content":{"type":"image","mimeType":"image/png","uri":"fixture://invented-image"},"_meta":{"modelId":"grok-fixture-model-build","promptIndex":1}}},"timestamp":1785585601}
 {"method":"session/update","params":{"sessionId":"fixture-session","_meta":{"promptId":"prompt-1"},"update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"inspect "}}},"timestamp":1785585602}
 {"method":"session/update","params":{"sessionId":"fixture-session","_meta":{"promptId":"prompt-1"},"update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"the target"}}},"timestamp":1785585603}
 {"method":"session/update","params":{"sessionId":"fixture-session","_meta":{"promptId":"prompt-1"},"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"I will "}}},"timestamp":1785585604}
@@ -19,7 +19,7 @@ const grokUpdates = `
 {"method":"session/update","params":{"sessionId":"fixture-session","_meta":{"promptId":"prompt-1"},"update":{"sessionUpdate":"tool_call_update","toolCallId":"tool-1","status":"failed","rawOutput":{"message":"synthetic failure"}}},"timestamp":1785585606}
 {"method":"session/update","params":{"sessionId":"fixture-session","_meta":{"promptId":"prompt-1"},"update":{"sessionUpdate":"plan","entries":[{"content":"Inspect the fixture","status":"completed"},{"content":"Repair the fixture","status":"pending"}]}},"timestamp":1785585607}
 {"method":"session/update","params":{"sessionId":"fixture-session","_meta":{"promptId":"prompt-1"},"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"repair it."}}},"timestamp":1785585608}
-{"method":"session/update","params":{"sessionId":"fixture-session","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"verify the fixture"},"_meta":{"modelId":"grok-fixture-model","promptIndex":2}}},"timestamp":1785585610}
+{"method":"session/update","params":{"sessionId":"fixture-session","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"verify the fixture"},"_meta":{"modelId":"grok-fixture-model-build","promptIndex":2}}},"timestamp":1785585610}
 {"method":"session/update","params":{"sessionId":"fixture-session","_meta":{"promptId":"prompt-2"},"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"verified."}}},"timestamp":1785585611}
 `
 

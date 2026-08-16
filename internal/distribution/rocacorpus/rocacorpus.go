@@ -112,15 +112,14 @@ func prepareIngestProvenance(path string) error {
 	var legacyGrokModels int
 	if err := tx.QueryRow(`SELECT COUNT(*) FROM exchanges e
 		JOIN sessions s ON s.session_id = e.session_id
-		WHERE e.provider IS NULL
-		  AND e.model IN ('grok-4.6-build', 'grok-4.5-build')
+		WHERE e.model IN ('grok-4.6-build', 'grok-4.5-build')
 		  AND (s.source_agent = 'grok' OR s.source_agent LIKE 'grok-%')`).
 		Scan(&legacyGrokModels); err != nil {
 		return fmt.Errorf("inspect historical Grok model labels: %w", err)
 	}
 	if legacyGrokModels > 0 {
 		// An old frozen corpus can predate the FTS table itself. Seed the derived
-		// index before the model-only UPDATE fires its generic exchange trigger.
+		// index before the model/provider UPDATE fires its generic exchange trigger.
 		if _, err := tx.Exec(`INSERT INTO exchanges_fts(exchanges_fts) VALUES ('rebuild')`); err != nil {
 			return fmt.Errorf("rebuild the derived exchange index: %w", err)
 		}

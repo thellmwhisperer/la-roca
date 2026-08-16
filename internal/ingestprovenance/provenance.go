@@ -91,12 +91,13 @@ func Backfill(ctx context.Context, db execer) error {
 		}
 	}
 	_, err := db.ExecContext(ctx, `
-		UPDATE exchanges SET model = CASE model
-			WHEN 'grok-4.6-build' THEN 'grok-4.6'
-			WHEN 'grok-4.5-build' THEN 'grok-4.5'
-			ELSE model END
-		WHERE provider IS NULL
-		  AND model IN ('grok-4.6-build', 'grok-4.5-build')
+		UPDATE exchanges SET
+			model = CASE model
+				WHEN 'grok-4.6-build' THEN 'grok-4.6'
+				WHEN 'grok-4.5-build' THEN 'grok-4.5'
+				ELSE model END,
+			provider = CASE provider WHEN 'xai' THEN NULL ELSE provider END
+		WHERE model IN ('grok-4.6-build', 'grok-4.5-build')
 		  AND EXISTS (
 			SELECT 1 FROM sessions
 			WHERE sessions.session_id = exchanges.session_id

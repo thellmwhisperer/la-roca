@@ -253,7 +253,7 @@ func (r *grokReader) flush(closed bool) {
 		HumanTimestamp: r.current.humanTS,
 		AgentTimestamp: r.current.agentTS,
 		LatencyMS:      latency(r.current.humanTS, r.current.agentTS),
-		Provenance:     usage.Provenance(r.current.model, ""),
+		Provenance:     usage.Provenance(grokModelLabel(r.current.model), ""),
 	}
 	if text := strings.TrimSpace(r.current.thoughtText.String()); text != "" {
 		exchange.Thinking = append(exchange.Thinking, Thinking{Text: text, WordCount: wordCount(text)})
@@ -304,6 +304,12 @@ func (r *grokReader) unreadable(record int, reason string) {
 func readGrokContent(raw json.RawMessage) (grokContent, bool) {
 	var content grokContent
 	return content, len(raw) > 0 && json.Unmarshal(raw, &content) == nil
+}
+
+// grokModelLabel records the source model without Grok Build's internal
+// "-build" marker.
+func grokModelLabel(modelID string) string {
+	return strings.TrimSuffix(modelID, "-build")
 }
 
 func grokTimestamp(value *float64) string {

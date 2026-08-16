@@ -43,8 +43,8 @@ func TestApplyingPluginSchemasTwicePreservesOldFrozenHomes(t *testing.T) {
 				human_text TEXT, agent_text TEXT, model TEXT, provider TEXT)`,
 			insert: `INSERT INTO sessions (session_id, source_agent, title)
 				VALUES ('frozen-session', 'grok', 'frozen corpus row');
-				INSERT INTO exchanges (session_id, exchange_number, model)
-				VALUES ('frozen-session', 1, 'grok-4.6-build')`,
+				INSERT INTO exchanges (session_id, exchange_number, model, provider)
+				VALUES ('frozen-session', 1, 'grok-4.6-build', 'xai')`,
 			count: `SELECT COUNT(*) FROM sessions WHERE title = 'frozen corpus row'`,
 		},
 		{

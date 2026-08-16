@@ -169,10 +169,10 @@ func TestIngestSurfaceAdoptsAndSanitizesOnlyDerivableHistoricalRows(t *testing.T
 	execute(t, db, "ALTER TABLE sessions DROP COLUMN source_surface")
 	execute(t, db, `INSERT INTO sessions (session_id, source_agent) VALUES
 		('grok-session', 'grok'), ('unknown-session', 'synthetic-unknown')`)
-	execute(t, db, `INSERT INTO exchanges (session_id, exchange_number, model) VALUES
-		('grok-session', 1, 'grok-4.6-build'),
-		('grok-session', 2, 'grok-4.5-build'),
-		('unknown-session', 1, 'grok-4.6-build')`)
+	execute(t, db, `INSERT INTO exchanges (session_id, exchange_number, model, provider) VALUES
+		('grok-session', 1, 'grok-4.6-build', 'xai'),
+		('grok-session', 2, 'grok-4.5-build', 'xai'),
+		('unknown-session', 1, 'grok-4.6-build', NULL)`)
 
 	if _, err := store.Adopt(ctx, db, t.TempDir()); err != nil {
 		t.Fatal(err)
