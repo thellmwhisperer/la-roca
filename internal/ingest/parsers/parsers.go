@@ -93,6 +93,17 @@ type Records struct {
 	// errors either, and they are reported so an operator can tell "nothing new"
 	// from "half a session in flight".
 	Deferred int
+	// Seen is the raw inventory a store-backed reader observed before it
+	// normalized anything: how many sessions and messages the source actually
+	// held. It is the denominator a coverage report divides the converted counts
+	// by. File parsers leave it zero.
+	Seen Seen
+}
+
+// Seen is the raw inventory one reader observed before normalization.
+type Seen struct {
+	Sessions int `json:"sessions"`
+	Messages int `json:"messages"`
 }
 
 type Discard struct {

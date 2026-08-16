@@ -105,7 +105,7 @@ var parserVersions = map[parsers.Kind]string{
 	parsers.KindCodexHistory:            "codex-history-v2",
 	parsers.KindPiSession:               "pi-session-v6",
 	parsers.KindOpenCodeDB:              "opencode-v6",
-	parsers.KindHermesDB:                "hermes-v6",
+	parsers.KindHermesDB:                "hermes-v7",
 	parsers.KindClaudeWebConversations:  "claude-web-conversations-v4",
 	parsers.KindChatGPTWebConversations: "chatgpt-web-conversations-v3",
 	parsers.KindGrokSession:             "grok-session-v4",

@@ -142,6 +142,34 @@ not record answers or per-exchange usage. Its session-wide `tokens_used` value
 therefore remains session metadata, while the exchange's answer and token
 columns remain NULL instead of receiving guessed values.
 
+## Hermes database
+
+Hermes keeps its conversations in `~/.hermes/state.db`, a SQLite database La
+Roca opens read-only: a `query_only` connection that never writes and waits at
+most a quarter second for the owner's lock before giving up. Override the
+location with `hermes_db_path` in the configuration or the `HERMES_DB_PATH`
+environment variable.
+
+Every session is read, closed or not. Hermes writes `ended_at` only when a
+session winds down cleanly, so sessions that were killed, abandoned, or run
+through a channel that never closes them (acp, most TUI and CLI runs) carry
+their messages and no ending. The end of such a session is its last recorded
+message. A human turn with no recorded answer is kept with an empty answer once
+the session is closed, and deferred while it is still open to be re-read on the
+next run; in neither case is an answer invented.
+
+Human and assistant text become exchanges, assistant reasoning becomes
+thinking, and tool calls are paired with their results by the call id Hermes
+records on both sides, each result carrying its call's summarized arguments and
+its own error verdict. The session's `model` and `billing_provider` columns name
+the provenance of every exchange; a missing model stays empty rather than
+becoming a placeholder.
+
+The memory files under `~/.hermes/memories` are deliberately not read, and the
+other Hermes SQLite databases (`kanban.db`, `cron/executions.db`,
+`verification_evidence.db`, `projects.db`) hold no conversation content and are
+not read either.
+
 ## Grok Build
 
 Grok Build keeps each session under `~/.grok/sessions/<encoded-cwd>/<session-id>/`,
@@ -220,7 +248,10 @@ rewrites nothing and no exchange is written twice.
 
 The default summary is one line per source with what it contributed, followed by
 up to five reasons in each group for what was left out, with each reason
-collapsed to a count.
+collapsed to a count. A source read from a live database rather than files also
+prints a `saw` line beneath its row — the raw sessions and messages it observed
+before normalization — so the converted counts read against the whole store and
+not only what landed.
 The two groups are apart on purpose: `excluded` counts the records this build
 never meant to read, which is most of a runtime log and is not a problem, and
 `discards` counts records it could not read or safely match to an existing turn,
