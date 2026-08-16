@@ -176,10 +176,13 @@ A runtime is added only after its user-skill surface is measured on a real
 machine, the same discipline `docs/agent-parsers.md` demands of a parser
 store. The measurements behind the current list:
 
-- **grok** (Grok Build): `grok inspect` lists skills this machine installed
-  only under `~/.claude/skills/` and `~/.agents/skills/` as discovered `user`
-  skills, and the runtime's own docs name `~/.grok/skills/` as the user tier
-  with `GROK_HOME` moving it — so the native layout is mirrored.
+- **grok** (Grok Build): `grok inspect` lists skills that exist only under
+  `~/.grok/skills/` as discovered `user` skills — both the ones this machine
+  already held there before the change and `roca`/`roca-semantica` after
+  `roca skill install grok`, on a machine where neither `~/.claude/skills/`
+  nor `~/.agents/skills/` held them. Skills installed only under
+  `~/.claude/skills/` are discovered through grok's compatibility tier,
+  tagged `[claude]`, and `GROK_HOME` moves the native tier.
 - **qwen** (Qwen Code): with `QWEN_HOME` pointed at a probe directory holding
   `skills/probe-skill/SKILL.md`, qwen's skill-manager debug log records
   "Loading user level skills from" that directory.
