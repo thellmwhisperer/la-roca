@@ -245,11 +245,12 @@ func TestClaudeWebMemoryIdentityUsesUUIDOrScopedPosition(t *testing.T) {
 	}
 }
 
-func TestClaudeWebMemoriesReadCurrentAccountSurfacesAndOlderShapes(t *testing.T) {
+func TestClaudeWebMemoriesReadEverySurfaceAndReportUnreadableOnes(t *testing.T) {
 	tests := []struct {
-		name string
-		raw  string
-		want []struct{ content, project, pathSuffix string }
+		name           string
+		raw            string
+		want           []struct{ content, project, pathSuffix string }
+		wantCategories []string
 	}{
 		{
 			name: "legacy string",
@@ -287,6 +288,36 @@ func TestClaudeWebMemoriesReadCurrentAccountSurfacesAndOlderShapes(t *testing.T)
 				{content: "Synthetic memory file.", pathSuffix: "memory-file:memories/synthetic-atlas.md"},
 			},
 		},
+		{
+			name: "scalar project_memories keeps memory_files",
+			raw: `[{"account_uuid":"aaaaaaaa-0000-4000-8000-000000000099",
+				"project_memories":"not-an-object",
+				"memory_files":[{"content":"Synthetic memory file.","path":"memories/synthetic-atlas.md"}]}]`,
+			want: []struct{ content, project, pathSuffix string }{
+				{content: "Synthetic memory file.", pathSuffix: "memory-file:memories/synthetic-atlas.md"},
+			},
+			wantCategories: []string{"claude-web project_memories is unreadable"},
+		},
+		{
+			name: "malformed memory_files entry reports the surface",
+			raw: `[{"account_uuid":"aaaaaaaa-0000-4000-8000-000000000099",
+				"project_memories":{"aaaaaaaa-0000-4000-8000-000000000001":"Synthetic orchard project memory."},
+				"memory_files":["not-an-object"]}]`,
+			want: []struct{ content, project, pathSuffix string }{
+				{content: "Synthetic orchard project memory.", project: "aaaaaaaa-0000-4000-8000-000000000001", pathSuffix: "memory-project:aaaaaaaa-0000-4000-8000-000000000001"},
+			},
+			wantCategories: []string{"claude-web memory_files is unreadable"},
+		},
+		{
+			name: "both unreadable surfaces report each without a no-text fallback",
+			raw: `[{"account_uuid":"aaaaaaaa-0000-4000-8000-000000000099",
+				"project_memories":42,
+				"memory_files":{"content":"not-an-array"}}]`,
+			wantCategories: []string{
+				"claude-web project_memories is unreadable",
+				"claude-web memory_files is unreadable",
+			},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -306,59 +337,6 @@ func TestClaudeWebMemoriesReadCurrentAccountSurfacesAndOlderShapes(t *testing.T)
 					t.Errorf("memory %d = content %q project %q path %q, want content %q project %q path containing %q",
 						i, got.Content, got.Project, got.FilePath, want.content, want.project, want.pathSuffix)
 				}
-			}
-			if len(records.Discards) != 0 {
-				t.Fatalf("discards = %+v", records.Discards)
-			}
-		})
-	}
-}
-
-func TestClaudeWebMemoriesReportUnreadableAccountSurfaces(t *testing.T) {
-	tests := []struct {
-		name           string
-		raw            string
-		wantMemories   int
-		wantCategories []string
-	}{
-		{
-			name: "scalar project_memories keeps memory_files",
-			raw: `[{"account_uuid":"aaaaaaaa-0000-4000-8000-000000000099",
-				"project_memories":"not-an-object",
-				"memory_files":[{"content":"Synthetic memory file.","path":"memories/synthetic-atlas.md"}]}]`,
-			wantMemories:   1,
-			wantCategories: []string{"claude-web project_memories is unreadable"},
-		},
-		{
-			name: "malformed memory_files entry reports the surface",
-			raw: `[{"account_uuid":"aaaaaaaa-0000-4000-8000-000000000099",
-				"project_memories":{"aaaaaaaa-0000-4000-8000-000000000001":"Synthetic orchard project memory."},
-				"memory_files":["not-an-object"]}]`,
-			wantMemories:   1,
-			wantCategories: []string{"claude-web memory_files is unreadable"},
-		},
-		{
-			name: "both unreadable surfaces report each without a no-text fallback",
-			raw: `[{"account_uuid":"aaaaaaaa-0000-4000-8000-000000000099",
-				"project_memories":42,
-				"memory_files":{"content":"not-an-array"}}]`,
-			wantMemories: 0,
-			wantCategories: []string{
-				"claude-web project_memories is unreadable",
-				"claude-web memory_files is unreadable",
-			},
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			records, err := ParseClaudeWebMemories(bytes.NewReader([]byte(test.raw)), FileMeta{
-				Path: "/declared/export/memories.json", FileName: "memories.json",
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(records.Memories) != test.wantMemories {
-				t.Fatalf("memories = %+v, want %d", records.Memories, test.wantMemories)
 			}
 			if len(records.Discards) != len(test.wantCategories) {
 				t.Fatalf("discards = %+v, want %d", records.Discards, len(test.wantCategories))
