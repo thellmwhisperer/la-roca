@@ -5,9 +5,7 @@ package acceptance
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,9 +27,8 @@ import (
 )
 
 const (
-	oracleFixtureSchema   = "la-roca.data-split-oracle-fixture/v1"
-	oracleGoldenSchema    = "la-roca.data-split-oracle-golden/v1"
-	oraclePublicKeyBase64 = "HfdYb438IgjL6HuHpfj0FlxVE67kr1AdPVmDJCBafpQ="
+	oracleFixtureSchema = "la-roca.data-split-oracle-fixture/v1"
+	oracleGoldenSchema  = "la-roca.data-split-oracle-golden/v1"
 )
 
 type oracleFixture struct {
@@ -135,7 +132,7 @@ func (w *oracleWorld) recordAndReplay() error {
 		w.bundle = *w.replayed
 		return nil
 	}
-	manifest, err := compatibility.VerifyBundle(w.root, oraclePublicKey())
+	manifest, err := compatibility.VerifyBundle(w.root)
 	if err != nil {
 		return err
 	}
@@ -152,7 +149,7 @@ func (w *oracleWorld) recordAndReplay() error {
 		if err != nil {
 			return err
 		}
-		return fmt.Errorf("recorded behavior differs from the sealed golden (-want +got):\n%s\nthe complete recording is kept at %s for owner review", compactDiff(string(want), string(actual)), recording)
+		return fmt.Errorf("recorded behavior differs from the golden (-want +got):\n%s\nthe complete recording is kept at %s for owner review", compactDiff(string(want), string(actual)), recording)
 	}
 	if err := json.Unmarshal(want, &w.bundle); err != nil {
 		return err
@@ -473,11 +470,6 @@ func sqlFromOracleOutput(stdout string) (string, error) {
 	return statement, nil
 }
 
-func oraclePublicKey() ed25519.PublicKey {
-	raw, _ := base64.StdEncoding.DecodeString(oraclePublicKeyBase64)
-	return ed25519.PublicKey(raw)
-}
-
 func (w *oracleWorld) cliCoverage() error {
 	return requireOracleCases(w.bundle, "cli", []string{
 		"cli.exec.generated", "cli.exec.write-refused", "cli.fts-ranking",
@@ -514,8 +506,7 @@ func requireOracleCases(bundle oracleGolden, surface string, want []string) erro
 }
 
 func (w *oracleWorld) changeSignedGolden() error {
-	public := oraclePublicKey()
-	if _, err := compatibility.VerifyBundle(w.root, public); err != nil {
+	if _, err := compatibility.VerifyBundle(w.root); err != nil {
 		return err
 	}
 	tampered, err := acceptanceTempDir("data-split-oracle-tampered-")
@@ -535,7 +526,7 @@ func (w *oracleWorld) changeSignedGolden() error {
 			return err
 		}
 	}
-	_, w.err = compatibility.VerifyBundle(tampered, public)
+	_, w.err = compatibility.VerifyBundle(tampered)
 	return nil
 }
 
