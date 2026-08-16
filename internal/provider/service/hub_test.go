@@ -146,48 +146,59 @@ func TestHubSearchRetriesAfterTheBuildingRequestIsCanceled(t *testing.T) {
 	}
 }
 
-func TestShadowSearchServesLegacyWhenTheHubIndexIsUnavailable(t *testing.T) {
-	fixture := newHubFixture(t)
-	seedHubCoreMemory(t, fixture.plugins, 106, "Synthetic quartz hub marker")
-	seedLegacyMemories(t, fixture, []hubMemory{{106, "Synthetic quartz legacy marker"}})
-	var rollback error
-	svc := openHubService(t, fixture, LayoutShadowEqual, func(options *Options) {
-		options.RollbackLayout = func(reason error) error { rollback = reason; return nil }
-	})
-	if err := svc.hub.Close(); err != nil {
-		t.Fatal(err)
+func TestSearchFailureRollsBackTheMarkerAndServesLegacy(t *testing.T) {
+	cases := []struct {
+		name                 string
+		layout               ReadLayout
+		id                   int64
+		expectRollbackReason string
+		checkServingLayout   bool
+		checkLegacyOpened    bool
+	}{
+		{
+			name:   "shadow search serves legacy when the hub index is unavailable",
+			layout: LayoutShadowEqual,
+			id:     106,
+		},
+		{
+			name:                 "cutover search failure rolls back the marker and serves legacy",
+			layout:               LayoutCutover,
+			id:                   107,
+			expectRollbackReason: "cutover hub search failed",
+			checkServingLayout:   true,
+			checkLegacyOpened:    true,
+		},
 	}
-	_, rows, _, _, _, err := svc.searchByTerm(t.Context(), query.Plan{
-		Term: "quartz", Limit: 10,
-	}, "", DefaultMaxChars, false)
-	if err != nil || len(rows) != 1 || rows[0]["text"] != "Synthetic quartz legacy marker" || rollback == nil {
-		t.Fatalf("shadow fallback rows = %+v, error = %v, rollback = %v", rows, err, rollback)
-	}
-}
-
-func TestCutoverSearchFailureRollsBackTheMarkerAndServesLegacy(t *testing.T) {
-	fixture := newHubFixture(t)
-	seedHubCoreMemory(t, fixture.plugins, 107, "Synthetic quartz hub marker")
-	seedLegacyMemories(t, fixture, []hubMemory{{107, "Synthetic quartz legacy marker"}})
-	var rollback error
-	svc := openHubService(t, fixture, LayoutCutover, func(options *Options) {
-		options.RollbackLayout = func(reason error) error { rollback = reason; return nil }
-	})
-	if err := svc.hub.Close(); err != nil {
-		t.Fatal(err)
-	}
-	_, rows, _, _, _, err := svc.searchByTerm(t.Context(), query.Plan{
-		Term: "quartz", Limit: 10,
-	}, "", DefaultMaxChars, false)
-	if err != nil || len(rows) != 1 || rows[0]["text"] != "Synthetic quartz legacy marker" ||
-		rollback == nil || !strings.Contains(rollback.Error(), "cutover hub search failed") {
-		t.Fatalf("cutover fallback rows = %+v, error = %v, rollback = %v", rows, err, rollback)
-	}
-	if svc.servingLayout() != LayoutLegacyServing {
-		t.Fatalf("serving layout after rollback = %q", svc.servingLayout())
-	}
-	if _, err := os.Stat(fixture.corePath); err != nil {
-		t.Fatalf("rollback did not open the legacy database: %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newHubFixture(t)
+			seedHubCoreMemory(t, fixture.plugins, tc.id, "Synthetic quartz hub marker")
+			seedLegacyMemories(t, fixture, []hubMemory{{tc.id, "Synthetic quartz legacy marker"}})
+			var rollback error
+			svc := openHubService(t, fixture, tc.layout, func(options *Options) {
+				options.RollbackLayout = func(reason error) error { rollback = reason; return nil }
+			})
+			if err := svc.hub.Close(); err != nil {
+				t.Fatal(err)
+			}
+			_, rows, _, _, _, err := svc.searchByTerm(t.Context(), query.Plan{
+				Term: "quartz", Limit: 10,
+			}, "", DefaultMaxChars, false)
+			if err != nil || len(rows) != 1 || rows[0]["text"] != "Synthetic quartz legacy marker" || rollback == nil {
+				t.Fatalf("fallback rows = %+v, error = %v, rollback = %v", rows, err, rollback)
+			}
+			if tc.expectRollbackReason != "" && !strings.Contains(rollback.Error(), tc.expectRollbackReason) {
+				t.Fatalf("rollback reason = %q, want substring %q", rollback.Error(), tc.expectRollbackReason)
+			}
+			if tc.checkServingLayout && svc.servingLayout() != LayoutLegacyServing {
+				t.Fatalf("serving layout after rollback = %q", svc.servingLayout())
+			}
+			if tc.checkLegacyOpened {
+				if _, err := os.Stat(fixture.corePath); err != nil {
+					t.Fatalf("rollback did not open the legacy database: %v", err)
+				}
+			}
+		})
 	}
 }
 
