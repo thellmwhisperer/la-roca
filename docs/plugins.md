@@ -1,26 +1,244 @@
 # Plugins
 
+A plugin is a small package that gives La Roca new data to answer questions
+from. It owns one or more SQLite databases, describes them in a `plugin.json`
+manifest, and La Roca attaches those databases read-only so their tables can
+appear in query answers. A plugin may also ship an executable that adds
+commands, but it does not have to: a plugin with only data is complete.
+
+You can build your first one in about five minutes with no Go code at all.
+[Your first plugin](#your-first-plugin) below is the whole walk: three files,
+one install command, one query. Everything after that is the reference: the
+full manifest schema, how installs are verified and preserved, the two plugins
+La Roca ships with, and scheduled rides.
+
+One thing to know before you start: the third-party plugin surface is
+**experimental and default-off**. Install and update commands do not exist
+until you set `features.plugins = true` in your configuration, and the surface
+may still change between releases.
+
+## Your first plugin
+
+This section is complete: copy each block in order and you end with an
+installed, working plugin. You need a terminal, La Roca itself
+(`roca init` if you have never used it), and the `sqlite3` command line tool,
+which ships with macOS and most Linux distributions.
+
+The example plugin is called `first-receipts` and serves one table of purchase
+receipts. It ships data only, no executable, so it is classified DATA-ONLY
+(near-harmless) at install time.
+
+### 1. Turn plugins on
+
+The plugin commands live behind one switch. Open your configuration file —
+`~/.roca/config.toml` by default, or `config.toml` next to the database when
+you use `--db-path` — and make sure it contains:
+
+```toml
+[features]
+plugins = true
+```
+
+### 2. Create three files
+
+Make a folder for the plugin. The folder's name does not matter; the `name`
+inside `plugin.json` decides where it installs.
+
+```sh
+mkdir first-receipts
+cd first-receipts
+```
+
+**File 1: the database.** A plugin database is an ordinary SQLite file you
+create however you like. Here `sqlite3` builds one with a single table and one
+row, so there is something to find:
+
+```sh
+sqlite3 receipts.db <<'SQL'
+CREATE TABLE receipts (id INTEGER PRIMARY KEY, title TEXT, amount_cents INTEGER);
+INSERT INTO receipts (title, amount_cents) VALUES ('coffee', 420);
+SQL
+```
+
+**File 2: the manifest.** Save this as `plugin.json`:
+
+```json
+{
+  "schema": 1,
+  "name": "first-receipts",
+  "version": "1.0.0",
+  "binary": "roca",
+  "databases": [
+    {
+      "name": "records",
+      "path": "receipts.db",
+      "alias": "first_receipts",
+      "attachment": "on-demand",
+      "retention": "Keep receipts until the operator removes them."
+    }
+  ],
+  "semantic": {
+    "databases": [
+      {
+        "database": "records",
+        "description": "Purchase receipts and their totals.",
+        "questions": ["Which receipts were recorded?"],
+        "tables": [
+          {
+            "name": "receipts",
+            "description": "One row per purchase receipt.",
+            "columns": ["id", "title", "amount_cents"]
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+What each part says:
+
+- `name` is the plugin's identity. It becomes the install directory
+  `~/.roca/plugins/first-receipts`, so it is restricted to letters, digits,
+  `-`, and `_`.
+- `binary` is `"roca"` because this plugin ships no executable of its own: it
+  adds data, not code, which is what keeps it DATA-ONLY.
+- `databases` lists every SQLite file in the package. `path` is the file name;
+  `alias` is the schema name SQL uses (`first_receipts.receipts`); `attachment`
+  `"on-demand"` means the database is attached only when a question or explicit
+  SQL asks for it; `retention` is a required, plain-language description of
+  your pruning policy — you own it and you enforce it.
+- `semantic` describes the data in words. The description and questions are
+  what lets the model pick these tables for the right questions, and the
+  ordered `columns` list must match the real table exactly or the plugin is
+  skipped at query time.
+
+**File 3: the checksums.** The installer verifies every payload before it
+copies anything, using `checksums.txt` — one SHA-256 per line. Generate it
+after the other two files are final (on Linux, `sha256sum` writes the same
+format):
+
+```sh
+shasum -a 256 plugin.json receipts.db > checksums.txt
+```
+
+Your folder now holds exactly three files:
+
+```text
+first-receipts/
+├── plugin.json
+├── receipts.db
+└── checksums.txt
+```
+
+### 3. Install it
+
+From the folder's parent directory:
+
+```sh
+roca plugin install ./first-receipts
+```
+
+The installer verifies the checksums, shows a consent screen naming the
+source, version, package checksum, and risk level, and waits for `y`:
+
+```text
+Plugin install consent
+source: /path/to/first-receipts
+version: 1.0.0
+checksum: sha256:…
+risk: DATA-ONLY: near-harmless; its worst case is lying content returned from its database.
+Proceed with plugin install? [y/N]
+```
+
+Answer `y`, and the plugin installs under `~/.roca/plugins/first-receipts`.
+Plugins are installed for you as the operator, not per database: they land
+under `~/.roca/plugins/` even when your database lives elsewhere through
+`--db-path`.
+
+### 4. Prove it answers
+
+The guaranteed check is direct SQL through the read-only gate, naming the
+alias you declared:
+
+```sh
+roca exec 'SELECT title, amount_cents FROM first_receipts.receipts'
+```
+
+You should see something like (the exact `databases:` line depends on what
+else is installed):
+
+```text
+SELECT title, amount_cents FROM first_receipts.receipts LIMIT 1000
+databases: core, plugin:roca-corpus, plugin:first-receipts
+rows[1]{title,amount_cents,database}:
+  coffee,420,"plugin:first-receipts"
+```
+
+The natural-language surface works too, because the semantic fragment is what
+routes the question (this needs an answering model, which `roca init` set up):
+
+```sh
+roca query "which receipts were recorded"
+```
+
+Every answer says which databases it consulted, and every row carries its
+origin — here `plugin:first-receipts`, which is how you know the rows came
+from your plugin and not from core memory.
+
+### 5. Remove it when done
+
+```sh
+roca plugin uninstall first-receipts
+```
+
+Because this example declares no `custody`, uninstall deletes the folder. A
+database holding operator data declares `custody: true` instead, and
+uninstall then archives the directory rather than deleting it — see
+[Database declarations](#database-declarations).
+
+### If something goes wrong
+
+- `the experimental plugin system is disabled; set features.plugins = true in
+  <path>` — you skipped step 1. The error names the exact file to edit.
+- `checksum mismatch for …` — you changed a file after generating
+  `checksums.txt`. Regenerate it (step 2, file 3) and install again.
+- ``plugin first-receipts is already installed; run `roca plugin update
+  first-receipts``` — one install per name. Uninstall first, or update.
+- Your table does not appear and the `databases:` line omits the plugin — the
+  semantic declaration disagrees with the real database (a wrong or reordered
+  column list is the usual cause). The plugin is skipped with a warning.
+  Fix `plugin.json`, regenerate the checksums, and run
+  `roca plugin update first-receipts`.
+- `plugin.json` with a misspelled key is rejected outright: the engine refuses
+  unknown fields rather than guessing what you meant.
+
+## How a plugin works
+
 La Roca is a federating kernel. A plugin owns its durable databases and
-describes them in a `plugin.json` manifest; the kernel validates those
-declarations, attaches the databases read-only, and composes their table
-descriptions into the catalog used by natural-language queries.
+describes them in its manifest; the kernel validates those declarations,
+attaches the databases read-only, and composes their table descriptions into
+the catalog used by natural-language queries.
 
-The kernel does not own a domain database. Its durable state is configuration
-and installed manifests. Database retention, pruning, compaction, and scale are
-plugin policy: one plugin cannot prune another plugin's history.
+The kernel does not own a domain database. Its own durable state is
+configuration and installed manifests. Database retention, pruning,
+compaction, and scale are plugin policy, and one plugin cannot prune another
+plugin's history.
 
-The kernel's own attach point is an empty in-memory SQLite database. During the
-reversible cutover, temporary compatibility views reproduce the former core
-tables from plugin custody memberships, and temporary FTS indexes preserve the
-legacy ranking surface. The single `layout.serving` marker and rollback states
-are documented in the [runtime map](architecture.md#runtime-map). This adapter
-is not a plugin API. A plugin database is opened read-only and reached only
-through its declared alias.
+The kernel's own attach point is an empty in-memory SQLite database. During
+the reversible cutover, temporary compatibility views reproduce the former
+core tables from plugin custody memberships, and temporary FTS indexes
+preserve the legacy ranking surface. The single `layout.serving` marker and
+its rollback states are documented in the
+[runtime map](architecture.md#runtime-map). This adapter is not a plugin API.
+A plugin database is opened read-only and reached only through its declared
+alias.
 
 `roca-corpus` and `roca-ops`, the engine's manifest-backed bundled consumers,
-prove it without changing the product contract: both are resident, ingest and
-operational writes still land in the same data, query results are unchanged,
-and readable query output still begins with the same consulted database list.
+prove the model without changing the product contract: both are resident,
+ingest and operational writes still land in the same data, query results are
+unchanged, and readable query output still begins with the same consulted
+database list.
 
 ## The manifest
 
@@ -34,13 +252,15 @@ and readable query output still begins with the same consulted database list.
 - capabilities: named executable calls used when SQL cannot perform the work.
 
 The canonical verb `inspect`, for example, names CLI command `inspect` and MCP
-tool `roca_inspect`. Both resolve to the same capability. A manifest cannot give
-the two surfaces different implementations. Registration lands in steps: this
-build seats a declared verb as a CLI command for bundled manifest plugins only.
+tool `roca_inspect`. Both resolve to the same capability. A manifest cannot
+give the two surfaces different implementations. Registration lands in steps:
+this build seats a declared verb as a CLI command for bundled manifest
+plugins only.
 
 Here is a complete two-database plugin. The second database demonstrates the
-same shape used by a scheduler that keeps run history and errors apart from its
-domain records.
+same shape used by a scheduler that keeps run history and errors apart from
+its domain records. (The quickstart above is the smallest useful subset of
+it.)
 
 ```json
 {
@@ -115,10 +335,10 @@ aliases, repeated names, a semantic fragment that names an undeclared
 database, a table declaration that disagrees with the real SQLite schema, and
 a verb that names a missing capability. Discovery reports malformed manifests
 as actionable errors; it never silently ignores them. Attach aliases are
-explicit and collisions are errors rather than names the kernel rewrites: two
+explicit, and collisions are errors rather than names the kernel rewrites: two
 packages that declare the same alias both lose it, and the warning names them.
-The aliases the bundled packages declare are the kernel's own seats, so a later
-package that claims one of them makes only itself unavailable.
+The aliases the bundled packages declare are the kernel's own seats, so a
+later package that claims one of them makes only itself unavailable.
 
 `name` travels through the install directory, the `roca-<name>` executable, and
 every lifecycle argument, so an installable package restricts it to ASCII
@@ -128,9 +348,9 @@ installer could not manage is refused at install time, not after.
 `binary` names the executable that runs the package's capabilities. A package
 that ships one declares its own `roca-<name>` file, and the installer refuses
 the package when the declared name and the shipped file disagree. A package
-that ships no executable declares `roca`, the host binary: its capabilities are
-commands of La Roca itself, and it stays **DATA-ONLY** because it adds no code
-of its own. There is no third value; `binary` is never empty.
+that ships no executable declares `roca`, the host binary: its capabilities
+are commands of La Roca itself, and it stays **DATA-ONLY** because it adds no
+code of its own. There is no third value; `binary` is never empty.
 
 ### Database declarations
 
@@ -141,9 +361,9 @@ ending in `.db`, `.sqlite`, or `.sqlite3`, not a path outside the package.
 
 `attachment` is `resident` or `on-demand`. A resident database is available to
 every query connection. An on-demand database is selected when its semantic
-fragment matches the question or explicit SQL names its alias. Both modes use
+fragment matches the question, or explicit SQL names its alias. Both modes use
 SQLite read-only URI mode, the same SQL gate and timeout, and the same
-attachment limit.
+attachment limit: at most ten plugin databases attached to one query.
 
 `custody: true` says the database contains operator-owned data that uninstall
 must archive instead of delete. `retention` documents the policy owned and
@@ -174,10 +394,10 @@ the two surfaces as two different contracts. The MCP tool is always
 `roca_<verb>`; the CLI name is the capability's own call, so a verb that rides
 an existing command names that command with its flags instead of advertising
 one the binary does not have. The current build registers that CLI command from
-the record for bundled manifest plugins. A third-party verb is
-validated and reserved, and until its own registration step lands it reaches the
-CLI only when a `roca-<verb>` executable sits on `PATH`; the MCP server likewise
-still declares its own tool list. A capability's `command` is prepended to the
+the record for bundled manifest plugins. A third-party verb is validated and
+reserved, and until its own registration step lands it reaches the CLI only
+when a `roca-<verb>` executable sits on `PATH`; the MCP server likewise still
+declares its own tool list. A capability's `command` is prepended to the
 arguments the caller supplies and executed through the declared `binary`.
 
 SQL remains the preferred path for reads. Capabilities are for work SQL cannot
@@ -196,7 +416,7 @@ are not a sandbox.
 5. Install from a local directory while developing, then publish the same
    directory in a Git repository.
 
-A source package for the example above contains:
+A source package for the two-database example above contains:
 
 ```text
 plugin.json
@@ -213,17 +433,6 @@ Its checksum file is:
 <sha256>  receipts.db
 <sha256>  receipts-runs.db
 <sha256>  roca-receipts
-```
-
-Enable third-party plugin lifecycle commands, then install the directory:
-
-```toml
-[features]
-plugins = true
-```
-
-```sh
-roca plugin install ./receipts-plugin
 ```
 
 The generated `.roca-plugin.json` is local installation inventory. Plugin
@@ -328,10 +537,9 @@ Those `plugin_schema`, `plugin_migrations`, `migration_batches`, and
 so they stay hidden from every attached schema. A batch is recorded only once it
 is fully committed: an interrupted one leaves nothing half-migrated behind and
 resumes from where it stopped, and only a verified migration becomes eligible
-for cutover. A bundled
-database may also declare `legacy_*` quarantine tables, which keep
-owner-specific records verbatim beside their canonical digest instead of
-reshaping them into an active surface. Bumping one of those versions is a
+for cutover. A bundled database may also declare `legacy_*` quarantine tables,
+which keep owner-specific records verbatim beside their canonical digest instead
+of reshaping them into an active surface. Bumping one of those versions is a
 schema change a released database has to adopt, so it owes what
 [releases](releases.md#schema-migration-definition-of-done) requires of one.
 
@@ -351,14 +559,14 @@ another current surface. Values JSON cannot carry are kept losslessly as hex:
 `{"$blob": "…"}` for a stored blob and `{"$text_blob": "…"}` for text whose
 bytes are not valid UTF-8, so a byte the source recorded is never dropped or
 replaced. The empty withdrawn `messages` table creates no destination object,
-and the derived `search_state` is rebuilt by its owner rather than copied.
-The import refuses to start at all while the snapshot still holds a table
-nobody disposed of, and it refuses before writing anything when a table it
-would quarantine still holds a row whose identity columns are NULL or blank,
-because a row it cannot address is a row it cannot prove it carried over.
-Each checksummed batch is replay-safe, and the plugin databases deliberately
-remain in shadow migration state until the whole split is independently
-verified for cutover.
+and the derived `search_state` is rebuilt by its owner rather than copied. The
+import refuses to start at all while the snapshot still holds a table nobody
+disposed of, and it refuses before writing anything when a table it would
+quarantine still holds a row whose identity columns are NULL or blank, because a
+row it cannot address is a row it cannot prove it carried over. Each
+checksummed batch is replay-safe, and the plugin databases deliberately remain
+in shadow migration state until the whole split is independently verified for
+cutover.
 
 Removing La Roca itself removes the installed packages and asks separately
 before it touches those archives: see [Uninstall](lifecycle.md#uninstall).
@@ -392,11 +600,11 @@ into: one version table per family, full-text indexes rebuilt over the ones
 that carry text, and the evidence tying each version back to the source row it
 came from. Those tables are migration machinery rather than fleet memory, so
 they stay hidden from every query surface, and the served tables above keep
-answering exactly as before until the atomic cutover. Each family is a
-named custody migration of its own, `corpus-archive-<family>`, because a
-migration owns exactly one destination; the merge seals all five against the
-same verification digest, so a partially sealed archive is merged again rather
-than accepted.
+answering exactly as before until the atomic cutover. Each family is a named
+custody migration of its own, `corpus-archive-<family>`, because a migration
+owns exactly one destination; the merge seals all five against the same
+verification digest, so a partially sealed archive is merged again rather than
+accepted.
 
 ## The bundled roca-ops plugin
 
@@ -430,30 +638,30 @@ read-only query surface.
 DATA-2 also prepares a second, hidden memory route in that same custodial
 database. `memory_records` holds the multiset union of ops, core, and harvested
 corpus payloads: byte-equivalent identities from different sources share one
-record, while duplicates within a source and divergent payloads remain
-physical versions. Plugin-local custody memberships and
-`memory_compatibility` retain every legacy database label and ID. Its derived
-`memory_records_fts` is rebuilt and checked before the ledger becomes
-`verified`. These names stay outside prompts and the SQL gate during shadow
-mode, so the served `memories`/`memories_fts` route and source databases remain
-untouched until the atomic cutover.
+record, while duplicates within a source and divergent payloads remain physical
+versions. Plugin-local custody memberships and `memory_compatibility` retain
+every legacy database label and ID. Its derived `memory_records_fts` is rebuilt
+and checked before the ledger becomes `verified`. These names stay outside
+prompts and the SQL gate during shadow mode, so the served `memories`/
+`memories_fts` route and source databases remain untouched until the atomic
+cutover.
 
 The DATA-6 cutover coordinator in `internal/distribution/datasplit/cutover.go`
 is DATA-2's sole runtime caller, the way DATA-1 shipped the ledger with only
 `Prepare` wired: no installer and no command invokes the copy directly. Sources
-are free to move between an interrupted run and its
-resume. A row whose payload changed is carried forward as a further version of
-the same legacy ID rather than refused, a row that disappeared keeps the
-membership its batch truthfully recorded, and both are reported as drift events;
-membership counts are verified against what the committed batches recorded, not
-against the live source. A home whose three sources are all empty verifies as
-`verified-empty` rather than `verified`: nothing was carried, so the migration
-stays open and a later run still carries whatever the sources hold by then, while
-the home counts as cutover-ready because there is nothing left to carry. Each
-source's frozen copy is named once per migration generation and published by
-renaming a validated sibling copy over it, so retries replace their own snapshot
-instead of accumulating a full database per attempt, a failed replacement leaves
-the previously verified copy intact, and no reader sees a half-written database.
+are free to move between an interrupted run and its resume. A row whose payload
+changed is carried forward as a further version of the same legacy ID rather
+than refused, a row that disappeared keeps the membership its batch truthfully
+recorded, and both are reported as drift events; membership counts are verified
+against what the committed batches recorded, not against the live source. A
+home whose three sources are all empty verifies as `verified-empty` rather than
+`verified`: nothing was carried, so the migration stays open and a later run
+still carries whatever the sources hold by then, while the home counts as
+cutover-ready because there is nothing left to carry. Each source's frozen copy
+is named once per migration generation and published by renaming a validated
+sibling copy over it, so retries replace their own snapshot instead of
+accumulating a full database per attempt, a failed replacement leaves the
+previously verified copy intact, and no reader sees a half-written database.
 
 A plugin database hosts as many custody migrations as it needs. `plugin_schema`
 keeps the plugin's schema and index versions and nothing else that is current:
@@ -463,15 +671,16 @@ lifecycle transition and verification outcome by a stable migration name, and
 both batches and memberships are keyed by that name beside the destination the
 migration owns. Batch identity is local to its migration, so two migrations may
 number their batches however they like and still commit the same id. Two
-migrations in one database therefore prepare, batch, resume and verify
+migrations in one database therefore prepare, batch, resume, and verify
 independently: neither counts the other's batches, reuses its destination, nor
 overwrites its state, and each reaches `verified` or `verified-empty` on its
 own. DATA-2 owns `data2-memory-custody` over `memory_records`, and the corpus
 shadow archive owns one `corpus-archive-<family>` name per version table. A
-DATA-1 database adopts this in place on the next `Prepare` — the rows it already
-held stay under an unclaimed empty name, so they can never stand in for a
-migration that has not run. A plugin schema or index bump reopens every named migration, because the
-destination those migrations fill may have moved under them.
+DATA-1 database adopts this in place on the next `Prepare` — the rows it
+already held stay under an unclaimed empty name, so they can never stand in for
+a migration that has not run. A plugin schema or index bump reopens every named
+migration, because the destination those migrations fill may have moved under
+them.
 
 ## Scheduled rides
 
@@ -487,8 +696,8 @@ cron = true
 
 With `features.cron` absent or false, the command is not registered and behaves
 as though it does not exist. The kernel registers its own `roca ingest` command
-as the first nightly ride, so direct ingest remains available unchanged, and the
-plugin name `core` is reserved for that built-in ride namespace.
+as the first nightly ride, so direct ingest remains available unchanged, and
+the plugin name `core` is reserved for that built-in ride namespace.
 
 The train is not behind `features.plugins`: it reads ride manifests from
 installed plugin payloads either way. Only a checksum-verified installation
