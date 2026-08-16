@@ -39,9 +39,13 @@ func (s *Service) Index(ctx context.Context) (search.Report, error) {
 	if err != nil {
 		return search.Report{}, err
 	}
-	report, err := search.Index(ctx, s.db, s.opts.Progress)
-	report.LexicalBuilt = report.LexicalBuilt || prepared.LexicalBuilt
-	report.ElapsedMS += prepared.ElapsedMS
+	report := prepared
+	if s.servingLayout() != LayoutCutover {
+		legacy, legacyErr := search.Index(ctx, s.db, s.opts.Progress)
+		report.LexicalBuilt = report.LexicalBuilt || legacy.LexicalBuilt
+		report.ElapsedMS += legacy.ElapsedMS
+		err = legacyErr
+	}
 	if err == nil && s.opts.CorpusEnabled && s.corpus != nil {
 		corpus, corpusErr := search.Index(ctx, s.corpus, s.opts.Progress)
 		report.LexicalBuilt = report.LexicalBuilt || corpus.LexicalBuilt

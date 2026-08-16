@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -634,6 +635,13 @@ func (s *Service) searchByTerm(ctx context.Context, plan query.Plan, method stri
 	maxChars int, matchAny bool) (columns []string, rows []map[string]any, stmt string,
 	provenance *search.Provenance, warnings []string, err error) {
 
+	if s.servingLayout() != LayoutLegacyServing && method != search.MethodLike {
+		if err := s.ensureHubSearch(ctx); err != nil {
+			if recoverErr := s.recoverHubSearchFailure(err); recoverErr != nil {
+				return nil, nil, "", nil, nil, recoverErr
+			}
+		}
+	}
 	gate, err := s.theGate()
 	if err != nil {
 		return nil, nil, "", nil, nil, err
@@ -657,14 +665,22 @@ func (s *Service) searchByTerm(ctx context.Context, plan query.Plan, method stri
 		}
 	}
 
-	result, err := engine.Search(ctx, search.Request{
+	request := search.Request{
 		Term:       plan.Term,
 		SQLLexical: sqlLexical,
 		Method:     method,
 		Limit:      limit,
-	})
+	}
+	result, err := engine.Search(ctx, request)
 	if err != nil {
 		return nil, nil, "", nil, nil, err
+	}
+	if result.Provenance.Method == search.MethodFTS && s.servingLayout() == LayoutShadowEqual {
+		hubEngine := &search.Engine{DB: s.hubDB, Validate: gate.Validate}
+		hubResult, hubErr := hubEngine.Search(ctx, request)
+		equal := hubResult.Provenance.Method == result.Provenance.Method &&
+			reflect.DeepEqual(result.Rows, hubResult.Rows)
+		s.compareShadow(equal, hubErr, "shadow lexical rows differ")
 	}
 
 	if result.Provenance.Method == search.MethodLike {

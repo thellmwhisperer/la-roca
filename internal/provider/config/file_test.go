@@ -383,6 +383,59 @@ func TestExperimentalFeaturesDefaultOffAndAreEnabledAlone(t *testing.T) {
 	}
 }
 
+func TestServingLayoutIsOneValidatedMarkerAndDefaultsToLegacy(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	missing, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if missing.Layout.Serving != LayoutLegacyServing {
+		t.Fatalf("missing layout = %q, want %q", missing.Layout.Serving, LayoutLegacyServing)
+	}
+
+	if err := os.WriteFile(path, []byte("[layout]\nserving = \"cutover\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cutover, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cutover.Layout.Serving != LayoutCutover || len(cutover.Warnings) != 0 {
+		t.Fatalf("cutover layout = %+v, warnings = %v", cutover.Layout, cutover.Warnings)
+	}
+
+	if err := os.WriteFile(path, []byte("[layout]\nserving = \"invented\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	invalid, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if invalid.Layout.Serving != LayoutLegacyServing || len(invalid.Warnings) != 1 ||
+		!strings.Contains(invalid.Warnings[0], "layout.serving") {
+		t.Fatalf("invalid layout = %+v, warnings = %v", invalid.Layout, invalid.Warnings)
+	}
+}
+
+func TestSetServingLayoutPreservesUnrelatedConfigurationBytes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	before := "# operator note\n[models]\norder = [\"ollama\"]\n\n[layout]\nserving = \"shadow-equal\"\n"
+	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetServingLayout(path, LayoutLegacyServing); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Replace(before, "serving = \"shadow-equal\"", "serving = \"legacy-serving\"", 1)
+	if string(after) != want {
+		t.Fatalf("atomic marker edit changed unrelated bytes:\nwant:\n%s\ngot:\n%s", want, after)
+	}
+}
+
 func TestSetProviderModelCreatesAndSurgicallyEditsTheConfiguration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "config.toml")
 	if err := SetProviderModel(path, "xai", "grok-first"); err != nil {
