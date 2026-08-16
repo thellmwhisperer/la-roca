@@ -216,8 +216,8 @@ func TestDeltaIndexIsIdempotentAndMapsResultsBackToCore(t *testing.T) {
 	assertVectorStoreHasNoCorpusText(t, vectorPath)
 }
 
-func TestIngestKeepsCompletedBatchesWhenWalkFails(t *testing.T) {
-	sources := make([]sourceRow, defaultBatchSize)
+func TestIngestFlushesStagedSourcesWhenWalkFails(t *testing.T) {
+	sources := make([]sourceRow, defaultBatchSize/2)
 	for index := range sources {
 		sources[index] = sourceRow{kind: "memories", text: fmt.Sprintf("synthetic progress %d", index),
 			layer: "discovery", origin: "agent", createdAt: "2026-01-01"}
@@ -238,8 +238,39 @@ func TestIngestKeepsCompletedBatchesWhenWalkFails(t *testing.T) {
 	if err := db.QueryRow(`SELECT COUNT(*) FROM chunks`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != defaultBatchSize {
-		t.Fatalf("completed chunks = %d, want %d", count, defaultBatchSize)
+	if count != len(sources) {
+		t.Fatalf("completed chunks = %d, want %d", count, len(sources))
+	}
+}
+
+func TestIngestRetainsMissingChunksUntilWalkCompletes(t *testing.T) {
+	longText := strings.Repeat("alpha old ", defaultChunkSize/4)
+	initial := sourceRow{kind: "exchanges", sessionID: "synthetic-session", ordinal: 1, hasOrdinal: true, text: longText}
+	path := filepath.Join(t.TempDir(), "vector.db")
+	index := Index{Corpus: &memoryCorpus{sources: []sourceRow{initial}}, VectorPath: path,
+		Model: DefaultModel, Embedder: &recordingEmbedder{}}
+	if _, err := index.Ingest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	changed := initial
+	changed.text = "alpha short"
+	index.Corpus = &failingCorpus{sources: []sourceRow{changed}}
+	if _, err := index.Ingest(context.Background()); err == nil {
+		t.Fatal("walk failure was not returned")
+	}
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM chunks`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != len(chunks(longText, defaultChunkSize, defaultOverlap)) {
+		t.Fatalf("chunks after interrupted replacement = %d, want %d", count, len(chunks(longText, defaultChunkSize, defaultOverlap)))
 	}
 }
 

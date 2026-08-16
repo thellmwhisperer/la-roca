@@ -192,7 +192,10 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 	}
 
 	report := Delta{}
-	desiredFingerprints := make(map[string]string, len(existing))
+	initial := make(map[string]storedChunk, len(existing))
+	for key, chunk := range existing {
+		initial[key] = chunk
+	}
 	pending := make([]desiredChunk, 0, defaultBatchSize)
 	locatorUpdates := make(map[int64]locatorUpdate)
 	if _, err := store.ExecContext(ctx, `PRAGMA temp_store=FILE;
@@ -212,7 +215,7 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 	}
 	var nextSourceOrder int64
 	var sourceOrder int64 = -1
-	flush := func() error {
+	flush := func(workCtx context.Context) error {
 		if len(pending) == 0 {
 			return nil
 		}
@@ -220,7 +223,7 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 		for n := range pending {
 			input[n] = DocumentPrefix + pending[n].text
 		}
-		vectors, err := i.Embedder.Embed(ctx, i.Model, input)
+		vectors, err := i.Embedder.Embed(workCtx, i.Model, input)
 		if err != nil {
 			return err
 		}
@@ -238,17 +241,17 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 				return fmt.Errorf("embedding %d has %d dimensions, want %d", n, len(vectors[n]), dimensions)
 			}
 		}
-		if err := writeBatch(ctx, store, pending, vectors, existing, locatorUpdates); err != nil {
+		if err := writeBatch(workCtx, store, pending, vectors, existing, locatorUpdates); err != nil {
 			return err
 		}
 		pending = pending[:0]
 		return nil
 	}
-	drainSources := func() error {
+	drainSources := func(workCtx context.Context) error {
 		for {
 			var kind, sourceID, sourceText, rawLocator, fingerprintVersion string
 			var order, chunkSize, overlap int64
-			err := store.QueryRowContext(ctx, `
+			err := store.QueryRowContext(workCtx, `
 				SELECT source_kind,source_id,source_order,text,locator,chunk_size,overlap,fingerprint_version
 				FROM temp.vector_desired_sources
 				WHERE source_order > ?
@@ -274,7 +277,6 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 					fingerprint: source.embeddingFingerprint(text), locator: where, text: text,
 				}
 				key := chunkKey(chunk.sourceKind, chunk.sourceID, chunk.index)
-				desiredFingerprints[key] = chunk.fingerprint
 				if old, ok := existing[key]; ok && old.fingerprint == chunk.fingerprint {
 					if old.locator != chunk.locator {
 						locatorUpdates[old.id] = locatorUpdate{id: old.id, locator: chunk.locator}
@@ -287,20 +289,14 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 				}
 				pending = append(pending, chunk)
 				if len(pending) == defaultBatchSize {
-					if err := flush(); err != nil {
+					if err := flush(workCtx); err != nil {
 						return err
 					}
 				}
 			}
 		}
-		if err := flush(); err != nil {
+		if err := flush(workCtx); err != nil {
 			return err
-		}
-		if sourceOrder >= 0 {
-			if _, err := store.ExecContext(ctx,
-				`DELETE FROM temp.vector_desired_sources WHERE source_order <= ?`, sourceOrder); err != nil {
-				return fmt.Errorf("clear vector reconciliation: %w", err)
-			}
 		}
 		return nil
 	}
@@ -319,7 +315,7 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 		_, err = store.ExecContext(ctx, `
 			INSERT INTO temp.vector_desired_sources(source_kind,source_id,source_order,text,locator,chunk_size,overlap,fingerprint_version)
 			VALUES (?,?,?,?,?,?,?,?)
-			ON CONFLICT(source_kind,source_id) DO UPDATE SET text=excluded.text,locator=excluded.locator,
+			ON CONFLICT(source_kind,source_id) DO UPDATE SET source_order=excluded.source_order,text=excluded.text,locator=excluded.locator,
 				chunk_size=excluded.chunk_size,overlap=excluded.overlap,fingerprint_version=excluded.fingerprint_version
 		`, source.kind, sourceID, nextSourceOrder, source.text, string(where), source.chunkSize, source.overlap, source.fingerprintVersion)
 		nextSourceOrder++
@@ -328,7 +324,7 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 		}
 		stagedSources++
 		if stagedSources >= defaultBatchSize {
-			if err := drainSources(); err != nil {
+			if err := drainSources(ctx); err != nil {
 				return err
 			}
 			stagedSources = 0
@@ -336,9 +332,14 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 		return nil
 	})
 	if err != nil {
+		drainCtx := ctx
+		if ctx.Err() != nil {
+			drainCtx = context.WithoutCancel(ctx)
+		}
+		_ = drainSources(drainCtx)
 		return Delta{}, err
 	}
-	if err := drainSources(); err != nil {
+	if err := drainSources(ctx); err != nil {
 		return Delta{}, err
 	}
 	if err := updateLocators(ctx, store, locatorUpdates); err != nil {
@@ -357,14 +358,19 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 			return Delta{}, err
 		}
 	}
-	if err := removeMissing(ctx, store, existing, desiredFingerprints, sourceKind, &report); err != nil {
+	finalSeen, err := finalSeenSources(ctx, store)
+	if err != nil {
+		return Delta{}, err
+	}
+	if err := removeMissing(ctx, store, existing, finalSeen, sourceKind); err != nil {
 		return Delta{}, err
 	}
 	if err := markDeprecatedLayersReconciled(ctx, store); err != nil {
 		return Delta{}, err
 	}
-	report.Chunks = report.Added + report.Updated + report.Unchanged
-	return report, nil
+	delta := deltaBetween(initial, existing)
+	delta.Sources = report.Sources
+	return delta, nil
 }
 
 func validateSourceKind(sourceKind string, declared map[string]bool) error {
@@ -855,8 +861,7 @@ func updateLocators(ctx context.Context, db *sql.DB, updates map[int64]locatorUp
 }
 
 func removeMissing(ctx context.Context, db *sql.DB, existing map[string]storedChunk,
-	desiredFingerprints map[string]string,
-	sourceKind string, report *Delta) error {
+	seen map[string]bool, sourceKind string) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -867,7 +872,7 @@ func removeMissing(ctx context.Context, db *sql.DB, existing map[string]storedCh
 		if sourceKind != "" && old.sourceKind != sourceKind {
 			continue
 		}
-		if _, desired := desiredFingerprints[key]; desired {
+		if seen[key] {
 			continue
 		}
 		if err := deleteEmbeddings(ctx, tx, old.id); err != nil {
@@ -887,37 +892,35 @@ func removeMissing(ctx context.Context, db *sql.DB, existing map[string]storedCh
 	return nil
 }
 
-func removeSourceMissing(ctx context.Context, db *sql.DB, existing map[string]storedChunk,
-	kind, sourceID string, desired map[string]struct{}) error {
-	prefix := sourceKey(kind, sourceID) + "\x00"
-	tx, err := db.BeginTx(ctx, nil)
+func finalSeenSources(ctx context.Context, db *sql.DB) (map[string]bool, error) {
+	seen := map[string]bool{}
+	rows, err := db.QueryContext(ctx, `
+		SELECT source_kind,source_id,text,chunk_size,overlap
+		FROM temp.vector_desired_sources`)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer tx.Rollback()
-	var removed []string
-	for key, old := range existing {
-		if !strings.HasPrefix(key, prefix) {
-			continue
+	for rows.Next() {
+		var kind, sourceID, text string
+		var chunkSize, overlap int64
+		if err := rows.Scan(&kind, &sourceID, &text, &chunkSize, &overlap); err != nil {
+			rows.Close()
+			return nil, err
 		}
-		if _, ok := desired[key]; ok {
-			continue
+		source := sourceRow{kind: kind, chunkSize: int(chunkSize), overlap: int(overlap)}
+		actualChunkSize, actualOverlap := source.chunking()
+		for chunkIndex := range chunks(text, actualChunkSize, actualOverlap) {
+			seen[chunkKey(kind, sourceID, chunkIndex)] = true
 		}
-		if err := deleteEmbeddings(ctx, tx, old.id); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM chunks WHERE id=?`, old.id); err != nil {
-			return err
-		}
-		removed = append(removed, key)
 	}
-	if err := tx.Commit(); err != nil {
-		return err
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
 	}
-	for _, key := range removed {
-		delete(existing, key)
+	if err := rows.Close(); err != nil {
+		return nil, err
 	}
-	return nil
+	return seen, nil
 }
 
 func deltaBetween(initial, existing map[string]storedChunk) Delta {
