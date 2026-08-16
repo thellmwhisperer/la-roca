@@ -3,6 +3,7 @@ package plugin_test
 import (
 	"context"
 	"database/sql"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -188,6 +189,16 @@ func TestAPluginReachedThroughARelativeRootStillOpensReadOnly(t *testing.T) {
 	if _, err := handle.ExecContext(t.Context(),
 		"ATTACH DATABASE ? AS probe", database.ReadOnlyURI()); err != nil {
 		t.Fatalf("attach under a relative root: %v", err)
+	}
+	// The read-only open runs while another process may be recovering or writing
+	// the same plugin database. It must wait out the lock, not fail the open with
+	// "database is locked".
+	uri, err := url.Parse(database.ReadOnlyURI())
+	if err != nil {
+		t.Fatalf("read-only URI does not parse: %v", err)
+	}
+	if uri.Query().Get("_pragma") != "busy_timeout(15000)" {
+		t.Fatalf("read-only URI does not wait out a concurrent writer: %s", database.ReadOnlyURI())
 	}
 }
 
