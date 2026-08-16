@@ -1032,6 +1032,15 @@ func (f *failingCorpus) WalkSources(_ context.Context, sourceKind string, visit 
 	return fmt.Errorf("synthetic walk failure")
 }
 
+func (f *failingCorpus) ResolveSource(_ context.Context, kind string, where Locator) (string, error) {
+	for _, source := range f.sources {
+		if source.kind == kind && source.locator().Identity == where.Identity {
+			return source.text, nil
+		}
+	}
+	return "", nil
+}
+
 func (m *memoryCorpus) WalkSources(_ context.Context, sourceKind string, visit func(sourceRow) error) error {
 	for _, source := range m.sources {
 		if sourceKind != "" && source.kind != sourceKind {
