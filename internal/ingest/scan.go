@@ -105,16 +105,17 @@ func Scan(roots Roots) Plan {
 	if err != nil {
 		plan.Warnings = append(plan.Warnings, err.Error())
 	}
-	plan.add(scanClaudeMemories(roots, claudeProjects, &plan), "claude_memory_files")
+	attribution := claudeCwdAttribution(roots)
+	plan.add(scanClaudeMemories(roots, claudeProjects, attribution, &plan), "claude_memory_files")
 	plan.addCodex(scanCodexFiles(roots))
-	plan.add(scanClaudeSessions(roots, claudeProjects, &plan), "session_files")
+	plan.add(scanClaudeSessions(roots, claudeProjects, attribution, &plan), "session_files")
 	plan.add(scanCodexSessions(roots), "codex_session_files")
 	plan.add(existingFile(filepath.Join(roots.CodexRoot, "history.jsonl"), Target{
 		Kind: parsers.KindCodexHistory, SourceAgent: "codex",
 	}), "codex_history_files")
 	plan.add(scanDesktopSessions(roots), "claude_desktop_files")
 	plan.add(scanCoworkSessions(roots), "cowork_files")
-	plan.add(scanSubagents(roots, claudeProjects), "subagent_files")
+	plan.add(scanSubagents(roots, claudeProjects, attribution), "subagent_files")
 	piFiles := scanPiStore(roots, &plan)
 	plan.Scanned["pi_files"] += len(piFiles)
 	var piSessions []Target
@@ -344,10 +345,10 @@ func (p *Plan) add(targets []Target, key string) {
 // contents as if it were knowledge. The global ~/.claude/CLAUDE.md is an
 // instruction file and not memory (the sources ruling that excludes repository
 // AGENTS.md/CLAUDE.md applies to it too), so it is not read here.
-func scanClaudeMemories(roots Roots, projects map[string]string, plan *Plan) []Target {
+func scanClaudeMemories(roots Roots, projects map[string]string, attribution map[string]string, plan *Plan) []Target {
 	var targets []Target
 	for _, dir := range subdirectories(roots.ClaudeProjects) {
-		project, _ := projectForClaudeDir(dir, roots.Workspace, projects)
+		project, _ := projectForClaudeDir(dir, roots.Workspace, projects, attribution)
 		exclusion := runnerExclusion(roots, dir)
 		memoryDir := filepath.Join(roots.ClaudeProjects, dir, "memory")
 		for _, name := range filesIn(memoryDir) {
@@ -426,11 +427,68 @@ func readClaudeProjects(path string) (map[string]string, error) {
 	return projects, nil
 }
 
-func projectForClaudeDir(dir string, roots WorkspaceRoots, projects map[string]string) (string, bool) {
+func projectForClaudeDir(dir string, roots WorkspaceRoots, projects map[string]string, attribution map[string]string) (string, bool) {
+	if project, ok := attribution[dir]; ok {
+		return project, true
+	}
 	if project, ok := projects[dir]; ok {
 		return project, true
 	}
 	return ProjectFromEncodedDir(dir, roots)
+}
+
+// claudeCwdAttribution discovers the authoritative project name for each encoded
+// Claude project directory from the first usable cwd its session transcripts
+// record. The exact recorded path outranks the lossy folder slug and the
+// ~/.claude.json mapping, which stay as the fallback.
+func claudeCwdAttribution(roots Roots) map[string]string {
+	attribution := map[string]string{}
+	for _, dir := range subdirectories(roots.ClaudeProjects) {
+		for _, name := range filesIn(filepath.Join(roots.ClaudeProjects, dir)) {
+			if !strings.HasSuffix(name, ".jsonl") ||
+				!sessionFileName.MatchString(strings.TrimSuffix(name, ".jsonl")) {
+				continue
+			}
+			cwd, ok := firstClaudeCwd(filepath.Join(roots.ClaudeProjects, dir, name))
+			if !ok {
+				continue
+			}
+			if project := ProjectFromMetadataCwd(cwd); project != "" {
+				attribution[dir] = project
+			}
+			break
+		}
+	}
+	return attribution
+}
+
+// firstClaudeCwd reads just enough of a Claude session transcript to recover the
+// first non-empty cwd it records. The read stops at the first usable record, so
+// the scan never walks a whole session to attribute it.
+func firstClaudeCwd(path string) (string, bool) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", false
+	}
+	defer file.Close()
+	return firstClaudeCwdFrom(bufio.NewReader(file))
+}
+
+func firstClaudeCwdFrom(reader *bufio.Reader) (string, bool) {
+	for {
+		line, err := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			var record struct {
+				Cwd string `json:"cwd"`
+			}
+			if json.Unmarshal(line, &record) == nil && record.Cwd != "" {
+				return record.Cwd, true
+			}
+		}
+		if err != nil {
+			return "", false
+		}
+	}
 }
 
 // scanCodexFiles finds the memories and rules Codex keeps as files, plus the
@@ -489,11 +547,11 @@ func scanCodexFiles(roots Roots) []Target {
 
 // scanClaudeSessions finds the transcripts, and diagnoses the project directories
 // no declared root explains.
-func scanClaudeSessions(roots Roots, projects map[string]string, plan *Plan) []Target {
+func scanClaudeSessions(roots Roots, projects map[string]string, attribution map[string]string, plan *Plan) []Target {
 	var targets []Target
 	var ambiguous []string
 	for _, dir := range subdirectories(roots.ClaudeProjects) {
-		project, resolved := projectForClaudeDir(dir, roots.Workspace, projects)
+		project, resolved := projectForClaudeDir(dir, roots.Workspace, projects, attribution)
 		full := filepath.Join(roots.ClaudeProjects, dir)
 		exclusion := runnerExclusion(roots, dir)
 		names := filesIn(full)
@@ -570,12 +628,12 @@ func scanCoworkSessions(roots Roots) []Target {
 
 // scanSubagents discovers the transcripts under both layouts the runtime has
 // used: the flat `subagents/` of a project and the one nested under a session.
-func scanSubagents(roots Roots, projects map[string]string) []Target {
+func scanSubagents(roots Roots, projects map[string]string, attribution map[string]string) []Target {
 	var targets []Target
 	seen := map[string]bool{}
 	for _, root := range roots.SubagentRoots {
 		for _, dir := range subdirectories(root) {
-			project, _ := projectForClaudeDir(dir, roots.Workspace, projects)
+			project, _ := projectForClaudeDir(dir, roots.Workspace, projects, attribution)
 			exclusion := runnerExclusion(roots, dir)
 			paths := jsonlIn(filepath.Join(root, dir, "subagents"))
 			for _, session := range subdirectories(filepath.Join(root, dir)) {

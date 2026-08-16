@@ -167,6 +167,41 @@ func TestUnreadableCoworkSidecarIsCountedPerFile(t *testing.T) {
 	}
 }
 
+func TestUnreadableCoworkSidecarStillCountsTheTranscriptIngested(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: chmod cannot make a file unreadable")
+	}
+	world := newWorld(t)
+	roots := world.roots()
+	sidecar := filepath.Join(roots.CoworkSessions, "cw.json")
+	audit := filepath.Join(roots.CoworkSessions, "cw", "audit.jsonl")
+	if err := os.Chmod(sidecar, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sidecar, 0o600) })
+
+	db := rocaDatabase(t)
+	result, err := Run(context.Background(), db, registry(t), Options{Roots: roots})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := countRows(t, db.SQL(), "sessions WHERE session_id = 'cowork-1'"); got != 1 {
+		t.Fatalf("the audit transcript's content did not land: sessions=%d", got)
+	}
+	if got := coverageDetailReason(result.Coverage.Details, audit); got == "read or parse failed" {
+		t.Fatalf("the audit transcript was counted as read-or-parse failed: %+v", result.Coverage.Details)
+	}
+}
+
+func coverageDetailReason(details []CoverageDetail, path string) string {
+	for _, detail := range details {
+		if detail.Path == path {
+			return detail.Reason
+		}
+	}
+	return ""
+}
+
 // The contract of requirement M2, and it is a test and not an aspiration: running
 // the ingest twice over the same disk produces exactly the same state.
 func TestASecondPassOverTheSameDiskChangesNothing(t *testing.T) {
@@ -699,7 +734,7 @@ func TestCommitRetryDoesNotDoubleReportCounters(t *testing.T) {
 	}
 	result := Result{Sources: map[string]*Counts{}}
 	target := Target{Path: path, Kind: parsers.KindSessionMetadata, SourceAgent: "claude"}
-	err := ingestOne(context.Background(), retryOnceDatabase{db.SQL()}, registry(t), Options{},
+	_, err := ingestOne(context.Background(), retryOnceDatabase{db.SQL()}, registry(t), Options{},
 		target, "fingerprint", &result)
 	if err != nil {
 		t.Fatal(err)
@@ -719,7 +754,7 @@ func TestEmptySessionIdentityIsCountedBeforeWrite(t *testing.T) {
 	}
 	result := Result{Sources: map[string]*Counts{}}
 	target := Target{Path: path, Kind: parsers.KindCoworkAudit, SourceAgent: "cowork"}
-	if err := ingestOne(context.Background(), db, registry(t), Options{}, target,
+	if _, err := ingestOne(context.Background(), db, registry(t), Options{}, target,
 		"fingerprint", &result); err != nil {
 		t.Fatal(err)
 	}

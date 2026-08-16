@@ -353,8 +353,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		result.categorizeFile("parsed", "new or changed fingerprint")
 		stats.Read++
 		discardsBefore, excludedBefore := result.RecordsDiscarded, result.RecordsExcluded
-		errorsBefore := result.Errors
-		err = ingestOne(ctx, db, layers, opts, target, fingerprint, &result)
+		ingested, err := ingestOne(ctx, db, layers, opts, target, fingerprint, &result)
 		stats.RecordsDiscarded += result.RecordsDiscarded - discardsBefore
 		stats.RecordsExcluded += result.RecordsExcluded - excludedBefore
 		finishTarget()
@@ -362,10 +361,10 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 			result.Coverage.skip(target.Path, "write failed")
 			return result, err
 		}
-		if result.Errors > errorsBefore {
-			result.Coverage.skip(target.Path, "read or parse failed")
-		} else {
+		if ingested {
 			result.Coverage.Files.Ingested++
+		} else {
+			result.Coverage.skip(target.Path, "read or parse failed")
 		}
 	}
 
@@ -556,18 +555,21 @@ func (r *Result) categorize(discard parsers.Discard) {
 }
 
 // ingestOne reads one artefact and writes it, with its state, in one transaction.
+// The first value reports whether the artefact's own content was read, parsed and
+// written; a companion failure such as an unreadable metadata sidecar leaves it
+// false only when the artefact itself could not be read.
 //
 // State and data commit together on purpose: committing the state apart would let
 // a crash between the two leave a fingerprint saying "synced" over data that was
 // never written, and that file would then be skipped forever.
 func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Options,
-	target Target, fingerprint string, result *Result) error {
+	target Target, fingerprint string, result *Result) (bool, error) {
 	records, reason := read(ctx, opts, target, result)
 	if reason != "" {
 		result.fail(target, reason)
 		// The failure is recorded against the path so the next run reads the file
 		// again instead of trusting a fingerprint it never earned.
-		return db.Write(ctx, func(tx *sql.Tx) error {
+		return false, db.Write(ctx, func(tx *sql.Tx) error {
 			return RecordState(ctx, tx, target, fingerprint, reason, nil)
 		})
 	}
@@ -610,8 +612,9 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 	})
 	if err == nil {
 		result.recordWritten(target, counts)
+		return true, nil
 	}
-	return err
+	return false, err
 }
 
 // read turns one artefact into records; what the content declares outranks what
