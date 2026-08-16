@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
+	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
@@ -33,14 +35,15 @@ func claudeHookCommand(executable string) string {
 	return shellQuote(executable) + " hooks run claude"
 }
 
-// skillCommand installs the canonical agent skill that teaches runtimes how to
-// use La Roca. Hidden plumbing: bare lists destinations; install writes one
-// file per runtime and narrates every path.
+// skillCommand installs the agent skills that teach runtimes how to use La
+// Roca. Hidden plumbing: bare lists destinations; install writes the embedded
+// skill and the generated semantic catalog per runtime and narrates every path.
 func skillCommand(env *cliEnv) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "skill",
-		Short: "Install the agent skill that teaches runtimes how to use La Roca",
-		Long: "One embedded SKILL.md, installed into each runtime's personal skills\n" +
+		Short: "Install the agent skills that teach runtimes how to use La Roca",
+		Long: "One embedded SKILL.md plus the generated semantic catalog of the\n" +
+			"installed plugins, each installed into a runtime's personal skills\n" +
 			"directory with separate SYSTEM and USER zones and a versioned registry.\n\n" +
 			"Supported runtimes: " + strings.Join(skill.Runtimes(), ", "),
 		Args: cobra.NoArgs,
@@ -56,7 +59,7 @@ func skillInstallCommand(env *cliEnv) *cobra.Command {
 	var all, force bool
 	cmd := &cobra.Command{
 		Use:   "install [runtime]",
-		Short: "Write the roca skill into one runtime, or every supported one",
+		Short: "Write the roca skills into one runtime, or every supported one",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			if all == (len(args) == 1) {
@@ -67,40 +70,64 @@ func skillInstallCommand(env *cliEnv) *cobra.Command {
 			if all {
 				runtimes = skill.Runtimes()
 			}
-			outcomes := make([]skill.Outcome, 0, len(runtimes))
+			catalog, err := env.composedCatalogSkill()
+			if err != nil {
+				return err
+			}
+			outcomes := make([]skill.Outcome, 0, 2*len(runtimes))
 			var refused []error
 			for _, runtime := range runtimes {
-				path, err := skillFileOf(runtime)
+				rocaPath, err := skillFileOf(runtime)
 				if err != nil {
 					return err
 				}
-				entry, found, err := env.registeredArtifact(artifactKindSkill, runtime, path)
+				catalogPath, err := skillCatalogFileOf(runtime)
 				if err != nil {
 					return err
 				}
-				previous := ""
-				if found {
-					previous = entry.SystemSHA256
+				// Both files carry the same install contract, so the loop is the
+				// one place the refusal, warning and registration rules are
+				// stated; only the content and the registry kind differ.
+				installs := []struct {
+					kind, path, system string
+					run                func(path, previous string) (skill.Outcome, error)
+				}{
+					{artifactKindSkill, rocaPath, skill.Content(), func(path, previous string) (skill.Outcome, error) {
+						return skill.InstallWithOptions(runtime, path, previous, force)
+					}},
+					{artifactKindSkillCatalog, catalogPath, catalog, func(path, previous string) (skill.Outcome, error) {
+						return skill.InstallCatalogWithOptions(runtime, path, catalog, previous, force, true)
+					}},
 				}
-				outcome, err := skill.InstallWithOptions(runtime, path, previous, force)
-				// One runtime this install cannot read or must not clobber never
-				// decides for the others: the refusal is collected, the remaining
-				// runtimes of an --all still install, and the command still fails.
-				if err != nil {
-					refused = append(refused, skillInstallFailure(err, runtime, outcome.Backup))
-					continue
-				}
-				if outcome.Diverged {
-					fmt.Fprintf(env.errOut, "warning: %s\n",
-						divergedArtifactWarning(path, forceSkillInstall(runtime),
-							outcome.Missing, outcome.Unregistered))
+				for _, file := range installs {
+					entry, found, err := env.registeredArtifact(file.kind, runtime, file.path)
+					if err != nil {
+						return err
+					}
+					previous := ""
+					if found {
+						previous = entry.SystemSHA256
+					}
+					outcome, err := file.run(file.path, previous)
+					// One runtime this install cannot read or must not clobber never
+					// decides for the others: the refusal is collected, the remaining
+					// runtimes of an --all still install, and the command still fails.
+					if err != nil {
+						refused = append(refused, skillInstallFailure(err, runtime, outcome.Backup))
+						continue
+					}
+					if outcome.Diverged {
+						fmt.Fprintf(env.errOut, "warning: %s\n",
+							divergedArtifactWarning(file.path, forceSkillInstall(runtime),
+								outcome.Missing, outcome.Unregistered))
+						outcomes = append(outcomes, outcome)
+						continue
+					}
+					if err := env.registerZonedArtifact(file.kind, runtime, file.path, file.system); err != nil {
+						return err
+					}
 					outcomes = append(outcomes, outcome)
-					continue
 				}
-				if err := env.registerZonedArtifact(artifactKindSkill, runtime, path, skill.Content()); err != nil {
-					return err
-				}
-				outcomes = append(outcomes, outcome)
 			}
 			if env.json {
 				if err := env.printJSON(map[string]any{"runtimes": outcomes}); err != nil {
@@ -170,24 +197,30 @@ func (env *cliEnv) listSkillDestinations() error {
 	}
 	type row struct {
 		Runtime string `json:"runtime"`
+		Skill   string `json:"skill"`
 		Path    string `json:"path"`
 	}
-	rows := make([]row, 0, len(skill.Runtimes()))
+	rows := make([]row, 0, 2*len(skill.Runtimes()))
 	for _, runtime := range skill.Runtimes() {
-		path, err := skill.Path(runtime, home, os.Getenv)
-		if err != nil {
-			return err
+		for _, destination := range []struct {
+			name string
+			path func(string, string, func(string) string) (string, error)
+		}{{skill.SkillName, skill.Path}, {skill.CatalogName, skill.CatalogPath}} {
+			path, err := destination.path(runtime, home, os.Getenv)
+			if err != nil {
+				return err
+			}
+			rows = append(rows, row{Runtime: runtime, Skill: destination.name, Path: path})
 		}
-		rows = append(rows, row{Runtime: runtime, Path: path})
 	}
 	if env.json {
 		return env.printJSON(map[string]any{"runtimes": rows})
 	}
 	toonRows := make([]map[string]any, 0, len(rows))
 	for _, r := range rows {
-		toonRows = append(toonRows, map[string]any{"runtime": r.Runtime, "path": r.Path})
+		toonRows = append(toonRows, map[string]any{"runtime": r.Runtime, "skill": r.Skill, "path": r.Path})
 	}
-	env.print("%s", rowOutput([]string{"runtime", "path"}, toonRows))
+	env.print("%s", rowOutput([]string{"runtime", "skill", "path"}, toonRows))
 	env.print("%s", renderHelp(
 		"Run `roca skill install <runtime>` to install one destination",
 		"Run `roca skill install --all` to install every destination"))
@@ -195,11 +228,96 @@ func (env *cliEnv) listSkillDestinations() error {
 }
 
 func skillFileOf(runtime string) (string, error) {
+	return skillFileWith(runtime, skill.Path)
+}
+
+func skillCatalogFileOf(runtime string) (string, error) {
+	return skillFileWith(runtime, skill.CatalogPath)
+}
+
+func skillFileWith(runtime string,
+	path func(string, string, func(string) string) (string, error)) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("I do not know where your HOME is")
 	}
-	return skill.Path(runtime, home, os.Getenv)
+	return path(runtime, home, os.Getenv)
+}
+
+// composedCatalogSkill builds the generated semantic-catalog skill body from
+// the installed plugin manifests: every database discovery finds is validated
+// the same way the query route validates it, so the catalog only names tables
+// a query can actually reach, and what could not serve one is said in the body
+// instead of silently omitted.
+func (env *cliEnv) composedCatalogSkill() (string, error) {
+	paths, err := env.resolvePaths()
+	if err != nil {
+		return "", err
+	}
+	root := pluginRoot(paths)
+	descriptors, warnings := plugin.Discover(root)
+	databases := make([]plugin.Database, 0, len(descriptors))
+	for _, descriptor := range descriptors {
+		database, err := plugin.Validate(context.Background(), descriptor)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf(
+				"plugin %s is unavailable: %v", descriptor.Name, err))
+			continue
+		}
+		databases = append(databases, database)
+	}
+	return skill.CatalogBody(databases, warnings), nil
+}
+
+// refreshCatalogSkills regenerates the semantic-catalog skill in every runtime
+// where it is registered, so installing, updating or uninstalling a plugin
+// teaches every runtime that asked for skills automatically. A runtime that
+// never ran `roca skill install` is left alone: that command is the consent
+// gate. A failure or a divergence is a warning, never a failed plugin command:
+// the plugin action already succeeded and its reporting stays the answer.
+func (env *cliEnv) refreshCatalogSkills() {
+	catalog, err := env.composedCatalogSkill()
+	if err != nil {
+		env.warnCatalogRefresh(err)
+		return
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		env.warnCatalogRefresh(fmt.Errorf("I do not know where your HOME is"))
+		return
+	}
+	for _, runtime := range skill.Runtimes() {
+		path, err := skill.CatalogPath(runtime, home, os.Getenv)
+		if err != nil {
+			continue
+		}
+		entry, found, err := env.registeredArtifact(artifactKindSkillCatalog, runtime, path)
+		if err != nil || !found {
+			continue
+		}
+		// RestoreMissing stays false: the plugin lifecycle is an automatic
+		// refresh, and a file the operator deleted is a withdrawal it honors.
+		outcome, err := skill.InstallCatalogWithOptions(
+			runtime, path, catalog, entry.SystemSHA256, false, false)
+		if err != nil {
+			env.warnCatalogRefresh(err)
+			continue
+		}
+		if outcome.Diverged {
+			fmt.Fprintf(env.errOut, "warning: %s\n",
+				divergedArtifactWarning(path, forceSkillInstall(runtime),
+					outcome.Missing, outcome.Unregistered))
+			continue
+		}
+		if err := env.registerZonedArtifact(artifactKindSkillCatalog, runtime, path, catalog); err != nil {
+			env.warnCatalogRefresh(err)
+		}
+	}
+}
+
+func (env *cliEnv) warnCatalogRefresh(err error) {
+	fmt.Fprintf(env.errOut,
+		"warning: the semantic catalog skill was not refreshed: %v\n", err)
 }
 
 func hooksCommand(env *cliEnv) *cobra.Command {

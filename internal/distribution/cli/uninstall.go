@@ -293,34 +293,51 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		return outcomes
 	}
 	for _, runtime := range skill.Runtimes() {
-		path, err := skill.Path(runtime, home, os.Getenv)
+		rocaPath, err := skill.Path(runtime, home, os.Getenv)
 		if err != nil {
 			failed(report, "%s", err)
 			continue
 		}
-		checksum := artifact.Checksum(skill.Content())
-		if entry, found := registry.Find(artifactKindSkill, runtime, path); found {
-			checksum = entry.SystemSHA256
-		}
-		outcome, err := skill.UninstallWithChecksum(runtime, path, checksum)
+		catalogPath, err := skill.CatalogPath(runtime, home, os.Getenv)
 		if err != nil {
-			failed(report, "withdraw skill from %s: %v", runtime, err)
+			failed(report, "%s", err)
 			continue
 		}
-		if outcome.Changed {
-			report.Deleted = append(report.Deleted, outcome.Removed...)
+		// The canonical skill falls back to this build's own bytes when no
+		// registry entry names them. The generated catalog has no shipped bytes:
+		// its unregistered fallback is the SYSTEM zone the file itself carries,
+		// which is ours only because the zone markers are ours.
+		withdrawals := []struct {
+			kind, path, fallback string
+		}{
+			{artifactKindSkill, rocaPath, artifact.Checksum(skill.Content())},
+			{artifactKindSkillCatalog, catalogPath, checksumOfZonedSystem(catalogPath)},
 		}
-		// The copy this withdrawal just made is spared from the purge and named
-		// like any other survivor: it holds the bytes the operator wrote, and the
-		// withdrawal made it precisely because they are left nowhere else.
-		if purge {
-			removeRecoveryBackups(report, path, outcome.Backup)
-			removeHollowSkillDirs(report, path)
+		for _, file := range withdrawals {
+			checksum := file.fallback
+			if entry, found := registry.Find(file.kind, runtime, file.path); found {
+				checksum = entry.SystemSHA256
+			}
+			outcome, err := skill.UninstallWithChecksum(runtime, file.path, checksum)
+			if err != nil {
+				failed(report, "withdraw skill from %s: %v", runtime, err)
+				continue
+			}
+			if outcome.Changed {
+				report.Deleted = append(report.Deleted, outcome.Removed...)
+			}
+			// The copy this withdrawal just made is spared from the purge and named
+			// like any other survivor: it holds the bytes the operator wrote, and the
+			// withdrawal made it precisely because they are left nowhere else.
+			if purge {
+				removeRecoveryBackups(report, file.path, outcome.Backup)
+				removeHollowSkillDirs(report, file.path)
+			}
+			nameSurvivingBackups(report, file.path)
 		}
-		nameSurvivingBackups(report, path)
 	}
 	if registryErr == nil && registryExists {
-		registry.RemoveKinds(artifactKindSkill, artifactKindHook)
+		registry.RemoveKinds(artifactKindSkill, artifactKindSkillCatalog, artifactKindHook)
 		if err := artifact.SaveRegistry(registryPath, registry); err != nil {
 			failed(report, "update managed artifact registry: %v", err)
 		}
@@ -328,12 +345,23 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 	return outcomes
 }
 
+// checksumOfZonedSystem is the checksum of a file's own SYSTEM zone, or empty
+// when the file is not there or carries no zones. An empty answer refuses the
+// withdrawal, which is the safe reading of a file this product cannot prove.
+func checksumOfZonedSystem(path string) string {
+	zones, err := artifact.ParseFile(path)
+	if err != nil {
+		return ""
+	}
+	return artifact.Checksum(zones.System)
+}
+
 // removeHollowSkillDirs takes back the chain a skill withdrawal could not,
 // because the recovery copies beside the file were still in it when the
 // withdrawal tried. Only an empty directory goes: os.Remove is the whole guard.
 func removeHollowSkillDirs(report *lifecycle.Report, skillFile string) {
 	dir := filepath.Dir(skillFile)
-	if filepath.Base(dir) != skill.SkillName {
+	if base := filepath.Base(dir); base != skill.SkillName && base != skill.CatalogName {
 		return
 	}
 	for _, hollow := range []string{dir, filepath.Dir(dir)} {

@@ -266,11 +266,13 @@ A regular skill is a snapshot of a tool. A skill distilled from La Roca
 comes with its whole story: the how, the why, and the failed attempts behind
 the final answer, one question away.
 
-`roca skill install` ships the operating craft into each runtime today. The
-installed skill and generated prompt keep shipped SYSTEM content separate from
-an operator-owned USER zone, and `roca update` tracks their release in
-`~/.roca/artifacts.json`. Automatic refresh is available behind the default-off
-`features.artifact_refresh` key.
+`roca skill install` ships two skills into each runtime today: the operating
+craft, and `roca-semantica`, a catalog of every installed plugin's tables and
+example questions generated from the same fragments natural-language search
+uses. Each installed skill and the generated prompt keep shipped SYSTEM content
+separate from an operator-owned USER zone, and `roca update` tracks their
+release in `~/.roca/artifacts.json`. Automatic refresh is available behind the
+default-off `features.artifact_refresh` key.
 
 The `pill` layer is built for what comes next: condensed artifacts distilled
 from your own history and injected through hooks, charging an agent with
@@ -374,7 +376,9 @@ roca skill install claude  # ship the usage craft into a runtime's skills
 roca hooks install claude  # sign Claude Code shell writes before they run
 ```
 
-Supported integration targets are Codex, Claude, OpenCode, Hermes, and Pi; the
+MCP integration targets are Codex, Claude, OpenCode, Hermes, and Pi; skills
+reach those five plus Grok Build and Qwen Code, whose user-skill surfaces are
+measured rather than assumed (see `docs/mcp.md`); the
 signing hook ships for Claude only, and
 [Memory authorship](docs/operations.md#memory-authorship) explains what it
 stamps. Configuration edits preserve unrelated bytes and create a recovery

@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"database/sql"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,7 +19,7 @@ func TestSkillBareListsEveryRuntimePath(t *testing.T) {
 	var output strings.Builder
 	runSkill(t, &output, "skill")
 	text := output.String()
-	if !strings.HasPrefix(text, "rows[5]{runtime,path}:\n") {
+	if !strings.HasPrefix(text, fmt.Sprintf("rows[%d]{runtime,skill,path}:\n", 2*len(skill.Runtimes()))) {
 		t.Fatalf("listing is not the stable TOON shape:\n%s", text)
 	}
 	for _, runtime := range skill.Runtimes() {
@@ -24,23 +27,33 @@ func TestSkillBareListsEveryRuntimePath(t *testing.T) {
 			t.Errorf("listing missing runtime %q:\n%s", runtime, text)
 		}
 	}
-	if !strings.Contains(text, filepath.Join(home, ".claude", "skills", "roca", "SKILL.md")) {
-		t.Errorf("listing does not show skill paths:\n%s", text)
+	for _, owned := range []string{skill.SkillName, skill.CatalogName} {
+		if !strings.Contains(text, filepath.Join(home, ".claude", "skills", owned, "SKILL.md")) {
+			t.Errorf("listing does not show the %s skill path:\n%s", owned, text)
+		}
 	}
 }
 
 func TestSkillInstallWritesUnderTempHome(t *testing.T) {
 	home := skillTestHome(t)
 	want := filepath.Join(home, ".claude", "skills", "roca", "SKILL.md")
+	catalogPath := filepath.Join(home, ".claude", "skills", "roca-semantica", "SKILL.md")
 
 	var output strings.Builder
 	runSkill(t, &output, "skill", "install", "claude")
 	if !strings.Contains(output.String(), "wrote "+want) {
 		t.Fatalf("install did not narrate the write:\n%s", output.String())
 	}
+	if !strings.Contains(output.String(), "wrote "+catalogPath) {
+		t.Fatalf("install did not narrate the catalog write:\n%s", output.String())
+	}
 	zones, err := artifact.ParseFile(want)
 	if err != nil || zones.System != skill.Content() || zones.User != "" {
 		t.Fatalf("installed zones = %+v, err %v", zones, err)
+	}
+	catalogZones, err := artifact.ParseFile(catalogPath)
+	if err != nil || !strings.Contains(catalogZones.System, "name: "+skill.CatalogName) {
+		t.Fatalf("installed catalog zones = %+v, err %v", catalogZones, err)
 	}
 	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
 	if err != nil {
@@ -50,11 +63,18 @@ func TestSkillInstallWritesUnderTempHome(t *testing.T) {
 	if !ok || entry.SystemSHA256 != artifact.Checksum(skill.Content()) {
 		t.Fatalf("registered skill = %+v, found %v", entry, ok)
 	}
+	catalogEntry, ok := registry.Find("skill-catalog", "claude", catalogPath)
+	if !ok || catalogEntry.SystemSHA256 != artifact.Checksum(catalogZones.System) {
+		t.Fatalf("registered catalog skill = %+v, found %v", catalogEntry, ok)
+	}
 
 	var again strings.Builder
 	runSkill(t, &again, "skill", "install", "claude")
 	if !strings.Contains(again.String(), "unchanged "+want) {
 		t.Fatalf("reinstall did not report unchanged:\n%s", again.String())
+	}
+	if !strings.Contains(again.String(), "unchanged "+catalogPath) {
+		t.Fatalf("reinstall did not report the catalog unchanged:\n%s", again.String())
 	}
 }
 
@@ -190,8 +210,8 @@ func skillTestHome(t *testing.T) string {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	for _, key := range []string{
-		"CLAUDE_CONFIG_DIR", "CODEX_HOME", "OPENCODE_CONFIG",
-		"HERMES_HOME", "PI_CODING_AGENT_DIR",
+		"CLAUDE_CONFIG_DIR", "CODEX_HOME", "GROK_HOME", "OPENCODE_CONFIG",
+		"HERMES_HOME", "PI_CODING_AGENT_DIR", "QWEN_HOME",
 	} {
 		t.Setenv(key, "")
 	}
@@ -204,5 +224,67 @@ func runSkill(t *testing.T, out *strings.Builder, args ...string) {
 	root.SetArgs(args)
 	if err := root.Execute(); err != nil {
 		t.Fatalf("roca %s: %v", strings.Join(args, " "), err)
+	}
+}
+
+// Installing a plugin teaches every runtime that asked for the skills: the
+// semantic catalog a `roca skill install` placed is regenerated from the
+// plugin set the lifecycle just changed, and a runtime that never asked is
+// left without one.
+func TestPluginLifecycleRefreshesTheInstalledCatalogSkill(t *testing.T) {
+	home := skillTestHome(t)
+	var output strings.Builder
+	runSkill(t, &output, "skill", "install", "claude")
+	catalogPath := filepath.Join(home, ".claude", "skills", "roca-semantica", "SKILL.md")
+	before, err := os.ReadFile(catalogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(before), "synthetic-refresh") {
+		t.Fatalf("the fresh catalog already names a plugin that is not installed:\n%s", before)
+	}
+
+	paths := resolvedIn(t, home)
+	directory := filepath.Join(pluginRoot(paths), "synthetic-refresh")
+	writeFile(t, filepath.Join(directory, "semantic.yaml"), `version: 1
+description: Synthetic records refreshed into the catalog.
+questions: ["Which synthetic records exist?"]
+tables:
+  - name: records
+    description: Synthetic records.
+    columns: [id, value]
+`)
+	database, err := sql.Open("sqlite", filepath.Join(directory, "plugin.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec("CREATE TABLE records (id INTEGER PRIMARY KEY, value TEXT)"); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	env := &cliEnv{out: io.Discard, errOut: io.Discard}
+	env.refreshCatalogSkills()
+
+	after, err := os.ReadFile(catalogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, needle := range []string{
+		"## synthetic-refresh (alias plugin_synthetic_refresh)",
+		"Synthetic records refreshed into the catalog.",
+		"### records · plugin_synthetic_refresh.records",
+		"Columns: id, value",
+	} {
+		if !strings.Contains(string(after), needle) {
+			t.Errorf("the refreshed catalog missing %q:\n%s", needle, after)
+		}
+	}
+	unregistered := filepath.Join(home, ".codex", "skills", "roca-semantica", "SKILL.md")
+	if _, err := os.Stat(unregistered); !os.IsNotExist(err) {
+		t.Errorf("a runtime that never asked for skills received a catalog: %v", err)
 	}
 }
