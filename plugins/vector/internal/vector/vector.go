@@ -166,7 +166,6 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 	for key, chunk := range existing {
 		initial[key] = chunk
 	}
-	seen := make(map[string]bool, len(existing))
 	pending := make([]desiredChunk, 0, defaultBatchSize)
 	locatorUpdates := make(map[int64]locatorUpdate)
 	if _, err := store.ExecContext(ctx, `PRAGMA temp_store=FILE;
@@ -183,7 +182,7 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 	}
 	var nextSourceOrder int64
 	var sourceOrder int64 = -1
-	flush := func() error {
+	flush := func(workCtx context.Context) error {
 		if len(pending) == 0 {
 			return nil
 		}
@@ -191,7 +190,7 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 		for n := range pending {
 			input[n] = DocumentPrefix + pending[n].text
 		}
-		vectors, err := i.Embedder.Embed(ctx, i.Model, input)
+		vectors, err := i.Embedder.Embed(workCtx, i.Model, input)
 		if err != nil {
 			return err
 		}
@@ -209,17 +208,17 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 				return fmt.Errorf("embedding %d has %d dimensions, want %d", n, len(vectors[n]), dimensions)
 			}
 		}
-		if err := writeBatch(ctx, store, pending, vectors, existing, locatorUpdates); err != nil {
+		if err := writeBatch(workCtx, store, pending, vectors, existing, locatorUpdates); err != nil {
 			return err
 		}
 		pending = pending[:0]
 		return nil
 	}
-	drainSources := func() error {
+	drainSources := func(workCtx context.Context) error {
 		for {
 			var kind, sourceID, sourceText, rawLocator string
 			var order int64
-			err := store.QueryRowContext(ctx, `
+			err := store.QueryRowContext(workCtx, `
 				SELECT source_kind,source_id,source_order,text,locator
 				FROM temp.vector_desired_sources
 				WHERE source_order > ?
@@ -238,20 +237,12 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 				return fmt.Errorf("decode %s source locator: %w", kind, err)
 			}
 			sourceChunks := chunks(sourceText, defaultChunkSize, defaultOverlap)
-			desiredKeys := make(map[string]struct{}, len(sourceChunks))
-			for chunkIndex := range sourceChunks {
-				desiredKeys[chunkKey(kind, sourceID, chunkIndex)] = struct{}{}
-			}
-			if err := removeSourceMissing(ctx, store, existing, kind, sourceID, desiredKeys); err != nil {
-				return err
-			}
 			for chunkIndex, text := range sourceChunks {
 				chunk := desiredChunk{
 					sourceKind: kind, sourceID: sourceID, index: chunkIndex,
 					fingerprint: fingerprint(text), locator: where, text: text,
 				}
 				key := chunkKey(chunk.sourceKind, chunk.sourceID, chunk.index)
-				seen[key] = true
 				if old, ok := existing[key]; ok && old.fingerprint == chunk.fingerprint {
 					if old.locator != chunk.locator {
 						locatorUpdates[old.id] = locatorUpdate{id: old.id, locator: chunk.locator}
@@ -261,20 +252,14 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 				}
 				pending = append(pending, chunk)
 				if len(pending) == defaultBatchSize {
-					if err := flush(); err != nil {
+					if err := flush(workCtx); err != nil {
 						return err
 					}
 				}
 			}
 		}
-		if err := flush(); err != nil {
+		if err := flush(workCtx); err != nil {
 			return err
-		}
-		if sourceOrder >= 0 {
-			if _, err := store.ExecContext(ctx,
-				`DELETE FROM temp.vector_desired_sources WHERE source_order <= ?`, sourceOrder); err != nil {
-				return fmt.Errorf("clear vector reconciliation: %w", err)
-			}
 		}
 		return nil
 	}
@@ -293,7 +278,8 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 		_, err = store.ExecContext(ctx, `
 			INSERT INTO temp.vector_desired_sources(source_kind,source_id,source_order,text,locator)
 			VALUES (?,?,?,?,?)
-			ON CONFLICT(source_kind,source_id) DO UPDATE SET text=excluded.text,locator=excluded.locator
+			ON CONFLICT(source_kind,source_id) DO UPDATE SET
+				source_order=excluded.source_order,text=excluded.text,locator=excluded.locator
 		`, source.kind, sourceID, nextSourceOrder, source.text, string(where))
 		nextSourceOrder++
 		if err != nil {
@@ -301,7 +287,7 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 		}
 		stagedSources++
 		if stagedSources >= defaultBatchSize {
-			if err := drainSources(); err != nil {
+			if err := drainSources(ctx); err != nil {
 				return err
 			}
 			stagedSources = 0
@@ -309,15 +295,24 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 		return nil
 	})
 	if err != nil {
+		drainCtx := ctx
+		if ctx.Err() != nil {
+			drainCtx = context.WithoutCancel(ctx)
+		}
+		_ = drainSources(drainCtx)
 		return Delta{}, err
 	}
-	if err := drainSources(); err != nil {
+	if err := drainSources(ctx); err != nil {
 		return Delta{}, err
 	}
 	if err := updateLocators(ctx, store, locatorUpdates); err != nil {
 		return Delta{}, err
 	}
-	if err := removeMissing(ctx, store, existing, seen); err != nil {
+	finalSeen, err := finalSeenSources(ctx, store)
+	if err != nil {
+		return Delta{}, err
+	}
+	if err := removeMissing(ctx, store, existing, finalSeen); err != nil {
 		return Delta{}, err
 	}
 	if err := markDeprecatedLayersReconciled(ctx, store); err != nil {
@@ -762,37 +757,32 @@ func removeMissing(ctx context.Context, db *sql.DB, existing map[string]storedCh
 	return nil
 }
 
-func removeSourceMissing(ctx context.Context, db *sql.DB, existing map[string]storedChunk,
-	kind, sourceID string, desired map[string]struct{}) error {
-	prefix := sourceKey(kind, sourceID) + "\x00"
-	tx, err := db.BeginTx(ctx, nil)
+func finalSeenSources(ctx context.Context, db *sql.DB) (map[string]bool, error) {
+	seen := map[string]bool{}
+	rows, err := db.QueryContext(ctx, `
+		SELECT source_kind,source_id,text
+		FROM temp.vector_desired_sources`)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer tx.Rollback()
-	var removed []string
-	for key, old := range existing {
-		if !strings.HasPrefix(key, prefix) {
-			continue
+	for rows.Next() {
+		var kind, sourceID, text string
+		if err := rows.Scan(&kind, &sourceID, &text); err != nil {
+			rows.Close()
+			return nil, err
 		}
-		if _, ok := desired[key]; ok {
-			continue
+		for chunkIndex := range chunks(text, defaultChunkSize, defaultOverlap) {
+			seen[chunkKey(kind, sourceID, chunkIndex)] = true
 		}
-		if err := deleteEmbeddings(ctx, tx, old.id); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM chunks WHERE id=?`, old.id); err != nil {
-			return err
-		}
-		removed = append(removed, key)
 	}
-	if err := tx.Commit(); err != nil {
-		return err
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
 	}
-	for _, key := range removed {
-		delete(existing, key)
+	if err := rows.Close(); err != nil {
+		return nil, err
 	}
-	return nil
+	return seen, nil
 }
 
 func deltaBetween(initial, existing map[string]storedChunk) Delta {
