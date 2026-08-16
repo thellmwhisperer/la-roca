@@ -165,8 +165,18 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 	seen := make(map[string]bool, len(existing))
 	pending := make([]desiredChunk, 0, defaultBatchSize)
 	locatorUpdates := make(map[int64]locatorUpdate)
-	desiredSources := make(map[string][]desiredChunk)
-	sourceOrder := make([]string, 0)
+	if _, err := store.ExecContext(ctx, `PRAGMA temp_store=FILE;
+		CREATE TEMP TABLE vector_desired_sources(
+			source_kind TEXT NOT NULL,
+			source_id TEXT NOT NULL,
+			source_order INTEGER NOT NULL,
+			text TEXT NOT NULL,
+			locator TEXT NOT NULL,
+			PRIMARY KEY(source_kind, source_id)
+		)`); err != nil {
+		return Delta{}, fmt.Errorf("initialize vector reconciliation: %w", err)
+	}
+	var nextSourceOrder int64
 	flush := func() error {
 		if len(pending) == 0 {
 			return nil
@@ -206,26 +216,48 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 		}
 		report.Sources++
 		sourceID := source.stableID()
-		groupKey := sourceKey(source.kind, sourceID)
-		if _, ok := desiredSources[groupKey]; !ok {
-			sourceOrder = append(sourceOrder, groupKey)
+		where, err := json.Marshal(source.locator())
+		if err != nil {
+			return fmt.Errorf("encode %s source locator: %w", source.kind, err)
 		}
-		desired := make([]desiredChunk, 0)
-		for chunkIndex, text := range chunks(source.text, defaultChunkSize, defaultOverlap) {
-			chunk := desiredChunk{
-				sourceKind: source.kind, sourceID: sourceID, index: chunkIndex,
-				fingerprint: fingerprint(text), locator: source.locator(), text: text,
-			}
-			desired = append(desired, chunk)
-		}
-		desiredSources[groupKey] = desired
-		return nil
+		_, err = store.ExecContext(ctx, `
+			INSERT INTO temp.vector_desired_sources(source_kind,source_id,source_order,text,locator)
+			VALUES (?,?,?,?,?)
+			ON CONFLICT(source_kind,source_id) DO UPDATE SET text=excluded.text,locator=excluded.locator
+		`, source.kind, sourceID, nextSourceOrder, source.text, string(where))
+		nextSourceOrder++
+		return err
 	})
 	if err != nil {
 		return Delta{}, err
 	}
-	for _, groupKey := range sourceOrder {
-		for _, chunk := range desiredSources[groupKey] {
+	var sourceOrder int64 = -1
+	for {
+		var kind, sourceID, sourceText, rawLocator string
+		var order int64
+		err := store.QueryRowContext(ctx, `
+			SELECT source_kind,source_id,source_order,text,locator
+			FROM temp.vector_desired_sources
+			WHERE source_order > ?
+			ORDER BY source_order
+			LIMIT 1
+		`, sourceOrder).Scan(&kind, &sourceID, &order, &sourceText, &rawLocator)
+		if err == sql.ErrNoRows {
+			break
+		}
+		if err != nil {
+			return Delta{}, fmt.Errorf("read vector reconciliation: %w", err)
+		}
+		sourceOrder = order
+		var where Locator
+		if err := json.Unmarshal([]byte(rawLocator), &where); err != nil {
+			return Delta{}, fmt.Errorf("decode %s source locator: %w", kind, err)
+		}
+		for chunkIndex, text := range chunks(sourceText, defaultChunkSize, defaultOverlap) {
+			chunk := desiredChunk{
+				sourceKind: kind, sourceID: sourceID, index: chunkIndex,
+				fingerprint: fingerprint(text), locator: where, text: text,
+			}
 			key := chunkKey(chunk.sourceKind, chunk.sourceID, chunk.index)
 			seen[key] = true
 			if old, ok := existing[key]; ok && old.fingerprint == chunk.fingerprint {
