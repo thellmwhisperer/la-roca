@@ -14,11 +14,14 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	"github.com/thellmwhisperer/la-roca/internal/store"
+	"github.com/thellmwhisperer/la-roca/internal/store/exactdedup"
 	"golang.org/x/term"
 )
 
@@ -735,6 +738,137 @@ func render(env *cliEnv, res service.QueryResult, prose string) {
 	// The AXI text — route preamble, optional prose, rows and contextual help —
 	// has one owner in the axi package.
 	env.print("%s", axi.Query(res, prose))
+}
+
+func dedupCommand(env *cliEnv) *cobra.Command {
+	var apply bool
+	var expected, backup, backupOut, runID string
+	cmd := &cobra.Command{
+		Use:   "dedup [database ...]",
+		Short: "Report or apply the exact-payload duplicate law",
+		Long: "Dry-run is the default and never changes a database. It reports exact-certified " +
+			"groups and same-identity payload conflicts separately. Apply accepts one physical " +
+			"database, its exact dry-run manifest, and a verified VACUUM INTO backup.",
+		Args: cobra.ArbitraryArgs,
+		PreRun: func(*cobra.Command, []string) {
+			// Maintenance evidence must not reconcile packages or write the ordinary
+			// command log beside a database other than the explicit target.
+			env.skipReconciliation = true
+			env.prelogged = true
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			targets, err := dedupTargets(env, args)
+			if err != nil {
+				return err
+			}
+			if apply && len(targets) != 1 {
+				return fmt.Errorf("dedup apply accepts exactly one physical database per transaction")
+			}
+			if backupOut != "" && len(targets) != 1 {
+				return fmt.Errorf("--backup-out accepts exactly one physical database")
+			}
+			if apply {
+				if !isFederatedDedupTarget(targets[0]) {
+					return fmt.Errorf("dedup apply is restricted to the federated roca-corpus and roca-ops databases; the legacy roca.db is read-only evidence")
+				}
+				report, err := exactdedup.Apply(cmd.Context(), targets[0], expected, runID, backup)
+				if err != nil {
+					return err
+				}
+				return renderDedup(env, "applied", []exactdedup.DatabaseReport{report}, nil)
+			}
+
+			reports := make([]exactdedup.DatabaseReport, 0, len(targets))
+			for _, target := range targets {
+				report, err := exactdedup.Inspect(cmd.Context(), target)
+				if err != nil {
+					return err
+				}
+				reports = append(reports, report)
+			}
+			var backupReport *exactdedup.DatabaseReport
+			if backupOut != "" {
+				copyReport, err := exactdedup.Backup(cmd.Context(), targets[0], backupOut)
+				if err != nil {
+					return err
+				}
+				if copyReport.ManifestSHA256 != reports[0].ManifestSHA256 {
+					return fmt.Errorf("backup drifted while it was created: %s != %s",
+						copyReport.ManifestSHA256, reports[0].ManifestSHA256)
+				}
+				backupReport = &copyReport
+			}
+			return renderDedup(env, "dry-run", reports, backupReport)
+		},
+	}
+	cmd.Flags().BoolVar(&apply, "apply", false, "apply the exact manifest in one transaction")
+	cmd.Flags().StringVar(&expected, "expected-manifest", "", "dry-run SHA-256 required by apply")
+	cmd.Flags().StringVar(&backup, "backup", "", "verified pre-apply VACUUM INTO database")
+	cmd.Flags().StringVar(&backupOut, "backup-out", "", "create and verify a dry-run VACUUM INTO backup")
+	cmd.Flags().StringVar(&runID, "run-id", "", "durable audit identity for apply")
+	return cmd
+}
+
+func dedupTargets(env *cliEnv, args []string) ([]string, error) {
+	if len(args) > 0 {
+		result := make([]string, 0, len(args))
+		for _, arg := range args {
+			absolute, err := filepath.Abs(arg)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, absolute)
+		}
+		return result, nil
+	}
+	paths, err := env.resolvePaths()
+	if err != nil {
+		return nil, err
+	}
+	root := filepath.Join(filepath.Dir(paths.DB), "plugins")
+	return []string{
+		filepath.Join(root, rocacorpus.Name, rocacorpus.DatabaseFilename),
+		filepath.Join(root, rocaops.Name, rocaops.DatabaseFilename),
+	}, nil
+}
+
+func isFederatedDedupTarget(path string) bool {
+	clean := filepath.Clean(path)
+	database, plugin := filepath.Base(clean), filepath.Base(filepath.Dir(clean))
+	return (plugin == rocacorpus.Name && database == rocacorpus.DatabaseFilename) ||
+		(plugin == rocaops.Name && database == rocaops.DatabaseFilename)
+}
+
+func renderDedup(env *cliEnv, mode string, reports []exactdedup.DatabaseReport,
+	backup *exactdedup.DatabaseReport) error {
+	document := map[string]any{"mode": mode, "databases": reports}
+	if backup != nil {
+		document["backup"] = backup
+	}
+	if env.json {
+		return env.printJSON(document)
+	}
+	env.print("dedup: %s", mode)
+	for _, report := range reports {
+		env.print("database: %s", report.Path)
+		env.print("manifest_sha256: %s", report.ManifestSHA256)
+		for _, table := range report.Tables {
+			env.print("  %s: observed exact groups=%d grouped=%d losers=%d; observed ambiguous identity groups=%d rows=%d",
+				table.Table, table.ObservedExactGroups, table.ObservedGroupedRows, table.ObservedLosers,
+				table.ObservedAmbiguousGroups, table.ObservedAmbiguousRows)
+			env.print("    apply after session remap: exact groups=%d grouped=%d losers=%d before=%d after=%d; remaining ambiguous groups=%d rows=%d",
+				table.ExactGroups, table.GroupedRows, table.Losers, table.Before, table.After,
+				table.AmbiguousGroups, table.AmbiguousRows)
+		}
+	}
+	if backup != nil {
+		env.print("backup: %s (read-only reopen and manifest verified)", backup.Path)
+		env.print("  sha256=%s bytes=%d schema_version=%d", backup.FileSHA256, backup.Bytes, backup.SchemaVersion)
+	}
+	if mode == "dry-run" {
+		env.print("drift gate: pass the database manifest exactly with --apply --expected-manifest, plus --backup")
+	}
+	return nil
 }
 
 func dirOf(path string) string { return filepath.Dir(path) }

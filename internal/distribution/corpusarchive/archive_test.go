@@ -235,7 +235,6 @@ func TestMergeEncodesEmptyLegacyIdentitiesAsNonemptyMemberships(t *testing.T) {
 
 func TestMergePreservesDuplicateNumberedExchangeOccurrences(t *testing.T) {
 	report, db := mergeSoleSource(t, func(t *testing.T, db *sql.DB) {
-		execTest(t, db, `DROP INDEX idx_exchanges_session_number`)
 		seedSession(t, db, "duplicate-turn", "duplicate numbered exchange")
 		seedExchange(t, db, 1, "duplicate-turn", 1, "same question", "same answer")
 		seedExchange(t, db, 2, "duplicate-turn", 1, "same question", "same answer")

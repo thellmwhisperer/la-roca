@@ -173,6 +173,10 @@ type Session struct {
 	// HistoryFallback marks the prompt-only history Codex kept for legacy
 	// sessions whose rollout contains metadata but no conversation.
 	HistoryFallback bool
+	// ExchangeNumbersAuthoritative marks a transcript whose ordinal is the
+	// source identity. Re-reading a growing final turn replaces that numbered
+	// projection instead of manufacturing a later number.
+	ExchangeNumbersAuthoritative bool
 	// ParentID is the session that spawned this one, when the artefact declares
 	// it.
 	ParentID string

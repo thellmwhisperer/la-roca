@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
+	"github.com/thellmwhisperer/la-roca/internal/store/exactdedup"
 	"github.com/thellmwhisperer/la-roca/internal/store/search"
 )
 
@@ -125,6 +126,13 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (IngestResult, 
 		return IngestResult{}, err
 	}
 	defer closeTarget()
+	if !req.DryRun {
+		if err := target.Write(ctx, func(tx *sql.Tx) error {
+			return exactdedup.EnsureGuards(ctx, tx)
+		}); err != nil {
+			return IngestResult{}, err
+		}
+	}
 	report, err := ingest.Run(ctx, target, s.registry, ingest.Options{
 		Roots:        roots,
 		DryRun:       req.DryRun,
