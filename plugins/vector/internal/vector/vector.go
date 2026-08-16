@@ -250,7 +250,7 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 					continue
 				}
 				pending = append(pending, chunk)
-				if len(pending) == defaultBatchSize {
+				if len(pending) >= defaultBatchSize {
 					if err := flush(workCtx); err != nil {
 						return err
 					}

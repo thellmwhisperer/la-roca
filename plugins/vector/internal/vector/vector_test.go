@@ -209,7 +209,7 @@ func TestIngestRetriesTheInFlightSourceAfterEmbeddingFailure(t *testing.T) {
 		sources[index] = sourceRow{kind: "memories", text: fmt.Sprintf("synthetic progress %d", index),
 			layer: "discovery", origin: "agent", createdAt: "2026-01-01"}
 	}
-	sources[defaultBatchSize-1] = sourceRow{kind: "memories", text: strings.Repeat("alpha current ", defaultChunkSize+1),
+	sources[defaultBatchSize-1] = sourceRow{kind: "memories", text: strings.Repeat("alpha current ", 17000),
 		layer: "discovery", origin: "agent", createdAt: "2026-01-01"}
 	embedder := &failOnceEmbedder{}
 	path := filepath.Join(t.TempDir(), "vector.db")
@@ -231,6 +231,9 @@ func TestIngestRetriesTheInFlightSourceAfterEmbeddingFailure(t *testing.T) {
 	want := defaultBatchSize - 1 + len(chunks(sources[defaultBatchSize-1].text, defaultChunkSize, defaultOverlap))
 	if count != want {
 		t.Fatalf("chunks after source retry = %d, want %d", count, want)
+	}
+	if embedder.maxInput > defaultBatchSize+1 {
+		t.Fatalf("retried embedding batch grew to %d inputs", embedder.maxInput)
 	}
 }
 
@@ -577,11 +580,15 @@ type failingCorpus struct {
 type failOnceEmbedder struct {
 	recordingEmbedder
 	failed bool
+	maxInput int
 }
 
 func (e *failOnceEmbedder) Pull(context.Context, string) error { return nil }
 
 func (e *failOnceEmbedder) Embed(ctx context.Context, model string, input []string) ([][]float32, error) {
+	if len(input) > e.maxInput {
+		e.maxInput = len(input)
+	}
 	if !e.failed {
 		e.failed = true
 		return nil, fmt.Errorf("synthetic embedding failure")
