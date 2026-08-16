@@ -4,9 +4,11 @@ package service
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -96,7 +98,24 @@ type Options struct {
 	// IngestProgress is the structured source counter used only by an
 	// interactive shell renderer.
 	IngestProgress func(ingest.SourceProgress)
+	// ReadLayout is the single reversible selector for the serving route. The
+	// zero value is the released legacy route.
+	ReadLayout ReadLayout
+	// RollbackLayout atomically restores legacy-serving when the shadow differs
+	// or the cutover hub cannot reopen. The surface owns the marker location.
+	RollbackLayout func(error) error
+	// RecordShadowMismatch persists row-free local evidence without changing the
+	// legacy answer returned to the caller. Observability remains non-fatal.
+	RecordShadowMismatch func(error)
 }
+
+type ReadLayout string
+
+const (
+	LayoutLegacyServing ReadLayout = "legacy-serving"
+	LayoutShadowEqual   ReadLayout = "shadow-equal"
+	LayoutCutover       ReadLayout = "cutover"
+)
 
 // DefaultQueryTimeout prevents an accepted recursive or aggregate query from
 // consuming resources indefinitely without requiring configuration.
@@ -107,6 +126,9 @@ const residentInitializationTimeout = 10 * time.Second
 // Service opens the database once and answers both surfaces.
 type Service struct {
 	db       *store.DB
+	legacy   *store.DB
+	hub      *plugin.Hub
+	hubDB    *store.DB
 	ops      *store.DB
 	corpus   *store.DB
 	opts     Options
@@ -121,6 +143,12 @@ type Service struct {
 	gateOnce    sync.Once
 	gate        *sqlgate.Gate
 	gateFailure error
+
+	layoutMu         sync.Mutex
+	readLayout       ReadLayout
+	hubSearchMu      sync.Mutex
+	hubSearchReady   bool
+	hubSearchFailure error
 }
 
 // Open opens the database. Its schema is adopted before the first data operation.
@@ -135,16 +163,147 @@ func openWithContext(ctx context.Context, opts Options) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	db, err := store.Open(opts.DBPath)
-	if err != nil {
-		return nil, err
+	layout := opts.ReadLayout
+	if layout == "" {
+		layout = LayoutLegacyServing
 	}
-	svc := &Service{db: db, opts: opts, registry: registry}
+	if layout != LayoutLegacyServing && layout != LayoutShadowEqual && layout != LayoutCutover {
+		return nil, fmt.Errorf("unknown serving layout %q", layout)
+	}
+	svc := &Service{opts: opts, registry: registry, readLayout: layout}
+	if layout != LayoutCutover {
+		svc.legacy, err = store.Open(opts.DBPath)
+		if err != nil {
+			return nil, err
+		}
+		svc.db = svc.legacy
+	}
 	if err := svc.openResidents(ctx); err != nil {
-		db.Close()
-		return nil, err
+		return svc.rollbackOpen(ctx, err)
+	}
+	if layout != LayoutLegacyServing {
+		if err := svc.openHub(ctx); err != nil {
+			return svc.rollbackOpen(ctx, err)
+		}
+		if layout == LayoutCutover {
+			svc.db = svc.hubDB
+			svc.schemaOK = true
+		}
 	}
 	return svc, nil
+}
+
+func (s *Service) rollbackOpen(ctx context.Context, reason error) (*Service, error) {
+	s.closeOpened()
+	if s.readLayout == LayoutLegacyServing || s.opts.RollbackLayout == nil {
+		return nil, reason
+	}
+	if err := s.opts.RollbackLayout(fmt.Errorf("%s reopen failed: %w", s.readLayout, reason)); err != nil {
+		return nil, errors.Join(reason, fmt.Errorf("roll back the serving marker: %w", err))
+	}
+	opts := s.opts
+	opts.ReadLayout = LayoutLegacyServing
+	opts.RollbackLayout = nil
+	return openWithContext(ctx, opts)
+}
+
+func (s *Service) closeOpened() {
+	if s.hub != nil {
+		_ = s.hub.Close()
+		s.hub = nil
+	}
+	if s.ops != nil {
+		_ = s.ops.Close()
+		s.ops = nil
+	}
+	if s.corpus != nil {
+		_ = s.corpus.Close()
+		s.corpus = nil
+	}
+	if s.legacy != nil {
+		_ = s.legacy.Close()
+		s.legacy = nil
+	}
+}
+
+func (s *Service) shadowEqual(columns []string, rows []map[string]any,
+	hubColumns []string, hubRows []map[string]any) bool {
+	return reflect.DeepEqual(columns, hubColumns) && reflect.DeepEqual(rows, hubRows)
+}
+
+func (s *Service) rollbackShadow(reason error) {
+	s.layoutMu.Lock()
+	if s.readLayout != LayoutShadowEqual {
+		s.layoutMu.Unlock()
+		return
+	}
+	s.readLayout = LayoutLegacyServing
+	s.layoutMu.Unlock()
+
+	recorded := reason
+	if s.opts.RollbackLayout != nil {
+		if err := s.opts.RollbackLayout(fmt.Errorf("shadow comparison failed: %w", reason)); err != nil {
+			recorded = errors.Join(reason, fmt.Errorf("persist legacy-serving rollback: %w", err))
+		}
+	}
+	if s.opts.RecordShadowMismatch != nil {
+		s.opts.RecordShadowMismatch(recorded)
+	}
+}
+
+func (s *Service) rollbackCutover(reason error) error {
+	s.layoutMu.Lock()
+	if s.readLayout != LayoutCutover {
+		s.layoutMu.Unlock()
+		return nil
+	}
+	legacy, err := store.Open(s.opts.DBPath)
+	if err != nil {
+		s.layoutMu.Unlock()
+		return fmt.Errorf("open the legacy database after the cutover search failed: %w", err)
+	}
+	s.legacy = legacy
+	s.db = legacy
+	s.readLayout = LayoutLegacyServing
+	s.schemaMu.Lock()
+	s.schemaOK = false
+	s.schemaMu.Unlock()
+	s.layoutMu.Unlock()
+
+	if s.opts.RollbackLayout != nil {
+		if err := s.opts.RollbackLayout(fmt.Errorf("cutover hub search failed: %w", reason)); err != nil {
+			return errors.Join(reason, fmt.Errorf("persist legacy-serving rollback: %w", err))
+		}
+	}
+	return nil
+}
+
+func (s *Service) recoverHubSearchFailure(err error) error {
+	switch s.servingLayout() {
+	case LayoutShadowEqual:
+		s.rollbackShadow(fmt.Errorf("shadow hub search differs: %w", err))
+		return nil
+	case LayoutCutover:
+		return s.rollbackCutover(err)
+	default:
+		return err
+	}
+}
+
+func (s *Service) compareShadow(equal bool, hubErr error, mismatch string) {
+	if hubErr == nil && equal {
+		return
+	}
+	if hubErr == nil {
+		hubErr = errors.New(mismatch)
+	}
+	s.rollbackShadow(hubErr)
+}
+
+func (s *Service) servingLayout() ReadLayout {
+	s.layoutMu.Lock()
+	defer s.layoutMu.Unlock()
+	return s.readLayout
 }
 
 // DB exposes the database for whatever has no method of its own in the service
@@ -166,13 +325,8 @@ func (s *Service) Close() error {
 	if s.gate != nil {
 		s.gate.Close()
 	}
-	if s.ops != nil {
-		s.ops.Close()
-	}
-	if s.corpus != nil {
-		s.corpus.Close()
-	}
-	return s.db.Close()
+	s.closeOpened()
+	return nil
 }
 
 func (s *Service) ensureSchema(ctx context.Context) (search.Report, error) {
@@ -306,19 +460,30 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 	progress("agents: checking known sources")
 	progress("agents detected: " + strings.Join(detected, ", "))
 	progress("database: inspecting " + s.db.Path())
-	before, err := store.Inspect(ctx, s.db)
-	if err != nil {
-		return InitResult{}, err
-	}
-	adoption, err := store.Adopt(ctx, s.db, s.opts.BackupDir)
-	if err != nil {
-		return InitResult{}, err
-	}
-	s.schemaMu.Lock()
-	s.schemaOK = true
-	s.schemaMu.Unlock()
-	if err := s.syncLayers(ctx); err != nil {
-		return InitResult{}, err
+
+	cutover := s.servingLayout() == LayoutCutover
+	var before store.Report
+	var adoption store.Adoption
+	var err error
+	if cutover {
+		before = store.Report{Verdict: store.VerdictCurrent,
+			Reason: "the federation hub serves adopted plugin snapshots"}
+		adoption = store.Adoption{Report: before, Adopted: true}
+	} else {
+		before, err = store.Inspect(ctx, s.db)
+		if err != nil {
+			return InitResult{}, err
+		}
+		adoption, err = store.Adopt(ctx, s.db, s.opts.BackupDir)
+		if err != nil {
+			return InitResult{}, err
+		}
+		s.schemaMu.Lock()
+		s.schemaOK = true
+		s.schemaMu.Unlock()
+		if err := s.syncLayers(ctx); err != nil {
+			return InitResult{}, err
+		}
 	}
 	state := "adopted"
 	progressState := "existing"
