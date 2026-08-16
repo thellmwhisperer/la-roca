@@ -231,7 +231,6 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 			if err != nil {
 				return fmt.Errorf("read vector reconciliation: %w", err)
 			}
-			sourceOrder = order
 			var where Locator
 			if err := json.Unmarshal([]byte(rawLocator), &where); err != nil {
 				return fmt.Errorf("decode %s source locator: %w", kind, err)
@@ -257,6 +256,7 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 					}
 				}
 			}
+			sourceOrder = order
 		}
 		if err := flush(workCtx); err != nil {
 			return err
