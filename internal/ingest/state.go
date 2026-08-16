@@ -109,7 +109,10 @@ var parserVersions = map[parsers.Kind]string{
 	parsers.KindOpenCodeDB:              "opencode-v7",
 	parsers.KindHermesDB:                "hermes-v7",
 	parsers.KindClaudeWebConversations:  "claude-web-conversations-v4",
-	parsers.KindChatGPTWebConversations: "chatgpt-web-conversations-v3",
+	parsers.KindClaudeWebMemories:       "claude-web-memories-v1",
+	parsers.KindClaudeWebProjects:       "claude-web-projects-v1",
+	parsers.KindClaudeWebDesignChats:    "claude-web-design-chats-v1",
+	parsers.KindChatGPTWebConversations: "chatgpt-web-conversations-v4",
 	parsers.KindGrokSession:             "grok-session-v4",
 	parsers.KindGrokSessionMetadata:     "grok-session-metadata-v1",
 }

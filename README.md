@@ -308,7 +308,7 @@ exactly the information the task needs instead of a whole skill.
 |---|---|
 | Claude Code | Sessions, subagent transcripts, and per-project memory files |
 | Claude Desktop and Cowork | Session stores and Claude memory files |
-| Claude web/Desktop export you point it at | Conversations and Claude memories from the official Anthropic data export |
+| Claude web/Desktop export you point it at | Conversations, memories, projects, and design chats from the official Anthropic data export |
 | ChatGPT export you point it at | Conversations from the official OpenAI data export |
 | Codex | Sessions, memory, rule and skill files, and what matters from its state database |
 | Qwen Code | Project chat sessions, including tool calls and source-recorded models |

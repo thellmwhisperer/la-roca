@@ -1,0 +1,11 @@
+{
+  "uuid": "cccccccc-0000-4000-8000-000000000002",
+  "title": "Synthetic empty canvas",
+  "created_at": "2026-08-01T12:10:00Z",
+  "updated_at": "2026-08-01T12:10:00Z",
+  "project": {
+    "uuid": "aaaaaaaa-0000-4000-8000-000000000002",
+    "name": "Synthetic atlas"
+  },
+  "messages": []
+}
