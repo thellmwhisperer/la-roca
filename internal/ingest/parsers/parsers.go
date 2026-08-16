@@ -125,10 +125,13 @@ func Excluded(reason string) Discard { return Discard{Reason: reason, ByDesign: 
 type Session struct {
 	ID          string
 	SourceAgent string
-	Project     string
-	StartedAt   string
-	EndedAt     string
-	Title       string
+	// SourceSurface is the canonical harness declared by the registered
+	// ingestion surface. It is not read from artifact content.
+	SourceSurface string
+	Project       string
+	StartedAt     string
+	EndedAt       string
+	Title         string
 	// DurationMinutes is nil when either end of the session is unknown.
 	DurationMinutes   *int
 	Metadata          map[string]any
@@ -316,8 +319,12 @@ type Memory struct {
 	// Origin is 'cron' for everything the ingest writes: nobody typed it.
 	Origin      string
 	SourceAgent string
-	Project     string
-	Metadata    map[string]any
+	SourceModel string
+	// SourceSurface is the canonical harness declared by the registered
+	// ingestion surface. It is not metadata from the file.
+	SourceSurface string
+	Project       string
+	Metadata      map[string]any
 	// Source and FilePath are the pair that makes re-ingesting a file update its
 	// memory instead of duplicating it. They also travel inside Metadata as
 	// `_cron_source` and `file_path`, which identifies rows across re-ingests.
