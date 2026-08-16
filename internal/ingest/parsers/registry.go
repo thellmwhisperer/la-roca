@@ -76,6 +76,11 @@ type Registration struct {
 	// still skipped before Detect sees candidate bytes. Established adapters with
 	// specialized scanners leave it empty.
 	Locations []string
+	// FileName narrows a directory Location to the one store file that source
+	// owns. A Location that is itself a file is always read literally, so one
+	// line can declare both a narrow directory and exact files. Empty keeps a
+	// directory Location walking every regular file beneath it.
+	FileName string
 	// HarvestLocations opt an established, source-specific scanner into the
 	// present-agent smoke test. Contributions already use Locations for both
 	// ingest and smoke; this separate list lets an established scanner prove its
@@ -226,6 +231,18 @@ var registry = []Registration{
 	},
 	fileParser(KindGrokSessionMetadata, DestinationCorpus, ingestprovenance.GrokBuild, detectGrokSessionMetadata,
 		ParseGrokSessionMetadata),
+	{
+		Name: string(KindCursorDB), SourceAgent: "cursor",
+		CanonicalHarness: ingestprovenance.Cursor,
+		Locations: []string{
+			"Library/Application Support/Cursor/User/globalStorage/state.vscdb",
+			"Library/Application Support/Cursor/User/workspaceStorage",
+			".cursor/ai-tracking/ai-code-tracking.db",
+		},
+		FileName: "state.vscdb",
+		Version:  "cursor-database-v1", Destination: DestinationCorpus,
+		Parser: cursorParser{},
+	},
 }
 
 func fileParser(kind Kind, destination Destination, harness string, detect func(File) bool,
