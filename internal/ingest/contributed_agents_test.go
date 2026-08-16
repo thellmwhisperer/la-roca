@@ -2,29 +2,15 @@ package ingest
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"testing"
 )
 
 func TestQwenCodeAndGLMIngestIsReportedAndIdempotent(t *testing.T) {
 	home := t.TempDir()
-	writeFixture := func(target, source string) {
-		t.Helper()
-		content, err := os.ReadFile(source)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(target, content, 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	writeFixture(filepath.Join(home, ".qwen", "projects", "-synthetic-orbit", "chats", "fixture-qwen.jsonl"),
+	writeFixture(t, filepath.Join(home, ".qwen", "projects", "-synthetic-orbit", "chats", "fixture-qwen.jsonl"),
 		filepath.Join("parsers", "testdata", "conformance", "qwen-code-session", "session.data"))
-	writeFixture(filepath.Join(home, ".glm", "skills", "synthetic-compass", "SKILL.md"),
+	writeFixture(t, filepath.Join(home, ".glm", "skills", "synthetic-compass", "SKILL.md"),
 		filepath.Join("parsers", "testdata", "conformance", "glm-skill", "skill.data"))
 
 	db := rocaDatabase(t)

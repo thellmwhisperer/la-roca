@@ -626,6 +626,8 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 		databaseReader = ReadOpenCode
 	case parsers.KindHermesDB:
 		databaseReader = ReadHermes
+	case parsers.KindCursorDB:
+		databaseReader = ReadCursor
 	}
 	if databaseReader != nil {
 		records, complaints, err := databaseReader(ctx, target.Path)
