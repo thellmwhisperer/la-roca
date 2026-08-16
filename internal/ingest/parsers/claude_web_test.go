@@ -314,6 +314,65 @@ func TestClaudeWebMemoriesReadCurrentAccountSurfacesAndOlderShapes(t *testing.T)
 	}
 }
 
+func TestClaudeWebMemoriesReportUnreadableAccountSurfaces(t *testing.T) {
+	tests := []struct {
+		name           string
+		raw            string
+		wantMemories   int
+		wantCategories []string
+	}{
+		{
+			name: "scalar project_memories keeps memory_files",
+			raw: `[{"account_uuid":"aaaaaaaa-0000-4000-8000-000000000099",
+				"project_memories":"not-an-object",
+				"memory_files":[{"content":"Synthetic memory file.","path":"memories/synthetic-atlas.md"}]}]`,
+			wantMemories:   1,
+			wantCategories: []string{"claude-web project_memories is unreadable"},
+		},
+		{
+			name: "malformed memory_files entry reports the surface",
+			raw: `[{"account_uuid":"aaaaaaaa-0000-4000-8000-000000000099",
+				"project_memories":{"aaaaaaaa-0000-4000-8000-000000000001":"Synthetic orchard project memory."},
+				"memory_files":["not-an-object"]}]`,
+			wantMemories:   1,
+			wantCategories: []string{"claude-web memory_files is unreadable"},
+		},
+		{
+			name: "both unreadable surfaces report each without a no-text fallback",
+			raw: `[{"account_uuid":"aaaaaaaa-0000-4000-8000-000000000099",
+				"project_memories":42,
+				"memory_files":{"content":"not-an-array"}}]`,
+			wantMemories: 0,
+			wantCategories: []string{
+				"claude-web project_memories is unreadable",
+				"claude-web memory_files is unreadable",
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			records, err := ParseClaudeWebMemories(bytes.NewReader([]byte(test.raw)), FileMeta{
+				Path: "/declared/export/memories.json", FileName: "memories.json",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(records.Memories) != test.wantMemories {
+				t.Fatalf("memories = %+v, want %d", records.Memories, test.wantMemories)
+			}
+			if len(records.Discards) != len(test.wantCategories) {
+				t.Fatalf("discards = %+v, want %d", records.Discards, len(test.wantCategories))
+			}
+			for i, category := range test.wantCategories {
+				if got := records.Discards[i]; got.Category != category || got.ByDesign ||
+					!strings.Contains(got.Reason, "is unreadable") {
+					t.Errorf("discard %d = %+v, want category %q and an unreadable reason", i, got, category)
+				}
+			}
+		})
+	}
+}
+
 func TestClaudeWebProjectEntitiesAndDocsBecomeStoreRows(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "testdata", "anthropic-export-projects",
 		"projects", "aaaaaaaa-0000-4000-8000-000000000001.json"))

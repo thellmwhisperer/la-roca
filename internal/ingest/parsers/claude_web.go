@@ -198,18 +198,9 @@ func ParseClaudeWebMemories(reader io.Reader, meta FileMeta) (Records, error) {
 		if err := decoder.Decode(&raw); err != nil {
 			return Records{}, fmt.Errorf("decode Claude web memory %d: %w", index, err)
 		}
-		memories, reason := parseClaudeWebMemoryEntry(raw, meta, index)
-		if reason != "" {
-			category := "memory has no text"
-			if strings.Contains(reason, "neither text nor an object") {
-				category = "memory is neither text nor an object"
-			}
-			records.Discards = append(records.Discards, Discard{
-				Record: index, Reason: reason, Category: category,
-			})
-			continue
-		}
+		memories, discards := parseClaudeWebMemoryEntry(raw, meta, index)
 		records.Memories = append(records.Memories, memories...)
+		records.Discards = append(records.Discards, discards...)
 	}
 	if err := closeJSONArray(decoder, "Claude web memories"); err != nil {
 		return Records{}, err
@@ -217,7 +208,7 @@ func ParseClaudeWebMemories(reader io.Reader, meta FileMeta) (Records, error) {
 	return records, nil
 }
 
-func parseClaudeWebMemoryEntry(raw json.RawMessage, meta FileMeta, index int) ([]Memory, string) {
+func parseClaudeWebMemoryEntry(raw json.RawMessage, meta FileMeta, index int) ([]Memory, []Discard) {
 	object := map[string]json.RawMessage{}
 	if err := json.Unmarshal(raw, &object); err == nil &&
 		has(object, "conversations_memory", "project_memories", "memory_files") {
@@ -225,14 +216,19 @@ func parseClaudeWebMemoryEntry(raw json.RawMessage, meta FileMeta, index int) ([
 	}
 	memory, reason := parseClaudeWebMemory(raw, meta, index)
 	if reason != "" {
-		return nil, reason
+		category := "memory has no text"
+		if strings.Contains(reason, "neither text nor an object") {
+			category = "memory is neither text nor an object"
+		}
+		return nil, []Discard{{Record: index, Reason: reason, Category: category}}
 	}
-	return []Memory{memory}, ""
+	return []Memory{memory}, nil
 }
 
-func parseClaudeWebAccountMemories(object map[string]json.RawMessage, meta FileMeta, index int) ([]Memory, string) {
+func parseClaudeWebAccountMemories(object map[string]json.RawMessage, meta FileMeta, index int) ([]Memory, []Discard) {
 	account := firstJSONString(object, "account_uuid")
 	var memories []Memory
+	var discards []Discard
 	if text := firstJSONString(object, "conversations_memory"); text != "" {
 		path := "memory-account:" + account
 		if account == "" {
@@ -245,7 +241,12 @@ func parseClaudeWebAccountMemories(object map[string]json.RawMessage, meta FileM
 	}
 	projects := map[string]string{}
 	if raw, ok := object["project_memories"]; ok {
-		_ = json.Unmarshal(raw, &projects)
+		if err := json.Unmarshal(raw, &projects); err != nil {
+			discards = append(discards, Discard{
+				Record: index, Reason: "project_memories is unreadable: " + err.Error(),
+				Category: "claude-web project_memories is unreadable",
+			})
+		}
 	}
 	keys := make([]string, 0, len(projects))
 	for key := range projects {
@@ -266,7 +267,12 @@ func parseClaudeWebAccountMemories(object map[string]json.RawMessage, meta FileM
 	}
 	var files []claudeWebMemoryFile
 	if raw, ok := object["memory_files"]; ok {
-		_ = json.Unmarshal(raw, &files)
+		if err := json.Unmarshal(raw, &files); err != nil {
+			discards = append(discards, Discard{
+				Record: index, Reason: "memory_files is unreadable: " + err.Error(),
+				Category: "claude-web memory_files is unreadable",
+			})
+		}
 	}
 	for i, file := range files {
 		text := strings.TrimSpace(file.Content)
@@ -285,10 +291,10 @@ func parseClaudeWebAccountMemories(object map[string]json.RawMessage, meta FileM
 			"updated_at":       validInstant(file.UpdatedAt),
 		}))
 	}
-	if len(memories) == 0 {
-		return nil, fmt.Sprintf("memory %d has no text", index)
+	if len(memories) == 0 && len(discards) == 0 {
+		return nil, []Discard{{Record: index, Reason: fmt.Sprintf("memory %d has no text", index), Category: "memory has no text"}}
 	}
-	return memories, ""
+	return memories, discards
 }
 
 func parseClaudeWebMemory(raw json.RawMessage, meta FileMeta, index int) (Memory, string) {
