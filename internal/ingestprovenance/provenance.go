@@ -16,6 +16,7 @@ const (
 	ChatGPT       = "ChatGPT"
 	CodexCLI      = "Codex CLI"
 	Cowork        = "Cowork"
+	Cursor        = "Cursor"
 	GrokBuild     = "Grok Build"
 	GLM           = "GLM"
 	Hermes        = "Hermes"
@@ -41,6 +42,8 @@ func HarnessForSource(source string) string {
 		return ClaudeCode
 	case source == "codex" || strings.HasPrefix(source, "codex-"):
 		return CodexCLI
+	case source == "cursor":
+		return Cursor
 	case source == "opencode" || strings.HasPrefix(source, "opencode-"):
 		return OpenCode
 	case source == "pi" || strings.HasPrefix(source, "pi-"):
@@ -76,6 +79,7 @@ func Backfill(ctx context.Context, db execer) error {
 		{ChatGPT, "source_agent = 'chatgpt-web'"},
 		{ClaudeCode, "source_agent IN ('claude', 'claude-code')"},
 		{CodexCLI, "(source_agent = 'codex' OR source_agent LIKE 'codex-%')"},
+		{Cursor, "source_agent = 'cursor'"},
 		{OpenCode, "(source_agent = 'opencode' OR source_agent LIKE 'opencode-%')"},
 		{Pi, "(source_agent = 'pi' OR source_agent LIKE 'pi-%')"},
 		{Hermes, "(source_agent = 'hermes' OR source_agent LIKE 'hermes-%')"},

@@ -70,7 +70,8 @@ func targetFingerprint(target Target) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if target.Kind != parsers.KindOpenCodeDB && target.Kind != parsers.KindHermesDB {
+	if target.Kind != parsers.KindOpenCodeDB && target.Kind != parsers.KindHermesDB &&
+		target.Kind != parsers.KindCursorDB {
 		return parserAwareFingerprint(target.Kind, main), nil
 	}
 	wal, err := Fingerprint(target.Path + "-wal")

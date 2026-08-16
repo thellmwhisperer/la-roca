@@ -319,6 +319,23 @@ func exec(t *testing.T, db *sql.DB, statement string, args ...any) {
 	}
 }
 
+// writeFixture copies a synthetic fixture file into a sandbox HOME, creating
+// the parent directories. It is the one place the ingest suites materialise a
+// conformance fixture, so the slop gate does not count a copy per parser.
+func writeFixture(t *testing.T, target, source string) {
+	t.Helper()
+	content, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // rocaDatabase is a real La Roca database with the v1 schema in it.
 func rocaDatabase(t *testing.T) *store.DB {
 	t.Helper()

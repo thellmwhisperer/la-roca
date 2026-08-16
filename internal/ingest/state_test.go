@@ -154,6 +154,11 @@ func TestDatabaseFingerprintChangesWithWAL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cursorTarget := Target{Path: path, Kind: parsers.KindCursorDB}
+	cursorBefore, err := targetFingerprint(cursorTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
 	mainBefore, err := Fingerprint(path)
 	if err != nil {
 		t.Fatal(err)
@@ -174,5 +179,12 @@ func TestDatabaseFingerprintChangesWithWAL(t *testing.T) {
 	}
 	if after == before {
 		t.Fatalf("database fingerprint stayed %q after a WAL commit", after)
+	}
+	cursorAfter, err := targetFingerprint(cursorTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cursorAfter == cursorBefore {
+		t.Fatalf("Cursor database fingerprint stayed %q after a WAL commit", cursorAfter)
 	}
 }
