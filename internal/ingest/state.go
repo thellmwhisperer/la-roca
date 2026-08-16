@@ -104,7 +104,7 @@ var parserVersions = map[parsers.Kind]string{
 	parsers.KindCodexSession:            "codex-session-v8",
 	parsers.KindCodexHistory:            "codex-history-v2",
 	parsers.KindPiSession:               "pi-session-v7",
-	parsers.KindOpenCodeDB:              "opencode-v6",
+	parsers.KindOpenCodeDB:              "opencode-v7",
 	parsers.KindHermesDB:                "hermes-v7",
 	parsers.KindClaudeWebConversations:  "claude-web-conversations-v4",
 	parsers.KindChatGPTWebConversations: "chatgpt-web-conversations-v3",
@@ -130,16 +130,17 @@ func parserAwareFingerprint(kind parsers.Kind, fingerprint string) string {
 
 // FileState is what the database remembers about one path.
 type FileState struct {
-	Fingerprint string
-	LastError   string
+	Fingerprint     string
+	LastError       string
+	MessageCoverage *parsers.MessageCoverage
 }
 
 // LoadState reads the whole state table once. One query beats one query per file:
 // a machine with thousands of transcripts would otherwise spend the run on
 // round trips.
 func LoadState(ctx context.Context, db *sql.DB) (map[string]FileState, error) {
-	rows, err := db.QueryContext(ctx,
-		`SELECT path, COALESCE(fingerprint, ''), COALESCE(last_error, '') FROM ingest_file_state`)
+	rows, err := db.QueryContext(ctx, `SELECT path, COALESCE(fingerprint, ''),
+		COALESCE(last_error, ''), COALESCE(metadata, '{}') FROM ingest_file_state`)
 	if err != nil {
 		return nil, fmt.Errorf("read the ingest state: %w", err)
 	}
@@ -147,11 +148,16 @@ func LoadState(ctx context.Context, db *sql.DB) (map[string]FileState, error) {
 
 	state := map[string]FileState{}
 	for rows.Next() {
-		var path, fingerprint, failure string
-		if err := rows.Scan(&path, &fingerprint, &failure); err != nil {
+		var path, fingerprint, failure, metadata string
+		if err := rows.Scan(&path, &fingerprint, &failure, &metadata); err != nil {
 			return nil, fmt.Errorf("read the ingest state: %w", err)
 		}
-		state[path] = FileState{Fingerprint: fingerprint, LastError: failure}
+		var summary struct {
+			MessageCoverage *parsers.MessageCoverage `json:"message_coverage"`
+		}
+		_ = json.Unmarshal([]byte(metadata), &summary)
+		state[path] = FileState{Fingerprint: fingerprint, LastError: failure,
+			MessageCoverage: summary.MessageCoverage}
 	}
 	return state, rows.Err()
 }
