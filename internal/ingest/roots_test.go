@@ -13,6 +13,7 @@ func TestRootsOnMacOS(t *testing.T) {
 	roots := ResolveRoots(Environment{GOOS: "darwin", Home: "/Users/op"}, Settings{})
 	want := map[string]string{
 		"claude projects": "/Users/op/.claude/projects",
+		"claude config":   "/Users/op/.claude.json",
 		"desktop":         "/Users/op/Library/Application Support/Claude/claude-code-sessions",
 		"cowork":          "/Users/op/Library/Application Support/Claude/local-agent-mode-sessions",
 		"codex":           "/Users/op/.codex",
@@ -22,9 +23,11 @@ func TestRootsOnMacOS(t *testing.T) {
 		"pi":              "/Users/op/.pi/agent/sessions",
 		"hermes":          "/Users/op/.hermes/state.db",
 		"grok":            "/Users/op/.grok/sessions",
+		"grok memtrace":   "/Users/op/.grok/memtrace",
 	}
 	got := map[string]string{
 		"claude projects": roots.ClaudeProjects,
+		"claude config":   roots.ClaudeConfig,
 		"desktop":         roots.ClaudeDesktopSessions,
 		"cowork":          roots.CoworkSessions,
 		"codex":           roots.CodexRoot,
@@ -34,6 +37,7 @@ func TestRootsOnMacOS(t *testing.T) {
 		"pi":              roots.PiSessions,
 		"hermes":          roots.HermesDB,
 		"grok":            roots.GrokSessions,
+		"grok memtrace":   roots.GrokMemtrace,
 	}
 	for name, expected := range want {
 		if got[name] != expected {

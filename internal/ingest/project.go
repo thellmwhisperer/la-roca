@@ -21,11 +21,10 @@ import (
 	"unicode"
 )
 
-// The agents encode a working directory as a directory name by replacing the
-// separators with dashes. `/w/demo` becomes `-w-demo` and `C:\code\demo` becomes
-// `C--code-demo`. The encoding is lossy: `-w-demo` could be `/w/demo` or
-// `/w-demo`, so it is only decoded relative to a declared workspace root, and
-// what no root explains stays unnamed.
+// Claude encodes a working directory as a directory name by replacing every
+// non-ASCII-alphanumeric character with a dash. The encoding is lossy:
+// `-w-demo` could be `/w/demo` or `/w-demo`, so it is only decoded relative to
+// source evidence or a declared workspace root.
 
 // mntPrefix is where WSL mounts the Windows drives. It is what makes a
 // repository under `C:\` and the same repository under `/mnt/c/` two spellings of
@@ -98,13 +97,21 @@ func spellings(root string) []string {
 	return all
 }
 
-// encodeRoot is the agents' own encoding: the separators become dashes, and on
-// Windows the colon after the drive letter does too.
+// encodeRoot is Claude's own encoding. Dots and spaces matter here: treating
+// only path separators specially is what left real project directories without
+// attribution even when ~/.claude.json named their original paths exactly.
 func encodeRoot(root string) string {
-	if isWindowsSyntax(root) {
-		return strings.NewReplacer(":", "-", `\`, "-").Replace(root)
+	var encoded strings.Builder
+	encoded.Grow(len(root))
+	for _, char := range root {
+		if char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' ||
+			char >= '0' && char <= '9' {
+			encoded.WriteRune(char)
+		} else {
+			encoded.WriteByte('-')
+		}
 	}
-	return strings.ReplaceAll(root, "/", "-")
+	return encoded.String()
 }
 
 // ProjectFromEncodedDir decodes an agent's project directory name.

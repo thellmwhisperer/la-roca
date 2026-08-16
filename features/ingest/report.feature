@@ -27,6 +27,11 @@ Feature: The honest summary
     Then each seeded source is summarized once with its elapsed time
     And index time and the product total are each reported once
 
+  Scenario: Coverage accounts for every seen file and names each skip class
+    Given Claude and Codex artefacts are ready to ingest
+    When I run ingest for a human
+    Then one coverage block closes the file accounting and explains the manifest skip
+
   Scenario: Human source rows own their record discards
     Given a Claude session with 3 malformed records is ready to ingest
     When I run ingest for a human

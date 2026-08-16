@@ -66,8 +66,11 @@ type Settings struct {
 // Roots are the resolved locations of every source in the v1 matrix.
 type Roots struct {
 	// Home anchors home-relative locations declared by contributed parsers.
-	Home                  string
-	ClaudeProjects        string
+	Home           string
+	ClaudeProjects string
+	// ClaudeConfig records the real working directories Claude encoded below
+	// ClaudeProjects. It is attribution evidence and never corpus content.
+	ClaudeConfig          string
 	ClaudeDesktopSessions string
 	CoworkSessions        string
 	CodexRoot             string
@@ -80,7 +83,10 @@ type Roots struct {
 	PiSessions   string
 	HermesDB     string
 	// GrokSessions is Grok Build's session store.
-	GrokSessions      string
+	GrokSessions string
+	// GrokMemtrace is process-memory telemetry, counted for coverage and excluded
+	// from conversation content.
+	GrokMemtrace      string
 	RunnerDir         string
 	ClaudeWebExports  []string
 	ChatGPTWebExports []string
@@ -116,6 +122,7 @@ func ResolveRoots(env Environment, settings Settings) Roots {
 		Home: env.Home,
 		ClaudeProjects: pick(env, settings.ClaudeProjects, envClaudeProjects,
 			join(env, claude, "projects")),
+		ClaudeConfig: join(env, env.Home, ".claude.json"),
 		ClaudeDesktopSessions: expand(env, firstNonEmpty(settings.ClaudeDesktopSessions,
 			join(env, appSupport, "claude-code-sessions"))),
 		CoworkSessions: expand(env, firstNonEmpty(settings.CoworkSessions,
@@ -134,8 +141,9 @@ func ResolveRoots(env Environment, settings Settings) Roots {
 			join(env, env.Home, ".hermes", "state.db")),
 		GrokSessions: pick(env, settings.GrokSessions, envGrokSessions,
 			join(env, env.Home, ".grok", "sessions")),
-		RunnerDir: expand(env, settings.RunnerDir),
-		Workspace: ResolveWorkspaceRoots(expandAll(env, settings.WorkspaceRoots)),
+		GrokMemtrace: join(env, env.Home, ".grok", "memtrace"),
+		RunnerDir:    expand(env, settings.RunnerDir),
+		Workspace:    ResolveWorkspaceRoots(expandAll(env, settings.WorkspaceRoots)),
 	}
 
 	roots.SubagentRoots = expandAll(env, settings.SubagentRoots)
