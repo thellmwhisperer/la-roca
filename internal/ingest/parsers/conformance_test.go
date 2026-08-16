@@ -57,6 +57,8 @@ var expectedCanonicalHarnesses = map[Kind]string{
 	KindCodexMemoryAggregate:    "Codex CLI",
 	KindSubagent:                "Claude Code",
 	KindPiSession:               "Pi",
+	KindQwenCode:                "Qwen Code",
+	KindGLMSkill:                "GLM",
 	KindClaudeWebConversations:  "Claude Web",
 	KindClaudeWebMemories:       "Claude Web",
 	KindChatGPTWebConversations: "ChatGPT",
