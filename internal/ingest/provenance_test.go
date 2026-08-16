@@ -16,14 +16,14 @@ import (
 // visible here and not in a query three weeks later.
 
 type provenanceRow struct {
-	model, provider             sql.NullString
+	model, provider, surface    sql.NullString
 	tokensIn, tokensOut, reason sql.NullInt64
 	cost                        sql.NullFloat64
 }
 
 type provenanceExpectation struct {
 	session                     string
-	model, provider             string
+	model, provider, surface    string
 	tokensIn, tokensOut, reason int
 	cost                        float64
 	// counted names the numeric columns the source does state, so an absent
@@ -35,24 +35,26 @@ var recordedProvenance = []provenanceExpectation{
 	// The three prompt tiers of a Claude transcript are one number, and the
 	// runtime separates no reasoning tokens out of the answer.
 	{session: fixtureSessionID, model: "fixture-claude-model",
-		tokensIn: 35, tokensOut: 7, counted: "in out"},
+		surface: "Claude Desktop", tokensIn: 35, tokensOut: 7, counted: "in out"},
 	{session: "child-1", model: "fixture-subagent-model",
-		tokensIn: 4, tokensOut: 2, counted: "in out"},
+		surface: "Claude Code", tokensIn: 4, tokensOut: 2, counted: "in out"},
 	{session: "cowork-1", model: "fixture-cowork-model",
-		tokensIn: 6, tokensOut: 1, counted: "in out"},
+		surface: "Cowork", tokensIn: 6, tokensOut: 1, counted: "in out"},
 	// A rollout counts the reasoning tokens apart and names who served it.
 	{session: "codex-thread-1", model: "fixture-codex-model", provider: "fixture-provider",
-		tokensIn: 31, tokensOut: 9, reason: 4, counted: "in out reasoning"},
+		surface: "Codex CLI", tokensIn: 31, tokensOut: 9, reason: 4, counted: "in out reasoning"},
 	// Pi and OpenCode are the two that also price the turn.
 	{session: "pi:pi-1", model: "fixture-pi-model", provider: "fixture-pi-provider",
-		tokensIn: 15, tokensOut: 5, reason: 2, cost: 0.25, counted: "in out reasoning cost"},
+		surface: "Pi", tokensIn: 15, tokensOut: 5, reason: 2, cost: 0.25, counted: "in out reasoning cost"},
 	{session: "opencode:oc1", model: "fixture-opencode-model", provider: "fixture-opencode-provider",
-		tokensIn: 43, tokensOut: 11, reason: 6, cost: 0.5, counted: "in out reasoning cost"},
+		surface: "OpenCode", tokensIn: 43, tokensOut: 11, reason: 6, cost: 0.5, counted: "in out reasoning cost"},
 	// Hermes measures a whole session and never a turn: the turn carries who
 	// answered and no invented split of the totals.
-	{session: "h1", model: "test-model", provider: "fixture-hermes-provider"},
+	{session: "h1", model: "test-model", provider: "fixture-hermes-provider", surface: "Hermes"},
 	// The web export is the signal-poor source, and every column stays NULL.
-	{session: "web-fixture-1"},
+	{session: "web-fixture-1", surface: "Claude Web"},
+	{session: "22222222-3333-4444-5555-666666666666", model: "fixture-grok-model",
+		surface: "Grok Build"},
 }
 
 // readProvenance keys on the session and not on the agent: the synthetic world
@@ -62,9 +64,12 @@ func readProvenance(t *testing.T, db *sql.DB, session string) provenanceRow {
 	t.Helper()
 	var got provenanceRow
 	err := db.QueryRow(`
-		SELECT model, provider, tokens_in, tokens_out, tokens_reasoning, cost_usd
-		FROM exchanges WHERE session_id = ? ORDER BY exchange_number LIMIT 1`, session).
-		Scan(&got.model, &got.provider, &got.tokensIn, &got.tokensOut, &got.reason, &got.cost)
+		SELECT e.model, e.provider, s.source_surface,
+		       e.tokens_in, e.tokens_out, e.tokens_reasoning, e.cost_usd
+		FROM exchanges e JOIN sessions s ON s.session_id = e.session_id
+		WHERE e.session_id = ? ORDER BY e.exchange_number LIMIT 1`, session).
+		Scan(&got.model, &got.provider, &got.surface,
+			&got.tokensIn, &got.tokensOut, &got.reason, &got.cost)
 	if err != nil {
 		t.Fatalf("read the provenance of %s: %v", session, err)
 	}
@@ -79,6 +84,17 @@ func TestEverySourceFillsTheProvenanceItRecords(t *testing.T) {
 	}
 
 	assertRecordedProvenance(t, db.SQL())
+	var missingSurface, inventedModel int
+	if err := db.SQL().QueryRow(`SELECT
+		COUNT(*) FILTER (WHERE COALESCE(source_surface, '') = ''),
+		COUNT(*) FILTER (WHERE source_model IS NOT NULL)
+		FROM memories WHERE origin = 'cron'`).Scan(&missingSurface, &inventedModel); err != nil {
+		t.Fatal(err)
+	}
+	if missingSurface != 0 || inventedModel != 0 {
+		t.Fatalf("memory provenance: missing surfaces=%d invented models=%d",
+			missingSurface, inventedModel)
+	}
 }
 
 // assertRecordedProvenance checks what each source of the synthetic world
@@ -92,6 +108,10 @@ func assertRecordedProvenance(t *testing.T, db *sql.DB) {
 		if got.model.String != want.model || got.provider.String != want.provider {
 			t.Errorf("%s: model/provider = %q/%q, want %q/%q",
 				want.session, got.model.String, got.provider.String, want.model, want.provider)
+		}
+		if got.surface.String != want.surface {
+			t.Errorf("%s: source surface = %q, want %q",
+				want.session, got.surface.String, want.surface)
 		}
 		for _, counter := range []struct {
 			name string
@@ -152,8 +172,9 @@ func TestAPlainReingestMatchesHistoricalNumbersWithoutDuplicating(t *testing.T) 
 		}
 		_, err = tx.ExecContext(ctx,
 			`UPDATE ingest_file_state SET fingerprint =
-				replace(replace(replace(replace(fingerprint, '-v8', '-v7'), '-v7', '-v6'),
-				        '-v6', '-v5'), 'conversations-v4', 'conversations-v3')
+				replace(replace(replace(replace(replace(fingerprint, '-v8', '-v7'), '-v7', '-v6'),
+				        '-v6', '-v5'), 'conversations-v4', 'conversations-v3'),
+				        'grok-session-v4', 'grok-session-v3')
 			 WHERE instr(fingerprint, ':parser:') > 0`)
 		return err
 	}); err != nil {

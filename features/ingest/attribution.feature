@@ -2,8 +2,8 @@
 
 @acceptance @ingest
 Feature: Who wrote what
-  Sessions keep a project, a supported family and any model identity their
-  source explicitly declares.
+  Sessions keep a project, a supported family, the family's canonical harness,
+  and any model identity their source explicitly declares.
 
   Scenario: Each session lands under the project its path declares
     Given a Claude session path declares project "anchor"
@@ -21,6 +21,7 @@ Feature: Who wrote what
     When I run ingest
     Then every session source is one of the supported agent families
     And every supported agent family owns a session
+    And every supported agent family uses its canonical harness
 
   Scenario Outline: Every session records which model answered when the artefact declares it
     Given a "<family>" session declares model "contract-model"
