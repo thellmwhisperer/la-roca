@@ -1,0 +1,99 @@
+[
+  {
+    "conversation_id": "50000000-0000-4000-8000-000000000001",
+    "title": "Synthetic orchard chat one",
+    "create_time": 1767225600,
+    "update_time": 1767225602,
+    "gizmo_type": "snorlax",
+    "gizmo_id": "g-p-syntheticorchard000000000000",
+    "conversation_template_id": "g-p-syntheticorchard000000000000",
+    "memory_scope": "project_enabled",
+    "default_model_slug": "gpt-synthetic-default",
+    "current_node": "52000000-0000-4000-8000-000000000001",
+    "mapping": {
+      "root": {"id": "root", "parent": null, "children": ["51000000-0000-4000-8000-000000000001"], "message": null},
+      "51000000-0000-4000-8000-000000000001": {
+        "id": "51000000-0000-4000-8000-000000000001",
+        "parent": "root",
+        "children": ["52000000-0000-4000-8000-000000000001"],
+        "message": {"author": {"role": "user"}, "content": {"parts": ["Name the invented orchard sensor."]}, "create_time": 1767225601}
+      },
+      "52000000-0000-4000-8000-000000000001": {
+        "id": "52000000-0000-4000-8000-000000000001",
+        "parent": "51000000-0000-4000-8000-000000000001",
+        "children": [],
+        "message": {"author": {"role": "assistant"}, "content": {"parts": ["Amber Finch."]}, "create_time": 1767225602, "metadata": {"model_slug": "gpt-synthetic-message"}}
+      }
+    }
+  },
+  {
+    "conversation_id": "50000000-0000-4000-8000-000000000002",
+    "title": "Synthetic orchard chat two",
+    "create_time": 1767225700,
+    "update_time": 1767225702,
+    "gizmo_type": "snorlax",
+    "gizmo_id": "g-p-syntheticorchard000000000000",
+    "conversation_template_id": "g-p-syntheticorchard000000000000",
+    "memory_scope": "project_v2",
+    "mapping": {
+      "root": {"id": "root", "parent": null, "children": ["user"], "message": null},
+      "user": {
+        "id": "user",
+        "parent": "root",
+        "children": ["agent"],
+        "message": {"author": {"role": "user"}, "content": {"parts": ["Calibrate the invented sensor."]}}
+      },
+      "agent": {
+        "id": "agent",
+        "parent": "user",
+        "children": [],
+        "message": {"author": {"role": "assistant"}, "content": {"parts": ["Calibration complete."]}}
+      }
+    }
+  },
+  {
+    "conversation_id": "50000000-0000-4000-8000-000000000003",
+    "title": "Synthetic custom GPT chat",
+    "create_time": 1767225800,
+    "update_time": 1767225802,
+    "gizmo_type": "gpt",
+    "gizmo_id": "g-syntheticcustomgpt000000000000",
+    "conversation_template_id": "g-syntheticcustomgpt000000000000",
+    "mapping": {
+      "root": {"id": "root", "parent": null, "children": ["user"], "message": null},
+      "user": {
+        "id": "user",
+        "parent": "root",
+        "children": ["agent"],
+        "message": {"author": {"role": "user"}, "content": {"parts": ["Ask the invented custom GPT."]}}
+      },
+      "agent": {
+        "id": "agent",
+        "parent": "user",
+        "children": [],
+        "message": {"author": {"role": "assistant"}, "content": {"parts": ["Custom GPT answer."]}}
+      }
+    }
+  },
+  {
+    "conversation_id": "50000000-0000-4000-8000-000000000004",
+    "title": "Synthetic unprojected chat",
+    "create_time": 1767225900,
+    "update_time": 1767225902,
+    "mapping": {
+      "root": {"id": "root", "parent": null, "children": ["user"], "message": null},
+      "user": {
+        "id": "user",
+        "parent": "root",
+        "children": ["agent"],
+        "message": {"author": {"role": "user"}, "content": {"parts": ["A plain invented question."]}}
+      },
+      "agent": {
+        "id": "agent",
+        "parent": "user",
+        "children": [],
+        "message": {"author": {"role": "assistant"}, "content": {"parts": ["A plain invented answer."]}}
+      }
+    }
+  }
+]

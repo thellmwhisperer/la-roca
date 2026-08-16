@@ -109,6 +109,9 @@ func TestKnownFingerprintCanMatchMetadataWhenContentCannotBeRead(t *testing.T) {
 func TestExportConversationFingerprintIncludesParserRevision(t *testing.T) {
 	for _, kind := range []parsers.Kind{
 		parsers.KindClaudeWebConversations,
+		parsers.KindClaudeWebMemories,
+		parsers.KindClaudeWebProjects,
+		parsers.KindClaudeWebDesignChats,
 		parsers.KindChatGPTWebConversations,
 	} {
 		t.Run(string(kind), func(t *testing.T) {

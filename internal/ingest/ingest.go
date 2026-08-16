@@ -740,7 +740,10 @@ func resolveProjects(ctx context.Context, opts Options, target Target, records *
 	for i := range records.Sessions {
 		session := &records.Sessions[i]
 		if target.Kind == parsers.KindClaudeWebConversations ||
-			target.Kind == parsers.KindChatGPTWebConversations {
+			target.Kind == parsers.KindChatGPTWebConversations ||
+			target.Kind == parsers.KindClaudeWebProjects ||
+			target.Kind == parsers.KindClaudeWebDesignChats ||
+			target.Kind == parsers.KindClaudeWebMemories {
 			// An export path says nothing about the conversation's project. It is
 			// deliberately not passed through path heuristics in v1.
 			continue

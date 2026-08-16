@@ -1,0 +1,22 @@
+[
+  {
+    "account_uuid": "aaaaaaaa-0000-4000-8000-000000000099",
+    "conversations_memory": "The synthetic operator prefers explicit export paths.",
+    "project_memories": {
+      "aaaaaaaa-0000-4000-8000-000000000001": "Remember the invented orchard sensor name.",
+      "aaaaaaaa-0000-4000-8000-000000000002": "Remember the invented atlas palette."
+    },
+    "memory_files": [
+      {
+        "content": "Synthetic user memory file one.",
+        "path": "memories/synthetic-user.md",
+        "updated_at": "2026-08-01T08:10:00Z"
+      },
+      {
+        "content": "Synthetic user memory file two.",
+        "path": "projects/synthetic-notes.md",
+        "updated_at": "2026-08-01T08:11:00Z"
+      }
+    ]
+  }
+]
