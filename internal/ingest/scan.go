@@ -154,6 +154,14 @@ func addRegisteredParsers(roots Roots, plan *Plan, registered []parsers.Registra
 			if pathExists(root) {
 				present = true
 			}
+			if file := existingFile(root, shape); len(file) > 0 {
+				targets = append(targets, file...)
+				continue
+			}
+			if contribution.FileName != "" {
+				targets = append(targets, namedFilesUnder(root, contribution.FileName, shape)...)
+				continue
+			}
 			targets = append(targets, filesUnder(root, "", shape)...)
 		}
 		plan.add(targets, contribution.Name+"_files")
@@ -782,6 +790,26 @@ func filesUnder(root, extension string, shape Target) []Target {
 	filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil || !entry.Type().IsRegular() ||
 			!strings.HasSuffix(entry.Name(), extension) {
+			return nil
+		}
+		shape.Path, shape.FileName = path, entry.Name()
+		targets = append(targets, shape)
+		return nil
+	})
+	return targets
+}
+
+// namedFilesUnder collects the one store file a directory Location targets.
+// A database store lives beside its own WAL, SHM and manifest sidecars;
+// matching the base name keeps those out of the scan without admitting a
+// foreign file the directory also holds.
+func namedFilesUnder(root, name string, shape Target) []Target {
+	if root == "" {
+		return nil
+	}
+	var targets []Target
+	filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || !entry.Type().IsRegular() || entry.Name() != name {
 			return nil
 		}
 		shape.Path, shape.FileName = path, entry.Name()

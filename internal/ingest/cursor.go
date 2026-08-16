@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -21,14 +22,14 @@ func ReadCursor(ctx context.Context, path string) (parsers.Records, []string, er
 	if !ok {
 		return parsers.Records{}, nil, fmt.Errorf("Cursor database parser is not registered")
 	}
-	raw, err := os.ReadFile(path)
+	header, err := readSQLiteHeader(path)
 	if err != nil {
 		return parsers.Records{}, nil, err
 	}
 	meta := parsers.FileMeta{Path: path, FileName: filepath.Base(path), SourceAgent: "cursor"}
-	file := parsers.File{Content: raw, Meta: meta}
+	file := parsers.File{Content: header, Meta: meta}
 	if (meta.FileName != "state.vscdb" && meta.FileName != "ai-code-tracking.db") ||
-		len(raw) < 16 || string(raw[:16]) != "SQLite format 3\x00" {
+		len(header) < 16 || string(header[:16]) != "SQLite format 3\x00" {
 		records, err := registered.Parse(file)
 		return records, nil, err
 	}
@@ -38,6 +39,23 @@ func ReadCursor(ctx context.Context, path string) (parsers.Records, []string, er
 	}
 	records, err := registered.Parse(parsers.File{Content: snapshot, Meta: meta})
 	return records, nil, err
+}
+
+// readSQLiteHeader reads only the leading 16 bytes a SQLite file opens with.
+// The magic is enough to route a candidate before the whole database is frozen
+// into a snapshot, so a foreign file is never buffered in full.
+func readSQLiteHeader(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	header := make([]byte, 16)
+	n, err := io.ReadFull(file, header)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		return nil, err
+	}
+	return header[:n], nil
 }
 
 func serializeForeign(ctx context.Context, path string) ([]byte, error) {

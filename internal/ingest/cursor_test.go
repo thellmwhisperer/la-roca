@@ -126,6 +126,70 @@ func TestCursorReaderSerializesAConsistentWALSnapshotWithoutChangingTheSource(t 
 	}
 }
 
+func TestCursorWorkspaceScanTargetsOnlyStateDatabases(t *testing.T) {
+	home := t.TempDir()
+	hash := filepath.Join(home, "Library", "Application Support", "Cursor", "User",
+		"workspaceStorage", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+	if err := os.MkdirAll(hash, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{
+		"state.vscdb", "state.vscdb-wal", "state.vscdb-shm", "workspace.json",
+	} {
+		if err := os.WriteFile(filepath.Join(hash, name), []byte("synthetic"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	registered, ok := parsers.Lookup("cursor_database")
+	if !ok {
+		t.Fatal("Cursor database parser is not registered")
+	}
+	plan := Plan{Scanned: map[string]int{}}
+	addRegisteredParsers(Roots{Home: home}, &plan, []parsers.Registration{registered})
+
+	if len(plan.Targets) != 1 || plan.Targets[0].Path != filepath.Join(hash, "state.vscdb") ||
+		plan.Targets[0].FileName != "state.vscdb" {
+		t.Fatalf("Cursor workspace targets = %+v", plan.Targets)
+	}
+	if plan.Scanned["cursor_database_files"] != 1 {
+		t.Fatalf("Cursor workspace coverage = %+v", plan.Scanned)
+	}
+	if len(plan.DetectedAgents) != 1 || plan.DetectedAgents[0] != "cursor" {
+		t.Fatalf("Cursor was not detected: %+v", plan.DetectedAgents)
+	}
+}
+
+func TestCursorReaderRejectsForeignCandidatesByDesign(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		fileName string
+		content  []byte
+	}{
+		{"a foreign filename", "workspace.json", []byte("synthetic")},
+		{"non-SQLite content", "state.vscdb", []byte("not a sqlite database")},
+		{"a truncated database", "state.vscdb", []byte("SQLite format")},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), testCase.fileName)
+			if err := os.WriteFile(path, testCase.content, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			records, complaints, err := ReadCursor(context.Background(), path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(complaints) != 0 || len(records.Sessions) != 0 || len(records.Discards) != 1 {
+				t.Fatalf("foreign Cursor candidate = sessions:%d discards:%d complaints:%v",
+					len(records.Sessions), len(records.Discards), complaints)
+			}
+			if discard := records.Discards[0]; !discard.ByDesign ||
+				discard.Reason != "file is not claimed by the registered parser" {
+				t.Fatalf("foreign Cursor candidate discard = %+v", discard)
+			}
+		})
+	}
+}
+
 func copyCursorFixture(t *testing.T, target string) {
 	t.Helper()
 	content, err := os.ReadFile(filepath.Join("parsers", "testdata", "conformance",
