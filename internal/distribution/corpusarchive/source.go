@@ -43,7 +43,7 @@ var archiveSourceTables = []archiveTable{
 	{
 		sourceTable: "sessions", migration: "corpus-archive-sessions",
 		destinationTable: "session_versions",
-		query: `SELECT session_id, source_agent, project, started_at, ended_at,
+		query: `SELECT rowid, session_id, source_agent, project, started_at, ended_at,
 			duration_minutes, title, metadata FROM sessions ORDER BY session_id`,
 		scan: scanSession,
 	},
@@ -320,10 +320,11 @@ func validateRecordedTable(ctx context.Context, destination *sql.DB,
 }
 
 func scanSession(rows *sql.Rows, _ *occurrenceTracker) (archiveRecord, error) {
+	var rowID int64
 	var sessionID string
 	var sourceAgent, project, startedAt, endedAt, title, metadata sql.NullString
 	var duration sql.NullInt64
-	if err := rows.Scan(&sessionID, &sourceAgent, &project, &startedAt, &endedAt,
+	if err := rows.Scan(&rowID, &sessionID, &sourceAgent, &project, &startedAt, &endedAt,
 		&duration, &title, &metadata); err != nil {
 		return archiveRecord{}, err
 	}
@@ -332,7 +333,8 @@ func scanSession(rows *sql.Rows, _ *occurrenceTracker) (archiveRecord, error) {
 		sourceKey:        canonicalDigest("session-key", sessionID),
 		digest:           canonicalDigest("session", values...),
 		destinationTable: "session_versions", values: values,
-		sessionID: sql.NullString{String: sessionID, Valid: true},
+		sourceRowID: sql.NullInt64{Int64: rowID, Valid: true},
+		sessionID:   sql.NullString{String: sessionID, Valid: true},
 	}, nil
 }
 

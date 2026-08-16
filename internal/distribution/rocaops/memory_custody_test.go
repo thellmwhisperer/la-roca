@@ -108,6 +108,10 @@ func TestDATA2MovesEveryMemoryIdentityIntoVerifiedOpsShadowCustody(t *testing.T)
 	}
 
 	beforeSnapshots := snapshotCount(t, fixture.snapshots)
+	missingSnapshot := report.SnapshotPaths[coreMemorySource]
+	if err := os.Remove(missingSnapshot); err != nil {
+		t.Fatal(err)
+	}
 	second, err := MigrateMemoryCustody(t.Context(), options)
 	if err != nil {
 		t.Fatal(err)
@@ -116,6 +120,9 @@ func TestDATA2MovesEveryMemoryIdentityIntoVerifiedOpsShadowCustody(t *testing.T)
 		second.PhysicalRecords != report.PhysicalRecords || snapshotCount(t, fixture.snapshots) != beforeSnapshots {
 		t.Fatalf("idempotent rerun = %+v; snapshots before=%d after=%d",
 			second, beforeSnapshots, snapshotCount(t, fixture.snapshots))
+	}
+	if _, err := os.Stat(missingSnapshot); err != nil {
+		t.Fatalf("verified rerun did not republish %s: %v", missingSnapshot, err)
 	}
 }
 
