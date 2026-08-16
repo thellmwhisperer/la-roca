@@ -36,6 +36,30 @@ func OpenDatabase(path string, readOnly bool) (*sql.DB, error) {
 	return db, nil
 }
 
+// TableColumns returns the declared column names of one table as a set. The
+// table name comes from a bundled schema constant, never operator input, and
+// the table-valued pragma form takes a bound parameter, so the name is never
+// interpolated into SQL. Both a connection and a transaction satisfy the
+// querier shape, which keeps schema-shape probes in one place.
+func TableColumns(ctx context.Context, querier interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, table string) (map[string]bool, error) {
+	rows, err := querier.QueryContext(ctx, `SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	columns := make(map[string]bool)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		columns[name] = true
+	}
+	return columns, rows.Err()
+}
+
 // ApplySchema upgrades one bundled plugin's owned database in place, then
 // prepares its plugin-local DATA SPLIT ledger. Every declaration it executes is
 // additive and idempotent; source rows remain the caller's custody throughout.
