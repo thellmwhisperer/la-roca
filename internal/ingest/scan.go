@@ -115,7 +115,9 @@ func Scan(roots Roots) Plan {
 		Kind: parsers.KindOpenCodeDB, SourceAgent: "opencode"}), "opencode_databases")
 	plan.add(existingFile(roots.HermesDB, Target{
 		Kind: parsers.KindHermesDB, SourceAgent: "hermes"}), "hermes_databases")
-	addRegisteredParsers(roots, &plan, parsers.Registered())
+	if roots.Home != "" {
+		addRegisteredParsers(roots, &plan, parsers.Registered())
+	}
 	return plan
 }
 
@@ -126,11 +128,6 @@ func Scan(roots Roots) Plan {
 // still never opened for parsing. Syntax never appears here.
 func addRegisteredParsers(roots Roots, plan *Plan, registered []parsers.Registration) {
 	for _, contribution := range registered {
-		if roots.Home == "" {
-			contribution.Locations = slices.DeleteFunc(
-				append([]string(nil), contribution.Locations...),
-				func(location string) bool { return !filepath.IsAbs(filepath.Clean(location)) })
-		}
 		if contribution.Name == "" || contribution.Parser == nil || len(contribution.Locations) == 0 {
 			continue
 		}
