@@ -69,6 +69,24 @@ type preparedSource struct {
 	db *sql.DB
 }
 
+// CutoverEligible reports whether all five DATA-3 archive families have a
+// verified population in the corpus destination. It is a cheap readiness
+// probe for DATA-6 and never opens a source snapshot.
+func CutoverEligible(ctx context.Context, destinationPath string) (bool, error) {
+	destination, err := bundledplugin.OpenDatabase(destinationPath, true)
+	if err != nil {
+		return false, err
+	}
+	defer destination.Close()
+	for _, table := range archiveSourceTables {
+		ready, err := migrationledger.MigrationCutoverEligible(ctx, destination, table.migration)
+		if err != nil || !ready {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
 func Merge(ctx context.Context, destinationPath string, sources []Source, options Options) (Report, error) {
 	prepared, err := prepareSources(ctx, destinationPath, sources)
 	if err != nil {

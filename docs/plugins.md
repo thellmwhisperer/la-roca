@@ -9,12 +9,13 @@ The kernel does not own a domain database. Its durable state is configuration
 and installed manifests. Database retention, pruning, compaction, and scale are
 plugin policy: one plugin cannot prune another plugin's history.
 
-The kernel's own attach point is an empty in-memory SQLite database. Which
-bundled domains have moved to a manifest, and the compatibility connection
-queries still attach to for the rows no plugin owns yet, are tracked by the
-runtime map in [Architecture](architecture.md#runtime-map); that compatibility
-path is not a plugin API. Either way a plugin database is opened read-only and
-reached only through its declared alias.
+The kernel's own attach point is an empty in-memory SQLite database. During the
+reversible cutover, temporary compatibility views reproduce the former core
+tables from plugin custody memberships, and temporary FTS indexes preserve the
+legacy ranking surface. The single `layout.serving` marker and rollback states
+are documented in the [runtime map](architecture.md#runtime-map). This adapter
+is not a plugin API. A plugin database is opened read-only and reached only
+through its declared alias.
 
 `roca-corpus` and `roca-ops`, the engine's manifest-backed bundled consumers,
 prove it without changing the product contract: both are resident, ingest and
@@ -334,10 +335,11 @@ reshaping them into an active surface. Bumping one of those versions is a
 schema change a released database has to adopt, so it owes what
 [releases](releases.md#schema-migration-definition-of-done) requires of one.
 
-The DATA SPLIT orphan import is staged and not invocable yet: no command, MCP
-tool or make target reaches it, so for now only the split's own Go code and
-tests run it, and the cutover orchestration step is what will give it an
-operator surface. What follows is what it does once that step lands.
+The DATA SPLIT orphan import has no command, MCP tool, or make target. Only the
+internal DATA-6 cutover coordinator in
+`internal/distribution/datasplit/cutover.go` runs it, so it remains an internal
+stage of the split rather than an operator surface. What follows is what it
+does.
 
 The import reads a verified core snapshot in read-only mode. It keeps old
 `runs` and `run_logs` as legacy cron payloads; the garden coordination tables,
@@ -390,7 +392,7 @@ into: one version table per family, full-text indexes rebuilt over the ones
 that carry text, and the evidence tying each version back to the source row it
 came from. Those tables are migration machinery rather than fleet memory, so
 they stay hidden from every query surface, and the served tables above keep
-answering exactly as before until the later atomic cutover. Each family is a
+answering exactly as before until the atomic cutover. Each family is a
 named custody migration of its own, `corpus-archive-<family>`, because a
 migration owns exactly one destination; the merge seals all five against the
 same verification digest, so a partially sealed archive is merged again rather
@@ -434,12 +436,12 @@ physical versions. Plugin-local custody memberships and
 `memory_records_fts` is rebuilt and checked before the ledger becomes
 `verified`. These names stay outside prompts and the SQL gate during shadow
 mode, so the served `memories`/`memories_fts` route and source databases remain
-untouched until a later atomic cutover.
+untouched until the atomic cutover.
 
-DATA-2 ships that engine and its frozen-home proof with no caller on purpose,
-the way DATA-1 shipped the ledger with only `Prepare` wired: no installer and no
-command invokes the copy, and deciding when a real home runs it belongs to the
-DATA-6 cutover rung. Sources are free to move between an interrupted run and its
+The DATA-6 cutover coordinator in `internal/distribution/datasplit/cutover.go`
+is DATA-2's sole runtime caller, the way DATA-1 shipped the ledger with only
+`Prepare` wired: no installer and no command invokes the copy directly. Sources
+are free to move between an interrupted run and its
 resume. A row whose payload changed is carried forward as a further version of
 the same legacy ID rather than refused, a row that disappeared keeps the
 membership its batch truthfully recorded, and both are reported as drift events;
