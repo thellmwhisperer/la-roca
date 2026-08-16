@@ -40,17 +40,29 @@ func TestFingerprintDetectsSameSizeSameMtimeEdit(t *testing.T) {
 	}
 }
 
-func TestCodexFingerprintCarriesTheHistoryParserRevision(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "history.jsonl")
-	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
-		t.Fatal(err)
+func TestVersionedFingerprintsForceParserBackfills(t *testing.T) {
+	tests := []struct {
+		name    string
+		kind    parsers.Kind
+		version string
+	}{
+		{name: "Codex history", kind: parsers.KindCodexHistory, version: "codex-history-v2"},
+		{name: "complete Pi session", kind: parsers.KindPiSession, version: "pi-session-v7"},
 	}
-	fingerprint, err := targetFingerprint(Target{Path: path, Kind: parsers.KindCodexHistory})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasSuffix(fingerprint, ":parser:codex-history-v2") {
-		t.Fatalf("Codex fingerprint = %q, want the v2 history parser revision", fingerprint)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "source.jsonl")
+			if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			fingerprint, err := targetFingerprint(Target{Path: path, Kind: tt.kind})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasSuffix(fingerprint, ":parser:"+tt.version) {
+				t.Fatalf("fingerprint = %q, want parser revision %q", fingerprint, tt.version)
+			}
+		})
 	}
 }
 

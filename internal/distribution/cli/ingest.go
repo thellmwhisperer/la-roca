@@ -108,12 +108,16 @@ func renderIngest(env *cliEnv, result service.IngestResult, verbose bool) {
 		env.print("  warning: %s", warning)
 	}
 	if result.DryRun {
-		env.print("ingest: dry run · %s pending · %s skipped · %s",
+		env.print("ingest: dry run · %s seen · %s pending · %s skipped · %s excluded · %s",
+			axi.Quantity(int64(result.FilesSeen), "file"),
 			axi.Quantity(int64(result.FilesRead), "file"), axi.Number(int64(result.FilesSkipped)),
+			axi.Number(int64(result.FilesExcluded)),
 			axi.Duration(result.ElapsedMS))
 	} else {
-		env.print("ingest: %s read · %s skipped · %s · %s",
+		env.print("ingest: %s seen · %s parsed · %s skipped · %s excluded · %s · %s",
+			axi.Quantity(int64(result.FilesSeen), "file"),
 			axi.Quantity(int64(result.FilesRead), "file"), axi.Number(int64(result.FilesSkipped)),
+			axi.Number(int64(result.FilesExcluded)),
 			axi.Quantity(int64(result.Errors), "error"), axi.Duration(result.ElapsedMS))
 	}
 	renderIngestSources(env, result)
@@ -149,8 +153,18 @@ func renderIngestSources(env *cliEnv, result service.IngestResult) {
 		if stats.RecordsDiscarded > 0 {
 			discarded = fmt.Sprintf("%s discarded · ", axi.Number(int64(stats.RecordsDiscarded)))
 		}
+		coverage := fmt.Sprintf("%s seen · %s parsed · %s skipped",
+			axi.Quantity(int64(stats.Processed+stats.FilesExcluded), "file"),
+			axi.Number(int64(stats.Read)),
+			axi.Number(int64(stats.Processed-stats.Read-stats.FilesErrored)))
+		if stats.FilesExcluded > 0 {
+			coverage += fmt.Sprintf(" · %s excluded", axi.Number(int64(stats.FilesExcluded)))
+		}
+		if stats.FilesErrored > 0 {
+			coverage += fmt.Sprintf(" · %s", axi.Quantity(int64(stats.FilesErrored), "error"))
+		}
 		env.print("  ✓ %s · %s · %s · %s · %s · %s%s",
-			ingestSourceLabel(name), axi.Quantity(int64(stats.Read), "file"),
+			ingestSourceLabel(name), coverage,
 			axi.Quantity(int64(sessions), "session"),
 			axi.Quantity(int64(counts.Exchanges), "exchange"),
 			axi.Quantity(int64(counts.MemoriesInserted+counts.MemoriesUpdated), "memory", "memories"),
@@ -289,6 +303,7 @@ func ingestSources(file config.File, home, runnerDir string) ingest.Roots {
 			CodexSessions:         file.Default("codex_sessions_root"),
 			CodexStateDB:          file.Default("codex_state_db_path"),
 			OpenCodeDB:            file.Default("opencode_db_path"),
+			PiRoot:                file.Default("pi_root"),
 			PiSessions:            file.Default("pi_sessions_root"),
 			HermesDB:              file.Default("hermes_db_path"),
 			GrokSessions:          file.Default("grok_sessions_root"),
