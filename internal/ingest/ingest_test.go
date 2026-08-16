@@ -32,7 +32,7 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 	// Every source of the matrix is scanned, and every family
 	// wrote something. A family missing from here is a family that has been lost.
 	for key, want := range map[string]int{
-		"claude_memory_files":     1, // one project file; not MEMORY.md and not the global CLAUDE.md
+		"claude_memory_files":     2, // one project file plus its coverage-only MEMORY.md manifest
 		"codex_files":             3, // one memory, one rule and one refused skill; not default.rules
 		"session_files":           1,
 		"codex_session_files":     1,
@@ -84,8 +84,8 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 	// one: the report keeps the two apart so a healthy run reads as healthy. The
 	// Grok runtime records (the system prompt and the compaction history injected
 	// as a synthetic user turn) are the same kind of deliberate exclusion.
-	if result.FilesExcluded != 1 || result.RecordsExcluded != 3 || result.RecordsDiscarded != 0 {
-		t.Errorf("excluded files/records and discards = %d/%d/%d, want 1/3/0: %+v",
+	if result.FilesExcluded != 2 || result.RecordsExcluded != 4 || result.RecordsDiscarded != 0 {
+		t.Errorf("excluded files/records and discards = %d/%d/%d, want 2/4/0: %+v",
 			result.FilesExcluded, result.RecordsExcluded, result.RecordsDiscarded, result.DiscardSummary)
 	}
 	if got := countRows(t, db.SQL(), "memories WHERE source_agent = 'config'"); got != 0 {
@@ -165,6 +165,41 @@ func TestUnreadableCoworkSidecarIsCountedPerFile(t *testing.T) {
 	if !found || result.Errors == 0 {
 		t.Fatalf("sidecar read failure was not counted: errors=%d details=%+v", result.Errors, result.ErrorDetails)
 	}
+}
+
+func TestUnreadableCoworkSidecarStillCountsTheTranscriptIngested(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: chmod cannot make a file unreadable")
+	}
+	world := newWorld(t)
+	roots := world.roots()
+	sidecar := filepath.Join(roots.CoworkSessions, "cw.json")
+	audit := filepath.Join(roots.CoworkSessions, "cw", "audit.jsonl")
+	if err := os.Chmod(sidecar, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sidecar, 0o600) })
+
+	db := rocaDatabase(t)
+	result, err := Run(context.Background(), db, registry(t), Options{Roots: roots})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := countRows(t, db.SQL(), "sessions WHERE session_id = 'cowork-1'"); got != 1 {
+		t.Fatalf("the audit transcript's content did not land: sessions=%d", got)
+	}
+	if got := coverageDetailReason(result.Coverage.Details, audit); got == "read or parse failed" {
+		t.Fatalf("the audit transcript was counted as read-or-parse failed: %+v", result.Coverage.Details)
+	}
+}
+
+func coverageDetailReason(details []CoverageDetail, path string) string {
+	for _, detail := range details {
+		if detail.Path == path {
+			return detail.Reason
+		}
+	}
+	return ""
 }
 
 // The contract of requirement M2, and it is a test and not an aspiration: running
@@ -699,7 +734,7 @@ func TestCommitRetryDoesNotDoubleReportCounters(t *testing.T) {
 	}
 	result := Result{Sources: map[string]*Counts{}}
 	target := Target{Path: path, Kind: parsers.KindSessionMetadata, SourceAgent: "claude"}
-	err := ingestOne(context.Background(), retryOnceDatabase{db.SQL()}, registry(t), Options{},
+	_, err := ingestOne(context.Background(), retryOnceDatabase{db.SQL()}, registry(t), Options{},
 		target, "fingerprint", &result)
 	if err != nil {
 		t.Fatal(err)
@@ -719,7 +754,7 @@ func TestEmptySessionIdentityIsCountedBeforeWrite(t *testing.T) {
 	}
 	result := Result{Sources: map[string]*Counts{}}
 	target := Target{Path: path, Kind: parsers.KindCoworkAudit, SourceAgent: "cowork"}
-	if err := ingestOne(context.Background(), db, registry(t), Options{}, target,
+	if _, err := ingestOne(context.Background(), db, registry(t), Options{}, target,
 		"fingerprint", &result); err != nil {
 		t.Fatal(err)
 	}

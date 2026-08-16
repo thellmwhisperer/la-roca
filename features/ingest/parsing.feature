@@ -10,7 +10,7 @@ Feature: Normalizing each family
     When I run ingest
     Then one session, one exchange, one thinking block and one tool call exist
 
-  Scenario Outline: The memory files an agent leaves behind become memories (the product's seed: MEMORY.md, memory dirs, learnings; per family)
+  Scenario Outline: The durable memory files an agent leaves behind become memories
     Given a "<family>" memory file with durable content is ready to ingest
     When I run ingest
     Then one memory from "<family>" exists
