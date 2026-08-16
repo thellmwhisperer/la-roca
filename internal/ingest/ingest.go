@@ -157,6 +157,9 @@ type Result struct {
 	RecordsExcluded  int               `json:"records_excluded"`
 	DiscardDetails   []DiscardDetail   `json:"discard_details,omitempty"`
 	DiscardSummary   []DiscardCategory `json:"discard_summary,omitempty"`
+	// MessageCoverage gives message-shaped stores a direct conversion ratio and
+	// stable reasons for every message that was not converted in this run.
+	MessageCoverage map[string]parsers.MessageCoverage `json:"message_coverage,omitempty"`
 	// Scanned is what the roots hold, per source, always with every source
 	// present: a source missing from the report reads as one nobody looked at.
 	Scanned map[string]int `json:"scanned"`
@@ -316,6 +319,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 			continue
 		}
 		if Unchanged(state, target.Path, fingerprint) {
+			result.addMessageCoverage(source, state[target.Path].MessageCoverage)
 			result.FilesSkipped++
 			result.categorizeFile("skipped", "unchanged fingerprint")
 			finishTarget()
@@ -375,6 +379,26 @@ func (r *Result) sourceStats(agent string) *SourceStats {
 	stats := &SourceStats{}
 	r.SourceStats[agent] = stats
 	return stats
+}
+
+func (r *Result) addMessageCoverage(source string, incoming *parsers.MessageCoverage) {
+	if incoming == nil {
+		return
+	}
+	if r.MessageCoverage == nil {
+		r.MessageCoverage = map[string]parsers.MessageCoverage{}
+	}
+	source = normalizedSource(source)
+	coverage := r.MessageCoverage[source]
+	coverage.Seen += incoming.Seen
+	coverage.Converted += incoming.Converted
+	if coverage.Skipped == nil {
+		coverage.Skipped = map[string]int{}
+	}
+	for reason, count := range incoming.Skipped {
+		coverage.Skipped[reason] += count
+	}
+	r.MessageCoverage[source] = coverage
 }
 
 // source makes sure a source that was scanned appears in the report even when it
@@ -530,6 +554,7 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 		kept = append(kept, session)
 	}
 	records.Sessions = kept
+	result.addMessageCoverage(target.SourceAgent, records.MessageCoverage)
 	result.ExchangesHeld += records.Deferred
 	if records.Seen.Sessions > 0 || records.Seen.Messages > 0 {
 		agent := normalizedSource(target.SourceAgent)
@@ -548,9 +573,10 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 		}
 		counts = written
 		summary := map[string]any{
-			"sessions":  written.Sessions,
-			"exchanges": written.Exchanges,
-			"memories":  written.MemoriesInserted + written.MemoriesUpdated,
+			"sessions":         written.Sessions,
+			"exchanges":        written.Exchanges,
+			"memories":         written.MemoriesInserted + written.MemoriesUpdated,
+			"message_coverage": records.MessageCoverage,
 		}
 		return RecordState(ctx, tx, target, fingerprint, "", summary)
 	})
