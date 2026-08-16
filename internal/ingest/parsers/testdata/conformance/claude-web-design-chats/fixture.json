@@ -1,0 +1,10 @@
+{
+  "parser": "claude_web_design_chats",
+  "destination": "corpus",
+  "source": "design-chat.data",
+  "meta": {"Path":"/synthetic/claude-web/design_chats/cccccccc-0000-4000-8000-000000000001.json","FileName":"cccccccc-0000-4000-8000-000000000001.json","SourceAgent":"claude-web"},
+  "want": {
+    "sessions": [{"id":"cccccccc-0000-4000-8000-000000000001","source_agent":"claude-web","project":"aaaaaaaa-0000-4000-8000-000000000001","title":"Synthetic orchard canvas","exchanges":[{"human_text":"Sketch the invented sensor.","agent_text":"A cobalt ring around an amber lens."}]}],
+    "memories": []
+  }
+}

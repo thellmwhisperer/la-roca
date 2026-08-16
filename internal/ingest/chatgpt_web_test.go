@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -70,6 +71,45 @@ func TestDeclaredChatGPTExportIsIdempotentAndNewerExportAddsOnlyDelta(t *testing
 	}
 	if model != "gpt-synthetic-message" || provider != "openai" {
 		t.Fatalf("stored provenance = %q/%q", model, provider)
+	}
+}
+
+func TestDeclaredChatGPTExportAssignsOnlySnorlaxVirtualProjects(t *testing.T) {
+	db := rocaDatabase(t)
+	result, err := Run(context.Background(), db, registry(t), Options{
+		Roots: Roots{ChatGPTWebExports: []string{filepath.Join("testdata", "openai-export-projects")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Delta.Sessions != 4 || result.Delta.Exchanges != 4 {
+		t.Fatalf("project export delta = %+v", result.Delta)
+	}
+	rows, err := db.SQL().Query(`SELECT session_id, COALESCE(project, '') FROM sessions
+		WHERE source_agent = 'chatgpt-web' ORDER BY session_id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	got := map[string]string{}
+	for rows.Next() {
+		var id, project string
+		if err := rows.Scan(&id, &project); err != nil {
+			t.Fatal(err)
+		}
+		got[id] = project
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"50000000-0000-4000-8000-000000000001": "g-p-syntheticorchard000000000000",
+		"50000000-0000-4000-8000-000000000002": "g-p-syntheticorchard000000000000",
+		"50000000-0000-4000-8000-000000000003": "",
+		"50000000-0000-4000-8000-000000000004": "",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("session projects = %v, want %v", got, want)
 	}
 }
 

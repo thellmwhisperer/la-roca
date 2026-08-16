@@ -184,7 +184,9 @@ func claudeWebMessageGraph(messages []claudeWebMessage) (map[string]int, []int, 
 }
 
 // ParseClaudeWebMemories reads each exported memory independently. UUID is the
-// preferred identity; stable list position supports older export shapes.
+// preferred identity; stable list position supports older export shapes. A
+// current-format account object expands into conversations_memory,
+// project_memories, and memory_files.
 func ParseClaudeWebMemories(reader io.Reader, meta FileMeta) (Records, error) {
 	decoder := json.NewDecoder(reader)
 	if err := openJSONArray(decoder, "Claude web memories"); err != nil {
@@ -196,23 +198,103 @@ func ParseClaudeWebMemories(reader io.Reader, meta FileMeta) (Records, error) {
 		if err := decoder.Decode(&raw); err != nil {
 			return Records{}, fmt.Errorf("decode Claude web memory %d: %w", index, err)
 		}
-		memory, reason := parseClaudeWebMemory(raw, meta, index)
-		if reason != "" {
-			category := "memory has no text"
-			if strings.Contains(reason, "neither text nor an object") {
-				category = "memory is neither text nor an object"
-			}
-			records.Discards = append(records.Discards, Discard{
-				Record: index, Reason: reason, Category: category,
-			})
-			continue
-		}
-		records.Memories = append(records.Memories, memory)
+		memories, discards := parseClaudeWebMemoryEntry(raw, meta, index)
+		records.Memories = append(records.Memories, memories...)
+		records.Discards = append(records.Discards, discards...)
 	}
 	if err := closeJSONArray(decoder, "Claude web memories"); err != nil {
 		return Records{}, err
 	}
 	return records, nil
+}
+
+func parseClaudeWebMemoryEntry(raw json.RawMessage, meta FileMeta, index int) ([]Memory, []Discard) {
+	object := map[string]json.RawMessage{}
+	if err := json.Unmarshal(raw, &object); err == nil &&
+		has(object, "conversations_memory", "project_memories", "memory_files") {
+		return parseClaudeWebAccountMemories(object, meta, index)
+	}
+	memory, reason := parseClaudeWebMemory(raw, meta, index)
+	if reason != "" {
+		category := "memory has no text"
+		if strings.Contains(reason, "neither text nor an object") {
+			category = "memory is neither text nor an object"
+		}
+		return nil, []Discard{{Record: index, Reason: reason, Category: category}}
+	}
+	return []Memory{memory}, nil
+}
+
+func parseClaudeWebAccountMemories(object map[string]json.RawMessage, meta FileMeta, index int) ([]Memory, []Discard) {
+	account := firstJSONString(object, "account_uuid")
+	var memories []Memory
+	var discards []Discard
+	if text := firstJSONString(object, "conversations_memory"); text != "" {
+		path := "memory-account:" + account
+		if account == "" {
+			path = fmt.Sprintf("%s#memory=conversations", meta.Path)
+		}
+		memories = append(memories, claudeWebUserMemory(text, "", path, meta, map[string]any{
+			"memory_kind":  "conversations_memory",
+			"account_uuid": account,
+		}))
+	}
+	projects := map[string]string{}
+	if raw, ok := object["project_memories"]; ok {
+		if err := json.Unmarshal(raw, &projects); err != nil {
+			discards = append(discards, Discard{
+				Record: index, Reason: "project_memories is unreadable: " + err.Error(),
+				Category: "claude-web project_memories is unreadable",
+			})
+		}
+	}
+	keys := make([]string, 0, len(projects))
+	for key := range projects {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, project := range keys {
+		text := strings.TrimSpace(projects[project])
+		project = strings.TrimSpace(project)
+		if text == "" || project == "" {
+			continue
+		}
+		memories = append(memories, claudeWebUserMemory(text, project, "memory-project:"+project, meta, map[string]any{
+			"memory_kind":  "project_memory",
+			"account_uuid": account,
+			"project_uuid": project,
+		}))
+	}
+	var files []claudeWebMemoryFile
+	if raw, ok := object["memory_files"]; ok {
+		if err := json.Unmarshal(raw, &files); err != nil {
+			discards = append(discards, Discard{
+				Record: index, Reason: "memory_files is unreadable: " + err.Error(),
+				Category: "claude-web memory_files is unreadable",
+			})
+		}
+	}
+	for i, file := range files {
+		text := strings.TrimSpace(file.Content)
+		if text == "" {
+			continue
+		}
+		sourcePath := strings.TrimSpace(file.Path)
+		path := "memory-file:" + sourcePath
+		if sourcePath == "" {
+			path = fmt.Sprintf("%s#memory=file-%d", meta.Path, i+1)
+		}
+		memories = append(memories, claudeWebUserMemory(text, "", path, meta, map[string]any{
+			"memory_kind":      "memory_file",
+			"account_uuid":     account,
+			"memory_file_path": sourcePath,
+			"updated_at":       validInstant(file.UpdatedAt),
+		}))
+	}
+	if len(memories) == 0 && len(discards) == 0 {
+		return nil, []Discard{{Record: index, Reason: fmt.Sprintf("memory %d has no text", index), Category: "memory has no text"}}
+	}
+	return memories, discards
 }
 
 func parseClaudeWebMemory(raw json.RawMessage, meta FileMeta, index int) (Memory, string) {
@@ -235,18 +317,214 @@ func parseClaudeWebMemory(raw json.RawMessage, meta FileMeta, index int) (Memory
 	if identity == "" {
 		path = fmt.Sprintf("%s#memory=entry-%d", meta.Path, index)
 	}
-	created := validInstant(firstJSONString(object, "created_at"))
-	updated := validInstant(firstJSONString(object, "updated_at"))
+	return claudeWebUserMemory(text, "", path, meta, map[string]any{
+		"memory_uuid": identity,
+		"created_at":  validInstant(firstJSONString(object, "created_at")),
+		"updated_at":  validInstant(firstJSONString(object, "updated_at")),
+	}), ""
+}
+
+func claudeWebUserMemory(content, project, path string, meta FileMeta, extra map[string]any) Memory {
+	created, _ := extra["created_at"].(string)
+	updated, _ := extra["updated_at"].(string)
 	metadata := WithoutEmpty(map[string]any{
-		"_cron_source": "claude-web", "file_path": path, "file_name": meta.FileName,
-		"export_file_path": meta.Path, "memory_uuid": firstJSONString(object, "uuid", "id"),
-		"updated_at": updated,
+		"_cron_source":     "claude-web",
+		"file_path":        path,
+		"file_name":        meta.FileName,
+		"export_file_path": meta.Path,
+		"memory_uuid":      extra["memory_uuid"],
+		"updated_at":       updated,
+		"memory_kind":      extra["memory_kind"],
+		"account_uuid":     extra["account_uuid"],
+		"project_uuid":     extra["project_uuid"],
+		"memory_file_path": extra["memory_file_path"],
 	})
 	return Memory{
-		Layer: "user", Content: text, Origin: "cron", SourceAgent: "claude-web",
-		Metadata: metadata, Source: "claude-web", FilePath: path,
+		Layer: "user", Content: content, Origin: "cron", SourceAgent: "claude-web",
+		Project: project, Metadata: metadata, Source: "claude-web", FilePath: path,
 		CreatedAt: firstNonEmpty(created, updated),
-	}, ""
+	}
+}
+
+type claudeWebMemoryFile struct {
+	Content   string `json:"content"`
+	Path      string `json:"path"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+type claudeWebProjectDoc struct {
+	UUID      string `json:"uuid"`
+	Filename  string `json:"filename"`
+	FileName  string `json:"file_name"`
+	Content   string `json:"content"`
+	CreatedAt string `json:"created_at"`
+}
+
+// ParseClaudeWebProject turns one official project entity and its docs into
+// store rows. Ordinary conversations are not joined here: the export has no key.
+func ParseClaudeWebProject(content []byte, meta FileMeta) (Records, error) {
+	var payload struct {
+		UUID           string                `json:"uuid"`
+		Name           string                `json:"name"`
+		Description    string                `json:"description"`
+		PromptTemplate string                `json:"prompt_template"`
+		IsPrivate      *bool                 `json:"is_private"`
+		IsStarter      *bool                 `json:"is_starter_project"`
+		CreatedAt      string                `json:"created_at"`
+		UpdatedAt      string                `json:"updated_at"`
+		Creator        json.RawMessage       `json:"creator"`
+		Docs           []claudeWebProjectDoc `json:"docs"`
+	}
+	if err := json.Unmarshal(content, &payload); err != nil {
+		return Records{}, fmt.Errorf("decode Claude web project: %w", err)
+	}
+	uuid := strings.TrimSpace(payload.UUID)
+	if uuid == "" {
+		return Records{Discards: []Discard{{Record: 1, Reason: "project has no uuid"}}}, nil
+	}
+	body := firstNonEmpty(strings.TrimSpace(payload.Description),
+		strings.TrimSpace(payload.PromptTemplate), strings.TrimSpace(payload.Name))
+	if body == "" {
+		return Records{Discards: []Discard{{Record: 1, Reason: "project has no text"}}}, nil
+	}
+	path := "project-entity:" + uuid
+	created, updated := validInstant(payload.CreatedAt), validInstant(payload.UpdatedAt)
+	metadata := WithoutEmpty(map[string]any{
+		"_cron_source":     "claude-web",
+		"file_path":        path,
+		"file_name":        meta.FileName,
+		"export_file_path": meta.Path,
+		"memory_kind":      "project_entity",
+		"uuid":             uuid,
+		"name":             strings.TrimSpace(payload.Name),
+		"description":      strings.TrimSpace(payload.Description),
+		"prompt_template":  strings.TrimSpace(payload.PromptTemplate),
+		"created_at":       created,
+		"updated_at":       updated,
+	})
+	if payload.IsPrivate != nil {
+		metadata["is_private"] = *payload.IsPrivate
+	}
+	if payload.IsStarter != nil {
+		metadata["is_starter_project"] = *payload.IsStarter
+	}
+	if len(payload.Creator) > 0 && string(payload.Creator) != "null" {
+		var creator any
+		if json.Unmarshal(payload.Creator, &creator) == nil {
+			metadata["creator"] = creator
+		}
+	}
+	memories := []Memory{{
+		Layer: "project", Content: body, Origin: "cron", SourceAgent: "claude-web",
+		Project: uuid, Metadata: metadata, Source: "claude-web", FilePath: path,
+		CreatedAt: firstNonEmpty(created, updated),
+	}}
+	for i, doc := range payload.Docs {
+		text := strings.TrimSpace(doc.Content)
+		if text == "" {
+			continue
+		}
+		docID := strings.TrimSpace(doc.UUID)
+		docPath := "project-doc:" + firstNonEmpty(docID, fmt.Sprintf("%s#%d", uuid, i+1))
+		memories = append(memories, Memory{
+			Layer: "project", Content: text, Origin: "cron", SourceAgent: "claude-web",
+			Project: uuid, Source: "claude-web", FilePath: docPath,
+			CreatedAt: validInstant(doc.CreatedAt),
+			Metadata: WithoutEmpty(map[string]any{
+				"_cron_source":     "claude-web",
+				"file_path":        docPath,
+				"file_name":        meta.FileName,
+				"export_file_path": meta.Path,
+				"memory_kind":      "project_doc",
+				"uuid":             docID,
+				"filename":         firstNonEmpty(strings.TrimSpace(doc.Filename), strings.TrimSpace(doc.FileName)),
+				"created_at":       validInstant(doc.CreatedAt),
+				"project_uuid":     uuid,
+			}),
+		})
+	}
+	return Records{Memories: memories}, nil
+}
+
+type claudeWebDesignMessage struct {
+	UUID      string          `json:"uuid"`
+	Role      string          `json:"role"`
+	CreatedAt string          `json:"created_at"`
+	Content   json.RawMessage `json:"content"`
+}
+
+// ParseClaudeWebDesignChat keeps the narrow project {uuid,name} relation the
+// official export actually states. Ordinary conversations.json items have none.
+func ParseClaudeWebDesignChat(content []byte, meta FileMeta) (Records, error) {
+	var payload struct {
+		UUID      string `json:"uuid"`
+		Title     string `json:"title"`
+		CreatedAt string `json:"created_at"`
+		UpdatedAt string `json:"updated_at"`
+		Project   struct {
+			UUID string `json:"uuid"`
+			Name string `json:"name"`
+		} `json:"project"`
+		Messages []claudeWebDesignMessage `json:"messages"`
+	}
+	if err := json.Unmarshal(content, &payload); err != nil {
+		return Records{}, fmt.Errorf("decode Claude web design chat: %w", err)
+	}
+	id := strings.TrimSpace(payload.UUID)
+	if id == "" {
+		return Records{Discards: []Discard{{Record: 1, Reason: "design chat has no uuid"}}}, nil
+	}
+	exchanges := make([]Exchange, 0, len(payload.Messages)/2)
+	for i, message := range payload.Messages {
+		if claudeWebDesignRole(message) != "assistant" || i == 0 ||
+			claudeWebDesignRole(payload.Messages[i-1]) != "user" {
+			continue
+		}
+		human := payload.Messages[i-1]
+		exchange := Exchange{
+			Number:         len(exchanges) + 1,
+			SourceID:       strings.TrimSpace(message.UUID),
+			HumanText:      claudeWebDesignText(human.Content),
+			AgentText:      claudeWebDesignText(message.Content),
+			HumanTimestamp: validInstant(human.CreatedAt),
+			AgentTimestamp: validInstant(message.CreatedAt),
+		}
+		exchange.LatencyMS = latency(exchange.HumanTimestamp, exchange.AgentTimestamp)
+		exchange.Fingerprint = claudeWebExchangeFingerprint(exchange, nil)
+		exchanges = append(exchanges, exchange)
+	}
+	started, ended := validInstant(payload.CreatedAt), validInstant(payload.UpdatedAt)
+	project := strings.TrimSpace(payload.Project.UUID)
+	return Records{Sessions: []Session{{
+		ID: id, SourceAgent: "claude-web", Project: project,
+		StartedAt: started, EndedAt: ended, DurationMinutes: minutesBetween(started, ended),
+		Title: strings.TrimSpace(payload.Title), Snapshot: true, SnapshotUpdatedAt: ended,
+		ExchangeKeyScope: "claude_web", Exchanges: exchanges,
+		Metadata: WithoutEmpty(map[string]any{
+			"created_at":   started,
+			"updated_at":   ended,
+			"project_uuid": project,
+			"project_name": strings.TrimSpace(payload.Project.Name),
+		}),
+	}}}, nil
+}
+
+func claudeWebDesignRole(message claudeWebDesignMessage) string {
+	return strings.ToLower(strings.TrimSpace(message.Role))
+}
+
+func claudeWebDesignText(raw json.RawMessage) string {
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return strings.TrimSpace(text)
+	}
+	var object struct {
+		Content string `json:"content"`
+	}
+	if json.Unmarshal(raw, &object) == nil {
+		return strings.TrimSpace(object.Content)
+	}
+	return ""
 }
 
 func firstJSONString(object map[string]json.RawMessage, keys ...string) string {

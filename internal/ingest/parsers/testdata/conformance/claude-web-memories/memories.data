@@ -1,1 +1,1 @@
-[{"uuid":"fixture-web-memory","memory":"The fictional observatory uses cobalt glass.","created_at":"2026-08-01T16:30:00Z"}]
+[{"account_uuid":"aaaaaaaa-0000-4000-8000-000000000099","conversations_memory":"The fictional observatory uses cobalt glass.","project_memories":{"aaaaaaaa-0000-4000-8000-000000000001":"The synthetic orchard sensor prefers amber glass."},"memory_files":[{"content":"Synthetic atlas memory file.","path":"memories/synthetic-atlas.md","updated_at":"2026-08-01T16:31:00Z"}]}]
