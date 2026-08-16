@@ -288,3 +288,22 @@ tables:
 		t.Errorf("a runtime that never asked for skills received a catalog: %v", err)
 	}
 }
+
+// A plugin lifecycle that cannot read the artifact registry must say so rather
+// than leave every installed catalog stale in silence: the refresh contract is
+// that a failure or a divergence is a warning, never a failed plugin command.
+func TestPluginRefreshWarnsWhenTheRegistryCannotBeRead(t *testing.T) {
+	home := skillTestHome(t)
+	var output strings.Builder
+	runSkill(t, &output, "skill", "install", "claude")
+
+	writeFile(t, filepath.Join(home, ".roca", "artifacts.json"), "{not json")
+
+	var warnings strings.Builder
+	env := &cliEnv{out: io.Discard, errOut: &warnings}
+	env.refreshCatalogSkills()
+
+	if !strings.Contains(warnings.String(), "the semantic catalog skill was not refreshed") {
+		t.Fatalf("an unreadable registry was not warned: %q", warnings.String())
+	}
+}

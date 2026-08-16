@@ -304,14 +304,15 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 			continue
 		}
 		// The canonical skill falls back to this build's own bytes when no
-		// registry entry names them. The generated catalog has no shipped bytes:
-		// its unregistered fallback is the SYSTEM zone the file itself carries,
-		// which is ours only because the zone markers are ours.
+		// registry entry names them. The generated catalog has no shipped bytes,
+		// so its unregistered fallback is empty: an empty answer refuses the
+		// withdrawal, which is the safe reading of a file this product cannot
+		// prove.
 		withdrawals := []struct {
 			kind, path, fallback string
 		}{
 			{artifactKindSkill, rocaPath, artifact.Checksum(skill.Content())},
-			{artifactKindSkillCatalog, catalogPath, checksumOfZonedSystem(catalogPath)},
+			{artifactKindSkillCatalog, catalogPath, ""},
 		}
 		for _, file := range withdrawals {
 			checksum := file.fallback
@@ -343,17 +344,6 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		}
 	}
 	return outcomes
-}
-
-// checksumOfZonedSystem is the checksum of a file's own SYSTEM zone, or empty
-// when the file is not there or carries no zones. An empty answer refuses the
-// withdrawal, which is the safe reading of a file this product cannot prove.
-func checksumOfZonedSystem(path string) string {
-	zones, err := artifact.ParseFile(path)
-	if err != nil {
-		return ""
-	}
-	return artifact.Checksum(zones.System)
 }
 
 // removeHollowSkillDirs takes back the chain a skill withdrawal could not,

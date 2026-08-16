@@ -292,7 +292,11 @@ func (env *cliEnv) refreshCatalogSkills() {
 			continue
 		}
 		entry, found, err := env.registeredArtifact(artifactKindSkillCatalog, runtime, path)
-		if err != nil || !found {
+		if err != nil {
+			env.warnCatalogRefresh(err)
+			continue
+		}
+		if !found {
 			continue
 		}
 		// RestoreMissing stays false: the plugin lifecycle is an automatic
