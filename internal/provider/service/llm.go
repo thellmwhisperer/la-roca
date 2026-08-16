@@ -637,10 +637,8 @@ func (s *Service) searchByTerm(ctx context.Context, plan query.Plan, method stri
 
 	if s.servingLayout() != LayoutLegacyServing && method != search.MethodLike {
 		if err := s.ensureHubSearch(ctx); err != nil {
-			if s.servingLayout() == LayoutShadowEqual {
-				s.rollbackShadow(fmt.Errorf("shadow hub search differs: %w", err))
-			} else {
-				return nil, nil, "", nil, nil, err
+			if recoverErr := s.recoverHubSearchFailure(err); recoverErr != nil {
+				return nil, nil, "", nil, nil, recoverErr
 			}
 		}
 	}

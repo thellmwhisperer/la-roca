@@ -251,6 +251,45 @@ func (s *Service) rollbackShadow(reason error) {
 	}
 }
 
+func (s *Service) rollbackCutover(reason error) error {
+	s.layoutMu.Lock()
+	if s.readLayout != LayoutCutover {
+		s.layoutMu.Unlock()
+		return nil
+	}
+	legacy, err := store.Open(s.opts.DBPath)
+	if err != nil {
+		s.layoutMu.Unlock()
+		return fmt.Errorf("open the legacy database after the cutover search failed: %w", err)
+	}
+	s.legacy = legacy
+	s.db = legacy
+	s.readLayout = LayoutLegacyServing
+	s.schemaMu.Lock()
+	s.schemaOK = false
+	s.schemaMu.Unlock()
+	s.layoutMu.Unlock()
+
+	if s.opts.RollbackLayout != nil {
+		if err := s.opts.RollbackLayout(fmt.Errorf("cutover hub search failed: %w", reason)); err != nil {
+			return errors.Join(reason, fmt.Errorf("persist legacy-serving rollback: %w", err))
+		}
+	}
+	return nil
+}
+
+func (s *Service) recoverHubSearchFailure(err error) error {
+	switch s.servingLayout() {
+	case LayoutShadowEqual:
+		s.rollbackShadow(fmt.Errorf("shadow hub search differs: %w", err))
+		return nil
+	case LayoutCutover:
+		return s.rollbackCutover(err)
+	default:
+		return err
+	}
+}
+
 func (s *Service) compareShadow(equal bool, hubErr error, mismatch string) {
 	if hubErr == nil && equal {
 		return
@@ -421,19 +460,30 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 	progress("agents: checking known sources")
 	progress("agents detected: " + strings.Join(detected, ", "))
 	progress("database: inspecting " + s.db.Path())
-	before, err := store.Inspect(ctx, s.db)
-	if err != nil {
-		return InitResult{}, err
-	}
-	adoption, err := store.Adopt(ctx, s.db, s.opts.BackupDir)
-	if err != nil {
-		return InitResult{}, err
-	}
-	s.schemaMu.Lock()
-	s.schemaOK = true
-	s.schemaMu.Unlock()
-	if err := s.syncLayers(ctx); err != nil {
-		return InitResult{}, err
+
+	cutover := s.servingLayout() == LayoutCutover
+	var before store.Report
+	var adoption store.Adoption
+	var err error
+	if cutover {
+		before = store.Report{Verdict: store.VerdictCurrent,
+			Reason: "the federation hub serves adopted plugin snapshots"}
+		adoption = store.Adoption{Report: before, Adopted: true}
+	} else {
+		before, err = store.Inspect(ctx, s.db)
+		if err != nil {
+			return InitResult{}, err
+		}
+		adoption, err = store.Adopt(ctx, s.db, s.opts.BackupDir)
+		if err != nil {
+			return InitResult{}, err
+		}
+		s.schemaMu.Lock()
+		s.schemaOK = true
+		s.schemaMu.Unlock()
+		if err := s.syncLayers(ctx); err != nil {
+			return InitResult{}, err
+		}
 	}
 	state := "adopted"
 	progressState := "existing"

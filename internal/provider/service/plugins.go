@@ -326,12 +326,10 @@ func schemaWithPlugins(databases []plugin.Database) query.Schema {
 
 func (s *Service) executeWithPlugins(ctx context.Context, statement, term string,
 	maxChars int, databases []plugin.Database) ([]string, []map[string]any, error) {
-	if s.hub != nil && needsHubSearch(statement) {
+	if s.servingLayout() != LayoutLegacyServing && s.hub != nil && needsHubSearch(statement) {
 		if err := s.ensureHubSearch(ctx); err != nil {
-			if s.servingLayout() == LayoutShadowEqual {
-				s.rollbackShadow(fmt.Errorf("shadow hub search differs: %w", err))
-			} else {
-				return nil, nil, err
+			if recoverErr := s.recoverHubSearchFailure(err); recoverErr != nil {
+				return nil, nil, recoverErr
 			}
 		}
 	}

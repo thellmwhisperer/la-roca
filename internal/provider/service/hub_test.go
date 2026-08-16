@@ -165,6 +165,48 @@ func TestShadowSearchServesLegacyWhenTheHubIndexIsUnavailable(t *testing.T) {
 	}
 }
 
+func TestCutoverSearchFailureRollsBackTheMarkerAndServesLegacy(t *testing.T) {
+	fixture := newHubFixture(t)
+	seedHubCoreMemory(t, fixture.plugins, 107, "Synthetic quartz hub marker")
+	seedLegacyMemories(t, fixture, []hubMemory{{107, "Synthetic quartz legacy marker"}})
+	var rollback error
+	svc := openHubService(t, fixture, LayoutCutover, func(options *Options) {
+		options.RollbackLayout = func(reason error) error { rollback = reason; return nil }
+	})
+	if err := svc.hub.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, rows, _, _, _, err := svc.searchByTerm(t.Context(), query.Plan{
+		Term: "quartz", Limit: 10,
+	}, "", DefaultMaxChars, false)
+	if err != nil || len(rows) != 1 || rows[0]["text"] != "Synthetic quartz legacy marker" ||
+		rollback == nil || !strings.Contains(rollback.Error(), "cutover hub search failed") {
+		t.Fatalf("cutover fallback rows = %+v, error = %v, rollback = %v", rows, err, rollback)
+	}
+	if svc.servingLayout() != LayoutLegacyServing {
+		t.Fatalf("serving layout after rollback = %q", svc.servingLayout())
+	}
+	if _, err := os.Stat(fixture.corePath); err != nil {
+		t.Fatalf("rollback did not open the legacy database: %v", err)
+	}
+}
+
+func TestInitUnderCutoverReportsTheServedDatabaseWithoutWritingTheHub(t *testing.T) {
+	fixture := newHubFixture(t)
+	seedHubCoreMemory(t, fixture.plugins, 108, "Synthetic quartz init marker")
+	svc := openHubService(t, fixture, LayoutCutover, nil)
+	result, err := svc.Init(t.Context())
+	if err != nil {
+		t.Fatalf("Init under cutover: %v", err)
+	}
+	if result.Database != "adopted" || result.Verdict != string(store.VerdictCurrent) {
+		t.Fatalf("init result = %+v", result)
+	}
+	if _, err := os.Stat(fixture.corePath); !os.IsNotExist(err) {
+		t.Fatalf("init under cutover touched roca.db: %v", err)
+	}
+}
+
 func TestShadowRollbackReleasesTheLayoutLockBeforePersistence(t *testing.T) {
 	svc := &Service{readLayout: LayoutShadowEqual}
 	observed := make(chan ReadLayout, 1)
