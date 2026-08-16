@@ -4,7 +4,7 @@
   "source": "conversations.data",
   "meta": {"Path":"/synthetic/chatgpt-web/conversations.data","SourceAgent":"chatgpt-web"},
   "want": {
-    "sessions": [{"id":"fixture-chatgpt-web","source_agent":"chatgpt-web","title":"Synthetic sextant","exchanges":[{"human_text":"Calibrate the invented sextant.","agent_text":"Calibration complete."}]}],
+    "sessions": [{"id":"fixture-chatgpt-web","source_agent":"chatgpt-web","project":"g-p-syntheticsextant000000000000","title":"Synthetic sextant","exchanges":[{"human_text":"Calibrate the invented sextant.","agent_text":"Calibration complete."}]}],
     "memories": []
   }
 }

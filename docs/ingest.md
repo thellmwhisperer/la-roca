@@ -52,10 +52,11 @@ roca ingest ~/exports/claude-data
 ```
 
 Point to the extracted directory, not to an individual JSON file. La Roca reads
-`conversations.json` and `memories.json` when present. Import another snapshot
-with another explicit command. La Roca never scans Downloads or another broad
-directory for exports and ignores `projects/`, `design_chats/`, `users.json`, and
-`login_history.json`.
+`conversations.json` and `memories.json` when present, plus each
+`projects/<uuid>.json` entity and its `docs`, and each `design_chats/*.json`
+record. Import another snapshot with another explicit command. La Roca never
+scans Downloads or another broad directory for exports and ignores `users.json`
+and `login_history.json`.
 
 ## Import an OpenAI data export
 
@@ -79,7 +80,12 @@ earlier release stored carries no record of how much its snapshot stated, and an
 absent record is not a low one: such a row is filled where it is empty and never
 overwritten, so an upgrade cannot cost a corpus provenance it already had.
 
-Each `conversation_id` becomes an unprojected `chatgpt-web` session. La Roca
+Each `conversation_id` becomes a `chatgpt-web` session. When the conversation
+envelope has `gizmo_type` `snorlax` and a non-empty `gizmo_id`, that opaque
+`g-p-...` id becomes the session project. The export does not carry the project's
+display name, and La Roca does not invent one. `gizmo_type` `gpt` is a Custom
+GPT: its gizmo fields stay in session metadata and do not become a project.
+Ordinary chats without a snorlax gizmo stay unprojected. La Roca
 walks the `mapping` parent/children tree and pairs user messages with assistant
 replies, retaining alternate branches. An unreadable conversation envelope is
 discarded on its own without stopping later conversations in the same file;
@@ -106,14 +112,24 @@ attachment bytes.
 
 ## What enters the corpus
 
-Each conversation UUID becomes an unprojected `claude-web` session whose name
-and summary are retained as metadata. Human and assistant messages are paired by
+Each ordinary conversation UUID becomes an unprojected `claude-web` session
+whose name and summary are retained as metadata. The official personal export
+has no conversation-to-project join, so La Roca does not assign those sessions
+to a project. Human and assistant messages are paired by
 `parent_message_uuid`, then ordered by timestamp; alternate replies remain
 separate exchanges instead of collapsing a branch. An unreadable message is
 discarded on its own with its source record and precise reason; its readable
 descendants are reparented to the nearest surviving ancestor, or begin a new
 timestamp-ordered thread when none survives. A missing parent and an unpaired
 readable message are not malformed records and do not poison later exchanges.
+
+Each `projects/<uuid>.json` file becomes a named project entity (uuid, name,
+description, prompt_template, timestamps) and one content row per `docs` item,
+both on the `project` layer.
+`memories.json` contributes `conversations_memory`, `project_memories` keyed by
+project uuid, and each `memory_files` entry. A `design_chats/*.json` record
+keeps the `project {uuid,name}` relation the export states; its session project
+is that uuid. Membership is never inferred from titles or similarity.
 
 The conversation-file fingerprint includes the parser revision. After an ingest
 fix changes normalization, the next `roca ingest` reopens an unchanged export,

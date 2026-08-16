@@ -1,0 +1,13 @@
+{
+  "parser": "claude_web_projects",
+  "destination": "store",
+  "source": "project.data",
+  "meta": {"Path":"/synthetic/claude-web/projects/aaaaaaaa-0000-4000-8000-000000000001.json","FileName":"aaaaaaaa-0000-4000-8000-000000000001.json","SourceAgent":"claude-web"},
+  "want": {
+    "sessions": [],
+    "memories": [
+      {"layer":"project","content":"A fictional indoor orchard sensor programme.","source_agent":"claude-web","project":"aaaaaaaa-0000-4000-8000-000000000001"},
+      {"layer":"project","content":"The invented sensor is called Amber Finch.","source_agent":"claude-web","project":"aaaaaaaa-0000-4000-8000-000000000001"}
+    ]
+  }
+}

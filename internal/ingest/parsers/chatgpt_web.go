@@ -11,13 +11,17 @@ import (
 )
 
 type chatGPTConversation struct {
-	ConversationID   string                     `json:"conversation_id"`
-	Title            string                     `json:"title"`
-	CreateTime       *float64                   `json:"create_time"`
-	UpdateTime       *float64                   `json:"update_time"`
-	DefaultModelSlug string                     `json:"default_model_slug"`
-	CurrentNode      string                     `json:"current_node"`
-	Mapping          map[string]json.RawMessage `json:"mapping"`
+	ConversationID         string                     `json:"conversation_id"`
+	Title                  string                     `json:"title"`
+	CreateTime             *float64                   `json:"create_time"`
+	UpdateTime             *float64                   `json:"update_time"`
+	DefaultModelSlug       string                     `json:"default_model_slug"`
+	CurrentNode            string                     `json:"current_node"`
+	GizmoType              string                     `json:"gizmo_type"`
+	GizmoID                string                     `json:"gizmo_id"`
+	ConversationTemplateID string                     `json:"conversation_template_id"`
+	MemoryScope            string                     `json:"memory_scope"`
+	Mapping                map[string]json.RawMessage `json:"mapping"`
 }
 
 type chatGPTNode struct {
@@ -144,14 +148,24 @@ func parseChatGPTConversation(payload chatGPTConversation, recordBase int) (Reco
 		})
 	}
 	started, ended := chatGPTInstant(payload.CreateTime), chatGPTInstant(payload.UpdateTime)
+	gizmoType := strings.TrimSpace(payload.GizmoType)
+	gizmoID := strings.TrimSpace(payload.GizmoID)
+	project := ""
+	if gizmoType == "snorlax" && gizmoID != "" {
+		project = gizmoID
+	}
 	metadata := WithoutEmpty(map[string]any{
-		"created_at":         started,
-		"updated_at":         ended,
-		"default_model_slug": strings.TrimSpace(payload.DefaultModelSlug),
-		"current_node":       strings.TrimSpace(payload.CurrentNode),
+		"created_at":               started,
+		"updated_at":               ended,
+		"default_model_slug":       strings.TrimSpace(payload.DefaultModelSlug),
+		"current_node":             strings.TrimSpace(payload.CurrentNode),
+		"gizmo_type":               gizmoType,
+		"gizmo_id":                 gizmoID,
+		"conversation_template_id": strings.TrimSpace(payload.ConversationTemplateID),
+		"memory_scope":             strings.TrimSpace(payload.MemoryScope),
 	})
 	return Records{Sessions: []Session{{
-		ID: payload.ConversationID, SourceAgent: "chatgpt-web",
+		ID: payload.ConversationID, SourceAgent: "chatgpt-web", Project: project,
 		StartedAt: started, EndedAt: ended, DurationMinutes: minutesBetween(started, ended),
 		Title: strings.TrimSpace(payload.Title), Metadata: metadata,
 		Snapshot: true, SnapshotUpdatedAt: ended,

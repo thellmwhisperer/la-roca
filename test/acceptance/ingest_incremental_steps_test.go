@@ -29,6 +29,11 @@ func registerIngestIncrementalSteps(ctx *godog.ScenarioContext, w *ingestAccepta
 		w.exportPath = export
 		return copyAnthropicExportFixture(export)
 	})
+	ctx.Given(`^an extracted Anthropic export with project surfaces is ready to ingest$`, func() error {
+		export := filepath.Join(w.home, "declared-anthropic-export-projects")
+		w.exportPath = export
+		return copyExportTree(export, "anthropic-export-projects")
+	})
 	ctx.Given(`^an extracted OpenAI export is ready to ingest$`, func() error {
 		export := filepath.Join(w.home, "declared-openai-export-v1")
 		w.exportPath = export
@@ -36,6 +41,11 @@ func registerIngestIncrementalSteps(ctx *godog.ScenarioContext, w *ingestAccepta
 			return err
 		}
 		return nil
+	})
+	ctx.Given(`^an extracted OpenAI export with project chats is ready to ingest$`, func() error {
+		export := filepath.Join(w.home, "declared-openai-export-projects")
+		w.exportPath = export
+		return copyOpenAIExportFixture(export, "openai-export-projects")
 	})
 	ctx.Given(`^an extracted sharded OpenAI export is ready to ingest$`, func() error {
 		export := filepath.Join(w.home, "declared-openai-export-sharded")
@@ -185,6 +195,40 @@ func registerIngestIncrementalSteps(ctx *godog.ScenarioContext, w *ingestAccepta
 		}
 		return nil
 	})
+	ctx.Then(`^Claude project entities documents and memories land$`, func() error {
+		for query, want := range map[string]int{
+			`SELECT COUNT(*) FROM memories WHERE source_agent = 'claude-web' AND layer = 'project'`:                                4,
+			`SELECT COUNT(*) FROM memories WHERE source_agent = 'claude-web' AND layer = 'user' AND origin = 'cron'`:               5,
+			`SELECT COUNT(*) FROM memories WHERE source_agent = 'claude-web' AND project = 'aaaaaaaa-0000-4000-8000-000000000001'`: 4,
+		} {
+			if err := expectQueryCount(w, query, want); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	ctx.Then(`^ordinary Claude conversations stay unprojected$`, func() error {
+		return expectQueryCount(w, `SELECT COUNT(*) FROM sessions
+			WHERE session_id = '10000000-0000-4000-8000-000000000099'
+			  AND source_agent = 'claude-web' AND project IS NULL`, 1)
+	})
+	ctx.Then(`^the design chat keeps its project uuid$`, func() error {
+		return expectQueryCount(w, `SELECT COUNT(*) FROM sessions
+			WHERE session_id = 'cccccccc-0000-4000-8000-000000000001'
+			  AND project = 'aaaaaaaa-0000-4000-8000-000000000001'`, 1)
+	})
+	ctx.Then(`^ChatGPT snorlax chats share a virtual project keyed by gizmo id$`, func() error {
+		return expectQueryCount(w, `SELECT COUNT(*) FROM sessions
+			WHERE source_agent = 'chatgpt-web'
+			  AND project = 'g-p-syntheticorchard000000000000'`, 2)
+	})
+	ctx.Then(`^Custom GPT chats stay unprojected$`, func() error {
+		return expectQueryCount(w, `SELECT COUNT(*) FROM sessions
+			WHERE session_id IN (
+			  '50000000-0000-4000-8000-000000000003',
+			  '50000000-0000-4000-8000-000000000004'
+			) AND project IS NULL`, 2)
+	})
 	ctx.Then(`^the ChatGPT exchanges retain OpenAI provenance$`, func() error {
 		return expectQueryCount(w, `SELECT COUNT(*) FROM exchanges e
 			JOIN sessions s ON s.session_id = e.session_id
@@ -243,6 +287,27 @@ func copyOpenAIExportFixture(target, fixtureName string) error {
 		names = append(names, entry.Name())
 	}
 	return copyExportFixture(target, fixtureName, names)
+}
+
+func copyExportTree(target, fixtureName string) error {
+	fixture := filepath.Join("..", "..", "internal", "ingest", "testdata", fixtureName)
+	return filepath.WalkDir(fixture, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(fixture, path)
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return os.MkdirAll(filepath.Join(target, rel), 0o700)
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return writeFixture(filepath.Join(target, rel), string(raw))
+	})
 }
 
 func copyExportFixture(target, fixtureName string, names []string) error {

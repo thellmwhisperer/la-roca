@@ -5,6 +5,10 @@
   "meta": {"Path":"/synthetic/claude-web/memories.data","FileName":"memories.data","SourceAgent":"claude-web"},
   "want": {
     "sessions": [],
-    "memories": [{"layer":"user","content":"The fictional observatory uses cobalt glass.","source_agent":"claude-web"}]
+    "memories": [
+      {"layer":"user","content":"The fictional observatory uses cobalt glass.","source_agent":"claude-web"},
+      {"layer":"user","content":"The synthetic orchard sensor prefers amber glass.","source_agent":"claude-web","project":"aaaaaaaa-0000-4000-8000-000000000001"},
+      {"layer":"user","content":"Synthetic atlas memory file.","source_agent":"claude-web"}
+    ]
   }
 }
