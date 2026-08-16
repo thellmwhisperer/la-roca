@@ -122,6 +122,13 @@ itself, and anything climbing out of it are refused: the harness fails the
 registry line and a shipped one warns the operator instead of walking the
 machine.
 
+`FileName`, when set, narrows a directory `Location` to the one store file that
+source owns, so a database directory that also holds WAL, SHM and manifest
+sidecars is scanned without admitting a foreign file the directory holds. A
+`Location` that is itself a file is always read literally, so one line can
+declare both a narrow directory and exact files; leave `FileName` empty to keep
+a directory walking every regular file beneath it.
+
 The same locations name what `TestRegisteredParsersHarvestPresentAgentStores`
 reads. That smoke is opt-in twice over: it runs only when you set
 `ROCA_REAL_HARVEST=1`, and then only for the declared stores that exist on the
