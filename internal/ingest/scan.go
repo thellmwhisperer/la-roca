@@ -778,25 +778,11 @@ func jsonlIn(dir string) []string {
 	return paths
 }
 
-// filesUnder collects every file under a root whose name ends in `extension`,
-// each one a copy of the shape its source declared. An undeclared root and an
-// unreadable branch both contribute nothing, which is the normal state of a
-// machine that does not run that agent.
+// filesUnder collects every file under a root whose name ends in `extension`.
 func filesUnder(root, extension string, shape Target) []Target {
-	if root == "" {
-		return nil
-	}
-	var targets []Target
-	filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil || !entry.Type().IsRegular() ||
-			!strings.HasSuffix(entry.Name(), extension) {
-			return nil
-		}
-		shape.Path, shape.FileName = path, entry.Name()
-		targets = append(targets, shape)
-		return nil
+	return targetsUnder(root, shape, func(name string) bool {
+		return strings.HasSuffix(name, extension)
 	})
-	return targets
 }
 
 // namedFilesUnder collects the one store file a directory Location targets.
@@ -804,12 +790,22 @@ func filesUnder(root, extension string, shape Target) []Target {
 // matching the base name keeps those out of the scan without admitting a
 // foreign file the directory also holds.
 func namedFilesUnder(root, name string, shape Target) []Target {
+	return targetsUnder(root, shape, func(fileName string) bool {
+		return fileName == name
+	})
+}
+
+// targetsUnder walks a root for the regular files `keep` accepts, each one a
+// copy of the shape its source declared. An undeclared root and an unreadable
+// branch both contribute nothing, which is the normal state of a machine that
+// does not run that agent.
+func targetsUnder(root string, shape Target, keep func(string) bool) []Target {
 	if root == "" {
 		return nil
 	}
 	var targets []Target
 	filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil || !entry.Type().IsRegular() || entry.Name() != name {
+		if err != nil || !entry.Type().IsRegular() || !keep(entry.Name()) {
 			return nil
 		}
 		shape.Path, shape.FileName = path, entry.Name()
