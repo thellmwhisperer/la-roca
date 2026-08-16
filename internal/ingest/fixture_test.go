@@ -257,7 +257,8 @@ func (w *world) seedHermes(t *testing.T, path string) {
 	exec(t, db, `INSERT INTO messages VALUES (2,'h1','assistant','nine','we have to count',
 	              '[{"function":{"name":"grep","arguments":"{\"pattern\":\"source\"}"}}]',NULL,1785542401,1,'stop')`)
 	exec(t, db, `INSERT INTO messages VALUES (3,'h1','tool','{"ok":true}',NULL,NULL,'grep',1785542402,1,NULL)`)
-	// A session Hermes has not closed: it is not read until it has an ending.
+	// A session Hermes has not closed: it is read whole, and its unanswered
+	// human turn is deferred rather than stored as an answer.
 	exec(t, db, `INSERT INTO sessions VALUES ('h2','tui','test-model',?,'live',
 	              1785542800, NULL, NULL, 1, 0, 10, 1, 0, NULL, 'fixture-hermes-provider')`,
 		w.demoCwd())
