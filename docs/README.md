@@ -13,7 +13,8 @@ Reading order, from operator to contributor:
 4. [Agent parser contribution kit](agent-parsers.md): support another agent with
    a measured real store, a synthetic fixture, one parser file, and one registry
    line.
-5. [Plugins](plugins.md): the manifest engine, isolated plugin-owned databases,
+5. [Plugins](plugins.md): a copy-verbatim quickstart to your first installed
+   plugin, then the manifest engine, isolated plugin-owned databases,
    executable capabilities, package lifecycle, and a build-your-own example.
 6. [The MCP plug](mcp.md): the stdio server, its six tools, the TOON answer
    contract, and the supported integration targets.

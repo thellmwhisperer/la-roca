@@ -30,6 +30,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - OpenCode normalization is message-shaped in `internal/ingest/opencode.go`: every finished message owns one exchange and its recorded model, reasoning/tool/patch parts stay with it, todos live in session metadata, and step/event telemetry stays outside the corpus. Keep the `opencode-v7` watermark and source-ID rewrite path in sync when that projection changes.
 - Records left out are reported apart: `parsers.Discard.ByDesign` is what this build never meant to read, and everything else is what it could not read. Collapsing the two is what made a healthy ingest report thousands of failures.
 - Cron ride manifests are optional `rides.toml` plugin payloads; `internal/provider/plugin/rides.go` owns discovery, but only installer-manifested, checksum-verified payloads whose recorded consent is executable may contribute rides, because a declared ride is an execution surface and never data-only. The observer and canonical custodial journey database live in `internal/distribution/rocacron`, and the train probes but never holds the core log lock.
+- The `docs/plugins.md` quickstart (`first-receipts`) is a copy-verbatim walkthrough hand-verified against the shipping binary: keep its steps working against a scratch `--db-path` database whenever the plugin surface changes, and keep its example names clear of the bundled `roca-corpus`/`roca-ops` seats.
 
 ## Maintaining this file
 
