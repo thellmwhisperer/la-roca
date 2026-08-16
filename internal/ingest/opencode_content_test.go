@@ -87,6 +87,22 @@ func TestOpenCodeConvertsEachFinishedMessageAndItsContent(t *testing.T) {
 		!strings.Contains(string(encoded), "archive the synthetic beacon") {
 		t.Errorf("todos = %s", encoded)
 	}
+	todos := session.Metadata["todos"].([]map[string]any)
+	if position, exists := todos[0]["position"]; !exists || position != 0 {
+		t.Errorf("first todo position = %v, exists %t", position, exists)
+	}
+	_, structuredFailure := (openCodePart{State: json.RawMessage(
+		`{"status":"error","error":{"message":"invented structured failure"}}`,
+	)}).toolState()
+	if structuredFailure != `{"message":"invented structured failure"}` {
+		t.Errorf("structured tool failure = %q", structuredFailure)
+	}
+	unique, duplicateComplaints := uniqueOpenCodeSessions([]row{
+		{"id": "synthetic-duplicate"}, {"id": "synthetic-duplicate"},
+	})
+	if len(unique) != 1 || len(duplicateComplaints) != 1 {
+		t.Errorf("duplicate sessions = %d/%v", len(unique), duplicateComplaints)
+	}
 	all, _ := json.Marshal(records)
 	if strings.Contains(string(all), "TELEMETRY-MUST-NOT-LAND") ||
 		strings.Contains(string(all), "EVENT-MUST-NOT-LAND") {
@@ -142,11 +158,11 @@ func TestOpenCodeBackfillSplitsLegacyPairsWithoutDuplicates(t *testing.T) {
 	}
 	legacyDocument := map[string]any{"opencode": map[string]any{
 		"source_exchange_ids": map[string]any{
-			"user-1": 1, "assistant-1": 2, "assistant-3": 2,
+			"user-1": 1, "assistant-1": 2, "assistant-3": 2, "deleted-message": 5,
 		},
 		"source_exchange_fingerprints": map[string]any{
 			"user-1": "legacy-pair", "assistant-1": fingerprints["assistant-1"],
-			"assistant-3": fingerprints["assistant-3"],
+			"assistant-3": fingerprints["assistant-3"], "deleted-message": "deleted",
 		},
 	}}
 	legacyMetadata, err := json.Marshal(legacyDocument)
@@ -271,6 +287,39 @@ func TestOpenCodeBackfillSplitsLegacyPairsWithoutDuplicates(t *testing.T) {
 	}
 	if strings.Join(models, ",") != ",synthetic-model-a,synthetic-model-b,synthetic-model-c" {
 		t.Errorf("per-message models = %v", models)
+	}
+
+	allExchanges := records.Sessions[0].Exchanges
+	records.Sessions[0].SnapshotUpdatedAt = "2026-08-01T00:00:00Z"
+	records.Sessions[0].Exchanges = allExchanges[:1]
+	if err := db.Write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE sessions SET metadata = json_set(metadata,
+			'$.updated_at', '2026-08-02T00:00:00Z') WHERE session_id = ?`,
+			"opencode:synthetic-opencode-session")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if stale := write(); stale.ExchangesDeleted != 0 {
+		t.Fatalf("stale snapshot pruned current rows: %+v", stale)
+	}
+	records.Sessions[0].SnapshotUpdatedAt = ""
+	records.Sessions[0].Exchanges = nil
+	if empty := write(); empty.ExchangesDeleted != 4 {
+		t.Fatalf("empty authoritative snapshot = %+v, want four deleted", empty)
+	}
+	var remaining, mapped int
+	if err := db.SQL().QueryRow(`SELECT COUNT(*) FROM exchanges
+		WHERE session_id = 'opencode:synthetic-opencode-session'`).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SQL().QueryRow(`SELECT COUNT(*) FROM sessions, json_each(
+		json_extract(metadata, '$.opencode.source_exchange_ids'))
+		WHERE session_id = 'opencode:synthetic-opencode-session'`).Scan(&mapped); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 0 || mapped != 0 {
+		t.Fatalf("empty snapshot left exchanges/map entries = %d/%d", remaining, mapped)
 	}
 }
 

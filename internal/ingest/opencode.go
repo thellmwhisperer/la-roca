@@ -98,7 +98,7 @@ func (p openCodePart) status() string {
 func (p openCodePart) toolState() (input, failure string) {
 	var state struct {
 		Input json.RawMessage `json:"input"`
-		Error string          `json:"error"`
+		Error json.RawMessage `json:"error"`
 	}
 	if json.Unmarshal(p.State, &state) != nil {
 		return "", ""
@@ -109,7 +109,15 @@ func (p openCodePart) toolState() (input, failure string) {
 			input = compact.String()
 		}
 	}
-	return parsers.Clip(input, openCodeParamsBudget), parsers.Clip(state.Error, openCodeErrorBudget)
+	if len(state.Error) > 0 && string(state.Error) != "null" {
+		if json.Unmarshal(state.Error, &failure) != nil {
+			var compact bytes.Buffer
+			if json.Compact(&compact, state.Error) == nil {
+				failure = compact.String()
+			}
+		}
+	}
+	return parsers.Clip(input, openCodeParamsBudget), parsers.Clip(failure, openCodeErrorBudget)
 }
 
 type openCodeRow struct {
@@ -149,6 +157,7 @@ func ReadOpenCode(ctx context.Context, path string) (parsers.Records, []string, 
 	if err != nil {
 		return parsers.Records{}, nil, err
 	}
+	sessions, duplicateComplaints := uniqueOpenCodeSessions(sessions)
 	messages, malformedMessages, err := openCodeDocuments(ctx, db,
 		`SELECT id, session_id, time_created, time_updated, data FROM message
 		 ORDER BY time_created, id`, true)
@@ -184,7 +193,7 @@ func ReadOpenCode(ctx context.Context, path string) (parsers.Records, []string, 
 	records := parsers.Records{MessageCoverage: &parsers.MessageCoverage{
 		Seen: len(messages), Skipped: map[string]int{},
 	}}
-	var complaints []string
+	complaints := duplicateComplaints
 	for _, id := range slices.Sorted(maps.Keys(malformed)) {
 		complaints = append(complaints, fmt.Sprintf("OpenCode session %s: %s", id, malformed[id]))
 	}
@@ -224,6 +233,23 @@ func ReadOpenCode(ctx context.Context, path string) (parsers.Records, []string, 
 		}
 	}
 	return records, complaints, nil
+}
+
+func uniqueOpenCodeSessions(sessions []row) ([]row, []string) {
+	unique := make([]row, 0, len(sessions))
+	seen := map[string]bool{}
+	var complaints []string
+	for _, session := range sessions {
+		id := session.text("id")
+		if seen[id] {
+			complaints = append(complaints,
+				fmt.Sprintf("OpenCode session %s: duplicate session row", id))
+			continue
+		}
+		seen[id] = true
+		unique = append(unique, session)
+	}
+	return unique, complaints
 }
 
 // openCodeDocuments reads one table and decodes its JSON payload. A row whose
@@ -312,6 +338,7 @@ func openCodeSession(path string, source row, worktrees map[string]string,
 		Project:                firstNonEmpty(baseName(worktree), baseName(source.text("directory"))),
 		StartedAt:              isoFromMS(created),
 		EndedAt:                isoFromMS(updated),
+		SnapshotUpdatedAt:      isoFromMS(updated),
 		Snapshot:               true,
 		ExchangeKeyScope:       openCodeScope,
 		PruneUnmappedExchanges: true,
@@ -331,6 +358,7 @@ func openCodeSession(path string, source row, worktrees map[string]string,
 		"session_directory": source.text("directory"),
 		"version":           source.text("version"),
 		"agent":             source.text("agent"),
+		"updated_at":        isoFromMS(updated),
 		"todos":             todos,
 	})
 	var sessionDeferred int

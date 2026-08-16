@@ -310,15 +310,21 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 			counts.ThinkingBlocks++
 		}
 	}
-	if session.PruneUnmappedExchanges && completeSourceAssignments(assigned, session.Exchanges) {
-		deleted, err := w.pruneUnmappedExchanges(ctx, session.ID, assigned)
-		if err != nil {
-			return counts, err
+	rewroteAssignments := false
+	if session.Snapshot && session.PruneUnmappedExchanges {
+		currentAssignments, complete := currentSourceAssignments(assigned, session.Exchanges)
+		if complete {
+			deleted, err := w.pruneUnmappedExchanges(ctx, session.ID, currentAssignments)
+			if err != nil {
+				return counts, err
+			}
+			counts.ExchangesDeleted += deleted
+			assigned = currentAssignments
+			rewroteAssignments = true
 		}
-		counts.ExchangesDeleted += deleted
 	}
 
-	if len(assigned) > 0 {
+	if len(assigned) > 0 || rewroteAssignments {
 		putExchangeMap(metadata, session.ExchangeKeyScope, assigned)
 	}
 	if len(metadata) > 0 {
@@ -329,17 +335,19 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 	return counts, nil
 }
 
-func completeSourceAssignments(assigned map[string]exchangeKey,
-	exchanges []parsers.Exchange) bool {
+func currentSourceAssignments(assigned map[string]exchangeKey,
+	exchanges []parsers.Exchange) (map[string]exchangeKey, bool) {
+	current := make(map[string]exchangeKey, len(exchanges))
 	numbers := map[int]bool{}
 	for _, exchange := range exchanges {
 		known, exists := assigned[exchange.SourceID]
 		if exchange.SourceID == "" || !exists || known.Number <= 0 || numbers[known.Number] {
-			return false
+			return nil, false
 		}
 		numbers[known.Number] = true
+		current[exchange.SourceID] = known
 	}
-	return len(exchanges) > 0
+	return current, true
 }
 
 func (w *writer) pruneUnmappedExchanges(ctx context.Context, sessionID string,
@@ -1398,6 +1406,16 @@ func historyFallbackNumbers(current row) map[int]bool {
 // Each adapter writes the exchange-map shape it also reads; using one shape for
 // both would leave the other adapter unable to find its entries.
 func putExchangeMap(metadata map[string]any, scope string, assigned map[string]exchangeKey) {
+	if len(assigned) == 0 {
+		if scope != "" {
+			metadata[scope] = nil
+		} else {
+			metadata["source_exchange_ids"] = nil
+			metadata["source_exchange_fingerprints"] = nil
+			metadata["source_exchange_signal"] = nil
+		}
+		return
+	}
 	ids := map[string]any{}
 	fingerprints := map[string]any{}
 	signals := map[string]any{}
@@ -1434,6 +1452,8 @@ func putExchangeMap(metadata map[string]any, scope string, assigned map[string]e
 	// that one out is what would make "stated nothing" read as "nobody looked".
 	if len(signals) > 0 {
 		into["source_exchange_signal"] = signals
+	} else {
+		into["source_exchange_signal"] = nil
 	}
 }
 
