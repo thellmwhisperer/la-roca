@@ -311,7 +311,7 @@ exactly the information the task needs instead of a whole skill.
 | ChatGPT export you point it at | Conversations from the official OpenAI data export |
 | Codex | Sessions, memory, rule and skill files, and what matters from its state database |
 | OpenCode | Sessions and exchanges, distilled from its local database |
-| Pi | Session files |
+| Pi | Complete session tree, including nested child runs |
 | Hermes | Sessions, distilled from its state database |
 | Grok Build | Sessions, from the session update stream and its metadata sidecar |
 

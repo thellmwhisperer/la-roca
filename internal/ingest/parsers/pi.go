@@ -33,8 +33,11 @@ var piTerminalReasons = map[string]bool{
 }
 
 type piEntry struct {
-	ID   string `json:"id"`
-	Type string `json:"type"`
+	ID      string          `json:"id"`
+	Type    string          `json:"type"`
+	Summary string          `json:"summary"`
+	Name    string          `json:"name"`
+	Content json.RawMessage `json:"content"`
 	// ParentID is a pointer so a declared null can be told from an absent key:
 	// the root declares null, and an entry with no key at all is malformed.
 	ParentID  *string    `json:"parentId"`
@@ -67,6 +70,10 @@ type piMessage struct {
 	StopReason string          `json:"stopReason"`
 	ToolCallID string          `json:"toolCallId"`
 	IsError    bool            `json:"isError"`
+	Command    string          `json:"command"`
+	ExitCode   *int            `json:"exitCode"`
+	Cancelled  bool            `json:"cancelled"`
+	Exclude    bool            `json:"excludeFromContext"`
 	Model      string          `json:"model"`
 	Provider   string          `json:"provider"`
 	Usage      *piUsage        `json:"usage"`
@@ -87,13 +94,14 @@ type piUsage struct {
 }
 
 type piBlock struct {
-	Type      string `json:"type"`
-	Text      string `json:"text"`
-	Thinking  string `json:"thinking"`
-	Redacted  bool   `json:"redacted"`
-	Encrypted bool   `json:"encrypted"`
-	ID        string `json:"id"`
-	Name      string `json:"name"`
+	Type      string          `json:"type"`
+	Text      string          `json:"text"`
+	Thinking  string          `json:"thinking"`
+	Redacted  bool            `json:"redacted"`
+	Encrypted bool            `json:"encrypted"`
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments"`
 }
 
 type piHeader struct {
@@ -162,11 +170,13 @@ func ParsePiSession(content []byte, meta FileMeta) (Records, error) {
 	if err != nil {
 		return Records{}, err
 	}
-	exchanges, stillOpen, exchangeDiscards := piExchanges(active)
+	exchanges, sessionThinking, title, stillOpen, exchangeDiscards := piExchanges(active)
 	deferred += stillOpen
 	discards = append(discards, exchangeDiscards...)
 
 	session.Exchanges = exchanges
+	session.Thinking = sessionThinking
+	session.Title = title
 	session.Metadata["source_high_water_id"] = active[len(active)-1].ID
 	if at := isoFromAnyInstant(active[len(active)-1].Timestamp); at != "" {
 		session.Metadata["source_high_water_at"] = at
@@ -298,6 +308,7 @@ type piPending struct {
 	thinking   []string
 	calls      []string
 	callNames  map[string]string
+	callParams map[string]string
 	results    map[string]bool
 	errors     map[string]bool
 	invalid    bool
@@ -308,13 +319,13 @@ type piPending struct {
 }
 
 // claim records what one assistant message of the turn declared about itself.
-// Pi answers a turn with several messages, so the counts add up and the first
-// model named keeps the turn.
+// Pi answers a turn with several messages, so the counts add up and the last
+// named model is the one that produced the terminal answer.
 func (p *piPending) claim(message *piMessage) {
-	if p.model == "" {
+	if message.Model != "" {
 		p.model = message.Model
 	}
-	if p.provider == "" {
+	if message.Provider != "" {
 		p.provider = message.Provider
 	}
 	usage := message.Usage
@@ -336,10 +347,12 @@ func (p *piPending) claim(message *piMessage) {
 	}
 }
 
-func piExchanges(active []*piEntry) ([]Exchange, int, []Discard) {
+func piExchanges(active []*piEntry) ([]Exchange, []Thinking, string, int, []Discard) {
 	var exchanges []Exchange
+	var sessionThinking []Thinking
 	var pending *piPending
 	compacted := false
+	title := ""
 	deferred := 0
 	number := 0
 	var discards []Discard
@@ -359,8 +372,46 @@ func piExchanges(active []*piEntry) ([]Exchange, int, []Discard) {
 	}
 
 	for _, entry := range active {
-		if entry.Type == "compaction" {
+		switch entry.Type {
+		case "compaction":
 			compacted = true
+			if summary := strings.TrimSpace(entry.Summary); summary != "" {
+				sessionThinking = append(sessionThinking, piSessionThinking("compact", summary))
+			} else {
+				discards = append(discards, Discard{Record: entry.record,
+					Reason: "Pi compaction has no readable summary"})
+			}
+			continue
+		case "branch_summary":
+			if summary := strings.TrimSpace(entry.Summary); summary != "" {
+				sessionThinking = append(sessionThinking, piSessionThinking("branch", summary))
+			} else {
+				discards = append(discards, Discard{Record: entry.record,
+					Reason: "Pi branch summary has no readable text"})
+			}
+			continue
+		case "custom_message":
+			contentExclusions := piContentExclusions(entry.Content, entry.record)
+			discards = append(discards, contentExclusions...)
+			if context := piContentText(entry.Content); context != "" {
+				sessionThinking = append(sessionThinking, piSessionThinking("context", context))
+			} else if len(contentExclusions) == 0 {
+				discards = append(discards, Discard{Record: entry.record,
+					Reason: "Pi custom message has no readable text"})
+			}
+			continue
+		case "session_info":
+			if name := strings.TrimSpace(entry.Name); name != "" {
+				title = name
+			}
+			continue
+		case "custom":
+			discards = append(discards, piExcluded(entry.record,
+				"Pi extension state is not conversation context"))
+			continue
+		case "model_change", "thinking_level_change", "label":
+			discards = append(discards, piExcluded(entry.record,
+				"Pi session setting event is not conversation content"))
 			continue
 		}
 		if entry.Type != "message" || entry.Message == nil {
@@ -372,8 +423,13 @@ func piExchanges(active []*piEntry) ([]Exchange, int, []Discard) {
 		case "user":
 			close()
 			text := piContentText(message.Content)
+			contentExclusions := piContentExclusions(message.Content, entry.record)
+			discards = append(discards, contentExclusions...)
 			if text == "" {
-				discards = append(discards, Discard{Record: entry.record, Reason: "user message has no readable content"})
+				if len(contentExclusions) == 0 {
+					discards = append(discards, Discard{Record: entry.record,
+						Reason: "user message has no readable content"})
+				}
 				continue
 			}
 			pending = &piPending{
@@ -383,6 +439,7 @@ func piExchanges(active []*piEntry) ([]Exchange, int, []Discard) {
 				humanTS:    isoFromAnyInstant(firstInstant(message.Timestamp, entry.Timestamp)),
 				compacted:  compacted,
 				callNames:  map[string]string{},
+				callParams: map[string]string{},
 				results:    map[string]bool{},
 				errors:     map[string]bool{},
 			}
@@ -410,6 +467,23 @@ func piExchanges(active []*piEntry) ([]Exchange, int, []Discard) {
 			}
 			pending.results[id] = true
 			pending.errors[id] = message.IsError
+		case "bashExecution":
+			if message.Exclude {
+				discards = append(discards, piExcluded(entry.record,
+					"Pi bash execution was explicitly excluded from model context"))
+				continue
+			}
+			if pending == nil {
+				discards = append(discards, piExcluded(entry.record,
+					"standalone Pi bash execution has no conversational turn"))
+				continue
+			}
+			id := "bash:" + entry.ID
+			pending.callNames[id] = "bash"
+			pending.callParams[id] = Clip(strings.TrimSpace(message.Command), paramsBudget)
+			pending.calls = append(pending.calls, id)
+			pending.results[id] = true
+			pending.errors[id] = message.Cancelled || (message.ExitCode != nil && *message.ExitCode != 0)
 		default:
 			discards = append(discards, Discard{Record: entry.record,
 				Reason:   "unsupported message role: " + message.Role,
@@ -418,7 +492,17 @@ func piExchanges(active []*piEntry) ([]Exchange, int, []Discard) {
 	}
 	close()
 	PlaceThinking(exchanges)
-	return exchanges, deferred, discards
+	return exchanges, sessionThinking, title, deferred, discards
+}
+
+func piSessionThinking(depth, text string) Thinking {
+	return Thinking{Depth: depth, Text: text, WordCount: wordCount(text)}
+}
+
+func piExcluded(record int, reason string) Discard {
+	discard := Excluded(reason)
+	discard.Record = record
+	return discard
 }
 
 func piConsumeAssistant(pending *piPending, message *piMessage, record int) []Discard {
@@ -447,12 +531,14 @@ func piConsumeAssistant(pending *piPending, message *piMessage, record int) []Di
 			// whose text is blank is the same noise by the same argument, and the
 			// text blocks above already refuse it.
 			if block.Redacted || block.Encrypted {
-				discards = append(discards, Discard{Record: record, Reason: "thinking block is redacted or encrypted"})
+				discards = append(discards, piExcluded(record,
+					"thinking block is redacted or encrypted"))
 				continue
 			}
 			trimmed := strings.TrimSpace(block.Thinking)
 			if trimmed == "" {
-				discards = append(discards, Discard{Record: record, Reason: "thinking block has no readable text"})
+				discards = append(discards, piExcluded(record,
+					"thinking block has no readable text"))
 				continue
 			}
 			pending.thinking = append(pending.thinking, trimmed)
@@ -468,7 +554,11 @@ func piConsumeAssistant(pending *piPending, message *piMessage, record int) []Di
 				continue
 			}
 			pending.callNames[block.ID] = block.Name
+			pending.callParams[block.ID] = paramsSummary(block.Arguments)
 			pending.calls = append(pending.calls, block.ID)
+		case "image":
+			discards = append(discards, piExcluded(record,
+				"Pi image content is not stored in the text corpus"))
 		default:
 			discards = append(discards, Discard{Record: record,
 				Reason:   "unsupported assistant block: " + block.Type,
@@ -512,7 +602,8 @@ func piProject(pending *piPending, number *int) (Exchange, bool) {
 		})
 	}
 	for _, id := range pending.calls {
-		tool := ToolUse{Name: pending.callNames[id], HadError: pending.errors[id]}
+		tool := ToolUse{Name: pending.callNames[id], ParamsSummary: pending.callParams[id],
+			HadError: pending.errors[id]}
 		if tool.HadError {
 			tool.ErrorMessage = "tool_error"
 		}
@@ -537,7 +628,8 @@ func (p *piPending) fingerprint() string {
 		if p.errors[id] {
 			verdict = "error"
 		}
-		projection.Tools = append(projection.Tools, []string{id, p.callNames[id], verdict})
+		projection.Tools = append(projection.Tools,
+			[]string{id, p.callNames[id], p.callParams[id], verdict})
 	}
 	encoded, err := json.Marshal(projection)
 	if err != nil {
@@ -568,6 +660,21 @@ func piContentText(content json.RawMessage) string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+func piContentExclusions(content json.RawMessage, record int) []Discard {
+	var blocks []piBlock
+	if json.Unmarshal(content, &blocks) != nil {
+		return nil
+	}
+	var discards []Discard
+	for _, block := range blocks {
+		if block.Type == "image" {
+			discards = append(discards, piExcluded(record,
+				"Pi image content is not stored in the text corpus"))
+		}
+	}
+	return discards
 }
 
 // lastSegment is the working directory's final component, in either syntax.

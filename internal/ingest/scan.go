@@ -97,7 +97,17 @@ func Scan(roots Roots) Plan {
 	plan.add(scanDesktopSessions(roots), "claude_desktop_files")
 	plan.add(scanCoworkSessions(roots), "cowork_files")
 	plan.add(scanSubagents(roots), "subagent_files")
-	plan.add(scanPiSessions(roots), "pi_session_files")
+	piFiles := scanPiStore(roots, &plan)
+	plan.Scanned["pi_files"] += len(piFiles)
+	var piSessions []Target
+	for _, target := range piFiles {
+		if target.ExclusionReason != "" {
+			plan.Excluded = append(plan.Excluded, target)
+			continue
+		}
+		piSessions = append(piSessions, target)
+	}
+	plan.add(piSessions, "pi_session_files")
 	plan.add(scanGrokSessions(roots), "grok_session_files")
 	plan.add(scanClaudeWebExports(roots), "claude_web_export_files")
 	plan.add(scanChatGPTWebExports(roots, &plan), "chatgpt_web_export_files")
@@ -179,7 +189,7 @@ func DetectAgents(roots Roots) []string {
 		{"cowork", pathExists(roots.CoworkSessions)},
 		{"codex", pathExists(roots.CodexRoot) || pathExists(roots.CodexSessions) || isFile(roots.CodexStateDB)},
 		{"opencode", isFile(roots.OpenCodeDB)},
-		{"pi", pathExists(roots.PiSessions)},
+		{"pi", pathExists(roots.PiRoot) || pathExists(roots.PiSessions)},
 		{"hermes", isFile(roots.HermesDB)},
 		{"grok", pathExists(roots.GrokSessions)},
 	}
@@ -518,22 +528,90 @@ func runnerExclusion(roots Roots, encodedDir string) string {
 	return ""
 }
 
-// scanPiSessions reads exactly `sessions/<encoded-cwd>/*.jsonl`, with no
-// recursion and no symlinks: Pi's own layout, and nothing that a link into it
-// could smuggle in.
-func scanPiSessions(roots Roots) []Target {
+// scanPiStore accounts for Pi's whole private tree. Session JSONL is recursive
+// because Pi extensions keep child runs below the parent session; everything
+// else is named as configuration, runtime state, or an unrecognized artefact.
+// WalkDir does not follow symlinks, so a link cannot expand the declared root.
+func scanPiStore(roots Roots, plan *Plan) []Target {
+	root := roots.PiRoot
 	var targets []Target
-	for _, dir := range subdirectories(roots.PiSessions) {
-		for _, path := range jsonlIn(filepath.Join(roots.PiSessions, dir)) {
-			targets = append(targets, Target{
-				Path:        path,
-				Kind:        parsers.KindPiSession,
-				SourceAgent: "pi",
-				FileName:    filepath.Base(path),
-			})
+	seen := map[string]bool{}
+	if root != "" {
+		filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				if !os.IsNotExist(err) {
+					plan.Warnings = append(plan.Warnings,
+						fmt.Sprintf("Pi root cannot be read at %q (%v)", path, err))
+				}
+				return nil
+			}
+			if !entry.Type().IsRegular() {
+				return nil
+			}
+			relative, relativeErr := filepath.Rel(root, path)
+			if relativeErr != nil {
+				return nil
+			}
+			relative = filepath.ToSlash(relative)
+			target := Target{Path: path, Kind: parsers.KindPiSession,
+				SourceAgent: "pi", FileName: entry.Name()}
+			if !piSessionPath(relative) {
+				target.ExclusionReason = piFileExclusion(relative)
+			}
+			targets = append(targets, target)
+			seen[realPath(path)] = true
+			return nil
+		})
+	}
+	for _, target := range filesUnder(roots.PiSessions, ".jsonl", Target{
+		Kind: parsers.KindPiSession, SourceAgent: "pi",
+	}) {
+		if seen[realPath(target.Path)] {
+			continue
 		}
+		targets = append(targets, target)
 	}
 	return targets
+}
+
+func piSessionPath(relative string) bool {
+	if !strings.HasSuffix(relative, ".jsonl") {
+		return false
+	}
+	if strings.HasPrefix(relative, "agent/sessions/") {
+		return true
+	}
+	// Pi briefly wrote sessions directly below agent/. run-history.jsonl is a
+	// separate extension log and is the one known exception in that directory.
+	return strings.Count(relative, "/") == 1 && strings.HasPrefix(relative, "agent/") &&
+		filepath.Base(relative) != "run-history.jsonl"
+}
+
+func piFileExclusion(relative string) string {
+	switch {
+	case strings.HasPrefix(relative, "agent/missions/index/"):
+		return "Pi mission index metadata"
+	case relative == "agent/run-history.jsonl" || strings.HasSuffix(relative, ".log"):
+		return "Pi runtime log"
+	case strings.HasPrefix(relative, "agent/npm/") ||
+		strings.HasPrefix(relative, "agent/git/") ||
+		strings.HasPrefix(relative, "agent/bin/") ||
+		strings.HasPrefix(relative, "agent/cache/"):
+		return "Pi runtime and package file"
+	case strings.HasPrefix(relative, "agent/prompts/") ||
+		strings.HasPrefix(relative, "agent/skills/") ||
+		strings.HasPrefix(relative, "extensions/") ||
+		strings.HasPrefix(relative, "agent/extensions/") ||
+		strings.Contains(relative, "/themes/") ||
+		strings.HasSuffix(strings.ToUpper(relative), "/AGENTS.MD") ||
+		strings.HasSuffix(strings.ToUpper(relative), "/CLAUDE.MD") ||
+		strings.HasSuffix(strings.ToUpper(relative), "/SYSTEM.MD") ||
+		strings.HasSuffix(strings.ToUpper(relative), "/APPEND_SYSTEM.MD") ||
+		strings.HasSuffix(relative, ".json"):
+		return "Pi configuration file"
+	default:
+		return "unrecognized Pi non-session file"
+	}
 }
 
 // scanGrokSessions walks Grok Build's session store, which files sessions by the

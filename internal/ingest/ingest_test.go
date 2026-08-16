@@ -207,6 +207,18 @@ func TestASecondPassOverTheSameDiskChangesNothing(t *testing.T) {
 		t.Errorf("files skipped = %d, want the %d the first pass read",
 			second.FilesSkipped, first.FilesRead)
 	}
+	if second.FilesSeen != second.FilesRead+second.FilesSkipped+second.FilesExcluded {
+		t.Errorf("file coverage = seen %d, read %d, skipped %d, excluded %d",
+			second.FilesSeen, second.FilesRead, second.FilesSkipped, second.FilesExcluded)
+	}
+	coverage := 0
+	for _, category := range second.FileCoverage {
+		coverage += category.Count
+	}
+	if coverage != second.FilesSeen {
+		t.Errorf("file coverage categories total %d, want %d: %+v",
+			coverage, second.FilesSeen, second.FileCoverage)
+	}
 	if second.Errors != 0 {
 		t.Errorf("errors = %d: %+v", second.Errors, second.ErrorDetails)
 	}
