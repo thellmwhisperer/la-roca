@@ -183,7 +183,14 @@ var registry = []Registration{
 	fileParser(KindCodexFile, DestinationStore, ingestprovenance.CodexCLI, detectCodexFile, ParseCodexFile),
 	fileParser(KindCodexMemoryAggregate, DestinationStore, ingestprovenance.CodexCLI, detectCodexMemoryAggregate, ParseCodexMemoryAggregate),
 	fileParser(KindSubagent, DestinationCorpus, ingestprovenance.ClaudeCode, detectSubagent, ParseSubagent),
-	fileParser(KindPiSession, DestinationCorpus, ingestprovenance.Pi, detectPiSession, ParsePiSession),
+	{
+		Name:             string(KindPiSession),
+		SourceAgent:      "pi",
+		CanonicalHarness: ingestprovenance.Pi,
+		HarvestLocations: []string{".pi/agent/sessions"},
+		Destination:      DestinationCorpus,
+		Parser:           parserFunctions{detect: detectPiSession, parse: ParsePiSession},
+	},
 	fileParser(KindClaudeWebConversations, DestinationCorpus, ingestprovenance.ClaudeWeb, detectClaudeWebConversations,
 		func(content []byte, meta FileMeta) (Records, error) {
 			return ParseClaudeWebConversations(bytes.NewReader(content), meta)
