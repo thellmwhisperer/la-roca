@@ -105,7 +105,8 @@ If the project has a semantic profile, apply it after recovering live source
 context. A profile supplies project-specific source authority, finding types,
 review states, required evidence fields, and complete/unresolved criteria; it
 never replaces the source locator, provenance, contradiction report, or core
-resolution. The first profile is the [Libro de Economía contract](https://github.com/thellmwhisperer/la-roca/blob/main/docs/semantic-profiles/libro-economia.md).
+resolution. Start from the public [domain profile template](https://github.com/thellmwhisperer/la-roca/blob/main/docs/semantic-profiles/domain-profile-template.md)
+when a project needs project-specific source authority and review policy.
 
 ## Default row output
 
