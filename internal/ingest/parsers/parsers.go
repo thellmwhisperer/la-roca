@@ -63,6 +63,10 @@ const (
 	// Claude-web memories as separate file-state targets.
 	KindClaudeWebConversations Kind = "claude_web_conversations"
 	KindClaudeWebMemories      Kind = "claude_web_memories"
+	// KindClaudeWebProjects is one official export project entity and its docs.
+	KindClaudeWebProjects Kind = "claude_web_projects"
+	// KindClaudeWebDesignChats is a design-chat record that carries a project join.
+	KindClaudeWebDesignChats Kind = "claude_web_design_chats"
 	// The official OpenAI data export contributes its ChatGPT mapping tree.
 	KindChatGPTWebConversations Kind = "chatgpt_web_conversations"
 	// KindGrokSession is a Grok Build updates.jsonl session stream.
