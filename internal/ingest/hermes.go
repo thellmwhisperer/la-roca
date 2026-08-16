@@ -32,9 +32,10 @@ var hermesSchema = []foreignTable{
 // session winds down cleanly, so a session that was killed, abandoned, or run
 // through a channel that never closes it (acp, most TUI and CLI runs) has its
 // messages and no ending; skipping those was what reduced six hundred sessions
-// to ninety. The span of such a session is its last recorded message, and a
-// human turn with no recorded answer is still in flight, so it is deferred and
-// re-read on the next run rather than stored as an answer that was never given.
+// to ninety. The span of such a session is its last recorded message. A session
+// that closed with a human turn still unanswered keeps that turn with no
+// invented answer, while an open session's trailing unanswered turn is still in
+// flight, so it is deferred and re-read on the next run.
 func ReadHermes(ctx context.Context, path string) (parsers.Records, []string, error) {
 	db, err := openForeignSource(ctx, "Hermes", path, hermesSchema)
 	if err != nil {
@@ -142,7 +143,7 @@ func hermesSession(source row, messages []row) (parsers.Session, int, int) {
 	}
 	orphaned := 0
 	deferred := 0
-	session.Exchanges, orphaned, deferred = hermesExchanges(source.text("id"), messages)
+	session.Exchanges, orphaned, deferred = hermesExchanges(source.text("id"), messages, hasEnded)
 	// Hermes prices and counts a whole session and never a turn, so every turn of
 	// it carries the model and the provider that answered and no invented split
 	// of the totals. Those totals travel beside the session in the same
@@ -226,9 +227,9 @@ func hermesMetadata(source row, messages []row) map[string]any {
 // A tool call embedded in an assistant message is not counted: only the result
 // message is, because that is the one that knows whether it worked. Counting both
 // would double every tool use in the corpus. A human turn with no recorded
-// answer at all is still in flight, so it is deferred instead of being stored
-// with an answer this build invented.
-func hermesExchanges(sessionID string, messages []row) ([]parsers.Exchange, int, int) {
+// answer is deferred while the session is still open, and kept with an empty
+// answer once the session is closed: in neither case is an answer invented.
+func hermesExchanges(sessionID string, messages []row, sessionClosed bool) ([]parsers.Exchange, int, int) {
 	var exchanges []parsers.Exchange
 	var current *parsers.Exchange
 	number := 0
@@ -241,8 +242,8 @@ func hermesExchanges(sessionID string, messages []row) ([]parsers.Exchange, int,
 	pendingByName := map[string]string{}
 	pendingByCall := map[string]hermesToolCall{}
 	// hasResponse records whether the open exchange has seen any assistant
-	// content: text, reasoning or a tool call. A human turn with none is still
-	// being answered and is deferred.
+	// content: text, reasoning or a tool call. A human turn with none is kept
+	// once the session is closed and deferred while it is still open.
 	hasResponse := false
 
 	closeCurrent := func() {
@@ -250,7 +251,11 @@ func hermesExchanges(sessionID string, messages []row) ([]parsers.Exchange, int,
 			return
 		}
 		if !hasResponse {
-			deferred++
+			if sessionClosed {
+				exchanges = append(exchanges, *current)
+			} else {
+				deferred++
+			}
 			current = nil
 			pendingByName = map[string]string{}
 			pendingByCall = map[string]hermesToolCall{}
@@ -277,19 +282,16 @@ func hermesExchanges(sessionID string, messages []row) ([]parsers.Exchange, int,
 				HumanTimestamp: parsers.ISOFromEpochSeconds(at),
 			}
 		case "assistant":
+			reasoning := strings.TrimSpace(message.text("reasoning_content"))
+			content := strings.TrimSpace(message.text("content"))
+			calls := hermesToolCalls(message.text("tool_calls"))
 			if current == nil {
-				if strings.TrimSpace(message.text("content")) != "" ||
-					strings.TrimSpace(message.text("reasoning_content")) != "" ||
-					strings.TrimSpace(message.text("tool_calls")) != "" {
+				if content != "" || reasoning != "" || len(calls) > 0 {
 					orphaned++
 				}
 				continue
 			}
-			reasoning := strings.TrimSpace(message.text("reasoning_content"))
-			content := strings.TrimSpace(message.text("content"))
-			rawCalls := strings.TrimSpace(message.text("tool_calls"))
-			calls := hermesToolCalls(message.text("tool_calls"))
-			if reasoning == "" && content == "" && rawCalls == "" {
+			if reasoning == "" && content == "" && len(calls) == 0 {
 				continue
 			}
 			hasResponse = true

@@ -956,6 +956,43 @@ func TestHermesPairsToolResultsByTheirCallID(t *testing.T) {
 	}
 }
 
+func TestHermesClosedSessionKeepsItsUnansweredTurn(t *testing.T) {
+	session, _, deferred := hermesSession(row{"id": "h-closed", "started_at": float64(10), "ended_at": float64(20)}, []row{
+		{"role": "user", "content": "hello?", "timestamp": float64(10)},
+	})
+	if deferred != 0 {
+		t.Fatalf("deferred = %d, want 0 for a closed session", deferred)
+	}
+	if len(session.Exchanges) != 1 {
+		t.Fatalf("exchanges = %d, want 1", len(session.Exchanges))
+	}
+	if session.Exchanges[0].HumanText != "hello?" {
+		t.Fatalf("human text = %q, want hello?", session.Exchanges[0].HumanText)
+	}
+	if session.Exchanges[0].AgentText != "" {
+		t.Fatalf("agent text = %q, want empty (no invented answer)", session.Exchanges[0].AgentText)
+	}
+}
+
+func TestHermesEmptyToolCallsDoNotFabricateToolUse(t *testing.T) {
+	session, _, deferred := hermesSession(row{"id": "h-empty-tools", "started_at": float64(10), "ended_at": float64(20)}, []row{
+		{"role": "user", "content": "do a thing", "timestamp": float64(10)},
+		{"role": "assistant", "content": "", "reasoning_content": "", "tool_calls": "[]", "timestamp": float64(11)},
+	})
+	if deferred != 0 {
+		t.Fatalf("deferred = %d, want 0", deferred)
+	}
+	if len(session.Exchanges) != 1 {
+		t.Fatalf("exchanges = %d, want 1", len(session.Exchanges))
+	}
+	if session.Exchanges[0].AgentText != "" {
+		t.Fatalf("agent text = %q, want empty (no fabricated tool use)", session.Exchanges[0].AgentText)
+	}
+	if len(session.Exchanges[0].Tools) != 0 {
+		t.Fatalf("tools = %d, want 0", len(session.Exchanges[0].Tools))
+	}
+}
+
 func TestReadHermesReportsTheSessionsAndMessagesItSaw(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hermes.db")
 	db := openSynthetic(t, path)
