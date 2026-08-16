@@ -47,6 +47,7 @@ type Settings struct {
 	CodexSessions         string
 	CodexStateDB          string
 	OpenCodeDB            string
+	PiRoot                string
 	PiSessions            string
 	HermesDB              string
 	// GrokSessions is Grok Build's session store.
@@ -75,6 +76,7 @@ type Roots struct {
 	// session with the model and the agent nickname it ran under.
 	CodexStateDB string
 	OpenCodeDB   string
+	PiRoot       string
 	PiSessions   string
 	HermesDB     string
 	// GrokSessions is Grok Build's session store.
@@ -93,6 +95,7 @@ const (
 	envCodexSessions  = "CODEX_SESSIONS_ROOT"
 	envCodexStateDB   = "CODEX_STATE_DB_PATH"
 	envOpenCodeDB     = "OPENCODE_DB_PATH"
+	envPiRoot         = "PI_ROOT"
 	envPiSessions     = "PI_SESSIONS_ROOT"
 	envHermesDB       = "HERMES_DB_PATH"
 	envGrokSessions   = "GROK_SESSIONS_ROOT"
@@ -106,6 +109,7 @@ const (
 func ResolveRoots(env Environment, settings Settings) Roots {
 	claude := join(env, env.Home, ".claude")
 	codexRoot := pick(env, settings.CodexRoot, envCodexRoot, join(env, env.Home, ".codex"))
+	piRoot := pick(env, settings.PiRoot, envPiRoot, join(env, env.Home, ".pi"))
 	appSupport := claudeAppSupport(env)
 
 	roots := Roots{
@@ -123,8 +127,9 @@ func ResolveRoots(env Environment, settings Settings) Roots {
 			join(env, codexRoot, "state_5.sqlite")),
 		OpenCodeDB: pick(env, settings.OpenCodeDB, envOpenCodeDB,
 			join(env, openCodeDir(env), "opencode.db")),
+		PiRoot: piRoot,
 		PiSessions: pick(env, settings.PiSessions, envPiSessions,
-			join(env, env.Home, ".pi", "agent", "sessions")),
+			join(env, piRoot, "agent", "sessions")),
 		HermesDB: pick(env, settings.HermesDB, envHermesDB,
 			join(env, env.Home, ".hermes", "state.db")),
 		GrokSessions: pick(env, settings.GrokSessions, envGrokSessions,

@@ -170,6 +170,37 @@ other Hermes SQLite databases (`kanban.db`, `cron/executions.db`,
 `verification_evidence.db`, `projects.db`) hold no conversation content and are
 not read either.
 
+## Pi
+
+Pi's private root defaults to `~/.pi` (`pi_root` or `PI_ROOT` can move it), and
+its session store defaults to `agent/sessions/` below that root
+(`pi_sessions_root` or `PI_SESSIONS_ROOT` can move just the sessions). La Roca
+walks session JSONL recursively: ordinary sessions sit directly below their
+encoded working-directory folder, while extension-created child runs can sit
+several directories below a parent session. Legacy JSONL written directly below
+`agent/` is also recognized. Symlinks are never followed.
+
+Each version 3 session is a tree. La Roca projects the active branch, pairs user
+and assistant messages into exchanges, and retains assistant text, thinking,
+tool calls, tool verdicts, and tool parameters. A contextual custom message,
+compaction summary, or branch summary participates in the conversation and is
+stored as session-level context; a session-info entry supplies its title. A bash
+execution that participates in a turn becomes a `bash` tool use. The terminal
+assistant message supplies the exchange's model and provider exactly as Pi
+recorded them, including provider-specific model identifiers, while usage and
+cost are summed across the assistant messages that produced that answer.
+
+The rest of the Pi root is inventoried but not opened as corpus. Prompts,
+skills, global instruction files, extensions, settings, themes and provider
+files are configuration. `missions/index/` contains runtime pointers and titles,
+not the mission records they reference. `run-history.jsonl` and crash logs are
+runtime history, while npm packages, cached repositories, binaries and caches
+are installation state. Each family appears as a named exclusion in the ingest
+coverage instead of being silently mistaken for thousands of conversations.
+Pi currently exposes no separate durable memory store; the parser therefore
+declares the corpus destination and invents no memories from configuration or
+index metadata.
+
 ## Grok Build
 
 Grok Build keeps each session under `~/.grok/sessions/<encoded-cwd>/<session-id>/`,
@@ -246,7 +277,8 @@ rewrites nothing and no exchange is written twice.
 
 ## Reading the summary
 
-The default summary is one line per source with what it contributed, followed by
+The default summary is one line per source with files seen, parsed, skipped and
+excluded plus what it contributed, followed by
 up to five reasons in each group for what was left out, with each reason
 collapsed to a count. A source read from a live database rather than files also
 prints a `saw` line beneath its row — the raw sessions and messages it observed
@@ -260,3 +292,9 @@ which is. `roca ingest
 retained records. Totals and the complete collapsed summary remain exact in JSON
 output and the ingest log when a run leaves out more records than that; the log
 retains the same bounded per-record detail.
+
+JSON output also carries `files_seen` and `file_coverage`. The latter groups
+every file under `parsed`, `pending`, `skipped`, `excluded`, or `error` with a
+reason and exact count. Those categories total `files_seen`, so an operator can
+distinguish an unchanged content file from a runtime family La Roca deliberately
+did not parse.
