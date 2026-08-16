@@ -109,29 +109,16 @@ func TestCutoverReopenFailureRollsBackTheMarker(t *testing.T) {
 
 func TestShadowFTSRankingIsExactlyEqualBeforeCutover(t *testing.T) {
 	fixture := newHubFixture(t)
-	memories := []struct {
-		id      int64
-		content string
-	}{
+	memories := []hubMemory{
 		{101, "Quartz orchard launch plan for the synthetic Alder team."},
 		{102, "Quartz orchard duplicate beacon with invented content."},
 		{103, "Quartz orchard duplicate beacon with invented content."},
 		{104, "Quartz quartz quartz orchard ranking beacon for a fictional observatory."},
 	}
-	seedLegacyCore(t, fixture, func(core *store.DB) {
-		for _, memory := range memories {
-			seedHubCoreMemory(t, fixture.plugins, memory.id, memory.content)
-			if _, err := core.SQL().Exec(`INSERT INTO memories
-				(id, layer, content, metadata, origin, status, created_at)
-				VALUES (?, 'project', ?, '{}', 'agent', 'active', '2026-08-15T10:00:00Z')`,
-				memory.id, memory.content); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if _, err := search.Index(t.Context(), core, nil); err != nil {
-			t.Fatal(err)
-		}
-	})
+	for _, memory := range memories {
+		seedHubCoreMemory(t, fixture.plugins, memory.id, memory.content)
+	}
+	seedLegacyMemories(t, fixture, memories)
 
 	var rollback error
 	svc := openHubService(t, fixture, LayoutShadowEqual, func(options *Options) {
@@ -162,17 +149,7 @@ func TestHubSearchRetriesAfterTheBuildingRequestIsCanceled(t *testing.T) {
 func TestShadowSearchServesLegacyWhenTheHubIndexIsUnavailable(t *testing.T) {
 	fixture := newHubFixture(t)
 	seedHubCoreMemory(t, fixture.plugins, 106, "Synthetic quartz hub marker")
-	seedLegacyCore(t, fixture, func(core *store.DB) {
-		if _, err := core.SQL().Exec(`INSERT INTO memories
-			(id, layer, content, metadata, origin, status, created_at)
-			VALUES (106, 'project', 'Synthetic quartz legacy marker', '{}', 'agent',
-			'active', '2026-08-15T10:00:00Z')`); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := search.Index(t.Context(), core, nil); err != nil {
-			t.Fatal(err)
-		}
-	})
+	seedLegacyMemories(t, fixture, []hubMemory{{106, "Synthetic quartz legacy marker"}})
 	var rollback error
 	svc := openHubService(t, fixture, LayoutShadowEqual, func(options *Options) {
 		options.RollbackLayout = func(reason error) error { rollback = reason; return nil }
@@ -221,6 +198,11 @@ type hubFixture struct {
 	corePath  string
 }
 
+type hubMemory struct {
+	id      int64
+	content string
+}
+
 func newHubFixture(t *testing.T) hubFixture {
 	t.Helper()
 	directory := t.TempDir()
@@ -261,6 +243,23 @@ func seedLegacyCore(t *testing.T, fixture hubFixture, seed func(*store.DB)) {
 	if seed != nil {
 		seed(core)
 	}
+}
+
+func seedLegacyMemories(t *testing.T, fixture hubFixture, memories []hubMemory) {
+	t.Helper()
+	seedLegacyCore(t, fixture, func(core *store.DB) {
+		for _, memory := range memories {
+			if _, err := core.SQL().Exec(`INSERT INTO memories
+				(id, layer, content, metadata, origin, status, created_at)
+				VALUES (?, 'project', ?, '{}', 'agent', 'active', '2026-08-15T10:00:00Z')`,
+				memory.id, memory.content); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := search.Index(t.Context(), core, nil); err != nil {
+			t.Fatal(err)
+		}
+	})
 }
 
 func executeHubSQL(t *testing.T, svc *Service, statement string) ExecResult {
