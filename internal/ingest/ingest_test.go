@@ -32,7 +32,7 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 	// Every source of the matrix is scanned, and every family
 	// wrote something. A family missing from here is a family that has been lost.
 	for key, want := range map[string]int{
-		"claude_memory_files":     1, // one project file; not MEMORY.md and not the global CLAUDE.md
+		"claude_memory_files":     2, // one project file plus its coverage-only MEMORY.md manifest
 		"codex_files":             3, // one memory, one rule and one refused skill; not default.rules
 		"session_files":           1,
 		"codex_session_files":     1,
@@ -84,8 +84,8 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 	// one: the report keeps the two apart so a healthy run reads as healthy. The
 	// Grok runtime records (the system prompt and the compaction history injected
 	// as a synthetic user turn) are the same kind of deliberate exclusion.
-	if result.FilesExcluded != 1 || result.RecordsExcluded != 3 || result.RecordsDiscarded != 0 {
-		t.Errorf("excluded files/records and discards = %d/%d/%d, want 1/3/0: %+v",
+	if result.FilesExcluded != 2 || result.RecordsExcluded != 4 || result.RecordsDiscarded != 0 {
+		t.Errorf("excluded files/records and discards = %d/%d/%d, want 2/4/0: %+v",
 			result.FilesExcluded, result.RecordsExcluded, result.RecordsDiscarded, result.DiscardSummary)
 	}
 	if got := countRows(t, db.SQL(), "memories WHERE source_agent = 'config'"); got != 0 {

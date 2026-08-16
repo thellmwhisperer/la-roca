@@ -1,6 +1,8 @@
 package ingest
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"net/url"
@@ -40,6 +42,14 @@ type Target struct {
 	// ExclusionReason marks a discovered artefact that policy counts but never
 	// fingerprints, opens, parses, or writes.
 	ExclusionReason string
+	// ExcludedRecords is the number of source records represented by an excluded
+	// file when it is cheaply knowable without parsing it as corpus.
+	ExcludedRecords int
+}
+
+type manifestLink struct {
+	Path   string
+	Exists bool
 }
 
 // Plan is everything one run is going to look at, with what the scan already has
@@ -55,6 +65,7 @@ type Plan struct {
 	// DetectedAgents names the runtimes whose routes or stores exist.
 	DetectedAgents []string
 	Warnings       []string
+	ManifestLinks  []manifestLink
 }
 
 var supportedAgentFamilies = []string{
@@ -77,26 +88,29 @@ func MissingAgentFamilies(detected []string) []string {
 	return missing
 }
 
-// Scan walks every root in the v1 matrix and returns what one run would read.
-//
-// It reads no content: a root that does not exist contributes nothing, and that
-// is the normal state of a machine that does not run that agent.
+// Scan walks every root in the v1 matrix and returns what one run would read. It
+// opens only source-owned completeness metadata: Claude's project map and memory
+// manifests. Corpus targets remain unopened until after the fingerprint gate.
 func Scan(roots Roots) Plan {
 	plan := Plan{
 		Scanned:        map[string]int{},
 		WorkspaceRoots: roots.Workspace.Selected,
 		DetectedAgents: DetectAgents(roots),
 	}
-	plan.add(scanClaudeMemories(roots), "claude_memory_files")
+	claudeProjects, err := readClaudeProjects(roots.ClaudeConfig)
+	if err != nil {
+		plan.Warnings = append(plan.Warnings, err.Error())
+	}
+	plan.add(scanClaudeMemories(roots, claudeProjects, &plan), "claude_memory_files")
 	plan.addCodex(scanCodexFiles(roots))
-	plan.add(scanClaudeSessions(roots, &plan), "session_files")
+	plan.add(scanClaudeSessions(roots, claudeProjects, &plan), "session_files")
 	plan.add(scanCodexSessions(roots), "codex_session_files")
 	plan.add(existingFile(filepath.Join(roots.CodexRoot, "history.jsonl"), Target{
 		Kind: parsers.KindCodexHistory, SourceAgent: "codex",
 	}), "codex_history_files")
 	plan.add(scanDesktopSessions(roots), "claude_desktop_files")
 	plan.add(scanCoworkSessions(roots), "cowork_files")
-	plan.add(scanSubagents(roots), "subagent_files")
+	plan.add(scanSubagents(roots, claudeProjects), "subagent_files")
 	piFiles := scanPiStore(roots, &plan)
 	plan.Scanned["pi_files"] += len(piFiles)
 	var piSessions []Target
@@ -109,6 +123,7 @@ func Scan(roots Roots) Plan {
 	}
 	plan.add(piSessions, "pi_session_files")
 	plan.add(scanGrokSessions(roots), "grok_session_files")
+	plan.add(scanGrokMemtrace(roots), "grok_memtrace_files")
 	plan.add(scanClaudeWebExports(roots), "claude_web_export_files")
 	plan.add(scanChatGPTWebExports(roots, &plan), "chatgpt_web_export_files")
 	plan.add(existingFile(roots.OpenCodeDB, Target{
@@ -325,18 +340,32 @@ func (p *Plan) add(targets []Target, key string) {
 // contents as if it were knowledge. The global ~/.claude/CLAUDE.md is an
 // instruction file and not memory (the sources ruling that excludes repository
 // AGENTS.md/CLAUDE.md applies to it too), so it is not read here.
-func scanClaudeMemories(roots Roots) []Target {
+func scanClaudeMemories(roots Roots, projects map[string]string, plan *Plan) []Target {
 	var targets []Target
 	for _, dir := range subdirectories(roots.ClaudeProjects) {
-		project, _ := ProjectFromEncodedDir(dir, roots.Workspace)
+		project, _ := projectForClaudeDir(dir, roots.Workspace, projects)
 		exclusion := runnerExclusion(roots, dir)
 		memoryDir := filepath.Join(roots.ClaudeProjects, dir, "memory")
 		for _, name := range filesIn(memoryDir) {
-			if !strings.HasSuffix(name, ".md") || name == "MEMORY.md" {
+			if !strings.HasSuffix(name, ".md") {
+				continue
+			}
+			path := filepath.Join(memoryDir, name)
+			if name == "MEMORY.md" {
+				targets = append(targets, Target{Path: path, Kind: parsers.KindClaudeMemory,
+					SourceAgent: "claude", Project: project, FileName: name,
+					ExclusionReason: "Claude memory completeness manifest is not corpus content"})
+				links, err := readManifestLinks(path)
+				if err != nil {
+					plan.Warnings = append(plan.Warnings,
+						fmt.Sprintf("Claude memory manifest %q cannot be checked: %v", path, err))
+				} else {
+					plan.ManifestLinks = append(plan.ManifestLinks, links...)
+				}
 				continue
 			}
 			targets = append(targets, Target{
-				Path:            filepath.Join(memoryDir, name),
+				Path:            path,
 				Kind:            parsers.KindClaudeMemory,
 				SourceAgent:     "claude",
 				Project:         project,
@@ -346,6 +375,58 @@ func scanClaudeMemories(roots Roots) []Target {
 		}
 	}
 	return targets
+}
+
+var markdownLink = regexp.MustCompile(`\[[^]]*\]\(([^)#]+\.md)(?:#[^)]*)?\)`)
+
+func readManifestLinks(path string) ([]manifestLink, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var links []manifestLink
+	for _, match := range markdownLink.FindAllStringSubmatch(string(content), -1) {
+		name, err := url.PathUnescape(strings.TrimSpace(match[1]))
+		if err != nil || filepath.IsAbs(name) {
+			continue
+		}
+		target := filepath.Clean(filepath.Join(filepath.Dir(path), name))
+		if filepath.Dir(target) != filepath.Dir(path) || seen[target] {
+			continue
+		}
+		seen[target] = true
+		links = append(links, manifestLink{Path: target, Exists: isFile(target)})
+	}
+	return links, nil
+}
+
+func readClaudeProjects(path string) (map[string]string, error) {
+	projects := map[string]string{}
+	content, err := os.ReadFile(path)
+	if os.IsNotExist(err) || path == "" {
+		return projects, nil
+	}
+	if err != nil {
+		return projects, fmt.Errorf("Claude project attribution config %q cannot be read: %w", path, err)
+	}
+	var config struct {
+		Projects map[string]json.RawMessage `json:"projects"`
+	}
+	if err := json.Unmarshal(content, &config); err != nil {
+		return projects, fmt.Errorf("Claude project attribution config %q is invalid: %w", path, err)
+	}
+	for cwd := range config.Projects {
+		projects[encodeRoot(cleanRoot(cwd))] = ProjectFromCwd(cwd)
+	}
+	return projects, nil
+}
+
+func projectForClaudeDir(dir string, roots WorkspaceRoots, projects map[string]string) (string, bool) {
+	if project, ok := projects[dir]; ok {
+		return project, true
+	}
+	return ProjectFromEncodedDir(dir, roots)
 }
 
 // scanCodexFiles finds the memories and rules Codex keeps as files, plus the
@@ -404,11 +485,11 @@ func scanCodexFiles(roots Roots) []Target {
 
 // scanClaudeSessions finds the transcripts, and diagnoses the project directories
 // no declared root explains.
-func scanClaudeSessions(roots Roots, plan *Plan) []Target {
+func scanClaudeSessions(roots Roots, projects map[string]string, plan *Plan) []Target {
 	var targets []Target
 	var ambiguous []string
 	for _, dir := range subdirectories(roots.ClaudeProjects) {
-		project, resolved := ProjectFromEncodedDir(dir, roots.Workspace)
+		project, resolved := projectForClaudeDir(dir, roots.Workspace, projects)
 		full := filepath.Join(roots.ClaudeProjects, dir)
 		exclusion := runnerExclusion(roots, dir)
 		names := filesIn(full)
@@ -485,12 +566,12 @@ func scanCoworkSessions(roots Roots) []Target {
 
 // scanSubagents discovers the transcripts under both layouts the runtime has
 // used: the flat `subagents/` of a project and the one nested under a session.
-func scanSubagents(roots Roots) []Target {
+func scanSubagents(roots Roots, projects map[string]string) []Target {
 	var targets []Target
 	seen := map[string]bool{}
 	for _, root := range roots.SubagentRoots {
 		for _, dir := range subdirectories(root) {
-			project, _ := ProjectFromEncodedDir(dir, roots.Workspace)
+			project, _ := projectForClaudeDir(dir, roots.Workspace, projects)
 			exclusion := runnerExclusion(roots, dir)
 			paths := jsonlIn(filepath.Join(root, dir, "subagents"))
 			for _, session := range subdirectories(filepath.Join(root, dir)) {
@@ -663,6 +744,38 @@ func scanGrokSessions(roots Roots) []Target {
 		}
 	}
 	return targets
+}
+
+func scanGrokMemtrace(roots Roots) []Target {
+	var targets []Target
+	for _, name := range filesIn(roots.GrokMemtrace) {
+		if !strings.HasSuffix(name, ".jsonl") {
+			continue
+		}
+		path := filepath.Join(roots.GrokMemtrace, name)
+		targets = append(targets, Target{
+			Path: path, Kind: parsers.Kind("grok_memtrace"), SourceAgent: "grok",
+			FileName: name, ExclusionReason: "Grok process memory telemetry is not conversation content",
+			ExcludedRecords: nonEmptyLines(path),
+		})
+	}
+	return targets
+}
+
+func nonEmptyLines(path string) int {
+	file, err := os.Open(path)
+	if err != nil {
+		return 0
+	}
+	defer file.Close()
+	count := 0
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		if strings.TrimSpace(scanner.Text()) != "" {
+			count++
+		}
+	}
+	return count
 }
 
 // projectFromGrokDir decodes the URL-escaped working directory a Grok project

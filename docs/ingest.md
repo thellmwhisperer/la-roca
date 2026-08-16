@@ -125,6 +125,23 @@ Attachment and file names are retained as per-exchange metadata. La Roca does
 not open their bytes. Entries from `memories.json` enter the `user` layer with
 origin `cron` and source `claude-web`.
 
+## Local memory files and completeness
+
+Claude Code's durable memory content lives in the individual Markdown files
+under `~/.claude/projects/*/memory/`. The neighbouring `MEMORY.md` is a
+completeness manifest, not another memory: La Roca counts it as seen, refuses to
+store the index as knowledge, and checks every relative Markdown link against
+both disk and the corpus. A missing target or a target that did not land appears
+as a coverage gap at the end of the run. Claude's own `~/.claude.json` project
+map supplies the original working directory behind each encoded project folder,
+so a normal ingest can attribute old memory rows whose project was previously
+blank.
+
+Codex's `raw_memories.md` is the primary aggregate and is split into its durable
+thread records. `MEMORY.md` and `memory_summary.md` are downstream derived views;
+they are counted and excluded rather than ingested as duplicate blobs. Ordinary
+Markdown memory files remain primary content.
+
 ## Codex legacy history
 
 The oldest Codex rollouts can contain only `session_meta`; their submitted
@@ -236,6 +253,10 @@ as is a content block that is not text, such as an attachment on either side.
 from the same update stream; they are not mined because they duplicate primary
 turns rather than add turns absent from `updates.jsonl`. `chat_history.jsonl` is
 also a compacted secondary view and is not the conversation source.
+Files under `~/.grok/memtrace/` are process-memory telemetry (`start`, `sample`,
+and `purge` records), not semantic memory or conversation. The coverage report
+counts their files and records under that exclusion reason without ingesting
+them.
 
 ## OpenCode
 
@@ -309,13 +330,21 @@ rewrites nothing and no exchange is written twice.
 
 ## Reading the summary
 
-The default summary is one line per source with files seen, parsed, skipped and
-excluded plus what it contributed, followed by
-up to five reasons in each group for what was left out, with each reason
-collapsed to a count. A source read from a live database rather than files also
-prints a `saw` line beneath its row — the raw sessions and messages it observed
-before normalization — so the converted counts read against the whole store and
-not only what landed.
+Every run ends with one `coverage:` block. Its file totals close as `seen =
+ingested + skipped`; `claimed` is the subset assigned to an ingest adapter, and
+each skip class is named with its exact count. Claude manifest gaps appear in
+the same block. When an OpenCode store is present, the block also compares its
+session, message, part, todo, and lost-and-found row counts with the normalized
+sessions, exchanges, thinking blocks, and tool uses currently in the corpus.
+Paths are shown only by `roca ingest --verbose`.
+
+The default summary also keeps one line per source with files seen, parsed,
+skipped and excluded plus what it contributed, followed by up to five reasons in
+each group for what was left out, with each reason collapsed to a count. A
+source read from a live database rather than files also prints a `saw` line
+beneath its row — the raw sessions and messages it observed before
+normalization — so the converted counts read against the whole store and not
+only what landed.
 The two groups are apart on purpose: `excluded` counts the records this build
 never meant to read, which is most of a runtime log and is not a problem, and
 `discards` counts records it could not read or safely match to an existing turn,
