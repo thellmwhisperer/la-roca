@@ -2,6 +2,18 @@ package ingest
 
 import "testing"
 
+func TestClaudePathEncodingReplacesEveryNonAlphanumericCharacter(t *testing.T) {
+	for path, want := range map[string]string{
+		"/Users/op/.treehouse/demo":        "-Users-op--treehouse-demo",
+		"/Volumes/work/Here comes the sun": "-Volumes-work-Here-comes-the-sun",
+		`C:\Users\op\demo`:                 "C--Users-op-demo",
+	} {
+		if got := encodeRoot(path); got != want {
+			t.Errorf("encodeRoot(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
 func TestADirectoryNameThatIsNotAnEncodedPathIsTheProject(t *testing.T) {
 	project, ok := ProjectFromEncodedDir("la-roca", WorkspaceRoots{})
 	if !ok || project != "la-roca" {

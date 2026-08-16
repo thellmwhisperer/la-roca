@@ -181,3 +181,38 @@ func TestASourceRowDoesNotCallFingerprintErrorsSkipped(t *testing.T) {
 		}
 	}
 }
+
+func TestCoverageRendersOneSummaryBlockAndHidesPathsUntilVerbose(t *testing.T) {
+	report := service.IngestResult{Result: ingest.Result{Coverage: ingest.CoverageReport{
+		Files: ingest.FileCoverage{Seen: 12, Claimed: 9, Ingested: 7, Skipped: 5,
+			Skips: []ingest.CoverageCategory{{Reason: "unchanged fingerprint", Count: 2}}},
+		Gaps:    []ingest.CoverageCategory{{Reason: "Claude memory manifest link is absent from disk", Count: 1}},
+		Details: []ingest.CoverageDetail{{Path: "/private/missing.md", Reason: "Claude memory manifest link is absent from disk"}},
+		OpenCode: ingest.OpenCodeCoverage{Store: map[string]int{"sessions": 8, "messages": 21},
+			Extracted: map[string]int{"sessions": 7, "exchanges": 13}},
+	}}}
+	for _, test := range []struct {
+		verbose bool
+		path    bool
+	}{
+		{verbose: false, path: false},
+		{verbose: true, path: true},
+	} {
+		var output strings.Builder
+		renderIngest(&cliEnv{out: &output}, report, test.verbose)
+		text := output.String()
+		for _, want := range []string{
+			"coverage: 12 seen · 9 claimed · 7 ingested · 5 skipped",
+			"skipped: unchanged fingerprint · 2",
+			"gap: Claude memory manifest link is absent from disk · 1",
+			"opencode: store messages=21 sessions=8 · extracted exchanges=13 sessions=7",
+		} {
+			if !strings.Contains(text, want) {
+				t.Errorf("verbose=%t: want %q in\n%s", test.verbose, want, text)
+			}
+		}
+		if strings.Contains(text, "/private/missing.md") != test.path {
+			t.Errorf("verbose=%t: path visibility is wrong in\n%s", test.verbose, text)
+		}
+	}
+}
