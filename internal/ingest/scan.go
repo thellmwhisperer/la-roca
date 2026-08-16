@@ -138,13 +138,6 @@ func addRegisteredParsers(roots Roots, plan *Plan, registered []parsers.Registra
 		shape := Target{Kind: parsers.Kind(contribution.Name), SourceAgent: source}
 		declared, refused := contribution.ResolveLocations(roots.Home)
 		for _, location := range refused {
-			// A caller assembling only the roots it needs has no home against
-			// which a contributed relative store can resolve. That source is
-			// absent from this invocation, not misconfigured; ResolveRoots always
-			// supplies Home for real CLI runs.
-			if roots.Home == "" && !filepath.IsAbs(location) {
-				continue
-			}
 			plan.Warnings = append(plan.Warnings, fmt.Sprintf(
 				"parser %q declares the unusable location %q", contribution.Name, location))
 		}

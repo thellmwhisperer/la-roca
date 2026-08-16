@@ -13,7 +13,8 @@ func TestCursorIngestReportsCoverageAndIsIdempotent(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, "Library", "Application Support", "Cursor", "User",
 		"globalStorage", "state.vscdb")
-	copyCursorFixture(t, path)
+	writeFixture(t, path, filepath.Join("parsers", "testdata", "conformance",
+		"cursor-database", "state.vscdb"))
 	db := rocaDatabase(t)
 	options := Options{Roots: Roots{Home: home}}
 
@@ -187,21 +188,6 @@ func TestCursorReaderRejectsForeignCandidatesByDesign(t *testing.T) {
 				t.Fatalf("foreign Cursor candidate discard = %+v", discard)
 			}
 		})
-	}
-}
-
-func copyCursorFixture(t *testing.T, target string) {
-	t.Helper()
-	content, err := os.ReadFile(filepath.Join("parsers", "testdata", "conformance",
-		"cursor-database", "state.vscdb"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(target, content, 0o600); err != nil {
-		t.Fatal(err)
 	}
 }
 
