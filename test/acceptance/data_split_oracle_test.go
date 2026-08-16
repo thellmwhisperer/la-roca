@@ -93,11 +93,11 @@ func TestDataSplitCompatibilityOracle(t *testing.T) {
 	w := &oracleWorld{binary: binary, root: root}
 	suite := godog.TestSuite{
 		ScenarioInitializer: func(ctx *godog.ScenarioContext) {
-			ctx.Given(`^the sealed DATA SPLIT synthetic fixture$`, w.loadFixture)
+			ctx.Given(`^the digest-pinned DATA SPLIT synthetic fixture$`, w.loadFixture)
 			ctx.When(`^the compatibility oracle records and replays the golden bundle$`, w.recordAndReplay)
 			ctx.Then(`^the CLI golden cases cover query, rescue, ranking, store, SQL, warnings, identities, and failures$`, w.cliCoverage)
 			ctx.Then(`^the MCP golden cases cover query, exec, store, read-only enforcement, and failures$`, w.mcpCoverage)
-			ctx.When(`^one byte of the signed golden bundle is changed$`, w.changeSignedGolden)
+			ctx.When(`^one byte of the golden bundle is changed$`, w.changeGolden)
 			ctx.Then(`^the compatibility oracle rejects the changed bundle$`, w.changedGoldenRejected)
 		},
 		Options: &godog.Options{
@@ -505,7 +505,7 @@ func requireOracleCases(bundle oracleGolden, surface string, want []string) erro
 	return nil
 }
 
-func (w *oracleWorld) changeSignedGolden() error {
+func (w *oracleWorld) changeGolden() error {
 	if _, err := compatibility.VerifyBundle(w.root); err != nil {
 		return err
 	}
