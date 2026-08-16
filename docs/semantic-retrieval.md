@@ -27,8 +27,9 @@ semantic retrieval.
 For a conceptual question:
 
 1. State the investigation purpose.
-2. Run one bare semantic probe with `roca vector --json query`; add
-   `--db-path /path/to/roca.db` after `vector` for a non-default core database.
+2. Run one bare semantic probe with `roca vector --json query "<bare concept>" 8`;
+   add `--db-path /path/to/roca.db` after `vector` for a non-default core
+   database.
 3. Inspect the returned source kind, stable source id, locator, and score as
    candidate retrieval metadata.
 4. Resolve the live source rows with core, recover the available project, layer,
