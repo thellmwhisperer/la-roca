@@ -1,0 +1,249 @@
+package service
+
+import (
+	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
+	"github.com/thellmwhisperer/la-roca/internal/store"
+	"github.com/thellmwhisperer/la-roca/internal/store/search"
+	_ "modernc.org/sqlite"
+)
+
+func TestCutoverServesLegacyCoreReadsFromTheHubWithoutOpeningRocaDB(t *testing.T) {
+	fixture := newHubFixture(t)
+	seedHubCoreMemory(t, fixture.plugins, 42, "Synthetic cutover quartz marker")
+	svc := openHubService(t, fixture, LayoutCutover, nil)
+	result := executeHubSQL(t, svc, `SELECT id, content FROM memories LIMIT 5`)
+	if result.RowCount != 1 || fmt.Sprint(result.Rows[0]["id"]) != "42" ||
+		result.Rows[0]["database"] != "core" {
+		t.Fatalf("hub result = %+v", result)
+	}
+	if _, err := os.Stat(fixture.corePath); !os.IsNotExist(err) {
+		t.Fatalf("hub mode touched roca.db: %v", err)
+	}
+}
+
+func TestCutoverPreservesLegacyFTSIdentityAndRankShape(t *testing.T) {
+	fixture := newHubFixture(t)
+	seedHubCoreMemory(t, fixture.plugins, 101, "Quartz quartz synthetic observatory")
+	result := executeHubSQL(t, openHubService(t, fixture, LayoutCutover, nil), hubFTSStatement)
+	if result.RowCount != 1 || fmt.Sprint(result.Rows[0]["id"]) != "101" ||
+		result.Rows[0]["rank"] == nil {
+		t.Fatalf("hub FTS result = %+v", result)
+	}
+}
+
+func TestCutoverWritersRemainAuthoritativeInPlugins(t *testing.T) {
+	fixture := newHubFixture(t)
+	seedHubCoreMemory(t, fixture.plugins, 7, "Synthetic historical marker")
+	svc := openHubService(t, fixture, LayoutCutover, nil)
+
+	stored, err := svc.Store(t.Context(), StoreRequest{Layer: "handoff", Content: "Synthetic post-cutover write"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ops := openSQLite(t, filepath.Join(fixture.plugins, rocaops.Name, rocaops.DatabaseFilename))
+	defer ops.Close()
+	var content string
+	if err := ops.QueryRow(`SELECT content FROM memories WHERE id = ?`, stored.ID).Scan(&content); err != nil {
+		t.Fatal(err)
+	}
+	if content != "Synthetic post-cutover write" {
+		t.Fatalf("stored content = %q", content)
+	}
+}
+
+func TestShadowMismatchServesLegacyAndRollsBackTheMarker(t *testing.T) {
+	fixture := newHubFixture(t)
+	seedHubCoreMemory(t, fixture.plugins, 9, "Synthetic mismatching hub row")
+	seedLegacyCore(t, fixture, func(core *store.DB) {
+		if _, err := core.SQL().Exec(`INSERT INTO memories
+			(id, layer, content, origin) VALUES (9, 'project', 'Synthetic legacy answer', 'agent')`); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	var rollback, evidence error
+	svc := openHubService(t, fixture, LayoutShadowEqual, func(options *Options) {
+		options.RollbackLayout = func(reason error) error { rollback = reason; return nil }
+		options.RecordShadowMismatch = func(reason error) { evidence = reason }
+	})
+	result := executeHubSQL(t, svc, `SELECT id, content FROM memories LIMIT 5`)
+	if result.Rows[0]["content"] != "Synthetic legacy answer" || rollback == nil || evidence == nil ||
+		!strings.Contains(rollback.Error(), "shadow") {
+		t.Fatalf("result = %+v, rollback = %v, evidence = %v", result, rollback, evidence)
+	}
+}
+
+func TestCutoverReopenFailureRollsBackTheMarker(t *testing.T) {
+	fixture := newHubFixture(t)
+	seedHubCoreMemory(t, fixture.plugins, 15, "Synthetic reopen marker")
+	seedLegacyCore(t, fixture, nil)
+	ops := openSQLite(t, filepath.Join(fixture.plugins, rocaops.Name, rocaops.DatabaseFilename))
+	if _, err := ops.Exec(`DROP VIEW memory_compatibility`); err != nil {
+		t.Fatal(err)
+	}
+	ops.Close()
+
+	rolledBack := false
+	svc := openHubService(t, fixture, LayoutCutover, func(options *Options) {
+		options.RollbackLayout = func(reason error) error {
+			rolledBack = strings.Contains(reason.Error(), "cutover reopen failed")
+			return nil
+		}
+	})
+	if !rolledBack || svc.readLayout != LayoutLegacyServing {
+		t.Fatalf("serving layout = %q, rolled back = %v", svc.readLayout, rolledBack)
+	}
+}
+
+func TestShadowFTSRankingIsExactlyEqualBeforeCutover(t *testing.T) {
+	fixture := newHubFixture(t)
+	memories := []struct {
+		id      int64
+		content string
+	}{
+		{101, "Quartz orchard launch plan for the synthetic Alder team."},
+		{102, "Quartz orchard duplicate beacon with invented content."},
+		{103, "Quartz orchard duplicate beacon with invented content."},
+		{104, "Quartz quartz quartz orchard ranking beacon for a fictional observatory."},
+	}
+	seedLegacyCore(t, fixture, func(core *store.DB) {
+		for _, memory := range memories {
+			seedHubCoreMemory(t, fixture.plugins, memory.id, memory.content)
+			if _, err := core.SQL().Exec(`INSERT INTO memories
+				(id, layer, content, metadata, origin, status, created_at)
+				VALUES (?, 'project', ?, '{}', 'agent', 'active', '2026-08-15T10:00:00Z')`,
+				memory.id, memory.content); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := search.Index(t.Context(), core, nil); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	var rollback error
+	svc := openHubService(t, fixture, LayoutShadowEqual, func(options *Options) {
+		options.RollbackLayout = func(reason error) error { rollback = reason; return nil }
+	})
+	result := executeHubSQL(t, svc, hubFTSStatement)
+	if result.RowCount != len(memories) || rollback != nil {
+		t.Fatalf("shadow ranking rows = %+v, rollback = %v", result.Rows, rollback)
+	}
+}
+
+const hubFTSStatement = `SELECT m.id, m.content, f.rank FROM
+	(SELECT rowid AS fila, bm25(memories_fts) AS rank FROM memories_fts
+	 WHERE memories_fts MATCH '"quartz"') AS f
+	JOIN memories AS m ON m.id = f.fila ORDER BY f.rank, m.id LIMIT 10`
+
+type hubFixture struct {
+	directory string
+	plugins   string
+	corePath  string
+}
+
+func newHubFixture(t *testing.T) hubFixture {
+	t.Helper()
+	directory := t.TempDir()
+	return hubFixture{
+		directory: directory,
+		plugins:   filepath.Join(directory, "plugins"),
+		corePath:  filepath.Join(directory, "roca.db"),
+	}
+}
+
+func openHubService(t *testing.T, fixture hubFixture, layout ReadLayout, configure func(*Options)) *Service {
+	t.Helper()
+	options := Options{
+		DBPath: fixture.corePath, BackupDir: filepath.Join(fixture.directory, "backups"),
+		PluginDir: fixture.plugins, RocaOpsEnabled: true, CorpusEnabled: true, ReadLayout: layout,
+	}
+	if configure != nil {
+		configure(&options)
+	}
+	svc, err := openWithContext(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = svc.Close() })
+	return svc
+}
+
+func seedLegacyCore(t *testing.T, fixture hubFixture, seed func(*store.DB)) {
+	t.Helper()
+	core, err := store.Open(fixture.corePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer core.Close()
+	if _, err := store.Adopt(t.Context(), core, filepath.Join(fixture.directory, "backups")); err != nil {
+		t.Fatal(err)
+	}
+	if seed != nil {
+		seed(core)
+	}
+}
+
+func executeHubSQL(t *testing.T, svc *Service, statement string) ExecResult {
+	t.Helper()
+	result, err := svc.Exec(t.Context(), ExecRequest{SQL: statement})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func seedHubCoreMemory(t *testing.T, plugins string, legacyID int64, content string) {
+	t.Helper()
+	if _, err := rocaops.Ensure(plugins, t.TempDir(), "v-test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rocacorpus.Ensure(plugins, t.TempDir(), "v-test"); err != nil {
+		t.Fatal(err)
+	}
+	db := openSQLite(t, filepath.Join(plugins, rocaops.Name, rocaops.DatabaseFilename))
+	defer db.Close()
+	digest := strings.Repeat("a", 64)
+	result, err := db.Exec(`INSERT INTO memory_records
+		(canonical_digest, provenance, layer, content, metadata, origin, status, created_at)
+		VALUES (?, 'core', 'project', ?, '{}', 'agent', 'active', '2026-08-15T10:00:00Z')`, digest, content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	physicalID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	batchID := fmt.Sprintf("fixture-batch-%d", legacyID)
+	if _, err := db.Exec(`INSERT INTO migration_batches
+		(migration, batch_id, destination_table, source_database, source_table,
+		 row_count, canonical_digest, high_water_mark)
+		VALUES ('data2-memory-custody', ?, 'memory_records', 'core', 'memories', 1, ?, ?)`,
+		batchID, digest, fmt.Sprint(legacyID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO custody_memberships
+		(migration, source_database, source_table, source_key, destination_table,
+		 destination_key, canonical_digest, batch_id)
+		VALUES ('data2-memory-custody', 'core', 'memories', ?, 'memory_records', ?, ?, ?)`,
+		fmt.Sprint(legacyID), fmt.Sprint(physicalID), digest, batchID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func openSQLite(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db
+}

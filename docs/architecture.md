@@ -10,11 +10,15 @@ database.
 
 The migration to that shape is incremental. The current release has
 manifest-backed `roca-corpus` and `roca-ops` domains, plus a separate
-`roca-cron` journey store that still uses its legacy descriptor. Historical
-rows that have not moved yet remain readable through a compatibility
-connection, and queries still attach to that connection rather than to the
-in-memory hub. It preserves behavior during the rollout; it is not new kernel
-ownership and plugin authors must not depend on it.
+`roca-cron` journey store that still uses its legacy descriptor. One atomic
+`layout.serving` marker selects `legacy-serving`, `shadow-equal`, or `cutover`.
+Before either federated route opens against an existing core database, the
+internal cutover coordinator completes and verifies the ops, corpus, and cron
+custody imports from frozen snapshots. That preparation has no public command.
+Shadow mode serves the legacy answer and returns the marker to legacy on any
+row difference. Cutover uses temporary compatibility views and indexes over
+the read-only plugin attachments; it does not open `roca.db`. That file remains
+in place as the reversible legacy route until the separate retirement step.
 
 ## Runtime map
 
@@ -72,7 +76,7 @@ fixtures.
   fingerprinted incremental writes.
 - `internal/provider/plugin/` is the manifest engine: declarations, discovery,
   schema truth checks, semantic composition, verb and capability registration,
-  and the in-memory hub the attach point is moving to.
+  and the in-memory hub.
 - `internal/provider/query/` owns prompt construction and the SQL read gate;
   `internal/provider/service/` orchestrates the compatibility product surface.
 - `internal/distribution/plugininstall/` verifies packages and preserves every

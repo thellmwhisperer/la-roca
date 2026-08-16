@@ -83,6 +83,7 @@ type MemoryCustodyReport struct {
 	FTSRecords         int
 	VerificationDigest string
 	Snapshots          []string
+	SnapshotPaths      map[string]string
 	Drift              []MemoryDrift
 }
 
@@ -121,6 +122,33 @@ type memoryRow struct {
 	createdAt      sql.NullString
 	expiresAt      sql.NullString
 	digest         string
+}
+
+// MemoryCustodyCutoverEligible reports whether DATA-2 has verified the ops
+// compatibility population. It performs no migration and does not open a
+// source database.
+func MemoryCustodyCutoverEligible(ctx context.Context, opsPath string) (bool, error) {
+	ops, err := bundledplugin.OpenDatabase(opsPath, true)
+	if err != nil {
+		return false, err
+	}
+	defer ops.Close()
+	return migrationledger.MigrationCutoverEligible(ctx, ops, memoryCustodyMigration)
+}
+
+// MemoryCustodyWriterFenced reports whether DATA-2 has begun owning memory
+// writes. Once this is true, a read-route rollback must keep new stores in ops.
+func MemoryCustodyWriterFenced(ctx context.Context, opsPath string) (bool, error) {
+	ops, err := bundledplugin.OpenDatabase(opsPath, true)
+	if err != nil {
+		return false, err
+	}
+	defer ops.Close()
+	state, err := migrationledger.InspectMigration(ctx, ops, memoryCustodyMigration)
+	if err != nil {
+		return false, err
+	}
+	return state.State != migrationledger.StateAbsent, nil
 }
 
 // MigrateMemoryCustody copies memory identities from verified snapshots into
@@ -166,7 +194,7 @@ func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (Me
 		return MemoryCustodyReport{}, err
 	}
 	if state.State == migrationledger.StateVerified {
-		return inspectMemoryCustody(ctx, ops, state)
+		return inspectMemoryCustody(ctx, ops, state, options.SnapshotDir, plugin)
 	}
 	if state.State != migrationledger.StatePrepared && state.State != migrationledger.StateBatchInProgress &&
 		state.State != migrationledger.StateVerifiedEmpty {
@@ -180,11 +208,13 @@ func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (Me
 		{name: corpusMemorySource, path: options.CorpusPath},
 	}
 	snapshots := make([]string, 0, len(sources))
+	snapshotPaths := make(map[string]string, len(sources))
 	rowsBySource := make(map[string][]memoryRow, len(sources))
 	var drift []MemoryDrift
 	for _, source := range sources {
 		snapshot := memorySnapshotPath(options.SnapshotDir, source.name, plugin)
 		snapshots = append(snapshots, snapshot)
+		snapshotPaths[source.name] = snapshot
 		if snapshotErr := snapshotMemories(ctx, source, snapshot); snapshotErr != nil {
 			return custodyFailure(ctx, ops, snapshots, drift, snapshotErr)
 		}
@@ -250,6 +280,7 @@ func MigrateMemoryCustody(ctx context.Context, options MemoryCustodyOptions) (Me
 	report.State = verified
 	report.VerificationDigest = digest
 	report.Snapshots = snapshots
+	report.SnapshotPaths = snapshotPaths
 	report.Drift = drift
 	return report, nil
 }
@@ -739,9 +770,17 @@ func verifyMemoryCustody(ctx context.Context, ops *sql.DB,
 	return MemoryCustodyReport{Memberships: memberships, PhysicalRecords: physical, FTSRecords: fts}, digest, nil
 }
 
-func inspectMemoryCustody(ctx context.Context, ops *sql.DB,
-	state migrationledger.MigrationSnapshot) (MemoryCustodyReport, error) {
+func inspectMemoryCustody(ctx context.Context, ops *sql.DB, state migrationledger.MigrationSnapshot,
+	snapshotDir string, plugin migrationledger.Snapshot) (MemoryCustodyReport, error) {
 	report := MemoryCustodyReport{State: state.State, VerificationDigest: state.VerificationDigest}
+	for _, source := range []string{opsMemorySource, coreMemorySource, corpusMemorySource} {
+		path := memorySnapshotPath(snapshotDir, source, plugin)
+		report.Snapshots = append(report.Snapshots, path)
+		if report.SnapshotPaths == nil {
+			report.SnapshotPaths = make(map[string]string, 3)
+		}
+		report.SnapshotPaths[source] = path
+	}
 	queries := []struct {
 		statement string
 		args      []any

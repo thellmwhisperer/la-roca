@@ -634,6 +634,11 @@ func (s *Service) searchByTerm(ctx context.Context, plan query.Plan, method stri
 	maxChars int, matchAny bool) (columns []string, rows []map[string]any, stmt string,
 	provenance *search.Provenance, warnings []string, err error) {
 
+	if s.servingLayout() != LayoutLegacyServing && method != search.MethodLike {
+		if err := s.ensureHubSearch(ctx); err != nil {
+			return nil, nil, "", nil, nil, err
+		}
+	}
 	gate, err := s.theGate()
 	if err != nil {
 		return nil, nil, "", nil, nil, err
@@ -665,6 +670,28 @@ func (s *Service) searchByTerm(ctx context.Context, plan query.Plan, method stri
 	})
 	if err != nil {
 		return nil, nil, "", nil, nil, err
+	}
+	if result.Provenance.Method == search.MethodFTS && s.servingLayout() == LayoutShadowEqual {
+		validated, validateErr := gate.Validate(result.SQL)
+		if validateErr != nil {
+			s.rollbackShadow(fmt.Errorf("shadow lexical gate differs: %w", validateErr))
+		} else {
+			legacyColumns, legacyRows, legacyErr := s.executeWithDatabase(
+				ctx, validated, plan.Term, maxChars, nil, s.db)
+			hubColumns, hubRows, hubErr := s.executeWithDatabase(
+				ctx, validated, plan.Term, maxChars, nil, s.hubDB)
+			if legacyErr != nil || hubErr != nil ||
+				!s.shadowEqual(legacyColumns, legacyRows, hubColumns, hubRows) {
+				reason := hubErr
+				if reason == nil {
+					reason = legacyErr
+				}
+				if reason == nil {
+					reason = fmt.Errorf("shadow lexical rows differ")
+				}
+				s.rollbackShadow(reason)
+			}
+		}
 	}
 
 	if result.Provenance.Method == search.MethodLike {

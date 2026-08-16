@@ -244,13 +244,20 @@ func databaseForVerb(databases []plugin.Database, verb, packageName string) *plu
 }
 
 func (s *Service) openQueryConnection(ctx context.Context) (*sql.Conn, []string, error) {
-	reader, err := s.db.ReadOnly()
+	return s.openQueryConnectionOn(ctx, s.db)
+}
+
+func (s *Service) openQueryConnectionOn(ctx context.Context, target *store.DB) (*sql.Conn, []string, error) {
+	reader, err := target.ReadOnly()
 	if err != nil {
 		return nil, nil, err
 	}
 	connection, err := reader.Conn(ctx)
 	if err != nil {
 		return nil, nil, err
+	}
+	if target == s.hubDB {
+		return connection, nil, nil
 	}
 	attached, err := plugin.Attach(ctx, connection, s.resident)
 	if err != nil {
@@ -319,6 +326,33 @@ func schemaWithPlugins(databases []plugin.Database) query.Schema {
 
 func (s *Service) executeWithPlugins(ctx context.Context, statement, term string,
 	maxChars int, databases []plugin.Database) ([]string, []map[string]any, error) {
+	if s.hub != nil && needsHubSearch(statement) {
+		if err := s.ensureHubSearch(ctx); err != nil {
+			if s.servingLayout() == LayoutShadowEqual {
+				s.rollbackShadow(fmt.Errorf("shadow hub search differs: %w", err))
+			} else {
+				return nil, nil, err
+			}
+		}
+	}
+	columns, rows, err := s.executeWithDatabase(ctx, statement, term, maxChars, databases, s.db)
+	if err != nil || s.servingLayout() != LayoutShadowEqual || s.hubDB == nil {
+		return columns, rows, err
+	}
+	hubColumns, hubRows, hubErr := s.executeWithDatabase(
+		ctx, statement, term, maxChars, databases, s.hubDB)
+	if hubErr != nil || !s.shadowEqual(columns, rows, hubColumns, hubRows) {
+		reason := hubErr
+		if reason == nil {
+			reason = fmt.Errorf("shadow rows differ")
+		}
+		s.rollbackShadow(reason)
+	}
+	return columns, rows, nil
+}
+
+func (s *Service) executeWithDatabase(ctx context.Context, statement, term string,
+	maxChars int, databases []plugin.Database, target *store.DB) ([]string, []map[string]any, error) {
 	timeout, bounded := s.queryExecutionBudget()
 	queryCtx := ctx
 	var cancel context.CancelFunc = func() {}
@@ -326,7 +360,7 @@ func (s *Service) executeWithPlugins(ctx context.Context, statement, term string
 		queryCtx, cancel = context.WithTimeout(ctx, timeout)
 	}
 	defer cancel()
-	connection, attached, err := s.openQueryConnection(queryCtx)
+	connection, attached, err := s.openQueryConnectionOn(queryCtx, target)
 	if err != nil {
 		return nil, nil, executionError(ctx, queryCtx, timeout, err)
 	}

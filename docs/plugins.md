@@ -9,12 +9,13 @@ The kernel does not own a domain database. Its durable state is configuration
 and installed manifests. Database retention, pruning, compaction, and scale are
 plugin policy: one plugin cannot prune another plugin's history.
 
-The kernel's own attach point is an empty in-memory SQLite database. Which
-bundled domains have moved to a manifest, and the compatibility connection
-queries still attach to for the rows no plugin owns yet, are tracked by the
-runtime map in [Architecture](architecture.md#runtime-map); that compatibility
-path is not a plugin API. Either way a plugin database is opened read-only and
-reached only through its declared alias.
+The kernel's own attach point is an empty in-memory SQLite database. During the
+reversible cutover, temporary compatibility views reproduce the former core
+tables from plugin custody memberships, and temporary FTS indexes preserve the
+legacy ranking surface. The single `layout.serving` marker and rollback states
+are documented in the [runtime map](architecture.md#runtime-map). This adapter
+is not a plugin API. A plugin database is opened read-only and reached only
+through its declared alias.
 
 `roca-corpus` and `roca-ops`, the engine's manifest-backed bundled consumers,
 prove it without changing the product contract: both are resident, ingest and
