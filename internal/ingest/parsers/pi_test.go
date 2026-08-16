@@ -1,7 +1,10 @@
 package parsers
 
-import "strings"
-import "testing"
+import (
+	"math"
+	"strings"
+	"testing"
+)
 
 // A Pi file is a tree: the header, then entries linked by parentId. Only the
 // branch that ends at the last entry is the conversation that happened.
@@ -183,5 +186,82 @@ func TestPiDoesNotStoreAThinkingBlockWithNoText(t *testing.T) {
 	}
 	if discard := records.Discards[0]; discard.Record != 3 || discard.Reason == "" {
 		t.Errorf("discard = %+v, want record 3 with a reason", discard)
+	}
+}
+
+func TestPiProjectsEveryConversationalEntryOnTheActivePath(t *testing.T) {
+	content := `{"type":"session","version":3,"id":"complete-pi","cwd":"/synthetic/beacon","timestamp":"2026-08-15T10:00:00Z"}
+{"id":"u1","parentId":null,"type":"message","timestamp":"2026-08-15T10:00:01Z","message":{"role":"user","content":[{"type":"text","text":"Inspect the invented beacon."},{"type":"image","data":"synthetic","mimeType":"image/png"}]}}
+{"id":"a1","parentId":"u1","type":"message","timestamp":"2026-08-15T10:00:02Z","message":{"role":"assistant","model":"model-alpha/v2","provider":"provider-alpha","stopReason":"toolUse","usage":{"input":4,"output":2,"reasoning":1,"cacheRead":3,"cost":{"total":0.10}},"content":[{"type":"thinking","thinking":"Check the synthetic lens."},{"type":"toolCall","id":"call-1","name":"inspect","arguments":{"target":"beacon"}}]}}
+{"id":"r1","parentId":"a1","type":"message","timestamp":"2026-08-15T10:00:03Z","message":{"role":"toolResult","toolCallId":"call-1","toolName":"inspect","isError":false,"content":[{"type":"text","text":"synthetic result"}]}}
+{"id":"a2","parentId":"r1","type":"message","timestamp":"2026-08-15T10:00:04Z","message":{"role":"assistant","model":"model-alpha/v2","provider":"provider-alpha","stopReason":"stop","usage":{"input":1,"output":3,"reasoning":0,"cost":{"total":0.05}},"content":[{"type":"text","text":"The invented lens is clear."}]}}
+{"id":"cx","parentId":"a2","type":"custom_message","timestamp":"2026-08-15T10:00:05Z","customType":"synthetic-context","content":"Remember the fictional north marker.","display":false}
+{"id":"co","parentId":"cx","type":"compaction","timestamp":"2026-08-15T10:00:06Z","summary":"The synthetic beacon was inspected.","tokensBefore":100}
+{"id":"bs","parentId":"co","type":"branch_summary","timestamp":"2026-08-15T10:00:07Z","summary":"An invented alternate lens was rejected.","fromId":"a1"}
+{"id":"si","parentId":"bs","type":"session_info","timestamp":"2026-08-15T10:00:08Z","name":"Synthetic beacon audit"}
+{"id":"u2","parentId":"si","type":"message","timestamp":"2026-08-15T10:00:09Z","message":{"role":"user","content":"Verify the marker."}}
+{"id":"b1","parentId":"u2","type":"message","timestamp":"2026-08-15T10:00:10Z","message":{"role":"bashExecution","command":"printf synthetic","output":"synthetic","exitCode":0,"cancelled":false}}
+{"id":"a3","parentId":"b1","type":"message","timestamp":"2026-08-15T10:00:11Z","message":{"role":"assistant","model":"model-beta@2026-08","provider":"provider-beta","stopReason":"stop","content":[{"type":"text","text":"The fictional marker is verified."}]}}
+{"id":"st","parentId":"a3","type":"custom","timestamp":"2026-08-15T10:00:12Z","customType":"synthetic-state","data":{"cursor":1}}
+{"id":"mc","parentId":"st","type":"model_change","timestamp":"2026-08-15T10:00:13Z","provider":"provider-beta","modelId":"model-beta@2026-08"}
+{"id":"tc","parentId":"mc","type":"thinking_level_change","timestamp":"2026-08-15T10:00:14Z","thinkingLevel":"high"}
+`
+	records, err := Parse(KindPiSession, []byte(content), FileMeta{Path: "/synthetic/.pi/agent/sessions/beacon/session.jsonl"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records.Sessions) != 1 {
+		t.Fatalf("sessions = %d, want 1", len(records.Sessions))
+	}
+	session := records.Sessions[0]
+	if session.Title != "Synthetic beacon audit" {
+		t.Errorf("title = %q", session.Title)
+	}
+	if len(session.Exchanges) != 2 {
+		t.Fatalf("exchanges = %d, want 2", len(session.Exchanges))
+	}
+	first := session.Exchanges[0]
+	if first.Provenance.Model != "model-alpha/v2" || first.Provenance.Provider != "provider-alpha" {
+		t.Errorf("first model/provider = %q/%q", first.Provenance.Model, first.Provenance.Provider)
+	}
+	if first.Provenance.TokensIn == nil || *first.Provenance.TokensIn != 8 ||
+		first.Provenance.TokensOut == nil || *first.Provenance.TokensOut != 5 ||
+		first.Provenance.TokensReasoning == nil || *first.Provenance.TokensReasoning != 1 ||
+		first.Provenance.CostUSD == nil || math.Abs(*first.Provenance.CostUSD-0.15) > 1e-9 {
+		t.Errorf("first provenance = %+v", first.Provenance)
+	}
+	if len(first.Tools) != 1 || first.Tools[0].Name != "inspect" ||
+		first.Tools[0].ParamsSummary != `{"target":"beacon"}` {
+		t.Errorf("first tools = %+v", first.Tools)
+	}
+	second := session.Exchanges[1]
+	if second.Provenance.Model != "model-beta@2026-08" || second.Provenance.Provider != "provider-beta" {
+		t.Errorf("second model/provider = %q/%q", second.Provenance.Model, second.Provenance.Provider)
+	}
+	if len(second.Tools) != 1 || second.Tools[0].Name != "bash" || second.Tools[0].HadError ||
+		second.Tools[0].ParamsSummary != "printf synthetic" {
+		t.Errorf("second tools = %+v", second.Tools)
+	}
+	wantThinking := map[string]string{
+		"context": "Remember the fictional north marker.",
+		"compact": "The synthetic beacon was inspected.",
+		"branch":  "An invented alternate lens was rejected.",
+	}
+	if len(session.Thinking) != len(wantThinking) {
+		t.Fatalf("session thinking = %+v", session.Thinking)
+	}
+	for _, block := range session.Thinking {
+		if wantThinking[block.Depth] != block.Text {
+			t.Errorf("session thinking block = %+v", block)
+		}
+		delete(wantThinking, block.Depth)
+	}
+	if len(wantThinking) != 0 {
+		t.Errorf("missing session thinking = %v", wantThinking)
+	}
+	for _, discard := range records.Discards {
+		if !discard.ByDesign {
+			t.Errorf("known Pi entry was reported unreadable: %+v", discard)
+		}
 	}
 }
