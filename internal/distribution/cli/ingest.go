@@ -155,6 +155,11 @@ func renderIngestSources(env *cliEnv, result service.IngestResult) {
 			axi.Quantity(int64(counts.Exchanges), "exchange"),
 			axi.Quantity(int64(counts.MemoriesInserted+counts.MemoriesUpdated), "memory", "memories"),
 			discarded, axi.Duration(stats.ElapsedMS))
+		if seen := result.Seen[name]; seen.Sessions > 0 || seen.Messages > 0 {
+			env.print("    saw %s and %s",
+				axi.Quantity(int64(seen.Sessions), "session"),
+				axi.Quantity(int64(seen.Messages), "message"))
+		}
 	}
 }
 

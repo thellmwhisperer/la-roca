@@ -159,6 +159,11 @@ type Result struct {
 	FilesExcluded int `json:"files_excluded"`
 	ExchangesHeld int `json:"exchanges_deferred"`
 
+	// Seen is how many source rows each store-backed reader observed before
+	// normalization, keyed by source agent: the denominator a coverage report
+	// divides the converted counts by. File sources leave it absent.
+	Seen map[string]parsers.Seen `json:"seen"`
+
 	Before Tables `json:"counts_before"`
 	After  Tables `json:"counts_after"`
 	Delta  Tables `json:"delta"`
@@ -189,6 +194,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		DryRun:  opts.DryRun,
 		Scanned: plan.Scanned,
 		Sources: map[string]*Counts{},
+		Seen:    map[string]parsers.Seen{},
 		WorkspaceRoots: Workspace{
 			Selected: orEmpty(plan.WorkspaceRoots),
 		},
@@ -485,6 +491,13 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 	}
 	records.Sessions = kept
 	result.ExchangesHeld += records.Deferred
+	if records.Seen.Sessions > 0 || records.Seen.Messages > 0 {
+		agent := normalizedSource(target.SourceAgent)
+		seen := result.Seen[agent]
+		seen.Sessions += records.Seen.Sessions
+		seen.Messages += records.Seen.Messages
+		result.Seen[agent] = seen
+	}
 	result.discard(target, records.Discards)
 
 	var counts Counts
