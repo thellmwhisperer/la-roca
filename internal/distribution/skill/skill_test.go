@@ -13,6 +13,13 @@ import (
 
 func shippedChecksum() string { return artifact.Checksum(skill.Content()) }
 
+// ownedSkillDestinations pairs each skill of the suite with its path resolver,
+// so every test that walks them states the pair once.
+var ownedSkillDestinations = []struct {
+	name string
+	path func(string, string, func(string) string) (string, error)
+}{{skill.SkillName, skill.Path}, {skill.CatalogName, skill.CatalogPath}}
+
 func TestContentIsANamedRocaSkill(t *testing.T) {
 	body := skill.Content()
 	if !strings.HasPrefix(body, "---\n") {
@@ -84,8 +91,8 @@ func TestContentCanSelfOnboardAnUnsupportedAgent(t *testing.T) {
 	}
 }
 
-func TestRuntimesMatchTheFiveAgentcfgKnows(t *testing.T) {
-	want := []string{"claude", "codex", "hermes", "opencode", "pi"}
+func TestRuntimesAreTheSkillSeatsThisProductMeasured(t *testing.T) {
+	want := []string{"claude", "codex", "grok", "hermes", "opencode", "pi", "qwen"}
 	got := skill.Runtimes()
 	if len(got) != len(want) {
 		t.Fatalf("runtimes = %v, want %v", got, want)
@@ -97,22 +104,29 @@ func TestRuntimesMatchTheFiveAgentcfgKnows(t *testing.T) {
 	}
 }
 
+// Every skill of the suite resolves under the same measured roots, so one
+// table states each runtime's roca path and its roca-semantica path.
 func TestPathResolvesEachRuntimeUnderATempHome(t *testing.T) {
 	home := t.TempDir()
-	cases := map[string]string{
-		"claude":   filepath.Join(home, ".claude", "skills", "roca", "SKILL.md"),
-		"codex":    filepath.Join(home, ".codex", "skills", "roca", "SKILL.md"),
-		"opencode": filepath.Join(home, ".config", "opencode", "skills", "roca", "SKILL.md"),
-		"hermes":   filepath.Join(home, ".hermes", "skills", "roca", "SKILL.md"),
-		"pi":       filepath.Join(home, ".pi", "agent", "skills", "roca", "SKILL.md"),
+	roots := map[string][]string{
+		"claude":   {".claude"},
+		"codex":    {".codex"},
+		"grok":     {".grok"},
+		"hermes":   {".hermes"},
+		"opencode": {".config", "opencode"},
+		"pi":       {".pi", "agent"},
+		"qwen":     {".qwen"},
 	}
-	for runtime, want := range cases {
-		got, err := skill.Path(runtime, home, nil)
-		if err != nil {
-			t.Fatalf("%s: %v", runtime, err)
-		}
-		if got != want {
-			t.Errorf("%s path = %s, want %s", runtime, got, want)
+	for runtime, dir := range roots {
+		for _, owned := range ownedSkillDestinations {
+			want := filepath.Join(append(append([]string{home}, dir...), "skills", owned.name, "SKILL.md")...)
+			got, err := owned.path(runtime, home, nil)
+			if err != nil {
+				t.Fatalf("%s: %v", runtime, err)
+			}
+			if got != want {
+				t.Errorf("%s %s path = %s, want %s", runtime, owned.name, got, want)
+			}
 		}
 	}
 }
@@ -122,7 +136,8 @@ func TestPathHonoursRuntimeEnvOverrides(t *testing.T) {
 	elsewhere := filepath.Join(home, "elsewhere")
 	env := func(key string) string {
 		switch key {
-		case "CLAUDE_CONFIG_DIR", "CODEX_HOME", "HERMES_HOME", "PI_CODING_AGENT_DIR":
+		case "CLAUDE_CONFIG_DIR", "CODEX_HOME", "GROK_HOME", "HERMES_HOME",
+			"PI_CODING_AGENT_DIR", "QWEN_HOME":
 			return elsewhere
 		case "OPENCODE_CONFIG":
 			return filepath.Join(elsewhere, "opencode.json")
@@ -131,70 +146,104 @@ func TestPathHonoursRuntimeEnvOverrides(t *testing.T) {
 		}
 	}
 	for _, runtime := range skill.Runtimes() {
-		got, err := skill.Path(runtime, home, env)
-		if err != nil {
-			t.Fatalf("%s: %v", runtime, err)
-		}
-		if !strings.HasPrefix(got, elsewhere) {
-			t.Errorf("%s path = %s, want under %s", runtime, got, elsewhere)
-		}
-		if !strings.HasSuffix(got, filepath.Join("skills", "roca", "SKILL.md")) {
-			t.Errorf("%s path = %s, want …/skills/roca/SKILL.md", runtime, got)
+		for _, owned := range ownedSkillDestinations {
+			got, err := owned.path(runtime, home, env)
+			if err != nil {
+				t.Fatalf("%s: %v", runtime, err)
+			}
+			if !strings.HasPrefix(got, elsewhere) {
+				t.Errorf("%s %s path = %s, want under %s", runtime, owned.name, got, elsewhere)
+			}
+			wantSuffix := filepath.Join("skills", owned.name, "SKILL.md")
+			if !strings.HasSuffix(got, wantSuffix) {
+				t.Errorf("%s %s path = %s, want …/%s", runtime, owned.name, got, wantSuffix)
+			}
 		}
 	}
 }
 
+// Both skills of the suite share one zoned install contract, so one table
+// walks each of them through the same write, idempotent rewrite and withdrawal.
 func TestInstallWritesTheSkillAndIsIdempotent(t *testing.T) {
+	catalog := catalogFixture()
 	home := t.TempDir()
-	path := filepath.Join(home, ".claude", "skills", "roca", "SKILL.md")
+	skills := []struct {
+		name     string
+		path     string
+		content  string
+		install  func(string, string, bool) (skill.Outcome, error)
+		checksum func() string
+	}{
+		{
+			name:    skill.SkillName,
+			path:    filepath.Join(home, ".claude", "skills", "roca", "SKILL.md"),
+			content: func() string { return skill.Content() }(),
+			install: func(path, previous string, force bool) (skill.Outcome, error) {
+				return skill.InstallWithOptions("claude", path, previous, force)
+			},
+			checksum: shippedChecksum,
+		},
+		{
+			name:    skill.CatalogName,
+			path:    filepath.Join(home, ".claude", "skills", "roca-semantica", "SKILL.md"),
+			content: catalog,
+			install: func(path, previous string, force bool) (skill.Outcome, error) {
+				return skill.InstallCatalogWithOptions("claude", path, catalog, previous, force, true)
+			},
+			checksum: func() string { return artifact.Checksum(catalog) },
+		},
+	}
+	for _, owned := range skills {
+		t.Run(owned.name, func(t *testing.T) {
+			first, err := owned.install(owned.path, "", false)
+			if err != nil {
+				t.Fatalf("first install: %v", err)
+			}
+			if !first.Changed || first.Path != owned.path {
+				t.Fatalf("first = %+v", first)
+			}
+			body, err := os.ReadFile(owned.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasPrefix(string(body), "---\n# ROCA SYSTEM BEGIN\n") {
+				t.Fatalf("installed skill no longer opens with YAML frontmatter: %q", string(body[:min(len(body), 40)]))
+			}
+			zones, err := artifact.Parse(string(body))
+			if err != nil || zones.System != owned.content || zones.User != "" {
+				t.Fatalf("written skill zones = %+v, err %v", zones, err)
+			}
 
-	first, err := skill.InstallWithOptions("claude", path, "", false)
-	if err != nil {
-		t.Fatalf("first install: %v", err)
-	}
-	if !first.Changed || first.Path != path {
-		t.Fatalf("first = %+v", first)
-	}
-	body, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(string(body), "---\n# ROCA SYSTEM BEGIN\n") {
-		t.Fatalf("installed skill no longer opens with YAML frontmatter: %q", string(body[:min(len(body), 40)]))
-	}
-	zones, err := artifact.Parse(string(body))
-	if err != nil || zones.System != skill.Content() || zones.User != "" {
-		t.Fatalf("written skill zones = %+v, err %v", zones, err)
-	}
+			second, err := owned.install(owned.path, "", false)
+			if err != nil {
+				t.Fatalf("second install: %v", err)
+			}
+			if second.Changed {
+				t.Fatal("reinstall rewrote an identical skill")
+			}
 
-	second, err := skill.InstallWithOptions("claude", path, "", false)
-	if err != nil {
-		t.Fatalf("second install: %v", err)
-	}
-	if second.Changed {
-		t.Fatal("reinstall rewrote an identical skill")
-	}
+			out, err := skill.UninstallWithChecksum("claude", owned.path, owned.checksum())
+			if err != nil {
+				t.Fatalf("uninstall: %v", err)
+			}
+			if !out.Changed {
+				t.Fatal("uninstall of an installed skill changed nothing")
+			}
+			if _, err := os.Stat(owned.path); !os.IsNotExist(err) {
+				t.Fatal("skill file survived uninstall")
+			}
+			if _, err := os.Stat(filepath.Dir(owned.path)); !os.IsNotExist(err) {
+				t.Fatal("skill directory survived uninstall")
+			}
 
-	out, err := skill.UninstallWithChecksum("claude", path, shippedChecksum())
-	if err != nil {
-		t.Fatalf("uninstall: %v", err)
-	}
-	if !out.Changed {
-		t.Fatal("uninstall of an installed skill changed nothing")
-	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatal("skill file survived uninstall")
-	}
-	if _, err := os.Stat(filepath.Dir(path)); !os.IsNotExist(err) {
-		t.Fatal("skill directory survived uninstall")
-	}
-
-	reuninstall, err := skill.UninstallWithChecksum("claude", path, shippedChecksum())
-	if err != nil {
-		t.Fatalf("re-uninstall: %v", err)
-	}
-	if reuninstall.Changed {
-		t.Fatal("re-uninstall of an already removed skill claims change")
+			reuninstall, err := skill.UninstallWithChecksum("claude", owned.path, owned.checksum())
+			if err != nil {
+				t.Fatalf("re-uninstall: %v", err)
+			}
+			if reuninstall.Changed {
+				t.Fatal("re-uninstall of an already removed skill claims change")
+			}
+		})
 	}
 }
 

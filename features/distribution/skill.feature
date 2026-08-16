@@ -8,14 +8,17 @@ Feature: Distribution agent teaching
   Scenario Outline: Skill install places the skill where the chosen agent discovers it, and says where
     When the operator installs the skill for "<agent>"
     Then only "<agent>" receives the canonical skill and the output names its path
+    And only "<agent>" receives the generated semantic catalog and no other runtime does
 
     Examples:
       | agent    |
       | claude   |
       | codex    |
+      | grok     |
       | hermes   |
       | opencode |
       | pi       |
+      | qwen     |
 
   Scenario: An installed skill is a registered artifact whose operator zone survives a refresh
     When the operator installs the skill for "claude"

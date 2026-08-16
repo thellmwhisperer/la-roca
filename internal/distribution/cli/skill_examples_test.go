@@ -15,13 +15,14 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/layers"
 )
 
-// The skill is the only manual an agent ever receives. Every command it shows
-// has to run and every layer it names has to exist, or the agent is led to an
-// invocation the product refuses. This guard checks each example against the
-// real command tree and layer registry.
+// The embedded skill is the only manual whose commands this guard must prove
+// runnable; the generated semantic catalog carries no CLI examples. Every
+// command it shows has to run and every layer it names has to exist, or the
+// agent is led to an invocation the product refuses. This guard checks each
+// example against the real command tree and layer registry.
 //
-// There is one skill body: internal/distribution/skill/SKILL.md, embedded in
-// the binary. Nothing else in the repository carries a copy.
+// There is one embedded skill body: internal/distribution/skill/SKILL.md,
+// embedded in the binary. Nothing else in the repository carries a copy.
 func TestEverySkillExampleIsValidAgainstTheRealCLI(t *testing.T) {
 	root := rootCommand(&cliEnv{out: io.Discard})
 	registry, err := layers.Load()

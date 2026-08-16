@@ -19,9 +19,10 @@ import (
 )
 
 const (
-	artifactKindSkill  = "skill"
-	artifactKindPrompt = "prompt"
-	artifactKindHook   = "hook"
+	artifactKindSkill        = "skill"
+	artifactKindSkillCatalog = "skill-catalog"
+	artifactKindPrompt       = "prompt"
+	artifactKindHook         = "hook"
 )
 
 func artifactsCommand(env *cliEnv) *cobra.Command {
@@ -204,12 +205,31 @@ func (env *cliEnv) refreshManagedArtifacts(executable string, force bool) (artif
 	if err := env.adoptLegacyArtifacts(paths, executable, &registry, &report); err != nil {
 		return report, err
 	}
+	// The catalog skill's desired body is composed from the installed plugins,
+	// not shipped inside the binary, so it is built once and only when a
+	// registered entry actually wants it.
+	var catalog string
+	catalogReady := false
+	desiredCatalog := func() string {
+		if !catalogReady {
+			catalogReady = true
+			if composed, err := env.composedCatalogSkill(); err == nil {
+				catalog = composed
+			} else {
+				report.failed("the semantic catalog skill", err, "")
+			}
+		}
+		return catalog
+	}
 	for index := range registry.Entries {
 		entry := &registry.Entries[index]
 		entry.AvailableVersion = env.build.Version
 		switch entry.Kind {
-		case artifactKindSkill, artifactKindPrompt:
-			desired, signature := shippedFileContent(entry.Kind)
+		case artifactKindSkill, artifactKindSkillCatalog, artifactKindPrompt:
+			desired, signature := desiredFileContent(entry.Kind, desiredCatalog)
+			if desired == "" {
+				continue
+			}
 			out, err := artifact.RefreshFile(artifact.FileRequest{
 				Path: entry.Path, System: desired, LegacySignature: signature,
 				PreviousSystemSHA256: entry.SystemSHA256, Enabled: report.Enabled, Force: force,
@@ -243,10 +263,15 @@ func (env *cliEnv) refreshManagedArtifacts(executable string, force bool) (artif
 	return report, nil
 }
 
-// shippedFileContent is the single place that says what this release wants a
-// zoned file artifact to hold, and which older shipped text it still recognizes
-// as its own. Both file kinds refresh identically, so only the content differs.
-func shippedFileContent(kind string) (string, string) {
+// desiredFileContent says what this release wants one zoned file artifact to
+// hold, and which older shipped text it still recognizes as its own. The two
+// shipped kinds read their text from the binary; the generated catalog composes
+// its own from the installed plugins and has no legacy form — it is a new
+// artifact, so a pre-zone file at its path is the operator's.
+func desiredFileContent(kind string, composedCatalog func() string) (string, string) {
+	if kind == artifactKindSkillCatalog {
+		return composedCatalog(), ""
+	}
 	if kind == artifactKindPrompt {
 		return service.PresentationPrompt(), service.PresentationPromptSignature()
 	}

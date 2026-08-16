@@ -8,9 +8,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/cucumber/godog"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 )
 
 func registerDistributionLifecycleSteps(ctx *godog.ScenarioContext, w *distributionWorld) {
@@ -53,17 +55,26 @@ func (w *distributionWorld) integratedHome(label string) (*lifecycleFixture, err
 	}
 	fixture := &lifecycleFixture{home: w.home, binary: w.installed, operatorFile: map[string]string{}, configs: map[string]bool{}}
 	for _, runtime := range distributionAgents {
-		path, _, err := configurationOf(runtime, w.home)
-		if err != nil {
-			return nil, err
+		instructionDir := filepath.Join(w.home, "."+runtime)
+		if slices.Contains(agentcfg.Runtimes(), runtime) {
+			path, _, err := configurationOf(runtime, w.home)
+			if err != nil {
+				return nil, err
+			}
+			config := distributionConfigContent(path)
+			if err := writeAcceptanceFixture(path, config); err != nil {
+				return nil, err
+			}
+			fixture.operatorFile[path] = config
+			fixture.configs[path] = true
+			instructionDir = filepath.Dir(path)
+			if run := w.runAt(w.home, w.installed, "mcp", "install", runtime); run.code != 0 {
+				return nil, fmt.Errorf("install %s MCP: %s", runtime, run.stderr)
+			}
 		}
-		config := distributionConfigContent(path)
-		if err := writeAcceptanceFixture(path, config); err != nil {
-			return nil, err
-		}
-		fixture.operatorFile[path] = config
-		fixture.configs[path] = true
-		instruction := filepath.Join(filepath.Dir(path), "OPERATOR-INSTRUCTIONS.md")
+		// grok and qwen are skill seats without a measured MCP surface, so an
+		// integrated home installs the skills for them and nothing else.
+		instruction := filepath.Join(instructionDir, "OPERATOR-INSTRUCTIONS.md")
 		if runtime == "claude" {
 			instruction = filepath.Join(w.home, ".claude", "OPERATOR-INSTRUCTIONS.md")
 		}
@@ -72,9 +83,6 @@ func (w *distributionWorld) integratedHome(label string) (*lifecycleFixture, err
 			return nil, err
 		}
 		fixture.operatorFile[instruction] = content
-		if run := w.runAt(w.home, w.installed, "mcp", "install", runtime); run.code != 0 {
-			return nil, fmt.Errorf("install %s MCP: %s", runtime, run.stderr)
-		}
 		if run := w.runAt(w.home, w.installed, "skill", "install", runtime); run.code != 0 {
 			return nil, fmt.Errorf("install %s skill: %s", runtime, run.stderr)
 		}
@@ -131,9 +139,12 @@ func (w *distributionWorld) lifecycleConsentIsRespected() error {
 			}
 		}
 		for _, runtime := range distributionAgents {
-			path, _ := distributionSkillPath(runtime, fixture.home)
-			if _, err := os.Stat(path); !os.IsNotExist(err) {
-				return fmt.Errorf("%s left the %s skill", name, runtime)
+			skillPath, _ := distributionSkillPath(runtime, fixture.home)
+			catalogPath, _ := distributionCatalogSkillPath(runtime, fixture.home)
+			for _, path := range []string{skillPath, catalogPath} {
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					return fmt.Errorf("%s left a skill at %s", name, path)
+				}
 			}
 		}
 	}
