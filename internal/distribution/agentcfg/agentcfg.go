@@ -29,6 +29,14 @@ const (
 	RuntimePi       = "pi"
 )
 
+// Skill seats whose user skill directory this product measured but whose MCP
+// configuration surface it did not: they name skill destinations only and stay
+// outside the runtime map `roca mcp install` edits.
+const (
+	RuntimeGrok = "grok"
+	RuntimeQwen = "qwen"
+)
+
 // ServerName is the entry Roca owns.
 const ServerName = "roca"
 

@@ -3,14 +3,16 @@ name: roca
 description: >
   Use La Roca, the local memory for agent fleets. Load when the user
   references past work, asks "who is X", "what happened with Y", "have we done
-  this before", or wants a memory stored.
+  this before", wants a memory stored, or wants to investigate a topic across
+  the agents' history.
 ---
 
 # La Roca
 
 Local SQLite memory of what agents leave on disk. Query in natural language and
-the answering model turns the question into SQL over the schema; store memories
-that last. No network required after install beyond the model provider itself.
+the answering model turns the question into SQL over the schema; investigate
+concepts with grounded exploration; store memories that last. No network
+required after install beyond the model provider itself.
 
 Before first use, run `roca init` in a terminal. With no home database it asks
 `new` or `adopt` with no default. `adopt` then asks you to type the source path,
@@ -23,6 +25,22 @@ model first, resolves its harness, and confirms the pair before editing
 keeps the factory choice and uses the CLI's existing session without a La Roca
 login. Automation that creates or selects a location must pass `--db-path`;
 non-terminal init does not open the chooser or write model configuration.
+
+## Staying current
+
+Two kinds of freshness, two commands:
+
+- **Binary**: `roca version` says what is installed; `roca update`
+  self-updates to the latest release. Releases ship often, so if behavior looks
+  outdated or a documented feature is missing, update before debugging. The
+  first run after an update may adopt new schema columns or rebuild derived
+  indexes, which can take a couple of minutes on a large corpus: that is work,
+  not a hang, and source rows are never rewritten.
+- **Data**: the database only knows what the last ingest read. `roca ingest`
+  reads every agent source and normalizes what changed; it is incremental, so
+  routine runs are cheap. If a question is about today's sessions and the
+  answer looks stale, ingest first, then ask again. Its per-agent coverage
+  report says what was seen, parsed, skipped and why; trust it over guessing.
 
 ## Shell commands
 
@@ -38,6 +56,7 @@ roca query "what happened with Y" --json
 roca query "ffmpeg patterns" --sql-only        # the SQL the model would run, without running it
 roca exec "SELECT COUNT(*) AS memories FROM memories"  # run a gate-approved SELECT
 roca store --layer discovery --content "FTS ranks by bm25, created_at only for time questions" --origin agent --agent codex --model gpt-5
+roca ingest                                    # refresh the corpus from every agent source
 roca doctor                                    # diagnosis + remedies
 ```
 
@@ -80,20 +99,52 @@ SQL, with the deep mission mapping the complete terrain and proposing probes.
 `query --sql-only` (the SQL without running it); `roca_exec` runs that SQL under
 the gate. Install them with `roca mcp install <runtime>`.
 
+## Provenance: who wrote what
+
+Every ingested row carries its author identity: the harness (claude, codex,
+hermes, ...) and the source model that produced it. Ask for it directly in
+natural language: "what did deepseek conclude about X", "which model wrote the
+most sessions in July". For memories you store, carry identity too:
+
+- `roca store --model <id>` (and `--agent <harness>`) states the writing
+  identity explicitly;
+- `roca hooks install claude` installs the Claude Code signing hook, so every
+  store from that runtime is stamped without remembering the flags.
+
+Over MCP, authorship comes from the session itself and cannot be spoofed by
+arguments.
+
 ## When to call what
 
 | Situation | Action |
 |---|---|
 | Past work / people / "have we…" | `roca query "<question>"` |
-| Investigation | `roca explore --deep "<one bare word>"`, then plain radius explores |
+| Researching a topic, not a point fact | `roca explore "<concept>"` |
+| Answer looks stale / about today | `roca ingest`, then ask again |
 | Programmatic parse | add `--json` |
 | Inspect SQL first | `roca query --sql-only` then `roca exec` |
 | Durable memory | `roca store --layer … --content … --agent … --model …` |
+| Who wrote it / which model | ask by author, or store with `--model` |
 | No shell | the MCP tools above |
+
+## Plugins
+
+La Roca is a federating kernel: capabilities ship as plugins that own their
+own SQLite databases and declare them in a `plugin.json` manifest; the kernel
+attaches them read-only and folds their tables into natural-language search.
+
+- Use one: `roca plugin install <local dir | git URL | owner/repo>`, then
+  `roca plugin update <name>` / `roca plugin uninstall <name>`. The
+  experimental surface requires `features.plugins=true`.
+- Build one: a manifest plus one executable is a complete plugin. Follow the
+  quickstart in the repository's `docs/plugins.md`; start from its minimal
+  example and grow, do not hand-roll the packaging.
 
 ## Investigation method
 
-Purpose: reach a verdict that is grounded in returned rows while learning the corpus terrain.
+Purpose: reach a verdict that is grounded in returned rows while learning the
+corpus terrain. When you would otherwise fire three exploratory queries, fire
+one `roca explore` instead and follow its probes.
 
 1. Declare the purpose in one line before touching anything.
 2. Launch the first probe with `roca explore --deep "<one bare word>"`. Use a
@@ -106,9 +157,16 @@ Purpose: reach a verdict that is grounded in returned rows while learning the co
 5. Widen only deliberately and say so out loud: use explicit OR, search the
    whole corpus, or raise limits consciously.
 6. Graduate to `roca query --sql-only` plus `roca exec` once the printed plans
-   have shown the schema.
+   have shown the schema. Phrase by relation, not point fact: "what is my
+   relationship with X" matches how conversations store knowledge better than
+   "who did I work with at X", and rankings need an explicit `ORDER BY` on the
+   volume column or the list shows the tail instead of the head.
 7. End with a Verdict grounded in rows: state the claim, which row supports it,
-   and what stayed unanswered.
+   and what stayed unanswered. Cross-check the plausible before trusting it: a
+   confident answer to a superlative or origin question ("the most", "the
+   first time", "when did we decide") may be a naive count crowning its first
+   match, so verify it against distilled memories or a second, differently
+   phrased query.
 
 ## Operating craft
 
@@ -124,6 +182,9 @@ Purpose: reach a verdict that is grounded in returned rows while learning the co
   steps and blockers.
 - Ask bare first: use one short concept and no hints. Hints can steer SQL to the
   wrong table; a typo can silently leave noise as the best match.
+- For any investigation, reach for `roca explore` first; the investigation
+  method above is the same discipline applied by hand with `query`, when you
+  need finer control than the probe gives you.
 - Widen deliberately: say "search the whole corpus (conversations, thinking,
   memories, sessions)", request OR between terms and raise limits consciously.
 - For counts or rankings, name `sessions` or `exchanges`, where the mass lives;
@@ -187,6 +248,7 @@ data.
 
 ```bash
 roca query "who is Ana"
+roca explore "what we know about retention"
 roca query "what feedback do we have" --json
 roca store --layer handoff --content "the ingest update left the gate in place" --origin agent --agent claude --model sonnet
 ```
@@ -198,6 +260,7 @@ roca store --layer handoff --content "the ingest update left the gate in place" 
 # Writing free-form SQL that is not a SELECT (the gate refuses it)
 # Storing secrets, tokens, or raw credentials
 # Re-storing the same memory on every turn without checking first
+# Asking about today's work without ingesting first
 ```
 
 ## Layers
