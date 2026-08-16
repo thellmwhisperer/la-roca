@@ -34,11 +34,12 @@ type Counts struct {
 	MemoriesUpdated   int `json:"memories_updated"`
 	MemoriesUnchanged int `json:"memories_unchanged"`
 	// ExchangesUnchanged and ExchangesChanged are what the sources that key on
-	// their own exchange identity report: one already landed identical, the other
-	// already landed and the source has since edited it. Neither is rewritten,
-	// because an exchange that already answered a query cannot change under it.
+	// their own exchange identity report. Ordinary changed readings are frozen;
+	// a parser revision may explicitly replace a changed historical projection
+	// when the source identity proves it is the same record under a new unit.
 	ExchangesUnchanged      int `json:"exchanges_unchanged"`
 	ExchangesChanged        int `json:"exchanges_changed"`
+	ExchangesDeleted        int `json:"exchanges_deleted"`
 	AnchorConflicts         int `json:"anchor_conflicts"`
 	ThinkingBlocksDiscarded int `json:"thinking_blocks_discarded"`
 }
@@ -54,6 +55,7 @@ func (c *Counts) add(other Counts) {
 	c.MemoriesUnchanged += other.MemoriesUnchanged
 	c.ExchangesUnchanged += other.ExchangesUnchanged
 	c.ExchangesChanged += other.ExchangesChanged
+	c.ExchangesDeleted += other.ExchangesDeleted
 	c.AnchorConflicts += other.AnchorConflicts
 	c.ThinkingBlocksDiscarded += other.ThinkingBlocksDiscarded
 }
@@ -127,10 +129,12 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 	if err != nil {
 		return counts, err
 	}
+	deduplicateSourceAssignments(assigned, session.Exchanges)
 	matcher, err := w.exchangeMatcher(ctx, session.ID, historyFallbackNumbers(current))
 	if err != nil {
 		return counts, err
 	}
+	claimAssignedExchanges(matcher, assigned, session.Exchanges)
 
 	metadata := map[string]any{}
 	maps.Copy(metadata, session.Metadata)
@@ -166,7 +170,48 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 				number = next
 			}
 		}
-		matched, outcome := matcher.match(number, exchange, session.HistoryFallback)
+		if identityKnown && exchange.RewriteOnIdentityChange &&
+			known.Fingerprint != exchange.Fingerprint {
+			stored, exists := matcher.byNumber[known.Number]
+			// A message-level user row has no agent projection. This check makes
+			// the rewrite a one-time migration of the old paired shape rather than
+			// permission to mutate a user message that later changed.
+			if exists && (stored.agentText != "" || stored.agentTimestamp != "") {
+				thinking, tools, err := w.replaceExchange(ctx, session.ID, stored, exchange)
+				if err != nil {
+					return counts, err
+				}
+				matcher.claim(stored, number, exchange)
+				assigned[exchange.SourceID] = exchangeKey{
+					Number: stored.number, Fingerprint: exchange.Fingerprint, Signal: exchange.Signal,
+				}
+				counts.ExchangesChanged++
+				counts.ThinkingBlocks += thinking
+				counts.ToolUses += tools
+				continue
+			}
+		}
+		var matched storedExchange
+		outcome := exchangeUnmatched
+		if identityKnown {
+			stored, mapped := matcher.byNumber[known.Number]
+			if !mapped {
+				delete(assigned, exchange.SourceID)
+				identityKnown = false
+				number = next
+			} else {
+				_, conflicts := compareContent(stored, exchange)
+				if conflicts {
+					matcher.claim(stored, number, exchange)
+					counts.ExchangesChanged++
+					continue
+				}
+				matched, outcome = stored, exchangeMatched
+			}
+		}
+		if !identityKnown {
+			matched, outcome = matcher.match(number, exchange, session.HistoryFallback)
+		}
 		if outcome == exchangeMatched {
 			if !matched.numberValid {
 				counts.ThinkingBlocksDiscarded += len(exchange.Thinking)
@@ -234,6 +279,12 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 			continue
 		}
 		matcher.occupy(exchangeID, number, exchange, session.HistoryFallback)
+		if exchange.SourceID != "" {
+			// A later record with another explicit source identity must not be
+			// reconciled onto a row inserted earlier in this same read merely
+			// because OpenCode gave sibling messages the same completion instant.
+			matcher.claim(matcher.byNumber[number], number, exchange)
+		}
 		counts.Exchanges++
 		if exchange.SourceID != "" {
 			assigned[exchange.SourceID] = exchangeKey{
@@ -259,8 +310,21 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 			counts.ThinkingBlocks++
 		}
 	}
+	rewroteAssignments := false
+	if session.Snapshot && session.PruneUnmappedExchanges {
+		currentAssignments, complete := currentSourceAssignments(assigned, session.Exchanges)
+		if complete {
+			deleted, err := w.pruneUnmappedExchanges(ctx, session.ID, currentAssignments)
+			if err != nil {
+				return counts, err
+			}
+			counts.ExchangesDeleted += deleted
+			assigned = currentAssignments
+			rewroteAssignments = true
+		}
+	}
 
-	if len(assigned) > 0 {
+	if len(assigned) > 0 || rewroteAssignments {
 		putExchangeMap(metadata, session.ExchangeKeyScope, assigned)
 	}
 	if len(metadata) > 0 {
@@ -269,6 +333,126 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 		}
 	}
 	return counts, nil
+}
+
+func currentSourceAssignments(assigned map[string]exchangeKey,
+	exchanges []parsers.Exchange) (map[string]exchangeKey, bool) {
+	current := make(map[string]exchangeKey, len(exchanges))
+	numbers := map[int]bool{}
+	for _, exchange := range exchanges {
+		known, exists := assigned[exchange.SourceID]
+		if exchange.SourceID == "" || !exists || known.Number <= 0 || numbers[known.Number] {
+			return nil, false
+		}
+		numbers[known.Number] = true
+		current[exchange.SourceID] = known
+	}
+	return current, true
+}
+
+func (w *writer) pruneUnmappedExchanges(ctx context.Context, sessionID string,
+	assigned map[string]exchangeKey) (int, error) {
+	keep := make([]int, 0, len(assigned))
+	seen := map[int]bool{}
+	for _, known := range assigned {
+		if known.Number > 0 && !seen[known.Number] {
+			seen[known.Number] = true
+			keep = append(keep, known.Number)
+		}
+	}
+	encoded, err := json.Marshal(keep)
+	if err != nil {
+		return 0, fmt.Errorf("encode exchange ownership of %s: %w", sessionID, err)
+	}
+	for _, table := range []string{"thinking_blocks", "tool_uses"} {
+		_, err := w.tx.ExecContext(ctx, `DELETE FROM `+table+`
+			WHERE session_id = ? AND exchange_number IS NOT NULL
+			  AND exchange_number NOT IN (SELECT CAST(value AS INTEGER) FROM json_each(?))`,
+			sessionID, string(encoded))
+		if err != nil {
+			return 0, fmt.Errorf("prune unmapped %s rows of %s: %w", table, sessionID, err)
+		}
+	}
+	result, err := w.tx.ExecContext(ctx, `DELETE FROM exchanges
+		WHERE session_id = ? AND (exchange_number IS NULL OR
+		  exchange_number NOT IN (SELECT CAST(value AS INTEGER) FROM json_each(?)))`,
+		sessionID, string(encoded))
+	if err != nil {
+		return 0, fmt.Errorf("prune unmapped exchanges of %s: %w", sessionID, err)
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("count pruned exchanges of %s: %w", sessionID, err)
+	}
+	return int(deleted), nil
+}
+
+// deduplicateSourceAssignments repairs an interrupted or older reading that
+// mapped several explicit source records onto one exchange number. The first
+// current source record owns the existing row; later identities become unknown
+// and therefore land as their own exchanges during this read.
+func deduplicateSourceAssignments(assigned map[string]exchangeKey,
+	exchanges []parsers.Exchange) {
+	owners := map[int]string{}
+	for _, exchange := range exchanges {
+		known, exists := assigned[exchange.SourceID]
+		if !exists || exchange.SourceID == "" {
+			continue
+		}
+		if _, owned := owners[known.Number]; !owned {
+			owners[known.Number] = exchange.SourceID
+		}
+	}
+	for sourceID, known := range assigned {
+		if owner := owners[known.Number]; owner != "" && owner != sourceID {
+			delete(assigned, sourceID)
+		}
+	}
+}
+
+// claimAssignedExchanges reserves rows already owned by current source identities
+// before matching any newly discovered identity. Source order must not let an
+// earlier new message steal the timestamp anchor of a later mapped message.
+func claimAssignedExchanges(matcher *exchangeMatcher, assigned map[string]exchangeKey,
+	exchanges []parsers.Exchange) {
+	for _, exchange := range exchanges {
+		known, exists := assigned[exchange.SourceID]
+		stored, landed := matcher.byNumber[known.Number]
+		if exchange.SourceID != "" && exists && landed {
+			matcher.claim(stored, known.Number, exchange)
+		}
+	}
+}
+
+// replaceExchange changes the projection of one explicitly identified source
+// record. OpenCode used this once when its historical user+assistant pair became
+// one exchange per durable message; the old assistant children must leave the
+// user row before their own message rows are inserted.
+func (w *writer) replaceExchange(ctx context.Context, sessionID string,
+	stored storedExchange, exchange parsers.Exchange) (int, int, error) {
+	values := append(exchangeColumnValues(exchange), stored.id, sessionID)
+	_, err := w.tx.ExecContext(ctx, `
+		UPDATE exchanges SET
+		  is_after_compaction = ?, human_text = ?, agent_text = ?,
+		  human_timestamp = ?, agent_timestamp = ?, response_latency_ms = ?,
+		  model = ?, provider = ?, tokens_in = ?, tokens_out = ?,
+		  tokens_reasoning = ?, cost_usd = ?
+		WHERE id = ? AND session_id = ?`, values...)
+	if err != nil {
+		return 0, 0, fmt.Errorf("replace exchange row %d of %s: %w", stored.id, sessionID, err)
+	}
+	if !stored.numberValid {
+		return 0, 0, nil
+	}
+	if _, err := w.tx.ExecContext(ctx, `DELETE FROM thinking_blocks
+		WHERE session_id = ? AND exchange_number = ?`, sessionID, stored.number); err != nil {
+		return 0, 0, fmt.Errorf("replace thinking of %s/%d: %w", sessionID, stored.number, err)
+	}
+	if _, err := w.tx.ExecContext(ctx, `DELETE FROM tool_uses
+		WHERE session_id = ? AND exchange_number = ?`, sessionID, stored.number); err != nil {
+		return 0, 0, fmt.Errorf("replace tools of %s/%d: %w", sessionID, stored.number, err)
+	}
+	return w.children(ctx, sessionID, stored.number, exchange)
 }
 
 type storedExchange struct {
@@ -888,20 +1072,13 @@ func keysItsOwnExchanges(session parsers.Session) bool {
 // exchange_number) remains the final guard against a concurrent duplicate.
 func (w *writer) exchange(ctx context.Context, sessionID string, number int,
 	exchange parsers.Exchange) (int64, bool, error) {
-	provenance := exchange.Provenance
+	values := append([]any{sessionID, number}, exchangeColumnValues(exchange)...)
 	result, err := w.tx.ExecContext(ctx, `
 		INSERT OR IGNORE INTO exchanges
 		  (session_id, exchange_number, is_after_compaction, human_text, agent_text,
 		   human_timestamp, agent_timestamp, response_latency_ms,
 		   model, provider, tokens_in, tokens_out, tokens_reasoning, cost_usd)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		sessionID, number, boolToInt(exchange.IsAfterCompaction),
-		nullIfEmpty(exchange.HumanText), nullIfEmpty(exchange.AgentText),
-		nullIfEmpty(exchange.HumanTimestamp), nullIfEmpty(exchange.AgentTimestamp),
-		nullInt(exchange.LatencyMS),
-		nullIfEmpty(provenance.Model), nullIfEmpty(provenance.Provider),
-		nullInt(provenance.TokensIn), nullInt(provenance.TokensOut),
-		nullInt(provenance.TokensReasoning), nullFloat(provenance.CostUSD))
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, values...)
 	var affected int64
 	if err == nil {
 		affected, err = result.RowsAffected()
@@ -918,6 +1095,23 @@ func (w *writer) exchange(ctx context.Context, sessionID string, number int,
 		return id, true, nil
 	}
 	return 0, false, nil
+}
+
+func exchangeColumnValues(exchange parsers.Exchange) []any {
+	values := []any{
+		boolToInt(exchange.IsAfterCompaction), nullIfEmpty(exchange.HumanText),
+		nullIfEmpty(exchange.AgentText), nullIfEmpty(exchange.HumanTimestamp),
+		nullIfEmpty(exchange.AgentTimestamp), nullInt(exchange.LatencyMS),
+	}
+	return append(values, exchangeProvenanceValues(exchange.Provenance)...)
+}
+
+func exchangeProvenanceValues(provenance parsers.Provenance) []any {
+	return []any{
+		nullIfEmpty(provenance.Model), nullIfEmpty(provenance.Provider),
+		nullInt(provenance.TokensIn), nullInt(provenance.TokensOut),
+		nullInt(provenance.TokensReasoning), nullFloat(provenance.CostUSD),
+	}
 }
 
 // enrichExchange fills what the row is missing from a later reading of the same
@@ -943,6 +1137,12 @@ func (w *writer) enrichExchange(ctx context.Context, sessionID string, stored st
 		  tokens_reasoning = COALESCE(?, tokens_reasoning),
 		  cost_usd = COALESCE(?, cost_usd)`
 	}
+	values := []any{
+		nullIfEmpty(exchange.AgentText), nullIfEmpty(exchange.AgentTimestamp),
+		nullInt(exchange.LatencyMS), boolToInt(exchange.IsAfterCompaction),
+	}
+	values = append(values, exchangeProvenanceValues(provenance)...)
+	values = append(values, stored.id, sessionID)
 	_, err := w.tx.ExecContext(ctx, `
 		UPDATE exchanges SET
 		  agent_text = COALESCE(agent_text, ?),
@@ -950,13 +1150,7 @@ func (w *writer) enrichExchange(ctx context.Context, sessionID string, stored st
 		  response_latency_ms = COALESCE(response_latency_ms, ?),
 		  is_after_compaction = MAX(COALESCE(is_after_compaction, 0), ?),`+
 		provenanceColumns+`
-		WHERE id = ? AND session_id = ?`,
-		nullIfEmpty(exchange.AgentText), nullIfEmpty(exchange.AgentTimestamp),
-		nullInt(exchange.LatencyMS), boolToInt(exchange.IsAfterCompaction),
-		nullIfEmpty(provenance.Model), nullIfEmpty(provenance.Provider),
-		nullInt(provenance.TokensIn), nullInt(provenance.TokensOut),
-		nullInt(provenance.TokensReasoning), nullFloat(provenance.CostUSD),
-		stored.id, sessionID)
+		WHERE id = ? AND session_id = ?`, values...)
 	if err != nil {
 		return 0, 0, fmt.Errorf("enrich exchange row %d of %s: %w", stored.id, sessionID, err)
 	}
@@ -1212,6 +1406,16 @@ func historyFallbackNumbers(current row) map[int]bool {
 // Each adapter writes the exchange-map shape it also reads; using one shape for
 // both would leave the other adapter unable to find its entries.
 func putExchangeMap(metadata map[string]any, scope string, assigned map[string]exchangeKey) {
+	if len(assigned) == 0 {
+		if scope != "" {
+			metadata[scope] = nil
+		} else {
+			metadata["source_exchange_ids"] = nil
+			metadata["source_exchange_fingerprints"] = nil
+			metadata["source_exchange_signal"] = nil
+		}
+		return
+	}
 	ids := map[string]any{}
 	fingerprints := map[string]any{}
 	signals := map[string]any{}
@@ -1248,6 +1452,8 @@ func putExchangeMap(metadata map[string]any, scope string, assigned map[string]e
 	// that one out is what would make "stated nothing" read as "nobody looked".
 	if len(signals) > 0 {
 		into["source_exchange_signal"] = signals
+	} else {
+		into["source_exchange_signal"] = nil
 	}
 }
 

@@ -59,7 +59,9 @@ var recordedProvenance = []provenanceExpectation{
 
 // readProvenance keys on the session and not on the agent: the synthetic world
 // files two sessions under the Claude family, and the desktop metadata renames
-// the transcript's own to the runtime that owns it.
+// the transcript's own to the runtime that owns it. It selects the first answer
+// that names a model: OpenCode preserves its user and assistant messages
+// separately, so its first exchange truthfully carries no answer provenance.
 func readProvenance(t *testing.T, db *sql.DB, session string) provenanceRow {
 	t.Helper()
 	var got provenanceRow
@@ -67,7 +69,7 @@ func readProvenance(t *testing.T, db *sql.DB, session string) provenanceRow {
 		SELECT e.model, e.provider, s.source_surface,
 		       e.tokens_in, e.tokens_out, e.tokens_reasoning, e.cost_usd
 		FROM exchanges e JOIN sessions s ON s.session_id = e.session_id
-		WHERE e.session_id = ? ORDER BY e.exchange_number LIMIT 1`, session).
+		WHERE e.session_id = ? ORDER BY e.model IS NULL, e.exchange_number LIMIT 1`, session).
 		Scan(&got.model, &got.provider, &got.surface,
 			&got.tokensIn, &got.tokensOut, &got.reason, &got.cost)
 	if err != nil {
