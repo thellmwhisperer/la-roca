@@ -154,9 +154,9 @@ Every session is read, closed or not. Hermes writes `ended_at` only when a
 session winds down cleanly, so sessions that were killed, abandoned, or run
 through a channel that never closes them (acp, most TUI and CLI runs) carry
 their messages and no ending. The end of such a session is its last recorded
-message. A human turn with no recorded answer is still in flight: it is
-deferred and re-read on the next run, never stored with an answer this build
-invented.
+message. A human turn with no recorded answer is kept with an empty answer once
+the session is closed, and deferred while it is still open to be re-read on the
+next run; in neither case is an answer invented.
 
 Human and assistant text become exchanges, assistant reasoning becomes
 thinking, and tool calls are paired with their results by the call id Hermes
@@ -241,7 +241,10 @@ rewrites nothing and no exchange is written twice.
 
 The default summary is one line per source with what it contributed, followed by
 up to five reasons in each group for what was left out, with each reason
-collapsed to a count.
+collapsed to a count. A source read from a live database rather than files also
+prints a `saw` line beneath its row — the raw sessions and messages it observed
+before normalization — so the converted counts read against the whole store and
+not only what landed.
 The two groups are apart on purpose: `excluded` counts the records this build
 never meant to read, which is most of a runtime log and is not a problem, and
 `discards` counts records it could not read or safely match to an existing turn,
