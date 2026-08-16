@@ -14,8 +14,8 @@ https://github.com/user-attachments/assets/f27d377b-e4ad-4c59-beb6-86dd02af4f84
 
 Your coding agents write thousands of sessions, reasoning traces, tool calls,
 and memory notes to disk, then forget all of it. La Roca reads what Claude
-Code, Codex, OpenCode, Pi, Hermes, Grok Build, and Claude Desktop leave behind,
-normalizes it into one SQLite database on your machine, and answers questions
+Code, Codex, Qwen Code, GLM, OpenCode, Pi, Hermes, Grok Build, and Claude
+Desktop leave behind, normalizes it into one SQLite database on your machine, and answers questions
 about it: from your terminal, or from the agents themselves over MCP.
 
 Every answer shows its proof: the SQL that produced it and the rows that
@@ -310,6 +310,8 @@ exactly the information the task needs instead of a whole skill.
 | Claude web/Desktop export you point it at | Conversations and Claude memories from the official Anthropic data export |
 | ChatGPT export you point it at | Conversations from the official OpenAI data export |
 | Codex | Sessions, memory, rule and skill files, and what matters from its state database |
+| Qwen Code | Project chat sessions, including tool calls and source-recorded models |
+| GLM | User skill documents and their supporting Markdown files |
 | OpenCode | Sessions and exchanges, distilled from its local database |
 | Pi | Complete session tree, including nested child runs |
 | Hermes | Sessions, distilled from its state database |

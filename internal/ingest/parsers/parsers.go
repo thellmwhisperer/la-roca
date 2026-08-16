@@ -46,6 +46,10 @@ const (
 	KindSubagent Kind = "subagent"
 	// KindPiSession is a Pi v3 session file.
 	KindPiSession Kind = "pi_session"
+	// KindQwenCode is a Qwen Code project chat stream.
+	KindQwenCode Kind = "qwen_code"
+	// KindGLMSkill is a user skill stored by GLM.
+	KindGLMSkill Kind = "glm_skill"
 	// KindOpenCodeDB and KindHermesDB are read by internal/ingest, which opens
 	// their databases read-only. They are declared here so that one enumeration
 	// names every source the ingest state table can hold.
