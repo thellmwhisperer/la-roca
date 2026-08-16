@@ -234,6 +234,20 @@ func TestContributedLocationsStayInsideTheirDeclaredStore(t *testing.T) {
 	}
 }
 
+func TestContributedRelativeLocationWithoutHomeIsReported(t *testing.T) {
+	plan := Plan{Scanned: map[string]int{}}
+	addRegisteredParsers(Roots{}, &plan, []parsers.Registration{{
+		Name: "nova", SourceAgent: "nova", Locations: []string{".nova/sessions"},
+		Destination: parsers.DestinationCorpus, Parser: syntheticContributionParser{},
+	}})
+	if count, ok := plan.Scanned["nova_files"]; !ok || count != 0 {
+		t.Fatalf("nova_files = %d (present %t), want a registered zero", count, ok)
+	}
+	if len(plan.Warnings) != 1 {
+		t.Fatalf("warnings = %v, want the unusable relative location", plan.Warnings)
+	}
+}
+
 // The Grok store files sessions by the URL-escaped working directory they ran
 // in. The escape is lossless, so the project decodes from the directory name
 // alone, and the La Roca runner store is excluded exactly as every other
