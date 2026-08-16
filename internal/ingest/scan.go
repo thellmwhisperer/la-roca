@@ -115,7 +115,9 @@ func Scan(roots Roots) Plan {
 		Kind: parsers.KindOpenCodeDB, SourceAgent: "opencode"}), "opencode_databases")
 	plan.add(existingFile(roots.HermesDB, Target{
 		Kind: parsers.KindHermesDB, SourceAgent: "hermes"}), "hermes_databases")
-	addRegisteredParsers(roots, &plan, parsers.Registered())
+	if roots.Home != "" {
+		addRegisteredParsers(roots, &plan, parsers.Registered())
+	}
 	return plan
 }
 
