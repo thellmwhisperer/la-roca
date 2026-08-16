@@ -703,17 +703,18 @@ func contentAnchor(human, agent string) ([sha256.Size]byte, bool) {
 
 // currentSession is what the database already holds for this id.
 func (w *writer) currentSession(ctx context.Context, id string) (row, bool, error) {
-	var agent, metadata sql.NullString
+	var agent, surface, metadata sql.NullString
 	err := w.tx.QueryRowContext(ctx,
-		`SELECT source_agent, metadata FROM sessions WHERE session_id = ?`, id).
-		Scan(&agent, &metadata)
+		`SELECT source_agent, source_surface, metadata FROM sessions WHERE session_id = ?`, id).
+		Scan(&agent, &surface, &metadata)
 	if errors.Is(err, sql.ErrNoRows) {
 		return row{}, false, nil
 	}
 	if err != nil {
 		return nil, false, fmt.Errorf("look up the session %s: %w", id, err)
 	}
-	return row{"source_agent": agent.String, "metadata": metadata.String}, true, nil
+	return row{"source_agent": agent.String, "source_surface": surface.String,
+		"metadata": metadata.String}, true, nil
 }
 
 func staleSnapshotMetadata(session parsers.Session, current row) (map[string]any, bool) {
@@ -749,10 +750,12 @@ func mergeMetadata(base, preferred map[string]any) map[string]any {
 func (w *writer) insertSession(ctx context.Context, session parsers.Session) error {
 	_, err := w.tx.ExecContext(ctx, `
 		INSERT INTO sessions
-		  (session_id, source_agent, project, started_at, ended_at, duration_minutes, title, metadata)
-		VALUES (?, ?, ?, ?, ?, ?, ?, '{}')
+		  (session_id, source_agent, source_surface, project, started_at, ended_at,
+		   duration_minutes, title, metadata)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}')
 		ON CONFLICT(session_id) DO NOTHING`,
-		session.ID, nullIfEmpty(session.SourceAgent), nullIfEmpty(session.Project),
+		session.ID, nullIfEmpty(session.SourceAgent), nullIfEmpty(session.SourceSurface),
+		nullIfEmpty(session.Project),
 		nullIfEmpty(session.StartedAt), nullIfEmpty(session.EndedAt),
 		nullInt(session.DurationMinutes), nullIfEmpty(session.Title))
 	if err != nil {
@@ -773,26 +776,33 @@ func (w *writer) insertSession(ctx context.Context, session parsers.Session) err
 // a real one keeps it, or two sources would take turns renaming the session.
 func (w *writer) refreshSession(ctx context.Context, session parsers.Session, current row) error {
 	agent := w.agentAfterRefresh(session, current.text("source_agent"))
+	surface := any(nil)
+	if session.SourceSurface != "" {
+		surface = session.SourceSurface
+	}
 	project := any(nil)
 	if session.Project != "" {
 		project = session.Project
 	}
-	// The two policies differ in these four columns and in nothing else: a
+	// The two policies differ in these five columns and in nothing else: a
 	// snapshot states the project, the start, the end and the duration, while a
 	// transcript re-read only fills their absence. ended_at and duration are
 	// identity fields like the other two: a transcript re-read cannot know better
 	// than the metadata file that named the session, so re-parsing it must not
 	// clobber a value a snapshot already set. The argument order is the same
 	// either way.
-	setProject, setStarted, setEnded, setDuration :=
+	setSurface, setProject, setStarted, setEnded, setDuration :=
+		"COALESCE(source_surface, ?)",
 		"COALESCE(project, ?)", "COALESCE(started_at, ?)", "COALESCE(ended_at, ?)", "COALESCE(duration_minutes, ?)"
 	if session.Snapshot {
-		setProject, setStarted, setEnded, setDuration =
+		setSurface, setProject, setStarted, setEnded, setDuration =
+			"COALESCE(?, source_surface)",
 			"COALESCE(?, project)", "COALESCE(?, started_at)", "COALESCE(?, ended_at)", "COALESCE(?, duration_minutes)"
 	}
 	statement := fmt.Sprintf(`
 		UPDATE sessions SET
 		  source_agent = COALESCE(?, source_agent),
+		  source_surface = %s,
 		  project = %s,
 		  started_at = %s,
 		  ended_at = %s,
@@ -800,9 +810,9 @@ func (w *writer) refreshSession(ctx context.Context, session parsers.Session, cu
 		  title = CASE WHEN TRIM(COALESCE(title, ''), CHAR(9,10,13,32,160)) <> '' THEN title
 		               WHEN TRIM(COALESCE(?, ''), CHAR(9,10,13,32,160)) <> '' THEN ?
 		               ELSE title END
-		WHERE session_id = ?`, setProject, setStarted, setEnded, setDuration)
+		WHERE session_id = ?`, setSurface, setProject, setStarted, setEnded, setDuration)
 	_, err := w.tx.ExecContext(ctx, statement,
-		nullIfEmpty(agent), project, nullIfEmpty(session.StartedAt),
+		nullIfEmpty(agent), surface, project, nullIfEmpty(session.StartedAt),
 		nullIfEmpty(session.EndedAt), nullInt(session.DurationMinutes),
 		nullIfEmpty(session.Title), nullIfEmpty(session.Title), session.ID)
 	if err != nil {
@@ -1088,10 +1098,12 @@ func (w *writer) memory(ctx context.Context, memory parsers.Memory) (Counts, err
 		layer := w.layers.Resolve(memory.Layer, defaultLayer)
 		_, err := w.tx.ExecContext(ctx, `
 			INSERT INTO memories
-			  (layer, content, metadata, origin, source_agent, project, status, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, 'active', COALESCE(NULLIF(?, ''), datetime('now')))`,
+			  (layer, content, metadata, origin, source_agent, source_model, source_surface,
+			   project, status, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', COALESCE(NULLIF(?, ''), datetime('now')))`,
 			layer, memory.Content, string(metadata), memory.Origin,
-			nullIfEmpty(memory.SourceAgent), nullIfEmpty(memory.Project), memory.CreatedAt)
+			nullIfEmpty(memory.SourceAgent), nullIfEmpty(memory.SourceModel),
+			nullIfEmpty(memory.SourceSurface), nullIfEmpty(memory.Project), memory.CreatedAt)
 		if err != nil {
 			return counts, fmt.Errorf("insert the memory of %s: %w", memory.FilePath, err)
 		}
@@ -1105,8 +1117,11 @@ func (w *writer) memory(ctx context.Context, memory parsers.Memory) (Counts, err
 	default:
 		_, err := w.tx.ExecContext(ctx,
 			`UPDATE memories SET content = ?, metadata = ?,
+			 source_model = COALESCE(source_model, ?),
+			 source_surface = COALESCE(source_surface, ?),
 			 created_at = COALESCE(NULLIF(?, ''), created_at) WHERE id = ?`,
-			memory.Content, string(metadata), memory.CreatedAt, id)
+			memory.Content, string(metadata), nullIfEmpty(memory.SourceModel),
+			nullIfEmpty(memory.SourceSurface), memory.CreatedAt, id)
 		if err != nil {
 			return counts, fmt.Errorf("update the memory of %s: %w", memory.FilePath, err)
 		}

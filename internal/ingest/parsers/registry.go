@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/thellmwhisperer/la-roca/internal/ingestprovenance"
 )
 
 // Destination says which public surface owns a parser's normalized records.
@@ -65,8 +67,9 @@ type Parser interface {
 // Registration binds a parser to its stable ingest identity and destination.
 // Name is not a file format; a parser may recognize any encoding internally.
 type Registration struct {
-	Name        string
-	SourceAgent string
+	Name             string
+	SourceAgent      string
+	CanonicalHarness string
 	// Locations are session-store directories relative to the operator's home,
 	// or absolute paths when an agent has a platform-independent location. The
 	// ingest scanner walks only these declared roots; unchanged fingerprints are
@@ -152,6 +155,7 @@ func (r Registration) parseClaimed(file File) (Records, error) {
 	if err := r.Destination.Conforms(records); err != nil {
 		return Records{}, fmt.Errorf("parser %q: %w", r.Name, err)
 	}
+	applyCanonicalHarness(r.CanonicalHarness, &records)
 	return records, nil
 }
 
@@ -168,44 +172,94 @@ func (p parserFunctions) Parse(file File) (Records, error) {
 // registry is the single contribution point. The identifier preserves ingest
 // fingerprints and reports; the parser owns every detail of its source syntax.
 var registry = []Registration{
-	fileParser(KindClaudeSession, DestinationCorpus, detectClaudeSession, ParseClaudeSession),
-	fileParser(KindClaudeMemory, DestinationStore, detectClaudeMemory, ParseClaudeMemory),
-	fileParser(KindSessionMetadata, DestinationCorpus, detectSessionMetadata, ParseSessionMetadata),
-	fileParser(KindCoworkAudit, DestinationCorpus, detectCoworkAudit, ParseCoworkAudit),
-	fileParser(KindCodexSession, DestinationCorpus, detectCodexSession, ParseCodexSession),
-	fileParser(KindCodexHistory, DestinationCorpus, detectCodexHistory, func(content []byte, meta FileMeta) (Records, error) {
+	fileParser(KindClaudeSession, DestinationCorpus, ingestprovenance.ClaudeCode, detectClaudeSession, ParseClaudeSession),
+	fileParser(KindClaudeMemory, DestinationStore, ingestprovenance.ClaudeCode, detectClaudeMemory, ParseClaudeMemory),
+	fileParser(KindSessionMetadata, DestinationCorpus, ingestprovenance.ClaudeDesktop, detectSessionMetadata, ParseSessionMetadata),
+	fileParser(KindCoworkAudit, DestinationCorpus, ingestprovenance.Cowork, detectCoworkAudit, ParseCoworkAudit),
+	fileParser(KindCodexSession, DestinationCorpus, ingestprovenance.CodexCLI, detectCodexSession, ParseCodexSession),
+	fileParser(KindCodexHistory, DestinationCorpus, ingestprovenance.CodexCLI, detectCodexHistory, func(content []byte, meta FileMeta) (Records, error) {
 		return parseCodexHistory(content, meta), nil
 	}),
-	fileParser(KindCodexFile, DestinationStore, detectCodexFile, ParseCodexFile),
-	fileParser(KindCodexMemoryAggregate, DestinationStore, detectCodexMemoryAggregate, ParseCodexMemoryAggregate),
-	fileParser(KindSubagent, DestinationCorpus, detectSubagent, ParseSubagent),
-	fileParser(KindPiSession, DestinationCorpus, detectPiSession, ParsePiSession),
-	fileParser(KindClaudeWebConversations, DestinationCorpus, detectClaudeWebConversations,
+	fileParser(KindCodexFile, DestinationStore, ingestprovenance.CodexCLI, detectCodexFile, ParseCodexFile),
+	fileParser(KindCodexMemoryAggregate, DestinationStore, ingestprovenance.CodexCLI, detectCodexMemoryAggregate, ParseCodexMemoryAggregate),
+	fileParser(KindSubagent, DestinationCorpus, ingestprovenance.ClaudeCode, detectSubagent, ParseSubagent),
+	fileParser(KindPiSession, DestinationCorpus, ingestprovenance.Pi, detectPiSession, ParsePiSession),
+	fileParser(KindClaudeWebConversations, DestinationCorpus, ingestprovenance.ClaudeWeb, detectClaudeWebConversations,
 		func(content []byte, meta FileMeta) (Records, error) {
 			return ParseClaudeWebConversations(bytes.NewReader(content), meta)
 		}),
-	fileParser(KindClaudeWebMemories, DestinationStore, detectClaudeWebMemories,
+	fileParser(KindClaudeWebMemories, DestinationStore, ingestprovenance.ClaudeWeb, detectClaudeWebMemories,
 		func(content []byte, meta FileMeta) (Records, error) {
 			return ParseClaudeWebMemories(bytes.NewReader(content), meta)
 		}),
-	fileParser(KindChatGPTWebConversations, DestinationCorpus, detectChatGPTWebConversations,
+	fileParser(KindChatGPTWebConversations, DestinationCorpus, ingestprovenance.ChatGPT, detectChatGPTWebConversations,
 		func(content []byte, meta FileMeta) (Records, error) {
 			return ParseChatGPTWebConversations(bytes.NewReader(content), meta)
 		}),
 	{
 		Name: string(KindGrokSession), SourceAgent: "grok",
-		HarvestLocations: []string{".grok/sessions"}, Version: "grok-session-v2",
-		Destination: DestinationCorpus,
-		Parser:      parserFunctions{detect: detectGrokSession, parse: ParseGrokSession},
+		CanonicalHarness: ingestprovenance.GrokBuild,
+		HarvestLocations: []string{".grok/sessions"},
+		Destination:      DestinationCorpus,
+		Parser:           parserFunctions{detect: detectGrokSession, parse: ParseGrokSession},
 	},
-	fileParser(KindGrokSessionMetadata, DestinationCorpus, detectGrokSessionMetadata,
+	fileParser(KindGrokSessionMetadata, DestinationCorpus, ingestprovenance.GrokBuild, detectGrokSessionMetadata,
 		ParseGrokSessionMetadata),
 }
 
-func fileParser(kind Kind, destination Destination, detect func(File) bool,
+func fileParser(kind Kind, destination Destination, harness string, detect func(File) bool,
 	parse func([]byte, FileMeta) (Records, error)) Registration {
-	return Registration{Name: string(kind), Destination: destination,
+	return Registration{Name: string(kind), Destination: destination, CanonicalHarness: harness,
 		Parser: parserFunctions{detect: detect, parse: parse}}
+}
+
+// ApplyCanonicalHarness labels records with the harness known by the detector
+// surface. Database-backed readers use this route because they do not implement
+// the byte-oriented Parser interface.
+func ApplyCanonicalHarness(kind Kind, records *Records) {
+	for i := range records.Sessions {
+		records.Sessions[i].SourceSurface = CanonicalHarness(kind, records.Sessions[i].SourceAgent)
+	}
+	for i := range records.Memories {
+		records.Memories[i].SourceSurface = CanonicalHarness(kind, records.Memories[i].SourceAgent)
+	}
+}
+
+// CanonicalHarness returns the registry-declared harness for one parser
+// family. The recorded source agent disambiguates shared parser code such as
+// Claude Desktop and Cowork session metadata.
+func CanonicalHarness(kind Kind, sourceAgent string) string {
+	if harness := ingestprovenance.HarnessForSource(sourceAgent); harness != "" {
+		return harness
+	}
+	if registered, ok := Lookup(string(kind)); ok {
+		return registered.CanonicalHarness
+	}
+	switch kind {
+	case KindOpenCodeDB:
+		return ingestprovenance.OpenCode
+	case KindHermesDB:
+		return ingestprovenance.Hermes
+	default:
+		return ""
+	}
+}
+
+func applyCanonicalHarness(fallback string, records *Records) {
+	for i := range records.Sessions {
+		harness := ingestprovenance.HarnessForSource(records.Sessions[i].SourceAgent)
+		if harness == "" {
+			harness = fallback
+		}
+		records.Sessions[i].SourceSurface = harness
+	}
+	for i := range records.Memories {
+		harness := ingestprovenance.HarnessForSource(records.Memories[i].SourceAgent)
+		if harness == "" {
+			harness = fallback
+		}
+		records.Memories[i].SourceSurface = harness
+	}
 }
 
 // Registered returns a copy so tests and contributor tooling can inspect the

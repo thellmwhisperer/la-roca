@@ -27,7 +27,7 @@
             "name": "sessions",
             "description": "Harvested conversation sessions with source, project, timing, title, and source metadata.",
             "questions": ["Which sessions were harvested?"],
-            "columns": ["session_id", "source_agent", "project", "started_at", "ended_at", "duration_minutes", "title", "metadata"]
+            "columns": ["session_id", "source_agent", "project", "started_at", "ended_at", "duration_minutes", "title", "metadata", "source_surface"]
           },
           {
             "name": "memories",

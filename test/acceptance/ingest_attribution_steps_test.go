@@ -73,6 +73,40 @@ func registerIngestAttributionSteps(ctx *godog.ScenarioContext, w *ingestAccepta
 		}
 		return nil
 	})
+	ctx.Then(`^every supported agent family uses its canonical harness$`, func() error {
+		db, err := w.openDB()
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		rows, err := db.Query("SELECT DISTINCT source_agent, source_surface FROM sessions")
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		want := map[string]string{
+			"claude": "Claude Code", "claude-desktop": "Claude Desktop",
+			"cowork": "Cowork", "codex": "Codex CLI", "opencode": "OpenCode",
+			"pi": "Pi", "hermes": "Hermes", "grok": "Grok Build",
+		}
+		for rows.Next() {
+			var family, harness string
+			if err := rows.Scan(&family, &harness); err != nil {
+				return err
+			}
+			if harness != want[family] {
+				return fmt.Errorf("family %q harness=%q, want %q", family, harness, want[family])
+			}
+			delete(want, family)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if len(want) != 0 {
+			return fmt.Errorf("canonical harnesses not exercised: %v", want)
+		}
+		return nil
+	})
 	ctx.Then(`^that session records model "([^"]*)"$`, func(model string) error {
 		db, err := w.openDB()
 		if err != nil {

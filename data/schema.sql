@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   ended_at      TEXT,
   duration_minutes INTEGER,
   title         TEXT,
-  metadata      TEXT DEFAULT '{}'
+  metadata      TEXT DEFAULT '{}',
+  source_surface TEXT
 );
 
 CREATE TABLE IF NOT EXISTS memories (

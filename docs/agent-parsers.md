@@ -51,6 +51,7 @@ parser:
   another registered parser owns;
 - returns the golden normalized sessions, exchanges, or memories;
 - emits no record outside its declared destination;
+- labels every normalized record with the registry's canonical harness;
 - has exactly the registry entry named by the fixture.
 
 Run the red test before writing the parser:
@@ -91,6 +92,7 @@ where its normalized records belong:
 ```go
 Registration{
     Name: "nova", SourceAgent: "nova",
+    CanonicalHarness: "Nova CLI",
     Locations: []string{".nova/sessions"},
     Version: "nova-v1",
     Destination: DestinationCorpus,
@@ -102,6 +104,13 @@ Registration{
 share. `SourceAgent` is the agent this source belongs to: it names the line in
 the ingest summary and rides in the scan metadata your parser receives, and it
 falls back to `Name` when left empty.
+
+`CanonicalHarness` is the product surface that opened the artifact, such as
+`Claude Code`, `Codex CLI`, `OpenCode`, or `Grok Build`. The registry knows this
+deterministically; never search for it in JSON or copy an incidental agent name
+from metadata. The conformance harness refuses an empty declaration and checks
+that the value lands on every normalized session or memory. A source-recorded
+model remains separate and stays empty when the artifact states none.
 
 `Locations` are narrow session-store directories relative to the operator's
 home (or absolute locations when the agent has one platform-independent path).
