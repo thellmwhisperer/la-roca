@@ -21,10 +21,11 @@ import (
 )
 
 const (
-	defaultChunkSize = 4000
-	defaultOverlap   = 400
-	defaultBatchSize = 64
-	walkPageSize     = 500
+	defaultChunkSize                 = 4000
+	defaultOverlap                   = 400
+	defaultBatchSize                 = 64
+	walkPageSize                     = 500
+	deprecatedLayerReconciliationKey = "deprecated_layers_reconciled_v1"
 	// maxUnresolvedCandidates bounds a query against an index the corpus has moved
 	// under. Each resolution is one `roca exec` process, so a wholly stale index
 	// would otherwise spend one process per candidate to answer nothing.
@@ -37,11 +38,12 @@ type Index struct {
 	Model      string
 	Embedder   Embedder
 	Notice     func(string)
+	ReadOnly   bool
 }
 
 type Corpus interface {
 	WalkSources(context.Context, func(sourceRow) error) error
-	ResolveSource(context.Context, string, locator) (string, error)
+	ResolveSource(context.Context, string, Locator) (string, error)
 }
 
 type Delta struct {
@@ -58,6 +60,7 @@ type Result struct {
 	Score    float64 `json:"score"`
 	Source   string  `json:"source"`
 	SourceID string  `json:"source_id"`
+	Locator  Locator `json:"locator"`
 	Text     string  `json:"text"`
 }
 
@@ -75,7 +78,7 @@ type sourceRow struct {
 	createdAt  string
 }
 
-type locator struct {
+type Locator struct {
 	SessionID  string `json:"session_id,omitempty"`
 	Ordinal    int64  `json:"ordinal,omitempty"`
 	HasOrdinal bool   `json:"has_ordinal,omitempty"`
@@ -93,13 +96,19 @@ type desiredChunk struct {
 	sourceID    string
 	index       int
 	fingerprint string
-	locator     locator
+	locator     Locator
 	text        string
 }
 
 type storedChunk struct {
 	id          int64
 	fingerprint string
+	locator     Locator
+}
+
+type locatorUpdate struct {
+	id      int64
+	locator Locator
 }
 
 func ConfiguredModel(path string) string {
@@ -136,7 +145,7 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 	if err := ensureBaseSchema(store); err != nil {
 		return Delta{}, err
 	}
-	existing, model, dimensions, err := readIndexState(store)
+	existing, model, dimensions, _, err := readIndexState(store)
 	if err != nil {
 		return Delta{}, err
 	}
@@ -153,9 +162,27 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 	}
 
 	report := Delta{}
-	seen := make(map[string]bool, len(existing))
+	initial := make(map[string]storedChunk, len(existing))
+	for key, chunk := range existing {
+		initial[key] = chunk
+	}
 	pending := make([]desiredChunk, 0, defaultBatchSize)
-	flush := func() error {
+	locatorUpdates := make(map[int64]locatorUpdate)
+	if _, err := store.ExecContext(ctx, `PRAGMA temp_store=FILE;
+		CREATE TEMP TABLE vector_desired_sources(
+			source_kind TEXT NOT NULL,
+			source_id TEXT NOT NULL,
+			source_order INTEGER NOT NULL,
+			text TEXT NOT NULL,
+			locator TEXT NOT NULL,
+			PRIMARY KEY(source_kind, source_id)
+		);
+		CREATE INDEX temp.vector_desired_sources_order ON vector_desired_sources(source_order)`); err != nil {
+		return Delta{}, fmt.Errorf("initialize vector reconciliation: %w", err)
+	}
+	var nextSourceOrder int64
+	var sourceOrder int64 = -1
+	flush := func(workCtx context.Context) error {
 		if len(pending) == 0 {
 			return nil
 		}
@@ -163,7 +190,7 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 		for n := range pending {
 			input[n] = DocumentPrefix + pending[n].text
 		}
-		vectors, err := i.Embedder.Embed(ctx, i.Model, input)
+		vectors, err := i.Embedder.Embed(workCtx, i.Model, input)
 		if err != nil {
 			return err
 		}
@@ -181,46 +208,119 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 				return fmt.Errorf("embedding %d has %d dimensions, want %d", n, len(vectors[n]), dimensions)
 			}
 		}
-		if err := writeBatch(ctx, store, pending, vectors, existing, &report); err != nil {
+		if err := writeBatch(workCtx, store, pending, vectors, existing, locatorUpdates); err != nil {
 			return err
 		}
 		pending = pending[:0]
 		return nil
 	}
-
-	err = i.Corpus.WalkSources(ctx, func(source sourceRow) error {
-		report.Sources++
-		for chunkIndex, text := range chunks(source.text, defaultChunkSize, defaultOverlap) {
-			chunk := desiredChunk{
-				sourceKind: source.kind, sourceID: source.stableID(), index: chunkIndex,
-				fingerprint: fingerprint(text), locator: source.locator(), text: text,
+	drainSources := func(workCtx context.Context) error {
+		for {
+			var kind, sourceID, sourceText, rawLocator string
+			var order int64
+			err := store.QueryRowContext(workCtx, `
+				SELECT source_kind,source_id,source_order,text,locator
+				FROM temp.vector_desired_sources
+				WHERE source_order > ?
+				ORDER BY source_order
+				LIMIT 1
+			`, sourceOrder).Scan(&kind, &sourceID, &order, &sourceText, &rawLocator)
+			if err == sql.ErrNoRows {
+				break
 			}
-			key := chunkKey(chunk.sourceKind, chunk.sourceID, chunk.index)
-			seen[key] = true
-			if old, ok := existing[key]; ok && old.fingerprint == chunk.fingerprint {
-				report.Unchanged++
-				continue
+			if err != nil {
+				return fmt.Errorf("read vector reconciliation: %w", err)
 			}
-			pending = append(pending, chunk)
-			if len(pending) == defaultBatchSize {
-				if err := flush(); err != nil {
-					return err
+			var where Locator
+			if err := json.Unmarshal([]byte(rawLocator), &where); err != nil {
+				return fmt.Errorf("decode %s source locator: %w", kind, err)
+			}
+			sourceChunks := chunks(sourceText, defaultChunkSize, defaultOverlap)
+			for chunkIndex, text := range sourceChunks {
+				chunk := desiredChunk{
+					sourceKind: kind, sourceID: sourceID, index: chunkIndex,
+					fingerprint: fingerprint(text), locator: where, text: text,
+				}
+				key := chunkKey(chunk.sourceKind, chunk.sourceID, chunk.index)
+				if old, ok := existing[key]; ok && old.fingerprint == chunk.fingerprint {
+					if old.locator != chunk.locator {
+						locatorUpdates[old.id] = locatorUpdate{id: old.id, locator: chunk.locator}
+						existing[key] = storedChunk{id: old.id, fingerprint: old.fingerprint, locator: chunk.locator}
+					}
+					continue
+				}
+				pending = append(pending, chunk)
+				if len(pending) >= defaultBatchSize {
+					if err := flush(workCtx); err != nil {
+						return err
+					}
 				}
 			}
+			sourceOrder = order
+		}
+		if err := flush(workCtx); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	stagedSources := 0
+	err = i.Corpus.WalkSources(ctx, func(source sourceRow) error {
+		if !source.indexable() {
+			return nil
+		}
+		report.Sources++
+		sourceID := source.stableID()
+		where, err := json.Marshal(source.locator())
+		if err != nil {
+			return fmt.Errorf("encode %s source locator: %w", source.kind, err)
+		}
+		_, err = store.ExecContext(ctx, `
+			INSERT INTO temp.vector_desired_sources(source_kind,source_id,source_order,text,locator)
+			VALUES (?,?,?,?,?)
+			ON CONFLICT(source_kind,source_id) DO UPDATE SET
+				source_order=excluded.source_order,text=excluded.text,locator=excluded.locator
+		`, source.kind, sourceID, nextSourceOrder, source.text, string(where))
+		nextSourceOrder++
+		if err != nil {
+			return err
+		}
+		stagedSources++
+		if stagedSources >= defaultBatchSize {
+			if err := drainSources(ctx); err != nil {
+				return err
+			}
+			stagedSources = 0
 		}
 		return nil
 	})
 	if err != nil {
+		drainCtx := ctx
+		if ctx.Err() != nil {
+			drainCtx = context.WithoutCancel(ctx)
+		}
+		_ = drainSources(drainCtx)
 		return Delta{}, err
 	}
-	if err := flush(); err != nil {
+	if err := drainSources(ctx); err != nil {
 		return Delta{}, err
 	}
-	if err := removeMissing(ctx, store, existing, seen, &report); err != nil {
+	if err := updateLocators(ctx, store, locatorUpdates); err != nil {
 		return Delta{}, err
 	}
-	report.Chunks = report.Added + report.Updated + report.Unchanged
-	return report, nil
+	finalSeen, err := finalSeenSources(ctx, store)
+	if err != nil {
+		return Delta{}, err
+	}
+	if err := removeMissing(ctx, store, existing, finalSeen); err != nil {
+		return Delta{}, err
+	}
+	if err := markDeprecatedLayersReconciled(ctx, store); err != nil {
+		return Delta{}, err
+	}
+	delta := deltaBetween(initial, existing)
+	delta.Sources = report.Sources
+	return delta, nil
 }
 
 func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) {
@@ -243,12 +343,40 @@ func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) 
 		return nil, fmt.Errorf("open vector database: %w", err)
 	}
 	defer store.Close()
-	_, model, dimensions, err := readIndexState(store)
+	_, model, dimensions, deprecated, err := readIndexState(store)
 	if err != nil {
 		return nil, fmt.Errorf("read vector index: %w; run `roca vector install`", err)
 	}
 	if model == "" || dimensions == 0 {
 		return nil, fmt.Errorf("vector index is not ready; run `roca vector install`")
+	}
+	reconciled, err := deprecatedLayersReconciled(ctx, store)
+	if err != nil {
+		return nil, fmt.Errorf("inspect vector reconciliation: %w", err)
+	}
+	if deprecated && i.ReadOnly {
+		return nil, fmt.Errorf("vector index contains retired chunks; run `roca vector ingest --delta` with writes enabled")
+	}
+	if !i.ReadOnly && (!reconciled || deprecated) {
+		store.Close()
+		var reconcileErr error
+		if deprecated {
+			reconcileErr = i.purgeDeprecatedChunks(ctx)
+		} else {
+			reconcileErr = i.markDeprecatedLayersReconciled(ctx)
+		}
+		if reconcileErr != nil {
+			return nil, fmt.Errorf("reconcile deprecated vector chunks: %w", reconcileErr)
+		}
+		store, err = openSQLite(i.VectorPath, true)
+		if err != nil {
+			return nil, fmt.Errorf("reopen vector database: %w", err)
+		}
+		defer store.Close()
+		_, model, dimensions, _, err = readIndexState(store)
+		if err != nil {
+			return nil, fmt.Errorf("read vector index after reconciliation: %w; run `roca vector install`", err)
+		}
 	}
 	vectors, err := i.Embedder.Embed(ctx, model, []string{QueryPrefix + text})
 	if err != nil {
@@ -282,7 +410,7 @@ func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) 
 		}
 		results = append(results, Result{
 			Rank: len(results) + 1, Score: 1 - candidate.distance,
-			Source: candidate.kind, SourceID: candidate.sourceID, Text: body,
+			Source: candidate.kind, SourceID: candidate.sourceID, Locator: candidate.where, Text: body,
 		})
 		if len(results) == k {
 			break
@@ -295,6 +423,36 @@ func (i Index) waitingForIndex(path string) {
 	if i.Notice != nil {
 		i.Notice(fmt.Sprintf("another indexing run holds %s; waiting for it to finish", path))
 	}
+}
+
+func (i Index) purgeDeprecatedChunks(ctx context.Context) error {
+	release, err := lockIndex(ctx, i.VectorPath+".index.lock", i.waitingForIndex)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	store, err := openSQLite(i.VectorPath, false)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	return purgeDeprecatedChunks(ctx, store)
+}
+
+func (i Index) markDeprecatedLayersReconciled(ctx context.Context) error {
+	release, err := lockIndex(ctx, i.VectorPath+".index.lock", i.waitingForIndex)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	store, err := openSQLite(i.VectorPath, false)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	return markDeprecatedLayersReconciled(ctx, store)
 }
 
 func (i Index) validate() error {
@@ -360,10 +518,18 @@ func (s sourceRow) stableID() string {
 	return s.kind + "/direct/" + s.identity()
 }
 
-func (s sourceRow) locator() locator {
-	return locator{SessionID: s.sessionID, Ordinal: s.ordinal, HasOrdinal: s.hasOrdinal,
+func (s sourceRow) locator() Locator {
+	return Locator{SessionID: s.sessionID, Ordinal: s.ordinal, HasOrdinal: s.hasOrdinal,
 		Position: s.position, CronSource: s.cronSource, FilePath: s.filePath,
 		Layer: s.layer, Origin: s.origin, CreatedAt: s.createdAt, Identity: s.identity()}
+}
+
+func (s sourceRow) indexable() bool {
+	return s.kind != "memories" || !deprecatedMemoryLayer(s.layer)
+}
+
+func deprecatedMemoryLayer(layer string) bool {
+	return strings.HasPrefix(strings.ToLower(layer), "rocodata_")
 }
 
 func (s sourceRow) identity() string {
@@ -383,7 +549,11 @@ func fingerprint(text string) string {
 }
 
 func chunkKey(kind, sourceID string, index int) string {
-	return kind + "\x00" + sourceID + "\x00" + strconv.Itoa(index)
+	return sourceKey(kind, sourceID) + "\x00" + strconv.Itoa(index)
+}
+
+func sourceKey(kind, sourceID string) string {
+	return kind + "\x00" + sourceID
 }
 
 func openSQLite(path string, readOnly bool) (*sql.DB, error) {
@@ -427,31 +597,40 @@ func ensureBaseSchema(db *sql.DB) error {
 	return nil
 }
 
-func readIndexState(db *sql.DB) (map[string]storedChunk, string, int, error) {
+func readIndexState(db *sql.DB) (map[string]storedChunk, string, int, bool, error) {
 	state := map[string]storedChunk{}
-	rows, err := db.Query(`SELECT id, source_kind, source_id, chunk_index, fingerprint FROM chunks`)
+	rows, err := db.Query(`SELECT id, source_kind, source_id, chunk_index, fingerprint, locator FROM chunks`)
 	if err != nil {
-		return nil, "", 0, err
+		return nil, "", 0, false, err
 	}
+	deprecated := false
 	for rows.Next() {
 		var item storedChunk
 		var kind, sourceID string
 		var index int
-		if err := rows.Scan(&item.id, &kind, &sourceID, &index, &item.fingerprint); err != nil {
+		var rawLocator string
+		if err := rows.Scan(&item.id, &kind, &sourceID, &index, &item.fingerprint, &rawLocator); err != nil {
 			rows.Close()
-			return nil, "", 0, err
+			return nil, "", 0, false, err
+		}
+		if json.Unmarshal([]byte(rawLocator), &item.locator) == nil && kind == "memories" && deprecatedMemoryLayer(item.locator.Layer) {
+			deprecated = true
 		}
 		state[chunkKey(kind, sourceID, index)] = item
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, "", 0, false, err
+	}
 	if err := rows.Close(); err != nil {
-		return nil, "", 0, err
+		return nil, "", 0, false, err
 	}
 	var model string
 	_ = db.QueryRow(`SELECT value FROM meta WHERE key='model'`).Scan(&model)
 	var dimensionText string
 	_ = db.QueryRow(`SELECT value FROM meta WHERE key='dimensions'`).Scan(&dimensionText)
 	dimensions, _ := strconv.Atoi(dimensionText)
-	return state, model, dimensions, nil
+	return state, model, dimensions, deprecated, nil
 }
 
 func resetIndex(db *sql.DB) error {
@@ -480,7 +659,7 @@ func ensureVectorTables(db *sql.DB, dimensions int, model string) error {
 }
 
 func writeBatch(ctx context.Context, db *sql.DB, chunks []desiredChunk, vectors [][]float32,
-	existing map[string]storedChunk, report *Delta) error {
+	existing map[string]storedChunk, locatorUpdates map[int64]locatorUpdate) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -505,8 +684,8 @@ func writeBatch(ctx context.Context, db *sql.DB, chunks []desiredChunk, vectors 
 			if _, err := tx.ExecContext(ctx, `INSERT INTO ann_embeddings(rowid,embedding) VALUES (?,vec_quantize_binary(?))`, old.id, vectorBlob(vectors[n])); err != nil {
 				return err
 			}
-			report.Updated++
-			existing[key] = storedChunk{id: old.id, fingerprint: chunk.fingerprint}
+			locatorUpdates[old.id] = locatorUpdate{id: old.id, locator: chunk.locator}
+			existing[key] = storedChunk{id: old.id, fingerprint: chunk.fingerprint, locator: chunk.locator}
 			continue
 		}
 		result, err := tx.ExecContext(ctx, `INSERT INTO chunks(source_kind,source_id,chunk_index,fingerprint,locator) VALUES (?,?,?,?,?)`,
@@ -524,18 +703,39 @@ func writeBatch(ctx context.Context, db *sql.DB, chunks []desiredChunk, vectors 
 		if _, err := tx.ExecContext(ctx, `INSERT INTO ann_embeddings(rowid,embedding) VALUES (?,vec_quantize_binary(?))`, id, vectorBlob(vectors[n])); err != nil {
 			return err
 		}
-		report.Added++
-		existing[key] = storedChunk{id: id, fingerprint: chunk.fingerprint}
+		existing[key] = storedChunk{id: id, fingerprint: chunk.fingerprint, locator: chunk.locator}
 	}
 	return tx.Commit()
 }
 
-func removeMissing(ctx context.Context, db *sql.DB, existing map[string]storedChunk, seen map[string]bool, report *Delta) error {
+func updateLocators(ctx context.Context, db *sql.DB, updates map[int64]locatorUpdate) error {
+	if len(updates) == 0 {
+		return nil
+	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	for _, update := range updates {
+		where, err := json.Marshal(update.locator)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE chunks SET locator=?,updated_at=datetime('now') WHERE id=?`, string(where), update.id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func removeMissing(ctx context.Context, db *sql.DB, existing map[string]storedChunk, seen map[string]bool) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var removed []string
 	for key, old := range existing {
 		if seen[key] {
 			continue
@@ -546,9 +746,66 @@ func removeMissing(ctx context.Context, db *sql.DB, existing map[string]storedCh
 		if _, err := tx.ExecContext(ctx, `DELETE FROM chunks WHERE id=?`, old.id); err != nil {
 			return err
 		}
-		report.Removed++
+		removed = append(removed, key)
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	for _, key := range removed {
+		delete(existing, key)
+	}
+	return nil
+}
+
+func finalSeenSources(ctx context.Context, db *sql.DB) (map[string]bool, error) {
+	seen := map[string]bool{}
+	rows, err := db.QueryContext(ctx, `
+		SELECT source_kind,source_id,text
+		FROM temp.vector_desired_sources`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var kind, sourceID, text string
+		if err := rows.Scan(&kind, &sourceID, &text); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		for chunkIndex := range chunks(text, defaultChunkSize, defaultOverlap) {
+			seen[chunkKey(kind, sourceID, chunkIndex)] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return seen, nil
+}
+
+func deltaBetween(initial, existing map[string]storedChunk) Delta {
+	var delta Delta
+	for key, current := range existing {
+		previous, ok := initial[key]
+		if !ok {
+			delta.Added++
+			continue
+		}
+		if previous.fingerprint != current.fingerprint || previous.locator != current.locator {
+			delta.Updated++
+			continue
+		}
+		delta.Unchanged++
+	}
+	for key := range initial {
+		if _, ok := existing[key]; !ok {
+			delta.Removed++
+		}
+	}
+	delta.Chunks = delta.Added + delta.Updated + delta.Unchanged
+	return delta
 }
 
 func deleteEmbeddings(ctx context.Context, tx *sql.Tx, rowID int64) error {
@@ -560,11 +817,78 @@ func deleteEmbeddings(ctx context.Context, tx *sql.Tx, rowID int64) error {
 	return nil
 }
 
+func purgeDeprecatedChunks(ctx context.Context, db *sql.DB) error {
+	var chunksTable int
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='chunks')`).Scan(&chunksTable); err != nil {
+		return err
+	}
+	if chunksTable == 0 {
+		return nil
+	}
+	rows, err := db.QueryContext(ctx, `SELECT id FROM chunks WHERE source_kind='memories' AND lower(COALESCE(json_extract(locator,'$.layer'),'')) LIKE 'rocodata\_%' ESCAPE '\'`)
+	if err != nil {
+		return err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return markDeprecatedLayersReconciled(ctx, db)
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, id := range ids {
+		if err := deleteEmbeddings(ctx, tx, id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM chunks WHERE id=?`, id); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)`, deprecatedLayerReconciliationKey, "1"); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func deprecatedLayersReconciled(ctx context.Context, db *sql.DB) (bool, error) {
+	var value string
+	err := db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key=?`, deprecatedLayerReconciliationKey).Scan(&value)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return value == "1", nil
+}
+
+func markDeprecatedLayersReconciled(ctx context.Context, db *sql.DB) error {
+	_, err := db.ExecContext(ctx, `INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)`, deprecatedLayerReconciliationKey, "1")
+	return err
+}
+
 type neighbor struct {
 	kind     string
 	sourceID string
 	distance float64
-	where    locator
+	where    Locator
 }
 
 func nearest(ctx context.Context, db *sql.DB, vector []byte, k int) ([]neighbor, error) {
@@ -576,6 +900,7 @@ func nearest(ctx context.Context, db *sql.DB, vector []byte, k int) ([]neighbor,
 		FROM candidates a
 		JOIN embeddings e ON e.rowid=a.rowid
 		JOIN chunks c ON c.id=a.rowid
+		WHERE c.source_kind <> 'memories' OR lower(COALESCE(json_extract(c.locator,'$.layer'),'')) NOT LIKE 'rocodata\_%' ESCAPE '\'
 		ORDER BY distance`, vector, k, vector)
 	if err != nil {
 		return nil, fmt.Errorf("search sqlite-vec index: %w", err)

@@ -52,6 +52,62 @@ does not handle authentication or store its secrets.
 `roca exec` runs exactly what `query --sql-only` prints, under the same
 read-only gate; nothing that is not a SELECT reaches the database.
 
+## Semantic-first retrieval
+
+Use semantic retrieval for questions about concepts, similar past work, or
+memories expressed with different words. Do not present a literal keyword
+rescue as if it were a semantic answer.
+
+When the optional local `roca-vector` plugin is installed and ready, use it as
+the candidate retriever:
+
+```bash
+roca vector --json query "<bare concept>" 8
+```
+
+For a non-default core database, add `--db-path /path/to/roca.db` after
+`vector`.
+
+The vector result includes the source kind, stable source id, persisted locator,
+score, and live source text. It is a locator and relevance signal, not final
+evidence. For each useful candidate, use the locator with the core query or
+`roca exec` to recover the live source context, then inspect enough surrounding
+context to establish what the source actually says. Keep available source
+kind, stable source id, layer, project, date, and provenance with the finding; a
+missing provenance value means the source said nothing.
+
+If the vector route is unavailable, say that semantic retrieval is unavailable
+and name the missing route. Use exact SQL or literal search only when the user
+explicitly asks for a literal lookup, and label that result as exact rather
+than semantic. Never silently downgrade a conceptual question to keyword
+matching.
+
+The vector route requires explicit local setup: `features.plugins = true`,
+`features.vector = true`, an installed package, and its local embedding model.
+The plugins switch is the master gate; the vector switch opts into this
+executable. It must remain optional and local. See the [semantic retrieval and evidence
+workflow](https://github.com/thellmwhisperer/la-roca/blob/main/docs/semantic-retrieval.md)
+for the complete setup, degradation, and evidence contract.
+
+## Evidence-first investigation
+
+For a question that needs more than one remembered fact, apply the [semantic
+retrieval and evidence workflow](https://github.com/thellmwhisperer/la-roca/blob/main/docs/semantic-retrieval.md): recover
+source context, preserve the stable source id, separate observations from
+interpretation, and end with evidence, contradictions, coverage limits, and
+the next probe.
+
+For project, decision, and agent questions, prefer the narrowest true layer
+and project filter. Store a durable handoff or decision only after the result
+has been checked against its source rows.
+
+If the project has a semantic profile, apply it after recovering live source
+context. A profile supplies project-specific source authority, finding types,
+review states, required evidence fields, and complete/unresolved criteria; it
+never replaces the source locator, provenance, contradiction report, or core
+resolution. Start from the public [domain profile template](https://github.com/thellmwhisperer/la-roca/blob/main/docs/semantic-profiles/domain-profile-template.md)
+when a project needs project-specific source authority and review policy.
+
 ## Default row output
 
 Rows use the same compact TOON shape as other AXI tools. The route narration
@@ -85,7 +141,8 @@ the gate. Install them with `roca mcp install <runtime>`.
 | Situation | Action |
 |---|---|
 | Past work / people / "have we…" | `roca query "<question>"` |
-| Investigation | `roca explore --deep "<one bare word>"`, then plain radius explores |
+| Conceptual investigation | Follow Semantic-first retrieval; report an unavailable vector route before using any exact fallback |
+| Exact or terrain investigation | `roca explore --deep "<one bare word>"`, then plain radius explores |
 | Programmatic parse | add `--json` |
 | Inspect SQL first | `roca query --sql-only` then `roca exec` |
 | Durable memory | `roca store --layer … --content … --agent … --model …` |
@@ -96,8 +153,9 @@ the gate. Install them with `roca mcp install <runtime>`.
 Purpose: reach a verdict that is grounded in returned rows while learning the corpus terrain.
 
 1. Declare the purpose in one line before touching anything.
-2. Launch the first probe with `roca explore --deep "<one bare word>"`. Use a
-   single bare word: no hints and no phrases.
+2. For a conceptual question, follow Semantic-first retrieval above. Use
+   `roca explore --deep "<one bare word>"` only for exact or terrain
+   investigation, with a single bare word and no hints or phrases.
 3. Read the terrain, not just the answer: inspect sources, dates, vocabulary,
    noise, and negative space.
 4. Work the radius with plain `roca explore`, one concept per query: a synonym,

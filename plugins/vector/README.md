@@ -20,9 +20,15 @@ roca plugin install .tmp/vector-package
 
 This package is intentionally installable rather than bundled. Installation is
 an explicit full-trust consent event and an ordinary La Roca install or update
-does not place the binary. Set `features.vector = true` as well: absent or false
-hides `roca vector` dispatch and its `roca plugins` entry even when the binary
-is on `PATH`. Installation supplies the package; the switch activates it.
+does not place the binary. Set `features.vector = true` as well: both switches
+are required, with `features.plugins` as the master gate. If either is absent
+or false, `roca vector` dispatch and its `roca plugins` entry stay hidden even
+when the binary is on `PATH`. Installation supplies the package; the vector
+switch activates it.
+
+The corpus walk excludes deprecated `rocodata_*` memory layers. Historical
+RocoData imports therefore cannot enter a new vector index; the canonical La
+Roca corpus remains the only memory source used by semantic retrieval.
 
 ## Use
 
@@ -40,6 +46,10 @@ plugin-owned index, and starts a resumable background build. `ingest
 --delta` embeds only new or changed chunks and removes missing sources. Both
 writing commands honor `ROCA_READ_ONLY`. `query` uses binary ANN candidates,
 exact cosine reranking, stable source deduplication, and live text resolution.
+It also removes retired `rocodata_*` chunks from an existing index when writes
+are enabled. Under `ROCA_READ_ONLY`, a query refuses an index that still has
+such chunks; run `roca vector ingest --delta` with writes enabled to reconcile
+it.
 
 For a non-default core database, export `ROCA_DB_PATH` or pass the plugin flag
 after dispatch: `roca vector --db-path /path/to/roca.db query "..."`.

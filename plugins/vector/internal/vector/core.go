@@ -37,6 +37,7 @@ const (
 	exchangeText = `trim(COALESCE(human_text,'') || CASE WHEN human_text IS NOT NULL AND agent_text IS NOT NULL THEN char(10)||char(10) ELSE '' END || COALESCE(agent_text,''))`
 	sessionText  = `trim(COALESCE(title,'') || char(10) || COALESCE(project,'') || char(10) || COALESCE(metadata,''))`
 	corpusSchema = "plugin_roca_corpus"
+	activeMemory = `COALESCE(content,'') <> '' AND lower(COALESCE(layer,'')) NOT LIKE 'rocodata\_%' ESCAPE '\'`
 )
 
 func corpusTable(name string) string { return corpusSchema + "." + name }
@@ -76,8 +77,8 @@ func corePages() []corePage {
 					source_sequence,COALESCE(source_agent,'') AS source_agent,
 					COALESCE(metadata,'{}') AS metadata,COALESCE(layer,'') AS layer,
 					COALESCE(origin,'') AS origin,COALESCE(created_at,'') AS created_at
-					FROM %s WHERE COALESCE(content,'') <> '' AND id > %s ORDER BY id LIMIT %d`,
-					corpusTable("memories"), cursor, walkPageSize)
+					FROM %s WHERE %s AND id > %s ORDER BY id LIMIT %d`,
+					corpusTable("memories"), activeMemory, cursor, walkPageSize)
 			},
 			decode: decodeMemory,
 		},
@@ -167,7 +168,7 @@ func decodeSession(values map[string]any) (sourceRow, string, error) {
 	return sourceRow{kind: "sessions", sessionID: id, text: stringValue(values["text"])}, id, nil
 }
 
-func (c CoreCLI) ResolveSource(ctx context.Context, kind string, where locator) (string, error) {
+func (c CoreCLI) ResolveSource(ctx context.Context, kind string, where Locator) (string, error) {
 	var statement string
 	switch kind {
 	case "sessions":
@@ -198,15 +199,15 @@ func (c CoreCLI) ResolveSource(ctx context.Context, kind string, where locator) 
 	case "memories":
 		switch {
 		case where.SessionID != "" && where.HasOrdinal:
-			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE source_session=%s AND source_sequence=%d ORDER BY id DESC LIMIT 1`,
-				corpusTable("memories"), sqlLiteral(where.SessionID), where.Ordinal)
+			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE %s AND source_session=%s AND source_sequence=%d ORDER BY id DESC LIMIT 1`,
+				corpusTable("memories"), activeMemory, sqlLiteral(where.SessionID), where.Ordinal)
 		case where.FilePath != "" && where.CronSource != "":
-			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE json_extract(metadata,'$.file_path')=%s AND (json_extract(metadata,'$._cron_source')=%s OR source_agent=%s) ORDER BY id DESC LIMIT 1`,
-				corpusTable("memories"), sqlLiteral(where.FilePath), sqlLiteral(where.CronSource),
+			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE %s AND json_extract(metadata,'$.file_path')=%s AND (json_extract(metadata,'$._cron_source')=%s OR source_agent=%s) ORDER BY id DESC LIMIT 1`,
+				corpusTable("memories"), activeMemory, sqlLiteral(where.FilePath), sqlLiteral(where.CronSource),
 				sqlLiteral(where.CronSource))
 		default:
-			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE layer=%s AND origin=%s AND COALESCE(created_at,'')=%s`,
-				corpusTable("memories"), sqlLiteral(where.Layer), sqlLiteral(where.Origin),
+			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE %s AND layer=%s AND origin=%s AND COALESCE(created_at,'')=%s`,
+				corpusTable("memories"), activeMemory, sqlLiteral(where.Layer), sqlLiteral(where.Origin),
 				sqlLiteral(where.CreatedAt))
 			return c.resolveIdentity(ctx, kind, where, statement)
 		}
@@ -220,7 +221,7 @@ func (c CoreCLI) ResolveSource(ctx context.Context, kind string, where locator) 
 	return stringValue(rows[0]["text"]), nil
 }
 
-func (c CoreCLI) resolveIdentity(ctx context.Context, kind string, where locator, statement string) (string, error) {
+func (c CoreCLI) resolveIdentity(ctx context.Context, kind string, where Locator, statement string) (string, error) {
 	rows, err := c.query(ctx, statement)
 	if err != nil {
 		return "", err

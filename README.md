@@ -5,7 +5,7 @@
 **Your agents' history is a database.**
 **Interrogate it. Interact with it. Learn from it. Have fun with it.**
 
-One file, zero dependencies. Local SQLite. CLI + MCP.
+One core file, zero dependencies. Local SQLite. CLI + MCP.
 
 [![CI](https://github.com/thellmwhisperer/la-roca/actions/workflows/ci.yml/badge.svg)](https://github.com/thellmwhisperer/la-roca/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -18,8 +18,8 @@ Code, Codex, Qwen Code, GLM, Cursor, OpenCode, Pi, Hermes, Grok Build, and Claud
 Desktop leave behind, normalizes it into one SQLite database on your machine, and answers questions
 about it: from your terminal, or from the agents themselves over MCP.
 
-Every answer shows its proof: the SQL that produced it and the rows that
-back it.
+Every core query answer shows its proof: the SQL that produced it and the rows
+that back it.
 
 ## Install
 
@@ -47,11 +47,11 @@ Your own words that night: "30 days and out. I do not want eternal logs."
 ```
 
 If an already signed-in agent CLI is on `PATH`, that is the factory default:
-La Roca detects it and semantic queries work immediately. No provider table and
-no model configuration step are required; `roca model check` only confirms that
-the session answers. Without a detected CLI, La Roca tries the local Ollama
-floor and finally the keyword rescue, naming every missing or unavailable
-semantic route.
+La Roca detects it and natural-language queries work immediately. No provider
+table and no model configuration step are required; `roca model check` only
+confirms that the session answers. Without a detected CLI, La Roca tries the
+local Ollama floor and finally the keyword rescue, naming every missing or
+unavailable answering route.
 
 `roca init` asks before creating or adopting a database, then shows the models
 this machine can actually serve. The chooser is model-first: pick a model,
@@ -194,8 +194,8 @@ cheap, local, and secure.
 
 ### Exact SQL, when you want it
 
-Because it is a real database, not a search box. A text search cannot answer
-this:
+Because it is a real database, not a search box. A keyword or vector index
+cannot replace an exact SQL query for this:
 
 ```sh
 roca exec "SELECT source_agent, COUNT(*) AS sessions
@@ -291,13 +291,26 @@ exactly the information the task needs instead of a whole skill.
   already on `PATH` and uses their existing signed-in sessions without reading,
   copying, or storing secrets. No La Roca login is required. For machines
   without a usable local CLI, the local Ollama floor and keyword rescue remain.
-- **Exact retrieval.** Recovery is SQL plus a local FTS5 index with diacritic
-  folding; a plain `LIKE` fallback works before the index exists. If you want
-  semantics, your model supplies it at question time; the retrieval itself
-  stays exact and auditable. Domain extensions are described in
-  [plugins](docs/plugins.md).
-- **Honest degradation.** No usable provider, or SQL that cannot run, falls
-  back to literal search and says so in the result.
+- **Exact core retrieval; optional semantic plugin.** Core recovery is SQL plus
+  a local FTS5 index with diacritic folding; a plain `LIKE` fallback works
+  before the index exists, and this route stays exact and auditable. Your model
+  can still supply natural-language query planning at question time; semantic
+  candidate retrieval is an optional executable package you build and install
+  yourself, with its embedding index remaining outside core. See the
+  [executable plugin contract](docs/plugins.md#executable-only-packages) and
+  the [roca-vector package guide](plugins/vector/README.md) for the setup and
+  domain-extension boundary.
+- **Semantic-first agent craft.** The installed skill can use the optional
+  local vector package to retrieve conceptual candidates when both
+  `features.plugins` and `features.vector` are enabled and its local model is
+  ready, then resolve their source context through core before forming a
+  verdict. A vector score is not evidence, and literal rescue is never silently
+  presented as semantic retrieval. See
+  [Semantic retrieval](docs/semantic-retrieval.md).
+- **Honest core degradation.** No usable provider, or SQL that cannot run,
+  falls back to literal search and says so in the result. The semantic-first
+  skill reports an unavailable vector route instead of presenting that exact
+  fallback as semantic retrieval.
 
 ## What it reads
 
