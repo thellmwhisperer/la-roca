@@ -65,6 +65,10 @@ INSERT INTO message VALUES (
   '{"role":"assistant","parentID":"user-1","time":{"created":1785542403500,"completed":1785542402000},"modelID":"synthetic-model-c","providerID":"synthetic-provider"}'
 );
 INSERT INTO message VALUES (
+  'assistant-4', 'synthetic-opencode-session', 1785542403600, 1785542403700,
+  '{"role":"assistant","parentID":"user-1","time":{"created":1785542403600,"completed":1785542403700},"modelID":"synthetic-model-d","providerID":"synthetic-provider"}'
+);
+INSERT INTO message VALUES (
   'assistant-live', 'synthetic-opencode-session', 1785542405000, 1785542405000,
   '{"role":"assistant","parentID":"user-1","time":{"created":1785542405000},"modelID":"synthetic-live-model"}'
 );
@@ -108,6 +112,10 @@ INSERT INTO part VALUES (
 INSERT INTO part VALUES (
   'part-agent-error', 'assistant-2', 'synthetic-opencode-session', 1785542403100, 1785542403100,
   '{"type":"tool","callID":"synthetic-error-call","tool":"read","state":{"status":"error","input":{"filePath":"synthetic/missing.txt"},"error":"invented missing file"}}'
+);
+INSERT INTO part VALUES (
+  'part-agent-four-tool', 'assistant-4', 'synthetic-opencode-session', 1785542403600, 1785542403600,
+  '{"type":"tool","callID":"synthetic-call-four","tool":"write","state":{"status":"completed","input":{"filePath":"synthetic/output.txt"},"output":"invented write result"}}'
 );
 INSERT INTO part VALUES (
   'part-live-tool', 'assistant-live', 'synthetic-opencode-session', 1785542405000, 1785542405000,
