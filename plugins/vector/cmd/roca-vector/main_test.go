@@ -57,7 +57,9 @@ func TestWorkerCarriesExplicitCoreAndStatePaths(t *testing.T) {
 }
 
 func TestVocabDemandsOneConceptAndAnInstalledIndex(t *testing.T) {
-	env := &environment{stateDir: t.TempDir()}
+	state := t.TempDir()
+	t.Setenv("ROCA_VECTOR_ROCA_BINARY", filepath.Join(state, "roca"))
+	env := &environment{stateDir: state}
 	root := rootCommand(env)
 	root.SetArgs([]string{"vocab"})
 	if err := root.Execute(); err == nil {
