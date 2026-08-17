@@ -41,7 +41,7 @@ const (
 )
 
 var (
-	structuralSessionToken    = regexp.MustCompile(`(?i)(?:\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b|\b[0-9A-HJKMNP-TV-Z]{26}\b|\bg-p-[a-z0-9_-]+\b)`)
+	structuralSessionToken    = regexp.MustCompile(`(?i)(?:\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b|\b(?:ses(?:sion)?[_:-])?[0-9A-HJKMNP-TV-Z]{26}\b|\bg-p-[a-z0-9_-]+\b|\b(?:md5|sha(?:1|224|256|384|512))[:=_-][0-9a-f]{7,}\b)`)
 	sessionJSONScalarFragment = regexp.MustCompile(`"(?:\\.|[^"\\])*"\s*:\s*(?:"(?:\\.|[^"\\])*"|true|false|null|-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)`)
 	sessionJSONKeyFragment    = regexp.MustCompile(`"(?:\\.|[^"\\])*"\s*:`)
 )
@@ -199,7 +199,7 @@ func sessionEmbeddingText(title, projectName string) string {
 
 func cleanSessionField(value string) string {
 	value = strings.TrimSpace(stripSessionJSON(value))
-	if value == "" || sessionPathValue(value) {
+	if value == "" {
 		return ""
 	}
 	value = sessionJSONScalarFragment.ReplaceAllString(value, " ")
@@ -209,20 +209,15 @@ func cleanSessionField(value string) string {
 	clean := fields[:0]
 	for _, field := range fields {
 		candidate := strings.Trim(field, `"'()[]{}<>,;:!?.`)
-		if candidate == "" || sessionPathToken(candidate) || sessionHexToken(candidate) {
+		if sessionPathToken(candidate) {
+			break
+		}
+		if candidate == "" || sessionHexToken(candidate) {
 			continue
 		}
 		clean = append(clean, field)
 	}
 	return strings.Join(clean, " ")
-}
-
-func sessionPathValue(value string) bool {
-	fields := strings.Fields(value)
-	if len(fields) == 0 {
-		return false
-	}
-	return sessionPathToken(strings.Trim(fields[0], `"'()[]{}<>,;:!?.`))
 }
 
 func sessionPathToken(value string) bool {
@@ -247,20 +242,38 @@ func sessionPathToken(value string) bool {
 }
 
 func sessionSlashLanguage(before, after string) bool {
-	if before == "" || after == "" || before != strings.ToUpper(before) {
+	if before == "" || after == "" {
 		return false
 	}
-	for _, character := range before {
-		if character < 'A' || character > 'Z' {
-			return false
+	if before == strings.ToUpper(before) {
+		for _, character := range before {
+			if character < 'A' || character > 'Z' {
+				return false
+			}
+		}
+		for _, character := range after {
+			if (character < 'A' || character > 'Z') && (character < '0' || character > '9') {
+				return false
+			}
+		}
+		return true
+	}
+	if before != strings.ToLower(before) || after != strings.ToLower(after) {
+		return false
+	}
+	for _, part := range []string{before, after} {
+		for _, character := range part {
+			if character < 'a' || character > 'z' {
+				return false
+			}
 		}
 	}
-	for _, character := range after {
-		if (character < 'A' || character > 'Z') && (character < '0' || character > '9') {
-			return false
-		}
+	switch before {
+	case "app", "bin", "cmd", "config", "data", "docs", "internal", "lib", "pkg", "src", "test", "tests", "tmp", "var", "vendor":
+		return false
+	default:
+		return true
 	}
-	return true
 }
 
 func sessionHexToken(value string) bool {
