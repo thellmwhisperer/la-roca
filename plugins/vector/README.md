@@ -8,15 +8,27 @@ token document frequencies in its own manifest-owned `state/` directory.
 Corpus text is resolved live from core when a result is returned and is never
 copied into the index.
 
-## Build and install
+## Install from a release
 
 The plugin lifecycle is experimental and OFF by default. Set
-`features.plugins = true` in the selected La Roca `config.toml`, then:
+`features.plugins = true` in the selected La Roca `config.toml`. Releases carry
+one verified archive per core platform. Download the archive for the installed
+release to a stable local path, verify its release checksum, and install it:
 
 ```sh
-make -C plugins/vector check
-make -C plugins/vector package
-roca plugin install .tmp/vector-package
+VERSION=$(roca --version | awk 'NR == 1 {print $2}')
+PLATFORM=darwin-arm64 # or linux-arm64, linux-x64, windows-x64
+ASSET=roca-vector-$VERSION-$PLATFORM.tar.gz
+DOWNLOAD=$(mktemp -d)
+CACHE=$HOME/.cache/roca
+
+gh release download "$VERSION" --repo thellmwhisperer/la-roca \
+  --pattern "$ASSET" --pattern checksums.txt --dir "$DOWNLOAD"
+grep "  $ASSET$" "$DOWNLOAD/checksums.txt" |
+  (cd "$DOWNLOAD" && shasum -a 256 --check)
+mkdir -p "$CACHE"
+mv "$DOWNLOAD/$ASSET" "$CACHE/roca-vector.tar.gz"
+roca plugin install "$CACHE/roca-vector.tar.gz"
 ```
 
 This package is intentionally installable rather than bundled. Installation is
@@ -24,6 +36,27 @@ an explicit full-trust consent event and an ordinary La Roca install or update
 does not place the binary. Set `features.vector = true` as well: absent or false
 hides `roca vector` dispatch and its `roca plugins` entry even when the binary
 is on `PATH`. Installation supplies the package; the switch activates it.
+
+For the next release, repeat the download, verification, and `mv` with the new
+`VERSION`, keeping the same cache path, then run:
+
+```sh
+roca plugin update vector
+```
+
+Update reopens the recorded archive path, verifies the package's inner
+`checksums.txt`, replaces the released executable and manifest, and preserves
+the manifest-owned `state/` index. No Go toolchain or local build is involved.
+
+## Build from source
+
+Contributors can still exercise the package locally:
+
+```sh
+make -C plugins/vector check
+make -C plugins/vector package
+roca plugin install .tmp/vector-package
+```
 
 ## Use
 
