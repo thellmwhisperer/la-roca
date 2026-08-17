@@ -130,7 +130,9 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (IngestResult, 
 		if err := target.Write(ctx, func(tx *sql.Tx) error {
 			return exactdedup.EnsureGuards(ctx, tx)
 		}); err != nil {
-			return IngestResult{}, err
+			if s.opts.Progress != nil {
+				s.opts.Progress("exact-payload guards: " + err.Error())
+			}
 		}
 	}
 	report, err := ingest.Run(ctx, target, s.registry, ingest.Options{
