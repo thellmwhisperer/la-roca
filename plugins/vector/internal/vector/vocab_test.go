@@ -318,8 +318,10 @@ type invalidatingCorpus struct {
 	invalidateFrom int
 }
 
-func (c *invalidatingCorpus) WalkSources(ctx context.Context, visit func(sourceRow) error) error {
-	return c.inner.WalkSources(ctx, visit)
+func (c *invalidatingCorpus) WalkSources(
+	ctx context.Context, sourceKind string, visit func(sourceRow) error,
+) error {
+	return c.inner.WalkSources(ctx, sourceKind, visit)
 }
 
 func (c *invalidatingCorpus) ResolveSource(ctx context.Context, kind string, where locator) (string, error) {
