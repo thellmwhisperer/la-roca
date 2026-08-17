@@ -15,6 +15,9 @@ manifest-backed `roca-corpus` and `roca-ops` domains, plus a separate
 Before either federated route opens against an existing core database, the
 internal cutover coordinator completes and verifies the ops, corpus, and cron
 custody imports from frozen snapshots. That preparation has no public command.
+DATA-3 refuses cutover unless its reproducible custody reconciliation is exactly
+100% green; the detailed count, hash, provenance, and occurrence contract is
+owned by the [bundled `roca-corpus` plugin](plugins.md#the-bundled-roca-corpus-plugin).
 Shadow mode serves the legacy answer and returns the marker to legacy on any
 row difference. Cutover uses temporary compatibility views and indexes over
 the read-only plugin attachments; it does not open `roca.db`. That file remains
