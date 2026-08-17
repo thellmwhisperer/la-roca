@@ -459,6 +459,22 @@ func assistantContent(parts []openCodeRow) string {
 		}
 		content = append(content, patch)
 	}
+	if len(content) == 0 {
+		// An assistant step that only ran tools still answered with those tools.
+		// Without this fallback the exchange's agent text stays empty and the
+		// turn is invisible to text search, even though its tool use is recorded
+		// beside it. The name is what the source recorded, so nothing is invented.
+		for _, part := range parts {
+			if part.part.Type != "tool" || part.part.Tool == "" {
+				continue
+			}
+			status := part.part.status()
+			if status != "completed" && status != "error" {
+				continue
+			}
+			content = append(content, "[tool "+part.part.Tool+"]")
+		}
+	}
 	return strings.Join(content, "\n\n")
 }
 
