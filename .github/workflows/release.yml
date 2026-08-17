@@ -99,9 +99,9 @@ jobs:
           VERSION: ${{ inputs.tag || github.ref_name }}
         run: make dist VERSION="$VERSION"
 
-      # The two Linux artefacts this runner can execute answer the tag, and the
-      # vector package manifest carries that same version into plugin lifecycle
-      # consent and installed inventory.
+      # The Linux core, its materialized vector companion and the standalone
+      # vector archive all answer the tag, and the package manifest carries that
+      # same version into plugin lifecycle consent and installed inventory.
       - name: The core and vector packages answer the tag they were built from
         env:
           VERSION: ${{ inputs.tag || github.ref_name }}
@@ -111,6 +111,16 @@ jobs:
           case "$reported" in
             "roca $VERSION"*) ;;
             *) echo "the binary reports '$reported' and the tag is $VERSION" >&2; exit 1 ;;
+          esac
+          bundle_home=$(mktemp -d)
+          mkdir -p "$bundle_home/bin"
+          HOME="$bundle_home" ROCA_PREFIX="$bundle_home/bin" \
+            ./bin/roca-"$VERSION"-linux-x64 _install-bundled-plugins --json
+          reported=$("$bundle_home/bin/roca-vector" --version)
+          echo "$reported"
+          case "$reported" in
+            *"$VERSION"*) ;;
+            *) echo "the bundled vector binary reports '$reported' and the tag is $VERSION" >&2; exit 1 ;;
           esac
           mkdir -p .tmp/release-vector
           tar -C .tmp/release-vector -xzf bin/roca-vector-"$VERSION"-linux-x64.tar.gz
