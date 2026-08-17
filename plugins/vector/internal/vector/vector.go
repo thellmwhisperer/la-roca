@@ -157,13 +157,6 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 	if err != nil {
 		return Delta{}, err
 	}
-	rebuildCensus := sourceKind == ""
-	if rebuildCensus {
-		err = invalidateCensus(ctx, store)
-	}
-	if err != nil {
-		return Delta{}, fmt.Errorf("invalidate vector census: %w", err)
-	}
 	if model != "" && model != i.Model {
 		if sourceKind != "" {
 			return Delta{}, fmt.Errorf("targeted vector ingest cannot change model from %s to %s", model, i.Model)
@@ -172,6 +165,13 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 			return Delta{}, err
 		}
 		existing, dimensions = map[string]storedChunk{}, 0
+	}
+	rebuildCensus := sourceKind != "sessions"
+	if rebuildCensus {
+		err = invalidateCensus(ctx, store)
+	}
+	if err != nil {
+		return Delta{}, fmt.Errorf("invalidate vector census: %w", err)
 	}
 	if dimensions > 0 && model != i.Model {
 		if err := ensureVectorTables(store, dimensions, i.Model); err != nil {
@@ -218,7 +218,7 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 
 	err = i.Corpus.WalkSources(ctx, sourceKind, func(source sourceRow) error {
 		report.Sources++
-		if rebuildCensus {
+		if sourceKind == "" {
 			census.add(source.kind, source.text)
 		}
 		for chunkIndex, text := range chunks(source.text, defaultChunkSize, defaultOverlap) {
@@ -251,6 +251,14 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 		return Delta{}, err
 	}
 	if rebuildCensus {
+		if sourceKind != "" {
+			if err := i.Corpus.WalkSources(ctx, "", func(source sourceRow) error {
+				census.add(source.kind, source.text)
+				return nil
+			}); err != nil {
+				return Delta{}, err
+			}
+		}
 		if err := writeCensus(ctx, store, census); err != nil {
 			return Delta{}, fmt.Errorf("write vector census: %w", err)
 		}
@@ -376,11 +384,11 @@ func (s sourceRow) stableID() string {
 	switch s.kind {
 	case "sessions":
 		if s.sessionID != "" {
-			return "sessions/" + escape(s.sessionID)
+			return "sessions/" + escape(s.sessionID) + "/" + s.identity()
 		}
 	case "exchanges":
 		if s.sessionID != "" && s.hasOrdinal {
-			return fmt.Sprintf("exchanges/%s/%d", escape(s.sessionID), s.ordinal)
+			return fmt.Sprintf("exchanges/%s/%d/%s", escape(s.sessionID), s.ordinal, s.identity())
 		}
 		if s.sessionID != "" {
 			return "exchanges/" + escape(s.sessionID) + "/unkeyed/" + s.identity()
@@ -396,9 +404,9 @@ func (s sourceRow) stableID() string {
 	case "memories":
 		switch {
 		case s.cronSource != "" && s.filePath != "":
-			return "memories/cron/" + escape(s.cronSource) + "/" + escape(s.filePath)
+			return "memories/cron/" + escape(s.cronSource) + "/" + escape(s.filePath) + "/" + s.identity()
 		case s.sessionID != "" && s.hasOrdinal:
-			return fmt.Sprintf("memories/session/%s/%d", escape(s.sessionID), s.ordinal)
+			return fmt.Sprintf("memories/session/%s/%d/%s", escape(s.sessionID), s.ordinal, s.identity())
 		default:
 			return "memories/direct/" + s.identity()
 		}

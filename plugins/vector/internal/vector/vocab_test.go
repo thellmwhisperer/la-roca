@@ -3,11 +3,13 @@ package vector
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"math"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestVocabTermsFoldAccentsCaseAndSeparators(t *testing.T) {
@@ -21,7 +23,7 @@ func TestVocabTermsFoldAccentsCaseAndSeparators(t *testing.T) {
 		{"single runes drop", "a I o", nil},
 		{"digits are terms", "worktree22 2026 b12", []string{"worktree22", "2026", "b12"}},
 		{"opaque decimal identifiers drop", "421867 12345 health", []string{"health"}},
-		{"hexadecimal tokens drop", "deadbeef 0123456789abcdef defaced", []string{"defaced"}},
+		{"hexadecimal tokens drop", "deadbeef 0123456789abcdef 0xdeadbeef 0XABC123 defaced", []string{"defaced"}},
 		{"serialized keys and structural identifiers drop",
 			`{"source_exchange_fingerprints":["deadbeef"],"health_status":"stable","id":"123e4567-e89b-12d3-a456-426614174000"} clinical`,
 			[]string{"stable", "clinical"}},
@@ -251,6 +253,40 @@ func TestVocabCensusFollowsTheCorpusExactly(t *testing.T) {
 		"otra": 1, "cosa": 1, "nuevo": 1, "cabecera": 1})
 }
 
+func TestTargetedContentDeltaRebuildsTheFullCensus(t *testing.T) {
+	ctx := context.Background()
+	corpus := &memoryCorpus{sources: []sourceRow{
+		{kind: "exchanges", sessionID: "s", ordinal: 1, hasOrdinal: true, text: "salud antiguo"},
+		{kind: "memories", text: "medico estable", layer: "discovery", origin: "agent"},
+	}}
+	index := Index{Corpus: corpus, VectorPath: filepath.Join(t.TempDir(), "vector.db"),
+		Model: DefaultModel, Embedder: vocabEmbedder{}}
+	if _, err := index.Ingest(ctx); err != nil {
+		t.Fatal(err)
+	}
+	corpus.sources[0].text = "salud moderno"
+	delta, err := index.IngestSource(ctx, "exchanges")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delta.Added != 1 || delta.Removed != 1 || delta.Sources != 1 {
+		t.Fatalf("targeted delta = %+v", delta)
+	}
+	assertCensus(t, index.VectorPath, 2, map[string]int64{"salud": 1, "moderno": 1, "medico": 1, "estable": 1})
+	store, err := sql.Open("sqlite", index.VectorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	var stale int
+	if err := store.QueryRow(`SELECT COUNT(*) FROM census WHERE term='antiguo'`).Scan(&stale); err != nil {
+		t.Fatal(err)
+	}
+	if stale != 0 {
+		t.Fatalf("stale census rows = %d", stale)
+	}
+}
+
 type secondBatchFailureEmbedder struct {
 	calls int
 }
@@ -358,6 +394,27 @@ func TestVocabRefusesAReportRankedAgainstAStolenCensus(t *testing.T) {
 	if _, err := index.Vocab(ctx, "salud"); err == nil ||
 		!strings.Contains(err.Error(), "vector census changed during discovery") {
 		t.Fatalf("vocab beside a concurrent ingest = %v, want the refusal", err)
+	}
+}
+
+func TestVocabHoldsTheIndexLock(t *testing.T) {
+	index := Index{Corpus: saludCorpus(), VectorPath: filepath.Join(t.TempDir(), "vector.db"),
+		Model: DefaultModel, Embedder: vocabEmbedder{}}
+	if _, err := index.Ingest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	release, err := lockFile(index.VectorPath + ".index.lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, vocabErr := index.Vocab(ctx, "salud")
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(vocabErr, context.DeadlineExceeded) {
+		t.Fatalf("vocab under held index lock = %v", vocabErr)
 	}
 }
 

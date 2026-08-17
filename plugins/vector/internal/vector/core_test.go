@@ -56,8 +56,8 @@ func TestCoreCLIWalksEverySourceThroughRocaExec(t *testing.T) {
 	if len(queries) != 4 || len(sources) != 4 {
 		t.Fatalf("queries=%d sources=%+v", len(queries), sources)
 	}
-	if sources[0].filePath != "notes.md" || sources[1].stableID() != "exchanges/s1/4" ||
-		!strings.Contains(sources[2].stableID(), "/unkeyed/") || sources[3].stableID() != "sessions/s1" ||
+	if sources[0].filePath != "notes.md" || sources[1].stableID() != "exchanges/s1/4/"+sources[1].identity() ||
+		!strings.Contains(sources[2].stableID(), "/unkeyed/") || sources[3].stableID() != "sessions/s1/"+sources[3].identity() ||
 		sources[3].text != "delta session\nSynthetic orchard" {
 		t.Fatalf("decoded sources = %+v", sources)
 	}
@@ -151,6 +151,7 @@ func TestSessionEmbeddingTextKeepsOnlyHumanContent(t *testing.T) {
 
 func TestCoreCLIResolvesSessionWithHumanProjectName(t *testing.T) {
 	var statement string
+	want := sourceRow{kind: "sessions", text: "Synthetic canvas\nSynthetic orchard"}
 	core := CoreCLI{Executable: "roca", Run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
 		statement = args[len(args)-1]
 		return json.Marshal(map[string]any{"rows": []map[string]any{{
@@ -158,7 +159,9 @@ func TestCoreCLIResolvesSessionWithHumanProjectName(t *testing.T) {
 			"project_name": "Synthetic orchard",
 		}}})
 	}}
-	text, err := core.ResolveSource(context.Background(), "sessions", locator{SessionID: "session-design"})
+	text, err := core.ResolveSource(context.Background(), "sessions", locator{
+		SessionID: "session-design", Identity: want.identity(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,12 +176,15 @@ func TestCoreCLIResolvesSessionWithHumanProjectName(t *testing.T) {
 
 func TestCoreCLIResolvesLiveTextAndQuotesStoredLocators(t *testing.T) {
 	var statement string
+	want := sourceRow{kind: "exchanges", text: "current answer"}
 	core := CoreCLI{Executable: "roca", Run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
 		statement = args[len(args)-1]
-		return json.Marshal(map[string]any{"rows": []map[string]any{{"text": "current answer"}}})
+		return json.Marshal(map[string]any{"rows": []map[string]any{
+			{"text": "previous answer"}, {"text": "current answer"},
+		}})
 	}}
 	text, err := core.ResolveSource(context.Background(), "exchanges", locator{
-		SessionID: "operator's-session", Ordinal: 7, HasOrdinal: true,
+		SessionID: "operator's-session", Ordinal: 7, HasOrdinal: true, Identity: want.identity(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -188,6 +194,34 @@ func TestCoreCLIResolvesLiveTextAndQuotesStoredLocators(t *testing.T) {
 	}
 	if !strings.Contains(statement, "session_id='operator''s-session'") {
 		t.Fatalf("stored locator was not SQL-quoted: %s", statement)
+	}
+	if strings.Contains(statement, "LIMIT 1") {
+		t.Fatalf("exchange resolution discarded divergent siblings: %s", statement)
+	}
+}
+
+func TestCoreCLIResolvesDistinctMemoriesSharingALocator(t *testing.T) {
+	want := sourceRow{kind: "memories", text: "first memory", layer: "discovery",
+		origin: "agent", createdAt: "2026-08-17"}
+	var statement string
+	core := CoreCLI{Executable: "roca", Run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		statement = args[len(args)-1]
+		return json.Marshal(map[string]any{"rows": []map[string]any{
+			{"text": "first memory"}, {"text": "second memory"},
+		}})
+	}}
+	text, err := core.ResolveSource(context.Background(), "memories", locator{
+		SessionID: "shared-session", Ordinal: 2, HasOrdinal: true, Layer: want.layer,
+		Origin: want.origin, CreatedAt: want.createdAt, Identity: want.identity(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != want.text {
+		t.Fatalf("text = %q", text)
+	}
+	if strings.Contains(statement, "LIMIT 1") {
+		t.Fatalf("memory resolution discarded divergent siblings: %s", statement)
 	}
 }
 

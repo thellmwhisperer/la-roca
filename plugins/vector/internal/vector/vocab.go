@@ -78,6 +78,11 @@ func (i Index) Vocab(ctx context.Context, concept string) (VocabReport, error) {
 	} else if err != nil {
 		return VocabReport{}, fmt.Errorf("inspect vector database: %w", err)
 	}
+	release, err := lockIndex(ctx, i.VectorPath+".index.lock", i.waitingForIndex)
+	if err != nil {
+		return VocabReport{}, fmt.Errorf("lock vector index: %w", err)
+	}
+	defer release()
 	store, err := openSQLite(i.VectorPath, true)
 	if err != nil {
 		return VocabReport{}, fmt.Errorf("open vector database: %w", err)
@@ -119,10 +124,6 @@ func (i Index) Vocab(ctx context.Context, concept string) (VocabReport, error) {
 	if err != nil {
 		return VocabReport{}, err
 	}
-	// An ingest invalidates the census before its first index mutation, so a
-	// discovery that started beside one ranks a moving index against a stale
-	// baseline. The totals it re-reads here are only unchanged when no ingest
-	// intervened, and a refusal is cheaper than a quietly mixed report.
 	if current, built := readCensusDocuments(store); !built || current != censusDocuments {
 		return VocabReport{}, fmt.Errorf("vector census changed during discovery; run vocab again once ingest finishes")
 	}
@@ -380,8 +381,12 @@ func vocabTerms(text string) []string {
 }
 
 func opaqueVocabTerm(term string) bool {
+	prefixedHex := strings.HasPrefix(term, "0x")
+	if prefixedHex {
+		term = strings.TrimPrefix(term, "0x")
+	}
 	runes := []rune(term)
-	allDigits, allHex := true, len(runes) >= 8
+	allDigits, allHex := true, len(runes) > 0 && (prefixedHex || len(runes) >= 8)
 	for _, symbol := range runes {
 		if !unicode.IsDigit(symbol) {
 			allDigits = false
