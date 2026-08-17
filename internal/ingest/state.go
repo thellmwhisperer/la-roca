@@ -25,8 +25,8 @@ import (
 // **Record level.** A fingerprint is not enough for a log that grows: a session
 // file changes on every turn and its fingerprint changes whole. The writer
 // matches replayed turns within their session before enrichment or insertion and
-// leaves conflicting or ambiguous anchors alone. The unique
-// `idx_exchanges_session_number` index is the final defence against a duplicate;
+// leaves conflicting or ambiguous anchors alone. The exact-payload unique index
+// is the final defence against a duplicate;
 // re-reading a grown file inserts only new exchanges.
 //
 // The debt v1 does not inherit is that this used to be two contracts: the live

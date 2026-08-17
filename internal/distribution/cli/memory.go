@@ -32,7 +32,7 @@ func storeCommand(env *cliEnv) *cobra.Command {
 		Use:   "store",
 		Short: "Write one memory",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			svc, _, err := env.openService()
+			svc, _, err := env.openStoreService()
 			if err != nil {
 				return err
 			}
@@ -424,4 +424,30 @@ func healthCommand(env *cliEnv) *cobra.Command {
 	}
 	cmd.Flags().IntVar(&req.MaxRows, "max-rows", 0, "sample rows per check")
 	return cmd
+}
+
+func memoryCommand(env *cliEnv) *cobra.Command {
+	command := &cobra.Command{Use: "memory", Short: "Resolve durable memory identities"}
+	command.AddCommand(&cobra.Command{
+		Use:   "resolve <id>",
+		Short: "Resolve a memory id or exact-dedup alias to its canonical row",
+		Args:  cobra.ExactArgs(1),
+		RunE: env.serviceRunE(func(cmd *cobra.Command, args []string, svc *service.Service) error {
+			id, err := strconv.ParseInt(args[0], 10, 64)
+			if err != nil || id <= 0 {
+				return fmt.Errorf("memory id must be a positive integer")
+			}
+			result, err := svc.ResolveMemory(cmd.Context(), id)
+			if err != nil {
+				return err
+			}
+			if env.json {
+				return env.printJSON(result)
+			}
+			env.print("memory: requested=%d canonical=%d alias=%t database=%s layer=%s",
+				result.RequestedID, result.CanonicalID, result.Alias, result.Database, result.Layer)
+			return nil
+		}),
+	})
+	return command
 }

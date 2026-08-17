@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	"github.com/thellmwhisperer/la-roca/internal/store"
+	"github.com/thellmwhisperer/la-roca/internal/store/exactdedup"
 )
 
 func TestStoreWritesOneMemoryAndReturnsItsIdentity(t *testing.T) {
@@ -147,8 +149,8 @@ func TestStoreKeepsTheCallerMetadataAndRefusesTheReservedKeys(t *testing.T) {
 	}
 }
 
-// Deduplication in the (layer, status, project) scope keeps a repeated hook from
-// writing the same handoff twice.
+// Exact-payload deduplication keeps a repeated hook from writing the same
+// handoff twice.
 func TestStoreDeduplicatesTheSameContentInTheSameScope(t *testing.T) {
 	svc, _ := serviceWithPaths(t)
 	ctx := context.Background()
@@ -205,7 +207,114 @@ func TestStoreDoesNotDeduplicateAcrossProjects(t *testing.T) {
 	}
 }
 
-func TestStoreDeduplicatesOnlyAgainstCurrentMemories(t *testing.T) {
+func TestTwentyIdenticalStoreAttemptsReturnOneCanonicalRow(t *testing.T) {
+	svc, _ := serviceWithPaths(t)
+	request := service.StoreRequest{
+		Layer: "discovery", Content: "twenty concurrent exact retries",
+		Metadata:   map[string]any{"fixture": "dedup"},
+		Authorship: service.Authorship{Agent: "fixture", Model: "fixture-model", Surface: service.SurfaceMCP},
+	}
+	const attempts = 20
+	results := make(chan service.StoreResult, attempts)
+	errors := make(chan error, attempts)
+	var group sync.WaitGroup
+	for range attempts {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			result, err := svc.Store(context.Background(), request)
+			results <- result
+			errors <- err
+		}()
+	}
+	group.Wait()
+	close(results)
+	close(errors)
+	for err := range errors {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	var canonical int64
+	created := 0
+	for result := range results {
+		if canonical == 0 {
+			canonical = result.ID
+		}
+		if result.ID != canonical {
+			t.Fatalf("retry returned id %d, want %d", result.ID, canonical)
+		}
+		if !result.Skipped {
+			created++
+		} else if result.DuplicateSource != "fixture" || result.DuplicateSurface != service.SurfaceMCP {
+			t.Fatalf("suppression telemetry = %q/%q", result.DuplicateSource, result.DuplicateSurface)
+		}
+	}
+	if created != 1 {
+		t.Fatalf("created attempts = %d, want 1", created)
+	}
+	var rows, indexed int
+	if err := svc.DB().SQL().QueryRow(`SELECT COUNT(*) FROM memories WHERE content = ?`, request.Content).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DB().SQL().QueryRow(`SELECT COUNT(*) FROM memories_fts WHERE rowid = ?`, canonical).Scan(&indexed); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 || indexed != 1 {
+		t.Fatalf("memory/FTS rows = %d/%d, want 1/1", rows, indexed)
+	}
+}
+
+func TestNearDuplicateMemoryPayloadsNeverCoalesce(t *testing.T) {
+	svc, _ := serviceWithPaths(t)
+	anchor, err := svc.Store(t.Context(), service.StoreRequest{Layer: "project", Content: "lineage anchor"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := service.StoreRequest{Layer: "project", Content: "near duplicate fixture"}
+	baseResult, err := svc.Store(t.Context(), base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []service.StoreRequest{
+		{Layer: "project", Content: base.Content, Metadata: map[string]any{"different": true}},
+		{Layer: "project", Content: base.Content, Origin: "cron"},
+		{Layer: "project", Content: base.Content, Project: "different-project"},
+		{Layer: "project", Content: base.Content, Status: "pending"},
+		{Layer: "project", Content: base.Content, Supersedes: anchor.ID},
+		{Layer: "project", Content: base.Content,
+			Authorship: service.Authorship{Agent: "different-agent", Model: "different-model", Surface: service.SurfaceCLI}},
+	}
+	for i, request := range cases {
+		result, err := svc.Store(t.Context(), request)
+		if err != nil {
+			t.Fatalf("case %d: %v", i, err)
+		}
+		if result.Skipped {
+			t.Fatalf("case %d coalesced: %+v", i, request)
+		}
+	}
+	// A schema migration which adds a payload column refreshes the physical law;
+	// a historical non-NULL value cannot coalesce with a new NULL write.
+	if _, err := svc.DB().SQL().Exec(`ALTER TABLE memories ADD COLUMN provenance TEXT`); err != nil {
+		t.Fatal(err)
+	}
+	if err := exactdedup.EnsureTableGuards(t.Context(), svc.DB().SQL(), "memories"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.DB().SQL().Exec(`UPDATE memories SET provenance = 'historical' WHERE id = ?`, baseResult.ID); err != nil {
+		t.Fatal(err)
+	}
+	provenanceNear, err := svc.Store(t.Context(), base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provenanceNear.Skipped || provenanceNear.ID == baseResult.ID {
+		t.Fatal("different provenance was coalesced")
+	}
+}
+
+func TestStoreTreatsSupersedesAsPartOfTheExactPayload(t *testing.T) {
 	svc, _ := serviceWithPaths(t)
 	ctx := context.Background()
 
@@ -228,8 +337,8 @@ func TestStoreDeduplicatesOnlyAgainstCurrentMemories(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !currentAgain.Skipped || currentAgain.ID != replacement.ID {
-		t.Fatalf("current duplicate = %+v, want skipped id %d", currentAgain, replacement.ID)
+	if currentAgain.Skipped || currentAgain.ID == replacement.ID {
+		t.Fatalf("different supersedes was coalesced with %+v", replacement)
 	}
 
 	staleAgain, err := svc.Store(ctx, service.StoreRequest{
@@ -238,8 +347,8 @@ func TestStoreDeduplicatesOnlyAgainstCurrentMemories(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if staleAgain.Skipped {
-		t.Fatalf("superseded content was treated as current: %+v", staleAgain)
+	if !staleAgain.Skipped || staleAgain.ID != original.ID {
+		t.Fatalf("exact historical payload = %+v, want canonical id %d", staleAgain, original.ID)
 	}
 }
 
@@ -311,9 +420,10 @@ func TestStoreRoundTripsAPluginOrigin(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := tc.open(t)
-			result, err := svc.Store(context.Background(), service.StoreRequest{
+			request := service.StoreRequest{
 				Layer: "discovery", Content: "plugin-owned synthetic memory", Origin: "plugin:demo",
-			})
+			}
+			result, err := svc.Store(context.Background(), request)
 			if err != nil {
 				t.Fatalf("Store: %v", err)
 			}
@@ -324,6 +434,13 @@ func TestStoreRoundTripsAPluginOrigin(t *testing.T) {
 			}
 			if origin != "plugin:demo" {
 				t.Errorf("origin = %q, want plugin:demo", origin)
+			}
+			retry, err := svc.Store(context.Background(), request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !retry.Skipped || retry.ID != result.ID {
+				t.Fatalf("plugin-origin retry = %+v, want canonical %d", retry, result.ID)
 			}
 		})
 	}
