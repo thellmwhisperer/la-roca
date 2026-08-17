@@ -43,6 +43,18 @@ func TestCutoverPreservesLegacyFTSIdentityAndRankShape(t *testing.T) {
 	}
 }
 
+func TestCutoverPreservesSessionSourceSurface(t *testing.T) {
+	fixture := newHubFixture(t)
+	seedHubCoreMemory(t, fixture.plugins, 109, "Synthetic session surface marker")
+	seedHubCoreSession(t, fixture.plugins, "synthetic-opencode", "opencode", "opencode-cli")
+	result := executeHubSQL(t, openHubService(t, fixture, LayoutCutover, nil),
+		`SELECT source_agent, source_surface FROM sessions WHERE session_id = 'synthetic-opencode'`)
+	if result.RowCount != 1 || result.Rows[0]["source_agent"] != "opencode" ||
+		result.Rows[0]["source_surface"] != "opencode-cli" {
+		t.Fatalf("hub session provenance = %+v", result.Rows)
+	}
+}
+
 func TestCutoverWritersRemainAuthoritativeInPlugins(t *testing.T) {
 	fixture := newHubFixture(t)
 	seedHubCoreMemory(t, fixture.plugins, 7, "Synthetic historical marker")
@@ -358,6 +370,41 @@ func seedHubCoreMemory(t *testing.T, plugins string, legacyID int64, content str
 		 destination_key, canonical_digest, batch_id)
 		VALUES ('data2-memory-custody', 'core', 'memories', ?, 'memory_records', ?, ?, ?)`,
 		fmt.Sprint(legacyID), fmt.Sprint(physicalID), digest, batchID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seedHubCoreSession(t *testing.T, plugins, sessionID, agent, surface string) {
+	t.Helper()
+	db := openSQLite(t, filepath.Join(plugins, rocacorpus.Name, rocacorpus.DatabaseFilename))
+	defer db.Close()
+	digest := strings.Repeat("b", 64)
+	batchID := "fixture-session-batch"
+	if _, err := db.Exec(`INSERT INTO session_versions
+		(version_digest, session_id, source_agent, source_surface, title, metadata)
+		VALUES (?, ?, ?, ?, 'Synthetic OpenCode session', '{}')`,
+		digest, sessionID, agent, surface); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO migration_batches
+		(migration, batch_id, destination_table, source_database, source_table,
+		 row_count, canonical_digest, high_water_mark)
+		VALUES ('corpus-archive-sessions', ?, 'session_versions', 'core', 'sessions', 1, ?, ?)`,
+		batchID, digest, sessionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO corpus_source_rows
+		(source_database, source_table, source_key, destination_table, version_digest,
+		 source_row_id, session_id)
+		VALUES ('core', 'sessions', ?, 'session_versions', ?, 1, ?)`,
+		sessionID, digest, sessionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO custody_memberships
+		(migration, source_database, source_table, source_key, destination_table,
+		 destination_key, canonical_digest, batch_id)
+		VALUES ('corpus-archive-sessions', 'core', 'sessions', ?,
+		        'session_versions', ?, ?, ?)`, sessionID, digest, digest, batchID); err != nil {
 		t.Fatal(err)
 	}
 }

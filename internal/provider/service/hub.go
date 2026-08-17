@@ -49,7 +49,7 @@ func installHubCompatibility(ctx context.Context, db *sql.DB, s *Service,
 			project, status, supersedes, created_at
 		 FROM ` + ops + `.memory_compatibility WHERE source_database = 'core'`,
 		`CREATE TEMP VIEW sessions AS SELECT session_id, source_agent, project, started_at,
-			ended_at, duration_minutes, title, metadata
+			ended_at, duration_minutes, title, metadata, source_surface
 		 FROM ` + corpus + `.session_version_memberships WHERE source_database = 'core'`,
 		`CREATE TEMP VIEW exchanges AS SELECT source_row_id AS id, session_id,
 			exchange_number, is_after_compaction, human_text, agent_text, human_timestamp,

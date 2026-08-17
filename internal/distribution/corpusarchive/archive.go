@@ -26,6 +26,12 @@ import (
 const DefaultBatchSize = 1000
 
 const (
+	reconciliationContractVersion = 1
+	reconciliationMigration       = "corpus-archive-reconciliation-v1"
+	reconciliationBatch           = "corpus-archive-reconciliation-v1"
+)
+
+const (
 	sqliteHeaderMagic   = "SQLite format 3\x00"
 	sqliteHeaderLength  = 100
 	sqliteReadVersion   = 18
@@ -61,12 +67,19 @@ type SourceReport struct {
 type Report struct {
 	Sources            []SourceReport          `json:"sources"`
 	Families           map[string]FamilyReport `json:"families"`
+	Reconciliation     ReconciliationReport    `json:"reconciliation"`
 	VerificationDigest string                  `json:"verification_digest"`
 }
 
 type preparedSource struct {
 	Source
 	db *sql.DB
+}
+
+type archiveRun struct {
+	sources     []preparedSource
+	destination *sql.DB
+	batchSize   int
 }
 
 // CutoverEligible reports whether all five DATA-3 archive families have a
@@ -78,6 +91,13 @@ func CutoverEligible(ctx context.Context, destinationPath string) (bool, error) 
 		return false, err
 	}
 	defer destination.Close()
+	marker, err := migrationledger.InspectMigration(ctx, destination, reconciliationMigration)
+	if err != nil {
+		return false, err
+	}
+	if marker.State != migrationledger.StateVerified || marker.VerificationDigest == "" {
+		return false, nil
+	}
 	for _, table := range archiveSourceTables {
 		ready, err := migrationledger.MigrationCutoverEligible(ctx, destination, table.migration)
 		if err != nil || !ready {
@@ -88,54 +108,215 @@ func CutoverEligible(ctx context.Context, destinationPath string) (bool, error) 
 }
 
 func Merge(ctx context.Context, destinationPath string, sources []Source, options Options) (Report, error) {
-	prepared, err := prepareSources(ctx, destinationPath, sources)
+	rebuildSessions, err := sessionArchiveNeedsSurfaceMigration(ctx, destinationPath)
 	if err != nil {
 		return Report{}, err
 	}
-	defer closeSources(prepared)
-	if options.BatchSize <= 0 {
-		options.BatchSize = DefaultBatchSize
-	}
-	if err := rocacorpus.ApplySchema(destinationPath); err != nil {
-		return Report{}, err
-	}
-	destination, err := bundledplugin.OpenDatabase(destinationPath, false)
+	run, err := openArchiveRun(ctx, destinationPath, sources, options, true)
 	if err != nil {
 		return Report{}, err
 	}
-	defer destination.Close()
-	destination.SetMaxOpenConns(1)
-	states, err := prepareArchiveMigrations(ctx, destination)
+	defer run.close()
+	states, err := prepareArchiveMigrations(ctx, run.destination)
 	if err != nil {
 		return Report{}, err
 	}
-	verified := archiveVerified(states)
-	if err := validateRecordedSources(ctx, destination, prepared, options.BatchSize, verified); err != nil {
-		return Report{}, err
-	}
-	if !verified {
-		for _, source := range prepared {
-			if err := importSource(ctx, destination, source, options.BatchSize); err != nil {
-				return Report{}, err
-			}
-		}
-		if err := rebuildArchiveFTS(ctx, destination); err != nil {
+	if rebuildSessions {
+		if err := resetSessionArchive(ctx, run.destination); err != nil {
 			return Report{}, err
 		}
 	}
-	report, err := verifyArchive(ctx, destination)
+	verified := archiveVerified(states)
+	if err := validateRecordedSources(ctx, run.destination, run.sources, run.batchSize, verified); err != nil {
+		return Report{}, err
+	}
+	if !verified {
+		for index, table := range archiveSourceTables {
+			if states[index].State == migrationledger.StateVerified {
+				continue
+			}
+			for _, source := range run.sources {
+				if err := importTable(ctx, run.destination, source, table, run.batchSize); err != nil {
+					return Report{}, fmt.Errorf("merge %s.%s into corpus shadow: %w",
+						source.Database, table.sourceTable, err)
+				}
+			}
+		}
+		if err := rebuildArchiveFTS(ctx, run.destination); err != nil {
+			return Report{}, err
+		}
+	}
+	report, err := buildReport(ctx, run.destination, run.sources)
 	if err != nil {
+		return report, err
+	}
+	ledgerDigest, err := legacyReportDigest(report)
+	if err != nil {
+		return Report{}, err
+	}
+	if err := recordArchiveVerification(ctx, run.destination, states, ledgerDigest); err != nil {
 		return Report{}, err
 	}
 	digest, err := reportDigest(report)
 	if err != nil {
 		return Report{}, err
 	}
-	if err := recordArchiveVerification(ctx, destination, states, digest); err != nil {
+	if err := recordReconciliationVerification(ctx, run.destination, digest); err != nil {
 		return Report{}, err
 	}
 	report.VerificationDigest = digest
 	return report, nil
+}
+
+// Verify reproduces DATA-3's frozen-source reconciliation without importing
+// rows. It succeeds only when the recorded migrations, every custody table,
+// and every source session still reproduce the verification digest that Merge
+// sealed.
+func Verify(ctx context.Context, destinationPath string, sources []Source, options Options) (Report, error) {
+	run, err := openArchiveRun(ctx, destinationPath, sources, options, false)
+	if err != nil {
+		return Report{}, err
+	}
+	defer run.close()
+	if err := validateRecordedSources(ctx, run.destination, run.sources, run.batchSize, true); err != nil {
+		return Report{}, err
+	}
+	report, err := buildReport(ctx, run.destination, run.sources)
+	if err != nil {
+		return report, err
+	}
+	ledgerDigest, err := legacyReportDigest(report)
+	if err != nil {
+		return report, err
+	}
+	for _, table := range archiveSourceTables {
+		state, inspectErr := migrationledger.InspectMigration(ctx, run.destination, table.migration)
+		if inspectErr != nil {
+			return report, inspectErr
+		}
+		if state.State != migrationledger.StateVerified {
+			report.Reconciliation.Status = ReconciliationRed
+			return report, fmt.Errorf("DATA-3 migration %q is %q, want verified",
+				table.migration, state.State)
+		}
+		if state.VerificationDigest != ledgerDigest {
+			report.Reconciliation.Status = ReconciliationRed
+			return report, fmt.Errorf("DATA-3 migration %q recorded digest %s, reproduced %s",
+				table.migration, state.VerificationDigest, ledgerDigest)
+		}
+	}
+	digest, err := reportDigest(report)
+	if err != nil {
+		return report, err
+	}
+	if err := verifyReconciliationVerification(ctx, run.destination, digest); err != nil {
+		report.Reconciliation.Status = ReconciliationRed
+		return report, err
+	}
+	report.VerificationDigest = digest
+	return report, nil
+}
+
+func sessionArchiveNeedsSurfaceMigration(ctx context.Context, destinationPath string) (bool, error) {
+	if _, err := os.Stat(destinationPath); errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	destination, err := bundledplugin.OpenDatabase(destinationPath, true)
+	if err != nil {
+		return false, err
+	}
+	defer destination.Close()
+	var table, column int
+	if err := destination.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master
+		WHERE type = 'table' AND name = 'session_versions'`).Scan(&table); err != nil {
+		return false, err
+	}
+	if table == 0 {
+		return false, nil
+	}
+	if err := destination.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('session_versions')
+		WHERE name = 'source_surface'`).Scan(&column); err != nil {
+		return false, err
+	}
+	if column == 0 {
+		return true, nil
+	}
+	query, err := physicalDigestQuery("session_versions")
+	if err != nil {
+		return false, err
+	}
+	rows, err := destination.QueryContext(ctx, query)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		stored, actual, err := scanPhysicalDigest(rows, "session_versions")
+		if err != nil {
+			return false, err
+		}
+		if stored != actual {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
+func resetSessionArchive(ctx context.Context, destination *sql.DB) error {
+	tx, err := destination.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, statement := range []string{
+		`DELETE FROM custody_memberships WHERE migration = 'corpus-archive-sessions'`,
+		`DELETE FROM migration_batches WHERE migration = 'corpus-archive-sessions'`,
+		`DELETE FROM corpus_source_rows WHERE source_table = 'sessions'`,
+		`DELETE FROM session_versions`,
+	} {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("rebuild DATA-3 session custody: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit DATA-3 session custody rebuild: %w", err)
+	}
+	return nil
+}
+
+func openArchiveRun(ctx context.Context, destinationPath string, sources []Source,
+	options Options, applySchema bool,
+) (*archiveRun, error) {
+	prepared, err := prepareSources(ctx, destinationPath, sources)
+	if err != nil {
+		return nil, err
+	}
+	fail := func(err error) (*archiveRun, error) {
+		closeSources(prepared)
+		return nil, err
+	}
+	batchSize := options.BatchSize
+	if batchSize <= 0 {
+		batchSize = DefaultBatchSize
+	}
+	if applySchema {
+		if err := rocacorpus.ApplySchema(destinationPath); err != nil {
+			return fail(err)
+		}
+	}
+	destination, err := bundledplugin.OpenDatabase(destinationPath, false)
+	if err != nil {
+		return fail(err)
+	}
+	destination.SetMaxOpenConns(1)
+	return &archiveRun{sources: prepared, destination: destination, batchSize: batchSize}, nil
+}
+
+func (run *archiveRun) close() {
+	_ = run.destination.Close()
+	closeSources(run.sources)
 }
 
 // prepareArchiveMigrations declares one named migration per family and reports
@@ -189,6 +370,67 @@ func recordArchiveVerification(ctx context.Context, destination *sql.DB,
 		if err := migrationledger.VerifyMigration(ctx, destination, state.Name, digest); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func recordReconciliationVerification(ctx context.Context, destination *sql.DB, digest string) error {
+	if err := migrationledger.PrepareMigration(ctx, destination, migrationledger.Migration{
+		Name: reconciliationMigration, DestinationTable: "session_versions",
+	}); err != nil {
+		return err
+	}
+	state, err := migrationledger.InspectMigration(ctx, destination, reconciliationMigration)
+	if err != nil {
+		return err
+	}
+	if state.State == migrationledger.StateVerified {
+		if state.VerificationDigest != digest {
+			return fmt.Errorf("verified DATA-3 reconciliation digest is %s, reproduced %s",
+				state.VerificationDigest, digest)
+		}
+		return nil
+	}
+	commit := migrationledger.BatchCommit{RowCount: 0,
+		CanonicalDigest: canonicalDigest("corpus-archive-reconciliation-batch",
+			int64(reconciliationContractVersion)),
+		HighWaterMark: fmt.Sprintf("contract-v%d", reconciliationContractVersion)}
+	batch, err := migrationledger.BeginBatch(ctx, destination, migrationledger.BatchSpec{
+		Migration: reconciliationMigration, ID: reconciliationBatch,
+		SourceDatabase: "plugin:roca-corpus", SourceTable: "reconciliation",
+	})
+	if errors.Is(err, migrationledger.ErrBatchCommitted) {
+		recorded, found, lookupErr := migrationledger.LookupBatch(ctx, destination,
+			reconciliationMigration, reconciliationBatch)
+		if lookupErr != nil {
+			return lookupErr
+		}
+		if !found || recorded.RowCount != commit.RowCount ||
+			recorded.CanonicalDigest != commit.CanonicalDigest ||
+			recorded.HighWaterMark != commit.HighWaterMark {
+			return fmt.Errorf("DATA-3 reconciliation marker batch does not match contract %d",
+				reconciliationContractVersion)
+		}
+	} else if err != nil {
+		return err
+	} else if err := batch.Commit(ctx, commit); err != nil {
+		return err
+	}
+	return migrationledger.VerifyMigration(ctx, destination, reconciliationMigration, digest)
+}
+
+func verifyReconciliationVerification(ctx context.Context, destination *sql.DB, digest string) error {
+	state, err := migrationledger.InspectMigration(ctx, destination, reconciliationMigration)
+	if err != nil {
+		return err
+	}
+	if state.State != migrationledger.StateVerified {
+		return fmt.Errorf("DATA-3 reconciliation contract %d is not verified",
+			reconciliationContractVersion)
+	}
+	if state.VerificationDigest != digest {
+		return fmt.Errorf("DATA-3 reconciliation recorded digest %s, reproduced %s",
+			state.VerificationDigest, digest)
 	}
 	return nil
 }
