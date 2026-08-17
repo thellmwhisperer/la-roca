@@ -22,6 +22,22 @@ CREATE INDEX IF NOT EXISTS idx_memories_project ON memories(project);
 CREATE INDEX IF NOT EXISTS idx_memories_origin ON memories(origin);
 CREATE INDEX IF NOT EXISTS idx_memories_expires_at ON memories(expires_at);
 
+CREATE TABLE IF NOT EXISTS layers (
+  name            TEXT PRIMARY KEY,
+  description     TEXT NOT NULL,
+  schema_file     TEXT NOT NULL,
+  access_mode     TEXT DEFAULT 'read-write',
+  ingest_allowed  INTEGER DEFAULT 1,
+  is_coordination INTEGER DEFAULT 0,
+  search_excluded INTEGER DEFAULT 0,
+  alias_of        TEXT,
+  added_by        TEXT DEFAULT 'kernel',
+  deprecated      INTEGER DEFAULT 0,
+  lifecycle       TEXT DEFAULT 'curated',
+  capabilities    TEXT DEFAULT '{}',
+  since_version   TEXT
+);
+
 -- The operational half issues identifiers above 2^60 so no ops memory ever
 -- answers to the same id as a core memory while both halves are read as one.
 -- The seed is conditional: a database that already counts keeps its own place.

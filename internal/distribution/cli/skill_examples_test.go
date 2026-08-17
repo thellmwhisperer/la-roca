@@ -188,6 +188,9 @@ func TestTheSkillLayersSectionNamesOnlyRealLayers(t *testing.T) {
 		t.Fatal("the skill has no Layers section, or it names no layers in backticks")
 	}
 	for _, name := range named {
+		if strings.HasPrefix(name, "roca ") {
+			continue
+		}
 		if !real[name] {
 			t.Errorf("skill Layers section names %q, which is not a layer in the registry", name)
 		}
@@ -383,7 +386,9 @@ func backticksInside(md string) []string {
 // HOME so the skill's documented commands can be executed against the same
 // SQLite, the same gate and the same index an operator's command hits. It is
 // the fixture the flag validator lacked.
-type skillFixture struct{}
+type skillFixture struct {
+	home string
+}
 
 func fixtureInstallation(t *testing.T) skillFixture {
 	t.Helper()
@@ -391,7 +396,7 @@ func fixtureInstallation(t *testing.T) skillFixture {
 	isolateRuntimeDirs(t, home)
 	runRoot(t, Build{Version: "test", Commit: "test-sha"},
 		"init", "--db-path", filepath.Join(home, ".roca", "roca.db"))
-	return skillFixture{}
+	return skillFixture{home: home}
 }
 
 // run executes one skill example (argv after `roca`) against the fixture
