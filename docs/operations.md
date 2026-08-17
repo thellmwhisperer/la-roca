@@ -1,4 +1,4 @@
-# Operations: audit logs, redaction, retention
+# Operations: memory layers, audit logs, redaction, retention
 
 First-time path: [install, detect an already signed-in agent CLI, and query
 without a La Roca login](lifecycle.md#install).
@@ -49,14 +49,18 @@ no other hook installer ships yet.
 `roca store --layer <name>` accepts only a name in the live layer registry and
 lists the registered layers when it refuses a write. This validation is shared
 by the CLI and MCP store paths.
-The supported catalogue surface is the unqualified `layers` compatibility view and the `roca layers` registry commands; explicitly qualified physical references such as `main.layers` intentionally expose physical storage.
+The supported catalogue surface is the unqualified `layers` compatibility view
+and the `roca layers` registry commands; explicitly qualified physical
+references such as `main.layers` intentionally expose physical storage.
 
 Register a deliberate custom layer with `roca layers add <name>`. To repair
 existing rows that used the wrong layer, run
 `roca layers migrate <from> <registered-to>`. `roca doctor` reports
 `runtime_layers_not_in_registry` drift and prints the exact `roca layers add`
 command for each unknown runtime layer; migration remains available when the
-right repair is to move those memories into an existing layer instead.
+right repair is to move those memories into an existing layer instead. Both
+repair commands follow the same selected database and `roca-ops` routing as
+`roca store`; the command printed by doctor includes the matching `--db-path`.
 
 Every CLI command and MCP tool call dual-writes one redacted record to the
 bundled ops database and to JSONL under the selected data directory's `logs/`,
