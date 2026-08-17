@@ -256,8 +256,28 @@ func verifyDestinationStateWins(ctx context.Context, db *sql.DB) error {
 }
 
 func reportDigest(report Report) (string, error) {
-	report.VerificationDigest = ""
-	encoded, err := json.Marshal(report)
+	sealed := struct {
+		ContractVersion int                  `json:"contract_version"`
+		Reconciliation  ReconciliationReport `json:"reconciliation"`
+	}{ContractVersion: reconciliationContractVersion, Reconciliation: report.Reconciliation}
+	encoded, err := json.Marshal(sealed)
+	if err != nil {
+		return "", fmt.Errorf("serialize corpus archive reconciliation: %w", err)
+	}
+	legacy, err := legacyReportDigest(report)
+	if err != nil {
+		return "", err
+	}
+	return canonicalDigest("corpus-archive-reconciliation", legacy, string(encoded)), nil
+}
+
+func legacyReportDigest(report Report) (string, error) {
+	sealed := struct {
+		Sources            []SourceReport          `json:"sources"`
+		Families           map[string]FamilyReport `json:"families"`
+		VerificationDigest string                  `json:"verification_digest"`
+	}{Sources: report.Sources, Families: report.Families}
+	encoded, err := json.Marshal(sealed)
 	if err != nil {
 		return "", fmt.Errorf("serialize corpus archive verification: %w", err)
 	}
