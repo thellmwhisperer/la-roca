@@ -349,13 +349,19 @@ func logOdds(localDocs, allLocal int, globalDocs, allGlobal int64) float64 {
 
 // vocabTerms tokenizes with accent folding: lowercase, NFKD-decomposed, marks
 // dropped, letters and digits kept as one alphabet, everything else a
-// separator. Single runes are not vocabulary.
+// separator. Serialized keys and opaque identifiers are evidence plumbing,
+// not vocabulary; single runes are not vocabulary either.
 func vocabTerms(text string) []string {
+	text = sessionJSONKeyFragment.ReplaceAllString(text, " ")
+	text = structuralSessionToken.ReplaceAllString(text, " ")
 	var terms []string
 	var current []rune
 	flush := func() {
 		if len(current) > 1 {
-			terms = append(terms, string(current))
+			term := string(current)
+			if !opaqueVocabTerm(term) {
+				terms = append(terms, term)
+			}
 		}
 		current = current[:0]
 	}
@@ -371,6 +377,20 @@ func vocabTerms(text string) []string {
 	}
 	flush()
 	return terms
+}
+
+func opaqueVocabTerm(term string) bool {
+	runes := []rune(term)
+	allDigits, allHex := true, len(runes) >= 8
+	for _, symbol := range runes {
+		if !unicode.IsDigit(symbol) {
+			allDigits = false
+		}
+		if !(symbol >= '0' && symbol <= '9') && !(symbol >= 'a' && symbol <= 'f') {
+			allHex = false
+		}
+	}
+	return allHex || (allDigits && len(runes) >= 5)
 }
 
 func termSet(terms []string) map[string]struct{} {

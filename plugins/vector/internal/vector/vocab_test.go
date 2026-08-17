@@ -20,6 +20,11 @@ func TestVocabTermsFoldAccentsCaseAndSeparators(t *testing.T) {
 		{"punctuation separates", "naïve—café; scotland's datasets", []string{"naive", "cafe", "scotland", "datasets"}},
 		{"single runes drop", "a I o", nil},
 		{"digits are terms", "worktree22 2026 b12", []string{"worktree22", "2026", "b12"}},
+		{"opaque decimal identifiers drop", "421867 12345 health", []string{"health"}},
+		{"hexadecimal tokens drop", "deadbeef 0123456789abcdef defaced", []string{"defaced"}},
+		{"serialized keys and structural identifiers drop",
+			`{"source_exchange_fingerprints":["deadbeef"],"health_status":"stable","id":"123e4567-e89b-12d3-a456-426614174000"} clinical`,
+			[]string{"stable", "clinical"}},
 		{"empty", "", nil},
 	}
 	for _, testCase := range cases {
