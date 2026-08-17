@@ -9,8 +9,8 @@ commands, but it does not have to: a plugin with only data is complete.
 You can build your first one in about five minutes with no Go code at all.
 [Your first plugin](#your-first-plugin) below is the whole walk: three files,
 one install command, one query. Everything after that is the reference: the
-full manifest schema, how installs are verified and preserved, the two plugins
-La Roca ships with, and scheduled rides.
+full manifest schema, how installs are verified and preserved, and scheduled
+rides.
 
 One thing to know before you start: the third-party plugin surface is
 **experimental and default-off**. Install and update commands do not exist

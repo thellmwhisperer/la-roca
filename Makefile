@@ -1,4 +1,5 @@
-# La Roca: static core and optional vector executables for every platform.
+# La Roca: static core binaries carrying matched vector payloads for every
+# platform.
 # The release channel publishes the artefacts; `make dist` reproduces them
 # locally, while the individual targets support development and verification.
 

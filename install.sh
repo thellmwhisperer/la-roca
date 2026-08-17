@@ -1,5 +1,6 @@
 #!/bin/sh
-# La Roca installer. One binary goes on PATH; bundled data plugins go under ~/.roca.
+# La Roca installer. Core and its companion go in the selected executable
+# directory; bundled data stays under ~/.roca.
 #
 # There is no release tree or `current` symlink: the artefact IS the product.
 # A short-lived copy keeps the previous binary recoverable until bundled plugin
@@ -61,7 +62,7 @@ USAGE
 say()  { printf '%s\n' "$*"; }
 die()  { printf 'install.sh: %s\n' "$*" >&2; exit 1; }
 
-# The bundled data plugins are placed by the binary that was just installed.
+# The bundled plugin payloads are placed by the binary that was just installed.
 # This script is served from the default branch while --version pins an exact
 # release, so it also runs against binaries older than the command: a release
 # that never shipped bundled plugins has none to fail to place.

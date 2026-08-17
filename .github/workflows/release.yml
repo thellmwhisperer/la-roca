@@ -99,9 +99,9 @@ jobs:
           VERSION: ${{ inputs.tag || github.ref_name }}
         run: make dist VERSION="$VERSION"
 
-      # The two Linux artefacts this runner can execute answer the tag, and the
-      # vector package manifest carries that same version into plugin lifecycle
-      # consent and installed inventory.
+      # The Linux core, its materialized vector companion and the standalone
+      # vector archive all answer the tag, and the package manifest carries that
+      # same version into plugin lifecycle consent and installed inventory.
       - name: The core and vector packages answer the tag they were built from
         env:
           VERSION: ${{ inputs.tag || github.ref_name }}
