@@ -64,6 +64,24 @@ func TestDoctorReportsDetectedBinariesAndTheFactorySelection(t *testing.T) {
 	}
 }
 
+func TestDoctorPrescribesTheExactLayerRegistryRepair(t *testing.T) {
+	svc, _ := serviceWithPaths(t)
+	if _, err := svc.DB().SQL().Exec(
+		`INSERT INTO memories (layer, content, origin)
+		 VALUES ('knowledge', 'synthetic drift', 'agent')`); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := svc.Doctor(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "roca layers add 'knowledge'"
+	if len(report.LayerRepairs) != 1 || report.LayerRepairs[0] != want {
+		t.Fatalf("layer repairs = %v, want %q", report.LayerRepairs, want)
+	}
+}
+
 func TestDoctorSaysSoWhenNobodyIsAvailable(t *testing.T) {
 	svc := seededServiceWith(t, provider.Cascade{
 		Providers: []provider.Provider{unavailable("ollama", "it does not answer", "start it")},

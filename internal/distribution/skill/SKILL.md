@@ -269,3 +269,9 @@ The real layers — pick the narrowest true one: `discovery`, `pattern`, `pill`,
 `feedback`, `handoff`, `project`, `user`, `question`, `review`, `issue`.
 Handoffs stay searchable (session continuity); `question`, `review` and `issue`
 are private messaging and do not surface in term search.
+
+Store accepts only a layer in the live registry and lists the registered names
+when it refuses one. Add an intentional custom layer with roca layers add NAME,
+or repair existing drift with roca layers migrate FROM REGISTERED-TO. Roca
+doctor prints the exact registration command when runtime data contains an
+unknown layer.

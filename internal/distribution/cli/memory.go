@@ -74,6 +74,66 @@ func storeCommand(env *cliEnv) *cobra.Command {
 	return cmd
 }
 
+func layersCommand(env *cliEnv) *cobra.Command {
+	command := &cobra.Command{
+		Use:   "layers",
+		Short: "Register layers and repair layer drift",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
+		},
+	}
+	command.AddCommand(
+		&cobra.Command{
+			Use:   "add <name>",
+			Short: "Register a memory layer intentionally",
+			Args:  cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				return runLayerCommand(env, cmd, func(svc *service.Service) (any, string, error) {
+					result, err := svc.AddLayer(cmd.Context(), args[0])
+					message := fmt.Sprintf("registered layer %s", result.Name)
+					if !result.Added {
+						message = fmt.Sprintf("layer %s is already registered", result.Name)
+					}
+					return result, message, err
+				})
+			},
+		},
+		&cobra.Command{
+			Use:   "migrate <from> <to>",
+			Short: "Move memories to a registered layer",
+			Args:  cobra.ExactArgs(2),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				return runLayerCommand(env, cmd, func(svc *service.Service) (any, string, error) {
+					result, err := svc.MigrateLayer(cmd.Context(), args[0], args[1])
+					message := fmt.Sprintf("migrated %d memories from layer %s to %s",
+						result.Migrated, result.From, result.To)
+					return result, message, err
+				})
+			},
+		},
+	)
+	return command
+}
+
+func runLayerCommand(env *cliEnv, cmd *cobra.Command,
+	run func(*service.Service) (any, string, error)) error {
+	svc, _, err := env.openStoreService()
+	if err != nil {
+		return err
+	}
+	defer svc.Close()
+	result, message, err := run(svc)
+	if err != nil {
+		return err
+	}
+	if env.json {
+		return env.printJSON(result)
+	}
+	env.print("%s", message)
+	return nil
+}
+
 func installBundledPluginsCommand(env *cliEnv) *cobra.Command {
 	return &cobra.Command{
 		Use:    "_install-bundled-plugins",

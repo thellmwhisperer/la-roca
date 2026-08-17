@@ -383,7 +383,9 @@ func backticksInside(md string) []string {
 // HOME so the skill's documented commands can be executed against the same
 // SQLite, the same gate and the same index an operator's command hits. It is
 // the fixture the flag validator lacked.
-type skillFixture struct{}
+type skillFixture struct {
+	home string
+}
 
 func fixtureInstallation(t *testing.T) skillFixture {
 	t.Helper()
@@ -391,7 +393,7 @@ func fixtureInstallation(t *testing.T) skillFixture {
 	isolateRuntimeDirs(t, home)
 	runRoot(t, Build{Version: "test", Commit: "test-sha"},
 		"init", "--db-path", filepath.Join(home, ".roca", "roca.db"))
-	return skillFixture{}
+	return skillFixture{home: home}
 }
 
 // run executes one skill example (argv after `roca`) against the fixture

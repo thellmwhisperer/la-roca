@@ -355,6 +355,12 @@ func (s *Service) ensureSchema(ctx context.Context) (search.Report, error) {
 		if err != nil {
 			return index, err
 		}
+		// Every writable open adopts the embedded defaults into the live
+		// registry before a store validates against it. Released databases may
+		// have the table but predate its seeded rows.
+		if err := s.syncLayers(ctx); err != nil {
+			return index, err
+		}
 	}
 	s.schemaOK = true
 	return index, nil

@@ -44,6 +44,19 @@ Other harnesses can use the same client-side pattern: intercept the shell tool,
 read identity only from a harness-owned session source, and inject both flags;
 no other hook installer ships yet.
 
+## Memory layers
+
+`roca store --layer <name>` accepts only a name in the live layer registry and
+lists the registered layers when it refuses a write. This validation is shared
+by the CLI and MCP store paths.
+
+Register a deliberate custom layer with `roca layers add <name>`. To repair
+existing rows that used the wrong layer, run
+`roca layers migrate <from> <registered-to>`. `roca doctor` reports
+`runtime_layers_not_in_registry` drift and prints the exact `roca layers add`
+command for each unknown runtime layer; migration remains available when the
+right repair is to move those memories into an existing layer instead.
+
 Every CLI command and MCP tool call dual-writes one redacted record to the
 bundled ops database and to JSONL under the selected data directory's `logs/`,
 whether it succeeds or fails. Either sink may fail independently: the surviving

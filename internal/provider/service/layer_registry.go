@@ -1,0 +1,160 @@
+package service
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"strings"
+)
+
+// LayerAddResult reports whether a layer registration changed the catalogue.
+type LayerAddResult struct {
+	Name  string `json:"name"`
+	Added bool   `json:"added"`
+}
+
+// LayerMigrateResult reports the physical destination and rows repaired.
+type LayerMigrateResult struct {
+	From     string `json:"from"`
+	To       string `json:"to"`
+	Migrated int64  `json:"migrated"`
+}
+
+type registeredLayer struct {
+	name    string
+	aliasOf string
+}
+
+// registeredLayers reads the live catalogue. The table, rather than the
+// embedded defaults, is authoritative because operators may intentionally add
+// a layer after installation.
+func (s *Service) registeredLayers(ctx context.Context) ([]registeredLayer, error) {
+	rows, err := s.db.SQL().QueryContext(ctx,
+		`SELECT name, COALESCE(alias_of, '') FROM layers ORDER BY name`)
+	if err != nil {
+		return nil, fmt.Errorf("read the layer registry: %w", err)
+	}
+	defer rows.Close()
+
+	var registered []registeredLayer
+	for rows.Next() {
+		var layer registeredLayer
+		if err := rows.Scan(&layer.name, &layer.aliasOf); err != nil {
+			return nil, fmt.Errorf("read the layer registry: %w", err)
+		}
+		registered = append(registered, layer)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read the layer registry: %w", err)
+	}
+	return registered, nil
+}
+
+func (s *Service) resolveRegisteredLayer(ctx context.Context, requested string) (string, error) {
+	registered, err := s.registeredLayers(ctx)
+	if err != nil {
+		return "", err
+	}
+	aliases := make(map[string]string, len(registered))
+	names := make([]string, 0, len(registered))
+	for _, layer := range registered {
+		aliases[layer.name] = layer.aliasOf
+		names = append(names, layer.name)
+	}
+	if _, ok := aliases[requested]; !ok {
+		listed := "(none)"
+		if len(names) > 0 {
+			listed = strings.Join(names, ", ")
+		}
+		return "", fmt.Errorf("layer %q is not registered; registered layers: %s", requested, listed)
+	}
+
+	physical := requested
+	for range len(registered) {
+		alias, ok := aliases[physical]
+		if !ok || alias == "" {
+			return physical, nil
+		}
+		physical = alias
+	}
+	return physical, nil
+}
+
+// AddLayer intentionally registers one exact layer name. Existing entries are
+// left untouched, including the embedded entries maintained by syncLayers.
+func (s *Service) AddLayer(ctx context.Context, name string) (LayerAddResult, error) {
+	if s.opts.ReadOnly {
+		return LayerAddResult{}, refuseReadOnly("add layer")
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return LayerAddResult{}, fmt.Errorf("a layer name is required")
+	}
+	if _, err := s.ensureSchema(ctx); err != nil {
+		return LayerAddResult{}, err
+	}
+
+	result := LayerAddResult{Name: name}
+	err := s.db.Write(ctx, func(tx *sql.Tx) error {
+		outcome, err := tx.ExecContext(ctx, `INSERT INTO layers
+			(name, description, schema_file, ingest_allowed, added_by, lifecycle, since_version)
+			VALUES (?, 'Operator-registered memory layer.', '', 1, 'operator', 'curated', ?)
+			ON CONFLICT(name) DO NOTHING`, name, s.opts.Version)
+		if err != nil {
+			return fmt.Errorf("register layer %q: %w", name, err)
+		}
+		changed, err := outcome.RowsAffected()
+		result.Added = changed > 0
+		return err
+	})
+	return result, err
+}
+
+// MigrateLayer moves memories from one exact layer spelling to a registered
+// physical destination in the database selected by this service.
+func (s *Service) MigrateLayer(ctx context.Context, from, to string) (LayerMigrateResult, error) {
+	if s.opts.ReadOnly {
+		return LayerMigrateResult{}, refuseReadOnly("migrate layer")
+	}
+	from, to = strings.TrimSpace(from), strings.TrimSpace(to)
+	if from == "" || to == "" {
+		return LayerMigrateResult{}, fmt.Errorf("both source and destination layers are required")
+	}
+	if _, err := s.ensureSchema(ctx); err != nil {
+		return LayerMigrateResult{}, err
+	}
+	physical, err := s.resolveRegisteredLayer(ctx, to)
+	if err != nil {
+		return LayerMigrateResult{}, err
+	}
+
+	result := LayerMigrateResult{From: from, To: physical}
+	err = s.db.Write(ctx, func(tx *sql.Tx) error {
+		outcome, err := tx.ExecContext(ctx,
+			`UPDATE memories SET layer = ? WHERE layer = ?`, physical, from)
+		if err != nil {
+			return fmt.Errorf("migrate memories from layer %q to %q: %w", from, physical, err)
+		}
+		result.Migrated, err = outcome.RowsAffected()
+		return err
+	})
+	return result, err
+}
+
+func (s *Service) unregisteredLayers(ctx context.Context) ([]string, error) {
+	var encoded string
+	err := s.db.SQL().QueryRowContext(ctx, `SELECT json_group_array(layer) FROM (
+		SELECT m.layer FROM memories m
+		LEFT JOIN layers l ON l.name = m.layer
+		WHERE l.name IS NULL
+		GROUP BY m.layer ORDER BY m.layer)`).Scan(&encoded)
+	if err != nil {
+		return nil, fmt.Errorf("find runtime layers absent from the registry: %w", err)
+	}
+	var names []string
+	if err := json.Unmarshal([]byte(encoded), &names); err != nil {
+		return nil, fmt.Errorf("decode runtime layers absent from the registry: %w", err)
+	}
+	return names, nil
+}

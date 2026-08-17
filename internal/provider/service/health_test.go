@@ -103,6 +103,70 @@ func TestHealthWarnsAboutALayerThatIsInNoRegistry(t *testing.T) {
 	}
 }
 
+func TestLayerRepairsDriveRegistryHealthBackToGreen(t *testing.T) {
+	tests := []struct {
+		name   string
+		repair func(*testing.T, *service.Service)
+	}{
+		{
+			name: "register the runtime layer",
+			repair: func(t *testing.T, svc *service.Service) {
+				result, err := svc.AddLayer(t.Context(), "a-layer-nobody-declared")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !result.Added {
+					t.Fatal("the new layer was not registered")
+				}
+				if _, err := svc.Store(t.Context(), service.StoreRequest{
+					Layer: "a-layer-nobody-declared", Content: "registered write",
+				}); err != nil {
+					t.Fatalf("store on registered layer: %v", err)
+				}
+			},
+		},
+		{
+			name: "migrate to a registered layer",
+			repair: func(t *testing.T, svc *service.Service) {
+				result, err := svc.MigrateLayer(t.Context(),
+					"a-layer-nobody-declared", "discovery")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if result.Migrated != 1 || result.To != "discovery" {
+					t.Fatalf("migration = %+v", result)
+				}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			svc, _ := serviceWithPaths(t)
+			if _, err := svc.DB().SQL().Exec(
+				`INSERT INTO memories (layer, content, origin)
+				 VALUES ('a-layer-nobody-declared', 'synthetic drift', 'agent')`); err != nil {
+				t.Fatal(err)
+			}
+			before, err := svc.Health(t.Context(), service.HealthRequest{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if before.Checks["runtime_layers_not_in_registry"].Status != service.HealthFail {
+				t.Fatalf("health before repair = %+v", before)
+			}
+
+			test.repair(t, svc)
+			after, err := svc.Health(t.Context(), service.HealthRequest{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after.Checks["runtime_layers_not_in_registry"].Status != service.HealthPass {
+				t.Fatalf("health after repair = %+v", after)
+			}
+		})
+	}
+}
+
 // The sample is capped so that a health report over a database with millions of
 // broken rows is still a report and not a dump.
 func TestHealthCapsTheSampleItReturns(t *testing.T) {
