@@ -324,6 +324,9 @@ func readPhysicalDigests(ctx context.Context, destination *sql.DB,
 		if scanErr != nil {
 			return nil, scanErr
 		}
+		if stored != actual {
+			actual = canonicalDigest("broken-physical-digest", stored, actual)
+		}
 		digests[stored] = actual
 	}
 	if err := rows.Err(); err != nil {
@@ -335,7 +338,7 @@ func readPhysicalDigests(ctx context.Context, destination *sql.DB,
 func physicalDigestQuery(destinationTable string) (string, error) {
 	switch destinationTable {
 	case "session_versions":
-		return `SELECT version_digest, session_id, source_agent, project, started_at, ended_at,
+		return `SELECT version_digest, session_id, source_agent, source_surface, project, started_at, ended_at,
 			duration_minutes, title, metadata FROM session_versions`, nil
 	case "exchange_versions":
 		return `SELECT version_digest, session_id, exchange_number, is_after_compaction,
@@ -363,13 +366,13 @@ func scanPhysicalDigest(rows *sql.Rows, destinationTable string) (string, string
 	switch destinationTable {
 	case "session_versions":
 		var sessionID string
-		var agent, project, started, ended, title, metadata sql.NullString
+		var agent, surface, project, started, ended, title, metadata sql.NullString
 		var duration sql.NullInt64
-		if err := rows.Scan(&stored, &sessionID, &agent, &project, &started, &ended,
+		if err := rows.Scan(&stored, &sessionID, &agent, &surface, &project, &started, &ended,
 			&duration, &title, &metadata); err != nil {
 			return "", "", err
 		}
-		return stored, canonicalDigest("session", sessionID, agent, project, started, ended,
+		return stored, canonicalDigest("session", sessionID, agent, surface, project, started, ended,
 			duration, title, metadata), nil
 	case "exchange_versions":
 		payload, err := scanExchangePayload(rows, &stored)
@@ -484,14 +487,35 @@ func compareRecordedSourceLabels(ctx context.Context, destination *sql.DB,
 func duplicatePhysicalRows(ctx context.Context, destination *sql.DB) (int64, error) {
 	var total int64
 	for _, table := range archiveSourceTables {
-		var count int64
-		query := fmt.Sprintf(`SELECT COALESCE(SUM(c - 1), 0) FROM (
-			SELECT COUNT(*) AS c FROM %s GROUP BY version_digest HAVING COUNT(*) > 1)`,
-			table.destinationTable)
-		if err := destination.QueryRowContext(ctx, query).Scan(&count); err != nil {
+		query, err := physicalDigestQuery(table.destinationTable)
+		if err != nil {
 			return 0, err
 		}
-		total += count
+		rows, err := destination.QueryContext(ctx, query)
+		if err != nil {
+			return 0, err
+		}
+		counts := make(map[string]int64)
+		for rows.Next() {
+			_, actual, scanErr := scanPhysicalDigest(rows, table.destinationTable)
+			if scanErr != nil {
+				rows.Close()
+				return 0, scanErr
+			}
+			counts[actual]++
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		if err := rows.Close(); err != nil {
+			return 0, err
+		}
+		for _, count := range counts {
+			if count > 1 {
+				total += count - 1
+			}
+		}
 	}
 	return total, nil
 }

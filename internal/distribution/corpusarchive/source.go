@@ -68,7 +68,7 @@ var archiveSourceTables = []archiveTable{
 	{
 		sourceTable: "sessions", migration: "corpus-archive-sessions",
 		destinationTable: "session_versions",
-		query: `SELECT rowid, session_id, source_agent, project, started_at, ended_at,
+		query: `SELECT rowid, session_id, source_agent, source_surface, project, started_at, ended_at,
 			duration_minutes, title, metadata FROM sessions ORDER BY session_id`,
 		scan: scanSession,
 	},
@@ -290,8 +290,8 @@ func insertStatement(destinationTable string) (string, error) {
 	switch destinationTable {
 	case "session_versions":
 		return `INSERT OR IGNORE INTO session_versions
-			(version_digest, session_id, source_agent, project, started_at, ended_at,
-			 duration_minutes, title, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, nil
+			(version_digest, session_id, source_agent, source_surface, project, started_at, ended_at,
+			 duration_minutes, title, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, nil
 	case "exchange_versions":
 		return `INSERT OR IGNORE INTO exchange_versions
 			(version_digest, session_id, exchange_number, is_after_compaction,
@@ -347,13 +347,14 @@ func validateRecordedTable(ctx context.Context, destination *sql.DB,
 func scanSession(rows *sql.Rows, _ *occurrenceTracker) (archiveRecord, error) {
 	var rowID int64
 	var sessionID string
-	var sourceAgent, project, startedAt, endedAt, title, metadata sql.NullString
+	var sourceAgent, sourceSurface, project, startedAt, endedAt, title, metadata sql.NullString
 	var duration sql.NullInt64
-	if err := rows.Scan(&rowID, &sessionID, &sourceAgent, &project, &startedAt, &endedAt,
+	if err := rows.Scan(&rowID, &sessionID, &sourceAgent, &sourceSurface, &project, &startedAt, &endedAt,
 		&duration, &title, &metadata); err != nil {
 		return archiveRecord{}, err
 	}
-	values := []any{sessionID, sourceAgent, project, startedAt, endedAt, duration, title, metadata}
+	values := []any{sessionID, sourceAgent, sourceSurface, project, startedAt, endedAt,
+		duration, title, metadata}
 	return archiveRecord{
 		sourceKey:        canonicalDigest("session-key", sessionID),
 		digest:           canonicalDigest("session", values...),

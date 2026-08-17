@@ -256,10 +256,22 @@ func verifyDestinationStateWins(ctx context.Context, db *sql.DB) error {
 }
 
 func reportDigest(report Report) (string, error) {
-	// Keep the seal compatible with archives verified before per-session
-	// reconciliation shipped. The source snapshot digests and aggregate family
-	// inventory already commit the same custody population; reconciliation is
-	// rerun from those snapshots and must be green before this seal is accepted.
+	sealed := struct {
+		ContractVersion int                  `json:"contract_version"`
+		Reconciliation  ReconciliationReport `json:"reconciliation"`
+	}{ContractVersion: reconciliationContractVersion, Reconciliation: report.Reconciliation}
+	encoded, err := json.Marshal(sealed)
+	if err != nil {
+		return "", fmt.Errorf("serialize corpus archive reconciliation: %w", err)
+	}
+	legacy, err := legacyReportDigest(report)
+	if err != nil {
+		return "", err
+	}
+	return canonicalDigest("corpus-archive-reconciliation", legacy, string(encoded)), nil
+}
+
+func legacyReportDigest(report Report) (string, error) {
 	sealed := struct {
 		Sources            []SourceReport          `json:"sources"`
 		Families           map[string]FamilyReport `json:"families"`

@@ -10,6 +10,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/data"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 )
 
 func TestMergePreservesAliasesDivergenceAndSourceScopedChildIdentity(t *testing.T) {
@@ -75,6 +76,10 @@ func TestMergePreservesAliasesDivergenceAndSourceScopedChildIdentity(t *testing.
 		WHERE source_table IN ('tool_uses', 'thinking_blocks')
 		  AND source_key IN ('1', '2', '10', '11')`, 0)
 
+	ledgerDigest, err := legacyReportDigest(report)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, table := range archiveSourceTables {
 		state, err := migrationledger.InspectMigration(t.Context(), db, table.migration)
 		if err != nil {
@@ -82,7 +87,7 @@ func TestMergePreservesAliasesDivergenceAndSourceScopedChildIdentity(t *testing.
 		}
 		if state.State != migrationledger.StateVerified ||
 			state.DestinationTable != table.destinationTable ||
-			state.VerificationDigest != report.VerificationDigest {
+			state.VerificationDigest != ledgerDigest {
 			t.Fatalf("migration state = %+v", state)
 		}
 	}
@@ -314,6 +319,42 @@ func TestVerifyRejectsEveryReconciliationMismatch(t *testing.T) {
 			},
 		},
 		{
+			name: "lost session surface", want: "custody mismatch",
+			mutate: func(t *testing.T, db *sql.DB) {
+				execTest(t, db, `UPDATE session_versions SET source_surface = NULL`)
+			},
+		},
+		{
+			name: "consistently relabeled physical digest", want: "custody mismatch",
+			mutate: func(t *testing.T, db *sql.DB) {
+				digest := strings.Repeat("f", 64)
+				execTest(t, db, `PRAGMA foreign_keys = OFF`)
+				execTest(t, db, `UPDATE session_versions SET version_digest = ?`, digest)
+				execTest(t, db, `UPDATE custody_memberships
+					SET destination_key = ?, canonical_digest = ?
+					WHERE migration = 'corpus-archive-sessions'`, digest, digest)
+				execTest(t, db, `UPDATE corpus_source_rows SET version_digest = ?
+					WHERE source_table = 'sessions'`, digest)
+			},
+		},
+		{
+			name: "duplicate physical payload", want: "duplicate physical",
+			mutate: func(t *testing.T, db *sql.DB) {
+				digest := strings.Repeat("e", 64)
+				execTest(t, db, `INSERT INTO session_versions
+					(version_digest, session_id, source_agent, source_surface, project,
+					 started_at, ended_at, duration_minutes, title, metadata)
+					SELECT ?, session_id, source_agent, source_surface, project,
+					       started_at, ended_at, duration_minutes, title, metadata
+					FROM session_versions LIMIT 1`, digest)
+			},
+			assert: func(t *testing.T, report Report) {
+				if report.Reconciliation.DuplicatePhysicalRows != 1 {
+					t.Fatalf("duplicate physical rows = %d", report.Reconciliation.DuplicatePhysicalRows)
+				}
+			},
+		},
+		{
 			name: "lost OpenCode model", want: "custody mismatch",
 			mutate: func(t *testing.T, db *sql.DB) {
 				execTest(t, db, `UPDATE exchange_versions SET model = NULL, provider = NULL`)
@@ -387,6 +428,64 @@ func TestVerifyRejectsEveryReconciliationMismatch(t *testing.T) {
 				testCase.assert(t, report)
 			}
 		})
+	}
+}
+
+func TestMergeUpgradesPreReconciliationSessionCustody(t *testing.T) {
+	directory := t.TempDir()
+	source := createFrozenSource(t, filepath.Join(directory, "source.db"), func(t *testing.T, db *sql.DB) {
+		seedSession(t, db, "upgrade-session", "upgrade session")
+	})
+	sources := []Source{frozenSource(source)}
+	destination := filepath.Join(directory, "destination.db")
+	if _, err := Merge(t.Context(), destination, sources, Options{BatchSize: 1}); err != nil {
+		t.Fatal(err)
+	}
+	db := openTestDB(t, destination)
+	for _, statement := range []string{
+		`DROP VIEW session_version_memberships`,
+		`DROP TABLE session_versions_fts`,
+		`ALTER TABLE session_versions DROP COLUMN source_surface`,
+		`UPDATE plugin_schema SET schema_version = 3`,
+		`DELETE FROM migration_batches WHERE migration = 'corpus-archive-reconciliation-v1'`,
+		`DELETE FROM plugin_migrations WHERE migration = 'corpus-archive-reconciliation-v1'`,
+	} {
+		execTest(t, db, statement)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := rocacorpus.ApplySchema(destination); err != nil {
+		t.Fatal(err)
+	}
+	eligible, err := CutoverEligible(t.Context(), destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eligible {
+		t.Fatal("pre-reconciliation archive reported cutover eligible")
+	}
+	report, err := Merge(t.Context(), destination, sources, Options{BatchSize: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Reconciliation.Status != ReconciliationGreen ||
+		report.Reconciliation.CoveragePercent != 100 {
+		t.Fatalf("upgraded reconciliation = %+v", report.Reconciliation)
+	}
+	db = openTestDB(t, destination)
+	defer db.Close()
+	var surface string
+	if err := db.QueryRow(`SELECT source_surface FROM session_versions
+		WHERE session_id = 'upgrade-session'`).Scan(&surface); err != nil {
+		t.Fatal(err)
+	}
+	if surface != "synthetic-cli" {
+		t.Fatalf("upgraded source surface = %q", surface)
+	}
+	eligible, err = CutoverEligible(t.Context(), destination)
+	if err != nil || !eligible {
+		t.Fatalf("upgraded cutover eligibility = %t, %v", eligible, err)
 	}
 }
 
@@ -501,8 +600,9 @@ func seedExistingCorpusArchive(t *testing.T, db *sql.DB) {
 func seedSession(t *testing.T, db *sql.DB, id, title string) {
 	t.Helper()
 	execTest(t, db, `INSERT INTO sessions
-		(session_id, source_agent, project, started_at, title, metadata)
-		VALUES (?, 'synthetic-agent', 'synthetic-project', '2026-08-15T00:00:00Z', ?, '{}')`, id, title)
+		(session_id, source_agent, source_surface, project, started_at, title, metadata)
+		VALUES (?, 'synthetic-agent', 'synthetic-cli', 'synthetic-project',
+		        '2026-08-15T00:00:00Z', ?, '{}')`, id, title)
 }
 
 func seedExchange(t *testing.T, db *sql.DB, id int, session string, number int, human, agent string) {
