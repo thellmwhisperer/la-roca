@@ -35,6 +35,31 @@ type occurrenceTracker struct {
 	counts map[string]int64
 }
 
+type exchangePayload struct {
+	sessionID                            sql.NullString
+	number, compacted, latency           sql.NullInt64
+	human, agent, humanAt, agentAt       sql.NullString
+	model, provider                      sql.NullString
+	tokensIn, tokensOut, tokensReasoning sql.NullInt64
+	cost                                 sql.NullFloat64
+}
+
+func scanExchangePayload(rows *sql.Rows, identity any) (exchangePayload, error) {
+	var payload exchangePayload
+	err := rows.Scan(identity, &payload.sessionID, &payload.number, &payload.compacted,
+		&payload.human, &payload.agent, &payload.humanAt, &payload.agentAt,
+		&payload.latency, &payload.model, &payload.provider, &payload.tokensIn,
+		&payload.tokensOut, &payload.tokensReasoning, &payload.cost)
+	return payload, err
+}
+
+func (payload exchangePayload) values() []any {
+	return []any{payload.sessionID.String, payload.number, payload.compacted,
+		payload.human, payload.agent, payload.humanAt, payload.agentAt, payload.latency,
+		payload.model, payload.provider, payload.tokensIn, payload.tokensOut,
+		payload.tokensReasoning, payload.cost}
+}
+
 // Each family is its own named custody migration. The ledger keys a migration
 // to the single destination it owns, and the archive fills five of them, so one
 // name per family is what lets them commit, resume and verify side by side in
@@ -340,26 +365,21 @@ func scanSession(rows *sql.Rows, _ *occurrenceTracker) (archiveRecord, error) {
 
 func scanExchange(rows *sql.Rows, tracker *occurrenceTracker) (archiveRecord, error) {
 	var id int64
-	var sessionID, human, agent, humanAt, agentAt, model, provider sql.NullString
-	var number, compacted, latency, tokensIn, tokensOut, reasoning sql.NullInt64
-	var cost sql.NullFloat64
-	if err := rows.Scan(&id, &sessionID, &number, &compacted, &human, &agent,
-		&humanAt, &agentAt, &latency, &model, &provider, &tokensIn, &tokensOut,
-		&reasoning, &cost); err != nil {
+	payload, err := scanExchangePayload(rows, &id)
+	if err != nil {
 		return archiveRecord{}, err
 	}
-	if !sessionID.Valid {
+	if !payload.sessionID.Valid {
 		return archiveRecord{}, fmt.Errorf("exchange %d has no deterministic session/exchange key", id)
 	}
-	values := []any{sessionID.String, number, compacted, human, agent, humanAt,
-		agentAt, latency, model, provider, tokensIn, tokensOut, reasoning, cost}
+	values := payload.values()
 	digest := canonicalDigest("exchange", values...)
-	ordinal := sql.NullInt64{Int64: tracker.next(sessionID, number, digest), Valid: true}
+	ordinal := sql.NullInt64{Int64: tracker.next(payload.sessionID, payload.number, digest), Valid: true}
 	return archiveRecord{
-		sourceKey: occurrenceKey("exchange", sessionID, number, digest, ordinal.Int64),
+		sourceKey: occurrenceKey("exchange", payload.sessionID, payload.number, digest, ordinal.Int64),
 		digest:    digest, destinationTable: "exchange_versions",
 		values: values, sourceRowID: sql.NullInt64{Int64: id, Valid: true},
-		sessionID: sessionID, exchangeNumber: number, ordinal: ordinal,
+		sessionID: payload.sessionID, exchangeNumber: payload.number, ordinal: ordinal,
 	}, nil
 }
 

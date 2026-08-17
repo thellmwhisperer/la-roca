@@ -15,6 +15,13 @@ manifest-backed `roca-corpus` and `roca-ops` domains, plus a separate
 Before either federated route opens against an existing core database, the
 internal cutover coordinator completes and verifies the ops, corpus, and cron
 custody imports from frozen snapshots. That preparation has no public command.
+DATA-3 reconciles every frozen source table and every source session against
+its custody memberships: counts and canonical payload hashes must match, no
+physical or membership duplicate may exist, and exchange model/provider/token
+provenance has its own hash. Exact legacy occurrences remain separate
+memberships even when the current parser represents several assistant fragments
+as one human turn. The merge and its re-runnable verifier return an error unless
+the global report is exactly 100% green.
 Shadow mode serves the legacy answer and returns the marker to legacy on any
 row difference. Cutover uses temporary compatibility views and indexes over
 the read-only plugin attachments; it does not open `roca.db`. That file remains
