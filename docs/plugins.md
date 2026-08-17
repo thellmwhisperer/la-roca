@@ -602,9 +602,25 @@ came from. Those tables are migration machinery rather than fleet memory, so
 they stay hidden from every query surface, and the served tables above keep
 answering exactly as before until the atomic cutover. Each family is a named
 custody migration of its own, `corpus-archive-<family>`, because a migration
-owns exactly one destination; the merge seals all five against the same
-verification digest, so a partially sealed archive is merged again rather than
-accepted.
+owns exactly one destination. The five family migrations retain their
+table-level archive seal, and cutover additionally requires the versioned
+DATA-3 reconciliation seal.
+
+That reconciliation rereads the same frozen sources and compares every source
+database and table by occurrence count and canonical payload hash. It also
+compares each source session by record count, exchange count, payload hash, and
+an exchange-provenance hash covering model, provider, token counts, and cost.
+The archived session payload includes `source_surface`, so OpenCode harness
+attribution survives beside its exchange model and provider after cutover.
+Missing or duplicate memberships, duplicate physical payload rows, changed
+payloads, or changed provenance make the report red; merge and the re-runnable
+verifier return an error unless global coverage is exactly 100%.
+
+An exact payload shared by several legacy rows may occupy one immutable version
+row, but every occurrence keeps its own custody membership. That preserves the
+legacy multiset when a current parser normalizes several assistant fragments
+into one turn. Replaying the same frozen snapshots is idempotent and must
+reproduce the sealed digest before DATA-3 is cutover-eligible.
 
 ## The bundled roca-ops plugin
 

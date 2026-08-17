@@ -10,6 +10,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/data"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 )
 
 func TestMergePreservesAliasesDivergenceAndSourceScopedChildIdentity(t *testing.T) {
@@ -17,10 +18,7 @@ func TestMergePreservesAliasesDivergenceAndSourceScopedChildIdentity(t *testing.
 	core := createFrozenSource(t, filepath.Join(directory, "core.db"), seedCoreArchive)
 	corpus := createFrozenSource(t, filepath.Join(directory, "existing-corpus.db"), seedExistingCorpusArchive)
 	destination := filepath.Join(directory, "merged-corpus.db")
-	sources := []Source{
-		{Database: "core", Path: core.path, SnapshotDigest: core.digest},
-		{Database: "plugin:roca-corpus", Path: corpus.path, SnapshotDigest: corpus.digest, ExistingCorpus: true},
-	}
+	sources := archiveSourcePair(core, corpus)
 
 	report, err := Merge(t.Context(), destination, sources, Options{BatchSize: 1})
 	if err != nil {
@@ -78,6 +76,10 @@ func TestMergePreservesAliasesDivergenceAndSourceScopedChildIdentity(t *testing.
 		WHERE source_table IN ('tool_uses', 'thinking_blocks')
 		  AND source_key IN ('1', '2', '10', '11')`, 0)
 
+	ledgerDigest, err := legacyReportDigest(report)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, table := range archiveSourceTables {
 		state, err := migrationledger.InspectMigration(t.Context(), db, table.migration)
 		if err != nil {
@@ -85,7 +87,7 @@ func TestMergePreservesAliasesDivergenceAndSourceScopedChildIdentity(t *testing.
 		}
 		if state.State != migrationledger.StateVerified ||
 			state.DestinationTable != table.destinationTable ||
-			state.VerificationDigest != report.VerificationDigest {
+			state.VerificationDigest != ledgerDigest {
 			t.Fatalf("migration state = %+v", state)
 		}
 	}
@@ -244,6 +246,247 @@ func TestMergePreservesDuplicateNumberedExchangeOccurrences(t *testing.T) {
 	})
 	assertCountQuery(t, db, `SELECT COUNT(*) FROM corpus_source_rows
 		WHERE source_table = 'exchanges' AND occurrence_ordinal IN (0, 1)`, 2)
+	session := findSessionReport(t, report, "plugin:roca-corpus", "duplicate-turn")
+	if session.ExpectedExchanges != 2 || session.ObservedExchanges != 2 ||
+		session.ExactPayloadAliases != 1 || session.DuplicateMemberships != 0 ||
+		!session.ModelProvenancePreserved || session.Status != ReconciliationGreen {
+		t.Fatalf("duplicate occurrence reconciliation = %+v", session)
+	}
+}
+
+func TestMergeReconcilesLegacyFragmentsAndOpenCodeProvenancePerSession(t *testing.T) {
+	directory := t.TempDir()
+	core := createFrozenSource(t, filepath.Join(directory, "core.db"), func(t *testing.T, db *sql.DB) {
+		seedSession(t, db, "legacy-fragments", "legacy fragments")
+		seedExchange(t, db, 1, "legacy-fragments", 1, "same prompt", "fragment one")
+		seedExchange(t, db, 2, "legacy-fragments", 1, "same prompt", "fragment two")
+		seedExchange(t, db, 3, "legacy-fragments", 1, "same prompt", "fragment three")
+		seedSession(t, db, "opencode-model", "OpenCode provenance")
+		execTest(t, db, `UPDATE sessions SET source_agent = 'opencode'
+			WHERE session_id = 'opencode-model'`)
+		execTest(t, db, `INSERT INTO exchanges
+			(id, session_id, exchange_number, human_text, agent_text, model, provider,
+			 tokens_in, tokens_out, tokens_reasoning, cost_usd)
+			VALUES (4, 'opencode-model', 1, 'ship it', 'done', 'gpt-opencode',
+			        'openai', 10, 20, 3, 0.25)`)
+	})
+	corpus := createFrozenSource(t, filepath.Join(directory, "corpus.db"), func(t *testing.T, db *sql.DB) {
+		seedSession(t, db, "legacy-fragments", "normalized turn")
+		seedExchange(t, db, 10, "legacy-fragments", 1, "same prompt",
+			"fragment one\nfragment two\nfragment three")
+	})
+	sources := archiveSourcePair(core, corpus)
+	report, err := Merge(t.Context(), filepath.Join(directory, "destination.db"),
+		sources, Options{BatchSize: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := findSessionReport(t, report, "core", "legacy-fragments")
+	normalized := findSessionReport(t, report, "plugin:roca-corpus", "legacy-fragments")
+	opencode := findSessionReport(t, report, "core", "opencode-model")
+	if legacy.ExpectedExchanges != 3 || legacy.ObservedExchanges != 3 ||
+		normalized.ExpectedExchanges != 1 || normalized.ObservedExchanges != 1 {
+		t.Fatalf("fragment-to-turn reconciliation: legacy=%+v normalized=%+v", legacy, normalized)
+	}
+	if !opencode.ModelProvenancePreserved ||
+		opencode.ExpectedProvenanceHash != opencode.ObservedProvenanceHash {
+		t.Fatalf("OpenCode provenance reconciliation = %+v", opencode)
+	}
+	if report.Reconciliation.Status != ReconciliationGreen ||
+		report.Reconciliation.CoveragePercent != 100 {
+		t.Fatalf("global reconciliation = %+v", report.Reconciliation)
+	}
+}
+
+func TestVerifyRejectsEveryReconciliationMismatch(t *testing.T) {
+	tests := []struct {
+		name, want string
+		mutate     func(*testing.T, *sql.DB)
+		assert     func(*testing.T, Report)
+	}{
+		{
+			name: "missing membership", want: "custody mismatch",
+			mutate: func(t *testing.T, db *sql.DB) {
+				execTest(t, db, `DELETE FROM custody_memberships WHERE rowid =
+					(SELECT rowid FROM custody_memberships
+					 WHERE migration = 'corpus-archive-exchanges' LIMIT 1)`)
+			},
+		},
+		{
+			name: "divergent payload hash", want: "custody mismatch",
+			mutate: func(t *testing.T, db *sql.DB) {
+				execTest(t, db, `UPDATE exchange_versions SET agent_text = 'tampered payload'`)
+			},
+		},
+		{
+			name: "lost session surface", want: "custody mismatch",
+			mutate: func(t *testing.T, db *sql.DB) {
+				execTest(t, db, `UPDATE session_versions SET source_surface = NULL`)
+			},
+		},
+		{
+			name: "consistently relabeled physical digest", want: "custody mismatch",
+			mutate: func(t *testing.T, db *sql.DB) {
+				digest := strings.Repeat("f", 64)
+				execTest(t, db, `PRAGMA foreign_keys = OFF`)
+				execTest(t, db, `UPDATE session_versions SET version_digest = ?`, digest)
+				execTest(t, db, `UPDATE custody_memberships
+					SET destination_key = ?, canonical_digest = ?
+					WHERE migration = 'corpus-archive-sessions'`, digest, digest)
+				execTest(t, db, `UPDATE corpus_source_rows SET version_digest = ?
+					WHERE source_table = 'sessions'`, digest)
+			},
+		},
+		{
+			name: "duplicate physical payload", want: "duplicate physical",
+			mutate: func(t *testing.T, db *sql.DB) {
+				digest := strings.Repeat("e", 64)
+				execTest(t, db, `INSERT INTO session_versions
+					(version_digest, session_id, source_agent, source_surface, project,
+					 started_at, ended_at, duration_minutes, title, metadata)
+					SELECT ?, session_id, source_agent, source_surface, project,
+					       started_at, ended_at, duration_minutes, title, metadata
+					FROM session_versions LIMIT 1`, digest)
+			},
+			assert: func(t *testing.T, report Report) {
+				if report.Reconciliation.DuplicatePhysicalRows != 1 {
+					t.Fatalf("duplicate physical rows = %d", report.Reconciliation.DuplicatePhysicalRows)
+				}
+			},
+		},
+		{
+			name: "lost OpenCode model", want: "custody mismatch",
+			mutate: func(t *testing.T, db *sql.DB) {
+				execTest(t, db, `UPDATE exchange_versions SET model = NULL, provider = NULL`)
+			},
+			assert: func(t *testing.T, report Report) {
+				session := findSessionReport(t, report, "plugin:roca-corpus", "verified-session")
+				if session.ModelProvenancePreserved {
+					t.Fatalf("lost model reported as preserved: %+v", session)
+				}
+			},
+		},
+		{
+			name: "duplicate membership", want: "custody mismatch",
+			mutate: func(t *testing.T, db *sql.DB) {
+				execTest(t, db, `PRAGMA foreign_keys = OFF`)
+				execTest(t, db, `CREATE TABLE custody_memberships_corrupt AS
+					SELECT * FROM custody_memberships`)
+				for _, view := range []string{"session_version_memberships",
+					"exchange_version_memberships", "tool_use_version_memberships",
+					"thinking_block_version_memberships", "ingest_file_state_version_memberships"} {
+					execTest(t, db, `DROP VIEW `+view)
+				}
+				execTest(t, db, `DROP TABLE custody_memberships`)
+				execTest(t, db, `ALTER TABLE custody_memberships_corrupt
+					RENAME TO custody_memberships`)
+				execTest(t, db, `INSERT INTO custody_memberships
+					SELECT * FROM custody_memberships
+					WHERE migration = 'corpus-archive-exchanges' LIMIT 1`)
+			},
+			assert: func(t *testing.T, report Report) {
+				for _, custody := range report.Reconciliation.Custody {
+					if custody.SourceTable == "exchanges" && custody.DuplicateMemberships == 1 {
+						return
+					}
+				}
+				t.Fatal("duplicate membership was not reported")
+			},
+		},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			directory := t.TempDir()
+			source := createFrozenSource(t, filepath.Join(directory, "source.db"),
+				func(t *testing.T, db *sql.DB) {
+					seedSession(t, db, "verified-session", "verified session")
+					seedExchange(t, db, 1, "verified-session", 1, "question", "answer")
+				})
+			sources := []Source{frozenSource(source)}
+			destination := filepath.Join(directory, "destination.db")
+			first, err := Merge(t.Context(), destination, sources, Options{BatchSize: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			replayed, err := Verify(t.Context(), destination, sources, Options{BatchSize: 1})
+			if err != nil || replayed.VerificationDigest != first.VerificationDigest {
+				t.Fatalf("clean idempotent verification = %+v, %v", replayed, err)
+			}
+			db := openTestDB(t, destination)
+			testCase.mutate(t, db)
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			report, err := Verify(t.Context(), destination, sources, Options{BatchSize: 1})
+			if err == nil || !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("verification error = %v, want %q", err, testCase.want)
+			}
+			if report.Reconciliation.Status != ReconciliationRed {
+				t.Fatalf("mismatch report = %+v", report.Reconciliation)
+			}
+			if testCase.assert != nil {
+				testCase.assert(t, report)
+			}
+		})
+	}
+}
+
+func TestMergeUpgradesPreReconciliationSessionCustody(t *testing.T) {
+	directory := t.TempDir()
+	source := createFrozenSource(t, filepath.Join(directory, "source.db"), func(t *testing.T, db *sql.DB) {
+		seedSession(t, db, "upgrade-session", "upgrade session")
+	})
+	sources := []Source{frozenSource(source)}
+	destination := filepath.Join(directory, "destination.db")
+	if _, err := Merge(t.Context(), destination, sources, Options{BatchSize: 1}); err != nil {
+		t.Fatal(err)
+	}
+	db := openTestDB(t, destination)
+	for _, statement := range []string{
+		`DROP VIEW session_version_memberships`,
+		`DROP TABLE session_versions_fts`,
+		`ALTER TABLE session_versions DROP COLUMN source_surface`,
+		`UPDATE plugin_schema SET schema_version = 3`,
+		`DELETE FROM migration_batches WHERE migration = 'corpus-archive-reconciliation-v1'`,
+		`DELETE FROM plugin_migrations WHERE migration = 'corpus-archive-reconciliation-v1'`,
+	} {
+		execTest(t, db, statement)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := rocacorpus.ApplySchema(destination); err != nil {
+		t.Fatal(err)
+	}
+	eligible, err := CutoverEligible(t.Context(), destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eligible {
+		t.Fatal("pre-reconciliation archive reported cutover eligible")
+	}
+	report, err := Merge(t.Context(), destination, sources, Options{BatchSize: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Reconciliation.Status != ReconciliationGreen ||
+		report.Reconciliation.CoveragePercent != 100 {
+		t.Fatalf("upgraded reconciliation = %+v", report.Reconciliation)
+	}
+	db = openTestDB(t, destination)
+	defer db.Close()
+	var surface string
+	if err := db.QueryRow(`SELECT source_surface FROM session_versions
+		WHERE session_id = 'upgrade-session'`).Scan(&surface); err != nil {
+		t.Fatal(err)
+	}
+	if surface != "synthetic-cli" {
+		t.Fatalf("upgraded source surface = %q", surface)
+	}
+	eligible, err = CutoverEligible(t.Context(), destination)
+	if err != nil || !eligible {
+		t.Fatalf("upgraded cutover eligibility = %t, %v", eligible, err)
+	}
 }
 
 type frozenFixture struct {
@@ -266,6 +509,14 @@ func frozenSource(fixture frozenFixture) Source {
 	return Source{
 		Database: "plugin:roca-corpus", Path: fixture.path,
 		SnapshotDigest: fixture.digest, ExistingCorpus: true,
+	}
+}
+
+func archiveSourcePair(core, corpus frozenFixture) []Source {
+	return []Source{
+		{Database: "core", Path: core.path, SnapshotDigest: core.digest},
+		{Database: "plugin:roca-corpus", Path: corpus.path,
+			SnapshotDigest: corpus.digest, ExistingCorpus: true},
 	}
 }
 
@@ -349,8 +600,9 @@ func seedExistingCorpusArchive(t *testing.T, db *sql.DB) {
 func seedSession(t *testing.T, db *sql.DB, id, title string) {
 	t.Helper()
 	execTest(t, db, `INSERT INTO sessions
-		(session_id, source_agent, project, started_at, title, metadata)
-		VALUES (?, 'synthetic-agent', 'synthetic-project', '2026-08-15T00:00:00Z', ?, '{}')`, id, title)
+		(session_id, source_agent, source_surface, project, started_at, title, metadata)
+		VALUES (?, 'synthetic-agent', 'synthetic-cli', 'synthetic-project',
+		        '2026-08-15T00:00:00Z', ?, '{}')`, id, title)
 }
 
 func seedExchange(t *testing.T, db *sql.DB, id int, session string, number int, human, agent string) {
@@ -407,4 +659,15 @@ func assertCountQuery(t *testing.T, db *sql.DB, query string, want int64) {
 	if got != want {
 		t.Fatalf("count for %q = %d, want %d", query, got, want)
 	}
+}
+
+func findSessionReport(t *testing.T, report Report, database, sessionID string) SessionReport {
+	t.Helper()
+	for _, session := range report.Reconciliation.Sessions {
+		if session.Database == database && session.SessionID == sessionID {
+			return session
+		}
+	}
+	t.Fatalf("no reconciliation report for %s/%q", database, sessionID)
+	return SessionReport{}
 }

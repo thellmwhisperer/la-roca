@@ -206,6 +206,7 @@ CREATE TABLE IF NOT EXISTS session_versions (
   version_digest   TEXT NOT NULL UNIQUE CHECK (length(version_digest) = 64),
   session_id       TEXT NOT NULL,
   source_agent     TEXT,
+  source_surface   TEXT,
   project          TEXT,
   started_at       TEXT,
   ended_at         TEXT,
