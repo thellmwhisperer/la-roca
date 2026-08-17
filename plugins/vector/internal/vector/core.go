@@ -40,7 +40,10 @@ const (
 	corpusSchema       = "plugin_roca_corpus"
 )
 
-var structuralSessionToken = regexp.MustCompile(`(?i)(?:\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b|\b[0-9a-f]{7,}\b|\b[0-9A-HJKMNP-TV-Z]{26}\b|\bg-p-[a-z0-9_-]+\b)`)
+var (
+	structuralSessionToken = regexp.MustCompile(`(?i)(?:\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b|\b[0-9A-HJKMNP-TV-Z]{26}\b|\bg-p-[a-z0-9_-]+\b)`)
+	sessionJSONKeyFragment = regexp.MustCompile(`"(?:\\.|[^"\\])*"\s*:`)
+)
 
 func corpusTable(name string) string { return corpusSchema + "." + name }
 
@@ -195,20 +198,54 @@ func sessionEmbeddingText(values ...string) string {
 
 func cleanSessionField(value string) string {
 	value = strings.TrimSpace(stripSessionJSON(value))
-	if value == "" {
+	if value == "" || sessionPathValue(value) {
 		return ""
 	}
+	value = sessionJSONKeyFragment.ReplaceAllString(value, " ")
 	value = structuralSessionToken.ReplaceAllString(value, " ")
 	fields := strings.Fields(value)
 	clean := fields[:0]
 	for _, field := range fields {
 		candidate := strings.Trim(field, `"'()[]{}<>,;:!?.`)
-		if candidate == "" || strings.ContainsAny(candidate, `/\`) {
+		if candidate == "" || strings.ContainsAny(candidate, `/\`) || sessionHexToken(candidate) {
 			continue
 		}
 		clean = append(clean, field)
 	}
 	return strings.Join(clean, " ")
+}
+
+func sessionPathValue(value string) bool {
+	fields := strings.Fields(value)
+	if len(fields) == 0 {
+		return false
+	}
+	first := fields[0]
+	if strings.ContainsAny(first, `/\`) {
+		return true
+	}
+	return len(first) >= 3 && first[1] == ':' && strings.ContainsAny(first[2:3], `/\`)
+}
+
+func sessionHexToken(value string) bool {
+	raw := value
+	if strings.HasPrefix(raw, "0x") || strings.HasPrefix(raw, "0X") {
+		raw = raw[2:]
+	}
+	if len(raw) < 7 {
+		return false
+	}
+	hasDigit := false
+	for _, character := range raw {
+		switch {
+		case character >= '0' && character <= '9':
+			hasDigit = true
+		case character >= 'a' && character <= 'f', character >= 'A' && character <= 'F':
+		default:
+			return false
+		}
+	}
+	return hasDigit || len(raw) >= 16 || (len(raw) >= 8 && raw == strings.ToLower(raw))
 }
 
 func stripSessionJSON(value string) string {
