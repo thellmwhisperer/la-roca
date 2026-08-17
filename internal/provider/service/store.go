@@ -107,10 +107,16 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (StoreResult, err
 			status, strings.Join(validStatuses, ", "))
 	}
 
-	// An alias written by anybody lands in the physical layer the readers look
-	// for: a `handover` is a `handoff` the moment it is stored, never at the
-	// moment somebody queries it.
-	physical := s.registry.Resolve(layer, layer)
+	if _, err := s.ensureSchema(ctx); err != nil {
+		return StoreResult{}, err
+	}
+	// The live registry is authoritative. An alias written by anybody lands in
+	// the physical layer the readers look for: a `handover` is a `handoff` the
+	// moment it is stored, never when somebody queries it.
+	physical, err := s.resolveRegisteredLayer(ctx, layer)
+	if err != nil {
+		return StoreResult{}, err
+	}
 	metadata, err := encodeMetadata(req.Metadata)
 	if err != nil {
 		return StoreResult{}, err
@@ -122,10 +128,6 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (StoreResult, err
 			return StoreResult{}, err
 		}
 	}
-	if _, err := s.ensureSchema(ctx); err != nil {
-		return StoreResult{}, err
-	}
-
 	result := StoreResult{
 		Layer:     physical,
 		Version:   s.opts.Version,
@@ -133,9 +135,11 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (StoreResult, err
 	}
 	authorship := req.Authorship
 	authorship = authorship.normalized()
-	target := s.db
+	target, err := s.memoryOwner()
+	if err != nil {
+		return StoreResult{}, err
+	}
 	if s.opts.RocaOpsEnabled {
-		target = s.ops
 		// The exclusion a superseded row obeys is computed inside the database
 		// that holds it, so a replacement written here can only retire what is
 		// here. Naming a core memory would retire nothing and say it did.

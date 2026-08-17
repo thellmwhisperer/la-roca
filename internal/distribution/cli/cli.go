@@ -203,7 +203,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 	root.PersistentFlags().BoolVar(&env.json, "json", false, "JSON output")
 	commands := []*cobra.Command{
 		versionCommand(env), initCommand(env), exploreCommand(env), schemaCommand(env),
-		indexCommand(env), doctorCommand(env), dedupCommand(env), memoryCommand(env),
+		indexCommand(env), doctorCommand(env), dedupCommand(env), memoryCommand(env), layersCommand(env),
 		healthCommand(env),
 		mcpCommand(env), skillCommand(env), hooksCommand(env),
 		loginCommand(env), modelCommand(env),
@@ -250,7 +250,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 
 func publicCommand(name string) bool {
 	switch name {
-	case "init", "query", "explore", "store", "ingest", "model", "doctor", "update", "uninstall", "plugin", "plugins", "hooks", "cron":
+	case "init", "query", "explore", "store", "ingest", "model", "doctor", "update", "uninstall", "plugin", "plugins", "hooks", "cron", "layers":
 		return true
 	default:
 		return false

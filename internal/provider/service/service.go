@@ -131,6 +131,8 @@ type Service struct {
 	hubDB    *store.DB
 	ops      *store.DB
 	corpus   *store.DB
+	layerDB  *store.DB
+	layerSet *plugin.Database
 	opts     Options
 	registry layers.Registry
 	schemaMu sync.Mutex
@@ -181,6 +183,11 @@ func openWithContext(ctx context.Context, opts Options) (*Service, error) {
 	if err := svc.openResidents(ctx); err != nil {
 		return svc.rollbackOpen(ctx, err)
 	}
+	if svc.layerDB != nil {
+		if err := svc.syncLayers(ctx); err != nil {
+			return svc.rollbackOpen(ctx, err)
+		}
+	}
 	if layout != LayoutLegacyServing {
 		if err := svc.openHub(ctx); err != nil {
 			return svc.rollbackOpen(ctx, err)
@@ -212,6 +219,11 @@ func (s *Service) closeOpened() {
 		_ = s.hub.Close()
 		s.hub = nil
 	}
+	if s.layerDB != nil && s.layerDB != s.ops {
+		_ = s.layerDB.Close()
+	}
+	s.layerDB = nil
+	s.layerSet = nil
 	if s.ops != nil {
 		_ = s.ops.Close()
 		s.ops = nil
@@ -353,6 +365,12 @@ func (s *Service) ensureSchema(ctx context.Context) (search.Report, error) {
 		index.LexicalBuilt, err = search.EnsureTokenizer(ctx, s.db, s.opts.Progress)
 		index.ElapsedMS = time.Since(started).Milliseconds()
 		if err != nil {
+			return index, err
+		}
+		// Every writable open adopts the embedded defaults into the live
+		// registry before a store validates against it. Released databases may
+		// have the table but predate its seeded rows.
+		if err := s.syncLayers(ctx); err != nil {
 			return index, err
 		}
 	}
@@ -685,7 +703,11 @@ func refuseReadOnly(operation string) error {
 // It only writes what changes, so that adopting a live database does not touch
 // it without reason.
 func (s *Service) syncLayers(ctx context.Context) error {
-	return s.db.Write(ctx, func(tx *sql.Tx) error {
+	owner, err := s.layerOwner()
+	if err != nil {
+		return err
+	}
+	return owner.Write(ctx, func(tx *sql.Tx) error {
 		for _, layer := range s.registry.Layers {
 			_, err := tx.ExecContext(ctx, `
 				INSERT INTO layers (name, description, schema_file, is_coordination,

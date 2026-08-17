@@ -525,6 +525,14 @@ func TestWritingThroughThePlugIsWritingThroughTheProduct(t *testing.T) {
 		retry.Meta["duplicate_surface"] != service.SurfaceMCP {
 		t.Fatalf("MCP duplicate signal = %#v", retry.Meta)
 	}
+	refused := callToolExpectingError(t, session, "roca_store", map[string]any{
+		"layer": "nonsense", "content": "this layer is not registered",
+	})
+	for _, want := range []string{`layer "nonsense" is not registered`, "registered layers:", "discovery"} {
+		if !strings.Contains(refused, want) {
+			t.Errorf("MCP layer refusal %q does not contain %q", refused, want)
+		}
+	}
 
 	// The audit says it came from the plug, which is what tells this write from
 	// the one the shell would have made.
