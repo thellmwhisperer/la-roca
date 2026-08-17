@@ -518,6 +518,26 @@ func TestResolveRefusesArchivePathsAndNonRegularEntries(t *testing.T) {
 	}
 }
 
+func TestResolveRefusesArchiveWithTooManyEntries(t *testing.T) {
+	archive := makeArchive(t, func(archive *tar.Writer) {
+		for index := range 1025 {
+			name := fmt.Sprintf("entry-%04d", index)
+			if err := archive.WriteHeader(&tar.Header{Name: name, Mode: 0o600}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+	path := filepath.Join(t.TempDir(), "plugin.tar.gz")
+	if err := os.WriteFile(path, archive, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, cleanup, err := plugininstall.Resolve(context.Background(), path, t.TempDir()); err == nil {
+		cleanup()
+		t.Fatal("archive with too many entries was accepted")
+	}
+}
+
 func writePackage(t *testing.T, name, version string, custody, executable bool) string {
 	t.Helper()
 	directory := filepath.Join(t.TempDir(), name)

@@ -34,6 +34,7 @@ const (
 	ManifestFilename  = plugin.ManifestFilename
 	manifestSchema    = 1
 	maxArchiveSize    = 256 << 20
+	maxArchiveEntries = 1024
 )
 
 var errSourceNotRegular = errors.New("source is not a regular file")
@@ -276,6 +277,7 @@ func extractTarGzip(input io.Reader, directory string) error {
 	defer gzipReader.Close()
 	archive := tar.NewReader(gzipReader)
 	var extracted int64
+	var entries int
 	for {
 		header, err := archive.Next()
 		if errors.Is(err, io.EOF) {
@@ -283,6 +285,10 @@ func extractTarGzip(input io.Reader, directory string) error {
 		}
 		if err != nil {
 			return fmt.Errorf("read tar stream: %w", err)
+		}
+		entries++
+		if entries > maxArchiveEntries {
+			return fmt.Errorf("archive contains more than %d entries", maxArchiveEntries)
 		}
 		name := strings.TrimPrefix(path.Clean(header.Name), "./")
 		if header.Typeflag == tar.TypeDir && (name == "" || name == ".") {
