@@ -18,19 +18,21 @@ func main() {
 	binary := flag.String("binary", "", "roca-vector binary to package")
 	out := flag.String("out", "", "package output directory")
 	version := flag.String("version", "dev", "package version")
+	targetOS := flag.String("target-os", runtime.GOOS, "target operating system")
 	flag.Parse()
-	if err := packagePlugin(*binary, *out, *version); err != nil {
+	if err := packagePlugin(*binary, *out, *version, *targetOS); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 }
 
-func packagePlugin(binary, out, version string) error {
-	if strings.TrimSpace(binary) == "" || strings.TrimSpace(out) == "" || strings.TrimSpace(version) == "" {
-		return fmt.Errorf("binary, out, and version are required")
+func packagePlugin(binary, out, version, targetOS string) error {
+	if strings.TrimSpace(binary) == "" || strings.TrimSpace(out) == "" ||
+		strings.TrimSpace(version) == "" || strings.TrimSpace(targetOS) == "" {
+		return fmt.Errorf("binary, out, version, and target OS are required")
 	}
 	name := "roca-vector"
-	if runtime.GOOS == "windows" {
+	if targetOS == "windows" {
 		name += ".exe"
 	}
 	if err := prepareOutput(out, name); err != nil {
