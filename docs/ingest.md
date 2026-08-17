@@ -308,7 +308,9 @@ deferred for the next ingest rather than landing half-written.
 Assistant `reasoning` parts become queryable thinking blocks. Completed and
 failed `tool` parts become structured tool uses with their recorded input and
 error, and `patch` parts contribute their source-recorded hash and changed-file
-list to searchable agent text. The session's `todo` rows are retained as the
+list to searchable agent text. An assistant message whose only content is its
+tools still lands with those tool names as its agent text, so a tool-only step
+is not an invisible empty answer. The session's `todo` rows are retained as the
 ordered `todos` list in session metadata. Step-start and step-finish parts are
 reported as excluded runtime telemetry; the event table is never read.
 
