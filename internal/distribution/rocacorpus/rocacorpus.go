@@ -17,7 +17,7 @@ const (
 	// BundledSource is what the installer records for this package, and it is
 	// what discovery reads to know the corpus attach alias is the kernel's own.
 	BundledSource = plugin.BundledSource
-	SchemaVersion = 3
+	SchemaVersion = 4
 	IndexVersion  = 2
 )
 
@@ -75,22 +75,48 @@ func prepareIngestProvenance(path string) error {
 		}
 	}
 	altered := tablePresent && !columnPresent
-	if altered {
+	archiveTablePresent, err := tableExists(tx, "session_versions")
+	if err != nil {
+		return err
+	}
+	archiveColumnPresent := false
+	if archiveTablePresent {
+		archiveColumnPresent, err = columnExists(context.Background(), tx,
+			"session_versions", "source_surface")
+		if err != nil {
+			return err
+		}
+	}
+	archiveAltered := archiveTablePresent && !archiveColumnPresent
+	if altered || archiveAltered {
 		// SQLite validates an external-content FTS table against its content
 		// table while ALTER runs. Retire the derived session index first and let
 		// the canonical declaration recreate it after the column is present.
-		for _, statement := range []string{
-			`DROP TRIGGER IF EXISTS sessions_ai`,
-			`DROP TRIGGER IF EXISTS sessions_ad`,
-			`DROP TRIGGER IF EXISTS sessions_au`,
-			`DROP TABLE IF EXISTS sessions_fts`,
-		} {
+		var statements []string
+		if altered {
+			statements = append(statements,
+				`DROP TRIGGER IF EXISTS sessions_ai`,
+				`DROP TRIGGER IF EXISTS sessions_ad`,
+				`DROP TRIGGER IF EXISTS sessions_au`,
+				`DROP TABLE IF EXISTS sessions_fts`)
+		}
+		if archiveAltered {
+			statements = append(statements, `DROP TABLE IF EXISTS session_versions_fts`)
+		}
+		for _, statement := range statements {
 			if _, err := tx.Exec(statement); err != nil {
 				return fmt.Errorf("retire the derived session index: %w", err)
 			}
 		}
+	}
+	if altered {
 		if _, err := tx.Exec(`ALTER TABLE sessions ADD COLUMN source_surface TEXT`); err != nil {
 			return fmt.Errorf("add sessions.source_surface: %w", err)
+		}
+	}
+	if archiveAltered {
+		if _, err := tx.Exec(`ALTER TABLE session_versions ADD COLUMN source_surface TEXT`); err != nil {
+			return fmt.Errorf("add session_versions.source_surface: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -107,6 +133,11 @@ func prepareIngestProvenance(path string) error {
 	if altered {
 		if _, err := tx.Exec(`INSERT INTO sessions_fts(sessions_fts) VALUES ('rebuild')`); err != nil {
 			return fmt.Errorf("rebuild the derived session index: %w", err)
+		}
+	}
+	if archiveAltered {
+		if _, err := tx.Exec(`INSERT INTO session_versions_fts(session_versions_fts) VALUES ('rebuild')`); err != nil {
+			return fmt.Errorf("rebuild the derived archived session index: %w", err)
 		}
 	}
 	var legacyGrokModels int

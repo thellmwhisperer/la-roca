@@ -37,18 +37,18 @@ func TestOpenCodeConvertsEachFinishedMessageAndItsContent(t *testing.T) {
 		t.Fatalf("complaints/sessions = %v/%d", complaints, len(records.Sessions))
 	}
 	coverage := records.MessageCoverage
-	if coverage == nil || coverage.Seen != 6 || coverage.Converted != 4 ||
+	if coverage == nil || coverage.Seen != 7 || coverage.Converted != 5 ||
 		coverage.Skipped["assistant message still being written"] != 1 ||
 		coverage.Skipped["unsupported message role: system"] != 1 {
 		t.Fatalf("message coverage = %+v", coverage)
 	}
 
 	session := records.Sessions[0]
-	if len(session.Exchanges) != 4 {
+	if len(session.Exchanges) != 5 {
 		t.Fatalf("exchanges = %d, want one per converted message", len(session.Exchanges))
 	}
-	user, first, second, third := session.Exchanges[0], session.Exchanges[1],
-		session.Exchanges[2], session.Exchanges[3]
+	user, first, second, third, fourth := session.Exchanges[0], session.Exchanges[1],
+		session.Exchanges[2], session.Exchanges[3], session.Exchanges[4]
 	if user.SourceID != "user-1" || user.HumanText != "map the synthetic beacon" || user.AgentText != "" {
 		t.Errorf("user exchange = %+v", user)
 	}
@@ -77,6 +77,13 @@ func TestOpenCodeConvertsEachFinishedMessageAndItsContent(t *testing.T) {
 	if third.SourceID != "assistant-3" || third.AgentText != "" ||
 		third.Provenance.Model != "synthetic-model-c" {
 		t.Errorf("contentless assistant exchange = %+v", third)
+	}
+	if fourth.SourceID != "assistant-4" || fourth.HumanText != "" ||
+		fourth.AgentText != "[tool write]" || fourth.Provenance.Model != "synthetic-model-d" {
+		t.Errorf("tool-only assistant exchange = %+v", fourth)
+	}
+	if len(fourth.Tools) != 1 || fourth.Tools[0].Name != "write" {
+		t.Errorf("tool-only tools = %+v", fourth.Tools)
 	}
 
 	encoded, err := json.Marshal(session.Metadata["todos"])
@@ -124,7 +131,7 @@ func TestOpenCodeConvertsEachFinishedMessageAndItsContent(t *testing.T) {
 	}
 	for label, result := range map[string]Result{"first": firstRun, "idempotent": secondRun} {
 		got := result.MessageCoverage["opencode"]
-		if got.Seen != 6 || got.Converted != 4 || len(got.Skipped) != 2 {
+		if got.Seen != 7 || got.Converted != 5 || len(got.Skipped) != 2 {
 			t.Errorf("%s run coverage = %+v", label, got)
 		}
 	}
@@ -231,8 +238,8 @@ func TestOpenCodeBackfillSplitsLegacyPairsWithoutDuplicates(t *testing.T) {
 		return counts
 	}
 	first := write()
-	if first.Exchanges != 2 || first.ExchangesDeleted != 1 {
-		t.Fatalf("backfill counts = %+v, want two recovered and one stale duplicate deleted", first)
+	if first.Exchanges != 3 || first.ExchangesDeleted != 1 {
+		t.Fatalf("backfill counts = %+v, want three recovered and one stale duplicate deleted", first)
 	}
 	if second := write(); second.Exchanges != 0 {
 		t.Fatalf("idempotent backfill = %+v", second)
@@ -267,7 +274,7 @@ func TestOpenCodeBackfillSplitsLegacyPairsWithoutDuplicates(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if exchanges != 4 || userRows != 1 || assistantRows != 3 || legacyChildren != 0 {
+	if exchanges != 5 || userRows != 1 || assistantRows != 4 || legacyChildren != 0 {
 		t.Fatalf("exchanges/user/assistants/legacy-children = %d/%d/%d/%d",
 			exchanges, userRows, assistantRows, legacyChildren)
 	}
@@ -285,7 +292,7 @@ func TestOpenCodeBackfillSplitsLegacyPairsWithoutDuplicates(t *testing.T) {
 		}
 		models = append(models, model)
 	}
-	if strings.Join(models, ",") != ",synthetic-model-a,synthetic-model-b,synthetic-model-c" {
+	if strings.Join(models, ",") != ",synthetic-model-a,synthetic-model-b,synthetic-model-c,synthetic-model-d" {
 		t.Errorf("per-message models = %v", models)
 	}
 
@@ -305,8 +312,8 @@ func TestOpenCodeBackfillSplitsLegacyPairsWithoutDuplicates(t *testing.T) {
 	}
 	records.Sessions[0].SnapshotUpdatedAt = ""
 	records.Sessions[0].Exchanges = nil
-	if empty := write(); empty.ExchangesDeleted != 4 {
-		t.Fatalf("empty authoritative snapshot = %+v, want four deleted", empty)
+	if empty := write(); empty.ExchangesDeleted != 5 {
+		t.Fatalf("empty authoritative snapshot = %+v, want five deleted", empty)
 	}
 	var remaining, mapped int
 	if err := db.SQL().QueryRow(`SELECT COUNT(*) FROM exchanges
