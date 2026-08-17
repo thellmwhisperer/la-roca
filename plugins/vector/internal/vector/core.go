@@ -41,7 +41,7 @@ const (
 )
 
 var (
-	structuralSessionToken    = regexp.MustCompile(`(?i)(?:\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b|\b(?:ses(?:sion)?[_:-])?[0-9A-HJKMNP-TV-Z]{26}\b|\bg-p-[a-z0-9_-]+\b|\b(?:md5|sha(?:1|224|256|384|512))[:=_-][0-9a-f]{7,}\b)`)
+	structuralSessionToken    = regexp.MustCompile(`(?i)(?:\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b|\b(?:ses(?:sion)?[_:-])?[0-9A-HJKMNP-TV-Z]{26}\b|\bg-p-[a-z0-9_-]+\b|\b(?:md5|sha-?(?:1|224|256|384|512))[:=_-][0-9a-f]{7,}\b)`)
 	sessionJSONScalarFragment = regexp.MustCompile(`"(?:\\.|[^"\\])*"\s*:\s*(?:"(?:\\.|[^"\\])*"|true|false|null|-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)`)
 	sessionJSONKeyFragment    = regexp.MustCompile(`"(?:\\.|[^"\\])*"\s*:`)
 )
@@ -245,7 +245,17 @@ func sessionSlashLanguage(before, after string) bool {
 	if before == "" || after == "" {
 		return false
 	}
+	pair := strings.ToLower(before + "/" + after)
+	switch pair {
+	case "and/or", "before/after", "client/server", "human/agent", "input/output",
+		"left/right", "on/off", "parent/child", "pass/fail", "producer/consumer",
+		"read/write", "request/response", "source/target", "up/down", "yes/no":
+		return true
+	}
 	if before == strings.ToUpper(before) {
+		if len(before) > 4 || len(after) > 4 {
+			return false
+		}
 		for _, character := range before {
 			if character < 'A' || character > 'Z' {
 				return false
@@ -258,22 +268,7 @@ func sessionSlashLanguage(before, after string) bool {
 		}
 		return true
 	}
-	if before != strings.ToLower(before) || after != strings.ToLower(after) {
-		return false
-	}
-	for _, part := range []string{before, after} {
-		for _, character := range part {
-			if character < 'a' || character > 'z' {
-				return false
-			}
-		}
-	}
-	switch before {
-	case "app", "bin", "cmd", "config", "data", "docs", "internal", "lib", "pkg", "src", "test", "tests", "tmp", "var", "vendor":
-		return false
-	default:
-		return true
-	}
+	return false
 }
 
 func sessionHexToken(value string) bool {
