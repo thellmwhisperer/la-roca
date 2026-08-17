@@ -554,18 +554,11 @@ func packageChecksum(checksums map[string]string) string {
 }
 
 func (m Manager) Install(candidate Candidate) (Result, error) {
-	if err := m.valid(); err != nil {
+	if err := m.PreflightInstall(candidate); err != nil {
 		return Result{}, err
 	}
 	target := filepath.Join(m.PluginRoot, candidate.Name)
-	if _, err := os.Lstat(target); err == nil || !os.IsNotExist(err) {
-		return Result{}, fmt.Errorf("plugin %s is already installed; run `roca plugin update %s`",
-			candidate.Name, candidate.Name)
-	}
 	executable := m.executablePath(candidate)
-	if err := refuseExecutableCollision(executable); err != nil {
-		return Result{}, err
-	}
 	staged, err := m.stage(candidate, nil)
 	if err != nil {
 		return Result{}, err
@@ -587,6 +580,18 @@ func (m Manager) Install(candidate Candidate) (Result, error) {
 	return resultFor(candidate, target, executable), nil
 }
 
+func (m Manager) PreflightInstall(candidate Candidate) error {
+	if err := m.valid(); err != nil {
+		return err
+	}
+	target := filepath.Join(m.PluginRoot, candidate.Name)
+	if _, err := os.Lstat(target); err == nil || !os.IsNotExist(err) {
+		return fmt.Errorf("plugin %s is already installed; run `roca plugin update %s`",
+			candidate.Name, candidate.Name)
+	}
+	return refuseExecutableCollision(m.executablePath(candidate))
+}
+
 func createStateDir(target, name string) error {
 	if name == "" {
 		return nil
@@ -598,39 +603,14 @@ func createStateDir(target, name string) error {
 }
 
 func (m Manager) Update(candidate Candidate) (Result, error) {
-	if err := m.valid(); err != nil {
+	previousManifest, err := m.preflightUpdate(candidate)
+	if err != nil {
 		return Result{}, err
 	}
 	target := filepath.Join(m.PluginRoot, candidate.Name)
-	previousManifest, err := ReadManifest(target)
-	if err != nil {
-		return Result{}, fmt.Errorf("update plugin %s: %w", candidate.Name, err)
-	}
-	if previousManifest.Kind != candidate.Kind {
-		return Result{}, fmt.Errorf("plugin %s changed its package kind from %s to %s; update refused",
-			candidate.Name, previousManifest.Kind, candidate.Kind)
-	}
-	previousDatabases := manifestDatabaseFiles(previousManifest)
-	candidateDatabases := candidateDatabaseFiles(candidate)
-	if !sameDatabaseFiles(previousDatabases, candidateDatabases) {
-		return Result{}, fmt.Errorf("plugin %s changed its database files from %v to %v; update refused to protect data",
-			candidate.Name, previousDatabases, candidateDatabases)
-	}
-	if previousManifest.StateDir != candidate.StateDir {
-		return Result{}, fmt.Errorf("plugin %s changed its state directory from %s to %s; update refused to protect data",
-			candidate.Name, previousManifest.StateDir, candidate.StateDir)
-	}
-	if err := m.verifyOwnedExecutable(previousManifest); err != nil {
-		return Result{}, err
-	}
 	executable := m.executablePath(candidate)
-	if previousManifest.Executable == "" && executable != "" {
-		if err := refuseExecutableCollision(executable); err != nil {
-			return Result{}, err
-		}
-	}
-	preservedDatabases := make(map[string]string, len(previousDatabases))
-	for _, database := range previousDatabases {
+	preservedDatabases := make(map[string]string, len(manifestDatabaseFiles(previousManifest)))
+	for _, database := range manifestDatabaseFiles(previousManifest) {
 		preservedDatabases[database] = filepath.Join(target, database)
 	}
 	staged, err := m.stage(candidate, preservedDatabases)
@@ -639,9 +619,6 @@ func (m Manager) Update(candidate Candidate) (Result, error) {
 	}
 	defer os.RemoveAll(staged)
 	backup := filepath.Join(m.PluginRoot, "."+candidate.Name+".previous")
-	if _, err := os.Lstat(backup); err == nil {
-		return Result{}, fmt.Errorf("update recovery directory already exists at %s", backup)
-	}
 	if err := os.Rename(target, backup); err != nil {
 		return Result{}, fmt.Errorf("preserve previous plugin: %w", err)
 	}
@@ -690,6 +667,62 @@ func (m Manager) Update(candidate Candidate) (Result, error) {
 		return Result{}, fmt.Errorf("remove previous plugin after update: %w", err)
 	}
 	return resultFor(candidate, target, executable), nil
+}
+
+func (m Manager) PreflightUpdate(candidate Candidate) error {
+	_, err := m.preflightUpdate(candidate)
+	return err
+}
+
+func (m Manager) preflightUpdate(candidate Candidate) (Manifest, error) {
+	if err := m.valid(); err != nil {
+		return Manifest{}, err
+	}
+	target := filepath.Join(m.PluginRoot, candidate.Name)
+	previousManifest, err := ReadManifest(target)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("update plugin %s: %w", candidate.Name, err)
+	}
+	if previousManifest.Kind != candidate.Kind {
+		return Manifest{}, fmt.Errorf("plugin %s changed its package kind from %s to %s; update refused",
+			candidate.Name, previousManifest.Kind, candidate.Kind)
+	}
+	previousDatabases := manifestDatabaseFiles(previousManifest)
+	candidateDatabases := candidateDatabaseFiles(candidate)
+	if !sameDatabaseFiles(previousDatabases, candidateDatabases) {
+		return Manifest{}, fmt.Errorf("plugin %s changed its database files from %v to %v; update refused to protect data",
+			candidate.Name, previousDatabases, candidateDatabases)
+	}
+	if previousManifest.StateDir != candidate.StateDir {
+		return Manifest{}, fmt.Errorf("plugin %s changed its state directory from %s to %s; update refused to protect data",
+			candidate.Name, previousManifest.StateDir, candidate.StateDir)
+	}
+	if err := m.verifyOwnedExecutable(previousManifest); err != nil {
+		return Manifest{}, err
+	}
+	executable := m.executablePath(candidate)
+	if previousManifest.Executable == "" && executable != "" {
+		if err := refuseExecutableCollision(executable); err != nil {
+			return Manifest{}, err
+		}
+	}
+	backup := filepath.Join(m.PluginRoot, "."+candidate.Name+".previous")
+	if _, err := os.Lstat(backup); err == nil {
+		return Manifest{}, fmt.Errorf("update recovery directory already exists at %s", backup)
+	} else if !os.IsNotExist(err) {
+		return Manifest{}, fmt.Errorf("inspect update recovery directory: %w", err)
+	}
+	if candidate.StateDir != "" {
+		info, err := os.Lstat(filepath.Join(target, candidate.StateDir))
+		if err == nil && !info.IsDir() {
+			return Manifest{}, fmt.Errorf("plugin state path %s is not a directory",
+				filepath.Join(target, candidate.StateDir))
+		}
+		if err != nil && !os.IsNotExist(err) {
+			return Manifest{}, fmt.Errorf("inspect plugin state directory: %w", err)
+		}
+	}
+	return previousManifest, nil
 }
 
 func (m Manager) Uninstall(name string) (Result, error) {
@@ -826,33 +859,13 @@ func writeManifest(directory string, candidate Candidate, executable string) err
 // writes land in an inode nobody can reach again. Nothing but the payload
 // changes between versions of such a plugin, so nothing else has to move.
 func (m Manager) UpdateInPlace(candidate Candidate) (Result, error) {
-	if err := m.valid(); err != nil {
+	previous, err := m.preflightUpdateInPlace(candidate)
+	if err != nil {
 		return Result{}, err
 	}
-	if candidate.Kind != DataPackage || candidate.Risk != DataOnly || candidate.Executable != "" {
-		return Result{}, fmt.Errorf(
-			"plugin %s can run code; an in-place update is refused", candidate.Name)
-	}
 	target := filepath.Join(m.PluginRoot, candidate.Name)
-	previous, err := ReadManifest(target)
-	if err != nil {
-		return Result{}, fmt.Errorf("update plugin %s: %w", candidate.Name, err)
-	}
-	if previous.Executable != "" {
-		return Result{}, fmt.Errorf(
-			"plugin %s was installed with an executable; an in-place update is refused", candidate.Name)
-	}
-	if previous.Kind != DataPackage {
-		return Result{}, fmt.Errorf(
-			"plugin %s is not a data package; an in-place update is refused", candidate.Name)
-	}
 	previousDatabases := manifestDatabaseFiles(previous)
 	candidateDatabases := candidateDatabaseFiles(candidate)
-	if !sameDatabaseFiles(previousDatabases, candidateDatabases) {
-		return Result{}, fmt.Errorf(
-			"plugin %s changed its database files from %v to %v; update refused to protect data",
-			candidate.Name, previousDatabases, candidateDatabases)
-	}
 	databaseSet := make(map[string]bool, len(candidateDatabases))
 	for _, database := range candidateDatabases {
 		databaseSet[database] = true
@@ -891,6 +904,109 @@ func (m Manager) UpdateInPlace(candidate Candidate) (Result, error) {
 		return Result{}, err
 	}
 	return resultFor(candidate, target, ""), nil
+}
+
+func (m Manager) PreflightUpdateInPlace(candidate Candidate) error {
+	_, err := m.preflightUpdateInPlace(candidate)
+	return err
+}
+
+func (m Manager) preflightUpdateInPlace(candidate Candidate) (Manifest, error) {
+	if err := m.valid(); err != nil {
+		return Manifest{}, err
+	}
+	if candidate.Kind != DataPackage || candidate.Risk != DataOnly || candidate.Executable != "" {
+		return Manifest{}, fmt.Errorf(
+			"plugin %s can run code; an in-place update is refused", candidate.Name)
+	}
+	target := filepath.Join(m.PluginRoot, candidate.Name)
+	previous, err := ReadManifest(target)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("update plugin %s: %w", candidate.Name, err)
+	}
+	if previous.Executable != "" {
+		return Manifest{}, fmt.Errorf(
+			"plugin %s was installed with an executable; an in-place update is refused", candidate.Name)
+	}
+	if previous.Kind != DataPackage {
+		return Manifest{}, fmt.Errorf(
+			"plugin %s is not a data package; an in-place update is refused", candidate.Name)
+	}
+	previousDatabases := manifestDatabaseFiles(previous)
+	candidateDatabases := candidateDatabaseFiles(candidate)
+	if !sameDatabaseFiles(previousDatabases, candidateDatabases) {
+		return Manifest{}, fmt.Errorf(
+			"plugin %s changed its database files from %v to %v; update refused to protect data",
+			candidate.Name, previousDatabases, candidateDatabases)
+	}
+	return previous, nil
+}
+
+func (m Manager) PreflightExecutableRepair(candidate Candidate) error {
+	_, _, err := m.preflightExecutableRepair(candidate)
+	return err
+}
+
+func (m Manager) RepairExecutable(candidate Candidate) (Result, error) {
+	manifest, missing, err := m.preflightExecutableRepair(candidate)
+	if err != nil {
+		return Result{}, err
+	}
+	target := filepath.Join(m.PluginRoot, candidate.Name)
+	if err := createStateDir(target, candidate.StateDir); err != nil {
+		return Result{}, err
+	}
+	if missing {
+		if err := installChecksummedFile(
+			filepath.Join(candidate.Directory, candidate.Executable), manifest.Executable,
+			0o700, candidate.Executable, candidate.Files[candidate.Executable]); err != nil {
+			return Result{}, err
+		}
+	}
+	return resultFor(candidate, target, manifest.Executable), nil
+}
+
+func (m Manager) preflightExecutableRepair(candidate Candidate) (Manifest, bool, error) {
+	if err := m.valid(); err != nil {
+		return Manifest{}, false, err
+	}
+	if candidate.Kind != ExecutablePackage || candidate.Executable == "" {
+		return Manifest{}, false, fmt.Errorf("plugin %s has no executable to repair", candidate.Name)
+	}
+	target := filepath.Join(m.PluginRoot, candidate.Name)
+	manifest, err := VerifyInstalledPayload(candidate.Name, target)
+	if err != nil {
+		return Manifest{}, false, fmt.Errorf("verify installed plugin %s: %w", candidate.Name, err)
+	}
+	if manifest.Source != candidate.Source || manifest.Version != candidate.Version ||
+		manifest.Kind != candidate.Kind || manifest.StateDir != candidate.StateDir ||
+		manifest.ExecutableFile != candidate.Executable || manifest.Checksum != candidate.Checksum ||
+		!maps.Equal(manifest.Files, candidate.Files) {
+		return Manifest{}, false, fmt.Errorf(
+			"bundled plugin %s version %s differs from its installed payload",
+			candidate.Name, candidate.Version)
+	}
+	if err := m.verifyOwnedExecutable(manifest); err != nil {
+		return Manifest{}, false, err
+	}
+	if candidate.StateDir != "" {
+		info, stateErr := os.Lstat(filepath.Join(target, candidate.StateDir))
+		if stateErr == nil && !info.IsDir() {
+			return Manifest{}, false, fmt.Errorf("plugin state path %s is not a directory",
+				filepath.Join(target, candidate.StateDir))
+		}
+		if stateErr != nil && !os.IsNotExist(stateErr) {
+			return Manifest{}, false, fmt.Errorf("inspect plugin state directory: %w", stateErr)
+		}
+	}
+	_, err = os.Lstat(manifest.Executable)
+	if os.IsNotExist(err) {
+		return manifest, true, nil
+	}
+	if err != nil {
+		return Manifest{}, false, fmt.Errorf("inspect plugin executable: %w", err)
+	}
+	return manifest, false, nil
 }
 
 // CandidateFromManifest describes an installed plugin the way Inspect describes

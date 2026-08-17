@@ -1,7 +1,8 @@
 # Install, update, and uninstall
 
-La Roca ships as one static executable. Installation copies it onto the PATH,
-update replaces it after verification, and uninstall removes the executable and
+La Roca ships as a static core executable carrying its platform-matched vector
+companion. Installation puts both in the selected executable directory, update
+refreshes them after verification, and uninstall removes the executables and
 integrations. Data is deleted only with explicit purge consent.
 
 ## Install
@@ -15,11 +16,17 @@ the SHA-256 digest, and only then replaces the target by rename. It refuses to
 overwrite an unrelated executable and converges safely after an interrupted
 run.
 
-The installed binary then places its own bundled data plugins under
-`~/.roca/plugins/`. Each one carries no executable, starts as an empty SQLite
-database, is verified and recorded like any other [installed
-package](plugins.md#verified-packages-and-lifecycle), and is removed by a purge
-with the rest of that tree. It ships the resident
+The installed core materializes `roca-vector` in the same directory, including
+when `--prefix` or `ROCA_PREFIX` selects a custom one. Its manifest and dormant
+`state/` directory live under `~/.roca/plugins/vector/`; dispatch remains hidden
+unless the existing `features.vector` switch is true. Installation refuses to
+replace an externally sourced plugin package, an unmanaged plugin directory, or
+an executable it does not own, and reports the collision instead.
+
+The core also places its bundled data plugins under `~/.roca/plugins/`. Each
+starts as an empty SQLite database, is verified and recorded like any other
+[installed package](plugins.md#verified-packages-and-lifecycle), and is removed
+by a purge with the rest of that tree. It ships the resident
 [`roca-ops`](plugins.md#the-bundled-roca-ops-plugin) store, the resident
 [`roca-corpus`](plugins.md#the-bundled-roca-corpus-plugin) archive and the
 custodial [`roca-cron`](plugins.md#scheduled-rides) journey store. If they cannot be
@@ -114,10 +121,13 @@ roca update
 
 Update resolves the selected release, verifies its checksum, runs the staged
 binary's version check, and swaps it into place by rename. The swapped binary
-then places its bundled data plugins exactly as installation does, refreshing
-the packaged files and keeping the database they already own. The existing
-data, configuration and agent integrations remain in place. If any verification
-fails, the active executable is unchanged.
+then refreshes every shipped plugin payload exactly as installation does. Data
+plugins keep the databases they already own; vector is replaced from the same
+core release while its manifest-owned `state/` directory is preserved byte for
+byte. An unowned or externally sourced vector installation is named and left
+untouched instead of being overwritten. Existing data, configuration and agent
+integrations remain in place. If bundled placement or verification fails, the
+previous core remains active.
 
 The roca skill, the generated `roca-semantica` catalog skill, `prompt.md`, and
 the Claude authorship hook are registered in the schema-versioned
