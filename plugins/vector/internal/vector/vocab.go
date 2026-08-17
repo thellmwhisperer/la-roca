@@ -3,6 +3,7 @@ package vector
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -100,7 +101,8 @@ func (i Index) Vocab(ctx context.Context, concept string) (VocabReport, error) {
 	if len(vectors) != 1 || len(vectors[0]) != dimensions {
 		return VocabReport{}, fmt.Errorf("query embedding has the wrong dimensions")
 	}
-	candidates, err := nearest(ctx, store, vectorBlob(vectors[0]), min(vocabTopK*8, 800))
+	candidates, err := nearestVocab(ctx, store, vectorBlob(vectors[0]),
+		vocabTopK+maxUnresolvedCandidates)
 	if err != nil {
 		return VocabReport{}, err
 	}
@@ -158,6 +160,44 @@ func (i Index) vocabDocuments(ctx context.Context, candidates []neighbor) ([]voc
 		}
 	}
 	return documents, nil
+}
+
+func nearestVocab(ctx context.Context, db *sql.DB, vector []byte, k int) ([]neighbor, error) {
+	rows, err := db.QueryContext(ctx, `WITH eligible AS (
+			SELECT c.source_kind,c.source_id,c.chunk_index,c.locator,
+				vec_distance_cosine(e.embedding,?) AS distance
+			FROM embeddings e
+			JOIN chunks c ON c.id=e.rowid
+			WHERE c.source_kind IN ('exchanges','thinking_blocks')
+		), ranked AS (
+			SELECT *,row_number() OVER (
+				PARTITION BY source_kind,source_id
+				ORDER BY distance,chunk_index
+			) AS source_rank
+			FROM eligible
+		)
+		SELECT source_kind,source_id,locator,distance
+		FROM ranked
+		WHERE source_rank=1
+		ORDER BY distance,source_kind,source_id
+		LIMIT ?`, vector, k)
+	if err != nil {
+		return nil, fmt.Errorf("search eligible vocabulary sources: %w", err)
+	}
+	defer rows.Close()
+	var result []neighbor
+	for rows.Next() {
+		var item neighbor
+		var raw string
+		if err := rows.Scan(&item.kind, &item.sourceID, &raw, &item.distance); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(raw), &item.where); err != nil {
+			return nil, fmt.Errorf("decode source locator: %w", err)
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
 }
 
 // rankedTerm carries everything the grouping needs beside the score.
@@ -360,6 +400,11 @@ func (c *vocabCensus) add(kind, text string) {
 
 func newVocabCensus() *vocabCensus {
 	return &vocabCensus{terms: map[string]int64{}}
+}
+
+func invalidateCensus(ctx context.Context, db *sql.DB) error {
+	_, err := db.ExecContext(ctx, `DELETE FROM census_totals`)
+	return err
 }
 
 // writeCensus replaces the stored census in one transaction, so a reader sees

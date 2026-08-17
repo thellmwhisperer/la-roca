@@ -157,6 +157,9 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 	if err != nil {
 		return Delta{}, err
 	}
+	if err := invalidateCensus(ctx, store); err != nil {
+		return Delta{}, fmt.Errorf("invalidate vector census: %w", err)
+	}
 	if model != "" && model != i.Model {
 		if sourceKind != "" {
 			return Delta{}, fmt.Errorf("targeted vector ingest cannot change model from %s to %s", model, i.Model)
