@@ -34,11 +34,12 @@ func TestCoreCLIWalksEverySourceThroughRocaExec(t *testing.T) {
 			rows = []map[string]any{{"id": 3, "session_id": "s1", "exchange_number": nil,
 				"position_in_session": nil, "text": "gamma reasoning"}}
 		case strings.Contains(statement, "FROM "+corpusTable("sessions")):
-			if !strings.Contains(statement, "$.project_name") || strings.Contains(statement, "metadata AS") {
+			if !strings.Contains(statement, "$.project_name") || strings.Contains(statement, "metadata AS") ||
+				strings.Contains(statement, "COALESCE(project,") {
 				t.Fatalf("session projection did not select only the project label: %s", statement)
 			}
 			rows = []map[string]any{{"session_id": "s1", "title": "delta session",
-				"project": "123e4567-e89b-12d3-a456-426614174000", "project_name": "Synthetic orchard"}}
+				"project_name": "Synthetic orchard"}}
 		default:
 			return nil, fmt.Errorf("unexpected statement %s", statement)
 		}
@@ -83,13 +84,19 @@ func TestSessionEmbeddingTextKeepsOnlyHumanContent(t *testing.T) {
 		want        string
 	}{
 		{name: "human fields", title: "Scottish public health " + hash + " " + uuid,
-			project: "health-research", want: "Scottish public health\nhealth-research"},
+			project: "health-research", want: "Scottish public health"},
 		{name: "opaque project", title: "Personal wellbeing",
 			project: "g-p-syntheticsextant000000000000", want: "Personal wellbeing"},
 		{name: "paths and short hashes", title: "Useful /synthetic/work/health deadbeef",
 			project: `C:\synthetic\work\health`, want: "Useful"},
+		{name: "uppercase and mixed case hashes", title: "Useful DEADBEEF DeadBeef",
+			want: "Useful"},
 		{name: "natural hexadecimal letters", title: "Defaced artifact recovery",
 			project: "", want: "Defaced artifact recovery"},
+		{name: "slash-bearing acronyms", title: "CI/CD rollout plan",
+			want: "CI/CD rollout plan"},
+		{name: "slash-bearing protocol", title: "HTTP/2 investigation",
+			want: "HTTP/2 investigation"},
 		{name: "path with spaces", title: "/Users/synthetic/Health Research",
 			project: "", want: ""},
 		{name: "human metadata label", title: "Synthetic canvas", project: uuid,
@@ -129,7 +136,7 @@ func TestCoreCLIResolvesSessionWithHumanProjectName(t *testing.T) {
 	core := CoreCLI{Executable: "roca", Run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
 		statement = args[len(args)-1]
 		return json.Marshal(map[string]any{"rows": []map[string]any{{
-			"title": "Synthetic canvas", "project": "aaaaaaaa-0000-4000-8000-000000000001",
+			"title":        "Synthetic canvas",
 			"project_name": "Synthetic orchard",
 		}}})
 	}}
@@ -140,7 +147,8 @@ func TestCoreCLIResolvesSessionWithHumanProjectName(t *testing.T) {
 	if text != "Synthetic canvas\nSynthetic orchard" {
 		t.Fatalf("session text = %q", text)
 	}
-	if !strings.Contains(statement, "$.project_name") || strings.Contains(statement, "metadata AS") {
+	if !strings.Contains(statement, "$.project_name") || strings.Contains(statement, "metadata AS") ||
+		strings.Contains(statement, "COALESCE(project,") {
 		t.Fatalf("session resolution did not select only the project label: %s", statement)
 	}
 }

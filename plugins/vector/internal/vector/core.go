@@ -117,8 +117,8 @@ func corePages() []corePage {
 			kind: "sessions", initial: "",
 			query: func(cursor string) string {
 				return fmt.Sprintf(`SELECT session_id,COALESCE(title,'') AS title,
-					COALESCE(project,'') AS project,%s AS project_name FROM %s
-					WHERE (COALESCE(title,'') <> '' OR COALESCE(project,'') <> '' OR %s <> '')
+					%s AS project_name FROM %s
+					WHERE (COALESCE(title,'') <> '' OR %s <> '')
 					AND session_id > %s ORDER BY session_id LIMIT %d`,
 					sessionProjectName, corpusTable("sessions"), sessionProjectName,
 					sqlLiteral(cursor), walkPageSize)
@@ -178,12 +178,12 @@ func decodeSession(values map[string]any) (sourceRow, string, error) {
 	if id == "" {
 		return sourceRow{}, "", fmt.Errorf("session_id is empty")
 	}
-	text := sessionEmbeddingText(stringValue(values["title"]), stringValue(values["project"]),
-		stringValue(values["project_name"]))
+	text := sessionEmbeddingText(stringValue(values["title"]), stringValue(values["project_name"]))
 	return sourceRow{kind: "sessions", sessionID: id, text: text}, id, nil
 }
 
-func sessionEmbeddingText(values ...string) string {
+func sessionEmbeddingText(title, projectName string) string {
+	values := [2]string{title, projectName}
 	fields := make([]string, 0, len(values))
 	seen := make(map[string]bool, len(values))
 	for _, value := range values {
@@ -207,7 +207,7 @@ func cleanSessionField(value string) string {
 	clean := fields[:0]
 	for _, field := range fields {
 		candidate := strings.Trim(field, `"'()[]{}<>,;:!?.`)
-		if candidate == "" || strings.ContainsAny(candidate, `/\`) || sessionHexToken(candidate) {
+		if candidate == "" || sessionPathToken(candidate) || sessionHexToken(candidate) {
 			continue
 		}
 		clean = append(clean, field)
@@ -220,11 +220,28 @@ func sessionPathValue(value string) bool {
 	if len(fields) == 0 {
 		return false
 	}
-	first := fields[0]
-	if strings.ContainsAny(first, `/\`) {
+	return sessionPathToken(strings.Trim(fields[0], `"'()[]{}<>,;:!?.`))
+}
+
+func sessionPathToken(value string) bool {
+	if value == "" {
+		return false
+	}
+	if strings.HasPrefix(value, "/") || strings.HasPrefix(value, `\`) ||
+		strings.HasPrefix(value, "./") || strings.HasPrefix(value, "../") ||
+		strings.HasPrefix(value, "~/") || strings.Contains(value, `\`) {
 		return true
 	}
-	return len(first) >= 3 && first[1] == ':' && strings.ContainsAny(first[2:3], `/\`)
+	if len(value) >= 3 && value[1] == ':' && strings.ContainsAny(value[2:3], `/\`) {
+		return true
+	}
+	if strings.Count(value, "/") >= 2 {
+		return true
+	}
+	if before, after, ok := strings.Cut(value, "/"); ok {
+		return before == "" || after == "" || strings.HasPrefix(after, ".") || strings.Contains(after, ".")
+	}
+	return false
 }
 
 func sessionHexToken(value string) bool {
@@ -245,7 +262,7 @@ func sessionHexToken(value string) bool {
 			return false
 		}
 	}
-	return hasDigit || len(raw) >= 16 || (len(raw) >= 8 && raw == strings.ToLower(raw))
+	return hasDigit || len(raw) >= 8
 }
 
 func stripSessionJSON(value string) string {
@@ -280,15 +297,14 @@ func (c CoreCLI) ResolveSource(ctx context.Context, kind string, where locator) 
 	var statement string
 	switch kind {
 	case "sessions":
-		statement = `SELECT COALESCE(title,'') AS title,COALESCE(project,'') AS project,` +
+		statement = `SELECT COALESCE(title,'') AS title,` +
 			sessionProjectName + ` AS project_name FROM ` + corpusTable("sessions") +
 			` WHERE session_id=` + sqlLiteral(where.SessionID)
 		rows, err := c.query(ctx, statement)
 		if err != nil || len(rows) == 0 {
 			return "", err
 		}
-		return sessionEmbeddingText(stringValue(rows[0]["title"]), stringValue(rows[0]["project"]),
-			stringValue(rows[0]["project_name"])), nil
+		return sessionEmbeddingText(stringValue(rows[0]["title"]), stringValue(rows[0]["project_name"])), nil
 	case "exchanges":
 		if !where.HasOrdinal {
 			statement = `SELECT ` + exchangeText + ` AS text FROM ` + corpusTable("exchanges") +
