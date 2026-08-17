@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -67,8 +68,9 @@ func (s *Service) pluginsFor(ctx context.Context, input string,
 	}
 	candidates, warnings := plugin.Discover(s.opts.PluginDir)
 	candidates = s.onDemand(candidates)
+	limit := max(0, plugin.MaxAttached-len(s.resident)-s.layerRegistryAttachmentCost())
 	return s.withResidents(validatePluginRouteLimit(ctx,
-		selectPlugins(input, candidates), warnings, plugin.MaxAttached-len(s.resident)))
+		selectPlugins(input, candidates), warnings, limit))
 }
 
 func validatePluginRoute(ctx context.Context, candidates []plugin.Descriptor,
@@ -136,6 +138,14 @@ func (s *Service) openResidents(ctx context.Context) error {
 		return nil
 	}
 	descriptors, warnings := plugin.Discover(s.opts.PluginDir)
+	var stableLayers *plugin.Database
+	if !s.opts.RocaOpsEnabled {
+		var err error
+		stableLayers, err = stableLayerDatabase(ctx, descriptors)
+		if err != nil {
+			return err
+		}
+	}
 	var candidates []plugin.Descriptor
 	if s.opts.RocaOpsEnabled {
 		for _, descriptor := range descriptors {
@@ -164,7 +174,11 @@ func (s *Service) openResidents(ctx context.Context) error {
 	}
 	// Discovery runs again for every answer and its warnings travel with that
 	// per-query route. Keeping a copy here would report each of them twice.
-	route := validatePluginRoute(ctx, candidates, nil)
+	limit := plugin.MaxAttached
+	if stableLayers != nil {
+		limit--
+	}
+	route := validatePluginRouteLimit(ctx, candidates, nil, limit)
 	s.resident, s.residentOmitted, s.residentWarnings = route.databases, route.omitted, route.warnings
 
 	var opsDatabase *plugin.Database
@@ -193,13 +207,10 @@ func (s *Service) openResidents(ctx context.Context) error {
 		s.layerSet = opsDatabase
 		s.layerDB = s.ops
 	} else {
-		layerSet, err := stableLayerDatabase(ctx, descriptors)
-		if err != nil {
-			return err
-		}
-		s.layerSet = layerSet
-		if layerSet != nil && !s.opts.ReadOnly {
-			s.layerDB, err = store.Open(layerSet.Database)
+		s.layerSet = stableLayers
+		if stableLayers != nil && !s.opts.ReadOnly {
+			var err error
+			s.layerDB, err = store.Open(stableLayers.Database)
 			if err != nil {
 				return fmt.Errorf("open %s for the layer registry: %w", rocaOpsPluginName, err)
 			}
@@ -303,12 +314,76 @@ func (s *Service) openQueryConnectionOn(ctx context.Context, target *store.DB) (
 		_ = connection.Close()
 		return nil, nil, err
 	}
+	if s.layerRegistryAttachmentCost() != 0 {
+		registryAttached, err := plugin.Attach(ctx, connection, []plugin.Database{*s.layerSet})
+		if err != nil {
+			plugin.Detach(context.Background(), connection, attached)
+			_ = connection.Close()
+			return nil, nil, err
+		}
+		attached = append(attached, registryAttached...)
+	}
+	if s.layerSet != nil {
+		if err := exposeLayerRegistry(ctx, connection, s.layerSet.Schema); err != nil {
+			hideLayerRegistry(connection)
+			plugin.Detach(context.Background(), connection, attached)
+			_ = connection.Close()
+			return nil, nil, err
+		}
+	}
 	return connection, attached, nil
 }
 
 func closeQueryConnection(connection *sql.Conn, attached []string) {
+	hideLayerRegistry(connection)
 	plugin.Detach(context.Background(), connection, attached)
 	_ = connection.Close()
+}
+
+func (s *Service) layerRegistryAttachmentCost() int {
+	if s.layerSet == nil {
+		return 0
+	}
+	for _, database := range s.resident {
+		if database.Schema == s.layerSet.Schema {
+			return 0
+		}
+	}
+	return 1
+}
+
+func exposeLayerRegistry(ctx context.Context, connection *sql.Conn, schema string) (resultErr error) {
+	if _, err := connection.ExecContext(ctx, "PRAGMA query_only = OFF"); err != nil {
+		return fmt.Errorf("open the layer registry compatibility view: %w", err)
+	}
+	defer func() {
+		if _, err := connection.ExecContext(context.WithoutCancel(ctx), "PRAGMA query_only = ON"); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("close the layer registry compatibility view: %w", err))
+		}
+	}()
+	if _, err := connection.ExecContext(ctx, "DROP VIEW IF EXISTS temp.layers"); err != nil {
+		return fmt.Errorf("replace the layer registry compatibility view: %w", err)
+	}
+	_, err := connection.ExecContext(ctx, `CREATE TEMP VIEW layers AS
+		SELECT name, description, schema_file, access_mode, ingest_allowed, is_coordination,
+		       search_excluded, alias_of, added_by, deprecated, lifecycle, capabilities,
+		       since_version FROM `+quoteSchema(schema)+`.layers`)
+	if err != nil {
+		return fmt.Errorf("compose the layer registry compatibility view: %w", err)
+	}
+	return nil
+}
+
+func hideLayerRegistry(connection *sql.Conn) {
+	ctx := context.Background()
+	var kind string
+	if err := connection.QueryRowContext(ctx,
+		"SELECT type FROM sqlite_temp_master WHERE name = 'layers'").Scan(&kind); err != nil || kind != "view" {
+		return
+	}
+	_, _ = connection.ExecContext(ctx, "PRAGMA query_only = OFF")
+	_, _ = connection.ExecContext(ctx, "DROP VIEW IF EXISTS temp.layers")
+	_, _ = connection.ExecContext(ctx, "PRAGMA query_only = ON")
 }
 
 func (r pluginRoute) consulted() []string {

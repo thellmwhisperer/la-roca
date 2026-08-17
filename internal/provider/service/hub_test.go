@@ -151,6 +151,17 @@ func TestLayerRegistryOwnerSurvivesRocaOpsActivation(t *testing.T) {
 	if copied != 0 {
 		t.Fatalf("custom registry rows copied into core = %d", copied)
 	}
+	for range 2 {
+		read, err := legacy.Exec(t.Context(), ExecRequest{
+			SQL: "SELECT name FROM layers WHERE name = 'knowledge'",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if read.RowCount != 1 || read.Rows[0]["name"] != "knowledge" {
+			t.Fatalf("legacy layer registry read = %+v", read)
+		}
+	}
 	if err := legacy.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -180,6 +191,33 @@ func TestLayerRegistryOwnerSurvivesRocaOpsActivation(t *testing.T) {
 	}
 	if report.Checks["runtime_layers_not_in_registry"].Status != HealthPass {
 		t.Fatalf("health after activation = %+v", report)
+	}
+}
+
+func TestShadowReadsTheStableLayerRegistry(t *testing.T) {
+	fixture := newHubFixture(t)
+	seedHubCoreMemory(t, fixture.plugins, 10, "Synthetic shadow layer marker")
+	seedLegacyCore(t, fixture, nil)
+	registering := openHubService(t, fixture, LayoutShadowEqual, nil)
+	if _, err := registering.AddLayer(t.Context(), "knowledge"); err != nil {
+		t.Fatal(err)
+	}
+	if err := registering.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var rollback error
+	shadow := openHubService(t, fixture, LayoutShadowEqual, func(options *Options) {
+		options.RollbackLayout = func(reason error) error { rollback = reason; return nil }
+	})
+	read, err := shadow.Exec(t.Context(), ExecRequest{
+		SQL: "SELECT name FROM layers WHERE name = 'knowledge'",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if read.RowCount != 1 || read.Rows[0]["name"] != "knowledge" || rollback != nil {
+		t.Fatalf("shadow layer registry read = %+v, rollback = %v", read, rollback)
 	}
 }
 
