@@ -42,9 +42,10 @@ plugin-owned index, and starts a resumable background build. `ingest
 writing commands honor `ROCA_READ_ONLY`. `query` uses binary ANN candidates,
 exact cosine reranking, stable source deduplication, and live text resolution.
 
-Session embeddings contain only cleaned human title and project labels. They
-never contain serialized metadata, fingerprints, hashes, UUIDs, opaque project
-identifiers, or paths. The session text contract is fingerprint-versioned, so
+Session embeddings contain only a cleaned human title and the explicitly
+whitelisted human `project_name` label. They never contain serialized metadata,
+JSON keys or fragments, fingerprints, hashes, UUIDs, opaque identifiers, or
+paths. The session text contract is fingerprint-versioned, so
 `ingest --delta --source sessions` re-embeds the affected session chunks once,
 reports added, updated, removed, and unchanged counts, and is a zero-write
 delta when repeated against the same corpus.
