@@ -55,3 +55,18 @@ func TestWorkerCarriesExplicitCoreAndStatePaths(t *testing.T) {
 		t.Fatalf("worker arguments = %q, want %q", got, want)
 	}
 }
+
+func TestVocabDemandsOneConceptAndAnInstalledIndex(t *testing.T) {
+	env := &environment{stateDir: t.TempDir()}
+	root := rootCommand(env)
+	root.SetArgs([]string{"vocab"})
+	if err := root.Execute(); err == nil {
+		t.Fatal("vocab without a concept ran")
+	}
+	root = rootCommand(env)
+	root.SetArgs([]string{"vocab", "salud"})
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "roca vector install") {
+		t.Fatalf("vocab without an index = %v, want the install hint", err)
+	}
+}
