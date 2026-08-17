@@ -118,7 +118,7 @@ func (s *Service) Doctor(ctx context.Context) (DoctorReport, error) {
 	}
 	for _, name := range unregistered {
 		report.LayerRepairs = append(report.LayerRepairs,
-			"roca layers add "+shellQuotedLayer(name))
+			"roca layers add "+shellQuoted(name)+" --db-path "+shellQuoted(report.DBPath))
 	}
 
 	report.Providers, report.Titular = verdicts(ctx, cascade)
@@ -133,8 +133,8 @@ func (s *Service) Doctor(ctx context.Context) (DoctorReport, error) {
 	return report, nil
 }
 
-func shellQuotedLayer(name string) string {
-	return "'" + strings.ReplaceAll(name, "'", `'"'"'`) + "'"
+func shellQuoted(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
 }
 
 // Bedrock is the oldest valid moment in the ingested corpus. Project is best

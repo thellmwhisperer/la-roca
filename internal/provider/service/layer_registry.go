@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/thellmwhisperer/la-roca/internal/store"
 )
 
 // LayerAddResult reports whether a layer registration changed the catalogue.
@@ -26,11 +28,50 @@ type registeredLayer struct {
 	aliasOf string
 }
 
+func (s *Service) memoryOwner() (*store.DB, error) {
+	if !s.opts.RocaOpsEnabled {
+		return s.db, nil
+	}
+	if s.ops == nil {
+		return nil, fmt.Errorf("%s is unavailable for operational memory writes", rocaOpsPluginName)
+	}
+	return s.ops, nil
+}
+
+func (s *Service) memoryReader(ctx context.Context) (*sql.DB, func(), error) {
+	if !s.opts.RocaOpsEnabled {
+		reader, err := s.db.ReadOnly()
+		return reader, func() {}, err
+	}
+	if s.ops != nil {
+		reader, err := s.ops.ReadOnly()
+		return reader, func() {}, err
+	}
+	database := databaseForVerb(s.resident, StoreVerb, rocaOpsPluginName)
+	if database == nil {
+		return nil, func() {}, fmt.Errorf("%s is unavailable for operational memory reads", rocaOpsPluginName)
+	}
+	reader, err := sql.Open("sqlite", database.ReadOnlyURI())
+	if err != nil {
+		return nil, func() {}, fmt.Errorf("open %s read-only: %w", rocaOpsPluginName, err)
+	}
+	if err := reader.PingContext(ctx); err != nil {
+		reader.Close()
+		return nil, func() {}, fmt.Errorf("open %s read-only: %w", rocaOpsPluginName, err)
+	}
+	return reader, func() { _ = reader.Close() }, nil
+}
+
 // registeredLayers reads the live catalogue. The table, rather than the
 // embedded defaults, is authoritative because operators may intentionally add
 // a layer after installation.
 func (s *Service) registeredLayers(ctx context.Context) ([]registeredLayer, error) {
-	rows, err := s.db.SQL().QueryContext(ctx,
+	reader, closeReader, err := s.memoryReader(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer closeReader()
+	rows, err := reader.QueryContext(ctx,
 		`SELECT name, COALESCE(alias_of, '') FROM layers ORDER BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("read the layer registry: %w", err)
@@ -94,9 +135,13 @@ func (s *Service) AddLayer(ctx context.Context, name string) (LayerAddResult, er
 	if _, err := s.ensureSchema(ctx); err != nil {
 		return LayerAddResult{}, err
 	}
+	owner, err := s.memoryOwner()
+	if err != nil {
+		return LayerAddResult{}, err
+	}
 
 	result := LayerAddResult{Name: name}
-	err := s.db.Write(ctx, func(tx *sql.Tx) error {
+	err = owner.Write(ctx, func(tx *sql.Tx) error {
 		outcome, err := tx.ExecContext(ctx, `INSERT INTO layers
 			(name, description, schema_file, ingest_allowed, added_by, lifecycle, since_version)
 			VALUES (?, 'Operator-registered memory layer.', '', 1, 'operator', 'curated', ?)
@@ -128,9 +173,13 @@ func (s *Service) MigrateLayer(ctx context.Context, from, to string) (LayerMigra
 	if err != nil {
 		return LayerMigrateResult{}, err
 	}
+	owner, err := s.memoryOwner()
+	if err != nil {
+		return LayerMigrateResult{}, err
+	}
 
 	result := LayerMigrateResult{From: from, To: physical}
-	err = s.db.Write(ctx, func(tx *sql.Tx) error {
+	err = owner.Write(ctx, func(tx *sql.Tx) error {
 		outcome, err := tx.ExecContext(ctx,
 			`UPDATE memories SET layer = ? WHERE layer = ?`, physical, from)
 		if err != nil {
@@ -143,8 +192,13 @@ func (s *Service) MigrateLayer(ctx context.Context, from, to string) (LayerMigra
 }
 
 func (s *Service) unregisteredLayers(ctx context.Context) ([]string, error) {
+	reader, closeReader, err := s.memoryReader(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer closeReader()
 	var encoded string
-	err := s.db.SQL().QueryRowContext(ctx, `SELECT json_group_array(layer) FROM (
+	err = reader.QueryRowContext(ctx, `SELECT json_group_array(layer) FROM (
 		SELECT m.layer FROM memories m
 		LEFT JOIN layers l ON l.name = m.layer
 		WHERE l.name IS NULL

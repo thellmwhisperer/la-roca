@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -65,7 +66,9 @@ func TestDoctorReportsDetectedBinariesAndTheFactorySelection(t *testing.T) {
 }
 
 func TestDoctorPrescribesTheExactLayerRegistryRepair(t *testing.T) {
-	svc, _ := serviceWithPaths(t)
+	paths := freshPaths(t)
+	paths.db = filepath.Join(paths.data, "operator's roca.db")
+	svc := initialized(t, paths)
 	if _, err := svc.DB().SQL().Exec(
 		`INSERT INTO memories (layer, content, origin)
 		 VALUES ('knowledge', 'synthetic drift', 'agent')`); err != nil {
@@ -76,7 +79,8 @@ func TestDoctorPrescribesTheExactLayerRegistryRepair(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "roca layers add 'knowledge'"
+	want := "roca layers add 'knowledge' --db-path '" +
+		strings.ReplaceAll(paths.db, "'", `'"'"'`) + "'"
 	if len(report.LayerRepairs) != 1 || report.LayerRepairs[0] != want {
 		t.Fatalf("layer repairs = %v, want %q", report.LayerRepairs, want)
 	}

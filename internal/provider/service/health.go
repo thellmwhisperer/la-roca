@@ -50,11 +50,12 @@ type HealthReport struct {
 // non-zero count is judged. Adding a check is a row, not a fifth copy of the
 // same three-step dance.
 type healthCheck struct {
-	name     string
-	summary  string
-	severity string
-	count    string
-	sample   string
+	name        string
+	summary     string
+	severity    string
+	memoryOwned bool
+	count       string
+	sample      string
 }
 
 // The v1 checks. There is deliberately no check over `runs`: that table is v2
@@ -62,9 +63,10 @@ type healthCheck struct {
 // component this version does not have.
 var healthChecks = []healthCheck{
 	{
-		name:     "orphan_supersedes",
-		summary:  "Memories whose supersedes pointer references a memory that is not there.",
-		severity: HealthFail,
+		name:        "orphan_supersedes",
+		summary:     "Memories whose supersedes pointer references a memory that is not there.",
+		severity:    HealthFail,
+		memoryOwned: true,
 		count: `SELECT COUNT(*) FROM memories
 		        WHERE supersedes IS NOT NULL
 		          AND supersedes NOT IN (SELECT id FROM memories)`,
@@ -74,9 +76,10 @@ var healthChecks = []healthCheck{
 		         ORDER BY id LIMIT ?`,
 	},
 	{
-		name:     "test_metadata_rows",
-		summary:  "Live memories carrying the metadata a test leaves behind.",
-		severity: HealthFail,
+		name:        "test_metadata_rows",
+		summary:     "Live memories carrying the metadata a test leaves behind.",
+		severity:    HealthFail,
+		memoryOwned: true,
 		count: `SELECT COUNT(*) FROM memories
 		        WHERE json_valid(metadata)
 		          AND json_extract(metadata, '$._test') IN (1, 'true', 'True')`,
@@ -86,9 +89,10 @@ var healthChecks = []healthCheck{
 		         ORDER BY id LIMIT ?`,
 	},
 	{
-		name:     "test_source_agent_rows",
-		summary:  "Live memories written by a test agent.",
-		severity: HealthFail,
+		name:        "test_source_agent_rows",
+		summary:     "Live memories written by a test agent.",
+		severity:    HealthFail,
+		memoryOwned: true,
 		count: `SELECT COUNT(*) FROM memories
 		        WHERE source_agent IN ('test-agent', 'test')`,
 		sample: `SELECT source_agent, COUNT(*) AS count FROM memories
@@ -96,9 +100,10 @@ var healthChecks = []healthCheck{
 		         GROUP BY source_agent ORDER BY source_agent LIMIT ?`,
 	},
 	{
-		name:     "runtime_layers_not_in_registry",
-		summary:  "Layers present in the data and absent from the layer registry.",
-		severity: HealthFail,
+		name:        "runtime_layers_not_in_registry",
+		summary:     "Layers present in the data and absent from the layer registry.",
+		severity:    HealthFail,
+		memoryOwned: true,
 		count: `SELECT COUNT(*) FROM (
 		          SELECT m.layer FROM memories m
 		          LEFT JOIN layers l ON l.name = m.layer
@@ -109,9 +114,10 @@ var healthChecks = []healthCheck{
 		         GROUP BY m.layer ORDER BY count DESC, m.layer ASC LIMIT ?`,
 	},
 	{
-		name:     "physical_alias_layer_rows",
-		summary:  "Memories stored under an alias layer instead of the physical one.",
-		severity: HealthFail,
+		name:        "physical_alias_layer_rows",
+		summary:     "Memories stored under an alias layer instead of the physical one.",
+		severity:    HealthFail,
+		memoryOwned: true,
 		count: `SELECT COUNT(*) FROM memories m
 		        JOIN layers l ON l.name = m.layer
 		        WHERE l.alias_of IS NOT NULL`,
@@ -152,6 +158,11 @@ func (s *Service) Health(ctx context.Context, req HealthRequest) (HealthReport, 
 	if err != nil {
 		return HealthReport{}, err
 	}
+	memoryReader, closeMemoryReader, err := s.memoryReader(ctx)
+	if err != nil {
+		return HealthReport{}, err
+	}
+	defer closeMemoryReader()
 
 	report := HealthReport{
 		Status:      HealthPass,
@@ -161,7 +172,11 @@ func (s *Service) Health(ctx context.Context, req HealthRequest) (HealthReport, 
 		SourceSHA:   s.opts.Commit,
 	}
 	for _, check := range healthChecks {
-		outcome, err := runHealthCheck(ctx, reader, check, maxRows)
+		checkReader := reader
+		if check.memoryOwned {
+			checkReader = memoryReader
+		}
+		outcome, err := runHealthCheck(ctx, checkReader, check, maxRows)
 		if err != nil {
 			return HealthReport{}, err
 		}
@@ -169,7 +184,7 @@ func (s *Service) Health(ctx context.Context, req HealthRequest) (HealthReport, 
 		report.Status = worst(report.Status, outcome.Status)
 	}
 
-	timestamps, err := checkTimestampFormats(ctx, reader)
+	timestamps, err := checkTimestampFormats(ctx, memoryReader)
 	if err != nil {
 		return HealthReport{}, err
 	}

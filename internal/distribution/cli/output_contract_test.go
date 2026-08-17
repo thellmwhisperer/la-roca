@@ -321,8 +321,9 @@ func TestLayerRepairCommandsRestoreHealth(t *testing.T) {
 			}
 
 			doctor := runRoot(t, contractBuild(), "doctor")
+			remedy := "roca layers add 'knowledge' --db-path '" + dbPath + "'"
 			if !strings.Contains(doctor, "runtime_layers_not_in_registry: failed") ||
-				!strings.Contains(doctor, "roca layers add 'knowledge'") {
+				!strings.Contains(doctor, remedy) {
 				t.Fatalf("doctor did not prescribe the exact repair:\n%s", doctor)
 			}
 			out := runRoot(t, contractBuild(), test.command...)

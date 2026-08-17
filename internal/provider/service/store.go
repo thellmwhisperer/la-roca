@@ -135,9 +135,11 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (StoreResult, err
 	}
 	authorship := req.Authorship
 	authorship = authorship.normalized()
-	target := s.db
+	target, err := s.memoryOwner()
+	if err != nil {
+		return StoreResult{}, err
+	}
 	if s.opts.RocaOpsEnabled {
-		target = s.ops
 		// The exclusion a superseded row obeys is computed inside the database
 		// that holds it, so a replacement written here can only retire what is
 		// here. Naming a core memory would retire nothing and say it did.

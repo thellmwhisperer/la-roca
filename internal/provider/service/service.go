@@ -181,6 +181,11 @@ func openWithContext(ctx context.Context, opts Options) (*Service, error) {
 	if err := svc.openResidents(ctx); err != nil {
 		return svc.rollbackOpen(ctx, err)
 	}
+	if svc.ops != nil {
+		if err := svc.syncLayers(ctx); err != nil {
+			return svc.rollbackOpen(ctx, err)
+		}
+	}
 	if layout != LayoutLegacyServing {
 		if err := svc.openHub(ctx); err != nil {
 			return svc.rollbackOpen(ctx, err)
@@ -691,7 +696,11 @@ func refuseReadOnly(operation string) error {
 // It only writes what changes, so that adopting a live database does not touch
 // it without reason.
 func (s *Service) syncLayers(ctx context.Context) error {
-	return s.db.Write(ctx, func(tx *sql.Tx) error {
+	owner, err := s.memoryOwner()
+	if err != nil {
+		return err
+	}
+	return owner.Write(ctx, func(tx *sql.Tx) error {
 		for _, layer := range s.registry.Layers {
 			_, err := tx.ExecContext(ctx, `
 				INSERT INTO layers (name, description, schema_file, is_coordination,
