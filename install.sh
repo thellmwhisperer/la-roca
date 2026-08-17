@@ -66,7 +66,7 @@ die()  { printf 'install.sh: %s\n' "$*" >&2; exit 1; }
 # release, so it also runs against binaries older than the command: a release
 # that never shipped bundled plugins has none to fail to place.
 install_bundled_plugins() {
-  BUNDLED_REPORT=$("$1" _install-bundled-plugins --json 2>&1) && return 0
+  BUNDLED_REPORT=$(ROCA_PREFIX="$PREFIX" "$1" _install-bundled-plugins --json 2>&1) && return 0
   case "$BUNDLED_REPORT" in
     *"unknown command"*|*"unknown flag"*)
       say "note: roca $TAG predates bundled plugins; none were placed"

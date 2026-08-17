@@ -4,9 +4,12 @@ package acceptance
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
 )
 
 // The channel serves the release document the way GitHub actually serves it:
@@ -36,6 +39,34 @@ func TestTheInstallerResolvesAPrettyPrintedReleaseDocument(t *testing.T) {
 	}
 	if err := m.versionExitsWith(0); err != nil {
 		t.Fatalf("the installed binary does not answer --version: %v", err)
+	}
+}
+
+func TestTheInstallerPlacesBundledVectorBesideACustomPrefix(t *testing.T) {
+	m := releaseInstallerWorld(t)
+	channel := m.theChannel()
+	prefix := filepath.Join(m.home, "custom", "bin")
+	command := exec.Command("sh", theInstallerPath(),
+		"--repo", channel.repo, "--api", channel.server.URL, "--prefix", prefix)
+	command.Env = m.environment()
+	if err := m.record("installer with custom prefix", command); err != nil {
+		t.Fatal(err)
+	}
+	if m.last.code != 0 {
+		t.Fatalf("installer exited %d: %s%s", m.last.code, m.last.stdout, m.last.stderr)
+	}
+	for _, name := range []string{"roca", "roca-vector"} {
+		if info, err := os.Stat(filepath.Join(prefix, name)); err != nil || info.Mode().Perm()&0o111 == 0 {
+			t.Fatalf("%s was not executable in the custom prefix: %v", name, err)
+		}
+	}
+	manifest, err := plugininstall.ReadManifest(
+		filepath.Join(m.home, ".roca", "plugins", "vector"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Executable != filepath.Join(prefix, "roca-vector") {
+		t.Fatalf("vector executable = %q, want custom prefix %q", manifest.Executable, prefix)
 	}
 }
 
