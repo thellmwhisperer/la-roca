@@ -157,7 +157,11 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 	if err != nil {
 		return Delta{}, err
 	}
-	if err := invalidateCensus(ctx, store); err != nil {
+	rebuildCensus := sourceKind == ""
+	if rebuildCensus {
+		err = invalidateCensus(ctx, store)
+	}
+	if err != nil {
 		return Delta{}, fmt.Errorf("invalidate vector census: %w", err)
 	}
 	if model != "" && model != i.Model {
@@ -214,7 +218,9 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 
 	err = i.Corpus.WalkSources(ctx, sourceKind, func(source sourceRow) error {
 		report.Sources++
-		census.add(source.kind, source.text)
+		if rebuildCensus {
+			census.add(source.kind, source.text)
+		}
 		for chunkIndex, text := range chunks(source.text, defaultChunkSize, defaultOverlap) {
 			chunk := desiredChunk{
 				sourceKind: source.kind, sourceID: source.stableID(), index: chunkIndex,
@@ -244,8 +250,10 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 	if err := removeMissing(ctx, store, existing, seen, sourceKind, &report); err != nil {
 		return Delta{}, err
 	}
-	if err := writeCensus(ctx, store, census); err != nil {
-		return Delta{}, fmt.Errorf("write vector census: %w", err)
+	if rebuildCensus {
+		if err := writeCensus(ctx, store, census); err != nil {
+			return Delta{}, fmt.Errorf("write vector census: %w", err)
+		}
 	}
 	report.Chunks = report.Added + report.Updated + report.Unchanged
 	return report, nil
