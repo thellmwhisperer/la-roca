@@ -146,6 +146,55 @@ func TestTheDryRunThroughTheServiceTouchesNothing(t *testing.T) {
 	}
 }
 
+// Ingest does not own guard installation. A pre-cleanup database still holding
+// exact duplicates ingests normally and gains no exact-payload guard: those
+// arrive only from the dedup apply.
+func TestIngestOnAPreCleanupDatabaseInstallsNoExactPayloadGuards(t *testing.T) {
+	home := t.TempDir()
+	paths := freshPaths(t)
+	raw, err := store.Open(paths.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ApplySchema(t.Context(), raw); err != nil {
+		t.Fatal(err)
+	}
+	const content = "duplicate fixture before the dedup apply"
+	for i := 0; i < 2; i++ {
+		if _, err := raw.SQL().Exec(
+			`INSERT INTO memories (layer, content, origin, status) VALUES ('project', ?, 'agent', 'active')`, content); err != nil {
+			t.Fatalf("seed duplicate memory: %v", err)
+		}
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	svc, err := service.Open(optionsOverTheSources(t, paths, home, false))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { svc.Close() })
+	seedATranscript(t, home)
+	if _, err := svc.Ingest(t.Context(), service.IngestRequest{}); err != nil {
+		t.Fatalf("ingest over pre-cleanup duplicates: %v", err)
+	}
+	var exchanges int
+	if err := svc.DB().SQL().QueryRow(`SELECT COUNT(*) FROM exchanges`).Scan(&exchanges); err != nil {
+		t.Fatal(err)
+	}
+	if exchanges == 0 {
+		t.Fatal("ingest reported success but wrote no exchanges")
+	}
+	var guards int
+	if err := svc.DB().SQL().QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name LIKE '%_exact_payload'`).Scan(&guards); err != nil {
+		t.Fatal(err)
+	}
+	if guards != 0 {
+		t.Fatalf("ingest installed %d exact-payload guard(s), want none", guards)
+	}
+}
+
 func TestInitBedrockIncludesTheDeclaredAnthropicExport(t *testing.T) {
 	export := t.TempDir()
 	for _, name := range []string{"conversations.json", "memories.json"} {
