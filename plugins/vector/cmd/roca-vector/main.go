@@ -54,8 +54,8 @@ func rootCommand(env *environment) *cobra.Command {
 	root.PersistentFlags().StringVar(&env.dbPath, "db-path", env.dbPath, "La Roca database selected by the core CLI")
 	root.PersistentFlags().StringVar(&env.stateDir, "state-dir", env.stateDir, "plugin state directory")
 	_ = root.PersistentFlags().MarkHidden("state-dir")
-	root.AddCommand(installCommand(env), ingestCommand(env), queryCommand(env),
-		vocabCommand(env), workerCommand(env))
+	root.AddCommand(installCommand(env), ingestCommand(env), compactCommand(env),
+		queryCommand(env), vocabCommand(env), workerCommand(env))
 	return root
 }
 
@@ -169,6 +169,35 @@ func ingestCommand(env *environment) *cobra.Command {
 	command.Flags().StringVar(&model, "model", "", "local Ollama embedding model (default: indexed model)")
 	command.Flags().StringVar(&source, "source", "", "limit the delta to one corpus source kind")
 	return command
+}
+
+func compactCommand(env *environment) *cobra.Command {
+	return &cobra.Command{
+		Use:   "compact",
+		Short: "Repack live embeddings into dense storage pages",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			if readOnly() {
+				return fmt.Errorf("vector compact is disabled while ROCA_READ_ONLY is enabled")
+			}
+			state, err := env.resolveStateDir()
+			if err != nil {
+				return err
+			}
+			report, err := vector.Compact(command.Context(), filepath.Join(state, vector.DatabaseFilename))
+			if err != nil {
+				return err
+			}
+			if env.json {
+				return printJSON(report)
+			}
+			fmt.Printf("vector compact: %d -> %d pages · %d live chunks\n",
+				report.PagesBefore, report.PagesAfter, report.LiveChunks)
+			fmt.Printf("  bytes: %d -> %d · %d reclaimed\n",
+				report.BytesBefore, report.BytesAfter, report.BytesReclaimed)
+			return nil
+		},
+	}
 }
 
 func queryCommand(env *environment) *cobra.Command {

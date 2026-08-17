@@ -14,11 +14,7 @@ func lockIndex(ctx context.Context, path string, contended func(string)) (func()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	created, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	if err := created.Close(); err != nil {
+	if err := ensureLockFile(path); err != nil {
 		return nil, err
 	}
 	release, busy, err := tryLockExisting(path)
@@ -46,6 +42,21 @@ func lockIndex(ctx context.Context, path string, contended func(string)) (func()
 		}()
 		return nil, ctx.Err()
 	}
+}
+
+func tryLockIndex(path string) (func() error, bool, error) {
+	if err := ensureLockFile(path); err != nil {
+		return nil, false, err
+	}
+	return tryLockExisting(path)
+}
+
+func ensureLockFile(path string) error {
+	created, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	return created.Close()
 }
 
 func validateExistingLock(path string, file *os.File, release func() error) error {
