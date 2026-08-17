@@ -119,6 +119,13 @@ func (i Index) Vocab(ctx context.Context, concept string) (VocabReport, error) {
 	if err != nil {
 		return VocabReport{}, err
 	}
+	// An ingest invalidates the census before its first index mutation, so a
+	// discovery that started beside one ranks a moving index against a stale
+	// baseline. The totals it re-reads here are only unchanged when no ingest
+	// intervened, and a refusal is cheaper than a quietly mixed report.
+	if current, built := readCensusDocuments(store); !built || current != censusDocuments {
+		return VocabReport{}, fmt.Errorf("vector census changed during discovery; run vocab again once ingest finishes")
+	}
 	report.Avenues = groupAvenues(terms)
 	return report, nil
 }
