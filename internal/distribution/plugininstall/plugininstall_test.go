@@ -1,12 +1,17 @@
 package plugininstall_test
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -428,6 +433,111 @@ func TestResolveAcceptsPathsAndNormalizesRepositoryNames(t *testing.T) {
 	}
 }
 
+func TestResolveAcceptsVerifiedReleaseArchivesFromDiskAndHTTP(t *testing.T) {
+	source := writeExecutablePackage(t, "vector", "v1.2.3", "state")
+	archive := packageArchive(t, source)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		_, _ = response.Write(archive)
+	}))
+	defer server.Close()
+	local := filepath.Join(t.TempDir(), "roca-vector-v1.2.3-linux-x64.tar.gz")
+	if err := os.WriteFile(local, archive, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, reference := range []string{local, server.URL + "/roca-vector-v1.2.3-linux-x64.tar.gz"} {
+		resolved, cleanup, err := plugininstall.Resolve(context.Background(), reference, t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		candidate, inspectErr := plugininstall.Inspect(resolved.Reference, resolved.Directory)
+		if inspectErr != nil {
+			cleanup()
+			t.Fatal(inspectErr)
+		}
+		if candidate.Name != "vector" || candidate.Version != "v1.2.3" ||
+			candidate.Source != resolved.Reference {
+			cleanup()
+			t.Fatalf("candidate from %s = %+v", reference, candidate)
+		}
+		manager := plugininstall.Manager{
+			PluginRoot: filepath.Join(t.TempDir(), "plugins"),
+			BinDir:     filepath.Join(t.TempDir(), "bin"),
+		}
+		result, installErr := manager.Install(candidate)
+		cleanup()
+		if installErr != nil {
+			t.Fatal(installErr)
+		}
+		if result.Version != "v1.2.3" {
+			t.Fatalf("installed result from %s = %+v", reference, result)
+		}
+		if reference == local {
+			nextSource := writeExecutablePackage(t, "vector", "v1.2.4", "state")
+			if err := os.WriteFile(local, packageArchive(t, nextSource), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			next, nextCleanup, err := plugininstall.Resolve(context.Background(), local, t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			nextCandidate, err := plugininstall.Inspect(next.Reference, next.Directory)
+			if err == nil {
+				_, err = manager.Update(nextCandidate)
+			}
+			nextCleanup()
+			if err != nil {
+				t.Fatal(err)
+			}
+			manifest, err := plugininstall.ReadManifest(filepath.Join(manager.PluginRoot, "vector"))
+			if err != nil || manifest.Version != "v1.2.4" {
+				t.Fatalf("updated manifest = %+v, err=%v", manifest, err)
+			}
+		}
+	}
+}
+
+func TestResolveRefusesArchivePathsAndNonRegularEntries(t *testing.T) {
+	for _, entry := range []struct {
+		name     string
+		typeflag byte
+	}{
+		{name: "../outside", typeflag: tar.TypeReg},
+		{name: `..\outside`, typeflag: tar.TypeReg},
+		{name: "nested/plugin.json", typeflag: tar.TypeReg},
+		{name: "roca-vector", typeflag: tar.TypeSymlink},
+	} {
+		archive := filepath.Join(t.TempDir(), "plugin.tar.gz")
+		if err := os.WriteFile(archive, archiveEntry(t, entry.name, entry.typeflag), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, cleanup, err := plugininstall.Resolve(context.Background(), archive, t.TempDir()); err == nil {
+			cleanup()
+			t.Fatalf("archive entry %q type %d was accepted", entry.name, entry.typeflag)
+		}
+	}
+}
+
+func TestResolveRefusesArchiveWithTooManyEntries(t *testing.T) {
+	archive := makeArchive(t, func(archive *tar.Writer) {
+		for index := range 1025 {
+			name := fmt.Sprintf("entry-%04d", index)
+			if err := archive.WriteHeader(&tar.Header{Name: name, Mode: 0o600}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+	path := filepath.Join(t.TempDir(), "plugin.tar.gz")
+	if err := os.WriteFile(path, archive, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, cleanup, err := plugininstall.Resolve(context.Background(), path, t.TempDir()); err == nil {
+		cleanup()
+		t.Fatal("archive with too many entries was accepted")
+	}
+}
+
 func writePackage(t *testing.T, name, version string, custody, executable bool) string {
 	t.Helper()
 	directory := filepath.Join(t.TempDir(), name)
@@ -569,6 +679,52 @@ func writeChecksums(t *testing.T, directory string, files []string) {
 		fmt.Fprintf(&checksums, "%s  %s\n", hex.EncodeToString(digest[:]), file)
 	}
 	writeFixtureFile(t, filepath.Join(directory, "checksums.txt"), []byte(checksums.String()), 0o600)
+}
+
+func packageArchive(t *testing.T, directory string) []byte {
+	t.Helper()
+	return makeArchive(t, func(archive *tar.Writer) {
+		for _, name := range []string{"checksums.txt", "plugin.json", "roca-vector"} {
+			body, err := os.ReadFile(filepath.Join(directory, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			mode := int64(0o600)
+			if name == "roca-vector" {
+				mode = 0o700
+			}
+			if err := archive.WriteHeader(&tar.Header{Name: "./" + name, Mode: mode, Size: int64(len(body))}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := archive.Write(body); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+}
+
+func archiveEntry(t *testing.T, name string, typeflag byte) []byte {
+	t.Helper()
+	return makeArchive(t, func(archive *tar.Writer) {
+		if err := archive.WriteHeader(&tar.Header{Name: name, Mode: 0o600, Typeflag: typeflag}); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func makeArchive(t *testing.T, write func(*tar.Writer)) []byte {
+	t.Helper()
+	var compressed bytes.Buffer
+	gzipWriter := gzip.NewWriter(&compressed)
+	archive := tar.NewWriter(gzipWriter)
+	write(archive)
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gzipWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return compressed.Bytes()
 }
 
 func writeFixtureFile(t *testing.T, path string, body []byte, mode os.FileMode) {
