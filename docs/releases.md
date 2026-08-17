@@ -9,6 +9,15 @@ Merging that pull request creates the `vX.Y.Z` tag. The tag then triggers
 `.github/workflows/release.yml`, which is the only workflow that builds and
 uploads release artefacts.
 
+Each release carries the four `roca` binaries and four matching
+`roca-vector-vX.Y.Z-<platform>.tar.gz` plugin archives. `make dist` builds the
+same set in CI and locally. The workflow injects the tag into both executables
+and each vector `plugin.json`, checks the runnable Linux pair, and publishes one
+top-level `checksums.txt` covering every asset. The vector archive also contains
+its package-level `checksums.txt`, which `roca plugin install` and `update`
+verify. The operator download and update flow is documented in
+[`plugins/vector/README.md`](../plugins/vector/README.md#install-from-a-release).
+
 The workflow uses the `RELEASE_PLEASE_TOKEN` repository secret instead of the
 automatic `GITHUB_TOKEN`. GitHub does not start a second workflow from a tag
 created with `GITHUB_TOKEN`; the repository token is what lets the new tag start

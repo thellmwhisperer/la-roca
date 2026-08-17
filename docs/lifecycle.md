@@ -37,7 +37,7 @@ plugins reports that none were placed.
 | `--force` | Reinstall even when that version is already active |
 
 Windows is not installed by the shell script. Download the `.exe` release
-artefact and place it on the PATH. Release artefacts are:
+artefact and place it on the PATH. Core executable release artefacts are:
 
 - `roca-<version>-darwin-arm64`
 - `roca-<version>-linux-x64`
@@ -276,6 +276,5 @@ and reports them with a reason. Re-running uninstall is safe.
 
 ## Release ownership
 
-Release artefacts are built by `.github/workflows/release.yml`; `make dist`
-produces the same platform names locally. The release publishes binaries and
-uploads `checksums.txt` after all targets have completed.
+The authoritative release channel, platform matrix, checksums, and optional
+plugin packages are documented in [Releases](releases.md).

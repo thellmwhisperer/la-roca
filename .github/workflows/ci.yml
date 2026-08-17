@@ -81,12 +81,11 @@ jobs:
       - name: Build, format, vet, tests and slop gate
         run: make check
 
-      # The four targets come out of a single runner because CGO_ENABLED=0
-      # makes cross compilation trivial. That is the port's biggest operational
-      # change: one lane that either breaks whole or does not break, not four.
-      # It is the same `make dist` the release channel runs, so a target that
-      # stops cross compiling is a red pull request and not a red tag.
-      - name: The four artefacts from a single runner
+      # Core binaries and installable vector archives come out of one runner
+      # because CGO_ENABLED=0 makes cross compilation trivial. It is the same
+      # `make dist` the release channel runs, so a target that stops building or
+      # packaging is a red pull request and not a red tag.
+      - name: The core and vector artefacts from a single runner
         run: make dist
 
       # The OSS portability guard: an absolute path with a machine name, a user
