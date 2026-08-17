@@ -75,6 +75,186 @@ func TestCutoverWritersRemainAuthoritativeInPlugins(t *testing.T) {
 	}
 }
 
+func TestRocaOpsLayerRepairUsesTheOperationalOwner(t *testing.T) {
+	options := residentTestOptions(t)
+	svc, err := openWithContext(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = svc.Close() })
+	if _, err := svc.ensureSchema(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ops.SQL().Exec(`INSERT INTO memories (layer, content, origin)
+		VALUES ('knowledge', 'Synthetic operational drift', 'agent')`); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := svc.Doctor(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRemedy := "roca layers add 'knowledge' --db-path '" + options.DBPath + "'"
+	if len(report.LayerRepairs) != 1 || report.LayerRepairs[0] != wantRemedy {
+		t.Fatalf("layer repairs = %v, want %q", report.LayerRepairs, wantRemedy)
+	}
+	before, err := svc.Health(t.Context(), HealthRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Checks["runtime_layers_not_in_registry"].Status != HealthFail {
+		t.Fatalf("health before repair = %+v", before)
+	}
+	migrated, err := svc.MigrateLayer(t.Context(), "knowledge", "discovery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migrated.Migrated != 1 {
+		t.Fatalf("migration = %+v", migrated)
+	}
+	after, err := svc.Health(t.Context(), HealthRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Checks["runtime_layers_not_in_registry"].Status != HealthPass {
+		t.Fatalf("health after repair = %+v", after)
+	}
+	var coreRows int
+	if err := svc.db.SQL().QueryRow("SELECT COUNT(*) FROM memories").Scan(&coreRows); err != nil {
+		t.Fatal(err)
+	}
+	if coreRows != 0 {
+		t.Fatalf("core memories changed = %d", coreRows)
+	}
+}
+
+func TestLayerRegistryOwnerSurvivesRocaOpsActivation(t *testing.T) {
+	options := residentTestOptions(t)
+	options.RocaOpsEnabled = false
+	legacy, err := openWithContext(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.AddLayer(t.Context(), "knowledge"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.Store(t.Context(), StoreRequest{
+		Layer: "knowledge", Content: "Synthetic pre-activation write",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var copied int
+	if err := legacy.db.SQL().QueryRow(
+		"SELECT COUNT(*) FROM layers WHERE name = 'knowledge'").Scan(&copied); err != nil {
+		t.Fatal(err)
+	}
+	if copied != 0 {
+		t.Fatalf("custom registry rows copied into core = %d", copied)
+	}
+	for range 2 {
+		read, err := legacy.Exec(t.Context(), ExecRequest{
+			SQL: "SELECT name FROM layers WHERE name = 'knowledge'",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if read.RowCount != 1 || read.Rows[0]["name"] != "knowledge" {
+			t.Fatalf("legacy layer registry read = %+v", read)
+		}
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	options.RocaOpsEnabled = true
+	operational, err := openWithContext(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = operational.Close() })
+	if _, err := operational.Store(t.Context(), StoreRequest{
+		Layer: "knowledge", Content: "Synthetic post-activation write",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var registered int
+	if err := operational.ops.SQL().QueryRow(
+		"SELECT COUNT(*) FROM layers WHERE name = 'knowledge'").Scan(&registered); err != nil {
+		t.Fatal(err)
+	}
+	if registered != 1 {
+		t.Fatalf("stable custom registry rows = %d", registered)
+	}
+	report, err := operational.Health(t.Context(), HealthRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Checks["runtime_layers_not_in_registry"].Status != HealthPass {
+		t.Fatalf("health after activation = %+v", report)
+	}
+}
+
+func TestShadowReadsTheStableLayerRegistry(t *testing.T) {
+	fixture := newHubFixture(t)
+	seedHubCoreMemory(t, fixture.plugins, 10, "Synthetic shadow layer marker")
+	seedLegacyCore(t, fixture, nil)
+	registering := openHubService(t, fixture, LayoutShadowEqual, nil)
+	if _, err := registering.AddLayer(t.Context(), "knowledge"); err != nil {
+		t.Fatal(err)
+	}
+	if err := registering.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var rollback error
+	shadow := openHubService(t, fixture, LayoutShadowEqual, func(options *Options) {
+		options.RollbackLayout = func(reason error) error { rollback = reason; return nil }
+	})
+	read, err := shadow.Exec(t.Context(), ExecRequest{
+		SQL: "SELECT name FROM layers WHERE name = 'knowledge'",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if read.RowCount != 1 || read.Rows[0]["name"] != "knowledge" || rollback != nil {
+		t.Fatalf("shadow layer registry read = %+v, rollback = %v", read, rollback)
+	}
+}
+
+func TestCutoverHubLoadsTheDurableCustomLayerRegistry(t *testing.T) {
+	fixture := newHubFixture(t)
+	seedHubCoreMemory(t, fixture.plugins, 8, "Synthetic custom layer marker")
+	svc := openHubService(t, fixture, LayoutCutover, nil)
+	added, err := svc.AddLayer(t.Context(), "knowledge")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !added.Added {
+		t.Fatal("custom layer was not added")
+	}
+	if err := svc.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened := openHubService(t, fixture, LayoutCutover, nil)
+	var registered int
+	if err := reopened.db.SQL().QueryRow(
+		"SELECT COUNT(*) FROM layers WHERE name = 'knowledge'").Scan(&registered); err != nil {
+		t.Fatal(err)
+	}
+	if registered != 1 {
+		t.Fatalf("hub custom layer count = %d", registered)
+	}
+	if _, err := reopened.Store(t.Context(), StoreRequest{
+		Layer: "knowledge", Content: "Synthetic registered cutover write",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(fixture.corePath); !os.IsNotExist(err) {
+		t.Fatalf("layer repair touched roca.db: %v", err)
+	}
+}
+
 func TestShadowMismatchServesLegacyAndRollsBackTheMarker(t *testing.T) {
 	fixture := newHubFixture(t)
 	seedHubCoreMemory(t, fixture.plugins, 9, "Synthetic mismatching hub row")

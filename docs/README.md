@@ -18,9 +18,9 @@ Reading order, from operator to contributor:
    executable capabilities, package lifecycle, and a build-your-own example.
 6. [The MCP plug](mcp.md): the stdio server, its six tools, the TOON answer
    contract, and the supported integration targets.
-7. [Operations](operations.md): the audit log contract for every CLI and MCP
-   call, the query failures `roca doctor` reports, redaction, retention, and
-   the read-only boundary.
+7. [Operations](operations.md): memory-layer validation and repair, the audit
+   log contract for every CLI and MCP call, the query failures `roca doctor`
+   reports, redaction, retention, and the read-only boundary.
 8. [Architecture](architecture.md): the database-neutral kernel, current domain
    map, query path, and internal import rule.
 9. [Releases](releases.md): how versions are cut and artefacts are built.

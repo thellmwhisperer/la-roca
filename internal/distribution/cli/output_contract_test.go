@@ -295,6 +295,53 @@ func TestStoreHumanJSONAndError(t *testing.T) {
 	}
 }
 
+func TestLayerRepairCommandsRestoreHealth(t *testing.T) {
+	tests := []struct {
+		name    string
+		command []string
+		want    string
+	}{
+		{"register", []string{"layers", "add", "knowledge"}, "registered layer knowledge"},
+		{"migrate", []string{"layers", "migrate", "knowledge", "discovery"}, "migrated 1 memories"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := fixtureInstallation(t)
+			dbPath := filepath.Join(fixture.home, ".roca", "roca.db")
+			db, err := sql.Open("sqlite", dbPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(`INSERT INTO memories (layer, content, origin)
+				VALUES ('knowledge', 'synthetic repair fixture', 'agent')`); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			doctor := runRoot(t, contractBuild(), "doctor")
+			remedy := "roca layers add 'knowledge' --db-path '" + dbPath + "'"
+			if !strings.Contains(doctor, "runtime_layers_not_in_registry: failed") ||
+				!strings.Contains(doctor, remedy) {
+				t.Fatalf("doctor did not prescribe the exact repair:\n%s", doctor)
+			}
+			out := runRoot(t, contractBuild(), test.command...)
+			if !strings.Contains(out, test.want) {
+				t.Fatalf("%v output:\n%s", test.command, out)
+			}
+			health := mustJSON(t, runRoot(t, contractBuild(), "health", "--json"))
+			if health["status"] != service.HealthPass {
+				t.Fatalf("health after %v = %v", test.command, health)
+			}
+			if test.name == "register" {
+				runRoot(t, contractBuild(), "store", "--layer", "knowledge",
+					"--content", "registered custom layer write")
+			}
+		})
+	}
+}
+
 func TestExecHumanJSONAndError(t *testing.T) {
 	fixtureInstallation(t)
 
