@@ -67,6 +67,7 @@ Ollama must be running locally. The default model is
 roca vector install
 roca vector ingest --delta
 roca vector ingest --delta --source sessions
+roca vector compact
 roca vector query "which decision kept inference local" 5
 roca vector vocab salud
 ```
@@ -74,8 +75,18 @@ roca vector vocab salud
 `install` is the plugin's adopt/init command: it pulls the model, prepares the
 plugin-owned index, and starts a resumable background build. `ingest
 --delta` embeds only new or changed chunks and removes missing sources. Both
-writing commands honor `ROCA_READ_ONLY`. `query` uses binary ANN candidates,
-exact cosine reranking, stable source deduplication, and live text resolution.
+writing commands and `compact` honor `ROCA_READ_ONLY`. `query` uses binary ANN
+candidates, exact cosine reranking, stable source deduplication, and live text
+resolution.
+
+`compact` copies the existing float embeddings into a fresh paged store,
+rebuilds their binary ANN representation without calling the model, verifies
+chunk and source-kind counts plus database integrity, and atomically replaces
+the old store. It reports embedding pages before and after, bytes reclaimed,
+and the unchanged live chunk count. It refuses to run while a delta ingest
+holds the index lock. Ingest does not compact automatically: reclaiming space
+remains an explicit operator action, so no background maintenance policy is
+enabled by default.
 
 A full delta covers federated memories, exchanges, thinking blocks, and
 sessions. Content-qualified source identities keep divergent rows that share a
