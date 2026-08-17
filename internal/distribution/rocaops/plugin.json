@@ -36,6 +36,11 @@
             "columns": ["content"]
           },
           {
+            "name": "layers",
+            "description": "Durable registry of accepted operational memory layers and aliases.",
+            "columns": ["name", "description", "schema_file", "access_mode", "ingest_allowed", "is_coordination", "search_excluded", "alias_of", "added_by", "deprecated", "lifecycle", "capabilities", "since_version"]
+          },
+          {
             "name": "legacy_records",
             "description": "Quarantined agent-coordination and query-teaching records retained without pretending they are active v1 surfaces.",
             "columns": ["canonical_digest", "record_type", "payload"]

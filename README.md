@@ -396,7 +396,8 @@ The [docs index](docs/README.md) orders the longer reads:
   local floor, and CLI-owned authentication.
 - [The MCP plug](docs/mcp.md): tools, contract, integration targets.
 - [Install, update, and uninstall](docs/lifecycle.md): the binary's life.
-- [Operations](docs/operations.md): logs, redaction, retention.
+- [Operations](docs/operations.md): memory-layer repair, logs, redaction, and
+  retention.
 - [Releases](docs/releases.md): how versions are cut.
 
 ## Build and test

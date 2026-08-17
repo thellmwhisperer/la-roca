@@ -373,6 +373,51 @@ func TestStoreNormalizesTheLayerThroughTheRegistryAliases(t *testing.T) {
 	}
 }
 
+func TestStoreValidatesTheLiveLayerRegistry(t *testing.T) {
+	svc, _ := serviceWithPaths(t)
+	tests := []struct {
+		name      string
+		layer     string
+		wantLayer string
+		wantError []string
+	}{
+		{name: "registered layer", layer: "discovery", wantLayer: "discovery"},
+		{
+			name: "unregistered layer", layer: "nonsense",
+			wantError: []string{
+				`layer "nonsense" is not registered`,
+				"registered layers:",
+				"discovery",
+				"feedback",
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := svc.Store(t.Context(), service.StoreRequest{
+				Layer: test.layer, Content: "synthetic " + test.name,
+			})
+			if len(test.wantError) == 0 {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if result.Layer != test.wantLayer {
+					t.Errorf("layer = %q, want %q", result.Layer, test.wantLayer)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("unregistered layer was stored as memory %d", result.ID)
+			}
+			for _, want := range test.wantError {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not contain %q", err, want)
+				}
+			}
+		})
+	}
+}
+
 func TestStoreRefusesWhatTheSchemaWouldRefuseAnyway(t *testing.T) {
 	svc, _ := serviceWithPaths(t)
 	ctx := context.Background()
