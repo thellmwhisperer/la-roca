@@ -1,5 +1,5 @@
-// Package bundledplugin owns the verified install and in-place update shared
-// by the data plugins compiled into the Roca binary.
+// Package bundledplugin owns verified installation and refresh for plugins
+// shipped inside the Roca binary.
 package bundledplugin
 
 import (
@@ -20,10 +20,12 @@ import (
 type Spec struct {
 	Name             string
 	DatabaseFilename string
+	Executable       string
 	Source           string
 	Semantic         []byte
 	Manifest         []byte
 	ApplySchema      func(string) error
+	Payload          func() ([]byte, error)
 }
 
 func Ensure(root, binDir, version string, spec Spec) (plugininstall.Result, error) {
@@ -54,15 +56,18 @@ func Ensure(root, binDir, version string, spec Spec) (plugininstall.Result, erro
 		return plugininstall.Result{}, err
 	}
 	defer cleanup()
-	// The staged candidate already carries its declaration, so only an update
-	// has a live database to upgrade. It is upgraded before the manifest records
-	// the new version: a manifest that ran ahead of its schema would short-circuit
-	// every later run and leave the interrupted upgrade unfinished forever.
 	manager := plugininstall.Manager{PluginRoot: root, BinDir: binDir}
 	var result plugininstall.Result
 	if _, statErr := os.Lstat(target); os.IsNotExist(statErr) {
 		result, err = manager.Install(candidate)
+	} else if spec.Executable != "" {
+		result, err = manager.Update(candidate)
 	} else {
+		// The staged candidate already carries its declaration, so only a data
+		// update has a live database to upgrade. It is upgraded before the
+		// manifest records the new version: a manifest that ran ahead of its
+		// schema would short-circuit every later run and leave the interrupted
+		// upgrade unfinished forever.
 		if err := spec.ApplySchema(filepath.Join(target, spec.DatabaseFilename)); err != nil {
 			return plugininstall.Result{}, err
 		}
@@ -91,9 +96,16 @@ func Manifest(raw []byte, version string) (plugin.Manifest, error) {
 }
 
 func (spec Spec) valid() error {
-	if spec.Name == "" || spec.DatabaseFilename == "" || spec.Source == "" || spec.ApplySchema == nil ||
+	if spec.Name == "" || spec.Source == "" ||
 		(len(spec.Semantic) == 0) == (len(spec.Manifest) == 0) {
-		return fmt.Errorf("a bundled plugin needs a name, database, source, one manifest format, and schema owner")
+		return fmt.Errorf("a bundled plugin needs a name, source, and one manifest format")
+	}
+	data := spec.DatabaseFilename != "" && spec.ApplySchema != nil &&
+		spec.Executable == "" && spec.Payload == nil
+	executable := spec.DatabaseFilename == "" && spec.ApplySchema == nil &&
+		spec.Executable != "" && spec.Payload != nil && len(spec.Manifest) > 0
+	if !data && !executable {
+		return fmt.Errorf("a bundled plugin needs either a database schema owner or an executable payload")
 	}
 	return nil
 }
@@ -113,7 +125,14 @@ func materialize(root, version string, spec Spec) (plugininstall.Candidate, func
 	}
 
 	var metadata []byte
-	if len(spec.Manifest) > 0 {
+	if spec.Executable != "" {
+		var declaration map[string]any
+		if decodeErr := json.Unmarshal(spec.Manifest, &declaration); decodeErr != nil {
+			return fail(fmt.Errorf("parse bundled %s: %w", plugin.PackageFilename, decodeErr))
+		}
+		declaration["name"], declaration["version"] = spec.Name, version
+		metadata, err = json.MarshalIndent(declaration, "", "  ")
+	} else if len(spec.Manifest) > 0 {
 		manifest, decodeErr := plugin.DecodeUnvalidatedManifest(bytes.NewReader(spec.Manifest))
 		if decodeErr != nil {
 			return fail(fmt.Errorf("parse bundled %s: %w", plugin.PackageFilename, decodeErr))
@@ -133,18 +152,40 @@ func materialize(root, version string, spec Spec) (plugininstall.Candidate, func
 	if len(spec.Semantic) > 0 {
 		payload[plugin.SemanticFilename] = spec.Semantic
 	}
+	if spec.Executable != "" {
+		executable, payloadErr := spec.Payload()
+		if payloadErr != nil {
+			return fail(fmt.Errorf("read bundled %s executable: %w", spec.Name, payloadErr))
+		}
+		if len(executable) == 0 {
+			return fail(fmt.Errorf("bundled %s executable is empty", spec.Name))
+		}
+		payload[spec.Executable] = executable
+	}
 	for name, body := range payload {
-		if err := os.WriteFile(filepath.Join(directory, name), body, 0o600); err != nil {
+		mode := os.FileMode(0o600)
+		if name == spec.Executable {
+			mode = 0o700
+		}
+		if err := os.WriteFile(filepath.Join(directory, name), body, mode); err != nil {
 			return fail(fmt.Errorf("write bundled %s: %w", name, err))
 		}
 	}
-	if err := spec.ApplySchema(filepath.Join(directory, spec.DatabaseFilename)); err != nil {
-		return fail(err)
+	if spec.ApplySchema != nil {
+		if err := spec.ApplySchema(filepath.Join(directory, spec.DatabaseFilename)); err != nil {
+			return fail(err)
+		}
 	}
 
-	names := []string{plugininstall.PackageFilename, spec.DatabaseFilename}
+	names := []string{plugininstall.PackageFilename}
+	if spec.DatabaseFilename != "" {
+		names = append(names, spec.DatabaseFilename)
+	}
 	if len(spec.Semantic) > 0 {
 		names = append(names, plugin.SemanticFilename)
+	}
+	if spec.Executable != "" {
+		names = append(names, spec.Executable)
 	}
 	sort.Strings(names)
 	var checksums strings.Builder

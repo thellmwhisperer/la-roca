@@ -15,26 +15,39 @@ LDFLAGS := -s -w \
 # CGO_ENABLED=0 is the product's premise: a static binary, cross compilation
 # with no toolchain and a single release lane instead of three.
 GO_BUILD := CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)"
+VECTOR_BUILD := $(MAKE) -C plugins/vector build VERSION=$(VERSION) COMMIT=$(COMMIT) DATE=$(DATE)
+VECTOR_TMP := $(abspath .tmp)
+VECTOR_BUNDLE := go run ./cmd/bundle-vector
 
 .PHONY: build
 build: ## Build the binary for this machine
+	$(VECTOR_BUILD) BIN=$(VECTOR_TMP)/roca-vector-native
 	$(GO_BUILD) -o $(BIN) ./cmd/roca
+	$(VECTOR_BUNDLE) --binary $(BIN) --payload $(VECTOR_TMP)/roca-vector-native
 
 .PHONY: darwin-arm64 linux-arm64 linux-amd64 windows-amd64
 darwin-arm64: ## Build the macOS ARM64 artefact
+	$(VECTOR_BUILD) GOOS=darwin GOARCH=arm64 BIN=$(VECTOR_TMP)/roca-vector-darwin-arm64
 	GOOS=darwin GOARCH=arm64 $(GO_BUILD) -o bin/roca-$(VERSION)-darwin-arm64 ./cmd/roca
+	$(VECTOR_BUNDLE) --binary bin/roca-$(VERSION)-darwin-arm64 --payload $(VECTOR_TMP)/roca-vector-darwin-arm64
 
 linux-arm64:
+	$(VECTOR_BUILD) GOOS=linux GOARCH=arm64 BIN=$(VECTOR_TMP)/roca-vector-linux-arm64
 	GOOS=linux GOARCH=arm64 $(GO_BUILD) -o bin/roca-$(VERSION)-linux-arm64 ./cmd/roca
+	$(VECTOR_BUNDLE) --binary bin/roca-$(VERSION)-linux-arm64 --payload $(VECTOR_TMP)/roca-vector-linux-arm64
 
 linux-amd64:
+	$(VECTOR_BUILD) GOOS=linux GOARCH=amd64 BIN=$(VECTOR_TMP)/roca-vector-linux-x64
 	GOOS=linux GOARCH=amd64 $(GO_BUILD) -o bin/roca-$(VERSION)-linux-x64 ./cmd/roca
+	$(VECTOR_BUNDLE) --binary bin/roca-$(VERSION)-linux-x64 --payload $(VECTOR_TMP)/roca-vector-linux-x64
 
 # The one artefact whose name is a different shape, because Windows will not run
 # a file without the extension. `release.ArtefactName` says the same thing in Go
 # and a test reads this file to prove the two agree.
 windows-amd64:
+	$(VECTOR_BUILD) GOOS=windows GOARCH=amd64 BIN=$(VECTOR_TMP)/roca-vector-windows-x64.exe
 	GOOS=windows GOARCH=amd64 $(GO_BUILD) -o bin/roca-$(VERSION)-windows-x64.exe ./cmd/roca
+	$(VECTOR_BUNDLE) --binary bin/roca-$(VERSION)-windows-x64.exe --payload $(VECTOR_TMP)/roca-vector-windows-x64.exe
 
 .PHONY: vector-dist
 vector-dist:

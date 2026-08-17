@@ -16,6 +16,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacron"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocavector"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	pluginstd "github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -95,8 +96,10 @@ func installBundledPluginsCommand(env *cliEnv) *cobra.Command {
 				}
 				return env.report(map[string]any{
 					"installed": false,
-					"plugins":   []string{rocaops.Name, rocacorpus.Name, rocacron.Name},
-					"reason":    reason,
+					"plugins": []string{
+						rocaops.Name, rocacorpus.Name, rocacron.Name, rocavector.Name,
+					},
+					"reason": reason,
 				}, "%s: bundled plugins were not placed", reason)
 			}
 			binDir := pluginExecutableDir(paths)
@@ -112,13 +115,19 @@ func installBundledPluginsCommand(env *cliEnv) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			vector, err := rocavector.Ensure(root, binDir, env.build.Version)
+			if err != nil {
+				return err
+			}
 			return env.report(map[string]any{
 				"installed": true, "plugins": []any{
 					map[string]any{"name": ops.Name, "version": ops.Version, "risk": ops.Risk, "resident": true},
 					map[string]any{"name": corpus.Name, "version": corpus.Version, "risk": corpus.Risk, "resident": true},
 					map[string]any{"name": cron.Name, "version": cron.Version, "risk": cron.Risk, "resident": false},
+					map[string]any{"name": vector.Name, "version": vector.Version, "risk": vector.Risk, "resident": false},
 				},
-			}, "bundled plugins %s, %s and %s installed", ops.Name, corpus.Name, cron.Name)
+			}, "bundled plugins %s, %s, %s and %s installed",
+				ops.Name, corpus.Name, cron.Name, vector.Name)
 		},
 	}
 }

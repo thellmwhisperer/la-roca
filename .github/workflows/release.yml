@@ -112,6 +112,16 @@ jobs:
             "roca $VERSION"*) ;;
             *) echo "the binary reports '$reported' and the tag is $VERSION" >&2; exit 1 ;;
           esac
+          bundle_home=$(mktemp -d)
+          mkdir -p "$bundle_home/bin"
+          HOME="$bundle_home" ROCA_PREFIX="$bundle_home/bin" \
+            ./bin/roca-"$VERSION"-linux-x64 _install-bundled-plugins --json
+          reported=$("$bundle_home/bin/roca-vector" --version)
+          echo "$reported"
+          case "$reported" in
+            *"$VERSION"*) ;;
+            *) echo "the bundled vector binary reports '$reported' and the tag is $VERSION" >&2; exit 1 ;;
+          esac
           mkdir -p .tmp/release-vector
           tar -C .tmp/release-vector -xzf bin/roca-vector-"$VERSION"-linux-x64.tar.gz
           plugin_version=$(jq -r .version .tmp/release-vector/plugin.json)

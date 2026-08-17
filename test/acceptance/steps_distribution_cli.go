@@ -51,7 +51,7 @@ func (w *distributionWorld) previewDefaultCronTrain() error {
 	}
 	manifest := "[ride.vector_delta]\ncommand = \"roca vector ingest --delta\"\ngate = \"after_ingest\"\n"
 	if err := testfixture.InstallRidePlugin(
-		filepath.Join(w.home, ".roca", "plugins"), "vector", manifest); err != nil {
+		filepath.Join(w.home, ".roca", "plugins"), "vector-rides", manifest); err != nil {
 		return err
 	}
 	w.state["cron-list"] = w.runAt(w.home, w.installed, "cron", "list")
@@ -76,12 +76,12 @@ func (w *distributionWorld) cronPreviewIsOrderedAndGated() error {
 		return fmt.Errorf("cron list = %+v", w.state["cron-list"])
 	}
 	core := strings.Index(listed.stdout, "core\tingest\tnightly")
-	vector := strings.Index(listed.stdout, "vector\tvector_delta\tnightly\tafter_ingest")
+	vector := strings.Index(listed.stdout, "vector-rides\tvector_delta\tnightly\tafter_ingest")
 	if core < 0 || vector <= core {
 		return fmt.Errorf("cron list is not ordered core then plugin:\n%s", listed.stdout)
 	}
 	if w.last.code != 0 || !strings.Contains(w.last.stdout, "core\tingest\tready") ||
-		!strings.Contains(w.last.stdout, "vector\tvector_delta\tdeferred_after_ingest") {
+		!strings.Contains(w.last.stdout, "vector-rides\tvector_delta\tdeferred_after_ingest") {
 		return fmt.Errorf("cron preview = %+v", w.last)
 	}
 	return nil
@@ -112,7 +112,8 @@ func (w *distributionWorld) disabledPluginInstallerIsInert() error {
 		return err
 	}
 	for _, entry := range entries {
-		if entry.Name() != "roca-ops" && entry.Name() != "roca-corpus" && entry.Name() != "roca-cron" {
+		if entry.Name() != "roca-ops" && entry.Name() != "roca-corpus" &&
+			entry.Name() != "roca-cron" && entry.Name() != "vector" {
 			return fmt.Errorf("disabled plugin installer added %q", entry.Name())
 		}
 	}

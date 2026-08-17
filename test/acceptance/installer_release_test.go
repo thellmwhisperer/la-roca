@@ -31,7 +31,7 @@ func TestTheInstallerResolvesAPrettyPrintedReleaseDocument(t *testing.T) {
 		t.Fatalf("the installer exited %d against a pretty-printed release:\n%s%s",
 			m.last.code, m.last.stdout, m.last.stderr)
 	}
-	if err := m.exactlyOneExecutableRoca(); err != nil {
+	if err := m.onlyRocaExecutables(); err != nil {
 		t.Fatalf("the artefact did not land: %v", err)
 	}
 	if err := m.versionExitsWith(0); err != nil {
@@ -44,7 +44,7 @@ func TestTheInstallerRestoresThePreviousBinaryWhenBundledPlacementFails(t *testi
 	if err := m.iRunTheInstaller(); err != nil || m.last.code != 0 {
 		t.Fatalf("initial install: %v, code %d:\n%s%s", err, m.last.code, m.last.stdout, m.last.stderr)
 	}
-	manifest := filepath.Join(m.home, ".roca", "plugins", "roca-ops", ".roca-plugin.json")
+	manifest := filepath.Join(m.home, ".roca", "plugins", "vector", ".roca-plugin.json")
 	body, err := os.ReadFile(manifest)
 	if err != nil {
 		t.Fatal(err)

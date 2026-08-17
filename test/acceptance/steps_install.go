@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -47,9 +48,8 @@ import (
 var thePrefix = []string{".local", "bin"}
 
 // theNewVersion is the tag the channel publishes as newer than the built one.
-// Its artefact is not a Go binary: the contract is that the
-// bytes on the PATH changed and that the new ones answer, and the installer is
-// deliberately blind to what it is installing.
+// The harness builds it through the release Makefile path so its bundled vector
+// payload obeys the same placement contract as the current artefact.
 const theNewVersion = "v99.9.9"
 
 // installWorld is the scenario's release channel and what it has installed.
@@ -114,13 +114,15 @@ func registerInstallSteps(ctx *godog.ScenarioContext, m *world) {
 	ctx.When(`^I run "roca uninstall" and answer "([^"]*)" to the question about keeping data$`,
 		m.iUninstallAnswering)
 
-	ctx.Then(`^there is exactly one executable file "roca" in the binaries directory$`,
-		m.exactlyOneExecutableRoca)
+	ctx.Then(`^the binaries directory contains only "roca" and "roca-vector"$`,
+		m.onlyRocaExecutables)
 	ctx.Then(`^the bundled resident plugin "([^"]*)" is installed without an executable$`,
 		m.bundledResidentPluginIsInstalled)
 	ctx.Then(`^the bundled journey plugin "([^"]*)" is installed without an executable$`,
 		m.bundledJourneyPluginIsInstalled)
-	ctx.Then(`^that file is a static binary with no third-party dynamic dependencies$`,
+	ctx.Then(`^the bundled executable plugin "([^"]*)" is installed with dormant state$`,
+		m.bundledExecutablePluginIsInstalled)
+	ctx.Then(`^the core file is a static binary with no third-party dynamic dependencies$`,
 		m.aStaticBinary)
 	ctx.Then(`^there is no Python virtual environment in the HOME$`, m.noVirtualEnvironment)
 	ctx.Then(`^there is no embedded interpreter in the HOME$`, m.noEmbeddedInterpreter)
@@ -235,8 +237,7 @@ func newStampedBinary() (string, error) {
 			newStampErr = err
 			return
 		}
-		build := exec.Command("go", "build",
-			"-ldflags", "-X main.version="+theNewVersion, "-o", out, "./cmd/roca")
+		build := exec.Command("make", "build", "BIN="+out, "VERSION="+theNewVersion)
 		build.Dir = root
 		if output, err := build.CombinedOutput(); err != nil {
 			newStampErr = fmt.Errorf("stamp the new release binary: %v: %s", err, output)
@@ -728,7 +729,7 @@ func theInstalledBinary(home string) string {
 
 // --- assertions ---
 
-func (m *world) exactlyOneExecutableRoca() error {
+func (m *world) onlyRocaExecutables() error {
 	directory := theBinariesDirectory(m.home)
 	entries, err := os.ReadDir(directory)
 	if err != nil {
@@ -742,8 +743,9 @@ func (m *world) exactlyOneExecutableRoca() error {
 		}
 		executables = append(executables, entry.Name())
 	}
-	if len(executables) != 1 || executables[0] != "roca" {
-		return fmt.Errorf("the binaries directory carries %v, want exactly [roca]", executables)
+	slices.Sort(executables)
+	if !slices.Equal(executables, []string{"roca", "roca-vector"}) {
+		return fmt.Errorf("the binaries directory carries %v, want exactly [roca roca-vector]", executables)
 	}
 	return nil
 }
@@ -779,6 +781,28 @@ func (m *world) bundledJourneyPluginIsInstalled(name string) error {
 	}
 	if journeys < 9 {
 		return fmt.Errorf("bundled journey schema has %d columns", journeys)
+	}
+	return nil
+}
+
+func (m *world) bundledExecutablePluginIsInstalled(name string) error {
+	directory := filepath.Join(m.home, ".roca", "plugins", name)
+	manifest, err := plugininstall.VerifyInstalledPayload(name, directory)
+	if err != nil {
+		return err
+	}
+	executable := filepath.Join(theBinariesDirectory(m.home), "roca-"+name)
+	if manifest.Source != plugin.BundledSource || manifest.Risk != plugininstall.Executable ||
+		manifest.Executable != executable || manifest.StateDir != "state" {
+		return fmt.Errorf("bundled executable plugin manifest = %+v", manifest)
+	}
+	state := filepath.Join(directory, manifest.StateDir)
+	entries, err := os.ReadDir(state)
+	if err != nil {
+		return fmt.Errorf("read dormant plugin state: %w", err)
+	}
+	if len(entries) != 0 {
+		return fmt.Errorf("bundled executable plugin activated state: %v", entries)
 	}
 	return nil
 }

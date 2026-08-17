@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocavector"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 )
 
@@ -39,9 +40,9 @@ func TestPluginsResolveFromAControlledPathAndNeverTheCurrentDirectory(t *testing
 }
 
 func TestVectorExecutableDispatchAndListingRequireItsFeature(t *testing.T) {
-	directory := t.TempDir()
-	vector := filepath.Join(directory, "roca-vector")
-	if err := os.WriteFile(vector, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	pluginRoot, directory := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
+	if _, err := rocavector.EnsureWithPayload(
+		pluginRoot, directory, "synthetic-version", []byte("#!/bin/sh\nexit 0\n")); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", directory)
