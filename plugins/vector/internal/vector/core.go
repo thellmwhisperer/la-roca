@@ -41,8 +41,9 @@ const (
 )
 
 var (
-	structuralSessionToken = regexp.MustCompile(`(?i)(?:\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b|\b[0-9A-HJKMNP-TV-Z]{26}\b|\bg-p-[a-z0-9_-]+\b)`)
-	sessionJSONKeyFragment = regexp.MustCompile(`"(?:\\.|[^"\\])*"\s*:`)
+	structuralSessionToken    = regexp.MustCompile(`(?i)(?:\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b|\b[0-9A-HJKMNP-TV-Z]{26}\b|\bg-p-[a-z0-9_-]+\b)`)
+	sessionJSONScalarFragment = regexp.MustCompile(`"(?:\\.|[^"\\])*"\s*:\s*(?:"(?:\\.|[^"\\])*"|true|false|null|-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)`)
+	sessionJSONKeyFragment    = regexp.MustCompile(`"(?:\\.|[^"\\])*"\s*:`)
 )
 
 func corpusTable(name string) string { return corpusSchema + "." + name }
@@ -201,6 +202,7 @@ func cleanSessionField(value string) string {
 	if value == "" || sessionPathValue(value) {
 		return ""
 	}
+	value = sessionJSONScalarFragment.ReplaceAllString(value, " ")
 	value = sessionJSONKeyFragment.ReplaceAllString(value, " ")
 	value = structuralSessionToken.ReplaceAllString(value, " ")
 	fields := strings.Fields(value)
@@ -239,9 +241,26 @@ func sessionPathToken(value string) bool {
 		return true
 	}
 	if before, after, ok := strings.Cut(value, "/"); ok {
-		return before == "" || after == "" || strings.HasPrefix(after, ".") || strings.Contains(after, ".")
+		return before == "" || after == "" || !sessionSlashLanguage(before, after)
 	}
 	return false
+}
+
+func sessionSlashLanguage(before, after string) bool {
+	if before == "" || after == "" || before != strings.ToUpper(before) {
+		return false
+	}
+	for _, character := range before {
+		if character < 'A' || character > 'Z' {
+			return false
+		}
+	}
+	for _, character := range after {
+		if (character < 'A' || character > 'Z') && (character < '0' || character > '9') {
+			return false
+		}
+	}
+	return true
 }
 
 func sessionHexToken(value string) bool {
