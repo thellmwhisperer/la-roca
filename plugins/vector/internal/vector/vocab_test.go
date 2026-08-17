@@ -193,6 +193,30 @@ func TestVocabDiscoversTwoAvenuesAndPenalizesWorkshopNoise(t *testing.T) {
 	}
 }
 
+func TestVocabRanksEligibleSourcesBeforeApplyingTopK(t *testing.T) {
+	sources := make([]sourceRow, 0, 1000)
+	for index := 0; index < 900; index++ {
+		sources = append(sources, sourceRow{kind: "memories", text: fmt.Sprintf("salud decoy %d", index),
+			layer: "discovery", origin: "agent", createdAt: "2026-08-17"})
+	}
+	for index := 0; index < 100; index++ {
+		sources = append(sources, sourceRow{kind: "exchanges", sessionID: "eligible",
+			ordinal: int64(index), hasOrdinal: true, text: fmt.Sprintf("scotland topic %d", index)})
+	}
+	index := Index{Corpus: &memoryCorpus{sources: sources}, VectorPath: filepath.Join(t.TempDir(), "vector.db"),
+		Model: DefaultModel, Embedder: vocabEmbedder{}}
+	if _, err := index.Ingest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	report, err := index.Vocab(context.Background(), "salud")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Hits != vocabTopK || len(report.HitsByKind) != 1 || report.HitsByKind["exchanges"] != vocabTopK {
+		t.Fatalf("hits = %d, by kind = %v", report.Hits, report.HitsByKind)
+	}
+}
+
 func TestVocabCensusFollowsTheCorpusExactly(t *testing.T) {
 	ctx := context.Background()
 	corpus := &memoryCorpus{sources: []sourceRow{
@@ -220,6 +244,45 @@ func TestVocabCensusFollowsTheCorpusExactly(t *testing.T) {
 	}
 	assertCensus(t, vectorPath, 4, map[string]int64{"camion": 2, "salud": 1, "medico": 2, "publica": 1,
 		"otra": 1, "cosa": 1, "nuevo": 1, "cabecera": 1})
+}
+
+type secondBatchFailureEmbedder struct {
+	calls int
+}
+
+func (*secondBatchFailureEmbedder) Pull(context.Context, string) error { return nil }
+
+func (e *secondBatchFailureEmbedder) Embed(ctx context.Context, model string, input []string) ([][]float32, error) {
+	e.calls++
+	if e.calls == 2 {
+		return nil, fmt.Errorf("synthetic second-batch failure")
+	}
+	return vocabEmbedder{}.Embed(ctx, model, input)
+}
+
+func TestFailedIngestLeavesCensusUnavailable(t *testing.T) {
+	ctx := context.Background()
+	corpus := &memoryCorpus{sources: []sourceRow{{kind: "exchanges", sessionID: "old",
+		ordinal: 1, hasOrdinal: true, text: "scotland old"}}}
+	index := Index{Corpus: corpus, VectorPath: filepath.Join(t.TempDir(), "vector.db"),
+		Model: DefaultModel, Embedder: vocabEmbedder{}}
+	if _, err := index.Ingest(ctx); err != nil {
+		t.Fatal(err)
+	}
+	corpus.sources = nil
+	for ordinal := 0; ordinal < defaultBatchSize+1; ordinal++ {
+		corpus.sources = append(corpus.sources, sourceRow{kind: "exchanges", sessionID: "new",
+			ordinal: int64(ordinal), hasOrdinal: true, text: fmt.Sprintf("cancer changed %d", ordinal)})
+	}
+	index.Embedder = &secondBatchFailureEmbedder{}
+	if _, err := index.Ingest(ctx); err == nil || !strings.Contains(err.Error(), "synthetic second-batch failure") {
+		t.Fatalf("failed ingest = %v", err)
+	}
+	index.Embedder = vocabEmbedder{}
+	if _, err := index.Vocab(ctx, "salud"); err == nil ||
+		!strings.Contains(err.Error(), "vector census is not built") {
+		t.Fatalf("vocab after failed ingest = %v, want the ingest hint", err)
+	}
 }
 
 func TestVocabRequiresTheCensus(t *testing.T) {

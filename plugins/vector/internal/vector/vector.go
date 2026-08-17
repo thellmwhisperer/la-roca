@@ -140,6 +140,9 @@ func (i Index) Ingest(ctx context.Context) (Delta, error) {
 	if err != nil {
 		return Delta{}, err
 	}
+	if err := invalidateCensus(ctx, store); err != nil {
+		return Delta{}, fmt.Errorf("invalidate vector census: %w", err)
+	}
 	if model != "" && model != i.Model {
 		if err := resetIndex(store); err != nil {
 			return Delta{}, err
