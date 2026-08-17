@@ -34,6 +34,7 @@ roca vector install
 roca vector ingest --delta
 roca vector ingest --delta --source sessions
 roca vector query "which decision kept inference local" 5
+roca vector vocab salud
 ```
 
 `install` is the plugin's adopt/init command: it pulls the model, prepares the
@@ -54,6 +55,26 @@ delta when repeated against the same corpus.
 
 For a non-default core database, export `ROCA_DB_PATH` or pass the plugin flag
 after dispatch: `roca vector --db-path /path/to/roca.db query "..."`.
+
+## Vocabulary discovery
+
+`roca vector vocab CONCEPT` reports the discriminative vocabulary around a
+concept with zero inference in the discovery path: the vector index nominates
+the top-100 semantic hits among `exchanges` and `thinking_blocks`, terms are
+tokenized with accent folding, and each term is scored by the smoothed
+log-odds of its document share in the discovery set against its share in a
+global census. Only terms the discovery set concentrates survive, so
+high-volume workshop vocabulary (for example `worktree`,
+`exchange`, `semantic`, `projects`) is penalized by the baseline instead of
+dominating. Surviving terms are grouped into research avenues by shared hit
+documents, in a fixed rank order that makes the report reproducible.
+
+The census is rebuilt from the same corpus walk that maintains the index:
+any `install` or `ingest --delta` refreshes it, and it covers the content
+kinds with first-class text (memories, exchanges, thinking blocks; the session
+projection carries serialized metadata and is deliberately not a baseline).
+On an index installed before the census existed, `vocab` reports the missing
+census until the next delta ingest builds it.
 
 ## Retrieval gate
 

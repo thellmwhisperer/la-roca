@@ -173,6 +173,7 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 	}
 
 	report := Delta{}
+	census := newVocabCensus()
 	seen := make(map[string]bool, len(existing))
 	pending := make([]desiredChunk, 0, defaultBatchSize)
 	flush := func() error {
@@ -210,6 +211,7 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 
 	err = i.Corpus.WalkSources(ctx, sourceKind, func(source sourceRow) error {
 		report.Sources++
+		census.add(source.kind, source.text)
 		for chunkIndex, text := range chunks(source.text, defaultChunkSize, defaultOverlap) {
 			chunk := desiredChunk{
 				sourceKind: source.kind, sourceID: source.stableID(), index: chunkIndex,
@@ -238,6 +240,9 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 	}
 	if err := removeMissing(ctx, store, existing, seen, sourceKind, &report); err != nil {
 		return Delta{}, err
+	}
+	if err := writeCensus(ctx, store, census); err != nil {
+		return Delta{}, fmt.Errorf("write vector census: %w", err)
 	}
 	report.Chunks = report.Added + report.Updated + report.Unchanged
 	return report, nil
@@ -447,6 +452,8 @@ func openSQLite(path string, readOnly bool) (*sql.DB, error) {
 func ensureBaseSchema(db *sql.DB) error {
 	_, err := db.Exec(`PRAGMA journal_mode=WAL;
 		CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+		CREATE TABLE IF NOT EXISTS census(term TEXT NOT NULL PRIMARY KEY, docs INTEGER NOT NULL) WITHOUT ROWID;
+		CREATE TABLE IF NOT EXISTS census_totals(key TEXT NOT NULL PRIMARY KEY, documents INTEGER NOT NULL);
 		CREATE TABLE IF NOT EXISTS chunks(
 			id INTEGER PRIMARY KEY,
 			source_kind TEXT NOT NULL,
