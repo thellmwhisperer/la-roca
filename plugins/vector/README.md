@@ -3,9 +3,10 @@
 `roca-vector` is the optional executable plugin for local semantic retrieval.
 It is a separate Go module and binary: core has no import, built-in command, or
 index dependency. The plugin reads corpus rows through `roca exec --json` and
-keeps only embeddings, fingerprints, and stable source locators in its own
-manifest-owned `state/` directory. Corpus text is resolved live from core when
-a result is returned and is never copied into the index.
+keeps only embeddings, fingerprints, stable source locators, and aggregate
+token document frequencies in its own manifest-owned `state/` directory.
+Corpus text is resolved live from core when a result is returned and is never
+copied into the index.
 
 ## Build and install
 
@@ -52,11 +53,11 @@ concept with zero inference in the discovery path: the vector index nominates
 the top-100 semantic hits among `exchanges` and `thinking_blocks`, terms are
 tokenized with accent folding, and each term is scored by the smoothed
 log-odds of its document share in the discovery set against its share in a
-global census. Only terms the discovery set concentrates survive, so
-high-volume workshop vocabulary (for example `worktree`,
-`exchange`, `semantic`, `projects`) is penalized by the baseline instead of
-dominating. Surviving terms are grouped into research avenues by shared hit
-documents, in a fixed rank order that makes the report reproducible.
+global census. A term must occur in at least two hit documents and have
+positive log-odds to survive, so high-volume workshop vocabulary (for example
+`worktree`, `exchange`, `semantic`, `projects`) is penalized by the baseline
+instead of dominating. Surviving terms are grouped into research avenues by
+shared hit documents, in a fixed rank order that makes the report reproducible.
 
 The census is rebuilt from the same corpus walk that maintains the index:
 any `install` or `ingest --delta` refreshes it, and it covers the content
