@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -475,6 +476,50 @@ func TestCompactRebuildsDenseEquivalentStoreAndRefusesAnActiveIngest(t *testing.
 		if _, err := Compact(context.Background(), vectorPath); err == nil ||
 			!strings.Contains(err.Error(), "another ingest holds") {
 			t.Fatalf("compact under active ingest lock = %v", err)
+		}
+	})
+
+	t.Run("post-checkpoint byte baseline", func(t *testing.T) {
+		vectorPath := filepath.Join(t.TempDir(), "vector.db")
+		index := Index{Corpus: &memoryCorpus{sources: []sourceRow{{
+			kind: "sessions", sessionID: "synthetic-session", text: "alpha session",
+		}}}, VectorPath: vectorPath, Model: DefaultModel, Embedder: &recordingEmbedder{}}
+		if _, err := index.Ingest(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		db, err := sql.Open("sqlite", vectorPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		db.SetMaxOpenConns(1)
+		defer db.Close()
+		if _, err := db.Exec(`PRAGMA wal_autocheckpoint=0`); err != nil {
+			t.Fatal(err)
+		}
+		tx, err := db.Begin()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for n := range 1024 {
+			term := fmt.Sprintf("synthetic-wal-term-%04d-%s", n, strings.Repeat("x", 1024))
+			if _, err := tx.Exec(`INSERT INTO census(term,docs) VALUES(?,1)`, term); err != nil {
+				tx.Rollback()
+				t.Fatal(err)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+		stale, err := os.Stat(vectorPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		checkpointed, err := checkpointedSourceInfo(db, vectorPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if checkpointed.Size() <= stale.Size() {
+			t.Fatalf("checkpointed size = %d, pre-checkpoint size = %d", checkpointed.Size(), stale.Size())
 		}
 	})
 }

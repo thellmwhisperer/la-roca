@@ -694,13 +694,6 @@ func Compact(ctx context.Context, vectorPath string) (CompactReport, error) {
 	if err := ctx.Err(); err != nil {
 		return CompactReport{}, err
 	}
-	info, err := os.Stat(vectorPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return CompactReport{}, fmt.Errorf("vector search is not initialized; run `roca vector install`")
-		}
-		return CompactReport{}, fmt.Errorf("inspect vector database: %w", err)
-	}
 	release, busy, err := tryLockIndex(vectorPath + ".index.lock")
 	if err != nil {
 		return CompactReport{}, fmt.Errorf("lock vector index: %w", err)
@@ -709,6 +702,17 @@ func Compact(ctx context.Context, vectorPath string) (CompactReport, error) {
 		return CompactReport{}, fmt.Errorf("vector index is busy; another ingest holds %s", vectorPath+".index.lock")
 	}
 	defer release()
+
+	existing, err := os.OpenFile(vectorPath, os.O_RDWR, 0)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return CompactReport{}, fmt.Errorf("vector search is not initialized; run `roca vector install`")
+		}
+		return CompactReport{}, fmt.Errorf("inspect vector database: %w", err)
+	}
+	if err := existing.Close(); err != nil {
+		return CompactReport{}, fmt.Errorf("inspect vector database: %w", err)
+	}
 
 	source, err := openSQLite(vectorPath, false)
 	if err != nil {
@@ -723,7 +727,8 @@ func Compact(ctx context.Context, vectorPath string) (CompactReport, error) {
 	if err := ensureBaseSchema(source); err != nil {
 		return CompactReport{}, err
 	}
-	if err := checkpointForReplacement(source); err != nil {
+	info, err := checkpointedSourceInfo(source, vectorPath)
+	if err != nil {
 		return CompactReport{}, err
 	}
 	before, model, dimensions, err := inspectCompactStore(ctx, source)
@@ -802,6 +807,17 @@ func Compact(ctx context.Context, vectorPath string) (CompactReport, error) {
 		BytesBefore: info.Size(), BytesAfter: afterInfo.Size(),
 		BytesReclaimed: reclaimed, LiveChunks: after.chunks,
 	}, nil
+}
+
+func checkpointedSourceInfo(db *sql.DB, path string) (os.FileInfo, error) {
+	if err := checkpointForReplacement(db); err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("inspect vector database: %w", err)
+	}
+	return info, nil
 }
 
 func checkpointForReplacement(db *sql.DB) error {
