@@ -118,8 +118,9 @@ CREATE INDEX IF NOT EXISTS idx_exchanges_session ON exchanges(session_id);
 CREATE INDEX IF NOT EXISTS idx_tool_uses_session ON tool_uses(session_id);
 CREATE INDEX IF NOT EXISTS idx_thinking_session ON thinking_blocks(session_id);
 
--- Ingest hardening: re-ingesting does not duplicate
-CREATE UNIQUE INDEX IF NOT EXISTS idx_exchanges_session_number
+-- Identity lookup for ingest. Payload equality, not identity alone, owns the
+-- physical uniqueness law; same-identity divergent rows remain reportable.
+CREATE INDEX IF NOT EXISTS idx_exchanges_identity
   ON exchanges(session_id, exchange_number);
 
 CREATE INDEX IF NOT EXISTS idx_ingest_state_project ON ingest_file_state(project);

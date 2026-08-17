@@ -120,11 +120,12 @@ func ParseClaudeSession(content []byte, meta FileMeta) (Records, error) {
 	builder.flush()
 
 	session := Session{
-		ID:          meta.SessionID,
-		SourceAgent: firstNonEmpty(meta.SourceAgent, "claude"),
-		Project:     meta.Project,
-		Exchanges:   builder.finish(),
-		Metadata:    map[string]any{},
+		ID:                           meta.SessionID,
+		SourceAgent:                  firstNonEmpty(meta.SourceAgent, "claude"),
+		Project:                      meta.Project,
+		Exchanges:                    builder.finish(),
+		ExchangeNumbersAuthoritative: true,
+		Metadata:                     map[string]any{},
 	}
 	if cwd != "" {
 		session.Metadata["cwd"] = cwd

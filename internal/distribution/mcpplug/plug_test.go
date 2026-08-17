@@ -518,6 +518,13 @@ func TestWritingThroughThePlugIsWritingThroughTheProduct(t *testing.T) {
 		"layer": "discovery", "content": "written from a shell-less agent",
 	})
 	assertNoStructuredEnvelope(t, result)
+	retry := callTool(t, session, "roca_store", map[string]any{
+		"layer": "discovery", "content": "written from a shell-less agent",
+	})
+	if retry.Meta["skipped_duplicate"] != true || retry.Meta["duplicate_source"] != "claude-code" ||
+		retry.Meta["duplicate_surface"] != service.SurfaceMCP {
+		t.Fatalf("MCP duplicate signal = %#v", retry.Meta)
+	}
 
 	// The audit says it came from the plug, which is what tells this write from
 	// the one the shell would have made.
