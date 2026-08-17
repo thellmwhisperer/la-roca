@@ -32,6 +32,7 @@ Ollama must be running locally. The default model is
 ```sh
 roca vector install
 roca vector ingest --delta
+roca vector ingest --delta --source sessions
 roca vector query "which decision kept inference local" 5
 ```
 
@@ -40,6 +41,13 @@ plugin-owned index, and starts a resumable background build. `ingest
 --delta` embeds only new or changed chunks and removes missing sources. Both
 writing commands honor `ROCA_READ_ONLY`. `query` uses binary ANN candidates,
 exact cosine reranking, stable source deduplication, and live text resolution.
+
+Session embeddings contain only cleaned human title and project labels. They
+never contain serialized metadata, fingerprints, hashes, UUIDs, opaque project
+identifiers, or paths. The session text contract is fingerprint-versioned, so
+`ingest --delta --source sessions` re-embeds the affected session chunks once,
+reports added, updated, removed, and unchanged counts, and is a zero-write
+delta when repeated against the same corpus.
 
 For a non-default core database, export `ROCA_DB_PATH` or pass the plugin flag
 after dispatch: `roca vector --db-path /path/to/roca.db query "..."`.

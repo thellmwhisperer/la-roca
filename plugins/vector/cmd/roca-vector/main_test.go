@@ -45,6 +45,9 @@ func TestDeltaFlagAndReadOnlyBoundaryAreExplicit(t *testing.T) {
 	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "ROCA_READ_ONLY") {
 		t.Fatalf("install under read-only = %v", err)
 	}
+	if flag := ingestCommand(env).Flags().Lookup("source"); flag == nil {
+		t.Fatal("targeted delta has no --source flag")
+	}
 }
 
 func TestWorkerCarriesExplicitCoreAndStatePaths(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -35,14 +36,21 @@ type corePage struct {
 
 const (
 	exchangeText = `trim(COALESCE(human_text,'') || CASE WHEN human_text IS NOT NULL AND agent_text IS NOT NULL THEN char(10)||char(10) ELSE '' END || COALESCE(agent_text,''))`
-	sessionText  = `trim(COALESCE(title,'') || char(10) || COALESCE(project,'') || char(10) || COALESCE(metadata,''))`
 	corpusSchema = "plugin_roca_corpus"
 )
 
+var structuralSessionToken = regexp.MustCompile(`(?i)(?:\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b|\b[0-9a-f]{16,}\b|\b[0-9A-HJKMNP-TV-Z]{26}\b)`)
+
 func corpusTable(name string) string { return corpusSchema + "." + name }
 
-func (c CoreCLI) WalkSources(ctx context.Context, visit func(sourceRow) error) error {
+func (c CoreCLI) WalkSources(ctx context.Context, sourceKind string, visit func(sourceRow) error) error {
+	if err := validateSourceKind(sourceKind); err != nil {
+		return err
+	}
 	for _, source := range corePages() {
+		if sourceKind != "" && source.kind != sourceKind {
+			continue
+		}
 		cursor := source.initial
 		for {
 			rows, err := c.query(ctx, source.query(cursor))
@@ -104,9 +112,10 @@ func corePages() []corePage {
 		{
 			kind: "sessions", initial: "",
 			query: func(cursor string) string {
-				return fmt.Sprintf(`SELECT session_id,%s AS text FROM %s
-					WHERE (COALESCE(title,'') <> '' OR COALESCE(project,'') <> '' OR COALESCE(metadata,'') NOT IN ('','{}'))
-					AND session_id > %s ORDER BY session_id LIMIT %d`, sessionText,
+				return fmt.Sprintf(`SELECT session_id,COALESCE(title,'') AS title,
+					COALESCE(project,'') AS project FROM %s
+					WHERE (COALESCE(title,'') <> '' OR COALESCE(project,'') <> '')
+					AND session_id > %s ORDER BY session_id LIMIT %d`,
 					corpusTable("sessions"), sqlLiteral(cursor), walkPageSize)
 			},
 			decode: decodeSession,
@@ -164,15 +173,50 @@ func decodeSession(values map[string]any) (sourceRow, string, error) {
 	if id == "" {
 		return sourceRow{}, "", fmt.Errorf("session_id is empty")
 	}
-	return sourceRow{kind: "sessions", sessionID: id, text: stringValue(values["text"])}, id, nil
+	text := sessionEmbeddingText(stringValue(values["title"]), stringValue(values["project"]))
+	return sourceRow{kind: "sessions", sessionID: id, text: text}, id, nil
+}
+
+func sessionEmbeddingText(title, project string) string {
+	fields := make([]string, 0, 2)
+	if title = cleanSessionField(title); title != "" {
+		fields = append(fields, title)
+	}
+	if project = cleanSessionProject(project); project != "" {
+		fields = append(fields, project)
+	}
+	return strings.Join(fields, "\n")
+}
+
+func cleanSessionField(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if (strings.HasPrefix(value, "{") || strings.HasPrefix(value, "[")) && json.Valid([]byte(value)) {
+		return ""
+	}
+	return strings.Join(strings.Fields(structuralSessionToken.ReplaceAllString(value, " ")), " ")
+}
+
+func cleanSessionProject(value string) string {
+	if strings.ContainsAny(value, `/\`) || structuralSessionToken.MatchString(value) {
+		return ""
+	}
+	return cleanSessionField(value)
 }
 
 func (c CoreCLI) ResolveSource(ctx context.Context, kind string, where locator) (string, error) {
 	var statement string
 	switch kind {
 	case "sessions":
-		statement = `SELECT ` + sessionText + ` AS text FROM ` + corpusTable("sessions") +
-			` WHERE session_id=` + sqlLiteral(where.SessionID)
+		statement = `SELECT COALESCE(title,'') AS title,COALESCE(project,'') AS project FROM ` +
+			corpusTable("sessions") + ` WHERE session_id=` + sqlLiteral(where.SessionID)
+		rows, err := c.query(ctx, statement)
+		if err != nil || len(rows) == 0 {
+			return "", err
+		}
+		return sessionEmbeddingText(stringValue(rows[0]["title"]), stringValue(rows[0]["project"])), nil
 	case "exchanges":
 		if !where.HasOrdinal {
 			statement = `SELECT ` + exchangeText + ` AS text FROM ` + corpusTable("exchanges") +

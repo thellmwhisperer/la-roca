@@ -34,7 +34,11 @@ func TestCoreCLIWalksEverySourceThroughRocaExec(t *testing.T) {
 			rows = []map[string]any{{"id": 3, "session_id": "s1", "exchange_number": nil,
 				"position_in_session": nil, "text": "gamma reasoning"}}
 		case strings.Contains(statement, "FROM "+corpusTable("sessions")):
-			rows = []map[string]any{{"session_id": "s1", "text": "delta session"}}
+			if strings.Contains(statement, "metadata") {
+				t.Fatalf("session projection selected structural metadata: %s", statement)
+			}
+			rows = []map[string]any{{"session_id": "s1", "title": "delta session",
+				"project": "synthetic-project"}}
 		default:
 			return nil, fmt.Errorf("unexpected statement %s", statement)
 		}
@@ -42,7 +46,7 @@ func TestCoreCLIWalksEverySourceThroughRocaExec(t *testing.T) {
 	}
 	core := CoreCLI{Executable: "/synthetic/roca", DBPath: "/synthetic/roca.db", Run: runner}
 	var sources []sourceRow
-	if err := core.WalkSources(context.Background(), func(source sourceRow) error {
+	if err := core.WalkSources(context.Background(), "", func(source sourceRow) error {
 		sources = append(sources, source)
 		return nil
 	}); err != nil {
@@ -54,6 +58,55 @@ func TestCoreCLIWalksEverySourceThroughRocaExec(t *testing.T) {
 	if sources[0].filePath != "notes.md" || sources[1].stableID() != "exchanges/s1/4" ||
 		!strings.Contains(sources[2].stableID(), "/unkeyed/") || sources[3].stableID() != "sessions/s1" {
 		t.Fatalf("decoded sources = %+v", sources)
+	}
+	queries, sources = nil, nil
+	if err := core.WalkSources(context.Background(), "sessions", func(source sourceRow) error {
+		sources = append(sources, source)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(queries) != 1 || len(sources) != 1 || !strings.Contains(queries[0], corpusTable("sessions")) {
+		t.Fatalf("targeted session walk queried %d pages and returned %+v", len(queries), sources)
+	}
+}
+
+func TestSessionEmbeddingTextKeepsOnlyHumanContent(t *testing.T) {
+	const hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	const uuid = "123e4567-e89b-12d3-a456-426614174000"
+	tests := []struct {
+		name    string
+		title   string
+		project string
+		want    string
+	}{
+		{name: "human fields", title: "Scottish public health " + hash + " " + uuid,
+			project: "health-research", want: "Scottish public health\nhealth-research"},
+		{name: "opaque project", title: "Personal wellbeing",
+			project: "g-p-681f216b02388191b7524b022cefef72", want: "Personal wellbeing"},
+		{name: "project path", title: "Useful session", project: "/synthetic/work/health",
+			want: "Useful session"},
+		{name: "serialized title", title: `{"source_exchange_fingerprints":["` + hash + `"],"enabled":true}`,
+			project: "", want: ""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			row, _, err := decodeSession(map[string]any{
+				"session_id": "synthetic-session", "title": test.title, "project": test.project,
+				"metadata": `{"source_exchange_fingerprints":["` + hash + `"],"default":true}`,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if row.text != test.want {
+				t.Fatalf("session embedding text = %q, want %q", row.text, test.want)
+			}
+			for _, contaminant := range []string{"source_exchange_fingerprints", "default", hash, uuid, "{", "}"} {
+				if strings.Contains(row.text, contaminant) {
+					t.Fatalf("session embedding text contains %q: %q", contaminant, row.text)
+				}
+			}
+		})
 	}
 }
 
