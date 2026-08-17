@@ -80,6 +80,42 @@ func TestEnsureAllPreflightsInstalledSchemasBeforeUpdatingAny(t *testing.T) {
 	}
 }
 
+func TestEnsureAllRejectsAReadOnlyDatabaseBeforeUpdatingAny(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not enforce Unix file modes")
+	}
+	root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
+	alpha, beta := dataSpec("alpha"), dataSpec("beta")
+	installDataSpecs(t, root, bin, "v1", alpha, beta)
+	betaDatabase := filepath.Join(root, "beta", "beta.db")
+	if err := os.Chmod(betaDatabase, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(betaDatabase, 0o600)
+
+	if _, err := bundledplugin.EnsureAll(root, bin, "v2", alpha, beta); err == nil {
+		t.Fatal("read-only database passed the bundled preflight")
+	}
+	assertManifestVersion(t, root, "alpha", "v1")
+}
+
+func TestEnsureAllConvergesMixedVersionsOnNextStartup(t *testing.T) {
+	root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
+	alpha, beta := dataSpec("alpha"), dataSpec("beta")
+	installDataSpecs(t, root, bin, "v1", alpha, beta)
+	if _, err := bundledplugin.Ensure(root, bin, "v2", alpha); err != nil {
+		t.Fatal(err)
+	}
+	assertManifestVersion(t, root, "alpha", "v2")
+	assertManifestVersion(t, root, "beta", "v1")
+
+	if _, err := bundledplugin.EnsureAll(root, bin, "v2", alpha, beta); err != nil {
+		t.Fatal(err)
+	}
+	assertManifestVersion(t, root, "alpha", "v2")
+	assertManifestVersion(t, root, "beta", "v2")
+}
+
 func executableSpec(name string, payload []byte) bundledplugin.Spec {
 	return bundledplugin.Spec{
 		Name: name, Executable: executableName(name), Source: "bundled:roca",
@@ -98,6 +134,26 @@ func dataSpec(name string) bundledplugin.Spec {
 			return bundledplugin.ApplySchema(path, name,
 				`CREATE TABLE IF NOT EXISTS records (id INTEGER PRIMARY KEY)`, 1, 0)
 		},
+	}
+}
+
+func installDataSpecs(t *testing.T, root, bin, version string, specs ...bundledplugin.Spec) {
+	t.Helper()
+	for _, spec := range specs {
+		if _, err := bundledplugin.Ensure(root, bin, version, spec); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func assertManifestVersion(t *testing.T, root, name, version string) {
+	t.Helper()
+	manifest, err := plugininstall.ReadManifest(filepath.Join(root, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Version != version {
+		t.Fatalf("%s version = %q, want %q", name, manifest.Version, version)
 	}
 }
 

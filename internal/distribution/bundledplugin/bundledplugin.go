@@ -1,5 +1,7 @@
 // Package bundledplugin owns verified installation and refresh for plugins
-// shipped inside the Roca binary.
+// shipped inside the Roca binary. Its batch atomicity contract is reasonable
+// preflight plus startup convergence: an environmental failure may leave a
+// transient mixed version, but the next successful startup repairs it.
 package bundledplugin
 
 import (
@@ -197,6 +199,9 @@ func preflightInstalledSchema(root, target string, spec Spec) error {
 	}
 	defer os.RemoveAll(directory)
 	source := filepath.Join(target, spec.DatabaseFilename)
+	if err := probeInstalledDatabase(source, spec.Name); err != nil {
+		return err
+	}
 	clone := filepath.Join(directory, spec.DatabaseFilename)
 	db, err := OpenDatabase(source, true)
 	if err != nil {
@@ -212,6 +217,29 @@ func preflightInstalledSchema(root, target string, spec Spec) error {
 	}
 	if err := spec.ApplySchema(clone); err != nil {
 		return fmt.Errorf("preflight bundled %s schema: %w", spec.Name, err)
+	}
+	return nil
+}
+
+func probeInstalledDatabase(path, name string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("inspect bundled %s database writeability: %w", name, err)
+	}
+	if info.Mode().Perm()&0o222 == 0 {
+		return fmt.Errorf("bundled %s database is not writable", name)
+	}
+	db, err := openDatabase(path, "rw")
+	if err != nil {
+		return fmt.Errorf("open bundled %s database read-write: %w", name, err)
+	}
+	pingErr := db.PingContext(context.Background())
+	closeErr := db.Close()
+	if pingErr != nil {
+		return fmt.Errorf("open bundled %s database read-write: %w", name, pingErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close bundled %s read-write probe: %w", name, closeErr)
 	}
 	return nil
 }
