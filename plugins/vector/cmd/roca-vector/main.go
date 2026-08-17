@@ -106,6 +106,7 @@ func installCommand(env *environment) *cobra.Command {
 func ingestCommand(env *environment) *cobra.Command {
 	var delta bool
 	var model string
+	var source string
 	command := &cobra.Command{
 		Use:   "ingest --delta",
 		Short: "Embed only new or changed corpus chunks",
@@ -139,15 +140,24 @@ func ingestCommand(env *environment) *cobra.Command {
 				return err
 			}
 			started := time.Now()
-			report, err := index.Ingest(command.Context())
+			var report vector.Delta
+			if source == "" {
+				report, err = index.Ingest(command.Context())
+			} else {
+				report, err = index.IngestSource(command.Context(), source)
+			}
 			if err != nil {
 				return err
 			}
 			if env.json {
 				return printJSON(map[string]any{"mode": "delta", "model": model,
-					"counts": report, "elapsed_ms": time.Since(started).Milliseconds()})
+					"source": source, "counts": report, "elapsed_ms": time.Since(started).Milliseconds()})
 			}
-			fmt.Printf("vector delta: %d added · %d updated · %d removed · %d unchanged\n",
+			label := "vector delta"
+			if source != "" {
+				label += " (" + source + ")"
+			}
+			fmt.Printf("%s: %d added · %d updated · %d removed · %d unchanged\n", label,
 				report.Added, report.Updated, report.Removed, report.Unchanged)
 			fmt.Printf("  sources: %d · chunks: %d · model: %s\n", report.Sources, report.Chunks, model)
 			return nil
@@ -155,6 +165,7 @@ func ingestCommand(env *environment) *cobra.Command {
 	}
 	command.Flags().BoolVar(&delta, "delta", false, "embed only new or changed chunks")
 	command.Flags().StringVar(&model, "model", "", "local Ollama embedding model (default: indexed model)")
+	command.Flags().StringVar(&source, "source", "", "limit the delta to one corpus source kind")
 	return command
 }
 
