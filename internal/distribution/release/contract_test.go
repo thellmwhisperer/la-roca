@@ -68,6 +68,7 @@ func TestTheChannelBuildsAndPublishesAStampedVectorPackagePerPlatform(t *testing
 	workflow := readRepoFile(t, "../../../.github/workflows/release.yml")
 	for _, required := range []string{
 		"plugin_version", `test "$plugin_version" = "$VERSION"`,
+		`"$bundle_home/bin/roca-vector" --version`,
 		"sha256sum roca-*", `gh release upload "$VERSION" --clobber bin/roca-*`,
 	} {
 		if !strings.Contains(workflow, required) {
@@ -77,6 +78,24 @@ func TestTheChannelBuildsAndPublishesAStampedVectorPackagePerPlatform(t *testing
 	ci := readRepoFile(t, "../../../.github/workflows/ci.yml")
 	if !strings.Contains(ci, "make dist") {
 		t.Error("pull-request CI does not dry-run the full release distribution")
+	}
+}
+
+func TestEveryCoreArtifactBundlesItsPlatformVectorExecutable(t *testing.T) {
+	makefile := readRepoFile(t, "../../../Makefile")
+	for _, payload := range []string{
+		"roca-vector-native",
+		"roca-vector-darwin-arm64",
+		"roca-vector-linux-arm64",
+		"roca-vector-linux-x64",
+		"roca-vector-windows-x64.exe",
+	} {
+		if !strings.Contains(makefile, "--payload $(VECTOR_TMP)/"+payload) {
+			t.Errorf("the core distribution does not bundle %s", payload)
+		}
+	}
+	if !strings.Contains(makefile, "go run ./cmd/bundle-vector") {
+		t.Error("the core build has no vector payload bundler")
 	}
 }
 

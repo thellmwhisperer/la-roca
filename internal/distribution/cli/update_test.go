@@ -372,3 +372,31 @@ exit 1
 		t.Fatalf("failed update left the new binary active:\n%s", got)
 	}
 }
+
+func TestBundledPluginRefreshUsesTheCoreInstallationDirectory(t *testing.T) {
+	directory := t.TempDir()
+	current := filepath.Join(directory, "roca")
+	if err := os.WriteFile(current, []byte("#!/bin/sh\necho 'roca v1.0.0'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	capture := filepath.Join(t.TempDir(), "prefix")
+	t.Setenv("ROCA_PREFIX_CAPTURE", capture)
+	next := []byte(`#!/bin/sh
+case "$1" in
+  --version) echo 'roca v2.0.0'; exit 0 ;;
+  _install-bundled-plugins) printf '%s' "$ROCA_PREFIX" > "$ROCA_PREFIX_CAPTURE"; exit 0 ;;
+esac
+exit 1
+`)
+	if err := release.Swap(current, next,
+		releaseReadiness(t.Context(), current, "v2.0.0")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != directory {
+		t.Fatalf("bundled plugin prefix = %q, want %q", got, directory)
+	}
+}

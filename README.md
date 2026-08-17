@@ -5,7 +5,7 @@
 **Your agents' history is a database.**
 **Interrogate it. Interact with it. Learn from it. Have fun with it.**
 
-One file, zero dependencies. Local SQLite. CLI + MCP.
+One command, zero dependencies. Local SQLite. CLI + MCP.
 
 [![CI](https://github.com/thellmwhisperer/la-roca/actions/workflows/ci.yml/badge.svg)](https://github.com/thellmwhisperer/la-roca/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -27,8 +27,9 @@ back it.
 curl -fsSL https://raw.githubusercontent.com/thellmwhisperer/la-roca/main/install.sh | sh
 ```
 
-This installs one static binary at `~/.local/bin/roca`, with no dependencies
-and no other changes. La Roca supports macOS on Apple Silicon and Linux; on
+This installs the static `roca` binary at `~/.local/bin/roca` and materializes
+its dormant, same-release `roca-vector` companion beside it. Neither executable
+has runtime dependencies. La Roca supports macOS on Apple Silicon and Linux; on
 Windows, use WSL.
 
 If `claude` or `codex` is already installed and signed in, no login of any kind
@@ -84,17 +85,17 @@ practically the same, sometimes better.
 
 ## Private by construction
 
-One binary, one SQLite file in `~/.roca`, zero network in the ingest path.
-Providers are called only to answer the questions you ask, and the SQL phase
-never sees your rows. With `--full` or `explore`, the prose phase receives at
-most ten result rows with each field truncated to 240 characters; the database,
-the full result set, and the search index never leave the machine. Explore reads
-the whole result set locally to compute its terrain, and only the aggregates
-travel: row counts per source, month clusters, co-occurring terms, and negative
-space. The ten-row cap governs raw row content in every model prompt, so an
-interpreter sees that capped sample plus those precomputed aggregates, never
-the full result set as text. Configure only Ollama when no query content may
-leave it at all.
+Static local executables, local SQLite stores under `~/.roca`, zero network in
+the ingest path. Providers are called only to answer the questions you ask, and
+the SQL phase never sees your rows. With `--full` or `explore`, the prose phase
+receives at most ten result rows with each field truncated to 240 characters;
+the database, the full result set, and the search index never leave the machine.
+Explore reads the whole result set locally to compute its terrain, and only the
+aggregates travel: row counts per source, month clusters, co-occurring terms,
+and negative space. The ten-row cap governs raw row content in every model
+prompt, so an interpreter sees that capped sample plus those precomputed
+aggregates, never the full result set as text. Configure only Ollama when no
+query content may leave it at all.
 
 Every CLI command and MCP tool call writes a size-capped, redacted record to
 the bundled ops database and to JSONL under `logs/`; query records never store

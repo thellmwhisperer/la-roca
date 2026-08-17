@@ -15,7 +15,7 @@ var (
 	schema string
 )
 
-func bundleSpec() bundledplugin.Spec {
+func BundleSpec() bundledplugin.Spec {
 	return bundledplugin.Spec{Name: Name, DatabaseFilename: DatabaseFilename,
 		Source: BundledSource, Manifest: manifest, ApplySchema: ApplySchema}
 }
