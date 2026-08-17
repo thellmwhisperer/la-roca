@@ -111,6 +111,12 @@ func renderDoctor(env *cliEnv, report service.DoctorReport) {
 	for _, warning := range report.Warnings {
 		env.print("warning: %s", warning)
 	}
+	if len(report.LayerRepairs) > 0 {
+		env.print("runtime_layers_not_in_registry: failed")
+		for _, command := range report.LayerRepairs {
+			env.print("      remedy: run `%s`", command)
+		}
+	}
 
 	switch {
 	case report.ModelDisabled && len(report.Providers) == 0:

@@ -23,7 +23,7 @@ func (s *Service) openHub(ctx context.Context) error {
 		return err
 	}
 	s.hub = hub
-	if err := installHubCompatibility(ctx, hub.DB, s, ops.Schema, corpus.Schema); err != nil {
+	if err := installHubCompatibility(ctx, hub.DB, ops.Schema, corpus.Schema); err != nil {
 		return err
 	}
 	if _, err := hub.ExecContext(ctx, "PRAGMA query_only = ON"); err != nil {
@@ -40,8 +40,7 @@ func (s *Service) openHub(ctx context.Context) error {
 	return nil
 }
 
-func installHubCompatibility(ctx context.Context, db *sql.DB, s *Service,
-	opsSchema, corpusSchema string) error {
+func installHubCompatibility(ctx context.Context, db *sql.DB, opsSchema, corpusSchema string) error {
 	ops, corpus := quoteSchema(opsSchema), quoteSchema(corpusSchema)
 	statements := []string{
 		`CREATE TEMP VIEW memories AS SELECT id, layer, content, metadata, origin,
@@ -78,16 +77,14 @@ func installHubCompatibility(ctx context.Context, db *sql.DB, s *Service,
 			return fmt.Errorf("compose the federation compatibility schema: %w", err)
 		}
 	}
-	for _, layer := range s.registry.Layers {
-		if _, err := db.ExecContext(ctx, `INSERT INTO layers
+	if _, err := db.ExecContext(ctx, `INSERT INTO layers
 			(name, description, schema_file, access_mode, ingest_allowed, is_coordination,
 			 search_excluded, alias_of, added_by, deprecated, lifecycle, capabilities,
-			 since_version) VALUES (?, ?, '', 'read-write', ?, ?, ?, ?, ?, ?, ?, '{}', ?)`,
-			layer.Name, layer.Description, layer.IngestAllowed, layer.IsCoordination,
-			layer.SearchExcluded, orNull(layer.AliasOf), layer.AddedBy, layer.Deprecated,
-			layer.Lifecycle, layer.SinceVersion); err != nil {
-			return fmt.Errorf("compose the federation layer catalogue: %w", err)
-		}
+			 since_version)
+		 SELECT name, description, schema_file, access_mode, ingest_allowed, is_coordination,
+			 search_excluded, alias_of, added_by, deprecated, lifecycle, capabilities,
+			 since_version FROM `+ops+`.layers`); err != nil {
+		return fmt.Errorf("compose the federation layer catalogue: %w", err)
 	}
 	return nil
 }
