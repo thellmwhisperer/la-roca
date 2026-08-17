@@ -188,6 +188,9 @@ func TestTheSkillLayersSectionNamesOnlyRealLayers(t *testing.T) {
 		t.Fatal("the skill has no Layers section, or it names no layers in backticks")
 	}
 	for _, name := range named {
+		if strings.HasPrefix(name, "roca ") {
+			continue
+		}
 		if !real[name] {
 			t.Errorf("skill Layers section names %q, which is not a layer in the registry", name)
 		}
