@@ -671,3 +671,308 @@ func vectorBlob(vector []float32) []byte {
 	}
 	return result
 }
+
+type CompactReport struct {
+	PagesBefore    int64 `json:"pages_before"`
+	PagesAfter     int64 `json:"pages_after"`
+	BytesBefore    int64 `json:"bytes_before"`
+	BytesAfter     int64 `json:"bytes_after"`
+	BytesReclaimed int64 `json:"bytes_reclaimed"`
+	LiveChunks     int64 `json:"live_chunks"`
+}
+
+type compactSnapshot struct {
+	chunks int64
+	pages  int64
+	kinds  map[string]int64
+}
+
+func Compact(ctx context.Context, vectorPath string) (CompactReport, error) {
+	if vectorPath == "" {
+		return CompactReport{}, fmt.Errorf("vector database path is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return CompactReport{}, err
+	}
+	info, err := os.Stat(vectorPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return CompactReport{}, fmt.Errorf("vector search is not initialized; run `roca vector install`")
+		}
+		return CompactReport{}, fmt.Errorf("inspect vector database: %w", err)
+	}
+	release, busy, err := tryLockIndex(vectorPath + ".index.lock")
+	if err != nil {
+		return CompactReport{}, fmt.Errorf("lock vector index: %w", err)
+	}
+	if busy {
+		return CompactReport{}, fmt.Errorf("vector index is busy; another ingest holds %s", vectorPath+".index.lock")
+	}
+	defer release()
+
+	source, err := openSQLite(vectorPath, false)
+	if err != nil {
+		return CompactReport{}, fmt.Errorf("open vector database: %w", err)
+	}
+	sourceOpen := true
+	defer func() {
+		if sourceOpen {
+			_ = source.Close()
+		}
+	}()
+	if err := ensureBaseSchema(source); err != nil {
+		return CompactReport{}, err
+	}
+	if err := checkpointForReplacement(source); err != nil {
+		return CompactReport{}, err
+	}
+	before, model, dimensions, err := inspectCompactStore(ctx, source)
+	if err != nil {
+		return CompactReport{}, fmt.Errorf("inspect vector index: %w", err)
+	}
+	if model == "" || dimensions == 0 {
+		return CompactReport{}, fmt.Errorf("vector index is not ready; run `roca vector install`")
+	}
+
+	temporaryFile, err := os.CreateTemp(filepath.Dir(vectorPath), "."+filepath.Base(vectorPath)+".compact-*")
+	if err != nil {
+		return CompactReport{}, fmt.Errorf("create compacted vector database: %w", err)
+	}
+	temporary := temporaryFile.Name()
+	if err := temporaryFile.Close(); err != nil {
+		_ = os.Remove(temporary)
+		return CompactReport{}, err
+	}
+	defer removeCompactFiles(temporary)
+	if err := os.Chmod(temporary, info.Mode().Perm()); err != nil {
+		return CompactReport{}, fmt.Errorf("secure compacted vector database: %w", err)
+	}
+
+	target, err := openSQLite(temporary, false)
+	if err != nil {
+		return CompactReport{}, fmt.Errorf("open compacted vector database: %w", err)
+	}
+	targetOpen := true
+	defer func() {
+		if targetOpen {
+			_ = target.Close()
+		}
+	}()
+	if err := buildCompactedStore(ctx, target, vectorPath, model, dimensions); err != nil {
+		return CompactReport{}, err
+	}
+	after, _, _, err := inspectCompactStore(ctx, target)
+	if err != nil {
+		return CompactReport{}, fmt.Errorf("verify compacted vector index: %w", err)
+	}
+	if err := verifyCompaction(before, after); err != nil {
+		return CompactReport{}, err
+	}
+	if err := sqliteIntegrityCheck(ctx, target); err != nil {
+		return CompactReport{}, fmt.Errorf("verify compacted vector database: %w", err)
+	}
+	if err := finishReplacementDatabase(target); err != nil {
+		return CompactReport{}, err
+	}
+	if err := target.Close(); err != nil {
+		return CompactReport{}, fmt.Errorf("close compacted vector database: %w", err)
+	}
+	targetOpen = false
+	if err := source.Close(); err != nil {
+		return CompactReport{}, fmt.Errorf("close vector database: %w", err)
+	}
+	sourceOpen = false
+
+	afterInfo, err := os.Stat(temporary)
+	if err != nil {
+		return CompactReport{}, fmt.Errorf("measure compacted vector database: %w", err)
+	}
+	if err := syncFile(temporary); err != nil {
+		return CompactReport{}, fmt.Errorf("sync compacted vector database: %w", err)
+	}
+	if err := replaceFile(temporary, vectorPath); err != nil {
+		return CompactReport{}, fmt.Errorf("replace vector database: %w", err)
+	}
+	reclaimed := info.Size() - afterInfo.Size()
+	if reclaimed < 0 {
+		reclaimed = 0
+	}
+	return CompactReport{
+		PagesBefore: before.pages, PagesAfter: after.pages,
+		BytesBefore: info.Size(), BytesAfter: afterInfo.Size(),
+		BytesReclaimed: reclaimed, LiveChunks: after.chunks,
+	}, nil
+}
+
+func checkpointForReplacement(db *sql.DB) error {
+	var busy, logFrames, checkpointed int
+	if err := db.QueryRow(`PRAGMA wal_checkpoint(TRUNCATE)`).Scan(&busy, &logFrames, &checkpointed); err != nil {
+		return fmt.Errorf("checkpoint vector database: %w", err)
+	}
+	if busy != 0 {
+		return fmt.Errorf("checkpoint vector database: active readers prevented a safe replacement")
+	}
+	var mode string
+	if err := db.QueryRow(`PRAGMA journal_mode=DELETE`).Scan(&mode); err != nil {
+		return fmt.Errorf("prepare vector database replacement: %w", err)
+	}
+	if !strings.EqualFold(mode, "delete") {
+		return fmt.Errorf("prepare vector database replacement: journal mode remained %s", mode)
+	}
+	return nil
+}
+
+func buildCompactedStore(ctx context.Context, target *sql.DB, sourcePath, model string, dimensions int) error {
+	if err := ensureBaseSchema(target); err != nil {
+		return err
+	}
+	if err := ensureVectorTables(target, dimensions, model); err != nil {
+		return err
+	}
+	if _, err := target.ExecContext(ctx, `PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF`); err != nil {
+		return fmt.Errorf("prepare compacted vector database: %w", err)
+	}
+	if _, err := target.ExecContext(ctx, `ATTACH DATABASE ? AS source`, sourcePath); err != nil {
+		return fmt.Errorf("attach vector database for compaction: %w", err)
+	}
+	attached := true
+	defer func() {
+		if attached {
+			_, _ = target.Exec(`DETACH DATABASE source`)
+		}
+	}()
+	statements := []struct {
+		name string
+		sql  string
+	}{
+		{"metadata", `INSERT OR REPLACE INTO main.meta(key,value) SELECT key,value FROM source.meta`},
+		{"census", `INSERT INTO main.census(term,docs) SELECT term,docs FROM source.census`},
+		{"census totals", `INSERT INTO main.census_totals(key,documents) SELECT key,documents FROM source.census_totals`},
+		{"chunk identities", `INSERT INTO main.chunks(id,source_kind,source_id,chunk_index,fingerprint,locator,updated_at)
+			SELECT id,source_kind,source_id,chunk_index,fingerprint,locator,updated_at FROM source.chunks ORDER BY id`},
+		{"float embeddings", `INSERT INTO main.embeddings(rowid,embedding)
+			SELECT rowid,vec_f32(embedding) FROM source.embeddings`},
+		{"ANN embeddings", `INSERT INTO main.ann_embeddings(rowid,embedding)
+			SELECT rowid,vec_quantize_binary(embedding) FROM source.embeddings`},
+	}
+	for _, statement := range statements {
+		if _, err := target.ExecContext(ctx, statement.sql); err != nil {
+			return fmt.Errorf("copy compacted vector database %s: %w", statement.name, err)
+		}
+	}
+	if _, err := target.ExecContext(ctx, `DETACH DATABASE source`); err != nil {
+		return fmt.Errorf("detach vector database after compaction: %w", err)
+	}
+	attached = false
+	return nil
+}
+
+func inspectCompactStore(ctx context.Context, db *sql.DB) (compactSnapshot, string, int, error) {
+	snapshot := compactSnapshot{kinds: map[string]int64{}}
+	var model, dimensionsText string
+	if err := db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key='model'`).Scan(&model); err != nil {
+		return snapshot, "", 0, err
+	}
+	if err := db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key='dimensions'`).Scan(&dimensionsText); err != nil {
+		return snapshot, "", 0, err
+	}
+	dimensions, err := strconv.Atoi(dimensionsText)
+	if err != nil {
+		return snapshot, "", 0, fmt.Errorf("invalid embedding dimensions %q", dimensionsText)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM chunks`).Scan(&snapshot.chunks); err != nil {
+		return snapshot, "", 0, err
+	}
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM embeddings_vector_chunks00`).Scan(&snapshot.pages); err != nil {
+		return snapshot, "", 0, err
+	}
+	rows, err := db.QueryContext(ctx, `SELECT source_kind,COUNT(*) FROM chunks GROUP BY source_kind`)
+	if err != nil {
+		return snapshot, "", 0, err
+	}
+	for rows.Next() {
+		var kind string
+		var count int64
+		if err := rows.Scan(&kind, &count); err != nil {
+			rows.Close()
+			return snapshot, "", 0, err
+		}
+		snapshot.kinds[kind] = count
+	}
+	if err := rows.Close(); err != nil {
+		return snapshot, "", 0, err
+	}
+	for _, table := range []string{"embeddings", "ann_embeddings"} {
+		var missing, orphaned int64
+		if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM (
+			SELECT id FROM chunks EXCEPT SELECT rowid FROM `+table+`)`).Scan(&missing); err != nil {
+			return snapshot, "", 0, err
+		}
+		if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM (
+			SELECT rowid FROM `+table+` EXCEPT SELECT id FROM chunks)`).Scan(&orphaned); err != nil {
+			return snapshot, "", 0, err
+		}
+		if missing != 0 || orphaned != 0 {
+			return snapshot, "", 0, fmt.Errorf("%s has %d missing and %d orphaned vectors", table, missing, orphaned)
+		}
+	}
+	return snapshot, model, dimensions, nil
+}
+
+func verifyCompaction(before, after compactSnapshot) error {
+	if before.chunks != after.chunks {
+		return fmt.Errorf("compacted vector index changed live chunk count from %d to %d", before.chunks, after.chunks)
+	}
+	if len(before.kinds) != len(after.kinds) {
+		return fmt.Errorf("compacted vector index changed source kind counts")
+	}
+	for kind, count := range before.kinds {
+		if after.kinds[kind] != count {
+			return fmt.Errorf("compacted vector index changed %s count from %d to %d", kind, count, after.kinds[kind])
+		}
+	}
+	return nil
+}
+
+func sqliteIntegrityCheck(ctx context.Context, db *sql.DB) error {
+	var result string
+	if err := db.QueryRowContext(ctx, `PRAGMA integrity_check`).Scan(&result); err != nil {
+		return err
+	}
+	if result != "ok" {
+		return fmt.Errorf("integrity check: %s", result)
+	}
+	return nil
+}
+
+func finishReplacementDatabase(db *sql.DB) error {
+	var mode string
+	if err := db.QueryRow(`PRAGMA journal_mode=DELETE`).Scan(&mode); err != nil {
+		return fmt.Errorf("finish compacted vector database: %w", err)
+	}
+	if !strings.EqualFold(mode, "delete") {
+		return fmt.Errorf("finish compacted vector database: journal mode remained %s", mode)
+	}
+	if _, err := db.Exec(`PRAGMA synchronous=FULL`); err != nil {
+		return fmt.Errorf("finish compacted vector database: %w", err)
+	}
+	return nil
+}
+
+func syncFile(path string) error {
+	file, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		return err
+	}
+	return file.Close()
+}
+
+func removeCompactFiles(path string) {
+	_ = os.Remove(path)
+	_ = os.Remove(path + "-wal")
+	_ = os.Remove(path + "-shm")
+}

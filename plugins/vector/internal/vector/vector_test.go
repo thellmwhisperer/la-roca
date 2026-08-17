@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"maps"
 	"math"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -14,6 +16,10 @@ import (
 
 type recordingEmbedder struct {
 	inputs [][]string
+}
+
+type compactFixtureEmbedder struct {
+	calls int
 }
 
 func (e *recordingEmbedder) Pull(context.Context, string) error { return nil }
@@ -30,6 +36,22 @@ func (e *recordingEmbedder) Embed(_ context.Context, _ string, input []string) (
 			vectors[i] = []float32{0, 1, 0, 0, 0, 0, 0, 0}
 		default:
 			vectors[i] = []float32{0, 0, 1, 0, 0, 0, 0, 0}
+		}
+	}
+	return vectors, nil
+}
+
+func (e *compactFixtureEmbedder) Pull(context.Context, string) error { return nil }
+
+func (e *compactFixtureEmbedder) Embed(_ context.Context, _ string, input []string) ([][]float32, error) {
+	e.calls++
+	vectors := make([][]float32, len(input))
+	for index, text := range input {
+		var ordinal int
+		if _, err := fmt.Sscanf(text, DocumentPrefix+"synthetic record %d", &ordinal); err == nil {
+			vectors[index] = []float32{1, float32(ordinal+1) / 2300, 0, 0, 0, 0, 0, 0}
+		} else {
+			vectors[index] = []float32{1, 0, 0, 0, 0, 0, 0, 0}
 		}
 	}
 	return vectors, nil
@@ -344,6 +366,144 @@ func TestQueryStopsWalkingAnIndexTheCorpusMovedUnder(t *testing.T) {
 		t.Fatalf("stale index cost %d resolutions, want at most %d",
 			len(corpus.resolves), maxUnresolvedCandidates)
 	}
+}
+
+func TestCompactRebuildsDenseEquivalentStoreAndRefusesAnActiveIngest(t *testing.T) {
+	t.Run("dense equivalent store", func(t *testing.T) {
+		ctx := context.Background()
+		sources := make([]sourceRow, 0, 2300)
+		for index := range 2300 {
+			text := fmt.Sprintf("synthetic record %04d", index)
+			switch index % 4 {
+			case 0:
+				sources = append(sources, sourceRow{kind: "sessions",
+					sessionID: fmt.Sprintf("synthetic-session-%04d", index), text: text})
+			case 1:
+				sources = append(sources, sourceRow{kind: "memories", text: text,
+					layer: "synthetic", origin: "test", createdAt: fmt.Sprintf("2026-01-%02d", index%28+1)})
+			case 2:
+				sources = append(sources, sourceRow{kind: "exchanges", sessionID: "synthetic-session",
+					ordinal: int64(index), hasOrdinal: true, text: text})
+			case 3:
+				sources = append(sources, sourceRow{kind: "thinking_blocks", sessionID: "synthetic-session",
+					ordinal: int64(index), hasOrdinal: true, position: "1", text: text})
+			}
+		}
+		corpus := &memoryCorpus{sources: sources}
+		vectorPath := filepath.Join(t.TempDir(), "vector.db")
+		embedder := &compactFixtureEmbedder{}
+		index := Index{Corpus: corpus, VectorPath: vectorPath, Model: DefaultModel, Embedder: embedder}
+		if delta, err := index.Ingest(ctx); err != nil || delta.Added != len(sources) {
+			t.Fatalf("initial delta = %+v, err=%v", delta, err)
+		}
+		kept := append([]sourceRow(nil), sources[:10]...)
+		kept = append(kept, sources[2290:]...)
+		corpus.sources = kept
+		if delta, err := index.Ingest(ctx); err != nil || delta.Removed != 2280 ||
+			delta.Unchanged != len(kept) || delta.Added != 0 || delta.Updated != 0 {
+			t.Fatalf("churn delta = %+v, err=%v", delta, err)
+		}
+		kindsBefore := chunkCountsByKind(t, vectorPath)
+		resultsBefore, err := index.Query(ctx, "synthetic compact query", 5)
+		if err != nil {
+			t.Fatal(err)
+		}
+		embeddingCalls := embedder.calls
+
+		report, err := Compact(ctx, vectorPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if embedder.calls != embeddingCalls {
+			t.Fatalf("compact made %d embedding calls", embedder.calls-embeddingCalls)
+		}
+		if report.LiveChunks != int64(len(kept)) || report.PagesBefore != 3 || report.PagesAfter != 1 {
+			t.Fatalf("compact report = %+v", report)
+		}
+		if report.BytesReclaimed <= 0 || report.BytesAfter >= report.BytesBefore {
+			t.Fatalf("compact did not reclaim bytes: %+v", report)
+		}
+		if kindsAfter := chunkCountsByKind(t, vectorPath); !maps.Equal(kindsBefore, kindsAfter) {
+			t.Fatalf("kind counts changed from %v to %v", kindsBefore, kindsAfter)
+		}
+		db, err := sql.Open("sqlite", vectorPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var integrity string
+		if err := db.QueryRow(`PRAGMA integrity_check`).Scan(&integrity); err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if integrity != "ok" {
+			t.Fatalf("integrity check = %q", integrity)
+		}
+		resultsAfter, err := index.Query(ctx, "synthetic compact query", 5)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(resultsBefore, resultsAfter) {
+			t.Fatalf("query changed from %+v to %+v", resultsBefore, resultsAfter)
+		}
+		embeddingCalls = embedder.calls
+		steady, err := index.Ingest(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if steady.Added != 0 || steady.Updated != 0 || steady.Removed != 0 ||
+			steady.Unchanged != len(kept) || embedder.calls != embeddingCalls {
+			t.Fatalf("post-compact delta = %+v, embedding batches=%d", steady, embedder.calls-embeddingCalls)
+		}
+	})
+
+	t.Run("active ingest lock", func(t *testing.T) {
+		vectorPath := filepath.Join(t.TempDir(), "vector.db")
+		index := Index{Corpus: &memoryCorpus{sources: []sourceRow{{
+			kind: "sessions", sessionID: "synthetic-session", text: "alpha session",
+		}}}, VectorPath: vectorPath, Model: DefaultModel, Embedder: &recordingEmbedder{}}
+		if _, err := index.Ingest(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		release, err := lockFile(vectorPath + ".index.lock")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer release()
+		if _, err := Compact(context.Background(), vectorPath); err == nil ||
+			!strings.Contains(err.Error(), "another ingest holds") {
+			t.Fatalf("compact under active ingest lock = %v", err)
+		}
+	})
+}
+
+func chunkCountsByKind(t *testing.T, path string) map[string]int64 {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	rows, err := db.Query(`SELECT source_kind,COUNT(*) FROM chunks GROUP BY source_kind`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	counts := map[string]int64{}
+	for rows.Next() {
+		var kind string
+		var count int64
+		if err := rows.Scan(&kind, &count); err != nil {
+			t.Fatal(err)
+		}
+		counts[kind] = count
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return counts
 }
 
 type memoryCorpus struct {
