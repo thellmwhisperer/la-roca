@@ -1,8 +1,9 @@
 # roca-vector
 
 `roca-vector` is the optional executable plugin for local semantic retrieval.
-It is a separate Go module and binary: core has no import, built-in command, or
-index dependency. The plugin reads corpus rows through `roca exec --json` and
+Its implementation is a separate Go module and binary: core has no import of
+that module, built-in vector command, or index dependency. The plugin reads
+corpus rows through `roca exec --json` and
 keeps only embeddings, fingerprints, stable source locators, and aggregate
 token document frequencies in its own manifest-owned `state/` directory.
 Corpus text is resolved live from core when a result is returned and is never
@@ -31,11 +32,10 @@ mv "$DOWNLOAD/$ASSET" "$CACHE/roca-vector.tar.gz"
 roca plugin install "$CACHE/roca-vector.tar.gz"
 ```
 
-This package is intentionally installable rather than bundled. Installation is
-an explicit full-trust consent event and an ordinary La Roca install or update
-does not place the binary. Set `features.vector = true` as well: absent or false
-hides `roca vector` dispatch and its `roca plugins` entry even when the binary
-is on `PATH`. Installation supplies the package; the switch activates it.
+Installing this archive is an explicit full-trust consent event. Set
+`features.vector = true` as well: absent or false hides `roca vector` dispatch
+and its `roca plugins` entry even when the binary is on `PATH`. Installation
+supplies the package; the switch activates it.
 
 For the next release, repeat the download, verification, and `mv` with the new
 `VERSION`, keeping the same cache path, then run:

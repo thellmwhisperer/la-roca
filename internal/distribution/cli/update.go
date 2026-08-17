@@ -247,8 +247,9 @@ func releaseReadiness(ctx context.Context, installed, tag string) func(string) e
 		if filepath.Clean(path) != filepath.Clean(installed) {
 			return nil
 		}
-		output, err := exec.CommandContext(ctx, path,
-			"_install-bundled-plugins", "--json").CombinedOutput()
+		command := exec.CommandContext(ctx, path, "_install-bundled-plugins", "--json")
+		command.Env = append(os.Environ(), envRocaPrefix+"="+filepath.Dir(installed))
+		output, err := command.CombinedOutput()
 		if err == nil || strings.Contains(string(output), "unknown command") {
 			return nil
 		}

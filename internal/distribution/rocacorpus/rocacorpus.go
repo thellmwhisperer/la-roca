@@ -22,7 +22,7 @@ const (
 )
 
 func Ensure(root, binDir, version string) (plugininstall.Result, error) {
-	return bundledplugin.Ensure(root, binDir, version, bundleSpec())
+	return bundledplugin.Ensure(root, binDir, version, BundleSpec())
 }
 
 // ApplySchema replays the whole declaration because every statement in it is

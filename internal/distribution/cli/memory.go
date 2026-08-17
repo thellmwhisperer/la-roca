@@ -12,10 +12,12 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacron"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocavector"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	pluginstd "github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -155,30 +157,28 @@ func installBundledPluginsCommand(env *cliEnv) *cobra.Command {
 				}
 				return env.report(map[string]any{
 					"installed": false,
-					"plugins":   []string{rocaops.Name, rocacorpus.Name, rocacron.Name},
-					"reason":    reason,
+					"plugins": []string{
+						rocaops.Name, rocacorpus.Name, rocacron.Name, rocavector.Name,
+					},
+					"reason": reason,
 				}, "%s: bundled plugins were not placed", reason)
 			}
 			binDir := pluginExecutableDir(paths)
-			ops, err := rocaops.Ensure(root, binDir, env.build.Version)
+			installed, err := bundledplugin.EnsureAll(root, binDir, env.build.Version,
+				rocaops.BundleSpec(), rocacorpus.BundleSpec(), rocacron.BundleSpec(), rocavector.BundleSpec())
 			if err != nil {
 				return err
 			}
-			corpus, err := rocacorpus.Ensure(root, binDir, env.build.Version)
-			if err != nil {
-				return err
-			}
-			cron, err := rocacron.Ensure(root, binDir, env.build.Version)
-			if err != nil {
-				return err
-			}
+			ops, corpus, cron, vector := installed[0], installed[1], installed[2], installed[3]
 			return env.report(map[string]any{
 				"installed": true, "plugins": []any{
 					map[string]any{"name": ops.Name, "version": ops.Version, "risk": ops.Risk, "resident": true},
 					map[string]any{"name": corpus.Name, "version": corpus.Version, "risk": corpus.Risk, "resident": true},
 					map[string]any{"name": cron.Name, "version": cron.Version, "risk": cron.Risk, "resident": false},
+					map[string]any{"name": vector.Name, "version": vector.Version, "risk": vector.Risk, "resident": false},
 				},
-			}, "bundled plugins %s, %s and %s installed", ops.Name, corpus.Name, cron.Name)
+			}, "bundled plugins %s, %s, %s and %s installed",
+				ops.Name, corpus.Name, cron.Name, vector.Name)
 		},
 	}
 }
