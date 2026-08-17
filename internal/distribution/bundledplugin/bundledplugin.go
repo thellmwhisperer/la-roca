@@ -29,54 +29,161 @@ type Spec struct {
 }
 
 func Ensure(root, binDir, version string, spec Spec) (plugininstall.Result, error) {
-	if err := spec.valid(); err != nil {
+	bundle, err := prepare(root, binDir, version, spec, false)
+	if err != nil {
 		return plugininstall.Result{}, err
+	}
+	defer bundle.cleanup()
+	return bundle.apply()
+}
+
+func EnsureAll(root, binDir, version string, specs ...Spec) ([]plugininstall.Result, error) {
+	names, executables := map[string]bool{}, map[string]bool{}
+	for _, spec := range specs {
+		if err := spec.valid(); err != nil {
+			return nil, err
+		}
+		if names[spec.Name] {
+			return nil, fmt.Errorf("bundled plugin %s is declared more than once", spec.Name)
+		}
+		names[spec.Name] = true
+		if spec.Executable != "" && executables[spec.Executable] {
+			return nil, fmt.Errorf("bundled executable %s is declared more than once", spec.Executable)
+		}
+		if spec.Executable != "" {
+			executables[spec.Executable] = true
+		}
+	}
+	prepared := make([]preparedBundle, 0, len(specs))
+	defer func() {
+		for _, bundle := range prepared {
+			bundle.cleanup()
+		}
+	}()
+	for _, spec := range specs {
+		bundle, err := prepare(root, binDir, version, spec, true)
+		if err != nil {
+			return nil, err
+		}
+		prepared = append(prepared, bundle)
+	}
+	results := make([]plugininstall.Result, 0, len(prepared))
+	for _, bundle := range prepared {
+		result, err := bundle.apply()
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
+type bundleAction uint8
+
+const (
+	bundleUnchanged bundleAction = iota
+	bundleInstall
+	bundleUpdateData
+	bundleUpdateExecutable
+	bundleRepairExecutable
+)
+
+type preparedBundle struct {
+	action    bundleAction
+	target    string
+	spec      Spec
+	manifest  plugininstall.Manifest
+	candidate plugininstall.Candidate
+	manager   plugininstall.Manager
+	cleanup   func()
+}
+
+func prepare(root, binDir, version string, spec Spec, validateUnchanged bool) (preparedBundle, error) {
+	if err := spec.valid(); err != nil {
+		return preparedBundle{}, err
+	}
+	if root == "" || binDir == "" {
+		return preparedBundle{}, fmt.Errorf("plugin root and executable directory are required")
 	}
 	if strings.TrimSpace(version) == "" {
 		version = "dev"
 	}
 	target := filepath.Join(root, spec.Name)
+	manager := plugininstall.Manager{PluginRoot: root, BinDir: binDir}
+	var installed plugininstall.Manifest
+	installedFound := false
 	if manifest, err := plugininstall.ReadManifest(target); err == nil {
 		if manifest.Name != spec.Name || manifest.Source != spec.Source {
-			return plugininstall.Result{}, fmt.Errorf(
+			return preparedBundle{}, fmt.Errorf(
 				"the bundled %s plugin collides with an installation from %q", spec.Name, manifest.Source)
 		}
-		if manifest.Version == version {
-			return resultFromManifest(target, manifest), nil
+		verified, verifyErr := plugininstall.VerifyInstalledPayload(spec.Name, target)
+		if verifyErr != nil {
+			return preparedBundle{}, fmt.Errorf("verify bundled %s plugin: %w", spec.Name, verifyErr)
+		}
+		installed, installedFound = verified, true
+		if manifest.Version == version && spec.Executable == "" && !validateUnchanged {
+			return preparedBundle{action: bundleUnchanged, target: target, spec: spec,
+				manifest: verified, manager: manager, cleanup: func() {}}, nil
 		}
 	} else if _, statErr := os.Lstat(target); statErr == nil {
-		return plugininstall.Result{}, fmt.Errorf(
+		return preparedBundle{}, fmt.Errorf(
 			"the bundled %s plugin cannot replace an unmanaged directory at %s", spec.Name, target)
 	} else if !os.IsNotExist(statErr) {
-		return plugininstall.Result{}, statErr
+		return preparedBundle{}, statErr
 	}
 
 	candidate, cleanup, err := materialize(root, version, spec)
 	if err != nil {
-		return plugininstall.Result{}, err
+		return preparedBundle{}, err
 	}
-	defer cleanup()
-	manager := plugininstall.Manager{PluginRoot: root, BinDir: binDir}
-	var result plugininstall.Result
-	if _, statErr := os.Lstat(target); os.IsNotExist(statErr) {
-		result, err = manager.Install(candidate)
-	} else if spec.Executable != "" {
-		result, err = manager.Update(candidate)
-	} else {
-		// The staged candidate already carries its declaration, so only a data
-		// update has a live database to upgrade. It is upgraded before the
-		// manifest records the new version: a manifest that ran ahead of its
-		// schema would short-circuit every later run and leave the interrupted
-		// upgrade unfinished forever.
-		if err := spec.ApplySchema(filepath.Join(target, spec.DatabaseFilename)); err != nil {
-			return plugininstall.Result{}, err
-		}
-		result, err = manager.UpdateInPlace(candidate)
+	fail := func(err error) (preparedBundle, error) {
+		cleanup()
+		return preparedBundle{}, err
+	}
+	bundle := preparedBundle{target: target, spec: spec, manifest: installed,
+		candidate: candidate, manager: manager, cleanup: cleanup}
+	switch {
+	case !installedFound:
+		bundle.action = bundleInstall
+		err = manager.PreflightInstall(candidate)
+	case installed.Version == version && spec.Executable == "":
+		bundle.action = bundleUnchanged
+	case installed.Version == version:
+		bundle.action = bundleRepairExecutable
+		err = manager.PreflightExecutableRepair(candidate)
+	case spec.Executable != "":
+		bundle.action = bundleUpdateExecutable
+		err = manager.PreflightUpdate(candidate)
+	default:
+		bundle.action = bundleUpdateData
+		err = manager.PreflightUpdateInPlace(candidate)
 	}
 	if err != nil {
-		return plugininstall.Result{}, err
+		return fail(err)
 	}
-	return result, nil
+	return bundle, nil
+}
+
+func (bundle preparedBundle) apply() (plugininstall.Result, error) {
+	switch bundle.action {
+	case bundleUnchanged:
+		return resultFromManifest(bundle.target, bundle.manifest), nil
+	case bundleInstall:
+		return bundle.manager.Install(bundle.candidate)
+	case bundleUpdateData:
+		if err := bundle.spec.ApplySchema(
+			filepath.Join(bundle.target, bundle.spec.DatabaseFilename)); err != nil {
+			return plugininstall.Result{}, err
+		}
+		return bundle.manager.UpdateInPlace(bundle.candidate)
+	case bundleUpdateExecutable:
+		return bundle.manager.Update(bundle.candidate)
+	case bundleRepairExecutable:
+		return bundle.manager.RepairExecutable(bundle.candidate)
+	default:
+		return plugininstall.Result{}, fmt.Errorf("unsupported bundled plugin action")
+	}
 }
 
 // Manifest loads one bundled declaration and stamps the running build version

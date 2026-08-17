@@ -15,9 +15,12 @@ const (
 )
 
 func Ensure(root, binDir, version string) (plugininstall.Result, error) {
-	spec := bundledplugin.Spec{Name: Name, DatabaseFilename: DatabaseFilename,
+	return bundledplugin.Ensure(root, binDir, version, BundleSpec())
+}
+
+func BundleSpec() bundledplugin.Spec {
+	return bundledplugin.Spec{Name: Name, DatabaseFilename: DatabaseFilename,
 		Source: BundledSource, Manifest: manifest, ApplySchema: ApplySchema}
-	return bundledplugin.Ensure(root, binDir, version, spec)
 }
 
 func ApplySchema(path string) error {

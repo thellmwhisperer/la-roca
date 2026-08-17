@@ -28,18 +28,23 @@ var (
 )
 
 func Ensure(root, binDir, version string) (plugininstall.Result, error) {
-	return ensure(root, binDir, version, Payload)
+	return bundledplugin.Ensure(root, binDir, version, BundleSpec())
 }
 
 func EnsureWithPayload(root, binDir, version string, payload []byte) (plugininstall.Result, error) {
-	return ensure(root, binDir, version, func() ([]byte, error) { return payload, nil })
+	return bundledplugin.Ensure(root, binDir, version,
+		bundleSpec(func() ([]byte, error) { return payload, nil }))
 }
 
-func ensure(root, binDir, version string, payload func() ([]byte, error)) (plugininstall.Result, error) {
-	return bundledplugin.Ensure(root, binDir, version, bundledplugin.Spec{
+func BundleSpec() bundledplugin.Spec {
+	return bundleSpec(Payload)
+}
+
+func bundleSpec(payload func() ([]byte, error)) bundledplugin.Spec {
+	return bundledplugin.Spec{
 		Name: Name, Executable: executableFilename(), Source: BundledSource,
 		Manifest: manifest, Payload: payload,
-	})
+	}
 }
 
 func executableFilename() string {

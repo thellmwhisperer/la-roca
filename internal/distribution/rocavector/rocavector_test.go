@@ -92,6 +92,48 @@ func TestBundledVectorRefreshAndCollisionPolicy(t *testing.T) {
 	}
 }
 
+func TestBundledVectorRepairsOnlyAMissingSameVersionExecutable(t *testing.T) {
+	for _, testCase := range []struct {
+		name, replacement, wantError, wantBody string
+		remove                                 bool
+	}{
+		{name: "missing executable is repaired", remove: true, wantBody: "vector one"},
+		{name: "changed executable is refused", replacement: "locally changed",
+			wantError: "changed since install", wantBody: "locally changed"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
+			if _, err := rocavector.EnsureWithPayload(root, bin, "v1", []byte("vector one")); err != nil {
+				t.Fatal(err)
+			}
+			executableName := "roca-vector"
+			if runtime.GOOS == "windows" {
+				executableName += ".exe"
+			}
+			executable := filepath.Join(bin, executableName)
+			if testCase.remove {
+				if err := os.Remove(executable); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(executable, []byte(testCase.replacement), 0o700); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := rocavector.EnsureWithPayload(root, bin, "v1", []byte("vector one"))
+			if testCase.wantError == "" && err != nil {
+				t.Fatal(err)
+			}
+			if testCase.wantError != "" && (err == nil || !strings.Contains(err.Error(), testCase.wantError)) {
+				t.Fatalf("repair error = %v, want %q", err, testCase.wantError)
+			}
+			raw, readErr := os.ReadFile(executable)
+			if readErr != nil || string(raw) != testCase.wantBody {
+				t.Fatalf("executable = %q, err=%v", raw, readErr)
+			}
+		})
+	}
+}
+
 func rewriteSource(t *testing.T, directory, source string) {
 	t.Helper()
 	path := filepath.Join(directory, plugininstall.ManifestFilename)

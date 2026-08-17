@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacron"
@@ -103,22 +104,12 @@ func installBundledPluginsCommand(env *cliEnv) *cobra.Command {
 				}, "%s: bundled plugins were not placed", reason)
 			}
 			binDir := pluginExecutableDir(paths)
-			ops, err := rocaops.Ensure(root, binDir, env.build.Version)
+			installed, err := bundledplugin.EnsureAll(root, binDir, env.build.Version,
+				rocaops.BundleSpec(), rocacorpus.BundleSpec(), rocacron.BundleSpec(), rocavector.BundleSpec())
 			if err != nil {
 				return err
 			}
-			corpus, err := rocacorpus.Ensure(root, binDir, env.build.Version)
-			if err != nil {
-				return err
-			}
-			cron, err := rocacron.Ensure(root, binDir, env.build.Version)
-			if err != nil {
-				return err
-			}
-			vector, err := rocavector.Ensure(root, binDir, env.build.Version)
-			if err != nil {
-				return err
-			}
+			ops, corpus, cron, vector := installed[0], installed[1], installed[2], installed[3]
 			return env.report(map[string]any{
 				"installed": true, "plugins": []any{
 					map[string]any{"name": ops.Name, "version": ops.Version, "risk": ops.Risk, "resident": true},
