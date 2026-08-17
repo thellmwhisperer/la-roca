@@ -132,7 +132,7 @@ func (s *Service) withResidents(route pluginRoute) pluginRoute {
 }
 
 func (s *Service) openResidents(ctx context.Context) error {
-	if !s.pluginsActive() {
+	if !s.pluginsActive() && s.opts.PluginDir == "" {
 		return nil
 	}
 	descriptors, warnings := plugin.Discover(s.opts.PluginDir)
@@ -189,6 +189,22 @@ func (s *Service) openResidents(ctx context.Context) error {
 			}
 		}
 	}
+	if opsDatabase != nil {
+		s.layerSet = opsDatabase
+		s.layerDB = s.ops
+	} else {
+		layerSet, err := stableLayerDatabase(ctx, descriptors)
+		if err != nil {
+			return err
+		}
+		s.layerSet = layerSet
+		if layerSet != nil && !s.opts.ReadOnly {
+			s.layerDB, err = store.Open(layerSet.Database)
+			if err != nil {
+				return fmt.Errorf("open %s for the layer registry: %w", rocaOpsPluginName, err)
+			}
+		}
+	}
 	if s.opts.CorpusEnabled {
 		corpusDatabase := databaseForVerb(s.resident, IngestVerb, rocaCorpusPluginName)
 		if corpusDatabase == nil {
@@ -217,6 +233,29 @@ func (s *Service) openResidents(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func stableLayerDatabase(ctx context.Context, descriptors []plugin.Descriptor) (*plugin.Database, error) {
+	var databases []plugin.Database
+	for _, descriptor := range descriptors {
+		if !ownsVerb(descriptor, StoreVerb, rocaOpsPluginName) ||
+			descriptor.Semantic.Attachment != plugin.AttachmentResident {
+			continue
+		}
+		database, err := plugin.Validate(ctx, descriptor)
+		if err != nil {
+			return nil, fmt.Errorf("validate %s layer registry: %w", rocaOpsPluginName, err)
+		}
+		databases = append(databases, database)
+	}
+	if len(databases) == 0 {
+		return nil, nil
+	}
+	selected := databaseForVerb(databases, StoreVerb, rocaOpsPluginName)
+	if selected == nil {
+		return nil, fmt.Errorf("%s declares no single durable layer registry", rocaOpsPluginName)
+	}
+	return selected, nil
 }
 
 // residentCorpus is the attached bundled corpus, or nil when this installation

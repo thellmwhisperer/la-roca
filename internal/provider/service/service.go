@@ -131,6 +131,8 @@ type Service struct {
 	hubDB    *store.DB
 	ops      *store.DB
 	corpus   *store.DB
+	layerDB  *store.DB
+	layerSet *plugin.Database
 	opts     Options
 	registry layers.Registry
 	schemaMu sync.Mutex
@@ -181,7 +183,7 @@ func openWithContext(ctx context.Context, opts Options) (*Service, error) {
 	if err := svc.openResidents(ctx); err != nil {
 		return svc.rollbackOpen(ctx, err)
 	}
-	if svc.ops != nil {
+	if svc.layerDB != nil {
 		if err := svc.syncLayers(ctx); err != nil {
 			return svc.rollbackOpen(ctx, err)
 		}
@@ -217,6 +219,11 @@ func (s *Service) closeOpened() {
 		_ = s.hub.Close()
 		s.hub = nil
 	}
+	if s.layerDB != nil && s.layerDB != s.ops {
+		_ = s.layerDB.Close()
+	}
+	s.layerDB = nil
+	s.layerSet = nil
 	if s.ops != nil {
 		_ = s.ops.Close()
 		s.ops = nil
@@ -696,7 +703,7 @@ func refuseReadOnly(operation string) error {
 // It only writes what changes, so that adopting a live database does not touch
 // it without reason.
 func (s *Service) syncLayers(ctx context.Context) error {
-	owner, err := s.memoryOwner()
+	owner, err := s.layerOwner()
 	if err != nil {
 		return err
 	}

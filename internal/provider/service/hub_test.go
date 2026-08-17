@@ -128,6 +128,61 @@ func TestRocaOpsLayerRepairUsesTheOperationalOwner(t *testing.T) {
 	}
 }
 
+func TestLayerRegistryOwnerSurvivesRocaOpsActivation(t *testing.T) {
+	options := residentTestOptions(t)
+	options.RocaOpsEnabled = false
+	legacy, err := openWithContext(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.AddLayer(t.Context(), "knowledge"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.Store(t.Context(), StoreRequest{
+		Layer: "knowledge", Content: "Synthetic pre-activation write",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var copied int
+	if err := legacy.db.SQL().QueryRow(
+		"SELECT COUNT(*) FROM layers WHERE name = 'knowledge'").Scan(&copied); err != nil {
+		t.Fatal(err)
+	}
+	if copied != 0 {
+		t.Fatalf("custom registry rows copied into core = %d", copied)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	options.RocaOpsEnabled = true
+	operational, err := openWithContext(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = operational.Close() })
+	if _, err := operational.Store(t.Context(), StoreRequest{
+		Layer: "knowledge", Content: "Synthetic post-activation write",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var registered int
+	if err := operational.ops.SQL().QueryRow(
+		"SELECT COUNT(*) FROM layers WHERE name = 'knowledge'").Scan(&registered); err != nil {
+		t.Fatal(err)
+	}
+	if registered != 1 {
+		t.Fatalf("stable custom registry rows = %d", registered)
+	}
+	report, err := operational.Health(t.Context(), HealthRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Checks["runtime_layers_not_in_registry"].Status != HealthPass {
+		t.Fatalf("health after activation = %+v", report)
+	}
+}
+
 func TestCutoverHubLoadsTheDurableCustomLayerRegistry(t *testing.T) {
 	fixture := newHubFixture(t)
 	seedHubCoreMemory(t, fixture.plugins, 8, "Synthetic custom layer marker")

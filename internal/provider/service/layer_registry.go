@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -62,11 +61,44 @@ func (s *Service) memoryReader(ctx context.Context) (*sql.DB, func(), error) {
 	return reader, func() { _ = reader.Close() }, nil
 }
 
+func (s *Service) layerOwner() (*store.DB, error) {
+	if s.layerDB != nil {
+		return s.layerDB, nil
+	}
+	if s.layerSet != nil {
+		return nil, fmt.Errorf("%s layer registry is not open for writes", rocaOpsPluginName)
+	}
+	if s.db == nil {
+		return nil, fmt.Errorf("no durable layer registry is available")
+	}
+	return s.db, nil
+}
+
+func (s *Service) layerReader(ctx context.Context) (*sql.DB, func(), error) {
+	if s.layerDB != nil {
+		reader, err := s.layerDB.ReadOnly()
+		return reader, func() {}, err
+	}
+	if s.layerSet != nil {
+		reader, err := sql.Open("sqlite", s.layerSet.ReadOnlyURI())
+		if err != nil {
+			return nil, func() {}, fmt.Errorf("open %s layer registry read-only: %w", rocaOpsPluginName, err)
+		}
+		if err := reader.PingContext(ctx); err != nil {
+			reader.Close()
+			return nil, func() {}, fmt.Errorf("open %s layer registry read-only: %w", rocaOpsPluginName, err)
+		}
+		return reader, func() { _ = reader.Close() }, nil
+	}
+	reader, err := s.db.ReadOnly()
+	return reader, func() {}, err
+}
+
 // registeredLayers reads the live catalogue. The table, rather than the
 // embedded defaults, is authoritative because operators may intentionally add
 // a layer after installation.
 func (s *Service) registeredLayers(ctx context.Context) ([]registeredLayer, error) {
-	reader, closeReader, err := s.memoryReader(ctx)
+	reader, closeReader, err := s.layerReader(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +167,7 @@ func (s *Service) AddLayer(ctx context.Context, name string) (LayerAddResult, er
 	if _, err := s.ensureSchema(ctx); err != nil {
 		return LayerAddResult{}, err
 	}
-	owner, err := s.memoryOwner()
+	owner, err := s.layerOwner()
 	if err != nil {
 		return LayerAddResult{}, err
 	}
@@ -192,23 +224,36 @@ func (s *Service) MigrateLayer(ctx context.Context, from, to string) (LayerMigra
 }
 
 func (s *Service) unregisteredLayers(ctx context.Context) ([]string, error) {
+	registered, err := s.registeredLayers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	known := make(map[string]struct{}, len(registered))
+	for _, layer := range registered {
+		known[layer.name] = struct{}{}
+	}
 	reader, closeReader, err := s.memoryReader(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer closeReader()
-	var encoded string
-	err = reader.QueryRowContext(ctx, `SELECT json_group_array(layer) FROM (
-		SELECT m.layer FROM memories m
-		LEFT JOIN layers l ON l.name = m.layer
-		WHERE l.name IS NULL
-		GROUP BY m.layer ORDER BY m.layer)`).Scan(&encoded)
+	rows, err := reader.QueryContext(ctx, `SELECT layer FROM memories GROUP BY layer ORDER BY layer`)
 	if err != nil {
 		return nil, fmt.Errorf("find runtime layers absent from the registry: %w", err)
 	}
-	var names []string
-	if err := json.Unmarshal([]byte(encoded), &names); err != nil {
-		return nil, fmt.Errorf("decode runtime layers absent from the registry: %w", err)
+	defer rows.Close()
+	var unregistered []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("find runtime layers absent from the registry: %w", err)
+		}
+		if _, ok := known[name]; !ok {
+			unregistered = append(unregistered, name)
+		}
 	}
-	return names, nil
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("find runtime layers absent from the registry: %w", err)
+	}
+	return unregistered, nil
 }
