@@ -146,9 +146,10 @@ func TestTheDryRunThroughTheServiceTouchesNothing(t *testing.T) {
 	}
 }
 
-// A database that still holds exact duplicates cannot accept the physical
-// guard, which is the pre-dedup state a normal ingest must keep working in.
-func TestIngestContinuesWhenExactPayloadGuardsCannotBeCreated(t *testing.T) {
+// Ingest does not own guard installation. A pre-cleanup database still holding
+// exact duplicates ingests normally and gains no exact-payload guard: those
+// arrive only from the dedup apply.
+func TestIngestOnAPreCleanupDatabaseInstallsNoExactPayloadGuards(t *testing.T) {
 	home := t.TempDir()
 	paths := freshPaths(t)
 	raw, err := store.Open(paths.db)
@@ -175,7 +176,7 @@ func TestIngestContinuesWhenExactPayloadGuardsCannotBeCreated(t *testing.T) {
 	t.Cleanup(func() { svc.Close() })
 	seedATranscript(t, home)
 	if _, err := svc.Ingest(t.Context(), service.IngestRequest{}); err != nil {
-		t.Fatalf("ingest over pre-dedup duplicates: %v", err)
+		t.Fatalf("ingest over pre-cleanup duplicates: %v", err)
 	}
 	var exchanges int
 	if err := svc.DB().SQL().QueryRow(`SELECT COUNT(*) FROM exchanges`).Scan(&exchanges); err != nil {
@@ -183,6 +184,14 @@ func TestIngestContinuesWhenExactPayloadGuardsCannotBeCreated(t *testing.T) {
 	}
 	if exchanges == 0 {
 		t.Fatal("ingest reported success but wrote no exchanges")
+	}
+	var guards int
+	if err := svc.DB().SQL().QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name LIKE '%_exact_payload'`).Scan(&guards); err != nil {
+		t.Fatal(err)
+	}
+	if guards != 0 {
+		t.Fatalf("ingest installed %d exact-payload guard(s), want none", guards)
 	}
 }
 
