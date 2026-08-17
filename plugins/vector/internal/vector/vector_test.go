@@ -49,16 +49,35 @@ func TestChunksOverlapWithoutRepeatingTerminalChunk(t *testing.T) {
 
 func TestStableSourceIDsUseCoreNaturalKeys(t *testing.T) {
 	memory := sourceRow{kind: "memories", sessionID: "session/a", ordinal: 3, hasOrdinal: true}
-	if got, want := memory.stableID(), "memories/session/session%2Fa/3"; got != want {
+	if got, want := memory.stableID(), "memories/session/session%2Fa/3/"+memory.identity(); got != want {
 		t.Fatalf("memory stable id = %q, want %q", got, want)
 	}
 	exchange := sourceRow{kind: "exchanges", sessionID: "session/a", ordinal: 7, hasOrdinal: true}
-	if got, want := exchange.stableID(), "exchanges/session%2Fa/7"; got != want {
+	if got, want := exchange.stableID(), "exchanges/session%2Fa/7/"+exchange.identity(); got != want {
 		t.Fatalf("exchange stable id = %q, want %q", got, want)
 	}
-	thinking := sourceRow{kind: "thinking_blocks", sessionID: "session/a", ordinal: 7, hasOrdinal: true, position: "1.5"}
-	if got, want := thinking.stableID(), "thinking_blocks/session%2Fa/7/1.5"; got != want {
+	session := sourceRow{kind: "sessions", sessionID: "session/a", text: "first title"}
+	if got, want := session.stableID(), "sessions/session%2Fa/"+session.identity(); got != want {
+		t.Fatalf("session stable id = %q, want %q", got, want)
+	}
+	thinking := sourceRow{kind: "thinking_blocks", sessionID: "session/a", ordinal: 7,
+		hasOrdinal: true, position: "1.5", text: "first reasoning"}
+	if got, want := thinking.stableID(), "thinking_blocks/session%2Fa/7/1.5/"+thinking.identity(); got != want {
 		t.Fatalf("thinking stable id = %q, want %q", got, want)
+	}
+	thinkingSibling := thinking
+	thinkingSibling.text = "second reasoning"
+	if thinking.stableID() == thinkingSibling.stableID() {
+		t.Fatalf("divergent thinking blocks sharing a locator have stable id %q", thinking.stableID())
+	}
+	for _, pair := range [][2]sourceRow{
+		{session, {kind: "sessions", sessionID: "session/a", text: "second title"}},
+		{exchange, {kind: "exchanges", sessionID: "session/a", ordinal: 7, hasOrdinal: true, text: "second exchange"}},
+		{memory, {kind: "memories", sessionID: "session/a", ordinal: 3, hasOrdinal: true, text: "second memory"}},
+	} {
+		if pair[0].stableID() == pair[1].stableID() {
+			t.Fatalf("divergent %s rows sharing a locator have stable id %q", pair[0].kind, pair[0].stableID())
+		}
 	}
 	unkeyed := sourceRow{kind: "thinking_blocks", sessionID: "session/a", text: "session reasoning"}
 	sibling := sourceRow{kind: "thinking_blocks", sessionID: "session/a", text: "other session reasoning"}
@@ -76,6 +95,35 @@ func TestStableSourceIDsUseCoreNaturalKeys(t *testing.T) {
 	direct := sourceRow{kind: "memories", text: "stored memory", layer: "discovery", origin: "human", createdAt: "2026-08-14"}
 	if got := direct.stableID(); !strings.HasPrefix(got, "memories/direct/") || strings.Contains(got, "/id/") {
 		t.Fatalf("direct memory stable id = %q", got)
+	}
+}
+
+func TestDivergentFederatedVersionsStaySeparateAndIdempotent(t *testing.T) {
+	sources := []sourceRow{
+		{kind: "sessions", sessionID: "shared", text: "alpha session"},
+		{kind: "sessions", sessionID: "shared", text: "beta session"},
+		{kind: "exchanges", sessionID: "shared", ordinal: 1, hasOrdinal: true, text: "alpha exchange"},
+		{kind: "exchanges", sessionID: "shared", ordinal: 1, hasOrdinal: true, text: "beta exchange"},
+		{kind: "thinking_blocks", sessionID: "shared", ordinal: 1, hasOrdinal: true, position: "1", text: "alpha thinking"},
+		{kind: "thinking_blocks", sessionID: "shared", ordinal: 1, hasOrdinal: true, position: "1", text: "beta thinking"},
+		{kind: "memories", sessionID: "shared", ordinal: 1, hasOrdinal: true, layer: "discovery", origin: "agent", text: "alpha memory"},
+		{kind: "memories", sessionID: "shared", ordinal: 1, hasOrdinal: true, layer: "discovery", origin: "agent", text: "beta memory"},
+	}
+	index := Index{Corpus: &memoryCorpus{sources: sources}, VectorPath: filepath.Join(t.TempDir(), "vector.db"),
+		Model: DefaultModel, Embedder: &recordingEmbedder{}}
+	first, err := index.Ingest(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Added != len(sources) || first.Chunks != len(sources) {
+		t.Fatalf("first delta = %+v, want %d distinct chunks", first, len(sources))
+	}
+	second, err := index.Ingest(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Unchanged != len(sources) || second.Added != 0 || second.Updated != 0 || second.Removed != 0 {
+		t.Fatalf("repeated delta = %+v", second)
 	}
 }
 
@@ -133,7 +181,7 @@ func TestDeltaIndexIsIdempotentAndMapsResultsBackToCore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if changed.Updated != 1 || changed.Removed != 3 || changed.Added != 0 {
+	if changed.Updated != 0 || changed.Removed != 4 || changed.Added != 1 {
 		t.Fatalf("changed delta = %+v", changed)
 	}
 	assertVectorStoreHasNoCorpusText(t, vectorPath)

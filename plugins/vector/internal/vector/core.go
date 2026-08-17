@@ -328,18 +328,25 @@ func (c CoreCLI) ResolveSource(ctx context.Context, kind string, where locator) 
 			sessionProjectName + ` AS project_name FROM ` + corpusTable("sessions") +
 			` WHERE session_id=` + sqlLiteral(where.SessionID)
 		rows, err := c.query(ctx, statement)
-		if err != nil || len(rows) == 0 {
+		if err != nil {
 			return "", err
 		}
-		return sessionEmbeddingText(stringValue(rows[0]["title"]), stringValue(rows[0]["project_name"])), nil
-	case "exchanges":
-		if !where.HasOrdinal {
-			statement = `SELECT ` + exchangeText + ` AS text FROM ` + corpusTable("exchanges") +
-				` WHERE session_id=` + sqlLiteral(where.SessionID) + ` AND exchange_number IS NULL`
-			return c.resolveIdentity(ctx, kind, where, statement)
+		for _, values := range rows {
+			text := sessionEmbeddingText(stringValue(values["title"]), stringValue(values["project_name"]))
+			if (sourceRow{kind: kind, text: text}).identity() == where.Identity {
+				return text, nil
+			}
 		}
-		statement = fmt.Sprintf(`SELECT %s AS text FROM %s WHERE session_id=%s AND exchange_number=%d ORDER BY id DESC LIMIT 1`,
-			exchangeText, corpusTable("exchanges"), sqlLiteral(where.SessionID), where.Ordinal)
+		return "", nil
+	case "exchanges":
+		statement = `SELECT ` + exchangeText + ` AS text FROM ` + corpusTable("exchanges") +
+			` WHERE session_id=` + sqlLiteral(where.SessionID)
+		if where.HasOrdinal {
+			statement += fmt.Sprintf(` AND exchange_number=%d`, where.Ordinal)
+		} else {
+			statement += ` AND exchange_number IS NULL`
+		}
+		return c.resolveIdentity(ctx, kind, where, statement)
 	case "thinking_blocks":
 		if !where.HasOrdinal || where.Position == "" {
 			statement = `SELECT COALESCE(full_text,'') AS text FROM ` + corpusTable("thinking_blocks") +
@@ -351,32 +358,28 @@ func (c CoreCLI) ResolveSource(ctx context.Context, kind string, where locator) 
 		if err != nil {
 			return "", fmt.Errorf("decode thinking block position %q: %w", where.Position, err)
 		}
-		statement = fmt.Sprintf(`SELECT COALESCE(full_text,'') AS text FROM %s WHERE session_id=%s AND exchange_number=%d AND position_in_session=%s ORDER BY id DESC LIMIT 1`,
+		statement = fmt.Sprintf(`SELECT COALESCE(full_text,'') AS text FROM %s WHERE session_id=%s AND exchange_number=%d AND position_in_session=%s`,
 			corpusTable("thinking_blocks"), sqlLiteral(where.SessionID), where.Ordinal,
 			strconv.FormatFloat(position, 'g', -1, 64))
+		return c.resolveIdentity(ctx, kind, where, statement)
 	case "memories":
 		switch {
 		case where.SessionID != "" && where.HasOrdinal:
-			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE source_session=%s AND source_sequence=%d ORDER BY id DESC LIMIT 1`,
+			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE source_session=%s AND source_sequence=%d`,
 				corpusTable("memories"), sqlLiteral(where.SessionID), where.Ordinal)
 		case where.FilePath != "" && where.CronSource != "":
-			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE json_extract(metadata,'$.file_path')=%s AND (json_extract(metadata,'$._cron_source')=%s OR source_agent=%s) ORDER BY id DESC LIMIT 1`,
+			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE json_extract(metadata,'$.file_path')=%s AND (json_extract(metadata,'$._cron_source')=%s OR source_agent=%s)`,
 				corpusTable("memories"), sqlLiteral(where.FilePath), sqlLiteral(where.CronSource),
 				sqlLiteral(where.CronSource))
 		default:
 			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE layer=%s AND origin=%s AND COALESCE(created_at,'')=%s`,
 				corpusTable("memories"), sqlLiteral(where.Layer), sqlLiteral(where.Origin),
 				sqlLiteral(where.CreatedAt))
-			return c.resolveIdentity(ctx, kind, where, statement)
 		}
+		return c.resolveIdentity(ctx, kind, where, statement)
 	default:
 		return "", fmt.Errorf("unknown vector source %q", kind)
 	}
-	rows, err := c.query(ctx, statement)
-	if err != nil || len(rows) == 0 {
-		return "", err
-	}
-	return stringValue(rows[0]["text"]), nil
 }
 
 func (c CoreCLI) resolveIdentity(ctx context.Context, kind string, where locator, statement string) (string, error) {
