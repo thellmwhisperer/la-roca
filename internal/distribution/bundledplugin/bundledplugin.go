@@ -4,6 +4,7 @@ package bundledplugin
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -159,6 +160,9 @@ func prepare(root, binDir, version string, spec Spec, validateUnchanged bool) (p
 		bundle.action = bundleUpdateData
 		err = manager.PreflightUpdateInPlace(candidate)
 	}
+	if err == nil && validateUnchanged && installedFound && spec.DatabaseFilename != "" {
+		err = preflightInstalledSchema(root, target, spec)
+	}
 	if err != nil {
 		return fail(err)
 	}
@@ -184,6 +188,32 @@ func (bundle preparedBundle) apply() (plugininstall.Result, error) {
 	default:
 		return plugininstall.Result{}, fmt.Errorf("unsupported bundled plugin action")
 	}
+}
+
+func preflightInstalledSchema(root, target string, spec Spec) error {
+	directory, err := os.MkdirTemp(root, "."+spec.Name+"-schema-preflight-")
+	if err != nil {
+		return fmt.Errorf("stage bundled %s schema preflight: %w", spec.Name, err)
+	}
+	defer os.RemoveAll(directory)
+	source := filepath.Join(target, spec.DatabaseFilename)
+	clone := filepath.Join(directory, spec.DatabaseFilename)
+	db, err := OpenDatabase(source, true)
+	if err != nil {
+		return fmt.Errorf("open bundled %s schema preflight source: %w", spec.Name, err)
+	}
+	_, copyErr := db.ExecContext(context.Background(), "VACUUM INTO ?", clone)
+	closeErr := db.Close()
+	if copyErr != nil {
+		return fmt.Errorf("copy bundled %s database for schema preflight: %w", spec.Name, copyErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close bundled %s schema preflight source: %w", spec.Name, closeErr)
+	}
+	if err := spec.ApplySchema(clone); err != nil {
+		return fmt.Errorf("preflight bundled %s schema: %w", spec.Name, err)
+	}
+	return nil
 }
 
 // Manifest loads one bundled declaration and stamps the running build version
