@@ -31,6 +31,23 @@ func TestFixturePluginsDiscoverValidateAndDeclareCustody(t *testing.T) {
 	if _, err := plugin.Validate(context.Background(), byName["well-formed"]); err != nil {
 		t.Fatalf("validate well-formed: %v", err)
 	}
+	db, err := sql.Open("sqlite", byName["well-formed"].Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"dedup_runs", "memory_id_remaps", "session_id_remaps",
+		"exchange_id_remaps", "thinking_block_id_remaps"} {
+		if _, err := db.Exec("CREATE TABLE " + name + " (fixture TEXT)"); err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plugin.Validate(context.Background(), byName["well-formed"]); err != nil {
+		t.Fatalf("dedup maintenance tables invalidated the semantic layer: %v", err)
+	}
 	if _, err := plugin.Validate(context.Background(), byName["lying"]); err == nil ||
 		!strings.Contains(err.Error(), "outstanding_cents") {
 		t.Fatalf("lying semantic layer passed with %v", err)

@@ -41,7 +41,7 @@
       "name": "cli.store.idempotent",
       "surface": "cli",
       "operation": "store",
-      "output": "{\n  \"id\": 105,\n  \"layer\": \"discovery\",\n  \"skipped\": true,\n  \"source_sha\": \"<source_sha>\",\n  \"version\": \"<version>\"\n}\n"
+      "output": "{\n  \"duplicate_source\": \"unknown\",\n  \"duplicate_surface\": \"cli\",\n  \"id\": 105,\n  \"layer\": \"discovery\",\n  \"skipped_duplicate\": true,\n  \"source_sha\": \"<source_sha>\",\n  \"version\": \"<version>\"\n}\n"
     },
     {
       "name": "cli.store.count",

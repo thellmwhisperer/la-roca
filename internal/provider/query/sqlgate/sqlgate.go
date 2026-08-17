@@ -58,6 +58,9 @@ const MaxLimit = 1000
 // which retained call segment the ops backfill already read and whether its
 // parity check passed, which is the backfill's own bookkeeping and never a call
 // anyone made.
+//
+// Exact-dedup runs and remaps are owner-gated maintenance evidence. Typed ID
+// resolution can read them, but generated SQL must not treat them as a domain.
 var invisibleTables = []string{
 	"ingest_file_state", "search_state",
 	"plugin_schema", "plugin_migrations", "migration_batches", "custody_memberships",
@@ -70,6 +73,8 @@ var invisibleTables = []string{
 	"ingest_file_state_version_memberships",
 	"memory_records", "memory_records_fts", "memory_provenance", "memory_compatibility",
 	"call_history_segments", "call_history_state",
+	"dedup_runs", "memory_id_remaps", "session_id_remaps",
+	"exchange_id_remaps", "thinking_block_id_remaps",
 }
 
 // ftsShadowSuffixes name the shadow tables FTS5 creates behind each virtual

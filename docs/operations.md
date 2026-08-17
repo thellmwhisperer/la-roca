@@ -169,6 +169,42 @@ durable half of the call log is database I/O under the same rule: a read-only
 run writes and backfills no call history, and `roca doctor` reads its failure
 history from JSONL, so an audit leaves the machine exactly as it found it.
 
+## Exact duplicate maintenance
+
+`roca dedup [database ...]` is an explicit, exact-payload maintenance surface.
+With no path it targets only the federated `roca-corpus` and `roca-ops`
+databases. An explicitly named legacy `roca.db` may be inspected as read-only
+evidence, but apply refuses it: pre-federation rows remain untouched. The
+default dry run opens each physical database read-only and reports, per
+table, the exact and ambiguous groups observed at rest, then the certified
+apply set after session IDs are canonicalized. This makes session-induced child
+duplicates visible instead of hiding them inside a changed aggregate. Row
+counts before and after and same-identity groups whose payloads differ travel
+beside those two views. Divergent groups are evidence for a future key decision
+and are never deleted. The four governed tables are
+`memories`, `sessions`, `exchanges`, and `thinking_blocks`; session winners are
+resolved first so child payloads are compared using canonical session IDs.
+
+An apply is deliberately not inferred from a dry run and is restricted to the
+two federated custody databases. First freeze writes,
+create a verified copy with `--backup-out`, and retain the printed manifest
+SHA-256. Apply exactly one physical database at a time with `--apply`, the same
+`--expected-manifest`, and `--backup`. The command rechecks the manifest under
+its immediate write lock, performs remaps, reference rewrites, deletes, FTS
+rebuilds, and unique exact-payload index creation in one transaction, then runs
+duplicate, FTS, foreign-key, and integrity acceptance checks before commit. A
+changed source fails the drift gate without a partial cleanup. Repeating a
+completed run is safe: no exact losers remain and all guards and audit tables
+are created idempotently.
+
+Every deleted public identity remains in its table-specific `*_id_remaps`
+audit table. `roca memory resolve <id>` follows the memory remap and returns the
+canonical ID explicitly, so references retained outside SQLite do not become
+silent misses. Normal store writes use the same complete-payload law inside the
+serialized write transaction and return `skipped_duplicate: true` with that
+canonical ID on an exact retry. A difference in metadata, provenance, project,
+status, supersedes, expiry, or authorship is not a duplicate.
+
 ## Data directory
 
 The default data directory is `~/.roca`. It contains `roca.db`,

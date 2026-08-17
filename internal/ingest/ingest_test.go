@@ -321,6 +321,45 @@ func TestAGrownTranscriptOnlyAddsWhatIsNew(t *testing.T) {
 	}
 }
 
+func TestAGrowingSourceExchangeReplacesItsIdentityInsteadOfAppending(t *testing.T) {
+	world, db, ctx, options := seededWorld(t)
+	const sessionID = "22222222-3333-4444-5555-666666666666"
+	transcript := filepath.Join(world.roots().ClaudeProjects, world.projectDir(), sessionID+".jsonl")
+	writeTranscript := func(answer, thought string) {
+		world.write(t, transcript, `{"type":"user","message":{"content":"run the fixture"}}
+{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"`+thought+`"},{"type":"text","text":"`+answer+`"}]}}
+`)
+		touchFuture(t, transcript)
+	}
+	writeTranscript("partial", "partial thought")
+	if _, err := Run(ctx, db, registry(t), options); err != nil {
+		t.Fatal(err)
+	}
+	writeTranscript("complete answer", "complete thought")
+	changed, err := Run(ctx, db, registry(t), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.Delta != (Tables{}) || changed.FilesRead != 1 {
+		t.Fatalf("grown identity result = delta %+v, files read %d", changed.Delta, changed.FilesRead)
+	}
+	var exchanges, thinking int
+	if err := db.SQL().QueryRow(`SELECT COUNT(*) FROM exchanges
+		WHERE session_id=? AND exchange_number=1 AND agent_text='complete answer'`, sessionID).Scan(&exchanges); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SQL().QueryRow(`SELECT COUNT(*) FROM thinking_blocks
+		WHERE session_id=? AND exchange_number=1 AND full_text='complete thought'`, sessionID).Scan(&thinking); err != nil {
+		t.Fatal(err)
+	}
+	if exchanges != 1 || thinking != 1 {
+		t.Fatalf("replaced exchange/thinking = %d/%d, want 1/1", exchanges, thinking)
+	}
+	if got := countRows(t, db.SQL(), `thinking_blocks WHERE session_id='`+sessionID+`'`); got != 1 {
+		t.Fatalf("thinking rows = %d, want the partial child replaced", got)
+	}
+}
+
 // The duplication shield covers three routes: the same session reached by a re-run, by a
 // re-scan of rewritten content, and by a copy under a second path, leaves not one
 // duplicate row and not one rewrite.

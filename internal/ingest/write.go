@@ -191,6 +191,27 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 				continue
 			}
 		}
+		// A parser-provided number is the source identity inside this session.
+		// A live transcript may be read while its last answer is partial and then
+		// read again after it grows. Reusing that identity replaces the projection
+		// and its children; allocating a fresh number would append a second copy of
+		// the same source turn.
+		if session.ExchangeNumbersAuthoritative && !identityKnown && exchange.SourceID == "" {
+			if stored, exists := matcher.byNumber[number]; exists {
+				_, conflicts := compareContent(stored, exchange)
+				if conflicts {
+					thinking, tools, err := w.replaceExchange(ctx, session.ID, stored, exchange)
+					if err != nil {
+						return counts, err
+					}
+					matcher.claim(stored, number, exchange)
+					counts.ExchangesChanged++
+					counts.ThinkingBlocks += thinking
+					counts.ToolUses += tools
+					continue
+				}
+			}
+		}
 		var matched storedExchange
 		outcome := exchangeUnmatched
 		if identityKnown {
@@ -1068,8 +1089,8 @@ func keysItsOwnExchanges(session parsers.Session) bool {
 // exchange inserts one exchange and says whether it landed.
 //
 // The matcher has already ruled out a historical row and selected an unoccupied
-// number. INSERT OR IGNORE plus the unique index over (session_id,
-// exchange_number) remains the final guard against a concurrent duplicate.
+// number. INSERT OR IGNORE plus the exact-payload unique index remains the final
+// guard against a concurrent exact duplicate.
 func (w *writer) exchange(ctx context.Context, sessionID string, number int,
 	exchange parsers.Exchange) (int64, bool, error) {
 	values := append([]any{sessionID, number}, exchangeColumnValues(exchange)...)
@@ -1160,26 +1181,13 @@ func (w *writer) enrichExchange(ctx context.Context, sessionID string, stored st
 	number := stored.number
 	inserted := 0
 	for _, block := range exchange.Thinking {
-		result, err := w.tx.ExecContext(ctx, `
-			INSERT INTO thinking_blocks
-			  (session_id, exchange_number, position_in_session, depth, word_count,
-			   is_after_compaction, full_text)
-			SELECT ?, ?, ?, ?, ?, ?, ?
-			WHERE NOT EXISTS (
-			  SELECT 1 FROM thinking_blocks
-			  WHERE session_id = ? AND exchange_number = ? AND full_text = ?
-			)`,
-			sessionID, number, block.Position, nullIfEmpty(block.Depth), block.WordCount,
-			boolToInt(block.IsAfterCompaction), block.Text,
-			sessionID, number, block.Text)
+		landed, err := w.insertThinking(ctx, sessionID, number, block.Position, block)
 		if err != nil {
 			return inserted, 0, fmt.Errorf("enrich a thinking block of %s/%d: %w", sessionID, number, err)
 		}
-		affected, err := result.RowsAffected()
-		if err != nil {
-			return inserted, 0, fmt.Errorf("count an enriched thinking block of %s/%d: %w", sessionID, number, err)
+		if landed {
+			inserted++
 		}
-		inserted += int(affected)
 	}
 	if stored.agentText != "" || stored.agentTimestamp != "" {
 		return inserted, 0, nil
@@ -1206,47 +1214,54 @@ func (w *writer) insertTools(ctx context.Context, sessionID string, number int,
 
 func (w *writer) children(ctx context.Context, sessionID string, number int,
 	exchange parsers.Exchange) (int, int, error) {
+	inserted := 0
 	for _, block := range exchange.Thinking {
-		_, err := w.tx.ExecContext(ctx, `
-			INSERT INTO thinking_blocks
-			  (session_id, exchange_number, position_in_session, depth, word_count,
-			   is_after_compaction, full_text)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			sessionID, number, block.Position, nullIfEmpty(block.Depth), block.WordCount,
-			boolToInt(block.IsAfterCompaction), block.Text)
+		landed, err := w.insertThinking(ctx, sessionID, number, block.Position, block)
 		if err != nil {
 			return 0, 0, fmt.Errorf("insert a thinking block of %s/%d: %w", sessionID, number, err)
+		}
+		if landed {
+			inserted++
 		}
 	}
 	tools, err := w.insertTools(ctx, sessionID, number, exchange.Tools)
 	if err != nil {
 		return 0, 0, err
 	}
-	return len(exchange.Thinking), tools, nil
+	return inserted, tools, nil
+}
+
+func (w *writer) insertThinking(ctx context.Context, sessionID string, number, position any,
+	block parsers.Thinking) (bool, error) {
+	depth, compacted := nullIfEmpty(block.Depth), boolToInt(block.IsAfterCompaction)
+	result, err := w.tx.ExecContext(ctx, `
+		INSERT INTO thinking_blocks
+		  (session_id, exchange_number, position_in_session, depth, word_count,
+		   is_after_compaction, full_text)
+		SELECT ?, ?, ?, ?, ?, ?, ?
+		WHERE NOT EXISTS (
+		  SELECT 1 FROM thinking_blocks
+		  WHERE session_id IS ? AND exchange_number IS ? AND position_in_session IS ?
+		    AND depth IS ? AND caution_ratio IS NULL AND word_count IS ?
+		    AND is_after_compaction IS ? AND full_text IS ?
+		)`, sessionID, number, position, depth, block.WordCount, compacted, block.Text,
+		sessionID, number, position, depth, block.WordCount, compacted, block.Text)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	return affected != 0, err
 }
 
 // sessionThinking writes a block that hangs off the session. Its natural key is
 // its own text, because it has no exchange to be numbered under.
 func (w *writer) sessionThinking(ctx context.Context, sessionID string,
 	block parsers.Thinking) (bool, error) {
-	var one int
-	err := w.tx.QueryRowContext(ctx,
-		`SELECT 1 FROM thinking_blocks WHERE session_id = ? AND full_text = ? LIMIT 1`,
-		sessionID, block.Text).Scan(&one)
-	if err == nil {
-		return false, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return false, fmt.Errorf("look up a thinking block of %s: %w", sessionID, err)
-	}
-	_, err = w.tx.ExecContext(ctx, `
-		INSERT INTO thinking_blocks (session_id, depth, word_count, full_text)
-		VALUES (?, ?, ?, ?)`,
-		sessionID, nullIfEmpty(block.Depth), block.WordCount, block.Text)
+	landed, err := w.insertThinking(ctx, sessionID, nil, nil, block)
 	if err != nil {
 		return false, fmt.Errorf("insert a thinking block of %s: %w", sessionID, err)
 	}
-	return true, nil
+	return landed, nil
 }
 
 func (w *writer) patchMetadata(ctx context.Context, sessionID string, payload map[string]any) error {
