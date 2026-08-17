@@ -2,7 +2,9 @@
 package plugininstall
 
 import (
+	"archive/tar"
 	"bufio"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -11,8 +13,11 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -28,6 +33,7 @@ const (
 	ChecksumsFilename = "checksums.txt"
 	ManifestFilename  = plugin.ManifestFilename
 	manifestSchema    = 1
+	maxArchiveSize    = 256 << 20
 )
 
 var errSourceNotRegular = errors.New("source is not a regular file")
@@ -154,14 +160,29 @@ func Resolve(ctx context.Context, reference, scratchRoot string) (Resolved, func
 		return Resolved{}, func() {}, fmt.Errorf("plugin source is empty")
 	}
 	if info, err := os.Stat(reference); err == nil {
-		if !info.IsDir() {
+		if info.IsDir() {
+			absolute, err := filepath.Abs(reference)
+			if err != nil {
+				return Resolved{}, func() {}, fmt.Errorf("resolve plugin source: %w", err)
+			}
+			return Resolved{Reference: absolute, Directory: absolute}, func() {}, nil
+		}
+		if !info.Mode().IsRegular() || !archiveReference(reference) {
 			return Resolved{}, func() {}, fmt.Errorf("plugin source %s is not a directory", reference)
 		}
 		absolute, err := filepath.Abs(reference)
 		if err != nil {
 			return Resolved{}, func() {}, fmt.Errorf("resolve plugin source: %w", err)
 		}
-		return Resolved{Reference: absolute, Directory: absolute}, func() {}, nil
+		directory, cleanup, err := extractArchive(ctx, absolute, scratchRoot)
+		return Resolved{Reference: absolute, Directory: directory}, cleanup, err
+	}
+	if archiveReference(reference) {
+		parsed, err := url.Parse(reference)
+		if err == nil && (parsed.Scheme == "https" || parsed.Scheme == "http") {
+			directory, cleanup, err := extractArchive(ctx, reference, scratchRoot)
+			return Resolved{Reference: reference, Directory: directory}, cleanup, err
+		}
 	}
 
 	cloneSource := reference
@@ -189,6 +210,111 @@ func Resolve(ctx context.Context, reference, scratchRoot string) (Resolved, func
 			reference, err, strings.TrimSpace(string(output)))
 	}
 	return Resolved{Reference: reference, Directory: directory}, cleanup, nil
+}
+
+func archiveReference(reference string) bool {
+	name := reference
+	if parsed, err := url.Parse(reference); err == nil && parsed.Path != "" {
+		name = parsed.Path
+	}
+	return strings.HasSuffix(strings.ToLower(name), ".tar.gz") ||
+		strings.HasSuffix(strings.ToLower(name), ".tgz")
+}
+
+func extractArchive(ctx context.Context, reference, scratchRoot string) (string, func(), error) {
+	if err := os.MkdirAll(scratchRoot, 0o700); err != nil {
+		return "", func() {}, fmt.Errorf("create plugin download directory: %w", err)
+	}
+	directory, err := os.MkdirTemp(scratchRoot, "source-")
+	if err != nil {
+		return "", func() {}, fmt.Errorf("create plugin download: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(directory) }
+	input, err := openArchive(ctx, reference)
+	if err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	defer input.Close()
+	if err := extractTarGzip(input, directory); err != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("extract plugin archive %s: %w", reference, err)
+	}
+	return directory, cleanup, nil
+}
+
+func openArchive(ctx context.Context, reference string) (io.ReadCloser, error) {
+	parsed, _ := url.Parse(reference)
+	if parsed != nil && (parsed.Scheme == "https" || parsed.Scheme == "http") {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, reference, nil)
+		if err != nil {
+			return nil, fmt.Errorf("download plugin archive: %w", err)
+		}
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			return nil, fmt.Errorf("download plugin archive: %w", err)
+		}
+		if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+			response.Body.Close()
+			return nil, fmt.Errorf("download plugin archive: server returned %s", response.Status)
+		}
+		return response.Body, nil
+	}
+	file, err := os.Open(reference)
+	if err != nil {
+		return nil, fmt.Errorf("open plugin archive: %w", err)
+	}
+	return file, nil
+}
+
+func extractTarGzip(input io.Reader, directory string) error {
+	compressed := io.LimitReader(input, maxArchiveSize+1)
+	gzipReader, err := gzip.NewReader(compressed)
+	if err != nil {
+		return fmt.Errorf("open gzip stream: %w", err)
+	}
+	defer gzipReader.Close()
+	archive := tar.NewReader(gzipReader)
+	var extracted int64
+	for {
+		header, err := archive.Next()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("read tar stream: %w", err)
+		}
+		name := strings.TrimPrefix(path.Clean(header.Name), "./")
+		if header.Typeflag == tar.TypeDir && (name == "" || name == ".") {
+			continue
+		}
+		if !safeFile(name) {
+			return fmt.Errorf("entry %q is not a package-root file", header.Name)
+		}
+		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
+			return fmt.Errorf("entry %q is not a regular file", header.Name)
+		}
+		if header.Size < 0 || header.Size > maxArchiveSize || extracted > maxArchiveSize-header.Size {
+			return fmt.Errorf("archive expands beyond %d bytes", maxArchiveSize)
+		}
+		extracted += header.Size
+		mode := os.FileMode(0o600)
+		if header.FileInfo().Mode().Perm()&0o111 != 0 {
+			mode = 0o700
+		}
+		output, err := os.OpenFile(filepath.Join(directory, name), os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
+		if err != nil {
+			return fmt.Errorf("create extracted file %s: %w", name, err)
+		}
+		_, copyErr := io.CopyN(output, archive, header.Size)
+		closeErr := output.Close()
+		if copyErr != nil {
+			return fmt.Errorf("extract file %s: %w", name, copyErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close extracted file %s: %w", name, closeErr)
+		}
+	}
 }
 
 func RepositoryURL(reference string) (string, bool) {

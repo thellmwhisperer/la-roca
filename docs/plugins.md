@@ -469,9 +469,11 @@ its command.
 
 ## Verified packages and lifecycle
 
-An installable source is a local directory, a Git URL, or `owner/repo`, which is
-cloned from GitHub with the user's existing Git credentials, including for a
-private repository.
+An installable source is a local directory, a local or HTTP(S) `.tar.gz`
+release archive, a Git URL, or `owner/repo`. Git sources are cloned with the
+user's existing credentials, including for a private repository. Archives must
+contain the package files at their root; nested paths and non-regular entries
+are refused before package verification.
 
 `checksums.txt` publishes one SHA-256 for every payload file: `plugin.json`,
 each declared database, the optional `rides.toml`, and the optional
@@ -483,7 +485,7 @@ rather than installed. The displayed package checksum is the deterministic
 SHA-256 fingerprint of those verified source checksums.
 
 ```sh
-roca plugin install <path|url|owner/repo>
+roca plugin install <path|archive|url|owner/repo>
 ```
 
 The consent screen always names the source, version, checksum, and one of two

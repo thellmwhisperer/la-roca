@@ -414,8 +414,8 @@ func pluginCommand(env *cliEnv) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "plugin",
 		Short: "Install, update, or uninstall an experimental plugin",
-		Long: "Manages verified plugin packages from a local directory, a Git URL, or\n" +
-			"an owner/repo source. This experimental surface requires features.plugins=true.",
+		Long: "Manages verified plugin packages from a directory, a .tar.gz release archive,\n" +
+			"a Git URL, or an owner/repo source. This experimental surface requires features.plugins=true.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
@@ -429,7 +429,7 @@ func pluginCommand(env *cliEnv) *cobra.Command {
 
 func pluginInstallCommand(env *cliEnv, consented *bool) *cobra.Command {
 	return &cobra.Command{
-		Use:   "install <path|url|owner/repo>",
+		Use:   "install <path|archive|url|owner/repo>",
 		Short: "Verify a source and install its plugin",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

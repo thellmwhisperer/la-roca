@@ -53,6 +53,33 @@ func TestTheChannelBuildsThroughTheMakefileAndNotByHand(t *testing.T) {
 	}
 }
 
+func TestTheChannelBuildsAndPublishesAStampedVectorPackagePerPlatform(t *testing.T) {
+	makefile := readRepoFile(t, "../../../Makefile")
+	pluginMakefile := readRepoFile(t, "../../../plugins/vector/Makefile")
+	if !strings.Contains(makefile, "$(MAKE) -C plugins/vector dist VERSION=$(VERSION)") {
+		t.Fatal("the root distribution does not pass its version to the vector package build")
+	}
+	for _, platform := range theMatrix {
+		name := "roca-vector-$(VERSION)-" + platform + ".tar.gz"
+		if !strings.Contains(pluginMakefile, name) {
+			t.Errorf("the vector distribution builds no %s", name)
+		}
+	}
+	workflow := readRepoFile(t, "../../../.github/workflows/release.yml")
+	for _, required := range []string{
+		"plugin_version", `test "$plugin_version" = "$VERSION"`,
+		"sha256sum roca-*", `gh release upload "$VERSION" --clobber bin/roca-*`,
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("the release workflow does not prove or publish vector packages with %q", required)
+		}
+	}
+	ci := readRepoFile(t, "../../../.github/workflows/ci.yml")
+	if !strings.Contains(ci, "make dist") {
+		t.Error("pull-request CI does not dry-run the full release distribution")
+	}
+}
+
 func readRepoFile(t *testing.T, path string) string {
 	t.Helper()
 	body, err := os.ReadFile(path)

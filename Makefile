@@ -37,8 +37,12 @@ linux-amd64:
 windows-amd64:
 	GOOS=windows GOARCH=amd64 $(GO_BUILD) -o bin/roca-$(VERSION)-windows-x64.exe ./cmd/roca
 
+.PHONY: vector-dist
+vector-dist:
+	$(MAKE) -C plugins/vector dist VERSION=$(VERSION)
+
 .PHONY: dist
-dist: darwin-arm64 linux-arm64 linux-amd64 windows-amd64 ## Build the four targets from a single runner
+dist: darwin-arm64 linux-arm64 linux-amd64 windows-amd64 vector-dist ## Build every release target from a single runner
 
 .PHONY: test
 test: ## Unit and contract tests

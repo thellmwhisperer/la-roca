@@ -94,16 +94,15 @@ jobs:
       # Makefile's ldflags. Everything downstream depends on it: the artefact
       # names carry it, `roca update` compares against it to decide whether it
       # is already the latest, and `install.sh` reads it to skip a reinstall.
-      - name: The four artefacts from a single runner
+      - name: The core and vector artefacts from a single runner
         env:
           VERSION: ${{ inputs.tag || github.ref_name }}
         run: make dist VERSION="$VERSION"
 
-      # The one artefact this runner can execute, asked the one question every
-      # client of the channel asks a binary before trusting it. A build whose
-      # version does not answer the tag is a release that would tell every
-      # installation the wrong thing about itself.
-      - name: The binary answers the tag it was built from
+      # The two Linux artefacts this runner can execute answer the tag, and the
+      # vector package manifest carries that same version into plugin lifecycle
+      # consent and installed inventory.
+      - name: The core and vector packages answer the tag they were built from
         env:
           VERSION: ${{ inputs.tag || github.ref_name }}
         run: |
@@ -112,6 +111,19 @@ jobs:
           case "$reported" in
             "roca $VERSION"*) ;;
             *) echo "the binary reports '$reported' and the tag is $VERSION" >&2; exit 1 ;;
+          esac
+          mkdir -p .tmp/release-vector
+          tar -C .tmp/release-vector -xzf bin/roca-vector-"$VERSION"-linux-x64.tar.gz
+          plugin_version=$(jq -r .version .tmp/release-vector/plugin.json)
+          test "$plugin_version" = "$VERSION" || {
+            echo "the vector manifest reports '$plugin_version' and the tag is $VERSION" >&2
+            exit 1
+          }
+          reported=$(.tmp/release-vector/roca-vector --version)
+          echo "$reported"
+          case "$reported" in
+            *"$VERSION"*) ;;
+            *) echo "the vector binary reports '$reported' and the tag is $VERSION" >&2; exit 1 ;;
           esac
 
       # One `<sha256>  <name>` line per artefact, with bare names: it is what
@@ -122,7 +134,7 @@ jobs:
           VERSION: ${{ inputs.tag || github.ref_name }}
         run: |
           cd bin
-          sha256sum roca-"$VERSION"-* > checksums.txt
+          sha256sum roca-* > checksums.txt
           cat checksums.txt
 
       # The binaries first and checksums.txt last, in two commands, because the
@@ -137,5 +149,5 @@ jobs:
           gh release view "$VERSION" >/dev/null 2>&1 || \
             gh release create "$VERSION" --verify-tag \
               --title "roca $VERSION" --generate-notes
-          gh release upload "$VERSION" --clobber bin/roca-"$VERSION"-*
+          gh release upload "$VERSION" --clobber bin/roca-*
           gh release upload "$VERSION" --clobber bin/checksums.txt
