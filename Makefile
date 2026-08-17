@@ -1,7 +1,6 @@
-# La Roca: one static executable per platform and nothing else.
-#
-# The release artefacts are produced by the channel (GitHub Actions), not by
-# this Makefile: here we build to work and to test locally.
+# La Roca: static core and optional vector executables for every platform.
+# The release channel publishes the artefacts; `make dist` reproduces them
+# locally, while the individual targets support development and verification.
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
