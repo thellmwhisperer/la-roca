@@ -35,11 +35,12 @@ type corePage struct {
 }
 
 const (
-	exchangeText = `trim(COALESCE(human_text,'') || CASE WHEN human_text IS NOT NULL AND agent_text IS NOT NULL THEN char(10)||char(10) ELSE '' END || COALESCE(agent_text,''))`
-	corpusSchema = "plugin_roca_corpus"
+	exchangeText       = `trim(COALESCE(human_text,'') || CASE WHEN human_text IS NOT NULL AND agent_text IS NOT NULL THEN char(10)||char(10) ELSE '' END || COALESCE(agent_text,''))`
+	sessionProjectName = `CASE WHEN json_valid(COALESCE(metadata,'')) THEN CASE WHEN json_type(metadata,'$.project_name')='text' THEN COALESCE(json_extract(metadata,'$.project_name'),'') ELSE '' END ELSE '' END`
+	corpusSchema       = "plugin_roca_corpus"
 )
 
-var structuralSessionToken = regexp.MustCompile(`(?i)(?:\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b|\b[0-9a-f]{16,}\b|\b[0-9A-HJKMNP-TV-Z]{26}\b)`)
+var structuralSessionToken = regexp.MustCompile(`(?i)(?:\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b|\b[0-9a-f]{7,}\b|\b[0-9A-HJKMNP-TV-Z]{26}\b|\bg-p-[a-z0-9_-]+\b)`)
 
 func corpusTable(name string) string { return corpusSchema + "." + name }
 
@@ -113,10 +114,11 @@ func corePages() []corePage {
 			kind: "sessions", initial: "",
 			query: func(cursor string) string {
 				return fmt.Sprintf(`SELECT session_id,COALESCE(title,'') AS title,
-					COALESCE(project,'') AS project FROM %s
-					WHERE (COALESCE(title,'') <> '' OR COALESCE(project,'') <> '')
+					COALESCE(project,'') AS project,%s AS project_name FROM %s
+					WHERE (COALESCE(title,'') <> '' OR COALESCE(project,'') <> '' OR %s <> '')
 					AND session_id > %s ORDER BY session_id LIMIT %d`,
-					corpusTable("sessions"), sqlLiteral(cursor), walkPageSize)
+					sessionProjectName, corpusTable("sessions"), sessionProjectName,
+					sqlLiteral(cursor), walkPageSize)
 			},
 			decode: decodeSession,
 		},
@@ -173,50 +175,83 @@ func decodeSession(values map[string]any) (sourceRow, string, error) {
 	if id == "" {
 		return sourceRow{}, "", fmt.Errorf("session_id is empty")
 	}
-	text := sessionEmbeddingText(stringValue(values["title"]), stringValue(values["project"]))
+	text := sessionEmbeddingText(stringValue(values["title"]), stringValue(values["project"]),
+		stringValue(values["project_name"]))
 	return sourceRow{kind: "sessions", sessionID: id, text: text}, id, nil
 }
 
-func sessionEmbeddingText(title, project string) string {
-	fields := make([]string, 0, 2)
-	if title = cleanSessionField(title); title != "" {
-		fields = append(fields, title)
-	}
-	if project = cleanSessionProject(project); project != "" {
-		fields = append(fields, project)
+func sessionEmbeddingText(values ...string) string {
+	fields := make([]string, 0, len(values))
+	seen := make(map[string]bool, len(values))
+	for _, value := range values {
+		value = cleanSessionField(value)
+		if value != "" && !seen[value] {
+			fields = append(fields, value)
+			seen[value] = true
+		}
 	}
 	return strings.Join(fields, "\n")
 }
 
 func cleanSessionField(value string) string {
-	value = strings.TrimSpace(value)
+	value = strings.TrimSpace(stripSessionJSON(value))
 	if value == "" {
 		return ""
 	}
-	if (strings.HasPrefix(value, "{") || strings.HasPrefix(value, "[")) && json.Valid([]byte(value)) {
-		return ""
+	value = structuralSessionToken.ReplaceAllString(value, " ")
+	fields := strings.Fields(value)
+	clean := fields[:0]
+	for _, field := range fields {
+		candidate := strings.Trim(field, `"'()[]{}<>,;:!?.`)
+		if candidate == "" || strings.ContainsAny(candidate, `/\`) {
+			continue
+		}
+		clean = append(clean, field)
 	}
-	return strings.Join(strings.Fields(structuralSessionToken.ReplaceAllString(value, " ")), " ")
+	return strings.Join(clean, " ")
 }
 
-func cleanSessionProject(value string) string {
-	if strings.ContainsAny(value, `/\`) || structuralSessionToken.MatchString(value) {
-		return ""
+func stripSessionJSON(value string) string {
+	var clean strings.Builder
+	for len(value) > 0 {
+		start := strings.IndexAny(value, "{[")
+		if start < 0 {
+			clean.WriteString(value)
+			break
+		}
+		clean.WriteString(value[:start])
+		decoder := json.NewDecoder(strings.NewReader(value[start:]))
+		var decoded any
+		if err := decoder.Decode(&decoded); err != nil {
+			clean.WriteByte(value[start])
+			value = value[start+1:]
+			continue
+		}
+		consumed := int(decoder.InputOffset())
+		if consumed == 0 {
+			clean.WriteByte(value[start])
+			value = value[start+1:]
+			continue
+		}
+		clean.WriteByte(' ')
+		value = value[start+consumed:]
 	}
-	return cleanSessionField(value)
+	return clean.String()
 }
 
 func (c CoreCLI) ResolveSource(ctx context.Context, kind string, where locator) (string, error) {
 	var statement string
 	switch kind {
 	case "sessions":
-		statement = `SELECT COALESCE(title,'') AS title,COALESCE(project,'') AS project FROM ` +
-			corpusTable("sessions") + ` WHERE session_id=` + sqlLiteral(where.SessionID)
+		statement = `SELECT COALESCE(title,'') AS title,COALESCE(project,'') AS project,` +
+			sessionProjectName + ` AS project_name FROM ` + corpusTable("sessions") +
+			` WHERE session_id=` + sqlLiteral(where.SessionID)
 		rows, err := c.query(ctx, statement)
 		if err != nil || len(rows) == 0 {
 			return "", err
 		}
-		return sessionEmbeddingText(stringValue(rows[0]["title"]), stringValue(rows[0]["project"])), nil
+		return sessionEmbeddingText(stringValue(rows[0]["title"]), stringValue(rows[0]["project"]),
+			stringValue(rows[0]["project_name"])), nil
 	case "exchanges":
 		if !where.HasOrdinal {
 			statement = `SELECT ` + exchangeText + ` AS text FROM ` + corpusTable("exchanges") +
