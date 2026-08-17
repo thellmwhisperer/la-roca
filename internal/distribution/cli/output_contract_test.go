@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 // A build the whole file shares for its assertions. The version travels into
@@ -282,6 +284,11 @@ func TestStoreHumanJSONAndError(t *testing.T) {
 	if doc["layer"] != "discovery" || doc["id"] == nil {
 		t.Errorf("store --json lost its id and layer: %v", doc)
 	}
+	retry := mustJSON(t, runRoot(t, contractBuild(), "store", "--layer", "discovery",
+		"--content", "a second note", "--origin", "agent", "--json"))
+	if retry["skipped_duplicate"] != true || retry["duplicate_surface"] != service.SurfaceCLI {
+		t.Errorf("store --json lost duplicate suppression telemetry: %v", retry)
+	}
 
 	if err := failingRoot(t, "store", "--content", "no layer"); !strings.Contains(err.Error(), "layer") {
 		t.Errorf("the error does not name the missing flag: %v", err)
@@ -324,5 +331,22 @@ func TestUnknownCommandFailsByNameAndSuggestsATypo(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "Did you mean this?") ||
 		!strings.Contains(err.Error(), "query") {
 		t.Errorf("a close typo is not suggested:\n%v", err)
+	}
+}
+
+func TestDedupApplyTargetsOnlyFederatedCustodyDatabases(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{filepath.Join("home", ".roca", "plugins", "roca-corpus", "roca-corpus.db"), true},
+		{filepath.Join("home", ".roca", "plugins", "roca-ops", "roca-ops.db"), true},
+		{filepath.Join("home", ".roca", "roca.db"), false},
+		{filepath.Join("scratch", "roca-corpus.db"), false},
+	}
+	for _, test := range tests {
+		if got := isFederatedDedupTarget(test.path); got != test.want {
+			t.Errorf("isFederatedDedupTarget(%q) = %t, want %t", test.path, got, test.want)
+		}
 	}
 }

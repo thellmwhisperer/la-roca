@@ -69,16 +69,21 @@ type StoreResult struct {
 	Layer string `json:"layer"`
 	// Skipped says the content was already stored in this scope. It is not an
 	// error: retrying the same write must not create a duplicate memory.
-	Skipped   bool   `json:"skipped,omitempty"`
-	Version   string `json:"version"`
-	SourceSHA string `json:"source_sha"`
+	Skipped bool `json:"skipped_duplicate,omitempty"`
+	// DuplicateSource and DuplicateSurface are bounded suppression telemetry.
+	// They identify the retrying harness without retaining memory content.
+	DuplicateSource  string `json:"duplicate_source,omitempty"`
+	DuplicateSurface string `json:"duplicate_surface,omitempty"`
+	Version          string `json:"version"`
+	SourceSHA        string `json:"source_sha"`
 }
 
 // Store writes one memory. It is the write half of the product, and the same
 // object the plug's `roca_store` and the shell's `roca store` both call.
 //
-// Deduplication compares content, layer, status and project among active
-// memories.
+// Deduplication compares the complete persisted payload. A near duplicate is
+// independent evidence and remains independent even when only one provenance,
+// metadata, lifecycle, project, or authorship field differs.
 func (s *Service) Store(ctx context.Context, req StoreRequest) (StoreResult, error) {
 	if s.opts.ReadOnly {
 		return StoreResult{}, refuseReadOnly("store")
@@ -147,10 +152,17 @@ func (s *Service) Store(ctx context.Context, req StoreRequest) (StoreResult, err
 		}
 	}
 	err = target.Write(ctx, func(tx *sql.Tx) error {
-		if existing, found, err := identicalMemory(ctx, tx, physical, status, content, req.Project); err != nil {
+		payload := memoryPayload{
+			layer: physical, content: content, metadata: metadata, origin: origin,
+			sourceAgent: authorship.Agent, sourceModel: authorship.Model,
+			sourceSurface: authorship.Surface, project: orNull(req.Project), status: status,
+			supersedes: orNull(req.Supersedes), expiresAt: expiresAt,
+		}
+		if existing, found, err := identicalMemory(ctx, tx, payload, s.opts.RocaOpsEnabled); err != nil {
 			return err
 		} else if found {
 			result.ID, result.Skipped = existing, true
+			result.DuplicateSource, result.DuplicateSurface = authorship.Agent, authorship.Surface
 			return nil
 		}
 
@@ -213,16 +225,41 @@ type memoryQuerier interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
-func identicalMemory(ctx context.Context, db memoryQuerier, layer, status, content,
-	project string) (int64, bool, error) {
+type memoryPayload struct {
+	layer, content, metadata, origin        string
+	sourceAgent, sourceModel, sourceSurface string
+	status                                  string
+	project, supersedes, expiresAt          any
+}
+
+func identicalMemory(ctx context.Context, db memoryQuerier, payload memoryPayload,
+	withExpiry bool) (int64, bool, error) {
+	statement := `SELECT id FROM memories
+		 WHERE layer IS ? AND content IS ? AND metadata IS ? AND origin IS ?
+		   AND source_agent IS ? AND source_model IS ? AND source_surface IS ?
+		   AND source_session IS NULL AND source_sequence IS NULL
+		   AND project IS ? AND status IS ? AND supersedes IS ?`
+	arguments := []any{payload.layer, payload.content, payload.metadata, payload.origin,
+		payload.sourceAgent, payload.sourceModel, payload.sourceSurface,
+		payload.project, payload.status, payload.supersedes}
+	if withExpiry {
+		statement += " AND expires_at IS ?"
+		arguments = append(arguments, payload.expiresAt)
+	}
+	var provenanceColumn int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name = 'provenance'`).Scan(&provenanceColumn); err != nil {
+		return 0, false, err
+	}
+	if provenanceColumn != 0 {
+		// Store has no caller-controlled provenance input. The row it would
+		// insert therefore has NULL provenance, and historical non-NULL
+		// provenance must remain a distinct near duplicate.
+		statement += " AND provenance IS NULL"
+	}
+	statement += " ORDER BY id LIMIT 1"
 	var existing int64
-	err := db.QueryRowContext(ctx,
-		`SELECT id FROM memories
-		 WHERE id NOT IN (SELECT supersedes FROM memories WHERE supersedes IS NOT NULL)
-		   AND layer = ? AND status = ? AND content = ?
-		   AND (project = ? OR (project IS NULL AND ? IS NULL))
-		 LIMIT 1`,
-		layer, status, content, orNull(project), orNull(project)).Scan(&existing)
+	err := db.QueryRowContext(ctx, statement, arguments...).Scan(&existing)
 	switch {
 	case err == nil:
 		return existing, true, nil

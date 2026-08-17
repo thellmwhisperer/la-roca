@@ -70,6 +70,7 @@ type cliEnv struct {
 	initChooserElapsed time.Duration
 	features           config.FeaturesConfig
 	featuresLoaded     bool
+	omitCorpus         bool
 }
 
 // Execute runs the CLI and returns the process exit code.
@@ -202,7 +203,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 	root.PersistentFlags().BoolVar(&env.json, "json", false, "JSON output")
 	commands := []*cobra.Command{
 		versionCommand(env), initCommand(env), exploreCommand(env), schemaCommand(env),
-		indexCommand(env), doctorCommand(env),
+		indexCommand(env), doctorCommand(env), dedupCommand(env), memoryCommand(env),
 		healthCommand(env),
 		mcpCommand(env), skillCommand(env), hooksCommand(env),
 		loginCommand(env), modelCommand(env),
@@ -702,6 +703,15 @@ func (env *cliEnv) openService() (*service.Service, config.Paths, error) {
 	return svc, paths, err
 }
 
+// openStoreService keeps the memory write boundary physical: a store call has
+// no reason to install or attach corpus custody, and two concurrent memory
+// writers must not contend with each other over the corpus package.
+func (env *cliEnv) openStoreService() (*service.Service, config.Paths, error) {
+	scoped := *env
+	scoped.omitCorpus = true
+	return scoped.openService()
+}
+
 // openServiceWith opens the service from already-resolved paths. Init calls it
 // after its own setup (adoption by copy, migration) so that the paths are
 // already known when the database is opened.
@@ -735,8 +745,10 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		// Ensure runs on every open and not only on the first one: it returns early
 		// when the recorded version already matches, and it is the only thing that
 		// re-applies the corpus schema after the binary is upgraded in place.
-		if _, err := rocacorpus.Ensure(pluginDir, pluginExecutableDir(paths), env.build.Version); err != nil {
-			return nil, fmt.Errorf("install bundled corpus plugin: %w", err)
+		if !env.omitCorpus {
+			if _, err := rocacorpus.Ensure(pluginDir, pluginExecutableDir(paths), env.build.Version); err != nil {
+				return nil, fmt.Errorf("install bundled corpus plugin: %w", err)
+			}
 		}
 	}
 	var ingestProgress func(ingest.SourceProgress)
@@ -808,7 +820,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		PluginDir:                 pluginDir,
 		PluginsEnabled:            file.Features.Plugins,
 		RocaOpsEnabled:            rocaOpsEnabled,
-		CorpusEnabled:             true,
+		CorpusEnabled:             !env.omitCorpus,
 		ReadLayout:                readLayout,
 		RollbackLayout:            rollbackLayout,
 		RecordShadowMismatch:      recordShadowMismatch,

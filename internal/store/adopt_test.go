@@ -301,35 +301,40 @@ func TestAnEmptyDatabaseIsCreatedInsteadOfRejected(t *testing.T) {
 	}
 }
 
-// Duplicate keys under a missing unique index are blocking: they are never
-// deduplicated silently to make the constraint fit.
-func TestAMissingUniqueIndexWithDuplicatesBlocks(t *testing.T) {
+// The exchange identity index is a lookup aid, not deletion authority. Schema
+// adoption restores it without collapsing divergent observations that share an
+// identity; the exact-payload maintenance law owns physical uniqueness.
+func TestAMissingIdentityIndexPreservesDivergentRows(t *testing.T) {
 	db := openFresh(t)
 	ctx := context.Background()
 	if err := store.ApplySchema(ctx, db); err != nil {
 		t.Fatalf("ApplySchema: %v", err)
 	}
-	execute(t, db, `DROP INDEX idx_exchanges_session_number`)
+	execute(t, db, `DROP INDEX idx_exchanges_identity`)
 	execute(t, db, `INSERT INTO sessions (session_id) VALUES ('s1')`)
-	execute(t, db, `INSERT INTO exchanges (session_id, exchange_number) VALUES ('s1', 1)`)
-	execute(t, db, `INSERT INTO exchanges (session_id, exchange_number) VALUES ('s1', 1)`)
+	execute(t, db, `INSERT INTO exchanges (session_id, exchange_number, agent_text) VALUES ('s1', 1, 'first')`)
+	execute(t, db, `INSERT INTO exchanges (session_id, exchange_number, agent_text) VALUES ('s1', 1, 'different')`)
 
 	report, err := store.Inspect(ctx, db)
 	if err != nil {
 		t.Fatalf("Inspect: %v", err)
 	}
-	if report.Verdict != store.VerdictIncompatible {
-		t.Fatalf("verdict = %q, want incompatible", report.Verdict)
+	if report.Verdict != store.VerdictMigratable {
+		t.Fatalf("verdict = %q, want migratable", report.Verdict)
 	}
-	if _, err := store.Adopt(ctx, db, t.TempDir()); err == nil {
-		t.Fatal("Adopt accepted a database with duplicates under a missing unique index")
+	if _, err := store.Adopt(ctx, db, t.TempDir()); err != nil {
+		t.Fatalf("Adopt refused divergent identity rows: %v", err)
 	}
 	var n int
 	if err := db.SQL().QueryRow("SELECT COUNT(*) FROM exchanges").Scan(&n); err != nil {
 		t.Fatalf("COUNT exchanges: %v", err)
 	}
 	if n != 2 {
-		t.Errorf("exchanges rows = %d, want 2: nothing is deduplicated silently", n)
+		t.Errorf("exchanges rows = %d, want 2: divergent evidence must remain", n)
+	}
+	if err := db.SQL().QueryRow(`SELECT COUNT(*) FROM sqlite_master
+		WHERE type='index' AND name='idx_exchanges_identity'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("identity index count = %d, err = %v", n, err)
 	}
 }
 

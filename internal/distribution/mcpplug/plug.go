@@ -397,6 +397,15 @@ func rendered[T any](res T, err error, paint func(T) string) (*mcp.CallToolResul
 		"row_count": resultRows(res),
 		"degraded":  resultDegraded(res),
 	}
+	if stored, ok := any(res).(service.StoreResult); ok {
+		metadata["id"] = stored.ID
+		metadata["layer"] = stored.Layer
+		metadata["skipped_duplicate"] = stored.Skipped
+		if stored.Skipped {
+			metadata["duplicate_source"] = stored.DuplicateSource
+			metadata["duplicate_surface"] = stored.DuplicateSurface
+		}
+	}
 	if query, ok := any(res).(service.QueryResult); ok {
 		if query.Mode != "" {
 			metadata["mode"] = query.Mode

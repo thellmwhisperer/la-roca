@@ -89,7 +89,7 @@ CREATE INDEX IF NOT EXISTS idx_memories_provenance ON memories(provenance);
 CREATE INDEX IF NOT EXISTS idx_exchanges_session ON exchanges(session_id);
 CREATE INDEX IF NOT EXISTS idx_tool_uses_session ON tool_uses(session_id);
 CREATE INDEX IF NOT EXISTS idx_thinking_session ON thinking_blocks(session_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_exchanges_session_number
+CREATE INDEX IF NOT EXISTS idx_exchanges_identity
   ON exchanges(session_id, exchange_number);
 CREATE INDEX IF NOT EXISTS idx_ingest_state_project ON ingest_file_state(project);
 CREATE INDEX IF NOT EXISTS idx_ingest_state_source_agent ON ingest_file_state(source_agent);

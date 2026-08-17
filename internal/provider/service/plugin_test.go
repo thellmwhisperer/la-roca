@@ -415,12 +415,7 @@ func TestKeywordRescueSearchesRocaOpsWithoutQuestionRouting(t *testing.T) {
 }
 
 func TestRocaOpsDrainOnlyRemovesExplicitlyExpiredRows(t *testing.T) {
-	paths := freshPaths(t)
-	plugins := ensureRocaOps(t, paths)
-	svc := initialized(t, paths, func(options *service.Options) {
-		options.PluginDir = plugins
-		options.RocaOpsEnabled = true
-	})
+	svc, plugins := enabledRocaOps(t)
 	for _, testCase := range []struct {
 		content   string
 		expiresAt string
@@ -457,6 +452,41 @@ func TestRocaOpsDrainOnlyRemovesExplicitlyExpiredRows(t *testing.T) {
 	if remaining != 2 {
 		t.Fatalf("remaining = %d, want future and immortal rows", remaining)
 	}
+}
+
+func TestRocaOpsExactStoreGuardIncludesExpiry(t *testing.T) {
+	svc, _ := enabledRocaOps(t)
+	request := service.StoreRequest{Layer: "handoff", Content: "synthetic exact ops retry",
+		Metadata: map[string]any{"expires_at": "2026-08-18T00:00:00Z"}}
+	first, err := svc.Store(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, err := svc.Store(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !retry.Skipped || retry.ID != first.ID {
+		t.Fatalf("ops retry = %+v, want canonical %d", retry, first.ID)
+	}
+	request.Metadata = map[string]any{"expires_at": "2026-08-19T00:00:00Z"}
+	near, err := svc.Store(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if near.Skipped || near.ID == first.ID {
+		t.Fatal("different ops expiry was coalesced")
+	}
+}
+
+func enabledRocaOps(t *testing.T) (*service.Service, string) {
+	t.Helper()
+	paths := freshPaths(t)
+	plugins := ensureRocaOps(t, paths)
+	svc := initialized(t, paths, func(options *service.Options) {
+		options.PluginDir, options.RocaOpsEnabled = plugins, true
+	})
+	return svc, plugins
 }
 
 func ensureRocaOps(t *testing.T, paths testPaths) string {
