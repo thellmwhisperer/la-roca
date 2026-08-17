@@ -56,9 +56,15 @@ func TestStableSourceIDsUseCoreNaturalKeys(t *testing.T) {
 	if got, want := exchange.stableID(), "exchanges/session%2Fa/7"; got != want {
 		t.Fatalf("exchange stable id = %q, want %q", got, want)
 	}
-	thinking := sourceRow{kind: "thinking_blocks", sessionID: "session/a", ordinal: 7, hasOrdinal: true, position: "1.5"}
-	if got, want := thinking.stableID(), "thinking_blocks/session%2Fa/7/1.5"; got != want {
+	thinking := sourceRow{kind: "thinking_blocks", sessionID: "session/a", ordinal: 7,
+		hasOrdinal: true, position: "1.5", text: "first reasoning"}
+	if got, want := thinking.stableID(), "thinking_blocks/session%2Fa/7/1.5/"+thinking.identity(); got != want {
 		t.Fatalf("thinking stable id = %q, want %q", got, want)
+	}
+	thinkingSibling := thinking
+	thinkingSibling.text = "second reasoning"
+	if thinking.stableID() == thinkingSibling.stableID() {
+		t.Fatalf("divergent thinking blocks sharing a locator have stable id %q", thinking.stableID())
 	}
 	unkeyed := sourceRow{kind: "thinking_blocks", sessionID: "session/a", text: "session reasoning"}
 	sibling := sourceRow{kind: "thinking_blocks", sessionID: "session/a", text: "other session reasoning"}

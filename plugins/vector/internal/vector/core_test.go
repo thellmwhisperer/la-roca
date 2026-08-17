@@ -191,6 +191,30 @@ func TestCoreCLIResolvesLiveTextAndQuotesStoredLocators(t *testing.T) {
 	}
 }
 
+func TestCoreCLIResolvesDistinctThinkingBlocksSharingALocator(t *testing.T) {
+	want := sourceRow{kind: "thinking_blocks", text: "first reasoning"}
+	var statement string
+	core := CoreCLI{Executable: "roca", Run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		statement = args[len(args)-1]
+		return json.Marshal(map[string]any{"rows": []map[string]any{
+			{"text": "first reasoning"}, {"text": "second reasoning"},
+		}})
+	}}
+	text, err := core.ResolveSource(context.Background(), "thinking_blocks", locator{
+		SessionID: "shared-session", Ordinal: 2, HasOrdinal: true,
+		Position: "0.5", Identity: want.identity(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "first reasoning" {
+		t.Fatalf("text = %q", text)
+	}
+	if strings.Contains(statement, "LIMIT 1") {
+		t.Fatalf("thinking resolution discarded divergent siblings: %s", statement)
+	}
+}
+
 func TestLargeCoreIdentifiersRemainExactAcrossJSON(t *testing.T) {
 	const identifier int64 = 1152921504606846988
 	core := CoreCLI{Executable: "roca", Run: func(_ context.Context, _ string, _ ...string) ([]byte, error) {

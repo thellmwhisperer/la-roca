@@ -351,9 +351,10 @@ func (c CoreCLI) ResolveSource(ctx context.Context, kind string, where locator) 
 		if err != nil {
 			return "", fmt.Errorf("decode thinking block position %q: %w", where.Position, err)
 		}
-		statement = fmt.Sprintf(`SELECT COALESCE(full_text,'') AS text FROM %s WHERE session_id=%s AND exchange_number=%d AND position_in_session=%s ORDER BY id DESC LIMIT 1`,
+		statement = fmt.Sprintf(`SELECT COALESCE(full_text,'') AS text FROM %s WHERE session_id=%s AND exchange_number=%d AND position_in_session=%s`,
 			corpusTable("thinking_blocks"), sqlLiteral(where.SessionID), where.Ordinal,
 			strconv.FormatFloat(position, 'g', -1, 64))
+		return c.resolveIdentity(ctx, kind, where, statement)
 	case "memories":
 		switch {
 		case where.SessionID != "" && where.HasOrdinal:
