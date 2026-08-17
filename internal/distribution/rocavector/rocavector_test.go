@@ -47,37 +47,17 @@ func TestBundledVectorRefreshAndCollisionPolicy(t *testing.T) {
 			wantError: "collides with an installation from", wantBody: "vector one"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
-			if _, err := rocavector.EnsureWithPayload(root, bin, "v1", []byte("vector one")); err != nil {
-				t.Fatal(err)
-			}
-			state := filepath.Join(root, rocavector.Name, rocavector.StateDir, "index.db")
-			if err := os.WriteFile(state, []byte("preserved index"), 0o600); err != nil {
+			fixture := installVectorFixture(t)
+			if err := os.WriteFile(fixture.state, []byte("preserved index"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			if testCase.external {
-				rewriteSource(t, filepath.Join(root, rocavector.Name), "/synthetic/vector-package")
+				rewriteSource(t, filepath.Join(fixture.root, rocavector.Name), "/synthetic/vector-package")
 			}
 
-			_, err := rocavector.EnsureWithPayload(root, bin, "v2", []byte("vector two"))
-			if testCase.wantError == "" && err != nil {
-				t.Fatal(err)
-			}
-			if testCase.wantError != "" && (err == nil || !strings.Contains(err.Error(), testCase.wantError)) {
-				t.Fatalf("refresh error = %v, want %q", err, testCase.wantError)
-			}
-			executableName := "roca-vector"
-			if runtime.GOOS == "windows" {
-				executableName += ".exe"
-			}
-			executable := filepath.Join(bin, executableName)
-			if raw, readErr := os.ReadFile(executable); readErr != nil || string(raw) != testCase.wantBody {
-				t.Fatalf("executable = %q, err=%v", raw, readErr)
-			}
-			if raw, readErr := os.ReadFile(state); readErr != nil || string(raw) != "preserved index" {
-				t.Fatalf("state = %q, err=%v", raw, readErr)
-			}
-			manifest, readErr := plugininstall.ReadManifest(filepath.Join(root, rocavector.Name))
+			fixture.ensureAndAssert(t, "v2", []byte("vector two"), testCase.wantError, testCase.wantBody)
+			assertFileContents(t, "state", fixture.state, "preserved index")
+			manifest, readErr := plugininstall.ReadManifest(filepath.Join(fixture.root, rocavector.Name))
 			if readErr != nil {
 				t.Fatal(readErr)
 			}
@@ -102,35 +82,63 @@ func TestBundledVectorRepairsOnlyAMissingSameVersionExecutable(t *testing.T) {
 			wantError: "changed since install", wantBody: "locally changed"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
-			if _, err := rocavector.EnsureWithPayload(root, bin, "v1", []byte("vector one")); err != nil {
-				t.Fatal(err)
-			}
-			executableName := "roca-vector"
-			if runtime.GOOS == "windows" {
-				executableName += ".exe"
-			}
-			executable := filepath.Join(bin, executableName)
+			fixture := installVectorFixture(t)
 			if testCase.remove {
-				if err := os.Remove(executable); err != nil {
+				if err := os.Remove(fixture.executable); err != nil {
 					t.Fatal(err)
 				}
-			} else if err := os.WriteFile(executable, []byte(testCase.replacement), 0o700); err != nil {
+			} else if err := os.WriteFile(fixture.executable, []byte(testCase.replacement), 0o700); err != nil {
 				t.Fatal(err)
 			}
 
-			_, err := rocavector.EnsureWithPayload(root, bin, "v1", []byte("vector one"))
-			if testCase.wantError == "" && err != nil {
-				t.Fatal(err)
-			}
-			if testCase.wantError != "" && (err == nil || !strings.Contains(err.Error(), testCase.wantError)) {
-				t.Fatalf("repair error = %v, want %q", err, testCase.wantError)
-			}
-			raw, readErr := os.ReadFile(executable)
-			if readErr != nil || string(raw) != testCase.wantBody {
-				t.Fatalf("executable = %q, err=%v", raw, readErr)
-			}
+			fixture.ensureAndAssert(t, "v1", []byte("vector one"), testCase.wantError, testCase.wantBody)
 		})
+	}
+}
+
+type vectorFixture struct {
+	root, bin, executable, state string
+}
+
+func installVectorFixture(t *testing.T) vectorFixture {
+	t.Helper()
+	root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
+	if _, err := rocavector.EnsureWithPayload(root, bin, "v1", []byte("vector one")); err != nil {
+		t.Fatal(err)
+	}
+	executableName := "roca-vector"
+	if runtime.GOOS == "windows" {
+		executableName += ".exe"
+	}
+	return vectorFixture{
+		root: root, bin: bin,
+		executable: filepath.Join(bin, executableName),
+		state:      filepath.Join(root, rocavector.Name, rocavector.StateDir, "index.db"),
+	}
+}
+
+func (fixture vectorFixture) ensureAndAssert(
+	t *testing.T,
+	version string,
+	payload []byte,
+	wantError, wantBody string,
+) {
+	t.Helper()
+	_, err := rocavector.EnsureWithPayload(fixture.root, fixture.bin, version, payload)
+	if wantError == "" && err != nil {
+		t.Fatal(err)
+	}
+	if wantError != "" && (err == nil || !strings.Contains(err.Error(), wantError)) {
+		t.Fatalf("ensure error = %v, want %q", err, wantError)
+	}
+	assertFileContents(t, "executable", fixture.executable, wantBody)
+}
+
+func assertFileContents(t *testing.T, label, path, want string) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil || string(raw) != want {
+		t.Fatalf("%s = %q, err=%v", label, raw, err)
 	}
 }
 

@@ -24,19 +24,9 @@ func TestEnsureAllPreflightsEveryBundleBeforeUpdatingAny(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := bundledplugin.EnsureAll(root, bin, "v2",
+	assertEnsureAllRejected(t, root, bin, "batch preflight", "refusing to overwrite existing executable",
 		executableSpec("alpha", []byte("alpha two")),
 		executableSpec("beta", []byte("beta two")))
-	if err == nil || !strings.Contains(err.Error(), "refusing to overwrite existing executable") {
-		t.Fatalf("batch preflight error = %v", err)
-	}
-	manifest, err := plugininstall.ReadManifest(filepath.Join(root, "alpha"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if manifest.Version != "v1" {
-		t.Fatalf("alpha version = %q, want v1", manifest.Version)
-	}
 	raw, err := os.ReadFile(filepath.Join(bin, executableName("alpha")))
 	if err != nil {
 		t.Fatal(err)
@@ -67,17 +57,7 @@ func TestEnsureAllPreflightsInstalledSchemasBeforeUpdatingAny(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = bundledplugin.EnsureAll(root, bin, "v2", alpha, beta)
-	if err == nil || !strings.Contains(err.Error(), "newer than supported") {
-		t.Fatalf("schema preflight error = %v", err)
-	}
-	manifest, err := plugininstall.ReadManifest(filepath.Join(root, "alpha"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if manifest.Version != "v1" {
-		t.Fatalf("alpha version = %q, want v1", manifest.Version)
-	}
+	assertEnsureAllRejected(t, root, bin, "schema preflight", "newer than supported", alpha, beta)
 }
 
 func TestEnsureAllRejectsAReadOnlyDatabaseBeforeUpdatingAny(t *testing.T) {
@@ -144,6 +124,19 @@ func installDataSpecs(t *testing.T, root, bin, version string, specs ...bundledp
 			t.Fatal(err)
 		}
 	}
+}
+
+func assertEnsureAllRejected(
+	t *testing.T,
+	root, bin, label, wantError string,
+	specs ...bundledplugin.Spec,
+) {
+	t.Helper()
+	_, err := bundledplugin.EnsureAll(root, bin, "v2", specs...)
+	if err == nil || !strings.Contains(err.Error(), wantError) {
+		t.Fatalf("%s error = %v", label, err)
+	}
+	assertManifestVersion(t, root, "alpha", "v1")
 }
 
 func assertManifestVersion(t *testing.T, root, name, version string) {
