@@ -139,6 +139,77 @@ func TestDeltaIndexIsIdempotentAndMapsResultsBackToCore(t *testing.T) {
 	assertVectorStoreHasNoCorpusText(t, vectorPath)
 }
 
+func TestTargetedSessionDeltaInvalidatesOldTextOnce(t *testing.T) {
+	ctx := context.Background()
+	const clean = "Public health research\nhealth-project"
+	corpus := &memoryCorpus{sources: []sourceRow{
+		{kind: "sessions", sessionID: "session-clean", text: clean},
+		{kind: "exchanges", sessionID: "session-clean", ordinal: 1, hasOrdinal: true,
+			text: "A useful question\n\nA useful answer"},
+	}}
+	vectorPath := filepath.Join(t.TempDir(), "vector.db")
+	embedder := &recordingEmbedder{}
+	index := Index{Corpus: corpus, VectorPath: vectorPath, Model: DefaultModel, Embedder: embedder}
+	if delta, err := index.Ingest(ctx); err != nil || delta.Added != 2 {
+		t.Fatalf("initial delta = %+v, err=%v", delta, err)
+	}
+
+	db, err := sql.Open("sqlite", vectorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contaminated := clean + `\n{"source_exchange_fingerprints":["0123456789abcdef0123456789abcdef"]}`
+	if _, err := db.Exec(`UPDATE chunks SET fingerprint=? WHERE source_kind='sessions'`, fingerprint(contaminated)); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	embedder.inputs = nil
+	changed, err := index.IngestSource(ctx, "sessions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.Updated != 1 || changed.Added != 0 || changed.Removed != 0 ||
+		changed.Unchanged != 0 || changed.Sources != 1 || changed.Chunks != 1 {
+		t.Fatalf("targeted session delta = %+v", changed)
+	}
+	if len(embedder.inputs) != 1 || len(embedder.inputs[0]) != 1 ||
+		embedder.inputs[0][0] != DocumentPrefix+clean {
+		t.Fatalf("targeted embedding inputs = %q", embedder.inputs)
+	}
+
+	observer, err := sql.Open("sqlite", vectorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer observer.Close()
+	var dataVersionBefore int
+	if err := observer.QueryRow(`PRAGMA data_version`).Scan(&dataVersionBefore); err != nil {
+		t.Fatal(err)
+	}
+
+	steady, err := index.IngestSource(ctx, "sessions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if steady.Updated != 0 || steady.Unchanged != 1 || steady.Sources != 1 || len(embedder.inputs) != 1 {
+		t.Fatalf("repeated targeted delta = %+v, embedding batches=%d", steady, len(embedder.inputs))
+	}
+	var dataVersionAfter int
+	if err := observer.QueryRow(`PRAGMA data_version`).Scan(&dataVersionAfter); err != nil {
+		t.Fatal(err)
+	}
+	if dataVersionAfter != dataVersionBefore {
+		t.Fatalf("repeated targeted delta changed database version from %d to %d", dataVersionBefore, dataVersionAfter)
+	}
+	if _, err := index.IngestSource(ctx, "unknown"); err == nil || !strings.Contains(err.Error(), "unknown vector source") {
+		t.Fatalf("unknown source error = %v", err)
+	}
+}
+
 func TestSourcesWithoutNaturalKeysStaySeparateAndResolve(t *testing.T) {
 	ctx := context.Background()
 	index := Index{Corpus: createCoreFixture(t), VectorPath: filepath.Join(t.TempDir(), "vector.db"),
@@ -232,8 +303,11 @@ type memoryCorpus struct {
 	resolves map[string]int
 }
 
-func (m *memoryCorpus) WalkSources(_ context.Context, visit func(sourceRow) error) error {
+func (m *memoryCorpus) WalkSources(_ context.Context, sourceKind string, visit func(sourceRow) error) error {
 	for _, source := range m.sources {
+		if sourceKind != "" && source.kind != sourceKind {
+			continue
+		}
 		if err := visit(source); err != nil {
 			return err
 		}
@@ -257,7 +331,7 @@ func (m *memoryCorpus) ResolveSource(_ context.Context, kind string, where locat
 func createCoreFixture(t *testing.T) *memoryCorpus {
 	t.Helper()
 	return &memoryCorpus{sources: []sourceRow{
-		{kind: "sessions", sessionID: "s1", text: "gamma session\nsynthetic-project\n{}"},
+		{kind: "sessions", sessionID: "s1", text: "gamma session\nsynthetic-project"},
 		{kind: "memories", text: "alpha memory", layer: "discovery", origin: "agent", createdAt: "2026-01-01", cronSource: "synthetic-agent"},
 		{kind: "memories", text: "epsilon unsequenced memory", sessionID: "s1", layer: "discovery", origin: "agent", createdAt: "2026-01-01", cronSource: "synthetic-agent"},
 		{kind: "exchanges", sessionID: "s1", ordinal: 2, hasOrdinal: true, text: "beta question\n\ngamma answer"},
