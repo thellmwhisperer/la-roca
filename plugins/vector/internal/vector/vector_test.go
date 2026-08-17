@@ -181,12 +181,29 @@ func TestTargetedSessionDeltaInvalidatesOldTextOnce(t *testing.T) {
 		t.Fatalf("targeted embedding inputs = %q", embedder.inputs)
 	}
 
+	observer, err := sql.Open("sqlite", vectorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer observer.Close()
+	var dataVersionBefore int
+	if err := observer.QueryRow(`PRAGMA data_version`).Scan(&dataVersionBefore); err != nil {
+		t.Fatal(err)
+	}
+
 	steady, err := index.IngestSource(ctx, "sessions")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if steady.Updated != 0 || steady.Unchanged != 1 || steady.Sources != 1 || len(embedder.inputs) != 1 {
 		t.Fatalf("repeated targeted delta = %+v, embedding batches=%d", steady, len(embedder.inputs))
+	}
+	var dataVersionAfter int
+	if err := observer.QueryRow(`PRAGMA data_version`).Scan(&dataVersionAfter); err != nil {
+		t.Fatal(err)
+	}
+	if dataVersionAfter != dataVersionBefore {
+		t.Fatalf("repeated targeted delta changed database version from %d to %d", dataVersionBefore, dataVersionAfter)
 	}
 	if _, err := index.IngestSource(ctx, "unknown"); err == nil || !strings.Contains(err.Error(), "unknown vector source") {
 		t.Fatalf("unknown source error = %v", err)

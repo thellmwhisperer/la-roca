@@ -166,7 +166,7 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 		}
 		existing, dimensions = map[string]storedChunk{}, 0
 	}
-	if dimensions > 0 {
+	if dimensions > 0 && model != i.Model {
 		if err := ensureVectorTables(store, dimensions, i.Model); err != nil {
 			return Delta{}, err
 		}
