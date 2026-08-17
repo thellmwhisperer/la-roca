@@ -308,6 +308,52 @@ func TestVocabRequiresTheCensus(t *testing.T) {
 	}
 }
 
+// invalidatingCorpus makes the concurrency deterministic: midway through
+// discovery it wipes the census totals exactly the way a concurrent ingest
+// does before its first index mutation.
+type invalidatingCorpus struct {
+	inner          *memoryCorpus
+	path           string
+	resolves       int
+	invalidateFrom int
+}
+
+func (c *invalidatingCorpus) WalkSources(ctx context.Context, visit func(sourceRow) error) error {
+	return c.inner.WalkSources(ctx, visit)
+}
+
+func (c *invalidatingCorpus) ResolveSource(ctx context.Context, kind string, where locator) (string, error) {
+	text, err := c.inner.ResolveSource(ctx, kind, where)
+	c.resolves++
+	if c.resolves == c.invalidateFrom {
+		store, err := sql.Open("sqlite", c.path)
+		if err != nil {
+			return "", err
+		}
+		defer store.Close()
+		if _, err := store.Exec(`DELETE FROM census_totals`); err != nil {
+			return "", err
+		}
+	}
+	return text, err
+}
+
+func TestVocabRefusesAReportRankedAgainstAStolenCensus(t *testing.T) {
+	ctx := context.Background()
+	corpus := saludCorpus()
+	vectorPath := filepath.Join(t.TempDir(), "vector.db")
+	index := Index{Corpus: corpus, VectorPath: vectorPath,
+		Model: DefaultModel, Embedder: vocabEmbedder{}}
+	if _, err := index.Ingest(ctx); err != nil {
+		t.Fatal(err)
+	}
+	index.Corpus = &invalidatingCorpus{inner: corpus, path: vectorPath, invalidateFrom: 10}
+	if _, err := index.Vocab(ctx, "salud"); err == nil ||
+		!strings.Contains(err.Error(), "vector census changed during discovery") {
+		t.Fatalf("vocab beside a concurrent ingest = %v, want the refusal", err)
+	}
+}
+
 func TestVocabRejectsAnEmptyConcept(t *testing.T) {
 	index := Index{Corpus: saludCorpus(), VectorPath: filepath.Join(t.TempDir(), "vector.db"),
 		Model: DefaultModel, Embedder: vocabEmbedder{}}
