@@ -166,6 +166,13 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 		}
 		existing, dimensions = map[string]storedChunk{}, 0
 	}
+	rebuildCensus := sourceKind != "sessions"
+	if rebuildCensus {
+		err = invalidateCensus(ctx, store)
+	}
+	if err != nil {
+		return Delta{}, fmt.Errorf("invalidate vector census: %w", err)
+	}
 	if dimensions > 0 && model != i.Model {
 		if err := ensureVectorTables(store, dimensions, i.Model); err != nil {
 			return Delta{}, err
@@ -173,6 +180,7 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 	}
 
 	report := Delta{}
+	census := newVocabCensus()
 	seen := make(map[string]bool, len(existing))
 	pending := make([]desiredChunk, 0, defaultBatchSize)
 	flush := func() error {
@@ -210,6 +218,9 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 
 	err = i.Corpus.WalkSources(ctx, sourceKind, func(source sourceRow) error {
 		report.Sources++
+		if sourceKind == "" {
+			census.add(source.kind, source.text)
+		}
 		for chunkIndex, text := range chunks(source.text, defaultChunkSize, defaultOverlap) {
 			chunk := desiredChunk{
 				sourceKind: source.kind, sourceID: source.stableID(), index: chunkIndex,
@@ -238,6 +249,19 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 	}
 	if err := removeMissing(ctx, store, existing, seen, sourceKind, &report); err != nil {
 		return Delta{}, err
+	}
+	if rebuildCensus {
+		if sourceKind != "" {
+			if err := i.Corpus.WalkSources(ctx, "", func(source sourceRow) error {
+				census.add(source.kind, source.text)
+				return nil
+			}); err != nil {
+				return Delta{}, err
+			}
+		}
+		if err := writeCensus(ctx, store, census); err != nil {
+			return Delta{}, fmt.Errorf("write vector census: %w", err)
+		}
 	}
 	report.Chunks = report.Added + report.Updated + report.Unchanged
 	return report, nil
@@ -360,18 +384,19 @@ func (s sourceRow) stableID() string {
 	switch s.kind {
 	case "sessions":
 		if s.sessionID != "" {
-			return "sessions/" + escape(s.sessionID)
+			return "sessions/" + escape(s.sessionID) + "/" + s.identity()
 		}
 	case "exchanges":
 		if s.sessionID != "" && s.hasOrdinal {
-			return fmt.Sprintf("exchanges/%s/%d", escape(s.sessionID), s.ordinal)
+			return fmt.Sprintf("exchanges/%s/%d/%s", escape(s.sessionID), s.ordinal, s.identity())
 		}
 		if s.sessionID != "" {
 			return "exchanges/" + escape(s.sessionID) + "/unkeyed/" + s.identity()
 		}
 	case "thinking_blocks":
 		if s.sessionID != "" && s.hasOrdinal && s.position != "" {
-			return fmt.Sprintf("thinking_blocks/%s/%d/%s", escape(s.sessionID), s.ordinal, escape(s.position))
+			return fmt.Sprintf("thinking_blocks/%s/%d/%s/%s", escape(s.sessionID), s.ordinal,
+				escape(s.position), s.identity())
 		}
 		if s.sessionID != "" {
 			return "thinking_blocks/" + escape(s.sessionID) + "/unkeyed/" + s.identity()
@@ -379,9 +404,9 @@ func (s sourceRow) stableID() string {
 	case "memories":
 		switch {
 		case s.cronSource != "" && s.filePath != "":
-			return "memories/cron/" + escape(s.cronSource) + "/" + escape(s.filePath)
+			return "memories/cron/" + escape(s.cronSource) + "/" + escape(s.filePath) + "/" + s.identity()
 		case s.sessionID != "" && s.hasOrdinal:
-			return fmt.Sprintf("memories/session/%s/%d", escape(s.sessionID), s.ordinal)
+			return fmt.Sprintf("memories/session/%s/%d/%s", escape(s.sessionID), s.ordinal, s.identity())
 		default:
 			return "memories/direct/" + s.identity()
 		}
@@ -447,6 +472,8 @@ func openSQLite(path string, readOnly bool) (*sql.DB, error) {
 func ensureBaseSchema(db *sql.DB) error {
 	_, err := db.Exec(`PRAGMA journal_mode=WAL;
 		CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+		CREATE TABLE IF NOT EXISTS census(term TEXT NOT NULL PRIMARY KEY, docs INTEGER NOT NULL) WITHOUT ROWID;
+		CREATE TABLE IF NOT EXISTS census_totals(key TEXT NOT NULL PRIMARY KEY, documents INTEGER NOT NULL);
 		CREATE TABLE IF NOT EXISTS chunks(
 			id INTEGER PRIMARY KEY,
 			source_kind TEXT NOT NULL,

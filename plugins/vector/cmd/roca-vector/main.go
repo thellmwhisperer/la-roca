@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -53,7 +54,8 @@ func rootCommand(env *environment) *cobra.Command {
 	root.PersistentFlags().StringVar(&env.dbPath, "db-path", env.dbPath, "La Roca database selected by the core CLI")
 	root.PersistentFlags().StringVar(&env.stateDir, "state-dir", env.stateDir, "plugin state directory")
 	_ = root.PersistentFlags().MarkHidden("state-dir")
-	root.AddCommand(installCommand(env), ingestCommand(env), queryCommand(env), workerCommand(env))
+	root.AddCommand(installCommand(env), ingestCommand(env), queryCommand(env),
+		vocabCommand(env), workerCommand(env))
 	return root
 }
 
@@ -207,6 +209,66 @@ func queryCommand(env *environment) *cobra.Command {
 			}
 			return nil
 		},
+	}
+}
+
+func vocabCommand(env *environment) *cobra.Command {
+	return &cobra.Command{
+		Use:   "vocab <concept>",
+		Short: "Discover the discriminative vocabulary around a concept",
+		Long: "Vector discovery without inference: the top-100 semantic hits among\n" +
+			"exchanges and thinking blocks are tokenized with accent folding and scored\n" +
+			"by relative document frequency against the global corpus census, then\n" +
+			"grouped into reproducible research avenues.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			state, err := env.resolveStateDir()
+			if err != nil {
+				return err
+			}
+			vectorPath := filepath.Join(state, vector.DatabaseFilename)
+			index, err := env.index(vector.ConfiguredModel(vectorPath))
+			if err != nil {
+				return err
+			}
+			started := time.Now()
+			report, err := index.Vocab(command.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			report.ElapsedMS = time.Since(started).Milliseconds()
+			if env.json {
+				return printJSON(report)
+			}
+			printVocabReport(report)
+			return nil
+		},
+	}
+}
+
+func printVocabReport(report vector.VocabReport) {
+	fmt.Printf("vector vocab: %s\n", report.Concept)
+	if report.Hits == 0 {
+		fmt.Printf("  no exchanges or thinking blocks surfaced among the top-%d hits\n", report.TopK)
+		return
+	}
+	kinds := make([]string, 0, len(report.HitsByKind))
+	for kind := range report.HitsByKind {
+		kinds = append(kinds, kind)
+	}
+	sort.Strings(kinds)
+	shares := make([]string, 0, len(kinds))
+	for _, kind := range kinds {
+		shares = append(shares, fmt.Sprintf("%d %s", report.HitsByKind[kind], kind))
+	}
+	fmt.Printf("  hits: %d of top-%d (%s) · census: %d documents\n", report.Hits, report.TopK,
+		strings.Join(shares, " · "), report.CensusDocuments)
+	for _, avenue := range report.Avenues {
+		fmt.Printf("  via %d\n", avenue.Rank)
+		for _, term := range avenue.Terms {
+			fmt.Printf("    %-18s local %3d · global %-8d · log-odds %.2f\n",
+				term.Term, term.LocalDocs, term.GlobalDocs, term.Score)
+		}
 	}
 }
 
