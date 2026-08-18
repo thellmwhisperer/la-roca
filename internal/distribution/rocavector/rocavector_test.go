@@ -79,6 +79,7 @@ func TestBundledVectorMigratesLegacyInstall(t *testing.T) {
 		name, version, payload, wantError string
 		plantLegacy, plantCurrent         bool
 		external, unmanaged               bool
+		corruptPayload, changeExecutable  bool
 		wantLegacy, wantCurrent           bool
 		preserveState                     bool
 		twice                             bool
@@ -95,6 +96,12 @@ func TestBundledVectorMigratesLegacyInstall(t *testing.T) {
 			wantLegacy: true},
 		{name: "unmanaged leftover is not migrated", version: "v2", payload: "vector two",
 			plantLegacy: true, unmanaged: true, wantError: "cannot replace an unmanaged directory",
+			wantLegacy: true},
+		{name: "corrupt legacy payload is not migrated", version: "v2", payload: "vector two",
+			plantLegacy: true, corruptPayload: true, wantError: "checksum mismatch",
+			wantLegacy: true},
+		{name: "changed legacy executable is not migrated", version: "v2", payload: "vector two",
+			plantLegacy: true, changeExecutable: true, wantError: "changed since install",
 			wantLegacy: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -126,6 +133,21 @@ func TestBundledVectorMigratesLegacyInstall(t *testing.T) {
 			}
 			if testCase.external {
 				rewriteSource(t, filepath.Join(root, rocavector.LegacyName), "/synthetic/vector-package")
+			}
+			if testCase.corruptPayload {
+				if err := os.WriteFile(filepath.Join(root, rocavector.LegacyName, plugininstall.PackageFilename),
+					[]byte("corrupted"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if testCase.changeExecutable {
+				executable := plugininstall.ExecutableName(rocavector.LegacyName)
+				if runtime.GOOS == "windows" {
+					executable += ".exe"
+				}
+				if err := os.WriteFile(filepath.Join(bin, executable), []byte("locally changed"), 0o700); err != nil {
+					t.Fatal(err)
+				}
 			}
 
 			_, err := rocavector.EnsureWithPayload(root, bin, testCase.version, []byte(testCase.payload))
@@ -168,6 +190,47 @@ func TestBundledVectorMigratesLegacyInstall(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestBundledVectorRestoresLegacyNameWhenApplyFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not enforce Unix directory modes")
+	}
+	root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
+	plantLegacyVector(t, root, bin, "v1", []byte("vector one"))
+	state := filepath.Join(root, rocavector.LegacyName, rocavector.StateDir, "index.db")
+	if err := os.WriteFile(state, []byte("preserved index"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Lstat(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(bin, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(bin, 0o700)
+
+	if _, err := rocavector.EnsureWithPayload(root, bin, "v2", []byte("vector two")); err == nil {
+		t.Fatal("apply failure unexpectedly succeeded")
+	}
+	assertDirExists(t, filepath.Join(root, rocavector.LegacyName), true)
+	assertDirExists(t, filepath.Join(root, rocavector.Name), false)
+	after, err := os.Lstat(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) || before.Size() != after.Size() {
+		t.Fatalf("state identity changed: same=%v size %d -> %d",
+			os.SameFile(before, after), before.Size(), after.Size())
+	}
+	manifest, err := plugininstall.ReadManifest(filepath.Join(root, rocavector.LegacyName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Name != rocavector.LegacyName {
+		t.Fatalf("restored manifest name = %q, want %q", manifest.Name, rocavector.LegacyName)
 	}
 }
 

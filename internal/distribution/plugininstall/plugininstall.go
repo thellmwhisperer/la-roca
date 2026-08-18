@@ -603,7 +603,7 @@ func createStateDir(target, name string) error {
 }
 
 func (m Manager) Update(candidate Candidate) (Result, error) {
-	previousManifest, err := m.preflightUpdate(candidate)
+	previousManifest, err := m.preflightUpdate(candidate, candidate.Name)
 	if err != nil {
 		return Result{}, err
 	}
@@ -670,18 +670,29 @@ func (m Manager) Update(candidate Candidate) (Result, error) {
 }
 
 func (m Manager) PreflightUpdate(candidate Candidate) error {
-	_, err := m.preflightUpdate(candidate)
+	_, err := m.preflightUpdate(candidate, candidate.Name)
 	return err
 }
 
-func (m Manager) preflightUpdate(candidate Candidate) (Manifest, error) {
+func (m Manager) PreflightUpdateFrom(candidate Candidate, installedName string) error {
+	_, err := m.preflightUpdate(candidate, installedName)
+	return err
+}
+
+func (m Manager) preflightUpdate(candidate Candidate, installedName string) (Manifest, error) {
 	if err := m.valid(); err != nil {
 		return Manifest{}, err
 	}
-	target := filepath.Join(m.PluginRoot, candidate.Name)
+	if !safeName(installedName) {
+		return Manifest{}, fmt.Errorf("invalid installed plugin name %q", installedName)
+	}
+	target := filepath.Join(m.PluginRoot, installedName)
 	previousManifest, err := ReadManifest(target)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("update plugin %s: %w", candidate.Name, err)
+	}
+	if previousManifest.Name != installedName && previousManifest.Name != candidate.Name {
+		return Manifest{}, fmt.Errorf("plugin manifest names %q, not %q", previousManifest.Name, installedName)
 	}
 	if previousManifest.Kind != candidate.Kind {
 		return Manifest{}, fmt.Errorf("plugin %s changed its package kind from %s to %s; update refused",
@@ -859,7 +870,7 @@ func writeManifest(directory string, candidate Candidate, executable string) err
 // writes land in an inode nobody can reach again. Nothing but the payload
 // changes between versions of such a plugin, so nothing else has to move.
 func (m Manager) UpdateInPlace(candidate Candidate) (Result, error) {
-	previous, err := m.preflightUpdateInPlace(candidate)
+	previous, err := m.preflightUpdateInPlace(candidate, candidate.Name)
 	if err != nil {
 		return Result{}, err
 	}
@@ -907,22 +918,33 @@ func (m Manager) UpdateInPlace(candidate Candidate) (Result, error) {
 }
 
 func (m Manager) PreflightUpdateInPlace(candidate Candidate) error {
-	_, err := m.preflightUpdateInPlace(candidate)
+	_, err := m.preflightUpdateInPlace(candidate, candidate.Name)
 	return err
 }
 
-func (m Manager) preflightUpdateInPlace(candidate Candidate) (Manifest, error) {
+func (m Manager) PreflightUpdateInPlaceFrom(candidate Candidate, installedName string) error {
+	_, err := m.preflightUpdateInPlace(candidate, installedName)
+	return err
+}
+
+func (m Manager) preflightUpdateInPlace(candidate Candidate, installedName string) (Manifest, error) {
 	if err := m.valid(); err != nil {
 		return Manifest{}, err
+	}
+	if !safeName(installedName) {
+		return Manifest{}, fmt.Errorf("invalid installed plugin name %q", installedName)
 	}
 	if candidate.Kind != DataPackage || candidate.Risk != DataOnly || candidate.Executable != "" {
 		return Manifest{}, fmt.Errorf(
 			"plugin %s can run code; an in-place update is refused", candidate.Name)
 	}
-	target := filepath.Join(m.PluginRoot, candidate.Name)
+	target := filepath.Join(m.PluginRoot, installedName)
 	previous, err := ReadManifest(target)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("update plugin %s: %w", candidate.Name, err)
+	}
+	if previous.Name != installedName && previous.Name != candidate.Name {
+		return Manifest{}, fmt.Errorf("plugin manifest names %q, not %q", previous.Name, installedName)
 	}
 	if previous.Executable != "" {
 		return Manifest{}, fmt.Errorf(

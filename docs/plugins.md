@@ -340,14 +340,16 @@ packages that declare the same alias both lose it, and the warning names them.
 The aliases the bundled packages declare are the kernel's own seats, so a
 later package that claims one of them makes only itself unavailable.
 
-`name` travels through the install directory, the `roca-<name>` executable, and
-every lifecycle argument, so an installable package restricts it to ASCII
-letters, digits, `-`, and `_`. A manifest the engine would read but the
-installer could not manage is refused at install time, not after.
+`name` travels through the install directory, executable, and every lifecycle
+argument, so an installable package restricts it to ASCII letters, digits, `-`,
+and `_`. The executable is `roca-<name>` unless `name` already starts with
+`roca-`, in which case it is exactly `name`. A manifest the engine would read
+but the installer could not manage is refused at install time, not after.
 
 `binary` names the executable that runs the package's capabilities. A package
-that ships one declares its own `roca-<name>` file, and the installer refuses
-the package when the declared name and the shipped file disagree. A package
+that ships one declares its derived executable file: `roca-<name>`, or exactly
+`name` when it already starts with `roca-`. The installer refuses the package
+when the declared name and the shipped file disagree. A package
 that ships no executable declares `roca`, the host binary: its capabilities
 are commands of La Roca itself, and it stays **DATA-ONLY** because it adds no
 code of its own. There is no third value; `binary` is never empty.
@@ -454,14 +456,14 @@ semantic fragment. Its `plugin.json` declares identity and the kind:
 }
 ```
 
-Its `checksums.txt` lists exactly `plugin.json` and the `roca-<name>`
-executable. The package may declare one `state_directory`, a safe
-single-component name for state the command derives and rewrites. The installer
-creates it after verification, preserves it across updates, refuses a rename,
-and records the namespace in the installed manifest, so uninstall and purge own
-its contents. It is derived rather than published, so it carries no checksum;
-a package whose derived state cannot be regenerated sets `custody: true`
-alongside the kind.
+Its `checksums.txt` lists exactly `plugin.json` and the derived executable:
+`roca-<name>`, or exactly `name` when it already starts with `roca-`. The package
+may declare one `state_directory`, a safe single-component name for state the
+command derives and rewrites. The installer creates it after verification,
+preserves it across updates, refuses a rename, and records the namespace in the
+installed manifest, so uninstall and purge own its contents. It is derived
+rather than published, so it carries no checksum; a package whose derived state
+cannot be regenerated sets `custody: true` alongside the kind.
 
 Such a package is always classified **EXECUTABLE**. It never enters data-plugin
 discovery, attachment, or the semantic catalog: it is reached only by running
@@ -476,8 +478,9 @@ must contain the package files at their root; nested paths and non-regular
 entries are refused before package verification.
 
 `checksums.txt` publishes one SHA-256 for every payload file: `plugin.json`,
-each declared database, the optional `rides.toml`, and the optional
-`roca-<name>` executable. The installer rejects missing, extra, changed,
+each declared database, the optional `rides.toml`, and the optional derived
+executable (`roca-<name>`, or exactly `name` when it already starts with
+`roca-`). The installer rejects missing, extra, changed,
 symlinked, or non-regular payloads before it writes anything, and it installs
 each payload from the same open file it verifies, so a source swapped for a
 symlink or another file between the consent screen and the copy is refused
@@ -495,7 +498,8 @@ risk levels:
   no ride manifest. It is near-harmless; its worst case is lying content
   entering model context.
 - **EXECUTABLE** is full trust. It runs code with the user's privileges, either
-  from its `roca-<name>` executable or from the ride commands the [cron
+  from its derived executable (`roca-<name>`, or exactly `name` when it already
+  starts with `roca-`) or from the ride commands the [cron
   train](#scheduled-rides) hands to a shell.
 
 Install, update, and uninstall all show that screen and wait for an answer.
