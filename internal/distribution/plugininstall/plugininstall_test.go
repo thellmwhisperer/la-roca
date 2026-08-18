@@ -23,6 +23,21 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+func TestExecutableNameKeepsAFamilyPrefix(t *testing.T) {
+	for _, test := range []struct {
+		name, want string
+	}{
+		{name: "vector", want: "roca-vector"},
+		{name: "roca-vector", want: "roca-vector"},
+		{name: "roca-ops", want: "roca-ops"},
+		{name: "synthetic", want: "roca-synthetic"},
+	} {
+		if got := plugininstall.ExecutableName(test.name); got != test.want {
+			t.Fatalf("ExecutableName(%q) = %q, want %q", test.name, got, test.want)
+		}
+	}
+}
+
 func TestInspectVerifiesTheSourceAndClassifiesItsRisk(t *testing.T) {
 	for _, executable := range []bool{false, true} {
 		t.Run(fmt.Sprintf("executable=%t", executable), func(t *testing.T) {
@@ -200,15 +215,20 @@ func TestInstallUpdateAndUninstallPreservePluginOwnedData(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	recovery := filepath.Join(root, ".synthetic.previous")
-	if err := os.Mkdir(recovery, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := manager.Update(updated); err == nil || !strings.Contains(err.Error(), recovery) {
-		t.Fatalf("update recovery directory is not hidden from discovery: %v", err)
-	}
-	if err := os.RemoveAll(recovery); err != nil {
-		t.Fatal(err)
+	for _, recovery := range []string{
+		filepath.Join(root, ".synthetic.previous"),
+		filepath.Join(root, ".synthetic.recovery"),
+		filepath.Join(root, ".synthetic.recovery.journal"),
+	} {
+		if err := os.Mkdir(recovery, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := manager.Update(updated); err == nil || !strings.Contains(err.Error(), recovery) {
+			t.Fatalf("update recovery directory %s was ignored: %v", recovery, err)
+		}
+		if err := os.RemoveAll(recovery); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	if _, err := manager.Update(updated); err != nil {
@@ -231,6 +251,154 @@ func TestInstallUpdateAndUninstallPreservePluginOwnedData(t *testing.T) {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("uninstall kept %s: %v", path, err)
 		}
+	}
+}
+
+func TestInterruptedUpdateRecoveryTombstoneConverges(t *testing.T) {
+	for _, testCase := range []struct {
+		name, wantError, preserved, wantContents string
+		arrange                                  func(*testing.T, string, string, string, string, string)
+	}{
+		{
+			name: "proof created before journal",
+			arrange: func(t *testing.T, target, backup, _, _, proof string) {
+				t.Helper()
+				if err := os.Rename(target, backup); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(target, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				for _, name := range []string{
+					plugininstall.PackageFilename,
+					plugininstall.ChecksumsFilename,
+					plugininstall.ManifestFilename,
+					plugininstall.ExecutableName("synthetic-exec"),
+				} {
+					raw, err := os.ReadFile(filepath.Join(backup, name))
+					if err != nil {
+						t.Fatal(err)
+					}
+					mode := os.FileMode(0o600)
+					if name == plugininstall.ExecutableName("synthetic-exec") {
+						mode = 0o700
+					}
+					writeFixtureFile(t, filepath.Join(target, name), raw, mode)
+				}
+				writeFixtureFile(t, filepath.Join(target, ".roca-update-recovery"), []byte(proof), 0o600)
+			},
+		},
+		{
+			name: "target tombstoned before previous restore",
+			arrange: func(t *testing.T, target, backup, tombstone, journal, proof string) {
+				t.Helper()
+				if err := os.Rename(target, backup); err != nil {
+					t.Fatal(err)
+				}
+				writeRecoveryFixture(t, tombstone, proof, true, "partial", "discarded update")
+				linkRecoveryJournal(t, tombstone, journal)
+			},
+		},
+		{
+			name: "previous restored before tombstone cleanup",
+			arrange: func(t *testing.T, _, _, tombstone, journal, proof string) {
+				writeRecoveryFixture(t, tombstone, proof, true, "partial", "discarded update")
+				linkRecoveryJournal(t, tombstone, journal)
+			},
+		},
+		{
+			name:         "nonempty tombstone without proof is preserved",
+			wantError:    "has no linked ownership proof and is not empty",
+			preserved:    "partial",
+			wantContents: "discarded update",
+			arrange: func(t *testing.T, _, _, tombstone, journal, proof string) {
+				writeRecoveryFixture(t, tombstone, proof, false, "partial", "discarded update")
+				writeFixtureFile(t, journal, []byte(proof), 0o600)
+			},
+		},
+		{
+			name: "empty tombstone after proof removal converges",
+			arrange: func(t *testing.T, _, _, tombstone, journal, proof string) {
+				writeRecoveryFixture(t, tombstone, proof, false)
+				writeFixtureFile(t, journal, []byte(proof), 0o600)
+			},
+		},
+		{
+			name:         "unowned tombstone collision is preserved",
+			wantError:    "has no installer ownership journal",
+			preserved:    "unowned",
+			wantContents: "operator data",
+			arrange: func(t *testing.T, _, _, tombstone, _, _ string) {
+				writeRecoveryFixture(t, tombstone, "", false, "unowned", "operator data")
+			},
+		},
+		{
+			name:         "unlinked ownership files are preserved",
+			wantError:    "is not linked to installer journal",
+			preserved:    "unowned",
+			wantContents: "operator data",
+			arrange: func(t *testing.T, _, _, tombstone, journal, proof string) {
+				writeRecoveryFixture(t, tombstone, proof, true, "unowned", "operator data")
+				writeFixtureFile(t, journal, []byte(proof), 0o600)
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
+			manager := plugininstall.Manager{PluginRoot: root, BinDir: bin}
+			_, candidate := inspectExecutablePackage(t, "synthetic-exec", "1.0.0", "state")
+			if _, err := manager.Install(candidate); err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(root, "synthetic-exec")
+			backup := filepath.Join(root, ".synthetic-exec.previous")
+			tombstone := filepath.Join(root, ".synthetic-exec.recovery")
+			state := filepath.Join(target, "state", "index.db")
+			writeFixtureFile(t, state, []byte("preserved index"), 0o600)
+			manifest, err := plugininstall.ReadManifest(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			proof := fmt.Sprintf("roca-plugin-update-recovery-v1\nsynthetic-exec\n%s\n", manifest.Checksum)
+			before, err := os.Lstat(state)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			journal := tombstone + ".journal"
+			testCase.arrange(t, target, backup, tombstone, journal, proof)
+			err = manager.RecoverUpdate("synthetic-exec")
+			if testCase.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), testCase.wantError) {
+					t.Fatalf("RecoverUpdate() error = %v, want %q", err, testCase.wantError)
+				}
+				raw, readErr := os.ReadFile(filepath.Join(tombstone, testCase.preserved))
+				if readErr != nil || string(raw) != testCase.wantContents {
+					t.Fatalf("preserved tombstone content = %q, err=%v", raw, readErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := manager.RecoverUpdate("synthetic-exec"); err != nil {
+				t.Fatal(err)
+			}
+
+			after, err := os.Lstat(state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !os.SameFile(before, after) || before.Size() != after.Size() {
+				t.Fatalf("state identity changed: same=%v size %d -> %d",
+					os.SameFile(before, after), before.Size(), after.Size())
+			}
+			for _, path := range []string{backup, tombstone, journal} {
+				if _, err := os.Lstat(path); !os.IsNotExist(err) {
+					t.Fatalf("recovery artifact remains at %s: %v", path, err)
+				}
+			}
+		})
 	}
 }
 
@@ -328,11 +496,7 @@ func TestFederatedManifestNamesMustSurviveTheWholeLifecycle(t *testing.T) {
 func TestExecutableOnlyPackageOwnsAndPreservesItsStateDirectory(t *testing.T) {
 	root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
 	manager := plugininstall.Manager{PluginRoot: root, BinDir: bin}
-	source := writeExecutablePackage(t, "synthetic-exec", "1.0.0", "state")
-	candidate, err := plugininstall.Inspect(source, source)
-	if err != nil {
-		t.Fatal(err)
-	}
+	source, candidate := inspectExecutablePackage(t, "synthetic-exec", "1.0.0", "state")
 	if candidate.Kind != plugininstall.ExecutablePackage || candidate.Database != "" ||
 		candidate.StateDir != "state" || candidate.Risk != plugininstall.Executable {
 		t.Fatalf("candidate = %+v", candidate)
@@ -434,7 +598,7 @@ func TestResolveAcceptsPathsAndNormalizesRepositoryNames(t *testing.T) {
 }
 
 func TestResolveAcceptsVerifiedReleaseArchivesFromDiskAndHTTP(t *testing.T) {
-	source := writeExecutablePackage(t, "vector", "v1.2.3", "state")
+	source := writeExecutablePackage(t, "roca-vector", "v1.2.3", "state")
 	archive := packageArchive(t, source)
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		_, _ = response.Write(archive)
@@ -455,7 +619,7 @@ func TestResolveAcceptsVerifiedReleaseArchivesFromDiskAndHTTP(t *testing.T) {
 			cleanup()
 			t.Fatal(inspectErr)
 		}
-		if candidate.Name != "vector" || candidate.Version != "v1.2.3" ||
+		if candidate.Name != "roca-vector" || candidate.Version != "v1.2.3" ||
 			candidate.Source != resolved.Reference {
 			cleanup()
 			t.Fatalf("candidate from %s = %+v", reference, candidate)
@@ -473,7 +637,7 @@ func TestResolveAcceptsVerifiedReleaseArchivesFromDiskAndHTTP(t *testing.T) {
 			t.Fatalf("installed result from %s = %+v", reference, result)
 		}
 		if reference == local {
-			nextSource := writeExecutablePackage(t, "vector", "v1.2.4", "state")
+			nextSource := writeExecutablePackage(t, "roca-vector", "v1.2.4", "state")
 			if err := os.WriteFile(local, packageArchive(t, nextSource), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -489,7 +653,7 @@ func TestResolveAcceptsVerifiedReleaseArchivesFromDiskAndHTTP(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			manifest, err := plugininstall.ReadManifest(filepath.Join(manager.PluginRoot, "vector"))
+			manifest, err := plugininstall.ReadManifest(filepath.Join(manager.PluginRoot, "roca-vector"))
 			if err != nil || manifest.Version != "v1.2.4" {
 				t.Fatalf("updated manifest = %+v, err=%v", manifest, err)
 			}
@@ -565,7 +729,7 @@ func writePackageAt(t *testing.T, directory, name, version string, custody, exec
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	executablePath := filepath.Join(directory, "roca-"+name)
+	executablePath := filepath.Join(directory, plugininstall.ExecutableName(name))
 	if executable {
 		writeFixtureFile(t, executablePath, []byte("#!/bin/sh\nprintf 'synthetic plugin\\n'\n"), 0o700)
 	} else if err := os.Remove(executablePath); err != nil && !os.IsNotExist(err) {
@@ -574,7 +738,7 @@ func writePackageAt(t *testing.T, directory, name, version string, custody, exec
 
 	files := []string{"plugin.json", "semantic.yaml", "plugin.db"}
 	if executable {
-		files = append(files, "roca-"+name)
+		files = append(files, plugininstall.ExecutableName(name))
 	}
 	writeChecksums(t, directory, files)
 }
@@ -644,13 +808,46 @@ func writeExecutablePackage(t *testing.T, name, version, stateDir string) string
 	return directory
 }
 
+func inspectExecutablePackage(t *testing.T, name, version, stateDir string) (string, plugininstall.Candidate) {
+	t.Helper()
+	source := writeExecutablePackage(t, name, version, stateDir)
+	candidate, err := plugininstall.Inspect(source, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return source, candidate
+}
+
+func writeRecoveryFixture(t *testing.T, tombstone, proof string, owned bool, entries ...string) {
+	t.Helper()
+	if len(entries)%2 != 0 {
+		t.Fatal("recovery fixture entries must be name/body pairs")
+	}
+	if err := os.Mkdir(tombstone, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if owned {
+		writeFixtureFile(t, filepath.Join(tombstone, ".roca-update-recovery"), []byte(proof), 0o600)
+	}
+	for index := 0; index < len(entries); index += 2 {
+		writeFixtureFile(t, filepath.Join(tombstone, entries[index]), []byte(entries[index+1]), 0o600)
+	}
+}
+
+func linkRecoveryJournal(t *testing.T, tombstone, journal string) {
+	t.Helper()
+	if err := os.Link(filepath.Join(tombstone, ".roca-update-recovery"), journal); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func writeExecutablePackageAt(t *testing.T, directory, name, version, stateDir string) {
 	t.Helper()
 	writePackageMetadata(t, directory, map[string]any{
 		"schema": 1, "name": name, "version": version,
 		"kind": "executable", "state_directory": stateDir,
 	})
-	executable := "roca-" + name
+	executable := plugininstall.ExecutableName(name)
 	writeFixtureFile(t, filepath.Join(directory, executable), []byte("#!/bin/sh\nexit 0\n"), 0o700)
 	writeChecksums(t, directory, []string{"plugin.json", executable})
 }

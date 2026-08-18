@@ -791,7 +791,7 @@ func (m *world) bundledExecutablePluginIsInstalled(name string) error {
 	if err != nil {
 		return err
 	}
-	executable := filepath.Join(theBinariesDirectory(m.home), "roca-"+name)
+	executable := filepath.Join(theBinariesDirectory(m.home), plugininstall.ExecutableName(name))
 	if manifest.Source != plugin.BundledSource || manifest.Risk != plugininstall.Executable ||
 		manifest.Executable != executable || manifest.StateDir != "state" {
 		return fmt.Errorf("bundled executable plugin manifest = %+v", manifest)

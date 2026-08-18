@@ -22,6 +22,7 @@ import (
 
 type Spec struct {
 	Name             string
+	LegacyName       string
 	DatabaseFilename string
 	Executable       string
 	Source           string
@@ -29,6 +30,7 @@ type Spec struct {
 	Manifest         []byte
 	ApplySchema      func(string) error
 	Payload          func() ([]byte, error)
+	MigrationGuard   func(string) (func() error, error)
 }
 
 func Ensure(root, binDir, version string, spec Spec) (plugininstall.Result, error) {
@@ -98,7 +100,18 @@ type preparedBundle struct {
 	manifest  plugininstall.Manifest
 	candidate plugininstall.Candidate
 	manager   plugininstall.Manager
+	migration legacyNameMigration
 	cleanup   func()
+}
+
+type legacyNameMigration struct {
+	legacy  string
+	target  string
+	renamed bool
+}
+
+func (migration legacyNameMigration) needed() bool {
+	return migration.legacy != ""
 }
 
 func prepare(root, binDir, version string, spec Spec, validateUnchanged bool) (preparedBundle, error) {
@@ -113,57 +126,87 @@ func prepare(root, binDir, version string, spec Spec, validateUnchanged bool) (p
 	}
 	target := filepath.Join(root, spec.Name)
 	manager := plugininstall.Manager{PluginRoot: root, BinDir: binDir}
+	releaseMigration := func() error { return nil }
+	var err error
+	if spec.MigrationGuard != nil {
+		releaseMigration, err = spec.MigrationGuard(root)
+		if err != nil {
+			return preparedBundle{}, err
+		}
+	}
+	failBeforeMaterialize := func(err error) (preparedBundle, error) {
+		_ = releaseMigration()
+		return preparedBundle{}, err
+	}
+	if err := manager.RecoverUpdate(spec.Name); err != nil {
+		return failBeforeMaterialize(err)
+	}
+	migration, err := prepareLegacyNameMigration(root, spec)
+	if err != nil {
+		return failBeforeMaterialize(err)
+	}
+	installedTarget := target
+	if migration.needed() && !migration.renamed {
+		installedTarget = migration.legacy
+	}
 	var installed plugininstall.Manifest
 	installedFound := false
-	if manifest, err := plugininstall.ReadManifest(target); err == nil {
-		if manifest.Name != spec.Name || manifest.Source != spec.Source {
-			return preparedBundle{}, fmt.Errorf(
-				"the bundled %s plugin collides with an installation from %q", spec.Name, manifest.Source)
+	if manifest, err := plugininstall.ReadManifest(installedTarget); err == nil {
+		validName := manifest.Name == spec.Name ||
+			migration.needed() && manifest.Name == spec.LegacyName
+		if !validName || manifest.Source != spec.Source {
+			return failBeforeMaterialize(fmt.Errorf(
+				"the bundled %s plugin collides with an installation from %q", spec.Name, manifest.Source))
 		}
-		verified, verifyErr := plugininstall.VerifyInstalledPayload(spec.Name, target)
+		verified, verifyErr := plugininstall.VerifyInstalledPayload(manifest.Name, installedTarget)
 		if verifyErr != nil {
-			return preparedBundle{}, fmt.Errorf("verify bundled %s plugin: %w", spec.Name, verifyErr)
+			return failBeforeMaterialize(fmt.Errorf("verify bundled %s plugin: %w", spec.Name, verifyErr))
 		}
 		installed, installedFound = verified, true
-		if manifest.Version == version && spec.Executable == "" && !validateUnchanged {
+		if manifest.Version == version && spec.Executable == "" && !validateUnchanged && !migration.needed() {
 			return preparedBundle{action: bundleUnchanged, target: target, spec: spec,
-				manifest: verified, manager: manager, cleanup: func() {}}, nil
+				manifest: verified, manager: manager, cleanup: func() { _ = releaseMigration() }}, nil
 		}
-	} else if _, statErr := os.Lstat(target); statErr == nil {
-		return preparedBundle{}, fmt.Errorf(
-			"the bundled %s plugin cannot replace an unmanaged directory at %s", spec.Name, target)
+	} else if _, statErr := os.Lstat(installedTarget); statErr == nil {
+		return failBeforeMaterialize(fmt.Errorf(
+			"the bundled %s plugin cannot replace an unmanaged directory at %s", spec.Name, installedTarget))
 	} else if !os.IsNotExist(statErr) {
-		return preparedBundle{}, statErr
+		return failBeforeMaterialize(statErr)
 	}
 
 	candidate, cleanup, err := materialize(root, version, spec)
 	if err != nil {
-		return preparedBundle{}, err
+		return failBeforeMaterialize(err)
 	}
 	fail := func(err error) (preparedBundle, error) {
 		cleanup()
+		_ = releaseMigration()
 		return preparedBundle{}, err
 	}
+	cleanupPrepared := func() {
+		cleanup()
+		_ = releaseMigration()
+	}
 	bundle := preparedBundle{target: target, spec: spec, manifest: installed,
-		candidate: candidate, manager: manager, cleanup: cleanup}
+		candidate: candidate, manager: manager, migration: migration, cleanup: cleanupPrepared}
 	switch {
 	case !installedFound:
 		bundle.action = bundleInstall
 		err = manager.PreflightInstall(candidate)
-	case installed.Version == version && spec.Executable == "":
+	case installed.Version == version && spec.Executable == "" && !migration.needed():
 		bundle.action = bundleUnchanged
-	case installed.Version == version:
+	case installed.Version == version && !migration.needed():
 		bundle.action = bundleRepairExecutable
 		err = manager.PreflightExecutableRepair(candidate)
 	case spec.Executable != "":
 		bundle.action = bundleUpdateExecutable
-		err = manager.PreflightUpdate(candidate)
+		err = manager.PreflightUpdateFrom(candidate, filepath.Base(installedTarget), installed.Name)
 	default:
 		bundle.action = bundleUpdateData
-		err = manager.PreflightUpdateInPlace(candidate)
+		err = manager.PreflightUpdateInPlaceFrom(candidate, filepath.Base(installedTarget), installed.Name)
 	}
 	if err == nil && validateUnchanged && installedFound && spec.DatabaseFilename != "" {
-		err = preflightInstalledSchema(root, target, spec)
+		err = preflightInstalledSchema(root, installedTarget, spec)
 	}
 	if err != nil {
 		return fail(err)
@@ -172,6 +215,23 @@ func prepare(root, binDir, version string, spec Spec, validateUnchanged bool) (p
 }
 
 func (bundle preparedBundle) apply() (plugininstall.Result, error) {
+	if !bundle.migration.needed() {
+		return bundle.applyPrepared()
+	}
+	if err := bundle.migration.apply(bundle.spec.Name); err != nil {
+		return plugininstall.Result{}, err
+	}
+	result, err := bundle.applyPrepared()
+	if err == nil {
+		return result, nil
+	}
+	if rollbackErr := bundle.migration.rollback(bundle.spec.LegacyName); rollbackErr != nil {
+		return plugininstall.Result{}, fmt.Errorf("%w; restore legacy plugin identity: %v", err, rollbackErr)
+	}
+	return plugininstall.Result{}, err
+}
+
+func (bundle preparedBundle) applyPrepared() (plugininstall.Result, error) {
 	switch bundle.action {
 	case bundleUnchanged:
 		return resultFromManifest(bundle.target, bundle.manifest), nil
@@ -260,10 +320,118 @@ func Manifest(raw []byte, version string) (plugin.Manifest, error) {
 	return declaration, nil
 }
 
+func prepareLegacyNameMigration(root string, spec Spec) (legacyNameMigration, error) {
+	if spec.LegacyName == "" || spec.LegacyName == spec.Name {
+		return legacyNameMigration{}, nil
+	}
+	legacy := filepath.Join(root, spec.LegacyName)
+	target := filepath.Join(root, spec.Name)
+	legacyInfo, legacyErr := os.Lstat(legacy)
+	_, targetErr := os.Lstat(target)
+	legacyExists := legacyErr == nil
+	targetExists := targetErr == nil
+	if legacyErr != nil && !os.IsNotExist(legacyErr) {
+		return legacyNameMigration{}, legacyErr
+	}
+	if targetErr != nil && !os.IsNotExist(targetErr) {
+		return legacyNameMigration{}, targetErr
+	}
+	if !legacyExists {
+		if targetExists {
+			manifest, err := plugininstall.ReadManifest(target)
+			if err == nil && manifest.Name == spec.LegacyName {
+				return legacyNameMigration{legacy: legacy, target: target, renamed: true}, nil
+			}
+		}
+		return legacyNameMigration{}, nil
+	}
+	if targetExists {
+		return legacyNameMigration{}, fmt.Errorf(
+			"the bundled %s plugin cannot migrate from %s because both %s and %s exist; remove or rename one directory and retry",
+			spec.Name, spec.LegacyName, legacy, target)
+	}
+	if !legacyInfo.IsDir() {
+		return legacyNameMigration{}, fmt.Errorf(
+			"the bundled %s plugin cannot replace an unmanaged directory at %s", spec.Name, legacy)
+	}
+	return legacyNameMigration{legacy: legacy, target: target}, nil
+}
+
+func (migration legacyNameMigration) apply(name string) error {
+	location := migration.legacy
+	if migration.renamed {
+		location = migration.target
+	}
+	if err := rewriteInstalledName(location, name); err != nil {
+		return fmt.Errorf("rewrite bundled %s install name: %w", name, err)
+	}
+	if !migration.renamed {
+		if err := os.Rename(migration.legacy, migration.target); err != nil {
+			if rollbackErr := rewriteInstalledName(migration.legacy, filepath.Base(migration.legacy)); rollbackErr != nil {
+				return fmt.Errorf("migrate bundled %s directory: %w; restore legacy plugin identity: %v",
+					name, err, rollbackErr)
+			}
+			return fmt.Errorf("migrate bundled %s directory: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func (migration legacyNameMigration) rollback(name string) error {
+	if err := rewriteInstalledName(migration.target, name); err != nil {
+		return err
+	}
+	if err := os.Rename(migration.target, migration.legacy); err != nil {
+		if restoreErr := rewriteInstalledName(migration.target, filepath.Base(migration.target)); restoreErr != nil {
+			return fmt.Errorf("%w; restore current plugin identity: %v", err, restoreErr)
+		}
+		return err
+	}
+	return nil
+}
+
+func rewriteInstalledName(directory, name string) error {
+	path := filepath.Join(directory, plugininstall.ManifestFilename)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var manifest map[string]any
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		return err
+	}
+	manifest["name"] = name
+	encoded, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(directory, "."+plugininstall.ManifestFilename+"-")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o600); err != nil {
+		temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(append(encoded, '\n')); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temporaryPath, path)
+}
+
 func (spec Spec) valid() error {
 	if spec.Name == "" || spec.Source == "" ||
 		(len(spec.Semantic) == 0) == (len(spec.Manifest) == 0) {
 		return fmt.Errorf("a bundled plugin needs a name, source, and one manifest format")
+	}
+	if spec.LegacyName != "" && (spec.LegacyName == spec.Name || filepath.Base(spec.LegacyName) != spec.LegacyName) {
+		return fmt.Errorf("bundled plugin %s has an invalid legacy name %q", spec.Name, spec.LegacyName)
 	}
 	data := spec.DatabaseFilename != "" && spec.ApplySchema != nil &&
 		spec.Executable == "" && spec.Payload == nil

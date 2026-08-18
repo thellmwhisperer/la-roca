@@ -19,6 +19,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/lifecycle"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocavector"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
@@ -595,6 +596,11 @@ func installedPluginPaths(paths config.Paths) []string {
 		executable := plugininstall.InstalledExecutable(manifest)
 		if executable != "" && filepath.Dir(executable) == filepath.Clean(bin) {
 			owned = append(owned, executable)
+		}
+	}
+	if lock := rocavector.RelocationLockPath(root); lock != "" {
+		if info, err := os.Lstat(lock); err == nil && info.Mode().IsRegular() {
+			owned = append(owned, lock)
 		}
 	}
 	return append(owned, pluginDownloads(paths), root)
