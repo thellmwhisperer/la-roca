@@ -125,11 +125,20 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (IngestResult, 
 		return IngestResult{}, err
 	}
 	defer closeTarget()
+	var hermesReservedMemories *sql.DB
+	if s.ops != nil {
+		hermesReservedMemories, err = s.ops.ReadOnly()
+		if err != nil {
+			return IngestResult{}, fmt.Errorf("open %s for Hermes memory deduplication: %w",
+				rocaOpsPluginName, err)
+		}
+	}
 	report, err := ingest.Run(ctx, target, s.registry, ingest.Options{
-		Roots:        roots,
-		DryRun:       req.DryRun,
-		Progress:     s.opts.Progress,
-		LiveProgress: s.opts.IngestProgress,
+		Roots:                  roots,
+		HermesReservedMemories: hermesReservedMemories,
+		DryRun:                 req.DryRun,
+		Progress:               s.opts.Progress,
+		LiveProgress:           s.opts.IngestProgress,
 	})
 	result := IngestResult{Result: report}
 	if err != nil {

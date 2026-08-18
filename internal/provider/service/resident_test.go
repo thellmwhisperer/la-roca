@@ -3,12 +3,15 @@ package service
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
+	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 	"github.com/thellmwhisperer/la-roca/internal/store/search"
 )
@@ -71,6 +74,55 @@ func TestBundledCorpusIsAlwaysResidentWithoutTheGenericPluginFlag(t *testing.T) 
 	if consulted := route.consulted(); len(consulted) != 2 ||
 		consulted[0] != "core" || consulted[1] != "plugin:roca-corpus" {
 		t.Fatalf("consulted = %v, want core and corpus", consulted)
+	}
+}
+
+func TestHermesMemoryDedupReadsReservedOperationalMemories(t *testing.T) {
+	options := residentTestOptions(t)
+	directory := filepath.Dir(options.DBPath)
+	if _, err := rocacorpus.Ensure(options.PluginDir, filepath.Join(directory, "bin"), "v-test"); err != nil {
+		t.Fatal(err)
+	}
+	options.CorpusEnabled = true
+	options.Sources = ingest.ResolveRoots(
+		ingest.Environment{GOOS: "darwin", Home: directory}, ingest.Settings{},
+	)
+	memories := make([]string, 9)
+	for index := range memories {
+		memories[index] = fmt.Sprintf("Synthetic Hermes reserved memory %d.", index+1)
+	}
+	memoryPath := filepath.Join(directory, ".hermes", "memories", "MEMORY.md")
+	if err := os.MkdirAll(filepath.Dir(memoryPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(memoryPath, []byte(strings.Join(memories, "\n§\n")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	svc, err := openWithContext(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	for index, content := range memories {
+		if _, err := svc.ops.SQL().Exec(`INSERT INTO memories (id, layer, content, metadata, origin)
+			VALUES (?, 'pattern', ?, '{}', 'agent')`,
+			int64(1152921504606847051)+int64(index), content); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	result, err := svc.Ingest(t.Context(), IngestRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var duplicates int
+	if err := svc.corpus.SQL().QueryRow(`SELECT COUNT(*) FROM memories`).Scan(&duplicates); err != nil {
+		t.Fatal(err)
+	}
+	if duplicates != 0 || result.Sources["hermes"].MemoriesInserted != 0 {
+		t.Fatalf("reserved Hermes memories duplicated into corpus: rows=%d counts=%+v",
+			duplicates, result.Sources["hermes"])
 	}
 }
 
