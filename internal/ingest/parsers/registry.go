@@ -255,6 +255,14 @@ var registry = []Registration{
 		Version:  "cursor-database-v1", Destination: DestinationCorpus,
 		Parser: cursorParser{},
 	},
+	{
+		Name: string(KindCursorStore), SourceAgent: "cursor",
+		CanonicalHarness: ingestprovenance.Cursor,
+		Locations:        []string{".cursor/chats"},
+		FileName:         "store.db",
+		Version:          "cursor-store-v1", Destination: DestinationCorpus,
+		Parser: cursorStoreParser{},
+	},
 }
 
 func fileParser(kind Kind, destination Destination, harness string, detect func(File) bool,

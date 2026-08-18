@@ -65,6 +65,7 @@ var expectedCanonicalHarnesses = map[Kind]string{
 	KindClaudeWebDesignChats:    "Claude Web",
 	KindChatGPTWebConversations: "ChatGPT",
 	KindCursorDB:                "Cursor",
+	KindCursorStore:             "Cursor",
 	KindGrokSession:             "Grok Build",
 	KindGrokSessionMetadata:     "Grok Build",
 	KindHermesMemory:            "Hermes",
