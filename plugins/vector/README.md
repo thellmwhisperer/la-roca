@@ -2,10 +2,11 @@
 
 `roca-vector` is the optional executable plugin for local semantic retrieval.
 Its implementation is a separate Go module and binary: core has no import of
-that module, built-in vector command, or index dependency. The plugin reads corpus rows through `roca exec --json` and keeps only
-embeddings, fingerprints, and stable source locators in its own
-manifest-owned `state/` directory. Corpus text is resolved live from core
-when a result is returned and is never copied into the index.
+that module, built-in vector command, or index dependency. The plugin reads
+corpus rows through `roca exec --json` and keeps only embeddings, fingerprints,
+and stable source locators in its own manifest-owned `state/` directory. Corpus
+text is resolved live from core when a result is returned and is never copied
+into the index.
 
 ## Install from a release
 
