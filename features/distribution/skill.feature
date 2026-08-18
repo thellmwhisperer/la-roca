@@ -14,6 +14,7 @@ Feature: Distribution agent teaching
       | agent    |
       | claude   |
       | codex    |
+      | cursor   |
       | grok     |
       | hermes   |
       | opencode |

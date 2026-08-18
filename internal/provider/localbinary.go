@@ -265,7 +265,7 @@ func (b *cappedBuffer) String() string { return b.buffer.String() }
 func (b *cappedBuffer) Bytes() []byte { return b.buffer.Bytes() }
 
 func executable(command string) (string, error) {
-	path, err := exec.LookPath(command)
+	path, err := LookPath(command)
 	if err != nil {
 		return "", err
 	}
