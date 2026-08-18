@@ -4,8 +4,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-
-	"github.com/thellmwhisperer/la-roca/internal/provider/query/sqlgate"
 )
 
 // The schema and rules handed to the model come
@@ -29,6 +27,7 @@ type Table struct {
 	Description string
 	Questions   []string
 	Database    string
+	FTS5        bool
 }
 
 // Column is one side of a join.
@@ -117,7 +116,7 @@ func ReadSchema(ddl string, hidden []string) Schema {
 		if invisible[name] {
 			continue
 		}
-		schema.Tables = append(schema.Tables, Table{Name: name, Columns: ftsColumns(match[2])})
+		schema.Tables = append(schema.Tables, Table{Name: name, Columns: ftsColumns(match[2]), FTS5: true})
 	}
 	return schema
 }
@@ -168,12 +167,16 @@ func (s Schema) Describe(layers []LayerHint) string {
 		if table.Database != "" {
 			out.WriteString("  database: " + table.Database + "\n")
 		}
+		if table.FTS5 {
+			out.WriteString("  kind: FTS5 virtual table\n")
+		}
 	}
 
 	if s.hasFTS() {
-		out.WriteString("\nFTS5 virtual tables (names ending _fts) are the census tool: " +
+		out.WriteString("\nThe listed FTS5 virtual tables are the census tool: " +
 			`WHERE memories_fts MATCH '"token"', rank with bm25(memories_fts), ` +
-			"and join rowid from a subquery to the base table id. " +
+			"and join rowid from a subquery to the base id for memories, exchanges, and thinking, " +
+			"or to the base rowid for sessions. " +
 			"MATCH and bm25 take the bare table name even when FROM is schema-qualified.\n")
 	}
 	out.WriteString("\nOnly the listed tables are readable. Internal catalogs " +
@@ -331,7 +334,8 @@ func SQLSystemPrompt(schema Schema, layers []LayerHint, layerFilter []string) st
 				"Never write schema.table MATCH or bm25(schema.table)",
 			"- Quote each search token in double quotes inside MATCH "+
 				`(memories_fts MATCH '"ana"'). When joining an FTS hit to its content `+
-				"table, pull rowid inside a subquery as an alias and join on id = alias; "+
+				"table, pull rowid inside a subquery as an alias. Join memories, exchanges, "+
+				"and thinking on id = alias; join sessions on rowid = alias. "+
 				"an FTS query may return unqualified rowid directly, but never write table.rowid",
 			"- Rank term search by bm25 relevance, not created_at, unless the question "+
 				"is explicitly temporal (last week, yesterday, recent, between dates)",
@@ -384,7 +388,7 @@ func (s Schema) databases() []string {
 // MATCH, bm25 rank, rowid pulled inside a subquery. Without an example the
 // model invents table.rowid (the AST gate rejects it) or falls back to LIKE.
 func (s Schema) hasFTS() bool {
-	return slices.ContainsFunc(s.Tables, func(table Table) bool { return sqlgate.IsFTSTable(table.Name) })
+	return slices.ContainsFunc(s.Tables, func(table Table) bool { return table.FTS5 })
 }
 
 func ftsExamples(schema Schema) string {

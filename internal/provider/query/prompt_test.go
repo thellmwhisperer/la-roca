@@ -454,7 +454,7 @@ func TestTheSchemaPromptTeachesFTSAndAClosedWorld(t *testing.T) {
 	composed := productSchema()
 	composed.Tables = append(composed.Tables, Table{
 		Name: "plugin_roca_corpus.exchanges_fts", Columns: []string{"human_text", "agent_text"},
-		Database: "plugin:roca-corpus",
+		Database: "plugin:roca-corpus", FTS5: true,
 	})
 	prompt := SQLSystemPrompt(composed, nil, nil)
 	lower := strings.ToLower(prompt)
@@ -463,7 +463,7 @@ func TestTheSchemaPromptTeachesFTSAndAClosedWorld(t *testing.T) {
 		"plugin_roca_corpus.exchanges_fts",
 		`match '"`, "bm25", "rowid",
 		"only the listed tables", "sqlite_master", "not available",
-		"bare",
+		"bare", "memories, exchanges, and thinking", "base rowid for sessions",
 	} {
 		if !strings.Contains(lower, needle) && !strings.Contains(prompt, needle) {
 			t.Errorf("the schema prompt does not teach %q:\n%s", needle, prompt)

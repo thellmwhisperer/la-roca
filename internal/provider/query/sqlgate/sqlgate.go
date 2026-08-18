@@ -22,6 +22,7 @@ package sqlgate
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -85,6 +86,10 @@ var ftsShadowSuffixes = []string{
 	"_fts_data", "_fts_idx", "_fts_content", "_fts_docsize", "_fts_config",
 }
 
+var fts5ShadowEndings = []string{"_data", "_idx", "_content", "_docsize", "_config"}
+
+var createVirtualFTS5 = regexp.MustCompile(`(?is)CREATE\s+VIRTUAL\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'` + "`" + `]?(\w+)["'` + "`" + `]?\s+USING\s+fts5\s*\(`)
+
 // HiddenTables are the ones the gate does not let through.
 //
 // It is exported because whoever builds the model's prompt needs the same list:
@@ -100,14 +105,6 @@ func IsHiddenTable(name string) bool {
 	lower := strings.ToLower(unqualify(name))
 	return slices.Contains(invisibleTables, lower) || strings.HasPrefix(lower, "sqlite_") ||
 		strings.HasPrefix(lower, "pragma_") || hasAnySuffix(lower, ftsShadowSuffixes)
-}
-
-// IsFTSTable is the queryable lexical index: a visible name ending in _fts.
-// The validation database must create those as FTS5 virtual tables, or MATCH
-// and bm25() are prepared as column lookups and a legitimate census is rejected.
-func IsFTSTable(name string) bool {
-	base := strings.ToLower(unqualify(name))
-	return strings.HasSuffix(base, "_fts") && !IsHiddenTable(base)
 }
 
 func unqualify(name string) string {
@@ -132,6 +129,7 @@ type Schema struct {
 type Table struct {
 	Name    string
 	Columns []string
+	FTS5    bool
 }
 
 // Open creates the validation database: the v1 schema minus what is invisible.
@@ -157,6 +155,9 @@ func OpenWithSchemas(schemas []Schema) (*Gate, error) {
 	if err := eng.exec(data.SearchSchema); err != nil {
 		eng.close()
 		return nil, fmt.Errorf("apply the search schema to the validation database: %w", err)
+	}
+	for _, match := range createVirtualFTS5.FindAllStringSubmatch(data.SearchSchema, -1) {
+		eng.registerFTSTable("main", match[1])
 	}
 	for _, table := range invisibleTables {
 		if err := eng.exec("DROP TABLE IF EXISTS " + table); err != nil {
@@ -197,7 +198,7 @@ func addSchema(eng *engine, schema Schema) error {
 		}
 		qualified := quoteIdentifier(schema.Name) + "." + quoteIdentifier(table.Name)
 		var statement string
-		if IsFTSTable(table.Name) {
+		if table.FTS5 {
 			statement = "CREATE VIRTUAL TABLE " + qualified + " USING fts5(" +
 				strings.Join(columns, ", ") + ")"
 		} else {
@@ -209,8 +210,33 @@ func addSchema(eng *engine, schema Schema) error {
 		if err := eng.exec(statement); err != nil {
 			return fmt.Errorf("create validation table %s.%s: %w", schema.Name, table.Name, err)
 		}
+		if table.FTS5 {
+			eng.registerFTSTable(schema.Name, table.Name)
+		}
 	}
 	return nil
+}
+
+// FTS5ShadowTables returns the internal tables SQLite creates for an FTS5 table.
+func FTS5ShadowTables(name string) []string {
+	shadows := make([]string, len(fts5ShadowEndings))
+	for index, ending := range fts5ShadowEndings {
+		shadows[index] = strings.ToLower(name) + ending
+	}
+	return shadows
+}
+
+func isFTS5DDL(ddl string) bool {
+	words := strings.Fields(strings.ToLower(ddl))
+	if len(words) < 6 || words[0] != "create" || words[1] != "virtual" || words[2] != "table" {
+		return false
+	}
+	for index := 3; index+1 < len(words); index++ {
+		if words[index] == "using" {
+			return strings.HasPrefix(words[index+1], "fts5(") || words[index+1] == "fts5"
+		}
+	}
+	return false
 }
 
 func quoteIdentifier(name string) string {
@@ -240,7 +266,6 @@ func (g *Gate) Validate(stmt string) (string, error) {
 		}
 		return "", fmt.Errorf("Only SELECT statements are allowed")
 	}
-
 	clean, err := enforceLimit(stmt)
 	if err != nil {
 		return "", err

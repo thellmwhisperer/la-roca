@@ -148,13 +148,6 @@ func TestHiddenTableClassificationIsSharedAcrossSchemas(t *testing.T) {
 	if !sqlgate.IsHiddenTable("plugin_roca_corpus.ingest_file_state") {
 		t.Fatal("a hidden name stayed visible behind a qualifier")
 	}
-	if !sqlgate.IsFTSTable("exchanges_fts") || !sqlgate.IsFTSTable("plugin_roca_corpus.memories_fts") {
-		t.Fatal("queryable FTS names are not classified as FTS")
-	}
-	if sqlgate.IsFTSTable("exchanges") || sqlgate.IsFTSTable("memory_records_fts") ||
-		sqlgate.IsFTSTable("memories_fts_data") {
-		t.Fatal("a base, hidden, or shadow name is classified as FTS")
-	}
 }
 
 func TestTheGateRejectsFunctionsNotOnTheList(t *testing.T) {

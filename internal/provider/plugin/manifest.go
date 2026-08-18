@@ -335,7 +335,7 @@ func Compose(base query.Schema, databases []Database) query.Schema {
 			schema.Tables = append(schema.Tables, query.Table{
 				Name: database.Schema + "." + table.Name, Columns: slices.Clone(table.Columns),
 				Description: database.Semantic.Description + " " + table.Description,
-				Questions:   questions, Database: database.Source(),
+				Questions:   questions, Database: database.Source(), FTS5: table.FTS5,
 			})
 		}
 	}

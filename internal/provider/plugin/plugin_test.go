@@ -54,6 +54,41 @@ func TestFixturePluginsDiscoverValidateAndDeclareCustody(t *testing.T) {
 	}
 }
 
+func TestValidationPreservesInspectedFTS5Kind(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "search.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		CREATE VIRTUAL TABLE documents_search USING fts5(body);
+		CREATE TABLE receipts_fts (body TEXT);
+	`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	database, err := plugin.Validate(t.Context(), plugin.Descriptor{
+		Name: "synthetic", Database: path,
+		Semantic: plugin.Semantic{Tables: []plugin.SemanticTable{
+			{Name: "documents_search", Columns: []string{"body"}},
+			{Name: "receipts_fts", Columns: []string{"body"}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := make(map[string]bool)
+	for _, table := range database.Tables {
+		kinds[table.Name] = table.FTS5
+	}
+	if !kinds["documents_search"] || kinds["receipts_fts"] {
+		t.Fatalf("inspected FTS5 kinds = %v", kinds)
+	}
+}
+
 func TestSemanticRelevanceIsStableAndBounded(t *testing.T) {
 	candidates := []plugin.Descriptor{
 		{Name: "broad", Semantic: plugin.Semantic{Description: "receipts and purchases"}},

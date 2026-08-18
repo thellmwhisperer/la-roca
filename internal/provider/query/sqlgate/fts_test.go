@@ -39,11 +39,10 @@ func TestTheGateAcceptsFTSMatchOnAttachedPluginTables(t *testing.T) {
 		Name: "plugin_roca_corpus",
 		Tables: []sqlgate.Table{
 			{Name: "exchanges", Columns: []string{"id", "session_id", "human_text", "agent_text", "human_timestamp"}},
-			{Name: "exchanges_fts", Columns: []string{"human_text", "agent_text"}},
+			{Name: "documents_search", Columns: []string{"human_text", "agent_text"}, FTS5: true},
 			{Name: "memories", Columns: []string{"id", "content"}},
-			{Name: "memories_fts", Columns: []string{"content"}},
+			{Name: "receipts_fts", Columns: []string{"content"}},
 			{Name: "thinking_blocks", Columns: []string{"id", "full_text"}},
-			{Name: "thinking_fts", Columns: []string{"full_text"}},
 		},
 	}})
 	if err != nil {
@@ -52,17 +51,15 @@ func TestTheGateAcceptsFTSMatchOnAttachedPluginTables(t *testing.T) {
 	t.Cleanup(func() { gate.Close() })
 
 	for _, stmt := range []string{
-		`SELECT rowid FROM plugin_roca_corpus.exchanges_fts WHERE exchanges_fts MATCH '"la"' LIMIT 5`,
-		`SELECT rowid, bm25(exchanges_fts) FROM plugin_roca_corpus.exchanges_fts WHERE exchanges_fts MATCH '"la"' LIMIT 5`,
-		`SELECT rowid, bm25(memories_fts) FROM plugin_roca_corpus.memories_fts WHERE memories_fts MATCH '"handoff"' LIMIT 10`,
-		`SELECT rowid, bm25(thinking_fts) FROM plugin_roca_corpus.thinking_fts WHERE thinking_fts MATCH '"protocol"' LIMIT 5`,
+		`SELECT rowid FROM plugin_roca_corpus.documents_search WHERE documents_search MATCH '"la"' LIMIT 5`,
+		`SELECT rowid, bm25(documents_search) FROM plugin_roca_corpus.documents_search WHERE documents_search MATCH '"la"' LIMIT 5`,
 		// Representative live census: "when did I first mention la roca", taught MATCH form.
 		`SELECT source, id, session_id, mentioned_at, text, "database" FROM (
 		    SELECT 'human' AS source, e.id AS id, e.session_id AS session_id,
 		           e.human_timestamp AS mentioned_at, e.human_text AS text,
 		           'plugin:roca-corpus' AS "database"
-		    FROM (SELECT rowid AS fila FROM plugin_roca_corpus.exchanges_fts
-		          WHERE exchanges_fts MATCH '{human_text} : ("la" "roca")') AS f
+		    FROM (SELECT rowid AS fila FROM plugin_roca_corpus.documents_search
+		          WHERE documents_search MATCH '{human_text} : ("la" "roca")') AS f
 		    JOIN plugin_roca_corpus.exchanges AS e ON e.id = f.fila
 		 ) AS mentions ORDER BY mentioned_at ASC LIMIT 1`,
 	} {
@@ -70,8 +67,14 @@ func TestTheGateAcceptsFTSMatchOnAttachedPluginTables(t *testing.T) {
 			t.Errorf("the gate rejects a legitimate plugin FTS read:\n%s\n-> %v", stmt, err)
 		}
 	}
-	if _, err := gate.Validate(`SELECT title FROM plugin_roca_corpus.exchanges WHERE exchanges MATCH '"la"' LIMIT 1`); err == nil {
-		t.Fatal("MATCH on a base table escaped the gate")
+	for _, stmt := range []string{
+		`SELECT content FROM plugin_roca_corpus.memories WHERE content MATCH '"la"' LIMIT 1`,
+		`SELECT content FROM plugin_roca_corpus.receipts_fts WHERE receipts_fts MATCH '"la"' LIMIT 1`,
+		`SELECT * FROM plugin_roca_corpus.documents_search_data LIMIT 1`,
+	} {
+		if _, err := gate.Validate(stmt); err == nil {
+			t.Fatalf("MATCH on a non-FTS5 table escaped the gate: %s", stmt)
+		}
 	}
 }
 

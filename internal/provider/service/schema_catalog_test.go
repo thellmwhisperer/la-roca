@@ -34,13 +34,13 @@ func TestComposedPluginSchemaTeachesQueryableFTSColumns(t *testing.T) {
 		Tables: []plugin.Table{
 			{Name: "exchanges", Columns: []string{"id", "session_id", "human_text", "agent_text", "human_timestamp"}},
 			{Name: "exchanges_fts", Columns: []string{"human_text", "agent_text"},
-				Description: "Accent-insensitive full-text index over harvested human and agent exchange text."},
+				Description: "Accent-insensitive full-text index over harvested human and agent exchange text.", FTS5: true},
 		},
 	}})
 	prompt := query.SQLSystemPrompt(composed, nil, nil)
 	for _, needle := range []string{
 		"plugin_roca_corpus.exchanges_fts(human_text, agent_text)",
-		"only the listed tables", "sqlite_master",
+		"kind: FTS5 virtual table", "only the listed tables", "sqlite_master",
 	} {
 		if !strings.Contains(strings.ToLower(prompt), strings.ToLower(needle)) &&
 			!strings.Contains(prompt, needle) {
