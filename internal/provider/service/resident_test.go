@@ -78,14 +78,15 @@ func TestBundledCorpusIsAlwaysResidentWithoutTheGenericPluginFlag(t *testing.T) 
 }
 
 func TestHermesMemoryDedupReadsReservedOperationalMemories(t *testing.T) {
-	directory := t.TempDir()
-	plugins := filepath.Join(directory, "plugins")
-	if _, err := rocaops.Ensure(plugins, filepath.Join(directory, "bin"), "v-test"); err != nil {
+	options := residentTestOptions(t)
+	directory := filepath.Dir(options.DBPath)
+	if _, err := rocacorpus.Ensure(options.PluginDir, filepath.Join(directory, "bin"), "v-test"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rocacorpus.Ensure(plugins, filepath.Join(directory, "bin"), "v-test"); err != nil {
-		t.Fatal(err)
-	}
+	options.CorpusEnabled = true
+	options.Sources = ingest.ResolveRoots(
+		ingest.Environment{GOOS: "darwin", Home: directory}, ingest.Settings{},
+	)
 	memories := make([]string, 9)
 	for index := range memories {
 		memories[index] = fmt.Sprintf("Synthetic Hermes reserved memory %d.", index+1)
@@ -98,11 +99,7 @@ func TestHermesMemoryDedupReadsReservedOperationalMemories(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	svc, err := openWithContext(t.Context(), Options{
-		DBPath: filepath.Join(directory, "roca.db"), PluginDir: plugins,
-		RocaOpsEnabled: true, CorpusEnabled: true,
-		Sources: ingest.ResolveRoots(ingest.Environment{GOOS: "darwin", Home: directory}, ingest.Settings{}),
-	})
+	svc, err := openWithContext(t.Context(), options)
 	if err != nil {
 		t.Fatal(err)
 	}
