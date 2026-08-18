@@ -97,9 +97,24 @@ func HiddenTables() []string { return slices.Clone(invisibleTables) }
 // validation and prompt construction use it so a name hidden in core does not
 // become visible merely because it appears behind another qualifier.
 func IsHiddenTable(name string) bool {
-	lower := strings.ToLower(name)
+	lower := strings.ToLower(unqualify(name))
 	return slices.Contains(invisibleTables, lower) || strings.HasPrefix(lower, "sqlite_") ||
 		strings.HasPrefix(lower, "pragma_") || hasAnySuffix(lower, ftsShadowSuffixes)
+}
+
+// IsFTSTable is the queryable lexical index: a visible name ending in _fts.
+// The validation database must create those as FTS5 virtual tables, or MATCH
+// and bm25() are prepared as column lookups and a legitimate census is rejected.
+func IsFTSTable(name string) bool {
+	base := strings.ToLower(unqualify(name))
+	return strings.HasSuffix(base, "_fts") && !IsHiddenTable(base)
+}
+
+func unqualify(name string) string {
+	if index := strings.LastIndex(name, "."); index >= 0 {
+		return name[index+1:]
+	}
+	return name
 }
 
 // Gate keeps open the in-memory database statements are prepared against.
@@ -178,10 +193,19 @@ func addSchema(eng *engine, schema Schema) error {
 		}
 		columns := make([]string, len(table.Columns))
 		for index, column := range table.Columns {
-			columns[index] = quoteIdentifier(column) + " BLOB"
+			columns[index] = quoteIdentifier(column)
 		}
-		statement := "CREATE TABLE " + quoteIdentifier(schema.Name) + "." +
-			quoteIdentifier(table.Name) + " (" + strings.Join(columns, ", ") + ")"
+		qualified := quoteIdentifier(schema.Name) + "." + quoteIdentifier(table.Name)
+		var statement string
+		if IsFTSTable(table.Name) {
+			statement = "CREATE VIRTUAL TABLE " + qualified + " USING fts5(" +
+				strings.Join(columns, ", ") + ")"
+		} else {
+			for index := range columns {
+				columns[index] += " BLOB"
+			}
+			statement = "CREATE TABLE " + qualified + " (" + strings.Join(columns, ", ") + ")"
+		}
 		if err := eng.exec(statement); err != nil {
 			return fmt.Errorf("create validation table %s.%s: %w", schema.Name, table.Name, err)
 		}

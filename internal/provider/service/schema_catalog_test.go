@@ -1,9 +1,11 @@
 package service
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
+	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 )
 
 func TestComposingPluginTablesLeavesTheProcessCatalogUnlabeled(t *testing.T) {
@@ -22,6 +24,28 @@ func TestComposingPluginTablesLeavesTheProcessCatalogUnlabeled(t *testing.T) {
 	}
 	if plain := schemaWithPlugins(nil); plain.Tables[0].Database != "" {
 		t.Fatalf("a plugin-free answer inherited the label %q", plain.Tables[0].Database)
+	}
+}
+
+func TestComposedPluginSchemaTeachesQueryableFTSColumns(t *testing.T) {
+	composed := schemaWithPlugins([]plugin.Database{{
+		Descriptor: plugin.Descriptor{Name: "roca-corpus", Schema: "plugin_roca_corpus",
+			Semantic: plugin.Semantic{Description: "Harvested transcripts."}},
+		Tables: []plugin.Table{
+			{Name: "exchanges", Columns: []string{"id", "session_id", "human_text", "agent_text", "human_timestamp"}},
+			{Name: "exchanges_fts", Columns: []string{"human_text", "agent_text"},
+				Description: "Accent-insensitive full-text index over harvested human and agent exchange text."},
+		},
+	}})
+	prompt := query.SQLSystemPrompt(composed, nil, nil)
+	for _, needle := range []string{
+		"plugin_roca_corpus.exchanges_fts(human_text, agent_text)",
+		"only the listed tables", "sqlite_master",
+	} {
+		if !strings.Contains(strings.ToLower(prompt), strings.ToLower(needle)) &&
+			!strings.Contains(prompt, needle) {
+			t.Errorf("composed schema prompt omits %q:\n%s", needle, prompt)
+		}
 	}
 }
 
