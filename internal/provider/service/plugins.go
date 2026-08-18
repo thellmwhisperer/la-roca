@@ -412,7 +412,7 @@ func (s *Service) gateFor(databases []plugin.Database) (*sqlgate.Gate, func(), e
 	for _, database := range databases {
 		tables := make([]sqlgate.Table, 0, len(database.Tables))
 		for _, table := range database.Tables {
-			tables = append(tables, sqlgate.Table{Name: table.Name, Columns: table.Columns})
+			tables = append(tables, sqlgate.Table{Name: table.Name, Columns: table.Columns, FTS5: table.FTS5})
 		}
 		schemas = append(schemas, sqlgate.Schema{Name: database.Schema, Tables: tables})
 	}

@@ -27,6 +27,7 @@ type Table struct {
 	Description string
 	Questions   []string
 	Database    string
+	FTS5        bool
 }
 
 // Column is one side of a join.
@@ -115,7 +116,7 @@ func ReadSchema(ddl string, hidden []string) Schema {
 		if invisible[name] {
 			continue
 		}
-		schema.Tables = append(schema.Tables, Table{Name: name, Columns: ftsColumns(match[2])})
+		schema.Tables = append(schema.Tables, Table{Name: name, Columns: ftsColumns(match[2]), FTS5: true})
 	}
 	return schema
 }
@@ -166,7 +167,21 @@ func (s Schema) Describe(layers []LayerHint) string {
 		if table.Database != "" {
 			out.WriteString("  database: " + table.Database + "\n")
 		}
+		if table.FTS5 {
+			out.WriteString("  kind: FTS5 virtual table\n")
+		}
 	}
+
+	if s.hasFTS() {
+		out.WriteString("\nThe listed FTS5 virtual tables are the census tool: " +
+			`WHERE memories_fts MATCH '"token"', rank with bm25(memories_fts), ` +
+			"and join rowid from a subquery to the base id for memories, exchanges, and thinking, " +
+			"or to the base rowid for sessions. " +
+			"MATCH and bm25 take the bare table name even when FROM is schema-qualified.\n")
+	}
+	out.WriteString("\nOnly the listed tables are readable. Internal catalogs " +
+		"(sqlite_master, sqlite_schema, pragma_*) are not available; " +
+		"if a name is not listed, it cannot be queried.\n")
 
 	// How the tables connect. Without this a question about tools by agent has
 	// no answer the model can write: `tool_uses` carries `session_id` and
@@ -277,7 +292,9 @@ func SQLSystemPrompt(schema Schema, layers []LayerHint, layerFilter []string) st
 		rules = append(rules, rule)
 	}
 	rules = append(rules,
-		"- Use only the tables and columns listed above, exactly as they are written there")
+		"- Only the listed tables are readable, and only with the columns listed for each. "+
+			"Internal catalogs (sqlite_master, sqlite_schema, pragma_*) are not available; "+
+			"do not probe them, fall back to this surface")
 	if databases := schema.databases(); len(databases) > 0 {
 		rules = append(rules,
 			"- Every result row must include a column written AS \"database\" (database is a keyword and must be quoted). Label rows from each table with its database value shown above; each UNION branch labels its own rows, and a join across databases uses a + joined label")
@@ -303,7 +320,7 @@ func SQLSystemPrompt(schema Schema, layers []LayerHint, layerFilter []string) st
 		"- Always end the query with an explicit LIMIT",
 		"- If the question is outside the La Roca memory database, respond with the single word REFUSE and do not generate SQL",
 		"- Respond ONLY with the SQL query or REFUSE: no explanations, no markdown, no code fences")
-	if hasTable(schema, "memories_fts") {
+	if schema.hasFTS() {
 		// Substring LIKE '%Ana%' matches "ganancia" and "banana". The
 		// FTS tables are the only honest term search; bm25 ranks, created_at
 		// does not unless the question is about time.
@@ -312,9 +329,13 @@ func SQLSystemPrompt(schema Schema, layers []LayerHint, layerFilter []string) st
 				"(`memories_fts`, `exchanges_fts`, `thinking_fts`) with MATCH and "+
 				"ORDER BY bm25(...). Never write LIKE '%term%' on content, metadata, "+
 				"human_text, agent_text or full_text: that matches inside other words",
+			"- MATCH and bm25 take the bare table name even when FROM is schema-qualified: "+
+				`FROM plugin_x.exchanges_fts WHERE exchanges_fts MATCH '"token"'. `+
+				"Never write schema.table MATCH or bm25(schema.table)",
 			"- Quote each search token in double quotes inside MATCH "+
 				`(memories_fts MATCH '"ana"'). When joining an FTS hit to its content `+
-				"table, pull rowid inside a subquery as an alias and join on id = alias; "+
+				"table, pull rowid inside a subquery as an alias. Join memories, exchanges, "+
+				"and thinking on id = alias; join sessions on rowid = alias. "+
 				"an FTS query may return unqualified rowid directly, but never write table.rowid",
 			"- Rank term search by bm25 relevance, not created_at, unless the question "+
 				"is explicitly temporal (last week, yesterday, recent, between dates)",
@@ -365,9 +386,13 @@ func (s Schema) databases() []string {
 
 // ftsExamples is the worked shape the compiler already emits: multi-source
 // MATCH, bm25 rank, rowid pulled inside a subquery. Without an example the
-// model falls back to LIKE instead of using the lexical index.
+// model invents table.rowid (the AST gate rejects it) or falls back to LIKE.
+func (s Schema) hasFTS() bool {
+	return slices.ContainsFunc(s.Tables, func(table Table) bool { return table.FTS5 })
+}
+
 func ftsExamples(schema Schema) string {
-	if !hasTable(schema, "memories_fts") {
+	if !schema.hasFTS() {
 		return ""
 	}
 	return "\n\n<examples>\n" +
