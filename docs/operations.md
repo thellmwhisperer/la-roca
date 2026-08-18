@@ -234,7 +234,7 @@ size:
    with core fallback only when ops cannot be read for all memory stores, and
    never including finding rows. Registry-owned checks are skipped when neither
    registry is readable.
-6. **Vector** — when `plugins/vector/state/vector.db` exists: model,
+6. **Vector** — when `plugins/roca-vector/state/vector.db` exists: model,
    dimensions, chunk totals by kind, store size, and the last recorded delta
    counts.
 7. **Ingest** — detected agent names and the latest `ingest_file_state`

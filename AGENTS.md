@@ -55,7 +55,7 @@ Tell your user the build is running, and offer them a live view of the
 progress:
 
 ```sh
-tail -f ~/.roca/plugins/vector/state/worker.log
+tail -f ~/.roca/plugins/roca-vector/state/worker.log
 ```
 
 `completion.json` in the same directory records when it finished. Full
