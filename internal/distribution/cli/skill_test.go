@@ -300,7 +300,7 @@ func TestSkillTeachesTheInvestigationFunnel(t *testing.T) {
 				"The vector discovers vocabulary, FTS censuses, SQL frames",
 				"inference only at the end",
 				"roca vector query", "roca vector vocab",
-				"nombres de personas", "mi jefe se llama",
+				"names of people", "my boss is named",
 				"k must be between 1 and 100",
 				"LIKE '%term%'",
 				"COUNT(DISTINCT e.session_id)",

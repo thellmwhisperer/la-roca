@@ -43,11 +43,11 @@ does none either.
 1. Probe veins with `roca vector query "<first-person phrase or bare word>" k`.
    `k` is optional (default 10) and capped at 100. Hits print score, source
    family, and source id. Probing phrases in first person work better than
-   meta-concepts: `roca vector query "nombres de personas" 20` finds documents
-   ABOUT names; `roca vector query "mi jefe se llama" 20` finds the names.
+   meta-concepts: `roca vector query "names of people" 20` finds documents
+   ABOUT names; `roca vector query "my boss is named" 20` finds the names.
 2. Discover discriminative terms with `roca vector vocab <concept>` (zero
    inference: top-100 semantic hits, census, log-odds vias). Example:
-   `roca vector vocab salud`.
+   `roca vector vocab health`.
 3. Write deterministic FTS/SQL directly for `roca exec`: counts, dates, and
    word-boundary `MATCH`. Do not use `LIKE '%term%'`: it matches inside other
    words (`name` inside `rename`).
@@ -55,15 +55,15 @@ does none either.
 Worked loop, names:
 
 ```bash
-roca vector query "mi jefe se llama" 20
+roca vector query "my boss is named" 20
 roca exec "SELECT substr(COALESCE(e.human_timestamp, e.agent_timestamp), 1, 7) AS month, COUNT(DISTINCT e.id) AS exchanges, COUNT(DISTINCT e.session_id) AS sessions FROM (SELECT rowid AS source_id FROM exchanges_fts WHERE exchanges_fts MATCH 'ana') hits JOIN exchanges e ON e.id = hits.source_id GROUP BY month ORDER BY month"
 ```
 
 Worked loop, concept:
 
 ```bash
-roca vector vocab salud
-roca exec "SELECT COUNT(DISTINCT e.id) AS exchanges, COUNT(DISTINCT e.session_id) AS sessions, MIN(COALESCE(e.human_timestamp, e.agent_timestamp)) AS first_seen, MAX(COALESCE(e.human_timestamp, e.agent_timestamp)) AS last_seen FROM (SELECT rowid AS source_id FROM exchanges_fts WHERE exchanges_fts MATCH 'agotamiento') hits JOIN exchanges e ON e.id = hits.source_id"
+roca vector vocab health
+roca exec "SELECT COUNT(DISTINCT e.id) AS exchanges, COUNT(DISTINCT e.session_id) AS sessions, MIN(COALESCE(e.human_timestamp, e.agent_timestamp)) AS first_seen, MAX(COALESCE(e.human_timestamp, e.agent_timestamp)) AS last_seen FROM (SELECT rowid AS source_id FROM exchanges_fts WHERE exchanges_fts MATCH 'exhaustion') hits JOIN exchanges e ON e.id = hits.source_id"
 ```
 
 Then the reading agent narrates from those rows. Stop before that last

@@ -372,8 +372,13 @@ func (env *cliEnv) adoptLegacyArtifacts(paths config.Paths, executable string,
 				continue
 			}
 			if body, err := os.ReadFile(path); err == nil {
-				registry.Upsert(discoveredFileEntry(artifactKindSkill, runtime, path,
-					string(body), env.build.Version))
+				content := string(body)
+				_, zonedErr := artifact.Parse(content)
+				legacyOwned := embedded.Legacy != "" && strings.HasPrefix(content, embedded.Legacy)
+				if zonedErr == nil || legacyOwned {
+					registry.Upsert(discoveredFileEntry(artifactKindSkill, runtime, path,
+						content, env.build.Version))
+				}
 				continue
 			}
 			if embedded.Name != skill.SkillName || proposed {

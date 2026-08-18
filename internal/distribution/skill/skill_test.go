@@ -126,6 +126,22 @@ func TestVectorSkillTeachesHybridDiscoveryAndInvitesTheIndex(t *testing.T) {
 	}
 }
 
+func TestOnlyThePreviouslyShippedSkillHasALegacySignature(t *testing.T) {
+	embedded := skill.EmbeddedSkills()
+	if embedded[0].Name != skill.SkillName || embedded[0].Legacy == "" {
+		t.Fatalf("definitive skill legacy signature = %q", embedded[0].Legacy)
+	}
+	for _, shipped := range embedded[1:] {
+		if shipped.Legacy != "" {
+			t.Errorf("new skill %s has legacy signature %q", shipped.Name, shipped.Legacy)
+		}
+		_, legacy := skill.ContentForPath(filepath.Join("skills", shipped.Name, "SKILL.md"))
+		if legacy != "" {
+			t.Errorf("new skill %s path has legacy signature %q", shipped.Name, legacy)
+		}
+	}
+}
+
 func TestDetectedNamesOnlyExistingRoots(t *testing.T) {
 	home := t.TempDir()
 	if got := skill.Detected(home, nil); len(got) != 0 {
@@ -263,7 +279,7 @@ func TestInstallWritesTheSkillAndIsIdempotent(t *testing.T) {
 			content: skill.OperationsContent(),
 			install: func(path, previous string, force bool) (skill.Outcome, error) {
 				return skill.InstallNamed("claude", path, skill.OperationsContent(),
-					"---\nname: "+skill.OperationsName+"\n", previous, force, true)
+					"", previous, force, true)
 			},
 			checksum: func() string { return artifact.Checksum(skill.OperationsContent()) },
 		},
@@ -273,7 +289,7 @@ func TestInstallWritesTheSkillAndIsIdempotent(t *testing.T) {
 			content: skill.VectorContent(),
 			install: func(path, previous string, force bool) (skill.Outcome, error) {
 				return skill.InstallNamed("claude", path, skill.VectorContent(),
-					"---\nname: "+skill.VectorName+"\n", previous, force, true)
+					"", previous, force, true)
 			},
 			checksum: func() string { return artifact.Checksum(skill.VectorContent()) },
 		},

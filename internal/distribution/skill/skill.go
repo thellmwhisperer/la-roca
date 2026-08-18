@@ -126,8 +126,8 @@ func VectorContent() string { return vectorContent }
 func EmbeddedSkills() []Embedded {
 	return []Embedded{
 		{Name: SkillName, Body: Content(), Legacy: LegacySignature()},
-		{Name: OperationsName, Body: operationsContent, Legacy: legacyOpening(OperationsName)},
-		{Name: VectorName, Body: vectorContent, Legacy: legacyOpening(VectorName)},
+		{Name: OperationsName, Body: operationsContent},
+		{Name: VectorName, Body: vectorContent},
 	}
 }
 
@@ -163,9 +163,9 @@ func ContentForPath(path string) (string, string) {
 	case SkillName:
 		return Content(), LegacySignature()
 	case OperationsName:
-		return operationsContent, legacyOpening(OperationsName)
+		return operationsContent, ""
 	case VectorName:
-		return vectorContent, legacyOpening(VectorName)
+		return vectorContent, ""
 	default:
 		return "", ""
 	}
