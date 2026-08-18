@@ -171,21 +171,33 @@ func insufficientAnswer(res QueryResult) bool {
 	if res.Path == PathAsk || res.Path == PathRefused || res.Path == PathUnresolved {
 		return false
 	}
-	switch res.Degraded {
-	case DegradedInvalidSQL, DegradedExecution, DegradedTimeout:
+	if wideningBlockedByDegradation(res.Degraded) {
 		return false
 	}
 	return res.RowCount == 0
 }
 
-func widenReply(text string) bool {
-	return WidenReply(text)
+func wideningBlockedByDegradation(degraded string) bool {
+	switch degraded {
+	case DegradedInvalidSQL, DegradedExecution, DegradedTimeout:
+		return true
+	default:
+		return false
+	}
 }
 
 // WidenReply reports that the reading seat asked for a second SQL pass over
 // the attached databases that were held back.
 func WidenReply(text string) bool {
 	return strings.TrimSpace(text) == "WIDEN"
+}
+
+// CanWidenAfterInterpretation reports whether a reading-seat reply may buy a
+// second SQL pass. SQL failures stay attributed to their first scoped pass;
+// widening cannot turn them into a different query with a different verdict.
+func CanWidenAfterInterpretation(res QueryResult, text string) bool {
+	return len(res.UnusedDatabases) > 0 && !wideningBlockedByDegradation(res.Degraded) &&
+		WidenReply(text)
 }
 
 func bundledSearchDatabases(route pluginRoute) []plugin.Database {

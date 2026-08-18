@@ -695,20 +695,8 @@ func answerQuery(ctx context.Context, svc *service.Service, req service.QueryReq
 	if req.InterpretationStart != nil {
 		onStart = func(native bool) { req.InterpretationStart(native, result) }
 	}
-	var bufferedNative bool
-	var bufferedStart bool
-	var bufferedDeltas []string
-	var firstOnStart func(bool)
-	if onStart != nil {
-		firstOnStart = func(native bool) {
-			bufferedNative = native
-			bufferedStart = true
-		}
-	}
-	var firstOnDelta func(string)
-	if req.InterpretationDelta != nil {
-		firstOnDelta = func(delta string) { bufferedDeltas = append(bufferedDeltas, delta) }
-	}
+	firstOnStart, firstOnDelta, flushInterpretation :=
+		service.BufferInterpretationCallbacks(onStart, req.InterpretationDelta)
 	started := time.Now()
 	interpretation, err := svc.InterpretStream(
 		ctx, result.Question, result.Columns, result.Rows,
@@ -718,7 +706,7 @@ func answerQuery(ctx context.Context, svc *service.Service, req service.QueryReq
 		},
 		firstOnStart, firstOnDelta)
 	interpretationMS += time.Since(started).Milliseconds()
-	if err == nil && service.WidenReply(interpretation.Text) && len(result.UnusedDatabases) > 0 {
+	if err == nil && service.CanWidenAfterInterpretation(result, interpretation.Text) {
 		first := result
 		req.Databases = []string{service.ScopeAll}
 		widened, widenErr := svc.Query(ctx, req)
@@ -739,12 +727,7 @@ func answerQuery(ctx context.Context, svc *service.Service, req service.QueryReq
 			interpretationMS += time.Since(started).Milliseconds()
 		}
 	} else if err == nil {
-		if bufferedStart {
-			onStart(bufferedNative)
-		}
-		for _, delta := range bufferedDeltas {
-			req.InterpretationDelta(delta)
-		}
+		flushInterpretation()
 	}
 	answer.result = result
 	answer.prose, answer.interpretErr = interpretation.Text, err

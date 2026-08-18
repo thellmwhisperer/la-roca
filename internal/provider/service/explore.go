@@ -83,27 +83,15 @@ func (s *Service) Explore(ctx context.Context, req ExploreRequest) (QueryResult,
 	if req.InterpretationStart != nil {
 		onStart = func(native bool) { req.InterpretationStart(native, result) }
 	}
-	var bufferedNative bool
-	var bufferedStart bool
-	var bufferedDeltas []string
-	var firstOnStart func(bool)
-	if onStart != nil {
-		firstOnStart = func(native bool) {
-			bufferedNative = native
-			bufferedStart = true
-		}
-	}
-	var firstOnDelta func(string)
-	if req.InterpretationDelta != nil {
-		firstOnDelta = func(delta string) { bufferedDeltas = append(bufferedDeltas, delta) }
-	}
+	firstOnStart, firstOnDelta, flushInterpretation :=
+		BufferInterpretationCallbacks(onStart, req.InterpretationDelta)
 	started := time.Now()
 	answer, interpretErr := s.InterpretStream(ctx, result.Question, result.Columns, result.Rows,
 		time.Duration(result.SQLInferenceMS)*time.Millisecond, result.Engine,
 		InterpretationContext{Mission: mission, Terrain: terrain, UnusedDatabases: result.UnusedDatabases},
 		firstOnStart, firstOnDelta)
 	interpretationMS += time.Since(started).Milliseconds()
-	if interpretErr == nil && widenReply(answer.Text) && len(result.UnusedDatabases) > 0 {
+	if interpretErr == nil && CanWidenAfterInterpretation(result, answer.Text) {
 		first := result
 		req.Databases = []string{ScopeAll}
 		widened, widenErr := s.Query(ctx, req.QueryRequest)
@@ -125,12 +113,7 @@ func (s *Service) Explore(ctx context.Context, req ExploreRequest) (QueryResult,
 			InterpretationContext{Mission: mission, Terrain: terrain}, onStart, req.InterpretationDelta)
 		interpretationMS += time.Since(started).Milliseconds()
 	} else if interpretErr == nil {
-		if bufferedStart {
-			onStart(bufferedNative)
-		}
-		for _, delta := range bufferedDeltas {
-			req.InterpretationDelta(delta)
-		}
+		flushInterpretation()
 	}
 	result.InterpretationMS = interpretationMS
 	result.LatencyMS += result.InterpretationMS

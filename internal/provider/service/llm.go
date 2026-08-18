@@ -311,6 +311,35 @@ type InterpretationContext struct {
 	UnusedDatabases []string
 }
 
+// BufferInterpretationCallbacks holds the first reading-seat stream until the
+// caller knows it is the answer rather than a WIDEN control reply. Flush
+// publishes that held stream when no second pass is needed.
+func BufferInterpretationCallbacks(onStart func(bool), onDelta func(string)) (
+	firstOnStart func(bool), firstOnDelta func(string), flush func(),
+) {
+	var bufferedNative bool
+	var bufferedStart bool
+	var bufferedDeltas []string
+	if onStart != nil {
+		firstOnStart = func(native bool) {
+			bufferedNative = native
+			bufferedStart = true
+		}
+	}
+	if onDelta != nil {
+		firstOnDelta = func(delta string) { bufferedDeltas = append(bufferedDeltas, delta) }
+	}
+	flush = func() {
+		if bufferedStart {
+			onStart(bufferedNative)
+		}
+		for _, delta := range bufferedDeltas {
+			onDelta(delta)
+		}
+	}
+	return firstOnStart, firstOnDelta, flush
+}
+
 // Interpret is the second inference call of a query: the first turned the
 // question into SQL, this one turns that SQL's rows into a natural-language
 // answer in the question's language. The rows, capped at ten, travel in the
