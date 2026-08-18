@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
@@ -127,8 +128,9 @@ type memoryRow struct {
 // MemoryCustodyCutoverEligible reports whether DATA-2 has verified the ops
 // compatibility population. It performs no migration and does not open a
 // source database.
-func MemoryCustodyCutoverEligible(ctx context.Context, opsPath string) (bool, error) {
-	ops, err := bundledplugin.OpenDatabase(opsPath, true)
+func MemoryCustodyCutoverEligible(ctx context.Context, opsPath string,
+	timeout ...time.Duration) (bool, error) {
+	ops, err := bundledplugin.OpenDatabase(opsPath, true, timeout...)
 	if err != nil {
 		return false, err
 	}

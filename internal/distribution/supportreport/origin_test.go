@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
+	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	_ "modernc.org/sqlite"
 )
@@ -124,16 +126,54 @@ func TestOpenSupportStoreReportsDanglingSymlinkAsUnreadable(t *testing.T) {
 	if err := os.Symlink("missing.db", path); err != nil {
 		t.Fatal(err)
 	}
-	store, closeStore := openSupportStore(path)
+	store, closeStore := openSupportStore(t.Context(), path)
 	defer closeStore()
 	if !store.present || store.db != nil {
 		t.Fatalf("dangling store = %+v, want present and unreadable", store)
 	}
 
-	absent, closeAbsent := openSupportStore(filepath.Join(t.TempDir(), "absent.db"))
+	absent, closeAbsent := openSupportStore(t.Context(), filepath.Join(t.TempDir(), "absent.db"))
 	defer closeAbsent()
 	if absent.present || absent.db != nil {
 		t.Fatalf("absent store = %+v", absent)
+	}
+}
+
+func TestCollectDoesNotStallOnLockedStore(t *testing.T) {
+	root := t.TempDir()
+	databasePath := filepath.Join(root, "support.db")
+	db, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`CREATE TABLE synthetic_lock (id INTEGER)`); err != nil {
+		t.Fatal(err)
+	}
+	connection, err := db.Conn(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = connection.Close() })
+	if _, err := connection.ExecContext(t.Context(), `BEGIN EXCLUSIVE`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = connection.ExecContext(t.Context(), `ROLLBACK`) })
+
+	started := time.Now()
+	snapshot, err := Collect(t.Context(), Options{
+		Paths:      config.Paths{DB: databasePath},
+		PluginRoot: filepath.Join(root, "plugins"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Fatalf("locked support report took %v", elapsed)
+	}
+	core := storeNamed(snapshot.Federation.Stores, "core")
+	if !core.Present || core.Readable {
+		t.Fatalf("locked core store = %+v", core)
 	}
 }
 

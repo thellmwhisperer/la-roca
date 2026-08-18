@@ -32,6 +32,8 @@ import (
 const (
 	Kind                      = "roca-support-report"
 	vectorCompletionFile      = "completion.json"
+	supportObserverTimeout    = 500 * time.Millisecond
+	supportBusyTimeout        = 250 * time.Millisecond
 	FederationFresh           = "fresh"
 	FederationLegacyOnly      = "legacy-only"
 	FederationMigrating       = "migrating"
@@ -167,17 +169,19 @@ func Collect(ctx context.Context, opts Options) (Snapshot, error) {
 	corpusPath := filepath.Join(opts.PluginRoot, rocacorpus.Name, rocacorpus.DatabaseFilename)
 	opsPath := filepath.Join(opts.PluginRoot, rocaops.Name, rocaops.DatabaseFilename)
 	cronPath := filepath.Join(opts.PluginRoot, rocacron.Name, rocacron.DatabaseFilename)
-	cutoverEligible, _ := datasplit.HubCutoverEligible(ctx, datasplit.HubOptions{
+	eligibilityCtx, cancelEligibility := context.WithTimeout(ctx, supportObserverTimeout)
+	cutoverEligible, _ := datasplit.HubCutoverEligible(eligibilityCtx, datasplit.HubOptions{
 		CoreDatabase: opts.Paths.DB, CorpusDatabase: corpusPath,
 		OpsDatabase: opsPath, CronDatabase: cronPath,
-	})
-	coreStore, coreClose := openSupportStore(opts.Paths.DB)
+	}, supportBusyTimeout)
+	cancelEligibility()
+	coreStore, coreClose := openSupportStore(ctx, opts.Paths.DB)
 	defer coreClose()
-	corpusStore, corpusClose := openSupportStore(corpusPath)
+	corpusStore, corpusClose := openSupportStore(ctx, corpusPath)
 	defer corpusClose()
-	opsStore, opsClose := openSupportStore(opsPath)
+	opsStore, opsClose := openSupportStore(ctx, opsPath)
 	defer opsClose()
-	cronStore, cronClose := openSupportStore(cronPath)
+	cronStore, cronClose := openSupportStore(ctx, cronPath)
 	defer cronClose()
 	core, corpus, ops, cron := coreStore.db, corpusStore.db, opsStore.db, cronStore.db
 
@@ -407,7 +411,7 @@ type supportStore struct {
 	db      *sql.DB
 }
 
-func openSupportStore(path string) (supportStore, func()) {
+func openSupportStore(ctx context.Context, path string) (supportStore, func()) {
 	if path == "" {
 		return supportStore{}, func() {}
 	}
@@ -418,12 +422,15 @@ func openSupportStore(path string) (supportStore, func()) {
 		return supportStore{present: true}, func() {}
 	}
 	store := supportStore{present: true}
-	db, err := bundledplugin.OpenDatabase(path, true)
+	db, err := bundledplugin.OpenDatabase(path, true, supportBusyTimeout)
 	if err != nil {
 		return store, func() {}
 	}
+	db.SetMaxOpenConns(1)
+	observerCtx, cancel := context.WithTimeout(ctx, supportObserverTimeout)
+	defer cancel()
 	var schemaVersion int
-	if err := db.QueryRow("PRAGMA schema_version").Scan(&schemaVersion); err != nil {
+	if err := db.QueryRowContext(observerCtx, "PRAGMA schema_version").Scan(&schemaVersion); err != nil {
 		db.Close()
 		return store, func() {}
 	}
@@ -431,8 +438,8 @@ func openSupportStore(path string) (supportStore, func()) {
 	return store, func() { _ = db.Close() }
 }
 
-func openSupportDB(path string) (*sql.DB, func()) {
-	store, closeStore := openSupportStore(path)
+func openSupportDB(ctx context.Context, path string) (*sql.DB, func()) {
+	store, closeStore := openSupportStore(ctx, path)
 	return store.db, closeStore
 }
 
@@ -593,7 +600,7 @@ func collectVector(ctx context.Context, pluginRoot string) *Vector {
 		return nil
 	}
 	report := &Vector{StoreBytes: info.Size(), Chunks: map[string]int{}}
-	db, closer := openSupportDB(path)
+	db, closer := openSupportDB(ctx, path)
 	defer closer()
 	if db != nil {
 		_ = db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key='model'`).Scan(&report.Model)

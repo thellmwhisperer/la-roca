@@ -17,21 +17,25 @@ const busyTimeout = 15 * time.Second
 
 // OpenDatabase gives bundled data plugins one SQLite DSN contract while
 // allowing observers to request a read-only connection.
-func OpenDatabase(path string, readOnly bool) (*sql.DB, error) {
+func OpenDatabase(path string, readOnly bool, timeout ...time.Duration) (*sql.DB, error) {
 	mode := ""
 	if readOnly {
 		mode = "ro"
 	}
-	return openDatabase(path, mode)
+	configuredTimeout := busyTimeout
+	if len(timeout) > 0 && timeout[0] > 0 {
+		configuredTimeout = timeout[0]
+	}
+	return openDatabase(path, mode, configuredTimeout)
 }
 
-func openDatabase(path, mode string) (*sql.DB, error) {
+func openDatabase(path, mode string, configuredTimeout time.Duration) (*sql.DB, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("resolve the bundled plugin database path: %w", err)
 	}
 	query := url.Values{
-		"_pragma": {fmt.Sprintf("busy_timeout(%d)", busyTimeout.Milliseconds())},
+		"_pragma": {fmt.Sprintf("busy_timeout(%d)", configuredTimeout.Milliseconds())},
 	}
 	if mode != "" {
 		query.Set("mode", mode)

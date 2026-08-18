@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/corpusarchive"
@@ -101,39 +102,44 @@ func PrepareHub(ctx context.Context, options HubOptions) (HubReport, error) {
 	return report, nil
 }
 
-func HubCutoverEligible(ctx context.Context, options HubOptions) (bool, error) {
+func HubCutoverEligible(ctx context.Context, options HubOptions,
+	timeout ...time.Duration) (bool, error) {
 	if err := options.validDatabases(); err != nil {
 		return false, err
 	}
-	eligibility, err := inspectHubEligibility(ctx, options)
+	eligibility, err := inspectHubEligibility(ctx, options, timeout...)
 	if err != nil {
 		return false, err
 	}
 	return eligibility.ready(), nil
 }
 
-func inspectHubEligibility(ctx context.Context, options HubOptions) (hubEligibility, error) {
+func inspectHubEligibility(ctx context.Context, options HubOptions,
+	timeout ...time.Duration) (hubEligibility, error) {
 	var eligibility hubEligibility
-	if err := validateHubDatabases(ctx, options); err != nil {
+	if err := validateHubDatabases(ctx, options, timeout...); err != nil {
 		return eligibility, err
 	}
 	var err error
-	eligibility.memory, err = rocaops.MemoryCustodyCutoverEligible(ctx, options.OpsDatabase)
+	eligibility.memory, err = rocaops.MemoryCustodyCutoverEligible(
+		ctx, options.OpsDatabase, timeout...)
 	if err != nil {
 		return eligibility, fmt.Errorf("inspect DATA-2 readiness: %w", err)
 	}
-	eligibility.corpus, err = corpusarchive.CutoverEligible(ctx, options.CorpusDatabase)
+	eligibility.corpus, err = corpusarchive.CutoverEligible(
+		ctx, options.CorpusDatabase, timeout...)
 	if err != nil {
 		return eligibility, fmt.Errorf("inspect DATA-3 readiness: %w", err)
 	}
-	eligibility.legacy, err = legacyCutoverEligible(ctx, options)
+	eligibility.legacy, err = legacyCutoverEligible(ctx, options, timeout...)
 	if err != nil {
 		return eligibility, fmt.Errorf("inspect DATA-4 readiness: %w", err)
 	}
 	return eligibility, nil
 }
 
-func validateHubDatabases(ctx context.Context, options HubOptions) error {
+func validateHubDatabases(ctx context.Context, options HubOptions,
+	timeout ...time.Duration) error {
 	for _, database := range []struct {
 		name string
 		path string
@@ -143,7 +149,7 @@ func validateHubDatabases(ctx context.Context, options HubOptions) error {
 		{name: "corpus", path: options.CorpusDatabase},
 		{name: "cron", path: options.CronDatabase},
 	} {
-		db, err := bundledplugin.OpenDatabase(database.path, true)
+		db, err := bundledplugin.OpenDatabase(database.path, true, timeout...)
 		if err != nil {
 			return fmt.Errorf("open DATA-6 %s database: %w", database.name, err)
 		}
@@ -186,8 +192,10 @@ func (options HubOptions) validDatabases() error {
 	return nil
 }
 
-func legacyCutoverEligible(ctx context.Context, options HubOptions) (bool, error) {
-	source, err := bundledplugin.OpenDatabase(options.CoreDatabase, true)
+func legacyCutoverEligible(ctx context.Context, options HubOptions,
+	timeout ...time.Duration) (bool, error) {
+	source, err := bundledplugin.OpenDatabase(
+		options.CoreDatabase, true, timeout...)
 	if err != nil {
 		return false, err
 	}
@@ -205,7 +213,7 @@ func legacyCutoverEligible(ctx context.Context, options HubOptions) (bool, error
 	destinations, err := openDestinations(LegacyOptions{
 		SourceClone: options.CoreDatabase, CronDatabase: options.CronDatabase,
 		OpsDatabase: options.OpsDatabase, CorpusDatabase: options.CorpusDatabase,
-	}, true)
+	}, true, timeout...)
 	if err != nil {
 		return false, err
 	}

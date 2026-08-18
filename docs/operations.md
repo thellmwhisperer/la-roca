@@ -172,6 +172,8 @@ prints one fenced text block with a generation timestamp; `roca doctor --report
 --json` emits the same snapshot as JSON. The collector is read-only: it does
 not install plugins, adopt schema, prepare the federation hub, or change
 `layout.serving`; it also writes no JSONL or ops audit record.
+Support-only database observation uses short, context-aware lock waits, so a
+locked store is reported as unreadable instead of delaying the snapshot.
 
 The block is ordered and bounded so it stays pasteable regardless of corpus
 size:
