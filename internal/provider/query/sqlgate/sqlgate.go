@@ -22,6 +22,7 @@ package sqlgate
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -74,16 +75,9 @@ var invisibleTables = []string{
 	"exchange_id_remaps", "thinking_block_id_remaps",
 }
 
-// ftsShadowSuffixes name the shadow tables FTS5 creates behind each virtual
-// table. They keep the index in binary blocks and are nobody's memory.
-//
-// These cannot be hidden by dropping them the way the others are: dropping a
-// shadow table leaves the virtual table broken, and the validation database
-// would no longer be able to prepare the legitimate query. The authorization
-// callback denies reads by name, as it does for `sqlite_` and `pragma_` tables.
-var ftsShadowSuffixes = []string{
-	"_fts_data", "_fts_idx", "_fts_content", "_fts_docsize", "_fts_config",
-}
+var fts5ShadowEndings = []string{"_data", "_idx", "_content", "_docsize", "_config"}
+
+var createVirtualFTS5 = regexp.MustCompile(`(?is)CREATE\s+VIRTUAL\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'` + "`" + `]?(\w+)["'` + "`" + `]?\s+USING\s+fts5\s*\(`)
 
 // HiddenTables are the ones the gate does not let through.
 //
@@ -97,9 +91,16 @@ func HiddenTables() []string { return slices.Clone(invisibleTables) }
 // validation and prompt construction use it so a name hidden in core does not
 // become visible merely because it appears behind another qualifier.
 func IsHiddenTable(name string) bool {
-	lower := strings.ToLower(name)
+	lower := strings.ToLower(unqualify(name))
 	return slices.Contains(invisibleTables, lower) || strings.HasPrefix(lower, "sqlite_") ||
-		strings.HasPrefix(lower, "pragma_") || hasAnySuffix(lower, ftsShadowSuffixes)
+		strings.HasPrefix(lower, "pragma_")
+}
+
+func unqualify(name string) string {
+	if index := strings.LastIndex(name, "."); index >= 0 {
+		return name[index+1:]
+	}
+	return name
 }
 
 // Gate keeps open the in-memory database statements are prepared against.
@@ -117,6 +118,7 @@ type Schema struct {
 type Table struct {
 	Name    string
 	Columns []string
+	FTS5    bool
 }
 
 // Open creates the validation database: the v1 schema minus what is invisible.
@@ -142,6 +144,9 @@ func OpenWithSchemas(schemas []Schema) (*Gate, error) {
 	if err := eng.exec(data.SearchSchema); err != nil {
 		eng.close()
 		return nil, fmt.Errorf("apply the search schema to the validation database: %w", err)
+	}
+	for _, match := range createVirtualFTS5.FindAllStringSubmatch(data.SearchSchema, -1) {
+		eng.registerFTSTable("main", match[1])
 	}
 	for _, table := range invisibleTables {
 		if err := eng.exec("DROP TABLE IF EXISTS " + table); err != nil {
@@ -178,15 +183,50 @@ func addSchema(eng *engine, schema Schema) error {
 		}
 		columns := make([]string, len(table.Columns))
 		for index, column := range table.Columns {
-			columns[index] = quoteIdentifier(column) + " BLOB"
+			columns[index] = quoteIdentifier(column)
 		}
-		statement := "CREATE TABLE " + quoteIdentifier(schema.Name) + "." +
-			quoteIdentifier(table.Name) + " (" + strings.Join(columns, ", ") + ")"
+		qualified := quoteIdentifier(schema.Name) + "." + quoteIdentifier(table.Name)
+		var statement string
+		if table.FTS5 {
+			statement = "CREATE VIRTUAL TABLE " + qualified + " USING fts5(" +
+				strings.Join(columns, ", ") + ")"
+		} else {
+			for index := range columns {
+				columns[index] += " BLOB"
+			}
+			statement = "CREATE TABLE " + qualified + " (" + strings.Join(columns, ", ") + ")"
+		}
 		if err := eng.exec(statement); err != nil {
 			return fmt.Errorf("create validation table %s.%s: %w", schema.Name, table.Name, err)
 		}
+		if table.FTS5 {
+			eng.registerFTSTable(schema.Name, table.Name)
+		}
 	}
 	return nil
+}
+
+// FTS5ShadowTables returns the internal tables SQLite creates for an FTS5 table.
+func FTS5ShadowTables(name string) []string {
+	shadows := make([]string, len(fts5ShadowEndings))
+	for index, ending := range fts5ShadowEndings {
+		shadows[index] = strings.ToLower(name) + ending
+	}
+	return shadows
+}
+
+// IsFTS5DDL reports whether a SQLite CREATE statement declares an FTS5 table.
+func IsFTS5DDL(ddl string) bool {
+	words := strings.Fields(strings.ToLower(ddl))
+	if len(words) < 6 || words[0] != "create" || words[1] != "virtual" || words[2] != "table" {
+		return false
+	}
+	for index := 3; index+1 < len(words); index++ {
+		if words[index] == "using" {
+			return strings.HasPrefix(words[index+1], "fts5(") || words[index+1] == "fts5"
+		}
+	}
+	return false
 }
 
 func quoteIdentifier(name string) string {
@@ -216,7 +256,6 @@ func (g *Gate) Validate(stmt string) (string, error) {
 		}
 		return "", fmt.Errorf("Only SELECT statements are allowed")
 	}
-
 	clean, err := enforceLimit(stmt)
 	if err != nil {
 		return "", err
@@ -272,10 +311,6 @@ func translate(message string) string {
 		return "SQL parse error: " + message
 	}
 	return "the database refused this statement: " + message
-}
-
-func hasAnySuffix(name string, suffixes []string) bool {
-	return slices.ContainsFunc(suffixes, func(s string) bool { return strings.HasSuffix(name, s) })
 }
 
 // enforceLimit imposes the cap on the original text. When there is no
