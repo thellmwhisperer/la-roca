@@ -129,6 +129,7 @@ func initCommand(env *cliEnv) *cobra.Command {
 					return err
 				}
 			}
+			env.seedDetectedSkills(true)
 			commandElapsed := initMachineDuration(time.Since(commandStarted), env.initPromptWait).Milliseconds()
 			chooserElapsed := env.initChooserElapsed.Milliseconds()
 			if outsideService := commandElapsed - result.TotalElapsedMS - chooserElapsed; outsideService > 0 {
@@ -345,7 +346,8 @@ func renderBootstrap(env *cliEnv, result service.InitResult) {
 		env.print("  agent prompt: %s", result.PromptPath)
 		env.print("  Paste its contents into the agent instructions you choose.")
 	}
-	env.print("  skill: available via `roca skill install` (not installed automatically)")
+	env.print("  skills: installed into every detected agent runtime")
+	env.print("  must-read: `roca` (what La Roca is) and `roca-operations` (how to search)")
 	renderInitAnswer(env, result)
 }
 

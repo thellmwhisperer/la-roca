@@ -335,6 +335,7 @@ func TestUninstallCleansTheEmptySkillChainAndNamesEverySurvivor(t *testing.T) {
 func TestUninstallLeavesAnUnregisteredCatalogFileAlone(t *testing.T) {
 	home := t.TempDir()
 	isolateRuntimeDirs(t, home)
+	t.Setenv("CURSOR_HOME", "")
 	t.Setenv("GROK_HOME", "")
 	t.Setenv("QWEN_HOME", "")
 
@@ -434,8 +435,8 @@ func isolateRuntimeDirs(t *testing.T, home string) {
 	t.Setenv("ROCA_CONFIG", "")
 	t.Setenv("ROCA_MODELS_ORDER", "none")
 	for _, key := range []string{
-		"CLAUDE_CONFIG_DIR", "CODEX_HOME", "OPENCODE_CONFIG",
-		"HERMES_HOME", "PI_CODING_AGENT_DIR",
+		"CLAUDE_CONFIG_DIR", "CODEX_HOME", "CURSOR_HOME", "GROK_HOME", "OPENCODE_CONFIG",
+		"HERMES_HOME", "PI_CODING_AGENT_DIR", "QWEN_HOME",
 	} {
 		t.Setenv(key, "")
 	}

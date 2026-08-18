@@ -230,7 +230,7 @@ func (w *distributionWorld) promptIsSeparateFromInstructions() error {
 	return nil
 }
 
-var distributionAgents = []string{"claude", "codex", "grok", "hermes", "opencode", "pi", "qwen"}
+var distributionAgents = []string{"claude", "codex", "cursor", "grok", "hermes", "opencode", "pi", "qwen"}
 
 func distributionSkillPath(agent, home string) (string, error) {
 	return distributionSkillFile(agent, home, "roca")
@@ -243,7 +243,7 @@ func distributionCatalogSkillPath(agent, home string) (string, error) {
 func distributionSkillFile(agent, home, skill string) (string, error) {
 	var parts []string
 	switch agent {
-	case "claude", "codex", "grok", "hermes", "qwen":
+	case "claude", "codex", "cursor", "grok", "hermes", "qwen":
 		parts = []string{"." + agent}
 	case "opencode":
 		parts = []string{".config", "opencode"}

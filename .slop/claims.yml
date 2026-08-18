@@ -64,7 +64,7 @@ claims:
     contract:
       file: features/store/search.feature
       item: "Search matches whole words, never substrings inside other words"
-  internal/distribution/skill/SKILL.md:
+  internal/distribution/skill/agents.md:
     contract:
       file: features/distribution/skill.feature
       item: "Skill install places the skill where the chosen agent discovers it, and says where"
