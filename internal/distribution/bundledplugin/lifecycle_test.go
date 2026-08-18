@@ -151,7 +151,7 @@ func assertManifestVersion(t *testing.T, root, name, version string) {
 }
 
 func executableName(name string) string {
-	executable := "roca-" + name
+	executable := plugininstall.ExecutableName(name)
 	if runtime.GOOS == "windows" {
 		executable += ".exe"
 	}

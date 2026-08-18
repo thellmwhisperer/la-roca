@@ -38,6 +38,7 @@ func TestPackageContainsOnlyExecutableManifestAndChecksums(t *testing.T) {
 				t.Fatal(err)
 			}
 			var manifest struct {
+				Name     string `json:"name"`
 				Version  string `json:"version"`
 				Kind     string `json:"kind"`
 				StateDir string `json:"state_directory"`
@@ -45,7 +46,8 @@ func TestPackageContainsOnlyExecutableManifestAndChecksums(t *testing.T) {
 			if err := json.Unmarshal(raw, &manifest); err != nil {
 				t.Fatal(err)
 			}
-			if manifest.Version != "v1.2.3" || manifest.Kind != "executable" || manifest.StateDir != "state" {
+			if manifest.Name != "roca-vector" || manifest.Version != "v1.2.3" ||
+				manifest.Kind != "executable" || manifest.StateDir != "state" {
 				t.Fatalf("plugin manifest = %+v", manifest)
 			}
 			checksums, err := os.ReadFile(filepath.Join(out, "checksums.txt"))
