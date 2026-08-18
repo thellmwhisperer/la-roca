@@ -2,10 +2,13 @@ package service_test
 
 import (
 	"context"
+	"database/sql"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
+	_ "modernc.org/sqlite"
 )
 
 // seedOrphanSupersedes plants what only an aged database has: memories pointing
@@ -54,6 +57,61 @@ func TestHealthOnACleanInstallationPasses(t *testing.T) {
 			t.Errorf("check %q = %q on a clean installation", name, check.Status)
 		}
 	}
+}
+
+func TestHealthVerdictsUseTheFirstReadableLayerRegistry(t *testing.T) {
+	memory := openVerdictDatabase(t, `
+		CREATE TABLE memories (
+			id INTEGER PRIMARY KEY, layer TEXT, supersedes INTEGER, metadata TEXT,
+			source_agent TEXT, created_at TEXT
+		);
+		INSERT INTO memories (id, layer, created_at) VALUES (1, 'handoff', '2026-08-18T12:00:00Z');`)
+	empty := openVerdictDatabase(t, `CREATE TABLE layers (name TEXT, alias_of TEXT);`)
+	fallback := openVerdictDatabase(t, `
+		CREATE TABLE layers (name TEXT, alias_of TEXT);
+		INSERT INTO layers (name) VALUES ('handoff');`)
+	unavailable := openVerdictDatabase(t, `CREATE TABLE unrelated (id INTEGER);`)
+
+	cases := []struct {
+		name         string
+		registries   []*sql.DB
+		wantRuntime  string
+		wantPhysical string
+	}{
+		{"empty active registry", []*sql.DB{empty, fallback}, service.HealthFail, service.HealthPass},
+		{"unavailable active registry", []*sql.DB{unavailable, fallback}, service.HealthPass, service.HealthPass},
+		{"no readable registry", []*sql.DB{unavailable}, "skipped", "skipped"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			statuses := map[string]string{}
+			for _, verdict := range service.HealthVerdicts(
+				t.Context(), testCase.registries, []*sql.DB{memory}, nil) {
+				statuses[verdict.Name] = verdict.Status
+			}
+			if statuses["runtime_layers_not_in_registry"] != testCase.wantRuntime {
+				t.Errorf("runtime layer verdict = %q, want %q",
+					statuses["runtime_layers_not_in_registry"], testCase.wantRuntime)
+			}
+			if statuses["physical_alias_layer_rows"] != testCase.wantPhysical {
+				t.Errorf("physical alias verdict = %q, want %q",
+					statuses["physical_alias_layer_rows"], testCase.wantPhysical)
+			}
+		})
+	}
+}
+
+func openVerdictDatabase(t *testing.T, schema string) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "health.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(schema); err != nil {
+		t.Fatal(err)
+	}
+	return db
 }
 
 // A memory pointing at a memory that is not there is the check that has to

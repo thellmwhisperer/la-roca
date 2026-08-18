@@ -30,22 +30,25 @@ import (
 )
 
 const (
-	Kind                    = "roca-support-report"
-	vectorCompletionFile    = "completion.json"
-	FederationFresh         = "fresh"
-	FederationLegacyOnly    = "legacy-only"
-	FederationMigrating     = "migrating"
-	FederationFederated     = "federated"
-	FederationUninitialized = "uninitialized"
-	FederationLegacyServing = "legacy-serving"
-	OriginBundled           = "bundled"
-	OriginExternal          = "external"
-	OriginLocalDirectory    = "local-directory"
-	OriginRemote            = "remote"
-	ManifestOK              = "ok"
-	ManifestMissing         = "missing"
-	ManifestUnreadable      = "unreadable"
-	ManifestInvalid         = "invalid"
+	Kind                      = "roca-support-report"
+	vectorCompletionFile      = "completion.json"
+	FederationFresh           = "fresh"
+	FederationLegacyOnly      = "legacy-only"
+	FederationMigrating       = "migrating"
+	FederationFederated       = "federated"
+	FederationUninitialized   = "uninitialized"
+	FederationLegacyServing   = "legacy-serving"
+	OriginBundled             = "bundled"
+	OriginExternal            = "external"
+	OriginLocalDirectory      = "local-directory"
+	OriginRemote              = "remote"
+	ManifestOK                = "ok"
+	ManifestMissing           = "missing"
+	ManifestUnreadable        = "unreadable"
+	ManifestInvalid           = "invalid"
+	PluginInventoryAbsent     = "absent"
+	PluginInventoryReadable   = "readable"
+	PluginInventoryUnreadable = "unreadable"
 )
 
 var (
@@ -64,15 +67,16 @@ var (
 )
 
 type Snapshot struct {
-	Kind        string                  `json:"kind"`
-	GeneratedAt string                  `json:"generated_at"`
-	Identity    Identity                `json:"identity"`
-	Plugins     []Plugin                `json:"plugins"`
-	Features    map[string]bool         `json:"features"`
-	Federation  Federation              `json:"federation"`
-	Health      []service.HealthVerdict `json:"health"`
-	Vector      *Vector                 `json:"vector,omitempty"`
-	Ingest      Ingest                  `json:"ingest"`
+	Kind            string                  `json:"kind"`
+	GeneratedAt     string                  `json:"generated_at"`
+	Identity        Identity                `json:"identity"`
+	Plugins         []Plugin                `json:"plugins"`
+	PluginInventory string                  `json:"plugin_inventory"`
+	Features        map[string]bool         `json:"features"`
+	Federation      Federation              `json:"federation"`
+	Health          []service.HealthVerdict `json:"health"`
+	Vector          *Vector                 `json:"vector,omitempty"`
+	Ingest          Ingest                  `json:"ingest"`
 }
 
 type Identity struct {
@@ -159,7 +163,7 @@ func Collect(ctx context.Context, opts Options) (Snapshot, error) {
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	plugins := listSupportPlugins(opts.PluginRoot)
+	plugins, pluginInventory := listSupportPlugins(opts.PluginRoot)
 	corpusPath := filepath.Join(opts.PluginRoot, rocacorpus.Name, rocacorpus.DatabaseFilename)
 	opsPath := filepath.Join(opts.PluginRoot, rocaops.Name, rocaops.DatabaseFilename)
 	cronPath := filepath.Join(opts.PluginRoot, rocacron.Name, rocacron.DatabaseFilename)
@@ -211,9 +215,10 @@ func Collect(ctx context.Context, opts Options) (Snapshot, error) {
 			InstallLayout: installLayout(opts.Paths),
 			BinaryShape:   binaryShape(opts.Home, opts.Prefix),
 		},
-		Plugins:    plugins,
-		Features:   featureFlags(opts.File.Features),
-		Federation: federation,
+		Plugins:         plugins,
+		PluginInventory: pluginInventory,
+		Features:        featureFlags(opts.File.Features),
+		Federation:      federation,
 		Health: service.HealthVerdicts(ctx, []*sql.DB{ops, core},
 			[]*sql.DB{ops, corpus, core}, []*sql.DB{core, corpus}),
 		Vector: collectVector(ctx, opts.PluginRoot),
@@ -224,13 +229,16 @@ func Collect(ctx context.Context, opts Options) (Snapshot, error) {
 	}, nil
 }
 
-func listSupportPlugins(root string) []Plugin {
+func listSupportPlugins(root string) ([]Plugin, string) {
 	if root == "" {
-		return nil
+		return []Plugin{}, PluginInventoryAbsent
 	}
 	entries, err := os.ReadDir(root)
 	if err != nil {
-		return nil
+		if errors.Is(err, os.ErrNotExist) {
+			return []Plugin{}, PluginInventoryAbsent
+		}
+		return []Plugin{}, PluginInventoryUnreadable
 	}
 	var listed []Plugin
 	for _, entry := range entries {
@@ -258,9 +266,9 @@ func listSupportPlugins(root string) []Plugin {
 		return strings.Compare(a.Name, b.Name)
 	})
 	if listed == nil {
-		return []Plugin{}
+		return []Plugin{}, PluginInventoryReadable
 	}
-	return listed
+	return listed, PluginInventoryReadable
 }
 
 func manifestFailureStatus(directory string, readErr error) string {
@@ -285,6 +293,12 @@ func PluginOrigin(source string) (string, string) {
 	if parseErr == nil && strings.EqualFold(parsed.Scheme, "file") {
 		return OriginExternal, OriginLocalDirectory
 	}
+	if strings.HasPrefix(source, "git@") {
+		if host := scpRemoteHost(source); host != "" {
+			return OriginExternal, host
+		}
+		return OriginExternal, OriginRemote
+	}
 	if looksLikeFilesystemPath(source) {
 		return OriginExternal, OriginLocalDirectory
 	}
@@ -299,6 +313,19 @@ func PluginOrigin(source string) (string, string) {
 		return OriginExternal, OriginRemote
 	}
 	return OriginExternal, OriginRemote
+}
+
+func scpRemoteHost(source string) string {
+	rest := strings.TrimPrefix(source, "git@")
+	separator := strings.IndexByte(rest, ':')
+	if separator <= 0 || separator == len(rest)-1 {
+		return ""
+	}
+	host := rest[:separator]
+	if strings.ContainsAny(host, `/\@`) {
+		return ""
+	}
+	return strings.ToLower(host)
 }
 
 func looksLikeFilesystemPath(source string) bool {
@@ -635,16 +662,18 @@ func lastIngestAt(ctx context.Context, dbs ...*sql.DB) string {
 func Render(snapshot Snapshot) string {
 	var b strings.Builder
 	b.WriteString("```text\n")
-	fmt.Fprintf(&b, "roca support report  %s\n", snapshot.GeneratedAt)
+	fmt.Fprintf(&b, "roca support report  %s\n", renderField(snapshot.GeneratedAt))
 	b.WriteString("\nIDENTITY\n")
-	fmt.Fprintf(&b, "version: %s\n", snapshot.Identity.Version)
-	fmt.Fprintf(&b, "commit: %s\n", snapshot.Identity.Commit)
-	fmt.Fprintf(&b, "os/arch: %s/%s\n", snapshot.Identity.OS, snapshot.Identity.Arch)
-	fmt.Fprintf(&b, "install_layout: %s\n", snapshot.Identity.InstallLayout)
-	fmt.Fprintf(&b, "binary_shape: %s\n", snapshot.Identity.BinaryShape)
+	fmt.Fprintf(&b, "version: %s\n", renderField(snapshot.Identity.Version))
+	fmt.Fprintf(&b, "commit: %s\n", renderField(snapshot.Identity.Commit))
+	fmt.Fprintf(&b, "os/arch: %s/%s\n", renderField(snapshot.Identity.OS), renderField(snapshot.Identity.Arch))
+	fmt.Fprintf(&b, "install_layout: %s\n", renderField(snapshot.Identity.InstallLayout))
+	fmt.Fprintf(&b, "binary_shape: %s\n", renderField(snapshot.Identity.BinaryShape))
 
 	b.WriteString("\nPLUGINS\n")
-	if len(snapshot.Plugins) == 0 {
+	if snapshot.PluginInventory == PluginInventoryUnreadable {
+		b.WriteString("inventory: unreadable\n")
+	} else if len(snapshot.Plugins) == 0 {
 		b.WriteString("none\n")
 	}
 	for _, item := range snapshot.Plugins {
@@ -663,17 +692,17 @@ func Render(snapshot Snapshot) string {
 
 	b.WriteString("\nFEATURE FLAGS\n")
 	for _, name := range featureFlagOrder {
-		fmt.Fprintf(&b, "%s: %s\n", name, onOff(snapshot.Features[name]))
+		fmt.Fprintf(&b, "%s: %s\n", renderField(name), renderField(onOff(snapshot.Features[name])))
 	}
 
 	b.WriteString("\nFEDERATION\n")
-	fmt.Fprintf(&b, "mode: %s\n", snapshot.Federation.Mode)
-	fmt.Fprintf(&b, "serving: %s\n", snapshot.Federation.Serving)
-	fmt.Fprintf(&b, "corpus_custody: %s\n", snapshot.Federation.CorpusCustody)
+	fmt.Fprintf(&b, "mode: %s\n", renderField(snapshot.Federation.Mode))
+	fmt.Fprintf(&b, "serving: %s\n", renderField(snapshot.Federation.Serving))
+	fmt.Fprintf(&b, "corpus_custody: %s\n", renderField(snapshot.Federation.CorpusCustody))
 	fmt.Fprintf(&b, "cutover_eligible: %t\n", snapshot.Federation.CutoverEligible)
 	b.WriteString("stores:\n")
 	for _, store := range snapshot.Federation.Stores {
-		fmt.Fprintf(&b, "  %s: %s", store.Name, storeStatus(store))
+		fmt.Fprintf(&b, "  %s: %s", renderField(store.Name), renderField(storeStatus(store)))
 		if len(store.Families) > 0 {
 			b.WriteString("  ")
 			b.WriteString(renderFamilyCounts(store.Families))
@@ -685,8 +714,8 @@ func Render(snapshot Snapshot) string {
 	} else {
 		b.WriteString("migrations:\n")
 		for _, migration := range snapshot.Federation.Migrations {
-			fmt.Fprintf(&b, "  %s %s: %s eligible=%t\n", migration.Plugin, migration.Name,
-				migration.State, migration.CutoverEligible)
+			fmt.Fprintf(&b, "  %s %s: %s eligible=%t\n", renderField(migration.Plugin),
+				renderField(migration.Name), renderField(migration.State), migration.CutoverEligible)
 		}
 	}
 
@@ -703,7 +732,7 @@ func Render(snapshot Snapshot) string {
 		default:
 			skipped++
 		}
-		fmt.Fprintf(&b, "%s: %s\n", check.Name, check.Status)
+		fmt.Fprintf(&b, "%s: %s\n", renderField(check.Name), renderField(check.Status))
 	}
 	fmt.Fprintf(&b, "summary: pass=%d warn=%d fail=%d skipped=%d\n", pass, warn, fail, skipped)
 
@@ -711,7 +740,7 @@ func Render(snapshot Snapshot) string {
 	if snapshot.Vector == nil {
 		b.WriteString("absent\n")
 	} else {
-		fmt.Fprintf(&b, "model: %s\n", snapshot.Vector.Model)
+		fmt.Fprintf(&b, "model: %s\n", renderField(snapshot.Vector.Model))
 		fmt.Fprintf(&b, "dimensions: %d\n", snapshot.Vector.Dimensions)
 		fmt.Fprintf(&b, "store_bytes: %d\n", snapshot.Vector.StoreBytes)
 		fmt.Fprintf(&b, "chunks: %s\n", renderFamilyCounts(snapshot.Vector.Chunks))
@@ -720,7 +749,7 @@ func Render(snapshot Snapshot) string {
 			fmt.Fprintf(&b, "last_delta: exit=%d added=%d updated=%d removed=%d unchanged=%d chunks=%d",
 				delta.ExitStatus, delta.Added, delta.Updated, delta.Removed, delta.Unchanged, delta.Chunks)
 			if delta.FinishedAt != "" {
-				fmt.Fprintf(&b, " finished=%s", delta.FinishedAt)
+				fmt.Fprintf(&b, " finished=%s", renderField(delta.FinishedAt))
 			}
 			b.WriteByte('\n')
 		}
@@ -730,12 +759,12 @@ func Render(snapshot Snapshot) string {
 	if len(snapshot.Ingest.DetectedAgents) == 0 {
 		b.WriteString("detected_agents: none\n")
 	} else {
-		fmt.Fprintf(&b, "detected_agents: %s\n", strings.Join(snapshot.Ingest.DetectedAgents, ","))
+		fmt.Fprintf(&b, "detected_agents: %s\n", renderJoined(snapshot.Ingest.DetectedAgents, ","))
 	}
 	if snapshot.Ingest.LastIngestAt == "" {
 		b.WriteString("last_ingest_at: none\n")
 	} else {
-		fmt.Fprintf(&b, "last_ingest_at: %s\n", snapshot.Ingest.LastIngestAt)
+		fmt.Fprintf(&b, "last_ingest_at: %s\n", renderField(snapshot.Ingest.LastIngestAt))
 	}
 	b.WriteString("```")
 	return b.String()
@@ -744,6 +773,14 @@ func Render(snapshot Snapshot) string {
 func renderField(value string) string {
 	quoted := strconv.QuoteToASCII(value)
 	return strings.ReplaceAll(quoted[1:len(quoted)-1], "`", `\u0060`)
+}
+
+func renderJoined(values []string, separator string) string {
+	rendered := make([]string, len(values))
+	for index, value := range values {
+		rendered[index] = renderField(value)
+	}
+	return strings.Join(rendered, separator)
 }
 
 func onOff(on bool) string {
@@ -778,7 +815,7 @@ func renderFamilyCounts(counts map[string]int) string {
 	slices.Sort(names)
 	parts := make([]string, 0, len(names))
 	for _, name := range names {
-		parts = append(parts, fmt.Sprintf("%s=%d", name, counts[name]))
+		parts = append(parts, fmt.Sprintf("%s=%d", renderField(name), counts[name]))
 	}
 	return strings.Join(parts, " ")
 }

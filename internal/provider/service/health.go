@@ -214,9 +214,13 @@ func (s *Service) Health(ctx context.Context, req HealthRequest) (HealthReport, 
 // statuses. A check is run against every applicable store and keeps the worst
 // concrete verdict. Missing handles and tables are skipped.
 func HealthVerdicts(ctx context.Context, registries, memories, others []*sql.DB) []HealthVerdict {
-	registered := firstLayers(ctx, registries)
+	registered, registryAvailable := firstReadableLayers(ctx, registries)
 	verdicts := make([]HealthVerdict, 0, len(healthChecks)+1)
 	for _, check := range healthChecks {
+		if check.registryOwned && !registryAvailable {
+			verdicts = append(verdicts, HealthVerdict{Name: check.name, Status: healthSkipped})
+			continue
+		}
 		readers := others
 		if check.memoryOwned {
 			readers = memories
@@ -251,14 +255,14 @@ func HealthVerdicts(ctx context.Context, registries, memories, others []*sql.DB)
 	return append(verdicts, HealthVerdict{Name: "memory_created_at_formats", Status: status})
 }
 
-func firstLayers(ctx context.Context, readers []*sql.DB) []registeredLayer {
+func firstReadableLayers(ctx context.Context, readers []*sql.DB) ([]registeredLayer, bool) {
 	for _, reader := range readers {
-		registered := layersFrom(ctx, reader)
-		if len(registered) > 0 {
-			return registered
+		registered, available := layersFrom(ctx, reader)
+		if available {
+			return registered, true
 		}
 	}
-	return nil
+	return nil, false
 }
 
 func worstConcrete(current, candidate string) string {
@@ -268,27 +272,27 @@ func worstConcrete(current, candidate string) string {
 	return worst(current, candidate)
 }
 
-func layersFrom(ctx context.Context, db *sql.DB) []registeredLayer {
+func layersFrom(ctx context.Context, db *sql.DB) ([]registeredLayer, bool) {
 	if db == nil {
-		return nil
+		return nil, false
 	}
 	rows, err := db.QueryContext(ctx, `SELECT name, COALESCE(alias_of, '') FROM layers ORDER BY name`)
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	defer rows.Close()
 	var registered []registeredLayer
 	for rows.Next() {
 		var layer registeredLayer
 		if rows.Scan(&layer.name, &layer.aliasOf) != nil {
-			return nil
+			return nil, false
 		}
 		registered = append(registered, layer)
 	}
 	if rows.Err() != nil {
-		return nil
+		return nil, false
 	}
-	return registered
+	return registered, true
 }
 
 func healthQuery(check healthCheck, registered []registeredLayer) (string, []any) {
