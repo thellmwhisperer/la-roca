@@ -330,6 +330,281 @@ func TestOpenCodeBackfillSplitsLegacyPairsWithoutDuplicates(t *testing.T) {
 	}
 }
 
+func TestOpenCodeTelegramBotLogExtraction(t *testing.T) {
+	for _, test := range []struct {
+		name, file, line, session, date string
+		count                           int
+	}{
+		{
+			name: "created session with inline timestamp",
+			file: "bot-2026-08-17.log",
+			line: "[2026-08-18T00:12:34.567Z] [Bot] Created new session via /new command: " +
+				"id=ses_synthetic_created, title=Invented",
+			session: "ses_synthetic_created", date: "2026-08-18T00:12:34.567Z", count: 1,
+		},
+		{
+			name: "repeated use falls back to file date",
+			file: "bot-2026-08-19.log",
+			line: "[Bot] Using existing session: id=ses_synthetic_existing " +
+				"id=ses_synthetic_existing",
+			session: "ses_synthetic_existing", date: "2026-08-19", count: 2,
+		},
+		{
+			name:    "non OpenCode id is ignored",
+			file:    "bot-2026-08-20.log",
+			line:    "[Bot] Using existing session: id=thread_synthetic",
+			session: "thread_synthetic", count: 0,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), test.file)
+			if err := os.WriteFile(path, []byte(test.line+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			evidence, warnings := readOpenCodeTelegramEvidence([]string{path})
+			if len(warnings) != 0 {
+				t.Fatalf("warnings = %v", warnings)
+			}
+			entries := evidence[test.session]
+			if len(entries) != test.count {
+				t.Fatalf("evidence = %+v, want %d entries", entries, test.count)
+			}
+			for _, raw := range entries {
+				entry := raw.(map[string]any)
+				if entry["log_file"] != path || entry["line_date"] != test.date {
+					t.Errorf("provenance = %+v", entry)
+				}
+			}
+		})
+	}
+}
+
+func TestOpenCodeTelegramBotEnrichmentIsDurableAndIdempotent(t *testing.T) {
+	path := syntheticOpenCodeContent(t)
+	source := openSynthetic(t, path)
+	for _, table := range []string{"session", "message", "part", "todo"} {
+		column := "session_id"
+		if table == "session" {
+			column = "id"
+		}
+		exec(t, source, "UPDATE "+table+" SET "+column+" = ? WHERE "+column+" = ?",
+			"ses_synthetic_telegram", "synthetic-opencode-session")
+	}
+	if err := source.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	logRoot := filepath.Join(t.TempDir(), "bot-logs")
+	if err := os.MkdirAll(logRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(logRoot, "bot-2026-08-18.log")
+	log := "[2026-08-18T00:30:00Z] [Bot] Created new session via /new command: " +
+		"id=ses_synthetic_telegram, title=Synthetic route\n" +
+		"[2026-08-18T00:31:00Z] [Bot] Unknown session: id=ses_synthetic_absent\n"
+	if err := os.WriteFile(logPath, []byte(log), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	db := rocaDatabase(t)
+	options := Options{Roots: Roots{
+		OpenCodeDB: path, OpenCodeTelegramLogs: logRoot,
+	}}
+	first, err := Run(context.Background(), db, registry(t), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Errors != 0 {
+		t.Fatalf("first run errors = %+v", first.ErrorDetails)
+	}
+	assertTelegram := func(stage string) {
+		t.Helper()
+		var channel, sourceSurface string
+		err := db.SQL().QueryRow(`
+			SELECT json_extract(metadata, '$.channel'), source_surface
+			FROM sessions
+			WHERE session_id = 'opencode:ses_synthetic_telegram'`).Scan(&channel, &sourceSurface)
+		if err != nil {
+			t.Fatalf("%s enrichment: %v", stage, err)
+		}
+		if channel != "telegram" || sourceSurface != "OpenCode" {
+			t.Errorf("%s enrichment = %q/%q", stage, channel, sourceSurface)
+		}
+	}
+	assertTelegram("first run")
+	assertTelegramEvidence(t, db.SQL(), logPath, "2026-08-18T00:30:00Z")
+	var unmatched int
+	if err := db.SQL().QueryRow(`SELECT COUNT(*) FROM sessions
+		WHERE session_id = 'opencode:ses_synthetic_absent'`).Scan(&unmatched); err != nil {
+		t.Fatal(err)
+	}
+	if unmatched != 0 {
+		t.Errorf("unmatched Telegram log ids created %d sessions", unmatched)
+	}
+
+	second, err := Run(context.Background(), db, registry(t), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.FilesRead != 0 {
+		t.Errorf("idempotent run read %d files", second.FilesRead)
+	}
+	if second.Delta != (Tables{}) {
+		t.Errorf("idempotent run delta = %+v", second.Delta)
+	}
+
+	appendedLog := "[2026-08-18T02:15:00Z] [Bot] Reusing session: " +
+		"id=ses_synthetic_telegram\n"
+	if err := os.WriteFile(logPath, []byte(log+appendedLog), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	appended, err := Run(context.Background(), db, registry(t), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if appended.FilesRead != 1 {
+		t.Errorf("appended companion entry read %d files, want 1", appended.FilesRead)
+	}
+	assertTelegramEvidenceCount(t, db.SQL(), 2)
+	assertTelegramEvidence(t, db.SQL(), logPath, "2026-08-18T02:15:00Z")
+
+	newLogPath := filepath.Join(logRoot, "bot-2026-08-19.log")
+	newLog := "[2026-08-19T01:45:00Z] [Bot] Using existing session: " +
+		"id=ses_synthetic_telegram\n"
+	if err := os.WriteFile(newLogPath, []byte(newLog), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := Run(context.Background(), db, registry(t), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.FilesRead != 1 {
+		t.Errorf("new companion entry read %d files, want 1", changed.FilesRead)
+	}
+	assertTelegramEvidenceCount(t, db.SQL(), 3)
+	assertTelegramEvidence(t, db.SQL(), newLogPath, "2026-08-19T01:45:00Z")
+
+	if err := os.Remove(logPath); err != nil {
+		t.Fatal(err)
+	}
+	partiallyRotated, err := Run(context.Background(), db, registry(t), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if partiallyRotated.FilesRead != 1 {
+		t.Errorf("partial rotation read %d files, want 1", partiallyRotated.FilesRead)
+	}
+	assertTelegramEvidenceCount(t, db.SQL(), 3)
+
+	if err := os.Remove(newLogPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(logRoot); err != nil {
+		t.Fatal(err)
+	}
+	rotated, err := Run(context.Background(), db, registry(t), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rotated.Errors != 0 {
+		t.Fatalf("rotation errors = %+v", rotated.ErrorDetails)
+	}
+	assertTelegram("after rotation")
+	foundExclusion := false
+	for _, excluded := range rotated.Coverage.Files.Skips {
+		foundExclusion = foundExclusion ||
+			excluded.Reason == "OpenCode Telegram bot logs are absent"
+	}
+	if !foundExclusion {
+		t.Errorf("absent directory coverage = %+v", rotated.Coverage.Files.Skips)
+	}
+	assertTelegramEvidenceCount(t, db.SQL(), 3)
+	t.Log("persisted state after log rotation: session_id=opencode:ses_synthetic_telegram " +
+		"source_surface=OpenCode channel=telegram evidence_count=3 absent_logs_exclusion=true")
+}
+
+func assertTelegramEvidence(t *testing.T, db *sql.DB, path, date string) {
+	t.Helper()
+	var got int
+	err := db.QueryRow(`
+		SELECT COUNT(*)
+		FROM sessions,
+		     json_each(json_extract(metadata,
+		       '$.channel_provenance.opencode_telegram_bot.evidence'))
+		WHERE session_id = 'opencode:ses_synthetic_telegram'
+		  AND json_extract(value, '$.log_file') = ?
+		  AND json_extract(value, '$.line_date') = ?`, path, date).Scan(&got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 1 {
+		t.Errorf("Telegram evidence %q/%q count = %d, want 1", path, date, got)
+	}
+}
+
+func assertTelegramEvidenceCount(t *testing.T, db *sql.DB, want int) {
+	t.Helper()
+	var got int
+	err := db.QueryRow(`
+		SELECT COUNT(*)
+		FROM sessions,
+		     json_each(json_extract(metadata,
+		       '$.channel_provenance.opencode_telegram_bot.evidence'))
+		WHERE session_id = 'opencode:ses_synthetic_telegram'`).Scan(&got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("Telegram evidence count = %d, want %d", got, want)
+	}
+}
+
+func TestOpenCodeTelegramBotAbsentLogsAreNamedCoverageExclusion(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		setup func(*testing.T) string
+	}{
+		{
+			name: "missing directory",
+			setup: func(t *testing.T) string {
+				return filepath.Join(t.TempDir(), "missing-bot-logs")
+			},
+		},
+		{
+			name: "directory has no matching logs",
+			setup: func(t *testing.T) string {
+				root := t.TempDir()
+				if err := os.WriteFile(filepath.Join(root, "service.log"),
+					[]byte("synthetic non-bot log\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				return root
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), "opencode.db")
+			if err := os.WriteFile(dbPath, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			plan := Scan(Roots{
+				OpenCodeDB: dbPath, OpenCodeTelegramLogs: test.setup(t),
+			})
+			if plan.Scanned["opencode_telegram_bot_logs"] != 0 {
+				t.Errorf("scanned logs = %d", plan.Scanned["opencode_telegram_bot_logs"])
+			}
+			found := false
+			for _, excluded := range plan.Excluded {
+				found = found || excluded.ExclusionReason ==
+					"OpenCode Telegram bot logs are absent"
+			}
+			if !found {
+				t.Errorf("coverage exclusions = %+v", plan.Excluded)
+			}
+		})
+	}
+}
+
 func TestOpenCodeRealHarvest(t *testing.T) {
 	if os.Getenv("ROCA_REAL_HARVEST") != "1" {
 		t.Skip("set ROCA_REAL_HARVEST=1 to read the present OpenCode store")

@@ -32,18 +32,19 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 	// Every source of the matrix is scanned, and every family
 	// wrote something. A family missing from here is a family that has been lost.
 	for key, want := range map[string]int{
-		"claude_memory_files":     2, // one project file plus its coverage-only MEMORY.md manifest
-		"codex_files":             3, // one memory, one rule and one refused skill; not default.rules
-		"session_files":           1,
-		"codex_session_files":     1,
-		"claude_desktop_files":    1,
-		"cowork_files":            2, // the metadata and the audit transcript it pairs with
-		"subagent_files":          1,
-		"pi_session_files":        1,
-		"grok_session_files":      2, // the metadata snapshot and the update stream it pairs with
-		"opencode_databases":      1,
-		"hermes_databases":        1,
-		"claude_web_export_files": 2,
+		"claude_memory_files":        2, // one project file plus its coverage-only MEMORY.md manifest
+		"codex_files":                3, // one memory, one rule and one refused skill; not default.rules
+		"session_files":              1,
+		"codex_session_files":        1,
+		"claude_desktop_files":       1,
+		"cowork_files":               2, // the metadata and the audit transcript it pairs with
+		"subagent_files":             1,
+		"pi_session_files":           1,
+		"grok_session_files":         2, // the metadata snapshot and the update stream it pairs with
+		"opencode_databases":         1,
+		"opencode_telegram_bot_logs": 0,
+		"hermes_databases":           1,
+		"claude_web_export_files":    2,
 	} {
 		if got := result.Scanned[key]; got != want {
 			t.Errorf("scanned[%s] = %d, want %d", key, got, want)
@@ -84,8 +85,8 @@ func TestTheWholeMatrixIsIngested(t *testing.T) {
 	// one: the report keeps the two apart so a healthy run reads as healthy. The
 	// Grok runtime records (the system prompt and the compaction history injected
 	// as a synthetic user turn) are the same kind of deliberate exclusion.
-	if result.FilesExcluded != 2 || result.RecordsExcluded != 4 || result.RecordsDiscarded != 0 {
-		t.Errorf("excluded files/records and discards = %d/%d/%d, want 2/4/0: %+v",
+	if result.FilesExcluded != 3 || result.RecordsExcluded != 5 || result.RecordsDiscarded != 0 {
+		t.Errorf("excluded files/records and discards = %d/%d/%d, want 3/5/0: %+v",
 			result.FilesExcluded, result.RecordsExcluded, result.RecordsDiscarded, result.DiscardSummary)
 	}
 	if got := countRows(t, db.SQL(), "memories WHERE source_agent = 'config'"); got != 0 {
