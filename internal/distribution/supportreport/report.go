@@ -33,6 +33,7 @@ const (
 	Kind                      = "roca-support-report"
 	vectorCompletionFile      = "completion.json"
 	supportObserverTimeout    = 500 * time.Millisecond
+	supportCollectionTimeout  = 2 * time.Second
 	supportBusyTimeout        = 250 * time.Millisecond
 	FederationFresh           = "fresh"
 	FederationLegacyOnly      = "legacy-only"
@@ -40,6 +41,9 @@ const (
 	FederationFederated       = "federated"
 	FederationUninitialized   = "uninitialized"
 	FederationLegacyServing   = "legacy-serving"
+	FederationUnknown         = "unknown"
+	ObservationComplete       = "complete"
+	ObservationUnreadable     = "unreadable"
 	OriginBundled             = "bundled"
 	OriginExternal            = "external"
 	OriginLocalDirectory      = "local-directory"
@@ -101,12 +105,13 @@ type Plugin struct {
 }
 
 type Federation struct {
-	Mode            string      `json:"mode"`
-	Serving         string      `json:"serving"`
-	CorpusCustody   string      `json:"corpus_custody"`
-	CutoverEligible bool        `json:"cutover_eligible"`
-	Stores          []Store     `json:"stores"`
-	Migrations      []Migration `json:"migrations"`
+	Mode             string      `json:"mode"`
+	Serving          string      `json:"serving"`
+	CorpusCustody    string      `json:"corpus_custody"`
+	CutoverEligible  *bool       `json:"cutover_eligible"`
+	Stores           []Store     `json:"stores"`
+	Migrations       []Migration `json:"migrations"`
+	MigrationsStatus string      `json:"migrations_status"`
 }
 
 type Store struct {
@@ -124,6 +129,7 @@ type Migration struct {
 }
 
 type Vector struct {
+	Status     string         `json:"status"`
 	Model      string         `json:"model"`
 	Dimensions int            `json:"dimensions"`
 	Chunks     map[string]int `json:"chunks"`
@@ -170,11 +176,18 @@ func Collect(ctx context.Context, opts Options) (Snapshot, error) {
 	opsPath := filepath.Join(opts.PluginRoot, rocaops.Name, rocaops.DatabaseFilename)
 	cronPath := filepath.Join(opts.PluginRoot, rocacron.Name, rocacron.DatabaseFilename)
 	eligibilityCtx, cancelEligibility := context.WithTimeout(ctx, supportObserverTimeout)
-	cutoverEligible, _ := datasplit.HubCutoverEligible(eligibilityCtx, datasplit.HubOptions{
+	cutoverReady, eligibilityErr := datasplit.HubCutoverEligible(eligibilityCtx, datasplit.HubOptions{
 		CoreDatabase: opts.Paths.DB, CorpusDatabase: corpusPath,
 		OpsDatabase: opsPath, CronDatabase: cronPath,
 	}, supportBusyTimeout)
+	eligibilityTimedOut := eligibilityErr != nil && observationTimedOut(eligibilityCtx, eligibilityErr)
 	cancelEligibility()
+	var cutoverEligible *bool
+	if eligibilityErr == nil {
+		cutoverEligible = boolValue(cutoverReady)
+	} else if !eligibilityTimedOut {
+		cutoverEligible = boolValue(false)
+	}
 	coreStore, coreClose := openSupportStore(ctx, opts.Paths.DB)
 	defer coreClose()
 	corpusStore, corpusClose := openSupportStore(ctx, corpusPath)
@@ -185,28 +198,52 @@ func Collect(ctx context.Context, opts Options) (Snapshot, error) {
 	defer cronClose()
 	core, corpus, ops, cron := coreStore.db, corpusStore.db, opsStore.db, cronStore.db
 
-	coreFamilies := countFamilies(ctx, core, corpusFamilies)
-	corpusFamiliesCounts := countFamilies(ctx, corpus, append(slices.Clone(corpusFamilies), archiveFamilies...))
-	opsFamiliesCounts := countFamilies(ctx, ops, opsFamilies)
+	observationCtx, cancelObservation := context.WithTimeout(ctx, supportCollectionTimeout)
+	defer cancelObservation()
+	coreFamilies, coreComplete := countFamilies(observationCtx, core, corpusFamilies)
+	corpusFamiliesCounts, corpusComplete := countFamilies(
+		observationCtx, corpus, append(slices.Clone(corpusFamilies), archiveFamilies...))
+	opsFamiliesCounts, opsComplete := countFamilies(observationCtx, ops, opsFamilies)
+	if !coreComplete {
+		core = nil
+	}
+	if !corpusComplete {
+		corpus = nil
+	}
+	if !opsComplete {
+		ops = nil
+	}
 	stores := []Store{
 		{Name: "core", Present: coreStore.present, Readable: core != nil, Families: coreFamilies},
 		{Name: "plugin-corpus", Present: corpusStore.present, Readable: corpus != nil, Families: corpusFamiliesCounts},
 		{Name: "plugin-ops", Present: opsStore.present, Readable: ops != nil, Families: opsFamiliesCounts},
 		{Name: "plugin-cron", Present: cronStore.present, Readable: cron != nil},
 	}
-	migrations := collectSupportMigrations(ctx, "roca-corpus", corpus, "roca-ops", ops, "roca-cron", cron)
-	if !storesReadable(stores, "core", "plugin-corpus", "plugin-ops", "plugin-cron") {
-		cutoverEligible = false
+	migrations, migrationsComplete := collectSupportMigrations(
+		observationCtx, "roca-corpus", corpus, "roca-ops", ops, "roca-cron", cron)
+	migrationsComplete = migrationsComplete && observationAvailable(corpusStore, corpus) &&
+		observationAvailable(opsStore, ops) && observationAvailable(cronStore, cron)
+	if cutoverEligible == nil && requiredStoreUnavailable(coreStore, corpusStore, opsStore, cronStore) {
+		cutoverEligible = boolValue(false)
 	}
 	serving := string(opts.File.Layout.Serving)
 	if serving == "" {
 		serving = string(config.LayoutLegacyServing)
 	}
 	mode, custody := classifyFederation(
-		serving, stores, coreFamilies, corpusFamiliesCounts, migrations, cutoverEligible)
+		serving, stores, coreFamilies, corpusFamiliesCounts, migrations, cutoverEligible,
+		coreComplete && corpusComplete && opsComplete && migrationsComplete)
+	migrationsStatus := ObservationComplete
+	if !migrationsComplete {
+		migrationsStatus = ObservationUnreadable
+	}
 	federation := Federation{
 		Mode: mode, Serving: serving, CorpusCustody: custody, CutoverEligible: cutoverEligible,
-		Stores: stores, Migrations: migrations,
+		Stores: stores, Migrations: migrations, MigrationsStatus: migrationsStatus,
+	}
+	lastIngest := ObservationUnreadable
+	if observationAvailable(corpusStore, corpus) && observationAvailable(coreStore, core) {
+		lastIngest = lastIngestAt(observationCtx, corpus, core)
 	}
 	return Snapshot{
 		Kind:        Kind,
@@ -223,14 +260,31 @@ func Collect(ctx context.Context, opts Options) (Snapshot, error) {
 		PluginInventory: pluginInventory,
 		Features:        featureFlags(opts.File.Features),
 		Federation:      federation,
-		Health: service.HealthVerdicts(ctx, []*sql.DB{ops, core},
+		Health: service.HealthVerdicts(observationCtx, []*sql.DB{ops, core},
 			[]*sql.DB{ops, corpus, core}, []*sql.DB{core, corpus}),
-		Vector: collectVector(ctx, opts.PluginRoot),
+		Vector: collectVector(observationCtx, opts.PluginRoot),
 		Ingest: Ingest{
 			DetectedAgents: orEmptyStrings(ingest.DetectAgents(opts.Sources)),
-			LastIngestAt:   lastIngestAt(ctx, corpus, core),
+			LastIngestAt:   lastIngest,
 		},
 	}, nil
+}
+
+func boolValue(value bool) *bool {
+	return &value
+}
+
+func requiredStoreUnavailable(observed ...supportStore) bool {
+	for _, store := range observed {
+		if store.db == nil && !store.timedOut {
+			return true
+		}
+	}
+	return false
+}
+
+func observationAvailable(store supportStore, db *sql.DB) bool {
+	return !store.present || db != nil
 }
 
 func listSupportPlugins(root string) ([]Plugin, string) {
@@ -407,8 +461,9 @@ func sameFilepath(a, b string) bool {
 }
 
 type supportStore struct {
-	present bool
-	db      *sql.DB
+	present  bool
+	timedOut bool
+	db       *sql.DB
 }
 
 func openSupportStore(ctx context.Context, path string) (supportStore, func()) {
@@ -432,10 +487,19 @@ func openSupportStore(ctx context.Context, path string) (supportStore, func()) {
 	var schemaVersion int
 	if err := db.QueryRowContext(observerCtx, "PRAGMA schema_version").Scan(&schemaVersion); err != nil {
 		db.Close()
+		store.timedOut = observationTimedOut(observerCtx, err)
 		return store, func() {}
 	}
 	store.db = db
 	return store, func() { _ = db.Close() }
+}
+
+func observationTimedOut(ctx context.Context, err error) bool {
+	if ctx.Err() != nil {
+		return true
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "sqlite_busy") || strings.Contains(message, "database is locked")
 }
 
 func openSupportDB(ctx context.Context, path string) (*sql.DB, func()) {
@@ -443,38 +507,43 @@ func openSupportDB(ctx context.Context, path string) (*sql.DB, func()) {
 	return store.db, closeStore
 }
 
-func countFamilies(ctx context.Context, db *sql.DB, families []string) map[string]int {
+func countFamilies(ctx context.Context, db *sql.DB, families []string) (map[string]int, bool) {
 	if db == nil {
-		return nil
+		return nil, true
 	}
 	counts := make(map[string]int, len(families))
 	for _, family := range families {
-		if !supportTablePresent(ctx, db, family) {
+		present, err := supportTableState(ctx, db, family)
+		if err != nil {
+			return nil, false
+		}
+		if !present {
 			continue
 		}
 		var count int
 		if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+family).Scan(&count); err != nil {
-			continue
+			return nil, false
 		}
 		counts[family] = count
 	}
 	if len(counts) == 0 {
-		return nil
+		return nil, true
 	}
-	return counts
+	return counts, true
 }
 
-func supportTablePresent(ctx context.Context, db *sql.DB, name string) bool {
+func supportTableState(ctx context.Context, db *sql.DB, name string) (bool, error) {
 	var exists int
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master
 		WHERE type = 'table' AND name = ?`, name).Scan(&exists); err != nil {
-		return false
+		return false, err
 	}
-	return exists != 0
+	return exists != 0, nil
 }
 
-func collectSupportMigrations(ctx context.Context, pairs ...any) []Migration {
+func collectSupportMigrations(ctx context.Context, pairs ...any) ([]Migration, bool) {
 	var listed []Migration
+	complete := true
 	for i := 0; i+1 < len(pairs); i += 2 {
 		name, _ := pairs[i].(string)
 		db, _ := pairs[i+1].(*sql.DB)
@@ -483,6 +552,7 @@ func collectSupportMigrations(ctx context.Context, pairs ...any) []Migration {
 		}
 		migrations, err := migrationledger.ListMigrations(ctx, db)
 		if err != nil {
+			complete = false
 			continue
 		}
 		for _, migration := range migrations {
@@ -501,12 +571,12 @@ func collectSupportMigrations(ctx context.Context, pairs ...any) []Migration {
 		return strings.Compare(a.Name, b.Name)
 	})
 	if listed == nil {
-		return []Migration{}
+		return []Migration{}, complete
 	}
-	return listed
+	return listed, complete
 }
 
-func corpusCustody(stores []Store, core, corpus map[string]int, cutoverEligible bool) string {
+func corpusCustody(stores []Store, core, corpus map[string]int, activeFederation bool) string {
 	coreStore, corpusStore := storeNamed(stores, "core"), storeNamed(stores, "plugin-corpus")
 	if coreStore.Present && !coreStore.Readable || corpusStore.Present && !corpusStore.Readable {
 		return "unknown"
@@ -514,7 +584,7 @@ func corpusCustody(stores []Store, core, corpus map[string]int, cutoverEligible 
 	coreText := core["sessions"] + core["exchanges"] + core["thinking_blocks"]
 	pluginText := corpus["sessions"] + corpus["exchanges"] + corpus["thinking_blocks"] +
 		corpus["session_versions"] + corpus["exchange_versions"] + corpus["thinking_block_versions"]
-	if cutoverEligible {
+	if activeFederation {
 		if pluginText > 0 {
 			return "plugin-corpus"
 		}
@@ -533,13 +603,14 @@ func corpusCustody(stores []Store, core, corpus map[string]int, cutoverEligible 
 }
 
 func classifyFederation(serving string, stores []Store, core, corpus map[string]int,
-	migrations []Migration, cutoverEligible bool) (string, string) {
+	migrations []Migration, cutoverEligible *bool, observationsComplete bool) (string, string) {
 	coreStore := storeNamed(stores, "core")
 	corpusStore := storeNamed(stores, "plugin-corpus")
 	opsStore := storeNamed(stores, "plugin-ops")
 	cronStore := storeNamed(stores, "plugin-cron")
 	pluginsPresent := corpusStore.Present || opsStore.Present || cronStore.Present
-	activeFederation := serving == string(config.LayoutCutover) && cutoverEligible
+	eligible := cutoverEligible != nil && *cutoverEligible
+	activeFederation := serving == string(config.LayoutCutover) && eligible
 	custody := corpusCustody(stores, core, corpus, activeFederation)
 	if !pluginsPresent {
 		if coreStore.Present {
@@ -547,11 +618,14 @@ func classifyFederation(serving string, stores []Store, core, corpus map[string]
 		}
 		return FederationUninitialized, custody
 	}
-	if serving == string(config.LayoutCutover) && cutoverEligible {
+	if cutoverEligible == nil || !observationsComplete {
+		return FederationUnknown, custody
+	}
+	if serving == string(config.LayoutCutover) && eligible {
 		return FederationFederated, custody
 	}
 	if serving == string(config.LayoutCutover) || serving == string(config.LayoutShadowEqual) ||
-		migrationInFlight(migrations) || len(migrations) > 0 && !cutoverEligible {
+		migrationInFlight(migrations) || len(migrations) > 0 && !eligible {
 		return FederationMigrating, custody
 	}
 	if custody == "empty" {
@@ -599,29 +673,46 @@ func collectVector(ctx context.Context, pluginRoot string) *Vector {
 	if err != nil {
 		return nil
 	}
-	report := &Vector{StoreBytes: info.Size(), Chunks: map[string]int{}}
+	report := &Vector{
+		Status: ObservationUnreadable, StoreBytes: info.Size(), Chunks: map[string]int{},
+		LastDelta: readVectorDelta(filepath.Join(state, vectorCompletionFile)),
+	}
 	db, closer := openSupportDB(ctx, path)
 	defer closer()
-	if db != nil {
-		_ = db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key='model'`).Scan(&report.Model)
-		var dimensionText string
-		if err := db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key='dimensions'`).
-			Scan(&dimensionText); err == nil {
-			report.Dimensions, _ = strconv.Atoi(dimensionText)
-		}
-		if rows, err := db.QueryContext(ctx,
-			`SELECT source_kind, COUNT(*) FROM chunks GROUP BY source_kind ORDER BY source_kind`); err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var kind string
-				var count int
-				if rows.Scan(&kind, &count) == nil {
-					report.Chunks[kind] = count
-				}
-			}
-		}
+	if db == nil {
+		return report
 	}
-	report.LastDelta = readVectorDelta(filepath.Join(state, vectorCompletionFile))
+	if err := db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key='model'`).Scan(&report.Model); err != nil {
+		return report
+	}
+	var dimensionText string
+	if err := db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key='dimensions'`).
+		Scan(&dimensionText); err != nil {
+		return report
+	}
+	dimensions, err := strconv.Atoi(dimensionText)
+	if err != nil {
+		return report
+	}
+	report.Dimensions = dimensions
+	rows, err := db.QueryContext(ctx,
+		`SELECT source_kind, COUNT(*) FROM chunks GROUP BY source_kind ORDER BY source_kind`)
+	if err != nil {
+		return report
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var kind string
+		var count int
+		if err := rows.Scan(&kind, &count); err != nil {
+			return report
+		}
+		report.Chunks[kind] = count
+	}
+	if rows.Err() != nil {
+		return report
+	}
+	report.Status = ObservationComplete
 	return report
 }
 
@@ -662,13 +753,20 @@ func lastIngestAt(ctx context.Context, dbs ...*sql.DB) string {
 	var latest time.Time
 	invalid := false
 	for _, db := range dbs {
-		if db == nil || !supportTablePresent(ctx, db, "ingest_file_state") {
+		if db == nil {
+			continue
+		}
+		present, err := supportTableState(ctx, db, "ingest_file_state")
+		if err != nil {
+			return ObservationUnreadable
+		}
+		if !present {
 			continue
 		}
 		rows, err := db.QueryContext(ctx,
 			`SELECT last_synced_at FROM ingest_file_state WHERE last_synced_at IS NOT NULL`)
 		if err != nil {
-			continue
+			return ObservationUnreadable
 		}
 		for rows.Next() {
 			var value string
@@ -685,7 +783,10 @@ func lastIngestAt(ctx context.Context, dbs ...*sql.DB) string {
 				latest = parsed
 			}
 		}
-		invalid = invalid || rows.Err() != nil
+		if rows.Err() != nil {
+			rows.Close()
+			return ObservationUnreadable
+		}
 		rows.Close()
 	}
 	if invalid {
@@ -745,7 +846,7 @@ func Render(snapshot Snapshot) string {
 	fmt.Fprintf(&b, "mode: %s\n", renderField(snapshot.Federation.Mode))
 	fmt.Fprintf(&b, "serving: %s\n", renderField(snapshot.Federation.Serving))
 	fmt.Fprintf(&b, "corpus_custody: %s\n", renderField(snapshot.Federation.CorpusCustody))
-	fmt.Fprintf(&b, "cutover_eligible: %t\n", snapshot.Federation.CutoverEligible)
+	fmt.Fprintf(&b, "cutover_eligible: %s\n", eligibilityText(snapshot.Federation.CutoverEligible))
 	b.WriteString("stores:\n")
 	for _, store := range snapshot.Federation.Stores {
 		fmt.Fprintf(&b, "  %s: %s", renderField(store.Name), renderField(storeStatus(store)))
@@ -755,7 +856,12 @@ func Render(snapshot Snapshot) string {
 		}
 		b.WriteByte('\n')
 	}
-	if len(snapshot.Federation.Migrations) == 0 {
+	if snapshot.Federation.MigrationsStatus == ObservationUnreadable {
+		b.WriteString("migrations_status: unreadable\n")
+	}
+	if len(snapshot.Federation.Migrations) == 0 && snapshot.Federation.MigrationsStatus == ObservationUnreadable {
+		b.WriteString("migrations: unreadable\n")
+	} else if len(snapshot.Federation.Migrations) == 0 {
 		b.WriteString("migrations: none\n")
 	} else {
 		b.WriteString("migrations:\n")
@@ -786,6 +892,7 @@ func Render(snapshot Snapshot) string {
 	if snapshot.Vector == nil {
 		b.WriteString("absent\n")
 	} else {
+		fmt.Fprintf(&b, "status: %s\n", renderField(snapshot.Vector.Status))
 		fmt.Fprintf(&b, "model: %s\n", renderField(snapshot.Vector.Model))
 		fmt.Fprintf(&b, "dimensions: %d\n", snapshot.Vector.Dimensions)
 		fmt.Fprintf(&b, "store_bytes: %d\n", snapshot.Vector.StoreBytes)
@@ -834,6 +941,13 @@ func onOff(on bool) string {
 		return "on"
 	}
 	return "off"
+}
+
+func eligibilityText(eligible *bool) string {
+	if eligible == nil {
+		return FederationUnknown
+	}
+	return strconv.FormatBool(*eligible)
 }
 
 func storeStatus(store Store) string {

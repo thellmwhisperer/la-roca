@@ -173,7 +173,10 @@ prints one fenced text block with a generation timestamp; `roca doctor --report
 not install plugins, adopt schema, prepare the federation hub, or change
 `layout.serving`; it also writes no JSONL or ops audit record.
 Support-only database observation uses short, context-aware lock waits, so a
-locked store is reported as unreadable instead of delaying the snapshot.
+locked store is reported as unreadable instead of delaying the snapshot. All
+support queries share a bounded observer context; timed-out health checks are
+skipped, while incomplete migration, vector, and ingest observations are
+reported as unreadable rather than as successful empty results.
 
 The block is ordered and bounded so it stays pasteable regardless of corpus
 size:
@@ -193,12 +196,14 @@ size:
    state cannot break the report fence.
 3. **Feature flags** — on/off for every `features.*` switch.
 4. **Federation** — first-class mode (`fresh`, `legacy-only`, `migrating`,
-   `federated`, `uninitialized`, or `legacy-serving`), the `layout.serving`
-   marker, where corpus text actually lives (`legacy-core`, `plugin-corpus`,
+   `federated`, `uninitialized`, `legacy-serving`, or `unknown`), the
+   `layout.serving` marker, where corpus text actually lives (`legacy-core`, `plugin-corpus`,
    `split`, `empty`, or `unknown`), which stores exist and are readable with
    family row counts (including present paths that cannot be followed or
    opened), and named migration states plus the shared DATA-6
-   cutover verdict. That verdict requires readable corpus, ops, and cron stores
+   cutover verdict. The verdict is `true`, `false`, or `unknown` (`null` in
+   JSON): a timeout is always unknown and never evidence of an incomplete migration. A verified
+   verdict requires readable corpus, ops, and cron stores
    together with verified DATA-2, DATA-3, and DATA-4 custody. A fresh init, a
    core-only legacy home, a mid-migration home, and a verified cutover home are
    distinguishable at a glance.

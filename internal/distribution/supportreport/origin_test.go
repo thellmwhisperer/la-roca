@@ -1,6 +1,7 @@
 package supportreport
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"os"
@@ -10,6 +11,10 @@ import (
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacron"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocavector"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	_ "modernc.org/sqlite"
@@ -159,11 +164,26 @@ func TestCollectDoesNotStallOnLockedStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _, _ = connection.ExecContext(t.Context(), `ROLLBACK`) })
+	pluginRoot := filepath.Join(root, "plugins")
+	for _, store := range []struct {
+		name, filename string
+	}{
+		{rocacorpus.Name, rocacorpus.DatabaseFilename},
+		{rocaops.Name, rocaops.DatabaseFilename},
+		{rocacron.Name, rocacron.DatabaseFilename},
+	} {
+		path := filepath.Join(pluginRoot, store.name, store.filename)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		createSupportReportDatabase(t, path)
+	}
 
 	started := time.Now()
 	snapshot, err := Collect(t.Context(), Options{
 		Paths:      config.Paths{DB: databasePath},
-		PluginRoot: filepath.Join(root, "plugins"),
+		PluginRoot: pluginRoot,
+		File:       config.File{Layout: config.LayoutConfig{Serving: config.LayoutCutover}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -174,6 +194,56 @@ func TestCollectDoesNotStallOnLockedStore(t *testing.T) {
 	core := storeNamed(snapshot.Federation.Stores, "core")
 	if !core.Present || core.Readable {
 		t.Fatalf("locked core store = %+v", core)
+	}
+	if snapshot.Federation.CutoverEligible != nil || snapshot.Federation.Mode != FederationUnknown {
+		t.Fatalf("locked eligibility = %v, mode = %q", snapshot.Federation.CutoverEligible,
+			snapshot.Federation.Mode)
+	}
+	if rendered := Render(snapshot); !strings.Contains(rendered, "cutover_eligible: unknown") {
+		t.Fatalf("locked report omitted unknown eligibility:\n%s", rendered)
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"cutover_eligible":null`) {
+		t.Fatalf("locked JSON eligibility was not null: %s", raw)
+	}
+	if snapshot.Ingest.LastIngestAt != ObservationUnreadable {
+		t.Fatalf("locked ingest observation = %q", snapshot.Ingest.LastIngestAt)
+	}
+}
+
+func TestObserverDeadlineReportsIncompleteSections(t *testing.T) {
+	db := openSupportReportDatabase(t)
+	if _, err := db.Exec(`CREATE TABLE ingest_file_state (last_synced_at TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+	cancel()
+	if _, complete := countFamilies(ctx, db, []string{"ingest_file_state"}); complete {
+		t.Fatal("family observation reported a canceled scan as complete")
+	}
+	if _, complete := collectSupportMigrations(ctx, "synthetic", db); complete {
+		t.Fatal("migration observation reported a canceled scan as complete")
+	}
+	if got := lastIngestAt(ctx, db); got != ObservationUnreadable {
+		t.Fatalf("canceled ingest observation = %q", got)
+	}
+	for _, verdict := range service.HealthVerdicts(ctx, []*sql.DB{db}, []*sql.DB{db}, []*sql.DB{db}) {
+		if verdict.Status != "skipped" {
+			t.Fatalf("canceled health verdict = %+v", verdict)
+		}
+	}
+	pluginRoot := t.TempDir()
+	vectorPath := filepath.Join(pluginRoot, rocavector.Name, rocavector.StateDir, "vector.db")
+	if err := os.MkdirAll(filepath.Dir(vectorPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	createSupportReportDatabase(t, vectorPath)
+	vector := collectVector(ctx, pluginRoot)
+	if vector == nil || vector.Status != ObservationUnreadable {
+		t.Fatalf("canceled vector observation = %+v", vector)
 	}
 }
 
@@ -215,6 +285,21 @@ func openSupportReportDatabase(t *testing.T) *sql.DB {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	return db
+}
+
+func createSupportReportDatabase(t *testing.T, path string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`PRAGMA user_version = 1`); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestRenderEscapesDynamicText(t *testing.T) {
