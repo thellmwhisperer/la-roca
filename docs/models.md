@@ -277,6 +277,12 @@ La Roca stores no model-provider secrets. Additional providers must be local
 command transports declared explicitly; remote HTTP providers are not part of
 the runtime catalog.
 
+SQL generation has no token budget. Ollama leaves its optional `num_predict`
+field unset for normal inference and sends it only for the one-token readiness
+probe. The shipped Codex and Claude commands pass no generation-length flag.
+The command adapter retains a 1 MiB stdout containment bound for runaway
+subprocesses; crossing it is an error, while accepted stdout is never clipped.
+
 ### Local-binary transport
 
 A provider table can declare a local command. The command is an argv template,
@@ -460,8 +466,8 @@ shown with its own yes or no first.
    asked `Ready` in order and the first yes serves. The ones behind it are not
    asked anything.
 4. The model generates SQL, a repair step forgives known model-output mistakes,
-   and the result **always** passes the two-halved gate. A model is not above
-   the gate.
+   and the result **always** passes the SQLite-backed read-only gate. A model is
+   not above the gate.
 5. A model that answers `REFUSE` because the question is outside this database
    is taken at its word: the route is `refused`, the answer says so, and no
    keyword rescue answers over it. A refusal is a result, not a failure.
@@ -513,22 +519,31 @@ that writes badly cannot be told from a rescue that fired for another reason.
 What the model wrote is repaired before the gate reads it, and only in ways
 that are deterministic and named: a `<think>` block goes (`thinking_block`), a
 single `sql` or bare Markdown fence is unwrapped (`code_fence`), prose before or
-after the one `SELECT` is dropped (`surrounding_prose`), a repetition loop is
-cut (`repetition_loop`), trailing semicolons are removed
-(`trailing_semicolon`), and a top-level `UNION ALL` branch `ORDER BY`, with its
-`LIMIT`, is taken out while the statement's final `ORDER BY` stays
+after the one `SELECT` is dropped (`surrounding_prose`), an immediately repeated
+long line is cut as a repetition loop (`repetition_loop`), trailing semicolons
+are removed (`trailing_semicolon`), and a top-level `UNION ALL` branch `ORDER
+BY`, with its `LIMIT`, is taken out while the statement's final `ORDER BY` stays
 (`union_order_by`). An implicit conjunction before a parenthesized FTS OR group
 is made explicit (`fts_or_group`), because FTS5 rejects that otherwise valid
 SQL shape at execution. The UNION repair has an aggressive fallback for shapes
 the targeted pass cannot fix, and it is accepted only when what it produces
-parses as one `SELECT`, so truncated output is left exactly as it came.
+parses as one `SELECT`, so truncated output and repeated lines on separate UNION
+branches are left exactly as they came.
 
 None of this authorizes execution: the gate then validates the repaired
-statement with its unchanged rules, and what is still invalid degrades to
-`invalid_sql` as before. `model_sql` keeps the untouched output and `repaired`
-names every repair applied, in the JSON envelope and in the narration above the
-rows, so the forgiveness is always auditable. SQL you wrote yourself and ran
-with `roca exec` never goes through this step.
+statement on its own schema-only in-memory SQLite connection. SQLite prepares
+it under an authorization callback, judging syntax, visible tables and columns,
+SELECT-only verbs, and the function allowlist without changing the application
+query connection. Separately, a textual guard adds or clamps the top-level
+`LIMIT` to 1000. Each LIMIT or OFFSET value must be a complete decimal literal;
+the accepted tails are SQLite's comma or `OFFSET` forms, then an optional
+semicolon or comment. Expressions such as `LIMIT 1+100000` and `LIMIT 1e6` are
+rejected. The scanner treats SQLite bracket-quoted identifiers like other quoted
+text. What is still invalid degrades to `invalid_sql` as before.
+`model_sql` keeps the untouched output and `repaired` names every repair
+applied, in the JSON envelope and in the narration above the rows, so the
+forgiveness is always auditable. SQL you wrote yourself and ran with `roca
+exec` never goes through this step.
 
 ## What the model is told
 

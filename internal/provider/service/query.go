@@ -265,10 +265,10 @@ func (r *QueryResult) unresolved(andAlso string) {
 // Query answers a question through the model.
 //
 // Every question goes to the model, which generates SQL over the SQLite + FTS5
-// schema; that SQL always passes the two-halved gate. Whatever fails from there
-// degrades to the keyword rescue instead of failing, and it says which of the
-// declared things went wrong. The fragility of a provider never takes down a
-// query.
+// schema; that SQL always passes the SQLite-backed read-only gate. Whatever
+// fails from there degrades to the keyword rescue instead of failing, and it
+// says which of the declared things went wrong. The fragility of a provider
+// never takes down a query.
 func (s *Service) Query(ctx context.Context, req QueryRequest) (res QueryResult, err error) {
 	start := time.Now()
 	if err := query.ValidateQuestion(req.Question, !s.opts.DisableStrictInput); err != nil {

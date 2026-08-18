@@ -1,10 +1,13 @@
 package sqlrepair_test
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	rqlite "github.com/rqlite/sql"
 	"github.com/thellmwhisperer/la-roca/internal/provider/query/sqlrepair"
 )
 
@@ -98,11 +101,43 @@ func TestPrepareLeavesValidSQLAndSuspiciousMultipleBlocksAlone(t *testing.T) {
 			"UNION ALL SELECT id FROM sessions ORDER BY id",
 		`SELECT rowid FROM memories_fts WHERE memories_fts MATCH '"alpha" AND ("beta" OR "gamma")'`,
 		`SELECT rowid FROM memories_fts WHERE memories_fts MATCH '"alpha" NOT ("beta" OR "gamma")'`,
+		"SELECT " + strings.Repeat("COALESCE(content, title, path, label, text), ", 80) + "id FROM memories LIMIT 10",
 	}
 	for _, raw := range benchCases {
 		got := sqlrepair.Prepare(raw)
 		if got.SQL != strings.TrimSpace(raw) || len(got.Repairs) != 0 {
 			t.Errorf("Prepare(%q) = SQL %q repairs %v", raw, got.SQL, got.Repairs)
 		}
+	}
+}
+
+// Live EOF failures stored complete, parenthesis-balanced UNION SQL. Prepare
+// used to crop a repeated COALESCE line that belongs to a later branch, and
+// the gate parser then reported EOF at that cut. The five shapes are the
+// anonymized live queries.
+func TestPrepareKeepsRepeatedUnionCoalesceBranches(t *testing.T) {
+	entries, err := os.ReadDir("testdata/union_coalesce")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 5 {
+		t.Fatalf("fixture count = %d, want 5 live shapes", len(entries))
+	}
+	for _, entry := range entries {
+		t.Run(entry.Name(), func(t *testing.T) {
+			raw, err := os.ReadFile(filepath.Join("testdata/union_coalesce", entry.Name()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			stmt := strings.TrimSpace(string(raw))
+			got := sqlrepair.Prepare(stmt)
+			if got.SQL != stmt || len(got.Repairs) != 0 {
+				t.Fatalf("Prepare cropped a complete UNION: repairs=%v in=%d out=%d",
+					got.Repairs, len(stmt), len(got.SQL))
+			}
+			if _, err := rqlite.NewParser(strings.NewReader(got.SQL)).ParseStatements(); err != nil {
+				t.Fatalf("gate parser rejected the intact UNION: %v", err)
+			}
+		})
 	}
 }

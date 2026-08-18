@@ -30,10 +30,8 @@ const (
 // measures.
 //
 // It requires every word, respects the layer when there is one, excludes the
-// search-excluded layers and always comes out with a LIMIT. The shape of the SQL
-// is not free: the half of the gate that parses the AST does not accept
-// `table.rowid`, so every source pulls its rowid inside a subquery, names it and
-// joins on the alias.
+// search-excluded layers and always comes out with a LIMIT. Every source pulls
+// its rowid inside a subquery, names it, and joins on the alias.
 func RenderSQLFTS(plan Plan, coordinationLayers []string, limit int) (string, error) {
 	return renderFTS(plan, coordinationLayers, limit, search.MatchAll)
 }
