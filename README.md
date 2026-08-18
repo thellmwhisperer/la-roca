@@ -29,10 +29,11 @@ curl -fsSL https://raw.githubusercontent.com/thellmwhisperer/la-roca/main/instal
 
 This installs the static `roca` binary at `~/.local/bin/roca` and materializes
 its dormant, same-release `roca-vector` companion beside it. Neither executable
-has runtime dependencies. La Roca supports macOS on Apple Silicon, Linux, and
-native Windows x64. On Windows, download the release `.exe` and follow the
-[native install and vector setup](docs/vector.md#windows-install); WSL remains
-an alternative for running the Unix commands inside a Linux distribution.
+needs shared runtime libraries; vector search talks to a locally running Ollama
+service. La Roca supports macOS on Apple Silicon, Linux, and native Windows x64.
+On Windows, download the release `.exe` and follow the [native install and
+vector setup](docs/vector.md#windows-install); WSL remains an alternative for
+running the Unix commands inside a Linux distribution.
 
 If `claude` or `codex` is already installed and signed in, no login of any kind
 is needed: run `roca init` and go. Update later with `roca update`.

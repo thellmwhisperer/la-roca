@@ -130,7 +130,7 @@ Throughput depends on the machine. Measured Apple Silicon rates:
 | Hardware | Chunks/min |
 |---|---|
 | M1 base | 576 |
-| Pro laptop | 2.400–2.500 |
+| Pro laptop | 2,400–2,500 |
 
 A 353k-chunk corpus is about 10 hours at the M1-base rate and about
 2.5 hours at the pro-laptop rate.
