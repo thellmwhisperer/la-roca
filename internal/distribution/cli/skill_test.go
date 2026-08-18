@@ -293,19 +293,51 @@ func TestSkillTeachesTheInvestigationFunnel(t *testing.T) {
 			},
 		},
 		{
-			name: "hybrid discovery",
-			body: skill.VectorContent(),
+			name: "search craft branch",
+			body: skill.OperationsContent(),
 			want: []string{
-				"## Hybrid discovery",
-				"The vector discovers, FTS censuses, SQL frames",
+				"## Search craft",
+				"completion.json",
+				"finished_at",
+				"exit_status == 0",
+				"the hybrid loop is mandatory",
+				"complete working path",
+				"last resort",
+				"Agents never pass `--full`",
+				"plugin_roca_ops.memories",
+				"Invite the user to build the index",
+			},
+		},
+		{
+			name: "hybrid loop",
+			body: skill.OperationsContent(),
+			want: []string{
+				"## Hybrid loop",
+				"Vector search finds the nearby rows",
+				"FTS censuses them",
+				"SQL frames them",
+				"the shipped RRF hybrid",
 				"inference only at the end",
-				"roca vector query",
+				`roca vector query "<first-person phrase or bare word>" 100`,
 				"names of people", "my boss is named",
 				"k must be between 1 and 100",
 				"LIKE '%term%'",
 				"COUNT(DISTINCT e.session_id)",
 				"COUNT(DISTINCT e.id)",
-				"with-inference SQL compiler outside this zero-inference path",
+				"Use them only as a last resort when you cannot write the SELECT yourself",
+			},
+		},
+		{
+			name: "vector owns the index",
+			body: skill.VectorContent(),
+			want: []string{
+				"roca vector install",
+				"roca vector ingest --delta",
+				"roca vector compact",
+				"completion.json",
+				"invite the user to",
+				"exit_status == 0",
+				"Otherwise treat the index as unavailable",
 			},
 		},
 	} {
@@ -317,9 +349,21 @@ func TestSkillTeachesTheInvestigationFunnel(t *testing.T) {
 			}
 		})
 	}
-	hybrid := markdownSection(skill.VectorContent(), "## Hybrid discovery")
+	hybrid := markdownSection(skill.OperationsContent(), "## Hybrid loop")
 	if strings.Contains(hybrid, `roca query --sql-only "`) {
-		t.Fatal("hybrid discovery sends its doctrinal path through model inference")
+		t.Fatal("hybrid loop sends its doctrinal path through model inference")
+	}
+	if strings.Contains(hybrid, "roca vector vocab") {
+		t.Fatal("hybrid loop still teaches vocab discovery")
+	}
+	if strings.Contains(skill.VectorContent(), "## Hybrid loop") ||
+		strings.Contains(skill.VectorContent(), "## Hybrid discovery") {
+		t.Fatal("vector skill still teaches the hybrid loop")
+	}
+	for _, embedded := range skill.EmbeddedSkills() {
+		if strings.Contains(embedded.Body, "roca vector vocab") {
+			t.Errorf("%s still teaches roca vector vocab", embedded.Name)
+		}
 	}
 }
 
