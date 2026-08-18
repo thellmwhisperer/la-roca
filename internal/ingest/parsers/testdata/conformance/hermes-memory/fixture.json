@@ -1,7 +1,7 @@
 {
   "parser": "hermes_memory",
   "destination": "store",
-  "source": "MEMORY.md",
+  "source": "MEMORY.md.golden",
   "meta": {"Path":"/synthetic/home/.hermes/memories/MEMORY.md","FileName":"MEMORY.md","SourceAgent":"hermes"},
   "want": {
     "sessions": [],
