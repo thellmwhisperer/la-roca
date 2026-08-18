@@ -281,7 +281,8 @@ func UninstallWithChecksum(name, path, systemSHA256 string) (Outcome, error) {
 		}
 		user = zones.User
 	} else if artifact.Checksum(string(previous)) != systemSHA256 {
-		if !strings.HasPrefix(string(previous), LegacySignature()) {
+		_, legacy := ContentForPath(path)
+		if legacy == "" || !strings.HasPrefix(string(previous), legacy) {
 			return out, nil
 		}
 		unproven = true

@@ -38,3 +38,19 @@ func TestLookPathDoesNotInventAMissingBinary(t *testing.T) {
 		t.Fatal("LookPath invented a binary that is not on PATH or in a well-known bin")
 	}
 }
+
+func TestLookPathDoesNotReinterpretAnExplicitCommandPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", "/synthetic/empty-path")
+	bin := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LookPath("./claude"); err == nil {
+		t.Fatal("LookPath replaced an explicit missing path with a well-known-bin command")
+	}
+}

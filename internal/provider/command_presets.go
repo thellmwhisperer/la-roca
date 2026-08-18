@@ -68,8 +68,12 @@ type LookPathFunc func(string) (string, error)
 // directory is absent from PATH. Host-global bins stay on PATH; they are not
 // searched here so an isolated HOME cannot see the machine's Homebrew tools.
 func LookPath(name string) (string, error) {
-	if path, err := exec.LookPath(name); err == nil {
+	path, err := exec.LookPath(name)
+	if err == nil {
 		return path, nil
+	}
+	if filepath.Base(name) != name {
+		return "", err
 	}
 	home := os.Getenv("HOME")
 	if home == "" {

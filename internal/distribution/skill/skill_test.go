@@ -492,6 +492,32 @@ func TestUninstallWithdrawsWhatItRecognizesAndNothingElse(t *testing.T) {
 	}
 }
 
+func TestUninstallDoesNotApplyRocaLegacyOwnershipToNewSkills(t *testing.T) {
+	home := t.TempDir()
+	for _, embedded := range skill.EmbeddedSkills()[1:] {
+		path, err := skill.NamedPath("claude", embedded.Name, home, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(earlierRelease()), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		out, err := skill.UninstallWithChecksum("claude", path, artifact.Checksum(embedded.Body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out.Changed || out.Backup != "" {
+			t.Errorf("uninstall claimed unproven %s skill: %+v", embedded.Name, out)
+		}
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("uninstall removed unproven %s skill: %v", embedded.Name, err)
+		}
+	}
+}
+
 // D-7's second half: what La Roca did not create is never deleted. The withdrawal
 // took the whole skill directory with os.RemoveAll, so anything the operator had
 // put beside the canonical SKILL.md went with it. The parent-directory cleanup
