@@ -218,6 +218,7 @@ func TestInstallUpdateAndUninstallPreservePluginOwnedData(t *testing.T) {
 	for _, recovery := range []string{
 		filepath.Join(root, ".synthetic.previous"),
 		filepath.Join(root, ".synthetic.recovery"),
+		filepath.Join(root, ".synthetic.recovery.journal"),
 	} {
 		if err := os.Mkdir(recovery, 0o700); err != nil {
 			t.Fatal(err)
@@ -255,12 +256,41 @@ func TestInstallUpdateAndUninstallPreservePluginOwnedData(t *testing.T) {
 
 func TestInterruptedUpdateRecoveryTombstoneConverges(t *testing.T) {
 	for _, testCase := range []struct {
-		name    string
-		arrange func(*testing.T, string, string, string)
+		name, wantError string
+		arrange         func(*testing.T, string, string, string, string, string)
 	}{
 		{
+			name: "proof created before journal",
+			arrange: func(t *testing.T, target, backup, _, _, proof string) {
+				t.Helper()
+				if err := os.Rename(target, backup); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(target, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				for _, name := range []string{
+					plugininstall.PackageFilename,
+					plugininstall.ChecksumsFilename,
+					plugininstall.ManifestFilename,
+					plugininstall.ExecutableName("synthetic-exec"),
+				} {
+					raw, err := os.ReadFile(filepath.Join(backup, name))
+					if err != nil {
+						t.Fatal(err)
+					}
+					mode := os.FileMode(0o600)
+					if name == plugininstall.ExecutableName("synthetic-exec") {
+						mode = 0o700
+					}
+					writeFixtureFile(t, filepath.Join(target, name), raw, mode)
+				}
+				writeFixtureFile(t, filepath.Join(target, ".roca-update-recovery"), []byte(proof), 0o600)
+			},
+		},
+		{
 			name: "target tombstoned before previous restore",
-			arrange: func(t *testing.T, target, backup, tombstone string) {
+			arrange: func(t *testing.T, target, backup, tombstone, journal, proof string) {
 				t.Helper()
 				if err := os.Rename(target, backup); err != nil {
 					t.Fatal(err)
@@ -268,17 +298,60 @@ func TestInterruptedUpdateRecoveryTombstoneConverges(t *testing.T) {
 				if err := os.Mkdir(tombstone, 0o700); err != nil {
 					t.Fatal(err)
 				}
+				writeFixtureFile(t, filepath.Join(tombstone, ".roca-update-recovery"), []byte(proof), 0o600)
 				writeFixtureFile(t, filepath.Join(tombstone, "partial"), []byte("discarded update"), 0o600)
+				if err := os.Link(filepath.Join(tombstone, ".roca-update-recovery"), journal); err != nil {
+					t.Fatal(err)
+				}
 			},
 		},
 		{
 			name: "previous restored before tombstone cleanup",
-			arrange: func(t *testing.T, _, _, tombstone string) {
+			arrange: func(t *testing.T, _, _, tombstone, journal, proof string) {
+				t.Helper()
+				if err := os.Mkdir(tombstone, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				writeFixtureFile(t, filepath.Join(tombstone, ".roca-update-recovery"), []byte(proof), 0o600)
+				writeFixtureFile(t, filepath.Join(tombstone, "partial"), []byte("discarded update"), 0o600)
+				if err := os.Link(filepath.Join(tombstone, ".roca-update-recovery"), journal); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "tombstone cleanup removed its internal proof",
+			arrange: func(t *testing.T, _, _, tombstone, journal, proof string) {
 				t.Helper()
 				if err := os.Mkdir(tombstone, 0o700); err != nil {
 					t.Fatal(err)
 				}
 				writeFixtureFile(t, filepath.Join(tombstone, "partial"), []byte("discarded update"), 0o600)
+				writeFixtureFile(t, journal, []byte(proof), 0o600)
+			},
+		},
+		{
+			name:      "unowned tombstone collision is preserved",
+			wantError: "has no installer ownership journal",
+			arrange: func(t *testing.T, _, _, tombstone, _, _ string) {
+				t.Helper()
+				if err := os.Mkdir(tombstone, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				writeFixtureFile(t, filepath.Join(tombstone, "unowned"), []byte("operator data"), 0o600)
+			},
+		},
+		{
+			name:      "unlinked ownership files are preserved",
+			wantError: "is not linked to installer journal",
+			arrange: func(t *testing.T, _, _, tombstone, journal, proof string) {
+				t.Helper()
+				if err := os.Mkdir(tombstone, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				writeFixtureFile(t, filepath.Join(tombstone, ".roca-update-recovery"), []byte(proof), 0o600)
+				writeFixtureFile(t, filepath.Join(tombstone, "unowned"), []byte("operator data"), 0o600)
+				writeFixtureFile(t, journal, []byte(proof), 0o600)
 			},
 		},
 	} {
@@ -298,16 +371,34 @@ func TestInterruptedUpdateRecoveryTombstoneConverges(t *testing.T) {
 			tombstone := filepath.Join(root, ".synthetic-exec.recovery")
 			state := filepath.Join(target, "state", "index.db")
 			writeFixtureFile(t, state, []byte("preserved index"), 0o600)
+			manifest, err := plugininstall.ReadManifest(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			proof := fmt.Sprintf("roca-plugin-update-recovery-v1\nsynthetic-exec\n%s\n", manifest.Checksum)
 			before, err := os.Lstat(state)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			testCase.arrange(t, target, backup, tombstone)
-			for range 2 {
-				if err := manager.RecoverUpdate("synthetic-exec"); err != nil {
-					t.Fatal(err)
+			journal := tombstone + ".journal"
+			testCase.arrange(t, target, backup, tombstone, journal, proof)
+			err = manager.RecoverUpdate("synthetic-exec")
+			if testCase.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), testCase.wantError) {
+					t.Fatalf("RecoverUpdate() error = %v, want %q", err, testCase.wantError)
 				}
+				raw, readErr := os.ReadFile(filepath.Join(tombstone, "unowned"))
+				if readErr != nil || string(raw) != "operator data" {
+					t.Fatalf("unowned tombstone = %q, err=%v", raw, readErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := manager.RecoverUpdate("synthetic-exec"); err != nil {
+				t.Fatal(err)
 			}
 
 			after, err := os.Lstat(state)
@@ -318,7 +409,7 @@ func TestInterruptedUpdateRecoveryTombstoneConverges(t *testing.T) {
 				t.Fatalf("state identity changed: same=%v size %d -> %d",
 					os.SameFile(before, after), before.Size(), after.Size())
 			}
-			for _, path := range []string{backup, tombstone} {
+			for _, path := range []string{backup, tombstone, journal} {
 				if _, err := os.Lstat(path); !os.IsNotExist(err) {
 					t.Fatalf("recovery artifact remains at %s: %v", path, err)
 				}
