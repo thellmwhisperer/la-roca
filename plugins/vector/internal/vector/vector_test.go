@@ -502,7 +502,7 @@ func TestCompactRebuildsDenseEquivalentStoreAndRefusesAnActiveIngest(t *testing.
 		}
 		for n := range 1024 {
 			term := fmt.Sprintf("synthetic-wal-term-%04d-%s", n, strings.Repeat("x", 1024))
-			if _, err := tx.Exec(`INSERT INTO census(term,docs) VALUES(?,1)`, term); err != nil {
+			if _, err := tx.Exec(`INSERT INTO meta(key,value) VALUES(?,?)`, term, term); err != nil {
 				tx.Rollback()
 				t.Fatal(err)
 			}

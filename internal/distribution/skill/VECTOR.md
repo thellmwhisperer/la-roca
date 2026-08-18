@@ -27,28 +27,24 @@ tail -f ~/.roca/plugins/roca-vector/state/worker.log
 `completion.json` in the same directory records when it finished. Full
 contract: docs/vector.md.
 
-Once the index is built, the loop below is the craft: vectors discover the
-vocabulary, full text counts it, SQL frames it.
+Once the index is built, the loop below is the craft: vectors discover
+nearby passages, full text counts them, SQL frames them.
 
 ## Hybrid discovery
 
 Requires `features.vector = true`. Operator setup lives in `docs/vector.md`.
 
-Purpose: discover the vocabulary the corpus actually uses, then census and
-frame it, then narrate. The vector discovers vocabulary, FTS censuses, SQL frames;
+Purpose: find the passages the corpus actually uses, then census and
+frame them, then narrate. The vector discovers, FTS censuses, SQL frames;
 inference only at the end, by the reading agent, to narrate.
-`roca vector query` and `roca vector vocab` do no model inference; `roca exec`
-does none either.
+`roca vector query` does no model inference; `roca exec` does none either.
 
 1. Probe veins with `roca vector query "<first-person phrase or bare word>" k`.
    `k` is optional (default 10) and capped at 100. Hits print score, source
    family, and source id. Probing phrases in first person work better than
    meta-concepts: `roca vector query "names of people" 20` finds documents
    ABOUT names; `roca vector query "my boss is named" 20` finds the names.
-2. Discover discriminative terms with `roca vector vocab <concept>` (zero
-   inference: top-100 semantic hits, census, log-odds vias). Example:
-   `roca vector vocab health`.
-3. Write deterministic FTS/SQL directly for `roca exec`: counts, dates, and
+2. Write deterministic FTS/SQL directly for `roca exec`: counts, dates, and
    word-boundary `MATCH`. Do not use `LIKE '%term%'`: it matches inside other
    words (`name` inside `rename`).
 
@@ -62,7 +58,7 @@ roca exec "SELECT substr(COALESCE(e.human_timestamp, e.agent_timestamp), 1, 7) A
 Worked loop, concept:
 
 ```bash
-roca vector vocab health
+roca vector query "health" 20
 roca exec "SELECT COUNT(DISTINCT e.id) AS exchanges, COUNT(DISTINCT e.session_id) AS sessions, MIN(COALESCE(e.human_timestamp, e.agent_timestamp)) AS first_seen, MAX(COALESCE(e.human_timestamp, e.agent_timestamp)) AS last_seen FROM (SELECT rowid AS source_id FROM exchanges_fts WHERE exchanges_fts MATCH 'exhaustion') hits JOIN exchanges e ON e.id = hits.source_id"
 ```
 

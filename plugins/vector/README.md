@@ -2,12 +2,10 @@
 
 `roca-vector` is the optional executable plugin for local semantic retrieval.
 Its implementation is a separate Go module and binary: core has no import of
-that module, built-in vector command, or index dependency. The plugin reads
-corpus rows through `roca exec --json` and
-keeps only embeddings, fingerprints, stable source locators, and aggregate
-token document frequencies in its own manifest-owned `state/` directory.
-Corpus text is resolved live from core when a result is returned and is never
-copied into the index.
+that module, built-in vector command, or index dependency. The plugin reads corpus rows through `roca exec --json` and keeps only
+embeddings, fingerprints, and stable source locators in its own
+manifest-owned `state/` directory. Corpus text is resolved live from core
+when a result is returned and is never copied into the index.
 
 ## Install from a release
 
@@ -39,7 +37,6 @@ roca vector ingest --delta
 roca vector ingest --delta --source sessions
 roca vector compact
 roca vector query "which decision kept inference local" 5
-roca vector vocab salud
 ```
 
 `install` is the plugin's adopt/init command: it pulls the model, prepares the
@@ -77,28 +74,6 @@ delta when repeated against the same corpus.
 
 For a non-default core database, export `ROCA_DB_PATH` or pass the plugin flag
 after dispatch: `roca vector --db-path /path/to/roca.db query "..."`.
-
-## Vocabulary discovery
-
-`roca vector vocab CONCEPT` reports the discriminative vocabulary around a
-concept with zero inference in the discovery path: the vector index nominates
-the top-100 semantic hits among `exchanges` and `thinking_blocks`, terms are
-tokenized with accent folding, and JSON-key terms, hexadecimal tokens, and
-opaque numeric identifiers are excluded. Each remaining term is scored by the
-smoothed log-odds of its document share in the discovery set against its share
-in a global census. A term must occur in at least two hit documents and have
-positive log-odds to survive, so high-volume workshop vocabulary (for example
-`worktree`, `exchange`, `semantic`, `projects`) is penalized by the baseline
-instead of dominating. Surviving terms are grouped into research avenues by
-shared hit documents, in a fixed rank order that makes the report reproducible.
-
-The census is rebuilt from the same corpus walk that maintains the index:
-`install`, a full `ingest --delta`, or a targeted `memories`, `exchanges`, or
-`thinking_blocks` delta refreshes it. A `sessions`-only delta leaves it
-unchanged. The census covers memories, exchanges, and thinking blocks;
-sessions are deliberately excluded because they cannot be
-vocabulary-discovery hits. On an index installed before the census existed,
-`vocab` reports the missing census until the next census-building delta ingest.
 
 ## Retrieval gate
 

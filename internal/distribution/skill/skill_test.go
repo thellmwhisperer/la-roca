@@ -118,7 +118,6 @@ func TestVectorSkillTeachesHybridDiscoveryAndInvitesTheIndex(t *testing.T) {
 		"roca vector install",
 		"## Hybrid discovery",
 		"roca vector query",
-		"roca vector vocab",
 	} {
 		if !strings.Contains(body, needle) {
 			t.Errorf("vector skill missing %q", needle)
