@@ -215,15 +215,19 @@ func TestInstallUpdateAndUninstallPreservePluginOwnedData(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	recovery := filepath.Join(root, ".synthetic.previous")
-	if err := os.Mkdir(recovery, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := manager.Update(updated); err == nil || !strings.Contains(err.Error(), recovery) {
-		t.Fatalf("update recovery directory is not hidden from discovery: %v", err)
-	}
-	if err := os.RemoveAll(recovery); err != nil {
-		t.Fatal(err)
+	for _, recovery := range []string{
+		filepath.Join(root, ".synthetic.previous"),
+		filepath.Join(root, ".synthetic.recovery"),
+	} {
+		if err := os.Mkdir(recovery, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := manager.Update(updated); err == nil || !strings.Contains(err.Error(), recovery) {
+			t.Fatalf("update recovery directory %s was ignored: %v", recovery, err)
+		}
+		if err := os.RemoveAll(recovery); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	if _, err := manager.Update(updated); err != nil {
@@ -246,6 +250,80 @@ func TestInstallUpdateAndUninstallPreservePluginOwnedData(t *testing.T) {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("uninstall kept %s: %v", path, err)
 		}
+	}
+}
+
+func TestInterruptedUpdateRecoveryTombstoneConverges(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		arrange func(*testing.T, string, string, string)
+	}{
+		{
+			name: "target tombstoned before previous restore",
+			arrange: func(t *testing.T, target, backup, tombstone string) {
+				t.Helper()
+				if err := os.Rename(target, backup); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(tombstone, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				writeFixtureFile(t, filepath.Join(tombstone, "partial"), []byte("discarded update"), 0o600)
+			},
+		},
+		{
+			name: "previous restored before tombstone cleanup",
+			arrange: func(t *testing.T, _, _, tombstone string) {
+				t.Helper()
+				if err := os.Mkdir(tombstone, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				writeFixtureFile(t, filepath.Join(tombstone, "partial"), []byte("discarded update"), 0o600)
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
+			manager := plugininstall.Manager{PluginRoot: root, BinDir: bin}
+			source := writeExecutablePackage(t, "synthetic-exec", "1.0.0", "state")
+			candidate, err := plugininstall.Inspect(source, source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := manager.Install(candidate); err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(root, "synthetic-exec")
+			backup := filepath.Join(root, ".synthetic-exec.previous")
+			tombstone := filepath.Join(root, ".synthetic-exec.recovery")
+			state := filepath.Join(target, "state", "index.db")
+			writeFixtureFile(t, state, []byte("preserved index"), 0o600)
+			before, err := os.Lstat(state)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			testCase.arrange(t, target, backup, tombstone)
+			for range 2 {
+				if err := manager.RecoverUpdate("synthetic-exec"); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			after, err := os.Lstat(state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !os.SameFile(before, after) || before.Size() != after.Size() {
+				t.Fatalf("state identity changed: same=%v size %d -> %d",
+					os.SameFile(before, after), before.Size(), after.Size())
+			}
+			for _, path := range []string{backup, tombstone} {
+				if _, err := os.Lstat(path); !os.IsNotExist(err) {
+					t.Fatalf("recovery artifact remains at %s: %v", path, err)
+				}
+			}
+		})
 	}
 }
 

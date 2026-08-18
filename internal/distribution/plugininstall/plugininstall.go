@@ -611,13 +611,44 @@ func (m Manager) RecoverUpdate(name string) error {
 	}
 	target := filepath.Join(m.PluginRoot, name)
 	backup := filepath.Join(m.PluginRoot, "."+name+".previous")
+	tombstone := filepath.Join(m.PluginRoot, "."+name+".recovery")
+	_, tombstoneErr := os.Lstat(tombstone)
+	if tombstoneErr != nil && !os.IsNotExist(tombstoneErr) {
+		return fmt.Errorf("inspect update recovery tombstone: %w", tombstoneErr)
+	}
 	if _, err := os.Lstat(backup); os.IsNotExist(err) {
+		if os.IsNotExist(tombstoneErr) {
+			return nil
+		}
+		if _, currentErr := VerifyInstalledPayload(name, target); currentErr != nil {
+			return fmt.Errorf("recover plugin %s update: current directory is not verified: %w", name, currentErr)
+		}
+		if err := os.RemoveAll(tombstone); err != nil {
+			return fmt.Errorf("remove plugin %s recovery tombstone: %w", name, err)
+		}
 		return nil
 	} else if err != nil {
 		return fmt.Errorf("inspect update recovery directory: %w", err)
 	}
 	previous, previousErr := VerifyInstalledPayload(name, backup)
 	current, currentErr := VerifyInstalledPayload(name, target)
+	if tombstoneErr == nil {
+		if previousErr != nil {
+			return fmt.Errorf("recover plugin %s update: previous directory is not verified: %w", name, previousErr)
+		}
+		if _, err := os.Lstat(target); err == nil {
+			return fmt.Errorf("recover plugin %s update: target and recovery tombstone both exist", name)
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("inspect plugin %s recovery target: %w", name, err)
+		}
+		if err := os.Rename(backup, target); err != nil {
+			return fmt.Errorf("restore plugin %s update: %w", name, err)
+		}
+		if err := os.RemoveAll(tombstone); err != nil {
+			return fmt.Errorf("remove plugin %s recovery tombstone: %w", name, err)
+		}
+		return nil
+	}
 	switch {
 	case previousErr == nil:
 		if _, err := os.Lstat(target); err == nil && currentErr != nil {
@@ -638,12 +669,17 @@ func (m Manager) RecoverUpdate(name string) error {
 			return fmt.Errorf("recover plugin %s executable: %w", name, err)
 		}
 		if currentErr == nil {
-			if err := os.RemoveAll(target); err != nil {
-				return fmt.Errorf("remove interrupted plugin %s update: %w", name, err)
+			if err := os.Rename(target, tombstone); err != nil {
+				return fmt.Errorf("tombstone interrupted plugin %s update: %w", name, err)
 			}
 		}
 		if err := os.Rename(backup, target); err != nil {
 			return fmt.Errorf("restore plugin %s update: %w", name, err)
+		}
+		if currentErr == nil {
+			if err := os.RemoveAll(tombstone); err != nil {
+				return fmt.Errorf("remove plugin %s recovery tombstone: %w", name, err)
+			}
 		}
 		return nil
 	case currentErr == nil:
@@ -749,31 +785,23 @@ func (m Manager) Update(candidate Candidate) (Result, error) {
 		_ = os.Rename(backup, target)
 		return Result{}, fmt.Errorf("activate plugin update: %w", err)
 	}
-	stateMoved := false
 	if candidate.StateDir != "" {
 		state := filepath.Join(backup, candidate.StateDir)
 		err := os.Rename(state, filepath.Join(target, candidate.StateDir))
 		switch {
 		case err == nil:
-			stateMoved = true
 		case os.IsNotExist(err):
 			if err := createStateDir(target, candidate.StateDir); err != nil {
-				_ = os.RemoveAll(target)
-				_ = os.Rename(backup, target)
+				_ = m.RecoverUpdate(candidate.Name)
 				return Result{}, err
 			}
 		default:
-			_ = os.RemoveAll(target)
-			_ = os.Rename(backup, target)
+			_ = m.RecoverUpdate(candidate.Name)
 			return Result{}, fmt.Errorf("preserve plugin state directory: %w", err)
 		}
 	}
 	rollback := func() {
-		if stateMoved {
-			_ = os.Rename(filepath.Join(target, candidate.StateDir), filepath.Join(backup, candidate.StateDir))
-		}
-		_ = os.RemoveAll(target)
-		_ = os.Rename(backup, target)
+		_ = m.RecoverUpdate(candidate.Name)
 	}
 	if candidate.Executable == "" && previousManifest.Executable != "" {
 		if err := os.Remove(previousManifest.Executable); err != nil && !os.IsNotExist(err) {
@@ -845,6 +873,12 @@ func (m Manager) preflightUpdate(candidate Candidate, installedName, manifestNam
 		return Manifest{}, fmt.Errorf("update recovery directory already exists at %s", backup)
 	} else if !os.IsNotExist(err) {
 		return Manifest{}, fmt.Errorf("inspect update recovery directory: %w", err)
+	}
+	tombstone := filepath.Join(m.PluginRoot, "."+candidate.Name+".recovery")
+	if _, err := os.Lstat(tombstone); err == nil {
+		return Manifest{}, fmt.Errorf("update recovery tombstone already exists at %s", tombstone)
+	} else if !os.IsNotExist(err) {
+		return Manifest{}, fmt.Errorf("inspect update recovery tombstone: %w", err)
 	}
 	if candidate.StateDir != "" {
 		info, err := os.Lstat(filepath.Join(target, candidate.StateDir))
