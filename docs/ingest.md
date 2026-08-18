@@ -14,7 +14,7 @@ without a La Roca login](lifecycle.md#install).
 | Codex | Sessions, memory, rule and skill files, and what matters from its state database |
 | Qwen Code | Project chat sessions, including tool calls and source-recorded models |
 | GLM | User skill documents and their supporting Markdown files |
-| Cursor | Composer sessions, prompts, thinking, and tool calls from its local state databases |
+| Cursor | Agent and legacy IDE sessions, prompts, thinking, and tool calls from its local SQLite stores |
 | OpenCode | Sessions and exchanges, distilled from its local database |
 | Pi | Complete session tree, including nested child runs |
 | Hermes | Sessions and channel, usage and routing intel from its state database, plus curated MEMORY.md blocks |
@@ -294,24 +294,39 @@ index metadata.
 
 ## Cursor
 
-Cursor keeps active composer conversations as JSON values inside SQLite rather
-than as loose transcript files. La Roca reads the global
+Current Cursor agent conversations live one session per
+`~/.cursor/chats/<workspace-hash>/<session-uuid>/store.db`, with a sibling
+`meta.json` supplying the title, working directory, and timestamps. La Roca
+walks every Merkle list node in the database's blob store, not only the latest
+root, so history retained behind compaction is not dropped. JSON role/content
+messages become exchanges with assistant text, thinking, and named tool calls;
+system prompts and injected context remain named exclusions.
+
+These stores do not distinguish desktop from CLI origin: the measured `mode`
+field is always `default`. Sessions therefore keep the existing canonical
+`source_surface` value `Cursor`. They also keep Cursor's `cursor:<session-uuid>`
+identity, so the shared writer deduplicates a session found through both the
+agent and legacy IDE surfaces. The sibling metadata file participates in the
+fingerprint, and a later plain `roca ingest` picks up changes without a manual
+import step.
+
+La Roca continues to read the legacy global
 `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb`, workspace
 `state.vscdb` stores under `workspaceStorage/`, and
-`~/.cursor/ai-tracking/ai-code-tracking.db`. It establishes a read-only SQLite
-snapshot and serializes it before parsing, which includes committed WAL content
-without writing, checkpointing, or otherwise changing Cursor's files.
+`~/.cursor/ai-tracking/ai-code-tracking.db`. The global IDE store's active
+composer headers order user prompts and assistant bubbles into exchanges;
+assistant text, thinking, named tools, timestamps, and the model and token counts
+recorded on those bubbles enter the corpus. Workspace prompt and generation
+arrays duplicate that history, and AI tracking rows describe code attribution
+rather than conversations, so both remain reported as exclusions instead of
+producing duplicate turns. Empty composers and bubbles outside the active
+headers are likewise counted as exclusions.
 
-The global store is the primary conversation surface. Its active composer
-headers order user prompts and assistant bubbles into exchanges; assistant text,
-thinking, named tools, timestamps, and the model and token counts recorded on
-those bubbles enter the corpus. Workspace prompt and generation arrays duplicate
-that primary history, and AI tracking rows describe code attribution rather than
-conversations, so both are reported as exclusions instead of producing duplicate
-turns. Empty composers and bubbles outside the active headers are likewise
-counted as exclusions. Every ingest summary therefore reports the whole reading,
-including what was intentionally left out, and an unchanged rerun is a zero
-delta.
+Both Cursor database eras are opened read-only and serialized before parsing,
+which includes committed WAL content without writing, checkpointing, or
+otherwise changing Cursor's files. Every ingest summary therefore reports the
+whole reading, including what was intentionally left out, and an unchanged
+rerun is a zero delta.
 
 ## Grok Build
 
