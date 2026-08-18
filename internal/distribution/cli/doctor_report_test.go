@@ -186,10 +186,7 @@ func setupFreshSupportHome(t *testing.T, home string) string {
 
 func setupLegacySupportHome(t *testing.T, home string) string {
 	t.Helper()
-	dbPath := filepath.Join(home, ".roca", "roca.db")
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	dbPath := prepareSupportDatabasePath(t, home)
 	db, err := store.Open(dbPath)
 	if err != nil {
 		t.Fatal(err)
@@ -227,10 +224,7 @@ func setupLegacySupportHome(t *testing.T, home string) string {
 
 func setupUnreadableSupportHome(t *testing.T, home string) string {
 	t.Helper()
-	dbPath := filepath.Join(home, ".roca", "roca.db")
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	dbPath := prepareSupportDatabasePath(t, home)
 	if err := os.WriteFile(dbPath, []byte("not a sqlite database"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -240,11 +234,25 @@ func setupUnreadableSupportHome(t *testing.T, home string) string {
 func setupUnverifiedCutoverHome(t *testing.T, home string) string {
 	t.Helper()
 	dbPath := setupFreshSupportHome(t, home)
+	writeCutoverSupportConfig(t, home)
+	return dbPath
+}
+
+func prepareSupportDatabasePath(t *testing.T, home string) string {
+	t.Helper()
+	dbPath := filepath.Join(home, ".roca", "roca.db")
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return dbPath
+}
+
+func writeCutoverSupportConfig(t *testing.T, home string) {
+	t.Helper()
 	configPath := filepath.Join(home, ".roca", "config.toml")
 	if err := os.WriteFile(configPath, []byte("[layout]\nserving = \"cutover\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return dbPath
 }
 
 func setupFederatedSupportHome(t *testing.T, home string) string {
@@ -317,10 +325,7 @@ func recordData4RunParity(t *testing.T, options datasplit.HubOptions, digest str
 func setupFederationSupportSources(t *testing.T, home string) (string, datasplit.HubOptions) {
 	t.Helper()
 	dbPath := setupFreshSupportHome(t, home)
-	configPath := filepath.Join(home, ".roca", "config.toml")
-	if err := os.WriteFile(configPath, []byte("[layout]\nserving = \"cutover\"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeCutoverSupportConfig(t, home)
 	core := openLayoutDatabase(t, dbPath)
 	if _, err := core.Exec(`
 		INSERT INTO sessions (session_id, project, started_at)

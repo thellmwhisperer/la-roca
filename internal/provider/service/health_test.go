@@ -124,14 +124,9 @@ func TestHealthVerdictsDoNotPassAfterIncompleteReader(t *testing.T) {
 			if testCase.maxOpen > 0 {
 				locked.SetMaxOpenConns(testCase.maxOpen)
 			}
-			connection, err := locked.Conn(t.Context())
-			if err != nil {
-				t.Fatal(err)
-			}
+			connection := verdictConnection(t, locked)
 			t.Cleanup(func() { _ = connection.Close() })
-			if _, err := connection.ExecContext(t.Context(), `BEGIN EXCLUSIVE`); err != nil {
-				t.Fatal(err)
-			}
+			execVerdictSQL(t, connection, `BEGIN EXCLUSIVE`)
 			t.Cleanup(func() { _, _ = connection.ExecContext(t.Context(), `ROLLBACK`) })
 
 			ctx, cancel := context.WithTimeout(t.Context(), testCase.timeout)
@@ -150,6 +145,22 @@ func TestHealthVerdictsDoNotPassAfterIncompleteReader(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func verdictConnection(t *testing.T, db *sql.DB) *sql.Conn {
+	t.Helper()
+	connection, err := db.Conn(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return connection
+}
+
+func execVerdictSQL(t *testing.T, connection *sql.Conn, statement string) {
+	t.Helper()
+	if _, err := connection.ExecContext(t.Context(), statement); err != nil {
+		t.Fatal(err)
 	}
 }
 
