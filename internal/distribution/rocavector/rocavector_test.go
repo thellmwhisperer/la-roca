@@ -196,10 +196,7 @@ func TestBundledVectorMigratesLegacyInstall(t *testing.T) {
 				if statErr != nil {
 					t.Fatal(statErr)
 				}
-				if !os.SameFile(before, after) || before.Size() != after.Size() {
-					t.Fatalf("state identity changed: same=%v size %d -> %d",
-						os.SameFile(before, after), before.Size(), after.Size())
-				}
+				assertStateIdentity(t, before, after)
 				assertFileContents(t, "state", currentState, "preserved index")
 			}
 			if testCase.wantCurrent && testCase.wantError == "" {
@@ -250,10 +247,7 @@ func TestBundledVectorRestoresLegacyNameWhenApplyFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !os.SameFile(before, after) || before.Size() != after.Size() {
-		t.Fatalf("state identity changed: same=%v size %d -> %d",
-			os.SameFile(before, after), before.Size(), after.Size())
-	}
+	assertStateIdentity(t, before, after)
 	manifest, err := plugininstall.ReadManifest(filepath.Join(root, rocavector.LegacyName))
 	if err != nil {
 		t.Fatal(err)
@@ -336,6 +330,15 @@ func assertDirExists(t *testing.T, path string, want bool) {
 	}
 	if !want && !os.IsNotExist(err) {
 		t.Fatalf("expected %s to be absent: %v", path, err)
+	}
+}
+
+func assertStateIdentity(t *testing.T, before, after os.FileInfo) {
+	t.Helper()
+	sameFile := os.SameFile(before, after)
+	sizes := [2]int64{before.Size(), after.Size()}
+	if !sameFile || sizes[0] != sizes[1] {
+		t.Fatalf("state identity changed: same=%v size %d -> %d", sameFile, sizes[0], sizes[1])
 	}
 }
 

@@ -295,28 +295,15 @@ func TestInterruptedUpdateRecoveryTombstoneConverges(t *testing.T) {
 				if err := os.Rename(target, backup); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.Mkdir(tombstone, 0o700); err != nil {
-					t.Fatal(err)
-				}
-				writeFixtureFile(t, filepath.Join(tombstone, ".roca-update-recovery"), []byte(proof), 0o600)
-				writeFixtureFile(t, filepath.Join(tombstone, "partial"), []byte("discarded update"), 0o600)
-				if err := os.Link(filepath.Join(tombstone, ".roca-update-recovery"), journal); err != nil {
-					t.Fatal(err)
-				}
+				writeRecoveryFixture(t, tombstone, proof, true, "partial", "discarded update")
+				linkRecoveryJournal(t, tombstone, journal)
 			},
 		},
 		{
 			name: "previous restored before tombstone cleanup",
 			arrange: func(t *testing.T, _, _, tombstone, journal, proof string) {
-				t.Helper()
-				if err := os.Mkdir(tombstone, 0o700); err != nil {
-					t.Fatal(err)
-				}
-				writeFixtureFile(t, filepath.Join(tombstone, ".roca-update-recovery"), []byte(proof), 0o600)
-				writeFixtureFile(t, filepath.Join(tombstone, "partial"), []byte("discarded update"), 0o600)
-				if err := os.Link(filepath.Join(tombstone, ".roca-update-recovery"), journal); err != nil {
-					t.Fatal(err)
-				}
+				writeRecoveryFixture(t, tombstone, proof, true, "partial", "discarded update")
+				linkRecoveryJournal(t, tombstone, journal)
 			},
 		},
 		{
@@ -325,21 +312,14 @@ func TestInterruptedUpdateRecoveryTombstoneConverges(t *testing.T) {
 			preserved:    "partial",
 			wantContents: "discarded update",
 			arrange: func(t *testing.T, _, _, tombstone, journal, proof string) {
-				t.Helper()
-				if err := os.Mkdir(tombstone, 0o700); err != nil {
-					t.Fatal(err)
-				}
-				writeFixtureFile(t, filepath.Join(tombstone, "partial"), []byte("discarded update"), 0o600)
+				writeRecoveryFixture(t, tombstone, proof, false, "partial", "discarded update")
 				writeFixtureFile(t, journal, []byte(proof), 0o600)
 			},
 		},
 		{
 			name: "empty tombstone after proof removal converges",
 			arrange: func(t *testing.T, _, _, tombstone, journal, proof string) {
-				t.Helper()
-				if err := os.Mkdir(tombstone, 0o700); err != nil {
-					t.Fatal(err)
-				}
+				writeRecoveryFixture(t, tombstone, proof, false)
 				writeFixtureFile(t, journal, []byte(proof), 0o600)
 			},
 		},
@@ -349,11 +329,7 @@ func TestInterruptedUpdateRecoveryTombstoneConverges(t *testing.T) {
 			preserved:    "unowned",
 			wantContents: "operator data",
 			arrange: func(t *testing.T, _, _, tombstone, _, _ string) {
-				t.Helper()
-				if err := os.Mkdir(tombstone, 0o700); err != nil {
-					t.Fatal(err)
-				}
-				writeFixtureFile(t, filepath.Join(tombstone, "unowned"), []byte("operator data"), 0o600)
+				writeRecoveryFixture(t, tombstone, "", false, "unowned", "operator data")
 			},
 		},
 		{
@@ -362,12 +338,7 @@ func TestInterruptedUpdateRecoveryTombstoneConverges(t *testing.T) {
 			preserved:    "unowned",
 			wantContents: "operator data",
 			arrange: func(t *testing.T, _, _, tombstone, journal, proof string) {
-				t.Helper()
-				if err := os.Mkdir(tombstone, 0o700); err != nil {
-					t.Fatal(err)
-				}
-				writeFixtureFile(t, filepath.Join(tombstone, ".roca-update-recovery"), []byte(proof), 0o600)
-				writeFixtureFile(t, filepath.Join(tombstone, "unowned"), []byte("operator data"), 0o600)
+				writeRecoveryFixture(t, tombstone, proof, true, "unowned", "operator data")
 				writeFixtureFile(t, journal, []byte(proof), 0o600)
 			},
 		},
@@ -375,11 +346,7 @@ func TestInterruptedUpdateRecoveryTombstoneConverges(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
 			manager := plugininstall.Manager{PluginRoot: root, BinDir: bin}
-			source := writeExecutablePackage(t, "synthetic-exec", "1.0.0", "state")
-			candidate, err := plugininstall.Inspect(source, source)
-			if err != nil {
-				t.Fatal(err)
-			}
+			_, candidate := inspectExecutablePackage(t, "synthetic-exec", "1.0.0", "state")
 			if _, err := manager.Install(candidate); err != nil {
 				t.Fatal(err)
 			}
@@ -529,11 +496,7 @@ func TestFederatedManifestNamesMustSurviveTheWholeLifecycle(t *testing.T) {
 func TestExecutableOnlyPackageOwnsAndPreservesItsStateDirectory(t *testing.T) {
 	root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
 	manager := plugininstall.Manager{PluginRoot: root, BinDir: bin}
-	source := writeExecutablePackage(t, "synthetic-exec", "1.0.0", "state")
-	candidate, err := plugininstall.Inspect(source, source)
-	if err != nil {
-		t.Fatal(err)
-	}
+	source, candidate := inspectExecutablePackage(t, "synthetic-exec", "1.0.0", "state")
 	if candidate.Kind != plugininstall.ExecutablePackage || candidate.Database != "" ||
 		candidate.StateDir != "state" || candidate.Risk != plugininstall.Executable {
 		t.Fatalf("candidate = %+v", candidate)
@@ -843,6 +806,39 @@ func writeExecutablePackage(t *testing.T, name, version, stateDir string) string
 	directory := filepath.Join(t.TempDir(), name)
 	writeExecutablePackageAt(t, directory, name, version, stateDir)
 	return directory
+}
+
+func inspectExecutablePackage(t *testing.T, name, version, stateDir string) (string, plugininstall.Candidate) {
+	t.Helper()
+	source := writeExecutablePackage(t, name, version, stateDir)
+	candidate, err := plugininstall.Inspect(source, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return source, candidate
+}
+
+func writeRecoveryFixture(t *testing.T, tombstone, proof string, owned bool, entries ...string) {
+	t.Helper()
+	if len(entries)%2 != 0 {
+		t.Fatal("recovery fixture entries must be name/body pairs")
+	}
+	if err := os.Mkdir(tombstone, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if owned {
+		writeFixtureFile(t, filepath.Join(tombstone, ".roca-update-recovery"), []byte(proof), 0o600)
+	}
+	for index := 0; index < len(entries); index += 2 {
+		writeFixtureFile(t, filepath.Join(tombstone, entries[index]), []byte(entries[index+1]), 0o600)
+	}
+}
+
+func linkRecoveryJournal(t *testing.T, tombstone, journal string) {
+	t.Helper()
+	if err := os.Link(filepath.Join(tombstone, ".roca-update-recovery"), journal); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func writeExecutablePackageAt(t *testing.T, directory, name, version, stateDir string) {

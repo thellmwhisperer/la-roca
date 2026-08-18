@@ -24,6 +24,23 @@ func RelocationLockPath(root string) string {
 	return filepath.Join(root, relocationLockFilename)
 }
 
+func validateExclusiveFileLock(path string, file *os.File, release func() error) (func() error, bool, error) {
+	held, err := file.Stat()
+	if err != nil {
+		_ = release()
+		return nil, false, err
+	}
+	current, err := os.Stat(path)
+	if err != nil || !os.SameFile(held, current) {
+		_ = release()
+		if err != nil {
+			return nil, false, err
+		}
+		return nil, false, &os.PathError{Op: "lock", Path: path, Err: os.ErrNotExist}
+	}
+	return release, false, nil
+}
+
 func migrationGuard(root string) (func() error, error) {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, fmt.Errorf("create plugin directory: %w", err)

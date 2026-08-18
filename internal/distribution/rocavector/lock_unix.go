@@ -26,18 +26,5 @@ func tryExclusiveFileLock(path string) (func() error, bool, error) {
 		closeErr := file.Close()
 		return errors.Join(unlockErr, closeErr)
 	}
-	held, err := file.Stat()
-	if err != nil {
-		_ = release()
-		return nil, false, err
-	}
-	current, err := os.Stat(path)
-	if err != nil || !os.SameFile(held, current) {
-		_ = release()
-		if err != nil {
-			return nil, false, err
-		}
-		return nil, false, &os.PathError{Op: "lock", Path: path, Err: os.ErrNotExist}
-	}
-	return release, false, nil
+	return validateExclusiveFileLock(path, file, release)
 }
