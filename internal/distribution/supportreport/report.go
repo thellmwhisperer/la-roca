@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/datasplit"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
@@ -153,11 +154,15 @@ func Collect(ctx context.Context, opts Options) (Snapshot, error) {
 		now = time.Now().UTC()
 	}
 	plugins := listSupportPlugins(opts.PluginRoot)
-	coreStore, coreClose := openSupportStore(opts.Paths.DB)
-	defer coreClose()
 	corpusPath := filepath.Join(opts.PluginRoot, rocacorpus.Name, rocacorpus.DatabaseFilename)
 	opsPath := filepath.Join(opts.PluginRoot, rocaops.Name, rocaops.DatabaseFilename)
 	cronPath := filepath.Join(opts.PluginRoot, rocacron.Name, rocacron.DatabaseFilename)
+	cutoverEligible, _ := datasplit.HubCutoverEligible(ctx, datasplit.HubOptions{
+		CoreDatabase: opts.Paths.DB, CorpusDatabase: corpusPath,
+		OpsDatabase: opsPath, CronDatabase: cronPath,
+	})
+	coreStore, coreClose := openSupportStore(opts.Paths.DB)
+	defer coreClose()
 	corpusStore, corpusClose := openSupportStore(corpusPath)
 	defer corpusClose()
 	opsStore, opsClose := openSupportStore(opsPath)
@@ -176,12 +181,15 @@ func Collect(ctx context.Context, opts Options) (Snapshot, error) {
 		{Name: "plugin-cron", Present: cronStore.present, Readable: cron != nil},
 	}
 	migrations := collectSupportMigrations(ctx, "roca-corpus", corpus, "roca-ops", ops, "roca-cron", cron)
+	if !storesReadable(stores, "core", "plugin-corpus", "plugin-ops", "plugin-cron") {
+		cutoverEligible = false
+	}
 	serving := string(opts.File.Layout.Serving)
 	if serving == "" {
 		serving = string(config.LayoutLegacyServing)
 	}
-	mode, custody, cutoverEligible := classifyFederation(
-		serving, stores, coreFamilies, corpusFamiliesCounts, migrations)
+	mode, custody := classifyFederation(
+		serving, stores, coreFamilies, corpusFamiliesCounts, migrations, cutoverEligible)
 	federation := Federation{
 		Mode: mode, Serving: serving, CorpusCustody: custody, CutoverEligible: cutoverEligible,
 		Stores: stores, Migrations: migrations,
@@ -200,7 +208,7 @@ func Collect(ctx context.Context, opts Options) (Snapshot, error) {
 		Plugins:    plugins,
 		Features:   featureFlags(opts.File.Features),
 		Federation: federation,
-		Health:     service.HealthVerdicts(ctx, []*sql.DB{ops, core}, []*sql.DB{core, corpus}),
+		Health:     service.HealthVerdicts(ctx, []*sql.DB{ops, corpus, core}, []*sql.DB{core, corpus}),
 		Vector:     collectVector(ctx, opts.PluginRoot),
 		Ingest: Ingest{
 			DetectedAgents: orEmptyStrings(ingest.DetectAgents(opts.Sources)),
@@ -461,64 +469,38 @@ func corpusCustody(stores []Store, core, corpus map[string]int, cutoverEligible 
 }
 
 func classifyFederation(serving string, stores []Store, core, corpus map[string]int,
-	migrations []Migration) (string, string, bool) {
+	migrations []Migration, cutoverEligible bool) (string, string) {
 	coreStore := storeNamed(stores, "core")
 	corpusStore := storeNamed(stores, "plugin-corpus")
 	opsStore := storeNamed(stores, "plugin-ops")
 	cronStore := storeNamed(stores, "plugin-cron")
 	pluginsPresent := corpusStore.Present || opsStore.Present || cronStore.Present
-	cutoverEligible := supportCutoverEligible(stores, migrations)
 	activeFederation := serving == string(config.LayoutCutover) && cutoverEligible
 	custody := corpusCustody(stores, core, corpus, activeFederation)
 	if !pluginsPresent {
 		if coreStore.Present {
-			return FederationLegacyOnly, custody, false
+			return FederationLegacyOnly, custody
 		}
-		return FederationUninitialized, custody, false
+		return FederationUninitialized, custody
 	}
 	if serving == string(config.LayoutCutover) && cutoverEligible {
-		return FederationFederated, custody, true
+		return FederationFederated, custody
 	}
 	if serving == string(config.LayoutCutover) || serving == string(config.LayoutShadowEqual) ||
 		migrationInFlight(migrations) || len(migrations) > 0 && !cutoverEligible {
-		return FederationMigrating, custody, cutoverEligible
+		return FederationMigrating, custody
 	}
 	if custody == "empty" {
-		return FederationFresh, custody, cutoverEligible
+		return FederationFresh, custody
 	}
-	return FederationLegacyServing, custody, cutoverEligible
+	return FederationLegacyServing, custody
 }
 
-func supportCutoverEligible(stores []Store, migrations []Migration) bool {
-	for _, name := range []string{"core", "plugin-corpus", "plugin-ops"} {
+func storesReadable(stores []Store, names ...string) bool {
+	for _, name := range names {
 		store := storeNamed(stores, name)
 		if !store.Present || !store.Readable {
 			return false
-		}
-	}
-	required := map[string]map[string]bool{
-		"roca-ops": {"data2-memory-custody": false},
-		"roca-corpus": {
-			"corpus-archive-sessions":          false,
-			"corpus-archive-exchanges":         false,
-			"corpus-archive-tool-uses":         false,
-			"corpus-archive-thinking-blocks":   false,
-			"corpus-archive-ingest-file-state": false,
-			"corpus-archive-reconciliation-v1": false,
-		},
-	}
-	for _, migration := range migrations {
-		if names := required[migration.Plugin]; names != nil {
-			if _, ok := names[migration.Name]; ok && migration.CutoverEligible {
-				names[migration.Name] = true
-			}
-		}
-	}
-	for _, names := range required {
-		for _, eligible := range names {
-			if !eligible {
-				return false
-			}
 		}
 	}
 	return true

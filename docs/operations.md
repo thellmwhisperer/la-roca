@@ -188,9 +188,11 @@ size:
    `federated`, `uninitialized`, or `legacy-serving`), the `layout.serving`
    marker, where corpus text actually lives (`legacy-core`, `plugin-corpus`,
    `split`, `empty`, or `unknown`), which stores exist and are readable with
-   family row counts, and named migration states plus cutover eligibility. A
-   fresh init, a core-only legacy home, a mid-migration home, and a verified
-   cutover home are distinguishable at a glance.
+   family row counts, and named migration states plus the shared DATA-6
+   cutover verdict. That verdict requires readable corpus, ops, and cron stores
+   together with verified DATA-2, DATA-3, and DATA-4 custody. A fresh init, a
+   core-only legacy home, a mid-migration home, and a verified cutover home are
+   distinguishable at a glance.
 5. **Health** — pass/warn/fail/skipped per check name, taking the worst verdict
    across every applicable core and plugin store and never including finding
    rows.

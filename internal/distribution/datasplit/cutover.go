@@ -28,6 +28,12 @@ type HubReport struct {
 	Ready  bool
 }
 
+type hubEligibility struct {
+	memory bool
+	corpus bool
+	legacy bool
+}
+
 // PrepareHub runs only the unfinished DATA-2, DATA-3, and DATA-4 custody work.
 // Every source read comes from the verified snapshots published by DATA-2;
 // the live core database remains untouched.
@@ -35,19 +41,11 @@ func PrepareHub(ctx context.Context, options HubOptions) (HubReport, error) {
 	if err := options.valid(); err != nil {
 		return HubReport{}, err
 	}
-	memoryReady, err := rocaops.MemoryCustodyCutoverEligible(ctx, options.OpsDatabase)
+	eligibility, err := inspectHubEligibility(ctx, options)
 	if err != nil {
-		return HubReport{}, fmt.Errorf("inspect DATA-2 readiness: %w", err)
+		return HubReport{}, err
 	}
-	corpusReady, err := corpusarchive.CutoverEligible(ctx, options.CorpusDatabase)
-	if err != nil {
-		return HubReport{}, fmt.Errorf("inspect DATA-3 readiness: %w", err)
-	}
-	legacyReady, err := legacyCutoverEligible(ctx, options)
-	if err != nil {
-		return HubReport{}, fmt.Errorf("inspect DATA-4 readiness: %w", err)
-	}
-	if memoryReady && corpusReady && legacyReady {
+	if eligibility.ready() {
 		return HubReport{Ready: true}, nil
 	}
 
@@ -64,7 +62,7 @@ func PrepareHub(ctx context.Context, options HubOptions) (HubReport, error) {
 	if coreSnapshot == "" || corpusSnapshot == "" {
 		return report, fmt.Errorf("DATA-2 did not publish the core and corpus snapshots")
 	}
-	if !corpusReady {
+	if !eligibility.corpus {
 		coreDigest, digestErr := corpusarchive.SnapshotDigest(coreSnapshot)
 		if digestErr != nil {
 			return report, digestErr
@@ -82,7 +80,7 @@ func PrepareHub(ctx context.Context, options HubOptions) (HubReport, error) {
 			return report, fmt.Errorf("prepare DATA-3 corpus custody: %w", err)
 		}
 	}
-	if !legacyReady {
+	if !eligibility.legacy {
 		report.Legacy, err = ImportLegacyOrphans(ctx, LegacyOptions{
 			SourceClone: coreSnapshot, CronDatabase: options.CronDatabase,
 			OpsDatabase: options.OpsDatabase, CorpusDatabase: options.CorpusDatabase,
@@ -92,28 +90,94 @@ func PrepareHub(ctx context.Context, options HubOptions) (HubReport, error) {
 		}
 	}
 
-	memoryReady, err = rocaops.MemoryCustodyCutoverEligible(ctx, options.OpsDatabase)
-	if err == nil {
-		corpusReady, err = corpusarchive.CutoverEligible(ctx, options.CorpusDatabase)
-	}
-	if err == nil {
-		legacyReady, err = legacyCutoverEligible(ctx, options)
-	}
+	eligibility, err = inspectHubEligibility(ctx, options)
 	if err != nil {
 		return report, fmt.Errorf("recheck DATA SPLIT readiness: %w", err)
 	}
-	report.Ready = memoryReady && corpusReady && legacyReady
+	report.Ready = eligibility.ready()
 	if !report.Ready {
 		return report, fmt.Errorf("DATA SPLIT destinations did not reach cutover eligibility")
 	}
 	return report, nil
 }
 
+func HubCutoverEligible(ctx context.Context, options HubOptions) (bool, error) {
+	if err := options.validDatabases(); err != nil {
+		return false, err
+	}
+	eligibility, err := inspectHubEligibility(ctx, options)
+	if err != nil {
+		return false, err
+	}
+	return eligibility.ready(), nil
+}
+
+func inspectHubEligibility(ctx context.Context, options HubOptions) (hubEligibility, error) {
+	var eligibility hubEligibility
+	if err := validateHubDatabases(ctx, options); err != nil {
+		return eligibility, err
+	}
+	var err error
+	eligibility.memory, err = rocaops.MemoryCustodyCutoverEligible(ctx, options.OpsDatabase)
+	if err != nil {
+		return eligibility, fmt.Errorf("inspect DATA-2 readiness: %w", err)
+	}
+	eligibility.corpus, err = corpusarchive.CutoverEligible(ctx, options.CorpusDatabase)
+	if err != nil {
+		return eligibility, fmt.Errorf("inspect DATA-3 readiness: %w", err)
+	}
+	eligibility.legacy, err = legacyCutoverEligible(ctx, options)
+	if err != nil {
+		return eligibility, fmt.Errorf("inspect DATA-4 readiness: %w", err)
+	}
+	return eligibility, nil
+}
+
+func validateHubDatabases(ctx context.Context, options HubOptions) error {
+	for _, database := range []struct {
+		name string
+		path string
+	}{
+		{name: "core", path: options.CoreDatabase},
+		{name: "ops", path: options.OpsDatabase},
+		{name: "corpus", path: options.CorpusDatabase},
+		{name: "cron", path: options.CronDatabase},
+	} {
+		db, err := bundledplugin.OpenDatabase(database.path, true)
+		if err != nil {
+			return fmt.Errorf("open DATA-6 %s database: %w", database.name, err)
+		}
+		var schemaVersion int
+		err = db.QueryRowContext(ctx, "PRAGMA schema_version").Scan(&schemaVersion)
+		closeErr := db.Close()
+		if err != nil {
+			return fmt.Errorf("read DATA-6 %s database: %w", database.name, err)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close DATA-6 %s database: %w", database.name, closeErr)
+		}
+	}
+	return nil
+}
+
+func (eligibility hubEligibility) ready() bool {
+	return eligibility.memory && eligibility.corpus && eligibility.legacy
+}
+
 func (options HubOptions) valid() error {
+	if err := options.validDatabases(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(options.SnapshotDir) == "" {
+		return fmt.Errorf("DATA-6 needs a snapshots path")
+	}
+	return nil
+}
+
+func (options HubOptions) validDatabases() error {
 	for name, path := range map[string]string{
 		"core": options.CoreDatabase, "ops": options.OpsDatabase,
 		"corpus": options.CorpusDatabase, "cron": options.CronDatabase,
-		"snapshots": options.SnapshotDir,
 	} {
 		if strings.TrimSpace(path) == "" {
 			return fmt.Errorf("DATA-6 needs a %s path", name)
@@ -141,7 +205,7 @@ func legacyCutoverEligible(ctx context.Context, options HubOptions) (bool, error
 	destinations, err := openDestinations(LegacyOptions{
 		SourceClone: options.CoreDatabase, CronDatabase: options.CronDatabase,
 		OpsDatabase: options.OpsDatabase, CorpusDatabase: options.CorpusDatabase,
-	})
+	}, true)
 	if err != nil {
 		return false, err
 	}
