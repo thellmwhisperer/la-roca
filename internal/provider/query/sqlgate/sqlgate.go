@@ -75,17 +75,6 @@ var invisibleTables = []string{
 	"exchange_id_remaps", "thinking_block_id_remaps",
 }
 
-// ftsShadowSuffixes name the shadow tables FTS5 creates behind each virtual
-// table. They keep the index in binary blocks and are nobody's memory.
-//
-// These cannot be hidden by dropping them the way the others are: dropping a
-// shadow table leaves the virtual table broken, and the validation database
-// would no longer be able to prepare the legitimate query. The authorization
-// callback denies reads by name, as it does for `sqlite_` and `pragma_` tables.
-var ftsShadowSuffixes = []string{
-	"_fts_data", "_fts_idx", "_fts_content", "_fts_docsize", "_fts_config",
-}
-
 var fts5ShadowEndings = []string{"_data", "_idx", "_content", "_docsize", "_config"}
 
 var createVirtualFTS5 = regexp.MustCompile(`(?is)CREATE\s+VIRTUAL\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'` + "`" + `]?(\w+)["'` + "`" + `]?\s+USING\s+fts5\s*\(`)
@@ -104,7 +93,7 @@ func HiddenTables() []string { return slices.Clone(invisibleTables) }
 func IsHiddenTable(name string) bool {
 	lower := strings.ToLower(unqualify(name))
 	return slices.Contains(invisibleTables, lower) || strings.HasPrefix(lower, "sqlite_") ||
-		strings.HasPrefix(lower, "pragma_") || hasAnySuffix(lower, ftsShadowSuffixes)
+		strings.HasPrefix(lower, "pragma_")
 }
 
 func unqualify(name string) string {
@@ -321,10 +310,6 @@ func translate(message string) string {
 		return "SQL parse error: " + message
 	}
 	return "the database refused this statement: " + message
-}
-
-func hasAnySuffix(name string, suffixes []string) bool {
-	return slices.ContainsFunc(suffixes, func(s string) bool { return strings.HasSuffix(name, s) })
 }
 
 // enforceLimit imposes the cap on the original text. When there is no

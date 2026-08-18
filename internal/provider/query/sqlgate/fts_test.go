@@ -35,16 +35,26 @@ func TestTheGateAcceptsLexicalIndexSearch(t *testing.T) {
 // The acceptance is Validate() itself — not how the gate parses — so it holds
 // if validation moves to prepare-under-authorizer against a schema-only DB.
 func TestTheGateAcceptsFTSMatchOnAttachedPluginTables(t *testing.T) {
-	gate, err := sqlgate.OpenWithSchemas([]sqlgate.Schema{{
-		Name: "plugin_roca_corpus",
-		Tables: []sqlgate.Table{
-			{Name: "exchanges", Columns: []string{"id", "session_id", "human_text", "agent_text", "human_timestamp"}},
-			{Name: "documents_search", Columns: []string{"human_text", "agent_text"}, FTS5: true},
-			{Name: "memories", Columns: []string{"id", "content"}},
-			{Name: "receipts_fts", Columns: []string{"content"}},
-			{Name: "thinking_blocks", Columns: []string{"id", "full_text"}},
+	gate, err := sqlgate.OpenWithSchemas([]sqlgate.Schema{
+		{
+			Name: "plugin_roca_corpus",
+			Tables: []sqlgate.Table{
+				{Name: "exchanges", Columns: []string{"id", "session_id", "human_text", "agent_text", "human_timestamp"}},
+				{Name: "documents_search", Columns: []string{"human_text", "agent_text"}, FTS5: true},
+				{Name: "memories", Columns: []string{"id", "content"}},
+				{Name: "receipts_fts", Columns: []string{"content"}},
+				{Name: "thinking_blocks", Columns: []string{"id", "full_text"}},
+			},
 		},
-	}})
+		{
+			Name: "plugin_records",
+			Tables: []sqlgate.Table{
+				{Name: "documents_search", Columns: []string{"body"}},
+				{Name: "documents_search_data", Columns: []string{"body"}},
+				{Name: "records", Columns: []string{"documents_search"}},
+			},
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,6 +63,7 @@ func TestTheGateAcceptsFTSMatchOnAttachedPluginTables(t *testing.T) {
 	for _, stmt := range []string{
 		`SELECT rowid FROM plugin_roca_corpus.documents_search WHERE documents_search MATCH '"la"' LIMIT 5`,
 		`SELECT rowid, bm25(documents_search) FROM plugin_roca_corpus.documents_search WHERE documents_search MATCH '"la"' LIMIT 5`,
+		`SELECT body FROM plugin_records.documents_search_data LIMIT 5`,
 		// Representative live census: "when did I first mention la roca", taught MATCH form.
 		`SELECT source, id, session_id, mentioned_at, text, "database" FROM (
 		    SELECT 'human' AS source, e.id AS id, e.session_id AS session_id,
@@ -70,6 +81,11 @@ func TestTheGateAcceptsFTSMatchOnAttachedPluginTables(t *testing.T) {
 	for _, stmt := range []string{
 		`SELECT content FROM plugin_roca_corpus.memories WHERE content MATCH '"la"' LIMIT 1`,
 		`SELECT content FROM plugin_roca_corpus.receipts_fts WHERE receipts_fts MATCH '"la"' LIMIT 1`,
+		`SELECT body FROM plugin_records.documents_search WHERE documents_search MATCH '"la"' LIMIT 1`,
+		`SELECT documents_search FROM plugin_records.records WHERE documents_search MATCH '"la"' LIMIT 1`,
+		`SELECT documents_search FROM (SELECT documents_search FROM plugin_records.records) AS r WHERE documents_search MATCH '"la"' LIMIT 1`,
+		`SELECT EXISTS(SELECT 1 FROM plugin_records.records WHERE documents_search MATCH '"la"') FROM plugin_roca_corpus.documents_search LIMIT 1`,
+		`WITH documents_search AS (SELECT documents_search FROM plugin_records.records) SELECT documents_search FROM documents_search WHERE documents_search MATCH '"la"' LIMIT 1`,
 		`SELECT * FROM plugin_roca_corpus.documents_search_data LIMIT 1`,
 	} {
 		if _, err := gate.Validate(stmt); err == nil {

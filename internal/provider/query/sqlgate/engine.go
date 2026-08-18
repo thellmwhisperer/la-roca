@@ -162,7 +162,7 @@ func (e *engine) authorize(action int32, arg1, arg2, schema string) int32 {
 				return sqlite3.SQLITE_DENY
 			}
 		}
-		if e.stepping && (hasAnySuffix(identity.table, ftsShadowSuffixes) || e.hiddenTables[identity]) {
+		if e.stepping && e.hiddenTables[identity] {
 			return sqlite3.SQLITE_OK
 		}
 		if IsHiddenTable(arg1) || e.hiddenTables[identity] {
