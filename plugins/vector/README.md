@@ -11,42 +11,12 @@ copied into the index.
 
 ## Install from a release
 
-The plugin lifecycle is experimental and OFF by default. Set
-`features.plugins = true` in the selected La Roca `config.toml`. Releases carry
-one verified archive per core platform. Download the archive for the installed
-release to a stable local path, verify its release checksum, and install it:
-
-```sh
-VERSION=$(roca --version | awk 'NR == 1 {print $2}')
-PLATFORM=darwin-arm64 # or linux-arm64, linux-x64, windows-x64
-ASSET=roca-vector-$VERSION-$PLATFORM.tar.gz
-DOWNLOAD=$(mktemp -d)
-CACHE=$HOME/.cache/roca
-
-gh release download "$VERSION" --repo thellmwhisperer/la-roca \
-  --pattern "$ASSET" --pattern checksums.txt --dir "$DOWNLOAD"
-grep "  $ASSET$" "$DOWNLOAD/checksums.txt" |
-  (cd "$DOWNLOAD" && shasum -a 256 --check)
-mkdir -p "$CACHE"
-mv "$DOWNLOAD/$ASSET" "$CACHE/roca-vector.tar.gz"
-roca plugin install "$CACHE/roca-vector.tar.gz"
-```
-
-Installing this archive is an explicit full-trust consent event. Set
-`features.vector = true` as well: absent or false hides `roca vector` dispatch
-and its `roca plugins` entry even when the binary is on `PATH`. Installation
-supplies the package; the switch activates it.
-
-For the next release, repeat the download, verification, and `mv` with the new
-`VERSION`, keeping the same cache path, then run:
-
-```sh
-roca plugin update vector
-```
-
-Update reopens the recorded archive path, verifies the package's inner
-`checksums.txt`, replaces the released executable and manifest, and preserves
-the manifest-owned `state/` index. No Go toolchain or local build is involved.
+Every release core carries its matching companion and the standard installer
+materializes it beside `roca`; `features.plugins` is not required. Vector
+retrieval remains off until `features.vector = true`. Follow [Local vector
+search](../../docs/vector.md) for native Windows and Unix setup, the Ollama
+prerequisite, indexing, and verification. Standalone verified archives remain
+release artefacts for explicit plugin-package workflows.
 
 ## Build from source
 
