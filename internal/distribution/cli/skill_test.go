@@ -297,9 +297,9 @@ func TestSkillTeachesTheInvestigationFunnel(t *testing.T) {
 			body: skill.VectorContent(),
 			want: []string{
 				"## Hybrid discovery",
-				"The vector discovers vocabulary, FTS censuses, SQL frames",
+				"The vector discovers, FTS censuses, SQL frames",
 				"inference only at the end",
-				"roca vector query", "roca vector vocab",
+				"roca vector query",
 				"names of people", "my boss is named",
 				"k must be between 1 and 100",
 				"LIKE '%term%'",

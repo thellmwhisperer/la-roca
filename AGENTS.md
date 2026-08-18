@@ -66,8 +66,8 @@ contract: docs/vector.md.
 The craft lives in the skills you just installed, and it works before the
 vector index finishes: grounded exploration, one concept per probe, your
 own SQL through `roca exec`, verdicts anchored in rows. With vectors on,
-the same skill teaches the hybrid loop: vectors discover the vocabulary,
-full text counts it, SQL frames it.
+the same skill teaches the hybrid loop: vectors discover nearby passages,
+full text counts them, SQL frames them.
 
 Read the `roca` skill before your first real search. `roca query` (natural
 language to SQL through a second model) is your user's door, not your main

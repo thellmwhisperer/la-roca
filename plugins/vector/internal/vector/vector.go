@@ -166,13 +166,6 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 		}
 		existing, dimensions = map[string]storedChunk{}, 0
 	}
-	rebuildCensus := sourceKind != "sessions"
-	if rebuildCensus {
-		err = invalidateCensus(ctx, store)
-	}
-	if err != nil {
-		return Delta{}, fmt.Errorf("invalidate vector census: %w", err)
-	}
 	if dimensions > 0 && model != i.Model {
 		if err := ensureVectorTables(store, dimensions, i.Model); err != nil {
 			return Delta{}, err
@@ -180,7 +173,6 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 	}
 
 	report := Delta{}
-	census := newVocabCensus()
 	seen := make(map[string]bool, len(existing))
 	pending := make([]desiredChunk, 0, defaultBatchSize)
 	flush := func() error {
@@ -218,9 +210,6 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 
 	err = i.Corpus.WalkSources(ctx, sourceKind, func(source sourceRow) error {
 		report.Sources++
-		if sourceKind == "" {
-			census.add(source.kind, source.text)
-		}
 		for chunkIndex, text := range chunks(source.text, defaultChunkSize, defaultOverlap) {
 			chunk := desiredChunk{
 				sourceKind: source.kind, sourceID: source.stableID(), index: chunkIndex,
@@ -249,19 +238,6 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 	}
 	if err := removeMissing(ctx, store, existing, seen, sourceKind, &report); err != nil {
 		return Delta{}, err
-	}
-	if rebuildCensus {
-		if sourceKind != "" {
-			if err := i.Corpus.WalkSources(ctx, "", func(source sourceRow) error {
-				census.add(source.kind, source.text)
-				return nil
-			}); err != nil {
-				return Delta{}, err
-			}
-		}
-		if err := writeCensus(ctx, store, census); err != nil {
-			return Delta{}, fmt.Errorf("write vector census: %w", err)
-		}
 	}
 	report.Chunks = report.Added + report.Updated + report.Unchanged
 	return report, nil
@@ -471,9 +447,9 @@ func openSQLite(path string, readOnly bool) (*sql.DB, error) {
 
 func ensureBaseSchema(db *sql.DB) error {
 	_, err := db.Exec(`PRAGMA journal_mode=WAL;
+		DROP TABLE IF EXISTS census;
+		DROP TABLE IF EXISTS census_totals;
 		CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
-		CREATE TABLE IF NOT EXISTS census(term TEXT NOT NULL PRIMARY KEY, docs INTEGER NOT NULL) WITHOUT ROWID;
-		CREATE TABLE IF NOT EXISTS census_totals(key TEXT NOT NULL PRIMARY KEY, documents INTEGER NOT NULL);
 		CREATE TABLE IF NOT EXISTS chunks(
 			id INTEGER PRIMARY KEY,
 			source_kind TEXT NOT NULL,
@@ -862,8 +838,6 @@ func buildCompactedStore(ctx context.Context, target *sql.DB, sourcePath, model 
 		sql  string
 	}{
 		{"metadata", `INSERT OR REPLACE INTO main.meta(key,value) SELECT key,value FROM source.meta`},
-		{"census", `INSERT INTO main.census(term,docs) SELECT term,docs FROM source.census`},
-		{"census totals", `INSERT INTO main.census_totals(key,documents) SELECT key,documents FROM source.census_totals`},
 		{"chunk identities", `INSERT INTO main.chunks(id,source_kind,source_id,chunk_index,fingerprint,locator,updated_at)
 			SELECT id,source_kind,source_id,chunk_index,fingerprint,locator,updated_at FROM source.chunks ORDER BY id`},
 		{"float embeddings", `INSERT INTO main.embeddings(rowid,embedding)
