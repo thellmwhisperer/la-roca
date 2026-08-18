@@ -1,12 +1,32 @@
 # Local vector search
 
-Vector retrieval is opt-in and off by default. The release already places
-the `roca-vector` companion next to `roca`; the switch only unhides
-dispatch. It does not require `features.plugins`. Windows is a first-class
-indexing seat: the matching artefacts are
+Vector retrieval is opt-in and off by default. The release core carries its
+matching `roca-vector` companion; the installation step extracts the companion
+next to `roca`, and the switch only unhides dispatch. It does not require
+`features.plugins`. Windows is a first-class indexing seat: the matching artefacts are
 `roca-<version>-windows-x64.exe` (core, carrying `roca-vector.exe`) and
 `roca-vector-vX.Y.Z-windows-x64.tar.gz` (standalone archive in the same
 release).
+
+## Windows install
+
+1. Download `roca-<version>-windows-x64.exe` from the release, put it in a
+   permanent directory, rename it `roca.exe`, and add that directory to the
+   user `PATH`.
+2. Open a new PowerShell window and have the core extract its carried companion
+   into that same directory:
+
+   ```powershell
+   $RocaDir = Split-Path (Get-Command roca.exe).Source
+   $env:ROCA_PREFIX = $RocaDir
+   roca.exe _install-bundled-plugins
+   Get-Command roca-vector.exe
+   ```
+
+The final command must resolve `roca-vector.exe` from `$RocaDir`. If the release
+filename is kept instead of renaming it, invoke that filename in the extraction
+command. WSL is an alternative: install and operate the Linux artefact with the
+Unix commands inside the distribution.
 
 Turn it on in the configuration `roca doctor` names
 (`~/.roca/config.toml`, or `%USERPROFILE%\.roca\config.toml` on Windows,
@@ -18,9 +38,8 @@ vector = true
 ```
 
 That exposes `roca vector` and lists `vector` in `roca plugins`. Absent or
-false, the command does not exist. On Windows, keep `roca-vector.exe` in
-the same directory as `roca.exe` and on `PATH`; [Install](lifecycle.md#install)
-is how the `.exe` is placed.
+false, the command does not exist. On Windows, keep `roca-vector.exe` beside
+`roca.exe` in the directory on `PATH`.
 
 ## Prerequisites
 
@@ -66,9 +85,11 @@ roca vector install
 
 `install` prepares the plugin-owned index under
 `~/.roca/plugins/vector/state/` (`%USERPROFILE%\.roca\plugins\vector\state`
-on Windows) and embeds the corpus in the background. A desktop
-notification reports exit status and counts; the worker log path is
-printed at launch.
+on Windows) and embeds the corpus in the background. macOS and Linux can send
+a desktop notification with the exit status and counts. Windows sends no
+desktop notification: inspect `completion.json` or `worker.log` in that state
+directory. The worker log path is printed at launch; `completion.json` records
+`started_at` and `finished_at`, which time the first pass on this machine.
 
 Indexing is incremental after that. `roca vector ingest` always requires
 `--delta`:

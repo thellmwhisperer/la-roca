@@ -216,6 +216,9 @@ func TestSkillTeachesTheInvestigationFunnel(t *testing.T) {
 				"nombres de personas", "mi jefe se llama",
 				"k must be between 1 and 100",
 				"LIKE '%term%'",
+				"COUNT(DISTINCT e.session_id)",
+				"COUNT(DISTINCT e.id)",
+				"with-inference SQL compiler outside this zero-inference path",
 			},
 		},
 	} {
@@ -227,6 +230,22 @@ func TestSkillTeachesTheInvestigationFunnel(t *testing.T) {
 			}
 		})
 	}
+	hybrid := markdownSection(body, "## Hybrid discovery")
+	if strings.Contains(hybrid, `roca query --sql-only "`) {
+		t.Fatal("hybrid discovery sends its doctrinal path through model inference")
+	}
+}
+
+func markdownSection(body, heading string) string {
+	start := strings.Index(body, heading)
+	if start < 0 {
+		return ""
+	}
+	rest := body[start+len(heading):]
+	if end := strings.Index(rest, "\n## "); end >= 0 {
+		return rest[:end]
+	}
+	return rest
 }
 
 func skillTestHome(t *testing.T) string {

@@ -47,6 +47,9 @@ func TestEverySkillExampleIsValidAgainstTheRealCLI(t *testing.T) {
 		if len(tokens) == 0 || tokens[0] != "roca" {
 			continue
 		}
+		if taughtPluginDispatch(tokens[1:]) {
+			continue
+		}
 		cmd, args := resolve(root, tokens[1:])
 		if cmd == nil || cmd == root {
 			t.Errorf("skill example is not a known command:\n  %s", line)

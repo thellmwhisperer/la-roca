@@ -190,35 +190,39 @@ does none either.
 2. Discover discriminative terms with `roca vector vocab <concept>` (zero
    inference: top-100 semantic hits, census, log-odds vias). Example:
    `roca vector vocab salud`.
-3. Census and frame with FTS / `roca query --sql-only` plus `roca exec`:
-   counts, dates, and word-boundary `MATCH`. Do not use `LIKE '%term%'`: it
-   matches inside other words (`name` inside `rename`).
+3. Write deterministic FTS/SQL directly for `roca exec`: counts, dates, and
+   word-boundary `MATCH`. Do not use `LIKE '%term%'`: it matches inside other
+   words (`name` inside `rename`).
 
 Worked loop, names:
 
-```text
-$ roca vector query "mi jefe se llama" 20
-$ roca query --sql-only "how often does that name appear, by month"
-$ roca exec "<the printed SELECT>"
+```bash
+roca vector query "mi jefe se llama" 20
+roca exec "SELECT substr(COALESCE(e.human_timestamp, e.agent_timestamp), 1, 7) AS month, COUNT(DISTINCT e.id) AS exchanges, COUNT(DISTINCT e.session_id) AS sessions FROM (SELECT rowid AS source_id FROM exchanges_fts WHERE exchanges_fts MATCH 'ana') hits JOIN exchanges e ON e.id = hits.source_id GROUP BY month ORDER BY month"
 ```
 
 Worked loop, concept:
 
-```text
-$ roca vector vocab salud
-$ roca query --sql-only "count exchanges matching the strongest via, with dates"
-$ roca exec "<the printed SELECT>"
+```bash
+roca vector vocab salud
+roca exec "SELECT COUNT(DISTINCT e.id) AS exchanges, COUNT(DISTINCT e.session_id) AS sessions, MIN(COALESCE(e.human_timestamp, e.agent_timestamp)) AS first_seen, MAX(COALESCE(e.human_timestamp, e.agent_timestamp)) AS last_seen FROM (SELECT rowid AS source_id FROM exchanges_fts WHERE exchanges_fts MATCH 'agotamiento') hits JOIN exchanges e ON e.id = hits.source_id"
 ```
 
 Then the reading agent narrates from those rows. Stop before that last
-reading if you only needed the map.
+reading if you only needed the map. `roca query --sql-only` is a convenient
+natural-language, with-inference SQL compiler outside this zero-inference path;
+use it only when that inference is intentional.
 
 Caveats measured on real use:
 
 - `k` max is 100. A larger `k` errors (`k must be between 1 and 100`) before
   any JSON body.
-- Query deduplicates by source identity: a census-style probe of `k=20` is
-  20 sources, not 20 chunks. For counts, use FTS/SQL.
+- A discovery probe can return several exchange sources from one session. Judge
+  breadth by grouping on session id or `COUNT(DISTINCT e.session_id)` before
+  interpreting the result.
+- Query deduplicates chunks by source identity. For an exact census, count the
+  family's identity in FTS/SQL, such as `COUNT(DISTINCT e.id)` for exchanges;
+  do not treat vector hits or distinct sessions as exact occurrence counts.
 - Two signal classes: presence (the topic is nearby) versus intention
   (someone decided or promised). Vector answers presence; SQL frames
   intention.
