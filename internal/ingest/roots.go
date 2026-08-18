@@ -264,11 +264,11 @@ func openCodeTelegramLogsDir(env Environment) string {
 			"opencode-telegram-bot", "logs")
 	}
 	if env.windows() {
-		return under(env, envLocalAppData, "opencode-telegram-bot",
-			"AppData", "Local") + `\logs`
+		return join(env, under(env, envAppData, "opencode-telegram-bot",
+			"AppData", "Roaming"), "logs")
 	}
-	return join(env, under(env, envXDGData, "opencode-telegram-bot",
-		".local", "share"), "logs")
+	return join(env, under(env, envXDGConfig, "opencode-telegram-bot",
+		".config"), "logs")
 }
 
 // pick applies the three precedences to one path.
