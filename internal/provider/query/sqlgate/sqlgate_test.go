@@ -115,10 +115,13 @@ func TestTheEngineIsTheOneThatSaysWhatDoesNotExist(t *testing.T) {
 
 func TestAnAttachedOnlyGateRejectsCoreTables(t *testing.T) {
 	g := mustOpenGate(t, sqlgate.OpenAttached, []sqlgate.Schema{{
-		Name:   "plugin_receipts",
-		Tables: []sqlgate.Table{{Name: "receipts", Columns: []string{"id", "title"}}},
+		Name: "plugin_receipts",
+		Tables: []sqlgate.Table{
+			{Name: "receipts", Columns: []string{"id", "title"}},
+			{Name: "memories", Columns: []string{"id", "content"}},
+		},
 	}})
-	if _, err := g.Validate(`SELECT title FROM plugin_receipts.receipts LIMIT 5`); err != nil {
+	if _, err := g.Validate(`SELECT content FROM plugin_receipts.memories LIMIT 5`); err != nil {
 		t.Fatalf("attached read was rejected: %v", err)
 	}
 	if _, err := g.Validate(`SELECT content FROM memories LIMIT 5`); err == nil {

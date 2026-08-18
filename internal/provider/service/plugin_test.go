@@ -13,6 +13,7 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
+	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	_ "modernc.org/sqlite"
@@ -637,6 +638,51 @@ INSERT INTO receipts (title) VALUES ('Synthetic telescope parts');`)
 				}
 			}
 		})
+	}
+}
+
+func TestSuccessfulWideningDropsTheScopedPassAnswerState(t *testing.T) {
+	paths := freshPaths(t)
+	plugins := ensureRocaOps(t, paths)
+	if _, err := rocacorpus.Ensure(plugins, filepath.Join(paths.data, "bin"), "v-test"); err != nil {
+		t.Fatal(err)
+	}
+	installQueryPlugin(t, plugins, "well-formed", `
+version: 1
+description: Synthetic purchase receipts.
+questions: ["Which receipts were recorded?"]
+tables:
+  - name: receipts
+    description: Synthetic receipts.
+    columns: [id, title]
+`, `CREATE TABLE receipts (id INTEGER PRIMARY KEY, title TEXT);
+INSERT INTO receipts (title) VALUES ('Synthetic telescope parts');`)
+
+	const first = "DELETE FROM memories"
+	const empty = "SELECT 1 AS answer WHERE 0 LIMIT 1"
+	const widened = "SELECT title AS text FROM plugin_well_formed.receipts LIMIT 1"
+	model := &fakeProvider{
+		name: "codex", model: "codex-model", ready: provider.Readiness{Ready: true},
+		latency: 7, answers: []string{first, empty, widened},
+	}
+	svc := initialized(t, paths, func(options *service.Options) {
+		options.PluginDir = plugins
+		options.PluginsEnabled = true
+		options.RocaOpsEnabled = true
+		options.CorpusEnabled = true
+		options.Providers = cascadeOf(model)
+	})
+	result, err := svc.Query(t.Context(), service.QueryRequest{Question: "Which receipts were recorded?"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Path != service.PathLLM || result.Match != service.MatchFound || result.RowCount != 1 ||
+		result.Message != "" || result.Degraded != "" {
+		t.Fatalf("widened result retained scoped answer state: %+v", result)
+	}
+	if !result.Widened || result.ModelSQL != widened || !result.RetriedSQL ||
+		result.FirstModelSQL != first || result.LLMLatencyMS != 21 || len(result.Providers) != 2 {
+		t.Fatalf("widened result lost cumulative state: %+v", result)
 	}
 }
 

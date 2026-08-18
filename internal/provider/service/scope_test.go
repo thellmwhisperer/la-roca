@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 )
 
@@ -97,6 +98,45 @@ func TestDefaultScopeWithoutCorpusIsCore(t *testing.T) {
 	route, err := resolveScope(nil, pluginRoute{includeCore: true, databases: []plugin.Database{ops}})
 	if err != nil || !route.includeCore || len(route.databases) != 0 {
 		t.Fatalf("route = %+v, err = %v; want core only", route, err)
+	}
+}
+
+func TestWidenReplyRequiresTheExactUppercaseToken(t *testing.T) {
+	for _, tc := range []struct {
+		reply string
+		want  bool
+	}{
+		{reply: "WIDEN", want: true},
+		{reply: "  WIDEN\n", want: true},
+		{reply: "widen"},
+		{reply: "Widen"},
+		{reply: "WIDEN now"},
+	} {
+		if got := WidenReply(tc.reply); got != tc.want {
+			t.Errorf("WidenReply(%q) = %v, want %v", tc.reply, got, tc.want)
+		}
+	}
+}
+
+func TestWidenedPassKeepsOnlyCumulativeState(t *testing.T) {
+	first := QueryResult{
+		Question: "synthetic question", Path: PathKeyword, Message: "nothing relevant",
+		Degraded: DegradedUnavailable, Match: MatchEmpty, Columns: []string{"text"},
+		Rows: []map[string]any{{"text": "stale"}}, RowCount: 1,
+		Providers: []provider.Attempt{{Name: "first"}}, Warnings: []string{"warning"},
+		RetriedSQL: true, RetryType: RetryGateRejection, FirstModelSQL: "SELECT missing",
+		RetryReason: "missing", FirstRepaired: []string{"code_fence"},
+		LLMLatencyMS: 2, SQLRetryProviderLatencyMS: 1, SQLInferenceMS: 3,
+		SQLRetryInferenceMS: 1, ExecutionMS: 4, Version: "v-test", SourceSHA: "abc",
+	}
+	got := beginWidenedPass(first, pluginRoute{includeCore: true})
+	if got.Message != "" || got.Degraded != "" || got.Path != "" || got.Match != "" ||
+		got.RowCount != 0 || got.Rows != nil || got.Columns != nil {
+		t.Fatalf("widened pass retained stale answer state: %+v", got)
+	}
+	if !got.Widened || got.LLMLatencyMS != 2 || got.ExecutionMS != 4 ||
+		len(got.Providers) != 1 || got.FirstModelSQL != "SELECT missing" {
+		t.Fatalf("widened pass lost cumulative state: %+v", got)
 	}
 }
 

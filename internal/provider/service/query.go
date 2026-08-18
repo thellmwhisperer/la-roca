@@ -308,7 +308,7 @@ func (s *Service) Query(ctx context.Context, req QueryRequest) (res QueryResult,
 		return res, err
 	}
 	inventory := s.inventoryRoute(ctx)
-	route, err := s.questionRoute(ctx, req.Databases)
+	route, err := questionRoute(req.Databases, inventory)
 	if err != nil {
 		return res, err
 	}
@@ -324,10 +324,7 @@ func (s *Service) Query(ctx context.Context, req QueryRequest) (res QueryResult,
 	}
 	if !req.SQLOnly && insufficientAnswer(res) && route.canWiden(inventory) {
 		widened := inventory
-		res.Databases = widened.consulted()
-		res.OmittedDatabases = widened.omittedSources()
-		res.UnusedDatabases = nil
-		res.Widened = true
+		res = beginWidenedPass(res, widened)
 		res, err = s.llmStage(ctx, req, res, widened)
 		if err != nil {
 			return res, err
@@ -341,6 +338,29 @@ func (s *Service) Query(ctx context.Context, req QueryRequest) (res QueryResult,
 		res.Columns, res.Rows = ensureDatabaseColumn(res.Columns, res.Rows, "core")
 	}
 	return res, err
+}
+
+func beginWidenedPass(first QueryResult, route pluginRoute) QueryResult {
+	return QueryResult{
+		Question:                  first.Question,
+		Databases:                 route.consulted(),
+		OmittedDatabases:          route.omittedSources(),
+		Widened:                   true,
+		RetriedSQL:                first.RetriedSQL,
+		RetryType:                 first.RetryType,
+		FirstModelSQL:             first.FirstModelSQL,
+		RetryReason:               first.RetryReason,
+		FirstRepaired:             slices.Clone(first.FirstRepaired),
+		Providers:                 slices.Clone(first.Providers),
+		Warnings:                  slices.Clone(first.Warnings),
+		LLMLatencyMS:              first.LLMLatencyMS,
+		SQLRetryProviderLatencyMS: first.SQLRetryProviderLatencyMS,
+		SQLInferenceMS:            first.SQLInferenceMS,
+		SQLRetryInferenceMS:       first.SQLRetryInferenceMS,
+		ExecutionMS:               first.ExecutionMS,
+		Version:                   first.Version,
+		SourceSHA:                 first.SourceSHA,
+	}
 }
 
 // ExecRequest is a SELECT the caller wants to run as it is. It is the natural

@@ -100,7 +100,7 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 	}
 
 	chosen, attempts := cascade.Pick(ctx)
-	res.Providers = attempts
+	res.Providers = append(res.Providers, attempts...)
 
 	if chosen == nil {
 		// The failure names which providers were tried, why each one
@@ -228,11 +228,13 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 				fmt.Sprintf("the SQL %s generated does not pass the gate: %v",
 					chosen.Name(), failure)), nil
 		}
-		res.RetriedSQL = true
-		res.RetryType = retryType
-		res.FirstModelSQL = answer.Content
-		res.FirstRepaired = append([]string(nil), prepared.Repairs...)
-		res.RetryReason = failure.Error()
+		if !res.RetriedSQL {
+			res.RetriedSQL = true
+			res.RetryType = retryType
+			res.FirstModelSQL = answer.Content
+			res.FirstRepaired = append([]string(nil), prepared.Repairs...)
+			res.RetryReason = failure.Error()
+		}
 		// The engine said exactly what is wrong. Handing that back is not a
 		// repair invented here: it is the verdict of the same engine that would
 		// have run the query, and it is the one piece of information that fixes

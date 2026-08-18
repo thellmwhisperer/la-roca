@@ -55,7 +55,7 @@ type pluginRoute struct {
 }
 
 func (s *Service) pluginsForQuestion(ctx context.Context, _ string) pluginRoute {
-	route, err := s.questionRoute(ctx, nil)
+	route, err := questionRoute(nil, s.inventoryRoute(ctx))
 	if err != nil {
 		return pluginRoute{warnings: []string{err.Error()}}
 	}

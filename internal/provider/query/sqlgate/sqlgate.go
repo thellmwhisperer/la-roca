@@ -173,11 +173,61 @@ func openGate(includeCore bool, schemas []Schema) (*Gate, error) {
 			return nil, err
 		}
 	}
+	if !includeCore {
+		if err := addUnqualifiedShadows(eng, schemas); err != nil {
+			eng.close()
+			return nil, err
+		}
+	}
 	if err := eng.attachAuthorizer(); err != nil {
 		eng.close()
 		return nil, err
 	}
 	return &Gate{engine: eng}, nil
+}
+
+func addUnqualifiedShadows(eng *engine, schemas []Schema) error {
+	type shadowTable struct {
+		name    string
+		columns []string
+		seen    map[string]bool
+	}
+	shadows := make(map[string]*shadowTable)
+	var order []string
+	for _, schema := range schemas {
+		for _, table := range schema.Tables {
+			if IsHiddenTable(table.Name) || len(table.Columns) == 0 {
+				continue
+			}
+			key := strings.ToLower(table.Name)
+			shadow := shadows[key]
+			if shadow == nil {
+				shadow = &shadowTable{name: table.Name, seen: make(map[string]bool)}
+				shadows[key] = shadow
+				order = append(order, key)
+			}
+			for _, column := range table.Columns {
+				columnKey := strings.ToLower(column)
+				if !shadow.seen[columnKey] {
+					shadow.seen[columnKey] = true
+					shadow.columns = append(shadow.columns, column)
+				}
+			}
+		}
+	}
+	for _, key := range order {
+		shadow := shadows[key]
+		columns := make([]string, len(shadow.columns))
+		for index, column := range shadow.columns {
+			columns[index] = quoteIdentifier(column) + " BLOB"
+		}
+		if err := eng.exec("CREATE TABLE main." + quoteIdentifier(shadow.name) +
+			" (" + strings.Join(columns, ", ") + ")"); err != nil {
+			return fmt.Errorf("reserve unqualified table name %q: %w", shadow.name, err)
+		}
+		eng.hideTable("main", shadow.name)
+	}
+	return nil
 }
 
 func addSchema(eng *engine, schema Schema) error {

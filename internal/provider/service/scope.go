@@ -66,8 +66,7 @@ func matchesScope(database plugin.Database, name string) bool {
 	return false
 }
 
-func (s *Service) questionRoute(ctx context.Context, names []string) (pluginRoute, error) {
-	inventory := s.inventoryRoute(ctx)
+func questionRoute(names []string, inventory pluginRoute) (pluginRoute, error) {
 	route, err := resolveScope(names, inventory)
 	if err != nil {
 		return pluginRoute{}, err
@@ -186,7 +185,7 @@ func widenReply(text string) bool {
 // WidenReply reports that the reading seat asked for a second SQL pass over
 // the attached databases that were held back.
 func WidenReply(text string) bool {
-	return strings.EqualFold(strings.TrimSpace(text), "WIDEN")
+	return strings.TrimSpace(text) == "WIDEN"
 }
 
 func bundledSearchDatabases(route pluginRoute) []plugin.Database {
