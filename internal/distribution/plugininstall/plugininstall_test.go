@@ -256,8 +256,8 @@ func TestInstallUpdateAndUninstallPreservePluginOwnedData(t *testing.T) {
 
 func TestInterruptedUpdateRecoveryTombstoneConverges(t *testing.T) {
 	for _, testCase := range []struct {
-		name, wantError string
-		arrange         func(*testing.T, string, string, string, string, string)
+		name, wantError, preserved, wantContents string
+		arrange                                  func(*testing.T, string, string, string, string, string)
 	}{
 		{
 			name: "proof created before journal",
@@ -320,7 +320,10 @@ func TestInterruptedUpdateRecoveryTombstoneConverges(t *testing.T) {
 			},
 		},
 		{
-			name: "tombstone cleanup removed its internal proof",
+			name:         "nonempty tombstone without proof is preserved",
+			wantError:    "has no linked ownership proof and is not empty",
+			preserved:    "partial",
+			wantContents: "discarded update",
 			arrange: func(t *testing.T, _, _, tombstone, journal, proof string) {
 				t.Helper()
 				if err := os.Mkdir(tombstone, 0o700); err != nil {
@@ -331,8 +334,20 @@ func TestInterruptedUpdateRecoveryTombstoneConverges(t *testing.T) {
 			},
 		},
 		{
-			name:      "unowned tombstone collision is preserved",
-			wantError: "has no installer ownership journal",
+			name: "empty tombstone after proof removal converges",
+			arrange: func(t *testing.T, _, _, tombstone, journal, proof string) {
+				t.Helper()
+				if err := os.Mkdir(tombstone, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				writeFixtureFile(t, journal, []byte(proof), 0o600)
+			},
+		},
+		{
+			name:         "unowned tombstone collision is preserved",
+			wantError:    "has no installer ownership journal",
+			preserved:    "unowned",
+			wantContents: "operator data",
 			arrange: func(t *testing.T, _, _, tombstone, _, _ string) {
 				t.Helper()
 				if err := os.Mkdir(tombstone, 0o700); err != nil {
@@ -342,8 +357,10 @@ func TestInterruptedUpdateRecoveryTombstoneConverges(t *testing.T) {
 			},
 		},
 		{
-			name:      "unlinked ownership files are preserved",
-			wantError: "is not linked to installer journal",
+			name:         "unlinked ownership files are preserved",
+			wantError:    "is not linked to installer journal",
+			preserved:    "unowned",
+			wantContents: "operator data",
 			arrange: func(t *testing.T, _, _, tombstone, journal, proof string) {
 				t.Helper()
 				if err := os.Mkdir(tombstone, 0o700); err != nil {
@@ -388,9 +405,9 @@ func TestInterruptedUpdateRecoveryTombstoneConverges(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), testCase.wantError) {
 					t.Fatalf("RecoverUpdate() error = %v, want %q", err, testCase.wantError)
 				}
-				raw, readErr := os.ReadFile(filepath.Join(tombstone, "unowned"))
-				if readErr != nil || string(raw) != "operator data" {
-					t.Fatalf("unowned tombstone = %q, err=%v", raw, readErr)
+				raw, readErr := os.ReadFile(filepath.Join(tombstone, testCase.preserved))
+				if readErr != nil || string(raw) != testCase.wantContents {
+					t.Fatalf("preserved tombstone content = %q, err=%v", raw, readErr)
 				}
 				return
 			}

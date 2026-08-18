@@ -661,7 +661,7 @@ func (m Manager) RecoverUpdate(name string) error {
 			if err := os.Rename(backup, target); err != nil {
 				return fmt.Errorf("restore plugin %s update: %w", name, err)
 			}
-			return removeRecoveryTombstone(tombstone, journal, proof, true)
+			return removeRecoveryTombstone(tombstone, journal, proof)
 		case currentErr == nil:
 			proof := updateRecoveryProof(name, current)
 			if err := verifyRecoveryProof(journal, proof); err != nil {
@@ -677,7 +677,7 @@ func (m Manager) RecoverUpdate(name string) error {
 					return fmt.Errorf("inspect plugin %s recovery proof: %w", name, err)
 				}
 			}
-			return removeRecoveryTombstone(tombstone, journal, proof, false)
+			return removeRecoveryTombstone(tombstone, journal, proof)
 		default:
 			return fmt.Errorf("recover plugin %s update: previous directory is not verified: %v; current directory is not verified: %v",
 				name, previousErr, currentErr)
@@ -729,7 +729,7 @@ func (m Manager) RecoverUpdate(name string) error {
 		}
 		if currentErr == nil {
 			return removeRecoveryTombstone(tombstone, journal,
-				updateRecoveryProof(name, previous), true)
+				updateRecoveryProof(name, previous))
 		}
 		return nil
 	case currentErr == nil:
@@ -828,17 +828,55 @@ func verifyLinkedRecoveryProof(marker, journal, proof string) error {
 	return nil
 }
 
-func removeRecoveryTombstone(tombstone, journal, proof string, markerRequired bool) error {
+func removeRecoveryTombstone(tombstone, journal, proof string) error {
+	if err := verifyRecoveryProof(journal, proof); err != nil {
+		return err
+	}
+	info, err := os.Lstat(tombstone)
+	if os.IsNotExist(err) {
+		if err := os.Remove(journal); err != nil {
+			return fmt.Errorf("remove recovery journal: %w", err)
+		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect recovery tombstone: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("recovery tombstone %s is not a directory", tombstone)
+	}
+	entries, err := os.ReadDir(tombstone)
+	if err != nil {
+		return fmt.Errorf("read recovery tombstone: %w", err)
+	}
 	marker := filepath.Join(tombstone, recoveryProofFile)
-	if markerRequired {
+	markerPresent := false
+	for _, entry := range entries {
+		if entry.Name() == recoveryProofFile {
+			markerPresent = true
+			break
+		}
+	}
+	if markerPresent {
 		if err := verifyLinkedRecoveryProof(marker, journal, proof); err != nil {
 			return err
 		}
-	} else if err := verifyRecoveryProof(journal, proof); err != nil {
-		return err
+		for _, entry := range entries {
+			if entry.Name() == recoveryProofFile {
+				continue
+			}
+			if err := os.RemoveAll(filepath.Join(tombstone, entry.Name())); err != nil {
+				return fmt.Errorf("remove recovery tombstone entry %s: %w", entry.Name(), err)
+			}
+		}
+		if err := os.Remove(marker); err != nil {
+			return fmt.Errorf("remove recovery ownership proof: %w", err)
+		}
+	} else if len(entries) != 0 {
+		return fmt.Errorf("recovery tombstone %s has no linked ownership proof and is not empty; remove or relocate it manually", tombstone)
 	}
-	if err := os.RemoveAll(tombstone); err != nil {
-		return fmt.Errorf("remove recovery tombstone: %w", err)
+	if err := os.Remove(tombstone); err != nil {
+		return fmt.Errorf("remove empty recovery tombstone: %w", err)
 	}
 	if err := os.Remove(journal); err != nil {
 		return fmt.Errorf("remove recovery journal: %w", err)
