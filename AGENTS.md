@@ -1,45 +1,86 @@
-# Project agent memory
+# La Roca is an AI agent memory
 
-This file is the project's committed home for project-intrinsic agent knowledge: build, test, release, architecture, and sharp-edge notes that should travel with the code.
+If your user pointed you here to **install and use** La Roca, this section is
+yours. If you are here to develop La Roca itself, skip to the contributor
+notes below.
 
-- Run the canonical local gate with `make check`; inspect the Gherkin catalogue with `make accept-index`. That gate stops at the root module, so a change under `plugins/<name>/` also owes `make -C plugins/<name> check`.
-- Per-domain acceptance lives under `features/<domain>/`; the Godog harness is enabled only by the `acceptance` build tag. A feature carrying a routing tag (`@journey`, `@data-split-oracle`) is excluded from its domain suite and driven by its own harness in `test/acceptance/`.
-- The DATA SPLIT compatibility oracle (`make split-oracle`, `test/acceptance/data_split_oracle_test.go`, normalizer and digest manifest in `test/compatibility/`) freezes what CLI and MCP users observe as a SHA-256 digest-pinned bundle under `testdata/data-split-oracle/`; no signature exists, and none is owed. When it reports a difference, never edit a golden to make it pass: the recording it keeps under `.tmp/` is evidence for an owner decision, and any change to the goldens or the harness merges only after the owner reviews it. README's build and test section owns the contributor-facing description.
-- The slop gate ratchets over test code too, so new tests alone can fail `make check`: fold paired cases into one table-driven test rather than raise the ceiling in `.slop/`.
-- Public source, documentation, features, and fixtures are English-only; use unmistakably synthetic test data.
-- Never add Sherpa-style navigational comment blocks or numbered section maps to any file; the owner forbids them repository-wide.
-- Keep distribution ownership declarations centralized in `internal/distribution/cli/uninstall.go` (`ownedPaths`, the `~/.roca` plugin trees, and recovery-backup handling); archived custodial plugin data is the one tree a purge owns only after its own consent.
-- Managed agent artifacts use the shared zones and schema-versioned registry in `internal/artifact`; installers register skill, prompt, and hook ownership, and `ownedPaths` consumes that registry rather than growing a second install inventory.
-- `roca skill install` writes two skills per runtime: the embedded roca skill and `roca-semantica`, generated from the installed plugin manifests' semantic fragments (the same fragments the query catalog composes) in `internal/distribution/skill`; regeneration triggers are skill install and the end of plugin install/update/uninstall, both in `internal/distribution/cli`. Grok and Qwen Code are measured skill seats only — no MCP configuration surface — and the measurement record lives in `docs/mcp.md`.
-- Vector retrieval is opt-in behind `features.vector` (off by default; the bundled companion is already installed). Operator contract: `docs/vector.md` (Windows is a first-class indexing seat; rates are hardware-conditioned). Agents learn the hybrid discovery loop (vector vocabulary, FTS census, SQL frame; inference only at the end) from the shipped skill.
-- Federated plugin manifests are owned by `internal/provider/plugin/manifest.go`: keep the engine database-neutral, attach plugin databases read-only through its in-memory hub, and compose semantic fragments through that package. The resident corpus and ops declarations live in `internal/distribution/{rocacorpus,rocaops}/plugin.json`; cron keeps its legacy descriptor until its migration, and `plugininstall` must preserve every declared database across updates.
-- The SQL-generation seat (`internal/provider/query/prompt.go`) must teach every queryable table's real columns, including FTS5 virtual tables, and state the closed world: only the listed tables are readable, and sqlite_master is not available. MATCH and bm25 take the bare FTS table name even when FROM is schema-qualified. The read-only gate creates attached virtual tables from inspected `Table.FTS5` metadata and records FTS and shadow ownership in its schema-scoped validation catalog; never infer FTS kind from a name suffix. Pin that with Validate() behavior tests, not parser internals.
-- Verified executable-only plugin packages declare their kind and optional writable state directory in `plugin.json`; `internal/distribution/plugininstall` preserves that manifest-owned namespace across updates and supplies purge ownership. Keep them out of data-plugin discovery; the contract lives in `docs/plugins.md`. Executable naming is centralized in `plugininstall.ExecutableName`; the bundled vector plugin is `roca-vector`.
-- The bundled corpus has no feature flag: the CLI installs and attaches it for every command except `roca store`, whose `openStoreService` omits corpus custody so a memory write never touches it. New ingest and lexical indexing target its database, and historical core rows remain readable without an implicit migration. The seams live in `internal/distribution/cli/cli.go` and `internal/provider/service/{ingest,plugins}.go`.
-- Redacted CLI/MCP call history dual-writes rotating JSONL and durable `roca-ops.db`; `internal/distribution/callhistory` owns segment-idempotent backfill and the parity gate before doctor uses ops, while `internal/distribution/logfile` keeps the public contract, redaction, JSONL rollback, and ingest/migration-only file streams. The schema and full contract live in `internal/distribution/rocaops/schema.sql` and `docs/operations.md`. `roca doctor --report` is the read-only, privacy-safe support snapshot; `docs/operations.md` owns that contract.
-- MCP answers are TOON-only text: never return row envelopes in `StructuredContent`; the contract lives in `internal/distribution/mcpplug/toon_contract_test.go`.
-- A prose query or explore costs two inferences and only the second one sees result rows; `models.interpret_order` routes that seat, while deep explore may try `models.explore_order` first. Keep rows out of the SQL prompt and terrain facts derived from the run's returned rows; the contracts live in `internal/provider/service/two_inferences_test.go` and `explore_test.go`.
-- Keep SQL generation unbounded and the gate on its own validation connection; `docs/models.md` owns the provider, repair, authorization, and LIMIT contracts, with seams in `internal/provider/{ollama,localbinary}.go` and `internal/provider/query/{sqlgate,sqlrepair}`.
-- Keep local-binary isolation and corpus exclusion synchronized: shipped command data lives in `internal/provider/command_presets.go`, the generic adapter in `internal/provider/localbinary.go`, and the runner ingest guard is pinned in `internal/ingest/detection_test.go`.
-- Account exports are invocation-scoped: `roca ingest <path>` imports one extracted ChatGPT or Claude snapshot, while plain/nightly ingest resolves only live agent roots; the contract lives in `internal/distribution/cli/ingest.go` and `features/ingest/`. `ingest.WithExportPath` decides the vendor from the folder shape and refuses a directory that is neither, so no snapshot is diagnosed as the other vendor's. ChatGPT project membership is `gizmo_type=snorlax` plus the opaque `gizmo_id`; `gizmo_type=gpt` is a Custom GPT and not a project. Claude personal exports ingest project entities, docs, current `memories.json` surfaces, and the narrow `design_chats` join, and do not assign ordinary `conversations.json` items to a project. `docs/ingest.md` owns the operator-facing contract.
-- There is no migration runner: `data/schema.sql` is core's only schema, each bundled plugin owns its own outside adoption (`internal/distribution/{rocaops,rocacron,rocacorpus}/schema.sql`, applied idempotently on install by the shared `internal/distribution/bundledplugin` installer), and plugin-local DATA SPLIT state, custody memberships, and atomic resumable batches live in `internal/distribution/migrationledger`, which keys every lifecycle transition, batch, and membership by a stable migration name owning one destination, so several custody migrations coexist in one plugin database without counting, colliding with, or overwriting each other and a DATA-1 ledger adopts that in place on the next `Prepare`. DATA-4's narrower shadow orphan importer accepts a read-only snapshot, never the live core database; only the internal DATA-6 coordinator in `internal/distribution/datasplit/cutover.go` invokes it, with no public CLI, MCP, or make surface. `internal/store/adopt.go` compares an existing core database against its schema and adds what is missing, so a new core column must be nullable with a constant default or adoption refuses it. Every pull request and release replays the frozen old-version homes through the current binary (`make upgrade-gauntlet`), and a release whose schema change an existing database must adopt freezes one more of them; `docs/releases.md` owns that definition of done.
-- DATA SPLIT session history is copied only into the hidden version tables owned by `internal/distribution/corpusarchive`; exact payloads share physical version rows but retain a distinct custody membership for every legacy occurrence, divergent payloads remain versions, and legacy child IDs are evidence rather than identity. DATA-3 reconciles every frozen table and session by count and hash, including exchange provenance, and cutover requires an exactly 100% report; the three archive FTS families are rebuilt before that verification. The currently served corpus tables remain untouched until cutover.
-- DATA-2 memory custody is the hidden route in `internal/distribution/rocaops/{memory_custody.go,schema.sql}`: it imports only verified snapshots, preserves a multiset per source through memberships, rebuilds its own FTS, and exposes legacy labels/IDs only through the compatibility view. DATA-6 is its sole runtime caller. A resume carries a mutated source row forward as a further `id#n` version and keeps a deleted row's membership, and verification counts memberships against committed batches rather than the live source. It owns the ledger migration name `data2-memory-custody` over `memory_records`; a zero-population run reaches the re-openable `verified-empty` state, and snapshots are published by renaming a validated sibling copy so a failed replacement keeps the prior one.
-- DATA-6 read routing is selected only by `layout.serving` in `internal/provider/config/file.go`: `legacy-serving`, `shadow-equal`, or `cutover`. `internal/distribution/datasplit/cutover.go` finishes and verifies DATA-2 through DATA-4 from frozen snapshots before the hub can serve. The service composes the temporary compatibility main and lazy FTS indexes in `internal/provider/service/hub.go`; any shadow mismatch or reopen failure atomically restores legacy serving while the DATA-2 writer fence keeps ops/corpus authoritative across restarts. Hub mode must never open or create `roca.db`; DATA-7 alone owns retiring that rollback file.
-- Every file parser is one line in the compiled-in `registry` (`internal/ingest/parsers/registry.go`), declaring a destination (corpus, store, or both), a canonical harness, and never a file format; it owes a measured real-store shape plus a synthetic fixture folder under `internal/ingest/parsers/testdata/conformance/`; the opt-in present-agent smoke (`ROCA_REAL_HARVEST=1`, deliberately outside `make check`) must prove material real yield, and `docs/agent-parsers.md` owns the contribution kit.
-- Pi's complete private-store inventory is owned by `internal/ingest/{roots,scan}.go`, while `internal/ingest/parsers/pi.go` owns the content projection: nested child sessions are corpus, and mission indexes, configuration, logs, packages, and runtime state remain named file-coverage exclusions. `docs/ingest.md` owns the operator-facing classification.
-- Cursor conversations live in SQLite `state.vscdb` stores and may have active WAL content; `internal/ingest/cursor.go` owns the read-only serialized snapshot and `internal/ingest/parsers/cursor.go` owns the composer reading. Workspace prompt/generation arrays duplicate the global composer history, while `ai-code-tracking.db` is attribution metadata rather than conversation content.
-- Hermes sessions stay in `internal/ingest/hermes.go`; `MEMORY.md` blocks (identity = content hash, vanished = superseded) are `internal/ingest/parsers/hermes_memory.go`. `session_model_usage`, `gateway_routing`, and `system_prompts` join onto already-read sessions as metadata, and `sessions.source` qualifies `source_surface` as `Hermes/<channel>`. Named exclusions and the mutability contract live in `docs/ingest.md`.
-- Teaching a parser to read more of a source means bumping its reading version, in `parserVersions` (`internal/ingest/state.go`) for the established kinds or in the registry line's `Version` for a contributed one: the version rides in the watermark so a plain `roca ingest` re-reads synced files, and `internal/ingest/provenance_test.go` pins that the re-read backfills without duplicating.
-- Per-exchange provenance is filled only from what a source itself recorded; a column NULL means the source said nothing, never zero. Use `parsers.UsageTally` rather than assembling `parsers.Provenance` by hand.
-- OpenCode normalization is message-shaped in `internal/ingest/opencode.go`: every finished message owns one exchange and its recorded model, reasoning/tool/patch parts stay with it, todos live in session metadata, and step/event telemetry stays outside the corpus. Keep the `opencode-v9` watermark and source-ID rewrite path in sync when that projection changes.
-- Records left out are reported apart: `parsers.Discard.ByDesign` is what this build never meant to read, and everything else is what it could not read. Collapsing the two is what made a healthy ingest report thousands of failures.
-- Cron ride manifests are optional `rides.toml` plugin payloads; `internal/provider/plugin/rides.go` owns discovery, but only installer-manifested, checksum-verified payloads whose recorded consent is executable may contribute rides, because a declared ride is an execution surface and never data-only. The observer and canonical custodial journey database live in `internal/distribution/rocacron`, and the train probes but never holds the core log lock.
-- The `docs/plugins.md` quickstart (`first-receipts`) is a copy-verbatim walkthrough hand-verified against the shipping binary: keep its steps working against a scratch `--db-path` database whenever the plugin surface changes, and keep its example names clear of the bundled `roca-corpus`/`roca-ops` seats.
+You are about to give your user a memory of everything their agents ever
+did on this machine: every session, decision, fix, and note that you and
+your sibling agents wrote to disk and forgot. After the steps below, you
+can answer questions about that history with proof.
 
-## Maintaining this file
+## Three commands to first answers
 
-Keep this file for knowledge useful to almost every future agent session in this project.
-Do not repeat what the codebase already shows; point to the authoritative file or command instead.
-Prefer rewriting or pruning existing entries over appending new ones.
-When updating this file, preserve this bar for all agents and keep entries concise.
+```sh
+curl -fsSL https://raw.githubusercontent.com/thellmwhisperer/la-roca/main/install.sh | sh
+roca init      # adopts an already signed-in agent CLI; no login, no keys
+roca query "what did we decide about <something your user cares about>"
+```
+
+`roca init` runs the first ingest. Later, `roca ingest` picks up whatever is
+new. Every answer shows the SQL that produced it and the rows that back it.
+
+## Install the skills into yourself, now, not later
+
+The skills ARE the semantic layer: the memory layers, the tables, and worked
+examples of how to query them. That map is static; it does not drift as data
+grows, and it regenerates automatically when the installed plugin set
+changes. Reading it is the difference between composing good SQL and
+guessing:
+
+```sh
+roca skill install claude   # or codex, opencode, pi, hermes: your runtime
+```
+
+This ships the operating craft plus `roca-semantica`, the generated catalog
+of every installed database's tables and example questions. Read both
+before your first real search. If you cannot write skills into your
+runtime, `roca mcp install <runtime>` exposes the same operations as tools.
+
+## Encourage your user: turn on the semantic layer
+
+Search as it stands is good, and incomplete. Exact SQL and full text answer
+what you can name; vectors answer what you can only describe. The full
+experience is both, and your job is to invite your user to it: the cost is
+one model download and one background index build (a few hours, or a
+laptop left running overnight), and it pays back every day after. Say so.
+
+```sh
+ollama pull nomic-embed-text-v2-moe    # ~1 GB, one time
+# set [features] vector = true in ~/.roca/config.toml
+roca vector install                    # builds the index in the background
+```
+
+Tell your user the build is running, and offer them a live view of the
+progress:
+
+```sh
+tail -f ~/.roca/plugins/vector/state/worker.log
+```
+
+`completion.json` in the same directory records when it finished. Full
+contract: docs/vector.md.
+
+## How to search well
+
+The craft lives in the skills you just installed, and it works before the
+vector index finishes: grounded exploration, one concept per probe, your
+own SQL through `roca exec`, verdicts anchored in rows. With vectors on,
+the same skill teaches the hybrid loop: vectors discover the vocabulary,
+full text counts it, SQL frames it.
+
+Read the `roca` skill before your first real search. `roca query` (natural
+language to SQL through a second model) is your user's door, not your main
+tool; if you use it, inspect the SQL it prints.
+
+## Make the first answer land
+
+You know this user: their project, what matters to them, what they keep
+re-explaining to every new session. When the first ingest finishes, do not
+wait to be asked. Pick one question you know they will appreciate and run
+it: a decision they half-remember, the first time a bug appeared, what
+they were working on a year ago today. Show them their own history
+answering back.
+
+This tool was built for agents to do great work with. Enjoy it, and make
+the first impact count.
