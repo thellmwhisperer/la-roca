@@ -334,13 +334,6 @@ func TestAValueOfTheWrongTypeKeepsTheDefaultAndWarns(t *testing.T) {
 				return !file.Index.TokenBudgetSet && file.Index.TokenBudget == DefaultIndexTokenBudget
 			},
 		},
-		{
-			name: "zero index budget", body: "[index]\ntoken_budget = 0\n",
-			wants: "index.token_budget",
-			check: func(file File) bool {
-				return !file.Index.TokenBudgetSet && file.Index.TokenBudget == DefaultIndexTokenBudget
-			},
-		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			file, err := LoadFile(write(t, testCase.body))
@@ -354,6 +347,27 @@ func TestAValueOfTheWrongTypeKeepsTheDefaultAndWarns(t *testing.T) {
 				t.Fatalf("warnings = %v, want one naming %q", file.Warnings, testCase.wants)
 			}
 		})
+	}
+}
+
+func TestAnUndersizedIndexBudgetIsRejectedWhileLoading(t *testing.T) {
+	for _, body := range []string{
+		"[index]\ntoken_budget = -1\n",
+		"[index]\ntoken_budget = 0\n",
+		"[index]\ntoken_budget = 116\n",
+	} {
+		_, err := LoadFile(write(t, body))
+		if err == nil || !strings.Contains(err.Error(), "must be at least 117 tokens") {
+			t.Fatalf("LoadFile error = %v", err)
+		}
+	}
+
+	file, err := LoadFile(write(t, "[index]\ntoken_budget = 117\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !file.Index.TokenBudgetSet || file.Index.TokenBudget != 117 {
+		t.Fatalf("index = %+v", file.Index)
 	}
 }
 

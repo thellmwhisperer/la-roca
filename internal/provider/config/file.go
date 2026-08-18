@@ -668,6 +668,8 @@ type QueryConfig struct {
 // DefaultIndexTokenBudget is the shipped ceiling for `roca index`.
 const DefaultIndexTokenBudget = 8000
 
+const minimumIndexTokenBudget = 117
+
 // IndexConfig bounds the virtual MEMORY.md derived from the database.
 type IndexConfig struct {
 	TokenBudget    int  `toml:"token_budget"`
@@ -808,7 +810,10 @@ func LoadFile(path string) (File, error) {
 	query, _ := document["query"].(map[string]any)
 	file.Query = readQuery(query, path, &file.Warnings)
 	index, _ := document["index"].(map[string]any)
-	file.Index = readIndex(index, path, &file.Warnings)
+	file.Index, err = readIndex(index, path, &file.Warnings)
+	if err != nil {
+		return file, err
+	}
 	features, _ := document["features"].(map[string]any)
 	file.Features = readFeatures(features, path, &file.Warnings)
 	layout, _ := document["layout"].(map[string]any)
@@ -880,16 +885,21 @@ func readQuery(section map[string]any, path string, warnings *[]string) QueryCon
 	return query
 }
 
-func readIndex(section map[string]any, path string, warnings *[]string) IndexConfig {
+func readIndex(section map[string]any, path string, warnings *[]string) (IndexConfig, error) {
 	index := defaultIndex()
 	for _, key := range sortedKeys(section) {
 		switch key {
 		case "token_budget":
 			tokens, ok := readNumber(section[key])
-			if !ok || tokens < 1 {
+			if !ok {
 				*warnings = append(*warnings, invalidValue("index.token_budget", path,
 					"a whole number of tokens, one or more"))
 				continue
+			}
+			if tokens < minimumIndexTokenBudget {
+				return index, fmt.Errorf(
+					"the key index.token_budget of %s must be at least %d tokens; got %d",
+					path, minimumIndexTokenBudget, tokens)
 			}
 			index.TokenBudget = tokens
 			index.TokenBudgetSet = true
@@ -899,7 +909,7 @@ func readIndex(section map[string]any, path string, warnings *[]string) IndexCon
 			}
 		}
 	}
-	return index
+	return index, nil
 }
 
 func readFeatures(section map[string]any, path string, warnings *[]string) FeaturesConfig {
