@@ -226,7 +226,7 @@ func (env *cliEnv) refreshManagedArtifacts(executable string, force bool) (artif
 		entry.AvailableVersion = env.build.Version
 		switch entry.Kind {
 		case artifactKindSkill, artifactKindSkillCatalog, artifactKindPrompt:
-			desired, signature := desiredFileContent(entry.Kind, desiredCatalog)
+			desired, signature := desiredFileContent(entry.Kind, entry.Path, desiredCatalog)
 			if desired == "" {
 				continue
 			}
@@ -268,12 +268,15 @@ func (env *cliEnv) refreshManagedArtifacts(executable string, force bool) (artif
 // shipped kinds read their text from the binary; the generated catalog composes
 // its own from the installed plugins and has no legacy form — it is a new
 // artifact, so a pre-zone file at its path is the operator's.
-func desiredFileContent(kind string, composedCatalog func() string) (string, string) {
+func desiredFileContent(kind, path string, composedCatalog func() string) (string, string) {
 	if kind == artifactKindSkillCatalog {
 		return composedCatalog(), ""
 	}
 	if kind == artifactKindPrompt {
 		return service.PresentationPrompt(), service.PresentationPromptSignature()
+	}
+	if body, legacy := skill.ContentForPath(path); body != "" {
+		return body, legacy
 	}
 	return skill.Content(), skill.LegacySignature()
 }
@@ -359,21 +362,28 @@ func (env *cliEnv) finishHookRefresh(entry *artifact.Entry, out hookRefreshOutco
 func (env *cliEnv) adoptLegacyArtifacts(paths config.Paths, executable string,
 	registry *artifact.Registry, report *artifactRefreshReport) error {
 	for _, runtime := range skill.Runtimes() {
-		path, err := skill.Path(runtime, paths.Home, os.Getenv)
-		if err != nil {
-			return err
-		}
-		if _, exists := registry.Find(artifactKindSkill, runtime, path); exists {
-			continue
-		}
-		if body, err := os.ReadFile(path); err == nil {
-			registry.Upsert(discoveredFileEntry(artifactKindSkill, runtime, path,
-				string(body), env.build.Version))
-			continue
-		}
-		root := filepath.Dir(filepath.Dir(filepath.Dir(path)))
-		if info, err := os.Stat(root); err == nil && info.IsDir() {
-			report.Proposals = append(report.Proposals, "roca skill install "+runtime)
+		proposed := false
+		for _, embedded := range skill.EmbeddedSkills() {
+			path, err := skill.NamedPath(runtime, embedded.Name, paths.Home, os.Getenv)
+			if err != nil {
+				return err
+			}
+			if _, exists := registry.Find(artifactKindSkill, runtime, path); exists {
+				continue
+			}
+			if body, err := os.ReadFile(path); err == nil {
+				registry.Upsert(discoveredFileEntry(artifactKindSkill, runtime, path,
+					string(body), env.build.Version))
+				continue
+			}
+			if embedded.Name != skill.SkillName || proposed {
+				continue
+			}
+			root := filepath.Dir(filepath.Dir(filepath.Dir(path)))
+			if info, err := os.Stat(root); err == nil && info.IsDir() {
+				report.Proposals = append(report.Proposals, "roca skill install "+runtime)
+				proposed = true
+			}
 		}
 	}
 	prompt := filepath.Join(filepath.Dir(paths.DB), "prompt.md")

@@ -18,7 +18,30 @@ func shippedChecksum() string { return artifact.Checksum(skill.Content()) }
 var ownedSkillDestinations = []struct {
 	name string
 	path func(string, string, func(string) string) (string, error)
-}{{skill.SkillName, skill.Path}, {skill.CatalogName, skill.CatalogPath}}
+}{
+	{skill.SkillName, skill.Path},
+	{skill.OperationsName, skill.OperationsPath},
+	{skill.VectorName, skill.VectorPath},
+	{skill.CatalogName, skill.CatalogPath},
+}
+
+func TestRocaSkillIsGeneratedFromTheAgentsPayload(t *testing.T) {
+	want, err := os.ReadFile(filepath.Join("..", "..", "..", "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if skill.Payload() != string(want) {
+		t.Fatal("embedded payload drifted from AGENTS.md")
+	}
+	body := skill.Content()
+	_, rest, found := strings.Cut(body, "\n---\n\n")
+	if !found || rest != string(want) {
+		t.Fatal("roca skill body is not the AGENTS.md payload")
+	}
+	if !strings.HasPrefix(body, skill.LegacySignature()) {
+		t.Fatalf("the generated skill no longer opens with %q", skill.LegacySignature())
+	}
+}
 
 func TestContentIsANamedRocaSkill(t *testing.T) {
 	body := skill.Content()
@@ -28,14 +51,9 @@ func TestContentIsANamedRocaSkill(t *testing.T) {
 	if !strings.Contains(body, "name: roca") {
 		t.Fatal("skill name must be roca")
 	}
-	// The migration recognizes an older release's SKILL.md by this opening, so a
-	// shipped skill that stopped carrying it would be adopted as operator bytes.
-	if !strings.HasPrefix(body, skill.LegacySignature()) {
-		t.Fatalf("the shipped skill no longer opens with %q", skill.LegacySignature())
-	}
 	for _, needle := range []string{
-		"roca query", "roca exec", "roca store",
-		"roca_query", "who is", "have we done",
+		"Must-read on install", "roca init", "roca query", "roca exec",
+		"La Roca is an AI agent memory",
 	} {
 		if !strings.Contains(body, needle) {
 			t.Errorf("skill body missing %q", needle)
@@ -44,16 +62,16 @@ func TestContentIsANamedRocaSkill(t *testing.T) {
 }
 
 func TestContentTeachesCLIAuthorshipFlags(t *testing.T) {
-	body := skill.Content()
+	body := skill.OperationsContent()
 	for _, want := range []string{"--agent", "--model", "automatic", "MCP"} {
 		if !strings.Contains(body, want) {
-			t.Errorf("skill does not teach %q in the authorship contract", want)
+			t.Errorf("operations skill does not teach %q in the authorship contract", want)
 		}
 	}
 }
 
 func TestContentCarriesOperatingCraft(t *testing.T) {
-	body := skill.Content()
+	body := skill.OperationsContent()
 	for _, needle := range []string{
 		`latest handoff for <project>`,
 		"current handoff protocol",
@@ -65,6 +83,7 @@ func TestContentCarriesOperatingCraft(t *testing.T) {
 		"Rows are the truth",
 		"Use the layer filter deliberately",
 		"coordination layers",
+		"name: roca-operations",
 	} {
 		if !strings.Contains(body, needle) {
 			t.Errorf("skill operating craft missing %q", needle)
@@ -73,7 +92,7 @@ func TestContentCarriesOperatingCraft(t *testing.T) {
 }
 
 func TestContentCanSelfOnboardAnUnsupportedAgent(t *testing.T) {
-	body := skill.Content()
+	body := skill.OperationsContent()
 	for _, needle := range []string{
 		"Unsupported agent self-onboarding",
 		"Never copy real conversation data into a fixture",
@@ -91,8 +110,62 @@ func TestContentCanSelfOnboardAnUnsupportedAgent(t *testing.T) {
 	}
 }
 
+func TestVectorSkillTeachesHybridDiscoveryAndInvitesTheIndex(t *testing.T) {
+	body := skill.VectorContent()
+	for _, needle := range []string{
+		"name: roca-vector",
+		"invite the user to",
+		"roca vector install",
+		"## Hybrid discovery",
+		"roca vector query",
+		"roca vector vocab",
+	} {
+		if !strings.Contains(body, needle) {
+			t.Errorf("vector skill missing %q", needle)
+		}
+	}
+}
+
+func TestDetectedNamesOnlyExistingRoots(t *testing.T) {
+	home := t.TempDir()
+	if got := skill.Detected(home, nil); len(got) != 0 {
+		t.Fatalf("empty home detected %v", got)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	got := skill.Detected(home, nil)
+	if len(got) != 2 || got[0] != "claude" || got[1] != "codex" {
+		t.Fatalf("detected = %v, want [claude codex]", got)
+	}
+}
+
+func TestDetectedFindsCursorFromTheConfigRootWithoutASkillsDir(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".cursor"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	got := skill.Detected(home, nil)
+	if len(got) != 1 || got[0] != "cursor" {
+		t.Fatalf("detected = %v, want [cursor]", got)
+	}
+	path, err := skill.Path("cursor", home, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(path, filepath.Join(".cursor", "skills", "roca")) {
+		t.Fatalf("cursor skill path = %s, want ~/.cursor/skills/roca", path)
+	}
+	if strings.Contains(path, "skills-cursor") {
+		t.Fatal("cursor skill path must not write into the built-in skills-cursor directory")
+	}
+}
+
 func TestRuntimesAreTheSkillSeatsThisProductMeasured(t *testing.T) {
-	want := []string{"claude", "codex", "grok", "hermes", "opencode", "pi", "qwen"}
+	want := []string{"claude", "codex", "cursor", "grok", "hermes", "opencode", "pi", "qwen"}
 	got := skill.Runtimes()
 	if len(got) != len(want) {
 		t.Fatalf("runtimes = %v, want %v", got, want)
@@ -111,6 +184,7 @@ func TestPathResolvesEachRuntimeUnderATempHome(t *testing.T) {
 	roots := map[string][]string{
 		"claude":   {".claude"},
 		"codex":    {".codex"},
+		"cursor":   {".cursor"},
 		"grok":     {".grok"},
 		"hermes":   {".hermes"},
 		"opencode": {".config", "opencode"},
@@ -136,7 +210,7 @@ func TestPathHonoursRuntimeEnvOverrides(t *testing.T) {
 	elsewhere := filepath.Join(home, "elsewhere")
 	env := func(key string) string {
 		switch key {
-		case "CLAUDE_CONFIG_DIR", "CODEX_HOME", "GROK_HOME", "HERMES_HOME",
+		case "CLAUDE_CONFIG_DIR", "CODEX_HOME", "CURSOR_HOME", "GROK_HOME", "HERMES_HOME",
 			"PI_CODING_AGENT_DIR", "QWEN_HOME":
 			return elsewhere
 		case "OPENCODE_CONFIG":
@@ -177,11 +251,31 @@ func TestInstallWritesTheSkillAndIsIdempotent(t *testing.T) {
 		{
 			name:    skill.SkillName,
 			path:    filepath.Join(home, ".claude", "skills", "roca", "SKILL.md"),
-			content: func() string { return skill.Content() }(),
+			content: skill.Content(),
 			install: func(path, previous string, force bool) (skill.Outcome, error) {
 				return skill.InstallWithOptions("claude", path, previous, force)
 			},
 			checksum: shippedChecksum,
+		},
+		{
+			name:    skill.OperationsName,
+			path:    filepath.Join(home, ".claude", "skills", "roca-operations", "SKILL.md"),
+			content: skill.OperationsContent(),
+			install: func(path, previous string, force bool) (skill.Outcome, error) {
+				return skill.InstallNamed("claude", path, skill.OperationsContent(),
+					"---\nname: "+skill.OperationsName+"\n", previous, force, true)
+			},
+			checksum: func() string { return artifact.Checksum(skill.OperationsContent()) },
+		},
+		{
+			name:    skill.VectorName,
+			path:    filepath.Join(home, ".claude", "skills", "roca-vector", "SKILL.md"),
+			content: skill.VectorContent(),
+			install: func(path, previous string, force bool) (skill.Outcome, error) {
+				return skill.InstallNamed("claude", path, skill.VectorContent(),
+					"---\nname: "+skill.VectorName+"\n", previous, force, true)
+			},
+			checksum: func() string { return artifact.Checksum(skill.VectorContent()) },
 		},
 		{
 			name:    skill.CatalogName,
