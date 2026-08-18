@@ -19,7 +19,9 @@ run.
 The installed core materializes `roca-vector` in the same directory, including
 when `--prefix` or `ROCA_PREFIX` selects a custom one. Its manifest and dormant
 `state/` directory live under `~/.roca/plugins/vector/`; dispatch remains hidden
-unless the existing `features.vector` switch is true. Installation refuses to
+unless the existing `features.vector` switch is true. See
+[Local vector search](vector.md) for the operator path from that switch to a
+first query. Installation refuses to
 replace an externally sourced plugin package, an unmanaged plugin directory, or
 an executable it does not own, and reports the collision instead.
 
@@ -44,7 +46,12 @@ plugins reports that none were placed.
 | `--force` | Reinstall even when that version is already active |
 
 Windows is not installed by the shell script. Download the `.exe` release
-artefact and place it on the PATH. Core executable release artefacts are:
+artefact, place it as `roca.exe` in a directory on `PATH`, and let that core
+binary extract its carried `roca-vector.exe` beside it. The exact native
+sequence, Ollama install, and one-time model pull are in
+[Local vector search](vector.md#windows-install). The same release also
+publishes `roca-vector-vX.Y.Z-windows-x64.tar.gz` for standalone use. Core
+executable release artefacts are:
 
 - `roca-<version>-darwin-arm64`
 - `roca-<version>-linux-x64`
