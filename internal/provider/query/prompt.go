@@ -365,7 +365,7 @@ func (s Schema) databases() []string {
 
 // ftsExamples is the worked shape the compiler already emits: multi-source
 // MATCH, bm25 rank, rowid pulled inside a subquery. Without an example the
-// model invents table.rowid (the AST gate rejects it) or falls back to LIKE.
+// model falls back to LIKE instead of using the lexical index.
 func ftsExamples(schema Schema) string {
 	if !hasTable(schema, "memories_fts") {
 		return ""

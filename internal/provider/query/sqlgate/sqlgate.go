@@ -79,8 +79,8 @@ var invisibleTables = []string{
 //
 // These cannot be hidden by dropping them the way the others are: dropping a
 // shadow table leaves the virtual table broken, and the validation database
-// would no longer be able to prepare the legitimate query. They are denied by
-// name in the AST, just like the `sqlite_` and `pragma_` ones.
+// would no longer be able to prepare the legitimate query. The authorization
+// callback denies reads by name, as it does for `sqlite_` and `pragma_` tables.
 var ftsShadowSuffixes = []string{
 	"_fts_data", "_fts_idx", "_fts_content", "_fts_docsize", "_fts_config",
 }
