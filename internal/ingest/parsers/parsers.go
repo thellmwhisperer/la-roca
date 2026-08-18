@@ -58,10 +58,14 @@ const (
 	// KindHermesMemory is Hermes's curated MEMORY.md, split at § into one
 	// memory per block. Identity is the block's content hash.
 	KindHermesMemory Kind = "hermes_memory"
-	// KindCursorDB is Cursor's SQLite state store. Its JSON conversation rows
-	// are normalized by the registered parser after ingest freezes the live
-	// database into an in-memory snapshot.
+	// KindCursorDB is Cursor's legacy IDE SQLite state store. Its JSON
+	// conversation rows are normalized by the registered parser after ingest
+	// freezes the live database into an in-memory snapshot.
 	KindCursorDB Kind = "cursor_database"
+	// KindCursorStore is Cursor's agent-home conversation store: one store.db
+	// per session under ~/.cursor/chats, with JSON role/content messages
+	// addressed from a Merkle list of SHA-256 blob ids.
+	KindCursorStore Kind = "cursor_store"
 	// The official Anthropic data export contributes its conversations and
 	// Claude-web memories as separate file-state targets.
 	KindClaudeWebConversations Kind = "claude_web_conversations"
@@ -92,8 +96,8 @@ type FileMeta struct {
 	// directory-name or config fallbacks on re-read.
 	ProjectFromCwd bool
 	SourceAgent    string
-	// Sidecar is the paired metadata JSON of a Cowork audit transcript. It
-	// travels as content so the parser stays off the disk.
+	// Sidecar is paired metadata JSON for a Cowork audit transcript or Cursor
+	// agent store. It travels as content so the parser stays off the disk.
 	Sidecar []byte
 	// SourceType qualifies a Codex file as a memory or rule.
 	SourceType string
