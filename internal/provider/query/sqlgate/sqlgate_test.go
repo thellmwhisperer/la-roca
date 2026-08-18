@@ -1,6 +1,8 @@
 package sqlgate_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -25,7 +27,10 @@ func TestTheGateAcceptsAReadOfTheVisibleTables(t *testing.T) {
 		"SELECT s.project, COUNT(*) FROM sessions s GROUP BY s.project LIMIT 10",
 		"SELECT substr(full_text, 1, 200) FROM thinking_blocks LIMIT 3",
 		"SELECT json_extract(metadata, '$.for_agent') FROM memories LIMIT 1",
+		"SELECT metadata -> '$.for_agent' FROM memories LIMIT 1",
+		"SELECT metadata ->> '$.for_agent' FROM memories LIMIT 1",
 		"SELECT DATE(started_at) FROM sessions LIMIT 1",
+		"SELECT CURRENT_DATE, CURRENT_TIME, CURRENT_TIMESTAMP LIMIT 1",
 		"SELECT 'memory' AS source, id FROM memories UNION ALL SELECT 'tool', id FROM tool_uses LIMIT 4",
 	}
 	for _, benchCase := range benchCases {
@@ -186,12 +191,29 @@ func TestTheLimitIsAddedAndClamped(t *testing.T) {
 func TestTheLimitClampHandlesWhitespaceOffsetsAndBothSQLiteForms(t *testing.T) {
 	for _, tc := range []struct {
 		statement, want string
+		wantErr         bool
 	}{
-		{"\n  SELECT id FROM memories LIMIT 2000", "LIMIT 1000"},
-		{"SELECT id FROM memories LIMIT 2000 OFFSET 4", "LIMIT 1000 OFFSET 4"},
-		{"SELECT id FROM memories LIMIT 4, 2000", "LIMIT 4, 1000"},
+		{statement: "\n  SELECT id FROM memories LIMIT 2000", want: "LIMIT 1000"},
+		{statement: "SELECT id FROM memories LIMIT 2000 OFFSET 4", want: "LIMIT 1000 OFFSET 4"},
+		{statement: "SELECT id FROM memories LIMIT 4, 2000", want: "LIMIT 4, 1000"},
+		{statement: "SELECT id FROM memories LIMIT 2000 /* gap */ OFFSET 4", want: "LIMIT 1000 /* gap */ OFFSET 4"},
+		{statement: "SELECT id AS [memory;id] FROM memories LIMIT 1", want: "LIMIT 1"},
+		{statement: "SELECT id AS [limit;id] FROM memories", want: "LIMIT 1000"},
+		{statement: "SELECT id FROM memories LIMIT 1+100000", wantErr: true},
+		{statement: "SELECT id FROM memories LIMIT 1e6", wantErr: true},
+		{statement: "SELECT id FROM memories LIMIT 1 + 100000", wantErr: true},
+		{statement: "SELECT id FROM memories LIMIT 1 OFFSET 1+100000", wantErr: true},
+		{statement: "SELECT id FROM memories LIMIT 1, 1e6", wantErr: true},
+		{statement: "SELECT id FROM memories LIMIT +1", wantErr: true},
+		{statement: "SELECT id FROM memories LIMIT -1", wantErr: true},
 	} {
 		clean, err := gate(t).Validate(tc.statement)
+		if tc.wantErr {
+			if err == nil || err.Error() != "LIMIT must be a numeric literal" {
+				t.Errorf("Validate(%q) = %v, want numeric-literal contract", tc.statement, err)
+			}
+			continue
+		}
 		if err != nil {
 			t.Errorf("Validate(%q) = %v", tc.statement, err)
 			continue
@@ -243,10 +265,51 @@ func TestTheGateRejectsWhatIsNotEvenAQuery(t *testing.T) {
 		"ATTACH DATABASE 'other.db' AS other",
 		"PRAGMA table_info(memories)",
 		"this is not sql",
+		"SELECT id FROM memories\x00",
 	} {
 		if _, err := gate(t).Validate(benchCase); err == nil {
 			t.Errorf("Validate(%q) passed", benchCase)
 		}
+	}
+
+	_, err := gate(t).Validate("WITH results AS (\n  SELECT id FROM memories\n  UNION ALL\n  SELECT id FROM (")
+	if err == nil || !strings.Contains(err.Error(), "SQL parse error") {
+		t.Fatalf("incomplete SQL = %v, want a parse error from the engine", err)
+	}
+	if strings.Contains(err.Error(), "EOF") {
+		t.Fatalf("incomplete SQL died as a parser EOF: %v", err)
+	}
+}
+
+// The five live EOF shapes are complete, parenthesis-balanced UNIONs. The
+// engine under the authorization callback is the correctness verdict; a
+// grammar-subset parse must not report EOF mid-input. Fixture 01 uses only
+// core tables and must pass the whole gate. The others attach plugin names
+// the default validation schema does not have, so they may fail as no such
+// table, never as a mid-statement EOF.
+func TestTheGatePreparesTheLiveUnionShapes(t *testing.T) {
+	entries, err := os.ReadDir(filepath.Join("..", "sqlrepair", "testdata", "union_coalesce"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 5 {
+		t.Fatalf("fixture count = %d, want 5 live shapes", len(entries))
+	}
+	g := gate(t)
+	for _, entry := range entries {
+		t.Run(entry.Name(), func(t *testing.T) {
+			raw, err := os.ReadFile(filepath.Join("..", "sqlrepair", "testdata", "union_coalesce", entry.Name()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = g.Validate(strings.TrimSpace(string(raw)))
+			if err != nil && strings.Contains(err.Error(), "EOF") {
+				t.Fatalf("complete UNION died as a parse EOF: %v", err)
+			}
+			if entry.Name() == "01_fts_four_branch.sql" && err != nil {
+				t.Fatalf("core-only live shape must pass the gate: %v", err)
+			}
+		})
 	}
 }
 

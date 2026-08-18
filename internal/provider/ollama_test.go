@@ -203,24 +203,34 @@ func contains(values []string, wanted string) bool {
 	return false
 }
 
-// chatRequest is what the adapter actually posts to /api/chat.
-func chatRequest(t *testing.T, tune func(*OllamaConfig)) map[string]any {
+// ollamaPosted is the HTTP chat the adapter actually sends. Tests that need
+// the posted body, a chosen answer, or a config tweak share this one server.
+func ollamaPosted(t *testing.T, req ChatRequest, answer string, tune func(*OllamaConfig)) (ChatResponse, map[string]any) {
 	t.Helper()
 	var posted map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
 			t.Errorf("decode the request: %v", err)
 		}
-		json.NewEncoder(w).Encode(map[string]any{"message": map[string]any{"content": "ok"}})
+		json.NewEncoder(w).Encode(map[string]any{"message": map[string]any{"content": answer}})
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 	cfg := OllamaConfig{BaseURL: server.URL, Model: DefaultOllamaModel}
-	tune(&cfg)
-	if _, err := NewOllama(cfg).Chat(context.Background(), ChatRequest{
-		Messages: []Message{{Role: RoleUser, Content: "interpret these rows"}},
-	}); err != nil {
+	if tune != nil {
+		tune(&cfg)
+	}
+	res, err := NewOllama(cfg).Chat(context.Background(), req)
+	if err != nil {
 		t.Fatalf("Chat: %v", err)
 	}
+	return res, posted
+}
+
+func chatRequest(t *testing.T, tune func(*OllamaConfig)) map[string]any {
+	t.Helper()
+	_, posted := ollamaPosted(t, ChatRequest{
+		Messages: []Message{{Role: RoleUser, Content: "interpret these rows"}},
+	}, "ok", tune)
 	return posted
 }
 

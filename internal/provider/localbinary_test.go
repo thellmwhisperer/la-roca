@@ -24,6 +24,7 @@ case "$FAKE_PROVIDER_MODE" in
   timeout) sleep 30 ;;
   oversized) dd if=/dev/zero bs=2097152 count=1 2>/dev/null ;;
   arguments) printf '%s' "$*" ;;
+  longsql) printf '%s' "$FAKE_PROVIDER_SQL" ;;
   *) printf '%s' 'plain answer' ;;
 esac
 `

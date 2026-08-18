@@ -7,8 +7,8 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/query/sqlgate"
 )
 
-// The gate is worth its two halves, and both have to know the lexical index:
-// the engine so it can prepare a MATCH, and the AST so it lets bm25 through.
+// The gate has to know the lexical index: the engine prepares a MATCH, and
+// the authorization callback lets bm25 through.
 // Without this, the FTS route would be SQL the gate rejects, and the guarantee
 // "everything that runs has been validated" would force skipping it.
 func TestTheGateAcceptsLexicalIndexSearch(t *testing.T) {
@@ -31,7 +31,7 @@ func TestTheGateAcceptsLexicalIndexSearch(t *testing.T) {
 
 // The shadow tables are the index's guts: binary blocks that are nobody's
 // memory. They cannot be hidden by dropping them, because dropping them breaks
-// the virtual table, so they are denied by name.
+// the virtual table, so the authorization callback denies the read.
 func TestTheGateDeniesTheIndexShadowTables(t *testing.T) {
 	gate := open(t)
 	for _, table := range []string{

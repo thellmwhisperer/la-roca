@@ -445,7 +445,7 @@ func (c Cascade) probeFor(p Provider) time.Duration {
 	return ProbeTimeout
 }
 
-// Chat asks the chosen provider, with the budget bounded. What goes past the
+// Chat asks the chosen provider under its request timeout. Going past that time
 // budget is a declared failure, never a command that never comes back.
 func (c Cascade) Chat(ctx context.Context, p Provider, req ChatRequest) (ChatResponse, error) {
 	return c.chat(ctx, p, func(callCtx context.Context) (ChatResponse, error) {
