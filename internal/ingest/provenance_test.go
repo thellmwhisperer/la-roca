@@ -174,9 +174,9 @@ func TestAPlainReingestMatchesHistoricalNumbersWithoutDuplicating(t *testing.T) 
 		}
 		_, err = tx.ExecContext(ctx,
 			`UPDATE ingest_file_state SET fingerprint =
-				replace(replace(replace(replace(replace(fingerprint, '-v8', '-v7'), '-v7', '-v6'),
-				        '-v6', '-v5'), 'conversations-v4', 'conversations-v3'),
-				        'grok-session-v4', 'grok-session-v3')
+				replace(replace(replace(replace(replace(replace(fingerprint, '-v9', '-v8'),
+				        '-v8', '-v7'), '-v7', '-v6'), '-v6', '-v5'),
+				        'conversations-v4', 'conversations-v3'), 'grok-session-v4', 'grok-session-v3')
 			 WHERE instr(fingerprint, ':parser:') > 0`)
 		return err
 	}); err != nil {

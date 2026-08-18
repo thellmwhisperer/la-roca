@@ -634,6 +634,10 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 		if err != nil {
 			return parsers.Records{}, err.Error()
 		}
+		if target.Kind == parsers.KindOpenCodeDB {
+			result.Warnings = append(result.Warnings,
+				enrichOpenCodeTelegram(&records, target.CompanionPaths)...)
+		}
 		result.Warnings = append(result.Warnings, complaints...)
 		for _, complaint := range complaints {
 			records.Discards = append(records.Discards, foreignDiscard(complaint))
@@ -822,20 +826,21 @@ func tableCounts(ctx context.Context, db *sql.DB) (Tables, error) {
 // an operator cannot tell them apart without this.
 func declaredRoots(roots Roots) map[string]string {
 	declared := map[string]string{
-		"claude_projects":         roots.ClaudeProjects,
-		"claude_project_config":   roots.ClaudeConfig,
-		"claude_desktop_sessions": roots.ClaudeDesktopSessions,
-		"cowork_sessions":         roots.CoworkSessions,
-		"codex_root":              roots.CodexRoot,
-		"codex_sessions":          roots.CodexSessions,
-		"opencode_db":             roots.OpenCodeDB,
-		"pi_root":                 roots.PiRoot,
-		"pi_sessions":             roots.PiSessions,
-		"hermes_db":               roots.HermesDB,
-		"grok_sessions":           roots.GrokSessions,
-		"grok_memtrace":           roots.GrokMemtrace,
-		"claude_export":           strings.Join(roots.ClaudeWebExports, string(os.PathListSeparator)),
-		"chatgpt_export":          strings.Join(roots.ChatGPTWebExports, string(os.PathListSeparator)),
+		"claude_projects":            roots.ClaudeProjects,
+		"claude_project_config":      roots.ClaudeConfig,
+		"claude_desktop_sessions":    roots.ClaudeDesktopSessions,
+		"cowork_sessions":            roots.CoworkSessions,
+		"codex_root":                 roots.CodexRoot,
+		"codex_sessions":             roots.CodexSessions,
+		"opencode_db":                roots.OpenCodeDB,
+		"opencode_telegram_bot_logs": roots.OpenCodeTelegramLogs,
+		"pi_root":                    roots.PiRoot,
+		"pi_sessions":                roots.PiSessions,
+		"hermes_db":                  roots.HermesDB,
+		"grok_sessions":              roots.GrokSessions,
+		"grok_memtrace":              roots.GrokMemtrace,
+		"claude_export":              strings.Join(roots.ClaudeWebExports, string(os.PathListSeparator)),
+		"chatgpt_export":             strings.Join(roots.ChatGPTWebExports, string(os.PathListSeparator)),
 	}
 	maps.DeleteFunc(declared, func(_, value string) bool { return value == "" })
 	return declared

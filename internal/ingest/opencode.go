@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -9,6 +10,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"os"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -600,4 +604,85 @@ func isoFromMS(value float64) string {
 		return ""
 	}
 	return parsers.ISOFromEpochMS(value)
+}
+
+var (
+	openCodeTelegramSessionID = regexp.MustCompile(`\bid=(ses_[A-Za-z0-9_-]+)`)
+	openCodeTelegramLineDate  = regexp.MustCompile(
+		`\d{4}-\d{2}-\d{2}(?:[T ][0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:?[0-9]{2})?)?`)
+	openCodeTelegramFileDate = regexp.MustCompile(`\d{4}-\d{2}-\d{2}`)
+)
+
+// enrichOpenCodeTelegram marks only sessions that came from the same OpenCode
+// snapshot. The bot logs are supporting evidence, not a second source of
+// sessions, so an id that is absent from the store cannot create an empty row.
+func enrichOpenCodeTelegram(records *parsers.Records, paths []string) []string {
+	evidence, warnings := readOpenCodeTelegramEvidence(paths)
+	for i := range records.Sessions {
+		session := &records.Sessions[i]
+		native, _ := session.Metadata["native_session_id"].(string)
+		entries := evidence[native]
+		if len(entries) == 0 {
+			continue
+		}
+		if session.Metadata == nil {
+			session.Metadata = map[string]any{}
+		}
+		session.Metadata["channel"] = "telegram"
+		session.Metadata["channel_provenance"] = map[string]any{
+			"opencode_telegram_bot": map[string]any{"evidence": entries},
+		}
+	}
+	return warnings
+}
+
+func readOpenCodeTelegramEvidence(paths []string) (map[string]map[string]any, []string) {
+	evidence := map[string]map[string]any{}
+	var warnings []string
+	for _, path := range paths {
+		file, err := os.Open(path)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				warnings = append(warnings,
+					fmt.Sprintf("OpenCode Telegram bot log %s could not be read: %v", path, err))
+			}
+			continue
+		}
+		scanner := bufio.NewScanner(file)
+		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+		line := 0
+		for scanner.Scan() {
+			line++
+			text := scanner.Text()
+			date := openCodeTelegramDate(text, path)
+			for occurrence, match := range openCodeTelegramSessionID.FindAllStringSubmatch(text, -1) {
+				sessionID := match[1]
+				if evidence[sessionID] == nil {
+					evidence[sessionID] = map[string]any{}
+				}
+				sum := sha256.Sum256([]byte(fmt.Sprintf(
+					"%s\x00%d\x00%d\x00%s", path, line, occurrence, sessionID)))
+				evidence[sessionID][fmt.Sprintf("%x", sum[:])] = map[string]any{
+					"log_file":  path,
+					"line_date": date,
+				}
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			warnings = append(warnings,
+				fmt.Sprintf("OpenCode Telegram bot log %s could not be read completely: %v", path, err))
+		}
+		if err := file.Close(); err != nil {
+			warnings = append(warnings,
+				fmt.Sprintf("OpenCode Telegram bot log %s could not be closed: %v", path, err))
+		}
+	}
+	return evidence, warnings
+}
+
+func openCodeTelegramDate(line, path string) string {
+	if date := openCodeTelegramLineDate.FindString(line); date != "" {
+		return date
+	}
+	return openCodeTelegramFileDate.FindString(filepath.Base(path))
 }
