@@ -214,10 +214,12 @@ func (b *LocalBinary) Chat(ctx context.Context, req ChatRequest) (ChatResponse, 
 	}
 
 	// The CLI route does not clip a long SELECT. command_presets pass no
-	// max-tokens flag (Codex exec exposes none). stdout is kept whole unless
-	// the 1MiB runaway guard errors. Live EOF failures on complete stored
-	// UNION SQL were sqlrepair.deloop cutting a repeated COALESCE line, not
-	// this extraction.
+	// max-tokens flag (Codex exec exposes none). The 1 MiB stdout bound is
+	// subprocess-runaway protection, two orders of magnitude beyond any
+	// legitimate SELECT, and is not a generation length constraint. stdout
+	// is kept whole unless that guard errors. Live EOF failures on complete
+	// stored UNION SQL were sqlrepair.deloop cutting a repeated COALESCE
+	// line, not this extraction.
 	content := strings.TrimSpace(stdout.String())
 	if b.responseFormat == binaryResponseJSON {
 		var envelope struct {
