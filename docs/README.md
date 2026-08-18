@@ -23,7 +23,8 @@ Reading order, from operator to contributor:
    contract, and the supported integration targets.
 8. [Operations](operations.md): memory-layer validation and repair, the audit
    log contract for every CLI and MCP call, the query failures `roca doctor`
-   reports, redaction, retention, and the read-only boundary.
+   reports, the privacy-safe `roca doctor --report` support snapshot,
+   redaction, retention, and the read-only boundary.
 9. [Architecture](architecture.md): the database-neutral kernel, current domain
    map, query path, and internal import rule.
 10. [Releases](releases.md): how versions are cut and artefacts are built.

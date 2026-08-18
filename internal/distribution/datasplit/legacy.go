@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
@@ -179,7 +180,7 @@ func importLegacyOrphans(ctx context.Context, options LegacyOptions, batchSize i
 	if err := prepareDestinations(options); err != nil {
 		return report, err
 	}
-	destinations, err := openDestinations(options)
+	destinations, err := openDestinations(options, false)
 	if err != nil {
 		return report, err
 	}
@@ -341,14 +342,15 @@ func prepareDestinations(options LegacyOptions) error {
 	return nil
 }
 
-func openDestinations(options LegacyOptions) (map[destination]*sql.DB, error) {
+func openDestinations(options LegacyOptions, readOnly bool,
+	timeout ...time.Duration) (map[destination]*sql.DB, error) {
 	paths := map[destination]string{
 		destinationCron: options.CronDatabase, destinationOps: options.OpsDatabase,
 		destinationCorpus: options.CorpusDatabase,
 	}
 	databases := make(map[destination]*sql.DB, len(paths))
 	for owner, path := range paths {
-		db, err := bundledplugin.OpenDatabase(path, false)
+		db, err := bundledplugin.OpenDatabase(path, readOnly, timeout...)
 		if err != nil {
 			closeDatabases(databases)
 			return nil, fmt.Errorf("open the DATA-4 %s destination: %w", owner, err)

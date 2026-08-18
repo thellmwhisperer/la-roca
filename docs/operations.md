@@ -62,11 +62,13 @@ right repair is to move those memories into an existing layer instead. Both
 repair commands follow the same selected database and `roca-ops` routing as
 `roca store`; the command printed by doctor includes the matching `--db-path`.
 
-Every CLI command and MCP tool call dual-writes one redacted record to the
-bundled ops database and to JSONL under the selected data directory's `logs/`,
-whether it succeeds or fails. Either sink may fail independently: the surviving
-sink is still written, one warning is emitted, and the observed command or tool
-result never changes. Query result rows are written to neither sink.
+Every CLI command except `roca doctor --report`, and every MCP tool call,
+dual-writes one redacted record to the bundled ops database and to JSONL under
+the selected data directory's `logs/`, whether it succeeds or fails. The
+support report suppresses both sinks because its read-only contract includes
+observability. Either sink may fail independently: the surviving sink is still
+written, one warning is emitted, and the observed command or tool result never
+changes. Query result rows are written to neither sink.
 
 ## Streams and contents
 
@@ -162,6 +164,65 @@ in `malformed_lines`, and a segment that cannot be read is skipped and counted
 in `unreadable_files`: the count and the five newest errors still describe
 everything that could be read, and the read failure is a warning, not a failed
 diagnosis.
+
+## Support report
+
+`roca doctor --report` is the shareable diagnosis for a remote maintainer. It
+prints one fenced text block with a generation timestamp; `roca doctor --report
+--json` emits the same snapshot as JSON. The collector is read-only: it does
+not install plugins, adopt schema, prepare the federation hub, or change
+`layout.serving`; it also writes no JSONL or ops audit record and makes no
+network calls.
+Support-only database observation uses short, context-aware lock waits, so a
+locked store is reported as unreadable instead of delaying the snapshot. All
+support queries share a bounded observer context; timed-out health checks are
+skipped, while incomplete migration, vector, and ingest observations are
+reported as unreadable rather than as successful empty results.
+
+The block is ordered and bounded so it stays pasteable regardless of corpus
+size:
+
+1. **Identity** — version, commit, OS/arch, and install shape (`default-home`
+   or `custom-data-dir`). Binary location is a shape (`home-local`, `prefix`,
+   `other`), never an absolute path.
+2. **Plugins** — each installed package's name, version, origin (`bundled` vs
+   `external`), checksum, and whether its state directory exists. A local
+   filesystem source, including `file://`, is reported as `local-directory`.
+   Remote sources expose only their hostname, or `remote` when none is safely
+   available. An unreadable, missing, or invalid installed manifest remains a
+   content-free entry with that error class; an unreadable plugin root is
+   reported as an unreadable inventory rather than as no plugins. Installed
+   manifests are opened without following links and must name their containing
+   plugin directory. All dynamic text fields are single-line escaped so damaged
+   state cannot break the report fence.
+3. **Feature flags** — on/off for every `features.*` switch.
+4. **Federation** — first-class mode (`fresh`, `legacy-only`, `migrating`,
+   `federated`, `uninitialized`, `legacy-serving`, or `unknown`), the
+   `layout.serving` marker, where corpus text actually lives (`legacy-core`, `plugin-corpus`,
+   `split`, `empty`, or `unknown`), which stores exist and are readable with
+   family row counts (including present paths that cannot be followed or
+   opened), and named migration states plus the shared DATA-6
+   cutover verdict. The verdict is `true`, `false`, or `unknown` (`null` in
+   JSON): a timeout is always unknown and never evidence of an incomplete migration. A verified
+   verdict requires readable corpus, ops, and cron stores
+   together with verified DATA-2, DATA-3, and DATA-4 custody. A fresh init, a
+   core-only legacy home, a mid-migration home, and a verified cutover home are
+   distinguishable at a glance.
+5. **Health** — pass/warn/fail/skipped per check name, taking the worst verdict
+   across every applicable core and plugin store, using the ops layer registry
+   with core fallback only when ops cannot be read for all memory stores, and
+   never including finding rows. Registry-owned checks are skipped when neither
+   registry is readable.
+6. **Vector** — when `plugins/vector/state/vector.db` exists: model,
+   dimensions, chunk totals by kind, store size, and the last recorded delta
+   counts.
+7. **Ingest** — detected agent names and the latest `ingest_file_state`
+   timestamp. Supported timestamp forms are normalized to UTC; malformed text
+   is reported only as `invalid`. No source paths.
+
+The report never includes conversation text, memory bodies, file paths outside
+the `~/.roca` layout names, or person names. Corpus-scale totals are the only
+counts.
 
 ## Redaction
 
