@@ -3,32 +3,37 @@
 Vector retrieval is opt-in and off by default. The release core carries its
 matching `roca-vector` companion; the installation step extracts the companion
 next to `roca`, and the switch only unhides dispatch. It does not require
-`features.plugins`. Windows is a first-class indexing seat: the matching artefacts are
-`roca-<version>-windows-x64.exe` (core, carrying `roca-vector.exe`) and
+`features.plugins`. Windows is a first-class indexing seat: the matching
+artefacts are `roca-<version>-windows-x64.exe` (core, carrying
+`roca-vector.exe`) and
 `roca-vector-vX.Y.Z-windows-x64.tar.gz` (standalone archive in the same
 release).
 
 ## Windows install
 
 1. Download `roca-<version>-windows-x64.exe` from the release, put it in a
-   permanent directory, rename it `roca.exe`, and add that directory to the
-   user `PATH`.
+   permanent directory without renaming it, and add that directory to the user
+   `PATH`.
 2. Open a new PowerShell window and have the core extract its carried companion
    into that same directory:
 
    ```powershell
-   $RocaDir = Split-Path (Get-Command roca.exe).Source
+   $RocaDir = Split-Path (Get-Command roca-<version>-windows-x64.exe).Source
    $env:ROCA_PREFIX = $RocaDir
-   roca.exe _install-bundled-plugins
+   roca-<version>-windows-x64.exe _install-bundled-plugins
    Get-Command roca-vector.exe
    ```
 
-The final command must resolve `roca-vector.exe` from `$RocaDir`. If the release
-filename is kept instead of renaming it, invoke that filename in the extraction
-command. WSL is an alternative: install and operate the Linux artefact with the
-Unix commands inside the distribution.
+Replace `<version>` with the downloaded release version. The final command must
+resolve `roca-vector.exe` from `$RocaDir`. Every native Windows command below
+keeps using that versioned core filename; if it is deliberately renamed to
+`roca.exe`, that shorter name can replace it throughout. WSL is an alternative:
+install and operate the Linux artefact with the Unix commands inside the
+distribution.
 
-Turn it on in the configuration `roca doctor` names
+Turn it on in the configuration
+`roca-<version>-windows-x64.exe doctor` names on native Windows (`roca doctor`
+on macOS, Linux, or WSL)
 (`~/.roca/config.toml`, or `%USERPROFILE%\.roca\config.toml` on Windows,
 or `config.toml` next to a `--db-path` database):
 
@@ -37,9 +42,9 @@ or `config.toml` next to a `--db-path` database):
 vector = true
 ```
 
-That exposes `roca vector` and lists `vector` in `roca plugins`. Absent or
-false, the command does not exist. On Windows, keep `roca-vector.exe` beside
-`roca.exe` in the directory on `PATH`.
+That exposes the `vector` command and lists `vector` in `plugins`. Absent or
+false, the command does not exist. On Windows, keep `roca-vector.exe` beside the
+versioned core executable in the directory on `PATH`.
 
 ## Prerequisites
 
@@ -47,9 +52,9 @@ Ollama must be running locally (default `http://127.0.0.1:11434`).
 
 The embedding model is `nomic-embed-text-v2-moe` (~957 MB). Pull it
 **before** the first index build. The download happens once; later delta
-ingest and queries reuse the local copy. `roca vector install` will pull
-the model if it is missing — do the explicit pull first so the size is
-not a surprise inside a background worker:
+ingest and queries reuse the local copy. The `vector install` command will
+pull the model if it is missing — do the explicit pull first so the size
+is not a surprise inside a background worker:
 
 ```
 ollama pull nomic-embed-text-v2-moe
@@ -65,7 +70,7 @@ ollama pull nomic-embed-text-v2-moe
 2. Open a **new** terminal (`cmd` or PowerShell) and confirm with
    `ollama --version`.
 3. Pull the embedding model above (~957 MB, one-time) before
-   `roca vector install`.
+   the `vector install` step below.
 
 NVIDIA GPUs accelerate this model. On a machine with no GPU, Ollama
 runs on CPU.
@@ -77,9 +82,14 @@ pull the same model before the first index build.
 
 ## Index the corpus
 
-Start the first build only after the model pull has finished:
+Start the first build only after the model pull has finished. Command pairs
+below show native Windows first and macOS, Linux, or WSL second:
 
+```powershell
+roca-<version>-windows-x64.exe vector install
 ```
+
+```sh
 roca vector install
 ```
 
@@ -91,10 +101,13 @@ desktop notification: inspect `completion.json` or `worker.log` in that state
 directory. The worker log path is printed at launch; `completion.json` records
 `started_at` and `finished_at`, which time the first pass on this machine.
 
-Indexing is incremental after that. `roca vector ingest` always requires
-`--delta`:
+Indexing is incremental after that. `vector ingest` always requires `--delta`:
 
+```powershell
+roca-<version>-windows-x64.exe vector ingest --delta
 ```
+
+```sh
 roca vector ingest --delta
 ```
 
@@ -105,7 +118,11 @@ cleaned title plus cleaned `metadata.project_name` only.
 
 For a non-default database:
 
+```powershell
+roca-<version>-windows-x64.exe vector --db-path C:\path\to\roca.db ingest --delta
 ```
+
+```sh
 roca vector --db-path /path/to/roca.db ingest --delta
 ```
 
@@ -132,7 +149,11 @@ After compaction the index occupies about 1.3-1.5 GB per ~350k chunks.
 Churn (many updates and deletes) leaves empty pages; reclaim them
 explicitly:
 
+```powershell
+roca-<version>-windows-x64.exe vector compact
 ```
+
+```sh
 roca vector compact
 ```
 
@@ -140,7 +161,11 @@ Ingest does not compact on its own.
 
 ## First query
 
+```powershell
+roca-<version>-windows-x64.exe vector query "what did we decide" 10
 ```
+
+```sh
 roca vector query "what did we decide" 10
 ```
 
@@ -155,4 +180,5 @@ the live chunk count. That is the operator's own confidence probe; it needs
 no golden file.
 
 Search craft for agents lives in the shipped skill's Hybrid discovery
-section (`roca skill install`).
+section (`roca-<version>-windows-x64.exe skill install` on native Windows;
+`roca skill install` on macOS, Linux, or WSL).

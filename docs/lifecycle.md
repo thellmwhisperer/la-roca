@@ -58,6 +58,10 @@ executable release artefacts are:
 - `roca-<version>-linux-arm64`
 - `roca-<version>-windows-x64.exe`
 
+The commands below use the short Unix name `roca`. A native Windows installation
+that retains the release filename uses `roca-<version>-windows-x64.exe` for each
+of those invocations.
+
 ## Initialize
 
 Run `roca init` after installation. With no home database it asks for one of

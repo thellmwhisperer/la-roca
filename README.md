@@ -35,7 +35,9 @@ native Windows x64. On Windows, download the release `.exe` and follow the
 an alternative for running the Unix commands inside a Linux distribution.
 
 If `claude` or `codex` is already installed and signed in, no login of any kind
-is needed: run `roca init` and go. Update later with `roca update`.
+is needed: run `roca init` and go. On native Windows without renaming the
+release file, use `roca-<version>-windows-x64.exe init` and later
+`roca-<version>-windows-x64.exe update`.
 
 ## Sixty seconds
 
