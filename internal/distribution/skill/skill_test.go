@@ -73,13 +73,15 @@ func TestContentTeachesCLIAuthorshipFlags(t *testing.T) {
 func TestContentCarriesOperatingCraft(t *testing.T) {
 	body := skill.OperationsContent()
 	for _, needle := range []string{
-		`latest handoff for <project>`,
+		`plugin_roca_ops.memories`,
+		"Start project work with the unqualified handoff one-liner",
 		"current handoff protocol",
 		"always store a handoff",
 		"Ask bare first",
 		"search the whole corpus",
 		"sessions` or `exchanges",
 		"ORDER BY timestamp ASC",
+		"write the SELECT yourself",
 		"Rows are the truth",
 		"Use the layer filter deliberately",
 		"coordination layers",
@@ -110,18 +112,78 @@ func TestContentCanSelfOnboardAnUnsupportedAgent(t *testing.T) {
 	}
 }
 
-func TestVectorSkillTeachesHybridDiscoveryAndInvitesTheIndex(t *testing.T) {
-	body := skill.VectorContent()
-	for _, needle := range []string{
-		"name: roca-vector",
-		"invite the user to",
-		"roca vector install",
-		"## Hybrid discovery",
-		"roca vector query",
+func TestShippedSkillsCarryTheSearchDoctrine(t *testing.T) {
+	for _, test := range []struct {
+		name, body   string
+		want, refuse []string
+	}{
+		{
+			name: "operations two-branch craft",
+			body: skill.OperationsContent(),
+			want: []string{
+				"name: roca-operations",
+				"with or without a vector index",
+				"who is X",
+				"what happened with Y",
+				"## Search craft",
+				"completion.json",
+				"finished_at",
+				"exit_status == 0",
+				"the hybrid loop is mandatory",
+				"last resort",
+				"Agents never pass `--full`",
+				"plugin_roca_ops.memories",
+				"Write the SQL yourself",
+				"roca exec",
+				"roca query",
+				"roca explore",
+				"Invite the user to build the index",
+				"## Hybrid loop",
+				"Vector search finds the nearby rows",
+				"FTS censuses them",
+				"SQL frames them",
+				"the shipped RRF hybrid",
+				"inference only at the end",
+				`roca vector query "<first-person phrase or bare word>" 100`,
+				"names of people",
+				"my boss is named",
+				"Use them only as a last resort when you cannot write the SELECT yourself",
+			},
+			refuse: []string{"roca vector vocab", "## Hybrid discovery"},
+		},
+		{
+			name: "vector owns the index",
+			body: skill.VectorContent(),
+			want: []string{
+				"name: roca-vector",
+				"invite the user to",
+				"roca vector install",
+				"roca vector ingest --delta",
+				"roca vector compact",
+				"worker.log",
+				"completion.json",
+				"finished_at",
+				"exit_status == 0",
+				"Otherwise treat the index as unavailable",
+			},
+			refuse: []string{"## Hybrid discovery", "## Hybrid loop", "roca vector vocab"},
+		},
 	} {
-		if !strings.Contains(body, needle) {
-			t.Errorf("vector skill missing %q", needle)
-		}
+		t.Run(test.name, func(t *testing.T) {
+			for _, needle := range test.want {
+				if !strings.Contains(test.body, needle) {
+					t.Errorf("missing %q", needle)
+				}
+			}
+			for _, needle := range test.refuse {
+				if strings.Contains(test.body, needle) {
+					t.Errorf("must not teach %q", needle)
+				}
+			}
+		})
+	}
+	if strings.Contains(skill.Content(), "roca vector vocab") {
+		t.Error("definitive skill still teaches roca vector vocab")
 	}
 }
 

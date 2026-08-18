@@ -1,10 +1,11 @@
 ---
 name: roca-operations
 description: >
-  The craft of searching with La Roca. Must-read on install. Load when the
-  user references past work, asks "who is X", "what happened with Y", "have
-  we done this before", wants a memory stored, or wants to investigate a
-  topic across the agents' history.
+  The craft of searching with La Roca, with or without a vector index.
+  Must-read on install. Load when the user references past work, asks
+  "who is X", "what happened with Y", "have we done this before", wants
+  a memory stored, or wants to investigate a topic across the agents'
+  history.
 ---
 
 # La Roca
@@ -44,17 +45,18 @@ Two kinds of freshness, two commands:
 
 ## Shell commands
 
-Data = `roca query`; human reading = `roca query --full`; investigation =
-`roca explore`; raw SQL = `roca exec`.
+Agents write SQL and run it: `roca exec`. Humans may read with
+`roca query --full`. `roca query` and `roca explore` are last resort for
+agents, only when the question cannot be expressed as SQL. Agents never
+pass `--full`.
 
 ```bash
-roca query "who is Ana"                        # natural-language search
-roca query --full "what happened with Y"       # add prose for human reading
-roca explore --deep "format"                   # launch a one-word investigation probe
-roca explore "rows"                            # follow one radius concept
-roca query "what happened with Y" --json
-roca query "ffmpeg patterns" --sql-only        # the SQL the model would run, without running it
-roca exec "SELECT COUNT(*) AS memories FROM memories"  # run a gate-approved SELECT
+roca exec "SELECT COUNT(*) AS memories FROM memories"
+roca exec "SELECT content, created_at, project FROM memories WHERE layer = 'handoff' AND project = '<project>' ORDER BY created_at DESC LIMIT 1"
+roca query "who is Ana"                        # last resort: cannot write the SQL
+roca explore --deep "format"                   # last resort investigation
+roca explore "rows"
+roca query "ffmpeg patterns" --sql-only        # compile SQL when stuck, then exec it
 roca store --layer discovery --content "FTS ranks by bm25, created_at only for time questions" --origin agent --agent codex --model gpt-5
 roca ingest                                    # refresh the corpus from every agent source
 roca doctor                                    # diagnosis + remedies
@@ -68,8 +70,10 @@ provider's catalogue. An unknown ID is refused, and a successful set
 writes only `models.<provider>.model` without changing provider order. La Roca
 does not handle authentication or store its secrets.
 
-`roca exec` runs exactly what `query --sql-only` prints, under the same
-read-only gate; nothing that is not a SELECT reaches the database.
+`roca exec` runs a gate-approved SELECT. Nothing that is not a SELECT
+reaches the database. When you cannot write the SQL, `query --sql-only`
+compiles it; then you exec that SELECT. `--full` is a human reading of
+rows; agents narrate from the rows themselves.
 
 ## Default row output
 
@@ -114,19 +118,49 @@ most sessions in July". For memories you store, carry identity too:
 Over MCP, authorship comes from the session itself and cannot be spoofed by
 arguments.
 
+## Search craft
+
+Write the SQL yourself against the semantic catalog (`roca-semantica`) and
+run it with `roca exec`. That is the craft. Anything that spends inference
+is last resort.
+
+Check whether the vector index exists before you search. The contract is
+docs/vector.md: `~/.roca/plugins/roca-vector/state/completion.json` records
+`finished_at` and `exit_status` for the first pass. The index exists only when
+`finished_at` is non-empty and `exit_status == 0`. Otherwise take the no-index,
+exec-first branch.
+`features.vector = true` only unhides `roca vector`; it is not the index.
+`roca vector query` refuses until the index is ready.
+
+- **Index present: the hybrid loop is mandatory.** Vector search (top-100),
+  FTS census, SQL framing through `roca exec`. Zero inference on that path;
+  inference only at the end, by the reading agent, to narrate.
+- **No index: `roca exec` is the complete working path.** Invite the user to build the index
+  (one laptop night, daily reward); the `roca-vector` skill owns install,
+  progress, and maintenance. Point there. Do not depend on it.
+- **`roca query` and `roca explore` are last resort.** Use them only when
+  you cannot express the question as SQL. Agents never pass `--full`.
+
+Handoffs and ops live on the ops database (alias `plugin_roca_ops`).
+Today the handoff one-liner reads `memories` with `layer = 'handoff'`.
+When corpus-only scoping lands, qualify the table as
+`plugin_roca_ops.memories` or add that database with `--databases`.
+
 ## When to call what
 
 | Situation | Action |
 |---|---|
-| Past work / people / "have we…" | `roca query "<question>"` |
-| Researching a topic, not a point fact | `roca explore "<concept>"` |
-| Semantic veins / unknown corpus vocabulary | the `roca-vector` skill |
+| Past work / people / "have we…" | Write SQL and `roca exec`; hybrid first if the index exists |
+| Researching a topic, not a point fact | Write SQL and `roca exec`; hybrid first if the index exists |
+| Cannot name the exact term | Hybrid loop when the index exists; otherwise exec with FTS MATCH |
+| Cannot express it as SQL | last resort: `roca query` or `roca explore`; never `--full` |
 | Answer looks stale / about today | `roca ingest`, then ask again |
 | Programmatic parse | add `--json` |
-| Inspect SQL first | `roca query --sql-only` then `roca exec` |
+| Stuck on the SQL | `roca query --sql-only` then `roca exec` |
 | Durable memory | `roca store --layer … --content … --agent … --model …` |
 | Who wrote it / which model | ask by author, or store with `--model` |
-| No shell | the MCP tools above |
+| Project start | the handoff one-liner below, through `roca exec` |
+| No shell | `roca_exec`; `roca_query` / `roca_explore` last resort |
 
 ## Plugins
 
@@ -141,27 +175,103 @@ attaches them read-only and folds their tables into natural-language search.
   quickstart in the repository's `docs/plugins.md`; start from its minimal
   example and grow, do not hand-roll the packaging.
 
+## Hybrid loop
+
+When the index exists, this loop is mandatory. It is how the craft is done.
+Operator setup lives in the `roca-vector` skill and docs/vector.md.
+
+Vector search finds the nearby rows. FTS censuses them. SQL frames them.
+This three-step loop is the shipped RRF hybrid.
+Zero inference on that path; inference only at the end, by the reading
+agent, to narrate. `roca vector query` does no model inference; `roca exec`
+does none either.
+
+1. Search by meaning with `roca vector query "<first-person phrase or bare word>" 100`.
+   The mandatory loop always requests the top 100 hits. Hits print score,
+   source family, and source id. Probing phrases in first person work better
+   than meta-concepts: `roca vector query "names of people" 100` finds
+   documents ABOUT names; `roca vector query "my boss is named" 100` finds
+   the names.
+2. Census those hits with deterministic FTS through `roca exec`: counts,
+   dates, and word-boundary `MATCH`. Do not use `LIKE '%term%'`: it matches
+   inside other words (`name` inside `rename`).
+3. Frame the claim in SQL. Then the reading agent narrates from those rows.
+
+Worked loop, names:
+
+```bash
+roca vector query "my boss is named" 100
+roca exec "SELECT substr(COALESCE(e.human_timestamp, e.agent_timestamp), 1, 7) AS month, COUNT(DISTINCT e.id) AS exchanges, COUNT(DISTINCT e.session_id) AS sessions FROM (SELECT rowid AS source_id FROM exchanges_fts WHERE exchanges_fts MATCH 'ana') hits JOIN exchanges e ON e.id = hits.source_id GROUP BY month ORDER BY month"
+```
+
+Worked loop, concept:
+
+```bash
+roca vector query "exhaustion" 100
+roca exec "SELECT COUNT(DISTINCT e.id) AS exchanges, COUNT(DISTINCT e.session_id) AS sessions, MIN(COALESCE(e.human_timestamp, e.agent_timestamp)) AS first_seen, MAX(COALESCE(e.human_timestamp, e.agent_timestamp)) AS last_seen FROM (SELECT rowid AS source_id FROM exchanges_fts WHERE exchanges_fts MATCH 'exhaustion') hits JOIN exchanges e ON e.id = hits.source_id"
+```
+
+Stop before the last reading if you only needed the map. `roca query --sql-only`
+and `roca_sql` are with-inference SQL compilers outside this zero-inference path.
+Use them only as a last resort when you cannot write the SELECT yourself.
+
+Caveats measured on real use:
+
+- `k` max is 100. A larger `k` errors (`k must be between 1 and 100`) before
+  any JSON body.
+- A vector search can return several exchange sources from one session. Judge
+  breadth by grouping on session id or `COUNT(DISTINCT e.session_id)` before
+  interpreting the result.
+- Query deduplicates chunks by source identity. For an exact census, count the
+  family's identity in FTS/SQL, such as `COUNT(DISTINCT e.id)` for exchanges;
+  do not treat vector hits or distinct sessions as exact occurrence counts.
+- Two signal classes: presence (the topic is nearby) versus intention
+  (someone decided or promised). Vector answers presence; SQL frames
+  intention.
+
+## Deterministic patterns
+
+FTS MATCH plus a join (word-boundary; never `LIKE '%term%'`):
+
+```bash
+roca exec "SELECT substr(COALESCE(e.human_timestamp, e.agent_timestamp), 1, 7) AS month, COUNT(DISTINCT e.id) AS exchanges, COUNT(DISTINCT e.session_id) AS sessions FROM (SELECT rowid AS source_id FROM exchanges_fts WHERE exchanges_fts MATCH 'ana') hits JOIN exchanges e ON e.id = hits.source_id GROUP BY month ORDER BY month"
+```
+
+Counts by month, same shape, swap the MATCH term.
+
+Handoff one-liner, by layer and project:
+
+```bash
+roca exec "SELECT content, created_at, project FROM memories WHERE layer = 'handoff' AND project = '<project>' ORDER BY created_at DESC LIMIT 1"
+```
+
+Handoffs live on ops. Today that SELECT reads `memories` with
+`layer = 'handoff'`. When corpus-only scoping lands, qualify the table as
+`plugin_roca_ops.memories` or add that database with `--databases`.
+
 ## Investigation method
 
-Purpose: reach a verdict that is grounded in returned rows while learning the
-corpus terrain. When you would otherwise fire three exploratory queries, fire
-one `roca explore` instead and follow its probes.
+Last resort, only when you cannot write the SQL. Purpose: reach a verdict
+that is grounded in returned rows while learning the corpus terrain.
+When you would otherwise fire three exploratory queries, fire one
+`roca explore` instead and follow its probes. Never pass `--full`.
 
 1. Declare the purpose in one line before touching anything.
 2. Launch the first probe with `roca explore --deep "<one bare word>"`. Use a
    single bare word: no hints and no phrases.
-3. Read the terrain, not just the answer: inspect sources, dates, vocabulary,
+3. Read the terrain, not just the answer: inspect sources, dates, terms,
    noise, and negative space.
 4. Work the radius with plain `roca explore`, one concept per query: a synonym,
    adjacent frame, entity, or era. Never stack five terms; FTS ANDs them and
    commonly produces zero rows.
 5. Widen only deliberately and say so out loud: use explicit OR, search the
    whole corpus, or raise limits consciously.
-6. Graduate to `roca query --sql-only` plus `roca exec` once the printed plans
-   have shown the schema. Phrase by relation, not point fact: "what is my
-   relationship with X" matches how conversations store knowledge better than
-   "who did I work with at X", and rankings need an explicit `ORDER BY` on the
-   volume column or the list shows the tail instead of the head.
+6. If you still cannot write the SELECT after the printed plans have shown the
+   schema, use the last-resort `roca query --sql-only` compiler, then `roca exec`.
+   Phrase by relation, not point fact: "what is my relationship with X" matches
+   how conversations store knowledge better than "who did I work with at X",
+   and rankings need an explicit `ORDER BY` on the volume column or the list
+   shows the tail instead of the head.
 7. End with a Verdict grounded in rows: state the claim, which row supports it,
    and what stayed unanswered. Cross-check the plausible before trusting it: a
    confident answer to a superlative or origin question ("the most", "the
@@ -169,8 +279,9 @@ one `roca explore` instead and follow its probes.
    match, so verify it against distilled memories or a second, differently
    phrased query.
 
-When the corpus vocabulary is unknown and a bare FTS word would miss, load
-the `roca-vector` skill instead of stacking synonyms.
+When a bare FTS word would miss, take the search-craft branch: hybrid loop
+if the index exists, otherwise write a broader MATCH or OR and exec it.
+Do not stack synonyms.
 
 ## Operating craft
 
@@ -180,22 +291,24 @@ the `roca-vector` skill instead of stacking synonyms.
   their memory and rule files land in the `user`, `feedback` and `project`
   layers at ingest. On a fresh install the `handoff` layer is empty until
   agents store the first one, so read the history, then write it yourself.
-- Start project work with `roca_query("latest handoff for <project>")`. Ask for
+- Start project work with the unqualified handoff one-liner through `roca exec`:
+  `FROM memories WHERE layer = 'handoff' AND project = '<project>'`. Ask for
   the current handoff protocol and follow it instead of freezing it here. After
   meaningful work, always store a handoff with branch, changes, state, next
   steps and blockers.
 - Ask bare first: use one short concept and no hints. Hints can steer SQL to the
   wrong table; a typo can silently leave noise as the best match.
-- For any investigation, reach for `roca explore` first; the investigation
-  method above is the same discipline applied by hand with `query`, when you
-  need finer control than the probe gives you.
+- Write SQL and `roca exec` first. `roca query` and `roca explore` are last
+  resort. With an index, the hybrid loop is mandatory; do not start with
+  explore as a substitute.
 - Widen deliberately: say "search the whole corpus (conversations, thinking,
   memories, sessions)", request OR between terms and raise limits consciously.
 - For counts or rankings, name `sessions` or `exchanges`, where the mass lives;
   do not aim analytics at the smaller set of curated memories.
-- For origins, compile with `roca_sql`, run with `roca_exec` using
-  `ORDER BY timestamp ASC`, then inspect the first matching session and its
-  surrounding exchanges.
+- For origins, write the SELECT yourself with `ORDER BY timestamp ASC`, run it
+  through `roca exec`, then inspect the first matching session and its
+  surrounding exchanges. Use an inference compiler only if you cannot write
+  that SELECT.
 - Rows are the truth; prose is a reading. Verify claims against returned rows
   and say plainly when they do not answer the question.
 - CLI and MCP split by job: with a shell, dig with the CLI, which composes
@@ -251,9 +364,8 @@ data.
 ## Good
 
 ```bash
-roca query "who is Ana"
-roca explore "what we know about retention"
-roca query "what feedback do we have" --json
+roca exec "SELECT content, created_at, project FROM memories WHERE layer = 'handoff' AND project = '<project>' ORDER BY created_at DESC LIMIT 1"
+roca exec "SELECT COUNT(*) AS memories FROM memories"
 roca store --layer handoff --content "the ingest update left the gate in place" --origin agent --agent claude --model sonnet
 ```
 
