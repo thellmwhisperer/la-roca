@@ -512,6 +512,25 @@ func TestThePromptSteersTermSearchToFTSNotSubstringLike(t *testing.T) {
 	}
 }
 
+func TestAttachedOnlyPromptOmitsUnqualifiedCoreExamples(t *testing.T) {
+	schema := Schema{Tables: []Table{
+		{Name: "plugin_roca_corpus.memories", Columns: []string{"id", "content"}},
+		{Name: "plugin_roca_corpus.memories_fts", Columns: []string{"content"}, FTS5: true},
+		{Name: "plugin_roca_corpus.exchanges", Columns: []string{"id", "agent_text"}},
+		{Name: "plugin_roca_corpus.exchanges_fts", Columns: []string{"agent_text"}, FTS5: true},
+		{Name: "plugin_roca_corpus.thinking_fts", Columns: []string{"full_text"}, FTS5: true},
+	}}
+	prompt := SQLSystemPrompt(schema, nil, nil)
+	for _, rejected := range []string{"<examples>", "FROM memories_fts", "JOIN memories", "FROM exchanges"} {
+		if strings.Contains(prompt, rejected) {
+			t.Errorf("attached-only prompt teaches rejected SQL %q:\n%s", rejected, prompt)
+		}
+	}
+	if !strings.Contains(prompt, "FROM plugin_x.exchanges_fts") {
+		t.Fatalf("attached-only prompt lost qualified FTS guidance:\n%s", prompt)
+	}
+}
+
 func TestSubstringLikeRejectionCatchesTheAnaDisease(t *testing.T) {
 	cases := []struct {
 		sql    string

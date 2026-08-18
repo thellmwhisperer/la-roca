@@ -340,20 +340,22 @@ func SQLSystemPromptWithInventory(schema Schema, layers []LayerHint, layerFilter
 		// FTS tables are the only honest term search; bm25 ranks, created_at
 		// does not unless the question is about time.
 		rules = append(rules,
-			"- For keyword / who-is / what-about term search use the FTS5 tables "+
-				"(`memories_fts`, `exchanges_fts`, `thinking_fts`) with MATCH and "+
+			"- For keyword / who-is / what-about term search use the listed FTS5 tables with MATCH and "+
 				"ORDER BY bm25(...). Never write LIKE '%term%' on content, metadata, "+
 				"human_text, agent_text or full_text: that matches inside other words",
 			"- MATCH and bm25 take the bare table name even when FROM is schema-qualified: "+
 				`FROM plugin_x.exchanges_fts WHERE exchanges_fts MATCH '"token"'. `+
 				"Never write schema.table MATCH or bm25(schema.table)",
-			"- Quote each search token in double quotes inside MATCH "+
-				`(memories_fts MATCH '"ana"'). When joining an FTS hit to its content `+
-				"table, pull rowid inside a subquery as an alias. Join memories, exchanges, "+
-				"and thinking on id = alias; join sessions on rowid = alias. "+
-				"an FTS query may return unqualified rowid directly, but never write table.rowid",
+			"- Quote each search token in double quotes inside MATCH. When joining an FTS hit to its content "+
+				"table, pull rowid inside a subquery as an alias. An FTS query may return "+
+				"unqualified rowid directly, but never write table.rowid",
 			"- Rank term search by bm25 relevance, not created_at, unless the question "+
-				"is explicitly temporal (last week, yesterday, recent, between dates)",
+				"is explicitly temporal (last week, yesterday, recent, between dates)")
+	}
+	if schema.supportsCoreFTSExamples() {
+		rules = append(rules,
+			"- Join memories, exchanges, and thinking FTS hits to their base tables on id = the rowid alias; "+
+				"join sessions on rowid = the alias",
 			"- In mixed term search select source_priority (memory 0, exchange or human 1, "+
 				"thinking 2) and ORDER BY source_priority before the bm25 rank; curated "+
 				"memories answer before transcript and reasoning echoes",
@@ -413,8 +415,19 @@ func (s Schema) hasFTS() bool {
 	return slices.ContainsFunc(s.Tables, func(table Table) bool { return table.FTS5 })
 }
 
+func (s Schema) supportsCoreFTSExamples() bool {
+	for _, name := range []string{
+		"memories", "memories_fts", "exchanges", "exchanges_fts", "thinking_fts",
+	} {
+		if !hasTable(s, name) {
+			return false
+		}
+	}
+	return true
+}
+
 func ftsExamples(schema Schema) string {
-	if !schema.hasFTS() {
+	if !schema.supportsCoreFTSExamples() {
 		return ""
 	}
 	return "\n\n<examples>\n" +

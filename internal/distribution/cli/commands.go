@@ -705,9 +705,14 @@ func answerQuery(ctx context.Context, svc *service.Service, req service.QueryReq
 	if err == nil && service.WidenReply(interpretation.Text) && len(result.UnusedDatabases) > 0 {
 		req.Databases = []string{service.ScopeAll}
 		widened, widenErr := svc.Query(ctx, req)
-		if widenErr == nil && widened.Engine != "" && widened.RowCount > 0 {
-			result = widened
-			result.Widened = true
+		if widenErr != nil {
+			return queryAnswer{result: widened}, widenErr
+		}
+		result = widened
+		result.Widened = true
+		interpretation = service.Interpretation{}
+		err = nil
+		if result.Engine != "" && result.RowCount > 0 {
 			interpretation, err = svc.InterpretStream(
 				ctx, result.Question, result.Columns, result.Rows,
 				time.Duration(result.SQLInferenceMS)*time.Millisecond,
@@ -715,6 +720,7 @@ func answerQuery(ctx context.Context, svc *service.Service, req service.QueryReq
 				onStart, req.InterpretationDelta)
 		}
 	}
+	answer.result = result
 	answer.prose, answer.interpretErr = interpretation.Text, err
 	answer.result.InterpretationMS = time.Since(started).Milliseconds()
 	answer.result.LatencyMS += answer.result.InterpretationMS

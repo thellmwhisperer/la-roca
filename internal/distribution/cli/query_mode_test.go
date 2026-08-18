@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
@@ -19,12 +21,13 @@ type queryModeProvider struct {
 	answers []string
 	// name and model are the provenance a split test needs: two of these under
 	// different names is an installation with the inferences on two providers.
-	name    string
-	model   string
-	calls   int
-	failAt  int
-	delays  []time.Duration
-	budgets []time.Duration
+	name         string
+	model        string
+	calls        int
+	failAt       int
+	unreadyAfter int
+	delays       []time.Duration
+	budgets      []time.Duration
 }
 
 type streamingQueryModeProvider struct{ *queryModeProvider }
@@ -49,6 +52,9 @@ const (
 func (p *queryModeProvider) Name() string    { return cmp.Or(p.name, "fake") }
 func (p *queryModeProvider) ModelID() string { return cmp.Or(p.model, "fake-model") }
 func (p *queryModeProvider) Ready(context.Context) provider.Readiness {
+	if p.unreadyAfter > 0 && p.calls >= p.unreadyAfter {
+		return provider.Readiness{Reason: "synthetic provider unavailable"}
+	}
 	return provider.Readiness{Ready: true, ModelID: p.ModelID()}
 }
 func (p *queryModeProvider) Models(context.Context) provider.ModelReport {
@@ -233,6 +239,47 @@ func TestQueryFullFallsBackToRowsWhenInterpretationFails(t *testing.T) {
 	}
 	if !strings.Contains(got, "rows[1]{source,id,text}") || !strings.Contains(got, "raw evidence") {
 		t.Fatalf("failed interpretation took the rows away:\n%s", got)
+	}
+}
+
+func TestQueryFullAdoptsADegradedEmptyWidenedResult(t *testing.T) {
+	model := &queryModeProvider{
+		answers: []string{queryModeSQL, "WIDEN"}, unreadyAfter: 2,
+	}
+	root := t.TempDir()
+	plugins := filepath.Join(root, "plugins")
+	bin := filepath.Join(root, "bin")
+	if _, err := rocaops.Ensure(plugins, bin, "v-test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rocacorpus.Ensure(plugins, bin, "v-test"); err != nil {
+		t.Fatal(err)
+	}
+	svc, err := service.Open(service.Options{
+		DBPath: filepath.Join(root, "roca.db"), PluginDir: plugins,
+		RocaOpsEnabled: true, CorpusEnabled: true,
+		Providers: provider.Cascade{Providers: []provider.Provider{model}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = svc.Close() })
+	if _, err := svc.Init(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	answer, err := answerQuery(t.Context(), svc,
+		service.QueryRequest{Question: queryModeQuestion}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !answer.result.Widened || answer.result.Degraded != service.DegradedUnavailable ||
+		answer.result.RowCount != 0 || answer.prose == "WIDEN" || model.calls != 2 {
+		t.Fatalf("widened answer = %+v, prose = %q, calls = %d",
+			answer.result, answer.prose, model.calls)
+	}
+	if !slices.Contains(answer.result.Databases, "plugin:roca-ops") {
+		t.Fatalf("widened databases = %v", answer.result.Databases)
 	}
 }
 
