@@ -62,6 +62,10 @@ const (
 	// are normalized by the registered parser after ingest freezes the live
 	// database into an in-memory snapshot.
 	KindCursorDB Kind = "cursor_database"
+	// KindCursorStore is Cursor's agent-home conversation store: one store.db
+	// per session under ~/.cursor/chats, with JSON role/content messages
+	// addressed from a Merkle list of SHA-256 blob ids.
+	KindCursorStore Kind = "cursor_store"
 	// The official Anthropic data export contributes its conversations and
 	// Claude-web memories as separate file-state targets.
 	KindClaudeWebConversations Kind = "claude_web_conversations"
