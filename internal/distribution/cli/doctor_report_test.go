@@ -86,6 +86,7 @@ func TestDoctorReport(t *testing.T) {
 				"mode: federated", "serving: cutover", "corpus_custody: plugin-corpus",
 				"cutover_eligible: true",
 				"plugin-corpus: present", "migrations:", "data2-memory-custody: verified",
+				"runtime_layers_not_in_registry: pass",
 				"orphan_supersedes: fail", "test_source_agent_rows: fail", "ghost_sessions: warn",
 				"VECTOR", "model: nomic-embed-text", "chunks: sessions=3",
 				"last_delta: exit=0 added=3",

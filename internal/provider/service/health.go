@@ -213,7 +213,8 @@ func (s *Service) Health(ctx context.Context, req HealthRequest) (HealthReport, 
 // HealthVerdicts runs the same checks as Health but returns only names and
 // statuses. A check is run against every applicable store and keeps the worst
 // concrete verdict. Missing handles and tables are skipped.
-func HealthVerdicts(ctx context.Context, memories, others []*sql.DB) []HealthVerdict {
+func HealthVerdicts(ctx context.Context, registries, memories, others []*sql.DB) []HealthVerdict {
+	registered := firstLayers(ctx, registries)
 	verdicts := make([]HealthVerdict, 0, len(healthChecks)+1)
 	for _, check := range healthChecks {
 		readers := others
@@ -225,7 +226,7 @@ func HealthVerdicts(ctx context.Context, memories, others []*sql.DB) []HealthVer
 			if reader == nil {
 				continue
 			}
-			count, err := healthCount(ctx, reader, check, layersFrom(ctx, reader))
+			count, err := healthCount(ctx, reader, check, registered)
 			if err != nil {
 				continue
 			}
@@ -248,6 +249,16 @@ func HealthVerdicts(ctx context.Context, memories, others []*sql.DB) []HealthVer
 		}
 	}
 	return append(verdicts, HealthVerdict{Name: "memory_created_at_formats", Status: status})
+}
+
+func firstLayers(ctx context.Context, readers []*sql.DB) []registeredLayer {
+	for _, reader := range readers {
+		registered := layersFrom(ctx, reader)
+		if len(registered) > 0 {
+			return registered
+		}
+	}
+	return nil
 }
 
 func worstConcrete(current, candidate string) string {

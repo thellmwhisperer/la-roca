@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -41,6 +42,10 @@ const (
 	OriginExternal          = "external"
 	OriginLocalDirectory    = "local-directory"
 	OriginRemote            = "remote"
+	ManifestOK              = "ok"
+	ManifestMissing         = "missing"
+	ManifestUnreadable      = "unreadable"
+	ManifestInvalid         = "invalid"
 )
 
 var (
@@ -85,6 +90,7 @@ type Plugin struct {
 	Origin          string `json:"origin"`
 	Source          string `json:"source"`
 	Checksum        string `json:"checksum"`
+	ManifestStatus  string `json:"manifest_status"`
 	StateDirPresent bool   `json:"state_directory_present"`
 }
 
@@ -208,8 +214,9 @@ func Collect(ctx context.Context, opts Options) (Snapshot, error) {
 		Plugins:    plugins,
 		Features:   featureFlags(opts.File.Features),
 		Federation: federation,
-		Health:     service.HealthVerdicts(ctx, []*sql.DB{ops, corpus, core}, []*sql.DB{core, corpus}),
-		Vector:     collectVector(ctx, opts.PluginRoot),
+		Health: service.HealthVerdicts(ctx, []*sql.DB{ops, core},
+			[]*sql.DB{ops, corpus, core}, []*sql.DB{core, corpus}),
+		Vector: collectVector(ctx, opts.PluginRoot),
 		Ingest: Ingest{
 			DetectedAgents: orEmptyStrings(ingest.DetectAgents(opts.Sources)),
 			LastIngestAt:   lastIngestAt(ctx, corpus, core),
@@ -230,8 +237,10 @@ func listSupportPlugins(root string) []Plugin {
 		if !entry.IsDir() {
 			continue
 		}
-		manifest, err := plugininstall.ReadManifest(filepath.Join(root, entry.Name()))
+		directory := filepath.Join(root, entry.Name())
+		manifest, err := plugininstall.ReadManifest(directory)
 		if err != nil {
+			listed = append(listed, Plugin{Name: "unknown", ManifestStatus: manifestFailureStatus(directory, err)})
 			continue
 		}
 		origin, source := PluginOrigin(manifest.Source)
@@ -241,7 +250,8 @@ func listSupportPlugins(root string) []Plugin {
 			Origin:          origin,
 			Source:          source,
 			Checksum:        manifest.Checksum,
-			StateDirPresent: stateDirPresent(filepath.Join(root, entry.Name()), manifest.StateDir),
+			ManifestStatus:  ManifestOK,
+			StateDirPresent: stateDirPresent(directory, manifest.StateDir),
 		})
 	}
 	slices.SortFunc(listed, func(a, b Plugin) int {
@@ -251,6 +261,20 @@ func listSupportPlugins(root string) []Plugin {
 		return []Plugin{}
 	}
 	return listed
+}
+
+func manifestFailureStatus(directory string, readErr error) string {
+	if errors.Is(readErr, os.ErrPermission) {
+		return ManifestUnreadable
+	}
+	info, err := os.Stat(filepath.Join(directory, plugininstall.ManifestFilename))
+	if errors.Is(err, os.ErrNotExist) {
+		return ManifestMissing
+	}
+	if err != nil || !info.Mode().IsRegular() {
+		return ManifestUnreadable
+	}
+	return ManifestInvalid
 }
 
 func PluginOrigin(source string) (string, string) {
@@ -265,20 +289,16 @@ func PluginOrigin(source string) (string, string) {
 		return OriginExternal, OriginLocalDirectory
 	}
 	if parseErr == nil && parsed.Scheme != "" {
-		parsed.User = nil
-		parsed.RawQuery = ""
-		parsed.ForceQuery = false
-		parsed.Fragment = ""
-		parsed.RawFragment = ""
-		if parsed.Opaque != "" {
+		host := strings.ToLower(parsed.Hostname())
+		if host == "" {
 			return OriginExternal, OriginRemote
 		}
-		return OriginExternal, parsed.String()
+		return OriginExternal, host
 	}
 	if strings.Contains(source, "://") {
 		return OriginExternal, OriginRemote
 	}
-	return OriginExternal, source
+	return OriginExternal, OriginRemote
 }
 
 func looksLikeFilesystemPath(source string) bool {
@@ -628,8 +648,17 @@ func Render(snapshot Snapshot) string {
 		b.WriteString("none\n")
 	}
 	for _, item := range snapshot.Plugins {
+		status := item.ManifestStatus
+		if status == "" {
+			status = ManifestOK
+		}
+		if status != ManifestOK {
+			fmt.Fprintf(&b, "unknown manifest=%s\n", renderField(status))
+			continue
+		}
 		fmt.Fprintf(&b, "%s %s origin=%s source=%s checksum=%s state_dir=%t\n",
-			item.Name, item.Version, item.Origin, item.Source, item.Checksum, item.StateDirPresent)
+			renderField(item.Name), renderField(item.Version), renderField(item.Origin),
+			renderField(item.Source), renderField(item.Checksum), item.StateDirPresent)
 	}
 
 	b.WriteString("\nFEATURE FLAGS\n")
@@ -710,6 +739,11 @@ func Render(snapshot Snapshot) string {
 	}
 	b.WriteString("```")
 	return b.String()
+}
+
+func renderField(value string) string {
+	quoted := strconv.QuoteToASCII(value)
+	return strings.ReplaceAll(quoted[1:len(quoted)-1], "`", `\u0060`)
 }
 
 func onOff(on bool) string {

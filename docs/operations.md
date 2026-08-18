@@ -182,7 +182,10 @@ size:
 2. **Plugins** — each installed package's name, version, origin (`bundled` vs
    `external`), checksum, and whether its state directory exists. A local
    filesystem source, including `file://`, is reported as `local-directory`.
-   Remote URL userinfo, query strings, and fragments are removed.
+   Remote sources expose only their hostname, or `remote` when none is safely
+   available. An unreadable, missing, or invalid installed manifest remains a
+   content-free entry with that error class. Text fields are single-line
+   escaped so package metadata cannot break the report fence.
 3. **Feature flags** — on/off for every `features.*` switch.
 4. **Federation** — first-class mode (`fresh`, `legacy-only`, `migrating`,
    `federated`, `uninitialized`, or `legacy-serving`), the `layout.serving`
@@ -194,8 +197,8 @@ size:
    core-only legacy home, a mid-migration home, and a verified cutover home are
    distinguishable at a glance.
 5. **Health** — pass/warn/fail/skipped per check name, taking the worst verdict
-   across every applicable core and plugin store and never including finding
-   rows.
+   across every applicable core and plugin store, using the ops layer registry
+   with core fallback for all memory stores, and never including finding rows.
 6. **Vector** — when `plugins/vector/state/vector.db` exists: model,
    dimensions, chunk totals by kind, store size, and the last recorded delta
    counts.
