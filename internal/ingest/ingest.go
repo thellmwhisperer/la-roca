@@ -631,6 +631,23 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 		databaseReader = ReadHermes
 	case parsers.KindCursorDB:
 		databaseReader = ReadCursor
+	case parsers.KindCursorStore:
+		meta := parsers.FileMeta{
+			Path: target.Path, FileName: target.FileName, SessionID: target.SessionID,
+			Project: target.Project, ProjectFromCwd: target.ProjectFromCwd,
+			SourceAgent: target.SourceAgent,
+		}
+		if target.SidecarPath != "" {
+			sidecar, sidecarErr := os.ReadFile(target.SidecarPath)
+			if sidecarErr != nil {
+				result.fail(Target{Path: target.SidecarPath, Kind: parsers.KindSessionMetadata}, sidecarErr.Error())
+			} else {
+				meta.Sidecar = sidecar
+			}
+		}
+		databaseReader = func(ctx context.Context, path string) (parsers.Records, []string, error) {
+			return ReadCursorStore(ctx, path, meta)
+		}
 	}
 	if databaseReader != nil {
 		records, complaints, err := databaseReader(ctx, target.Path)

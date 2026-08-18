@@ -22,15 +22,8 @@ const cursorExchangeScope = "cursor"
 type cursorParser struct{}
 
 func (cursorParser) Detect(file File) bool {
-	if name := file.Meta.FileName; name != "" && name != "state.vscdb" &&
-		name != "ai-code-tracking.db" {
-		return false
-	}
-	if len(file.Content) < 16 || string(file.Content[:16]) != "SQLite format 3\x00" {
-		return false
-	}
-	db, err := cursorSnapshotDB(file.Content)
-	if err != nil {
+	db, ok := cursorOpenNamedSQLite(file, "state.vscdb", "ai-code-tracking.db")
+	if !ok {
 		return false
 	}
 	defer db.close()
@@ -71,6 +64,29 @@ type cursorSnapshot struct {
 func (s *cursorSnapshot) close() {
 	_ = s.db.Close()
 	_ = s.vfs.Close()
+}
+
+func cursorOpenNamedSQLite(file File, names ...string) (*cursorSnapshot, bool) {
+	if name := file.Meta.FileName; name != "" {
+		allowed := false
+		for _, candidate := range names {
+			if name == candidate {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return nil, false
+		}
+	}
+	if len(file.Content) < 16 || string(file.Content[:16]) != "SQLite format 3\x00" {
+		return nil, false
+	}
+	db, err := cursorSnapshotDB(file.Content)
+	if err != nil {
+		return nil, false
+	}
+	return db, true
 }
 
 func cursorSnapshotDB(content []byte) (*cursorSnapshot, error) {
