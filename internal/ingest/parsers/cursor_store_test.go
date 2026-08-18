@@ -177,6 +177,46 @@ func TestCursorStoreReportsUnreadableMerkleChildren(t *testing.T) {
 	assertCursorStoreDiscard(t, discards, "Cursor Merkle child blob is not a valid message")
 }
 
+func TestCursorStoreReportsListsWithOnlyMissingChildren(t *testing.T) {
+	firstHash := bytes.Repeat([]byte{0x44}, 32)
+	secondHash := bytes.Repeat([]byte{0x55}, 32)
+	listData := make([]byte, 0, 68)
+	for _, hash := range [][]byte{firstHash, secondHash} {
+		listData = append(listData, 0x0a, 0x20)
+		listData = append(listData, hash...)
+	}
+	items, discards := cursorStoreOrderedMessages(map[string][]byte{"list": listData}, "")
+	if len(items) != 0 || len(discards) != 2 {
+		t.Fatalf("missing-only list = items:%d discards:%+v", len(items), discards)
+	}
+	for _, discard := range discards {
+		if discard.Category != "Cursor Merkle child blob is missing" || discard.ByDesign {
+			t.Fatalf("missing child discard = %+v", discard)
+		}
+	}
+}
+
+func TestCursorStoreReportsUnreadableLatestRoot(t *testing.T) {
+	rootID := strings.Repeat("66", 32)
+	tests := []struct {
+		name, category string
+		blobs          map[string][]byte
+	}{
+		{"missing", "Cursor latest Merkle root blob is missing", nil},
+		{"malformed", "Cursor latest Merkle root blob is not a valid list",
+			map[string][]byte{rootID: []byte("not a list")}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			items, discards := cursorStoreOrderedMessages(test.blobs, rootID)
+			if len(items) != 0 || len(discards) != 1 {
+				t.Fatalf("unreadable root = items:%d discards:%+v", len(items), discards)
+			}
+			assertCursorStoreDiscard(t, discards, test.category)
+		})
+	}
+}
+
 func TestCursorStoreProtoRejectsLengthBeyondRemainingBytes(t *testing.T) {
 	data := []byte{0x0a, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01}
 	if _, ok := cursorStoreProtoFields(data); ok {

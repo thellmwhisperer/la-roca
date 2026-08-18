@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -215,17 +216,18 @@ func TestCursorStoreIngestReportsCoverageAndIsIdempotent(t *testing.T) {
 		t.Fatalf("store yield = %+v excluded = %d discarded = %d",
 			got, first.RecordsExcluded, first.RecordsDiscarded)
 	}
-	var model, surface, project, title string
+	var model sql.NullString
+	var surface, project, title string
 	if err := db.SQL().QueryRow(`SELECT e.model, s.source_surface, s.project, s.title
 		FROM exchanges e JOIN sessions s ON s.session_id = e.session_id
 		WHERE e.session_id = 'cursor:11111111-aaaa-4bbb-8ccc-222222222222'
 		AND e.exchange_number = 1`).Scan(&model, &surface, &project, &title); err != nil {
 		t.Fatal(err)
 	}
-	if model != "fixture-cursor-store-model" || surface != "Cursor" ||
+	if model.Valid || surface != "Cursor" ||
 		project != "harbor" || title != "Synthetic harbor session" {
 		t.Fatalf("stored Cursor store provenance = model %q surface %q project %q title %q",
-			model, surface, project, title)
+			model.String, surface, project, title)
 	}
 	if second.Delta != (Tables{}) || second.FilesRead != 0 || second.FilesSkipped != 1 {
 		t.Fatalf("idempotent Cursor store pass = delta:%+v read:%d skipped:%d",

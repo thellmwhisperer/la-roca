@@ -294,21 +294,36 @@ func cursorStoreTimestamp(values ...int64) string {
 
 func cursorStoreOrderedMessages(blobs map[string][]byte, latestRoot string) ([]cursorStoreItem, []Discard) {
 	var lists []cursorStoreList
+	var discards []Discard
 	for id, data := range blobs {
 		kids, ts := cursorStoreListChildren(data)
 		if len(kids) == 0 {
 			continue
 		}
-		known := 0
-		for _, kid := range kids {
-			if _, ok := blobs[kid]; ok {
-				known++
+		lists = append(lists, cursorStoreList{id: id, kids: kids, ts: ts})
+	}
+	if latestRoot != "" {
+		// Keep latestRoot in the walk even when it is a compacted window: new
+		// turns after a summary live only on that node.
+		found := false
+		for _, list := range lists {
+			if list.id == latestRoot {
+				found = true
+				break
 			}
 		}
-		if known == 0 {
-			continue
+		if !found {
+			raw, ok := blobs[latestRoot]
+			if !ok {
+				category := "Cursor latest Merkle root blob is missing"
+				discards = append(discards, Discard{Record: 1, Reason: category, Category: category})
+			} else if kids, ts := cursorStoreListChildren(raw); len(kids) > 0 {
+				lists = append(lists, cursorStoreList{id: latestRoot, kids: kids, ts: ts})
+			} else {
+				category := "Cursor latest Merkle root blob is not a valid list"
+				discards = append(discards, Discard{Record: 1, Reason: category, Category: category})
+			}
 		}
-		lists = append(lists, cursorStoreList{id: id, kids: kids, ts: ts})
 	}
 	sort.SliceStable(lists, func(i, j int) bool {
 		if lists[i].ts != lists[j].ts {
@@ -325,25 +340,8 @@ func cursorStoreOrderedMessages(blobs map[string][]byte, latestRoot string) ([]c
 		}
 		return lists[i].id < lists[j].id
 	})
-	if latestRoot != "" {
-		// Keep latestRoot in the walk even when it is a compacted window: new
-		// turns after a summary live only on that node.
-		found := false
-		for _, list := range lists {
-			if list.id == latestRoot {
-				found = true
-				break
-			}
-		}
-		if !found {
-			if kids, ts := cursorStoreListChildren(blobs[latestRoot]); len(kids) > 0 {
-				lists = append(lists, cursorStoreList{id: latestRoot, kids: kids, ts: ts})
-			}
-		}
-	}
 	seen := map[string]bool{}
 	var items []cursorStoreItem
-	var discards []Discard
 	record := 0
 	for _, list := range lists {
 		for _, id := range list.kids {
