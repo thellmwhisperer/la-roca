@@ -73,7 +73,7 @@ func TestSemanticLayerCarriesTheLayersAndWhatTheyAreFor(t *testing.T) {
 }
 
 func TestTheSystemPromptCarriesTheRulesThatKeepTheAnswerRunnable(t *testing.T) {
-	prompt := SQLSystemPrompt(ReadSchema(someDDL, nil), nil, nil)
+	prompt := SQLSystemPrompt(productSchema(), nil, nil)
 
 	for _, rule := range []string{"SELECT", "NOT IN (SELECT supersedes", "LIMIT"} {
 		if !strings.Contains(prompt, rule) {
@@ -150,7 +150,7 @@ func TestThePromptsDeclareRefusalForQuestionsOutsideMemory(t *testing.T) {
 // The rule is now derived from the same DDL the gate prepares itself with, so a
 // rule about a column can only name the tables that really carry it.
 func TestTheSupersedesRuleNamesOnlyTheTablesThatCarryTheColumn(t *testing.T) {
-	prompt := SQLSystemPrompt(ReadSchema(someDDL, nil), nil, nil)
+	prompt := SQLSystemPrompt(productSchema(), nil, nil)
 
 	line := ruleAbout(rulesOf(t, prompt), "NOT IN (SELECT supersedes")
 	if line == "" {
@@ -514,20 +514,30 @@ func TestThePromptSteersTermSearchToFTSNotSubstringLike(t *testing.T) {
 
 func TestAttachedOnlyPromptOmitsUnqualifiedCoreExamples(t *testing.T) {
 	schema := Schema{Tables: []Table{
-		{Name: "plugin_roca_corpus.memories", Columns: []string{"id", "content"}},
+		{Name: "plugin_roca_corpus.memories", Columns: []string{"id", "content", "supersedes"}},
 		{Name: "plugin_roca_corpus.memories_fts", Columns: []string{"content"}, FTS5: true},
 		{Name: "plugin_roca_corpus.exchanges", Columns: []string{"id", "agent_text"}},
 		{Name: "plugin_roca_corpus.exchanges_fts", Columns: []string{"agent_text"}, FTS5: true},
 		{Name: "plugin_roca_corpus.thinking_fts", Columns: []string{"full_text"}, FTS5: true},
 	}}
 	prompt := SQLSystemPrompt(schema, nil, nil)
-	for _, rejected := range []string{"<examples>", "FROM memories_fts", "JOIN memories", "FROM exchanges"} {
+	for _, rejected := range []string{
+		"<examples>", "WHERE memories_fts", "bm25(memories_fts)", "FROM memories",
+		"JOIN memories", "FROM exchanges", "Search memories_fts", "SELECT COUNT(*) AS n FROM exchanges",
+	} {
 		if strings.Contains(prompt, rejected) {
 			t.Errorf("attached-only prompt teaches rejected SQL %q:\n%s", rejected, prompt)
 		}
 	}
 	if !strings.Contains(prompt, "FROM plugin_x.exchanges_fts") {
 		t.Fatalf("attached-only prompt lost qualified FTS guidance:\n%s", prompt)
+	}
+	hint := SubstringLikeRejection(
+		`SELECT content FROM plugin_roca_corpus.memories WHERE content LIKE '%Ana%' LIMIT 5`, schema)
+	for _, rejected := range []string{"memories_fts", "exchanges_fts", "thinking_fts"} {
+		if strings.Contains(hint, rejected) {
+			t.Errorf("attached-only retry hint teaches bare core table %q: %s", rejected, hint)
+		}
 	}
 }
 
@@ -548,7 +558,7 @@ func TestSubstringLikeRejectionCatchesTheAnaDisease(t *testing.T) {
 		{`SELECT COUNT(*) FROM exchanges LIMIT 1`, false},
 	}
 	for _, c := range cases {
-		got := SubstringLikeRejection(c.sql)
+		got := SubstringLikeRejection(c.sql, productSchema())
 		if c.reject && got == "" {
 			t.Errorf("missed the disease:\n%s", c.sql)
 		}
@@ -556,7 +566,8 @@ func TestSubstringLikeRejectionCatchesTheAnaDisease(t *testing.T) {
 			t.Errorf("false positive (%s):\n%s", got, c.sql)
 		}
 	}
-	hint := SubstringLikeRejection(`SELECT content FROM memories WHERE content LIKE '%Ana%' LIMIT 5`)
+	hint := SubstringLikeRejection(
+		`SELECT content FROM memories WHERE content LIKE '%Ana%' LIMIT 5`, productSchema())
 	for _, needle := range []string{"MATCH", "memories_fts", "bm25"} {
 		if !strings.Contains(hint, needle) {
 			t.Errorf("the rejection hint does not steer to %q: %s", needle, hint)

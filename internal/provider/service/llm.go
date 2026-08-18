@@ -195,7 +195,8 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 			// Defense in depth behind the prompt: bare LIKE '%term%' on a text
 			// column is the substring disease (Ana → ganancia). Reject with a
 			// retry hint that points at FTS; do not rewrite the SQL.
-			if hint := query.SubstringLikeRejection(validated); hint != "" {
+			if hint := query.SubstringLikeRejection(validated,
+				schemaWithPlugins(route.includeCore, route.databases)); hint != "" {
 				failure = fmt.Errorf("%s", hint)
 			}
 		}

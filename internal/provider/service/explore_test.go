@@ -3,15 +3,31 @@ package service_test
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
 const exploreSQL = "SELECT 'memory' AS source, '2026-07-02' AS created_at, 'cedar map orbit' AS text " +
 	"UNION ALL SELECT 'exchange', '2026-08-09', 'cedar trail orbit' LIMIT 10"
+
+type streamingExploreProvider struct {
+	*twoInferenceFake
+	answers []string
+	calls   int
+}
+
+func (p *streamingExploreProvider) ChatStream(_ context.Context, _ provider.ChatRequest,
+	onDelta func(string)) (provider.ChatResponse, error) {
+	answer := p.answers[p.calls]
+	p.calls++
+	onDelta(answer)
+	return provider.ChatResponse{Content: answer, Provider: p.Name(), ModelID: p.ModelID()}, nil
+}
 
 func TestExplorePinsEachInterpreterMissionAndItsGroundedTerrain(t *testing.T) {
 	for _, tc := range []struct {
@@ -79,6 +95,40 @@ func TestExplorePinsEachInterpreterMissionAndItsGroundedTerrain(t *testing.T) {
 				t.Fatalf("terrain was not derived from the result: %+v", result.Terrain)
 			}
 		})
+	}
+}
+
+func TestExploreBuffersWidenAndMergesQueryTelemetry(t *testing.T) {
+	paths := freshPaths(t)
+	plugins := ensureRocaOps(t, paths)
+	if _, err := rocacorpus.Ensure(plugins, filepath.Join(paths.data, "bin"), "v-test"); err != nil {
+		t.Fatal(err)
+	}
+	base := newTwoInferenceFake([]string{exploreSQL, exploreSQL}, "")
+	model := &streamingExploreProvider{twoInferenceFake: base,
+		answers: []string{"WIDEN", "A widened investigation answer."}}
+	svc := initialized(t, paths, func(options *service.Options) {
+		options.PluginDir = plugins
+		options.PluginsEnabled = true
+		options.RocaOpsEnabled = true
+		options.CorpusEnabled = true
+		options.Providers = cascadeOf(model)
+	})
+	var deltas []string
+	result, err := svc.Explore(t.Context(), service.ExploreRequest{QueryRequest: service.QueryRequest{
+		Question: "orbit", InterpretationDelta: func(delta string) { deltas = append(deltas, delta) },
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(deltas, ""); got != "A widened investigation answer." ||
+		strings.Contains(got, "WIDEN") {
+		t.Fatalf("published interpretation = %q", got)
+	}
+	if !result.Widened || result.Interpretation != "A widened investigation answer." ||
+		len(result.Providers) != 2 || len(base.sqlRequests) != 2 || model.calls != 2 {
+		t.Fatalf("widened explore = %+v, SQL calls = %d, interpretation calls = %d",
+			result, len(base.sqlRequests), model.calls)
 	}
 }
 

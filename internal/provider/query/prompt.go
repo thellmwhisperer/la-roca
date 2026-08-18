@@ -172,11 +172,14 @@ func (s Schema) Describe(layers []LayerHint) string {
 		}
 	}
 
-	if s.hasFTS() {
+	if s.hasUnqualifiedCoreSearch() {
 		out.WriteString("\nThe listed FTS5 virtual tables are the census tool: " +
 			`WHERE memories_fts MATCH '"token"', rank with bm25(memories_fts), ` +
 			"and join rowid from a subquery to the base id for memories, exchanges, and thinking, " +
 			"or to the base rowid for sessions. " +
+			"MATCH and bm25 take the bare table name even when FROM is schema-qualified.\n")
+	} else if s.hasFTS() {
+		out.WriteString("\nUse the listed FTS5 virtual tables for term search with MATCH and bm25. " +
 			"MATCH and bm25 take the bare table name even when FROM is schema-qualified.\n")
 	}
 	out.WriteString("\nOnly the listed tables are readable. Internal catalogs " +
@@ -352,7 +355,7 @@ func SQLSystemPromptWithInventory(schema Schema, layers []LayerHint, layerFilter
 			"- Rank term search by bm25 relevance, not created_at, unless the question "+
 				"is explicitly temporal (last week, yesterday, recent, between dates)")
 	}
-	if schema.supportsCoreFTSExamples() {
+	if schema.hasUnqualifiedCoreSearch() {
 		rules = append(rules,
 			"- Join memories, exchanges, and thinking FTS hits to their base tables on id = the rowid alias; "+
 				"join sessions on rowid = the alias",
@@ -415,7 +418,7 @@ func (s Schema) hasFTS() bool {
 	return slices.ContainsFunc(s.Tables, func(table Table) bool { return table.FTS5 })
 }
 
-func (s Schema) supportsCoreFTSExamples() bool {
+func (s Schema) hasUnqualifiedCoreSearch() bool {
 	for _, name := range []string{
 		"memories", "memories_fts", "exchanges", "exchanges_fts", "thinking_fts",
 	} {
@@ -427,7 +430,7 @@ func (s Schema) supportsCoreFTSExamples() bool {
 }
 
 func ftsExamples(schema Schema) string {
-	if !schema.supportsCoreFTSExamples() {
+	if !schema.hasUnqualifiedCoreSearch() {
 		return ""
 	}
 	return "\n\n<examples>\n" +
@@ -468,16 +471,19 @@ var substringLikeOnText = regexp.MustCompile(
 // SubstringLikeRejection is the narrow defense behind the prompt: a model plan
 // that still writes LIKE '%term%' on a text column is rejected with a retry
 // hint that points at FTS. It is not a SQL rewriter.
-func SubstringLikeRejection(sql string) string {
+func SubstringLikeRejection(sql string, schema Schema) string {
 	if !substringLikeOnText.MatchString(sql) {
 		return ""
 	}
-	return "substring LIKE '%term%' on a text column matches inside other words " +
+	hint := "substring LIKE '%term%' on a text column matches inside other words " +
 		"(Ana matches ganancia). For term search use the FTS tables with MATCH " +
-		`and ORDER BY bm25(...), e.g. memories_fts MATCH '"ana"'. ` +
-		"Search memories_fts, exchanges_fts and thinking_fts with UNION ALL unless " +
-		"the question targets one source. Pull rowid inside a subquery; never table.rowid. " +
-		"Respond ONLY with the corrected SQL."
+		"and ORDER BY bm25(...). Pull rowid inside a subquery; never table.rowid. "
+	if schema.hasUnqualifiedCoreSearch() {
+		hint += `For example, memories_fts MATCH '"ana"'. ` +
+			"Search memories_fts, exchanges_fts and thinking_fts with UNION ALL unless " +
+			"the question targets one source. "
+	}
+	return hint + "Respond ONLY with the corrected SQL."
 }
 
 // supersededRule is the rule that used to be a lie. It names the table that
@@ -486,6 +492,9 @@ func SubstringLikeRejection(sql string) string {
 // no rule: a rule about a column that does not exist is the same defect written
 // the other way round.
 func supersededRule(schema Schema) string {
+	if !schema.hasUnqualifiedCoreSearch() {
+		return ""
+	}
 	carriers := schema.TablesWith(supersededColumn)
 	if len(carriers) == 0 {
 		return ""

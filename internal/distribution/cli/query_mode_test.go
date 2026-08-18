@@ -26,6 +26,7 @@ type queryModeProvider struct {
 	calls        int
 	failAt       int
 	unreadyAfter int
+	latency      int64
 	delays       []time.Duration
 	budgets      []time.Duration
 }
@@ -35,11 +36,10 @@ type streamingQueryModeProvider struct{ *queryModeProvider }
 func (p *streamingQueryModeProvider) ChatStream(ctx context.Context, _ provider.ChatRequest,
 	onDelta func(string)) (provider.ChatResponse, error) {
 	p.calls++
-	for _, delta := range []string{"The evidence ", "says the format is rows."} {
-		onDelta(delta)
-	}
+	answer := p.answers[p.calls-1]
+	onDelta(answer)
 	return provider.ChatResponse{
-		Content: queryModeProse, Provider: p.Name(), ModelID: p.ModelID(),
+		Content: answer, Provider: p.Name(), ModelID: p.ModelID(), LatencyMS: p.latency,
 	}, nil
 }
 
@@ -76,7 +76,9 @@ func (p *queryModeProvider) Chat(ctx context.Context, _ provider.ChatRequest) (p
 		return provider.ChatResponse{}, errors.New("interpretation unavailable")
 	}
 	answer := p.answers[p.calls-1]
-	return provider.ChatResponse{Content: answer, Provider: p.Name(), ModelID: p.ModelID()}, nil
+	return provider.ChatResponse{
+		Content: answer, Provider: p.Name(), ModelID: p.ModelID(), LatencyMS: p.latency,
+	}, nil
 }
 
 func queryModeService(t *testing.T, model *queryModeProvider) *service.Service {
@@ -191,7 +193,6 @@ func TestQueryFullStreamsOnlyNativeProvidersAndReportsEveryPhase(t *testing.T) {
 			base := &queryModeProvider{answers: answers}
 			var model provider.Provider = base
 			if native {
-				base.answers = answers[:1]
 				model = &streamingQueryModeProvider{base}
 			}
 			var phases []service.QueryPhase
@@ -246,6 +247,53 @@ func TestQueryFullAdoptsADegradedEmptyWidenedResult(t *testing.T) {
 	model := &queryModeProvider{
 		answers: []string{queryModeSQL, "WIDEN"}, unreadyAfter: 2,
 	}
+	svc := scopedQueryModeService(t, model)
+
+	answer, err := answerQuery(t.Context(), svc,
+		service.QueryRequest{Question: queryModeQuestion}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !answer.result.Widened || answer.result.Degraded != service.DegradedUnavailable ||
+		answer.result.RowCount != 0 || answer.prose == "WIDEN" || model.calls != 2 {
+		t.Fatalf("widened answer = %+v, prose = %q, calls = %d",
+			answer.result, answer.prose, model.calls)
+	}
+	if !slices.Contains(answer.result.Databases, "plugin:roca-ops") {
+		t.Fatalf("widened databases = %v", answer.result.Databases)
+	}
+}
+
+func TestQueryFullBuffersWidenAndMergesQueryTelemetry(t *testing.T) {
+	base := &queryModeProvider{
+		answers: []string{queryModeSQL, "WIDEN", queryModeSQL, queryModeProse},
+		delays:  []time.Duration{0, 0, 250 * time.Millisecond}, latency: 7,
+	}
+	var deltas []string
+	answer, err := answerQuery(t.Context(),
+		scopedQueryModeService(t, &streamingQueryModeProvider{base}),
+		service.QueryRequest{
+			Question:            queryModeQuestion,
+			InterpretationDelta: func(delta string) { deltas = append(deltas, delta) },
+		}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(deltas, ""); got != queryModeProse || strings.Contains(got, "WIDEN") {
+		t.Fatalf("published interpretation = %q", got)
+	}
+	if !answer.result.Widened || base.calls != 4 || len(answer.result.Providers) != 2 ||
+		answer.result.LLMLatencyMS != 14 {
+		t.Fatalf("widened telemetry = %+v, calls = %d", answer.result, base.calls)
+	}
+	if answer.result.InterpretationMS >= 200 || answer.result.LatencyMS < 250 {
+		t.Fatalf("latency total/interpretation = %d/%d",
+			answer.result.LatencyMS, answer.result.InterpretationMS)
+	}
+}
+
+func scopedQueryModeService(t *testing.T, model provider.Provider) *service.Service {
+	t.Helper()
 	root := t.TempDir()
 	plugins := filepath.Join(root, "plugins")
 	bin := filepath.Join(root, "bin")
@@ -267,20 +315,7 @@ func TestQueryFullAdoptsADegradedEmptyWidenedResult(t *testing.T) {
 	if _, err := svc.Init(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-
-	answer, err := answerQuery(t.Context(), svc,
-		service.QueryRequest{Question: queryModeQuestion}, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !answer.result.Widened || answer.result.Degraded != service.DegradedUnavailable ||
-		answer.result.RowCount != 0 || answer.prose == "WIDEN" || model.calls != 2 {
-		t.Fatalf("widened answer = %+v, prose = %q, calls = %d",
-			answer.result, answer.prose, model.calls)
-	}
-	if !slices.Contains(answer.result.Databases, "plugin:roca-ops") {
-		t.Fatalf("widened databases = %v", answer.result.Databases)
-	}
+	return svc
 }
 
 func TestQueryFullAdaptsTheInterpretationDeadlineAndReportsItsTimeout(t *testing.T) {

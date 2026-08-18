@@ -687,7 +687,7 @@ func answerQuery(ctx context.Context, svc *service.Service, req service.QueryReq
 	if err != nil || !full || result.Engine == "" || result.RowCount == 0 {
 		return answer, err
 	}
-	started := time.Now()
+	var interpretationMS int64
 	if req.Progress != nil {
 		req.Progress(service.QueryPhaseInterpretation)
 	}
@@ -695,34 +695,60 @@ func answerQuery(ctx context.Context, svc *service.Service, req service.QueryReq
 	if req.InterpretationStart != nil {
 		onStart = func(native bool) { req.InterpretationStart(native, result) }
 	}
+	var bufferedNative bool
+	var bufferedStart bool
+	var bufferedDeltas []string
+	var firstOnStart func(bool)
+	if onStart != nil {
+		firstOnStart = func(native bool) {
+			bufferedNative = native
+			bufferedStart = true
+		}
+	}
+	var firstOnDelta func(string)
+	if req.InterpretationDelta != nil {
+		firstOnDelta = func(delta string) { bufferedDeltas = append(bufferedDeltas, delta) }
+	}
+	started := time.Now()
 	interpretation, err := svc.InterpretStream(
 		ctx, result.Question, result.Columns, result.Rows,
 		time.Duration(result.SQLInferenceMS)*time.Millisecond,
 		result.Engine, service.InterpretationContext{
 			Mission: service.InterpretationAnswer, UnusedDatabases: result.UnusedDatabases,
 		},
-		onStart, req.InterpretationDelta)
+		firstOnStart, firstOnDelta)
+	interpretationMS += time.Since(started).Milliseconds()
 	if err == nil && service.WidenReply(interpretation.Text) && len(result.UnusedDatabases) > 0 {
+		first := result
 		req.Databases = []string{service.ScopeAll}
 		widened, widenErr := svc.Query(ctx, req)
 		if widenErr != nil {
-			return queryAnswer{result: widened}, widenErr
+			return queryAnswer{result: service.MergeWidenedResult(first, widened)}, widenErr
 		}
-		result = widened
-		result.Widened = true
+		secondSQLInferenceMS := widened.SQLInferenceMS
+		result = service.MergeWidenedResult(first, widened)
 		interpretation = service.Interpretation{}
 		err = nil
 		if result.Engine != "" && result.RowCount > 0 {
+			started = time.Now()
 			interpretation, err = svc.InterpretStream(
 				ctx, result.Question, result.Columns, result.Rows,
-				time.Duration(result.SQLInferenceMS)*time.Millisecond,
+				time.Duration(secondSQLInferenceMS)*time.Millisecond,
 				result.Engine, service.InterpretationContext{Mission: service.InterpretationAnswer},
 				onStart, req.InterpretationDelta)
+			interpretationMS += time.Since(started).Milliseconds()
+		}
+	} else if err == nil {
+		if bufferedStart {
+			onStart(bufferedNative)
+		}
+		for _, delta := range bufferedDeltas {
+			req.InterpretationDelta(delta)
 		}
 	}
 	answer.result = result
 	answer.prose, answer.interpretErr = interpretation.Text, err
-	answer.result.InterpretationMS = time.Since(started).Milliseconds()
+	answer.result.InterpretationMS = interpretationMS
 	answer.result.LatencyMS += answer.result.InterpretationMS
 	answer.result.Interpretation = interpretation.Text
 	// Who read the rows travels in the envelope beside who wrote the SQL: on an

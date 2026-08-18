@@ -363,6 +363,25 @@ func beginWidenedPass(first QueryResult, route pluginRoute) QueryResult {
 	}
 }
 
+func MergeWidenedResult(first, widened QueryResult) QueryResult {
+	widened.Widened = true
+	widened.Providers = append(slices.Clone(first.Providers), widened.Providers...)
+	widened.LLMLatencyMS += first.LLMLatencyMS
+	widened.SQLRetryProviderLatencyMS += first.SQLRetryProviderLatencyMS
+	widened.SQLInferenceMS += first.SQLInferenceMS
+	widened.SQLRetryInferenceMS += first.SQLRetryInferenceMS
+	widened.ExecutionMS += first.ExecutionMS
+	widened.LatencyMS += first.LatencyMS
+	if first.RetriedSQL && !widened.RetriedSQL {
+		widened.RetriedSQL = true
+		widened.RetryType = first.RetryType
+		widened.FirstModelSQL = first.FirstModelSQL
+		widened.RetryReason = first.RetryReason
+		widened.FirstRepaired = slices.Clone(first.FirstRepaired)
+	}
+	return widened
+}
+
 // ExecRequest is a SELECT the caller wants to run as it is. It is the natural
 // companion of `query --sql-only`.
 type ExecRequest struct {

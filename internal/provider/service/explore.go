@@ -78,34 +78,61 @@ func (s *Service) Explore(ctx context.Context, req ExploreRequest) (QueryResult,
 	if req.Deep {
 		mission = InterpretationExploreDeep
 	}
-	started := time.Now()
+	var interpretationMS int64
 	var onStart func(bool)
 	if req.InterpretationStart != nil {
 		onStart = func(native bool) { req.InterpretationStart(native, result) }
 	}
+	var bufferedNative bool
+	var bufferedStart bool
+	var bufferedDeltas []string
+	var firstOnStart func(bool)
+	if onStart != nil {
+		firstOnStart = func(native bool) {
+			bufferedNative = native
+			bufferedStart = true
+		}
+	}
+	var firstOnDelta func(string)
+	if req.InterpretationDelta != nil {
+		firstOnDelta = func(delta string) { bufferedDeltas = append(bufferedDeltas, delta) }
+	}
+	started := time.Now()
 	answer, interpretErr := s.InterpretStream(ctx, result.Question, result.Columns, result.Rows,
 		time.Duration(result.SQLInferenceMS)*time.Millisecond, result.Engine,
 		InterpretationContext{Mission: mission, Terrain: terrain, UnusedDatabases: result.UnusedDatabases},
-		onStart, req.InterpretationDelta)
+		firstOnStart, firstOnDelta)
+	interpretationMS += time.Since(started).Milliseconds()
 	if interpretErr == nil && widenReply(answer.Text) && len(result.UnusedDatabases) > 0 {
+		first := result
 		req.Databases = []string{ScopeAll}
 		widened, widenErr := s.Query(ctx, req.QueryRequest)
 		if widenErr != nil {
-			return widened, widenErr
+			return MergeWidenedResult(first, widened), widenErr
 		}
+		secondSQLInferenceMS := widened.SQLInferenceMS
+		widened = MergeWidenedResult(first, widened)
 		widened.Mode = result.Mode
-		widened.Widened = true
 		terrain = terrainFromRows(widened.Question, widened.Columns, widened.Rows)
 		widened.Terrain = &terrain
 		if req.Progress != nil {
 			req.Progress(QueryPhaseInterpretation)
 		}
+		started = time.Now()
 		answer, interpretErr = s.InterpretStream(ctx, widened.Question, widened.Columns, widened.Rows,
-			time.Duration(widened.SQLInferenceMS)*time.Millisecond, widened.Engine,
+			time.Duration(secondSQLInferenceMS)*time.Millisecond, widened.Engine,
 			InterpretationContext{Mission: mission, Terrain: terrain}, onStart, req.InterpretationDelta)
+		interpretationMS += time.Since(started).Milliseconds()
 		result = widened
+	} else if interpretErr == nil {
+		if bufferedStart {
+			onStart(bufferedNative)
+		}
+		for _, delta := range bufferedDeltas {
+			req.InterpretationDelta(delta)
+		}
 	}
-	result.InterpretationMS = time.Since(started).Milliseconds()
+	result.InterpretationMS = interpretationMS
 	result.LatencyMS += result.InterpretationMS
 	result.Interpretation = answer.Text
 	result.InterpretEngine = answer.Engine
