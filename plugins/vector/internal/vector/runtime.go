@@ -18,6 +18,7 @@ const (
 	CompletionFilename  = "completion.json"
 	WorkerLogFilename   = "worker.log"
 	WorkerClaimFilename = ".worker"
+	relocationLockFile  = ".roca-vector.relocation.lock"
 )
 
 var workerProcessAlive = processAlive
@@ -100,10 +101,45 @@ type LaunchResult struct {
 	AlreadyRunning bool   `json:"already_running"`
 }
 
+func LockStateUsage(directory string) (func() error, error) {
+	if directory == "" {
+		return nil, fmt.Errorf("vector state directory is required")
+	}
+	managed := filepath.Base(directory) == "state" &&
+		(filepath.Base(filepath.Dir(directory)) == "vector" ||
+			filepath.Base(filepath.Dir(directory)) == "roca-vector")
+	lockPath := filepath.Join(directory, ".relocation.lock")
+	if managed {
+		lockPath = filepath.Join(filepath.Dir(filepath.Dir(directory)), relocationLockFile)
+	} else if err := os.MkdirAll(directory, 0o700); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
+		return nil, err
+	}
+	release, err := lockSharedFile(lockPath)
+	if err != nil {
+		return nil, fmt.Errorf("lock vector state relocation: %w", err)
+	}
+	if _, err := os.Stat(directory); err != nil {
+		_ = release()
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("vector state moved from %s; rerun the command", directory)
+		}
+		return nil, err
+	}
+	return release, nil
+}
+
 func Launch(request LaunchRequest) (LaunchResult, error) {
 	if request.Executable == "" || request.DataDir == "" {
 		return LaunchResult{}, fmt.Errorf("vector worker executable and data directory are required")
 	}
+	releaseState, err := LockStateUsage(request.DataDir)
+	if err != nil {
+		return LaunchResult{}, err
+	}
+	defer releaseState()
 	if err := os.MkdirAll(request.DataDir, 0o700); err != nil {
 		return LaunchResult{}, err
 	}

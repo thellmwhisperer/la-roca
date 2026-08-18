@@ -13,6 +13,29 @@ func lockFile(path string) (func() error, error) {
 	return lock(path, os.O_CREATE|os.O_RDWR)
 }
 
+func lockSharedFile(path string) (func() error, error) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := unix.Flock(int(file.Fd()), unix.LOCK_SH); err != nil {
+		file.Close()
+		return nil, err
+	}
+	release := func() error {
+		unlockErr := unix.Flock(int(file.Fd()), unix.LOCK_UN)
+		closeErr := file.Close()
+		if unlockErr != nil {
+			return unlockErr
+		}
+		return closeErr
+	}
+	if err := validateExistingLock(path, file, release); err != nil {
+		return nil, err
+	}
+	return release, nil
+}
+
 func tryLockExisting(path string) (func() error, bool, error) {
 	file, err := os.OpenFile(path, os.O_RDWR, 0o600)
 	if err != nil {
@@ -56,10 +79,8 @@ func lock(path string, flags int) (func() error, error) {
 		}
 		return closeErr
 	}
-	if flags&os.O_CREATE == 0 {
-		if err := validateExistingLock(path, file, release); err != nil {
-			return nil, err
-		}
+	if err := validateExistingLock(path, file, release); err != nil {
+		return nil, err
 	}
 	return release, nil
 }
