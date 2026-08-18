@@ -336,6 +336,8 @@ func TestSkillTeachesTheInvestigationFunnel(t *testing.T) {
 				"roca vector compact",
 				"completion.json",
 				"invite the user to",
+				"exit_status == 0",
+				"Otherwise treat the index as unavailable",
 			},
 		},
 	} {

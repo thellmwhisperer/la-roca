@@ -35,9 +35,9 @@ Tell the user the build is running, and offer a live view of the progress:
 tail -f ~/.roca/plugins/roca-vector/state/worker.log
 ```
 
-`completion.json` in the same directory records `started_at` and
-`finished_at`. A non-empty `finished_at` means the first pass finished;
-that is the index. Absent or unfinished means there is no index.
+`completion.json` in the same directory records `started_at`, `finished_at`,
+and `exit_status`. The index is ready only when `finished_at` is non-empty and
+`exit_status == 0`. Otherwise treat the index as unavailable.
 
 ## Maintain
 
@@ -65,7 +65,7 @@ unchanged count equal to the live chunk count.
 `ROCA_READ_ONLY` refuses `install`, `ingest --delta`, and `compact`.
 For a non-default database, pass `--db-path` on the vector command.
 
-A first smoke query after `finished_at`:
+A first smoke query after the index is ready:
 
 ```sh
 roca vector query "what did we decide" 10

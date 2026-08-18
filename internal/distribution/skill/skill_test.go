@@ -163,6 +163,8 @@ func TestShippedSkillsCarryTheSearchDoctrine(t *testing.T) {
 				"worker.log",
 				"completion.json",
 				"finished_at",
+				"exit_status == 0",
+				"Otherwise treat the index as unavailable",
 			},
 			refuse: []string{"## Hybrid discovery", "## Hybrid loop", "roca vector vocab"},
 		},
