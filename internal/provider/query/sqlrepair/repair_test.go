@@ -119,10 +119,40 @@ func TestPrepareRepairsOnlyNamedModelOutputShapes(t *testing.T) {
 			wantRepairs: []string{sqlrepair.WrapOrderedCompound},
 		},
 		{
+			name: "keep a compound ORDER BY projected expression",
+			raw: "SELECT lower(layer) FROM memories UNION ALL " +
+				"SELECT lower(project) FROM sessions ORDER BY lower(layer)",
+			wantSQL: "SELECT lower(layer) FROM memories UNION ALL " +
+				"SELECT lower(project) FROM sessions ORDER BY lower(layer)",
+		},
+		{
+			name: "keep compound ORDER BY aliases and valid ordinals",
+			raw: "SELECT lower(layer) AS normalized, project FROM memories UNION ALL " +
+				"SELECT lower(project), agent FROM sessions ORDER BY normalized, 2",
+			wantSQL: "SELECT lower(layer) AS normalized, project FROM memories UNION ALL " +
+				"SELECT lower(project), agent FROM sessions ORDER BY normalized, 2",
+		},
+		{
 			name:        "rewrite the JSON arrow shorthand to json_extract",
 			raw:         "SELECT id FROM memories WHERE metadata -> '$.project' = 'galactic' LIMIT 5",
 			wantSQL:     "SELECT id FROM memories WHERE json_extract(metadata, '$.project') = 'galactic' LIMIT 5",
 			wantRepairs: []string{sqlrepair.PreserveJSONExtract},
+		},
+		{
+			name:        "rewrite a complete JSON arrow chain",
+			raw:         "SELECT metadata -> '$.project' ->> '$.name' FROM memories",
+			wantSQL:     "SELECT json_extract(json_extract(metadata, '$.project'), '$.name') FROM memories",
+			wantRepairs: []string{sqlrepair.PreserveJSONExtract},
+		},
+		{
+			name:    "leave a JSON label operand unchanged",
+			raw:     "SELECT metadata ->> 'project' FROM memories",
+			wantSQL: "SELECT metadata ->> 'project' FROM memories",
+		},
+		{
+			name:    "leave a JSON index operand unchanged",
+			raw:     "SELECT metadata -> 0 FROM memories",
+			wantSQL: "SELECT metadata -> 0 FROM memories",
 		},
 		{
 			name:        "rewrite the JSON SQL-value arrow to json_extract",

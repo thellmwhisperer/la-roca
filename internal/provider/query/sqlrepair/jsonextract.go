@@ -20,19 +20,45 @@ func preserveJSONExtract(stmt string) (string, bool) {
 			continue
 		}
 		leftStart, leftEnd := jsonArrowLeft(stmt, i)
-		rightStart, rightEnd := jsonArrowRight(stmt, i+width)
-		if leftStart < 0 || rightStart < 0 {
+		if leftStart < cursor {
 			i++
 			continue
 		}
+		expr := stmt[leftStart:leftEnd]
+		chainEnd := leftEnd
+		chainChanged := false
+		arrow := i
+		for {
+			width = jsonArrowWidth(stmt, arrow)
+			rightStart, rightEnd := jsonArrowRight(stmt, arrow+width)
+			if rightStart < 0 {
+				break
+			}
+			if isJSONExtractPath(stmt[rightStart:rightEnd]) {
+				expr = "json_extract(" + expr + ", " + stmt[rightStart:rightEnd] + ")"
+				chainChanged = true
+			} else {
+				expr += stmt[chainEnd:rightEnd]
+			}
+			chainEnd = rightEnd
+			next := skipSpaceRight(stmt, rightEnd)
+			if jsonArrowWidth(stmt, next) == 0 {
+				break
+			}
+			arrow = next
+		}
+		if chainEnd == leftEnd {
+			i++
+			continue
+		}
+		if !chainChanged {
+			i = chainEnd
+			continue
+		}
 		rebuilt.WriteString(stmt[cursor:leftStart])
-		rebuilt.WriteString("json_extract(")
-		rebuilt.WriteString(stmt[leftStart:leftEnd])
-		rebuilt.WriteString(", ")
-		rebuilt.WriteString(stmt[rightStart:rightEnd])
-		rebuilt.WriteString(")")
-		cursor = rightEnd
-		i = rightEnd
+		rebuilt.WriteString(expr)
+		cursor = chainEnd
+		i = chainEnd
 		changed = true
 	}
 	if !changed {
@@ -40,6 +66,10 @@ func preserveJSONExtract(stmt string) (string, bool) {
 	}
 	rebuilt.WriteString(stmt[cursor:])
 	return rebuilt.String(), true
+}
+
+func isJSONExtractPath(operand string) bool {
+	return len(operand) >= 3 && operand[0] == '\'' && operand[1] == '$' && operand[len(operand)-1] == '\''
 }
 
 func jsonArrowWidth(stmt string, i int) int {

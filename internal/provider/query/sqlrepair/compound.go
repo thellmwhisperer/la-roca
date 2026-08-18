@@ -1,6 +1,7 @@
 package sqlrepair
 
 import (
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -31,7 +32,7 @@ func dropUnorderableCompoundTerms(stmt string) (string, bool) {
 	if len(seps) == 0 {
 		return stmt, false
 	}
-	names, ok := firstBranchResultNames(stmt, tokens, seps)
+	columns, ok := firstBranchResultColumns(stmt, tokens, seps)
 	if !ok {
 		return stmt, false
 	}
@@ -63,7 +64,7 @@ func dropUnorderableCompoundTerms(stmt string) (string, bool) {
 		if text == "" {
 			continue
 		}
-		if keepsCompoundOrderTerm(text, names) {
+		if keepsCompoundOrderTerm(text, columns) {
 			kept = append(kept, text)
 		}
 	}
@@ -132,7 +133,13 @@ func wrapOrderedCompoundBranches(stmt string) (string, bool) {
 	return strings.TrimSpace(rebuilt.String()), true
 }
 
-func firstBranchResultNames(stmt string, tokens []token, seps []span) (map[string]bool, bool) {
+type compoundResultColumns struct {
+	names       map[string]bool
+	expressions map[string]bool
+	count       int
+}
+
+func firstBranchResultColumns(stmt string, tokens []token, seps []span) (compoundResultColumns, bool) {
 	end := seps[0].start
 	if order := firstPair(tokens, 0, end, "order", "by"); order >= 0 {
 		end = order
@@ -140,53 +147,61 @@ func firstBranchResultNames(stmt string, tokens []token, seps []span) (map[strin
 		end = limit
 	}
 	from, to := trimIndex(stmt, 0, end)
-	return resultColumnNames(parseSelect(stmt[from:to]))
+	return resultColumns(parseSelect(stmt[from:to]))
 }
 
-func resultColumnNames(sel *rqlite.SelectStatement) (map[string]bool, bool) {
+func resultColumns(sel *rqlite.SelectStatement) (compoundResultColumns, bool) {
 	if sel == nil {
-		return nil, false
+		return compoundResultColumns{}, false
 	}
-	names := make(map[string]bool)
+	result := compoundResultColumns{
+		names:       make(map[string]bool),
+		expressions: make(map[string]bool),
+		count:       len(sel.Columns),
+	}
 	for _, col := range sel.Columns {
 		if col.Star.IsValid() {
-			return nil, false
+			return compoundResultColumns{}, false
 		}
 		if ref, ok := col.Expr.(*rqlite.QualifiedRef); ok && ref.Star.IsValid() {
-			return nil, false
+			return compoundResultColumns{}, false
 		}
 		if col.Alias != nil {
-			names[strings.ToLower(col.Alias.Name)] = true
-			continue
+			result.names[strings.ToLower(col.Alias.Name)] = true
 		}
+		result.expressions[col.Expr.String()] = true
 		switch expr := col.Expr.(type) {
 		case *rqlite.Ident:
-			names[strings.ToLower(expr.Name)] = true
+			result.names[strings.ToLower(expr.Name)] = true
 		case *rqlite.QualifiedRef:
 			if expr.Column != nil {
-				names[strings.ToLower(expr.Column.Name)] = true
+				result.names[strings.ToLower(expr.Column.Name)] = true
 			}
 		}
 	}
-	return names, true
+	return result, true
 }
 
-func keepsCompoundOrderTerm(term string, names map[string]bool) bool {
-	fields := strings.Fields(term)
-	if len(fields) == 0 {
+func keepsCompoundOrderTerm(term string, columns compoundResultColumns) bool {
+	sel := parseSelect("SELECT 1 ORDER BY " + term)
+	if sel == nil || len(sel.OrderingTerms) != 1 {
 		return false
 	}
-	head := strings.Trim(fields[0], "\"'`[]()")
-	if head == "" {
-		return false
+	expr := sel.OrderingTerms[0].X
+	if ordinal, ok := expr.(*rqlite.NumberLit); ok && isDecimalLiteral(ordinal.Value) {
+		position, err := strconv.Atoi(ordinal.Value)
+		return err == nil && position >= 1 && position <= columns.count
 	}
-	if isDecimalLiteral(head) {
+	if columns.expressions[expr.String()] {
 		return true
 	}
-	if strings.ContainsAny(fields[0], ".") {
+	switch ref := expr.(type) {
+	case *rqlite.Ident:
+		return columns.names[strings.ToLower(ref.Name)]
+	case *rqlite.QualifiedRef:
 		return false
 	}
-	return names[strings.ToLower(head)]
+	return false
 }
 
 func isDecimalLiteral(text string) bool {
