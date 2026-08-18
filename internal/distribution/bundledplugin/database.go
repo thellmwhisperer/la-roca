@@ -1,9 +1,12 @@
 package bundledplugin
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -15,21 +18,47 @@ import (
 
 const busyTimeout = 15 * time.Second
 
-// OpenDatabase gives bundled data plugins one SQLite DSN contract while
-// allowing observers to request a read-only connection.
+// OpenDatabase gives bundled data plugins one SQLite DSN contract. A read-only
+// observer opens a closed WAL database as immutable so observation creates no
+// sidecars; a live WAL keeps ordinary SQLite locking so its frames stay visible.
 func OpenDatabase(path string, readOnly bool, timeout ...time.Duration) (*sql.DB, error) {
 	mode := ""
+	immutable := false
 	if readOnly {
 		mode = "ro"
+		var err error
+		immutable, err = closedWALDatabase(path)
+		if err != nil {
+			return nil, err
+		}
 	}
 	configuredTimeout := busyTimeout
 	if len(timeout) > 0 && timeout[0] > 0 {
 		configuredTimeout = timeout[0]
 	}
-	return openDatabase(path, mode, configuredTimeout)
+	return openDatabase(path, mode, configuredTimeout, immutable)
 }
 
-func openDatabase(path, mode string, configuredTimeout time.Duration) (*sql.DB, error) {
+func closedWALDatabase(path string) (bool, error) {
+	if _, err := os.Lstat(path + "-wal"); err == nil {
+		return false, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, fmt.Errorf("inspect the bundled plugin database WAL: %w", err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return false, fmt.Errorf("inspect the bundled plugin database header: %w", err)
+	}
+	defer file.Close()
+	header := make([]byte, 20)
+	if _, err := io.ReadFull(file, header); err != nil {
+		return false, nil
+	}
+	return bytes.Equal(header[:16], []byte("SQLite format 3\x00")) &&
+		header[18] == 2 && header[19] == 2, nil
+}
+
+func openDatabase(path, mode string, configuredTimeout time.Duration, immutable bool) (*sql.DB, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("resolve the bundled plugin database path: %w", err)
@@ -39,6 +68,9 @@ func openDatabase(path, mode string, configuredTimeout time.Duration) (*sql.DB, 
 	}
 	if mode != "" {
 		query.Set("mode", mode)
+	}
+	if immutable {
+		query.Set("immutable", "1")
 	}
 	dsn := url.URL{Scheme: "file", Path: filepath.ToSlash(absolute), RawQuery: query.Encode()}
 	db, err := sql.Open("sqlite", dsn.String())

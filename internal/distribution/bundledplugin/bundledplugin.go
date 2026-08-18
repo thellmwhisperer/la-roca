@@ -229,7 +229,7 @@ func probeInstalledDatabase(path, name string) error {
 	if info.Mode().Perm()&0o222 == 0 {
 		return fmt.Errorf("bundled %s database is not writable", name)
 	}
-	db, err := openDatabase(path, "rw", busyTimeout)
+	db, err := openDatabase(path, "rw", busyTimeout, false)
 	if err != nil {
 		return fmt.Errorf("open bundled %s database read-write: %w", name, err)
 	}

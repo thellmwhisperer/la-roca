@@ -101,11 +101,12 @@ prompt, so an interpreter sees that capped sample plus those precomputed
 aggregates, never the full result set as text. Configure only Ollama when no
 query content may leave it at all.
 
-Every CLI command and MCP tool call writes a size-capped, redacted record to
-the bundled ops database and to JSONL under `logs/`; query records never store
-result row contents, and `roca doctor` summarizes recent query failures. The
-stable format, retention, full redaction list, and `roca doctor --report`
-support snapshot live in [docs/operations.md](docs/operations.md).
+Every CLI command except `roca doctor --report`, and every MCP tool call, writes
+a size-capped, redacted record to the bundled ops database and to JSONL under
+`logs/`; query records never store result row contents, and `roca doctor`
+summarizes recent query failures. The stable format, retention, full redaction
+list, and `roca doctor --report` support snapshot live in
+[docs/operations.md](docs/operations.md).
 `ROCA_READ_ONLY=1` refuses writes in the shared service before database I/O,
 so CLI and MCP enforce the same boundary.
 

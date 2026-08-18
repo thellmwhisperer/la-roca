@@ -138,12 +138,22 @@ func TestDoctorReportLeavesALegacyInstallUntouched(t *testing.T) {
 	home := t.TempDir()
 	isolateRuntimeDirs(t, home)
 	dbPath := setupLegacySupportHome(t, home)
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if _, err := os.Lstat(dbPath + suffix); !os.IsNotExist(err) {
+			t.Fatalf("fixture left a SQLite sidecar %q: %v", suffix, err)
+		}
+	}
 	runRoot(t, contractBuild(), "doctor", "--report", "--db-path", dbPath)
 	if _, err := os.Stat(filepath.Join(home, ".roca", "plugins")); !os.IsNotExist(err) {
 		t.Fatalf("report created a plugins tree: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".roca", logfile.DirName)); !os.IsNotExist(err) {
 		t.Fatalf("report created an execution log: %v", err)
+	}
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if _, err := os.Lstat(dbPath + suffix); !os.IsNotExist(err) {
+			t.Fatalf("report created a SQLite sidecar %q: %v", suffix, err)
+		}
 	}
 }
 
