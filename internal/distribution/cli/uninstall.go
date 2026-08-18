@@ -294,27 +294,32 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 		return outcomes
 	}
 	for _, runtime := range skill.Runtimes() {
-		rocaPath, err := skill.Path(runtime, home, os.Getenv)
-		if err != nil {
-			failed(report, "%s", err)
-			continue
+		// Each embedded skill falls back to this build's own bytes when no
+		// registry entry names them. The generated catalog has no shipped bytes,
+		// so its unregistered fallback is empty: an empty answer refuses the
+		// withdrawal, which is the safe reading of a file this product cannot
+		// prove.
+		var withdrawals []struct {
+			kind, path, fallback string
+		}
+		for _, embedded := range skill.EmbeddedSkills() {
+			path, err := skill.NamedPath(runtime, embedded.Name, home, os.Getenv)
+			if err != nil {
+				failed(report, "%s", err)
+				continue
+			}
+			withdrawals = append(withdrawals, struct {
+				kind, path, fallback string
+			}{artifactKindSkill, path, artifact.Checksum(embedded.Body)})
 		}
 		catalogPath, err := skill.CatalogPath(runtime, home, os.Getenv)
 		if err != nil {
 			failed(report, "%s", err)
 			continue
 		}
-		// The canonical skill falls back to this build's own bytes when no
-		// registry entry names them. The generated catalog has no shipped bytes,
-		// so its unregistered fallback is empty: an empty answer refuses the
-		// withdrawal, which is the safe reading of a file this product cannot
-		// prove.
-		withdrawals := []struct {
+		withdrawals = append(withdrawals, struct {
 			kind, path, fallback string
-		}{
-			{artifactKindSkill, rocaPath, artifact.Checksum(skill.Content())},
-			{artifactKindSkillCatalog, catalogPath, ""},
-		}
+		}{artifactKindSkillCatalog, catalogPath, ""})
 		for _, file := range withdrawals {
 			checksum := file.fallback
 			if entry, found := registry.Find(file.kind, runtime, file.path); found {
@@ -352,7 +357,7 @@ func (env *cliEnv) withdrawTheIntegrations(report *lifecycle.Report, purge bool)
 // withdrawal tried. Only an empty directory goes: os.Remove is the whole guard.
 func removeHollowSkillDirs(report *lifecycle.Report, skillFile string) {
 	dir := filepath.Dir(skillFile)
-	if base := filepath.Base(dir); base != skill.SkillName && base != skill.CatalogName {
+	if !skill.OwnedDir(filepath.Base(dir)) {
 		return
 	}
 	for _, hollow := range []string{dir, filepath.Dir(dir)} {

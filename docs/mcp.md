@@ -141,8 +141,8 @@ An agent learns La Roca three different ways. They stack; none replaces another.
 
 | Layer | What it is | How the operator turns it on |
 |---|---|---|
-| **Prompt** | A one-line aviso from `roca init` that a skill exists | Automatic on every init; install is never implied |
-| **Skill** | Two skills: the canonical `SKILL.md` that teaches query/explore/store/exec, the investigation method, and the MCP tools, plus `roca-semantica`, the semantic catalog generated from the installed plugin manifests | `roca skill install <runtime>` or `--all` — installs both as registered, zoned files in each selected runtime's personal skills directory |
+| **Prompt** | The generated `prompt.md` block for agent instructions | Automatic on every init |
+| **Skill** | Three embedded skills (`roca`, `roca-operations`, `roca-vector`) plus `roca-semantica`, the semantic catalog generated from the installed plugin manifests | `roca init` installs the three embedded skills into every detected skill seat and names `roca` and `roca-operations` as must-read; `roca skill install <runtime>` or `--all` writes all four as registered, zoned files |
 | **MCP** | Six passthrough tools for agents with no shell | `roca mcp install <runtime>` |
 
 ```
@@ -152,13 +152,15 @@ roca skill install claude  # one runtime
 ```
 
 Paths (personal/global only — Roca never writes a project-local skill). Each
-runtime receives the canonical skill at `skills/roca/SKILL.md` and the
-generated catalog at `skills/roca-semantica/SKILL.md` under the same root:
+runtime receives `skills/roca/SKILL.md`, `skills/roca-operations/SKILL.md`,
+`skills/roca-vector/SKILL.md`, and the generated catalog at
+`skills/roca-semantica/SKILL.md` under the same root:
 
 | Runtime | Skill root |
 |---|---|
 | `claude` | `$CLAUDE_CONFIG_DIR`/`~/.claude` |
 | `codex` | `$CODEX_HOME`/`~/.codex` |
+| `cursor` | `$CURSOR_HOME`/`~/.cursor` (user skills at `skills/`; never `skills-cursor/`) |
 | `grok` | `$GROK_HOME`/`~/.grok` |
 | `opencode` | beside `$OPENCODE_CONFIG`, else `~/.config/opencode` |
 | `hermes` | `$HERMES_HOME`/`~/.hermes` |
@@ -169,9 +171,11 @@ Only those files are created or refreshed. Explicit markers divide the shipped
 SYSTEM zone from the operator's USER zone. Re-running is a no-op when SYSTEM
 already matches; otherwise USER is transplanted verbatim and the previous file
 is backed up. An edited SYSTEM zone is left alone unless the operator passes
-`--force`. The canonical skill body lives in
-`internal/distribution/skill/SKILL.md` and ships inside the binary via
-`go:embed`; the catalog body is composed at install time from the semantic
+`--force`. The embedded skill sources live in
+`internal/distribution/skill/agents.md` (which generates `roca`),
+`internal/distribution/skill/OPERATIONS.md`, and
+`internal/distribution/skill/VECTOR.md`, and ship inside the
+binary via `go:embed`; the catalog body is composed at install time from the semantic
 fragments of the installed plugin manifests, the same fragments the query
 catalog composes, and every `roca plugin install`, `update` and `uninstall`
 regenerates it in each runtime where it is registered.
@@ -183,8 +187,8 @@ machine, the same discipline `docs/agent-parsers.md` demands of a parser
 store. The measurements behind the current list:
 
 - **grok** (Grok Build): `grok inspect` lists skills that exist only under
-  `~/.grok/skills/` as discovered `user` skills — both the ones this machine
-  already held there before the change and `roca`/`roca-semantica` after
+  `~/.grok/skills/` as discovered `user` skills, both the ones this machine
+  already held there before the change and all four La Roca skills after
   `roca skill install grok`, on a machine where neither `~/.claude/skills/`
   nor `~/.agents/skills/` held them. Skills installed only under
   `~/.claude/skills/` are discovered through grok's compatibility tier,
@@ -196,9 +200,13 @@ store. The measurements behind the current list:
   no `glm` binary exists anywhere measured (PATH, npm globals, shell aliases),
   so no reader can be verified; the GLM plan is used through Claude Code with
   `CLAUDE_CONFIG_DIR`, which the `claude` seat already honors.
-- **cursor**: not claimed. `~/.cursor` has no `skills/` directory and the
-  `cursor-agent` CLI is not installed, so its user-skill surface is not
-  measurable here.
+- **cursor**: first-class skill seat. `cursor-agent` is installed at
+  `~/.local/bin/cursor-agent` (symlink into `~/.local/share/cursor-agent/versions/`),
+  verified by executing that path; a PATH miss alone is not "not installed".
+  `~/.cursor` is the live config root (`cli-config.json`, `mcp.json`). User
+  skills are `~/.cursor/skills/<name>/SKILL.md`. `~/.cursor/skills-cursor/` is
+  reserved for Cursor's built-in skills and is never written. Detection is the
+  `~/.cursor` directory existing; Cursor does not create `skills/` itself.
 
 ---
 

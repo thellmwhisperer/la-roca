@@ -1,6 +1,10 @@
 package provider
 
-import "os/exec"
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+)
 
 // DefaultCodexModel is the model used by the shipped Codex CLI command.
 const DefaultCodexModel = "gpt-5.6-luna"
@@ -58,10 +62,47 @@ func CommandPresetDefaultModel(name string) (string, bool) {
 // without duplicating detection rules.
 type LookPathFunc func(string) (string, error)
 
-// BinaryOnPath reports whether an executable resolves through PATH.
+// LookPath resolves an executable on PATH, then in the user's well-known
+// bins (HOME/.local/bin, HOME/bin). A PATH miss alone is not "not installed":
+// cursor-agent on this machine lives at ~/.local/bin and is missed when that
+// directory is absent from PATH. Host-global bins stay on PATH; they are not
+// searched here so an isolated HOME cannot see the machine's Homebrew tools.
+func LookPath(name string) (string, error) {
+	path, err := exec.LookPath(name)
+	if err == nil {
+		return path, nil
+	}
+	if filepath.Base(name) != name {
+		return "", err
+	}
+	home := os.Getenv("HOME")
+	if home == "" {
+		if userHome, err := os.UserHomeDir(); err == nil {
+			home = userHome
+		}
+	}
+	if home == "" {
+		return "", &exec.Error{Name: name, Err: exec.ErrNotFound}
+	}
+	for _, dir := range []string{
+		filepath.Join(home, ".local", "bin"),
+		filepath.Join(home, "bin"),
+	} {
+		path := filepath.Join(dir, name)
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
+			continue
+		}
+		return path, nil
+	}
+	return "", &exec.Error{Name: name, Err: exec.ErrNotFound}
+}
+
+// BinaryOnPath reports whether an executable resolves through PATH or a
+// well-known bin directory.
 func BinaryOnPath(lookPath LookPathFunc, name string) bool {
 	if lookPath == nil {
-		lookPath = exec.LookPath
+		lookPath = LookPath
 	}
 	_, err := lookPath(name)
 	return err == nil

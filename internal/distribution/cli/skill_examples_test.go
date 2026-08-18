@@ -15,14 +15,15 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/layers"
 )
 
-// The embedded skill is the only manual whose commands this guard must prove
+// The embedded skills are the manuals whose commands this guard must prove
 // runnable; the generated semantic catalog carries no CLI examples. Every
-// command it shows has to run and every layer it names has to exist, or the
+// command they show has to run and every layer they name has to exist, or the
 // agent is led to an invocation the product refuses. This guard checks each
 // example against the real command tree and layer registry.
 //
-// There is one embedded skill body: internal/distribution/skill/SKILL.md,
-// embedded in the binary. Nothing else in the repository carries a copy.
+// The three embedded skill bodies live in internal/distribution/skill/. The
+// definitive roca skill is generated from the AGENTS.md payload; a pin test
+// refuses drift.
 func TestEverySkillExampleIsValidAgainstTheRealCLI(t *testing.T) {
 	root := rootCommand(&cliEnv{out: io.Discard})
 	registry, err := layers.Load()
@@ -41,8 +42,11 @@ func TestEverySkillExampleIsValidAgainstTheRealCLI(t *testing.T) {
 	// showed `roca exec "SELECT ..."`, whose flags parse but whose body the
 	// engine rejects.
 	fixture := fixtureInstallation(t)
-	content := skill.Content()
-	for _, line := range fencedCommandLines(content) {
+	// The generated roca skill repeats the first-install recipe from AGENTS.md
+	// (`roca init` in a fence). That is not an example against a live home.
+	// Operations and vector are the manuals whose commands must exit 0 here.
+	craft := skill.OperationsContent() + "\n" + skill.VectorContent()
+	for _, line := range fencedCommandLines(craft) {
 		tokens := shellTokens(line)
 		if len(tokens) == 0 || tokens[0] != "roca" {
 			continue
@@ -69,9 +73,12 @@ func TestEverySkillExampleIsValidAgainstTheRealCLI(t *testing.T) {
 // still a taught command; this catches it even outside a fence.
 func TestSkillTeachesOnlyCommandsTheCLIHas(t *testing.T) {
 	root := rootCommand(&cliEnv{out: io.Discard})
-	for _, line := range taughtShellLines(skill.Content()) {
+	for _, line := range taughtShellLines(embeddedSkillBodies()) {
 		tokens := shellTokens(line)
 		if len(tokens) == 0 || tokens[0] != "roca" {
+			continue
+		}
+		if len(tokens) == 1 {
 			continue
 		}
 		if taughtPluginDispatch(tokens[1:]) {
@@ -106,7 +113,7 @@ func taughtPluginDispatch(tokens []string) bool {
 // live-data probe, not the agent-facing remedy surface. The skill must not
 // put agents on the wrong verb.
 func TestSkillDiagnosisCommandIsDoctor(t *testing.T) {
-	body := skill.Content()
+	body := skill.OperationsContent()
 	if !strings.Contains(body, "roca doctor") {
 		t.Fatal(`skill does not teach "roca doctor"`)
 	}
@@ -207,7 +214,7 @@ func TestTheSkillLayersSectionNamesOnlyRealLayers(t *testing.T) {
 	for _, name := range registry.Names() {
 		real[name] = true
 	}
-	named := backticksInside(layersSection(skill.Content()))
+	named := backticksInside(layersSection(skill.OperationsContent()))
 	if len(named) == 0 {
 		t.Fatal("the skill has no Layers section, or it names no layers in backticks")
 	}
@@ -412,6 +419,15 @@ func backticksInside(md string) []string {
 // the fixture the flag validator lacked.
 type skillFixture struct {
 	home string
+}
+
+func embeddedSkillBodies() string {
+	var b strings.Builder
+	for _, embedded := range skill.EmbeddedSkills() {
+		b.WriteString(embedded.Body)
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 func fixtureInstallation(t *testing.T) skillFixture {

@@ -33,8 +33,9 @@ const (
 // configuration surface it did not: they name skill destinations only and stay
 // outside the runtime map `roca mcp install` edits.
 const (
-	RuntimeGrok = "grok"
-	RuntimeQwen = "qwen"
+	RuntimeGrok   = "grok"
+	RuntimeQwen   = "qwen"
+	RuntimeCursor = "cursor"
 )
 
 // ServerName is the entry Roca owns.

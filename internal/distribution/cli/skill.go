@@ -36,15 +36,17 @@ func claudeHookCommand(executable string) string {
 }
 
 // skillCommand installs the agent skills that teach runtimes how to use La
-// Roca. Hidden plumbing: bare lists destinations; install writes the embedded
-// skill and the generated semantic catalog per runtime and narrates every path.
+// Roca. Hidden plumbing: bare lists destinations; install writes the three
+// embedded skills and the generated semantic catalog per runtime and narrates
+// every path.
 func skillCommand(env *cliEnv) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "skill",
 		Short: "Install the agent skills that teach runtimes how to use La Roca",
-		Long: "One embedded SKILL.md plus the generated semantic catalog of the\n" +
-			"installed plugins, each installed into a runtime's personal skills\n" +
-			"directory with separate SYSTEM and USER zones and a versioned registry.\n\n" +
+		Long: "Three embedded skills (roca, roca-operations, roca-vector) plus the\n" +
+			"generated semantic catalog of the installed plugins, each installed into\n" +
+			"a runtime's personal skills directory with separate SYSTEM and USER zones\n" +
+			"and a versioned registry.\n\n" +
 			"Supported runtimes: " + strings.Join(skill.Runtimes(), ", "),
 		Args: cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
@@ -74,60 +76,12 @@ func skillInstallCommand(env *cliEnv) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			outcomes := make([]skill.Outcome, 0, 2*len(runtimes))
+			outcomes := make([]skill.Outcome, 0, (len(skill.EmbeddedSkills())+1)*len(runtimes))
 			var refused []error
 			for _, runtime := range runtimes {
-				rocaPath, err := skillFileOf(runtime)
-				if err != nil {
-					return err
-				}
-				catalogPath, err := skillCatalogFileOf(runtime)
-				if err != nil {
-					return err
-				}
-				// Both files carry the same install contract, so the loop is the
-				// one place the refusal, warning and registration rules are
-				// stated; only the content and the registry kind differ.
-				installs := []struct {
-					kind, path, system string
-					run                func(path, previous string) (skill.Outcome, error)
-				}{
-					{artifactKindSkill, rocaPath, skill.Content(), func(path, previous string) (skill.Outcome, error) {
-						return skill.InstallWithOptions(runtime, path, previous, force)
-					}},
-					{artifactKindSkillCatalog, catalogPath, catalog, func(path, previous string) (skill.Outcome, error) {
-						return skill.InstallCatalogWithOptions(runtime, path, catalog, previous, force, true)
-					}},
-				}
-				for _, file := range installs {
-					entry, found, err := env.registeredArtifact(file.kind, runtime, file.path)
-					if err != nil {
-						return err
-					}
-					previous := ""
-					if found {
-						previous = entry.SystemSHA256
-					}
-					outcome, err := file.run(file.path, previous)
-					// One runtime this install cannot read or must not clobber never
-					// decides for the others: the refusal is collected, the remaining
-					// runtimes of an --all still install, and the command still fails.
-					if err != nil {
-						refused = append(refused, skillInstallFailure(err, runtime, outcome.Backup))
-						continue
-					}
-					if outcome.Diverged {
-						fmt.Fprintf(env.errOut, "warning: %s\n",
-							divergedArtifactWarning(file.path, forceSkillInstall(runtime),
-								outcome.Missing, outcome.Unregistered))
-						outcomes = append(outcomes, outcome)
-						continue
-					}
-					if err := env.registerZonedArtifact(file.kind, runtime, file.path, file.system); err != nil {
-						return err
-					}
-					outcomes = append(outcomes, outcome)
-				}
+				written, failures := env.installRuntimeSkills(runtime, catalog, force, true, true)
+				outcomes = append(outcomes, written...)
+				refused = append(refused, failures...)
 			}
 			if env.json {
 				if err := env.printJSON(map[string]any{"runtimes": outcomes}); err != nil {
@@ -200,12 +154,9 @@ func (env *cliEnv) listSkillDestinations() error {
 		Skill   string `json:"skill"`
 		Path    string `json:"path"`
 	}
-	rows := make([]row, 0, 2*len(skill.Runtimes()))
+	rows := make([]row, 0, len(listedSkills())*len(skill.Runtimes()))
 	for _, runtime := range skill.Runtimes() {
-		for _, destination := range []struct {
-			name string
-			path func(string, string, func(string) string) (string, error)
-		}{{skill.SkillName, skill.Path}, {skill.CatalogName, skill.CatalogPath}} {
+		for _, destination := range listedSkills() {
 			path, err := destination.path(runtime, home, os.Getenv)
 			if err != nil {
 				return err
@@ -227,21 +178,146 @@ func (env *cliEnv) listSkillDestinations() error {
 	return nil
 }
 
-func skillFileOf(runtime string) (string, error) {
-	return skillFileWith(runtime, skill.Path)
+type listedSkill struct {
+	name string
+	path func(string, string, func(string) string) (string, error)
 }
 
-func skillCatalogFileOf(runtime string) (string, error) {
-	return skillFileWith(runtime, skill.CatalogPath)
+func listedSkills() []listedSkill {
+	return []listedSkill{
+		{skill.SkillName, skill.Path},
+		{skill.OperationsName, skill.OperationsPath},
+		{skill.VectorName, skill.VectorPath},
+		{skill.CatalogName, skill.CatalogPath},
+	}
 }
 
-func skillFileWith(runtime string,
-	path func(string, string, func(string) string) (string, error)) (string, error) {
+// installRuntimeSkills writes the embedded skills, and optionally the catalog,
+// into one runtime. restoreMissing is the consent an explicit install and init
+// carry; ingest reseed leaves a deleted registered file alone. skipRegistered
+// is the reseed gate: a runtime that already has the skill is left for
+// artifact_refresh, not rewritten here.
+func (env *cliEnv) installRuntimeSkills(runtime, catalog string,
+	force, restoreMissing, includeCatalog bool) ([]skill.Outcome, []error) {
+	return env.installRuntimeSkillsFiltered(runtime, catalog, force, restoreMissing, includeCatalog, false)
+}
+
+func (env *cliEnv) reseedRuntimeSkills(runtime string) ([]skill.Outcome, []error) {
+	return env.installRuntimeSkillsFiltered(runtime, "", false, false, false, true)
+}
+
+func (env *cliEnv) installRuntimeSkillsFiltered(runtime, catalog string,
+	force, restoreMissing, includeCatalog, skipRegistered bool) ([]skill.Outcome, []error) {
+	home, err := env.skillHome()
+	if err != nil {
+		return nil, []error{err}
+	}
+	type file struct {
+		kind, path, system string
+		run                func(path, previous string) (skill.Outcome, error)
+	}
+	var files []file
+	for _, embedded := range skill.EmbeddedSkills() {
+		path, err := skill.NamedPath(runtime, embedded.Name, home, os.Getenv)
+		if err != nil {
+			return nil, []error{err}
+		}
+		embedded := embedded
+		files = append(files, file{
+			kind: artifactKindSkill, path: path, system: embedded.Body,
+			run: func(path, previous string) (skill.Outcome, error) {
+				return skill.InstallNamed(runtime, path, embedded.Body, embedded.Legacy,
+					previous, force, restoreMissing)
+			},
+		})
+	}
+	if includeCatalog {
+		path, err := skill.CatalogPath(runtime, home, os.Getenv)
+		if err != nil {
+			return nil, []error{err}
+		}
+		files = append(files, file{
+			kind: artifactKindSkillCatalog, path: path, system: catalog,
+			run: func(path, previous string) (skill.Outcome, error) {
+				return skill.InstallCatalogWithOptions(runtime, path, catalog, previous, force, restoreMissing)
+			},
+		})
+	}
+	outcomes := make([]skill.Outcome, 0, len(files))
+	var refused []error
+	for _, file := range files {
+		entry, found, err := env.registeredArtifact(file.kind, runtime, file.path)
+		if err != nil {
+			return outcomes, append(refused, err)
+		}
+		if skipRegistered && found {
+			continue
+		}
+		previous := ""
+		if found {
+			previous = entry.SystemSHA256
+		}
+		outcome, err := file.run(file.path, previous)
+		if err != nil {
+			refused = append(refused, skillInstallFailure(err, runtime, outcome.Backup))
+			continue
+		}
+		if outcome.Diverged {
+			env.warnf("warning: %s\n",
+				divergedArtifactWarning(file.path, forceSkillInstall(runtime),
+					outcome.Missing, outcome.Unregistered))
+			outcomes = append(outcomes, outcome)
+			continue
+		}
+		if err := env.registerZonedArtifact(file.kind, runtime, file.path, file.system); err != nil {
+			return outcomes, append(refused, err)
+		}
+		outcomes = append(outcomes, outcome)
+	}
+	return outcomes, refused
+}
+
+// seedDetectedSkills writes the three embedded skills into every skill seat
+// whose config directory exists. restoreMissing is init's consent to write
+// again; ingest reseed skips a runtime that already has a registry entry so a
+// later agent still receives the skills without rewriting ones already placed.
+func (env *cliEnv) seedDetectedSkills(restoreMissing bool) []string {
+	home, err := env.skillHome()
+	if err != nil {
+		env.warnf("warning: skills were not installed: %v\n", err)
+		return nil
+	}
+	detected := skill.Detected(home, os.Getenv)
+	for _, runtime := range detected {
+		var refused []error
+		if restoreMissing {
+			_, refused = env.installRuntimeSkills(runtime, "", false, true, false)
+		} else {
+			_, refused = env.reseedRuntimeSkills(runtime)
+		}
+		for _, seedErr := range refused {
+			env.warnf("warning: skills were not installed for %s: %v\n", runtime, seedErr)
+		}
+	}
+	return detected
+}
+
+func (env *cliEnv) skillHome() (string, error) {
+	if paths, err := env.resolvePaths(); err == nil && paths.Home != "" {
+		return paths.Home, nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("I do not know where your HOME is")
 	}
-	return path(runtime, home, os.Getenv)
+	return home, nil
+}
+
+func (env *cliEnv) warnf(format string, args ...any) {
+	if env.errOut == nil {
+		return
+	}
+	fmt.Fprintf(env.errOut, format, args...)
 }
 
 // composedCatalogSkill builds the generated semantic-catalog skill body from

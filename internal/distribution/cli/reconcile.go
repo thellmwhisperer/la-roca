@@ -3,10 +3,10 @@ package cli
 import (
 	"fmt"
 	"os"
-	"os/exec"
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/reconcile"
+	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 )
 
@@ -26,7 +26,7 @@ func (env *cliEnv) reconciliationContext() (reconcile.Context, error) {
 	return reconcile.Context{
 		Version: env.build.Version, ConfigPath: paths.Config,
 		StampPath: paths.Reconciliation,
-		LookPath:  exec.LookPath, Env: os.Getenv, File: file,
+		LookPath:  provider.LookPath, Env: os.Getenv, File: file,
 		RetiredCredentialPaths: legacyProviderCredentialPaths(dirOf(paths.DB)),
 		RecoveryBackupPaths:    backups,
 	}, nil
