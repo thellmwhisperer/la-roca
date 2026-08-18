@@ -24,6 +24,9 @@ type Database interface {
 // Options are one run's inputs.
 type Options struct {
 	Roots Roots
+	// HermesReservedMemories is the read-only operational store that may hold
+	// the nine Hermes memories curated before MEMORY.md ingestion existed.
+	HermesReservedMemories *sql.DB
 	// DryRun reports what would be read and writes nothing. It is a first-class
 	// mode and not a debugging aid: it is how an operator checks that a root is
 	// being seen before letting anything touch the database.
@@ -597,7 +600,7 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 
 	var counts Counts
 	err := db.Write(ctx, func(tx *sql.Tx) error {
-		written, err := WriteRecords(ctx, tx, layers, records)
+		written, err := writeRecords(ctx, tx, layers, opts.HermesReservedMemories, records)
 		if err != nil {
 			return err
 		}
@@ -836,6 +839,7 @@ func declaredRoots(roots Roots) map[string]string {
 		"opencode_telegram_bot_logs": roots.OpenCodeTelegramLogs,
 		"pi_root":                    roots.PiRoot,
 		"pi_sessions":                roots.PiSessions,
+		"hermes_home":                roots.HermesHome,
 		"hermes_db":                  roots.HermesDB,
 		"grok_sessions":              roots.GrokSessions,
 		"grok_memtrace":              roots.GrokMemtrace,

@@ -68,14 +68,20 @@ type layerResolver interface {
 
 // writer holds what every write of one run shares.
 type writer struct {
-	tx     *sql.Tx
-	layers layerResolver
+	tx                     *sql.Tx
+	layers                 layerResolver
+	hermesReservedMemories *sql.DB
 }
 
 // WriteRecords writes one artefact's records and returns what it wrote.
 func WriteRecords(ctx context.Context, tx *sql.Tx, layers layerResolver,
 	records parsers.Records) (Counts, error) {
-	w := &writer{tx: tx, layers: layers}
+	return writeRecords(ctx, tx, layers, nil, records)
+}
+
+func writeRecords(ctx context.Context, tx *sql.Tx, layers layerResolver,
+	hermesReservedMemories *sql.DB, records parsers.Records) (Counts, error) {
+	w := &writer{tx: tx, layers: layers, hermesReservedMemories: hermesReservedMemories}
 	var counts Counts
 	for _, session := range records.Sessions {
 		written, err := w.session(ctx, session)
@@ -90,6 +96,9 @@ func WriteRecords(ctx context.Context, tx *sql.Tx, layers layerResolver,
 			return counts, err
 		}
 		counts.add(written)
+	}
+	if err := w.supersedeVanishedHermesBlocks(ctx, records.ObservedMemoryFiles, records.Memories, &counts); err != nil {
+		return counts, err
 	}
 	return counts, nil
 }
@@ -1302,6 +1311,25 @@ func (w *writer) memory(ctx context.Context, memory parsers.Memory) (Counts, err
 		  AND json_extract(metadata, '$.file_path') = ?
 		ORDER BY id LIMIT 1`, memory.Source, memory.FilePath).
 		Scan(&id, &stored, &storedMetadata, &storedProject)
+	if errors.Is(err, sql.ErrNoRows) && memory.Source == "hermes" {
+		err = w.tx.QueryRowContext(ctx, `
+			SELECT id, content, metadata, COALESCE(project, '') FROM memories
+			WHERE id BETWEEN 1152921504606847051 AND 1152921504606847059
+			  AND content = ? AND status = 'active' ORDER BY id LIMIT 1`, memory.Content).
+			Scan(&id, &stored, &storedMetadata, &storedProject)
+	}
+	if errors.Is(err, sql.ErrNoRows) && memory.Source == "hermes" &&
+		w.hermesReservedMemories != nil {
+		var found int
+		err = w.hermesReservedMemories.QueryRowContext(ctx, `
+			SELECT 1 FROM memories
+			WHERE id BETWEEN 1152921504606847051 AND 1152921504606847059
+			  AND content = ? AND status = 'active' LIMIT 1`, memory.Content).Scan(&found)
+		if err == nil {
+			counts.MemoriesUnchanged = 1
+			return counts, nil
+		}
+	}
 	freshness := claudeWebMemoryFreshness(memory, storedMetadata)
 	authoritative := memory.ProjectFromCwd && memory.Project != ""
 	projectChange := memory.Project != "" && storedProject != memory.Project &&
@@ -1330,6 +1358,17 @@ func (w *writer) memory(ctx context.Context, memory parsers.Memory) (Counts, err
 			return counts, fmt.Errorf("attribute the memory of %s: %w", memory.FilePath, err)
 		}
 		counts.MemoriesUpdated = 1
+	case stored == memory.Content && hermesNeedsIdentityStamp(memory, storedMetadata):
+		_, err := w.tx.ExecContext(ctx, `
+			UPDATE memories SET metadata = ?,
+			 source_agent = COALESCE(NULLIF(source_agent, ''), ?),
+			 source_surface = COALESCE(source_surface, ?)
+			WHERE id = ?`, string(metadata), nullIfEmpty(memory.SourceAgent),
+			nullIfEmpty(memory.SourceSurface), id)
+		if err != nil {
+			return counts, fmt.Errorf("stamp the memory of %s: %w", memory.FilePath, err)
+		}
+		counts.MemoriesUpdated = 1
 	case freshness < 0 || stored == memory.Content && freshness <= 0:
 		// Same file, same text: nothing to do, and nothing written either. This is
 		// what makes a second pass leave the database byte for byte as it was.
@@ -1353,6 +1392,79 @@ func (w *writer) memory(ctx context.Context, memory parsers.Memory) (Counts, err
 		counts.MemoriesUpdated = 1
 	}
 	return counts, nil
+}
+
+func hermesNeedsIdentityStamp(memory parsers.Memory, storedMetadata string) bool {
+	if memory.Source != "hermes" {
+		return false
+	}
+	hash, _ := memory.Metadata["block_hash"].(string)
+	file, _ := memory.Metadata["aggregate_file_path"].(string)
+	if hash == "" || file == "" {
+		return false
+	}
+	var stored map[string]any
+	if json.Unmarshal([]byte(storedMetadata), &stored) != nil {
+		return true
+	}
+	return stored["block_hash"] != hash || stored["aggregate_file_path"] != file
+}
+
+func (w *writer) supersedeVanishedHermesBlocks(ctx context.Context, observedFiles []string,
+	memories []parsers.Memory, counts *Counts) error {
+	current := map[string]map[string]bool{}
+	for _, file := range observedFiles {
+		if file != "" {
+			current[file] = map[string]bool{}
+		}
+	}
+	for _, memory := range memories {
+		file, _ := memory.Metadata["aggregate_file_path"].(string)
+		hash, _ := memory.Metadata["block_hash"].(string)
+		if file == "" || hash == "" {
+			continue
+		}
+		if current[file] == nil {
+			current[file] = map[string]bool{}
+		}
+		current[file][hash] = true
+	}
+	for file, hashes := range current {
+		rows, err := w.tx.QueryContext(ctx, `
+			SELECT id, COALESCE(json_extract(metadata, '$.block_hash'), '') FROM memories
+			WHERE status = 'active' AND json_extract(metadata, '$.aggregate_file_path') = ?`, file)
+		if err != nil {
+			return fmt.Errorf("look up vanished Hermes blocks of %s: %w", file, err)
+		}
+		var vanished []int64
+		for rows.Next() {
+			var id int64
+			var hash string
+			if err := rows.Scan(&id, &hash); err != nil {
+				rows.Close()
+				return fmt.Errorf("read a vanished Hermes block of %s: %w", file, err)
+			}
+			if !hashes[hash] {
+				vanished = append(vanished, id)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		for _, id := range vanished {
+			_, err := w.tx.ExecContext(ctx, `
+				UPDATE memories SET status = 'resolved',
+				 metadata = json_patch(COALESCE(metadata, '{}'), '{"superseded":true}')
+				WHERE id = ?`, id)
+			if err != nil {
+				return fmt.Errorf("mark vanished Hermes memory %d superseded: %w", id, err)
+			}
+			counts.MemoriesUpdated++
+		}
+	}
+	return nil
 }
 
 func claudeWebMemoryFreshness(memory parsers.Memory, storedMetadata string) int {

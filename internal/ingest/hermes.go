@@ -54,6 +54,10 @@ func ReadHermes(ctx context.Context, path string) (parsers.Records, []string, er
 
 	var records parsers.Records
 	records.Seen.Sessions = len(sessions)
+	intel, err := readHermesIntel(ctx, db)
+	if err != nil {
+		return parsers.Records{}, nil, err
+	}
 	var complaints []string
 	for _, source := range sessions {
 		id := source.text("id")
@@ -68,6 +72,7 @@ func ReadHermes(ctx context.Context, path string) (parsers.Records, []string, er
 		}
 		records.Seen.Messages += len(messages)
 		session, orphaned, deferred := hermesSession(source, messages)
+		attachHermesIntel(&session, source, intel)
 		records.Sessions = append(records.Sessions, session)
 		records.Deferred += deferred
 		for range orphaned {
@@ -77,6 +82,7 @@ func ReadHermes(ctx context.Context, path string) (parsers.Records, []string, er
 			})
 		}
 	}
+	records.Discards = append(records.Discards, intel.exclusions...)
 	return records, complaints, nil
 }
 
@@ -133,13 +139,14 @@ func hermesSession(source row, messages []row) (parsers.Session, int, int) {
 	}
 
 	session := parsers.Session{
-		ID:          source.text("id"),
-		SourceAgent: "hermes",
-		Project:     ProjectFromCwd(source.text("cwd")),
-		StartedAt:   startedAt,
-		EndedAt:     endedAt,
-		Title:       source.text("title"),
-		Snapshot:    true,
+		ID:            source.text("id"),
+		SourceAgent:   "hermes",
+		SourceSurface: hermesSurface(source.text("source")),
+		Project:       ProjectFromCwd(source.text("cwd")),
+		StartedAt:     startedAt,
+		EndedAt:       endedAt,
+		Title:         source.text("title"),
+		Snapshot:      true,
 	}
 	orphaned := 0
 	deferred := 0

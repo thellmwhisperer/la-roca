@@ -55,6 +55,9 @@ const (
 	// names every source the ingest state table can hold.
 	KindOpenCodeDB Kind = "opencode_database"
 	KindHermesDB   Kind = "hermes_database"
+	// KindHermesMemory is Hermes's curated MEMORY.md, split at § into one
+	// memory per block. Identity is the block's content hash.
+	KindHermesMemory Kind = "hermes_memory"
 	// KindCursorDB is Cursor's SQLite state store. Its JSON conversation rows
 	// are normalized by the registered parser after ingest freezes the live
 	// database into an in-memory snapshot.
@@ -100,8 +103,9 @@ type FileMeta struct {
 // an empty memory file and a transcript with no complete exchange are both
 // normal, and both are simply nothing to write.
 type Records struct {
-	Sessions []Session
-	Memories []Memory
+	Sessions            []Session
+	Memories            []Memory
+	ObservedMemoryFiles []string
 	// MessageCoverage is filled by sources whose durable store is message-shaped.
 	// It lets an ingest report the conversion ratio without treating principled
 	// skips, such as a message still being written, as parser failures.

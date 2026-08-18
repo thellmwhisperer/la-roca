@@ -50,6 +50,7 @@ type Settings struct {
 	OpenCodeTelegramLogs  string
 	PiRoot                string
 	PiSessions            string
+	HermesHome            string
 	HermesDB              string
 	// GrokSessions is Grok Build's session store.
 	GrokSessions string
@@ -85,7 +86,11 @@ type Roots struct {
 	OpenCodeTelegramLogs string
 	PiRoot               string
 	PiSessions           string
-	HermesDB             string
+	// HermesHome is the Hermes private tree. Memories, named exclusions, and
+	// the default state.db live under it; hermes_db_path can still point the
+	// database elsewhere.
+	HermesHome string
+	HermesDB   string
 	// GrokSessions is Grok Build's session store.
 	GrokSessions string
 	// GrokMemtrace is process-memory telemetry, counted for coverage and excluded
@@ -108,6 +113,7 @@ const (
 	envOpenCodeTelegramLogs = "OPENCODE_TELEGRAM_BOT_LOGS"
 	envPiRoot               = "PI_ROOT"
 	envPiSessions           = "PI_SESSIONS_ROOT"
+	envHermesHome           = "HERMES_HOME"
 	envHermesDB             = "HERMES_DB_PATH"
 	envGrokSessions         = "GROK_SESSIONS_ROOT"
 	envXDGConfig            = "XDG_CONFIG_HOME"
@@ -121,6 +127,7 @@ func ResolveRoots(env Environment, settings Settings) Roots {
 	claude := join(env, env.Home, ".claude")
 	codexRoot := pick(env, settings.CodexRoot, envCodexRoot, join(env, env.Home, ".codex"))
 	piRoot := pick(env, settings.PiRoot, envPiRoot, join(env, env.Home, ".pi"))
+	hermesHome := pick(env, settings.HermesHome, envHermesHome, join(env, env.Home, ".hermes"))
 	appSupport := claudeAppSupport(env)
 
 	roots := Roots{
@@ -144,8 +151,9 @@ func ResolveRoots(env Environment, settings Settings) Roots {
 		PiRoot: piRoot,
 		PiSessions: pick(env, settings.PiSessions, envPiSessions,
 			join(env, piRoot, "agent", "sessions")),
+		HermesHome: hermesHome,
 		HermesDB: pick(env, settings.HermesDB, envHermesDB,
-			join(env, env.Home, ".hermes", "state.db")),
+			join(env, hermesHome, "state.db")),
 		GrokSessions: pick(env, settings.GrokSessions, envGrokSessions,
 			join(env, env.Home, ".grok", "sessions")),
 		GrokMemtrace: join(env, env.Home, ".grok", "memtrace"),
