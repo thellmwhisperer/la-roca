@@ -46,7 +46,11 @@ plugins reports that none were placed.
 | `--force` | Reinstall even when that version is already active |
 
 Windows is not installed by the shell script. Download the `.exe` release
-artefact and place it on the PATH. Core executable release artefacts are:
+artefact and place it on the PATH. The same release carries
+`roca-vector.exe` inside that core binary and publishes
+`roca-vector-vX.Y.Z-windows-x64.tar.gz`. Vector enablement, the Ollama
+install, and the one-time model pull on Windows are in
+[Local vector search](vector.md). Core executable release artefacts are:
 
 - `roca-<version>-darwin-arm64`
 - `roca-<version>-linux-x64`

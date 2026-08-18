@@ -2,9 +2,14 @@
 
 Vector retrieval is opt-in and off by default. The release already places
 the `roca-vector` companion next to `roca`; the switch only unhides
-dispatch. It does not require `features.plugins`.
+dispatch. It does not require `features.plugins`. Windows is a first-class
+indexing seat: the matching artefacts are
+`roca-<version>-windows-x64.exe` (core, carrying `roca-vector.exe`) and
+`roca-vector-vX.Y.Z-windows-x64.tar.gz` (standalone archive in the same
+release).
 
-Turn it on in the configuration `roca doctor` names (`~/.roca/config.toml`,
+Turn it on in the configuration `roca doctor` names
+(`~/.roca/config.toml`, or `%USERPROFILE%\.roca\config.toml` on Windows,
 or `config.toml` next to a `--db-path` database):
 
 ```toml
@@ -13,35 +18,62 @@ vector = true
 ```
 
 That exposes `roca vector` and lists `vector` in `roca plugins`. Absent or
-false, the command does not exist.
+false, the command does not exist. On Windows, keep `roca-vector.exe` in
+the same directory as `roca.exe` and on `PATH`; [Install](lifecycle.md#install)
+is how the `.exe` is placed.
 
 ## Prerequisites
 
 Ollama must be running locally (default `http://127.0.0.1:11434`).
 
-The first index build downloads the embedding model
-`nomic-embed-text-v2-moe` (~957 MB) from Ollama. That pull happens once, on
-first use, before any chunks are embedded. Later delta ingest and queries
-reuse the local copy.
+The embedding model is `nomic-embed-text-v2-moe` (~957 MB). Pull it
+**before** the first index build. The download happens once; later delta
+ingest and queries reuse the local copy. `roca vector install` will pull
+the model if it is missing — do the explicit pull first so the size is
+not a surprise inside a background worker:
+
+```
+ollama pull nomic-embed-text-v2-moe
+```
+
+### Ollama on Windows
+
+1. Install Ollama from https://ollama.com/download (Windows installer
+   `OllamaSetup.exe`). Official notes: https://docs.ollama.com/windows.
+   The installer does not require Administrator rights. After it
+   finishes, Ollama stays in the system tray and serves
+   `http://127.0.0.1:11434`.
+2. Open a **new** terminal (`cmd` or PowerShell) and confirm with
+   `ollama --version`.
+3. Pull the embedding model above (~957 MB, one-time) before
+   `roca vector install`.
+
+NVIDIA GPUs accelerate this model. On a machine with no GPU, Ollama
+runs on CPU.
+
+### Ollama on macOS and Linux
+
+Install Ollama from https://ollama.com/download, start the daemon, then
+pull the same model before the first index build.
 
 ## Index the corpus
 
-The download above starts when you run the first-build command. Start that
-build only after you have read the size:
+Start the first build only after the model pull has finished:
 
-```sh
+```
 roca vector install
 ```
 
-`install` pulls the model if needed, prepares the plugin-owned index under
-`~/.roca/plugins/vector/state/`, and embeds the corpus in the background. A
-desktop notification reports exit status and counts; the worker log path is
+`install` prepares the plugin-owned index under
+`~/.roca/plugins/vector/state/` (`%USERPROFILE%\.roca\plugins\vector\state`
+on Windows) and embeds the corpus in the background. A desktop
+notification reports exit status and counts; the worker log path is
 printed at launch.
 
 Indexing is incremental after that. `roca vector ingest` always requires
 `--delta`:
 
-```sh
+```
 roca vector ingest --delta
 ```
 
@@ -52,7 +84,7 @@ cleaned title plus cleaned `metadata.project_name` only.
 
 For a non-default database:
 
-```sh
+```
 roca vector --db-path /path/to/roca.db ingest --delta
 ```
 
@@ -60,15 +92,26 @@ roca vector --db-path /path/to/roca.db ingest --delta
 
 ## Time and disk
 
-Measured on Apple Silicon, expect about 2.400-2.500 chunks/min. A
-full-corpus example of 353k chunks is about 2.5 hours. A later delta
-against an unchanged or lightly grown corpus is minutes.
+Throughput depends on the machine. Measured Apple Silicon rates:
+
+| Hardware | Chunks/min |
+|---|---|
+| M1 base | 576 |
+| Pro laptop | 2.400–2.500 |
+
+A 353k-chunk corpus is about 10 hours at the M1-base rate and about
+2.5 hours at the pro-laptop rate.
+
+Windows has no published rate here. NVIDIA GPUs accelerate; a CPU-only
+box can be slower than the M1. The first full pass **is** your
+measurement for this machine: time that run and scale from it. A later
+daily delta against an unchanged or lightly grown corpus is minutes.
 
 After compaction the index occupies about 1.3-1.5 GB per ~350k chunks.
 Churn (many updates and deletes) leaves empty pages; reclaim them
 explicitly:
 
-```sh
+```
 roca vector compact
 ```
 
@@ -76,7 +119,7 @@ Ingest does not compact on its own.
 
 ## First query
 
-```sh
+```
 roca vector query "what did we decide" 10
 ```
 

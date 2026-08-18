@@ -396,8 +396,9 @@ The [docs index](docs/README.md) orders the longer reads:
   local floor, and CLI-owned authentication.
 - [The MCP plug](docs/mcp.md): tools, contract, integration targets.
 - [Install, update, and uninstall](docs/lifecycle.md): the binary's life.
-- [Local vector search](docs/vector.md): the default-off switch, the one-time
-  embedding-model download, and how to index a corpus.
+- [Local vector search](docs/vector.md): the default-off switch, Windows and
+  Unix Ollama setup, the one-time embedding-model download, and how to index
+  a corpus.
 - [Operations](docs/operations.md): memory-layer repair, logs, redaction, and
   retention.
 - [Releases](docs/releases.md): how versions are cut.
