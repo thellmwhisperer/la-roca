@@ -240,6 +240,12 @@ func TestTwoNamedMigrationsAdvanceIndependently(t *testing.T) {
 	if carried.State != StateVerified || empty.State != StateVerifiedEmpty {
 		t.Fatalf("simultaneous states = %q and %q", carried.State, empty.State)
 	}
+	listed, err := ListMigrations(context.Background(), db)
+	if err != nil || len(listed) != 2 || listed[0].Name != destinationMigration ||
+		listed[0].State != StateVerifiedEmpty || listed[1].Name != rowsMigration ||
+		listed[1].State != StateVerified {
+		t.Fatalf("listed migrations = %+v, err = %v", listed, err)
+	}
 	for _, name := range []string{rowsMigration, destinationMigration} {
 		eligible, err := MigrationCutoverEligible(context.Background(), db, name)
 		if err != nil {

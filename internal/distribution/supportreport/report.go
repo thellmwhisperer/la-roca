@@ -1,0 +1,982 @@
+package supportreport
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/datasplit"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacron"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocavector"
+	"github.com/thellmwhisperer/la-roca/internal/ingest"
+	"github.com/thellmwhisperer/la-roca/internal/provider/config"
+	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
+	"github.com/thellmwhisperer/la-roca/internal/provider/service"
+)
+
+const (
+	Kind                      = "roca-support-report"
+	vectorCompletionFile      = "completion.json"
+	supportObserverTimeout    = 500 * time.Millisecond
+	supportCollectionTimeout  = 2 * time.Second
+	supportBusyTimeout        = 250 * time.Millisecond
+	FederationFresh           = "fresh"
+	FederationLegacyOnly      = "legacy-only"
+	FederationMigrating       = "migrating"
+	FederationFederated       = "federated"
+	FederationUninitialized   = "uninitialized"
+	FederationLegacyServing   = "legacy-serving"
+	FederationUnknown         = "unknown"
+	ObservationComplete       = "complete"
+	ObservationUnreadable     = "unreadable"
+	OriginBundled             = "bundled"
+	OriginExternal            = "external"
+	OriginLocalDirectory      = "local-directory"
+	OriginRemote              = "remote"
+	ManifestOK                = "ok"
+	ManifestMissing           = "missing"
+	ManifestUnreadable        = "unreadable"
+	ManifestInvalid           = "invalid"
+	PluginInventoryAbsent     = "absent"
+	PluginInventoryReadable   = "readable"
+	PluginInventoryUnreadable = "unreadable"
+)
+
+var (
+	featureFlagOrder = []string{
+		"strict_input", "ask_missing_referent", "plugins", "vector", "cron",
+		"artifact_refresh", "roca_ops", "release_redirects",
+	}
+	corpusFamilies = []string{
+		"sessions", "exchanges", "memories", "tool_uses", "thinking_blocks", "ingest_file_state",
+	}
+	archiveFamilies = []string{
+		"session_versions", "exchange_versions", "tool_use_versions",
+		"thinking_block_versions", "ingest_file_state_versions",
+	}
+	opsFamilies = []string{"memories", "memory_records"}
+)
+
+type Snapshot struct {
+	Kind            string                  `json:"kind"`
+	GeneratedAt     string                  `json:"generated_at"`
+	Identity        Identity                `json:"identity"`
+	Plugins         []Plugin                `json:"plugins"`
+	PluginInventory string                  `json:"plugin_inventory"`
+	Features        map[string]bool         `json:"features"`
+	Federation      Federation              `json:"federation"`
+	Health          []service.HealthVerdict `json:"health"`
+	Vector          *Vector                 `json:"vector,omitempty"`
+	Ingest          Ingest                  `json:"ingest"`
+}
+
+type Identity struct {
+	Version       string `json:"version"`
+	Commit        string `json:"commit"`
+	OS            string `json:"os"`
+	Arch          string `json:"arch"`
+	InstallLayout string `json:"install_layout"`
+	BinaryShape   string `json:"binary_shape"`
+}
+
+type Plugin struct {
+	Name            string `json:"name"`
+	Version         string `json:"version"`
+	Origin          string `json:"origin"`
+	Source          string `json:"source"`
+	Checksum        string `json:"checksum"`
+	ManifestStatus  string `json:"manifest_status"`
+	StateDirPresent bool   `json:"state_directory_present"`
+}
+
+type Federation struct {
+	Mode             string      `json:"mode"`
+	Serving          string      `json:"serving"`
+	CorpusCustody    string      `json:"corpus_custody"`
+	CutoverEligible  *bool       `json:"cutover_eligible"`
+	Stores           []Store     `json:"stores"`
+	Migrations       []Migration `json:"migrations"`
+	MigrationsStatus string      `json:"migrations_status"`
+}
+
+type Store struct {
+	Name     string         `json:"name"`
+	Present  bool           `json:"present"`
+	Readable bool           `json:"readable"`
+	Families map[string]int `json:"families,omitempty"`
+}
+
+type Migration struct {
+	Plugin          string `json:"plugin"`
+	Name            string `json:"name"`
+	State           string `json:"state"`
+	CutoverEligible bool   `json:"cutover_eligible"`
+}
+
+type Vector struct {
+	Status     string         `json:"status"`
+	Model      string         `json:"model"`
+	Dimensions int            `json:"dimensions"`
+	Chunks     map[string]int `json:"chunks"`
+	StoreBytes int64          `json:"store_bytes"`
+	LastDelta  *Delta         `json:"last_delta,omitempty"`
+}
+
+type Delta struct {
+	ExitStatus int    `json:"exit_status"`
+	Added      int    `json:"added"`
+	Updated    int    `json:"updated"`
+	Removed    int    `json:"removed"`
+	Unchanged  int    `json:"unchanged"`
+	Chunks     int    `json:"chunks"`
+	FinishedAt string `json:"finished_at,omitempty"`
+}
+
+type Ingest struct {
+	DetectedAgents []string `json:"detected_agents"`
+	LastIngestAt   string   `json:"last_ingest_at,omitempty"`
+}
+
+// Options is everything the collector needs from the CLI without opening
+// the write-capable service.
+type Options struct {
+	Version    string
+	Commit     string
+	Paths      config.Paths
+	File       config.File
+	Home       string
+	PluginRoot string
+	Prefix     string
+	Sources    ingest.Roots
+	Now        time.Time
+}
+
+func Collect(ctx context.Context, opts Options) (Snapshot, error) {
+	now := opts.Now
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	plugins, pluginInventory := listSupportPlugins(opts.PluginRoot)
+	corpusPath := filepath.Join(opts.PluginRoot, rocacorpus.Name, rocacorpus.DatabaseFilename)
+	opsPath := filepath.Join(opts.PluginRoot, rocaops.Name, rocaops.DatabaseFilename)
+	cronPath := filepath.Join(opts.PluginRoot, rocacron.Name, rocacron.DatabaseFilename)
+	eligibilityCtx, cancelEligibility := context.WithTimeout(ctx, supportObserverTimeout)
+	cutoverReady, eligibilityErr := datasplit.HubCutoverEligible(eligibilityCtx, datasplit.HubOptions{
+		CoreDatabase: opts.Paths.DB, CorpusDatabase: corpusPath,
+		OpsDatabase: opsPath, CronDatabase: cronPath,
+	}, supportBusyTimeout)
+	eligibilityTimedOut := eligibilityErr != nil && observationTimedOut(eligibilityCtx, eligibilityErr)
+	cancelEligibility()
+	var cutoverEligible *bool
+	if eligibilityErr == nil {
+		cutoverEligible = boolValue(cutoverReady)
+	} else if !eligibilityTimedOut {
+		cutoverEligible = boolValue(false)
+	}
+	coreStore, coreClose := openSupportStore(ctx, opts.Paths.DB)
+	defer coreClose()
+	corpusStore, corpusClose := openSupportStore(ctx, corpusPath)
+	defer corpusClose()
+	opsStore, opsClose := openSupportStore(ctx, opsPath)
+	defer opsClose()
+	cronStore, cronClose := openSupportStore(ctx, cronPath)
+	defer cronClose()
+	core, corpus, ops, cron := coreStore.db, corpusStore.db, opsStore.db, cronStore.db
+
+	observationCtx, cancelObservation := context.WithTimeout(ctx, supportCollectionTimeout)
+	defer cancelObservation()
+	coreFamilies, coreComplete := countFamilies(observationCtx, core, corpusFamilies)
+	corpusFamiliesCounts, corpusComplete := countFamilies(
+		observationCtx, corpus, append(slices.Clone(corpusFamilies), archiveFamilies...))
+	opsFamiliesCounts, opsComplete := countFamilies(observationCtx, ops, opsFamilies)
+	if !coreComplete {
+		core = nil
+	}
+	if !corpusComplete {
+		corpus = nil
+	}
+	if !opsComplete {
+		ops = nil
+	}
+	stores := []Store{
+		{Name: "core", Present: coreStore.present, Readable: core != nil, Families: coreFamilies},
+		{Name: "plugin-corpus", Present: corpusStore.present, Readable: corpus != nil, Families: corpusFamiliesCounts},
+		{Name: "plugin-ops", Present: opsStore.present, Readable: ops != nil, Families: opsFamiliesCounts},
+		{Name: "plugin-cron", Present: cronStore.present, Readable: cron != nil},
+	}
+	migrations, migrationsComplete := collectSupportMigrations(
+		observationCtx, "roca-corpus", corpus, "roca-ops", ops, "roca-cron", cron)
+	migrationsComplete = migrationsComplete && observationAvailable(corpusStore, corpus) &&
+		observationAvailable(opsStore, ops) && observationAvailable(cronStore, cron)
+	if cutoverEligible == nil && requiredStoreUnavailable(coreStore, corpusStore, opsStore, cronStore) {
+		cutoverEligible = boolValue(false)
+	}
+	serving := string(opts.File.Layout.Serving)
+	if serving == "" {
+		serving = string(config.LayoutLegacyServing)
+	}
+	mode, custody := classifyFederation(
+		serving, stores, coreFamilies, corpusFamiliesCounts, migrations, cutoverEligible,
+		observationAvailable(coreStore, core) && coreComplete && corpusComplete &&
+			opsComplete && migrationsComplete)
+	migrationsStatus := ObservationComplete
+	if !migrationsComplete {
+		migrationsStatus = ObservationUnreadable
+	}
+	federation := Federation{
+		Mode: mode, Serving: serving, CorpusCustody: custody, CutoverEligible: cutoverEligible,
+		Stores: stores, Migrations: migrations, MigrationsStatus: migrationsStatus,
+	}
+	lastIngest := ObservationUnreadable
+	if observationAvailable(corpusStore, corpus) && observationAvailable(coreStore, core) {
+		lastIngest = lastIngestAt(observationCtx, corpus, core)
+	}
+	return Snapshot{
+		Kind:        Kind,
+		GeneratedAt: now.Format(time.RFC3339),
+		Identity: Identity{
+			Version:       opts.Version,
+			Commit:        opts.Commit,
+			OS:            runtime.GOOS,
+			Arch:          runtime.GOARCH,
+			InstallLayout: installLayout(opts.Paths),
+			BinaryShape:   binaryShape(opts.Home, opts.Prefix),
+		},
+		Plugins:         plugins,
+		PluginInventory: pluginInventory,
+		Features:        featureFlags(opts.File.Features),
+		Federation:      federation,
+		Health: service.HealthVerdicts(observationCtx, []*sql.DB{ops, core},
+			[]*sql.DB{ops, corpus, core}, []*sql.DB{core, corpus}),
+		Vector: collectVector(observationCtx, opts.PluginRoot),
+		Ingest: Ingest{
+			DetectedAgents: orEmptyStrings(ingest.DetectAgents(opts.Sources)),
+			LastIngestAt:   lastIngest,
+		},
+	}, nil
+}
+
+func boolValue(value bool) *bool {
+	return &value
+}
+
+func requiredStoreUnavailable(observed ...supportStore) bool {
+	for _, store := range observed {
+		if store.db == nil && !store.timedOut {
+			return true
+		}
+	}
+	return false
+}
+
+func observationAvailable(store supportStore, db *sql.DB) bool {
+	return !store.present || db != nil
+}
+
+func listSupportPlugins(root string) ([]Plugin, string) {
+	if root == "" {
+		return []Plugin{}, PluginInventoryAbsent
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return []Plugin{}, PluginInventoryAbsent
+		}
+		return []Plugin{}, PluginInventoryUnreadable
+	}
+	var listed []Plugin
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		directory := filepath.Join(root, entry.Name())
+		manifest, err := plugininstall.ReadManifest(directory)
+		if err != nil {
+			listed = append(listed, Plugin{Name: "unknown", ManifestStatus: manifestFailureStatus(directory, err)})
+			continue
+		}
+		if manifest.Name != entry.Name() {
+			listed = append(listed, Plugin{Name: "unknown", ManifestStatus: ManifestInvalid})
+			continue
+		}
+		origin, source := PluginOrigin(manifest.Source)
+		listed = append(listed, Plugin{
+			Name:            manifest.Name,
+			Version:         manifest.Version,
+			Origin:          origin,
+			Source:          source,
+			Checksum:        manifest.Checksum,
+			ManifestStatus:  ManifestOK,
+			StateDirPresent: stateDirPresent(directory, manifest.StateDir),
+		})
+	}
+	slices.SortFunc(listed, func(a, b Plugin) int {
+		return strings.Compare(a.Name, b.Name)
+	})
+	if listed == nil {
+		return []Plugin{}, PluginInventoryReadable
+	}
+	return listed, PluginInventoryReadable
+}
+
+func manifestFailureStatus(directory string, readErr error) string {
+	if errors.Is(readErr, os.ErrPermission) {
+		return ManifestUnreadable
+	}
+	info, err := os.Lstat(filepath.Join(directory, plugininstall.ManifestFilename))
+	if errors.Is(err, os.ErrNotExist) {
+		return ManifestMissing
+	}
+	if err != nil {
+		return ManifestUnreadable
+	}
+	if !info.Mode().IsRegular() {
+		return ManifestInvalid
+	}
+	return ManifestInvalid
+}
+
+func PluginOrigin(source string) (string, string) {
+	if source == plugin.BundledSource {
+		return OriginBundled, source
+	}
+	parsed, parseErr := url.Parse(source)
+	if parseErr == nil && strings.EqualFold(parsed.Scheme, "file") {
+		return OriginExternal, OriginLocalDirectory
+	}
+	if strings.HasPrefix(source, "git@") {
+		if host := scpRemoteHost(source); host != "" {
+			return OriginExternal, host
+		}
+		return OriginExternal, OriginRemote
+	}
+	if looksLikeFilesystemPath(source) {
+		return OriginExternal, OriginLocalDirectory
+	}
+	if parseErr == nil && parsed.Scheme != "" {
+		host := strings.ToLower(parsed.Hostname())
+		if host == "" {
+			return OriginExternal, OriginRemote
+		}
+		return OriginExternal, host
+	}
+	if strings.Contains(source, "://") {
+		return OriginExternal, OriginRemote
+	}
+	return OriginExternal, OriginRemote
+}
+
+func scpRemoteHost(source string) string {
+	rest := strings.TrimPrefix(source, "git@")
+	separator := strings.IndexByte(rest, ':')
+	if separator <= 0 || separator == len(rest)-1 {
+		return ""
+	}
+	host := rest[:separator]
+	if strings.ContainsAny(host, `/\@`) {
+		return ""
+	}
+	return strings.ToLower(host)
+}
+
+func looksLikeFilesystemPath(source string) bool {
+	if source == "" {
+		return false
+	}
+	if filepath.IsAbs(source) || strings.HasPrefix(source, "~") || strings.HasPrefix(source, ".") {
+		return true
+	}
+	return strings.ContainsAny(source, `/\`) && !strings.Contains(source, "://") &&
+		!pluginRepoReference(source)
+}
+
+func pluginRepoReference(source string) bool {
+	return strings.Count(source, "/") == 1 && !strings.ContainsAny(source, `\:`)
+}
+
+func stateDirPresent(directory, name string) bool {
+	if name == "" {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(directory, name))
+	return err == nil && info.IsDir()
+}
+
+func featureFlags(features config.FeaturesConfig) map[string]bool {
+	return map[string]bool{
+		"strict_input":         features.StrictInput,
+		"ask_missing_referent": features.AskMissingReferent,
+		"plugins":              features.Plugins,
+		"vector":               features.Vector,
+		"cron":                 features.Cron,
+		"artifact_refresh":     features.ArtifactRefresh,
+		"roca_ops":             features.RocaOps,
+		"release_redirects":    features.ReleaseRedirects,
+	}
+}
+
+func installLayout(paths config.Paths) string {
+	if paths.Home != "" && paths.DB == filepath.Join(paths.Home, config.DirOwn, config.FileDB) {
+		return "default-home"
+	}
+	return "custom-data-dir"
+}
+
+func binaryShape(home, prefix string) string {
+	executable, err := os.Executable()
+	if err != nil {
+		return "unknown"
+	}
+	directory := filepath.Dir(executable)
+	if prefix != "" && sameFilepath(directory, prefix) {
+		return "prefix"
+	}
+	if home != "" && sameFilepath(directory, filepath.Join(home, ".local", "bin")) {
+		return "home-local"
+	}
+	return "other"
+}
+
+func sameFilepath(a, b string) bool {
+	left, err := filepath.Abs(a)
+	if err != nil {
+		return false
+	}
+	right, err := filepath.Abs(b)
+	return err == nil && left == right
+}
+
+type supportStore struct {
+	present  bool
+	timedOut bool
+	db       *sql.DB
+}
+
+func openSupportStore(ctx context.Context, path string) (supportStore, func()) {
+	if path == "" {
+		return supportStore{}, func() {}
+	}
+	if _, err := os.Lstat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return supportStore{}, func() {}
+		}
+		return supportStore{present: true}, func() {}
+	}
+	store := supportStore{present: true}
+	db, err := bundledplugin.OpenDatabase(path, true, supportBusyTimeout)
+	if err != nil {
+		return store, func() {}
+	}
+	db.SetMaxOpenConns(1)
+	observerCtx, cancel := context.WithTimeout(ctx, supportObserverTimeout)
+	defer cancel()
+	var schemaVersion int
+	if err := db.QueryRowContext(observerCtx, "PRAGMA schema_version").Scan(&schemaVersion); err != nil {
+		db.Close()
+		store.timedOut = observationTimedOut(observerCtx, err)
+		return store, func() {}
+	}
+	store.db = db
+	return store, func() { _ = db.Close() }
+}
+
+func observationTimedOut(ctx context.Context, err error) bool {
+	if ctx.Err() != nil {
+		return true
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "sqlite_busy") || strings.Contains(message, "database is locked")
+}
+
+func openSupportDB(ctx context.Context, path string) (*sql.DB, func()) {
+	store, closeStore := openSupportStore(ctx, path)
+	return store.db, closeStore
+}
+
+func countFamilies(ctx context.Context, db *sql.DB, families []string) (map[string]int, bool) {
+	if db == nil {
+		return nil, true
+	}
+	counts := make(map[string]int, len(families))
+	for _, family := range families {
+		present, err := supportTableState(ctx, db, family)
+		if err != nil {
+			return nil, false
+		}
+		if !present {
+			continue
+		}
+		var count int
+		if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+family).Scan(&count); err != nil {
+			return nil, false
+		}
+		counts[family] = count
+	}
+	if len(counts) == 0 {
+		return nil, true
+	}
+	return counts, true
+}
+
+func supportTableState(ctx context.Context, db *sql.DB, name string) (bool, error) {
+	var exists int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master
+		WHERE type = 'table' AND name = ?`, name).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists != 0, nil
+}
+
+func collectSupportMigrations(ctx context.Context, pairs ...any) ([]Migration, bool) {
+	var listed []Migration
+	complete := true
+	for i := 0; i+1 < len(pairs); i += 2 {
+		name, _ := pairs[i].(string)
+		db, _ := pairs[i+1].(*sql.DB)
+		if db == nil {
+			continue
+		}
+		migrations, err := migrationledger.ListMigrations(ctx, db)
+		if err != nil {
+			complete = false
+			continue
+		}
+		for _, migration := range migrations {
+			listed = append(listed, Migration{
+				Plugin: name, Name: migration.Name, State: string(migration.State),
+				CutoverEligible: (migration.State == migrationledger.StateVerified ||
+					migration.State == migrationledger.StateVerifiedEmpty) &&
+					migration.VerificationDigest != "",
+			})
+		}
+	}
+	slices.SortFunc(listed, func(a, b Migration) int {
+		if compared := strings.Compare(a.Plugin, b.Plugin); compared != 0 {
+			return compared
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
+	if listed == nil {
+		return []Migration{}, complete
+	}
+	return listed, complete
+}
+
+func corpusCustody(stores []Store, core, corpus map[string]int, activeFederation bool) string {
+	coreStore, corpusStore := storeNamed(stores, "core"), storeNamed(stores, "plugin-corpus")
+	if coreStore.Present && !coreStore.Readable || corpusStore.Present && !corpusStore.Readable {
+		return "unknown"
+	}
+	coreText := core["sessions"] + core["exchanges"] + core["thinking_blocks"]
+	pluginText := corpus["sessions"] + corpus["exchanges"] + corpus["thinking_blocks"] +
+		corpus["session_versions"] + corpus["exchange_versions"] + corpus["thinking_block_versions"]
+	if activeFederation {
+		if pluginText > 0 {
+			return "plugin-corpus"
+		}
+		return "empty"
+	}
+	switch {
+	case coreText == 0 && pluginText == 0:
+		return "empty"
+	case pluginText > 0 && coreText == 0:
+		return "plugin-corpus"
+	case coreText > 0 && pluginText == 0:
+		return "legacy-core"
+	default:
+		return "split"
+	}
+}
+
+func classifyFederation(serving string, stores []Store, core, corpus map[string]int,
+	migrations []Migration, cutoverEligible *bool, observationsComplete bool) (string, string) {
+	coreStore := storeNamed(stores, "core")
+	corpusStore := storeNamed(stores, "plugin-corpus")
+	opsStore := storeNamed(stores, "plugin-ops")
+	cronStore := storeNamed(stores, "plugin-cron")
+	pluginsPresent := corpusStore.Present || opsStore.Present || cronStore.Present
+	eligible := cutoverEligible != nil && *cutoverEligible
+	activeFederation := serving == string(config.LayoutCutover) && eligible
+	custody := corpusCustody(stores, core, corpus, activeFederation)
+	if !pluginsPresent {
+		if coreStore.Present {
+			return FederationLegacyOnly, custody
+		}
+		return FederationUninitialized, custody
+	}
+	if cutoverEligible == nil || !observationsComplete {
+		return FederationUnknown, custody
+	}
+	if serving == string(config.LayoutCutover) && eligible {
+		return FederationFederated, custody
+	}
+	if serving == string(config.LayoutCutover) || serving == string(config.LayoutShadowEqual) ||
+		migrationInFlight(migrations) || len(migrations) > 0 && !eligible {
+		return FederationMigrating, custody
+	}
+	if custody == "empty" {
+		return FederationFresh, custody
+	}
+	return FederationLegacyServing, custody
+}
+
+func storesReadable(stores []Store, names ...string) bool {
+	for _, name := range names {
+		store := storeNamed(stores, name)
+		if !store.Present || !store.Readable {
+			return false
+		}
+	}
+	return true
+}
+
+func storeNamed(stores []Store, name string) Store {
+	for _, store := range stores {
+		if store.Name == name {
+			return store
+		}
+	}
+	return Store{Name: name}
+}
+
+func migrationInFlight(migrations []Migration) bool {
+	for _, migration := range migrations {
+		if migration.State == string(migrationledger.StatePrepared) ||
+			migration.State == string(migrationledger.StateBatchInProgress) {
+			return true
+		}
+	}
+	return false
+}
+
+func collectVector(ctx context.Context, pluginRoot string) *Vector {
+	if pluginRoot == "" {
+		return nil
+	}
+	state := filepath.Join(pluginRoot, rocavector.Name, rocavector.StateDir)
+	path := filepath.Join(state, "vector.db")
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil
+	}
+	report := &Vector{
+		Status: ObservationUnreadable, StoreBytes: info.Size(), Chunks: map[string]int{},
+		LastDelta: readVectorDelta(filepath.Join(state, vectorCompletionFile)),
+	}
+	db, closer := openSupportDB(ctx, path)
+	defer closer()
+	if db == nil {
+		return report
+	}
+	if err := db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key='model'`).Scan(&report.Model); err != nil {
+		return report
+	}
+	var dimensionText string
+	if err := db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key='dimensions'`).
+		Scan(&dimensionText); err != nil {
+		return report
+	}
+	dimensions, err := strconv.Atoi(dimensionText)
+	if err != nil {
+		return report
+	}
+	report.Dimensions = dimensions
+	rows, err := db.QueryContext(ctx,
+		`SELECT source_kind, COUNT(*) FROM chunks GROUP BY source_kind ORDER BY source_kind`)
+	if err != nil {
+		return report
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var kind string
+		var count int
+		if err := rows.Scan(&kind, &count); err != nil {
+			return report
+		}
+		report.Chunks[kind] = count
+	}
+	if rows.Err() != nil {
+		return report
+	}
+	report.Status = ObservationComplete
+	return report
+}
+
+func readVectorDelta(path string) *Delta {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var completion struct {
+		ExitStatus int `json:"exit_status"`
+		Delta      struct {
+			Added     int `json:"added"`
+			Updated   int `json:"updated"`
+			Removed   int `json:"removed"`
+			Unchanged int `json:"unchanged"`
+			Chunks    int `json:"chunks"`
+		} `json:"counts"`
+		FinishedAt time.Time `json:"finished_at"`
+	}
+	if json.Unmarshal(raw, &completion) != nil {
+		return nil
+	}
+	delta := &Delta{
+		ExitStatus: completion.ExitStatus,
+		Added:      completion.Delta.Added,
+		Updated:    completion.Delta.Updated,
+		Removed:    completion.Delta.Removed,
+		Unchanged:  completion.Delta.Unchanged,
+		Chunks:     completion.Delta.Chunks,
+	}
+	if !completion.FinishedAt.IsZero() {
+		delta.FinishedAt = completion.FinishedAt.UTC().Format(time.RFC3339)
+	}
+	return delta
+}
+
+func lastIngestAt(ctx context.Context, dbs ...*sql.DB) string {
+	var latest time.Time
+	invalid := false
+	for _, db := range dbs {
+		if db == nil {
+			continue
+		}
+		present, err := supportTableState(ctx, db, "ingest_file_state")
+		if err != nil {
+			return ObservationUnreadable
+		}
+		if !present {
+			continue
+		}
+		rows, err := db.QueryContext(ctx,
+			`SELECT last_synced_at FROM ingest_file_state WHERE last_synced_at IS NOT NULL`)
+		if err != nil {
+			return ObservationUnreadable
+		}
+		for rows.Next() {
+			var value string
+			if rows.Scan(&value) != nil {
+				invalid = true
+				continue
+			}
+			parsed, ok := parseSupportTimestamp(value)
+			if !ok {
+				invalid = true
+				continue
+			}
+			if parsed.After(latest) {
+				latest = parsed
+			}
+		}
+		if rows.Err() != nil {
+			rows.Close()
+			return ObservationUnreadable
+		}
+		rows.Close()
+	}
+	if invalid {
+		return "invalid"
+	}
+	if latest.IsZero() {
+		return ""
+	}
+	return latest.UTC().Format(time.RFC3339)
+}
+
+func parseSupportTimestamp(value string) (time.Time, bool) {
+	if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return parsed, true
+	}
+	parsed, err := time.ParseInLocation("2006-01-02 15:04:05", value, time.UTC)
+	return parsed, err == nil
+}
+
+func Render(snapshot Snapshot) string {
+	var b strings.Builder
+	b.WriteString("```text\n")
+	fmt.Fprintf(&b, "roca support report  %s\n", renderField(snapshot.GeneratedAt))
+	b.WriteString("\nIDENTITY\n")
+	fmt.Fprintf(&b, "version: %s\n", renderField(snapshot.Identity.Version))
+	fmt.Fprintf(&b, "commit: %s\n", renderField(snapshot.Identity.Commit))
+	fmt.Fprintf(&b, "os/arch: %s/%s\n", renderField(snapshot.Identity.OS), renderField(snapshot.Identity.Arch))
+	fmt.Fprintf(&b, "install_layout: %s\n", renderField(snapshot.Identity.InstallLayout))
+	fmt.Fprintf(&b, "binary_shape: %s\n", renderField(snapshot.Identity.BinaryShape))
+
+	b.WriteString("\nPLUGINS\n")
+	if snapshot.PluginInventory == PluginInventoryUnreadable {
+		b.WriteString("inventory: unreadable\n")
+	} else if len(snapshot.Plugins) == 0 {
+		b.WriteString("none\n")
+	}
+	for _, item := range snapshot.Plugins {
+		status := item.ManifestStatus
+		if status == "" {
+			status = ManifestOK
+		}
+		if status != ManifestOK {
+			fmt.Fprintf(&b, "unknown manifest=%s\n", renderField(status))
+			continue
+		}
+		fmt.Fprintf(&b, "%s %s origin=%s source=%s checksum=%s state_dir=%t\n",
+			renderField(item.Name), renderField(item.Version), renderField(item.Origin),
+			renderField(item.Source), renderField(item.Checksum), item.StateDirPresent)
+	}
+
+	b.WriteString("\nFEATURE FLAGS\n")
+	for _, name := range featureFlagOrder {
+		fmt.Fprintf(&b, "%s: %s\n", renderField(name), renderField(onOff(snapshot.Features[name])))
+	}
+
+	b.WriteString("\nFEDERATION\n")
+	fmt.Fprintf(&b, "mode: %s\n", renderField(snapshot.Federation.Mode))
+	fmt.Fprintf(&b, "serving: %s\n", renderField(snapshot.Federation.Serving))
+	fmt.Fprintf(&b, "corpus_custody: %s\n", renderField(snapshot.Federation.CorpusCustody))
+	fmt.Fprintf(&b, "cutover_eligible: %s\n", eligibilityText(snapshot.Federation.CutoverEligible))
+	b.WriteString("stores:\n")
+	for _, store := range snapshot.Federation.Stores {
+		fmt.Fprintf(&b, "  %s: %s", renderField(store.Name), renderField(storeStatus(store)))
+		if len(store.Families) > 0 {
+			b.WriteString("  ")
+			b.WriteString(renderFamilyCounts(store.Families))
+		}
+		b.WriteByte('\n')
+	}
+	if snapshot.Federation.MigrationsStatus == ObservationUnreadable {
+		b.WriteString("migrations_status: unreadable\n")
+	}
+	if len(snapshot.Federation.Migrations) == 0 && snapshot.Federation.MigrationsStatus == ObservationUnreadable {
+		b.WriteString("migrations: unreadable\n")
+	} else if len(snapshot.Federation.Migrations) == 0 {
+		b.WriteString("migrations: none\n")
+	} else {
+		b.WriteString("migrations:\n")
+		for _, migration := range snapshot.Federation.Migrations {
+			fmt.Fprintf(&b, "  %s %s: %s eligible=%t\n", renderField(migration.Plugin),
+				renderField(migration.Name), renderField(migration.State), migration.CutoverEligible)
+		}
+	}
+
+	b.WriteString("\nHEALTH\n")
+	pass, warn, fail, skipped := 0, 0, 0, 0
+	for _, check := range snapshot.Health {
+		switch check.Status {
+		case service.HealthPass:
+			pass++
+		case service.HealthWarn:
+			warn++
+		case service.HealthFail:
+			fail++
+		default:
+			skipped++
+		}
+		fmt.Fprintf(&b, "%s: %s\n", renderField(check.Name), renderField(check.Status))
+	}
+	fmt.Fprintf(&b, "summary: pass=%d warn=%d fail=%d skipped=%d\n", pass, warn, fail, skipped)
+
+	b.WriteString("\nVECTOR\n")
+	if snapshot.Vector == nil {
+		b.WriteString("absent\n")
+	} else {
+		fmt.Fprintf(&b, "status: %s\n", renderField(snapshot.Vector.Status))
+		fmt.Fprintf(&b, "model: %s\n", renderField(snapshot.Vector.Model))
+		fmt.Fprintf(&b, "dimensions: %d\n", snapshot.Vector.Dimensions)
+		fmt.Fprintf(&b, "store_bytes: %d\n", snapshot.Vector.StoreBytes)
+		fmt.Fprintf(&b, "chunks: %s\n", renderFamilyCounts(snapshot.Vector.Chunks))
+		if snapshot.Vector.LastDelta != nil {
+			delta := snapshot.Vector.LastDelta
+			fmt.Fprintf(&b, "last_delta: exit=%d added=%d updated=%d removed=%d unchanged=%d chunks=%d",
+				delta.ExitStatus, delta.Added, delta.Updated, delta.Removed, delta.Unchanged, delta.Chunks)
+			if delta.FinishedAt != "" {
+				fmt.Fprintf(&b, " finished=%s", renderField(delta.FinishedAt))
+			}
+			b.WriteByte('\n')
+		}
+	}
+
+	b.WriteString("\nINGEST\n")
+	if len(snapshot.Ingest.DetectedAgents) == 0 {
+		b.WriteString("detected_agents: none\n")
+	} else {
+		fmt.Fprintf(&b, "detected_agents: %s\n", renderJoined(snapshot.Ingest.DetectedAgents, ","))
+	}
+	if snapshot.Ingest.LastIngestAt == "" {
+		b.WriteString("last_ingest_at: none\n")
+	} else {
+		fmt.Fprintf(&b, "last_ingest_at: %s\n", renderField(snapshot.Ingest.LastIngestAt))
+	}
+	b.WriteString("```")
+	return b.String()
+}
+
+func renderField(value string) string {
+	quoted := strconv.QuoteToASCII(value)
+	return strings.ReplaceAll(quoted[1:len(quoted)-1], "`", `\u0060`)
+}
+
+func renderJoined(values []string, separator string) string {
+	rendered := make([]string, len(values))
+	for index, value := range values {
+		rendered[index] = renderField(value)
+	}
+	return strings.Join(rendered, separator)
+}
+
+func onOff(on bool) string {
+	if on {
+		return "on"
+	}
+	return "off"
+}
+
+func eligibilityText(eligible *bool) string {
+	if eligible == nil {
+		return FederationUnknown
+	}
+	return strconv.FormatBool(*eligible)
+}
+
+func storeStatus(store Store) string {
+	if store.Readable {
+		return "present"
+	}
+	if store.Present {
+		return "unreadable"
+	}
+	return "absent"
+}
+
+func orEmptyStrings(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
+}
+
+func renderFamilyCounts(counts map[string]int) string {
+	names := make([]string, 0, len(counts))
+	for name := range counts {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	parts := make([]string, 0, len(names))
+	for _, name := range names {
+		parts = append(parts, fmt.Sprintf("%s=%d", renderField(name), counts[name]))
+	}
+	return strings.Join(parts, " ")
+}

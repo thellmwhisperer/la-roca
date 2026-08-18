@@ -57,6 +57,7 @@ type cliEnv struct {
 	auditArgs          []string
 	started            time.Time
 	prelogged          bool
+	skipExecutionLog   bool
 	openedDir          string
 	auditOpsDatabase   string
 	liveIngest         *ingestRows
@@ -95,6 +96,7 @@ func executeWithEnv(env *cliEnv, args []string, in io.Reader) (int, error) {
 }
 
 func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) (int, error) {
+	env.skipExecutionLog = false
 	started := env.started
 	if started.IsZero() {
 		started = time.Now()
@@ -164,7 +166,7 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 	// The ID is surfaced here and not earlier because it may only name a record
 	// this run is about to write: a command that logged itself already carries
 	// the verdict of what it wrote.
-	if !env.prelogged {
+	if !env.prelogged && !env.skipExecutionLog {
 		if err == nil && code != ExitOK {
 			env.surfaceCorrelation()
 		}

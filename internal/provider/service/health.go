@@ -3,11 +3,14 @@ package service
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
+
+	sqlite "modernc.org/sqlite"
 )
 
 // Health verdicts, in ascending severity.
@@ -37,6 +40,15 @@ type HealthCheck struct {
 	Rows    []map[string]any `json:"rows,omitempty"`
 	Extra   map[string]int   `json:"formats,omitempty"`
 }
+
+// HealthVerdict is a check name and its status only. Support snapshots use
+// this so they never carry finding rows that could hold personal content.
+type HealthVerdict struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
+const healthSkipped = "skipped"
 
 // HealthReport is the whole diagnosis. Its status is the worst of its checks'.
 type HealthReport struct {
@@ -201,21 +213,144 @@ func (s *Service) Health(ctx context.Context, req HealthRequest) (HealthReport, 
 	return report, nil
 }
 
-func runHealthCheck(ctx context.Context, reader *sql.DB, check healthCheck,
-	registered []registeredLayer, maxRows int) (HealthCheck, error) {
-	prefix, arguments := "", []any(nil)
-	if check.registryOwned {
-		prefix, arguments = layerRegistryCTE(registered)
+// HealthVerdicts runs the same checks as Health but returns only names and
+// statuses. A check is run against every applicable store and keeps the worst
+// concrete verdict. Missing handles and tables are skipped.
+func HealthVerdicts(ctx context.Context, registries, memories, others []*sql.DB) []HealthVerdict {
+	registered, registryAvailable := firstReadableLayers(ctx, registries)
+	verdicts := make([]HealthVerdict, 0, len(healthChecks)+1)
+	for _, check := range healthChecks {
+		if check.registryOwned && !registryAvailable {
+			verdicts = append(verdicts, HealthVerdict{Name: check.name, Status: healthSkipped})
+			continue
+		}
+		readers := others
+		if check.memoryOwned {
+			readers = memories
+		}
+		status := healthSkipped
+		incomplete := false
+		for _, reader := range readers {
+			if reader == nil {
+				continue
+			}
+			count, err := healthCount(ctx, reader, check, registered)
+			if err != nil {
+				incomplete = incomplete || healthObservationIncomplete(ctx, err)
+				continue
+			}
+			candidate := HealthPass
+			if count > 0 {
+				candidate = check.severity
+			}
+			status = worstConcrete(status, candidate)
+		}
+		if incomplete && status == HealthPass {
+			status = healthSkipped
+		}
+		verdicts = append(verdicts, HealthVerdict{Name: check.name, Status: status})
 	}
+	status := healthSkipped
+	incomplete := false
+	for _, reader := range memories {
+		if reader == nil {
+			continue
+		}
+		timestamps, err := checkTimestampFormats(ctx, reader)
+		if err == nil {
+			status = worstConcrete(status, timestamps.Status)
+		} else {
+			incomplete = incomplete || healthObservationIncomplete(ctx, err)
+		}
+	}
+	if incomplete && status == HealthPass {
+		status = healthSkipped
+	}
+	return append(verdicts, HealthVerdict{Name: "memory_created_at_formats", Status: status})
+}
+
+func healthObservationIncomplete(ctx context.Context, err error) bool {
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var sqliteErr *sqlite.Error
+	if !errors.As(err, &sqliteErr) {
+		return false
+	}
+	primary := sqliteErr.Code() & 0xff
+	return primary == 5 || primary == 6
+}
+
+func firstReadableLayers(ctx context.Context, readers []*sql.DB) ([]registeredLayer, bool) {
+	for _, reader := range readers {
+		registered, available := layersFrom(ctx, reader)
+		if available {
+			return registered, true
+		}
+	}
+	return nil, false
+}
+
+func worstConcrete(current, candidate string) string {
+	if current == healthSkipped {
+		return candidate
+	}
+	return worst(current, candidate)
+}
+
+func layersFrom(ctx context.Context, db *sql.DB) ([]registeredLayer, bool) {
+	if db == nil {
+		return nil, false
+	}
+	rows, err := db.QueryContext(ctx, `SELECT name, COALESCE(alias_of, '') FROM layers ORDER BY name`)
+	if err != nil {
+		return nil, false
+	}
+	defer rows.Close()
+	var registered []registeredLayer
+	for rows.Next() {
+		var layer registeredLayer
+		if rows.Scan(&layer.name, &layer.aliasOf) != nil {
+			return nil, false
+		}
+		registered = append(registered, layer)
+	}
+	if rows.Err() != nil {
+		return nil, false
+	}
+	return registered, true
+}
+
+func healthQuery(check healthCheck, registered []registeredLayer) (string, []any) {
+	if check.registryOwned {
+		return layerRegistryCTE(registered)
+	}
+	return "", nil
+}
+
+func healthCount(ctx context.Context, reader *sql.DB, check healthCheck,
+	registered []registeredLayer) (int, error) {
+	prefix, arguments := healthQuery(check, registered)
 	var count int
 	if err := reader.QueryRowContext(ctx, prefix+check.count, arguments...).Scan(&count); err != nil {
-		return HealthCheck{}, fmt.Errorf("health check %s: %w", check.name, err)
+		return 0, fmt.Errorf("health check %s: %w", check.name, err)
+	}
+	return count, nil
+}
+
+func runHealthCheck(ctx context.Context, reader *sql.DB, check healthCheck,
+	registered []registeredLayer, maxRows int) (HealthCheck, error) {
+	count, err := healthCount(ctx, reader, check, registered)
+	if err != nil {
+		return HealthCheck{}, err
 	}
 	outcome := HealthCheck{Status: HealthPass, Count: count, Summary: check.summary}
 	if count == 0 {
 		return outcome, nil
 	}
 	outcome.Status = check.severity
+	prefix, arguments := healthQuery(check, registered)
 	rows, err := reader.QueryContext(ctx, prefix+check.sample,
 		append(slices.Clone(arguments), maxRows)...)
 	if err != nil {
