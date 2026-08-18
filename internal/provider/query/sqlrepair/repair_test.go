@@ -41,25 +41,99 @@ func TestPrepareRepairsOnlyNamedModelOutputShapes(t *testing.T) {
 			wantRepairs: []string{sqlrepair.ThinkingBlock, sqlrepair.RepetitionLoop},
 		},
 		{
-			name: "soft union repair",
+			name: "soft union repair wraps the leading branch",
 			raw: "SELECT id, created_at AS occurred_at FROM memories ORDER BY occurred_at DESC LIMIT 5 " +
 				"UNION ALL SELECT id, created_at AS occurred_at FROM memories ORDER BY occurred_at DESC LIMIT 7",
-			wantSQL: "SELECT id, created_at AS occurred_at FROM memories UNION ALL " +
-				"SELECT id, created_at AS occurred_at FROM memories ORDER BY occurred_at DESC LIMIT 7",
-			wantRepairs: []string{sqlrepair.UnionOrderBy},
+			wantSQL: "SELECT * FROM (SELECT id, created_at AS occurred_at FROM memories ORDER BY occurred_at DESC LIMIT 5) " +
+				"UNION ALL SELECT id, created_at AS occurred_at FROM memories ORDER BY occurred_at DESC LIMIT 7",
+			wantRepairs: []string{sqlrepair.WrapOrderedCompound},
 		},
 		{
-			name: "aggressive union fallback",
+			name: "repeated trailing ORDER BY keeps the last clause after wrap",
 			raw: "SELECT id FROM memories ORDER BY id LIMIT 5 UNION ALL " +
 				"SELECT id FROM exchanges ORDER BY id LIMIT 5 ORDER BY id LIMIT 9",
-			wantSQL:     "SELECT id FROM memories UNION ALL SELECT id FROM exchanges ORDER BY id LIMIT 9",
-			wantRepairs: []string{sqlrepair.UnionOrderBy},
+			wantSQL:     "SELECT * FROM (SELECT id FROM memories ORDER BY id LIMIT 5) UNION ALL SELECT id FROM exchanges ORDER BY id LIMIT 9",
+			wantRepairs: []string{sqlrepair.UnionOrderBy, sqlrepair.WrapOrderedCompound},
 		},
 		{
 			name:        "FTS phrase followed by parenthesized OR group",
 			raw:         `SELECT rowid FROM memories_fts WHERE memories_fts MATCH '"Javi" ("objetivo" OR "propósito" OR "carrera" OR "impulsa" OR "motivación")'`,
 			wantSQL:     `SELECT rowid FROM memories_fts WHERE memories_fts MATCH '"Javi" AND ("objetivo" OR "propósito" OR "carrera" OR "impulsa" OR "motivación")'`,
 			wantRepairs: []string{sqlrepair.FTSOrGroup},
+		},
+		{
+			name: "qualify a unique JOIN ORDER BY column",
+			raw: "SELECT s.session_id, DATE(s.started_at) AS session_date, COUNT(*) AS tool_count " +
+				"FROM tool_uses tu JOIN sessions s ON tu.session_id = s.session_id " +
+				"GROUP BY s.session_id, DATE(s.started_at) ORDER BY session_date DESC, session_id LIMIT 1000",
+			wantSQL: "SELECT s.session_id, DATE(s.started_at) AS session_date, COUNT(*) AS tool_count " +
+				"FROM tool_uses tu JOIN sessions s ON tu.session_id = s.session_id " +
+				"GROUP BY s.session_id, DATE(s.started_at) ORDER BY session_date DESC, s.session_id LIMIT 1000",
+			wantRepairs: []string{sqlrepair.JoinOrderBy},
+		},
+		{
+			name: "qualify several unique JOIN ORDER BY columns",
+			raw: "SELECT 'é' AS label, s.source_agent, tu.tool_name " +
+				"FROM tool_uses tu JOIN sessions s ON tu.session_id = s.session_id " +
+				"ORDER BY source_agent, tool_name LIMIT 10",
+			wantSQL: "SELECT 'é' AS label, s.source_agent, tu.tool_name " +
+				"FROM tool_uses tu JOIN sessions s ON tu.session_id = s.session_id " +
+				"ORDER BY s.source_agent, tu.tool_name LIMIT 10",
+			wantRepairs: []string{sqlrepair.JoinOrderBy},
+		},
+		{
+			name: "leave an explicit ORDER BY alias bare",
+			raw: "SELECT s.session_id AS session_key, COUNT(*) AS cnt " +
+				"FROM tool_uses tu JOIN sessions s ON tu.session_id = s.session_id " +
+				"GROUP BY s.session_id ORDER BY session_key LIMIT 10",
+			wantSQL: "SELECT s.session_id AS session_key, COUNT(*) AS cnt " +
+				"FROM tool_uses tu JOIN sessions s ON tu.session_id = s.session_id " +
+				"GROUP BY s.session_id ORDER BY session_key LIMIT 10",
+		},
+		{
+			name: "leave an ambiguous JOIN ORDER BY column for the gate",
+			raw: "SELECT s.session_id, tu.session_id FROM tool_uses tu " +
+				"JOIN sessions s ON tu.session_id = s.session_id " +
+				"GROUP BY s.session_id, tu.session_id ORDER BY session_id LIMIT 10",
+			wantSQL: "SELECT s.session_id, tu.session_id FROM tool_uses tu " +
+				"JOIN sessions s ON tu.session_id = s.session_id " +
+				"GROUP BY s.session_id, tu.session_id ORDER BY session_id LIMIT 10",
+		},
+		{
+			name: "wrap a leading UNION branch that asked for its own LIMIT",
+			raw:  "SELECT id FROM memories ORDER BY id LIMIT 5 UNION ALL SELECT id FROM exchanges ORDER BY id LIMIT 7",
+			wantSQL: "SELECT * FROM (SELECT id FROM memories ORDER BY id LIMIT 5) " +
+				"UNION ALL SELECT id FROM exchanges ORDER BY id LIMIT 7",
+			wantRepairs: []string{sqlrepair.WrapOrderedCompound},
+		},
+		{
+			name:    "leave a trailing compound ORDER BY on a bare last branch",
+			raw:     "SELECT id FROM memories UNION ALL SELECT id FROM exchanges ORDER BY id LIMIT 7",
+			wantSQL: "SELECT id FROM memories UNION ALL SELECT id FROM exchanges ORDER BY id LIMIT 7",
+		},
+		{
+			name: "drop a compound ORDER BY that the first branch does not project",
+			raw: "SELECT id, created_at FROM memories UNION ALL " +
+				"SELECT id, agent_timestamp FROM exchanges ORDER BY agent_timestamp DESC LIMIT 10",
+			wantSQL:     "SELECT id, created_at FROM memories UNION ALL SELECT id, agent_timestamp FROM exchanges LIMIT 10",
+			wantRepairs: []string{sqlrepair.WrapOrderedCompound},
+		},
+		{
+			name:        "rewrite the JSON arrow shorthand to json_extract",
+			raw:         "SELECT id FROM memories WHERE metadata -> '$.project' = 'galactic' LIMIT 5",
+			wantSQL:     "SELECT id FROM memories WHERE json_extract(metadata, '$.project') = 'galactic' LIMIT 5",
+			wantRepairs: []string{sqlrepair.PreserveJSONExtract},
+		},
+		{
+			name:        "rewrite the JSON SQL-value arrow to json_extract",
+			raw:         "SELECT id FROM memories WHERE metadata ->> '$.project' = 'galactic' LIMIT 5",
+			wantSQL:     "SELECT id FROM memories WHERE json_extract(metadata, '$.project') = 'galactic' LIMIT 5",
+			wantRepairs: []string{sqlrepair.PreserveJSONExtract},
+		},
+		{
+			name:    "leave an existing json_extract call alone",
+			raw:     "SELECT id FROM memories WHERE json_extract(metadata, '$.project') = 'galactic' LIMIT 5",
+			wantSQL: "SELECT id FROM memories WHERE json_extract(metadata, '$.project') = 'galactic' LIMIT 5",
 		},
 	}
 	for _, benchCase := range benchCases {
@@ -97,7 +171,7 @@ func TestPrepareLeavesValidSQLAndSuspiciousMultipleBlocksAlone(t *testing.T) {
 			"UNION ALL SELECT * FROM (SELECT id FROM memories ORDER BY id LIMIT 5) AS older",
 		"```sql\nSELECT id FROM memories\n```\n```sql\nDELETE FROM memories\n```",
 		"Preface on the same line: SELECT id FROM memories LIMIT 5",
-		"SELECT id FROM memories ORDER BY id UNION SELECT id FROM exchanges " +
+		"SELECT id FROM memories UNION SELECT id FROM exchanges " +
 			"UNION ALL SELECT id FROM sessions ORDER BY id",
 		`SELECT rowid FROM memories_fts WHERE memories_fts MATCH '"alpha" AND ("beta" OR "gamma")'`,
 		`SELECT rowid FROM memories_fts WHERE memories_fts MATCH '"alpha" NOT ("beta" OR "gamma")'`,

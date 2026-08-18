@@ -1230,10 +1230,11 @@ func TestKnownUnionMistakesAreRepairedBeforeTheStrictGate(t *testing.T) {
 	if err != nil || res.Degraded != "" {
 		t.Fatalf("repaired union degraded=%q sql=%q message=%q err=%v", res.Degraded, res.SQL, res.Message, err)
 	}
-	if res.ModelSQL != raw || strings.Count(strings.ToUpper(res.SQL), "ORDER BY") != 1 {
+	if res.ModelSQL != raw || !strings.Contains(res.SQL, "SELECT * FROM (") ||
+		!strings.Contains(res.SQL, "LIMIT 5") {
 		t.Fatalf("audit SQL=%q; executed SQL=%q", res.ModelSQL, res.SQL)
 	}
-	if strings.Join(res.Repaired, ",") != "union_order_by" {
+	if strings.Join(res.Repaired, ",") != "wrap_ordered_compound" {
 		t.Fatalf("repaired = %v", res.Repaired)
 	}
 }

@@ -521,14 +521,24 @@ that are deterministic and named: a `<think>` block goes (`thinking_block`), a
 single `sql` or bare Markdown fence is unwrapped (`code_fence`), prose before or
 after the one `SELECT` is dropped (`surrounding_prose`), an immediately repeated
 long line is cut as a repetition loop (`repetition_loop`), trailing semicolons
-are removed (`trailing_semicolon`), and a top-level `UNION ALL` branch `ORDER
-BY`, with its `LIMIT`, is taken out while the statement's final `ORDER BY` stays
-(`union_order_by`). An implicit conjunction before a parenthesized FTS OR group
-is made explicit (`fts_or_group`), because FTS5 rejects that otherwise valid
-SQL shape at execution. The UNION repair has an aggressive fallback for shapes
-the targeted pass cannot fix, and it is accepted only when what it produces
-parses as one `SELECT`, so truncated output and repeated lines on separate UNION
-branches are left exactly as they came.
+are removed (`trailing_semicolon`), and a top-level compound branch that
+carries its own `ORDER BY` or `LIMIT` is wrapped as `SELECT * FROM (...)`
+(`wrap_ordered_compound`) so the branch keeps its top-N. The statement's
+trailing `ORDER BY` stays on the compound; a term that is not a name in the
+first branch's result set is dropped. The older strip (`union_order_by`)
+remains as a fallback for shapes wrap cannot keep, including a duplicated
+final `ORDER BY`. A bare `ORDER BY` after a `JOIN` is qualified from the one
+selected or grouped column that owns that name (`join_order_by`); when two
+tables share the name the statement is left for the gate to reject as
+ambiguous. `json_extract(x, '$.k')` is never rewritten as the `->` shorthand,
+and a model-emitted `->` or `->>` is restored to `json_extract`
+(`preserve_json_extract`), because the shorthand compares quoted JSON text
+and silently returns no rows. An implicit conjunction before a parenthesized
+FTS OR group is made explicit (`fts_or_group`), because FTS5 rejects that
+otherwise valid SQL shape at execution. The UNION strip has an aggressive
+fallback for shapes the targeted pass cannot fix, and it is accepted only
+when what it produces parses as one `SELECT`, so truncated output and
+repeated lines on separate UNION branches are left exactly as they came.
 
 None of this authorizes execution: the gate then validates the repaired
 statement on its own schema-only in-memory SQLite connection. SQLite prepares
