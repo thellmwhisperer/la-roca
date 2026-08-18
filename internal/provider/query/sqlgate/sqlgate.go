@@ -2,27 +2,25 @@
 // touch the database passes through here first, whether it comes from a
 // template or from a model.
 //
-// "Valid" means SQLite accepted the exact statement, not merely that a parser
-// believes it would. The pure-Go driver does not expose SQLite's authorizer, so
-// the work is split in two:
+// "Valid" means SQLite accepted the exact statement under an authorization
+// callback, not merely that a parser believes it would. The gate opens its own
+// schema-only in-memory connection against modernc.org/sqlite/lib and attaches
+// the callback there. The application's query connection is not changed.
 //
-//   - Table and column existence, and syntax: the engine says so. The statement
-//     is prepared against an in-memory database that contains only the visible
-//     tables. A table the query must not see does not need forbidding: it does
-//     not exist there, and prepare fails. This is stronger than an AST allowlist,
-//     because it also covers columns and ambiguities.
-//   - Verb, functions and LIMIT: the AST says so, with a pure-Go parser of
-//     SQLite's grammar. It was measured that the engine is not enough for this:
-//     over a connection with query_only, `prepare` of a DELETE passes, and the
-//     rejection only arrives at execution time.
+//   - Syntax, tables, columns, verbs and functions: the engine says so. The
+//     statement is prepared against an in-memory database that contains only the
+//     visible tables. A table the query must not see does not exist there.
+//     Writes, ATTACH, PRAGMA and functions outside the list are denied by the
+//     callback, so a DELETE does not slip through merely because prepare would
+//     succeed on a query_only connection.
+//   - LIMIT: imposed on the original text with the same numeric-literal
+//     guarantee as before, including both SQLite forms and a trailing comment.
 //
 // The verdict messages are contract surface and the acceptance suite quotes
 // them literally.
 package sqlgate
 
 import (
-	"context"
-	"database/sql"
 	"fmt"
 	"slices"
 	"strconv"
@@ -30,7 +28,6 @@ import (
 
 	rqlite "github.com/rqlite/sql"
 	"github.com/thellmwhisperer/la-roca/data"
-	_ "modernc.org/sqlite"
 )
 
 // MaxLimit is the cap the gate guarantees.
@@ -82,8 +79,8 @@ var invisibleTables = []string{
 //
 // These cannot be hidden by dropping them the way the others are: dropping a
 // shadow table leaves the virtual table broken, and the validation database
-// would no longer be able to prepare the legitimate query. They are denied by
-// name in the AST, just like the `sqlite_` and `pragma_` ones.
+// would no longer be able to prepare the legitimate query. The authorization
+// callback denies reads by name, as it does for `sqlite_` and `pragma_` tables.
 var ftsShadowSuffixes = []string{
 	"_fts_data", "_fts_idx", "_fts_content", "_fts_docsize", "_fts_config",
 }
@@ -107,7 +104,7 @@ func IsHiddenTable(name string) bool {
 
 // Gate keeps open the in-memory database statements are prepared against.
 type Gate struct {
-	db *sql.DB
+	engine *engine
 }
 
 // Schema is one attached database as the validation engine sees it. Only the
@@ -130,46 +127,46 @@ func Open() (*Gate, error) {
 // OpenWithSchemas creates the core validation database and the qualified
 // schemas selected by the plugin semantic router.
 func OpenWithSchemas(schemas []Schema) (*Gate, error) {
-	db, err := sql.Open("sqlite", "file::memory:?_pragma=query_only(0)")
+	eng, err := openEngine()
 	if err != nil {
-		return nil, fmt.Errorf("open the validation database: %w", err)
+		return nil, err
 	}
-	// A single connection: the in-memory database lives in the connection,
-	// and a pool would hand out an empty one where everything would fail with
-	// "no such table".
-	db.SetMaxOpenConns(1)
 
-	if _, err := db.Exec(data.Schema); err != nil {
-		db.Close()
+	if err := eng.exec(data.Schema); err != nil {
+		eng.close()
 		return nil, fmt.Errorf("apply the schema to the validation database: %w", err)
 	}
 	// The lexical index goes in too: the FTS route emits SQL that queries it,
 	// and a gate that did not know those tables would force skipping it in order
 	// to search, which is exactly what the gate exists to prevent.
-	if _, err := db.Exec(data.SearchSchema); err != nil {
-		db.Close()
+	if err := eng.exec(data.SearchSchema); err != nil {
+		eng.close()
 		return nil, fmt.Errorf("apply the search schema to the validation database: %w", err)
 	}
 	for _, table := range invisibleTables {
-		if _, err := db.Exec("DROP TABLE IF EXISTS " + table); err != nil {
-			db.Close()
+		if err := eng.exec("DROP TABLE IF EXISTS " + table); err != nil {
+			eng.close()
 			return nil, fmt.Errorf("hide table %q: %w", table, err)
 		}
 	}
 	for _, schema := range schemas {
-		if err := addSchema(db, schema); err != nil {
-			db.Close()
+		if err := addSchema(eng, schema); err != nil {
+			eng.close()
 			return nil, err
 		}
 	}
-	return &Gate{db: db}, nil
+	if err := eng.attachAuthorizer(); err != nil {
+		eng.close()
+		return nil, err
+	}
+	return &Gate{engine: eng}, nil
 }
 
-func addSchema(db *sql.DB, schema Schema) error {
+func addSchema(eng *engine, schema Schema) error {
 	if schema.Name == "" || strings.EqualFold(schema.Name, "main") || strings.EqualFold(schema.Name, "temp") {
 		return fmt.Errorf("invalid attached schema name %q", schema.Name)
 	}
-	if _, err := db.Exec("ATTACH DATABASE ':memory:' AS " + quoteIdentifier(schema.Name)); err != nil {
+	if err := eng.exec("ATTACH DATABASE ':memory:' AS " + quoteIdentifier(schema.Name)); err != nil {
 		return fmt.Errorf("create validation schema %q: %w", schema.Name, err)
 	}
 	for _, table := range schema.Tables {
@@ -185,7 +182,7 @@ func addSchema(db *sql.DB, schema Schema) error {
 		}
 		statement := "CREATE TABLE " + quoteIdentifier(schema.Name) + "." +
 			quoteIdentifier(table.Name) + " (" + strings.Join(columns, ", ") + ")"
-		if _, err := db.Exec(statement); err != nil {
+		if err := eng.exec(statement); err != nil {
 			return fmt.Errorf("create validation table %s.%s: %w", schema.Name, table.Name, err)
 		}
 	}
@@ -197,38 +194,34 @@ func quoteIdentifier(name string) string {
 }
 
 // Close closes the validation database.
-func (g *Gate) Close() error { return g.db.Close() }
+func (g *Gate) Close() error { return g.engine.close() }
 
 // Validate returns the statement ready to run, or the reason why it is not
 // going to run. The string it returns is the one to execute: it may carry the
 // LIMIT that was missing.
 func (g *Gate) Validate(stmt string) (string, error) {
-	stmt = strings.TrimSpace(stmt)
-	stmts, err := rqlite.NewParser(strings.NewReader(stmt)).ParseStatements()
-	if err != nil {
-		return "", fmt.Errorf("SQL parse error: %w", err)
+	if strings.IndexByte(stmt, 0) >= 0 {
+		return "", fmt.Errorf("SQL parse error: embedded NUL byte")
 	}
-	if len(stmts) == 0 {
-		// Nothing but blanks: the parser reads no statement and raises nothing.
+	stmt = strings.TrimSpace(stmt)
+	if stmt == "" {
 		return "", fmt.Errorf("Empty SQL")
 	}
-	if len(stmts) > 1 {
-		return "", fmt.Errorf("Only one statement is allowed, and this one has %d",
-			len(stmts))
+	if n := statementCount(stmt); n > 1 {
+		return "", fmt.Errorf("Only one statement is allowed, and this one has %d", n)
 	}
-	sel, isSelect := stmts[0].(*rqlite.SelectStatement)
-	if !isSelect {
+	if verb := leadingVerb(stmt); verb != "SELECT" && verb != "WITH" {
+		if verb == "" {
+			return "", fmt.Errorf("Empty SQL")
+		}
 		return "", fmt.Errorf("Only SELECT statements are allowed")
 	}
-	if err := walkTheTree(sel); err != nil {
-		return "", err
-	}
 
-	clean, err := withLimit(stmt, sel)
+	clean, err := enforceLimit(stmt)
 	if err != nil {
 		return "", err
 	}
-	if err := g.prepareWithEngine(clean); err != nil {
+	if err := g.engine.prepare(clean); err != nil {
 		return "", err
 	}
 	return clean, nil
@@ -256,20 +249,9 @@ func withoutSemicolon(stmt string) string {
 	return strings.TrimRight(strings.TrimSpace(stmt), "; \t\n")
 }
 
-// prepareWithEngine is the half that cannot be faked: what SQLite will not
-// prepare against the visible schema does not run.
-func (g *Gate) prepareWithEngine(stmt string) error {
-	prepared, err := g.db.PrepareContext(context.Background(), stmt)
-	if err != nil {
-		return fmt.Errorf("%s", translate(err))
-	}
-	return prepared.Close()
-}
-
 // translate speaks the gate's vocabulary, not SQLite's: the operator reads this,
 // and "SQL logic error (1)" does not tell them what to fix.
-func translate(err error) string {
-	message := err.Error()
+func translate(message string) string {
 	if i := strings.Index(message, "no such table: "); i >= 0 {
 		table := strings.TrimSpace(strings.TrimSuffix(message[i+len("no such table: "):], " (1)"))
 		return fmt.Sprintf("no such table: %q is not a table this query can read", table)
@@ -278,116 +260,71 @@ func translate(err error) string {
 		column := strings.TrimSpace(strings.TrimSuffix(message[i+len("no such column: "):], " (1)"))
 		return fmt.Sprintf("no such column: %q does not exist in the referenced tables", column)
 	}
+	if i := strings.Index(message, "no such function: "); i >= 0 {
+		name := strings.TrimSpace(strings.TrimSuffix(message[i+len("no such function: "):], " (1)"))
+		return fmt.Sprintf("Function %q is not allowed", name)
+	}
 	if strings.Contains(message, "ambiguous column name") {
 		return message
 	}
+	if strings.Contains(message, "incomplete input") || strings.Contains(message, "syntax error") ||
+		strings.Contains(message, "unrecognized token") {
+		return "SQL parse error: " + message
+	}
 	return "the database refused this statement: " + message
 }
-
-// walkTheTree denies what the engine cannot deny on its own: the functions
-// outside the list, and SQLite's internal tables, which exist in any database
-// and cannot be hidden by dropping them.
-//
-// Preparing a call to load_extension does not fail; it fails on execution, and
-// by then it is too late.
-func walkTheTree(sel *rqlite.SelectStatement) error {
-	visitor := &inspector{}
-	if _, err := rqlite.Walk(visitor, sel); err != nil {
-		return err
-	}
-	return visitor.reason
-}
-
-type inspector struct{ reason error }
-
-func (v *inspector) Visit(n rqlite.Node) (rqlite.Visitor, rqlite.Node, error) {
-	if v.reason != nil {
-		return v, n, nil
-	}
-	switch node := n.(type) {
-	case *rqlite.Call:
-		if node.Name != nil && !allowedFunctions[strings.ToLower(node.Name.Name)] {
-			v.reason = fmt.Errorf("Function %q is not allowed", node.Name.Name)
-		}
-	case *rqlite.QualifiedTableName:
-		if node.Name == nil {
-			break
-		}
-		name := strings.ToLower(node.Name.Name)
-		if strings.HasPrefix(name, "sqlite_") || strings.HasPrefix(name, "pragma_") ||
-			hasAnySuffix(name, ftsShadowSuffixes) {
-			v.reason = fmt.Errorf("no such table: %q is not a table this query can read",
-				node.Name.Name)
-		}
-	case *rqlite.QualifiedTableFunctionName:
-		if node.Name == nil {
-			break
-		}
-		name := strings.ToLower(node.Name.Name)
-		if strings.HasPrefix(name, "sqlite_") || strings.HasPrefix(name, "pragma_") {
-			v.reason = fmt.Errorf("no such table: %q is not a table this query can read",
-				node.Name.Name)
-		}
-	case *rqlite.WithClause:
-		for _, cte := range node.CTEs {
-			if cte != nil && cte.Select != nil {
-				if err := walkTheTree(cte.Select); err != nil {
-					v.reason = err
-					break
-				}
-			}
-		}
-	case rqlite.SelectExpr:
-		if node.SelectStatement != nil {
-			v.reason = walkTheTree(node.SelectStatement)
-		}
-	}
-	return v, n, nil
-}
-
-func (v *inspector) VisitEnd(n rqlite.Node) (rqlite.Node, error) { return n, nil }
 
 func hasAnySuffix(name string, suffixes []string) bool {
 	return slices.ContainsFunc(suffixes, func(s string) bool { return strings.HasSuffix(name, s) })
 }
 
-// withLimit imposes the cap, which is a guarantee and not a suggestion: when
-// there is no LIMIT the maximum is added, and when the one there is exceeds it,
-// it is clamped.
-//
-// The work happens on the original text and not on a re-serialization of the AST
-// for two reasons. The first is that the validated statement is returned to the
-// caller and goes to the log, so it has to keep looking like the one that was
-// asked for. The second is security: the parser quotes every identifier when it
-// re-serializes, and SQLite treats a double-quoted string that matches no column
-// as a text literal, so re-serializing would turn "column that does not exist"
-// into "constant string" and lose the engine's error.
-func withLimit(stmt string, sel *rqlite.SelectStatement) (string, error) {
-	if sel.LimitExpr == nil {
+// enforceLimit imposes the cap on the original text. When there is no
+// top-level LIMIT the maximum is added; when the one there is exceeds it, the
+// count is clamped. Subquery limits stay untouched because they sit inside
+// parentheses. The work is textual so a grammar-subset parser is not what
+// decides whether the statement the engine prepared may run.
+func enforceLimit(stmt string) (string, error) {
+	limitAt, ok := lastTopLevelWord(stmt, "limit")
+	if !ok {
 		return appendLimit(stmt), nil
 	}
-	target := sel.LimitExpr
-	if sel.OffsetComma.IsValid() {
-		target = sel.OffsetExpr
-	}
-	number, isNumber := target.(*rqlite.NumberLit)
-	if !isNumber {
+	i := skipSpaceAndComments(stmt, limitAt.end)
+	_, start1, end1, ok := readNumberLiteral(stmt, i)
+	if !ok {
 		return "", fmt.Errorf("LIMIT must be a numeric literal")
 	}
-	requested, err := strconv.Atoi(number.Value)
+	i = skipSpaceAndComments(stmt, end1)
+	countStart, countEnd := start1, end1
+	if i < len(stmt) && stmt[i] == ',' {
+		i = skipSpaceAndComments(stmt, i+1)
+		_, start2, end2, ok := readNumberLiteral(stmt, i)
+		if !ok {
+			return "", fmt.Errorf("LIMIT must be a numeric literal")
+		}
+		countStart, countEnd = start2, end2
+		i = end2
+	} else if start, end, okWord := readWord(stmt, i); okWord &&
+		strings.EqualFold(stmt[start:end], "offset") {
+		i = skipSpaceAndComments(stmt, end)
+		_, _, offsetEnd, ok := readNumberLiteral(stmt, i)
+		if !ok {
+			return "", fmt.Errorf("LIMIT must be a numeric literal")
+		}
+		i = offsetEnd
+	} else {
+		i = end1
+	}
+	if !onlyStatementTail(stmt, i) {
+		return "", fmt.Errorf("LIMIT must be a numeric literal")
+	}
+	requested, err := strconv.Atoi(stmt[countStart:countEnd])
 	if err != nil {
 		return "", fmt.Errorf("LIMIT must be a numeric literal")
 	}
 	if requested >= 0 && requested <= MaxLimit {
 		return stmt, nil
 	}
-
-	start := number.ValuePos.Offset
-	end := start + len(number.Value)
-	if start < 0 || end > len(stmt) || stmt[start:end] != number.Value {
-		return "", fmt.Errorf("LIMIT must be a numeric literal")
-	}
-	return stmt[:start] + strconv.Itoa(MaxLimit) + stmt[end:], nil
+	return stmt[:countStart] + strconv.Itoa(MaxLimit) + stmt[countEnd:], nil
 }
 
 func appendLimit(stmt string) string {
@@ -395,6 +332,171 @@ func appendLimit(stmt string) string {
 	code := strings.TrimRight(stmt[:end], "; \t\r\n")
 	tail := stmt[end:]
 	return code + fmt.Sprintf(" LIMIT %d", MaxLimit) + tail
+}
+
+type wordSpan struct{ start, end int }
+
+func leadingVerb(stmt string) string {
+	i := skipSpaceAndComments(stmt, 0)
+	start, end, ok := readWord(stmt, i)
+	if !ok {
+		return ""
+	}
+	return strings.ToUpper(stmt[start:end])
+}
+
+func statementCount(stmt string) int {
+	count, hasCode := 0, false
+	for i := 0; i < len(stmt); {
+		next := skipSpaceAndComments(stmt, i)
+		if next > i {
+			i = next
+			continue
+		}
+		if i >= len(stmt) {
+			break
+		}
+		switch stmt[i] {
+		case '\'', '"', '`', '[':
+			hasCode = true
+			i = scanQuoted(stmt, i, stmt[i])
+		case ';':
+			if hasCode {
+				count++
+				hasCode = false
+			}
+			i++
+		default:
+			hasCode = true
+			i++
+		}
+	}
+	if hasCode {
+		count++
+	}
+	return count
+}
+
+func lastTopLevelWord(stmt, want string) (wordSpan, bool) {
+	var found wordSpan
+	ok := false
+	depth := 0
+	for i := 0; i < len(stmt); {
+		next := skipSpaceAndComments(stmt, i)
+		if next > i {
+			i = next
+			continue
+		}
+		if i >= len(stmt) {
+			break
+		}
+		switch stmt[i] {
+		case '(':
+			depth++
+			i++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+			i++
+		case '\'', '"', '`', '[':
+			i = scanQuoted(stmt, i, stmt[i])
+		default:
+			if start, end, okWord := readWord(stmt, i); okWord {
+				if depth == 0 && strings.EqualFold(stmt[start:end], want) {
+					found, ok = wordSpan{start: start, end: end}, true
+				}
+				i = end
+				continue
+			}
+			i++
+		}
+	}
+	return found, ok
+}
+
+func readWord(stmt string, i int) (start, end int, ok bool) {
+	if i >= len(stmt) {
+		return 0, i, false
+	}
+	letter := stmt[i]
+	if letter != '_' && (letter < 'A' || letter > 'Z') && (letter < 'a' || letter > 'z') {
+		return 0, i, false
+	}
+	start = i
+	for i < len(stmt) {
+		letter = stmt[i]
+		if letter != '_' && (letter < 'A' || letter > 'Z') && (letter < 'a' || letter > 'z') &&
+			(letter < '0' || letter > '9') {
+			break
+		}
+		i++
+	}
+	return start, i, true
+}
+
+func readNumberLiteral(stmt string, i int) (value string, start, end int, ok bool) {
+	if i >= len(stmt) {
+		return "", i, i, false
+	}
+	start = i
+	if i >= len(stmt) || stmt[i] < '0' || stmt[i] > '9' {
+		return "", start, i, false
+	}
+	for i < len(stmt) && stmt[i] >= '0' && stmt[i] <= '9' {
+		i++
+	}
+	return stmt[start:i], start, i, true
+}
+
+func skipSpaceAndComments(stmt string, i int) int {
+	for i < len(stmt) {
+		switch {
+		case strings.ContainsRune(" \t\r\n", rune(stmt[i])):
+			i++
+		case stmt[i] == '-' && i+1 < len(stmt) && stmt[i+1] == '-':
+			if end := strings.IndexByte(stmt[i:], '\n'); end >= 0 {
+				i += end + 1
+			} else {
+				return len(stmt)
+			}
+		case stmt[i] == '/' && i+1 < len(stmt) && stmt[i+1] == '*':
+			if end := strings.Index(stmt[i+2:], "*/"); end >= 0 {
+				i += end + 4
+			} else {
+				return len(stmt)
+			}
+		default:
+			return i
+		}
+	}
+	return i
+}
+
+func scanQuoted(stmt string, i int, quote byte) int {
+	closing := quote
+	if quote == '[' {
+		closing = ']'
+	}
+	for i++; i < len(stmt); i++ {
+		if stmt[i] != closing {
+			continue
+		}
+		if quote != '[' && i+1 < len(stmt) && stmt[i+1] == closing {
+			i++
+			continue
+		}
+		return i + 1
+	}
+	return len(stmt)
+}
+
+func onlyStatementTail(stmt string, i int) bool {
+	i = skipSpaceAndComments(stmt, i)
+	if i < len(stmt) && stmt[i] == ';' {
+		i = skipSpaceAndComments(stmt, i+1)
+	}
+	return i == len(stmt)
 }
 
 // trailingSQLCodeEnd finds the final byte of executable SQL while ignoring
@@ -478,14 +580,15 @@ var allowedFunctions = set(
 	"replace", "round", "rtrim", "sign", "soundex", "substr", "substring",
 	"trim", "typeof", "unhex", "unicode", "unlikely", "upper",
 	// date and time
-	"date", "datetime", "julianday", "strftime", "time", "timediff", "unixepoch",
+	"current_date", "current_time", "current_timestamp", "date", "datetime", "julianday",
+	"strftime", "time", "timediff", "unixepoch",
 	// aggregate
 	"avg", "count", "group_concat", "sum", "total", "string_agg",
 	// JSON
 	"json", "json_array", "json_array_length", "json_error_position",
 	"json_extract", "json_group_array", "json_group_object", "json_insert",
 	"json_object", "json_patch", "json_quote", "json_remove", "json_replace",
-	"json_set", "json_type", "json_valid",
+	"json_set", "json_type", "json_valid", "->", "->>",
 	// window
 	"cume_dist", "dense_rank", "first_value", "lag", "last_value", "lead",
 	"nth_value", "ntile", "percent_rank", "rank", "row_number",
@@ -493,9 +596,10 @@ var allowedFunctions = set(
 	"acos", "asin", "atan", "atan2", "ceil", "ceiling", "cos", "degrees",
 	"exp", "floor", "ln", "log", "log10", "log2", "mod", "pi", "pow", "power",
 	"radians", "sin", "sqrt", "tan", "trunc",
-	// lexical index: FTS5's three auxiliary functions. They only read from
-	// the index and only make sense inside a query that already matched.
-	"bm25", "highlight", "snippet",
+	// lexical index: FTS5's three auxiliary functions, plus MATCH, which the
+	// authorization callback reports as a function even though SQL writes it
+	// as an operator. They only read from the index.
+	"bm25", "highlight", "snippet", "match",
 )
 
 func set(values ...string) map[string]bool {

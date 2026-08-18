@@ -75,9 +75,9 @@ func correction(failure error, retryType string) string {
 //  1. A provider is chosen by availability. What is not available does not get
 //     asked, and why it was not is recorded. In the factory order only, a local
 //     CLI whose first real request disproves its session fails forward.
-//  2. The model generates SQL and that SQL ALWAYS goes through the two-halved
-//     gate. A model is not above the gate: if it were, "everything that runs has
-//     been validated" would stop being true.
+//  2. The model generates SQL and that SQL ALWAYS goes through the SQLite-backed
+//     read-only gate. A model is not above the gate: if it were, "everything
+//     that runs has been validated" would stop being true.
 //  3. Whatever fails from here on degrades to the keyword rescue instead of
 //     failing, and it says which of the declared things went wrong. The
 //     fragility of a provider never takes down a query. An explicit refusal is

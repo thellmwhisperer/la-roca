@@ -169,13 +169,8 @@ func (o *Ollama) chat(ctx context.Context, req ChatRequest, stream bool,
 		// away is paying twice. It is also the difference between a local
 		// interpretation that answers in seconds and one that answers in minutes,
 		// and on qwen3.5 this field is the only switch that turns it off.
-		"think": o.think,
-		"options": map[string]any{
-			"num_predict": maxTokens(req),
-			// Zero temperature: the same question has to compile to the same SQL,
-			// or repeatable query tests measure noise.
-			"temperature": 0,
-		},
+		"think":   o.think,
+		"options": ollamaOptions(req),
 	}
 	if o.keepAlive != "" {
 		body["keep_alive"] = o.keepAlive
@@ -237,4 +232,19 @@ func (o *Ollama) stream(ctx context.Context, body map[string]any,
 		}
 	}
 	return ChatResponse{Content: content.String(), Provider: o.Name(), ModelID: o.model}, nil
+}
+
+func ollamaOptions(req ChatRequest) map[string]any {
+	options := map[string]any{
+		// Zero temperature: the same question has to compile to the same SQL,
+		// or repeatable query tests measure noise.
+		"temperature": 0,
+	}
+	// num_predict is optional on Ollama (unset means unlimited). A default
+	// of 500 used to be sent on every call; only the readiness probe sets
+	// MaxTokens, and only then do we send the field.
+	if req.MaxTokens > 0 {
+		options["num_predict"] = req.MaxTokens
+	}
+	return options
 }
