@@ -57,6 +57,9 @@ func ingestCommand(env *cliEnv) *cobra.Command {
 			if !env.ingestStarted.IsZero() {
 				result.TotalElapsedMS = time.Since(env.ingestStarted).Milliseconds()
 			}
+			if !req.DryRun {
+				env.seedDetectedSkills(false)
+			}
 			if env.json {
 				return env.printJSON(result)
 			}

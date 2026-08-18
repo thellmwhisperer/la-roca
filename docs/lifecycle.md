@@ -130,11 +130,14 @@ A regular skill is a snapshot of a tool. A skill distilled from La Roca
 comes with its whole story: the how, the why, and the failed attempts behind
 the final answer, one question away.
 
-`roca skill install` ships two skills into each runtime today: the operating
-craft, and `roca-semantica`, a catalog of every installed plugin's tables and
-example questions generated from the same fragments natural-language search
-uses. Each installed skill and the generated prompt keep shipped SYSTEM content
-separate from an operator-owned USER zone, and `roca update` tracks their
+`roca init` ships the three embedded skills (`roca`, `roca-operations`,
+`roca-vector`) into every detected skill seat. `roca skill install` writes
+those three plus `roca-semantica`, a catalog of every installed plugin's tables
+and example questions generated from the same fragments natural-language search
+uses. An agent installed after init receives the three embedded skills after
+the next successful non-dry-run ingest, whether plain or nightly. Each
+installed skill and the generated prompt keep shipped SYSTEM content separate
+from an operator-owned USER zone, and `roca update` tracks their
 release in `~/.roca/artifacts.json`. Automatic refresh is available behind the
 default-off `features.artifact_refresh` key.
 
@@ -161,7 +164,8 @@ untouched instead of being overwritten. Existing data, configuration and agent
 integrations remain in place. If bundled placement or verification fails, the
 previous core remains active.
 
-The roca skill, the generated `roca-semantica` catalog skill, `prompt.md`, and
+The `roca`, `roca-operations`, and `roca-vector` skills, the generated
+`roca-semantica` catalog skill, `prompt.md`, and
 the Claude authorship hook are registered in the schema-versioned
 `~/.roca/artifacts.json`. Each entry records its harness,
 path, installed release, available release, format, and SYSTEM checksum. The

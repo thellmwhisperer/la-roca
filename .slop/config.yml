@@ -68,7 +68,7 @@ orphan_scopes:
       - "internal/distribution/cli/*.go"
       - "internal/distribution/mcpplug/tools.go"
       - "data/*.{sql,yaml}"
-      - "internal/distribution/skill/SKILL.md"
+      - "internal/distribution/skill/agents.md"
     ignore:
       - "**/*_test.go"
       - "internal/distribution/cli/execution_log.go"
@@ -98,4 +98,4 @@ claims:
     embedded_assets:
       files:
         - "data/*.{sql,yaml}"
-        - "internal/distribution/skill/SKILL.md"
+        - "internal/distribution/skill/agents.md"

@@ -247,6 +247,42 @@ func TestArtifactRefreshHonoursTheDefaultOffGateAndSystemDivergence(t *testing.T
 	}
 }
 
+func TestLegacyAdoptionRequiresProofOfSkillOwnership(t *testing.T) {
+	home := skillTestHome(t)
+	foreignOperations := filepath.Join(home, ".codex", "skills", skill.OperationsName, "SKILL.md")
+	foreignVector := filepath.Join(home, ".codex", "skills", skill.VectorName, "SKILL.md")
+	legacyRoca := filepath.Join(home, ".codex", "skills", skill.SkillName, "SKILL.md")
+	zonedOperations := filepath.Join(home, ".claude", "skills", skill.OperationsName, "SKILL.md")
+	writeFile(t, foreignOperations, "---\nname: roca-operations\n---\nforeign\n")
+	writeFile(t, foreignVector, "---\nname: roca-vector\n---\nforeign\n")
+	writeFile(t, legacyRoca, skill.LegacySignature()+"---\nlegacy\n")
+	writeFile(t, zonedOperations, artifact.Zoned(skill.OperationsContent(), ""))
+
+	env := &cliEnv{build: Build{Version: "v2.0.0"}}
+	if _, err := env.refreshManagedArtifacts(filepath.Join(home, "bin", "roca"), false); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := artifact.LoadRegistry(filepath.Join(home, ".roca", "artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{foreignOperations, foreignVector} {
+		if _, found := registry.Find(artifactKindSkill, "codex", path); found {
+			t.Errorf("unproven skill was registered: %s", path)
+		}
+	}
+	for _, owned := range []struct {
+		runtime, path string
+	}{
+		{"codex", legacyRoca},
+		{"claude", zonedOperations},
+	} {
+		if _, found := registry.Find(artifactKindSkill, owned.runtime, owned.path); !found {
+			t.Errorf("proven skill was not registered: %s", owned.path)
+		}
+	}
+}
+
 // The update report is what the operator is told, so it has to distinguish the
 // three states a refresh can refuse in: an edited SYSTEM zone, a file that is
 // no longer there, and one nothing can read. The unreadable one in particular

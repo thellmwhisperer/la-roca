@@ -168,5 +168,4 @@ delta — `0 added · 0 updated · 0 removed` — and an unchanged count equal t
 the live chunk count. That is the operator's own confidence probe; it needs
 no golden file.
 
-Search craft for agents lives in the shipped skill's Hybrid discovery
-section (`roca skill install`).
+Search craft for agents lives in the `roca-vector` skill.

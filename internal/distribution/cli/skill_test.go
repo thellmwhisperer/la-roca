@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -19,7 +20,7 @@ func TestSkillBareListsEveryRuntimePath(t *testing.T) {
 	var output strings.Builder
 	runSkill(t, &output, "skill")
 	text := output.String()
-	if !strings.HasPrefix(text, fmt.Sprintf("rows[%d]{runtime,skill,path}:\n", 2*len(skill.Runtimes()))) {
+	if !strings.HasPrefix(text, fmt.Sprintf("rows[%d]{runtime,skill,path}:\n", 4*len(skill.Runtimes()))) {
 		t.Fatalf("listing is not the stable TOON shape:\n%s", text)
 	}
 	for _, runtime := range skill.Runtimes() {
@@ -27,7 +28,7 @@ func TestSkillBareListsEveryRuntimePath(t *testing.T) {
 			t.Errorf("listing missing runtime %q:\n%s", runtime, text)
 		}
 	}
-	for _, owned := range []string{skill.SkillName, skill.CatalogName} {
+	for _, owned := range skill.OwnedNames() {
 		if !strings.Contains(text, filepath.Join(home, ".claude", "skills", owned, "SKILL.md")) {
 			t.Errorf("listing does not show the %s skill path:\n%s", owned, text)
 		}
@@ -37,19 +38,26 @@ func TestSkillBareListsEveryRuntimePath(t *testing.T) {
 func TestSkillInstallWritesUnderTempHome(t *testing.T) {
 	home := skillTestHome(t)
 	want := filepath.Join(home, ".claude", "skills", "roca", "SKILL.md")
+	operationsPath := filepath.Join(home, ".claude", "skills", "roca-operations", "SKILL.md")
+	vectorPath := filepath.Join(home, ".claude", "skills", "roca-vector", "SKILL.md")
 	catalogPath := filepath.Join(home, ".claude", "skills", "roca-semantica", "SKILL.md")
 
 	var output strings.Builder
 	runSkill(t, &output, "skill", "install", "claude")
-	if !strings.Contains(output.String(), "wrote "+want) {
-		t.Fatalf("install did not narrate the write:\n%s", output.String())
-	}
-	if !strings.Contains(output.String(), "wrote "+catalogPath) {
-		t.Fatalf("install did not narrate the catalog write:\n%s", output.String())
+	for _, path := range []string{want, operationsPath, vectorPath, catalogPath} {
+		if !strings.Contains(output.String(), "wrote "+path) {
+			t.Fatalf("install did not narrate the write of %s:\n%s", path, output.String())
+		}
 	}
 	zones, err := artifact.ParseFile(want)
 	if err != nil || zones.System != skill.Content() || zones.User != "" {
 		t.Fatalf("installed zones = %+v, err %v", zones, err)
+	}
+	if zones, err := artifact.ParseFile(operationsPath); err != nil || zones.System != skill.OperationsContent() {
+		t.Fatalf("installed operations zones = %+v, err %v", zones, err)
+	}
+	if zones, err := artifact.ParseFile(vectorPath); err != nil || zones.System != skill.VectorContent() {
+		t.Fatalf("installed vector zones = %+v, err %v", zones, err)
 	}
 	catalogZones, err := artifact.ParseFile(catalogPath)
 	if err != nil || !strings.Contains(catalogZones.System, "name: "+skill.CatalogName) {
@@ -70,11 +78,10 @@ func TestSkillInstallWritesUnderTempHome(t *testing.T) {
 
 	var again strings.Builder
 	runSkill(t, &again, "skill", "install", "claude")
-	if !strings.Contains(again.String(), "unchanged "+want) {
-		t.Fatalf("reinstall did not report unchanged:\n%s", again.String())
-	}
-	if !strings.Contains(again.String(), "unchanged "+catalogPath) {
-		t.Fatalf("reinstall did not report the catalog unchanged:\n%s", again.String())
+	for _, path := range []string{want, operationsPath, vectorPath, catalogPath} {
+		if !strings.Contains(again.String(), "unchanged "+path) {
+			t.Fatalf("reinstall did not report unchanged %s:\n%s", path, again.String())
+		}
 	}
 }
 
@@ -180,25 +187,104 @@ func TestSkillInstallAllNarratesEveryPath(t *testing.T) {
 	}
 }
 
-func TestInitMentionsTheSkillWithoutInstallingIt(t *testing.T) {
+func TestInitAnnouncesTheMustReadSkills(t *testing.T) {
 	var output strings.Builder
 	renderBootstrap(&cliEnv{out: &output}, service.InitResult{})
-	if !strings.Contains(output.String(), "roca skill install") {
-		t.Fatalf("init does not mention the skill:\n%s", output.String())
+	text := output.String()
+	for _, want := range []string{
+		"must-read:", "`roca`", "`roca-operations`",
+		"installed into every detected agent runtime",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("init does not announce %q:\n%s", want, text)
+		}
 	}
-	if strings.Contains(output.String(), "wrote ") {
-		t.Fatalf("init must not install the skill:\n%s", output.String())
+}
+
+func TestInitInstallsEmbeddedSkillsIntoDetectedRuntimes(t *testing.T) {
+	home := skillTestHome(t)
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".cursor"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	before := skill.Detected(home, os.Getenv)
+	if len(before) != 2 || before[0] != "claude" || before[1] != "cursor" {
+		t.Fatalf("pre-init detected = %v, want [claude cursor]", before)
+	}
+	out := runRoot(t, Build{Version: "test", Commit: "test-sha"},
+		"init", "--db-path", filepath.Join(home, ".roca", "roca.db"))
+	for _, want := range []string{
+		"must-read:", "`roca`", "`roca-operations`",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("init closing missed %q:\n%s", want, out)
+		}
+	}
+	detected := skill.Detected(home, os.Getenv)
+	if !slices.Contains(detected, "claude") || !slices.Contains(detected, "cursor") {
+		t.Fatalf("claude or cursor vanished after init; detected = %v (was %v)", detected, before)
+	}
+	for _, runtime := range skill.Runtimes() {
+		wanted := slices.Contains(detected, runtime)
+		for _, name := range []string{skill.SkillName, skill.OperationsName, skill.VectorName} {
+			path, err := skill.NamedPath(runtime, name, home, os.Getenv)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = os.Stat(path)
+			if wanted && err != nil {
+				t.Errorf("init did not install %s: %v", path, err)
+			}
+			if !wanted && !os.IsNotExist(err) {
+				t.Errorf("init installed %s into a runtime that was not detected: %v", path, detected)
+			}
+		}
+	}
+	for _, runtime := range []string{"claude", "cursor"} {
+		path := filepath.Join(home, "."+runtime, "skills", "roca-semantica", "SKILL.md")
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("init installed the catalog skill at %s; that stays on skill install", path)
+		}
+	}
+}
+
+func TestIngestReseedsEmbeddedSkillsForANewRuntime(t *testing.T) {
+	home := skillTestHome(t)
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runRoot(t, Build{Version: "test", Commit: "test-sha"},
+		"init", "--db-path", filepath.Join(home, ".roca", "roca.db"))
+	deleted := filepath.Join(home, ".claude", "skills", "roca", "SKILL.md")
+	if err := os.Remove(deleted); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".grok"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runRoot(t, Build{Version: "test", Commit: "test-sha"}, "ingest")
+	for _, name := range []string{skill.SkillName, skill.OperationsName, skill.VectorName} {
+		path := filepath.Join(home, ".grok", "skills", name, "SKILL.md")
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("ingest did not reseed %s: %v", path, err)
+		}
+	}
+	if _, err := os.Stat(deleted); !os.IsNotExist(err) {
+		t.Fatal("ingest restored a deleted registered skill")
 	}
 }
 
 func TestSkillTeachesTheInvestigationFunnel(t *testing.T) {
-	body := skill.Content()
 	for _, test := range []struct {
 		name string
+		body string
 		want []string
 	}{
 		{
 			name: "investigation funnel",
+			body: skill.OperationsContent(),
 			want: []string{
 				"## Investigation method", "Declare the purpose in one line",
 				"roca explore --deep", "single bare word", "Read the terrain",
@@ -208,12 +294,13 @@ func TestSkillTeachesTheInvestigationFunnel(t *testing.T) {
 		},
 		{
 			name: "hybrid discovery",
+			body: skill.VectorContent(),
 			want: []string{
 				"## Hybrid discovery",
 				"The vector discovers vocabulary, FTS censuses, SQL frames",
 				"inference only at the end",
 				"roca vector query", "roca vector vocab",
-				"nombres de personas", "mi jefe se llama",
+				"names of people", "my boss is named",
 				"k must be between 1 and 100",
 				"LIKE '%term%'",
 				"COUNT(DISTINCT e.session_id)",
@@ -224,13 +311,13 @@ func TestSkillTeachesTheInvestigationFunnel(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			for _, want := range test.want {
-				if !strings.Contains(body, want) {
+				if !strings.Contains(test.body, want) {
 					t.Errorf("skill lacks %q", want)
 				}
 			}
 		})
 	}
-	hybrid := markdownSection(body, "## Hybrid discovery")
+	hybrid := markdownSection(skill.VectorContent(), "## Hybrid discovery")
 	if strings.Contains(hybrid, `roca query --sql-only "`) {
 		t.Fatal("hybrid discovery sends its doctrinal path through model inference")
 	}
@@ -253,7 +340,7 @@ func skillTestHome(t *testing.T) string {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	for _, key := range []string{
-		"CLAUDE_CONFIG_DIR", "CODEX_HOME", "GROK_HOME", "OPENCODE_CONFIG",
+		"CLAUDE_CONFIG_DIR", "CODEX_HOME", "CURSOR_HOME", "GROK_HOME", "OPENCODE_CONFIG",
 		"HERMES_HOME", "PI_CODING_AGENT_DIR", "QWEN_HOME",
 	} {
 		t.Setenv(key, "")
