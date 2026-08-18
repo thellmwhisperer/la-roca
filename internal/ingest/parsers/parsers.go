@@ -55,6 +55,9 @@ const (
 	// names every source the ingest state table can hold.
 	KindOpenCodeDB Kind = "opencode_database"
 	KindHermesDB   Kind = "hermes_database"
+	// KindHermesMemory is Hermes's curated MEMORY.md, split at § into one
+	// memory per block. Identity is the block's content hash.
+	KindHermesMemory Kind = "hermes_memory"
 	// KindCursorDB is Cursor's SQLite state store. Its JSON conversation rows
 	// are normalized by the registered parser after ingest freezes the live
 	// database into an in-memory snapshot.

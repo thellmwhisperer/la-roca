@@ -127,7 +127,7 @@ var parserVersions = map[parsers.Kind]string{
 	parsers.KindCodexHistory:            "codex-history-v2",
 	parsers.KindPiSession:               "pi-session-v7",
 	parsers.KindOpenCodeDB:              "opencode-v9",
-	parsers.KindHermesDB:                "hermes-v7",
+	parsers.KindHermesDB:                "hermes-v8",
 	parsers.KindClaudeWebConversations:  "claude-web-conversations-v4",
 	parsers.KindClaudeWebMemories:       "claude-web-memories-v1",
 	parsers.KindClaudeWebProjects:       "claude-web-projects-v1",

@@ -1,0 +1,14 @@
+{
+  "parser": "hermes_memory",
+  "destination": "store",
+  "source": "MEMORY.md",
+  "meta": {"Path":"/synthetic/home/.hermes/memories/MEMORY.md","FileName":"MEMORY.md","SourceAgent":"hermes"},
+  "want": {
+    "sessions": [],
+    "memories": [
+      {"layer":"user","content":"The operator identity is a fictional cartographer based in the cobalt archipelago.","source_agent":"hermes"},
+      {"layer":"feedback","content":"Prefer short synthetic replies. Never invent a review finding.","source_agent":"hermes"},
+      {"layer":"pattern","content":"Run the invented compass check before launching a second probe.","source_agent":"hermes"}
+    ]
+  }
+}

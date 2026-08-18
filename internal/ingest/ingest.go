@@ -836,6 +836,7 @@ func declaredRoots(roots Roots) map[string]string {
 		"opencode_telegram_bot_logs": roots.OpenCodeTelegramLogs,
 		"pi_root":                    roots.PiRoot,
 		"pi_sessions":                roots.PiSessions,
+		"hermes_home":                roots.HermesHome,
 		"hermes_db":                  roots.HermesDB,
 		"grok_sessions":              roots.GrokSessions,
 		"grok_memtrace":              roots.GrokMemtrace,
