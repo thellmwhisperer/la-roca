@@ -35,7 +35,8 @@ var (
 
 // Prepare applies only the model-output mistakes named above. The UNION
 // fallback is accepted only when its result parses as one SELECT; truncated or
-// ambiguous output stays untouched for the strict gate to reject.
+// ambiguous output stays untouched for the strict gate to reject. Prepare
+// never clips by length: a complete federated UNION is returned intact.
 func Prepare(raw string) Result {
 	result := Result{SQL: strings.TrimSpace(raw)}
 
@@ -222,21 +223,22 @@ func stripTrailingSemicolons(text string) (string, bool) {
 }
 
 // loopThreshold distinguishes a local model repetition loop from legitimate
-// repeated short UNION or JOIN lines.
+// repeated short UNION or JOIN lines. A long COALESCE reused on a later
+// UNION branch is not a loop: only an immediately repeated long line is.
 const loopThreshold = 50
 
 func deloop(text string) string {
 	lines := strings.Split(text, "\n")
-	seen := make(map[string]bool, len(lines))
+	var previous string
 	for i, line := range lines {
 		key := strings.TrimSpace(line)
-		if len(key) <= loopThreshold {
+		if key == "" {
 			continue
 		}
-		if seen[key] {
+		if len(key) > loopThreshold && key == previous {
 			return strings.TrimSpace(strings.Join(lines[:i], "\n"))
 		}
-		seen[key] = true
+		previous = key
 	}
 	return text
 }

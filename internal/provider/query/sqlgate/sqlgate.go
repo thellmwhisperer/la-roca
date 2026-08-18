@@ -3,18 +3,25 @@
 // template or from a model.
 //
 // "Valid" means SQLite accepted the exact statement, not merely that a parser
-// believes it would. The pure-Go driver does not expose SQLite's authorizer, so
-// the work is split in two:
+// believes it would. modernc.org/sqlite does not expose an authorization
+// callback, so the shipped shape is: prepare is the correctness verdict
+// (syntax, tables, columns); the AST remains the permission surface (verb,
+// functions, hidden names) when it accepts the same string; LIMIT is applied
+// on the text so a grammar-subset parse cannot be the thing that rejects a
+// statement the engine already prepared.
 //
 //   - Table and column existence, and syntax: the engine says so. The statement
 //     is prepared against an in-memory database that contains only the visible
 //     tables. A table the query must not see does not need forbidding: it does
 //     not exist there, and prepare fails. This is stronger than an AST allowlist,
 //     because it also covers columns and ambiguities.
-//   - Verb, functions and LIMIT: the AST says so, with a pure-Go parser of
-//     SQLite's grammar. It was measured that the engine is not enough for this:
-//     over a connection with query_only, `prepare` of a DELETE passes, and the
-//     rejection only arrives at execution time.
+//   - Verb and functions: the AST says so when the parser accepts the statement.
+//     It was measured that the engine is not enough for this: over a connection
+//     with query_only, `prepare` of a DELETE passes, and the rejection only
+//     arrives at execution time. A leading verb check refuses writes before
+//     prepare so the contract message stays "Only SELECT statements are allowed".
+//   - LIMIT: imposed on the original text with the same numeric-literal
+//     guarantee as before, including both SQLite forms and a trailing comment.
 //
 // The verdict messages are contract surface and the acceptance suite quotes
 // them literally.
@@ -204,34 +211,51 @@ func (g *Gate) Close() error { return g.db.Close() }
 // LIMIT that was missing.
 func (g *Gate) Validate(stmt string) (string, error) {
 	stmt = strings.TrimSpace(stmt)
-	stmts, err := rqlite.NewParser(strings.NewReader(stmt)).ParseStatements()
-	if err != nil {
-		return "", fmt.Errorf("SQL parse error: %w", err)
-	}
-	if len(stmts) == 0 {
-		// Nothing but blanks: the parser reads no statement and raises nothing.
+	if stmt == "" {
 		return "", fmt.Errorf("Empty SQL")
 	}
-	if len(stmts) > 1 {
-		return "", fmt.Errorf("Only one statement is allowed, and this one has %d",
-			len(stmts))
+	if n := statementCount(stmt); n > 1 {
+		return "", fmt.Errorf("Only one statement is allowed, and this one has %d", n)
 	}
-	sel, isSelect := stmts[0].(*rqlite.SelectStatement)
-	if !isSelect {
+	if verb := leadingVerb(stmt); verb != "SELECT" && verb != "WITH" {
+		if verb == "" {
+			return "", fmt.Errorf("Empty SQL")
+		}
 		return "", fmt.Errorf("Only SELECT statements are allowed")
 	}
-	if err := walkTheTree(sel); err != nil {
-		return "", err
-	}
 
-	clean, err := withLimit(stmt, sel)
+	clean, err := enforceLimit(stmt)
 	if err != nil {
 		return "", err
 	}
+	sel, parseErr := parseSelectErr(clean)
+	if parseErr == nil && sel != nil {
+		if err := walkTheTree(sel); err != nil {
+			return "", err
+		}
+	}
 	if err := g.prepareWithEngine(clean); err != nil {
+		if parseErr != nil {
+			return "", fmt.Errorf("SQL parse error: %w", parseErr)
+		}
 		return "", err
 	}
 	return clean, nil
+}
+
+func parseSelectErr(stmt string) (*rqlite.SelectStatement, error) {
+	stmts, err := rqlite.NewParser(strings.NewReader(stmt)).ParseStatements()
+	if err != nil {
+		return nil, err
+	}
+	if len(stmts) != 1 {
+		return nil, fmt.Errorf("Only one statement is allowed, and this one has %d", len(stmts))
+	}
+	sel, ok := stmts[0].(*rqlite.SelectStatement)
+	if !ok {
+		return nil, fmt.Errorf("Only SELECT statements are allowed")
+	}
+	return sel, nil
 }
 
 // IsRowCount reports whether the statement's sole result is COUNT(*). It uses
@@ -351,43 +375,39 @@ func hasAnySuffix(name string, suffixes []string) bool {
 	return slices.ContainsFunc(suffixes, func(s string) bool { return strings.HasSuffix(name, s) })
 }
 
-// withLimit imposes the cap, which is a guarantee and not a suggestion: when
-// there is no LIMIT the maximum is added, and when the one there is exceeds it,
-// it is clamped.
-//
-// The work happens on the original text and not on a re-serialization of the AST
-// for two reasons. The first is that the validated statement is returned to the
-// caller and goes to the log, so it has to keep looking like the one that was
-// asked for. The second is security: the parser quotes every identifier when it
-// re-serializes, and SQLite treats a double-quoted string that matches no column
-// as a text literal, so re-serializing would turn "column that does not exist"
-// into "constant string" and lose the engine's error.
-func withLimit(stmt string, sel *rqlite.SelectStatement) (string, error) {
-	if sel.LimitExpr == nil {
+// enforceLimit imposes the cap on the original text. When there is no
+// top-level LIMIT the maximum is added; when the one there is exceeds it, the
+// count is clamped. Subquery limits stay untouched because they sit inside
+// parentheses. The work is textual so a grammar-subset parser cannot be what
+// decides whether the statement the engine prepared may run.
+func enforceLimit(stmt string) (string, error) {
+	limitAt, ok := lastTopLevelWord(stmt, "limit")
+	if !ok {
 		return appendLimit(stmt), nil
 	}
-	target := sel.LimitExpr
-	if sel.OffsetComma.IsValid() {
-		target = sel.OffsetExpr
-	}
-	number, isNumber := target.(*rqlite.NumberLit)
-	if !isNumber {
+	i := skipSpaceAndComments(stmt, limitAt.end)
+	_, start1, end1, ok := readNumberLiteral(stmt, i)
+	if !ok {
 		return "", fmt.Errorf("LIMIT must be a numeric literal")
 	}
-	requested, err := strconv.Atoi(number.Value)
+	i = skipSpaceAndComments(stmt, end1)
+	countStart, countEnd := start1, end1
+	if i < len(stmt) && stmt[i] == ',' {
+		i = skipSpaceAndComments(stmt, i+1)
+		_, start2, end2, ok := readNumberLiteral(stmt, i)
+		if !ok {
+			return "", fmt.Errorf("LIMIT must be a numeric literal")
+		}
+		countStart, countEnd = start2, end2
+	}
+	requested, err := strconv.Atoi(stmt[countStart:countEnd])
 	if err != nil {
 		return "", fmt.Errorf("LIMIT must be a numeric literal")
 	}
 	if requested >= 0 && requested <= MaxLimit {
 		return stmt, nil
 	}
-
-	start := number.ValuePos.Offset
-	end := start + len(number.Value)
-	if start < 0 || end > len(stmt) || stmt[start:end] != number.Value {
-		return "", fmt.Errorf("LIMIT must be a numeric literal")
-	}
-	return stmt[:start] + strconv.Itoa(MaxLimit) + stmt[end:], nil
+	return stmt[:countStart] + strconv.Itoa(MaxLimit) + stmt[countEnd:], nil
 }
 
 func appendLimit(stmt string) string {
@@ -395,6 +415,162 @@ func appendLimit(stmt string) string {
 	code := strings.TrimRight(stmt[:end], "; \t\r\n")
 	tail := stmt[end:]
 	return code + fmt.Sprintf(" LIMIT %d", MaxLimit) + tail
+}
+
+type wordSpan struct{ start, end int }
+
+func leadingVerb(stmt string) string {
+	i := skipSpaceAndComments(stmt, 0)
+	start, end, ok := readWord(stmt, i)
+	if !ok {
+		return ""
+	}
+	return strings.ToUpper(stmt[start:end])
+}
+
+func statementCount(stmt string) int {
+	count, hasCode := 0, false
+	for i := 0; i < len(stmt); {
+		next := skipSpaceAndComments(stmt, i)
+		if next > i {
+			i = next
+			continue
+		}
+		if i >= len(stmt) {
+			break
+		}
+		switch stmt[i] {
+		case '\'', '"', '`':
+			hasCode = true
+			i = scanQuoted(stmt, i, stmt[i])
+		case ';':
+			if hasCode {
+				count++
+				hasCode = false
+			}
+			i++
+		default:
+			hasCode = true
+			i++
+		}
+	}
+	if hasCode {
+		count++
+	}
+	return count
+}
+
+func lastTopLevelWord(stmt, want string) (wordSpan, bool) {
+	var found wordSpan
+	ok := false
+	depth := 0
+	for i := 0; i < len(stmt); {
+		next := skipSpaceAndComments(stmt, i)
+		if next > i {
+			i = next
+			continue
+		}
+		if i >= len(stmt) {
+			break
+		}
+		switch stmt[i] {
+		case '(':
+			depth++
+			i++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+			i++
+		case '\'', '"', '`':
+			i = scanQuoted(stmt, i, stmt[i])
+		default:
+			if start, end, okWord := readWord(stmt, i); okWord {
+				if depth == 0 && strings.EqualFold(stmt[start:end], want) {
+					found, ok = wordSpan{start: start, end: end}, true
+				}
+				i = end
+				continue
+			}
+			i++
+		}
+	}
+	return found, ok
+}
+
+func readWord(stmt string, i int) (start, end int, ok bool) {
+	if i >= len(stmt) {
+		return 0, i, false
+	}
+	letter := stmt[i]
+	if letter != '_' && (letter < 'A' || letter > 'Z') && (letter < 'a' || letter > 'z') {
+		return 0, i, false
+	}
+	start = i
+	for i < len(stmt) {
+		letter = stmt[i]
+		if letter != '_' && (letter < 'A' || letter > 'Z') && (letter < 'a' || letter > 'z') &&
+			(letter < '0' || letter > '9') {
+			break
+		}
+		i++
+	}
+	return start, i, true
+}
+
+func readNumberLiteral(stmt string, i int) (value string, start, end int, ok bool) {
+	if i >= len(stmt) {
+		return "", i, i, false
+	}
+	start = i
+	if stmt[i] == '+' || stmt[i] == '-' {
+		i++
+	}
+	if i >= len(stmt) || stmt[i] < '0' || stmt[i] > '9' {
+		return "", start, i, false
+	}
+	for i < len(stmt) && stmt[i] >= '0' && stmt[i] <= '9' {
+		i++
+	}
+	return stmt[start:i], start, i, true
+}
+
+func skipSpaceAndComments(stmt string, i int) int {
+	for i < len(stmt) {
+		switch {
+		case strings.ContainsRune(" \t\r\n", rune(stmt[i])):
+			i++
+		case stmt[i] == '-' && i+1 < len(stmt) && stmt[i+1] == '-':
+			if end := strings.IndexByte(stmt[i:], '\n'); end >= 0 {
+				i += end + 1
+			} else {
+				return len(stmt)
+			}
+		case stmt[i] == '/' && i+1 < len(stmt) && stmt[i+1] == '*':
+			if end := strings.Index(stmt[i+2:], "*/"); end >= 0 {
+				i += end + 4
+			} else {
+				return len(stmt)
+			}
+		default:
+			return i
+		}
+	}
+	return i
+}
+
+func scanQuoted(stmt string, i int, quote byte) int {
+	for i++; i < len(stmt); i++ {
+		if stmt[i] != quote {
+			continue
+		}
+		if i+1 < len(stmt) && stmt[i+1] == quote {
+			i++
+			continue
+		}
+		return i + 1
+	}
+	return len(stmt)
 }
 
 // trailingSQLCodeEnd finds the final byte of executable SQL while ignoring

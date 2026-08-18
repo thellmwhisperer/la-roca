@@ -1,6 +1,8 @@
 package sqlgate_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -247,6 +249,38 @@ func TestTheGateRejectsWhatIsNotEvenAQuery(t *testing.T) {
 		if _, err := gate(t).Validate(benchCase); err == nil {
 			t.Errorf("Validate(%q) passed", benchCase)
 		}
+	}
+}
+
+// The five live EOF shapes are complete, parenthesis-balanced UNIONs. Prepare
+// against the schema-only engine is the correctness verdict; a grammar-subset
+// parse must not report EOF mid-input. Fixture 01 uses only core tables and
+// must pass the whole gate. The others attach plugin names the default
+// validation schema does not have, so they may fail as no such table, never
+// as a mid-statement EOF.
+func TestTheGatePreparesTheLiveUnionShapes(t *testing.T) {
+	entries, err := os.ReadDir(filepath.Join("..", "sqlrepair", "testdata", "union_coalesce"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 5 {
+		t.Fatalf("fixture count = %d, want 5 live shapes", len(entries))
+	}
+	g := gate(t)
+	for _, entry := range entries {
+		t.Run(entry.Name(), func(t *testing.T) {
+			raw, err := os.ReadFile(filepath.Join("..", "sqlrepair", "testdata", "union_coalesce", entry.Name()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = g.Validate(strings.TrimSpace(string(raw)))
+			if err != nil && strings.Contains(err.Error(), "EOF") {
+				t.Fatalf("complete UNION died as a parse EOF: %v", err)
+			}
+			if entry.Name() == "01_fts_four_branch.sql" && err != nil {
+				t.Fatalf("core-only live shape must pass the gate: %v", err)
+			}
+		})
 	}
 }
 

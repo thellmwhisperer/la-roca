@@ -11,10 +11,6 @@ import (
 	"strings"
 )
 
-// DefaultMaxTokens is the budget for one answer. The answer is a SELECT, not an
-// essay.
-const DefaultMaxTokens = 500
-
 // errorBodyBudget is how much of a failed response's body travels into the
 // error. Enough to say what the provider complained about, not enough to dump
 // an HTML page into the operator's terminal.
@@ -67,13 +63,6 @@ func excerpt(body io.Reader) string {
 func drain(res *http.Response) {
 	io.Copy(io.Discard, io.LimitReader(res.Body, 1<<16))
 	res.Body.Close()
-}
-
-func maxTokens(req ChatRequest) int {
-	if req.MaxTokens > 0 {
-		return req.MaxTokens
-	}
-	return DefaultMaxTokens
 }
 
 // normalizeBaseURL accepts what an operator actually writes: a full URL, a

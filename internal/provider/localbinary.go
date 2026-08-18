@@ -213,6 +213,11 @@ func (b *LocalBinary) Chat(ctx context.Context, req ChatRequest) (ChatResponse, 
 		return ChatResponse{}, fmt.Errorf("%s command failed: %s", b.name, truncateCommandError(detail))
 	}
 
+	// The CLI route does not clip a long SELECT. command_presets pass no
+	// max-tokens flag (Codex exec exposes none). stdout is kept whole unless
+	// the 1MiB runaway guard errors. Live EOF failures on complete stored
+	// UNION SQL were sqlrepair.deloop cutting a repeated COALESCE line, not
+	// this extraction.
 	content := strings.TrimSpace(stdout.String())
 	if b.responseFormat == binaryResponseJSON {
 		var envelope struct {
