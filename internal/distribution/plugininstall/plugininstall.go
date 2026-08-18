@@ -447,7 +447,7 @@ func Inspect(source, directory string) (Candidate, error) {
 		}
 	case ExecutablePackage:
 		if executable == "" {
-			return Candidate{}, fmt.Errorf("executable plugin %s has no roca-%s payload", metadata.Name, metadata.Name)
+			return Candidate{}, fmt.Errorf("executable plugin %s has no %s payload", metadata.Name, ExecutableName(metadata.Name))
 		}
 		if metadata.StateDir != "" && !safeFile(metadata.StateDir) {
 			return Candidate{}, fmt.Errorf("%s has an invalid state_directory %q", PackageFilename, metadata.StateDir)
@@ -1293,8 +1293,18 @@ func openFileChecksum(file *os.File, path string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
+// ExecutableName is the payload filename for a plugin. A name that already
+// carries the family prefix is the executable itself, so a family-prefixed
+// plugin is not double-prefixed.
+func ExecutableName(name string) string {
+	if strings.HasPrefix(name, "roca-") {
+		return name
+	}
+	return "roca-" + name
+}
+
 func executableNames(name string) []string {
-	base := "roca-" + name
+	base := ExecutableName(name)
 	if runtime.GOOS == "windows" {
 		return []string{base + ".exe", base + ".com", base + ".bat", base + ".cmd"}
 	}

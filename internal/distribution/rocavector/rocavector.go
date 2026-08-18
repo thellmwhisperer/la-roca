@@ -16,7 +16,8 @@ import (
 )
 
 const (
-	Name          = "vector"
+	Name          = "roca-vector"
+	LegacyName    = "vector"
 	StateDir      = "state"
 	BundledSource = plugin.BundledSource
 	trailerSize   = 16 + 8 + sha256.Size
@@ -24,7 +25,7 @@ const (
 
 var (
 	trailerMagic = [16]byte{'R', 'O', 'C', 'A', '_', 'V', 'E', 'C', 'T', 'O', 'R', '_', 'V', '1'}
-	manifest     = []byte(`{"schema":1,"name":"vector","version":"dev","kind":"executable","state_directory":"state"}`)
+	manifest     = []byte(`{"schema":1,"name":"roca-vector","version":"dev","kind":"executable","state_directory":"state"}`)
 )
 
 func Ensure(root, binDir, version string) (plugininstall.Result, error) {
@@ -42,8 +43,8 @@ func BundleSpec() bundledplugin.Spec {
 
 func bundleSpec(payload func() ([]byte, error)) bundledplugin.Spec {
 	return bundledplugin.Spec{
-		Name: Name, Executable: executableFilename(), Source: BundledSource,
-		Manifest: manifest, Payload: payload,
+		Name: Name, LegacyName: LegacyName, Executable: executableFilename(),
+		Source: BundledSource, Manifest: manifest, Payload: payload,
 	}
 }
 

@@ -22,6 +22,7 @@ import (
 
 type Spec struct {
 	Name             string
+	LegacyName       string
 	DatabaseFilename string
 	Executable       string
 	Source           string
@@ -105,6 +106,10 @@ func prepare(root, binDir, version string, spec Spec, validateUnchanged bool) (p
 	if err := spec.valid(); err != nil {
 		return preparedBundle{}, err
 	}
+	migrated, err := migrateLegacyName(root, spec)
+	if err != nil {
+		return preparedBundle{}, err
+	}
 	if root == "" || binDir == "" {
 		return preparedBundle{}, fmt.Errorf("plugin root and executable directory are required")
 	}
@@ -150,9 +155,9 @@ func prepare(root, binDir, version string, spec Spec, validateUnchanged bool) (p
 	case !installedFound:
 		bundle.action = bundleInstall
 		err = manager.PreflightInstall(candidate)
-	case installed.Version == version && spec.Executable == "":
+	case installed.Version == version && spec.Executable == "" && !migrated:
 		bundle.action = bundleUnchanged
-	case installed.Version == version:
+	case installed.Version == version && !migrated:
 		bundle.action = bundleRepairExecutable
 		err = manager.PreflightExecutableRepair(candidate)
 	case spec.Executable != "":
@@ -260,10 +265,82 @@ func Manifest(raw []byte, version string) (plugin.Manifest, error) {
 	return declaration, nil
 }
 
+func migrateLegacyName(root string, spec Spec) (bool, error) {
+	if spec.LegacyName == "" || spec.LegacyName == spec.Name {
+		return false, nil
+	}
+	if root == "" {
+		return false, nil
+	}
+	legacy := filepath.Join(root, spec.LegacyName)
+	target := filepath.Join(root, spec.Name)
+	legacyInfo, legacyErr := os.Lstat(legacy)
+	_, targetErr := os.Lstat(target)
+	legacyExists := legacyErr == nil
+	targetExists := targetErr == nil
+	if legacyErr != nil && !os.IsNotExist(legacyErr) {
+		return false, legacyErr
+	}
+	if targetErr != nil && !os.IsNotExist(targetErr) {
+		return false, targetErr
+	}
+	if !legacyExists {
+		return false, nil
+	}
+	if targetExists {
+		return false, fmt.Errorf(
+			"the bundled %s plugin cannot migrate from %s because both %s and %s exist; remove or rename one directory and retry",
+			spec.Name, spec.LegacyName, legacy, target)
+	}
+	if !legacyInfo.IsDir() {
+		return false, fmt.Errorf("the bundled %s plugin cannot replace an unmanaged directory at %s", spec.Name, legacy)
+	}
+	manifest, err := plugininstall.ReadManifest(legacy)
+	if err != nil {
+		return false, fmt.Errorf("the bundled %s plugin cannot replace an unmanaged directory at %s", spec.Name, legacy)
+	}
+	if manifest.Source != spec.Source {
+		return false, fmt.Errorf("the bundled %s plugin collides with an installation from %q", spec.Name, manifest.Source)
+	}
+	if manifest.Name != spec.LegacyName && manifest.Name != spec.Name {
+		return false, fmt.Errorf("the bundled %s plugin collides with an installation from %q", spec.Name, manifest.Source)
+	}
+	if manifest.Name != spec.Name {
+		if err := rewriteInstalledName(legacy, spec.Name); err != nil {
+			return false, fmt.Errorf("rewrite bundled %s install name: %w", spec.Name, err)
+		}
+	}
+	if err := os.Rename(legacy, target); err != nil {
+		return false, fmt.Errorf("migrate bundled %s from %s: %w", spec.Name, spec.LegacyName, err)
+	}
+	return true, nil
+}
+
+func rewriteInstalledName(directory, name string) error {
+	path := filepath.Join(directory, plugininstall.ManifestFilename)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var manifest map[string]any
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		return err
+	}
+	manifest["name"] = name
+	encoded, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(encoded, '\n'), 0o600)
+}
+
 func (spec Spec) valid() error {
 	if spec.Name == "" || spec.Source == "" ||
 		(len(spec.Semantic) == 0) == (len(spec.Manifest) == 0) {
 		return fmt.Errorf("a bundled plugin needs a name, source, and one manifest format")
+	}
+	if spec.LegacyName != "" && (spec.LegacyName == spec.Name || filepath.Base(spec.LegacyName) != spec.LegacyName) {
+		return fmt.Errorf("bundled plugin %s has an invalid legacy name %q", spec.Name, spec.LegacyName)
 	}
 	data := spec.DatabaseFilename != "" && spec.ApplySchema != nil &&
 		spec.Executable == "" && spec.Payload == nil

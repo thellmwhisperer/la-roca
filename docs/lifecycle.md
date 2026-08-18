@@ -18,7 +18,7 @@ run.
 
 The installed core materializes `roca-vector` in the same directory, including
 when `--prefix` or `ROCA_PREFIX` selects a custom one. Its manifest and dormant
-`state/` directory live under `~/.roca/plugins/vector/`; dispatch remains hidden
+`state/` directory live under `~/.roca/plugins/roca-vector/`; dispatch remains hidden
 unless the existing `features.vector` switch is true. See
 [Local vector search](vector.md) for the operator path from that switch to a
 first query. Installation refuses to

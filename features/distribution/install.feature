@@ -17,7 +17,7 @@ Feature: The full installation cycle
     And the bundled resident plugin "roca-ops" is installed without an executable
     And the bundled resident plugin "roca-corpus" is installed without an executable
     And the bundled journey plugin "roca-cron" is installed without an executable
-    And the bundled executable plugin "vector" is installed with dormant state
+    And the bundled executable plugin "roca-vector" is installed with dormant state
     And the core file is a static binary with no third-party dynamic dependencies
     And there is no Python virtual environment in the HOME
     And there is no embedded interpreter in the HOME

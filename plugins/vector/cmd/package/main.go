@@ -42,7 +42,7 @@ func packagePlugin(binary, out, version, targetOS string) error {
 		return err
 	}
 	metadata, err := json.MarshalIndent(map[string]any{
-		"schema": 1, "name": "vector", "version": version,
+		"schema": 1, "name": "roca-vector", "version": version,
 		"kind": "executable", "state_directory": "state",
 	}, "", "  ")
 	if err != nil {

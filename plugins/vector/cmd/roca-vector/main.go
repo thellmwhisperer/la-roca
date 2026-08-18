@@ -379,7 +379,7 @@ func (env *environment) resolveStateDir() (string, error) {
 	if err != nil || home == "" {
 		return "", fmt.Errorf("find HOME for the vector plugin state directory")
 	}
-	return filepath.Join(home, ".roca", "plugins", "vector", "state"), nil
+	return filepath.Join(home, ".roca", "plugins", "roca-vector", "state"), nil
 }
 
 func (env *environment) calmGate() vector.CalmGate {

@@ -23,6 +23,21 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+func TestExecutableNameKeepsAFamilyPrefix(t *testing.T) {
+	for _, test := range []struct {
+		name, want string
+	}{
+		{name: "vector", want: "roca-vector"},
+		{name: "roca-vector", want: "roca-vector"},
+		{name: "roca-ops", want: "roca-ops"},
+		{name: "synthetic", want: "roca-synthetic"},
+	} {
+		if got := plugininstall.ExecutableName(test.name); got != test.want {
+			t.Fatalf("ExecutableName(%q) = %q, want %q", test.name, got, test.want)
+		}
+	}
+}
+
 func TestInspectVerifiesTheSourceAndClassifiesItsRisk(t *testing.T) {
 	for _, executable := range []bool{false, true} {
 		t.Run(fmt.Sprintf("executable=%t", executable), func(t *testing.T) {
@@ -434,7 +449,7 @@ func TestResolveAcceptsPathsAndNormalizesRepositoryNames(t *testing.T) {
 }
 
 func TestResolveAcceptsVerifiedReleaseArchivesFromDiskAndHTTP(t *testing.T) {
-	source := writeExecutablePackage(t, "vector", "v1.2.3", "state")
+	source := writeExecutablePackage(t, "roca-vector", "v1.2.3", "state")
 	archive := packageArchive(t, source)
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		_, _ = response.Write(archive)
@@ -455,7 +470,7 @@ func TestResolveAcceptsVerifiedReleaseArchivesFromDiskAndHTTP(t *testing.T) {
 			cleanup()
 			t.Fatal(inspectErr)
 		}
-		if candidate.Name != "vector" || candidate.Version != "v1.2.3" ||
+		if candidate.Name != "roca-vector" || candidate.Version != "v1.2.3" ||
 			candidate.Source != resolved.Reference {
 			cleanup()
 			t.Fatalf("candidate from %s = %+v", reference, candidate)
@@ -473,7 +488,7 @@ func TestResolveAcceptsVerifiedReleaseArchivesFromDiskAndHTTP(t *testing.T) {
 			t.Fatalf("installed result from %s = %+v", reference, result)
 		}
 		if reference == local {
-			nextSource := writeExecutablePackage(t, "vector", "v1.2.4", "state")
+			nextSource := writeExecutablePackage(t, "roca-vector", "v1.2.4", "state")
 			if err := os.WriteFile(local, packageArchive(t, nextSource), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -489,7 +504,7 @@ func TestResolveAcceptsVerifiedReleaseArchivesFromDiskAndHTTP(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			manifest, err := plugininstall.ReadManifest(filepath.Join(manager.PluginRoot, "vector"))
+			manifest, err := plugininstall.ReadManifest(filepath.Join(manager.PluginRoot, "roca-vector"))
 			if err != nil || manifest.Version != "v1.2.4" {
 				t.Fatalf("updated manifest = %+v, err=%v", manifest, err)
 			}
@@ -565,7 +580,7 @@ func writePackageAt(t *testing.T, directory, name, version string, custody, exec
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	executablePath := filepath.Join(directory, "roca-"+name)
+	executablePath := filepath.Join(directory, plugininstall.ExecutableName(name))
 	if executable {
 		writeFixtureFile(t, executablePath, []byte("#!/bin/sh\nprintf 'synthetic plugin\\n'\n"), 0o700)
 	} else if err := os.Remove(executablePath); err != nil && !os.IsNotExist(err) {
@@ -574,7 +589,7 @@ func writePackageAt(t *testing.T, directory, name, version string, custody, exec
 
 	files := []string{"plugin.json", "semantic.yaml", "plugin.db"}
 	if executable {
-		files = append(files, "roca-"+name)
+		files = append(files, plugininstall.ExecutableName(name))
 	}
 	writeChecksums(t, directory, files)
 }
@@ -650,7 +665,7 @@ func writeExecutablePackageAt(t *testing.T, directory, name, version, stateDir s
 		"schema": 1, "name": name, "version": version,
 		"kind": "executable", "state_directory": stateDir,
 	})
-	executable := "roca-" + name
+	executable := plugininstall.ExecutableName(name)
 	writeFixtureFile(t, filepath.Join(directory, executable), []byte("#!/bin/sh\nexit 0\n"), 0o700)
 	writeChecksums(t, directory, []string{"plugin.json", executable})
 }

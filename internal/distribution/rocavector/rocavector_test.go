@@ -8,8 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocavector"
+	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 )
 
 func TestPayloadEnvelopeRoundTripsAndReplacesTheExecutable(t *testing.T) {
@@ -72,6 +74,103 @@ func TestBundledVectorRefreshAndCollisionPolicy(t *testing.T) {
 	}
 }
 
+func TestBundledVectorMigratesLegacyInstall(t *testing.T) {
+	for _, testCase := range []struct {
+		name, version, payload, wantError string
+		plantLegacy, plantCurrent         bool
+		external, unmanaged               bool
+		wantLegacy, wantCurrent           bool
+		preserveState                     bool
+		twice                             bool
+	}{
+		{name: "upgrade with rename preserves state", version: "v2", payload: "vector two",
+			plantLegacy: true, preserveState: true, wantCurrent: true},
+		{name: "second run is a no-op", version: "v2", payload: "vector two",
+			plantLegacy: true, preserveState: true, twice: true, wantCurrent: true},
+		{name: "both directories refuse", version: "v2", payload: "vector two",
+			plantLegacy: true, plantCurrent: true, wantError: "both",
+			wantLegacy: true, wantCurrent: true},
+		{name: "external legacy is not migrated", version: "v2", payload: "vector two",
+			plantLegacy: true, external: true, wantError: "collides with an installation from",
+			wantLegacy: true},
+		{name: "unmanaged leftover is not migrated", version: "v2", payload: "vector two",
+			plantLegacy: true, unmanaged: true, wantError: "cannot replace an unmanaged directory",
+			wantLegacy: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
+			if testCase.plantLegacy && !testCase.unmanaged {
+				plantLegacyVector(t, root, bin, "v1", []byte("vector one"))
+			} else if testCase.unmanaged {
+				if err := os.MkdirAll(filepath.Join(root, rocavector.LegacyName, "noise"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if testCase.plantCurrent {
+				if err := os.MkdirAll(filepath.Join(root, rocavector.Name), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			legacyState := filepath.Join(root, rocavector.LegacyName, rocavector.StateDir, "index.db")
+			currentState := filepath.Join(root, rocavector.Name, rocavector.StateDir, "index.db")
+			var before os.FileInfo
+			if testCase.preserveState {
+				if err := os.WriteFile(legacyState, []byte("preserved index"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				var err error
+				before, err = os.Lstat(legacyState)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if testCase.external {
+				rewriteSource(t, filepath.Join(root, rocavector.LegacyName), "/synthetic/vector-package")
+			}
+
+			_, err := rocavector.EnsureWithPayload(root, bin, testCase.version, []byte(testCase.payload))
+			if testCase.twice && err == nil {
+				_, err = rocavector.EnsureWithPayload(root, bin, testCase.version, []byte(testCase.payload))
+			}
+			if testCase.wantError == "" && err != nil {
+				t.Fatal(err)
+			}
+			if testCase.wantError != "" && (err == nil || !strings.Contains(err.Error(), testCase.wantError)) {
+				t.Fatalf("ensure error = %v, want %q", err, testCase.wantError)
+			}
+			assertDirExists(t, filepath.Join(root, rocavector.LegacyName), testCase.wantLegacy)
+			assertDirExists(t, filepath.Join(root, rocavector.Name), testCase.wantCurrent)
+			if testCase.preserveState && testCase.wantError == "" {
+				after, statErr := os.Lstat(currentState)
+				if statErr != nil {
+					t.Fatal(statErr)
+				}
+				if !os.SameFile(before, after) || before.Size() != after.Size() {
+					t.Fatalf("state identity changed: same=%v size %d -> %d",
+						os.SameFile(before, after), before.Size(), after.Size())
+				}
+				assertFileContents(t, "state", currentState, "preserved index")
+			}
+			if testCase.wantCurrent && testCase.wantError == "" {
+				entries, readErr := os.ReadDir(bin)
+				if readErr != nil {
+					t.Fatal(readErr)
+				}
+				family := "roca-"
+				for _, entry := range entries {
+					if strings.HasPrefix(entry.Name(), family+family) {
+						t.Fatalf("double-prefixed executable appeared: %s", entry.Name())
+					}
+				}
+				manifest, readErr := plugininstall.ReadManifest(filepath.Join(root, rocavector.Name))
+				if readErr != nil || manifest.Name != rocavector.Name {
+					t.Fatalf("migrated manifest = %+v, err=%v", manifest, readErr)
+				}
+			}
+		})
+	}
+}
+
 func TestBundledVectorRepairsOnlyAMissingSameVersionExecutable(t *testing.T) {
 	for _, testCase := range []struct {
 		name, replacement, wantError, wantBody string
@@ -110,10 +209,41 @@ func installVectorFixture(t *testing.T) vectorFixture {
 	if runtime.GOOS == "windows" {
 		executableName += ".exe"
 	}
-	return vectorFixture{
+	fixture := vectorFixture{
 		root: root, bin: bin,
 		executable: filepath.Join(bin, executableName),
 		state:      filepath.Join(root, rocavector.Name, rocavector.StateDir, "index.db"),
+	}
+	if _, err := os.Stat(filepath.Join(root, rocavector.LegacyName)); !os.IsNotExist(err) {
+		t.Fatalf("fresh install left a leftover %s directory: %v", rocavector.LegacyName, err)
+	}
+	return fixture
+}
+
+func plantLegacyVector(t *testing.T, root, bin, version string, payload []byte) {
+	t.Helper()
+	spec := bundledplugin.Spec{
+		Name: rocavector.LegacyName, Executable: plugininstall.ExecutableName(rocavector.LegacyName),
+		Source:   plugin.BundledSource,
+		Manifest: []byte(`{"schema":1,"name":"vector","version":"dev","kind":"executable","state_directory":"state"}`),
+		Payload:  func() ([]byte, error) { return payload, nil },
+	}
+	if runtime.GOOS == "windows" {
+		spec.Executable += ".exe"
+	}
+	if _, err := bundledplugin.Ensure(root, bin, version, spec); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertDirExists(t *testing.T, path string, want bool) {
+	t.Helper()
+	_, err := os.Lstat(path)
+	if want && err != nil {
+		t.Fatalf("expected %s to exist: %v", path, err)
+	}
+	if !want && !os.IsNotExist(err) {
+		t.Fatalf("expected %s to be absent: %v", path, err)
 	}
 }
 
