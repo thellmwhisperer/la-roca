@@ -47,7 +47,6 @@ type cursorStoreMeta struct {
 	Mode              string `json:"mode"`
 	ApprovalMode      string `json:"approvalMode"`
 	CreatedAt         int64  `json:"createdAt"`
-	LastUsedModel     string `json:"lastUsedModel"`
 	BlobEncryptionKey string `json:"blobEncryptionKey"`
 	SubagentInfo      *struct {
 		ParentAgentID string `json:"parentAgentId"`
@@ -88,12 +87,14 @@ func cursorStoreRecords(db *sql.DB, meta FileMeta) (Records, error) {
 	if err != nil {
 		return Records{}, err
 	}
-	storeMeta, err := cursorStoreSessionMeta(db)
+	storeMeta, metaDiscards, err := cursorStoreSessionMeta(db)
 	if err != nil {
 		return Records{}, err
 	}
-	sidecar := cursorStoreReadSidecar(meta.Sidecar)
-	ordered, discards := cursorStoreOrderedMessages(blobs, storeMeta.LatestRootBlobID)
+	sidecar, sidecarDiscards := cursorStoreReadSidecar(meta.Sidecar)
+	ordered, messageDiscards := cursorStoreOrderedMessages(blobs, storeMeta.LatestRootBlobID)
+	discards := append(metaDiscards, sidecarDiscards...)
+	discards = append(discards, messageDiscards...)
 	source := firstNonEmpty(meta.SourceAgent, "cursor")
 	sessionID := firstNonEmpty(storeMeta.AgentID, cursorStorePathSession(meta.Path), meta.SessionID)
 	session := Session{
@@ -125,10 +126,6 @@ func cursorStoreRecords(db *sql.DB, meta FileMeta) (Records, error) {
 			return
 		}
 		if current.hasAnswer() || strings.TrimSpace(current.human) != "" {
-			if current.model == "" && storeMeta.LastUsedModel != "" && current.hasAnswer() {
-				current.model = storeMeta.LastUsedModel
-				current.signal++
-			}
 			if current.hasAnswer() {
 				session.Exchanges = append(session.Exchanges, current.exchange())
 			} else {
@@ -229,25 +226,34 @@ func cursorStoreBlobs(db *sql.DB) (map[string][]byte, error) {
 	return blobs, rows.Err()
 }
 
-func cursorStoreSessionMeta(db *sql.DB) (cursorStoreMeta, error) {
+func cursorStoreSessionMeta(db *sql.DB) (cursorStoreMeta, []Discard, error) {
 	var raw string
 	err := db.QueryRow(`SELECT value FROM meta WHERE key = '0'`).Scan(&raw)
 	if err == sql.ErrNoRows {
-		return cursorStoreMeta{}, nil
+		return cursorStoreMeta{}, nil, nil
 	}
 	if err != nil {
 		if cursorTableMissing(err) {
-			return cursorStoreMeta{}, nil
+			return cursorStoreMeta{}, nil, nil
 		}
-		return cursorStoreMeta{}, fmt.Errorf("read Cursor store session metadata: %w", err)
+		return cursorStoreMeta{}, nil, fmt.Errorf("read Cursor store session metadata: %w", err)
 	}
+	meta, discards := cursorStoreDecodeSessionMeta(raw)
+	return meta, discards, nil
+}
+
+func cursorStoreDecodeSessionMeta(raw string) (cursorStoreMeta, []Discard) {
 	decoded, err := hex.DecodeString(raw)
 	if err != nil {
-		return cursorStoreMeta{}, nil
+		category := "invalid Cursor store metadata hex"
+		return cursorStoreMeta{}, []Discard{{Record: 1, Reason: category + ": " + err.Error(),
+			Category: category}}
 	}
 	var meta cursorStoreMeta
 	if err := json.Unmarshal(decoded, &meta); err != nil {
-		return cursorStoreMeta{}, nil
+		category := "invalid Cursor store metadata JSON"
+		return cursorStoreMeta{}, []Discard{{Record: 1, Reason: category + ": " + err.Error(),
+			Category: category}}
 	}
 	return meta, nil
 }
@@ -256,13 +262,17 @@ func cursorTableMissing(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "no such table")
 }
 
-func cursorStoreReadSidecar(raw []byte) cursorStoreSidecar {
+func cursorStoreReadSidecar(raw []byte) (cursorStoreSidecar, []Discard) {
 	var sidecar cursorStoreSidecar
 	if len(raw) == 0 {
-		return sidecar
+		return sidecar, nil
 	}
-	_ = json.Unmarshal(raw, &sidecar)
-	return sidecar
+	if err := json.Unmarshal(raw, &sidecar); err != nil {
+		category := "invalid Cursor sidecar JSON"
+		return cursorStoreSidecar{}, []Discard{{Record: 1, Reason: category + ": " + err.Error(),
+			Category: category}}
+	}
+	return sidecar, nil
 }
 
 func cursorStorePathSession(path string) string {
@@ -341,15 +351,19 @@ func cursorStoreOrderedMessages(blobs map[string][]byte, latestRoot string) ([]c
 				continue
 			}
 			seen[id] = true
+			record++
 			raw, ok := blobs[id]
 			if !ok {
+				category := "Cursor Merkle child blob is missing"
+				discards = append(discards, Discard{Record: record, Reason: category, Category: category})
 				continue
 			}
 			msg, ok := cursorStoreJSONMessage(raw)
 			if !ok {
+				category := "Cursor Merkle child blob is not a valid message"
+				discards = append(discards, Discard{Record: record, Reason: category, Category: category})
 				continue
 			}
-			record++
 			items = append(items, cursorStoreItem{id: id, raw: raw, record: record, msg: msg})
 		}
 	}
@@ -419,12 +433,16 @@ func cursorStoreProtoFields(data []byte) ([]cursorStoreProtoField, bool) {
 			i += 8
 		case 2:
 			length, size, ok := cursorStoreVarint(data[i:])
-			if !ok || i+size+int(length) > len(data) {
+			if !ok {
 				return nil, false
 			}
 			i += size
-			field.bytes = data[i : i+int(length)]
-			i += int(length)
+			if length > uint64(len(data)-i) {
+				return nil, false
+			}
+			end := i + int(length)
+			field.bytes = data[i:end]
+			i = end
 		case 5:
 			if i+4 > len(data) {
 				return nil, false
