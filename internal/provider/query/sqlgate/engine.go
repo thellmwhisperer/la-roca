@@ -22,10 +22,18 @@ func cFuncPointer[T any](f T) uintptr {
 // modernc.org/sqlite/lib so an authorization callback can be attached here
 // without touching the application's query connection.
 type engine struct {
-	tls    *libc.TLS
-	db     uintptr
-	mu     sync.Mutex
-	denial string
+	tls          *libc.TLS
+	db           uintptr
+	mu           sync.Mutex
+	denial       string
+	hiddenTables map[tableIdentity]bool
+	ftsTables    map[tableIdentity]bool
+	matchPending bool
+}
+
+type tableIdentity struct {
+	schema string
+	table  string
 }
 
 var engines = struct {
@@ -76,7 +84,12 @@ func openEngine() (*engine, error) {
 		tls.Close()
 		return nil, fmt.Errorf("open the validation database: %s", msg)
 	}
-	return &engine{tls: tls, db: db}, nil
+	return &engine{
+		tls:          tls,
+		db:           db,
+		hiddenTables: make(map[tableIdentity]bool),
+		ftsTables:    make(map[tableIdentity]bool),
+	}, nil
 }
 
 func (e *engine) close() error {
@@ -125,27 +138,38 @@ func (e *engine) attachAuthorizer() error {
 	return nil
 }
 
-func authorizerTrampoline(_ *libc.TLS, pArg uintptr, action int32, arg1, arg2, _, _ uintptr) int32 {
+func authorizerTrampoline(_ *libc.TLS, pArg uintptr, action int32, arg1, arg2, schema, _ uintptr) int32 {
 	engines.mu.RLock()
 	e := engines.m[pArg]
 	engines.mu.RUnlock()
 	if e == nil {
 		return sqlite3.SQLITE_DENY
 	}
-	return e.authorize(action, libc.GoString(arg1), libc.GoString(arg2))
+	return e.authorize(action, libc.GoString(arg1), libc.GoString(arg2), libc.GoString(schema))
 }
 
-func (e *engine) authorize(action int32, arg1, arg2 string) int32 {
+func (e *engine) authorize(action int32, arg1, arg2, schema string) int32 {
 	switch action {
 	case sqlite3.SQLITE_SELECT, sqlite3.SQLITE_RECURSIVE:
 		return sqlite3.SQLITE_OK
 	case sqlite3.SQLITE_READ:
-		if IsHiddenTable(arg1) {
+		identity := tableIdentity{schema: strings.ToLower(schema), table: strings.ToLower(arg1)}
+		if e.matchPending {
+			e.matchPending = false
+			if !e.ftsTables[identity] || !strings.EqualFold(arg1, arg2) {
+				e.note("MATCH is allowed only on a declared FTS5 table")
+				return sqlite3.SQLITE_DENY
+			}
+		}
+		if IsHiddenTable(arg1) || e.hiddenTables[identity] {
 			e.note(fmt.Sprintf("no such table: %q is not a table this query can read", arg1))
 			return sqlite3.SQLITE_DENY
 		}
 		return sqlite3.SQLITE_OK
 	case sqlite3.SQLITE_FUNCTION:
+		if strings.EqualFold(arg2, "match") {
+			e.matchPending = true
+		}
 		if allowedFunctions[strings.ToLower(arg2)] {
 			return sqlite3.SQLITE_OK
 		}
@@ -154,6 +178,17 @@ func (e *engine) authorize(action int32, arg1, arg2 string) int32 {
 	default:
 		e.note("Only SELECT statements are allowed")
 		return sqlite3.SQLITE_DENY
+	}
+}
+
+func (e *engine) hideTable(schema, table string) {
+	e.hiddenTables[tableIdentity{schema: strings.ToLower(schema), table: strings.ToLower(table)}] = true
+}
+
+func (e *engine) registerFTSTable(schema, table string) {
+	e.ftsTables[tableIdentity{schema: strings.ToLower(schema), table: strings.ToLower(table)}] = true
+	for _, shadow := range FTS5ShadowTables(table) {
+		e.hideTable(schema, shadow)
 	}
 }
 
@@ -167,6 +202,7 @@ func (e *engine) prepare(sql string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.denial = ""
+	e.matchPending = false
 
 	z, err := libc.CString(sql)
 	if err != nil {
@@ -183,13 +219,16 @@ func (e *engine) prepare(sql string) error {
 	rc := sqlite3.Xsqlite3_prepare_v2(e.tls, e.db, z, -1, pp, 0)
 	stmt := loadSlot(e.tls, pp)
 	if stmt != 0 {
-		sqlite3.Xsqlite3_finalize(e.tls, stmt)
+		defer sqlite3.Xsqlite3_finalize(e.tls, stmt)
 	}
-	if rc == sqlite3.SQLITE_OK {
-		return nil
+	if rc != sqlite3.SQLITE_OK {
+		if e.denial != "" {
+			return fmt.Errorf("%s", e.denial)
+		}
+		return fmt.Errorf("%s", translate(libc.GoString(sqlite3.Xsqlite3_errmsg(e.tls, e.db))))
 	}
-	if e.denial != "" {
-		return fmt.Errorf("%s", e.denial)
+	if e.matchPending {
+		return fmt.Errorf("MATCH is allowed only on a declared FTS5 table")
 	}
-	return fmt.Errorf("%s", translate(libc.GoString(sqlite3.Xsqlite3_errmsg(e.tls, e.db))))
+	return nil
 }
