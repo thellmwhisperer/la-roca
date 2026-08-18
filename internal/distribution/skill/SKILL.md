@@ -120,6 +120,7 @@ arguments.
 |---|---|
 | Past work / people / "have we…" | `roca query "<question>"` |
 | Researching a topic, not a point fact | `roca explore "<concept>"` |
+| Semantic veins / unknown corpus vocabulary | Hybrid discovery below |
 | Answer looks stale / about today | `roca ingest`, then ask again |
 | Programmatic parse | add `--json` |
 | Inspect SQL first | `roca query --sql-only` then `roca exec` |
@@ -167,6 +168,60 @@ one `roca explore` instead and follow its probes.
    first time", "when did we decide") may be a naive count crowning its first
    match, so verify it against distilled memories or a second, differently
    phrased query.
+
+When the corpus vocabulary is unknown and a bare FTS word would miss, start
+with Hybrid discovery instead of stacking synonyms.
+
+## Hybrid discovery
+
+Requires `features.vector = true`. Operator setup lives in `docs/vector.md`.
+
+Purpose: discover the vocabulary the corpus actually uses, then census and
+frame it, then narrate. The vector discovers vocabulary, FTS censuses, SQL frames;
+inference only at the end, by the reading agent, to narrate.
+`roca vector query` and `roca vector vocab` do no model inference; `roca exec`
+does none either.
+
+1. Probe veins with `roca vector query "<first-person phrase or bare word>" k`.
+   `k` is optional (default 10) and capped at 100. Hits print score, source
+   family, and source id. Probing phrases in first person work better than
+   meta-concepts: `roca vector query "nombres de personas" 20` finds documents
+   ABOUT names; `roca vector query "mi jefe se llama" 20` finds the names.
+2. Discover discriminative terms with `roca vector vocab <concept>` (zero
+   inference: top-100 semantic hits, census, log-odds vias). Example:
+   `roca vector vocab salud`.
+3. Census and frame with FTS / `roca query --sql-only` plus `roca exec`:
+   counts, dates, and word-boundary `MATCH`. Do not use `LIKE '%term%'`: it
+   matches inside other words (`name` inside `rename`).
+
+Worked loop, names:
+
+```text
+$ roca vector query "mi jefe se llama" 20
+$ roca query --sql-only "how often does that name appear, by month"
+$ roca exec "<the printed SELECT>"
+```
+
+Worked loop, concept:
+
+```text
+$ roca vector vocab salud
+$ roca query --sql-only "count exchanges matching the strongest via, with dates"
+$ roca exec "<the printed SELECT>"
+```
+
+Then the reading agent narrates from those rows. Stop before that last
+reading if you only needed the map.
+
+Caveats measured on real use:
+
+- `k` max is 100. A larger `k` errors (`k must be between 1 and 100`) before
+  any JSON body.
+- Query deduplicates by source identity: a census-style probe of `k=20` is
+  20 sources, not 20 chunks. For counts, use FTS/SQL.
+- Two signal classes: presence (the topic is nearby) versus intention
+  (someone decided or promised). Vector answers presence; SQL frames
+  intention.
 
 ## Operating craft
 
