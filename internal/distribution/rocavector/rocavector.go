@@ -44,7 +44,7 @@ func BundleSpec() bundledplugin.Spec {
 func bundleSpec(payload func() ([]byte, error)) bundledplugin.Spec {
 	return bundledplugin.Spec{
 		Name: Name, LegacyName: LegacyName, Executable: executableFilename(),
-		Source: BundledSource, Manifest: manifest, Payload: payload,
+		Source: BundledSource, Manifest: manifest, Payload: payload, MigrationGuard: migrationGuard,
 	}
 }
 

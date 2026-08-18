@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -80,6 +81,8 @@ func TestBundledVectorMigratesLegacyInstall(t *testing.T) {
 		plantLegacy, plantCurrent         bool
 		external, unmanaged               bool
 		corruptPayload, changeExecutable  bool
+		activeWorker, interruptedRename   bool
+		interruptedUpdate                 bool
 		wantLegacy, wantCurrent           bool
 		preserveState                     bool
 		twice                             bool
@@ -103,6 +106,13 @@ func TestBundledVectorMigratesLegacyInstall(t *testing.T) {
 		{name: "changed legacy executable is not migrated", version: "v2", payload: "vector two",
 			plantLegacy: true, changeExecutable: true, wantError: "changed since install",
 			wantLegacy: true},
+		{name: "active legacy worker blocks migration", version: "v2", payload: "vector two",
+			plantLegacy: true, activeWorker: true, wantError: "active vector worker",
+			wantLegacy: true},
+		{name: "rename interruption converges", version: "v2", payload: "vector two",
+			plantLegacy: true, preserveState: true, interruptedRename: true, wantCurrent: true},
+		{name: "update interruption converges", version: "v2", payload: "vector two",
+			plantLegacy: true, preserveState: true, interruptedUpdate: true, wantCurrent: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
@@ -147,6 +157,25 @@ func TestBundledVectorMigratesLegacyInstall(t *testing.T) {
 				}
 				if err := os.WriteFile(filepath.Join(bin, executable), []byte("locally changed"), 0o700); err != nil {
 					t.Fatal(err)
+				}
+			}
+			if testCase.activeWorker {
+				if err := os.WriteFile(filepath.Join(root, rocavector.LegacyName, rocavector.StateDir, ".worker"),
+					[]byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if testCase.interruptedRename || testCase.interruptedUpdate {
+				legacy := filepath.Join(root, rocavector.LegacyName)
+				current := filepath.Join(root, rocavector.Name)
+				if err := os.Rename(legacy, current); err != nil {
+					t.Fatal(err)
+				}
+				if testCase.interruptedUpdate {
+					rewriteName(t, current, rocavector.Name)
+					if err := os.Rename(current, filepath.Join(root, "."+rocavector.Name+".previous")); err != nil {
+						t.Fatal(err)
+					}
 				}
 			}
 
@@ -336,6 +365,14 @@ func assertFileContents(t *testing.T, label, path, want string) {
 }
 
 func rewriteSource(t *testing.T, directory, source string) {
+	rewriteManifest(t, directory, "source", source)
+}
+
+func rewriteName(t *testing.T, directory, name string) {
+	rewriteManifest(t, directory, "name", name)
+}
+
+func rewriteManifest(t *testing.T, directory, key, value string) {
 	t.Helper()
 	path := filepath.Join(directory, plugininstall.ManifestFilename)
 	raw, err := os.ReadFile(path)
@@ -346,7 +383,7 @@ func rewriteSource(t *testing.T, directory, source string) {
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		t.Fatal(err)
 	}
-	manifest["source"] = source
+	manifest[key] = value
 	raw, err = json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		t.Fatal(err)

@@ -124,6 +124,11 @@ func ingestCommand(env *environment) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			release, err := vector.LockStateUsage(state)
+			if err != nil {
+				return err
+			}
+			defer release()
 			vectorPath := filepath.Join(state, vector.DatabaseFilename)
 			if _, err := os.Stat(vectorPath); err != nil {
 				if os.IsNotExist(err) {
@@ -184,6 +189,11 @@ func compactCommand(env *environment) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			release, err := vector.LockStateUsage(state)
+			if err != nil {
+				return err
+			}
+			defer release()
 			report, err := vector.Compact(command.Context(), filepath.Join(state, vector.DatabaseFilename))
 			if err != nil {
 				return err
@@ -218,6 +228,11 @@ func queryCommand(env *environment) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			release, err := vector.LockStateUsage(state)
+			if err != nil {
+				return err
+			}
+			defer release()
 			vectorPath := filepath.Join(state, vector.DatabaseFilename)
 			index, err := env.index(vector.ConfiguredModel(vectorPath))
 			if err != nil {
@@ -255,6 +270,11 @@ func vocabCommand(env *environment) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			release, err := vector.LockStateUsage(state)
+			if err != nil {
+				return err
+			}
+			defer release()
 			vectorPath := filepath.Join(state, vector.DatabaseFilename)
 			index, err := env.index(vector.ConfiguredModel(vectorPath))
 			if err != nil {
@@ -312,6 +332,11 @@ func workerCommand(env *environment) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			release, err := vector.LockStateUsage(state)
+			if err != nil {
+				return err
+			}
+			defer release()
 			defer vector.ReleaseWorkerClaim(state)
 			index, err := env.index(model)
 			if err != nil {

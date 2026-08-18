@@ -602,8 +602,131 @@ func createStateDir(target, name string) error {
 	return nil
 }
 
+func (m Manager) RecoverUpdate(name string) error {
+	if err := m.valid(); err != nil {
+		return err
+	}
+	if !safeName(name) {
+		return fmt.Errorf("invalid plugin name %q", name)
+	}
+	target := filepath.Join(m.PluginRoot, name)
+	backup := filepath.Join(m.PluginRoot, "."+name+".previous")
+	if _, err := os.Lstat(backup); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("inspect update recovery directory: %w", err)
+	}
+	previous, previousErr := VerifyInstalledPayload(name, backup)
+	current, currentErr := VerifyInstalledPayload(name, target)
+	switch {
+	case previousErr == nil:
+		if _, err := os.Lstat(target); err == nil && currentErr != nil {
+			return fmt.Errorf("recover plugin %s update: current directory is not verified: %w", name, currentErr)
+		} else if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("inspect plugin %s recovery target: %w", name, err)
+		}
+		if currentErr == nil {
+			if err := moveRecoveryState(target, backup, previous.StateDir); err != nil {
+				return fmt.Errorf("recover plugin %s state: %w", name, err)
+			}
+		}
+		allowed := []Manifest{previous}
+		if currentErr == nil {
+			allowed = append(allowed, current)
+		}
+		if err := m.restoreRecoveryExecutable(backup, previous, allowed...); err != nil {
+			return fmt.Errorf("recover plugin %s executable: %w", name, err)
+		}
+		if currentErr == nil {
+			if err := os.RemoveAll(target); err != nil {
+				return fmt.Errorf("remove interrupted plugin %s update: %w", name, err)
+			}
+		}
+		if err := os.Rename(backup, target); err != nil {
+			return fmt.Errorf("restore plugin %s update: %w", name, err)
+		}
+		return nil
+	case currentErr == nil:
+		if err := moveRecoveryState(backup, target, current.StateDir); err != nil {
+			return fmt.Errorf("finish plugin %s state recovery: %w", name, err)
+		}
+		if err := m.restoreRecoveryExecutable(target, current, current); err != nil {
+			return fmt.Errorf("finish plugin %s executable recovery: %w", name, err)
+		}
+		if err := os.RemoveAll(backup); err != nil {
+			return fmt.Errorf("finish plugin %s recovery: %w", name, err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("recover plugin %s update: previous directory is not verified: %v; current directory is not verified: %v",
+			name, previousErr, currentErr)
+	}
+}
+
+func moveRecoveryState(source, destination, name string) error {
+	if name == "" {
+		return nil
+	}
+	sourceState := filepath.Join(source, name)
+	destinationState := filepath.Join(destination, name)
+	sourceInfo, sourceErr := os.Lstat(sourceState)
+	destinationInfo, destinationErr := os.Lstat(destinationState)
+	if sourceErr != nil && !os.IsNotExist(sourceErr) {
+		return sourceErr
+	}
+	if destinationErr != nil && !os.IsNotExist(destinationErr) {
+		return destinationErr
+	}
+	if sourceErr == nil && !sourceInfo.IsDir() {
+		return fmt.Errorf("plugin state path %s is not a directory", sourceState)
+	}
+	if destinationErr == nil && !destinationInfo.IsDir() {
+		return fmt.Errorf("plugin state path %s is not a directory", destinationState)
+	}
+	if sourceErr == nil && destinationErr == nil {
+		return fmt.Errorf("plugin state exists in both recovery directories")
+	}
+	if sourceErr == nil {
+		return os.Rename(sourceState, destinationState)
+	}
+	return nil
+}
+
+func (m Manager) restoreRecoveryExecutable(
+	directory string,
+	manifest Manifest,
+	allowed ...Manifest,
+) error {
+	if manifest.Executable == "" {
+		return nil
+	}
+	expected := filepath.Join(m.BinDir, manifest.ExecutableFile)
+	if filepath.Clean(manifest.Executable) != filepath.Clean(expected) {
+		return fmt.Errorf("plugin executable path %s is outside the configured executable directory", manifest.Executable)
+	}
+	digest, err := fileChecksum(expected)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err == nil {
+		owned := false
+		for _, candidate := range allowed {
+			if candidate.Executable == manifest.Executable &&
+				digest == candidate.Files[candidate.ExecutableFile] {
+				owned = true
+				break
+			}
+		}
+		if !owned {
+			return fmt.Errorf("plugin executable %s changed since install; refusing to overwrite it", expected)
+		}
+	}
+	return installChecksummedFile(filepath.Join(directory, manifest.ExecutableFile), expected,
+		0o700, manifest.ExecutableFile, manifest.Files[manifest.ExecutableFile])
+}
+
 func (m Manager) Update(candidate Candidate) (Result, error) {
-	previousManifest, err := m.preflightUpdate(candidate, candidate.Name)
+	previousManifest, err := m.preflightUpdate(candidate, candidate.Name, candidate.Name)
 	if err != nil {
 		return Result{}, err
 	}
@@ -670,16 +793,16 @@ func (m Manager) Update(candidate Candidate) (Result, error) {
 }
 
 func (m Manager) PreflightUpdate(candidate Candidate) error {
-	_, err := m.preflightUpdate(candidate, candidate.Name)
+	_, err := m.preflightUpdate(candidate, candidate.Name, candidate.Name)
 	return err
 }
 
-func (m Manager) PreflightUpdateFrom(candidate Candidate, installedName string) error {
-	_, err := m.preflightUpdate(candidate, installedName)
+func (m Manager) PreflightUpdateFrom(candidate Candidate, installedName, manifestName string) error {
+	_, err := m.preflightUpdate(candidate, installedName, manifestName)
 	return err
 }
 
-func (m Manager) preflightUpdate(candidate Candidate, installedName string) (Manifest, error) {
+func (m Manager) preflightUpdate(candidate Candidate, installedName, manifestName string) (Manifest, error) {
 	if err := m.valid(); err != nil {
 		return Manifest{}, err
 	}
@@ -691,8 +814,8 @@ func (m Manager) preflightUpdate(candidate Candidate, installedName string) (Man
 	if err != nil {
 		return Manifest{}, fmt.Errorf("update plugin %s: %w", candidate.Name, err)
 	}
-	if previousManifest.Name != installedName && previousManifest.Name != candidate.Name {
-		return Manifest{}, fmt.Errorf("plugin manifest names %q, not %q", previousManifest.Name, installedName)
+	if previousManifest.Name != manifestName {
+		return Manifest{}, fmt.Errorf("plugin manifest names %q, not %q", previousManifest.Name, manifestName)
 	}
 	if previousManifest.Kind != candidate.Kind {
 		return Manifest{}, fmt.Errorf("plugin %s changed its package kind from %s to %s; update refused",
@@ -870,7 +993,7 @@ func writeManifest(directory string, candidate Candidate, executable string) err
 // writes land in an inode nobody can reach again. Nothing but the payload
 // changes between versions of such a plugin, so nothing else has to move.
 func (m Manager) UpdateInPlace(candidate Candidate) (Result, error) {
-	previous, err := m.preflightUpdateInPlace(candidate, candidate.Name)
+	previous, err := m.preflightUpdateInPlace(candidate, candidate.Name, candidate.Name)
 	if err != nil {
 		return Result{}, err
 	}
@@ -918,16 +1041,16 @@ func (m Manager) UpdateInPlace(candidate Candidate) (Result, error) {
 }
 
 func (m Manager) PreflightUpdateInPlace(candidate Candidate) error {
-	_, err := m.preflightUpdateInPlace(candidate, candidate.Name)
+	_, err := m.preflightUpdateInPlace(candidate, candidate.Name, candidate.Name)
 	return err
 }
 
-func (m Manager) PreflightUpdateInPlaceFrom(candidate Candidate, installedName string) error {
-	_, err := m.preflightUpdateInPlace(candidate, installedName)
+func (m Manager) PreflightUpdateInPlaceFrom(candidate Candidate, installedName, manifestName string) error {
+	_, err := m.preflightUpdateInPlace(candidate, installedName, manifestName)
 	return err
 }
 
-func (m Manager) preflightUpdateInPlace(candidate Candidate, installedName string) (Manifest, error) {
+func (m Manager) preflightUpdateInPlace(candidate Candidate, installedName, manifestName string) (Manifest, error) {
 	if err := m.valid(); err != nil {
 		return Manifest{}, err
 	}
@@ -943,8 +1066,8 @@ func (m Manager) preflightUpdateInPlace(candidate Candidate, installedName strin
 	if err != nil {
 		return Manifest{}, fmt.Errorf("update plugin %s: %w", candidate.Name, err)
 	}
-	if previous.Name != installedName && previous.Name != candidate.Name {
-		return Manifest{}, fmt.Errorf("plugin manifest names %q, not %q", previous.Name, installedName)
+	if previous.Name != manifestName {
+		return Manifest{}, fmt.Errorf("plugin manifest names %q, not %q", previous.Name, manifestName)
 	}
 	if previous.Executable != "" {
 		return Manifest{}, fmt.Errorf(
