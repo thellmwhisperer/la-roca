@@ -122,6 +122,29 @@ output emits one `answering:` notice with the chosen provider/model and
 configuration path; scripts receive no prompts. `--json` remains one JSON
 document.
 
+## Skills
+
+Patterns in your history become skills that travel back to every agent.
+
+A regular skill is a snapshot of a tool. A skill distilled from La Roca
+comes with its whole story: the how, the why, and the failed attempts behind
+the final answer, one question away.
+
+`roca skill install` ships two skills into each runtime today: the operating
+craft, and `roca-semantica`, a catalog of every installed plugin's tables and
+example questions generated from the same fragments natural-language search
+uses. Each installed skill and the generated prompt keep shipped SYSTEM content
+separate from an operator-owned USER zone, and `roca update` tracks their
+release in `~/.roca/artifacts.json`. Automatic refresh is available behind the
+default-off `features.artifact_refresh` key.
+
+The `pill` layer is built for what comes next: condensed artifacts distilled
+from your own history and injected through hooks, charging an agent with
+exactly the information the task needs instead of a whole skill.
+
+Runtimes, paths, and the measured skill seats live in
+[The MCP plug](mcp.md#3-three-adoption-layers).
+
 ## Update
 
 ```sh

@@ -3,6 +3,24 @@
 First-time path: [install, detect an already signed-in agent CLI, and query
 without a La Roca login](lifecycle.md#install).
 
+## Privacy
+
+Static local executables, local SQLite stores under `~/.roca`, zero network in
+the ingest path. Providers are called only to answer the questions you ask, and
+the SQL phase never sees your rows. With `--full` or `explore`, the prose phase
+receives at most ten result rows with each field truncated to 240 characters;
+the database, the full result set, and the search index never leave the machine.
+Explore reads the whole result set locally to compute its terrain, and only the
+aggregates travel: row counts per source, month clusters, co-occurring terms,
+and negative space. The ten-row cap governs raw row content in every model
+prompt, so an interpreter sees that capped sample plus those precomputed
+aggregates, never the full result set as text. Configure only Ollama when no
+query content may leave it at all.
+
+The row and field caps, and the terrain aggregates, are also stated under
+[Investigation missions and deep routing](models.md#investigation-missions-and-deep-routing).
+The audit log, redaction, and `ROCA_READ_ONLY=1` boundary follow below.
+
 ## Memory authorship
 
 Every new memory stores a system-stamped harness, model and write surface in
@@ -45,6 +63,9 @@ read identity only from a harness-owned session source, and inject both flags;
 no other hook installer ships yet.
 
 ## Memory layers
+
+Curated memories use typed layers (`handoff`, `pattern`, `discovery`,
+`feedback`, `pill`, among others), the same shape for every runtime.
 
 `roca store --layer <name>` accepts only a name in the live layer registry and
 lists the registered layers when it refuses a write. This validation is shared
@@ -213,7 +234,7 @@ size:
    with core fallback only when ops cannot be read for all memory stores, and
    never including finding rows. Registry-owned checks are skipped when neither
    registry is readable.
-6. **Vector** — when `plugins/vector/state/vector.db` exists: model,
+6. **Vector** — when `plugins/roca-vector/state/vector.db` exists: model,
    dimensions, chunk totals by kind, store size, and the last recorded delta
    counts.
 7. **Ingest** — detected agent names and the latest `ingest_file_state`

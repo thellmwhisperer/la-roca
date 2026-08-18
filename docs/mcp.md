@@ -6,6 +6,12 @@ without a La Roca login](lifecycle.md#install).
 The way La Roca reaches an agent that is not typing commands: the MCP server it
 can call.
 
+La Roca is built agent-first, following the AXI convention (agent ergonomic
+interface) shared by a family of agent-facing tools: route narration above
+the data, compact TOON rows, bounded text previews, and deterministic next
+commands in every answer. An agent never has to guess what it just got or
+what to run next.
+
 `roca_query` uses the same factory order as the CLI: La Roca detects an already
 signed-in supported agent CLI and needs no separate login or MCP credentials. Models
 authenticate through their own CLIs; La Roca stores no secrets. Ollama and the
