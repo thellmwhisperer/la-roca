@@ -171,6 +171,14 @@ func TestPrepareRepairsOnlyNamedModelOutputShapes(t *testing.T) {
 			wantRepairs: []string{sqlrepair.PreserveJSONExtract},
 		},
 		{
+			name: "rewrite nested JSON arrows in a multi-argument call",
+			raw: "SELECT COALESCE(metadata -> '$.project', '{}') -> '$.name' = 'Javi' " +
+				"FROM memories",
+			wantSQL: "SELECT json_extract(COALESCE(json_extract(metadata, '$.project'), '{}'), '$.name') = 'Javi' " +
+				"FROM memories",
+			wantRepairs: []string{sqlrepair.PreserveJSONExtract},
+		},
+		{
 			name:    "leave a JSON label operand unchanged",
 			raw:     "SELECT metadata ->> 'project' FROM memories",
 			wantSQL: "SELECT metadata ->> 'project' FROM memories",

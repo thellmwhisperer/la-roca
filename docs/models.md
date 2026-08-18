@@ -524,8 +524,9 @@ long line is cut as a repetition loop (`repetition_loop`), trailing semicolons
 are removed (`trailing_semicolon`), and a top-level compound branch that
 carries its own `ORDER BY` or `LIMIT` is wrapped as `SELECT * FROM (...)`
 (`wrap_ordered_compound`) so the branch keeps its top-N. The statement's
-trailing `ORDER BY` stays on the compound; a term that is not a name in the
-first branch's result set is dropped. The older strip (`union_order_by`)
+trailing `ORDER BY` stays on the compound; a term is kept when it is a valid
+ordinal or matches a result expression or alias in any constituent branch,
+and otherwise dropped. The older strip (`union_order_by`)
 remains as a fallback for shapes wrap cannot keep, including a duplicated
 final `ORDER BY`. A bare `ORDER BY` after a `JOIN` is qualified from the one
 selected or grouped column that owns that name (`join_order_by`); when two

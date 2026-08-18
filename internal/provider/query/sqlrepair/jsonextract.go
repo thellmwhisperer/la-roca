@@ -10,6 +10,19 @@ import (
 // json_extract. The shorthand with `->` yields quoted JSON text, so a
 // comparison against a SQL string silently returns no rows.
 func preserveJSONExtract(stmt string) (string, bool) {
+	result := stmt
+	changed := false
+	for {
+		fixed, ok := preserveJSONExtractPass(result)
+		if !ok || fixed == result {
+			return result, changed
+		}
+		result = fixed
+		changed = true
+	}
+}
+
+func preserveJSONExtractPass(stmt string) (string, bool) {
 	var rebuilt strings.Builder
 	changed := false
 	cursor := 0
