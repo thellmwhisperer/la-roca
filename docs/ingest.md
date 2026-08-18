@@ -212,19 +212,23 @@ when Hermes recorded one, and `Hermes` when it did not. The same channel is
 kept in session metadata.
 
 `session_model_usage` joins onto those sessions as operational `model_usage`
-metadata (per-model requests, tokens, cache, estimated cost, and pricing
-source). `gateway_routing` joins by `session_key` or embedded `session_id` as
-`routing` history. `system_prompts` join by `system_prompt_hash` as session
-provenance (`hash`, a short preview, and byte length), never as corpus
-content.
+metadata (per-model provider and API base, requests, input, output, cache and
+reasoning tokens, estimated and actual cost, pricing source, and first/last
+observed times). `gateway_routing` joins by `session_key` or embedded
+`session_id` as `routing` history. `system_prompts` join by
+`system_prompt_hash` as session provenance (`hash`, a short preview, and byte
+length), never as corpus content.
 
 `~/.hermes/memories/MEMORY.md` is a mutable curated document, not an
 append-only log. Each `§`-separated block is one memory whose identity is the
 content hash. An unchanged rerun is a zero delta. A vanished block keeps its
 row and is marked superseded; a new or edited block is a new memory. Layers
 follow the block's nature (`user`, `feedback`, or `pattern`), origin is
-`agent`, and `source_agent` is `hermes`. Equivalent content already stored
-(including hand-written rows) is recognized and not duplicated.
+`agent`, and `source_agent` is `hermes`. Per-block provenance preserves the
+source file and block hash; the row's creation time records the ingest date.
+The nine reserved hand-ingested rows (IDs 1152921504606847051 through
+1152921504606847059) are also checked by exact content so those legacy
+memories are not duplicated.
 
 These Hermes stores are named exclusions, not corpus: `kanban.db`, the empty
 `sessions.db`, `verification_evidence.db`, `USER.md` and other memory
