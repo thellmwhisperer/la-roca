@@ -85,6 +85,7 @@ type Table struct {
 	Columns     []string
 	Description string
 	Questions   []string
+	FTS5        bool
 }
 
 type Database struct {
@@ -537,24 +538,32 @@ func Validate(ctx context.Context, descriptor Descriptor) (Database, error) {
 		return Database{}, fmt.Errorf("inspect plugin %s: %w", descriptor.Name, err)
 	}
 	declared := make(map[string]SemanticTable, len(descriptor.Semantic.Tables))
+	shadows := make(map[string]bool)
+	for name, table := range actual {
+		if table.FTS5 {
+			for _, shadow := range sqlgate.FTS5ShadowTables(name) {
+				shadows[shadow] = true
+			}
+		}
+	}
 	for _, table := range descriptor.Semantic.Tables {
 		declared[table.Name] = table
 	}
-	for name, columns := range actual {
-		if sqlgate.IsHiddenTable(name) {
+	for name, inspected := range actual {
+		if sqlgate.IsHiddenTable(name) || shadows[strings.ToLower(name)] {
 			continue
 		}
 		table, ok := declared[name]
 		if !ok {
 			return Database{}, fmt.Errorf("semantic layer omits database table %s", name)
 		}
-		if !slices.Equal(columns, table.Columns) {
+		if !slices.Equal(inspected.Columns, table.Columns) {
 			return Database{}, fmt.Errorf("semantic layer columns for %s are %v but the database has %v",
-				name, table.Columns, columns)
+				name, table.Columns, inspected.Columns)
 		}
 	}
 	for name := range declared {
-		if sqlgate.IsHiddenTable(name) {
+		if sqlgate.IsHiddenTable(name) || shadows[strings.ToLower(name)] {
 			continue
 		}
 		if _, ok := actual[name]; !ok {
@@ -564,12 +573,13 @@ func Validate(ctx context.Context, descriptor Descriptor) (Database, error) {
 
 	tables := make([]Table, 0, len(descriptor.Semantic.Tables))
 	for _, table := range descriptor.Semantic.Tables {
-		if sqlgate.IsHiddenTable(table.Name) {
+		if sqlgate.IsHiddenTable(table.Name) || shadows[strings.ToLower(table.Name)] {
 			continue
 		}
 		tables = append(tables, Table{
 			Name: table.Name, Columns: slices.Clone(table.Columns),
 			Description: table.Description, Questions: slices.Clone(table.Questions),
+			FTS5: actual[table.Name].FTS5,
 		})
 	}
 	return Database{Descriptor: descriptor, Tables: tables}, nil
@@ -592,26 +602,31 @@ func databaseURI(path string) string {
 	return uri.String()
 }
 
-func inspectTables(ctx context.Context, db *sql.DB) (map[string][]string, error) {
-	rows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_schema
+type inspectedTable struct {
+	Columns []string
+	FTS5    bool
+}
+
+func inspectTables(ctx context.Context, db *sql.DB) (map[string]inspectedTable, error) {
+	rows, err := db.QueryContext(ctx, `SELECT name, sql FROM sqlite_schema
 		WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var names []string
+	actual := make(map[string]inspectedTable)
 	for rows.Next() {
 		var name string
-		if err := rows.Scan(&name); err != nil {
+		var ddl sql.NullString
+		if err := rows.Scan(&name, &ddl); err != nil {
 			return nil, err
 		}
-		names = append(names, name)
+		actual[name] = inspectedTable{FTS5: sqlgate.IsFTS5DDL(ddl.String)}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	actual := make(map[string][]string, len(names))
-	for _, name := range names {
+	for name, inspected := range actual {
 		columns, err := db.QueryContext(ctx, "PRAGMA table_info("+quoteIdentifier(name)+")")
 		if err != nil {
 			return nil, err
@@ -624,11 +639,12 @@ func inspectTables(ctx context.Context, db *sql.DB) (map[string][]string, error)
 				columns.Close()
 				return nil, err
 			}
-			actual[name] = append(actual[name], column)
+			inspected.Columns = append(inspected.Columns, column)
 		}
 		if err := columns.Close(); err != nil {
 			return nil, err
 		}
+		actual[name] = inspected
 	}
 	return actual, nil
 }
