@@ -250,14 +250,22 @@ func TestTheGateRejectsWhatIsNotEvenAQuery(t *testing.T) {
 			t.Errorf("Validate(%q) passed", benchCase)
 		}
 	}
+
+	_, err := gate(t).Validate("WITH results AS (\n  SELECT id FROM memories\n  UNION ALL\n  SELECT id FROM (")
+	if err == nil || !strings.Contains(err.Error(), "SQL parse error") {
+		t.Fatalf("incomplete SQL = %v, want a parse error from the engine", err)
+	}
+	if strings.Contains(err.Error(), "EOF") {
+		t.Fatalf("incomplete SQL died as a parser EOF: %v", err)
+	}
 }
 
-// The five live EOF shapes are complete, parenthesis-balanced UNIONs. Prepare
-// against the schema-only engine is the correctness verdict; a grammar-subset
-// parse must not report EOF mid-input. Fixture 01 uses only core tables and
-// must pass the whole gate. The others attach plugin names the default
-// validation schema does not have, so they may fail as no such table, never
-// as a mid-statement EOF.
+// The five live EOF shapes are complete, parenthesis-balanced UNIONs. The
+// engine under the authorization callback is the correctness verdict; a
+// grammar-subset parse must not report EOF mid-input. Fixture 01 uses only
+// core tables and must pass the whole gate. The others attach plugin names
+// the default validation schema does not have, so they may fail as no such
+// table, never as a mid-statement EOF.
 func TestTheGatePreparesTheLiveUnionShapes(t *testing.T) {
 	entries, err := os.ReadDir(filepath.Join("..", "sqlrepair", "testdata", "union_coalesce"))
 	if err != nil {

@@ -2,24 +2,17 @@
 // touch the database passes through here first, whether it comes from a
 // template or from a model.
 //
-// "Valid" means SQLite accepted the exact statement, not merely that a parser
-// believes it would. modernc.org/sqlite does not expose an authorization
-// callback, so the shipped shape is: prepare is the correctness verdict
-// (syntax, tables, columns); the AST remains the permission surface (verb,
-// functions, hidden names) when it accepts the same string; LIMIT is applied
-// on the text so a grammar-subset parse cannot be the thing that rejects a
-// statement the engine already prepared.
+// "Valid" means SQLite accepted the exact statement under an authorization
+// callback, not merely that a parser believes it would. The gate opens its own
+// schema-only in-memory connection against modernc.org/sqlite/lib and attaches
+// the callback there. The application's query connection is not changed.
 //
-//   - Table and column existence, and syntax: the engine says so. The statement
-//     is prepared against an in-memory database that contains only the visible
-//     tables. A table the query must not see does not need forbidding: it does
-//     not exist there, and prepare fails. This is stronger than an AST allowlist,
-//     because it also covers columns and ambiguities.
-//   - Verb and functions: the AST says so when the parser accepts the statement.
-//     It was measured that the engine is not enough for this: over a connection
-//     with query_only, `prepare` of a DELETE passes, and the rejection only
-//     arrives at execution time. A leading verb check refuses writes before
-//     prepare so the contract message stays "Only SELECT statements are allowed".
+//   - Syntax, tables, columns, verbs and functions: the engine says so. The
+//     statement is prepared against an in-memory database that contains only the
+//     visible tables. A table the query must not see does not exist there.
+//     Writes, ATTACH, PRAGMA and functions outside the list are denied by the
+//     callback, so a DELETE does not slip through merely because prepare would
+//     succeed on a query_only connection.
 //   - LIMIT: imposed on the original text with the same numeric-literal
 //     guarantee as before, including both SQLite forms and a trailing comment.
 //
@@ -28,8 +21,6 @@
 package sqlgate
 
 import (
-	"context"
-	"database/sql"
 	"fmt"
 	"slices"
 	"strconv"
@@ -37,7 +28,6 @@ import (
 
 	rqlite "github.com/rqlite/sql"
 	"github.com/thellmwhisperer/la-roca/data"
-	_ "modernc.org/sqlite"
 )
 
 // MaxLimit is the cap the gate guarantees.
@@ -114,7 +104,7 @@ func IsHiddenTable(name string) bool {
 
 // Gate keeps open the in-memory database statements are prepared against.
 type Gate struct {
-	db *sql.DB
+	engine *engine
 }
 
 // Schema is one attached database as the validation engine sees it. Only the
@@ -137,46 +127,46 @@ func Open() (*Gate, error) {
 // OpenWithSchemas creates the core validation database and the qualified
 // schemas selected by the plugin semantic router.
 func OpenWithSchemas(schemas []Schema) (*Gate, error) {
-	db, err := sql.Open("sqlite", "file::memory:?_pragma=query_only(0)")
+	eng, err := openEngine()
 	if err != nil {
-		return nil, fmt.Errorf("open the validation database: %w", err)
+		return nil, err
 	}
-	// A single connection: the in-memory database lives in the connection,
-	// and a pool would hand out an empty one where everything would fail with
-	// "no such table".
-	db.SetMaxOpenConns(1)
 
-	if _, err := db.Exec(data.Schema); err != nil {
-		db.Close()
+	if err := eng.exec(data.Schema); err != nil {
+		eng.close()
 		return nil, fmt.Errorf("apply the schema to the validation database: %w", err)
 	}
 	// The lexical index goes in too: the FTS route emits SQL that queries it,
 	// and a gate that did not know those tables would force skipping it in order
 	// to search, which is exactly what the gate exists to prevent.
-	if _, err := db.Exec(data.SearchSchema); err != nil {
-		db.Close()
+	if err := eng.exec(data.SearchSchema); err != nil {
+		eng.close()
 		return nil, fmt.Errorf("apply the search schema to the validation database: %w", err)
 	}
 	for _, table := range invisibleTables {
-		if _, err := db.Exec("DROP TABLE IF EXISTS " + table); err != nil {
-			db.Close()
+		if err := eng.exec("DROP TABLE IF EXISTS " + table); err != nil {
+			eng.close()
 			return nil, fmt.Errorf("hide table %q: %w", table, err)
 		}
 	}
 	for _, schema := range schemas {
-		if err := addSchema(db, schema); err != nil {
-			db.Close()
+		if err := addSchema(eng, schema); err != nil {
+			eng.close()
 			return nil, err
 		}
 	}
-	return &Gate{db: db}, nil
+	if err := eng.attachAuthorizer(); err != nil {
+		eng.close()
+		return nil, err
+	}
+	return &Gate{engine: eng}, nil
 }
 
-func addSchema(db *sql.DB, schema Schema) error {
+func addSchema(eng *engine, schema Schema) error {
 	if schema.Name == "" || strings.EqualFold(schema.Name, "main") || strings.EqualFold(schema.Name, "temp") {
 		return fmt.Errorf("invalid attached schema name %q", schema.Name)
 	}
-	if _, err := db.Exec("ATTACH DATABASE ':memory:' AS " + quoteIdentifier(schema.Name)); err != nil {
+	if err := eng.exec("ATTACH DATABASE ':memory:' AS " + quoteIdentifier(schema.Name)); err != nil {
 		return fmt.Errorf("create validation schema %q: %w", schema.Name, err)
 	}
 	for _, table := range schema.Tables {
@@ -192,7 +182,7 @@ func addSchema(db *sql.DB, schema Schema) error {
 		}
 		statement := "CREATE TABLE " + quoteIdentifier(schema.Name) + "." +
 			quoteIdentifier(table.Name) + " (" + strings.Join(columns, ", ") + ")"
-		if _, err := db.Exec(statement); err != nil {
+		if err := eng.exec(statement); err != nil {
 			return fmt.Errorf("create validation table %s.%s: %w", schema.Name, table.Name, err)
 		}
 	}
@@ -204,7 +194,7 @@ func quoteIdentifier(name string) string {
 }
 
 // Close closes the validation database.
-func (g *Gate) Close() error { return g.db.Close() }
+func (g *Gate) Close() error { return g.engine.close() }
 
 // Validate returns the statement ready to run, or the reason why it is not
 // going to run. The string it returns is the one to execute: it may carry the
@@ -228,34 +218,10 @@ func (g *Gate) Validate(stmt string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	sel, parseErr := parseSelectErr(clean)
-	if parseErr == nil && sel != nil {
-		if err := walkTheTree(sel); err != nil {
-			return "", err
-		}
-	}
-	if err := g.prepareWithEngine(clean); err != nil {
-		if parseErr != nil {
-			return "", fmt.Errorf("SQL parse error: %w", parseErr)
-		}
+	if err := g.engine.prepare(clean); err != nil {
 		return "", err
 	}
 	return clean, nil
-}
-
-func parseSelectErr(stmt string) (*rqlite.SelectStatement, error) {
-	stmts, err := rqlite.NewParser(strings.NewReader(stmt)).ParseStatements()
-	if err != nil {
-		return nil, err
-	}
-	if len(stmts) != 1 {
-		return nil, fmt.Errorf("Only one statement is allowed, and this one has %d", len(stmts))
-	}
-	sel, ok := stmts[0].(*rqlite.SelectStatement)
-	if !ok {
-		return nil, fmt.Errorf("Only SELECT statements are allowed")
-	}
-	return sel, nil
 }
 
 // IsRowCount reports whether the statement's sole result is COUNT(*). It uses
@@ -280,20 +246,9 @@ func withoutSemicolon(stmt string) string {
 	return strings.TrimRight(strings.TrimSpace(stmt), "; \t\n")
 }
 
-// prepareWithEngine is the half that cannot be faked: what SQLite will not
-// prepare against the visible schema does not run.
-func (g *Gate) prepareWithEngine(stmt string) error {
-	prepared, err := g.db.PrepareContext(context.Background(), stmt)
-	if err != nil {
-		return fmt.Errorf("%s", translate(err))
-	}
-	return prepared.Close()
-}
-
 // translate speaks the gate's vocabulary, not SQLite's: the operator reads this,
 // and "SQL logic error (1)" does not tell them what to fix.
-func translate(err error) string {
-	message := err.Error()
+func translate(message string) string {
 	if i := strings.Index(message, "no such table: "); i >= 0 {
 		table := strings.TrimSpace(strings.TrimSuffix(message[i+len("no such table: "):], " (1)"))
 		return fmt.Sprintf("no such table: %q is not a table this query can read", table)
@@ -302,74 +257,19 @@ func translate(err error) string {
 		column := strings.TrimSpace(strings.TrimSuffix(message[i+len("no such column: "):], " (1)"))
 		return fmt.Sprintf("no such column: %q does not exist in the referenced tables", column)
 	}
+	if i := strings.Index(message, "no such function: "); i >= 0 {
+		name := strings.TrimSpace(strings.TrimSuffix(message[i+len("no such function: "):], " (1)"))
+		return fmt.Sprintf("Function %q is not allowed", name)
+	}
 	if strings.Contains(message, "ambiguous column name") {
 		return message
 	}
+	if strings.Contains(message, "incomplete input") || strings.Contains(message, "syntax error") ||
+		strings.Contains(message, "unrecognized token") {
+		return "SQL parse error: " + message
+	}
 	return "the database refused this statement: " + message
 }
-
-// walkTheTree denies what the engine cannot deny on its own: the functions
-// outside the list, and SQLite's internal tables, which exist in any database
-// and cannot be hidden by dropping them.
-//
-// Preparing a call to load_extension does not fail; it fails on execution, and
-// by then it is too late.
-func walkTheTree(sel *rqlite.SelectStatement) error {
-	visitor := &inspector{}
-	if _, err := rqlite.Walk(visitor, sel); err != nil {
-		return err
-	}
-	return visitor.reason
-}
-
-type inspector struct{ reason error }
-
-func (v *inspector) Visit(n rqlite.Node) (rqlite.Visitor, rqlite.Node, error) {
-	if v.reason != nil {
-		return v, n, nil
-	}
-	switch node := n.(type) {
-	case *rqlite.Call:
-		if node.Name != nil && !allowedFunctions[strings.ToLower(node.Name.Name)] {
-			v.reason = fmt.Errorf("Function %q is not allowed", node.Name.Name)
-		}
-	case *rqlite.QualifiedTableName:
-		if node.Name == nil {
-			break
-		}
-		name := strings.ToLower(node.Name.Name)
-		if strings.HasPrefix(name, "sqlite_") || strings.HasPrefix(name, "pragma_") ||
-			hasAnySuffix(name, ftsShadowSuffixes) {
-			v.reason = fmt.Errorf("no such table: %q is not a table this query can read",
-				node.Name.Name)
-		}
-	case *rqlite.QualifiedTableFunctionName:
-		if node.Name == nil {
-			break
-		}
-		name := strings.ToLower(node.Name.Name)
-		if strings.HasPrefix(name, "sqlite_") || strings.HasPrefix(name, "pragma_") {
-			v.reason = fmt.Errorf("no such table: %q is not a table this query can read",
-				node.Name.Name)
-		}
-	case *rqlite.WithClause:
-		for _, cte := range node.CTEs {
-			if cte != nil && cte.Select != nil {
-				if err := walkTheTree(cte.Select); err != nil {
-					v.reason = err
-					break
-				}
-			}
-		}
-	case rqlite.SelectExpr:
-		if node.SelectStatement != nil {
-			v.reason = walkTheTree(node.SelectStatement)
-		}
-	}
-	return v, n, nil
-}
-
-func (v *inspector) VisitEnd(n rqlite.Node) (rqlite.Node, error) { return n, nil }
 
 func hasAnySuffix(name string, suffixes []string) bool {
 	return slices.ContainsFunc(suffixes, func(s string) bool { return strings.HasSuffix(name, s) })
@@ -378,7 +278,7 @@ func hasAnySuffix(name string, suffixes []string) bool {
 // enforceLimit imposes the cap on the original text. When there is no
 // top-level LIMIT the maximum is added; when the one there is exceeds it, the
 // count is clamped. Subquery limits stay untouched because they sit inside
-// parentheses. The work is textual so a grammar-subset parser cannot be what
+// parentheses. The work is textual so a grammar-subset parser is not what
 // decides whether the statement the engine prepared may run.
 func enforceLimit(stmt string) (string, error) {
 	limitAt, ok := lastTopLevelWord(stmt, "limit")
@@ -669,9 +569,10 @@ var allowedFunctions = set(
 	"acos", "asin", "atan", "atan2", "ceil", "ceiling", "cos", "degrees",
 	"exp", "floor", "ln", "log", "log10", "log2", "mod", "pi", "pow", "power",
 	"radians", "sin", "sqrt", "tan", "trunc",
-	// lexical index: FTS5's three auxiliary functions. They only read from
-	// the index and only make sense inside a query that already matched.
-	"bm25", "highlight", "snippet",
+	// lexical index: FTS5's three auxiliary functions, plus MATCH, which the
+	// authorization callback reports as a function even though SQL writes it
+	// as an operator. They only read from the index.
+	"bm25", "highlight", "snippet", "match",
 )
 
 func set(values ...string) map[string]bool {
