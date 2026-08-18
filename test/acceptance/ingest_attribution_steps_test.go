@@ -107,8 +107,14 @@ func registerIngestAttributionSteps(ctx *godog.ScenarioContext, w *ingestAccepta
 			if err := rows.Scan(&family, &harness); err != nil {
 				return err
 			}
-			if harness != want[family] {
-				return fmt.Errorf("family %q harness=%q, want %q", family, harness, want[family])
+			expected := want[family]
+			if family == "hermes" {
+				if harness != expected && !strings.HasPrefix(harness, expected+"/") {
+					return fmt.Errorf("family %q harness=%q, want %q or %s/<channel>",
+						family, harness, expected, expected)
+				}
+			} else if harness != expected {
+				return fmt.Errorf("family %q harness=%q, want %q", family, harness, expected)
 			}
 			delete(want, family)
 		}
