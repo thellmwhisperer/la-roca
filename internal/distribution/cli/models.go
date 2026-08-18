@@ -16,6 +16,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/agentcfg"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/reconcile"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/supportreport"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -32,47 +33,85 @@ type doctorReport struct {
 }
 
 func doctorCommand(env *cliEnv) *cobra.Command {
-	return &cobra.Command{
+	var support bool
+	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Diagnose the configuration and which model is going to answer",
 		Long: "Reports where the data and the configuration are, which providers this\n" +
 			"installation declares, which of them are available and, for the ones that\n" +
 			"are not, the exact command that fixes it. Local agent models authenticate\n" +
-			"through their own CLIs; La Roca stores no secrets.",
-		RunE: env.serviceRunE(func(cmd *cobra.Command, _ []string, svc *service.Service) error {
-			report, err := svc.Doctor(cmd.Context())
-			if err != nil {
+			"through their own CLIs; La Roca stores no secrets.\n\n" +
+			"`roca doctor --report` writes a privacy-safe support snapshot for pasting\n" +
+			"into a chat or issue. It is read-only: it never installs plugins, never\n" +
+			"adopts schema, and never changes the serving marker.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if support {
+				env.skipExecutionLog = true
+				return env.runDoctorReport(cmd.Context())
+			}
+			return env.serviceRunE(func(cmd *cobra.Command, _ []string, svc *service.Service) error {
+				report, err := svc.Doctor(cmd.Context())
+				if err != nil {
+					return err
+				}
+				proposals, err := env.openCapabilityProposals()
+				if err != nil {
+					return err
+				}
+				for _, proposal := range proposals {
+					report.CapabilityProposals = append(report.CapabilityProposals, proposal.Proposal.Alert)
+				}
+				audit := logfile.New(svc.DataDir())
+				if env.auditOpsDatabase != "" {
+					audit = logfile.NewWithOps(svc.DataDir(), env.auditOpsDatabase)
+				}
+				failures, logErr := audit.RecentQueryFailures(
+					time.Now(), doctorQueryFailureWindow, doctorQueryFailureLimit)
+				if logErr != nil {
+					report.Warnings = append(report.Warnings,
+						"query failure log could not be read: "+logErr.Error())
+				}
+				answer := doctorReport{DoctorReport: report, QueryFailures: failures}
+				if env.json {
+					return env.printJSON(answer)
+				}
+				renderDoctor(env, report)
+				renderQueryFailures(env, failures)
+				if terminalInput(cmd.InOrStdin()) && !env.skipReconciliation {
+					_, err = env.reconcileCapabilities(cmd, true, true)
+				}
 				return err
-			}
-			proposals, err := env.openCapabilityProposals()
-			if err != nil {
-				return err
-			}
-			for _, proposal := range proposals {
-				report.CapabilityProposals = append(report.CapabilityProposals, proposal.Proposal.Alert)
-			}
-			audit := logfile.New(svc.DataDir())
-			if env.auditOpsDatabase != "" {
-				audit = logfile.NewWithOps(svc.DataDir(), env.auditOpsDatabase)
-			}
-			failures, logErr := audit.RecentQueryFailures(
-				time.Now(), doctorQueryFailureWindow, doctorQueryFailureLimit)
-			if logErr != nil {
-				report.Warnings = append(report.Warnings,
-					"query failure log could not be read: "+logErr.Error())
-			}
-			answer := doctorReport{DoctorReport: report, QueryFailures: failures}
-			if env.json {
-				return env.printJSON(answer)
-			}
-			renderDoctor(env, report)
-			renderQueryFailures(env, failures)
-			if terminalInput(cmd.InOrStdin()) && !env.skipReconciliation {
-				_, err = env.reconcileCapabilities(cmd, true, true)
-			}
-			return err
-		}),
+			})(cmd, args)
+		},
 	}
+	cmd.Flags().BoolVar(&support, "report", false,
+		"emit a privacy-safe support snapshot for pasting into a chat or issue")
+	return cmd
+}
+
+func (env *cliEnv) runDoctorReport(ctx context.Context) error {
+	paths, err := env.resolvePaths()
+	if err != nil {
+		return err
+	}
+	file, err := config.LoadFile(paths.Config)
+	if err != nil {
+		return err
+	}
+	home, _ := os.UserHomeDir()
+	snapshot, err := supportreport.Collect(ctx, supportreport.Options{
+		Version: env.build.Version, Commit: env.build.Commit, Paths: paths, File: file,
+		Home: home, PluginRoot: pluginRoot(paths), Prefix: os.Getenv(envRocaPrefix),
+		Sources: ingestSources(file, home, paths.Runner),
+	})
+	if err != nil {
+		return err
+	}
+	if env.json {
+		return env.printJSON(snapshot)
+	}
+	env.print("%s", supportreport.Render(snapshot))
+	return nil
 }
 
 func renderQueryFailures(env *cliEnv, summary logfile.QueryFailureSummary) {

@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
@@ -85,8 +86,9 @@ type archiveRun struct {
 // CutoverEligible reports whether all five DATA-3 archive families have a
 // verified population in the corpus destination. It is a cheap readiness
 // probe for DATA-6 and never opens a source snapshot.
-func CutoverEligible(ctx context.Context, destinationPath string) (bool, error) {
-	destination, err := bundledplugin.OpenDatabase(destinationPath, true)
+func CutoverEligible(ctx context.Context, destinationPath string,
+	timeout ...time.Duration) (bool, error) {
+	destination, err := bundledplugin.OpenDatabase(destinationPath, true, timeout...)
 	if err != nil {
 		return false, err
 	}

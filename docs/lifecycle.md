@@ -105,6 +105,8 @@ plainly instead of printing a zero date. It ends with an `answering:` line that
 names the active provider/model, the exact configuration path, and the setting
 that changes it. `roca doctor` reports the same floor as part of installation
 health, and `--json` carries the machine fields in both commands.
+`roca doctor --report` is the pasteable, privacy-safe support snapshot;
+[Operations](operations.md#support-report) owns that contract.
 
 Before asking for any provider setup, init detects supported agent CLIs already
 on `PATH` and uses their existing signed-in sessions. Its summary names the

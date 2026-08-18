@@ -2,10 +2,14 @@ package service_test
 
 import (
 	"context"
+	"database/sql"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
+	_ "modernc.org/sqlite"
 )
 
 // seedOrphanSupersedes plants what only an aged database has: memories pointing
@@ -54,6 +58,123 @@ func TestHealthOnACleanInstallationPasses(t *testing.T) {
 			t.Errorf("check %q = %q on a clean installation", name, check.Status)
 		}
 	}
+}
+
+func TestHealthVerdictsUseTheFirstReadableLayerRegistry(t *testing.T) {
+	memory := openVerdictDatabase(t, `
+		CREATE TABLE memories (
+			id INTEGER PRIMARY KEY, layer TEXT, supersedes INTEGER, metadata TEXT,
+			source_agent TEXT, created_at TEXT
+		);
+		INSERT INTO memories (id, layer, created_at) VALUES (1, 'handoff', '2026-08-18T12:00:00Z');`)
+	empty := openVerdictDatabase(t, `CREATE TABLE layers (name TEXT, alias_of TEXT);`)
+	fallback := openVerdictDatabase(t, `
+		CREATE TABLE layers (name TEXT, alias_of TEXT);
+		INSERT INTO layers (name) VALUES ('handoff');`)
+	unavailable := openVerdictDatabase(t, `CREATE TABLE unrelated (id INTEGER);`)
+
+	cases := []struct {
+		name         string
+		registries   []*sql.DB
+		wantRuntime  string
+		wantPhysical string
+	}{
+		{"empty active registry", []*sql.DB{empty, fallback}, service.HealthFail, service.HealthPass},
+		{"unavailable active registry", []*sql.DB{unavailable, fallback}, service.HealthPass, service.HealthPass},
+		{"no readable registry", []*sql.DB{unavailable}, "skipped", "skipped"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			statuses := map[string]string{}
+			for _, verdict := range service.HealthVerdicts(
+				t.Context(), testCase.registries, []*sql.DB{memory}, nil) {
+				statuses[verdict.Name] = verdict.Status
+			}
+			if statuses["runtime_layers_not_in_registry"] != testCase.wantRuntime {
+				t.Errorf("runtime layer verdict = %q, want %q",
+					statuses["runtime_layers_not_in_registry"], testCase.wantRuntime)
+			}
+			if statuses["physical_alias_layer_rows"] != testCase.wantPhysical {
+				t.Errorf("physical alias verdict = %q, want %q",
+					statuses["physical_alias_layer_rows"], testCase.wantPhysical)
+			}
+		})
+	}
+}
+
+func TestHealthVerdictsDoNotPassAfterIncompleteReader(t *testing.T) {
+	schema := `
+		CREATE TABLE memories (
+			id INTEGER PRIMARY KEY, layer TEXT, supersedes INTEGER, metadata TEXT,
+			source_agent TEXT, created_at TEXT
+		);`
+	cases := []struct {
+		name            string
+		maxOpen         int
+		timeout         time.Duration
+		wantContextDone bool
+	}{
+		{name: "context deadline", maxOpen: 1, timeout: 100 * time.Millisecond, wantContextDone: true},
+		{name: "SQLite contention", timeout: 2 * time.Second},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			passing := openVerdictDatabase(t, schema)
+			locked := openVerdictDatabase(t, schema)
+			if testCase.maxOpen > 0 {
+				locked.SetMaxOpenConns(testCase.maxOpen)
+			}
+			connection := verdictConnection(t, locked)
+			t.Cleanup(func() { _ = connection.Close() })
+			execVerdictSQL(t, connection, `BEGIN EXCLUSIVE`)
+			t.Cleanup(func() { _, _ = connection.ExecContext(t.Context(), `ROLLBACK`) })
+
+			ctx, cancel := context.WithTimeout(t.Context(), testCase.timeout)
+			defer cancel()
+			statuses := map[string]string{}
+			for _, verdict := range service.HealthVerdicts(
+				ctx, nil, []*sql.DB{passing, locked}, nil) {
+				statuses[verdict.Name] = verdict.Status
+			}
+			if testCase.wantContextDone != (ctx.Err() != nil) {
+				t.Fatalf("context error = %v", ctx.Err())
+			}
+			for _, name := range []string{"orphan_supersedes", "memory_created_at_formats"} {
+				if statuses[name] != "skipped" {
+					t.Errorf("%s verdict = %q, want skipped", name, statuses[name])
+				}
+			}
+		})
+	}
+}
+
+func verdictConnection(t *testing.T, db *sql.DB) *sql.Conn {
+	t.Helper()
+	connection, err := db.Conn(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return connection
+}
+
+func execVerdictSQL(t *testing.T, connection *sql.Conn, statement string) {
+	t.Helper()
+	if _, err := connection.ExecContext(t.Context(), statement); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func openVerdictDatabase(t *testing.T, schema string) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "health.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(schema); err != nil {
+		t.Fatal(err)
+	}
+	return db
 }
 
 // A memory pointing at a memory that is not there is the check that has to
