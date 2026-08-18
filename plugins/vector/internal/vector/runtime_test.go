@@ -72,3 +72,22 @@ func TestWorkerClaimDistinguishesLiveAndStaleProcesses(t *testing.T) {
 	}
 	claim.Close()
 }
+
+func TestManagedStateUsageLocksTheStablePluginRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "plugins")
+	state := filepath.Join(root, "vector", "state")
+	if err := os.MkdirAll(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	release, err := LockStateUsage(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if _, err := os.Stat(filepath.Join(root, relocationLockFile)); err != nil {
+		t.Fatalf("stable relocation lock: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(state, ".relocation.lock")); !os.IsNotExist(err) {
+		t.Fatalf("state-local relocation lock = %v", err)
+	}
+}

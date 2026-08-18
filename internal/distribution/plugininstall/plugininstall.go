@@ -32,6 +32,7 @@ const (
 	PackageFilename   = plugin.PackageFilename
 	ChecksumsFilename = "checksums.txt"
 	ManifestFilename  = plugin.ManifestFilename
+	recoveryProofFile = ".roca-update-recovery"
 	manifestSchema    = 1
 	maxArchiveSize    = 256 << 20
 	maxArchiveEntries = 1024
@@ -447,7 +448,7 @@ func Inspect(source, directory string) (Candidate, error) {
 		}
 	case ExecutablePackage:
 		if executable == "" {
-			return Candidate{}, fmt.Errorf("executable plugin %s has no roca-%s payload", metadata.Name, metadata.Name)
+			return Candidate{}, fmt.Errorf("executable plugin %s has no %s payload", metadata.Name, ExecutableName(metadata.Name))
 		}
 		if metadata.StateDir != "" && !safeFile(metadata.StateDir) {
 			return Candidate{}, fmt.Errorf("%s has an invalid state_directory %q", PackageFilename, metadata.StateDir)
@@ -602,8 +603,355 @@ func createStateDir(target, name string) error {
 	return nil
 }
 
+func (m Manager) RecoverUpdate(name string) error {
+	if err := m.valid(); err != nil {
+		return err
+	}
+	if !safeName(name) {
+		return fmt.Errorf("invalid plugin name %q", name)
+	}
+	target := filepath.Join(m.PluginRoot, name)
+	backup := filepath.Join(m.PluginRoot, "."+name+".previous")
+	tombstone := filepath.Join(m.PluginRoot, "."+name+".recovery")
+	journal := tombstone + ".journal"
+	tombstoneExists, err := recoveryPathExists(tombstone)
+	if err != nil {
+		return fmt.Errorf("inspect update recovery tombstone: %w", err)
+	}
+	journalExists, err := recoveryPathExists(journal)
+	if err != nil {
+		return fmt.Errorf("inspect update recovery journal: %w", err)
+	}
+	backupExists, err := recoveryPathExists(backup)
+	if err != nil {
+		return fmt.Errorf("inspect update recovery directory: %w", err)
+	}
+	if tombstoneExists && !journalExists {
+		return fmt.Errorf("recover plugin %s update: recovery tombstone %s has no installer ownership journal; remove or relocate it manually", name, tombstone)
+	}
+	if !backupExists && !journalExists {
+		return nil
+	}
+	previous, previousErr := VerifyInstalledPayload(name, backup)
+	current, currentErr := VerifyInstalledPayload(name, target)
+	if journalExists {
+		switch {
+		case previousErr == nil:
+			proof := updateRecoveryProof(name, previous)
+			if tombstoneExists {
+				if _, err := os.Lstat(target); err == nil {
+					return fmt.Errorf("recover plugin %s update: target and recovery tombstone both exist", name)
+				} else if !os.IsNotExist(err) {
+					return fmt.Errorf("inspect plugin %s recovery target: %w", name, err)
+				}
+				if err := verifyLinkedRecoveryProof(filepath.Join(tombstone, recoveryProofFile), journal, proof); err != nil {
+					return fmt.Errorf("recover plugin %s update: %w", name, err)
+				}
+			} else {
+				if currentErr != nil {
+					return fmt.Errorf("recover plugin %s update: current directory is not verified: %w", name, currentErr)
+				}
+				if err := verifyLinkedRecoveryProof(filepath.Join(target, recoveryProofFile), journal, proof); err != nil {
+					return fmt.Errorf("recover plugin %s update: %w", name, err)
+				}
+				if err := tombstoneAndRestore(name, target, backup, tombstone); err != nil {
+					return err
+				}
+				return removeRecoveryTombstone(tombstone, journal, proof)
+			}
+			if err := os.Rename(backup, target); err != nil {
+				return fmt.Errorf("restore plugin %s update: %w", name, err)
+			}
+			return removeRecoveryTombstone(tombstone, journal, proof)
+		case currentErr == nil:
+			proof := updateRecoveryProof(name, current)
+			if err := verifyRecoveryProof(journal, proof); err != nil {
+				return fmt.Errorf("recover plugin %s update: %w", name, err)
+			}
+			if tombstoneExists {
+				marker := filepath.Join(tombstone, recoveryProofFile)
+				if _, err := os.Lstat(marker); err == nil {
+					if err := verifyLinkedRecoveryProof(marker, journal, proof); err != nil {
+						return fmt.Errorf("recover plugin %s update: %w", name, err)
+					}
+				} else if !os.IsNotExist(err) {
+					return fmt.Errorf("inspect plugin %s recovery proof: %w", name, err)
+				}
+			}
+			return removeRecoveryTombstone(tombstone, journal, proof)
+		default:
+			return fmt.Errorf("recover plugin %s update: previous directory is not verified: %v; current directory is not verified: %v",
+				name, previousErr, currentErr)
+		}
+	}
+	if !backupExists {
+		return nil
+	}
+	switch {
+	case previousErr == nil:
+		if _, err := os.Lstat(target); err == nil && currentErr != nil {
+			return fmt.Errorf("recover plugin %s update: current directory is not verified: %w", name, currentErr)
+		} else if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("inspect plugin %s recovery target: %w", name, err)
+		}
+		if currentErr == nil {
+			if err := moveRecoveryState(target, backup, previous.StateDir); err != nil {
+				return fmt.Errorf("recover plugin %s state: %w", name, err)
+			}
+		}
+		allowed := []Manifest{previous}
+		if currentErr == nil {
+			allowed = append(allowed, current)
+		}
+		if err := m.restoreRecoveryExecutable(backup, previous, allowed...); err != nil {
+			return fmt.Errorf("recover plugin %s executable: %w", name, err)
+		}
+		if currentErr == nil {
+			proof := updateRecoveryProof(name, previous)
+			marker := filepath.Join(target, recoveryProofFile)
+			if _, err := os.Lstat(marker); os.IsNotExist(err) {
+				if err := createRecoveryProof(marker, proof); err != nil {
+					return fmt.Errorf("create plugin %s recovery proof: %w", name, err)
+				}
+			} else if err != nil {
+				return fmt.Errorf("inspect plugin %s recovery proof: %w", name, err)
+			} else if err := verifyRecoveryProof(marker, proof); err != nil {
+				return fmt.Errorf("recover plugin %s update: %w", name, err)
+			}
+			if err := os.Link(marker, journal); err != nil {
+				return fmt.Errorf("create plugin %s recovery journal: %w", name, err)
+			}
+			if err := tombstoneAndRestore(name, target, backup, tombstone); err != nil {
+				return err
+			}
+			return removeRecoveryTombstone(tombstone, journal,
+				updateRecoveryProof(name, previous))
+		}
+		if err := os.Rename(backup, target); err != nil {
+			return fmt.Errorf("restore plugin %s update: %w", name, err)
+		}
+		return nil
+	case currentErr == nil:
+		if err := moveRecoveryState(backup, target, current.StateDir); err != nil {
+			return fmt.Errorf("finish plugin %s state recovery: %w", name, err)
+		}
+		if err := m.restoreRecoveryExecutable(target, current, current); err != nil {
+			return fmt.Errorf("finish plugin %s executable recovery: %w", name, err)
+		}
+		if err := os.RemoveAll(backup); err != nil {
+			return fmt.Errorf("finish plugin %s recovery: %w", name, err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("recover plugin %s update: previous directory is not verified: %v; current directory is not verified: %v",
+			name, previousErr, currentErr)
+	}
+}
+
+func tombstoneAndRestore(name, target, backup, tombstone string) error {
+	if err := os.Rename(target, tombstone); err != nil {
+		return fmt.Errorf("tombstone interrupted plugin %s update: %w", name, err)
+	}
+	if err := os.Rename(backup, target); err != nil {
+		return fmt.Errorf("restore plugin %s update: %w", name, err)
+	}
+	return nil
+}
+
+func recoveryPathExists(path string) (bool, error) {
+	_, err := os.Lstat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+func updateRecoveryProof(name string, previous Manifest) string {
+	return fmt.Sprintf("roca-plugin-update-recovery-v1\n%s\n%s\n", name, previous.Checksum)
+}
+
+func createRecoveryProof(path, proof string) error {
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".recovery-proof-")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if _, err := temporary.WriteString(proof); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Link(temporaryPath, path)
+}
+
+func verifyRecoveryProof(path, proof string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("inspect recovery ownership proof: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("recovery ownership proof %s is not a regular file", path)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read recovery ownership proof: %w", err)
+	}
+	if string(raw) != proof {
+		return fmt.Errorf("recovery ownership proof %s does not match the interrupted update", path)
+	}
+	return nil
+}
+
+func verifyLinkedRecoveryProof(marker, journal, proof string) error {
+	if err := verifyRecoveryProof(marker, proof); err != nil {
+		return err
+	}
+	if err := verifyRecoveryProof(journal, proof); err != nil {
+		return err
+	}
+	markerInfo, err := os.Lstat(marker)
+	if err != nil {
+		return err
+	}
+	journalInfo, err := os.Lstat(journal)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(markerInfo, journalInfo) {
+		return fmt.Errorf("recovery tombstone %s is not linked to installer journal %s", filepath.Dir(marker), journal)
+	}
+	return nil
+}
+
+func removeRecoveryTombstone(tombstone, journal, proof string) error {
+	if err := verifyRecoveryProof(journal, proof); err != nil {
+		return err
+	}
+	info, err := os.Lstat(tombstone)
+	if os.IsNotExist(err) {
+		if err := os.Remove(journal); err != nil {
+			return fmt.Errorf("remove recovery journal: %w", err)
+		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect recovery tombstone: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("recovery tombstone %s is not a directory", tombstone)
+	}
+	entries, err := os.ReadDir(tombstone)
+	if err != nil {
+		return fmt.Errorf("read recovery tombstone: %w", err)
+	}
+	marker := filepath.Join(tombstone, recoveryProofFile)
+	markerPresent := false
+	for _, entry := range entries {
+		if entry.Name() == recoveryProofFile {
+			markerPresent = true
+			break
+		}
+	}
+	if markerPresent {
+		if err := verifyLinkedRecoveryProof(marker, journal, proof); err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			if entry.Name() == recoveryProofFile {
+				continue
+			}
+			if err := os.RemoveAll(filepath.Join(tombstone, entry.Name())); err != nil {
+				return fmt.Errorf("remove recovery tombstone entry %s: %w", entry.Name(), err)
+			}
+		}
+		if err := os.Remove(marker); err != nil {
+			return fmt.Errorf("remove recovery ownership proof: %w", err)
+		}
+	} else if len(entries) != 0 {
+		return fmt.Errorf("recovery tombstone %s has no linked ownership proof and is not empty; remove or relocate it manually", tombstone)
+	}
+	if err := os.Remove(tombstone); err != nil {
+		return fmt.Errorf("remove empty recovery tombstone: %w", err)
+	}
+	if err := os.Remove(journal); err != nil {
+		return fmt.Errorf("remove recovery journal: %w", err)
+	}
+	return nil
+}
+
+func moveRecoveryState(source, destination, name string) error {
+	if name == "" {
+		return nil
+	}
+	sourceState := filepath.Join(source, name)
+	destinationState := filepath.Join(destination, name)
+	sourceInfo, sourceErr := os.Lstat(sourceState)
+	destinationInfo, destinationErr := os.Lstat(destinationState)
+	if sourceErr != nil && !os.IsNotExist(sourceErr) {
+		return sourceErr
+	}
+	if destinationErr != nil && !os.IsNotExist(destinationErr) {
+		return destinationErr
+	}
+	if sourceErr == nil && !sourceInfo.IsDir() {
+		return fmt.Errorf("plugin state path %s is not a directory", sourceState)
+	}
+	if destinationErr == nil && !destinationInfo.IsDir() {
+		return fmt.Errorf("plugin state path %s is not a directory", destinationState)
+	}
+	if sourceErr == nil && destinationErr == nil {
+		return fmt.Errorf("plugin state exists in both recovery directories")
+	}
+	if sourceErr == nil {
+		return os.Rename(sourceState, destinationState)
+	}
+	return nil
+}
+
+func (m Manager) restoreRecoveryExecutable(
+	directory string,
+	manifest Manifest,
+	allowed ...Manifest,
+) error {
+	expected, digest, err := m.installedExecutableChecksum(manifest)
+	if expected == "" {
+		return nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err == nil {
+		if digest == manifest.Files[manifest.ExecutableFile] {
+			return nil
+		}
+		owned := false
+		for _, candidate := range allowed {
+			if candidate.Executable == manifest.Executable &&
+				digest == candidate.Files[candidate.ExecutableFile] {
+				owned = true
+				break
+			}
+		}
+		if !owned {
+			return fmt.Errorf("plugin executable %s changed since install; refusing to overwrite it", expected)
+		}
+	}
+	return installChecksummedFile(filepath.Join(directory, manifest.ExecutableFile), expected,
+		0o700, manifest.ExecutableFile, manifest.Files[manifest.ExecutableFile])
+}
+
 func (m Manager) Update(candidate Candidate) (Result, error) {
-	previousManifest, err := m.preflightUpdate(candidate)
+	previousManifest, err := m.preflightUpdate(candidate, candidate.Name, candidate.Name)
 	if err != nil {
 		return Result{}, err
 	}
@@ -626,31 +974,23 @@ func (m Manager) Update(candidate Candidate) (Result, error) {
 		_ = os.Rename(backup, target)
 		return Result{}, fmt.Errorf("activate plugin update: %w", err)
 	}
-	stateMoved := false
 	if candidate.StateDir != "" {
 		state := filepath.Join(backup, candidate.StateDir)
 		err := os.Rename(state, filepath.Join(target, candidate.StateDir))
 		switch {
 		case err == nil:
-			stateMoved = true
 		case os.IsNotExist(err):
 			if err := createStateDir(target, candidate.StateDir); err != nil {
-				_ = os.RemoveAll(target)
-				_ = os.Rename(backup, target)
+				_ = m.RecoverUpdate(candidate.Name)
 				return Result{}, err
 			}
 		default:
-			_ = os.RemoveAll(target)
-			_ = os.Rename(backup, target)
+			_ = m.RecoverUpdate(candidate.Name)
 			return Result{}, fmt.Errorf("preserve plugin state directory: %w", err)
 		}
 	}
 	rollback := func() {
-		if stateMoved {
-			_ = os.Rename(filepath.Join(target, candidate.StateDir), filepath.Join(backup, candidate.StateDir))
-		}
-		_ = os.RemoveAll(target)
-		_ = os.Rename(backup, target)
+		_ = m.RecoverUpdate(candidate.Name)
 	}
 	if candidate.Executable == "" && previousManifest.Executable != "" {
 		if err := os.Remove(previousManifest.Executable); err != nil && !os.IsNotExist(err) {
@@ -670,18 +1010,23 @@ func (m Manager) Update(candidate Candidate) (Result, error) {
 }
 
 func (m Manager) PreflightUpdate(candidate Candidate) error {
-	_, err := m.preflightUpdate(candidate)
+	_, err := m.preflightUpdate(candidate, candidate.Name, candidate.Name)
 	return err
 }
 
-func (m Manager) preflightUpdate(candidate Candidate) (Manifest, error) {
-	if err := m.valid(); err != nil {
+func (m Manager) PreflightUpdateFrom(candidate Candidate, installedName, manifestName string) error {
+	_, err := m.preflightUpdate(candidate, installedName, manifestName)
+	return err
+}
+
+func (m Manager) preflightUpdate(candidate Candidate, installedName, manifestName string) (Manifest, error) {
+	target, err := m.updateTarget(installedName)
+	if err != nil {
 		return Manifest{}, err
 	}
-	target := filepath.Join(m.PluginRoot, candidate.Name)
-	previousManifest, err := ReadManifest(target)
+	previousManifest, err := readUpdateManifest(candidate, target, manifestName)
 	if err != nil {
-		return Manifest{}, fmt.Errorf("update plugin %s: %w", candidate.Name, err)
+		return Manifest{}, err
 	}
 	if previousManifest.Kind != candidate.Kind {
 		return Manifest{}, fmt.Errorf("plugin %s changed its package kind from %s to %s; update refused",
@@ -711,6 +1056,24 @@ func (m Manager) preflightUpdate(candidate Candidate) (Manifest, error) {
 		return Manifest{}, fmt.Errorf("update recovery directory already exists at %s", backup)
 	} else if !os.IsNotExist(err) {
 		return Manifest{}, fmt.Errorf("inspect update recovery directory: %w", err)
+	}
+	tombstone := filepath.Join(m.PluginRoot, "."+candidate.Name+".recovery")
+	if _, err := os.Lstat(tombstone); err == nil {
+		return Manifest{}, fmt.Errorf("update recovery tombstone already exists at %s", tombstone)
+	} else if !os.IsNotExist(err) {
+		return Manifest{}, fmt.Errorf("inspect update recovery tombstone: %w", err)
+	}
+	journal := tombstone + ".journal"
+	if _, err := os.Lstat(journal); err == nil {
+		return Manifest{}, fmt.Errorf("update recovery journal already exists at %s", journal)
+	} else if !os.IsNotExist(err) {
+		return Manifest{}, fmt.Errorf("inspect update recovery journal: %w", err)
+	}
+	marker := filepath.Join(target, recoveryProofFile)
+	if _, err := os.Lstat(marker); err == nil {
+		return Manifest{}, fmt.Errorf("update recovery proof already exists at %s", marker)
+	} else if !os.IsNotExist(err) {
+		return Manifest{}, fmt.Errorf("inspect update recovery proof: %w", err)
 	}
 	if candidate.StateDir != "" {
 		info, err := os.Lstat(filepath.Join(target, candidate.StateDir))
@@ -859,7 +1222,7 @@ func writeManifest(directory string, candidate Candidate, executable string) err
 // writes land in an inode nobody can reach again. Nothing but the payload
 // changes between versions of such a plugin, so nothing else has to move.
 func (m Manager) UpdateInPlace(candidate Candidate) (Result, error) {
-	previous, err := m.preflightUpdateInPlace(candidate)
+	previous, err := m.preflightUpdateInPlace(candidate, candidate.Name, candidate.Name)
 	if err != nil {
 		return Result{}, err
 	}
@@ -907,22 +1270,27 @@ func (m Manager) UpdateInPlace(candidate Candidate) (Result, error) {
 }
 
 func (m Manager) PreflightUpdateInPlace(candidate Candidate) error {
-	_, err := m.preflightUpdateInPlace(candidate)
+	_, err := m.preflightUpdateInPlace(candidate, candidate.Name, candidate.Name)
 	return err
 }
 
-func (m Manager) preflightUpdateInPlace(candidate Candidate) (Manifest, error) {
-	if err := m.valid(); err != nil {
+func (m Manager) PreflightUpdateInPlaceFrom(candidate Candidate, installedName, manifestName string) error {
+	_, err := m.preflightUpdateInPlace(candidate, installedName, manifestName)
+	return err
+}
+
+func (m Manager) preflightUpdateInPlace(candidate Candidate, installedName, manifestName string) (Manifest, error) {
+	target, err := m.updateTarget(installedName)
+	if err != nil {
 		return Manifest{}, err
 	}
 	if candidate.Kind != DataPackage || candidate.Risk != DataOnly || candidate.Executable != "" {
 		return Manifest{}, fmt.Errorf(
 			"plugin %s can run code; an in-place update is refused", candidate.Name)
 	}
-	target := filepath.Join(m.PluginRoot, candidate.Name)
-	previous, err := ReadManifest(target)
+	previous, err := readUpdateManifest(candidate, target, manifestName)
 	if err != nil {
-		return Manifest{}, fmt.Errorf("update plugin %s: %w", candidate.Name, err)
+		return Manifest{}, err
 	}
 	if previous.Executable != "" {
 		return Manifest{}, fmt.Errorf(
@@ -940,6 +1308,27 @@ func (m Manager) preflightUpdateInPlace(candidate Candidate) (Manifest, error) {
 			candidate.Name, previousDatabases, candidateDatabases)
 	}
 	return previous, nil
+}
+
+func (m Manager) updateTarget(installedName string) (string, error) {
+	if err := m.valid(); err != nil {
+		return "", err
+	}
+	if !safeName(installedName) {
+		return "", fmt.Errorf("invalid installed plugin name %q", installedName)
+	}
+	return filepath.Join(m.PluginRoot, installedName), nil
+}
+
+func readUpdateManifest(candidate Candidate, target, manifestName string) (Manifest, error) {
+	manifest, err := ReadManifest(target)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("update plugin %s: %w", candidate.Name, err)
+	}
+	if manifest.Name != manifestName {
+		return Manifest{}, fmt.Errorf("plugin manifest names %q, not %q", manifest.Name, manifestName)
+	}
+	return manifest, nil
 }
 
 func (m Manager) PreflightExecutableRepair(candidate Candidate) error {
@@ -1174,14 +1563,10 @@ func (m Manager) executablePath(candidate Candidate) string {
 }
 
 func (m Manager) verifyOwnedExecutable(manifest Manifest) error {
-	if manifest.Executable == "" {
+	expected, digest, err := m.installedExecutableChecksum(manifest)
+	if expected == "" {
 		return nil
 	}
-	expected := filepath.Join(m.BinDir, manifest.ExecutableFile)
-	if filepath.Clean(manifest.Executable) != filepath.Clean(expected) {
-		return fmt.Errorf("plugin executable path %s is outside the configured executable directory", manifest.Executable)
-	}
-	digest, err := fileChecksum(expected)
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -1192,6 +1577,18 @@ func (m Manager) verifyOwnedExecutable(manifest Manifest) error {
 		return fmt.Errorf("plugin executable %s changed since install; refusing to overwrite or delete it", expected)
 	}
 	return nil
+}
+
+func (m Manager) installedExecutableChecksum(manifest Manifest) (string, string, error) {
+	if manifest.Executable == "" {
+		return "", "", nil
+	}
+	expected := filepath.Join(m.BinDir, manifest.ExecutableFile)
+	if filepath.Clean(manifest.Executable) != filepath.Clean(expected) {
+		return expected, "", fmt.Errorf("plugin executable path %s is outside the configured executable directory", manifest.Executable)
+	}
+	digest, err := fileChecksum(expected)
+	return expected, digest, err
 }
 
 func resultFor(candidate Candidate, directory, executable string) Result {
@@ -1293,8 +1690,18 @@ func openFileChecksum(file *os.File, path string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
+// ExecutableName is the payload filename for a plugin. A name that already
+// carries the family prefix is the executable itself, so a family-prefixed
+// plugin is not double-prefixed.
+func ExecutableName(name string) string {
+	if strings.HasPrefix(name, "roca-") {
+		return name
+	}
+	return "roca-" + name
+}
+
 func executableNames(name string) []string {
-	base := "roca-" + name
+	base := ExecutableName(name)
 	if runtime.GOOS == "windows" {
 		return []string{base + ".exe", base + ".com", base + ".bat", base + ".cmd"}
 	}

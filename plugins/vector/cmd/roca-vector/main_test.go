@@ -207,6 +207,20 @@ func executeForOutput(t *testing.T, env *environment, args ...string) string {
 	return string(raw)
 }
 
+func TestDefaultStateDirUsesThePluginIdentity(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ROCA_VECTOR_STATE_DIR", "")
+	got, err := (&environment{}).resolveStateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(home, ".roca", "plugins", "roca-vector", "state")
+	if got != want {
+		t.Fatalf("default state dir = %q, want %q", got, want)
+	}
+}
+
 func TestWorkerCarriesExplicitCoreAndStatePaths(t *testing.T) {
 	got := workerArguments("/synthetic/roca.db", "/synthetic/state", "synthetic-model")
 	want := []string{"--state-dir", "/synthetic/state", "--db-path", "/synthetic/roca.db",

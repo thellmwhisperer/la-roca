@@ -61,7 +61,7 @@ func TestTheInstallerPlacesBundledVectorBesideACustomPrefix(t *testing.T) {
 		}
 	}
 	manifest, err := plugininstall.ReadManifest(
-		filepath.Join(m.home, ".roca", "plugins", "vector"))
+		filepath.Join(m.home, ".roca", "plugins", "roca-vector"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestTheInstallerRestoresThePreviousBinaryWhenBundledPlacementFails(t *testi
 	if err := m.iRunTheInstaller(); err != nil || m.last.code != 0 {
 		t.Fatalf("initial install: %v, code %d:\n%s%s", err, m.last.code, m.last.stdout, m.last.stderr)
 	}
-	manifest := filepath.Join(m.home, ".roca", "plugins", "vector", ".roca-plugin.json")
+	manifest := filepath.Join(m.home, ".roca", "plugins", "roca-vector", ".roca-plugin.json")
 	body, err := os.ReadFile(manifest)
 	if err != nil {
 		t.Fatal(err)
