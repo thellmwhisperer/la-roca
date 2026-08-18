@@ -23,6 +23,10 @@ func preserveJSONExtract(stmt string) (string, bool) {
 }
 
 func preserveJSONExtractPass(stmt string) (string, bool) {
+	leftStarts := jsonArrowLeftStarts(stmt)
+	if len(leftStarts) == 0 {
+		return stmt, false
+	}
 	var rebuilt strings.Builder
 	changed := false
 	cursor := 0
@@ -36,7 +40,7 @@ func preserveJSONExtractPass(stmt string) (string, bool) {
 			i++
 			continue
 		}
-		leftStart, leftEnd := jsonArrowLeft(stmt, i)
+		leftStart, leftEnd := jsonArrowLeft(stmt, i, leftStarts)
 		if leftStart < cursor {
 			i++
 			continue
@@ -59,20 +63,6 @@ func preserveJSONExtractPass(stmt string) (string, bool) {
 			}
 			chainEnd = rightEnd
 			next := skipSpaceRight(stmt, rightEnd)
-			for next < len(stmt) && stmt[next] == ')' {
-				open := matchingOpenParen(stmt, next)
-				if open < 0 {
-					break
-				}
-				outerStart := jsonParenOperandStart(stmt, open, next+1)
-				if outerStart < cursor || outerStart > leftStart {
-					break
-				}
-				expr = stmt[outerStart:leftStart] + expr + stmt[chainEnd:next+1]
-				leftStart = outerStart
-				chainEnd = next + 1
-				next = skipSpaceRight(stmt, chainEnd)
-			}
 			if jsonArrowWidth(stmt, next) == 0 {
 				break
 			}
@@ -131,41 +121,99 @@ func skipQuotedOrComment(stmt string, i int) (int, bool) {
 	return i, false
 }
 
-func jsonArrowLeft(stmt string, arrow int) (int, int) {
+func jsonArrowLeft(stmt string, arrow int, starts map[int]int) (int, int) {
 	end := skipSpaceLeft(stmt, arrow)
-	if end <= 0 {
-		return -1, -1
-	}
-	if stmt[end-1] == ')' {
-		open := matchingOpenParen(stmt, end-1)
-		if open < 0 {
-			return -1, -1
-		}
-		return jsonParenOperandStart(stmt, open, end), end
-	}
-	start := qualifiedIdentStart(stmt, end)
-	if start < 0 || start >= end {
+	start, ok := starts[arrow]
+	if !ok || start < 0 || start >= end {
 		return -1, -1
 	}
 	return start, end
 }
 
-func jsonParenOperandStart(stmt string, open, end int) int {
-	nameEnd := skipSpaceLeft(stmt, open)
-	start := qualifiedIdentStart(stmt, nameEnd)
-	if start < 0 {
-		return open
+type jsonArrowVisitor struct {
+	starts map[int]int
+}
+
+func (v *jsonArrowVisitor) Visit(node rqlite.Node) (rqlite.Visitor, rqlite.Node, error) {
+	if expr, ok := node.(*rqlite.BinaryExpr); ok &&
+		(expr.Op == rqlite.JSON_EXTRACT_JSON || expr.Op == rqlite.JSON_EXTRACT_SQL) {
+		if start := jsonExprStart(expr.X); start >= 0 {
+			v.starts[expr.OpPos.Offset] = start
+		}
 	}
-	sel := parseSelect("SELECT " + stmt[start:end])
-	if sel == nil || len(sel.Columns) != 1 || sel.Columns[0].Alias != nil || sel.Source != nil {
-		return open
+	return v, node, nil
+}
+
+func (v *jsonArrowVisitor) VisitEnd(node rqlite.Node) (rqlite.Node, error) {
+	return node, nil
+}
+
+func jsonArrowLeftStarts(stmt string) map[int]int {
+	sel := parseSelect(stmt)
+	if sel == nil {
+		return nil
 	}
-	switch sel.Columns[0].Expr.(type) {
-	case *rqlite.Call, *rqlite.CastExpr, *rqlite.Raise:
-		return start
-	default:
-		return open
+	visitor := &jsonArrowVisitor{starts: make(map[int]int)}
+	if _, err := rqlite.Walk(visitor, sel); err != nil {
+		return nil
 	}
+	return visitor.starts
+}
+
+func jsonExprStart(expr rqlite.Expr) int {
+	switch expr := expr.(type) {
+	case *rqlite.BinaryExpr:
+		return jsonExprStart(expr.X)
+	case *rqlite.BindExpr:
+		return expr.NamePos.Offset
+	case *rqlite.BlobLit:
+		return expr.ValuePos.Offset
+	case *rqlite.BoolLit:
+		return expr.ValuePos.Offset
+	case *rqlite.Call:
+		return expr.Name.NamePos.Offset
+	case *rqlite.CaseExpr:
+		return expr.Case.Offset
+	case *rqlite.CastExpr:
+		return expr.Cast.Offset
+	case *rqlite.CollateExpr:
+		return jsonExprStart(expr.X)
+	case *rqlite.Exists:
+		if expr.Not.IsValid() {
+			return expr.Not.Offset
+		}
+		return expr.Exists.Offset
+	case *rqlite.ExprList:
+		return expr.Lparen.Offset
+	case *rqlite.Ident:
+		return expr.NamePos.Offset
+	case *rqlite.Null:
+		return jsonExprStart(expr.X)
+	case *rqlite.NullLit:
+		return expr.Pos.Offset
+	case *rqlite.NumberLit:
+		return expr.ValuePos.Offset
+	case *rqlite.ParenExpr:
+		return expr.Lparen.Offset
+	case *rqlite.QualifiedRef:
+		if expr.Schema != nil {
+			return expr.Schema.NamePos.Offset
+		}
+		if expr.Table != nil {
+			return expr.Table.NamePos.Offset
+		}
+	case *rqlite.Raise:
+		return expr.Raise.Offset
+	case *rqlite.Range:
+		return jsonExprStart(expr.X)
+	case *rqlite.StringLit:
+		return expr.ValuePos.Offset
+	case *rqlite.TimestampLit:
+		return expr.ValuePos.Offset
+	case *rqlite.UnaryExpr:
+		return expr.OpPos.Offset
+	}
+	return -1
 }
 
 func jsonArrowRight(stmt string, from int) (int, int) {
@@ -207,85 +255,6 @@ func skipSpaceRight(stmt string, i int) int {
 		i++
 	}
 	return i
-}
-
-func qualifiedIdentStart(stmt string, end int) int {
-	start := identStart(stmt, end)
-	if start < 0 {
-		return -1
-	}
-	for {
-		dot := skipSpaceLeft(stmt, start)
-		if dot <= 0 || stmt[dot-1] != '.' {
-			return start
-		}
-		next := identStart(stmt, skipSpaceLeft(stmt, dot-1))
-		if next < 0 {
-			return start
-		}
-		start = next
-	}
-}
-
-func identStart(stmt string, end int) int {
-	if end <= 0 {
-		return -1
-	}
-	switch stmt[end-1] {
-	case '"', '\'', '`':
-		quote := stmt[end-1]
-		for i := end - 2; i >= 0; i-- {
-			if stmt[i] != quote {
-				continue
-			}
-			if i > 0 && stmt[i-1] == quote {
-				i--
-				continue
-			}
-			return i
-		}
-		return -1
-	case ']':
-		for i := end - 2; i >= 0; i-- {
-			if stmt[i] == '[' {
-				return i
-			}
-		}
-		return -1
-	}
-	i := end
-	for i > 0 && isWordPart(stmt[i-1]) {
-		i--
-	}
-	if i == end || !isWordStart(stmt[i]) {
-		return -1
-	}
-	return i
-}
-
-func matchingOpenParen(stmt string, closeAt int) int {
-	var opens []int
-	for i := 0; i <= closeAt; {
-		if next, ok := skipQuotedOrComment(stmt, i); ok {
-			i = next
-			continue
-		}
-		switch stmt[i] {
-		case '(':
-			opens = append(opens, i)
-		case ')':
-			if len(opens) == 0 {
-				i++
-				continue
-			}
-			if i == closeAt {
-				return opens[len(opens)-1]
-			}
-			opens = opens[:len(opens)-1]
-		}
-		i++
-	}
-	return -1
 }
 
 func matchingCloseParen(stmt string, openAt int) int {

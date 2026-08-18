@@ -193,7 +193,7 @@ func resultColumns(sel *rqlite.SelectStatement) (compoundResultColumns, bool) {
 		if col.Alias != nil {
 			result.names[strings.ToLower(col.Alias.Name)] = true
 		}
-		result.expressions[col.Expr.String()] = true
+		result.expressions[compoundExpressionKey(col.Expr)] = true
 		switch expr := col.Expr.(type) {
 		case *rqlite.Ident:
 			result.names[strings.ToLower(expr.Name)] = true
@@ -216,7 +216,7 @@ func keepsCompoundOrderTerm(term string, columns compoundResultColumns) bool {
 		position, err := strconv.Atoi(ordinal.Value)
 		return err == nil && position >= 1 && position <= columns.count
 	}
-	if columns.expressions[expr.String()] {
+	if columns.expressions[compoundExpressionKey(expr)] {
 		return true
 	}
 	switch ref := expr.(type) {
@@ -226,6 +226,28 @@ func keepsCompoundOrderTerm(term string, columns compoundResultColumns) bool {
 		return false
 	}
 	return false
+}
+
+type foldExpressionIdentifiers struct{}
+
+func (foldExpressionIdentifiers) Visit(node rqlite.Node) (rqlite.Visitor, rqlite.Node, error) {
+	if ident, ok := node.(*rqlite.Ident); ok {
+		ident.Name = strings.ToLower(ident.Name)
+	}
+	return foldExpressionIdentifiers{}, node, nil
+}
+
+func (foldExpressionIdentifiers) VisitEnd(node rqlite.Node) (rqlite.Node, error) {
+	return node, nil
+}
+
+func compoundExpressionKey(expr rqlite.Expr) string {
+	clone := rqlite.CloneExpr(expr)
+	node, err := rqlite.Walk(foldExpressionIdentifiers{}, clone)
+	if err != nil {
+		return expr.String()
+	}
+	return node.(rqlite.Expr).String()
 }
 
 func isDecimalLiteral(text string) bool {

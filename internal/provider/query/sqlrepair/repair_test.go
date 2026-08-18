@@ -140,6 +140,20 @@ func TestPrepareRepairsOnlyNamedModelOutputShapes(t *testing.T) {
 				"SELECT lower(project) FROM sessions ORDER BY lower(layer)",
 		},
 		{
+			name: "match compound ORDER BY expression identifiers case insensitively",
+			raw: "SELECT lower(layer) FROM memories UNION ALL " +
+				"SELECT lower(project) FROM sessions ORDER BY LOWER(LAYER)",
+			wantSQL: "SELECT lower(layer) FROM memories UNION ALL " +
+				"SELECT lower(project) FROM sessions ORDER BY LOWER(LAYER)",
+		},
+		{
+			name: "preserve literal case when matching compound expressions",
+			raw: "SELECT CASE WHEN layer = 'A' THEN 1 END FROM memories UNION ALL " +
+				"SELECT 1 FROM sessions ORDER BY CASE WHEN layer = 'a' THEN 1 END",
+			wantSQL:     "SELECT CASE WHEN layer = 'A' THEN 1 END FROM memories UNION ALL SELECT 1 FROM sessions",
+			wantRepairs: []string{sqlrepair.WrapOrderedCompound},
+		},
+		{
 			name: "keep compound ORDER BY aliases and valid ordinals",
 			raw: "SELECT lower(layer) AS normalized, project FROM memories UNION ALL " +
 				"SELECT lower(project), agent FROM sessions ORDER BY normalized, 2",
@@ -175,6 +189,14 @@ func TestPrepareRepairsOnlyNamedModelOutputShapes(t *testing.T) {
 			raw: "SELECT COALESCE(metadata -> '$.project', '{}') -> '$.name' = 'Javi' " +
 				"FROM memories",
 			wantSQL: "SELECT json_extract(COALESCE(json_extract(metadata, '$.project'), '{}'), '$.name') = 'Javi' " +
+				"FROM memories",
+			wantRepairs: []string{sqlrepair.PreserveJSONExtract},
+		},
+		{
+			name: "rewrite a JSON arrow after a CASE expression",
+			raw: "SELECT CASE WHEN metadata IS NULL THEN '{}' ELSE metadata END -> '$.project' " +
+				"FROM memories",
+			wantSQL: "SELECT json_extract(CASE WHEN metadata IS NULL THEN '{}' ELSE metadata END, '$.project') " +
 				"FROM memories",
 			wantRepairs: []string{sqlrepair.PreserveJSONExtract},
 		},
