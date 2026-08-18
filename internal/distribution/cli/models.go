@@ -46,6 +46,7 @@ func doctorCommand(env *cliEnv) *cobra.Command {
 			"adopts schema, and never changes the serving marker.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if support {
+				env.skipExecutionLog = true
 				return env.runDoctorReport(cmd.Context())
 			}
 			return env.serviceRunE(func(cmd *cobra.Command, _ []string, svc *service.Service) error {

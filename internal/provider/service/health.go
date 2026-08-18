@@ -211,42 +211,50 @@ func (s *Service) Health(ctx context.Context, req HealthRequest) (HealthReport, 
 }
 
 // HealthVerdicts runs the same checks as Health but returns only names and
-// statuses. memory is used for memory-owned checks; other is used for the
-// rest. A missing handle or a missing table is skipped, not a failed report.
-func HealthVerdicts(ctx context.Context, memory, other *sql.DB) []HealthVerdict {
-	registered := layersFrom(ctx, memory)
-	if len(registered) == 0 {
-		registered = layersFrom(ctx, other)
-	}
+// statuses. A check is run against every applicable store and keeps the worst
+// concrete verdict. Missing handles and tables are skipped.
+func HealthVerdicts(ctx context.Context, memories, others []*sql.DB) []HealthVerdict {
 	verdicts := make([]HealthVerdict, 0, len(healthChecks)+1)
 	for _, check := range healthChecks {
-		reader := other
+		readers := others
 		if check.memoryOwned {
-			reader = memory
+			readers = memories
 		}
-		if reader == nil {
-			verdicts = append(verdicts, HealthVerdict{Name: check.name, Status: healthSkipped})
-			continue
-		}
-		count, err := healthCount(ctx, reader, check, registered)
-		if err != nil {
-			verdicts = append(verdicts, HealthVerdict{Name: check.name, Status: healthSkipped})
-			continue
-		}
-		status := HealthPass
-		if count > 0 {
-			status = check.severity
+		status := healthSkipped
+		for _, reader := range readers {
+			if reader == nil {
+				continue
+			}
+			count, err := healthCount(ctx, reader, check, layersFrom(ctx, reader))
+			if err != nil {
+				continue
+			}
+			candidate := HealthPass
+			if count > 0 {
+				candidate = check.severity
+			}
+			status = worstConcrete(status, candidate)
 		}
 		verdicts = append(verdicts, HealthVerdict{Name: check.name, Status: status})
 	}
-	if memory == nil {
-		return append(verdicts, HealthVerdict{Name: "memory_created_at_formats", Status: healthSkipped})
+	status := healthSkipped
+	for _, reader := range memories {
+		if reader == nil {
+			continue
+		}
+		timestamps, err := checkTimestampFormats(ctx, reader)
+		if err == nil {
+			status = worstConcrete(status, timestamps.Status)
+		}
 	}
-	timestamps, err := checkTimestampFormats(ctx, memory)
-	if err != nil {
-		return append(verdicts, HealthVerdict{Name: "memory_created_at_formats", Status: healthSkipped})
+	return append(verdicts, HealthVerdict{Name: "memory_created_at_formats", Status: status})
+}
+
+func worstConcrete(current, candidate string) string {
+	if current == healthSkipped {
+		return candidate
 	}
-	return append(verdicts, HealthVerdict{Name: "memory_created_at_formats", Status: timestamps.Status})
+	return worst(current, candidate)
 }
 
 func layersFrom(ctx context.Context, db *sql.DB) []registeredLayer {

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -38,6 +39,7 @@ const (
 	OriginBundled           = "bundled"
 	OriginExternal          = "external"
 	OriginLocalDirectory    = "local-directory"
+	OriginRemote            = "remote"
 )
 
 var (
@@ -86,23 +88,26 @@ type Plugin struct {
 }
 
 type Federation struct {
-	Mode          string      `json:"mode"`
-	Serving       string      `json:"serving"`
-	CorpusCustody string      `json:"corpus_custody"`
-	Stores        []Store     `json:"stores"`
-	Migrations    []Migration `json:"migrations"`
+	Mode            string      `json:"mode"`
+	Serving         string      `json:"serving"`
+	CorpusCustody   string      `json:"corpus_custody"`
+	CutoverEligible bool        `json:"cutover_eligible"`
+	Stores          []Store     `json:"stores"`
+	Migrations      []Migration `json:"migrations"`
 }
 
 type Store struct {
 	Name     string         `json:"name"`
 	Present  bool           `json:"present"`
+	Readable bool           `json:"readable"`
 	Families map[string]int `json:"families,omitempty"`
 }
 
 type Migration struct {
-	Plugin string `json:"plugin"`
-	Name   string `json:"name"`
-	State  string `json:"state"`
+	Plugin          string `json:"plugin"`
+	Name            string `json:"name"`
+	State           string `json:"state"`
+	CutoverEligible bool   `json:"cutover_eligible"`
 }
 
 type Vector struct {
@@ -148,42 +153,39 @@ func Collect(ctx context.Context, opts Options) (Snapshot, error) {
 		now = time.Now().UTC()
 	}
 	plugins := listSupportPlugins(opts.PluginRoot)
-	core, coreClose := openSupportDB(opts.Paths.DB)
+	coreStore, coreClose := openSupportStore(opts.Paths.DB)
 	defer coreClose()
 	corpusPath := filepath.Join(opts.PluginRoot, rocacorpus.Name, rocacorpus.DatabaseFilename)
 	opsPath := filepath.Join(opts.PluginRoot, rocaops.Name, rocaops.DatabaseFilename)
 	cronPath := filepath.Join(opts.PluginRoot, rocacron.Name, rocacron.DatabaseFilename)
-	corpus, corpusClose := openSupportDB(corpusPath)
+	corpusStore, corpusClose := openSupportStore(corpusPath)
 	defer corpusClose()
-	ops, opsClose := openSupportDB(opsPath)
+	opsStore, opsClose := openSupportStore(opsPath)
 	defer opsClose()
-	cron, cronClose := openSupportDB(cronPath)
+	cronStore, cronClose := openSupportStore(cronPath)
 	defer cronClose()
+	core, corpus, ops, cron := coreStore.db, corpusStore.db, opsStore.db, cronStore.db
 
 	coreFamilies := countFamilies(ctx, core, corpusFamilies)
 	corpusFamiliesCounts := countFamilies(ctx, corpus, append(slices.Clone(corpusFamilies), archiveFamilies...))
 	opsFamiliesCounts := countFamilies(ctx, ops, opsFamilies)
 	stores := []Store{
-		{Name: "core", Present: core != nil, Families: coreFamilies},
-		{Name: "plugin-corpus", Present: corpus != nil, Families: corpusFamiliesCounts},
-		{Name: "plugin-ops", Present: ops != nil, Families: opsFamiliesCounts},
-		{Name: "plugin-cron", Present: cron != nil},
+		{Name: "core", Present: coreStore.present, Readable: core != nil, Families: coreFamilies},
+		{Name: "plugin-corpus", Present: corpusStore.present, Readable: corpus != nil, Families: corpusFamiliesCounts},
+		{Name: "plugin-ops", Present: opsStore.present, Readable: ops != nil, Families: opsFamiliesCounts},
+		{Name: "plugin-cron", Present: cronStore.present, Readable: cron != nil},
 	}
 	migrations := collectSupportMigrations(ctx, "roca-corpus", corpus, "roca-ops", ops, "roca-cron", cron)
-	custody := corpusCustody(coreFamilies, corpusFamiliesCounts)
 	serving := string(opts.File.Layout.Serving)
 	if serving == "" {
 		serving = string(config.LayoutLegacyServing)
 	}
+	mode, custody, cutoverEligible := classifyFederation(
+		serving, stores, coreFamilies, corpusFamiliesCounts, migrations)
 	federation := Federation{
-		Mode:          classifyFederation(serving, core != nil, corpus != nil, ops != nil, cron != nil, custody, migrations),
-		Serving:       serving,
-		CorpusCustody: custody,
-		Stores:        stores,
-		Migrations:    migrations,
+		Mode: mode, Serving: serving, CorpusCustody: custody, CutoverEligible: cutoverEligible,
+		Stores: stores, Migrations: migrations,
 	}
-	memory := firstOpen(ops, core)
-	other := firstOpen(core, corpus)
 	return Snapshot{
 		Kind:        Kind,
 		GeneratedAt: now.Format(time.RFC3339),
@@ -198,7 +200,7 @@ func Collect(ctx context.Context, opts Options) (Snapshot, error) {
 		Plugins:    plugins,
 		Features:   featureFlags(opts.File.Features),
 		Federation: federation,
-		Health:     service.HealthVerdicts(ctx, memory, other),
+		Health:     service.HealthVerdicts(ctx, []*sql.DB{ops, core}, []*sql.DB{core, corpus}),
 		Vector:     collectVector(ctx, opts.PluginRoot),
 		Ingest: Ingest{
 			DetectedAgents: orEmptyStrings(ingest.DetectAgents(opts.Sources)),
@@ -247,8 +249,26 @@ func PluginOrigin(source string) (string, string) {
 	if source == plugin.BundledSource {
 		return OriginBundled, source
 	}
+	parsed, parseErr := url.Parse(source)
+	if parseErr == nil && strings.EqualFold(parsed.Scheme, "file") {
+		return OriginExternal, OriginLocalDirectory
+	}
 	if looksLikeFilesystemPath(source) {
 		return OriginExternal, OriginLocalDirectory
+	}
+	if parseErr == nil && parsed.Scheme != "" {
+		parsed.User = nil
+		parsed.RawQuery = ""
+		parsed.ForceQuery = false
+		parsed.Fragment = ""
+		parsed.RawFragment = ""
+		if parsed.Opaque != "" {
+			return OriginExternal, OriginRemote
+		}
+		return OriginExternal, parsed.String()
+	}
+	if strings.Contains(source, "://") {
+		return OriginExternal, OriginRemote
 	}
 	return OriginExternal, source
 }
@@ -320,31 +340,35 @@ func sameFilepath(a, b string) bool {
 	return err == nil && left == right
 }
 
-func openSupportDB(path string) (*sql.DB, func()) {
-	if path == "" {
-		return nil, func() {}
-	}
-	if _, err := os.Stat(path); err != nil {
-		return nil, func() {}
-	}
-	db, err := bundledplugin.OpenDatabase(path, true)
-	if err != nil {
-		return nil, func() {}
-	}
-	if err := db.Ping(); err != nil {
-		db.Close()
-		return nil, func() {}
-	}
-	return db, func() { _ = db.Close() }
+type supportStore struct {
+	present bool
+	db      *sql.DB
 }
 
-func firstOpen(candidates ...*sql.DB) *sql.DB {
-	for _, candidate := range candidates {
-		if candidate != nil {
-			return candidate
-		}
+func openSupportStore(path string) (supportStore, func()) {
+	if path == "" {
+		return supportStore{}, func() {}
 	}
-	return nil
+	if _, err := os.Stat(path); err != nil {
+		return supportStore{}, func() {}
+	}
+	store := supportStore{present: true}
+	db, err := bundledplugin.OpenDatabase(path, true)
+	if err != nil {
+		return store, func() {}
+	}
+	var schemaVersion int
+	if err := db.QueryRow("PRAGMA schema_version").Scan(&schemaVersion); err != nil {
+		db.Close()
+		return store, func() {}
+	}
+	store.db = db
+	return store, func() { _ = db.Close() }
+}
+
+func openSupportDB(path string) (*sql.DB, func()) {
+	store, closeStore := openSupportStore(path)
+	return store.db, closeStore
 }
 
 func countFamilies(ctx context.Context, db *sql.DB, families []string) map[string]int {
@@ -392,6 +416,9 @@ func collectSupportMigrations(ctx context.Context, pairs ...any) []Migration {
 		for _, migration := range migrations {
 			listed = append(listed, Migration{
 				Plugin: name, Name: migration.Name, State: string(migration.State),
+				CutoverEligible: (migration.State == migrationledger.StateVerified ||
+					migration.State == migrationledger.StateVerifiedEmpty) &&
+					migration.VerificationDigest != "",
 			})
 		}
 	}
@@ -407,9 +434,20 @@ func collectSupportMigrations(ctx context.Context, pairs ...any) []Migration {
 	return listed
 }
 
-func corpusCustody(core, corpus map[string]int) string {
+func corpusCustody(stores []Store, core, corpus map[string]int, cutoverEligible bool) string {
+	coreStore, corpusStore := storeNamed(stores, "core"), storeNamed(stores, "plugin-corpus")
+	if coreStore.Present && !coreStore.Readable || corpusStore.Present && !corpusStore.Readable {
+		return "unknown"
+	}
 	coreText := core["sessions"] + core["exchanges"] + core["thinking_blocks"]
-	pluginText := corpus["sessions"] + corpus["exchanges"] + corpus["thinking_blocks"]
+	pluginText := corpus["sessions"] + corpus["exchanges"] + corpus["thinking_blocks"] +
+		corpus["session_versions"] + corpus["exchange_versions"] + corpus["thinking_block_versions"]
+	if cutoverEligible {
+		if pluginText > 0 {
+			return "plugin-corpus"
+		}
+		return "empty"
+	}
 	switch {
 	case coreText == 0 && pluginText == 0:
 		return "empty"
@@ -422,24 +460,77 @@ func corpusCustody(core, corpus map[string]int) string {
 	}
 }
 
-func classifyFederation(serving string, core, corpus, ops, cron bool, custody string,
-	migrations []Migration) string {
-	if !corpus && !ops && !cron {
-		if core {
-			return FederationLegacyOnly
+func classifyFederation(serving string, stores []Store, core, corpus map[string]int,
+	migrations []Migration) (string, string, bool) {
+	coreStore := storeNamed(stores, "core")
+	corpusStore := storeNamed(stores, "plugin-corpus")
+	opsStore := storeNamed(stores, "plugin-ops")
+	cronStore := storeNamed(stores, "plugin-cron")
+	pluginsPresent := corpusStore.Present || opsStore.Present || cronStore.Present
+	cutoverEligible := supportCutoverEligible(stores, migrations)
+	activeFederation := serving == string(config.LayoutCutover) && cutoverEligible
+	custody := corpusCustody(stores, core, corpus, activeFederation)
+	if !pluginsPresent {
+		if coreStore.Present {
+			return FederationLegacyOnly, custody, false
 		}
-		return FederationUninitialized
+		return FederationUninitialized, custody, false
 	}
-	if serving == string(config.LayoutCutover) {
-		return FederationFederated
+	if serving == string(config.LayoutCutover) && cutoverEligible {
+		return FederationFederated, custody, true
 	}
-	if serving == string(config.LayoutShadowEqual) || migrationInFlight(migrations) {
-		return FederationMigrating
+	if serving == string(config.LayoutCutover) || serving == string(config.LayoutShadowEqual) ||
+		migrationInFlight(migrations) || len(migrations) > 0 && !cutoverEligible {
+		return FederationMigrating, custody, cutoverEligible
 	}
 	if custody == "empty" {
-		return FederationFresh
+		return FederationFresh, custody, cutoverEligible
 	}
-	return FederationLegacyServing
+	return FederationLegacyServing, custody, cutoverEligible
+}
+
+func supportCutoverEligible(stores []Store, migrations []Migration) bool {
+	for _, name := range []string{"core", "plugin-corpus", "plugin-ops"} {
+		store := storeNamed(stores, name)
+		if !store.Present || !store.Readable {
+			return false
+		}
+	}
+	required := map[string]map[string]bool{
+		"roca-ops": {"data2-memory-custody": false},
+		"roca-corpus": {
+			"corpus-archive-sessions":          false,
+			"corpus-archive-exchanges":         false,
+			"corpus-archive-tool-uses":         false,
+			"corpus-archive-thinking-blocks":   false,
+			"corpus-archive-ingest-file-state": false,
+			"corpus-archive-reconciliation-v1": false,
+		},
+	}
+	for _, migration := range migrations {
+		if names := required[migration.Plugin]; names != nil {
+			if _, ok := names[migration.Name]; ok && migration.CutoverEligible {
+				names[migration.Name] = true
+			}
+		}
+	}
+	for _, names := range required {
+		for _, eligible := range names {
+			if !eligible {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func storeNamed(stores []Store, name string) Store {
+	for _, store := range stores {
+		if store.Name == name {
+			return store
+		}
+	}
+	return Store{Name: name}
 }
 
 func migrationInFlight(migrations []Migration) bool {
@@ -568,9 +659,10 @@ func Render(snapshot Snapshot) string {
 	fmt.Fprintf(&b, "mode: %s\n", snapshot.Federation.Mode)
 	fmt.Fprintf(&b, "serving: %s\n", snapshot.Federation.Serving)
 	fmt.Fprintf(&b, "corpus_custody: %s\n", snapshot.Federation.CorpusCustody)
+	fmt.Fprintf(&b, "cutover_eligible: %t\n", snapshot.Federation.CutoverEligible)
 	b.WriteString("stores:\n")
 	for _, store := range snapshot.Federation.Stores {
-		fmt.Fprintf(&b, "  %s: %s", store.Name, presentAbsent(store.Present))
+		fmt.Fprintf(&b, "  %s: %s", store.Name, storeStatus(store))
 		if len(store.Families) > 0 {
 			b.WriteString("  ")
 			b.WriteString(renderFamilyCounts(store.Families))
@@ -582,7 +674,8 @@ func Render(snapshot Snapshot) string {
 	} else {
 		b.WriteString("migrations:\n")
 		for _, migration := range snapshot.Federation.Migrations {
-			fmt.Fprintf(&b, "  %s %s: %s\n", migration.Plugin, migration.Name, migration.State)
+			fmt.Fprintf(&b, "  %s %s: %s eligible=%t\n", migration.Plugin, migration.Name,
+				migration.State, migration.CutoverEligible)
 		}
 	}
 
@@ -644,9 +737,12 @@ func onOff(on bool) string {
 	return "off"
 }
 
-func presentAbsent(present bool) string {
-	if present {
+func storeStatus(store Store) string {
+	if store.Readable {
 		return "present"
+	}
+	if store.Present {
+		return "unreadable"
 	}
 	return "absent"
 }

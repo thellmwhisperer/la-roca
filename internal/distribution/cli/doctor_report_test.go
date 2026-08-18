@@ -7,7 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocavector"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/supportreport"
 	"github.com/thellmwhisperer/la-roca/internal/store"
@@ -51,12 +53,30 @@ func TestDoctorReport(t *testing.T) {
 			refuse: []string{personalName, personalPeer, personalProject, personalTalk, personalPath},
 		},
 		{
+			name:     "unreadable core store",
+			setup:    setupUnreadableSupportHome,
+			wantMode: supportreport.FederationLegacyOnly,
+			want: []string{
+				"mode: legacy-only", "corpus_custody: unknown", "core: unreadable",
+			},
+		},
+		{
+			name:     "unverified cutover",
+			setup:    setupUnverifiedCutoverHome,
+			wantMode: supportreport.FederationMigrating,
+			want: []string{
+				"mode: migrating", "serving: cutover", "cutover_eligible: false",
+			},
+		},
+		{
 			name:     "federated install",
 			setup:    setupFederatedSupportHome,
 			wantMode: supportreport.FederationFederated,
 			want: []string{
 				"mode: federated", "serving: cutover", "corpus_custody: plugin-corpus",
+				"cutover_eligible: true",
 				"plugin-corpus: present", "migrations:", "data2-memory-custody: verified",
+				"orphan_supersedes: fail", "ghost_sessions: warn",
 				"VECTOR", "model: nomic-embed-text", "chunks: sessions=3",
 				"last_delta: exit=0 added=3",
 			},
@@ -111,6 +131,29 @@ func TestDoctorReportLeavesALegacyInstallUntouched(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(home, ".roca", "plugins")); !os.IsNotExist(err) {
 		t.Fatalf("report created a plugins tree: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(home, ".roca", logfile.DirName)); !os.IsNotExist(err) {
+		t.Fatalf("report created an execution log: %v", err)
+	}
+}
+
+func TestDoctorReportDoesNotAppendOpsAudit(t *testing.T) {
+	home := t.TempDir()
+	isolateRuntimeDirs(t, home)
+	dbPath := setupFreshSupportHome(t, home)
+	opsPath := filepath.Join(home, ".roca", "plugins", rocaops.Name, rocaops.DatabaseFilename)
+	ops := openLayoutDatabase(t, opsPath)
+	defer ops.Close()
+	var before, after int
+	if err := ops.QueryRow("SELECT COUNT(*) FROM call_history").Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	runRoot(t, contractBuild(), "doctor", "--report", "--db-path", dbPath)
+	if err := ops.QueryRow("SELECT COUNT(*) FROM call_history").Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("report appended ops audit rows: before=%d after=%d", before, after)
+	}
 }
 
 func setupFreshSupportHome(t *testing.T, home string) string {
@@ -161,6 +204,28 @@ func setupLegacySupportHome(t *testing.T, home string) string {
 	return dbPath
 }
 
+func setupUnreadableSupportHome(t *testing.T, home string) string {
+	t.Helper()
+	dbPath := filepath.Join(home, ".roca", "roca.db")
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dbPath, []byte("not a sqlite database"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return dbPath
+}
+
+func setupUnverifiedCutoverHome(t *testing.T, home string) string {
+	t.Helper()
+	dbPath := setupFreshSupportHome(t, home)
+	configPath := filepath.Join(home, ".roca", "config.toml")
+	if err := os.WriteFile(configPath, []byte("[layout]\nserving = \"cutover\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return dbPath
+}
+
 func setupFederatedSupportHome(t *testing.T, home string) string {
 	t.Helper()
 	dbPath := setupFreshSupportHome(t, home)
@@ -168,11 +233,30 @@ func setupFederatedSupportHome(t *testing.T, home string) string {
 	if err := os.WriteFile(configPath, []byte("[layout]\nserving = \"cutover\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	core := openLayoutDatabase(t, dbPath)
+	if _, err := core.Exec(`
+		INSERT INTO sessions (session_id, project, started_at)
+		VALUES ('rollback-1', ?, '2026-02-01T00:00:00Z')`, personalProject); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.Exec(`
+		INSERT INTO exchanges (session_id, exchange_number, human_text)
+		VALUES ('rollback-1', 1, ?)`, personalTalk); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.Exec(`
+		INSERT INTO memories (layer, content, origin, supersedes)
+		VALUES ('handoff', ?, 'agent', 999999)`, personalTalk); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.Close(); err != nil {
+		t.Fatal(err)
+	}
 	corpusPath := filepath.Join(home, ".roca", "plugins", rocacorpus.Name, rocacorpus.DatabaseFilename)
 	corpus := openLayoutDatabase(t, corpusPath)
 	if _, err := corpus.Exec(`
-		INSERT INTO sessions (session_id, project, started_at)
-		VALUES ('federated-1', ?, '2026-03-01T00:00:00Z')`, personalProject); err != nil {
+		INSERT INTO sessions (session_id, project)
+		VALUES ('federated-1', ?)`, personalProject); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := corpus.Exec(`
@@ -185,16 +269,48 @@ func setupFederatedSupportHome(t *testing.T, home string) string {
 		VALUES (?, 'claude_jsonl', 'claude', '2026-08-17T09:00:00Z')`, personalPath); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := corpus.Exec(`
-		INSERT INTO plugin_migrations (migration, destination_table, migration_state)
-		VALUES ('data2-memory-custody', 'memory_records', 'verified')`); err != nil {
+	digest := strings.Repeat("a", 64)
+	if _, err := corpus.Exec(`INSERT INTO session_versions
+		(version_digest, session_id, project, started_at)
+		VALUES (?, 'rollback-1', ?, '2026-02-01T00:00:00Z')`, digest, personalProject); err != nil {
 		t.Fatal(err)
 	}
+	recordVerifiedMigrations(t, corpus, digest, map[string]string{
+		"corpus-archive-sessions":          "session_versions",
+		"corpus-archive-exchanges":         "exchange_versions",
+		"corpus-archive-tool-uses":         "tool_use_versions",
+		"corpus-archive-thinking-blocks":   "thinking_block_versions",
+		"corpus-archive-ingest-file-state": "ingest_file_state_versions",
+		"corpus-archive-reconciliation-v1": "session_versions",
+	})
 	if err := corpus.Close(); err != nil {
+		t.Fatal(err)
+	}
+	opsPath := filepath.Join(home, ".roca", "plugins", rocaops.Name, rocaops.DatabaseFilename)
+	ops := openLayoutDatabase(t, opsPath)
+	recordVerifiedMigrations(t, ops, digest, map[string]string{
+		"data2-memory-custody": "memory_records",
+	})
+	if err := ops.Close(); err != nil {
 		t.Fatal(err)
 	}
 	writeVectorSupportFixture(t, home)
 	return dbPath
+}
+
+func recordVerifiedMigrations(t *testing.T, db *sql.DB, digest string, migrations map[string]string) {
+	t.Helper()
+	for migration, destination := range migrations {
+		if _, err := db.Exec(`INSERT INTO plugin_migrations
+			(migration, destination_table, migration_state, verification_digest)
+			VALUES (?, ?, 'verified', ?)
+			ON CONFLICT(migration) DO UPDATE SET
+				destination_table=excluded.destination_table,
+				migration_state=excluded.migration_state,
+				verification_digest=excluded.verification_digest`, migration, destination, digest); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func writeVectorSupportFixture(t *testing.T, home string) {

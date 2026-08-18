@@ -62,11 +62,13 @@ right repair is to move those memories into an existing layer instead. Both
 repair commands follow the same selected database and `roca-ops` routing as
 `roca store`; the command printed by doctor includes the matching `--db-path`.
 
-Every CLI command and MCP tool call dual-writes one redacted record to the
-bundled ops database and to JSONL under the selected data directory's `logs/`,
-whether it succeeds or fails. Either sink may fail independently: the surviving
-sink is still written, one warning is emitted, and the observed command or tool
-result never changes. Query result rows are written to neither sink.
+Every CLI command except `roca doctor --report`, and every MCP tool call,
+dual-writes one redacted record to the bundled ops database and to JSONL under
+the selected data directory's `logs/`, whether it succeeds or fails. The
+support report suppresses both sinks because its read-only contract includes
+observability. Either sink may fail independently: the surviving sink is still
+written, one warning is emitted, and the observed command or tool result never
+changes. Query result rows are written to neither sink.
 
 ## Streams and contents
 
@@ -169,7 +171,7 @@ diagnosis.
 prints one fenced text block with a generation timestamp; `roca doctor --report
 --json` emits the same snapshot as JSON. The collector is read-only: it does
 not install plugins, adopt schema, prepare the federation hub, or change
-`layout.serving`.
+`layout.serving`; it also writes no JSONL or ops audit record.
 
 The block is ordered and bounded so it stays pasteable regardless of corpus
 size:
@@ -179,14 +181,19 @@ size:
    `other`), never an absolute path.
 2. **Plugins** — each installed package's name, version, origin (`bundled` vs
    `external`), checksum, and whether its state directory exists. A local
-   filesystem source is reported as `local-directory`.
+   filesystem source, including `file://`, is reported as `local-directory`.
+   Remote URL userinfo, query strings, and fragments are removed.
 3. **Feature flags** — on/off for every `features.*` switch.
 4. **Federation** — first-class mode (`fresh`, `legacy-only`, `migrating`,
-   `federated`), the `layout.serving` marker, where corpus text actually lives
-   (`legacy-core`, `plugin-corpus`, `split`, or `empty`), which stores exist
-   with family row counts, and named migration states. A fresh init, a
-   core-only legacy home, and a cutover home are distinguishable at a glance.
-5. **Health** — pass/warn/fail/skipped per check name, never finding rows.
+   `federated`, `uninitialized`, or `legacy-serving`), the `layout.serving`
+   marker, where corpus text actually lives (`legacy-core`, `plugin-corpus`,
+   `split`, `empty`, or `unknown`), which stores exist and are readable with
+   family row counts, and named migration states plus cutover eligibility. A
+   fresh init, a core-only legacy home, a mid-migration home, and a verified
+   cutover home are distinguishable at a glance.
+5. **Health** — pass/warn/fail/skipped per check name, taking the worst verdict
+   across every applicable core and plugin store and never including finding
+   rows.
 6. **Vector** — when `plugins/vector/state/vector.db` exists: model,
    dimensions, chunk totals by kind, store size, and the last recorded delta
    counts.
