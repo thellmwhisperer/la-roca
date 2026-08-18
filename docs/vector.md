@@ -140,9 +140,10 @@ box can be slower than the M1. The first full pass **is** your
 measurement for this machine: time that run and scale from it. A later
 daily delta against an unchanged or lightly grown corpus is minutes.
 
-After compaction the index occupies about 1.3-1.5 GB per ~350k chunks.
-Churn (many updates and deletes) leaves empty pages; reclaim them
-explicitly:
+As an order-of-magnitude reference, a production home with 353,663 chunks
+measured 1.3 GB on disk after compaction. Expect roughly 1.3-1.5 GB per
+~350k chunks; the footprint varies with the corpus and embedding model. Churn
+(many updates and deletes) leaves empty pages; reclaim them explicitly:
 
 ```sh
 roca vector compact
