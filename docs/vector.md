@@ -97,7 +97,8 @@ roca vector install
 ```
 
 `install` prepares the plugin-owned index under
-`~/.roca/plugins/vector/state/` (`%USERPROFILE%\.roca\plugins\vector\state`
+`~/.roca/plugins/roca-vector/state/`
+(`%USERPROFILE%\.roca\plugins\roca-vector\state`
 on Windows) and embeds the corpus in the background. macOS and Linux can send
 a desktop notification with the exit status and counts. Windows sends no
 desktop notification: inspect `completion.json` or `worker.log` in that state
