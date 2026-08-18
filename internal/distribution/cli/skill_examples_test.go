@@ -47,6 +47,9 @@ func TestEverySkillExampleIsValidAgainstTheRealCLI(t *testing.T) {
 		if len(tokens) == 0 || tokens[0] != "roca" {
 			continue
 		}
+		if taughtPluginDispatch(tokens[1:]) {
+			continue
+		}
 		cmd, args := resolve(root, tokens[1:])
 		if cmd == nil || cmd == root {
 			t.Errorf("skill example is not a known command:\n  %s", line)
@@ -71,10 +74,31 @@ func TestSkillTeachesOnlyCommandsTheCLIHas(t *testing.T) {
 		if len(tokens) == 0 || tokens[0] != "roca" {
 			continue
 		}
+		if taughtPluginDispatch(tokens[1:]) {
+			continue
+		}
 		cmd, _ := resolve(root, tokens[1:])
 		if cmd == nil || cmd == root {
 			t.Errorf("skill teaches a command the CLI does not have:\n  %s", line)
 		}
+	}
+}
+
+// taughtPluginDispatch accepts the PATH-dispatched vector verbs the skill
+// teaches. They are not cobra children of the core tree; features.vector
+// unhides them at runtime.
+func taughtPluginDispatch(tokens []string) bool {
+	if len(tokens) == 0 || tokens[0] != "vector" {
+		return false
+	}
+	if len(tokens) == 1 || strings.HasPrefix(tokens[1], "-") {
+		return true
+	}
+	switch tokens[1] {
+	case "install", "ingest", "compact", "query", "vocab":
+		return true
+	default:
+		return false
 	}
 }
 
