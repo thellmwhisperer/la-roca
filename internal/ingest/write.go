@@ -68,14 +68,20 @@ type layerResolver interface {
 
 // writer holds what every write of one run shares.
 type writer struct {
-	tx     *sql.Tx
-	layers layerResolver
+	tx                     *sql.Tx
+	layers                 layerResolver
+	hermesReservedMemories *sql.DB
 }
 
 // WriteRecords writes one artefact's records and returns what it wrote.
 func WriteRecords(ctx context.Context, tx *sql.Tx, layers layerResolver,
 	records parsers.Records) (Counts, error) {
-	w := &writer{tx: tx, layers: layers}
+	return writeRecords(ctx, tx, layers, nil, records)
+}
+
+func writeRecords(ctx context.Context, tx *sql.Tx, layers layerResolver,
+	hermesReservedMemories *sql.DB, records parsers.Records) (Counts, error) {
+	w := &writer{tx: tx, layers: layers, hermesReservedMemories: hermesReservedMemories}
 	var counts Counts
 	for _, session := range records.Sessions {
 		written, err := w.session(ctx, session)
@@ -1311,6 +1317,18 @@ func (w *writer) memory(ctx context.Context, memory parsers.Memory) (Counts, err
 			WHERE id BETWEEN 1152921504606847051 AND 1152921504606847059
 			  AND content = ? AND status = 'active' ORDER BY id LIMIT 1`, memory.Content).
 			Scan(&id, &stored, &storedMetadata, &storedProject)
+	}
+	if errors.Is(err, sql.ErrNoRows) && memory.Source == "hermes" &&
+		w.hermesReservedMemories != nil {
+		var found int
+		err = w.hermesReservedMemories.QueryRowContext(ctx, `
+			SELECT 1 FROM memories
+			WHERE id BETWEEN 1152921504606847051 AND 1152921504606847059
+			  AND content = ? AND status = 'active' LIMIT 1`, memory.Content).Scan(&found)
+		if err == nil {
+			counts.MemoriesUnchanged = 1
+			return counts, nil
+		}
 	}
 	freshness := claudeWebMemoryFreshness(memory, storedMetadata)
 	authoritative := memory.ProjectFromCwd && memory.Project != ""
