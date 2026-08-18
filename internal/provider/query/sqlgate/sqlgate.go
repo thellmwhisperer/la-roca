@@ -215,7 +215,8 @@ func FTS5ShadowTables(name string) []string {
 	return shadows
 }
 
-func isFTS5DDL(ddl string) bool {
+// IsFTS5DDL reports whether a SQLite CREATE statement declares an FTS5 table.
+func IsFTS5DDL(ddl string) bool {
 	words := strings.Fields(strings.ToLower(ddl))
 	if len(words) < 6 || words[0] != "create" || words[1] != "virtual" || words[2] != "table" {
 		return false

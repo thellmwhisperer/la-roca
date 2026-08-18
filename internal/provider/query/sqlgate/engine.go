@@ -29,7 +29,6 @@ type engine struct {
 	hiddenTables map[tableIdentity]bool
 	ftsTables    map[tableIdentity]bool
 	matchPending bool
-	stepping     bool
 }
 
 type tableIdentity struct {
@@ -162,9 +161,6 @@ func (e *engine) authorize(action int32, arg1, arg2, schema string) int32 {
 				return sqlite3.SQLITE_DENY
 			}
 		}
-		if e.stepping && e.hiddenTables[identity] {
-			return sqlite3.SQLITE_OK
-		}
 		if IsHiddenTable(arg1) || e.hiddenTables[identity] {
 			e.note(fmt.Sprintf("no such table: %q is not a table this query can read", arg1))
 			return sqlite3.SQLITE_DENY
@@ -179,14 +175,6 @@ func (e *engine) authorize(action int32, arg1, arg2, schema string) int32 {
 		}
 		e.note(fmt.Sprintf("Function %q is not allowed", arg2))
 		return sqlite3.SQLITE_DENY
-	case sqlite3.SQLITE_PRAGMA:
-		// FTS5 checks the database version when a prepared search first steps.
-		// A user PRAGMA never reaches this callback because Validate accepts only
-		// SELECT/WITH, so this read-only internal probe does not widen the surface.
-		if strings.EqualFold(arg1, "data_version") {
-			return sqlite3.SQLITE_OK
-		}
-		fallthrough
 	default:
 		e.note("Only SELECT statements are allowed")
 		return sqlite3.SQLITE_DENY
@@ -242,18 +230,5 @@ func (e *engine) prepare(sql string) error {
 	if e.matchPending {
 		return fmt.Errorf("MATCH is allowed only on a declared FTS5 table")
 	}
-	// Preparing accepts MATCH on an ordinary column and defers its misuse error
-	// until the first step. The validation database is empty and contains only
-	// the declared read surface, so one step is enough to make SQLite validate
-	// that operator without observing or changing application data.
-	e.stepping = true
-	defer func() { e.stepping = false }()
-	rc = sqlite3.Xsqlite3_step(e.tls, stmt)
-	if rc == sqlite3.SQLITE_ROW || rc == sqlite3.SQLITE_DONE {
-		return nil
-	}
-	if e.denial != "" {
-		return fmt.Errorf("%s", e.denial)
-	}
-	return fmt.Errorf("%s", translate(libc.GoString(sqlite3.Xsqlite3_errmsg(e.tls, e.db))))
+	return nil
 }

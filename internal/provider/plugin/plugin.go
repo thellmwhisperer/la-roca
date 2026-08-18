@@ -621,7 +621,7 @@ func inspectTables(ctx context.Context, db *sql.DB) (map[string]inspectedTable, 
 		if err := rows.Scan(&name, &ddl); err != nil {
 			return nil, err
 		}
-		actual[name] = inspectedTable{FTS5: isFTS5DDL(ddl.String)}
+		actual[name] = inspectedTable{FTS5: sqlgate.IsFTS5DDL(ddl.String)}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -647,19 +647,6 @@ func inspectTables(ctx context.Context, db *sql.DB) (map[string]inspectedTable, 
 		actual[name] = inspected
 	}
 	return actual, nil
-}
-
-func isFTS5DDL(ddl string) bool {
-	words := strings.Fields(strings.ToLower(ddl))
-	if len(words) < 6 || words[0] != "create" || words[1] != "virtual" || words[2] != "table" {
-		return false
-	}
-	for index := 3; index+1 < len(words); index++ {
-		if words[index] == "using" {
-			return strings.HasPrefix(words[index+1], "fts5(") || words[index+1] == "fts5"
-		}
-	}
-	return false
 }
 
 func schemaName(name string) string {
