@@ -30,6 +30,18 @@ the `roca plugin` installer commands. See [Plugins](plugins.md) for the package
 and trust contract. Leave the key absent or false for the release-default
 behavior.
 
+Local vector retrieval is a separate default-off switch. The companion
+binary is already installed; the key only unhides `roca vector`:
+
+```toml
+[features]
+vector = true
+```
+
+See [Local vector search](vector.md) for the one-time embedding-model
+download, indexing, and the null-delta check. Leave the key absent or false
+to keep dispatch hidden.
+
 Managed agent-artifact refresh is independently default-off. The registry is
 still updated and outdated installs are reported when this key is absent:
 
