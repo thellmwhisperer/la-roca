@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -115,8 +116,15 @@ func TestExploreBuffersWidenAndMergesQueryTelemetry(t *testing.T) {
 		options.Providers = cascadeOf(model)
 	})
 	var deltas []string
+	var announced service.QueryResult
+	var starts int
 	result, err := svc.Explore(t.Context(), service.ExploreRequest{QueryRequest: service.QueryRequest{
-		Question: "orbit", InterpretationDelta: func(delta string) { deltas = append(deltas, delta) },
+		Question: "orbit",
+		InterpretationStart: func(_ bool, result service.QueryResult) {
+			starts++
+			announced = result
+		},
+		InterpretationDelta: func(delta string) { deltas = append(deltas, delta) },
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -129,6 +137,12 @@ func TestExploreBuffersWidenAndMergesQueryTelemetry(t *testing.T) {
 		len(result.Providers) != 2 || len(base.sqlRequests) != 2 || model.calls != 2 {
 		t.Fatalf("widened explore = %+v, SQL calls = %d, interpretation calls = %d",
 			result, len(base.sqlRequests), model.calls)
+	}
+	if starts != 1 || !announced.Widened ||
+		!reflect.DeepEqual(announced.Databases, result.Databases) ||
+		!reflect.DeepEqual(announced.Rows, result.Rows) {
+		t.Fatalf("announced result = %+v; final result = %+v; starts = %d",
+			announced, result, starts)
 	}
 }
 

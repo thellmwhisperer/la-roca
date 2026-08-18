@@ -472,7 +472,7 @@ var substringLikeOnText = regexp.MustCompile(
 // that still writes LIKE '%term%' on a text column is rejected with a retry
 // hint that points at FTS. It is not a SQL rewriter.
 func SubstringLikeRejection(sql string, schema Schema) string {
-	if !substringLikeOnText.MatchString(sql) {
+	if !schema.hasFTS() || !substringLikeOnText.MatchString(sql) {
 		return ""
 	}
 	hint := "substring LIKE '%term%' on a text column matches inside other words " +

@@ -574,3 +574,13 @@ func TestSubstringLikeRejectionCatchesTheAnaDisease(t *testing.T) {
 		}
 	}
 }
+
+func TestSubstringLikeRejectionAllowsTextSearchWithoutFTS(t *testing.T) {
+	schema := Schema{Tables: []Table{{
+		Name: "plugin_receipts.receipts", Columns: []string{"title"},
+	}}}
+	if hint := SubstringLikeRejection(
+		`SELECT title FROM plugin_receipts.receipts WHERE title LIKE '%Ana%' LIMIT 5`, schema); hint != "" {
+		t.Fatalf("text-only schema rejected its available search form: %s", hint)
+	}
+}

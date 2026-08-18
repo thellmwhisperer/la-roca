@@ -115,15 +115,15 @@ func (s *Service) Explore(ctx context.Context, req ExploreRequest) (QueryResult,
 		widened.Mode = result.Mode
 		terrain = terrainFromRows(widened.Question, widened.Columns, widened.Rows)
 		widened.Terrain = &terrain
+		result = widened
 		if req.Progress != nil {
 			req.Progress(QueryPhaseInterpretation)
 		}
 		started = time.Now()
-		answer, interpretErr = s.InterpretStream(ctx, widened.Question, widened.Columns, widened.Rows,
-			time.Duration(secondSQLInferenceMS)*time.Millisecond, widened.Engine,
+		answer, interpretErr = s.InterpretStream(ctx, result.Question, result.Columns, result.Rows,
+			time.Duration(secondSQLInferenceMS)*time.Millisecond, result.Engine,
 			InterpretationContext{Mission: mission, Terrain: terrain}, onStart, req.InterpretationDelta)
 		interpretationMS += time.Since(started).Milliseconds()
-		result = widened
 	} else if interpretErr == nil {
 		if bufferedStart {
 			onStart(bufferedNative)
