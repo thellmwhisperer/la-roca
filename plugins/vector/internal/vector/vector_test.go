@@ -502,7 +502,7 @@ func TestCompactRebuildsDenseEquivalentStoreAndRefusesAnActiveIngest(t *testing.
 		}
 		for n := range 1024 {
 			term := fmt.Sprintf("synthetic-wal-term-%04d-%s", n, strings.Repeat("x", 1024))
-			if _, err := tx.Exec(`INSERT INTO census(term,docs) VALUES(?,1)`, term); err != nil {
+			if _, err := tx.Exec(`INSERT INTO meta(key,value) VALUES(?,?)`, term, term); err != nil {
 				tx.Rollback()
 				t.Fatal(err)
 			}
@@ -522,6 +522,72 @@ func TestCompactRebuildsDenseEquivalentStoreAndRefusesAnActiveIngest(t *testing.
 			t.Fatalf("checkpointed size = %d, pre-checkpoint size = %d", checkpointed.Size(), stale.Size())
 		}
 	})
+}
+
+func TestRetiredCensusTablesAreDroppedByIngestAndCompact(t *testing.T) {
+	for _, operation := range []struct {
+		name string
+		run  func(context.Context, Index, string) error
+	}{
+		{
+			name: "ingest",
+			run: func(ctx context.Context, index Index, _ string) error {
+				_, err := index.Ingest(ctx)
+				return err
+			},
+		},
+		{
+			name: "compact",
+			run: func(ctx context.Context, _ Index, path string) error {
+				_, err := Compact(ctx, path)
+				return err
+			},
+		},
+	} {
+		t.Run(operation.name, func(t *testing.T) {
+			ctx := context.Background()
+			path := filepath.Join(t.TempDir(), "vector.db")
+			index := Index{
+				Corpus: &memoryCorpus{sources: []sourceRow{{
+					kind: "sessions", sessionID: "synthetic-session", text: "retired census migration",
+				}}},
+				VectorPath: path, Model: DefaultModel, Embedder: &recordingEmbedder{},
+			}
+			if _, err := index.Ingest(ctx); err != nil {
+				t.Fatal(err)
+			}
+			db, err := sql.Open("sqlite", path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(`CREATE TABLE census(term TEXT PRIMARY KEY, docs INTEGER NOT NULL);
+				CREATE TABLE census_totals(key TEXT PRIMARY KEY, documents INTEGER NOT NULL);`); err != nil {
+				db.Close()
+				t.Fatal(err)
+			}
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := operation.run(ctx, index, path); err != nil {
+				t.Fatal(err)
+			}
+			db, err = sql.Open("sqlite", path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			var retired int
+			if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_schema
+				WHERE type='table' AND name IN ('census','census_totals')`).Scan(&retired); err != nil {
+				t.Fatal(err)
+			}
+			if retired != 0 {
+				t.Fatalf("%s left %d retired census tables", operation.name, retired)
+			}
+			t.Logf("%s: retired census tables remaining = %d", operation.name, retired)
+		})
+	}
 }
 
 func chunkCountsByKind(t *testing.T, path string) map[string]int64 {
