@@ -110,18 +110,68 @@ func TestContentCanSelfOnboardAnUnsupportedAgent(t *testing.T) {
 	}
 }
 
-func TestVectorSkillTeachesHybridDiscoveryAndInvitesTheIndex(t *testing.T) {
-	body := skill.VectorContent()
-	for _, needle := range []string{
-		"name: roca-vector",
-		"invite the user to",
-		"roca vector install",
-		"## Hybrid discovery",
-		"roca vector query",
+func TestShippedSkillsCarryTheSearchDoctrine(t *testing.T) {
+	for _, test := range []struct {
+		name, body   string
+		want, refuse []string
+	}{
+		{
+			name: "operations two-branch craft",
+			body: skill.OperationsContent(),
+			want: []string{
+				"name: roca-operations",
+				"with or without a vector index",
+				"who is X",
+				"what happened with Y",
+				"## Search craft",
+				"completion.json",
+				"finished_at",
+				"the hybrid loop is mandatory",
+				"roca query",
+				"roca explore",
+				"Invite the user to build the index",
+				"## Hybrid loop",
+				"Vector search finds the nearby rows",
+				"FTS censuses them",
+				"SQL frames them",
+				"inference only at the end",
+				"roca vector query",
+				"names of people",
+				"my boss is named",
+			},
+			refuse: []string{"roca vector vocab", "## Hybrid discovery"},
+		},
+		{
+			name: "vector owns the index",
+			body: skill.VectorContent(),
+			want: []string{
+				"name: roca-vector",
+				"invite the user to",
+				"roca vector install",
+				"roca vector ingest --delta",
+				"roca vector compact",
+				"worker.log",
+				"completion.json",
+				"finished_at",
+			},
+			refuse: []string{"## Hybrid discovery", "## Hybrid loop", "roca vector vocab"},
+		},
 	} {
-		if !strings.Contains(body, needle) {
-			t.Errorf("vector skill missing %q", needle)
-		}
+		t.Run(test.name, func(t *testing.T) {
+			for _, needle := range test.want {
+				if !strings.Contains(test.body, needle) {
+					t.Errorf("missing %q", needle)
+				}
+			}
+			for _, needle := range test.refuse {
+				if strings.Contains(test.body, needle) {
+					t.Errorf("must not teach %q", needle)
+				}
+			}
+		})
+	}
+	if strings.Contains(skill.Content(), "roca vector vocab") {
+		t.Error("definitive skill still teaches roca vector vocab")
 	}
 }
 

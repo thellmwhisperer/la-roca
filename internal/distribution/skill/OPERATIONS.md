@@ -1,10 +1,11 @@
 ---
 name: roca-operations
 description: >
-  The craft of searching with La Roca. Must-read on install. Load when the
-  user references past work, asks "who is X", "what happened with Y", "have
-  we done this before", wants a memory stored, or wants to investigate a
-  topic across the agents' history.
+  The craft of searching with La Roca, with or without a vector index.
+  Must-read on install. Load when the user references past work, asks
+  "who is X", "what happened with Y", "have we done this before", wants
+  a memory stored, or wants to investigate a topic across the agents'
+  history.
 ---
 
 # La Roca
@@ -114,13 +115,31 @@ most sessions in July". For memories you store, carry identity too:
 Over MCP, authorship comes from the session itself and cannot be spoofed by
 arguments.
 
+## Search craft
+
+Check whether the vector index exists before you search. The contract is
+docs/vector.md: `~/.roca/plugins/roca-vector/state/completion.json` records
+`finished_at` when the first pass finished. That file, with a non-empty
+`finished_at`, is the index. Absent or unfinished means there is no index.
+`features.vector = true` only unhides `roca vector`; it is not the index.
+`roca vector query` refuses until the index is ready.
+
+- **Index present: the hybrid loop is mandatory.** It is how the craft is
+  done. Vector search (top-100), FTS census, SQL framing. Zero inference on
+  that path; inference only at the end, by the reading agent, to narrate.
+- **No index: `roca query` and `roca explore` are the complete working
+  path.** They spend inference, and they deliver the result. Do not relegate
+  them and do not wait. Invite the user to build the index (one laptop
+  night, daily reward); the `roca-vector` skill owns install, progress, and
+  maintenance. Point there. Do not depend on it.
+
 ## When to call what
 
 | Situation | Action |
 |---|---|
-| Past work / people / "have we…" | `roca query "<question>"` |
-| Researching a topic, not a point fact | `roca explore "<concept>"` |
-| Semantic veins / unknown corpus vocabulary | the `roca-vector` skill |
+| Past work / people / "have we…" | Search craft: hybrid if the index exists, else `roca query "<question>"` |
+| Researching a topic, not a point fact | Search craft: hybrid if the index exists, else `roca explore "<concept>"` |
+| Cannot name the exact term | Hybrid loop when the index exists; otherwise explore, and invite the index |
 | Answer looks stale / about today | `roca ingest`, then ask again |
 | Programmatic parse | add `--json` |
 | Inspect SQL first | `roca query --sql-only` then `roca exec` |
@@ -141,16 +160,69 @@ attaches them read-only and folds their tables into natural-language search.
   quickstart in the repository's `docs/plugins.md`; start from its minimal
   example and grow, do not hand-roll the packaging.
 
+## Hybrid loop
+
+When the index exists, this loop is mandatory. It is how the craft is done.
+Operator setup lives in the `roca-vector` skill and docs/vector.md.
+
+Vector search finds the nearby rows. FTS censuses them. SQL frames them.
+Zero inference on that path; inference only at the end, by the reading
+agent, to narrate. `roca vector query` does no model inference; `roca exec`
+does none either.
+
+1. Search by meaning with `roca vector query "<first-person phrase or bare word>" k`.
+   `k` is optional (default 10) and capped at 100. Hits print score, source
+   family, and source id. Probing phrases in first person work better than
+   meta-concepts: `roca vector query "names of people" 20` finds documents
+   ABOUT names; `roca vector query "my boss is named" 20` finds the names.
+2. Census those hits with deterministic FTS through `roca exec`: counts,
+   dates, and word-boundary `MATCH`. Do not use `LIKE '%term%'`: it matches
+   inside other words (`name` inside `rename`).
+3. Frame the claim in SQL. Then the reading agent narrates from those rows.
+
+Worked loop, names:
+
+```bash
+roca vector query "my boss is named" 20
+roca exec "SELECT substr(COALESCE(e.human_timestamp, e.agent_timestamp), 1, 7) AS month, COUNT(DISTINCT e.id) AS exchanges, COUNT(DISTINCT e.session_id) AS sessions FROM (SELECT rowid AS source_id FROM exchanges_fts WHERE exchanges_fts MATCH 'ana') hits JOIN exchanges e ON e.id = hits.source_id GROUP BY month ORDER BY month"
+```
+
+Worked loop, concept:
+
+```bash
+roca vector query "exhaustion" 20
+roca exec "SELECT COUNT(DISTINCT e.id) AS exchanges, COUNT(DISTINCT e.session_id) AS sessions, MIN(COALESCE(e.human_timestamp, e.agent_timestamp)) AS first_seen, MAX(COALESCE(e.human_timestamp, e.agent_timestamp)) AS last_seen FROM (SELECT rowid AS source_id FROM exchanges_fts WHERE exchanges_fts MATCH 'exhaustion') hits JOIN exchanges e ON e.id = hits.source_id"
+```
+
+Stop before the last reading if you only needed the map. `roca query --sql-only`
+is a convenient natural-language, with-inference SQL compiler outside this zero-inference path;
+use it only when that inference is intentional.
+
+Caveats measured on real use:
+
+- `k` max is 100. A larger `k` errors (`k must be between 1 and 100`) before
+  any JSON body.
+- A vector search can return several exchange sources from one session. Judge
+  breadth by grouping on session id or `COUNT(DISTINCT e.session_id)` before
+  interpreting the result.
+- Query deduplicates chunks by source identity. For an exact census, count the
+  family's identity in FTS/SQL, such as `COUNT(DISTINCT e.id)` for exchanges;
+  do not treat vector hits or distinct sessions as exact occurrence counts.
+- Two signal classes: presence (the topic is nearby) versus intention
+  (someone decided or promised). Vector answers presence; SQL frames
+  intention.
+
 ## Investigation method
 
-Purpose: reach a verdict that is grounded in returned rows while learning the
-corpus terrain. When you would otherwise fire three exploratory queries, fire
-one `roca explore` instead and follow its probes.
+This is the complete working path when there is no index. Purpose: reach a
+verdict that is grounded in returned rows while learning the corpus terrain.
+When you would otherwise fire three exploratory queries, fire one
+`roca explore` instead and follow its probes.
 
 1. Declare the purpose in one line before touching anything.
 2. Launch the first probe with `roca explore --deep "<one bare word>"`. Use a
    single bare word: no hints and no phrases.
-3. Read the terrain, not just the answer: inspect sources, dates, vocabulary,
+3. Read the terrain, not just the answer: inspect sources, dates, terms,
    noise, and negative space.
 4. Work the radius with plain `roca explore`, one concept per query: a synonym,
    adjacent frame, entity, or era. Never stack five terms; FTS ANDs them and
@@ -169,8 +241,9 @@ one `roca explore` instead and follow its probes.
    match, so verify it against distilled memories or a second, differently
    phrased query.
 
-When the corpus vocabulary is unknown and a bare FTS word would miss, load
-the `roca-vector` skill instead of stacking synonyms.
+When a bare FTS word would miss, take the search-craft branch: hybrid loop
+if the index exists, otherwise keep exploring one concept at a time. Do
+not stack synonyms.
 
 ## Operating craft
 
@@ -186,9 +259,10 @@ the `roca-vector` skill instead of stacking synonyms.
   steps and blockers.
 - Ask bare first: use one short concept and no hints. Hints can steer SQL to the
   wrong table; a typo can silently leave noise as the best match.
-- For any investigation, reach for `roca explore` first; the investigation
-  method above is the same discipline applied by hand with `query`, when you
-  need finer control than the probe gives you.
+- With no index, reach for `roca explore` first; the investigation method
+  above is the same discipline applied by hand with `query` when you need
+  finer control than the probe gives you. With an index, the hybrid loop is
+  mandatory; do not start with explore as a substitute.
 - Widen deliberately: say "search the whole corpus (conversations, thinking,
   memories, sessions)", request OR between terms and raise limits consciously.
 - For counts or rankings, name `sessions` or `exchanges`, where the mass lives;

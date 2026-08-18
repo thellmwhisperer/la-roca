@@ -1,14 +1,21 @@
 ---
 name: roca-vector
 description: >
-  Semantic search with La Roca. Load when the user describes something they
-  cannot name exactly, or when vector search or the hybrid loop is in play.
-  If the index is not built yet, invite them to build it.
+  Build, watch, and maintain the La Roca vector index. Load when the user
+  wants the index, asks about vector install or progress, or needs to keep
+  the index current. Invite them to build it: one laptop night, daily reward.
 ---
 
-# La Roca vector search
+# La Roca vector index
 
-With an index built, search by meaning. Without one, invite the user to
+This skill owns the index: building it, watching its progress, keeping it
+current, and the standing invitation. Search craft lives in
+`roca-operations`. The contract is docs/vector.md.
+
+## Invite
+
+A fresh install has no index. Most people never build one at first. The
+craft in `roca-operations` is complete without it. Still invite the user to
 build it: one model download (~1 GB) and one background index build (a few
 hours, or a laptop left running overnight). It pays back every day after.
 
@@ -18,65 +25,52 @@ ollama pull nomic-embed-text-v2-moe
 roca vector install
 ```
 
+`features.vector = true` only unhides `roca vector`. It is not the index.
+
+## Watch progress
+
 Tell the user the build is running, and offer a live view of the progress:
 
 ```sh
 tail -f ~/.roca/plugins/roca-vector/state/worker.log
 ```
 
-`completion.json` in the same directory records when it finished. Full
-contract: docs/vector.md.
+`completion.json` in the same directory records `started_at` and
+`finished_at`. A non-empty `finished_at` means the first pass finished;
+that is the index. Absent or unfinished means there is no index.
 
-Once the index is built, the loop below is the craft: vectors discover
-nearby passages, full text counts them, SQL frames them.
+## Maintain
 
-## Hybrid discovery
+Indexing is incremental after the first pass. Always pass `--delta`:
 
-Requires `features.vector = true`. Operator setup lives in `docs/vector.md`.
-
-Purpose: find the passages the corpus actually uses, then census and
-frame them, then narrate. The vector discovers, FTS censuses, SQL frames;
-inference only at the end, by the reading agent, to narrate.
-`roca vector query` does no model inference; `roca exec` does none either.
-
-1. Probe veins with `roca vector query "<first-person phrase or bare word>" k`.
-   `k` is optional (default 10) and capped at 100. Hits print score, source
-   family, and source id. Probing phrases in first person work better than
-   meta-concepts: `roca vector query "names of people" 20` finds documents
-   ABOUT names; `roca vector query "my boss is named" 20` finds the names.
-2. Write deterministic FTS/SQL directly for `roca exec`: counts, dates, and
-   word-boundary `MATCH`. Do not use `LIKE '%term%'`: it matches inside other
-   words (`name` inside `rename`).
-
-Worked loop, names:
-
-```bash
-roca vector query "my boss is named" 20
-roca exec "SELECT substr(COALESCE(e.human_timestamp, e.agent_timestamp), 1, 7) AS month, COUNT(DISTINCT e.id) AS exchanges, COUNT(DISTINCT e.session_id) AS sessions FROM (SELECT rowid AS source_id FROM exchanges_fts WHERE exchanges_fts MATCH 'ana') hits JOIN exchanges e ON e.id = hits.source_id GROUP BY month ORDER BY month"
+```sh
+roca vector ingest --delta
 ```
 
-Worked loop, concept:
+A full delta embeds four families: `memories`, `exchanges`,
+`thinking_blocks`, and `sessions`. Restrict a repair with
+`--source memories|exchanges|thinking_blocks|sessions`.
 
-```bash
-roca vector query "health" 20
-roca exec "SELECT COUNT(DISTINCT e.id) AS exchanges, COUNT(DISTINCT e.session_id) AS sessions, MIN(COALESCE(e.human_timestamp, e.agent_timestamp)) AS first_seen, MAX(COALESCE(e.human_timestamp, e.agent_timestamp)) AS last_seen FROM (SELECT rowid AS source_id FROM exchanges_fts WHERE exchanges_fts MATCH 'exhaustion') hits JOIN exchanges e ON e.id = hits.source_id"
+Churn leaves empty pages. Reclaim them explicitly; ingest does not
+compact on its own:
+
+```sh
+roca vector compact
 ```
 
-Then the reading agent narrates from those rows. Stop before that last
-reading if you only needed the map. `roca query --sql-only` is a convenient
-natural-language, with-inference SQL compiler outside this zero-inference path;
-use it only when that inference is intentional.
+Verify a healthy index by re-running a full delta with no corpus change.
+It reports a null delta (`0 added · 0 updated · 0 removed`) and an
+unchanged count equal to the live chunk count.
 
-Caveats measured on real use:
+`ROCA_READ_ONLY` refuses `install`, `ingest --delta`, and `compact`.
+For a non-default database, pass `--db-path` on the vector command.
 
-- `k` max is 100. A larger `k` errors (`k must be between 1 and 100`) before
-  any JSON body.
-- A discovery probe can return several exchange sources from one session. Judge
-  breadth by grouping on session id or `COUNT(DISTINCT e.session_id)` before
-  interpreting the result.
-- Query deduplicates chunks by source identity. For an exact census, count the
-  family's identity in FTS/SQL, such as `COUNT(DISTINCT e.id)` for exchanges;
-  do not treat vector hits or distinct sessions as exact occurrence counts.
-- Two signal classes: presence (the topic is nearby) versus intention
-  (someone decided or promised). Vector answers presence; SQL frames
-  intention.
+A first smoke query after `finished_at`:
+
+```sh
+roca vector query "what did we decide" 10
+```
+
+`k` is optional (default 10) and capped at 100. Hits print rank, score,
+source family, source id, and a text preview. This checks the index;
+the search loop itself is in `roca-operations`.
