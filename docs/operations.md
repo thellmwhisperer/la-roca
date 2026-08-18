@@ -163,6 +163,40 @@ in `unreadable_files`: the count and the five newest errors still describe
 everything that could be read, and the read failure is a warning, not a failed
 diagnosis.
 
+## Support report
+
+`roca doctor --report` is the shareable diagnosis for a remote maintainer. It
+prints one fenced text block with a generation timestamp; `roca doctor --report
+--json` emits the same snapshot as JSON. The collector is read-only: it does
+not install plugins, adopt schema, prepare the federation hub, or change
+`layout.serving`.
+
+The block is ordered and bounded so it stays pasteable regardless of corpus
+size:
+
+1. **Identity** — version, commit, OS/arch, and install shape (`default-home`
+   or `custom-data-dir`). Binary location is a shape (`home-local`, `prefix`,
+   `other`), never an absolute path.
+2. **Plugins** — each installed package's name, version, origin (`bundled` vs
+   `external`), checksum, and whether its state directory exists. A local
+   filesystem source is reported as `local-directory`.
+3. **Feature flags** — on/off for every `features.*` switch.
+4. **Federation** — first-class mode (`fresh`, `legacy-only`, `migrating`,
+   `federated`), the `layout.serving` marker, where corpus text actually lives
+   (`legacy-core`, `plugin-corpus`, `split`, or `empty`), which stores exist
+   with family row counts, and named migration states. A fresh init, a
+   core-only legacy home, and a cutover home are distinguishable at a glance.
+5. **Health** — pass/warn/fail/skipped per check name, never finding rows.
+6. **Vector** — when `plugins/vector/state/vector.db` exists: model,
+   dimensions, chunk totals by kind, store size, and the last recorded delta
+   counts.
+7. **Ingest** — detected agent names and the latest `ingest_file_state`
+   timestamp. No source paths.
+
+The report never includes conversation text, memory bodies, file paths outside
+the `~/.roca` layout names, or person names. Corpus-scale totals are the only
+counts.
+
 ## Redaction
 
 Before a record reaches either sink, redaction covers sensitive field names;

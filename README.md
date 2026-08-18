@@ -73,7 +73,8 @@ with an explicit `--db-path` asks no model questions, writes no model
 configuration, keeps the factory selection, and prints the same one-line answer
 notice. The summary also tells you how deep your memory goes: the oldest moment
 it ingested is the floor of your rock. `roca doctor` reports the same floor and
-model health.
+model health. `roca doctor --report` is the pasteable, privacy-safe support
+snapshot; [Operations](docs/operations.md#support-report) owns that contract.
 
 ## Let your agent drive
 
@@ -103,10 +104,10 @@ query content may leave it at all.
 Every CLI command and MCP tool call writes a size-capped, redacted record to
 the bundled ops database and to JSONL under `logs/`; query records never store
 result row contents, and `roca doctor` summarizes recent query failures. The
-stable format, retention, and full redaction list live in
-[docs/operations.md](docs/operations.md). `ROCA_READ_ONLY=1` refuses writes in
-the shared service before database I/O, so CLI and MCP enforce the same
-boundary.
+stable format, retention, full redaction list, and `roca doctor --report`
+support snapshot live in [docs/operations.md](docs/operations.md).
+`ROCA_READ_ONLY=1` refuses writes in the shared service before database I/O,
+so CLI and MCP enforce the same boundary.
 
 ## What you can ask
 

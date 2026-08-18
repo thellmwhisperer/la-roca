@@ -38,6 +38,15 @@ type HealthCheck struct {
 	Extra   map[string]int   `json:"formats,omitempty"`
 }
 
+// HealthVerdict is a check name and its status only. Support snapshots use
+// this so they never carry finding rows that could hold personal content.
+type HealthVerdict struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
+const healthSkipped = "skipped"
+
 // HealthReport is the whole diagnosis. Its status is the worst of its checks'.
 type HealthReport struct {
 	Status      string                 `json:"status"`
@@ -201,21 +210,97 @@ func (s *Service) Health(ctx context.Context, req HealthRequest) (HealthReport, 
 	return report, nil
 }
 
-func runHealthCheck(ctx context.Context, reader *sql.DB, check healthCheck,
-	registered []registeredLayer, maxRows int) (HealthCheck, error) {
-	prefix, arguments := "", []any(nil)
-	if check.registryOwned {
-		prefix, arguments = layerRegistryCTE(registered)
+// HealthVerdicts runs the same checks as Health but returns only names and
+// statuses. memory is used for memory-owned checks; other is used for the
+// rest. A missing handle or a missing table is skipped, not a failed report.
+func HealthVerdicts(ctx context.Context, memory, other *sql.DB) []HealthVerdict {
+	registered := layersFrom(ctx, memory)
+	if len(registered) == 0 {
+		registered = layersFrom(ctx, other)
 	}
+	verdicts := make([]HealthVerdict, 0, len(healthChecks)+1)
+	for _, check := range healthChecks {
+		reader := other
+		if check.memoryOwned {
+			reader = memory
+		}
+		if reader == nil {
+			verdicts = append(verdicts, HealthVerdict{Name: check.name, Status: healthSkipped})
+			continue
+		}
+		count, err := healthCount(ctx, reader, check, registered)
+		if err != nil {
+			verdicts = append(verdicts, HealthVerdict{Name: check.name, Status: healthSkipped})
+			continue
+		}
+		status := HealthPass
+		if count > 0 {
+			status = check.severity
+		}
+		verdicts = append(verdicts, HealthVerdict{Name: check.name, Status: status})
+	}
+	if memory == nil {
+		return append(verdicts, HealthVerdict{Name: "memory_created_at_formats", Status: healthSkipped})
+	}
+	timestamps, err := checkTimestampFormats(ctx, memory)
+	if err != nil {
+		return append(verdicts, HealthVerdict{Name: "memory_created_at_formats", Status: healthSkipped})
+	}
+	return append(verdicts, HealthVerdict{Name: "memory_created_at_formats", Status: timestamps.Status})
+}
+
+func layersFrom(ctx context.Context, db *sql.DB) []registeredLayer {
+	if db == nil {
+		return nil
+	}
+	rows, err := db.QueryContext(ctx, `SELECT name, COALESCE(alias_of, '') FROM layers ORDER BY name`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var registered []registeredLayer
+	for rows.Next() {
+		var layer registeredLayer
+		if rows.Scan(&layer.name, &layer.aliasOf) != nil {
+			return nil
+		}
+		registered = append(registered, layer)
+	}
+	if rows.Err() != nil {
+		return nil
+	}
+	return registered
+}
+
+func healthQuery(check healthCheck, registered []registeredLayer) (string, []any) {
+	if check.registryOwned {
+		return layerRegistryCTE(registered)
+	}
+	return "", nil
+}
+
+func healthCount(ctx context.Context, reader *sql.DB, check healthCheck,
+	registered []registeredLayer) (int, error) {
+	prefix, arguments := healthQuery(check, registered)
 	var count int
 	if err := reader.QueryRowContext(ctx, prefix+check.count, arguments...).Scan(&count); err != nil {
-		return HealthCheck{}, fmt.Errorf("health check %s: %w", check.name, err)
+		return 0, fmt.Errorf("health check %s: %w", check.name, err)
+	}
+	return count, nil
+}
+
+func runHealthCheck(ctx context.Context, reader *sql.DB, check healthCheck,
+	registered []registeredLayer, maxRows int) (HealthCheck, error) {
+	count, err := healthCount(ctx, reader, check, registered)
+	if err != nil {
+		return HealthCheck{}, err
 	}
 	outcome := HealthCheck{Status: HealthPass, Count: count, Summary: check.summary}
 	if count == 0 {
 		return outcome, nil
 	}
 	outcome.Status = check.severity
+	prefix, arguments := healthQuery(check, registered)
 	rows, err := reader.QueryContext(ctx, prefix+check.sample,
 		append(slices.Clone(arguments), maxRows)...)
 	if err != nil {

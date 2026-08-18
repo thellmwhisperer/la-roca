@@ -298,6 +298,38 @@ func Inspect(ctx context.Context, db *sql.DB) (Snapshot, error) {
 	return snapshot, nil
 }
 
+// ListMigrations reports every named custody migration in this plugin
+// database, in stable name order. A database with no ledger is empty, not an
+// error: callers that inspect an unmigrated store need that distinction.
+func ListMigrations(ctx context.Context, db *sql.DB) ([]MigrationSnapshot, error) {
+	present, err := ledgerPresent(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	if !present {
+		return nil, nil
+	}
+	rows, err := db.QueryContext(ctx, `SELECT migration, destination_table, migration_state,
+		COALESCE(verification_digest, '') FROM plugin_migrations ORDER BY migration`)
+	if err != nil {
+		return nil, fmt.Errorf("list plugin migrations: %w", err)
+	}
+	defer rows.Close()
+	var listed []MigrationSnapshot
+	for rows.Next() {
+		var snapshot MigrationSnapshot
+		if err := rows.Scan(&snapshot.Name, &snapshot.DestinationTable, &snapshot.State,
+			&snapshot.VerificationDigest); err != nil {
+			return nil, fmt.Errorf("read plugin migrations: %w", err)
+		}
+		listed = append(listed, snapshot)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read plugin migrations: %w", err)
+	}
+	return listed, nil
+}
+
 // InspectMigration reports one named migration's own lifecycle, independent of
 // every other migration the same plugin database hosts.
 func InspectMigration(ctx context.Context, db *sql.DB, name string) (MigrationSnapshot, error) {
