@@ -103,7 +103,9 @@ on Windows) and embeds the corpus in the background. macOS and Linux can send
 a desktop notification with the exit status and counts. Windows sends no
 desktop notification: inspect `completion.json` or `worker.log` in that state
 directory. The worker log path is printed at launch; `completion.json` records
-`started_at` and `finished_at`, which time the first pass on this machine.
+`started_at`, `finished_at`, and `exit_status`. The index is ready only when
+`finished_at` is non-empty and `exit_status` is `0`; otherwise treat it as
+unavailable. The timestamps time the first pass on this machine.
 
 Indexing is incremental after that. `vector ingest` always requires `--delta`:
 
@@ -168,4 +170,5 @@ delta — `0 added · 0 updated · 0 removed` — and an unchanged count equal t
 the live chunk count. That is the operator's own confidence probe; it needs
 no golden file.
 
-Search craft for agents lives in the `roca-vector` skill.
+Search craft for agents lives in the `roca-operations` skill. The
+`roca-vector` skill owns index installation, progress, and maintenance.

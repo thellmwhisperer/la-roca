@@ -81,9 +81,10 @@ finds the rest:
 > passport mess": 41 mentions across 3 projects, first on 11 February,
 > dropped in April after the token bug. Want the month-by-month arc?
 
-Underneath, the [hybrid loop](docs/vector.md): vectors discover nearby
-passages, full text counts them, SQL frames them. No model invents a single
-row.
+Underneath, the
+[hybrid loop](internal/distribution/skill/OPERATIONS.md#hybrid-loop): vectors
+find nearby rows, full text counts them, SQL frames them. No model invents a
+single row.
 
 ### Give your whole fleet one memory
 
