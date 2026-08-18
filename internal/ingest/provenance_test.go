@@ -50,7 +50,7 @@ var recordedProvenance = []provenanceExpectation{
 		surface: "OpenCode", tokensIn: 43, tokensOut: 11, reason: 6, cost: 0.5, counted: "in out reasoning cost"},
 	// Hermes measures a whole session and never a turn: the turn carries who
 	// answered and no invented split of the totals.
-	{session: "h1", model: "test-model", provider: "fixture-hermes-provider", surface: "Hermes"},
+	{session: "h1", model: "test-model", provider: "fixture-hermes-provider", surface: "Hermes/tui"},
 	// The web export is the signal-poor source, and every column stays NULL.
 	{session: "web-fixture-1", surface: "Claude Web"},
 	{session: "22222222-3333-4444-5555-666666666666", model: "fixture-grok-model",

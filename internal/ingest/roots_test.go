@@ -23,6 +23,7 @@ func TestRootsOnMacOS(t *testing.T) {
 		"pi root":         "/Users/op/.pi",
 		"pi":              "/Users/op/.pi/agent/sessions",
 		"hermes":          "/Users/op/.hermes/state.db",
+		"hermes home":     "/Users/op/.hermes",
 		"grok":            "/Users/op/.grok/sessions",
 		"grok memtrace":   "/Users/op/.grok/memtrace",
 	}
@@ -38,6 +39,7 @@ func TestRootsOnMacOS(t *testing.T) {
 		"pi root":         roots.PiRoot,
 		"pi":              roots.PiSessions,
 		"hermes":          roots.HermesDB,
+		"hermes home":     roots.HermesHome,
 		"grok":            roots.GrokSessions,
 		"grok memtrace":   roots.GrokMemtrace,
 	}
@@ -117,6 +119,9 @@ func TestRootsOnWindowsUseItsOwnSeparatorAndItsOwnVariables(t *testing.T) {
 	if roots.HermesDB != `C:\Users\ale\.hermes\state.db` {
 		t.Errorf("hermes = %q", roots.HermesDB)
 	}
+	if roots.HermesHome != `C:\Users\ale\.hermes` {
+		t.Errorf("hermes home = %q", roots.HermesHome)
+	}
 }
 
 // Under WSL the home is a Linux one and the work lives on the Windows drive. The
@@ -170,6 +175,17 @@ func TestTheEnvironmentWinsOverThePlatformDefault(t *testing.T) {
 	}
 	if roots.OpenCodeTelegramLogs != "/elsewhere/bot-logs" {
 		t.Errorf("opencode Telegram logs = %q", roots.OpenCodeTelegramLogs)
+	}
+}
+
+func TestHermesHomeOverrideMovesTheDefaultDatabase(t *testing.T) {
+	roots := ResolveRoots(Environment{GOOS: "darwin", Home: "/Users/op",
+		Getenv: environmentOf(map[string]string{"HERMES_HOME": "/moved/hermes"})}, Settings{})
+	if roots.HermesHome != "/moved/hermes" {
+		t.Errorf("hermes home = %q", roots.HermesHome)
+	}
+	if roots.HermesDB != "/moved/hermes/state.db" {
+		t.Errorf("hermes db = %q", roots.HermesDB)
 	}
 }
 

@@ -67,6 +67,7 @@ var expectedCanonicalHarnesses = map[Kind]string{
 	KindCursorDB:                "Cursor",
 	KindGrokSession:             "Grok Build",
 	KindGrokSessionMetadata:     "Grok Build",
+	KindHermesMemory:            "Hermes",
 }
 
 // TestRegisteredParsersConform is the contribution harness. Every directory in

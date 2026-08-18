@@ -236,6 +236,14 @@ var registry = []Registration{
 	fileParser(KindGrokSessionMetadata, DestinationCorpus, ingestprovenance.GrokBuild, detectGrokSessionMetadata,
 		ParseGrokSessionMetadata),
 	{
+		Name: string(KindHermesMemory), SourceAgent: "hermes",
+		CanonicalHarness: ingestprovenance.Hermes,
+		HarvestLocations: []string{".hermes/memories"},
+		FileName:         "MEMORY.md",
+		Version:          "hermes-memory-v1", Destination: DestinationStore,
+		Parser: parserFunctions{detect: detectHermesMemory, parse: ParseHermesMemory},
+	},
+	{
 		Name: string(KindCursorDB), SourceAgent: "cursor",
 		CanonicalHarness: ingestprovenance.Cursor,
 		Locations: []string{
@@ -260,9 +268,15 @@ func fileParser(kind Kind, destination Destination, harness string, detect func(
 // the byte-oriented Parser interface.
 func ApplyCanonicalHarness(kind Kind, records *Records) {
 	for i := range records.Sessions {
+		if records.Sessions[i].SourceSurface != "" {
+			continue
+		}
 		records.Sessions[i].SourceSurface = CanonicalHarness(kind, records.Sessions[i].SourceAgent)
 	}
 	for i := range records.Memories {
+		if records.Memories[i].SourceSurface != "" {
+			continue
+		}
 		records.Memories[i].SourceSurface = CanonicalHarness(kind, records.Memories[i].SourceAgent)
 	}
 }
@@ -289,6 +303,9 @@ func CanonicalHarness(kind Kind, sourceAgent string) string {
 
 func applyCanonicalHarness(fallback string, records *Records) {
 	for i := range records.Sessions {
+		if records.Sessions[i].SourceSurface != "" {
+			continue
+		}
 		harness := ingestprovenance.HarnessForSource(records.Sessions[i].SourceAgent)
 		if harness == "" {
 			harness = fallback
@@ -296,6 +313,9 @@ func applyCanonicalHarness(fallback string, records *Records) {
 		records.Sessions[i].SourceSurface = harness
 	}
 	for i := range records.Memories {
+		if records.Memories[i].SourceSurface != "" {
+			continue
+		}
 		harness := ingestprovenance.HarnessForSource(records.Memories[i].SourceAgent)
 		if harness == "" {
 			harness = fallback
