@@ -3,8 +3,31 @@
 First-time path: [install, detect an already signed-in agent CLI, and query
 without a La Roca login](lifecycle.md#install).
 
-`roca ingest` reads live agent stores from their platform locations. Pass one
-extracted account-export directory to import that snapshot in the same run:
+`roca ingest` incrementally reads supported local artefacts:
+
+| Runtime | Artefacts |
+|---|---|
+| Claude Code | Sessions, subagent transcripts, and per-project memory files |
+| Claude Desktop and Cowork | Session stores and Claude memory files |
+| Claude web/Desktop export you point it at | Conversations, memories, projects, and design chats from the official Anthropic data export |
+| ChatGPT export you point it at | Conversations from the official OpenAI data export |
+| Codex | Sessions, memory, rule and skill files, and what matters from its state database |
+| Qwen Code | Project chat sessions, including tool calls and source-recorded models |
+| GLM | User skill documents and their supporting Markdown files |
+| Cursor | Composer sessions, prompts, thinking, and tool calls from its local state databases |
+| OpenCode | Sessions and exchanges, distilled from its local database |
+| Pi | Complete session tree, including nested child runs |
+| Hermes | Sessions and channel, usage and routing intel from its state database, plus curated MEMORY.md blocks |
+| Grok Build | Sessions, from the session update stream and its metadata sidecar |
+
+Repository `AGENTS.md` and `CLAUDE.md` files are instructions and are never
+ingested as memories. Live databases are read with SQLite `query_only` enabled
+and a short busy timeout. Cursor databases are first serialized into an
+immutable snapshot so active WAL content is included without changing Cursor's
+stores.
+
+Pass one extracted account-export directory to import that snapshot in the same
+run:
 
 ```sh
 roca ingest /path/to/extracted-export
