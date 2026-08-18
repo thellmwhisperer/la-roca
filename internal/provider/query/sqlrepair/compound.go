@@ -24,21 +24,20 @@ func dropRepeatedOrderBy(stmt string) (string, bool) {
 }
 
 // dropUnorderableCompoundTerms drops a trailing compound ORDER BY term that
-// SQLite cannot resolve. A compound SELECT can only be ordered by a name in
-// its own result set, and those names come from the first branch.
+// SQLite cannot resolve against any result column in the compound.
 func dropUnorderableCompoundTerms(stmt string) (string, bool) {
 	tokens := topLevelTokens(stmt)
 	seps := setSeparators(tokens)
 	if len(seps) == 0 {
 		return stmt, false
 	}
-	columns, ok := firstBranchResultColumns(stmt, tokens, seps)
-	if !ok {
-		return stmt, false
-	}
 	last := seps[len(seps)-1].end
 	orderAt := firstPair(tokens, last, len(stmt), "order", "by")
 	if orderAt < 0 {
+		return stmt, false
+	}
+	columns, ok := compoundResultSet(stmt, tokens, seps, orderAt)
+	if !ok {
 		return stmt, false
 	}
 	termsStart := -1
@@ -139,15 +138,40 @@ type compoundResultColumns struct {
 	count       int
 }
 
-func firstBranchResultColumns(stmt string, tokens []token, seps []span) (compoundResultColumns, bool) {
-	end := seps[0].start
-	if order := firstPair(tokens, 0, end, "order", "by"); order >= 0 {
-		end = order
-	} else if limit := firstWord(tokens, 0, end, "limit"); limit >= 0 {
-		end = limit
+func compoundResultSet(stmt string, tokens []token, seps []span, orderAt int) (compoundResultColumns, bool) {
+	branches := make([]span, 0, len(seps)+1)
+	start := 0
+	for _, sep := range seps {
+		branches = append(branches, span{start: start, end: sep.start})
+		start = sep.end
 	}
-	from, to := trimIndex(stmt, 0, end)
-	return resultColumns(parseSelect(stmt[from:to]))
+	branches = append(branches, span{start: start, end: orderAt})
+
+	var combined compoundResultColumns
+	for _, branch := range branches {
+		end := branch.end
+		if order := firstPair(tokens, branch.start, end, "order", "by"); order >= 0 {
+			end = order
+		} else if limit := firstWord(tokens, branch.start, end, "limit"); limit >= 0 {
+			end = limit
+		}
+		from, to := trimIndex(stmt, branch.start, end)
+		columns, ok := resultColumns(parseSelect(stmt[from:to]))
+		if !ok || combined.count != 0 && columns.count != combined.count {
+			return compoundResultColumns{}, false
+		}
+		if combined.count == 0 {
+			combined = columns
+			continue
+		}
+		for name := range columns.names {
+			combined.names[name] = true
+		}
+		for expression := range columns.expressions {
+			combined.expressions[expression] = true
+		}
+	}
+	return combined, true
 }
 
 func resultColumns(sel *rqlite.SelectStatement) (compoundResultColumns, bool) {

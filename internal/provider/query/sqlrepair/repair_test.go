@@ -112,9 +112,23 @@ func TestPrepareRepairsOnlyNamedModelOutputShapes(t *testing.T) {
 			wantSQL: "SELECT id FROM memories UNION ALL SELECT id FROM exchanges ORDER BY id LIMIT 7",
 		},
 		{
-			name: "drop a compound ORDER BY that the first branch does not project",
+			name: "keep a compound ORDER BY projected by a later branch",
 			raw: "SELECT id, created_at FROM memories UNION ALL " +
 				"SELECT id, agent_timestamp FROM exchanges ORDER BY agent_timestamp DESC LIMIT 10",
+			wantSQL: "SELECT id, created_at FROM memories UNION ALL " +
+				"SELECT id, agent_timestamp FROM exchanges ORDER BY agent_timestamp DESC LIMIT 10",
+		},
+		{
+			name: "keep a compound ORDER BY aliased by a later branch",
+			raw: "SELECT id, created_at FROM memories UNION ALL " +
+				"SELECT id, agent_timestamp AS occurred_at FROM exchanges ORDER BY occurred_at DESC",
+			wantSQL: "SELECT id, created_at FROM memories UNION ALL " +
+				"SELECT id, agent_timestamp AS occurred_at FROM exchanges ORDER BY occurred_at DESC",
+		},
+		{
+			name: "drop a compound ORDER BY that no branch projects",
+			raw: "SELECT id, created_at FROM memories UNION ALL " +
+				"SELECT id, agent_timestamp FROM exchanges ORDER BY missing_timestamp DESC LIMIT 10",
 			wantSQL:     "SELECT id, created_at FROM memories UNION ALL SELECT id, agent_timestamp FROM exchanges LIMIT 10",
 			wantRepairs: []string{sqlrepair.WrapOrderedCompound},
 		},
@@ -142,6 +156,18 @@ func TestPrepareRepairsOnlyNamedModelOutputShapes(t *testing.T) {
 			name:        "rewrite a complete JSON arrow chain",
 			raw:         "SELECT metadata -> '$.project' ->> '$.name' FROM memories",
 			wantSQL:     "SELECT json_extract(json_extract(metadata, '$.project'), '$.name') FROM memories",
+			wantRepairs: []string{sqlrepair.PreserveJSONExtract},
+		},
+		{
+			name:        "rewrite a grouped JSON operand",
+			raw:         "SELECT (metadata) -> '$.project' FROM memories",
+			wantSQL:     "SELECT json_extract((metadata), '$.project') FROM memories",
+			wantRepairs: []string{sqlrepair.PreserveJSONExtract},
+		},
+		{
+			name:        "rewrite a parenthesized JSON chain atomically",
+			raw:         "SELECT (metadata -> '$.project') ->> '$.name' FROM memories",
+			wantSQL:     "SELECT json_extract((json_extract(metadata, '$.project')), '$.name') FROM memories",
 			wantRepairs: []string{sqlrepair.PreserveJSONExtract},
 		},
 		{

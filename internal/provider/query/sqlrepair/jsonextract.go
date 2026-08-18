@@ -1,6 +1,10 @@
 package sqlrepair
 
-import "strings"
+import (
+	"strings"
+
+	rqlite "github.com/rqlite/sql"
+)
 
 // preserveJSONExtract rewrites SQLite's `->` / `->>` shorthand to
 // json_extract. The shorthand with `->` yields quoted JSON text, so a
@@ -42,6 +46,20 @@ func preserveJSONExtract(stmt string) (string, bool) {
 			}
 			chainEnd = rightEnd
 			next := skipSpaceRight(stmt, rightEnd)
+			for next < len(stmt) && stmt[next] == ')' {
+				open := matchingOpenParen(stmt, next)
+				if open < 0 {
+					break
+				}
+				outerStart := jsonParenOperandStart(stmt, open, next+1)
+				if outerStart < cursor || outerStart > leftStart {
+					break
+				}
+				expr = stmt[outerStart:leftStart] + expr + stmt[chainEnd:next+1]
+				leftStart = outerStart
+				chainEnd = next + 1
+				next = skipSpaceRight(stmt, chainEnd)
+			}
 			if jsonArrowWidth(stmt, next) == 0 {
 				break
 			}
@@ -110,18 +128,31 @@ func jsonArrowLeft(stmt string, arrow int) (int, int) {
 		if open < 0 {
 			return -1, -1
 		}
-		nameEnd := skipSpaceLeft(stmt, open)
-		start := qualifiedIdentStart(stmt, nameEnd)
-		if start < 0 {
-			start = open
-		}
-		return start, end
+		return jsonParenOperandStart(stmt, open, end), end
 	}
 	start := qualifiedIdentStart(stmt, end)
 	if start < 0 || start >= end {
 		return -1, -1
 	}
 	return start, end
+}
+
+func jsonParenOperandStart(stmt string, open, end int) int {
+	nameEnd := skipSpaceLeft(stmt, open)
+	start := qualifiedIdentStart(stmt, nameEnd)
+	if start < 0 {
+		return open
+	}
+	sel := parseSelect("SELECT " + stmt[start:end])
+	if sel == nil || len(sel.Columns) != 1 || sel.Columns[0].Alias != nil || sel.Source != nil {
+		return open
+	}
+	switch sel.Columns[0].Expr.(type) {
+	case *rqlite.Call, *rqlite.CastExpr, *rqlite.Raise:
+		return start
+	default:
+		return open
+	}
 }
 
 func jsonArrowRight(stmt string, from int) (int, int) {
