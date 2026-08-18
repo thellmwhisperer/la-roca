@@ -42,6 +42,10 @@ type Target struct {
 	SessionID      string
 	FileName       string
 	SourceType     string
+	// CompanionPaths are read-only evidence that enriches this target. Their
+	// fingerprints travel with the primary artefact so either source changing
+	// reopens the same normalized snapshot.
+	CompanionPaths []string
 	// SidecarPath is the metadata file paired with a Cowork audit transcript.
 	SidecarPath string
 	// ExclusionReason marks a discovered artefact that policy counts but never
@@ -135,14 +139,37 @@ func Scan(roots Roots) Plan {
 	plan.add(scanGrokMemtrace(roots, &plan), "grok_memtrace_files")
 	plan.add(scanClaudeWebExports(roots), "claude_web_export_files")
 	plan.add(scanChatGPTWebExports(roots, &plan), "chatgpt_web_export_files")
-	plan.add(existingFile(roots.OpenCodeDB, Target{
-		Kind: parsers.KindOpenCodeDB, SourceAgent: "opencode"}), "opencode_databases")
+	openCode := existingFile(roots.OpenCodeDB, Target{
+		Kind: parsers.KindOpenCodeDB, SourceAgent: "opencode"})
+	if len(openCode) > 0 {
+		logs := scanOpenCodeTelegramLogs(roots.OpenCodeTelegramLogs)
+		openCode[0].CompanionPaths = logs
+		plan.Scanned["opencode_telegram_bot_logs"] = len(logs)
+		if roots.OpenCodeTelegramLogs != "" && len(logs) == 0 {
+			plan.Excluded = append(plan.Excluded, Target{
+				Path: roots.OpenCodeTelegramLogs, Kind: parsers.KindOpenCodeDB,
+				SourceAgent:     "opencode",
+				ExclusionReason: "OpenCode Telegram bot logs are absent",
+			})
+		}
+	}
+	plan.add(openCode, "opencode_databases")
 	plan.add(existingFile(roots.HermesDB, Target{
 		Kind: parsers.KindHermesDB, SourceAgent: "hermes"}), "hermes_databases")
 	if roots.Home != "" {
 		addRegisteredParsers(roots, &plan, parsers.Registered())
 	}
 	return plan
+}
+
+func scanOpenCodeTelegramLogs(root string) []string {
+	var paths []string
+	for _, name := range filesIn(root) {
+		if strings.HasPrefix(name, "bot-") && strings.HasSuffix(name, ".log") {
+			paths = append(paths, filepath.Join(root, name))
+		}
+	}
+	return paths
 }
 
 // addRegisteredParsers is the generic contribution route. A registry line may

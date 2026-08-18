@@ -19,6 +19,7 @@ func TestRootsOnMacOS(t *testing.T) {
 		"codex":           "/Users/op/.codex",
 		"codex sessions":  "/Users/op/.codex/sessions",
 		"opencode":        "/Users/op/.local/share/opencode/opencode.db",
+		"opencode bot":    "/Users/op/Library/Application Support/opencode-telegram-bot/logs",
 		"pi root":         "/Users/op/.pi",
 		"pi":              "/Users/op/.pi/agent/sessions",
 		"hermes":          "/Users/op/.hermes/state.db",
@@ -33,6 +34,7 @@ func TestRootsOnMacOS(t *testing.T) {
 		"codex":           roots.CodexRoot,
 		"codex sessions":  roots.CodexSessions,
 		"opencode":        roots.OpenCodeDB,
+		"opencode bot":    roots.OpenCodeTelegramLogs,
 		"pi root":         roots.PiRoot,
 		"pi":              roots.PiSessions,
 		"hermes":          roots.HermesDB,
@@ -147,14 +149,18 @@ func TestWhatTheOperatorDeclaresWinsOverThePlatformDefault(t *testing.T) {
 func TestTheEnvironmentWinsOverThePlatformDefault(t *testing.T) {
 	roots := ResolveRoots(Environment{GOOS: "darwin", Home: "/Users/op",
 		Getenv: environmentOf(map[string]string{
-			"CLAUDE_PROJECTS_ROOT": "/elsewhere/projects",
-			"HERMES_DB_PATH":       "/elsewhere/state.db",
+			"CLAUDE_PROJECTS_ROOT":       "/elsewhere/projects",
+			"HERMES_DB_PATH":             "/elsewhere/state.db",
+			"OPENCODE_TELEGRAM_BOT_LOGS": "/elsewhere/bot-logs",
 		})}, Settings{})
 	if roots.ClaudeProjects != "/elsewhere/projects" {
 		t.Errorf("claude projects = %q", roots.ClaudeProjects)
 	}
 	if roots.HermesDB != "/elsewhere/state.db" {
 		t.Errorf("hermes = %q", roots.HermesDB)
+	}
+	if roots.OpenCodeTelegramLogs != "/elsewhere/bot-logs" {
+		t.Errorf("opencode Telegram logs = %q", roots.OpenCodeTelegramLogs)
 	}
 }
 
