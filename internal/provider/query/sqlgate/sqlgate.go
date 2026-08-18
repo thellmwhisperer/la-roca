@@ -299,6 +299,20 @@ func enforceLimit(stmt string) (string, error) {
 			return "", fmt.Errorf("LIMIT must be a numeric literal")
 		}
 		countStart, countEnd = start2, end2
+		i = end2
+	} else if start, end, okWord := readWord(stmt, i); okWord &&
+		strings.EqualFold(stmt[start:end], "offset") {
+		i = skipSpaceAndComments(stmt, end)
+		_, _, offsetEnd, ok := readNumberLiteral(stmt, i)
+		if !ok {
+			return "", fmt.Errorf("LIMIT must be a numeric literal")
+		}
+		i = offsetEnd
+	} else {
+		i = end1
+	}
+	if !onlyStatementTail(stmt, i) {
+		return "", fmt.Errorf("LIMIT must be a numeric literal")
 	}
 	requested, err := strconv.Atoi(stmt[countStart:countEnd])
 	if err != nil {
@@ -340,7 +354,7 @@ func statementCount(stmt string) int {
 			break
 		}
 		switch stmt[i] {
-		case '\'', '"', '`':
+		case '\'', '"', '`', '[':
 			hasCode = true
 			i = scanQuoted(stmt, i, stmt[i])
 		case ';':
@@ -382,7 +396,7 @@ func lastTopLevelWord(stmt, want string) (wordSpan, bool) {
 				depth--
 			}
 			i++
-		case '\'', '"', '`':
+		case '\'', '"', '`', '[':
 			i = scanQuoted(stmt, i, stmt[i])
 		default:
 			if start, end, okWord := readWord(stmt, i); okWord {
@@ -460,17 +474,29 @@ func skipSpaceAndComments(stmt string, i int) int {
 }
 
 func scanQuoted(stmt string, i int, quote byte) int {
+	closing := quote
+	if quote == '[' {
+		closing = ']'
+	}
 	for i++; i < len(stmt); i++ {
-		if stmt[i] != quote {
+		if stmt[i] != closing {
 			continue
 		}
-		if i+1 < len(stmt) && stmt[i+1] == quote {
+		if quote != '[' && i+1 < len(stmt) && stmt[i+1] == closing {
 			i++
 			continue
 		}
 		return i + 1
 	}
 	return len(stmt)
+}
+
+func onlyStatementTail(stmt string, i int) bool {
+	i = skipSpaceAndComments(stmt, i)
+	if i < len(stmt) && stmt[i] == ';' {
+		i = skipSpaceAndComments(stmt, i+1)
+	}
+	return i == len(stmt)
 }
 
 // trailingSQLCodeEnd finds the final byte of executable SQL while ignoring
