@@ -200,6 +200,9 @@ func (g *Gate) Close() error { return g.engine.close() }
 // going to run. The string it returns is the one to execute: it may carry the
 // LIMIT that was missing.
 func (g *Gate) Validate(stmt string) (string, error) {
+	if strings.IndexByte(stmt, 0) >= 0 {
+		return "", fmt.Errorf("SQL parse error: embedded NUL byte")
+	}
 	stmt = strings.TrimSpace(stmt)
 	if stmt == "" {
 		return "", fmt.Errorf("Empty SQL")
@@ -437,9 +440,6 @@ func readNumberLiteral(stmt string, i int) (value string, start, end int, ok boo
 		return "", i, i, false
 	}
 	start = i
-	if stmt[i] == '+' || stmt[i] == '-' {
-		i++
-	}
 	if i >= len(stmt) || stmt[i] < '0' || stmt[i] > '9' {
 		return "", start, i, false
 	}
@@ -580,14 +580,15 @@ var allowedFunctions = set(
 	"replace", "round", "rtrim", "sign", "soundex", "substr", "substring",
 	"trim", "typeof", "unhex", "unicode", "unlikely", "upper",
 	// date and time
-	"date", "datetime", "julianday", "strftime", "time", "timediff", "unixepoch",
+	"current_date", "current_time", "current_timestamp", "date", "datetime", "julianday",
+	"strftime", "time", "timediff", "unixepoch",
 	// aggregate
 	"avg", "count", "group_concat", "sum", "total", "string_agg",
 	// JSON
 	"json", "json_array", "json_array_length", "json_error_position",
 	"json_extract", "json_group_array", "json_group_object", "json_insert",
 	"json_object", "json_patch", "json_quote", "json_remove", "json_replace",
-	"json_set", "json_type", "json_valid",
+	"json_set", "json_type", "json_valid", "->", "->>",
 	// window
 	"cume_dist", "dense_rank", "first_value", "lag", "last_value", "lead",
 	"nth_value", "ntile", "percent_rank", "rank", "row_number",

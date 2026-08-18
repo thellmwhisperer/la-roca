@@ -27,7 +27,10 @@ func TestTheGateAcceptsAReadOfTheVisibleTables(t *testing.T) {
 		"SELECT s.project, COUNT(*) FROM sessions s GROUP BY s.project LIMIT 10",
 		"SELECT substr(full_text, 1, 200) FROM thinking_blocks LIMIT 3",
 		"SELECT json_extract(metadata, '$.for_agent') FROM memories LIMIT 1",
+		"SELECT metadata -> '$.for_agent' FROM memories LIMIT 1",
+		"SELECT metadata ->> '$.for_agent' FROM memories LIMIT 1",
 		"SELECT DATE(started_at) FROM sessions LIMIT 1",
+		"SELECT CURRENT_DATE, CURRENT_TIME, CURRENT_TIMESTAMP LIMIT 1",
 		"SELECT 'memory' AS source, id FROM memories UNION ALL SELECT 'tool', id FROM tool_uses LIMIT 4",
 	}
 	for _, benchCase := range benchCases {
@@ -201,6 +204,8 @@ func TestTheLimitClampHandlesWhitespaceOffsetsAndBothSQLiteForms(t *testing.T) {
 		{statement: "SELECT id FROM memories LIMIT 1 + 100000", wantErr: true},
 		{statement: "SELECT id FROM memories LIMIT 1 OFFSET 1+100000", wantErr: true},
 		{statement: "SELECT id FROM memories LIMIT 1, 1e6", wantErr: true},
+		{statement: "SELECT id FROM memories LIMIT +1", wantErr: true},
+		{statement: "SELECT id FROM memories LIMIT -1", wantErr: true},
 	} {
 		clean, err := gate(t).Validate(tc.statement)
 		if tc.wantErr {
@@ -260,6 +265,7 @@ func TestTheGateRejectsWhatIsNotEvenAQuery(t *testing.T) {
 		"ATTACH DATABASE 'other.db' AS other",
 		"PRAGMA table_info(memories)",
 		"this is not sql",
+		"SELECT id FROM memories\x00",
 	} {
 		if _, err := gate(t).Validate(benchCase); err == nil {
 			t.Errorf("Validate(%q) passed", benchCase)

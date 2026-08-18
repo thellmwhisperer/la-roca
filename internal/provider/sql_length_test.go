@@ -6,13 +6,12 @@ import (
 	"testing"
 )
 
-// retiredSQLTokenCap is the former DefaultMaxTokens budget. A realistic
-// federated UNION already exceeded it and died mid-statement; these tests
-// lock that the transport no longer imposes that ceiling.
+// retiredSQLTokenCap is the former DefaultMaxTokens budget. These tests lock
+// that the transport no longer imposes that ceiling.
 const retiredSQLTokenCap = 500
 
-// longSQLSelect is the live failure shape: a multi-database UNION with long
-// COALESCE chains, longer than the retired 500-token generation cap.
+// longSQLSelect is a synthetic multi-database UNION longer than the retired
+// 500-token generation cap.
 func longSQLSelect() string {
 	const branches = 48
 	var b strings.Builder
