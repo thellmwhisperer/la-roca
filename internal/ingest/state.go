@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -81,7 +82,26 @@ func targetFingerprint(target Target) (string, error) {
 		}
 		wal = "none"
 	}
-	return parserAwareFingerprint(target.Kind, main+":wal:"+wal), nil
+	combined := main + ":wal:" + wal
+	if len(target.CompanionPaths) > 0 {
+		digest := sha256.New()
+		paths := slices.Clone(target.CompanionPaths)
+		slices.Sort(paths)
+		for _, path := range paths {
+			fingerprint, fingerprintErr := Fingerprint(path)
+			switch {
+			case fingerprintErr == nil:
+			case os.IsNotExist(fingerprintErr):
+				fingerprint = "missing"
+			default:
+				fingerprint = "unreadable"
+			}
+			_, _ = fmt.Fprintf(digest, "%d:%s:%d:%s", len(path), path,
+				len(fingerprint), fingerprint)
+		}
+		combined += ":companions:" + fmt.Sprintf("%x", digest.Sum(nil))
+	}
+	return parserAwareFingerprint(target.Kind, combined), nil
 }
 
 // parserVersions is the reading each source kind currently gets. The version
@@ -106,7 +126,7 @@ var parserVersions = map[parsers.Kind]string{
 	parsers.KindCodexSession:            "codex-session-v8",
 	parsers.KindCodexHistory:            "codex-history-v2",
 	parsers.KindPiSession:               "pi-session-v7",
-	parsers.KindOpenCodeDB:              "opencode-v8",
+	parsers.KindOpenCodeDB:              "opencode-v9",
 	parsers.KindHermesDB:                "hermes-v7",
 	parsers.KindClaudeWebConversations:  "claude-web-conversations-v4",
 	parsers.KindClaudeWebMemories:       "claude-web-memories-v1",

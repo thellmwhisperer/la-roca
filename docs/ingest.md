@@ -321,6 +321,19 @@ and adds the recovered assistant messages once. Later runs are zero-delta. The
 summary prints messages seen, converted and skipped, with a count for each skip
 reason, so coverage does not have to be inferred from exchange totals.
 
+La Roca also reads the companion bot's installed-mode `bot-*.log` files from
+`~/Library/Application Support/opencode-telegram-bot/logs` on macOS,
+`%APPDATA%\opencode-telegram-bot\logs` on Windows, or
+`${XDG_CONFIG_HOME:-~/.config}/opencode-telegram-bot/logs` on Linux. Override
+that directory with `opencode_telegram_bot_logs` in the configuration or
+`OPENCODE_TELEGRAM_BOT_LOGS` in the environment. Each
+`id=ses_...` occurrence marks the matching OpenCode session with metadata
+`channel=telegram`; its metadata also retains the bot log path and the date
+recorded on that line. The canonical `source_surface` remains OpenCode. This
+evidence is additive, so a session stays marked after its log rotates away.
+An absent directory or a directory with no matching logs is a named coverage
+exclusion and does not fail ingest.
+
 ## Per-exchange provenance
 
 Every session also carries `source_surface`, the canonical harness known from

@@ -47,6 +47,7 @@ type Settings struct {
 	CodexSessions         string
 	CodexStateDB          string
 	OpenCodeDB            string
+	OpenCodeTelegramLogs  string
 	PiRoot                string
 	PiSessions            string
 	HermesDB              string
@@ -79,9 +80,12 @@ type Roots struct {
 	// session with the model and the agent nickname it ran under.
 	CodexStateDB string
 	OpenCodeDB   string
-	PiRoot       string
-	PiSessions   string
-	HermesDB     string
+	// OpenCodeTelegramLogs is the companion bot's own log directory. Its
+	// session ids enrich matching OpenCode records; the logs are never corpus.
+	OpenCodeTelegramLogs string
+	PiRoot               string
+	PiSessions           string
+	HermesDB             string
 	// GrokSessions is Grok Build's session store.
 	GrokSessions string
 	// GrokMemtrace is process-memory telemetry, counted for coverage and excluded
@@ -96,19 +100,20 @@ type Roots struct {
 
 // These environment variable names are stable for operator compatibility.
 const (
-	envClaudeProjects = "CLAUDE_PROJECTS_ROOT"
-	envCodexRoot      = "CODEX_ROOT"
-	envCodexSessions  = "CODEX_SESSIONS_ROOT"
-	envCodexStateDB   = "CODEX_STATE_DB_PATH"
-	envOpenCodeDB     = "OPENCODE_DB_PATH"
-	envPiRoot         = "PI_ROOT"
-	envPiSessions     = "PI_SESSIONS_ROOT"
-	envHermesDB       = "HERMES_DB_PATH"
-	envGrokSessions   = "GROK_SESSIONS_ROOT"
-	envXDGConfig      = "XDG_CONFIG_HOME"
-	envXDGData        = "XDG_DATA_HOME"
-	envAppData        = "APPDATA"
-	envLocalAppData   = "LOCALAPPDATA"
+	envClaudeProjects       = "CLAUDE_PROJECTS_ROOT"
+	envCodexRoot            = "CODEX_ROOT"
+	envCodexSessions        = "CODEX_SESSIONS_ROOT"
+	envCodexStateDB         = "CODEX_STATE_DB_PATH"
+	envOpenCodeDB           = "OPENCODE_DB_PATH"
+	envOpenCodeTelegramLogs = "OPENCODE_TELEGRAM_BOT_LOGS"
+	envPiRoot               = "PI_ROOT"
+	envPiSessions           = "PI_SESSIONS_ROOT"
+	envHermesDB             = "HERMES_DB_PATH"
+	envGrokSessions         = "GROK_SESSIONS_ROOT"
+	envXDGConfig            = "XDG_CONFIG_HOME"
+	envXDGData              = "XDG_DATA_HOME"
+	envAppData              = "APPDATA"
+	envLocalAppData         = "LOCALAPPDATA"
 )
 
 // ResolveRoots decides where every source lives on this machine.
@@ -134,6 +139,8 @@ func ResolveRoots(env Environment, settings Settings) Roots {
 			join(env, codexRoot, "state_5.sqlite")),
 		OpenCodeDB: pick(env, settings.OpenCodeDB, envOpenCodeDB,
 			join(env, openCodeDir(env), "opencode.db")),
+		OpenCodeTelegramLogs: pick(env, settings.OpenCodeTelegramLogs,
+			envOpenCodeTelegramLogs, openCodeTelegramLogsDir(env)),
 		PiRoot: piRoot,
 		PiSessions: pick(env, settings.PiSessions, envPiSessions,
 			join(env, piRoot, "agent", "sessions")),
@@ -249,6 +256,19 @@ func openCodeDir(env Environment) string {
 		return under(env, envLocalAppData, "opencode", "AppData", "Local")
 	}
 	return under(env, envXDGData, "opencode", ".local", "share")
+}
+
+func openCodeTelegramLogsDir(env Environment) string {
+	if env.GOOS == "darwin" {
+		return join(env, env.Home, "Library", "Application Support",
+			"opencode-telegram-bot", "logs")
+	}
+	if env.windows() {
+		return join(env, under(env, envAppData, "opencode-telegram-bot",
+			"AppData", "Roaming"), "logs")
+	}
+	return join(env, under(env, envXDGConfig, "opencode-telegram-bot",
+		".config"), "logs")
 }
 
 // pick applies the three precedences to one path.
