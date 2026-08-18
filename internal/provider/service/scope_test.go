@@ -118,6 +118,34 @@ func TestWidenReplyRequiresTheExactUppercaseToken(t *testing.T) {
 	}
 }
 
+func TestOnlyEmptyUsableAnswersMayWiden(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		res  QueryResult
+		want bool
+	}{
+		{name: "empty rows", res: QueryResult{Path: PathLLM, Match: MatchEmpty}, want: true},
+		{name: "model unavailable with empty rescue", res: QueryResult{
+			Path: PathKeyword, Match: MatchEmpty, Degraded: DegradedUnavailable,
+		}, want: true},
+		{name: "invalid sql", res: QueryResult{
+			Path: PathKeyword, Match: MatchEmpty, Degraded: DegradedInvalidSQL,
+		}},
+		{name: "execution failure", res: QueryResult{
+			Path: PathKeyword, Match: MatchEmpty, Degraded: DegradedExecution,
+		}},
+		{name: "execution timeout", res: QueryResult{
+			Path: PathKeyword, Match: MatchEmpty, Degraded: DegradedTimeout,
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := insufficientAnswer(tc.res); got != tc.want {
+				t.Fatalf("insufficientAnswer(%+v) = %v, want %v", tc.res, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestWidenedPassKeepsOnlyCumulativeState(t *testing.T) {
 	first := QueryResult{
 		Question: "synthetic question", Path: PathKeyword, Message: "nothing relevant",

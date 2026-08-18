@@ -568,6 +568,7 @@ INSERT INTO receipts (title) VALUES ('Synthetic telescope parts');`)
 		hidePrompt []string
 		wantErr    string
 		widened    bool
+		sqlOnly    bool
 	}{
 		{
 			name:       "default is corpus without ops noise",
@@ -596,6 +597,14 @@ INSERT INTO receipts (title) VALUES ('Synthetic telescope parts');`)
 			wantDBs: []string{"core", "plugin:roca-ops", "plugin:roca-corpus"},
 			widened: true,
 		},
+		{
+			name:       "sql only stays on the scoped pass",
+			sql:        `SELECT 1 AS answer WHERE 0 LIMIT 1`,
+			wantDBs:    []string{"core", "plugin:roca-corpus"},
+			wantPrompt: []string{"plugin_roca_corpus", "Attached databases not in this pass"},
+			hidePrompt: []string{"plugin_roca_ops", "plugin_well_formed"},
+			sqlOnly:    true,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			model := answering("codex", tc.sql)
@@ -607,7 +616,7 @@ INSERT INTO receipts (title) VALUES ('Synthetic telescope parts');`)
 				options.Providers = cascadeOf(model)
 			})
 			result, err := svc.Query(t.Context(), service.QueryRequest{
-				Question: "Which receipts were recorded?", Databases: tc.databases,
+				Question: "Which receipts were recorded?", Databases: tc.databases, SQLOnly: tc.sqlOnly,
 			})
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
