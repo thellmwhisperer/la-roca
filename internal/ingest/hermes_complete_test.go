@@ -51,16 +51,17 @@ func TestHermesCompleteSource(t *testing.T) {
 			t.Fatalf("errors = %d: %+v", result.Errors, result.ErrorDetails)
 		}
 		var surface, channel, model, promptHash, routeKey string
-		var requests int
+		var requests, routes int
 		if err := db.SQL().QueryRow(`
 			SELECT COALESCE(source_surface, ''),
 			       COALESCE(json_extract(metadata, '$.channel'), ''),
 			       COALESCE(json_extract(metadata, '$.model_usage[0].model'), ''),
 			       COALESCE(json_extract(metadata, '$.model_usage[0].requests'), 0),
 			       COALESCE(json_extract(metadata, '$.system_prompt.hash'), ''),
-			       COALESCE(json_extract(metadata, '$.routing[0].session_key'), '')
+			       COALESCE(json_extract(metadata, '$.routing[0].session_key'), ''),
+			       COALESCE(json_array_length(json_extract(metadata, '$.routing')), 0)
 			FROM sessions WHERE session_id = 'h-intel'`).
-			Scan(&surface, &channel, &model, &requests, &promptHash, &routeKey); err != nil {
+			Scan(&surface, &channel, &model, &requests, &promptHash, &routeKey, &routes); err != nil {
 			t.Fatal(err)
 		}
 		if surface != "Hermes/telegram" || channel != "telegram" {
@@ -69,8 +70,8 @@ func TestHermesCompleteSource(t *testing.T) {
 		if model != "fixture-hermes-model" || requests != 4 {
 			t.Errorf("usage = %s/%d, want fixture-hermes-model/4", model, requests)
 		}
-		if promptHash != "prompt-fixture" || routeKey != "agent:main:telegram:dm:1" {
-			t.Errorf("prompt/routing = %q/%q", promptHash, routeKey)
+		if promptHash != "prompt-fixture" || routeKey != "agent:main:telegram:dm:1" || routes != 1 {
+			t.Errorf("prompt/routing = %q/%q/%d", promptHash, routeKey, routes)
 		}
 		if got := countRows(t, db.SQL(), `memories WHERE content LIKE '%persona fixture%'`); got != 0 {
 			t.Errorf("system prompt became corpus: %d", got)
@@ -192,6 +193,38 @@ func TestHermesCompleteSource(t *testing.T) {
 		}
 		if got := countRows(t, db.SQL(), `memories WHERE source_agent = 'hermes' AND status = 'active'`); got != 2 {
 			t.Fatalf("active Hermes memories after rewrite = %d, want 2", got)
+		}
+
+		world.write(t, memory, "\n§\n")
+		seventh, err := Run(context.Background(), db, registry(t), opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if seventh.Sources["hermes"].MemoriesInserted != 0 ||
+			countRows(t, db.SQL(), `memories WHERE source_agent = 'hermes' AND status = 'active'`) != 0 {
+			t.Fatalf("empty rewrite left active blocks: %+v", seventh.Sources["hermes"])
+		}
+	})
+
+	t.Run("foreign memory with matching content is not adopted", func(t *testing.T) {
+		home := t.TempDir()
+		roots := ResolveRoots(Environment{GOOS: "darwin", Home: home}, Settings{})
+		memory := filepath.Join(roots.HermesHome, "memories", "MEMORY.md")
+		content := "Prefer the foreign synthetic source unchanged."
+		(&world{home: home}).write(t, memory, content)
+
+		db := rocaDatabase(t)
+		exec(t, db.SQL(), `INSERT INTO memories
+			(layer, content, metadata, origin, source_agent, status)
+			VALUES ('feedback', ?, '{}', 'agent', 'claude', 'active')`, content)
+		result, err := Run(context.Background(), db, registry(t), Options{Roots: roots})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Sources["hermes"].MemoriesInserted != 1 ||
+			countRows(t, db.SQL(), `memories WHERE content = '`+content+`'`) != 2 ||
+			countRows(t, db.SQL(), `memories WHERE content = '`+content+`' AND source_agent = 'claude'`) != 1 {
+			t.Fatalf("foreign memory was adopted: %+v", result.Sources["hermes"])
 		}
 	})
 }

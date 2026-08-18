@@ -25,7 +25,7 @@ func detectHermesMemory(file File) bool {
 // own memory: identity is the content hash, so a rewrite that drops a block
 // leaves that memory to be superseded and a new block lands as a new row.
 func ParseHermesMemory(content []byte, meta FileMeta) (Records, error) {
-	records := Records{}
+	records := Records{ObservedMemoryFiles: []string{meta.Path}}
 	for _, block := range hermesMemoryBlocks(string(content)) {
 		hash := hermesBlockHash(block)
 		identity := meta.Path + "#block=" + hash

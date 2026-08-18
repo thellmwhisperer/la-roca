@@ -13,10 +13,15 @@ const hermesPromptPreview = 240
 
 type hermesIntel struct {
 	usage      map[string][]map[string]any
-	routing    map[string][]map[string]any
-	routingIDs map[string][]map[string]any
+	routing    map[string][]hermesRoutingRow
+	routingIDs map[string][]hermesRoutingRow
 	prompts    map[string]map[string]any
 	exclusions []parsers.Discard
+}
+
+type hermesRoutingRow struct {
+	index int
+	entry map[string]any
 }
 
 func hermesSurface(channel string) string {
@@ -30,8 +35,8 @@ func hermesSurface(channel string) string {
 func readHermesIntel(ctx context.Context, db *sql.DB) (hermesIntel, error) {
 	intel := hermesIntel{
 		usage:      map[string][]map[string]any{},
-		routing:    map[string][]map[string]any{},
-		routingIDs: map[string][]map[string]any{},
+		routing:    map[string][]hermesRoutingRow{},
+		routingIDs: map[string][]hermesRoutingRow{},
 		prompts:    map[string]map[string]any{},
 	}
 	if err := hermesLoadUsage(ctx, db, &intel); err != nil {
@@ -58,8 +63,15 @@ func attachHermesIntel(session *parsers.Session, source row, intel hermesIntel) 
 		session.Metadata["model_usage"] = usage
 	}
 	key := source.text("session_key")
-	routing := append([]map[string]any{}, intel.routing[key]...)
-	routing = append(routing, intel.routingIDs[session.ID]...)
+	seenRouting := map[int]bool{}
+	routing := make([]map[string]any, 0, len(intel.routing[key])+len(intel.routingIDs[session.ID]))
+	for _, sourceRow := range append(intel.routing[key], intel.routingIDs[session.ID]...) {
+		if seenRouting[sourceRow.index] {
+			continue
+		}
+		seenRouting[sourceRow.index] = true
+		routing = append(routing, sourceRow.entry)
+	}
 	if len(routing) > 0 {
 		session.Metadata["routing"] = routing
 	}
@@ -119,13 +131,14 @@ func hermesLoadRouting(ctx context.Context, db *sql.DB, intel *hermesIntel) erro
 	if err != nil {
 		return err
 	}
-	for _, source := range rows {
+	for index, source := range rows {
 		entry := hermesRoutingEntry(source)
+		routingRow := hermesRoutingRow{index: index, entry: entry}
 		if key := source.text("session_key"); key != "" {
-			intel.routing[key] = append(intel.routing[key], entry)
+			intel.routing[key] = append(intel.routing[key], routingRow)
 		}
 		if id, _ := entry["session_id"].(string); id != "" {
-			intel.routingIDs[id] = append(intel.routingIDs[id], entry)
+			intel.routingIDs[id] = append(intel.routingIDs[id], routingRow)
 		}
 	}
 	return nil

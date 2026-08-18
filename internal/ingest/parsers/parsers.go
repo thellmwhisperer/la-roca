@@ -103,8 +103,9 @@ type FileMeta struct {
 // an empty memory file and a transcript with no complete exchange are both
 // normal, and both are simply nothing to write.
 type Records struct {
-	Sessions []Session
-	Memories []Memory
+	Sessions            []Session
+	Memories            []Memory
+	ObservedMemoryFiles []string
 	// MessageCoverage is filled by sources whose durable store is message-shaped.
 	// It lets an ingest report the conversion ratio without treating principled
 	// skips, such as a message still being written, as parser failures.

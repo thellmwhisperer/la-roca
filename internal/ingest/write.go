@@ -91,7 +91,7 @@ func WriteRecords(ctx context.Context, tx *sql.Tx, layers layerResolver,
 		}
 		counts.add(written)
 	}
-	if err := w.supersedeVanishedHermesBlocks(ctx, records.Memories, &counts); err != nil {
+	if err := w.supersedeVanishedHermesBlocks(ctx, records.ObservedMemoryFiles, records.Memories, &counts); err != nil {
 		return counts, err
 	}
 	return counts, nil
@@ -1308,7 +1308,8 @@ func (w *writer) memory(ctx context.Context, memory parsers.Memory) (Counts, err
 	if errors.Is(err, sql.ErrNoRows) && memory.Source == "hermes" {
 		err = w.tx.QueryRowContext(ctx, `
 			SELECT id, content, metadata, COALESCE(project, '') FROM memories
-			WHERE content = ? AND status = 'active' ORDER BY id LIMIT 1`, memory.Content).
+			WHERE id BETWEEN 1152921504606847051 AND 1152921504606847059
+			  AND content = ? AND status = 'active' ORDER BY id LIMIT 1`, memory.Content).
 			Scan(&id, &stored, &storedMetadata, &storedProject)
 	}
 	freshness := claudeWebMemoryFreshness(memory, storedMetadata)
@@ -1391,8 +1392,14 @@ func hermesNeedsIdentityStamp(memory parsers.Memory, storedMetadata string) bool
 	return stored["block_hash"] != hash || stored["aggregate_file_path"] != file
 }
 
-func (w *writer) supersedeVanishedHermesBlocks(ctx context.Context, memories []parsers.Memory, counts *Counts) error {
+func (w *writer) supersedeVanishedHermesBlocks(ctx context.Context, observedFiles []string,
+	memories []parsers.Memory, counts *Counts) error {
 	current := map[string]map[string]bool{}
+	for _, file := range observedFiles {
+		if file != "" {
+			current[file] = map[string]bool{}
+		}
+	}
 	for _, memory := range memories {
 		file, _ := memory.Metadata["aggregate_file_path"].(string)
 		hash, _ := memory.Metadata["block_hash"].(string)
