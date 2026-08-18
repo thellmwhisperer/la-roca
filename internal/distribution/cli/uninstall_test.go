@@ -28,6 +28,21 @@ import (
 // The other half of the same rule, and the one that keeps the fix honest: what
 // the operator left in the data directory is not La Roca's. A wider inventory
 // may not turn into a wider deletion.
+func TestPurgeOwnsVirtualIndexCache(t *testing.T) {
+	home := t.TempDir()
+	paths := resolvedIn(t, home)
+	cache := filepath.Join(dirOf(paths.DB), "virtual-index.json")
+	writeFile(t, cache, `{}`)
+
+	report := lifecycle.Plan{Owned: ownedPaths(paths), DataDir: dirOf(paths.DB)}.Apply()
+	if _, err := os.Stat(cache); !os.IsNotExist(err) {
+		t.Fatalf("virtual index cache survived purge: %v", err)
+	}
+	if !report.Purged || len(report.Errors) != 0 {
+		t.Fatalf("purge = %+v", report)
+	}
+}
+
 func TestAWiderInventoryStillDeletesNothingOfTheOperators(t *testing.T) {
 	home := t.TempDir()
 	paths := resolvedIn(t, home)

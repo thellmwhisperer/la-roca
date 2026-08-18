@@ -460,7 +460,7 @@ func ownedPaths(paths config.Paths) []string {
 	dataDir := dirOf(paths.DB)
 	owned := []string{
 		paths.DB, paths.DB + "-wal", paths.DB + "-shm", paths.DB + "-journal",
-		paths.Config, paths.Reconciliation,
+		paths.Config, paths.Reconciliation, filepath.Join(dataDir, "virtual-index.json"),
 	}
 	managed, err := artifact.OwnedPaths(paths.Artifacts)
 	if err != nil {

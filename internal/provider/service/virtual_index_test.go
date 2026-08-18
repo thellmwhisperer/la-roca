@@ -32,6 +32,10 @@ func TestVirtualIndexIsDeterministicCachedAndBounded(t *testing.T) {
 		"gap undated sessions: 1",
 		"gap empty sources: cursor",
 	}
+	wantText := "# La Roca index\n" +
+		"generated: 2026-08-18T00:00:00Z\n" +
+		"budget: 593/8000 tokens\n\n" +
+		strings.Join(wantBlocks, "\n") + "\n"
 
 	svc, paths := serviceWithPaths(t)
 	seedVirtualIndexFixture(t, svc)
@@ -44,11 +48,8 @@ func TestVirtualIndexIsDeterministicCachedAndBounded(t *testing.T) {
 	if !slices.Equal(full.Blocks, wantBlocks) {
 		t.Fatalf("blocks = %#v\nwant %#v", full.Blocks, wantBlocks)
 	}
-	if !strings.HasPrefix(full.Text, "# La Roca index\ngenerated: 2026-08-18T00:00:00Z\n") {
-		t.Fatalf("header:\n%s", full.Text)
-	}
-	if !strings.Contains(full.Text, "budget: ") || strings.Contains(full.Text, "truncated:") {
-		t.Fatalf("full index should name its budget and not truncate:\n%s", full.Text)
+	if full.Text != wantText {
+		t.Fatalf("text = %q\nwant %q", full.Text, wantText)
 	}
 	if _, err := os.Stat(filepath.Join(paths.data, "virtual-index.json")); err != nil {
 		t.Fatalf("cache was not written: %v", err)
@@ -80,7 +81,7 @@ func TestVirtualIndexIsDeterministicCachedAndBounded(t *testing.T) {
 	}
 
 	tight, err := svc.VirtualIndex(t.Context(), service.VirtualIndexRequest{
-		GeneratedAt: fixed, TokenBudget: 40, Refresh: true,
+		GeneratedAt: fixed, TokenBudget: 300, Refresh: true,
 	})
 	if err != nil {
 		t.Fatalf("truncated VirtualIndex: %v", err)
@@ -90,6 +91,11 @@ func TestVirtualIndexIsDeterministicCachedAndBounded(t *testing.T) {
 	}
 	if strings.Contains(tight.Text, wantBlocks[len(wantBlocks)-1]) {
 		t.Fatalf("truncated index still carries the omitted tail:\n%s", tight.Text)
+	}
+	if _, err := svc.VirtualIndex(t.Context(), service.VirtualIndexRequest{
+		GeneratedAt: fixed, TokenBudget: 1, Refresh: true,
+	}); err == nil || !strings.Contains(err.Error(), "cannot fit the mandatory header") {
+		t.Fatalf("undersized budget error = %v", err)
 	}
 }
 

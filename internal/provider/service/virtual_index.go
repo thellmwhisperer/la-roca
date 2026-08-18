@@ -18,7 +18,10 @@ import (
 // DefaultIndexTokenBudget is the shipped ceiling for the virtual index.
 const DefaultIndexTokenBudget = 8000
 
-const virtualIndexCacheFile = "virtual-index.json"
+const (
+	virtualIndexCacheFile    = "virtual-index.json"
+	virtualIndexCacheVersion = 1
+)
 
 // VirtualIndexRequest is the only knob the map accepts.
 type VirtualIndexRequest struct {
@@ -39,6 +42,7 @@ type VirtualIndex struct {
 }
 
 type virtualIndexCache struct {
+	Version      int          `json:"version"`
 	Budget       int          `json:"budget"`
 	VirtualIndex VirtualIndex `json:"index"`
 }
@@ -112,7 +116,10 @@ func (s *Service) readVirtualIndexCache(budget int) (VirtualIndex, bool) {
 		return VirtualIndex{}, false
 	}
 	var cached virtualIndexCache
-	if json.Unmarshal(raw, &cached) != nil || cached.Budget != budget || cached.VirtualIndex.Text == "" {
+	if json.Unmarshal(raw, &cached) != nil || cached.Version != virtualIndexCacheVersion ||
+		cached.Budget != budget || cached.VirtualIndex.Text == "" ||
+		cached.VirtualIndex.Tokens != countIndexTokens(cached.VirtualIndex.Text) ||
+		cached.VirtualIndex.Tokens > budget {
 		return VirtualIndex{}, false
 	}
 	return cached.VirtualIndex, true
@@ -123,7 +130,9 @@ func (s *Service) writeVirtualIndexCache(report VirtualIndex) error {
 	if path == "" {
 		return nil
 	}
-	raw, err := json.Marshal(virtualIndexCache{Budget: report.Budget, VirtualIndex: report})
+	raw, err := json.Marshal(virtualIndexCache{
+		Version: virtualIndexCacheVersion, Budget: report.Budget, VirtualIndex: report,
+	})
 	if err != nil {
 		return fmt.Errorf("encode the virtual index cache: %w", err)
 	}
@@ -139,7 +148,10 @@ func (s *Service) generateVirtualIndex(ctx context.Context, budget int, generate
 		return VirtualIndex{}, err
 	}
 	stamp := generatedAt.Format(time.RFC3339)
-	text, tokens, omitted := fitVirtualIndex(stamp, budget, blocks)
+	text, tokens, omitted, err := fitVirtualIndex(stamp, budget, blocks)
+	if err != nil {
+		return VirtualIndex{}, err
+	}
 	return VirtualIndex{
 		GeneratedAt: stamp,
 		Budget:      budget,
@@ -554,17 +566,37 @@ func countTable(ctx context.Context, reader *sql.DB, table string) (int, bool, e
 	return count, true, nil
 }
 
-func fitVirtualIndex(generatedAt string, budget int, blocks []string) (string, int, int) {
+func fitVirtualIndex(generatedAt string, budget int, blocks []string) (string, int, int, error) {
+	_, minimum := stableVirtualIndex(generatedAt, budget, 0, nil)
+	if minimum > budget {
+		return "", 0, 0, fmt.Errorf(
+			"index token budget %d cannot fit the mandatory header (%d tokens required)",
+			budget, minimum)
+	}
 	kept := append([]string(nil), blocks...)
 	for {
 		omitted := len(blocks) - len(kept)
-		text, tokens := composeVirtualIndex(generatedAt, budget, 0, omitted, kept)
-		text, tokens = composeVirtualIndex(generatedAt, budget, tokens, omitted, kept)
-		text, tokens = composeVirtualIndex(generatedAt, budget, tokens, omitted, kept)
-		if tokens <= budget || len(kept) == 0 {
-			return text, tokens, omitted
+		text, tokens := stableVirtualIndex(generatedAt, budget, omitted, kept)
+		if tokens <= budget {
+			return text, tokens, omitted, nil
+		}
+		if len(kept) == 0 {
+			return "", 0, 0, fmt.Errorf(
+				"index token budget %d cannot fit the explicit truncation header (%d tokens required)",
+				budget, tokens)
 		}
 		kept = kept[:len(kept)-1]
+	}
+}
+
+func stableVirtualIndex(generatedAt string, budget, omitted int, kept []string) (string, int) {
+	used := 0
+	for {
+		text, tokens := composeVirtualIndex(generatedAt, budget, used, omitted, kept)
+		if tokens == used {
+			return text, tokens
+		}
+		used = tokens
 	}
 }
 
@@ -586,10 +618,7 @@ func composeVirtualIndex(generatedAt string, budget, used, omitted int, kept []s
 }
 
 func countIndexTokens(text string) int {
-	if text == "" {
-		return 0
-	}
-	return (len(text) + 3) / 4
+	return len(text)
 }
 
 func yearSpan(from, to string) string {
