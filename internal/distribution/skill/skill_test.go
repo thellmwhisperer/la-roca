@@ -73,7 +73,7 @@ func TestContentTeachesCLIAuthorshipFlags(t *testing.T) {
 func TestContentCarriesOperatingCraft(t *testing.T) {
 	body := skill.OperationsContent()
 	for _, needle := range []string{
-		`latest handoff for <project>`,
+		`plugin_roca_ops.memories`,
 		"current handoff protocol",
 		"always store a handoff",
 		"Ask bare first",
@@ -127,6 +127,11 @@ func TestShippedSkillsCarryTheSearchDoctrine(t *testing.T) {
 				"completion.json",
 				"finished_at",
 				"the hybrid loop is mandatory",
+				"last resort",
+				"Agents never pass `--full`",
+				"plugin_roca_ops.memories",
+				"Write the SQL yourself",
+				"roca exec",
 				"roca query",
 				"roca explore",
 				"Invite the user to build the index",

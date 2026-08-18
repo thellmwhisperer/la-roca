@@ -62,13 +62,15 @@ contract: docs/vector.md.
 
 ## How to search well
 
-Read `roca-operations` before your first real search. A fresh install has
-no vector index, and most people never build one at first. `roca query` and
-`roca explore` are the complete working path from minute zero: they spend
-inference, and they deliver the result. Use `roca exec` for your own SQL.
+Read `roca-operations` before your first real search. Write the SQL yourself
+against the semantic catalog and run it with `roca exec`. That is the craft.
+Anything that spends inference is last resort: `roca query` and `roca explore`
+only when you cannot express the question as SQL. `--full` is for humans;
+agents do not use it.
 
-When the index exists, that same skill makes the hybrid loop mandatory:
-vector search finds the nearby rows, full text counts them, SQL frames them.
+A fresh install has no vector index. Exec still works. When the index exists,
+that same skill makes the hybrid loop mandatory: vector search finds the
+nearby rows, full text counts them, SQL frames them through exec.
 Zero inference on that path; inference only at the end, to narrate.
 
 The `roca-vector` skill owns building, watching, and maintaining the index.
