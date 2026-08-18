@@ -102,36 +102,54 @@ func TestHealthVerdictsUseTheFirstReadableLayerRegistry(t *testing.T) {
 	}
 }
 
-func TestHealthVerdictsDoNotPassAfterADeadline(t *testing.T) {
+func TestHealthVerdictsDoNotPassAfterIncompleteReader(t *testing.T) {
 	schema := `
 		CREATE TABLE memories (
 			id INTEGER PRIMARY KEY, layer TEXT, supersedes INTEGER, metadata TEXT,
 			source_agent TEXT, created_at TEXT
 		);`
-	passing := openVerdictDatabase(t, schema)
-	locked := openVerdictDatabase(t, schema)
-	locked.SetMaxOpenConns(1)
-	connection, err := locked.Conn(t.Context())
-	if err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name            string
+		maxOpen         int
+		timeout         time.Duration
+		wantContextDone bool
+	}{
+		{name: "context deadline", maxOpen: 1, timeout: 100 * time.Millisecond, wantContextDone: true},
+		{name: "SQLite contention", timeout: 2 * time.Second},
 	}
-	t.Cleanup(func() { _ = connection.Close() })
-	if _, err := connection.ExecContext(t.Context(), `BEGIN EXCLUSIVE`); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _, _ = connection.ExecContext(t.Context(), `ROLLBACK`) })
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			passing := openVerdictDatabase(t, schema)
+			locked := openVerdictDatabase(t, schema)
+			if testCase.maxOpen > 0 {
+				locked.SetMaxOpenConns(testCase.maxOpen)
+			}
+			connection, err := locked.Conn(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = connection.Close() })
+			if _, err := connection.ExecContext(t.Context(), `BEGIN EXCLUSIVE`); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _, _ = connection.ExecContext(t.Context(), `ROLLBACK`) })
 
-	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
-	defer cancel()
-	statuses := map[string]string{}
-	for _, verdict := range service.HealthVerdicts(
-		ctx, nil, []*sql.DB{passing, locked}, nil) {
-		statuses[verdict.Name] = verdict.Status
-	}
-	for _, name := range []string{"orphan_supersedes", "memory_created_at_formats"} {
-		if statuses[name] != "skipped" {
-			t.Errorf("%s verdict = %q, want skipped", name, statuses[name])
-		}
+			ctx, cancel := context.WithTimeout(t.Context(), testCase.timeout)
+			defer cancel()
+			statuses := map[string]string{}
+			for _, verdict := range service.HealthVerdicts(
+				ctx, nil, []*sql.DB{passing, locked}, nil) {
+				statuses[verdict.Name] = verdict.Status
+			}
+			if testCase.wantContextDone != (ctx.Err() != nil) {
+				t.Fatalf("context error = %v", ctx.Err())
+			}
+			for _, name := range []string{"orphan_supersedes", "memory_created_at_formats"} {
+				if statuses[name] != "skipped" {
+					t.Errorf("%s verdict = %q, want skipped", name, statuses[name])
+				}
+			}
+		})
 	}
 }
 

@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	sqlite "modernc.org/sqlite"
 )
 
 // Health verdicts, in ascending severity.
@@ -268,8 +270,16 @@ func HealthVerdicts(ctx context.Context, registries, memories, others []*sql.DB)
 }
 
 func healthObservationIncomplete(ctx context.Context, err error) bool {
-	return ctx.Err() != nil || errors.Is(err, context.Canceled) ||
-		errors.Is(err, context.DeadlineExceeded)
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var sqliteErr *sqlite.Error
+	if !errors.As(err, &sqliteErr) {
+		return false
+	}
+	primary := sqliteErr.Code() & 0xff
+	return primary == 5 || primary == 6
 }
 
 func firstReadableLayers(ctx context.Context, readers []*sql.DB) ([]registeredLayer, bool) {
