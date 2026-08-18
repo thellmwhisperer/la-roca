@@ -9,7 +9,7 @@ import (
 )
 
 func TestComposingPluginTablesLeavesTheProcessCatalogUnlabeled(t *testing.T) {
-	composed := schemaWithPlugins([]plugin.Database{{
+	composed := schemaWithPlugins(true, []plugin.Database{{
 		Descriptor: plugin.Descriptor{Name: "synthetic", Schema: "plugin_synthetic",
 			Semantic: plugin.Semantic{Description: "Synthetic receipts."}},
 		Tables: []plugin.Table{{Name: "receipts", Columns: []string{"id"}, Description: "One receipt."}},
@@ -22,13 +22,13 @@ func TestComposingPluginTablesLeavesTheProcessCatalogUnlabeled(t *testing.T) {
 			t.Fatalf("table %s kept the label %q in the shared catalog", table.Name, table.Database)
 		}
 	}
-	if plain := schemaWithPlugins(nil); plain.Tables[0].Database != "" {
+	if plain := schemaWithPlugins(true, nil); plain.Tables[0].Database != "" {
 		t.Fatalf("a plugin-free answer inherited the label %q", plain.Tables[0].Database)
 	}
 }
 
 func TestComposedPluginSchemaTeachesQueryableFTSColumns(t *testing.T) {
-	composed := schemaWithPlugins([]plugin.Database{{
+	composed := schemaWithPlugins(true, []plugin.Database{{
 		Descriptor: plugin.Descriptor{Name: "roca-corpus", Schema: "plugin_roca_corpus",
 			Semantic: plugin.Semantic{Description: "Harvested transcripts."}},
 		Tables: []plugin.Table{

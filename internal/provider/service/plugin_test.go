@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
@@ -118,11 +119,13 @@ INSERT INTO receipts (title, amount_cents) VALUES ('Synthetic telescope parts', 
 	svc, model := pluginModelService(t, paths, plugins,
 		`SELECT 'core' AS "database", title AS text FROM plugin_well_formed.receipts LIMIT 5`)
 
-	result, err := svc.Query(t.Context(), service.QueryRequest{Question: "Which receipts were recorded?"})
+	result, err := svc.Query(t.Context(), service.QueryRequest{
+		Question: "Which receipts were recorded?", Databases: []string{"well-formed"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(result.Databases, []string{"core", "plugin:well-formed"}) {
+	if !slices.Equal(result.Databases, []string{"plugin:well-formed"}) {
 		t.Fatalf("databases = %v", result.Databases)
 	}
 	if result.RowCount != 1 || result.Rows[0]["database"] != "plugin:well-formed" {
@@ -159,17 +162,17 @@ INSERT INTO inventory (label) VALUES ('Synthetic resident marker');`)
 	})
 
 	result, err := svc.Query(t.Context(), service.QueryRequest{
-		Question: "show the unrelated telescope schedule",
+		Question: "show the unrelated telescope schedule", Databases: []string{"resident-fixture"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(result.Databases, []string{"core", "plugin:resident-fixture"}) ||
+	if !slices.Equal(result.Databases, []string{"plugin:resident-fixture"}) ||
 		result.RowCount != 1 || result.Rows[0]["database"] != "plugin:resident-fixture" {
 		t.Fatalf("resident result = %+v", result)
 	}
 	if !strings.Contains(model.prompt, "plugin_resident_fixture.inventory") {
-		t.Fatalf("resident schema was routed by question instead of connection lifetime:\n%s", model.prompt)
+		t.Fatalf("named resident schema is absent from the query prompt:\n%s", model.prompt)
 	}
 }
 
@@ -274,7 +277,7 @@ tables:
 `, `CREATE TABLE ingest_file_state (path TEXT);`)
 	svc, model := pluginModelService(t, paths, plugins, `SELECT 1 AS answer LIMIT 1`)
 	result, err := svc.Query(t.Context(), service.QueryRequest{
-		Question: "Which internal plugin paths exist?",
+		Question: "Which internal plugin paths exist?", Databases: []string{"private-state"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -282,7 +285,7 @@ tables:
 	if strings.Contains(model.prompt, "plugin_private_state.ingest_file_state") {
 		t.Fatalf("hidden plugin table reached the prompt:\n%s", model.prompt)
 	}
-	if !slices.Equal(result.Databases, []string{"core", "plugin:private-state"}) {
+	if !slices.Equal(result.Databases, []string{"plugin:private-state"}) {
 		t.Fatalf("databases = %v", result.Databases)
 	}
 }
@@ -306,7 +309,7 @@ tables:
 	svc, _ := pluginModelService(t, paths, plugins, `SELECT 1 AS answer LIMIT 1`)
 
 	result, err := svc.Query(t.Context(), service.QueryRequest{
-		Question: "Which synthetic beacon records exist?",
+		Question: "Which synthetic beacon records exist?", Databases: []string{"all"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -372,7 +375,9 @@ func TestRocaOpsRoutesStoresAndQueriesCoreHistoryTogetherWithNewWrites(t *testin
 		t.Fatalf("authorship = %s/%s via %s", agent, modelID, surface)
 	}
 
-	result, err := svc.Query(t.Context(), service.QueryRequest{Question: "show the synthetic handoff history"})
+	result, err := svc.Query(t.Context(), service.QueryRequest{
+		Question: "show the synthetic handoff history", Databases: []string{"core", "ops"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -533,6 +538,105 @@ func installQueryPlugin(t *testing.T, root, name, semantic, ddl string) {
 	}()
 	if _, err := db.Exec(ddl); err != nil {
 		t.Fatalf("create synthetic plugin database: %v", err)
+	}
+}
+
+func TestQueryScopesTheSQLSeatAndFailsUnknownNames(t *testing.T) {
+	paths := freshPaths(t)
+	plugins := ensureRocaOps(t, paths)
+	if _, err := rocacorpus.Ensure(plugins, filepath.Join(paths.data, "bin"), "v-test"); err != nil {
+		t.Fatal(err)
+	}
+	installQueryPlugin(t, plugins, "well-formed", `
+version: 1
+description: Synthetic purchase receipts.
+questions: [Which receipts were recorded?]
+tables:
+  - name: receipts
+    description: Synthetic receipts.
+    columns: [id, title]
+`, `CREATE TABLE receipts (id INTEGER PRIMARY KEY, title TEXT);
+INSERT INTO receipts (title) VALUES ('Synthetic telescope parts');`)
+
+	for _, tc := range []struct {
+		name       string
+		databases  []string
+		sql        string
+		wantDBs    []string
+		wantPrompt []string
+		hidePrompt []string
+		wantErr    string
+		widened    bool
+	}{
+		{
+			name:       "default is corpus without ops noise",
+			sql:        `SELECT 1 AS answer LIMIT 1`,
+			wantDBs:    []string{"core", "plugin:roca-corpus"},
+			wantPrompt: []string{"plugin_roca_corpus", "Attached databases not in this pass"},
+			hidePrompt: []string{"plugin_roca_ops", "plugin_well_formed"},
+		},
+		{
+			name:       "explicit names widen the seat",
+			databases:  []string{"corpus", "ops"},
+			sql:        `SELECT 1 AS answer LIMIT 1`,
+			wantDBs:    []string{"plugin:roca-corpus", "plugin:roca-ops"},
+			wantPrompt: []string{"plugin_roca_corpus", "plugin_roca_ops"},
+			hidePrompt: []string{"plugin_well_formed"},
+		},
+		{
+			name:      "unknown names list what is attached",
+			databases: []string{"nope"},
+			sql:       `SELECT 1 AS answer LIMIT 1`,
+			wantErr:   "unknown database \"nope\"; attached databases:",
+		},
+		{
+			name:    "empty scoped pass widens once",
+			sql:     `SELECT 1 AS answer WHERE 0 LIMIT 1`,
+			wantDBs: []string{"core", "plugin:roca-ops", "plugin:roca-corpus"},
+			widened: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			model := answering("codex", tc.sql)
+			svc := initialized(t, paths, func(options *service.Options) {
+				options.PluginDir = plugins
+				options.PluginsEnabled = true
+				options.RocaOpsEnabled = true
+				options.CorpusEnabled = true
+				options.Providers = cascadeOf(model)
+			})
+			result, err := svc.Query(t.Context(), service.QueryRequest{
+				Question: "Which receipts were recorded?", Databases: tc.databases,
+			})
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want %q", err, tc.wantErr)
+				}
+				if !strings.Contains(err.Error(), "corpus") || !strings.Contains(err.Error(), "ops") {
+					t.Fatalf("error does not list attached names: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(result.Databases, tc.wantDBs) {
+				t.Fatalf("databases = %v, want %v", result.Databases, tc.wantDBs)
+			}
+			if result.Widened != tc.widened {
+				t.Fatalf("widened = %v, want %v", result.Widened, tc.widened)
+			}
+			for _, want := range tc.wantPrompt {
+				if !strings.Contains(model.prompt, want) && !strings.Contains(strings.Join(model.prompts, "\n"), want) {
+					t.Errorf("prompt lacks %q:\n%s", want, model.prompt)
+				}
+			}
+			for _, hide := range tc.hidePrompt {
+				if strings.Contains(model.prompt, hide) {
+					t.Errorf("scoped prompt leaked %q:\n%s", hide, model.prompt)
+				}
+			}
+		})
 	}
 }
 

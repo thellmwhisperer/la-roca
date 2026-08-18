@@ -375,7 +375,7 @@ func TestSearchFailureRollsBackTheMarkerAndServesLegacy(t *testing.T) {
 			}
 			_, rows, _, _, _, err := svc.searchByTerm(t.Context(), query.Plan{
 				Term: "quartz", Limit: 10,
-			}, "", DefaultMaxChars, false)
+			}, "", DefaultMaxChars, false, pluginRoute{includeCore: true})
 			if err != nil || len(rows) != 1 || rows[0]["text"] != "Synthetic quartz legacy marker" || rollback == nil {
 				t.Fatalf("fallback rows = %+v, error = %v, rollback = %v", rows, err, rollback)
 			}

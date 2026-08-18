@@ -278,6 +278,14 @@ func provenanceRule(schema Schema) string {
 // goes separately, as the user's turn: mixing them is what lets a question
 // rewrite the rules.
 func SQLSystemPrompt(schema Schema, layers []LayerHint, layerFilter []string) string {
+	return SQLSystemPromptWithInventory(schema, layers, layerFilter, nil)
+}
+
+// SQLSystemPromptWithInventory is SQLSystemPrompt plus the names of attached
+// databases held back from this pass. Their tables stay out of the schema so
+// the model cannot invent them; the names alone tell it a later SQL pass can
+// add them if this SELECT returns no rows.
+func SQLSystemPromptWithInventory(schema Schema, layers []LayerHint, layerFilter, unused []string) string {
 	rules := []string{
 		"- Only generate SELECT queries (read-only)",
 		"- Never use INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE",
@@ -295,6 +303,13 @@ func SQLSystemPrompt(schema Schema, layers []LayerHint, layerFilter []string) st
 		"- Only the listed tables are readable, and only with the columns listed for each. "+
 			"Internal catalogs (sqlite_master, sqlite_schema, pragma_*) are not available; "+
 			"do not probe them, fall back to this surface")
+	if len(unused) > 0 {
+		rules = append(rules,
+			"- This pass may query only the listed schema. Attached databases not in this pass: "+
+				strings.Join(unused, ", ")+
+				". Do not invent tables or columns for those names. If this SELECT returns no rows, "+
+				"a second SQL pass will add them to the schema")
+	}
 	if databases := schema.databases(); len(databases) > 0 {
 		rules = append(rules,
 			"- Every result row must include a column written AS \"database\" (database is a keyword and must be quoted). Label rows from each table with its database value shown above; each UNION branch labels its own rows, and a join across databases uses a + joined label")
@@ -354,9 +369,16 @@ func SQLSystemPrompt(schema Schema, layers []LayerHint, layerFilter []string) st
 				"their own indexed text. Aggregations and counts stay on the base tables")
 	}
 
-	return "You are an expert SQL assistant. Given the user's question about the " +
+	body := "You are an expert SQL assistant. Given the user's question about the " +
 		"La Roca memory database, generate ONLY a single valid SQLite SELECT query.\n\n" +
-		"<schema>\n" + schema.Describe(layers) + "\n</schema>\n\n" +
+		"<schema>\n" + schema.Describe(layers) + "\n</schema>\n\n"
+	if len(unused) > 0 {
+		body += "<inventory>\nThis pass queries only the schema above. Attached databases held back: " +
+			strings.Join(unused, ", ") +
+			". A second SQL pass can add those databases if this one returns no rows. " +
+			"Their tables are not listed here.\n</inventory>\n\n"
+	}
+	return body +
 		"<rules>\n" + strings.Join(rules, "\n") + "\n</rules>" +
 		ftsExamples(schema) +
 		layerInstruction(schema, layerFilter)

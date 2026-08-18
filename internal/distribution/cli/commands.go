@@ -527,29 +527,20 @@ func indexCommand(env *cliEnv) *cobra.Command {
 func queryCommand(env *cliEnv) *cobra.Command {
 	var req service.QueryRequest
 	var full bool
+	var databases string
 	cmd := &cobra.Command{
 		Use:   "query <question>",
 		Short: "Answer a natural-language question about the memory",
 		Long: "Data: query; human reading: query --full; raw SQL: exec. " +
 			"Questions must contain text and may be at most 1000 characters.",
 		Args: cobra.MinimumNArgs(1),
-		RunE: env.serviceRunE(func(cmd *cobra.Command, args []string, svc *service.Service) error {
-			req.Question = strings.Join(args, " ")
+		RunE: scopedQuestionRunE(env, &req, &databases, func(cmd *cobra.Command, svc *service.Service) error {
 			// The query may round-trip a model, and a model takes long enough to read
 			// as frozen. The spinner says it is running on the error stream of an
 			// interactive terminal only, so a piped call and a --json call see nothing.
 			spin := startSpinner(env, spinnerShaping)
 			live := newLiveInterpretation(env, spin, full, svc.DB().Path())
-			req.Progress = func(phase service.QueryPhase) {
-				switch phase {
-				case service.QueryPhaseExecution:
-					spin.phase(spinnerSearching)
-				case service.QueryPhaseInterpretation:
-					spin.phase(spinnerComposing)
-				default:
-					spin.phase(spinnerShaping)
-				}
-			}
+			req.Progress = queryProgress(spin)
 			req.InterpretationStart = live.start
 			req.InterpretationDelta = live.append
 			answer, err := answerQuery(cmd.Context(), svc, req, full)
@@ -583,31 +574,23 @@ func queryCommand(env *cliEnv) *cobra.Command {
 	cmd.Flags().IntVar(&req.MaxChars, "max-chars", service.DefaultMaxChars, "character budget per text field")
 	cmd.Flags().BoolVar(&req.SQLOnly, "sql-only", false, "return the SQL without running it")
 	cmd.Flags().BoolVar(&full, "full", false, "add a prose interpretation for human reading")
+	addDatabaseFlag(cmd, &databases)
 	return cmd
 }
 
 func exploreCommand(env *cliEnv) *cobra.Command {
 	var req service.QueryRequest
 	var deep bool
+	var databases string
 	cmd := &cobra.Command{
 		Use:   "explore <term>",
 		Short: "Investigate one concept through grounded memory",
 		Long: "Investigate one concept with prose, deterministic terrain facts, and the generated SQL. " +
 			"Use --deep for the full terrain map and 2-3 next probes.",
 		Args: cobra.MinimumNArgs(1),
-		RunE: env.serviceRunE(func(cmd *cobra.Command, args []string, svc *service.Service) error {
-			req.Question = strings.Join(args, " ")
+		RunE: scopedQuestionRunE(env, &req, &databases, func(cmd *cobra.Command, svc *service.Service) error {
 			spin := startSpinner(env, spinnerShaping)
-			req.Progress = func(phase service.QueryPhase) {
-				switch phase {
-				case service.QueryPhaseExecution:
-					spin.phase(spinnerSearching)
-				case service.QueryPhaseInterpretation:
-					spin.phase(spinnerComposing)
-				default:
-					spin.phase(spinnerShaping)
-				}
-			}
+			req.Progress = queryProgress(spin)
 			result, err := svc.Explore(cmd.Context(), service.ExploreRequest{
 				QueryRequest: req, Deep: deep,
 			})
@@ -627,7 +610,46 @@ func exploreCommand(env *cliEnv) *cobra.Command {
 	cmd.Flags().StringVar(&req.Layer, "layer", "", "restrict the investigation to one layer")
 	cmd.Flags().IntVar(&req.MaxChars, "max-chars", service.DefaultMaxChars, "character budget per text field")
 	cmd.Flags().BoolVar(&deep, "deep", false, "use the full terrain map and propose 2-3 next probes")
+	addDatabaseFlag(cmd, &databases)
 	return cmd
+}
+
+func addDatabaseFlag(cmd *cobra.Command, dest *string) {
+	cmd.Flags().StringVar(dest, "databases", "",
+		"comma list of attached database names (corpus,ops), or all")
+}
+
+func scopedQuestionRunE(env *cliEnv, req *service.QueryRequest, databases *string,
+	run func(*cobra.Command, *service.Service) error) func(*cobra.Command, []string) error {
+	return env.serviceRunE(func(cmd *cobra.Command, args []string, svc *service.Service) error {
+		if err := bindQuestionScope(req, args, *databases); err != nil {
+			return err
+		}
+		return run(cmd, svc)
+	})
+}
+
+func queryProgress(spin *spinner) func(service.QueryPhase) {
+	return func(phase service.QueryPhase) {
+		switch phase {
+		case service.QueryPhaseExecution:
+			spin.phase(spinnerSearching)
+		case service.QueryPhaseInterpretation:
+			spin.phase(spinnerComposing)
+		default:
+			spin.phase(spinnerShaping)
+		}
+	}
+}
+
+func bindQuestionScope(req *service.QueryRequest, args []string, databases string) error {
+	req.Question = strings.Join(args, " ")
+	names, err := service.ParseDatabaseList(databases)
+	if err != nil {
+		return err
+	}
+	req.Databases = names
+	return nil
 }
 
 func (env *cliEnv) recordQueryResult(result *service.QueryResult,
@@ -676,8 +698,23 @@ func answerQuery(ctx context.Context, svc *service.Service, req service.QueryReq
 	interpretation, err := svc.InterpretStream(
 		ctx, result.Question, result.Columns, result.Rows,
 		time.Duration(result.SQLInferenceMS)*time.Millisecond,
-		result.Engine, service.InterpretationContext{Mission: service.InterpretationAnswer},
+		result.Engine, service.InterpretationContext{
+			Mission: service.InterpretationAnswer, UnusedDatabases: result.UnusedDatabases,
+		},
 		onStart, req.InterpretationDelta)
+	if err == nil && service.WidenReply(interpretation.Text) && len(result.UnusedDatabases) > 0 {
+		req.Databases = []string{service.ScopeAll}
+		widened, widenErr := svc.Query(ctx, req)
+		if widenErr == nil && widened.Engine != "" && widened.RowCount > 0 {
+			result = widened
+			result.Widened = true
+			interpretation, err = svc.InterpretStream(
+				ctx, result.Question, result.Columns, result.Rows,
+				time.Duration(result.SQLInferenceMS)*time.Millisecond,
+				result.Engine, service.InterpretationContext{Mission: service.InterpretationAnswer},
+				onStart, req.InterpretationDelta)
+		}
+	}
 	answer.prose, answer.interpretErr = interpretation.Text, err
 	answer.result.InterpretationMS = time.Since(started).Milliseconds()
 	answer.result.LatencyMS += answer.result.InterpretationMS

@@ -48,13 +48,18 @@ func selfGated(name string) bool {
 }
 
 type pluginRoute struct {
-	databases []plugin.Database
-	omitted   []plugin.Descriptor
-	warnings  []string
+	includeCore bool
+	databases   []plugin.Database
+	omitted     []plugin.Descriptor
+	warnings    []string
 }
 
-func (s *Service) pluginsForQuestion(ctx context.Context, question string) pluginRoute {
-	return s.pluginsFor(ctx, question, plugin.Relevant)
+func (s *Service) pluginsForQuestion(ctx context.Context, _ string) pluginRoute {
+	route, err := s.questionRoute(ctx, nil)
+	if err != nil {
+		return pluginRoute{warnings: []string{err.Error()}}
+	}
+	return route
 }
 
 func (s *Service) pluginsForSQL(ctx context.Context, statement string) pluginRoute {
@@ -64,7 +69,7 @@ func (s *Service) pluginsForSQL(ctx context.Context, statement string) pluginRou
 func (s *Service) pluginsFor(ctx context.Context, input string,
 	selectPlugins func(string, []plugin.Descriptor) []plugin.Descriptor) pluginRoute {
 	if !s.pluginsActive() {
-		return pluginRoute{}
+		return pluginRoute{includeCore: true}
 	}
 	candidates, warnings := plugin.Discover(s.opts.PluginDir)
 	candidates = s.onDemand(candidates)
@@ -125,8 +130,10 @@ func (s *Service) withResidents(route pluginRoute) pluginRoute {
 	// A resident half that could not be opened has no database and still owes the
 	// answer its warning, so the count of databases alone does not decide this.
 	if len(s.resident) == 0 && len(s.residentOmitted) == 0 && len(s.residentWarnings) == 0 {
+		route.includeCore = true
 		return route
 	}
+	route.includeCore = true
 	route.databases = append(slices.Clone(s.resident), route.databases...)
 	route.omitted = append(slices.Clone(s.residentOmitted), route.omitted...)
 	route.warnings = append(slices.Clone(s.residentWarnings), route.warnings...)
@@ -387,8 +394,10 @@ func hideLayerRegistry(connection *sql.Conn) {
 }
 
 func (r pluginRoute) consulted() []string {
-	consulted := make([]string, 1, len(r.databases)+1)
-	consulted[0] = "core"
+	consulted := make([]string, 0, len(r.databases)+1)
+	if r.includeCore {
+		consulted = append(consulted, "core")
+	}
 	for _, database := range r.databases {
 		consulted = append(consulted, database.Source())
 	}
@@ -403,8 +412,8 @@ func (r pluginRoute) omittedSources() []string {
 	return omitted
 }
 
-func (s *Service) gateFor(databases []plugin.Database) (*sqlgate.Gate, func(), error) {
-	if len(databases) == 0 {
+func (s *Service) gateFor(includeCore bool, databases []plugin.Database) (*sqlgate.Gate, func(), error) {
+	if len(databases) == 0 && includeCore {
 		gate, err := s.theGate()
 		return gate, func() {}, err
 	}
@@ -416,14 +425,23 @@ func (s *Service) gateFor(databases []plugin.Database) (*sqlgate.Gate, func(), e
 		}
 		schemas = append(schemas, sqlgate.Schema{Name: database.Schema, Tables: tables})
 	}
-	gate, err := sqlgate.OpenWithSchemas(schemas)
+	var gate *sqlgate.Gate
+	var err error
+	if includeCore {
+		gate, err = sqlgate.OpenWithSchemas(schemas)
+	} else {
+		gate, err = sqlgate.OpenAttached(schemas)
+	}
 	if err != nil {
 		return nil, func() {}, err
 	}
 	return gate, func() { _ = gate.Close() }, nil
 }
 
-func schemaWithPlugins(databases []plugin.Database) query.Schema {
+func schemaWithPlugins(includeCore bool, databases []plugin.Database) query.Schema {
+	if !includeCore {
+		return plugin.Compose(query.Schema{}, databases)
+	}
 	base := theModelsSchema()
 	if len(databases) == 0 {
 		return base

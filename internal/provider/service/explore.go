@@ -85,7 +85,26 @@ func (s *Service) Explore(ctx context.Context, req ExploreRequest) (QueryResult,
 	}
 	answer, interpretErr := s.InterpretStream(ctx, result.Question, result.Columns, result.Rows,
 		time.Duration(result.SQLInferenceMS)*time.Millisecond, result.Engine,
-		InterpretationContext{Mission: mission, Terrain: terrain}, onStart, req.InterpretationDelta)
+		InterpretationContext{Mission: mission, Terrain: terrain, UnusedDatabases: result.UnusedDatabases},
+		onStart, req.InterpretationDelta)
+	if interpretErr == nil && widenReply(answer.Text) && len(result.UnusedDatabases) > 0 {
+		req.Databases = []string{ScopeAll}
+		widened, widenErr := s.Query(ctx, req.QueryRequest)
+		if widenErr != nil {
+			return widened, widenErr
+		}
+		widened.Mode = result.Mode
+		widened.Widened = true
+		terrain = terrainFromRows(widened.Question, widened.Columns, widened.Rows)
+		widened.Terrain = &terrain
+		if req.Progress != nil {
+			req.Progress(QueryPhaseInterpretation)
+		}
+		answer, interpretErr = s.InterpretStream(ctx, widened.Question, widened.Columns, widened.Rows,
+			time.Duration(widened.SQLInferenceMS)*time.Millisecond, widened.Engine,
+			InterpretationContext{Mission: mission, Terrain: terrain}, onStart, req.InterpretationDelta)
+		result = widened
+	}
 	result.InterpretationMS = time.Since(started).Milliseconds()
 	result.LatencyMS += result.InterpretationMS
 	result.Interpretation = answer.Text

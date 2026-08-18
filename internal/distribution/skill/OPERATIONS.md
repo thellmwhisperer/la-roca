@@ -54,9 +54,12 @@ pass `--full`.
 roca exec "SELECT COUNT(*) AS memories FROM memories"
 roca exec "SELECT content, created_at, project FROM memories WHERE layer = 'handoff' AND project = '<project>' ORDER BY created_at DESC LIMIT 1"
 roca query "who is Ana"                        # last resort: cannot write the SQL
+roca query --full "what happened with Y"       # human reading only; agents never pass --full
 roca explore --deep "format"                   # last resort investigation
 roca explore "rows"
+roca query "what happened with Y" --json
 roca query "ffmpeg patterns" --sql-only        # compile SQL when stuck, then exec it
+roca query --databases all "who is Ana"        # widen to every attached database
 roca store --layer discovery --content "FTS ranks by bm25, created_at only for time questions" --origin agent --agent codex --model gpt-5
 roca ingest                                    # refresh the corpus from every agent source
 roca doctor                                    # diagnosis + remedies
@@ -74,6 +77,24 @@ does not handle authentication or store its secrets.
 reaches the database. When you cannot write the SQL, `query --sql-only`
 compiles it; then you exec that SELECT. `--full` is a human reading of
 rows; agents narrate from the rows themselves.
+
+## Which databases a question sees
+
+`roca query` and `roca explore` default to the corpus database when it is
+attached, together with the core compatibility store that still holds historical
+rows. Studying harvested conversations should not drag in ops handoffs, cron
+jobs, or other federated stores.
+
+Pass `--databases` to widen when the question genuinely spans databases, and
+name them: `--databases corpus,ops`, `--databases cron,corpus`, or
+`--databases all` for every attached database. Unknown names fail and list what
+is attached. The kernel does not guess relevance from the wording.
+
+The SQL seat is shown only the selected schemas, plus an inventory of the other attached names.
+It writes SQL for the selected set first. If that pass returns
+no rows, or the reading seat finds the rows do not answer the question, one
+second SQL pass adds the remaining attached databases. `--sql-only` stays on
+the first pass.
 
 ## Default row output
 
