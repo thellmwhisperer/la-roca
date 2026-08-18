@@ -631,6 +631,7 @@ type File struct {
 	Exists   bool
 	Models   ModelsConfig
 	Query    QueryConfig
+	Index    IndexConfig
 	Features FeaturesConfig
 	Layout   LayoutConfig
 	// Warnings are what this build did not understand, each one naming the key,
@@ -663,6 +664,17 @@ type QueryConfig struct {
 	TimeoutMS  int  `toml:"timeout_ms"`
 	TimeoutSet bool `toml:"-"`
 }
+
+// DefaultIndexTokenBudget is the shipped ceiling for `roca index`.
+const DefaultIndexTokenBudget = 8000
+
+// IndexConfig bounds the virtual MEMORY.md derived from the database.
+type IndexConfig struct {
+	TokenBudget    int  `toml:"token_budget"`
+	TokenBudgetSet bool `toml:"-"`
+}
+
+func defaultIndex() IndexConfig { return IndexConfig{TokenBudget: DefaultIndexTokenBudget} }
 
 // FeaturesConfig contains operational escape hatches and experimental
 // surfaces. The safety belt defaults on; new optional surfaces default off.
@@ -753,6 +765,8 @@ var knownProviderKeys = map[string]bool{
 
 var knownQueryKeys = map[string]bool{"timeout_ms": true}
 
+var knownIndexKeys = map[string]bool{"token_budget": true}
+
 func KnownProviderKey(key string) bool { return knownProviderKeys[key] }
 
 func UnknownKeyWarning(key, path string) string { return unknownKey(key, path) }
@@ -760,7 +774,7 @@ func UnknownKeyWarning(key, path string) string { return unknownKey(key, path) }
 // LoadFile reads the config. A file that is not there is a machine with
 // defaults, not a failure.
 func LoadFile(path string) (File, error) {
-	file := File{Path: path, Features: defaultFeatures(), Layout: defaultLayout()}
+	file := File{Path: path, Features: defaultFeatures(), Layout: defaultLayout(), Index: defaultIndex()}
 
 	raw, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -793,6 +807,8 @@ func LoadFile(path string) (File, error) {
 	}
 	query, _ := document["query"].(map[string]any)
 	file.Query = readQuery(query, path, &file.Warnings)
+	index, _ := document["index"].(map[string]any)
+	file.Index = readIndex(index, path, &file.Warnings)
 	features, _ := document["features"].(map[string]any)
 	file.Features = readFeatures(features, path, &file.Warnings)
 	layout, _ := document["layout"].(map[string]any)
@@ -862,6 +878,28 @@ func readQuery(section map[string]any, path string, warnings *[]string) QueryCon
 		}
 	}
 	return query
+}
+
+func readIndex(section map[string]any, path string, warnings *[]string) IndexConfig {
+	index := defaultIndex()
+	for _, key := range sortedKeys(section) {
+		switch key {
+		case "token_budget":
+			tokens, ok := readNumber(section[key])
+			if !ok || tokens < 1 {
+				*warnings = append(*warnings, invalidValue("index.token_budget", path,
+					"a whole number of tokens, one or more"))
+				continue
+			}
+			index.TokenBudget = tokens
+			index.TokenBudgetSet = true
+		default:
+			if !knownIndexKeys[key] {
+				*warnings = append(*warnings, unknownKey("index."+key, path))
+			}
+		}
+	}
+	return index
 }
 
 func readFeatures(section map[string]any, path string, warnings *[]string) FeaturesConfig {

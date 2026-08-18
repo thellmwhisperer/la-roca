@@ -24,6 +24,7 @@ Feature: Distribution command line
       | update    |
       | uninstall |
       | plugins   |
+      | index     |
 
   Scenario: Neighbor executables extend unknown commands without intercepting built-ins
     When the operator exercises the plugin dispatch contract

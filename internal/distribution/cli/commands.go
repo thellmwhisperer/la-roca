@@ -500,6 +500,30 @@ func schemaCommand(env *cliEnv) *cobra.Command {
 func indexCommand(env *cliEnv) *cobra.Command {
 	return &cobra.Command{
 		Use:   "index",
+		Short: "Print the compact map of what La Roca holds",
+		Long: "Prints a virtual MEMORY.md derived from the database: one hook line\n" +
+			"per knowledge block (source epochs, memory layers, corpus volumes,\n" +
+			"index state, health, and named gaps). Generation is deterministic SQL\n" +
+			"with no model inference. A token budget (config `index.token_budget`,\n" +
+			"default 8000) bounds the output; truncation is stated, never silent.\n" +
+			"Ingest refreshes the cache so this command stays instant.",
+		RunE: env.serviceRunE(func(cmd *cobra.Command, _ []string, svc *service.Service) error {
+			report, err := svc.VirtualIndex(cmd.Context(), service.VirtualIndexRequest{})
+			if err != nil {
+				return err
+			}
+			if env.json {
+				return env.printJSON(report)
+			}
+			env.print("%s", strings.TrimRight(report.Text, "\n"))
+			return nil
+		}),
+	}
+}
+
+func lexicalIndexCommand(env *cliEnv) *cobra.Command {
+	return &cobra.Command{
+		Use:   "lexical-index",
 		Short: "Build or refresh the search index",
 		Long: "Builds the full-text index.\n" +
 			"It is incremental: on an already indexed database it costs nothing, and\n" +

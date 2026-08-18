@@ -327,6 +327,20 @@ func TestAValueOfTheWrongTypeKeepsTheDefaultAndWarns(t *testing.T) {
 			wants: "features.strict_input",
 			check: func(file File) bool { return file.Features.StrictInput },
 		},
+		{
+			name: "quoted index budget", body: "[index]\ntoken_budget = \"8000\"\n",
+			wants: "index.token_budget",
+			check: func(file File) bool {
+				return !file.Index.TokenBudgetSet && file.Index.TokenBudget == DefaultIndexTokenBudget
+			},
+		},
+		{
+			name: "zero index budget", body: "[index]\ntoken_budget = 0\n",
+			wants: "index.token_budget",
+			check: func(file File) bool {
+				return !file.Index.TokenBudgetSet && file.Index.TokenBudget == DefaultIndexTokenBudget
+			},
+		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			file, err := LoadFile(write(t, testCase.body))

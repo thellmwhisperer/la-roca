@@ -45,9 +45,11 @@ Two kinds of freshness, two commands:
 ## Shell commands
 
 Data = `roca query`; human reading = `roca query --full`; investigation =
-`roca explore`; raw SQL = `roca exec`.
+`roca explore`; raw SQL = `roca exec`. Start with `roca index` for the
+compact map of what the database holds.
 
 ```bash
+roca index                                     # virtual MEMORY.md: one hook line per block
 roca query "who is Ana"                        # natural-language search
 roca query --full "what happened with Y"       # add prose for human reading
 roca explore --deep "format"                   # launch a one-word investigation probe
@@ -118,6 +120,7 @@ arguments.
 
 | Situation | Action |
 |---|---|
+| What does this installation hold? | `roca index` |
 | Past work / people / "have we…" | `roca query "<question>"` |
 | Researching a topic, not a point fact | `roca explore "<concept>"` |
 | Answer looks stale / about today | `roca ingest`, then ask again |
@@ -170,8 +173,10 @@ one `roca explore` instead and follow its probes.
 
 ## Operating craft
 
-- Landing on a machine that is new to you, get up to speed from La Roca
-  before asking the human anything: active projects and their volume from
+- Landing on a machine that is new to you, start with `roca index` for the
+  compact map of every source epoch, memory layer, and corpus family, then
+  get up to speed from La Roca before asking the human anything: active
+  projects and their volume from
   `sessions` analytics, and what the operator's agents already knew, since
   their memory and rule files land in the `user`, `feedback` and `project`
   layers at ingest. On a fresh install the `handoff` layer is empty until

@@ -150,6 +150,10 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (IngestResult, 
 	index.LexicalBuilt = index.LexicalBuilt || prepared.LexicalBuilt
 	index.ElapsedMS += prepared.ElapsedMS
 	result.Index = &index
+	if err := s.refreshVirtualIndex(ctx); err != nil {
+		result.TotalElapsedMS = time.Since(started).Milliseconds()
+		return result, err
+	}
 	result.TotalElapsedMS = time.Since(started).Milliseconds()
 
 	return result, nil

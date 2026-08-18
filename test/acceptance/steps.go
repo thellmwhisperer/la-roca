@@ -276,7 +276,7 @@ func (m *world) seededWorld(name string) error {
 	// The FTS index has to cover what was seeded straight into the database,
 	// the same way a later ingest does on a real machine, so the search layer
 	// the model operates over is ready.
-	return m.mustRun("roca index")
+	return m.mustRun("roca lexical-index")
 }
 
 // The pill a session receives and the newest handoff it is handed. They are

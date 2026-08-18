@@ -201,7 +201,7 @@ func (w *distributionWorld) helpIsComplete() error {
 	}
 	honest := map[string]string{
 		"doctor": "configuration", "ingest": "source", "init": "database",
-		"hooks": "authorship", "layers": "layer", "model": "model", "query": "memory",
+		"hooks": "authorship", "index": "map", "layers": "layer", "model": "model", "query": "memory",
 		"explore": "concept", "store": "memory",
 		"uninstall": "remove", "update": "release", "plugin": "plugin", "plugins": "plugin",
 	}
@@ -299,6 +299,8 @@ func distributionCommandArgs(command, home string, channel *httptest.Server) ([]
 		return []string{"uninstall", "--keep-data"}, nil
 	case "plugins":
 		return []string{"plugins"}, nil
+	case "index":
+		return []string{"index"}, nil
 	default:
 		return nil, fmt.Errorf("unknown acceptance command %q", command)
 	}

@@ -196,6 +196,24 @@ func TestHealthReportsItsStatus(t *testing.T) {
 	}
 }
 
+func TestIndexNarratesTheMapAndAnswersJSON(t *testing.T) {
+	fixtureInstallation(t)
+
+	human := runRoot(t, contractBuild(), "index")
+	for _, want := range []string{"# La Roca index", "generated:", "budget:", "corpus sessions:"} {
+		if !strings.Contains(human, want) {
+			t.Errorf("index narration does not carry %q:\n%s", want, human)
+		}
+	}
+
+	doc := mustJSON(t, runRoot(t, contractBuild(), "index", "--json"))
+	for _, key := range []string{"generated_at", "budget", "tokens", "text", "blocks"} {
+		if _, ok := doc[key]; !ok {
+			t.Errorf("index --json is missing %q:\n%s", key, doc)
+		}
+	}
+}
+
 // `roca init` narrates its phases for a human (covered in init_narration_test);
 // under --json it answers the outcome envelope a program parses, with the
 // adopted-by-copy flag telling the adoption path apart from a fresh create and

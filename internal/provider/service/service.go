@@ -43,6 +43,9 @@ type Options struct {
 	// from an absent setting, which uses DefaultQueryTimeout.
 	QueryTimeout    time.Duration
 	QueryTimeoutSet bool
+	// IndexTokenBudget bounds the virtual index printed by `roca index`.
+	// Zero means DefaultIndexTokenBudget.
+	IndexTokenBudget int
 	// DisableStrictInput is the opt-out escape hatch for the experimental
 	// prompt-attack signature gate. Its zero value keeps the gate enabled.
 	DisableStrictInput bool
