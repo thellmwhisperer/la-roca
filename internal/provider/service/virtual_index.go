@@ -15,7 +15,8 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/store"
 )
 
-// DefaultIndexTokenBudget is the shipped ceiling for the virtual index.
+// DefaultIndexTokenBudget is the shipped UTF-8 byte ceiling for the virtual
+// index. Its legacy name remains part of the public contract.
 const DefaultIndexTokenBudget = 8000
 
 const (
@@ -25,6 +26,7 @@ const (
 
 // VirtualIndexRequest is the only knob the map accepts.
 type VirtualIndexRequest struct {
+	// TokenBudget is enforced as UTF-8 bytes, a conservative token upper bound.
 	TokenBudget int
 	GeneratedAt time.Time
 	Refresh     bool
@@ -32,13 +34,17 @@ type VirtualIndexRequest struct {
 
 // VirtualIndex is the derived MEMORY.md: one hook line per knowledge block.
 type VirtualIndex struct {
-	GeneratedAt string   `json:"generated_at"`
-	Budget      int      `json:"budget"`
-	Tokens      int      `json:"tokens"`
-	Truncated   bool     `json:"truncated"`
-	Omitted     int      `json:"omitted,omitempty"`
-	Text        string   `json:"text"`
-	Blocks      []string `json:"blocks"`
+	GeneratedAt string `json:"generated_at"`
+	// Budget is the configured UTF-8 byte ceiling; its JSON name is retained
+	// for compatibility.
+	Budget int `json:"budget"`
+	// Tokens is the UTF-8 byte count used; its JSON name is retained for
+	// compatibility.
+	Tokens    int      `json:"tokens"`
+	Truncated bool     `json:"truncated"`
+	Omitted   int      `json:"omitted,omitempty"`
+	Text      string   `json:"text"`
+	Blocks    []string `json:"blocks"`
 }
 
 type virtualIndexCache struct {
@@ -617,6 +623,9 @@ func composeVirtualIndex(generatedAt string, budget, used, omitted int, kept []s
 	return text, countIndexTokens(text)
 }
 
+// countIndexTokens preserves the legacy contract name while deliberately
+// counting UTF-8 bytes. This strict conservative token upper bound avoids a
+// tokenizer dependency.
 func countIndexTokens(text string) int {
 	return len(text)
 }

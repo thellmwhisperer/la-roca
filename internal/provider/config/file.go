@@ -665,13 +665,15 @@ type QueryConfig struct {
 	TimeoutSet bool `toml:"-"`
 }
 
-// DefaultIndexTokenBudget is the shipped ceiling for `roca index`.
+// DefaultIndexTokenBudget is the shipped UTF-8 byte ceiling for `roca index`.
+// Its legacy name remains part of the configuration contract.
 const DefaultIndexTokenBudget = 8000
 
 const minimumIndexTokenBudget = 117
 
 // IndexConfig bounds the virtual MEMORY.md derived from the database.
 type IndexConfig struct {
+	// TokenBudget is enforced as UTF-8 bytes, a conservative token upper bound.
 	TokenBudget    int  `toml:"token_budget"`
 	TokenBudgetSet bool `toml:"-"`
 }

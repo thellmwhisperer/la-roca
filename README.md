@@ -209,10 +209,15 @@ roca exec "SELECT source_agent, COUNT(*) AS sessions
 `roca index` prints a virtual MEMORY.md derived from the database: one hook
 line per knowledge block (source epochs, memory layers, corpus volumes, index
 state, health, and named gaps). It is deterministic SQL, cached on ingest, and
-bounded by `index.token_budget` (default 8000 tokens). Use it to see what La
-Roca holds before searching; `roca index --json` returns the same map in a
-machine envelope. The [configuration reference](docs/models.md#the-configuration)
-owns the budget override and its accepted range.
+bounded by `index.token_budget` (default 8000). Despite the legacy key name,
+the bound is enforced in UTF-8 bytes as a strict conservative upper bound on
+tokens: 8000 guarantees that the index never exceeds 8000 tokens, without a
+tokenizer dependency. Use it to see what La Roca holds before searching;
+`roca index --json` returns the same map in a machine envelope. Its `budget`
+and `tokens` fields report the UTF-8 byte ceiling and bytes used, respectively;
+their names are retained for compatibility. The
+[configuration reference](docs/models.md#the-configuration) owns the budget
+override and its accepted range.
 
 `roca query` compiles your question into one checked `SELECT` and shows it.
 `--sql-only` compiles without executing, `--full` adds a prose reading of the

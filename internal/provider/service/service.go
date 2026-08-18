@@ -43,7 +43,8 @@ type Options struct {
 	// from an absent setting, which uses DefaultQueryTimeout.
 	QueryTimeout    time.Duration
 	QueryTimeoutSet bool
-	// IndexTokenBudget bounds the virtual index printed by `roca index`.
+	// IndexTokenBudget bounds the virtual index in UTF-8 bytes. The legacy name
+	// remains part of the configuration and JSON contracts.
 	// Zero means DefaultIndexTokenBudget.
 	IndexTokenBudget int
 	// DisableStrictInput is the opt-out escape hatch for the experimental

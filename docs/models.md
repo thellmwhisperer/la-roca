@@ -86,8 +86,11 @@ timeout_ms = 5000
 
 [index]
 # Bound the virtual MEMORY.md printed by `roca index`. The default is 8000
-# tokens. The minimum configured budget is 117; smaller numeric values are
-# rejected when the configuration is loaded, and truncation is explicit.
+# UTF-8 bytes. The legacy key name is retained for compatibility; the byte
+# count is a strict conservative upper bound on tokens, so 8000 guarantees no
+# more than 8000 tokens without a tokenizer dependency. The minimum configured
+# budget is 117 bytes; smaller numeric values are rejected when the
+# configuration is loaded, and truncation is explicit.
 token_budget = 8000
 
 [features]
