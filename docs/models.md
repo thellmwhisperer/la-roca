@@ -84,6 +84,12 @@ probe_ms   = 3000
 # about and the default applies.
 timeout_ms = 5000
 
+[index]
+# Bound the virtual MEMORY.md printed by `roca index`. The default is 8000
+# tokens. The minimum configured budget is 117; smaller numeric values are
+# rejected when the configuration is loaded, and truncation is explicit.
+token_budget = 8000
+
 [features]
 # The two model-facing switches are enabled by default and each one is its own
 # escape hatch. Every default-off experimental switch is documented with the

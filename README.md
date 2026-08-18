@@ -210,7 +210,9 @@ roca exec "SELECT source_agent, COUNT(*) AS sessions
 line per knowledge block (source epochs, memory layers, corpus volumes, index
 state, health, and named gaps). It is deterministic SQL, cached on ingest, and
 bounded by `index.token_budget` (default 8000 tokens). Use it to see what La
-Roca holds before searching.
+Roca holds before searching; `roca index --json` returns the same map in a
+machine envelope. The [configuration reference](docs/models.md#the-configuration)
+owns the budget override and its accepted range.
 
 `roca query` compiles your question into one checked `SELECT` and shows it.
 `--sql-only` compiles without executing, `--full` adds a prose reading of the
