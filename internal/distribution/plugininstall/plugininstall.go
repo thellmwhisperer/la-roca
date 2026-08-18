@@ -1023,7 +1023,7 @@ func CandidateFromManifest(manifest Manifest, directory string) Candidate {
 }
 
 func ReadManifest(directory string) (Manifest, error) {
-	file, err := os.Open(filepath.Join(directory, ManifestFilename))
+	file, err := openRegularSource(filepath.Join(directory, ManifestFilename))
 	if err != nil {
 		return Manifest{}, fmt.Errorf("read %s: %w", ManifestFilename, err)
 	}

@@ -31,6 +31,9 @@ func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWor
 	ctx.Then(`^init reports setup, ingest, index, model, and its total once in that order$`, w.initSummaryIsOrdered)
 	ctx.When(`^the operator initializes non-interactively with a detected model CLI$`, w.initWithDetectedModelCLI)
 	ctx.Then(`^init prints one answering notice and writes no model configuration$`, w.initHasOneAnsweringNotice)
+	ctx.When(`^the operator asks for a doctor support report$`, w.askForDoctorReport)
+	ctx.Then(`^the report is one fenced block with a federation mode and the JSON form is one document$`,
+		w.doctorReportIsPasteable)
 	ctx.When(`^the operator previews the default cron train with a gated plugin ride$`, w.previewDefaultCronTrain)
 	ctx.Then(`^core ingest appears before the plugin ride and its dependency gate is closed$`,
 		w.cronPreviewIsOrderedAndGated)
@@ -186,6 +189,38 @@ func (w *distributionWorld) initHasOneAnsweringNotice() error {
 	}
 	if _, err := os.Stat(filepath.Join(w.home, ".roca", "config.toml")); !os.IsNotExist(err) {
 		return fmt.Errorf("non-interactive init wrote model configuration: %v", err)
+	}
+	return nil
+}
+
+func (w *distributionWorld) askForDoctorReport() error {
+	if err := w.ensurePrepared(); err != nil {
+		return err
+	}
+	w.human = w.runAt(w.home, w.installed, "doctor", "--report")
+	w.machine = w.runAt(w.home, w.installed, "doctor", "--report", "--json")
+	return nil
+}
+
+func (w *distributionWorld) doctorReportIsPasteable() error {
+	if err := w.outputFormsAreExplicit(); err != nil {
+		return err
+	}
+	human := strings.TrimSpace(w.human.stdout)
+	if !strings.HasPrefix(human, "```text") || !strings.HasSuffix(human, "```") {
+		return fmt.Errorf("doctor report is not one fenced block:\n%s", human)
+	}
+	for _, want := range []string{"roca support report", "FEDERATION", "mode: fresh"} {
+		if !strings.Contains(human, want) {
+			return fmt.Errorf("doctor report does not contain %q:\n%s", want, human)
+		}
+	}
+	var document map[string]any
+	if err := json.Unmarshal([]byte(w.machine.stdout), &document); err != nil {
+		return fmt.Errorf("doctor report JSON: %w", err)
+	}
+	if document["kind"] != "roca-support-report" {
+		return fmt.Errorf("doctor report kind = %v", document["kind"])
 	}
 	return nil
 }

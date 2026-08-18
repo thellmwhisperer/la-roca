@@ -23,12 +23,23 @@ func TestPrepareHubRunsEveryShadowCustodyMigrationBeforeCutover(t *testing.T) {
 		LockPath:       filepath.Join(directory, "data-split.lock"),
 	}
 	seedHubSources(t, options)
+	if ready, err := HubCutoverEligible(t.Context(), options); err != nil || ready {
+		t.Fatalf("pre-migration eligibility = %t, err=%v", ready, err)
+	}
 
 	if _, err := PrepareHub(t.Context(), options); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := PrepareHub(t.Context(), options); err != nil {
 		t.Fatalf("idempotent preparation: %v", err)
+	}
+	if ready, err := HubCutoverEligible(t.Context(), options); err != nil || !ready {
+		t.Fatalf("prepared eligibility = %t, err=%v", ready, err)
+	}
+	missingCron := options
+	missingCron.CronDatabase = filepath.Join(directory, "missing-cron.db")
+	if ready, err := HubCutoverEligible(t.Context(), missingCron); err == nil || ready {
+		t.Fatalf("missing-cron eligibility = %t, err=%v", ready, err)
 	}
 
 	ops := openCutoverDatabase(t, options.OpsDatabase)
@@ -75,7 +86,9 @@ func seedHubSources(t *testing.T, options HubOptions) {
 	if _, err := core.SQL().Exec(`INSERT INTO memories
 		(id, layer, content, origin) VALUES (17, 'project', 'Synthetic migration marker', 'agent');
 		INSERT INTO sessions (session_id, source_agent, title) VALUES
-		('synthetic-session', 'fixture', 'Synthetic archive marker')`); err != nil {
+		('synthetic-session', 'fixture', 'Synthetic archive marker');
+		CREATE TABLE runs (id INTEGER PRIMARY KEY, name TEXT);
+		INSERT INTO runs (id, name) VALUES (1, 'synthetic-run')`); err != nil {
 		t.Fatal(err)
 	}
 	for path, apply := range map[string]func(string) error{
