@@ -50,7 +50,7 @@ var recordedProvenance = []provenanceExpectation{
 		surface: "OpenCode", tokensIn: 43, tokensOut: 11, reason: 6, cost: 0.5, counted: "in out reasoning cost"},
 	// Hermes measures a whole session and never a turn: the turn carries who
 	// answered and no invented split of the totals.
-	{session: "h1", model: "test-model", provider: "fixture-hermes-provider", surface: "Hermes"},
+	{session: "h1", model: "test-model", provider: "fixture-hermes-provider", surface: "Hermes/tui"},
 	// The web export is the signal-poor source, and every column stays NULL.
 	{session: "web-fixture-1", surface: "Claude Web"},
 	{session: "22222222-3333-4444-5555-666666666666", model: "fixture-grok-model",
@@ -174,9 +174,9 @@ func TestAPlainReingestMatchesHistoricalNumbersWithoutDuplicating(t *testing.T) 
 		}
 		_, err = tx.ExecContext(ctx,
 			`UPDATE ingest_file_state SET fingerprint =
-				replace(replace(replace(replace(replace(fingerprint, '-v8', '-v7'), '-v7', '-v6'),
-				        '-v6', '-v5'), 'conversations-v4', 'conversations-v3'),
-				        'grok-session-v4', 'grok-session-v3')
+				replace(replace(replace(replace(replace(replace(fingerprint, '-v9', '-v8'),
+				        '-v8', '-v7'), '-v7', '-v6'), '-v6', '-v5'),
+				        'conversations-v4', 'conversations-v3'), 'grok-session-v4', 'grok-session-v3')
 			 WHERE instr(fingerprint, ':parser:') > 0`)
 		return err
 	}); err != nil {

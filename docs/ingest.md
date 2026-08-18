@@ -186,9 +186,10 @@ columns remain NULL instead of receiving guessed values.
 
 Hermes keeps its conversations in `~/.hermes/state.db`, a SQLite database La
 Roca opens read-only: a `query_only` connection that never writes and waits at
-most a quarter second for the owner's lock before giving up. Override the
-location with `hermes_db_path` in the configuration or the `HERMES_DB_PATH`
-environment variable.
+most a quarter second for the owner's lock before giving up. The private tree
+defaults to `~/.hermes` (`hermes_home` or `HERMES_HOME`). Override only the
+database with `hermes_db_path` or `HERMES_DB_PATH`. An absent Hermes home is a
+clean no-op.
 
 Every session is read, closed or not. Hermes writes `ended_at` only when a
 session winds down cleanly, so sessions that were killed, abandoned, or run
@@ -205,10 +206,37 @@ its own error verdict. The session's `model` and `billing_provider` columns name
 the provenance of every exchange; a missing model stays empty rather than
 becoming a placeholder.
 
-The memory files under `~/.hermes/memories` are deliberately not read, and the
-other Hermes SQLite databases (`kanban.db`, `cron/executions.db`,
-`verification_evidence.db`, `projects.db`) hold no conversation content and are
-not read either.
+The live `sessions.source` channel (acp, cron, tui, cli, telegram, desktop)
+is the session's surface qualifier: `source_surface` is `Hermes/<channel>`
+when Hermes recorded one, and `Hermes` when it did not. The same channel is
+kept in session metadata.
+
+`session_model_usage` joins onto those sessions as operational `model_usage`
+metadata (per-model provider and API base, requests, input, output, cache and
+reasoning tokens, estimated and actual cost, pricing source, and first/last
+observed times). `gateway_routing` joins by `session_key` or embedded
+`session_id` as `routing` history. `system_prompts` join by
+`system_prompt_hash` as session provenance (`hash`, a short preview, and byte
+length), never as corpus content.
+
+`~/.hermes/memories/MEMORY.md` is a mutable curated document, not an
+append-only log. Each `§`-separated block is one memory whose identity is the
+content hash. An unchanged rerun is a zero delta. A vanished block keeps its
+row and is marked superseded; a new or edited block is a new memory. Layers
+follow the block's nature (`user`, `feedback`, or `pattern`), origin is
+`agent`, and `source_agent` is `hermes`. Per-block provenance preserves the
+source file and block hash; the row's creation time records the ingest date.
+The nine reserved hand-ingested rows (IDs 1152921504606847051 through
+1152921504606847059) are also checked by exact content so those legacy
+memories are not duplicated.
+
+These Hermes stores are named exclusions, not corpus: `kanban.db`, the empty
+`sessions.db`, `verification_evidence.db`, `USER.md` and other memory
+companions, FTS shadow tables, and locks or leases. `projects.db` and
+`cron/executions.db` are valid SQLite and can refuse a guest open (error 14)
+while Hermes holds them; they hold no conversation content (empty project and
+execution tables, with only discovery metadata), so they stay named exclusions
+rather than Cursor-style snapshots.
 
 ## Pi
 
@@ -321,14 +349,28 @@ and adds the recovered assistant messages once. Later runs are zero-delta. The
 summary prints messages seen, converted and skipped, with a count for each skip
 reason, so coverage does not have to be inferred from exchange totals.
 
+La Roca also reads the companion bot's installed-mode `bot-*.log` files from
+`~/Library/Application Support/opencode-telegram-bot/logs` on macOS,
+`%APPDATA%\opencode-telegram-bot\logs` on Windows, or
+`${XDG_CONFIG_HOME:-~/.config}/opencode-telegram-bot/logs` on Linux. Override
+that directory with `opencode_telegram_bot_logs` in the configuration or
+`OPENCODE_TELEGRAM_BOT_LOGS` in the environment. Each
+`id=ses_...` occurrence marks the matching OpenCode session with metadata
+`channel=telegram`; its metadata also retains the bot log path and the date
+recorded on that line. The canonical `source_surface` remains OpenCode. This
+evidence is additive, so a session stays marked after its log rotates away.
+An absent directory or a directory with no matching logs is a named coverage
+exclusion and does not fail ingest.
+
 ## Per-exchange provenance
 
 Every session also carries `source_surface`, the canonical harness known from
 the detector and parser family that opened it (`Claude Code`, `Codex CLI`,
 `OpenCode`, `Grok Build`, and so on). It is first-class provenance, not metadata
-read from the artifact. Harvested memories use the existing `source_surface`
-column under the same rule and keep `source_model` NULL unless their source
-actually recorded a model.
+read from the artifact, except Hermes, whose live channel is the one dimension
+that would otherwise collapse every session to `Hermes`. Harvested memories use
+the existing `source_surface` column under the same rule and keep
+`source_model` NULL unless their source actually recorded a model.
 
 Every exchange carries what its own source recorded about how the answer was
 produced: `model`, `provider`, `tokens_in`, `tokens_out`, `tokens_reasoning` and

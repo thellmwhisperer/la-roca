@@ -24,6 +24,9 @@ type Database interface {
 // Options are one run's inputs.
 type Options struct {
 	Roots Roots
+	// HermesReservedMemories is the read-only operational store that may hold
+	// the nine Hermes memories curated before MEMORY.md ingestion existed.
+	HermesReservedMemories *sql.DB
 	// DryRun reports what would be read and writes nothing. It is a first-class
 	// mode and not a debugging aid: it is how an operator checks that a root is
 	// being seen before letting anything touch the database.
@@ -597,7 +600,7 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 
 	var counts Counts
 	err := db.Write(ctx, func(tx *sql.Tx) error {
-		written, err := WriteRecords(ctx, tx, layers, records)
+		written, err := writeRecords(ctx, tx, layers, opts.HermesReservedMemories, records)
 		if err != nil {
 			return err
 		}
@@ -633,6 +636,10 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 		records, complaints, err := databaseReader(ctx, target.Path)
 		if err != nil {
 			return parsers.Records{}, err.Error()
+		}
+		if target.Kind == parsers.KindOpenCodeDB {
+			result.Warnings = append(result.Warnings,
+				enrichOpenCodeTelegram(&records, target.CompanionPaths)...)
 		}
 		result.Warnings = append(result.Warnings, complaints...)
 		for _, complaint := range complaints {
@@ -822,20 +829,22 @@ func tableCounts(ctx context.Context, db *sql.DB) (Tables, error) {
 // an operator cannot tell them apart without this.
 func declaredRoots(roots Roots) map[string]string {
 	declared := map[string]string{
-		"claude_projects":         roots.ClaudeProjects,
-		"claude_project_config":   roots.ClaudeConfig,
-		"claude_desktop_sessions": roots.ClaudeDesktopSessions,
-		"cowork_sessions":         roots.CoworkSessions,
-		"codex_root":              roots.CodexRoot,
-		"codex_sessions":          roots.CodexSessions,
-		"opencode_db":             roots.OpenCodeDB,
-		"pi_root":                 roots.PiRoot,
-		"pi_sessions":             roots.PiSessions,
-		"hermes_db":               roots.HermesDB,
-		"grok_sessions":           roots.GrokSessions,
-		"grok_memtrace":           roots.GrokMemtrace,
-		"claude_export":           strings.Join(roots.ClaudeWebExports, string(os.PathListSeparator)),
-		"chatgpt_export":          strings.Join(roots.ChatGPTWebExports, string(os.PathListSeparator)),
+		"claude_projects":            roots.ClaudeProjects,
+		"claude_project_config":      roots.ClaudeConfig,
+		"claude_desktop_sessions":    roots.ClaudeDesktopSessions,
+		"cowork_sessions":            roots.CoworkSessions,
+		"codex_root":                 roots.CodexRoot,
+		"codex_sessions":             roots.CodexSessions,
+		"opencode_db":                roots.OpenCodeDB,
+		"opencode_telegram_bot_logs": roots.OpenCodeTelegramLogs,
+		"pi_root":                    roots.PiRoot,
+		"pi_sessions":                roots.PiSessions,
+		"hermes_home":                roots.HermesHome,
+		"hermes_db":                  roots.HermesDB,
+		"grok_sessions":              roots.GrokSessions,
+		"grok_memtrace":              roots.GrokMemtrace,
+		"claude_export":              strings.Join(roots.ClaudeWebExports, string(os.PathListSeparator)),
+		"chatgpt_export":             strings.Join(roots.ChatGPTWebExports, string(os.PathListSeparator)),
 	}
 	maps.DeleteFunc(declared, func(_, value string) bool { return value == "" })
 	return declared

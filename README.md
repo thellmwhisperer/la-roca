@@ -322,7 +322,7 @@ exactly the information the task needs instead of a whole skill.
 | Cursor | Composer sessions, prompts, thinking, and tool calls from its local state databases |
 | OpenCode | Sessions and exchanges, distilled from its local database |
 | Pi | Complete session tree, including nested child runs |
-| Hermes | Sessions, distilled from its state database |
+| Hermes | Sessions and channel, usage and routing intel from its state database, plus curated MEMORY.md blocks |
 | Grok Build | Sessions, from the session update stream and its metadata sidecar |
 
 Repository `AGENTS.md` and `CLAUDE.md` files are instructions and are never

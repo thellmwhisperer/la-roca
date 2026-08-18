@@ -42,6 +42,10 @@ type Target struct {
 	SessionID      string
 	FileName       string
 	SourceType     string
+	// CompanionPaths are read-only evidence that enriches this target. Their
+	// fingerprints travel with the primary artefact so either source changing
+	// reopens the same normalized snapshot.
+	CompanionPaths []string
 	// SidecarPath is the metadata file paired with a Cowork audit transcript.
 	SidecarPath string
 	// ExclusionReason marks a discovered artefact that policy counts but never
@@ -135,14 +139,38 @@ func Scan(roots Roots) Plan {
 	plan.add(scanGrokMemtrace(roots, &plan), "grok_memtrace_files")
 	plan.add(scanClaudeWebExports(roots), "claude_web_export_files")
 	plan.add(scanChatGPTWebExports(roots, &plan), "chatgpt_web_export_files")
-	plan.add(existingFile(roots.OpenCodeDB, Target{
-		Kind: parsers.KindOpenCodeDB, SourceAgent: "opencode"}), "opencode_databases")
+	openCode := existingFile(roots.OpenCodeDB, Target{
+		Kind: parsers.KindOpenCodeDB, SourceAgent: "opencode"})
+	if len(openCode) > 0 {
+		logs := scanOpenCodeTelegramLogs(roots.OpenCodeTelegramLogs)
+		openCode[0].CompanionPaths = logs
+		plan.Scanned["opencode_telegram_bot_logs"] = len(logs)
+		if roots.OpenCodeTelegramLogs != "" && len(logs) == 0 {
+			plan.Excluded = append(plan.Excluded, Target{
+				Path: roots.OpenCodeTelegramLogs, Kind: parsers.KindOpenCodeDB,
+				SourceAgent:     "opencode",
+				ExclusionReason: "OpenCode Telegram bot logs are absent",
+			})
+		}
+	}
+	plan.add(openCode, "opencode_databases")
 	plan.add(existingFile(roots.HermesDB, Target{
 		Kind: parsers.KindHermesDB, SourceAgent: "hermes"}), "hermes_databases")
+	plan.add(scanHermesStore(roots), "hermes_files")
 	if roots.Home != "" {
 		addRegisteredParsers(roots, &plan, parsers.Registered())
 	}
 	return plan
+}
+
+func scanOpenCodeTelegramLogs(root string) []string {
+	var paths []string
+	for _, name := range filesIn(root) {
+		if strings.HasPrefix(name, "bot-") && strings.HasSuffix(name, ".log") {
+			paths = append(paths, filepath.Join(root, name))
+		}
+	}
+	return paths
 }
 
 // addRegisteredParsers is the generic contribution route. A registry line may
@@ -224,7 +252,7 @@ func DetectAgents(roots Roots) []string {
 		{"codex", pathExists(roots.CodexRoot) || pathExists(roots.CodexSessions) || isFile(roots.CodexStateDB)},
 		{"opencode", isFile(roots.OpenCodeDB)},
 		{"pi", pathExists(roots.PiRoot) || pathExists(roots.PiSessions)},
-		{"hermes", isFile(roots.HermesDB)},
+		{"hermes", isFile(roots.HermesDB) || isFile(filepath.Join(roots.HermesHome, "memories", "MEMORY.md"))},
 		{"grok", pathExists(roots.GrokSessions)},
 	}
 	detected := make([]string, 0, len(candidates))
@@ -915,6 +943,54 @@ func runnerExclusionGrok(roots Roots, encodedDir string) string {
 		}
 	}
 	return ""
+}
+
+// scanHermesStore inventories the Hermes home besides state.db. MEMORY.md is
+// the one curated document this build reads; the other named stores are
+// counted as exclusions so an operator can see they were seen and refused.
+func scanHermesStore(roots Roots) []Target {
+	if roots.HermesHome == "" {
+		return nil
+	}
+	var targets []Target
+	memories := filepath.Join(roots.HermesHome, "memories")
+	targets = append(targets, existingFile(filepath.Join(memories, "MEMORY.md"), Target{
+		Kind: parsers.KindHermesMemory, SourceAgent: "hermes",
+	})...)
+	for _, companion := range filesUnder(memories, "", Target{
+		Kind: parsers.KindHermesMemory, SourceAgent: "hermes",
+	}) {
+		if strings.EqualFold(companion.FileName, "MEMORY.md") {
+			continue
+		}
+		companion.ExclusionReason = hermesMemoryCompanionExclusion(companion.FileName)
+		targets = append(targets, companion)
+	}
+	for _, item := range []struct{ rel, reason string }{
+		{"kanban.db", "Hermes kanban is empty and unread"},
+		{"sessions.db", "Hermes sessions.db is empty and unread"},
+		{"projects.db", "Hermes projects database is not conversation content"},
+		{"verification_evidence.db", "Hermes verification evidence is not conversation content"},
+		{filepath.Join("cron", "executions.db"), "Hermes cron executions are not conversation content"},
+	} {
+		targets = append(targets, existingFile(filepath.Join(roots.HermesHome, item.rel), Target{
+			Kind: parsers.KindHermesDB, SourceAgent: "hermes", ExclusionReason: item.reason,
+		})...)
+	}
+	return targets
+}
+
+func hermesMemoryCompanionExclusion(name string) string {
+	switch {
+	case strings.EqualFold(name, "USER.md"):
+		return "Hermes USER.md is not the curated MEMORY.md document"
+	case strings.HasSuffix(strings.ToLower(name), ".lock"):
+		return "Hermes memory lock file is not corpus content"
+	case strings.Contains(strings.ToLower(name), ".bak"):
+		return "Hermes memory backup is not corpus content"
+	default:
+		return "Hermes memory companion is not the curated MEMORY.md document"
+	}
 }
 
 // existingFile is one target for a path that is there and nothing for one that

@@ -19,9 +19,11 @@ func TestRootsOnMacOS(t *testing.T) {
 		"codex":           "/Users/op/.codex",
 		"codex sessions":  "/Users/op/.codex/sessions",
 		"opencode":        "/Users/op/.local/share/opencode/opencode.db",
+		"opencode bot":    "/Users/op/Library/Application Support/opencode-telegram-bot/logs",
 		"pi root":         "/Users/op/.pi",
 		"pi":              "/Users/op/.pi/agent/sessions",
 		"hermes":          "/Users/op/.hermes/state.db",
+		"hermes home":     "/Users/op/.hermes",
 		"grok":            "/Users/op/.grok/sessions",
 		"grok memtrace":   "/Users/op/.grok/memtrace",
 	}
@@ -33,9 +35,11 @@ func TestRootsOnMacOS(t *testing.T) {
 		"codex":           roots.CodexRoot,
 		"codex sessions":  roots.CodexSessions,
 		"opencode":        roots.OpenCodeDB,
+		"opencode bot":    roots.OpenCodeTelegramLogs,
 		"pi root":         roots.PiRoot,
 		"pi":              roots.PiSessions,
 		"hermes":          roots.HermesDB,
+		"hermes home":     roots.HermesHome,
 		"grok":            roots.GrokSessions,
 		"grok memtrace":   roots.GrokMemtrace,
 	}
@@ -54,6 +58,9 @@ func TestRootsOnLinuxFollowTheXDGDirectories(t *testing.T) {
 	if roots.OpenCodeDB != "/home/op/.local/share/opencode/opencode.db" {
 		t.Errorf("opencode = %q", roots.OpenCodeDB)
 	}
+	if roots.OpenCodeTelegramLogs != "/home/op/.config/opencode-telegram-bot/logs" {
+		t.Errorf("opencode Telegram logs = %q", roots.OpenCodeTelegramLogs)
+	}
 
 	// And they follow the variables when the operator moved them.
 	moved := ResolveRoots(Environment{
@@ -69,6 +76,9 @@ func TestRootsOnLinuxFollowTheXDGDirectories(t *testing.T) {
 	}
 	if moved.OpenCodeDB != "/home/op/data/opencode/opencode.db" {
 		t.Errorf("opencode = %q", moved.OpenCodeDB)
+	}
+	if moved.OpenCodeTelegramLogs != "/home/op/cfg/opencode-telegram-bot/logs" {
+		t.Errorf("opencode Telegram logs = %q", moved.OpenCodeTelegramLogs)
 	}
 }
 
@@ -103,8 +113,14 @@ func TestRootsOnWindowsUseItsOwnSeparatorAndItsOwnVariables(t *testing.T) {
 	if roots.OpenCodeDB != `C:\Users\ale\AppData\Local\opencode\opencode.db` {
 		t.Errorf("opencode = %q", roots.OpenCodeDB)
 	}
+	if roots.OpenCodeTelegramLogs != `C:\Users\ale\AppData\Roaming\opencode-telegram-bot\logs` {
+		t.Errorf("opencode Telegram logs = %q", roots.OpenCodeTelegramLogs)
+	}
 	if roots.HermesDB != `C:\Users\ale\.hermes\state.db` {
 		t.Errorf("hermes = %q", roots.HermesDB)
+	}
+	if roots.HermesHome != `C:\Users\ale\.hermes` {
+		t.Errorf("hermes home = %q", roots.HermesHome)
 	}
 }
 
@@ -147,14 +163,29 @@ func TestWhatTheOperatorDeclaresWinsOverThePlatformDefault(t *testing.T) {
 func TestTheEnvironmentWinsOverThePlatformDefault(t *testing.T) {
 	roots := ResolveRoots(Environment{GOOS: "darwin", Home: "/Users/op",
 		Getenv: environmentOf(map[string]string{
-			"CLAUDE_PROJECTS_ROOT": "/elsewhere/projects",
-			"HERMES_DB_PATH":       "/elsewhere/state.db",
+			"CLAUDE_PROJECTS_ROOT":       "/elsewhere/projects",
+			"HERMES_DB_PATH":             "/elsewhere/state.db",
+			"OPENCODE_TELEGRAM_BOT_LOGS": "/elsewhere/bot-logs",
 		})}, Settings{})
 	if roots.ClaudeProjects != "/elsewhere/projects" {
 		t.Errorf("claude projects = %q", roots.ClaudeProjects)
 	}
 	if roots.HermesDB != "/elsewhere/state.db" {
 		t.Errorf("hermes = %q", roots.HermesDB)
+	}
+	if roots.OpenCodeTelegramLogs != "/elsewhere/bot-logs" {
+		t.Errorf("opencode Telegram logs = %q", roots.OpenCodeTelegramLogs)
+	}
+}
+
+func TestHermesHomeOverrideMovesTheDefaultDatabase(t *testing.T) {
+	roots := ResolveRoots(Environment{GOOS: "darwin", Home: "/Users/op",
+		Getenv: environmentOf(map[string]string{"HERMES_HOME": "/moved/hermes"})}, Settings{})
+	if roots.HermesHome != "/moved/hermes" {
+		t.Errorf("hermes home = %q", roots.HermesHome)
+	}
+	if roots.HermesDB != "/moved/hermes/state.db" {
+		t.Errorf("hermes db = %q", roots.HermesDB)
 	}
 }
 
