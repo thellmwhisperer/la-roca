@@ -654,9 +654,10 @@ func (m Manager) RecoverUpdate(name string) error {
 				if err := verifyLinkedRecoveryProof(filepath.Join(target, recoveryProofFile), journal, proof); err != nil {
 					return fmt.Errorf("recover plugin %s update: %w", name, err)
 				}
-				if err := os.Rename(target, tombstone); err != nil {
-					return fmt.Errorf("tombstone interrupted plugin %s update: %w", name, err)
+				if err := tombstoneAndRestore(name, target, backup, tombstone); err != nil {
+					return err
 				}
+				return removeRecoveryTombstone(tombstone, journal, proof)
 			}
 			if err := os.Rename(backup, target); err != nil {
 				return fmt.Errorf("restore plugin %s update: %w", name, err)
@@ -720,16 +721,14 @@ func (m Manager) RecoverUpdate(name string) error {
 			if err := os.Link(marker, journal); err != nil {
 				return fmt.Errorf("create plugin %s recovery journal: %w", name, err)
 			}
-			if err := os.Rename(target, tombstone); err != nil {
-				return fmt.Errorf("tombstone interrupted plugin %s update: %w", name, err)
+			if err := tombstoneAndRestore(name, target, backup, tombstone); err != nil {
+				return err
 			}
+			return removeRecoveryTombstone(tombstone, journal,
+				updateRecoveryProof(name, previous))
 		}
 		if err := os.Rename(backup, target); err != nil {
 			return fmt.Errorf("restore plugin %s update: %w", name, err)
-		}
-		if currentErr == nil {
-			return removeRecoveryTombstone(tombstone, journal,
-				updateRecoveryProof(name, previous))
 		}
 		return nil
 	case currentErr == nil:
@@ -747,6 +746,16 @@ func (m Manager) RecoverUpdate(name string) error {
 		return fmt.Errorf("recover plugin %s update: previous directory is not verified: %v; current directory is not verified: %v",
 			name, previousErr, currentErr)
 	}
+}
+
+func tombstoneAndRestore(name, target, backup, tombstone string) error {
+	if err := os.Rename(target, tombstone); err != nil {
+		return fmt.Errorf("tombstone interrupted plugin %s update: %w", name, err)
+	}
+	if err := os.Rename(backup, target); err != nil {
+		return fmt.Errorf("restore plugin %s update: %w", name, err)
+	}
+	return nil
 }
 
 func recoveryPathExists(path string) (bool, error) {
@@ -771,10 +780,6 @@ func createRecoveryProof(path, proof string) error {
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
-	if err := temporary.Chmod(0o600); err != nil {
-		temporary.Close()
-		return err
-	}
 	if _, err := temporary.WriteString(proof); err != nil {
 		temporary.Close()
 		return err
@@ -918,14 +923,10 @@ func (m Manager) restoreRecoveryExecutable(
 	manifest Manifest,
 	allowed ...Manifest,
 ) error {
-	if manifest.Executable == "" {
+	expected, digest, err := m.installedExecutableChecksum(manifest)
+	if expected == "" {
 		return nil
 	}
-	expected := filepath.Join(m.BinDir, manifest.ExecutableFile)
-	if filepath.Clean(manifest.Executable) != filepath.Clean(expected) {
-		return fmt.Errorf("plugin executable path %s is outside the configured executable directory", manifest.Executable)
-	}
-	digest, err := fileChecksum(expected)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -1019,19 +1020,13 @@ func (m Manager) PreflightUpdateFrom(candidate Candidate, installedName, manifes
 }
 
 func (m Manager) preflightUpdate(candidate Candidate, installedName, manifestName string) (Manifest, error) {
-	if err := m.valid(); err != nil {
+	target, err := m.updateTarget(installedName)
+	if err != nil {
 		return Manifest{}, err
 	}
-	if !safeName(installedName) {
-		return Manifest{}, fmt.Errorf("invalid installed plugin name %q", installedName)
-	}
-	target := filepath.Join(m.PluginRoot, installedName)
-	previousManifest, err := ReadManifest(target)
+	previousManifest, err := readUpdateManifest(candidate, target, manifestName)
 	if err != nil {
-		return Manifest{}, fmt.Errorf("update plugin %s: %w", candidate.Name, err)
-	}
-	if previousManifest.Name != manifestName {
-		return Manifest{}, fmt.Errorf("plugin manifest names %q, not %q", previousManifest.Name, manifestName)
+		return Manifest{}, err
 	}
 	if previousManifest.Kind != candidate.Kind {
 		return Manifest{}, fmt.Errorf("plugin %s changed its package kind from %s to %s; update refused",
@@ -1285,23 +1280,17 @@ func (m Manager) PreflightUpdateInPlaceFrom(candidate Candidate, installedName, 
 }
 
 func (m Manager) preflightUpdateInPlace(candidate Candidate, installedName, manifestName string) (Manifest, error) {
-	if err := m.valid(); err != nil {
+	target, err := m.updateTarget(installedName)
+	if err != nil {
 		return Manifest{}, err
-	}
-	if !safeName(installedName) {
-		return Manifest{}, fmt.Errorf("invalid installed plugin name %q", installedName)
 	}
 	if candidate.Kind != DataPackage || candidate.Risk != DataOnly || candidate.Executable != "" {
 		return Manifest{}, fmt.Errorf(
 			"plugin %s can run code; an in-place update is refused", candidate.Name)
 	}
-	target := filepath.Join(m.PluginRoot, installedName)
-	previous, err := ReadManifest(target)
+	previous, err := readUpdateManifest(candidate, target, manifestName)
 	if err != nil {
-		return Manifest{}, fmt.Errorf("update plugin %s: %w", candidate.Name, err)
-	}
-	if previous.Name != manifestName {
-		return Manifest{}, fmt.Errorf("plugin manifest names %q, not %q", previous.Name, manifestName)
+		return Manifest{}, err
 	}
 	if previous.Executable != "" {
 		return Manifest{}, fmt.Errorf(
@@ -1319,6 +1308,27 @@ func (m Manager) preflightUpdateInPlace(candidate Candidate, installedName, mani
 			candidate.Name, previousDatabases, candidateDatabases)
 	}
 	return previous, nil
+}
+
+func (m Manager) updateTarget(installedName string) (string, error) {
+	if err := m.valid(); err != nil {
+		return "", err
+	}
+	if !safeName(installedName) {
+		return "", fmt.Errorf("invalid installed plugin name %q", installedName)
+	}
+	return filepath.Join(m.PluginRoot, installedName), nil
+}
+
+func readUpdateManifest(candidate Candidate, target, manifestName string) (Manifest, error) {
+	manifest, err := ReadManifest(target)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("update plugin %s: %w", candidate.Name, err)
+	}
+	if manifest.Name != manifestName {
+		return Manifest{}, fmt.Errorf("plugin manifest names %q, not %q", manifest.Name, manifestName)
+	}
+	return manifest, nil
 }
 
 func (m Manager) PreflightExecutableRepair(candidate Candidate) error {
@@ -1553,14 +1563,10 @@ func (m Manager) executablePath(candidate Candidate) string {
 }
 
 func (m Manager) verifyOwnedExecutable(manifest Manifest) error {
-	if manifest.Executable == "" {
+	expected, digest, err := m.installedExecutableChecksum(manifest)
+	if expected == "" {
 		return nil
 	}
-	expected := filepath.Join(m.BinDir, manifest.ExecutableFile)
-	if filepath.Clean(manifest.Executable) != filepath.Clean(expected) {
-		return fmt.Errorf("plugin executable path %s is outside the configured executable directory", manifest.Executable)
-	}
-	digest, err := fileChecksum(expected)
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -1571,6 +1577,18 @@ func (m Manager) verifyOwnedExecutable(manifest Manifest) error {
 		return fmt.Errorf("plugin executable %s changed since install; refusing to overwrite or delete it", expected)
 	}
 	return nil
+}
+
+func (m Manager) installedExecutableChecksum(manifest Manifest) (string, string, error) {
+	if manifest.Executable == "" {
+		return "", "", nil
+	}
+	expected := filepath.Join(m.BinDir, manifest.ExecutableFile)
+	if filepath.Clean(manifest.Executable) != filepath.Clean(expected) {
+		return expected, "", fmt.Errorf("plugin executable path %s is outside the configured executable directory", manifest.Executable)
+	}
+	digest, err := fileChecksum(expected)
+	return expected, digest, err
 }
 
 func resultFor(candidate Candidate, directory, executable string) Result {
