@@ -12,28 +12,36 @@ release).
 ## Windows install
 
 1. Download `roca-<version>-windows-x64.exe` from the release, put it in a
-   permanent directory without renaming it, and add that directory to the user
-   `PATH`.
+   permanent directory as `roca.exe`, and add that directory to the user
+   `PATH`. This stable name is what the shipped skills and the commands below
+   assume.
 2. Open a new PowerShell window and have the core extract its carried companion
    into that same directory:
 
    ```powershell
-   $RocaDir = Split-Path (Get-Command roca-<version>-windows-x64.exe).Source
+   $RocaDir = Split-Path (Get-Command roca.exe).Source
    $env:ROCA_PREFIX = $RocaDir
-   roca-<version>-windows-x64.exe _install-bundled-plugins
+   roca.exe _install-bundled-plugins
    Get-Command roca-vector.exe
    ```
 
-Replace `<version>` with the downloaded release version. The final command must
-resolve `roca-vector.exe` from `$RocaDir`. Every native Windows command below
-keeps using that versioned core filename; if it is deliberately renamed to
-`roca.exe`, that shorter name can replace it throughout. WSL is an alternative:
-install and operate the Linux artefact with the Unix commands inside the
-distribution.
+The final command must resolve `roca-vector.exe` from `$RocaDir`.
 
-Turn it on in the configuration
-`roca-<version>-windows-x64.exe doctor` names on native Windows (`roca doctor`
-on macOS, Linux, or WSL)
+No-rename PATH alternative: replace `<version>` below with the downloaded
+release version and extract through that filename:
+
+```powershell
+$RocaDir = Split-Path (Get-Command roca-<version>-windows-x64.exe).Source
+$env:ROCA_PREFIX = $RocaDir
+roca-<version>-windows-x64.exe _install-bundled-plugins
+```
+
+The docs and shipped skills assume the stable `roca` / `roca.exe` name. A user
+who keeps the versioned filename must substitute it for bare `roca` in every
+later docs or skill command. WSL is an alternative: install and operate the
+Linux artefact with the Unix commands inside the distribution.
+
+Turn it on in the configuration `roca doctor` names
 (`~/.roca/config.toml`, or `%USERPROFILE%\.roca\config.toml` on Windows,
 or `config.toml` next to a `--db-path` database):
 
@@ -42,9 +50,9 @@ or `config.toml` next to a `--db-path` database):
 vector = true
 ```
 
-That exposes the `vector` command and lists `vector` in `plugins`. Absent or
-false, the command does not exist. On Windows, keep `roca-vector.exe` beside the
-versioned core executable in the directory on `PATH`.
+That exposes `roca vector` and lists `vector` in `roca plugins`. Absent or
+false, the command does not exist. On Windows, keep `roca-vector.exe` beside
+`roca.exe` in the directory on `PATH`.
 
 ## Prerequisites
 
@@ -82,12 +90,7 @@ pull the same model before the first index build.
 
 ## Index the corpus
 
-Start the first build only after the model pull has finished. Command pairs
-below show native Windows first and macOS, Linux, or WSL second:
-
-```powershell
-roca-<version>-windows-x64.exe vector install
-```
+Start the first build only after the model pull has finished:
 
 ```sh
 roca vector install
@@ -103,10 +106,6 @@ directory. The worker log path is printed at launch; `completion.json` records
 
 Indexing is incremental after that. `vector ingest` always requires `--delta`:
 
-```powershell
-roca-<version>-windows-x64.exe vector ingest --delta
-```
-
 ```sh
 roca vector ingest --delta
 ```
@@ -117,10 +116,6 @@ A full delta embeds four families: `memories`, `exchanges`,
 cleaned title plus cleaned `metadata.project_name` only.
 
 For a non-default database:
-
-```powershell
-roca-<version>-windows-x64.exe vector --db-path C:\path\to\roca.db ingest --delta
-```
 
 ```sh
 roca vector --db-path /path/to/roca.db ingest --delta
@@ -149,10 +144,6 @@ After compaction the index occupies about 1.3-1.5 GB per ~350k chunks.
 Churn (many updates and deletes) leaves empty pages; reclaim them
 explicitly:
 
-```powershell
-roca-<version>-windows-x64.exe vector compact
-```
-
 ```sh
 roca vector compact
 ```
@@ -160,10 +151,6 @@ roca vector compact
 Ingest does not compact on its own.
 
 ## First query
-
-```powershell
-roca-<version>-windows-x64.exe vector query "what did we decide" 10
-```
 
 ```sh
 roca vector query "what did we decide" 10
@@ -180,5 +167,4 @@ the live chunk count. That is the operator's own confidence probe; it needs
 no golden file.
 
 Search craft for agents lives in the shipped skill's Hybrid discovery
-section (`roca-<version>-windows-x64.exe skill install` on native Windows;
-`roca skill install` on macOS, Linux, or WSL).
+section (`roca skill install`).
