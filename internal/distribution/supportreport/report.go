@@ -251,6 +251,10 @@ func listSupportPlugins(root string) ([]Plugin, string) {
 			listed = append(listed, Plugin{Name: "unknown", ManifestStatus: manifestFailureStatus(directory, err)})
 			continue
 		}
+		if manifest.Name != entry.Name() {
+			listed = append(listed, Plugin{Name: "unknown", ManifestStatus: ManifestInvalid})
+			continue
+		}
 		origin, source := PluginOrigin(manifest.Source)
 		listed = append(listed, Plugin{
 			Name:            manifest.Name,
@@ -275,12 +279,15 @@ func manifestFailureStatus(directory string, readErr error) string {
 	if errors.Is(readErr, os.ErrPermission) {
 		return ManifestUnreadable
 	}
-	info, err := os.Stat(filepath.Join(directory, plugininstall.ManifestFilename))
+	info, err := os.Lstat(filepath.Join(directory, plugininstall.ManifestFilename))
 	if errors.Is(err, os.ErrNotExist) {
 		return ManifestMissing
 	}
-	if err != nil || !info.Mode().IsRegular() {
+	if err != nil {
 		return ManifestUnreadable
+	}
+	if !info.Mode().IsRegular() {
+		return ManifestInvalid
 	}
 	return ManifestInvalid
 }
@@ -404,8 +411,11 @@ func openSupportStore(path string) (supportStore, func()) {
 	if path == "" {
 		return supportStore{}, func() {}
 	}
-	if _, err := os.Stat(path); err != nil {
-		return supportStore{}, func() {}
+	if _, err := os.Lstat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return supportStore{}, func() {}
+		}
+		return supportStore{present: true}, func() {}
 	}
 	store := supportStore{present: true}
 	db, err := bundledplugin.OpenDatabase(path, true)
@@ -642,21 +652,50 @@ func readVectorDelta(path string) *Delta {
 }
 
 func lastIngestAt(ctx context.Context, dbs ...*sql.DB) string {
-	var latest string
+	var latest time.Time
+	invalid := false
 	for _, db := range dbs {
 		if db == nil || !supportTablePresent(ctx, db, "ingest_file_state") {
 			continue
 		}
-		var value sql.NullString
-		if err := db.QueryRowContext(ctx, `SELECT MAX(last_synced_at) FROM ingest_file_state`).
-			Scan(&value); err != nil || !value.Valid || value.String == "" {
+		rows, err := db.QueryContext(ctx,
+			`SELECT last_synced_at FROM ingest_file_state WHERE last_synced_at IS NOT NULL`)
+		if err != nil {
 			continue
 		}
-		if value.String > latest {
-			latest = value.String
+		for rows.Next() {
+			var value string
+			if rows.Scan(&value) != nil {
+				invalid = true
+				continue
+			}
+			parsed, ok := parseSupportTimestamp(value)
+			if !ok {
+				invalid = true
+				continue
+			}
+			if parsed.After(latest) {
+				latest = parsed
+			}
 		}
+		invalid = invalid || rows.Err() != nil
+		rows.Close()
 	}
-	return latest
+	if invalid {
+		return "invalid"
+	}
+	if latest.IsZero() {
+		return ""
+	}
+	return latest.UTC().Format(time.RFC3339)
+}
+
+func parseSupportTimestamp(value string) (time.Time, bool) {
+	if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return parsed, true
+	}
+	parsed, err := time.ParseInLocation("2006-01-02 15:04:05", value, time.UTC)
+	return parsed, err == nil
 }
 
 func Render(snapshot Snapshot) string {

@@ -185,15 +185,17 @@ size:
    Remote sources expose only their hostname, or `remote` when none is safely
    available. An unreadable, missing, or invalid installed manifest remains a
    content-free entry with that error class; an unreadable plugin root is
-   reported as an unreadable inventory rather than as no plugins. All dynamic
-   text fields are single-line escaped so damaged state cannot break the report
-   fence.
+   reported as an unreadable inventory rather than as no plugins. Installed
+   manifests are opened without following links and must name their containing
+   plugin directory. All dynamic text fields are single-line escaped so damaged
+   state cannot break the report fence.
 3. **Feature flags** — on/off for every `features.*` switch.
 4. **Federation** — first-class mode (`fresh`, `legacy-only`, `migrating`,
    `federated`, `uninitialized`, or `legacy-serving`), the `layout.serving`
    marker, where corpus text actually lives (`legacy-core`, `plugin-corpus`,
    `split`, `empty`, or `unknown`), which stores exist and are readable with
-   family row counts, and named migration states plus the shared DATA-6
+   family row counts (including present paths that cannot be followed or
+   opened), and named migration states plus the shared DATA-6
    cutover verdict. That verdict requires readable corpus, ops, and cron stores
    together with verified DATA-2, DATA-3, and DATA-4 custody. A fresh init, a
    core-only legacy home, a mid-migration home, and a verified cutover home are
@@ -207,7 +209,8 @@ size:
    dimensions, chunk totals by kind, store size, and the last recorded delta
    counts.
 7. **Ingest** — detected agent names and the latest `ingest_file_state`
-   timestamp. No source paths.
+   timestamp. Supported timestamp forms are normalized to UTC; malformed text
+   is reported only as `invalid`. No source paths.
 
 The report never includes conversation text, memory bodies, file paths outside
 the `~/.roca` layout names, or person names. Corpus-scale totals are the only
