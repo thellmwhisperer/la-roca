@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 	_ "modernc.org/sqlite"
@@ -98,6 +99,39 @@ func TestHealthVerdictsUseTheFirstReadableLayerRegistry(t *testing.T) {
 					statuses["physical_alias_layer_rows"], testCase.wantPhysical)
 			}
 		})
+	}
+}
+
+func TestHealthVerdictsDoNotPassAfterADeadline(t *testing.T) {
+	schema := `
+		CREATE TABLE memories (
+			id INTEGER PRIMARY KEY, layer TEXT, supersedes INTEGER, metadata TEXT,
+			source_agent TEXT, created_at TEXT
+		);`
+	passing := openVerdictDatabase(t, schema)
+	locked := openVerdictDatabase(t, schema)
+	locked.SetMaxOpenConns(1)
+	connection, err := locked.Conn(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = connection.Close() })
+	if _, err := connection.ExecContext(t.Context(), `BEGIN EXCLUSIVE`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = connection.ExecContext(t.Context(), `ROLLBACK`) })
+
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	statuses := map[string]string{}
+	for _, verdict := range service.HealthVerdicts(
+		ctx, nil, []*sql.DB{passing, locked}, nil) {
+		statuses[verdict.Name] = verdict.Status
+	}
+	for _, name := range []string{"orphan_supersedes", "memory_created_at_formats"} {
+		if statuses[name] != "skipped" {
+			t.Errorf("%s verdict = %q, want skipped", name, statuses[name])
+		}
 	}
 }
 

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -226,12 +227,14 @@ func HealthVerdicts(ctx context.Context, registries, memories, others []*sql.DB)
 			readers = memories
 		}
 		status := healthSkipped
+		incomplete := false
 		for _, reader := range readers {
 			if reader == nil {
 				continue
 			}
 			count, err := healthCount(ctx, reader, check, registered)
 			if err != nil {
+				incomplete = incomplete || healthObservationIncomplete(ctx, err)
 				continue
 			}
 			candidate := HealthPass
@@ -240,9 +243,13 @@ func HealthVerdicts(ctx context.Context, registries, memories, others []*sql.DB)
 			}
 			status = worstConcrete(status, candidate)
 		}
+		if incomplete && status == HealthPass {
+			status = healthSkipped
+		}
 		verdicts = append(verdicts, HealthVerdict{Name: check.name, Status: status})
 	}
 	status := healthSkipped
+	incomplete := false
 	for _, reader := range memories {
 		if reader == nil {
 			continue
@@ -250,9 +257,19 @@ func HealthVerdicts(ctx context.Context, registries, memories, others []*sql.DB)
 		timestamps, err := checkTimestampFormats(ctx, reader)
 		if err == nil {
 			status = worstConcrete(status, timestamps.Status)
+		} else {
+			incomplete = incomplete || healthObservationIncomplete(ctx, err)
 		}
 	}
+	if incomplete && status == HealthPass {
+		status = healthSkipped
+	}
 	return append(verdicts, HealthVerdict{Name: "memory_created_at_formats", Status: status})
+}
+
+func healthObservationIncomplete(ctx context.Context, err error) bool {
+	return ctx.Err() != nil || errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded)
 }
 
 func firstReadableLayers(ctx context.Context, readers []*sql.DB) ([]registeredLayer, bool) {

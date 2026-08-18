@@ -232,7 +232,8 @@ func Collect(ctx context.Context, opts Options) (Snapshot, error) {
 	}
 	mode, custody := classifyFederation(
 		serving, stores, coreFamilies, corpusFamiliesCounts, migrations, cutoverEligible,
-		coreComplete && corpusComplete && opsComplete && migrationsComplete)
+		observationAvailable(coreStore, core) && coreComplete && corpusComplete &&
+			opsComplete && migrationsComplete)
 	migrationsStatus := ObservationComplete
 	if !migrationsComplete {
 		migrationsStatus = ObservationUnreadable
