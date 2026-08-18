@@ -347,12 +347,11 @@ and `_`. The executable is `roca-<name>` unless `name` already starts with
 but the installer could not manage is refused at install time, not after.
 
 `binary` names the executable that runs the package's capabilities. A package
-that ships one declares its derived executable file: `roca-<name>`, or exactly
-`name` when it already starts with `roca-`. The installer refuses the package
-when the declared name and the shipped file disagree. A package
-that ships no executable declares `roca`, the host binary: its capabilities
-are commands of La Roca itself, and it stays **DATA-ONLY** because it adds no
-code of its own. There is no third value; `binary` is never empty.
+that ships one declares the derived executable described above. The installer
+refuses the package when the declared name and the shipped file disagree. A
+package that ships no executable declares `roca`, the host binary: its
+capabilities are commands of La Roca itself, and it stays **DATA-ONLY** because
+it adds no code of its own. There is no third value; `binary` is never empty.
 
 ### Database declarations
 
@@ -456,9 +455,9 @@ semantic fragment. Its `plugin.json` declares identity and the kind:
 }
 ```
 
-Its `checksums.txt` lists exactly `plugin.json` and the derived executable:
-`roca-<name>`, or exactly `name` when it already starts with `roca-`. The package
-may declare one `state_directory`, a safe single-component name for state the
+Its `checksums.txt` lists exactly `plugin.json` and the derived executable
+described in [the manifest](#the-manifest). The package may declare one
+`state_directory`, a safe single-component name for state the
 command derives and rewrites. The installer creates it after verification,
 preserves it across updates, refuses a rename, and records the namespace in the
 installed manifest, so uninstall and purge own its contents. It is derived
@@ -479,8 +478,7 @@ entries are refused before package verification.
 
 `checksums.txt` publishes one SHA-256 for every payload file: `plugin.json`,
 each declared database, the optional `rides.toml`, and the optional derived
-executable (`roca-<name>`, or exactly `name` when it already starts with
-`roca-`). The installer rejects missing, extra, changed,
+executable. The installer rejects missing, extra, changed,
 symlinked, or non-regular payloads before it writes anything, and it installs
 each payload from the same open file it verifies, so a source swapped for a
 symlink or another file between the consent screen and the copy is refused
@@ -498,8 +496,7 @@ risk levels:
   no ride manifest. It is near-harmless; its worst case is lying content
   entering model context.
 - **EXECUTABLE** is full trust. It runs code with the user's privileges, either
-  from its derived executable (`roca-<name>`, or exactly `name` when it already
-  starts with `roca-`) or from the ride commands the [cron
+  from its derived executable or from the ride commands the [cron
   train](#scheduled-rides) hands to a shell.
 
 Install, update, and uninstall all show that screen and wait for an answer.

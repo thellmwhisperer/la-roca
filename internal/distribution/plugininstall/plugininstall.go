@@ -930,6 +930,9 @@ func (m Manager) restoreRecoveryExecutable(
 		return err
 	}
 	if err == nil {
+		if digest == manifest.Files[manifest.ExecutableFile] {
+			return nil
+		}
 		owned := false
 		for _, candidate := range allowed {
 			if candidate.Executable == manifest.Executable &&
