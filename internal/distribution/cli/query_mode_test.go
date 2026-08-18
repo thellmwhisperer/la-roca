@@ -96,7 +96,7 @@ func queryModeServiceWithTimeout(t *testing.T, model *queryModeProvider,
 func queryModeServiceWithProvider(t *testing.T, model provider.Provider,
 	timeout time.Duration, interpreters ...provider.Provider) *service.Service {
 	t.Helper()
-	svc, err := service.Open(service.Options{
+	return openQueryModeService(t, service.Options{
 		DBPath: filepath.Join(t.TempDir(), "roca.db"),
 		Providers: provider.Cascade{
 			Providers: []provider.Provider{model},
@@ -104,6 +104,11 @@ func queryModeServiceWithProvider(t *testing.T, model provider.Provider,
 		},
 		Interpreters: provider.Cascade{Providers: interpreters, Timeout: timeout},
 	})
+}
+
+func openQueryModeService(t *testing.T, options service.Options) *service.Service {
+	t.Helper()
+	svc, err := service.Open(options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,19 +308,11 @@ func scopedQueryModeService(t *testing.T, model provider.Provider) *service.Serv
 	if _, err := rocacorpus.Ensure(plugins, bin, "v-test"); err != nil {
 		t.Fatal(err)
 	}
-	svc, err := service.Open(service.Options{
+	return openQueryModeService(t, service.Options{
 		DBPath: filepath.Join(root, "roca.db"), PluginDir: plugins,
 		RocaOpsEnabled: true, CorpusEnabled: true,
 		Providers: provider.Cascade{Providers: []provider.Provider{model}},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = svc.Close() })
-	if _, err := svc.Init(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	return svc
 }
 
 func TestQueryFullAdaptsTheInterpretationDeadlineAndReportsItsTimeout(t *testing.T) {

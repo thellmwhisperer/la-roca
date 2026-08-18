@@ -542,12 +542,19 @@ func installQueryPlugin(t *testing.T, root, name, semantic, ddl string) {
 	}
 }
 
-func TestQueryScopesTheSQLSeatAndFailsUnknownNames(t *testing.T) {
+func scopedBundledPlugins(t *testing.T) (testPaths, string) {
+	t.Helper()
 	paths := freshPaths(t)
 	plugins := ensureRocaOps(t, paths)
 	if _, err := rocacorpus.Ensure(plugins, filepath.Join(paths.data, "bin"), "v-test"); err != nil {
 		t.Fatal(err)
 	}
+	return paths, plugins
+}
+
+func scopedReceiptPlugins(t *testing.T) (testPaths, string) {
+	t.Helper()
+	paths, plugins := scopedBundledPlugins(t)
 	installQueryPlugin(t, plugins, "well-formed", `
 version: 1
 description: Synthetic purchase receipts.
@@ -558,6 +565,23 @@ tables:
     columns: [id, title]
 `, `CREATE TABLE receipts (id INTEGER PRIMARY KEY, title TEXT);
 INSERT INTO receipts (title) VALUES ('Synthetic telescope parts');`)
+	return paths, plugins
+}
+
+func initializedScopedPlugins(t *testing.T, paths testPaths, plugins string,
+	model provider.Provider) *service.Service {
+	t.Helper()
+	return initialized(t, paths, func(options *service.Options) {
+		options.PluginDir = plugins
+		options.PluginsEnabled = true
+		options.RocaOpsEnabled = true
+		options.CorpusEnabled = true
+		options.Providers = cascadeOf(model)
+	})
+}
+
+func TestQueryScopesTheSQLSeatAndFailsUnknownNames(t *testing.T) {
+	paths, plugins := scopedReceiptPlugins(t)
 
 	for _, tc := range []struct {
 		name       string
@@ -608,13 +632,7 @@ INSERT INTO receipts (title) VALUES ('Synthetic telescope parts');`)
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			model := answering("codex", tc.sql)
-			svc := initialized(t, paths, func(options *service.Options) {
-				options.PluginDir = plugins
-				options.PluginsEnabled = true
-				options.RocaOpsEnabled = true
-				options.CorpusEnabled = true
-				options.Providers = cascadeOf(model)
-			})
+			svc := initializedScopedPlugins(t, paths, plugins, model)
 			result, err := svc.Query(t.Context(), service.QueryRequest{
 				Question: "Which receipts were recorded?", Databases: tc.databases, SQLOnly: tc.sqlOnly,
 			})
@@ -651,21 +669,7 @@ INSERT INTO receipts (title) VALUES ('Synthetic telescope parts');`)
 }
 
 func TestSuccessfulWideningDropsTheScopedPassAnswerState(t *testing.T) {
-	paths := freshPaths(t)
-	plugins := ensureRocaOps(t, paths)
-	if _, err := rocacorpus.Ensure(plugins, filepath.Join(paths.data, "bin"), "v-test"); err != nil {
-		t.Fatal(err)
-	}
-	installQueryPlugin(t, plugins, "well-formed", `
-version: 1
-description: Synthetic purchase receipts.
-questions: ["Which receipts were recorded?"]
-tables:
-  - name: receipts
-    description: Synthetic receipts.
-    columns: [id, title]
-`, `CREATE TABLE receipts (id INTEGER PRIMARY KEY, title TEXT);
-INSERT INTO receipts (title) VALUES ('Synthetic telescope parts');`)
+	paths, plugins := scopedReceiptPlugins(t)
 
 	const first = "DELETE FROM memories"
 	const empty = "SELECT 1 AS answer WHERE 0 LIMIT 1"
@@ -674,13 +678,7 @@ INSERT INTO receipts (title) VALUES ('Synthetic telescope parts');`)
 		name: "codex", model: "codex-model", ready: provider.Readiness{Ready: true},
 		latency: 7, answers: []string{first, empty, widened},
 	}
-	svc := initialized(t, paths, func(options *service.Options) {
-		options.PluginDir = plugins
-		options.PluginsEnabled = true
-		options.RocaOpsEnabled = true
-		options.CorpusEnabled = true
-		options.Providers = cascadeOf(model)
-	})
+	svc := initializedScopedPlugins(t, paths, plugins, model)
 	result, err := svc.Query(t.Context(), service.QueryRequest{Question: "Which receipts were recorded?"})
 	if err != nil {
 		t.Fatal(err)

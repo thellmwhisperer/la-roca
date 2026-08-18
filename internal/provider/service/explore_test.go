@@ -3,12 +3,10 @@ package service_test
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
@@ -100,21 +98,11 @@ func TestExplorePinsEachInterpreterMissionAndItsGroundedTerrain(t *testing.T) {
 }
 
 func TestExploreBuffersWidenAndMergesQueryTelemetry(t *testing.T) {
-	paths := freshPaths(t)
-	plugins := ensureRocaOps(t, paths)
-	if _, err := rocacorpus.Ensure(plugins, filepath.Join(paths.data, "bin"), "v-test"); err != nil {
-		t.Fatal(err)
-	}
+	paths, plugins := scopedBundledPlugins(t)
 	base := newTwoInferenceFake([]string{exploreSQL, exploreSQL}, "")
 	model := &streamingExploreProvider{twoInferenceFake: base,
 		answers: []string{"WIDEN", "A widened investigation answer."}}
-	svc := initialized(t, paths, func(options *service.Options) {
-		options.PluginDir = plugins
-		options.PluginsEnabled = true
-		options.RocaOpsEnabled = true
-		options.CorpusEnabled = true
-		options.Providers = cascadeOf(model)
-	})
+	svc := initializedScopedPlugins(t, paths, plugins, model)
 	var deltas []string
 	var announced service.QueryResult
 	var starts int
