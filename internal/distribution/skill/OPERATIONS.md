@@ -126,8 +126,9 @@ is last resort.
 
 Check whether the vector index exists before you search. The contract is
 docs/vector.md: `~/.roca/plugins/roca-vector/state/completion.json` records
-`finished_at` when the first pass finished. That file, with a non-empty
-`finished_at`, is the index. Absent or unfinished means there is no index.
+`finished_at` and `exit_status` for the first pass. The index exists only when
+`finished_at` is non-empty and `exit_status == 0`. Otherwise take the no-index,
+exec-first branch.
 `features.vector = true` only unhides `roca vector`; it is not the index.
 `roca vector query` refuses until the index is ready.
 
@@ -180,15 +181,17 @@ When the index exists, this loop is mandatory. It is how the craft is done.
 Operator setup lives in the `roca-vector` skill and docs/vector.md.
 
 Vector search finds the nearby rows. FTS censuses them. SQL frames them.
+This three-step loop is the shipped RRF hybrid.
 Zero inference on that path; inference only at the end, by the reading
 agent, to narrate. `roca vector query` does no model inference; `roca exec`
 does none either.
 
-1. Search by meaning with `roca vector query "<first-person phrase or bare word>" k`.
-   `k` is optional (default 10) and capped at 100. Hits print score, source
-   family, and source id. Probing phrases in first person work better than
-   meta-concepts: `roca vector query "names of people" 20` finds documents
-   ABOUT names; `roca vector query "my boss is named" 20` finds the names.
+1. Search by meaning with `roca vector query "<first-person phrase or bare word>" 100`.
+   The mandatory loop always requests the top 100 hits. Hits print score,
+   source family, and source id. Probing phrases in first person work better
+   than meta-concepts: `roca vector query "names of people" 100` finds
+   documents ABOUT names; `roca vector query "my boss is named" 100` finds
+   the names.
 2. Census those hits with deterministic FTS through `roca exec`: counts,
    dates, and word-boundary `MATCH`. Do not use `LIKE '%term%'`: it matches
    inside other words (`name` inside `rename`).
@@ -197,20 +200,20 @@ does none either.
 Worked loop, names:
 
 ```bash
-roca vector query "my boss is named" 20
+roca vector query "my boss is named" 100
 roca exec "SELECT substr(COALESCE(e.human_timestamp, e.agent_timestamp), 1, 7) AS month, COUNT(DISTINCT e.id) AS exchanges, COUNT(DISTINCT e.session_id) AS sessions FROM (SELECT rowid AS source_id FROM exchanges_fts WHERE exchanges_fts MATCH 'ana') hits JOIN exchanges e ON e.id = hits.source_id GROUP BY month ORDER BY month"
 ```
 
 Worked loop, concept:
 
 ```bash
-roca vector query "exhaustion" 20
+roca vector query "exhaustion" 100
 roca exec "SELECT COUNT(DISTINCT e.id) AS exchanges, COUNT(DISTINCT e.session_id) AS sessions, MIN(COALESCE(e.human_timestamp, e.agent_timestamp)) AS first_seen, MAX(COALESCE(e.human_timestamp, e.agent_timestamp)) AS last_seen FROM (SELECT rowid AS source_id FROM exchanges_fts WHERE exchanges_fts MATCH 'exhaustion') hits JOIN exchanges e ON e.id = hits.source_id"
 ```
 
 Stop before the last reading if you only needed the map. `roca query --sql-only`
-is a convenient natural-language, with-inference SQL compiler outside this zero-inference path;
-use it only when that inference is intentional.
+and `roca_sql` are with-inference SQL compilers outside this zero-inference path.
+Use them only as a last resort when you cannot write the SELECT yourself.
 
 Caveats measured on real use:
 
@@ -263,11 +266,12 @@ When you would otherwise fire three exploratory queries, fire one
    commonly produces zero rows.
 5. Widen only deliberately and say so out loud: use explicit OR, search the
    whole corpus, or raise limits consciously.
-6. Graduate to `roca query --sql-only` plus `roca exec` once the printed plans
-   have shown the schema. Phrase by relation, not point fact: "what is my
-   relationship with X" matches how conversations store knowledge better than
-   "who did I work with at X", and rankings need an explicit `ORDER BY` on the
-   volume column or the list shows the tail instead of the head.
+6. If you still cannot write the SELECT after the printed plans have shown the
+   schema, use the last-resort `roca query --sql-only` compiler, then `roca exec`.
+   Phrase by relation, not point fact: "what is my relationship with X" matches
+   how conversations store knowledge better than "who did I work with at X",
+   and rankings need an explicit `ORDER BY` on the volume column or the list
+   shows the tail instead of the head.
 7. End with a Verdict grounded in rows: state the claim, which row supports it,
    and what stayed unanswered. Cross-check the plausible before trusting it: a
    confident answer to a superlative or origin question ("the most", "the
@@ -287,8 +291,8 @@ Do not stack synonyms.
   their memory and rule files land in the `user`, `feedback` and `project`
   layers at ingest. On a fresh install the `handoff` layer is empty until
   agents store the first one, so read the history, then write it yourself.
-- Start project work with the handoff one-liner through `roca exec` on
-  `plugin_roca_ops.memories` (layer `handoff`, the project name). Ask for
+- Start project work with the unqualified handoff one-liner through `roca exec`:
+  `FROM memories WHERE layer = 'handoff' AND project = '<project>'`. Ask for
   the current handoff protocol and follow it instead of freezing it here. After
   meaningful work, always store a handoff with branch, changes, state, next
   steps and blockers.
@@ -301,9 +305,10 @@ Do not stack synonyms.
   memories, sessions)", request OR between terms and raise limits consciously.
 - For counts or rankings, name `sessions` or `exchanges`, where the mass lives;
   do not aim analytics at the smaller set of curated memories.
-- For origins, compile with `roca_sql`, run with `roca_exec` using
-  `ORDER BY timestamp ASC`, then inspect the first matching session and its
-  surrounding exchanges.
+- For origins, write the SELECT yourself with `ORDER BY timestamp ASC`, run it
+  through `roca exec`, then inspect the first matching session and its
+  surrounding exchanges. Use an inference compiler only if you cannot write
+  that SELECT.
 - Rows are the truth; prose is a reading. Verify claims against returned rows
   and say plainly when they do not answer the question.
 - CLI and MCP split by job: with a shell, dig with the CLI, which composes
