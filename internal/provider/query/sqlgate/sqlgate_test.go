@@ -188,46 +188,27 @@ func TestTheLimitIsAddedAndClamped(t *testing.T) {
 func TestTheLimitClampHandlesWhitespaceOffsetsAndBothSQLiteForms(t *testing.T) {
 	for _, tc := range []struct {
 		statement, want string
+		wantErr         bool
 	}{
-		{"\n  SELECT id FROM memories LIMIT 2000", "LIMIT 1000"},
-		{"SELECT id FROM memories LIMIT 2000 OFFSET 4", "LIMIT 1000 OFFSET 4"},
-		{"SELECT id FROM memories LIMIT 4, 2000", "LIMIT 4, 1000"},
-		{"SELECT id FROM memories LIMIT 2000 /* gap */ OFFSET 4", "LIMIT 1000 /* gap */ OFFSET 4"},
+		{statement: "\n  SELECT id FROM memories LIMIT 2000", want: "LIMIT 1000"},
+		{statement: "SELECT id FROM memories LIMIT 2000 OFFSET 4", want: "LIMIT 1000 OFFSET 4"},
+		{statement: "SELECT id FROM memories LIMIT 4, 2000", want: "LIMIT 4, 1000"},
+		{statement: "SELECT id FROM memories LIMIT 2000 /* gap */ OFFSET 4", want: "LIMIT 1000 /* gap */ OFFSET 4"},
+		{statement: "SELECT id AS [memory;id] FROM memories LIMIT 1", want: "LIMIT 1"},
+		{statement: "SELECT id AS [limit;id] FROM memories", want: "LIMIT 1000"},
+		{statement: "SELECT id FROM memories LIMIT 1+100000", wantErr: true},
+		{statement: "SELECT id FROM memories LIMIT 1e6", wantErr: true},
+		{statement: "SELECT id FROM memories LIMIT 1 + 100000", wantErr: true},
+		{statement: "SELECT id FROM memories LIMIT 1 OFFSET 1+100000", wantErr: true},
+		{statement: "SELECT id FROM memories LIMIT 1, 1e6", wantErr: true},
 	} {
 		clean, err := gate(t).Validate(tc.statement)
-		if err != nil {
-			t.Errorf("Validate(%q) = %v", tc.statement, err)
+		if tc.wantErr {
+			if err == nil || err.Error() != "LIMIT must be a numeric literal" {
+				t.Errorf("Validate(%q) = %v, want numeric-literal contract", tc.statement, err)
+			}
 			continue
 		}
-		if !strings.Contains(clean, tc.want) {
-			t.Errorf("Validate(%q) = %q, want %q", tc.statement, clean, tc.want)
-		}
-	}
-}
-
-func TestTheLimitRejectsExpressionsAfterNumericLiterals(t *testing.T) {
-	for _, statement := range []string{
-		"SELECT id FROM memories LIMIT 1+100000",
-		"SELECT id FROM memories LIMIT 1e6",
-		"SELECT id FROM memories LIMIT 1 + 100000",
-		"SELECT id FROM memories LIMIT 1 OFFSET 1+100000",
-		"SELECT id FROM memories LIMIT 1, 1e6",
-	} {
-		_, err := gate(t).Validate(statement)
-		if err == nil || err.Error() != "LIMIT must be a numeric literal" {
-			t.Errorf("Validate(%q) = %v, want numeric-literal contract", statement, err)
-		}
-	}
-}
-
-func TestBracketQuotedIdentifiersStayOpaqueToTextualScanners(t *testing.T) {
-	for _, tc := range []struct {
-		statement, want string
-	}{
-		{"SELECT id AS [memory;id] FROM memories LIMIT 1", "LIMIT 1"},
-		{"SELECT id AS [limit;id] FROM memories", "LIMIT 1000"},
-	} {
-		clean, err := gate(t).Validate(tc.statement)
 		if err != nil {
 			t.Errorf("Validate(%q) = %v", tc.statement, err)
 			continue
