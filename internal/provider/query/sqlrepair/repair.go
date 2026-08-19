@@ -11,13 +11,16 @@ import (
 )
 
 const (
-	ThinkingBlock     = "thinking_block"
-	CodeFence         = "code_fence"
-	SurroundingProse  = "surrounding_prose"
-	TrailingSemicolon = "trailing_semicolon"
-	RepetitionLoop    = "repetition_loop"
-	UnionOrderBy      = "union_order_by"
-	FTSOrGroup        = "fts_or_group"
+	ThinkingBlock       = "thinking_block"
+	CodeFence           = "code_fence"
+	SurroundingProse    = "surrounding_prose"
+	TrailingSemicolon   = "trailing_semicolon"
+	RepetitionLoop      = "repetition_loop"
+	UnionOrderBy        = "union_order_by"
+	FTSOrGroup          = "fts_or_group"
+	WrapOrderedCompound = "wrap_ordered_compound"
+	JoinOrderBy         = "join_order_by"
+	PreserveJSONExtract = "preserve_json_extract"
 )
 
 // Result is the candidate sent to the gate and every named repair used to
@@ -33,10 +36,12 @@ var (
 	sqlStart      = regexp.MustCompile(`(?i)^\s*(SELECT|WITH)\b`)
 )
 
-// Prepare applies only the model-output mistakes named above. The UNION
-// fallback is accepted only when its result parses as one SELECT; truncated or
-// ambiguous output stays untouched for the strict gate to reject. Prepare
-// never clips by length: a complete federated UNION is returned intact.
+// Prepare applies only the model-output mistakes named above. Compound
+// branches that asked for their own LIMIT are wrapped before the older UNION
+// strip runs, so the branch keeps its top-N. The UNION fallback is accepted
+// only when its result parses as one SELECT; truncated or ambiguous output
+// stays untouched for the strict gate to reject. Prepare never clips by
+// length: a complete federated UNION is returned intact.
 func Prepare(raw string) Result {
 	result := Result{SQL: strings.TrimSpace(raw)}
 
@@ -65,6 +70,18 @@ func Prepare(raw string) Result {
 		result.SQL = cleaned
 		result.add(SurroundingProse)
 	}
+	if cleaned, ok := dropRepeatedOrderBy(result.SQL); ok {
+		result.SQL = cleaned
+		result.add(UnionOrderBy)
+	}
+	if cleaned, ok := dropUnorderableCompoundTerms(result.SQL); ok {
+		result.SQL = cleaned
+		result.add(WrapOrderedCompound)
+	}
+	if fixed, ok := wrapOrderedCompoundBranches(result.SQL); ok {
+		result.SQL = fixed
+		result.add(WrapOrderedCompound)
+	}
 	if fixed, ok := softUnionOrderBy(result.SQL); ok {
 		result.SQL = fixed
 		result.add(UnionOrderBy)
@@ -83,6 +100,14 @@ func Prepare(raw string) Result {
 			result.SQL = fixed
 			result.add(UnionOrderBy)
 		}
+	}
+	if fixed, ok := qualifyJoinOrderBy(result.SQL); ok {
+		result.SQL = fixed
+		result.add(JoinOrderBy)
+	}
+	if fixed, ok := preserveJSONExtract(result.SQL); ok {
+		result.SQL = fixed
+		result.add(PreserveJSONExtract)
 	}
 	result.SQL = strings.TrimSpace(result.SQL)
 	return result
@@ -244,12 +269,19 @@ func deloop(text string) string {
 }
 
 func parsesAsSingleSelect(stmt string) bool {
+	return parseSelect(stmt) != nil
+}
+
+func parseSelect(stmt string) *rqlite.SelectStatement {
 	statements, err := rqlite.NewParser(strings.NewReader(stmt)).ParseStatements()
 	if err != nil || len(statements) != 1 {
-		return false
+		return nil
 	}
-	_, ok := statements[0].(*rqlite.SelectStatement)
-	return ok
+	sel, ok := statements[0].(*rqlite.SelectStatement)
+	if !ok {
+		return nil
+	}
+	return sel
 }
 
 type token struct {
