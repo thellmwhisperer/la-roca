@@ -52,6 +52,9 @@ type QueryRequest struct {
 	MaxChars int
 	// SQLOnly returns the SQL the model generated without running it.
 	SQLOnly bool
+	// Databases is the explicit --databases selection: attached names, or "all".
+	// Empty means the default scope (corpus plus core when corpus is attached).
+	Databases []string
 	// Progress and the interpretation hooks are presentation only. They are
 	// ignored by machine callers and never enter the result envelope.
 	Progress            func(QueryPhase)
@@ -102,6 +105,13 @@ type QueryResult struct {
 	// limit; paths never enter either field.
 	Databases        []string `json:"databases,omitempty"`
 	OmittedDatabases []string `json:"omitted_databases,omitempty"`
+	// UnusedDatabases names attached stores held back from this pass. The SQL
+	// seat sees the names only; a later pass can add them when this one is empty
+	// or the reading seat replies WIDEN.
+	UnusedDatabases []string `json:"unused_databases,omitempty"`
+	// Widened is true when this answer used the second SQL pass over the rest
+	// of the attached inventory.
+	Widened bool `json:"widened,omitempty"`
 
 	// Engine and Model are the model path's provenance: which provider answered
 	// and with which model. Without them a poor answer cannot be attributed, and
@@ -297,18 +307,79 @@ func (s *Service) Query(ctx context.Context, req QueryRequest) (res QueryResult,
 	if _, err := s.ensureSchema(ctx); err != nil {
 		return res, err
 	}
-	route := s.pluginsForQuestion(ctx, req.Question)
+	inventory := s.inventoryRoute(ctx)
+	route, err := questionRoute(req.Databases, inventory)
+	if err != nil {
+		return res, err
+	}
 	if s.pluginsActive() {
 		res.Databases = route.consulted()
 	}
 	res.OmittedDatabases = route.omittedSources()
+	res.UnusedDatabases = route.unusedNames(inventory)
 	res.Warnings = append(res.Warnings, route.warnings...)
-	res, err = s.llmStage(ctx, req, res, route.databases)
-	if len(route.databases) > 0 && res.Path == PathKeyword &&
-		!slices.Contains(res.Columns, plugin.ProvenanceColumn) {
+	res, err = s.llmStage(ctx, req, res, route)
+	if err != nil {
+		return res, err
+	}
+	if !req.SQLOnly && insufficientAnswer(res) && route.canWiden(inventory) {
+		widened := inventory
+		res = beginWidenedPass(res, widened)
+		res, err = s.llmStage(ctx, req, res, widened)
+		if err != nil {
+			return res, err
+		}
+		res.Widened = true
+		res.Databases = widened.consulted()
+		res.UnusedDatabases = nil
+	}
+	if len(route.databases) > 0 && !res.Widened && res.Path == PathKeyword &&
+		!slices.Contains(res.Columns, plugin.ProvenanceColumn) && route.includeCore {
 		res.Columns, res.Rows = ensureDatabaseColumn(res.Columns, res.Rows, "core")
 	}
 	return res, err
+}
+
+func beginWidenedPass(first QueryResult, route pluginRoute) QueryResult {
+	return QueryResult{
+		Question:                  first.Question,
+		Databases:                 route.consulted(),
+		OmittedDatabases:          route.omittedSources(),
+		Widened:                   true,
+		RetriedSQL:                first.RetriedSQL,
+		RetryType:                 first.RetryType,
+		FirstModelSQL:             first.FirstModelSQL,
+		RetryReason:               first.RetryReason,
+		FirstRepaired:             slices.Clone(first.FirstRepaired),
+		Providers:                 slices.Clone(first.Providers),
+		Warnings:                  slices.Clone(first.Warnings),
+		LLMLatencyMS:              first.LLMLatencyMS,
+		SQLRetryProviderLatencyMS: first.SQLRetryProviderLatencyMS,
+		SQLInferenceMS:            first.SQLInferenceMS,
+		SQLRetryInferenceMS:       first.SQLRetryInferenceMS,
+		ExecutionMS:               first.ExecutionMS,
+		Version:                   first.Version,
+		SourceSHA:                 first.SourceSHA,
+	}
+}
+
+func MergeWidenedResult(first, widened QueryResult) QueryResult {
+	widened.Widened = true
+	widened.Providers = append(slices.Clone(first.Providers), widened.Providers...)
+	widened.LLMLatencyMS += first.LLMLatencyMS
+	widened.SQLRetryProviderLatencyMS += first.SQLRetryProviderLatencyMS
+	widened.SQLInferenceMS += first.SQLInferenceMS
+	widened.SQLRetryInferenceMS += first.SQLRetryInferenceMS
+	widened.ExecutionMS += first.ExecutionMS
+	widened.LatencyMS += first.LatencyMS
+	if first.RetriedSQL && !widened.RetriedSQL {
+		widened.RetriedSQL = true
+		widened.RetryType = first.RetryType
+		widened.FirstModelSQL = first.FirstModelSQL
+		widened.RetryReason = first.RetryReason
+		widened.FirstRepaired = slices.Clone(first.FirstRepaired)
+	}
+	return widened
 }
 
 // ExecRequest is a SELECT the caller wants to run as it is. It is the natural
@@ -345,7 +416,7 @@ func (s *Service) Exec(ctx context.Context, req ExecRequest) (ExecResult, error)
 			"the SELECT references more than SQLite's %d attached databases; split the query (omitted: %s)",
 			plugin.MaxAttached, strings.Join(route.omittedSources(), ", ")), DegradedInvalidSQL)
 	}
-	gate, closeGate, err := s.gateFor(route.databases)
+	gate, closeGate, err := s.gateFor(route.includeCore, route.databases)
 	if err != nil {
 		return ExecResult{}, err
 	}

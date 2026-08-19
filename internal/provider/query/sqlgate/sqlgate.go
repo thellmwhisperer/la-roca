@@ -129,33 +129,52 @@ func Open() (*Gate, error) {
 // OpenWithSchemas creates the core validation database and the qualified
 // schemas selected by the plugin semantic router.
 func OpenWithSchemas(schemas []Schema) (*Gate, error) {
+	return openGate(true, schemas)
+}
+
+// OpenAttached creates a validation database that contains only the named
+// attached schemas. Core tables are absent, so a scoped query cannot slip
+// through to main.
+func OpenAttached(schemas []Schema) (*Gate, error) {
+	return openGate(false, schemas)
+}
+
+func openGate(includeCore bool, schemas []Schema) (*Gate, error) {
 	eng, err := openEngine()
 	if err != nil {
 		return nil, err
 	}
 
-	if err := eng.exec(data.Schema); err != nil {
-		eng.close()
-		return nil, fmt.Errorf("apply the schema to the validation database: %w", err)
-	}
-	// The lexical index goes in too: the FTS route emits SQL that queries it,
-	// and a gate that did not know those tables would force skipping it in order
-	// to search, which is exactly what the gate exists to prevent.
-	if err := eng.exec(data.SearchSchema); err != nil {
-		eng.close()
-		return nil, fmt.Errorf("apply the search schema to the validation database: %w", err)
-	}
-	for _, match := range createVirtualFTS5.FindAllStringSubmatch(data.SearchSchema, -1) {
-		eng.registerFTSTable("main", match[1])
-	}
-	for _, table := range invisibleTables {
-		if err := eng.exec("DROP TABLE IF EXISTS " + table); err != nil {
+	if includeCore {
+		if err := eng.exec(data.Schema); err != nil {
 			eng.close()
-			return nil, fmt.Errorf("hide table %q: %w", table, err)
+			return nil, fmt.Errorf("apply the schema to the validation database: %w", err)
+		}
+		// The lexical index goes in too: the FTS route emits SQL that queries it,
+		// and a gate that did not know those tables would force skipping it in order
+		// to search, which is exactly what the gate exists to prevent.
+		if err := eng.exec(data.SearchSchema); err != nil {
+			eng.close()
+			return nil, fmt.Errorf("apply the search schema to the validation database: %w", err)
+		}
+		for _, match := range createVirtualFTS5.FindAllStringSubmatch(data.SearchSchema, -1) {
+			eng.registerFTSTable("main", match[1])
+		}
+		for _, table := range invisibleTables {
+			if err := eng.exec("DROP TABLE IF EXISTS " + table); err != nil {
+				eng.close()
+				return nil, fmt.Errorf("hide table %q: %w", table, err)
+			}
 		}
 	}
 	for _, schema := range schemas {
 		if err := addSchema(eng, schema); err != nil {
+			eng.close()
+			return nil, err
+		}
+	}
+	if !includeCore {
+		if err := addUnqualifiedShadows(eng, schemas); err != nil {
 			eng.close()
 			return nil, err
 		}
@@ -165,6 +184,50 @@ func OpenWithSchemas(schemas []Schema) (*Gate, error) {
 		return nil, err
 	}
 	return &Gate{engine: eng}, nil
+}
+
+func addUnqualifiedShadows(eng *engine, schemas []Schema) error {
+	type shadowTable struct {
+		name    string
+		columns []string
+		seen    map[string]bool
+	}
+	shadows := make(map[string]*shadowTable)
+	var order []string
+	for _, schema := range schemas {
+		for _, table := range schema.Tables {
+			if IsHiddenTable(table.Name) || len(table.Columns) == 0 {
+				continue
+			}
+			key := strings.ToLower(table.Name)
+			shadow := shadows[key]
+			if shadow == nil {
+				shadow = &shadowTable{name: table.Name, seen: make(map[string]bool)}
+				shadows[key] = shadow
+				order = append(order, key)
+			}
+			for _, column := range table.Columns {
+				columnKey := strings.ToLower(column)
+				if !shadow.seen[columnKey] {
+					shadow.seen[columnKey] = true
+					shadow.columns = append(shadow.columns, column)
+				}
+			}
+		}
+	}
+	for _, key := range order {
+		shadow := shadows[key]
+		columns := make([]string, len(shadow.columns))
+		for index, column := range shadow.columns {
+			columns[index] = quoteIdentifier(column) + " BLOB"
+		}
+		if err := eng.exec("CREATE TABLE main." + quoteIdentifier(shadow.name) +
+			" (" + strings.Join(columns, ", ") + ")"); err != nil {
+			return fmt.Errorf("reserve unqualified table name %q: %w", shadow.name, err)
+		}
+		eng.hideTable("main", shadow.name)
+	}
+	return nil
 }
 
 func addSchema(eng *engine, schema Schema) error {

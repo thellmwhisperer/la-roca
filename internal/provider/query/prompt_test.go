@@ -73,7 +73,7 @@ func TestSemanticLayerCarriesTheLayersAndWhatTheyAreFor(t *testing.T) {
 }
 
 func TestTheSystemPromptCarriesTheRulesThatKeepTheAnswerRunnable(t *testing.T) {
-	prompt := SQLSystemPrompt(ReadSchema(someDDL, nil), nil, nil)
+	prompt := SQLSystemPrompt(productSchema(), nil, nil)
 
 	for _, rule := range []string{"SELECT", "NOT IN (SELECT supersedes", "LIMIT"} {
 		if !strings.Contains(prompt, rule) {
@@ -86,6 +86,18 @@ func TestTheSystemPromptCarriesTheRulesThatKeepTheAnswerRunnable(t *testing.T) {
 	if !strings.Contains(strings.ToLower(prompt), "no markdown") &&
 		!strings.Contains(strings.ToLower(prompt), "no code fences") {
 		t.Errorf("the prompt does not forbid the fence:\n%s", prompt)
+	}
+}
+
+func TestTheSQLSeatInventoryNamesHeldBackDatabasesWithoutTheirTables(t *testing.T) {
+	prompt := SQLSystemPromptWithInventory(ReadSchema(someDDL, nil), nil, nil, []string{"ops", "cron"})
+	for _, want := range []string{"ops", "cron", "<inventory>", "second SQL pass", "not listed here"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("inventory prompt lacks %q:\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "plugin_roca_ops") {
+		t.Fatalf("held-back tables reached the schema:\n%s", prompt)
 	}
 }
 
@@ -138,7 +150,7 @@ func TestThePromptsDeclareRefusalForQuestionsOutsideMemory(t *testing.T) {
 // The rule is now derived from the same DDL the gate prepares itself with, so a
 // rule about a column can only name the tables that really carry it.
 func TestTheSupersedesRuleNamesOnlyTheTablesThatCarryTheColumn(t *testing.T) {
-	prompt := SQLSystemPrompt(ReadSchema(someDDL, nil), nil, nil)
+	prompt := SQLSystemPrompt(productSchema(), nil, nil)
 
 	line := ruleAbout(rulesOf(t, prompt), "NOT IN (SELECT supersedes")
 	if line == "" {
@@ -500,6 +512,35 @@ func TestThePromptSteersTermSearchToFTSNotSubstringLike(t *testing.T) {
 	}
 }
 
+func TestAttachedOnlyPromptOmitsUnqualifiedCoreExamples(t *testing.T) {
+	schema := Schema{Tables: []Table{
+		{Name: "plugin_roca_corpus.memories", Columns: []string{"id", "content", "supersedes"}},
+		{Name: "plugin_roca_corpus.memories_fts", Columns: []string{"content"}, FTS5: true},
+		{Name: "plugin_roca_corpus.exchanges", Columns: []string{"id", "agent_text"}},
+		{Name: "plugin_roca_corpus.exchanges_fts", Columns: []string{"agent_text"}, FTS5: true},
+		{Name: "plugin_roca_corpus.thinking_fts", Columns: []string{"full_text"}, FTS5: true},
+	}}
+	prompt := SQLSystemPrompt(schema, nil, nil)
+	for _, rejected := range []string{
+		"<examples>", "WHERE memories_fts", "bm25(memories_fts)", "FROM memories",
+		"JOIN memories", "FROM exchanges", "Search memories_fts", "SELECT COUNT(*) AS n FROM exchanges",
+	} {
+		if strings.Contains(prompt, rejected) {
+			t.Errorf("attached-only prompt teaches rejected SQL %q:\n%s", rejected, prompt)
+		}
+	}
+	if !strings.Contains(prompt, "FROM plugin_x.exchanges_fts") {
+		t.Fatalf("attached-only prompt lost qualified FTS guidance:\n%s", prompt)
+	}
+	hint := SubstringLikeRejection(
+		`SELECT content FROM plugin_roca_corpus.memories WHERE content LIKE '%Ana%' LIMIT 5`, schema)
+	for _, rejected := range []string{"memories_fts", "exchanges_fts", "thinking_fts"} {
+		if strings.Contains(hint, rejected) {
+			t.Errorf("attached-only retry hint teaches bare core table %q: %s", rejected, hint)
+		}
+	}
+}
+
 func TestSubstringLikeRejectionCatchesTheAnaDisease(t *testing.T) {
 	cases := []struct {
 		sql    string
@@ -517,7 +558,7 @@ func TestSubstringLikeRejectionCatchesTheAnaDisease(t *testing.T) {
 		{`SELECT COUNT(*) FROM exchanges LIMIT 1`, false},
 	}
 	for _, c := range cases {
-		got := SubstringLikeRejection(c.sql)
+		got := SubstringLikeRejection(c.sql, productSchema())
 		if c.reject && got == "" {
 			t.Errorf("missed the disease:\n%s", c.sql)
 		}
@@ -525,10 +566,21 @@ func TestSubstringLikeRejectionCatchesTheAnaDisease(t *testing.T) {
 			t.Errorf("false positive (%s):\n%s", got, c.sql)
 		}
 	}
-	hint := SubstringLikeRejection(`SELECT content FROM memories WHERE content LIKE '%Ana%' LIMIT 5`)
+	hint := SubstringLikeRejection(
+		`SELECT content FROM memories WHERE content LIKE '%Ana%' LIMIT 5`, productSchema())
 	for _, needle := range []string{"MATCH", "memories_fts", "bm25"} {
 		if !strings.Contains(hint, needle) {
 			t.Errorf("the rejection hint does not steer to %q: %s", needle, hint)
 		}
+	}
+}
+
+func TestSubstringLikeRejectionAllowsTextSearchWithoutFTS(t *testing.T) {
+	schema := Schema{Tables: []Table{{
+		Name: "plugin_receipts.receipts", Columns: []string{"title"},
+	}}}
+	if hint := SubstringLikeRejection(
+		`SELECT title FROM plugin_receipts.receipts WHERE title LIKE '%Ana%' LIMIT 5`, schema); hint != "" {
+		t.Fatalf("text-only schema rejected its available search form: %s", hint)
 	}
 }
