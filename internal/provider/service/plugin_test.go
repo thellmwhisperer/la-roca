@@ -25,7 +25,7 @@ func TestPluginsOffMakesAnInstalledDirectoryObservableNowhere(t *testing.T) {
 	installQueryPlugin(t, plugins, "well-formed", `
 version: 1
 description: Synthetic purchase receipts.
-questions: [Which receipts were recorded?]
+questions: ["Which receipts were recorded?"]
 tables:
   - name: receipts
     description: Synthetic receipts.
@@ -558,7 +558,7 @@ func scopedReceiptPlugins(t *testing.T) (testPaths, string) {
 	installQueryPlugin(t, plugins, "well-formed", `
 version: 1
 description: Synthetic purchase receipts.
-questions: [Which receipts were recorded?]
+questions: ["Which receipts were recorded?"]
 tables:
   - name: receipts
     description: Synthetic receipts.
@@ -618,7 +618,7 @@ func TestQueryScopesTheSQLSeatAndFailsUnknownNames(t *testing.T) {
 		{
 			name:    "empty scoped pass widens once",
 			sql:     `SELECT 1 AS answer WHERE 0 LIMIT 1`,
-			wantDBs: []string{"core", "plugin:roca-ops", "plugin:roca-corpus"},
+			wantDBs: []string{"core", "plugin:roca-ops", "plugin:roca-corpus", "plugin:well-formed"},
 			widened: true,
 		},
 		{

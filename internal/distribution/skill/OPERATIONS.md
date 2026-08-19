@@ -81,22 +81,22 @@ rows; agents narrate from the rows themselves.
 
 `roca query` and `roca explore` default to the corpus database when it is
 attached, together with the core compatibility store that still holds
-historical rows. Studying harvested conversations does not drag in ops
-handoffs, cron jobs, or other federated stores. Without an attached corpus, the
-default is core alone.
+historical rows. Historical corpus study should not drag in ops handoffs, cron
+jobs, or other federated stores. Without an attached corpus, the default is core
+alone.
 
 Pass `--databases` to select exactly the named databases when a question spans
 them: `--databases corpus,ops`, `--databases cron,corpus`, or `--databases all`
 for every attached database. Include `core` explicitly when a named set needs
-it. Unknown names fail and list what is attached. The kernel does not infer
-relevance from the wording or auto-select a plugin.
+it. Unknown names fail and list what is attached. Routing does not guess relevance.
+It does not auto-select a plugin from the wording.
 
-The SQL seat sees tables only for the selected databases. It also sees the
-names, but not the tables, of attached databases held back from that pass. If
-the first pass returns zero rows (including `model_unavailable`), or the reading
-seat replies exactly `WIDEN`, one second SQL pass adds the remaining attached
-databases. It does not widen after `invalid_sql`, `execution`, or `timeout`.
-`--sql-only` stays on the first pass.
+The SQL seat sees tables only for the selected databases. It also sees an
+inventory of the other attached names, but not their tables, when they are held
+back from that pass. If the first pass returns zero rows (including
+`model_unavailable`), or the reading seat replies exactly `WIDEN`, it takes a
+second SQL pass. That pass adds the remaining attached databases. It does not widen after
+`invalid_sql`, `execution`, or `timeout`. `--sql-only` stays on the first pass.
 
 ## Default row output
 
@@ -266,8 +266,12 @@ Counts by month, same shape, swap the MATCH term.
 Handoff one-liner, by layer and project:
 
 ```bash
-roca exec "SELECT content, created_at, project FROM plugin_roca_ops.memories WHERE layer = 'handoff' AND project = '<project>' ORDER BY created_at DESC LIMIT 1"
+roca exec "SELECT content, created_at, project FROM memories WHERE layer = 'handoff' AND project = '<project>' ORDER BY created_at DESC LIMIT 1"
 ```
+
+Handoffs live on ops. The unqualified compatibility query above remains valid;
+when composing a query directly against the ops attachment, its qualified table
+is `plugin_roca_ops.memories`.
 
 ## Investigation method
 
@@ -311,7 +315,7 @@ Do not stack synonyms.
   their memory and rule files land in the `user`, `feedback` and `project`
   layers at ingest. On a fresh install the `handoff` layer is empty until
   agents store the first one, so read the history, then write it yourself.
-- Start project work with the qualified handoff one-liner under Deterministic
+- Start project work with the unqualified handoff one-liner under Deterministic
   patterns. Ask for the current handoff protocol and follow it instead of
   freezing it here. After meaningful work, always store a handoff with branch,
   changes, state, next steps and blockers.
