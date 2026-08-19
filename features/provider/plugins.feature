@@ -5,16 +5,15 @@ Feature: Querying isolated plugin databases
   Background:
     Given an initialized home with no model
 
-  Scenario: A relevant plugin is qualified and its rows declare their database
+  Scenario: A relevant plugin stays out of the default corpus-only answer
     Given the synthetic plugin "well-formed" is installed
     And the provider configuration is:
       | provider | model             | availability |
       | ollama   | plugin-acceptance | ready         |
-    And the model answers with SQL "SELECT title AS text FROM plugin_well_formed.receipts LIMIT 1"
+    And the model answers with SQL "SELECT 1 AS answer LIMIT 1"
     When I ask "Which receipts were recorded?"
     Then the command exits with code 0
-    And the consulted databases are "core, plugin:roca-corpus, plugin:well-formed"
-    And the first row declares database "plugin:well-formed"
+    And the consulted databases are "core, plugin:roca-corpus"
 
   Scenario: A lying semantic layer degrades with a warning instead of becoming queryable
     Given the synthetic plugin "lying" is installed
@@ -22,7 +21,7 @@ Feature: Querying isolated plugin databases
     And the provider configuration is:
       | provider | model             | availability |
       | ollama   | plugin-acceptance | ready         |
-    And the model answers with SQL "SELECT content AS text FROM memories LIMIT 1"
+    And the model answers with SQL "SELECT 1 AS answer LIMIT 1"
     When I ask "Which synthetic invoices are outstanding?"
     Then the command exits with code 0
     And the consulted databases are "core, plugin:roca-corpus"

@@ -88,7 +88,7 @@ func correction(failure error, retryType string) string {
 // factory local-CLI exception is declared in the attempts and applies only to
 // the first request, before any SQL answer exists.
 func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResult,
-	plugins []plugin.Database) (QueryResult, error) {
+	route pluginRoute) (QueryResult, error) {
 	progress(req, QueryPhaseSQL)
 	cascade := s.opts.Providers
 
@@ -100,7 +100,7 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 	}
 
 	chosen, attempts := cascade.Pick(ctx)
-	res.Providers = attempts
+	res.Providers = append(res.Providers, attempts...)
 
 	if chosen == nil {
 		// The failure names which providers were tried, why each one
@@ -109,7 +109,7 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 		// but the exit is a failure all the same, because the question needed a
 		// model and there was none. Answering 0 with a code of success would be
 		// saying the machine did what was asked of it.
-		return s.rescue(ctx, req, res, DegradedUnavailable,
+		return s.rescue(ctx, req, res, route, DegradedUnavailable,
 			"no model is available and this question needs one.\n"+tried(attempts)), nil
 	}
 	res.Engine = chosen.Name()
@@ -119,13 +119,13 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 	// overwrite it, nor be mistaken for it.
 	res.ProviderNote = noteAboutTheFall(chosen, attempts)
 
-	gate, closeGate, err := s.gateFor(plugins)
+	gate, closeGate, err := s.gateFor(route.includeCore, route.databases)
 	if err != nil {
 		return res, err
 	}
 	defer closeGate()
 
-	prompt := s.sqlPrompt(req.Layer, plugins)
+	prompt := s.sqlPrompt(req.Layer, route, res.UnusedDatabases)
 	messages := []provider.Message{
 		{Role: provider.RoleSystem, Content: prompt},
 		{Role: provider.RoleUser, Content: query.SQLUserPrompt(req.Question)},
@@ -151,7 +151,7 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 			transport, localCLI := chosen.(interface{ CommandTransport() bool })
 			if attempt != 0 || !cascade.FactoryDefault || !localCLI || !transport.CommandTransport() {
 				res.Providers = cascade.CompleteDiagnostics(res.Providers)
-				return s.rescue(ctx, req, res, DegradedLLMError,
+				return s.rescue(ctx, req, res, route, DegradedLLMError,
 					fmt.Sprintf("%s could not answer: %v\n%s", chosen.Name(), err, tried(res.Providers))), nil
 			}
 			res.Providers[len(res.Providers)-1].Ready = false
@@ -161,7 +161,7 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 			next, further := cascade.PickAfter(ctx, chosen.Name())
 			res.Providers = append(res.Providers, further...)
 			if next == nil {
-				return s.rescue(ctx, req, res, DegradedLLMError,
+				return s.rescue(ctx, req, res, route, DegradedLLMError,
 					"no factory-default model could answer.\n"+tried(res.Providers)), nil
 			}
 			chosen = next
@@ -195,7 +195,8 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 			// Defense in depth behind the prompt: bare LIKE '%term%' on a text
 			// column is the substring disease (Ana → ganancia). Reject with a
 			// retry hint that points at FTS; do not rewrite the SQL.
-			if hint := query.SubstringLikeRejection(validated); hint != "" {
+			if hint := query.SubstringLikeRejection(validated,
+				schemaWithPlugins(route.includeCore, route.databases)); hint != "" {
 				failure = fmt.Errorf("%s", hint)
 			}
 		}
@@ -203,11 +204,11 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 			term := query.SearchTerm(req.Question)
 			progress(req, QueryPhaseExecution)
 			executionStart := time.Now()
-			columns, rows, failure = s.executeWithPlugins(ctx, validated, term, req.MaxChars, plugins)
+			columns, rows, failure = s.executeWithPlugins(ctx, validated, term, req.MaxChars, route.databases)
 			res.ExecutionMS += time.Since(executionStart).Milliseconds()
 			if failure != nil {
 				if errors.Is(failure, errQueryTimeout) {
-					return s.rescue(ctx, req, res, DegradedTimeout, failure.Error()), nil
+					return s.rescue(ctx, req, res, route, DegradedTimeout, failure.Error()), nil
 				}
 				retryType = RetryExecutionError
 				failure = exactEngineError(failure)
@@ -221,18 +222,20 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 		// degradation would blame a provider that never failed.
 		if attempt == retriesOnSQLFailure || ctx.Err() != nil {
 			if retryType == RetryExecutionError {
-				return s.rescue(ctx, req, res, DegradedExecution,
+				return s.rescue(ctx, req, res, route, DegradedExecution,
 					fmt.Sprintf("the validated SQL failed when it ran: %v", failure)), nil
 			}
-			return s.rescue(ctx, req, res, DegradedInvalidSQL,
+			return s.rescue(ctx, req, res, route, DegradedInvalidSQL,
 				fmt.Sprintf("the SQL %s generated does not pass the gate: %v",
 					chosen.Name(), failure)), nil
 		}
-		res.RetriedSQL = true
-		res.RetryType = retryType
-		res.FirstModelSQL = answer.Content
-		res.FirstRepaired = append([]string(nil), prepared.Repairs...)
-		res.RetryReason = failure.Error()
+		if !res.RetriedSQL {
+			res.RetriedSQL = true
+			res.RetryType = retryType
+			res.FirstModelSQL = answer.Content
+			res.FirstRepaired = append([]string(nil), prepared.Repairs...)
+			res.RetryReason = failure.Error()
+		}
 		// The engine said exactly what is wrong. Handing that back is not a
 		// repair invented here: it is the verdict of the same engine that would
 		// have run the query, and it is the one piece of information that fixes
@@ -252,7 +255,7 @@ func (s *Service) llmStage(ctx context.Context, req QueryRequest, res QueryResul
 		// with the operator's own words before declaring there is nothing. It is
 		// not a degradation, so it carries no degraded reason; but it IS a
 		// different answer from the one asked for, and it says so.
-		return s.rescue(ctx, req, res, "",
+		return s.rescue(ctx, req, res, route, "",
 			fmt.Sprintf("nothing relevant was found by the plan from %s (tried: %s)",
 				chosen.Name(), validated)), nil
 	}
@@ -303,8 +306,38 @@ const (
 // InterpretationContext declares which mission occupies the interpreter seat
 // and carries only deterministic terrain facts for investigation missions.
 type InterpretationContext struct {
-	Mission InterpretationMission
-	Terrain Terrain
+	Mission         InterpretationMission
+	Terrain         Terrain
+	UnusedDatabases []string
+}
+
+// BufferInterpretationCallbacks holds the first reading-seat stream until the
+// caller knows it is the answer rather than a WIDEN control reply. Flush
+// publishes that held stream when no second pass is needed.
+func BufferInterpretationCallbacks(onStart func(bool), onDelta func(string)) (
+	firstOnStart func(bool), firstOnDelta func(string), flush func(),
+) {
+	var bufferedNative bool
+	var bufferedStart bool
+	var bufferedDeltas []string
+	if onStart != nil {
+		firstOnStart = func(native bool) {
+			bufferedNative = native
+			bufferedStart = true
+		}
+	}
+	if onDelta != nil {
+		firstOnDelta = func(delta string) { bufferedDeltas = append(bufferedDeltas, delta) }
+	}
+	flush = func() {
+		if bufferedStart {
+			onStart(bufferedNative)
+		}
+		for _, delta := range bufferedDeltas {
+			onDelta(delta)
+		}
+	}
+	return firstOnStart, firstOnDelta, flush
 }
 
 // Interpret is the second inference call of a query: the first turned the
@@ -347,6 +380,11 @@ func (s *Service) InterpretStream(ctx context.Context, question string,
 	b.WriteString("Use only these results, never general knowledge. If the results do not support the question, say so plainly before anything else. ")
 	b.WriteString("A requested style changes delivery only and never licenses invention. Answer in the same language as the question. ")
 	b.WriteString("Write calm, terminal-friendly prose: paragraphs and simple dashes only. Do not use headings or tables.\n")
+	if len(interpret.UnusedDatabases) > 0 {
+		b.WriteString("Attached databases were left out of this pass: ")
+		b.WriteString(strings.Join(interpret.UnusedDatabases, ", "))
+		b.WriteString(". If these rows do not answer the question, reply with the single word WIDEN and nothing else. Do not invent contents of those databases.\n")
+	}
 	switch interpret.Mission {
 	case InterpretationExplore:
 		b.WriteString("mission: investigation-light. Answer what the rows support, then give short trail hints grounded only in the terrain facts. Use one concept per hint. Do not produce a full terrain map or invent statistics.\n")
@@ -580,7 +618,7 @@ func noteAboutTheFall(chosen provider.Provider, attempts []provider.Attempt) str
 // having nothing to answer with, and the query already carries its own declared
 // reason.
 func (s *Service) rescue(ctx context.Context, req QueryRequest, res QueryResult,
-	degraded, message string) QueryResult {
+	route pluginRoute, degraded, message string) QueryResult {
 
 	// The message describes the answer, never who was asked: that is what
 	// ProviderNote is for, and mixing them is what produced an answer claiming a
@@ -606,7 +644,7 @@ func (s *Service) rescue(ctx context.Context, req QueryRequest, res QueryResult,
 
 	progress(req, QueryPhaseExecution)
 	executionStart := time.Now()
-	columns, rows, stmt, provenance, warnings, err := s.searchByTerm(ctx, plan, "", req.MaxChars, true)
+	columns, rows, stmt, provenance, warnings, err := s.searchByTerm(ctx, plan, "", req.MaxChars, true, route)
 	res.ExecutionMS += time.Since(executionStart).Milliseconds()
 	if err != nil {
 		// A rescue that fails is not a second failure to report: the query
@@ -632,7 +670,7 @@ func (s *Service) rescue(ctx context.Context, req QueryRequest, res QueryResult,
 // searchByTerm resolves the term-search template by the best available route,
 // and also returns the provenance of that decision.
 func (s *Service) searchByTerm(ctx context.Context, plan query.Plan, method string,
-	maxChars int, matchAny bool) (columns []string, rows []map[string]any, stmt string,
+	maxChars int, matchAny bool, route pluginRoute) (columns []string, rows []map[string]any, stmt string,
 	provenance *search.Provenance, warnings []string, err error) {
 
 	if s.servingLayout() != LayoutLegacyServing && method != search.MethodLike {
@@ -642,16 +680,30 @@ func (s *Service) searchByTerm(ctx context.Context, plan query.Plan, method stri
 			}
 		}
 	}
+	limit := plan.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+	if !route.includeCore {
+		databases := bundledSearchDatabases(route)
+		if len(databases) == 0 {
+			return nil, nil, "", nil, nil, nil
+		}
+		rows, stmt, warnings, err := s.residentMemoryRows(ctx, plan, maxChars, matchAny, limit, databases, "")
+		if err != nil {
+			return nil, nil, "", nil, warnings, err
+		}
+		columns := []string{"source", "id", "author", "text", "created_at"}
+		if len(rows) > 0 {
+			columns, rows = ensureDatabaseColumn(columns, rows, fallbackDatabase(stmt, databases))
+		}
+		return columns, rows, stmt, nil, warnings, nil
+	}
 	gate, err := s.theGate()
 	if err != nil {
 		return nil, nil, "", nil, nil, err
 	}
 	engine := &search.Engine{DB: s.db, Validate: gate.Validate}
-
-	limit := plan.Limit
-	if limit <= 0 {
-		limit = 10
-	}
 
 	var sqlLexical string
 	if method != search.MethodLike {
@@ -699,7 +751,7 @@ func (s *Service) searchByTerm(ctx context.Context, plan query.Plan, method stri
 		// The LIKE floor requires every word, so the attached half requires every
 		// word too: merging a looser search with a stricter one is not one search.
 		return s.withResidentMemorySearch(ctx, plan, maxChars, false, limit,
-			columns, rows, validated, &result.Provenance)
+			columns, rows, validated, &result.Provenance, route)
 	}
 
 	columns = []string{"source", "id", "author", "text", "created_at"}
@@ -722,7 +774,7 @@ func (s *Service) searchByTerm(ctx context.Context, plan query.Plan, method stri
 		})
 	}
 	return s.withResidentMemorySearch(ctx, plan, maxChars, matchAny, limit,
-		columns, rows, result.SQL, &result.Provenance)
+		columns, rows, result.SQL, &result.Provenance, route)
 }
 
 // withResidentMemorySearch merges the bundled data halves into a core answer that
@@ -731,22 +783,18 @@ func (s *Service) searchByTerm(ctx context.Context, plan query.Plan, method stri
 // answers nothing where the unmerged one answered is the worse of the two.
 func (s *Service) withResidentMemorySearch(ctx context.Context, plan query.Plan, maxChars int,
 	matchAny bool, limit int, columns []string, rows []map[string]any, stmt string,
-	provenance *search.Provenance) ([]string, []map[string]any, string, *search.Provenance,
+	provenance *search.Provenance, route pluginRoute) ([]string, []map[string]any, string, *search.Provenance,
 	[]string, error) {
-	var databases []plugin.Database
-	for index := range s.resident {
-		if s.resident[index].Name == rocaOpsPluginName ||
-			s.resident[index].Name == rocaCorpusPluginName {
-			databases = append(databases, s.resident[index])
-		}
-	}
+	databases := bundledSearchDatabases(route)
 	if len(databases) == 0 {
 		return columns, rows, stmt, provenance, nil, nil
 	}
 	// The provenance column belongs to the answer's shape and not to its content:
 	// once a bundled database is in scope, every run of the same command declares
 	// the same header, whether or not that half matched anything this time.
-	columns, rows = ensureDatabaseColumn(columns, rows, "core")
+	if route.includeCore {
+		columns, rows = ensureDatabaseColumn(columns, rows, "core")
+	}
 	residentRows, declared, warnings, err := s.residentMemoryRows(
 		ctx, plan, maxChars, matchAny, limit, databases, stmt)
 	if err != nil {
@@ -764,12 +812,15 @@ func (s *Service) withResidentMemorySearch(ctx context.Context, plan query.Plan,
 func (s *Service) residentMemoryRows(ctx context.Context, plan query.Plan, maxChars int,
 	matchAny bool, limit int, databases []plugin.Database,
 	core string) ([]map[string]any, string, []string, error) {
-	gate, closeGate, err := s.gateFor(databases)
+	gate, closeGate, err := s.gateFor(core != "", databases)
 	if err != nil {
 		return nil, core, nil, err
 	}
 	defer closeGate()
-	statements := []string{core}
+	var statements []string
+	if core != "" {
+		statements = append(statements, core)
+	}
 	var rows []map[string]any
 	var warnings []string
 	for _, database := range databases {
@@ -825,6 +876,9 @@ func limitMergedSearchRows(rows []map[string]any, limit int) []map[string]any {
 // statement alone would hand the operator SQL that returns strictly fewer rows
 // than the answer it is supposed to explain.
 func declaredSearchSQL(gate *sqlgate.Gate, statements []string, limit int) string {
+	if len(statements) == 0 {
+		return ""
+	}
 	if len(statements) < 2 {
 		return statements[0]
 	}
@@ -868,7 +922,7 @@ func (s *Service) rescueSQL(plan query.Plan, res QueryResult) QueryResult {
 // validation database with, minus the SAME tables the gate hides. That is not
 // tidiness: a prompt that announces a schema the gate does not have produces
 // SQL that is born rejected, and it did. See internal/query/prompt.go.
-func (s *Service) sqlPrompt(layer string, plugins []plugin.Database) string {
+func (s *Service) sqlPrompt(layer string, route pluginRoute, unused []string) string {
 	hints := make([]query.LayerHint, 0, len(s.registry.Layers))
 	for _, declared := range s.registry.Layers {
 		if declared.Deprecated || declared.AliasOf != "" {
@@ -883,7 +937,9 @@ func (s *Service) sqlPrompt(layer string, plugins []plugin.Database) string {
 	if layer != "" {
 		filter = []string{layer}
 	}
-	return query.SQLSystemPrompt(schemaWithPlugins(plugins), query.SortedLayerHints(hints), filter)
+	return query.SQLSystemPromptWithInventory(
+		schemaWithPlugins(route.includeCore, route.databases),
+		query.SortedLayerHints(hints), filter, unused)
 }
 
 // theModelsSchema is read once: it never changes for a given build, and parsing
