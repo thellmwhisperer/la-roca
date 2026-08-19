@@ -11,9 +11,17 @@ import (
 
 func gate(t *testing.T) *sqlgate.Gate {
 	t.Helper()
-	g, err := sqlgate.Open()
+	return mustOpenGate(t, func([]sqlgate.Schema) (*sqlgate.Gate, error) {
+		return sqlgate.Open()
+	}, nil)
+}
+
+func mustOpenGate(t *testing.T, open func([]sqlgate.Schema) (*sqlgate.Gate, error),
+	schemas []sqlgate.Schema) *sqlgate.Gate {
+	t.Helper()
+	g, err := open(schemas)
 	if err != nil {
-		t.Fatalf("Open the gate: %v", err)
+		t.Fatal(err)
 	}
 	t.Cleanup(func() { g.Close() })
 	return g
@@ -105,19 +113,30 @@ func TestTheEngineIsTheOneThatSaysWhatDoesNotExist(t *testing.T) {
 	}
 }
 
+func TestAnAttachedOnlyGateRejectsCoreTables(t *testing.T) {
+	g := mustOpenGate(t, sqlgate.OpenAttached, []sqlgate.Schema{{
+		Name: "plugin_receipts",
+		Tables: []sqlgate.Table{
+			{Name: "receipts", Columns: []string{"id", "title"}},
+			{Name: "memories", Columns: []string{"id", "content"}},
+		},
+	}})
+	if _, err := g.Validate(`SELECT content FROM plugin_receipts.memories LIMIT 5`); err != nil {
+		t.Fatalf("attached read was rejected: %v", err)
+	}
+	if _, err := g.Validate(`SELECT content FROM memories LIMIT 5`); err == nil {
+		t.Fatal("core table stayed readable after it was excluded from the gate")
+	}
+}
+
 func TestAnAttachedSchemaUsesTheSameTableColumnAndFunctionGate(t *testing.T) {
-	g, err := sqlgate.OpenWithSchemas([]sqlgate.Schema{{
+	g := mustOpenGate(t, sqlgate.OpenWithSchemas, []sqlgate.Schema{{
 		Name: "plugin_receipts",
 		Tables: []sqlgate.Table{
 			{Name: "receipts", Columns: []string{"id", "title"}},
 			{Name: "ingest_file_state", Columns: []string{"path"}},
 		},
 	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { g.Close() })
-
 	if _, err := g.Validate(`SELECT title FROM plugin_receipts.receipts LIMIT 5`); err != nil {
 		t.Fatalf("valid plugin read was rejected: %v", err)
 	}

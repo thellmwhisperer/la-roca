@@ -293,6 +293,19 @@ func TestSkillTeachesTheInvestigationFunnel(t *testing.T) {
 			},
 		},
 		{
+			name: "database scoping",
+			body: skill.OperationsContent(),
+			want: []string{
+				"## Which databases a question sees",
+				"default to the corpus database",
+				"should not drag in ops handoffs",
+				"--databases", "corpus,ops", "--databases all",
+				"does not guess relevance",
+				"inventory of the other attached names",
+				"second SQL pass",
+			},
+		},
+		{
 			name: "search craft branch",
 			body: skill.OperationsContent(),
 			want: []string{

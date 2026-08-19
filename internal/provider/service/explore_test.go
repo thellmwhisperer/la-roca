@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -12,6 +13,20 @@ import (
 
 const exploreSQL = "SELECT 'memory' AS source, '2026-07-02' AS created_at, 'cedar map orbit' AS text " +
 	"UNION ALL SELECT 'exchange', '2026-08-09', 'cedar trail orbit' LIMIT 10"
+
+type streamingExploreProvider struct {
+	*twoInferenceFake
+	answers []string
+	calls   int
+}
+
+func (p *streamingExploreProvider) ChatStream(_ context.Context, _ provider.ChatRequest,
+	onDelta func(string)) (provider.ChatResponse, error) {
+	answer := p.answers[p.calls]
+	p.calls++
+	onDelta(answer)
+	return provider.ChatResponse{Content: answer, Provider: p.Name(), ModelID: p.ModelID()}, nil
+}
 
 func TestExplorePinsEachInterpreterMissionAndItsGroundedTerrain(t *testing.T) {
 	for _, tc := range []struct {
@@ -79,6 +94,43 @@ func TestExplorePinsEachInterpreterMissionAndItsGroundedTerrain(t *testing.T) {
 				t.Fatalf("terrain was not derived from the result: %+v", result.Terrain)
 			}
 		})
+	}
+}
+
+func TestExploreBuffersWidenAndMergesQueryTelemetry(t *testing.T) {
+	paths, plugins := scopedBundledPlugins(t)
+	base := newTwoInferenceFake([]string{exploreSQL, exploreSQL}, "")
+	model := &streamingExploreProvider{twoInferenceFake: base,
+		answers: []string{"WIDEN", "A widened investigation answer."}}
+	svc := initializedScopedPlugins(t, paths, plugins, model)
+	var deltas []string
+	var announced service.QueryResult
+	var starts int
+	result, err := svc.Explore(t.Context(), service.ExploreRequest{QueryRequest: service.QueryRequest{
+		Question: "orbit",
+		InterpretationStart: func(_ bool, result service.QueryResult) {
+			starts++
+			announced = result
+		},
+		InterpretationDelta: func(delta string) { deltas = append(deltas, delta) },
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(deltas, ""); got != "A widened investigation answer." ||
+		strings.Contains(got, "WIDEN") {
+		t.Fatalf("published interpretation = %q", got)
+	}
+	if !result.Widened || result.Interpretation != "A widened investigation answer." ||
+		len(result.Providers) != 2 || len(base.sqlRequests) != 2 || model.calls != 2 {
+		t.Fatalf("widened explore = %+v, SQL calls = %d, interpretation calls = %d",
+			result, len(base.sqlRequests), model.calls)
+	}
+	if starts != 1 || !announced.Widened ||
+		!reflect.DeepEqual(announced.Databases, result.Databases) ||
+		!reflect.DeepEqual(announced.Rows, result.Rows) {
+		t.Fatalf("announced result = %+v; final result = %+v; starts = %d",
+			announced, result, starts)
 	}
 }
 
