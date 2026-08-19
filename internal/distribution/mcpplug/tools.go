@@ -67,24 +67,27 @@ func (a execArgs) request() service.ExecRequest {
 // queryArgs is what an agent sends to ask a question. A zero budget reaches the
 // service, where the shared default is applied for every surface.
 type queryArgs struct {
-	Query    string `json:"query" jsonschema:"non-empty natural-language question, preferably under 15 words, maximum 1000 characters"`
-	Layer    string `json:"layer,omitempty" jsonschema:"restrict the answer to one memory layer"`
-	MaxChars int    `json:"max_chars,omitempty" jsonschema:"character budget per text field"`
+	Query     string `json:"query" jsonschema:"non-empty natural-language question, preferably under 15 words, maximum 1000 characters"`
+	Layer     string `json:"layer,omitempty" jsonschema:"restrict the answer to one memory layer"`
+	MaxChars  int    `json:"max_chars,omitempty" jsonschema:"character budget per text field"`
+	Databases string `json:"databases,omitempty" jsonschema:"comma list of attached database names (corpus,ops), or all"`
 }
 
 // exploreArgs declares the investigation mission. The tool name declares
 // exploration; Deep distinguishes its light and full-care variants.
 type exploreArgs struct {
-	Query    string `json:"query" jsonschema:"one non-empty concept, preferably a single bare word, maximum 1000 characters"`
-	Layer    string `json:"layer,omitempty" jsonschema:"restrict the investigation to one memory layer"`
-	MaxChars int    `json:"max_chars,omitempty" jsonschema:"character budget per text field"`
-	Deep     bool   `json:"deep,omitempty" jsonschema:"use the full terrain map and propose 2-3 next probes"`
+	Query     string `json:"query" jsonschema:"one non-empty concept, preferably a single bare word, maximum 1000 characters"`
+	Layer     string `json:"layer,omitempty" jsonschema:"restrict the investigation to one memory layer"`
+	MaxChars  int    `json:"max_chars,omitempty" jsonschema:"character budget per text field"`
+	Deep      bool   `json:"deep,omitempty" jsonschema:"use the full terrain map and propose 2-3 next probes"`
+	Databases string `json:"databases,omitempty" jsonschema:"comma list of attached database names (corpus,ops), or all"`
 }
 
 func (a exploreArgs) request() service.ExploreRequest {
 	return service.ExploreRequest{
 		QueryRequest: service.QueryRequest{
 			Question: a.Query, Layer: a.Layer, MaxChars: a.MaxChars,
+			Databases: mustParseDatabases(a.Databases),
 		},
 		Deep: a.Deep,
 	}
@@ -92,25 +95,36 @@ func (a exploreArgs) request() service.ExploreRequest {
 
 func (a queryArgs) request() service.QueryRequest {
 	return service.QueryRequest{
-		Question: a.Query,
-		Layer:    a.Layer,
-		MaxChars: a.MaxChars,
+		Question:  a.Query,
+		Layer:     a.Layer,
+		MaxChars:  a.MaxChars,
+		Databases: mustParseDatabases(a.Databases),
 	}
+}
+
+func mustParseDatabases(raw string) []string {
+	names, err := service.ParseDatabaseList(raw)
+	if err != nil {
+		return []string{raw}
+	}
+	return names
 }
 
 // sqlArgs is the same question with the running kept back. SQLOnly is fixed
 // here and not asked for: a tool whose whole purpose is the SQL without running
 // does not take "run it" as a parameter.
 type sqlArgs struct {
-	Query string `json:"query" jsonschema:"non-empty natural-language question, preferably under 15 words, maximum 1000 characters"`
-	Layer string `json:"layer,omitempty" jsonschema:"restrict the answer to one memory layer"`
+	Query     string `json:"query" jsonschema:"non-empty natural-language question, preferably under 15 words, maximum 1000 characters"`
+	Layer     string `json:"layer,omitempty" jsonschema:"restrict the answer to one memory layer"`
+	Databases string `json:"databases,omitempty" jsonschema:"comma list of attached database names (corpus,ops), or all"`
 }
 
 func (a sqlArgs) request() service.QueryRequest {
 	return service.QueryRequest{
-		Question: a.Query,
-		Layer:    a.Layer,
-		SQLOnly:  true,
+		Question:  a.Query,
+		Layer:     a.Layer,
+		SQLOnly:   true,
+		Databases: mustParseDatabases(a.Databases),
 	}
 }
 
