@@ -140,7 +140,7 @@ func TestKeywordSearchReadsExchangesFromTheResidentCorpus(t *testing.T) {
 	}
 	columns, rows, statement, _, warnings, err := svc.searchByTerm(t.Context(),
 		query.Plan{Template: query.TemplateSearchByTerm, Term: "cobalt+atlas", Limit: 10},
-		search.MethodLike, 0, true)
+		search.MethodLike, 0, true, pluginRoute{databases: svc.resident})
 	if err != nil {
 		t.Fatal(err)
 	}

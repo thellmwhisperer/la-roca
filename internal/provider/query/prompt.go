@@ -172,11 +172,14 @@ func (s Schema) Describe(layers []LayerHint) string {
 		}
 	}
 
-	if s.hasFTS() {
+	if s.hasUnqualifiedCoreSearch() {
 		out.WriteString("\nThe listed FTS5 virtual tables are the census tool: " +
 			`WHERE memories_fts MATCH '"token"', rank with bm25(memories_fts), ` +
 			"and join rowid from a subquery to the base id for memories, exchanges, and thinking, " +
 			"or to the base rowid for sessions. " +
+			"MATCH and bm25 take the bare table name even when FROM is schema-qualified.\n")
+	} else if s.hasFTS() {
+		out.WriteString("\nUse the listed FTS5 virtual tables for term search with MATCH and bm25. " +
 			"MATCH and bm25 take the bare table name even when FROM is schema-qualified.\n")
 	}
 	out.WriteString("\nOnly the listed tables are readable. Internal catalogs " +
@@ -278,6 +281,14 @@ func provenanceRule(schema Schema) string {
 // goes separately, as the user's turn: mixing them is what lets a question
 // rewrite the rules.
 func SQLSystemPrompt(schema Schema, layers []LayerHint, layerFilter []string) string {
+	return SQLSystemPromptWithInventory(schema, layers, layerFilter, nil)
+}
+
+// SQLSystemPromptWithInventory is SQLSystemPrompt plus the names of attached
+// databases held back from this pass. Their tables stay out of the schema so
+// the model cannot invent them; the names alone tell it a later SQL pass can
+// add them if this SELECT returns no rows.
+func SQLSystemPromptWithInventory(schema Schema, layers []LayerHint, layerFilter, unused []string) string {
 	rules := []string{
 		"- Only generate SELECT queries (read-only)",
 		"- Never use INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE",
@@ -295,6 +306,13 @@ func SQLSystemPrompt(schema Schema, layers []LayerHint, layerFilter []string) st
 		"- Only the listed tables are readable, and only with the columns listed for each. "+
 			"Internal catalogs (sqlite_master, sqlite_schema, pragma_*) are not available; "+
 			"do not probe them, fall back to this surface")
+	if len(unused) > 0 {
+		rules = append(rules,
+			"- This pass may query only the listed schema. Attached databases not in this pass: "+
+				strings.Join(unused, ", ")+
+				". Do not invent tables or columns for those names. If this SELECT returns no rows, "+
+				"a second SQL pass will add them to the schema")
+	}
 	if databases := schema.databases(); len(databases) > 0 {
 		rules = append(rules,
 			"- Every result row must include a column written AS \"database\" (database is a keyword and must be quoted). Label rows from each table with its database value shown above; each UNION branch labels its own rows, and a join across databases uses a + joined label")
@@ -325,20 +343,22 @@ func SQLSystemPrompt(schema Schema, layers []LayerHint, layerFilter []string) st
 		// FTS tables are the only honest term search; bm25 ranks, created_at
 		// does not unless the question is about time.
 		rules = append(rules,
-			"- For keyword / who-is / what-about term search use the FTS5 tables "+
-				"(`memories_fts`, `exchanges_fts`, `thinking_fts`) with MATCH and "+
+			"- For keyword / who-is / what-about term search use the listed FTS5 tables with MATCH and "+
 				"ORDER BY bm25(...). Never write LIKE '%term%' on content, metadata, "+
 				"human_text, agent_text or full_text: that matches inside other words",
 			"- MATCH and bm25 take the bare table name even when FROM is schema-qualified: "+
 				`FROM plugin_x.exchanges_fts WHERE exchanges_fts MATCH '"token"'. `+
 				"Never write schema.table MATCH or bm25(schema.table)",
-			"- Quote each search token in double quotes inside MATCH "+
-				`(memories_fts MATCH '"ana"'). When joining an FTS hit to its content `+
-				"table, pull rowid inside a subquery as an alias. Join memories, exchanges, "+
-				"and thinking on id = alias; join sessions on rowid = alias. "+
-				"an FTS query may return unqualified rowid directly, but never write table.rowid",
+			"- Quote each search token in double quotes inside MATCH. When joining an FTS hit to its content "+
+				"table, pull rowid inside a subquery as an alias. An FTS query may return "+
+				"unqualified rowid directly, but never write table.rowid",
 			"- Rank term search by bm25 relevance, not created_at, unless the question "+
-				"is explicitly temporal (last week, yesterday, recent, between dates)",
+				"is explicitly temporal (last week, yesterday, recent, between dates)")
+	}
+	if schema.hasUnqualifiedCoreSearch() {
+		rules = append(rules,
+			"- Join memories, exchanges, and thinking FTS hits to their base tables on id = the rowid alias; "+
+				"join sessions on rowid = the alias",
 			"- In mixed term search select source_priority (memory 0, exchange or human 1, "+
 				"thinking 2) and ORDER BY source_priority before the bm25 rank; curated "+
 				"memories answer before transcript and reasoning echoes",
@@ -354,9 +374,16 @@ func SQLSystemPrompt(schema Schema, layers []LayerHint, layerFilter []string) st
 				"their own indexed text. Aggregations and counts stay on the base tables")
 	}
 
-	return "You are an expert SQL assistant. Given the user's question about the " +
+	body := "You are an expert SQL assistant. Given the user's question about the " +
 		"La Roca memory database, generate ONLY a single valid SQLite SELECT query.\n\n" +
-		"<schema>\n" + schema.Describe(layers) + "\n</schema>\n\n" +
+		"<schema>\n" + schema.Describe(layers) + "\n</schema>\n\n"
+	if len(unused) > 0 {
+		body += "<inventory>\nThis pass queries only the schema above. Attached databases held back: " +
+			strings.Join(unused, ", ") +
+			". A second SQL pass can add those databases if this one returns no rows. " +
+			"Their tables are not listed here.\n</inventory>\n\n"
+	}
+	return body +
 		"<rules>\n" + strings.Join(rules, "\n") + "\n</rules>" +
 		ftsExamples(schema) +
 		layerInstruction(schema, layerFilter)
@@ -391,8 +418,19 @@ func (s Schema) hasFTS() bool {
 	return slices.ContainsFunc(s.Tables, func(table Table) bool { return table.FTS5 })
 }
 
+func (s Schema) hasUnqualifiedCoreSearch() bool {
+	for _, name := range []string{
+		"memories", "memories_fts", "exchanges", "exchanges_fts", "thinking_fts",
+	} {
+		if !hasTable(s, name) {
+			return false
+		}
+	}
+	return true
+}
+
 func ftsExamples(schema Schema) string {
-	if !schema.hasFTS() {
+	if !schema.hasUnqualifiedCoreSearch() {
 		return ""
 	}
 	return "\n\n<examples>\n" +
@@ -433,16 +471,19 @@ var substringLikeOnText = regexp.MustCompile(
 // SubstringLikeRejection is the narrow defense behind the prompt: a model plan
 // that still writes LIKE '%term%' on a text column is rejected with a retry
 // hint that points at FTS. It is not a SQL rewriter.
-func SubstringLikeRejection(sql string) string {
-	if !substringLikeOnText.MatchString(sql) {
+func SubstringLikeRejection(sql string, schema Schema) string {
+	if !schema.hasFTS() || !substringLikeOnText.MatchString(sql) {
 		return ""
 	}
-	return "substring LIKE '%term%' on a text column matches inside other words " +
+	hint := "substring LIKE '%term%' on a text column matches inside other words " +
 		"(Ana matches ganancia). For term search use the FTS tables with MATCH " +
-		`and ORDER BY bm25(...), e.g. memories_fts MATCH '"ana"'. ` +
-		"Search memories_fts, exchanges_fts and thinking_fts with UNION ALL unless " +
-		"the question targets one source. Pull rowid inside a subquery; never table.rowid. " +
-		"Respond ONLY with the corrected SQL."
+		"and ORDER BY bm25(...). Pull rowid inside a subquery; never table.rowid. "
+	if schema.hasUnqualifiedCoreSearch() {
+		hint += `For example, memories_fts MATCH '"ana"'. ` +
+			"Search memories_fts, exchanges_fts and thinking_fts with UNION ALL unless " +
+			"the question targets one source. "
+	}
+	return hint + "Respond ONLY with the corrected SQL."
 }
 
 // supersededRule is the rule that used to be a lie. It names the table that
@@ -451,6 +492,9 @@ func SubstringLikeRejection(sql string) string {
 // no rule: a rule about a column that does not exist is the same defect written
 // the other way round.
 func supersededRule(schema Schema) string {
+	if !schema.hasUnqualifiedCoreSearch() {
+		return ""
+	}
 	carriers := schema.TablesWith(supersededColumn)
 	if len(carriers) == 0 {
 		return ""

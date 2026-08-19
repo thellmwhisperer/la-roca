@@ -78,15 +78,44 @@ func (s *Service) Explore(ctx context.Context, req ExploreRequest) (QueryResult,
 	if req.Deep {
 		mission = InterpretationExploreDeep
 	}
-	started := time.Now()
+	var interpretationMS int64
 	var onStart func(bool)
 	if req.InterpretationStart != nil {
 		onStart = func(native bool) { req.InterpretationStart(native, result) }
 	}
+	firstOnStart, firstOnDelta, flushInterpretation :=
+		BufferInterpretationCallbacks(onStart, req.InterpretationDelta)
+	started := time.Now()
 	answer, interpretErr := s.InterpretStream(ctx, result.Question, result.Columns, result.Rows,
 		time.Duration(result.SQLInferenceMS)*time.Millisecond, result.Engine,
-		InterpretationContext{Mission: mission, Terrain: terrain}, onStart, req.InterpretationDelta)
-	result.InterpretationMS = time.Since(started).Milliseconds()
+		InterpretationContext{Mission: mission, Terrain: terrain, UnusedDatabases: result.UnusedDatabases},
+		firstOnStart, firstOnDelta)
+	interpretationMS += time.Since(started).Milliseconds()
+	if interpretErr == nil && CanWidenAfterInterpretation(result, answer.Text) {
+		first := result
+		req.Databases = []string{ScopeAll}
+		widened, widenErr := s.Query(ctx, req.QueryRequest)
+		if widenErr != nil {
+			return MergeWidenedResult(first, widened), widenErr
+		}
+		secondSQLInferenceMS := widened.SQLInferenceMS
+		widened = MergeWidenedResult(first, widened)
+		widened.Mode = result.Mode
+		terrain = terrainFromRows(widened.Question, widened.Columns, widened.Rows)
+		widened.Terrain = &terrain
+		result = widened
+		if req.Progress != nil {
+			req.Progress(QueryPhaseInterpretation)
+		}
+		started = time.Now()
+		answer, interpretErr = s.InterpretStream(ctx, result.Question, result.Columns, result.Rows,
+			time.Duration(secondSQLInferenceMS)*time.Millisecond, result.Engine,
+			InterpretationContext{Mission: mission, Terrain: terrain}, onStart, req.InterpretationDelta)
+		interpretationMS += time.Since(started).Milliseconds()
+	} else if interpretErr == nil {
+		flushInterpretation()
+	}
+	result.InterpretationMS = interpretationMS
 	result.LatencyMS += result.InterpretationMS
 	result.Interpretation = answer.Text
 	result.InterpretEngine = answer.Engine
