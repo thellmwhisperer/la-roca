@@ -149,13 +149,13 @@ func (v *jsonArrowVisitor) Visit(node rqlite.Node) (rqlite.Visitor, rqlite.Node,
 		op := runeToByteOffset(v.byteOffsets, expr.OpPos.Offset)
 		if leftStart >= 0 && op >= 0 {
 			width := jsonArrowWidth(v.stmt, op)
-			rightStart, rightEnd := jsonArrowRight(v.stmt, v.byteOffsets, expr.Y)
+			rightStart, rightEnd, path := jsonArrowRight(v.stmt, v.byteOffsets, expr.Y)
 			if width > 0 && rightStart >= 0 {
 				v.arrows[op] = jsonArrow{
 					leftStart:  leftStart,
 					rightStart: rightStart,
 					rightEnd:   rightEnd,
-					path:       isJSONExtractPathExpr(expr.Y),
+					path:       path,
 				}
 			}
 		}
@@ -183,16 +183,17 @@ func jsonArrows(stmt string) map[int]jsonArrow {
 	return visitor.arrows
 }
 
-func isJSONExtractPathExpr(expr rqlite.Expr) bool {
+func jsonExtractPathExpr(expr rqlite.Expr) rqlite.Expr {
 	for {
-		paren, ok := expr.(*rqlite.ParenExpr)
-		if !ok {
-			break
+		switch wrapper := expr.(type) {
+		case *rqlite.ParenExpr:
+			expr = wrapper.X
+		case *rqlite.CollateExpr:
+			expr = wrapper.X
+		default:
+			return expr
 		}
-		expr = paren.X
 	}
-	lit, ok := expr.(*rqlite.StringLit)
-	return ok && strings.HasPrefix(lit.Value, "$")
 }
 
 func runeByteOffsets(text string) []int {
@@ -266,38 +267,55 @@ func jsonExprStart(expr rqlite.Expr) int {
 	return -1
 }
 
-func jsonArrowRight(stmt string, byteOffsets []int, expr rqlite.Expr) (int, int) {
+func jsonArrowRight(stmt string, byteOffsets []int, expr rqlite.Expr) (int, int, bool) {
 	i := runeToByteOffset(byteOffsets, jsonExprStart(expr))
 	if i < 0 || i >= len(stmt) {
-		return -1, -1
+		return -1, -1, false
 	}
-	if paren, ok := expr.(*rqlite.ParenExpr); ok {
-		end := runeToByteOffset(byteOffsets, paren.Rparen.Offset)
+	end := -1
+	switch wrapper := expr.(type) {
+	case *rqlite.ParenExpr:
+		paren := wrapper
+		end = runeToByteOffset(byteOffsets, paren.Rparen.Offset)
 		if end < 0 {
-			return -1, -1
+			return -1, -1, false
 		}
-		return i, end + 1
+		end++
+	case *rqlite.CollateExpr:
+		if wrapper.Collation == nil || wrapper.Collation.Name == nil {
+			return -1, -1, false
+		}
+		nameStart := runeToByteOffset(byteOffsets, wrapper.Collation.Name.NamePos.Offset)
+		end = jsonArrowTokenEnd(stmt, nameStart)
+	default:
+		end = jsonArrowTokenEnd(stmt, i)
+	}
+	if end < 0 {
+		return -1, -1, false
+	}
+	lit, ok := jsonExtractPathExpr(expr).(*rqlite.StringLit)
+	return i, end, ok && strings.HasPrefix(lit.Value, "$")
+}
+
+func jsonArrowTokenEnd(stmt string, i int) int {
+	if i < 0 || i >= len(stmt) {
+		return -1
 	}
 	switch stmt[i] {
 	case '\'', '"', '`':
-		return i, quotedEnd(stmt, i, stmt[i])
+		return quotedEnd(stmt, i, stmt[i])
 	case '[':
-		return i, bracketEnd(stmt, i)
+		return bracketEnd(stmt, i)
 	case '(':
-		closeAt := matchingCloseParen(stmt, i)
-		if closeAt < 0 {
-			return -1, -1
-		}
-		return i, closeAt
+		return matchingCloseParen(stmt, i)
 	}
 	if isWordStart(stmt[i]) || stmt[i] >= '0' && stmt[i] <= '9' {
-		start := i
 		for i < len(stmt) && (isWordPart(stmt[i]) || stmt[i] == '.') {
 			i++
 		}
-		return start, i
+		return i
 	}
-	return -1, -1
+	return -1
 }
 
 func skipSpaceLeft(stmt string, i int) int {
