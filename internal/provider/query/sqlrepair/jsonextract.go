@@ -190,6 +190,11 @@ func jsonExtractPathExpr(expr rqlite.Expr) rqlite.Expr {
 			expr = wrapper.X
 		case *rqlite.CollateExpr:
 			expr = wrapper.X
+		case *rqlite.UnaryExpr:
+			if wrapper.Op != rqlite.PLUS {
+				return expr
+			}
+			expr = wrapper.X
 		default:
 			return expr
 		}
@@ -272,29 +277,34 @@ func jsonArrowRight(stmt string, byteOffsets []int, expr rqlite.Expr) (int, int,
 	if i < 0 || i >= len(stmt) {
 		return -1, -1, false
 	}
-	end := -1
-	switch wrapper := expr.(type) {
-	case *rqlite.ParenExpr:
-		paren := wrapper
-		end = runeToByteOffset(byteOffsets, paren.Rparen.Offset)
-		if end < 0 {
-			return -1, -1, false
-		}
-		end++
-	case *rqlite.CollateExpr:
-		if wrapper.Collation == nil || wrapper.Collation.Name == nil {
-			return -1, -1, false
-		}
-		nameStart := runeToByteOffset(byteOffsets, wrapper.Collation.Name.NamePos.Offset)
-		end = jsonArrowTokenEnd(stmt, nameStart)
-	default:
-		end = jsonArrowTokenEnd(stmt, i)
-	}
+	end := jsonArrowExprEnd(stmt, byteOffsets, expr)
 	if end < 0 {
 		return -1, -1, false
 	}
 	lit, ok := jsonExtractPathExpr(expr).(*rqlite.StringLit)
 	return i, end, ok && strings.HasPrefix(lit.Value, "$")
+}
+
+func jsonArrowExprEnd(stmt string, byteOffsets []int, expr rqlite.Expr) int {
+	switch wrapper := expr.(type) {
+	case *rqlite.ParenExpr:
+		end := runeToByteOffset(byteOffsets, wrapper.Rparen.Offset)
+		if end < 0 {
+			return -1
+		}
+		return end + 1
+	case *rqlite.CollateExpr:
+		if wrapper.Collation == nil || wrapper.Collation.Name == nil {
+			return -1
+		}
+		nameStart := runeToByteOffset(byteOffsets, wrapper.Collation.Name.NamePos.Offset)
+		return jsonArrowTokenEnd(stmt, nameStart)
+	case *rqlite.UnaryExpr:
+		return jsonArrowExprEnd(stmt, byteOffsets, wrapper.X)
+	default:
+		start := runeToByteOffset(byteOffsets, jsonExprStart(expr))
+		return jsonArrowTokenEnd(stmt, start)
+	}
 }
 
 func jsonArrowTokenEnd(stmt string, i int) int {

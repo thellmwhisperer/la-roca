@@ -204,6 +204,12 @@ func TestPrepareRepairsOnlyNamedModelOutputShapes(t *testing.T) {
 			wantRepairs: []string{sqlrepair.PreserveJSONExtract},
 		},
 		{
+			name:        "rewrite nested transparent JSON path wrappers",
+			raw:         "SELECT metadata -> +('$.project' COLLATE NOCASE) = 'galactic' FROM memories",
+			wantSQL:     "SELECT json_extract(metadata, +('$.project' COLLATE NOCASE)) = 'galactic' FROM memories",
+			wantRepairs: []string{sqlrepair.PreserveJSONExtract},
+		},
+		{
 			name:        "rewrite a parenthesized JSON chain atomically",
 			raw:         "SELECT (metadata -> '$.project') ->> '$.name' FROM memories",
 			wantSQL:     "SELECT json_extract((json_extract(metadata, '$.project')), '$.name') FROM memories",
