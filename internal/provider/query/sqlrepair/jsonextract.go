@@ -23,8 +23,8 @@ func preserveJSONExtract(stmt string) (string, bool) {
 }
 
 func preserveJSONExtractPass(stmt string) (string, bool) {
-	leftStarts := jsonArrowLeftStarts(stmt)
-	if len(leftStarts) == 0 {
+	arrows := jsonArrows(stmt)
+	if len(arrows) == 0 {
 		return stmt, false
 	}
 	var rebuilt strings.Builder
@@ -40,7 +40,7 @@ func preserveJSONExtractPass(stmt string) (string, bool) {
 			i++
 			continue
 		}
-		leftStart, leftEnd := jsonArrowLeft(stmt, i, leftStarts)
+		leftStart, leftEnd := jsonArrowLeft(stmt, i, arrows)
 		if leftStart < cursor {
 			i++
 			continue
@@ -50,19 +50,18 @@ func preserveJSONExtractPass(stmt string) (string, bool) {
 		chainChanged := false
 		arrow := i
 		for {
-			width = jsonArrowWidth(stmt, arrow)
-			rightStart, rightEnd := jsonArrowRight(stmt, arrow+width)
-			if rightStart < 0 {
+			operand, ok := arrows[arrow]
+			if !ok {
 				break
 			}
-			if isJSONExtractPath(stmt[rightStart:rightEnd]) {
-				expr = "json_extract(" + expr + ", " + stmt[rightStart:rightEnd] + ")"
+			if operand.path {
+				expr = "json_extract(" + expr + ", " + stmt[operand.rightStart:operand.rightEnd] + ")"
 				chainChanged = true
 			} else {
-				expr += stmt[chainEnd:rightEnd]
+				expr += stmt[chainEnd:operand.rightEnd]
 			}
-			chainEnd = rightEnd
-			next := skipSpaceRight(stmt, rightEnd)
+			chainEnd = operand.rightEnd
+			next := skipSpaceRight(stmt, operand.rightEnd)
 			if jsonArrowWidth(stmt, next) == 0 {
 				break
 			}
@@ -87,10 +86,6 @@ func preserveJSONExtractPass(stmt string) (string, bool) {
 	}
 	rebuilt.WriteString(stmt[cursor:])
 	return rebuilt.String(), true
-}
-
-func isJSONExtractPath(operand string) bool {
-	return len(operand) >= 3 && operand[0] == '\'' && operand[1] == '$' && operand[len(operand)-1] == '\''
 }
 
 func jsonArrowWidth(stmt string, i int) int {
@@ -121,17 +116,25 @@ func skipQuotedOrComment(stmt string, i int) (int, bool) {
 	return i, false
 }
 
-func jsonArrowLeft(stmt string, arrow int, starts map[int]int) (int, int) {
+func jsonArrowLeft(stmt string, arrow int, arrows map[int]jsonArrow) (int, int) {
 	end := skipSpaceLeft(stmt, arrow)
-	start, ok := starts[arrow]
-	if !ok || start < 0 || start >= end {
+	operand, ok := arrows[arrow]
+	if !ok || operand.leftStart < 0 || operand.leftStart >= end {
 		return -1, -1
 	}
-	return start, end
+	return operand.leftStart, end
+}
+
+type jsonArrow struct {
+	leftStart  int
+	rightStart int
+	rightEnd   int
+	path       bool
 }
 
 type jsonArrowVisitor struct {
-	starts      map[int]int
+	stmt        string
+	arrows      map[int]jsonArrow
 	byteOffsets []int
 }
 
@@ -142,10 +145,19 @@ func (v *jsonArrowVisitor) Visit(node rqlite.Node) (rqlite.Visitor, rqlite.Node,
 	}
 	if expr, ok := node.(*rqlite.BinaryExpr); ok &&
 		(expr.Op == rqlite.JSON_EXTRACT_JSON || expr.Op == rqlite.JSON_EXTRACT_SQL) {
-		start := runeToByteOffset(v.byteOffsets, jsonExprStart(expr.X))
+		leftStart := runeToByteOffset(v.byteOffsets, jsonExprStart(expr.X))
 		op := runeToByteOffset(v.byteOffsets, expr.OpPos.Offset)
-		if start >= 0 && op >= 0 {
-			v.starts[op] = start
+		if leftStart >= 0 && op >= 0 {
+			width := jsonArrowWidth(v.stmt, op)
+			rightStart, rightEnd := jsonArrowRight(v.stmt, op+width)
+			if width > 0 && rightStart >= 0 {
+				v.arrows[op] = jsonArrow{
+					leftStart:  leftStart,
+					rightStart: rightStart,
+					rightEnd:   rightEnd,
+					path:       isJSONExtractPathExpr(expr.Y),
+				}
+			}
 		}
 	}
 	return v, node, nil
@@ -155,19 +167,32 @@ func (v *jsonArrowVisitor) VisitEnd(node rqlite.Node) (rqlite.Node, error) {
 	return node, nil
 }
 
-func jsonArrowLeftStarts(stmt string) map[int]int {
+func jsonArrows(stmt string) map[int]jsonArrow {
 	sel := parseSelect(stmt)
 	if sel == nil {
 		return nil
 	}
 	visitor := &jsonArrowVisitor{
-		starts:      make(map[int]int),
+		stmt:        stmt,
+		arrows:      make(map[int]jsonArrow),
 		byteOffsets: runeByteOffsets(stmt),
 	}
 	if _, err := rqlite.Walk(visitor, sel); err != nil {
 		return nil
 	}
-	return visitor.starts
+	return visitor.arrows
+}
+
+func isJSONExtractPathExpr(expr rqlite.Expr) bool {
+	for {
+		paren, ok := expr.(*rqlite.ParenExpr)
+		if !ok {
+			break
+		}
+		expr = paren.X
+	}
+	lit, ok := expr.(*rqlite.StringLit)
+	return ok && strings.HasPrefix(lit.Value, "$")
 }
 
 func runeByteOffsets(text string) []int {

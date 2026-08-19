@@ -532,10 +532,11 @@ final `ORDER BY`. A bare `ORDER BY` after a `JOIN` is qualified from the one
 selected or grouped column that owns that name (`join_order_by`); when two
 tables share the name the statement is left for the gate to reject as
 ambiguous. `json_extract(x, '$.k')` is never rewritten as the `->` shorthand,
-and a model-emitted `->` or `->>` is restored to `json_extract`
-(`preserve_json_extract`), because the shorthand compares quoted JSON text
-and silently returns no rows. An implicit conjunction before a parenthesized
-FTS OR group is made explicit (`fts_or_group`), because FTS5 rejects that
+and a model-emitted `->` or `->>` with a quoted `$` path is restored to
+`json_extract` (`preserve_json_extract`); label and index shorthand stays
+unchanged. The `->` shorthand returns quoted JSON text, so comparing it with a
+SQL string can silently return no rows. An implicit conjunction before a
+parenthesized FTS OR group is made explicit (`fts_or_group`), because FTS5 rejects that
 otherwise valid SQL shape at execution. The UNION strip has an aggressive
 fallback for shapes the targeted pass cannot fix, and it is accepted only
 when what it produces parses as one `SELECT`, so truncated output and
