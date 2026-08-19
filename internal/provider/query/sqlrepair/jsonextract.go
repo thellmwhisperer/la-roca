@@ -149,7 +149,7 @@ func (v *jsonArrowVisitor) Visit(node rqlite.Node) (rqlite.Visitor, rqlite.Node,
 		op := runeToByteOffset(v.byteOffsets, expr.OpPos.Offset)
 		if leftStart >= 0 && op >= 0 {
 			width := jsonArrowWidth(v.stmt, op)
-			rightStart, rightEnd := jsonArrowRight(v.stmt, op+width)
+			rightStart, rightEnd := jsonArrowRight(v.stmt, v.byteOffsets, expr.Y)
 			if width > 0 && rightStart >= 0 {
 				v.arrows[op] = jsonArrow{
 					leftStart:  leftStart,
@@ -266,10 +266,17 @@ func jsonExprStart(expr rqlite.Expr) int {
 	return -1
 }
 
-func jsonArrowRight(stmt string, from int) (int, int) {
-	i := skipSpaceRight(stmt, from)
-	if i >= len(stmt) {
+func jsonArrowRight(stmt string, byteOffsets []int, expr rqlite.Expr) (int, int) {
+	i := runeToByteOffset(byteOffsets, jsonExprStart(expr))
+	if i < 0 || i >= len(stmt) {
 		return -1, -1
+	}
+	if paren, ok := expr.(*rqlite.ParenExpr); ok {
+		end := runeToByteOffset(byteOffsets, paren.Rparen.Offset)
+		if end < 0 {
+			return -1, -1
+		}
+		return i, end + 1
 	}
 	switch stmt[i] {
 	case '\'', '"', '`':

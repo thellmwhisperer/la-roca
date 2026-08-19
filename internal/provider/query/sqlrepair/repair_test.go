@@ -192,6 +192,12 @@ func TestPrepareRepairsOnlyNamedModelOutputShapes(t *testing.T) {
 			wantRepairs: []string{sqlrepair.PreserveJSONExtract},
 		},
 		{
+			name:        "rewrite a JSON path after a comment",
+			raw:         "SELECT metadata -> /* key */ '$.project' = 'galactic' FROM memories",
+			wantSQL:     "SELECT json_extract(metadata, '$.project') = 'galactic' FROM memories",
+			wantRepairs: []string{sqlrepair.PreserveJSONExtract},
+		},
+		{
 			name:        "rewrite a parenthesized JSON chain atomically",
 			raw:         "SELECT (metadata -> '$.project') ->> '$.name' FROM memories",
 			wantSQL:     "SELECT json_extract((json_extract(metadata, '$.project')), '$.name') FROM memories",
