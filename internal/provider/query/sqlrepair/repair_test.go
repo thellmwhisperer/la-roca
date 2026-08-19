@@ -154,6 +154,13 @@ func TestPrepareRepairsOnlyNamedModelOutputShapes(t *testing.T) {
 			wantRepairs: []string{sqlrepair.WrapOrderedCompound},
 		},
 		{
+			name: "fold identifiers inside compound scalar subqueries",
+			raw: "SELECT (SELECT layer) FROM memories UNION ALL " +
+				"SELECT (SELECT project) FROM sessions ORDER BY (SELECT LAYER)",
+			wantSQL: "SELECT (SELECT layer) FROM memories UNION ALL " +
+				"SELECT (SELECT project) FROM sessions ORDER BY (SELECT LAYER)",
+		},
+		{
 			name: "keep compound ORDER BY aliases and valid ordinals",
 			raw: "SELECT lower(layer) AS normalized, project FROM memories UNION ALL " +
 				"SELECT lower(project), agent FROM sessions ORDER BY normalized, 2",
@@ -198,6 +205,18 @@ func TestPrepareRepairsOnlyNamedModelOutputShapes(t *testing.T) {
 				"FROM memories",
 			wantSQL: "SELECT json_extract(CASE WHEN metadata IS NULL THEN '{}' ELSE metadata END, '$.project') " +
 				"FROM memories",
+			wantRepairs: []string{sqlrepair.PreserveJSONExtract},
+		},
+		{
+			name:        "rewrite a JSON arrow after multibyte text",
+			raw:         "SELECT 'é', metadata -> '$.project' FROM memories",
+			wantSQL:     "SELECT 'é', json_extract(metadata, '$.project') FROM memories",
+			wantRepairs: []string{sqlrepair.PreserveJSONExtract},
+		},
+		{
+			name:        "rewrite a JSON arrow inside a scalar subquery",
+			raw:         "SELECT (SELECT metadata -> '$.project' FROM memories LIMIT 1)",
+			wantSQL:     "SELECT (SELECT json_extract(metadata, '$.project') FROM memories LIMIT 1)",
 			wantRepairs: []string{sqlrepair.PreserveJSONExtract},
 		},
 		{

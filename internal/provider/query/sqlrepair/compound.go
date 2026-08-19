@@ -231,6 +231,10 @@ func keepsCompoundOrderTerm(term string, columns compoundResultColumns) bool {
 type foldExpressionIdentifiers struct{}
 
 func (foldExpressionIdentifiers) Visit(node rqlite.Node) (rqlite.Visitor, rqlite.Node, error) {
+	if expr, ok := node.(rqlite.SelectExpr); ok {
+		_, err := rqlite.Walk(foldExpressionIdentifiers{}, expr.SelectStatement)
+		return nil, node, err
+	}
 	if ident, ok := node.(*rqlite.Ident); ok {
 		ident.Name = strings.ToLower(ident.Name)
 	}

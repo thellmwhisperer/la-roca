@@ -131,14 +131,21 @@ func jsonArrowLeft(stmt string, arrow int, starts map[int]int) (int, int) {
 }
 
 type jsonArrowVisitor struct {
-	starts map[int]int
+	starts      map[int]int
+	byteOffsets []int
 }
 
 func (v *jsonArrowVisitor) Visit(node rqlite.Node) (rqlite.Visitor, rqlite.Node, error) {
+	if expr, ok := node.(rqlite.SelectExpr); ok {
+		_, err := rqlite.Walk(v, expr.SelectStatement)
+		return nil, node, err
+	}
 	if expr, ok := node.(*rqlite.BinaryExpr); ok &&
 		(expr.Op == rqlite.JSON_EXTRACT_JSON || expr.Op == rqlite.JSON_EXTRACT_SQL) {
-		if start := jsonExprStart(expr.X); start >= 0 {
-			v.starts[expr.OpPos.Offset] = start
+		start := runeToByteOffset(v.byteOffsets, jsonExprStart(expr.X))
+		op := runeToByteOffset(v.byteOffsets, expr.OpPos.Offset)
+		if start >= 0 && op >= 0 {
+			v.starts[op] = start
 		}
 	}
 	return v, node, nil
@@ -153,11 +160,29 @@ func jsonArrowLeftStarts(stmt string) map[int]int {
 	if sel == nil {
 		return nil
 	}
-	visitor := &jsonArrowVisitor{starts: make(map[int]int)}
+	visitor := &jsonArrowVisitor{
+		starts:      make(map[int]int),
+		byteOffsets: runeByteOffsets(stmt),
+	}
 	if _, err := rqlite.Walk(visitor, sel); err != nil {
 		return nil
 	}
 	return visitor.starts
+}
+
+func runeByteOffsets(text string) []int {
+	var offsets []int
+	for offset := range text {
+		offsets = append(offsets, offset)
+	}
+	return offsets
+}
+
+func runeToByteOffset(offsets []int, offset int) int {
+	if offset < 0 || offset >= len(offsets) {
+		return -1
+	}
+	return offsets[offset]
 }
 
 func jsonExprStart(expr rqlite.Expr) int {
