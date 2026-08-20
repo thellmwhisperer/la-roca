@@ -2,10 +2,8 @@ package cli
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -35,10 +33,7 @@ func TestIngestKeepsSuccessWhenOnlyAReadFailed(t *testing.T) {
 func TestDirectIngestReportsAnIsolatedWriteFailureAndExitsNonZero(t *testing.T) {
 	home, claudeRoot, grokRoot, dbPath := initializedIngestCLI(t)
 	corpusPath := filepath.Join(home, ".roca", "plugins", rocacorpus.Name, rocacorpus.DatabaseFilename)
-	db, err := sql.Open("sqlite", corpusPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := openLayoutDatabase(t, corpusPath)
 	defer db.Close()
 	if err := exactdedup.EnsureGuards(context.Background(), db); err != nil {
 		t.Fatal(err)
@@ -51,26 +46,23 @@ func TestDirectIngestReportsAnIsolatedWriteFailureAndExitsNonZero(t *testing.T) 
 	writeFailureBody := `{"type":"user","timestamp":"2026-08-01T11:00:00Z","message":{"content":"write question"}}
 {"type":"assistant","timestamp":"2026-08-01T11:00:01Z","message":{"content":[{"type":"text","text":"write answer"}]}}
 `
-	writeIngestFixture(t, filepath.Join(project, "11111111-1111-1111-1111-111111111111.jsonl"), metadataBody)
-	writeIngestFixture(t, filepath.Join(project, "22222222-2222-2222-2222-222222222222.jsonl"), metadataBody)
-	writeIngestFixture(t, filepath.Join(project, "33333333-3333-3333-3333-333333333333.jsonl"), writeFailureBody)
-	writeIngestFixture(t, filepath.Join(project, "44444444-4444-4444-4444-444444444444.jsonl"), writeFailureBody)
+	writeFile(t, filepath.Join(project, "11111111-1111-1111-1111-111111111111.jsonl"), metadataBody)
+	writeFile(t, filepath.Join(project, "22222222-2222-2222-2222-222222222222.jsonl"), metadataBody)
+	writeFile(t, filepath.Join(project, "33333333-3333-3333-3333-333333333333.jsonl"), writeFailureBody)
+	writeFile(t, filepath.Join(project, "44444444-4444-4444-4444-444444444444.jsonl"), writeFailureBody)
 	seedLaterGrokFixture(t, grokRoot)
 
-	var output, warnings strings.Builder
-	env := hermeticCLIEnv(&cliEnv{build: Build{Version: "test", Commit: "test-sha"},
-		out: &output, errOut: &warnings})
-	code, err := executeWithEnv(env, []string{"ingest", "--db-path", dbPath}, nil)
-	if err != nil {
+	run := executeHermeticCLI([]string{"ingest", "--db-path", dbPath})
+	if run.err != nil {
 		t.Fatalf("ingest returned an execution error instead of its report: %v\n%s%s",
-			err, output.String(), warnings.String())
+			run.err, run.output, run.warnings)
 	}
-	if code != ExitError {
-		t.Fatalf("ingest exit = %d, want %d:\n%s%s", code, ExitError, output.String(), warnings.String())
+	if run.code != ExitError {
+		t.Fatalf("ingest exit = %d, want %d:\n%s%s", run.code, ExitError, run.output, run.warnings)
 	}
 	for _, want := range []string{"skipped: write failed · 1", "✓ grok", "1 error"} {
-		if !strings.Contains(output.String(), want) {
-			t.Errorf("ingest report lacks %q:\n%s", want, output.String())
+		if !strings.Contains(run.output, want) {
+			t.Errorf("ingest report lacks %q:\n%s", want, run.output)
 		}
 	}
 
@@ -94,34 +86,28 @@ func TestDirectIngestReportsAnIsolatedWriteFailureAndExitsNonZero(t *testing.T) 
 			claudeSessions, grokSessions, exactGuards, metadataPreserved)
 	}
 	t.Logf("direct CLI exit=%d; persisted sessions claude=%d grok=%d; exact guard present=%t; colliding metadata unchanged=%t\n%s",
-		code, claudeSessions, grokSessions, exactGuards == 1, metadataPreserved == 1, output.String())
+		run.code, claudeSessions, grokSessions, exactGuards == 1, metadataPreserved == 1, run.output)
 }
 
 func TestDirectIngestKeepsAReadFailureNonFatal(t *testing.T) {
 	home, claudeRoot, _, dbPath := initializedIngestCLI(t)
 	bad := filepath.Join(claudeRoot, "-synthetic-demo",
 		"66666666-6666-6666-6666-666666666666", "subagents", "foreign.jsonl")
-	writeIngestFixture(t, bad, `{"event":"turn","payload":{"role":"user","text":"another shape"}}`+"\n")
+	writeFile(t, bad, `{"event":"turn","payload":{"role":"user","text":"another shape"}}`+"\n")
 
-	var output, warnings strings.Builder
-	env := hermeticCLIEnv(&cliEnv{build: Build{Version: "test", Commit: "test-sha"},
-		out: &output, errOut: &warnings})
-	code, err := executeWithEnv(env, []string{"ingest", "--db-path", dbPath}, nil)
-	if err != nil || code != ExitOK {
+	run := executeHermeticCLI([]string{"ingest", "--db-path", dbPath})
+	if run.err != nil || run.code != ExitOK {
 		t.Fatalf("read-only failure = code %d err %v, want a non-fatal report:\n%s%s",
-			code, err, output.String(), warnings.String())
+			run.code, run.err, run.output, run.warnings)
 	}
 	for _, want := range []string{"1 error", "skipped: read or parse failed · 1", "error: foreign.jsonl"} {
-		if !strings.Contains(output.String(), want) {
-			t.Errorf("ingest report lacks %q:\n%s", want, output.String())
+		if !strings.Contains(run.output, want) {
+			t.Errorf("ingest report lacks %q:\n%s", want, run.output)
 		}
 	}
 
 	corpusPath := filepath.Join(home, ".roca", "plugins", rocacorpus.Name, rocacorpus.DatabaseFilename)
-	db, err := sql.Open("sqlite", corpusPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := openLayoutDatabase(t, corpusPath)
 	defer db.Close()
 	var recorded int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM ingest_file_state WHERE last_error IS NOT NULL`).Scan(&recorded); err != nil {
@@ -130,7 +116,7 @@ func TestDirectIngestKeepsAReadFailureNonFatal(t *testing.T) {
 	if recorded != 1 {
 		t.Fatalf("persisted read failures = %d, want 1", recorded)
 	}
-	t.Logf("direct CLI exit=%d; persisted read failures=%d\n%s", code, recorded, output.String())
+	t.Logf("direct CLI exit=%d; persisted read failures=%d\n%s", run.code, recorded, run.output)
 }
 
 func initializedIngestCLI(t *testing.T) (home, claudeRoot, grokRoot, dbPath string) {
@@ -146,35 +132,36 @@ func initializedIngestCLI(t *testing.T) (home, claudeRoot, grokRoot, dbPath stri
 		claudeRoot, grokRoot, filepath.Join(home, "workspace")))
 	dbPath = filepath.Join(home, ".roca", "roca.db")
 
-	var output, warnings strings.Builder
-	env := hermeticCLIEnv(&cliEnv{build: Build{Version: "test", Commit: "test-sha"},
-		out: &output, errOut: &warnings})
-	code, err := executeWithEnv(env, []string{"init", "--db-path", dbPath}, nil)
-	if err != nil || code != ExitOK {
-		t.Fatalf("init = code %d err %v:\n%s%s", code, err, output.String(), warnings.String())
+	run := executeHermeticCLI([]string{"init", "--db-path", dbPath})
+	if run.err != nil || run.code != ExitOK {
+		t.Fatalf("init = code %d err %v:\n%s%s", run.code, run.err, run.output, run.warnings)
 	}
 	return home, claudeRoot, grokRoot, dbPath
 }
 
-func writeIngestFixture(t *testing.T, path, body string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
+type cliExecution struct {
+	code             int
+	err              error
+	output, warnings string
+}
+
+func executeHermeticCLI(args []string) cliExecution {
+	var output, warnings strings.Builder
+	env := hermeticCLIEnv(&cliEnv{build: Build{Version: "test", Commit: "test-sha"},
+		out: &output, errOut: &warnings})
+	code, err := executeWithEnv(env, args, nil)
+	return cliExecution{code: code, err: err, output: output.String(), warnings: warnings.String()}
 }
 
 func seedLaterGrokFixture(t *testing.T, root string) {
 	t.Helper()
 	const sessionID = "55555555-5555-5555-5555-555555555555"
 	session := filepath.Join(root, url.PathEscape("/synthetic/later"), sessionID)
-	writeIngestFixture(t, filepath.Join(session, "summary.json"), `{
+	writeFile(t, filepath.Join(session, "summary.json"), `{
   "info":{"id":"55555555-5555-5555-5555-555555555555","cwd":"/synthetic/later"},
   "created_at":"2026-08-01T12:00:00Z","updated_at":"2026-08-01T12:00:02Z"
 }`)
-	writeIngestFixture(t, filepath.Join(session, "updates.jsonl"), `
+	writeFile(t, filepath.Join(session, "updates.jsonl"), `
 {"method":"session/update","params":{"sessionId":"55555555-5555-5555-5555-555555555555","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"later question"}}},"timestamp":1785585601}
 {"method":"session/update","params":{"sessionId":"55555555-5555-5555-5555-555555555555","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"later answer"}}},"timestamp":1785585602}
 `)

@@ -57,21 +57,9 @@ func TestPatchMetadataDoesNotBreakTheExactPayloadIndex(t *testing.T) {
 }
 
 func TestAMetadataPayloadCollisionDoesNotAbortLaterSources(t *testing.T) {
-	world, roots := collisionWorld(t)
-	project := filepath.Join(roots.ClaudeProjects, world.projectDir())
-	body := collidingClaudeTranscript(world.demoCwd())
-	world.write(t, filepath.Join(project, "aaaaaaaa-bbbb-cccc-dddd-111111111111.jsonl"), body)
-	world.write(t, filepath.Join(project, "bbbbbbbb-cccc-dddd-eeee-222222222222.jsonl"), body)
-	world.seedGrok(t, roots)
-
-	db := rocaDatabase(t)
-	if err := exactdedup.EnsureGuards(context.Background(), db.SQL()); err != nil {
-		t.Fatal(err)
-	}
-	result, err := Run(context.Background(), db, registry(t), Options{Roots: roots})
-	if err != nil {
-		t.Fatalf("run: %v", err)
-	}
+	result, sessions := runCollidingSources(t, func(world *world) string {
+		return collidingClaudeTranscript(world.demoCwd())
+	})
 	if result.WriteFailed != 0 {
 		t.Fatalf("write_failed = %d, want the metadata collision resolved: %+v",
 			result.WriteFailed, result.ErrorDetails)
@@ -79,33 +67,16 @@ func TestAMetadataPayloadCollisionDoesNotAbortLaterSources(t *testing.T) {
 	if grok := result.Sources["grok"]; grok == nil || grok.Sessions+grok.SessionsUpdated == 0 {
 		t.Fatalf("later grok source did not run: %+v", result.Sources)
 	}
-	var sessions int
-	if err := db.SQL().QueryRow(`SELECT COUNT(*) FROM sessions`).Scan(&sessions); err != nil {
-		t.Fatal(err)
-	}
 	if sessions < 3 {
 		t.Fatalf("sessions = %d, want both Claude rows and the later grok session", sessions)
 	}
 }
 
 func TestOneWriteFailureDoesNotAbortLaterSources(t *testing.T) {
-	world, roots := collisionWorld(t)
-	project := filepath.Join(roots.ClaudeProjects, world.projectDir())
 	body := `{"type":"user","timestamp":"2026-08-01T10:00:00Z","message":{"content":"question"}}
 {"type":"assistant","timestamp":"2026-08-01T10:00:01Z","message":{"content":[{"type":"text","text":"answer"}]}}
 `
-	world.write(t, filepath.Join(project, "aaaaaaaa-bbbb-cccc-dddd-111111111111.jsonl"), body)
-	world.write(t, filepath.Join(project, "bbbbbbbb-cccc-dddd-eeee-222222222222.jsonl"), body)
-	world.seedGrok(t, roots)
-
-	db := rocaDatabase(t)
-	if err := exactdedup.EnsureGuards(context.Background(), db.SQL()); err != nil {
-		t.Fatal(err)
-	}
-	result, err := Run(context.Background(), db, registry(t), Options{Roots: roots})
-	if err != nil {
-		t.Fatalf("run: %v", err)
-	}
+	result, _ := runCollidingSources(t, func(*world) string { return body })
 	if result.WriteFailed == 0 || result.Errors == 0 {
 		t.Fatalf("the colliding insert was not isolated: errors=%d write_failed=%d details=%+v",
 			result.Errors, result.WriteFailed, result.ErrorDetails)
@@ -119,6 +90,30 @@ func TestOneWriteFailureDoesNotAbortLaterSources(t *testing.T) {
 	if grok := result.Sources["grok"]; grok == nil || grok.Sessions+grok.SessionsUpdated == 0 {
 		t.Fatalf("one write failure aborted later sources: %+v", result.Sources)
 	}
+}
+
+func runCollidingSources(t *testing.T, transcript func(*world) string) (Result, int) {
+	t.Helper()
+	world, roots := collisionWorld(t)
+	project := filepath.Join(roots.ClaudeProjects, world.projectDir())
+	body := transcript(world)
+	world.write(t, filepath.Join(project, "aaaaaaaa-bbbb-cccc-dddd-111111111111.jsonl"), body)
+	world.write(t, filepath.Join(project, "bbbbbbbb-cccc-dddd-eeee-222222222222.jsonl"), body)
+	world.seedGrok(t, roots)
+
+	db := rocaDatabase(t)
+	if err := exactdedup.EnsureGuards(context.Background(), db.SQL()); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Run(context.Background(), db, registry(t), Options{Roots: roots})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	var sessions int
+	if err := db.SQL().QueryRow(`SELECT COUNT(*) FROM sessions`).Scan(&sessions); err != nil {
+		t.Fatal(err)
+	}
+	return result, sessions
 }
 
 func collisionWorld(t *testing.T) (*world, Roots) {
