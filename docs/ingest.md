@@ -479,3 +479,10 @@ every file under `parsed`, `pending`, `skipped`, `excluded`, or `error` with a
 reason and exact count. Those categories total `files_seen`, so an operator can
 distinguish an unchanged content file from a runtime family La Roca deliberately
 did not parse.
+
+A file that parsed and then could not be written is isolated: the run names it
+under `write failed`, continues with the rest of the corpus, and `roca ingest`
+exits non-zero so a direct invocation and a cron ride agree. A file that could
+not be read is still a counted, non-fatal skip. Patching session metadata never
+writes a duplicate exact-payload row; the unique index stays, and the artefact
+keeps the metadata it already had.
