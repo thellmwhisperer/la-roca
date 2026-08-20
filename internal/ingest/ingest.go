@@ -59,6 +59,7 @@ type SourceStats struct {
 	Read             int
 	FilesExcluded    int
 	FilesErrored     int
+	FilesWriteFailed int
 	RecordsDiscarded int
 	RecordsExcluded  int
 	ElapsedMS        int64
@@ -368,6 +369,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 			result.fail(target, err.Error())
 			result.WriteFailed++
 			stats.FilesErrored++
+			stats.FilesWriteFailed++
 			result.Coverage.skip(target.Path, "write failed")
 			if recordErr := db.Write(ctx, func(tx *sql.Tx) error {
 				return RecordState(ctx, tx, target, fingerprint, err.Error(), nil)

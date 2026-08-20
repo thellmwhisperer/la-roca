@@ -232,7 +232,7 @@ func renderIngestSources(env *cliEnv, result service.IngestResult) {
 		coverage := fmt.Sprintf("%s seen · %s parsed · %s skipped",
 			axi.Quantity(int64(stats.Processed+stats.FilesExcluded), "file"),
 			axi.Number(int64(stats.Read)),
-			axi.Number(int64(stats.Processed-stats.Read-stats.FilesErrored)))
+			axi.Number(int64(stats.Processed-stats.Read-(stats.FilesErrored-stats.FilesWriteFailed))))
 		if stats.FilesExcluded > 0 {
 			coverage += fmt.Sprintf(" · %s excluded", axi.Number(int64(stats.FilesExcluded)))
 		}

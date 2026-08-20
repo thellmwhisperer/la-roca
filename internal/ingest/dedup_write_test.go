@@ -96,6 +96,9 @@ func TestOneWriteFailureDoesNotAbortLaterSources(t *testing.T) {
 		t.Fatalf("the colliding insert was not isolated: errors=%d write_failed=%d details=%+v",
 			result.Errors, result.WriteFailed, result.ErrorDetails)
 	}
+	if stats := result.SourceStats["claude"]; stats == nil || stats.FilesWriteFailed != 1 {
+		t.Fatalf("claude write failure stats = %+v, want one", stats)
+	}
 	if !coverageHas(result, "write failed") {
 		t.Fatalf("coverage did not name the write failure: %+v", result.Coverage)
 	}
