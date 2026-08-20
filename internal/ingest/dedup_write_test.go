@@ -40,6 +40,20 @@ func TestPatchMetadataDoesNotBreakTheExactPayloadIndex(t *testing.T) {
 	if count != 2 {
 		t.Fatalf("sessions = %d, want both rows to land", count)
 	}
+	var firstCwd, secondCwd sql.NullString
+	if err := db.SQL().QueryRow(`
+		SELECT
+		  (SELECT json_extract(metadata, '$.cwd') FROM sessions WHERE session_id = 'session-one'),
+		  (SELECT json_extract(metadata, '$.cwd') FROM sessions WHERE session_id = 'session-two')`,
+	).Scan(&firstCwd, &secondCwd); err != nil {
+		t.Fatal(err)
+	}
+	if !firstCwd.Valid || firstCwd.String != "/synthetic/demo" {
+		t.Fatalf("first metadata cwd = %q, want the committed patch", firstCwd.String)
+	}
+	if secondCwd.Valid {
+		t.Fatalf("second metadata cwd = %q, want its pre-patch metadata unchanged", secondCwd.String)
+	}
 }
 
 func TestAMetadataPayloadCollisionDoesNotAbortLaterSources(t *testing.T) {
