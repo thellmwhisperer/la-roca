@@ -61,9 +61,13 @@ func ingestCommand(env *cliEnv) *cobra.Command {
 				env.seedDetectedSkills(false)
 			}
 			if env.json {
-				return env.printJSON(result)
+				if err := env.printJSON(result); err != nil {
+					return err
+				}
+			} else {
+				renderIngest(env, result, verbose)
 			}
-			renderIngest(env, result, verbose)
+			applyIngestExitCode(env, result)
 			return nil
 		}),
 	}
@@ -72,6 +76,15 @@ func ingestCommand(env *cliEnv) *cobra.Command {
 	cmd.Flags().BoolVar(&verbose, "verbose", false,
 		"add up to 100 record details with paths; the ingest log has the full run report")
 	return cmd
+}
+
+// applyIngestExitCode makes a direct `roca ingest` and a cron ride agree: a
+// write that could not land is a failed run even though the rest of the corpus
+// continued. A file that could not be read stays a counted, non-fatal skip.
+func applyIngestExitCode(env *cliEnv, result service.IngestResult) {
+	if result.WriteFailed > 0 {
+		env.code = ExitError
+	}
 }
 
 func validateIngestArgs(cmd *cobra.Command, args []string) error {
@@ -219,7 +232,7 @@ func renderIngestSources(env *cliEnv, result service.IngestResult) {
 		coverage := fmt.Sprintf("%s seen · %s parsed · %s skipped",
 			axi.Quantity(int64(stats.Processed+stats.FilesExcluded), "file"),
 			axi.Number(int64(stats.Read)),
-			axi.Number(int64(stats.Processed-stats.Read-stats.FilesErrored)))
+			axi.Number(int64(stats.Processed-stats.Read-(stats.FilesErrored-stats.FilesWriteFailed))))
 		if stats.FilesExcluded > 0 {
 			coverage += fmt.Sprintf(" · %s excluded", axi.Number(int64(stats.FilesExcluded)))
 		}

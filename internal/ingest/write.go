@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
+
+	sqlite "modernc.org/sqlite"
 )
 
 // This file is the only one in the ingest that knows SQL. What
@@ -1281,10 +1283,30 @@ func (w *writer) patchMetadata(ctx context.Context, sessionID string, payload ma
 	_, err = w.tx.ExecContext(ctx, `
 		UPDATE sessions SET metadata = json_patch(COALESCE(metadata, '{}'), ?)
 		WHERE session_id = ?`, string(encoded), sessionID)
+	if isSessionExactPayloadConflict(err) {
+		// The patched payload would match another session row. Exact-dedup
+		// forbids that duplicate; leaving this row's metadata unchanged keeps
+		// the artefact writable and the unique index intact.
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("patch the metadata of %s: %w", sessionID, err)
 	}
 	return nil
+}
+
+// SQLITE_CONSTRAINT_UNIQUE is 2067; the primary constraint class is 19.
+const sqliteConstraintUnique = 2067
+
+func isSessionExactPayloadConflict(err error) bool {
+	if err == nil || !strings.Contains(err.Error(), "idx_sessions_exact_payload") {
+		return false
+	}
+	var serr *sqlite.Error
+	if errors.As(err, &serr) {
+		return serr.Code() == sqliteConstraintUnique || serr.Code()&0xff == 19
+	}
+	return true
 }
 
 // memory writes one curated text.
