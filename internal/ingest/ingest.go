@@ -64,9 +64,9 @@ type SourceStats struct {
 	ElapsedMS        int64
 }
 
-// Failure is one artefact that could not be read, named so the operator knows
-// which one and why. One bad file is isolated and reported; it never costs the
-// run.
+// Failure is one artefact that could not be read or written, named so the
+// operator knows which one and why. One bad file is isolated and reported; it
+// never costs the rest of the corpus.
 type Failure struct {
 	Path   string `json:"path"`
 	Parser string `json:"parser"`
@@ -153,6 +153,10 @@ type Result struct {
 	// checks. The list is beside it.
 	Errors       int       `json:"errors"`
 	ErrorDetails []Failure `json:"error_details,omitempty"`
+	// WriteFailed counts artefacts that parsed and then could not be written.
+	// The rest of the corpus still runs; the CLI exits non-zero so a direct
+	// invocation and cron agree.
+	WriteFailed int `json:"write_failed,omitempty"`
 	// RecordsDiscarded counts what could not be read; RecordsExcluded counts what
 	// this build never meant to read. They are apart because collapsing them is
 	// what made a healthy ingest report thousands of failures.
@@ -361,8 +365,16 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		stats.RecordsExcluded += result.RecordsExcluded - excludedBefore
 		finishTarget()
 		if err != nil {
+			result.fail(target, err.Error())
+			result.WriteFailed++
+			stats.FilesErrored++
 			result.Coverage.skip(target.Path, "write failed")
-			return result, err
+			if recordErr := db.Write(ctx, func(tx *sql.Tx) error {
+				return RecordState(ctx, tx, target, fingerprint, err.Error(), nil)
+			}); recordErr != nil {
+				return result, recordErr
+			}
+			continue
 		}
 		if ingested {
 			result.Coverage.Files.Ingested++
