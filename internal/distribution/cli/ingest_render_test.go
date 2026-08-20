@@ -167,18 +167,32 @@ func TestAStoreBackedSourceRowShowsWhatItSaw(t *testing.T) {
 	}
 }
 
-func TestASourceRowDoesNotCallFingerprintErrorsSkipped(t *testing.T) {
-	var output strings.Builder
-	renderIngestSources(&cliEnv{out: &output}, service.IngestResult{Result: ingest.Result{
-		Sources: map[string]*ingest.Counts{"pi": {}},
-		SourceStats: map[string]*ingest.SourceStats{"pi": {
-			Processed: 3, Read: 1, FilesErrored: 1,
-		}},
-	}})
-	for _, want := range []string{"3 files seen", "1 parsed", "1 skipped", "1 error"} {
-		if !strings.Contains(output.String(), want) {
-			t.Errorf("source row does not carry %q: %q", want, output.String())
-		}
+func TestASourceRowReportsReadAndWriteFailuresWithoutNegativeSkips(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		writeFailed int
+		wantSkipped string
+	}{
+		{name: "read failure", wantSkipped: "1 skipped"},
+		{name: "write failure after parse", writeFailed: 1, wantSkipped: "2 skipped"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var output strings.Builder
+			renderIngestSources(&cliEnv{out: &output}, service.IngestResult{Result: ingest.Result{
+				Sources: map[string]*ingest.Counts{"pi": {}},
+				SourceStats: map[string]*ingest.SourceStats{"pi": {
+					Processed: 3, Read: 1, FilesErrored: 1, FilesWriteFailed: test.writeFailed,
+				}},
+			}})
+			for _, want := range []string{"3 files seen", "1 parsed", test.wantSkipped, "1 error"} {
+				if !strings.Contains(output.String(), want) {
+					t.Errorf("source row does not carry %q: %q", want, output.String())
+				}
+			}
+			if strings.Contains(output.String(), "-1 skipped") {
+				t.Errorf("source row reports negative skips: %q", output.String())
+			}
+		})
 	}
 }
 
