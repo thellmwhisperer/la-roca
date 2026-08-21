@@ -18,6 +18,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
 	"github.com/thellmwhisperer/la-roca/internal/securefile"
+	"github.com/thellmwhisperer/la-roca/internal/store"
 )
 
 const defaultMemoryBatchSize = 250
@@ -140,13 +141,17 @@ func MemoryCustodyCutoverEligible(ctx context.Context, opsPath string,
 
 // MemoryCustodyWriterFenced reports whether DATA-2 has begun owning memory
 // writes. Once this is true, a read-route rollback must keep new stores in ops.
-func MemoryCustodyWriterFenced(ctx context.Context, opsPath string) (bool, error) {
-	ops, err := bundledplugin.OpenDatabase(opsPath, true)
+func MemoryCustodyWriterFenced(ctx context.Context, opsPath string) (fenced bool, resultErr error) {
+	snapshot, err := store.OpenReadOnlySnapshot(ctx, opsPath)
 	if err != nil {
 		return false, err
 	}
-	defer ops.Close()
-	state, err := migrationledger.InspectMigration(ctx, ops, memoryCustodyMigration)
+	defer func() {
+		if err := snapshot.Close(); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("close ops writer-fence snapshot: %w", err))
+		}
+	}()
+	state, err := migrationledger.InspectMigration(ctx, snapshot.SQL(), memoryCustodyMigration)
 	if err != nil {
 		return false, err
 	}

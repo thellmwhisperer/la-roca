@@ -29,8 +29,10 @@ const (
 
 // DB is an open La Roca database.
 type DB struct {
-	sql  *sql.DB
-	path string
+	sql              *sql.DB
+	path             string
+	physicalReadOnly bool
+	snapshot         *ReadOnlySnapshot
 	// transient is an in-memory compatibility main owned by the federation
 	// hub. It can be read through the ordinary store contract, but it is never a
 	// durable write target and its handle is closed by the hub that attached the
@@ -80,6 +82,18 @@ func Open(path string) (*DB, error) {
 		}
 	}
 	return &DB{sql: handle, path: abs}, nil
+}
+
+func OpenReadOnly(path string) (*DB, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolve the database path %q: %w", path, err)
+	}
+	snapshot, err := OpenReadOnlySnapshot(context.Background(), abs)
+	if err != nil {
+		return nil, fmt.Errorf("open the database %q read-only: %w", abs, err)
+	}
+	return &DB{sql: snapshot.SQL(), path: abs, physicalReadOnly: true, snapshot: snapshot}, nil
 }
 
 // Transient exposes an already-open in-memory federation main through the read
@@ -138,7 +152,7 @@ func (db *DB) SQL() *sql.DB { return db.sql }
 // read-only connection cannot touch WAL's shared index, and a WAL database with
 // a reader like that fails to read.
 func (db *DB) ReadOnly() (*sql.DB, error) {
-	if db.transient {
+	if db.transient || db.physicalReadOnly {
 		return db.sql, nil
 	}
 	db.once.Do(func() {
@@ -185,6 +199,9 @@ func (db *DB) Close() error {
 	if db.transient {
 		return nil
 	}
+	if db.snapshot != nil {
+		return db.snapshot.Close()
+	}
 	if db.readOnly != nil {
 		db.readOnly.Close()
 	}
@@ -195,8 +212,8 @@ func (db *DB) Close() error {
 // write lock is busy. If fn returns an error, the whole transaction is rolled
 // back.
 func (db *DB) Write(ctx context.Context, fn func(*sql.Tx) error) error {
-	if db.transient {
-		return fmt.Errorf("the in-memory federation main is read-only")
+	if db.transient || db.physicalReadOnly {
+		return fmt.Errorf("the database is read-only")
 	}
 	var last error
 	for attempt := range writeRetries {

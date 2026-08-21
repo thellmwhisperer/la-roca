@@ -33,7 +33,7 @@ func (env *cliEnv) reconciliationContext() (reconcile.Context, error) {
 }
 
 func (env *cliEnv) reconcileAfterCommand(cmd *cobra.Command) error {
-	if cmd == nil || env.skipReconciliation {
+	if cmd == nil || env.skipReconciliation || env.forceReadOnly {
 		return nil
 	}
 	switch cmd.Name() {

@@ -21,6 +21,7 @@ Feature: Distribution command line
       | ingest    |
       | model     |
       | doctor    |
+      | remote    |
       | update    |
       | uninstall |
       | plugins   |
