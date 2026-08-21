@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
+	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 )
 
 // Provenance is the answer to "which model answered, how much did it think, what

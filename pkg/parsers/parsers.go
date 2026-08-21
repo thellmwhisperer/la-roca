@@ -1,6 +1,10 @@
-// Package parsers is the pure half of the ingest: it turns one artefact's bytes
-// into normalized records and nothing else.
-// File-format parsers live here; store-backed readers such as OpenCode and Hermes stay in internal/ingest beside foreign-source guards.
+// Package parsers is the public, pure half of the ingest: it detects supported
+// artefacts and turns their bytes into normalized sessions, exchanges,
+// thinking, tool uses, and memories. Detect and Parse provide the stable
+// entry points, while Registered returns the complete built-in parser family.
+//
+// File-format parsers live here; store-backed readers such as OpenCode and
+// Hermes stay in internal/ingest beside foreign-source guards.
 //
 // It touches neither the database nor the clock nor the disk beyond the content
 // it is handed. That isolation makes the ingest

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
+	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 )
 
 func TestTheWholeMatrixIsIngested(t *testing.T) {

@@ -14,7 +14,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
+	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 )
 
 // The scan only proves a file exists under a declared root and declares the

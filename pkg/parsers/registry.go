@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/thellmwhisperer/la-roca/pkg/ingestprovenance"
@@ -334,16 +335,28 @@ func applyCanonicalHarness(fallback string, records *Records) {
 
 // Registered returns a copy so tests and contributor tooling can inspect the
 // catalogue without changing process-global routing.
-func Registered() []Registration { return append([]Registration(nil), registry...) }
+func Registered() []Registration {
+	registered := make([]Registration, len(registry))
+	for i := range registry {
+		registered[i] = cloneRegistration(registry[i])
+	}
+	return registered
+}
 
 // Lookup finds the one registry line for a parser identifier.
 func Lookup(name string) (Registration, bool) {
 	for _, registered := range registry {
 		if registered.Name == name {
-			return registered, true
+			return cloneRegistration(registered), true
 		}
 	}
 	return Registration{}, false
+}
+
+func cloneRegistration(registered Registration) Registration {
+	registered.Locations = slices.Clone(registered.Locations)
+	registered.HarvestLocations = slices.Clone(registered.HarvestLocations)
+	return registered
 }
 
 // Detect asks a registered parser whether the file belongs to it.

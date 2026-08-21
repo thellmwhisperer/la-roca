@@ -34,7 +34,7 @@ JSON or an author-invented fixture for measurement.
 ## 1. Add a synthetic fixture folder
 
 Copy one of the worked examples under
-`internal/ingest/parsers/testdata/conformance/` and give the new folder your
+`pkg/parsers/testdata/conformance/` and give the new folder your
 parser's stable name. It contains:
 
 - `fixture.json`, which names the parser, its destination, source file,
@@ -57,12 +57,12 @@ parser:
 Run the red test before writing the parser:
 
 ```sh
-go test ./internal/ingest/parsers -run TestRegisteredParsersConform
+go test ./pkg/parsers -run TestRegisteredParsersConform
 ```
 
 ## 2. Add one parser file
 
-Add one Go file under `internal/ingest/parsers/`. Implement the two-method
+Add one Go file under `pkg/parsers/`. Implement the two-method
 `Parser` interface:
 
 ```go
@@ -86,7 +86,7 @@ as a `Discard`; do not lose the rest of a valid file.
 
 ## 3. Add one registry line
 
-Add the parser to `registry` in `internal/ingest/parsers/registry.go`. Declare
+Add the parser to `registry` in `pkg/parsers/registry.go`. Declare
 where its normalized records belong:
 
 ```go
@@ -157,9 +157,9 @@ writer.
 Run the parser suite, then the repository gate:
 
 ```sh
-ROCA_REAL_HARVEST=1 go test -v ./internal/ingest/parsers \
+ROCA_REAL_HARVEST=1 go test -v ./pkg/parsers \
   -run TestRegisteredParsersHarvestPresentAgentStores
-go test ./internal/ingest/parsers
+go test ./pkg/parsers
 make check
 ```
 
