@@ -208,6 +208,9 @@ func TestInstallUpdateAndUninstallPreservePluginOwnedData(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
+	installedSidecar := filepath.Join(root, "synthetic", "plugin.vector.db")
+	writeFixtureFile(t, installedSidecar, []byte("derived vectors"), 0o600)
+	writeFixtureFile(t, installedSidecar+"-wal", []byte("derived wal"), 0o600)
 
 	writePackageAt(t, source, "synthetic", "2.0.0", false, true)
 	updated, err := plugininstall.Inspect(source, source)
@@ -235,6 +238,15 @@ func TestInstallUpdateAndUninstallPreservePluginOwnedData(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertDatabaseValue(t, installedDB, "user-owned update marker")
+	for path, want := range map[string]string{
+		installedSidecar:          "derived vectors",
+		installedSidecar + "-wal": "derived wal",
+	} {
+		raw, err := os.ReadFile(path)
+		if err != nil || string(raw) != want {
+			t.Fatalf("preserved sidecar %s = %q, err=%v", filepath.Base(path), raw, err)
+		}
+	}
 
 	manifest, err := plugininstall.ReadManifest(filepath.Join(root, "synthetic"))
 	if err != nil {
@@ -243,6 +255,9 @@ func TestInstallUpdateAndUninstallPreservePluginOwnedData(t *testing.T) {
 	if manifest.Source != source || manifest.Version != "2.0.0" || manifest.Checksum != updated.Checksum {
 		t.Fatalf("manifest = %+v", manifest)
 	}
+	if paths := plugininstall.InstalledPaths(filepath.Join(root, "synthetic"), manifest); !slices.Contains(paths, installedSidecar) || !slices.Contains(paths, installedSidecar+"-wal") {
+		t.Fatalf("installed ownership omits vector sidecar: %v", paths)
+	}
 
 	if _, err := manager.Uninstall("synthetic"); err != nil {
 		t.Fatal(err)
@@ -250,6 +265,60 @@ func TestInstallUpdateAndUninstallPreservePluginOwnedData(t *testing.T) {
 	for _, path := range []string{filepath.Join(root, "synthetic"), filepath.Join(bin, "roca-synthetic")} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("uninstall kept %s: %v", path, err)
+		}
+	}
+}
+
+func TestRecoverUpdateRestoresTransferredVectorSidecars(t *testing.T) {
+	root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
+	manager := plugininstall.Manager{PluginRoot: root, BinDir: bin}
+	source := writePackage(t, "synthetic", "1.0.0", false, false)
+	previous, err := plugininstall.Inspect(source, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Install(previous); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "synthetic")
+	backup := filepath.Join(root, ".synthetic.previous")
+	database := filepath.Join(target, "plugin.db")
+	withPackageDatabase(t, database, func(db *sql.DB) {
+		if _, err := db.Exec(`INSERT INTO records (value) VALUES ('previous database')`); err != nil {
+			t.Fatal(err)
+		}
+	})
+	sidecar := filepath.Join(target, "plugin.vector.db")
+	writeFixtureFile(t, sidecar, []byte("previous vectors"), 0o600)
+	writeFixtureFile(t, sidecar+"-wal", []byte("previous vector wal"), 0o600)
+
+	if err := os.Rename(target, backup); err != nil {
+		t.Fatal(err)
+	}
+	writePackageAt(t, source, "synthetic", "2.0.0", false, false)
+	current, err := plugininstall.Inspect(source, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Install(current); err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{"", "-wal"} {
+		if err := os.Rename(filepath.Join(backup, "plugin.vector.db"+suffix),
+			filepath.Join(target, "plugin.vector.db"+suffix)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := manager.RecoverUpdate("synthetic"); err != nil {
+		t.Fatal(err)
+	}
+	assertDatabaseValue(t, database, "previous database")
+	for path, want := range map[string]string{
+		sidecar: "previous vectors", sidecar + "-wal": "previous vector wal",
+	} {
+		raw, err := os.ReadFile(path)
+		if err != nil || string(raw) != want {
+			t.Fatalf("recovered sidecar %s = %q, err=%v", filepath.Base(path), raw, err)
 		}
 	}
 }

@@ -750,6 +750,13 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 			if _, err := rocacorpus.Ensure(pluginDir, pluginExecutableDir(paths), env.build.Version); err != nil {
 				return nil, fmt.Errorf("install bundled corpus plugin: %w", err)
 			}
+			// Bundled declarations change with the running build rather than an
+			// explicit `plugin update`, so keep their derived vector registry in
+			// step here. The writer is content-aware and leaves an identical
+			// registry untouched on ordinary commands.
+			if err := env.refreshVectorRegistry(); err != nil {
+				env.warnVectorRegistryRefresh(err)
+			}
 		}
 	}
 	var ingestProgress func(ingest.SourceProgress)
