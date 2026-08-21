@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -88,5 +89,35 @@ func TestPublicPackageRecordsLoadsAndChecksState(t *testing.T) {
 	}
 	if summary["records"] != float64(2) {
 		t.Fatalf("metadata = %s", state[target.Path].Metadata)
+	}
+
+	tx, err = db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = incrementality.RecordState(ctx, tx, target, "changed", "",
+		map[string]any{"unsupported": make(chan struct{})})
+	if err == nil {
+		_ = tx.Rollback()
+		t.Fatal("unsupported metadata was accepted")
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	state, err = incrementality.LoadState(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state[target.Path].Fingerprint != "5:10:digest" {
+		t.Fatalf("failed metadata encoding changed state to %q", state[target.Path].Fingerprint)
+	}
+}
+
+func TestStandaloneModuleCompiles(t *testing.T) {
+	command := exec.Command("go", "test", "-mod=readonly", ".")
+	command.Dir = filepath.Join("testdata", "external")
+	command.Env = append(os.Environ(), "GOWORK=off")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("compile standalone consumer module: %v\n%s", err, output)
 	}
 }

@@ -175,9 +175,11 @@ func RecordState(ctx context.Context, tx *sql.Tx, target Target, fingerprint str
 	failure string, summary map[string]any) error {
 	payload := "{}"
 	if len(summary) > 0 {
-		if encoded, err := json.Marshal(summary); err == nil {
-			payload = string(encoded)
+		encoded, err := json.Marshal(summary)
+		if err != nil {
+			return fmt.Errorf("encode state metadata for %s: %w", target.Path, err)
 		}
+		payload = string(encoded)
 	}
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO ingest_file_state
