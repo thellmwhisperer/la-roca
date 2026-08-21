@@ -3,6 +3,7 @@
 package vector
 
 import (
+	"errors"
 	"os"
 	"unsafe"
 
@@ -30,6 +31,14 @@ func replaceFile(source, destination string) error {
 	}
 	replaced, err := windows.UTF16PtrFromString(destination)
 	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(destination); errors.Is(err, os.ErrNotExist) {
+		if err := windows.MoveFileEx(replacement, replaced, windows.MOVEFILE_WRITE_THROUGH); err != nil {
+			return os.NewSyscallError("MoveFileExW", err)
+		}
+		return nil
+	} else if err != nil {
 		return err
 	}
 	result, _, callErr := replaceFileW.Call(
