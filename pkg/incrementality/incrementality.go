@@ -1,5 +1,5 @@
-// Package incrementality provides file fingerprints and the persisted state
-// primitives needed to skip unchanged scanner inputs.
+// Package incrementality provides file fingerprints and primitives for loading
+// and recording unchanged-pass state in La Roca's ingest_file_state table.
 package incrementality
 
 import (
@@ -30,9 +30,9 @@ type Target struct {
 	// IncludeSQLiteWAL includes the database's write-ahead log. A committed
 	// change can live only in the WAL until the owning process checkpoints it.
 	IncludeSQLiteWAL bool
-	// CompanionPaths are read-only inputs that enrich a SQLite target. Their
-	// fingerprints travel with the primary artifact so either source changing
-	// reopens the same normalized snapshot.
+	// CompanionPaths are read-only inputs that enrich a SQLite target. When
+	// IncludeSQLiteWAL is true, their fingerprints travel with the primary
+	// artifact so either source changing reopens the same normalized snapshot.
 	CompanionPaths []string
 }
 
