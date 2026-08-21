@@ -5,7 +5,7 @@ import (
 	"database/sql"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
-	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
+	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 )
 
 // Records are the normalized conversations to write in one transaction.
