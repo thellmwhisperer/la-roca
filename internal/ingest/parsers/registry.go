@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/thellmwhisperer/la-roca/internal/ingestprovenance"
+	"github.com/thellmwhisperer/la-roca/pkg/ingestprovenance"
 )
 
 // Destination says which public surface owns a parser's normalized records.

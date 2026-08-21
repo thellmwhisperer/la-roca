@@ -75,8 +75,10 @@ fixtures.
 ## What lives where
 
 - `internal/store/` owns SQLite access, schema adoption, backups, and FTS.
-- `internal/ingest/` owns source detection, pure parsers, provenance, and
-  fingerprinted incremental writes.
+- `internal/ingest/` owns source detection, pure parsers, source-specific
+  provenance extraction, and fingerprinted incremental writes.
+- `pkg/ingestprovenance/` exposes the canonical source-to-harness mapping and
+  historical provenance backfill to external Go modules.
 - `internal/provider/plugin/` is the manifest engine: declarations, discovery,
   schema truth checks, semantic composition, verb and capability registration,
   and the in-memory hub.
