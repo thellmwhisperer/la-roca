@@ -68,15 +68,16 @@ type SemanticTable struct {
 }
 
 type Descriptor struct {
-	Name         string    `json:"name"`
-	Directory    string    `json:"-"`
-	Database     string    `json:"-"`
-	DatabaseName string    `json:"database_name,omitempty"`
-	Schema       string    `json:"schema"`
-	Retention    string    `json:"retention,omitempty"`
-	Semantic     Semantic  `json:"semantic"`
-	Manifest     *Manifest `json:"-"`
-	SourceLabel  string    `json:"-"`
+	Name         string        `json:"name"`
+	Directory    string        `json:"-"`
+	Database     string        `json:"-"`
+	DatabaseName string        `json:"database_name,omitempty"`
+	Schema       string        `json:"schema"`
+	Retention    string        `json:"retention,omitempty"`
+	Semantic     Semantic      `json:"semantic"`
+	VectorTables []VectorTable `json:"vector_tables,omitempty"`
+	Manifest     *Manifest     `json:"-"`
+	SourceLabel  string        `json:"-"`
 	relevance    int
 }
 
@@ -232,7 +233,8 @@ func InspectAll(name, directory string) ([]Descriptor, error) {
 					Name: name, Directory: directory,
 					Database: filepath.Join(directory, declaration.Path), DatabaseName: declaration.Name,
 					Schema: declaration.Alias, Retention: declaration.Retention,
-					Semantic: semantic, Manifest: &manifest, SourceLabel: source,
+					Semantic: semantic, VectorTables: manifest.vectorFor(declaration.Name),
+					Manifest: &manifest, SourceLabel: source,
 				})
 			}
 			return descriptors, nil
@@ -570,6 +572,26 @@ func Validate(ctx context.Context, descriptor Descriptor) (Database, error) {
 			return Database{}, fmt.Errorf("semantic layer describes missing database table %s", name)
 		}
 	}
+	for _, table := range descriptor.VectorTables {
+		inspected, exists := actual[table.Name]
+		if !exists {
+			return Database{}, fmt.Errorf("vector layer describes missing database table %s", table.Name)
+		}
+		columns := make(map[string]bool, len(inspected.Columns))
+		for _, column := range inspected.Columns {
+			columns[column] = true
+		}
+		if !columns[table.IDColumn] {
+			return Database{}, fmt.Errorf("vector layer id column %s.%s is missing from the database",
+				table.Name, table.IDColumn)
+		}
+		for _, column := range table.TextColumns {
+			if !columns[column] {
+				return Database{}, fmt.Errorf("vector layer text column %s.%s is missing from the database",
+					table.Name, column)
+			}
+		}
+	}
 
 	tables := make([]Table, 0, len(descriptor.Semantic.Tables))
 	for _, table := range descriptor.Semantic.Tables {
@@ -581,6 +603,10 @@ func Validate(ctx context.Context, descriptor Descriptor) (Database, error) {
 			Description: table.Description, Questions: slices.Clone(table.Questions),
 			FTS5: actual[table.Name].FTS5,
 		})
+	}
+	descriptor.VectorTables = slices.Clone(descriptor.VectorTables)
+	for index := range descriptor.VectorTables {
+		descriptor.VectorTables[index] = cloneVectorTable(descriptor.VectorTables[index])
 	}
 	return Database{Descriptor: descriptor, Tables: tables}, nil
 }
