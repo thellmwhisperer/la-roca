@@ -23,6 +23,17 @@ const (
 type VectorRegistry struct {
 	Schema    int                  `json:"schema"`
 	Databases []VectorRegistration `json:"databases"`
+	Routes    []VectorRoute        `json:"routes"`
+}
+
+// VectorRoute is the database-name inventory needed to give vector query the
+// same explicit routing contract as query. It carries no content and grants no
+// vector coverage; Databases remains the opt-in declaration projection.
+type VectorRoute struct {
+	Plugin   string `json:"plugin"`
+	Database string `json:"database"`
+	Alias    string `json:"alias"`
+	Source   string `json:"source"`
 }
 
 type VectorRegistration struct {
@@ -41,8 +52,17 @@ func VectorRegistryPath(pluginRoot string) string {
 // Paths stay relative to their plugin directory so local home paths never enter
 // the contract.
 func ComposeVectorRegistry(databases []Database) VectorRegistry {
-	registry := VectorRegistry{Schema: vectorRegistrySchema, Databases: []VectorRegistration{}}
+	registry := VectorRegistry{Schema: vectorRegistrySchema,
+		Databases: []VectorRegistration{}, Routes: []VectorRoute{}}
 	for _, database := range databases {
+		routeName := database.DatabaseName
+		if routeName == "" {
+			routeName = database.Name
+		}
+		registry.Routes = append(registry.Routes, VectorRoute{
+			Plugin: database.Name, Database: routeName,
+			Alias: database.Schema, Source: database.Source(),
+		})
 		if len(database.VectorTables) == 0 || database.Manifest == nil {
 			continue
 		}
@@ -63,6 +83,7 @@ func ComposeVectorRegistry(databases []Database) VectorRegistry {
 		})
 	}
 	sortVectorRegistrations(registry.Databases)
+	sortVectorRoutes(registry.Routes)
 	return registry
 }
 
@@ -88,6 +109,9 @@ func LoadVectorRegistry(path string) (VectorRegistry, error) {
 	if registry.Databases == nil {
 		registry.Databases = []VectorRegistration{}
 	}
+	if registry.Routes == nil {
+		registry.Routes = []VectorRoute{}
+	}
 	if err := registry.valid(); err != nil {
 		return VectorRegistry{}, err
 	}
@@ -100,10 +124,15 @@ func SaveVectorRegistry(path string, registry VectorRegistry) error {
 	if registry.Databases == nil {
 		registry.Databases = []VectorRegistration{}
 	}
+	registry.Routes = slices.Clone(registry.Routes)
+	if registry.Routes == nil {
+		registry.Routes = []VectorRoute{}
+	}
 	if err := registry.valid(); err != nil {
 		return err
 	}
 	sortVectorRegistrations(registry.Databases)
+	sortVectorRoutes(registry.Routes)
 	body, err := json.MarshalIndent(registry, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode vector registry: %w", err)
@@ -128,7 +157,26 @@ func sortVectorRegistrations(registrations []VectorRegistration) {
 	})
 }
 
+func sortVectorRoutes(routes []VectorRoute) {
+	sort.Slice(routes, func(i, j int) bool {
+		if routes[i].Plugin != routes[j].Plugin {
+			return routes[i].Plugin < routes[j].Plugin
+		}
+		return routes[i].Database < routes[j].Database
+	})
+}
+
 func (registry VectorRegistry) valid() error {
+	seenRoutes := map[string]bool{}
+	for _, route := range registry.Routes {
+		key := route.Plugin + "\x00" + route.Database
+		if !validPluginName(route.Plugin) || strings.TrimSpace(route.Database) == "" ||
+			!validIdentifier(route.Alias) || strings.TrimSpace(route.Source) == "" || seenRoutes[key] {
+			return fmt.Errorf("vector registry has an invalid or repeated route %q/%q",
+				route.Plugin, route.Database)
+		}
+		seenRoutes[key] = true
+	}
 	seen := map[string]bool{}
 	for _, database := range registry.Databases {
 		key := database.Plugin + "\x00" + database.Database

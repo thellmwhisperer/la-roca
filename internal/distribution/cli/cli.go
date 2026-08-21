@@ -206,7 +206,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 	commands := []*cobra.Command{
 		versionCommand(env), initCommand(env), exploreCommand(env), schemaCommand(env),
 		indexCommand(env), doctorCommand(env), dedupCommand(env), memoryCommand(env), layersCommand(env),
-		healthCommand(env),
+		healthCommand(env), databaseScopeCommand(env),
 		mcpCommand(env), skillCommand(env), hooksCommand(env),
 		loginCommand(env), modelCommand(env),
 		updateCommand(env), uninstallCommand(env),

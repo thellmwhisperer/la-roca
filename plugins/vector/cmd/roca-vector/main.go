@@ -252,9 +252,10 @@ func compactCommand(env *environment) *cobra.Command {
 }
 
 func queryCommand(env *environment) *cobra.Command {
-	return &cobra.Command{
+	var databases string
+	command := &cobra.Command{
 		Use:   "query <text> [k]",
-		Short: "Search the local corpus by semantic similarity",
+		Short: "Search routed database sidecars by semantic similarity",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(command *cobra.Command, args []string) error {
 			k := 10
@@ -274,12 +275,44 @@ func queryCommand(env *environment) *cobra.Command {
 				return err
 			}
 			defer release()
+			started := time.Now()
+			federation, federationErr := env.federation("")
+			if federationErr == nil {
+				result, err := federation.Query(command.Context(), args[0], k, databases)
+				if err != nil {
+					return err
+				}
+				if env.json {
+					return printJSON(map[string]any{"query": args[0], "k": k,
+						"databases": result.Databases, "model": result.Model,
+						"mixed_models": result.MixedModels, "results": result.Results,
+						"database_results": result.DatabaseResults, "notices": result.Notices,
+						"elapsed_ms": time.Since(started).Milliseconds()})
+				}
+				for _, notice := range result.Notices {
+					fmt.Fprintln(os.Stderr, "notice:", notice)
+				}
+				if result.MixedModels {
+					for _, database := range result.DatabaseResults {
+						fmt.Printf("database %s · model %s\n", database.Database, database.Model)
+						printResults(database.Results)
+					}
+				} else {
+					printResults(result.Results)
+				}
+				return nil
+			}
+			if !errors.Is(federationErr, os.ErrNotExist) {
+				return federationErr
+			}
+			if strings.TrimSpace(databases) != "" {
+				return fmt.Errorf("--databases needs federated sidecars; run `roca vector install`")
+			}
 			vectorPath := filepath.Join(state, vector.DatabaseFilename)
 			index, err := env.index(vector.ConfiguredModel(vectorPath))
 			if err != nil {
 				return err
 			}
-			started := time.Now()
 			results, err := index.Query(command.Context(), args[0], k)
 			if err != nil {
 				return err
@@ -288,12 +321,24 @@ func queryCommand(env *environment) *cobra.Command {
 				return printJSON(map[string]any{"query": args[0], "k": k,
 					"results": results, "elapsed_ms": time.Since(started).Milliseconds()})
 			}
-			for _, result := range results {
-				fmt.Printf("%d. %.3f · %s · %s\n", result.Rank, result.Score, result.Source, result.SourceID)
-				fmt.Printf("   %s\n", preview(result.Text, 500))
-			}
+			printResults(results)
 			return nil
 		},
+	}
+	command.Flags().StringVar(&databases, "databases", "",
+		"comma list of attached database names (corpus,ops), or all")
+	return command
+}
+
+func printResults(results []vector.Result) {
+	for _, result := range results {
+		if result.Database != "" {
+			fmt.Printf("%d. %.3f · database=%s · table=%s · id=%s\n",
+				result.Rank, result.Score, result.Database, result.Table, result.ID)
+		} else {
+			fmt.Printf("%d. %.3f · %s · %s\n", result.Rank, result.Score, result.Source, result.SourceID)
+		}
+		fmt.Printf("   %s\n", preview(result.Text, 500))
 	}
 }
 
@@ -370,7 +415,7 @@ func (env *environment) index(model string) (vector.Index, error) {
 	}
 	return vector.Index{Corpus: core, VectorPath: filepath.Join(state, vector.DatabaseFilename),
 		Model: model, Embedder: vector.Ollama{BaseURL: os.Getenv("OLLAMA_HOST")},
-		Notice: func(message string) { fmt.Fprintln(os.Stderr, message) }}, nil
+		Notice: func(message string) { fmt.Fprintln(os.Stderr, message) }, Database: "corpus"}, nil
 }
 
 func (env *environment) federation(model string) (vector.Federation, error) {

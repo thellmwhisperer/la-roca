@@ -16,6 +16,18 @@ const (
 	ScopeCore = "core"
 )
 
+type DatabaseScope struct {
+	Databases        []string            `json:"databases"`
+	Selected         []DatabaseSelection `json:"selected"`
+	OmittedDatabases []string            `json:"omitted_databases,omitempty"`
+	Warnings         []string            `json:"warnings,omitempty"`
+}
+
+type DatabaseSelection struct {
+	Source   string `json:"source"`
+	Database string `json:"database"`
+}
+
 // ParseDatabaseList splits the --databases value. Empty means the default
 // scope. Unknown names are the caller's problem after inventory is known.
 func ParseDatabaseList(raw string) ([]string, error) {
@@ -99,6 +111,31 @@ func (s *Service) inventoryRoute(ctx context.Context) pluginRoute {
 	route.omitted = append(route.omitted, extra.omitted...)
 	route.warnings = append(route.warnings, extra.warnings...)
 	return route
+}
+
+func (s *Service) ResolveDatabaseScope(ctx context.Context, names []string) (DatabaseScope, error) {
+	inventory := s.inventoryRoute(ctx)
+	route, err := questionRoute(names, inventory)
+	if err != nil {
+		return DatabaseScope{}, err
+	}
+	databases := make([]string, 0, len(route.databases)+1)
+	selected := make([]DatabaseSelection, 0, len(route.databases)+1)
+	if route.includeCore {
+		databases = append(databases, ScopeCore)
+		selected = append(selected, DatabaseSelection{Source: ScopeCore, Database: ScopeCore})
+	}
+	for _, database := range route.databases {
+		name := scopeName(database)
+		databases = append(databases, name)
+		selected = append(selected, DatabaseSelection{Source: database.Source(), Database: name})
+	}
+	return DatabaseScope{
+		Databases:        databases,
+		Selected:         selected,
+		OmittedDatabases: route.omittedSources(),
+		Warnings:         slices.Clone(route.warnings),
+	}, nil
 }
 
 func resolveScope(names []string, inventory pluginRoute) (pluginRoute, error) {

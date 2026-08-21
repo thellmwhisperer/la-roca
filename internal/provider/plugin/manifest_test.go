@@ -246,12 +246,16 @@ func TestManifestEngineDiscoversAttachesComposesAndRegisters(t *testing.T) {
 		registry.Databases[0].Alias != "synthetic_records" {
 		t.Fatalf("vector registry = %+v", registry)
 	}
+	if len(registry.Routes) != 2 || registry.Routes[0].Database != "records" ||
+		registry.Routes[1].Database != "runs" {
+		t.Fatalf("vector route inventory = %+v", registry.Routes)
+	}
 	registryPath := plugin.VectorRegistryPath(root)
 	if err := plugin.SaveVectorRegistry(registryPath, registry); err != nil {
 		t.Fatal(err)
 	}
 	loadedRegistry, err := plugin.LoadVectorRegistry(registryPath)
-	if err != nil || len(loadedRegistry.Databases) != 1 ||
+	if err != nil || len(loadedRegistry.Databases) != 1 || len(loadedRegistry.Routes) != 2 ||
 		!slices.Equal(loadedRegistry.Databases[0].Tables[0].TextColumns, []string{"value"}) {
 		t.Fatalf("loaded vector registry = %+v, err = %v", loadedRegistry, err)
 	}

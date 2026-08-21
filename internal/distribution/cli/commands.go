@@ -619,6 +619,27 @@ func addDatabaseFlag(cmd *cobra.Command, dest *string) {
 		"comma list of attached database names (corpus,ops), or all")
 }
 
+func databaseScopeCommand(env *cliEnv) *cobra.Command {
+	var databases string
+	cmd := &cobra.Command{
+		Use:  "_database-scope",
+		Args: cobra.NoArgs,
+		RunE: env.serviceRunE(func(cmd *cobra.Command, _ []string, svc *service.Service) error {
+			names, err := service.ParseDatabaseList(databases)
+			if err != nil {
+				return err
+			}
+			result, err := svc.ResolveDatabaseScope(cmd.Context(), names)
+			if err != nil {
+				return err
+			}
+			return env.printJSON(result)
+		}),
+	}
+	addDatabaseFlag(cmd, &databases)
+	return cmd
+}
+
 func scopedQuestionRunE(env *cliEnv, req *service.QueryRequest, databases *string,
 	run func(*cobra.Command, *service.Service) error) func(*cobra.Command, []string) error {
 	return env.serviceRunE(func(cmd *cobra.Command, args []string, svc *service.Service) error {

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -31,6 +32,14 @@ var (
 type vectorRegistry struct {
 	Schema    int              `json:"schema"`
 	Databases []vectorDatabase `json:"databases"`
+	Routes    []vectorRoute    `json:"routes"`
+}
+
+type vectorRoute struct {
+	Plugin   string `json:"plugin"`
+	Database string `json:"database"`
+	Alias    string `json:"alias"`
+	Source   string `json:"source"`
 }
 
 type vectorDatabase struct {
@@ -61,6 +70,7 @@ type Federation struct {
 	Embedder     Embedder
 	Notice       func(string)
 	databases    []vectorDatabase
+	routes       []vectorRoute
 }
 
 func LoadFederation(core CoreCLI, pluginRoot, model, buildVersion string,
@@ -76,12 +86,19 @@ func LoadFederation(core CoreCLI, pluginRoot, model, buildVersion string,
 	if len(registry.Databases) == 0 {
 		return Federation{}, fmt.Errorf("vector registry declares no databases")
 	}
+	if len(registry.Routes) == 0 {
+		registry.Routes = make([]vectorRoute, 0, len(registry.Databases))
+		for _, database := range registry.Databases {
+			registry.Routes = append(registry.Routes, vectorRoute{Plugin: database.Plugin,
+				Database: database.Database, Alias: database.Alias, Source: "plugin:" + database.owner()})
+		}
+	}
 	if buildVersion == "" {
 		buildVersion = "dev"
 	}
 	return Federation{Core: core, PluginRoot: absolute, Model: model,
 		BuildVersion: buildVersion, Embedder: embedder, Notice: notice,
-		databases: registry.Databases}, nil
+		databases: registry.Databases, routes: registry.Routes}, nil
 }
 
 func loadVectorRegistry(path string) (vectorRegistry, error) {
@@ -114,6 +131,15 @@ func validateRegistry(registry vectorRegistry) error {
 		return fmt.Errorf("vector registry schema is %d, want %d", registry.Schema, vectorRegistrySchema)
 	}
 	seenDatabases := map[string]bool{}
+	seenRoutes := map[string]bool{}
+	for _, route := range registry.Routes {
+		owner := route.Plugin + "/" + route.Database
+		if !manifestPluginName.MatchString(route.Plugin) || strings.TrimSpace(route.Database) == "" ||
+			!validIdentifier(route.Alias) || strings.TrimSpace(route.Source) == "" || seenRoutes[owner] {
+			return fmt.Errorf("vector registry has invalid or repeated route %q", owner)
+		}
+		seenRoutes[owner] = true
+	}
 	databasePaths := map[string]string{}
 	for _, database := range registry.Databases {
 		owner := database.owner()
@@ -194,6 +220,257 @@ type DatabaseDelta struct {
 	Counts Delta  `json:"counts"`
 }
 
+type FederatedQuery struct {
+	Databases       []string              `json:"databases"`
+	Model           string                `json:"model,omitempty"`
+	MixedModels     bool                  `json:"mixed_models"`
+	Results         []Result              `json:"results"`
+	DatabaseResults []DatabaseQueryResult `json:"database_results,omitempty"`
+	Notices         []string              `json:"notices"`
+}
+
+type DatabaseQueryResult struct {
+	Database string   `json:"database"`
+	Model    string   `json:"model"`
+	Results  []Result `json:"results"`
+}
+
+type queryTarget struct {
+	database   vectorDatabase
+	path       string
+	model      string
+	dimensions int
+}
+
+func (f Federation) Query(ctx context.Context, text string, k int, databaseList string) (FederatedQuery, error) {
+	result := FederatedQuery{Databases: []string{}, Results: []Result{}, Notices: []string{}}
+	if strings.TrimSpace(text) == "" {
+		return result, fmt.Errorf("semantic query is empty")
+	}
+	if k < 1 || k > 100 {
+		return result, fmt.Errorf("k must be between 1 and 100")
+	}
+	scope, err := f.Core.ResolveDatabaseScope(ctx, databaseList)
+	if err != nil {
+		return result, err
+	}
+	selected, notices := f.queryDatabases(scope.Selected)
+	result.Databases = append(result.Databases, scope.Databases...)
+	result.Notices = append(result.Notices, scope.Warnings...)
+	result.Notices = append(result.Notices, notices...)
+	targets := make([]queryTarget, 0, len(selected))
+	for _, database := range selected {
+		path := SidecarPath(f.databasePath(database))
+		model, dimensions, err := querySidecarState(path, database.owner())
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, errSidecarNotReady) {
+			result.Notices = append(result.Notices, fmt.Sprintf(
+				"database %s has no ready vector sidecar; continuing with FTS-only", database.Database))
+			continue
+		}
+		if err != nil {
+			return result, err
+		}
+		targets = append(targets, queryTarget{database: database, path: path,
+			model: model, dimensions: dimensions})
+	}
+
+	groups := make(map[string][]queryTarget)
+	for _, target := range targets {
+		groups[target.model] = append(groups[target.model], target)
+	}
+	models := make([]string, 0, len(groups))
+	for model := range groups {
+		models = append(models, model)
+	}
+	sort.Strings(models)
+	result.MixedModels = len(models) > 1
+	if result.MixedModels {
+		result.Notices = append(result.Notices,
+			"selected sidecars use mixed embedding models; scores are returned per database and are not merged")
+	} else if len(models) == 1 {
+		result.Model = models[0]
+	}
+
+	for _, model := range models {
+		group := groups[model]
+		if f.Embedder == nil {
+			result.noticeModelUnavailable(model, group, "embedding provider is unavailable")
+			continue
+		}
+		vectors, err := f.Embedder.Embed(ctx, model, []string{QueryPrefix + text})
+		if err != nil {
+			result.noticeModelUnavailable(model, group, err.Error())
+			continue
+		}
+		if len(vectors) != 1 || len(vectors[0]) == 0 {
+			result.noticeModelUnavailable(model, group, "embedding provider returned no query vector")
+			continue
+		}
+		for _, target := range group {
+			if len(vectors[0]) != target.dimensions {
+				result.Notices = append(result.Notices, fmt.Sprintf(
+					"database %s expects %d-dimensional model %s; continuing with FTS-only",
+					target.database.Database, target.dimensions, model))
+				continue
+			}
+			store, err := openSQLite(target.path, true)
+			if err != nil {
+				return result, fmt.Errorf("open vector sidecar for %s: %w", target.database.owner(), err)
+			}
+			index := f.index(target.database,
+				DeclaredCorpus{Core: f.Core, Database: target.database}, target.path)
+			index.Model = model
+			hits, queryErr := index.queryVector(ctx, store, vectors[0], k)
+			closeErr := store.Close()
+			if queryErr != nil {
+				return result, fmt.Errorf("query vector sidecar %s: %w", target.database.owner(), queryErr)
+			}
+			if closeErr != nil {
+				return result, fmt.Errorf("close vector sidecar %s: %w", target.database.owner(), closeErr)
+			}
+			tagFederatedResults(hits, target.database.Database)
+			if result.MixedModels {
+				result.DatabaseResults = append(result.DatabaseResults, DatabaseQueryResult{
+					Database: target.database.Database, Model: model, Results: hits,
+				})
+			} else {
+				result.Results = append(result.Results, hits...)
+			}
+		}
+	}
+	if !result.MixedModels {
+		sortFederatedResults(result.Results)
+		if len(result.Results) > k {
+			result.Results = result.Results[:k]
+		}
+		for index := range result.Results {
+			result.Results[index].Rank = index + 1
+		}
+	}
+	return result, nil
+}
+
+func (r *FederatedQuery) noticeModelUnavailable(model string, targets []queryTarget, reason string) {
+	for _, target := range targets {
+		r.Notices = append(r.Notices, fmt.Sprintf(
+			"embedding model %s is unavailable for database %s; continuing with FTS-only: %s",
+			model, target.database.Database, reason))
+	}
+}
+
+func tagFederatedResults(results []Result, database string) {
+	for index := range results {
+		results[index].Database = database
+		if results[index].Table == "" {
+			results[index].Table = results[index].Source
+		}
+	}
+}
+
+func sortFederatedResults(results []Result) {
+	sort.SliceStable(results, func(i, j int) bool {
+		if results[i].Score != results[j].Score {
+			return results[i].Score > results[j].Score
+		}
+		left := results[i].Database + "\x00" + results[i].Table + "\x00" + results[i].ID
+		right := results[j].Database + "\x00" + results[j].Table + "\x00" + results[j].ID
+		return left < right
+	})
+}
+
+var errSidecarNotReady = errors.New("vector sidecar is not ready")
+
+func querySidecarState(path, owner string) (string, int, error) {
+	if _, err := os.Stat(path); err != nil {
+		return "", 0, err
+	}
+	store, err := openSQLite(path, true)
+	if err != nil {
+		return "", 0, fmt.Errorf("open vector sidecar for %s: %w", owner, err)
+	}
+	defer store.Close()
+	metadata, err := readMetadata(store, "owner", "model", "dimensions")
+	if errors.Is(err, sql.ErrNoRows) || strings.Contains(fmt.Sprint(err), "no such table") {
+		return "", 0, errSidecarNotReady
+	}
+	if err != nil {
+		return "", 0, fmt.Errorf("read vector sidecar for %s: %w", owner, err)
+	}
+	if metadata["owner"] != owner {
+		return "", 0, fmt.Errorf("vector sidecar owner is %s, want %s", metadata["owner"], owner)
+	}
+	dimensions, err := strconv.Atoi(metadata["dimensions"])
+	if metadata["model"] == "" || err != nil || dimensions <= 0 {
+		return "", 0, errSidecarNotReady
+	}
+	return metadata["model"], dimensions, nil
+}
+
+func (f Federation) queryDatabases(selections []DatabaseSelection) ([]vectorDatabase, []string) {
+	selected := make([]vectorDatabase, 0, len(selections))
+	var notices []string
+	seen := map[string]bool{}
+	for _, selection := range selections {
+		if selection.Source == "core" {
+			notices = append(notices, "database core has no vector declaration; continuing with FTS-only")
+			continue
+		}
+		var matched *vectorRoute
+		for index := range f.routes {
+			if !routeMatchesSelection(f.routes[index], selection) {
+				continue
+			}
+			matched = &f.routes[index]
+			break
+		}
+		if matched == nil {
+			notices = append(notices, fmt.Sprintf(
+				"database %s has no vector declaration; continuing with FTS-only", selection.Database))
+			continue
+		}
+		database, ok := f.vectorDatabaseForRoute(*matched)
+		if !ok {
+			notices = append(notices, fmt.Sprintf(
+				"database %s has no vector declaration; continuing with FTS-only", matched.Database))
+			continue
+		}
+		if !seen[database.owner()] {
+			selected = append(selected, database)
+			seen[database.owner()] = true
+		}
+	}
+	return selected, notices
+}
+
+func routeMatchesSelection(route vectorRoute, selection DatabaseSelection) bool {
+	if route.Source == selection.Source && route.Database == selection.Database {
+		return true
+	}
+	if route.Database != selection.Database {
+		return false
+	}
+	return selection.Source == "plugin:"+route.Plugin ||
+		selection.Source == "plugin:"+route.Plugin+"/"+route.Database
+}
+
+func (f Federation) vectorDatabaseForRoute(route vectorRoute) (vectorDatabase, bool) {
+	for _, database := range f.databases {
+		if database.Plugin == route.Plugin && database.Database == route.Database {
+			return database, true
+		}
+	}
+	return vectorDatabase{}, false
+}
+
+func containsString(values []string, candidate string) bool {
+	for _, value := range values {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
+}
+
 func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDelta, error) {
 	if f.Model == "" || f.Embedder == nil {
 		return FederationDelta{}, fmt.Errorf("embedding model and provider are required")
@@ -270,7 +547,7 @@ func (f Federation) index(database vectorDatabase, reader DeclaredCorpus, sideca
 		kinds[table.Name] = true
 	}
 	return Index{Corpus: reader, VectorPath: sidecar, Model: f.Model,
-		Embedder: f.Embedder, Notice: f.Notice, SourceKinds: kinds}
+		Embedder: f.Embedder, Notice: f.Notice, SourceKinds: kinds, Database: database.Database}
 }
 
 type DeclaredCorpus struct {

@@ -178,12 +178,22 @@ Ingest does not compact on its own.
 
 ```sh
 roca vector query "what did we decide" 10
+roca vector query --databases corpus,ops "what did we decide" 10
 ```
 
-This command currently reads the corpus compatibility sidecar; cross-database
-query fan-out is a separate serving change. Each hit prints rank, cosine score,
-source table, source id, and a text preview. `k` is optional (default 10) and
-capped at 100. Core FTS and SQL routing never depends on a model or sidecar.
+The default route searches the corpus sidecar. `--databases` has the same
+explicit comma-list and `all` selection rules as `roca query`; the command fans
+out only to selected databases with vector declarations and ready sidecars.
+Same-model scores merge into one top-N. If selected sidecars use different
+models, results stay grouped per database with a notice because their scores
+are not comparable. Every hit carries database, table, and source id. `k` is
+optional (default 10) and capped at 100.
+
+A missing sidecar or unavailable embedding model emits a notice and leaves that
+database on its deterministic FTS/SQL route. Databases without a vector
+declaration are still recognized routing targets and behave the same way.
+Vector serving never invokes the answering model, and core search never
+depends on a model or sidecar.
 
 ## Verify the index
 
