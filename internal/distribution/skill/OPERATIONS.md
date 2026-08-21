@@ -212,7 +212,7 @@ does none either.
 
 1. Search by meaning with `roca vector query "<first-person phrase or bare word>" 100`.
    The mandatory loop always requests the top 100 hits. Hits print score,
-   source family, and source id. Probing phrases in first person work better
+   database, source table, and source id. Probing phrases in first person work better
    than meta-concepts: `roca vector query "names of people" 100` finds
    documents ABOUT names; `roca vector query "my boss is named" 100` finds
    the names.

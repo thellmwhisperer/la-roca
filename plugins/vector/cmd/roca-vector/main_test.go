@@ -63,6 +63,9 @@ func TestDeltaFlagAndReadOnlyBoundaryAreExplicit(t *testing.T) {
 	if flag := ingestCommand(env).Flags().Lookup("source"); flag == nil {
 		t.Fatal("targeted delta has no --source flag")
 	}
+	if flag := queryCommand(env).Flags().Lookup("databases"); flag == nil {
+		t.Fatal("federated query has no --databases flag")
+	}
 }
 
 func TestTargetedSessionDeltaIsObservableAndIdempotentThroughCLI(t *testing.T) {
