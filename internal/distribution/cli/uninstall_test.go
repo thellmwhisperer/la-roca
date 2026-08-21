@@ -15,6 +15,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/lifecycle"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
+	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 )
 
 // The inventory is a declaration, so what is missing from it is invisible until
@@ -122,6 +123,23 @@ func TestPurgePreservesGenericSiblingDirectoryContents(t *testing.T) {
 		if !slices.ContainsFunc(report.Kept, func(kept lifecycle.Kept) bool { return kept.Path == path }) {
 			t.Errorf("preserved path %s was not named: %+v", path, report.Kept)
 		}
+	}
+}
+
+func TestPurgeRemovesTheGeneratedVectorRegistry(t *testing.T) {
+	home := t.TempDir()
+	paths := resolvedIn(t, home)
+	registry := plugin.VectorRegistryPath(pluginRoot(paths))
+	if err := plugin.SaveVectorRegistry(registry, plugin.VectorRegistry{}); err != nil {
+		t.Fatal(err)
+	}
+
+	purgeOwnedPaths(t, paths)
+	if _, err := os.Stat(registry); !os.IsNotExist(err) {
+		t.Fatalf("vector registry survived purge: %v", err)
+	}
+	if _, err := os.Stat(pluginRoot(paths)); !os.IsNotExist(err) {
+		t.Fatalf("plugin root survived purge: %v", err)
 	}
 }
 
