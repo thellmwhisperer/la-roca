@@ -91,11 +91,12 @@ type Table struct {
 
 type Database struct {
 	Descriptor
-	Tables []Table
+	Tables    []Table
+	immutable bool
 }
 
 func (d Database) ReadOnlyURI() string {
-	return databaseURI(d.Database)
+	return databaseURI(d.Database, d.immutable)
 }
 
 func (d Descriptor) Source() string {
@@ -526,7 +527,15 @@ func tokenSet(text string) map[string]bool {
 }
 
 func Validate(ctx context.Context, descriptor Descriptor) (Database, error) {
-	db, err := sql.Open("sqlite", databaseURI(descriptor.Database))
+	return validate(ctx, descriptor, false)
+}
+
+func ValidateImmutable(ctx context.Context, descriptor Descriptor) (Database, error) {
+	return validate(ctx, descriptor, true)
+}
+
+func validate(ctx context.Context, descriptor Descriptor, immutable bool) (Database, error) {
+	db, err := sql.Open("sqlite", databaseURI(descriptor.Database, immutable))
 	if err != nil {
 		return Database{}, fmt.Errorf("open plugin %s read-only: %w", descriptor.Name, err)
 	}
@@ -608,7 +617,7 @@ func Validate(ctx context.Context, descriptor Descriptor) (Database, error) {
 	for index := range descriptor.VectorTables {
 		descriptor.VectorTables[index] = cloneVectorTable(descriptor.VectorTables[index])
 	}
-	return Database{Descriptor: descriptor, Tables: tables}, nil
+	return Database{Descriptor: descriptor, Tables: tables, immutable: immutable}, nil
 }
 
 // databaseURI resolves the path first because a plugin root reached through a
@@ -616,15 +625,18 @@ func Validate(ctx context.Context, descriptor Descriptor) (Database, error) {
 // refuses to open at all. It is always read-only, and it waits on the busy
 // timeout instead of failing the open the moment another process holds a write
 // lock on the same plugin database.
-func databaseURI(path string) string {
+func databaseURI(path string, immutable bool) string {
 	if absolute, err := filepath.Abs(path); err == nil {
 		path = absolute
 	}
-	uri := url.URL{Scheme: "file", Path: filepath.ToSlash(path),
-		RawQuery: url.Values{
-			"mode":    {"ro"},
-			"_pragma": {fmt.Sprintf("busy_timeout(%d)", busyTimeout.Milliseconds())},
-		}.Encode()}
+	values := url.Values{
+		"mode":    {"ro"},
+		"_pragma": {fmt.Sprintf("busy_timeout(%d)", busyTimeout.Milliseconds())},
+	}
+	if immutable {
+		values.Set("immutable", "1")
+	}
+	uri := url.URL{Scheme: "file", Path: filepath.ToSlash(path), RawQuery: values.Encode()}
 	return uri.String()
 }
 

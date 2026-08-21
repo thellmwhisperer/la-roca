@@ -97,6 +97,23 @@ func TestRemoteAddGetOrCreatesARegistryAndListPrintsIt(t *testing.T) {
 	}
 }
 
+func TestRemoteNamesCannotCollideInSQLite(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if _, err := runRemoteRoot(t, &cliEnv{}, "remote", "add", "LOCAL", "--ssh", "dev@example.test"); err == nil {
+		t.Fatal("LOCAL remote was accepted")
+	}
+	if _, err := runRemoteRoot(t, &cliEnv{}, "remote", "add", "Studio", "--ssh", "dev@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runRemoteRoot(t, &cliEnv{}, "remote", "add", "studio", "--ssh", "other@example.test"); err == nil || !strings.Contains(err.Error(), "collides case-insensitively") {
+		t.Fatalf("case-colliding add error = %v", err)
+	}
+	if _, err := remoteNames("Studio,studio"); err == nil || !strings.Contains(err.Error(), "case-colliding") {
+		t.Fatalf("case-colliding --on error = %v", err)
+	}
+}
+
 func runRemoteJSON(t *testing.T, env *cliEnv, args ...string) string {
 	t.Helper()
 	output, err := runRemoteRoot(t, env, args...)
@@ -157,6 +174,33 @@ func TestRemoteExecLeavesReadOnlyRefusalToTheRemoteGate(t *testing.T) {
 	}
 }
 
+func TestRemoteExecRejectsMalformedEnvelopesAsSkew(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "null", body: `null`},
+		{name: "missing fields", body: `{}`},
+		{name: "missing version", body: `{"sql":"SELECT 1","columns":["n"],"rows":[{"n":1}],"row_count":1,"latency_ms":1,"source_sha":"sha"}`},
+		{name: "row count mismatch", body: `{"sql":"SELECT 1","columns":["n"],"rows":[{"n":1}],"row_count":2,"latency_ms":1,"version":"v-test","source_sha":"sha"}`},
+		{name: "row shape mismatch", body: `{"sql":"SELECT 1","columns":["n"],"rows":[{"other":1}],"row_count":1,"latency_ms":1,"version":"v-test","source_sha":"sha"}`},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			home := t.TempDir()
+			addRemote(t, home, "studio", "dev@example.test")
+			env := &cliEnv{sshRunner: &scriptedSSHRunner{replies: []sshReply{
+				remoteVersionReply("v-test"), {stdout: testCase.body},
+			}}}
+			_, err := runRemoteRoot(t, env, "remote", "exec", "studio", "SELECT 1")
+			if err == nil || env.code != ExitRemoteVersionSkew ||
+				!strings.Contains(err.Error(), "incompatible exec envelope") {
+				t.Fatalf("malformed exec envelope = code %d err %v", env.code, err)
+			}
+		})
+	}
+}
+
 func TestRemoteVectorQueryBridgesResultsAndPropagatesAnAbsentIndexHonestly(t *testing.T) {
 	home := t.TempDir()
 	addRemote(t, home, "studio", "dev@example.test")
@@ -183,6 +227,29 @@ func TestRemoteVectorQueryBridgesResultsAndPropagatesAnAbsentIndexHonestly(t *te
 	if err == nil || env.code != ExitError ||
 		!strings.Contains(err.Error(), "vector index is not ready; run `roca vector install`") {
 		t.Fatalf("absent vector index = code %d err %v", env.code, err)
+	}
+}
+
+func TestRemoteVectorRejectsMalformedEnvelopesAsSkew(t *testing.T) {
+	tests := []string{
+		`null`,
+		`{}`,
+		`{"query":"remembered decision","k":10,"results":[null],"elapsed_ms":1}`,
+		`{"query":"remembered decision","k":10,"results":[{"rank":1,"score":0.5,"source":"memories","source_id":"memories/1"}],"elapsed_ms":1}`,
+	}
+	for index, body := range tests {
+		t.Run(string(rune('a'+index)), func(t *testing.T) {
+			home := t.TempDir()
+			addRemote(t, home, "studio", "dev@example.test")
+			env := &cliEnv{sshRunner: &scriptedSSHRunner{replies: []sshReply{
+				remoteVersionReply("v-test"), {stdout: body},
+			}}}
+			_, err := runRemoteRoot(t, env, "remote", "vector", "query", "studio", "remembered decision")
+			if err == nil || env.code != ExitRemoteVersionSkew ||
+				!strings.Contains(err.Error(), "incompatible vector envelope") {
+				t.Fatalf("malformed vector envelope = code %d err %v", env.code, err)
+			}
+		})
 	}
 }
 
@@ -243,8 +310,7 @@ func TestRemoteVersionSkewHasItsOwnExitCode(t *testing.T) {
 func TestRemoteCrossScatterGathersOnlyInMemory(t *testing.T) {
 	fixture := fixtureInstallation(t)
 	addRemote(t, fixture.home, "studio", "dev@example.test")
-	t.Setenv("ROCA_READ_ONLY", "1")
-	before := databaseSnapshot(t, fixture.home)
+	before := treeSnapshot(t, fixture.home)
 	runner := &scriptedSSHRunner{replies: []sshReply{
 		remoteVersionReply("v-test"),
 		{stdout: `{"sql":"SELECT 7 AS answer","columns":["answer"],"rows":[{"answer":9}],"row_count":1,"latency_ms":1,"version":"v-test","source_sha":"remote-sha"}`},
@@ -259,27 +325,46 @@ func TestRemoteCrossScatterGathersOnlyInMemory(t *testing.T) {
 			t.Errorf("cross output lacks %q:\n%s", want, output)
 		}
 	}
-	after := databaseSnapshot(t, fixture.home)
-	if !equalByteMap(before, after) {
+	wantCalls := []sshCall{
+		{target: "dev@example.test", args: []string{"roca", "version", "--json", "--read-only"}},
+		{target: "dev@example.test", args: []string{"roca", "exec", "SELECT 7 AS answer", "--json", "--read-only"}},
+	}
+	if !slices.EqualFunc(runner.calls, wantCalls, func(a, b sshCall) bool {
+		return a.target == b.target && slices.Equal(a.args, b.args)
+	}) {
+		t.Fatalf("cross ssh calls = %#v, want %#v", runner.calls, wantCalls)
+	}
+	after := treeSnapshot(t, fixture.home)
+	if !equalTreeSnapshots(before, after) {
 		t.Fatalf("cross changed a rock: before=%v after=%v", mapKeys(before), mapKeys(after))
 	}
 }
 
-func databaseSnapshot(t *testing.T, root string) map[string][]byte {
+type treeSnapshotEntry struct {
+	mode    fs.FileMode
+	modTime int64
+	body    []byte
+}
+
+func treeSnapshot(t *testing.T, root string) map[string]treeSnapshotEntry {
 	t.Helper()
-	result := map[string][]byte{}
+	result := map[string]treeSnapshotEntry{}
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if entry.IsDir() || filepath.Ext(path) != ".db" {
-			return nil
-		}
-		body, err := os.ReadFile(path)
+		info, err := entry.Info()
 		if err != nil {
 			return err
 		}
-		result[path] = body
+		item := treeSnapshotEntry{mode: info.Mode(), modTime: info.ModTime().UnixNano()}
+		if info.Mode().IsRegular() {
+			item.body, err = os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+		}
+		result[path] = item
 		return nil
 	})
 	if err != nil {
@@ -288,19 +373,21 @@ func databaseSnapshot(t *testing.T, root string) map[string][]byte {
 	return result
 }
 
-func equalByteMap(left, right map[string][]byte) bool {
+func equalTreeSnapshots(left, right map[string]treeSnapshotEntry) bool {
 	if len(left) != len(right) {
 		return false
 	}
 	for key, value := range left {
-		if !slices.Equal(value, right[key]) {
+		other, found := right[key]
+		if !found || value.mode != other.mode || value.modTime != other.modTime ||
+			!slices.Equal(value.body, other.body) {
 			return false
 		}
 	}
 	return true
 }
 
-func mapKeys(values map[string][]byte) []string {
+func mapKeys(values map[string]treeSnapshotEntry) []string {
 	keys := make([]string, 0, len(values))
 	for key := range values {
 		keys = append(keys, key)

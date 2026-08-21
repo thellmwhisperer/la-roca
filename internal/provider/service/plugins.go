@@ -75,23 +75,29 @@ func (s *Service) pluginsFor(ctx context.Context, input string,
 	candidates = s.onDemand(candidates)
 	limit := max(0, plugin.MaxAttached-len(s.resident)-s.layerRegistryAttachmentCost())
 	return s.withResidents(validatePluginRouteLimit(ctx,
-		selectPlugins(input, candidates), warnings, limit))
+		selectPlugins(input, candidates), warnings, limit, s.opts.ReadOnly))
 }
 
 func validatePluginRoute(ctx context.Context, candidates []plugin.Descriptor,
 	warnings []string) pluginRoute {
-	return validatePluginRouteLimit(ctx, candidates, warnings, plugin.MaxAttached)
+	return validatePluginRouteLimit(ctx, candidates, warnings, plugin.MaxAttached, false)
 }
 
 func validatePluginRouteLimit(ctx context.Context, candidates []plugin.Descriptor,
-	warnings []string, limit int) pluginRoute {
+	warnings []string, limit int, immutable bool) pluginRoute {
 	route := pluginRoute{warnings: slices.Clone(warnings)}
 	for _, candidate := range candidates {
 		if len(route.databases) == limit {
 			route.omitted = append(route.omitted, candidate)
 			continue
 		}
-		database, err := plugin.Validate(ctx, candidate)
+		var database plugin.Database
+		var err error
+		if immutable {
+			database, err = plugin.ValidateImmutable(ctx, candidate)
+		} else {
+			database, err = plugin.Validate(ctx, candidate)
+		}
 		if err != nil {
 			route.warnings = append(route.warnings, fmt.Sprintf(
 				"plugin %s semantic layer does not match its database: %v; plugin skipped",
@@ -148,7 +154,7 @@ func (s *Service) openResidents(ctx context.Context) error {
 	var stableLayers *plugin.Database
 	if !s.opts.RocaOpsEnabled {
 		var err error
-		stableLayers, err = stableLayerDatabase(ctx, descriptors)
+		stableLayers, err = stableLayerDatabase(ctx, descriptors, s.opts.ReadOnly)
 		if err != nil {
 			return err
 		}
@@ -185,7 +191,7 @@ func (s *Service) openResidents(ctx context.Context) error {
 	if stableLayers != nil {
 		limit--
 	}
-	route := validatePluginRouteLimit(ctx, candidates, nil, limit)
+	route := validatePluginRouteLimit(ctx, candidates, nil, limit, s.opts.ReadOnly)
 	s.resident, s.residentOmitted, s.residentWarnings = route.databases, route.omitted, route.warnings
 
 	var opsDatabase *plugin.Database
@@ -253,14 +259,20 @@ func (s *Service) openResidents(ctx context.Context) error {
 	return nil
 }
 
-func stableLayerDatabase(ctx context.Context, descriptors []plugin.Descriptor) (*plugin.Database, error) {
+func stableLayerDatabase(ctx context.Context, descriptors []plugin.Descriptor, immutable bool) (*plugin.Database, error) {
 	var databases []plugin.Database
 	for _, descriptor := range descriptors {
 		if !ownsVerb(descriptor, StoreVerb, rocaOpsPluginName) ||
 			descriptor.Semantic.Attachment != plugin.AttachmentResident {
 			continue
 		}
-		database, err := plugin.Validate(ctx, descriptor)
+		var database plugin.Database
+		var err error
+		if immutable {
+			database, err = plugin.ValidateImmutable(ctx, descriptor)
+		} else {
+			database, err = plugin.Validate(ctx, descriptor)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("validate %s layer registry: %w", rocaOpsPluginName, err)
 		}

@@ -174,7 +174,11 @@ func openWithContext(ctx context.Context, opts Options) (*Service, error) {
 	}
 	svc := &Service{opts: opts, registry: registry, readLayout: layout}
 	if layout != LayoutCutover {
-		svc.legacy, err = store.Open(opts.DBPath)
+		if opts.ReadOnly {
+			svc.legacy, err = store.OpenReadOnly(opts.DBPath)
+		} else {
+			svc.legacy, err = store.Open(opts.DBPath)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -264,6 +268,9 @@ func (s *Service) rollbackShadow(reason error) {
 }
 
 func (s *Service) rollbackCutover(reason error) error {
+	if s.opts.ReadOnly {
+		return reason
+	}
 	s.layoutMu.Lock()
 	if s.readLayout != LayoutCutover {
 		s.layoutMu.Unlock()

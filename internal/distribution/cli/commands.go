@@ -1124,7 +1124,7 @@ func remoteExecCommand(env *cliEnv) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := env.runRemoteExec(command.Context(), remote, statement)
+			result, err := env.runRemoteExec(command.Context(), remote, statement, false)
 			if err != nil {
 				return err
 			}
@@ -1151,28 +1151,24 @@ func remoteVectorCommand(env *cliEnv) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			k := 10
 			remoteArgs := []string{"roca", "vector", "query", args[1]}
 			if len(args) == 3 {
-				if k, parseErr := strconv.Atoi(args[2]); parseErr != nil || k < 1 || k > 100 {
+				k, err = strconv.Atoi(args[2])
+				if err != nil || k < 1 || k > 100 {
 					return fmt.Errorf("k must be between 1 and 100")
 				}
 				remoteArgs = append(remoteArgs, args[2])
 			}
 			remoteArgs = append(remoteArgs, "--json")
-			version, raw, err := env.runRemoteJSON(command.Context(), remote, remoteArgs)
+			version, raw, err := env.runRemoteJSON(command.Context(), remote, remoteArgs, false)
 			if err != nil {
 				return err
 			}
-			document, err := decodeJSONObject(raw)
+			document, err := decodeRemoteVectorEnvelope(raw, version, args[1], k)
 			if err != nil {
 				env.code = ExitRemoteVersionSkew
 				return fmt.Errorf("remote %s returned an incompatible vector envelope: %w", remote.Name, err)
-			}
-			if _, found := document["version"]; !found {
-				document["version"] = version.Version
-			}
-			if _, found := document["source_sha"]; !found {
-				document["source_sha"] = version.SourceSHA
 			}
 			env.capture(document)
 			if env.json {
@@ -1280,7 +1276,7 @@ func remoteCrossCommand(env *cliEnv) *cobra.Command {
 				if lookupErr != nil {
 					return lookupErr
 				}
-				result, runErr := env.runRemoteExec(command.Context(), remote, statement)
+				result, runErr := env.runRemoteExec(command.Context(), remote, statement, true)
 				if runErr != nil {
 					return runErr
 				}
@@ -1448,15 +1444,19 @@ func quoteIdentifier(identifier string) string {
 
 func remoteNames(value string) ([]string, error) {
 	var names []string
-	seen := map[string]bool{}
+	seen := map[string]string{}
 	for _, name := range strings.Split(value, ",") {
 		name = strings.TrimSpace(name)
-		if !remoteNamePattern.MatchString(name) {
+		if !remoteNamePattern.MatchString(name) || strings.EqualFold(name, "local") {
 			return nil, fmt.Errorf("--on contains invalid remote name %q", name)
 		}
-		if !seen[name] {
+		folded := strings.ToLower(name)
+		if previous, found := seen[folded]; found && previous != name {
+			return nil, fmt.Errorf("--on contains case-colliding remote names %q and %q", previous, name)
+		}
+		if _, found := seen[folded]; !found {
 			names = append(names, name)
-			seen[name] = true
+			seen[folded] = name
 		}
 	}
 	if len(names) == 0 {
@@ -1465,26 +1465,26 @@ func remoteNames(value string) ([]string, error) {
 	return names, nil
 }
 
-func (env *cliEnv) runRemoteExec(ctx context.Context, remote remoteEntry, statement string) (service.ExecResult, error) {
-	_, raw, err := env.runRemoteJSON(ctx, remote,
-		[]string{"roca", "exec", statement, "--json"})
+func (env *cliEnv) runRemoteExec(ctx context.Context, remote remoteEntry, statement string, noWrite bool) (service.ExecResult, error) {
+	version, raw, err := env.runRemoteJSON(ctx, remote,
+		[]string{"roca", "exec", statement, "--json"}, noWrite)
 	if err != nil {
 		return service.ExecResult{}, err
 	}
-	var result service.ExecResult
-	if err := decodeJSON(raw, &result); err != nil {
+	result, err := decodeRemoteExecEnvelope(raw)
+	if err != nil {
 		env.code = ExitRemoteVersionSkew
 		return service.ExecResult{}, fmt.Errorf("remote %s returned an incompatible exec envelope: %w", remote.Name, err)
 	}
-	for _, row := range result.Rows {
-		for column, value := range row {
-			row[column] = normalizedNumber(value)
-		}
-	}
-	if result.Version != "" && result.Version != env.build.Version {
+	if result.Version != env.build.Version {
 		env.code = ExitRemoteVersionSkew
 		return service.ExecResult{}, fmt.Errorf("remote %s runs roca %s; local roca is %s",
 			remote.Name, result.Version, env.build.Version)
+	}
+	if result.Version != version.Version || result.SourceSHA != version.SourceSHA {
+		env.code = ExitRemoteVersionSkew
+		return service.ExecResult{}, fmt.Errorf(
+			"remote %s returned exec provenance that differs from its version probe", remote.Name)
 	}
 	return result, nil
 }
@@ -1494,17 +1494,23 @@ type remoteVersion struct {
 	SourceSHA string `json:"source_sha"`
 }
 
-func (env *cliEnv) runRemoteJSON(ctx context.Context, remote remoteEntry, args []string) (remoteVersion, string, error) {
+func (env *cliEnv) runRemoteJSON(ctx context.Context, remote remoteEntry, args []string, noWrite bool) (remoteVersion, string, error) {
 	runner := env.sshRunner
 	if runner == nil {
 		runner = systemSSHRunner{}
 	}
-	versionReply := runner.Run(ctx, remote.SSH, []string{"roca", "version", "--json"})
+	versionArgs := []string{"roca", "version", "--json"}
+	if noWrite {
+		versionArgs = append(versionArgs, "--read-only")
+		args = append(slices.Clone(args), "--read-only")
+	}
+	versionReply := runner.Run(ctx, remote.SSH, versionArgs)
 	if err := env.remoteReplyError(remote.Name, versionReply, true); err != nil {
 		return remoteVersion{}, "", err
 	}
 	var version remoteVersion
-	if err := decodeJSON(versionReply.stdout, &version); err != nil || version.Version == "" {
+	if err := decodeJSON(versionReply.stdout, &version); err != nil ||
+		version.Version == "" || version.SourceSHA == "" {
 		env.code = ExitRemoteVersionSkew
 		return remoteVersion{}, "", fmt.Errorf("remote %s returned an incompatible version envelope", remote.Name)
 	}
@@ -1584,7 +1590,7 @@ func (env *cliEnv) remoteRegistryPath() (string, error) {
 }
 
 func validateRemote(name, target string) error {
-	if !remoteNamePattern.MatchString(name) || name == "local" {
+	if !remoteNamePattern.MatchString(name) || strings.EqualFold(name, "local") {
 		return fmt.Errorf("remote name %q must be a SQLite-safe identifier and cannot be local", name)
 	}
 	if target == "" || strings.HasPrefix(target, "-") || strings.ContainsAny(target, " \t\r\n\x00") {
@@ -1612,6 +1618,18 @@ func loadRemoteRegistry(path string) (remoteRegistry, []byte, error) {
 	if registry.Remotes == nil {
 		registry.Remotes = []remoteEntry{}
 	}
+	seen := map[string]string{}
+	for _, remote := range registry.Remotes {
+		if err := validateRemote(remote.Name, remote.SSH); err != nil {
+			return remoteRegistry{}, nil, fmt.Errorf("remote registry %s: %w", path, err)
+		}
+		folded := strings.ToLower(remote.Name)
+		if previous, found := seen[folded]; found {
+			return remoteRegistry{}, nil, fmt.Errorf(
+				"remote registry %s has case-colliding names %q and %q", path, previous, remote.Name)
+		}
+		seen[folded] = remote.Name
+	}
 	slices.SortFunc(registry.Remotes, func(left, right remoteEntry) int {
 		return strings.Compare(left.Name, right.Name)
 	})
@@ -1633,6 +1651,11 @@ func upsertRemote(path string, entry remoteEntry) (remoteRegistry, bool, error) 
 	}
 	added := true
 	for index := range registry.Remotes {
+		if strings.EqualFold(registry.Remotes[index].Name, entry.Name) &&
+			registry.Remotes[index].Name != entry.Name {
+			return remoteRegistry{}, false, fmt.Errorf(
+				"remote name %q collides case-insensitively with %q", entry.Name, registry.Remotes[index].Name)
+		}
 		if registry.Remotes[index].Name == entry.Name {
 			registry.Remotes[index] = entry
 			added = false
@@ -1676,10 +1699,264 @@ func decodeJSONObject(raw string) (map[string]any, error) {
 	if err := decodeJSON(raw, &document); err != nil {
 		return nil, err
 	}
+	if document == nil {
+		return nil, fmt.Errorf("expected a JSON object")
+	}
 	for key, value := range document {
 		document[key] = normalizedNumber(value)
 	}
 	return document, nil
+}
+
+func decodeRemoteExecEnvelope(raw string) (service.ExecResult, error) {
+	document, err := decodeJSONObject(raw)
+	if err != nil {
+		return service.ExecResult{}, err
+	}
+	sqlText, err := requiredText(document, "sql")
+	if err != nil || strings.TrimSpace(sqlText) == "" {
+		return service.ExecResult{}, fmt.Errorf("sql must be a non-empty string")
+	}
+	rowCount, err := requiredInteger(document, "row_count")
+	if err != nil || rowCount < 0 {
+		return service.ExecResult{}, fmt.Errorf("row_count must be a non-negative integer")
+	}
+	latency, err := requiredInteger(document, "latency_ms")
+	if err != nil || latency < 0 {
+		return service.ExecResult{}, fmt.Errorf("latency_ms must be a non-negative integer")
+	}
+	version, err := requiredText(document, "version")
+	if err != nil || version == "" {
+		return service.ExecResult{}, fmt.Errorf("version must be a non-empty string")
+	}
+	sourceSHA, err := requiredText(document, "source_sha")
+	if err != nil || sourceSHA == "" {
+		return service.ExecResult{}, fmt.Errorf("source_sha must be a non-empty string")
+	}
+	columns, err := optionalStrings(document, "columns")
+	if err != nil {
+		return service.ExecResult{}, err
+	}
+	rows, err := optionalObjects(document, "rows")
+	if err != nil {
+		return service.ExecResult{}, err
+	}
+	if int64(len(rows)) != rowCount {
+		return service.ExecResult{}, fmt.Errorf("row_count does not match rows")
+	}
+	seen := map[string]bool{}
+	for _, column := range columns {
+		if column == "" || seen[column] {
+			return service.ExecResult{}, fmt.Errorf("columns contains an empty or duplicate name")
+		}
+		seen[column] = true
+	}
+	for index, row := range rows {
+		if len(row) != len(columns) {
+			return service.ExecResult{}, fmt.Errorf("row %d does not match columns", index)
+		}
+		for _, column := range columns {
+			if _, found := row[column]; !found {
+				return service.ExecResult{}, fmt.Errorf("row %d is missing column %q", index, column)
+			}
+		}
+	}
+	databases, err := optionalStrings(document, "databases")
+	if err != nil {
+		return service.ExecResult{}, err
+	}
+	omitted, err := optionalStrings(document, "omitted_databases")
+	if err != nil {
+		return service.ExecResult{}, err
+	}
+	return service.ExecResult{
+		SQL: sqlText, Columns: columns, Rows: rows, RowCount: int(rowCount),
+		Databases: databases, OmittedDatabases: omitted, LatencyMS: latency,
+		Version: version, SourceSHA: sourceSHA,
+	}, nil
+}
+
+func decodeRemoteVectorEnvelope(raw string, remote remoteVersion, phrase string, k int) (map[string]any, error) {
+	document, err := decodeJSONObject(raw)
+	if err != nil {
+		return nil, err
+	}
+	query, err := requiredText(document, "query")
+	if err != nil || query != phrase {
+		return nil, fmt.Errorf("query does not match the request")
+	}
+	resultK, err := requiredInteger(document, "k")
+	if err != nil || resultK != int64(k) {
+		return nil, fmt.Errorf("k does not match the request")
+	}
+	elapsed, err := requiredInteger(document, "elapsed_ms")
+	if err != nil || elapsed < 0 {
+		return nil, fmt.Errorf("elapsed_ms must be a non-negative integer")
+	}
+	results, err := requiredObjects(document, "results")
+	if err != nil {
+		return nil, err
+	}
+	if err := validateVectorResults(results); err != nil {
+		return nil, err
+	}
+	for _, field := range []string{"databases", "notices"} {
+		if _, err := optionalStrings(document, field); err != nil {
+			return nil, err
+		}
+	}
+	if value, found := document["model"]; found {
+		if _, ok := value.(string); !ok {
+			return nil, fmt.Errorf("model must be a string")
+		}
+	}
+	if value, found := document["mixed_models"]; found {
+		if _, ok := value.(bool); !ok {
+			return nil, fmt.Errorf("mixed_models must be a boolean")
+		}
+	}
+	groups, err := optionalObjects(document, "database_results")
+	if err != nil {
+		return nil, err
+	}
+	for index, group := range groups {
+		if database, err := requiredText(group, "database"); err != nil || database == "" {
+			return nil, fmt.Errorf("database_results[%d].database must be a non-empty string", index)
+		}
+		if model, err := requiredText(group, "model"); err != nil || model == "" {
+			return nil, fmt.Errorf("database_results[%d].model must be a non-empty string", index)
+		}
+		groupResults, err := requiredObjects(group, "results")
+		if err != nil {
+			return nil, fmt.Errorf("database_results[%d]: %w", index, err)
+		}
+		if err := validateVectorResults(groupResults); err != nil {
+			return nil, fmt.Errorf("database_results[%d]: %w", index, err)
+		}
+	}
+	if version, found := document["version"]; found {
+		text, ok := version.(string)
+		if !ok || text != remote.Version {
+			return nil, fmt.Errorf("version does not match the version probe")
+		}
+	} else {
+		document["version"] = remote.Version
+	}
+	if sourceSHA, found := document["source_sha"]; found {
+		text, ok := sourceSHA.(string)
+		if !ok || text != remote.SourceSHA {
+			return nil, fmt.Errorf("source_sha does not match the version probe")
+		}
+	} else {
+		document["source_sha"] = remote.SourceSHA
+	}
+	return document, nil
+}
+
+func validateVectorResults(results []map[string]any) error {
+	for index, result := range results {
+		rank, err := requiredInteger(result, "rank")
+		if err != nil || rank < 1 {
+			return fmt.Errorf("results[%d].rank must be a positive integer", index)
+		}
+		score, found := result["score"]
+		if !found || !numberValue(score) {
+			return fmt.Errorf("results[%d].score must be a number", index)
+		}
+		for _, field := range []string{"source", "source_id", "text"} {
+			if _, err := requiredText(result, field); err != nil {
+				return fmt.Errorf("results[%d].%s must be a string", index, field)
+			}
+		}
+		for _, field := range []string{"database", "table", "id"} {
+			if value, found := result[field]; found {
+				if _, ok := value.(string); !ok {
+					return fmt.Errorf("results[%d].%s must be a string", index, field)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func requiredText(document map[string]any, field string) (string, error) {
+	value, found := document[field]
+	if !found {
+		return "", fmt.Errorf("%s is required", field)
+	}
+	text, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("%s must be a string", field)
+	}
+	return text, nil
+}
+
+func requiredInteger(document map[string]any, field string) (int64, error) {
+	value, found := document[field]
+	if !found {
+		return 0, fmt.Errorf("%s is required", field)
+	}
+	integer, ok := value.(int64)
+	if !ok {
+		return 0, fmt.Errorf("%s must be an integer", field)
+	}
+	return integer, nil
+}
+
+func optionalStrings(document map[string]any, field string) ([]string, error) {
+	value, found := document[field]
+	if !found {
+		return nil, nil
+	}
+	items, ok := value.([]any)
+	if !ok {
+		return nil, fmt.Errorf("%s must be an array of strings", field)
+	}
+	result := make([]string, len(items))
+	for index, item := range items {
+		text, ok := item.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s[%d] must be a string", field, index)
+		}
+		result[index] = text
+	}
+	return result, nil
+}
+
+func requiredObjects(document map[string]any, field string) ([]map[string]any, error) {
+	if _, found := document[field]; !found {
+		return nil, fmt.Errorf("%s is required", field)
+	}
+	return optionalObjects(document, field)
+}
+
+func optionalObjects(document map[string]any, field string) ([]map[string]any, error) {
+	value, found := document[field]
+	if !found {
+		return nil, nil
+	}
+	items, ok := value.([]any)
+	if !ok {
+		return nil, fmt.Errorf("%s must be an array of objects", field)
+	}
+	result := make([]map[string]any, len(items))
+	for index, item := range items {
+		object, ok := item.(map[string]any)
+		if !ok || object == nil {
+			return nil, fmt.Errorf("%s[%d] must be an object", field, index)
+		}
+		result[index] = object
+	}
+	return result, nil
+}
+
+func numberValue(value any) bool {
+	switch value.(type) {
+	case int64, float64:
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizedNumber(value any) any {

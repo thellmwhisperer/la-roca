@@ -29,8 +29,9 @@ const (
 
 // DB is an open La Roca database.
 type DB struct {
-	sql  *sql.DB
-	path string
+	sql              *sql.DB
+	path             string
+	physicalReadOnly bool
 	// transient is an in-memory compatibility main owned by the federation
 	// hub. It can be read through the ordinary store contract, but it is never a
 	// durable write target and its handle is closed by the hub that attached the
@@ -80,6 +81,29 @@ func Open(path string) (*DB, error) {
 		}
 	}
 	return &DB{sql: handle, path: abs}, nil
+}
+
+func OpenReadOnly(path string) (*DB, error) {
+	abs, dsn, err := sqliteFileDSN(path, url.Values{
+		"mode":      {"ro"},
+		"immutable": {"1"},
+		"_pragma": {
+			fmt.Sprintf("busy_timeout(%d)", busyTimeout.Milliseconds()),
+			"query_only(1)",
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("resolve the database path %q: %w", path, err)
+	}
+	handle, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open the database %q read-only: %w", abs, err)
+	}
+	if err := handle.Ping(); err != nil {
+		handle.Close()
+		return nil, fmt.Errorf("open the database %q read-only: %w", abs, err)
+	}
+	return &DB{sql: handle, path: abs, physicalReadOnly: true}, nil
 }
 
 // Transient exposes an already-open in-memory federation main through the read
@@ -138,7 +162,7 @@ func (db *DB) SQL() *sql.DB { return db.sql }
 // read-only connection cannot touch WAL's shared index, and a WAL database with
 // a reader like that fails to read.
 func (db *DB) ReadOnly() (*sql.DB, error) {
-	if db.transient {
+	if db.transient || db.physicalReadOnly {
 		return db.sql, nil
 	}
 	db.once.Do(func() {
@@ -195,8 +219,8 @@ func (db *DB) Close() error {
 // write lock is busy. If fn returns an error, the whole transaction is rolled
 // back.
 func (db *DB) Write(ctx context.Context, fn func(*sql.Tx) error) error {
-	if db.transient {
-		return fmt.Errorf("the in-memory federation main is read-only")
+	if db.transient || db.physicalReadOnly {
+		return fmt.Errorf("the database is read-only")
 	}
 	var last error
 	for attempt := range writeRetries {
