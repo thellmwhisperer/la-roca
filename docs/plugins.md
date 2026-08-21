@@ -426,10 +426,13 @@ Install, update, and uninstall regenerate
 `~/.roca/plugins/vector-registry.json` in the same pass that refreshes the
 semantic catalog. Bundled manifest upgrades refresh the same registry when the
 kernel opens them. The registry contains plugin-relative database filenames,
-not local home paths, and is derived state: edit `plugin.json`, never the
-registry. The kernel worker turns each declaration into a database-owned
-adjacent sidecar with owner/model/dimensions/version metadata and incremental
-fingerprint GC. Cross-database query fan-out remains a separate serving service.
+not local home paths, plus a content-free routing inventory so FTS-only
+databases remain valid `--databases` selections. It is derived state: edit
+`plugin.json`, never the registry. The kernel worker turns each declaration
+into a database-owned adjacent sidecar with owner/model/dimensions/version
+metadata and incremental fingerprint GC. `roca vector query --databases ...`
+routes over those sidecars, merges only same-model scores, and leaves missing
+or undeclared vector coverage on the database's existing FTS/SQL path.
 
 ### Verbs and capabilities
 
