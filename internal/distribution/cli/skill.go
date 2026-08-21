@@ -364,8 +364,7 @@ func (env *cliEnv) refreshPluginContracts() {
 		env.warnVectorRegistryRefresh(err)
 		return
 	}
-	registryPath := plugin.VectorRegistryPath(root)
-	if err := plugin.SaveVectorRegistry(registryPath, plugin.ComposeVectorRegistry(databases)); err != nil {
+	if err := saveVectorRegistry(root, databases); err != nil {
 		env.warnVectorRegistryRefresh(err)
 	}
 	catalog := skill.CatalogBody(databases, warnings)
@@ -405,6 +404,19 @@ func (env *cliEnv) refreshPluginContracts() {
 			env.warnCatalogRefresh(err)
 		}
 	}
+}
+
+func (env *cliEnv) refreshVectorRegistry() error {
+	root, databases, _, err := env.discoverPluginContracts()
+	if err != nil {
+		return err
+	}
+	return saveVectorRegistry(root, databases)
+}
+
+func saveVectorRegistry(root string, databases []plugin.Database) error {
+	return plugin.SaveVectorRegistry(plugin.VectorRegistryPath(root),
+		plugin.ComposeVectorRegistry(databases))
 }
 
 func (env *cliEnv) warnCatalogRefresh(err error) {

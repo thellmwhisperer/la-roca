@@ -116,7 +116,8 @@ func (w *distributionWorld) disabledPluginInstallerIsInert() error {
 	}
 	for _, entry := range entries {
 		if entry.Name() != "roca-ops" && entry.Name() != "roca-corpus" &&
-			entry.Name() != "roca-cron" && entry.Name() != "roca-vector" {
+			entry.Name() != "roca-cron" && entry.Name() != "roca-vector" &&
+			entry.Name() != "vector-registry.json" {
 			return fmt.Errorf("disabled plugin installer added %q", entry.Name())
 		}
 	}

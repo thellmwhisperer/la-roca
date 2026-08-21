@@ -147,6 +147,11 @@ func manifestDatabaseFiles(manifest Manifest) []string {
 	return nil
 }
 
+func databaseVectorSidecar(name string) string {
+	extension := filepath.Ext(name)
+	return strings.TrimSuffix(name, extension) + ".vector" + extension
+}
+
 type packageMetadata struct {
 	Schema   int         `json:"schema"`
 	Name     string      `json:"name"`
@@ -695,6 +700,9 @@ func (m Manager) RecoverUpdate(name string) error {
 			return fmt.Errorf("inspect plugin %s recovery target: %w", name, err)
 		}
 		if currentErr == nil {
+			if err := moveDatabaseSidecars(target, backup, previous); err != nil {
+				return fmt.Errorf("recover plugin %s vector sidecars: %w", name, err)
+			}
 			if err := moveRecoveryState(target, backup, previous.StateDir); err != nil {
 				return fmt.Errorf("recover plugin %s state: %w", name, err)
 			}
@@ -989,6 +997,10 @@ func (m Manager) Update(candidate Candidate) (Result, error) {
 			return Result{}, fmt.Errorf("preserve plugin state directory: %w", err)
 		}
 	}
+	if err := moveDatabaseSidecars(backup, target, previousManifest); err != nil {
+		_ = m.RecoverUpdate(candidate.Name)
+		return Result{}, err
+	}
 	rollback := func() {
 		_ = m.RecoverUpdate(candidate.Name)
 	}
@@ -1007,6 +1019,19 @@ func (m Manager) Update(candidate Candidate) (Result, error) {
 		return Result{}, fmt.Errorf("remove previous plugin after update: %w", err)
 	}
 	return resultFor(candidate, target, executable), nil
+}
+
+func moveDatabaseSidecars(source, destination string, manifest Manifest) error {
+	for _, database := range manifestDatabaseFiles(manifest) {
+		sidecar := databaseVectorSidecar(database)
+		for _, suffix := range []string{"", "-wal", "-shm", "-journal", ".index.lock"} {
+			from, to := filepath.Join(source, sidecar+suffix), filepath.Join(destination, sidecar+suffix)
+			if err := os.Rename(from, to); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("preserve vector sidecar %s: %w", sidecar+suffix, err)
+			}
+		}
+	}
+	return nil
 }
 
 func (m Manager) PreflightUpdate(candidate Candidate) error {
@@ -1534,6 +1559,9 @@ func InstalledPaths(directory string, manifest Manifest) []string {
 	for _, name := range manifestDatabaseFiles(manifest) {
 		database := filepath.Join(directory, name)
 		paths = append(paths, database+"-wal", database+"-shm", database+"-journal")
+		sidecar := filepath.Join(directory, databaseVectorSidecar(name))
+		paths = append(paths, sidecar, sidecar+"-wal", sidecar+"-shm", sidecar+"-journal",
+			sidecar+".index.lock")
 	}
 	if manifest.StateDir != "" {
 		state := filepath.Join(directory, manifest.StateDir)

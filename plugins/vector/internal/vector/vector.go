@@ -3,10 +3,8 @@ package vector
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -16,15 +14,17 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/thellmwhisperer/la-roca/pkg/incrementality"
 	_ "modernc.org/sqlite"
 	_ "modernc.org/sqlite/vec"
 )
 
 const (
-	defaultChunkSize = 4000
-	defaultOverlap   = 400
-	defaultBatchSize = 64
-	walkPageSize     = 500
+	defaultChunkSize    = 4000
+	defaultOverlap      = 400
+	defaultBatchSize    = 64
+	walkPageSize        = 500
+	vectorStorageSchema = "vector-v1"
 	// maxUnresolvedCandidates bounds a query against an index the corpus has moved
 	// under. Each resolution is one `roca exec` process, so a wholly stale index
 	// would otherwise spend one process per candidate to answer nothing.
@@ -32,11 +32,12 @@ const (
 )
 
 type Index struct {
-	Corpus     Corpus
-	VectorPath string
-	Model      string
-	Embedder   Embedder
-	Notice     func(string)
+	Corpus      Corpus
+	VectorPath  string
+	Model       string
+	Embedder    Embedder
+	Notice      func(string)
+	SourceKinds map[string]bool
 }
 
 type Corpus interface {
@@ -62,20 +63,25 @@ type Result struct {
 }
 
 type sourceRow struct {
-	kind       string
-	text       string
-	sessionID  string
-	ordinal    int64
-	hasOrdinal bool
-	position   string
-	cronSource string
-	filePath   string
-	layer      string
-	origin     string
-	createdAt  string
+	kind               string
+	sourceID           string
+	text               string
+	chunkSize          int
+	overlap            int
+	fingerprintVersion string
+	sessionID          string
+	ordinal            int64
+	hasOrdinal         bool
+	position           string
+	cronSource         string
+	filePath           string
+	layer              string
+	origin             string
+	createdAt          string
 }
 
 type locator struct {
+	SourceID   string `json:"source_id,omitempty"`
 	SessionID  string `json:"session_id,omitempty"`
 	Ordinal    int64  `json:"ordinal,omitempty"`
 	HasOrdinal bool   `json:"has_ordinal,omitempty"`
@@ -133,7 +139,7 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 	if err := i.validate(); err != nil {
 		return Delta{}, err
 	}
-	if err := validateSourceKind(sourceKind); err != nil {
+	if err := validateSourceKind(sourceKind, i.SourceKinds); err != nil {
 		return Delta{}, err
 	}
 	if err := ensureParent(i.VectorPath); err != nil {
@@ -173,7 +179,7 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 	}
 
 	report := Delta{}
-	seen := make(map[string]bool, len(existing))
+	desiredFingerprints := make(map[string]string, len(existing))
 	pending := make([]desiredChunk, 0, defaultBatchSize)
 	flush := func() error {
 		if len(pending) == 0 {
@@ -210,13 +216,14 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 
 	err = i.Corpus.WalkSources(ctx, sourceKind, func(source sourceRow) error {
 		report.Sources++
-		for chunkIndex, text := range chunks(source.text, defaultChunkSize, defaultOverlap) {
+		chunkSize, overlap := source.chunking()
+		for chunkIndex, text := range chunks(source.text, chunkSize, overlap) {
 			chunk := desiredChunk{
 				sourceKind: source.kind, sourceID: source.stableID(), index: chunkIndex,
-				fingerprint: embeddingFingerprint(source.kind, text), locator: source.locator(), text: text,
+				fingerprint: source.embeddingFingerprint(text), locator: source.locator(), text: text,
 			}
 			key := chunkKey(chunk.sourceKind, chunk.sourceID, chunk.index)
-			seen[key] = true
+			desiredFingerprints[key] = chunk.fingerprint
 			if old, ok := existing[key]; ok && old.fingerprint == chunk.fingerprint {
 				report.Unchanged++
 				continue
@@ -236,16 +243,38 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 	if err := flush(); err != nil {
 		return Delta{}, err
 	}
-	if err := removeMissing(ctx, store, existing, seen, sourceKind, &report); err != nil {
+	if dimensions == 0 {
+		vectors, err := i.Embedder.Embed(ctx, i.Model, []string{DocumentPrefix + "dimension probe"})
+		if err != nil {
+			return Delta{}, err
+		}
+		if len(vectors) != 1 || len(vectors[0]) == 0 {
+			return Delta{}, fmt.Errorf("embedding model %s returned an empty dimension probe", i.Model)
+		}
+		dimensions = len(vectors[0])
+		if err := ensureVectorTables(store, dimensions, i.Model); err != nil {
+			return Delta{}, err
+		}
+	}
+	if err := removeMissing(ctx, store, existing, desiredFingerprints, sourceKind, &report); err != nil {
 		return Delta{}, err
 	}
 	report.Chunks = report.Added + report.Updated + report.Unchanged
 	return report, nil
 }
 
-func validateSourceKind(sourceKind string) error {
+func validateSourceKind(sourceKind string, declared map[string]bool) error {
+	if sourceKind == "" {
+		return nil
+	}
+	if declared != nil {
+		if declared[sourceKind] {
+			return nil
+		}
+		return fmt.Errorf("unknown vector source %q", sourceKind)
+	}
 	switch sourceKind {
-	case "", "memories", "exchanges", "thinking_blocks", "sessions":
+	case "memories", "exchanges", "thinking_blocks", "sessions":
 		return nil
 	default:
 		return fmt.Errorf("unknown vector source %q", sourceKind)
@@ -357,6 +386,9 @@ func chunks(text string, size, overlap int) []string {
 
 func (s sourceRow) stableID() string {
 	escape := url.PathEscape
+	if s.sourceID != "" {
+		return s.kind + "/" + escape(s.sourceID)
+	}
 	switch s.kind {
 	case "sessions":
 		if s.sessionID != "" {
@@ -391,7 +423,7 @@ func (s sourceRow) stableID() string {
 }
 
 func (s sourceRow) locator() locator {
-	return locator{SessionID: s.sessionID, Ordinal: s.ordinal, HasOrdinal: s.hasOrdinal,
+	return locator{SourceID: s.sourceID, SessionID: s.sessionID, Ordinal: s.ordinal, HasOrdinal: s.hasOrdinal,
 		Position: s.position, CronSource: s.cronSource, FilePath: s.filePath,
 		Layer: s.layer, Origin: s.origin, CreatedAt: s.createdAt, Identity: s.identity()}
 }
@@ -408,8 +440,7 @@ func ensureParent(path string) error {
 }
 
 func fingerprint(text string) string {
-	digest := sha256.Sum256([]byte(text))
-	return hex.EncodeToString(digest[:])
+	return incrementality.ContentFingerprint(text)
 }
 
 func embeddingFingerprint(sourceKind, text string) string {
@@ -417,6 +448,28 @@ func embeddingFingerprint(sourceKind, text string) string {
 		text = sessionEmbeddingTextVersion + "\x00" + text
 	}
 	return fingerprint(text)
+}
+
+func (s sourceRow) embeddingFingerprint(text string) string {
+	version := s.fingerprintVersion
+	if version == "" && s.kind == "sessions" {
+		version = sessionEmbeddingTextVersion
+	}
+	if version != "" {
+		return incrementality.ContentFingerprint(version, text)
+	}
+	return fingerprint(text)
+}
+
+func (s sourceRow) chunking() (int, int) {
+	size, overlap := s.chunkSize, s.overlap
+	if size <= 0 {
+		size = defaultChunkSize
+	}
+	if overlap < 0 || overlap >= size || (s.chunkSize == 0 && overlap == 0) {
+		overlap = defaultOverlap
+	}
+	return size, overlap
 }
 
 func chunkKey(kind, sourceID string, index int) string {
@@ -459,7 +512,8 @@ func ensureBaseSchema(db *sql.DB) error {
 			locator TEXT NOT NULL,
 			updated_at TEXT NOT NULL DEFAULT (datetime('now')),
 			UNIQUE(source_kind, source_id, chunk_index)
-		);`)
+		);
+		INSERT OR IGNORE INTO meta(key,value) VALUES ('schema','` + vectorStorageSchema + `');`)
 	if err != nil {
 		return fmt.Errorf("initialize vector database: %w", err)
 	}
@@ -495,7 +549,11 @@ func readIndexState(db *sql.DB) (map[string]storedChunk, string, int, error) {
 }
 
 func resetIndex(db *sql.DB) error {
-	_, err := db.Exec(`DROP TABLE IF EXISTS ann_embeddings; DROP TABLE IF EXISTS embeddings; DELETE FROM chunks; DELETE FROM meta;`)
+	_, err := db.Exec(`DROP TABLE IF EXISTS ann_embeddings;
+		DROP TABLE IF EXISTS embeddings;
+		DELETE FROM chunks;
+		DELETE FROM meta WHERE key NOT IN ('schema','owner');
+		INSERT OR IGNORE INTO meta(key,value) VALUES ('schema','` + vectorStorageSchema + `');`)
 	if err != nil {
 		return fmt.Errorf("reset vector index for the selected model: %w", err)
 	}
@@ -570,7 +628,8 @@ func writeBatch(ctx context.Context, db *sql.DB, chunks []desiredChunk, vectors 
 	return tx.Commit()
 }
 
-func removeMissing(ctx context.Context, db *sql.DB, existing map[string]storedChunk, seen map[string]bool,
+func removeMissing(ctx context.Context, db *sql.DB, existing map[string]storedChunk,
+	desiredFingerprints map[string]string,
 	sourceKind string, report *Delta) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -581,7 +640,7 @@ func removeMissing(ctx context.Context, db *sql.DB, existing map[string]storedCh
 		if sourceKind != "" && old.sourceKind != sourceKind {
 			continue
 		}
-		if seen[key] {
+		if _, desired := desiredFingerprints[key]; desired {
 			continue
 		}
 		if err := deleteEmbeddings(ctx, tx, old.id); err != nil {
