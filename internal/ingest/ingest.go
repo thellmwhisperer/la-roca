@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/pkg/parsers"
+	"github.com/thellmwhisperer/la-roca/pkg/incrementality"
 )
 
 // Database is the little of the store the ingest needs. It travels as an interface
@@ -262,7 +263,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 	// The state is read even on a dry run: telling an operator that eight hundred
 	// files were found is not the same as telling them that two of them changed,
 	// and the second is what they are asking.
-	state, err := LoadState(ctx, db.SQL())
+	state, err := incrementality.LoadState(ctx, db.SQL())
 	if err != nil {
 		if opts.DryRun {
 			// A dry run answers over a database it may not be able to read, and it
@@ -270,7 +271,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 			result.Warnings = append(result.Warnings,
 				fmt.Sprintf("the ingest state could not be read, so every file counts as "+
 					"pending: %v", err))
-			state = map[string]FileState{}
+			state = map[string]incrementality.FileState{}
 		} else {
 			return result, err
 		}
@@ -319,9 +320,9 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		}
 		fingerprint, err := targetFingerprint(target)
 		if err != nil {
-			metadata, metadataErr := metadataFingerprint(target.Path)
+			metadata, metadataErr := incrementality.MetadataFingerprint(target.Path)
 			isDatabase := target.Kind == parsers.KindOpenCodeDB || target.Kind == parsers.KindHermesDB
-			if metadataErr == nil && !isDatabase && unchangedMetadata(state, target.Path, metadata) {
+			if metadataErr == nil && !isDatabase && incrementality.UnchangedMetadata(state, target.Path, metadata) {
 				result.FilesSkipped++
 				result.categorizeFile("skipped", "unchanged fingerprint")
 				result.Coverage.skip(target.Path, "unchanged metadata after fingerprint failure")
@@ -337,8 +338,8 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 			finishTarget()
 			continue
 		}
-		if Unchanged(state, target.Path, fingerprint) {
-			result.addMessageCoverage(source, state[target.Path].MessageCoverage)
+		if incrementality.Unchanged(state, target.Path, fingerprint) {
+			result.addMessageCoverage(source, stateMessageCoverage(state[target.Path]))
 			result.FilesSkipped++
 			result.categorizeFile("skipped", "unchanged fingerprint")
 			result.Coverage.skip(target.Path, "unchanged fingerprint")
@@ -372,7 +373,8 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 			stats.FilesWriteFailed++
 			result.Coverage.skip(target.Path, "write failed")
 			if recordErr := db.Write(ctx, func(tx *sql.Tx) error {
-				return RecordState(ctx, tx, target, fingerprint, err.Error(), nil)
+				return incrementality.RecordState(ctx, tx, incrementalityTarget(target),
+					fingerprint, err.Error(), nil)
 			}); recordErr != nil {
 				return result, recordErr
 			}
@@ -587,7 +589,8 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 		// The failure is recorded against the path so the next run reads the file
 		// again instead of trusting a fingerprint it never earned.
 		return false, db.Write(ctx, func(tx *sql.Tx) error {
-			return RecordState(ctx, tx, target, fingerprint, reason, nil)
+			return incrementality.RecordState(ctx, tx, incrementalityTarget(target),
+				fingerprint, reason, nil)
 		})
 	}
 	kept := records.Sessions[:0]
@@ -625,7 +628,8 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 			"memories":         written.MemoriesInserted + written.MemoriesUpdated,
 			"message_coverage": records.MessageCoverage,
 		}
-		return RecordState(ctx, tx, target, fingerprint, "", summary)
+		return incrementality.RecordState(ctx, tx, incrementalityTarget(target),
+			fingerprint, "", summary)
 	})
 	if err == nil {
 		result.recordWritten(target, counts)

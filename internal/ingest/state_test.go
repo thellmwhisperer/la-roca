@@ -10,6 +10,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/thellmwhisperer/la-roca/pkg/parsers"
+	"github.com/thellmwhisperer/la-roca/pkg/incrementality"
 )
 
 func TestFingerprintDetectsSameSizeSameMtimeEdit(t *testing.T) {
@@ -21,7 +22,7 @@ func TestFingerprintDetectsSameSizeSameMtimeEdit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before, err := Fingerprint(path)
+	before, err := incrementality.Fingerprint(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +32,7 @@ func TestFingerprintDetectsSameSizeSameMtimeEdit(t *testing.T) {
 	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
 		t.Fatal(err)
 	}
-	after, err := Fingerprint(path)
+	after, err := incrementality.Fingerprint(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,11 +98,11 @@ func TestContributedParserVersionRidesInTheFingerprint(t *testing.T) {
 }
 
 func TestKnownFingerprintCanMatchMetadataWhenContentCannotBeRead(t *testing.T) {
-	state := map[string]FileState{"session": {Fingerprint: "5:10:digest"}}
-	if !unchangedMetadata(state, "session", "5:10") {
+	state := map[string]incrementality.FileState{"session": {Fingerprint: "5:10:digest"}}
+	if !incrementality.UnchangedMetadata(state, "session", "5:10") {
 		t.Fatal("known content fingerprint did not retain its metadata identity")
 	}
-	if unchangedMetadata(state, "session", "5:11") {
+	if incrementality.UnchangedMetadata(state, "session", "5:11") {
 		t.Fatal("changed metadata was accepted")
 	}
 }
@@ -119,7 +120,7 @@ func TestExportConversationFingerprintIncludesParserRevision(t *testing.T) {
 			if err := os.WriteFile(path, []byte("[]"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			legacy, err := Fingerprint(path)
+			legacy, err := incrementality.Fingerprint(path)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -130,11 +131,13 @@ func TestExportConversationFingerprintIncludesParserRevision(t *testing.T) {
 			if current == legacy {
 				t.Fatalf("parser revision did not change legacy fingerprint %q", legacy)
 			}
-			metadata, err := metadataFingerprint(path)
+			metadata, err := incrementality.MetadataFingerprint(path)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !unchangedMetadata(map[string]FileState{"export": {Fingerprint: current}}, "export", metadata) {
+			if !incrementality.UnchangedMetadata(map[string]incrementality.FileState{
+				"export": {Fingerprint: current},
+			}, "export", metadata) {
 				t.Fatal("parser-aware fingerprint lost its metadata prefix")
 			}
 		})
@@ -162,14 +165,14 @@ func TestDatabaseFingerprintChangesWithWAL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mainBefore, err := Fingerprint(path)
+	mainBefore, err := incrementality.Fingerprint(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO events VALUES ('committed in the wal')`); err != nil {
 		t.Fatal(err)
 	}
-	mainAfter, err := Fingerprint(path)
+	mainAfter, err := incrementality.Fingerprint(path)
 	if err != nil {
 		t.Fatal(err)
 	}
