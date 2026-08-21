@@ -38,6 +38,7 @@ type Index struct {
 	Embedder    Embedder
 	Notice      func(string)
 	SourceKinds map[string]bool
+	Database    string
 }
 
 type Corpus interface {
@@ -348,9 +349,13 @@ func (i Index) queryVector(ctx context.Context, store *sql.DB, embedding []float
 			}
 			continue
 		}
+		sourceID := candidate.where.SourceID
+		if sourceID == "" {
+			sourceID = candidate.sourceID
+		}
 		results = append(results, Result{
 			Rank: len(results) + 1, Score: 1 - candidate.distance,
-			Table: candidate.kind, ID: candidate.where.SourceID,
+			Database: i.Database, Table: candidate.kind, ID: sourceID,
 			Source: candidate.kind, SourceID: candidate.sourceID, Text: body,
 		})
 		if len(results) == k {

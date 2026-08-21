@@ -415,7 +415,7 @@ func (env *environment) index(model string) (vector.Index, error) {
 	}
 	return vector.Index{Corpus: core, VectorPath: filepath.Join(state, vector.DatabaseFilename),
 		Model: model, Embedder: vector.Ollama{BaseURL: os.Getenv("OLLAMA_HOST")},
-		Notice: func(message string) { fmt.Fprintln(os.Stderr, message) }}, nil
+		Notice: func(message string) { fmt.Fprintln(os.Stderr, message) }, Database: "corpus"}, nil
 }
 
 func (env *environment) federation(model string) (vector.Federation, error) {

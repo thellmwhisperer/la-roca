@@ -101,6 +101,25 @@ func TestDefaultScopeWithoutCorpusIsCore(t *testing.T) {
 	}
 }
 
+func TestResolveDatabaseScopeUsesTheFeatureGatedRuntimeInventory(t *testing.T) {
+	corpus := plugin.Database{Descriptor: plugin.Descriptor{
+		Name: rocaCorpusPluginName, DatabaseName: "corpus", Schema: "plugin_roca_corpus",
+	}}
+	svc := Service{
+		opts:             Options{CorpusEnabled: true},
+		resident:         []plugin.Database{corpus},
+		residentWarnings: []string{"synthetic inventory warning"},
+	}
+	scope, err := svc.ResolveDatabaseScope(t.Context(), []string{ScopeAll})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stringSlicesEqual(scope.Databases, []string{"core", "corpus"}) ||
+		!stringSlicesEqual(scope.Warnings, []string{"synthetic inventory warning"}) {
+		t.Fatalf("runtime database scope = %+v", scope)
+	}
+}
+
 func TestWidenReplyRequiresTheExactUppercaseToken(t *testing.T) {
 	for _, tc := range []struct {
 		reply string

@@ -23,6 +23,12 @@ type CoreCLI struct {
 	Run        CommandRunner
 }
 
+type DatabaseScope struct {
+	Databases        []string `json:"databases"`
+	OmittedDatabases []string `json:"omitted_databases,omitempty"`
+	Warnings         []string `json:"warnings,omitempty"`
+}
+
 type execResult struct {
 	Rows []map[string]any `json:"rows"`
 }
@@ -78,6 +84,36 @@ func (c CoreCLI) WalkSources(ctx context.Context, sourceKind string, visit func(
 		}
 	}
 	return nil
+}
+
+func (c CoreCLI) ResolveDatabaseScope(ctx context.Context, databases string) (DatabaseScope, error) {
+	if strings.TrimSpace(c.Executable) == "" {
+		return DatabaseScope{}, fmt.Errorf("roca executable is required")
+	}
+	args := []string{"--json"}
+	if c.DBPath != "" {
+		args = append(args, "--db-path", c.DBPath)
+	}
+	args = append(args, "_database-scope")
+	if strings.TrimSpace(databases) != "" {
+		args = append(args, "--databases", databases)
+	}
+	run := c.Run
+	if run == nil {
+		run = runCommand
+	}
+	raw, err := run(ctx, c.Executable, args...)
+	if err != nil {
+		return DatabaseScope{}, err
+	}
+	var result DatabaseScope
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return DatabaseScope{}, fmt.Errorf("decode roca database scope: %w", err)
+	}
+	if result.Databases == nil {
+		result.Databases = []string{}
+	}
+	return result, nil
 }
 
 func corePages() []corePage {

@@ -229,6 +229,26 @@ func TestFederationQueryFansOutWithRoutingAndTaggedMergedHits(t *testing.T) {
 	}
 }
 
+func TestFederationQueryUsesTheCoreRuntimeInventory(t *testing.T) {
+	federation, _, _, _ := federationFixture(t)
+	if _, err := federation.Ingest(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
+	federation.Core.Run = databaseScopeRunner(federation.Core.Run, []string{"core", "corpus"})
+	result, err := federation.Query(context.Background(), "remembered decision", 10, "all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(result.Databases, ",") != "core,corpus" {
+		t.Fatalf("runtime-routed databases = %v", result.Databases)
+	}
+	for _, hit := range result.Results {
+		if hit.Database != "corpus" {
+			t.Fatalf("feature-gated database escaped runtime inventory: %+v", hit)
+		}
+	}
+}
+
 func TestFederationQueryKeepsMixedModelsPerDatabaseAndFailsSoftWithoutModel(t *testing.T) {
 	federation, _, opsPath, embedder := federationFixture(t)
 	if _, err := federation.Ingest(context.Background(), ""); err != nil {
@@ -398,6 +418,7 @@ func federationFixture(t *testing.T) (Federation, string, string, *recordingEmbe
 		"plugin_roca_corpus": corpusPath,
 		"plugin_roca_ops":    opsPath,
 	})
+	runner = databaseScopeRunner(runner, []string{"core", "corpus", "ops", "cron"})
 	embedder := &recordingEmbedder{}
 	federation, err := LoadFederation(CoreCLI{Executable: "roca", Run: runner}, root,
 		DefaultModel, "v-test", embedder, nil)
@@ -405,6 +426,51 @@ func federationFixture(t *testing.T) (Federation, string, string, *recordingEmbe
 		t.Fatal(err)
 	}
 	return federation, corpusPath, opsPath, embedder
+}
+
+func databaseScopeRunner(next CommandRunner, attached []string) CommandRunner {
+	return func(ctx context.Context, executable string, args ...string) ([]byte, error) {
+		command := -1
+		for index, argument := range args {
+			if argument == "_database-scope" {
+				command = index
+				break
+			}
+		}
+		if command == -1 {
+			return next(ctx, executable, args...)
+		}
+		raw := ""
+		for index := command + 1; index+1 < len(args); index++ {
+			if args[index] == "--databases" {
+				raw = args[index+1]
+				break
+			}
+		}
+		selected := []string{}
+		switch strings.TrimSpace(raw) {
+		case "":
+			for _, name := range []string{"core", "corpus"} {
+				if containsString(attached, name) {
+					selected = append(selected, name)
+				}
+			}
+		case "all":
+			selected = append(selected, attached...)
+		default:
+			for _, name := range strings.Split(raw, ",") {
+				name = strings.TrimSpace(name)
+				if !containsString(attached, name) {
+					return nil, fmt.Errorf("unknown database %q; attached databases: %s",
+						name, strings.Join(attached, ", "))
+				}
+				if !containsString(selected, name) {
+					selected = append(selected, name)
+				}
+			}
+		}
+		return json.Marshal(DatabaseScope{Databases: selected})
+	}
 }
 
 func writeRegistry(t *testing.T, root string, registry vectorRegistry) {

@@ -250,11 +250,13 @@ func (f Federation) Query(ctx context.Context, text string, k int, databaseList 
 	if k < 1 || k > 100 {
 		return result, fmt.Errorf("k must be between 1 and 100")
 	}
-	selected, routed, notices, err := f.queryDatabases(databaseList)
+	scope, err := f.Core.ResolveDatabaseScope(ctx, databaseList)
 	if err != nil {
 		return result, err
 	}
+	selected, routed, notices := f.queryDatabases(scope.Databases)
 	result.Databases = append(result.Databases, routed...)
+	result.Notices = append(result.Notices, scope.Warnings...)
 	result.Notices = append(result.Notices, notices...)
 	targets := make([]queryTarget, 0, len(selected))
 	for _, database := range selected {
@@ -404,54 +406,9 @@ func querySidecarState(path, owner string) (string, int, error) {
 	return metadata["model"], dimensions, nil
 }
 
-func (f Federation) queryDatabases(raw string) ([]vectorDatabase, []string, []string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		for _, route := range f.routes {
-			if route.Plugin == "roca-corpus" || route.Database == "corpus" {
-				if database, ok := f.vectorDatabaseForRoute(route); ok {
-					return []vectorDatabase{database}, []string{route.Database}, nil, nil
-				}
-				return nil, []string{route.Database}, []string{
-					"the default corpus database has no vector declaration; continuing with FTS-only",
-				}, nil
-			}
-		}
-		return nil, nil, []string{
-			"the default corpus database has no vector declaration; continuing with FTS-only",
-		}, nil
-	}
-	names := strings.Split(raw, ",")
-	for index := range names {
-		names[index] = strings.TrimSpace(names[index])
-		if names[index] == "" {
-			return nil, nil, nil, fmt.Errorf("empty database name in --databases")
-		}
-	}
-	if len(names) > 1 {
-		for _, name := range names {
-			if name == "all" {
-				return nil, nil, nil, fmt.Errorf("all cannot be combined with other database names")
-			}
-		}
-	}
-	if len(names) == 1 && names[0] == "all" {
-		selected := append([]vectorDatabase(nil), f.databases...)
-		routed := []string{"core"}
-		notices := []string{"database core has no vector declaration; continuing with FTS-only"}
-		for _, route := range f.routes {
-			if !containsString(routed, route.Database) {
-				routed = append(routed, route.Database)
-			}
-			if _, ok := f.vectorDatabaseForRoute(route); !ok {
-				notices = append(notices, fmt.Sprintf(
-					"database %s has no vector declaration; continuing with FTS-only", route.Database))
-			}
-		}
-		return selected, routed, notices, nil
-	}
+func (f Federation) queryDatabases(names []string) ([]vectorDatabase, []string, []string) {
 	selected := make([]vectorDatabase, 0, len(names))
-	var routed, notices, unknown []string
+	var routed, notices []string
 	seen := map[string]bool{}
 	for _, name := range names {
 		if name == "core" {
@@ -463,14 +420,18 @@ func (f Federation) queryDatabases(raw string) ([]vectorDatabase, []string, []st
 		}
 		var matched *vectorRoute
 		for index := range f.routes {
-			if !f.routes[index].matchesScope(name) {
+			if f.routes[index].Database != name {
 				continue
 			}
 			matched = &f.routes[index]
 			break
 		}
 		if matched == nil {
-			unknown = append(unknown, name)
+			if !containsString(routed, name) {
+				routed = append(routed, name)
+			}
+			notices = append(notices, fmt.Sprintf(
+				"database %s has no vector declaration; continuing with FTS-only", name))
 			continue
 		}
 		if !containsString(routed, matched.Database) {
@@ -487,15 +448,7 @@ func (f Federation) queryDatabases(raw string) ([]vectorDatabase, []string, []st
 			seen[database.owner()] = true
 		}
 	}
-	if len(unknown) > 0 {
-		return nil, nil, nil, fmt.Errorf("unknown database %q; attached databases: %s",
-			strings.Join(unknown, ", "), strings.Join(f.attachedDatabaseNames(), ", "))
-	}
-	return selected, routed, notices, nil
-}
-
-func (r vectorRoute) matchesScope(name string) bool {
-	return name == r.Database || name == r.Plugin || name == r.Alias || name == r.Source
+	return selected, routed, notices
 }
 
 func (f Federation) vectorDatabaseForRoute(route vectorRoute) (vectorDatabase, bool) {
@@ -505,16 +458,6 @@ func (f Federation) vectorDatabaseForRoute(route vectorRoute) (vectorDatabase, b
 		}
 	}
 	return vectorDatabase{}, false
-}
-
-func (f Federation) attachedDatabaseNames() []string {
-	result := []string{"core"}
-	for _, route := range f.routes {
-		if !containsString(result, route.Database) {
-			result = append(result, route.Database)
-		}
-	}
-	return result
 }
 
 func containsString(values []string, candidate string) bool {
@@ -602,7 +545,7 @@ func (f Federation) index(database vectorDatabase, reader DeclaredCorpus, sideca
 		kinds[table.Name] = true
 	}
 	return Index{Corpus: reader, VectorPath: sidecar, Model: f.Model,
-		Embedder: f.Embedder, Notice: f.Notice, SourceKinds: kinds}
+		Embedder: f.Embedder, Notice: f.Notice, SourceKinds: kinds, Database: database.Database}
 }
 
 type DeclaredCorpus struct {
