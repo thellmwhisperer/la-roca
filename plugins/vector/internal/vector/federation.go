@@ -1,6 +1,6 @@
 /*
 *
-@overview Declarative vector generation across plugin databases. ~700 lines, 13 public symbols, owns registry loading and sidecar orchestration.
+@overview Declarative vector generation across plugin databases. ~730 lines, 13 public symbols, owns registry loading and sidecar orchestration.
 
 	READING GUIDE
 	-------------
@@ -156,6 +156,7 @@ func validateRegistry(registry vectorRegistry) error {
 		return fmt.Errorf("vector registry schema is %d, want %d", registry.Schema, vectorRegistrySchema)
 	}
 	seenDatabases := map[string]bool{}
+	databasePaths := map[string]string{}
 	for _, database := range registry.Databases {
 		owner := database.owner()
 		if !manifestPluginName.MatchString(database.Plugin) || !validIdentifier(database.Database) ||
@@ -171,6 +172,11 @@ func validateRegistry(registry vectorRegistry) error {
 		default:
 			return fmt.Errorf("vector registry database %s has invalid SQLite path %q", owner, database.Path)
 		}
+		packagePath := filepath.Join(database.Plugin, database.Path)
+		if previous := databasePaths[packagePath]; previous != "" {
+			return fmt.Errorf("vector registry databases %s and %s share path %q", previous, owner, packagePath)
+		}
+		databasePaths[packagePath] = owner
 		if !validIdentifier(database.Alias) || len(database.Tables) == 0 {
 			return fmt.Errorf("vector registry database %s needs an alias and tables", owner)
 		}
@@ -192,6 +198,13 @@ func validateRegistry(registry vectorRegistry) error {
 			if err := validateChunking(table.Chunking); err != nil {
 				return fmt.Errorf("vector registry table %s/%s: %w", owner, table.Name, err)
 			}
+		}
+	}
+	for _, database := range registry.Databases {
+		sidecar := filepath.Join(database.Plugin, SidecarPath(database.Path))
+		if sourceOwner := databasePaths[sidecar]; sourceOwner != "" {
+			return fmt.Errorf("vector registry sidecar for %s collides with database %s at %q",
+				database.owner(), sourceOwner, sidecar)
 		}
 	}
 	return nil
@@ -556,7 +569,14 @@ func assertSidecarOwner(path, owner string) error {
 	defer store.Close()
 	var knownOwner string
 	err = store.QueryRow(`SELECT value FROM meta WHERE key='owner'`).Scan(&knownOwner)
-	if errors.Is(err, sql.ErrNoRows) || strings.Contains(fmt.Sprint(err), "no such table") {
+	if errors.Is(err, sql.ErrNoRows) {
+		var schema string
+		if schemaErr := store.QueryRow(`SELECT value FROM meta WHERE key='schema'`).Scan(&schema); schemaErr != nil || schema != vectorStorageSchema {
+			return fmt.Errorf("existing sidecar for %s is not an owned or interrupted vector index", owner)
+		}
+		if _, schemaErr := store.Exec(`SELECT id,source_kind,source_id,chunk_index,fingerprint,locator,updated_at FROM chunks LIMIT 0`); schemaErr != nil {
+			return fmt.Errorf("existing sidecar for %s is not an owned or interrupted vector index", owner)
+		}
 		return nil
 	}
 	if err != nil {

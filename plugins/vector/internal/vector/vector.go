@@ -20,10 +20,11 @@ import (
 )
 
 const (
-	defaultChunkSize = 4000
-	defaultOverlap   = 400
-	defaultBatchSize = 64
-	walkPageSize     = 500
+	defaultChunkSize    = 4000
+	defaultOverlap      = 400
+	defaultBatchSize    = 64
+	walkPageSize        = 500
+	vectorStorageSchema = "vector-v1"
 	// maxUnresolvedCandidates bounds a query against an index the corpus has moved
 	// under. Each resolution is one `roca exec` process, so a wholly stale index
 	// would otherwise spend one process per candidate to answer nothing.
@@ -241,6 +242,19 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 	}
 	if err := flush(); err != nil {
 		return Delta{}, err
+	}
+	if dimensions == 0 {
+		vectors, err := i.Embedder.Embed(ctx, i.Model, []string{DocumentPrefix + "dimension probe"})
+		if err != nil {
+			return Delta{}, err
+		}
+		if len(vectors) != 1 || len(vectors[0]) == 0 {
+			return Delta{}, fmt.Errorf("embedding model %s returned an empty dimension probe", i.Model)
+		}
+		dimensions = len(vectors[0])
+		if err := ensureVectorTables(store, dimensions, i.Model); err != nil {
+			return Delta{}, err
+		}
 	}
 	if err := removeMissing(ctx, store, existing, desiredFingerprints, sourceKind, &report); err != nil {
 		return Delta{}, err
@@ -498,7 +512,8 @@ func ensureBaseSchema(db *sql.DB) error {
 			locator TEXT NOT NULL,
 			updated_at TEXT NOT NULL DEFAULT (datetime('now')),
 			UNIQUE(source_kind, source_id, chunk_index)
-		);`)
+		);
+		INSERT OR IGNORE INTO meta(key,value) VALUES ('schema','` + vectorStorageSchema + `');`)
 	if err != nil {
 		return fmt.Errorf("initialize vector database: %w", err)
 	}
@@ -534,7 +549,11 @@ func readIndexState(db *sql.DB) (map[string]storedChunk, string, int, error) {
 }
 
 func resetIndex(db *sql.DB) error {
-	_, err := db.Exec(`DROP TABLE IF EXISTS ann_embeddings; DROP TABLE IF EXISTS embeddings; DELETE FROM chunks; DELETE FROM meta;`)
+	_, err := db.Exec(`DROP TABLE IF EXISTS ann_embeddings;
+		DROP TABLE IF EXISTS embeddings;
+		DELETE FROM chunks;
+		DELETE FROM meta WHERE key NOT IN ('schema','owner');
+		INSERT OR IGNORE INTO meta(key,value) VALUES ('schema','` + vectorStorageSchema + `');`)
 	if err != nil {
 		return fmt.Errorf("reset vector index for the selected model: %w", err)
 	}

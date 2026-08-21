@@ -700,6 +700,9 @@ func (m Manager) RecoverUpdate(name string) error {
 			return fmt.Errorf("inspect plugin %s recovery target: %w", name, err)
 		}
 		if currentErr == nil {
+			if err := moveDatabaseSidecars(target, backup, previous); err != nil {
+				return fmt.Errorf("recover plugin %s vector sidecars: %w", name, err)
+			}
 			if err := moveRecoveryState(target, backup, previous.StateDir); err != nil {
 				return fmt.Errorf("recover plugin %s state: %w", name, err)
 			}

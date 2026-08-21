@@ -269,6 +269,60 @@ func TestInstallUpdateAndUninstallPreservePluginOwnedData(t *testing.T) {
 	}
 }
 
+func TestRecoverUpdateRestoresTransferredVectorSidecars(t *testing.T) {
+	root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
+	manager := plugininstall.Manager{PluginRoot: root, BinDir: bin}
+	source := writePackage(t, "synthetic", "1.0.0", false, false)
+	previous, err := plugininstall.Inspect(source, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Install(previous); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "synthetic")
+	backup := filepath.Join(root, ".synthetic.previous")
+	database := filepath.Join(target, "plugin.db")
+	withPackageDatabase(t, database, func(db *sql.DB) {
+		if _, err := db.Exec(`INSERT INTO records (value) VALUES ('previous database')`); err != nil {
+			t.Fatal(err)
+		}
+	})
+	sidecar := filepath.Join(target, "plugin.vector.db")
+	writeFixtureFile(t, sidecar, []byte("previous vectors"), 0o600)
+	writeFixtureFile(t, sidecar+"-wal", []byte("previous vector wal"), 0o600)
+
+	if err := os.Rename(target, backup); err != nil {
+		t.Fatal(err)
+	}
+	writePackageAt(t, source, "synthetic", "2.0.0", false, false)
+	current, err := plugininstall.Inspect(source, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Install(current); err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{"", "-wal"} {
+		if err := os.Rename(filepath.Join(backup, "plugin.vector.db"+suffix),
+			filepath.Join(target, "plugin.vector.db"+suffix)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := manager.RecoverUpdate("synthetic"); err != nil {
+		t.Fatal(err)
+	}
+	assertDatabaseValue(t, database, "previous database")
+	for path, want := range map[string]string{
+		sidecar: "previous vectors", sidecar + "-wal": "previous vector wal",
+	} {
+		raw, err := os.ReadFile(path)
+		if err != nil || string(raw) != want {
+			t.Fatalf("recovered sidecar %s = %q, err=%v", filepath.Base(path), raw, err)
+		}
+	}
+}
+
 func TestInterruptedUpdateRecoveryTombstoneConverges(t *testing.T) {
 	for _, testCase := range []struct {
 		name, wantError, preserved, wantContents string

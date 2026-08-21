@@ -1,6 +1,6 @@
 /*
 *
-@overview Contract tests for declared vector surfaces. ~320 lines, no public symbols, proves sidecar ownership and generic delta behavior.
+@overview Contract tests for declared vector surfaces. ~430 lines, no public symbols, proves sidecar ownership and generic delta behavior.
 
 	READING GUIDE
 	-------------
@@ -147,6 +147,82 @@ func TestFederationTargetedDeltaPreservesOtherTablesAndCorpusQueryCompatibility(
 	}
 	if len(embedder.inputs) == 0 || !strings.HasPrefix(embedder.inputs[len(embedder.inputs)-1][0], QueryPrefix) {
 		t.Fatalf("query embedding inputs = %q", embedder.inputs)
+	}
+}
+
+func TestFederationRejectsSidecarDatabaseCollisionsAndUnownedFiles(t *testing.T) {
+	collision := vectorRegistry{Schema: 1, Databases: []vectorDatabase{
+		{Plugin: "fixture", Database: "records", Path: "records.db", Alias: "records",
+			Tables: []vectorTable{{Name: "entries", IDColumn: "id", TextColumns: []string{"body"}}}},
+		{Plugin: "fixture", Database: "vectors", Path: "records.vector.db", Alias: "vectors",
+			Tables: []vectorTable{{Name: "entries", IDColumn: "id", TextColumns: []string{"body"}}}},
+	}}
+	if err := validateRegistry(collision); err == nil || !strings.Contains(err.Error(), "collides") {
+		t.Fatalf("sidecar database collision passed with %v", err)
+	}
+
+	foreign := filepath.Join(t.TempDir(), "foreign.vector.db")
+	createSourceDatabase(t, foreign, `CREATE TABLE records(id TEXT PRIMARY KEY, body TEXT);`)
+	if err := assertSidecarOwner(foreign, "fixture/records"); err == nil {
+		t.Fatalf("unowned foreign database passed with %v", err)
+	}
+
+	interrupted := filepath.Join(t.TempDir(), "interrupted.vector.db")
+	store := openTestSQLite(t, interrupted)
+	if err := ensureBaseSchema(store); err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := assertSidecarOwner(interrupted, "fixture/records"); err != nil {
+		t.Fatalf("interrupted vector build was refused: %v", err)
+	}
+}
+
+func TestFederationSealsEmptySidecarWithDimensions(t *testing.T) {
+	root := t.TempDir()
+	pluginDir := filepath.Join(root, "fixture")
+	if err := os.MkdirAll(pluginDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	databasePath := filepath.Join(pluginDir, "empty.db")
+	createSourceDatabase(t, databasePath, `CREATE TABLE entries(id TEXT PRIMARY KEY, body TEXT);`)
+	writeRegistry(t, root, vectorRegistry{Schema: 1, Databases: []vectorDatabase{{
+		Plugin: "fixture", Database: "empty", Path: "empty.db", Alias: "fixture_empty",
+		Tables: []vectorTable{{Name: "entries", IDColumn: "id", TextColumns: []string{"body"}}},
+	}}})
+	embedder := &recordingEmbedder{}
+	federation, err := LoadFederation(CoreCLI{Executable: "roca", Run: sqliteExecRunner(t,
+		map[string]string{"fixture_empty": databasePath})}, root, DefaultModel, "v-empty", embedder, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delta, err := federation.Ingest(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delta.Sources != 0 || delta.Chunks != 0 || len(embedder.inputs) != 1 ||
+		len(embedder.inputs[0]) != 1 || !strings.Contains(embedder.inputs[0][0], "dimension probe") {
+		t.Fatalf("empty federation delta = %+v, inputs = %q", delta, embedder.inputs)
+	}
+	metadata := sidecarMeta(t, SidecarPath(databasePath))
+	if metadata["owner"] != "fixture/empty" || metadata["model"] != DefaultModel ||
+		metadata["dimensions"] != "8" || metadata["version"] != "v-empty" {
+		t.Fatalf("empty sidecar metadata = %+v", metadata)
+	}
+	store := openTestSQLite(t, SidecarPath(databasePath))
+	defer store.Close()
+	var chunks int
+	if err := store.QueryRow(`SELECT COUNT(*) FROM chunks`).Scan(&chunks); err != nil || chunks != 0 {
+		t.Fatalf("empty sidecar chunks = %d, err=%v", chunks, err)
+	}
+	if _, err := federation.Ingest(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(embedder.inputs) != 1 {
+		t.Fatalf("unchanged empty sidecar re-embedded %d batches", len(embedder.inputs))
 	}
 }
 
