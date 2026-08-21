@@ -205,7 +205,9 @@ func openWithContext(ctx context.Context, opts Options) (*Service, error) {
 }
 
 func (s *Service) rollbackOpen(ctx context.Context, reason error) (*Service, error) {
-	s.closeOpened()
+	if err := s.closeOpened(); err != nil {
+		reason = errors.Join(reason, fmt.Errorf("close the failed service open: %w", err))
+	}
 	if s.readLayout == LayoutLegacyServing || s.opts.RollbackLayout == nil {
 		return nil, reason
 	}
@@ -218,35 +220,42 @@ func (s *Service) rollbackOpen(ctx context.Context, reason error) (*Service, err
 	return openWithContext(ctx, opts)
 }
 
-func (s *Service) closeOpened() {
+func (s *Service) closeOpened() error {
+	var result error
+	join := func(label string, err error) {
+		if err != nil {
+			result = errors.Join(result, fmt.Errorf("close %s: %w", label, err))
+		}
+	}
 	if s.hub != nil {
-		_ = s.hub.Close()
+		join("the federation hub", s.hub.Close())
 		s.hub = nil
 	}
 	if s.layerDB != nil && s.layerDB != s.ops {
-		_ = s.layerDB.Close()
+		join("the layer registry", s.layerDB.Close())
 	}
 	s.layerDB = nil
 	if s.layerSet != nil {
-		_ = s.layerSet.Close()
+		join("the layer registry attachment", s.layerSet.Close())
 	}
 	s.layerSet = nil
 	for _, database := range s.resident {
-		_ = database.Close()
+		join("resident plugin "+database.Source(), database.Close())
 	}
 	s.resident = nil
 	if s.ops != nil {
-		_ = s.ops.Close()
+		join("the operational store", s.ops.Close())
 		s.ops = nil
 	}
 	if s.corpus != nil {
-		_ = s.corpus.Close()
+		join("the corpus store", s.corpus.Close())
 		s.corpus = nil
 	}
 	if s.legacy != nil {
-		_ = s.legacy.Close()
+		join("the legacy store", s.legacy.Close())
 		s.legacy = nil
 	}
+	return result
 }
 
 func (s *Service) shadowEqual(columns []string, rows []map[string]any,
@@ -348,11 +357,12 @@ func (s *Service) ReadOnly() bool { return s.opts.ReadOnly }
 
 // Close closes the database.
 func (s *Service) Close() error {
+	var result error
 	if s.gate != nil {
-		s.gate.Close()
+		result = errors.Join(result, s.gate.Close())
+		s.gate = nil
 	}
-	s.closeOpened()
-	return nil
+	return errors.Join(result, s.closeOpened())
 }
 
 func (s *Service) ensureSchema(ctx context.Context) (search.Report, error) {

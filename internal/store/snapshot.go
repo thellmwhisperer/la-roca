@@ -3,15 +3,24 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 )
 
 var snapshotArtifacts = [...]string{"", "-wal", "-journal"}
+
+const (
+	snapshotDirectoryPrefix = "roca-read-only-snapshot-"
+	snapshotStaleAfter      = 30 * 24 * time.Hour
+	snapshotCopyBufferSize  = 128 * 1024
+)
 
 type ReadOnlySnapshot struct {
 	database  *sql.DB
@@ -30,67 +39,114 @@ type snapshotArtifactState struct {
 type snapshotSourceState [len(snapshotArtifacts)]snapshotArtifactState
 
 func OpenReadOnlySnapshot(ctx context.Context, path string) (*ReadOnlySnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
 	}
-	directory, err := os.MkdirTemp("", "roca-read-only-snapshot-")
+	tempRoot := os.TempDir()
+	if err := scavengeReadOnlySnapshots(ctx, tempRoot, time.Now()); err != nil {
+		return nil, err
+	}
+	directory, err := os.MkdirTemp(tempRoot, snapshotDirectoryPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("create read-only snapshot directory: %w", err)
 	}
 	for attempt := range 3 {
+		if err := ctx.Err(); err != nil {
+			return nil, cleanupSnapshotDirectory(directory, err)
+		}
 		before, err := inspectSnapshotSource(abs)
 		if err != nil {
-			_ = os.RemoveAll(directory)
-			return nil, err
+			return nil, cleanupSnapshotDirectory(directory, err)
 		}
 		attemptDirectory := filepath.Join(directory, fmt.Sprintf("%d", attempt))
 		if err := os.Mkdir(attemptDirectory, 0o700); err != nil {
-			_ = os.RemoveAll(directory)
-			return nil, err
+			return nil, cleanupSnapshotDirectory(directory, err)
 		}
 		destination := filepath.Join(attemptDirectory, filepath.Base(abs))
-		if err := copySnapshotSource(abs, destination); err != nil {
+		if err := copySnapshotSource(ctx, abs, destination); err != nil {
 			after, inspectErr := inspectSnapshotSource(abs)
 			if inspectErr == nil && before != after {
-				_ = os.RemoveAll(attemptDirectory)
+				if cleanupErr := cleanupSnapshotDirectory(attemptDirectory, nil); cleanupErr != nil {
+					return nil, cleanupSnapshotDirectory(directory, cleanupErr)
+				}
 				continue
 			}
-			_ = os.RemoveAll(directory)
-			return nil, err
+			return nil, cleanupSnapshotDirectory(directory, err)
 		}
 		after, err := inspectSnapshotSource(abs)
 		if err != nil {
-			_ = os.RemoveAll(directory)
-			return nil, err
+			return nil, cleanupSnapshotDirectory(directory, err)
 		}
 		if before != after {
-			_ = os.RemoveAll(attemptDirectory)
+			if err := cleanupSnapshotDirectory(attemptDirectory, nil); err != nil {
+				return nil, cleanupSnapshotDirectory(directory, err)
+			}
 			continue
 		}
 		snapshot, err := openCopiedSnapshot(ctx, destination, directory)
 		if err != nil {
 			final, inspectErr := inspectSnapshotSource(abs)
 			if inspectErr == nil && before != final {
-				_ = os.RemoveAll(attemptDirectory)
+				if cleanupErr := cleanupSnapshotDirectory(attemptDirectory, nil); cleanupErr != nil {
+					return nil, cleanupSnapshotDirectory(directory, cleanupErr)
+				}
 				continue
 			}
-			_ = os.RemoveAll(directory)
-			return nil, err
+			return nil, cleanupSnapshotDirectory(directory, err)
 		}
 		final, err := inspectSnapshotSource(abs)
 		if err == nil && before == final {
 			return snapshot, nil
 		}
-		_ = snapshot.database.Close()
-		_ = os.RemoveAll(attemptDirectory)
+		closeErr := snapshot.database.Close()
+		cleanupErr := cleanupSnapshotDirectory(attemptDirectory, nil)
+		if closeErr != nil || cleanupErr != nil {
+			return nil, cleanupSnapshotDirectory(directory, errors.Join(closeErr, cleanupErr))
+		}
 		if err != nil {
-			_ = os.RemoveAll(directory)
-			return nil, err
+			return nil, cleanupSnapshotDirectory(directory, err)
 		}
 	}
-	_ = os.RemoveAll(directory)
-	return nil, fmt.Errorf("database %q kept changing while it was snapshotted", abs)
+	return nil, cleanupSnapshotDirectory(directory,
+		fmt.Errorf("database %q kept changing while it was snapshotted", abs))
+}
+
+func scavengeReadOnlySnapshots(ctx context.Context, root string, now time.Time) error {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return fmt.Errorf("inspect read-only snapshot directory: %w", err)
+	}
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), snapshotDirectoryPrefix) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("inspect stale read-only snapshot %q: %w", entry.Name(), err)
+		}
+		if age := now.Sub(info.ModTime()); age < snapshotStaleAfter {
+			continue
+		}
+		path := filepath.Join(root, entry.Name())
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("remove stale read-only snapshot %q: %w", path, err)
+		}
+	}
+	return nil
+}
+
+func cleanupSnapshotDirectory(directory string, cause error) error {
+	if err := os.RemoveAll(directory); err != nil {
+		return errors.Join(cause, fmt.Errorf("remove read-only snapshot %q: %w", directory, err))
+	}
+	return cause
 }
 
 func inspectSnapshotSource(path string) (snapshotSourceState, error) {
@@ -113,8 +169,11 @@ func inspectSnapshotSource(path string) (snapshotSourceState, error) {
 	return state, nil
 }
 
-func copySnapshotSource(source, destination string) error {
+func copySnapshotSource(ctx context.Context, source, destination string) error {
 	for _, suffix := range snapshotArtifacts {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		input, err := os.Open(source + suffix)
 		if os.IsNotExist(err) && suffix != "" {
 			continue
@@ -124,19 +183,29 @@ func copySnapshotSource(source, destination string) error {
 		}
 		output, err := os.OpenFile(destination+suffix, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err != nil {
-			input.Close()
-			return fmt.Errorf("create snapshot copy %q: %w", destination+suffix, err)
+			return fmt.Errorf("create snapshot copy %q: %w", destination+suffix,
+				errors.Join(err, input.Close()))
 		}
-		_, err = io.Copy(output, input)
-		input.Close()
-		if closeErr := output.Close(); err == nil {
-			err = closeErr
-		}
+		_, copyErr := io.CopyBuffer(output, &contextReader{ctx: ctx, reader: input},
+			make([]byte, snapshotCopyBufferSize))
+		err = errors.Join(copyErr, ctx.Err(), input.Close(), output.Close())
 		if err != nil {
 			return fmt.Errorf("copy snapshot source %q: %w", source+suffix, err)
 		}
 	}
 	return nil
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (reader *contextReader) Read(buffer []byte) (int, error) {
+	if err := reader.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return reader.reader.Read(buffer)
 }
 
 func openCopiedSnapshot(ctx context.Context, path, directory string) (*ReadOnlySnapshot, error) {
@@ -184,10 +253,7 @@ func (snapshot *ReadOnlySnapshot) URI() string {
 
 func (snapshot *ReadOnlySnapshot) Close() error {
 	snapshot.once.Do(func() {
-		snapshot.err = snapshot.database.Close()
-		if err := os.RemoveAll(snapshot.directory); snapshot.err == nil {
-			snapshot.err = err
-		}
+		snapshot.err = cleanupSnapshotDirectory(snapshot.directory, snapshot.database.Close())
 	})
 	return snapshot.err
 }

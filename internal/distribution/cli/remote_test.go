@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/store"
 )
 
@@ -371,6 +372,16 @@ func TestRemoteVersionSkewHasItsOwnExitCode(t *testing.T) {
 func TestRemoteCrossScatterGathersOnlyInMemory(t *testing.T) {
 	fixture := fixtureInstallation(t)
 	addRemote(t, fixture.home, "studio", "dev@example.test")
+	ops, err := store.Open(filepath.Join(fixture.home, ".roca", "plugins",
+		rocaops.Name, rocaops.DatabaseFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ops.Close()
+	if _, err := ops.SQL().Exec(`PRAGMA wal_autocheckpoint=0; INSERT INTO layers
+		(name, description, schema_file) VALUES ('remote-cross-marker', 'marker', 'marker')`); err != nil {
+		t.Fatal(err)
+	}
 	core, err := store.Open(filepath.Join(fixture.home, ".roca", "roca.db"))
 	if err != nil {
 		t.Fatal(err)
