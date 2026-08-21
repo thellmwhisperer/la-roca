@@ -89,6 +89,45 @@ func TestValidationPreservesInspectedFTS5Kind(t *testing.T) {
 	}
 }
 
+func TestImmutableValidationFreezesCommittedWALFramesInMemory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "live.db")
+	writer, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	if _, err := writer.Exec(`PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;
+		CREATE TABLE rows (id INTEGER PRIMARY KEY, value TEXT);
+		INSERT INTO rows VALUES (1, 'first')`); err != nil {
+		t.Fatal(err)
+	}
+	database, err := plugin.ValidateImmutable(t.Context(), plugin.Descriptor{
+		Name: "live", Database: path, Schema: "live",
+		Semantic: plugin.Semantic{Tables: []plugin.SemanticTable{{
+			Name: "rows", Columns: []string{"id", "value"},
+		}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if _, err := writer.Exec(`INSERT INTO rows VALUES (2, 'second')`); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := sql.Open("sqlite", database.ReadOnlyURI())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	var count int
+	if err := reader.QueryRow("SELECT COUNT(*) FROM rows").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("snapshot rows = %d, want 1", count)
+	}
+}
+
 func TestSemanticRelevanceIsStableAndBounded(t *testing.T) {
 	candidates := []plugin.Descriptor{
 		{Name: "broad", Semantic: plugin.Semantic{Description: "receipts and purchases"}},

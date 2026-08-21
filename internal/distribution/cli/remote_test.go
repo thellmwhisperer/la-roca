@@ -4,12 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/thellmwhisperer/la-roca/internal/store"
 )
 
 type sshCall struct {
@@ -20,6 +25,42 @@ type sshCall struct {
 type scriptedSSHRunner struct {
 	calls   []sshCall
 	replies []sshReply
+}
+
+type concurrentSSHRunner struct {
+	mu           sync.Mutex
+	calls        []sshCall
+	versionCalls int
+	ready        chan struct{}
+}
+
+func (runner *concurrentSSHRunner) Run(ctx context.Context, target string, args []string) sshReply {
+	runner.mu.Lock()
+	runner.calls = append(runner.calls, sshCall{target: target, args: slices.Clone(args)})
+	isVersion := len(args) > 1 && args[1] == "version"
+	if isVersion {
+		runner.versionCalls++
+		if runner.versionCalls == 2 {
+			close(runner.ready)
+		}
+	}
+	ready := runner.ready
+	runner.mu.Unlock()
+	if isVersion {
+		select {
+		case <-ready:
+			return remoteVersionReply("v-test")
+		case <-ctx.Done():
+			return sshReply{err: ctx.Err()}
+		case <-time.After(time.Second):
+			return sshReply{err: errors.New("remote legs did not start concurrently")}
+		}
+	}
+	answer := 11
+	if strings.Contains(target, "beta") {
+		answer = 12
+	}
+	return sshReply{stdout: fmt.Sprintf(`{"sql":"SELECT 7 AS answer","columns":["answer"],"rows":[{"answer":%d}],"row_count":1,"latency_ms":1,"version":"v-test","source_sha":"remote-sha"}`, answer)}
 }
 
 func (runner *scriptedSSHRunner) Run(_ context.Context, target string, args []string) sshReply {
@@ -285,6 +326,20 @@ func TestRemoteTransportFailuresHaveDistinctExitCodesAndMessages(t *testing.T) {
 	}
 }
 
+func TestRemoteCommandMissingAfterVersionProbeKeepsItsDistinctExitCode(t *testing.T) {
+	home := t.TempDir()
+	addRemote(t, home, "studio", "dev@example.test")
+	env := &cliEnv{sshRunner: &scriptedSSHRunner{replies: []sshReply{
+		remoteVersionReply("v-test"),
+		{stderr: "sh: roca: command not found", exitCode: 127},
+	}}}
+	_, err := runRemoteRoot(t, env, "remote", "exec", "studio", "SELECT 1")
+	if err == nil || env.code != ExitRemoteRocaMissing ||
+		!strings.Contains(err.Error(), "remote studio does not have roca on PATH") {
+		t.Fatalf("post-probe failure = code %d err %v", env.code, err)
+	}
+}
+
 func TestRemoteTransportExitCodesSurviveTheProductionExecutor(t *testing.T) {
 	home := t.TempDir()
 	addRemote(t, home, "studio", "dev@example.test")
@@ -316,29 +371,57 @@ func TestRemoteVersionSkewHasItsOwnExitCode(t *testing.T) {
 func TestRemoteCrossScatterGathersOnlyInMemory(t *testing.T) {
 	fixture := fixtureInstallation(t)
 	addRemote(t, fixture.home, "studio", "dev@example.test")
-	before := treeSnapshot(t, fixture.home)
-	runner := &scriptedSSHRunner{replies: []sshReply{
-		remoteVersionReply("v-test"),
-		{stdout: `{"sql":"SELECT 7 AS answer","columns":["answer"],"rows":[{"answer":9}],"row_count":1,"latency_ms":1,"version":"v-test","source_sha":"remote-sha"}`},
-	}}
-	env := &cliEnv{sshRunner: runner}
-	output, err := runRemoteRoot(t, env, "remote", "cross", "SELECT 7 AS answer", "--on", "studio")
+	core, err := store.Open(filepath.Join(fixture.home, ".roca", "roca.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"rows[2]{origin,answer", "local,7", "studio,9", "help["} {
+	defer core.Close()
+	if _, err := core.SQL().Exec(`PRAGMA wal_autocheckpoint=0; INSERT INTO memories
+		(id, layer, content, origin) VALUES (909, 'project', 'Local WAL marker', 'agent')`); err != nil {
+		t.Fatal(err)
+	}
+	before := treeSnapshot(t, fixture.home)
+	runner := &scriptedSSHRunner{replies: []sshReply{
+		remoteVersionReply("v-test"),
+		{stdout: `{"sql":"SELECT id, content FROM memories WHERE id = 909","columns":["id","content"],"rows":[{"id":909,"content":"Remote marker"}],"row_count":1,"latency_ms":1,"version":"v-test","source_sha":"remote-sha"}`},
+	}}
+	env := &cliEnv{sshRunner: runner}
+	statement := "SELECT id, content FROM memories WHERE id = 909"
+	output, err := runRemoteRoot(t, env, "remote", "cross", statement, "--on", "studio")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"rows[2]{origin,id,content", "local,909,Local WAL marker", "studio,909,Remote marker", "help["} {
 		if !strings.Contains(output, want) {
 			t.Errorf("cross output lacks %q:\n%s", want, output)
 		}
 	}
 	wantCalls := []sshCall{
 		{target: "dev@example.test", args: []string{"roca", "version", "--json", "--read-only"}},
-		{target: "dev@example.test", args: []string{"roca", "exec", "SELECT 7 AS answer", "--json", "--read-only"}},
+		{target: "dev@example.test", args: []string{"roca", "exec", statement, "--json", "--read-only"}},
 	}
 	assertSSHCalls(t, runner.calls, wantCalls)
 	after := treeSnapshot(t, fixture.home)
 	if !equalTreeSnapshots(before, after) {
 		t.Fatalf("cross changed a rock: before=%v after=%v", mapKeys(before), mapKeys(after))
+	}
+}
+
+func TestRemoteCrossStartsAllRemoteLegsBeforeGatheringInInputOrder(t *testing.T) {
+	fixture := fixtureInstallation(t)
+	addRemote(t, fixture.home, "alpha", "alpha@example.test")
+	addRemote(t, fixture.home, "beta", "beta@example.test")
+	runner := &concurrentSSHRunner{ready: make(chan struct{})}
+	output, err := runRemoteRoot(t, &cliEnv{sshRunner: runner}, "remote", "cross",
+		"SELECT 7 AS answer", "--on", "alpha,beta")
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := strings.Index(output, "local,7")
+	alpha := strings.Index(output, "alpha,11")
+	beta := strings.Index(output, "beta,12")
+	if local < 0 || alpha <= local || beta <= alpha {
+		t.Fatalf("cross output order:\n%s", output)
 	}
 }
 
@@ -381,7 +464,13 @@ func equalTreeSnapshots(left, right map[string]treeSnapshotEntry) bool {
 	}
 	for key, value := range left {
 		other, found := right[key]
-		if !found || value.mode != other.mode || value.modTime != other.modTime ||
+		if !found || value.mode != other.mode {
+			return false
+		}
+		if strings.HasSuffix(key, "-shm") {
+			continue
+		}
+		if value.modTime != other.modTime ||
 			!slices.Equal(value.body, other.body) {
 			return false
 		}

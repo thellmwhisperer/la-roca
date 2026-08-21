@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -1256,31 +1257,48 @@ func remoteCrossCommand(env *cliEnv) *cobra.Command {
 			}
 			statement := strings.Join(args, " ")
 			started := time.Now()
-			svc, _, err := env.openService()
-			if err != nil {
-				return err
-			}
-			local, err := svc.Exec(command.Context(), service.ExecRequest{
-				SQL: statement, MaxChars: service.DefaultMaxChars,
-			})
-			closeErr := svc.Close()
-			if err != nil {
-				return err
-			}
-			if closeErr != nil {
-				return closeErr
-			}
-			sets := []crossResult{{origin: "local", result: local}}
-			for _, name := range names {
+			remotes := make([]remoteEntry, len(names))
+			for index, name := range names {
 				remote, lookupErr := env.namedRemote(name)
 				if lookupErr != nil {
 					return lookupErr
 				}
-				result, runErr := env.runRemoteExec(command.Context(), remote, statement, true)
-				if runErr != nil {
-					return runErr
+				remotes[index] = remote
+			}
+			sets := make([]crossResult, len(names)+1)
+			sets[0].origin = "local"
+			failures := make([]error, len(sets))
+			codes := make([]int, len(sets))
+			var scatter sync.WaitGroup
+			scatter.Add(len(sets))
+			go func() {
+				defer scatter.Done()
+				worker := *env
+				worker.code = ExitOK
+				sets[0].result, failures[0] = runLocalCross(command.Context(), &worker, statement)
+				codes[0] = worker.code
+			}()
+			for index, remote := range remotes {
+				resultIndex := index + 1
+				sets[resultIndex].origin = names[index]
+				go func() {
+					defer scatter.Done()
+					worker := *env
+					worker.code = ExitOK
+					sets[resultIndex].result, failures[resultIndex] = worker.runRemoteExec(
+						command.Context(), remote, statement, true)
+					codes[resultIndex] = worker.code
+				}()
+			}
+			scatter.Wait()
+			for index, failure := range failures {
+				if failure == nil {
+					continue
 				}
-				sets = append(sets, crossResult{origin: name, result: result})
+				if codes[index] != ExitOK {
+					env.code = codes[index]
+				}
+				return failure
 			}
 			result, err := gatherCross(command.Context(), env.build, sets)
 			if err != nil {
@@ -1300,6 +1318,24 @@ func remoteCrossCommand(env *cliEnv) *cobra.Command {
 	command.Flags().StringVar(&on, "on", "", "comma-separated registered remote names")
 	_ = command.MarkFlagRequired("on")
 	return command
+}
+
+func runLocalCross(ctx context.Context, env *cliEnv, statement string) (service.ExecResult, error) {
+	svc, _, err := env.openService()
+	if err != nil {
+		return service.ExecResult{}, err
+	}
+	result, execErr := svc.Exec(ctx, service.ExecRequest{
+		SQL: statement, MaxChars: service.DefaultMaxChars,
+	})
+	closeErr := svc.Close()
+	if execErr != nil {
+		return service.ExecResult{}, execErr
+	}
+	if closeErr != nil {
+		return service.ExecResult{}, closeErr
+	}
+	return result, nil
 }
 
 type crossResult struct {
@@ -1542,8 +1578,8 @@ func (env *cliEnv) remoteReplyError(name string, reply sshReply, probing bool) e
 		return nil
 	}
 	detail := cleanRemoteError(reply.stderr)
-	if probing && (reply.exitCode == 126 || reply.exitCode == 127 ||
-		strings.Contains(strings.ToLower(detail), "command not found")) {
+	if reply.exitCode == 126 || reply.exitCode == 127 ||
+		strings.Contains(strings.ToLower(detail), "command not found") {
 		env.code = ExitRemoteRocaMissing
 		return fmt.Errorf("remote %s does not have roca on PATH", name)
 	}

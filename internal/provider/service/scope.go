@@ -115,6 +115,7 @@ func (s *Service) inventoryRoute(ctx context.Context) pluginRoute {
 
 func (s *Service) ResolveDatabaseScope(ctx context.Context, names []string) (DatabaseScope, error) {
 	inventory := s.inventoryRoute(ctx)
+	defer inventory.closeOnDemand()
 	route, err := questionRoute(names, inventory)
 	if err != nil {
 		return DatabaseScope{}, err

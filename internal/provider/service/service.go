@@ -227,7 +227,14 @@ func (s *Service) closeOpened() {
 		_ = s.layerDB.Close()
 	}
 	s.layerDB = nil
+	if s.layerSet != nil {
+		_ = s.layerSet.Close()
+	}
 	s.layerSet = nil
+	for _, database := range s.resident {
+		_ = database.Close()
+	}
+	s.resident = nil
 	if s.ops != nil {
 		_ = s.ops.Close()
 		s.ops = nil

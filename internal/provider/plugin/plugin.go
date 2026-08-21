@@ -20,6 +20,7 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 	"github.com/thellmwhisperer/la-roca/internal/provider/query/sqlgate"
+	"github.com/thellmwhisperer/la-roca/internal/store"
 	"gopkg.in/yaml.v3"
 	_ "modernc.org/sqlite"
 )
@@ -91,12 +92,22 @@ type Table struct {
 
 type Database struct {
 	Descriptor
-	Tables    []Table
-	immutable bool
+	Tables   []Table
+	snapshot *store.ReadOnlySnapshot
 }
 
 func (d Database) ReadOnlyURI() string {
-	return databaseURI(d.Database, d.immutable)
+	if d.snapshot != nil {
+		return d.snapshot.URI()
+	}
+	return databaseURI(d.Database)
+}
+
+func (d Database) Close() error {
+	if d.snapshot == nil {
+		return nil
+	}
+	return d.snapshot.Close()
 }
 
 func (d Descriptor) Source() string {
@@ -535,11 +546,29 @@ func ValidateImmutable(ctx context.Context, descriptor Descriptor) (Database, er
 }
 
 func validate(ctx context.Context, descriptor Descriptor, immutable bool) (Database, error) {
-	db, err := sql.Open("sqlite", databaseURI(descriptor.Database, immutable))
+	var db *sql.DB
+	var snapshot *store.ReadOnlySnapshot
+	var err error
+	if immutable {
+		snapshot, err = store.OpenReadOnlySnapshot(ctx, descriptor.Database)
+		if err == nil {
+			db = snapshot.SQL()
+		}
+	} else {
+		db, err = sql.Open("sqlite", databaseURI(descriptor.Database))
+	}
 	if err != nil {
 		return Database{}, fmt.Errorf("open plugin %s read-only: %w", descriptor.Name, err)
 	}
-	defer db.Close()
+	keepSnapshot := false
+	defer func() {
+		if snapshot != nil && !keepSnapshot {
+			_ = snapshot.Close()
+		}
+		if snapshot == nil {
+			_ = db.Close()
+		}
+	}()
 	if err := db.PingContext(ctx); err != nil {
 		return Database{}, fmt.Errorf("open plugin %s read-only: %w", descriptor.Name, err)
 	}
@@ -617,7 +646,8 @@ func validate(ctx context.Context, descriptor Descriptor, immutable bool) (Datab
 	for index := range descriptor.VectorTables {
 		descriptor.VectorTables[index] = cloneVectorTable(descriptor.VectorTables[index])
 	}
-	return Database{Descriptor: descriptor, Tables: tables, immutable: immutable}, nil
+	keepSnapshot = true
+	return Database{Descriptor: descriptor, Tables: tables, snapshot: snapshot}, nil
 }
 
 // databaseURI resolves the path first because a plugin root reached through a
@@ -625,16 +655,13 @@ func validate(ctx context.Context, descriptor Descriptor, immutable bool) (Datab
 // refuses to open at all. It is always read-only, and it waits on the busy
 // timeout instead of failing the open the moment another process holds a write
 // lock on the same plugin database.
-func databaseURI(path string, immutable bool) string {
+func databaseURI(path string) string {
 	if absolute, err := filepath.Abs(path); err == nil {
 		path = absolute
 	}
 	values := url.Values{
 		"mode":    {"ro"},
 		"_pragma": {fmt.Sprintf("busy_timeout(%d)", busyTimeout.Milliseconds())},
-	}
-	if immutable {
-		values.Set("immutable", "1")
 	}
 	uri := url.URL{Scheme: "file", Path: filepath.ToSlash(path), RawQuery: values.Encode()}
 	return uri.String()

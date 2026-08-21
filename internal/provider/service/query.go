@@ -308,6 +308,7 @@ func (s *Service) Query(ctx context.Context, req QueryRequest) (res QueryResult,
 		return res, err
 	}
 	inventory := s.inventoryRoute(ctx)
+	defer inventory.closeOnDemand()
 	route, err := questionRoute(req.Databases, inventory)
 	if err != nil {
 		return res, err
@@ -411,6 +412,7 @@ func (s *Service) Exec(ctx context.Context, req ExecRequest) (ExecResult, error)
 		return ExecResult{}, err
 	}
 	route := s.pluginsForSQL(ctx, req.SQL)
+	defer route.closeOnDemand()
 	if len(route.omitted) > 0 {
 		return ExecResult{}, logfile.Typed(fmt.Errorf(
 			"the SELECT references more than SQLite's %d attached databases; split the query (omitted: %s)",

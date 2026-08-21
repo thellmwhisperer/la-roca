@@ -54,8 +54,18 @@ type pluginRoute struct {
 	warnings    []string
 }
 
+func (r pluginRoute) closeOnDemand() {
+	for _, database := range r.databases {
+		if database.Semantic.Attachment == plugin.AttachmentOnDemand {
+			_ = database.Close()
+		}
+	}
+}
+
 func (s *Service) pluginsForQuestion(ctx context.Context, _ string) pluginRoute {
-	route, err := questionRoute(nil, s.inventoryRoute(ctx))
+	inventory := s.inventoryRoute(ctx)
+	defer inventory.closeOnDemand()
+	route, err := questionRoute(nil, inventory)
 	if err != nil {
 		return pluginRoute{warnings: []string{err.Error()}}
 	}
