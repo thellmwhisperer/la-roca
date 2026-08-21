@@ -102,6 +102,139 @@ func TestFederatedWorkerBuildsOwnedSidecarsBeforeRetiringLegacyMonolith(t *testi
 	t.Log("sidecars: roca-corpus/corpus, roca-ops/ops; legacy central index: removed")
 }
 
+func TestFederatedWorkerReusesLegacyMonolithEmbeddingsBeforeRetiringIt(t *testing.T) {
+	root := t.TempDir()
+	corpusDir, opsDir := filepath.Join(root, "roca-corpus"), filepath.Join(root, "roca-ops")
+	for _, directory := range []string{corpusDir, opsDir} {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	corpusPath := filepath.Join(corpusDir, "roca-corpus.db")
+	opsPath := filepath.Join(opsDir, "roca-ops.db")
+	createSourceDatabase(t, corpusPath, `
+		CREATE TABLE sessions(session_id TEXT PRIMARY KEY,title TEXT,project TEXT);
+		CREATE TABLE memories(id INTEGER PRIMARY KEY,content TEXT);
+		CREATE TABLE exchanges(id INTEGER PRIMARY KEY,human_text TEXT,agent_text TEXT);
+		CREATE TABLE thinking_blocks(id INTEGER PRIMARY KEY,full_text TEXT);
+		INSERT INTO sessions VALUES ('session-1','Release notes','vector-project');
+		INSERT INTO memories VALUES (1,'Corpus memory already embedded');
+		INSERT INTO exchanges VALUES (1,'Question already embedded','Answer already embedded');
+		INSERT INTO thinking_blocks VALUES (1,'Reasoning already embedded');`)
+	createSourceDatabase(t, opsPath, `
+		CREATE TABLE memories(id INTEGER PRIMARY KEY,content TEXT);
+		INSERT INTO memories VALUES (1,'Operational memory already embedded');`)
+	writeRegistry(t, root, vectorRegistry{Schema: 1, Databases: []vectorDatabase{
+		{Plugin: "roca-corpus", Database: "corpus", Path: "roca-corpus.db", Alias: "plugin_roca_corpus",
+			Tables: []vectorTable{
+				{Name: "sessions", IDColumn: "session_id", TextColumns: []string{"title", "project"}},
+				{Name: "memories", IDColumn: "id", TextColumns: []string{"content"}},
+				{Name: "exchanges", IDColumn: "id", TextColumns: []string{"human_text", "agent_text"}},
+				{Name: "thinking_blocks", IDColumn: "id", TextColumns: []string{"full_text"}},
+			}},
+		{Plugin: "roca-ops", Database: "ops", Path: "roca-ops.db", Alias: "plugin_roca_ops",
+			Tables: []vectorTable{{Name: "memories", IDColumn: "id", TextColumns: []string{"content"}}}},
+	}})
+
+	embedder := &recordingEmbedder{}
+	state := t.TempDir()
+	legacy := filepath.Join(state, DatabaseFilename)
+	legacyCorpus := &memoryCorpus{sources: []sourceRow{
+		{kind: "sessions", sessionID: "session-1", text: "Release notes\nvector-project"},
+		{kind: "memories", text: "Corpus memory already embedded"},
+		{kind: "exchanges", sessionID: "session-1", ordinal: 1, hasOrdinal: true,
+			text: "Question already embedded\n\nAnswer already embedded"},
+		{kind: "thinking_blocks", sessionID: "session-1", ordinal: 1, hasOrdinal: true,
+			position: "1", text: "Reasoning already embedded"},
+		{kind: "memories", text: "Operational memory already embedded"},
+	}}
+	legacyIndex := Index{Corpus: legacyCorpus, VectorPath: legacy, Model: DefaultModel, Embedder: embedder}
+	if _, err := legacyIndex.Ingest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	embedder.inputs = nil
+
+	runner := sqliteExecRunner(t, map[string]string{
+		"plugin_roca_corpus": corpusPath,
+		"plugin_roca_ops":    opsPath,
+	})
+	federation, err := LoadFederation(CoreCLI{Executable: "roca", Run: runner}, root,
+		DefaultModel, "v-migration", embedder, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if partial, err := federation.Ingest(context.Background(), "memories"); err != nil || partial.Added != 2 {
+		t.Fatalf("partial sidecar setup = %+v, err=%v", partial, err)
+	}
+	embedder.inputs = nil
+	completion := (FederatedWorker{Federation: federation, DataDir: state}).Run(context.Background())
+	if completion.ExitStatus != 0 || completion.Error != "" {
+		t.Fatalf("federated worker completion = %+v", completion)
+	}
+	recordedRaw, err := os.ReadFile(filepath.Join(state, CompletionFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var recorded Completion
+	if err := json.Unmarshal(recordedRaw, &recorded); err != nil {
+		t.Fatal(err)
+	}
+	if recorded.ExitStatus != 0 || recorded.FinishedAt.IsZero() {
+		t.Fatalf("recorded worker completion = %+v", recorded)
+	}
+	if got := len(flattenInputs(embedder.inputs)); got != 1 {
+		t.Fatalf("federated migration embedded %d inputs, want only the changed session text", got)
+	}
+	if completion.Delta.Added != 1 || completion.Delta.Unchanged != 4 {
+		t.Fatalf("federated migration delta = %+v, want one added and four reused chunks", completion.Delta)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("legacy central index remains after successful migration: %v", err)
+	}
+	for path, owner := range map[string]string{
+		SidecarPath(corpusPath): "roca-corpus/corpus",
+		SidecarPath(opsPath):    "roca-ops/ops",
+	} {
+		metadata := sidecarMeta(t, path)
+		if metadata["owner"] != owner || metadata["model"] != DefaultModel ||
+			metadata["dimensions"] != "8" || metadata["source_fingerprint"] == "" {
+			t.Fatalf("migrated sidecar %s metadata = %+v", owner, metadata)
+		}
+	}
+	t.Logf("legacy migration: reused=%d embedded=%d sidecars=roca-corpus/corpus,roca-ops/ops completion=ready legacy=removed",
+		completion.Delta.Unchanged, len(flattenInputs(embedder.inputs)))
+}
+
+func TestFederatedWorkerKeepsLegacyMonolithUntilEveryDeclaredSidecarCompletes(t *testing.T) {
+	federation, corpusPath, opsPath, _ := federationFixture(t)
+	federation.databases = append(federation.databases, vectorDatabase{
+		Plugin: "fixture", Database: "missing", Path: "missing.db", Alias: "plugin_fixture_missing",
+		Tables: []vectorTable{{Name: "records", IDColumn: "id", TextColumns: []string{"content"}}},
+	})
+	state := t.TempDir()
+	legacy := filepath.Join(state, DatabaseFilename)
+	if err := os.WriteFile(legacy, []byte("legacy central index"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	completion := (FederatedWorker{Federation: federation, DataDir: state}).Run(context.Background())
+	if completion.ExitStatus == 0 || !strings.Contains(completion.Error, "fixture/missing") {
+		t.Fatalf("federated worker completion = %+v, want the missing declared database failure", completion)
+	}
+	if _, err := os.Stat(legacy); err != nil {
+		t.Fatalf("legacy central index was retired before every sidecar completed: %v", err)
+	}
+	for path, owner := range map[string]string{
+		SidecarPath(corpusPath): "roca-corpus/corpus",
+		SidecarPath(opsPath):    "roca-ops/ops",
+	} {
+		if metadata := sidecarMeta(t, path); metadata["owner"] != owner {
+			t.Fatalf("completed sidecar metadata = %+v, want owner %s", metadata, owner)
+		}
+	}
+	t.Logf("partial federation failure: completed=roca-corpus/corpus,roca-ops/ops failed=fixture/missing legacy=retained")
+}
+
 func TestFederationTargetedDeltaPreservesOtherTablesAndCorpusQueryCompatibility(t *testing.T) {
 	federation, corpusPath, _, embedder := federationFixture(t)
 	if _, err := federation.Ingest(context.Background(), ""); err != nil {
