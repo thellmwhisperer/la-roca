@@ -180,9 +180,9 @@ as described under Which databases a question sees.
 
 | Situation | Action |
 |---|---|
-| Past work / people / "have we…" | Write SQL and `roca exec`; hybrid first if the index exists |
-| Researching a topic, not a point fact | Write SQL and `roca exec`; hybrid first if the index exists |
-| Cannot name the exact term | Hybrid loop when the index exists; otherwise exec with FTS MATCH |
+| Past work / people / "have we…" | Write SQL and `roca exec`; hybrid first when a selected sidecar is ready |
+| Researching a topic, not a point fact | Write SQL and `roca exec`; hybrid first when a selected sidecar is ready |
+| Cannot name the exact term | Hybrid loop when a selected sidecar is ready; otherwise exec with FTS MATCH |
 | Cannot express it as SQL | last resort: `roca query` or `roca explore`; never `--full` |
 | Answer looks stale / about today | `roca ingest`, then ask again |
 | Programmatic parse | add `--json` |
@@ -207,8 +207,9 @@ attaches them read-only and folds their tables into natural-language search.
 
 ## Hybrid loop
 
-When the index exists, this loop is mandatory. It is how the craft is done.
-Operator setup lives in the `roca-vector` skill and docs/vector.md.
+When any selected sidecar is ready, this loop is mandatory across the selected
+scope. It is how the craft is done. Operator setup lives in the `roca-vector`
+skill and docs/vector.md.
 
 Vector search finds the nearby rows across declared, selected federated
 databases. FTS censuses them in their owning databases. SQL frames them there.
@@ -325,7 +326,8 @@ When you would otherwise fire three exploratory queries, fire one
    phrased query.
 
 When a bare FTS word would miss, take the search-craft branch: hybrid loop
-if the index exists, otherwise write a broader MATCH or OR and exec it.
+when a selected sidecar is ready, otherwise write a broader MATCH or OR and
+exec it.
 Do not stack synonyms.
 
 ## Operating craft

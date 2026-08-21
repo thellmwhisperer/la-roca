@@ -147,7 +147,10 @@ func TestShippedSkillsCarryTheSearchDoctrine(t *testing.T) {
 				"SQL frames them",
 				"the shipped RRF hybrid",
 				"inference only at the end",
+				`roca vector query --databases <scope>`,
 				`roca vector query "<first-person phrase or bare word>" 100`,
+				"one query can mix a declared plugin hit with a\n   corpus hit",
+				"A selected database without a `Vector:` declaration joins\n   here through its unchanged FTS path",
 				"names of people",
 				"my boss is named",
 				"Use them only as a last resort when you cannot write the SELECT yourself",
@@ -191,6 +194,22 @@ func TestShippedSkillsCarryTheSearchDoctrine(t *testing.T) {
 	}
 	if strings.Contains(skill.Content(), "roca vector vocab") {
 		t.Error("definitive skill still teaches roca vector vocab")
+	}
+}
+
+func TestPluginGuideKeepsTheThreeLineVectorAuthorContract(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "plugins.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"the complete author contract is three\nlines: table, stable id column, and opt-in prose columns",
+		"{\"name\": \"receipts\",\n \"id_column\": \"id\",\n \"text_columns\": [\"title\"]}",
+		"a\ndatabase with no `vector` declaration continues to serve through FTS and SQL\nexactly as before",
+	} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("plugin author guide missing %q", want)
+		}
 	}
 }
 
