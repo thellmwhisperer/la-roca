@@ -230,6 +230,14 @@ func (m Manifest) Valid() error {
 		}
 		declarations[database.Name], paths[database.Path], aliases[database.Alias] = database, database.Name, true
 	}
+	for _, database := range m.Databases {
+		extension := filepath.Ext(database.Path)
+		sidecar := strings.TrimSuffix(database.Path, extension) + ".vector" + extension
+		if collision := paths[sidecar]; collision != "" {
+			return fmt.Errorf("derived sidecar for database %q at %q collides with database %q",
+				database.Name, sidecar, collision)
+		}
+	}
 
 	semantics := make(map[string]bool, len(m.Semantic.Databases))
 	semanticTables := make(map[string]map[string]SemanticTable, len(m.Semantic.Databases))
@@ -263,15 +271,6 @@ func (m Manifest) Valid() error {
 	if m.Vector != nil {
 		if err := m.Vector.valid(declarations, semanticTables); err != nil {
 			return err
-		}
-		for _, database := range m.Vector.Databases {
-			declaration := declarations[database.Database]
-			extension := filepath.Ext(declaration.Path)
-			sidecar := strings.TrimSuffix(declaration.Path, extension) + ".vector" + extension
-			if collision := paths[sidecar]; collision != "" {
-				return fmt.Errorf("vector sidecar for database %q at %q collides with database %q",
-					database.Database, sidecar, collision)
-			}
 		}
 	}
 

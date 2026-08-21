@@ -127,6 +127,7 @@ func TestVectorManifestValidationKeepsEmbeddabilityExplicitAndActionable(t *test
 		Questions: []string{"Which non-vectorized records exist?"},
 		Tables:    []plugin.SemanticTable{{Name: "entries", Description: "One entry.", Columns: []string{"id"}}},
 	})
+	collision.Vector = nil
 	if err := collision.Valid(); err == nil || !strings.Contains(err.Error(), "collides") {
 		t.Fatalf("manifest sidecar collision passed with %v", err)
 	}
