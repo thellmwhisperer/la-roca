@@ -49,9 +49,10 @@ in place as the reversible legacy route until the separate retirement step.
 ```
 
 The manifest engine owns discovery, strict schema validation, read-only
-attachment, semantic catalog composition, and the canonical registry for verbs
-and executable capabilities. Removing a plugin removes its databases and
-surface declarations without requiring edits to the kernel.
+attachment, semantic catalog composition, vector registry projection, and the
+canonical registry for verbs and executable capabilities. Removing a plugin
+removes its databases and surface declarations without requiring edits to the
+kernel.
 
 Retention and scale follow the same boundary. Corpus may preserve a perennial
 archive, ops may keep a shorter operational window, and cron may prune
@@ -65,7 +66,7 @@ applies one domain's diet to another.
 ```text
 store        - SQLite primitives and lexical indexing
 ingest       - source scanning, parsers, and idempotent writes
-provider     - models, manifests, semantic catalog, gate, and services
+provider     - models, manifests, semantic catalog, vector registry, gate, and services
 distribution - CLI, MCP, installers, lifecycle, and release plumbing
 ```
 
@@ -85,8 +86,8 @@ fixtures.
   delegates to the ingest session writer so deduplication and FTS behavior have
   one implementation.
 - `internal/provider/plugin/` is the manifest engine: declarations, discovery,
-  schema truth checks, semantic composition, verb and capability registration,
-  and the in-memory hub.
+  schema truth checks, semantic and vector projection, verb and capability
+  registration, and the in-memory hub.
 - `internal/provider/query/` owns prompt construction and the SQL read gate;
   `internal/provider/service/` orchestrates the compatibility product surface.
 - `internal/distribution/plugininstall/` verifies packages and preserves every
