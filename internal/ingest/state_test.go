@@ -9,8 +9,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 	"github.com/thellmwhisperer/la-roca/pkg/incrementality"
+	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 )
 
 func TestFingerprintDetectsSameSizeSameMtimeEdit(t *testing.T) {

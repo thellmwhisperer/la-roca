@@ -3,8 +3,8 @@ package ingest
 import (
 	"encoding/json"
 
-	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 	"github.com/thellmwhisperer/la-roca/pkg/incrementality"
+	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 )
 
 // parserVersions is the reading each source kind currently gets. The version

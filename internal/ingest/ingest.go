@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 	"github.com/thellmwhisperer/la-roca/pkg/incrementality"
+	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 )
 
 // Database is the little of the store the ingest needs. It travels as an interface

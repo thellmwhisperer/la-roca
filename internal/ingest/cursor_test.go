@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 	"github.com/thellmwhisperer/la-roca/pkg/incrementality"
+	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 )
 
 func TestCursorIngestReportsCoverageAndIsIdempotent(t *testing.T) {
