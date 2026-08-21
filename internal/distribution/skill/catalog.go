@@ -1,28 +1,3 @@
-/*
-*
-@overview Builds the generated roca-semantica skill from validated plugin databases.
-
-	READING GUIDE
-	-------------
-	1. Start at CatalogBody             <- skill document and retrieval contract
-	2. Continue at writeDatabase        <- per-database semantic and vector coverage
-	3. Read vectorTable on demand       <- table declaration lookup
-
-	MAIN FLOW
-	---------
-	CatalogBody -> writeDatabase -> vectorTable -> generated roca-semantica skill
-
-	PUBLIC API
-	----------
-	CatalogBody()       Composes the complete generated semantic catalog.
-
-	INTERNALS
-	---------
-	writeDatabase, vectorTable
-
-@exports CatalogBody
-@deps internal/provider/plugin, strings
-*/
 package skill
 
 import (
@@ -31,8 +6,6 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 )
-
-// -- 1/3 CORE · CatalogBody -- <- START HERE
 
 // CatalogBody composes the roca-semantica skill from the semantic fragments of
 // every installed plugin manifest — the same fragments the query catalog
@@ -84,10 +57,6 @@ func CatalogBody(databases []plugin.Database, notes []string) string {
 	return b.String()
 }
 
-// -/ 1/3
-
-// -- 2/3 HELPER · writeDatabase --
-
 // writeDatabase renders one plugin database: what it knows, its questions, and
 // each table with its description, alias-qualified name, columns, retrieval
 // coverage, and its own example questions.
@@ -128,10 +97,6 @@ func writeDatabase(b *strings.Builder, database plugin.Database) {
 	}
 }
 
-// -/ 2/3
-
-// -- 3/3 HELPER · vectorTable --
-
 func vectorTable(database plugin.Database, name string) (plugin.VectorTable, bool) {
 	for _, table := range database.VectorTables {
 		if table.Name == name {
@@ -140,5 +105,3 @@ func vectorTable(database plugin.Database, name string) (plugin.VectorTable, boo
 	}
 	return plugin.VectorTable{}, false
 }
-
-// -/ 3/3
