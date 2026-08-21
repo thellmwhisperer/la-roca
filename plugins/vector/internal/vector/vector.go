@@ -38,6 +38,7 @@ type Index struct {
 	Embedder    Embedder
 	Notice      func(string)
 	SourceKinds map[string]bool
+	Database    string
 }
 
 type Corpus interface {
@@ -57,6 +58,9 @@ type Delta struct {
 type Result struct {
 	Rank     int     `json:"rank"`
 	Score    float64 `json:"score"`
+	Database string  `json:"database,omitempty"`
+	Table    string  `json:"table,omitempty"`
+	ID       string  `json:"id,omitempty"`
 	Source   string  `json:"source"`
 	SourceID string  `json:"source_id"`
 	Text     string  `json:"text"`
@@ -315,7 +319,14 @@ func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) 
 	if len(vectors) != 1 || len(vectors[0]) != dimensions {
 		return nil, fmt.Errorf("query embedding has the wrong dimensions")
 	}
-	candidates, err := nearest(ctx, store, vectorBlob(vectors[0]), min(k*8, 800))
+	return i.queryVector(ctx, store, vectors[0], k)
+}
+
+func (i Index) queryVector(ctx context.Context, store *sql.DB, embedding []float32, k int) ([]Result, error) {
+	if k < 1 || k > 100 {
+		return nil, fmt.Errorf("k must be between 1 and 100")
+	}
+	candidates, err := nearest(ctx, store, vectorBlob(embedding), min(k*8, 800))
 	if err != nil {
 		return nil, err
 	}
@@ -338,8 +349,13 @@ func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) 
 			}
 			continue
 		}
+		sourceID := candidate.where.SourceID
+		if sourceID == "" {
+			sourceID = candidate.sourceID
+		}
 		results = append(results, Result{
 			Rank: len(results) + 1, Score: 1 - candidate.distance,
+			Database: i.Database, Table: candidate.kind, ID: sourceID,
 			Source: candidate.kind, SourceID: candidate.sourceID, Text: body,
 		})
 		if len(results) == k {

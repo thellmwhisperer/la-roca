@@ -73,6 +73,31 @@ func TestCoreCLIWalksEverySourceThroughRocaExec(t *testing.T) {
 	}
 }
 
+func TestCoreCLIResolvesDatabaseScopeThroughRoca(t *testing.T) {
+	core := CoreCLI{Executable: "/synthetic/roca", DBPath: "/synthetic/roca.db",
+		Run: func(_ context.Context, executable string, args ...string) ([]byte, error) {
+			if executable != "/synthetic/roca" || !slices.Equal(args, []string{
+				"--json", "--db-path", "/synthetic/roca.db", "_database-scope", "--databases", "all",
+			}) {
+				t.Fatalf("database scope command = %q %q", executable, args)
+			}
+			return []byte(`{"databases":["core","corpus"],"selected":[{"source":"core","database":"core"},{"source":"plugin:roca-corpus","database":"corpus"}],"omitted_databases":["plugin:extra"],"warnings":["attachment limit"]}`), nil
+		}}
+	scope, err := core.ResolveDatabaseScope(context.Background(), "all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(scope.Databases, []string{"core", "corpus"}) ||
+		!slices.Equal(scope.Selected, []DatabaseSelection{
+			{Source: "core", Database: "core"},
+			{Source: "plugin:roca-corpus", Database: "corpus"},
+		}) ||
+		!slices.Equal(scope.OmittedDatabases, []string{"plugin:extra"}) ||
+		!slices.Equal(scope.Warnings, []string{"attachment limit"}) {
+		t.Fatalf("database scope = %+v", scope)
+	}
+}
+
 func TestSessionEmbeddingTextKeepsOnlyHumanContent(t *testing.T) {
 	const hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	const uuid = "123e4567-e89b-12d3-a456-426614174000"

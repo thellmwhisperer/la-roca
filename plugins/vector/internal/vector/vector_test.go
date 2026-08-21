@@ -318,7 +318,7 @@ func TestQueryDeduplicatesChunksByStableSource(t *testing.T) {
 	corpus.sources = append(corpus.sources, stale)
 	index := Index{
 		Corpus: corpus, VectorPath: filepath.Join(t.TempDir(), "vector.db"),
-		Model: DefaultModel, Embedder: &recordingEmbedder{},
+		Model: DefaultModel, Embedder: &recordingEmbedder{}, Database: "corpus",
 	}
 	if _, err := index.Ingest(context.Background()); err != nil {
 		t.Fatal(err)
@@ -330,6 +330,9 @@ func TestQueryDeduplicatesChunksByStableSource(t *testing.T) {
 	}
 	seen := map[string]bool{}
 	for _, result := range results {
+		if result.Database != "corpus" || result.Table == "" || result.ID == "" {
+			t.Fatalf("legacy result has incomplete provenance: %+v", result)
+		}
 		if seen[result.SourceID] {
 			t.Fatalf("source %q returned more than once", result.SourceID)
 		}

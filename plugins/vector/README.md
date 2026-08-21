@@ -44,10 +44,12 @@ roca vector query "which decision kept inference local" 5
 `install` is the plugin's adopt/init command: it pulls the model, prepares one
 sidecar per declared database, and starts a resumable background build.
 `ingest --delta` embeds only new or changed chunks and removes missing sources.
-Both writing commands and `compact` honor `ROCA_READ_ONLY`. `query` uses the
-corpus compatibility sidecar, binary ANN candidates, exact cosine reranking,
-stable source deduplication, and live text resolution; cross-database query
-fan-out is a separate serving change.
+Both writing commands and `compact` honor `ROCA_READ_ONLY`. `query` uses routed
+database sidecars, binary ANN candidates, exact cosine reranking, stable source
+deduplication, and live text resolution. Pass `--databases corpus,ops` or
+`--databases all` with the same explicit routing semantics as `roca query`.
+Same-model sidecars merge into one top-N; mixed-model sidecars stay grouped per
+database with a notice. Missing sidecars or models remain FTS-only.
 
 `compact` copies each existing sidecar's float embeddings into a fresh paged store,
 rebuilds their binary ANN representation without calling the model, verifies
