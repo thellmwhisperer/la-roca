@@ -357,7 +357,7 @@ func runHealthCheck(ctx context.Context, reader *sql.DB, check healthCheck,
 		return HealthCheck{}, fmt.Errorf("health check %s: %w", check.name, err)
 	}
 	defer rows.Close()
-	_, outcome.Rows, err = scanRows(rows, 0, "")
+	_, outcome.Rows, err = ScanRows(rows, 0, "")
 	if err != nil {
 		return HealthCheck{}, fmt.Errorf("health check %s: %w", check.name, err)
 	}
