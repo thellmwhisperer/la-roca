@@ -917,6 +917,14 @@ func (w FederatedWorker) Run(ctx context.Context) Completion {
 		failIf(w.WaitForCalm(ctx))
 	}
 	if completion.Error == "" {
+		legacy := filepath.Join(w.DataDir, DatabaseFilename)
+		if _, err := os.Stat(legacy); err == nil {
+			if err := w.Federation.seedSidecarsFromLegacyMonolith(ctx, legacy); err != nil && w.Federation.Notice != nil {
+				w.Federation.Notice("legacy vector reuse was skipped: " + err.Error())
+			}
+		}
+	}
+	if completion.Error == "" {
 		delta, err := w.Federation.Ingest(ctx, "")
 		completion.Delta = delta.Delta
 		failIf(err)
