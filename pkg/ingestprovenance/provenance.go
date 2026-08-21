@@ -1,5 +1,5 @@
-// Package ingestprovenance owns the source-independent labels attached to
-// records by the ingestion surface that opened them.
+// Package ingestprovenance exposes La Roca's canonical source-to-harness labels
+// and historical provenance backfill.
 package ingestprovenance
 
 import (
