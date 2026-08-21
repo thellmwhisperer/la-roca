@@ -96,8 +96,8 @@ slop: ## Duplication, orphan and public-surface claims gates
 
 .PHONY: fmt
 fmt:
-	@test -z "$$(gofmt -l cmd internal data test)" || \
-		(echo "gofmt pending in:"; gofmt -l cmd internal data test; exit 1)
+	@test -z "$$(gofmt -l cmd internal data pkg test)" || \
+		(echo "gofmt pending in:"; gofmt -l cmd internal data pkg test; exit 1)
 
 .PHONY: vet
 vet:
