@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca/pkg/incrementality"
 	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 )
 
@@ -82,11 +83,11 @@ func TestCursorReaderSerializesAConsistentWALSnapshotWithoutChangingTheSource(t 
 		  "modelInfo":{"modelName":"fixture-cursor-model"},
 		  "tokenCount":{"inputTokens":3,"outputTokens":2}}')`)
 
-	mainBefore, err := Fingerprint(path)
+	mainBefore, err := incrementality.Fingerprint(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	walBefore, err := Fingerprint(path + "-wal")
+	walBefore, err := incrementality.Fingerprint(path + "-wal")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,8 +111,8 @@ func TestCursorReaderSerializesAConsistentWALSnapshotWithoutChangingTheSource(t 
 	if len(complaints) != 0 || len(records.Sessions) != 1 {
 		t.Fatalf("snapshot read = sessions:%d complaints:%v", len(records.Sessions), complaints)
 	}
-	mainAfter, _ := Fingerprint(path)
-	walAfter, _ := Fingerprint(path + "-wal")
+	mainAfter, _ := incrementality.Fingerprint(path)
+	walAfter, _ := incrementality.Fingerprint(path + "-wal")
 	if mainAfter != mainBefore || walAfter != walBefore {
 		t.Fatal("reading Cursor changed its database or WAL")
 	}
