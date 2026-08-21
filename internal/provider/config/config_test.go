@@ -26,6 +26,9 @@ func TestTheDefaultDatabaseLivesUnderTheHome(t *testing.T) {
 	if paths.Artifacts != filepath.Join(home, ".roca", "artifacts.json") {
 		t.Errorf("artifact registry = %q", paths.Artifacts)
 	}
+	if paths.Remotes != filepath.Join(home, ".roca", "remotes.json") {
+		t.Errorf("remote registry = %q", paths.Remotes)
+	}
 }
 
 func TestTheFlagBeatsTheEnvironmentAndTheHome(t *testing.T) {
@@ -72,5 +75,8 @@ func TestANamedDatabaseWithoutAHomeKeepsTheRegistryBesideIt(t *testing.T) {
 	}
 	if !filepath.IsAbs(paths.Artifacts) {
 		t.Errorf("artifact registry is relative to the working directory: %q", paths.Artifacts)
+	}
+	if paths.Remotes != filepath.Join(dir, "remotes.json") {
+		t.Errorf("remote registry = %q, want it beside the chosen database", paths.Remotes)
 	}
 }

@@ -238,7 +238,7 @@ func (w *distributionWorld) helpIsComplete() error {
 	honest := map[string]string{
 		"doctor": "configuration", "ingest": "source", "init": "database",
 		"hooks": "authorship", "layers": "layer", "model": "model", "query": "memory",
-		"explore": "concept", "store": "memory",
+		"explore": "concept", "remote": "ssh", "store": "memory",
 		"uninstall": "remove", "update": "release", "plugin": "plugin", "plugins": "plugin",
 	}
 	found := map[string]string{}
@@ -329,6 +329,8 @@ func distributionCommandArgs(command, home string, channel *httptest.Server) ([]
 		return []string{"model", "check"}, nil
 	case "doctor":
 		return []string{"doctor"}, nil
+	case "remote":
+		return []string{"remote", "add", "studio", "--ssh", "dev@studio.example"}, nil
 	case "update":
 		return []string{"update", "--check", "--api", channel.URL, "--repo", "example/roca"}, nil
 	case "uninstall":
