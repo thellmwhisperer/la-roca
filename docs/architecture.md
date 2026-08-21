@@ -75,8 +75,10 @@ fixtures.
 ## What lives where
 
 - `internal/store/` owns SQLite access, schema adoption, backups, and FTS.
+- `pkg/incrementality/` owns the public fingerprint and persisted unchanged-pass
+  primitives that scanners can reuse.
 - `internal/ingest/` owns source detection, pure parsers, source-specific
-  provenance extraction, and fingerprinted incremental writes.
+  provenance extraction, and idempotent corpus writes built on those primitives.
 - `pkg/ingestprovenance/` exposes the canonical source-to-harness mapping and
   historical provenance backfill to external Go modules.
 - `pkg/corpuswriter/` is the public normalized-conversation write facade. It

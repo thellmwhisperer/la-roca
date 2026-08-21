@@ -12,8 +12,8 @@
 // database and no integration marker, which is the difference between a
 // 40-second suite and a 40-minute one.
 //
-// Writing lives apart, in internal/ingest, which is the only place that knows
-// SQL.
+// Writing is exposed separately by pkg/corpuswriter; its shared implementation
+// stays in internal/ingest, the only package that knows SQL.
 package parsers
 
 import (
