@@ -81,6 +81,9 @@ fixtures.
   provenance extraction, and idempotent corpus writes built on those primitives.
 - `pkg/ingestprovenance/` exposes the canonical source-to-harness mapping and
   historical provenance backfill to external Go modules.
+- `pkg/corpuswriter/` is the public normalized-conversation write facade. It
+  delegates to the ingest session writer so deduplication and FTS behavior have
+  one implementation.
 - `internal/provider/plugin/` is the manifest engine: declarations, discovery,
   schema truth checks, semantic composition, verb and capability registration,
   and the in-memory hub.
@@ -97,11 +100,12 @@ fixtures.
   gating, refresh reports, and the post-update handoff to the new binary.
 
 The physical `sessions`, `exchanges`, `thinking_blocks`, and `tool_uses` tables
-are corpus custody. In normal runtime operation only `internal/ingest/` may
-create or update those records, and it writes them in the `roca-corpus`
-database when federation is enabled. Memory store calls—including CLI, MCP,
-core, and plugin-origin calls—cannot cross that boundary, and explicit SQL is
-always read-only. The owner-gated exact-dedup maintenance command is the sole
+are corpus custody. In normal runtime operation they enter through the session
+writer in `internal/ingest/`, either from ingest itself or through the public
+`pkg/corpuswriter` facade, and federation directs them to the `roca-corpus`
+database. Memory store calls—including CLI, MCP, core, and plugin-origin
+calls—cannot cross that boundary, and explicit SQL is always read-only. The
+owner-gated exact-dedup maintenance command is the sole
 offline maintenance exception: it may remap and remove certified duplicate
 custody rows in the federated `roca-corpus` and `roca-ops` databases, but it
 cannot modify the pre-federation `roca.db`, create source observations, or
