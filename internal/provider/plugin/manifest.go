@@ -36,6 +36,7 @@ type Manifest struct {
 	Binary       string                `json:"binary"`
 	Databases    []DatabaseDeclaration `json:"databases"`
 	Semantic     SemanticFragment      `json:"semantic"`
+	Vector       *VectorFragment       `json:"vector,omitempty"`
 	Verbs        []Verb                `json:"verbs"`
 	Capabilities []Capability          `json:"capabilities"`
 }
@@ -58,6 +59,32 @@ type DatabaseSemantic struct {
 	Description string          `json:"description"`
 	Questions   []string        `json:"questions,omitempty"`
 	Tables      []SemanticTable `json:"tables"`
+}
+
+// VectorFragment is the opt-in semantic-retrieval contract of a plugin. It
+// names prose columns only; generation and storage belong to kernel services,
+// never to plugin code.
+type VectorFragment struct {
+	Databases []VectorDatabase `json:"databases"`
+}
+
+type VectorDatabase struct {
+	Database string        `json:"database"`
+	Tables   []VectorTable `json:"tables"`
+}
+
+type VectorTable struct {
+	Name        string         `json:"name"`
+	IDColumn    string         `json:"id_column"`
+	TextColumns []string       `json:"text_columns"`
+	Chunking    *ChunkingHints `json:"chunking,omitempty"`
+}
+
+// ChunkingHints lets a database describe useful boundaries without owning the
+// chunker. Nil fields leave that decision to the kernel service.
+type ChunkingHints struct {
+	MaxChars     *int `json:"max_chars,omitempty"`
+	OverlapChars *int `json:"overlap_chars,omitempty"`
 }
 
 type Verb struct {
@@ -137,7 +164,7 @@ func Federated(raw []byte) (bool, error) {
 	if err := json.Unmarshal(raw, &shape); err != nil {
 		return false, fmt.Errorf("parse %s: %w", PackageFilename, err)
 	}
-	for _, part := range []string{"databases", "binary", "semantic", "verbs", "capabilities"} {
+	for _, part := range []string{"databases", "binary", "semantic", "vector", "verbs", "capabilities"} {
 		if shape[part] != nil {
 			return true, nil
 		}
@@ -205,6 +232,7 @@ func (m Manifest) Valid() error {
 	}
 
 	semantics := make(map[string]bool, len(m.Semantic.Databases))
+	semanticTables := make(map[string]map[string]SemanticTable, len(m.Semantic.Databases))
 	for _, fragment := range m.Semantic.Databases {
 		declaration, exists := declarations[fragment.Database]
 		if !exists {
@@ -220,11 +248,21 @@ func (m Manifest) Valid() error {
 		if err := semantic.validFor(PackageFilename); err != nil {
 			return fmt.Errorf("database %s: %w", fragment.Database, err)
 		}
+		tables := make(map[string]SemanticTable, len(fragment.Tables))
+		for _, table := range fragment.Tables {
+			tables[table.Name] = table
+		}
+		semanticTables[fragment.Database] = tables
 		semantics[fragment.Database] = true
 	}
 	for name := range declarations {
 		if !semantics[name] {
 			return fmt.Errorf("database %q has no semantic declaration", name)
+		}
+	}
+	if m.Vector != nil {
+		if err := m.Vector.valid(declarations, semanticTables); err != nil {
+			return err
 		}
 	}
 
@@ -259,6 +297,84 @@ func (m Manifest) Valid() error {
 	return nil
 }
 
+func (v VectorFragment) valid(declarations map[string]DatabaseDeclaration,
+	semanticTables map[string]map[string]SemanticTable) error {
+
+	if len(v.Databases) == 0 {
+		return fmt.Errorf("%s vector fragment declares no databases", PackageFilename)
+	}
+	seenDatabases := map[string]bool{}
+	for _, database := range v.Databases {
+		if _, exists := declarations[database.Database]; !exists {
+			return fmt.Errorf("vector database %q has no database declaration", database.Database)
+		}
+		if seenDatabases[database.Database] {
+			return fmt.Errorf("vector database %q is repeated", database.Database)
+		}
+		seenDatabases[database.Database] = true
+		if len(database.Tables) == 0 {
+			return fmt.Errorf("vector database %q declares no tables", database.Database)
+		}
+
+		seenTables := map[string]bool{}
+		for _, table := range database.Tables {
+			semantic, exists := semanticTables[database.Database][table.Name]
+			if !validIdentifier(table.Name) || seenTables[table.Name] {
+				return fmt.Errorf("vector database %q has an invalid or repeated table %q",
+					database.Database, table.Name)
+			}
+			seenTables[table.Name] = true
+			if !exists {
+				return fmt.Errorf("vector table %s.%s has no semantic table declaration",
+					database.Database, table.Name)
+			}
+			columns := make(map[string]bool, len(semantic.Columns))
+			for _, column := range semantic.Columns {
+				columns[column] = true
+			}
+			if !validIdentifier(table.IDColumn) || !columns[table.IDColumn] {
+				return fmt.Errorf("vector table %s.%s has invalid or missing id column %q",
+					database.Database, table.Name, table.IDColumn)
+			}
+			if len(table.TextColumns) == 0 {
+				return fmt.Errorf("vector table %s.%s declares no text columns",
+					database.Database, table.Name)
+			}
+			seenColumns := map[string]bool{}
+			for _, column := range table.TextColumns {
+				if !validIdentifier(column) || !columns[column] || seenColumns[column] {
+					return fmt.Errorf("vector table %s.%s has invalid, missing, or repeated text column %q",
+						database.Database, table.Name, column)
+				}
+				seenColumns[column] = true
+			}
+			if err := table.Chunking.valid(database.Database, table.Name); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (hints *ChunkingHints) valid(database, table string) error {
+	if hints == nil {
+		return nil
+	}
+	if hints.MaxChars == nil && hints.OverlapChars == nil {
+		return fmt.Errorf("vector table %s.%s has empty chunking hints", database, table)
+	}
+	if hints.MaxChars != nil && *hints.MaxChars <= 0 {
+		return fmt.Errorf("vector table %s.%s max_chars must be positive", database, table)
+	}
+	if hints.OverlapChars != nil && *hints.OverlapChars < 0 {
+		return fmt.Errorf("vector table %s.%s overlap_chars must not be negative", database, table)
+	}
+	if hints.MaxChars != nil && hints.OverlapChars != nil && *hints.OverlapChars >= *hints.MaxChars {
+		return fmt.Errorf("vector table %s.%s overlap_chars must be smaller than max_chars", database, table)
+	}
+	return nil
+}
+
 func safeManifestFile(name string) bool {
 	return name != "" && filepath.Base(name) == name && name != "." && name != ".." &&
 		!strings.ContainsAny(name, "/\\\x00")
@@ -282,6 +398,40 @@ func (m Manifest) semanticFor(name string) (Semantic, bool) {
 		}
 	}
 	return Semantic{}, false
+}
+
+func (m Manifest) vectorFor(name string) []VectorTable {
+	if m.Vector == nil {
+		return nil
+	}
+	for _, database := range m.Vector.Databases {
+		if database.Database != name {
+			continue
+		}
+		tables := make([]VectorTable, len(database.Tables))
+		for index, table := range database.Tables {
+			tables[index] = cloneVectorTable(table)
+		}
+		return tables
+	}
+	return nil
+}
+
+func cloneVectorTable(table VectorTable) VectorTable {
+	table.TextColumns = slices.Clone(table.TextColumns)
+	if table.Chunking != nil {
+		chunking := *table.Chunking
+		if chunking.MaxChars != nil {
+			value := *chunking.MaxChars
+			chunking.MaxChars = &value
+		}
+		if chunking.OverlapChars != nil {
+			value := *chunking.OverlapChars
+			chunking.OverlapChars = &value
+		}
+		table.Chunking = &chunking
+	}
+	return table
 }
 
 func (m Manifest) HasVerb(name string) bool {
