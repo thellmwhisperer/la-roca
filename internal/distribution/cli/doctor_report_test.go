@@ -18,11 +18,11 @@ import (
 )
 
 const (
-	personalName    = "Javier"
+	personalName    = "Ismael"
 	personalPeer    = "Ana"
 	personalProject = "Nortada"
 	personalTalk    = "secret handshake about tulips"
-	personalPath    = "/Users/javiermellado/Documents/secret-chat.json"
+	personalPath    = "/Users/op/Documents/secret-chat.json"
 )
 
 func TestDoctorReport(t *testing.T) {
