@@ -7,8 +7,8 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
-	"github.com/thellmwhisperer/la-roca/internal/ingestprovenance"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
+	"github.com/thellmwhisperer/la-roca/pkg/ingestprovenance"
 )
 
 const (

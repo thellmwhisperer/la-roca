@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/thellmwhisperer/la-roca/data"
-	"github.com/thellmwhisperer/la-roca/internal/ingestprovenance"
+	"github.com/thellmwhisperer/la-roca/pkg/ingestprovenance"
 )
 
 // Verdict of the structural comparison between the database that is there and
