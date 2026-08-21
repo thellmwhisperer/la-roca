@@ -504,7 +504,7 @@ func (s *Service) executeWithDatabase(ctx context.Context, statement, term strin
 	if err != nil {
 		return nil, nil, executionError(ctx, queryCtx, timeout, err)
 	}
-	columns, result, scanErr := scanRows(rows, maxChars, term)
+	columns, result, scanErr := ScanRows(rows, maxChars, term)
 	closeErr := rows.Close()
 	if scanErr != nil {
 		return nil, nil, executionError(ctx, queryCtx, timeout, scanErr)

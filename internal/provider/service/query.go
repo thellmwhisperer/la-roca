@@ -478,10 +478,11 @@ func executionError(parent, queryCtx context.Context, timeout time.Duration, err
 	return fmt.Errorf("run the validated query: %w", err)
 }
 
-// scanRows turns any result set into its column names and its rows of named
-// values under the text budget. The query cascade and the health diagnosis both
-// read through it, so a column of an unexpected type is handled in one place.
-func scanRows(rows *sql.Rows, maxChars int, term string) ([]string, []map[string]any, error) {
+// ScanRows turns any result set into its column names and its rows of named
+// values under the text budget. The query cascade, health diagnosis and
+// in-memory cross queries share it, so unexpected column types are handled in
+// one place.
+func ScanRows(rows *sql.Rows, maxChars int, term string) ([]string, []map[string]any, error) {
 	columns, err := rows.Columns()
 	if err != nil {
 		return nil, nil, err

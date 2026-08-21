@@ -45,6 +45,47 @@ supplies it at question time; the retrieval itself stays exact and auditable.
 No usable provider, or SQL that cannot run, falls back to literal search and
 says so in the result.
 
+## Read-only queries across machines
+
+`roca remote` connects already-installed Roca instances through ordinary SSH.
+SSH configuration owns host aliases, keys, agents, and authentication; La Roca
+stores only the name-to-target registry in `~/.roca/remotes.json`. There is no
+listener, daemon, sync protocol, or additional port.
+
+```sh
+roca remote add studio --ssh dev@studio.example
+roca remote list
+roca remote exec studio "SELECT layer, COUNT(*) AS n FROM memories GROUP BY layer"
+roca remote vector query studio "the deployment decision" 20
+```
+
+Each data call first checks that the local and remote Roca versions match, then
+runs plain `ssh <target> roca ... --json`. `remote exec` reaches the remote
+read-only SQL gate, so a non-`SELECT` is refused exactly as it is locally.
+`remote vector query` likewise preserves the remote index's own result or its
+honest not-installed/not-ready error. Default output is bounded TOON with
+contextual `help[]`; `--json` returns the full result envelope.
+
+Transport failures are scriptable: exit 10 means SSH could not reach the
+target, 11 means `roca` is absent from the remote `PATH`, and 12 means the Roca
+versions or envelopes are incompatible. A query refused by the remote gate or
+vector index keeps the ordinary command-failure exit 1 and message.
+
+Cross-machine comparison scatters one inner `SELECT` to the local installation
+and every named remote, loads those JSON result sets into a temporary SQLite
+database as `r_local`, `r_<name>` and so on, adds an `origin` column, and runs a
+generated `UNION ALL` outer `SELECT` there:
+
+```sh
+roca remote cross "SELECT source_agent, COUNT(*) AS sessions FROM sessions GROUP BY source_agent" \
+  --on studio,laptop
+```
+
+The temporary database is exactly `:memory:`. Cross disables reconciliation
+and call-history writes for the run and opens the local stores read-only, so it
+writes to neither the local nor remote rocks. The data path is SQL and JSON
+only; it performs no inference.
+
 ## One answer, two readers
 
 Every query serves both audiences. Your agent gets the rows; you get the

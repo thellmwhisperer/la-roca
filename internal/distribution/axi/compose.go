@@ -168,15 +168,28 @@ func composeQuery(res service.QueryResult, prose string, help func(service.Query
 // that ran, its rows, the count and latency, and the help to reach the envelope
 // or expand the fields.
 func Exec(res service.ExecResult) string {
-	return exec(res, true)
+	return exec(res, []string{
+		"Run `roca exec \"<SELECT>\" --json` for the complete result envelope",
+		"Run `roca exec \"<SELECT>\" --max-chars 2000` to expand text fields",
+	}, false)
+}
+
+// ExecWithHelp renders the standard SELECT envelope with caller-specific next
+// commands. Remote exec and cross return the same envelope, but their useful
+// follow-ups must keep the remote name and scatter scope instead of pointing at
+// an unrelated local command.
+func ExecWithHelp(res service.ExecResult, help ...string) string {
+	return exec(res, help, true)
 }
 
 // MCPExec renders an executed SELECT with MCP-native next steps.
 func MCPExec(res service.ExecResult) string {
-	return exec(res, false)
+	return exec(res, []string{
+		"Call roca_exec again with max_chars 2000 to expand text fields",
+	}, false)
 }
 
-func exec(res service.ExecResult, shell bool) string {
+func exec(res service.ExecResult, help []string, alwaysHelp bool) string {
 	var b strings.Builder
 	appendLine(&b, res.SQL)
 	if len(res.Databases) > 0 {
@@ -185,15 +198,8 @@ func exec(res service.ExecResult, shell bool) string {
 	appendLine(&b, RowOutput(res.Columns, res.Rows))
 	appendLine(&b, fmt.Sprintf("%s · %s",
 		Quantity(int64(res.RowCount), "row"), Duration(res.LatencyMS)))
-	if res.RowCount > 0 && !(res.RowCount == 1 && len(res.Columns) == 1) {
-		if shell {
-			appendLine(&b, RenderHelp(
-				"Run `roca exec \"<SELECT>\" --json` for the complete result envelope",
-				"Run `roca exec \"<SELECT>\" --max-chars 2000` to expand text fields"))
-		} else {
-			appendLine(&b, RenderHelp(
-				"Call roca_exec again with max_chars 2000 to expand text fields"))
-		}
+	if len(help) > 0 && (alwaysHelp || res.RowCount > 0 && !(res.RowCount == 1 && len(res.Columns) == 1)) {
+		appendLine(&b, RenderHelp(help...))
 	}
 	return b.String()
 }

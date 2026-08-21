@@ -39,8 +39,11 @@ type Build struct {
 // answer either: it has a code of its own so a script can tell them apart
 // without reading prose.
 const (
-	ExitOK    = 0
-	ExitError = 1
+	ExitOK                = 0
+	ExitError             = 1
+	ExitRemoteUnreachable = 10
+	ExitRemoteRocaMissing = 11
+	ExitRemoteVersionSkew = 12
 )
 
 type cliEnv struct {
@@ -72,6 +75,8 @@ type cliEnv struct {
 	features           config.FeaturesConfig
 	featuresLoaded     bool
 	omitCorpus         bool
+	forceReadOnly      bool
+	sshRunner          sshCommandRunner
 }
 
 // Execute runs the CLI and returns the process exit code.
@@ -153,7 +158,9 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 	}
 	code := env.code
 	if err != nil {
-		code = ExitError
+		if code == ExitOK {
+			code = ExitError
+		}
 		err = logfile.Correlate(err)
 	}
 	// The trace is observability, and observability never fails the command.
@@ -211,6 +218,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 		loginCommand(env), modelCommand(env),
 		updateCommand(env), uninstallCommand(env),
 		modelsCommand(env), pluginCommand(env), pluginsCommand(env),
+		remoteCommand(env),
 		installBundledPluginsCommand(env),
 		capabilitiesCommand(env), artifactsCommand(env),
 	}
@@ -252,7 +260,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 
 func publicCommand(name string) bool {
 	switch name {
-	case "init", "query", "explore", "store", "ingest", "model", "doctor", "update", "uninstall", "plugin", "plugins", "hooks", "cron", "layers":
+	case "init", "query", "explore", "store", "ingest", "model", "doctor", "update", "uninstall", "plugin", "plugins", "hooks", "cron", "layers", "remote":
 		return true
 	default:
 		return false
@@ -730,7 +738,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 	if home != "" {
 		pluginDir = filepath.Join(home, config.DirOwn, "plugins")
 	}
-	readOnly := config.ReadOnly(os.Getenv(config.EnvReadOnly))
+	readOnly := env.forceReadOnly || config.ReadOnly(os.Getenv(config.EnvReadOnly))
 	// Placing the bundled plugins writes directories, manifests and schemas.
 	// Read-only refuses writes before any of that, so an audit of a machine
 	// leaves it exactly as it found it. The ops package is always present for

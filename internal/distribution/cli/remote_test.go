@@ -1,0 +1,310 @@
+package cli
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+)
+
+type sshCall struct {
+	target string
+	args   []string
+}
+
+type scriptedSSHRunner struct {
+	calls   []sshCall
+	replies []sshReply
+}
+
+func (runner *scriptedSSHRunner) Run(_ context.Context, target string, args []string) sshReply {
+	runner.calls = append(runner.calls, sshCall{target: target, args: slices.Clone(args)})
+	if len(runner.replies) == 0 {
+		return sshReply{err: errors.New("unexpected ssh call")}
+	}
+	reply := runner.replies[0]
+	runner.replies = runner.replies[1:]
+	return reply
+}
+
+func remoteVersionReply(version string) sshReply {
+	body, _ := json.Marshal(map[string]any{"version": version, "source_sha": "remote-sha"})
+	return sshReply{stdout: string(body)}
+}
+
+func runRemoteRoot(t *testing.T, env *cliEnv, args ...string) (string, error) {
+	t.Helper()
+	var output strings.Builder
+	env.out, env.errOut = &output, &output
+	env.build = Build{Version: "v-test", Commit: "local-sha"}
+	env.skipReconciliation = true
+	env.featuresLoaded = true
+	root := rootCommand(env)
+	root.SetArgs(args)
+	err := root.Execute()
+	return strings.TrimSpace(output.String()), err
+}
+
+func addRemote(t *testing.T, home, name, target string) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	if output, err := runRemoteRoot(t, &cliEnv{}, "remote", "add", name, "--ssh", target); err != nil {
+		t.Fatalf("add remote: %v\n%s", err, output)
+	}
+}
+
+func TestRemoteAddGetOrCreatesARegistryAndListPrintsIt(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	output, err := runRemoteRoot(t, &cliEnv{}, "remote", "add", "studio", "--ssh", "dev@example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output, "remote studio added") || !strings.Contains(output, "help[") {
+		t.Fatalf("remote add output:\n%s", output)
+	}
+	registryPath := filepath.Join(home, ".roca", "remotes.json")
+	info, err := os.Stat(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("registry mode = %o, want 600", info.Mode().Perm())
+	}
+
+	output, err = runRemoteRoot(t, &cliEnv{}, "remote", "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output, "remotes[1]{name,ssh}:") ||
+		!strings.Contains(output, "studio,dev@example.test") || !strings.Contains(output, "help[") {
+		t.Fatalf("remote list output:\n%s", output)
+	}
+
+	doc := mustJSON(t, runRemoteJSON(t, &cliEnv{}, "remote", "list", "--json"))
+	if doc["version"] != "v-test" || doc["source_sha"] != "local-sha" {
+		t.Fatalf("remote list envelope = %#v", doc)
+	}
+	remotes, _ := doc["remotes"].([]any)
+	if len(remotes) != 1 || remotes[0].(map[string]any)["name"] != "studio" {
+		t.Fatalf("remote list JSON = %#v", doc)
+	}
+}
+
+func runRemoteJSON(t *testing.T, env *cliEnv, args ...string) string {
+	t.Helper()
+	output, err := runRemoteRoot(t, env, args...)
+	if err != nil {
+		t.Fatalf("roca %v: %v\n%s", args, err, output)
+	}
+	return output
+}
+
+func TestRemoteExecBridgesTheStandardEnvelopeAndInjectsTheSSHRunner(t *testing.T) {
+	home := t.TempDir()
+	addRemote(t, home, "studio", "dev@example.test")
+	runner := &scriptedSSHRunner{replies: []sshReply{
+		remoteVersionReply("v-test"),
+		{stdout: `{"sql":"SELECT 7 AS answer","columns":["answer"],"rows":[{"answer":7}],"row_count":1,"latency_ms":2,"version":"v-test","source_sha":"remote-sha"}`},
+	}}
+
+	output, err := runRemoteRoot(t, &cliEnv{sshRunner: runner}, "remote", "exec", "studio", "SELECT 7 AS answer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output, "SELECT 7 AS answer") || !strings.Contains(output, "7") ||
+		!strings.Contains(output, "help[") {
+		t.Fatalf("remote exec output:\n%s", output)
+	}
+	wantCalls := []sshCall{
+		{target: "dev@example.test", args: []string{"roca", "version", "--json"}},
+		{target: "dev@example.test", args: []string{"roca", "exec", "SELECT 7 AS answer", "--json"}},
+	}
+	if !slices.EqualFunc(runner.calls, wantCalls, func(a, b sshCall) bool {
+		return a.target == b.target && slices.Equal(a.args, b.args)
+	}) {
+		t.Fatalf("ssh calls = %#v, want %#v", runner.calls, wantCalls)
+	}
+
+	runner.replies = []sshReply{
+		remoteVersionReply("v-test"),
+		{stdout: `{"sql":"SELECT 7 AS answer","columns":["answer"],"rows":[{"answer":7}],"row_count":1,"latency_ms":2,"version":"v-test","source_sha":"remote-sha"}`},
+	}
+	doc := mustJSON(t, runRemoteJSON(t, &cliEnv{sshRunner: runner},
+		"remote", "exec", "studio", "SELECT 7 AS answer", "--json"))
+	if doc["row_count"] != float64(1) || doc["version"] != "v-test" {
+		t.Fatalf("remote exec JSON = %#v", doc)
+	}
+}
+
+func TestRemoteExecLeavesReadOnlyRefusalToTheRemoteGate(t *testing.T) {
+	home := t.TempDir()
+	addRemote(t, home, "studio", "dev@example.test")
+	runner := &scriptedSSHRunner{replies: []sshReply{
+		remoteVersionReply("v-test"),
+		{stderr: "error: only SELECT statements are allowed", exitCode: 1},
+	}}
+	env := &cliEnv{sshRunner: runner}
+	output, err := runRemoteRoot(t, env, "remote", "exec", "studio", "DELETE FROM memories")
+	if err == nil || env.code != ExitError || !strings.Contains(err.Error(), "only SELECT statements are allowed") {
+		t.Fatalf("remote gate refusal = code %d err %v output %q", env.code, err, output)
+	}
+}
+
+func TestRemoteVectorQueryBridgesResultsAndPropagatesAnAbsentIndexHonestly(t *testing.T) {
+	home := t.TempDir()
+	addRemote(t, home, "studio", "dev@example.test")
+	runner := &scriptedSSHRunner{replies: []sshReply{
+		remoteVersionReply("v-test"),
+		{stdout: `{"query":"remembered decision","k":3,"model":"embed-test","results":[{"rank":1,"score":0.9,"database":"corpus","table":"memories","id":"4","source":"memories","source_id":"memories/4","text":"A remembered decision"}],"elapsed_ms":4}`},
+	}}
+	output, err := runRemoteRoot(t, &cliEnv{sshRunner: runner},
+		"remote", "vector", "query", "studio", "remembered decision", "3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output, "rows[1]") || !strings.Contains(output, "A remembered decision") ||
+		!strings.Contains(output, "help[") {
+		t.Fatalf("remote vector output:\n%s", output)
+	}
+
+	runner = &scriptedSSHRunner{replies: []sshReply{
+		remoteVersionReply("v-test"),
+		{stderr: "error: vector index is not ready; run `roca vector install`", exitCode: 1},
+	}}
+	env := &cliEnv{sshRunner: runner}
+	_, err = runRemoteRoot(t, env, "remote", "vector", "query", "studio", "remembered decision")
+	if err == nil || env.code != ExitError ||
+		!strings.Contains(err.Error(), "vector index is not ready; run `roca vector install`") {
+		t.Fatalf("absent vector index = code %d err %v", env.code, err)
+	}
+}
+
+func TestRemoteTransportFailuresHaveDistinctExitCodesAndMessages(t *testing.T) {
+	tests := []struct {
+		name     string
+		reply    sshReply
+		wantCode int
+		want     string
+	}{
+		{name: "unreachable", reply: sshReply{stderr: "ssh: connect to host example.test: Connection refused", exitCode: 255},
+			wantCode: ExitRemoteUnreachable, want: "remote studio is unreachable"},
+		{name: "roca missing", reply: sshReply{stderr: "sh: roca: command not found", exitCode: 127},
+			wantCode: ExitRemoteRocaMissing, want: "remote studio does not have roca on PATH"},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			home := t.TempDir()
+			addRemote(t, home, "studio", "dev@example.test")
+			env := &cliEnv{sshRunner: &scriptedSSHRunner{replies: []sshReply{testCase.reply}}}
+			_, err := runRemoteRoot(t, env, "remote", "exec", "studio", "SELECT 1")
+			if err == nil || env.code != testCase.wantCode || !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("failure = code %d err %v, want code %d containing %q",
+					env.code, err, testCase.wantCode, testCase.want)
+			}
+		})
+	}
+}
+
+func TestRemoteTransportExitCodesSurviveTheProductionExecutor(t *testing.T) {
+	home := t.TempDir()
+	addRemote(t, home, "studio", "dev@example.test")
+	t.Setenv("ROCA_READ_ONLY", "1")
+	var output strings.Builder
+	env := hermeticCLIEnv(&cliEnv{
+		build: Build{Version: "v-test", Commit: "local-sha"}, out: &output, errOut: &output,
+		sshRunner: &scriptedSSHRunner{replies: []sshReply{{
+			stderr: "ssh: connect to host example.test: Connection refused", exitCode: 255,
+		}}},
+	})
+	code, err := executeWithEnv(env, []string{"remote", "exec", "studio", "SELECT 1"}, nil)
+	if err == nil || code != ExitRemoteUnreachable {
+		t.Fatalf("production executor = code %d err %v, want %d", code, err, ExitRemoteUnreachable)
+	}
+}
+
+func TestRemoteVersionSkewHasItsOwnExitCode(t *testing.T) {
+	home := t.TempDir()
+	addRemote(t, home, "studio", "dev@example.test")
+	env := &cliEnv{sshRunner: &scriptedSSHRunner{replies: []sshReply{remoteVersionReply("v-other")}}}
+	_, err := runRemoteRoot(t, env, "remote", "exec", "studio", "SELECT 1")
+	if err == nil || env.code != ExitRemoteVersionSkew ||
+		!strings.Contains(err.Error(), "remote studio runs roca v-other; local roca is v-test") {
+		t.Fatalf("version skew = code %d err %v", env.code, err)
+	}
+}
+
+func TestRemoteCrossScatterGathersOnlyInMemory(t *testing.T) {
+	fixture := fixtureInstallation(t)
+	addRemote(t, fixture.home, "studio", "dev@example.test")
+	t.Setenv("ROCA_READ_ONLY", "1")
+	before := databaseSnapshot(t, fixture.home)
+	runner := &scriptedSSHRunner{replies: []sshReply{
+		remoteVersionReply("v-test"),
+		{stdout: `{"sql":"SELECT 7 AS answer","columns":["answer"],"rows":[{"answer":9}],"row_count":1,"latency_ms":1,"version":"v-test","source_sha":"remote-sha"}`},
+	}}
+	env := &cliEnv{sshRunner: runner}
+	output, err := runRemoteRoot(t, env, "remote", "cross", "SELECT 7 AS answer", "--on", "studio")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"rows[2]{origin,answer", "local,7", "studio,9", "help["} {
+		if !strings.Contains(output, want) {
+			t.Errorf("cross output lacks %q:\n%s", want, output)
+		}
+	}
+	after := databaseSnapshot(t, fixture.home)
+	if !equalByteMap(before, after) {
+		t.Fatalf("cross changed a rock: before=%v after=%v", mapKeys(before), mapKeys(after))
+	}
+}
+
+func databaseSnapshot(t *testing.T, root string) map[string][]byte {
+	t.Helper()
+	result := map[string][]byte{}
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || filepath.Ext(path) != ".db" {
+			return nil
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		result[path] = body
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func equalByteMap(left, right map[string][]byte) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for key, value := range left {
+		if !slices.Equal(value, right[key]) {
+			return false
+		}
+	}
+	return true
+}
+
+func mapKeys(values map[string][]byte) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	return keys
+}

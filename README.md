@@ -113,6 +113,21 @@ roca exec "SELECT source_agent, COUNT(*) FROM sessions
 `roca explore` turns the same machinery into a guided investigation.
 [Queries, explore, and the read-only gate.](docs/queries.md)
 
+### Compare rocks across machines
+
+Register an SSH target, run the same gate-approved `SELECT` there, or scatter
+one `SELECT` across local and remote rocks into a temporary in-memory SQLite:
+
+```sh
+roca remote add studio --ssh dev@studio.example
+roca remote exec studio "SELECT COUNT(*) AS sessions FROM sessions"
+roca remote cross "SELECT source_agent, COUNT(*) AS sessions FROM sessions GROUP BY 1" --on studio
+```
+
+SSH configuration owns authentication. La Roca opens no port and adds no sync
+or daemon; remote data calls are plain `ssh <target> roca ... --json` and remain
+read-only. [Remote query details and exit codes.](docs/queries.md#read-only-queries-across-machines)
+
 ## Private by construction
 
 Everything runs on your machine: static binaries, SQLite under `~/.roca`,
