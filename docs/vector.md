@@ -109,11 +109,12 @@ declaration fingerprint, and source fingerprint.
 
 When upgrading from the former central `state/vector.db`, the first worker pass
 reuses compatible corpus and ops embeddings in their owned sidecars before it
-runs the normal delta. Fingerprint mismatches, changed chunking, and content
-that was never present in the central index fall through to embedding; an
-unreadable or incompatible legacy index is ignored and the ordinary build
-continues. The central index is removed only after every declared sidecar has
-completed successfully.
+runs the normal delta, including gaps in sidecars that already contain a
+partial build. Fingerprint mismatches, changed chunking, and content that was
+never present in the central index fall through to embedding; an unreadable or
+incompatible legacy index is ignored and the ordinary build continues. The
+central index is removed only after every declared sidecar has completed
+successfully.
 
 Worker coordination remains under `~/.roca/plugins/roca-vector/state/`
 (`%USERPROFILE%\.roca\plugins\roca-vector\state` on Windows). macOS and Linux

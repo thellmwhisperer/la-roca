@@ -171,6 +171,17 @@ func TestFederatedWorkerReusesLegacyMonolithEmbeddingsBeforeRetiringIt(t *testin
 	if completion.ExitStatus != 0 || completion.Error != "" {
 		t.Fatalf("federated worker completion = %+v", completion)
 	}
+	recordedRaw, err := os.ReadFile(filepath.Join(state, CompletionFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var recorded Completion
+	if err := json.Unmarshal(recordedRaw, &recorded); err != nil {
+		t.Fatal(err)
+	}
+	if recorded.ExitStatus != 0 || recorded.FinishedAt.IsZero() {
+		t.Fatalf("recorded worker completion = %+v", recorded)
+	}
 	if got := len(flattenInputs(embedder.inputs)); got != 1 {
 		t.Fatalf("federated migration embedded %d inputs, want only the changed session text", got)
 	}
@@ -190,6 +201,38 @@ func TestFederatedWorkerReusesLegacyMonolithEmbeddingsBeforeRetiringIt(t *testin
 			t.Fatalf("migrated sidecar %s metadata = %+v", owner, metadata)
 		}
 	}
+	t.Logf("legacy migration: reused=%d embedded=%d sidecars=roca-corpus/corpus,roca-ops/ops completion=ready legacy=removed",
+		completion.Delta.Unchanged, len(flattenInputs(embedder.inputs)))
+}
+
+func TestFederatedWorkerKeepsLegacyMonolithUntilEveryDeclaredSidecarCompletes(t *testing.T) {
+	federation, corpusPath, opsPath, _ := federationFixture(t)
+	federation.databases = append(federation.databases, vectorDatabase{
+		Plugin: "fixture", Database: "missing", Path: "missing.db", Alias: "plugin_fixture_missing",
+		Tables: []vectorTable{{Name: "records", IDColumn: "id", TextColumns: []string{"content"}}},
+	})
+	state := t.TempDir()
+	legacy := filepath.Join(state, DatabaseFilename)
+	if err := os.WriteFile(legacy, []byte("legacy central index"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	completion := (FederatedWorker{Federation: federation, DataDir: state}).Run(context.Background())
+	if completion.ExitStatus == 0 || !strings.Contains(completion.Error, "fixture/missing") {
+		t.Fatalf("federated worker completion = %+v, want the missing declared database failure", completion)
+	}
+	if _, err := os.Stat(legacy); err != nil {
+		t.Fatalf("legacy central index was retired before every sidecar completed: %v", err)
+	}
+	for path, owner := range map[string]string{
+		SidecarPath(corpusPath): "roca-corpus/corpus",
+		SidecarPath(opsPath):    "roca-ops/ops",
+	} {
+		if metadata := sidecarMeta(t, path); metadata["owner"] != owner {
+			t.Fatalf("completed sidecar metadata = %+v, want owner %s", metadata, owner)
+		}
+	}
+	t.Logf("partial federation failure: completed=roca-corpus/corpus,roca-ops/ops failed=fixture/missing legacy=retained")
 }
 
 func TestFederationTargetedDeltaPreservesOtherTablesAndCorpusQueryCompatibility(t *testing.T) {
