@@ -70,8 +70,12 @@ A first smoke query after the index is ready:
 
 ```sh
 roca vector query "what did we decide" 10
+roca vector query --databases corpus,ops "what did we decide" 10
 ```
 
-`k` is optional (default 10) and capped at 100. Hits print rank, score,
-source table, source id, and a text preview. This checks the corpus sidecar;
-the search loop itself is in `roca-operations`.
+`k` is optional (default 10) and capped at 100. The default route searches the
+corpus sidecar; `--databases` follows `roca query` selection. Same-model
+sidecars merge into one top-N, while mixed-model results stay grouped per
+database with a notice. Hits carry database, table, id, score, and a text
+preview. A missing sidecar or unavailable model leaves that database FTS-only.
+The hybrid search loop itself is in `roca-operations`.

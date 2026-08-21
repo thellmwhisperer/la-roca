@@ -151,6 +151,143 @@ func TestFederationTargetedDeltaPreservesOtherTablesAndCorpusQueryCompatibility(
 	}
 }
 
+func TestFederationQueryFansOutWithRoutingAndTaggedMergedHits(t *testing.T) {
+	federation, _, opsPath, embedder := federationFixture(t)
+	if _, err := federation.Ingest(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
+
+	queryCalls := len(embedder.inputs)
+	result, err := federation.Query(context.Background(), "remembered decision", 10, "all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.MixedModels || result.Model != DefaultModel || len(result.DatabaseResults) != 0 {
+		t.Fatalf("same-model federation result = %+v", result)
+	}
+	if len(embedder.inputs) != queryCalls+1 {
+		t.Fatalf("same-model fan-out made %d query embedding calls, want 1",
+			len(embedder.inputs)-queryCalls)
+	}
+	seen := map[string]bool{}
+	for rank, hit := range result.Results {
+		if hit.Rank != rank+1 || hit.Database == "" || hit.Table == "" || hit.ID == "" {
+			t.Fatalf("untagged or unranked federated hit = %+v", hit)
+		}
+		seen[hit.Database] = true
+	}
+	if !seen["corpus"] || !seen["ops"] {
+		t.Fatalf("federated databases in merged hits = %v", seen)
+	}
+
+	defaultResult, err := federation.Query(context.Background(), "remembered", 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, hit := range defaultResult.Results {
+		if hit.Database != "corpus" {
+			t.Fatalf("default vector route returned %+v", hit)
+		}
+	}
+	opsResult, err := federation.Query(context.Background(), "decision", 10, "ops")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, hit := range opsResult.Results {
+		if hit.Database != "ops" {
+			t.Fatalf("explicit ops route returned %+v", hit)
+		}
+	}
+	ftsOnly, err := federation.Query(context.Background(), "journey", 10, "cron")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ftsOnly.Results) != 0 || !strings.Contains(strings.Join(ftsOnly.Notices, "\n"),
+		"database cron has no vector declaration") {
+		t.Fatalf("undeclared database route = %+v", ftsOnly)
+	}
+	if _, err := federation.Query(context.Background(), "decision", 10, "missing"); err == nil ||
+		!strings.Contains(err.Error(), "attached databases: core, corpus, ops, cron") {
+		t.Fatalf("unknown vector database = %v", err)
+	}
+
+	if err := os.Remove(SidecarPath(opsPath)); err != nil {
+		t.Fatal(err)
+	}
+	fallback, err := federation.Query(context.Background(), "remembered", 10, "all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(fallback.Notices, "\n"), "database ops") ||
+		!strings.Contains(strings.Join(fallback.Notices, "\n"), "FTS-only") {
+		t.Fatalf("missing-sidecar notices = %q", fallback.Notices)
+	}
+	for _, hit := range fallback.Results {
+		if hit.Database != "corpus" {
+			t.Fatalf("missing-sidecar fallback returned %+v", hit)
+		}
+	}
+}
+
+func TestFederationQueryKeepsMixedModelsPerDatabaseAndFailsSoftWithoutModel(t *testing.T) {
+	federation, _, opsPath, embedder := federationFixture(t)
+	if _, err := federation.Ingest(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
+	ops := openTestSQLite(t, SidecarPath(opsPath))
+	if _, err := ops.Exec(`UPDATE meta SET value='synthetic-embed-v2' WHERE key='model'`); err != nil {
+		ops.Close()
+		t.Fatal(err)
+	}
+	if err := ops.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	queryCalls := len(embedder.inputs)
+	result, err := federation.Query(context.Background(), "remembered decision", 10, "all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.MixedModels || len(result.Results) != 0 || len(result.DatabaseResults) != 2 {
+		t.Fatalf("mixed-model federation result = %+v", result)
+	}
+	if len(embedder.inputs) != queryCalls+2 {
+		t.Fatalf("mixed-model fan-out made %d query embedding calls, want 2",
+			len(embedder.inputs)-queryCalls)
+	}
+	if !strings.Contains(strings.Join(result.Notices, "\n"), "not merged") {
+		t.Fatalf("mixed-model notices = %q", result.Notices)
+	}
+	for _, database := range result.DatabaseResults {
+		if database.Database == "" || database.Model == "" || len(database.Results) == 0 {
+			t.Fatalf("mixed-model database result = %+v", database)
+		}
+		for _, hit := range database.Results {
+			if hit.Database != database.Database || hit.Table == "" || hit.ID == "" {
+				t.Fatalf("mixed-model tagged hit = %+v", hit)
+			}
+		}
+	}
+
+	federation.Embedder = unavailableEmbedder{}
+	fallback, err := federation.Query(context.Background(), "remembered decision", 10, "all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fallback.Results) != 0 || len(fallback.DatabaseResults) != 0 ||
+		!strings.Contains(strings.Join(fallback.Notices, "\n"), "continuing with FTS-only") {
+		t.Fatalf("model-unavailable fallback = %+v", fallback)
+	}
+}
+
+type unavailableEmbedder struct{}
+
+func (unavailableEmbedder) Pull(context.Context, string) error { return nil }
+
+func (unavailableEmbedder) Embed(context.Context, string, []string) ([][]float32, error) {
+	return nil, fmt.Errorf("model is not installed")
+}
+
 func TestFederationRejectsSidecarDatabaseCollisionsAndUnownedFiles(t *testing.T) {
 	collision := vectorRegistry{Schema: 1, Databases: []vectorDatabase{
 		{Plugin: "fixture", Database: "records", Path: "records.db", Alias: "records",
@@ -251,6 +388,10 @@ func federationFixture(t *testing.T) (Federation, string, string, *recordingEmbe
 				Chunking: &chunkingHints{MaxChars: intPointer(24), OverlapChars: intPointer(4)}}}},
 		{Plugin: "roca-ops", Database: "ops", Path: "roca-ops.db", Alias: "plugin_roca_ops",
 			Tables: []vectorTable{{Name: "memories", IDColumn: "id", TextColumns: []string{"content"}}}},
+	}, Routes: []vectorRoute{
+		{Plugin: "roca-corpus", Database: "corpus", Alias: "plugin_roca_corpus", Source: "plugin:roca-corpus"},
+		{Plugin: "roca-ops", Database: "ops", Alias: "plugin_roca_ops", Source: "plugin:roca-ops"},
+		{Plugin: "roca-cron", Database: "cron", Alias: "plugin_roca_cron", Source: "plugin:roca-cron"},
 	}})
 
 	runner := sqliteExecRunner(t, map[string]string{
