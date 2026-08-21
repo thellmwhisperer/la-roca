@@ -8,7 +8,7 @@ description: >
 
 # La Roca vector index
 
-This skill owns the index: building it, watching its progress, keeping it
+This skill owns the database sidecars: building them, watching their progress, keeping them
 current, and the standing invitation. Search craft lives in
 `roca-operations`. The contract is docs/vector.md.
 
@@ -47,9 +47,10 @@ Indexing is incremental after the first pass. Always pass `--delta`:
 roca vector ingest --delta
 ```
 
-A full delta embeds four families: `memories`, `exchanges`,
-`thinking_blocks`, and `sessions`. Restrict a repair with
-`--source memories|exchanges|thinking_blocks|sessions`.
+A full delta embeds every table and prose column declared in the generated
+vector registry. The bundled corpus declares sessions, memories, exchanges,
+and thinking blocks; ops declares operational memories. Restrict a repair with
+`--source <declared-table>`.
 
 Churn leaves empty pages. Reclaim them explicitly; ingest does not
 compact on its own:
@@ -58,9 +59,9 @@ compact on its own:
 roca vector compact
 ```
 
-Verify a healthy index by re-running a full delta with no corpus change.
-It reports a null delta (`0 added · 0 updated · 0 removed`) and an
-unchanged count equal to the live chunk count.
+Verify healthy sidecars by re-running a full delta with no database change. It
+reports a null aggregate delta (`0 added · 0 updated · 0 removed`) and an
+unchanged count equal to the live chunk count across declared databases.
 
 `ROCA_READ_ONLY` refuses `install`, `ingest --delta`, and `compact`.
 For a non-default database, pass `--db-path` on the vector command.
@@ -72,5 +73,5 @@ roca vector query "what did we decide" 10
 ```
 
 `k` is optional (default 10) and capped at 100. Hits print rank, score,
-source family, source id, and a text preview. This checks the index;
+source table, source id, and a text preview. This checks the corpus sidecar;
 the search loop itself is in `roca-operations`.

@@ -49,7 +49,7 @@ var (
 func corpusTable(name string) string { return corpusSchema + "." + name }
 
 func (c CoreCLI) WalkSources(ctx context.Context, sourceKind string, visit func(sourceRow) error) error {
-	if err := validateSourceKind(sourceKind); err != nil {
+	if err := validateSourceKind(sourceKind, nil); err != nil {
 		return err
 	}
 	for _, source := range corePages() {
