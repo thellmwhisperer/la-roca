@@ -234,7 +234,10 @@ func TestFederationQueryUsesTheCoreRuntimeInventory(t *testing.T) {
 	if _, err := federation.Ingest(context.Background(), ""); err != nil {
 		t.Fatal(err)
 	}
-	federation.Core.Run = databaseScopeRunner(federation.Core.Run, []string{"core", "corpus"})
+	federation.Core.Run = databaseScopeRunner(federation.Core.Run, []DatabaseSelection{
+		{Source: "core", Database: "core"},
+		{Source: "plugin:roca-corpus", Database: "corpus"},
+	})
 	result, err := federation.Query(context.Background(), "remembered decision", 10, "all")
 	if err != nil {
 		t.Fatal(err)
@@ -246,6 +249,63 @@ func TestFederationQueryUsesTheCoreRuntimeInventory(t *testing.T) {
 		if hit.Database != "corpus" {
 			t.Fatalf("feature-gated database escaped runtime inventory: %+v", hit)
 		}
+	}
+}
+
+func TestFederationQueryFansOutDuplicateCanonicalNamesBySource(t *testing.T) {
+	root := t.TempDir()
+	firstDir := filepath.Join(root, "fixture-first")
+	secondDir := filepath.Join(root, "fixture-second")
+	for _, directory := range []string{firstDir, secondDir} {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	firstPath := filepath.Join(firstDir, "first.db")
+	secondPath := filepath.Join(secondDir, "second.db")
+	createSourceDatabase(t, firstPath, `
+		CREATE TABLE records(id TEXT PRIMARY KEY,body TEXT);
+		INSERT INTO records VALUES ('first-id','alpha first body');`)
+	createSourceDatabase(t, secondPath, `
+		CREATE TABLE records(id TEXT PRIMARY KEY,body TEXT);
+		INSERT INTO records VALUES ('second-id','alpha second body');`)
+	writeRegistry(t, root, vectorRegistry{Schema: 1, Databases: []vectorDatabase{
+		{Plugin: "fixture-first", Database: "shared", Path: "first.db", Alias: "plugin_fixture_first",
+			Tables: []vectorTable{{Name: "records", IDColumn: "id", TextColumns: []string{"body"}}}},
+		{Plugin: "fixture-second", Database: "shared", Path: "second.db", Alias: "plugin_fixture_second",
+			Tables: []vectorTable{{Name: "records", IDColumn: "id", TextColumns: []string{"body"}}}},
+	}, Routes: []vectorRoute{
+		{Plugin: "fixture-first", Database: "shared", Alias: "plugin_fixture_first", Source: "plugin:fixture-first"},
+		{Plugin: "fixture-second", Database: "shared", Alias: "plugin_fixture_second", Source: "plugin:fixture-second"},
+	}})
+	runner := sqliteExecRunner(t, map[string]string{
+		"plugin_fixture_first":  firstPath,
+		"plugin_fixture_second": secondPath,
+	})
+	runner = databaseScopeRunner(runner, []DatabaseSelection{
+		{Source: "core", Database: "core"},
+		{Source: "plugin:fixture-first", Database: "shared"},
+		{Source: "plugin:fixture-second", Database: "shared"},
+	})
+	federation, err := LoadFederation(CoreCLI{Executable: "roca", Run: runner}, root,
+		DefaultModel, "v-test", &recordingEmbedder{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := federation.Ingest(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
+	result, err := federation.Query(context.Background(), "alpha", 10, "all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, hit := range result.Results {
+		seen[hit.ID] = true
+	}
+	if strings.Join(result.Databases, ",") != "core,shared,shared" ||
+		!seen["first-id"] || !seen["second-id"] {
+		t.Fatalf("duplicate-name federated query = %+v", result)
 	}
 }
 
@@ -418,7 +478,12 @@ func federationFixture(t *testing.T) (Federation, string, string, *recordingEmbe
 		"plugin_roca_corpus": corpusPath,
 		"plugin_roca_ops":    opsPath,
 	})
-	runner = databaseScopeRunner(runner, []string{"core", "corpus", "ops", "cron"})
+	runner = databaseScopeRunner(runner, []DatabaseSelection{
+		{Source: "core", Database: "core"},
+		{Source: "plugin:roca-corpus", Database: "corpus"},
+		{Source: "plugin:roca-ops", Database: "ops"},
+		{Source: "plugin:roca-cron", Database: "cron"},
+	})
 	embedder := &recordingEmbedder{}
 	federation, err := LoadFederation(CoreCLI{Executable: "roca", Run: runner}, root,
 		DefaultModel, "v-test", embedder, nil)
@@ -428,7 +493,7 @@ func federationFixture(t *testing.T) (Federation, string, string, *recordingEmbe
 	return federation, corpusPath, opsPath, embedder
 }
 
-func databaseScopeRunner(next CommandRunner, attached []string) CommandRunner {
+func databaseScopeRunner(next CommandRunner, attached []DatabaseSelection) CommandRunner {
 	return func(ctx context.Context, executable string, args ...string) ([]byte, error) {
 		command := -1
 		for index, argument := range args {
@@ -447,12 +512,15 @@ func databaseScopeRunner(next CommandRunner, attached []string) CommandRunner {
 				break
 			}
 		}
-		selected := []string{}
+		selected := []DatabaseSelection{}
 		switch strings.TrimSpace(raw) {
 		case "":
 			for _, name := range []string{"core", "corpus"} {
-				if containsString(attached, name) {
-					selected = append(selected, name)
+				for _, database := range attached {
+					if database.Database == name {
+						selected = append(selected, database)
+						break
+					}
 				}
 			}
 		case "all":
@@ -460,16 +528,32 @@ func databaseScopeRunner(next CommandRunner, attached []string) CommandRunner {
 		default:
 			for _, name := range strings.Split(raw, ",") {
 				name = strings.TrimSpace(name)
-				if !containsString(attached, name) {
-					return nil, fmt.Errorf("unknown database %q; attached databases: %s",
-						name, strings.Join(attached, ", "))
+				matched := false
+				for _, database := range attached {
+					if database.Database != name && database.Source != name {
+						continue
+					}
+					selected = append(selected, database)
+					matched = true
+					break
 				}
-				if !containsString(selected, name) {
-					selected = append(selected, name)
+				if !matched {
+					available := make([]string, 0, len(attached))
+					for _, database := range attached {
+						if !containsString(available, database.Database) {
+							available = append(available, database.Database)
+						}
+					}
+					return nil, fmt.Errorf("unknown database %q; attached databases: %s",
+						name, strings.Join(available, ", "))
 				}
 			}
 		}
-		return json.Marshal(DatabaseScope{Databases: selected})
+		databases := make([]string, 0, len(selected))
+		for _, database := range selected {
+			databases = append(databases, database.Database)
+		}
+		return json.Marshal(DatabaseScope{Databases: databases, Selected: selected})
 	}
 }
 

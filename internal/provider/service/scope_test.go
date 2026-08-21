@@ -115,8 +115,32 @@ func TestResolveDatabaseScopeUsesTheFeatureGatedRuntimeInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !stringSlicesEqual(scope.Databases, []string{"core", "corpus"}) ||
-		!stringSlicesEqual(scope.Warnings, []string{"synthetic inventory warning"}) {
+		!stringSlicesEqual(scope.Warnings, []string{"synthetic inventory warning"}) ||
+		len(scope.Selected) != 2 || scope.Selected[1].Source != "plugin:roca-corpus" {
 		t.Fatalf("runtime database scope = %+v", scope)
+	}
+}
+
+func TestResolveDatabaseScopeKeepsDuplicateCanonicalNamesBySource(t *testing.T) {
+	first := plugin.Database{Descriptor: plugin.Descriptor{
+		Name: "fixture-first", DatabaseName: "shared", Schema: "plugin_fixture_first",
+	}}
+	second := plugin.Database{Descriptor: plugin.Descriptor{
+		Name: "fixture-second", DatabaseName: "shared", Schema: "plugin_fixture_second",
+	}}
+	svc := Service{
+		opts:     Options{CorpusEnabled: true},
+		resident: []plugin.Database{first, second},
+	}
+	scope, err := svc.ResolveDatabaseScope(t.Context(), []string{ScopeAll})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stringSlicesEqual(scope.Databases, []string{"core", "shared", "shared"}) ||
+		len(scope.Selected) != 3 ||
+		scope.Selected[1] != (DatabaseSelection{Source: "plugin:fixture-first", Database: "shared"}) ||
+		scope.Selected[2] != (DatabaseSelection{Source: "plugin:fixture-second", Database: "shared"}) {
+		t.Fatalf("duplicate-name database scope = %+v", scope)
 	}
 }
 

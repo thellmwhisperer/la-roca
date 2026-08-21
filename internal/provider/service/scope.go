@@ -17,9 +17,15 @@ const (
 )
 
 type DatabaseScope struct {
-	Databases        []string `json:"databases"`
-	OmittedDatabases []string `json:"omitted_databases,omitempty"`
-	Warnings         []string `json:"warnings,omitempty"`
+	Databases        []string            `json:"databases"`
+	Selected         []DatabaseSelection `json:"selected"`
+	OmittedDatabases []string            `json:"omitted_databases,omitempty"`
+	Warnings         []string            `json:"warnings,omitempty"`
+}
+
+type DatabaseSelection struct {
+	Source   string `json:"source"`
+	Database string `json:"database"`
 }
 
 // ParseDatabaseList splits the --databases value. Empty means the default
@@ -113,8 +119,20 @@ func (s *Service) ResolveDatabaseScope(ctx context.Context, names []string) (Dat
 	if err != nil {
 		return DatabaseScope{}, err
 	}
+	databases := make([]string, 0, len(route.databases)+1)
+	selected := make([]DatabaseSelection, 0, len(route.databases)+1)
+	if route.includeCore {
+		databases = append(databases, ScopeCore)
+		selected = append(selected, DatabaseSelection{Source: ScopeCore, Database: ScopeCore})
+	}
+	for _, database := range route.databases {
+		name := scopeName(database)
+		databases = append(databases, name)
+		selected = append(selected, DatabaseSelection{Source: database.Source(), Database: name})
+	}
 	return DatabaseScope{
-		Databases:        attachedNames(route.includeCore, route.databases),
+		Databases:        databases,
+		Selected:         selected,
 		OmittedDatabases: route.omittedSources(),
 		Warnings:         slices.Clone(route.warnings),
 	}, nil

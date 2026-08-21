@@ -81,13 +81,17 @@ func TestCoreCLIResolvesDatabaseScopeThroughRoca(t *testing.T) {
 			}) {
 				t.Fatalf("database scope command = %q %q", executable, args)
 			}
-			return []byte(`{"databases":["core","corpus"],"omitted_databases":["plugin:extra"],"warnings":["attachment limit"]}`), nil
+			return []byte(`{"databases":["core","corpus"],"selected":[{"source":"core","database":"core"},{"source":"plugin:roca-corpus","database":"corpus"}],"omitted_databases":["plugin:extra"],"warnings":["attachment limit"]}`), nil
 		}}
 	scope, err := core.ResolveDatabaseScope(context.Background(), "all")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(scope.Databases, []string{"core", "corpus"}) ||
+		!slices.Equal(scope.Selected, []DatabaseSelection{
+			{Source: "core", Database: "core"},
+			{Source: "plugin:roca-corpus", Database: "corpus"},
+		}) ||
 		!slices.Equal(scope.OmittedDatabases, []string{"plugin:extra"}) ||
 		!slices.Equal(scope.Warnings, []string{"attachment limit"}) {
 		t.Fatalf("database scope = %+v", scope)

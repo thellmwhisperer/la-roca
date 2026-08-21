@@ -24,9 +24,15 @@ type CoreCLI struct {
 }
 
 type DatabaseScope struct {
-	Databases        []string `json:"databases"`
-	OmittedDatabases []string `json:"omitted_databases,omitempty"`
-	Warnings         []string `json:"warnings,omitempty"`
+	Databases        []string            `json:"databases"`
+	Selected         []DatabaseSelection `json:"selected"`
+	OmittedDatabases []string            `json:"omitted_databases,omitempty"`
+	Warnings         []string            `json:"warnings,omitempty"`
+}
+
+type DatabaseSelection struct {
+	Source   string `json:"source"`
+	Database string `json:"database"`
 }
 
 type execResult struct {
@@ -112,6 +118,9 @@ func (c CoreCLI) ResolveDatabaseScope(ctx context.Context, databases string) (Da
 	}
 	if result.Databases == nil {
 		result.Databases = []string{}
+	}
+	if result.Selected == nil {
+		result.Selected = []DatabaseSelection{}
 	}
 	return result, nil
 }

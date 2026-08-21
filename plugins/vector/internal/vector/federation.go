@@ -254,8 +254,8 @@ func (f Federation) Query(ctx context.Context, text string, k int, databaseList 
 	if err != nil {
 		return result, err
 	}
-	selected, routed, notices := f.queryDatabases(scope.Databases)
-	result.Databases = append(result.Databases, routed...)
+	selected, notices := f.queryDatabases(scope.Selected)
+	result.Databases = append(result.Databases, scope.Databases...)
 	result.Notices = append(result.Notices, scope.Warnings...)
 	result.Notices = append(result.Notices, notices...)
 	targets := make([]queryTarget, 0, len(selected))
@@ -406,36 +406,27 @@ func querySidecarState(path, owner string) (string, int, error) {
 	return metadata["model"], dimensions, nil
 }
 
-func (f Federation) queryDatabases(names []string) ([]vectorDatabase, []string, []string) {
-	selected := make([]vectorDatabase, 0, len(names))
-	var routed, notices []string
+func (f Federation) queryDatabases(selections []DatabaseSelection) ([]vectorDatabase, []string) {
+	selected := make([]vectorDatabase, 0, len(selections))
+	var notices []string
 	seen := map[string]bool{}
-	for _, name := range names {
-		if name == "core" {
-			if !containsString(routed, "core") {
-				routed = append(routed, "core")
-			}
+	for _, selection := range selections {
+		if selection.Source == "core" {
 			notices = append(notices, "database core has no vector declaration; continuing with FTS-only")
 			continue
 		}
 		var matched *vectorRoute
 		for index := range f.routes {
-			if f.routes[index].Database != name {
+			if !routeMatchesSelection(f.routes[index], selection) {
 				continue
 			}
 			matched = &f.routes[index]
 			break
 		}
 		if matched == nil {
-			if !containsString(routed, name) {
-				routed = append(routed, name)
-			}
 			notices = append(notices, fmt.Sprintf(
-				"database %s has no vector declaration; continuing with FTS-only", name))
+				"database %s has no vector declaration; continuing with FTS-only", selection.Database))
 			continue
-		}
-		if !containsString(routed, matched.Database) {
-			routed = append(routed, matched.Database)
 		}
 		database, ok := f.vectorDatabaseForRoute(*matched)
 		if !ok {
@@ -448,7 +439,18 @@ func (f Federation) queryDatabases(names []string) ([]vectorDatabase, []string, 
 			seen[database.owner()] = true
 		}
 	}
-	return selected, routed, notices
+	return selected, notices
+}
+
+func routeMatchesSelection(route vectorRoute, selection DatabaseSelection) bool {
+	if route.Source == selection.Source && route.Database == selection.Database {
+		return true
+	}
+	if route.Database != selection.Database {
+		return false
+	}
+	return selection.Source == "plugin:"+route.Plugin ||
+		selection.Source == "plugin:"+route.Plugin+"/"+route.Database
 }
 
 func (f Federation) vectorDatabaseForRoute(route vectorRoute) (vectorDatabase, bool) {
