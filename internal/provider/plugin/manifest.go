@@ -205,13 +205,13 @@ func (m Manifest) Valid() error {
 	}
 
 	declarations := make(map[string]DatabaseDeclaration, len(m.Databases))
-	paths := make(map[string]bool, len(m.Databases))
+	paths := make(map[string]string, len(m.Databases))
 	aliases := make(map[string]bool, len(m.Databases))
 	for _, database := range m.Databases {
 		if !validIdentifier(database.Name) || declarations[database.Name].Name != "" {
 			return fmt.Errorf("%s has invalid or repeated database name %q", PackageFilename, database.Name)
 		}
-		if !safeManifestFile(database.Path) || paths[database.Path] {
+		if !safeManifestFile(database.Path) || paths[database.Path] != "" {
 			return fmt.Errorf("%s has invalid or repeated database path %q", PackageFilename, database.Path)
 		}
 		extension := strings.ToLower(filepath.Ext(database.Path))
@@ -228,7 +228,7 @@ func (m Manifest) Valid() error {
 		if strings.TrimSpace(database.Retention) == "" {
 			return fmt.Errorf("database %s has no plugin-owned retention policy", database.Name)
 		}
-		declarations[database.Name], paths[database.Path], aliases[database.Alias] = database, true, true
+		declarations[database.Name], paths[database.Path], aliases[database.Alias] = database, database.Name, true
 	}
 
 	semantics := make(map[string]bool, len(m.Semantic.Databases))
@@ -263,6 +263,15 @@ func (m Manifest) Valid() error {
 	if m.Vector != nil {
 		if err := m.Vector.valid(declarations, semanticTables); err != nil {
 			return err
+		}
+		for _, database := range m.Vector.Databases {
+			declaration := declarations[database.Database]
+			extension := filepath.Ext(declaration.Path)
+			sidecar := strings.TrimSuffix(declaration.Path, extension) + ".vector" + extension
+			if collision := paths[sidecar]; collision != "" {
+				return fmt.Errorf("vector sidecar for database %q at %q collides with database %q",
+					database.Database, sidecar, collision)
+			}
 		}
 	}
 
