@@ -81,16 +81,22 @@ func WriteRecords(ctx context.Context, tx *sql.Tx, layers layerResolver,
 	return writeRecords(ctx, tx, layers, nil, records)
 }
 
+// WriteSessions writes normalized conversations without the memory-specific
+// dependencies used by WriteRecords. The public corpus writer and ingest both
+// enter the same session insert path through this seam.
+func WriteSessions(ctx context.Context, tx *sql.Tx,
+	sessions []parsers.Session) (Counts, error) {
+	return (&writer{tx: tx}).sessions(ctx, sessions)
+}
+
 func writeRecords(ctx context.Context, tx *sql.Tx, layers layerResolver,
 	hermesReservedMemories *sql.DB, records parsers.Records) (Counts, error) {
 	w := &writer{tx: tx, layers: layers, hermesReservedMemories: hermesReservedMemories}
 	var counts Counts
-	for _, session := range records.Sessions {
-		written, err := w.session(ctx, session)
-		if err != nil {
-			return counts, err
-		}
-		counts.add(written)
+	written, err := w.sessions(ctx, records.Sessions)
+	counts.add(written)
+	if err != nil {
+		return counts, err
 	}
 	for _, memory := range records.Memories {
 		written, err := w.memory(ctx, memory)
@@ -101,6 +107,18 @@ func writeRecords(ctx context.Context, tx *sql.Tx, layers layerResolver,
 	}
 	if err := w.supersedeVanishedHermesBlocks(ctx, records.ObservedMemoryFiles, records.Memories, &counts); err != nil {
 		return counts, err
+	}
+	return counts, nil
+}
+
+func (w *writer) sessions(ctx context.Context, sessions []parsers.Session) (Counts, error) {
+	var counts Counts
+	for _, session := range sessions {
+		written, err := w.session(ctx, session)
+		if err != nil {
+			return counts, err
+		}
+		counts.add(written)
 	}
 	return counts, nil
 }
