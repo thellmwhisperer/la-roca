@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
+	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 )
 
 func TestDeclaredClaudeWebExportIsIncrementalAndIdempotent(t *testing.T) {

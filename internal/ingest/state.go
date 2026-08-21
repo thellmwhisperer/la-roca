@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
+	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 )
 
 // Ingest idempotency has two levels because one is not enough.

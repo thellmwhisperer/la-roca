@@ -367,7 +367,7 @@ data.
    measurement**. A fixture not traceable to that measured shape is invalid; if
    no populated real store is available, do not guess the format.
 1. Read `docs/agent-parsers.md` and copy a synthetic worked-example folder under
-   `internal/ingest/parsers/testdata/conformance/`.
+   `pkg/parsers/testdata/conformance/`.
 2. Add one parser file implementing `Detect` and `Parse`; declare whether its
    output belongs to the conversation corpus, the distilled-memory store, or
    both. File encoding is an implementation detail, never the destination.
@@ -375,10 +375,10 @@ data.
    known by the ingestion surface, never discovered in JSON; keep the model
    exactly as the source recorded it and empty when the source recorded none.
    Then run
-   `go test ./internal/ingest/parsers -run TestRegisteredParsersConform`, then
-   `ROCA_REAL_HARVEST=1 go test -v ./internal/ingest/parsers -run TestRegisteredParsersHarvestPresentAgentStores`
+   `go test ./pkg/parsers -run TestRegisteredParsersConform`, then
+   `ROCA_REAL_HARVEST=1 go test -v ./pkg/parsers -run TestRegisteredParsersHarvestPresentAgentStores`
    on a machine where that agent is installed (the smoke reads private stores, so
-   it stays out of the shared gate), `go test ./internal/ingest/parsers` and
+   it stays out of the shared gate), `go test ./pkg/parsers` and
    `make check`.
 4. Open a pull request with the synthetic fixture, parser, and registry line.
    Include the real-harvest yield summary; do not attach or quote the real source

@@ -276,7 +276,7 @@ func TestChatGPTWebSnorlaxBecomesVirtualProjectAndCustomGPTDoesNot(t *testing.T)
 
 func parseChatGPTWebFixture(t *testing.T, fixture string) Records {
 	t.Helper()
-	path := filepath.Join("..", "testdata", fixture)
+	path := filepath.Join("..", "..", "internal", "ingest", "testdata", fixture)
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

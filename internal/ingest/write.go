@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
+	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 
 	sqlite "modernc.org/sqlite"
 )
