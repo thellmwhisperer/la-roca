@@ -157,12 +157,13 @@ roca update
 Update resolves the selected release, verifies its checksum, runs the staged
 binary's version check, and swaps it into place by rename. The swapped binary
 then refreshes every shipped plugin payload exactly as installation does. Data
-plugins keep the databases they already own; vector is replaced from the same
-core release while its manifest-owned `state/` directory is preserved byte for
-byte. An unowned or externally sourced vector installation is named and left
-untouched instead of being overwritten. Existing data, configuration and agent
-integrations remain in place. If bundled placement or verification fails, the
-previous core remains active.
+plugins keep the databases and adjacent vector sidecars they already own;
+`roca-vector` is replaced from the same core release while its manifest-owned
+worker `state/` directory is preserved byte for byte. An unowned or externally
+sourced vector installation is named and left untouched instead of being
+overwritten. Existing data, configuration and agent integrations remain in
+place. If bundled placement or verification fails, the previous core remains
+active.
 
 The `roca`, `roca-operations`, and `roca-vector` skills, the generated
 `roca-semantica` catalog skill, `prompt.md`, and

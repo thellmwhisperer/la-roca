@@ -105,6 +105,20 @@
       }
     ]
   },
+  "vector": {
+    "databases": [
+      {
+        "database": "ops",
+        "tables": [
+          {
+            "name": "memories",
+            "id_column": "id",
+            "text_columns": ["content"]
+          }
+        ]
+      }
+    ]
+  },
   "verbs": [
     {
       "name": "store",

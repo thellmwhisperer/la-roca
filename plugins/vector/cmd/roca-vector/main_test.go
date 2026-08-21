@@ -221,6 +221,20 @@ func TestDefaultStateDirUsesThePluginIdentity(t *testing.T) {
 	}
 }
 
+func TestVectorRegistryRemainsHomeScopedForACustomCoreDatabase(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ROCA_VECTOR_PLUGIN_ROOT", "")
+	env := &environment{dbPath: filepath.Join(t.TempDir(), "custom.db")}
+	root, err := env.resolvePluginRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(home, ".roca", "plugins"); root != want {
+		t.Fatalf("vector registry root = %q, want %q", root, want)
+	}
+}
+
 func TestWorkerCarriesExplicitCoreAndStatePaths(t *testing.T) {
 	got := workerArguments("/synthetic/roca.db", "/synthetic/state", "synthetic-model")
 	want := []string{"--state-dir", "/synthetic/state", "--db-path", "/synthetic/roca.db",

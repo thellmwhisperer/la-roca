@@ -117,6 +117,20 @@ func TestVectorManifestValidationKeepsEmbeddabilityExplicitAndActionable(t *test
 		table.Chunking == nil || *table.Chunking.MaxChars != 4000 || *table.Chunking.OverlapChars != 400 {
 		t.Fatalf("vector table = %+v", table)
 	}
+	collision := manifest
+	collision.Databases = append(slices.Clone(manifest.Databases), plugin.DatabaseDeclaration{
+		Name: "existing_sidecar", Path: "records.vector.db", Alias: "plugin_synthetic_existing_sidecar",
+		Attachment: plugin.AttachmentResident, Retention: "The plugin retains the non-vectorized database.",
+	})
+	collision.Semantic.Databases = append(slices.Clone(manifest.Semantic.Databases), plugin.DatabaseSemantic{
+		Database: "existing_sidecar", Description: "Non-vectorized records.",
+		Questions: []string{"Which non-vectorized records exist?"},
+		Tables:    []plugin.SemanticTable{{Name: "entries", Description: "One entry.", Columns: []string{"id"}}},
+	})
+	collision.Vector = nil
+	if err := collision.Valid(); err == nil || !strings.Contains(err.Error(), "collides") {
+		t.Fatalf("manifest sidecar collision passed with %v", err)
+	}
 
 	tests := []struct {
 		name string

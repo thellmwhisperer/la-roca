@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,21 @@ import (
 	"strconv"
 	"strings"
 )
+
+// ContentFingerprint returns a stable digest for an ordered set of logical
+// fields. Length framing prevents different field boundaries from colliding.
+// It is shared by incremental consumers whose source is a row rather than a
+// file, while Fingerprint and TargetFingerprint remain the file-level tools.
+func ContentFingerprint(fields ...string) string {
+	digest := sha256.New()
+	var size [8]byte
+	for _, field := range fields {
+		binary.BigEndian.PutUint64(size[:], uint64(len(field)))
+		_, _ = digest.Write(size[:])
+		_, _ = digest.Write([]byte(field))
+	}
+	return fmt.Sprintf("%x", digest.Sum(nil))
+}
 
 // Target describes the part of a scanner target needed for fingerprinting and
 // state persistence. Callers keep parsing and discovery details in their own
