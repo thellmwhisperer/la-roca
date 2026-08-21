@@ -452,10 +452,9 @@ func pluginInstallCommand(env *cliEnv, consented *bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// The new plugin's semantic fragments teach every runtime that has
-			// the skills installed; the catalog is regenerated last so it sees
-			// the plugin this run just placed.
-			env.refreshCatalogSkills()
+			// The new plugin's semantic and vector fragments are registered from
+			// the same installed manifest set after the package is in place.
+			env.refreshPluginContracts()
 			return env.reportPlugin("installed", result)
 		},
 	}
@@ -492,7 +491,7 @@ func pluginUpdateCommand(env *cliEnv, consented *bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			env.refreshCatalogSkills()
+			env.refreshPluginContracts()
 			return env.reportPlugin("updated", result)
 		},
 	}
@@ -522,7 +521,7 @@ func pluginUninstallCommand(env *cliEnv, consented *bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			env.refreshCatalogSkills()
+			env.refreshPluginContracts()
 			return env.reportPlugin("uninstalled", result)
 		},
 	}
