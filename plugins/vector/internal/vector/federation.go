@@ -1,43 +1,3 @@
-/*
-*
-@overview Declarative vector generation across plugin databases. ~730 lines, 13 public symbols, owns registry loading and sidecar orchestration.
-
-	READING GUIDE
-	-------------
-	1. Start at Federation.Ingest       <- federated delta and GC orchestration
-	2. Read DeclaredCorpus.WalkSources  <- manifest surface to read-only SQL
-	3. Read LoadFederation              <- registry and path safety boundary
-	4. Everything else is storage metadata and helpers
-
-	MAIN FLOW
-	---------
-	LoadFederation -> Federation.Ingest -> DeclaredCorpus.WalkSources -> Index.Ingest -> sealSidecar
-
-	PUBLIC API
-	----------
-	LoadFederation()       Load and validate the kernel-generated registry
-	SidecarPath()          Derive the database-owned adjacent vector path
-	Federation.Ingest()    Sweep every selected declared database incrementally
-	Federation.CorpusIndex() Return the corpus compatibility query seat
-	Federation.Compact()   Repack every existing declared sidecar
-	Federation.HasSidecars() Report whether any declared sidecar exists
-	Federation.RemoveLegacyMonolith() Remove the superseded central derived index
-	Federation.ConfiguredModel() Read the corpus sidecar's selected model
-	FederatedWorker.Run() Run the background federated build lifecycle
-	FederationDelta        Aggregate and per-owner delta report
-	DatabaseDelta          One database owner's delta report
-	CompactFederationReport Aggregate compaction report
-	DeclaredCorpus         Read and resolve one database's declared surfaces
-
-	INTERNALS
-	---------
-	vectorRegistry, vectorDatabase, vectorTable, chunkingHints
-	loadVectorRegistry, validateRegistry, databaseFingerprint, unchangedSidecar
-	sealSidecar, declaredTextExpression, quoteIdentifier, validIdentifier
-
-@exports LoadFederation, SidecarPath, Federation, FederationDelta, DatabaseDelta, CompactFederationReport, DeclaredCorpus, FederatedWorker
-@deps CoreCLI and Index from this package; pkg/incrementality; encoding/json; filesystem and SQLite
-*/
 package vector
 
 import (
@@ -67,8 +27,6 @@ var (
 	manifestPluginName = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 	sqlIdentifier      = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
-
-// -- 1/7 HELPER · Registry contract and safe path loading --
 
 type vectorRegistry struct {
 	Schema    int              `json:"schema"`
@@ -226,10 +184,6 @@ func validateChunking(hints *chunkingHints) error {
 	return nil
 }
 
-// -/ 1/7
-
-// -- 2/7 CORE · Federation.Ingest <- START HERE --
-
 type FederationDelta struct {
 	Delta
 	Databases []DatabaseDelta `json:"databases"`
@@ -318,10 +272,6 @@ func (f Federation) index(database vectorDatabase, reader DeclaredCorpus, sideca
 	return Index{Corpus: reader, VectorPath: sidecar, Model: f.Model,
 		Embedder: f.Embedder, Notice: f.Notice, SourceKinds: kinds}
 }
-
-// -/ 2/7
-
-// -- 3/7 CORE · DeclaredCorpus.WalkSources and ResolveSource --
 
 type DeclaredCorpus struct {
 	Core     CoreCLI
@@ -426,10 +376,6 @@ func declaredTextExpression(columns []string) string {
 	return "trim(" + strings.Join(parts, " || char(10) || char(10) || ") + ")"
 }
 
-// -/ 3/7
-
-// -- 4/7 HELPER · Fingerprints and unchanged database fast path --
-
 var errSidecarChanged = errors.New("sidecar source changed")
 
 func databaseFingerprint(path, contract string) (string, error) {
@@ -511,10 +457,6 @@ func (t vectorTable) chunking() (int, int) {
 	return size, overlap
 }
 
-// -/ 4/7
-
-// -- 5/7 HELPER · Sidecar ownership and metadata sealing --
-
 func SidecarPath(databasePath string) string {
 	extension := filepath.Ext(databasePath)
 	return strings.TrimSuffix(databasePath, extension) + ".vector" + extension
@@ -593,10 +535,6 @@ func (d vectorDatabase) owner() string { return d.Plugin + "/" + d.Database }
 func (f Federation) databasePath(database vectorDatabase) string {
 	return filepath.Join(f.PluginRoot, database.Plugin, database.Path)
 }
-
-// -/ 5/7
-
-// -- 6/7 HELPER · Corpus compatibility and federated compaction --
 
 func (f Federation) CorpusIndex() (Index, error) {
 	for _, database := range f.databases {
@@ -719,10 +657,4 @@ func (w FederatedWorker) Run(ctx context.Context) Completion {
 	return completion
 }
 
-// -/ 6/7
-
-// -- 7/7 HELPER · Deterministic identifier validation --
-
 func validIdentifier(value string) bool { return sqlIdentifier.MatchString(value) }
-
-// -/ 7/7

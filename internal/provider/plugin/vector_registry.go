@@ -18,8 +18,8 @@ const (
 	vectorRegistrySchema   = 1
 )
 
-// VectorRegistry is the generated, inference-free projection consumed by
-// later kernel vector services. plugin.json remains the source of truth.
+// VectorRegistry is the generated, inference-free projection consumed by the
+// vector worker. plugin.json remains the source of truth.
 type VectorRegistry struct {
 	Schema    int                  `json:"schema"`
 	Databases []VectorRegistration `json:"databases"`

@@ -1,28 +1,3 @@
-/*
-*
-@overview Contract tests for declared vector surfaces. ~430 lines, no public symbols, proves sidecar ownership and generic delta behavior.
-
-	READING GUIDE
-	-------------
-	1. Start at TestFederationBuildsOwnedSidecarsAndGarbageCollectsByDelta
-	2. Read federationFixture for the synthetic registry and databases
-	3. Read sqliteExecRunner for the public roca-exec boundary
-
-	MAIN FLOW
-	---------
-	federationFixture -> Federation.Ingest -> inspect sidecars -> mutate sources -> repeat delta
-
-	PUBLIC API
-	----------
-	None; this file is executable contract coverage.
-
-	INTERNALS
-	---------
-	federationFixture, sqliteExecRunner, writeRegistry, createSourceDatabase, sidecarMeta
-
-@exports
-@deps testing; database/sql; JSON; internal vector package
-*/
 package vector
 
 import (
@@ -37,8 +12,6 @@ import (
 
 	_ "modernc.org/sqlite"
 )
-
-// -- 1/4 CORE · Federated generation, metadata, incrementality, and GC <- START HERE --
 
 func TestFederationBuildsOwnedSidecarsAndGarbageCollectsByDelta(t *testing.T) {
 	federation, corpusPath, opsPath, embedder := federationFixture(t)
@@ -99,6 +72,34 @@ func TestFederationBuildsOwnedSidecarsAndGarbageCollectsByDelta(t *testing.T) {
 	if deleted != 0 {
 		t.Fatalf("deleted declared row retained %d chunks", deleted)
 	}
+}
+
+func TestFederatedWorkerBuildsOwnedSidecarsBeforeRetiringLegacyMonolith(t *testing.T) {
+	federation, corpusPath, opsPath, _ := federationFixture(t)
+	state := t.TempDir()
+	legacy := filepath.Join(state, DatabaseFilename)
+	if err := os.WriteFile(legacy, []byte("legacy central index"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	completion := (FederatedWorker{Federation: federation, DataDir: state}).Run(context.Background())
+	if completion.ExitStatus != 0 || completion.Error != "" {
+		t.Fatalf("federated worker completion = %+v", completion)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("legacy central index remains after successful federation build: %v", err)
+	}
+	for path, owner := range map[string]string{
+		SidecarPath(corpusPath): "roca-corpus/corpus",
+		SidecarPath(opsPath):    "roca-ops/ops",
+	} {
+		if metadata := sidecarMeta(t, path); metadata["owner"] != owner {
+			t.Fatalf("migrated sidecar metadata = %+v, want owner %s", metadata, owner)
+		}
+	}
+	t.Logf("worker completion: status=%d added=%d sources=%d chunks=%d",
+		completion.ExitStatus, completion.Delta.Added, completion.Delta.Sources, completion.Delta.Chunks)
+	t.Log("sidecars: roca-corpus/corpus, roca-ops/ops; legacy central index: removed")
 }
 
 func TestFederationTargetedDeltaPreservesOtherTablesAndCorpusQueryCompatibility(t *testing.T) {
@@ -226,10 +227,6 @@ func TestFederationSealsEmptySidecarWithDimensions(t *testing.T) {
 	}
 }
 
-// -/ 1/4
-
-// -- 2/4 HELPER · Synthetic registry and source databases --
-
 func federationFixture(t *testing.T) (Federation, string, string, *recordingEmbedder) {
 	t.Helper()
 	root := t.TempDir()
@@ -304,10 +301,6 @@ func mutateSourceDatabase(t *testing.T, path, statement string) {
 	}
 }
 
-// -/ 2/4
-
-// -- 3/4 HELPER · Public roca exec boundary over attached synthetic SQLite --
-
 func sqliteExecRunner(t *testing.T, databases map[string]string) CommandRunner {
 	t.Helper()
 	db := openTestSQLite(t, ":memory:")
@@ -351,10 +344,6 @@ func sqliteExecRunner(t *testing.T, databases map[string]string) CommandRunner {
 	}
 }
 
-// -/ 3/4
-
-// -- 4/4 HELPER · Sidecar assertions --
-
 func sidecarMeta(t *testing.T, path string) map[string]string {
 	t.Helper()
 	db := openTestSQLite(t, path)
@@ -394,5 +383,3 @@ func flattenInputs(batches [][]string) []string {
 }
 
 func intPointer(value int) *int { return &value }
-
-// -/ 4/4

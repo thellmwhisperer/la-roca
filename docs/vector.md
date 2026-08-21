@@ -96,14 +96,16 @@ Start the first build only after the model pull has finished:
 roca vector install
 ```
 
-`install` reads the kernel-generated `plugins/vector-registry.json` and embeds
-every declared database in the background. Each database owns an adjacent
-sidecar: `roca-corpus.db` owns `roca-corpus.vector.db`, `roca-ops.db` owns
-`roca-ops.vector.db`, and third-party declarations follow the same rule.
-Moving, copying, or uninstalling a database therefore carries or removes its
-derived index at the same lifecycle boundary. Every sidecar records its owner,
-embedding model, dimensions, build version, declaration fingerprint, and
-source fingerprint.
+`install` reads the kernel-generated `vector-registry.json` under the plugin
+root (`~/.roca/plugins/` by default, or `%USERPROFILE%\.roca\plugins\` on
+Windows) and embeds every declared database in the background. Each database
+owns an adjacent sidecar: `roca-corpus.db` owns `roca-corpus.vector.db`,
+`roca-ops.db` owns `roca-ops.vector.db`, and third-party declarations follow
+the same rule. Plugin update preserves that sidecar; uninstall archives or
+removes it under the database's custody policy. Manual filesystem operations
+must treat the pair together or discard the sidecar and regenerate it. Every
+sidecar records its owner, embedding model, dimensions, build version,
+declaration fingerprint, and source fingerprint.
 
 Worker coordination remains under `~/.roca/plugins/roca-vector/state/`
 (`%USERPROFILE%\.roca\plugins\roca-vector\state` on Windows). macOS and Linux
@@ -131,9 +133,9 @@ The worker fingerprints each database (including its SQLite WAL) through
 `pkg/incrementality` and skips the row sweep when both source and declaration
 are unchanged. When a sweep is needed, existing chunk fingerprints decide
 added, updated, and unchanged work; a desired-versus-stored fingerprint diff
-garbage-collects rows and chunks whose source disappeared. Optional manifest
-chunking hints override the kernel defaults without giving plugins executable
-generation code.
+garbage-collects chunks and embeddings whose source disappeared. Optional
+manifest chunking hints override the kernel defaults without giving plugins
+executable generation code.
 
 For a non-default database:
 
