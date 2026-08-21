@@ -208,6 +208,9 @@ func TestInstallUpdateAndUninstallPreservePluginOwnedData(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
+	installedSidecar := filepath.Join(root, "synthetic", "plugin.vector.db")
+	writeFixtureFile(t, installedSidecar, []byte("derived vectors"), 0o600)
+	writeFixtureFile(t, installedSidecar+"-wal", []byte("derived wal"), 0o600)
 
 	writePackageAt(t, source, "synthetic", "2.0.0", false, true)
 	updated, err := plugininstall.Inspect(source, source)
@@ -235,6 +238,15 @@ func TestInstallUpdateAndUninstallPreservePluginOwnedData(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertDatabaseValue(t, installedDB, "user-owned update marker")
+	for path, want := range map[string]string{
+		installedSidecar:          "derived vectors",
+		installedSidecar + "-wal": "derived wal",
+	} {
+		raw, err := os.ReadFile(path)
+		if err != nil || string(raw) != want {
+			t.Fatalf("preserved sidecar %s = %q, err=%v", filepath.Base(path), raw, err)
+		}
+	}
 
 	manifest, err := plugininstall.ReadManifest(filepath.Join(root, "synthetic"))
 	if err != nil {
@@ -242,6 +254,9 @@ func TestInstallUpdateAndUninstallPreservePluginOwnedData(t *testing.T) {
 	}
 	if manifest.Source != source || manifest.Version != "2.0.0" || manifest.Checksum != updated.Checksum {
 		t.Fatalf("manifest = %+v", manifest)
+	}
+	if paths := plugininstall.InstalledPaths(filepath.Join(root, "synthetic"), manifest); !slices.Contains(paths, installedSidecar) || !slices.Contains(paths, installedSidecar+"-wal") {
+		t.Fatalf("installed ownership omits vector sidecar: %v", paths)
 	}
 
 	if _, err := manager.Uninstall("synthetic"); err != nil {

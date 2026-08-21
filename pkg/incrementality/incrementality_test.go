@@ -36,6 +36,19 @@ func TestPublicPackageFingerprintsTargets(t *testing.T) {
 	}
 }
 
+func TestContentFingerprintFramesOrderedFields(t *testing.T) {
+	joined := incrementality.ContentFingerprint("ab", "c")
+	boundaryChanged := incrementality.ContentFingerprint("a", "bc")
+	orderChanged := incrementality.ContentFingerprint("c", "ab")
+	if joined == boundaryChanged || joined == orderChanged {
+		t.Fatalf("content fingerprints collide: joined=%s boundary=%s order=%s",
+			joined, boundaryChanged, orderChanged)
+	}
+	if joined != incrementality.ContentFingerprint("ab", "c") {
+		t.Fatal("content fingerprint is not deterministic")
+	}
+}
+
 func TestPublicPackageRecordsLoadsAndChecksState(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {

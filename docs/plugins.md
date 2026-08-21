@@ -417,18 +417,19 @@ the retrieval surface.
 
 `chunking` is optional. `max_chars` must be positive, `overlap_chars` cannot be
 negative, and when both are present the overlap must be smaller than the
-maximum. These are hints to a later kernel service, not instructions for code
+maximum. These are hints to the kernel vector worker, not instructions for code
 the plugin runs. A plugin never supplies embedding generation code, and a
 database with no `vector` declaration continues to serve through FTS and SQL
 exactly as before.
 
 Install, update, and uninstall regenerate
 `~/.roca/plugins/vector-registry.json` in the same pass that refreshes the
-semantic catalog. The registry contains plugin-relative database filenames,
+semantic catalog. Bundled manifest upgrades refresh the same registry when the
+kernel opens them. The registry contains plugin-relative database filenames,
 not local home paths, and is derived state: edit `plugin.json`, never the
-registry. This release only publishes and validates that contract. Vector
-generation, per-database sidecar stores, and query fan-out are separate kernel
-services.
+registry. The kernel worker turns each declaration into a database-owned
+adjacent sidecar with owner/model/dimensions/version metadata and incremental
+fingerprint GC. Cross-database query fan-out remains a separate serving service.
 
 ### Verbs and capabilities
 

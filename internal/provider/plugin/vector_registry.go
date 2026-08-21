@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -108,6 +109,9 @@ func SaveVectorRegistry(path string, registry VectorRegistry) error {
 		return fmt.Errorf("encode vector registry: %w", err)
 	}
 	body = append(body, '\n')
+	if existing, readErr := os.ReadFile(path); readErr == nil && bytes.Equal(existing, body) {
+		return nil
+	}
 	if err := securefile.Write(path, body, 0o600, 0o700); err != nil {
 		return fmt.Errorf("write vector registry: %w", err)
 	}

@@ -88,7 +88,7 @@ runs on CPU.
 Install Ollama from https://ollama.com/download, start the daemon, then
 pull the same model before the first index build.
 
-## Index the corpus
+## Index declared databases
 
 Start the first build only after the model pull has finished:
 
@@ -96,16 +96,24 @@ Start the first build only after the model pull has finished:
 roca vector install
 ```
 
-`install` prepares the plugin-owned index under
-`~/.roca/plugins/roca-vector/state/`
-(`%USERPROFILE%\.roca\plugins\roca-vector\state`
-on Windows) and embeds the corpus in the background. macOS and Linux can send
-a desktop notification with the exit status and counts. Windows sends no
-desktop notification: inspect `completion.json` or `worker.log` in that state
-directory. The worker log path is printed at launch; `completion.json` records
-`started_at`, `finished_at`, and `exit_status`. The index is ready only when
-`finished_at` is non-empty and `exit_status` is `0`; otherwise treat it as
-unavailable. The timestamps time the first pass on this machine.
+`install` reads the kernel-generated `plugins/vector-registry.json` and embeds
+every declared database in the background. Each database owns an adjacent
+sidecar: `roca-corpus.db` owns `roca-corpus.vector.db`, `roca-ops.db` owns
+`roca-ops.vector.db`, and third-party declarations follow the same rule.
+Moving, copying, or uninstalling a database therefore carries or removes its
+derived index at the same lifecycle boundary. Every sidecar records its owner,
+embedding model, dimensions, build version, declaration fingerprint, and
+source fingerprint.
+
+Worker coordination remains under `~/.roca/plugins/roca-vector/state/`
+(`%USERPROFILE%\.roca\plugins\roca-vector\state` on Windows). macOS and Linux
+can send a desktop notification with the exit status and aggregate counts.
+Windows sends no desktop notification: inspect `completion.json` or
+`worker.log` in that state directory. The worker log path is printed at launch;
+`completion.json` records `started_at`, `finished_at`, and `exit_status`. The
+declared sidecars are ready only when `finished_at` is non-empty and
+`exit_status` is `0`; otherwise deterministic FTS and SQL continue without
+them. The timestamps time the first pass on this machine.
 
 Indexing is incremental after that. `vector ingest` always requires `--delta`:
 
@@ -113,10 +121,19 @@ Indexing is incremental after that. `vector ingest` always requires `--delta`:
 roca vector ingest --delta
 ```
 
-A full delta embeds four families: `memories`, `exchanges`,
-`thinking_blocks`, and `sessions`. Restrict a repair with
-`--source memories|exchanges|thinking_blocks|sessions`. Session text is the
-cleaned title plus cleaned `metadata.project_name` only.
+A full delta sweeps every table and prose column declared by installed plugin
+manifests. The bundled corpus declares session titles/projects, memory content,
+human/agent exchanges, and thinking text; ops declares operational memory
+content. Raw tool data, call telemetry, and other undeclared columns stay
+FTS-only. Restrict a repair to a declared table with `--source <table>`.
+
+The worker fingerprints each database (including its SQLite WAL) through
+`pkg/incrementality` and skips the row sweep when both source and declaration
+are unchanged. When a sweep is needed, existing chunk fingerprints decide
+added, updated, and unchanged work; a desired-versus-stored fingerprint diff
+garbage-collects rows and chunks whose source disappeared. Optional manifest
+chunking hints override the kernel defaults without giving plugins executable
+generation code.
 
 For a non-default database:
 
@@ -145,8 +162,9 @@ daily delta against an unchanged or lightly grown corpus is minutes.
 
 As an order-of-magnitude reference, a production home with 353,663 chunks
 measured 1.3 GB on disk after compaction. Expect roughly 1.3-1.5 GB per
-~350k chunks; the footprint varies with the corpus and embedding model. Churn
-(many updates and deletes) leaves empty pages; reclaim them explicitly:
+~350k chunks per sidecar; the footprint varies with the source and embedding
+model. Churn (many updates and deletes) leaves empty pages; reclaim every
+installed sidecar explicitly:
 
 ```sh
 roca vector compact
@@ -160,15 +178,17 @@ Ingest does not compact on its own.
 roca vector query "what did we decide" 10
 ```
 
-Each hit prints rank, cosine score, source family, source id, and a text
-preview. `k` is optional (default 10) and capped at 100.
+This command currently reads the corpus compatibility sidecar; cross-database
+query fan-out is a separate serving change. Each hit prints rank, cosine score,
+source table, source id, and a text preview. `k` is optional (default 10) and
+capped at 100. Core FTS and SQL routing never depends on a model or sidecar.
 
 ## Verify the index
 
-Re-run a full delta with no corpus change. A healthy index reports a null
-delta — `0 added · 0 updated · 0 removed` — and an unchanged count equal to
-the live chunk count. That is the operator's own confidence probe; it needs
-no golden file.
+Re-run a full delta with no source database change. Healthy sidecars report a
+null aggregate delta — `0 added · 0 updated · 0 removed` — and an unchanged
+count equal to the live chunk count across declared databases. That is the
+operator's own confidence probe; it needs no golden file.
 
 Search craft for agents lives in the `roca-operations` skill. The
 `roca-vector` skill owns index installation, progress, and maintenance.
