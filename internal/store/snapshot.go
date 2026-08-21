@@ -3,175 +3,175 @@ package store
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sync"
-	"sync/atomic"
-
-	sqlite "modernc.org/sqlite"
 )
 
-type sqliteBackuper interface {
-	NewBackup(string) (*sqlite.Backup, error)
-}
+var snapshotArtifacts = [...]string{"", "-wal", "-journal"}
 
 type ReadOnlySnapshot struct {
-	database *sql.DB
-	uri      string
-	once     sync.Once
-	err      error
+	database  *sql.DB
+	uri       string
+	directory string
+	once      sync.Once
+	err       error
 }
 
-var snapshotSequence atomic.Uint64
-
-type snapshotConnector struct {
-	mu         sync.Mutex
-	connection driver.Conn
+type snapshotArtifactState struct {
+	exists  bool
+	size    int64
+	modTime int64
 }
 
-func (connector *snapshotConnector) Connect(context.Context) (driver.Conn, error) {
-	connector.mu.Lock()
-	defer connector.mu.Unlock()
-	if connector.connection == nil {
-		return nil, fmt.Errorf("in-memory snapshot connection is unavailable")
-	}
-	connection := connector.connection
-	connector.connection = nil
-	return connection, nil
-}
-
-func (*snapshotConnector) Driver() driver.Driver {
-	return &sqlite.Driver{}
-}
+type snapshotSourceState [len(snapshotArtifacts)]snapshotArtifactState
 
 func OpenReadOnlySnapshot(ctx context.Context, path string) (*ReadOnlySnapshot, error) {
-	for range 3 {
-		state, err := inspectSnapshotSource(path)
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	directory, err := os.MkdirTemp("", "roca-read-only-snapshot-")
+	if err != nil {
+		return nil, fmt.Errorf("create read-only snapshot directory: %w", err)
+	}
+	for attempt := range 3 {
+		before, err := inspectSnapshotSource(abs)
 		if err != nil {
+			_ = os.RemoveAll(directory)
 			return nil, err
 		}
-		snapshot, immutable, err := openReadOnlySnapshot(ctx, path, state)
-		if err != nil {
+		attemptDirectory := filepath.Join(directory, fmt.Sprintf("%d", attempt))
+		if err := os.Mkdir(attemptDirectory, 0o700); err != nil {
+			_ = os.RemoveAll(directory)
 			return nil, err
 		}
-		if !immutable {
-			return snapshot, nil
+		destination := filepath.Join(attemptDirectory, filepath.Base(abs))
+		if err := copySnapshotSource(abs, destination); err != nil {
+			after, inspectErr := inspectSnapshotSource(abs)
+			if inspectErr == nil && before != after {
+				_ = os.RemoveAll(attemptDirectory)
+				continue
+			}
+			_ = os.RemoveAll(directory)
+			return nil, err
 		}
-		after, err := inspectSnapshotSource(path)
-		if err == nil && state == after {
-			return snapshot, nil
-		}
-		_ = snapshot.Close()
+		after, err := inspectSnapshotSource(abs)
 		if err != nil {
+			_ = os.RemoveAll(directory)
+			return nil, err
+		}
+		if before != after {
+			_ = os.RemoveAll(attemptDirectory)
+			continue
+		}
+		snapshot, err := openCopiedSnapshot(ctx, destination, directory)
+		if err != nil {
+			final, inspectErr := inspectSnapshotSource(abs)
+			if inspectErr == nil && before != final {
+				_ = os.RemoveAll(attemptDirectory)
+				continue
+			}
+			_ = os.RemoveAll(directory)
+			return nil, err
+		}
+		final, err := inspectSnapshotSource(abs)
+		if err == nil && before == final {
+			return snapshot, nil
+		}
+		_ = snapshot.database.Close()
+		_ = os.RemoveAll(attemptDirectory)
+		if err != nil {
+			_ = os.RemoveAll(directory)
 			return nil, err
 		}
 	}
-	return nil, fmt.Errorf("database %q kept changing while it was snapshotted", path)
-}
-
-type snapshotSourceState struct {
-	mainSize    int64
-	mainModTime int64
-	walExists   bool
-	walSize     int64
-	walModTime  int64
-	shmExists   bool
+	_ = os.RemoveAll(directory)
+	return nil, fmt.Errorf("database %q kept changing while it was snapshotted", abs)
 }
 
 func inspectSnapshotSource(path string) (snapshotSourceState, error) {
-	main, err := os.Stat(path)
-	if err != nil {
-		return snapshotSourceState{}, err
-	}
-	state := snapshotSourceState{mainSize: main.Size(), mainModTime: main.ModTime().UnixNano()}
-	wal, err := os.Stat(path + "-wal")
-	if err == nil {
-		state.walExists = true
-		state.walSize = wal.Size()
-		state.walModTime = wal.ModTime().UnixNano()
-	} else if !os.IsNotExist(err) {
-		return snapshotSourceState{}, fmt.Errorf("inspect the WAL for %q: %w", path, err)
-	}
-	if _, err := os.Stat(path + "-shm"); err == nil {
-		state.shmExists = true
-	} else if !os.IsNotExist(err) {
-		return snapshotSourceState{}, fmt.Errorf("inspect the shared index for %q: %w", path, err)
+	var state snapshotSourceState
+	for index, suffix := range snapshotArtifacts {
+		info, err := os.Stat(path + suffix)
+		if err == nil {
+			if !info.Mode().IsRegular() {
+				return snapshotSourceState{}, fmt.Errorf("snapshot source %q is not a regular file", path+suffix)
+			}
+			state[index] = snapshotArtifactState{
+				exists: true, size: info.Size(), modTime: info.ModTime().UnixNano(),
+			}
+			continue
+		}
+		if !os.IsNotExist(err) || suffix == "" {
+			return snapshotSourceState{}, fmt.Errorf("inspect snapshot source %q: %w", path+suffix, err)
+		}
 	}
 	return state, nil
 }
 
-func openReadOnlySnapshot(ctx context.Context, path string,
-	state snapshotSourceState) (*ReadOnlySnapshot, bool, error) {
-	values := url.Values{
+func copySnapshotSource(source, destination string) error {
+	for _, suffix := range snapshotArtifacts {
+		input, err := os.Open(source + suffix)
+		if os.IsNotExist(err) && suffix != "" {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("open snapshot source %q: %w", source+suffix, err)
+		}
+		output, err := os.OpenFile(destination+suffix, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			input.Close()
+			return fmt.Errorf("create snapshot copy %q: %w", destination+suffix, err)
+		}
+		_, err = io.Copy(output, input)
+		input.Close()
+		if closeErr := output.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			return fmt.Errorf("copy snapshot source %q: %w", source+suffix, err)
+		}
+	}
+	return nil
+}
+
+func openCopiedSnapshot(ctx context.Context, path, directory string) (*ReadOnlySnapshot, error) {
+	_, writableURI, err := sqliteFileDSN(path, url.Values{
+		"mode": {"rw"},
+		"_pragma": {
+			fmt.Sprintf("busy_timeout(%d)", busyTimeout.Milliseconds()),
+			"query_only(1)",
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	database, err := sql.Open("sqlite", writableURI)
+	if err != nil {
+		return nil, err
+	}
+	database.SetMaxOpenConns(1)
+	var schemaVersion int
+	if err := database.QueryRowContext(ctx, "PRAGMA schema_version").Scan(&schemaVersion); err != nil {
+		database.Close()
+		return nil, err
+	}
+	_, uri, err := sqliteFileDSN(path, url.Values{
 		"mode": {"ro"},
 		"_pragma": {
 			fmt.Sprintf("busy_timeout(%d)", busyTimeout.Milliseconds()),
 			"query_only(1)",
 		},
-	}
-	immutable := !state.walExists || state.walSize <= 32
-	if immutable {
-		values.Set("immutable", "1")
-	} else if !state.shmExists {
-		return nil, false, fmt.Errorf("open the live WAL for %q without changing it: shared index is missing", path)
-	}
-	_, sourceURI, err := sqliteFileDSN(path, values)
+	})
 	if err != nil {
-		return nil, false, err
+		database.Close()
+		return nil, err
 	}
-	source, err := sql.Open("sqlite", sourceURI)
-	if err != nil {
-		return nil, false, err
-	}
-	source.SetMaxOpenConns(1)
-	defer source.Close()
-	connection, err := source.Conn(ctx)
-	if err != nil {
-		return nil, false, err
-	}
-	defer connection.Close()
-	if _, err := connection.ExecContext(ctx, "BEGIN"); err != nil {
-		return nil, false, err
-	}
-	defer connection.ExecContext(context.Background(), "ROLLBACK")
-	var schemaVersion int
-	if err := connection.QueryRowContext(ctx, "PRAGMA schema_version").Scan(&schemaVersion); err != nil {
-		return nil, false, err
-	}
-	uri := fmt.Sprintf("file:roca-read-only-snapshot-%d?mode=memory&cache=shared",
-		snapshotSequence.Add(1))
-	var snapshotConnection driver.Conn
-	if err := connection.Raw(func(driverConnection any) error {
-		backuper, ok := driverConnection.(sqliteBackuper)
-		if !ok {
-			return fmt.Errorf("SQLite driver cannot back up a snapshot")
-		}
-		backup, err := backuper.NewBackup(uri)
-		if err != nil {
-			return err
-		}
-		for more := true; more; {
-			more, err = backup.Step(-1)
-			if err != nil {
-				_ = backup.Finish()
-				return err
-			}
-		}
-		snapshotConnection, err = backup.Commit()
-		return err
-	}); err != nil {
-		return nil, false, err
-	}
-	destination := sql.OpenDB(&snapshotConnector{connection: snapshotConnection})
-	destination.SetMaxOpenConns(1)
-	destination.SetMaxIdleConns(1)
-	if _, err := destination.ExecContext(ctx, "PRAGMA query_only(1)"); err != nil {
-		destination.Close()
-		return nil, false, err
-	}
-	return &ReadOnlySnapshot{database: destination, uri: uri}, immutable, nil
+	return &ReadOnlySnapshot{database: database, uri: uri, directory: directory}, nil
 }
 
 func (snapshot *ReadOnlySnapshot) SQL() *sql.DB {
@@ -185,6 +185,9 @@ func (snapshot *ReadOnlySnapshot) URI() string {
 func (snapshot *ReadOnlySnapshot) Close() error {
 	snapshot.once.Do(func() {
 		snapshot.err = snapshot.database.Close()
+		if err := os.RemoveAll(snapshot.directory); snapshot.err == nil {
+			snapshot.err = err
+		}
 	})
 	return snapshot.err
 }

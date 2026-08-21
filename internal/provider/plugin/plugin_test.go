@@ -89,7 +89,7 @@ func TestValidationPreservesInspectedFTS5Kind(t *testing.T) {
 	}
 }
 
-func TestImmutableValidationFreezesCommittedWALFramesInMemory(t *testing.T) {
+func TestReadOnlyValidationTracksCommittedWALWithoutChangingSharedMemory(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "live.db")
 	writer, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -101,7 +101,14 @@ func TestImmutableValidationFreezesCommittedWALFramesInMemory(t *testing.T) {
 		INSERT INTO rows VALUES (1, 'first')`); err != nil {
 		t.Fatal(err)
 	}
-	database, err := plugin.ValidateImmutable(t.Context(), plugin.Descriptor{
+	if _, err := writer.Exec(`INSERT INTO rows VALUES (2, 'second')`); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path + "-shm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := plugin.ValidatePhysicalReadOnly(t.Context(), plugin.Descriptor{
 		Name: "live", Database: path, Schema: "live",
 		Semantic: plugin.Semantic{Tables: []plugin.SemanticTable{{
 			Name: "rows", Columns: []string{"id", "value"},
@@ -111,9 +118,6 @@ func TestImmutableValidationFreezesCommittedWALFramesInMemory(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if _, err := writer.Exec(`INSERT INTO rows VALUES (2, 'second')`); err != nil {
-		t.Fatal(err)
-	}
 	reader, err := sql.Open("sqlite", database.ReadOnlyURI())
 	if err != nil {
 		t.Fatal(err)
@@ -123,8 +127,23 @@ func TestImmutableValidationFreezesCommittedWALFramesInMemory(t *testing.T) {
 	if err := reader.QueryRow("SELECT COUNT(*) FROM rows").Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != 1 {
-		t.Fatalf("snapshot rows = %d, want 1", count)
+	if count != 2 {
+		t.Fatalf("read-only rows = %d, want 2", count)
+	}
+	after, err := os.ReadFile(path + "-shm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(before, after) {
+		t.Fatal("read-only validation changed the WAL shared index")
+	}
+	uri, err := url.Parse(database.ReadOnlyURI())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uri.Query().Get("mode") != "ro" || uri.Query().Get("immutable") != "" ||
+		filepath.Clean(uri.Path) == filepath.Clean(path) {
+		t.Fatalf("physical read-only URI did not isolate the source: %s", database.ReadOnlyURI())
 	}
 }
 

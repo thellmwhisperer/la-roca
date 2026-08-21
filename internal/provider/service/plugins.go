@@ -94,7 +94,7 @@ func validatePluginRoute(ctx context.Context, candidates []plugin.Descriptor,
 }
 
 func validatePluginRouteLimit(ctx context.Context, candidates []plugin.Descriptor,
-	warnings []string, limit int, immutable bool) pluginRoute {
+	warnings []string, limit int, physicalReadOnly bool) pluginRoute {
 	route := pluginRoute{warnings: slices.Clone(warnings)}
 	for _, candidate := range candidates {
 		if len(route.databases) == limit {
@@ -103,8 +103,8 @@ func validatePluginRouteLimit(ctx context.Context, candidates []plugin.Descripto
 		}
 		var database plugin.Database
 		var err error
-		if immutable {
-			database, err = plugin.ValidateImmutable(ctx, candidate)
+		if physicalReadOnly {
+			database, err = plugin.ValidatePhysicalReadOnly(ctx, candidate)
 		} else {
 			database, err = plugin.Validate(ctx, candidate)
 		}
@@ -269,7 +269,7 @@ func (s *Service) openResidents(ctx context.Context) error {
 	return nil
 }
 
-func stableLayerDatabase(ctx context.Context, descriptors []plugin.Descriptor, immutable bool) (*plugin.Database, error) {
+func stableLayerDatabase(ctx context.Context, descriptors []plugin.Descriptor, physicalReadOnly bool) (*plugin.Database, error) {
 	var databases []plugin.Database
 	for _, descriptor := range descriptors {
 		if !ownsVerb(descriptor, StoreVerb, rocaOpsPluginName) ||
@@ -278,8 +278,8 @@ func stableLayerDatabase(ctx context.Context, descriptors []plugin.Descriptor, i
 		}
 		var database plugin.Database
 		var err error
-		if immutable {
-			database, err = plugin.ValidateImmutable(ctx, descriptor)
+		if physicalReadOnly {
+			database, err = plugin.ValidatePhysicalReadOnly(ctx, descriptor)
 		} else {
 			database, err = plugin.Validate(ctx, descriptor)
 		}

@@ -541,15 +541,15 @@ func Validate(ctx context.Context, descriptor Descriptor) (Database, error) {
 	return validate(ctx, descriptor, false)
 }
 
-func ValidateImmutable(ctx context.Context, descriptor Descriptor) (Database, error) {
+func ValidatePhysicalReadOnly(ctx context.Context, descriptor Descriptor) (Database, error) {
 	return validate(ctx, descriptor, true)
 }
 
-func validate(ctx context.Context, descriptor Descriptor, immutable bool) (Database, error) {
+func validate(ctx context.Context, descriptor Descriptor, physicalReadOnly bool) (Database, error) {
 	var db *sql.DB
 	var snapshot *store.ReadOnlySnapshot
 	var err error
-	if immutable {
+	if physicalReadOnly {
 		snapshot, err = store.OpenReadOnlySnapshot(ctx, descriptor.Database)
 		if err == nil {
 			db = snapshot.SQL()

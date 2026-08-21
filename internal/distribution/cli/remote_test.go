@@ -467,9 +467,6 @@ func equalTreeSnapshots(left, right map[string]treeSnapshotEntry) bool {
 		if !found || value.mode != other.mode {
 			return false
 		}
-		if strings.HasSuffix(key, "-shm") {
-			continue
-		}
 		if value.modTime != other.modTime ||
 			!slices.Equal(value.body, other.body) {
 			return false
