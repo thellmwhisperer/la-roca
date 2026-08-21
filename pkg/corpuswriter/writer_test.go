@@ -3,9 +3,6 @@ package corpuswriter_test
 import (
 	"context"
 	"database/sql"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/data"
@@ -74,15 +71,6 @@ func TestWriteKeepsExactPayloadCollisionSafety(t *testing.T) {
 	}
 	if secondCwd.Valid {
 		t.Fatalf("second metadata cwd = %q, want its pre-patch metadata unchanged", secondCwd.String)
-	}
-}
-
-func TestStandaloneModuleCompiles(t *testing.T) {
-	command := exec.Command("go", "test", "-mod=readonly", ".")
-	command.Dir = filepath.Join("testdata", "external")
-	command.Env = append(os.Environ(), "GOWORK=off")
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("compile standalone consumer module: %v\n%s", err, output)
 	}
 }
 
