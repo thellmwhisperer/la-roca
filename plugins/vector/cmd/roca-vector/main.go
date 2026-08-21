@@ -2,11 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -55,7 +55,7 @@ func rootCommand(env *environment) *cobra.Command {
 	root.PersistentFlags().StringVar(&env.stateDir, "state-dir", env.stateDir, "plugin state directory")
 	_ = root.PersistentFlags().MarkHidden("state-dir")
 	root.AddCommand(installCommand(env), ingestCommand(env), compactCommand(env),
-		queryCommand(env), vocabCommand(env), workerCommand(env))
+		queryCommand(env), workerCommand(env))
 	return root
 }
 
@@ -63,7 +63,7 @@ func installCommand(env *environment) *cobra.Command {
 	model := vector.DefaultModel
 	command := &cobra.Command{
 		Use:   "install",
-		Short: "Download the embedding model and build the index in the background",
+		Short: "Download the embedding model and build declared sidecars in the background",
 		Args:  cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			if readOnly() {
@@ -111,7 +111,7 @@ func ingestCommand(env *environment) *cobra.Command {
 	var source string
 	command := &cobra.Command{
 		Use:   "ingest --delta",
-		Short: "Embed only new or changed corpus chunks",
+		Short: "Embed only new or changed chunks from declared databases",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			if !delta {
@@ -129,36 +129,59 @@ func ingestCommand(env *environment) *cobra.Command {
 				return err
 			}
 			defer release()
+			federation, federationErr := env.federation(model)
+			federated := federationErr == nil
+			if federationErr != nil && !errors.Is(federationErr, os.ErrNotExist) {
+				return federationErr
+			}
 			vectorPath := filepath.Join(state, vector.DatabaseFilename)
-			if _, err := os.Stat(vectorPath); err != nil {
-				if os.IsNotExist(err) {
+			if federated {
+				if !federation.HasSidecars() {
 					return fmt.Errorf("vector search is not initialized; run `roca vector install`")
 				}
-				return fmt.Errorf("inspect vector index: %w", err)
-			}
-			if model == "" {
-				model = vector.ConfiguredModel(vectorPath)
+				if model == "" {
+					model = federation.ConfiguredModel()
+					federation.Model = model
+				}
+			} else {
+				if _, err := os.Stat(vectorPath); err != nil {
+					if os.IsNotExist(err) {
+						return fmt.Errorf("vector search is not initialized; run `roca vector install`")
+					}
+					return fmt.Errorf("inspect vector index: %w", err)
+				}
+				if model == "" {
+					model = vector.ConfiguredModel(vectorPath)
+				}
 			}
 			if err := env.calmGate().Wait(command.Context()); err != nil {
 				return err
 			}
-			index, err := env.index(model)
-			if err != nil {
-				return err
-			}
 			started := time.Now()
 			var report vector.Delta
-			if source == "" {
-				report, err = index.Ingest(command.Context())
+			var databases []vector.DatabaseDelta
+			if federated {
+				federationReport, ingestErr := federation.Ingest(command.Context(), source)
+				err = ingestErr
+				report, databases = federationReport.Delta, federationReport.Databases
 			} else {
-				report, err = index.IngestSource(command.Context(), source)
+				index, indexErr := env.index(model)
+				if indexErr != nil {
+					return indexErr
+				}
+				if source == "" {
+					report, err = index.Ingest(command.Context())
+				} else {
+					report, err = index.IngestSource(command.Context(), source)
+				}
 			}
 			if err != nil {
 				return err
 			}
 			if env.json {
 				return printJSON(map[string]any{"mode": "delta", "model": model,
-					"source": source, "counts": report, "elapsed_ms": time.Since(started).Milliseconds()})
+					"source": source, "counts": report, "databases": databases,
+					"elapsed_ms": time.Since(started).Milliseconds()})
 			}
 			label := "vector delta"
 			if source != "" {
@@ -172,7 +195,7 @@ func ingestCommand(env *environment) *cobra.Command {
 	}
 	command.Flags().BoolVar(&delta, "delta", false, "embed only new or changed chunks")
 	command.Flags().StringVar(&model, "model", "", "local Ollama embedding model (default: indexed model)")
-	command.Flags().StringVar(&source, "source", "", "limit the delta to one corpus source kind")
+	command.Flags().StringVar(&source, "source", "", "limit the delta to one declared table")
 	return command
 }
 
@@ -194,6 +217,24 @@ func compactCommand(env *environment) *cobra.Command {
 				return err
 			}
 			defer release()
+			federation, federationErr := env.federation("")
+			if federationErr == nil {
+				report, err := federation.Compact(command.Context())
+				if err != nil {
+					return err
+				}
+				if env.json {
+					return printJSON(report)
+				}
+				fmt.Printf("vector compact: %d -> %d pages · %d live chunks · %d databases\n",
+					report.PagesBefore, report.PagesAfter, report.LiveChunks, report.Databases)
+				fmt.Printf("  bytes: %d -> %d · %d reclaimed\n",
+					report.BytesBefore, report.BytesAfter, report.BytesReclaimed)
+				return nil
+			}
+			if !errors.Is(federationErr, os.ErrNotExist) {
+				return federationErr
+			}
 			report, err := vector.Compact(command.Context(), filepath.Join(state, vector.DatabaseFilename))
 			if err != nil {
 				return err
@@ -211,9 +252,10 @@ func compactCommand(env *environment) *cobra.Command {
 }
 
 func queryCommand(env *environment) *cobra.Command {
-	return &cobra.Command{
+	var databases string
+	command := &cobra.Command{
 		Use:   "query <text> [k]",
-		Short: "Search the local corpus by semantic similarity",
+		Short: "Search routed database sidecars by semantic similarity",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(command *cobra.Command, args []string) error {
 			k := 10
@@ -233,12 +275,44 @@ func queryCommand(env *environment) *cobra.Command {
 				return err
 			}
 			defer release()
+			started := time.Now()
+			federation, federationErr := env.federation("")
+			if federationErr == nil {
+				result, err := federation.Query(command.Context(), args[0], k, databases)
+				if err != nil {
+					return err
+				}
+				if env.json {
+					return printJSON(map[string]any{"query": args[0], "k": k,
+						"databases": result.Databases, "model": result.Model,
+						"mixed_models": result.MixedModels, "results": result.Results,
+						"database_results": result.DatabaseResults, "notices": result.Notices,
+						"elapsed_ms": time.Since(started).Milliseconds()})
+				}
+				for _, notice := range result.Notices {
+					fmt.Fprintln(os.Stderr, "notice:", notice)
+				}
+				if result.MixedModels {
+					for _, database := range result.DatabaseResults {
+						fmt.Printf("database %s · model %s\n", database.Database, database.Model)
+						printResults(database.Results)
+					}
+				} else {
+					printResults(result.Results)
+				}
+				return nil
+			}
+			if !errors.Is(federationErr, os.ErrNotExist) {
+				return federationErr
+			}
+			if strings.TrimSpace(databases) != "" {
+				return fmt.Errorf("--databases needs federated sidecars; run `roca vector install`")
+			}
 			vectorPath := filepath.Join(state, vector.DatabaseFilename)
 			index, err := env.index(vector.ConfiguredModel(vectorPath))
 			if err != nil {
 				return err
 			}
-			started := time.Now()
 			results, err := index.Query(command.Context(), args[0], k)
 			if err != nil {
 				return err
@@ -247,77 +321,24 @@ func queryCommand(env *environment) *cobra.Command {
 				return printJSON(map[string]any{"query": args[0], "k": k,
 					"results": results, "elapsed_ms": time.Since(started).Milliseconds()})
 			}
-			for _, result := range results {
-				fmt.Printf("%d. %.3f · %s · %s\n", result.Rank, result.Score, result.Source, result.SourceID)
-				fmt.Printf("   %s\n", preview(result.Text, 500))
-			}
+			printResults(results)
 			return nil
 		},
 	}
+	command.Flags().StringVar(&databases, "databases", "",
+		"comma list of attached database names (corpus,ops), or all")
+	return command
 }
 
-func vocabCommand(env *environment) *cobra.Command {
-	return &cobra.Command{
-		Use:   "vocab <concept>",
-		Short: "Discover the discriminative vocabulary around a concept",
-		Long: "Vector discovery without inference: the top-100 semantic hits among\n" +
-			"exchanges and thinking blocks are tokenized with accent folding and scored\n" +
-			"by relative document frequency against the global corpus census, then\n" +
-			"grouped into reproducible research avenues.",
-		Args: cobra.ExactArgs(1),
-		RunE: func(command *cobra.Command, args []string) error {
-			state, err := env.resolveStateDir()
-			if err != nil {
-				return err
-			}
-			release, err := vector.LockStateUsage(state)
-			if err != nil {
-				return err
-			}
-			defer release()
-			vectorPath := filepath.Join(state, vector.DatabaseFilename)
-			index, err := env.index(vector.ConfiguredModel(vectorPath))
-			if err != nil {
-				return err
-			}
-			started := time.Now()
-			report, err := index.Vocab(command.Context(), args[0])
-			if err != nil {
-				return err
-			}
-			report.ElapsedMS = time.Since(started).Milliseconds()
-			if env.json {
-				return printJSON(report)
-			}
-			printVocabReport(report)
-			return nil
-		},
-	}
-}
-
-func printVocabReport(report vector.VocabReport) {
-	fmt.Printf("vector vocab: %s\n", report.Concept)
-	if report.Hits == 0 {
-		fmt.Printf("  no exchanges or thinking blocks surfaced among the top-%d hits\n", report.TopK)
-		return
-	}
-	kinds := make([]string, 0, len(report.HitsByKind))
-	for kind := range report.HitsByKind {
-		kinds = append(kinds, kind)
-	}
-	sort.Strings(kinds)
-	shares := make([]string, 0, len(kinds))
-	for _, kind := range kinds {
-		shares = append(shares, fmt.Sprintf("%d %s", report.HitsByKind[kind], kind))
-	}
-	fmt.Printf("  hits: %d of top-%d (%s) · census: %d documents\n", report.Hits, report.TopK,
-		strings.Join(shares, " · "), report.CensusDocuments)
-	for _, avenue := range report.Avenues {
-		fmt.Printf("  via %d\n", avenue.Rank)
-		for _, term := range avenue.Terms {
-			fmt.Printf("    %-18s local %3d · global %-8d · log-odds %.2f\n",
-				term.Term, term.LocalDocs, term.GlobalDocs, term.Score)
+func printResults(results []vector.Result) {
+	for _, result := range results {
+		if result.Database != "" {
+			fmt.Printf("%d. %.3f · database=%s · table=%s · id=%s\n",
+				result.Rank, result.Score, result.Database, result.Table, result.ID)
+		} else {
+			fmt.Printf("%d. %.3f · %s · %s\n", result.Rank, result.Score, result.Source, result.SourceID)
 		}
+		fmt.Printf("   %s\n", preview(result.Text, 500))
 	}
 }
 
@@ -338,13 +359,24 @@ func workerCommand(env *environment) *cobra.Command {
 			}
 			defer release()
 			defer vector.ReleaseWorkerClaim(state)
-			index, err := env.index(model)
-			if err != nil {
-				return err
+			federation, federationErr := env.federation(model)
+			var completion vector.Completion
+			if federationErr == nil {
+				worker := vector.FederatedWorker{Federation: federation, DataDir: state, PullModel: true,
+					Notifier: vector.SystemNotifier{}, WaitForCalm: env.calmGate().Wait}
+				completion = worker.Run(command.Context())
+			} else {
+				if !errors.Is(federationErr, os.ErrNotExist) {
+					return federationErr
+				}
+				index, err := env.index(model)
+				if err != nil {
+					return err
+				}
+				worker := vector.Worker{Index: index, DataDir: state, PullModel: true,
+					Notifier: vector.SystemNotifier{}, WaitForCalm: env.calmGate().Wait}
+				completion = worker.Run(command.Context())
 			}
-			worker := vector.Worker{Index: index, DataDir: state, PullModel: true,
-				Notifier: vector.SystemNotifier{}, WaitForCalm: env.calmGate().Wait}
-			completion := worker.Run(command.Context())
 			if env.json {
 				if err := printJSON(completion); err != nil {
 					return err
@@ -368,6 +400,11 @@ func workerCommand(env *environment) *cobra.Command {
 }
 
 func (env *environment) index(model string) (vector.Index, error) {
+	if federation, err := env.federation(model); err == nil {
+		return federation.CorpusIndex()
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return vector.Index{}, err
+	}
 	state, err := env.resolveStateDir()
 	if err != nil {
 		return vector.Index{}, err
@@ -378,7 +415,38 @@ func (env *environment) index(model string) (vector.Index, error) {
 	}
 	return vector.Index{Corpus: core, VectorPath: filepath.Join(state, vector.DatabaseFilename),
 		Model: model, Embedder: vector.Ollama{BaseURL: os.Getenv("OLLAMA_HOST")},
-		Notice: func(message string) { fmt.Fprintln(os.Stderr, message) }}, nil
+		Notice: func(message string) { fmt.Fprintln(os.Stderr, message) }, Database: "corpus"}, nil
+}
+
+func (env *environment) federation(model string) (vector.Federation, error) {
+	core, err := env.core()
+	if err != nil {
+		return vector.Federation{}, err
+	}
+	pluginRoot, err := env.resolvePluginRoot()
+	if err != nil {
+		return vector.Federation{}, err
+	}
+	return vector.LoadFederation(core, pluginRoot, model, version,
+		vector.Ollama{BaseURL: os.Getenv("OLLAMA_HOST")},
+		func(message string) { fmt.Fprintln(os.Stderr, message) })
+}
+
+func (env *environment) resolvePluginRoot() (string, error) {
+	if override := strings.TrimSpace(os.Getenv("ROCA_VECTOR_PLUGIN_ROOT")); override != "" {
+		return filepath.Abs(override)
+	}
+	// An explicit state directory is the test and standalone-development seat;
+	// keep its registry scoped beside the selected database instead of reading
+	// an operator's installed home plugins by accident.
+	if env.stateDir != "" {
+		return filepath.Join(coreDataDir(env.dbPath), "plugins"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "", fmt.Errorf("find HOME for the vector registry")
+	}
+	return filepath.Join(home, ".roca", "plugins"), nil
 }
 
 func (env *environment) core() (vector.CoreCLI, error) {

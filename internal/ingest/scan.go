@@ -14,7 +14,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
+	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 )
 
 // The scan only proves a file exists under a declared root and declares the
@@ -204,7 +204,11 @@ func addRegisteredParsers(roots Roots, plan *Plan, registered []parsers.Registra
 				continue
 			}
 			if contribution.FileName != "" {
-				targets = append(targets, namedFilesUnder(root, contribution.FileName, shape)...)
+				found := namedFilesUnder(root, contribution.FileName, shape)
+				if contribution.Name == string(parsers.KindCursorStore) {
+					attachCursorStoreSidecars(found)
+				}
+				targets = append(targets, found...)
 				continue
 			}
 			targets = append(targets, filesUnder(root, "", shape)...)
@@ -1074,6 +1078,23 @@ func namedFilesUnder(root, name string, shape Target) []Target {
 	return targetsUnder(root, shape, func(fileName string) bool {
 		return fileName == name
 	})
+}
+
+// attachCursorStoreSidecars pairs each store.db with its sibling meta.json
+// (title, cwd, timestamps) when that file is there. The session directory name
+// is the native agent UUID.
+func attachCursorStoreSidecars(targets []Target) {
+	for i, target := range targets {
+		sidecar := filepath.Join(filepath.Dir(target.Path), "meta.json")
+		if isFile(sidecar) {
+			targets[i].SidecarPath = sidecar
+			targets[i].CompanionPaths = append(append([]string{}, target.CompanionPaths...), sidecar)
+		}
+		session := filepath.Base(filepath.Dir(target.Path))
+		if sessionFileName.MatchString(session) {
+			targets[i].SessionID = session
+		}
+	}
 }
 
 // targetsUnder walks a root for the regular files `keep` accepts, each one a

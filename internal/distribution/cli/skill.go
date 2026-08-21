@@ -326,9 +326,17 @@ func (env *cliEnv) warnf(format string, args ...any) {
 // a query can actually reach, and what could not serve one is said in the body
 // instead of silently omitted.
 func (env *cliEnv) composedCatalogSkill() (string, error) {
-	paths, err := env.resolvePaths()
+	_, databases, warnings, err := env.discoverPluginContracts()
 	if err != nil {
 		return "", err
+	}
+	return skill.CatalogBody(databases, warnings), nil
+}
+
+func (env *cliEnv) discoverPluginContracts() (string, []plugin.Database, []string, error) {
+	paths, err := env.resolvePaths()
+	if err != nil {
+		return "", nil, nil, err
 	}
 	root := pluginRoot(paths)
 	descriptors, warnings := plugin.Discover(root)
@@ -342,21 +350,24 @@ func (env *cliEnv) composedCatalogSkill() (string, error) {
 		}
 		databases = append(databases, database)
 	}
-	return skill.CatalogBody(databases, warnings), nil
+	return root, databases, warnings, nil
 }
 
-// refreshCatalogSkills regenerates the semantic-catalog skill in every runtime
-// where it is registered, so installing, updating or uninstalling a plugin
-// teaches every runtime that asked for skills automatically. A runtime that
-// never ran `roca skill install` is left alone: that command is the consent
-// gate. A failure or a divergence is a warning, never a failed plugin command:
-// the plugin action already succeeded and its reporting stays the answer.
-func (env *cliEnv) refreshCatalogSkills() {
-	catalog, err := env.composedCatalogSkill()
+// refreshPluginContracts regenerates both declarative federation projections
+// after install, update, or uninstall. The vector registry is always refreshed;
+// the semantic catalog is written only to runtimes that previously asked for
+// skills. A failure is a warning because the package action already succeeded.
+func (env *cliEnv) refreshPluginContracts() {
+	root, databases, warnings, err := env.discoverPluginContracts()
 	if err != nil {
 		env.warnCatalogRefresh(err)
+		env.warnVectorRegistryRefresh(err)
 		return
 	}
+	if err := saveVectorRegistry(root, databases); err != nil {
+		env.warnVectorRegistryRefresh(err)
+	}
+	catalog := skill.CatalogBody(databases, warnings)
 	home, err := os.UserHomeDir()
 	if err != nil {
 		env.warnCatalogRefresh(fmt.Errorf("I do not know where your HOME is"))
@@ -395,9 +406,27 @@ func (env *cliEnv) refreshCatalogSkills() {
 	}
 }
 
+func (env *cliEnv) refreshVectorRegistry() error {
+	root, databases, _, err := env.discoverPluginContracts()
+	if err != nil {
+		return err
+	}
+	return saveVectorRegistry(root, databases)
+}
+
+func saveVectorRegistry(root string, databases []plugin.Database) error {
+	return plugin.SaveVectorRegistry(plugin.VectorRegistryPath(root),
+		plugin.ComposeVectorRegistry(databases))
+}
+
 func (env *cliEnv) warnCatalogRefresh(err error) {
 	fmt.Fprintf(env.errOut,
 		"warning: the semantic catalog skill was not refreshed: %v\n", err)
+}
+
+func (env *cliEnv) warnVectorRegistryRefresh(err error) {
+	fmt.Fprintf(env.errOut,
+		"warning: the vector declaration registry was not refreshed: %v\n", err)
 }
 
 func hooksCommand(env *cliEnv) *cobra.Command {

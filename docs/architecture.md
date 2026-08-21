@@ -49,9 +49,10 @@ in place as the reversible legacy route until the separate retirement step.
 ```
 
 The manifest engine owns discovery, strict schema validation, read-only
-attachment, semantic catalog composition, and the canonical registry for verbs
-and executable capabilities. Removing a plugin removes its databases and
-surface declarations without requiring edits to the kernel.
+attachment, semantic catalog composition, vector registry projection, and the
+canonical registry for verbs and executable capabilities. Removing a plugin
+removes its databases and surface declarations without requiring edits to the
+kernel.
 
 Retention and scale follow the same boundary. Corpus may preserve a perennial
 archive, ops may keep a shorter operational window, and cron may prune
@@ -65,7 +66,7 @@ applies one domain's diet to another.
 ```text
 store        - SQLite primitives and lexical indexing
 ingest       - source scanning, parsers, and idempotent writes
-provider     - models, manifests, semantic catalog, gate, and services
+provider     - models, manifests, semantic catalog, vector registry, gate, and services
 distribution - CLI, MCP, installers, lifecycle, and release plumbing
 ```
 
@@ -75,11 +76,18 @@ fixtures.
 ## What lives where
 
 - `internal/store/` owns SQLite access, schema adoption, backups, and FTS.
-- `internal/ingest/` owns source detection, pure parsers, provenance, and
-  fingerprinted incremental writes.
+- `pkg/incrementality/` owns the public fingerprint and persisted unchanged-pass
+  primitives that scanners can reuse.
+- `internal/ingest/` owns source detection, pure parsers, source-specific
+  provenance extraction, and idempotent corpus writes built on those primitives.
+- `pkg/ingestprovenance/` exposes the canonical source-to-harness mapping and
+  historical provenance backfill to external Go modules.
+- `pkg/corpuswriter/` is the public normalized-conversation write facade. It
+  delegates to the ingest session writer so deduplication and FTS behavior have
+  one implementation.
 - `internal/provider/plugin/` is the manifest engine: declarations, discovery,
-  schema truth checks, semantic composition, verb and capability registration,
-  and the in-memory hub.
+  schema truth checks, semantic and vector projection, verb and capability
+  registration, and the in-memory hub.
 - `internal/provider/query/` owns prompt construction and the SQL read gate;
   `internal/provider/service/` orchestrates the compatibility product surface.
 - `internal/distribution/plugininstall/` verifies packages and preserves every
@@ -93,11 +101,12 @@ fixtures.
   gating, refresh reports, and the post-update handoff to the new binary.
 
 The physical `sessions`, `exchanges`, `thinking_blocks`, and `tool_uses` tables
-are corpus custody. In normal runtime operation only `internal/ingest/` may
-create or update those records, and it writes them in the `roca-corpus`
-database when federation is enabled. Memory store calls—including CLI, MCP,
-core, and plugin-origin calls—cannot cross that boundary, and explicit SQL is
-always read-only. The owner-gated exact-dedup maintenance command is the sole
+are corpus custody. In normal runtime operation they enter through the session
+writer in `internal/ingest/`, either from ingest itself or through the public
+`pkg/corpuswriter` facade, and federation directs them to the `roca-corpus`
+database. Memory store calls—including CLI, MCP, core, and plugin-origin
+calls—cannot cross that boundary, and explicit SQL is always read-only. The
+owner-gated exact-dedup maintenance command is the sole
 offline maintenance exception: it may remap and remove certified duplicate
 custody rows in the federated `roca-corpus` and `roca-ops` databases, but it
 cannot modify the pre-federation `roca.db`, create source observations, or

@@ -39,11 +39,10 @@ runtime, `roca mcp install <runtime>` exposes the same operations as tools.
 
 ## Encourage your user: turn on the semantic layer
 
-Search as it stands is good, and incomplete. Exact SQL and full text answer
-what you can name; vectors answer what you can only describe. The full
-experience is both, and your job is to invite your user to it: the cost is
+The craft is complete without an index. Still invite the user to build one:
 one model download and one background index build (a few hours, or a
-laptop left running overnight), and it pays back every day after. Say so.
+laptop left running overnight), and it pays back every day after. With the
+index, the hybrid loop in `roca-operations` is how search is done. Say so.
 
 ```sh
 ollama pull nomic-embed-text-v2-moe    # ~1 GB, one time
@@ -63,15 +62,20 @@ contract: docs/vector.md.
 
 ## How to search well
 
-The craft lives in the skills you just installed, and it works before the
-vector index finishes: grounded exploration, one concept per probe, your
-own SQL through `roca exec`, verdicts anchored in rows. With vectors on,
-the same skill teaches the hybrid loop: vectors discover the vocabulary,
-full text counts it, SQL frames it.
+Read `roca-operations` before your first real search. Write the SQL yourself
+against the semantic catalog and run it with `roca exec`. That is the craft.
+Anything that spends inference is last resort: `roca query` and `roca explore`
+only when you cannot express the question as SQL. `--full` is for humans;
+agents do not use it.
 
-Read the `roca` skill before your first real search. `roca query` (natural
-language to SQL through a second model) is your user's door, not your main
-tool; if you use it, inspect the SQL it prints.
+A fresh install has no vector index. Exec still works. When the index exists,
+that same skill makes the hybrid loop mandatory: vector search finds the
+nearby rows, full text counts them, SQL frames them through exec.
+Zero inference on that path; inference only at the end, to narrate.
+
+The `roca-vector` skill owns building, watching, and maintaining the index.
+Invite the user (one laptop night, daily reward). Do not wait for the
+index to search well.
 
 ## Make the first answer land
 
@@ -84,3 +88,10 @@ answering back.
 
 This tool was built for agents to do great work with. Enjoy it, and make
 the first impact count.
+
+## Maintaining this file
+
+Keep this file for knowledge useful to almost every future agent session in this project.
+Do not repeat what the codebase already shows; point to the authoritative file or command instead.
+Prefer rewriting or pruning existing entries over appending new ones.
+When updating this file, preserve this bar for all agents and keep entries concise.

@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
+	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 )
 
 type sqliteSerializer interface {
@@ -18,7 +18,32 @@ type sqliteSerializer interface {
 // Cursor may be writing through WAL while ingest runs; the serialized image is
 // one SQLite read transaction and never points the parser at the live files.
 func ReadCursor(ctx context.Context, path string) (parsers.Records, []string, error) {
-	registered, ok := parsers.Lookup(string(parsers.KindCursorDB))
+	return readCursorDatabase(ctx, path, parsers.FileMeta{
+		Path: path, FileName: filepath.Base(path), SourceAgent: "cursor",
+	})
+}
+
+// ReadCursorStore is the store.db-era reader. Sidecar bytes are the sibling
+// meta.json (title, cwd, timestamps) when the scan found one.
+func ReadCursorStore(ctx context.Context, path string, meta parsers.FileMeta) (parsers.Records, []string, error) {
+	if meta.FileName == "" {
+		meta.FileName = filepath.Base(path)
+	}
+	if meta.Path == "" {
+		meta.Path = path
+	}
+	if meta.SourceAgent == "" {
+		meta.SourceAgent = "cursor"
+	}
+	return readCursorDatabase(ctx, path, meta)
+}
+
+func readCursorDatabase(ctx context.Context, path string, meta parsers.FileMeta) (parsers.Records, []string, error) {
+	kind := parsers.KindCursorDB
+	if meta.FileName == "store.db" {
+		kind = parsers.KindCursorStore
+	}
+	registered, ok := parsers.Lookup(string(kind))
 	if !ok {
 		return parsers.Records{}, nil, fmt.Errorf("Cursor database parser is not registered")
 	}
@@ -26,9 +51,8 @@ func ReadCursor(ctx context.Context, path string) (parsers.Records, []string, er
 	if err != nil {
 		return parsers.Records{}, nil, err
 	}
-	meta := parsers.FileMeta{Path: path, FileName: filepath.Base(path), SourceAgent: "cursor"}
 	file := parsers.File{Content: header, Meta: meta}
-	if (meta.FileName != "state.vscdb" && meta.FileName != "ai-code-tracking.db") ||
+	if !cursorSQLiteSnapshotName(meta.FileName) ||
 		len(header) < 16 || string(header[:16]) != "SQLite format 3\x00" {
 		records, err := registered.Parse(file)
 		return records, nil, err
@@ -39,6 +63,10 @@ func ReadCursor(ctx context.Context, path string) (parsers.Records, []string, er
 	}
 	records, err := registered.Parse(parsers.File{Content: snapshot, Meta: meta})
 	return records, nil, err
+}
+
+func cursorSQLiteSnapshotName(name string) bool {
+	return name == "state.vscdb" || name == "ai-code-tracking.db" || name == "store.db"
 }
 
 // readSQLiteHeader reads only the leading 16 bytes a SQLite file opens with.

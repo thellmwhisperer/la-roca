@@ -102,6 +102,35 @@
       }
     ]
   },
+  "vector": {
+    "databases": [
+      {
+        "database": "corpus",
+        "tables": [
+          {
+            "name": "sessions",
+            "id_column": "session_id",
+            "text_columns": ["title", "project"]
+          },
+          {
+            "name": "memories",
+            "id_column": "id",
+            "text_columns": ["content"]
+          },
+          {
+            "name": "exchanges",
+            "id_column": "id",
+            "text_columns": ["human_text", "agent_text"]
+          },
+          {
+            "name": "thinking_blocks",
+            "id_column": "id",
+            "text_columns": ["full_text"]
+          }
+        ]
+      }
+    ]
+  },
   "verbs": [
     {
       "name": "ingest",

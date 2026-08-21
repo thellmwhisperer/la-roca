@@ -9,7 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
+	"github.com/thellmwhisperer/la-roca/pkg/incrementality"
+	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 )
 
 func TestDeclaredClaudeWebExportIsIncrementalAndIdempotent(t *testing.T) {
@@ -139,7 +140,7 @@ func TestClaudeWebParserRevisionBackfillsLegacyCascadeWithoutDuplicates(t *testi
 
 	db := rocaDatabase(t)
 	target := Target{Path: path, Kind: parsers.KindClaudeWebConversations, SourceAgent: "claude-web"}
-	legacyFingerprint, err := Fingerprint(path)
+	legacyFingerprint, err := incrementality.Fingerprint(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +148,8 @@ func TestClaudeWebParserRevisionBackfillsLegacyCascadeWithoutDuplicates(t *testi
 		if _, err := WriteRecords(context.Background(), tx, registry(t), records); err != nil {
 			return err
 		}
-		return RecordState(context.Background(), tx, target, legacyFingerprint, "", nil)
+		return incrementality.RecordState(context.Background(), tx,
+			incrementalityTarget(target), legacyFingerprint, "", nil)
 	}); err != nil {
 		t.Fatal(err)
 	}

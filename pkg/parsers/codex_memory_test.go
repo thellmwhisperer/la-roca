@@ -6,7 +6,7 @@ import (
 )
 
 func TestCodexAggregateSplitsThreadBlocksWithStableIdentity(t *testing.T) {
-	content, err := os.ReadFile("../testdata/codex_raw_memories.fixture")
+	content, err := os.ReadFile("../../internal/ingest/testdata/codex_raw_memories.fixture")
 	if err != nil {
 		t.Fatal(err)
 	}

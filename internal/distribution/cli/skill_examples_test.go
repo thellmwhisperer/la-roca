@@ -102,7 +102,7 @@ func taughtPluginDispatch(tokens []string) bool {
 		return true
 	}
 	switch tokens[1] {
-	case "install", "ingest", "compact", "query", "vocab":
+	case "install", "ingest", "compact", "query":
 		return true
 	default:
 		return false

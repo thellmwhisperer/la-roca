@@ -12,7 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
+	"github.com/thellmwhisperer/la-roca/pkg/parsers"
+
+	sqlite "modernc.org/sqlite"
 )
 
 // This file is the only one in the ingest that knows SQL. What
@@ -79,16 +81,22 @@ func WriteRecords(ctx context.Context, tx *sql.Tx, layers layerResolver,
 	return writeRecords(ctx, tx, layers, nil, records)
 }
 
+// WriteSessions writes normalized conversations without the memory-specific
+// dependencies used by WriteRecords. The public corpus writer and ingest both
+// enter the same session insert path through this seam.
+func WriteSessions(ctx context.Context, tx *sql.Tx,
+	sessions []parsers.Session) (Counts, error) {
+	return (&writer{tx: tx}).sessions(ctx, sessions)
+}
+
 func writeRecords(ctx context.Context, tx *sql.Tx, layers layerResolver,
 	hermesReservedMemories *sql.DB, records parsers.Records) (Counts, error) {
 	w := &writer{tx: tx, layers: layers, hermesReservedMemories: hermesReservedMemories}
 	var counts Counts
-	for _, session := range records.Sessions {
-		written, err := w.session(ctx, session)
-		if err != nil {
-			return counts, err
-		}
-		counts.add(written)
+	written, err := w.sessions(ctx, records.Sessions)
+	counts.add(written)
+	if err != nil {
+		return counts, err
 	}
 	for _, memory := range records.Memories {
 		written, err := w.memory(ctx, memory)
@@ -99,6 +107,18 @@ func writeRecords(ctx context.Context, tx *sql.Tx, layers layerResolver,
 	}
 	if err := w.supersedeVanishedHermesBlocks(ctx, records.ObservedMemoryFiles, records.Memories, &counts); err != nil {
 		return counts, err
+	}
+	return counts, nil
+}
+
+func (w *writer) sessions(ctx context.Context, sessions []parsers.Session) (Counts, error) {
+	var counts Counts
+	for _, session := range sessions {
+		written, err := w.session(ctx, session)
+		if err != nil {
+			return counts, err
+		}
+		counts.add(written)
 	}
 	return counts, nil
 }
@@ -1281,10 +1301,30 @@ func (w *writer) patchMetadata(ctx context.Context, sessionID string, payload ma
 	_, err = w.tx.ExecContext(ctx, `
 		UPDATE sessions SET metadata = json_patch(COALESCE(metadata, '{}'), ?)
 		WHERE session_id = ?`, string(encoded), sessionID)
+	if isSessionExactPayloadConflict(err) {
+		// The patched payload would match another session row. Exact-dedup
+		// forbids that duplicate; leaving this row's metadata unchanged keeps
+		// the artefact writable and the unique index intact.
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("patch the metadata of %s: %w", sessionID, err)
 	}
 	return nil
+}
+
+// SQLITE_CONSTRAINT_UNIQUE is 2067; the primary constraint class is 19.
+const sqliteConstraintUnique = 2067
+
+func isSessionExactPayloadConflict(err error) bool {
+	if err == nil || !strings.Contains(err.Error(), "idx_sessions_exact_payload") {
+		return false
+	}
+	var serr *sqlite.Error
+	if errors.As(err, &serr) {
+		return serr.Code() == sqliteConstraintUnique || serr.Code()&0xff == 19
+	}
+	return true
 }
 
 // memory writes one curated text.

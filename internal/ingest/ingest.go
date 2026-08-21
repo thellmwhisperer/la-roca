@@ -10,7 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
+	"github.com/thellmwhisperer/la-roca/pkg/incrementality"
+	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 )
 
 // Database is the little of the store the ingest needs. It travels as an interface
@@ -59,14 +60,15 @@ type SourceStats struct {
 	Read             int
 	FilesExcluded    int
 	FilesErrored     int
+	FilesWriteFailed int
 	RecordsDiscarded int
 	RecordsExcluded  int
 	ElapsedMS        int64
 }
 
-// Failure is one artefact that could not be read, named so the operator knows
-// which one and why. One bad file is isolated and reported; it never costs the
-// run.
+// Failure is one artefact that could not be read or written, named so the
+// operator knows which one and why. One bad file is isolated and reported; it
+// never costs the rest of the corpus.
 type Failure struct {
 	Path   string `json:"path"`
 	Parser string `json:"parser"`
@@ -153,6 +155,10 @@ type Result struct {
 	// checks. The list is beside it.
 	Errors       int       `json:"errors"`
 	ErrorDetails []Failure `json:"error_details,omitempty"`
+	// WriteFailed counts artefacts that parsed and then could not be written.
+	// The rest of the corpus still runs; the CLI exits non-zero so a direct
+	// invocation and cron agree.
+	WriteFailed int `json:"write_failed,omitempty"`
 	// RecordsDiscarded counts what could not be read; RecordsExcluded counts what
 	// this build never meant to read. They are apart because collapsing them is
 	// what made a healthy ingest report thousands of failures.
@@ -257,7 +263,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 	// The state is read even on a dry run: telling an operator that eight hundred
 	// files were found is not the same as telling them that two of them changed,
 	// and the second is what they are asking.
-	state, err := LoadState(ctx, db.SQL())
+	state, err := incrementality.LoadState(ctx, db.SQL())
 	if err != nil {
 		if opts.DryRun {
 			// A dry run answers over a database it may not be able to read, and it
@@ -265,7 +271,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 			result.Warnings = append(result.Warnings,
 				fmt.Sprintf("the ingest state could not be read, so every file counts as "+
 					"pending: %v", err))
-			state = map[string]FileState{}
+			state = map[string]incrementality.FileState{}
 		} else {
 			return result, err
 		}
@@ -314,9 +320,9 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		}
 		fingerprint, err := targetFingerprint(target)
 		if err != nil {
-			metadata, metadataErr := metadataFingerprint(target.Path)
+			metadata, metadataErr := incrementality.MetadataFingerprint(target.Path)
 			isDatabase := target.Kind == parsers.KindOpenCodeDB || target.Kind == parsers.KindHermesDB
-			if metadataErr == nil && !isDatabase && unchangedMetadata(state, target.Path, metadata) {
+			if metadataErr == nil && !isDatabase && incrementality.UnchangedMetadata(state, target.Path, metadata) {
 				result.FilesSkipped++
 				result.categorizeFile("skipped", "unchanged fingerprint")
 				result.Coverage.skip(target.Path, "unchanged metadata after fingerprint failure")
@@ -332,8 +338,8 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 			finishTarget()
 			continue
 		}
-		if Unchanged(state, target.Path, fingerprint) {
-			result.addMessageCoverage(source, state[target.Path].MessageCoverage)
+		if incrementality.Unchanged(state, target.Path, fingerprint) {
+			result.addMessageCoverage(source, stateMessageCoverage(state[target.Path]))
 			result.FilesSkipped++
 			result.categorizeFile("skipped", "unchanged fingerprint")
 			result.Coverage.skip(target.Path, "unchanged fingerprint")
@@ -361,8 +367,18 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		stats.RecordsExcluded += result.RecordsExcluded - excludedBefore
 		finishTarget()
 		if err != nil {
+			result.fail(target, err.Error())
+			result.WriteFailed++
+			stats.FilesErrored++
+			stats.FilesWriteFailed++
 			result.Coverage.skip(target.Path, "write failed")
-			return result, err
+			if recordErr := db.Write(ctx, func(tx *sql.Tx) error {
+				return incrementality.RecordState(ctx, tx, incrementalityTarget(target),
+					fingerprint, err.Error(), nil)
+			}); recordErr != nil {
+				return result, recordErr
+			}
+			continue
 		}
 		if ingested {
 			result.Coverage.Files.Ingested++
@@ -573,7 +589,8 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 		// The failure is recorded against the path so the next run reads the file
 		// again instead of trusting a fingerprint it never earned.
 		return false, db.Write(ctx, func(tx *sql.Tx) error {
-			return RecordState(ctx, tx, target, fingerprint, reason, nil)
+			return incrementality.RecordState(ctx, tx, incrementalityTarget(target),
+				fingerprint, reason, nil)
 		})
 	}
 	kept := records.Sessions[:0]
@@ -611,7 +628,8 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 			"memories":         written.MemoriesInserted + written.MemoriesUpdated,
 			"message_coverage": records.MessageCoverage,
 		}
-		return RecordState(ctx, tx, target, fingerprint, "", summary)
+		return incrementality.RecordState(ctx, tx, incrementalityTarget(target),
+			fingerprint, "", summary)
 	})
 	if err == nil {
 		result.recordWritten(target, counts)
@@ -631,6 +649,23 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 		databaseReader = ReadHermes
 	case parsers.KindCursorDB:
 		databaseReader = ReadCursor
+	case parsers.KindCursorStore:
+		meta := parsers.FileMeta{
+			Path: target.Path, FileName: target.FileName, SessionID: target.SessionID,
+			Project: target.Project, ProjectFromCwd: target.ProjectFromCwd,
+			SourceAgent: target.SourceAgent,
+		}
+		if target.SidecarPath != "" {
+			sidecar, sidecarErr := os.ReadFile(target.SidecarPath)
+			if sidecarErr != nil {
+				result.fail(Target{Path: target.SidecarPath, Kind: parsers.KindSessionMetadata}, sidecarErr.Error())
+			} else {
+				meta.Sidecar = sidecar
+			}
+		}
+		databaseReader = func(ctx context.Context, path string) (parsers.Records, []string, error) {
+			return ReadCursorStore(ctx, path, meta)
+		}
 	}
 	if databaseReader != nil {
 		records, complaints, err := databaseReader(ctx, target.Path)

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/artifact"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
+	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
@@ -293,19 +295,64 @@ func TestSkillTeachesTheInvestigationFunnel(t *testing.T) {
 			},
 		},
 		{
-			name: "hybrid discovery",
-			body: skill.VectorContent(),
+			name: "database scoping",
+			body: skill.OperationsContent(),
 			want: []string{
-				"## Hybrid discovery",
-				"The vector discovers vocabulary, FTS censuses, SQL frames",
+				"## Which databases a question sees",
+				"default to the corpus database",
+				"should not drag in ops handoffs",
+				"--databases", "corpus,ops", "--databases all",
+				"does not guess relevance",
+				"inventory of the other attached names",
+				"second SQL pass",
+			},
+		},
+		{
+			name: "search craft branch",
+			body: skill.OperationsContent(),
+			want: []string{
+				"## Search craft",
+				"completion.json",
+				"finished_at",
+				"exit_status == 0",
+				"the hybrid loop is mandatory",
+				"complete working path",
+				"last resort",
+				"Agents never pass `--full`",
+				"plugin_roca_ops.memories",
+				"Invite the user to build the index",
+			},
+		},
+		{
+			name: "hybrid loop",
+			body: skill.OperationsContent(),
+			want: []string{
+				"## Hybrid loop",
+				"Vector search finds the nearby rows",
+				"FTS censuses them",
+				"SQL frames them",
+				"the shipped RRF hybrid",
 				"inference only at the end",
-				"roca vector query", "roca vector vocab",
+				`roca vector query "<first-person phrase or bare word>" 100`,
 				"names of people", "my boss is named",
 				"k must be between 1 and 100",
 				"LIKE '%term%'",
 				"COUNT(DISTINCT e.session_id)",
 				"COUNT(DISTINCT e.id)",
-				"with-inference SQL compiler outside this zero-inference path",
+				"Use them only as a last resort when you cannot write the SELECT yourself",
+			},
+		},
+		{
+			name: "vector owns the index",
+			body: skill.VectorContent(),
+			want: []string{
+				"roca vector install",
+				"roca vector ingest --delta",
+				"roca vector compact",
+				"completion.json",
+				"invite the user to",
+				"exit_status == 0",
+				"Otherwise treat the index as unavailable",
 			},
 		},
 	} {
@@ -317,9 +364,21 @@ func TestSkillTeachesTheInvestigationFunnel(t *testing.T) {
 			}
 		})
 	}
-	hybrid := markdownSection(skill.VectorContent(), "## Hybrid discovery")
+	hybrid := markdownSection(skill.OperationsContent(), "## Hybrid loop")
 	if strings.Contains(hybrid, `roca query --sql-only "`) {
-		t.Fatal("hybrid discovery sends its doctrinal path through model inference")
+		t.Fatal("hybrid loop sends its doctrinal path through model inference")
+	}
+	if strings.Contains(hybrid, "roca vector vocab") {
+		t.Fatal("hybrid loop still teaches vocab discovery")
+	}
+	if strings.Contains(skill.VectorContent(), "## Hybrid loop") ||
+		strings.Contains(skill.VectorContent(), "## Hybrid discovery") {
+		t.Fatal("vector skill still teaches the hybrid loop")
+	}
+	for _, embedded := range skill.EmbeddedSkills() {
+		if strings.Contains(embedded.Body, "roca vector vocab") {
+			t.Errorf("%s still teaches roca vector vocab", embedded.Name)
+		}
 	}
 }
 
@@ -397,7 +456,7 @@ tables:
 	}
 
 	env := &cliEnv{out: io.Discard, errOut: io.Discard}
-	env.refreshCatalogSkills()
+	env.refreshPluginContracts()
 
 	after, err := os.ReadFile(catalogPath)
 	if err != nil {
@@ -419,6 +478,117 @@ tables:
 	}
 }
 
+func TestPluginContractRefreshRegistersUpdatesAndUnregistersVectorSurfaces(t *testing.T) {
+	home := skillTestHome(t)
+	paths := resolvedIn(t, home)
+	root := pluginRoot(paths)
+	writeFile(t, paths.Config, "[features]\nplugins = true\n")
+	directory := t.TempDir()
+	manifestPath := filepath.Join(directory, plugin.PackageFilename)
+	manifest := `{
+  "schema": 1,
+  "name": "synthetic-vector",
+  "version": "1.0.0",
+  "binary": "roca",
+  "databases": [{
+    "name": "records",
+    "path": "records.db",
+    "alias": "plugin_synthetic_vector",
+    "attachment": "resident",
+    "retention": "The plugin retains synthetic records."
+  }],
+  "semantic": {"databases": [{
+    "database": "records",
+    "description": "Synthetic prose records.",
+    "questions": ["Which synthetic records exist?"],
+    "tables": [{
+      "name": "records",
+      "description": "One synthetic record.",
+      "columns": ["id", "title", "body", "telemetry"]
+    }]
+  }]},
+  "vector": {"databases": [{
+    "database": "records",
+    "tables": [{"name": "records", "id_column": "id", "text_columns": ["title", "body"]}]
+  }]},
+  "verbs": [],
+  "capabilities": []
+}`
+	writeFile(t, manifestPath, manifest)
+	database, err := sql.Open("sqlite", filepath.Join(directory, "records.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`CREATE TABLE records (
+		id INTEGER PRIMARY KEY, title TEXT, body TEXT, telemetry TEXT)`); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	writePluginChecksums(t, directory, plugin.PackageFilename, "records.db")
+
+	var output strings.Builder
+	env := &cliEnv{out: &output, errOut: &output}
+	code, err := executeWithEnv(env,
+		[]string{"plugin", "--yes", "install", directory}, strings.NewReader(""))
+	if err != nil || code != ExitOK {
+		t.Fatalf("plugin install = code %d, err %v, output %q", code, err, output.String())
+	}
+	registryPath := plugin.VectorRegistryPath(root)
+	registry, err := plugin.LoadVectorRegistry(registryPath)
+	if err != nil || len(registry.Databases) != 1 {
+		t.Fatalf("registered vector surfaces = %+v, err = %v", registry, err)
+	}
+	registration := registry.Databases[0]
+	if registration.Path != "records.db" || filepath.IsAbs(registration.Path) ||
+		!slices.Equal(registration.Tables[0].TextColumns, []string{"title", "body"}) {
+		t.Fatalf("vector registration = %+v", registration)
+	}
+
+	updated := strings.Replace(manifest,
+		`"text_columns": ["title", "body"]`, `"text_columns": ["body"]`, 1)
+	updated = strings.Replace(updated, `"version": "1.0.0"`, `"version": "1.1.0"`, 1)
+	writeFile(t, manifestPath, updated)
+	writePluginChecksums(t, directory, plugin.PackageFilename, "records.db")
+	output.Reset()
+	code, err = executeWithEnv(env,
+		[]string{"plugin", "--yes", "update", "synthetic-vector"}, strings.NewReader(""))
+	if err != nil || code != ExitOK {
+		t.Fatalf("plugin update = code %d, err %v, output %q", code, err, output.String())
+	}
+	registry, err = plugin.LoadVectorRegistry(registryPath)
+	if err != nil || !slices.Equal(registry.Databases[0].Tables[0].TextColumns, []string{"body"}) {
+		t.Fatalf("updated vector surfaces = %+v, err = %v", registry, err)
+	}
+
+	output.Reset()
+	code, err = executeWithEnv(env,
+		[]string{"plugin", "--yes", "uninstall", "synthetic-vector"}, strings.NewReader(""))
+	if err != nil || code != ExitOK {
+		t.Fatalf("plugin uninstall = code %d, err %v, output %q", code, err, output.String())
+	}
+	registry, err = plugin.LoadVectorRegistry(registryPath)
+	if err != nil || len(registry.Databases) != 0 {
+		t.Fatalf("unregistered vector surfaces = %+v, err = %v", registry, err)
+	}
+}
+
+func writePluginChecksums(t *testing.T, directory string, names ...string) {
+	t.Helper()
+	var checksums strings.Builder
+	for _, name := range names {
+		body, err := os.ReadFile(filepath.Join(directory, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		digest := sha256.Sum256(body)
+		fmt.Fprintf(&checksums, "%x  %s\n", digest, name)
+	}
+	writeFile(t, filepath.Join(directory, "checksums.txt"), checksums.String())
+}
+
 // A plugin lifecycle that cannot read the artifact registry must say so rather
 // than leave every installed catalog stale in silence: the refresh contract is
 // that a failure or a divergence is a warning, never a failed plugin command.
@@ -431,7 +601,7 @@ func TestPluginRefreshWarnsWhenTheRegistryCannotBeRead(t *testing.T) {
 
 	var warnings strings.Builder
 	env := &cliEnv{out: io.Discard, errOut: &warnings}
-	env.refreshCatalogSkills()
+	env.refreshPluginContracts()
 
 	if !strings.Contains(warnings.String(), "the semantic catalog skill was not refreshed") {
 		t.Fatalf("an unreadable registry was not warned: %q", warnings.String())

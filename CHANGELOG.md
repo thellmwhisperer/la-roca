@@ -4,11 +4,104 @@
 
 ### Features
 
+* **vector:** remove the `vocab` discovery verb
+
 * remove all model credential machinery; agent models authenticate through their own CLIs
 
 Most users need to do nothing: an already signed-in Codex or Claude CLI is detected and used automatically. Existing remote-provider configuration is tolerated and receives a migration proposal when a supported local CLI is available, or a removal proposal when none is available. A provider table that declares its own `command` keeps that command: the proposal removes only the retired authentication keys. Recovery backups made while retiring those providers are credential-redacted rather than byte-exact. If an older installation left files under `~/.roca/credentials`, La Roca no longer reads them; they never disable a working CLI transport and are offered for removal on their own. `roca init` retires nothing behind its model confirmation, and `roca update` no longer refreshes a remote model catalogue.
 
 The bootstrap JSON field `external_credential` is now named `command_transport`; it reports that the selected model runs through a local agent CLI without implying that La Roca owns authentication.
+
+## [1.67.0](https://github.com/thellmwhisperer/la-roca/compare/v1.66.0...v1.67.0) (2026-08-21)
+
+
+### Features
+
+* **vector:** federate queries across routed sidecars ([#222](https://github.com/thellmwhisperer/la-roca/issues/222)) ([86c5e48](https://github.com/thellmwhisperer/la-roca/commit/86c5e48c2799525bda6f392cb8d231eeeb3eb596))
+
+## [1.66.0](https://github.com/thellmwhisperer/la-roca/compare/v1.65.0...v1.66.0) (2026-08-21)
+
+
+### Features
+
+* **vector:** generate database-owned federated sidecars ([#220](https://github.com/thellmwhisperer/la-roca/issues/220)) ([663f9fa](https://github.com/thellmwhisperer/la-roca/commit/663f9fa2b34b61f13f499255e1f49a1174ed3f69))
+
+## [1.65.0](https://github.com/thellmwhisperer/la-roca/compare/v1.64.0...v1.65.0) (2026-08-21)
+
+
+### Features
+
+* **plugin:** register vector surface contracts ([#218](https://github.com/thellmwhisperer/la-roca/issues/218)) ([4c22c6c](https://github.com/thellmwhisperer/la-roca/commit/4c22c6cf196aaac83fbe00c36067927a0bf392d6))
+
+## [1.64.0](https://github.com/thellmwhisperer/la-roca/compare/v1.63.0...v1.64.0) (2026-08-21)
+
+
+### Features
+
+* **corpuswriter:** export shared conversation writer API ([#209](https://github.com/thellmwhisperer/la-roca/issues/209)) ([4fa6d7f](https://github.com/thellmwhisperer/la-roca/commit/4fa6d7fb57db220fcb615568330a45cdaab53bc0))
+
+## [1.63.0](https://github.com/thellmwhisperer/la-roca/compare/v1.62.0...v1.63.0) (2026-08-21)
+
+
+### Features
+
+* **incrementality:** export reusable unchanged-pass primitives ([#213](https://github.com/thellmwhisperer/la-roca/issues/213)) ([2236fb1](https://github.com/thellmwhisperer/la-roca/commit/2236fb16e06f80d1e5574c0b6e8a935ae10c1a08))
+
+## [1.62.0](https://github.com/thellmwhisperer/la-roca/compare/v1.61.0...v1.62.0) (2026-08-21)
+
+
+### Features
+
+* **parsers:** export public parser package ([#210](https://github.com/thellmwhisperer/la-roca/issues/210)) ([5fd44e8](https://github.com/thellmwhisperer/la-roca/commit/5fd44e8550942a8b89d39fa4d9a895c929ccb7a9))
+
+## [1.61.0](https://github.com/thellmwhisperer/la-roca/compare/v1.60.1...v1.61.0) (2026-08-21)
+
+
+### Features
+
+* **ingest:** export provenance mapping package ([#208](https://github.com/thellmwhisperer/la-roca/issues/208)) ([d54a986](https://github.com/thellmwhisperer/la-roca/commit/d54a986bf0ad3e02dedda610615cbab244059e6b))
+
+## [1.60.1](https://github.com/thellmwhisperer/la-roca/compare/v1.60.0...v1.60.1) (2026-08-20)
+
+
+### Bug Fixes
+
+* **ingest:** prevent write failures from aborting the corpus ([#206](https://github.com/thellmwhisperer/la-roca/issues/206)) ([f21b579](https://github.com/thellmwhisperer/la-roca/commit/f21b579ba4b08a6789ec0403f3a5caedd8345e3c))
+
+## [1.60.0](https://github.com/thellmwhisperer/la-roca/compare/v1.59.0...v1.60.0) (2026-08-19)
+
+
+### Features
+
+* **query:** add compound, join, and JSON SQL repairs ([#202](https://github.com/thellmwhisperer/la-roca/issues/202)) ([b477241](https://github.com/thellmwhisperer/la-roca/commit/b477241f0986e0b1a486d2b43a55dafc59ca29a1))
+
+## [1.59.0](https://github.com/thellmwhisperer/la-roca/compare/v1.58.0...v1.59.0) (2026-08-19)
+
+
+### Features
+
+* **query:** add per-question database scoping ([#201](https://github.com/thellmwhisperer/la-roca/issues/201)) ([6d122f6](https://github.com/thellmwhisperer/la-roca/commit/6d122f6ce25c47a2f087b13c5bb35e60cb21495f))
+
+## [1.58.0](https://github.com/thellmwhisperer/la-roca/compare/v1.57.0...v1.58.0) (2026-08-18)
+
+
+### Features
+
+* **ingest:** ingest Cursor agent-home conversations ([#195](https://github.com/thellmwhisperer/la-roca/issues/195)) ([0a3f511](https://github.com/thellmwhisperer/la-roca/commit/0a3f511c9e0f7ff61ca2474e3a4610c3a1267332))
+
+## [1.57.0](https://github.com/thellmwhisperer/la-roca/compare/v1.56.0...v1.57.0) (2026-08-18)
+
+
+### Features
+
+* **distribution:** teach exec-first hybrid search doctrine ([#198](https://github.com/thellmwhisperer/la-roca/issues/198)) ([cd6d79a](https://github.com/thellmwhisperer/la-roca/commit/cd6d79aefc7016aac2d66e4d1cccb43f6ec39474))
+
+## [1.56.0](https://github.com/thellmwhisperer/la-roca/compare/v1.55.0...v1.56.0) (2026-08-18)
+
+
+### Features
+
+* **vector:** remove vocab discovery command ([#196](https://github.com/thellmwhisperer/la-roca/issues/196)) ([16e1bf4](https://github.com/thellmwhisperer/la-roca/commit/16e1bf43c88b3bbae1a73eae9b065cc38b162b3f))
 
 ## [1.55.0](https://github.com/thellmwhisperer/la-roca/compare/v1.54.0...v1.55.0) (2026-08-18)
 

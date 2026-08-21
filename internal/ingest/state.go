@@ -1,108 +1,11 @@
 package ingest
 
 import (
-	"context"
-	"crypto/sha256"
-	"database/sql"
 	"encoding/json"
-	"fmt"
-	"io"
-	"os"
-	"slices"
-	"strconv"
-	"strings"
 
-	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
+	"github.com/thellmwhisperer/la-roca/pkg/incrementality"
+	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 )
-
-// Ingest idempotency has two levels because one is not enough.
-//
-// **File level.** `ingest_file_state` keeps, per path, the source kind, the agent,
-// the project, a fingerprint, the last sync and the last error. Before a file is
-// read, its current fingerprint is compared with the stored one; when they match
-// the file is skipped whole, without being opened. That is what makes a repeated
-// `roca ingest` cheap, and the operator's real flow runs it repeatedly.
-//
-// **Record level.** A fingerprint is not enough for a log that grows: a session
-// file changes on every turn and its fingerprint changes whole. The writer
-// matches replayed turns within their session before enrichment or insertion and
-// leaves conflicting or ambiguous anchors alone. The exact-payload unique index
-// is the final defence against a duplicate;
-// re-reading a grown file inserts only new exchanges.
-//
-// The debt v1 does not inherit is that this used to be two contracts: the live
-// route kept fingerprints and the full reconciliation did not, so the table was
-// empty on a machine with many sessions. Here every route is this route.
-
-// Fingerprint is a file's identity for the skip decision: metadata plus a
-// content digest. Size and mtime alone collide after timestamp-preserving
-// restores, which would otherwise mark changed transcripts as synced forever.
-func Fingerprint(path string) (string, error) {
-	metadata, err := metadataFingerprint(path)
-	if err != nil {
-		return "", err
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-	digest := sha256.New()
-	if _, err := io.Copy(digest, file); err != nil {
-		return "", err
-	}
-	return metadata + ":" + fmt.Sprintf("%x", digest.Sum(nil)), nil
-}
-
-func metadataFingerprint(path string) (string, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return "", err
-	}
-	return strconv.FormatInt(info.Size(), 10) + ":" +
-		strconv.FormatInt(info.ModTime().UnixNano(), 10), nil
-}
-
-// targetFingerprint includes SQLite's write-ahead log for database sources.
-// Commits can live only in that sidecar until the owning process checkpoints,
-// leaving the main database's size and mtime unchanged.
-func targetFingerprint(target Target) (string, error) {
-	main, err := Fingerprint(target.Path)
-	if err != nil {
-		return "", err
-	}
-	if target.Kind != parsers.KindOpenCodeDB && target.Kind != parsers.KindHermesDB &&
-		target.Kind != parsers.KindCursorDB {
-		return parserAwareFingerprint(target.Kind, main), nil
-	}
-	wal, err := Fingerprint(target.Path + "-wal")
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return "", err
-		}
-		wal = "none"
-	}
-	combined := main + ":wal:" + wal
-	if len(target.CompanionPaths) > 0 {
-		digest := sha256.New()
-		paths := slices.Clone(target.CompanionPaths)
-		slices.Sort(paths)
-		for _, path := range paths {
-			fingerprint, fingerprintErr := Fingerprint(path)
-			switch {
-			case fingerprintErr == nil:
-			case os.IsNotExist(fingerprintErr):
-				fingerprint = "missing"
-			default:
-				fingerprint = "unreadable"
-			}
-			_, _ = fmt.Fprintf(digest, "%d:%s:%d:%s", len(path), path,
-				len(fingerprint), fingerprint)
-		}
-		combined += ":companions:" + fmt.Sprintf("%x", digest.Sum(nil))
-	}
-	return parserAwareFingerprint(target.Kind, combined), nil
-}
 
 // parserVersions is the reading each source kind currently gets. The version
 // travels inside the watermark, so a build that learned to read more of a source
@@ -141,99 +44,36 @@ var parserVersions = map[parsers.Kind]string{
 // be exercised against a contributed registration without shipping one.
 var registeredParser = parsers.Lookup
 
-func parserAwareFingerprint(kind parsers.Kind, fingerprint string) string {
-	version, versioned := parserVersions[kind]
+func incrementalityTarget(target Target) incrementality.Target {
+	version, versioned := parserVersions[target.Kind]
 	if !versioned {
-		registered, found := registeredParser(string(kind))
-		if !found || registered.Version == "" {
-			return fingerprint
-		}
-		version = registered.Version
-	}
-	return fingerprint + ":parser:" + version
-}
-
-// FileState is what the database remembers about one path.
-type FileState struct {
-	Fingerprint     string
-	LastError       string
-	MessageCoverage *parsers.MessageCoverage
-}
-
-// LoadState reads the whole state table once. One query beats one query per file:
-// a machine with thousands of transcripts would otherwise spend the run on
-// round trips.
-func LoadState(ctx context.Context, db *sql.DB) (map[string]FileState, error) {
-	rows, err := db.QueryContext(ctx, `SELECT path, COALESCE(fingerprint, ''),
-		COALESCE(last_error, ''), COALESCE(metadata, '{}') FROM ingest_file_state`)
-	if err != nil {
-		return nil, fmt.Errorf("read the ingest state: %w", err)
-	}
-	defer rows.Close()
-
-	state := map[string]FileState{}
-	for rows.Next() {
-		var path, fingerprint, failure, metadata string
-		if err := rows.Scan(&path, &fingerprint, &failure, &metadata); err != nil {
-			return nil, fmt.Errorf("read the ingest state: %w", err)
-		}
-		var summary struct {
-			MessageCoverage *parsers.MessageCoverage `json:"message_coverage"`
-		}
-		_ = json.Unmarshal([]byte(metadata), &summary)
-		state[path] = FileState{Fingerprint: fingerprint, LastError: failure,
-			MessageCoverage: summary.MessageCoverage}
-	}
-	return state, rows.Err()
-}
-
-// Unchanged decides whether a file can be skipped without being opened.
-//
-// A path with an error recorded against it is always re-read: the error may have
-// been the disk, the agent writing mid-file, or a bug that has since been fixed,
-// and none of those is a reason to never look again.
-func Unchanged(state map[string]FileState, path, fingerprint string) bool {
-	known, ok := state[path]
-	if !ok || known.LastError != "" || known.Fingerprint == "" {
-		return false
-	}
-	return known.Fingerprint == fingerprint
-}
-
-func unchangedMetadata(state map[string]FileState, path, metadata string) bool {
-	known, ok := state[path]
-	return ok && known.LastError == "" && metadata != "" &&
-		strings.HasPrefix(known.Fingerprint, metadata+":")
-}
-
-// RecordState writes one path's state. The upsert by path is what makes
-// re-ingesting never duplicate the state either.
-func RecordState(ctx context.Context, tx *sql.Tx, target Target, fingerprint string,
-	failure string, summary map[string]any) error {
-	payload := "{}"
-	if len(summary) > 0 {
-		if encoded, err := json.Marshal(summary); err == nil {
-			payload = string(encoded)
+		if registered, found := registeredParser(string(target.Kind)); found {
+			version = registered.Version
 		}
 	}
-	_, err := tx.ExecContext(ctx, `
-		INSERT INTO ingest_file_state
-		  (path, source_kind, source_agent, project, fingerprint, last_synced_at, last_error, metadata)
-		VALUES (?, ?, ?, ?, ?, datetime('now'), ?, ?)
-		ON CONFLICT(path) DO UPDATE SET
-		  source_kind = excluded.source_kind,
-		  source_agent = excluded.source_agent,
-		  project = excluded.project,
-		  fingerprint = excluded.fingerprint,
-		  last_synced_at = datetime('now'),
-		  last_error = excluded.last_error,
-		  metadata = excluded.metadata`,
-		target.Path, string(target.Kind), nullIfEmpty(target.SourceAgent),
-		nullIfEmpty(target.Project), fingerprint, nullIfEmpty(failure), payload)
-	if err != nil {
-		return fmt.Errorf("record the state of %s: %w", target.Path, err)
+	return incrementality.Target{
+		Path:          target.Path,
+		Kind:          string(target.Kind),
+		SourceAgent:   target.SourceAgent,
+		Project:       target.Project,
+		ParserVersion: version,
+		IncludeSQLiteWAL: target.Kind == parsers.KindOpenCodeDB ||
+			target.Kind == parsers.KindHermesDB || target.Kind == parsers.KindCursorDB ||
+			target.Kind == parsers.KindCursorStore,
+		CompanionPaths: target.CompanionPaths,
 	}
-	return nil
+}
+
+func targetFingerprint(target Target) (string, error) {
+	return incrementality.TargetFingerprint(incrementalityTarget(target))
+}
+
+func stateMessageCoverage(state incrementality.FileState) *parsers.MessageCoverage {
+	var summary struct {
+		MessageCoverage *parsers.MessageCoverage `json:"message_coverage"`
+	}
+	_ = json.Unmarshal(state.Metadata, &summary)
+	return summary.MessageCoverage
 }
 
 func nullIfEmpty(value string) any {

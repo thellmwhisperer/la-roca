@@ -1,0 +1,32 @@
+{
+  "parser": "cursor_store",
+  "destination": "corpus",
+  "source": "store.db",
+  "meta": {
+    "Path": "/synthetic/home/.cursor/chats/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/11111111-aaaa-4bbb-8ccc-222222222222/store.db",
+    "FileName": "store.db",
+    "Project": "harbor",
+    "SourceAgent": "cursor"
+  },
+  "want": {
+    "sessions": [
+      {
+        "id": "cursor:11111111-aaaa-4bbb-8ccc-222222222222",
+        "source_agent": "cursor",
+        "project": "harbor",
+        "title": "Synthetic harbor session",
+        "exchanges": [
+          {
+            "human_text": "map the synthetic harbor",
+            "agent_text": "The synthetic harbor is mapped."
+          },
+          {
+            "human_text": "confirm the invented beacon color",
+            "agent_text": "The invented beacon is amber."
+          }
+        ]
+      }
+    ],
+    "memories": []
+  }
+}

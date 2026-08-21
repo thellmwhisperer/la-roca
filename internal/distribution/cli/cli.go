@@ -206,7 +206,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 	commands := []*cobra.Command{
 		versionCommand(env), initCommand(env), exploreCommand(env), schemaCommand(env),
 		indexCommand(env), doctorCommand(env), dedupCommand(env), memoryCommand(env), layersCommand(env),
-		healthCommand(env),
+		healthCommand(env), databaseScopeCommand(env),
 		mcpCommand(env), skillCommand(env), hooksCommand(env),
 		loginCommand(env), modelCommand(env),
 		updateCommand(env), uninstallCommand(env),
@@ -452,10 +452,9 @@ func pluginInstallCommand(env *cliEnv, consented *bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// The new plugin's semantic fragments teach every runtime that has
-			// the skills installed; the catalog is regenerated last so it sees
-			// the plugin this run just placed.
-			env.refreshCatalogSkills()
+			// The new plugin's semantic and vector fragments are registered from
+			// the same installed manifest set after the package is in place.
+			env.refreshPluginContracts()
 			return env.reportPlugin("installed", result)
 		},
 	}
@@ -492,7 +491,7 @@ func pluginUpdateCommand(env *cliEnv, consented *bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			env.refreshCatalogSkills()
+			env.refreshPluginContracts()
 			return env.reportPlugin("updated", result)
 		},
 	}
@@ -522,7 +521,7 @@ func pluginUninstallCommand(env *cliEnv, consented *bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			env.refreshCatalogSkills()
+			env.refreshPluginContracts()
 			return env.reportPlugin("uninstalled", result)
 		},
 	}
@@ -750,6 +749,13 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		if !env.omitCorpus {
 			if _, err := rocacorpus.Ensure(pluginDir, pluginExecutableDir(paths), env.build.Version); err != nil {
 				return nil, fmt.Errorf("install bundled corpus plugin: %w", err)
+			}
+			// Bundled declarations change with the running build rather than an
+			// explicit `plugin update`, so keep their derived vector registry in
+			// step here. The writer is content-aware and leaves an identical
+			// registry untouched on ordinary commands.
+			if err := env.refreshVectorRegistry(); err != nil {
+				env.warnVectorRegistryRefresh(err)
 			}
 		}
 	}

@@ -23,6 +23,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/skill"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
+	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
 
@@ -608,6 +609,7 @@ func installedPluginPaths(paths config.Paths) []string {
 			owned = append(owned, lock)
 		}
 	}
+	owned = append(owned, plugin.VectorRegistryPath(root))
 	return append(owned, pluginDownloads(paths), root)
 }
 

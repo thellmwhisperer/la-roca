@@ -77,6 +77,110 @@ func TestManifestValidationRejectsMalformedDeclarationsActionably(t *testing.T) 
 	}
 }
 
+func TestVectorManifestValidationKeepsEmbeddabilityExplicitAndActionable(t *testing.T) {
+	valid := manifestFixture(`{
+  "schema": 1,
+  "name": "synthetic",
+  "version": "1.0.0",
+  "binary": "roca-synthetic",
+  "databases": [{
+    "name": "records",
+    "path": "records.db",
+    "alias": "plugin_synthetic_records",
+    "attachment": "resident",
+    "retention": "The plugin retains every synthetic record."
+  }],
+  "semantic": {"databases": [{
+    "database": "records",
+    "description": "Synthetic records.",
+    "questions": ["Which synthetic records exist?"],
+    "tables": [{"name": "records", "description": "One synthetic record.", "columns": ["id", "title", "body", "telemetry"]}]
+  }]},
+  "vector": {"databases": [{
+    "database": "records",
+    "tables": [{
+      "name": "records",
+      "id_column": "id",
+      "text_columns": ["title", "body"],
+      "chunking": {"max_chars": 4000, "overlap_chars": 400}
+    }]
+  }]},
+  "verbs": [],
+  "capabilities": []
+}`)
+	manifest, err := plugin.DecodeManifest(strings.NewReader(valid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	table := manifest.Vector.Databases[0].Tables[0]
+	if !slices.Equal(table.TextColumns, []string{"title", "body"}) ||
+		table.Chunking == nil || *table.Chunking.MaxChars != 4000 || *table.Chunking.OverlapChars != 400 {
+		t.Fatalf("vector table = %+v", table)
+	}
+	collision := manifest
+	collision.Databases = append(slices.Clone(manifest.Databases), plugin.DatabaseDeclaration{
+		Name: "existing_sidecar", Path: "records.vector.db", Alias: "plugin_synthetic_existing_sidecar",
+		Attachment: plugin.AttachmentResident, Retention: "The plugin retains the non-vectorized database.",
+	})
+	collision.Semantic.Databases = append(slices.Clone(manifest.Semantic.Databases), plugin.DatabaseSemantic{
+		Database: "existing_sidecar", Description: "Non-vectorized records.",
+		Questions: []string{"Which non-vectorized records exist?"},
+		Tables:    []plugin.SemanticTable{{Name: "entries", Description: "One entry.", Columns: []string{"id"}}},
+	})
+	collision.Vector = nil
+	if err := collision.Valid(); err == nil || !strings.Contains(err.Error(), "collides") {
+		t.Fatalf("manifest sidecar collision passed with %v", err)
+	}
+
+	tests := []struct {
+		name string
+		edit func(string) string
+		want string
+	}{
+		{"empty fragment", func(raw string) string {
+			return replaceVectorFragment(raw, `"vector": {"databases": []},`)
+		}, "vector fragment declares no databases"},
+		{"undeclared database", func(raw string) string {
+			return replaceLast(raw, "\"database\": \"records\",\n    \"tables\": [{", "\"database\": \"missing\",\n    \"tables\": [{")
+		}, "has no database declaration"},
+		{"missing semantic table", func(raw string) string {
+			return replaceLast(raw, "\"name\": \"records\",\n      \"id_column\"", "\"name\": \"missing\",\n      \"id_column\"")
+		}, "has no semantic table declaration"},
+		{"missing id column", func(raw string) string {
+			return strings.Replace(raw, `"id_column": "id"`, `"id_column": "missing"`, 1)
+		}, "missing id column"},
+		{"no text columns", func(raw string) string {
+			return strings.Replace(raw, `"text_columns": ["title", "body"]`, `"text_columns": []`, 1)
+		}, "declares no text columns"},
+		{"missing text column", func(raw string) string {
+			return strings.Replace(raw, `"text_columns": ["title", "body"]`, `"text_columns": ["missing"]`, 1)
+		}, "missing, or repeated text column"},
+		{"repeated text column", func(raw string) string {
+			return strings.Replace(raw, `"text_columns": ["title", "body"]`, `"text_columns": ["title", "title"]`, 1)
+		}, "missing, or repeated text column"},
+		{"empty chunking", func(raw string) string {
+			return strings.Replace(raw, `"chunking": {"max_chars": 4000, "overlap_chars": 400}`, `"chunking": {}`, 1)
+		}, "empty chunking hints"},
+		{"non-positive max", func(raw string) string {
+			return strings.Replace(raw, `"max_chars": 4000`, `"max_chars": 0`, 1)
+		}, "max_chars must be positive"},
+		{"negative overlap", func(raw string) string {
+			return strings.Replace(raw, `"overlap_chars": 400`, `"overlap_chars": -1`, 1)
+		}, "overlap_chars must not be negative"},
+		{"overlap reaches max", func(raw string) string {
+			return strings.Replace(raw, `"overlap_chars": 400`, `"overlap_chars": 4000`, 1)
+		}, "overlap_chars must be smaller"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := plugin.DecodeManifest(strings.NewReader(test.edit(valid)))
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("vector manifest error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestManifestEngineDiscoversAttachesComposesAndRegisters(t *testing.T) {
 	root := t.TempDir()
 	directory := filepath.Join(root, "synthetic")
@@ -100,6 +204,10 @@ func TestManifestEngineDiscoversAttachesComposesAndRegisters(t *testing.T) {
       {"name": "runs", "description": "One synthetic run.", "columns": ["id", "error"]}
     ]}
   ]},
+  "vector": {"databases": [{"database": "records", "tables": [{
+    "name": "records", "id_column": "id", "text_columns": ["value"],
+    "chunking": {"max_chars": 2400, "overlap_chars": 240}
+  }]}]},
   "verbs": [{"name": "inspect", "description": "Inspect synthetic records.", "capability": "inspect"}],
   "capabilities": [{"name": "inspect", "command": ["inspect"]}]
 }`)
@@ -125,6 +233,38 @@ func TestManifestEngineDiscoversAttachesComposesAndRegisters(t *testing.T) {
 	}
 	if got := []string{databases[0].Schema, databases[1].Schema}; !slices.Equal(got, []string{"synthetic_records", "synthetic_runs"}) {
 		t.Fatalf("aliases = %v", got)
+	}
+	if len(databases[0].VectorTables) != 1 || databases[0].VectorTables[0].IDColumn != "id" ||
+		!slices.Equal(databases[0].VectorTables[0].TextColumns, []string{"value"}) ||
+		len(databases[1].VectorTables) != 0 {
+		t.Fatalf("vector surfaces = %+v, %+v", databases[0].VectorTables, databases[1].VectorTables)
+	}
+
+	registry := plugin.ComposeVectorRegistry(databases)
+	if len(registry.Databases) != 1 || registry.Databases[0].Plugin != "synthetic" ||
+		registry.Databases[0].Database != "records" || registry.Databases[0].Path != "records.db" ||
+		registry.Databases[0].Alias != "synthetic_records" {
+		t.Fatalf("vector registry = %+v", registry)
+	}
+	if len(registry.Routes) != 2 || registry.Routes[0].Database != "records" ||
+		registry.Routes[1].Database != "runs" {
+		t.Fatalf("vector route inventory = %+v", registry.Routes)
+	}
+	registryPath := plugin.VectorRegistryPath(root)
+	if err := plugin.SaveVectorRegistry(registryPath, registry); err != nil {
+		t.Fatal(err)
+	}
+	loadedRegistry, err := plugin.LoadVectorRegistry(registryPath)
+	if err != nil || len(loadedRegistry.Databases) != 1 || len(loadedRegistry.Routes) != 2 ||
+		!slices.Equal(loadedRegistry.Databases[0].Tables[0].TextColumns, []string{"value"}) {
+		t.Fatalf("loaded vector registry = %+v, err = %v", loadedRegistry, err)
+	}
+	invalidRegistry := registry
+	invalidRegistry.Databases = slices.Clone(registry.Databases)
+	invalidRegistry.Databases[0].Path = "/outside.db"
+	if err := plugin.SaveVectorRegistry(registryPath, invalidRegistry); err == nil ||
+		!strings.Contains(err.Error(), "invalid path") {
+		t.Fatalf("unsafe vector registry error = %v", err)
 	}
 
 	hub, err := plugin.OpenHub(t.Context(), databases)
@@ -278,6 +418,27 @@ tables:
 }
 
 func manifestFixture(raw string) string { return strings.TrimSpace(raw) + "\n" }
+
+func replaceLast(raw, old, replacement string) string {
+	index := strings.LastIndex(raw, old)
+	if index < 0 {
+		return raw
+	}
+	return raw[:index] + replacement + raw[index+len(old):]
+}
+
+func replaceVectorFragment(raw, replacement string) string {
+	start := strings.Index(raw, `"vector":`)
+	if start < 0 {
+		return raw
+	}
+	end := strings.Index(raw[start:], "\n  \"verbs\"")
+	if end < 0 {
+		return raw
+	}
+	end += start
+	return raw[:start] + replacement + raw[end:]
+}
 
 func createManifestDatabase(t *testing.T, path, ddl string) {
 	t.Helper()

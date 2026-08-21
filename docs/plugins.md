@@ -242,12 +242,15 @@ database list.
 
 ## The manifest
 
-`plugin.json` schema 1 has five required parts:
+`plugin.json` schema 1 has five required parts and one optional retrieval
+contract:
 
 - identity: `name`, `version`, and `binary`;
 - databases: every SQLite file, its declared attach alias, attachment mode,
   custody, and plugin-owned retention policy;
 - semantic fragment: the tables and questions served by each database;
+- optional vector fragment: the stable row id and prose columns a database
+  opts into later semantic indexing;
 - verbs: one canonical command name and description, projected to CLI and MCP;
 - capabilities: named executable calls used when SQL cannot perform the work.
 
@@ -314,6 +317,21 @@ it.)
       }
     ]
   },
+  "vector": {
+    "databases": [
+      {
+        "database": "records",
+        "tables": [
+          {
+            "name": "receipts",
+            "id_column": "id",
+            "text_columns": ["title"],
+            "chunking": {"max_chars": 4000, "overlap_chars": 400}
+          }
+        ]
+      }
+    ]
+  },
   "verbs": [
     {
       "name": "receipts",
@@ -331,13 +349,14 @@ it.)
 ```
 
 The engine rejects unknown fields, unsupported schema versions, unsafe paths or
-aliases, repeated names, a semantic fragment that names an undeclared
-database, a table declaration that disagrees with the real SQLite schema, and
-a verb that names a missing capability. Discovery reports malformed manifests
-as actionable errors; it never silently ignores them. Attach aliases are
-explicit, and collisions are errors rather than names the kernel rewrites: two
-packages that declare the same alias both lose it, and the warning names them.
-The aliases the bundled packages declare are the kernel's own seats, so a
+aliases, repeated names, a semantic or vector fragment that names an
+undeclared database or table, a vector id or text column missing from the
+semantic declaration, a table declaration that disagrees with the real SQLite
+schema, and a verb that names a missing capability. Discovery reports malformed
+manifests as actionable errors; it never silently ignores them. Attach aliases
+are explicit, and collisions are errors rather than names the kernel rewrites:
+two packages that declare the same alias both lose it, and the warning names
+them. The aliases the bundled packages declare are the kernel's own seats, so a
 later package that claims one of them makes only itself unavailable.
 
 `name` travels through the install directory, executable, and every lifecycle
@@ -387,6 +406,34 @@ catalog: declaring one is allowed and omitting it is allowed, and either way it
 never reaches the SQL model. No plugin table may declare a column named
 `database`; that name is reserved for row provenance.
 
+### Vector fragments
+
+The optional `vector` fragment is opt-in at column granularity. Each entry
+names one declared database and table, one stable `id_column`, and the ordered
+`text_columns` whose prose is worth recalling by meaning. Columns omitted from
+`text_columns` are not embeddable. Keep telemetry, raw tool output, machine
+noise, and other deterministic-only fields out unless their meaning is itself
+the retrieval surface.
+
+`chunking` is optional. `max_chars` must be positive, `overlap_chars` cannot be
+negative, and when both are present the overlap must be smaller than the
+maximum. These are hints to the kernel vector worker, not instructions for code
+the plugin runs. A plugin never supplies embedding generation code, and a
+database with no `vector` declaration continues to serve through FTS and SQL
+exactly as before.
+
+Install, update, and uninstall regenerate
+`~/.roca/plugins/vector-registry.json` in the same pass that refreshes the
+semantic catalog. Bundled manifest upgrades refresh the same registry when the
+kernel opens them. The registry contains plugin-relative database filenames,
+not local home paths, plus a content-free routing inventory so FTS-only
+databases remain valid `--databases` selections. It is derived state: edit
+`plugin.json`, never the registry. The kernel worker turns each declaration
+into a database-owned adjacent sidecar with owner/model/dimensions/version
+metadata and incremental fingerprint GC. `roca vector query --databases ...`
+routes over those sidecars, merges only same-model scores, and leaves missing
+or undeclared vector coverage on the database's existing FTS/SQL path.
+
 ### Verbs and capabilities
 
 A verb is the public name. A capability is the executable call behind it. The
@@ -410,7 +457,8 @@ are not a sandbox.
 
 1. Create the SQLite files, and the executable when the manifest names one of
    its own rather than the host binary.
-2. Write `plugin.json`, including a semantic entry for every database.
+2. Write `plugin.json`, including a semantic entry for every database and an
+   optional vector entry for prose columns that should be semantically indexed.
 3. Publish a `checksums.txt` containing one SHA-256 for every immutable payload
    and every initial database file.
 4. Test that each declared table and ordered column list matches the database.

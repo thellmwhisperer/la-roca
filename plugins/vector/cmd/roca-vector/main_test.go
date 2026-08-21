@@ -63,6 +63,9 @@ func TestDeltaFlagAndReadOnlyBoundaryAreExplicit(t *testing.T) {
 	if flag := ingestCommand(env).Flags().Lookup("source"); flag == nil {
 		t.Fatal("targeted delta has no --source flag")
 	}
+	if flag := queryCommand(env).Flags().Lookup("databases"); flag == nil {
+		t.Fatal("federated query has no --databases flag")
+	}
 }
 
 func TestTargetedSessionDeltaIsObservableAndIdempotentThroughCLI(t *testing.T) {
@@ -221,28 +224,25 @@ func TestDefaultStateDirUsesThePluginIdentity(t *testing.T) {
 	}
 }
 
+func TestVectorRegistryRemainsHomeScopedForACustomCoreDatabase(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ROCA_VECTOR_PLUGIN_ROOT", "")
+	env := &environment{dbPath: filepath.Join(t.TempDir(), "custom.db")}
+	root, err := env.resolvePluginRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(home, ".roca", "plugins"); root != want {
+		t.Fatalf("vector registry root = %q, want %q", root, want)
+	}
+}
+
 func TestWorkerCarriesExplicitCoreAndStatePaths(t *testing.T) {
 	got := workerArguments("/synthetic/roca.db", "/synthetic/state", "synthetic-model")
 	want := []string{"--state-dir", "/synthetic/state", "--db-path", "/synthetic/roca.db",
 		"_worker", "--model", "synthetic-model"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("worker arguments = %q, want %q", got, want)
-	}
-}
-
-func TestVocabDemandsOneConceptAndAnInstalledIndex(t *testing.T) {
-	state := t.TempDir()
-	t.Setenv("ROCA_VECTOR_ROCA_BINARY", filepath.Join(state, "roca"))
-	env := &environment{stateDir: state}
-	root := rootCommand(env)
-	root.SetArgs([]string{"vocab"})
-	if err := root.Execute(); err == nil {
-		t.Fatal("vocab without a concept ran")
-	}
-	root = rootCommand(env)
-	root.SetArgs([]string{"vocab", "salud"})
-	err := root.Execute()
-	if err == nil || !strings.Contains(err.Error(), "roca vector install") {
-		t.Fatalf("vocab without an index = %v, want the install hint", err)
 	}
 }

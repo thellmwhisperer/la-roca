@@ -3,11 +3,11 @@
 `roca-vector` is the optional executable plugin for local semantic retrieval.
 Its implementation is a separate Go module and binary: core has no import of
 that module, built-in vector command, or index dependency. The plugin reads
-corpus rows through `roca exec --json` and
-keeps only embeddings, fingerprints, stable source locators, and aggregate
-token document frequencies in its own manifest-owned `state/` directory.
-Corpus text is resolved live from core when a result is returned and is never
-copied into the index.
+kernel-registered database surfaces through `roca exec --json` and keeps only
+embeddings, fingerprints, and stable source locators in adjacent
+database-owned sidecars. Source text is resolved live from core when a result
+is returned and is never copied into a sidecar. The plugin-owned `state/`
+directory holds only worker coordination, logs, and completion state.
 
 ## Install from a release
 
@@ -36,69 +36,41 @@ Ollama must be running locally. The default model is
 ```sh
 roca vector install
 roca vector ingest --delta
-roca vector ingest --delta --source sessions
+roca vector ingest --delta --source memories
 roca vector compact
 roca vector query "which decision kept inference local" 5
-roca vector vocab salud
 ```
 
-`install` is the plugin's adopt/init command: it pulls the model, prepares the
-plugin-owned index, and starts a resumable background build. `ingest
---delta` embeds only new or changed chunks and removes missing sources. Both
-writing commands and `compact` honor `ROCA_READ_ONLY`. `query` uses binary ANN
-candidates, exact cosine reranking, stable source deduplication, and live text
-resolution.
+`install` is the plugin's adopt/init command: it pulls the model, prepares one
+sidecar per declared database, and starts a resumable background build.
+`ingest --delta` embeds only new or changed chunks and removes missing sources.
+Both writing commands and `compact` honor `ROCA_READ_ONLY`. `query` uses routed
+database sidecars, binary ANN candidates, exact cosine reranking, stable source
+deduplication, and live text resolution. Pass `--databases corpus,ops` or
+`--databases all` with the same explicit routing semantics as `roca query`.
+Same-model sidecars merge into one top-N; mixed-model sidecars stay grouped per
+database with a notice. Missing sidecars or models remain FTS-only.
 
-`compact` copies the existing float embeddings into a fresh paged store,
+`compact` copies each existing sidecar's float embeddings into a fresh paged store,
 rebuilds their binary ANN representation without calling the model, verifies
 chunk and source-kind counts plus database integrity, and atomically replaces
-the old store. It reports embedding pages before and after, bytes reclaimed,
-and the unchanged live chunk count. It refuses to run while a delta ingest
-holds the index lock. Ingest does not compact automatically: reclaiming space
+the old store. It reports aggregate embedding pages before and after, bytes
+reclaimed, database count, and the unchanged live chunk count. It refuses to
+run while a delta ingest holds a sidecar lock. Ingest does not compact automatically: reclaiming space
 remains an explicit operator action, so no background maintenance policy is
 enabled by default.
 
-A full delta covers federated memories, exchanges, thinking blocks, and
-sessions. Content-qualified source identities keep divergent rows that share a
-natural locator separate, while repeated walks of the same row converge on one
-indexed copy of each chunk. Use `--source` to restrict a repair to one of those
-four source kinds (`memories`, `exchanges`, `thinking_blocks`, or `sessions`)
-without removing indexed chunks from the others.
-
-Session embedding input is built only from cleaned `sessions.title` and the
-cleaned, string-valued `sessions.metadata.project_name`; it never reads
-`sessions.project`. It excludes serialized metadata, JSON keys or fragments,
-fingerprints, hashes, UUIDs, opaque identifiers, and paths while preserving
-ordinary slash-bearing language such as `CI/CD` and `HTTP/2`. The session text
-contract is fingerprint-versioned, so
-`ingest --delta --source sessions` re-embeds the affected session chunks once,
-reports added, updated, removed, and unchanged counts, and is a zero-write
-delta when repeated against the same corpus.
+A full delta covers every table and prose column in the generated vector
+registry. The bundled corpus declares sessions, memories, exchanges, and
+thinking blocks; ops declares operational memories. Raw telemetry and every
+undeclared column stay out. Stable manifest ids keep row updates attached to
+one source identity, while chunk fingerprints and `pkg/incrementality` make
+unchanged passes model-free. Use `--source <declared-table>` to restrict a
+repair without removing chunks from other tables. Per-table chunking hints are
+part of the fingerprinted contract.
 
 For a non-default core database, export `ROCA_DB_PATH` or pass the plugin flag
 after dispatch: `roca vector --db-path /path/to/roca.db query "..."`.
-
-## Vocabulary discovery
-
-`roca vector vocab CONCEPT` reports the discriminative vocabulary around a
-concept with zero inference in the discovery path: the vector index nominates
-the top-100 semantic hits among `exchanges` and `thinking_blocks`, terms are
-tokenized with accent folding, and JSON-key terms, hexadecimal tokens, and
-opaque numeric identifiers are excluded. Each remaining term is scored by the
-smoothed log-odds of its document share in the discovery set against its share
-in a global census. A term must occur in at least two hit documents and have
-positive log-odds to survive, so high-volume workshop vocabulary (for example
-`worktree`, `exchange`, `semantic`, `projects`) is penalized by the baseline
-instead of dominating. Surviving terms are grouped into research avenues by
-shared hit documents, in a fixed rank order that makes the report reproducible.
-
-The census is rebuilt from the same corpus walk that maintains the index:
-`install`, a full `ingest --delta`, or a targeted `memories`, `exchanges`, or
-`thinking_blocks` delta refreshes it. A `sessions`-only delta leaves it
-unchanged. The census covers memories, exchanges, and thinking blocks;
-sessions are deliberately excluded because they cannot be
-vocabulary-discovery hits. On an index installed before the census existed,
-`vocab` reports the missing census until the next census-building delta ingest.
 
 ## Retrieval gate
 

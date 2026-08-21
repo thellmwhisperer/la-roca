@@ -48,8 +48,8 @@ func TestCatalogBodyComposesFragmentsAndStatesTheHierarchy(t *testing.T) {
 			want: []string{
 				"name: " + skill.CatalogName,
 				"Load it only when you\n  need to know which tables or domains exist",
-				"Prefer the roca skill and its `roca query` and\n  `roca explore`",
-				"this catalog is for authors of `roca exec` SELECTs",
+				"This catalog is for authors of `roca exec` SELECTs",
+				"`roca query` and `roca explore` are last resort",
 				"## synth-corpus — corpus (alias plugin_synth_corpus)",
 				"Synthetic perennial harvest for the catalog fixture.",
 				"- What did the synthetic corpus record?",
@@ -63,7 +63,7 @@ func TestCatalogBodyComposesFragmentsAndStatesTheHierarchy(t *testing.T) {
 			name: "an installation without plugin databases still teaches the hierarchy",
 			want: []string{
 				"name: " + skill.CatalogName,
-				"this catalog is for authors of `roca exec` SELECTs",
+				"This catalog is for authors of `roca exec` SELECTs",
 				"No plugin databases installed",
 			},
 		},
