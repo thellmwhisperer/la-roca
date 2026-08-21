@@ -96,7 +96,9 @@ type Counts struct {
 }
 
 // Write persists normalized conversations through the same insert path used by
-// La Roca ingest. The caller owns committing or rolling back tx.
+// La Roca ingest. The caller owns committing or rolling back tx. If metadata
+// enrichment meets an exact-payload collision, Write preserves the later row's
+// existing metadata and continues without returning that collision as an error.
 func Write(ctx context.Context, tx *sql.Tx, records Records) (Counts, error) {
 	sessions := make([]parsers.Session, len(records.Sessions))
 	for i, session := range records.Sessions {
