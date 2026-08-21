@@ -9,7 +9,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
+	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 )
 
 // Hermes keeps its sessions in its own SQLite too, but flat: a message list per

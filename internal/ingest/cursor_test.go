@@ -7,14 +7,14 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
+	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 )
 
 func TestCursorIngestReportsCoverageAndIsIdempotent(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, "Library", "Application Support", "Cursor", "User",
 		"globalStorage", "state.vscdb")
-	writeFixture(t, path, filepath.Join("parsers", "testdata", "conformance",
+	writeFixture(t, path, filepath.Join("..", "..", "pkg", "parsers", "testdata", "conformance",
 		"cursor-database", "state.vscdb"))
 	first, second, db := ingestCursorHomeTwice(t, home)
 	if first.Errors != 0 || first.Scanned["cursor_database_files"] != 1 {
@@ -198,9 +198,9 @@ func TestCursorStoreIngestReportsCoverageAndIsIdempotent(t *testing.T) {
 	home := t.TempDir()
 	session := filepath.Join(home, ".cursor", "chats",
 		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "11111111-aaaa-4bbb-8ccc-222222222222")
-	writeFixture(t, filepath.Join(session, "store.db"), filepath.Join("parsers",
+	writeFixture(t, filepath.Join(session, "store.db"), filepath.Join("..", "..", "pkg", "parsers",
 		"testdata", "conformance", "cursor-store", "store.db"))
-	writeFixture(t, filepath.Join(session, "meta.json"), filepath.Join("parsers",
+	writeFixture(t, filepath.Join(session, "meta.json"), filepath.Join("..", "..", "pkg", "parsers",
 		"testdata", "conformance", "cursor-store", "meta.json"))
 	first, second, db := ingestCursorHomeTwice(t, home)
 	if got := first.Scanned["cursor_store_files"]; first.Errors != 0 || got != 1 {

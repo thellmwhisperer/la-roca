@@ -103,7 +103,7 @@ func TestContentCanSelfOnboardAnUnsupportedAgent(t *testing.T) {
 		"docs/agent-parsers.md",
 		"Detect",
 		"Parse",
-		"go test ./internal/ingest/parsers",
+		"go test ./pkg/parsers",
 		"Open a pull request",
 	} {
 		if !strings.Contains(body, needle) {
