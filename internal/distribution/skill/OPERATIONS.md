@@ -79,17 +79,19 @@ rows; agents narrate from the rows themselves.
 
 ## Which databases a question sees
 
-`roca query` and `roca explore` default to the corpus database when it is
-attached, together with the core compatibility store that still holds
-historical rows. Historical corpus study should not drag in ops handoffs, cron
-jobs, or other federated stores. Without an attached corpus, the default is core
-alone.
+`roca query`, `roca explore`, and `roca vector query` default to the corpus
+database when it is attached, together with the core compatibility store where
+that command can use it. Historical corpus study should not drag in ops
+handoffs, cron jobs, or other federated stores. Without an attached corpus, the
+default deterministic route is core alone.
 
 Pass `--databases` to select exactly the named databases when a question spans
 them: `--databases corpus,ops`, `--databases cron,corpus`, or `--databases all`
-for every attached database. Include `core` explicitly when a named set needs
-it. Unknown names fail and list what is attached. Routing does not guess relevance.
-It does not auto-select a plugin from the wording.
+for every attached database. The same explicit scope applies to vector
+discovery and deterministic FTS/SQL framing. Include `core` explicitly when a
+named deterministic set needs it. Unknown names fail and list what is attached.
+Routing does not guess relevance. It does not auto-select a plugin from the
+wording.
 
 The SQL seat sees tables only for the selected databases. It also sees an
 inventory of the other attached names, but not their tables, when they are held
@@ -149,18 +151,22 @@ Write the SQL yourself against the semantic catalog (`roca-semantica`) and
 run it with `roca exec`. That is the craft. Anything that spends inference
 is last resort.
 
-Check whether the vector index exists before you search. The contract is
-docs/vector.md: `~/.roca/plugins/roca-vector/state/completion.json` records
-`finished_at` and `exit_status` for the first pass. The index exists only when
-`finished_at` is non-empty and `exit_status == 0`. Otherwise take the no-index,
-exec-first branch.
-`features.vector = true` only unhides `roca vector`; it is not the index.
-`roca vector query` refuses until the index is ready.
+Vector readiness is per selected sidecar. The aggregate worker record at
+`~/.roca/plugins/roca-vector/state/completion.json` reports `finished_at` and
+`exit_status` for that worker run; it is not a readiness prerequisite for every
+query. `features.vector = true` only unhides `roca vector`; it is not the index.
+Query every available selected sidecar. A selected database with no declaration,
+a missing or unready sidecar, or an unavailable embedding model emits a notice
+and keeps exactly its existing FTS/SQL behavior. When none of the selected
+sidecars is ready, `roca vector query` still returns successfully with notices;
+use every selected database through its unchanged FTS/SQL path.
 
-- **Index present: the hybrid loop is mandatory.** Vector search (top-100),
-  FTS census, SQL framing through `roca exec`. Zero inference on that path;
-  inference only at the end, by the reading agent, to narrate.
-- **No index: `roca exec` is the complete working path.** Invite the user to build the index
+- **Ready selected sidecars: the hybrid loop is mandatory and federated.**
+  Vector search (top-100) across every available selected sidecar, then FTS
+  census and SQL framing through `roca exec` across all selected federated
+  databases. Zero inference on that path; inference only at the end, by the
+  reading agent, to narrate.
+- **No ready selected sidecar: `roca exec` is the complete working path.** Invite the user to build the index
   (one laptop night, daily reward); the `roca-vector` skill owns install,
   progress, and maintenance. Point there. Do not depend on it.
 - **`roca query` and `roca explore` are last resort.** Use them only when
@@ -174,9 +180,9 @@ as described under Which databases a question sees.
 
 | Situation | Action |
 |---|---|
-| Past work / people / "have we…" | Write SQL and `roca exec`; hybrid first if the index exists |
-| Researching a topic, not a point fact | Write SQL and `roca exec`; hybrid first if the index exists |
-| Cannot name the exact term | Hybrid loop when the index exists; otherwise exec with FTS MATCH |
+| Past work / people / "have we…" | Write SQL and `roca exec`; hybrid first when a selected sidecar is ready |
+| Researching a topic, not a point fact | Write SQL and `roca exec`; hybrid first when a selected sidecar is ready |
+| Cannot name the exact term | Hybrid loop when a selected sidecar is ready; otherwise exec with FTS MATCH |
 | Cannot express it as SQL | last resort: `roca query` or `roca explore`; never `--full` |
 | Answer looks stale / about today | `roca ingest`, then ask again |
 | Programmatic parse | add `--json` |
@@ -201,25 +207,38 @@ attaches them read-only and folds their tables into natural-language search.
 
 ## Hybrid loop
 
-When the index exists, this loop is mandatory. It is how the craft is done.
-Operator setup lives in the `roca-vector` skill and docs/vector.md.
+When any selected sidecar is ready, this loop is mandatory across the selected
+scope. It is how the craft is done. Operator setup lives in the `roca-vector`
+skill and docs/vector.md.
 
-Vector search finds the nearby rows. FTS censuses them. SQL frames them.
+Vector search finds the nearby rows across declared, selected federated
+databases. FTS censuses them in their owning databases. SQL frames them there.
 This three-step loop is the shipped RRF hybrid.
 Zero inference on that path; inference only at the end, by the reading
 agent, to narrate. `roca vector query` does no model inference; `roca exec`
 does none either.
 
-1. Search by meaning with `roca vector query "<first-person phrase or bare word>" 100`.
-   The mandatory loop always requests the top 100 hits. Hits print score,
-   database, source table, and source id. Probing phrases in first person work better
-   than meta-concepts: `roca vector query "names of people" 100` finds
-   documents ABOUT names; `roca vector query "my boss is named" 100` finds
-   the names.
-2. Census those hits with deterministic FTS through `roca exec`: counts,
-   dates, and word-boundary `MATCH`. Do not use `LIKE '%term%'`: it matches
-   inside other words (`name` inside `rename`).
-3. Frame the claim in SQL. Then the reading agent narrates from those rows.
+1. Search by meaning with `roca vector query --databases <scope> "<first-person phrase or bare word>" 100`.
+   Omit `--databases` only when the default corpus scope is intentional:
+   `roca vector query "<first-person phrase or bare word>" 100`. The
+   mandatory loop always requests the top 100 hits. Hits print score, database,
+   source table, and source id; one query can mix a declared plugin hit with a
+   corpus hit. Probing phrases in first person work better than meta-concepts:
+   `roca vector query "names of people" 100` finds documents ABOUT names;
+   `roca vector query "my boss is named" 100` finds the names.
+2. Census those hits with deterministic FTS through `roca exec`, using each
+   hit's database alias from `roca-semantica`: counts, dates, and word-boundary
+   `MATCH`. Do not use `LIKE '%term%'`: it matches inside other words (`name`
+   inside `rename`). A selected database without a `Vector:` declaration joins
+   here through its unchanged FTS path; it cannot contribute a vector hit.
+3. Frame each claim with SQL against the hit's owning tables, combine database
+   frames only when the question needs it, and narrate from those rows.
+
+Federated discovery, one result list when the selected sidecars share a model:
+
+```bash
+roca vector query --databases corpus,ops "we decided to preserve the evidence" 100
+```
 
 Worked loop, names:
 
@@ -252,6 +271,9 @@ Caveats measured on real use:
 - Two signal classes: presence (the topic is nearby) versus intention
   (someone decided or promised). Vector answers presence; SQL frames
   intention.
+- Mixed-model sidecars are returned in separate per-database groups with a
+  notice. Their scores are not comparable; census and frame each group in its
+  own database.
 
 ## Deterministic patterns
 
@@ -304,7 +326,8 @@ When you would otherwise fire three exploratory queries, fire one
    phrased query.
 
 When a bare FTS word would miss, take the search-craft branch: hybrid loop
-if the index exists, otherwise write a broader MATCH or OR and exec it.
+when a selected sidecar is ready, otherwise write a broader MATCH or OR and
+exec it.
 Do not stack synonyms.
 
 ## Operating craft
