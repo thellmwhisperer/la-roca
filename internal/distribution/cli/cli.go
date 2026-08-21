@@ -39,8 +39,11 @@ type Build struct {
 // answer either: it has a code of its own so a script can tell them apart
 // without reading prose.
 const (
-	ExitOK    = 0
-	ExitError = 1
+	ExitOK                = 0
+	ExitError             = 1
+	ExitRemoteUnreachable = 10
+	ExitRemoteRocaMissing = 11
+	ExitRemoteVersionSkew = 12
 )
 
 type cliEnv struct {
@@ -72,6 +75,8 @@ type cliEnv struct {
 	features           config.FeaturesConfig
 	featuresLoaded     bool
 	omitCorpus         bool
+	forceReadOnly      bool
+	sshRunner          sshCommandRunner
 }
 
 // Execute runs the CLI and returns the process exit code.
@@ -153,7 +158,9 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 	}
 	code := env.code
 	if err != nil {
-		code = ExitError
+		if code == ExitOK {
+			code = ExitError
+		}
 		err = logfile.Correlate(err)
 	}
 	// The trace is observability, and observability never fails the command.
@@ -166,7 +173,7 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 	// The ID is surfaced here and not earlier because it may only name a record
 	// this run is about to write: a command that logged itself already carries
 	// the verdict of what it wrote.
-	if !env.prelogged && !env.skipExecutionLog {
+	if !env.prelogged && !env.skipExecutionLog && !env.forceReadOnly {
 		if err == nil && code != ExitOK {
 			env.surfaceCorrelation()
 		}
@@ -203,6 +210,8 @@ func rootCommand(env *cliEnv) *cobra.Command {
 	root.SetVersionTemplate(versionLine(env.build) + "\n")
 	root.PersistentFlags().StringVar(&env.dbPath, "db-path", "", "database to use")
 	root.PersistentFlags().BoolVar(&env.json, "json", false, "JSON output")
+	root.PersistentFlags().BoolVar(&env.forceReadOnly, "read-only", false,
+		"refuse database, audit, and reconciliation writes")
 	commands := []*cobra.Command{
 		versionCommand(env), initCommand(env), exploreCommand(env), schemaCommand(env),
 		indexCommand(env), doctorCommand(env), dedupCommand(env), memoryCommand(env), layersCommand(env),
@@ -211,6 +220,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 		loginCommand(env), modelCommand(env),
 		updateCommand(env), uninstallCommand(env),
 		modelsCommand(env), pluginCommand(env), pluginsCommand(env),
+		remoteCommand(env),
 		installBundledPluginsCommand(env),
 		capabilitiesCommand(env), artifactsCommand(env),
 	}
@@ -252,7 +262,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 
 func publicCommand(name string) bool {
 	switch name {
-	case "init", "query", "explore", "store", "ingest", "model", "doctor", "update", "uninstall", "plugin", "plugins", "hooks", "cron", "layers":
+	case "init", "query", "explore", "store", "ingest", "model", "doctor", "update", "uninstall", "plugin", "plugins", "hooks", "cron", "layers", "remote":
 		return true
 	default:
 		return false
@@ -717,8 +727,11 @@ func (env *cliEnv) openStoreService() (*service.Service, config.Paths, error) {
 // after its own setup (adoption by copy, migration) so that the paths are
 // already known when the database is opened.
 func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error) {
-	if err := os.MkdirAll(dirOf(paths.DB), 0o700); err != nil {
-		return nil, fmt.Errorf("create the database directory: %w", err)
+	readOnly := env.forceReadOnly || config.ReadOnly(os.Getenv(config.EnvReadOnly))
+	if !readOnly {
+		if err := os.MkdirAll(dirOf(paths.DB), 0o700); err != nil {
+			return nil, fmt.Errorf("create the database directory: %w", err)
+		}
 	}
 
 	file, err := config.LoadFile(paths.Config)
@@ -730,7 +743,6 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 	if home != "" {
 		pluginDir = filepath.Join(home, config.DirOwn, "plugins")
 	}
-	readOnly := config.ReadOnly(os.Getenv(config.EnvReadOnly))
 	// Placing the bundled plugins writes directories, manifests and schemas.
 	// Read-only refuses writes before any of that, so an audit of a machine
 	// leaves it exactly as it found it. The ops package is always present for
@@ -850,14 +862,15 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		env.finishIngestProgress()
 		return nil, err
 	}
-	audit := logfile.New(filepath.Dir(paths.DB))
-	if pluginDir != "" && !readOnly {
-		env.auditOpsDatabase = filepath.Join(pluginDir, rocaops.Name, rocaops.DatabaseFilename)
-		audit = logfile.NewWithOps(filepath.Dir(paths.DB),
-			env.auditOpsDatabase)
+	if !readOnly {
+		audit := logfile.New(filepath.Dir(paths.DB))
+		if pluginDir != "" {
+			env.auditOpsDatabase = filepath.Join(pluginDir, rocaops.Name, rocaops.DatabaseFilename)
+			audit = logfile.NewWithOps(filepath.Dir(paths.DB), env.auditOpsDatabase)
+		}
+		_ = audit.Prepare()
+		_ = audit.BackfillIfNeeded()
 	}
-	_ = audit.Prepare()
-	_ = audit.BackfillIfNeeded()
 	env.openedDir = filepath.Dir(paths.DB)
 	return svc, nil
 }

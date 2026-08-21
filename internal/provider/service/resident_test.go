@@ -158,6 +158,19 @@ func TestKeywordSearchReadsExchangesFromTheResidentCorpus(t *testing.T) {
 // carries the omission into every answer instead of failing every read.
 func TestReadOnlyAnswersFromCoreWithoutTheBundledCorpus(t *testing.T) {
 	directory := t.TempDir()
+	seed, err := openWithContext(t.Context(), Options{
+		DBPath: filepath.Join(directory, "roca.db"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := seed.Init(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatal(err)
+	}
+
 	svc, err := openWithContext(t.Context(), Options{
 		DBPath:        filepath.Join(directory, "roca.db"),
 		PluginDir:     filepath.Join(directory, "plugins"),

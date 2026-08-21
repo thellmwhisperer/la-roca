@@ -3,13 +3,20 @@ package cli
 import (
 	"bufio"
 	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -20,9 +27,11 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
+	"github.com/thellmwhisperer/la-roca/internal/securefile"
 	"github.com/thellmwhisperer/la-roca/internal/store"
 	"github.com/thellmwhisperer/la-roca/internal/store/exactdedup"
 	"golang.org/x/term"
+	_ "modernc.org/sqlite"
 )
 
 func versionCommand(env *cliEnv) *cobra.Command {
@@ -947,3 +956,1096 @@ func renderDedup(env *cliEnv, mode string, reports []exactdedup.DatabaseReport,
 }
 
 func dirOf(path string) string { return filepath.Dir(path) }
+
+const remoteRegistrySchema = 1
+
+var remoteNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+type remoteEntry struct {
+	Name string `json:"name"`
+	SSH  string `json:"ssh"`
+}
+
+type remoteRegistry struct {
+	Schema  int           `json:"schema"`
+	Remotes []remoteEntry `json:"remotes"`
+}
+
+type remoteListEnvelope struct {
+	Remotes   []remoteEntry `json:"remotes"`
+	Version   string        `json:"version"`
+	SourceSHA string        `json:"source_sha"`
+}
+
+type sshReply struct {
+	stdout   string
+	stderr   string
+	exitCode int
+	err      error
+}
+
+type sshCommandRunner interface {
+	Run(context.Context, string, []string) sshReply
+}
+
+type systemSSHRunner struct{}
+
+func (systemSSHRunner) Run(ctx context.Context, target string, args []string) sshReply {
+	command := exec.CommandContext(ctx, "ssh", target, shellCommand(args))
+	var stdout, stderr strings.Builder
+	command.Stdout, command.Stderr = &stdout, &stderr
+	err := command.Run()
+	reply := sshReply{stdout: stdout.String(), stderr: stderr.String(), err: err}
+	if err == nil {
+		return reply
+	}
+	var exitError *exec.ExitError
+	if errors.As(err, &exitError) {
+		reply.exitCode = exitError.ExitCode()
+		reply.err = nil
+		return reply
+	}
+	return reply
+}
+
+func shellCommand(args []string) string {
+	quoted := make([]string, len(args))
+	for index, arg := range args {
+		quoted[index] = "'" + strings.ReplaceAll(arg, "'", "'\\''") + "'"
+	}
+	return strings.Join(quoted, " ")
+}
+
+func remoteCommand(env *cliEnv) *cobra.Command {
+	command := &cobra.Command{
+		Use:   "remote",
+		Short: "Run read-only queries across SSH-connected Roca installations",
+	}
+	command.AddCommand(remoteAddCommand(env), remoteListCommand(env), remoteExecCommand(env),
+		remoteVectorCommand(env), remoteCrossCommand(env))
+	return command
+}
+
+func remoteAddCommand(env *cliEnv) *cobra.Command {
+	var target string
+	command := &cobra.Command{
+		Use:   "add <name>",
+		Short: "Register an SSH target",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			if err := validateRemote(args[0], target); err != nil {
+				return err
+			}
+			path, err := env.remoteRegistryPath()
+			if err != nil {
+				return err
+			}
+			registry, added, err := upsertRemote(path, remoteEntry{Name: args[0], SSH: target})
+			if err != nil {
+				return err
+			}
+			if printed, printErr := env.captureRemoteList(registry.Remotes); printed {
+				return printErr
+			}
+			action := "updated"
+			if added {
+				action = "added"
+			}
+			env.print("remote %s %s", args[0], action)
+			env.print("%s", axi.RenderHelp(
+				"Run `roca remote list` to inspect registered SSH targets",
+				fmt.Sprintf("Run `roca remote exec %s \"<SELECT>\"` to query it", args[0])))
+			return nil
+		},
+	}
+	command.Flags().StringVar(&target, "ssh", "", "SSH target from ssh_config, such as user@host")
+	_ = command.MarkFlagRequired("ssh")
+	return command
+}
+
+func remoteListCommand(env *cliEnv) *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List registered SSH targets",
+		Args:  cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			path, err := env.remoteRegistryPath()
+			if err != nil {
+				return err
+			}
+			registry, _, err := loadRemoteRegistry(path)
+			if err != nil {
+				return err
+			}
+			if printed, printErr := env.captureRemoteList(registry.Remotes); printed {
+				return printErr
+			}
+			env.print("%s", renderRemoteList(registry.Remotes))
+			return nil
+		},
+	}
+}
+
+func (env *cliEnv) captureRemoteList(remotes []remoteEntry) (bool, error) {
+	envelope := remoteListEnvelope{Remotes: remotes,
+		Version: env.build.Version, SourceSHA: env.build.Commit}
+	env.capture(envelope)
+	if !env.json {
+		return false, nil
+	}
+	return true, env.printJSON(envelope)
+}
+
+func renderRemoteList(remotes []remoteEntry) string {
+	var output strings.Builder
+	fmt.Fprintf(&output, "remotes[%d]{name,ssh}:", len(remotes))
+	for _, remote := range remotes {
+		row := axi.RowOutput([]string{"name", "ssh"}, []map[string]any{{
+			"name": remote.Name, "ssh": remote.SSH,
+		}})
+		if cut := strings.IndexByte(row, '\n'); cut >= 0 {
+			output.WriteString(row[cut:])
+		}
+	}
+	output.WriteByte('\n')
+	output.WriteString(axi.RenderHelp(
+		"Run `roca remote add <name> --ssh <user@host>` to add or update a target",
+		"Run `roca remote exec <name> \"<SELECT>\"` to query one target"))
+	return output.String()
+}
+
+func remoteExecCommand(env *cliEnv) *cobra.Command {
+	return &cobra.Command{
+		Use:   "exec <name> <SELECT>",
+		Short: "Run a gate-approved SELECT on one remote",
+		Args:  cobra.MinimumNArgs(2),
+		RunE: func(command *cobra.Command, args []string) error {
+			name, statement := args[0], strings.Join(args[1:], " ")
+			remote, err := env.namedRemote(name)
+			if err != nil {
+				return err
+			}
+			result, err := env.runRemoteExec(command.Context(), remote, statement, false)
+			if err != nil {
+				return err
+			}
+			env.capture(result)
+			if env.json {
+				return env.printJSON(result)
+			}
+			env.print("%s", axi.ExecWithHelp(result,
+				fmt.Sprintf("Run `roca remote exec %s \"<SELECT>\" --json` for the complete result envelope", name),
+				fmt.Sprintf("Run `roca remote exec %s \"<SELECT>\"` with a narrower projection to reduce output", name)))
+			return nil
+		},
+	}
+}
+
+func remoteVectorCommand(env *cliEnv) *cobra.Command {
+	command := &cobra.Command{Use: "vector", Short: "Query a remote vector index"}
+	command.AddCommand(&cobra.Command{
+		Use:   "query <name> <phrase> [k]",
+		Short: "Search one remote vector index",
+		Args:  cobra.RangeArgs(2, 3),
+		RunE: func(command *cobra.Command, args []string) error {
+			remote, err := env.namedRemote(args[0])
+			if err != nil {
+				return err
+			}
+			k := 10
+			remoteArgs := []string{"roca", "vector", "query", args[1]}
+			if len(args) == 3 {
+				k, err = strconv.Atoi(args[2])
+				if err != nil || k < 1 || k > 100 {
+					return fmt.Errorf("k must be between 1 and 100")
+				}
+				remoteArgs = append(remoteArgs, args[2])
+			}
+			remoteArgs = append(remoteArgs, "--json")
+			version, raw, err := env.runRemoteJSON(command.Context(), remote, remoteArgs, false)
+			if err != nil {
+				return err
+			}
+			document, err := decodeRemoteVectorEnvelope(raw, version, args[1], k)
+			if err != nil {
+				env.code = ExitRemoteVersionSkew
+				return fmt.Errorf("remote %s returned an incompatible vector envelope: %w", remote.Name, err)
+			}
+			env.capture(document)
+			if env.json {
+				return env.printJSON(document)
+			}
+			env.print("%s", renderRemoteVector(remote.Name, document))
+			return nil
+		},
+	})
+	return command
+}
+
+func renderRemoteVector(name string, document map[string]any) string {
+	var output strings.Builder
+	if query := boundedRemoteText(strings.TrimSpace(fmt.Sprint(document["query"]))); query != "" {
+		fmt.Fprintf(&output, "query: %s\n", query)
+	}
+	if model := boundedRemoteText(strings.TrimSpace(fmt.Sprint(document["model"]))); model != "" && model != "<nil>" {
+		fmt.Fprintf(&output, "model: %s\n", model)
+	}
+	for _, notice := range stringSlice(document["notices"]) {
+		fmt.Fprintf(&output, "notice: %s\n", boundedRemoteText(notice))
+	}
+	rows := vectorRows(document)
+	columns := []string{"rank", "score", "database", "table", "id", "source", "source_id", "text"}
+	if len(rows) == 0 {
+		output.WriteString("rows[0]{rank,score,database,table,id,source,source_id,text}:\n")
+	} else {
+		output.WriteString(axi.RowOutput(columns, rows))
+		output.WriteByte('\n')
+	}
+	if elapsed, ok := integerValue(document["elapsed_ms"]); ok {
+		fmt.Fprintf(&output, "%s\n", axi.Duration(elapsed))
+	}
+	output.WriteString(axi.RenderHelp(
+		fmt.Sprintf("Run `roca remote vector query %s \"<phrase>\" 100 --json` for the complete result envelope", name),
+		fmt.Sprintf("Run `roca remote exec %s \"<SELECT>\"` to frame these hits with SQL", name)))
+	return strings.TrimSpace(output.String())
+}
+
+func boundedRemoteText(value string) string {
+	value = strings.Join(strings.Fields(value), " ")
+	runes := []rune(value)
+	if len(runes) <= axi.FieldWidth {
+		return value
+	}
+	return string(runes[:axi.FieldWidth-1]) + "…"
+}
+
+func vectorRows(document map[string]any) []map[string]any {
+	rows := objectSlice(document["results"])
+	if len(rows) > 0 {
+		return rows
+	}
+	for _, group := range objectSlice(document["database_results"]) {
+		database, model := group["database"], group["model"]
+		for _, row := range objectSlice(group["results"]) {
+			if _, found := row["database"]; !found {
+				row["database"] = database
+			}
+			if _, found := row["model"]; !found && model != nil {
+				row["model"] = model
+			}
+			rows = append(rows, row)
+		}
+	}
+	return rows
+}
+
+func remoteCrossCommand(env *cliEnv) *cobra.Command {
+	var on string
+	command := &cobra.Command{
+		Use:   "cross <SELECT>",
+		Short: "Run one SELECT locally and remotely, then union the results in memory",
+		Args:  cobra.MinimumNArgs(1),
+		PreRun: func(*cobra.Command, []string) {
+			env.skipExecutionLog = true
+			env.skipReconciliation = true
+			env.forceReadOnly = true
+		},
+		RunE: func(command *cobra.Command, args []string) error {
+			names, err := remoteNames(on)
+			if err != nil {
+				return err
+			}
+			statement := strings.Join(args, " ")
+			started := time.Now()
+			remotes := make([]remoteEntry, len(names))
+			for index, name := range names {
+				remote, lookupErr := env.namedRemote(name)
+				if lookupErr != nil {
+					return lookupErr
+				}
+				remotes[index] = remote
+			}
+			sets := make([]crossResult, len(names)+1)
+			sets[0].origin = "local"
+			failures := make([]error, len(sets))
+			codes := make([]int, len(sets))
+			var scatter sync.WaitGroup
+			scatter.Add(len(sets))
+			go func() {
+				defer scatter.Done()
+				worker := *env
+				worker.code = ExitOK
+				sets[0].result, failures[0] = runLocalCross(command.Context(), &worker, statement)
+				codes[0] = worker.code
+			}()
+			for index, remote := range remotes {
+				resultIndex := index + 1
+				sets[resultIndex].origin = names[index]
+				go func() {
+					defer scatter.Done()
+					worker := *env
+					worker.code = ExitOK
+					sets[resultIndex].result, failures[resultIndex] = worker.runRemoteExec(
+						command.Context(), remote, statement, true)
+					codes[resultIndex] = worker.code
+				}()
+			}
+			scatter.Wait()
+			for index, failure := range failures {
+				if failure == nil {
+					continue
+				}
+				if codes[index] != ExitOK {
+					env.code = codes[index]
+				}
+				return failure
+			}
+			result, err := gatherCross(command.Context(), env.build, sets)
+			if err != nil {
+				return err
+			}
+			result.LatencyMS = time.Since(started).Milliseconds()
+			env.capture(result)
+			if env.json {
+				return env.printJSON(result)
+			}
+			env.print("%s", axi.ExecWithHelp(result,
+				fmt.Sprintf("Run `roca remote cross \"<SELECT>\" --on %s --json` for the complete result envelope", strings.Join(names, ",")),
+				"Rerun `roca remote cross` with a narrower SELECT to compare fewer fields"))
+			return nil
+		},
+	}
+	command.Flags().StringVar(&on, "on", "", "comma-separated registered remote names")
+	_ = command.MarkFlagRequired("on")
+	return command
+}
+
+func runLocalCross(ctx context.Context, env *cliEnv, statement string) (service.ExecResult, error) {
+	svc, _, err := env.openService()
+	if err != nil {
+		return service.ExecResult{}, err
+	}
+	result, execErr := svc.Exec(ctx, service.ExecRequest{
+		SQL: statement, MaxChars: service.DefaultMaxChars,
+	})
+	closeErr := svc.Close()
+	if execErr != nil {
+		return service.ExecResult{}, execErr
+	}
+	if closeErr != nil {
+		return service.ExecResult{}, closeErr
+	}
+	return result, nil
+}
+
+type crossResult struct {
+	origin string
+	result service.ExecResult
+}
+
+func gatherCross(ctx context.Context, build Build, sets []crossResult) (service.ExecResult, error) {
+	database, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		return service.ExecResult{}, fmt.Errorf("open cross result database: %w", err)
+	}
+	database.SetMaxOpenConns(1)
+	defer database.Close()
+	for _, set := range sets {
+		if err := loadCrossTable(ctx, database, set); err != nil {
+			return service.ExecResult{}, err
+		}
+	}
+	columns := crossUnionColumns(sets)
+	selects := make([]string, 0, len(sets))
+	for _, set := range sets {
+		present := map[string]bool{"origin": true}
+		for _, column := range crossColumns(set.result) {
+			present[column] = true
+		}
+		projection := make([]string, 0, len(columns))
+		for _, column := range columns {
+			if present[column] {
+				projection = append(projection, quoteIdentifier(column))
+			} else {
+				projection = append(projection, "NULL AS "+quoteIdentifier(column))
+			}
+		}
+		selects = append(selects, "SELECT "+strings.Join(projection, ",")+
+			" FROM "+quoteIdentifier("r_"+set.origin))
+	}
+	outer := strings.Join(selects, " UNION ALL ")
+	rows, err := database.QueryContext(ctx, outer)
+	if err != nil {
+		shapes := make([]string, 0, len(sets))
+		for _, set := range sets {
+			shapes = append(shapes, fmt.Sprintf("%s(%s)", set.origin,
+				strings.Join(crossColumns(set.result), ",")))
+		}
+		return service.ExecResult{}, fmt.Errorf("gather cross results %s: %w",
+			strings.Join(shapes, ", "), err)
+	}
+	defer rows.Close()
+	columns, resultRows, err := service.ScanRows(rows, service.DefaultMaxChars, "")
+	if err != nil {
+		return service.ExecResult{}, err
+	}
+	return service.ExecResult{SQL: outer, Columns: columns, Rows: resultRows,
+		RowCount: len(resultRows), Version: build.Version, SourceSHA: build.Commit}, nil
+}
+
+func crossUnionColumns(sets []crossResult) []string {
+	columns := []string{"origin"}
+	seen := map[string]bool{"origin": true}
+	for _, set := range sets {
+		for _, column := range crossColumns(set.result) {
+			if !seen[column] {
+				columns = append(columns, column)
+				seen[column] = true
+			}
+		}
+	}
+	return columns
+}
+
+func loadCrossTable(ctx context.Context, database *sql.DB, set crossResult) error {
+	seen := map[string]bool{"origin": true}
+	definitions := []string{quoteIdentifier("origin") + " TEXT NOT NULL"}
+	columns := crossColumns(set.result)
+	for _, column := range columns {
+		if seen[column] {
+			return fmt.Errorf("cross SELECT returned duplicate or reserved column %q", column)
+		}
+		seen[column] = true
+		definitions = append(definitions, quoteIdentifier(column))
+	}
+	table := quoteIdentifier("r_" + set.origin)
+	if _, err := database.ExecContext(ctx, "CREATE TABLE "+table+" ("+strings.Join(definitions, ",")+")"); err != nil {
+		return fmt.Errorf("create cross table for %s: %w", set.origin, err)
+	}
+	placeholders := make([]string, len(columns)+1)
+	for index := range placeholders {
+		placeholders[index] = "?"
+	}
+	insert := "INSERT INTO " + table + " VALUES (" + strings.Join(placeholders, ",") + ")"
+	for _, row := range set.result.Rows {
+		values := make([]any, 1, len(columns)+1)
+		values[0] = set.origin
+		for _, column := range columns {
+			values = append(values, sqliteValue(row[column]))
+		}
+		if _, err := database.ExecContext(ctx, insert, values...); err != nil {
+			return fmt.Errorf("load cross result for %s: %w", set.origin, err)
+		}
+	}
+	return nil
+}
+
+func crossColumns(result service.ExecResult) []string {
+	if len(result.Columns) > 0 {
+		return result.Columns
+	}
+	seen := map[string]bool{}
+	for _, row := range result.Rows {
+		for column := range row {
+			seen[column] = true
+		}
+	}
+	columns := make([]string, 0, len(seen))
+	for column := range seen {
+		columns = append(columns, column)
+	}
+	slices.Sort(columns)
+	return columns
+}
+
+func sqliteValue(value any) any {
+	switch typed := value.(type) {
+	case nil, string, []byte, int64, float64, bool:
+		return typed
+	case json.Number:
+		if integer, err := typed.Int64(); err == nil {
+			return integer
+		}
+		if decimal, err := typed.Float64(); err == nil {
+			return decimal
+		}
+	}
+	encoded, _ := json.Marshal(value)
+	return string(encoded)
+}
+
+func quoteIdentifier(identifier string) string {
+	return `"` + strings.ReplaceAll(identifier, `"`, `""`) + `"`
+}
+
+func remoteNames(value string) ([]string, error) {
+	var names []string
+	seen := map[string]string{}
+	for _, name := range strings.Split(value, ",") {
+		name = strings.TrimSpace(name)
+		if !remoteNamePattern.MatchString(name) || strings.EqualFold(name, "local") {
+			return nil, fmt.Errorf("--on contains invalid remote name %q", name)
+		}
+		folded := strings.ToLower(name)
+		if previous, found := seen[folded]; found && previous != name {
+			return nil, fmt.Errorf("--on contains case-colliding remote names %q and %q", previous, name)
+		}
+		if _, found := seen[folded]; !found {
+			names = append(names, name)
+			seen[folded] = name
+		}
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("--on requires at least one remote name")
+	}
+	return names, nil
+}
+
+func (env *cliEnv) runRemoteExec(ctx context.Context, remote remoteEntry, statement string, noWrite bool) (service.ExecResult, error) {
+	version, raw, err := env.runRemoteJSON(ctx, remote,
+		[]string{"roca", "exec", statement, "--json"}, noWrite)
+	if err != nil {
+		return service.ExecResult{}, err
+	}
+	result, err := decodeRemoteExecEnvelope(raw)
+	if err != nil {
+		env.code = ExitRemoteVersionSkew
+		return service.ExecResult{}, fmt.Errorf("remote %s returned an incompatible exec envelope: %w", remote.Name, err)
+	}
+	if result.Version != env.build.Version {
+		env.code = ExitRemoteVersionSkew
+		return service.ExecResult{}, fmt.Errorf("remote %s runs roca %s; local roca is %s",
+			remote.Name, result.Version, env.build.Version)
+	}
+	if result.Version != version.Version || result.SourceSHA != version.SourceSHA {
+		env.code = ExitRemoteVersionSkew
+		return service.ExecResult{}, fmt.Errorf(
+			"remote %s returned exec provenance that differs from its version probe", remote.Name)
+	}
+	return result, nil
+}
+
+type remoteVersion struct {
+	Version   string `json:"version"`
+	SourceSHA string `json:"source_sha"`
+}
+
+func (env *cliEnv) runRemoteJSON(ctx context.Context, remote remoteEntry, args []string, noWrite bool) (remoteVersion, string, error) {
+	runner := env.sshRunner
+	if runner == nil {
+		runner = systemSSHRunner{}
+	}
+	versionArgs := []string{"roca", "version", "--json"}
+	if noWrite {
+		versionArgs = append(versionArgs, "--read-only")
+		args = append(slices.Clone(args), "--read-only")
+	}
+	versionReply := runner.Run(ctx, remote.SSH, versionArgs)
+	if err := env.remoteReplyError(remote.Name, versionReply, true); err != nil {
+		return remoteVersion{}, "", err
+	}
+	var version remoteVersion
+	if err := decodeJSON(versionReply.stdout, &version); err != nil ||
+		version.Version == "" || version.SourceSHA == "" {
+		env.code = ExitRemoteVersionSkew
+		return remoteVersion{}, "", fmt.Errorf("remote %s returned an incompatible version envelope", remote.Name)
+	}
+	if version.Version != env.build.Version {
+		env.code = ExitRemoteVersionSkew
+		return remoteVersion{}, "", fmt.Errorf("remote %s runs roca %s; local roca is %s",
+			remote.Name, version.Version, env.build.Version)
+	}
+	reply := runner.Run(ctx, remote.SSH, args)
+	if err := env.remoteReplyError(remote.Name, reply, false); err != nil {
+		return remoteVersion{}, "", err
+	}
+	return version, reply.stdout, nil
+}
+
+func (env *cliEnv) remoteReplyError(name string, reply sshReply, probing bool) error {
+	if reply.err != nil || reply.exitCode == 255 {
+		env.code = ExitRemoteUnreachable
+		detail := strings.TrimSpace(reply.stderr)
+		if detail == "" && reply.err != nil {
+			detail = reply.err.Error()
+		}
+		if detail == "" {
+			detail = "ssh failed"
+		}
+		return fmt.Errorf("remote %s is unreachable: %s", name, detail)
+	}
+	if reply.exitCode == 0 {
+		return nil
+	}
+	detail := cleanRemoteError(reply.stderr)
+	if reply.exitCode == 126 || reply.exitCode == 127 ||
+		strings.Contains(strings.ToLower(detail), "command not found") {
+		env.code = ExitRemoteRocaMissing
+		return fmt.Errorf("remote %s does not have roca on PATH", name)
+	}
+	if probing {
+		env.code = ExitRemoteVersionSkew
+		return fmt.Errorf("remote %s could not report a compatible roca version: %s", name, detail)
+	}
+	env.code = ExitError
+	if detail == "" {
+		detail = fmt.Sprintf("remote command exited %d", reply.exitCode)
+	}
+	return errors.New(detail)
+}
+
+func cleanRemoteError(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "error: ")
+	return value
+}
+
+func (env *cliEnv) namedRemote(name string) (remoteEntry, error) {
+	path, err := env.remoteRegistryPath()
+	if err != nil {
+		return remoteEntry{}, err
+	}
+	registry, _, err := loadRemoteRegistry(path)
+	if err != nil {
+		return remoteEntry{}, err
+	}
+	for _, remote := range registry.Remotes {
+		if remote.Name == name {
+			return remote, nil
+		}
+	}
+	return remoteEntry{}, fmt.Errorf("remote %q is not registered; run `roca remote list`", name)
+}
+
+func (env *cliEnv) remoteRegistryPath() (string, error) {
+	paths, err := env.resolvePaths()
+	if err != nil {
+		return "", err
+	}
+	return paths.Remotes, nil
+}
+
+func validateRemote(name, target string) error {
+	if !remoteNamePattern.MatchString(name) || strings.EqualFold(name, "local") {
+		return fmt.Errorf("remote name %q must be a SQLite-safe identifier and cannot be local", name)
+	}
+	if target == "" || strings.HasPrefix(target, "-") || strings.ContainsAny(target, " \t\r\n\x00") {
+		return fmt.Errorf("--ssh must be one ssh_config target without whitespace")
+	}
+	return nil
+}
+
+func loadRemoteRegistry(path string) (remoteRegistry, []byte, error) {
+	registry := remoteRegistry{Schema: remoteRegistrySchema, Remotes: []remoteEntry{}}
+	body, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return registry, nil, nil
+	}
+	if err != nil {
+		return remoteRegistry{}, nil, fmt.Errorf("read remote registry %s: %w", path, err)
+	}
+	if err := json.Unmarshal(body, &registry); err != nil {
+		return remoteRegistry{}, nil, fmt.Errorf("read remote registry %s: %w", path, err)
+	}
+	if registry.Schema != remoteRegistrySchema {
+		return remoteRegistry{}, nil, fmt.Errorf("remote registry %s has schema %d, want %d",
+			path, registry.Schema, remoteRegistrySchema)
+	}
+	if registry.Remotes == nil {
+		registry.Remotes = []remoteEntry{}
+	}
+	seen := map[string]string{}
+	for _, remote := range registry.Remotes {
+		if err := validateRemote(remote.Name, remote.SSH); err != nil {
+			return remoteRegistry{}, nil, fmt.Errorf("remote registry %s: %w", path, err)
+		}
+		folded := strings.ToLower(remote.Name)
+		if previous, found := seen[folded]; found {
+			return remoteRegistry{}, nil, fmt.Errorf(
+				"remote registry %s has case-colliding names %q and %q", path, previous, remote.Name)
+		}
+		seen[folded] = remote.Name
+	}
+	slices.SortFunc(registry.Remotes, func(left, right remoteEntry) int {
+		return strings.Compare(left.Name, right.Name)
+	})
+	return registry, body, nil
+}
+
+func upsertRemote(path string, entry remoteEntry) (remoteRegistry, bool, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return remoteRegistry{}, false, fmt.Errorf("create remote registry directory: %w", err)
+	}
+	release, err := securefile.Lock(path + ".lock")
+	if err != nil {
+		return remoteRegistry{}, false, fmt.Errorf("lock remote registry: %w", err)
+	}
+	defer release()
+	registry, _, err := loadRemoteRegistry(path)
+	if err != nil {
+		return remoteRegistry{}, false, err
+	}
+	added := true
+	for index := range registry.Remotes {
+		if strings.EqualFold(registry.Remotes[index].Name, entry.Name) &&
+			registry.Remotes[index].Name != entry.Name {
+			return remoteRegistry{}, false, fmt.Errorf(
+				"remote name %q collides case-insensitively with %q", entry.Name, registry.Remotes[index].Name)
+		}
+		if registry.Remotes[index].Name == entry.Name {
+			registry.Remotes[index] = entry
+			added = false
+			break
+		}
+	}
+	if added {
+		registry.Remotes = append(registry.Remotes, entry)
+	}
+	slices.SortFunc(registry.Remotes, func(left, right remoteEntry) int {
+		return strings.Compare(left.Name, right.Name)
+	})
+	body, err := json.MarshalIndent(registry, "", "  ")
+	if err != nil {
+		return remoteRegistry{}, false, err
+	}
+	body = append(body, '\n')
+	if err := securefile.Write(path, body, 0o600, 0o700); err != nil {
+		return remoteRegistry{}, false, fmt.Errorf("write remote registry %s: %w", path, err)
+	}
+	return registry, added, nil
+}
+
+func decodeJSON(raw string, destination any) error {
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("more than one JSON value")
+		}
+		return err
+	}
+	return nil
+}
+
+func decodeJSONObject(raw string) (map[string]any, error) {
+	var document map[string]any
+	if err := decodeJSON(raw, &document); err != nil {
+		return nil, err
+	}
+	if document == nil {
+		return nil, fmt.Errorf("expected a JSON object")
+	}
+	for key, value := range document {
+		document[key] = normalizedNumber(value)
+	}
+	return document, nil
+}
+
+func decodeRemoteExecEnvelope(raw string) (service.ExecResult, error) {
+	document, err := decodeJSONObject(raw)
+	if err != nil {
+		return service.ExecResult{}, err
+	}
+	sqlText, err := requiredText(document, "sql")
+	if err != nil || strings.TrimSpace(sqlText) == "" {
+		return service.ExecResult{}, fmt.Errorf("sql must be a non-empty string")
+	}
+	rowCount, err := requiredInteger(document, "row_count")
+	if err != nil || rowCount < 0 {
+		return service.ExecResult{}, fmt.Errorf("row_count must be a non-negative integer")
+	}
+	latency, err := requiredInteger(document, "latency_ms")
+	if err != nil || latency < 0 {
+		return service.ExecResult{}, fmt.Errorf("latency_ms must be a non-negative integer")
+	}
+	version, err := requiredText(document, "version")
+	if err != nil || version == "" {
+		return service.ExecResult{}, fmt.Errorf("version must be a non-empty string")
+	}
+	sourceSHA, err := requiredText(document, "source_sha")
+	if err != nil || sourceSHA == "" {
+		return service.ExecResult{}, fmt.Errorf("source_sha must be a non-empty string")
+	}
+	columns, err := optionalStrings(document, "columns")
+	if err != nil {
+		return service.ExecResult{}, err
+	}
+	rows, err := optionalObjects(document, "rows")
+	if err != nil {
+		return service.ExecResult{}, err
+	}
+	if int64(len(rows)) != rowCount {
+		return service.ExecResult{}, fmt.Errorf("row_count does not match rows")
+	}
+	seen := map[string]bool{}
+	for _, column := range columns {
+		if column == "" || seen[column] {
+			return service.ExecResult{}, fmt.Errorf("columns contains an empty or duplicate name")
+		}
+		seen[column] = true
+	}
+	for index, row := range rows {
+		if len(row) != len(columns) {
+			return service.ExecResult{}, fmt.Errorf("row %d does not match columns", index)
+		}
+		for _, column := range columns {
+			if _, found := row[column]; !found {
+				return service.ExecResult{}, fmt.Errorf("row %d is missing column %q", index, column)
+			}
+		}
+	}
+	databases, err := optionalStrings(document, "databases")
+	if err != nil {
+		return service.ExecResult{}, err
+	}
+	omitted, err := optionalStrings(document, "omitted_databases")
+	if err != nil {
+		return service.ExecResult{}, err
+	}
+	return service.ExecResult{
+		SQL: sqlText, Columns: columns, Rows: rows, RowCount: int(rowCount),
+		Databases: databases, OmittedDatabases: omitted, LatencyMS: latency,
+		Version: version, SourceSHA: sourceSHA,
+	}, nil
+}
+
+func decodeRemoteVectorEnvelope(raw string, remote remoteVersion, phrase string, k int) (map[string]any, error) {
+	document, err := decodeJSONObject(raw)
+	if err != nil {
+		return nil, err
+	}
+	query, err := requiredText(document, "query")
+	if err != nil || query != phrase {
+		return nil, fmt.Errorf("query does not match the request")
+	}
+	resultK, err := requiredInteger(document, "k")
+	if err != nil || resultK != int64(k) {
+		return nil, fmt.Errorf("k does not match the request")
+	}
+	elapsed, err := requiredInteger(document, "elapsed_ms")
+	if err != nil || elapsed < 0 {
+		return nil, fmt.Errorf("elapsed_ms must be a non-negative integer")
+	}
+	results, err := requiredObjects(document, "results")
+	if err != nil {
+		return nil, err
+	}
+	if err := validateVectorResults(results); err != nil {
+		return nil, err
+	}
+	for _, field := range []string{"databases", "notices"} {
+		if _, err := optionalStrings(document, field); err != nil {
+			return nil, err
+		}
+	}
+	if value, found := document["model"]; found {
+		if _, ok := value.(string); !ok {
+			return nil, fmt.Errorf("model must be a string")
+		}
+	}
+	if value, found := document["mixed_models"]; found {
+		if _, ok := value.(bool); !ok {
+			return nil, fmt.Errorf("mixed_models must be a boolean")
+		}
+	}
+	groups, err := optionalObjects(document, "database_results")
+	if err != nil {
+		return nil, err
+	}
+	for index, group := range groups {
+		if database, err := requiredText(group, "database"); err != nil || database == "" {
+			return nil, fmt.Errorf("database_results[%d].database must be a non-empty string", index)
+		}
+		if model, err := requiredText(group, "model"); err != nil || model == "" {
+			return nil, fmt.Errorf("database_results[%d].model must be a non-empty string", index)
+		}
+		groupResults, err := requiredObjects(group, "results")
+		if err != nil {
+			return nil, fmt.Errorf("database_results[%d]: %w", index, err)
+		}
+		if err := validateVectorResults(groupResults); err != nil {
+			return nil, fmt.Errorf("database_results[%d]: %w", index, err)
+		}
+	}
+	if version, found := document["version"]; found {
+		text, ok := version.(string)
+		if !ok || text != remote.Version {
+			return nil, fmt.Errorf("version does not match the version probe")
+		}
+	} else {
+		document["version"] = remote.Version
+	}
+	if sourceSHA, found := document["source_sha"]; found {
+		text, ok := sourceSHA.(string)
+		if !ok || text != remote.SourceSHA {
+			return nil, fmt.Errorf("source_sha does not match the version probe")
+		}
+	} else {
+		document["source_sha"] = remote.SourceSHA
+	}
+	return document, nil
+}
+
+func validateVectorResults(results []map[string]any) error {
+	for index, result := range results {
+		rank, err := requiredInteger(result, "rank")
+		if err != nil || rank < 1 {
+			return fmt.Errorf("results[%d].rank must be a positive integer", index)
+		}
+		score, found := result["score"]
+		if !found || !numberValue(score) {
+			return fmt.Errorf("results[%d].score must be a number", index)
+		}
+		for _, field := range []string{"source", "source_id", "text"} {
+			if _, err := requiredText(result, field); err != nil {
+				return fmt.Errorf("results[%d].%s must be a string", index, field)
+			}
+		}
+		for _, field := range []string{"database", "table", "id"} {
+			if value, found := result[field]; found {
+				if _, ok := value.(string); !ok {
+					return fmt.Errorf("results[%d].%s must be a string", index, field)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func requiredText(document map[string]any, field string) (string, error) {
+	value, found := document[field]
+	if !found {
+		return "", fmt.Errorf("%s is required", field)
+	}
+	text, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("%s must be a string", field)
+	}
+	return text, nil
+}
+
+func requiredInteger(document map[string]any, field string) (int64, error) {
+	value, found := document[field]
+	if !found {
+		return 0, fmt.Errorf("%s is required", field)
+	}
+	integer, ok := value.(int64)
+	if !ok {
+		return 0, fmt.Errorf("%s must be an integer", field)
+	}
+	return integer, nil
+}
+
+func optionalStrings(document map[string]any, field string) ([]string, error) {
+	value, found := document[field]
+	if !found {
+		return nil, nil
+	}
+	items, ok := value.([]any)
+	if !ok {
+		return nil, fmt.Errorf("%s must be an array of strings", field)
+	}
+	result := make([]string, len(items))
+	for index, item := range items {
+		text, ok := item.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s[%d] must be a string", field, index)
+		}
+		result[index] = text
+	}
+	return result, nil
+}
+
+func requiredObjects(document map[string]any, field string) ([]map[string]any, error) {
+	if _, found := document[field]; !found {
+		return nil, fmt.Errorf("%s is required", field)
+	}
+	return optionalObjects(document, field)
+}
+
+func optionalObjects(document map[string]any, field string) ([]map[string]any, error) {
+	value, found := document[field]
+	if !found {
+		return nil, nil
+	}
+	items, ok := value.([]any)
+	if !ok {
+		return nil, fmt.Errorf("%s must be an array of objects", field)
+	}
+	result := make([]map[string]any, len(items))
+	for index, item := range items {
+		object, ok := item.(map[string]any)
+		if !ok || object == nil {
+			return nil, fmt.Errorf("%s[%d] must be an object", field, index)
+		}
+		result[index] = object
+	}
+	return result, nil
+}
+
+func numberValue(value any) bool {
+	switch value.(type) {
+	case int64, float64:
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizedNumber(value any) any {
+	switch typed := value.(type) {
+	case json.Number:
+		if integer, err := typed.Int64(); err == nil {
+			return integer
+		}
+		if decimal, err := typed.Float64(); err == nil {
+			return decimal
+		}
+	case []any:
+		for index := range typed {
+			typed[index] = normalizedNumber(typed[index])
+		}
+	case map[string]any:
+		for key, nested := range typed {
+			typed[key] = normalizedNumber(nested)
+		}
+	}
+	return value
+}
+
+func objectSlice(value any) []map[string]any {
+	items, _ := value.([]any)
+	result := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		if object, ok := item.(map[string]any); ok {
+			result = append(result, object)
+		}
+	}
+	return result
+}
+
+func stringSlice(value any) []string {
+	items, _ := value.([]any)
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		if text, ok := item.(string); ok {
+			result = append(result, text)
+		}
+	}
+	return result
+}
+
+func integerValue(value any) (int64, bool) {
+	switch typed := value.(type) {
+	case int64:
+		return typed, true
+	case int:
+		return int64(typed), true
+	case float64:
+		return int64(typed), true
+	}
+	return 0, false
+}
