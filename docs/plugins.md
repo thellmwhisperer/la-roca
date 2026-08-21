@@ -415,6 +415,19 @@ names one declared database and table, one stable `id_column`, and the ordered
 noise, and other deterministic-only fields out unless their meaning is itself
 the retrieval surface.
 
+Inside `vector.databases[].tables[]`, the complete author contract is three
+lines: table, stable id column, and opt-in prose columns.
+
+```json
+{"name": "receipts",
+ "id_column": "id",
+ "text_columns": ["title"]}
+```
+
+That is declaration only. The kernel owns embedding generation, fingerprints,
+sidecars, and query fan-out; the plugin owns no embedding code. Add `chunking`
+only when the default boundaries are unsuitable.
+
 `chunking` is optional. `max_chars` must be positive, `overlap_chars` cannot be
 negative, and when both are present the overlap must be smaller than the
 maximum. These are hints to the kernel vector worker, not instructions for code

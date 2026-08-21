@@ -1,3 +1,29 @@
+/*
+*
+@overview Verifies generated roca-semantica hierarchy and retrieval coverage.
+
+	READING GUIDE
+	-------------
+	1. Start at TestCatalogBodyComposesFragmentsAndStatesTheHierarchy <- core contract
+	2. Read TestCatalogHeadingsNameDatabasesAndAliases                <- naming edge cases
+	3. Fixtures above the tests define the synthetic catalog surface
+
+	MAIN FLOW
+	---------
+	synthetic plugin databases -> CatalogBody -> required semantic and vector text
+
+	PUBLIC API
+	----------
+	TestCatalogBodyComposesFragmentsAndStatesTheHierarchy()   Checks catalog content.
+	TestCatalogHeadingsNameDatabasesAndAliases()              Checks heading identity.
+
+	INTERNALS
+	---------
+	catalogFixtureDatabases, catalogFixture
+
+@exports TestCatalogBodyComposesFragmentsAndStatesTheHierarchy, TestCatalogHeadingsNameDatabasesAndAliases
+@deps testing, strings, internal/distribution/skill, internal/provider/plugin
+*/
 package skill_test
 
 import (
@@ -8,9 +34,12 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 )
 
+// -- 1/3 HELPER · catalogFixtureDatabases and catalogFixture --
+
 // catalogFixtureDatabases is one unmistakably synthetic plugin database with
 // every fragment the catalog composes: a description, database-level questions,
-// and one table with its own description, columns and questions.
+// one table with its own description, columns and questions, and its opt-in
+// vector coverage.
 func catalogFixtureDatabases() []plugin.Database {
 	return []plugin.Database{{
 		Descriptor: plugin.Descriptor{
@@ -19,6 +48,9 @@ func catalogFixtureDatabases() []plugin.Database {
 				Description: "Synthetic perennial harvest for the catalog fixture.",
 				Questions:   []string{"What did the synthetic corpus record?"},
 			},
+			VectorTables: []plugin.VectorTable{{
+				Name: "sessions", IDColumn: "session_id", TextColumns: []string{"title"},
+			}},
 		},
 		Tables: []plugin.Table{{
 			Name:        "sessions",
@@ -30,6 +62,10 @@ func catalogFixtureDatabases() []plugin.Database {
 }
 
 func catalogFixture() string { return skill.CatalogBody(catalogFixtureDatabases(), nil) }
+
+// -/ 1/3
+
+// -- 2/3 CORE · TestCatalogBodyComposesFragmentsAndStatesTheHierarchy -- <- START HERE
 
 // The catalog is a lazy-loaded second skill: its frontmatter must send agents
 // back to query and explore unless they need exact SQL, and its body must carry
@@ -50,12 +86,16 @@ func TestCatalogBodyComposesFragmentsAndStatesTheHierarchy(t *testing.T) {
 				"Load it only when you\n  need to know which tables or domains exist",
 				"This catalog is for authors of `roca exec` SELECTs",
 				"`roca query` and `roca explore` are last resort",
+				"`roca vector query --databases ...`\ndiscovers nearby rows across the selected federated databases",
+				"then FTS\ncounts and SQL frames the claim in each hit's database",
 				"## synth-corpus — corpus (alias plugin_synth_corpus)",
 				"Synthetic perennial harvest for the catalog fixture.",
 				"- What did the synthetic corpus record?",
 				"### sessions · plugin_synth_corpus.sessions",
 				"Synthetic conversation sessions.",
 				"Columns: session_id, title",
+				"Vector coverage: declared below",
+				"Vector: source id `session_id`; opt-in text columns: `title`.",
 				"- Which synthetic sessions exist?",
 			},
 		},
@@ -88,6 +128,10 @@ func TestCatalogBodyComposesFragmentsAndStatesTheHierarchy(t *testing.T) {
 	}
 }
 
+// -/ 2/3
+
+// -- 3/3 HELPER · TestCatalogHeadingsNameDatabasesAndAliases --
+
 // A plugin that declares several databases gets one section per database, each
 // under its own alias, and a single-database plugin does not repeat the
 // database name the plugin name already states.
@@ -117,4 +161,9 @@ func TestCatalogHeadingsNameDatabasesAndAliases(t *testing.T) {
 			t.Errorf("catalog heading missing %q:\n%s", heading, body)
 		}
 	}
+	if got := strings.Count(body, "Vector coverage: not declared; this database keeps exactly its existing FTS/SQL behavior."); got != 3 {
+		t.Fatalf("undeclared vector coverage notices = %d, want 3:\n%s", got, body)
+	}
 }
+
+// -/ 3/3
