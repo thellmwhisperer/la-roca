@@ -352,7 +352,7 @@ func TestClaudeWebMemoriesReadEverySurfaceAndReportUnreadableOnes(t *testing.T) 
 }
 
 func TestClaudeWebProjectEntitiesAndDocsBecomeStoreRows(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "testdata", "anthropic-export-projects",
+	raw, err := os.ReadFile(filepath.Join("..", "..", "internal", "ingest", "testdata", "anthropic-export-projects",
 		"projects", "aaaaaaaa-0000-4000-8000-000000000001.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -387,7 +387,7 @@ func TestClaudeWebProjectEntitiesAndDocsBecomeStoreRows(t *testing.T) {
 }
 
 func TestClaudeWebNamelessProjectUsesNameAsContentAndKeepsUnresolvedHonesty(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "testdata", "anthropic-export-projects",
+	raw, err := os.ReadFile(filepath.Join("..", "..", "internal", "ingest", "testdata", "anthropic-export-projects",
 		"projects", "aaaaaaaa-0000-4000-8000-000000000002.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -402,7 +402,7 @@ func TestClaudeWebNamelessProjectUsesNameAsContentAndKeepsUnresolvedHonesty(t *t
 }
 
 func TestClaudeWebDesignChatKeepsProjectUUIDAndOrdinaryConversationsStayUnprojected(t *testing.T) {
-	chat, err := os.ReadFile(filepath.Join("..", "testdata", "anthropic-export-projects",
+	chat, err := os.ReadFile(filepath.Join("..", "..", "internal", "ingest", "testdata", "anthropic-export-projects",
 		"design_chats", "cccccccc-0000-4000-8000-000000000001.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -456,7 +456,7 @@ func parseClaudeWebFixture(t *testing.T, name string) Records {
 
 func readClaudeWebFixture(t *testing.T, name string) []byte {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "testdata", "anthropic-export", name))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "internal", "ingest", "testdata", "anthropic-export", name))
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
 	}

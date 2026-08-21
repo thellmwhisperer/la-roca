@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
-	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
+	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 )
 
 // The ingest summary counts in prose, and prose counts through axi.Quantity.

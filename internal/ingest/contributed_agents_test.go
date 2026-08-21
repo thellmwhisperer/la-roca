@@ -9,9 +9,9 @@ import (
 func TestQwenCodeAndGLMIngestIsReportedAndIdempotent(t *testing.T) {
 	home := t.TempDir()
 	writeFixture(t, filepath.Join(home, ".qwen", "projects", "-synthetic-orbit", "chats", "fixture-qwen.jsonl"),
-		filepath.Join("parsers", "testdata", "conformance", "qwen-code-session", "session.data"))
+		filepath.Join("..", "..", "pkg", "parsers", "testdata", "conformance", "qwen-code-session", "session.data"))
 	writeFixture(t, filepath.Join(home, ".glm", "skills", "synthetic-compass", "SKILL.md"),
-		filepath.Join("parsers", "testdata", "conformance", "glm-skill", "skill.data"))
+		filepath.Join("..", "..", "pkg", "parsers", "testdata", "conformance", "glm-skill", "skill.data"))
 
 	db := rocaDatabase(t)
 	options := Options{Roots: ResolveRoots(Environment{GOOS: "darwin", Home: home}, Settings{})}
