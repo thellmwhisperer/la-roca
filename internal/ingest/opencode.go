@@ -16,7 +16,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/thellmwhisperer/la-roca/internal/ingest/parsers"
+	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 )
 
 // OpenCode keeps its conversations in its own SQLite, normalized into four
