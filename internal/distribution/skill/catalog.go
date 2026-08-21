@@ -33,6 +33,11 @@ func CatalogBody(databases []plugin.Database, notes []string) string {
 	b.WriteString("install`, `update` and `uninstall` refreshes it. Reach a table through\n")
 	b.WriteString("its database's attach alias, for example alias.table in a `roca exec`\n")
 	b.WriteString("SELECT.\n\n")
+	b.WriteString("For the zero-inference hybrid loop, `roca vector query --databases ...`\n")
+	b.WriteString("discovers nearby rows across the selected federated databases; then FTS\n")
+	b.WriteString("counts and SQL frames the claim in each hit's database. A `Vector:` line\n")
+	b.WriteString("below names the stable source id and opt-in prose columns. Without one,\n")
+	b.WriteString("the table keeps exactly its existing FTS/SQL behavior.\n\n")
 	if len(databases) == 0 && len(notes) == 0 {
 		b.WriteString("## No plugin databases installed\n\n")
 		b.WriteString("The kernel is installed without plugin databases. `roca plugin install\n")
@@ -53,8 +58,8 @@ func CatalogBody(databases []plugin.Database, notes []string) string {
 }
 
 // writeDatabase renders one plugin database: what it knows, its questions, and
-// each table with its description, alias-qualified name, columns and its own
-// example questions.
+// each table with its description, alias-qualified name, columns, retrieval
+// coverage, and its own example questions.
 func writeDatabase(b *strings.Builder, database plugin.Database) {
 	heading := database.Name
 	if database.DatabaseName != "" && database.DatabaseName != database.Name {
@@ -68,11 +73,20 @@ func writeDatabase(b *strings.Builder, database plugin.Database) {
 			fmt.Fprintf(b, "- %s\n", question)
 		}
 	}
+	if len(database.VectorTables) == 0 {
+		b.WriteString("\nVector coverage: not declared; this database keeps exactly its existing FTS/SQL behavior.\n")
+	} else {
+		b.WriteString("\nVector coverage: declared below. Tables without a `Vector:` line keep exactly their existing FTS/SQL behavior.\n")
+	}
 	b.WriteString("\n")
 	for _, table := range database.Tables {
 		fmt.Fprintf(b, "### %s · %s.%s\n\n", table.Name, database.Schema, table.Name)
 		fmt.Fprintf(b, "%s\n\n", table.Description)
 		fmt.Fprintf(b, "Columns: %s\n", strings.Join(table.Columns, ", "))
+		if declaration, ok := vectorTable(database, table.Name); ok {
+			fmt.Fprintf(b, "\nVector: source id `%s`; opt-in text columns: `%s`.\n",
+				declaration.IDColumn, strings.Join(declaration.TextColumns, "`, `"))
+		}
 		if len(table.Questions) > 0 {
 			b.WriteString("\nQuestions:\n")
 			for _, question := range table.Questions {
@@ -81,4 +95,13 @@ func writeDatabase(b *strings.Builder, database plugin.Database) {
 		}
 		b.WriteString("\n")
 	}
+}
+
+func vectorTable(database plugin.Database, name string) (plugin.VectorTable, bool) {
+	for _, table := range database.VectorTables {
+		if table.Name == name {
+			return table, true
+		}
+	}
+	return plugin.VectorTable{}, false
 }

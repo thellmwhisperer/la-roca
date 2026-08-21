@@ -128,7 +128,10 @@ func TestShippedSkillsCarryTheSearchDoctrine(t *testing.T) {
 				"## Search craft",
 				"completion.json",
 				"finished_at",
-				"exit_status == 0",
+				"Vector readiness is per selected sidecar",
+				"it is not a readiness prerequisite for every\nquery",
+				"still returns successfully with notices",
+				"unchanged FTS/SQL path",
 				"the hybrid loop is mandatory",
 				"last resort",
 				"Agents never pass `--full`",
@@ -144,12 +147,19 @@ func TestShippedSkillsCarryTheSearchDoctrine(t *testing.T) {
 				"SQL frames them",
 				"the shipped RRF hybrid",
 				"inference only at the end",
+				`roca vector query --databases <scope>`,
 				`roca vector query "<first-person phrase or bare word>" 100`,
+				"one query can mix a declared plugin hit with a\n   corpus hit",
+				"A selected database without a `Vector:` declaration joins\n   here through its unchanged FTS path",
 				"names of people",
 				"my boss is named",
 				"Use them only as a last resort when you cannot write the SELECT yourself",
 			},
-			refuse: []string{"roca vector vocab", "## Hybrid discovery"},
+			refuse: []string{
+				"roca vector vocab", "## Hybrid discovery",
+				"Declared sidecars are ready only when",
+				"refuses when no declared sidecar is ready",
+			},
 		},
 		{
 			name: "vector owns the index",
@@ -184,6 +194,22 @@ func TestShippedSkillsCarryTheSearchDoctrine(t *testing.T) {
 	}
 	if strings.Contains(skill.Content(), "roca vector vocab") {
 		t.Error("definitive skill still teaches roca vector vocab")
+	}
+}
+
+func TestPluginGuideKeepsTheThreeLineVectorAuthorContract(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "plugins.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"the complete author contract is three\nlines: table, stable id column, and opt-in prose columns",
+		"{\"name\": \"receipts\",\n \"id_column\": \"id\",\n \"text_columns\": [\"title\"]}",
+		"a\ndatabase with no `vector` declaration continues to serve through FTS and SQL\nexactly as before",
+	} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("plugin author guide missing %q", want)
+		}
 	}
 }
 
