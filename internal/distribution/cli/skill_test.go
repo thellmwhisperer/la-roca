@@ -299,8 +299,8 @@ func TestSkillTeachesTheInvestigationFunnel(t *testing.T) {
 			body: skill.OperationsContent(),
 			want: []string{
 				"## Which databases a question sees",
-				"default to the corpus database",
-				"should not drag in ops handoffs",
+				"default to the corpus",
+				"should not drag in ops",
 				"--databases", "corpus,ops", "--databases all",
 				"does not guess relevance",
 				"inventory of the other attached names",
@@ -314,7 +314,10 @@ func TestSkillTeachesTheInvestigationFunnel(t *testing.T) {
 				"## Search craft",
 				"completion.json",
 				"finished_at",
-				"exit_status == 0",
+				"Vector readiness is per selected sidecar",
+				"it is not a readiness prerequisite for every\nquery",
+				"still returns successfully with notices",
+				"unchanged FTS/SQL path",
 				"the hybrid loop is mandatory",
 				"complete working path",
 				"last resort",
@@ -363,6 +366,15 @@ func TestSkillTeachesTheInvestigationFunnel(t *testing.T) {
 				}
 			}
 		})
+	}
+	operations := skill.OperationsContent()
+	for _, forbidden := range []string{
+		"Declared sidecars are ready only when",
+		"refuses when no declared sidecar is ready",
+	} {
+		if strings.Contains(operations, forbidden) {
+			t.Errorf("operations skill must not teach %q", forbidden)
+		}
 	}
 	hybrid := markdownSection(skill.OperationsContent(), "## Hybrid loop")
 	if strings.Contains(hybrid, `roca query --sql-only "`) {

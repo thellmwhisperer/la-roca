@@ -10,7 +10,8 @@ import (
 
 // catalogFixtureDatabases is one unmistakably synthetic plugin database with
 // every fragment the catalog composes: a description, database-level questions,
-// and one table with its own description, columns and questions.
+// one table with its own description, columns and questions, and its opt-in
+// vector coverage.
 func catalogFixtureDatabases() []plugin.Database {
 	return []plugin.Database{{
 		Descriptor: plugin.Descriptor{
@@ -19,6 +20,9 @@ func catalogFixtureDatabases() []plugin.Database {
 				Description: "Synthetic perennial harvest for the catalog fixture.",
 				Questions:   []string{"What did the synthetic corpus record?"},
 			},
+			VectorTables: []plugin.VectorTable{{
+				Name: "sessions", IDColumn: "session_id", TextColumns: []string{"title"},
+			}},
 		},
 		Tables: []plugin.Table{{
 			Name:        "sessions",
@@ -50,12 +54,16 @@ func TestCatalogBodyComposesFragmentsAndStatesTheHierarchy(t *testing.T) {
 				"Load it only when you\n  need to know which tables or domains exist",
 				"This catalog is for authors of `roca exec` SELECTs",
 				"`roca query` and `roca explore` are last resort",
+				"`roca vector query --databases ...`\ndiscovers nearby rows across the selected federated databases",
+				"then FTS\ncounts and SQL frames the claim in each hit's database",
 				"## synth-corpus — corpus (alias plugin_synth_corpus)",
 				"Synthetic perennial harvest for the catalog fixture.",
 				"- What did the synthetic corpus record?",
 				"### sessions · plugin_synth_corpus.sessions",
 				"Synthetic conversation sessions.",
 				"Columns: session_id, title",
+				"Vector coverage: declared below",
+				"Vector: source id `session_id`; opt-in text columns: `title`.",
 				"- Which synthetic sessions exist?",
 			},
 		},
@@ -116,5 +124,8 @@ func TestCatalogHeadingsNameDatabasesAndAliases(t *testing.T) {
 		if !strings.Contains(body, heading) {
 			t.Errorf("catalog heading missing %q:\n%s", heading, body)
 		}
+	}
+	if got := strings.Count(body, "Vector coverage: not declared; this database keeps exactly its existing FTS/SQL behavior."); got != 3 {
+		t.Fatalf("undeclared vector coverage notices = %d, want 3:\n%s", got, body)
 	}
 }
