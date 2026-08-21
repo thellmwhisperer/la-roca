@@ -107,6 +107,14 @@ must treat the pair together or discard the sidecar and regenerate it. Every
 sidecar records its owner, embedding model, dimensions, build version,
 declaration fingerprint, and source fingerprint.
 
+When upgrading from the former central `state/vector.db`, the first worker pass
+reuses compatible corpus and ops embeddings in their owned sidecars before it
+runs the normal delta. Fingerprint mismatches, changed chunking, and content
+that was never present in the central index fall through to embedding; an
+unreadable or incompatible legacy index is ignored and the ordinary build
+continues. The central index is removed only after every declared sidecar has
+completed successfully.
+
 Worker coordination remains under `~/.roca/plugins/roca-vector/state/`
 (`%USERPROFILE%\.roca\plugins\roca-vector\state` on Windows). macOS and Linux
 can send a desktop notification with the exit status and aggregate counts.
