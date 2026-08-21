@@ -151,21 +151,22 @@ Write the SQL yourself against the semantic catalog (`roca-semantica`) and
 run it with `roca exec`. That is the craft. Anything that spends inference
 is last resort.
 
-Check whether the vector sidecars exist before you search. The contract is
-docs/vector.md: `~/.roca/plugins/roca-vector/state/completion.json` records
-`finished_at` and `exit_status` for the first pass. Declared sidecars are ready
-only when `finished_at` is non-empty and `exit_status == 0`. Otherwise take the
-no-index, exec-first branch.
-`features.vector = true` only unhides `roca vector`; it is not the index.
-`roca vector query` refuses when no declared sidecar is ready. Once at least one
-sidecar exists, a selected database with no declaration or no ready sidecar
-emits a notice and keeps exactly its existing FTS/SQL behavior.
+Vector readiness is per selected sidecar. The aggregate worker record at
+`~/.roca/plugins/roca-vector/state/completion.json` reports `finished_at` and
+`exit_status` for that worker run; it is not a readiness prerequisite for every
+query. `features.vector = true` only unhides `roca vector`; it is not the index.
+Query every available selected sidecar. A selected database with no declaration,
+a missing or unready sidecar, or an unavailable embedding model emits a notice
+and keeps exactly its existing FTS/SQL behavior. When none of the selected
+sidecars is ready, `roca vector query` still returns successfully with notices;
+use every selected database through its unchanged FTS/SQL path.
 
-- **Declared sidecars present: the hybrid loop is mandatory and federated.**
-  Vector search (top-100), FTS census, SQL framing through `roca exec`, across
-  the selected federated databases. Zero inference on that path; inference
-  only at the end, by the reading agent, to narrate.
-- **No index: `roca exec` is the complete working path.** Invite the user to build the index
+- **Ready selected sidecars: the hybrid loop is mandatory and federated.**
+  Vector search (top-100) across every available selected sidecar, then FTS
+  census and SQL framing through `roca exec` across all selected federated
+  databases. Zero inference on that path; inference only at the end, by the
+  reading agent, to narrate.
+- **No ready selected sidecar: `roca exec` is the complete working path.** Invite the user to build the index
   (one laptop night, daily reward); the `roca-vector` skill owns install,
   progress, and maintenance. Point there. Do not depend on it.
 - **`roca query` and `roca explore` are last resort.** Use them only when
