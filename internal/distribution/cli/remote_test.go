@@ -37,6 +37,24 @@ func remoteVersionReply(version string) sshReply {
 	return sshReply{stdout: string(body)}
 }
 
+func malformedRemoteEnvelopeEnv(t *testing.T, body string) *cliEnv {
+	t.Helper()
+	home := t.TempDir()
+	addRemote(t, home, "studio", "dev@example.test")
+	return &cliEnv{sshRunner: &scriptedSSHRunner{replies: []sshReply{
+		remoteVersionReply("v-test"), {stdout: body},
+	}}}
+}
+
+func assertSSHCalls(t *testing.T, got, want []sshCall) {
+	t.Helper()
+	if !slices.EqualFunc(got, want, func(a, b sshCall) bool {
+		return a.target == b.target && slices.Equal(a.args, b.args)
+	}) {
+		t.Fatalf("ssh calls = %#v, want %#v", got, want)
+	}
+}
+
 func runRemoteRoot(t *testing.T, env *cliEnv, args ...string) (string, error) {
 	t.Helper()
 	var output strings.Builder
@@ -143,11 +161,7 @@ func TestRemoteExecBridgesTheStandardEnvelopeAndInjectsTheSSHRunner(t *testing.T
 		{target: "dev@example.test", args: []string{"roca", "version", "--json"}},
 		{target: "dev@example.test", args: []string{"roca", "exec", "SELECT 7 AS answer", "--json"}},
 	}
-	if !slices.EqualFunc(runner.calls, wantCalls, func(a, b sshCall) bool {
-		return a.target == b.target && slices.Equal(a.args, b.args)
-	}) {
-		t.Fatalf("ssh calls = %#v, want %#v", runner.calls, wantCalls)
-	}
+	assertSSHCalls(t, runner.calls, wantCalls)
 
 	runner.replies = []sshReply{
 		remoteVersionReply("v-test"),
@@ -187,11 +201,7 @@ func TestRemoteExecRejectsMalformedEnvelopesAsSkew(t *testing.T) {
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			home := t.TempDir()
-			addRemote(t, home, "studio", "dev@example.test")
-			env := &cliEnv{sshRunner: &scriptedSSHRunner{replies: []sshReply{
-				remoteVersionReply("v-test"), {stdout: testCase.body},
-			}}}
+			env := malformedRemoteEnvelopeEnv(t, testCase.body)
 			_, err := runRemoteRoot(t, env, "remote", "exec", "studio", "SELECT 1")
 			if err == nil || env.code != ExitRemoteVersionSkew ||
 				!strings.Contains(err.Error(), "incompatible exec envelope") {
@@ -239,11 +249,7 @@ func TestRemoteVectorRejectsMalformedEnvelopesAsSkew(t *testing.T) {
 	}
 	for index, body := range tests {
 		t.Run(string(rune('a'+index)), func(t *testing.T) {
-			home := t.TempDir()
-			addRemote(t, home, "studio", "dev@example.test")
-			env := &cliEnv{sshRunner: &scriptedSSHRunner{replies: []sshReply{
-				remoteVersionReply("v-test"), {stdout: body},
-			}}}
+			env := malformedRemoteEnvelopeEnv(t, body)
 			_, err := runRemoteRoot(t, env, "remote", "vector", "query", "studio", "remembered decision")
 			if err == nil || env.code != ExitRemoteVersionSkew ||
 				!strings.Contains(err.Error(), "incompatible vector envelope") {
@@ -329,11 +335,7 @@ func TestRemoteCrossScatterGathersOnlyInMemory(t *testing.T) {
 		{target: "dev@example.test", args: []string{"roca", "version", "--json", "--read-only"}},
 		{target: "dev@example.test", args: []string{"roca", "exec", "SELECT 7 AS answer", "--json", "--read-only"}},
 	}
-	if !slices.EqualFunc(runner.calls, wantCalls, func(a, b sshCall) bool {
-		return a.target == b.target && slices.Equal(a.args, b.args)
-	}) {
-		t.Fatalf("cross ssh calls = %#v, want %#v", runner.calls, wantCalls)
-	}
+	assertSSHCalls(t, runner.calls, wantCalls)
 	after := treeSnapshot(t, fixture.home)
 	if !equalTreeSnapshots(before, after) {
 		t.Fatalf("cross changed a rock: before=%v after=%v", mapKeys(before), mapKeys(after))
