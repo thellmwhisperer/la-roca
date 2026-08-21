@@ -101,6 +101,15 @@ func TestDefaultScopeWithoutCorpusIsCore(t *testing.T) {
 	}
 }
 
+func resolveAllDatabaseScope(t *testing.T, svc *Service) DatabaseScope {
+	t.Helper()
+	scope, err := svc.ResolveDatabaseScope(t.Context(), []string{ScopeAll})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return scope
+}
+
 func TestResolveDatabaseScopeUsesTheFeatureGatedRuntimeInventory(t *testing.T) {
 	corpus := plugin.Database{Descriptor: plugin.Descriptor{
 		Name: rocaCorpusPluginName, DatabaseName: "corpus", Schema: "plugin_roca_corpus",
@@ -110,10 +119,7 @@ func TestResolveDatabaseScopeUsesTheFeatureGatedRuntimeInventory(t *testing.T) {
 		resident:         []plugin.Database{corpus},
 		residentWarnings: []string{"synthetic inventory warning"},
 	}
-	scope, err := svc.ResolveDatabaseScope(t.Context(), []string{ScopeAll})
-	if err != nil {
-		t.Fatal(err)
-	}
+	scope := resolveAllDatabaseScope(t, &svc)
 	if !stringSlicesEqual(scope.Databases, []string{"core", "corpus"}) ||
 		!stringSlicesEqual(scope.Warnings, []string{"synthetic inventory warning"}) ||
 		len(scope.Selected) != 2 || scope.Selected[1].Source != "plugin:roca-corpus" {
@@ -132,10 +138,7 @@ func TestResolveDatabaseScopeKeepsDuplicateCanonicalNamesBySource(t *testing.T) 
 		opts:     Options{CorpusEnabled: true},
 		resident: []plugin.Database{first, second},
 	}
-	scope, err := svc.ResolveDatabaseScope(t.Context(), []string{ScopeAll})
-	if err != nil {
-		t.Fatal(err)
-	}
+	scope := resolveAllDatabaseScope(t, &svc)
 	if !stringSlicesEqual(scope.Databases, []string{"core", "shared", "shared"}) ||
 		len(scope.Selected) != 3 ||
 		scope.Selected[1] != (DatabaseSelection{Source: "plugin:fixture-first", Database: "shared"}) ||
