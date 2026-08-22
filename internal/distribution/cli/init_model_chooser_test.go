@@ -367,14 +367,7 @@ func TestReinitializeChooserFailureLeavesTheDatabaseUntouched(t *testing.T) {
 func TestNonTTYInitPrintsOneAnsweringAlertAndWritesNewInstallConfig(t *testing.T) {
 	home, bin := initChooserHome(t)
 	fakeModelCLI(t, bin, provider.NameClaude)
-	dbPath := filepath.Join(home, "explicit", "roca.db")
-	configPath := filepath.Join(filepath.Dir(dbPath), "config.toml")
-
-	out, err := runInitChooser(t, false, "", chooserTestBackend{},
-		"init", "--db-path", dbPath)
-	if err != nil {
-		t.Fatalf("init: %v\n%s", err, out)
-	}
+	out, configPath := runExplicitNonTTYInit(t, home)
 	if count := countLinesWithPrefix(out, "answering:"); count != 1 {
 		t.Fatalf("answering alert count=%d, want 1:\n%s", count, out)
 	}
@@ -411,14 +404,7 @@ func TestInitIgnoresConfigOverrideWhenCreatingExplicitDatabaseConfig(t *testing.
 		t.Fatal(err)
 	}
 	t.Setenv("ROCA_CONFIG", override)
-	dbPath := filepath.Join(home, "explicit", "roca.db")
-	configPath := filepath.Join(filepath.Dir(dbPath), "config.toml")
-
-	out, err := runInitChooser(t, false, "", chooserTestBackend{},
-		"init", "--db-path", dbPath)
-	if err != nil {
-		t.Fatalf("init: %v\n%s", err, out)
-	}
+	out, configPath := runExplicitNonTTYInit(t, home)
 	if !strings.Contains(out, "configuration: "+configPath) {
 		t.Fatalf("init did not report the database-adjacent config:\n%s", out)
 	}
@@ -529,13 +515,7 @@ func TestInitCreatesConfigBesideEnvironmentDatabase(t *testing.T) {
 	if !strings.Contains(out, "configuration: "+configPath) {
 		t.Fatalf("init did not use the environment database config:\n%s", out)
 	}
-	file, err := config.LoadFile(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !file.Features.Plugins || !file.Features.RocaOps || !file.Features.Cron || file.Features.Vector {
-		t.Fatalf("environment database config has wrong features: %+v", file.Features)
-	}
+	assertInitFeatures(t, configPath, "environment database")
 	if _, err := os.Stat(filepath.Join(home, ".roca", "config.toml")); !os.IsNotExist(err) {
 		t.Fatalf("init wrote the home config instead: %v", err)
 	}
@@ -553,22 +533,12 @@ func TestInitRetryKeepsFeaturesAfterPostChooserFailure(t *testing.T) {
 	}
 
 	configPath := filepath.Join(home, ".roca", "config.toml")
-	assertFeatures := func(label string) {
-		t.Helper()
-		file, err := config.LoadFile(configPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !file.Features.Plugins || !file.Features.RocaOps || !file.Features.Cron || file.Features.Vector {
-			t.Fatalf("%s config has wrong features: %+v", label, file.Features)
-		}
-	}
 
 	out, err := runInitChooser(t, true, "new\n\n\n", chooserTestBackend{}, "init")
 	if err == nil || !strings.Contains(err.Error(), "install bundled roca-ops plugin") {
 		t.Fatalf("init error = %v, want blocked bundled-plugin installation:\n%s", err, out)
 	}
-	assertFeatures("failed init")
+	assertInitFeatures(t, configPath, "failed init")
 	if err := os.Remove(pluginPath); err != nil {
 		t.Fatal(err)
 	}
@@ -576,7 +546,7 @@ func TestInitRetryKeepsFeaturesAfterPostChooserFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("retry init: %v\n%s", err, out)
 	}
-	assertFeatures("retry")
+	assertInitFeatures(t, configPath, "retry")
 	if strings.Contains(out, "Which model") {
 		t.Fatalf("retry treated the product-created config as missing:\n%s", out)
 	}
@@ -628,6 +598,28 @@ func (b chooserTestBackend) Catalogue(_ context.Context, name, _ string) (modelC
 }
 
 func (chooserTestBackend) Probe(context.Context, string, string) error { return nil }
+
+func runExplicitNonTTYInit(t *testing.T, home string) (string, string) {
+	t.Helper()
+	dbPath := filepath.Join(home, "explicit", "roca.db")
+	out, err := runInitChooser(t, false, "", chooserTestBackend{},
+		"init", "--db-path", dbPath)
+	if err != nil {
+		t.Fatalf("init: %v\n%s", err, out)
+	}
+	return out, filepath.Join(filepath.Dir(dbPath), "config.toml")
+}
+
+func assertInitFeatures(t *testing.T, configPath, label string) {
+	t.Helper()
+	file, err := config.LoadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !file.Features.Plugins || !file.Features.RocaOps || !file.Features.Cron || file.Features.Vector {
+		t.Fatalf("%s config has wrong features: %+v", label, file.Features)
+	}
+}
 
 func initChooserHome(t *testing.T) (string, string) {
 	t.Helper()

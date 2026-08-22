@@ -10,16 +10,7 @@ import (
 )
 
 func TestCreatePreservingParentModePublishesCompleteFile(t *testing.T) {
-	realRename := renameNoReplaceFile
-	t.Cleanup(func() {
-		renameNoReplaceFile = realRename
-	})
-
-	dir := t.TempDir()
-	if err := os.Chmod(dir, 0o750); err != nil {
-		t.Fatalf("set parent mode: %v", err)
-	}
-	path := filepath.Join(dir, "config.toml")
+	dir, path, realRename := preservingParentModeFixture(t)
 	want := []byte("[features]\nplugins = true\n")
 	renameNoReplaceFile = func(staged, target string) error {
 		if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
@@ -43,16 +34,7 @@ func TestCreatePreservingParentModePublishesCompleteFile(t *testing.T) {
 }
 
 func TestCreatePreservingParentModePreservesConcurrentTarget(t *testing.T) {
-	realRename := renameNoReplaceFile
-	t.Cleanup(func() {
-		renameNoReplaceFile = realRename
-	})
-
-	dir := t.TempDir()
-	if err := os.Chmod(dir, 0o750); err != nil {
-		t.Fatalf("set parent mode: %v", err)
-	}
-	path := filepath.Join(dir, "config.toml")
+	dir, path, realRename := preservingParentModeFixture(t)
 	existing := []byte("operator configuration")
 	renameNoReplaceFile = func(staged, target string) error {
 		if err := os.WriteFile(target, existing, 0o640); err != nil {
@@ -86,6 +68,19 @@ func TestCreatePreservingParentModeFailsWithoutAtomicPrimitive(t *testing.T) {
 	if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("target exists after unsupported publication: %v", statErr)
 	}
+}
+
+func preservingParentModeFixture(t *testing.T) (string, string, func(string, string) error) {
+	t.Helper()
+	realRename := renameNoReplaceFile
+	t.Cleanup(func() {
+		renameNoReplaceFile = realRename
+	})
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o750); err != nil {
+		t.Fatalf("set parent mode: %v", err)
+	}
+	return dir, filepath.Join(dir, "config.toml"), realRename
 }
 
 func assertFileContentAndMode(t *testing.T, path string, want []byte, mode os.FileMode) {
