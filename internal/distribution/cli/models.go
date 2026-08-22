@@ -309,7 +309,7 @@ func (env *cliEnv) chooseInitModel(ctx context.Context, input *bufio.Reader,
 				harness, model, err)
 		}
 	}
-	if err := env.offerRetirementFor(input, harness); err != nil {
+	if err := env.offerRetirementFor(input, harness, paths); err != nil {
 		return result, false, err
 	}
 	outcome, err := writeInitModelChoice(paths, harness, model)
@@ -593,11 +593,11 @@ func writeInitModelChoice(paths config.Paths, providerName, model string) (agent
 // before init writes the choice. It is the only route by which init retires a
 // legacy transport, and it is always shown rather than stamped away, because
 // the operator has just asked for that provider to answer.
-func (env *cliEnv) offerRetirementFor(input *bufio.Reader, providerName string) error {
+func (env *cliEnv) offerRetirementFor(input *bufio.Reader, providerName string, paths config.Paths) error {
 	if env.skipReconciliation {
 		return nil
 	}
-	context, err := env.reconciliationContext()
+	context, err := env.reconciliationContextFor(paths)
 	if err != nil {
 		return err
 	}

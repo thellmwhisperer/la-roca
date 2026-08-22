@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -438,6 +439,82 @@ func TestInitIgnoresConfigOverrideWhenCreatingExplicitDatabaseConfig(t *testing.
 	}
 }
 
+func TestFreshInitReconciliationIgnoresConfigOverride(t *testing.T) {
+	tests := []struct {
+		name, override, input string
+	}{
+		{name: "malformed override", override: "[models\n", input: "new\n\n\n"},
+		{
+			name: "retired transport override",
+			override: "[models]\norder = [\"claude\", \"ollama\"]\n\n" +
+				"[models.claude]\nbase_url = \"https://example.invalid/v1\"\n" +
+				"api_key = \"legacy-secret\"\nmodel = \"legacy-model\"\n",
+			input: "new\n\n\ny\n",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			home, bin := initChooserHome(t)
+			fakeModelCLI(t, bin, provider.NameClaude)
+			overridePath := filepath.Join(home, "override", "config.toml")
+			if err := os.MkdirAll(filepath.Dir(overridePath), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(overridePath, []byte(test.override), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("ROCA_CONFIG", overridePath)
+			dbPath := filepath.Join(home, "fresh", "roca.db")
+
+			out, err := runInitChooser(t, true, test.input, chooserTestBackend{},
+				"init", "--db-path", dbPath)
+			if err != nil {
+				t.Fatalf("init: %v\n%s", err, out)
+			}
+			after, err := os.ReadFile(overridePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(after) != test.override {
+				t.Fatalf("init changed the config override:\n--- want ---\n%s--- got ---\n%s", test.override, after)
+			}
+			if _, err := os.Stat(overridePath + ".roca.bak"); !os.IsNotExist(err) {
+				t.Fatalf("init backed up the config override: %v", err)
+			}
+		})
+	}
+}
+
+func TestInitPreservesConfigCreatedDuringDatabasePrompt(t *testing.T) {
+	home, _ := initChooserHome(t)
+	configPath := filepath.Join(home, ".roca", "config.toml")
+	operatorConfig := "[features]\nplugins = false\nroca_ops = false\ncron = false\nvector = true\n"
+	input := &firstReadHook{
+		reader: strings.NewReader("new\n"),
+		hook: func() {
+			if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(configPath, []byte(operatorConfig), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+
+	out, err := runInitChooserReader(t, true, input, chooserTestBackend{}, "init")
+	if err == nil || !strings.Contains(err.Error(), "appeared before it could be created") ||
+		!strings.Contains(err.Error(), "existing file was preserved") {
+		t.Fatalf("init error = %v, want ownership collision:\n%s", err, out)
+	}
+	after, readErr := os.ReadFile(configPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != operatorConfig {
+		t.Fatalf("init changed the concurrently created config:\n--- want ---\n%s--- got ---\n%s", operatorConfig, after)
+	}
+}
+
 func TestInitCreatesConfigBesideEnvironmentDatabase(t *testing.T) {
 	home, bin := initChooserHome(t)
 	fakeModelCLI(t, bin, provider.NameClaude)
@@ -591,6 +668,11 @@ func fakeModelCLI(t *testing.T, bin, name string) {
 
 func runInitChooser(t *testing.T, tty bool, input string, backend modelValidationBackend,
 	args ...string) (string, error) {
+	return runInitChooserReader(t, tty, strings.NewReader(input), backend, args...)
+}
+
+func runInitChooserReader(t *testing.T, tty bool, input io.Reader, backend modelValidationBackend,
+	args ...string) (string, error) {
 	t.Helper()
 	previous := terminalInput
 	terminalInput = func(any) bool { return tty }
@@ -602,8 +684,22 @@ func runInitChooser(t *testing.T, tty bool, input string, backend modelValidatio
 	env.skipInitChooser = false
 	env.skipReconciliation = false
 	env.modelBackend = backend
-	_, err := executeWithEnv(env, args, strings.NewReader(input))
+	_, err := executeWithEnv(env, args, input)
 	return out.String(), err
+}
+
+type firstReadHook struct {
+	reader io.Reader
+	hook   func()
+}
+
+func (reader *firstReadHook) Read(buffer []byte) (int, error) {
+	if reader.hook != nil {
+		hook := reader.hook
+		reader.hook = nil
+		hook()
+	}
+	return reader.reader.Read(buffer)
 }
 
 func countLinesWithPrefix(text, prefix string) int {

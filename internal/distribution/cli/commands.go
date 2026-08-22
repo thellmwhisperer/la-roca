@@ -331,24 +331,11 @@ var newInstallFeatureChanges = []config.Change{
 // writeNewInstallConfig materializes the product contract for an init that
 // began without a configuration file.
 func writeNewInstallConfig(path string) error {
-	previous, err := os.ReadFile(path)
-	missing := os.IsNotExist(err)
-	if err != nil && !missing {
-		return fmt.Errorf("read the new-install configuration at %s: %w", path, err)
-	}
-	updated, err := config.ApplyText(string(previous), newInstallFeatureChanges)
+	updated, err := config.ApplyText("", newInstallFeatureChanges)
 	if err != nil {
 		return fmt.Errorf("prepare the new-install configuration at %s: %w", path, err)
 	}
-	if updated == string(previous) {
-		return nil
-	}
-	if missing {
-		err = securefile.WritePreservingParentMode(path, []byte(updated), 0o600, 0o700)
-	} else {
-		err = securefile.Replace(path, []byte(updated), previous)
-	}
-	if err != nil {
+	if err := securefile.CreatePreservingParentMode(path, []byte(updated), 0o600, 0o700); err != nil {
 		return fmt.Errorf("write the new-install configuration at %s: %w", path, err)
 	}
 	return nil

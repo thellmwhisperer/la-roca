@@ -10,13 +10,13 @@ import (
 
 // Write replaces path atomically after the new bytes and permissions are durable.
 func Write(path string, data []byte, mode, dirMode os.FileMode) (err error) {
-	return publish(path, data, nil, mode, dirMode, true)
+	return publish(path, data, nil, mode, dirMode, true, false)
 }
 
-// WritePreservingParentMode writes atomically without changing an existing
-// parent directory's permissions. Directories it creates use dirMode.
-func WritePreservingParentMode(path string, data []byte, mode, dirMode os.FileMode) error {
-	return publish(path, data, nil, mode, dirMode, false)
+// CreatePreservingParentMode atomically creates a file without replacing a
+// path that already exists or changing an existing parent directory's mode.
+func CreatePreservingParentMode(path string, data []byte, mode, dirMode os.FileMode) error {
+	return publish(path, data, nil, mode, dirMode, false, true)
 }
 
 // Replace atomically replaces an operator-owned file while preserving its mode.
@@ -26,7 +26,7 @@ func Replace(path string, data, previous []byte) error {
 	if info, err := os.Stat(path); err == nil {
 		mode = info.Mode().Perm()
 	}
-	return publish(path, data, previous, mode, 0o700, false)
+	return publish(path, data, previous, mode, 0o700, false, false)
 }
 
 // BackUp preserves previous bytes beside path without overwriting older copies.
@@ -56,7 +56,8 @@ func BackUp(path string, previous []byte) (string, error) {
 	}
 }
 
-func publish(path string, data, previous []byte, mode, dirMode os.FileMode, restrictDir bool) (err error) {
+func publish(path string, data, previous []byte, mode, dirMode os.FileMode,
+	restrictDir, createOnly bool) (err error) {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, dirMode); err != nil {
 		return err
@@ -100,7 +101,17 @@ func publish(path string, data, previous []byte, mode, dirMode os.FileMode, rest
 				path)
 		}
 	}
-	if err = os.Rename(staged, path); err != nil {
+	if createOnly {
+		if err = os.Link(staged, path); err != nil {
+			if os.IsExist(err) {
+				return fmt.Errorf("%s appeared before it could be created; existing file was preserved", path)
+			}
+			return err
+		}
+		if err = os.Remove(staged); err != nil {
+			return err
+		}
+	} else if err = os.Rename(staged, path); err != nil {
 		return err
 	}
 	if err = os.Chmod(path, mode); err != nil {
