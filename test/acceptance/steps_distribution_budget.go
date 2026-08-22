@@ -24,7 +24,7 @@ func (w *distributionWorld) seedBudgetRow() error {
 }
 
 func (w *distributionWorld) requestBudgetedRow(surface string) error {
-	statement := "SELECT content FROM memories WHERE content LIKE '" + budgetMarker + "%'"
+	statement := "SELECT content FROM plugin_roca_ops.memories WHERE content LIKE '" + budgetMarker + "%'"
 	var values []string
 	switch surface {
 	case "terminal":
@@ -58,7 +58,9 @@ func budgetedValues(output string) []string {
 		if strings.HasPrefix(line, budgetMarker) {
 			// Only the provenance cell is dropped. Truncating at the last comma
 			// would eat the budgeted prose itself, which routinely contains one.
-			values = append(values, strings.TrimSuffix(line, ",core"))
+			line = strings.TrimSuffix(line, ",core")
+			line = strings.TrimSuffix(line, `,"plugin:roca-ops"`)
+			values = append(values, line)
 		}
 	}
 	return values

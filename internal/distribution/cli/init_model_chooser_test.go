@@ -51,6 +51,11 @@ func TestTTYInitListsDetectedModelsAndEnterKeepsTheFactoryDefault(t *testing.T) 
 		`order = ["claude", "codex", "ollama"]`,
 		"[models.claude]",
 		`model = "sonnet"`,
+		"[features]",
+		"plugins = true",
+		"roca_ops = true",
+		"cron = true",
+		"vector = false",
 	} {
 		if !strings.Contains(config, want) {
 			t.Errorf("config does not contain %q:\n%s", want, config)
@@ -393,10 +398,11 @@ func TestReinitializeChooserFailureLeavesTheDatabaseUntouched(t *testing.T) {
 	}
 }
 
-func TestNonTTYInitPrintsOneAnsweringAlertAndDoesNotWriteConfig(t *testing.T) {
+func TestNonTTYInitPrintsOneAnsweringAlertAndWritesNewInstallConfig(t *testing.T) {
 	home, bin := initChooserHome(t)
 	fakeModelCLI(t, bin, provider.NameClaude)
-	dbPath := filepath.Join(home, ".roca", "roca.db")
+	dbPath := filepath.Join(home, "explicit", "roca.db")
+	configPath := filepath.Join(filepath.Dir(dbPath), "config.toml")
 
 	out, err := runInitChooser(t, false, "", chooserTestBackend{},
 		"init", "--db-path", dbPath)
@@ -409,7 +415,7 @@ func TestNonTTYInitPrintsOneAnsweringAlertAndDoesNotWriteConfig(t *testing.T) {
 	for _, want := range []string{
 		"answering: claude/sonnet",
 		"roca model set <id>",
-		"models.claude.model in " + filepath.Join(home, ".roca", "config.toml"),
+		"models.claude.model in " + configPath,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("non-TTY alert does not contain %q:\n%s", want, out)
@@ -418,8 +424,13 @@ func TestNonTTYInitPrintsOneAnsweringAlertAndDoesNotWriteConfig(t *testing.T) {
 	if strings.Contains(out, "Which model") {
 		t.Fatalf("non-TTY init prompted:\n%s", out)
 	}
-	if _, err := os.Stat(filepath.Join(home, ".roca", "config.toml")); !os.IsNotExist(err) {
-		t.Fatalf("non-TTY init wrote config: %v", err)
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read new-install config: %v", err)
+	}
+	want := "[features]\nplugins = true\nroca_ops = true\ncron = true\nvector = false\n"
+	if string(raw) != want {
+		t.Fatalf("new-install config:\n--- want ---\n%s--- got ---\n%s", want, raw)
 	}
 }
 

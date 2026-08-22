@@ -75,6 +75,7 @@ func initCommand(env *cliEnv) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			configMissingAtStart := !fileExists(paths.Config)
 			rawInput := cmd.InOrStdin()
 			interactive := terminalInput(rawInput) && !env.json
 			input := bufio.NewReader(rawInput)
@@ -131,6 +132,11 @@ func initCommand(env *cliEnv) *cobra.Command {
 			env.finishIngestProgress()
 			if err != nil {
 				return err
+			}
+			if configMissingAtStart {
+				if err := writeNewInstallConfig(paths.Config); err != nil {
+					return err
+				}
 			}
 			if result.PromptPath != "" {
 				if err := env.registerZonedArtifact(artifactKindPrompt, "", result.PromptPath,
@@ -305,6 +311,44 @@ func (env *cliEnv) initSay(format string, args ...any) {
 func fileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
+}
+
+var newInstallFeatureChanges = []config.Change{
+	// ApplyText inserts a new value at the start of its table, so declare the
+	// changes in reverse to materialize the public new-install order below.
+	{Kind: config.SetValue, Table: "features", Key: "vector", Value: false},
+	{Kind: config.SetValue, Table: "features", Key: "cron", Value: true},
+	{Kind: config.SetValue, Table: "features", Key: "roca_ops", Value: true},
+	{Kind: config.SetValue, Table: "features", Key: "plugins", Value: true},
+}
+
+// writeNewInstallConfig materializes the product contract only for an init that
+// began without a configuration file. An interactive chooser may have written
+// its model choice earlier in the same init, so add the feature table
+// surgically instead of replacing those bytes. Callers skip this function when
+// the operator already owned the file.
+func writeNewInstallConfig(path string) error {
+	previous, err := os.ReadFile(path)
+	missing := os.IsNotExist(err)
+	if err != nil && !missing {
+		return fmt.Errorf("read the new-install configuration at %s: %w", path, err)
+	}
+	updated, err := config.ApplyText(string(previous), newInstallFeatureChanges)
+	if err != nil {
+		return fmt.Errorf("prepare the new-install configuration at %s: %w", path, err)
+	}
+	if updated == string(previous) {
+		return nil
+	}
+	if missing {
+		err = securefile.Write(path, []byte(updated), 0o600, 0o700)
+	} else {
+		err = securefile.Replace(path, []byte(updated), previous)
+	}
+	if err != nil {
+		return fmt.Errorf("write the new-install configuration at %s: %w", path, err)
+	}
+	return nil
 }
 
 // renderBootstrap is the rest of what init did: what the first read of the disk
