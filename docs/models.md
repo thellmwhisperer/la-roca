@@ -18,7 +18,7 @@ Most installations do not need this file for model access: the examples below
 are overrides for operators who want a fixed order, split inference, or a
 custom local command.
 
-Experimental plugin support is an explicit, default-off feature:
+Experimental plugin support is gated by an explicit feature switch:
 
 ```toml
 [features]
@@ -26,9 +26,10 @@ plugins = true
 ```
 
 This activates plugin discovery, read-only attachment, semantic routing, and
-the `roca plugin` installer commands. See [Plugins](plugins.md) for the package
-and trust contract. Leave the key absent or false for the release-default
-behavior.
+the `roca plugin` installer commands. Fresh init configurations contain this
+setting; a missing configuration outside init, or an existing configuration
+where the key is absent or false, keeps the surface disabled. See
+[Plugins](plugins.md) for the package and trust contract.
 
 Local vector retrieval is a separate default-off switch. The companion
 binary is already installed; the key only unhides `roca vector`:
@@ -54,9 +55,9 @@ Enabling it lets `roca update` refresh unchanged SYSTEM zones while preserving
 USER zones. See [Update](lifecycle.md#update) for legacy adoption, divergence,
 backup, and force behavior.
 
-A fresh interactive `roca init` is the shortest way to create those overrides.
-It starts with models rather than provider names: detected agent CLIs are
-grouped as origins with their shipped default and a free-text option, while
+A fresh interactive `roca init` creates the configuration and can add explicit
+model overrides. It starts with models rather than provider names: detected
+agent CLIs are grouped as origins with their shipped default and a free-text option, while
 Ollama contributes the models returned by its local `/api/tags` catalogue.
 After the model choice, init auto-selects its harness when exactly one origin
 matches or asks which harness to use when several match. The confirmed pair is
@@ -97,7 +98,7 @@ timeout_ms = 5000
 
 [features]
 # The two model-facing switches are enabled by default and each one is its own
-# escape hatch. Every default-off experimental switch is documented with the
+# escape hatch. Every runtime-default-off experimental switch is documented with the
 # subsystem it gates: plugins, roca_ops and cron in docs/plugins.md,
 # artifact_refresh and release_redirects in docs/lifecycle.md. A switch that
 # gates an independent plugin module is documented by that module itself.

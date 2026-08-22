@@ -13,9 +13,10 @@ full manifest schema, how installs are verified and preserved, and scheduled
 rides.
 
 One thing to know before you start: the third-party plugin surface is
-**experimental and default-off**. Install and update commands do not exist
-until you set `features.plugins = true` in your configuration, and the surface
-may still change between releases.
+**experimental** and gated by `features.plugins`. A fresh `roca init` enables
+it; older or operator-managed configurations may leave it disabled. Install
+and update commands exist only while the switch is true, and the surface may
+still change between releases.
 
 ## Your first plugin
 
@@ -28,9 +29,10 @@ The example plugin is called `first-receipts` and serves one table of purchase
 receipts. It ships data only, no executable, so it is classified DATA-ONLY
 (near-harmless) at install time.
 
-### 1. Turn plugins on
+### 1. Confirm plugins are on
 
-The plugin commands live behind one switch. Open your configuration file —
+Fresh init already writes this switch. If you use an older or operator-managed
+configuration, open the file —
 `~/.roca/config.toml` by default, or `config.toml` next to the database when
 you use `--db-path` — and make sure it contains:
 
@@ -200,7 +202,8 @@ uninstall then archives the directory rather than deleting it — see
 ### If something goes wrong
 
 - `the experimental plugin system is disabled; set features.plugins = true in
-  <path>` — you skipped step 1. The error names the exact file to edit.
+  <path>` — the configuration checked in step 1 does not enable it. The error
+  names the exact file to edit.
 - `checksum mismatch for …` — you changed a file after generating
   `checksums.txt`. Regenerate it (step 2, file 3) and install again.
 - ``plugin first-receipts is already installed; run `roca plugin update
@@ -767,7 +770,8 @@ them.
 `roca cron` is a lightweight train: an external observer that invokes work
 already owned by the kernel or a plugin. It does not ingest, embed, or keep a
 daemon alive. System cron calls `roca cron run`; omitting the train selects
-`nightly`. The command is default-off:
+`nightly`. The command is gated by a feature switch that fresh init writes as
+true:
 
 ```toml
 [features]
