@@ -378,10 +378,19 @@ func TestReinitializeChooserFailureLeavesTheDatabaseUntouched(t *testing.T) {
 				t.Fatalf("reinitialize changed the database after chooser failure:\n%s", out)
 			}
 			if !test.wantErr {
+				configPath := filepath.Join(home, ".roca", "config.toml")
+				raw, err := os.ReadFile(configPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := "[features]\nplugins = true\nroca_ops = true\ncron = true\nvector = false\n"
+				if string(raw) != want {
+					t.Fatalf("canceled reinitialize config:\n--- want ---\n%s--- got ---\n%s", want, raw)
+				}
 				last := strings.TrimSpace(out)
 				last = last[strings.LastIndex(last, "\n")+1:]
 				if !strings.HasPrefix(last, "answering: claude/sonnet") ||
-					!strings.Contains(last, "configuration: "+filepath.Join(home, ".roca", "config.toml")) {
+					!strings.Contains(last, "configuration: "+configPath) {
 					t.Fatalf("canceled reinitialize did not end with the unchanged answer:\n%s", out)
 				}
 			}

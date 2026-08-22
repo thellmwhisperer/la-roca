@@ -102,6 +102,9 @@ func initCommand(env *cliEnv) *cobra.Command {
 					return chooserErr
 				}
 				if choice == "reinitialize" && !completed {
+					if err := writeNewInstallConfig(paths.Config); err != nil {
+						return err
+					}
 					renderInitAnswer(env, chooserResult)
 					return nil
 				}
