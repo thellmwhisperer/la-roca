@@ -648,6 +648,19 @@ func TestSourcesWithoutNaturalKeysStaySeparateAndResolve(t *testing.T) {
 	}
 }
 
+func TestQueryOptionsFilterPluginMetadata(t *testing.T) {
+	where := Locator{Plugin: "biblioteca-conocimiento", TopicID: "salud", TopicLabel: "Salud mental",
+		ChannelLabel: "Worldcast", PublishedAt: "2026-08-20"}
+	if !matchesQueryOptions(where, QueryOptions{Plugins: []string{"biblioteca-conocimiento"}, Topic: "mental", Channel: "world", PublishedAfter: "2026-01-01", PublishedBefore: "2026-12-31"}) {
+		t.Fatal("matching plugin metadata was filtered out")
+	}
+	if matchesQueryOptions(where, QueryOptions{Plugins: []string{"otro-plugin"}}) ||
+		matchesQueryOptions(where, QueryOptions{Topic: "finanzas"}) ||
+		matchesQueryOptions(where, QueryOptions{PublishedAfter: "2026-09-01"}) {
+		t.Fatal("non-matching plugin metadata passed the filter")
+	}
+}
+
 func TestQueryDeduplicatesChunksByStableSource(t *testing.T) {
 	corpus := createCoreFixture(t)
 	long := strings.Repeat("alpha ", defaultChunkSize/3)

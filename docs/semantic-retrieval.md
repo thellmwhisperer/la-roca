@@ -8,7 +8,8 @@ La Roca has two different jobs that must not be confused:
    distinguish evidence from interpretation, and report uncertainty.
 
 The optional `roca-vector` executable supplies semantic candidates for the
-second job. Its install and trust boundary are defined by the
+second job. It can combine the canonical corpus with explicitly selected data
+plugins through the public `roca exec` boundary. Its install and trust boundary are defined by the
 [executable plugin contract](plugins.md#executable-only-packages), and its
 setup is documented in the [roca-vector package guide](../plugins/vector/README.md).
 When a candidate is returned, the agent must resolve the source text through
@@ -30,6 +31,9 @@ For a conceptual question:
 2. Run one bare semantic probe with `roca vector --json query "<bare concept>" 8`;
    add `--db-path /path/to/roca.db` after `vector` for a non-default core
    database.
+   For a data plugin, add `--plugin <name>`; Biblioteca, for example, uses
+   `--plugin biblioteca-conocimiento` and supports `--topic`, `--channel`,
+   `--published-after`, and `--published-before`.
 3. Inspect the returned source kind, stable source id, locator, and score as
    candidate retrieval metadata.
 4. Resolve the live source rows with core, recover the available project, layer,
@@ -67,6 +71,11 @@ profile can define:
 
 It may not remove source locators, context recovery, provenance, contradiction
 reporting, or the distinction between a candidate and an accepted finding.
+
+Data-plugin adapters follow the same rule: they store only embeddings,
+fingerprints, and locators; the source text is resolved live. A plugin may
+enrich the embedding input with metadata, but the live transcript content and
+its hash remain the verification boundary.
 
 The Libro de Economía's corpus skills are an example of this separation: the
 shared workflow owns coverage and context recovery, while the project owns its

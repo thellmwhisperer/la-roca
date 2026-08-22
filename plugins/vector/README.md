@@ -11,6 +11,15 @@ directory holds only worker coordination, logs, and completion state.
 
 ## Install from a release
 
+Data plugins can opt in as additional live sources with the repeatable
+`--plugin` flag. The plugin name is resolved through La Roca's public
+`roca exec` boundary (for example, `biblioteca-conocimiento` maps to the
+validated `plugin_biblioteca_conocimiento` schema); `roca-vector` never opens a
+data-plugin database directly. Their locators preserve material, chunk, topic,
+channel, video, publication date, and opaque source reference metadata.
+
+## Build and install
+
 Every release core carries its matching companion and the standard installer
 materializes it beside `roca`; `features.plugins` is not required. Vector
 retrieval remains off until `features.vector = true`. Follow [Local vector
@@ -48,7 +57,10 @@ roca vector install
 roca vector ingest --delta
 roca vector ingest --delta --source memories
 roca vector compact
+roca vector ingest --delta --plugin biblioteca-conocimiento
 roca vector query "which decision kept inference local" 5
+roca vector query --plugin biblioteca-conocimiento --topic salud \
+  "hábitos saludables y salud mental" 10
 ```
 
 `install` is the plugin's adopt/init command: it pulls the model, prepares one
@@ -79,8 +91,12 @@ unchanged passes model-free. Use `--source <declared-table>` to restrict a
 repair without removing chunks from other tables. Per-table chunking hints are
 part of the fingerprinted contract.
 
-Queries remove retired `rocodata_*` chunks from an existing index when writes
-are enabled. Under `ROCA_READ_ONLY`, a query refuses an index that still has
+Data-plugin queries add stable material deduplication, metadata filters, and
+live text resolution. Titles and topic/channel labels enrich the embedding
+input while the stored fingerprint remains the exact transcript text; changed
+live text is rejected as a stale candidate until the next delta ingestion. The
+index also removes retired `rocodata_*` chunks from an existing index when
+writing is enabled. Under `ROCA_READ_ONLY`, a query refuses an index that still has
 such chunks; run `roca vector ingest --delta` with writes enabled to reconcile
 it.
 

@@ -61,6 +61,7 @@ func rootCommand(env *environment) *cobra.Command {
 
 func installCommand(env *environment) *cobra.Command {
 	model := vector.DefaultModel
+	var plugins []string
 	command := &cobra.Command{
 		Use:   "install",
 		Short: "Download the embedding model and build declared sidecars in the background",
@@ -77,7 +78,7 @@ func installCommand(env *environment) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("locate roca-vector: %w", err)
 			}
-			arguments := workerArguments(env.dbPath, state, model)
+			arguments := workerArguments(env.dbPath, state, model, plugins)
 			result, err := launchWorker(vector.LaunchRequest{
 				Executable: executable, Arguments: arguments, DataDir: state,
 			})
@@ -102,6 +103,7 @@ func installCommand(env *environment) *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&model, "model", model, "local Ollama embedding model")
+	command.Flags().StringArrayVar(&plugins, "plugin", nil, "data plugin to index (repeatable; e.g. biblioteca-conocimiento)")
 	return command
 }
 
@@ -109,6 +111,7 @@ func ingestCommand(env *environment) *cobra.Command {
 	var delta bool
 	var model string
 	var source string
+	var plugins []string
 	command := &cobra.Command{
 		Use:   "ingest --delta",
 		Short: "Embed only new or changed chunks from declared databases",
@@ -129,12 +132,13 @@ func ingestCommand(env *environment) *cobra.Command {
 				return err
 			}
 			defer release()
+			vectorPath := filepath.Join(state, vector.DatabaseFilename)
+			plugins = mergePluginNames(vector.ConfiguredPlugins(vectorPath), plugins)
 			federation, federationErr := env.federation(model)
-			federated := federationErr == nil
-			if federationErr != nil && !errors.Is(federationErr, os.ErrNotExist) {
+			federated := federationErr == nil && len(plugins) == 0
+			if federationErr != nil && !errors.Is(federationErr, os.ErrNotExist) && len(plugins) == 0 {
 				return federationErr
 			}
-			vectorPath := filepath.Join(state, vector.DatabaseFilename)
 			if federated {
 				if !federation.HasSidecars() {
 					return fmt.Errorf("vector search is not initialized; run `roca vector install`")
@@ -165,7 +169,7 @@ func ingestCommand(env *environment) *cobra.Command {
 				err = ingestErr
 				report, databases = federationReport.Delta, federationReport.Databases
 			} else {
-				index, indexErr := env.index(model)
+				index, indexErr := env.index(model, plugins)
 				if indexErr != nil {
 					return indexErr
 				}
@@ -196,6 +200,7 @@ func ingestCommand(env *environment) *cobra.Command {
 	command.Flags().BoolVar(&delta, "delta", false, "embed only new or changed chunks")
 	command.Flags().StringVar(&model, "model", "", "local Ollama embedding model (default: indexed model)")
 	command.Flags().StringVar(&source, "source", "", "limit the delta to one declared table")
+	command.Flags().StringArrayVar(&plugins, "plugin", nil, "data plugin to index (repeatable; retained in the vector index)")
 	return command
 }
 
@@ -253,6 +258,8 @@ func compactCommand(env *environment) *cobra.Command {
 
 func queryCommand(env *environment) *cobra.Command {
 	var databases string
+	var plugins []string
+	var topic, channel, publishedAfter, publishedBefore string
 	command := &cobra.Command{
 		Use:   "query <text> [k]",
 		Short: "Search routed database sidecars by semantic similarity",
@@ -277,7 +284,8 @@ func queryCommand(env *environment) *cobra.Command {
 			defer release()
 			started := time.Now()
 			federation, federationErr := env.federation("")
-			if federationErr == nil {
+			useFederation := federationErr == nil && len(plugins) == 0 && topic == "" && channel == "" && publishedAfter == "" && publishedBefore == ""
+			if useFederation {
 				result, err := federation.Query(command.Context(), args[0], k, databases)
 				if err != nil {
 					return err
@@ -302,18 +310,21 @@ func queryCommand(env *environment) *cobra.Command {
 				}
 				return nil
 			}
-			if !errors.Is(federationErr, os.ErrNotExist) {
+			if federationErr != nil && !errors.Is(federationErr, os.ErrNotExist) && len(plugins) == 0 {
 				return federationErr
 			}
 			if strings.TrimSpace(databases) != "" {
 				return fmt.Errorf("--databases needs federated sidecars; run `roca vector install`")
 			}
 			vectorPath := filepath.Join(state, vector.DatabaseFilename)
-			index, err := env.index(vector.ConfiguredModel(vectorPath))
+			index, err := env.index(vector.ConfiguredModel(vectorPath), plugins)
 			if err != nil {
 				return err
 			}
-			results, err := index.Query(command.Context(), args[0], k)
+			results, err := index.QueryWithOptions(command.Context(), args[0], k, vector.QueryOptions{
+				Plugins: plugins, Topic: topic, Channel: channel,
+				PublishedAfter: publishedAfter, PublishedBefore: publishedBefore,
+			})
 			if err != nil {
 				return err
 			}
@@ -327,6 +338,11 @@ func queryCommand(env *environment) *cobra.Command {
 	}
 	command.Flags().StringVar(&databases, "databases", "",
 		"comma list of attached database names (corpus,ops), or all")
+	command.Flags().StringArrayVar(&plugins, "plugin", nil, "restrict results to a data plugin (repeatable)")
+	command.Flags().StringVar(&topic, "topic", "", "restrict results by topic id or label")
+	command.Flags().StringVar(&channel, "channel", "", "restrict results by channel id or label")
+	command.Flags().StringVar(&publishedAfter, "published-after", "", "restrict results published on/after YYYY-MM-DD")
+	command.Flags().StringVar(&publishedBefore, "published-before", "", "restrict results published on/before YYYY-MM-DD")
 	return command
 }
 
@@ -344,6 +360,7 @@ func printResults(results []vector.Result) {
 
 func workerCommand(env *environment) *cobra.Command {
 	model := vector.DefaultModel
+	var plugins []string
 	command := &cobra.Command{
 		Use:    "_worker",
 		Hidden: true,
@@ -369,7 +386,7 @@ func workerCommand(env *environment) *cobra.Command {
 				if !errors.Is(federationErr, os.ErrNotExist) {
 					return federationErr
 				}
-				index, err := env.index(model)
+				index, err := env.index(model, plugins)
 				if err != nil {
 					return err
 				}
@@ -396,11 +413,16 @@ func workerCommand(env *environment) *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&model, "model", model, "local Ollama embedding model")
+	command.Flags().StringArrayVar(&plugins, "plugin", nil, "data plugin to index (repeatable)")
 	return command
 }
 
-func (env *environment) index(model string) (vector.Index, error) {
-	if federation, err := env.federation(model); err == nil {
+
+func (env *environment) index(model string, pluginSets ...[]string) (vector.Index, error) {
+	var plugins []string
+	if len(pluginSets) > 0 {
+		plugins = pluginSets[0]
+	} else if federation, err := env.federation(model); err == nil {
 		return federation.CorpusIndex()
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return vector.Index{}, err
@@ -409,12 +431,12 @@ func (env *environment) index(model string) (vector.Index, error) {
 	if err != nil {
 		return vector.Index{}, err
 	}
-	core, err := env.core()
+	core, err := env.core(plugins)
 	if err != nil {
 		return vector.Index{}, err
 	}
 	return vector.Index{Corpus: core, VectorPath: filepath.Join(state, vector.DatabaseFilename),
-		Model: model, Embedder: vector.Ollama{BaseURL: os.Getenv("OLLAMA_HOST")}, ReadOnly: readOnly(),
+		Model: model, Embedder: vector.Ollama{BaseURL: os.Getenv("OLLAMA_HOST")}, Plugins: plugins, ReadOnly: readOnly(),
 		Notice: func(message string) { fmt.Fprintln(os.Stderr, message) }, Database: "corpus"}, nil
 }
 
@@ -449,7 +471,7 @@ func (env *environment) resolvePluginRoot() (string, error) {
 	return filepath.Join(home, ".roca", "plugins"), nil
 }
 
-func (env *environment) core() (vector.CoreCLI, error) {
+func (env *environment) core(pluginSets ...[]string) (vector.CoreCLI, error) {
 	executable := strings.TrimSpace(os.Getenv("ROCA_VECTOR_ROCA_BINARY"))
 	if executable == "" {
 		var err error
@@ -458,7 +480,11 @@ func (env *environment) core() (vector.CoreCLI, error) {
 			return vector.CoreCLI{}, fmt.Errorf("find the roca core executable on PATH: %w", err)
 		}
 	}
-	return vector.CoreCLI{Executable: executable, DBPath: env.dbPath}, nil
+	var plugins []string
+	if len(pluginSets) > 0 {
+		plugins = pluginSets[0]
+	}
+	return vector.CoreCLI{Executable: executable, DBPath: env.dbPath, Plugins: plugins}, nil
 }
 
 func (env *environment) resolveStateDir() (string, error) {
@@ -497,12 +523,31 @@ func coreDataDir(flag string) string {
 	return filepath.Join(home, ".roca")
 }
 
-func workerArguments(dbPath, state, model string) []string {
+func workerArguments(dbPath, state, model string, plugins []string) []string {
 	arguments := []string{"--state-dir", state}
 	if dbPath != "" {
 		arguments = append(arguments, "--db-path", dbPath)
 	}
-	return append(arguments, "_worker", "--model", model)
+	arguments = append(arguments, "_worker", "--model", model)
+	for _, plugin := range plugins {
+		arguments = append(arguments, "--plugin", plugin)
+	}
+	return arguments
+}
+
+func mergePluginNames(configured, requested []string) []string {
+	seen := map[string]bool{}
+	merged := make([]string, 0, len(configured)+len(requested))
+	for _, names := range [][]string{configured, requested} {
+		for _, name := range names {
+			if name == "" || seen[name] {
+				continue
+			}
+			seen[name] = true
+			merged = append(merged, name)
+		}
+	}
+	return merged
 }
 
 func printJSON(value any) error {
