@@ -8,6 +8,8 @@ import (
 	"runtime"
 )
 
+var linkFile = os.Link
+
 // Write replaces path atomically after the new bytes and permissions are durable.
 func Write(path string, data []byte, mode, dirMode os.FileMode) (err error) {
 	return publish(path, data, nil, mode, dirMode, true, false)
@@ -102,11 +104,13 @@ func publish(path string, data, previous []byte, mode, dirMode os.FileMode,
 		}
 	}
 	if createOnly {
-		if err = os.Link(staged, path); err != nil {
-			if os.IsExist(err) {
-				return fmt.Errorf("%s appeared before it could be created; existing file was preserved", path)
+		if linkErr := linkFile(staged, path); linkErr != nil {
+			if os.IsExist(linkErr) {
+				return createCollisionError(path)
 			}
-			return err
+			if err = createExclusive(path, data, mode); err != nil {
+				return err
+			}
 		}
 		if err = os.Remove(staged); err != nil {
 			return err
@@ -114,8 +118,10 @@ func publish(path string, data, previous []byte, mode, dirMode os.FileMode,
 	} else if err = os.Rename(staged, path); err != nil {
 		return err
 	}
-	if err = os.Chmod(path, mode); err != nil {
-		return err
+	if !createOnly {
+		if err = os.Chmod(path, mode); err != nil {
+			return err
+		}
 	}
 	if runtime.GOOS == "windows" {
 		return nil
@@ -126,4 +132,42 @@ func publish(path string, data, previous []byte, mode, dirMode os.FileMode,
 	}
 	defer directory.Close()
 	return directory.Sync()
+}
+
+func createExclusive(path string, data []byte, mode os.FileMode) (err error) {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		if os.IsExist(err) {
+			return createCollisionError(path)
+		}
+		return err
+	}
+	created, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return err
+	}
+	defer func() {
+		if closeErr := file.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+		if err != nil {
+			current, statErr := os.Stat(path)
+			if statErr == nil && os.SameFile(created, current) {
+				_ = os.Remove(path)
+			}
+		}
+	}()
+
+	if err = file.Chmod(mode); err != nil {
+		return err
+	}
+	if _, err = file.Write(data); err != nil {
+		return err
+	}
+	return file.Sync()
+}
+
+func createCollisionError(path string) error {
+	return fmt.Errorf("%s appeared before it could be created; existing file was preserved", path)
 }
