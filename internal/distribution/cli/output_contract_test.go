@@ -15,8 +15,9 @@ import (
 // every JSON envelope, so the contract pins it by this constant rather than by
 // the binary's release string.
 const (
-	contractVersion = "test"
-	contractSHA     = "test-sha"
+	contractVersion         = "test"
+	contractSHA             = "test-sha"
+	coreMemoryFeatureConfig = "[features]\nplugins = true\nroca_ops = false\ncron = true\nvector = false\n"
 )
 
 func contractBuild() Build { return Build{Version: contractVersion, Commit: contractSHA} }
@@ -223,7 +224,8 @@ func TestInitAnswersAJSONEnvelope(t *testing.T) {
 // the skill documents. The route line names the path and the template so the
 // operator can tell a compiler answer from a model one.
 func TestQueryPaintsTOONRowsAndARouteLine(t *testing.T) {
-	fixtureInstallation(t)
+	fixture := fixtureInstallation(t)
+	writeConfig(t, fixture.home, coreMemoryFeatureConfig)
 
 	runRoot(t, contractBuild(), "store", "--layer", "discovery",
 		"--content", "ffmpeg patterns for trimming video", "--origin", "agent")
@@ -307,6 +309,7 @@ func TestLayerRepairCommandsRestoreHealth(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := fixtureInstallation(t)
+			writeConfig(t, fixture.home, coreMemoryFeatureConfig)
 			dbPath := filepath.Join(fixture.home, ".roca", "roca.db")
 			db, err := sql.Open("sqlite", dbPath)
 			if err != nil {

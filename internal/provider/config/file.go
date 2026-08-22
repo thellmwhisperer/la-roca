@@ -677,7 +677,7 @@ type FeaturesConfig struct {
 	ReleaseRedirects   bool `toml:"release_redirects"`
 }
 
-// defaultFeatures is the belt as shipped: everything on.
+// defaultFeatures keeps the safety belt on and optional surfaces off.
 func defaultFeatures() FeaturesConfig {
 	return FeaturesConfig{StrictInput: true, AskMissingReferent: true}
 }

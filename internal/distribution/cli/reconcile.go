@@ -15,6 +15,10 @@ func (env *cliEnv) reconciliationContext() (reconcile.Context, error) {
 	if err != nil {
 		return reconcile.Context{}, err
 	}
+	return env.reconciliationContextFor(paths)
+}
+
+func (env *cliEnv) reconciliationContextFor(paths config.Paths) (reconcile.Context, error) {
 	file, err := config.LoadFile(paths.Config)
 	if err != nil {
 		return reconcile.Context{}, err

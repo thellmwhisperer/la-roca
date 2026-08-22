@@ -43,7 +43,7 @@ func TestTheStoredClockDoesNotMoveWithTheOperatorsTimezone(t *testing.T) {
 		}
 	}
 
-	if err := m.mustRun("roca exec 'SELECT created_at FROM memories'"); err != nil {
+	if err := m.mustRun("roca exec 'SELECT created_at FROM plugin_roca_ops.memories'"); err != nil {
 		t.Fatalf("exec: %v\n%s", err, m.last.stderr)
 	}
 	stamps := theStamps(m.last.stdout)

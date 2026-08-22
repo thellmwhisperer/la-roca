@@ -65,8 +65,9 @@ func initCommand(env *cliEnv) *cobra.Command {
 		Long: "Creates and bootstraps the database. With no home database, init asks new or adopt;\n" +
 			"adopt then asks for the source path and copies it, leaving the original untouched.\n" +
 			"An existing home database is kept or reinitialized only by explicit answer.\n" +
-			"In a terminal, a model-first chooser lists detected CLI defaults and pulled Ollama models,\n" +
-			"resolves the harness, confirms the pair, and writes it with a recovery backup.\n" +
+			"With no existing config, a terminal model-first chooser lists detected CLI defaults and pulled Ollama models,\n" +
+			"resolves the harness, confirms the pair, and writes it into the new configuration.\n" +
+			"An existing config is preserved byte-for-byte and skips the chooser.\n" +
 			"Non-interactive callers must select a location explicitly with --db-path; they are never prompted.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			commandStarted := time.Now()
@@ -75,6 +76,8 @@ func initCommand(env *cliEnv) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			paths.Config = initConfigPath(paths)
+			configMissingAtStart := !fileExists(paths.Config)
 			rawInput := cmd.InOrStdin()
 			interactive := terminalInput(rawInput) && !env.json
 			input := bufio.NewReader(rawInput)
@@ -82,7 +85,12 @@ func initCommand(env *cliEnv) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if interactive && !env.skipInitChooser {
+			if configMissingAtStart {
+				if err := writeNewInstallConfig(paths.Config); err != nil {
+					return err
+				}
+			}
+			if interactive && !env.skipInitChooser && configMissingAtStart {
 				chooserStarted := time.Now()
 				promptWaitBefore := env.initPromptWait
 				initialModel, modelErr := effectiveInitModel(cmd.Context(), paths)
@@ -305,6 +313,32 @@ func (env *cliEnv) initSay(format string, args ...any) {
 func fileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
+}
+
+func initConfigPath(paths config.Paths) string {
+	return filepath.Join(filepath.Dir(paths.DB), config.FileConfig)
+}
+
+var newInstallFeatureChanges = []config.Change{
+	// ApplyText inserts a new value at the start of its table, so declare the
+	// changes in reverse to materialize the public new-install order below.
+	{Kind: config.SetValue, Table: "features", Key: "vector", Value: false},
+	{Kind: config.SetValue, Table: "features", Key: "cron", Value: true},
+	{Kind: config.SetValue, Table: "features", Key: "roca_ops", Value: true},
+	{Kind: config.SetValue, Table: "features", Key: "plugins", Value: true},
+}
+
+// writeNewInstallConfig materializes the product contract for an init that
+// began without a configuration file.
+func writeNewInstallConfig(path string) error {
+	updated, err := config.ApplyText("", newInstallFeatureChanges)
+	if err != nil {
+		return fmt.Errorf("prepare the new-install configuration at %s: %w", path, err)
+	}
+	if err := securefile.CreatePreservingParentMode(path, []byte(updated), 0o600, 0o700); err != nil {
+		return fmt.Errorf("write the new-install configuration at %s: %w", path, err)
+	}
+	return nil
 }
 
 // renderBootstrap is the rest of what init did: what the first read of the disk

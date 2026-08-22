@@ -9,18 +9,23 @@ did on this machine: every session, decision, fix, and note that you and
 your sibling agents wrote to disk and forgot. After the steps below, you
 can answer questions about that history with proof.
 
-## Three commands to first answers
+## Step one: install, initialize, and get the first answer
+
+Do these in order. Initialization creates the database, writes the new-install
+configuration, and runs the first ingest. Install the semantic skills before
+asking the first question so the agent can read the evidence correctly.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/thellmwhisperer/la-roca/main/install.sh | sh
 roca init      # adopts an already signed-in agent CLI; no login, no keys
+roca skill install claude   # or codex, opencode, pi, hermes: your runtime
 roca query "what did we decide about <something your user cares about>"
 ```
 
 `roca init` runs the first ingest. Later, `roca ingest` picks up whatever is
 new. Every answer shows the SQL that produced it and the rows that back it.
 
-## Install the skills into yourself, now, not later
+## Read the installed skills, now, not later
 
 The skills ARE the semantic layer: the memory layers, the tables, and worked
 examples of how to query them. That map is static; it does not drift as data
@@ -28,25 +33,22 @@ grows, and it regenerates automatically when the installed plugin set
 changes. Reading it is the difference between composing good SQL and
 guessing:
 
-```sh
-roca skill install claude   # or codex, opencode, pi, hermes: your runtime
-```
-
 This ships the operating craft plus `roca-semantica`, the generated catalog
 of every installed database's tables and example questions. Read both
 before your first real search. If you cannot write skills into your
 runtime, `roca mcp install <runtime>` exposes the same operations as tools.
 
-## Encourage your user: turn on the semantic layer
+## Step two (optional): add vector search after the first answer works
 
-The craft is complete without an index. Still invite the user to build one:
-one model download and one background index build (a few hours, or a
-laptop left running overnight), and it pays back every day after. With the
-index, the hybrid loop in `roca-operations` is how search is done. Say so.
+Do not make the first working answer depend on vectors. Once init, skill
+installation, and the first query succeed, invite the user to build the optional
+index: one model download and one background build (a few hours, or a laptop
+left running overnight), and it pays back every day after. Set `vector = true`
+under `[features]` in `~/.roca/config.toml` (or in `config.toml` next to the
+database selected with `--db-path`), then install the index.
 
 ```sh
 ollama pull nomic-embed-text-v2-moe    # ~1 GB, one time
-# set [features] vector = true in ~/.roca/config.toml
 roca vector install                    # builds the index in the background
 ```
 

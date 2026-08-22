@@ -55,6 +55,25 @@ func TestSkillInstallWritesUnderTempHome(t *testing.T) {
 	if err != nil || zones.System != skill.Content() || zones.User != "" {
 		t.Fatalf("installed zones = %+v, err %v", zones, err)
 	}
+	previous := -1
+	for _, command := range []string{
+		"curl -fsSL", "roca init", "roca skill install", "roca query",
+		"vector = true", "roca vector install",
+	} {
+		index := strings.Index(zones.System, command)
+		if index < 0 {
+			t.Fatalf("installed agent playbook is missing %q", command)
+		}
+		if index <= previous {
+			t.Fatalf("installed agent playbook puts %q out of order", command)
+		}
+		previous = index
+	}
+	for _, forbidden := range []string{"plugins = true", "roca_ops = true"} {
+		if strings.Contains(zones.System, forbidden) {
+			t.Fatalf("installed agent playbook still tells agents to set %q", forbidden)
+		}
+	}
 	if zones, err := artifact.ParseFile(operationsPath); err != nil || zones.System != skill.OperationsContent() {
 		t.Fatalf("installed operations zones = %+v, err %v", zones, err)
 	}

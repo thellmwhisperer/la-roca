@@ -74,7 +74,7 @@ func (w *distributionWorld) seedTOONParityMemory() error {
 }
 
 func (w *distributionWorld) queryRowsOnBothSurfaces() error {
-	statement := "SELECT id, content FROM memories WHERE content = '" + toonParityContent + "'"
+	statement := "SELECT id, content FROM plugin_roca_ops.memories WHERE content = '" + toonParityContent + "'"
 	w.human = w.run("exec", statement)
 	if w.human.code != 0 {
 		return fmt.Errorf("terminal exec: %s", w.human.stderr)
@@ -86,7 +86,8 @@ func (w *distributionWorld) toonRowsHaveParity() error {
 	terminal, agent := w.human.stdout, renderedText(w.tool)
 	for _, answer := range []string{terminal, agent} {
 		if !strings.Contains(answer, "rows[1]{id,content,database}") ||
-			!strings.Contains(answer, toonParityContent+",core") {
+			!strings.Contains(answer, toonParityContent) ||
+			!strings.Contains(answer, "plugin:roca-ops") {
 			return fmt.Errorf("readable answer lacks the expected TOON shape and cell: %q", answer)
 		}
 	}

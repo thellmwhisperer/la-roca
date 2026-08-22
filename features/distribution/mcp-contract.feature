@@ -54,7 +54,7 @@ Feature: The MCP is a thin plug over the same core
   Scenario: Writing through the plug is writing through the product
     When I call the store tool over stdio with a new memory
     Then the response is not an error
-    When I run "roca exec 'SELECT COUNT(*) AS n FROM memories WHERE supersedes IS NULL' --json"
+    When I run "roca exec 'SELECT (SELECT COUNT(*) FROM memories WHERE supersedes IS NULL) + (SELECT COUNT(*) FROM plugin_roca_ops.memories WHERE supersedes IS NULL) AS n' --json"
     Then the count has gone up by one
     And the identity card of that write declares it came from the plug
 

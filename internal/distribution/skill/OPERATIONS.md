@@ -20,12 +20,14 @@ Before first use, run `roca init` in a terminal. With no home database it asks
 copies that database into `~/.roca`, and leaves the original untouched; `new`
 creates an empty database and indexes detected agent sources. If the home
 database already exists, init asks to keep or explicitly reinitialize it.
-It then lists models by their detected CLI or local Ollama origin, asks for the
-model first, resolves its harness, and confirms the pair before editing
-`~/.roca/config.toml`, backing up an existing file when it changes. Plain Enter
-keeps the factory choice and uses the CLI's existing session without a La Roca
-login. Automation that creates or selects a location must pass `--db-path`;
-non-terminal init does not open the chooser or write model configuration.
+When no config exists, init creates the new-install feature configuration, then
+lists models by their detected CLI or local Ollama origin, asks for the model
+first, resolves its harness, and confirms the pair into that new file. Plain
+Enter keeps the factory choice and uses the CLI's existing session without a La
+Roca login. An existing config is preserved byte-for-byte and skips the chooser;
+use `roca model set` to change it. Automation that creates or selects a location
+must pass `--db-path`; non-terminal init does not open the chooser or add model
+settings.
 
 ## Staying current
 
