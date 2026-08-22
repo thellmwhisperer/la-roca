@@ -263,10 +263,18 @@ func TestInitInstallsEmbeddedSkillsIntoDetectedRuntimes(t *testing.T) {
 			}
 		}
 	}
+	// The catalog is the map of what is searchable on this machine. An agent
+	// that reads the skills after init and does not find it composes SQL by
+	// guessing, so init writes it too and no manual step stands between the
+	// first ingest and a good first question.
 	for _, runtime := range []string{"claude", "cursor"} {
 		path := filepath.Join(home, "."+runtime, "skills", "roca-semantica", "SKILL.md")
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Fatalf("init installed the catalog skill at %s; that stays on skill install", path)
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("init did not install the catalog skill at %s: %v", path, err)
+		}
+		if !strings.Contains(string(body), skill.CatalogName) {
+			t.Errorf("the catalog skill at %s does not name itself:\n%s", path, body)
 		}
 	}
 }
