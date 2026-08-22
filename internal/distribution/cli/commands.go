@@ -32,6 +32,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/securefile"
 	"github.com/thellmwhisperer/la-roca/internal/store"
 	"github.com/thellmwhisperer/la-roca/internal/store/exactdedup"
+	"github.com/thellmwhisperer/la-roca/internal/store/search"
 	"golang.org/x/term"
 	_ "modernc.org/sqlite"
 )
@@ -479,6 +480,7 @@ func renderBootstrap(env *cliEnv, result service.InitResult) {
 		env.print("index: full-text index ready · %s",
 			axi.Duration(result.Search.ElapsedMS))
 	}
+	renderWordSearch(env, result.WordSearch)
 	if model := result.Model; model != nil {
 		switch {
 		case model.Disabled:
@@ -507,6 +509,28 @@ func renderBootstrap(env *cliEnv, result service.InitResult) {
 	env.print("  skills: installed into every detected agent runtime")
 	env.print("  must-read: `roca` (what La Roca is) and `roca-operations` (how to search)")
 	renderInitAnswer(env, result)
+}
+
+// renderWordSearch reports the round trip init exists to deliver. The three
+// states it can reach are three different things to say: the index answered,
+// there is nothing on this machine to ask about yet, or the index is there and
+// did not answer. Only the last one is a fault.
+func renderWordSearch(env *cliEnv, proof *search.Proof) {
+	if proof == nil {
+		return
+	}
+	switch {
+	case proof.Ready:
+		places := axi.Quantity(int64(proof.Matches), "place")
+		if proof.Capped {
+			places = "at least " + places
+		}
+		env.print("word search: ready · asked for %q and found it in %s", proof.Word, places)
+	case proof.Empty:
+		env.print("word search: nothing to search yet · %s", proof.Reason)
+	default:
+		env.print("word search: did not answer · %s", proof.Reason)
+	}
 }
 
 func renderInitAnswer(env *cliEnv, result service.InitResult) {

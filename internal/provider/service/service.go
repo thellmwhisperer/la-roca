@@ -438,6 +438,10 @@ type InitResult struct {
 	Rows       ingest.Tables  `json:"rows"`
 	Bedrock    *Bedrock       `json:"bedrock"`
 	Search     *search.Report `json:"search_index,omitempty"`
+	// WordSearch is the round trip init will not return without: a word taken
+	// from a row this machine holds, asked back of the index, and found. The
+	// index being built is a step; this is the promise that step was for.
+	WordSearch *search.Proof `json:"word_search,omitempty"`
 	// Model and Ingest are the rest of the bootstrap: whether a model is going
 	// to answer, and what the first read of the disk found. Neither can fail
 	// the command, and both report.
@@ -584,6 +588,13 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 	result.Search = result.Ingest.Index
 	if result.Search != nil {
 		progress(fmt.Sprintf("index: ready in %d ms", result.Search.ElapsedMS))
+	}
+	progress("word search: asking the index for a word from your own history")
+	result.WordSearch = s.proveWordSearch(ctx)
+	progress("word search: " + wordSearchProgress(*result.WordSearch))
+	if !result.WordSearch.Ready && !result.WordSearch.Empty {
+		result.Warnings = append(result.Warnings,
+			"word search did not answer on this database: "+result.WordSearch.Reason)
 	}
 	progress("model: checking declared providers")
 	modelStarted := time.Now()
@@ -867,4 +878,56 @@ func lowerWithPositions(text string) (string, []int) {
 		}
 	}
 	return lower.String(), positions
+}
+
+// proveWordSearch runs the one search init promised. It cannot fail the
+// command: a database that is ready is what init created, and an index that did
+// not answer is a state to report, not a reason to leave the operator with
+// nothing.
+func (s *Service) proveWordSearch(ctx context.Context) *search.Proof {
+	var fault *search.Proof
+	for _, database := range s.searchable() {
+		proof, err := search.Prove(ctx, database)
+		if err != nil {
+			proof = search.Proof{Reason: err.Error()}
+		}
+		if proof.Ready {
+			return &proof
+		}
+		if !proof.Empty && fault == nil {
+			fault = &proof
+		}
+	}
+	if fault != nil {
+		return fault
+	}
+	empty := search.EmptyProof()
+	return &empty
+}
+
+// searchable lists the databases the word index is served from, in the order
+// rows are most likely to live in them. It follows Index: what that builds is
+// what this has to be able to ask.
+func (s *Service) searchable() []*store.DB {
+	var databases []*store.DB
+	if s.opts.CorpusEnabled && s.corpus != nil {
+		databases = append(databases, s.corpus)
+	}
+	if s.servingLayout() != LayoutCutover && s.db != nil {
+		databases = append(databases, s.db)
+	}
+	return databases
+}
+
+// wordSearchProgress says which of the three states the probe reached in the
+// words the progress stream uses.
+func wordSearchProgress(proof search.Proof) string {
+	switch {
+	case proof.Ready:
+		return fmt.Sprintf("ready · asked for %q and found it", proof.Word)
+	case proof.Empty:
+		return "no history to search on this machine yet"
+	default:
+		return "did not answer · " + proof.Reason
+	}
 }
