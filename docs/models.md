@@ -54,22 +54,21 @@ Enabling it lets `roca update` refresh unchanged SYSTEM zones while preserving
 USER zones. See [Update](lifecycle.md#update) for legacy adoption, divergence,
 backup, and force behavior.
 
-An interactive `roca init` is the shortest way to create those overrides. It
-starts with models rather than provider names: detected agent CLIs are grouped
-as origins with their shipped default and a free-text option, while Ollama
-contributes the models returned by its local `/api/tags` catalogue. After the
-model choice, init auto-selects its harness when exactly one origin matches or
-asks which harness to use when several match. The confirmed pair is probed when
-it differs from the already-ready default, then `models.order` and
-`models.<provider>.model` are edited in place. Existing files keep their
-comments and unrelated settings and receive a named recovery backup when the
-edit changes them. A backup created while retiring a credential-backed provider
-is credential-redacted rather than byte-exact. The complete question and
-automation contracts live in [Initialize](lifecycle.md#initialize).
+A fresh interactive `roca init` is the shortest way to create those overrides.
+It starts with models rather than provider names: detected agent CLIs are
+grouped as origins with their shipped default and a free-text option, while
+Ollama contributes the models returned by its local `/api/tags` catalogue.
+After the model choice, init auto-selects its harness when exactly one origin
+matches or asks which harness to use when several match. The confirmed pair is
+probed when it differs from the already-ready default, then `models.order` and
+`models.<provider>.model` are added to the new config. If a config existed when
+init began, init preserves it byte-for-byte and skips the chooser; use `roca
+model set` to change the selection later. The complete question and automation
+contracts live in [Initialize](lifecycle.md#initialize).
 
-Plain Enter through the chooser preserves the effective selection the normal
-factory ordering would have made. Non-terminal init does not run this chooser
-or write the model configuration; it reports the effective provider/model and
+Plain Enter through the fresh-config chooser preserves the effective selection
+the normal factory ordering would have made. Non-terminal init does not run
+this chooser or add model settings; it reports the effective provider/model and
 the configuration path once so automation stays question-free.
 
 ```toml

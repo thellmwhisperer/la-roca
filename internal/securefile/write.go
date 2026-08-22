@@ -13,6 +13,12 @@ func Write(path string, data []byte, mode, dirMode os.FileMode) (err error) {
 	return publish(path, data, nil, mode, dirMode, true)
 }
 
+// WritePreservingParentMode writes atomically without changing an existing
+// parent directory's permissions. Directories it creates use dirMode.
+func WritePreservingParentMode(path string, data []byte, mode, dirMode os.FileMode) error {
+	return publish(path, data, nil, mode, dirMode, false)
+}
+
 // Replace atomically replaces an operator-owned file while preserving its mode.
 // When previous is non-nil, a concurrent change makes the replacement fail.
 func Replace(path string, data, previous []byte) error {

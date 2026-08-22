@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -470,6 +471,107 @@ func TestInitIgnoresConfigOverrideWhenCreatingExplicitDatabaseConfig(t *testing.
 	}
 	if string(shared) != before {
 		t.Fatalf("init changed the ROCA_CONFIG file:\n--- want ---\n%s--- got ---\n%s", before, shared)
+	}
+}
+
+func TestInitCreatesConfigBesideEnvironmentDatabase(t *testing.T) {
+	home, bin := initChooserHome(t)
+	fakeModelCLI(t, bin, provider.NameClaude)
+	dbPath := filepath.Join(home, "environment", "roca.db")
+	configPath := filepath.Join(filepath.Dir(dbPath), "config.toml")
+	t.Setenv("ROCA_DB_PATH", dbPath)
+
+	out, err := runInitChooser(t, true, "new\n\n\n", chooserTestBackend{}, "init")
+	if err != nil {
+		t.Fatalf("init: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "configuration: "+configPath) {
+		t.Fatalf("init did not use the environment database config:\n%s", out)
+	}
+	file, err := config.LoadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !file.Features.Plugins || !file.Features.RocaOps || !file.Features.Cron || file.Features.Vector {
+		t.Fatalf("environment database config has wrong features: %+v", file.Features)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".roca", "config.toml")); !os.IsNotExist(err) {
+		t.Fatalf("init wrote the home config instead: %v", err)
+	}
+}
+
+func TestInitRetryKeepsFeaturesAfterPostChooserFailure(t *testing.T) {
+	home, bin := initChooserHome(t)
+	fakeModelCLI(t, bin, provider.NameClaude)
+	pluginPath := filepath.Join(home, ".roca", "plugins")
+	if err := os.MkdirAll(filepath.Dir(pluginPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pluginPath, []byte("blocks plugin installation"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	configPath := filepath.Join(home, ".roca", "config.toml")
+	assertFeatures := func(label string) {
+		t.Helper()
+		file, err := config.LoadFile(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !file.Features.Plugins || !file.Features.RocaOps || !file.Features.Cron || file.Features.Vector {
+			t.Fatalf("%s config has wrong features: %+v", label, file.Features)
+		}
+	}
+
+	out, err := runInitChooser(t, true, "new\n\n\n", chooserTestBackend{}, "init")
+	if err == nil || !strings.Contains(err.Error(), "install bundled roca-ops plugin") {
+		t.Fatalf("init error = %v, want blocked bundled-plugin installation:\n%s", err, out)
+	}
+	assertFeatures("failed init")
+	if err := os.Remove(pluginPath); err != nil {
+		t.Fatal(err)
+	}
+	out, err = runInitChooser(t, true, "new\n", chooserTestBackend{}, "init")
+	if err != nil {
+		t.Fatalf("retry init: %v\n%s", err, out)
+	}
+	assertFeatures("retry")
+	if strings.Contains(out, "Which model") {
+		t.Fatalf("retry treated the product-created config as missing:\n%s", out)
+	}
+}
+
+func TestInitPreservesExistingDatabaseDirectoryMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory permission bits are not portable to Windows")
+	}
+	home, _ := initChooserHome(t)
+	dataDir := filepath.Join(home, "shared-data")
+	if err := os.MkdirAll(dataDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dataDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(dataDir, "roca.db")
+	out, err := runInitChooser(t, false, "", chooserTestBackend{},
+		"init", "--db-path", dbPath)
+	if err != nil {
+		t.Fatalf("init: %v\n%s", err, out)
+	}
+	info, err := os.Stat(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o750 {
+		t.Fatalf("database directory mode = %o, want 750", got)
+	}
+	configInfo, err := os.Stat(filepath.Join(dataDir, "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := configInfo.Mode().Perm(); got != 0o600 {
+		t.Fatalf("config mode = %o, want 600", got)
 	}
 }
 

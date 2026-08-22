@@ -65,8 +65,9 @@ func initCommand(env *cliEnv) *cobra.Command {
 		Long: "Creates and bootstraps the database. With no home database, init asks new or adopt;\n" +
 			"adopt then asks for the source path and copies it, leaving the original untouched.\n" +
 			"An existing home database is kept or reinitialized only by explicit answer.\n" +
-			"In a terminal, a model-first chooser lists detected CLI defaults and pulled Ollama models,\n" +
-			"resolves the harness, confirms the pair, and writes it with a recovery backup.\n" +
+			"With no existing config, a terminal model-first chooser lists detected CLI defaults and pulled Ollama models,\n" +
+			"resolves the harness, confirms the pair, and writes it into the new configuration.\n" +
+			"An existing config is preserved byte-for-byte and skips the chooser.\n" +
 			"Non-interactive callers must select a location explicitly with --db-path; they are never prompted.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			commandStarted := time.Now()
@@ -75,10 +76,7 @@ func initCommand(env *cliEnv) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			paths.Config, err = initConfigPath(paths, env.dbPath != "")
-			if err != nil {
-				return err
-			}
+			paths.Config = initConfigPath(paths)
 			configMissingAtStart := !fileExists(paths.Config)
 			rawInput := cmd.InOrStdin()
 			interactive := terminalInput(rawInput) && !env.json
@@ -86,6 +84,11 @@ func initCommand(env *cliEnv) *cobra.Command {
 			choice, source, err := env.selectInitDatabase(input, paths, env.dbPath != "", interactive)
 			if err != nil {
 				return err
+			}
+			if configMissingAtStart {
+				if err := writeNewInstallConfig(paths.Config); err != nil {
+					return err
+				}
 			}
 			if interactive && !env.skipInitChooser && configMissingAtStart {
 				chooserStarted := time.Now()
@@ -102,9 +105,6 @@ func initCommand(env *cliEnv) *cobra.Command {
 					return chooserErr
 				}
 				if choice == "reinitialize" && !completed {
-					if err := writeNewInstallConfig(paths.Config); err != nil {
-						return err
-					}
 					renderInitAnswer(env, chooserResult)
 					return nil
 				}
@@ -139,11 +139,6 @@ func initCommand(env *cliEnv) *cobra.Command {
 			env.finishIngestProgress()
 			if err != nil {
 				return err
-			}
-			if configMissingAtStart {
-				if err := writeNewInstallConfig(paths.Config); err != nil {
-					return err
-				}
 			}
 			if result.PromptPath != "" {
 				if err := env.registerZonedArtifact(artifactKindPrompt, "", result.PromptPath,
@@ -320,14 +315,8 @@ func fileExists(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
-func initConfigPath(paths config.Paths, explicitDB bool) (string, error) {
-	if explicitDB {
-		return filepath.Join(filepath.Dir(paths.DB), config.FileConfig), nil
-	}
-	if paths.Home == "" {
-		return "", fmt.Errorf("I do not know where your HOME is: name the database with --db-path")
-	}
-	return filepath.Join(paths.Home, config.DirOwn, config.FileConfig), nil
+func initConfigPath(paths config.Paths) string {
+	return filepath.Join(filepath.Dir(paths.DB), config.FileConfig)
 }
 
 var newInstallFeatureChanges = []config.Change{
@@ -339,11 +328,8 @@ var newInstallFeatureChanges = []config.Change{
 	{Kind: config.SetValue, Table: "features", Key: "plugins", Value: true},
 }
 
-// writeNewInstallConfig materializes the product contract only for an init that
-// began without a configuration file. An interactive chooser may have written
-// its model choice earlier in the same init, so add the feature table
-// surgically instead of replacing those bytes. Callers skip this function when
-// the operator already owned the file.
+// writeNewInstallConfig materializes the product contract for an init that
+// began without a configuration file.
 func writeNewInstallConfig(path string) error {
 	previous, err := os.ReadFile(path)
 	missing := os.IsNotExist(err)
@@ -358,7 +344,7 @@ func writeNewInstallConfig(path string) error {
 		return nil
 	}
 	if missing {
-		err = securefile.Write(path, []byte(updated), 0o600, 0o700)
+		err = securefile.WritePreservingParentMode(path, []byte(updated), 0o600, 0o700)
 	} else {
 		err = securefile.Replace(path, []byte(updated), previous)
 	}
