@@ -1013,7 +1013,7 @@ func TestAnInterruptedIndexStillAnswersWithTheRowsItAlreadyWrote(t *testing.T) {
 }
 
 func TestProgressCountsHistoryReadAgainstHistoryDeclared(t *testing.T) {
-	federation, _, _, _ := federationFixture(t)
+	federation, corpusPath, _, _ := federationFixture(t)
 	ctx := context.Background()
 
 	before, err := federation.Progress(ctx)
@@ -1036,5 +1036,16 @@ func TestProgressCountsHistoryReadAgainstHistoryDeclared(t *testing.T) {
 	}
 	if len(after.Databases) != 2 {
 		t.Fatalf("progress databases = %+v", after.Databases)
+	}
+
+	mutateSourceDatabase(t, corpusPath, `DELETE FROM articles WHERE id='article-1';
+		INSERT INTO articles VALUES ('article-3','Replacement title','Replacement body','raw-counter')`)
+	replaced, err := federation.Progress(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replaced.Read != 3 || replaced.Total != 4 {
+		t.Fatalf("progress after replacing one declared row = %d of %d, want 3 of 4",
+			replaced.Read, replaced.Total)
 	}
 }

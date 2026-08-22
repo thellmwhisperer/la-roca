@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"database/sql"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 )
 
 // TestInitProvesWordSearchOnHistoryItJustRead is the first-run promise: the
@@ -34,5 +37,56 @@ func TestInitSaysNothingToSearchYetRatherThanBroken(t *testing.T) {
 	}
 	if strings.Contains(out, "word search: did not answer") {
 		t.Errorf("init called an empty machine a broken index:\n%s", out)
+	}
+}
+
+func TestInitRepairsAnEmptiedWordIndexBeforeReturning(t *testing.T) {
+	home, dbPath := deepSearchHome(t)
+	initMustSucceed(t, "init", "--db-path", dbPath)
+	corpusPath := filepath.Join(home, ".roca", "plugins", rocacorpus.Name, rocacorpus.DatabaseFilename)
+	emptyWordIndex(t, corpusPath, false)
+
+	run := initMustSucceed(t, "init", "--db-path", dbPath)
+	if !strings.Contains(run.output, "word search: ready ·") {
+		t.Fatalf("init did not restore word search before returning:\n%s", run.output)
+	}
+}
+
+func TestInitFailsWithOneNextStepWhenWordIndexRepairFails(t *testing.T) {
+	home, dbPath := deepSearchHome(t)
+	initMustSucceed(t, "init", "--db-path", dbPath)
+	corpusPath := filepath.Join(home, ".roca", "plugins", rocacorpus.Name, rocacorpus.DatabaseFilename)
+	emptyWordIndex(t, corpusPath, true)
+
+	run := executeHermeticCLI([]string{"init", "--db-path", dbPath})
+	if run.err == nil || run.code == ExitOK {
+		t.Fatalf("init succeeded with an index it could not repair:\n%s%s", run.output, run.warnings)
+	}
+	report := run.output + run.warnings + run.err.Error()
+	if !strings.Contains(report, "word search is not working after one rebuild") {
+		t.Fatalf("init did not give a plain repair failure: %s", report)
+	}
+	if count := strings.Count(report, "next step:"); count != 1 {
+		t.Fatalf("init printed %d next steps, want one: %s", count, report)
+	}
+}
+
+func emptyWordIndex(t *testing.T, path string, refuseRepair bool) {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, table := range []string{"memories_fts", "exchanges_fts", "thinking_fts", "sessions_fts"} {
+		if _, err := db.Exec(`INSERT INTO ` + table + `(` + table + `) VALUES ('delete-all')`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if refuseRepair {
+		if _, err := db.Exec(`CREATE TRIGGER refuse_word_index_repair BEFORE DELETE ON search_state
+			BEGIN SELECT RAISE(ABORT, 'synthetic repair refusal'); END`); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

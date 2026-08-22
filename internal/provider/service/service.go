@@ -578,9 +578,8 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 	}
 	result.SetupElapsedMS = time.Since(started).Milliseconds()
 
-	// The rest of the bootstrap. None of it may take the command down: a
-	// database that is ready is the thing init promised, and a source that
-	// cannot be read or a model that is not installed are reported states.
+	// The rest of the bootstrap reports unreadable sources and unavailable
+	// models as states. Word search remains the completion boundary for init.
 	progress("ingest: starting first read")
 	result.Ingest = s.bootstrapIngest(ctx)
 	progress(fmt.Sprintf("ingest: complete · %d files read · %d skipped · %d errors",
@@ -593,8 +592,23 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 	result.WordSearch = s.proveWordSearch(ctx)
 	progress("word search: " + wordSearchProgress(*result.WordSearch))
 	if !result.WordSearch.Ready && !result.WordSearch.Empty {
-		result.Warnings = append(result.Warnings,
-			"word search did not answer on this database: "+result.WordSearch.Reason)
+		progress("word search: rebuilding the full-text index once")
+		rebuilt, rebuildErr := s.rebuildWordSearch(ctx)
+		if rebuildErr != nil {
+			return result, wordSearchInitError()
+		}
+		if result.Search == nil {
+			result.Search = &rebuilt
+		} else {
+			result.Search.LexicalBuilt = result.Search.LexicalBuilt || rebuilt.LexicalBuilt
+			result.Search.ElapsedMS += rebuilt.ElapsedMS
+		}
+		progress("word search: asking the rebuilt index again")
+		result.WordSearch = s.proveWordSearch(ctx)
+		progress("word search: " + wordSearchProgress(*result.WordSearch))
+		if !result.WordSearch.Ready && !result.WordSearch.Empty {
+			return result, wordSearchInitError()
+		}
 	}
 	progress("model: checking declared providers")
 	modelStarted := time.Now()
@@ -880,10 +894,6 @@ func lowerWithPositions(text string) (string, []int) {
 	return lower.String(), positions
 }
 
-// proveWordSearch runs the one search init promised. It cannot fail the
-// command: a database that is ready is what init created, and an index that did
-// not answer is a state to report, not a reason to leave the operator with
-// nothing.
 func (s *Service) proveWordSearch(ctx context.Context) *search.Proof {
 	var fault *search.Proof
 	for _, database := range s.searchable() {
@@ -917,6 +927,23 @@ func (s *Service) searchable() []*store.DB {
 		databases = append(databases, s.db)
 	}
 	return databases
+}
+
+func (s *Service) rebuildWordSearch(ctx context.Context) (search.Report, error) {
+	var result search.Report
+	for _, database := range s.searchable() {
+		report, err := search.Rebuild(ctx, database)
+		if err != nil {
+			return search.Report{}, err
+		}
+		result.LexicalBuilt = result.LexicalBuilt || report.LexicalBuilt
+		result.ElapsedMS += report.ElapsedMS
+	}
+	return result, nil
+}
+
+func wordSearchInitError() error {
+	return fmt.Errorf("word search is not working after one rebuild; next step: run `roca doctor`")
 }
 
 // wordSearchProgress says which of the three states the probe reached in the

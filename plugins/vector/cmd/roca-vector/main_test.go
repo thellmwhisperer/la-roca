@@ -419,18 +419,22 @@ func TestStatusSpeaksInHistoryReadAndNeverCallsTheProductEmpty(t *testing.T) {
 		want   []string
 		absent []string
 	}{
-		{name: "running", status: indexStatus{Running: true, Read: 3, Total: 5},
+		{name: "running", status: indexStatus{HistoryKnown: true, Running: true, Read: 3, Total: 5},
 			want: []string{"reading your history", "3 of 5", "word search keeps answering"}},
-		{name: "finished", status: indexStatus{Read: 5, Total: 5},
+		{name: "finished", status: indexStatus{HistoryKnown: true, Read: 5, Total: 5},
 			want: []string{"ready"}},
-		{name: "stopped partway", status: indexStatus{Read: 3, Total: 5, Stopped: "the runtime went away"},
-			want:   []string{"3 of 5", "word search", "roca init --vectors", "the runtime went away"},
-			absent: []string{"empty"}},
-		{name: "never started", status: indexStatus{Total: 5},
+		{name: "stopped partway", status: indexStatus{HistoryKnown: true, Read: 3, Total: 5,
+			Stopped: "pull nomic-embed-text at /synthetic/corpus.vector.db: ollama runtime failed"},
+			want:   []string{"3 of 5", "word search", "roca init --vectors", "local reading service stopped answering"},
+			absent: []string{"empty", "nomic", "/synthetic", "ollama", "runtime", "vector.db"}},
+		{name: "never started", status: indexStatus{HistoryKnown: true, Total: 5},
 			want:   []string{"not started", "word search", "roca init --vectors"},
 			absent: []string{"empty"}},
-		{name: "no history", status: indexStatus{},
+		{name: "no history", status: indexStatus{HistoryKnown: true},
 			want: []string{"nothing to read yet"}},
+		{name: "history unavailable", status: indexStatus{},
+			want:   []string{"progress unavailable", "word search", "next step"},
+			absent: []string{"empty", "nothing"}},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -445,7 +449,7 @@ func TestStatusSpeaksInHistoryReadAndNeverCallsTheProductEmpty(t *testing.T) {
 					t.Fatalf("status says %q: %s", phrase, rendered)
 				}
 			}
-			for _, jargon := range []string{"chunk", "embedding", "sidecar", "vector.db"} {
+			for _, jargon := range []string{"chunk", "embedding", "sidecar", "vector.db", "model name"} {
 				if strings.Contains(rendered, jargon) {
 					t.Fatalf("status speaks in %q: %s", jargon, rendered)
 				}

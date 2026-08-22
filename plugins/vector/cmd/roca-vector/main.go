@@ -128,11 +128,12 @@ func installCommand(env *environment) *cobra.Command {
 // asking has: how much of their history has been read, whether reading is still
 // going on, and what stopped it if it stopped.
 type indexStatus struct {
-	Running   bool                      `json:"running"`
-	Read      int                       `json:"read"`
-	Total     int                       `json:"total"`
-	Databases []vector.DatabaseProgress `json:"databases,omitempty"`
-	Stopped   string                    `json:"stopped,omitempty"`
+	HistoryKnown bool                      `json:"history_known"`
+	Running      bool                      `json:"running"`
+	Read         int                       `json:"read"`
+	Total        int                       `json:"total"`
+	Databases    []vector.DatabaseProgress `json:"databases,omitempty"`
+	Stopped      string                    `json:"stopped,omitempty"`
 }
 
 func statusCommand(env *environment) *cobra.Command {
@@ -163,19 +164,17 @@ func (env *environment) indexStatus(ctx context.Context) (indexStatus, error) {
 	}
 	status := indexStatus{Running: vector.WorkerRunning(state)}
 	if completion, ok := vector.ReadCompletion(state); ok && !status.Running {
-		status.Stopped = completion.Error
+		status.Stopped = productStopReason(completion.Error)
 	}
 	federation, err := env.federation("")
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return status, nil
-		}
-		return indexStatus{}, err
+		return status, nil
 	}
 	progress, err := federation.Progress(ctx)
 	if err != nil {
-		return indexStatus{}, err
+		return status, nil
 	}
+	status.HistoryKnown = true
 	status.Read, status.Total, status.Databases = progress.Read, progress.Total, progress.Databases
 	return status, nil
 }
@@ -184,6 +183,10 @@ func (env *environment) indexStatus(ctx context.Context) (indexStatus, error) {
 // is never the same sentence as a product with nothing in it, and word search is
 // named every time reading is not complete, because it is answering right then.
 func statusLines(status indexStatus) []string {
+	if !status.HistoryKnown {
+		return []string{"deep search: progress unavailable · word search is answering now",
+			"  next step: `roca init --vectors`"}
+	}
 	fraction := fmt.Sprintf("%d of %d read", status.Read, status.Total)
 	switch {
 	case status.Running:
@@ -197,12 +200,47 @@ func statusLines(status indexStatus) []string {
 		lines := []string{"deep search: stopped partway · " + fraction,
 			"  what it read already answers, and word search answers for the rest"}
 		if status.Stopped != "" {
-			lines = append(lines, "  it stopped on: "+status.Stopped)
+			lines = append(lines, "  it stopped because "+productStopReason(status.Stopped))
 		}
 		return append(lines, "  next step: `roca init --vectors`")
 	default:
 		return []string{"deep search: not started · word search is answering now",
 			"  next step: `roca init --vectors`"}
+	}
+}
+
+func productStopReason(raw string) string {
+	reason := strings.TrimSpace(raw)
+	if reason == "" {
+		return ""
+	}
+	switch reason {
+	case "the pass was interrupted",
+		"this machine ran out of storage space",
+		"the local reading service stopped answering",
+		"the history could not be read",
+		"the pass stopped before it finished":
+		return reason
+	}
+	lower := strings.ToLower(reason)
+	switch {
+	case strings.Contains(lower, "interrupt"), strings.Contains(lower, "canceled"),
+		strings.Contains(lower, "cancelled"), strings.Contains(lower, "signal"),
+		strings.Contains(lower, "deadline"):
+		return "the pass was interrupted"
+	case strings.Contains(lower, "no space"), strings.Contains(lower, "disk full"):
+		return "this machine ran out of storage space"
+	case strings.Contains(lower, "ollama"), strings.Contains(lower, "embedding"),
+		strings.Contains(lower, "model"), strings.Contains(lower, "runtime"),
+		strings.Contains(lower, "connection refused"):
+		return "the local reading service stopped answering"
+	case strings.Contains(lower, "sqlite"), strings.Contains(lower, "database"),
+		strings.Contains(lower, "registry"), strings.Contains(lower, "sidecar"),
+		strings.Contains(lower, ".db"), strings.Contains(lower, "no such table"),
+		strings.Contains(lower, "permission denied"):
+		return "the history could not be read"
+	default:
+		return "the pass stopped before it finished"
 	}
 }
 

@@ -1640,7 +1640,8 @@ func (f Federation) Progress(ctx context.Context) (Progress, error) {
 		if err != nil {
 			return Progress{}, err
 		}
-		read, err := countIndexedSources(SidecarPath(f.databasePath(database)))
+		databasePath := f.databasePath(database)
+		read, err := countIndexedSources(ctx, databasePath, SidecarPath(databasePath), database.Tables)
 		if err != nil {
 			return Progress{}, err
 		}
@@ -1683,25 +1684,41 @@ func (d DeclaredCorpus) countQuery(table vectorTable) string {
 // countIndexedSources counts source rows the index already holds, not chunks: a
 // row half chunked is a row the reader has reached, and a sidecar that is not
 // there yet is zero read rather than an error.
-func countIndexedSources(path string) (int, error) {
-	if _, err := os.Stat(path); err != nil {
+func countIndexedSources(ctx context.Context, sourcePath, sidecarPath string, tables []vectorTable) (int, error) {
+	if _, err := os.Stat(sidecarPath); err != nil {
 		if os.IsNotExist(err) {
 			return 0, nil
 		}
 		return 0, err
 	}
-	store, err := openSQLite(path, true)
+	store, err := openSQLite(sidecarPath, true)
 	if err != nil {
-		return 0, fmt.Errorf("open vector sidecar %s: %w", filepath.Base(path), err)
+		return 0, fmt.Errorf("open vector sidecar %s: %w", filepath.Base(sidecarPath), err)
 	}
 	defer store.Close()
-	var read int
-	err = store.QueryRow(`SELECT COUNT(*) FROM (SELECT DISTINCT source_kind,source_id FROM chunks)`).Scan(&read)
-	if err != nil && strings.Contains(fmt.Sprint(err), "no such table") {
-		return 0, nil
+	if _, err := store.ExecContext(ctx, `ATTACH DATABASE ? AS declared_source`, sourcePath); err != nil {
+		return 0, fmt.Errorf("attach declared history for %s: %w", filepath.Base(sidecarPath), err)
 	}
-	if err != nil {
-		return 0, fmt.Errorf("count indexed rows in %s: %w", filepath.Base(path), err)
+	read := 0
+	for _, table := range tables {
+		statement := fmt.Sprintf(`WITH declared_rows AS (
+			SELECT CAST(%s AS TEXT) AS source_id,%s AS text
+			FROM declared_source.%s WHERE %s IS NOT NULL
+		) SELECT COUNT(*) FROM declared_rows
+		WHERE source_id<>'' AND text<>'' AND EXISTS (
+			SELECT 1 FROM chunks WHERE source_kind=?
+			AND CAST(json_extract(locator,'$.source_id') AS TEXT)=declared_rows.source_id
+		)`, quoteIdentifier(table.IDColumn), declaredTextExpression(table.TextColumns),
+			quoteIdentifier(table.Name), quoteIdentifier(table.IDColumn))
+		var tableRead int
+		err := store.QueryRowContext(ctx, statement, table.Name).Scan(&tableRead)
+		if err != nil && strings.Contains(fmt.Sprint(err), "no such table: chunks") {
+			return 0, nil
+		}
+		if err != nil {
+			return 0, fmt.Errorf("count indexed rows in %s: %w", filepath.Base(sidecarPath), err)
+		}
+		read += tableRead
 	}
 	return read, nil
 }

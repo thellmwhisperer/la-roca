@@ -19,8 +19,9 @@ background pass. Word search keeps answering the whole time. If the machine
 cannot embed, init reports that and prints one next step instead of failing.
 
 Bare `roca init` never does any of this: it stops at working full-text search,
-downloads nothing, and does not rewrite an existing configuration. The same is
-true of a non-interactive run and of any run with `--db-path`.
+downloads nothing, and does not rewrite an existing configuration. A bare
+non-interactive run, including one with `--db-path`, has the same boundary.
+Passing `--vectors` explicitly on that command still starts the background pass.
 
 Progress is reported as a fraction of the history on this machine:
 
@@ -132,15 +133,15 @@ Worker coordination remains under `~/.roca/plugins/roca-vector/state/`
 can send a desktop notification with the exit status and aggregate counts.
 Windows sends no desktop notification: inspect `completion.json` or
 `worker.log` in that state directory. The worker log path is printed at launch;
-`completion.json` records `started_at`, `finished_at`, and `exit_status`. The
-completion record describes that worker run; query readiness is checked from
-each selected sidecar's owner, model, and dimensions metadata. Sidecars that
-are not ready leave their databases on deterministic FTS and SQL. The
-timestamps time the first pass. During setup, download and indexing progress stream live with completed
-counts, the current time range, and an ETA. Indexing works from newest material
-toward the oldest history, so recent work becomes searchable first. Engine
-timings (load, pre-warm, per-query embedding, throughput, backend and fallback,
-memory high-water, and errors) are rotated, dated JSONL files at
+`completion.json` records `started_at`, `finished_at`, and `exit_status`. That
+record describes the worker run, not sidecar readiness. A sidecar is ready when
+its identity, model, and dimensions match the current declaration. Rows already
+written remain queryable whether the pass finished, failed, or stopped early;
+deterministic FTS and SQL answer for the rest. The timestamps time the first
+pass on this machine. During setup, download and indexing progress stream live
+with completed counts, the current time range, and an ETA. Engine timings
+(load, pre-warm, per-query embedding, throughput, backend and fallback, memory
+high-water, and errors) are rotated, dated JSONL files at
 `<data-directory>/logs/engine-YYYY-MM-DD.jsonl`. They contain no query or
 document text, never enter a database table, and never leave the machine.
 

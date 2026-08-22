@@ -54,6 +54,21 @@ func Index(ctx context.Context, db *store.DB, progress func(string)) (Report, er
 	return report, nil
 }
 
+func Rebuild(ctx context.Context, db *store.DB) (Report, error) {
+	started := time.Now()
+	if err := recreateLexicalTables(ctx, db); err != nil {
+		return Report{}, err
+	}
+	built, err := buildLexicalIndex(ctx, db)
+	if err != nil {
+		return Report{}, err
+	}
+	if err := recordTokenizerGeneration(ctx, db); err != nil {
+		return Report{}, err
+	}
+	return Report{LexicalBuilt: built, ElapsedMS: time.Since(started).Milliseconds()}, nil
+}
+
 // EnsureTokenizer upgrades an existing lexical index to the tokenizer shipped
 // by this build. The content tables are never changed: only the four derived FTS
 // tables and their state markers are replaced.
