@@ -85,6 +85,29 @@ func TestInitOffersToKeepOrReinitializeItsHomeDatabase(t *testing.T) {
 	assertSchemaLine(t, "keep", out, "schema: 17 required structures verified")
 }
 
+func TestInitLeavesAnExistingConfigByteExact(t *testing.T) {
+	home := initChoiceHome(t)
+	configPath := filepath.Join(home, ".roca", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	before := "# operator choice\n[features]\nplugins = false\nroca_ops = false\ncron = false\nvector = true\n"
+	if err := os.WriteFile(configPath, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(home, ".roca", "roca.db")
+	if out, err := runInitChoice(t, false, "", "init", "--db-path", dbPath); err != nil {
+		t.Fatalf("init: %v\n%s", err, out)
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != before {
+		t.Fatalf("init changed the existing config:\n--- before ---\n%s--- after ---\n%s", before, after)
+	}
+}
+
 func TestReinitializeRemovesTheRollbackJournal(t *testing.T) {
 	home := initChoiceHome(t)
 	path := filepath.Join(home, ".roca", "roca.db")

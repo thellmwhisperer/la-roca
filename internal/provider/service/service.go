@@ -474,7 +474,8 @@ const presentationPrompt = presentationPromptSignature +
 	"Investigations start with `roca explore --deep \"<one bare word>\"`, then plain `roca explore` radius probes.\n" +
 	"Without a shell, use the MCP equivalents: `roca_query`, `roca_explore`, and `roca_store`.\n" +
 	"Authorship is automatic over MCP; CLI detection is conservative, so pass --agent and --model.\n" +
-	"On first bootstrap, `roca init` asks new or adopt, then chooses the answering model before its harness.\n" +
+	"`roca init` chooses an answering model only when initialization starts without a configuration; " +
+	"an existing configuration is preserved and its model selection remains in force.\n" +
 	"La Roca never edits agent instruction files; a human chooses where to paste this block.\n"
 
 // PresentationPrompt is the product-owned part of prompt.md. Distribution

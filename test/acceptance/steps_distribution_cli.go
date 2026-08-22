@@ -30,7 +30,7 @@ func registerDistributionCLISteps(ctx *godog.ScenarioContext, w *distributionWor
 	ctx.Then(`^the installer is inert and names the feature flag$`, w.disabledPluginInstallerIsInert)
 	ctx.Then(`^init reports setup, ingest, index, model, and its total once in that order$`, w.initSummaryIsOrdered)
 	ctx.When(`^the operator initializes non-interactively with a detected model CLI$`, w.initWithDetectedModelCLI)
-	ctx.Then(`^init prints one answering notice and writes no model configuration$`, w.initHasOneAnsweringNotice)
+	ctx.Then(`^init prints one answering notice and writes only the new-install features$`, w.initHasOneAnsweringNotice)
 	ctx.When(`^the operator asks for a doctor support report$`, w.askForDoctorReport)
 	ctx.Then(`^the report is one fenced block with a federation mode and the JSON form is one document$`,
 		w.doctorReportIsPasteable)
@@ -101,6 +101,10 @@ func (w *distributionWorld) tryDisabledPluginInstall() error {
 	if err := w.prepare("disabled-plugin-install"); err != nil {
 		return err
 	}
+	disabled := strings.Replace(distributionPreparedConfig, "plugins = true", "plugins = false", 1)
+	if err := writeFixture(filepath.Join(w.home, ".roca", "config.toml"), disabled); err != nil {
+		return err
+	}
 	w.last = w.runAtInput(w.home, w.installed, "yes\n", nil,
 		"plugin", "install", filepath.Join(w.home, "source-that-does-not-exist"))
 	return nil
@@ -156,10 +160,15 @@ func countDistributionLines(output, prefix string) int {
 }
 
 func (w *distributionWorld) initWithDetectedModelCLI() error {
-	if err := w.prepare("init-model-notice"); err != nil {
+	home := filepath.Join(w.root, "init-model-notice")
+	if err := os.MkdirAll(filepath.Join(home, ".tmp"), 0o700); err != nil {
 		return err
 	}
-	bin := filepath.Join(w.home, "bin")
+	installed := filepath.Join(home, "roca")
+	if err := copyAcceptanceFile(w.binary, installed, 0o755); err != nil {
+		return err
+	}
+	bin := filepath.Join(home, "bin")
 	if err := os.MkdirAll(bin, 0o700); err != nil {
 		return err
 	}
@@ -167,9 +176,10 @@ func (w *distributionWorld) initWithDetectedModelCLI() error {
 	if err := os.WriteFile(claude, []byte("#!/bin/sh\nprintf '{\"result\":\"SELECT 1\"}\\n'\n"), 0o700); err != nil {
 		return err
 	}
-	w.last = w.runAtInput(w.home, w.installed, "", []string{
+	w.home, w.installed = home, installed
+	w.last = w.runAtInput(home, installed, "", []string{
 		"PATH=" + bin, "ROCA_MODELS_ORDER=claude",
-	}, "init", "--db-path", filepath.Join(w.home, ".roca", "roca.db"))
+	}, "init", "--db-path", filepath.Join(home, ".roca", "roca.db"))
 	return nil
 }
 
@@ -188,8 +198,13 @@ func (w *distributionWorld) initHasOneAnsweringNotice() error {
 	if strings.Contains(w.last.stdout+w.last.stderr, "Which model") {
 		return fmt.Errorf("non-interactive init opened the chooser: %s%s", w.last.stdout, w.last.stderr)
 	}
-	if _, err := os.Stat(filepath.Join(w.home, ".roca", "config.toml")); !os.IsNotExist(err) {
-		return fmt.Errorf("non-interactive init wrote model configuration: %v", err)
+	raw, err := os.ReadFile(filepath.Join(w.home, ".roca", "config.toml"))
+	if err != nil {
+		return err
+	}
+	want := "[features]\nplugins = true\nroca_ops = true\ncron = true\nvector = false\n"
+	if string(raw) != want {
+		return fmt.Errorf("non-interactive init configuration:\n--- want ---\n%s--- got ---\n%s", want, raw)
 	}
 	return nil
 }

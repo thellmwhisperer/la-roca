@@ -34,12 +34,13 @@ Do not read a manual. Tell your agent:
 > Install https://github.com/thellmwhisperer/la-roca and learn to use it.
 
 The repository teaches your agent the rest: [`AGENTS.md`](AGENTS.md) tells
-it what this is, how to install it, and how to search well. Three commands
+it what this is, how to install it, and how to search well. Four commands
 later it is answering questions about everything your agents ever did:
 
 ```text
 $ curl -fsSL https://raw.githubusercontent.com/thellmwhisperer/la-roca/main/install.sh | sh
 $ roca init
+$ roca skill install codex   # or claude, opencode, pi, hermes: your runtime
 $ roca query --full "what did we decide about the retention window"
 SQL · codex · gpt-5.6-luna · 3.1 s / search · 2 ms / answer · 9.8 s
 
