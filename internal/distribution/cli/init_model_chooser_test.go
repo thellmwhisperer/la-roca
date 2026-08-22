@@ -229,16 +229,14 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 			modelEnv:      true,
 		},
 		{
-			name: "retired base URL is retired by its own visible proposal",
+			name: "retired base URL in existing config is preserved",
 			prepare: func(t *testing.T, home, bin string) {
 				fakeModelCLI(t, bin, provider.NameClaude)
 				writeConfig(t, home, "[models]\norder = [\"ollama\"]\n\n[models.claude]\nbase_url = \"https://example.invalid/v1\"\napi_key = \"synthetic-key\"\nmodel = \"remote-old\"\n")
 			},
-			input: "sonnet\n\ny\n",
-			want:  "answering: claude/sonnet",
-			guidance: []string{"Remove the retired claude authentication settings?",
-				"uses the existing local CLI session"},
-			avoidGuidance: "transport is governed by models.claude.base_url",
+			want:          "answering: none",
+			avoid:         "answering: claude/sonnet",
+			avoidGuidance: "Remove the retired claude authentication settings?",
 		},
 		{
 			name: "persisted custom command",
@@ -259,10 +257,10 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 					t.Fatal(err)
 				}
 				writeConfig(t, home,
-					"[models]\norder = [\"ollama\"]\n\n[models.claude]\ncommand = [\"custom-claude\", \"{prompt}\"]\nmodel = \"custom-old\"\n")
+					"[models]\norder = [\"claude\"]\n\n[models.claude]\ncommand = [\"custom-claude\", \"{prompt}\"]\nmodel = \"custom-old\"\n")
 			},
-			input:    "sonnet\n\n",
-			want:     "answering: claude/sonnet",
+			want:     "answering: claude/custom-old",
+			avoid:    "answering: claude/sonnet",
 			guidance: []string{"transport is governed by models.claude.command"},
 		},
 	}
