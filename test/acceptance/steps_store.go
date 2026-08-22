@@ -143,7 +143,11 @@ func (m *world) freshDatabase() error {
 	if m.last.code != 0 {
 		return fmt.Errorf("init exited %d: %s", m.last.code, m.last.stderr)
 	}
-	return nil
+	// The store-domain scenarios measure the core store itself. New installs
+	// deliberately route agent memories to roca-ops, so this harness becomes an
+	// explicit existing-config operator who keeps the legacy core write target.
+	return os.WriteFile(filepath.Join(m.home, ".roca", "config.toml"), []byte(
+		"[features]\nplugins = true\nroca_ops = false\ncron = true\nvector = false\n"), 0o600)
 }
 
 // runInit is the When action: it runs init and files what it said, and the

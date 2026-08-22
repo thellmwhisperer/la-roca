@@ -35,6 +35,9 @@ type distributionWorld struct {
 	state     map[string]any
 }
 
+const distributionPreparedConfig = "[models]\norder = [\"none\"]\n\n" +
+	"[features]\nplugins = true\nroca_ops = true\ncron = true\nvector = false\n"
+
 func registerDistributionSteps(ctx *godog.ScenarioContext, binary string) {
 	w := &distributionWorld{binary: binary}
 	ctx.Before(func(c context.Context, _ *godog.Scenario) (context.Context, error) {
@@ -80,6 +83,9 @@ func (w *distributionWorld) prepare(label string) error {
 	run := w.runAt(home, installed, "init", "--db-path", filepath.Join(home, ".roca", "roca.db"), "--json")
 	if run.code != 0 {
 		return fmt.Errorf("initialize %s: exit %d: %s", label, run.code, run.stderr)
+	}
+	if err := writeFixture(filepath.Join(home, ".roca", "config.toml"), distributionPreparedConfig); err != nil {
+		return err
 	}
 	w.home, w.installed, w.last = home, installed, run
 	return nil
