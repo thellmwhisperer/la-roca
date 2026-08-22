@@ -372,7 +372,7 @@ func (m *world) theCountHasGoneUpByOne() error {
 }
 
 func (m *world) theIdentityCardSaysItCameFromThePlug() error {
-	db, err := m.openDB()
+	db, err := m.openRocaOpsDB()
 	if err != nil {
 		return err
 	}
@@ -564,11 +564,16 @@ func renderedText(result *mcp.CallToolResult) string {
 	if result == nil {
 		return ""
 	}
-	var parts []string
+	var rendered strings.Builder
 	for _, content := range result.Content {
-		if text, ok := content.(*mcp.TextContent); ok {
-			parts = append(parts, text.Text)
+		text, ok := content.(*mcp.TextContent)
+		if !ok {
+			continue
 		}
+		if rendered.Len() > 0 {
+			rendered.WriteByte('\n')
+		}
+		rendered.WriteString(text.Text)
 	}
-	return strings.Join(parts, "\n")
+	return rendered.String()
 }

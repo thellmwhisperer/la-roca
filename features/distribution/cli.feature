@@ -41,7 +41,7 @@ Feature: Distribution command line
 
   Scenario: Non-interactive init names the answering model without opening the chooser
     When the operator initializes non-interactively with a detected model CLI
-    Then init prints one answering notice and writes no model configuration
+    Then init prints one answering notice and writes only the new-install features
 
   Scenario: Doctor report is a privacy-safe pasteable snapshot
     When the operator asks for a doctor support report

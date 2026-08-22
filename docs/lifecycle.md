@@ -72,7 +72,21 @@ it. Non-interactive automation must select a location with `--db-path`; init
 never guesses. Existing tables outside the current schema are reported and left
 intact.
 
-In a terminal, database selection flows directly into a model-first chooser:
+When init begins without a configuration, it creates `config.toml` in
+`~/.roca/` for the standard database, or next to the database selected with
+`--db-path` or `ROCA_DB_PATH`. Interactive and non-interactive init use the
+same new-install feature block:
+
+```toml
+[features]
+plugins = true
+roca_ops = true
+cron = true
+vector = false
+```
+
+In a terminal, that new configuration flows directly into a model-first
+chooser:
 
 1. Init lists the default model for every detected supported agent CLI and the
    models returned by Ollama's local catalogue, then asks which model should
@@ -83,9 +97,11 @@ In a terminal, database selection flows directly into a model-first chooser:
    selected and named automatically; several candidates produce one short
    harness question.
 3. Init confirms the provider/model pair, probes a changed choice, and writes
-   the provider entry, model, and order to the configuration with a surgical
-   edit. An existing configuration file gets a named `.roca.bak` recovery copy
-   when the edit changes it.
+   the provider entry, model, and order into the new configuration.
+
+If a config existed beside the resolved database when init began, init
+preserves it byte-for-byte, skips the chooser, and uses its current model
+selection; use `roca model set` for an intentional later change.
 
 A normal fresh init asks for the database, model, and confirmation. An ambiguous
 harness adds one question; adoption separately asks for its source path. It uses
@@ -117,10 +133,10 @@ detected CLI can serve. Models authenticate through their own CLIs; La Roca
 stores no secrets.
 
 With `--db-path` on non-terminal input, init keeps that zero-login factory
-selection without opening the chooser or writing model configuration. Human
-output emits one `answering:` notice with the chosen provider/model and
-configuration path; scripts receive no prompts. `--json` remains one JSON
-document.
+selection without opening the chooser or adding model settings. A missing
+config still receives the new-install feature block above. Human output emits one
+`answering:` notice with the chosen provider/model and configuration path;
+scripts receive no prompts. `--json` remains one JSON document.
 
 ## Skills
 

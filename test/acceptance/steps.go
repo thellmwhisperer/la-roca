@@ -695,6 +695,14 @@ func (m *world) openDB() (*sql.DB, error) {
 	return sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)")
 }
 
+func (m *world) openRocaOpsDB() (*sql.DB, error) {
+	path := filepath.Join(m.home, ".roca", "plugins", "roca-ops", "roca-ops.db")
+	if _, err := os.Stat(path); err != nil {
+		return nil, fmt.Errorf("there is no roca-ops database at %s: %w", path, err)
+	}
+	return sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)")
+}
+
 // rowsOfTheAnswer is the `rows` list of the JSON answer, refused when it is
 // empty: every step that checks a property of the rows one by one needs the same
 // thing first, and an empty list would let the check pass by having nothing to

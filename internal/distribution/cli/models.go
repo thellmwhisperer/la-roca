@@ -20,6 +20,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
+	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 const (
@@ -286,7 +287,7 @@ func (env *cliEnv) chooseInitModel(ctx context.Context, input *bufio.Reader,
 	candidates := initHarnesses(origins, model)
 	if len(candidates) == 0 {
 		return result, false, fmt.Errorf(
-			"no detected harness can serve model %s; configuration was not changed", model)
+			"no detected harness can serve model %s; model selection was not changed", model)
 	}
 	harness, err := env.askInitHarness(input, model, candidates, defaultChoice.Provider)
 	if err != nil {
@@ -297,18 +298,18 @@ func (env *cliEnv) chooseInitModel(ctx context.Context, input *bufio.Reader,
 		return result, false, err
 	}
 	if !confirmed {
-		env.initSay("model choice canceled; configuration was not changed")
+		env.initSay("model choice canceled; model selection was not changed")
 		return result, false, nil
 	}
 	if harness != defaultChoice.Provider || model != defaultChoice.Model {
 		backend := env.initModelBackend(paths, file, harness)
 		if err := backend.Probe(ctx, harness, model); err != nil {
 			return result, false, fmt.Errorf(
-				"%s model %s failed its account probe: %w; configuration was not changed",
+				"%s model %s failed its account probe: %w; model selection was not changed",
 				harness, model, err)
 		}
 	}
-	if err := env.offerRetirementFor(input, harness); err != nil {
+	if err := env.offerRetirementFor(input, harness, paths); err != nil {
 		return result, false, err
 	}
 	outcome, err := writeInitModelChoice(paths, harness, model)
@@ -316,13 +317,9 @@ func (env *cliEnv) chooseInitModel(ctx context.Context, input *bufio.Reader,
 		return result, false, err
 	}
 	if outcome.Changed {
-		fmt.Fprintf(env.errOut, "configuration updated: %s", outcome.Path)
-		if outcome.Backup != "" {
-			fmt.Fprintf(env.errOut, " (backup: %s)", outcome.Backup)
-		}
-		fmt.Fprintln(env.errOut)
+		env.initSay("configuration updated: %s", outcome.Path)
 	} else {
-		env.initSay("configuration unchanged: %s", outcome.Path)
+		env.initSay("model selection unchanged in: %s", outcome.Path)
 	}
 	result.Model, err = effectiveInitModel(ctx, paths)
 	if err != nil {
@@ -536,7 +533,7 @@ func (env *cliEnv) askInitHarness(input *bufio.Reader, model string, candidates 
 	if slices.Contains(candidates, answer) {
 		return answer, nil
 	}
-	return "", fmt.Errorf("harness %q is not one of %s; configuration was not changed",
+	return "", fmt.Errorf("harness %q is not one of %s; model selection was not changed",
 		answer, strings.Join(candidates, ", "))
 }
 
@@ -566,19 +563,29 @@ func (env *cliEnv) readInitLine(input *bufio.Reader) (string, error) {
 	return answer, nil
 }
 
-// writeInitModelChoice persists the pair the operator confirmed and nothing
-// else. Retiring a legacy transport is a separate, visible accept/decline
-// proposal: a model-selection prompt never deletes an operator's settings or
-// the credential files an older release left behind.
 func writeInitModelChoice(paths config.Paths, providerName, model string) (agentcfg.Outcome, error) {
+	outcome := agentcfg.Outcome{Runtime: "roca", Path: paths.Config}
+	previous, err := os.ReadFile(paths.Config)
+	if err != nil {
+		return outcome, fmt.Errorf("read the init-owned configuration at %s: %w", paths.Config, err)
+	}
 	changes := []config.Change{
 		{Kind: config.PrependUnique, Table: "models", Key: "order", Value: providerName,
 			Default: provider.DefaultOrder(nil)},
 		{Kind: config.SetValue, Table: "models." + providerName, Key: "model", Value: model},
 	}
-	return agentcfg.EditWithBackup("roca", paths.Config, func(text string) (string, error) {
-		return config.ApplyText(text, changes)
-	}, config.RedactProviderSecrets, true)
+	updated, err := config.ApplyText(string(previous), changes)
+	if err != nil {
+		return outcome, err
+	}
+	if updated == string(previous) {
+		return outcome, nil
+	}
+	if err := securefile.Replace(paths.Config, []byte(updated), previous); err != nil {
+		return outcome, err
+	}
+	outcome.Changed = true
+	return outcome, nil
 }
 
 // offerRetirementFor puts the reconciliation proposals that concern the chosen
@@ -586,11 +593,11 @@ func writeInitModelChoice(paths config.Paths, providerName, model string) (agent
 // before init writes the choice. It is the only route by which init retires a
 // legacy transport, and it is always shown rather than stamped away, because
 // the operator has just asked for that provider to answer.
-func (env *cliEnv) offerRetirementFor(input *bufio.Reader, providerName string) error {
+func (env *cliEnv) offerRetirementFor(input *bufio.Reader, providerName string, paths config.Paths) error {
 	if env.skipReconciliation {
 		return nil
 	}
-	context, err := env.reconciliationContext()
+	context, err := env.reconciliationContextFor(paths)
 	if err != nil {
 		return err
 	}
