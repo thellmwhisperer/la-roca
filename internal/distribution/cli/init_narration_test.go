@@ -15,11 +15,7 @@ import (
 )
 
 func TestInitNarratesItsPhasesAndPointsToThePromptLast(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("ROCA_DB_PATH", "")
-	t.Setenv("ROCA_CONFIG", "")
-	t.Setenv("ROCA_MODELS_ORDER", "none")
+	home := hermeticHome(t)
 
 	out := runRoot(t, Build{Version: "test", Commit: "test-sha"},
 		"init", "--db-path", filepath.Join(home, ".roca", "roca.db"))

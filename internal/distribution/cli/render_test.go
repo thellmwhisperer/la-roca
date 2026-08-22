@@ -183,6 +183,19 @@ func TestTheVersionFlagAnswersWhatTheSubcommandAnswers(t *testing.T) {
 	}
 }
 
+// hermeticHome is a machine the test owns end to end: a home directory with
+// nothing in it and every environment override cleared, so what the run finds is
+// only what the test put there.
+func hermeticHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ROCA_DB_PATH", "")
+	t.Setenv("ROCA_CONFIG", "")
+	t.Setenv("ROCA_MODELS_ORDER", "none")
+	return home
+}
+
 func runRoot(t *testing.T, build Build, args ...string) string {
 	t.Helper()
 	out, err := runRootErr(t, build, nil, args...)

@@ -2,10 +2,8 @@ package search_test
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 
-	"github.com/thellmwhisperer/la-roca/internal/store"
 	"github.com/thellmwhisperer/la-roca/internal/store/search"
 )
 
@@ -34,14 +32,7 @@ func TestProofAsksTheIndexForAWordTheDatabaseHolds(t *testing.T) {
 // index, and the caller has to be able to tell the two apart.
 func TestProofSaysEmptyRatherThanBrokenOnAFreshDatabase(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Open(filepath.Join(t.TempDir(), "roca.db"))
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	if err := store.ApplySchema(ctx, db); err != nil {
-		t.Fatalf("ApplySchema: %v", err)
-	}
+	db := openWorld(t)
 	if _, err := search.Index(ctx, db, nil); err != nil {
 		t.Fatalf("Index: %v", err)
 	}
