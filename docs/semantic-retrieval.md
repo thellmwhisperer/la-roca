@@ -9,7 +9,8 @@ La Roca has two different jobs that must not be confused:
 
 The optional `roca-vector` executable supplies semantic candidates for the
 second job. It can combine the canonical corpus with explicitly selected data
-plugins through the public `roca exec` boundary. Its install and trust boundary are defined by the
+plugins through the public `roca exec` boundary. Its install and trust boundary
+are defined by the
 [executable plugin contract](plugins.md#executable-only-packages), and its
 setup is documented in the [roca-vector package guide](../plugins/vector/README.md).
 When a candidate is returned, the agent must resolve the source text through

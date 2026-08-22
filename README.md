@@ -11,7 +11,6 @@ are, one query away.
 
 One tool, zero dependencies, 100% local. SQLite + exact SQL + optional
 local semantic search. CLI + MCP.
-One core file, zero dependencies: local SQLite, CLI + MCP.
 
 [![CI](https://github.com/thellmwhisperer/la-roca/actions/workflows/ci.yml/badge.svg)](https://github.com/thellmwhisperer/la-roca/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -174,6 +173,8 @@ incremental, idempotent, read-only against live stores.
   source context through core before forming a verdict. A vector score is not
   evidence, and literal rescue is never silently presented as semantic
   retrieval. See [Semantic retrieval](docs/semantic-retrieval.md).
+  The [Libro de Economía profile](docs/semantic-profiles/libro-economia.md)
+  shows how a domain layer keeps its own categories while preserving evidence.
 - **Honest degradation.** No usable provider, or SQL that cannot run, falls
   back to literal search and says so in the result. The semantic-first skill
   reports an unavailable vector route instead of presenting that exact

@@ -21,11 +21,12 @@ channel, video, publication date, and opaque source reference metadata.
 ## Build and install
 
 Every release core carries its matching companion and the standard installer
-materializes it beside `roca`; `features.plugins` is not required. Vector
-retrieval remains off until `features.vector = true`. Follow [Local vector
-search](../../docs/vector.md) for native Windows and Unix setup, the Ollama
-prerequisite, indexing, and verification. Standalone verified archives remain
-release artefacts for explicit plugin-package workflows.
+materializes it beside `roca`. Vector dispatch requires both
+`features.plugins = true` and `features.vector = true`; `features.plugins` is
+the master gate. Follow [Local vector search](../../docs/vector.md) for native
+Windows and Unix setup, the Ollama prerequisite, indexing, and verification.
+Standalone verified archives remain release artefacts for explicit
+plugin-package workflows.
 
 ## Build from source
 
@@ -37,16 +38,17 @@ make -C plugins/vector package
 roca plugin install .tmp/vector-package
 ```
 
-This package is intentionally installable rather than bundled. Installation is
-an explicit full-trust consent event and an ordinary La Roca install or update
-does not place the binary. Set `features.vector = true` as well: both switches
-are required, with `features.plugins` as the master gate. If either is absent
-or false, `roca vector` dispatch and its `roca plugins` entry stay hidden even
-when the binary is on `PATH`. Installation supplies the package; the vector
-switch activates it.
+Standalone package installation is an explicit full-trust consent event; an
+ordinary La Roca install or update does not place a separately sourced binary.
+Both `features.plugins` and `features.vector` are required, with
+`features.plugins` as the master gate. If either is absent or false, `roca
+vector` dispatch and its `roca plugins` entry stay hidden even when the binary
+is on `PATH`. Installation supplies the package; the vector switch activates
+it.
 The corpus walk excludes deprecated `rocodata_*` memory layers. Historical
 RocoData imports therefore cannot enter a new vector index; the canonical La
 Roca corpus remains the only memory source used by semantic retrieval.
+
 ## Use
 
 Ollama must be running locally. The default model is
@@ -57,6 +59,7 @@ roca vector install
 roca vector ingest --delta
 roca vector ingest --delta --source memories
 roca vector compact
+roca vector install --plugin biblioteca-conocimiento
 roca vector ingest --delta --plugin biblioteca-conocimiento
 roca vector query "which decision kept inference local" 5
 roca vector query --plugin biblioteca-conocimiento --topic salud \
@@ -73,14 +76,14 @@ deduplication, and live text resolution. Pass `--databases corpus,ops` or
 Same-model sidecars merge into one top-N; mixed-model sidecars stay grouped per
 database with a notice. Missing sidecars or models remain FTS-only.
 
-`compact` copies each existing sidecar's float embeddings into a fresh paged store,
-rebuilds their binary ANN representation without calling the model, verifies
-chunk and source-kind counts plus database integrity, and atomically replaces
-the old store. It reports aggregate embedding pages before and after, bytes
-reclaimed, database count, and the unchanged live chunk count. It refuses to
-run while a delta ingest holds a sidecar lock. Ingest does not compact automatically: reclaiming space
-remains an explicit operator action, so no background maintenance policy is
-enabled by default.
+`compact` copies each existing sidecar's float embeddings into a fresh paged
+store, rebuilds their binary ANN representation without calling the model,
+verifies chunk and source-kind counts plus database integrity, and atomically
+replaces the old store. It reports aggregate embedding pages before and after,
+bytes reclaimed, database count, and the unchanged live chunk count. It refuses
+to run while a delta ingest holds a sidecar lock. Ingest does not compact
+automatically: reclaiming space remains an explicit operator action, so no
+background maintenance policy is enabled by default.
 
 A full delta covers every table and prose column in the generated vector
 registry. The bundled corpus declares sessions, memories, exchanges, and
@@ -96,9 +99,9 @@ live text resolution. Titles and topic/channel labels enrich the embedding
 input while the stored fingerprint remains the exact transcript text; changed
 live text is rejected as a stale candidate until the next delta ingestion. The
 index also removes retired `rocodata_*` chunks from an existing index when
-writing is enabled. Under `ROCA_READ_ONLY`, a query refuses an index that still has
-such chunks; run `roca vector ingest --delta` with writes enabled to reconcile
-it.
+writing is enabled. Under `ROCA_READ_ONLY`, a query refuses an index that still
+has such chunks; run `roca vector ingest --delta` with writes enabled to
+reconcile it.
 
 For a non-default core database, export `ROCA_DB_PATH` or pass the plugin flag
 after dispatch: `roca vector --db-path /path/to/roca.db query "..."`.

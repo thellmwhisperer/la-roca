@@ -102,8 +102,8 @@ func TestSkillTeachesOnlyCommandsTheCLIHas(t *testing.T) {
 }
 
 // taughtPluginDispatch accepts the PATH-dispatched vector verbs the skill
-// teaches. They are not cobra children of the core tree; features.vector
-// unhides them at runtime.
+// teaches. They are not cobra children of the core tree; the vector and plugin
+// feature gates unhide them at runtime.
 func taughtPluginDispatch(tokens []string) bool {
 	if len(tokens) == 0 || tokens[0] != "vector" {
 		return false

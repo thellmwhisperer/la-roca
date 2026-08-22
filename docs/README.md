@@ -13,9 +13,10 @@ Reading order, from operator to contributor:
    SQL repair then gate, and the TOON versus `--full` readers.
 4. [Ingest sources](ingest.md): import downloaded data exports once and understand
    their incremental boundary.
-5. [Local vector search](vector.md): the default-off `features.vector` switch,
-   Windows and Unix Ollama setup, the one-time embedding-model download,
-   hardware-conditioned indexing time, and the null-delta check.
+5. [Local vector search](vector.md): the default-off `features.plugins` and
+   `features.vector` gates, Windows and Unix Ollama setup, the one-time
+   embedding-model download, hardware-conditioned indexing time, and the
+   null-delta check.
 6. [Agent parser contribution kit](agent-parsers.md): support another agent with
    a measured real store, a synthetic fixture, one parser file, and one registry
    line.
@@ -25,7 +26,8 @@ Reading order, from operator to contributor:
 8. [The MCP plug](mcp.md): the stdio server, its six tools, the TOON answer
    contract, and the supported integration targets.
 9. [Semantic retrieval](semantic-retrieval.md): semantic-first candidate
-   retrieval, context recovery, evidence, and honest degradation.
+   retrieval, context recovery, evidence, and honest degradation, including the
+   [Libro de Economía profile](semantic-profiles/libro-economia.md).
 10. [Operations](operations.md): memory-layer validation and repair, the audit
    log contract for every CLI and MCP call, the query failures `roca doctor`
    reports, the privacy-safe `roca doctor --report` support snapshot,
