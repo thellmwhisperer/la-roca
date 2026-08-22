@@ -2,13 +2,17 @@
 package securefile
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 )
 
-var linkFile = os.Link
+var (
+	errAtomicNoReplaceUnsupported = errors.New("atomic no-replace publication is unsupported")
+	renameNoReplaceFile           = renameNoReplace
+)
 
 // Write replaces path atomically after the new bytes and permissions are durable.
 func Write(path string, data []byte, mode, dirMode os.FileMode) (err error) {
@@ -104,16 +108,14 @@ func publish(path string, data, previous []byte, mode, dirMode os.FileMode,
 		}
 	}
 	if createOnly {
-		if linkErr := linkFile(staged, path); linkErr != nil {
-			if os.IsExist(linkErr) {
+		if err = renameNoReplaceFile(staged, path); err != nil {
+			if os.IsExist(err) {
 				return createCollisionError(path)
 			}
-			if err = createExclusive(path, data, mode); err != nil {
-				return err
+			if errors.Is(err, errAtomicNoReplaceUnsupported) {
+				return fmt.Errorf("cannot safely create %s: %w", path, err)
 			}
-		}
-		if err = os.Remove(staged); err != nil {
-			return err
+			return fmt.Errorf("atomically create %s: %w", path, err)
 		}
 	} else if err = os.Rename(staged, path); err != nil {
 		return err
@@ -132,40 +134,6 @@ func publish(path string, data, previous []byte, mode, dirMode os.FileMode,
 	}
 	defer directory.Close()
 	return directory.Sync()
-}
-
-func createExclusive(path string, data []byte, mode os.FileMode) (err error) {
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
-	if err != nil {
-		if os.IsExist(err) {
-			return createCollisionError(path)
-		}
-		return err
-	}
-	created, err := file.Stat()
-	if err != nil {
-		file.Close()
-		return err
-	}
-	defer func() {
-		if closeErr := file.Close(); err == nil && closeErr != nil {
-			err = closeErr
-		}
-		if err != nil {
-			current, statErr := os.Stat(path)
-			if statErr == nil && os.SameFile(created, current) {
-				_ = os.Remove(path)
-			}
-		}
-	}()
-
-	if err = file.Chmod(mode); err != nil {
-		return err
-	}
-	if _, err = file.Write(data); err != nil {
-		return err
-	}
-	return file.Sync()
 }
 
 func createCollisionError(path string) error {
