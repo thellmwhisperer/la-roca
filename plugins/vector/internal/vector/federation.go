@@ -684,6 +684,9 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 				return FederationDelta{}, unchangedErr
 			}
 		}
+		if err := claimSidecar(sidecar, database.owner(), f.BuildVersion, contract, sourceKind == ""); err != nil {
+			return FederationDelta{}, err
+		}
 		jobs = append(jobs, &ingestJob{database: database, reader: reader, sidecar: sidecar,
 			contract: contract, fingerprint: fingerprint})
 	}
@@ -1453,6 +1456,30 @@ func SidecarPath(databasePath string) string {
 }
 
 func sealSidecar(path, owner, model, buildVersion, contract, sourceFingerprint string) error {
+	values := map[string]string{
+		"owner": owner, "model": model, "version": buildVersion, "contract": contract,
+	}
+	if sourceFingerprint != "" {
+		values["source_fingerprint"] = sourceFingerprint
+	}
+	return writeSidecarMeta(path, owner, values, nil)
+}
+
+// claimSidecar names the index before it is built. Identity written at the end
+// of a run is identity a run that never ends never writes, and rows already on
+// disk then read as an absent index: the product looks empty when it is not.
+// The fingerprint of the source goes in the same breath, because an index that
+// has not finished must never claim to already match what it was built from.
+func claimSidecar(path, owner, buildVersion, contract string, full bool) error {
+	var clear []string
+	if full {
+		clear = []string{"source_fingerprint"}
+	}
+	return writeSidecarMeta(path, owner, map[string]string{
+		"owner": owner, "version": buildVersion, "contract": contract}, clear)
+}
+
+func writeSidecarMeta(path, owner string, values map[string]string, clear []string) error {
 	store, err := openSQLite(path, false)
 	if err != nil {
 		return fmt.Errorf("open vector sidecar for %s: %w", owner, err)
@@ -1469,12 +1496,6 @@ func sealSidecar(path, owner, model, buildVersion, contract, sourceFingerprint s
 	if knownOwner != "" && knownOwner != owner {
 		return fmt.Errorf("vector sidecar owner is %s, want %s", knownOwner, owner)
 	}
-	values := map[string]string{
-		"owner": owner, "model": model, "version": buildVersion, "contract": contract,
-	}
-	if sourceFingerprint != "" {
-		values["source_fingerprint"] = sourceFingerprint
-	}
 	tx, err := store.Begin()
 	if err != nil {
 		return err
@@ -1482,6 +1503,11 @@ func sealSidecar(path, owner, model, buildVersion, contract, sourceFingerprint s
 	defer tx.Rollback()
 	for key, value := range values {
 		if _, err := tx.Exec(`INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)`, key, value); err != nil {
+			return err
+		}
+	}
+	for _, key := range clear {
+		if _, err := tx.Exec(`DELETE FROM meta WHERE key=?`, key); err != nil {
 			return err
 		}
 	}

@@ -959,3 +959,47 @@ func flattenInputs(batches [][]string) []string {
 }
 
 func intPointer(value int) *int { return &value }
+
+// haltingEmbedder lets one batch through and drops the next, which leaves the
+// index in the state this test is about: rows written, run never finished.
+type haltingEmbedder struct{ batches int }
+
+func (e *haltingEmbedder) Pull(context.Context, string) error { return nil }
+
+func (e *haltingEmbedder) Embed(_ context.Context, _ string, input []string) ([][]float32, error) {
+	e.batches++
+	if e.batches == 2 {
+		return nil, fmt.Errorf("the embedding pass was interrupted")
+	}
+	vectors := make([][]float32, len(input))
+	for index := range input {
+		vectors[index] = []float32{1, 0, 0, 0, 0, 0, 0, 0}
+	}
+	return vectors, nil
+}
+
+func TestAnInterruptedIndexStillAnswersWithTheRowsItAlreadyWrote(t *testing.T) {
+	federation, corpusPath, _, _ := federationFixture(t)
+	mutateSourceDatabase(t, corpusPath, fmt.Sprintf(
+		`INSERT INTO articles VALUES ('article-3','Long title','%s','raw-counter')`,
+		strings.Repeat("remembered alpha ", 120)))
+	federation.Embedder = &haltingEmbedder{}
+
+	if _, err := federation.Ingest(context.Background(), ""); err == nil {
+		t.Fatal("an embedder that stops answering has to fail the ingest")
+	}
+
+	answer, err := federation.Query(context.Background(), "remembered", 10, "corpus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(answer.Notices, "\n"), "FTS-only") {
+		t.Fatalf("an unfinished index reported itself as absent: %q", answer.Notices)
+	}
+	if len(answer.Results) == 0 {
+		t.Fatal("an unfinished index hid the rows it had already written")
+	}
+	if fingerprint := sidecarMeta(t, SidecarPath(corpusPath))["source_fingerprint"]; fingerprint != "" {
+		t.Fatalf("an unfinished index claimed to match its source: %q", fingerprint)
+	}
+}
