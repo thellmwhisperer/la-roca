@@ -55,21 +55,24 @@ func TestSkillInstallWritesUnderTempHome(t *testing.T) {
 	if err != nil || zones.System != skill.Content() || zones.User != "" {
 		t.Fatalf("installed zones = %+v, err %v", zones, err)
 	}
-	previous := -1
+	// The playbook is read top to bottom, so the steps have to appear in the
+	// order an agent performs them. Each one is looked for after the last, which
+	// leaves prose free to name a command before the step that runs it.
+	previous := 0
 	for _, command := range []string{
-		"curl -fsSL", "roca init", "roca skill install", "roca query",
-		"vector = true", "roca vector install",
+		"curl -fsSL", "roca init", "roca query",
+		"roca skill install", "roca init --vectors",
 	} {
-		index := strings.Index(zones.System, command)
-		if index < 0 {
-			t.Fatalf("installed agent playbook is missing %q", command)
+		offset := strings.Index(zones.System[previous:], command)
+		if offset < 0 {
+			t.Fatalf("installed agent playbook is missing %q, or puts it out of order", command)
 		}
-		if index <= previous {
-			t.Fatalf("installed agent playbook puts %q out of order", command)
-		}
-		previous = index
+		previous += offset + len(command)
 	}
-	for _, forbidden := range []string{"plugins = true", "roca_ops = true"} {
+	// The second yes is a command, not a hand-edited configuration file: an
+	// agent that is taught to switch a feature on by hand switches it on for a
+	// machine that has no index to serve.
+	for _, forbidden := range []string{"plugins = true", "roca_ops = true", "vector = true"} {
 		if strings.Contains(zones.System, forbidden) {
 			t.Fatalf("installed agent playbook still tells agents to set %q", forbidden)
 		}
@@ -374,13 +377,15 @@ func TestSkillTeachesTheInvestigationFunnel(t *testing.T) {
 			name: "vector owns the index",
 			body: skill.VectorContent(),
 			want: []string{
+				"roca init --vectors",
+				"roca vector status",
 				"roca vector install",
 				"roca vector ingest --delta",
 				"roca vector compact",
 				"completion.json",
 				"invite the user to",
-				"exit_status == 0",
-				"Otherwise treat the index as unavailable",
+				"is not an\nempty product",
+				"never to decide whether the index",
 			},
 		},
 	} {

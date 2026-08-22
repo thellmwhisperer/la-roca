@@ -34,7 +34,7 @@ Do not read a manual. Tell your agent:
 > Install https://github.com/thellmwhisperer/la-roca and learn to use it.
 
 The repository teaches your agent the rest: [`AGENTS.md`](AGENTS.md) tells
-it what this is, how to install it, and how to search well. Four commands
+it what this is, how to install it, and how to search well. Three commands
 later it is answering questions about everything your agents ever did:
 
 ```text

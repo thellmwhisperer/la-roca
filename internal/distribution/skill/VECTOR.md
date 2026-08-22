@@ -15,9 +15,9 @@ current, and the standing invitation. Search craft lives in
 ## Invite
 
 The craft in `roca-operations` is complete without an index. During interactive
-init, invite the user to say yes to semantic search. That remembered answer
-starts the one model download (~1 GB) and newest-first background build; there
-is no second setup command. It pays back every day after.
+init, after word search works, La Roca asks once for permission to find history
+by meaning and download the model it needs. A yes starts the background build;
+it pays back every day after.
 
 If they declined during init and choose semantic search later:
 
@@ -26,19 +26,26 @@ If they declined during init and choose semantic search later:
 roca vector install
 ```
 
-`features.vector = true` only unhides `roca vector`. It is not the index.
+Word search keeps answering while the meaning pass runs in the background.
 
 ## Watch progress
 
-Tell the user the build is running, and offer a live view of the progress:
+Progress is a fraction of the user's own history, and that is the number to
+report:
 
 ```sh
-tail -f ~/.roca/plugins/roca-vector/state/worker.log
+roca vector status
 ```
 
-`completion.json` in the same directory records `started_at`, `finished_at`,
-and `exit_status`. The index is ready only when `finished_at` is non-empty and
-`exit_status == 0`. Otherwise treat the index as unavailable.
+It says whether a pass is reading right now, how much of the history it has
+read, and what stopped it if it stopped. A pass that stopped partway is not an
+empty product: the rows it already wrote are queryable, and word search covers
+the rest. Never report a machine with rows on disk as having nothing.
+
+`completion.json` under the plugin state directory records `started_at`,
+`finished_at`, and `exit_status` for the last pass. Read it to say whether the
+history was read all the way through, never to decide whether the index
+answers: what is written answers regardless of how the pass ended.
 
 ## Maintain
 
@@ -68,7 +75,12 @@ reports a null aggregate delta (`0 added · 0 updated · 0 removed`) and an
 unchanged count equal to the live chunk count across declared databases.
 
 `ROCA_READ_ONLY` refuses `install`, `ingest --delta`, and `compact`.
-For a non-default database, pass `--db-path` on the vector command.
+For a database that is not the default, start the pass at the plugin instead
+of at init and name the database:
+
+```sh
+roca vector install --db-path <path>
+```
 
 A first smoke query after the index is ready:
 

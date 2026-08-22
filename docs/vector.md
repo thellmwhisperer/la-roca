@@ -9,6 +9,32 @@ payload: the matching artefacts are `roca-<version>-windows-x64.exe` (core, carr
 `roca-vector-vX.Y.Z-windows-x64.tar.gz` (standalone archive in the same
 release).
 
+## The one-command path
+
+`roca init --vectors` is the supported first run and does everything the
+sections below describe by hand: it gets the local embedding runtime going if
+this machine allows it, fetches the model if it is missing, turns
+`features.vector` on in the configuration `roca doctor` names, and starts the
+background pass. Word search keeps answering the whole time. If the machine
+cannot embed, init reports that and prints one next step instead of failing.
+
+Bare `roca init` never does any of this: it stops at working full-text search,
+downloads nothing, and does not rewrite an existing configuration. The same is
+true of a non-interactive run and of any run with `--db-path`.
+
+Progress is reported as a fraction of the history on this machine:
+
+```sh
+roca vector status
+```
+
+It says whether a pass is reading right now, how much it has read, and what
+stopped it if it stopped. A pass that stopped partway leaves the rows it
+already wrote queryable; those rows answer, and full text answers for the rest.
+
+The rest of this document is the contract underneath, for operators who want
+each step separately or who are on a machine the one command cannot serve.
+
 ## Windows install
 
 1. Download `roca-<version>-windows-x64.exe` from the release, put it in a

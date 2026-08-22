@@ -109,6 +109,29 @@ search decision after full-text indexing is ready. An ambiguous harness adds one
 question; adoption separately asks for its source path. It uses the agent CLI's
 existing session and does not add a login step.
 
+### Word search before init returns
+
+Init does not return until word search works. After the first ingest it takes a
+word out of a row this machine now holds, asks the full-text index for it, and
+reports the round trip. A machine with no agent history yet says exactly that,
+which is a fact about the machine and not a fault in the index. Only an index
+that fails to answer for text it holds is reported as a fault.
+
+### The second yes
+
+`roca init --vectors` adds one thing to that run: it gets the local embedding
+runtime going if the machine allows it, fetches the embedding model if it is
+missing, turns `features.vector` on, and starts the background pass that reads
+the history for meaning. Word search keeps answering while it runs, and
+`roca vector status` reports progress as a fraction of this machine's history.
+A machine that cannot embed gets one clear next step and a working word search,
+never a failed init.
+
+In a terminal, a run that proved word search on real history offers the same
+yes as a question. Bare non-interactive init, any run with `--db-path`, and any
+run whose configuration already enables the feature stop at working full text:
+they download nothing and rewrite no existing configuration.
+
 Init also writes and registers `prompt.md` in the selected data directory. Its
 marked SYSTEM zone is shipped by La Roca; its marked USER zone belongs to the
 operator. A file an earlier release wrote is moved into those zones once, and
@@ -160,10 +183,11 @@ comes with its whole story: the how, the why, and the failed attempts behind
 the final answer, one question away.
 
 `roca init` ships the three embedded skills (`roca`, `roca-operations`,
-`roca-vector`) into every detected skill seat. `roca skill install` writes
-those three plus `roca-semantica`, a catalog of every installed plugin's tables
-and example questions generated from the same fragments natural-language search
-uses. An agent installed after init receives the three embedded skills after
+`roca-vector`) into every detected skill seat, and with them `roca-semantica`,
+a catalog of every installed plugin's tables and example questions generated
+from the same fragments natural-language search uses. `roca skill install`
+writes the same four for a runtime init did not detect. An agent installed
+after init receives the three embedded skills after
 the next successful non-dry-run ingest, whether plain or nightly. Each
 installed skill and the generated prompt keep shipped SYSTEM content separate
 from an operator-owned USER zone, and `roca update` tracks their
