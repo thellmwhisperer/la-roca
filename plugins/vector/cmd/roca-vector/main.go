@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -63,7 +64,7 @@ func rootCommand(env *environment) *cobra.Command {
 	_ = root.PersistentFlags().MarkHidden("state-dir")
 	_ = root.PersistentFlags().MarkHidden("progress-fd")
 	root.AddCommand(installCommand(env), ingestCommand(env), compactCommand(env),
-		queryCommand(env), workerCommand(env), residentCommand(env))
+		queryCommand(env), statusCommand(env), workerCommand(env), residentCommand(env))
 	return root
 }
 
@@ -121,6 +122,88 @@ func installCommand(env *environment) *cobra.Command {
 	command.Flags().BoolVar(&streamProgress, "stream-progress", false, "stream setup progress")
 	_ = command.Flags().MarkHidden("stream-progress")
 	return command
+}
+
+// indexStatus is the whole answer to "how is it going", in the terms the person
+// asking has: how much of their history has been read, whether reading is still
+// going on, and what stopped it if it stopped.
+type indexStatus struct {
+	Running   bool                      `json:"running"`
+	Read      int                       `json:"read"`
+	Total     int                       `json:"total"`
+	Databases []vector.DatabaseProgress `json:"databases,omitempty"`
+	Stopped   string                    `json:"stopped,omitempty"`
+}
+
+func statusCommand(env *environment) *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Report how much of your history has been read for meaning",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			status, err := env.indexStatus(command.Context())
+			if err != nil {
+				return err
+			}
+			if env.json {
+				return printJSON(status)
+			}
+			for _, line := range statusLines(status) {
+				fmt.Println(line)
+			}
+			return nil
+		},
+	}
+}
+
+func (env *environment) indexStatus(ctx context.Context) (indexStatus, error) {
+	state, err := env.resolveStateDir()
+	if err != nil {
+		return indexStatus{}, err
+	}
+	status := indexStatus{Running: vector.WorkerRunning(state)}
+	if completion, ok := vector.ReadCompletion(state); ok && !status.Running {
+		status.Stopped = completion.Error
+	}
+	federation, err := env.federation("")
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return status, nil
+		}
+		return indexStatus{}, err
+	}
+	progress, err := federation.Progress(ctx)
+	if err != nil {
+		return indexStatus{}, err
+	}
+	status.Read, status.Total, status.Databases = progress.Read, progress.Total, progress.Databases
+	return status, nil
+}
+
+// statusLines keeps the report in product language. A pass that has not finished
+// is never the same sentence as a product with nothing in it, and word search is
+// named every time reading is not complete, because it is answering right then.
+func statusLines(status indexStatus) []string {
+	fraction := fmt.Sprintf("%d of %d read", status.Read, status.Total)
+	switch {
+	case status.Running:
+		return []string{"deep search: reading your history · " + fraction,
+			"  word search keeps answering while it runs"}
+	case status.Total == 0:
+		return []string{"deep search: nothing to read yet · there is no history on this machine"}
+	case status.Read >= status.Total:
+		return []string{"deep search: ready · your history is understood, not only searched"}
+	case status.Read > 0:
+		lines := []string{"deep search: stopped partway · " + fraction,
+			"  what it read already answers, and word search answers for the rest"}
+		if status.Stopped != "" {
+			lines = append(lines, "  it stopped on: "+status.Stopped)
+		}
+		return append(lines, "  next step: `roca init --vectors`")
+	default:
+		return []string{"deep search: not started · word search is answering now",
+			"  next step: `roca init --vectors`"}
+	}
 }
 
 func ingestCommand(env *environment) *cobra.Command {

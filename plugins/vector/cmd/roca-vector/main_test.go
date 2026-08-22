@@ -411,3 +411,45 @@ func TestFederationUsesTheResidentPrewarmedEmbedder(t *testing.T) {
 		t.Fatal("federation replaced the prewarmed resident embedder")
 	}
 }
+
+func TestStatusSpeaksInHistoryReadAndNeverCallsTheProductEmpty(t *testing.T) {
+	cases := []struct {
+		name   string
+		status indexStatus
+		want   []string
+		absent []string
+	}{
+		{name: "running", status: indexStatus{Running: true, Read: 3, Total: 5},
+			want: []string{"reading your history", "3 of 5", "word search keeps answering"}},
+		{name: "finished", status: indexStatus{Read: 5, Total: 5},
+			want: []string{"ready"}},
+		{name: "stopped partway", status: indexStatus{Read: 3, Total: 5, Stopped: "the runtime went away"},
+			want:   []string{"3 of 5", "word search", "roca init --vectors", "the runtime went away"},
+			absent: []string{"empty"}},
+		{name: "never started", status: indexStatus{Total: 5},
+			want:   []string{"not started", "word search", "roca init --vectors"},
+			absent: []string{"empty"}},
+		{name: "no history", status: indexStatus{},
+			want: []string{"nothing to read yet"}},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			rendered := strings.Join(statusLines(testCase.status), "\n")
+			for _, phrase := range testCase.want {
+				if !strings.Contains(rendered, phrase) {
+					t.Fatalf("status is missing %q: %s", phrase, rendered)
+				}
+			}
+			for _, phrase := range testCase.absent {
+				if strings.Contains(rendered, phrase) {
+					t.Fatalf("status says %q: %s", phrase, rendered)
+				}
+			}
+			for _, jargon := range []string{"chunk", "embedding", "sidecar", "vector.db"} {
+				if strings.Contains(rendered, jargon) {
+					t.Fatalf("status speaks in %q: %s", jargon, rendered)
+				}
+			}
+		})
+	}
+}

@@ -1614,6 +1614,98 @@ func (f Federation) Compact(ctx context.Context) (CompactFederationReport, error
 	return report, nil
 }
 
+// Progress is how far the meaning pass has read the history, counted in the
+// unit a person recognizes: rows of their own history. Chunks and vectors are
+// how the index is built, not what the operator is waiting for.
+type Progress struct {
+	Read      int                `json:"read"`
+	Total     int                `json:"total"`
+	Databases []DatabaseProgress `json:"databases"`
+}
+
+type DatabaseProgress struct {
+	Database string `json:"database"`
+	Read     int    `json:"read"`
+	Total    int    `json:"total"`
+}
+
+// Progress answers while a pass is running and after one stopped, because both
+// are questions the operator asks. It reads counts only: no embedding, no
+// chunking, nothing that would make asking expensive.
+func (f Federation) Progress(ctx context.Context) (Progress, error) {
+	result := Progress{Databases: []DatabaseProgress{}}
+	for _, database := range f.databases {
+		reader := DeclaredCorpus{Core: f.Core, Database: database}
+		total, err := reader.countSources(ctx)
+		if err != nil {
+			return Progress{}, err
+		}
+		read, err := countIndexedSources(SidecarPath(f.databasePath(database)))
+		if err != nil {
+			return Progress{}, err
+		}
+		if read > total {
+			read = total
+		}
+		result.Databases = append(result.Databases,
+			DatabaseProgress{Database: database.Database, Read: read, Total: total})
+		result.Read, result.Total = result.Read+read, result.Total+total
+	}
+	return result, nil
+}
+
+func (d DeclaredCorpus) countSources(ctx context.Context) (int, error) {
+	total := 0
+	for _, table := range d.Database.Tables {
+		rows, err := d.Core.query(ctx, d.countQuery(table))
+		if err != nil {
+			return 0, fmt.Errorf("count declared surface %s/%s: %w", d.Database.owner(), table.Name, err)
+		}
+		for _, values := range rows {
+			counted, err := integer(values, "total")
+			if err != nil {
+				return 0, fmt.Errorf("count declared surface %s/%s: %w", d.Database.owner(), table.Name, err)
+			}
+			total += int(counted)
+		}
+	}
+	return total, nil
+}
+
+func (d DeclaredCorpus) countQuery(table vectorTable) string {
+	return fmt.Sprintf(`WITH vector_rows AS (
+		SELECT CAST(%s AS TEXT) AS source_id,%s AS text FROM %s.%s WHERE %s IS NOT NULL
+	) SELECT COUNT(*) AS total FROM vector_rows WHERE source_id<>'' AND text<>''`,
+		quoteIdentifier(table.IDColumn), declaredTextExpression(table.TextColumns),
+		quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name), quoteIdentifier(table.IDColumn))
+}
+
+// countIndexedSources counts source rows the index already holds, not chunks: a
+// row half chunked is a row the reader has reached, and a sidecar that is not
+// there yet is zero read rather than an error.
+func countIndexedSources(path string) (int, error) {
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	store, err := openSQLite(path, true)
+	if err != nil {
+		return 0, fmt.Errorf("open vector sidecar %s: %w", filepath.Base(path), err)
+	}
+	defer store.Close()
+	var read int
+	err = store.QueryRow(`SELECT COUNT(*) FROM (SELECT DISTINCT source_kind,source_id FROM chunks)`).Scan(&read)
+	if err != nil && strings.Contains(fmt.Sprint(err), "no such table") {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("count indexed rows in %s: %w", filepath.Base(path), err)
+	}
+	return read, nil
+}
+
 func (f Federation) HasSidecars() bool {
 	for _, database := range f.databases {
 		if _, err := os.Stat(SidecarPath(f.databasePath(database))); err == nil {

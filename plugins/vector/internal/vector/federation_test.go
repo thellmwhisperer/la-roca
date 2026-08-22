@@ -1002,4 +1002,39 @@ func TestAnInterruptedIndexStillAnswersWithTheRowsItAlreadyWrote(t *testing.T) {
 	if fingerprint := sidecarMeta(t, SidecarPath(corpusPath))["source_fingerprint"]; fingerprint != "" {
 		t.Fatalf("an unfinished index claimed to match its source: %q", fingerprint)
 	}
+
+	progress, err := federation.Progress(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.Read == 0 || progress.Read >= progress.Total {
+		t.Fatalf("an unfinished pass reported %d of %d read", progress.Read, progress.Total)
+	}
+}
+
+func TestProgressCountsHistoryReadAgainstHistoryDeclared(t *testing.T) {
+	federation, _, _, _ := federationFixture(t)
+	ctx := context.Background()
+
+	before, err := federation.Progress(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Total != 4 || before.Read != 0 {
+		t.Fatalf("progress before any pass = %d of %d", before.Read, before.Total)
+	}
+
+	if _, err := federation.Ingest(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	after, err := federation.Progress(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Read != 4 || after.Total != 4 {
+		t.Fatalf("progress after a finished pass = %d of %d", after.Read, after.Total)
+	}
+	if len(after.Databases) != 2 {
+		t.Fatalf("progress databases = %+v", after.Databases)
+	}
 }
