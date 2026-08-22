@@ -135,7 +135,7 @@ func ingestCommand(env *environment) *cobra.Command {
 			vectorPath := filepath.Join(state, vector.DatabaseFilename)
 			plugins = mergePluginNames(vector.ConfiguredPlugins(vectorPath), plugins)
 			federation, federationErr := env.federation(model)
-			federated := federationErr == nil && len(plugins) == 0
+			federated := useFederation(plugins, federationErr)
 			if federationErr != nil && !errors.Is(federationErr, os.ErrNotExist) && len(plugins) == 0 {
 				return federationErr
 			}
@@ -378,12 +378,12 @@ func workerCommand(env *environment) *cobra.Command {
 			defer vector.ReleaseWorkerClaim(state)
 			federation, federationErr := env.federation(model)
 			var completion vector.Completion
-			if federationErr == nil {
+			if useFederation(plugins, federationErr) {
 				worker := vector.FederatedWorker{Federation: federation, DataDir: state, PullModel: true,
 					Notifier: vector.SystemNotifier{}, WaitForCalm: env.calmGate().Wait}
 				completion = worker.Run(command.Context())
 			} else {
-				if !errors.Is(federationErr, os.ErrNotExist) {
+				if len(plugins) == 0 && !errors.Is(federationErr, os.ErrNotExist) {
 					return federationErr
 				}
 				index, err := env.index(model, plugins)
@@ -416,7 +416,6 @@ func workerCommand(env *environment) *cobra.Command {
 	command.Flags().StringArrayVar(&plugins, "plugin", nil, "data plugin to index (repeatable)")
 	return command
 }
-
 
 func (env *environment) index(model string, pluginSets ...[]string) (vector.Index, error) {
 	var plugins []string
@@ -533,6 +532,10 @@ func workerArguments(dbPath, state, model string, plugins []string) []string {
 		arguments = append(arguments, "--plugin", plugin)
 	}
 	return arguments
+}
+
+func useFederation(plugins []string, federationErr error) bool {
+	return len(plugins) == 0 && federationErr == nil
 }
 
 func mergePluginNames(configured, requested []string) []string {

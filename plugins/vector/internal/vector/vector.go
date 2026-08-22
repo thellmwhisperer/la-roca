@@ -20,11 +20,11 @@ import (
 )
 
 const (
-	defaultChunkSize    = 4000
-	defaultOverlap      = 400
-	defaultBatchSize    = 64
-	walkPageSize        = 500
-	vectorStorageSchema = "vector-v1"
+	defaultChunkSize                 = 4000
+	defaultOverlap                   = 400
+	defaultBatchSize                 = 64
+	walkPageSize                     = 500
+	vectorStorageSchema              = "vector-v1"
 	deprecatedLayerReconciliationKey = "deprecated_layers_reconciled_v1"
 	// maxUnresolvedCandidates bounds a query against an index the corpus has moved
 	// under. Each resolution is one `roca exec` process, so a wholly stale index
@@ -99,17 +99,17 @@ type sourceRow struct {
 }
 
 type Locator struct {
-	SourceID   string `json:"source_id,omitempty"`
-	SessionID  string `json:"session_id,omitempty"`
-	Ordinal    int64  `json:"ordinal,omitempty"`
-	HasOrdinal bool   `json:"has_ordinal,omitempty"`
-	Position   string `json:"position,omitempty"`
-	CronSource string `json:"cron_source,omitempty"`
-	FilePath   string `json:"file_path,omitempty"`
-	Layer      string `json:"layer,omitempty"`
-	Origin     string `json:"origin,omitempty"`
-	CreatedAt  string `json:"created_at,omitempty"`
-	Identity   string `json:"identity,omitempty"`
+	SourceID      string `json:"source_id,omitempty"`
+	SessionID     string `json:"session_id,omitempty"`
+	Ordinal       int64  `json:"ordinal,omitempty"`
+	HasOrdinal    bool   `json:"has_ordinal,omitempty"`
+	Position      string `json:"position,omitempty"`
+	CronSource    string `json:"cron_source,omitempty"`
+	FilePath      string `json:"file_path,omitempty"`
+	Layer         string `json:"layer,omitempty"`
+	Origin        string `json:"origin,omitempty"`
+	CreatedAt     string `json:"created_at,omitempty"`
+	Identity      string `json:"identity,omitempty"`
 	Plugin        string `json:"plugin,omitempty"`
 	MaterialID    string `json:"material_id,omitempty"`
 	ChunkID       string `json:"chunk_id,omitempty"`
@@ -347,7 +347,7 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 				return fmt.Errorf("decode %s source locator: %w", kind, err)
 			}
 			source := sourceRow{kind: kind, text: sourceText, preChunked: preChunked != 0,
-			chunkSize: int(chunkSize), overlap: int(overlap), fingerprintVersion: fingerprintVersion}
+				chunkSize: int(chunkSize), overlap: int(overlap), fingerprintVersion: fingerprintVersion}
 			var texts []string
 			if source.preChunked {
 				texts = sourceChunks(sourceText, true)
@@ -411,7 +411,7 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 			INSERT INTO temp.vector_desired_sources(source_kind,source_id,source_order,text,pre_chunked,locator,chunk_size,overlap,fingerprint_version)
 			VALUES (?,?,?,?,?,?,?,?,?)
 			ON CONFLICT(source_kind,source_id) DO UPDATE SET source_order=excluded.source_order,text=excluded.text,locator=excluded.locator,
-				chunk_size=excluded.chunk_size,overlap=excluded.overlap,fingerprint_version=excluded.fingerprint_version
+				chunk_size=excluded.chunk_size,overlap=excluded.overlap,fingerprint_version=excluded.fingerprint_version,
 				pre_chunked=excluded.pre_chunked
 		`, source.kind, sourceID, nextSourceOrder, source.text, boolInt(source.preChunked), string(where), source.chunkSize, source.overlap, source.fingerprintVersion)
 		nextSourceOrder++
@@ -432,7 +432,11 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 		if ctx.Err() != nil {
 			drainCtx = context.WithoutCancel(ctx)
 		}
+		if cleanupErr := discardExistingDesiredSources(drainCtx, store, initial); cleanupErr != nil {
+			return Delta{}, cleanupErr
+		}
 		pending = pending[:0]
+		sourceOrder = -1
 		_ = drainSources(drainCtx)
 		return Delta{}, err
 	}
@@ -465,7 +469,7 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 	if err := markDeprecatedLayersReconciled(ctx, store); err != nil {
 		return Delta{}, err
 	}
-	delta := deltaBetween(initial, existing)
+	delta := deltaBetween(initial, existing, sourceKind)
 	delta.Sources = report.Sources
 	return delta, nil
 }
@@ -597,57 +601,98 @@ func (i Index) queryVectorWithOptions(ctx context.Context, store *sql.DB, embedd
 	if err != nil {
 		return nil, fmt.Errorf("count vector candidates: %w", err)
 	}
-	candidates, err := nearest(ctx, store, vectorBlob(embedding), candidateLimit)
+	candidateCount, err := activeCandidateCount(ctx, store)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("count active vector candidates: %w", err)
+	}
+	if candidateCount == 0 {
+		return []Result{}, nil
+	}
+	if candidateLimit > candidateCount {
+		candidateLimit = candidateCount
 	}
 	results := make([]Result, 0, k)
 	seen := map[string]bool{}
+	seenCandidates := map[int64]bool{}
 	misses := 0
-	for _, candidate := range candidates {
-		if !matchesQueryOptions(candidate.where, options) {
-			continue
-		}
-		dedupeKey := candidate.sourceID
-		if candidate.where.DedupeKey != "" {
-			dedupeKey = candidate.where.DedupeKey
-		}
-		if seen[dedupeKey] {
-			continue
-		}
-		seen[dedupeKey] = true
-		body, err := i.Corpus.ResolveSource(ctx, candidate.kind, candidate.where)
+	for {
+		candidates, err := nearest(ctx, store, vectorBlob(embedding), candidateLimit)
 		if err != nil {
 			return nil, err
 		}
-		if body == "" {
-			misses++
-			if misses == maxUnresolvedCandidates {
+		for _, candidate := range candidates {
+			if seenCandidates[candidate.id] {
+				continue
+			}
+			seenCandidates[candidate.id] = true
+			if !matchesQueryOptions(candidate.where, options) {
+				continue
+			}
+			dedupeKey := candidate.sourceID
+			if candidate.where.DedupeKey != "" {
+				dedupeKey = candidate.where.DedupeKey
+			}
+			if seen[dedupeKey] {
+				continue
+			}
+			seen[dedupeKey] = true
+			body, err := i.Corpus.ResolveSource(ctx, candidate.kind, candidate.where)
+			if err != nil {
+				return nil, err
+			}
+			if body == "" {
+				misses++
+				if misses == maxUnresolvedCandidates {
+					break
+				}
+				continue
+			}
+			sourceID := candidate.where.SourceID
+			if sourceID == "" {
+				sourceID = candidate.sourceID
+			}
+			if candidate.where.Plugin != "" && candidate.fingerprint != "" && fingerprint(body) != candidate.fingerprint {
+				misses++
+				if misses == maxUnresolvedCandidates {
+					break
+				}
+				continue
+			}
+			results = append(results, Result{
+				Rank: len(results) + 1, Score: 1 - candidate.distance,
+				Database: resultDatabase(i.Database, candidate.kind, candidate.where), Table: candidate.kind, ID: sourceID,
+				Source: candidate.kind, SourceID: candidate.sourceID, Locator: candidate.where, Text: body,
+			})
+			if len(results) == k {
 				break
 			}
-			continue
 		}
-		sourceID := candidate.where.SourceID
-		if sourceID == "" {
-			sourceID = candidate.sourceID
-		}
-		if candidate.where.Plugin != "" && candidate.fingerprint != "" && fingerprint(body) != candidate.fingerprint {
-			misses++
-			if misses == maxUnresolvedCandidates {
-				break
-			}
-			continue
-		}
-		results = append(results, Result{
-			Rank: len(results) + 1, Score: 1 - candidate.distance,
-			Database: i.Database, Table: candidate.kind, ID: sourceID,
-			Source: candidate.kind, SourceID: candidate.sourceID, Locator: candidate.where, Text: body,
-		})
-		if len(results) == k {
+		if len(results) == k || misses == maxUnresolvedCandidates || candidateLimit >= candidateCount {
 			break
 		}
+		nextLimit := candidateLimit * 2
+		if nextLimit <= candidateLimit {
+			nextLimit = candidateLimit + 1
+		}
+		if nextLimit > candidateCount {
+			nextLimit = candidateCount
+		}
+		candidateLimit = nextLimit
 	}
 	return results, nil
+}
+
+func resultDatabase(defaultDatabase, kind string, where Locator) string {
+	if plugin := strings.TrimSpace(where.Plugin); plugin != "" {
+		if strings.HasPrefix(plugin, "plugin:") {
+			return plugin
+		}
+		return "plugin:" + plugin
+	}
+	if strings.HasPrefix(kind, "plugin:") {
+		return kind
+	}
+	return defaultDatabase
 }
 
 func matchesQueryOptions(where Locator, options QueryOptions) bool {
@@ -800,7 +845,7 @@ func (s sourceRow) stableID() string {
 	case "memories":
 		switch {
 		case s.cronSource != "" && s.filePath != "":
-			return "memories/cron/" + escape(s.cronSource) + "/" + escape(s.filePath) + "/" + s.identity()
+			return "memories/cron/" + escape(s.cronSource) + "/" + escape(s.filePath)
 		case s.sessionID != "" && s.hasOrdinal:
 			return fmt.Sprintf("memories/session/%s/%d/%s", escape(s.sessionID), s.ordinal, s.identity())
 		default:
@@ -1040,7 +1085,6 @@ func writeBatch(ctx context.Context, db *sql.DB, chunks []desiredChunk, vectors 
 		if _, err := tx.ExecContext(ctx, `INSERT INTO ann_embeddings(rowid,embedding) VALUES (?,vec_quantize_binary(?))`, id, vectorBlob(vectors[n])); err != nil {
 			return err
 		}
-		report.Added++
 		existing[key] = storedChunk{id: id, sourceKind: chunk.sourceKind, fingerprint: chunk.fingerprint, locator: chunk.locator}
 	}
 	return tx.Commit()
@@ -1136,9 +1180,12 @@ func finalSeenSources(ctx context.Context, db *sql.DB) (map[string]bool, error) 
 	return seen, nil
 }
 
-func deltaBetween(initial, existing map[string]storedChunk) Delta {
+func deltaBetween(initial, existing map[string]storedChunk, sourceKind string) Delta {
 	var delta Delta
 	for key, current := range existing {
+		if sourceKind != "" && current.sourceKind != sourceKind {
+			continue
+		}
 		previous, ok := initial[key]
 		if !ok {
 			delta.Added++
@@ -1151,12 +1198,85 @@ func deltaBetween(initial, existing map[string]storedChunk) Delta {
 		delta.Unchanged++
 	}
 	for key := range initial {
+		previous := initial[key]
+		if sourceKind != "" && previous.sourceKind != sourceKind {
+			continue
+		}
 		if _, ok := existing[key]; !ok {
 			delta.Removed++
 		}
 	}
 	delta.Chunks = delta.Added + delta.Updated + delta.Unchanged
 	return delta
+}
+
+func discardExistingDesiredSources(ctx context.Context, db *sql.DB, initial map[string]storedChunk) error {
+	rows, err := db.QueryContext(ctx, `SELECT source_kind,source_id,locator FROM temp.vector_desired_sources`)
+	if err != nil {
+		return fmt.Errorf("inspect interrupted vector sources: %w", err)
+	}
+	var discard [][2]string
+	for rows.Next() {
+		var kind, sourceID, rawLocator string
+		if err := rows.Scan(&kind, &sourceID, &rawLocator); err != nil {
+			return fmt.Errorf("inspect interrupted vector source: %w", err)
+		}
+		var locator Locator
+		if err := json.Unmarshal([]byte(rawLocator), &locator); err != nil {
+			return fmt.Errorf("decode interrupted vector source: %w", err)
+		}
+		keep := true
+		for _, previous := range initial {
+			if previous.sourceKind == kind && sameSourceLocator(kind, previous.locator, locator) {
+				keep = false
+				break
+			}
+		}
+		if keep {
+			continue
+		}
+		discard = append(discard, [2]string{kind, sourceID})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, source := range discard {
+		if _, err := db.ExecContext(ctx, `DELETE FROM temp.vector_desired_sources WHERE source_kind=? AND source_id=?`, source[0], source[1]); err != nil {
+			return fmt.Errorf("discard interrupted vector source: %w", err)
+		}
+	}
+	return nil
+}
+
+func sameSourceLocator(kind string, left, right Locator) bool {
+	if strings.HasPrefix(kind, "plugin:") {
+		return left.Plugin == right.Plugin && left.ChunkID == right.ChunkID
+	}
+	switch kind {
+	case "sessions":
+		return left.SessionID == right.SessionID
+	case "exchanges":
+		return left.SessionID == right.SessionID && left.HasOrdinal == right.HasOrdinal &&
+			(!left.HasOrdinal || left.Ordinal == right.Ordinal)
+	case "thinking_blocks":
+		return left.SessionID == right.SessionID && left.HasOrdinal == right.HasOrdinal &&
+			left.Position == right.Position && (!left.HasOrdinal || left.Ordinal == right.Ordinal)
+	case "memories":
+		if left.CronSource != "" && left.FilePath != "" || right.CronSource != "" && right.FilePath != "" {
+			return left.CronSource == right.CronSource && left.FilePath == right.FilePath
+		}
+		if left.SessionID != "" || right.SessionID != "" {
+			return left.SessionID == right.SessionID && left.HasOrdinal == right.HasOrdinal &&
+				(!left.HasOrdinal || left.Ordinal == right.Ordinal)
+		}
+		return left.Layer == right.Layer && left.Origin == right.Origin && left.CreatedAt == right.CreatedAt
+	default:
+		return left.SourceID == right.SourceID
+	}
 }
 
 func deleteEmbeddings(ctx context.Context, tx *sql.Tx, rowID int64) error {
@@ -1182,6 +1302,15 @@ func nearestCandidateLimit(ctx context.Context, db *sql.DB, k int) (int, error) 
 		limit = total
 	}
 	return int(limit), nil
+}
+
+func activeCandidateCount(ctx context.Context, db *sql.DB) (int, error) {
+	var count int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM chunks
+		WHERE source_kind <> 'memories' OR lower(COALESCE(json_extract(locator,'$.layer'),'')) NOT LIKE 'rocodata\_%' ESCAPE '\'`).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func purgeDeprecatedChunks(ctx context.Context, db *sql.DB) error {
@@ -1247,11 +1376,20 @@ func deprecatedLayersReconciled(ctx context.Context, db *sql.DB) (bool, error) {
 }
 
 func markDeprecatedLayersReconciled(ctx context.Context, db *sql.DB) error {
-	_, err := db.ExecContext(ctx, `INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)`, deprecatedLayerReconciliationKey, "1")
+	var value string
+	err := db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key=?`, deprecatedLayerReconciliationKey).Scan(&value)
+	if err == nil && value == "1" {
+		return nil
+	}
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)`, deprecatedLayerReconciliationKey, "1")
 	return err
 }
 
 type neighbor struct {
+	id          int64
 	kind        string
 	sourceID    string
 	fingerprint string
@@ -1264,7 +1402,7 @@ func nearest(ctx context.Context, db *sql.DB, vector []byte, k int) ([]neighbor,
 			SELECT rowid FROM ann_embeddings
 			WHERE embedding MATCH vec_quantize_binary(?) AND k = ?
 		)
-		SELECT c.source_kind,c.source_id,c.fingerprint,c.locator,vec_distance_cosine(e.embedding,?) AS distance
+		SELECT c.id,c.source_kind,c.source_id,c.fingerprint,c.locator,vec_distance_cosine(e.embedding,?) AS distance
 		FROM candidates a
 		JOIN embeddings e ON e.rowid=a.rowid
 		JOIN chunks c ON c.id=a.rowid
@@ -1278,7 +1416,7 @@ func nearest(ctx context.Context, db *sql.DB, vector []byte, k int) ([]neighbor,
 	for rows.Next() {
 		var item neighbor
 		var raw string
-		if err := rows.Scan(&item.kind, &item.sourceID, &item.fingerprint, &raw, &item.distance); err != nil {
+		if err := rows.Scan(&item.id, &item.kind, &item.sourceID, &item.fingerprint, &raw, &item.distance); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(raw), &item.where); err != nil {

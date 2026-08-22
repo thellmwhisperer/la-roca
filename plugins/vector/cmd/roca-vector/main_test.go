@@ -42,6 +42,18 @@ func TestInstallLaunchesThePluginBinaryIntoManifestOwnedState(t *testing.T) {
 	}
 }
 
+func TestExplicitPluginsSelectThePluginAwareWorker(t *testing.T) {
+	if useFederation([]string{"biblioteca-conocimiento"}, nil) {
+		t.Fatal("explicit plugin selection entered the federated worker")
+	}
+	if !useFederation(nil, nil) {
+		t.Fatal("an unqualified install did not select the federated worker")
+	}
+	if useFederation(nil, os.ErrNotExist) {
+		t.Fatal("a missing federation registry selected the federated worker")
+	}
+}
+
 func TestDeltaFlagAndReadOnlyBoundaryAreExplicit(t *testing.T) {
 	env := &environment{stateDir: t.TempDir()}
 	root := rootCommand(env)

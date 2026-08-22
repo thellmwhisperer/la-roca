@@ -20,6 +20,22 @@ type recordingEmbedder struct {
 	inputs [][]string
 }
 
+type candidateWindowEmbedder struct{}
+
+func (candidateWindowEmbedder) Pull(context.Context, string) error { return nil }
+
+func (candidateWindowEmbedder) Embed(_ context.Context, _ string, input []string) ([][]float32, error) {
+	vectors := make([][]float32, len(input))
+	for index, text := range input {
+		if strings.Contains(text, "target") {
+			vectors[index] = []float32{0.99, 0.1, 0, 0, 0, 0, 0, 0}
+		} else {
+			vectors[index] = []float32{1, 0, 0, 0, 0, 0, 0, 0}
+		}
+	}
+	return vectors, nil
+}
+
 type compactFixtureEmbedder struct {
 	calls int
 }
@@ -661,6 +677,42 @@ func TestQueryOptionsFilterPluginMetadata(t *testing.T) {
 	}
 }
 
+func TestPluginQueryRefillsFilteredCandidatesAndPreservesProvenance(t *testing.T) {
+	sources := make([]sourceRow, 0, 18)
+	for index := 0; index < 16; index++ {
+		id := fmt.Sprintf("distractor-%02d", index)
+		sources = append(sources, sourceRow{kind: "plugin:biblioteca-conocimiento", sourceID: id,
+			text: "alpha distractor", plugin: Locator{Plugin: "biblioteca-conocimiento", ChunkID: id,
+				Identity: id, TopicID: "otro", DedupeKey: id}})
+	}
+	for index := 0; index < 2; index++ {
+		id := fmt.Sprintf("target-%02d", index)
+		sources = append(sources, sourceRow{kind: "plugin:biblioteca-conocimiento", sourceID: id,
+			text: "alpha target", plugin: Locator{Plugin: "biblioteca-conocimiento", ChunkID: id,
+				Identity: id, TopicID: "salud", DedupeKey: id}})
+	}
+	index := Index{Corpus: &memoryCorpus{sources: sources}, VectorPath: filepath.Join(t.TempDir(), "vector.db"),
+		Model: DefaultModel, Embedder: candidateWindowEmbedder{}, Database: "corpus"}
+	if _, err := index.Ingest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	results, err := index.QueryWithOptions(context.Background(), "alpha", 2, QueryOptions{
+		Plugins: []string{"biblioteca-conocimiento"}, Topic: "salud",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("filtered plugin results = %+v, want two refilled hits", results)
+	}
+	for _, result := range results {
+		if result.Database != "plugin:biblioteca-conocimiento" || result.Locator.Plugin != "biblioteca-conocimiento" ||
+			!strings.HasPrefix(result.SourceID, "target-") {
+			t.Fatalf("plugin result provenance = %+v", result)
+		}
+	}
+}
+
 func TestQueryDeduplicatesChunksByStableSource(t *testing.T) {
 	corpus := createCoreFixture(t)
 	long := strings.Repeat("alpha ", defaultChunkSize/3)
@@ -1016,7 +1068,7 @@ type failingCorpus struct {
 
 type failOnceEmbedder struct {
 	recordingEmbedder
-	failed bool
+	failed   bool
 	maxInput int
 }
 

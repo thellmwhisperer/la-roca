@@ -51,7 +51,7 @@ const (
 	exchangeText       = `trim(COALESCE(human_text,'') || CASE WHEN human_text IS NOT NULL AND agent_text IS NOT NULL THEN char(10)||char(10) ELSE '' END || COALESCE(agent_text,''))`
 	sessionProjectName = `CASE WHEN json_valid(COALESCE(metadata,'')) THEN CASE WHEN json_type(metadata,'$.project_name')='text' THEN COALESCE(json_extract(metadata,'$.project_name'),'') ELSE '' END ELSE '' END`
 	corpusSchema       = "plugin_roca_corpus"
-    activeMemory       = `COALESCE(content,'') <> '' AND lower(COALESCE(layer,'')) NOT LIKE 'rocodata\_%' ESCAPE '\'`
+	activeMemory       = `COALESCE(content,'') <> '' AND lower(COALESCE(layer,'')) NOT LIKE 'rocodata\_%' ESCAPE '\'`
 )
 
 var (
@@ -489,10 +489,10 @@ func (c CoreCLI) ResolveSource(ctx context.Context, kind string, where Locator) 
 	case "memories":
 		switch {
 		case where.SessionID != "" && where.HasOrdinal:
-			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE %s AND source_session=%s AND source_sequence=%d ORDER BY id DESC LIMIT 1`,
+			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE %s AND source_session=%s AND source_sequence=%d`,
 				corpusTable("memories"), activeMemory, sqlLiteral(where.SessionID), where.Ordinal)
 		case where.FilePath != "" && where.CronSource != "":
-			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE %s AND json_extract(metadata,'$.file_path')=%s AND (json_extract(metadata,'$._cron_source')=%s OR source_agent=%s) ORDER BY id DESC LIMIT 1`,
+			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE %s AND json_extract(metadata,'$.file_path')=%s AND (json_extract(metadata,'$._cron_source')=%s OR source_agent=%s)`,
 				corpusTable("memories"), activeMemory, sqlLiteral(where.FilePath), sqlLiteral(where.CronSource),
 				sqlLiteral(where.CronSource))
 		default:
