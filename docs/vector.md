@@ -2,8 +2,10 @@
 
 Vector retrieval is opt-in and off by default. The release core carries its
 matching `roca-vector` companion; the installation step extracts the companion
-next to `roca`, and the switch only unhides dispatch. It does not require
-`features.plugins`. Windows is a first-class indexing seat: the matching
+next to `roca`. Dispatch requires both `features.plugins = true` and
+`features.vector = true`; `features.plugins` is the master gate and
+`features.vector` opts into the executable. Windows is a first-class indexing
+seat: the matching
 artefacts are `roca-<version>-windows-x64.exe` (core, carrying
 `roca-vector.exe`) and
 `roca-vector-vX.Y.Z-windows-x64.tar.gz` (standalone archive in the same
@@ -47,12 +49,13 @@ or `config.toml` next to a `--db-path` database):
 
 ```toml
 [features]
+plugins = true
 vector = true
 ```
 
-That exposes `roca vector` and lists `vector` in `roca plugins`. Absent or
-false, the command does not exist. On Windows, keep `roca-vector.exe` beside
-`roca.exe` in the directory on `PATH`.
+That exposes `roca vector` and lists `vector` in `roca plugins`. If either
+switch is absent or false, the command is hidden. On Windows, keep
+`roca-vector.exe` beside `roca.exe` in the directory on `PATH`.
 
 ## Prerequisites
 

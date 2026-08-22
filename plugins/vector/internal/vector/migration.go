@@ -144,7 +144,7 @@ func (f Federation) seedLegacySidecar(ctx context.Context, legacy *sql.DB,
 	if err := ensureBaseSchema(target); err != nil {
 		return 0, err
 	}
-	existing, existingModel, existingDimensions, err := readIndexState(target)
+	existing, existingModel, existingDimensions, _, err := readIndexState(target)
 	if err != nil {
 		return 0, fmt.Errorf("read sidecar seed state for %s: %w", database.owner(), err)
 	}

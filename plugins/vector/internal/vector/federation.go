@@ -595,7 +595,7 @@ func (d DeclaredCorpus) WalkSources(ctx context.Context, sourceKind string,
 	return nil
 }
 
-func (d DeclaredCorpus) ResolveSource(ctx context.Context, kind string, where locator) (string, error) {
+func (d DeclaredCorpus) ResolveSource(ctx context.Context, kind string, where Locator) (string, error) {
 	table, ok := d.table(kind)
 	if !ok {
 		return "", fmt.Errorf("unknown vector source %q", kind)

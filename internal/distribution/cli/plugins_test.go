@@ -55,12 +55,41 @@ func TestVectorExecutableDispatchAndListingRequireItsFeature(t *testing.T) {
 		t.Fatalf("disabled vector appeared in plugin listing: %+v", plugins)
 	}
 
-	enabled := config.FeaturesConfig{Vector: true}
+	vectorOnly := config.FeaturesConfig{Vector: true}
+	if handled, _, err := dispatchPlugin(root, []string{"vector"}, vectorOnly); handled || err != nil {
+		t.Fatalf("vector-only dispatch = handled %v, err %v", handled, err)
+	}
+	if plugins := listPlugins(vectorOnly); len(plugins) != 0 {
+		t.Fatalf("vector-only listing = %+v", plugins)
+	}
+
+	enabled := config.FeaturesConfig{Plugins: true, Vector: true}
 	if handled, code, err := dispatchPlugin(root, []string{"vector"}, enabled); !handled || code != ExitOK || err != nil {
 		t.Fatalf("enabled vector dispatch = handled %v, code %d, err %v", handled, code, err)
 	}
 	if plugins := listPlugins(enabled); len(plugins) != 1 || plugins[0].Name != "vector" {
 		t.Fatalf("enabled vector listing = %+v", plugins)
+	}
+}
+
+func TestVectorDispatchUsesTheSelectedDatabaseConfiguration(t *testing.T) {
+	home := t.TempDir()
+	selectedDir := t.TempDir()
+	selectedDB := filepath.Join(selectedDir, "roca.db")
+	if err := os.WriteFile(filepath.Join(selectedDir, "config.toml"),
+		[]byte("[features]\nplugins = true\nvector = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pluginDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(pluginDir, "roca-vector"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", pluginDir)
+	env := &cliEnv{out: &strings.Builder{}, errOut: &strings.Builder{}}
+	code, err := executeWithOptions(env, []string{"vector", "--db-path", selectedDB}, nil, true)
+	if err != nil || code != ExitOK {
+		t.Fatalf("selected database plugin result = code %d err %v", code, err)
 	}
 }
 

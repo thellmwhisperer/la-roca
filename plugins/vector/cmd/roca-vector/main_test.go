@@ -35,10 +35,22 @@ func TestInstallLaunchesThePluginBinaryIntoManifestOwnedState(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	want := workerArguments(env.dbPath, state, vector.DefaultModel)
+	want := workerArguments(env.dbPath, state, vector.DefaultModel, nil)
 	if request.Executable != "/synthetic/roca-vector" || request.DataDir != state ||
 		!slices.Equal(request.Arguments, want) {
 		t.Fatalf("launch request = %+v, want args %q", request, want)
+	}
+}
+
+func TestExplicitPluginsSelectThePluginAwareWorker(t *testing.T) {
+	if useFederation([]string{"biblioteca-conocimiento"}, nil) {
+		t.Fatal("explicit plugin selection entered the federated worker")
+	}
+	if !useFederation(nil, nil) {
+		t.Fatal("an unqualified install did not select the federated worker")
+	}
+	if useFederation(nil, os.ErrNotExist) {
+		t.Fatal("a missing federation registry selected the federated worker")
 	}
 }
 
@@ -239,7 +251,7 @@ func TestVectorRegistryRemainsHomeScopedForACustomCoreDatabase(t *testing.T) {
 }
 
 func TestWorkerCarriesExplicitCoreAndStatePaths(t *testing.T) {
-	got := workerArguments("/synthetic/roca.db", "/synthetic/state", "synthetic-model")
+	got := workerArguments("/synthetic/roca.db", "/synthetic/state", "synthetic-model", nil)
 	want := []string{"--state-dir", "/synthetic/state", "--db-path", "/synthetic/roca.db",
 		"_worker", "--model", "synthetic-model"}
 	if !slices.Equal(got, want) {

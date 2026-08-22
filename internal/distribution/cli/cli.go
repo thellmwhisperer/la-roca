@@ -107,6 +107,7 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 		started = time.Now()
 		env.started = started
 	}
+	env.resolveDatabaseFlag(args)
 	env.loadCommandFeatures()
 	// The durable half of the call log is database I/O like any other, so a
 	// read-only run keeps the JSONL sink alone and leaves the ops database
@@ -183,6 +184,25 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 		}
 	}
 	return code, err
+}
+
+func (env *cliEnv) resolveDatabaseFlag(args []string) {
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		if argument == "--" {
+			return
+		}
+		if argument == "--db-path" {
+			if index+1 < len(args) && args[index+1] != "--" {
+				env.dbPath = args[index+1]
+				index++
+			}
+			continue
+		}
+		if strings.HasPrefix(argument, "--db-path=") {
+			env.dbPath = strings.TrimPrefix(argument, "--db-path=")
+		}
+	}
 }
 
 func rootCommand(env *cliEnv) *cobra.Command {
@@ -281,7 +301,7 @@ func dispatchPlugin(root *cobra.Command, args []string, features config.Features
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") || builtIn(root, args[0]) {
 		return false, 0, nil
 	}
-	if args[0] == "vector" && !features.Vector {
+	if args[0] == "vector" && (!features.Plugins || !features.Vector) {
 		return false, 0, nil
 	}
 	path, found := findPlugin(args[0])
@@ -350,7 +370,7 @@ func listPlugins(features config.FeaturesConfig) []pathPlugin {
 		for _, entry := range entries {
 			name, ok := pluginName(entry.Name())
 			path := filepath.Join(directory, entry.Name())
-			if ok && isExecutable(path) && (name != "vector" || features.Vector) {
+			if ok && isExecutable(path) && (name != "vector" || (features.Plugins && features.Vector)) {
 				found = append(found, pathPlugin{Name: name, Path: path})
 			}
 		}

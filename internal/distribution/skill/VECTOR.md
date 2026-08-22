@@ -21,11 +21,12 @@ hours, or a laptop left running overnight). It pays back every day after.
 
 ```sh
 ollama pull nomic-embed-text-v2-moe
-# set [features] vector = true in ~/.roca/config.toml
+# set [features] plugins = true and vector = true in ~/.roca/config.toml
 roca vector install
 ```
 
-`features.vector = true` only unhides `roca vector`. It is not the index.
+Both feature switches are required to unhide `roca vector`; `features.plugins`
+is the master gate. They are not the index.
 
 ## Watch progress
 

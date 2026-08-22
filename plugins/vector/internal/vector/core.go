@@ -20,6 +20,7 @@ type CommandRunner func(context.Context, string, ...string) ([]byte, error)
 type CoreCLI struct {
 	Executable string
 	DBPath     string
+	Plugins    []string
 	Run        CommandRunner
 }
 
@@ -50,6 +51,7 @@ const (
 	exchangeText       = `trim(COALESCE(human_text,'') || CASE WHEN human_text IS NOT NULL AND agent_text IS NOT NULL THEN char(10)||char(10) ELSE '' END || COALESCE(agent_text,''))`
 	sessionProjectName = `CASE WHEN json_valid(COALESCE(metadata,'')) THEN CASE WHEN json_type(metadata,'$.project_name')='text' THEN COALESCE(json_extract(metadata,'$.project_name'),'') ELSE '' END ELSE '' END`
 	corpusSchema       = "plugin_roca_corpus"
+	activeMemory       = `COALESCE(content,'') <> '' AND lower(COALESCE(layer,'')) NOT LIKE 'rocodata\_%' ESCAPE '\'`
 )
 
 var (
@@ -89,6 +91,18 @@ func (c CoreCLI) WalkSources(ctx context.Context, sourceKind string, visit func(
 			}
 		}
 	}
+	for _, rawPlugin := range c.Plugins {
+		plugin, schema, err := canonicalPlugin(rawPlugin)
+		if err != nil {
+			return err
+		}
+		if sourceKind != "" && sourceKind != "plugin:"+plugin {
+			continue
+		}
+		if err := c.walkPluginSources(ctx, plugin, schema, visit); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -125,6 +139,64 @@ func (c CoreCLI) ResolveDatabaseScope(ctx context.Context, databases string) (Da
 	return result, nil
 }
 
+func (c CoreCLI) walkPluginSources(ctx context.Context, plugin, schema string, visit func(sourceRow) error) error {
+	cursor := ""
+	for {
+		rows, err := c.query(ctx, pluginPageQuery(schema, cursor))
+		if err != nil {
+			return fmt.Errorf("read data plugin %s: %w", plugin, err)
+		}
+		for _, values := range rows {
+			row, next, err := decodePlugin(values, plugin)
+			if err != nil {
+				return fmt.Errorf("decode data plugin %s: %w", plugin, err)
+			}
+			cursor = next
+			if err := visit(row); err != nil {
+				return err
+			}
+		}
+		if len(rows) < walkPageSize {
+			return nil
+		}
+	}
+}
+
+func pluginPageQuery(schema, cursor string) string {
+	return fmt.Sprintf(`SELECT c.chunk_id,c.material_id,c.chunk_index,c.content,c.content_sha256,
+			c.start_offset,c.end_offset,c.updated_at,
+			m.source_ref,m.title,COALESCE(m.topic_id,'') AS topic_id,
+			COALESCE(m.topic_label,'') AS topic_label,COALESCE(m.channel_id,'') AS channel_id,
+			COALESCE(m.channel_label,'') AS channel_label,COALESCE(m.video_id,'') AS video_id,
+			COALESCE(m.published_at,'') AS published_at
+			FROM %s.text_chunks c JOIN %s.materials m ON m.material_id=c.material_id
+			WHERE m.status='active' AND COALESCE(c.content,'') <> '' AND c.chunk_id > %s
+			ORDER BY c.chunk_id LIMIT %d`, schema, schema, sqlLiteral(cursor), walkPageSize)
+}
+
+func decodePlugin(values map[string]any, plugin string) (sourceRow, string, error) {
+	chunkID := stringValue(values["chunk_id"])
+	materialID := stringValue(values["material_id"])
+	if chunkID == "" || materialID == "" {
+		return sourceRow{}, "", fmt.Errorf("chunk_id and material_id are required")
+	}
+	chunkIndex, ok := nullableInteger(values["chunk_index"])
+	if !ok || chunkIndex < 0 {
+		return sourceRow{}, "", fmt.Errorf("chunk_index is invalid for %s", chunkID)
+	}
+	where := Locator{
+		Plugin: plugin, MaterialID: materialID, ChunkID: chunkID, ChunkIndex: int(chunkIndex),
+		SourceRef: stringValue(values["source_ref"]), Title: stringValue(values["title"]),
+		TopicID: stringValue(values["topic_id"]), TopicLabel: stringValue(values["topic_label"]),
+		ChannelID: stringValue(values["channel_id"]), ChannelLabel: stringValue(values["channel_label"]),
+		VideoID: stringValue(values["video_id"]), PublishedAt: stringValue(values["published_at"]),
+		ContentSHA256: stringValue(values["content_sha256"]),
+		DedupeKey:     plugin + ":material:" + materialID,
+	}
+	return sourceRow{kind: "plugin:" + plugin, text: stringValue(values["content"]),
+		sourceID: chunkID, preChunked: true, plugin: where}, chunkID, nil
+}
+
 func corePages() []corePage {
 	return []corePage{
 		{
@@ -134,8 +206,8 @@ func corePages() []corePage {
 					source_sequence,COALESCE(source_agent,'') AS source_agent,
 					COALESCE(metadata,'{}') AS metadata,COALESCE(layer,'') AS layer,
 					COALESCE(origin,'') AS origin,COALESCE(created_at,'') AS created_at
-					FROM %s WHERE COALESCE(content,'') <> '' AND id > %s ORDER BY id LIMIT %d`,
-					corpusTable("memories"), cursor, walkPageSize)
+					FROM %s WHERE %s AND id > %s ORDER BY id LIMIT %d`,
+					corpusTable("memories"), activeMemory, cursor, walkPageSize)
 			},
 			decode: decodeMemory,
 		},
@@ -365,7 +437,14 @@ func stripSessionJSON(value string) string {
 	return clean.String()
 }
 
-func (c CoreCLI) ResolveSource(ctx context.Context, kind string, where locator) (string, error) {
+func (c CoreCLI) ResolveSource(ctx context.Context, kind string, where Locator) (string, error) {
+	if strings.HasPrefix(kind, "plugin:") {
+		plugin := strings.TrimPrefix(kind, "plugin:")
+		if plugin == "" {
+			return "", fmt.Errorf("plugin source kind is empty")
+		}
+		return c.resolvePluginSource(ctx, plugin, where)
+	}
 	var statement string
 	switch kind {
 	case "sessions":
@@ -410,15 +489,15 @@ func (c CoreCLI) ResolveSource(ctx context.Context, kind string, where locator) 
 	case "memories":
 		switch {
 		case where.SessionID != "" && where.HasOrdinal:
-			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE source_session=%s AND source_sequence=%d`,
-				corpusTable("memories"), sqlLiteral(where.SessionID), where.Ordinal)
+			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE %s AND source_session=%s AND source_sequence=%d`,
+				corpusTable("memories"), activeMemory, sqlLiteral(where.SessionID), where.Ordinal)
 		case where.FilePath != "" && where.CronSource != "":
-			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE json_extract(metadata,'$.file_path')=%s AND (json_extract(metadata,'$._cron_source')=%s OR source_agent=%s)`,
-				corpusTable("memories"), sqlLiteral(where.FilePath), sqlLiteral(where.CronSource),
+			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE %s AND json_extract(metadata,'$.file_path')=%s AND (json_extract(metadata,'$._cron_source')=%s OR source_agent=%s)`,
+				corpusTable("memories"), activeMemory, sqlLiteral(where.FilePath), sqlLiteral(where.CronSource),
 				sqlLiteral(where.CronSource))
 		default:
-			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE layer=%s AND origin=%s AND COALESCE(created_at,'')=%s`,
-				corpusTable("memories"), sqlLiteral(where.Layer), sqlLiteral(where.Origin),
+			statement = fmt.Sprintf(`SELECT content AS text FROM %s WHERE %s AND layer=%s AND origin=%s AND COALESCE(created_at,'')=%s`,
+				corpusTable("memories"), activeMemory, sqlLiteral(where.Layer), sqlLiteral(where.Origin),
 				sqlLiteral(where.CreatedAt))
 		}
 		return c.resolveIdentity(ctx, kind, where, statement)
@@ -427,7 +506,43 @@ func (c CoreCLI) ResolveSource(ctx context.Context, kind string, where locator) 
 	}
 }
 
-func (c CoreCLI) resolveIdentity(ctx context.Context, kind string, where locator, statement string) (string, error) {
+func (c CoreCLI) resolvePluginSource(ctx context.Context, plugin string, where Locator) (string, error) {
+	canonical, schema, err := canonicalPlugin(plugin)
+	if err != nil {
+		return "", err
+	}
+	if where.Plugin != "" && where.Plugin != canonical {
+		return "", fmt.Errorf("plugin locator belongs to %q, not %q", where.Plugin, canonical)
+	}
+	if where.ChunkID == "" {
+		return "", fmt.Errorf("plugin locator for %s has no chunk_id", canonical)
+	}
+	statement := fmt.Sprintf(`SELECT c.content AS text FROM %s.text_chunks c
+		JOIN %s.materials m ON m.material_id=c.material_id
+		WHERE c.chunk_id=%s AND m.status='active' LIMIT 1`, schema, schema, sqlLiteral(where.ChunkID))
+	rows, err := c.query(ctx, statement)
+	if err != nil || len(rows) == 0 {
+		return "", err
+	}
+	return stringValue(rows[0]["text"]), nil
+}
+
+func canonicalPlugin(name string) (string, string, error) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		return "", "", fmt.Errorf("data plugin name is empty")
+	}
+	for index, r := range name {
+		valid := r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '-'
+		if !valid || (index == 0 && (r == '_' || r == '-')) {
+			return "", "", fmt.Errorf("invalid data plugin name %q", name)
+		}
+	}
+	schema := "plugin_" + strings.NewReplacer("-", "_").Replace(name)
+	return name, schema, nil
+}
+
+func (c CoreCLI) resolveIdentity(ctx context.Context, kind string, where Locator, statement string) (string, error) {
 	rows, err := c.query(ctx, statement)
 	if err != nil {
 		return "", err

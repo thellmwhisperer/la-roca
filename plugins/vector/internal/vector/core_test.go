@@ -56,6 +56,9 @@ func TestCoreCLIWalksEverySourceThroughRocaExec(t *testing.T) {
 	if len(queries) != 4 || len(sources) != 4 {
 		t.Fatalf("queries=%d sources=%+v", len(queries), sources)
 	}
+	if !strings.Contains(queries[0], "NOT LIKE 'rocodata\\_%' ESCAPE '\\'") {
+		t.Fatalf("memory walk does not exclude deprecated RocoData layers: %s", queries[0])
+	}
 	if sources[0].filePath != "notes.md" || sources[1].stableID() != "exchanges/s1/4/"+sources[1].identity() ||
 		!strings.Contains(sources[2].stableID(), "/unkeyed/") || sources[3].stableID() != "sessions/s1/"+sources[3].identity() ||
 		sources[3].text != "delta session\nSynthetic orchard" {
@@ -184,7 +187,7 @@ func TestCoreCLIResolvesSessionWithHumanProjectName(t *testing.T) {
 			"project_name": "Synthetic orchard",
 		}}})
 	}}
-	text, err := core.ResolveSource(context.Background(), "sessions", locator{
+	text, err := core.ResolveSource(context.Background(), "sessions", Locator{
 		SessionID: "session-design", Identity: want.identity(),
 	})
 	if err != nil {
@@ -199,6 +202,72 @@ func TestCoreCLIResolvesSessionWithHumanProjectName(t *testing.T) {
 	}
 }
 
+func TestCoreCLIWalksAndResolvesConfiguredDataPlugin(t *testing.T) {
+	queries := []string{}
+	runner := func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		statement := args[len(args)-1]
+		queries = append(queries, statement)
+		var rows []map[string]any
+		switch {
+		case strings.Contains(statement, "SELECT c.chunk_id") && strings.Contains(statement, "FROM plugin_biblioteca_conocimiento.text_chunks"):
+			rows = []map[string]any{
+				{"chunk_id": "material-1:chunk:000000", "material_id": "material-1", "chunk_index": 0,
+					"content": "salud y descanso", "content_sha256": fingerprint("salud y descanso"),
+					"source_ref": "biblioteca://material/material-1/transcript", "title": "Hábitos saludables",
+					"topic_id": "salud", "topic_label": "Salud", "channel_id": "canal-1",
+					"channel_label": "Canal", "video_id": "video-1", "published_at": "2026-08-20"},
+				{"chunk_id": "material-1:chunk:000001", "material_id": "material-1", "chunk_index": 1,
+					"content": "movimiento y mente", "content_sha256": fingerprint("movimiento y mente"),
+					"source_ref": "biblioteca://material/material-1/transcript", "title": "Hábitos saludables",
+					"topic_id": "salud", "topic_label": "Salud", "channel_id": "canal-1",
+					"channel_label": "Canal", "video_id": "video-1", "published_at": "2026-08-20"},
+			}
+		case strings.Contains(statement, "FROM "+corpusTable("memories")):
+			rows = []map[string]any{{"id": 1, "content": "alpha memory", "source_session": "",
+				"source_sequence": nil, "source_agent": "synthetic-agent", "metadata": "{}", "layer": "discovery",
+				"origin": "agent", "created_at": "2026-08-14"}}
+		case strings.Contains(statement, "FROM "+corpusTable("exchanges")):
+			rows = []map[string]any{{"id": 2, "session_id": "s1", "exchange_number": 4, "text": "beta"}}
+		case strings.Contains(statement, "FROM "+corpusTable("thinking_blocks")):
+			rows = []map[string]any{{"id": 3, "session_id": "s1", "exchange_number": nil,
+				"position_in_session": nil, "text": "gamma"}}
+		case strings.Contains(statement, "FROM "+corpusTable("sessions")):
+			rows = []map[string]any{{"session_id": "s1", "text": "delta"}}
+		case strings.Contains(statement, "WHERE c.chunk_id='material-1:chunk:000000'"):
+			rows = []map[string]any{{"text": "salud y descanso"}}
+		default:
+			return nil, fmt.Errorf("unexpected statement: %s", statement)
+		}
+		return json.Marshal(map[string]any{"rows": rows})
+	}
+	core := CoreCLI{Executable: "roca", Plugins: []string{"biblioteca-conocimiento"}, Run: runner}
+	var sources []sourceRow
+	if err := core.WalkSources(context.Background(), "", func(source sourceRow) error {
+		sources = append(sources, source)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sources) != 6 {
+		t.Fatalf("sources = %d, want 6: %+v", len(sources), sources)
+	}
+	plugin := sources[4]
+	if plugin.kind != "plugin:biblioteca-conocimiento" || plugin.stableID() != "material-1:chunk:000000" ||
+		!plugin.preChunked || plugin.locator().TopicLabel != "Salud" || plugin.locator().DedupeKey != "biblioteca-conocimiento:material:material-1" {
+		t.Fatalf("plugin source = %+v locator=%+v", plugin, plugin.locator())
+	}
+	body, err := core.ResolveSource(context.Background(), plugin.kind, plugin.locator())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body != "salud y descanso" {
+		t.Fatalf("resolved plugin text = %q", body)
+	}
+	if len(queries) != 6 || !strings.Contains(queries[4], "plugin_biblioteca_conocimiento.text_chunks") {
+		t.Fatalf("plugin queries = %d: %v", len(queries), queries)
+	}
+}
+
 func TestCoreCLIResolvesLiveTextAndQuotesStoredLocators(t *testing.T) {
 	var statement string
 	want := sourceRow{kind: "exchanges", text: "current answer"}
@@ -208,7 +277,7 @@ func TestCoreCLIResolvesLiveTextAndQuotesStoredLocators(t *testing.T) {
 			{"text": "previous answer"}, {"text": "current answer"},
 		}})
 	}}
-	text, err := core.ResolveSource(context.Background(), "exchanges", locator{
+	text, err := core.ResolveSource(context.Background(), "exchanges", Locator{
 		SessionID: "operator's-session", Ordinal: 7, HasOrdinal: true, Identity: want.identity(),
 	})
 	if err != nil {
@@ -225,6 +294,23 @@ func TestCoreCLIResolvesLiveTextAndQuotesStoredLocators(t *testing.T) {
 	}
 }
 
+func TestCoreCLIResolutionExcludesDeprecatedMemoryLayers(t *testing.T) {
+	var statement string
+	core := CoreCLI{Executable: "roca", Run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		statement = args[len(args)-1]
+		return []byte(`{"rows":[]}`), nil
+	}}
+	_, err := core.ResolveSource(context.Background(), "memories", Locator{
+		Layer: "rocodata_legacy", Origin: "agent", CreatedAt: "2026-08-14", Identity: "synthetic",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(statement, "NOT LIKE 'rocodata\\_%' ESCAPE '\\'") {
+		t.Fatalf("memory resolution does not exclude deprecated RocoData layers: %s", statement)
+	}
+}
+
 func TestCoreCLIResolvesDistinctMemoriesSharingALocator(t *testing.T) {
 	want := sourceRow{kind: "memories", text: "first memory", layer: "discovery",
 		origin: "agent", createdAt: "2026-08-17"}
@@ -235,7 +321,7 @@ func TestCoreCLIResolvesDistinctMemoriesSharingALocator(t *testing.T) {
 			{"text": "first memory"}, {"text": "second memory"},
 		}})
 	}}
-	text, err := core.ResolveSource(context.Background(), "memories", locator{
+	text, err := core.ResolveSource(context.Background(), "memories", Locator{
 		SessionID: "shared-session", Ordinal: 2, HasOrdinal: true, Layer: want.layer,
 		Origin: want.origin, CreatedAt: want.createdAt, Identity: want.identity(),
 	})
@@ -259,7 +345,7 @@ func TestCoreCLIResolvesDistinctThinkingBlocksSharingALocator(t *testing.T) {
 			{"text": "first reasoning"}, {"text": "second reasoning"},
 		}})
 	}}
-	text, err := core.ResolveSource(context.Background(), "thinking_blocks", locator{
+	text, err := core.ResolveSource(context.Background(), "thinking_blocks", Locator{
 		SessionID: "shared-session", Ordinal: 2, HasOrdinal: true,
 		Position: "0.5", Identity: want.identity(),
 	})

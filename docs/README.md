@@ -13,9 +13,10 @@ Reading order, from operator to contributor:
    SQL repair then gate, and the TOON versus `--full` readers.
 4. [Ingest sources](ingest.md): import downloaded data exports once and understand
    their incremental boundary.
-5. [Local vector search](vector.md): the default-off `features.vector` switch,
-   Windows and Unix Ollama setup, the one-time embedding-model download,
-   hardware-conditioned indexing time, and the null-delta check.
+5. [Local vector search](vector.md): the default-off `features.plugins` and
+   `features.vector` gates, Windows and Unix Ollama setup, the one-time
+   embedding-model download, hardware-conditioned indexing time, and the
+   null-delta check.
 6. [Agent parser contribution kit](agent-parsers.md): support another agent with
    a measured real store, a synthetic fixture, one parser file, and one registry
    line.
@@ -24,14 +25,17 @@ Reading order, from operator to contributor:
    executable capabilities, package lifecycle, and a build-your-own example.
 8. [The MCP plug](mcp.md): the stdio server, its six tools, the TOON answer
    contract, and the supported integration targets.
-9. [Operations](operations.md): memory-layer validation and repair, the audit
+9. [Semantic retrieval](semantic-retrieval.md): semantic-first candidate
+   retrieval, context recovery, evidence, and honest degradation, including the
+   [Libro de Economía profile](semantic-profiles/libro-economia.md).
+10. [Operations](operations.md): memory-layer validation and repair, the audit
    log contract for every CLI and MCP call, the query failures `roca doctor`
    reports, the privacy-safe `roca doctor --report` support snapshot,
    redaction, retention, and the read-only boundary.
-10. [Architecture](architecture.md): the database-neutral kernel, current domain
+11. [Architecture](architecture.md): the database-neutral kernel, current domain
    map, query path, and internal import rule.
-11. [Releases](releases.md): how versions are cut and artefacts are built.
-12. [Project memory](project-memory.md): contributor-agent notes that travel
+12. [Releases](releases.md): how versions are cut and artefacts are built.
+13. [Project memory](project-memory.md): contributor-agent notes that travel
     with the code (build, test, release, architecture, and sharp edges).
 
 The [README](../README.md) is the front page; these pages carry the depth.

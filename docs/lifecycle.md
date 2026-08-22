@@ -19,8 +19,8 @@ run.
 The installed core materializes `roca-vector` in the same directory, including
 when `--prefix` or `ROCA_PREFIX` selects a custom one. Its manifest and dormant
 `state/` directory live under `~/.roca/plugins/roca-vector/`; dispatch remains hidden
-unless the existing `features.vector` switch is true. See
-[Local vector search](vector.md) for the operator path from that switch to a
+unless both `features.plugins` and `features.vector` are true. See
+[Local vector search](vector.md) for the operator path from those switches to a
 first query. Installation refuses to
 replace an externally sourced plugin package, an unmanaged plugin directory, or
 an executable it does not own, and reports the collision instead.

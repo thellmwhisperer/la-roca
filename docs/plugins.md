@@ -436,7 +436,9 @@ negative, and when both are present the overlap must be smaller than the
 maximum. These are hints to the kernel vector worker, not instructions for code
 the plugin runs. A plugin never supplies embedding generation code, and a
 database with no `vector` declaration continues to serve through FTS and SQL
-exactly as before.
+exactly as before; an explicitly selected data-plugin adapter may still expose
+its live chunks to the standalone `roca-vector` package through `roca exec`, as
+documented in [`plugins/vector/README.md`](../plugins/vector/README.md).
 
 Install, update, and uninstall regenerate
 `~/.roca/plugins/vector-registry.json` in the same pass that refreshes the

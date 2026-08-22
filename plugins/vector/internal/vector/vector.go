@@ -20,11 +20,12 @@ import (
 )
 
 const (
-	defaultChunkSize    = 4000
-	defaultOverlap      = 400
-	defaultBatchSize    = 64
-	walkPageSize        = 500
-	vectorStorageSchema = "vector-v1"
+	defaultChunkSize                 = 4000
+	defaultOverlap                   = 400
+	defaultBatchSize                 = 64
+	walkPageSize                     = 500
+	vectorStorageSchema              = "vector-v1"
+	deprecatedLayerReconciliationKey = "deprecated_layers_reconciled_v1"
 	// maxUnresolvedCandidates bounds a query against an index the corpus has moved
 	// under. Each resolution is one `roca exec` process, so a wholly stale index
 	// would otherwise spend one process per candidate to answer nothing.
@@ -36,14 +37,16 @@ type Index struct {
 	VectorPath  string
 	Model       string
 	Embedder    Embedder
+	Plugins     []string
 	Notice      func(string)
 	SourceKinds map[string]bool
 	Database    string
+	ReadOnly    bool
 }
 
 type Corpus interface {
 	WalkSources(context.Context, string, func(sourceRow) error) error
-	ResolveSource(context.Context, string, locator) (string, error)
+	ResolveSource(context.Context, string, Locator) (string, error)
 }
 
 type Delta struct {
@@ -63,7 +66,16 @@ type Result struct {
 	ID       string  `json:"id,omitempty"`
 	Source   string  `json:"source"`
 	SourceID string  `json:"source_id"`
+	Locator  Locator `json:"locator"`
 	Text     string  `json:"text"`
+}
+
+type QueryOptions struct {
+	Plugins         []string
+	Topic           string
+	Channel         string
+	PublishedAfter  string
+	PublishedBefore string
 }
 
 type sourceRow struct {
@@ -73,6 +85,8 @@ type sourceRow struct {
 	chunkSize          int
 	overlap            int
 	fingerprintVersion string
+	preChunked         bool
+	plugin             Locator
 	sessionID          string
 	ordinal            int64
 	hasOrdinal         bool
@@ -84,33 +98,54 @@ type sourceRow struct {
 	createdAt          string
 }
 
-type locator struct {
-	SourceID   string `json:"source_id,omitempty"`
-	SessionID  string `json:"session_id,omitempty"`
-	Ordinal    int64  `json:"ordinal,omitempty"`
-	HasOrdinal bool   `json:"has_ordinal,omitempty"`
-	Position   string `json:"position,omitempty"`
-	CronSource string `json:"cron_source,omitempty"`
-	FilePath   string `json:"file_path,omitempty"`
-	Layer      string `json:"layer,omitempty"`
-	Origin     string `json:"origin,omitempty"`
-	CreatedAt  string `json:"created_at,omitempty"`
-	Identity   string `json:"identity,omitempty"`
+type Locator struct {
+	SourceID      string `json:"source_id,omitempty"`
+	SessionID     string `json:"session_id,omitempty"`
+	Ordinal       int64  `json:"ordinal,omitempty"`
+	HasOrdinal    bool   `json:"has_ordinal,omitempty"`
+	Position      string `json:"position,omitempty"`
+	CronSource    string `json:"cron_source,omitempty"`
+	FilePath      string `json:"file_path,omitempty"`
+	Layer         string `json:"layer,omitempty"`
+	Origin        string `json:"origin,omitempty"`
+	CreatedAt     string `json:"created_at,omitempty"`
+	Identity      string `json:"identity,omitempty"`
+	Plugin        string `json:"plugin,omitempty"`
+	MaterialID    string `json:"material_id,omitempty"`
+	ChunkID       string `json:"chunk_id,omitempty"`
+	ChunkIndex    int    `json:"chunk_index,omitempty"`
+	SourceRef     string `json:"source_ref,omitempty"`
+	Title         string `json:"title,omitempty"`
+	TopicID       string `json:"topic_id,omitempty"`
+	TopicLabel    string `json:"topic_label,omitempty"`
+	ChannelID     string `json:"channel_id,omitempty"`
+	ChannelLabel  string `json:"channel_label,omitempty"`
+	VideoID       string `json:"video_id,omitempty"`
+	PublishedAt   string `json:"published_at,omitempty"`
+	ContentSHA256 string `json:"content_sha256,omitempty"`
+	DedupeKey     string `json:"dedupe_key,omitempty"`
 }
 
 type desiredChunk struct {
-	sourceKind  string
-	sourceID    string
-	index       int
-	fingerprint string
-	locator     locator
-	text        string
+	sourceKind    string
+	sourceID      string
+	index         int
+	fingerprint   string
+	locator       Locator
+	text          string
+	embeddingText string
 }
 
 type storedChunk struct {
 	id          int64
 	sourceKind  string
 	fingerprint string
+	locator     Locator
+}
+
+type locatorUpdate struct {
+	id      int64
+	locator Locator
 }
 
 const sessionEmbeddingTextVersion = "sessions-human-v2"
@@ -126,6 +161,52 @@ func ConfiguredModel(path string) string {
 		return DefaultModel
 	}
 	return model
+}
+
+func ConfiguredPlugins(path string) []string {
+	db, err := openSQLite(path, true)
+	if err != nil {
+		return nil
+	}
+	defer db.Close()
+	var raw string
+	if err := db.QueryRow(`SELECT value FROM meta WHERE key='plugins'`).Scan(&raw); err != nil {
+		return nil
+	}
+	var names []string
+	if json.Unmarshal([]byte(raw), &names) != nil {
+		return nil
+	}
+	return normalizePluginNames(names)
+}
+
+func saveConfiguredPlugins(db *sql.DB, names []string) error {
+	normalized := normalizePluginNames(names)
+	raw, err := json.Marshal(normalized)
+	if err != nil {
+		return fmt.Errorf("encode vector plugin sources: %w", err)
+	}
+	if _, err := db.Exec(`INSERT OR REPLACE INTO meta(key,value) VALUES ('plugins',?)`, string(raw)); err != nil {
+		return fmt.Errorf("save vector plugin sources: %w", err)
+	}
+	return nil
+}
+
+func normalizePluginNames(names []string) []string {
+	seen := map[string]bool{}
+	result := make([]string, 0, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			continue
+		}
+		if _, _, err := canonicalPlugin(name); err != nil {
+			continue
+		}
+		seen[name] = true
+		result = append(result, name)
+	}
+	return result
 }
 
 func (i Index) Ingest(ctx context.Context) (Delta, error) {
@@ -163,7 +244,7 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 	if err := ensureBaseSchema(store); err != nil {
 		return Delta{}, err
 	}
-	existing, model, dimensions, err := readIndexState(store)
+	existing, model, dimensions, _, err := readIndexState(store)
 	if err != nil {
 		return Delta{}, err
 	}
@@ -181,19 +262,46 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 			return Delta{}, err
 		}
 	}
+	if i.Plugins != nil {
+		if err := saveConfiguredPlugins(store, i.Plugins); err != nil {
+			return Delta{}, err
+		}
+	}
 
 	report := Delta{}
-	desiredFingerprints := make(map[string]string, len(existing))
+	initial := make(map[string]storedChunk, len(existing))
+	for key, chunk := range existing {
+		initial[key] = chunk
+	}
 	pending := make([]desiredChunk, 0, defaultBatchSize)
-	flush := func() error {
+	locatorUpdates := make(map[int64]locatorUpdate)
+	if _, err := store.ExecContext(ctx, `PRAGMA temp_store=FILE;
+		CREATE TEMP TABLE vector_desired_sources(
+			source_kind TEXT NOT NULL,
+			source_id TEXT NOT NULL,
+			source_order INTEGER NOT NULL,
+			text TEXT NOT NULL,
+			pre_chunked INTEGER NOT NULL DEFAULT 0,
+			locator TEXT NOT NULL,
+			chunk_size INTEGER NOT NULL,
+			overlap INTEGER NOT NULL,
+			fingerprint_version TEXT NOT NULL,
+			PRIMARY KEY(source_kind, source_id)
+		);
+		CREATE INDEX temp.vector_desired_sources_order ON vector_desired_sources(source_order)`); err != nil {
+		return Delta{}, fmt.Errorf("initialize vector reconciliation: %w", err)
+	}
+	var nextSourceOrder int64
+	var sourceOrder int64 = -1
+	flush := func(workCtx context.Context) error {
 		if len(pending) == 0 {
 			return nil
 		}
 		input := make([]string, len(pending))
 		for n := range pending {
-			input[n] = DocumentPrefix + pending[n].text
+			input[n] = DocumentPrefix + pending[n].embeddingText
 		}
-		vectors, err := i.Embedder.Embed(ctx, i.Model, input)
+		vectors, err := i.Embedder.Embed(workCtx, i.Model, input)
 		if err != nil {
 			return err
 		}
@@ -211,40 +319,131 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 				return fmt.Errorf("embedding %d has %d dimensions, want %d", n, len(vectors[n]), dimensions)
 			}
 		}
-		if err := writeBatch(ctx, store, pending, vectors, existing, &report); err != nil {
+		if err := writeBatch(workCtx, store, pending, vectors, existing, locatorUpdates); err != nil {
 			return err
 		}
 		pending = pending[:0]
 		return nil
 	}
-
-	err = i.Corpus.WalkSources(ctx, sourceKind, func(source sourceRow) error {
-		report.Sources++
-		chunkSize, overlap := source.chunking()
-		for chunkIndex, text := range chunks(source.text, chunkSize, overlap) {
-			chunk := desiredChunk{
-				sourceKind: source.kind, sourceID: source.stableID(), index: chunkIndex,
-				fingerprint: source.embeddingFingerprint(text), locator: source.locator(), text: text,
+	drainSources := func(workCtx context.Context) error {
+		for {
+			var kind, sourceID, sourceText, rawLocator, fingerprintVersion string
+			var preChunked, order, chunkSize, overlap int64
+			err := store.QueryRowContext(workCtx, `
+				SELECT source_kind,source_id,source_order,text,pre_chunked,locator,chunk_size,overlap,fingerprint_version
+				FROM temp.vector_desired_sources
+				WHERE source_order > ?
+				ORDER BY source_order
+				LIMIT 1
+			`, sourceOrder).Scan(&kind, &sourceID, &order, &sourceText, &preChunked, &rawLocator, &chunkSize, &overlap, &fingerprintVersion)
+			if err == sql.ErrNoRows {
+				break
 			}
-			key := chunkKey(chunk.sourceKind, chunk.sourceID, chunk.index)
-			desiredFingerprints[key] = chunk.fingerprint
-			if old, ok := existing[key]; ok && old.fingerprint == chunk.fingerprint {
-				report.Unchanged++
-				continue
+			if err != nil {
+				return fmt.Errorf("read vector reconciliation: %w", err)
 			}
-			pending = append(pending, chunk)
-			if len(pending) == defaultBatchSize {
-				if err := flush(); err != nil {
-					return err
+			var where Locator
+			if err := json.Unmarshal([]byte(rawLocator), &where); err != nil {
+				return fmt.Errorf("decode %s source locator: %w", kind, err)
+			}
+			source := sourceRow{kind: kind, text: sourceText, preChunked: preChunked != 0,
+				chunkSize: int(chunkSize), overlap: int(overlap), fingerprintVersion: fingerprintVersion}
+			var texts []string
+			if source.preChunked {
+				texts = sourceChunks(sourceText, true)
+			} else {
+				actualChunkSize, actualOverlap := source.chunking()
+				texts = chunks(sourceText, actualChunkSize, actualOverlap)
+			}
+			for chunkIndex, text := range texts {
+				chunk := desiredChunk{
+					sourceKind: kind, sourceID: sourceID, index: chunkIndex,
+					fingerprint: source.embeddingFingerprint(text), locator: where, text: text,
+					embeddingText: retrievalText(where, text),
+				}
+				key := chunkKey(chunk.sourceKind, chunk.sourceID, chunk.index)
+				if old, ok := existing[key]; ok && old.fingerprint == chunk.fingerprint {
+					if old.locator != chunk.locator {
+						if retrievalText(old.locator, text) != chunk.embeddingText {
+							pending = append(pending, chunk)
+							if len(pending) >= defaultBatchSize {
+								if err := flush(workCtx); err != nil {
+									return err
+								}
+							}
+						} else {
+							locatorUpdates[old.id] = locatorUpdate{id: old.id, locator: chunk.locator}
+							existing[key] = storedChunk{id: old.id, sourceKind: old.sourceKind, fingerprint: old.fingerprint, locator: chunk.locator}
+							report.Updated++
+						}
+					} else {
+						report.Unchanged++
+					}
+					continue
+				}
+				pending = append(pending, chunk)
+				if len(pending) >= defaultBatchSize {
+					if err := flush(workCtx); err != nil {
+						return err
+					}
 				}
 			}
+			sourceOrder = order
+		}
+		if err := flush(workCtx); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	stagedSources := 0
+	err = i.Corpus.WalkSources(ctx, sourceKind, func(source sourceRow) error {
+		if !source.indexable() {
+			return nil
+		}
+		report.Sources++
+		sourceID := source.stableID()
+		where, err := json.Marshal(source.locator())
+		if err != nil {
+			return fmt.Errorf("encode %s source locator: %w", source.kind, err)
+		}
+		_, err = store.ExecContext(ctx, `
+			INSERT INTO temp.vector_desired_sources(source_kind,source_id,source_order,text,pre_chunked,locator,chunk_size,overlap,fingerprint_version)
+			VALUES (?,?,?,?,?,?,?,?,?)
+			ON CONFLICT(source_kind,source_id) DO UPDATE SET source_order=excluded.source_order,text=excluded.text,locator=excluded.locator,
+				chunk_size=excluded.chunk_size,overlap=excluded.overlap,fingerprint_version=excluded.fingerprint_version,
+				pre_chunked=excluded.pre_chunked
+		`, source.kind, sourceID, nextSourceOrder, source.text, boolInt(source.preChunked), string(where), source.chunkSize, source.overlap, source.fingerprintVersion)
+		nextSourceOrder++
+		if err != nil {
+			return err
+		}
+		stagedSources++
+		if stagedSources >= defaultBatchSize {
+			if err := drainSources(ctx); err != nil {
+				return err
+			}
+			stagedSources = 0
 		}
 		return nil
 	})
 	if err != nil {
+		drainCtx := ctx
+		if ctx.Err() != nil {
+			drainCtx = context.WithoutCancel(ctx)
+		}
+		if cleanupErr := discardExistingDesiredSources(drainCtx, store, initial); cleanupErr != nil {
+			return Delta{}, cleanupErr
+		}
+		pending = pending[:0]
+		sourceOrder = -1
+		_ = drainSources(drainCtx)
 		return Delta{}, err
 	}
-	if err := flush(); err != nil {
+	if err := drainSources(ctx); err != nil {
+		return Delta{}, err
+	}
+	if err := updateLocators(ctx, store, locatorUpdates); err != nil {
 		return Delta{}, err
 	}
 	if dimensions == 0 {
@@ -260,11 +459,19 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 			return Delta{}, err
 		}
 	}
-	if err := removeMissing(ctx, store, existing, desiredFingerprints, sourceKind, &report); err != nil {
+	finalSeen, err := finalSeenSources(ctx, store)
+	if err != nil {
 		return Delta{}, err
 	}
-	report.Chunks = report.Added + report.Updated + report.Unchanged
-	return report, nil
+	if err := removeMissing(ctx, store, existing, finalSeen, sourceKind); err != nil {
+		return Delta{}, err
+	}
+	if err := markDeprecatedLayersReconciled(ctx, store); err != nil {
+		return Delta{}, err
+	}
+	delta := deltaBetween(initial, existing, sourceKind)
+	delta.Sources = report.Sources
+	return delta, nil
 }
 
 func validateSourceKind(sourceKind string, declared map[string]bool) error {
@@ -275,17 +482,49 @@ func validateSourceKind(sourceKind string, declared map[string]bool) error {
 		if declared[sourceKind] {
 			return nil
 		}
+		if strings.HasPrefix(sourceKind, "plugin:") {
+			if declared[strings.TrimPrefix(sourceKind, "plugin:")] {
+				return nil
+			}
+		}
 		return fmt.Errorf("unknown vector source %q", sourceKind)
 	}
 	switch sourceKind {
 	case "memories", "exchanges", "thinking_blocks", "sessions":
 		return nil
 	default:
+		if strings.HasPrefix(sourceKind, "plugin:") {
+			_, _, err := canonicalPlugin(strings.TrimPrefix(sourceKind, "plugin:"))
+			return err
+		}
 		return fmt.Errorf("unknown vector source %q", sourceKind)
 	}
 }
 
+func retrievalText(where Locator, text string) string {
+	if where.Plugin == "" {
+		return text
+	}
+	metadata := make([]string, 0, 7)
+	for _, value := range []string{
+		where.Title, where.TopicLabel, where.TopicID, where.ChannelLabel, where.ChannelID,
+		where.VideoID, where.PublishedAt,
+	} {
+		if strings.TrimSpace(value) != "" {
+			metadata = append(metadata, value)
+		}
+	}
+	if len(metadata) == 0 {
+		return text
+	}
+	return strings.Join(metadata, " | ") + "\n\n" + text
+}
+
 func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) {
+	return i.QueryWithOptions(ctx, text, k, QueryOptions{})
+}
+
+func (i Index) QueryWithOptions(ctx context.Context, text string, k int, options QueryOptions) ([]Result, error) {
 	if err := i.validate(); err != nil {
 		return nil, err
 	}
@@ -305,12 +544,40 @@ func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) 
 		return nil, fmt.Errorf("open vector database: %w", err)
 	}
 	defer store.Close()
-	_, model, dimensions, err := readIndexState(store)
+	_, model, dimensions, deprecated, err := readIndexState(store)
 	if err != nil {
 		return nil, fmt.Errorf("read vector index: %w; run `roca vector install`", err)
 	}
 	if model == "" || dimensions == 0 {
 		return nil, fmt.Errorf("vector index is not ready; run `roca vector install`")
+	}
+	reconciled, err := deprecatedLayersReconciled(ctx, store)
+	if err != nil {
+		return nil, fmt.Errorf("inspect vector reconciliation: %w", err)
+	}
+	if deprecated && i.ReadOnly {
+		return nil, fmt.Errorf("vector index contains retired chunks; run `roca vector ingest --delta` with writes enabled")
+	}
+	if !i.ReadOnly && (!reconciled || deprecated) {
+		store.Close()
+		var reconcileErr error
+		if deprecated {
+			reconcileErr = i.purgeDeprecatedChunks(ctx)
+		} else {
+			reconcileErr = i.markDeprecatedLayersReconciled(ctx)
+		}
+		if reconcileErr != nil {
+			return nil, fmt.Errorf("reconcile deprecated vector chunks: %w", reconcileErr)
+		}
+		store, err = openSQLite(i.VectorPath, true)
+		if err != nil {
+			return nil, fmt.Errorf("reopen vector database: %w", err)
+		}
+		defer store.Close()
+		_, model, dimensions, _, err = readIndexState(store)
+		if err != nil {
+			return nil, fmt.Errorf("read vector index after reconciliation: %w; run `roca vector install`", err)
+		}
 	}
 	vectors, err := i.Embedder.Embed(ctx, model, []string{QueryPrefix + text})
 	if err != nil {
@@ -319,56 +586,186 @@ func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) 
 	if len(vectors) != 1 || len(vectors[0]) != dimensions {
 		return nil, fmt.Errorf("query embedding has the wrong dimensions")
 	}
-	return i.queryVector(ctx, store, vectors[0], k)
+	return i.queryVectorWithOptions(ctx, store, vectors[0], k, options)
 }
 
 func (i Index) queryVector(ctx context.Context, store *sql.DB, embedding []float32, k int) ([]Result, error) {
+	return i.queryVectorWithOptions(ctx, store, embedding, k, QueryOptions{})
+}
+
+func (i Index) queryVectorWithOptions(ctx context.Context, store *sql.DB, embedding []float32, k int, options QueryOptions) ([]Result, error) {
 	if k < 1 || k > 100 {
 		return nil, fmt.Errorf("k must be between 1 and 100")
 	}
-	candidates, err := nearest(ctx, store, vectorBlob(embedding), min(k*8, 800))
+	candidateLimit, err := nearestCandidateLimit(ctx, store, k)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("count vector candidates: %w", err)
+	}
+	candidateCount, err := activeCandidateCount(ctx, store)
+	if err != nil {
+		return nil, fmt.Errorf("count active vector candidates: %w", err)
+	}
+	if candidateCount == 0 {
+		return []Result{}, nil
+	}
+	if candidateLimit > candidateCount {
+		candidateLimit = candidateCount
 	}
 	results := make([]Result, 0, k)
 	seen := map[string]bool{}
+	seenCandidates := map[int64]bool{}
 	misses := 0
-	for _, candidate := range candidates {
-		if seen[candidate.sourceID] {
-			continue
-		}
-		seen[candidate.sourceID] = true
-		body, err := i.Corpus.ResolveSource(ctx, candidate.kind, candidate.where)
+	for {
+		candidates, err := nearest(ctx, store, vectorBlob(embedding), candidateLimit)
 		if err != nil {
 			return nil, err
 		}
-		if body == "" {
-			misses++
-			if misses == maxUnresolvedCandidates {
+		for _, candidate := range candidates {
+			if seenCandidates[candidate.id] {
+				continue
+			}
+			seenCandidates[candidate.id] = true
+			if !matchesQueryOptions(candidate.where, options) {
+				continue
+			}
+			dedupeKey := candidate.sourceID
+			if candidate.where.DedupeKey != "" {
+				dedupeKey = candidate.where.DedupeKey
+			}
+			if seen[dedupeKey] {
+				continue
+			}
+			seen[dedupeKey] = true
+			body, err := i.Corpus.ResolveSource(ctx, candidate.kind, candidate.where)
+			if err != nil {
+				return nil, err
+			}
+			if body == "" {
+				misses++
+				if misses == maxUnresolvedCandidates {
+					break
+				}
+				continue
+			}
+			sourceID := candidate.where.SourceID
+			if sourceID == "" {
+				sourceID = candidate.sourceID
+			}
+			if candidate.where.Plugin != "" && candidate.fingerprint != "" && fingerprint(body) != candidate.fingerprint {
+				misses++
+				if misses == maxUnresolvedCandidates {
+					break
+				}
+				continue
+			}
+			results = append(results, Result{
+				Rank: len(results) + 1, Score: 1 - candidate.distance,
+				Database: resultDatabase(i.Database, candidate.kind, candidate.where), Table: candidate.kind, ID: sourceID,
+				Source: candidate.kind, SourceID: candidate.sourceID, Locator: candidate.where, Text: body,
+			})
+			if len(results) == k {
 				break
 			}
-			continue
 		}
-		sourceID := candidate.where.SourceID
-		if sourceID == "" {
-			sourceID = candidate.sourceID
-		}
-		results = append(results, Result{
-			Rank: len(results) + 1, Score: 1 - candidate.distance,
-			Database: i.Database, Table: candidate.kind, ID: sourceID,
-			Source: candidate.kind, SourceID: candidate.sourceID, Text: body,
-		})
-		if len(results) == k {
+		if len(results) == k || misses == maxUnresolvedCandidates || candidateLimit >= candidateCount {
 			break
 		}
+		nextLimit := candidateLimit * 2
+		if nextLimit <= candidateLimit {
+			nextLimit = candidateLimit + 1
+		}
+		if nextLimit > candidateCount {
+			nextLimit = candidateCount
+		}
+		candidateLimit = nextLimit
 	}
 	return results, nil
+}
+
+func resultDatabase(defaultDatabase, kind string, where Locator) string {
+	if plugin := strings.TrimSpace(where.Plugin); plugin != "" {
+		if strings.HasPrefix(plugin, "plugin:") {
+			return plugin
+		}
+		return "plugin:" + plugin
+	}
+	if strings.HasPrefix(kind, "plugin:") {
+		return kind
+	}
+	return defaultDatabase
+}
+
+func matchesQueryOptions(where Locator, options QueryOptions) bool {
+	if len(options.Plugins) > 0 {
+		matched := false
+		for _, name := range options.Plugins {
+			plugin, _, err := canonicalPlugin(name)
+			if err == nil && where.Plugin == plugin {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	topic := strings.TrimSpace(options.Topic)
+	if topic != "" && !containsFold(where.TopicID, topic) && !containsFold(where.TopicLabel, topic) {
+		return false
+	}
+	channel := strings.TrimSpace(options.Channel)
+	if channel != "" && !containsFold(where.ChannelID, channel) && !containsFold(where.ChannelLabel, channel) {
+		return false
+	}
+	after := strings.TrimSpace(options.PublishedAfter)
+	if after != "" && (where.PublishedAt == "" || where.PublishedAt < after) {
+		return false
+	}
+	before := strings.TrimSpace(options.PublishedBefore)
+	if before != "" && (where.PublishedAt == "" || where.PublishedAt > before) {
+		return false
+	}
+	return true
+}
+
+func containsFold(value, query string) bool {
+	return strings.Contains(strings.ToLower(value), strings.ToLower(strings.TrimSpace(query)))
 }
 
 func (i Index) waitingForIndex(path string) {
 	if i.Notice != nil {
 		i.Notice(fmt.Sprintf("another indexing run holds %s; waiting for it to finish", path))
 	}
+}
+
+func (i Index) purgeDeprecatedChunks(ctx context.Context) error {
+	release, err := lockIndex(ctx, i.VectorPath+".index.lock", i.waitingForIndex)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	store, err := openSQLite(i.VectorPath, false)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	return purgeDeprecatedChunks(ctx, store)
+}
+
+func (i Index) markDeprecatedLayersReconciled(ctx context.Context) error {
+	release, err := lockIndex(ctx, i.VectorPath+".index.lock", i.waitingForIndex)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	store, err := openSQLite(i.VectorPath, false)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	return markDeprecatedLayersReconciled(ctx, store)
 }
 
 func (i Index) validate() error {
@@ -400,9 +797,29 @@ func chunks(text string, size, overlap int) []string {
 	return result
 }
 
+func sourceChunks(text string, preChunked bool) []string {
+	if preChunked {
+		if strings.TrimSpace(text) == "" {
+			return nil
+		}
+		return []string{text}
+	}
+	return chunks(text, defaultChunkSize, defaultOverlap)
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
 func (s sourceRow) stableID() string {
 	escape := url.PathEscape
 	if s.sourceID != "" {
+		if strings.HasPrefix(s.kind, "plugin:") {
+			return s.sourceID
+		}
 		return s.kind + "/" + escape(s.sourceID)
 	}
 	switch s.kind {
@@ -428,7 +845,7 @@ func (s sourceRow) stableID() string {
 	case "memories":
 		switch {
 		case s.cronSource != "" && s.filePath != "":
-			return "memories/cron/" + escape(s.cronSource) + "/" + escape(s.filePath) + "/" + s.identity()
+			return "memories/cron/" + escape(s.cronSource) + "/" + escape(s.filePath)
 		case s.sessionID != "" && s.hasOrdinal:
 			return fmt.Sprintf("memories/session/%s/%d/%s", escape(s.sessionID), s.ordinal, s.identity())
 		default:
@@ -438,10 +855,21 @@ func (s sourceRow) stableID() string {
 	return s.kind + "/direct/" + s.identity()
 }
 
-func (s sourceRow) locator() locator {
-	return locator{SourceID: s.sourceID, SessionID: s.sessionID, Ordinal: s.ordinal, HasOrdinal: s.hasOrdinal,
+func (s sourceRow) locator() Locator {
+	if s.plugin.Plugin != "" {
+		return s.plugin
+	}
+	return Locator{SourceID: s.sourceID, SessionID: s.sessionID, Ordinal: s.ordinal, HasOrdinal: s.hasOrdinal,
 		Position: s.position, CronSource: s.cronSource, FilePath: s.filePath,
 		Layer: s.layer, Origin: s.origin, CreatedAt: s.createdAt, Identity: s.identity()}
+}
+
+func (s sourceRow) indexable() bool {
+	return s.kind != "memories" || !deprecatedMemoryLayer(s.layer)
+}
+
+func deprecatedMemoryLayer(layer string) bool {
+	return strings.HasPrefix(strings.ToLower(layer), "rocodata_")
 }
 
 func (s sourceRow) identity() string {
@@ -489,7 +917,11 @@ func (s sourceRow) chunking() (int, int) {
 }
 
 func chunkKey(kind, sourceID string, index int) string {
-	return kind + "\x00" + sourceID + "\x00" + strconv.Itoa(index)
+	return sourceKey(kind, sourceID) + "\x00" + strconv.Itoa(index)
+}
+
+func sourceKey(kind, sourceID string) string {
+	return kind + "\x00" + sourceID
 }
 
 func openSQLite(path string, readOnly bool) (*sql.DB, error) {
@@ -536,32 +968,47 @@ func ensureBaseSchema(db *sql.DB) error {
 	return nil
 }
 
-func readIndexState(db *sql.DB) (map[string]storedChunk, string, int, error) {
+func readIndexState(db *sql.DB) (map[string]storedChunk, string, int, bool, error) {
 	state := map[string]storedChunk{}
-	rows, err := db.Query(`SELECT id, source_kind, source_id, chunk_index, fingerprint FROM chunks`)
+	rows, err := db.Query(`SELECT id, source_kind, source_id, chunk_index, fingerprint, locator FROM chunks`)
 	if err != nil {
-		return nil, "", 0, err
+		return nil, "", 0, false, err
 	}
+	deprecated := false
 	for rows.Next() {
 		var item storedChunk
 		var kind, sourceID string
 		var index int
-		if err := rows.Scan(&item.id, &kind, &sourceID, &index, &item.fingerprint); err != nil {
+		var rawLocator string
+		if err := rows.Scan(&item.id, &kind, &sourceID, &index, &item.fingerprint, &rawLocator); err != nil {
 			rows.Close()
-			return nil, "", 0, err
+			return nil, "", 0, false, err
 		}
 		item.sourceKind = kind
+		if json.Unmarshal([]byte(rawLocator), &item.locator) != nil {
+			item.locator = Locator{}
+		}
 		state[chunkKey(kind, sourceID, index)] = item
+		if kind == "memories" {
+			var where Locator
+			if json.Unmarshal([]byte(rawLocator), &where) == nil && deprecatedMemoryLayer(where.Layer) {
+				deprecated = true
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, "", 0, false, err
 	}
 	if err := rows.Close(); err != nil {
-		return nil, "", 0, err
+		return nil, "", 0, false, err
 	}
 	var model string
 	_ = db.QueryRow(`SELECT value FROM meta WHERE key='model'`).Scan(&model)
 	var dimensionText string
 	_ = db.QueryRow(`SELECT value FROM meta WHERE key='dimensions'`).Scan(&dimensionText)
 	dimensions, _ := strconv.Atoi(dimensionText)
-	return state, model, dimensions, nil
+	return state, model, dimensions, deprecated, nil
 }
 
 func resetIndex(db *sql.DB) error {
@@ -594,7 +1041,7 @@ func ensureVectorTables(db *sql.DB, dimensions int, model string) error {
 }
 
 func writeBatch(ctx context.Context, db *sql.DB, chunks []desiredChunk, vectors [][]float32,
-	existing map[string]storedChunk, report *Delta) error {
+	existing map[string]storedChunk, locatorUpdates map[int64]locatorUpdate) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -619,8 +1066,8 @@ func writeBatch(ctx context.Context, db *sql.DB, chunks []desiredChunk, vectors 
 			if _, err := tx.ExecContext(ctx, `INSERT INTO ann_embeddings(rowid,embedding) VALUES (?,vec_quantize_binary(?))`, old.id, vectorBlob(vectors[n])); err != nil {
 				return err
 			}
-			report.Updated++
-			existing[key] = storedChunk{id: old.id, sourceKind: chunk.sourceKind, fingerprint: chunk.fingerprint}
+			locatorUpdates[old.id] = locatorUpdate{id: old.id, locator: chunk.locator}
+			existing[key] = storedChunk{id: old.id, sourceKind: chunk.sourceKind, fingerprint: chunk.fingerprint, locator: chunk.locator}
 			continue
 		}
 		result, err := tx.ExecContext(ctx, `INSERT INTO chunks(source_kind,source_id,chunk_index,fingerprint,locator) VALUES (?,?,?,?,?)`,
@@ -638,25 +1085,45 @@ func writeBatch(ctx context.Context, db *sql.DB, chunks []desiredChunk, vectors 
 		if _, err := tx.ExecContext(ctx, `INSERT INTO ann_embeddings(rowid,embedding) VALUES (?,vec_quantize_binary(?))`, id, vectorBlob(vectors[n])); err != nil {
 			return err
 		}
-		report.Added++
-		existing[key] = storedChunk{id: id, sourceKind: chunk.sourceKind, fingerprint: chunk.fingerprint}
+		existing[key] = storedChunk{id: id, sourceKind: chunk.sourceKind, fingerprint: chunk.fingerprint, locator: chunk.locator}
 	}
 	return tx.Commit()
 }
 
-func removeMissing(ctx context.Context, db *sql.DB, existing map[string]storedChunk,
-	desiredFingerprints map[string]string,
-	sourceKind string, report *Delta) error {
+func updateLocators(ctx context.Context, db *sql.DB, updates map[int64]locatorUpdate) error {
+	if len(updates) == 0 {
+		return nil
+	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	for _, update := range updates {
+		where, err := json.Marshal(update.locator)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE chunks SET locator=?,updated_at=datetime('now') WHERE id=?`, string(where), update.id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func removeMissing(ctx context.Context, db *sql.DB, existing map[string]storedChunk,
+	seen map[string]bool, sourceKind string) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var removed []string
 	for key, old := range existing {
 		if sourceKind != "" && old.sourceKind != sourceKind {
 			continue
 		}
-		if _, desired := desiredFingerprints[key]; desired {
+		if seen[key] {
 			continue
 		}
 		if err := deleteEmbeddings(ctx, tx, old.id); err != nil {
@@ -665,9 +1132,151 @@ func removeMissing(ctx context.Context, db *sql.DB, existing map[string]storedCh
 		if _, err := tx.ExecContext(ctx, `DELETE FROM chunks WHERE id=?`, old.id); err != nil {
 			return err
 		}
-		report.Removed++
+		removed = append(removed, key)
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	for _, key := range removed {
+		delete(existing, key)
+	}
+	return nil
+}
+
+func finalSeenSources(ctx context.Context, db *sql.DB) (map[string]bool, error) {
+	seen := map[string]bool{}
+	rows, err := db.QueryContext(ctx, `
+		SELECT source_kind,source_id,text,pre_chunked,chunk_size,overlap
+		FROM temp.vector_desired_sources`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var kind, sourceID, text string
+		var preChunked, chunkSize, overlap int64
+		if err := rows.Scan(&kind, &sourceID, &text, &preChunked, &chunkSize, &overlap); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		var texts []string
+		if preChunked != 0 {
+			texts = sourceChunks(text, true)
+		} else {
+			source := sourceRow{kind: kind, chunkSize: int(chunkSize), overlap: int(overlap)}
+			actualChunkSize, actualOverlap := source.chunking()
+			texts = chunks(text, actualChunkSize, actualOverlap)
+		}
+		for chunkIndex := range texts {
+			seen[chunkKey(kind, sourceID, chunkIndex)] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return seen, nil
+}
+
+func deltaBetween(initial, existing map[string]storedChunk, sourceKind string) Delta {
+	var delta Delta
+	for key, current := range existing {
+		if sourceKind != "" && current.sourceKind != sourceKind {
+			continue
+		}
+		previous, ok := initial[key]
+		if !ok {
+			delta.Added++
+			continue
+		}
+		if previous.fingerprint != current.fingerprint || previous.locator != current.locator {
+			delta.Updated++
+			continue
+		}
+		delta.Unchanged++
+	}
+	for key := range initial {
+		previous := initial[key]
+		if sourceKind != "" && previous.sourceKind != sourceKind {
+			continue
+		}
+		if _, ok := existing[key]; !ok {
+			delta.Removed++
+		}
+	}
+	delta.Chunks = delta.Added + delta.Updated + delta.Unchanged
+	return delta
+}
+
+func discardExistingDesiredSources(ctx context.Context, db *sql.DB, initial map[string]storedChunk) error {
+	rows, err := db.QueryContext(ctx, `SELECT source_kind,source_id,locator FROM temp.vector_desired_sources`)
+	if err != nil {
+		return fmt.Errorf("inspect interrupted vector sources: %w", err)
+	}
+	var discard [][2]string
+	for rows.Next() {
+		var kind, sourceID, rawLocator string
+		if err := rows.Scan(&kind, &sourceID, &rawLocator); err != nil {
+			return fmt.Errorf("inspect interrupted vector source: %w", err)
+		}
+		var locator Locator
+		if err := json.Unmarshal([]byte(rawLocator), &locator); err != nil {
+			return fmt.Errorf("decode interrupted vector source: %w", err)
+		}
+		keep := true
+		for _, previous := range initial {
+			if previous.sourceKind == kind && sameSourceLocator(kind, previous.locator, locator) {
+				keep = false
+				break
+			}
+		}
+		if keep {
+			continue
+		}
+		discard = append(discard, [2]string{kind, sourceID})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, source := range discard {
+		if _, err := db.ExecContext(ctx, `DELETE FROM temp.vector_desired_sources WHERE source_kind=? AND source_id=?`, source[0], source[1]); err != nil {
+			return fmt.Errorf("discard interrupted vector source: %w", err)
+		}
+	}
+	return nil
+}
+
+func sameSourceLocator(kind string, left, right Locator) bool {
+	if strings.HasPrefix(kind, "plugin:") {
+		return left.Plugin == right.Plugin && left.ChunkID == right.ChunkID
+	}
+	switch kind {
+	case "sessions":
+		return left.SessionID == right.SessionID
+	case "exchanges":
+		return left.SessionID == right.SessionID && left.HasOrdinal == right.HasOrdinal &&
+			(!left.HasOrdinal || left.Ordinal == right.Ordinal)
+	case "thinking_blocks":
+		return left.SessionID == right.SessionID && left.HasOrdinal == right.HasOrdinal &&
+			left.Position == right.Position && (!left.HasOrdinal || left.Ordinal == right.Ordinal)
+	case "memories":
+		if left.CronSource != "" && left.FilePath != "" || right.CronSource != "" && right.FilePath != "" {
+			return left.CronSource == right.CronSource && left.FilePath == right.FilePath
+		}
+		if left.SessionID != "" || right.SessionID != "" {
+			return left.SessionID == right.SessionID && left.HasOrdinal == right.HasOrdinal &&
+				(!left.HasOrdinal || left.Ordinal == right.Ordinal)
+		}
+		return left.Layer == right.Layer && left.Origin == right.Origin && left.CreatedAt == right.CreatedAt
+	default:
+		return left.SourceID == right.SourceID
+	}
 }
 
 func deleteEmbeddings(ctx context.Context, tx *sql.Tx, rowID int64) error {
@@ -679,11 +1288,113 @@ func deleteEmbeddings(ctx context.Context, tx *sql.Tx, rowID int64) error {
 	return nil
 }
 
+func nearestCandidateLimit(ctx context.Context, db *sql.DB, k int) (int, error) {
+	base := int64(min(k*8, 800))
+	var total, retired int64
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(CASE WHEN source_kind='memories' AND lower(COALESCE(json_extract(locator,'$.layer'),'')) LIKE 'rocodata\_%' ESCAPE '\' THEN 1 ELSE 0 END),0) FROM chunks`).Scan(&total, &retired); err != nil {
+		return 0, err
+	}
+	if total == 0 {
+		return int(base), nil
+	}
+	limit := base + retired
+	if limit > total {
+		limit = total
+	}
+	return int(limit), nil
+}
+
+func activeCandidateCount(ctx context.Context, db *sql.DB) (int, error) {
+	var count int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM chunks
+		WHERE source_kind <> 'memories' OR lower(COALESCE(json_extract(locator,'$.layer'),'')) NOT LIKE 'rocodata\_%' ESCAPE '\'`).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func purgeDeprecatedChunks(ctx context.Context, db *sql.DB) error {
+	var chunksTable int
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='chunks')`).Scan(&chunksTable); err != nil {
+		return err
+	}
+	if chunksTable == 0 {
+		return nil
+	}
+	rows, err := db.QueryContext(ctx, `SELECT id FROM chunks WHERE source_kind='memories' AND lower(COALESCE(json_extract(locator,'$.layer'),'')) LIKE 'rocodata\_%' ESCAPE '\'`)
+	if err != nil {
+		return err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return markDeprecatedLayersReconciled(ctx, db)
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, id := range ids {
+		if err := deleteEmbeddings(ctx, tx, id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM chunks WHERE id=?`, id); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)`, deprecatedLayerReconciliationKey, "1"); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func deprecatedLayersReconciled(ctx context.Context, db *sql.DB) (bool, error) {
+	var value string
+	err := db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key=?`, deprecatedLayerReconciliationKey).Scan(&value)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return value == "1", nil
+}
+
+func markDeprecatedLayersReconciled(ctx context.Context, db *sql.DB) error {
+	var value string
+	err := db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key=?`, deprecatedLayerReconciliationKey).Scan(&value)
+	if err == nil && value == "1" {
+		return nil
+	}
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)`, deprecatedLayerReconciliationKey, "1")
+	return err
+}
+
 type neighbor struct {
-	kind     string
-	sourceID string
-	distance float64
-	where    locator
+	id          int64
+	kind        string
+	sourceID    string
+	fingerprint string
+	distance    float64
+	where       Locator
 }
 
 func nearest(ctx context.Context, db *sql.DB, vector []byte, k int) ([]neighbor, error) {
@@ -691,10 +1402,11 @@ func nearest(ctx context.Context, db *sql.DB, vector []byte, k int) ([]neighbor,
 			SELECT rowid FROM ann_embeddings
 			WHERE embedding MATCH vec_quantize_binary(?) AND k = ?
 		)
-		SELECT c.source_kind,c.source_id,c.locator,vec_distance_cosine(e.embedding,?) AS distance
+		SELECT c.id,c.source_kind,c.source_id,c.fingerprint,c.locator,vec_distance_cosine(e.embedding,?) AS distance
 		FROM candidates a
 		JOIN embeddings e ON e.rowid=a.rowid
 		JOIN chunks c ON c.id=a.rowid
+		WHERE c.source_kind <> 'memories' OR lower(COALESCE(json_extract(c.locator,'$.layer'),'')) NOT LIKE 'rocodata\_%' ESCAPE '\'
 		ORDER BY distance`, vector, k, vector)
 	if err != nil {
 		return nil, fmt.Errorf("search sqlite-vec index: %w", err)
@@ -704,7 +1416,7 @@ func nearest(ctx context.Context, db *sql.DB, vector []byte, k int) ([]neighbor,
 	for rows.Next() {
 		var item neighbor
 		var raw string
-		if err := rows.Scan(&item.kind, &item.sourceID, &raw, &item.distance); err != nil {
+		if err := rows.Scan(&item.id, &item.kind, &item.sourceID, &item.fingerprint, &raw, &item.distance); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(raw), &item.where); err != nil {

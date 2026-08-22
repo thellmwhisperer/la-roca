@@ -24,6 +24,8 @@ that data, and teaches them how as they go:
 - every answer says what you got and which command comes next
 - every error names its fix
 - the shipped skills carry the craft
+Every core query answer shows its proof: the SQL that produced it and the rows
+that back it.
 
 An agent learns La Roca by using La Roca. CLI and MCP.
 
@@ -52,6 +54,11 @@ If an already signed-in agent CLI is on `PATH` (`claude`, `codex`, ...),
 no login of any kind is needed: La Roca borrows the plan you already pay
 for. Supported on macOS, Linux, and native Windows.
 [Install details and the full init flow.](docs/lifecycle.md)
+That detected CLI is the factory default: no provider table or model
+configuration step is required; `roca model check` only confirms that the
+session answers. Without a detected CLI, La Roca tries the local Ollama floor
+and finally the keyword rescue, naming every missing or unavailable answering
+route.
 
 ## What you can do
 
@@ -103,7 +110,8 @@ final answer. [Skills and distillation.](docs/lifecycle.md#skills)
 
 ### Drop to exact SQL whenever you want
 
-Because it is a real database, not a search box:
+Because it is a real database, not a search box. A keyword or vector index
+cannot replace an exact SQL query for this:
 
 ```sh
 roca exec "SELECT source_agent, COUNT(*) FROM sessions
@@ -149,8 +157,28 @@ incremental, idempotent, read-only against live stores.
 - **A query is two inferences.** The first sees the schema, never your rows,
   and writes one `SELECT`. The second sees only result rows. Either can be
   a local model.
-- **Exact retrieval.** SQL plus FTS5 with diacritic folding; opt-in local
-  vectors for meaning; honest fallbacks that say so.
+- **Exact core retrieval; optional semantic plugin.** Core recovery is SQL plus
+  a local FTS5 index with diacritic folding; a plain `LIKE` fallback works
+  before the index exists, and this route stays exact and auditable. Your model
+  can still supply natural-language query planning at question time; semantic
+  candidate retrieval is an optional executable package you build and install
+  yourself, with its embedding index remaining outside core. See the
+  [executable plugin contract](docs/plugins.md#executable-only-packages) and
+  the [roca-vector package guide](plugins/vector/README.md) for the setup and
+  domain-extension boundary.
+- **Semantic-first agent craft.** The installed skill can use the optional
+  local vector package to retrieve conceptual candidates when both
+  `features.plugins` and `features.vector` are enabled and its local model is
+  ready, then resolve their
+  source context through core before forming a verdict. A vector score is not
+  evidence, and literal rescue is never silently presented as semantic
+  retrieval. See [Semantic retrieval](docs/semantic-retrieval.md).
+  The [Libro de Economía profile](docs/semantic-profiles/libro-economia.md)
+  shows how a domain layer keeps its own categories while preserving evidence.
+- **Honest degradation.** No usable provider, or SQL that cannot run, falls
+  back to literal search and says so in the result. The semantic-first skill
+  reports an unavailable vector route instead of presenting that exact
+  fallback as semantic retrieval.
 - **Extensible.** [Plugins](docs/plugins.md) federate your own SQLite
   databases into the same query surface: a checksummed package, one consent
   screen, and your team's sources answer next to the corpus.
