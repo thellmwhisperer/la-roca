@@ -75,6 +75,10 @@ func initCommand(env *cliEnv) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			paths.Config, err = initConfigPath(paths, env.dbPath != "")
+			if err != nil {
+				return err
+			}
 			configMissingAtStart := !fileExists(paths.Config)
 			rawInput := cmd.InOrStdin()
 			interactive := terminalInput(rawInput) && !env.json
@@ -83,7 +87,7 @@ func initCommand(env *cliEnv) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if interactive && !env.skipInitChooser {
+			if interactive && !env.skipInitChooser && configMissingAtStart {
 				chooserStarted := time.Now()
 				promptWaitBefore := env.initPromptWait
 				initialModel, modelErr := effectiveInitModel(cmd.Context(), paths)
@@ -311,6 +315,16 @@ func (env *cliEnv) initSay(format string, args ...any) {
 func fileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
+}
+
+func initConfigPath(paths config.Paths, explicitDB bool) (string, error) {
+	if explicitDB {
+		return filepath.Join(filepath.Dir(paths.DB), config.FileConfig), nil
+	}
+	if paths.Home == "" {
+		return "", fmt.Errorf("I do not know where your HOME is: name the database with --db-path")
+	}
+	return filepath.Join(paths.Home, config.DirOwn, config.FileConfig), nil
 }
 
 var newInstallFeatureChanges = []config.Change{

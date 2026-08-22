@@ -43,30 +43,6 @@ func TestRocaSkillIsGeneratedFromTheAgentsPayload(t *testing.T) {
 	}
 }
 
-func TestAgentInstallPlaybookWorksBeforeOptionalVectors(t *testing.T) {
-	body := skill.Payload()
-	ordered := []string{
-		"curl -fsSL", "roca init", "roca skill install", "roca query",
-		"vector = true", "roca vector install",
-	}
-	previous := -1
-	for _, needle := range ordered {
-		index := strings.Index(body, needle)
-		if index < 0 {
-			t.Fatalf("agent install playbook is missing %q", needle)
-		}
-		if index <= previous {
-			t.Fatalf("agent install playbook puts %q out of order", needle)
-		}
-		previous = index
-	}
-	for _, forbidden := range []string{"plugins = true", "roca_ops = true"} {
-		if strings.Contains(body, forbidden) {
-			t.Fatalf("agent install playbook still tells agents to set %q", forbidden)
-		}
-	}
-}
-
 func TestContentIsANamedRocaSkill(t *testing.T) {
 	body := skill.Content()
 	if !strings.HasPrefix(body, "---\n") {

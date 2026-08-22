@@ -111,9 +111,8 @@ func TestTTYFreeTextModelAsksWhichDetectedHarnessServesIt(t *testing.T) {
 	}
 }
 
-func TestTTYInitWritesSurgicallyWithBackupAndNamesIt(t *testing.T) {
-	home, bin := initChooserHome(t)
-	fakeModelCLI(t, bin, provider.NameClaude)
+func TestTTYInitPreservesExistingConfigByteExact(t *testing.T) {
+	home, _ := initChooserHome(t)
 	path := filepath.Join(home, ".roca", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
@@ -129,26 +128,18 @@ func TestTTYInitWritesSurgicallyWithBackupAndNamesIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("init: %v\n%s", err, out)
 	}
-	backup := path + ".roca.bak"
-	if !strings.Contains(out, "backup: "+backup) {
-		t.Fatalf("init did not name its config backup:\n%s", out)
-	}
-	backupRaw, err := os.ReadFile(backup)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(backupRaw) != before {
-		t.Fatalf("backup changed:\n--- want ---\n%s--- got ---\n%s", before, backupRaw)
+	if strings.Contains(out, "Which model") || strings.Contains(out, "configuration updated") {
+		t.Fatalf("init offered to replace an existing configuration:\n%s", out)
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), "# operator note") ||
-		!strings.Contains(string(raw), "probe_ms = 500") ||
-		!strings.Contains(string(raw), `order = ["claude", "ollama"]`) ||
-		!strings.Contains(string(raw), `[models.claude]`) {
-		t.Fatalf("surgical config edit lost operator content:\n%s", raw)
+	if string(raw) != before {
+		t.Fatalf("init changed the existing config:\n--- want ---\n%s--- got ---\n%s", before, raw)
+	}
+	if _, err := os.Stat(path + ".roca.bak"); !os.IsNotExist(err) {
+		t.Fatalf("init created a backup for an unchanged config: %v", err)
 	}
 }
 
@@ -431,6 +422,45 @@ func TestNonTTYInitPrintsOneAnsweringAlertAndWritesNewInstallConfig(t *testing.T
 	want := "[features]\nplugins = true\nroca_ops = true\ncron = true\nvector = false\n"
 	if string(raw) != want {
 		t.Fatalf("new-install config:\n--- want ---\n%s--- got ---\n%s", want, raw)
+	}
+}
+
+func TestInitIgnoresConfigOverrideWhenCreatingExplicitDatabaseConfig(t *testing.T) {
+	home, _ := initChooserHome(t)
+	override := filepath.Join(home, "override", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(override), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	before := "# shared operator config\n[features]\nvector = true\n"
+	if err := os.WriteFile(override, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ROCA_CONFIG", override)
+	dbPath := filepath.Join(home, "explicit", "roca.db")
+	configPath := filepath.Join(filepath.Dir(dbPath), "config.toml")
+
+	out, err := runInitChooser(t, false, "", chooserTestBackend{},
+		"init", "--db-path", dbPath)
+	if err != nil {
+		t.Fatalf("init: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "configuration: "+configPath) {
+		t.Fatalf("init did not report the database-adjacent config:\n%s", out)
+	}
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "[features]\nplugins = true\nroca_ops = true\ncron = true\nvector = false\n"
+	if string(raw) != want {
+		t.Fatalf("database-adjacent config:\n--- want ---\n%s--- got ---\n%s", want, raw)
+	}
+	shared, err := os.ReadFile(override)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(shared) != before {
+		t.Fatalf("init changed the ROCA_CONFIG file:\n--- want ---\n%s--- got ---\n%s", before, shared)
 	}
 }
 
