@@ -65,6 +65,12 @@ func TestTTYInitListsDetectedModelsAndEnterKeepsTheFactoryDefault(t *testing.T) 
 	if strings.Contains(out, "Which harness") {
 		t.Fatalf("a model with one exact harness asked a redundant question:\n%s", out)
 	}
+	if strings.Contains(out, "backup:") {
+		t.Fatalf("fresh init announced an operator recovery backup:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".roca", "config.toml.roca.bak")); !os.IsNotExist(err) {
+		t.Fatalf("fresh init created an operator recovery backup: %v", err)
+	}
 }
 
 func TestTTYAdoptChoosesALocallyPulledModelModelFirst(t *testing.T) {
@@ -144,83 +150,31 @@ func TestTTYInitPreservesExistingConfigByteExact(t *testing.T) {
 	}
 }
 
-// The model chooser persists a pair. It is not the retirement prompt: it writes
-// a secret-free recovery backup of its own, and it leaves every legacy setting
-// and every credential file an older release left behind exactly where they are,
-// because removing those is what the visible accept/decline proposal is for.
-func TestInitModelChoiceWritesTheChoiceAndRetiresNothing(t *testing.T) {
-	tests := []struct {
-		name, body       string
-		legacyCredential bool
-		preserved        []string
-	}{
-		{
-			name:             "leftover credential file",
-			body:             "[models]\norder = [\"codex\"]\n\n[models.codex]\nmodel = \"gpt-legacy\"\n",
-			legacyCredential: true,
-		},
-		{
-			name:      "quoted inline legacy key",
-			body:      "[models]\norder = [\"codex\"]\n\n[models.codex]\n\"api_key\" = \"legacy-secret\"\nmodel = \"gpt-legacy\"\n",
-			preserved: []string{"api_key"},
-		},
-		{
-			name:      "unrelated provider secret",
-			body:      "[models]\norder = [\"xai\"]\n\n[models.xai]\napi_key = \"unrelated-secret\"\nmodel = \"grok-legacy\"\n",
-			preserved: []string{"[models.xai]", "api_key"},
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			paths, credential := initRetirementFixture(t, test.body, test.legacyCredential)
-			if _, err := writeInitModelChoice(paths, provider.NameCodex, "gpt-current"); err != nil {
-				t.Fatal(err)
-			}
-
-			backup, err := os.ReadFile(paths.Config + ".roca.bak")
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, secret := range []string{"legacy-secret", "unrelated-secret"} {
-				if strings.Contains(string(backup), secret) {
-					t.Fatalf("provider secret %q survived in the recovery backup:\n%s", secret, backup)
-				}
-			}
-			raw, err := os.ReadFile(paths.Config)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !strings.Contains(string(raw), `model = "gpt-current"`) {
-				t.Fatalf("the confirmed model was not persisted:\n%s", raw)
-			}
-			for _, kept := range test.preserved {
-				if !strings.Contains(string(raw), kept) {
-					t.Fatalf("the model choice deleted the legacy setting %q:\n%s", kept, raw)
-				}
-			}
-			if credential != "" {
-				if _, err := os.Stat(credential); err != nil {
-					t.Fatalf("the model choice removed a legacy credential file: %v", err)
-				}
-			}
-		})
-	}
-}
-
-func initRetirementFixture(t *testing.T, body string, legacyCredential bool) (config.Paths, string) {
-	t.Helper()
+func TestInitOwnedModelChoiceWritesWithoutRecoveryBackup(t *testing.T) {
 	root := t.TempDir()
 	paths := config.Paths{DB: filepath.Join(root, "roca.db"), Config: filepath.Join(root, "config.toml")}
-	if err := os.WriteFile(paths.Config, []byte(body), 0o600); err != nil {
+	features := "[features]\nplugins = true\nroca_ops = true\ncron = true\nvector = false\n"
+	if err := os.WriteFile(paths.Config, []byte(features), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if !legacyCredential {
-		return paths, ""
+	outcome, err := writeInitModelChoice(paths, provider.NameCodex, "gpt-current")
+	if err != nil {
+		t.Fatal(err)
 	}
-	credential := legacyProviderCredentialPaths(root)[provider.NameCodex]
-	writeFile(t, credential, "legacy-file-secret")
-	return paths, credential
+	if !outcome.Changed || outcome.Backup != "" {
+		t.Fatalf("init-owned model write outcome = %+v", outcome)
+	}
+	file, err := config.LoadFile(paths.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if file.Models.Providers[provider.NameCodex].Model != "gpt-current" ||
+		!file.Features.Plugins || !file.Features.RocaOps || !file.Features.Cron || file.Features.Vector {
+		t.Fatalf("init-owned config = %+v", file)
+	}
+	if _, err := os.Stat(paths.Config + ".roca.bak"); !os.IsNotExist(err) {
+		t.Fatalf("init-owned model write created an operator recovery backup: %v", err)
+	}
 }
 
 func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
@@ -378,22 +332,32 @@ func TestReinitializeChooserFailureLeavesTheDatabaseUntouched(t *testing.T) {
 			if string(after) != string(before) {
 				t.Fatalf("reinitialize changed the database after chooser failure:\n%s", out)
 			}
+			configPath := filepath.Join(home, ".roca", "config.toml")
+			raw, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "[features]\nplugins = true\nroca_ops = true\ncron = true\nvector = false\n"
+			if string(raw) != want {
+				t.Fatalf("chooser exit config:\n--- want ---\n%s--- got ---\n%s", want, raw)
+			}
+			if _, err := os.Stat(configPath + ".roca.bak"); !os.IsNotExist(err) {
+				t.Fatalf("chooser exit created an operator recovery backup: %v", err)
+			}
 			if !test.wantErr {
-				configPath := filepath.Join(home, ".roca", "config.toml")
-				raw, err := os.ReadFile(configPath)
-				if err != nil {
-					t.Fatal(err)
-				}
-				want := "[features]\nplugins = true\nroca_ops = true\ncron = true\nvector = false\n"
-				if string(raw) != want {
-					t.Fatalf("canceled reinitialize config:\n--- want ---\n%s--- got ---\n%s", want, raw)
-				}
 				last := strings.TrimSpace(out)
 				last = last[strings.LastIndex(last, "\n")+1:]
 				if !strings.HasPrefix(last, "answering: claude/sonnet") ||
 					!strings.Contains(last, "configuration: "+configPath) {
 					t.Fatalf("canceled reinitialize did not end with the unchanged answer:\n%s", out)
 				}
+				if !strings.Contains(out, "model choice canceled; model selection was not changed") ||
+					strings.Contains(out, "configuration was not changed") {
+					t.Fatalf("canceled chooser described the wrong ownership boundary:\n%s", out)
+				}
+			} else if !strings.Contains(runErr.Error(), "model selection was not changed") ||
+				strings.Contains(runErr.Error(), "configuration was not changed") {
+				t.Fatalf("chooser error described the wrong ownership boundary: %v", runErr)
 			}
 		})
 	}
