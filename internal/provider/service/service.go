@@ -107,6 +107,10 @@ type Options struct {
 	// RecordShadowMismatch persists row-free local evidence without changing the
 	// legacy answer returned to the caller. Observability remains non-fatal.
 	RecordShadowMismatch func(error)
+	// VectorSearch is the optional federated vector leg for hybrid query.
+	// Nil means this installation has no vector plugin, and Search runs FTS
+	// alone with the same envelope.
+	VectorSearch VectorSearchFunc
 }
 
 type ReadLayout string

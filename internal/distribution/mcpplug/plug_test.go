@@ -102,31 +102,23 @@ func TestTheSameQuestionThroughThePlugAndThroughTheServiceIsTheSameAnswer(t *tes
 	session := connect(t, svc)
 	ctx := context.Background()
 
-	direct, err := svc.Query(ctx, service.QueryRequest{
+	direct, err := svc.Search(ctx, service.SearchRequest{
 		Question: "how many memories are there",
 	})
 	if err != nil {
-		t.Fatalf("Query over the service: %v", err)
+		t.Fatalf("Search over the service: %v", err)
 	}
 	throughThePlug := queryThroughThePlug(t, session, map[string]any{
 		"query": "how many memories are there",
 	})
-
-	wantRows := axi.RowOutput(direct.Columns, direct.Rows, direct.Question)
-	if !strings.Contains(throughThePlug, wantRows) {
-		t.Errorf("plug answer lacks the service rows:\n%s\nwant rows:\n%s", throughThePlug, wantRows)
-	}
-	if direct.Path == service.PathUnresolved {
-		if throughThePlug != direct.Message {
-			t.Errorf("plug unresolved answer = %q, service = %q", throughThePlug, direct.Message)
-		}
-	} else if !strings.Contains(throughThePlug, "route "+string(direct.Path)) {
-		t.Errorf("plug answer lacks service route %q:\n%s", direct.Path, throughThePlug)
+	want := axi.MCPSearch(direct)
+	if throughThePlug != want && answerBody(throughThePlug) != answerBody(want) {
+		t.Errorf("plug answer = %q, service = %q", throughThePlug, want)
 	}
 }
 
 func TestAClarificationAskTravelsAsSuccessfulMetadata(t *testing.T) {
-	result := callTool(t, connect(t, seededService(t)), "roca_query", map[string]any{
+	result := callTool(t, connect(t, seededService(t)), "roca_sql", map[string]any{
 		"query": "what happened in a specific project?",
 	})
 	if result.IsError || renderedText(result) != "Which project should I use? Please name it in the question." {
@@ -244,11 +236,11 @@ func TestEveryToolCallWritesACredentialFreeAuditRecord(t *testing.T) {
 
 func TestQueryAuditCarriesTheCurrentAttributionEnvelope(t *testing.T) {
 	svc := seededServiceWithModel(t)
-	callTool(t, connect(t, svc), "roca_query", map[string]any{"query": "how many memories"})
+	callTool(t, connect(t, svc), "roca_sql", map[string]any{"query": "how many memories"})
 	raw := readSingleLog(t, svc.DataDir(), logfile.MCPAudit)
 	text := string(raw)
-	for _, want := range []string{`"path":"model"`, `"sql_provider":"fake"`, `"sql_model":"fake-model"`,
-		`"sql_inference_ms":`, `"execution_ms":`} {
+	for _, want := range []string{`"sql_provider":"fake"`, `"sql_model":"fake-model"`,
+		`"sql_inference_ms":`, `"model_sql":`} {
 		if !strings.Contains(text, want) {
 			t.Errorf("query audit lacks %q: %s", want, text)
 		}
@@ -276,7 +268,7 @@ func TestQueryAuditDistinguishesRetrySuccessFromRescue(t *testing.T) {
 				"SELECT missing FROM memories LIMIT 1",
 				"SELECT content FROM memories WHERE supersedes IS NULL LIMIT 1",
 			},
-			want: []string{`"path":"model"`, `"retried_sql":true`,
+			want: []string{`"retried_sql":true`,
 				`"first_model_sql":"SELECT missing FROM memories LIMIT 1"`,
 				`"model_sql":"SELECT content FROM memories WHERE supersedes IS NULL LIMIT 1"`,
 				`"retry_reason":"no such column:`, `missing`,
@@ -289,8 +281,7 @@ func TestQueryAuditDistinguishesRetrySuccessFromRescue(t *testing.T) {
 				"SELECT still_missing FROM memories LIMIT 1",
 			},
 			expectError: true,
-			want: []string{`"path":"keyword"`, `"retried":true`, `"retried_sql":true`,
-				`"degraded":"invalid_sql"`},
+			want:        []string{`"retried_sql":true`, `"degraded":"invalid_sql"`},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -298,9 +289,9 @@ func TestQueryAuditDistinguishesRetrySuccessFromRescue(t *testing.T) {
 			session := connect(t, svc)
 			args := map[string]any{"query": "what decisions were made about the long dashes"}
 			if tc.expectError {
-				callToolExpectingError(t, session, "roca_query", args)
+				callToolExpectingError(t, session, "roca_sql", args)
 			} else {
-				callTool(t, session, "roca_query", args)
+				callTool(t, session, "roca_sql", args)
 			}
 			text := string(readSingleLog(t, svc.DataDir(), logfile.MCPAudit))
 			for _, want := range tc.want {
@@ -321,16 +312,10 @@ func TestEverySQLDegradationPersistsTheCompleteAuditFailure(t *testing.T) {
 			retryType: service.RetryGateRejection,
 			sql:       "SELECT still_missing FROM memories LIMIT 1", errorText: "still_missing",
 		},
-		{
-			name: "execution error", degraded: service.DegradedExecution,
-			retryType: service.RetryExecutionError,
-			sql:       `SELECT rowid FROM memories_fts WHERE memories_fts MATCH '"synthetic" ("one" OR)' LIMIT 1`,
-			errorText: `fts5: syntax error near "OR"`,
-		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			svc := seededServiceWithScriptedModel(t, []string{testCase.sql, testCase.sql})
-			result := callToolResult(t, connect(t, svc), "roca_query", map[string]any{
+			result := callToolResult(t, connect(t, svc), "roca_sql", map[string]any{
 				"query": "what decisions were made about the long dashes",
 			})
 			if !result.IsError {
@@ -396,7 +381,7 @@ func TestMalformedToolCallIsAuditedAsAFailure(t *testing.T) {
 
 func TestUnavailableLLMIsAuditedAsDegradedNotOK(t *testing.T) {
 	svc := seededServiceWithUnavailableModel(t)
-	result := callToolResult(t, connect(t, svc), "roca_query", map[string]any{
+	result := callToolResult(t, connect(t, svc), "roca_sql", map[string]any{
 		"query": "question no provider can answer",
 	})
 	if !result.IsError {
@@ -448,7 +433,7 @@ func TestADegradedQueryIsAnMCPToolErrorWithoutAnEnvelope(t *testing.T) {
 	}
 
 	result, err := connect(t, svc).CallTool(t.Context(), &mcp.CallToolParams{
-		Name: "roca_query", Arguments: map[string]any{"query": "invalid sql sentinel"},
+		Name: "roca_sql", Arguments: map[string]any{"query": "invalid sql sentinel"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -724,7 +709,7 @@ func queryThroughThePlug(t *testing.T, session *mcp.ClientSession,
 func answerBody(text string) string {
 	var body []string
 	for _, line := range strings.Split(text, "\n") {
-		if !strings.HasPrefix(line, "route ") {
+		if !strings.HasPrefix(line, "route ") && !strings.HasPrefix(line, "search ") {
 			body = append(body, line)
 		}
 	}

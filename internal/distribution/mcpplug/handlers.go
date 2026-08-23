@@ -32,7 +32,7 @@ func (p *plug) explore(ctx context.Context, _ *mcp.CallToolRequest,
 
 func (p *plug) query(ctx context.Context, _ *mcp.CallToolRequest,
 	in queryArgs) (*mcp.CallToolResult, any, error) {
-	return queryText(p.svc.Query(ctx, in.request()))
+	return searchText(p.svc.Search(ctx, in.request()))
 }
 
 func (p *plug) sql(ctx context.Context, _ *mcp.CallToolRequest,

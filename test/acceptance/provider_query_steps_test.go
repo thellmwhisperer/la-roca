@@ -151,11 +151,11 @@ func (w *providerAcceptanceWorld) memoryExists(content string) error {
 }
 
 func (w *providerAcceptanceWorld) ask(question string) error {
-	return w.run("query", question, "--json")
+	return w.run("playground", question, "--json")
 }
 
 func (w *providerAcceptanceWorld) askForSQL(question string) error {
-	return w.run("query", question, "--sql-only", "--json")
+	return w.run("playground", question, "--sql-only", "--json")
 }
 
 func (w *providerAcceptanceWorld) submitSQL(statement string) error {

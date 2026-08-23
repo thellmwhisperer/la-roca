@@ -53,7 +53,7 @@ func TestCatalogBodyComposesFragmentsAndStatesTheHierarchy(t *testing.T) {
 				"name: " + skill.CatalogName,
 				"Load it only when you\n  need to know which tables or domains exist",
 				"This catalog is for authors of `roca exec` SELECTs",
-				"`roca query` and `roca explore` are last resort",
+				"`roca query` is the zero-inference hybrid search. `roca explore` is last resort",
 				"`roca vector query --databases ...`\ndiscovers nearby rows across the selected federated databases",
 				"then FTS\ncounts and SQL frames the claim in each hit's database",
 				"## synth-corpus — corpus (alias plugin_synth_corpus)",

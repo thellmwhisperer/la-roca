@@ -41,11 +41,11 @@ later it is answering questions about everything your agents ever did:
 $ curl -fsSL https://raw.githubusercontent.com/thellmwhisperer/la-roca/main/install.sh | sh
 $ roca init
 $ roca skill install codex   # or claude, opencode, pi, hermes: your runtime
-$ roca query --full "what did we decide about the retention window"
-SQL · codex · gpt-5.6-luna · 3.1 s / search · 2 ms / answer · 9.8 s
-
-You decided it on 2 August: operational logs keep 30 days, in dated streams.
-Your own words that night: "30 days and out. I do not want eternal logs."
+$ roca query "what did we decide about the retention window"
+search hybrid · engines fts,vector · 24 ms
+terms[3]: retention, window, logs
+rows[1]{rank,source,legs,consensus,snippet}:
+  1,corpus.memories.202,vector+fts,true,"30 days and out. I do not want eternal logs."
 ```
 
 If an already signed-in agent CLI is on `PATH` (`claude`, `codex`, ...),

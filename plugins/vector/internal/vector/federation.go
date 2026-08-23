@@ -245,8 +245,30 @@ type queryTarget struct {
 }
 
 func (f Federation) Query(ctx context.Context, text string, k int, databaseList string) (FederatedQuery, error) {
+	return f.queryTexts(ctx, []string{text}, k, databaseList, 0, true)
+}
+
+// QueryExpanded embeds the raw query and the static question templates,
+// unions the KNN lists, applies minScore, and dedupes by stable source.
+func (f Federation) QueryExpanded(ctx context.Context, text string, k int,
+	databaseList string, minScore float64) (FederatedQuery, error) {
+	return f.queryTexts(ctx, ExpandedQueries(text), k, databaseList, minScore, false)
+}
+
+func (f Federation) queryTexts(ctx context.Context, texts []string, k int, databaseList string,
+	minScore float64, trimToK bool) (FederatedQuery, error) {
 	result := FederatedQuery{Databases: []string{}, Results: []Result{}, Notices: []string{}}
-	if strings.TrimSpace(text) == "" {
+	cleaned := make([]string, 0, len(texts))
+	seenText := map[string]bool{}
+	for _, text := range texts {
+		text = strings.TrimSpace(text)
+		if text == "" || seenText[text] {
+			continue
+		}
+		seenText[text] = true
+		cleaned = append(cleaned, text)
+	}
+	if len(cleaned) == 0 {
 		return result, fmt.Errorf("semantic query is empty")
 	}
 	if k < 1 || k > 100 {
@@ -293,63 +315,145 @@ func (f Federation) Query(ctx context.Context, text string, k int, databaseList 
 		result.Model = models[0]
 	}
 
+	prefixed := make([]string, len(cleaned))
+	for index, text := range cleaned {
+		prefixed[index] = QueryPrefix + text
+	}
 	for _, model := range models {
 		group := groups[model]
 		if f.Embedder == nil {
 			result.noticeModelUnavailable(model, group, "embedding provider is unavailable")
 			continue
 		}
-		vectors, err := f.Embedder.Embed(ctx, model, []string{QueryPrefix + text})
+		vectors, err := f.Embedder.Embed(ctx, model, prefixed)
 		if err != nil {
 			result.noticeModelUnavailable(model, group, err.Error())
 			continue
 		}
-		if len(vectors) != 1 || len(vectors[0]) == 0 {
+		if len(vectors) != len(prefixed) {
 			result.noticeModelUnavailable(model, group, "embedding provider returned no query vector")
 			continue
 		}
 		for _, target := range group {
-			if len(vectors[0]) != target.dimensions {
-				result.Notices = append(result.Notices, fmt.Sprintf(
-					"database %s expects %d-dimensional model %s; continuing with FTS-only",
-					target.database.Database, target.dimensions, model))
-				continue
+			if err := f.searchTarget(ctx, &result, target, model, vectors, k, minScore); err != nil {
+				return result, err
 			}
-			store, err := openSQLite(target.path, true)
-			if err != nil {
-				return result, fmt.Errorf("open vector sidecar for %s: %w", target.database.owner(), err)
+		}
+	}
+	if result.MixedModels {
+		for index := range result.DatabaseResults {
+			result.DatabaseResults[index].Results = finishFederatedHits(
+				result.DatabaseResults[index].Results, k, trimToK)
+		}
+		return result, nil
+	}
+	result.Results = finishFederatedHits(result.Results, k, trimToK)
+	return result, nil
+}
+
+func (f Federation) searchTarget(ctx context.Context, result *FederatedQuery, target queryTarget,
+	model string, vectors [][]float32, k int, minScore float64) error {
+	for _, embedding := range vectors {
+		if len(embedding) == 0 {
+			result.noticeModelUnavailable(model, []queryTarget{target},
+				"embedding provider returned no query vector")
+			return nil
+		}
+		if len(embedding) != target.dimensions {
+			result.Notices = append(result.Notices, fmt.Sprintf(
+				"database %s expects %d-dimensional model %s; continuing with FTS-only",
+				target.database.Database, target.dimensions, model))
+			return nil
+		}
+		store, err := openSQLite(target.path, true)
+		if err != nil {
+			return fmt.Errorf("open vector sidecar for %s: %w", target.database.owner(), err)
+		}
+		index := f.index(target.database,
+			DeclaredCorpus{Core: f.Core, Database: target.database}, target.path)
+		index.Model = model
+		hits, queryErr := index.queryVector(ctx, store, embedding, k)
+		closeErr := store.Close()
+		if queryErr != nil {
+			return fmt.Errorf("query vector sidecar %s: %w", target.database.owner(), queryErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close vector sidecar %s: %w", target.database.owner(), closeErr)
+		}
+		tagFederatedResults(hits, target.database.Database)
+		hits = filterVectorFloor(hits, minScore)
+		if result.MixedModels {
+			merged := false
+			for index := range result.DatabaseResults {
+				if result.DatabaseResults[index].Database == target.database.Database {
+					result.DatabaseResults[index].Results = unionFederatedHits(
+						result.DatabaseResults[index].Results, hits)
+					merged = true
+					break
+				}
 			}
-			index := f.index(target.database,
-				DeclaredCorpus{Core: f.Core, Database: target.database}, target.path)
-			index.Model = model
-			hits, queryErr := index.queryVector(ctx, store, vectors[0], k)
-			closeErr := store.Close()
-			if queryErr != nil {
-				return result, fmt.Errorf("query vector sidecar %s: %w", target.database.owner(), queryErr)
-			}
-			if closeErr != nil {
-				return result, fmt.Errorf("close vector sidecar %s: %w", target.database.owner(), closeErr)
-			}
-			tagFederatedResults(hits, target.database.Database)
-			if result.MixedModels {
+			if !merged {
 				result.DatabaseResults = append(result.DatabaseResults, DatabaseQueryResult{
 					Database: target.database.Database, Model: model, Results: hits,
 				})
-			} else {
-				result.Results = append(result.Results, hits...)
 			}
+			continue
+		}
+		result.Results = unionFederatedHits(result.Results, hits)
+	}
+	return nil
+}
+
+func filterVectorFloor(hits []Result, minScore float64) []Result {
+	if minScore <= 0 {
+		return hits
+	}
+	out := make([]Result, 0, len(hits))
+	for _, hit := range hits {
+		if hit.Score >= minScore {
+			out = append(out, hit)
 		}
 	}
-	if !result.MixedModels {
-		sortFederatedResults(result.Results)
-		if len(result.Results) > k {
-			result.Results = result.Results[:k]
+	return out
+}
+
+func unionFederatedHits(existing, incoming []Result) []Result {
+	best := make(map[string]Result, len(existing)+len(incoming))
+	order := make([]string, 0, len(existing)+len(incoming))
+	add := func(hit Result) {
+		key := hit.Database + "\x00" + hit.Table + "\x00" + hit.ID
+		previous, seen := best[key]
+		if !seen {
+			best[key] = hit
+			order = append(order, key)
+			return
 		}
-		for index := range result.Results {
-			result.Results[index].Rank = index + 1
+		if hit.Score > previous.Score {
+			best[key] = hit
 		}
 	}
-	return result, nil
+	for _, hit := range existing {
+		add(hit)
+	}
+	for _, hit := range incoming {
+		add(hit)
+	}
+	out := make([]Result, 0, len(order))
+	for _, key := range order {
+		out = append(out, best[key])
+	}
+	return out
+}
+
+func finishFederatedHits(hits []Result, k int, trimToK bool) []Result {
+	sortFederatedResults(hits)
+	if trimToK && len(hits) > k {
+		hits = hits[:k]
+	}
+	for index := range hits {
+		hits[index].Rank = index + 1
+	}
+	return hits
 }
 
 func (r *FederatedQuery) noticeModelUnavailable(model string, targets []queryTarget, reason string) {

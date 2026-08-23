@@ -3,11 +3,18 @@
 First-time path: [install, detect an already signed-in agent CLI, and query
 without a La Roca login](lifecycle.md#install).
 
-`roca query` compiles your question into one checked `SELECT` and shows it.
-`--sql-only` compiles without executing, `--full` adds a prose reading of the
-rows, `roca exec` runs your own `SELECT` through the same read-only gate, and
+`roca query` is hybrid search with no answering-model inference: it selects
+rare full-text terms, embeds the question plus static question templates when
+a vector index exists, fuses the two lists with RRF, and labels which legs
+found each hit. Without a vector index the same command runs full-text alone.
+`--top N` (default 10) and `--require-both` keep only dual-confirmed hits.
 `--json` returns the complete machine envelope. Questions must contain text and
 have a generous 1000-character cap on both CLI and MCP query surfaces.
+
+`roca playground` is the human room: it compiles a question into one checked
+`SELECT`, `--sql-only` compiles without executing, and `--full` adds a prose
+reading of the rows. `roca exec` runs your own `SELECT` through the same
+read-only gate.
 
 For investigations, `roca explore "<term>"` uses the same checked query and
 second-inference seat but gives the interpreter an investigation mission. Every

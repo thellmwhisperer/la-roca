@@ -47,24 +47,24 @@ Two kinds of freshness, two commands:
 
 ## Shell commands
 
-Agents write SQL and run it: `roca exec`. Humans may read with
-`roca query --full`. `roca query` and `roca explore` are last resort for
-agents, only when the question cannot be expressed as SQL. Agents never
-pass `--full`.
+Agents write SQL and run it: `roca exec`. Agents search with `roca query`
+(zero answering-model inference: rarity-selected FTS plus template-expanded
+vector neighbors, fused with RRF). Humans who want a model to write SQL and
+explain the rows use `roca playground`. Agents never pass `--full`.
 
 ```bash
 roca exec "SELECT COUNT(*) AS memories FROM memories"
-roca query "who is Ana"                        # last resort: cannot write the SQL
-roca query --full "what happened with Y"       # human reading only; agents never pass --full
-roca explore --deep "format"                   # last resort investigation
+roca query "who is Ana"
+roca explore --deep "format"
 roca explore "rows"
 roca query "what happened with Y" --json
-roca query "ffmpeg patterns" --sql-only        # compile SQL when stuck, then exec it
-roca query --databases all "who is Ana"        # widen to every attached database
+roca query --databases all "who is Ana"
 roca store --layer discovery --content "FTS ranks by bm25, created_at only for time questions" --origin agent --agent codex --model gpt-5
-roca ingest                                    # refresh the corpus from every agent source
-roca doctor                                    # diagnosis + remedies
+roca ingest
+roca doctor
 ```
+
+Humans who want a model to write SQL use `roca playground "what happened with Y"`. Add `--full` for prose. Compile without running with `roca playground "ffmpeg patterns" --sql-only`, then `roca exec`.
 
 To verify that the configured provider session answers without changing any
 configuration, run `roca model check [provider]`. To change the answering model,
@@ -75,9 +75,9 @@ writes only `models.<provider>.model` without changing provider order. La Roca
 does not handle authentication or store its secrets.
 
 `roca exec` runs a gate-approved SELECT. Nothing that is not a SELECT
-reaches the database. When you cannot write the SQL, `query --sql-only`
+reaches the database. When you cannot write the SQL, `playground --sql-only`
 compiles it; then you exec that SELECT. `--full` is a human reading of
-rows; agents narrate from the rows themselves.
+rows in the playground; agents narrate from the rows themselves.
 
 ## Which databases a question sees
 
@@ -110,14 +110,13 @@ bounded preview. Add `--json` when a program needs the unchanged full envelope.
 
 ```text
 $ roca query "what do we know about AXI output"
-route model
-SQL · provider ollama · model qwen3.5:4b · 4 ms
-search · 1 ms
-rows[1]{source,id,author,created_at,text}:
-  memory,1,"codex/gpt-5 via cli","2026-08-07 17:39:43","AXI output uses TOON rows, stable fields, and contextual help."
+search hybrid · engines fts,vector · 12 ms
+terms[3]: axi, output, toon
+rows[1]{rank,source,legs,consensus,vector_score,vector_rank,fts_rank,snippet}:
+  1,corpus.memories.1,vector+fts,true,0.51,2,1,"AXI output uses TOON rows, stable fields, and contextual help."
 help[2]:
   - "Run `roca query \"what do we know about AXI output\" --json` for the complete result envelope"
-  - "Run `roca query \"what do we know about AXI output\" --sql-only`, then `roca exec \"<SELECT>\" --max-chars 2000` to inspect or expand rows"
+  - "Run `roca query \"what do we know about AXI output\" --require-both` to keep only dual-confirmed hits"
 ```
 
 ## MCP (shell-less agents)
@@ -127,7 +126,7 @@ Six tools, same service as the CLI: `roca_query`, `roca_explore`, `roca_sql`,
 plain mode and `deep: true` both return the prose investigation and generated
 SQL, with the deep mission mapping the complete terrain and proposing probes.
 `roca_sql` is the shell-less form of
-`query --sql-only` (the SQL without running it); `roca_exec` runs that SQL under
+`playground --sql-only` (the SQL without running it); `roca_exec` runs that SQL under
 the gate. The `roca_query`, `roca_explore`, and `roca_sql` tools accept the same
 comma list or `all` in their `databases` argument. Install them with
 `roca mcp install <runtime>`.
@@ -171,8 +170,9 @@ use every selected database through its unchanged FTS/SQL path.
 - **No ready selected sidecar: `roca exec` is the complete working path.** Invite the user to build the index
   (one laptop night, daily reward); the `roca-vector` skill owns install,
   progress, and maintenance. Point there. Do not depend on it.
-- **`roca query` and `roca explore` are last resort.** Use them only when
-  you cannot express the question as SQL. Agents never pass `--full`.
+- **`roca query` is hybrid search** (FTS plus vector when a sidecar is ready,
+  FTS alone otherwise). `roca explore` and `roca playground` spend inference
+  and are last resort. Agents never pass `--full`.
 
 Handoffs and ops live on the ops database. Use the qualified handoff query under
 Deterministic patterns; natural-language questions that need ops must select it
@@ -185,14 +185,14 @@ as described under Which databases a question sees.
 | Past work / people / "have we…" | Write SQL and `roca exec`; hybrid first when a selected sidecar is ready |
 | Researching a topic, not a point fact | Write SQL and `roca exec`; hybrid first when a selected sidecar is ready |
 | Cannot name the exact term | Hybrid loop when a selected sidecar is ready; otherwise exec with FTS MATCH |
-| Cannot express it as SQL | last resort: `roca query` or `roca explore`; never `--full` |
+| Cannot express it as SQL | `roca query` for hybrid search; last resort `roca playground --sql-only` or `roca explore`; never `--full` |
 | Answer looks stale / about today | `roca ingest`, then ask again |
 | Programmatic parse | add `--json` |
-| Stuck on the SQL | `roca query --sql-only` then `roca exec` |
+| Stuck on the SQL | `roca playground --sql-only` then `roca exec` |
 | Durable memory | `roca store --layer … --content … --agent … --model …` |
 | Who wrote it / which model | ask by author, or store with `--model` |
 | Project start | the handoff one-liner below, through `roca exec` |
-| No shell | `roca_exec`; `roca_query` / `roca_explore` last resort |
+| No shell | `roca_query` to search; `roca_exec` for SQL; `roca_explore` last resort |
 
 ## Plugins
 
@@ -256,7 +256,7 @@ roca vector query "exhaustion" 100
 roca exec "SELECT COUNT(DISTINCT e.id) AS exchanges, COUNT(DISTINCT e.session_id) AS sessions, MIN(COALESCE(e.human_timestamp, e.agent_timestamp)) AS first_seen, MAX(COALESCE(e.human_timestamp, e.agent_timestamp)) AS last_seen FROM (SELECT rowid AS source_id FROM exchanges_fts WHERE exchanges_fts MATCH 'exhaustion') hits JOIN exchanges e ON e.id = hits.source_id"
 ```
 
-Stop before the last reading if you only needed the map. `roca query --sql-only`
+Stop before the last reading if you only needed the map. `roca playground --sql-only`
 and `roca_sql` are with-inference SQL compilers outside this zero-inference path.
 Use them only as a last resort when you cannot write the SELECT yourself.
 
@@ -315,7 +315,7 @@ When you would otherwise fire three exploratory queries, fire one
 5. Widen only deliberately and say so out loud: use explicit OR, search the
    whole corpus, or raise limits consciously.
 6. If you still cannot write the SELECT after the printed plans have shown the
-   schema, use the last-resort `roca query --sql-only` compiler, then `roca exec`.
+   schema, use the last-resort `roca playground --sql-only` compiler, then `roca exec`.
    Phrase by relation, not point fact: "what is my relationship with X" matches
    how conversations store knowledge better than "who did I work with at X",
    and rankings need an explicit `ORDER BY` on the volume column or the list
@@ -346,8 +346,8 @@ Do not stack synonyms.
   changes, state, next steps and blockers.
 - Ask bare first: use one short concept and no hints. Hints can steer SQL to the
   wrong table; a typo can silently leave noise as the best match.
-- Write SQL and `roca exec` first. `roca query` and `roca explore` are last
-  resort. With an index, the hybrid loop is mandatory; do not start with
+- Write SQL and `roca exec` first. `roca query` is hybrid search. `roca explore`
+  is last resort. With an index, the hybrid loop is mandatory; do not start with
   explore as a substitute.
 - Widen deliberately: say "search the whole corpus (conversations, thinking,
   memories, sessions)", request OR between terms and raise limits consciously.

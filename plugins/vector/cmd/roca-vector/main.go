@@ -294,6 +294,8 @@ func compactCommand(env *environment) *cobra.Command {
 
 func queryCommand(env *environment) *cobra.Command {
 	var databases string
+	var expandTemplates bool
+	var minScore float64
 	command := &cobra.Command{
 		Use:   "query <text> [k]",
 		Short: "Search routed database sidecars by semantic similarity",
@@ -319,7 +321,12 @@ func queryCommand(env *environment) *cobra.Command {
 			started := time.Now()
 			federation, federationErr := env.federation("")
 			if federationErr == nil {
-				result, err := federation.Query(command.Context(), args[0], k, databases)
+				var result vector.FederatedQuery
+				if expandTemplates {
+					result, err = federation.QueryExpanded(command.Context(), args[0], k, databases, minScore)
+				} else {
+					result, err = federation.Query(command.Context(), args[0], k, databases)
+				}
 				if err != nil {
 					return err
 				}
@@ -368,6 +375,10 @@ func queryCommand(env *environment) *cobra.Command {
 	}
 	command.Flags().StringVar(&databases, "databases", "",
 		"comma list of attached database names (corpus,ops), or all")
+	command.Flags().BoolVar(&expandTemplates, "expand-templates", false,
+		"embed the query plus static question templates and union the neighbors")
+	command.Flags().Float64Var(&minScore, "min-score", 0,
+		"drop vector hits below this cosine when expanding templates")
 	return command
 }
 

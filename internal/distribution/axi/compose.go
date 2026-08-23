@@ -189,6 +189,91 @@ func MCPExec(res service.ExecResult) string {
 	}, false)
 }
 
+// Search renders the zero-inference hybrid query envelope: which engines ran,
+// the rarity-selected terms, labeled hits, and the next deterministic commands.
+func Search(res service.SearchResult) string {
+	return searchText(res, []string{
+		"Run `roca query " + shellArg(res.Question) + " --json` for the complete result envelope",
+		"Run `roca query " + shellArg(res.Question) + " --require-both` to keep only dual-confirmed hits",
+	})
+}
+
+// MCPSearch is the same envelope with MCP-native next steps.
+func MCPSearch(res service.SearchResult) string {
+	return searchText(res, []string{
+		"Call roca_query again with require_both to keep only dual-confirmed hits",
+		"Call roca_exec with a SELECT to frame a cited source",
+	})
+}
+
+func searchText(res service.SearchResult, help []string) string {
+	var b strings.Builder
+	engines := strings.Join(res.Engines, ",")
+	if engines == "" {
+		engines = "none"
+	}
+	appendLine(&b, fmt.Sprintf("search %s · engines %s · %s", hybridMode(res.Engines), engines, Duration(res.LatencyMS)))
+	if len(res.Databases) > 0 {
+		appendLine(&b, "databases: "+strings.Join(res.Databases, ", "))
+	}
+	for _, notice := range res.Notices {
+		appendLine(&b, "notice: "+notice)
+	}
+	if len(res.Terms) > 0 {
+		appendLine(&b, "terms["+fmt.Sprintf("%d", len(res.Terms))+"]: "+strings.Join(res.Terms, ", "))
+	}
+	rows := make([]map[string]any, 0, len(res.Hits))
+	for _, hit := range res.Hits {
+		row := map[string]any{
+			"rank": hit.Rank, "source": hit.Source, "legs": strings.Join(hit.Legs, "+"),
+			"snippet": hit.Snippet,
+		}
+		if hit.Consensus {
+			row["consensus"] = true
+		}
+		if hit.VectorScore != nil {
+			row["vector_score"] = *hit.VectorScore
+		}
+		if hit.VectorRank != nil {
+			row["vector_rank"] = *hit.VectorRank
+		}
+		if hit.FTSRank != nil {
+			row["fts_rank"] = *hit.FTSRank
+		}
+		rows = append(rows, row)
+	}
+	appendLine(&b, RowOutput([]string{
+		"rank", "source", "legs", "consensus", "vector_score", "vector_rank", "fts_rank", "snippet",
+	}, rows, res.Terms...))
+	if len(res.Hits) == 0 {
+		appendLine(&b, "no matches in memory for that search")
+	}
+	if len(help) > 0 && (len(res.Hits) != 1) {
+		appendLine(&b, RenderHelp(help...))
+	}
+	return b.String()
+}
+
+func hybridMode(engines []string) string {
+	hasFTS, hasVector := false, false
+	for _, engine := range engines {
+		if engine == "fts" {
+			hasFTS = true
+		}
+		if engine == "vector" {
+			hasVector = true
+		}
+	}
+	switch {
+	case hasFTS && hasVector:
+		return "hybrid"
+	case hasVector:
+		return "vector"
+	default:
+		return "fts"
+	}
+}
+
 func exec(res service.ExecResult, help []string, alwaysHelp bool) string {
 	var b strings.Builder
 	appendLine(&b, res.SQL)
