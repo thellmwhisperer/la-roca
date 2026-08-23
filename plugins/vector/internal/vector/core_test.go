@@ -16,7 +16,8 @@ func TestCoreCLIWalksEverySourceThroughRocaExec(t *testing.T) {
 		if executable != "/synthetic/roca" {
 			t.Fatalf("executable = %q", executable)
 		}
-		if !slices.Equal(args[:5], []string{"--json", "--db-path", "/synthetic/roca.db", "exec", "--max-chars"}) {
+		if !slices.Equal(args[:7], []string{"--json", "--db-path", "/synthetic/roca.db", "exec",
+			"--timeout-ms", "0", "--max-chars"}) {
 			t.Fatalf("prefix = %q", args)
 		}
 		statement := args[len(args)-1]

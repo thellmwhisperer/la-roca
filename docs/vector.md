@@ -179,7 +179,7 @@ roca vector query "what did we decide" 10
 roca vector query --databases corpus,ops "what did we decide" 10
 ```
 
-The default route searches the corpus sidecar. `--databases` has the same
+The default route searches every attached sidecar. `--databases` has the same
 explicit comma-list and `all` selection rules as `roca query`; the command fans
 out only to selected databases with vector declarations and ready sidecars.
 Same-model scores merge into one top-N. If selected sidecars use different
@@ -188,7 +188,9 @@ are not comparable. Every hit carries database, table, and source id. `k` is
 optional (default 10) and capped at 100.
 
 A missing sidecar or unavailable embedding model emits a notice and leaves that
-database on its deterministic FTS/SQL route. Databases without a vector
+database on its deterministic FTS/SQL route. A pending model download never
+blocks a query: FTS answers immediately and the download continues in the
+background until a later query can join the vector leg. Databases without a vector
 declaration are still recognized routing targets and behave the same way.
 Vector serving never invokes the answering model, and core search never
 depends on a model or sidecar.

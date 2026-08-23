@@ -487,3 +487,55 @@ func createManifestDatabase(t *testing.T, path, ddl string) {
 		t.Fatal(err)
 	}
 }
+
+func TestMissingChronologicalColumnsDoNotExpelAPlugin(t *testing.T) {
+	raw := manifestFixture(`{
+  "schema": 1,
+  "name": "synthetic",
+  "version": "1.0.0",
+  "binary": "roca-synthetic",
+  "databases": [{
+    "name": "records",
+    "path": "records.db",
+    "alias": "plugin_synthetic_records",
+    "attachment": "resident",
+    "retention": "The plugin retains every synthetic record."
+  }],
+  "semantic": {"databases": [{
+    "database": "records",
+    "description": "Synthetic records.",
+    "questions": ["Which synthetic records exist?"],
+    "tables": [{"name": "sessions", "description": "One synthetic session.", "columns": ["session_id", "title"]}]
+  }]},
+  "vector": {"databases": [{
+    "database": "records",
+    "tables": [{
+      "name": "sessions",
+      "id_column": "session_id",
+      "text_columns": ["title"]
+    }]
+  }]},
+  "verbs": [],
+  "capabilities": []
+}`)
+	if _, err := plugin.DecodeManifest(strings.NewReader(raw)); err != nil {
+		t.Fatalf("manifest without chronological columns was expelled: %v", err)
+	}
+	root := t.TempDir()
+	directory := filepath.Join(root, "synthetic")
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, plugin.PackageFilename), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	createManifestDatabase(t, filepath.Join(directory, "records.db"),
+		`CREATE TABLE sessions (session_id TEXT PRIMARY KEY, title TEXT); INSERT INTO sessions VALUES ('s1','synthetic title');`)
+	descriptors, warnings := plugin.Discover(root)
+	if len(warnings) != 0 {
+		t.Fatalf("plugin was marked unavailable: %v", warnings)
+	}
+	if len(descriptors) != 1 || descriptors[0].Name != "synthetic" || len(descriptors[0].VectorTables) != 1 {
+		t.Fatalf("discovery = %+v", descriptors)
+	}
+}

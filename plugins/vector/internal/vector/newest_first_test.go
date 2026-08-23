@@ -59,6 +59,101 @@ func TestDeclaredCorpusPagesNewestFirst(t *testing.T) {
 	}
 }
 
+func TestDeclaredCorpusFallsBackToRowidWhenChronologicalColumnsAreAbsent(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+t.TempDir()+"/source.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if _, err := db.Exec(`CREATE TABLE sessions (session_id TEXT PRIMARY KEY, title TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"old", "mid", "new"} {
+		if _, err := db.Exec(`INSERT INTO sessions VALUES (?,?)`, id, "title "+id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	corpus := DeclaredCorpus{Core: CoreCLI{Executable: "sqlite-fixture", Run: sqliteRunner(db)},
+		Database: vectorDatabase{Plugin: "fixture", Database: "records", Alias: "main",
+			Tables: []vectorTable{{Name: "sessions", IDColumn: "session_id", TextColumns: []string{"title"}}}}}
+	var rows []sourceRow
+	if err := corpus.WalkSources(context.Background(), "sessions", func(row sourceRow) error {
+		rows = append(rows, row)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 3 || rows[0].sourceID != "new" || rows[2].sourceID != "old" {
+		t.Fatalf("rowid fallback order = %+v", rows)
+	}
+}
+
+func TestDeclaredSweepPagesALargeExchangesTableWithinStatementBudget(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+t.TempDir()+"/source.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if _, err := db.Exec(`
+		CREATE TABLE sessions (session_id TEXT PRIMARY KEY, title TEXT, started_at TEXT);
+		CREATE TABLE exchanges (
+			id INTEGER PRIMARY KEY, session_id TEXT, human_text TEXT, agent_text TEXT,
+			human_timestamp TEXT, agent_timestamp TEXT);
+		INSERT INTO sessions VALUES ('lab','Night rest','2026-03-18');`); err != nil {
+		t.Fatal(err)
+	}
+	total := walkPageSize*2 + 25
+	for index := 1; index <= total; index++ {
+		if _, err := db.Exec(`INSERT INTO exchanges VALUES (?,?,?,?,?,?)`,
+			index, "lab", fmt.Sprintf("human %d", index), fmt.Sprintf("agent %d", index),
+			fmt.Sprintf("2026-03-18T%02d:00:00Z", index%24),
+			fmt.Sprintf("2026-03-18T%02d:01:00Z", index%24)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	base := sqliteRunner(db)
+	runner := func(ctx context.Context, executable string, args ...string) ([]byte, error) {
+		statement := args[len(args)-1]
+		if materializesFullSweep(statement) {
+			return nil, fmt.Errorf("roca exec: exit status 1: error: the validated SQL exceeded the time limit after 5s")
+		}
+		return base(ctx, executable, args...)
+	}
+	corpus := DeclaredCorpus{Core: CoreCLI{Executable: "sqlite-fixture", Run: runner},
+		Database: vectorDatabase{Plugin: "roca-corpus", Database: "corpus", Alias: "main",
+			Tables: []vectorTable{
+				{Name: "sessions", IDColumn: "session_id", TextColumns: []string{"title"},
+					TimeColumns: []string{"started_at"}},
+				{Name: "exchanges", IDColumn: "id", TextColumns: []string{"human_text", "agent_text"},
+					TimeColumns: []string{"agent_timestamp", "human_timestamp"},
+					TimeJoin: &vectorTimeJoin{Table: "sessions", LocalColumn: "session_id",
+						ForeignColumn: "session_id", TimeColumns: []string{"started_at"}}},
+			}}}
+	var rows []sourceRow
+	if err := corpus.WalkSources(context.Background(), "exchanges", func(row sourceRow) error {
+		rows = append(rows, row)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != total*2 {
+		t.Fatalf("paged sweep returned %d column rows, want %d", len(rows), total*2)
+	}
+}
+
+func materializesFullSweep(statement string) bool {
+	start := strings.Index(statement, "WITH vector_rows AS")
+	if start < 0 {
+		return false
+	}
+	rest := statement[start:]
+	fromVector := strings.Index(rest, "FROM vector_rows")
+	if fromVector < 0 {
+		return true
+	}
+	return !strings.Contains(strings.ToUpper(rest[:fromVector]), "LIMIT")
+}
+
 func TestEmbeddingSchedulerMergesDatabaseHeadsNewestFirst(t *testing.T) {
 	base := &recordingEmbedder{}
 	ctx, cancel := context.WithCancel(context.Background())

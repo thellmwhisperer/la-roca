@@ -8,8 +8,8 @@ rare full-text terms, embeds the question plus static question templates when
 a vector index exists, fuses the two lists with RRF, and labels which legs
 found each hit. Without a vector index the same command runs full-text alone.
 `--top N` (default 10) controls the fused result count, `--require-both` keeps
-only dual-confirmed hits, and `--databases corpus,ops` (or `all`) selects the
-federated scope explicitly. `--json` returns the complete machine envelope.
+only dual-confirmed hits, and `--databases` narrows the default (every attached
+plugin database, including ops). `--json` returns the complete machine envelope.
 Questions must contain text and have a generous 1000-character cap on both CLI
 and MCP query surfaces.
 
@@ -106,7 +106,7 @@ The JSON envelope additionally keeps the RRF score and split source fields.
 ```text
 $ roca query "have I fixed a stale lock error before"
 search hybrid · engines fts,vector · 18 ms
-databases: core, corpus
+databases: core, corpus, ops
 terms[3]: stale, lock, error
 rows[2]{rank,source,legs,consensus,vector_score,vector_rank,fts_rank,snippet}:
   1,corpus.exchanges.912,vector+fts,true,0.61,2,1,"fixed: stale .lock left by a killed run; remove it and rerun"
@@ -119,8 +119,9 @@ BM25 ranking. The vector leg embeds the raw question plus fixed Spanish and
 English question wrappers, oversamples neighbors, applies a similarity floor,
 and deduplicates chunks by stable source. RRF then combines ranks without
 normalizing either leg's native scores. If vector search is unavailable,
-missing, or incompatible, the same envelope reports the notice and contains
-the federated FTS results alone.
+missing, or still downloading, the same envelope reports the notice and contains
+the federated FTS results alone. The query never waits on the embedding model
+download.
 
 ## The playground's two readers
 

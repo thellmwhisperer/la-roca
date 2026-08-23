@@ -83,7 +83,7 @@ func questionRoute(names []string, inventory pluginRoute) (pluginRoute, error) {
 	if err != nil {
 		return pluginRoute{}, err
 	}
-	if len(names) == 1 && names[0] == ScopeAll {
+	if len(names) == 0 || (len(names) == 1 && names[0] == ScopeAll) {
 		return route, nil
 	}
 	route.warnings = append(slices.Clone(inventory.warnings), route.warnings...)
@@ -141,12 +141,7 @@ func (s *Service) ResolveDatabaseScope(ctx context.Context, names []string) (Dat
 
 func resolveScope(names []string, inventory pluginRoute) (pluginRoute, error) {
 	if len(names) == 0 {
-		if corpus := databaseForVerb(inventory.databases, IngestVerb, rocaCorpusPluginName); corpus != nil {
-			// Historical core rows stay readable beside the corpus. Ops, cron,
-			// and other plugins stay out until the question names them.
-			return pluginRoute{includeCore: true, databases: []plugin.Database{*corpus}}, nil
-		}
-		return pluginRoute{includeCore: true}, nil
+		return inventory, nil
 	}
 	if len(names) == 1 && names[0] == ScopeAll {
 		return inventory, nil

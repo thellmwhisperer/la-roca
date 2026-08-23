@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -70,6 +71,63 @@ func TestInstallLaunchesThePluginBinaryIntoManifestOwnedState(t *testing.T) {
 	if embedder.pulls != 0 {
 		t.Fatalf("install blocked on %d foreground model downloads", embedder.pulls)
 	}
+}
+
+func TestQueryStartsBackgroundModelDownloadWithoutWaiting(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ROCA_VECTOR_PLUGIN_ROOT", "")
+	oldLaunch, oldExecutable, oldEmbedder := launchWorker, currentExecutable, newEmbedder
+	t.Cleanup(func() {
+		launchWorker, currentExecutable, newEmbedder = oldLaunch, oldExecutable, oldEmbedder
+	})
+	started := make(chan struct{})
+	newEmbedder = func(*environment) vector.Embedder {
+		return &blockingDownloadEmbedder{started: started}
+	}
+	var launched vector.LaunchRequest
+	launchWorker = func(got vector.LaunchRequest) (vector.LaunchResult, error) {
+		launched = got
+		return vector.LaunchResult{PID: 7, LogPath: filepath.Join(got.DataDir, vector.WorkerLogFilename)}, nil
+	}
+	currentExecutable = func() (string, error) { return "/synthetic/roca-vector", nil }
+	state := filepath.Join(t.TempDir(), "state")
+	t.Setenv("ROCA_VECTOR_STATE_DIR", state)
+	env := &environment{dbPath: "/synthetic/roca.db"}
+	root := rootCommand(env)
+	root.SetArgs([]string{"--json", "query", "synthetic question", "3"})
+	done := make(chan error, 1)
+	go func() { done <- root.Execute() }()
+	select {
+	case <-started:
+		t.Fatal("query waited on the embedding model download")
+	case err := <-done:
+		_ = err
+	case <-time.After(2 * time.Second):
+		t.Fatal("query blocked instead of returning FTS-first")
+	}
+	if launched.Executable != "/synthetic/roca-vector" {
+		t.Fatalf("query did not start a background download: %+v", launched)
+	}
+}
+
+type blockingDownloadEmbedder struct {
+	started chan struct{}
+	once    sync.Once
+}
+
+func (e *blockingDownloadEmbedder) signal() {
+	e.once.Do(func() { close(e.started) })
+}
+
+func (e *blockingDownloadEmbedder) Pull(context.Context, string) error {
+	e.signal()
+	select {}
+}
+
+func (e *blockingDownloadEmbedder) Embed(context.Context, string, []string) ([][]float32, error) {
+	e.signal()
+	select {}
 }
 
 func TestDeltaFlagAndReadOnlyBoundaryAreExplicit(t *testing.T) {

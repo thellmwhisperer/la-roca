@@ -600,7 +600,7 @@ func (c CoreCLI) query(ctx context.Context, statement string) ([]map[string]any,
 	if c.DBPath != "" {
 		args = append(args, "--db-path", c.DBPath)
 	}
-	args = append(args, "exec", "--max-chars", strconv.Itoa(coreFieldBudget), statement)
+	args = append(args, "exec", "--timeout-ms", "0", "--max-chars", strconv.Itoa(coreFieldBudget), statement)
 	run := c.Run
 	if run == nil {
 		run = runCommand

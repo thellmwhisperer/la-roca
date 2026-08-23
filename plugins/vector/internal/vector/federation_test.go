@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -396,10 +397,8 @@ func TestFederationQueryFansOutWithRoutingAndTaggedMergedHits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, hit := range defaultResult.Results {
-		if hit.Database != "corpus" {
-			t.Fatalf("default vector route returned %+v", hit)
-		}
+	if !slices.Contains(defaultResult.Databases, "ops") || !slices.Contains(defaultResult.Databases, "corpus") {
+		t.Fatalf("default databases = %v, want the whole federation", defaultResult.Databases)
 	}
 	opsResult, err := federation.Query(context.Background(), "decision", 10, "ops")
 	if err != nil {
@@ -461,6 +460,89 @@ func TestFederationQueryUsesTheCoreRuntimeInventory(t *testing.T) {
 		if hit.Database != "corpus" {
 			t.Fatalf("feature-gated database escaped runtime inventory: %+v", hit)
 		}
+	}
+}
+
+func TestResolveSourcesAlignsUnionArmsAcrossChunkGenerations(t *testing.T) {
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "roca-corpus.db")
+	createSourceDatabase(t, dbPath, `
+		CREATE TABLE articles(id TEXT PRIMARY KEY, title TEXT, body TEXT);
+		CREATE TABLE notes(id TEXT PRIMARY KEY, body TEXT);
+		INSERT INTO articles VALUES ('article-new','New policy title','new-policy giraffe unique');
+		INSERT INTO notes VALUES ('note-old','old-policy zebra unique');`)
+	declared := DeclaredCorpus{
+		Core: CoreCLI{Executable: "roca", Run: sqliteExecRunner(t, map[string]string{"plugin_roca_corpus": dbPath})},
+		Database: vectorDatabase{Plugin: "roca-corpus", Database: "corpus", Alias: "plugin_roca_corpus",
+			Tables: []vectorTable{
+				{Name: "articles", IDColumn: "id", TextColumns: []string{"title", "body"}},
+				{Name: "notes", IDColumn: "id", TextColumns: []string{"body"}},
+			}},
+	}
+	article := sourceRow{kind: "articles", sourceID: "article-new"}
+	note := sourceRow{kind: "notes", sourceID: "note-old"}
+	resolved, err := declared.ResolveSources(context.Background(), []sourceLookup{
+		{kind: "articles", where: locator{SourceID: article.sourceID, Identity: article.identity()}},
+		{kind: "notes", where: locator{SourceID: note.sourceID, Identity: note.identity()}},
+	})
+	if err != nil {
+		t.Fatalf("mixed-policy resolve: %v", err)
+	}
+	if !strings.Contains(resolved[sourceLookupKey("articles", "article-new")], "giraffe") ||
+		!strings.Contains(resolved[sourceLookupKey("notes", "note-old")], "zebra") {
+		t.Fatalf("mixed-policy texts = %v", resolved)
+	}
+}
+
+func TestMixedChunkPolicySidecarStaysQueryable(t *testing.T) {
+	root := t.TempDir()
+	corpusDir := filepath.Join(root, "roca-corpus")
+	if err := os.MkdirAll(corpusDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	corpusPath := filepath.Join(corpusDir, "roca-corpus.db")
+	createSourceDatabase(t, corpusPath, `
+		CREATE TABLE articles(id TEXT PRIMARY KEY, title TEXT, body TEXT);
+		CREATE TABLE notes(id TEXT PRIMARY KEY, body TEXT);
+		INSERT INTO articles VALUES ('article-new','New policy title','new-policy giraffe unique');
+		INSERT INTO notes VALUES ('note-old','old-policy zebra unique');`)
+	writeRegistry(t, root, vectorRegistry{Schema: vectorRegistrySchema, Databases: []vectorDatabase{
+		{Plugin: "roca-corpus", Database: "corpus", Path: "roca-corpus.db", Alias: "plugin_roca_corpus",
+			Tables: []vectorTable{
+				{Name: "articles", IDColumn: "id", TextColumns: []string{"title", "body"}, TimeColumns: []string{"id"}},
+				{Name: "notes", IDColumn: "id", TextColumns: []string{"body"}, TimeColumns: []string{"id"}},
+			}},
+	}})
+	runner := sqliteExecRunner(t, map[string]string{"plugin_roca_corpus": corpusPath})
+	runner = databaseScopeRunner(runner, []DatabaseSelection{
+		{Source: "core", Database: "core"},
+		{Source: "plugin:roca-corpus", Database: "corpus"},
+	})
+	embedder := &recordingEmbedder{}
+	federation, err := LoadFederation(CoreCLI{Executable: "roca", Run: runner}, root,
+		DefaultModel, "v-test", embedder, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := federation.Ingest(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
+	store := openTestSQLite(t, SidecarPath(corpusPath))
+	if _, err := store.Exec(`UPDATE chunks SET text_column='' WHERE source_kind='notes'`); err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	store.Close()
+	result, err := federation.Query(context.Background(), "giraffe zebra", 10, "")
+	if err != nil {
+		t.Fatalf("mixed-policy query: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, hit := range result.Results {
+		seen[hit.Table+"/"+hit.ID] = true
+	}
+	if !seen["articles/article-new"] || !seen["notes/note-old"] {
+		t.Fatalf("mixed-policy hits = %+v", result.Results)
 	}
 }
 
@@ -726,16 +808,7 @@ func databaseScopeRunner(next CommandRunner, attached []DatabaseSelection) Comma
 		}
 		selected := []DatabaseSelection{}
 		switch strings.TrimSpace(raw) {
-		case "":
-			for _, name := range []string{"core", "corpus"} {
-				for _, database := range attached {
-					if database.Database == name {
-						selected = append(selected, database)
-						break
-					}
-				}
-			}
-		case "all":
+		case "", "all":
 			selected = append(selected, attached...)
 		default:
 			for _, name := range strings.Split(raw, ",") {

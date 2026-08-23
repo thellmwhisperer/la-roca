@@ -318,8 +318,8 @@ func TestSkillTeachesTheInvestigationFunnel(t *testing.T) {
 			body: skill.OperationsContent(),
 			want: []string{
 				"## Which databases a question sees",
-				"default to the corpus",
-				"should not drag in ops",
+				"whole installed federation",
+				"does not require naming",
 				"--databases", "corpus,ops", "--databases all",
 				"does not guess relevance",
 				"inventory of the other attached names",

@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca-vector/internal/engine"
+	"github.com/thellmwhisperer/la-roca-vector/internal/model"
 	"github.com/thellmwhisperer/la-roca-vector/internal/telemetry"
 	"github.com/thellmwhisperer/la-roca-vector/internal/vector"
 )
@@ -326,6 +327,9 @@ func queryCommand(env *environment) *cobra.Command {
 				}
 				k = parsed
 			}
+			if err := env.startBackgroundSetup(); err != nil {
+				return err
+			}
 			state, err := env.resolveStateDir()
 			if err != nil {
 				return err
@@ -336,7 +340,7 @@ func queryCommand(env *environment) *cobra.Command {
 			}
 			defer release()
 			started := time.Now()
-			federation, federationErr := env.federation("")
+			federation, federationErr := env.federationForQuery("")
 			if federationErr == nil {
 				var result vector.FederatedQuery
 				if expandTemplates {
@@ -375,7 +379,7 @@ func queryCommand(env *environment) *cobra.Command {
 				return fmt.Errorf("--databases needs federated sidecars; run `roca vector install`")
 			}
 			vectorPath := filepath.Join(state, vector.DatabaseFilename)
-			index, err := env.index(vector.ConfiguredModel(vectorPath))
+			index, err := env.indexForQuery(vector.ConfiguredModel(vectorPath))
 			if err != nil {
 				return err
 			}
@@ -398,7 +402,7 @@ func queryCommand(env *environment) *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&databases, "databases", "",
-		"comma list of attached database names (corpus,ops), or all")
+		"comma list of attached database names to narrow the default federation, or all")
 	command.Flags().BoolVar(&expandTemplates, "expand-templates", false,
 		"embed the query plus static question templates and union the neighbors")
 	command.Flags().Float64Var(&minScore, "min-score", 0,
@@ -500,6 +504,58 @@ func (env *environment) federation(model string) (vector.Federation, error) {
 	return env.federationWithEmbedder(model, embedder, events)
 }
 
+func (env *environment) federationForQuery(model string) (vector.Federation, error) {
+	embedder, events := env.queryEmbedder()
+	return env.federationWithEmbedder(model, embedder, events)
+}
+
+func (env *environment) indexForQuery(model string) (vector.Index, error) {
+	if federation, err := env.federationForQuery(model); err == nil {
+		return federation.CorpusIndex()
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return vector.Index{}, err
+	}
+	state, err := env.resolveStateDir()
+	if err != nil {
+		return vector.Index{}, err
+	}
+	core, err := env.core()
+	if err != nil {
+		return vector.Index{}, err
+	}
+	embedder, events := env.queryEmbedder()
+	return vector.Index{Corpus: core, VectorPath: filepath.Join(state, vector.DatabaseFilename),
+		Model: model, Embedder: embedder, Events: events,
+		Notice: func(message string) { fmt.Fprintln(os.Stderr, message) }, Database: "corpus"}, nil
+}
+
+func (env *environment) startBackgroundSetup() error {
+	if readOnly() {
+		return nil
+	}
+	if _, err := model.Existing(coreDataDir(env.dbPath), model.DefaultManifest()); err == nil {
+		return nil
+	}
+	state, err := env.resolveStateDir()
+	if err != nil {
+		return err
+	}
+	executable, err := currentExecutable()
+	if err != nil {
+		return fmt.Errorf("locate roca-vector: %w", err)
+	}
+	pluginRoot, err := env.resolvePluginRoot()
+	if err != nil {
+		return err
+	}
+	_, err = launchWorker(vector.LaunchRequest{
+		Executable: executable, Arguments: workerArguments(env.dbPath, state, vector.DefaultModel),
+		DataDir: state, Progress: os.Stderr,
+		Environment: []string{"ROCA_VECTOR_PLUGIN_ROOT=" + pluginRoot},
+	})
+	return err
+}
+
 func (env *environment) federationWithEmbedder(model string, embedder vector.Embedder,
 	events engine.Sink) (vector.Federation, error) {
 	core, err := env.core()
@@ -533,6 +589,11 @@ func defaultEmbedder(env *environment) vector.Embedder {
 
 func (env *environment) embedder() (vector.Embedder, engine.Sink) {
 	return newEmbedder(env), env.events()
+}
+
+func (env *environment) queryEmbedder() (vector.Embedder, engine.Sink) {
+	events := env.events()
+	return vector.ConfiguredEmbedder(coreDataDir(env.dbPath), env.stateDir, events, nil, true), events
 }
 
 func (env *environment) events() engine.Sink {
