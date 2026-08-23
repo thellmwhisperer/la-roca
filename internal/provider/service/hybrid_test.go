@@ -12,15 +12,8 @@ import (
 )
 
 func TestSearchRunsFTSAloneWhenVectorIsAbsent(t *testing.T) {
-	svc, _ := serviceWithPaths(t)
-	seedHybridCorpus(t, svc)
-
-	result, err := svc.Search(context.Background(), service.SearchRequest{
-		Question: "salud mental", Top: 10,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	svc := seededHybridService(t, nil)
+	result := mustHybridSearch(t, svc, "salud mental", false)
 	if strings.Join(result.Engines, ",") != "fts" {
 		t.Fatalf("engines = %v, want fts-only", result.Engines)
 	}
@@ -36,24 +29,16 @@ func TestSearchRunsFTSAloneWhenVectorIsAbsent(t *testing.T) {
 }
 
 func TestSearchFusesVectorAndFTSAndCanRequireBoth(t *testing.T) {
-	svc := initialized(t, freshPaths(t), func(options *service.Options) {
-		options.VectorSearch = func(_ context.Context, _ string, _ int, _ string) (service.VectorHits, error) {
+	svc := seededHybridService(t,
+		func(_ context.Context, _ string, _ int, _ string) (service.VectorHits, error) {
 			return service.VectorHits{Results: []service.VectorHit{
 				{Rank: 1, Score: 0.51, Database: "core", Table: "memories", ID: "1",
 					Text: "a private note about salud mental in therapy"},
 				{Rank: 2, Score: 0.44, Database: "core", Table: "sessions", ID: "session-salud",
 					Text: "Therapy notes\n\nrecovery"},
 			}}, nil
-		}
-	})
-	seedHybridCorpus(t, svc)
-
-	result, err := svc.Search(context.Background(), service.SearchRequest{
-		Question: "salud mental", Top: 10,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+		})
+	result := mustHybridSearch(t, svc, "salud mental", false)
 	if strings.Join(result.Engines, ",") != "fts,vector" {
 		t.Fatalf("engines = %v", result.Engines)
 	}
@@ -67,12 +52,7 @@ func TestSearchFusesVectorAndFTSAndCanRequireBoth(t *testing.T) {
 		t.Fatalf("expected a dual-confirmed memory: %+v", result.Hits)
 	}
 
-	precise, err := svc.Search(context.Background(), service.SearchRequest{
-		Question: "salud mental", Top: 10, RequireBoth: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	precise := mustHybridSearch(t, svc, "salud mental", true)
 	if len(precise.Hits) == 0 {
 		t.Fatal("require-both dropped every hit")
 	}
@@ -84,43 +64,27 @@ func TestSearchFusesVectorAndFTSAndCanRequireBoth(t *testing.T) {
 }
 
 func TestSearchDoesNotLabelAnUnavailableVectorEngine(t *testing.T) {
-	svc := initialized(t, freshPaths(t), func(options *service.Options) {
-		options.VectorSearch = func(context.Context, string, int, string) (service.VectorHits, error) {
+	svc := seededHybridService(t,
+		func(context.Context, string, int, string) (service.VectorHits, error) {
 			return service.VectorHits{Notices: []string{
 				"database corpus has no ready vector sidecar; continuing with FTS-only",
 			}}, nil
-		}
-	})
-	seedHybridCorpus(t, svc)
-
-	result, err := svc.Search(context.Background(), service.SearchRequest{
-		Question: "salud mental", Top: 10,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+		})
+	result := mustHybridSearch(t, svc, "salud mental", false)
 	if strings.Join(result.Engines, ",") != "fts" {
 		t.Fatalf("engines = %v, want fts-only", result.Engines)
 	}
 }
 
 func TestSearchDoesNotFlattenMixedModelVectorGroups(t *testing.T) {
-	svc := initialized(t, freshPaths(t), func(options *service.Options) {
-		options.VectorSearch = func(context.Context, string, int, string) (service.VectorHits, error) {
+	svc := seededHybridService(t,
+		func(context.Context, string, int, string) (service.VectorHits, error) {
 			return service.VectorHits{Executed: true, MixedModels: true, Results: []service.VectorHit{
 				{Rank: 1, Score: 0.91, Database: "corpus", Table: "memories", ID: "1"},
 				{Rank: 1, Score: 0.42, Database: "ops", Table: "memories", ID: "1"},
 			}}, nil
-		}
-	})
-	seedHybridCorpus(t, svc)
-
-	result, err := svc.Search(context.Background(), service.SearchRequest{
-		Question: "salud mental", Top: 10,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+		})
+	result := mustHybridSearch(t, svc, "salud mental", false)
 	if strings.Join(result.Engines, ",") != "fts" {
 		t.Fatalf("mixed-model engines = %v, want fts-only", result.Engines)
 	}
@@ -135,22 +99,14 @@ func TestSearchDoesNotFlattenMixedModelVectorGroups(t *testing.T) {
 }
 
 func TestSearchUsesOnlyVectorWhenEveryFTSTermHasZeroDocumentFrequency(t *testing.T) {
-	svc := initialized(t, freshPaths(t), func(options *service.Options) {
-		options.VectorSearch = func(context.Context, string, int, string) (service.VectorHits, error) {
+	svc := seededHybridService(t,
+		func(context.Context, string, int, string) (service.VectorHits, error) {
 			return service.VectorHits{Executed: true, Results: []service.VectorHit{{
 				Rank: 1, Score: 0.58, Database: "core", Table: "memories", ID: "1",
 				Text: "semantic neighbor",
 			}}}, nil
-		}
-	})
-	seedHybridCorpus(t, svc)
-
-	result, err := svc.Search(context.Background(), service.SearchRequest{
-		Question: "tulipanismo", Top: 10,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+		})
+	result := mustHybridSearch(t, svc, "tulipanismo", false)
 	if len(result.Terms) != 0 || strings.Join(result.Engines, ",") != "vector" {
 		t.Fatalf("zero-DF route terms=%v engines=%v", result.Terms, result.Engines)
 	}
@@ -177,14 +133,8 @@ printf '%s' '{"mixed_models":true,"vector_executed":true,"results":[],"database_
 }
 
 func TestSearchResolvesSessionSnippetsFromDeclaredColumns(t *testing.T) {
-	svc, _ := serviceWithPaths(t)
-	seedHybridCorpus(t, svc)
-	result, err := svc.Search(context.Background(), service.SearchRequest{
-		Question: "recovery", Top: 10,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	svc := seededHybridService(t, nil)
+	result := mustHybridSearch(t, svc, "recovery", false)
 	found := false
 	for _, hit := range result.Hits {
 		if hit.Table == "sessions" && hit.ID == "session-salud" {
@@ -200,15 +150,9 @@ func TestSearchResolvesSessionSnippetsFromDeclaredColumns(t *testing.T) {
 }
 
 func TestSearchLongQuestionDoesNotPromoteGenericFTSNoise(t *testing.T) {
-	svc, _ := serviceWithPaths(t)
-	seedHybridCorpus(t, svc)
+	svc := seededHybridService(t, nil)
 	question := "what are the thoughts of the team about the way we should look at the salud mental of the day"
-	result, err := svc.Search(context.Background(), service.SearchRequest{
-		Question: question, Top: 10,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	result := mustHybridSearch(t, svc, question, false)
 	if !containsTerm(result.Terms, "salud") && !containsTerm(result.Terms, "mental") {
 		t.Fatalf("rarity selection dropped the rare terms: %v", result.Terms)
 	}
@@ -247,32 +191,15 @@ func TestHybridGoldenHitsAtTenMatchesOrBeatsEachLeg(t *testing.T) {
 
 	hybridHits, ftsHits, vectorHits := 0, 0, 0
 	for _, golden := range cases {
-		hybridResult, err := hybrid.Search(context.Background(), service.SearchRequest{
-			Question: golden.query, Top: 10,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		ftsResult, err := fts.Search(context.Background(), service.SearchRequest{
-			Question: golden.query, Top: 10,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
+		hybridResult := mustHybridSearch(t, hybrid, golden.query, false)
+		ftsResult := mustHybridSearch(t, fts, golden.query, false)
 		if searchResultHasSource(hybridResult, "core.memories."+vectorTargets[golden.query]) {
 			hybridHits++
 		}
 		if searchResultHasSource(ftsResult, "core.memories."+ftsTargets[golden.query]) {
 			ftsHits++
 		}
-		vectorResult, err := vectorLeg(context.Background(), golden.query, 100, "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !vectorResult.Executed {
-			t.Fatalf("pure-vector baseline did not execute for %q: notices=%v",
-				golden.query, vectorResult.Notices)
-		}
+		vectorResult := mustHybridVectorSearch(t, vectorLeg, golden.query)
 		if vectorHitsHaveSource(vectorResult.Results, "core.memories."+vectorTargets[golden.query]) {
 			vectorHits++
 		}
@@ -339,26 +266,9 @@ func TestHybridGoldenAgainstReadOnlyLabCopies(t *testing.T) {
 
 	hybridHits, ftsHits, vectorHits := 0, 0, 0
 	for _, golden := range cases {
-		hybridResult, err := hybrid.Search(context.Background(), service.SearchRequest{
-			Question: golden.query, Top: 10,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		ftsResult, err := fts.Search(context.Background(), service.SearchRequest{
-			Question: golden.query, Top: 10,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		vectorResult, err := vectorLeg(context.Background(), golden.query, 100, "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !vectorResult.Executed {
-			t.Fatalf("pure-vector baseline did not execute for %q: notices=%v",
-				golden.query, vectorResult.Notices)
-		}
+		hybridResult := mustHybridSearch(t, hybrid, golden.query, false)
+		ftsResult := mustHybridSearch(t, fts, golden.query, false)
+		vectorResult := mustHybridVectorSearch(t, vectorLeg, golden.query)
 		if goldenSearchHit(hybridResult.Hits, golden.table, golden.ids) {
 			hybridHits++
 		}
@@ -396,6 +306,43 @@ func goldenVectorHit(hits []service.VectorHit, table string, ids []string) bool 
 		}
 	}
 	return false
+}
+
+func seededHybridService(t *testing.T, vectorSearch service.VectorSearchFunc) *service.Service {
+	t.Helper()
+	var svc *service.Service
+	if vectorSearch == nil {
+		svc, _ = serviceWithPaths(t)
+	} else {
+		svc = initialized(t, freshPaths(t), func(options *service.Options) {
+			options.VectorSearch = vectorSearch
+		})
+	}
+	seedHybridCorpus(t, svc)
+	return svc
+}
+
+func mustHybridSearch(t *testing.T, svc *service.Service, question string, requireBoth bool) service.SearchResult {
+	t.Helper()
+	result, err := svc.Search(context.Background(), service.SearchRequest{
+		Question: question, Top: 10, RequireBoth: requireBoth,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func mustHybridVectorSearch(t *testing.T, search service.VectorSearchFunc, question string) service.VectorHits {
+	t.Helper()
+	result, err := search(context.Background(), question, 100, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Executed {
+		t.Fatalf("pure-vector baseline did not execute for %q: notices=%v", question, result.Notices)
+	}
+	return result
 }
 
 func seedHybridGoldenCorpus(t *testing.T, svc *service.Service, cases []struct {

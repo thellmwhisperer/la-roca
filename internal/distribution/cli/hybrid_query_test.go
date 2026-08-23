@@ -6,21 +6,6 @@ import (
 	"testing"
 )
 
-func TestQueryHelpTeachesHybridSearch(t *testing.T) {
-	var output strings.Builder
-	root := rootCommand(&cliEnv{})
-	root.SetOut(&output)
-	root.SetArgs([]string{"query", "--help"})
-	if err := root.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"--top", "--require-both", "--databases", "hybrid"} {
-		if !strings.Contains(output.String(), want) {
-			t.Errorf("query help lacks %q:\n%s", want, output.String())
-		}
-	}
-}
-
 func TestPlaygroundHelpTeachesHumanSQLModes(t *testing.T) {
 	var output strings.Builder
 	root := rootCommand(&cliEnv{})
