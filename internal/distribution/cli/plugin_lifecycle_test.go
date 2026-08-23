@@ -2,8 +2,10 @@ package cli
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,6 +15,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/lifecycle"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
+	_ "modernc.org/sqlite"
 )
 
 func TestPluginInstallerIsInertBeforeTheExperimentalFlag(t *testing.T) {
@@ -234,4 +237,113 @@ func TestPluginConsentDistinguishesDataFromCodeAndNamesTheReplacedChecksum(t *te
 			}
 		}
 	}
+}
+
+func TestPluginUpdateAcceptsAnExplicitSourceToRebase(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	paths := resolvedIn(t, home)
+	writeFile(t, paths.Config, "[features]\nplugins = true\n")
+	first := writeCLIPluginPackage(t, filepath.Join(t.TempDir(), "first"), "synthetic-release", "1.0.0")
+	second := writeCLIPluginPackage(t, filepath.Join(t.TempDir(), "second"), "synthetic-release", "2.0.0")
+
+	var output strings.Builder
+	env := &cliEnv{out: &output, errOut: &output}
+	code, err := executeWithEnv(env, []string{"plugin", "--yes", "install", first}, strings.NewReader(""))
+	if err != nil || code != ExitOK {
+		t.Fatalf("install = code %d err %v output %q", code, err, output.String())
+	}
+
+	output.Reset()
+	code, err = executeWithEnv(env,
+		[]string{"plugin", "--yes", "update", "synthetic-release", second}, strings.NewReader(""))
+	if err != nil || code != ExitOK {
+		t.Fatalf("update with source = code %d err %v output %q", code, err, output.String())
+	}
+	manifest, err := plugininstall.ReadManifest(filepath.Join(pluginRoot(paths), "synthetic-release"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Version != "2.0.0" {
+		t.Fatalf("updated version = %q", manifest.Version)
+	}
+	if manifest.Source != second {
+		t.Fatalf("rebased source = %q, want %q", manifest.Source, second)
+	}
+}
+
+func TestPluginInstallOverAnExistingPluginNamesTheUpdateWithThatSource(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	paths := resolvedIn(t, home)
+	writeFile(t, paths.Config, "[features]\nplugins = true\n")
+	first := writeCLIPluginPackage(t, filepath.Join(t.TempDir(), "first"), "synthetic-release", "1.0.0")
+	newer := writeCLIPluginPackage(t, filepath.Join(t.TempDir(), "newer"), "synthetic-release", "2.0.0")
+
+	var output strings.Builder
+	env := &cliEnv{out: &output, errOut: &output}
+	code, err := executeWithEnv(env, []string{"plugin", "--yes", "install", first}, strings.NewReader(""))
+	if err != nil || code != ExitOK {
+		t.Fatalf("install = code %d err %v output %q", code, err, output.String())
+	}
+
+	code, err = executeWithEnv(env, []string{"plugin", "--yes", "install", newer}, strings.NewReader(""))
+	if err == nil || code == ExitOK {
+		t.Fatalf("second install succeeded: code %d err %v", code, err)
+	}
+	want := "run `roca plugin update synthetic-release " + newer + "`"
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("already-installed error = %v, want %q", err, want)
+	}
+}
+
+func writeCLIPluginPackage(t *testing.T, directory, name, version string) string {
+	t.Helper()
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(directory, plugininstall.PackageFilename), fmt.Sprintf(`{
+  "schema": 1,
+  "name": %q,
+  "version": %q,
+  "binary": "roca",
+  "databases": [{
+    "name": "records",
+    "path": "records.db",
+    "alias": "synthetic_records",
+    "attachment": "resident",
+    "custody": true,
+    "retention": "Keep operator records until the plugin is uninstalled."
+  }],
+  "semantic": {"databases": [{
+    "database": "records",
+    "description": "Synthetic custodial records.",
+    "questions": ["Which synthetic records exist?"],
+    "tables": [{"name": "entries", "description": "One synthetic row.", "columns": ["id", "value"]}]
+  }]},
+  "verbs": [],
+  "capabilities": []
+}`, name, version))
+	db, err := sql.Open("sqlite", filepath.Join(directory, "records.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE entries (id INTEGER PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var checksums strings.Builder
+	for _, file := range []string{plugininstall.PackageFilename, "records.db"} {
+		body, err := os.ReadFile(filepath.Join(directory, file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		digest := sha256.Sum256(body)
+		fmt.Fprintf(&checksums, "%x  %s\n", digest, file)
+	}
+	writeFile(t, filepath.Join(directory, plugininstall.ChecksumsFilename), checksums.String())
+	return directory
 }

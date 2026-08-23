@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/release"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 )
 
@@ -109,6 +110,19 @@ type Resolved struct {
 	Directory string
 }
 
+// Resolver turns a plugin source into a directory of verified package files.
+// The zero value asks GitHub's public API, using GITHUB_TOKEN when it is set.
+// Tests point API at a server of their own and, for the tree fallback, replace
+// the git remote so nothing on the network is required.
+type Resolver struct {
+	API   string
+	Token string
+	HTTP  *http.Client
+	// CloneURL, when set, is the only git remote mapping for an owner/repo
+	// tree fallback. A test that must not touch github.com installs one.
+	CloneURL func(reference string) (string, bool)
+}
+
 func candidateDatabaseFiles(candidate Candidate) []string {
 	if len(candidate.Databases) > 0 {
 		return slices.Clone(candidate.Databases)
@@ -162,6 +176,13 @@ type packageMetadata struct {
 }
 
 func Resolve(ctx context.Context, reference, scratchRoot string) (Resolved, func(), error) {
+	return Resolver{
+		API:   os.Getenv(release.EnvAPI),
+		Token: os.Getenv(release.EnvToken),
+	}.Resolve(ctx, reference, scratchRoot)
+}
+
+func (r Resolver) Resolve(ctx context.Context, reference, scratchRoot string) (Resolved, func(), error) {
 	reference = strings.TrimSpace(reference)
 	if reference == "" {
 		return Resolved{}, func() {}, fmt.Errorf("plugin source is empty")
@@ -192,13 +213,32 @@ func Resolve(ctx context.Context, reference, scratchRoot string) (Resolved, func
 		}
 	}
 
-	cloneSource := reference
-	if repository, ok := RepositoryURL(reference); ok {
-		cloneSource = repository
-	} else if !sourceURL(reference) {
+	if _, isRepo := RepositoryURL(reference); isRepo {
+		if resolved, cleanup, err, handled := r.resolvePublishedRelease(ctx, reference, scratchRoot); handled {
+			return resolved, cleanup, err
+		}
+		cloneSource, ok := r.gitRemote(reference)
+		if !ok {
+			return Resolved{}, func() {}, fmt.Errorf(
+				"plugin source %q is neither a directory, URL, nor owner/repo", reference)
+		}
+		return cloneGit(ctx, reference, cloneSource, scratchRoot)
+	}
+	if !sourceURL(reference) {
 		return Resolved{}, func() {}, fmt.Errorf(
 			"plugin source %q is neither a directory, URL, nor owner/repo", reference)
 	}
+	return cloneGit(ctx, reference, reference, scratchRoot)
+}
+
+func (r Resolver) gitRemote(reference string) (string, bool) {
+	if r.CloneURL != nil {
+		return r.CloneURL(reference)
+	}
+	return RepositoryURL(reference)
+}
+
+func cloneGit(ctx context.Context, reference, cloneSource, scratchRoot string) (Resolved, func(), error) {
 	if strings.HasPrefix(cloneSource, "-") {
 		return Resolved{}, func() {}, fmt.Errorf("plugin source may not begin with '-'")
 	}
@@ -592,10 +632,17 @@ func (m Manager) PreflightInstall(candidate Candidate) error {
 	}
 	target := filepath.Join(m.PluginRoot, candidate.Name)
 	if _, err := os.Lstat(target); err == nil || !os.IsNotExist(err) {
-		return fmt.Errorf("plugin %s is already installed; run `roca plugin update %s`",
-			candidate.Name, candidate.Name)
+		return alreadyInstalledError(candidate.Name, candidate.Source)
 	}
 	return refuseExecutableCollision(m.executablePath(candidate))
+}
+
+func alreadyInstalledError(name, source string) error {
+	if strings.TrimSpace(source) == "" {
+		return fmt.Errorf("plugin %s is already installed; run `roca plugin update %s`", name, name)
+	}
+	return fmt.Errorf("plugin %s is already installed; run `roca plugin update %s %s`",
+		name, name, source)
 }
 
 func createStateDir(target, name string) error {

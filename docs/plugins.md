@@ -208,7 +208,9 @@ uninstall then archives the directory rather than deleting it — see
 - `checksum mismatch for …` — you changed a file after generating
   `checksums.txt`. Regenerate it (step 2, file 3) and install again.
 - ``plugin first-receipts is already installed; run `roca plugin update
-  first-receipts``` — one install per name. Uninstall first, or update.
+  first-receipts <source>``` — the plugin is already installed. That command
+  rebases it onto the source you just named and preserves custodial data. Do
+  not uninstall.
 - Your table does not appear and the `databases:` line omits the plugin — the
   semantic declaration disagrees with the real database (a wrong or reordered
   column list is the usual cause). The plugin is skipped with a warning.
@@ -547,10 +549,14 @@ its command.
 ## Verified packages and lifecycle
 
 An installable source is a local directory, a local or HTTP(S) `.tar.gz` or
-`.tgz` release archive, a Git URL, or `owner/repo`. Git sources are cloned with
-the user's existing credentials, including for a private repository. Archives
-must contain the package files at their root; nested paths and non-regular
-entries are refused before package verification.
+`.tgz` release archive, a Git URL, or `owner/repo`. An `owner/repo` source uses
+the latest published release's platform archive, verified against that
+release's `checksums.txt`, and records `owner/repo` so the next update asks
+the channel again. The repository tree is the fallback only for a release-less
+data-only plugin, one that never published a platform archive. Git sources are
+cloned with the user's existing credentials, including for a private
+repository. Archives must contain the package files at their root; nested
+paths and non-regular entries are refused before package verification.
 
 `checksums.txt` publishes one SHA-256 for every payload file: `plugin.json`,
 each declared database, the optional `rides.toml`, and the optional derived
@@ -586,11 +592,16 @@ to `$ROCA_PREFIX`, or `~/.local/bin` when that variable is absent. The generated
 `.roca-plugin.json` records source, version, package checksum, payload
 checksums, and installed paths.
 
-`roca plugin update <name>` re-resolves and verifies that recorded source. It
-refreshes the immutable package files but preserves every declared database and
-any declared state directory, because those are the plugin's writable,
-user-owned state. A change to the database file list, the state directory name,
-or the package kind is refused instead of guessing at a migration.
+`roca plugin update <name> [source]` re-resolves and verifies the recorded
+source, or rebases the install onto an explicit new source (a directory, an
+archive, a Git URL, or `owner/repo`) with the same verification and consent as
+install. It refreshes the immutable package files but preserves every declared
+database and any declared state directory, because those are the plugin's
+writable, user-owned state. Custodial database bytes are never replaced from
+the package. A change to the database file list, the state directory name, or
+the package kind is refused instead of guessing at a migration. An install of
+a name that is already present names this update invocation with the source
+you passed; it is not a dead end.
 
 `roca plugin uninstall <name>` removes an ordinary verified installation. When a
 declaration carries custody, it never deletes the folder: it atomically moves
