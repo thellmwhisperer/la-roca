@@ -14,8 +14,8 @@ rides.
 
 One thing to know before you start: the third-party plugin surface is
 **experimental** and gated by `features.plugins`. A fresh `roca init` enables
-it; older or operator-managed configurations may leave it disabled. Install
-and update commands exist only while the switch is true, and the surface may
+it; older or operator-managed configurations may leave it disabled. Plugin
+lifecycle commands exist only while the switch is true, and the surface may
 still change between releases.
 
 ## Your first plugin
@@ -440,7 +440,7 @@ exactly as before; an explicitly selected data-plugin adapter may still expose
 its live chunks to the standalone `roca-vector` package through `roca exec`, as
 documented in [`plugins/vector/README.md`](../plugins/vector/README.md).
 
-Install, update, and uninstall regenerate
+Install, sync, update, and uninstall regenerate
 `~/.roca/plugins/vector-registry.json` in the same pass that refreshes the
 semantic catalog. Bundled manifest upgrades refresh the same registry when the
 kernel opens them. The registry contains plugin-relative database filenames,
@@ -566,7 +566,8 @@ risk levels:
   from its derived executable or from the ride commands the [cron
   train](#scheduled-rides) hands to a shell.
 
-Install, update, and uninstall all show that screen and wait for an answer.
+Install, sync, update, and uninstall all show that screen and wait for an
+answer.
 `--yes` accepts that risk without prompting; `--json` never prompts and refuses
 the operation until `--yes` states the decision, so no script consents by
 accident. An update also names the checksum it replaces, because a source

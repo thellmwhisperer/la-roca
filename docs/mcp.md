@@ -177,7 +177,7 @@ is backed up. An edited SYSTEM zone is left alone unless the operator passes
 `internal/distribution/skill/VECTOR.md`, and ship inside the
 binary via `go:embed`; the catalog body is composed at install time from the semantic
 fragments of the installed plugin manifests, the same fragments the query
-catalog composes, and every `roca plugin install`, `update` and `uninstall`
+catalog composes, and every `roca plugin install`, `sync`, `update` and `uninstall`
 regenerates it in each runtime where it is registered.
 
 ### How a runtime earns a skill seat

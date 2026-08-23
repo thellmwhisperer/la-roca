@@ -354,9 +354,9 @@ func (env *cliEnv) discoverPluginContracts() (string, []plugin.Database, []strin
 }
 
 // refreshPluginContracts regenerates both declarative federation projections
-// after install, update, or uninstall. The vector registry is required by the
-// synchronization boundary; the semantic catalog is written only to runtimes
-// that previously asked for skills and remains warning-based.
+// after install, sync, update, or uninstall. The vector registry is required
+// by the synchronization boundary; the semantic catalog is written only to
+// runtimes that previously asked for skills and remains warning-based.
 func (env *cliEnv) refreshPluginContracts() error {
 	root, databases, warnings, err := env.discoverPluginContracts()
 	if err != nil {
