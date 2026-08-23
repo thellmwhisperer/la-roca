@@ -11,16 +11,18 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/store"
+	"github.com/thellmwhisperer/la-roca/internal/store/exactdedup"
 	"github.com/thellmwhisperer/la-roca/pkg/ingestprovenance"
 	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 )
 
 const (
-	legacyFixtureSession  = "legacy-fixture-session"
-	legacyOverlapSession  = "legacy-overlap-session"
-	legacyHandoffContent  = "synthetic legacy handoff for the next agent"
-	legacyFeedbackContent = "synthetic legacy feedback about the ingest route"
-	legacyCreatedAt       = "2026-08-01 12:00:00"
+	legacyFixtureSession          = "legacy-fixture-session"
+	legacyOverlapSession          = "legacy-overlap-session"
+	legacyFederatedPayloadSession = "federated-exact-payload"
+	legacyHandoffContent          = "synthetic legacy handoff for the next agent"
+	legacyFeedbackContent         = "synthetic legacy feedback about the ingest route"
+	legacyCreatedAt               = "2026-08-01 12:00:00"
 )
 
 func TestLegacyStoreIngest(t *testing.T) {
@@ -320,19 +322,7 @@ func TestLegacyStoreSkipsFederatedOverlap(t *testing.T) {
 	if result.Delta.Sessions != 3 {
 		t.Errorf("delta sessions = %d, want 3 missing fixture sessions", result.Delta.Sessions)
 	}
-	if result.Sources[legacyStoreSource].SessionsSkipped != 1 {
-		t.Errorf("overlap sessions skipped = %d, want 1",
-			result.Sources[legacyStoreSource].SessionsSkipped)
-	}
-	var reportedOverlap bool
-	for _, line := range progress {
-		if strings.Contains(line, "sessions_skipped=1 (session_id already present)") {
-			reportedOverlap = true
-		}
-	}
-	if !reportedOverlap {
-		t.Errorf("progress did not report the overlap: %v", progress)
-	}
+	assertLegacyStoreOverlapReported(t, result, progress)
 	if countRows(t, corpus.SQL(), "sessions") != 4 {
 		t.Errorf("sessions = %d, want 4", countRows(t, corpus.SQL(), "sessions"))
 	}
@@ -356,6 +346,169 @@ func TestLegacyStoreSkipsFederatedOverlap(t *testing.T) {
 		}
 		if got != 0 {
 			t.Errorf("overlap %s = %d, want 0", table, got)
+		}
+	}
+}
+
+func TestLegacyStoreSkipsExactPayloadOverlapAndContinues(t *testing.T) {
+	t.Parallel()
+	path := seedLegacyStoreFixture(t)
+	corpus, ops := legacyStoreStores(t)
+	if err := exactdedup.EnsureGuards(context.Background(), corpus.SQL()); err != nil {
+		t.Fatal(err)
+	}
+	if err := corpus.Write(context.Background(), func(tx *sql.Tx) error {
+		_, err := tx.Exec(`INSERT INTO sessions
+			(session_id, source_agent, source_surface, project, started_at, ended_at,
+			 duration_minutes, title, metadata)
+			VALUES (?, 'codex', ?, 'demo', '2026-08-01 13:00:00', '2026-08-01 13:01:00',
+			        1, 'overlap fixture', '{}')`,
+			legacyFederatedPayloadSession, ingestprovenance.LegacyStore)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	roots := ResolveRoots(Environment{GOOS: "darwin", Home: t.TempDir()}, Settings{LegacyStoreDB: path})
+	var progress []string
+	options := Options{Roots: roots, Ops: ops, Progress: func(line string) { progress = append(progress, line) }}
+	result, err := Run(context.Background(), corpus, registry(t), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Errors != 0 || result.WriteFailed != 0 {
+		t.Fatalf("exact-payload overlap aborted the source: errors=%+v write_failed=%d",
+			result.ErrorDetails, result.WriteFailed)
+	}
+	if result.Delta.Sessions != 3 {
+		t.Errorf("delta sessions = %d, want 3 new sessions", result.Delta.Sessions)
+	}
+	if result.Sources[legacyStoreSource].Sessions != 3 {
+		t.Errorf("ingested sessions = %d, want 3", result.Sources[legacyStoreSource].Sessions)
+	}
+	assertLegacyStoreOverlapReported(t, result, progress)
+	if countRows(t, corpus.SQL(), "sessions") != 4 {
+		t.Errorf("sessions = %d, want 4 (1 federated + 3 new)", countRows(t, corpus.SQL(), "sessions"))
+	}
+	var title, surface string
+	if err := corpus.SQL().QueryRow(`SELECT COALESCE(title, ''), COALESCE(source_surface, '')
+		FROM sessions WHERE session_id = ?`, legacyFederatedPayloadSession).Scan(&title, &surface); err != nil {
+		t.Fatal(err)
+	}
+	if title != "overlap fixture" || surface != ingestprovenance.LegacyStore {
+		t.Errorf("federated payload session mutated: title=%q surface=%q", title, surface)
+	}
+	var overlapLanded int
+	if err := corpus.SQL().QueryRow(`SELECT COUNT(*) FROM sessions WHERE session_id = ?`,
+		legacyOverlapSession).Scan(&overlapLanded); err != nil {
+		t.Fatal(err)
+	}
+	if overlapLanded != 0 {
+		t.Errorf("exact-payload overlap inserted a second session row")
+	}
+	if countRows(t, corpus.SQL(), "exchanges") != 1 {
+		t.Errorf("exchanges = %d, want 1 from the new sessions", countRows(t, corpus.SQL(), "exchanges"))
+	}
+
+	second, err := Run(context.Background(), corpus, registry(t), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Errors != 0 || second.Delta != (Tables{}) {
+		t.Errorf("second run errors=%+v delta=%+v, want zero", second.ErrorDetails, second.Delta)
+	}
+}
+
+func assertLegacyStoreOverlapReported(t *testing.T, result Result, progress []string) {
+	t.Helper()
+	if result.Sources[legacyStoreSource].SessionsSkipped != 1 {
+		t.Errorf("overlap sessions skipped = %d, want 1",
+			result.Sources[legacyStoreSource].SessionsSkipped)
+	}
+	var reportedOverlap bool
+	for _, line := range progress {
+		if strings.Contains(line, "sessions_skipped=1 (session_id already present)") {
+			reportedOverlap = true
+		}
+	}
+	if !reportedOverlap {
+		t.Errorf("progress did not report the overlap: %v", progress)
+	}
+}
+
+func TestLegacyStoreUniqueChildOverlapsDoNotAbortTheBatch(t *testing.T) {
+	t.Parallel()
+	db := rocaDatabase(t)
+	for _, statement := range []string{
+		`CREATE UNIQUE INDEX fixture_exchange_guard ON exchanges(human_text)`,
+		`CREATE UNIQUE INDEX fixture_thinking_guard ON thinking_blocks(full_text)`,
+		`CREATE UNIQUE INDEX fixture_tool_guard ON tool_uses(tool_name)`,
+		`CREATE UNIQUE INDEX fixture_memory_guard ON memories(content)`,
+	} {
+		if _, err := db.SQL().Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ctx := context.Background()
+	var sessions, memories Counts
+	err := db.Write(ctx, func(tx *sql.Tx) error {
+		var err error
+		sessions, err = writeLegacyStoreSessions(ctx, tx, []parsers.Session{
+			{ID: "constraint-session-one", Exchanges: []parsers.Exchange{
+				{Number: 1, HumanText: "colliding exchange", AgentText: "first",
+					HumanTimestamp: "2026-08-01T10:00:00Z",
+					Thinking: []parsers.Thinking{
+						{Position: 1, Text: "colliding thought"},
+						{Position: 2, Text: "colliding thought"},
+						{Position: 3, Text: "surviving thought"},
+					},
+					Tools: []parsers.ToolUse{
+						{Name: "colliding-tool", ParamsSummary: "first"},
+						{Name: "colliding-tool", ParamsSummary: "second"},
+						{Name: "surviving-tool"},
+					}},
+				{Number: 2, HumanText: "colliding exchange", AgentText: "second",
+					HumanTimestamp: "2026-08-01T10:01:00Z"},
+				{Number: 3, HumanText: "surviving exchange", AgentText: "third",
+					HumanTimestamp: "2026-08-01T10:02:00Z"},
+			}},
+			{ID: "constraint-session-two", Exchanges: []parsers.Exchange{{
+				Number: 1, HumanText: "later session", AgentText: "still written",
+				HumanTimestamp: "2026-08-01T11:00:00Z",
+			}}},
+		})
+		if err != nil {
+			return err
+		}
+		memories, err = writeRecords(ctx, tx, registry(t), nil, parsers.Records{
+			Memories: []parsers.Memory{
+				{Layer: "pattern", Content: "colliding memory", Origin: "agent",
+					Source: legacyStoreSource, FilePath: "memory-one"},
+				{Layer: "pattern", Content: "colliding memory", Origin: "agent",
+					Source: legacyStoreSource, FilePath: "memory-two"},
+				{Layer: "pattern", Content: "surviving memory", Origin: "agent",
+					Source: legacyStoreSource, FilePath: "memory-three"},
+			},
+		})
+		return err
+	})
+	if err != nil {
+		t.Fatalf("a unique child overlap aborted the batch: %v", err)
+	}
+	if sessions.Sessions != 2 || sessions.Exchanges != 3 ||
+		sessions.ThinkingBlocks != 2 || sessions.ToolUses != 2 {
+		t.Errorf("session counts = %+v, want 2 sessions, 3 exchanges, 2 thinking, 2 tools",
+			sessions)
+	}
+	if memories.MemoriesInserted != 2 || memories.MemoriesUnchanged != 1 {
+		t.Errorf("memory counts = %+v, want 2 inserted and 1 unchanged", memories)
+	}
+	for table, want := range map[string]int{
+		"sessions": 2, "exchanges": 3, "thinking_blocks": 2, "tool_uses": 2, "memories": 2,
+	} {
+		if got := countRows(t, db.SQL(), table); got != want {
+			t.Errorf("%s rows = %d, want %d", table, got, want)
 		}
 	}
 }
