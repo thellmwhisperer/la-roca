@@ -40,6 +40,17 @@ func ObserveCalls(kind Kind, content []byte) []CallEvent {
 	}
 }
 
+// Observable reports whether ObserveCalls can read tool-call records of this
+// kind. Database stores are not live JSONL logs and are not observable.
+func Observable(kind Kind) bool {
+	switch kind {
+	case KindClaudeSession, KindGrokSession, KindCodexSession, KindPiSession:
+		return true
+	default:
+		return false
+	}
+}
+
 func observeClaude(content []byte) []CallEvent {
 	var events []CallEvent
 	pending := map[string]pendingCall{}

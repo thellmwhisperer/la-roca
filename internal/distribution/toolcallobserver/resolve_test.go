@@ -224,6 +224,62 @@ func TestResolveUsesAnOpenSessionFileForHarnessesWithoutSessionEnv(t *testing.T)
 	}
 }
 
+func TestResolveUsesPiSessionID(t *testing.T) {
+	roots := labRoots(t)
+	path := filepath.Join(roots.PiSessions, "demo", "session.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"type":"session","version":3,"id":"pi-session-1","cwd":"/synthetic/lab","timestamp":"2026-08-01T13:00:00Z"}` + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name    string
+		facts   Evidence
+		want    string
+		missing string
+	}{
+		{
+			name: "pi session id resolves the session file",
+			facts: Evidence{
+				Processes:   []Process{{Command: "pi"}},
+				Environment: map[string]string{"PI_SESSION_ID": "pi-session-1"},
+			},
+			want: path,
+		},
+		{
+			name: "pi missing session id refuses",
+			facts: Evidence{
+				Processes: []Process{{Command: "pi"}},
+			},
+			missing: "session identity",
+		},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			test.facts.Roots = roots
+			got, err := Resolve(test.facts)
+			if test.missing != "" {
+				if err == nil {
+					t.Fatalf("resolved %s, want a refusal", got.Path)
+				}
+				if !strings.Contains(err.Error(), test.missing) {
+					t.Fatalf("error %q does not name %q", err, test.missing)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Path != test.want {
+				t.Fatalf("path = %q, want %q", got.Path, test.want)
+			}
+		})
+	}
+}
+
 func labRoots(t *testing.T) ingest.Roots {
 	t.Helper()
 	home := t.TempDir()

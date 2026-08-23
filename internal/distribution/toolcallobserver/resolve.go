@@ -1,7 +1,10 @@
 package toolcallobserver
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -82,7 +85,7 @@ func hasSessionEnvironment(harness string) bool {
 func sessionMatches(harness, id string, roots ingest.Roots) []ingest.Target {
 	var matches []ingest.Target
 	for _, target := range ingest.Scan(roots).Targets {
-		if target.SourceAgent != harness || target.SessionID != id {
+		if target.SourceAgent != harness || targetSessionID(target) != id {
 			continue
 		}
 		if target.Kind == parsers.KindGrokSessionMetadata {
@@ -91,6 +94,35 @@ func sessionMatches(harness, id string, roots ingest.Roots) []ingest.Target {
 		matches = append(matches, target)
 	}
 	return matches
+}
+
+func targetSessionID(target ingest.Target) string {
+	if target.SessionID != "" {
+		return target.SessionID
+	}
+	if target.Kind == parsers.KindPiSession {
+		return piSessionID(target.Path)
+	}
+	return ""
+}
+
+func piSessionID(path string) string {
+	file, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	if !scanner.Scan() {
+		return ""
+	}
+	var header struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(scanner.Bytes(), &header); err != nil {
+		return ""
+	}
+	return header.ID
 }
 
 func openFileMatches(harness string, evidence Evidence) []ingest.Target {
@@ -176,6 +208,9 @@ func envHarnesses(environment map[string]string) []string {
 	if strings.TrimSpace(environment["HERMES_SESSION_ID"]) != "" {
 		found = append(found, "hermes")
 	}
+	if strings.TrimSpace(environment["PI_SESSION_ID"]) != "" {
+		found = append(found, "pi")
+	}
 	return found
 }
 
@@ -189,6 +224,8 @@ func sessionID(harness string, environment map[string]string) string {
 		return strings.TrimSpace(environment["CODEX_THREAD_ID"])
 	case "hermes":
 		return strings.TrimSpace(environment["HERMES_SESSION_ID"])
+	case "pi":
+		return strings.TrimSpace(environment["PI_SESSION_ID"])
 	default:
 		return ""
 	}

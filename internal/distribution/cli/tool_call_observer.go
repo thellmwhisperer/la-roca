@@ -23,6 +23,7 @@ import (
 const (
 	observerFollowEnv  = "ROCA_TOOL_CALL_OBSERVER_FOLLOW"
 	observerHarnessEnv = "ROCA_TOOL_CALL_OBSERVER_HARNESS"
+	observerKindEnv    = "ROCA_TOOL_CALL_OBSERVER_KIND"
 )
 
 func toolCallObserverCommand(env *cliEnv) *cobra.Command {
@@ -40,11 +41,15 @@ func (env *cliEnv) runToolCallObserver(cmd *cobra.Command, _ []string) error {
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if path := strings.TrimSpace(os.Getenv(observerFollowEnv)); path != "" {
-		return env.followObserver(ctx, path, os.Getenv(observerHarnessEnv))
+		return env.followObserver(ctx, path, os.Getenv(observerHarnessEnv), parsers.Kind(os.Getenv(observerKindEnv)))
 	}
 	session, err := env.resolveObserverSession()
 	if err != nil {
 		return err
+	}
+	if !parsers.Observable(session.Kind) {
+		return fmt.Errorf("cannot watch this session: %s stores this session as a database, not a live log the observer can tail",
+			toolcallobserver.ProductName(session.Harness))
 	}
 	opened, err := env.openObserverWindow(ctx, session)
 	if err != nil {
@@ -68,13 +73,13 @@ func (env *cliEnv) runToolCallObserver(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-func (env *cliEnv) followObserver(ctx context.Context, path, harness string) error {
+func (env *cliEnv) followObserver(ctx context.Context, path, harness string, kind parsers.Kind) error {
 	follow := env.observerFollow
 	if follow == nil {
 		follow = toolcallobserver.Follow
 	}
 	err := follow(ctx, toolcallobserver.Session{
-		Harness: harness, Kind: kindForHarness(harness), Path: path, ID: filepath.Base(path),
+		Harness: harness, Kind: kind, Path: path, ID: filepath.Base(path),
 	}, env.out, toolcallobserver.FollowOptions{})
 	if errors.Is(err, context.Canceled) {
 		return nil
@@ -99,6 +104,7 @@ func (env *cliEnv) openObserverWindow(ctx context.Context, session toolcallobser
 		Env: []string{
 			observerFollowEnv + "=" + session.Path,
 			observerHarnessEnv + "=" + session.Harness,
+			observerKindEnv + "=" + string(session.Kind),
 		},
 		CurrentID: os.Getenv("HERDR_WORKSPACE_ID"),
 	}
@@ -177,21 +183,6 @@ func observerProcessAncestry(pid int) []toolcallobserver.Process {
 		pid = parent
 	}
 	return processes
-}
-
-func kindForHarness(harness string) parsers.Kind {
-	switch harness {
-	case "claude":
-		return parsers.KindClaudeSession
-	case "grok":
-		return parsers.KindGrokSession
-	case "codex":
-		return parsers.KindCodexSession
-	case "pi":
-		return parsers.KindPiSession
-	default:
-		return ""
-	}
 }
 
 func windowLine(opened toolcallobserver.OpenedWindow) string {
