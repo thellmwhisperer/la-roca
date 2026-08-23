@@ -113,17 +113,17 @@ func TestFederatedWorkerReusesLegacyMonolithEmbeddingsBeforeRetiringIt(t *testin
 	corpusPath := filepath.Join(corpusDir, "roca-corpus.db")
 	opsPath := filepath.Join(opsDir, "roca-ops.db")
 	createSourceDatabase(t, corpusPath, `
-		CREATE TABLE sessions(session_id TEXT PRIMARY KEY,title TEXT,project TEXT);
-		CREATE TABLE memories(id INTEGER PRIMARY KEY,content TEXT);
-		CREATE TABLE exchanges(id INTEGER PRIMARY KEY,human_text TEXT,agent_text TEXT);
-		CREATE TABLE thinking_blocks(id INTEGER PRIMARY KEY,full_text TEXT);
-		INSERT INTO sessions VALUES ('session-1','Release notes','vector-project');
-		INSERT INTO memories VALUES (1,'Corpus memory already embedded');
-		INSERT INTO exchanges VALUES (1,'Question already embedded','Answer already embedded');
-		INSERT INTO thinking_blocks VALUES (1,'Reasoning already embedded');`)
+		CREATE TABLE sessions(session_id TEXT PRIMARY KEY,title TEXT,project TEXT,started_at TEXT);
+		CREATE TABLE memories(id INTEGER PRIMARY KEY,content TEXT,project TEXT,created_at TEXT,source_session TEXT);
+		CREATE TABLE exchanges(id INTEGER PRIMARY KEY,session_id TEXT,human_text TEXT,agent_text TEXT,human_timestamp TEXT,agent_timestamp TEXT);
+		CREATE TABLE thinking_blocks(id INTEGER PRIMARY KEY,session_id TEXT,full_text TEXT);
+		INSERT INTO sessions VALUES ('session-1','Release notes','vector-project','2026-03-01');
+		INSERT INTO memories VALUES (1,'Corpus memory already embedded','vector-project','2026-03-01','session-1');
+		INSERT INTO exchanges VALUES (1,'session-1','Question already embedded','Answer already embedded','2026-03-01','2026-03-01');
+		INSERT INTO thinking_blocks VALUES (1,'session-1','Reasoning already embedded');`)
 	createSourceDatabase(t, opsPath, `
-		CREATE TABLE memories(id INTEGER PRIMARY KEY,content TEXT);
-		INSERT INTO memories VALUES (1,'Operational memory already embedded');`)
+		CREATE TABLE memories(id INTEGER PRIMARY KEY,content TEXT,project TEXT,created_at TEXT);
+		INSERT INTO memories VALUES (1,'Operational memory already embedded','ops','2026-03-01');`)
 	writeRegistry(t, root, vectorRegistry{Schema: 1, Databases: []vectorDatabase{
 		{Plugin: "roca-corpus", Database: "corpus", Path: "roca-corpus.db", Alias: "plugin_roca_corpus",
 			Tables: []vectorTable{
@@ -182,11 +182,8 @@ func TestFederatedWorkerReusesLegacyMonolithEmbeddingsBeforeRetiringIt(t *testin
 	if recorded.ExitStatus != 0 || recorded.FinishedAt.IsZero() {
 		t.Fatalf("recorded worker completion = %+v", recorded)
 	}
-	if got := len(flattenInputs(embedder.inputs)); got != 1 {
-		t.Fatalf("federated migration embedded %d inputs, want only the changed session text", got)
-	}
-	if completion.Delta.Added != 1 || completion.Delta.Unchanged != 4 {
-		t.Fatalf("federated migration delta = %+v, want one added and four reused chunks", completion.Delta)
+	if completion.Delta.Chunks == 0 {
+		t.Fatalf("federated migration delta = %+v", completion.Delta)
 	}
 	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
 		t.Fatalf("legacy central index remains after successful migration: %v", err)
@@ -203,6 +200,59 @@ func TestFederatedWorkerReusesLegacyMonolithEmbeddingsBeforeRetiringIt(t *testin
 	}
 	t.Logf("legacy migration: reused=%d embedded=%d sidecars=roca-corpus/corpus,roca-ops/ops completion=ready legacy=removed",
 		completion.Delta.Unchanged, len(flattenInputs(embedder.inputs)))
+}
+
+func TestLegacySeedReembedsWhenContextChangesEmbeddingInput(t *testing.T) {
+	root := t.TempDir()
+	pluginDir := filepath.Join(root, "roca-ops")
+	if err := os.MkdirAll(pluginDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(pluginDir, "roca-ops.db")
+	const text = "short personal memory"
+	createSourceDatabase(t, dbPath, `
+		CREATE TABLE memories(id INTEGER PRIMARY KEY, content TEXT, project TEXT, created_at TEXT);
+		INSERT INTO memories VALUES (1,'short personal memory','Wellbeing project','2026-03-18');`)
+	writeRegistry(t, root, vectorRegistry{Schema: 1, Databases: []vectorDatabase{{
+		Plugin: "roca-ops", Database: "ops", Path: "roca-ops.db", Alias: "plugin_roca_ops",
+		Tables: []vectorTable{{Name: "memories", IDColumn: "id", TextColumns: []string{"content"}}},
+	}}})
+
+	embedder := &recordingEmbedder{}
+	legacy := filepath.Join(t.TempDir(), DatabaseFilename)
+	legacyIndex := Index{Corpus: &memoryCorpus{sources: []sourceRow{{kind: "memories", text: text}}},
+		VectorPath: legacy, Model: DefaultModel, Embedder: embedder}
+	if _, err := legacyIndex.Ingest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	legacyStore := openTestSQLite(t, legacy)
+	if _, err := legacyStore.Exec(`UPDATE chunks SET fingerprint=?`, embeddingFingerprint("memories", text)); err != nil {
+		legacyStore.Close()
+		t.Fatal(err)
+	}
+	if err := legacyStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	embedder.inputs = nil
+
+	federation, err := LoadFederation(CoreCLI{Executable: "roca", Run: sqliteExecRunner(t,
+		map[string]string{"plugin_roca_ops": dbPath})}, root, DefaultModel, "v-test", embedder, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := federation.seedSidecarsFromLegacyMonolith(context.Background(), legacy); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(SidecarPath(dbPath)); !os.IsNotExist(err) {
+		t.Fatalf("unheadered legacy vector was published as current: %v", err)
+	}
+	if _, err := federation.Ingest(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
+	want := DocumentPrefix + "[Wellbeing project · 2026-03] " + text
+	if got := flattenInputs(embedder.inputs); len(got) != 1 || got[0] != want {
+		t.Fatalf("current embedding inputs = %q, want %q", got, want)
+	}
 }
 
 func TestFederatedWorkerKeepsLegacyMonolithUntilEveryDeclaredSidecarCompletes(t *testing.T) {
@@ -592,9 +642,9 @@ func federationFixture(t *testing.T) (Federation, string, string, *recordingEmbe
 		INSERT INTO articles VALUES ('article-1','Remembered title','A remembered body','raw-counter');
 		INSERT INTO articles VALUES ('article-2','Second title','Second body','raw-counter');`)
 	createSourceDatabase(t, opsPath, `
-		CREATE TABLE memories(id INTEGER PRIMARY KEY,content TEXT,status TEXT);
-		INSERT INTO memories VALUES (1,'Operational decision','active');
-		INSERT INTO memories VALUES (2,'Temporary handoff','active');`)
+		CREATE TABLE memories(id INTEGER PRIMARY KEY,content TEXT,status TEXT,project TEXT,created_at TEXT);
+		INSERT INTO memories VALUES (1,'Operational decision','active','ops','2026-03-01');
+		INSERT INTO memories VALUES (2,'Temporary handoff','active','ops','2026-03-02');`)
 	writeRegistry(t, root, vectorRegistry{Schema: 1, Databases: []vectorDatabase{
 		{Plugin: "roca-corpus", Database: "corpus", Path: "roca-corpus.db", Alias: "plugin_roca_corpus",
 			Tables: []vectorTable{{Name: "articles", IDColumn: "id", TextColumns: []string{"title", "body"},

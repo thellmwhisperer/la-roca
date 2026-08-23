@@ -1,0 +1,32 @@
+{
+  "title": "Night shift recovery study",
+  "started_at": "2026-03-18T04:00:00Z",
+  "query": "why did I feel exhausted and unable to sleep after the night shift",
+  "target_ids": ["lab-01", "lab-02", "lab-03"],
+  "exchanges": [
+    {"id":"lab-01","human":"After the night shift I felt completely exhausted but still could not fall asleep when I got home.","agent_seed":"kubernetes deployment replica canary rollout digest cluster container service","agent_words":300},
+    {"id":"lab-02","human":"I was drained after working overnight, yet my mind stayed alert and sleep would not come.","agent_seed":"quarterly invoice ledger reconciliation tax category receipt accounting balance","agent_words":300},
+    {"id":"lab-03","human":"Why am I unable to sleep even though the late shift left me physically and mentally exhausted?","agent_seed":"tomato garden irrigation compost seedlings greenhouse pruning harvest soil","agent_words":300},
+    {"id":"lab-04","human":"Which lens should I pack for landscape photographs on a cloudy hike?","agent_seed":"camera aperture shutter tripod landscape exposure focus","agent_words":300},
+    {"id":"lab-05","human":"How can I keep basil healthy beside the kitchen window?","agent_seed":"basil sunlight watering pot drainage leaves kitchen","agent_words":300},
+    {"id":"lab-06","human":"What is a safe cadence for deploying a small web service?","agent_seed":"deployment staging rollback monitoring release service cadence","agent_words":300},
+    {"id":"lab-07","human":"How should I categorize a software subscription on an expense report?","agent_seed":"expense subscription invoice category report accounting software","agent_words":300},
+    {"id":"lab-08","human":"What makes bread dough develop a crisp crust in a home oven?","agent_seed":"bread dough flour yeast oven crust steam recipe","agent_words":100},
+    {"id":"lab-09","human":"How often should a bicycle chain be cleaned during winter?","agent_seed":"bicycle chain lubricant winter road maintenance gears","agent_words":100},
+    {"id":"lab-10","human":"Which paint finish is practical for a busy hallway?","agent_seed":"paint hallway finish wall primer brush durable","agent_words":100},
+    {"id":"lab-11","human":"How do I compare two train routes for a weekend trip?","agent_seed":"train route station ticket weekend journey schedule","agent_words":100},
+    {"id":"lab-12","human":"What should a simple incident review include after an outage?","agent_seed":"incident outage timeline impact recovery followup review","agent_words":100},
+    {"id":"lab-13","human":"Can a wool jumper be washed without shrinking it?","agent_seed":"wool jumper wash water detergent fabric dry","agent_words":100},
+    {"id":"lab-14","human":"How can I make a spreadsheet total only visible rows?","agent_seed":"spreadsheet filter subtotal formula rows cells total","agent_words":100},
+    {"id":"lab-15","human":"What helps indoor herbs survive during a dark winter?","agent_seed":"herbs winter lamp window soil watering indoor","agent_words":100},
+    {"id":"lab-16","human":"How should a meeting agenda separate decisions from discussion?","agent_seed":"meeting agenda decision discussion owner notes action","agent_words":100},
+    {"id":"lab-17","human":"Which screws work best for mounting a shelf on plasterboard?","agent_seed":"shelf screw anchor wall plasterboard drill mounting","agent_words":100},
+    {"id":"lab-18","human":"How can I reduce echo when recording speech in a spare room?","agent_seed":"recording microphone room echo blanket speech sound","agent_words":100},
+    {"id":"lab-19","human":"What is the easiest way to label cables behind a desk?","agent_seed":"cable label desk wire marker organize power","agent_words":100},
+    {"id":"lab-20","human":"How do I tell whether a watermelon is ripe?","agent_seed":"watermelon ripe fruit stem color weight market","agent_words":100},
+    {"id":"lab-21","human":"What belongs in a small emergency kit for a day hike?","agent_seed":"hike emergency kit water map bandage whistle","agent_words":100},
+    {"id":"lab-22","human":"How should I archive old project notes without losing searchability?","agent_seed":"archive notes project folder metadata search storage","agent_words":100},
+    {"id":"lab-23","human":"Why does a cast iron pan need to be dried immediately?","agent_seed":"cast iron pan dry seasoning rust heat kitchen","agent_words":100},
+    {"id":"lab-24","human":"What is a clear naming scheme for monthly backup files?","agent_seed":"backup file month archive naming storage restore","agent_words":100}
+  ]
+}

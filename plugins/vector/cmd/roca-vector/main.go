@@ -109,6 +109,7 @@ func ingestCommand(env *environment) *cobra.Command {
 	var delta bool
 	var model string
 	var source string
+	var reembed bool
 	command := &cobra.Command{
 		Use:   "ingest --delta",
 		Short: "Embed only new or changed chunks from declared databases",
@@ -160,7 +161,16 @@ func ingestCommand(env *environment) *cobra.Command {
 			started := time.Now()
 			var report vector.Delta
 			var databases []vector.DatabaseDelta
+			progress := func(update vector.IngestProgress) {
+				if env.json {
+					return
+				}
+				line := formatIngestProgress(update)
+				fmt.Fprintf(command.ErrOrStderr(), "\r%s", line)
+			}
 			if federated {
+				federation.Reembed = reembed
+				federation.Progress = progress
 				federationReport, ingestErr := federation.Ingest(command.Context(), source)
 				err = ingestErr
 				report, databases = federationReport.Delta, federationReport.Databases
@@ -169,6 +179,8 @@ func ingestCommand(env *environment) *cobra.Command {
 				if indexErr != nil {
 					return indexErr
 				}
+				index.Reembed = reembed
+				index.Progress = progress
 				if source == "" {
 					report, err = index.Ingest(command.Context())
 				} else {
@@ -178,12 +190,22 @@ func ingestCommand(env *environment) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if !env.json {
+				fmt.Fprintln(command.ErrOrStderr())
+			}
 			if env.json {
-				return printJSON(map[string]any{"mode": "delta", "model": model,
+				mode := "delta"
+				if reembed {
+					mode = "reembed"
+				}
+				return printJSON(map[string]any{"mode": mode, "model": model,
 					"source": source, "counts": report, "databases": databases,
 					"elapsed_ms": time.Since(started).Milliseconds()})
 			}
 			label := "vector delta"
+			if reembed {
+				label = "vector reembed"
+			}
 			if source != "" {
 				label += " (" + source + ")"
 			}
@@ -194,9 +216,28 @@ func ingestCommand(env *environment) *cobra.Command {
 		},
 	}
 	command.Flags().BoolVar(&delta, "delta", false, "embed only new or changed chunks")
+	command.Flags().BoolVar(&reembed, "reembed", false, "rebuild sidecar chunks under the current generation policy")
 	command.Flags().StringVar(&model, "model", "", "local Ollama embedding model (default: indexed model)")
 	command.Flags().StringVar(&source, "source", "", "limit the delta to one declared table")
 	return command
+}
+
+func formatIngestProgress(progress vector.IngestProgress) string {
+	line := fmt.Sprintf("vector ingest: %d sources · %d chunks", progress.Sources, progress.Chunks)
+	if progress.Total > 0 {
+		line = fmt.Sprintf("vector ingest: %d/%d sources · %d chunks",
+			progress.Sources, progress.Total, progress.Chunks)
+	}
+	if progress.Rate > 0 {
+		line += fmt.Sprintf(" · %.1f/s", progress.Rate)
+	}
+	if progress.ETAMS > 0 {
+		line += " · ETA " + time.Duration(progress.ETAMS*int64(time.Millisecond)).Round(time.Second).String()
+	}
+	if progress.Range != "" {
+		line += " · " + progress.Range
+	}
+	return line
 }
 
 func compactCommand(env *environment) *cobra.Command {
