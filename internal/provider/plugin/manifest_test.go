@@ -424,14 +424,7 @@ tables:
 
 func TestMalformedManifestNeverFallsBackToALegacySemanticFile(t *testing.T) {
 	root := t.TempDir()
-	directory := filepath.Join(root, "synthetic")
-	if err := os.Mkdir(directory, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(directory, plugin.PackageFilename),
-		[]byte(`{"schema":1,"databases":[}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	directory := writeManifestPackage(t, root, "synthetic", `{"schema":1,"databases":[}`)
 	if err := os.WriteFile(filepath.Join(directory, plugin.SemanticFilename), []byte(`
 version: 1
 description: This valid legacy declaration must not hide the broken manifest.
@@ -488,6 +481,18 @@ func createManifestDatabase(t *testing.T, path, ddl string) {
 	}
 }
 
+func writeManifestPackage(t *testing.T, root, name, raw string) string {
+	t.Helper()
+	directory := filepath.Join(root, name)
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, plugin.PackageFilename), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return directory
+}
+
 func TestMissingChronologicalColumnsDoNotExpelAPlugin(t *testing.T) {
 	raw := manifestFixture(`{
   "schema": 1,
@@ -522,13 +527,7 @@ func TestMissingChronologicalColumnsDoNotExpelAPlugin(t *testing.T) {
 		t.Fatalf("manifest without chronological columns was expelled: %v", err)
 	}
 	root := t.TempDir()
-	directory := filepath.Join(root, "synthetic")
-	if err := os.Mkdir(directory, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(directory, plugin.PackageFilename), []byte(raw), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	directory := writeManifestPackage(t, root, "synthetic", raw)
 	createManifestDatabase(t, filepath.Join(directory, "records.db"),
 		`CREATE TABLE sessions (session_id TEXT PRIMARY KEY, title TEXT); INSERT INTO sessions VALUES ('s1','synthetic title');`)
 	descriptors, warnings := plugin.Discover(root)
