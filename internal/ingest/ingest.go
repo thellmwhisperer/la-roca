@@ -403,8 +403,13 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 	if opts.Progress != nil {
 		for _, name := range SortedSources(result.Sources) {
 			counts := result.Sources[name]
-			opts.Progress(fmt.Sprintf("ingest: %s complete · sessions=%d exchanges=%d memories=%d",
-				name, counts.Sessions, counts.Exchanges,
+			skipped := ""
+			if counts.SessionsSkipped > 0 {
+				skipped = fmt.Sprintf(" · sessions_skipped=%d (session_id already present)",
+					counts.SessionsSkipped)
+			}
+			opts.Progress(fmt.Sprintf("ingest: %s complete · sessions=%d%s · exchanges=%d memories=%d",
+				name, counts.Sessions, skipped, counts.Exchanges,
 				counts.MemoriesInserted+counts.MemoriesUpdated))
 		}
 	}
@@ -619,9 +624,11 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 	}
 	result.discard(target, records.Discards)
 
+	destinationsComplete := true
 	var opsCounts Counts
 	if target.Kind == parsers.KindLegacyStoreDB && len(records.Memories) > 0 {
 		if opts.Ops == nil {
+			destinationsComplete = false
 			excluded := make([]parsers.Discard, 0, len(records.Memories))
 			for range records.Memories {
 				excluded = append(excluded, parsers.Excluded("legacy store memories need the ops plugin"))
@@ -662,6 +669,9 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 			"exchanges":        counts.Exchanges,
 			"memories":         counts.MemoriesInserted + counts.MemoriesUpdated,
 			"message_coverage": records.MessageCoverage,
+		}
+		if !destinationsComplete {
+			return nil
 		}
 		return incrementality.RecordState(ctx, tx, incrementalityTarget(target),
 			fingerprint, "", summary)

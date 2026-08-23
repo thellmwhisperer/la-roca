@@ -222,6 +222,11 @@ func renderIngestSources(env *cliEnv, result service.IngestResult) {
 			stats = &ingest.SourceStats{}
 		}
 		sessions := counts.Sessions + counts.SessionsUpdated
+		sessionSummary := axi.Quantity(int64(sessions), "session")
+		if counts.SessionsSkipped > 0 {
+			sessionSummary += fmt.Sprintf(" · %s skipped as already present (session_id overlap)",
+				axi.Quantity(int64(counts.SessionsSkipped), "session"))
+		}
 		// The discard count earns its place on the row only when there is one:
 		// printing "0 discarded" beside every healthy source is what taught an
 		// operator to read the row looking for bad news.
@@ -241,7 +246,7 @@ func renderIngestSources(env *cliEnv, result service.IngestResult) {
 		}
 		env.print("  ✓ %s · %s · %s · %s · %s · %s%s",
 			ingestSourceLabel(name), coverage,
-			axi.Quantity(int64(sessions), "session"),
+			sessionSummary,
 			axi.Quantity(int64(counts.Exchanges), "exchange"),
 			axi.Quantity(int64(counts.MemoriesInserted+counts.MemoriesUpdated), "memory", "memories"),
 			discarded, axi.Duration(stats.ElapsedMS))

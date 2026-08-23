@@ -235,24 +235,6 @@ is the session's surface qualifier: `source_surface` is `Hermes/<channel>`
 when Hermes recorded one, and `Hermes` when it did not. The same channel is
 kept in session metadata.
 
-## Pre-federation store
-
-The previous generation kept harvested conversations and agent-written
-memories in one SQLite file. `roca ingest` reads that `roca.db` the same way
-it reads OpenCode or Hermes, with `query_only` and a short busy timeout. The
-default is the retired product home beside `~/.roca`. Override the path with
-`legacy_store_db_path` or `LEGACY_STORE_DB_PATH`. An absent file is a clean
-no-op.
-
-Sessions, exchanges, tool uses, and thinking blocks land in the corpus under
-their original `session_id`, which is the dedupe key against sessions already
-federated. `source_surface` records the legacy-store import route;
-`source_agent` stays what the source stored. Memories land in ops and keep
-the layer, status, and `created_at` the source recorded: a handoff stays a
-handoff. Expiry is not invented. Garden, proposal, run, and other
-non-conversation tables are left out by design. A second run over the same
-file adds nothing.
-
 `session_model_usage` joins onto those sessions as operational `model_usage`
 metadata (per-model provider and API base, requests, input, output, cache and
 reasoning tokens, estimated and actual cost, pricing source, and first/last
@@ -279,6 +261,24 @@ companions, FTS shadow tables, and locks or leases. `projects.db` and
 while Hermes holds them; they hold no conversation content (empty project and
 execution tables, with only discovery metadata), so they stay named exclusions
 rather than Cursor-style snapshots.
+
+## Pre-federation store
+
+The previous generation kept harvested conversations and agent-written
+memories in one SQLite file. `roca ingest` opens that `roca.db` with SQLite
+`mode=ro`, `query_only`, and a short busy timeout. The default is the retired
+product home beside `~/.roca`. Override the path with
+`legacy_store_db_path` or `LEGACY_STORE_DB_PATH`. An absent file is a clean
+no-op.
+
+Sessions, exchanges, tool uses, and thinking blocks land in the corpus under
+their original `session_id`, which is the dedupe key against sessions already
+federated. `source_surface` records the legacy-store import route;
+`source_agent` stays what the source stored. Memories land in ops and keep
+the layer, status, and `created_at` the source recorded: a handoff stays a
+handoff. Expiry is not invented. Garden, proposal, run, and other
+non-conversation tables are left out by design. A second run over the same
+file adds nothing.
 
 ## Pi
 

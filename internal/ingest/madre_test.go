@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
@@ -212,7 +213,10 @@ func TestLegacyStoreSkipsFederatedOverlap(t *testing.T) {
 	}
 
 	roots := ResolveRoots(Environment{GOOS: "darwin", Home: t.TempDir()}, Settings{LegacyStoreDB: path})
-	result, err := Run(context.Background(), corpus, registry(t), Options{Roots: roots, Ops: ops})
+	var progress []string
+	result, err := Run(context.Background(), corpus, registry(t), Options{
+		Roots: roots, Ops: ops, Progress: func(line string) { progress = append(progress, line) },
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,6 +229,15 @@ func TestLegacyStoreSkipsFederatedOverlap(t *testing.T) {
 	if result.Sources[madreSource].SessionsSkipped != 1 {
 		t.Errorf("overlap sessions skipped = %d, want 1",
 			result.Sources[madreSource].SessionsSkipped)
+	}
+	var reportedOverlap bool
+	for _, line := range progress {
+		if strings.Contains(line, "sessions_skipped=1 (session_id already present)") {
+			reportedOverlap = true
+		}
+	}
+	if !reportedOverlap {
+		t.Errorf("progress did not report the overlap: %v", progress)
 	}
 	if countRows(t, corpus.SQL(), "sessions") != 2 {
 		t.Errorf("sessions = %d, want 2", countRows(t, corpus.SQL(), "sessions"))
@@ -250,6 +263,40 @@ func TestLegacyStoreSkipsFederatedOverlap(t *testing.T) {
 		if got != 0 {
 			t.Errorf("overlap %s = %d, want 0", table, got)
 		}
+	}
+}
+
+func TestLegacyStoreRetriesMemoriesAfterOpsBecomesAvailable(t *testing.T) {
+	t.Parallel()
+	path := seedMadreFixture(t)
+	corpus, ops := madreStores(t)
+	roots := ResolveRoots(Environment{GOOS: "darwin", Home: t.TempDir()},
+		Settings{LegacyStoreDB: path})
+
+	withoutOps, err := Run(context.Background(), corpus, registry(t), Options{Roots: roots})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withoutOps.Sources[madreSource].Sessions != 2 {
+		t.Fatalf("sessions without ops = %+v", withoutOps.Sources[madreSource])
+	}
+	if got := countRows(t, ops.SQL(), "memories"); got != 0 {
+		t.Fatalf("ops memories without ops routing = %d, want 0", got)
+	}
+
+	withOps, err := Run(context.Background(), corpus, registry(t), Options{Roots: roots, Ops: ops})
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := withOps.Sources[madreSource]
+	if counts.MemoriesInserted != 5 || counts.SessionsSkipped != 2 {
+		t.Fatalf("retry counts = %+v", counts)
+	}
+	if got := countRows(t, ops.SQL(), "memories"); got != 5 {
+		t.Errorf("ops memories after enabling ops = %d, want 5", got)
+	}
+	if got := countRows(t, corpus.SQL(), "sessions"); got != 2 {
+		t.Errorf("corpus sessions after retry = %d, want 2", got)
 	}
 }
 
