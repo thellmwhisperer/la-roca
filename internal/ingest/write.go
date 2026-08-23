@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -506,6 +507,9 @@ func claimAssignedExchanges(matcher *exchangeMatcher, assigned map[string]exchan
 func (w *writer) replaceExchange(ctx context.Context, sessionID string,
 	stored storedExchange, exchange parsers.Exchange) (int, int, error) {
 	values := append(exchangeColumnValues(exchange), stored.id, sessionID)
+	if err := w.recordExchangeLineage(ctx, sessionID, stored); err != nil {
+		return 0, 0, err
+	}
 	_, err := w.tx.ExecContext(ctx, `
 		UPDATE exchanges SET
 		  is_after_compaction = ?, human_text = ?, agent_text = ?,
@@ -890,6 +894,41 @@ func compatibleContent(stored storedExchange, exchange parsers.Exchange) bool {
 	return matched && !conflicts
 }
 
+func (w *writer) recordExchangeLineage(ctx context.Context, sessionID string,
+	stored storedExchange) error {
+	present, err := w.tableExists(ctx, "exchange_versions")
+	if err != nil || !present || !stored.numberValid {
+		return err
+	}
+	digest := framedDigest(sessionID, fmt.Sprintf("%d", stored.number),
+		stored.humanText, stored.agentText)
+	_, err = w.tx.ExecContext(ctx, `INSERT OR IGNORE INTO exchange_versions
+		(version_digest, session_id, exchange_number) VALUES (?, ?, ?)`,
+		digest, sessionID, stored.number)
+	if err != nil {
+		return fmt.Errorf("record exchange lineage of %s/%d: %w", sessionID, stored.number, err)
+	}
+	return nil
+}
+
+func framedDigest(fields ...string) string {
+	hash := sha256.New()
+	var length [8]byte
+	for _, field := range fields {
+		binary.BigEndian.PutUint64(length[:], uint64(len(field)))
+		_, _ = hash.Write(length[:])
+		_, _ = hash.Write([]byte(field))
+	}
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func (w *writer) tableExists(ctx context.Context, name string) (bool, error) {
+	var count int
+	err := w.tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, name).Scan(&count)
+	return count == 1, err
+}
+
 func compareContent(stored storedExchange, exchange parsers.Exchange) (bool, bool) {
 	matched := false
 	for _, pair := range [][2]string{
@@ -962,18 +1001,24 @@ func contentAnchor(human, agent string) ([sha256.Size]byte, bool) {
 
 // currentSession is what the database already holds for this id.
 func (w *writer) currentSession(ctx context.Context, id string) (row, bool, error) {
-	var agent, surface, metadata sql.NullString
+	var agent, surface, started, ended, metadata sql.NullString
+	var duration sql.NullInt64
 	err := w.tx.QueryRowContext(ctx,
-		`SELECT source_agent, source_surface, metadata FROM sessions WHERE session_id = ?`, id).
-		Scan(&agent, &surface, &metadata)
+		`SELECT source_agent, source_surface, started_at, ended_at, duration_minutes, metadata
+		 FROM sessions WHERE session_id = ?`, id).
+		Scan(&agent, &surface, &started, &ended, &duration, &metadata)
 	if errors.Is(err, sql.ErrNoRows) {
 		return row{}, false, nil
 	}
 	if err != nil {
 		return nil, false, fmt.Errorf("look up the session %s: %w", id, err)
 	}
-	return row{"source_agent": agent.String, "source_surface": surface.String,
-		"metadata": metadata.String}, true, nil
+	current := row{"source_agent": agent.String, "source_surface": surface.String,
+		"started_at": started.String, "ended_at": ended.String, "metadata": metadata.String}
+	if duration.Valid {
+		current["duration_minutes"] = duration.Int64
+	}
+	return current, true, nil
 }
 
 func staleSnapshotMetadata(session parsers.Session, current row) (map[string]any, bool) {
@@ -1042,11 +1087,11 @@ func (w *writer) registerSession(ctx context.Context, session parsers.Session,
 
 // refreshSession merges what was just observed into the row that is there.
 //
-// Two policies, and the difference matters. A snapshot artefact (a desktop
+// A snapshot artefact (a desktop
 // metadata file, a database row) states the session's current state, so its
-// non-empty fields win. Re-parsing a grown transcript does not: there the identity
-// fields only fill NULLs, because a transcript re-read cannot know better than the
-// metadata file that named the session.
+// non-empty fields win. A cursor tail advances the observed time span. Other
+// transcript readings only fill NULL identity fields because they cannot know
+// better than the metadata file that named the session.
 //
 // The title never overwrites a title that is already there: the first writer with
 // a real one keeps it, or two sources would take turns renaming the session.
@@ -1060,13 +1105,6 @@ func (w *writer) refreshSession(ctx context.Context, session parsers.Session, cu
 	if session.Project != "" {
 		project = session.Project
 	}
-	// The two policies differ in these five columns and in nothing else: a
-	// snapshot states the project, the start, the end and the duration, while a
-	// transcript re-read only fills their absence. ended_at and duration are
-	// identity fields like the other two: a transcript re-read cannot know better
-	// than the metadata file that named the session, so re-parsing it must not
-	// clobber a value a snapshot already set. The argument order is the same
-	// either way.
 	setSurface, setProject, setStarted, setEnded, setDuration :=
 		"COALESCE(source_surface, ?)",
 		"COALESCE(project, ?)", "COALESCE(started_at, ?)", "COALESCE(ended_at, ?)", "COALESCE(duration_minutes, ?)"
@@ -1074,6 +1112,11 @@ func (w *writer) refreshSession(ctx context.Context, session parsers.Session, cu
 		setSurface, setProject, setStarted, setEnded, setDuration =
 			"COALESCE(?, source_surface)",
 			"COALESCE(?, project)", "COALESCE(?, started_at)", "COALESCE(?, ended_at)", "COALESCE(?, duration_minutes)"
+	} else if session.Incremental {
+		session.StartedAt = earlierSessionInstant(current.text("started_at"), session.StartedAt)
+		session.EndedAt = laterSessionInstant(current.text("ended_at"), session.EndedAt)
+		session.DurationMinutes = mergedSessionDuration(current, session)
+		setStarted, setEnded, setDuration = "?", "?", "?"
 	}
 	statement := fmt.Sprintf(`
 		UPDATE sessions SET
@@ -1095,6 +1138,54 @@ func (w *writer) refreshSession(ctx context.Context, session parsers.Session, cu
 		return fmt.Errorf("refresh the session %s: %w", session.ID, err)
 	}
 	return nil
+}
+
+// pickSessionInstant chooses between the current and incoming session instant
+// using the supplied comparison over their resolved timestamps. It returns the
+// incoming instant only when both resolve and the comparison prefers it.
+func pickSessionInstant(current, incoming string, prefer func(incoming, current time.Time) bool) string {
+	if current == "" {
+		return incoming
+	}
+	if incoming == "" {
+		return current
+	}
+	currentTime, currentOK := parseTimestampInstant(current)
+	incomingTime, incomingOK := parseTimestampInstant(incoming)
+	if currentOK && incomingOK && incomingTime.present && currentTime.present &&
+		prefer(instantTime(incomingTime), instantTime(currentTime)) {
+		return incoming
+	}
+	return current
+}
+
+func earlierSessionInstant(current, incoming string) string {
+	return pickSessionInstant(current, incoming, func(incoming, current time.Time) bool {
+		return incoming.Before(current)
+	})
+}
+
+func laterSessionInstant(current, incoming string) string {
+	return pickSessionInstant(current, incoming, func(incoming, current time.Time) bool {
+		return incoming.After(current)
+	})
+}
+
+func mergedSessionDuration(current row, session parsers.Session) *int {
+	started, startedOK := parseTimestampInstant(session.StartedAt)
+	ended, endedOK := parseTimestampInstant(session.EndedAt)
+	if startedOK && endedOK && started.present && ended.present {
+		span := instantTime(ended).Sub(instantTime(started))
+		if span >= 0 {
+			minutes := int(span / time.Minute)
+			return &minutes
+		}
+	}
+	if duration, ok := current.number("duration_minutes"); ok {
+		value := int(duration)
+		return &value
+	}
+	return session.DurationMinutes
 }
 
 // agentAfterRefresh decides who a known session is attributed to.

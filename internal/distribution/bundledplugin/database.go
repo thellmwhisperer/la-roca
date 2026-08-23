@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
+	_ "github.com/thellmwhisperer/la-roca/internal/store/payloadhash"
 	_ "modernc.org/sqlite"
 )
 

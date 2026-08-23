@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -14,7 +15,9 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"github.com/thellmwhisperer/la-roca/internal/store/payloadhash"
+
+	sqlite "modernc.org/sqlite"
 )
 
 type TableReport struct {
@@ -635,6 +638,34 @@ func EnsureGuards(ctx context.Context, db queryExecutor) error {
 	return EnsureTableGuards(ctx, db)
 }
 
+func GuardsInstalled(ctx context.Context, db interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}) (bool, error) {
+	specs, err := specs(ctx, db)
+	if err != nil {
+		return false, err
+	}
+	for _, spec := range specs {
+		name := "idx_" + spec.name + "_exact_payload"
+		want := fmt.Sprintf("CREATE UNIQUE INDEX %s ON %s(%s)",
+			name, spec.name, guardKeyExpression(spec.payload))
+		var installed sql.NullString
+		err := db.QueryRowContext(ctx,
+			`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?`, name).Scan(&installed)
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if !installed.Valid || normalizeDDL(installed.String) != normalizeDDL(want) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func EnsureTableGuards(ctx context.Context, db queryExecutor, only ...string) error {
 	specs, err := specs(ctx, db)
 	if err != nil {
@@ -666,24 +697,23 @@ func EnsureTableGuards(ctx context.Context, db queryExecutor, only ...string) er
 			}
 		}
 		if _, err := db.ExecContext(ctx, statement); err != nil {
-			return fmt.Errorf("create exact-payload guard %s: %w; run the exact dedup dry-run and apply first", name, err)
+			var sqliteErr *sqlite.Error
+			if errors.As(err, &sqliteErr) && sqliteErr.Code() == 2067 {
+				return fmt.Errorf("create exact-payload guard %s: exact duplicates remain; run the exact dedup dry-run and apply first: %w", name, err)
+			}
+			return fmt.Errorf("create exact-payload guard %s: %w", name, err)
 		}
 	}
 	return nil
 }
 
-// guardKeyExpression deliberately avoids JSON functions. SQLite's JSON
-// subtype is not stable index storage across every insert/update path, which
-// can make an otherwise valid expression index report SQLITE_CORRUPT_INDEX.
-// typeof plus a length-prefixed quoted value is stable, NULL-aware, and
-// injective across SQLite storage classes.
 func guardKeyExpression(names []string) string {
-	parts := make([]string, len(names))
-	for i, name := range names {
-		quoted := "quote(" + name + ")"
-		parts[i] = "(typeof(" + name + ")||':'||length(" + quoted + ")||':'||" + quoted + ")"
+	parts := make([]string, 0, len(names)*2)
+	for _, name := range names {
+		parts = append(parts, "typeof("+name+")",
+			"CASE WHEN typeof("+name+") = 'text' THEN CAST("+name+" AS BLOB) ELSE "+name+" END")
 	}
-	return strings.Join(parts, "||")
+	return payloadhash.SQLFunc + "(" + strings.Join(parts, ",") + ")"
 }
 
 func normalizeDDL(statement string) string {

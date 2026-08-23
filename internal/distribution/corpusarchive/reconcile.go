@@ -62,8 +62,9 @@ type sessionInventory struct {
 }
 
 type sourceInventory struct {
-	custody  map[string][]reconciliationRecord
-	sessions map[string]*sessionInventory
+	custody         map[string][]reconciliationRecord
+	retainedByTable map[string]map[string]string
+	sessions        map[string]*sessionInventory
 }
 
 func buildReport(ctx context.Context, db *sql.DB, sources []preparedSource) (Report, error) {
@@ -209,6 +210,13 @@ func readExpectedInventories(ctx context.Context,
 				item := reconciliationRecord{table: table.sourceTable,
 					key: record.sourceKey, digest: record.digest}
 				inventory.custody[table.sourceTable] = append(inventory.custody[table.sourceTable], item)
+				retained := inventory.retainedByTable[table.sourceTable]
+				if retained == nil {
+					retained = make(map[string]string)
+					inventory.retainedByTable[table.sourceTable] = retained
+				}
+				retained[record.digest] = retainedCoordinateDigest(record.destinationTable,
+					record.values...)
 				if record.sessionID.Valid {
 					session := ensureSession(inventory, record.sessionID.String)
 					session.records = append(session.records, item)
@@ -237,18 +245,26 @@ func readObservedInventories(ctx context.Context, destination *sql.DB,
 	observed := make(map[string]*sourceInventory, len(expected))
 	duplicates := make(map[string]int64)
 	physicalByTable := make(map[string]map[string]string, len(archiveSourceTables))
+	retainedByTable := make(map[string]map[string]string, len(archiveSourceTables))
 	for _, table := range archiveSourceTables {
 		physical, err := readPhysicalDigests(ctx, destination, table)
 		if err != nil {
 			return nil, nil, err
 		}
 		physicalByTable[table.sourceTable] = physical
+		retained, err := readRetainedCoordinateDigests(ctx, destination, table.destinationTable)
+		if err != nil {
+			return nil, nil, err
+		}
+		retainedByTable[table.sourceTable] = retained
 	}
 	for _, database := range sortedInventoryKeys(expected) {
 		inventory := newSourceInventory()
 		observed[database] = inventory
 		for _, table := range archiveSourceTables {
 			physical := physicalByTable[table.sourceTable]
+			retained := retainedByTable[table.sourceTable]
+			expectedRetained := expected[database].retainedByTable[table.sourceTable]
 			rows, err := destination.QueryContext(ctx, `SELECT m.source_key, m.destination_key,
 				m.canonical_digest, r.version_digest, r.session_id
 				FROM custody_memberships AS m
@@ -273,10 +289,14 @@ func readObservedInventories(ctx context.Context, destination *sql.DB,
 				}
 				seen[key] = true
 				observedDigest, physicalPresent := physical[destinationKey]
+				actualCoordinates, retainedPresent := retained[destinationKey]
+				expectedCoordinates, coordinatesExpected := expectedRetained[destinationKey]
 				if !physicalPresent || destinationKey != digest || !evidenceDigest.Valid ||
-					evidenceDigest.String != digest {
+					evidenceDigest.String != digest || !retainedPresent || !coordinatesExpected ||
+					actualCoordinates != expectedCoordinates {
 					observedDigest = canonicalDigest("broken-membership", destinationKey,
-						digest, evidenceDigest, observedDigest)
+						digest, evidenceDigest, observedDigest, actualCoordinates,
+						expectedCoordinates)
 				}
 				item := reconciliationRecord{table: table.sourceTable, key: key, digest: observedDigest}
 				inventory.custody[table.sourceTable] = append(inventory.custody[table.sourceTable], item)
@@ -313,6 +333,26 @@ func readPhysicalDigests(ctx context.Context, destination *sql.DB,
 	if err != nil {
 		return nil, err
 	}
+	digests, err := readDigestMap(ctx, destination, query,
+		func(rows *sql.Rows) (string, string, error) {
+			return scanPhysicalDigest(rows, table.destinationTable)
+		})
+	if err != nil {
+		return nil, err
+	}
+	for stored, actual := range digests {
+		if stored != actual {
+			digests[stored] = canonicalDigest("broken-physical-digest", stored, actual)
+		}
+	}
+	return digests, nil
+}
+
+// readDigestMap runs query and collects a stored-key -> scanned-value map, one
+// row at a time. Both physical and retained coordinate digests share the loop.
+func readDigestMap(ctx context.Context, destination *sql.DB, query string,
+	scan func(*sql.Rows) (string, string, error),
+) (map[string]string, error) {
 	rows, err := destination.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -320,14 +360,11 @@ func readPhysicalDigests(ctx context.Context, destination *sql.DB,
 	defer rows.Close()
 	digests := make(map[string]string)
 	for rows.Next() {
-		stored, actual, scanErr := scanPhysicalDigest(rows, table.destinationTable)
+		stored, value, scanErr := scan(rows)
 		if scanErr != nil {
 			return nil, scanErr
 		}
-		if stored != actual {
-			actual = canonicalDigest("broken-physical-digest", stored, actual)
-		}
-		digests[stored] = actual
+		digests[stored] = value
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -338,21 +375,13 @@ func readPhysicalDigests(ctx context.Context, destination *sql.DB,
 func physicalDigestQuery(destinationTable string) (string, error) {
 	switch destinationTable {
 	case "session_versions":
-		return `SELECT version_digest, session_id, source_agent, source_surface, project, started_at, ended_at,
-			duration_minutes, title, metadata FROM session_versions`, nil
+		return `SELECT version_digest FROM session_versions`, nil
 	case "exchange_versions":
-		return `SELECT version_digest, session_id, exchange_number, is_after_compaction,
-			human_text, agent_text, human_timestamp, agent_timestamp, response_latency_ms,
-			model, provider, tokens_in, tokens_out, tokens_reasoning, cost_usd
-			FROM exchange_versions`, nil
+		return `SELECT version_digest FROM exchange_versions`, nil
 	case "tool_use_versions":
-		return `SELECT version_digest, session_id, exchange_number, tool_name,
-			tool_params_summary, had_error, error_message, initiative_type
-			FROM tool_use_versions`, nil
+		return `SELECT version_digest FROM tool_use_versions`, nil
 	case "thinking_block_versions":
-		return `SELECT version_digest, session_id, exchange_number, position_in_session,
-			depth, caution_ratio, word_count, is_after_compaction, full_text
-			FROM thinking_block_versions`, nil
+		return `SELECT version_digest FROM thinking_block_versions`, nil
 	case "ingest_file_state_versions":
 		return `SELECT version_digest, path, source_kind, source_agent, project, fingerprint,
 			last_synced_at, last_error, metadata FROM ingest_file_state_versions`, nil
@@ -365,54 +394,148 @@ func scanPhysicalDigest(rows *sql.Rows, destinationTable string) (string, string
 	var stored string
 	switch destinationTable {
 	case "session_versions":
-		var sessionID string
-		var agent, surface, project, started, ended, title, metadata sql.NullString
-		var duration sql.NullInt64
-		if err := rows.Scan(&stored, &sessionID, &agent, &surface, &project, &started, &ended,
-			&duration, &title, &metadata); err != nil {
+		if err := rows.Scan(&stored); err != nil {
 			return "", "", err
 		}
-		return stored, canonicalDigest("session", sessionID, agent, surface, project, started, ended,
-			duration, title, metadata), nil
+		return stored, stored, nil
 	case "exchange_versions":
-		payload, err := scanExchangePayload(rows, &stored)
+		if err := rows.Scan(&stored); err != nil {
+			return "", "", err
+		}
+		return stored, stored, nil
+	case "tool_use_versions":
+		if err := rows.Scan(&stored); err != nil {
+			return "", "", err
+		}
+		return stored, stored, nil
+	case "thinking_block_versions":
+		if err := rows.Scan(&stored); err != nil {
+			return "", "", err
+		}
+		return stored, stored, nil
+	case "ingest_file_state_versions":
+		row, err := scanIngestFileStateRow(rows)
 		if err != nil {
 			return "", "", err
 		}
-		return stored, canonicalDigest("exchange", payload.values()...), nil
-	case "tool_use_versions":
-		var sessionID sql.NullString
-		var number, hadError sql.NullInt64
-		var name, params, errorMessage, initiative sql.NullString
-		if err := rows.Scan(&stored, &sessionID, &number, &name, &params, &hadError,
-			&errorMessage, &initiative); err != nil {
-			return "", "", err
-		}
-		return stored, canonicalDigest("tool-use", sessionID.String, number, name, params,
-			hadError, errorMessage, initiative), nil
-	case "thinking_block_versions":
-		var sessionID sql.NullString
-		var number, wordCount, compacted sql.NullInt64
-		var position, caution sql.NullFloat64
-		var depth, fullText sql.NullString
-		if err := rows.Scan(&stored, &sessionID, &number, &position, &depth, &caution,
-			&wordCount, &compacted, &fullText); err != nil {
-			return "", "", err
-		}
-		return stored, canonicalDigest("thinking-block", sessionID.String, number, position,
-			depth, caution, wordCount, compacted, fullText), nil
-	case "ingest_file_state_versions":
-		var path string
-		var kind, agent, project, fingerprint, syncedAt, lastError, metadata sql.NullString
-		if err := rows.Scan(&stored, &path, &kind, &agent, &project, &fingerprint,
-			&syncedAt, &lastError, &metadata); err != nil {
-			return "", "", err
-		}
-		return stored, canonicalDigest("ingest-file-state", path, kind, agent, project,
-			fingerprint, syncedAt, lastError, metadata), nil
+		return row.stored, canonicalDigest("ingest-file-state", row.path, row.kind, row.agent,
+			row.project, row.fingerprint, row.syncedAt, row.lastError, row.metadata), nil
 	default:
 		return "", "", fmt.Errorf("unknown corpus archive destination %q", destinationTable)
 	}
+}
+
+type ingestFileStateRow struct {
+	stored, path                                                     string
+	kind, agent, project, fingerprint, syncedAt, lastError, metadata sql.NullString
+}
+
+func scanIngestFileStateRow(rows *sql.Rows) (ingestFileStateRow, error) {
+	var row ingestFileStateRow
+	err := rows.Scan(&row.stored, &row.path, &row.kind, &row.agent, &row.project,
+		&row.fingerprint, &row.syncedAt, &row.lastError, &row.metadata)
+	return row, err
+}
+
+func readRetainedCoordinateDigests(ctx context.Context, destination *sql.DB,
+	destinationTable string,
+) (map[string]string, error) {
+	query, err := retainedCoordinateQuery(destinationTable)
+	if err != nil {
+		return nil, err
+	}
+	return readDigestMap(ctx, destination, query,
+		func(rows *sql.Rows) (string, string, error) {
+			return scanRetainedCoordinateDigest(rows, destinationTable)
+		})
+}
+
+func retainedCoordinateQuery(destinationTable string) (string, error) {
+	switch destinationTable {
+	case "session_versions":
+		return `SELECT version_digest, session_id, source_agent, source_surface, project,
+			started_at, ended_at, duration_minutes FROM session_versions`, nil
+	case "exchange_versions":
+		return `SELECT version_digest, session_id, exchange_number, is_after_compaction,
+			human_timestamp, agent_timestamp, response_latency_ms, model, provider,
+			tokens_in, tokens_out, tokens_reasoning, cost_usd FROM exchange_versions`, nil
+	case "tool_use_versions":
+		return `SELECT version_digest, session_id, exchange_number, tool_name, had_error,
+			initiative_type FROM tool_use_versions`, nil
+	case "thinking_block_versions":
+		return `SELECT version_digest, session_id, exchange_number, position_in_session,
+			depth, caution_ratio, word_count, is_after_compaction
+			FROM thinking_block_versions`, nil
+	case "ingest_file_state_versions":
+		return `SELECT version_digest, path, source_kind, source_agent, project, fingerprint,
+			last_synced_at, last_error, metadata FROM ingest_file_state_versions`, nil
+	default:
+		return "", fmt.Errorf("unknown corpus archive destination %q", destinationTable)
+	}
+}
+
+func scanRetainedCoordinateDigest(rows *sql.Rows, destinationTable string) (string, string, error) {
+	var stored string
+	var values []any
+	switch destinationTable {
+	case "session_versions":
+		var sessionID string
+		var agent, surface, project, started, ended sql.NullString
+		var duration sql.NullInt64
+		if err := rows.Scan(&stored, &sessionID, &agent, &surface, &project, &started,
+			&ended, &duration); err != nil {
+			return "", "", err
+		}
+		values = []any{sessionID, agent, surface, project, started, ended, duration}
+	case "exchange_versions":
+		var sessionID string
+		var number, compacted, latency, tokensIn, tokensOut, tokensReasoning sql.NullInt64
+		var humanAt, agentAt, model, provider sql.NullString
+		var cost sql.NullFloat64
+		if err := rows.Scan(&stored, &sessionID, &number, &compacted, &humanAt, &agentAt,
+			&latency, &model, &provider, &tokensIn, &tokensOut, &tokensReasoning, &cost); err != nil {
+			return "", "", err
+		}
+		values = []any{sessionID, number, compacted, humanAt, agentAt, latency, model,
+			provider, tokensIn, tokensOut, tokensReasoning, cost}
+	case "tool_use_versions":
+		var sessionID string
+		var number, hadError sql.NullInt64
+		var name, initiative sql.NullString
+		if err := rows.Scan(&stored, &sessionID, &number, &name, &hadError,
+			&initiative); err != nil {
+			return "", "", err
+		}
+		values = []any{sessionID, number, name, hadError, initiative}
+	case "thinking_block_versions":
+		var sessionID string
+		var number, wordCount, compacted sql.NullInt64
+		var position, caution sql.NullFloat64
+		var depth sql.NullString
+		if err := rows.Scan(&stored, &sessionID, &number, &position, &depth, &caution,
+			&wordCount, &compacted); err != nil {
+			return "", "", err
+		}
+		values = []any{sessionID, number, position, depth, caution, wordCount, compacted}
+	case "ingest_file_state_versions":
+		row, err := scanIngestFileStateRow(rows)
+		if err != nil {
+			return "", "", err
+		}
+		stored = row.stored
+		values = []any{row.path, row.kind, row.agent, row.project, row.fingerprint,
+			row.syncedAt, row.lastError, row.metadata}
+	default:
+		return "", "", fmt.Errorf("unknown corpus archive destination %q", destinationTable)
+	}
+	return stored, retainedCoordinateDigest(destinationTable, values...), nil
+}
+
+func retainedCoordinateDigest(destinationTable string, values ...any) string {
+	if destinationTable == "exchange_versions" {
+		values = values[:6]
+	}
+	return canonicalDigest("retained-"+destinationTable, values...)
 }
 
 func readObservedProvenance(ctx context.Context, destination *sql.DB, database string,
@@ -449,8 +572,7 @@ func readObservedProvenance(ctx context.Context, destination *sql.DB, database s
 
 func expectedProvenance(record archiveRecord) reconciliationRecord {
 	return reconciliationRecord{table: "exchanges", key: record.sourceKey,
-		digest: provenanceDigest(record.values[8], record.values[9], record.values[10],
-			record.values[11], record.values[12], record.values[13])}
+		digest: provenanceDigest(record.provenance...)}
 }
 
 func provenanceDigest(values ...any) string {
@@ -522,7 +644,8 @@ func duplicatePhysicalRows(ctx context.Context, destination *sql.DB) (int64, err
 
 func newSourceInventory() *sourceInventory {
 	return &sourceInventory{custody: make(map[string][]reconciliationRecord),
-		sessions: make(map[string]*sessionInventory)}
+		retainedByTable: make(map[string]map[string]string),
+		sessions:        make(map[string]*sessionInventory)}
 }
 
 func ensureSession(inventory *sourceInventory, sessionID string) *sessionInventory {

@@ -211,8 +211,7 @@ CREATE TABLE IF NOT EXISTS session_versions (
   started_at       TEXT,
   ended_at         TEXT,
   duration_minutes INTEGER,
-  title            TEXT,
-  metadata         TEXT
+  observed_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS exchange_versions (
@@ -221,8 +220,6 @@ CREATE TABLE IF NOT EXISTS exchange_versions (
   session_id          TEXT NOT NULL,
   exchange_number     INTEGER,
   is_after_compaction INTEGER,
-  human_text          TEXT,
-  agent_text          TEXT,
   human_timestamp     TEXT,
   agent_timestamp     TEXT,
   response_latency_ms INTEGER,
@@ -231,7 +228,8 @@ CREATE TABLE IF NOT EXISTS exchange_versions (
   tokens_in           INTEGER,
   tokens_out          INTEGER,
   tokens_reasoning    INTEGER,
-  cost_usd            REAL
+  cost_usd            REAL,
+  observed_at         TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS tool_use_versions (
@@ -240,10 +238,9 @@ CREATE TABLE IF NOT EXISTS tool_use_versions (
   session_id          TEXT NOT NULL,
   exchange_number     INTEGER,
   tool_name           TEXT,
-  tool_params_summary TEXT,
   had_error           INTEGER,
-  error_message       TEXT,
-  initiative_type     TEXT
+  initiative_type     TEXT,
+  observed_at         TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS thinking_block_versions (
@@ -256,7 +253,7 @@ CREATE TABLE IF NOT EXISTS thinking_block_versions (
   caution_ratio       REAL,
   word_count          INTEGER,
   is_after_compaction INTEGER,
-  full_text           TEXT
+  observed_at         TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS ingest_file_state_versions (
@@ -307,29 +304,6 @@ CREATE INDEX IF NOT EXISTS ingest_file_state_versions_path
   ON ingest_file_state_versions(path);
 CREATE INDEX IF NOT EXISTS corpus_source_rows_destination
   ON corpus_source_rows(destination_table, version_digest);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS session_versions_fts USING fts5(
-  title,
-  project,
-  content='session_versions',
-  content_rowid='id',
-  tokenize='unicode61 remove_diacritics 2'
-);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS exchange_versions_fts USING fts5(
-  human_text,
-  agent_text,
-  content='exchange_versions',
-  content_rowid='id',
-  tokenize='unicode61 remove_diacritics 2'
-);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS thinking_block_versions_fts USING fts5(
-  full_text,
-  content='thinking_block_versions',
-  content_rowid='id',
-  tokenize='unicode61 remove_diacritics 2'
-);
 
 CREATE VIEW IF NOT EXISTS session_version_memberships AS
 SELECT m.source_database, r.session_id AS source_session_id,
