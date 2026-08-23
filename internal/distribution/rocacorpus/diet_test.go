@@ -200,6 +200,72 @@ func TestApplySchemaPreservesVersionObservedTimes(t *testing.T) {
 	}
 }
 
+func TestApplySchemaDropsVersionFTSBeforeAddingObservedTime(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "roca-corpus.db")
+	if err := rocacorpus.ApplySchema(path); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statements := []string{
+		`DROP VIEW IF EXISTS exchange_version_memberships`,
+		`DROP TABLE IF EXISTS exchange_versions_fts`,
+		`DROP TABLE exchange_versions`,
+		`CREATE TABLE exchange_versions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			version_digest TEXT NOT NULL UNIQUE,
+			session_id TEXT NOT NULL,
+			exchange_number INTEGER,
+			is_after_compaction INTEGER,
+			human_text TEXT,
+			agent_text TEXT,
+			human_timestamp TEXT,
+			agent_timestamp TEXT,
+			response_latency_ms INTEGER,
+			model TEXT,
+			provider TEXT,
+			tokens_in INTEGER,
+			tokens_out INTEGER,
+			tokens_reasoning INTEGER,
+			cost_usd REAL)`,
+		`INSERT INTO exchange_versions
+			(version_digest, session_id, exchange_number, human_text, agent_text)
+		 VALUES ('` + strings.Repeat("a", 64) + `', 'sess-1', 1, 'prompt', 'answer')`,
+		`CREATE VIRTUAL TABLE exchange_versions_fts USING fts5(
+			human_text, agent_text, content='exchange_versions', content_rowid='id')`,
+		`INSERT INTO exchange_versions_fts(exchange_versions_fts) VALUES ('rebuild')`,
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := rocacorpus.ApplySchema(path); err != nil {
+		t.Fatal(err)
+	}
+	db, err = sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	assertNoTable(t, db, "exchange_versions_fts")
+	assertNoColumn(t, db, "exchange_versions", "human_text")
+	var observedAt string
+	if err := db.QueryRow(`SELECT observed_at FROM exchange_versions`).Scan(&observedAt); err != nil {
+		t.Fatal(err)
+	}
+	if observedAt == "" {
+		t.Fatal("version observed time was not backfilled")
+	}
+}
+
 type rowCounts struct {
 	sessions, exchanges, thinking, tools int64
 }

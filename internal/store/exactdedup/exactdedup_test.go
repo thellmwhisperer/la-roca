@@ -190,6 +190,35 @@ func TestExactPayloadGuardIndexesAHashNotThePayload(t *testing.T) {
 	}
 }
 
+func TestExactPayloadGuardFramesEmbeddedNULValues(t *testing.T) {
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "roca.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(data.Schema + data.SearchSchema); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO sessions(session_id, source_agent, title, started_at, metadata)
+		VALUES ('session-a', 'fixture', 'nul fixture', '2026-08-16T10:00:00Z', '{}')`); err != nil {
+		t.Fatal(err)
+	}
+	for _, human := range []string{"a\x00x", "a\x00y"} {
+		if _, err := db.Exec(`INSERT INTO exchanges(session_id, exchange_number, human_text, agent_text)
+			VALUES ('session-a', 1, ?, 'answer')`, human); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := exactdedup.EnsureGuards(ctx, db); err != nil {
+		t.Fatalf("distinct NUL-bearing payloads collided: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO exchanges(session_id, exchange_number, human_text, agent_text)
+		VALUES ('session-a', 1, ?, 'answer')`, "a\x00x"); err == nil {
+		t.Fatal("hash exact-payload guard accepted a NUL-bearing duplicate")
+	}
+}
+
 func assertTable(t *testing.T, report exactdedup.DatabaseReport, name string,
 	groups, losers, ambiguousGroups, ambiguousRows int) {
 	t.Helper()

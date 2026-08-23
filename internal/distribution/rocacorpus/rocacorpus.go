@@ -3,15 +3,12 @@ package rocacorpus
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
-	"github.com/thellmwhisperer/la-roca/internal/store/exactdedup"
 	"github.com/thellmwhisperer/la-roca/pkg/ingestprovenance"
-	sqlite "modernc.org/sqlite"
 )
 
 const (
@@ -32,6 +29,10 @@ func Ensure(root, binDir, version string) (plugininstall.Result, error) {
 // guarded, so a version update over a database that already carries the harvest
 // leaves its rows untouched.
 func ApplySchema(path string) error {
+	return applySchema(context.Background(), path)
+}
+
+func applySchema(ctx context.Context, path string) error {
 	if err := prepareIngestProvenance(path); err != nil {
 		return err
 	}
@@ -39,7 +40,18 @@ func ApplySchema(path string) error {
 	if err != nil {
 		return err
 	}
-	rewrote, err := applyStorageLaw(context.Background(), path, false)
+	db, err := bundledplugin.OpenDatabase(path, false)
+	if err != nil {
+		return err
+	}
+	if err := preflightHashGuards(ctx, db); err != nil {
+		db.Close()
+		return fmt.Errorf("corpus schema upgrade requires exact dedup first: %w", err)
+	}
+	if err := db.Close(); err != nil {
+		return err
+	}
+	rewrote, err := applyStorageLaw(ctx, path, false)
 	if err != nil {
 		return err
 	}
@@ -51,19 +63,13 @@ func ApplySchema(path string) error {
 			return err
 		}
 	}
-	db, err := bundledplugin.OpenDatabase(path, false)
+	db, err = bundledplugin.OpenDatabase(path, false)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	if err := exactdedup.EnsureGuards(context.Background(), db); err != nil {
-		var sqliteErr *sqlite.Error
-		if errors.As(err, &sqliteErr) && sqliteErr.Code() == 2067 {
-			// A corpus that still has exact duplicates cannot take the unique hash
-			// index. Version content is already gone; uniqueness waits on exact dedup.
-			return nil
-		}
-		return err
+	if err := installHashGuards(ctx, db); err != nil {
+		return fmt.Errorf("install corpus hash guards: %w", err)
 	}
 	return nil
 }

@@ -55,18 +55,15 @@ func Compact(ctx context.Context, path string) (CompactReport, error) {
 	} else if closeErr != nil {
 		return CompactReport{}, closeErr
 	}
+	if err := ctx.Err(); err != nil {
+		return CompactReport{}, err
+	}
 
 	rewrote, err := applyStorageLaw(ctx, path, true)
 	if err != nil {
 		return CompactReport{}, err
 	}
-	if err := ctx.Err(); err != nil {
-		return CompactReport{}, err
-	}
-	if err := ApplySchema(path); err != nil {
-		return CompactReport{}, err
-	}
-	if err := ctx.Err(); err != nil {
+	if err := restoreCompactSchema(ctx, path); err != nil {
 		return CompactReport{}, err
 	}
 	if err := vacuumDatabase(ctx, path); err != nil {
@@ -153,6 +150,13 @@ func Compact(ctx context.Context, path string) (CompactReport, error) {
 	}, nil
 }
 
+func restoreCompactSchema(ctx context.Context, path string) error {
+	if err := applySchema(context.WithoutCancel(ctx), path); err != nil {
+		return err
+	}
+	return ctx.Err()
+}
+
 func preflightHashGuards(ctx context.Context, db *sql.DB) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -166,6 +170,21 @@ func preflightHashGuards(ctx context.Context, db *sql.DB) error {
 	}
 	if err := tx.Rollback(); err != nil {
 		return fmt.Errorf("rollback hash-guard preflight: %w", err)
+	}
+	return nil
+}
+
+func installHashGuards(ctx context.Context, db *sql.DB) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin hash-guard installation: %w", err)
+	}
+	defer tx.Rollback()
+	if err := exactdedup.EnsureGuards(ctx, tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit hash-guard installation: %w", err)
 	}
 	return nil
 }
@@ -228,13 +247,13 @@ func applyStorageLaw(ctx context.Context, path string, dropArchive bool) (bool, 
 	if err != nil {
 		return false, err
 	}
-	statements := storageLawPrefix
+	var statements []string
 	slimVersions := false
 	if dropArchive && bookkeeping &&
 		harvest.sessions+harvest.exchanges+harvest.thinking+harvest.tools > 0 {
-		statements = append(statements, dropArchiveStatements...)
+		statements = dropArchiveStatements
 	} else if needed {
-		statements = append(statements, slimVersionStatements...)
+		statements = slimVersionStatements
 		slimVersions = true
 	}
 	tx, err := db.BeginTx(ctx, nil)
@@ -242,6 +261,11 @@ func applyStorageLaw(ctx context.Context, path string, dropArchive bool) (bool, 
 		return false, fmt.Errorf("begin storage-law rewrite: %w", err)
 	}
 	defer tx.Rollback()
+	for _, statement := range storageLawPrefix {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return false, fmt.Errorf("prepare storage-law rewrite: %w", err)
+		}
+	}
 	if slimVersions {
 		if err := prepareSlimVersionObservedAt(ctx, tx); err != nil {
 			return false, err
@@ -251,6 +275,9 @@ func applyStorageLaw(ctx context.Context, path string, dropArchive bool) (bool, 
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
 			return false, fmt.Errorf("apply storage-law rewrite: %w", err)
 		}
+	}
+	if err := exactdedup.EnsureGuards(ctx, tx); err != nil {
+		return false, fmt.Errorf("install storage-law hash guards: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return false, fmt.Errorf("commit storage-law rewrite: %w", err)
