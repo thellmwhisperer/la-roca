@@ -74,6 +74,29 @@ func TestFederationBuildsOwnedSidecarsAndGarbageCollectsByDelta(t *testing.T) {
 	}
 }
 
+func TestChronologicalContractChangeDoesNotReembedExistingChunks(t *testing.T) {
+	federation, corpusPath, _, embedder := federationFixture(t)
+	ctx := context.Background()
+	first, err := federation.Ingest(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	embeddingCalls := len(embedder.inputs)
+	mutateSourceDatabase(t, corpusPath, `ALTER TABLE articles ADD COLUMN indexed_at TEXT`)
+	mutateSourceDatabase(t, corpusPath, `UPDATE articles SET indexed_at=id`)
+	federation.databases[0].Tables[0].TimeColumns = []string{"indexed_at"}
+
+	rescanned, err := federation.Ingest(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rescanned.Unchanged != first.Chunks || rescanned.Added != 0 || rescanned.Updated != 0 ||
+		rescanned.Removed != 0 || len(embedder.inputs) != embeddingCalls {
+		t.Fatalf("chronology-only rescan = %+v, embedding calls %d -> %d",
+			rescanned, embeddingCalls, len(embedder.inputs))
+	}
+}
+
 func TestFederatedWorkerBuildsOwnedSidecarsBeforeRetiringLegacyMonolith(t *testing.T) {
 	federation, corpusPath, opsPath, _ := federationFixture(t)
 	state := t.TempDir()

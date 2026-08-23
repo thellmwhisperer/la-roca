@@ -11,46 +11,77 @@ import (
 	"testing"
 )
 
+type goldenVectors struct {
+	Reference        string         `json:"reference"`
+	MaxAbsoluteDelta float64        `json:"max_absolute_delta"`
+	Vectors          []goldenVector `json:"vectors"`
+}
+
+type goldenVector struct {
+	Input  string    `json:"input"`
+	Vector []float32 `json:"vector"`
+}
+
 func TestNativeEngineMatchesPublicEquivalenceFixture(t *testing.T) {
-	var corpus []struct {
-		ID   string `json:"id"`
-		Text string `json:"text"`
-	}
-	var queries []struct {
-		Query  string `json:"query"`
-		WantID string `json:"want_id"`
-	}
-	decodeFixture(t, "public-corpus.json", &corpus)
-	decodeFixture(t, "public-queries.json", &queries)
+	inputs := publicEquivalenceInputs(t)
 	embedder := ConfiguredEmbedder(t.TempDir(), t.TempDir(), nil, nil)
 	if closer, ok := embedder.(*Native); ok {
 		t.Cleanup(closer.Close)
 	}
-	documents := make([]string, len(corpus))
-	for index := range corpus {
-		documents[index] = DocumentPrefix + corpus[index].Text
-	}
-	documentVectors, err := embedder.Embed(context.Background(), DefaultModel, documents)
+	vectors, err := embedder.Embed(context.Background(), DefaultModel, inputs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, fixture := range queries {
-		queryVectors, err := embedder.Embed(context.Background(), DefaultModel,
-			[]string{QueryPrefix + fixture.Query})
-		if err != nil {
-			t.Fatal(err)
+	var golden goldenVectors
+	decodeFixture(t, "public-golden-vectors.json", &golden)
+	if golden.Reference != "previous-production-engine" || golden.MaxAbsoluteDelta <= 0 ||
+		len(golden.Vectors) != len(inputs) {
+		t.Fatalf("invalid golden vector contract: reference=%q tolerance=%g vectors=%d inputs=%d",
+			golden.Reference, golden.MaxAbsoluteDelta, len(golden.Vectors), len(inputs))
+	}
+	want := make(map[string][]float32, len(golden.Vectors))
+	for _, fixture := range golden.Vectors {
+		want[fixture.Input] = fixture.Vector
+	}
+	for inputIndex, input := range inputs {
+		reference, ok := want[input]
+		if !ok {
+			t.Errorf("public input %q has no reference vector", input)
+			continue
 		}
-		bestID, bestScore := "", -math.MaxFloat64
-		for index, vector := range documentVectors {
-			score := cosine(queryVectors[0], vector)
-			if score > bestScore {
-				bestID, bestScore = corpus[index].ID, score
+		if len(vectors[inputIndex]) != len(reference) {
+			t.Errorf("public input %q dimensions = %d, want %d", input, len(vectors[inputIndex]), len(reference))
+			continue
+		}
+		for element := range reference {
+			delta := math.Abs(float64(vectors[inputIndex][element] - reference[element]))
+			if delta > golden.MaxAbsoluteDelta {
+				t.Errorf("public input %q element %d delta = %.9g, limit %.9g",
+					input, element, delta, golden.MaxAbsoluteDelta)
+				break
 			}
 		}
-		if bestID != fixture.WantID {
-			t.Errorf("query %q ranked %q first, want %q", fixture.Query, bestID, fixture.WantID)
-		}
 	}
+}
+
+func publicEquivalenceInputs(t *testing.T) []string {
+	t.Helper()
+	var corpus []struct {
+		Text string `json:"text"`
+	}
+	var queries []struct {
+		Query string `json:"query"`
+	}
+	decodeFixture(t, "public-corpus.json", &corpus)
+	decodeFixture(t, "public-queries.json", &queries)
+	inputs := make([]string, 0, len(corpus)+len(queries))
+	for _, fixture := range corpus {
+		inputs = append(inputs, DocumentPrefix+fixture.Text)
+	}
+	for _, fixture := range queries {
+		inputs = append(inputs, QueryPrefix+fixture.Query)
+	}
+	return inputs
 }
 
 func decodeFixture(t *testing.T, name string, target any) {
@@ -62,15 +93,4 @@ func decodeFixture(t *testing.T, name string, target any) {
 	if err := json.Unmarshal(body, target); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func cosine(left, right []float32) float64 {
-	var dot, leftNorm, rightNorm float64
-	for index := range left {
-		l, r := float64(left[index]), float64(right[index])
-		dot += l * r
-		leftNorm += l * l
-		rightNorm += r * r
-	}
-	return dot / math.Sqrt(leftNorm*rightNorm)
 }

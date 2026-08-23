@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -363,16 +364,25 @@ func (env *cliEnv) offerSemanticSearch(ctx context.Context, input *bufio.Reader,
 	}
 	path, found := findPlugin("vector")
 	if !found {
-		env.print("semantic search: enabled. run `roca vector install` after the companion is on PATH")
+		env.print("semantic search: enabled; setup will begin when its companion is available")
 		return nil
 	}
-	command := exec.CommandContext(ctx, path, "install")
+	arguments := []string{"--json"}
 	if env.dbPath != "" {
-		command.Args = append([]string{path, "--db-path", env.dbPath, "install"})
+		arguments = append(arguments, "--db-path", env.dbPath)
 	}
-	command.Stdout, command.Stderr = env.out, env.errOut
+	arguments = append(arguments, "install")
+	command := exec.CommandContext(ctx, path, arguments...)
+	var stdout, stderr bytes.Buffer
+	command.Stdout, command.Stderr = &stdout, &stderr
 	if err := command.Run(); err != nil {
-		return fmt.Errorf("start semantic indexing: %w", err)
+		return fmt.Errorf("semantic search setup could not start")
+	}
+	var result struct {
+		Background bool `json:"background"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil || !result.Background {
+		return fmt.Errorf("semantic search setup returned an invalid response")
 	}
 	env.print("semantic search: setup continues in the background; newest material is indexed first")
 	return nil

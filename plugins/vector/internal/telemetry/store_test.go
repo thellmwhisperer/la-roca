@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -118,6 +119,51 @@ func TestStoreRotatesOversizedLogs(t *testing.T) {
 	}
 	if len(matches) < 2 {
 		t.Fatalf("rotation produced %d files, want at least a live file and an archive", len(matches))
+	}
+}
+
+func TestIndependentStoresSerializeRotationAndAppend(t *testing.T) {
+	root := t.TempDir()
+	first, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, store := range []*Store{first, second} {
+		store.maxFileBytes = 180
+		store.maxFiles = 200
+	}
+	const recordsPerStore = 40
+	errors := make(chan error, 2)
+	var wait sync.WaitGroup
+	for storeIndex, store := range []*Store{first, second} {
+		wait.Add(1)
+		go func(storeIndex int, store *Store) {
+			defer wait.Done()
+			for index := 0; index < recordsPerStore; index++ {
+				if err := store.Record(context.Background(), Record{
+					Kind: KindEmbed, Backend: "cpu", DurationMS: int64(storeIndex*recordsPerStore + index),
+				}); err != nil {
+					errors <- err
+					return
+				}
+			}
+		}(storeIndex, store)
+	}
+	wait.Wait()
+	close(errors)
+	for err := range errors {
+		t.Fatal(err)
+	}
+	records, err := first.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2*recordsPerStore {
+		t.Fatalf("concurrent records = %d, want %d", len(records), 2*recordsPerStore)
 	}
 }
 

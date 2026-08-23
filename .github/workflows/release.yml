@@ -144,6 +144,9 @@ jobs:
           path: bin
           merge-multiple: true
 
+      - name: Restore executable permissions
+        run: find bin -maxdepth 1 -type f -name 'roca-*' ! -name '*.tar.gz' -exec chmod 0755 {} +
+
       # The Linux core, its materialized vector companion and the standalone
       # vector archive all answer the tag, and the package manifest carries that
       # same version into plugin lifecycle consent and installed inventory.

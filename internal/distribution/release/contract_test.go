@@ -33,7 +33,9 @@ type releaseWorkflow struct {
 			} `yaml:"matrix"`
 		} `yaml:"strategy"`
 		Steps []struct {
+			Name string         `yaml:"name"`
 			Uses string         `yaml:"uses"`
+			Run  string         `yaml:"run"`
 			With map[string]any `yaml:"with"`
 		} `yaml:"steps"`
 	} `yaml:"jobs"`
@@ -104,14 +106,21 @@ func TestReleaseWorkflowBuildsNativelyAndAggregatesBeforePublishing(t *testing.T
 		t.Fatal("release workflow has no publish job")
 	}
 	aggregated := false
+	restoredModes := false
 	for _, step := range publish.Steps {
 		if step.Uses == "actions/download-artifact@v4" && step.With["pattern"] == "release-*" &&
 			step.With["merge-multiple"] == true {
 			aggregated = true
 		}
+		if step.Name == "Restore executable permissions" && strings.Contains(step.Run, "chmod 0755") {
+			restoredModes = true
+		}
 	}
 	if !aggregated {
 		t.Fatal("publish does not aggregate every native artifact lane")
+	}
+	if !restoredModes {
+		t.Fatal("publish does not restore executable modes after artifact download")
 	}
 }
 

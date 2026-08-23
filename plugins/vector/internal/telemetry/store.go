@@ -83,6 +83,11 @@ func (s *Store) Record(_ context.Context, record Record) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	path := filepath.Join(s.dir, Stream+"-"+record.Timestamp.Format(time.DateOnly)+".jsonl")
+	release, err := lockStream(filepath.Join(s.dir, Stream+".lock"))
+	if err != nil {
+		return fmt.Errorf("lock the engine log: %w", err)
+	}
+	defer release()
 	if err := s.rotate(path, int64(len(line)+1)); err != nil {
 		return fmt.Errorf("rotate the engine log: %w", err)
 	}

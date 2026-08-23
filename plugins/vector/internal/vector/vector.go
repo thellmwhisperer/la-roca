@@ -66,6 +66,10 @@ type sourceCounter interface {
 	CountSources(context.Context, string) (int, error)
 }
 
+type chunkCounter interface {
+	CountChunks(context.Context, string) (int64, error)
+}
+
 type Delta struct {
 	Added     int `json:"added"`
 	Updated   int `json:"updated"`
@@ -227,6 +231,13 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 			i.totalHint = total
 		}
 	}
+	var totalChunks int64
+	if counter, ok := i.Corpus.(chunkCounter); ok {
+		totalChunks, err = counter.CountChunks(ctx, sourceKind)
+		if err != nil {
+			return Delta{}, err
+		}
+	}
 	report := Delta{}
 	desiredFingerprints := make(map[string]string, len(existing))
 	batchSize := i.batchSize()
@@ -234,6 +245,8 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 	started := time.Now()
 	currentRange := ""
 	seenSources := map[string]bool{}
+	var completedChunks int64
+	var lastProgress int64
 	flush := func() error {
 		if len(pending) == 0 {
 			return nil
@@ -260,11 +273,14 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 				return fmt.Errorf("embedding %d has %d dimensions, want %d", n, len(vectors[n]), dimensions)
 			}
 		}
+		batchChunks := int64(len(pending))
 		if err := writeBatch(ctx, store, pending, vectors, existing, &report); err != nil {
 			return err
 		}
 		pending = pending[:0]
-		i.emitProgress(report, currentRange, started)
+		completedChunks += batchChunks
+		i.emitProgress(report, currentRange, completedChunks, totalChunks, started)
+		lastProgress = completedChunks
 		return nil
 	}
 
@@ -291,6 +307,7 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 			desiredFingerprints[key] = chunk.fingerprint
 			if old, ok := existing[key]; ok && old.fingerprint == chunk.fingerprint {
 				report.Unchanged++
+				completedChunks++
 				continue
 			}
 			pending = append(pending, chunk)
@@ -300,6 +317,10 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 				}
 			}
 		}
+		if completedChunks > lastProgress {
+			i.emitProgress(report, currentRange, completedChunks, totalChunks, started)
+			lastProgress = completedChunks
+		}
 		return nil
 	})
 	if err != nil {
@@ -308,7 +329,7 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 	if err := flush(); err != nil {
 		return Delta{}, err
 	}
-	i.emitProgress(report, currentRange, started)
+	i.emitProgress(report, currentRange, completedChunks, totalChunks, started)
 	if dimensions == 0 {
 		vectors, err := i.Embedder.Embed(ctx, i.Model, []string{DocumentPrefix + "dimension probe"})
 		if err != nil {
@@ -517,7 +538,7 @@ func (i Index) batchSize() int {
 	return defaultBatchSize
 }
 
-func (i Index) emitProgress(report Delta, timeRange string, started time.Time) {
+func (i Index) emitProgress(report Delta, timeRange string, done, total int64, started time.Time) {
 	if i.Progress == nil && i.Notice == nil && i.Events == nil {
 		return
 	}
@@ -527,23 +548,31 @@ func (i Index) emitProgress(report Delta, timeRange string, started time.Time) {
 	if elapsed > 0 {
 		rate = float64(chunks) / elapsed.Seconds()
 	}
-	var eta time.Duration
+	var sourceETA time.Duration
 	if i.totalHint > 0 && report.Sources > 0 && report.Sources < i.totalHint && elapsed > 0 {
-		eta = elapsed / time.Duration(report.Sources) * time.Duration(i.totalHint-report.Sources)
+		sourceETA = elapsed / time.Duration(report.Sources) * time.Duration(i.totalHint-report.Sources)
+	}
+	chunkETA := time.Duration(0)
+	if done > 0 && total > done && elapsed > 0 {
+		chunkETA = time.Duration(float64(elapsed) * float64(total-done) / float64(done))
 	}
 	progress := IngestProgress{
 		Sources: report.Sources, Total: i.totalHint, Added: report.Added, Updated: report.Updated,
 		Unchanged: report.Unchanged, Removed: report.Removed, Chunks: chunks,
-		ElapsedMS: elapsed.Milliseconds(), ETAMS: eta.Milliseconds(), Rate: rate, Range: timeRange,
+		ElapsedMS: elapsed.Milliseconds(), ETAMS: sourceETA.Milliseconds(), Rate: rate, Range: timeRange,
 	}
 	if i.Progress != nil {
 		i.Progress(progress)
 	}
 	if i.Events != nil {
-		message := fmt.Sprintf("semantic index: %d/%d sources · %d chunks",
-			progress.Sources, progress.Total, progress.Chunks)
-		i.Events(engine.Partial("ingest", message, timeRange,
-			int64(progress.Sources), int64(progress.Total), eta))
+		message := fmt.Sprintf("semantic index: %d/%d chunks · %d added", done, total, report.Added)
+		if timeRange != "" {
+			message += " · " + timeRange
+		}
+		if chunkETA > 0 {
+			message += " · ETA " + chunkETA.Round(time.Second).String()
+		}
+		i.Events(engine.Partial("ingest", message, timeRange, done, total, chunkETA))
 	}
 	if i.Progress == nil && i.Notice != nil {
 		message := fmt.Sprintf("vector ingest: %d sources · %d chunks", progress.Sources, progress.Chunks)
@@ -554,14 +583,20 @@ func (i Index) emitProgress(report Delta, timeRange string, started time.Time) {
 		if progress.Rate > 0 {
 			message += fmt.Sprintf(" · %.1f/s", progress.Rate)
 		}
-		if eta > 0 {
-			message += " · ETA " + eta.Round(time.Second).String()
+		if sourceETA > 0 {
+			message += " · ETA " + sourceETA.Round(time.Second).String()
 		}
 		if timeRange != "" {
 			message += " · " + timeRange
 		}
 		i.Notice(message)
 	}
+}
+
+func chunkCountExpression(text string, size, overlap int) string {
+	step := size - overlap
+	return fmt.Sprintf(`CASE WHEN %s='' THEN 0 WHEN length(%s)<=%d THEN 1 ELSE 1+((length(%s)-%d+%d-1)/%d) END`,
+		text, text, size, text, size, step, step)
 }
 
 func chunks(text string, size, overlap int) []string {

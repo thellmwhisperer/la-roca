@@ -726,6 +726,43 @@ type declaredCursor struct {
 	valid bool
 }
 
+func (d DeclaredCorpus) CountChunks(ctx context.Context, sourceKind string) (int64, error) {
+	tables := d.Database.Tables
+	if sourceKind != "" {
+		table, ok := d.table(sourceKind)
+		if !ok {
+			return 0, fmt.Errorf("unknown vector source %q", sourceKind)
+		}
+		tables = []vectorTable{table}
+	}
+	var total int64
+	for _, table := range tables {
+		alias := "_vector_count"
+		size, overlap := table.chunking()
+		counts := make([]string, 0, len(table.TextColumns))
+		for _, column := range table.TextColumns {
+			text := fmt.Sprintf("COALESCE(CAST(%s.%s AS TEXT),'')", alias, quoteIdentifier(column))
+			counts = append(counts, chunkCountExpression(text, size, overlap))
+		}
+		statement := fmt.Sprintf(`SELECT COALESCE(SUM(%s),0) AS total FROM %s.%s AS %s WHERE %s.%s IS NOT NULL AND (%s)`,
+			strings.Join(counts, "+"), quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name),
+			alias, alias, quoteIdentifier(table.IDColumn), declaredNonEmptyPredicate(alias, table.TextColumns))
+		rows, err := d.Core.query(ctx, statement)
+		if err != nil {
+			return 0, fmt.Errorf("count declared chunks %s/%s: %w", d.Database.owner(), table.Name, err)
+		}
+		if len(rows) != 1 {
+			return 0, fmt.Errorf("count declared chunks %s/%s returned %d rows", d.Database.owner(), table.Name, len(rows))
+		}
+		count, err := integer(rows[0], "total")
+		if err != nil {
+			return 0, err
+		}
+		total += count
+	}
+	return total, nil
+}
+
 func (d DeclaredCorpus) WalkSources(ctx context.Context, sourceKind string,
 	visit func(sourceRow) error) error {
 	tables := d.Database.Tables
@@ -754,7 +791,7 @@ func (d DeclaredCorpus) WalkSources(ctx context.Context, sourceKind string,
 				}
 				cursor = declaredCursor{time: stringValue(values["context_time"]), id: id, valid: true}
 				row := sourceRow{kind: table.Name, sourceID: id,
-					fingerprintVersion: table.contractFingerprint(),
+					fingerprintVersion: table.embeddingContractFingerprint(),
 					title:              stringValue(values["context_title"]),
 					project:            stringValue(values["context_project"]),
 					occurredAt:         stringValue(values["context_time"]),
@@ -803,7 +840,7 @@ func (d DeclaredCorpus) ResolveSource(ctx context.Context, kind string, where lo
 		}
 		text := expanded[0].rowText
 		candidate := sourceRow{kind: kind, sourceID: where.SourceID, text: text, rowText: text,
-			fingerprintVersion: table.contractFingerprint()}
+			fingerprintVersion: table.embeddingContractFingerprint()}
 		if candidate.identity() == where.Identity {
 			return text, nil
 		}
@@ -1117,13 +1154,13 @@ func readMetadata(db *sql.DB, keys ...string) (map[string]string, error) {
 func (d vectorDatabase) contractFingerprint() string {
 	fields := []string{declaredReaderVersion, d.Plugin, d.Database, d.Alias}
 	for _, table := range d.Tables {
-		fields = append(fields, table.contractFingerprint())
+		fields = append(fields, table.readerContractFingerprint())
 	}
 	return incrementality.ContentFingerprint(fields...)
 }
 
-func (t vectorTable) contractFingerprint() string {
-	fields := []string{declaredReaderVersion, chunkPolicyVersion, t.Name, t.IDColumn, "per-column"}
+func (t vectorTable) readerContractFingerprint() string {
+	fields := []string{declaredReaderVersion, t.Name, t.IDColumn}
 	fields = append(fields, t.TimeColumns...)
 	if t.TimeJoin != nil {
 		fields = append(fields, t.TimeJoin.Table, t.TimeJoin.LocalColumn, t.TimeJoin.ForeignColumn)
@@ -1153,6 +1190,18 @@ func (t vectorTable) availableColumns() map[string]bool {
 		columns[column] = true
 	}
 	return columns
+}
+
+func (t vectorTable) embeddingContractFingerprint() string {
+	fields := []string{declaredReaderVersion, chunkPolicyVersion, t.Name, t.IDColumn, "per-column"}
+	fields = append(fields, t.TextColumns...)
+	if t.Chunking != nil && (t.Chunking.MaxChars != nil || t.Chunking.OverlapChars != nil) {
+		size, overlap := t.chunking()
+		fields = append(fields, "chars", strconv.Itoa(size), strconv.Itoa(overlap))
+	} else {
+		fields = append(fields, "tokens", strconv.Itoa(defaultChunkTokens), strconv.Itoa(defaultOverlapTokens))
+	}
+	return incrementality.ContentFingerprint(fields...)
 }
 
 func (t vectorTable) chunking() (int, int) {

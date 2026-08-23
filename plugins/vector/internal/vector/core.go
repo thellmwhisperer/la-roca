@@ -94,17 +94,23 @@ func (c CoreCLI) WalkSources(ctx context.Context, sourceKind string, visit func(
 	return nil
 }
 
-func (c CoreCLI) CountSources(ctx context.Context, sourceKind string) (int, error) {
+func (c CoreCLI) CountChunks(ctx context.Context, sourceKind string) (int64, error) {
 	if err := validateSourceKind(sourceKind, nil); err != nil {
 		return 0, err
 	}
+	sessionText := fmt.Sprintf(`trim(COALESCE(title,'') || CASE WHEN COALESCE(title,'')<>'' AND %s<>'' THEN char(10) ELSE '' END || %s)`,
+		sessionProjectName, sessionProjectName)
 	statements := map[string]string{
-		"memories": fmt.Sprintf(`SELECT COUNT(*) AS total FROM %s WHERE COALESCE(content,'')<>''`, corpusTable("memories")),
-		"exchanges": fmt.Sprintf(`SELECT COUNT(*) AS total FROM %s WHERE COALESCE(human_text,'')<>'' OR COALESCE(agent_text,'')<>''`, corpusTable("exchanges")),
-		"thinking_blocks": fmt.Sprintf(`SELECT COUNT(*) AS total FROM %s WHERE COALESCE(full_text,'')<>''`, corpusTable("thinking_blocks")),
-		"sessions": fmt.Sprintf(`SELECT COUNT(*) AS total FROM %s WHERE COALESCE(title,'')<>'' OR %s<>''`, corpusTable("sessions"), sessionProjectName),
+		"memories": fmt.Sprintf(`SELECT COALESCE(SUM(%s),0) AS total FROM %s WHERE COALESCE(content,'')<>''`,
+			chunkCountExpression("COALESCE(content,'')", defaultChunkSize, defaultOverlap), corpusTable("memories")),
+		"exchanges": fmt.Sprintf(`SELECT COALESCE(SUM(%s),0) AS total FROM %s WHERE COALESCE(human_text,'')<>'' OR COALESCE(agent_text,'')<>''`,
+			chunkCountExpression(exchangeText, defaultChunkSize, defaultOverlap), corpusTable("exchanges")),
+		"thinking_blocks": fmt.Sprintf(`SELECT COALESCE(SUM(%s),0) AS total FROM %s WHERE COALESCE(full_text,'')<>''`,
+			chunkCountExpression("COALESCE(full_text,'')", defaultChunkSize, defaultOverlap), corpusTable("thinking_blocks")),
+		"sessions": fmt.Sprintf(`SELECT COALESCE(SUM(%s),0) AS total FROM %s WHERE COALESCE(title,'')<>'' OR %s<>''`,
+			chunkCountExpression(sessionText, defaultChunkSize, defaultOverlap), corpusTable("sessions"), sessionProjectName),
 	}
-	total := 0
+	var total int64
 	for _, kind := range []string{"memories", "exchanges", "thinking_blocks", "sessions"} {
 		if sourceKind != "" && sourceKind != kind {
 			continue
@@ -120,7 +126,7 @@ func (c CoreCLI) CountSources(ctx context.Context, sourceKind string) (int, erro
 		if err != nil {
 			return 0, err
 		}
-		total += int(count)
+		total += count
 	}
 	return total, nil
 }

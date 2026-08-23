@@ -89,8 +89,7 @@ func TestNativeEmbedderRejectsUnsupportedModelBeforeLoading(t *testing.T) {
 
 func TestIngestProgressReportsRemainingETA(t *testing.T) {
 	corpus := &memoryCorpus{sources: []sourceRow{
-		{kind: "memories", text: "alpha newest", occurredAt: "2026-08-01"},
-		{kind: "memories", text: "beta older", occurredAt: "2025-08-01"},
+		{kind: "memories", text: "alpha beta gamma", occurredAt: "2026-08-01", chunkSize: 6},
 	}}
 	var events []engine.Event
 	index := Index{Corpus: corpus, VectorPath: filepath.Join(t.TempDir(), "vector.db"),
@@ -100,7 +99,7 @@ func TestIngestProgressReportsRemainingETA(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, event := range events {
-		if event.Stage == "ingest" && event.Done == 1 && event.Total == 2 && event.ETA > 0 {
+		if event.Stage == "ingest" && event.Done == 1 && event.Total == 3 && event.ETA > 0 {
 			return
 		}
 	}
@@ -707,11 +706,12 @@ func (m *memoryCorpus) WalkSources(_ context.Context, sourceKind string, visit f
 	return nil
 }
 
-func (m *memoryCorpus) CountSources(_ context.Context, sourceKind string) (int, error) {
-	total := 0
+func (m *memoryCorpus) CountChunks(_ context.Context, sourceKind string) (int64, error) {
+	var total int64
 	for _, source := range m.sources {
 		if sourceKind == "" || source.kind == sourceKind {
-			total++
+			size, overlap := source.chunking()
+			total += int64(len(chunks(source.text, size, overlap)))
 		}
 	}
 	return total, nil
