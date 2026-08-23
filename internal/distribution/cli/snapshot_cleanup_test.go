@@ -1,5 +1,5 @@
 /**
- * @overview Verifies completed CLI snapshot cleanup. ~85 lines, no public symbols.
+ * @overview Verifies completed CLI snapshot cleanup. ~80 lines, no public symbols.
  *
  *   READING GUIDE
  *   -------------
@@ -61,14 +61,17 @@ func TestCompletedReadOnlyCommandRemovesSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read-only CLI subprocess: %v\n%s", err, output)
 	}
-	entries, err := os.ReadDir(tempRoot)
+	err = filepath.WalkDir(tempRoot, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), "roca-read-only-snapshot-") {
+			return fmt.Errorf("completed command left snapshot directory %q", path)
+		}
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() && strings.HasPrefix(entry.Name(), "roca-read-only-snapshot-") {
-			t.Fatalf("completed command left snapshot directory %q", entry.Name())
-		}
 	}
 }
 

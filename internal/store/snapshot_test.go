@@ -1,5 +1,5 @@
 /**
- * @overview Verifies snapshot lifetime, reuse, reaping, and telemetry. ~700 lines, no public symbols.
+ * @overview Verifies snapshot lifetime, reuse, reaping, and telemetry. ~950 lines, no public symbols.
  *
  *   READING GUIDE
  *   -------------
@@ -18,7 +18,8 @@
  *
  *   INTERNALS
  *   ---------
- *   lifecycle tests, flight tests, reap tests, snapshotHelper, filesystem helpers
+ *   lifecycle tests, namespace tests, flight tests, reap tests, snapshotHelper
+ *   filesystem helpers
  *
  * @exports
  * @deps testing; os/exec; internal/securefile
@@ -123,7 +124,8 @@ func TestReadOnlySnapshotLifecycle(t *testing.T) {
 		}
 		t.Cleanup(func() { _ = live.Close() })
 
-		orphan := filepath.Join(root, snapshotDirectoryPrefix+"orphan")
+		namespace := snapshotNamespaceForTest(t, root)
+		orphan := filepath.Join(namespace, snapshotDirectoryPrefix+"orphan")
 		if err := os.Mkdir(orphan, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -150,6 +152,68 @@ func TestReadOnlySnapshotLifecycle(t *testing.T) {
 // -/ 1/5
 
 // -- 2/5 HELPER · Cache identity and context-aware flights --
+
+func TestSnapshotNamespaceIsPrivatePerUser(t *testing.T) {
+	originalIdentity := snapshotUserIdentityFn
+	t.Cleanup(func() { snapshotUserIdentityFn = originalIdentity })
+	tempRoot := t.TempDir()
+
+	snapshotUserIdentityFn = func() (string, error) { return "user-a", nil }
+	first, err := snapshotNamespaceRoot(tempRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o700 {
+		t.Fatalf("namespace permissions = %o, want 700", info.Mode().Perm())
+	}
+
+	snapshotUserIdentityFn = func() (string, error) { return "user-b", nil }
+	second, err := snapshotNamespaceRoot(tempRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatalf("different users shared snapshot namespace %q", first)
+	}
+
+	if err := os.Chmod(first, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	snapshotUserIdentityFn = func() (string, error) { return "user-a", nil }
+	secured, err := snapshotNamespaceRoot(tempRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err = os.Stat(secured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o700 {
+		t.Fatalf("revalidated namespace permissions = %o, want 700", info.Mode().Perm())
+	}
+
+	if runtime.GOOS != "windows" {
+		snapshotUserIdentityFn = func() (string, error) { return "user-c", nil }
+		symlink, err := snapshotNamespaceRoot(tempRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(symlink); err != nil {
+			t.Fatal(err)
+		}
+		target := t.TempDir()
+		if err := os.Symlink(target, symlink); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := snapshotNamespaceRoot(tempRoot); err == nil {
+			t.Fatal("symlinked snapshot namespace passed validation")
+		}
+	}
+}
 
 func TestSnapshotFlightsUseFinalSourceFingerprint(t *testing.T) {
 	root := isolateSnapshotTemp(t)
@@ -376,6 +440,7 @@ func TestKilledProcessOrphanIsReapedAndLiveSnapshotIsKept(t *testing.T) {
 
 func TestSnapshotPublicationIsLeasedBeforeItIsVisible(t *testing.T) {
 	root := isolateSnapshotTemp(t)
+	namespace := snapshotNamespaceForTest(t, root)
 	source := fixtureDatabase(t)
 	originalCopy := copySnapshotSourceFn
 	t.Cleanup(func() { copySnapshotSourceFn = originalCopy })
@@ -399,12 +464,12 @@ func TestSnapshotPublicationIsLeasedBeforeItIsVisible(t *testing.T) {
 	if _, err := securefile.TryLock(filepath.Join(dirs[0], snapshotLeaseName)); !errors.Is(err, securefile.ErrBusy) {
 		t.Fatalf("visible snapshot lease = %v, want busy", err)
 	}
-	if matches, err := filepath.Glob(filepath.Join(root, snapshotStagingPrefix+"*")); err != nil {
+	if matches, err := filepath.Glob(filepath.Join(namespace, snapshotStagingPrefix+"*")); err != nil {
 		t.Fatal(err)
 	} else if len(matches) != 0 {
 		t.Fatalf("staging directories remained visible after publication: %v", matches)
 	}
-	if err := scavengeReadOnlySnapshots(context.Background(), root); err != nil {
+	if err := scavengeReadOnlySnapshots(context.Background(), namespace); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(dirs[0]); err != nil {
@@ -422,6 +487,7 @@ func TestSnapshotPublicationIsLeasedBeforeItIsVisible(t *testing.T) {
 
 func TestConcurrentSnapshotReapersCountOneRemoval(t *testing.T) {
 	root := isolateSnapshotTemp(t)
+	root = snapshotNamespaceForTest(t, root)
 	dataDir := t.TempDir()
 	SetSnapshotLogDir(dataDir)
 	t.Cleanup(func() { SetSnapshotLogDir("") })
@@ -471,6 +537,7 @@ func TestConcurrentSnapshotReapersCountOneRemoval(t *testing.T) {
 
 func TestVanishedSnapshotIsNotCountedAsReaped(t *testing.T) {
 	root := isolateSnapshotTemp(t)
+	root = snapshotNamespaceForTest(t, root)
 	dataDir := t.TempDir()
 	SetSnapshotLogDir(dataDir)
 	t.Cleanup(func() { SetSnapshotLogDir("") })
@@ -500,6 +567,7 @@ func TestVanishedSnapshotIsNotCountedAsReaped(t *testing.T) {
 
 func TestSnapshotReaperReleasesLeaseBeforeDeletion(t *testing.T) {
 	root := isolateSnapshotTemp(t)
+	root = snapshotNamespaceForTest(t, root)
 	orphan := filepath.Join(root, snapshotDirectoryPrefix+"windows-compatible")
 	if err := os.Mkdir(orphan, 0o700); err != nil {
 		t.Fatal(err)
@@ -536,8 +604,67 @@ func TestSnapshotReaperReleasesLeaseBeforeDeletion(t *testing.T) {
 	}
 }
 
+func TestSnapshotReapFailureBlocksAnotherCopy(t *testing.T) {
+	tempRoot := isolateSnapshotTemp(t)
+	root := snapshotNamespaceForTest(t, tempRoot)
+	orphan := filepath.Join(root, snapshotDirectoryPrefix+"blocked")
+	if err := os.Mkdir(orphan, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(orphan, snapshotLeaseName), []byte("1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := fixtureDatabase(t)
+
+	originalRemove := removeSnapshotDirectoryFn
+	originalCopy := copySnapshotSourceFn
+	t.Cleanup(func() {
+		removeSnapshotDirectoryFn = originalRemove
+		copySnapshotSourceFn = originalCopy
+	})
+	removeSnapshotDirectoryFn = func(string) error { return os.ErrPermission }
+	var copies atomic.Int32
+	copySnapshotSourceFn = func(ctx context.Context, source, destination string) error {
+		copies.Add(1)
+		return originalCopy(ctx, source, destination)
+	}
+
+	snapshot, err := OpenReadOnlySnapshot(context.Background(), source)
+	if snapshot != nil || !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("snapshot = %v, error = %v, want permission failure", snapshot, err)
+	}
+	if got := copies.Load(); got != 0 {
+		t.Fatalf("snapshot copies after failed reap = %d, want 0", got)
+	}
+}
+
+func TestAlreadyAbsentSnapshotRemovalIsBenign(t *testing.T) {
+	tempRoot := isolateSnapshotTemp(t)
+	root := snapshotNamespaceForTest(t, tempRoot)
+	orphan := filepath.Join(root, snapshotDirectoryPrefix+"already-absent")
+	if err := os.Mkdir(orphan, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(orphan, snapshotLeaseName), []byte("1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	originalRemove := removeSnapshotDirectoryFn
+	t.Cleanup(func() { removeSnapshotDirectoryFn = originalRemove })
+	removeSnapshotDirectoryFn = func(directory string) error {
+		if err := originalRemove(directory); err != nil {
+			return err
+		}
+		return &os.PathError{Op: "remove", Path: directory, Err: os.ErrNotExist}
+	}
+	if err := scavengeReadOnlySnapshots(context.Background(), root); err != nil {
+		t.Fatalf("already absent snapshot removal: %v", err)
+	}
+}
+
 func TestSnapshotTelemetryLogsCreateAndReap(t *testing.T) {
 	root := isolateSnapshotTemp(t)
+	root = snapshotNamespaceForTest(t, root)
 	dataDir := t.TempDir()
 	SetSnapshotLogDir(dataDir)
 	t.Cleanup(func() { SetSnapshotLogDir("") })
@@ -748,17 +875,30 @@ func fixtureDatabase(t *testing.T) string {
 
 func listSnapshotDirs(t *testing.T, root string) []string {
 	t.Helper()
-	entries, err := os.ReadDir(root)
+	var dirs []string
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), snapshotDirectoryPrefix) {
+			dirs = append(dirs, path)
+			return filepath.SkipDir
+		}
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var dirs []string
-	for _, entry := range entries {
-		if entry.IsDir() && strings.HasPrefix(entry.Name(), snapshotDirectoryPrefix) {
-			dirs = append(dirs, filepath.Join(root, entry.Name()))
-		}
-	}
 	return dirs
+}
+
+func snapshotNamespaceForTest(t *testing.T, tempRoot string) string {
+	t.Helper()
+	root, err := snapshotNamespaceRoot(tempRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
 }
 
 func readSnapshotLog(t *testing.T, dataDir string) []map[string]any {
