@@ -558,6 +558,12 @@ type DeclaredCorpus struct {
 	Database vectorDatabase
 }
 
+type declaredCursor struct {
+	time  string
+	id    string
+	valid bool
+}
+
 func (d DeclaredCorpus) WalkSources(ctx context.Context, sourceKind string,
 	visit func(sourceRow) error) error {
 	tables := d.Database.Tables
@@ -569,7 +575,7 @@ func (d DeclaredCorpus) WalkSources(ctx context.Context, sourceKind string,
 		tables = []vectorTable{table}
 	}
 	for _, table := range tables {
-		cursor := ""
+		cursor := declaredCursor{}
 		for {
 			rows, err := d.Core.query(ctx, d.pageQuery(table, cursor))
 			if err != nil {
@@ -580,7 +586,7 @@ func (d DeclaredCorpus) WalkSources(ctx context.Context, sourceKind string,
 				if id == "" {
 					continue
 				}
-				cursor = id
+				cursor = declaredCursor{time: stringValue(values["context_time"]), id: id, valid: true}
 				row := sourceRow{kind: table.Name, sourceID: id,
 					fingerprintVersion: table.contractFingerprint(),
 					title:              stringValue(values["context_title"]),
@@ -669,17 +675,18 @@ func (d DeclaredCorpus) CountSources(ctx context.Context, sourceKind string) (in
 	return total, nil
 }
 
-func (d DeclaredCorpus) pageQuery(table vectorTable, cursor string) string {
+func (d DeclaredCorpus) pageQuery(table vectorTable, cursor declaredCursor) string {
 	bound := ""
-	if strings.TrimSpace(cursor) != "" {
-		bound = " AND source_id<" + sqlLiteral(cursor)
+	if cursor.valid {
+		bound = fmt.Sprintf(" AND (context_time<%s OR (context_time=%s AND source_id<%s))",
+			sqlLiteral(cursor.time), sqlLiteral(cursor.time), sqlLiteral(cursor.id))
 	}
 	contextSQL, join := d.contextSQL(table.Name)
 	return fmt.Sprintf(`WITH vector_rows AS (
 		SELECT CAST(src.%s AS TEXT) AS source_id%s%s FROM %s.%s src%s
 		WHERE src.%s IS NOT NULL
 	) SELECT * FROM vector_rows
-	WHERE source_id<>''%s ORDER BY source_id DESC LIMIT %d`,
+	WHERE source_id<>''%s ORDER BY context_time DESC, source_id DESC LIMIT %d`,
 		quoteIdentifier(table.IDColumn), declaredColumnSelect("src", table.TextColumns), contextSQL,
 		quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name), join,
 		quoteIdentifier(table.IDColumn), bound, walkPageSize)

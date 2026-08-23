@@ -10,6 +10,7 @@ const (
 	defaultChunkTokens   = 250
 	defaultOverlapTokens = 100
 	chunkPolicyVersion   = "chunk-policy-v2"
+	maxChunkContextRunes = 80
 )
 
 type tokenSpan struct {
@@ -62,7 +63,7 @@ func tokenSpans(text string) []tokenSpan {
 }
 
 func chunkHeader(title, occurredAt string) string {
-	title = strings.TrimSpace(title)
+	title = chunkContext(title)
 	month := yearMonth(occurredAt)
 	switch {
 	case title != "" && month != "":
@@ -74,6 +75,15 @@ func chunkHeader(title, occurredAt string) string {
 	default:
 		return ""
 	}
+}
+
+func chunkContext(value string) string {
+	value = cleanSessionField(value)
+	runes := []rune(value)
+	if len(runes) <= maxChunkContextRunes {
+		return value
+	}
+	return strings.TrimSpace(string(runes[:maxChunkContextRunes-1])) + "…"
 }
 
 func yearMonth(value string) string {
@@ -94,9 +104,9 @@ func yearMonth(value string) string {
 }
 
 func (s sourceRow) header() string {
-	title := strings.TrimSpace(s.title)
+	title := chunkContext(s.title)
 	if title == "" {
-		title = strings.TrimSpace(s.project)
+		title = chunkContext(s.project)
 	}
 	occurred := s.occurredAt
 	if occurred == "" {

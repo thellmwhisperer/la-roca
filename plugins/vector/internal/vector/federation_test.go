@@ -202,6 +202,59 @@ func TestFederatedWorkerReusesLegacyMonolithEmbeddingsBeforeRetiringIt(t *testin
 		completion.Delta.Unchanged, len(flattenInputs(embedder.inputs)))
 }
 
+func TestLegacySeedReembedsWhenContextChangesEmbeddingInput(t *testing.T) {
+	root := t.TempDir()
+	pluginDir := filepath.Join(root, "roca-ops")
+	if err := os.MkdirAll(pluginDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(pluginDir, "roca-ops.db")
+	const text = "short personal memory"
+	createSourceDatabase(t, dbPath, `
+		CREATE TABLE memories(id INTEGER PRIMARY KEY, content TEXT, project TEXT, created_at TEXT);
+		INSERT INTO memories VALUES (1,'short personal memory','Wellbeing project','2026-03-18');`)
+	writeRegistry(t, root, vectorRegistry{Schema: 1, Databases: []vectorDatabase{{
+		Plugin: "roca-ops", Database: "ops", Path: "roca-ops.db", Alias: "plugin_roca_ops",
+		Tables: []vectorTable{{Name: "memories", IDColumn: "id", TextColumns: []string{"content"}}},
+	}}})
+
+	embedder := &recordingEmbedder{}
+	legacy := filepath.Join(t.TempDir(), DatabaseFilename)
+	legacyIndex := Index{Corpus: &memoryCorpus{sources: []sourceRow{{kind: "memories", text: text}}},
+		VectorPath: legacy, Model: DefaultModel, Embedder: embedder}
+	if _, err := legacyIndex.Ingest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	legacyStore := openTestSQLite(t, legacy)
+	if _, err := legacyStore.Exec(`UPDATE chunks SET fingerprint=?`, embeddingFingerprint("memories", text)); err != nil {
+		legacyStore.Close()
+		t.Fatal(err)
+	}
+	if err := legacyStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	embedder.inputs = nil
+
+	federation, err := LoadFederation(CoreCLI{Executable: "roca", Run: sqliteExecRunner(t,
+		map[string]string{"plugin_roca_ops": dbPath})}, root, DefaultModel, "v-test", embedder, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := federation.seedSidecarsFromLegacyMonolith(context.Background(), legacy); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(SidecarPath(dbPath)); !os.IsNotExist(err) {
+		t.Fatalf("unheadered legacy vector was published as current: %v", err)
+	}
+	if _, err := federation.Ingest(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
+	want := DocumentPrefix + "[Wellbeing project · 2026-03] " + text
+	if got := flattenInputs(embedder.inputs); len(got) != 1 || got[0] != want {
+		t.Fatalf("current embedding inputs = %q, want %q", got, want)
+	}
+}
+
 func TestFederatedWorkerKeepsLegacyMonolithUntilEveryDeclaredSidecarCompletes(t *testing.T) {
 	federation, corpusPath, opsPath, _ := federationFixture(t)
 	federation.databases = append(federation.databases, vectorDatabase{

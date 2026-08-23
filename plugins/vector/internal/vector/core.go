@@ -141,7 +141,8 @@ func corePages() []corePage {
 				return fmt.Sprintf(`SELECT id,content,COALESCE(source_session,'') AS source_session,
 					source_sequence,COALESCE(source_agent,'') AS source_agent,
 					COALESCE(metadata,'{}') AS metadata,COALESCE(layer,'') AS layer,
-					COALESCE(origin,'') AS origin,COALESCE(created_at,'') AS created_at
+					COALESCE(origin,'') AS origin,COALESCE(project,'') AS project,
+					COALESCE(created_at,'') AS created_at
 					FROM %s WHERE COALESCE(content,'') <> ''
 					AND (COALESCE(created_at,'') < %s OR (COALESCE(created_at,'') = %s AND id < %s))
 					ORDER BY COALESCE(created_at,'') DESC, id DESC LIMIT %d`,
@@ -173,9 +174,11 @@ func corePages() []corePage {
 			query: func(cursor string) string {
 				return fmt.Sprintf(`SELECT t.id,COALESCE(t.session_id,'') AS session_id,t.exchange_number,
 					t.position_in_session,COALESCE(t.full_text,'') AS text,
-					COALESCE(s.title,'') AS context_title, COALESCE(s.started_at,'') AS occurred_at
+					COALESCE(s.title,'') AS context_title, COALESCE(%s,'') AS context_project,
+					COALESCE(s.started_at,'') AS occurred_at
 					FROM %s t LEFT JOIN %s s ON s.session_id = t.session_id
 					WHERE COALESCE(t.full_text,'') <> '' AND t.id < %s ORDER BY t.id DESC LIMIT %d`,
+					strings.ReplaceAll(sessionProjectName, "metadata", "s.metadata"),
 					corpusTable("thinking_blocks"), corpusTable("sessions"), cursor, walkPageSize)
 			},
 			decode: decodeThinking,
@@ -199,7 +202,7 @@ func corePages() []corePage {
 
 func splitCursor(cursor string) (string, string) {
 	ts, id, ok := strings.Cut(cursor, "|")
-	if !ok || ts == "" {
+	if !ok {
 		return newestTimeCursor, newestIDCursor
 	}
 	return ts, id
@@ -247,7 +250,7 @@ func decodeThinking(values map[string]any) (sourceRow, string, error) {
 	}
 	row := sourceRow{kind: "thinking_blocks", sessionID: stringValue(values["session_id"]),
 		text: stringValue(values["text"]), title: stringValue(values["context_title"]),
-		occurredAt: stringValue(values["occurred_at"])}
+		project: stringValue(values["context_project"]), occurredAt: stringValue(values["occurred_at"])}
 	row.ordinal, row.hasOrdinal = nullableInteger(values["exchange_number"])
 	if position, ok := nullableFloat(values["position_in_session"]); ok {
 		row.position = strconv.FormatFloat(position, 'g', -1, 64)

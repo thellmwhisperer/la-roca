@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -91,6 +92,79 @@ func TestCoreCLIWalksEverySourceThroughRocaExec(t *testing.T) {
 	}
 	if len(queries) != 1 || len(sources) < 1 || !strings.Contains(queries[0], corpusTable("sessions")) {
 		t.Fatalf("targeted session walk queried %d pages and returned %+v", len(queries), sources)
+	}
+}
+
+func TestCoreCLIPaginatesEmptyTimestampsAndCarriesProjectContext(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "corpus.db")
+	createSourceDatabase(t, dbPath, `CREATE TABLE memories(
+		id INTEGER PRIMARY KEY, content TEXT, source_session TEXT, source_sequence INTEGER,
+		source_agent TEXT, metadata TEXT, layer TEXT, origin TEXT, project TEXT, created_at TEXT);`)
+	db := openTestSQLite(t, dbPath)
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id := 1; id <= walkPageSize+1; id++ {
+		if _, err := tx.Exec(`INSERT INTO memories VALUES (?,?,?,?,?,?,?,?,?,?)`, id,
+			fmt.Sprintf("memory %d", id), "", nil, "fixture", "{}", "discovery", "agent",
+			"Wellbeing project", ""); err != nil {
+			tx.Rollback()
+			db.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	queries := 0
+	fixtureRunner := sqliteExecRunner(t, map[string]string{corpusSchema: dbPath})
+	runner := func(ctx context.Context, executable string, args ...string) ([]byte, error) {
+		queries++
+		if queries > 3 {
+			return nil, fmt.Errorf("pagination did not advance")
+		}
+		return fixtureRunner(ctx, executable, args...)
+	}
+	seen := map[string]bool{}
+	core := CoreCLI{Executable: "roca", Run: runner}
+	if err := core.WalkSources(context.Background(), "memories", func(row sourceRow) error {
+		seen[row.text] = true
+		if row.project != "Wellbeing project" || row.header() != "[Wellbeing project] " {
+			return fmt.Errorf("memory context = project %q header %q", row.project, row.header())
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != walkPageSize+1 || queries != 2 {
+		t.Fatalf("empty-timestamp walk returned %d unique rows in %d queries", len(seen), queries)
+	}
+}
+
+func TestCoreCLIThinkingHeaderFallsBackToSessionProject(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "corpus.db")
+	createSourceDatabase(t, dbPath, `
+		CREATE TABLE sessions(session_id TEXT PRIMARY KEY, title TEXT, metadata TEXT, started_at TEXT);
+		CREATE TABLE thinking_blocks(
+			id INTEGER PRIMARY KEY, session_id TEXT, exchange_number INTEGER,
+			position_in_session REAL, full_text TEXT);
+		INSERT INTO sessions VALUES ('s1','', '{"project_name":"Wellbeing project"}', '2026-03-18');
+		INSERT INTO thinking_blocks VALUES (1,'s1',1,0.5,'private reflection');`)
+	core := CoreCLI{Executable: "roca", Run: sqliteExecRunner(t, map[string]string{corpusSchema: dbPath})}
+	var rows []sourceRow
+	if err := core.WalkSources(context.Background(), "thinking_blocks", func(row sourceRow) error {
+		rows = append(rows, row)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].header() != "[Wellbeing project · 2026-03] " {
+		t.Fatalf("thinking context = %+v", rows)
 	}
 }
 

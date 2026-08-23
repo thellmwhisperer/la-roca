@@ -179,6 +179,9 @@ func (f Federation) seedLegacySidecar(ctx context.Context, legacy *sql.DB,
 		header := source.header()
 		for index, text := range source.window() {
 			input := header + text
+			if input != text {
+				continue
+			}
 			desired := desiredChunk{
 				sourceKind: source.kind, sourceID: source.stableID(), column: source.column, index: index,
 				fingerprint: source.embeddingFingerprint(input), locator: source.locator(), text: input,

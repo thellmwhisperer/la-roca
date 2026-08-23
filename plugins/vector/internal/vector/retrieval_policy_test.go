@@ -4,9 +4,11 @@ import (
 	"context"
 	"hash/fnv"
 	"math"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"unicode"
 )
 
@@ -34,6 +36,9 @@ func TestPerColumnChunkingLiftsShortHumanTextAboveConcatenation(t *testing.T) {
 }
 
 func TestGoldenVideoQueriesKeepTopRank(t *testing.T) {
+	if os.Getenv("ROCA_VECTOR_LAB") != "1" {
+		t.Skip("set ROCA_VECTOR_LAB=1 to measure the current embedding engine")
+	}
 	docs := []sourceRow{
 		{kind: "memories", sourceID: "doc-private-first",
 			text: "Never publish a short video as private first. The recommendation system will not test the thumbnail or the title while it stays hidden."},
@@ -55,13 +60,15 @@ func TestGoldenVideoQueriesKeepTopRank(t *testing.T) {
 		{"does the bridge from shorts to long-form videos actually work", "memories/doc-bridge"},
 		{"what lessons did I learn about making YouTube shorts for my channel", "memories/doc-lessons"},
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
 	index := Index{Corpus: &memoryCorpus{sources: docs}, VectorPath: filepath.Join(t.TempDir(), "vector.db"),
-		Model: DefaultModel, Embedder: goldenVideoEmbedder{}}
-	if _, err := index.Ingest(context.Background()); err != nil {
+		Model: DefaultModel, Embedder: Ollama{BaseURL: os.Getenv("OLLAMA_HOST")}}
+	if _, err := index.Ingest(ctx); err != nil {
 		t.Fatal(err)
 	}
 	for _, item := range cases {
-		results, err := index.Query(context.Background(), item.query, 5)
+		results, err := index.Query(ctx, item.query, 5)
 		if err != nil {
 			t.Fatalf("%s: %v", item.query, err)
 		}
@@ -86,37 +93,6 @@ func maxScore(t *testing.T, corpus *memoryCorpus, query string) float64 {
 		return 0
 	}
 	return results[0].Score
-}
-
-type goldenVideoEmbedder struct{}
-
-func (goldenVideoEmbedder) Pull(context.Context, string) error { return nil }
-
-func (goldenVideoEmbedder) Embed(_ context.Context, _ string, input []string) ([][]float32, error) {
-	out := make([][]float32, len(input))
-	for i, text := range input {
-		out[i] = goldenVideoVector(text)
-	}
-	return out, nil
-}
-
-func goldenVideoVector(text string) []float32 {
-	vec := make([]float32, 8)
-	lower := strings.ToLower(text)
-	switch {
-	case strings.Contains(lower, "private first") || strings.Contains(lower, "never publish a short video as private first"):
-		vec[0] = 1
-	case strings.Contains(lower, "dead short") || strings.Contains(lower, "changing the title of a dead short"):
-		vec[1] = 1
-	case strings.Contains(lower, "long-form") || strings.Contains(lower, "bridge from short videos to long-form"):
-		vec[2] = 1
-	case strings.Contains(lower, "lessons") || strings.Contains(lower, "making youtube shorts") ||
-		strings.Contains(lower, "lessons about making short videos"):
-		vec[3] = 1
-	default:
-		vec[4] = 1
-	}
-	return vec
 }
 
 type lexicalEmbedder struct{}

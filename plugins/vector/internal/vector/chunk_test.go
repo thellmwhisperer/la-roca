@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"unicode"
+	"unicode/utf8"
 )
 
 func TestTokenChunksHonorSizeOverlapAndBoundaries(t *testing.T) {
@@ -95,5 +96,23 @@ func TestChunkHeaderUsesTitleAndYearMonth(t *testing.T) {
 	}
 	if got := chunkHeader("", "not-a-date"); got != "" {
 		t.Fatalf("empty header = %q", got)
+	}
+}
+
+func TestChunkHeaderSanitizesAndBoundsContext(t *testing.T) {
+	project := strings.Repeat("meaningful wellbeing ", 12) + `/private/machine/session.json {"secret":true}`
+	header := chunkHeader(project, "2026-03-18T04:12:00Z")
+	if strings.Contains(header, "/private/") || strings.ContainsAny(header, "{}") {
+		t.Fatalf("header retained machine context: %q", header)
+	}
+	if utf8.RuneCountInString(strings.TrimSuffix(strings.TrimPrefix(header, "["), " · 2026-03] ")) > maxChunkContextRunes {
+		t.Fatalf("header context is unbounded: %q", header)
+	}
+	if !strings.Contains(header, "… · 2026-03] ") {
+		t.Fatalf("bounded header = %q", header)
+	}
+	row := sourceRow{title: `{"source":"/private/machine/session.json"}`, project: "Human project"}
+	if got := row.header(); got != "[Human project] " {
+		t.Fatalf("project fallback header = %q", got)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDeclaredWalkEmitsPerColumnChunkIdentity(t *testing.T) {
@@ -127,17 +128,58 @@ func TestReembedIsIdempotentAcrossInterruptAndRerun(t *testing.T) {
 }
 
 func TestDeclaredPagesNewestFirst(t *testing.T) {
-	corpus := DeclaredCorpus{Database: vectorDatabase{
-		Alias:  "plugin_roca_corpus",
-		Tables: []vectorTable{{Name: "memories", IDColumn: "id", TextColumns: []string{"content"}}},
-	}}
-	first := corpus.pageQuery(corpus.Database.Tables[0], "")
-	if !strings.Contains(first, "ORDER BY source_id DESC") {
-		t.Fatalf("declared walk is not newest-first: %s", first)
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "memories.db")
+	createSourceDatabase(t, dbPath, `CREATE TABLE memories(
+		id TEXT PRIMARY KEY, content TEXT, project TEXT, created_at TEXT);`)
+	db := openTestSQLite(t, dbPath)
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
 	}
-	next := corpus.pageQuery(corpus.Database.Tables[0], "9")
-	if !strings.Contains(next, "source_id<'9'") {
-		t.Fatalf("declared cursor is not descending: %s", next)
+	base := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	want := make([]string, 0, walkPageSize+3)
+	for i := 0; i < walkPageSize+3; i++ {
+		id := fmt.Sprintf("z%03d", walkPageSize+2-i)
+		if i == 0 {
+			id = "a-newest"
+		}
+		if _, err := tx.Exec(`INSERT INTO memories VALUES (?,?,?,?)`, id,
+			fmt.Sprintf("memory %d", i), "project", base.Add(-time.Duration(i)*time.Minute).Format(time.RFC3339)); err != nil {
+			tx.Rollback()
+			db.Close()
+			t.Fatal(err)
+		}
+		want = append(want, id)
+	}
+	if err := tx.Commit(); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	corpus := DeclaredCorpus{
+		Core: CoreCLI{Executable: "roca", Run: sqliteExecRunner(t, map[string]string{
+			"plugin_roca_ops": dbPath,
+		})},
+		Database: vectorDatabase{Plugin: "roca-ops", Database: "ops", Alias: "plugin_roca_ops",
+			Tables: []vectorTable{{Name: "memories", IDColumn: "id", TextColumns: []string{"content"}}}},
+	}
+	got := make([]string, 0, len(want))
+	if err := corpus.WalkSources(context.Background(), "memories", func(row sourceRow) error {
+		got = append(got, row.sourceID)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("walked %d rows, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("row %d = %q, want newest-first %q", i, got[i], want[i])
+		}
 	}
 }
 
