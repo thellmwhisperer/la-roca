@@ -4,7 +4,7 @@
 
 ### Features
 
-* **vector:** ship a local embedding engine inside the vector companion. The user downloads exactly one embeddings model. macOS and Linux no longer need a separate embedding runtime; Windows keeps the previous path until its native lane exists. Indexing walks newest material first. MCP sessions keep one companion process for their lifetime and prepare the model in the background.
+* **vector:** ship a local embedding engine inside the vector companion. The user downloads exactly one embeddings model. macOS and Linux no longer need a separate embedding runtime; Windows keeps the previous path until its native lane exists. Indexing walks newest material first. MCP sessions keep one companion process for their lifetime and prepare the model in the background. Engine timings land in rotated JSONL under the data directory logs area, never in a database.
 
 * **vector:** remove the `vocab` discovery verb
 

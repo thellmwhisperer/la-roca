@@ -104,7 +104,9 @@ Windows sends no desktop notification: inspect `completion.json` or
 completion record describes that worker run; query readiness is checked from
 each selected sidecar's owner, model, and dimensions metadata. Sidecars that
 are not ready leave their databases on deterministic FTS and SQL. The
-timestamps time the first pass on this machine.
+timestamps time the first pass on this machine. Engine timings (load,
+pre-warm, query, throughput, backend, errors) are dated JSONL files in the data
+directory logs area, rotated, content-redacted, and never a database table.
 
 Indexing is incremental after that. `vector ingest` always requires `--delta`:
 

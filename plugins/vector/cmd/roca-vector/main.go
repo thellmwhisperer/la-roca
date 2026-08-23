@@ -506,10 +506,8 @@ func (env *environment) federation(model string) (vector.Federation, error) {
 func defaultEmbedder(env *environment) vector.Embedder {
 	events := env.events()
 	var tel *telemetry.Store
-	if state, err := env.resolveStateDir(); err == nil {
-		if store, openErr := telemetry.Open(telemetry.Path(state)); openErr == nil {
-			tel = store
-		}
+	if store, err := telemetry.Open(coreDataDir(env.dbPath)); err == nil {
+		tel = store
 	}
 	return vector.ConfiguredEmbedder(coreDataDir(env.dbPath), env.stateDir, events, tel)
 }
