@@ -137,7 +137,9 @@ tokens with about 100 tokens of overlap, and each embedding input gets a short
 deterministic header from session title or project and year-month when those
 columns exist. `--reembed` rebuilds a sidecar under that policy. It is
 resumable: interrupting and running it again continues, and it does not
-duplicate chunks. Progress prints counts, rate, and ETA, newest rows first.
+duplicate chunks. A partially rebuilt sidecar can contain multiple chunk
+generations; queries search all of them while re-embedding continues. Progress
+prints counts, rate, and ETA, newest rows first.
 
 The worker fingerprints each database (including its SQLite WAL) through
 `pkg/incrementality` and skips the row sweep when both source and declaration
@@ -145,7 +147,9 @@ are unchanged. When a sweep is needed, existing chunk fingerprints decide
 added, updated, and unchanged work; a desired-versus-stored fingerprint diff
 garbage-collects chunks and embeddings whose source disappeared. Optional
 manifest chunking hints override the kernel defaults without giving plugins
-executable generation code.
+executable generation code. Source sweeps are paged and, together with source
+counts, use an ingest-only statement budget; serving lookups keep the configured
+interactive query budget.
 
 For a non-default database:
 
@@ -190,8 +194,8 @@ optional (default 10) and capped at 100.
 A missing sidecar or unavailable embedding model emits a notice and leaves that
 database on its deterministic FTS/SQL route. A pending model download never
 blocks a query: FTS answers immediately and the download continues in the
-background until a later query can join the vector leg. Databases without a vector
-declaration are still recognized routing targets and behave the same way.
+background until a later query can join the vector leg. Databases without a
+vector declaration are still recognized routing targets and behave the same way.
 Vector serving never invokes the answering model, and core search never
 depends on a model or sidecar.
 

@@ -16,7 +16,11 @@ and MCP query surfaces.
 `roca playground` is the human room: it compiles a question into one checked
 `SELECT`, `--sql-only` compiles without executing, and `--full` adds a prose
 reading of the rows. `roca exec` runs your own `SELECT` through the same
-read-only gate.
+read-only gate. By default it uses the configured
+[`query.timeout_ms`](models.md#the-configuration). `--timeout-ms N` overrides that
+statement budget for one invocation; `0` disables the bound. Vector ingest uses
+the unbounded form only for its paged source sweeps and source counts, while
+query-time source lookups keep the interactive budget.
 
 For investigations, `roca explore "<term>"` uses the same checked query and
 second-inference seat but gives the interpreter an investigation mission. Every
