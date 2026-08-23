@@ -341,7 +341,7 @@ func legacyStoreMemory(source row) (parsers.Memory, bool) {
 }
 
 func writeLegacyStoreSessions(ctx context.Context, tx *sql.Tx, sessions []parsers.Session) (Counts, error) {
-	w := &writer{tx: tx}
+	w := &writer{tx: tx, preserveSessionThinkingPosition: true}
 	var counts Counts
 	for _, session := range sessions {
 		written, err := w.sessionIfMissing(ctx, session)

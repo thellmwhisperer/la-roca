@@ -72,9 +72,10 @@ type layerResolver interface {
 
 // writer holds what every write of one run shares.
 type writer struct {
-	tx                     *sql.Tx
-	layers                 layerResolver
-	hermesReservedMemories *sql.DB
+	tx                              *sql.Tx
+	layers                          layerResolver
+	hermesReservedMemories          *sql.DB
+	preserveSessionThinkingPosition bool
 }
 
 // WriteRecords writes one artefact's records and returns what it wrote.
@@ -1300,11 +1301,14 @@ func (w *writer) insertThinking(ctx context.Context, sessionID string, number, p
 	return affected != 0, err
 }
 
-// sessionThinking writes a block that hangs off the session. Its natural key is
-// its own text, because it has no exchange to be numbered under.
+// sessionThinking writes a block that hangs off the session rather than an exchange.
 func (w *writer) sessionThinking(ctx context.Context, sessionID string,
 	block parsers.Thinking) (bool, error) {
-	landed, err := w.insertThinking(ctx, sessionID, nil, nil, block)
+	var position any
+	if w.preserveSessionThinkingPosition {
+		position = block.Position
+	}
+	landed, err := w.insertThinking(ctx, sessionID, nil, position, block)
 	if err != nil {
 		return false, fmt.Errorf("insert a thinking block of %s: %w", sessionID, err)
 	}

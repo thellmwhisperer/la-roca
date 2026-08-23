@@ -57,6 +57,9 @@ func TestLegacyStoreIngest(t *testing.T) {
 	if len(exchange.Tools) != 1 || exchange.Tools[0].Name != "exec" {
 		t.Errorf("tools = %+v", exchange.Tools)
 	}
+	if len(session.Thinking) != 2 || session.Thinking[0].Position == session.Thinking[1].Position {
+		t.Errorf("unmatched thinking = %+v, want two distinct positions", session.Thinking)
+	}
 
 	if len(records.Memories) != 5 {
 		t.Fatalf("memories = %d, want 5", len(records.Memories))
@@ -143,7 +146,7 @@ func TestLegacyStoreIngest(t *testing.T) {
 	if !ok {
 		t.Fatalf("source %q missing: %v", legacyStoreSource, SortedSources(first.Sources))
 	}
-	if counts.Sessions != 4 || counts.Exchanges != 2 || counts.ThinkingBlocks != 2 ||
+	if counts.Sessions != 4 || counts.Exchanges != 2 || counts.ThinkingBlocks != 4 ||
 		counts.ToolUses != 2 || counts.MemoriesInserted != 5 {
 		t.Fatalf("first source counts = %+v", counts)
 	}
@@ -161,6 +164,17 @@ func TestLegacyStoreIngest(t *testing.T) {
 	}
 	if surface != ingestprovenance.LegacyStore || agent != "claude-code" {
 		t.Errorf("landed session provenance = %q / %q", surface, agent)
+	}
+	var unmatched, distinctPositions, assignedExchanges int
+	if err := corpus.SQL().QueryRow(`
+		SELECT COUNT(*), COUNT(DISTINCT position_in_session), COUNT(exchange_number)
+		FROM thinking_blocks WHERE session_id = ? AND full_text = 'unmatched duplicate'`,
+		legacyFixtureSession).Scan(&unmatched, &distinctPositions, &assignedExchanges); err != nil {
+		t.Fatal(err)
+	}
+	if unmatched != 2 || distinctPositions != 2 || assignedExchanges != 0 {
+		t.Errorf("landed unmatched thinking = rows %d positions %d assigned exchanges %d",
+			unmatched, distinctPositions, assignedExchanges)
 	}
 
 	var layer, status, created string
@@ -660,6 +674,10 @@ func seedLegacyStoreFixture(t *testing.T) string {
 	exec(t, db, `INSERT INTO thinking_blocks VALUES (2, ?, 1, 1.0, 'think', 0.2, 2, 0, 'do not enrich')`,
 		legacyOverlapSession)
 	exec(t, db, `INSERT INTO thinking_blocks VALUES (3, 'missing-session', 1, 1.0, 'think', 0.2, 1, 0, 'orphan')`)
+	exec(t, db, `INSERT INTO thinking_blocks VALUES (4, ?, 2, 2.0, 'think', 0.3, 2, 0, 'unmatched duplicate')`,
+		legacyFixtureSession)
+	exec(t, db, `INSERT INTO thinking_blocks VALUES (5, ?, 2, 2.0, 'think', 0.3, 2, 0, 'unmatched duplicate')`,
+		legacyFixtureSession)
 	exec(t, db, `INSERT INTO tool_uses VALUES (1, ?, 1, 'exec', 'select 1', 0, NULL, 'reactive')`,
 		legacyFixtureSession)
 	exec(t, db, `INSERT INTO tool_uses VALUES (2, ?, 1, 'exec', 'select 2', 0, NULL, 'reactive')`,
