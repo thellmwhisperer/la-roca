@@ -102,6 +102,10 @@ type snapshotInflight struct {
 	err   error
 }
 
+type snapshotCopyInflight struct {
+	done chan struct{}
+}
+
 type snapshotLease struct {
 	mu        sync.Mutex
 	directory string
@@ -118,6 +122,8 @@ type snapshotLogContextKey struct{}
 var (
 	snapshotShuttingDown atomic.Bool
 
+	snapshotShutdownCtx, snapshotShutdownCancel = context.WithCancel(context.Background())
+
 	snapshotCacheMu sync.Mutex
 	snapshotCache   = map[string]*snapshotArtifact{}
 	snapshotFlight  = map[string]*snapshotInflight{}
@@ -131,16 +137,22 @@ var (
 	snapshotHeldMu sync.Mutex
 	snapshotHeld   = map[*snapshotLease]struct{}{}
 
+	snapshotCopyMu      sync.Mutex
+	snapshotCopyHandles = map[*os.File]struct{}{}
+	snapshotCopies      = map[*snapshotCopyInflight]struct{}{}
+
 	snapshotExitOnce sync.Once
 )
 
 var (
 	copySnapshotSourceFn             = copySnapshotSource
 	snapshotAfterLeaseRegistrationFn func(string)
+	snapshotAfterCopyHandleFn        func(string)
 	claimSnapshotDirectoryFn         = claimSnapshotDirectory
 	removeSnapshotDirectoryFn        = os.RemoveAll
 	snapshotEntryInfoFn              = func(entry os.DirEntry) (os.FileInfo, error) { return entry.Info() }
 	snapshotUserIdentityFn           = snapshotUserIdentity
+	legacySnapshotHasOpenHandlesFn   = legacySnapshotHasOpenHandles
 )
 
 // WithSnapshotLogWriter binds snapshot lifecycle telemetry to ctx.
@@ -515,7 +527,6 @@ func (lease *snapshotLease) move(directory string) error {
 
 func (lease *snapshotLease) destroy(cause error) error {
 	lease.once.Do(func() {
-		unregisterHeldSnapshot(lease)
 		lease.mu.Lock()
 		defer lease.mu.Unlock()
 		var releaseErr error
@@ -523,6 +534,7 @@ func (lease *snapshotLease) destroy(cause error) error {
 			releaseErr = lease.release()
 		}
 		lease.err = errors.Join(releaseErr, cleanupSnapshotDirectory(lease.directory, nil))
+		unregisterHeldSnapshot(lease)
 	})
 	return errors.Join(cause, lease.err)
 }
@@ -680,8 +692,14 @@ func snapshotOrphanLease(ctx context.Context, directory string, legacy bool) (fu
 	}
 	if os.IsNotExist(err) {
 		if legacy {
-			live, probeErr := legacySnapshotHasOpenHandles(ctx, directory)
-			return nil, !live, probeErr
+			live, probeErr := legacySnapshotHasOpenHandlesFn(ctx, directory)
+			if probeErr != nil {
+				if ctx.Err() != nil {
+					return nil, false, ctx.Err()
+				}
+				return nil, false, nil
+			}
+			return nil, !live, nil
 		}
 		return nil, true, nil
 	}
@@ -760,9 +778,65 @@ func directorySize(ctx context.Context, root string) (int64, error) {
 	return total, err
 }
 
+func beginSnapshotCopy() *snapshotCopyInflight {
+	inflight := &snapshotCopyInflight{done: make(chan struct{})}
+	snapshotCopyMu.Lock()
+	snapshotCopies[inflight] = struct{}{}
+	snapshotCopyMu.Unlock()
+	return inflight
+}
+
+func (inflight *snapshotCopyInflight) finish() {
+	snapshotCopyMu.Lock()
+	delete(snapshotCopies, inflight)
+	snapshotCopyMu.Unlock()
+	close(inflight.done)
+}
+
+func registerSnapshotCopyHandle(file *os.File) {
+	snapshotCopyMu.Lock()
+	snapshotCopyHandles[file] = struct{}{}
+	snapshotCopyMu.Unlock()
+}
+
+func unregisterSnapshotCopyHandle(file *os.File) {
+	snapshotCopyMu.Lock()
+	delete(snapshotCopyHandles, file)
+	snapshotCopyMu.Unlock()
+}
+
+func drainSnapshotCopies() {
+	snapshotCopyMu.Lock()
+	handles := make([]*os.File, 0, len(snapshotCopyHandles))
+	for file := range snapshotCopyHandles {
+		handles = append(handles, file)
+	}
+	copies := make([]*snapshotCopyInflight, 0, len(snapshotCopies))
+	for inflight := range snapshotCopies {
+		copies = append(copies, inflight)
+	}
+	snapshotCopyMu.Unlock()
+	for _, file := range handles {
+		_ = file.Close()
+	}
+	for _, inflight := range copies {
+		<-inflight.done
+	}
+}
+
 func copySnapshotSource(ctx context.Context, source, destination string) error {
+	inflight := beginSnapshotCopy()
+	defer inflight.finish()
+
+	copyCtx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(snapshotShutdownCtx, cancel)
+	defer func() {
+		stop()
+		cancel()
+	}()
+
 	for _, suffix := range snapshotArtifacts {
-		if err := ctx.Err(); err != nil {
+		if err := copyCtx.Err(); err != nil {
 			return err
 		}
 		input, err := os.Open(source + suffix)
@@ -777,9 +851,14 @@ func copySnapshotSource(ctx context.Context, source, destination string) error {
 			return fmt.Errorf("create snapshot copy %q: %w", destination+suffix,
 				errors.Join(err, input.Close()))
 		}
-		_, copyErr := io.CopyBuffer(output, &contextReader{ctx: ctx, reader: input},
+		registerSnapshotCopyHandle(output)
+		if snapshotAfterCopyHandleFn != nil {
+			snapshotAfterCopyHandleFn(destination + suffix)
+		}
+		_, copyErr := io.CopyBuffer(output, &contextReader{ctx: copyCtx, reader: input},
 			make([]byte, snapshotCopyBufferSize))
-		err = errors.Join(copyErr, ctx.Err(), input.Close(), output.Close())
+		err = errors.Join(copyErr, copyCtx.Err(), input.Close(), output.Close())
+		unregisterSnapshotCopyHandle(output)
 		if err != nil {
 			return fmt.Errorf("copy snapshot source %q: %w", source+suffix, err)
 		}
@@ -930,6 +1009,7 @@ func beginSnapshotShutdown() {
 	snapshotHeldMu.Lock()
 	snapshotShuttingDown.Store(true)
 	snapshotHeldMu.Unlock()
+	snapshotShutdownCancel()
 }
 
 func CloseReadOnlySnapshots() error {
@@ -937,6 +1017,8 @@ func CloseReadOnlySnapshots() error {
 }
 
 func cleanupHeldSnapshots() error {
+	drainSnapshotCopies()
+
 	snapshotCacheMu.Lock()
 	live := make([]*snapshotArtifact, 0, len(snapshotCache))
 	for _, artifact := range snapshotCache {

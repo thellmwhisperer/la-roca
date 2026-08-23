@@ -572,6 +572,34 @@ func TestLegacySnapshotNamespaceIsMigratedSafely(t *testing.T) {
 	}
 }
 
+func TestLegacyProbeFailurePreservesSnapshot(t *testing.T) {
+	tempRoot := isolateSnapshotTemp(t)
+	legacy := filepath.Join(tempRoot, snapshotDirectoryPrefix+"legacy-unprobeable")
+	if err := os.Mkdir(legacy, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacy, "payload"), []byte("orphan"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	original := legacySnapshotHasOpenHandlesFn
+	t.Cleanup(func() { legacySnapshotHasOpenHandlesFn = original })
+	legacySnapshotHasOpenHandlesFn = func(context.Context, string) (bool, error) {
+		return false, errors.New("lsof probe unavailable")
+	}
+
+	snapshot, err := OpenReadOnlySnapshot(context.Background(), fixtureDatabase(t))
+	if err != nil {
+		t.Fatalf("legacy probe failure failed the command: %v", err)
+	}
+	if err := snapshot.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(legacy); err != nil {
+		t.Fatalf("unprobeable legacy snapshot was removed: %v", err)
+	}
+}
+
 func TestSnapshotPublicationIsLeasedBeforeItIsVisible(t *testing.T) {
 	root := isolateSnapshotTemp(t)
 	namespace := snapshotNamespaceForTest(t, root)
@@ -973,6 +1001,15 @@ func TestSnapshotHelperProcess(t *testing.T) {
 			}
 		}
 	}
+	if mode == "signal-during-copy" {
+		snapshotAfterCopyHandleFn = func(destination string) {
+			fmt.Printf("COPYING %s\n", filepath.Dir(filepath.Dir(destination)))
+			os.Stdout.Sync()
+			for !snapshotShuttingDown.Load() {
+				runtime.Gosched()
+			}
+		}
+	}
 	snapshot, err := OpenReadOnlySnapshot(context.Background(), os.Getenv("ROCA_SNAPSHOT_SOURCE"))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "open: %v\n", err)
@@ -1042,7 +1079,7 @@ func startSnapshotHelper(t *testing.T, tmp, source, mode string) *snapshotHelper
 		_ = helper.wait()
 		t.Fatalf("helper stdout: %v", err)
 	}
-	directory := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(line, "READY "), "STAGING "))
+	directory := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(strings.TrimPrefix(line, "READY "), "STAGING "), "COPYING "))
 	if directory == "" || (!strings.Contains(directory, snapshotDirectoryPrefix) &&
 		!strings.Contains(directory, snapshotStagingPrefix)) {
 		t.Fatalf("helper announced %q", line)
