@@ -280,7 +280,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		}
 	}
 
-	before, err := tableCounts(ctx, db.SQL())
+	before, err := runTableCounts(ctx, db, opts.Ops)
 	if err != nil {
 		if !opts.DryRun {
 			return result, err
@@ -392,7 +392,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 	}
 
 	if !opts.DryRun {
-		after, err := tableCounts(ctx, db.SQL())
+		after, err := runTableCounts(ctx, db, opts.Ops)
 		if err != nil {
 			return result, err
 		}
@@ -648,6 +648,7 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 			}); err != nil {
 				return false, err
 			}
+			result.recordWritten(target, opsCounts)
 		}
 	}
 	var counts Counts
@@ -663,11 +664,11 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 			return err
 		}
 		counts = written
-		counts.add(opsCounts)
 		summary := map[string]any{
-			"sessions":         counts.Sessions,
-			"exchanges":        counts.Exchanges,
-			"memories":         counts.MemoriesInserted + counts.MemoriesUpdated,
+			"sessions":  counts.Sessions,
+			"exchanges": counts.Exchanges,
+			"memories": counts.MemoriesInserted + counts.MemoriesUpdated +
+				opsCounts.MemoriesInserted + opsCounts.MemoriesUpdated,
 			"message_coverage": records.MessageCoverage,
 		}
 		if !destinationsComplete {
@@ -903,6 +904,22 @@ func tableCounts(ctx context.Context, db *sql.DB) (Tables, error) {
 			return counts, fmt.Errorf("count the rows of %s: %w", table, err)
 		}
 	}
+	return counts, nil
+}
+
+func runTableCounts(ctx context.Context, db, ops Database) (Tables, error) {
+	counts, err := tableCounts(ctx, db.SQL())
+	if err != nil {
+		return counts, err
+	}
+	if ops == nil || ops.SQL() == db.SQL() {
+		return counts, nil
+	}
+	var memories int
+	if err := ops.SQL().QueryRowContext(ctx, `SELECT COUNT(*) FROM memories`).Scan(&memories); err != nil {
+		return counts, fmt.Errorf("count the rows of ops memories: %w", err)
+	}
+	counts.Memories += memories
 	return counts, nil
 }
 

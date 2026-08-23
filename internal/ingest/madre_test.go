@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -97,12 +98,22 @@ func TestLegacyStoreIngest(t *testing.T) {
 	if len(discards) != 0 {
 		t.Errorf("complaints = %v", discards)
 	}
-	excluded := 0
+	excluded, unmatchedTools := 0, 0
 	for _, discard := range records.Discards {
+		if discard.Reason == madreMissingToolExchangeReason {
+			if discard.ByDesign {
+				t.Errorf("unmatched tool was excluded by design: %+v", discard)
+			}
+			unmatchedTools++
+			continue
+		}
 		if !discard.ByDesign {
 			t.Errorf("unexpected discard: %+v", discard)
 		}
 		excluded += 1
+	}
+	if unmatchedTools != 1 {
+		t.Errorf("unmatched tool discards = %d, want 1", unmatchedTools)
 	}
 	if excluded == 0 {
 		t.Error("garden and proposal rows were not reported as exclusions by design")
@@ -126,8 +137,11 @@ func TestLegacyStoreIngest(t *testing.T) {
 		counts.ToolUses != 2 || counts.MemoriesInserted != 5 {
 		t.Fatalf("first source counts = %+v", counts)
 	}
-	if first.Delta.Sessions != 2 || first.Delta.Exchanges != 2 {
-		t.Fatalf("first corpus delta = %+v", first.Delta)
+	if first.Delta.Sessions != 2 || first.Delta.Exchanges != 2 || first.Delta.Memories != 5 {
+		t.Fatalf("first aggregate delta = %+v", first.Delta)
+	}
+	if first.RecordsDiscarded != 1 {
+		t.Errorf("first discarded records = %d, want 1 unmatched tool", first.RecordsDiscarded)
 	}
 
 	var surface, agent string
@@ -297,6 +311,49 @@ func TestLegacyStoreRetriesMemoriesAfterOpsBecomesAvailable(t *testing.T) {
 	}
 	if got := countRows(t, corpus.SQL(), "sessions"); got != 2 {
 		t.Errorf("corpus sessions after retry = %d, want 2", got)
+	}
+	if withOps.Delta.Memories != 5 {
+		t.Errorf("memory delta after enabling ops = %d, want 5", withOps.Delta.Memories)
+	}
+}
+
+func TestLegacyStoreReportsCommittedOpsWhenCorpusFails(t *testing.T) {
+	t.Parallel()
+	path := seedMadreFixture(t)
+	corpus, ops := madreStores(t)
+	failing := &failOnceDatabase{
+		Database: corpus,
+		failure:  errors.New("synthetic corpus write failure"),
+	}
+	roots := ResolveRoots(Environment{GOOS: "darwin", Home: t.TempDir()},
+		Settings{LegacyStoreDB: path})
+
+	first, err := Run(context.Background(), failing, registry(t), Options{Roots: roots, Ops: ops})
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := first.Sources[madreSource]
+	if first.WriteFailed != 1 || counts.MemoriesInserted != 5 {
+		t.Fatalf("failed corpus run = write_failed %d counts %+v", first.WriteFailed, counts)
+	}
+	if first.Delta.Memories != 5 || first.After.Memories != 5 {
+		t.Errorf("failed corpus memory totals = after %d delta %d, want 5/5",
+			first.After.Memories, first.Delta.Memories)
+	}
+	if got := countRows(t, corpus.SQL(), "sessions"); got != 0 {
+		t.Errorf("corpus sessions after failed write = %d, want 0", got)
+	}
+
+	retry, err := Run(context.Background(), failing, registry(t), Options{Roots: roots, Ops: ops})
+	if err != nil {
+		t.Fatal(err)
+	}
+	retryCounts := retry.Sources[madreSource]
+	if retryCounts.MemoriesInserted != 0 || retryCounts.MemoriesUnchanged != 5 {
+		t.Errorf("retry memory counts = %+v", retryCounts)
+	}
+	if retry.Delta.Memories != 0 || retry.Delta.Sessions != 2 {
+		t.Errorf("retry delta = %+v, want two sessions and no memories", retry.Delta)
 	}
 }
 
@@ -509,6 +566,20 @@ func madreStores(t *testing.T) (*store.DB, *store.DB) {
 	return corpus, ops
 }
 
+type failOnceDatabase struct {
+	Database
+	failure error
+}
+
+func (db *failOnceDatabase) Write(ctx context.Context, fn func(*sql.Tx) error) error {
+	if db.failure != nil {
+		err := db.failure
+		db.failure = nil
+		return err
+	}
+	return db.Database.Write(ctx, fn)
+}
+
 func madreSessionByID(t *testing.T, records parsers.Records, id string) parsers.Session {
 	t.Helper()
 	for _, session := range records.Sessions {
@@ -562,6 +633,8 @@ func seedMadreFixture(t *testing.T) string {
 		madreFixtureSession)
 	exec(t, db, `INSERT INTO tool_uses VALUES (2, ?, 1, 'exec', 'select 2', 0, NULL, 'reactive')`,
 		madreOverlapSession)
+	exec(t, db, `INSERT INTO tool_uses VALUES (3, ?, 99, 'exec', 'select 99', 0, NULL, 'reactive')`,
+		madreFixtureSession)
 	exec(t, db, `INSERT INTO memories VALUES (1, 'handoff', ?, '{}', 'agent', 'claude-code', ?, 1, 'demo',
 		'pending', NULL, ?)`, madreHandoffContent, madreFixtureSession, madreCreatedAt)
 	exec(t, db, `INSERT INTO memories VALUES (2, 'feedback', ?, '{}', 'agent', 'claude-code', ?, 2, 'demo',

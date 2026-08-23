@@ -18,10 +18,11 @@ import (
 // the corpus; memories keep the layer they were stored under and land in ops.
 
 const (
-	madreSource        = "legacy-store"
-	madreMemoryFile    = "legacy-store:memory:"
-	madreMemoryIDKey   = "madre_memory_id"
-	madreSupersedesKey = "madre_supersedes"
+	madreSource                    = "legacy-store"
+	madreMemoryFile                = "legacy-store:memory:"
+	madreMemoryIDKey               = "madre_memory_id"
+	madreSupersedesKey             = "madre_supersedes"
+	madreMissingToolExchangeReason = "tool references a missing exchange"
 )
 
 var madreSchema = []foreignTable{
@@ -114,8 +115,10 @@ func ReadMadre(ctx context.Context, path string) (parsers.Records, []string, err
 		native := source.text("session_id")
 		sessionExchanges := exchangesBySession[native]
 		records.Seen.Messages += len(sessionExchanges)
-		records.Sessions = append(records.Sessions, madreSession(source,
-			sessionExchanges, thinkingBySession[native], toolsBySession[native]))
+		session, discards := madreSession(source, sessionExchanges,
+			thinkingBySession[native], toolsBySession[native])
+		records.Sessions = append(records.Sessions, session)
+		records.Discards = append(records.Discards, discards...)
 	}
 	for _, memory := range memories {
 		normalized, ok := madreMemory(memory)
@@ -166,7 +169,7 @@ func groupMadreRows(rows []row) map[string][]row {
 	return out
 }
 
-func madreSession(source row, exchanges, thinking, tools []row) parsers.Session {
+func madreSession(source row, exchanges, thinking, tools []row) (parsers.Session, []parsers.Discard) {
 	id := source.text("session_id")
 	if id == "" {
 		id = madreSource + ":empty-session"
@@ -213,6 +216,7 @@ func madreSession(source row, exchanges, thinking, tools []row) parsers.Session 
 			exchange.Tools = toolsByNumber[int(original)]
 			claimed[int(original)] = true
 			delete(thinkingByNumber, int(original))
+			delete(toolsByNumber, int(original))
 		}
 		if latency, ok := item.number("response_latency_ms"); ok {
 			value := int(latency)
@@ -223,7 +227,13 @@ func madreSession(source row, exchanges, thinking, tools []row) parsers.Session 
 	for _, leftover := range thinkingByNumber {
 		session.Thinking = append(session.Thinking, leftover...)
 	}
-	return session
+	var discards []parsers.Discard
+	for _, leftovers := range toolsByNumber {
+		for range leftovers {
+			discards = append(discards, parsers.Discard{Reason: madreMissingToolExchangeReason})
+		}
+	}
+	return session, discards
 }
 
 func madreThinking(block row) parsers.Thinking {
