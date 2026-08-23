@@ -1,5 +1,5 @@
 /**
- * @overview Creates leased read-only SQLite snapshots. ~1000 lines, 8 public symbols.
+ * @overview Creates leased read-only SQLite snapshots. ~1000 lines, 9 public symbols.
  *
  *   READING GUIDE
  *   -------------
@@ -18,6 +18,7 @@
  *   SnapshotLogWriter        Snapshot lifecycle telemetry sink.
  *   WithSnapshotLogWriter    Binds snapshot telemetry to an operation context.
  *   OpenReadOnlySnapshot     Opens or reuses a stable source snapshot.
+ *   SnapshotDirectories      Lists snapshot directories the reaper owns.
  *   CloseReadOnlySnapshots   Closes every snapshot still held by the process.
  *   SQL                      Returns the copied database handle.
  *   URI                      Returns the copied database URI.
@@ -30,7 +31,7 @@
  *   claimSnapshotDirectory
  *   inspectSnapshotSource, copySnapshotSource, openCopiedSnapshot, cleanupHeldSnapshots
  *
- * @exports ReadOnlySnapshot, SnapshotLogWriter, WithSnapshotLogWriter, OpenReadOnlySnapshot, CloseReadOnlySnapshots, SQL, URI, Close
+ * @exports ReadOnlySnapshot, SnapshotLogWriter, WithSnapshotLogWriter, OpenReadOnlySnapshot, SnapshotDirectories, CloseReadOnlySnapshots, SQL, URI, Close
  * @deps database/sql and modernc SQLite; internal/securefile; os/signal and filesystem
  */
 package store
@@ -158,6 +159,24 @@ var (
 // WithSnapshotLogWriter binds snapshot lifecycle telemetry to ctx.
 func WithSnapshotLogWriter(ctx context.Context, writer SnapshotLogWriter) context.Context {
 	return context.WithValue(ctx, snapshotLogContextKey{}, writer)
+}
+
+// SnapshotDirectories lists every directory under root that carries the
+// read-only snapshot prefix the reaper owns. The CLI test suite uses it to
+// assert a completed command leaves no snapshot directory behind.
+func SnapshotDirectories(root string) ([]string, error) {
+	var directories []string
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), snapshotDirectoryPrefix) {
+			directories = append(directories, path)
+			return filepath.SkipDir
+		}
+		return nil
+	})
+	return directories, err
 }
 
 // -/ 1/7

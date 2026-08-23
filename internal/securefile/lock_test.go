@@ -7,11 +7,17 @@ import (
 	"testing"
 )
 
-func TestTryLockFailsWhileExclusiveLockIsHeld(t *testing.T) {
+func leaseFile(t *testing.T) string {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "lease")
 	if err := os.WriteFile(path, []byte("1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	return path
+}
+
+func TestTryLockFailsWhileExclusiveLockIsHeld(t *testing.T) {
+	path := leaseFile(t)
 	release, err := Lock(path)
 	if err != nil {
 		t.Fatal(err)
@@ -32,10 +38,7 @@ func TestTryLockMissingFile(t *testing.T) {
 }
 
 func TestTryLockSucceedsOnUnlockedFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "lease")
-	if err := os.WriteFile(path, []byte("1\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	path := leaseFile(t)
 	release, err := TryLock(path)
 	if err != nil {
 		t.Fatal(err)
