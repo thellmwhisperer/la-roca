@@ -24,7 +24,7 @@ func CatalogBody(databases []plugin.Database, notes []string) string {
 	b.WriteString("  knows, its tables, and its example questions. Load it only when you\n")
 	b.WriteString("  need to know which tables or domains exist, or when you will write\n")
 	b.WriteString("  exact SQL yourself. This catalog is for authors of `roca exec` SELECTs.\n")
-	b.WriteString("  `roca query` and `roca explore` are last resort.\n")
+	b.WriteString("  `roca query` is the zero-inference hybrid search. `roca explore` is last resort.\n")
 	b.WriteString("---\n\n")
 	b.WriteString("# La Roca semantic catalog\n\n")
 	b.WriteString("Composed from the semantic fragments of every installed plugin manifest,\n")

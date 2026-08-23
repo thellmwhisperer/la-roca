@@ -221,9 +221,9 @@ func (w *oracleWorld) record() ([]byte, error) {
 		cases = append(cases, result)
 		return result, stdout
 	}
-	appendCLI("cli.query.model.json", "query", false, "query", w.fixture.ModelQuestion, "--json")
-	appendCLI("cli.query.model.toon", "query", false, "query", w.fixture.ModelQuestion)
-	_, sqlOnlyStdout := appendCLI("cli.sql-only", "sql", false, "query", w.fixture.ModelQuestion, "--sql-only", "--json")
+	appendCLI("cli.query.model.json", "query", false, "playground", w.fixture.ModelQuestion, "--json")
+	appendCLI("cli.query.model.toon", "query", false, "playground", w.fixture.ModelQuestion)
+	_, sqlOnlyStdout := appendCLI("cli.sql-only", "sql", false, "playground", w.fixture.ModelQuestion, "--sql-only", "--json")
 	statement, err := sqlFromOracleOutput(sqlOnlyStdout)
 	if err != nil {
 		return nil, err
@@ -240,8 +240,8 @@ func (w *oracleWorld) record() ([]byte, error) {
 	if err := runner.writeConfig(providerDeadEndpoint); err != nil {
 		return nil, err
 	}
-	appendCLI("cli.query.literal-rescue", "query", false, "query", w.fixture.LiteralQuestion, "--json")
-	appendCLI("cli.query.empty-failure", "query", false, "query", w.fixture.MissingQuestion, "--json")
+	appendCLI("cli.query.literal-rescue", "query", false, "playground", w.fixture.LiteralQuestion, "--json")
+	appendCLI("cli.query.empty-failure", "query", false, "playground", w.fixture.MissingQuestion, "--json")
 	if err := runner.writeConfig(server.URL); err != nil {
 		return nil, err
 	}

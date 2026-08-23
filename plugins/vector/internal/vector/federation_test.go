@@ -127,13 +127,18 @@ func TestFederatedWorkerReusesLegacyMonolithEmbeddingsBeforeRetiringIt(t *testin
 	writeRegistry(t, root, vectorRegistry{Schema: 1, Databases: []vectorDatabase{
 		{Plugin: "roca-corpus", Database: "corpus", Path: "roca-corpus.db", Alias: "plugin_roca_corpus",
 			Tables: []vectorTable{
-				{Name: "sessions", IDColumn: "session_id", TextColumns: []string{"title", "project"}},
-				{Name: "memories", IDColumn: "id", TextColumns: []string{"content"}},
-				{Name: "exchanges", IDColumn: "id", TextColumns: []string{"human_text", "agent_text"}},
-				{Name: "thinking_blocks", IDColumn: "id", TextColumns: []string{"full_text"}},
+				{Name: "sessions", IDColumn: "session_id", TextColumns: []string{"title", "project"},
+					Columns: []string{"session_id", "title", "project", "started_at"}},
+				{Name: "memories", IDColumn: "id", TextColumns: []string{"content"},
+					Columns: []string{"id", "content", "project", "created_at", "source_session"}},
+				{Name: "exchanges", IDColumn: "id", TextColumns: []string{"human_text", "agent_text"},
+					Columns: []string{"id", "session_id", "human_text", "agent_text", "human_timestamp", "agent_timestamp"}},
+				{Name: "thinking_blocks", IDColumn: "id", TextColumns: []string{"full_text"},
+					Columns: []string{"id", "session_id", "full_text"}},
 			}},
 		{Plugin: "roca-ops", Database: "ops", Path: "roca-ops.db", Alias: "plugin_roca_ops",
-			Tables: []vectorTable{{Name: "memories", IDColumn: "id", TextColumns: []string{"content"}}}},
+			Tables: []vectorTable{{Name: "memories", IDColumn: "id", TextColumns: []string{"content"},
+				Columns: []string{"id", "content", "project", "created_at"}}}},
 	}})
 
 	embedder := &recordingEmbedder{}
@@ -215,7 +220,8 @@ func TestLegacySeedReembedsWhenContextChangesEmbeddingInput(t *testing.T) {
 		INSERT INTO memories VALUES (1,'short personal memory','Wellbeing project','2026-03-18');`)
 	writeRegistry(t, root, vectorRegistry{Schema: 1, Databases: []vectorDatabase{{
 		Plugin: "roca-ops", Database: "ops", Path: "roca-ops.db", Alias: "plugin_roca_ops",
-		Tables: []vectorTable{{Name: "memories", IDColumn: "id", TextColumns: []string{"content"}}},
+		Tables: []vectorTable{{Name: "memories", IDColumn: "id", TextColumns: []string{"content"},
+			Columns: []string{"id", "content", "project", "created_at"}}},
 	}}})
 
 	embedder := &recordingEmbedder{}
@@ -511,7 +517,7 @@ func TestFederationQueryKeepsMixedModelsPerDatabaseAndFailsSoftWithoutModel(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.MixedModels || len(result.Results) != 0 || len(result.DatabaseResults) != 2 {
+	if !result.MixedModels || !result.VectorExecuted || len(result.Results) != 0 || len(result.DatabaseResults) != 2 {
 		t.Fatalf("mixed-model federation result = %+v", result)
 	}
 	if len(embedder.inputs) != queryCalls+2 {
@@ -537,7 +543,7 @@ func TestFederationQueryKeepsMixedModelsPerDatabaseAndFailsSoftWithoutModel(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fallback.Results) != 0 || len(fallback.DatabaseResults) != 0 ||
+	if fallback.VectorExecuted || len(fallback.Results) != 0 || len(fallback.DatabaseResults) != 0 ||
 		!strings.Contains(strings.Join(fallback.Notices, "\n"), "continuing with FTS-only") {
 		t.Fatalf("model-unavailable fallback = %+v", fallback)
 	}

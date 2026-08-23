@@ -67,7 +67,7 @@ func (w *providerAcceptanceWorld) legacyProviderConfiguration(kind string) error
 }
 
 func (w *providerAcceptanceWorld) queryLegacyConfiguration() error {
-	return w.run("query", "a question requiring a model", "--json")
+	return w.run("playground", "a question requiring a model", "--json")
 }
 
 func (w *providerAcceptanceWorld) legacyQueryIsHonest() error {

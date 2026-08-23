@@ -557,7 +557,18 @@ func (m *world) jsonHasZeroRows() error {
 }
 
 func (m *world) jsonDeclaresEmptyMatch() error {
-	return m.jsonKeyEqualTo("match", "empty")
+	document, err := m.json()
+	if err != nil {
+		return err
+	}
+	if document["match"] == "empty" {
+		return nil
+	}
+	hits, ok := document["hits"].([]any)
+	if !ok || len(hits) != 0 || intValue(document["row_count"]) != 0 {
+		return fmt.Errorf("hybrid empty result = row_count %v, hits %v", document["row_count"], document["hits"])
+	}
+	return nil
 }
 
 func (m *world) namesOutOfScope() error {

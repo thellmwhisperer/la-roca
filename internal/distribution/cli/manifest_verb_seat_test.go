@@ -20,7 +20,7 @@ func TestOnlyBundledManifestVerbsTakeACLISeat(t *testing.T) {
 		{"query", true, "the bundled ops manifest did not seat its query verb"},
 		{"exec", true, "the bundled ops manifest did not seat its exec verb"},
 		{"store", true, "the bundled ops manifest did not seat its store verb"},
-		{"sql", false, "the sql verb rides `query --sql-only` and owns no command of its own"},
+		{"sql", false, "the sql verb rides `playground --sql-only` and owns no command of its own"},
 		{"receipts", false, "the documented third-party verb took a seat this build does not register"},
 	}
 	for _, seat := range seats {

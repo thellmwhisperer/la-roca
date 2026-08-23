@@ -6,11 +6,11 @@ Reading order, from operator to contributor:
    Roca detect an already signed-in agent CLI, and ask away with no La Roca
    login; then follow the verified update and consent-based uninstall flows.
 2. [Model providers](models.md): automatic agent CLI detection, provider order,
-   the local floor, CLI-owned authentication, and how the two query inferences
-   choose their models.
-3. [Queries, explore, and the read-only gate](queries.md): the `roca query`
-   contract, `--sql-only` / `--full` / `--json`, plain and `--deep` explore,
-   SQL repair then gate, and the TOON versus `--full` readers.
+   the local floor, CLI-owned authentication, and how the playground and
+   explore inferences choose their models.
+3. [Queries, explore, and the read-only gate](queries.md): deterministic hybrid
+   `roca query`, its `--top` / `--require-both` / `--databases` / `--json`
+   contract, model-backed playground and explore, and the checked SQL gate.
 4. [Ingest sources](ingest.md): import downloaded data exports once and understand
    their incremental boundary.
 5. [Local vector search](vector.md): the default-off `features.vector` switch,

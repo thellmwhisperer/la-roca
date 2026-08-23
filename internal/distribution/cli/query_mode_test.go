@@ -351,8 +351,12 @@ func TestQueryHelpTeachesDataHumanAndSQLModes(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "Data: query; human reading: query --full; raw SQL: exec.") {
-		t.Fatalf("query help does not teach the three modes:\n%s", output.String())
+	for _, want := range []string{
+		"Zero-inference hybrid search", "--top", "--require-both", "--databases", "hybrid",
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("query help lacks %q:\n%s", want, output.String())
+		}
 	}
 }
 
