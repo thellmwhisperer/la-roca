@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -506,6 +507,9 @@ func claimAssignedExchanges(matcher *exchangeMatcher, assigned map[string]exchan
 func (w *writer) replaceExchange(ctx context.Context, sessionID string,
 	stored storedExchange, exchange parsers.Exchange) (int, int, error) {
 	values := append(exchangeColumnValues(exchange), stored.id, sessionID)
+	if err := w.recordExchangeLineage(ctx, sessionID, stored); err != nil {
+		return 0, 0, err
+	}
 	_, err := w.tx.ExecContext(ctx, `
 		UPDATE exchanges SET
 		  is_after_compaction = ?, human_text = ?, agent_text = ?,
@@ -888,6 +892,32 @@ func compatibleCandidates(candidates []storedExchange, exchange parsers.Exchange
 func compatibleContent(stored storedExchange, exchange parsers.Exchange) bool {
 	matched, conflicts := compareContent(stored, exchange)
 	return matched && !conflicts
+}
+
+func (w *writer) recordExchangeLineage(ctx context.Context, sessionID string,
+	stored storedExchange) error {
+	present, err := w.tableExists(ctx, "exchange_versions")
+	if err != nil || !present || !stored.numberValid {
+		return err
+	}
+	payload := sessionID + "\x00" + fmt.Sprintf("%d", stored.number) + "\x00" +
+		stored.humanText + "\x00" + stored.agentText
+	sum := sha256.Sum256([]byte(payload))
+	digest := hex.EncodeToString(sum[:])
+	_, err = w.tx.ExecContext(ctx, `INSERT OR IGNORE INTO exchange_versions
+		(version_digest, session_id, exchange_number) VALUES (?, ?, ?)`,
+		digest, sessionID, stored.number)
+	if err != nil {
+		return fmt.Errorf("record exchange lineage of %s/%d: %w", sessionID, stored.number, err)
+	}
+	return nil
+}
+
+func (w *writer) tableExists(ctx context.Context, name string) (bool, error) {
+	var count int
+	err := w.tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, name).Scan(&count)
+	return count == 1, err
 }
 
 func compareContent(stored storedExchange, exchange parsers.Exchange) (bool, bool) {

@@ -1,0 +1,211 @@
+package rocacorpus_test
+
+import (
+	"context"
+	"database/sql"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
+	"github.com/thellmwhisperer/la-roca/internal/store/exactdedup"
+	_ "modernc.org/sqlite"
+)
+
+func TestCompactRewritesAFatCorpusWithoutLosingCurrentRows(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "roca-corpus.db")
+	if err := rocacorpus.ApplySchema(path); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedFatCorpus(t, db)
+	if err := exactdedup.EnsureGuards(context.Background(), db); err != nil {
+		t.Fatal(err)
+	}
+	before := currentCounts(t, db)
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := rocacorpus.Compact(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Sessions != before.sessions || report.Exchanges != before.exchanges ||
+		report.ThinkingBlocks != before.thinking || report.ToolUses != before.tools {
+		t.Fatalf("current rows drifted: %+v vs %+v", report, before)
+	}
+	if report.BytesAfter <= 0 || report.BytesAfter > report.BytesBefore {
+		t.Fatalf("compact did not shrink the database: before=%d after=%d",
+			report.BytesBefore, report.BytesAfter)
+	}
+
+	db, err = sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	after := currentCounts(t, db)
+	if after != before {
+		t.Fatalf("current counts after reopen = %+v, want %+v", after, before)
+	}
+	assertNoTable(t, db, "exchange_versions_fts")
+	assertNoTable(t, db, "thinking_block_versions_fts")
+	assertNoTable(t, db, "session_versions_fts")
+	assertNoColumn(t, db, "exchange_versions", "human_text")
+	assertNoColumn(t, db, "exchange_versions", "agent_text")
+	assertNoColumn(t, db, "thinking_block_versions", "full_text")
+	var indexSQL string
+	if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_exchanges_exact_payload'`).
+		Scan(&indexSQL); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.ToLower(indexSQL), "roca_payload_hash(") {
+		t.Fatalf("payload index still stores content: %s", indexSQL)
+	}
+}
+
+func seedFatCorpus(t *testing.T, db *sql.DB) {
+	t.Helper()
+	statements := []string{
+		`INSERT INTO sessions(session_id, source_agent, title, started_at, metadata)
+			VALUES ('sess-1', 'claude', 'diet fixture', '2026-08-01T10:00:00Z', '{}')`,
+		`INSERT INTO exchanges(session_id, exchange_number, human_text, agent_text)
+			VALUES ('sess-1', 1, 'diet prompt', 'diet answer')`,
+		`INSERT INTO thinking_blocks(session_id, exchange_number, position_in_session, word_count, full_text)
+			VALUES ('sess-1', 1, 1, 2, 'diet thought')`,
+		`INSERT INTO tool_uses(session_id, exchange_number, tool_name)
+			VALUES ('sess-1', 1, 'Read')`,
+		`DROP VIEW IF EXISTS exchange_version_memberships`,
+		`DROP VIEW IF EXISTS thinking_block_version_memberships`,
+		`DROP TABLE IF EXISTS exchange_versions_fts`,
+		`DROP TABLE IF EXISTS thinking_block_versions_fts`,
+		`DROP TABLE IF EXISTS exchange_versions`,
+		`DROP TABLE IF EXISTS thinking_block_versions`,
+		`CREATE TABLE exchange_versions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			version_digest TEXT NOT NULL UNIQUE,
+			session_id TEXT NOT NULL,
+			exchange_number INTEGER,
+			is_after_compaction INTEGER,
+			human_text TEXT,
+			agent_text TEXT,
+			human_timestamp TEXT,
+			agent_timestamp TEXT,
+			response_latency_ms INTEGER,
+			model TEXT, provider TEXT,
+			tokens_in INTEGER, tokens_out INTEGER, tokens_reasoning INTEGER, cost_usd REAL)`,
+		`CREATE TABLE thinking_block_versions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			version_digest TEXT NOT NULL UNIQUE,
+			session_id TEXT NOT NULL,
+			exchange_number INTEGER,
+			position_in_session REAL,
+			depth TEXT,
+			caution_ratio REAL,
+			word_count INTEGER,
+			is_after_compaction INTEGER,
+			full_text TEXT)`,
+		`INSERT INTO exchange_versions (version_digest, session_id, exchange_number, human_text, agent_text)
+			VALUES ('` + strings.Repeat("a", 64) + `', 'sess-1', 1, 'diet prompt', 'diet answer')`,
+		`INSERT INTO thinking_block_versions (version_digest, session_id, exchange_number, word_count, full_text)
+			VALUES ('` + strings.Repeat("b", 64) + `', 'sess-1', 1, 2, 'diet thought')`,
+		`CREATE VIRTUAL TABLE exchange_versions_fts USING fts5(
+			human_text, agent_text, content='exchange_versions', content_rowid='id')`,
+		`INSERT INTO exchange_versions_fts(exchange_versions_fts) VALUES ('rebuild')`,
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+type rowCounts struct {
+	sessions, exchanges, thinking, tools int64
+}
+
+func currentCounts(t *testing.T, db *sql.DB) rowCounts {
+	t.Helper()
+	count := func(table string) int64 {
+		t.Helper()
+		var n int64
+		if err := db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	return rowCounts{
+		sessions:  count("sessions"),
+		exchanges: count("exchanges"),
+		thinking:  count("thinking_blocks"),
+		tools:     count("tool_uses"),
+	}
+}
+
+func tableExists(t *testing.T, db *sql.DB, name string) bool {
+	t.Helper()
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, name).
+		Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n == 1
+}
+
+func assertNoTable(t *testing.T, db *sql.DB, name string) {
+	t.Helper()
+	if tableExists(t, db, name) {
+		t.Fatalf("table %s still exists", name)
+	}
+}
+
+func assertNoColumn(t *testing.T, db *sql.DB, table, column string) {
+	t.Helper()
+	rows, err := db.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		if name == column {
+			t.Fatalf("%s.%s still exists", table, column)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCompactIsIdempotentOnAnAlreadySlimDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "roca-corpus.db")
+	if err := rocacorpus.ApplySchema(path); err != nil {
+		t.Fatal(err)
+	}
+	first, err := rocacorpus.Compact(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := rocacorpus.Compact(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Sessions != second.Sessions || first.Exchanges != second.Exchanges {
+		t.Fatalf("idempotent compact drifted current rows: %+v vs %+v", first, second)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() <= 0 {
+		t.Fatal("compact left an empty database")
+	}
+}

@@ -39,7 +39,11 @@ including the nightly run, reads only live Claude, Codex, Qwen Code, GLM, Cursor
 Pi, OpenCode, Hermes, Grok Build, Cowork, and the pre-federation store. It
 fingerprints each source file by path and content, so an explicit rerun of the
 same export is a zero delta and a newer export contributes only message
-identities that have not already landed.
+identities that have not already landed. A live session file that grows
+appends the new exchanges. It does not rewrite rows that already landed. A
+genuine rewrite of an existing exchange records one digest-only lineage row,
+never a second copy of the text. `roca compact` rewrites an older corpus
+database onto that one-row law and VACUUMs.
 
 The directory decides which vendor's parser reads it: `memories.json`, or a
 `conversations.json` of `chat_messages` records, is a Claude export, and

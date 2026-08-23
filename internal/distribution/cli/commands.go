@@ -1016,6 +1016,66 @@ func render(env *cliEnv, res service.QueryResult, prose string) {
 	env.print("%s", axi.Query(res, prose))
 }
 
+func compactCommand(env *cliEnv) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "compact [database]",
+		Short: "Rewrite a corpus database onto one current row per fact",
+		Long: "Removes duplicated version content and version full-text indexes, stores " +
+			"exact-payload uniqueness as a hash, and VACUUMs. Current harvest rows stay. " +
+			"Backup copies belong outside the database.",
+		Args: cobra.MaximumNArgs(1),
+		PreRun: func(*cobra.Command, []string) {
+			env.skipReconciliation = true
+			env.prelogged = true
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			target, err := compactTarget(env, args)
+			if err != nil {
+				return err
+			}
+			report, err := rocacorpus.Compact(cmd.Context(), target)
+			if err != nil {
+				return err
+			}
+			return renderCompact(env, report)
+		},
+	}
+	return cmd
+}
+
+func compactTarget(env *cliEnv, args []string) (string, error) {
+	if len(args) == 1 {
+		return filepath.Abs(args[0])
+	}
+	paths, err := env.resolvePaths()
+	if err != nil {
+		return "", err
+	}
+	root := filepath.Join(filepath.Dir(paths.DB), "plugins")
+	return filepath.Join(root, rocacorpus.Name, rocacorpus.DatabaseFilename), nil
+}
+
+func renderCompact(env *cliEnv, report rocacorpus.CompactReport) error {
+	if env.json {
+		return env.printJSON(report)
+	}
+	beforeMB := float64(report.BytesBefore) / (1024 * 1024)
+	afterMB := float64(report.BytesAfter) / (1024 * 1024)
+	reclaimedMB := float64(report.ReclaimedBytes) / (1024 * 1024)
+	env.print("storage law: one current row per fact")
+	env.print("current: sessions=%d exchanges=%d thinking=%d tools=%d",
+		report.Sessions, report.Exchanges, report.ThinkingBlocks, report.ToolUses)
+	env.print("size: %.1f MB -> %.1f MB (reclaimed %.1f MB)", beforeMB, afterMB, reclaimedMB)
+	env.print("version FTS: removed")
+	env.print("payload indexes: hash")
+	env.print("custody_memberships: source identity to digest, kept")
+	env.print("corpus_source_rows: source coordinates to digest, kept")
+	if report.AlreadyApplied {
+		env.print("rewrite: already applied")
+	}
+	return nil
+}
+
 func dedupCommand(env *cliEnv) *cobra.Command {
 	var apply bool
 	var expected, backup, backupOut, runID string

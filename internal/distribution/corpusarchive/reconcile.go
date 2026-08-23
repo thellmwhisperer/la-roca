@@ -341,18 +341,13 @@ func physicalDigestQuery(destinationTable string) (string, error) {
 		return `SELECT version_digest, session_id, source_agent, source_surface, project, started_at, ended_at,
 			duration_minutes, title, metadata FROM session_versions`, nil
 	case "exchange_versions":
-		return `SELECT version_digest, session_id, exchange_number, is_after_compaction,
-			human_text, agent_text, human_timestamp, agent_timestamp, response_latency_ms,
-			model, provider, tokens_in, tokens_out, tokens_reasoning, cost_usd
-			FROM exchange_versions`, nil
+		return `SELECT version_digest FROM exchange_versions`, nil
 	case "tool_use_versions":
 		return `SELECT version_digest, session_id, exchange_number, tool_name,
 			tool_params_summary, had_error, error_message, initiative_type
 			FROM tool_use_versions`, nil
 	case "thinking_block_versions":
-		return `SELECT version_digest, session_id, exchange_number, position_in_session,
-			depth, caution_ratio, word_count, is_after_compaction, full_text
-			FROM thinking_block_versions`, nil
+		return `SELECT version_digest FROM thinking_block_versions`, nil
 	case "ingest_file_state_versions":
 		return `SELECT version_digest, path, source_kind, source_agent, project, fingerprint,
 			last_synced_at, last_error, metadata FROM ingest_file_state_versions`, nil
@@ -375,11 +370,10 @@ func scanPhysicalDigest(rows *sql.Rows, destinationTable string) (string, string
 		return stored, canonicalDigest("session", sessionID, agent, surface, project, started, ended,
 			duration, title, metadata), nil
 	case "exchange_versions":
-		payload, err := scanExchangePayload(rows, &stored)
-		if err != nil {
+		if err := rows.Scan(&stored); err != nil {
 			return "", "", err
 		}
-		return stored, canonicalDigest("exchange", payload.values()...), nil
+		return stored, stored, nil
 	case "tool_use_versions":
 		var sessionID sql.NullString
 		var number, hadError sql.NullInt64
@@ -391,16 +385,10 @@ func scanPhysicalDigest(rows *sql.Rows, destinationTable string) (string, string
 		return stored, canonicalDigest("tool-use", sessionID.String, number, name, params,
 			hadError, errorMessage, initiative), nil
 	case "thinking_block_versions":
-		var sessionID sql.NullString
-		var number, wordCount, compacted sql.NullInt64
-		var position, caution sql.NullFloat64
-		var depth, fullText sql.NullString
-		if err := rows.Scan(&stored, &sessionID, &number, &position, &depth, &caution,
-			&wordCount, &compacted, &fullText); err != nil {
+		if err := rows.Scan(&stored); err != nil {
 			return "", "", err
 		}
-		return stored, canonicalDigest("thinking-block", sessionID.String, number, position,
-			depth, caution, wordCount, compacted, fullText), nil
+		return stored, stored, nil
 	case "ingest_file_state_versions":
 		var path string
 		var kind, agent, project, fingerprint, syncedAt, lastError, metadata sql.NullString
@@ -449,8 +437,7 @@ func readObservedProvenance(ctx context.Context, destination *sql.DB, database s
 
 func expectedProvenance(record archiveRecord) reconciliationRecord {
 	return reconciliationRecord{table: "exchanges", key: record.sourceKey,
-		digest: provenanceDigest(record.values[8], record.values[9], record.values[10],
-			record.values[11], record.values[12], record.values[13])}
+		digest: provenanceDigest(record.provenance...)}
 }
 
 func provenanceDigest(values ...any) string {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/thellmwhisperer/la-roca/data"
@@ -146,6 +147,46 @@ func TestExactCleanupRemapsSessionsAndPreservesAmbiguousPayloads(t *testing.T) {
 		if _, err := db.Exec(statement); err == nil {
 			t.Fatalf("the exact %s guard accepted a duplicate", name)
 		}
+	}
+}
+
+func TestExactPayloadGuardIndexesAHashNotThePayload(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "roca.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(data.Schema + data.SearchSchema); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO sessions(session_id, source_agent, title, started_at, metadata)
+		VALUES ('session-a', 'fixture', 'hash fixture', '2026-08-16T10:00:00Z', '{}')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO exchanges(session_id, exchange_number, human_text, agent_text)
+		VALUES ('session-a', 1, 'a long unique prompt that must not live in the index', 'answer')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := exactdedup.EnsureGuards(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	var statement string
+	if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_exchanges_exact_payload'`).
+		Scan(&statement); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.ToLower(statement), "roca_payload_hash(") {
+		t.Fatalf("exact-payload index still stores the payload: %s", statement)
+	}
+	if _, err := db.Exec(`INSERT INTO exchanges(session_id, exchange_number, human_text, agent_text)
+		VALUES ('session-a', 1, 'a long unique prompt that must not live in the index', 'answer')`); err == nil {
+		t.Fatal("hash exact-payload guard accepted a duplicate")
+	}
+	if _, err := db.Exec(`INSERT INTO exchanges(session_id, exchange_number, human_text, agent_text)
+		VALUES ('session-a', 2, 'a different prompt', 'answer')`); err != nil {
+		t.Fatalf("hash exact-payload guard rejected a different payload: %v", err)
 	}
 }
 

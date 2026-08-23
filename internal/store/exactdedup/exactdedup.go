@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thellmwhisperer/la-roca/internal/store/payloadhash"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -678,6 +680,10 @@ func EnsureTableGuards(ctx context.Context, db queryExecutor, only ...string) er
 // typeof plus a length-prefixed quoted value is stable, NULL-aware, and
 // injective across SQLite storage classes.
 func guardKeyExpression(names []string) string {
+	return payloadhash.SQLFunc + "(" + concatGuardKey(names) + ")"
+}
+
+func concatGuardKey(names []string) string {
 	parts := make([]string, len(names))
 	for i, name := range names {
 		quoted := "quote(" + name + ")"

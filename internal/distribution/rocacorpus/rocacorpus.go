@@ -8,6 +8,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/plugininstall"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
+	"github.com/thellmwhisperer/la-roca/internal/store/exactdedup"
 	"github.com/thellmwhisperer/la-roca/pkg/ingestprovenance"
 )
 
@@ -17,8 +18,8 @@ const (
 	// BundledSource is what the installer records for this package, and it is
 	// what discovery reads to know the corpus attach alias is the kernel's own.
 	BundledSource = plugin.BundledSource
-	SchemaVersion = 4
-	IndexVersion  = 2
+	SchemaVersion = 5
+	IndexVersion  = 3
 )
 
 func Ensure(root, binDir, version string) (plugininstall.Result, error) {
@@ -32,7 +33,33 @@ func ApplySchema(path string) error {
 	if err := prepareIngestProvenance(path); err != nil {
 		return err
 	}
-	return bundledplugin.ApplySchema(path, Name, schema, SchemaVersion, IndexVersion)
+	seals, err := snapshotMigrationSeals(path)
+	if err != nil {
+		return err
+	}
+	rewrote, err := applyStorageLaw(path)
+	if err != nil {
+		return err
+	}
+	if err := bundledplugin.ApplySchema(path, Name, schema, SchemaVersion, IndexVersion); err != nil {
+		return err
+	}
+	if rewrote {
+		if err := restoreMigrationSeals(path, seals); err != nil {
+			return err
+		}
+	}
+	db, err := bundledplugin.OpenDatabase(path, false)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := exactdedup.EnsureGuards(context.Background(), db); err != nil {
+		// A corpus that still has exact duplicates cannot take the unique hash
+		// index. Version content is already gone; uniqueness waits on exact dedup.
+		return nil
+	}
+	return nil
 }
 
 // prepareIngestProvenance upgrades the corpus before the migration ledger is
@@ -88,22 +115,16 @@ func prepareIngestProvenance(path string) error {
 		}
 	}
 	archiveAltered := archiveTablePresent && !archiveColumnPresent
-	if altered || archiveAltered {
+	if altered {
 		// SQLite validates an external-content FTS table against its content
 		// table while ALTER runs. Retire the derived session index first and let
 		// the canonical declaration recreate it after the column is present.
-		var statements []string
-		if altered {
-			statements = append(statements,
-				`DROP TRIGGER IF EXISTS sessions_ai`,
-				`DROP TRIGGER IF EXISTS sessions_ad`,
-				`DROP TRIGGER IF EXISTS sessions_au`,
-				`DROP TABLE IF EXISTS sessions_fts`)
-		}
-		if archiveAltered {
-			statements = append(statements, `DROP TABLE IF EXISTS session_versions_fts`)
-		}
-		for _, statement := range statements {
+		for _, statement := range []string{
+			`DROP TRIGGER IF EXISTS sessions_ai`,
+			`DROP TRIGGER IF EXISTS sessions_ad`,
+			`DROP TRIGGER IF EXISTS sessions_au`,
+			`DROP TABLE IF EXISTS sessions_fts`,
+		} {
 			if _, err := tx.Exec(statement); err != nil {
 				return fmt.Errorf("retire the derived session index: %w", err)
 			}
@@ -133,11 +154,6 @@ func prepareIngestProvenance(path string) error {
 	if altered {
 		if _, err := tx.Exec(`INSERT INTO sessions_fts(sessions_fts) VALUES ('rebuild')`); err != nil {
 			return fmt.Errorf("rebuild the derived session index: %w", err)
-		}
-	}
-	if archiveAltered {
-		if _, err := tx.Exec(`INSERT INTO session_versions_fts(session_versions_fts) VALUES ('rebuild')`); err != nil {
-			return fmt.Errorf("rebuild the derived archived session index: %w", err)
 		}
 	}
 	var legacyGrokModels int

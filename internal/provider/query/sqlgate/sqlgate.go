@@ -43,10 +43,11 @@ const MaxLimit = 1000
 // declares them so its database stays self-describing, but which batch carried
 // which row is custody bookkeeping and never an answer about the fleet.
 //
-// The block after them is the corpus archive shadow: the version tables, their
-// rebuilt FTS indexes, the source evidence, and the compatibility views. They
-// are migration machinery until the cutover makes them the serving surface, so
-// nothing here answers a question yet.
+// The block after them is the corpus archive shadow: digest-only version
+// tables, the source evidence, and the compatibility views. They are
+// migration machinery until the cutover makes them the serving surface, so
+// nothing here answers a question yet. Version FTS names stay hidden so a
+// leftover table from an older database cannot answer a question.
 //
 // The memory names continue the list for the same reason: DATA-2's custody
 // tables and compatibility view stay shadow-only until the atomic federation

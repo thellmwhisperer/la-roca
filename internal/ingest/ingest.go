@@ -671,6 +671,9 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 				opsCounts.MemoriesInserted + opsCounts.MemoriesUpdated,
 			"message_coverage": records.MessageCoverage,
 		}
+		if info, statErr := os.Stat(target.Path); statErr == nil {
+			summary["byte_offset"] = info.Size()
+		}
 		if !destinationsComplete {
 			return nil
 		}

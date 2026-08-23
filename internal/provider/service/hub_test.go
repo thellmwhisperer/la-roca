@@ -560,6 +560,12 @@ func seedHubCoreSession(t *testing.T, plugins, sessionID, agent, surface string)
 	defer db.Close()
 	digest := strings.Repeat("b", 64)
 	batchID := "fixture-session-batch"
+	if _, err := db.Exec(`INSERT INTO sessions
+		(session_id, source_agent, source_surface, title, metadata)
+		VALUES (?, ?, ?, 'Synthetic OpenCode session', '{}')`,
+		sessionID, agent, surface); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(`INSERT INTO session_versions
 		(version_digest, session_id, source_agent, source_surface, title, metadata)
 		VALUES (?, ?, ?, ?, 'Synthetic OpenCode session', '{}')`,

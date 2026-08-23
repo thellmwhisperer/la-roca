@@ -675,15 +675,21 @@ the semantic fragment used by NL-to-SQL, custody, and plugin-owned archive
 retention. Existing ingest and query behavior is unchanged by the migration.
 
 Its schema also declares the shadow archive the retired core history is copied
-into: one version table per family, full-text indexes rebuilt over the ones
-that carry text, and the evidence tying each version back to the source row it
-came from. Those tables are migration machinery rather than fleet memory, so
-they stay hidden from every query surface, and the served tables above keep
-answering exactly as before until the atomic cutover. Each family is a named
-custody migration of its own, `corpus-archive-<family>`, because a migration
-owns exactly one destination. The five family migrations retain their
-table-level archive seal, and cutover additionally requires the versioned
-DATA-3 reconciliation seal.
+into: one digest-only version table per family, and the evidence tying each
+version back to the source row it came from. Version rows store the payload
+hash, source coordinates, and observed time. They never store a second copy of
+`human_text`, `agent_text`, or `full_text`. There is no full-text index over
+versions: search uses the current harvest tables. Those tables are migration
+machinery rather than fleet memory, so they stay hidden from every query
+surface, and the served tables above keep answering exactly as before until the
+atomic cutover. Each family is a named custody migration of its own,
+`corpus-archive-<family>`, because a migration owns exactly one destination.
+The five family migrations retain their table-level archive seal, and cutover
+additionally requires the versioned DATA-3 reconciliation seal.
+
+`roca compact` rewrites an existing corpus database onto that one-row law and
+VACUUMs. Current session, exchange, thinking, and tool rows stay. Backup copies
+belong outside the database.
 
 That reconciliation rereads the same frozen sources and compares every source
 database and table by occurrence count and canonical payload hash. It also

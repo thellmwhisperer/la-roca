@@ -23,6 +23,7 @@ type archiveRecord struct {
 	digest           string
 	destinationTable string
 	values           []any
+	provenance       []any
 	sourceRowID      sql.NullInt64
 	sessionID        sql.NullString
 	exchangeNumber   sql.NullInt64
@@ -54,9 +55,25 @@ func scanExchangePayload(rows *sql.Rows, identity any) (exchangePayload, error) 
 }
 
 func (payload exchangePayload) values() []any {
+	return payload.insertValues()
+}
+
+func (payload exchangePayload) digestValues() []any {
 	return []any{payload.sessionID.String, payload.number, payload.compacted,
 		payload.human, payload.agent, payload.humanAt, payload.agentAt, payload.latency,
 		payload.model, payload.provider, payload.tokensIn, payload.tokensOut,
+		payload.tokensReasoning, payload.cost}
+}
+
+func (payload exchangePayload) insertValues() []any {
+	return []any{payload.sessionID.String, payload.number, payload.compacted,
+		payload.humanAt, payload.agentAt, payload.latency,
+		payload.model, payload.provider, payload.tokensIn, payload.tokensOut,
+		payload.tokensReasoning, payload.cost}
+}
+
+func (payload exchangePayload) provenanceValues() []any {
+	return []any{payload.model, payload.provider, payload.tokensIn, payload.tokensOut,
 		payload.tokensReasoning, payload.cost}
 }
 
@@ -295,9 +312,9 @@ func insertStatement(destinationTable string) (string, error) {
 	case "exchange_versions":
 		return `INSERT OR IGNORE INTO exchange_versions
 			(version_digest, session_id, exchange_number, is_after_compaction,
-			 human_text, agent_text, human_timestamp, agent_timestamp, response_latency_ms,
+			 human_timestamp, agent_timestamp, response_latency_ms,
 			 model, provider, tokens_in, tokens_out, tokens_reasoning, cost_usd)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, nil
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, nil
 	case "tool_use_versions":
 		return `INSERT OR IGNORE INTO tool_use_versions
 			(version_digest, session_id, exchange_number, tool_name, tool_params_summary,
@@ -305,8 +322,8 @@ func insertStatement(destinationTable string) (string, error) {
 	case "thinking_block_versions":
 		return `INSERT OR IGNORE INTO thinking_block_versions
 			(version_digest, session_id, exchange_number, position_in_session, depth,
-			 caution_ratio, word_count, is_after_compaction, full_text)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, nil
+			 caution_ratio, word_count, is_after_compaction)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, nil
 	case "ingest_file_state_versions":
 		return `INSERT OR IGNORE INTO ingest_file_state_versions
 			(version_digest, path, source_kind, source_agent, project, fingerprint,
@@ -373,14 +390,14 @@ func scanExchange(rows *sql.Rows, tracker *occurrenceTracker) (archiveRecord, er
 	if !payload.sessionID.Valid {
 		return archiveRecord{}, fmt.Errorf("exchange %d has no deterministic session/exchange key", id)
 	}
-	values := payload.values()
-	digest := canonicalDigest("exchange", values...)
+	digest := canonicalDigest("exchange", payload.digestValues()...)
 	ordinal := sql.NullInt64{Int64: tracker.next(payload.sessionID, payload.number, digest), Valid: true}
 	return archiveRecord{
 		sourceKey: occurrenceKey("exchange", payload.sessionID, payload.number, digest, ordinal.Int64),
 		digest:    digest, destinationTable: "exchange_versions",
-		values: values, sourceRowID: sql.NullInt64{Int64: id, Valid: true},
-		sessionID: payload.sessionID, exchangeNumber: payload.number, ordinal: ordinal,
+		values: payload.insertValues(), provenance: payload.provenanceValues(),
+		sourceRowID: sql.NullInt64{Int64: id, Valid: true},
+		sessionID:   payload.sessionID, exchangeNumber: payload.number, ordinal: ordinal,
 	}, nil
 }
 
@@ -413,10 +430,10 @@ func scanThinkingBlock(rows *sql.Rows, tracker *occurrenceTracker) (archiveRecor
 	if !sessionID.Valid {
 		return archiveRecord{}, fmt.Errorf("thinking block %d has no deterministic parent turn", id)
 	}
-	values := []any{sessionID.String, number, position, depth, caution,
-		wordCount, compacted, fullText}
-	digest := canonicalDigest("thinking-block", values...)
+	digest := canonicalDigest("thinking-block", sessionID.String, number, position, depth, caution,
+		wordCount, compacted, fullText)
 	ordinal := tracker.next(sessionID, number, digest)
+	values := []any{sessionID.String, number, position, depth, caution, wordCount, compacted}
 	return childRecord("thinking_block_versions", id, sessionID, number, ordinal, digest, values), nil
 }
 
