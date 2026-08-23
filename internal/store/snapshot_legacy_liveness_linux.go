@@ -1,7 +1,7 @@
 //go:build linux
 
 /**
- * @overview Detects live lease-less legacy snapshots through Linux procfs. ~85 lines, no public symbols.
+ * @overview Detects live lease-less legacy snapshots through Linux procfs. ~100 lines, no public symbols.
  *
  *   READING GUIDE
  *   -------------
@@ -18,7 +18,7 @@
  *
  *   INTERNALS
  *   ---------
- *   legacySnapshotHasOpenHandles, snapshotTargetWithin
+ *   legacySnapshotHasOpenHandles, snapshotTargetWithin, snapshotProcVanished
  *
  * @exports
  * @deps Linux procfs
@@ -27,6 +27,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -58,7 +59,7 @@ func legacySnapshotHasOpenHandles(ctx context.Context, directory string) (bool, 
 		}
 		processRoot := filepath.Join("/proc", process.Name())
 		info, err := os.Stat(processRoot)
-		if os.IsNotExist(err) {
+		if snapshotProcVanished(err) {
 			continue
 		}
 		if err != nil {
@@ -69,7 +70,7 @@ func legacySnapshotHasOpenHandles(ctx context.Context, directory string) (bool, 
 			continue
 		}
 		fds, err := os.ReadDir(filepath.Join(processRoot, "fd"))
-		if os.IsNotExist(err) {
+		if snapshotProcVanished(err) {
 			continue
 		}
 		if err != nil {
@@ -77,7 +78,7 @@ func legacySnapshotHasOpenHandles(ctx context.Context, directory string) (bool, 
 		}
 		for _, fd := range fds {
 			target, err := os.Readlink(filepath.Join(processRoot, "fd", fd.Name()))
-			if os.IsNotExist(err) {
+			if snapshotProcVanished(err) {
 				continue
 			}
 			if err != nil {
@@ -95,4 +96,12 @@ func snapshotTargetWithin(directory, target string) bool {
 	cleanDirectory := filepath.Clean(directory)
 	cleanTarget := filepath.Clean(target)
 	return cleanTarget == cleanDirectory || strings.HasPrefix(cleanTarget, cleanDirectory+string(os.PathSeparator))
+}
+
+// snapshotProcVanished reports whether a procfs read failed because the process
+// or file descriptor being inspected no longer exists. ENOENT and ESRCH both
+// mean the process is gone and can no longer hold a snapshot open, so the scan
+// may skip it instead of aborting the whole probe.
+func snapshotProcVanished(err error) bool {
+	return os.IsNotExist(err) || errors.Is(err, syscall.ESRCH)
 }
