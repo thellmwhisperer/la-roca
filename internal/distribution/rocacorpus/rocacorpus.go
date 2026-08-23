@@ -17,8 +17,8 @@ const (
 	// BundledSource is what the installer records for this package, and it is
 	// what discovery reads to know the corpus attach alias is the kernel's own.
 	BundledSource = plugin.BundledSource
-	SchemaVersion = 4
-	IndexVersion  = 2
+	SchemaVersion = 5
+	IndexVersion  = 3
 )
 
 func Ensure(root, binDir, version string) (plugininstall.Result, error) {
@@ -29,10 +29,49 @@ func Ensure(root, binDir, version string) (plugininstall.Result, error) {
 // guarded, so a version update over a database that already carries the harvest
 // leaves its rows untouched.
 func ApplySchema(path string) error {
+	return applySchema(context.Background(), path)
+}
+
+func applySchema(ctx context.Context, path string) error {
 	if err := prepareIngestProvenance(path); err != nil {
 		return err
 	}
-	return bundledplugin.ApplySchema(path, Name, schema, SchemaVersion, IndexVersion)
+	seals, err := snapshotMigrationSeals(path)
+	if err != nil {
+		return err
+	}
+	db, err := bundledplugin.OpenDatabase(path, false)
+	if err != nil {
+		return err
+	}
+	if err := preflightHashGuards(ctx, db); err != nil {
+		db.Close()
+		return fmt.Errorf("corpus schema upgrade requires exact dedup first: %w", err)
+	}
+	if err := db.Close(); err != nil {
+		return err
+	}
+	rewrote, err := applyStorageLaw(ctx, path, false)
+	if err != nil {
+		return err
+	}
+	if err := bundledplugin.ApplySchema(path, Name, schema, SchemaVersion, IndexVersion); err != nil {
+		return err
+	}
+	if rewrote {
+		if err := restoreMigrationSeals(path, seals); err != nil {
+			return err
+		}
+	}
+	db, err = bundledplugin.OpenDatabase(path, false)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := installHashGuards(ctx, db); err != nil {
+		return fmt.Errorf("install corpus hash guards: %w", err)
+	}
+	return nil
 }
 
 // prepareIngestProvenance upgrades the corpus before the migration ledger is
@@ -89,9 +128,6 @@ func prepareIngestProvenance(path string) error {
 	}
 	archiveAltered := archiveTablePresent && !archiveColumnPresent
 	if altered || archiveAltered {
-		// SQLite validates an external-content FTS table against its content
-		// table while ALTER runs. Retire the derived session index first and let
-		// the canonical declaration recreate it after the column is present.
 		var statements []string
 		if altered {
 			statements = append(statements,
@@ -133,11 +169,6 @@ func prepareIngestProvenance(path string) error {
 	if altered {
 		if _, err := tx.Exec(`INSERT INTO sessions_fts(sessions_fts) VALUES ('rebuild')`); err != nil {
 			return fmt.Errorf("rebuild the derived session index: %w", err)
-		}
-	}
-	if archiveAltered {
-		if _, err := tx.Exec(`INSERT INTO session_versions_fts(session_versions_fts) VALUES ('rebuild')`); err != nil {
-			return fmt.Errorf("rebuild the derived archived session index: %w", err)
 		}
 	}
 	var legacyGrokModels int

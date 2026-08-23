@@ -102,7 +102,7 @@ type claudeBuilder struct {
 // the next one, which is what makes "what did we decide before the compaction"
 // answerable.
 func ParseClaudeSession(content []byte, meta FileMeta) (Records, error) {
-	builder := &claudeBuilder{pending: map[string]*ToolUse{}}
+	builder := &claudeBuilder{pending: map[string]*ToolUse{}, number: meta.ExchangeNumberOffset}
 	cwd, model := "", ""
 	discards, validLines := consumeClaudeLines(content, func(line claudeLine) {
 		if cwd == "" {
@@ -146,7 +146,7 @@ func ParseClaudeSession(content []byte, meta FileMeta) (Records, error) {
 // ParseCoworkAudit turns a Cowork audit transcript into one session, merging in
 // what its paired metadata file declares about it.
 func ParseCoworkAudit(content []byte, meta FileMeta) (Records, error) {
-	builder := &claudeBuilder{auditMode: true, pending: map[string]*ToolUse{}}
+	builder := &claudeBuilder{auditMode: true, pending: map[string]*ToolUse{}, number: meta.ExchangeNumberOffset}
 	firstSessionID := ""
 	discards, _ := consumeClaudeLines(content, func(line claudeLine) {
 		if firstSessionID == "" {
@@ -163,13 +163,14 @@ func ParseCoworkAudit(content []byte, meta FileMeta) (Records, error) {
 
 	sidecar := readSessionMetadata(meta.Sidecar)
 	session := Session{
-		ID:          firstNonEmpty(sidecar.sessionID, meta.SessionID, firstSessionID),
-		SourceAgent: firstNonEmpty(meta.SourceAgent, "cowork"),
-		Project:     meta.Project,
-		Title:       sidecar.title,
-		Snapshot:    true,
-		Exchanges:   exchanges,
-		Metadata:    map[string]any{"entrypoint": "claude-cowork"},
+		ID:                           firstNonEmpty(sidecar.sessionID, meta.SessionID, firstSessionID),
+		SourceAgent:                  firstNonEmpty(meta.SourceAgent, "cowork"),
+		Project:                      meta.Project,
+		Title:                        sidecar.title,
+		Snapshot:                     !meta.Incremental,
+		ExchangeNumbersAuthoritative: true,
+		Exchanges:                    exchanges,
+		Metadata:                     map[string]any{"entrypoint": "claude-cowork"},
 	}
 	if sidecar.initialMessage != "" {
 		session.Metadata["initial_message"] = sidecar.initialMessage

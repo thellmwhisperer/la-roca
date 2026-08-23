@@ -215,7 +215,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 		"refuse database, audit, and reconciliation writes")
 	commands := []*cobra.Command{
 		versionCommand(env), initCommand(env), exploreCommand(env), schemaCommand(env),
-		indexCommand(env), doctorCommand(env), dedupCommand(env), memoryCommand(env), layersCommand(env),
+		indexCommand(env), doctorCommand(env), dedupCommand(env), compactCommand(env), memoryCommand(env), layersCommand(env),
 		healthCommand(env), databaseScopeCommand(env),
 		mcpCommand(env), skillCommand(env), hooksCommand(env),
 		loginCommand(env), modelCommand(env),

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/data"
+	_ "github.com/thellmwhisperer/la-roca/internal/store/payloadhash"
 	sqlite "modernc.org/sqlite"
 )
 
