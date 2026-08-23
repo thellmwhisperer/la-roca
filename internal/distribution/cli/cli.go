@@ -27,6 +27,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
+	"github.com/thellmwhisperer/la-roca/internal/store"
 )
 
 // Build is what the linker put inside the binary.
@@ -100,7 +101,15 @@ func execute(build Build, out, errOut io.Writer, args []string) (int, error) {
 	return executeCommand(build, out, errOut, args, false)
 }
 
-func executeCommand(build Build, out, errOut io.Writer, args []string, plugins bool) (int, error) {
+func executeCommand(build Build, out, errOut io.Writer, args []string, plugins bool) (code int, resultErr error) {
+	defer func() {
+		if err := store.CloseReadOnlySnapshots(); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("close read-only snapshots: %w", err))
+			if code == ExitOK {
+				code = ExitError
+			}
+		}
+	}()
 	started := time.Now()
 	env := &cliEnv{build: build, out: out, errOut: errOut, started: started}
 	return executeWithOptions(env, args, nil, plugins)

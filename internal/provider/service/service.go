@@ -15,6 +15,7 @@ import (
 	"unicode"
 
 	"github.com/thellmwhisperer/la-roca/internal/artifact"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/layers"
@@ -175,7 +176,14 @@ func Open(opts Options) (*Service, error) {
 // EnableSnapshotLogs writes snapshot create and reap records to dataDir/logs.
 // The CLI calls it before any read-only snapshot is taken.
 func EnableSnapshotLogs(dataDir string) {
-	store.SetSnapshotLogDir(dataDir)
+	if strings.TrimSpace(dataDir) == "" {
+		store.SetSnapshotLogWriter(nil)
+		return
+	}
+	writer := logfile.New(dataDir)
+	store.SetSnapshotLogWriter(func(record map[string]any) error {
+		return writer.Append(logfile.Snapshots, record)
+	})
 }
 
 func openWithContext(ctx context.Context, opts Options) (*Service, error) {
@@ -183,7 +191,7 @@ func openWithContext(ctx context.Context, opts Options) (*Service, error) {
 	if logDir == "" && opts.DBPath != "" {
 		logDir = filepath.Dir(opts.DBPath)
 	}
-	store.SetSnapshotLogDir(logDir)
+	EnableSnapshotLogs(logDir)
 	registry, err := layers.Load()
 	if err != nil {
 		return nil, err
