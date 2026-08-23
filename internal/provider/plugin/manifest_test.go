@@ -243,7 +243,8 @@ func TestManifestEngineDiscoversAttachesComposesAndRegisters(t *testing.T) {
 	registry := plugin.ComposeVectorRegistry(databases)
 	if len(registry.Databases) != 1 || registry.Databases[0].Plugin != "synthetic" ||
 		registry.Databases[0].Database != "records" || registry.Databases[0].Path != "records.db" ||
-		registry.Databases[0].Alias != "synthetic_records" {
+		registry.Databases[0].Alias != "synthetic_records" ||
+		!slices.Equal(registry.Databases[0].Tables[0].Columns, []string{"id", "value"}) {
 		t.Fatalf("vector registry = %+v", registry)
 	}
 	if len(registry.Routes) != 2 || registry.Routes[0].Database != "records" ||
@@ -256,7 +257,8 @@ func TestManifestEngineDiscoversAttachesComposesAndRegisters(t *testing.T) {
 	}
 	loadedRegistry, err := plugin.LoadVectorRegistry(registryPath)
 	if err != nil || len(loadedRegistry.Databases) != 1 || len(loadedRegistry.Routes) != 2 ||
-		!slices.Equal(loadedRegistry.Databases[0].Tables[0].TextColumns, []string{"value"}) {
+		!slices.Equal(loadedRegistry.Databases[0].Tables[0].TextColumns, []string{"value"}) ||
+		!slices.Equal(loadedRegistry.Databases[0].Tables[0].Columns, []string{"id", "value"}) {
 		t.Fatalf("loaded vector registry = %+v, err = %v", loadedRegistry, err)
 	}
 	invalidRegistry := registry

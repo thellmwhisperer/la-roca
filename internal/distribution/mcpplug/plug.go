@@ -347,6 +347,8 @@ func resultRows(value any) int {
 		return resultRows(result.Meta)
 	case service.QueryResult:
 		return result.RowCount
+	case service.SearchResult:
+		return result.RowCount
 	case service.ExecResult:
 		return result.RowCount
 	case service.StoreResult:
@@ -396,6 +398,11 @@ func rendered[T any](res T, err error, paint func(T) string) (*mcp.CallToolResul
 	metadata := mcp.Meta{
 		"row_count": resultRows(res),
 		"degraded":  resultDegraded(res),
+	}
+	if search, ok := any(res).(service.SearchResult); ok {
+		metadata["question"] = search.Question
+		metadata["engines"] = search.Engines
+		metadata["row_count"] = search.RowCount
 	}
 	if stored, ok := any(res).(service.StoreResult); ok {
 		metadata["id"] = stored.ID
@@ -469,6 +476,10 @@ func queryText(res service.QueryResult, err error) (*mcp.CallToolResult, any, er
 		result.IsError = service.IsDegradedFailure(res.Degraded)
 	}
 	return result, nil, callErr
+}
+
+func searchText(res service.SearchResult, err error) (*mcp.CallToolResult, any, error) {
+	return rendered(res, err, axi.MCPSearch)
 }
 
 func exploreText(res service.QueryResult, err error) (*mcp.CallToolResult, any, error) {

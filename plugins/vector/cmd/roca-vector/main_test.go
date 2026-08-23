@@ -70,6 +70,12 @@ func TestDeltaFlagAndReadOnlyBoundaryAreExplicit(t *testing.T) {
 	if flag := queryCommand(env).Flags().Lookup("databases"); flag == nil {
 		t.Fatal("federated query has no --databases flag")
 	}
+	if flag := queryCommand(env).Flags().Lookup("expand-templates"); flag == nil {
+		t.Fatal("vector query has no --expand-templates flag")
+	}
+	if flag := queryCommand(env).Flags().Lookup("min-score"); flag == nil {
+		t.Fatal("vector query has no --min-score flag")
+	}
 }
 
 func TestIngestProgressFormatsCountsRateAndETA(t *testing.T) {

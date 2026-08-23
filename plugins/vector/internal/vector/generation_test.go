@@ -25,8 +25,10 @@ func TestDeclaredWalkEmitsPerColumnChunkIdentity(t *testing.T) {
 	writeRegistry(t, root, vectorRegistry{Schema: 1, Databases: []vectorDatabase{{
 		Plugin: "roca-corpus", Database: "corpus", Path: "roca-corpus.db", Alias: "plugin_roca_corpus",
 		Tables: []vectorTable{
-			{Name: "sessions", IDColumn: "session_id", TextColumns: []string{"title", "project"}},
-			{Name: "exchanges", IDColumn: "id", TextColumns: []string{"human_text", "agent_text"}},
+			{Name: "sessions", IDColumn: "session_id", TextColumns: []string{"title", "project"},
+				Columns: []string{"session_id", "title", "project", "started_at"}},
+			{Name: "exchanges", IDColumn: "id", TextColumns: []string{"human_text", "agent_text"},
+				Columns: []string{"id", "session_id", "exchange_number", "human_text", "agent_text", "human_timestamp", "agent_timestamp"}},
 		},
 	}}})
 	runner := sqliteExecRunner(t, map[string]string{"plugin_roca_corpus": dbPath})
@@ -164,7 +166,8 @@ func TestDeclaredPagesNewestFirst(t *testing.T) {
 			"plugin_roca_ops": dbPath,
 		})},
 		Database: vectorDatabase{Plugin: "roca-ops", Database: "ops", Alias: "plugin_roca_ops",
-			Tables: []vectorTable{{Name: "memories", IDColumn: "id", TextColumns: []string{"content"}}}},
+			Tables: []vectorTable{{Name: "memories", IDColumn: "id", TextColumns: []string{"content"},
+				Columns: []string{"id", "content", "project", "created_at"}}}},
 	}
 	got := make([]string, 0, len(want))
 	if err := corpus.WalkSources(context.Background(), "memories", func(row sourceRow) error {

@@ -23,7 +23,8 @@ roca query "what did we decide about <something your user cares about>"
 ```
 
 `roca init` runs the first ingest. Later, `roca ingest` picks up whatever is
-new. Every answer shows the SQL that produced it and the rows that back it.
+new. `roca query` is hybrid search with labeled evidence; `roca exec` is the
+checked SELECT seat.
 
 ## Read the installed skills, now, not later
 
@@ -66,9 +67,9 @@ contract: docs/vector.md.
 
 Read `roca-operations` before your first real search. Write the SQL yourself
 against the semantic catalog and run it with `roca exec`. That is the craft.
-Anything that spends inference is last resort: `roca query` and `roca explore`
-only when you cannot express the question as SQL. `--full` is for humans;
-agents do not use it.
+`roca query` is hybrid search (FTS plus vector, zero answering-model
+inference). Anything that spends inference is last resort: `roca playground`
+and `roca explore`. `--full` is for humans; agents do not use it.
 
 A fresh install has no vector index. Exec still works. When the index exists,
 that same skill makes the hybrid loop mandatory: vector search finds the

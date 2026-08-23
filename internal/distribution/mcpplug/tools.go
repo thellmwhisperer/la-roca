@@ -24,14 +24,12 @@ var (
 	}
 	queryTool = &mcp.Tool{
 		Name: "roca_query",
-		Description: "Query La Roca, the local memory of past conversations, " +
-			"decisions and learnings across every project on this machine.\n\n" +
-			"Good questions are short and specific:\n" +
-			"- \"count memories by project\" — analytics\n" +
-			"- \"what do we know about ffmpeg\" — concept search\n" +
-			"- \"what feedback do we have\" — ask in any language; the corpus answers with what it holds\n\n" +
-			"Keep it under 15 words and one concept per question. " +
-			"The hard input cap is 1000 characters. With zero results, rephrase with different keywords.",
+		Description: "Hybrid FTS and vector search over La Roca, the local memory of past " +
+			"conversations, decisions and learnings. Zero answering-model inference: rarity-selected " +
+			"full-text plus template-expanded vector neighbors, fused with RRF. Without a vector " +
+			"index the same tool runs full-text alone.\n\n" +
+			"Good questions are short and specific. The hard input cap is 1000 characters. " +
+			"Each hit names which legs found it. Use require_both for dual-confirmed precision.",
 	}
 	sqlTool = &mcp.Tool{
 		Name: "roca_sql",
@@ -67,10 +65,11 @@ func (a execArgs) request() service.ExecRequest {
 // queryArgs is what an agent sends to ask a question. A zero budget reaches the
 // service, where the shared default is applied for every surface.
 type queryArgs struct {
-	Query     string `json:"query" jsonschema:"non-empty natural-language question, preferably under 15 words, maximum 1000 characters"`
-	Layer     string `json:"layer,omitempty" jsonschema:"restrict the answer to one memory layer"`
-	MaxChars  int    `json:"max_chars,omitempty" jsonschema:"character budget per text field"`
-	Databases string `json:"databases,omitempty" jsonschema:"comma list of attached database names (corpus,ops), or all"`
+	Query       string `json:"query" jsonschema:"non-empty natural-language question, preferably under 15 words, maximum 1000 characters"`
+	Top         int    `json:"top,omitempty" jsonschema:"number of fused hits to return, default 10"`
+	RequireBoth bool   `json:"require_both,omitempty" jsonschema:"keep only hits found by both FTS and vector"`
+	MaxChars    int    `json:"max_chars,omitempty" jsonschema:"character budget per snippet"`
+	Databases   string `json:"databases,omitempty" jsonschema:"comma list of attached database names (corpus,ops), or all"`
 }
 
 // exploreArgs declares the investigation mission. The tool name declares
@@ -93,12 +92,13 @@ func (a exploreArgs) request() service.ExploreRequest {
 	}
 }
 
-func (a queryArgs) request() service.QueryRequest {
-	return service.QueryRequest{
-		Question:  a.Query,
-		Layer:     a.Layer,
-		MaxChars:  a.MaxChars,
-		Databases: mustParseDatabases(a.Databases),
+func (a queryArgs) request() service.SearchRequest {
+	return service.SearchRequest{
+		Question:    a.Query,
+		Top:         a.Top,
+		RequireBoth: a.RequireBoth,
+		MaxChars:    a.MaxChars,
+		Databases:   mustParseDatabases(a.Databases),
 	}
 }
 

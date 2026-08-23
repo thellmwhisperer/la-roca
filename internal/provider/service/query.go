@@ -384,7 +384,7 @@ func MergeWidenedResult(first, widened QueryResult) QueryResult {
 }
 
 // ExecRequest is a SELECT the caller wants to run as it is. It is the natural
-// companion of `query --sql-only`.
+// companion of `playground --sql-only`.
 type ExecRequest struct {
 	SQL      string
 	MaxChars int

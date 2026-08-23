@@ -229,7 +229,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 		panic(fmt.Sprintf("invalid bundled ops manifest: %v", err))
 	}
 	if opsManifest.HasVerb(service.QueryVerb) {
-		commands = append(commands, queryCommand(env))
+		commands = append(commands, queryCommand(env), playgroundCommand(env))
 	}
 	if opsManifest.HasVerb(service.ExecVerb) {
 		commands = append(commands, execCommand(env))
@@ -262,7 +262,7 @@ func rootCommand(env *cliEnv) *cobra.Command {
 
 func publicCommand(name string) bool {
 	switch name {
-	case "init", "query", "explore", "store", "ingest", "model", "doctor", "update", "uninstall", "plugin", "plugins", "hooks", "cron", "layers", "remote":
+	case "init", "query", "playground", "explore", "store", "ingest", "model", "doctor", "update", "uninstall", "plugin", "plugins", "hooks", "cron", "layers", "remote":
 		return true
 	default:
 		return false
@@ -827,6 +827,10 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 			})
 		}
 	}
+	vectorSearch := service.VectorSearchFunc(nil)
+	if file.Features.Vector {
+		vectorSearch = service.PluginVectorSearch(paths.DB)
+	}
 	svc, err := service.Open(service.Options{
 		DBPath:                    paths.DB,
 		BackupDir:                 paths.Backups,
@@ -851,6 +855,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		ConfigExists:              file.Exists,
 		Sources:                   ingestSources(file, home, paths.Runner),
 		ReadOnly:                  readOnly,
+		VectorSearch:              vectorSearch,
 		Progress: func(line string) {
 			if !env.json && strings.HasPrefix(line, "index: rebuilding") {
 				env.initSay("%s", line)

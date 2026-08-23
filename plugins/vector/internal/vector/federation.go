@@ -54,6 +54,7 @@ type vectorTable struct {
 	Name        string         `json:"name"`
 	IDColumn    string         `json:"id_column"`
 	TextColumns []string       `json:"text_columns"`
+	Columns     []string       `json:"columns,omitempty"`
 	Chunking    *chunkingHints `json:"chunking,omitempty"`
 }
 
@@ -181,6 +182,26 @@ func validateRegistry(registry vectorRegistry) error {
 				}
 				seenColumns[column] = true
 			}
+			catalogColumns := map[string]bool{}
+			for _, column := range table.Columns {
+				if !validIdentifier(column) || catalogColumns[column] {
+					return fmt.Errorf("vector registry table %s/%s has invalid catalog column %q",
+						owner, table.Name, column)
+				}
+				catalogColumns[column] = true
+			}
+			if len(catalogColumns) > 0 {
+				if !catalogColumns[table.IDColumn] {
+					return fmt.Errorf("vector registry table %s/%s catalog omits id column %q",
+						owner, table.Name, table.IDColumn)
+				}
+				for _, column := range table.TextColumns {
+					if !catalogColumns[column] {
+						return fmt.Errorf("vector registry table %s/%s catalog omits text column %q",
+							owner, table.Name, column)
+					}
+				}
+			}
 			if err := validateChunking(table.Chunking); err != nil {
 				return fmt.Errorf("vector registry table %s/%s: %w", owner, table.Name, err)
 			}
@@ -226,6 +247,7 @@ type FederatedQuery struct {
 	Databases       []string              `json:"databases"`
 	Model           string                `json:"model,omitempty"`
 	MixedModels     bool                  `json:"mixed_models"`
+	VectorExecuted  bool                  `json:"vector_executed"`
 	Results         []Result              `json:"results"`
 	DatabaseResults []DatabaseQueryResult `json:"database_results,omitempty"`
 	Notices         []string              `json:"notices"`
@@ -245,8 +267,30 @@ type queryTarget struct {
 }
 
 func (f Federation) Query(ctx context.Context, text string, k int, databaseList string) (FederatedQuery, error) {
+	return f.queryTexts(ctx, []string{text}, k, databaseList, 0, true)
+}
+
+// QueryExpanded embeds the raw query and the static question templates,
+// unions the KNN lists, applies minScore, and dedupes by stable source.
+func (f Federation) QueryExpanded(ctx context.Context, text string, k int,
+	databaseList string, minScore float64) (FederatedQuery, error) {
+	return f.queryTexts(ctx, ExpandedQueries(text), k, databaseList, minScore, false)
+}
+
+func (f Federation) queryTexts(ctx context.Context, texts []string, k int, databaseList string,
+	minScore float64, trimToK bool) (FederatedQuery, error) {
 	result := FederatedQuery{Databases: []string{}, Results: []Result{}, Notices: []string{}}
-	if strings.TrimSpace(text) == "" {
+	cleaned := make([]string, 0, len(texts))
+	seenText := map[string]bool{}
+	for _, text := range texts {
+		text = strings.TrimSpace(text)
+		if text == "" || seenText[text] {
+			continue
+		}
+		seenText[text] = true
+		cleaned = append(cleaned, text)
+	}
+	if len(cleaned) == 0 {
 		return result, fmt.Errorf("semantic query is empty")
 	}
 	if k < 1 || k > 100 {
@@ -293,63 +337,146 @@ func (f Federation) Query(ctx context.Context, text string, k int, databaseList 
 		result.Model = models[0]
 	}
 
+	prefixed := make([]string, len(cleaned))
+	for index, text := range cleaned {
+		prefixed[index] = QueryPrefix + text
+	}
 	for _, model := range models {
 		group := groups[model]
 		if f.Embedder == nil {
 			result.noticeModelUnavailable(model, group, "embedding provider is unavailable")
 			continue
 		}
-		vectors, err := f.Embedder.Embed(ctx, model, []string{QueryPrefix + text})
+		vectors, err := f.Embedder.Embed(ctx, model, prefixed)
 		if err != nil {
 			result.noticeModelUnavailable(model, group, err.Error())
 			continue
 		}
-		if len(vectors) != 1 || len(vectors[0]) == 0 {
+		if len(vectors) != len(prefixed) {
 			result.noticeModelUnavailable(model, group, "embedding provider returned no query vector")
 			continue
 		}
 		for _, target := range group {
-			if len(vectors[0]) != target.dimensions {
-				result.Notices = append(result.Notices, fmt.Sprintf(
-					"database %s expects %d-dimensional model %s; continuing with FTS-only",
-					target.database.Database, target.dimensions, model))
-				continue
+			if err := f.searchTarget(ctx, &result, target, model, vectors, k, minScore); err != nil {
+				return result, err
 			}
-			store, err := openSQLite(target.path, true)
-			if err != nil {
-				return result, fmt.Errorf("open vector sidecar for %s: %w", target.database.owner(), err)
+		}
+	}
+	if result.MixedModels {
+		for index := range result.DatabaseResults {
+			result.DatabaseResults[index].Results = finishFederatedHits(
+				result.DatabaseResults[index].Results, k, trimToK)
+		}
+		return result, nil
+	}
+	result.Results = finishFederatedHits(result.Results, k, trimToK)
+	return result, nil
+}
+
+func (f Federation) searchTarget(ctx context.Context, result *FederatedQuery, target queryTarget,
+	model string, vectors [][]float32, k int, minScore float64) error {
+	for _, embedding := range vectors {
+		if len(embedding) == 0 {
+			result.noticeModelUnavailable(model, []queryTarget{target},
+				"embedding provider returned no query vector")
+			return nil
+		}
+		if len(embedding) != target.dimensions {
+			result.Notices = append(result.Notices, fmt.Sprintf(
+				"database %s expects %d-dimensional model %s; continuing with FTS-only",
+				target.database.Database, target.dimensions, model))
+			return nil
+		}
+		store, err := openSQLite(target.path, true)
+		if err != nil {
+			return fmt.Errorf("open vector sidecar for %s: %w", target.database.owner(), err)
+		}
+		index := f.index(target.database,
+			DeclaredCorpus{Core: f.Core, Database: target.database}, target.path)
+		index.Model = model
+		hits, queryErr := index.queryVector(ctx, store, embedding, k)
+		closeErr := store.Close()
+		if queryErr != nil {
+			return fmt.Errorf("query vector sidecar %s: %w", target.database.owner(), queryErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close vector sidecar %s: %w", target.database.owner(), closeErr)
+		}
+		result.VectorExecuted = true
+		tagFederatedResults(hits, target.database.Database)
+		hits = filterVectorFloor(hits, minScore)
+		if result.MixedModels {
+			merged := false
+			for index := range result.DatabaseResults {
+				if result.DatabaseResults[index].Database == target.database.Database {
+					result.DatabaseResults[index].Results = unionFederatedHits(
+						result.DatabaseResults[index].Results, hits)
+					merged = true
+					break
+				}
 			}
-			index := f.index(target.database,
-				DeclaredCorpus{Core: f.Core, Database: target.database}, target.path)
-			index.Model = model
-			hits, queryErr := index.queryVector(ctx, store, vectors[0], k)
-			closeErr := store.Close()
-			if queryErr != nil {
-				return result, fmt.Errorf("query vector sidecar %s: %w", target.database.owner(), queryErr)
-			}
-			if closeErr != nil {
-				return result, fmt.Errorf("close vector sidecar %s: %w", target.database.owner(), closeErr)
-			}
-			tagFederatedResults(hits, target.database.Database)
-			if result.MixedModels {
+			if !merged {
 				result.DatabaseResults = append(result.DatabaseResults, DatabaseQueryResult{
 					Database: target.database.Database, Model: model, Results: hits,
 				})
-			} else {
-				result.Results = append(result.Results, hits...)
 			}
+			continue
+		}
+		result.Results = unionFederatedHits(result.Results, hits)
+	}
+	return nil
+}
+
+func filterVectorFloor(hits []Result, minScore float64) []Result {
+	if minScore <= 0 {
+		return hits
+	}
+	out := make([]Result, 0, len(hits))
+	for _, hit := range hits {
+		if hit.Score >= minScore {
+			out = append(out, hit)
 		}
 	}
-	if !result.MixedModels {
-		sortFederatedResults(result.Results)
-		if len(result.Results) > k {
-			result.Results = result.Results[:k]
+	return out
+}
+
+func unionFederatedHits(existing, incoming []Result) []Result {
+	best := make(map[string]Result, len(existing)+len(incoming))
+	order := make([]string, 0, len(existing)+len(incoming))
+	add := func(hit Result) {
+		key := hit.Database + "\x00" + hit.Table + "\x00" + hit.ID
+		previous, seen := best[key]
+		if !seen {
+			best[key] = hit
+			order = append(order, key)
+			return
 		}
-		for index := range result.Results {
-			result.Results[index].Rank = index + 1
+		if hit.Score > previous.Score {
+			best[key] = hit
 		}
 	}
-	return result, nil
+	for _, hit := range existing {
+		add(hit)
+	}
+	for _, hit := range incoming {
+		add(hit)
+	}
+	out := make([]Result, 0, len(order))
+	for _, key := range order {
+		out = append(out, best[key])
+	}
+	return out
+}
+
+func finishFederatedHits(hits []Result, k int, trimToK bool) []Result {
+	sortFederatedResults(hits)
+	if trimToK && len(hits) > k {
+		hits = hits[:k]
+	}
+	for index := range hits {
+		hits[index].Rank = index + 1
+	}
+	return hits
 }
 
 func (r *FederatedQuery) noticeModelUnavailable(model string, targets []queryTarget, reason string) {
@@ -574,10 +701,14 @@ func (d DeclaredCorpus) WalkSources(ctx context.Context, sourceKind string,
 		}
 		tables = []vectorTable{table}
 	}
+	catalog := make(map[string]map[string]bool, len(d.Database.Tables))
+	for _, table := range d.Database.Tables {
+		catalog[table.Name] = table.availableColumns()
+	}
 	for _, table := range tables {
 		cursor := declaredCursor{}
 		for {
-			rows, err := d.Core.query(ctx, d.pageQuery(table, cursor))
+			rows, err := d.Core.query(ctx, d.pageQuery(table, cursor, catalog))
 			if err != nil {
 				return fmt.Errorf("read declared surface %s/%s: %w", d.Database.owner(), table.Name, err)
 			}
@@ -645,6 +776,73 @@ func (d DeclaredCorpus) ResolveSource(ctx context.Context, kind string, where lo
 	return "", nil
 }
 
+func (d DeclaredCorpus) ResolveSources(ctx context.Context,
+	lookups []sourceLookup) (map[string]string, error) {
+	resolved := make(map[string]string, len(lookups))
+	idsByTable := make(map[string][]string)
+	seen := make(map[string]bool)
+	for _, lookup := range lookups {
+		if lookup.where.SourceID == "" {
+			continue
+		}
+		if _, ok := d.table(lookup.kind); !ok {
+			return nil, fmt.Errorf("unknown vector source %q", lookup.kind)
+		}
+		key := sourceLookupKey(lookup.kind, lookup.where.SourceID)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		idsByTable[lookup.kind] = append(idsByTable[lookup.kind], lookup.where.SourceID)
+	}
+	branches := make([]string, 0, len(idsByTable))
+	for _, table := range d.Database.Tables {
+		ids := idsByTable[table.Name]
+		if len(ids) == 0 {
+			continue
+		}
+		literals := make([]string, len(ids))
+		for index, id := range ids {
+			literals[index] = sqlLiteral(id)
+		}
+		branches = append(branches, fmt.Sprintf(
+			`SELECT %s AS source_kind,CAST(%s AS TEXT) AS source_id%s FROM %s.%s WHERE CAST(%s AS TEXT) IN (%s)`,
+			sqlLiteral(table.Name), quoteIdentifier(table.IDColumn),
+			declaredColumnSelect("", table.TextColumns), quoteIdentifier(d.Database.Alias),
+			quoteIdentifier(table.Name), quoteIdentifier(table.IDColumn), strings.Join(literals, ",")))
+	}
+	if len(branches) == 0 {
+		return resolved, nil
+	}
+	rows, err := d.Core.query(ctx, strings.Join(branches, " UNION ALL "))
+	if err != nil {
+		return nil, err
+	}
+	for _, values := range rows {
+		kind := stringValue(values["source_kind"])
+		id := stringValue(values["source_id"])
+		table, ok := d.table(kind)
+		if !ok {
+			continue
+		}
+		expanded := expandColumnRows(sourceRow{kind: kind, sourceID: id}, table.TextColumns, values)
+		if len(expanded) == 0 {
+			continue
+		}
+		text := expanded[0].rowText
+		candidate := sourceRow{kind: kind, sourceID: id, text: text, rowText: text,
+			fingerprintVersion: table.contractFingerprint()}
+		for _, lookup := range lookups {
+			if lookup.kind == kind && lookup.where.SourceID == id &&
+				candidate.identity() == lookup.where.Identity {
+				resolved[sourceLookupKey(kind, id)] = text
+				break
+			}
+		}
+	}
+	return resolved, nil
+}
+
 func (d DeclaredCorpus) CountSources(ctx context.Context, sourceKind string) (int, error) {
 	tables := d.Database.Tables
 	if sourceKind != "" {
@@ -675,13 +873,14 @@ func (d DeclaredCorpus) CountSources(ctx context.Context, sourceKind string) (in
 	return total, nil
 }
 
-func (d DeclaredCorpus) pageQuery(table vectorTable, cursor declaredCursor) string {
+func (d DeclaredCorpus) pageQuery(table vectorTable, cursor declaredCursor,
+	catalog map[string]map[string]bool) string {
 	bound := ""
 	if cursor.valid {
 		bound = fmt.Sprintf(" AND (context_time<%s OR (context_time=%s AND source_id<%s))",
 			sqlLiteral(cursor.time), sqlLiteral(cursor.time), sqlLiteral(cursor.id))
 	}
-	contextSQL, join := d.contextSQL(table.Name)
+	contextSQL, join := d.contextSQL(table, catalog)
 	return fmt.Sprintf(`WITH vector_rows AS (
 		SELECT CAST(src.%s AS TEXT) AS source_id%s%s FROM %s.%s src%s
 		WHERE src.%s IS NOT NULL
@@ -692,33 +891,86 @@ func (d DeclaredCorpus) pageQuery(table vectorTable, cursor declaredCursor) stri
 		quoteIdentifier(table.IDColumn), bound, walkPageSize)
 }
 
-func (d DeclaredCorpus) contextSQL(tableName string) (string, string) {
+func (d DeclaredCorpus) contextSQL(table vectorTable,
+	catalog map[string]map[string]bool) (string, string) {
 	empty := `, '' AS context_title, '' AS context_project, '' AS context_time`
 	alias := quoteIdentifier(d.Database.Alias)
-	switch tableName {
+	columns := catalog[table.Name]
+	switch table.Name {
 	case "sessions":
-		return `, COALESCE(src.title,'') AS context_title, COALESCE(src.project,'') AS context_project, COALESCE(src.started_at,'') AS context_time`, ""
+		return fmt.Sprintf(`, %s AS context_title, %s AS context_project, %s AS context_time`,
+			coalesceDeclared(columns, "src", "title"),
+			coalesceDeclared(columns, "src", "project"),
+			coalesceDeclared(columns, "src", "started_at")), ""
 	case "exchanges":
-		if !d.hasTable("sessions") {
-			return `, '' AS context_title, '' AS context_project, COALESCE(src.human_timestamp, src.agent_timestamp, '') AS context_time`, ""
+		sessions, hasSessions := d.table("sessions")
+		sessionColumns := catalog["sessions"]
+		occurred := coalesceDeclared(columns, "src", "human_timestamp", "agent_timestamp")
+		if !hasSessions || !columns["session_id"] || !sessionColumns[sessions.IDColumn] {
+			return fmt.Sprintf(`, '' AS context_title, '' AS context_project, %s AS context_time`, occurred), ""
 		}
-		return `, COALESCE(ctx.title,'') AS context_title, COALESCE(ctx.project,'') AS context_project, COALESCE(src.human_timestamp, src.agent_timestamp, ctx.started_at, '') AS context_time`,
-			fmt.Sprintf(" LEFT JOIN %s.sessions ctx ON ctx.session_id = src.session_id", alias)
+		return fmt.Sprintf(`, %s AS context_title, %s AS context_project, %s AS context_time`,
+				coalesceDeclared(sessionColumns, "ctx", "title"),
+				coalesceDeclared(sessionColumns, "ctx", "project"),
+				coalesceDeclaredPair(columns, "src", []string{"human_timestamp", "agent_timestamp"},
+					sessionColumns, "ctx", []string{"started_at"})),
+			fmt.Sprintf(" LEFT JOIN %s.%s ctx ON ctx.%s = src.%s", alias,
+				quoteIdentifier(sessions.Name), quoteIdentifier(sessions.IDColumn), quoteIdentifier("session_id"))
 	case "thinking_blocks":
-		if !d.hasTable("sessions") {
+		sessions, hasSessions := d.table("sessions")
+		sessionColumns := catalog["sessions"]
+		if !hasSessions || !columns["session_id"] || !sessionColumns[sessions.IDColumn] {
 			return empty, ""
 		}
-		return `, COALESCE(ctx.title,'') AS context_title, COALESCE(ctx.project,'') AS context_project, COALESCE(ctx.started_at,'') AS context_time`,
-			fmt.Sprintf(" LEFT JOIN %s.sessions ctx ON ctx.session_id = src.session_id", alias)
+		return fmt.Sprintf(`, %s AS context_title, %s AS context_project, %s AS context_time`,
+				coalesceDeclared(sessionColumns, "ctx", "title"),
+				coalesceDeclared(sessionColumns, "ctx", "project"),
+				coalesceDeclared(sessionColumns, "ctx", "started_at")),
+			fmt.Sprintf(" LEFT JOIN %s.%s ctx ON ctx.%s = src.%s", alias,
+				quoteIdentifier(sessions.Name), quoteIdentifier(sessions.IDColumn), quoteIdentifier("session_id"))
 	case "memories":
-		if !d.hasTable("sessions") {
-			return `, COALESCE(src.project,'') AS context_title, '' AS context_project, COALESCE(src.created_at,'') AS context_time`, ""
+		sessions, hasSessions := d.table("sessions")
+		sessionColumns := catalog["sessions"]
+		if !hasSessions || !columns["source_session"] || !sessionColumns[sessions.IDColumn] {
+			return fmt.Sprintf(`, %s AS context_title, '' AS context_project, %s AS context_time`,
+				coalesceDeclared(columns, "src", "project"),
+				coalesceDeclared(columns, "src", "created_at")), ""
 		}
-		return `, COALESCE(ctx.title, src.project, '') AS context_title, COALESCE(ctx.project,'') AS context_project, COALESCE(src.created_at, ctx.started_at, '') AS context_time`,
-			fmt.Sprintf(" LEFT JOIN %s.sessions ctx ON ctx.session_id = src.source_session", alias)
+		return fmt.Sprintf(`, %s AS context_title, %s AS context_project, %s AS context_time`,
+				coalesceDeclaredPair(sessionColumns, "ctx", []string{"title"},
+					columns, "src", []string{"project"}),
+				coalesceDeclared(sessionColumns, "ctx", "project"),
+				coalesceDeclaredPair(columns, "src", []string{"created_at"},
+					sessionColumns, "ctx", []string{"started_at"})),
+			fmt.Sprintf(" LEFT JOIN %s.%s ctx ON ctx.%s = src.%s", alias,
+				quoteIdentifier(sessions.Name), quoteIdentifier(sessions.IDColumn), quoteIdentifier("source_session"))
 	default:
 		return empty, ""
 	}
+}
+
+func coalesceDeclared(columns map[string]bool, alias string, names ...string) string {
+	return coalesceDeclaredPair(columns, alias, names, nil, "", nil)
+}
+
+func coalesceDeclaredPair(first map[string]bool, firstAlias string, firstNames []string,
+	second map[string]bool, secondAlias string, secondNames []string) string {
+	values := make([]string, 0, len(firstNames)+len(secondNames)+1)
+	for _, name := range firstNames {
+		if first[name] {
+			values = append(values, firstAlias+"."+quoteIdentifier(name))
+		}
+	}
+	for _, name := range secondNames {
+		if second[name] {
+			values = append(values, secondAlias+"."+quoteIdentifier(name))
+		}
+	}
+	values = append(values, "''")
+	if len(values) == 1 {
+		return values[0]
+	}
+	return "COALESCE(" + strings.Join(values, ", ") + ")"
 }
 
 func declaredColumnSelect(alias string, columns []string) string {
@@ -826,6 +1078,10 @@ func (d vectorDatabase) contractFingerprint() string {
 func (t vectorTable) contractFingerprint() string {
 	fields := []string{declaredReaderVersion, chunkPolicyVersion, t.Name, t.IDColumn, "per-column"}
 	fields = append(fields, t.TextColumns...)
+	if len(t.Columns) > 0 {
+		fields = append(fields, "catalog")
+		fields = append(fields, t.Columns...)
+	}
 	if t.Chunking != nil && (t.Chunking.MaxChars != nil || t.Chunking.OverlapChars != nil) {
 		size, overlap := t.chunking()
 		fields = append(fields, "chars", strconv.Itoa(size), strconv.Itoa(overlap))
@@ -833,6 +1089,18 @@ func (t vectorTable) contractFingerprint() string {
 		fields = append(fields, "tokens", strconv.Itoa(defaultChunkTokens), strconv.Itoa(defaultOverlapTokens))
 	}
 	return incrementality.ContentFingerprint(fields...)
+}
+
+func (t vectorTable) availableColumns() map[string]bool {
+	columns := make(map[string]bool, len(t.Columns)+len(t.TextColumns)+1)
+	for _, column := range t.Columns {
+		columns[column] = true
+	}
+	columns[t.IDColumn] = true
+	for _, column := range t.TextColumns {
+		columns[column] = true
+	}
+	return columns
 }
 
 func (t vectorTable) chunking() (int, int) {

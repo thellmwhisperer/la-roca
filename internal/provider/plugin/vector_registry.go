@@ -37,20 +37,30 @@ type VectorRoute struct {
 }
 
 type VectorRegistration struct {
-	Plugin   string        `json:"plugin"`
-	Database string        `json:"database"`
-	Path     string        `json:"path"`
-	Alias    string        `json:"alias"`
-	Tables   []VectorTable `json:"tables"`
+	Plugin   string                    `json:"plugin"`
+	Database string                    `json:"database"`
+	Path     string                    `json:"path"`
+	Alias    string                    `json:"alias"`
+	Tables   []VectorRegistrationTable `json:"tables"`
+}
+
+// VectorRegistrationTable combines opt-in retrieval columns with the
+// validated semantic catalog columns needed for safe contextual queries.
+type VectorRegistrationTable struct {
+	Name        string         `json:"name"`
+	IDColumn    string         `json:"id_column"`
+	TextColumns []string       `json:"text_columns"`
+	Columns     []string       `json:"columns,omitempty"`
+	Chunking    *ChunkingHints `json:"chunking,omitempty"`
 }
 
 func VectorRegistryPath(pluginRoot string) string {
 	return filepath.Join(pluginRoot, VectorRegistryFilename)
 }
 
-// ComposeVectorRegistry projects only validated, explicitly opted-in columns.
-// Paths stay relative to their plugin directory so local home paths never enter
-// the contract.
+// ComposeVectorRegistry projects validated catalog column names alongside the
+// explicitly opted-in retrieval columns. Paths stay relative to their plugin
+// directory so local home paths never enter the contract.
 func ComposeVectorRegistry(databases []Database) VectorRegistry {
 	registry := VectorRegistry{Schema: vectorRegistrySchema,
 		Databases: []VectorRegistration{}, Routes: []VectorRoute{}}
@@ -73,9 +83,19 @@ func ComposeVectorRegistry(databases []Database) VectorRegistry {
 				break
 			}
 		}
-		tables := make([]VectorTable, len(database.VectorTables))
+		tables := make([]VectorRegistrationTable, len(database.VectorTables))
 		for index, table := range database.VectorTables {
-			tables[index] = cloneVectorTable(table)
+			cloned := cloneVectorTable(table)
+			tables[index] = VectorRegistrationTable{
+				Name: cloned.Name, IDColumn: cloned.IDColumn,
+				TextColumns: cloned.TextColumns, Chunking: cloned.Chunking,
+			}
+			for _, semanticTable := range database.Tables {
+				if semanticTable.Name == table.Name {
+					tables[index].Columns = slices.Clone(semanticTable.Columns)
+					break
+				}
+			}
 		}
 		registry.Databases = append(registry.Databases, VectorRegistration{
 			Plugin: database.Name, Database: database.DatabaseName,
@@ -210,6 +230,26 @@ func (registry VectorRegistry) valid() error {
 						database.Plugin, database.Database, table.Name, column)
 				}
 				seenColumns[column] = true
+			}
+			catalogColumns := map[string]bool{}
+			for _, column := range table.Columns {
+				if !validIdentifier(column) || catalogColumns[column] {
+					return fmt.Errorf("vector registry table %s/%s.%s has invalid or repeated catalog column %q",
+						database.Plugin, database.Database, table.Name, column)
+				}
+				catalogColumns[column] = true
+			}
+			if len(catalogColumns) > 0 {
+				if !catalogColumns[table.IDColumn] {
+					return fmt.Errorf("vector registry table %s/%s.%s catalog omits id column %q",
+						database.Plugin, database.Database, table.Name, table.IDColumn)
+				}
+				for _, column := range table.TextColumns {
+					if !catalogColumns[column] {
+						return fmt.Errorf("vector registry table %s/%s.%s catalog omits text column %q",
+							database.Plugin, database.Database, table.Name, column)
+					}
+				}
 			}
 			if err := table.Chunking.valid(database.Database, table.Name); err != nil {
 				return err

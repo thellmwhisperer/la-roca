@@ -252,8 +252,8 @@ func (w *distributionWorld) helpIsComplete() error {
 	}
 	honest := map[string]string{
 		"doctor": "configuration", "ingest": "source", "init": "database",
-		"hooks": "authorship", "layers": "layer", "model": "model", "query": "memory",
-		"explore": "concept", "remote": "ssh", "store": "memory",
+		"hooks": "authorship", "layers": "layer", "model": "model", "query": "search",
+		"explore": "concept", "playground": "sql", "remote": "ssh", "store": "memory",
 		"uninstall": "remove", "update": "release", "plugin": "plugin", "plugins": "plugin",
 	}
 	found := map[string]string{}
