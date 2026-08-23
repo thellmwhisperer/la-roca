@@ -41,7 +41,7 @@ func lock(path string, disposition uint32, nonBlocking bool) (func() error, erro
 		file.Close()
 		return nil, err
 	}
-	lockFlags := windows.LOCKFILE_EXCLUSIVE_LOCK
+	lockFlags := uint32(windows.LOCKFILE_EXCLUSIVE_LOCK)
 	if nonBlocking {
 		lockFlags |= windows.LOCKFILE_FAIL_IMMEDIATELY
 	}
