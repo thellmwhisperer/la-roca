@@ -1,5 +1,5 @@
 /**
- * @overview Creates leased read-only SQLite snapshots. ~700 lines, 6 public symbols.
+ * @overview Creates leased read-only SQLite snapshots. ~900 lines, 6 public symbols.
  *
  *   READING GUIDE
  *   -------------
@@ -23,8 +23,8 @@
  *
  *   INTERNALS
  *   ---------
- *   snapshotArtifact, snapshotLease, snapshotInflight, createReadOnlySnapshot
- *   scavengeReadOnlySnapshots, claimSnapshotDirectory
+ *   snapshotArtifact, snapshotLease, snapshotInflight, snapshotNamespaceRoot
+ *   createReadOnlySnapshot, scavengeReadOnlySnapshots, claimSnapshotDirectory
  *   inspectSnapshotSource, copySnapshotSource, openCopiedSnapshot, cleanupHeldSnapshots
  *
  * @exports ReadOnlySnapshot, SetSnapshotLogDir, OpenReadOnlySnapshot, SQL, URI, Close
@@ -34,6 +34,7 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -58,6 +59,7 @@ const (
 	snapshotDirectoryPrefix    = "roca-read-only-snapshot-"
 	snapshotStagingPrefix      = ".roca-snapshot-staging-"
 	snapshotReapPrefix         = ".roca-snapshot-reap-"
+	snapshotNamespacePrefix    = ".roca-snapshot-namespace-"
 	snapshotNamespaceLeaseName = ".roca-read-only-snapshot-namespace.lease"
 	snapshotLeaseName          = "lease"
 	snapshotCopyBufferSize     = 128 * 1024
@@ -128,6 +130,7 @@ var (
 	snapshotBeforeLeaseRegistrationFn func(string)
 	claimSnapshotDirectoryFn          = claimSnapshotDirectory
 	removeSnapshotDirectoryFn         = os.RemoveAll
+	snapshotUserIdentityFn            = snapshotUserIdentity
 )
 
 // SetSnapshotLogDir routes snapshot create/reap records to the standard JSONL
@@ -157,7 +160,11 @@ func OpenReadOnlySnapshot(ctx context.Context, path string) (*ReadOnlySnapshot, 
 		return nil, err
 	}
 	ensureSnapshotExitCleanup()
-	if err := scavengeReadOnlySnapshots(ctx, os.TempDir()); err != nil {
+	namespace, err := snapshotNamespaceRoot(os.TempDir())
+	if err != nil {
+		return nil, err
+	}
+	if err := scavengeReadOnlySnapshots(ctx, namespace); err != nil {
 		return nil, err
 	}
 	for {
@@ -202,7 +209,7 @@ func OpenReadOnlySnapshot(ctx context.Context, path string) (*ReadOnlySnapshot, 
 		snapshotFlight[abs] = flight
 		snapshotCacheMu.Unlock()
 
-		created, createErr := createReadOnlySnapshot(ctx, abs, before)
+		created, createErr := createReadOnlySnapshot(ctx, abs, before, namespace)
 		if createErr == nil && snapshotShuttingDown.Load() {
 			createErr = errors.Join(errSnapshotShuttingDown, created.destroy())
 			created = nil
@@ -262,8 +269,8 @@ func isSnapshotContextError(err error) bool {
 
 // -- 3/7 HELPER · Snapshot creation and atomic publication --
 
-func createReadOnlySnapshot(ctx context.Context, abs string, before snapshotSourceState) (*snapshotArtifact, error) {
-	lease, directory, err := createSnapshotDirectory(os.TempDir())
+func createReadOnlySnapshot(ctx context.Context, abs string, before snapshotSourceState, namespace string) (*snapshotArtifact, error) {
+	lease, directory, err := createSnapshotDirectory(namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -357,7 +364,11 @@ func createSnapshotDirectory(root string) (*snapshotLease, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("create read-only snapshot staging directory: %w", err)
 	}
-	release, err := securefile.Lock(filepath.Join(staging, snapshotLeaseName))
+	leasePath := filepath.Join(staging, snapshotLeaseName)
+	if err := os.WriteFile(leasePath, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
+		return nil, "", cleanupSnapshotDirectory(staging, err)
+	}
+	release, err := securefile.LockExisting(leasePath)
 	if err != nil {
 		return nil, "", cleanupSnapshotDirectory(staging,
 			fmt.Errorf("lock read-only snapshot: %w", err))
@@ -368,10 +379,6 @@ func createSnapshotDirectory(root string) (*snapshotLease, string, error) {
 	}
 	if !registerHeldSnapshot(lease) {
 		return nil, "", lease.destroy(errSnapshotShuttingDown)
-	}
-	if err := os.WriteFile(filepath.Join(staging, snapshotLeaseName),
-		[]byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
-		return nil, "", lease.destroy(err)
 	}
 
 	placeholder, err := os.CreateTemp(root, snapshotDirectoryPrefix)
@@ -402,6 +409,47 @@ func lockSnapshotNamespace(root string) (func() error, error) {
 	}, nil
 }
 
+func snapshotNamespaceRoot(tempRoot string) (string, error) {
+	abs, err := filepath.Abs(tempRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolve snapshot temp directory: %w", err)
+	}
+	identity, err := snapshotUserIdentityFn()
+	if err != nil {
+		return "", fmt.Errorf("identify snapshot namespace owner: %w", err)
+	}
+	if identity == "" {
+		return "", errors.New("identify snapshot namespace owner: empty identity")
+	}
+	digest := sha256.Sum256([]byte(identity))
+	root := filepath.Join(abs, snapshotNamespacePrefix+fmt.Sprintf("%x", digest[:8]))
+	if err := os.Mkdir(root, 0o700); err != nil && !os.IsExist(err) {
+		return "", fmt.Errorf("create snapshot namespace: %w", err)
+	}
+	before, err := os.Lstat(root)
+	if err != nil {
+		return "", fmt.Errorf("inspect snapshot namespace: %w", err)
+	}
+	if before.Mode()&os.ModeSymlink != 0 || !before.IsDir() {
+		return "", fmt.Errorf("snapshot namespace %q is not a directory", root)
+	}
+	if !snapshotNamespaceOwned(before) {
+		return "", fmt.Errorf("snapshot namespace %q has a different owner", root)
+	}
+	if err := os.Chmod(root, 0o700); err != nil {
+		return "", fmt.Errorf("secure snapshot namespace: %w", err)
+	}
+	after, err := os.Lstat(root)
+	if err != nil {
+		return "", fmt.Errorf("validate snapshot namespace: %w", err)
+	}
+	if after.Mode()&os.ModeSymlink != 0 || !after.IsDir() || !os.SameFile(before, after) ||
+		!snapshotNamespaceOwned(after) || !snapshotNamespacePermissionsValid(after) {
+		return "", fmt.Errorf("snapshot namespace %q failed validation", root)
+	}
+	return root, nil
+}
+
 func (lease *snapshotLease) move(directory string) error {
 	lease.mu.Lock()
 	defer lease.mu.Unlock()
@@ -430,12 +478,14 @@ func (lease *snapshotLease) destroy(cause error) error {
 
 // -- 4/7 HELPER · Orphan reaping --
 
-func scavengeReadOnlySnapshots(ctx context.Context, root string) error {
+func scavengeReadOnlySnapshots(ctx context.Context, root string) (resultErr error) {
 	releaseNamespace, err := lockSnapshotNamespace(root)
 	if err != nil {
 		return fmt.Errorf("lock read-only snapshot namespace: %w", err)
 	}
-	defer releaseNamespace()
+	defer func() {
+		resultErr = errors.Join(resultErr, releaseNamespace())
+	}()
 
 	entries, err := os.ReadDir(root)
 	if err != nil {
@@ -443,9 +493,10 @@ func scavengeReadOnlySnapshots(ctx context.Context, root string) error {
 	}
 	var reaped int
 	var reclaimed int64
+	var reapErrors []error
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
-			return err
+			return errors.Join(err, errors.Join(reapErrors...))
 		}
 		if !entry.IsDir() || (!strings.HasPrefix(entry.Name(), snapshotDirectoryPrefix) &&
 			!strings.HasPrefix(entry.Name(), snapshotStagingPrefix) &&
@@ -454,24 +505,44 @@ func scavengeReadOnlySnapshots(ctx context.Context, root string) error {
 		}
 		path := filepath.Join(root, entry.Name())
 		release, orphan, err := snapshotOrphanLease(path)
-		if err != nil || !orphan {
+		if err != nil {
+			reapErrors = append(reapErrors, fmt.Errorf("inspect orphan snapshot %q: %w", path, err))
+			continue
+		}
+		if !orphan {
 			continue
 		}
 		claimed, err := claimSnapshotDirectoryFn(root, path)
 		if err != nil {
 			if release != nil {
-				_ = release()
+				if releaseErr := release(); releaseErr != nil {
+					reapErrors = append(reapErrors,
+						fmt.Errorf("release orphan snapshot lease %q: %w", path, releaseErr))
+				}
+			}
+			if !os.IsNotExist(err) {
+				reapErrors = append(reapErrors, fmt.Errorf("claim orphan snapshot %q: %w", path, err))
 			}
 			continue
 		}
 		size := directorySize(claimed)
 		if release != nil {
-			_ = release()
+			if err := release(); err != nil {
+				reapErrors = append(reapErrors, fmt.Errorf("release orphan snapshot lease %q: %w", claimed, err))
+				continue
+			}
 		}
 		if err := removeSnapshotDirectoryFn(claimed); err != nil {
+			if !os.IsNotExist(err) {
+				reapErrors = append(reapErrors, fmt.Errorf("remove orphan snapshot %q: %w", claimed, err))
+			}
 			continue
 		}
-		if _, err := os.Stat(claimed); !os.IsNotExist(err) {
+		if _, err := os.Stat(claimed); err == nil {
+			reapErrors = append(reapErrors, fmt.Errorf("remove orphan snapshot %q: directory still exists", claimed))
+			continue
+		} else if !os.IsNotExist(err) {
+			reapErrors = append(reapErrors, fmt.Errorf("verify orphan snapshot removal %q: %w", claimed, err))
 			continue
 		}
 		reaped++
@@ -485,7 +556,7 @@ func scavengeReadOnlySnapshots(ctx context.Context, root string) error {
 			"reclaimed_bytes": reclaimed,
 		})
 	}
-	return nil
+	return errors.Join(reapErrors...)
 }
 
 func claimSnapshotDirectory(root, directory string) (string, error) {
@@ -752,8 +823,10 @@ func ensureSnapshotExitCleanup() {
 			signal.Reset(terminating...)
 			cleaned := make(chan struct{})
 			go func() {
-				if release, err := lockSnapshotNamespace(os.TempDir()); err == nil {
-					_ = release()
+				if namespace, err := snapshotNamespaceRoot(os.TempDir()); err == nil {
+					if release, err := lockSnapshotNamespace(namespace); err == nil {
+						_ = release()
+					}
 				}
 				cleanupHeldSnapshots()
 				close(cleaned)
@@ -764,9 +837,7 @@ func ensureSnapshotExitCleanup() {
 				timer.Stop()
 			case <-timer.C:
 			}
-			if process, err := os.FindProcess(os.Getpid()); err == nil {
-				_ = process.Signal(sig)
-			}
+			terminateSnapshotProcess(sig)
 		}()
 	})
 }
