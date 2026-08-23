@@ -266,6 +266,33 @@ func reportDigest(report Report) (string, error) {
 	return canonicalDigest("corpus-archive-reconciliation", legacy, string(encoded)), nil
 }
 
+// buildLegacyReport produces the reconciliation report and its legacy digest,
+// the pair Merge seals and Verify reproduces.
+func buildLegacyReport(ctx context.Context, destination *sql.DB,
+	sources []preparedSource,
+) (Report, string, error) {
+	report, err := buildReport(ctx, destination, sources)
+	if err != nil {
+		return report, "", err
+	}
+	ledgerDigest, err := legacyReportDigest(report)
+	if err != nil {
+		return report, "", err
+	}
+	return report, ledgerDigest, nil
+}
+
+// sealReportDigest computes the report's verification digest and stores it on
+// the report, returning the digest so the caller can record or verify it.
+func sealReportDigest(report *Report) (string, error) {
+	digest, err := reportDigest(*report)
+	if err != nil {
+		return "", err
+	}
+	report.VerificationDigest = digest
+	return digest, nil
+}
+
 func legacyReportDigest(report Report) (string, error) {
 	sealed := struct {
 		Sources            []SourceReport          `json:"sources"`

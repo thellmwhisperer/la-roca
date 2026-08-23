@@ -16,14 +16,7 @@ import (
 
 func TestExactCleanupRemapsSessionsAndPreservesAmbiguousPayloads(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "roca.db")
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(data.Schema + data.SearchSchema); err != nil {
-		t.Fatal(err)
-	}
+	db, path := openExactdedupDB(t)
 	seed := `
 		INSERT INTO sessions(session_id,source_agent,title,started_at,metadata) VALUES
 		 ('session-a','fixture','Exact fixture','2026-08-16T10:00:00Z','{}'),
@@ -153,19 +146,9 @@ func TestExactCleanupRemapsSessionsAndPreservesAmbiguousPayloads(t *testing.T) {
 
 func TestExactPayloadGuardIndexesAHashNotThePayload(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "roca.db")
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	db, _ := openExactdedupDB(t)
 	defer db.Close()
-	if _, err := db.Exec(data.Schema + data.SearchSchema); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`INSERT INTO sessions(session_id, source_agent, title, started_at, metadata)
-		VALUES ('session-a', 'fixture', 'hash fixture', '2026-08-16T10:00:00Z', '{}')`); err != nil {
-		t.Fatal(err)
-	}
+	seedExactSession(t, db, "hash fixture")
 	if _, err := db.Exec(`INSERT INTO exchanges(session_id, exchange_number, human_text, agent_text)
 		VALUES ('session-a', 1, 'a long unique prompt that must not live in the index', 'answer')`); err != nil {
 		t.Fatal(err)
@@ -193,18 +176,9 @@ func TestExactPayloadGuardIndexesAHashNotThePayload(t *testing.T) {
 
 func TestExactPayloadGuardFramesEmbeddedNULValues(t *testing.T) {
 	ctx := context.Background()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "roca.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	db, _ := openExactdedupDB(t)
 	defer db.Close()
-	if _, err := db.Exec(data.Schema + data.SearchSchema); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`INSERT INTO sessions(session_id, source_agent, title, started_at, metadata)
-		VALUES ('session-a', 'fixture', 'nul fixture', '2026-08-16T10:00:00Z', '{}')`); err != nil {
-		t.Fatal(err)
-	}
+	seedExactSession(t, db, "nul fixture")
 	for _, human := range []string{"a\x00x", "a\x00y"} {
 		if _, err := db.Exec(`INSERT INTO exchanges(session_id, exchange_number, human_text, agent_text)
 			VALUES ('session-a', 1, ?, 'answer')`, human); err != nil {
@@ -222,18 +196,9 @@ func TestExactPayloadGuardFramesEmbeddedNULValues(t *testing.T) {
 
 func TestExactPayloadGuardCanonicalizesSignedZero(t *testing.T) {
 	ctx := context.Background()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "roca.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	db, _ := openExactdedupDB(t)
 	defer db.Close()
-	if _, err := db.Exec(data.Schema + data.SearchSchema); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`INSERT INTO sessions(session_id, source_agent, title, started_at, metadata)
-		VALUES ('session-a', 'fixture', 'zero fixture', '2026-08-16T10:00:00Z', '{}')`); err != nil {
-		t.Fatal(err)
-	}
+	seedExactSession(t, db, "zero fixture")
 	if err := exactdedup.EnsureGuards(ctx, db); err != nil {
 		t.Fatal(err)
 	}
@@ -262,4 +227,26 @@ func assertTable(t *testing.T, report exactdedup.DatabaseReport, name string,
 		return
 	}
 	t.Fatalf("missing %s report", name)
+}
+
+func openExactdedupDB(t *testing.T) (*sql.DB, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "roca.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(data.Schema + data.SearchSchema); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	return db, path
+}
+
+func seedExactSession(t *testing.T, db *sql.DB, title string) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO sessions(session_id, source_agent, title, started_at, metadata)
+		VALUES ('session-a', 'fixture', ?, '2026-08-16T10:00:00Z', '{}')`, title); err != nil {
+		t.Fatal(err)
+	}
 }

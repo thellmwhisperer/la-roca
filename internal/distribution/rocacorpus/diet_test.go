@@ -14,14 +14,7 @@ import (
 )
 
 func TestCompactRewritesAFatCorpusWithoutLosingCurrentRows(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "roca-corpus.db")
-	if err := rocacorpus.ApplySchema(path); err != nil {
-		t.Fatal(err)
-	}
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	db, path := openCorpusDB(t)
 	seedFatCorpus(t, db)
 	if err := exactdedup.EnsureGuards(context.Background(), db); err != nil {
 		t.Fatal(err)
@@ -35,10 +28,7 @@ func TestCompactRewritesAFatCorpusWithoutLosingCurrentRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Sessions != before.sessions || report.Exchanges != before.exchanges ||
-		report.ThinkingBlocks != before.thinking || report.ToolUses != before.tools {
-		t.Fatalf("current rows drifted: %+v vs %+v", report, before)
-	}
+	assertCurrentRows(t, report, before.sessions, before.exchanges, before.thinking, before.tools)
 	if report.BytesAfter <= 0 || report.BytesAfter > report.BytesBefore {
 		t.Fatalf("compact did not shrink the database: before=%d after=%d",
 			report.BytesBefore, report.BytesAfter)
@@ -167,25 +157,12 @@ func seedFatCorpus(t *testing.T, db *sql.DB) {
 }
 
 func TestApplySchemaPreservesVersionObservedTimes(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "roca-corpus.db")
-	if err := rocacorpus.ApplySchema(path); err != nil {
-		t.Fatal(err)
-	}
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	db, path := openCorpusDB(t)
 	seedFatCorpus(t, db)
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := rocacorpus.ApplySchema(path); err != nil {
-		t.Fatal(err)
-	}
-	db, err = sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	db = reapplySchemaAndReopen(t, path)
 	defer db.Close()
 	for _, table := range []string{
 		"session_versions", "exchange_versions", "tool_use_versions", "thinking_block_versions",
@@ -201,14 +178,7 @@ func TestApplySchemaPreservesVersionObservedTimes(t *testing.T) {
 }
 
 func TestApplySchemaDropsVersionFTSBeforeAddingObservedTime(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "roca-corpus.db")
-	if err := rocacorpus.ApplySchema(path); err != nil {
-		t.Fatal(err)
-	}
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	db, path := openCorpusDB(t)
 	statements := []string{
 		`DROP VIEW IF EXISTS exchange_version_memberships`,
 		`DROP TABLE IF EXISTS exchange_versions_fts`,
@@ -237,23 +207,9 @@ func TestApplySchemaDropsVersionFTSBeforeAddingObservedTime(t *testing.T) {
 			human_text, agent_text, content='exchange_versions', content_rowid='id')`,
 		`INSERT INTO exchange_versions_fts(exchange_versions_fts) VALUES ('rebuild')`,
 	}
-	for _, statement := range statements {
-		if _, err := db.Exec(statement); err != nil {
-			db.Close()
-			t.Fatal(err)
-		}
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
+	execStatements(t, db, statements)
 
-	if err := rocacorpus.ApplySchema(path); err != nil {
-		t.Fatal(err)
-	}
-	db, err = sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	db = reapplySchemaAndReopen(t, path)
 	defer db.Close()
 	assertNoTable(t, db, "exchange_versions_fts")
 	assertNoColumn(t, db, "exchange_versions", "human_text")
@@ -309,7 +265,7 @@ func assertCountQuery(t *testing.T, db *sql.DB, query string, want int) {
 	t.Helper()
 	var got int
 	if err := db.QueryRow(query).Scan(&got); err != nil {
-		t.Fatal(err)
+		t.Fatalf("%s: %v", query, err)
 	}
 	if got != want {
 		t.Fatalf("%s = %d, want %d", query, got, want)
@@ -318,22 +274,8 @@ func assertCountQuery(t *testing.T, db *sql.DB, query string, want int) {
 
 func assertNoColumn(t *testing.T, db *sql.DB, table, column string) {
 	t.Helper()
-	rows, err := db.Query(`SELECT name FROM pragma_table_info(?)`, table)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			t.Fatal(err)
-		}
-		if name == column {
-			t.Fatalf("%s.%s still exists", table, column)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
+	if tableHasColumn(t, db, table, column) {
+		t.Fatalf("%s.%s still exists", table, column)
 	}
 }
 
@@ -343,7 +285,7 @@ func TestCompactRefusesANonCorpusDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, statement := range []string{
+	statements := []string{
 		`CREATE TABLE sessions (
   session_id    TEXT PRIMARY KEY,
   source_agent  TEXT DEFAULT 'claude-code',
@@ -393,15 +335,8 @@ func TestCompactRefusesANonCorpusDatabase(t *testing.T) {
   is_after_compaction   INTEGER DEFAULT 0,
   full_text             TEXT
 )`,
-	} {
-		if _, err := db.Exec(statement); err != nil {
-			db.Close()
-			t.Fatal(err)
-		}
 	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
+	execStatements(t, db, statements)
 
 	if _, err := rocacorpus.Compact(context.Background(), path); err == nil {
 		t.Fatal("compact accepted a database with no corpus identity")
@@ -472,14 +407,7 @@ func TestCompactIsIdempotentOnAnAlreadySlimDatabase(t *testing.T) {
 }
 
 func TestCompactRefusesToReportMissingHashGuards(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "roca-corpus.db")
-	if err := rocacorpus.ApplySchema(path); err != nil {
-		t.Fatal(err)
-	}
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	db, path := openCorpusDB(t)
 	seedFatCorpus(t, db)
 	if _, err := db.Exec(`DROP INDEX idx_sessions_exact_payload;
 		INSERT INTO sessions(session_id, source_agent, title, metadata)
@@ -493,7 +421,7 @@ func TestCompactRefusesToReportMissingHashGuards(t *testing.T) {
 	if _, err := rocacorpus.Compact(context.Background(), path); err == nil {
 		t.Fatal("compact reported success without every hash guard")
 	}
-	db, err = sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -514,4 +442,56 @@ func tableHasColumn(t *testing.T, db *sql.DB, table, column string) bool {
 		t.Fatal(err)
 	}
 	return count == 1
+}
+
+// openCorpusDB applies the corpus schema to a fresh database and opens it,
+// returning the handle and the file path for tests that reopen or compact it.
+func openCorpusDB(t *testing.T) (*sql.DB, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "roca-corpus.db")
+	if err := rocacorpus.ApplySchema(path); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db, path
+}
+
+// reapplySchemaAndReopen re-runs the schema over an already-created corpus and
+// opens the result, the shared tail of the observed-time upgrade tests.
+func reapplySchemaAndReopen(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	if err := rocacorpus.ApplySchema(path); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db
+}
+
+// execStatements runs every fixture statement and closes the database.
+func execStatements(t *testing.T, db *sql.DB, statements []string) {
+	t.Helper()
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// assertCurrentRows checks a compact report carried every current row through.
+func assertCurrentRows(t *testing.T, report rocacorpus.CompactReport, sessions, exchanges, thinking, tools int64) {
+	t.Helper()
+	if report.Sessions != sessions || report.Exchanges != exchanges ||
+		report.ThinkingBlocks != thinking || report.ToolUses != tools {
+		t.Fatalf("current rows drifted: %+v", report)
+	}
 }

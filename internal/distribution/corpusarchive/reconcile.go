@@ -333,6 +333,26 @@ func readPhysicalDigests(ctx context.Context, destination *sql.DB,
 	if err != nil {
 		return nil, err
 	}
+	digests, err := readDigestMap(ctx, destination, query,
+		func(rows *sql.Rows) (string, string, error) {
+			return scanPhysicalDigest(rows, table.destinationTable)
+		})
+	if err != nil {
+		return nil, err
+	}
+	for stored, actual := range digests {
+		if stored != actual {
+			digests[stored] = canonicalDigest("broken-physical-digest", stored, actual)
+		}
+	}
+	return digests, nil
+}
+
+// readDigestMap runs query and collects a stored-key -> scanned-value map, one
+// row at a time. Both physical and retained coordinate digests share the loop.
+func readDigestMap(ctx context.Context, destination *sql.DB, query string,
+	scan func(*sql.Rows) (string, string, error),
+) (map[string]string, error) {
 	rows, err := destination.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -340,14 +360,11 @@ func readPhysicalDigests(ctx context.Context, destination *sql.DB,
 	defer rows.Close()
 	digests := make(map[string]string)
 	for rows.Next() {
-		stored, actual, scanErr := scanPhysicalDigest(rows, table.destinationTable)
+		stored, value, scanErr := scan(rows)
 		if scanErr != nil {
 			return nil, scanErr
 		}
-		if stored != actual {
-			actual = canonicalDigest("broken-physical-digest", stored, actual)
-		}
-		digests[stored] = actual
+		digests[stored] = value
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -397,17 +414,27 @@ func scanPhysicalDigest(rows *sql.Rows, destinationTable string) (string, string
 		}
 		return stored, stored, nil
 	case "ingest_file_state_versions":
-		var path string
-		var kind, agent, project, fingerprint, syncedAt, lastError, metadata sql.NullString
-		if err := rows.Scan(&stored, &path, &kind, &agent, &project, &fingerprint,
-			&syncedAt, &lastError, &metadata); err != nil {
+		row, err := scanIngestFileStateRow(rows)
+		if err != nil {
 			return "", "", err
 		}
-		return stored, canonicalDigest("ingest-file-state", path, kind, agent, project,
-			fingerprint, syncedAt, lastError, metadata), nil
+		return row.stored, canonicalDigest("ingest-file-state", row.path, row.kind, row.agent,
+			row.project, row.fingerprint, row.syncedAt, row.lastError, row.metadata), nil
 	default:
 		return "", "", fmt.Errorf("unknown corpus archive destination %q", destinationTable)
 	}
+}
+
+type ingestFileStateRow struct {
+	stored, path                                                     string
+	kind, agent, project, fingerprint, syncedAt, lastError, metadata sql.NullString
+}
+
+func scanIngestFileStateRow(rows *sql.Rows) (ingestFileStateRow, error) {
+	var row ingestFileStateRow
+	err := rows.Scan(&row.stored, &row.path, &row.kind, &row.agent, &row.project,
+		&row.fingerprint, &row.syncedAt, &row.lastError, &row.metadata)
+	return row, err
 }
 
 func readRetainedCoordinateDigests(ctx context.Context, destination *sql.DB,
@@ -417,23 +444,10 @@ func readRetainedCoordinateDigests(ctx context.Context, destination *sql.DB,
 	if err != nil {
 		return nil, err
 	}
-	rows, err := destination.QueryContext(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	digests := make(map[string]string)
-	for rows.Next() {
-		stored, retained, scanErr := scanRetainedCoordinateDigest(rows, destinationTable)
-		if scanErr != nil {
-			return nil, scanErr
-		}
-		digests[stored] = retained
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return digests, nil
+	return readDigestMap(ctx, destination, query,
+		func(rows *sql.Rows) (string, string, error) {
+			return scanRetainedCoordinateDigest(rows, destinationTable)
+		})
 }
 
 func retainedCoordinateQuery(destinationTable string) (string, error) {
@@ -504,13 +518,13 @@ func scanRetainedCoordinateDigest(rows *sql.Rows, destinationTable string) (stri
 		}
 		values = []any{sessionID, number, position, depth, caution, wordCount, compacted}
 	case "ingest_file_state_versions":
-		var path string
-		var kind, agent, project, fingerprint, syncedAt, lastError, metadata sql.NullString
-		if err := rows.Scan(&stored, &path, &kind, &agent, &project, &fingerprint,
-			&syncedAt, &lastError, &metadata); err != nil {
+		row, err := scanIngestFileStateRow(rows)
+		if err != nil {
 			return "", "", err
 		}
-		values = []any{path, kind, agent, project, fingerprint, syncedAt, lastError, metadata}
+		stored = row.stored
+		values = []any{row.path, row.kind, row.agent, row.project, row.fingerprint,
+			row.syncedAt, row.lastError, row.metadata}
 	default:
 		return "", "", fmt.Errorf("unknown corpus archive destination %q", destinationTable)
 	}

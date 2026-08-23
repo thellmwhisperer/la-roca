@@ -18,19 +18,11 @@ import (
 const harvestCursorSession = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
 func TestGrowingSessionAppendsWithoutVersioningOldRows(t *testing.T) {
-	home := t.TempDir()
-	workspace := filepath.Join(home, "w", "demo")
-	if err := os.MkdirAll(workspace, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	sessionPath := filepath.Join(home, ".claude", "projects", encodeRoot(workspace),
-		harvestCursorSession+".jsonl")
+	home, workspace, sessionPath := harvestWorkspace(t)
 	writeHarvestTranscript(t, sessionPath, workspace, 1)
 
 	db := corpusDatabase(t)
-	roots := ResolveRoots(Environment{GOOS: "darwin", Home: home},
-		Settings{WorkspaceRoots: []string{filepath.Dir(workspace)}})
-	options := Options{Roots: roots}
+	options := Options{Roots: resolveWorkspaceRoots(home, workspace)}
 	ctx := context.Background()
 
 	first, err := Run(ctx, db, registry(t), options)
@@ -208,26 +200,8 @@ func TestCodexHistoryCursorRemainsPerSession(t *testing.T) {
 	prefix := `{"session_id":"history-1","text":"one","ts":1785578401}` + "\n" +
 		`{"session_id":"history-2","text":"other","ts":1785578402}` + "\n"
 	tail := `{"session_id":"history-1","text":"two","ts":1785578403}` + "\n"
-	path := filepath.Join(t.TempDir(), "history.jsonl")
-	if err := os.WriteFile(path, []byte(prefix+tail), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	state := harvestCursorState{
-		ByteOffset: int64(len(prefix)), PrefixDigest: digestBytes([]byte(prefix)),
-		ExchangeCursor: 1, ExchangeCursors: map[string]int{"history-1": 1, "history-2": 1},
-		LastExchangeComplete: true, ParserVersion: readingVersion(parsers.KindCodexHistory),
-	}
-	metadata, err := json.Marshal(state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	result := Result{}
-	records, reason := read(t.Context(), Options{}, Target{
-		Path: path, FileName: filepath.Base(path), Kind: parsers.KindCodexHistory,
-	}, incrementality.FileState{Metadata: metadata}, &result)
-	if reason != "" {
-		t.Fatal(reason)
-	}
+	records, result, path := readCodexHistoryIncrement(t, prefix, tail, 1,
+		map[string]int{"history-1": 1, "history-2": 1})
 	if len(records.Sessions) != 1 || records.Sessions[0].ID != "history-1" ||
 		len(records.Sessions[0].Exchanges) != 1 || records.Sessions[0].Exchanges[0].Number != 2 {
 		t.Fatalf("incremental history records = %+v", records)
@@ -241,13 +215,31 @@ func TestCodexHistoryCursorRemainsPerSession(t *testing.T) {
 func TestCodexHistoryCursorStartsNewSessionAtOne(t *testing.T) {
 	prefix := `{"session_id":"history-1","text":"five","ts":1785578401}` + "\n"
 	tail := `{"session_id":"history-2","text":"first","ts":1785578402}` + "\n"
+	records, result, path := readCodexHistoryIncrement(t, prefix, tail, 5,
+		map[string]int{"history-1": 5})
+	if len(records.Sessions) != 1 || records.Sessions[0].ID != "history-2" ||
+		len(records.Sessions[0].Exchanges) != 1 || records.Sessions[0].Exchanges[0].Number != 1 {
+		t.Fatalf("new history session records = %+v", records)
+	}
+	cursor := result.harvestCursors[path]
+	if cursor.ExchangeCursors["history-1"] != 5 || cursor.ExchangeCursors["history-2"] != 1 {
+		t.Fatalf("per-session history cursor = %+v", cursor.ExchangeCursors)
+	}
+}
+
+// readCodexHistoryIncrement writes a history prefix plus tail, primes the
+// stored exchange cursor from the prefix, and runs one incremental read.
+func readCodexHistoryIncrement(t *testing.T, prefix, tail string, exchangeCursor int,
+	cursors map[string]int,
+) (parsers.Records, Result, string) {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "history.jsonl")
 	if err := os.WriteFile(path, []byte(prefix+tail), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	state := harvestCursorState{
 		ByteOffset: int64(len(prefix)), PrefixDigest: digestBytes([]byte(prefix)),
-		ExchangeCursor: 5, ExchangeCursors: map[string]int{"history-1": 5},
+		ExchangeCursor: exchangeCursor, ExchangeCursors: cursors,
 		LastExchangeComplete: true, ParserVersion: readingVersion(parsers.KindCodexHistory),
 	}
 	metadata, err := json.Marshal(state)
@@ -261,24 +253,11 @@ func TestCodexHistoryCursorStartsNewSessionAtOne(t *testing.T) {
 	if reason != "" {
 		t.Fatal(reason)
 	}
-	if len(records.Sessions) != 1 || records.Sessions[0].ID != "history-2" ||
-		len(records.Sessions[0].Exchanges) != 1 || records.Sessions[0].Exchanges[0].Number != 1 {
-		t.Fatalf("new history session records = %+v", records)
-	}
-	cursor := result.harvestCursors[path]
-	if cursor.ExchangeCursors["history-1"] != 5 || cursor.ExchangeCursors["history-2"] != 1 {
-		t.Fatalf("per-session history cursor = %+v", cursor.ExchangeCursors)
-	}
+	return records, result, path
 }
 
 func TestIncompleteGrowingSessionFallsBackToACompleteReparse(t *testing.T) {
-	home := t.TempDir()
-	workspace := filepath.Join(home, "w", "demo")
-	if err := os.MkdirAll(workspace, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	sessionPath := filepath.Join(home, ".claude", "projects", encodeRoot(workspace),
-		harvestCursorSession+".jsonl")
+	home, workspace, sessionPath := harvestWorkspace(t)
 	if err := os.MkdirAll(filepath.Dir(sessionPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -287,9 +266,8 @@ func TestIncompleteGrowingSessionFallsBackToACompleteReparse(t *testing.T) {
 		t.Fatal(err)
 	}
 	db := corpusDatabase(t)
-	roots := ResolveRoots(Environment{GOOS: "darwin", Home: home},
-		Settings{WorkspaceRoots: []string{filepath.Dir(workspace)}})
-	if _, err := Run(t.Context(), db, registry(t), Options{Roots: roots}); err != nil {
+	if _, err := Run(t.Context(), db, registry(t),
+		Options{Roots: resolveWorkspaceRoots(home, workspace)}); err != nil {
 		t.Fatal(err)
 	}
 	assertHarvestCursorState(t, db, sessionPath, 0, false)
@@ -297,7 +275,7 @@ func TestIncompleteGrowingSessionFallsBackToACompleteReparse(t *testing.T) {
 	if err := os.WriteFile(sessionPath, []byte(user+assistant), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Run(t.Context(), db, registry(t), Options{Roots: roots}); err != nil {
+	if _, err := Run(t.Context(), db, registry(t), Options{Roots: resolveWorkspaceRoots(home, workspace)}); err != nil {
 		t.Fatal(err)
 	}
 	if got := countRows(t, db.SQL(), "exchanges"); got != 1 {
@@ -658,22 +636,36 @@ func harvestVersionCount(t *testing.T, db *store.DB) int {
 
 func assertLineageHasNoContent(t *testing.T, db *store.DB) {
 	t.Helper()
-	rows, err := db.SQL().Query(`SELECT name FROM pragma_table_info('exchange_versions')`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
+	for _, column := range []string{"human_text", "agent_text", "full_text"} {
+		var count int
+		if err := db.SQL().QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info('exchange_versions') WHERE name = ?`, column).
+			Scan(&count); err != nil {
 			t.Fatal(err)
 		}
-		switch name {
-		case "human_text", "agent_text", "full_text":
-			t.Fatalf("lineage still stores content column %s", name)
+		if count != 0 {
+			t.Fatalf("lineage still stores content column %s", column)
 		}
 	}
-	if err := rows.Err(); err != nil {
+}
+
+// resolveWorkspaceRoots derives roots from a home and workspace the same way
+// every harvest test does, keeping the fixture spelling in one place.
+func resolveWorkspaceRoots(home, workspace string) Roots {
+	return ResolveRoots(Environment{GOOS: "darwin", Home: home},
+		Settings{WorkspaceRoots: []string{filepath.Dir(workspace)}})
+}
+
+// harvestWorkspace creates the demo workspace and the claude session path the
+// growing-session tests share.
+func harvestWorkspace(t *testing.T) (home, workspace, sessionPath string) {
+	t.Helper()
+	home = t.TempDir()
+	workspace = filepath.Join(home, "w", "demo")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	sessionPath = filepath.Join(home, ".claude", "projects", encodeRoot(workspace),
+		harvestCursorSession+".jsonl")
+	return home, workspace, sessionPath
 }

@@ -2,6 +2,7 @@ package rocacorpus
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"testing"
@@ -11,27 +12,14 @@ import (
 )
 
 func TestStorageLawRewriteHonorsCancellation(t *testing.T) {
-	path := t.TempDir() + "/roca-corpus.db"
-	if err := ApplySchema(path); err != nil {
-		t.Fatal(err)
-	}
-	db, err := bundledplugin.OpenDatabase(path, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`ALTER TABLE session_versions ADD COLUMN title TEXT`); err != nil {
-		db.Close()
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
+	db, path := openSchemaDB(t)
+	addTitleColumnAndClose(t, db)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := applyStorageLaw(ctx, path, false); err == nil {
 		t.Fatal("storage-law rewrite ignored cancellation")
 	}
-	db, err = bundledplugin.OpenDatabase(path, true)
+	db, err := bundledplugin.OpenDatabase(path, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,14 +46,7 @@ func TestVacuumHonorsCancellation(t *testing.T) {
 }
 
 func TestApplySchemaRefusesDuplicatesWithoutDroppingPriorGuard(t *testing.T) {
-	path := t.TempDir() + "/roca-corpus.db"
-	if err := ApplySchema(path); err != nil {
-		t.Fatal(err)
-	}
-	db, err := bundledplugin.OpenDatabase(path, false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	db, path := openSchemaDB(t)
 	statements := []string{
 		`DROP INDEX idx_sessions_exact_payload`,
 		`CREATE INDEX idx_sessions_exact_payload ON sessions(source_agent, title, metadata)`,
@@ -77,14 +58,14 @@ func TestApplySchemaRefusesDuplicatesWithoutDroppingPriorGuard(t *testing.T) {
 	for _, statement := range statements {
 		if _, err := db.Exec(statement); err != nil {
 			db.Close()
-			t.Fatal(err)
+			t.Fatalf("fixture %q: %v", statement, err)
 		}
 	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	err = ApplySchema(path)
+	err := ApplySchema(path)
 	if err == nil || !strings.Contains(err.Error(), "exact dedup") {
 		t.Fatalf("ApplySchema duplicate error = %v", err)
 	}
@@ -104,27 +85,14 @@ func TestApplySchemaRefusesDuplicatesWithoutDroppingPriorGuard(t *testing.T) {
 }
 
 func TestCanceledCompactRestoresSchemaAfterCommittedRewrite(t *testing.T) {
-	path := t.TempDir() + "/roca-corpus.db"
-	if err := ApplySchema(path); err != nil {
-		t.Fatal(err)
-	}
-	db, err := bundledplugin.OpenDatabase(path, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`ALTER TABLE session_versions ADD COLUMN title TEXT`); err != nil {
-		db.Close()
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
+	db, path := openSchemaDB(t)
+	addTitleColumnAndClose(t, db)
 	if rewrote, err := applyStorageLaw(context.Background(), path, false); err != nil {
 		t.Fatal(err)
 	} else if !rewrote {
 		t.Fatal("storage-law fixture did not rewrite")
 	}
-	db, err = bundledplugin.OpenDatabase(path, true)
+	db, err := bundledplugin.OpenDatabase(path, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,5 +133,33 @@ func TestCanceledCompactRestoresSchemaAfterCommittedRewrite(t *testing.T) {
 	}
 	if !guards {
 		t.Fatal("canceled compact left hash guards unrestored")
+	}
+}
+
+// openSchemaDB applies the corpus schema to a fresh database and opens it for
+// writing, returning the handle and the file path for tests that reopen it.
+func openSchemaDB(t *testing.T) (*sql.DB, string) {
+	t.Helper()
+	path := t.TempDir() + "/roca-corpus.db"
+	if err := ApplySchema(path); err != nil {
+		t.Fatal(err)
+	}
+	db, err := bundledplugin.OpenDatabase(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db, path
+}
+
+// addTitleColumnAndClose adds the pre-storage-law title column and closes the
+// database, the shared fixture of the cancellation tests.
+func addTitleColumnAndClose(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if _, err := db.Exec(`ALTER TABLE session_versions ADD COLUMN title TEXT`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
 	}
 }

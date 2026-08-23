@@ -44,10 +44,7 @@ func TestCompactPreservesCurrentRowsOnALabCopy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Sessions != before.sessions || report.Exchanges != before.exchanges ||
-		report.ThinkingBlocks != before.thinking || report.ToolUses != before.tools {
-		t.Fatalf("current rows drifted: compact=%+v before=%+v", report, before)
-	}
+	assertCurrentRows(t, report, before.sessions, before.exchanges, before.thinking, before.tools)
 	afterFTS, afterExec, err := labQuerySnapshot(copyPath)
 	if err != nil {
 		t.Fatal(err)

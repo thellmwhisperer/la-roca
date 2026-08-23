@@ -141,6 +141,39 @@ func importSource(ctx context.Context, destination *sql.DB, source preparedSourc
 	return nil
 }
 
+// querier is the narrow surface scanRecords needs; both *sql.DB and *sql.Tx
+// implement it, so the destination pass and the source passes share one loop.
+type querier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+// scanRecords streams every row query returns and hands each scanned record to
+// fn. The three materialization passes (destination sessions, source sessions,
+// source child rows) share this iteration and its error handling.
+func scanRecords(ctx context.Context, q querier, table archiveTable, fn func(archiveRecord) error) error {
+	rows, err := q.QueryContext(ctx, table.query)
+	if err != nil {
+		return err
+	}
+	tracker := &occurrenceTracker{}
+	for rows.Next() {
+		record, scanErr := table.scan(rows, tracker)
+		if scanErr != nil {
+			rows.Close()
+			return scanErr
+		}
+		if err := fn(record); err != nil {
+			rows.Close()
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	return rows.Close()
+}
+
 func materializeCurrent(ctx context.Context, destination *sql.DB, sources []preparedSource) error {
 	tx, err := destination.BeginTx(ctx, nil)
 	if err != nil {
@@ -151,40 +184,16 @@ func materializeCurrent(ctx context.Context, destination *sql.DB, sources []prep
 	sessionAliases := map[sourceSession]string{}
 	canonicalSessions := map[string]string{}
 	sessionTable := archiveSourceTables[0]
-	destinationRows, err := tx.QueryContext(ctx, sessionTable.query)
-	if err != nil {
-		return err
-	}
-	destinationTracker := &occurrenceTracker{}
-	for destinationRows.Next() {
-		record, scanErr := sessionTable.scan(destinationRows, destinationTracker)
-		if scanErr != nil {
-			destinationRows.Close()
-			return scanErr
-		}
+	if err := scanRecords(ctx, tx, sessionTable, func(record archiveRecord) error {
 		if record.sessionID.Valid {
 			canonicalSessions[record.currentDigest] = record.sessionID.String
 		}
-	}
-	if err := destinationRows.Err(); err != nil {
-		destinationRows.Close()
-		return err
-	}
-	if err := destinationRows.Close(); err != nil {
+		return nil
+	}); err != nil {
 		return err
 	}
 	for _, source := range sources {
-		rows, err := source.db.QueryContext(ctx, sessionTable.query)
-		if err != nil {
-			return err
-		}
-		tracker := &occurrenceTracker{}
-		for rows.Next() {
-			record, scanErr := sessionTable.scan(rows, tracker)
-			if scanErr != nil {
-				rows.Close()
-				return scanErr
-			}
+		if err := scanRecords(ctx, source.db, sessionTable, func(record archiveRecord) error {
 			if record.sessionID.Valid {
 				canonical, found := canonicalSessions[record.currentDigest]
 				if !found {
@@ -193,35 +202,17 @@ func materializeCurrent(ctx context.Context, destination *sql.DB, sources []prep
 				}
 				sessionAliases[sourceSession{source.Database, record.sessionID.String}] = canonical
 				if canonical != record.sessionID.String {
-					continue
+					return nil
 				}
 			}
-			if err := materializeRecord(ctx, tx, record); err != nil {
-				rows.Close()
-				return err
-			}
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return err
-		}
-		if err := rows.Close(); err != nil {
+			return materializeRecord(ctx, tx, record)
+		}); err != nil {
 			return err
 		}
 	}
 	for _, table := range archiveSourceTables[1:] {
 		for _, source := range sources {
-			rows, err := source.db.QueryContext(ctx, table.query)
-			if err != nil {
-				return err
-			}
-			tracker := &occurrenceTracker{}
-			for rows.Next() {
-				record, scanErr := table.scan(rows, tracker)
-				if scanErr != nil {
-					rows.Close()
-					return scanErr
-				}
+			if err := scanRecords(ctx, source.db, table, func(record archiveRecord) error {
 				if record.sessionID.Valid {
 					if canonical := sessionAliases[sourceSession{
 						source.Database, record.sessionID.String,
@@ -230,16 +221,8 @@ func materializeCurrent(ctx context.Context, destination *sql.DB, sources []prep
 						record.currentValues[0] = canonical
 					}
 				}
-				if err := materializeRecord(ctx, tx, record); err != nil {
-					rows.Close()
-					return err
-				}
-			}
-			if err := rows.Err(); err != nil {
-				rows.Close()
-				return err
-			}
-			if err := rows.Close(); err != nil {
+				return materializeRecord(ctx, tx, record)
+			}); err != nil {
 				return err
 			}
 		}

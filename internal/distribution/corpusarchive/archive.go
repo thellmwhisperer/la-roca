@@ -157,25 +157,20 @@ func Merge(ctx context.Context, destinationPath string, sources []Source, option
 	if err := materializeCurrent(ctx, run.destination, run.sources); err != nil {
 		return Report{}, err
 	}
-	report, err := buildReport(ctx, run.destination, run.sources)
+	report, ledgerDigest, err := buildLegacyReport(ctx, run.destination, run.sources)
 	if err != nil {
 		return report, err
-	}
-	ledgerDigest, err := legacyReportDigest(report)
-	if err != nil {
-		return Report{}, err
 	}
 	if err := recordArchiveVerification(ctx, run.destination, states, ledgerDigest); err != nil {
 		return Report{}, err
 	}
-	digest, err := reportDigest(report)
+	digest, err := sealReportDigest(&report)
 	if err != nil {
 		return Report{}, err
 	}
 	if err := recordReconciliationVerification(ctx, run.destination, digest); err != nil {
 		return Report{}, err
 	}
-	report.VerificationDigest = digest
 	return report, nil
 }
 
@@ -201,11 +196,7 @@ func Verify(ctx context.Context, destinationPath string, sources []Source, optio
 	if err := validateRecordedSources(ctx, run.destination, run.sources, run.batchSize, true); err != nil {
 		return Report{}, err
 	}
-	report, err := buildReport(ctx, run.destination, run.sources)
-	if err != nil {
-		return report, err
-	}
-	ledgerDigest, err := legacyReportDigest(report)
+	report, ledgerDigest, err := buildLegacyReport(ctx, run.destination, run.sources)
 	if err != nil {
 		return report, err
 	}
@@ -225,7 +216,7 @@ func Verify(ctx context.Context, destinationPath string, sources []Source, optio
 				table.migration, state.VerificationDigest, ledgerDigest)
 		}
 	}
-	digest, err := reportDigest(report)
+	digest, err := sealReportDigest(&report)
 	if err != nil {
 		return report, err
 	}
@@ -233,7 +224,6 @@ func Verify(ctx context.Context, destinationPath string, sources []Source, optio
 		report.Reconciliation.Status = ReconciliationRed
 		return report, err
 	}
-	report.VerificationDigest = digest
 	return report, nil
 }
 

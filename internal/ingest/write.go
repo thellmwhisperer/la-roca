@@ -1140,7 +1140,10 @@ func (w *writer) refreshSession(ctx context.Context, session parsers.Session, cu
 	return nil
 }
 
-func earlierSessionInstant(current, incoming string) string {
+// pickSessionInstant chooses between the current and incoming session instant
+// using the supplied comparison over their resolved timestamps. It returns the
+// incoming instant only when both resolve and the comparison prefers it.
+func pickSessionInstant(current, incoming string, prefer func(incoming, current time.Time) bool) string {
 	if current == "" {
 		return incoming
 	}
@@ -1150,26 +1153,22 @@ func earlierSessionInstant(current, incoming string) string {
 	currentTime, currentOK := parseTimestampInstant(current)
 	incomingTime, incomingOK := parseTimestampInstant(incoming)
 	if currentOK && incomingOK && incomingTime.present && currentTime.present &&
-		instantTime(incomingTime).Before(instantTime(currentTime)) {
+		prefer(instantTime(incomingTime), instantTime(currentTime)) {
 		return incoming
 	}
 	return current
 }
 
+func earlierSessionInstant(current, incoming string) string {
+	return pickSessionInstant(current, incoming, func(incoming, current time.Time) bool {
+		return incoming.Before(current)
+	})
+}
+
 func laterSessionInstant(current, incoming string) string {
-	if current == "" {
-		return incoming
-	}
-	if incoming == "" {
-		return current
-	}
-	currentTime, currentOK := parseTimestampInstant(current)
-	incomingTime, incomingOK := parseTimestampInstant(incoming)
-	if currentOK && incomingOK && incomingTime.present && currentTime.present &&
-		instantTime(incomingTime).After(instantTime(currentTime)) {
-		return incoming
-	}
-	return current
+	return pickSessionInstant(current, incoming, func(incoming, current time.Time) bool {
+		return incoming.After(current)
+	})
 }
 
 func mergedSessionDuration(current row, session parsers.Session) *int {

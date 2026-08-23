@@ -944,44 +944,40 @@ func codexCursorTail(prefix, tail []byte) ([]byte, bool) {
 }
 
 func claudeTailStartsTurn(content []byte) bool {
-	for _, raw := range bytes.Split(content, []byte{'\n'}) {
-		if len(bytes.TrimSpace(raw)) == 0 {
-			continue
-		}
-		var line struct {
-			Type    string `json:"type"`
-			Message *struct {
-				Content json.RawMessage `json:"content"`
-			} `json:"message"`
-		}
-		if json.Unmarshal(raw, &line) != nil || line.Type != "user" || line.Message == nil {
-			return false
-		}
-		var text string
-		if json.Unmarshal(line.Message.Content, &text) == nil {
+	raw, ok := firstNonblankLine(content)
+	if !ok {
+		return false
+	}
+	var line struct {
+		Type    string `json:"type"`
+		Message *struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"message"`
+	}
+	if json.Unmarshal(raw, &line) != nil || line.Type != "user" || line.Message == nil {
+		return false
+	}
+	var text string
+	if json.Unmarshal(line.Message.Content, &text) == nil {
+		return true
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(line.Message.Content, &blocks) != nil {
+		return false
+	}
+	for _, block := range blocks {
+		if block.Type != "tool_result" {
 			return true
 		}
-		var blocks []struct {
-			Type string `json:"type"`
-		}
-		if json.Unmarshal(line.Message.Content, &blocks) != nil {
-			return false
-		}
-		for _, block := range blocks {
-			if block.Type != "tool_result" {
-				return true
-			}
-		}
-		return len(blocks) == 0
 	}
-	return false
+	return len(blocks) == 0
 }
 
 func codexTailStartsTurn(content []byte) bool {
-	for _, raw := range bytes.Split(content, []byte{'\n'}) {
-		if len(bytes.TrimSpace(raw)) == 0 {
-			continue
-		}
+	startsTurn := false
+	forEachNonBlankLine(content, func(raw []byte) bool {
 		var line struct {
 			Type    string `json:"type"`
 			Payload struct {
@@ -996,61 +992,58 @@ func codexTailStartsTurn(content []byte) bool {
 		}
 		switch line.Type {
 		case "session_meta", "turn_context":
-			continue
+			return true
 		case "event_msg":
 			if line.Payload.Type == "user_message" {
-				return true
+				startsTurn = true
+				return false
 			}
 			if line.Payload.Type == "task_started" {
-				continue
+				return true
 			}
 			return false
 		case "response_item":
-			return line.Payload.Type == "message" && line.Payload.Role == "user"
+			startsTurn = line.Payload.Type == "message" && line.Payload.Role == "user"
+			return false
 		case "":
-			return line.SessionID != "" && strings.TrimSpace(line.Text) != ""
+			startsTurn = line.SessionID != "" && strings.TrimSpace(line.Text) != ""
+			return false
 		default:
 			return false
 		}
-	}
-	return false
+	})
+	return startsTurn
 }
 
 func codexHistoryTailStartsTurn(content []byte) bool {
-	for _, raw := range bytes.Split(content, []byte{'\n'}) {
-		if len(bytes.TrimSpace(raw)) == 0 {
-			continue
-		}
-		var line struct {
-			Type      string   `json:"type"`
-			SessionID string   `json:"session_id"`
-			Text      string   `json:"text"`
-			Timestamp *float64 `json:"ts"`
-		}
-		return json.Unmarshal(raw, &line) == nil && line.Type == "" && line.SessionID != "" &&
-			strings.TrimSpace(line.Text) != "" && line.Timestamp != nil && *line.Timestamp > 0
+	raw, ok := firstNonblankLine(content)
+	if !ok {
+		return false
 	}
-	return false
+	var line struct {
+		Type      string   `json:"type"`
+		SessionID string   `json:"session_id"`
+		Text      string   `json:"text"`
+		Timestamp *float64 `json:"ts"`
+	}
+	return json.Unmarshal(raw, &line) == nil && line.Type == "" && line.SessionID != "" &&
+		strings.TrimSpace(line.Text) != "" && line.Timestamp != nil && *line.Timestamp > 0
 }
 
 func messageTailStartsUser(content []byte) bool {
-	for _, raw := range bytes.Split(content, []byte{'\n'}) {
-		if len(bytes.TrimSpace(raw)) == 0 {
-			continue
-		}
-		var line struct {
-			Type string `json:"type"`
-		}
-		return json.Unmarshal(raw, &line) == nil && line.Type == "user"
+	raw, ok := firstNonblankLine(content)
+	if !ok {
+		return false
 	}
-	return false
+	var line struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal(raw, &line) == nil && line.Type == "user"
 }
 
 func qwenTailStartsTurn(content []byte) bool {
-	for _, raw := range bytes.Split(content, []byte{'\n'}) {
-		if len(bytes.TrimSpace(raw)) == 0 {
-			continue
-		}
+	startsTurn := false
+	forEachNonBlankLine(content, func(raw []byte) bool {
 		var line struct {
 			Type      string `json:"type"`
 			SessionID string `json:"sessionId"`
@@ -1059,18 +1052,17 @@ func qwenTailStartsTurn(content []byte) bool {
 			return false
 		}
 		if line.Type == "system" {
-			continue
+			return true
 		}
-		return line.Type == "user"
-	}
-	return false
+		startsTurn = line.Type == "user"
+		return false
+	})
+	return startsTurn
 }
 
 func grokTailStartsTurn(content []byte) bool {
-	for _, raw := range bytes.Split(content, []byte{'\n'}) {
-		if len(bytes.TrimSpace(raw)) == 0 {
-			continue
-		}
+	startsTurn := false
+	forEachNonBlankLine(content, func(raw []byte) bool {
 		var line struct {
 			Method string `json:"method"`
 			Params struct {
@@ -1083,11 +1075,12 @@ func grokTailStartsTurn(content []byte) bool {
 			return false
 		}
 		if line.Method == "_x.ai/session/update" {
-			continue
+			return true
 		}
-		return line.Method == "session/update" && line.Params.Update.Type == "user_message_chunk"
-	}
-	return false
+		startsTurn = line.Method == "session/update" && line.Params.Update.Type == "user_message_chunk"
+		return false
+	})
+	return startsTurn
 }
 
 func piCursorTail(prefix, tail []byte) ([]byte, bool) {
@@ -1146,13 +1139,26 @@ func piCursorTail(prefix, tail []byte) ([]byte, bool) {
 	return prepared, true
 }
 
-func firstNonblankLine(content []byte) ([]byte, bool) {
+// forEachNonBlankLine calls fn for each line of content that carries
+// non-whitespace bytes, in order. fn returns false to stop scanning early.
+func forEachNonBlankLine(content []byte, fn func([]byte) bool) {
 	for _, raw := range bytes.Split(content, []byte{'\n'}) {
-		if trimmed := bytes.TrimSpace(raw); len(trimmed) > 0 {
-			return trimmed, true
+		if len(bytes.TrimSpace(raw)) == 0 {
+			continue
+		}
+		if !fn(raw) {
+			return
 		}
 	}
-	return nil, false
+}
+
+func firstNonblankLine(content []byte) ([]byte, bool) {
+	var line []byte
+	forEachNonBlankLine(content, func(raw []byte) bool {
+		line = bytes.TrimSpace(raw)
+		return false
+	})
+	return line, line != nil
 }
 
 func recordHarvestCursor(target Target, seed harvestCursorSeed, full []byte, records parsers.Records,
