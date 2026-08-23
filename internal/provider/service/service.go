@@ -896,20 +896,28 @@ func lowerWithPositions(text string) (string, []int) {
 
 func (s *Service) proveWordSearch(ctx context.Context) *search.Proof {
 	var fault *search.Proof
+	var ready *search.Proof
 	for _, database := range s.searchable() {
 		proof, err := search.Prove(ctx, database)
 		if err != nil {
 			proof = search.Proof{Reason: err.Error()}
 		}
-		if proof.Ready {
-			return &proof
+		if proof.Ready && ready == nil {
+			candidate := proof
+			ready = &candidate
 		}
 		if !proof.Empty && fault == nil {
-			fault = &proof
+			if !proof.Ready {
+				candidate := proof
+				fault = &candidate
+			}
 		}
 	}
 	if fault != nil {
 		return fault
+	}
+	if ready != nil {
+		return ready
 	}
 	empty := search.EmptyProof()
 	return &empty

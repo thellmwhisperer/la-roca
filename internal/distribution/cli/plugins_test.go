@@ -39,7 +39,7 @@ func TestPluginsResolveFromAControlledPathAndNeverTheCurrentDirectory(t *testing
 	}
 }
 
-func TestVectorExecutableDispatchAndListingRequireItsFeature(t *testing.T) {
+func TestVectorExecutableLifecycleRemainsReachableWhenSearchIsDisabled(t *testing.T) {
 	pluginRoot, directory := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
 	if _, err := rocavector.EnsureWithPayload(
 		pluginRoot, directory, "synthetic-version", []byte("#!/bin/sh\nexit 0\n")); err != nil {
@@ -50,6 +50,14 @@ func TestVectorExecutableDispatchAndListingRequireItsFeature(t *testing.T) {
 
 	if handled, _, err := dispatchPlugin(root, []string{"vector"}, config.FeaturesConfig{}); handled || err != nil {
 		t.Fatalf("disabled vector dispatch = handled %v, err %v", handled, err)
+	}
+	for _, verb := range []string{"install", "status"} {
+		if handled, code, err := dispatchPlugin(root, []string{"vector", verb}, config.FeaturesConfig{}); !handled || code != ExitOK || err != nil {
+			t.Fatalf("disabled vector %s = handled %v, code %d, err %v", verb, handled, code, err)
+		}
+	}
+	if handled, _, err := dispatchPlugin(root, []string{"vector", "query"}, config.FeaturesConfig{}); handled || err != nil {
+		t.Fatalf("disabled vector query = handled %v, err %v", handled, err)
 	}
 	if plugins := listPlugins(config.FeaturesConfig{}); len(plugins) != 0 {
 		t.Fatalf("disabled vector appeared in plugin listing: %+v", plugins)

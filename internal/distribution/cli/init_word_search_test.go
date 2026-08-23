@@ -81,6 +81,31 @@ func TestInitFailsWithOneNextStepWhenWordIndexRepairFails(t *testing.T) {
 	corpusPath := filepath.Join(home, ".roca", "plugins", rocacorpus.Name, rocacorpus.DatabaseFilename)
 	emptyWordIndex(t, corpusPath, true)
 
+	assertWordIndexRepairFails(t, dbPath)
+}
+
+func TestHealthyCoreDoesNotMaskBrokenCorpusWordIndex(t *testing.T) {
+	home, dbPath := deepSearchHome(t)
+	initMustSucceed(t, "init", "--db-path", dbPath)
+	core, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.Exec(`INSERT INTO memories (layer, content, origin)
+		VALUES ('fact', 'healthy core lighthouse', 'agent')`); err != nil {
+		core.Close()
+		t.Fatal(err)
+	}
+	if err := core.Close(); err != nil {
+		t.Fatal(err)
+	}
+	corpusPath := filepath.Join(home, ".roca", "plugins", rocacorpus.Name, rocacorpus.DatabaseFilename)
+	emptyWordIndex(t, corpusPath, true)
+	assertWordIndexRepairFails(t, dbPath)
+}
+
+func assertWordIndexRepairFails(t *testing.T, dbPath string) {
+	t.Helper()
 	run := executeHermeticCLI([]string{"init", "--db-path", dbPath})
 	if run.err == nil || run.code == ExitOK {
 		t.Fatalf("init succeeded with an index it could not repair:\n%s%s", run.output, run.warnings)

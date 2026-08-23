@@ -282,7 +282,7 @@ func dispatchPlugin(root *cobra.Command, args []string, features config.Features
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") || builtIn(root, args[0]) {
 		return false, 0, nil
 	}
-	if args[0] == "vector" && !features.Vector {
+	if args[0] == "vector" && !features.Vector && !vectorLifecycleCommand(args[1:]) {
 		return false, 0, nil
 	}
 	path, found := findPlugin(args[0])
@@ -300,6 +300,10 @@ func dispatchPlugin(root *cobra.Command, args []string, features config.Features
 		return true, exit.ExitCode(), nil
 	}
 	return true, ExitError, fmt.Errorf("execute plugin %s: %w", path, err)
+}
+
+func vectorLifecycleCommand(args []string) bool {
+	return len(args) > 0 && (args[0] == "install" || args[0] == "status")
 }
 
 func builtIn(root *cobra.Command, name string) bool {

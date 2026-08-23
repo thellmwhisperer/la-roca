@@ -33,16 +33,16 @@ type Proof struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// proofSource is one indexed text column and the FTS table that carries it.
+// proofSource is one source table and the FTS table that carries its text.
 type proofSource struct {
-	table, column, index string
+	table, index string
 }
 
 var proofSources = []proofSource{
-	{"memories", "content", "memories_fts"},
-	{"exchanges", "human_text", "exchanges_fts"},
-	{"sessions", "title", "sessions_fts"},
-	{"thinking_blocks", "full_text", "thinking_fts"},
+	{"memories", "memories_fts"},
+	{"exchanges", "exchanges_fts"},
+	{"sessions", "sessions_fts"},
+	{"thinking_blocks", "thinking_fts"},
 }
 
 // Prove asks the lexical index for a word this database already stores.
@@ -56,25 +56,31 @@ func Prove(ctx context.Context, db *store.DB) (Proof, error) {
 	}
 	hasRows := false
 	for _, source := range proofSources {
-		word, rows, err := newestWord(ctx, db, source)
+		columns, err := indexedColumns(ctx, db, source)
 		if err != nil {
 			return Proof{}, err
 		}
-		hasRows = hasRows || rows
-		if word == "" {
-			continue
+		for _, column := range columns {
+			word, rows, err := newestWord(ctx, db, source.table, column)
+			if err != nil {
+				return Proof{}, err
+			}
+			hasRows = hasRows || rows
+			if word == "" {
+				continue
+			}
+			matches, err := countMatches(ctx, db, source.index, word)
+			if err != nil {
+				return Proof{Word: word, Reason: err.Error()}, nil
+			}
+			if matches == 0 {
+				return Proof{Word: word, Reason: fmt.Sprintf(
+					"the word index did not answer for %q, a word %s already holds",
+					word, source.table)}, nil
+			}
+			return Proof{Ready: true, Word: word, Matches: matches,
+				Capped: matches >= proofLimit}, nil
 		}
-		matches, err := countMatches(ctx, db, source.index, word)
-		if err != nil {
-			return Proof{Word: word, Reason: err.Error()}, nil
-		}
-		if matches == 0 {
-			return Proof{Word: word, Reason: fmt.Sprintf(
-				"the word index did not answer for %q, a word %s already holds",
-				word, source.table)}, nil
-		}
-		return Proof{Ready: true, Word: word, Matches: matches,
-			Capped: matches >= proofLimit}, nil
 	}
 	if hasRows {
 		return Proof{Reason: "agent history is present but contains no searchable words"}, nil
@@ -90,13 +96,34 @@ func EmptyProof() Proof {
 		Reason: "there is no agent history on this machine to search yet"}
 }
 
-func newestWord(ctx context.Context, db *store.DB, source proofSource) (string, bool, error) {
+func indexedColumns(ctx context.Context, db *store.DB, source proofSource) ([]string, error) {
+	rows, err := db.SQL().QueryContext(ctx,
+		`SELECT name FROM pragma_table_info(?) ORDER BY cid`, source.index)
+	if err != nil {
+		return nil, fmt.Errorf("read indexed columns for %s: %w", source.table, err)
+	}
+	defer rows.Close()
+	var columns []string
+	for rows.Next() {
+		var column string
+		if err := rows.Scan(&column); err != nil {
+			return nil, fmt.Errorf("read an indexed column for %s: %w", source.table, err)
+		}
+		columns = append(columns, column)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read indexed columns for %s: %w", source.table, err)
+	}
+	return columns, nil
+}
+
+func newestWord(ctx context.Context, db *store.DB, table, column string) (string, bool, error) {
 	statement := fmt.Sprintf(
 		`SELECT %[1]s FROM %[2]s WHERE %[1]s IS NOT NULL AND %[1]s <> '' ORDER BY rowid DESC`,
-		source.column, source.table)
+		quoteProofIdentifier(column), quoteProofIdentifier(table))
 	rows, err := db.SQL().QueryContext(ctx, statement)
 	if err != nil {
-		return "", false, fmt.Errorf("read %s rows to search for: %w", source.table, err)
+		return "", false, fmt.Errorf("read %s rows to search for: %w", table, err)
 	}
 	defer rows.Close()
 	hasRows := false
@@ -104,16 +131,20 @@ func newestWord(ctx context.Context, db *store.DB, source proofSource) (string, 
 		hasRows = true
 		var text string
 		if err := rows.Scan(&text); err != nil {
-			return "", hasRows, fmt.Errorf("read a %s row to search for: %w", source.table, err)
+			return "", hasRows, fmt.Errorf("read a %s row to search for: %w", table, err)
 		}
 		if word := probeWord(text); word != "" {
 			return word, true, nil
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return "", hasRows, fmt.Errorf("read %s rows to search for: %w", source.table, err)
+		return "", hasRows, fmt.Errorf("read %s rows to search for: %w", table, err)
 	}
 	return "", hasRows, nil
+}
+
+func quoteProofIdentifier(identifier string) string {
+	return `"` + strings.ReplaceAll(identifier, `"`, `""`) + `"`
 }
 
 func countMatches(ctx context.Context, db *store.DB, index, word string) (int, error) {

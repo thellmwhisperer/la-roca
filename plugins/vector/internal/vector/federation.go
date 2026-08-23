@@ -900,9 +900,9 @@ func (d DeclaredCorpus) CountChunks(ctx context.Context, sourceKind string) (int
 			text := fmt.Sprintf("COALESCE(CAST(%s.%s AS TEXT),'')", alias, quoteIdentifier(column))
 			counts = append(counts, chunkCountExpression(text, size, overlap))
 		}
-		statement := fmt.Sprintf(`SELECT COALESCE(SUM(%s),0) AS total FROM %s.%s AS %s WHERE %s.%s IS NOT NULL AND (%s)`,
+		statement := fmt.Sprintf(`SELECT COALESCE(SUM(%s),0) AS total FROM %s.%s AS %s WHERE %s`,
 			strings.Join(counts, "+"), quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name),
-			alias, alias, quoteIdentifier(table.IDColumn), declaredNonEmptyPredicate(alias, table.TextColumns))
+			alias, declaredSourcePredicate(alias, table))
 		rows, err := d.Core.queryIngest(ctx, statement)
 		if err != nil {
 			return 0, fmt.Errorf("count declared chunks %s/%s: %w", d.Database.owner(), table.Name, err)
@@ -1156,9 +1156,9 @@ func (d DeclaredCorpus) CountSources(ctx context.Context, sourceKind string) (in
 	}
 	total := 0
 	for _, table := range tables {
-		statement := fmt.Sprintf(`SELECT COUNT(*) AS n FROM %s.%s src WHERE %s IS NOT NULL AND (%s)`,
+		statement := fmt.Sprintf(`SELECT COUNT(*) AS n FROM %s.%s src WHERE %s`,
 			quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name),
-			quoteIdentifier(table.IDColumn), declaredNonEmptyPredicate("src", table.TextColumns))
+			declaredSourcePredicate("src", table))
 		rows, err := d.Core.queryIngest(ctx, statement)
 		if err != nil {
 			return 0, err
@@ -1185,11 +1185,11 @@ func (d DeclaredCorpus) pageQuery(table vectorTable, cursor declaredCursor,
 			quoteIdentifier(table.IDColumn), sqlLiteral(cursor.id))
 	}
 	return fmt.Sprintf(`SELECT CAST(src.%s AS TEXT) AS source_id%s%s FROM %s.%s src%s
-		WHERE src.%s IS NOT NULL AND CAST(src.%s AS TEXT)<>''%s
+		WHERE %s%s
 		ORDER BY context_time DESC, source_id DESC LIMIT %d`,
 		quoteIdentifier(table.IDColumn), declaredColumnSelect("src", table.TextColumns), contextSQL,
 		quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name), join,
-		quoteIdentifier(table.IDColumn), quoteIdentifier(table.IDColumn), bound, walkPageSize)
+		declaredSourcePredicate("src", table), bound, walkPageSize)
 }
 
 func (d DeclaredCorpus) contextSQL(table vectorTable,
@@ -1316,6 +1316,16 @@ func declaredNonEmptyPredicate(alias string, columns []string) string {
 		return "1=1"
 	}
 	return strings.Join(parts, " OR ")
+}
+
+func declaredSourcePredicate(alias string, table vectorTable) string {
+	prefix := ""
+	if alias != "" {
+		prefix = alias + "."
+	}
+	id := prefix + quoteIdentifier(table.IDColumn)
+	return fmt.Sprintf("%s IS NOT NULL AND CAST(%s AS TEXT)<>'' AND (%s)",
+		id, id, declaredNonEmptyPredicate(alias, table.TextColumns))
 }
 
 func (d DeclaredCorpus) table(name string) (vectorTable, bool) {
@@ -1675,17 +1685,8 @@ func countIndexedSources(ctx context.Context, sourcePath, sidecarPath string, ta
 	}
 	read := 0
 	for _, table := range tables {
-		statement := fmt.Sprintf(`WITH declared_rows AS (
-			SELECT CAST(src.%s AS TEXT) AS source_id
-			FROM declared_source.%s AS src WHERE src.%s IS NOT NULL AND (%s)
-		) SELECT COUNT(*) FROM declared_rows
-		WHERE source_id<>'' AND EXISTS (
-			SELECT 1 FROM chunks WHERE source_kind=?
-			AND CAST(json_extract(locator,'$.source_id') AS TEXT)=declared_rows.source_id
-		)`, quoteIdentifier(table.IDColumn), quoteIdentifier(table.Name), quoteIdentifier(table.IDColumn),
-			declaredNonEmptyPredicate("src", table.TextColumns))
 		var tableRead int
-		err := store.QueryRowContext(ctx, statement, table.Name).Scan(&tableRead)
+		err := store.QueryRowContext(ctx, indexedSourceCountQuery(table), table.Name).Scan(&tableRead)
 		if err != nil && strings.Contains(fmt.Sprint(err), "no such table: chunks") {
 			return 0, nil
 		}
@@ -1695,6 +1696,18 @@ func countIndexedSources(ctx context.Context, sourcePath, sidecarPath string, ta
 		read += tableRead
 	}
 	return read, nil
+}
+
+func indexedSourceCountQuery(table vectorTable) string {
+	return fmt.Sprintf(`WITH indexed_ids AS MATERIALIZED (
+		SELECT DISTINCT CAST(json_extract(locator,'$.source_id') AS TEXT) AS source_id
+		FROM chunks WHERE source_kind=?
+			AND json_extract(locator,'$.source_id') IS NOT NULL
+	) SELECT COUNT(*) FROM indexed_ids
+	JOIN declared_source.%s AS src
+		ON CAST(src.%s AS TEXT)=indexed_ids.source_id
+	WHERE %s`, quoteIdentifier(table.Name), quoteIdentifier(table.IDColumn),
+		declaredSourcePredicate("src", table))
 }
 
 func (f Federation) HasSidecars() bool {

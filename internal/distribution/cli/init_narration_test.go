@@ -213,8 +213,10 @@ func TestSemanticSetupFailuresKeepConfigurationAndInitSuccessful(t *testing.T) {
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			root := t.TempDir()
+			t.Setenv("HOME", root)
 			installVectorFixture(t, root, testCase.fixture)
 			path := filepath.Join(root, "config.toml")
+			t.Setenv("ROCA_CONFIG", path)
 			before := "# operator setting\n[features]\nplugins = true\nvector = false\n"
 			if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
 				t.Fatal(err)
@@ -225,6 +227,17 @@ func TestSemanticSetupFailuresKeepConfigurationAndInitSuccessful(t *testing.T) {
 			}
 			if strings.Count(output, "next step:") != 1 || !strings.Contains(output, "word search keeps answering") {
 				t.Fatalf("failed setup output = %q", output)
+			}
+			if !strings.Contains(output, "`roca vector install`") {
+				t.Fatalf("failed setup did not name the installed recovery command: %q", output)
+			}
+			installVectorFixture(t, root, "#!/bin/sh\nexit 0\n")
+			var recoveryOutput bytes.Buffer
+			code, err := executeWithOptions(&cliEnv{out: &recoveryOutput, errOut: &recoveryOutput},
+				[]string{"vector", "install"}, nil, true)
+			if code != ExitOK || err != nil {
+				t.Fatalf("printed recovery command was not accepted: code=%d err=%v output=%q",
+					code, err, recoveryOutput.String())
 			}
 		})
 	}
@@ -263,6 +276,12 @@ func TestSemanticCompanionPlacementFailureKeepsConfigurationAndInitSuccessful(t 
 	}
 	if strings.Count(output.String(), "next step:") != 1 {
 		t.Fatalf("placement failure output = %q", output.String())
+	}
+	if !strings.Contains(output.String(), "`roca init`") {
+		t.Fatalf("placement failure did not name init as its recovery: %q", output.String())
+	}
+	if _, err := runInitChoice(t, true, "new\n", "init"); err != nil {
+		t.Fatalf("printed recovery command was not accepted in the preserved state: %v", err)
 	}
 }
 

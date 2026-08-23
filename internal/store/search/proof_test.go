@@ -90,3 +90,20 @@ func TestProofSkipsANewerTokenlessRow(t *testing.T) {
 		t.Fatalf("tokenless newest row hid searchable history: %+v", proof)
 	}
 }
+
+func TestProofUsesEveryIndexedColumn(t *testing.T) {
+	ctx := context.Background()
+	db := openWorld(t)
+	writeTo(t, db, `INSERT INTO sessions (session_id, project, title)
+		VALUES ('project-only', 'harbour', '')`)
+	if _, err := search.Index(ctx, db, nil); err != nil {
+		t.Fatal(err)
+	}
+	proof, err := search.Prove(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !proof.Ready || proof.Empty || proof.Word != "harbour" || proof.Matches == 0 {
+		t.Fatalf("an indexed project-only session was not proved ready: %+v", proof)
+	}
+}
