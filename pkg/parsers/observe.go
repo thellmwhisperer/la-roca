@@ -243,7 +243,14 @@ func observePi(content []byte) []CallEvent {
 func recordedCommand(raw json.RawMessage) string {
 	var object map[string]json.RawMessage
 	if json.Unmarshal(raw, &object) != nil {
-		return ""
+		var encoded string
+		if json.Unmarshal(raw, &encoded) != nil {
+			return ""
+		}
+		if json.Unmarshal([]byte(encoded), &object) != nil {
+			return ""
+		}
 	}
-	return strings.TrimSpace(rawText(object["command"]))
+	return firstNonEmpty(strings.TrimSpace(rawText(object["command"])),
+		strings.TrimSpace(rawText(object["cmd"])))
 }

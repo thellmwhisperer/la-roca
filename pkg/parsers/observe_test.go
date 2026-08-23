@@ -68,3 +68,16 @@ func TestObserveCallsEmitsPiBashAsCommandThenResult(t *testing.T) {
 		t.Fatalf("result = %#v", result)
 	}
 }
+
+func TestObserveCallsReadsCodexShellCommandFromCmdField(t *testing.T) {
+	content := []byte(`{"type":"response_item","timestamp":"2026-08-01T10:00:04Z","payload":{"type":"function_call","call_id":"c1","name":"shell","arguments":"{\"cmd\":\"make build\"}"}}
+`)
+	events := ObserveCalls(KindCodexSession, content)
+	if len(events) != 1 {
+		t.Fatalf("events = %#v, want one call", events)
+	}
+	call := events[0]
+	if call.IsResult || call.Name != "shell" || call.Command != "make build" {
+		t.Fatalf("call = %#v", call)
+	}
+}
