@@ -51,10 +51,9 @@ roca vector ingest --delta --reembed
 A full delta embeds every table and prose column declared in the generated
 vector registry. The bundled corpus declares sessions, memories, exchanges,
 and thinking blocks; ops declares operational memories. Restrict a repair with
-`--source <declared-table>`. `--reembed` rebuilds sidecars under the current
-generation policy: per-column windows, overlap, and contextual headers,
-newest first, with streamed counts and ETA. It is resumable and does not
-duplicate chunks.
+`--source <declared-table>`. Use `--reembed` for the resumable rebuild flow;
+generation policy, progress, and sizing details live in
+`docs/vector.md#index-declared-databases`.
 
 Churn leaves empty pages. Reclaim them explicitly; ingest does not
 compact on its own:

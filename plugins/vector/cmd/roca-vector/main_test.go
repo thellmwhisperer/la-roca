@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca-vector/internal/vector"
 	_ "modernc.org/sqlite"
@@ -69,6 +70,18 @@ func TestDeltaFlagAndReadOnlyBoundaryAreExplicit(t *testing.T) {
 	if flag := queryCommand(env).Flags().Lookup("databases"); flag == nil {
 		t.Fatal("federated query has no --databases flag")
 	}
+}
+
+func TestIngestProgressFormatsCountsRateAndETA(t *testing.T) {
+	got := formatIngestProgress(vector.IngestProgress{
+		Sources: 2, Total: 5, Chunks: 9, Rate: 3.5,
+		ETAMS: int64((65 * time.Second) / time.Millisecond), Range: "2026-08",
+	})
+	want := "vector ingest: 2/5 sources · 9 chunks · 3.5/s · ETA 1m5s · 2026-08"
+	if got != want {
+		t.Fatalf("progress line = %q, want %q", got, want)
+	}
+	t.Log(got)
 }
 
 func TestTargetedSessionDeltaIsObservableAndIdempotentThroughCLI(t *testing.T) {

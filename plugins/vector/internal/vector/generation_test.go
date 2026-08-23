@@ -189,9 +189,10 @@ func TestIngestReportsProgressWithETA(t *testing.T) {
 		{kind: "memories", sourceID: "2", text: "beta later", createdAt: "2026-07-01", occurredAt: "2026-07-01"},
 	}
 	var updates []IngestProgress
+	embedder := &delayedEmbedder{delay: 1100 * time.Millisecond}
 	index := Index{Corpus: &countingCorpus{memoryCorpus: memoryCorpus{sources: sources}, total: 2},
 		VectorPath: filepath.Join(t.TempDir(), "vector.db"), Model: DefaultModel,
-		Embedder: &recordingEmbedder{}, Progress: func(update IngestProgress) {
+		Embedder: embedder, Progress: func(update IngestProgress) {
 			updates = append(updates, update)
 		}, BatchSize: 1}
 	if _, err := index.Ingest(context.Background()); err != nil {
@@ -204,6 +205,35 @@ func TestIngestReportsProgressWithETA(t *testing.T) {
 	if last.Sources != 2 || last.Total != 2 || last.Chunks != 2 {
 		t.Fatalf("progress = %+v", last)
 	}
+	var partial IngestProgress
+	for _, update := range updates {
+		if update.Sources < update.Total && update.ETAMS > 0 && update.Rate > 0 {
+			partial = update
+			break
+		}
+	}
+	if partial.ETAMS == 0 {
+		t.Fatalf("no in-flight progress update carried rate and ETA: %+v", updates)
+	}
+	t.Logf("in-flight progress: %d/%d sources · %d chunks · %.1f/s · ETA %s · %s",
+		partial.Sources, partial.Total, partial.Chunks, partial.Rate,
+		time.Duration(partial.ETAMS*int64(time.Millisecond)).Round(time.Second), partial.Range)
+}
+
+type delayedEmbedder struct {
+	delay time.Duration
+	inner recordingEmbedder
+}
+
+func (e *delayedEmbedder) Pull(context.Context, string) error { return nil }
+
+func (e *delayedEmbedder) Embed(ctx context.Context, model string, input []string) ([][]float32, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-time.After(e.delay):
+	}
+	return e.inner.Embed(ctx, model, input)
 }
 
 type failAfterEmbedder struct {

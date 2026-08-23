@@ -122,9 +122,10 @@ can send a desktop notification with the exit status and aggregate counts.
 Windows sends no desktop notification: inspect `completion.json` or
 `worker.log` in that state directory. The worker log path is printed at launch;
 `completion.json` records `started_at`, `finished_at`, and `exit_status`. The
-declared sidecars are ready only when `finished_at` is non-empty and
-`exit_status` is `0`; otherwise deterministic FTS and SQL continue without
-them. The timestamps time the first pass on this machine.
+completion record describes that worker run; query readiness is checked from
+each selected sidecar's owner, model, and dimensions metadata. Sidecars that
+are not ready leave their databases on deterministic FTS and SQL. The
+timestamps time the first pass on this machine.
 
 Indexing is incremental after that. `vector ingest` always requires `--delta`:
 
@@ -172,6 +173,12 @@ Throughput depends on the machine. Measured Apple Silicon rates:
 | M1 base | 576 |
 | Pro laptop | 2,400–2,500 |
 
+A bounded 24-row lab rebuild with the current embedding engine measured 24
+chunks before the policy change and 55 after it: 2.29x as many chunks at about
+30 chunks/s. Use that 2.29x result as the measured planning sample, not a
+universal multiplier; source shape and declared columns determine the actual
+growth.
+
 A 353k-chunk corpus is about 10 hours at the M1-base rate and about
 2.5 hours at the pro-laptop rate.
 
@@ -183,8 +190,9 @@ daily delta against an unchanged or lightly grown corpus is minutes.
 As an order-of-magnitude reference, a production home with 353,663 chunks
 measured 1.3 GB on disk after compaction. Expect roughly 1.3-1.5 GB per
 ~350k chunks per sidecar; the footprint varies with the source and embedding
-model. Per-column windows and overlap raise live chunk count by about 2x on a
-mixed conversation corpus, so plan disk from that multiple after `--reembed`.
+model. Per-column windows and overlap can raise live chunk count by roughly 2x
+on a mixed conversation corpus, so measure the rebuilt sidecars before setting
+a permanent disk budget.
 Churn (many updates and deletes) leaves empty pages; reclaim every
 installed sidecar explicitly:
 
