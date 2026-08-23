@@ -93,6 +93,38 @@ func TestCompanionCrashRetriesThenStaysDown(t *testing.T) {
 	}
 }
 
+func TestCompanionCleanExitStopsWithoutCrashTelemetry(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture uses a POSIX executable")
+	}
+	root, data := t.TempDir(), t.TempDir()
+	starts := filepath.Join(data, "starts")
+	installCompanion(t, root, "mirror", "roca-mirror", []string{},
+		"#!/bin/sh\nn=0\n[ -f "+starts+" ] && n=$(cat "+starts+")\necho $((n+1)) > "+starts+"\nexit 0\n")
+	notices := &safeBuffer{}
+	set := startPluginCompanionsWithPolicy(root, data, notices, fastCompanionPolicy)
+	defer set.Close()
+	waitFor(t, func() bool {
+		raw, err := os.ReadFile(starts)
+		return err == nil && strings.TrimSpace(string(raw)) == "1"
+	})
+	time.Sleep(40 * time.Millisecond)
+	raw, err := os.ReadFile(starts)
+	if err != nil || strings.TrimSpace(string(raw)) != "1" {
+		t.Fatalf("clean exit was retried: starts=%s err=%v", raw, err)
+	}
+	if strings.Contains(notices.String(), "plugin mirror companion stopped") {
+		t.Fatalf("clean exit reported as stopped: %q", notices.String())
+	}
+	body := companionLog(t, data)
+	if strings.Contains(body, `"event":"stopped"`) {
+		t.Fatalf("clean exit wrote a stopped telemetry record: %s", body)
+	}
+	if !strings.Contains(body, `"event":"exited"`) || !strings.Contains(body, `"reason":"exit 0"`) {
+		t.Fatalf("clean exit telemetry missing exited/exit-0 record: %s", body)
+	}
+}
+
 func TestCompanionNeverResolvesThroughPATH(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fixture uses a POSIX executable")

@@ -87,6 +87,9 @@ func (s *companionSet) supervise(spec plugin.SessionCompanion, policy companionP
 			return
 		}
 		s.log(companionRecord{Plugin: spec.Plugin, Event: "exited", Reason: companionExitReason(err), Attempt: attempts})
+		if err == nil {
+			return
+		}
 		if attempts > len(policy.Backoff) {
 			s.notice(fmt.Sprintf("plugin %s companion stopped", spec.Plugin))
 			s.log(companionRecord{Plugin: spec.Plugin, Event: "stopped", Attempt: attempts})
