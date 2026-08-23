@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"fmt"
@@ -561,7 +562,9 @@ func TestPluginContractRefreshRegistersUpdatesAndUnregistersVectorSurfaces(t *te
 	writePluginChecksums(t, directory, plugin.PackageFilename, "records.db")
 
 	var output strings.Builder
-	env := &cliEnv{out: &output, errOut: &output}
+	deltaRuns := 0
+	env := &cliEnv{out: &output, errOut: &output,
+		vectorDelta: func(context.Context) error { deltaRuns++; return nil }}
 	code, err := executeWithEnv(env,
 		[]string{"plugin", "--yes", "install", directory}, strings.NewReader(""))
 	if err != nil || code != ExitOK {
@@ -626,6 +629,9 @@ func TestPluginContractRefreshRegistersUpdatesAndUnregistersVectorSurfaces(t *te
 	}
 	if snapshotCount != 1 {
 		t.Fatalf("plugin sync did not replace the database snapshot: %d", snapshotCount)
+	}
+	if deltaRuns != 2 {
+		t.Fatalf("semantic delta runs = %d, want install and sync", deltaRuns)
 	}
 
 	output.Reset()

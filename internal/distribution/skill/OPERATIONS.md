@@ -205,7 +205,10 @@ attaches them read-only and folds their tables into natural-language search.
 - Use one: follow `roca plugin install --help`, then run `roca plugin sync
   <source>` for a complete external data snapshot, or `roca plugin update
   <name>` / `roca plugin uninstall <name>` for the normal lifecycle. The
-  experimental surface requires `features.plugins=true`.
+  experimental surface requires `features.plugins=true`. A federated snapshot
+  is complete only after its atomic replacement, registry refresh, and a
+  confirmed `roca vector ingest --delta`; a missing or failed delta is an
+  error, not a best-effort success.
 - Build one: a manifest plus one executable is a complete plugin. Follow the
   quickstart in the repository's `docs/plugins.md`; start from its minimal
   example and grow, do not hand-roll the packaging.

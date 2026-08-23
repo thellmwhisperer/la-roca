@@ -354,24 +354,25 @@ func (env *cliEnv) discoverPluginContracts() (string, []plugin.Database, []strin
 }
 
 // refreshPluginContracts regenerates both declarative federation projections
-// after install, update, or uninstall. The vector registry is always refreshed;
-// the semantic catalog is written only to runtimes that previously asked for
-// skills. A failure is a warning because the package action already succeeded.
-func (env *cliEnv) refreshPluginContracts() {
+// after install, update, or uninstall. The vector registry is required by the
+// synchronization boundary; the semantic catalog is written only to runtimes
+// that previously asked for skills and remains warning-based.
+func (env *cliEnv) refreshPluginContracts() error {
 	root, databases, warnings, err := env.discoverPluginContracts()
 	if err != nil {
 		env.warnCatalogRefresh(err)
 		env.warnVectorRegistryRefresh(err)
-		return
+		return err
 	}
 	if err := saveVectorRegistry(root, databases); err != nil {
 		env.warnVectorRegistryRefresh(err)
+		return err
 	}
 	catalog := skill.CatalogBody(databases, warnings)
 	home, err := os.UserHomeDir()
 	if err != nil {
 		env.warnCatalogRefresh(fmt.Errorf("I do not know where your HOME is"))
-		return
+		return err
 	}
 	for _, runtime := range skill.Runtimes() {
 		path, err := skill.CatalogPath(runtime, home, os.Getenv)
@@ -404,6 +405,7 @@ func (env *cliEnv) refreshPluginContracts() {
 			env.warnCatalogRefresh(err)
 		}
 	}
+	return nil
 }
 
 func (env *cliEnv) refreshVectorRegistry() error {

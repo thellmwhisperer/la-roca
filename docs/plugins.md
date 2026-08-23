@@ -584,11 +584,17 @@ user-owned state. A change to the database file list, the state directory name,
 or the package kind is refused instead of guessing at a migration.
 
 `roca plugin sync <source>` is the explicit data-source operation. It accepts
-only a DATA-ONLY package, verifies that the installed plugin keeps the same
-database declarations and state directory, and atomically replaces the
-declared database snapshot. It is intended for federated sources such as the
-Biblioteca del conocimiento whose database is maintained outside La Roca;
-ordinary plugin updates must continue to preserve plugin-owned databases.
+only a DATA-ONLY federated package with a vector declaration, verifies that the
+installed plugin keeps the same database declarations, state directory, and
+custody policy, and atomically replaces the declared database snapshot. The
+same boundary is used by `plugin install` for a federated package. After the
+replacement La Roca refreshes the registry and runs
+`roca vector --json ingest --delta`; the operation is not reported complete
+unless that delta report succeeds. A failed delta leaves the new snapshot
+retryable and does not claim semantic readiness. It is intended for federated
+sources such as the Biblioteca del conocimiento whose database is maintained
+outside La Roca; ordinary plugin updates must continue to preserve
+plugin-owned databases.
 
 `roca plugin uninstall <name>` removes an ordinary verified installation. When a
 declaration carries custody, it never deletes the folder: it atomically moves

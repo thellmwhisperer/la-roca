@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -77,6 +78,7 @@ type cliEnv struct {
 	omitCorpus         bool
 	forceReadOnly      bool
 	sshRunner          sshCommandRunner
+	vectorDelta        func(context.Context) error
 }
 
 // Execute runs the CLI and returns the process exit code.
@@ -478,14 +480,30 @@ func pluginInstallCommand(env *cliEnv, consented *bool) *cobra.Command {
 			if err != nil || !accepted {
 				return err
 			}
-			result, err := manager.Install(candidate)
+			var result plugininstall.Result
+			action := "installed"
+			if candidate.Kind == plugininstall.DataPackage && candidate.Federated && candidate.Risk == plugininstall.DataOnly {
+				if err := requireSemanticSyncCandidate(candidate); err != nil {
+					return err
+				}
+				result, err = manager.SyncDataPackage(candidate)
+				action = "synchronized"
+			} else {
+				result, err = manager.Install(candidate)
+			}
 			if err != nil {
 				return err
 			}
 			// The new plugin's semantic and vector fragments are registered from
 			// the same installed manifest set after the package is in place.
-			env.refreshPluginContracts()
-			return env.reportPlugin("installed", result)
+			if action == "synchronized" {
+				if err := env.completePluginSync(cmd.Context(), candidate.Name); err != nil {
+					return err
+				}
+			} else {
+				env.refreshPluginContracts()
+			}
+			return env.reportPlugin(action, result)
 		},
 	}
 }
@@ -505,8 +523,8 @@ func pluginSyncCommand(env *cliEnv, consented *bool) *cobra.Command {
 				return err
 			}
 			defer cleanup()
-			if candidate.Kind != plugininstall.DataPackage || candidate.Risk != plugininstall.DataOnly || candidate.Executable != "" {
-				return fmt.Errorf("plugin sync accepts only data-only packages")
+			if err := requireSemanticSyncCandidate(candidate); err != nil {
+				return err
 			}
 			accepted, err := env.confirmPlugin(cmd.InOrStdin(), "sync", candidate, "", *consented)
 			if err != nil || !accepted {
@@ -516,10 +534,103 @@ func pluginSyncCommand(env *cliEnv, consented *bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			env.refreshPluginContracts()
+			if err := env.completePluginSync(cmd.Context(), candidate.Name); err != nil {
+				return err
+			}
 			return env.reportPlugin("synchronized", result)
 		},
 	}
+}
+
+func requireSemanticSyncCandidate(candidate plugininstall.Candidate) error {
+	if candidate.Kind != plugininstall.DataPackage || candidate.Risk != plugininstall.DataOnly || candidate.Executable != "" {
+		return fmt.Errorf("plugin sync accepts only data-only packages")
+	}
+	if !candidate.Federated || !candidate.Vector {
+		return fmt.Errorf("plugin sync requires a federated package with a vector declaration")
+	}
+	return nil
+}
+
+func (env *cliEnv) completePluginSync(ctx context.Context, pluginName string) error {
+	if err := env.refreshPluginContracts(); err != nil {
+		return fmt.Errorf("refresh plugin contracts before semantic delta: %w", err)
+	}
+	if err := env.requireVectorContract(pluginName); err != nil {
+		return err
+	}
+	if err := env.runSemanticDelta(ctx); err != nil {
+		return fmt.Errorf("semantic delta was not confirmed: %w", err)
+	}
+	return nil
+}
+
+func (env *cliEnv) requireVectorContract(pluginName string) error {
+	_, databases, warnings, err := env.discoverPluginContracts()
+	if err != nil {
+		return fmt.Errorf("verify plugin %s contract: %w", pluginName, err)
+	}
+	for _, database := range databases {
+		if database.Name == pluginName && len(database.VectorTables) > 0 {
+			return nil
+		}
+	}
+	if len(warnings) > 0 {
+		return fmt.Errorf("verify plugin %s contract: unavailable (%s)", pluginName,
+			strings.Join(warnings, "; "))
+	}
+	return fmt.Errorf("verify plugin %s contract: vector declaration is unavailable", pluginName)
+}
+
+func (env *cliEnv) runSemanticDelta(ctx context.Context) error {
+	if env.vectorDelta != nil {
+		return env.vectorDelta(ctx)
+	}
+	executable, found := findPlugin("vector")
+	if !found {
+		paths, err := env.resolvePaths()
+		if err != nil {
+			return err
+		}
+		candidate := filepath.Join(pluginExecutableDir(paths), plugininstall.ExecutableName("vector"))
+		if isExecutable(candidate) {
+			executable = candidate
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("find roca-vector; install the vector plugin before synchronizing a federated snapshot")
+	}
+	arguments := []string{"--json"}
+	if env.dbPath != "" {
+		arguments = append(arguments, "--db-path", env.dbPath)
+	}
+	arguments = append(arguments, "ingest", "--delta")
+	command := exec.CommandContext(ctx, executable, arguments...)
+	var stdout, stderr bytes.Buffer
+	command.Stdout, command.Stderr = &stdout, &stderr
+	if err := command.Run(); err != nil {
+		detail := strings.TrimSpace(stderr.String())
+		if detail == "" {
+			detail = strings.TrimSpace(stdout.String())
+		}
+		if detail != "" {
+			return fmt.Errorf("%w: %s", err, detail)
+		}
+		return err
+	}
+	var report struct {
+		Mode   string          `json:"mode"`
+		Counts json.RawMessage `json:"counts"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(stdout.Bytes()))
+	if err := decoder.Decode(&report); err != nil {
+		return fmt.Errorf("parse roca-vector delta report: %w", err)
+	}
+	if report.Mode != "delta" || len(report.Counts) == 0 || string(report.Counts) == "null" {
+		return fmt.Errorf("roca-vector returned no confirmed delta report")
+	}
+	return nil
 }
 
 func pluginUpdateCommand(env *cliEnv, consented *bool) *cobra.Command {

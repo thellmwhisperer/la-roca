@@ -280,6 +280,7 @@ func TestSyncDataPackageReplacesTheDeclaredDatabasePayload(t *testing.T) {
 	if _, err := manager.Install(candidate); err != nil {
 		t.Fatal(err)
 	}
+	writeFixtureFile(t, filepath.Join(root, "synthetic", "plugin.vector.db"), []byte("stale vectors"), 0o600)
 
 	installedDB := filepath.Join(root, "synthetic", "plugin.db")
 	withPackageDatabase(t, installedDB, func(db *sql.DB) {
@@ -315,6 +316,38 @@ func TestSyncDataPackageReplacesTheDeclaredDatabasePayload(t *testing.T) {
 	}
 	if manifest.Version != "2.0.0" || manifest.Checksum != updated.Checksum {
 		t.Fatalf("synchronized manifest = %+v", manifest)
+	}
+	if _, err := os.Stat(filepath.Join(root, "synthetic", "plugin.vector.db")); !os.IsNotExist(err) {
+		t.Fatalf("synchronized plugin kept invalidated vector sidecar: %v", err)
+	}
+}
+
+func TestSyncDataPackageRejectsCustodyPolicyChanges(t *testing.T) {
+	root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
+	manager := plugininstall.Manager{PluginRoot: root, BinDir: bin}
+	source := writePackage(t, "synthetic", "1.0.0", false, false)
+	previous, err := plugininstall.Inspect(source, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Install(previous); err != nil {
+		t.Fatal(err)
+	}
+
+	writePackageAt(t, source, "synthetic", "2.0.0", true, false)
+	candidate, err := plugininstall.Inspect(source, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.SyncDataPackage(candidate); err == nil || !strings.Contains(err.Error(), "custody") {
+		t.Fatalf("custody change was accepted: %v", err)
+	}
+	manifest, err := plugininstall.ReadManifest(filepath.Join(root, "synthetic"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Version != "1.0.0" || manifest.Custody {
+		t.Fatalf("rejected custody change altered manifest: %+v", manifest)
 	}
 }
 

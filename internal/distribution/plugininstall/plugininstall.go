@@ -34,6 +34,7 @@ const (
 	ManifestFilename  = plugin.ManifestFilename
 	recoveryProofFile = ".roca-update-recovery"
 	manifestSchema    = 1
+	syncJournalSchema = 1
 	maxArchiveSize    = 256 << 20
 	maxArchiveEntries = 1024
 )
@@ -68,6 +69,8 @@ type Candidate struct {
 	Executable string
 	StateDir   string
 	Files      map[string]string
+	Federated  bool
+	Vector     bool
 }
 
 type Manifest struct {
@@ -107,6 +110,16 @@ type Manager struct {
 type Resolved struct {
 	Reference string
 	Directory string
+}
+
+type syncRecoveryJournal struct {
+	Schema            int      `json:"schema"`
+	Name              string   `json:"name"`
+	PreviousChecksum  string   `json:"previous_checksum"`
+	CandidateChecksum string   `json:"candidate_checksum"`
+	Custody           bool     `json:"custody"`
+	StateDir          string   `json:"state_directory,omitempty"`
+	Databases         []string `json:"databases"`
 }
 
 func candidateDatabaseFiles(candidate Candidate) []string {
@@ -420,7 +433,7 @@ func Inspect(source, directory string) (Candidate, error) {
 	candidate := Candidate{
 		Name: metadata.Name, Version: metadata.Version, Source: source,
 		Directory: directory, Checksum: packageChecksum(checksums), Kind: kind,
-		Executable: executable, Files: checksums,
+		Executable: executable, Files: checksums, Federated: fullManifest,
 	}
 	switch kind {
 	case DataPackage:
@@ -435,6 +448,7 @@ func Inspect(source, directory string) (Candidate, error) {
 		}
 		for _, descriptor := range descriptors {
 			candidate.Custody = candidate.Custody || descriptor.Semantic.Custody
+			candidate.Vector = candidate.Vector || len(descriptor.VectorTables) > 0
 			candidate.Databases = append(candidate.Databases, filepath.Base(descriptor.Database))
 		}
 		if len(candidate.Databases) == 1 {
@@ -1423,12 +1437,252 @@ func (m Manager) preflightExecutableRepair(candidate Candidate) (Manifest, bool,
 	return manifest, false, nil
 }
 
-// SyncDataPackage replaces the database payload of an installed data-only
-// plugin. Unlike Update and UpdateInPlace, this is deliberately destructive to
-// the installed database: it is reserved for an external source of truth that
-// has explicitly synchronized a complete data snapshot. The replacement is
-// staged and activated atomically, while the plugin state directory remains in
-// place.
+func syncRecoveryPaths(pluginRoot, name string) (string, string) {
+	return filepath.Join(pluginRoot, "."+name+".sync-previous"),
+		filepath.Join(pluginRoot, "."+name+".sync-recovery.journal")
+}
+
+func validSyncRecoveryJournal(journal syncRecoveryJournal, name string) error {
+	if journal.Schema != syncJournalSchema || journal.Name != name ||
+		!safeName(journal.Name) || journal.PreviousChecksum == "" || journal.CandidateChecksum == "" ||
+		len(journal.Databases) == 0 {
+		return fmt.Errorf("sync recovery journal is incomplete")
+	}
+	for _, database := range journal.Databases {
+		if !safeFile(database) {
+			return fmt.Errorf("sync recovery journal has unsafe database %q", database)
+		}
+	}
+	if journal.StateDir != "" && !safeFile(journal.StateDir) {
+		return fmt.Errorf("sync recovery journal has unsafe state directory %q", journal.StateDir)
+	}
+	return nil
+}
+
+func readSyncRecoveryJournal(path, name string) (syncRecoveryJournal, error) {
+	file, err := openRegularSource(path)
+	if err != nil {
+		return syncRecoveryJournal{}, fmt.Errorf("read sync recovery journal: %w", err)
+	}
+	defer file.Close()
+	decoder := json.NewDecoder(file)
+	decoder.DisallowUnknownFields()
+	var journal syncRecoveryJournal
+	if err := decoder.Decode(&journal); err != nil {
+		return syncRecoveryJournal{}, fmt.Errorf("parse sync recovery journal: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return syncRecoveryJournal{}, fmt.Errorf("sync recovery journal contains more than one JSON value")
+		}
+		return syncRecoveryJournal{}, fmt.Errorf("parse sync recovery journal: %w", err)
+	}
+	if err := validSyncRecoveryJournal(journal, name); err != nil {
+		return syncRecoveryJournal{}, err
+	}
+	return journal, nil
+}
+
+func syncDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		if runtime.GOOS == "windows" {
+			return nil
+		}
+		return err
+	}
+	syncErr := directory.Sync()
+	closeErr := directory.Close()
+	if runtime.GOOS == "windows" {
+		return closeErr
+	}
+	if syncErr != nil {
+		return syncErr
+	}
+	return closeErr
+}
+
+func writeSyncRecoveryJournal(path string, journal syncRecoveryJournal) error {
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".sync-journal-")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	encoder := json.NewEncoder(temporary)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(journal); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return err
+	}
+	return syncDirectory(filepath.Dir(path))
+}
+
+func removeSyncRecoveryJournal(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove sync recovery journal: %w", err)
+	}
+	if err := syncDirectory(filepath.Dir(path)); err != nil {
+		return fmt.Errorf("sync plugin directory after recovery: %w", err)
+	}
+	return nil
+}
+
+func validateSyncManifest(manifest Manifest, journal syncRecoveryJournal, checksum string) error {
+	if manifest.Checksum != checksum || manifest.Custody != journal.Custody ||
+		manifest.StateDir != journal.StateDir ||
+		!sameDatabaseFiles(manifestDatabaseFiles(manifest), journal.Databases) {
+		return fmt.Errorf("sync recovery manifest does not match its journal")
+	}
+	return nil
+}
+
+func ensureStateDir(target, name string) error {
+	if name == "" {
+		return nil
+	}
+	path := filepath.Join(target, name)
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return createStateDir(target, name)
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("plugin state path %s is not a directory", path)
+	}
+	return nil
+}
+
+func (m Manager) RecoverSync(name string) error {
+	if err := m.valid(); err != nil {
+		return err
+	}
+	if !safeName(name) {
+		return fmt.Errorf("invalid plugin name %q", name)
+	}
+	backup, journalPath := syncRecoveryPaths(m.PluginRoot, name)
+	backupExists, err := recoveryPathExists(backup)
+	if err != nil {
+		return fmt.Errorf("inspect sync recovery directory: %w", err)
+	}
+	journalExists, err := recoveryPathExists(journalPath)
+	if err != nil {
+		return fmt.Errorf("inspect sync recovery journal: %w", err)
+	}
+	if !backupExists && !journalExists {
+		return nil
+	}
+	if !journalExists {
+		return fmt.Errorf("sync recovery directory %s has no installer journal", backup)
+	}
+	journal, err := readSyncRecoveryJournal(journalPath, name)
+	if err != nil {
+		return err
+	}
+	target := filepath.Join(m.PluginRoot, name)
+	targetExists, err := recoveryPathExists(target)
+	if err != nil {
+		return fmt.Errorf("inspect sync target: %w", err)
+	}
+	if !backupExists {
+		if !targetExists {
+			return fmt.Errorf("sync recovery has neither target nor previous directory")
+		}
+		current, err := VerifyInstalledPayload(name, target)
+		if err != nil {
+			return fmt.Errorf("verify completed synchronized plugin: %w", err)
+		}
+		switch current.Checksum {
+		case journal.CandidateChecksum:
+			if err := validateSyncManifest(current, journal, journal.CandidateChecksum); err != nil {
+				return fmt.Errorf("verify completed synchronized plugin: %w", err)
+			}
+		case journal.PreviousChecksum:
+			if err := validateSyncManifest(current, journal, journal.PreviousChecksum); err != nil {
+				return fmt.Errorf("verify interrupted synchronized plugin: %w", err)
+			}
+		default:
+			return fmt.Errorf("sync target does not match its recovery journal")
+		}
+		return removeSyncRecoveryJournal(journalPath)
+	}
+	previous, err := VerifyInstalledPayload(name, backup)
+	if err != nil {
+		return fmt.Errorf("verify previous synchronized plugin: %w", err)
+	}
+	if err := validateSyncManifest(previous, journal, journal.PreviousChecksum); err != nil {
+		return fmt.Errorf("verify previous synchronized plugin: %w", err)
+	}
+	if !targetExists {
+		if err := os.Rename(backup, target); err != nil {
+			return fmt.Errorf("restore interrupted synchronized plugin: %w", err)
+		}
+		if err := syncDirectory(m.PluginRoot); err != nil {
+			return fmt.Errorf("sync restored plugin directory: %w", err)
+		}
+		return removeSyncRecoveryJournal(journalPath)
+	}
+	current, err := VerifyInstalledPayload(name, target)
+	if err != nil {
+		return fmt.Errorf("verify synchronized plugin: %w", err)
+	}
+	if err := validateSyncManifest(current, journal, journal.CandidateChecksum); err != nil {
+		return fmt.Errorf("verify synchronized plugin: %w", err)
+	}
+	if err := moveRecoveryState(backup, target, journal.StateDir); err != nil {
+		return fmt.Errorf("recover synchronized plugin state: %w", err)
+	}
+	if err := ensureStateDir(target, journal.StateDir); err != nil {
+		return fmt.Errorf("recover synchronized plugin state: %w", err)
+	}
+	if err := removeDatabaseSidecars(backup, previous); err != nil {
+		return fmt.Errorf("invalidate previous vector sidecars: %w", err)
+	}
+	if err := os.RemoveAll(backup); err != nil {
+		return fmt.Errorf("remove previous synchronized plugin: %w", err)
+	}
+	if err := syncDirectory(m.PluginRoot); err != nil {
+		return fmt.Errorf("sync recovered plugin directory: %w", err)
+	}
+	return removeSyncRecoveryJournal(journalPath)
+}
+
+func removeDatabaseSidecars(directory string, manifest Manifest) error {
+	for _, database := range manifestDatabaseFiles(manifest) {
+		sidecar := databaseVectorSidecar(database)
+		for _, suffix := range []string{"", "-wal", "-shm", "-journal", ".index.lock"} {
+			path := filepath.Join(directory, sidecar+suffix)
+			info, err := os.Lstat(path)
+			if os.IsNotExist(err) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("vector sidecar %s is not a regular file", path)
+			}
+			if err := os.Remove(path); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (m Manager) SyncDataPackage(candidate Candidate) (Result, error) {
 	if err := m.valid(); err != nil {
 		return Result{}, err
@@ -1437,16 +1691,30 @@ func (m Manager) SyncDataPackage(candidate Candidate) (Result, error) {
 		return Result{}, fmt.Errorf(
 			"plugin %s is not a data-only package; database synchronization refused", candidate.Name)
 	}
+	if !safeName(candidate.Name) {
+		return Result{}, fmt.Errorf("invalid plugin name %q", candidate.Name)
+	}
+	if err := m.RecoverSync(candidate.Name); err != nil {
+		return Result{}, err
+	}
 	target := filepath.Join(m.PluginRoot, candidate.Name)
-	previous, err := ReadManifest(target)
+	targetExists, err := recoveryPathExists(target)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return m.Install(candidate)
-		}
+		return Result{}, fmt.Errorf("inspect sync target: %w", err)
+	}
+	if !targetExists {
+		return m.Install(candidate)
+	}
+	previous, err := VerifyInstalledPayload(candidate.Name, target)
+	if err != nil {
 		return Result{}, fmt.Errorf("sync plugin %s: %w", candidate.Name, err)
 	}
 	if previous.Kind != DataPackage || previous.Risk != DataOnly || previous.Executable != "" {
 		return Result{}, fmt.Errorf("plugin %s is not an installed data-only package", candidate.Name)
+	}
+	if previous.Name != candidate.Name {
+		return Result{}, fmt.Errorf("plugin manifest names %q, not %q; synchronization refused",
+			previous.Name, candidate.Name)
 	}
 	if !sameDatabaseFiles(manifestDatabaseFiles(previous), candidateDatabaseFiles(candidate)) {
 		return Result{}, fmt.Errorf(
@@ -1458,51 +1726,73 @@ func (m Manager) SyncDataPackage(candidate Candidate) (Result, error) {
 			"plugin %s changed its state directory from %s to %s; synchronization refused",
 			candidate.Name, previous.StateDir, candidate.StateDir)
 	}
-	staged, err := m.stage(candidate, nil)
-	if err != nil {
-		return Result{}, err
+	if previous.Custody != candidate.Custody {
+		return Result{}, fmt.Errorf(
+			"plugin %s changed its custody policy; synchronization refused", candidate.Name)
 	}
-	defer os.RemoveAll(staged)
-	backup := filepath.Join(m.PluginRoot, "."+candidate.Name+".sync-previous")
+	backup, journalPath := syncRecoveryPaths(m.PluginRoot, candidate.Name)
 	if _, err := os.Lstat(backup); err == nil {
 		return Result{}, fmt.Errorf("sync recovery directory already exists at %s", backup)
 	} else if !os.IsNotExist(err) {
 		return Result{}, fmt.Errorf("inspect sync recovery directory: %w", err)
 	}
+	if _, err := os.Lstat(journalPath); err == nil {
+		return Result{}, fmt.Errorf("sync recovery journal already exists at %s", journalPath)
+	} else if !os.IsNotExist(err) {
+		return Result{}, fmt.Errorf("inspect sync recovery journal: %w", err)
+	}
+	staged, err := m.stage(candidate, nil)
+	if err != nil {
+		return Result{}, err
+	}
+	defer os.RemoveAll(staged)
+	recovery := syncRecoveryJournal{Schema: syncJournalSchema, Name: candidate.Name,
+		PreviousChecksum: previous.Checksum, CandidateChecksum: candidate.Checksum,
+		Custody: candidate.Custody, StateDir: candidate.StateDir,
+		Databases: candidateDatabaseFiles(candidate)}
+	if err := writeSyncRecoveryJournal(journalPath, recovery); err != nil {
+		return Result{}, fmt.Errorf("write sync recovery journal: %w", err)
+	}
 	if err := os.Rename(target, backup); err != nil {
+		_ = removeSyncRecoveryJournal(journalPath)
 		return Result{}, fmt.Errorf("preserve previous plugin for sync: %w", err)
 	}
-	rollback := func() {
-		_ = os.RemoveAll(target)
-		_ = os.Rename(backup, target)
+	if err := syncDirectory(m.PluginRoot); err != nil {
+		_ = m.RecoverSync(candidate.Name)
+		return Result{}, fmt.Errorf("sync previous plugin for sync: %w", err)
 	}
 	if err := os.Rename(staged, target); err != nil {
-		rollback()
+		_ = m.RecoverSync(candidate.Name)
 		return Result{}, fmt.Errorf("activate synchronized plugin: %w", err)
 	}
-	stateMoved := false
+	if err := syncDirectory(m.PluginRoot); err != nil {
+		_ = m.RecoverSync(candidate.Name)
+		return Result{}, fmt.Errorf("sync activated plugin: %w", err)
+	}
 	if candidate.StateDir != "" {
 		state := filepath.Join(backup, candidate.StateDir)
 		err := os.Rename(state, filepath.Join(target, candidate.StateDir))
 		switch {
 		case err == nil:
-			stateMoved = true
 		case os.IsNotExist(err):
 			if err := createStateDir(target, candidate.StateDir); err != nil {
-				rollback()
 				return Result{}, err
 			}
 		default:
-			rollback()
 			return Result{}, fmt.Errorf("preserve plugin state directory: %w", err)
 		}
 	}
+	if err := removeDatabaseSidecars(backup, previous); err != nil {
+		return Result{}, fmt.Errorf("invalidate previous vector sidecars: %w", err)
+	}
 	if err := os.RemoveAll(backup); err != nil {
-		if stateMoved {
-			_ = os.Rename(filepath.Join(target, candidate.StateDir), filepath.Join(backup, candidate.StateDir))
-		}
-		rollback()
 		return Result{}, fmt.Errorf("remove previous plugin after sync: %w", err)
+	}
+	if err := syncDirectory(m.PluginRoot); err != nil {
+		return Result{}, fmt.Errorf("sync completed plugin: %w", err)
+	}
+	if err := removeSyncRecoveryJournal(journalPath); err != nil {
+		return Result{}, err
 	}
 	return resultFor(candidate, target, ""), nil
 }
