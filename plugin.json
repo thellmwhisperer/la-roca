@@ -1,6 +1,6 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "roca",
-  "version": "1.70.0",
+  "version": "1.71.0",
   "description": "Local semantic memory for AI agents."
 }
