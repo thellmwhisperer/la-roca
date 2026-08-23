@@ -24,25 +24,37 @@ const foreignBusyTimeoutMS = 250
 // reliably read a live WAL database without access to its shared index. The
 // engine-level query_only guard rejects every write statement on the connection.
 func openForeign(path string) (*sql.DB, error) {
+	return openForeignPath(context.Background(), path, false)
+}
+
+func openForeignPath(ctx context.Context, path string, readOnly bool) (*sql.DB, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("resolve %q: %w", path, err)
 	}
-	dsn := "file:" + abs + "?" + url.Values{
-		"_pragma": {
-			fmt.Sprintf("busy_timeout(%d)", foreignBusyTimeoutMS),
-			"query_only(1)",
-		},
-	}.Encode()
+	dsn := "file:" + abs + "?" + foreignSourceQuery(readOnly)
 	handle, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open %q for reading: %w", abs, err)
 	}
-	if err := handle.Ping(); err != nil {
+	if err := handle.PingContext(ctx); err != nil {
 		handle.Close()
 		return nil, fmt.Errorf("open %q for reading: %w", abs, err)
 	}
 	return handle, nil
+}
+
+func foreignSourceQuery(readOnly bool) string {
+	query := url.Values{
+		"_pragma": {
+			fmt.Sprintf("busy_timeout(%d)", foreignBusyTimeoutMS),
+			"query_only(1)",
+		},
+	}
+	if readOnly {
+		query.Set("mode", "ro")
+	}
+	return query.Encode()
 }
 
 // foreignTable is one table a source's database has to have, and the columns

@@ -36,10 +36,10 @@ roca ingest /path/to/extracted-export
 
 The path belongs only to that invocation. A later `roca ingest` with no path,
 including the nightly run, reads only live Claude, Codex, Qwen Code, GLM, Cursor,
-Pi, OpenCode, Hermes, Grok Build, Cowork, and the pre-federation store. It fingerprints each source
-file by path and content, so an explicit rerun of the same export is a zero
-delta and a newer export contributes only message identities that have not
-already landed.
+Pi, OpenCode, Hermes, Grok Build, Cowork, and the pre-federation store. It
+fingerprints each source file by path and content, so an explicit rerun of the
+same export is a zero delta and a newer export contributes only message
+identities that have not already landed.
 
 The directory decides which vendor's parser reads it: `memories.json`, or a
 `conversations.json` of `chat_messages` records, is a Claude export, and
@@ -268,17 +268,23 @@ The previous generation kept harvested conversations and agent-written
 memories in one SQLite file. `roca ingest` opens that `roca.db` with SQLite
 `mode=ro`, `query_only`, and a short busy timeout. The default is the retired
 product home beside `~/.roca`. Override the path with
-`legacy_store_db_path` or `LEGACY_STORE_DB_PATH`. An absent file is a clean
-no-op.
+`legacy_store_db_path` under `[defaults]`, or with `LEGACY_STORE_DB_PATH`. The
+historical pre-federation aliases remain accepted for existing lab
+configurations. An absent file is a clean no-op.
 
-Sessions, exchanges, tool uses, and thinking blocks land in the corpus under
-their original `session_id`, which is the dedupe key against sessions already
-federated. `source_surface` records the legacy-store import route;
-`source_agent` stays what the source stored. Memories land in ops and keep
-the layer, status, and `created_at` the source recorded: a handoff stays a
-handoff. Expiry is not invented. Garden, proposal, run, and other
-non-conversation tables are left out by design. A second run over the same
-file adds nothing.
+Sessions, exchanges, tool uses, and thinking blocks land in the corpus. The
+source `session_id` is the dedupe key against sessions already federated; an
+empty ID receives a deterministic fallback. Overlaps remain untouched and the
+summary reports them as already present. Duplicate source exchange numbers and
+thinking positions are disambiguated deterministically so each distinct source
+row can land. `source_surface` is `Legacy store`, while `source_agent` stays
+what the source stored.
+
+Memories land in ops and keep the layer, status, `created_at`, source
+coordinates, and supersession relationship the source recorded: a handoff stays
+a handoff. Expiry is not invented. Garden, proposal, run, and other
+non-conversation tables are left out by design and reported with their collapsed
+reasons. A second run over the same file adds nothing.
 
 ## Pi
 

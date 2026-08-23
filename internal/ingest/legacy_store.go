@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"net/url"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -167,24 +165,9 @@ func ReadLegacyStore(ctx context.Context, path string) (parsers.Records, []strin
 }
 
 func openLegacyStoreSource(ctx context.Context, path string) (*sql.DB, error) {
-	abs, err := filepath.Abs(path)
+	db, err := openForeignPath(ctx, path, true)
 	if err != nil {
-		return nil, fmt.Errorf("resolve %q: %w", path, err)
-	}
-	dsn := "file:" + abs + "?" + url.Values{
-		"mode": {"ro"},
-		"_pragma": {
-			fmt.Sprintf("busy_timeout(%d)", foreignBusyTimeoutMS),
-			"query_only(1)",
-		},
-	}.Encode()
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		return nil, fmt.Errorf("open %q for reading: %w", abs, err)
-	}
-	if err := db.PingContext(ctx); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("open %q for reading: %w", abs, err)
+		return nil, err
 	}
 	for _, table := range legacyStoreSchema {
 		if err := requireColumns(ctx, db, table.name, table.required); err != nil {
