@@ -31,19 +31,19 @@ func (r Resolver) resolvePublishedRelease(
 		}
 		return Resolved{}, func() {}, err, true
 	}
+	if !releasePublishesPluginArchive(found) {
+		// A tag with no platform archives is not a plugin release. Data-only
+		// plugins still install from the tree; that fallback is documented.
+		return Resolved{}, nil, nil, false
+	}
 	platform, err := release.Platform(runtime.GOOS, runtime.GOARCH)
 	if err != nil {
 		return Resolved{}, func() {}, err, true
 	}
 	asset, ok := pluginReleaseArchive(found, reference, platform)
 	if !ok {
-		if releasePublishesPluginArchive(found) {
-			return Resolved{}, func() {}, fmt.Errorf(
-				"release %s publishes no plugin archive for %s", found.Tag, platform), true
-		}
-		// A tag with no platform archives is not a plugin release. Data-only
-		// plugins still install from the tree; that fallback is documented.
-		return Resolved{}, nil, nil, false
+		return Resolved{}, func() {}, fmt.Errorf(
+			"release %s publishes no plugin archive for %s", found.Tag, platform), true
 	}
 	sums, ok := found.Asset("checksums.txt")
 	if !ok {

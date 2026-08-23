@@ -176,12 +176,103 @@ func TestInstallOverAnExistingPluginNamesTheExactUpdateInvocation(t *testing.T) 
 }
 
 // A data-only plugin that has never published a release still installs from
-// the repository tree. That fallback is the documented path, not a guess.
+// the repository tree. That fallback is the documented path, not a guess, and
+// it is exercised end to end: install, write custodial bytes, then update from
+// the same tree and confirm the operator's bytes survive the update.
 func TestReleaseLessDataOnlyOwnerRepoFallsBackToTheTree(t *testing.T) {
 	name := "synthetic-data"
 	tree := writeReleasePluginPackage(t, filepath.Join(t.TempDir(), "tree"), name, "1.0.0", false)
 	remote := gitRepoFromDirectory(t, tree)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(server.Close)
+	cloned := false
+	resolver := plugininstall.Resolver{
+		API: server.URL,
+		CloneURL: func(reference string) (string, bool) {
+			if reference != "owner/"+name {
+				t.Fatalf("clone reference = %q", reference)
+			}
+			cloned = true
+			return remote, true
+		},
+	}
+	root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
+	manager := plugininstall.Manager{PluginRoot: root, BinDir: bin}
+
+	resolved, cleanup, err := resolver.Resolve(context.Background(), "owner/"+name, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if !cloned {
+		t.Fatal("release-less owner/repo did not fall back to the tree")
+	}
+	candidate, err := plugininstall.Inspect(resolved.Reference, resolved.Directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if candidate.Executable != "" || candidate.Risk != plugininstall.DataOnly || candidate.Version != "1.0.0" {
+		t.Fatalf("tree candidate = %+v", candidate)
+	}
+	if _, err := manager.Install(candidate); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(root, name, "records.db")
+	marker := []byte("data-only custody survives the tree fallback update")
+	if err := os.WriteFile(dbPath, marker, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before := fileDigest(t, dbPath)
+
+	cloned = false
+	updatedResolved, updatedCleanup, err := resolver.Resolve(context.Background(), "owner/"+name, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer updatedCleanup()
+	if !cloned {
+		t.Fatal("update did not fall back to the tree again")
+	}
+	updated, err := plugininstall.Inspect(updatedResolved.Reference, updatedResolved.Directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Update(updated); err != nil {
+		t.Fatal(err)
+	}
+	if fileDigest(t, dbPath) != before {
+		t.Fatal("update rewrote custodial database bytes")
+	}
+	got, err := os.ReadFile(dbPath)
+	if err != nil || string(got) != string(marker) {
+		t.Fatalf("custody bytes = %q, err=%v", got, err)
+	}
+}
+
+// A data-only plugin whose repo has published a tag but no plugin archive
+// (only a source tarball) still installs from the tree. A tag is not a plugin
+// release until it carries a platform archive, and the tree fallback must not
+// be blocked by a platform the release channel does not build.
+func TestDataOnlyOwnerRepoFallsBackToTheTreeWhenTheReleaseCarriesNoPluginArchive(t *testing.T) {
+	name := "synthetic-data"
+	tree := writeReleasePluginPackage(t, filepath.Join(t.TempDir(), "tree"), name, "1.0.0", false)
+	remote := gitRepoFromDirectory(t, tree)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/owner/"+name+"/releases/latest" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"tag_name": "v1.0.0",
+				"assets": []any{
+					map[string]any{
+						"name": name + "-1.0.0-source.tar.gz",
+						"url":  "http://" + r.Host + "/repos/owner/" + name + "/releases/assets/1",
+						"size": 0,
+					},
+				},
+			})
+			return
+		}
 		http.NotFound(w, r)
 	}))
 	t.Cleanup(server.Close)
@@ -202,14 +293,14 @@ func TestReleaseLessDataOnlyOwnerRepoFallsBackToTheTree(t *testing.T) {
 	}
 	defer cleanup()
 	if !cloned {
-		t.Fatal("release-less owner/repo did not fall back to the tree")
+		t.Fatal("a tag with no plugin archive did not fall back to the tree")
 	}
 	candidate, err := plugininstall.Inspect(resolved.Reference, resolved.Directory)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if candidate.Executable != "" || candidate.Risk != plugininstall.DataOnly || candidate.Version != "1.0.0" {
-		t.Fatalf("tree candidate = %+v", candidate)
+	if candidate.Risk != plugininstall.DataOnly {
+		t.Fatalf("tree candidate = %+v, want data-only", candidate)
 	}
 }
 
