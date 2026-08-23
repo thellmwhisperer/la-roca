@@ -552,7 +552,13 @@ An installable source is a local directory, a local or HTTP(S) `.tar.gz` or
 `.tgz` release archive, a Git URL, or `owner/repo`. An `owner/repo` source uses
 the latest published release's platform archive, verified against that
 release's `checksums.txt`, and records `owner/repo` so the next update asks
-the channel again. The repository tree is the fallback only for a release-less
+the channel again. A GitHub release that backs an `owner/repo` install must
+publish each platform archive as `<repo>-<tag>-<platform>.tar.gz` (`.tgz` is
+also accepted), where `<repo>` is the repository name without the owner,
+`<tag>` is the release tag with or without its leading `v`, and `<platform>`
+is one of `darwin-arm64`, `linux-x64`, `linux-arm64`, or `windows-x64`, and it
+must publish a top-level `checksums.txt` with a line for each of those
+archives. The repository tree is the fallback only for a release-less
 data-only plugin, one that never published a platform archive. Git sources are
 cloned with the user's existing credentials, including for a private
 repository. Archives must contain the package files at their root; nested

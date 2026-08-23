@@ -23,6 +23,21 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 )
 
+// The production entry point refuses an owner/repo source whose configured
+// release API is not a clean HTTPS base, the same guard the kernel's update
+// path enforces, before any network request is made.
+func TestResolveRefusesANonHTTPSReleaseAPIForOwnerRepo(t *testing.T) {
+	t.Setenv(release.EnvAPI, "http://mirror.example")
+	_, cleanup, err := plugininstall.Resolve(context.Background(), "owner/synthetic-release", t.TempDir())
+	if err == nil {
+		cleanup()
+		t.Fatal("a non-HTTPS release API was accepted for an owner/repo source")
+	}
+	if !strings.Contains(err.Error(), "https") {
+		t.Fatalf("refusal error %q does not name the https requirement", err)
+	}
+}
+
 // An owner/repo source that publishes a platform archive is installed from
 // that archive, not from the repository tree. The tree is what produced
 // "declares binary but the package supplies" when the checkout had no build.

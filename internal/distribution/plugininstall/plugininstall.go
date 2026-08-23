@@ -176,8 +176,15 @@ type packageMetadata struct {
 }
 
 func Resolve(ctx context.Context, reference, scratchRoot string) (Resolved, func(), error) {
+	api := os.Getenv(release.EnvAPI)
+	reference = strings.TrimSpace(reference)
+	if _, isRepo := RepositoryURL(reference); isRepo {
+		if err := release.ValidateMirror(api, reference); err != nil {
+			return Resolved{}, func() {}, err
+		}
+	}
 	return Resolver{
-		API:   os.Getenv(release.EnvAPI),
+		API:   api,
 		Token: os.Getenv(release.EnvToken),
 	}.Resolve(ctx, reference, scratchRoot)
 }
