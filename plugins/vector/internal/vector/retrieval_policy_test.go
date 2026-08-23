@@ -75,6 +75,7 @@ func TestGoldenVideoQueriesKeepTopRank(t *testing.T) {
 		if len(results) == 0 || results[0].SourceID != item.id {
 			t.Fatalf("video query %q rank1=%+v, want %s", item.query, results, item.id)
 		}
+		t.Logf("video query %q rank1=%s score=%.3f", item.query, results[0].SourceID, results[0].Score)
 	}
 }
 

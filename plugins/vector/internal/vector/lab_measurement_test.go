@@ -3,6 +3,7 @@ package vector
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,59 +13,50 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+type labExchange struct {
+	ID         string `json:"id"`
+	Human      string `json:"human"`
+	AgentSeed  string `json:"agent_seed"`
+	AgentWords int    `json:"agent_words"`
+}
+
+type labFixture struct {
+	Title     string        `json:"title"`
+	Started   string        `json:"started_at"`
+	Query     string        `json:"query"`
+	TargetIDs []string      `json:"target_ids"`
+	Exchanges []labExchange `json:"exchanges"`
+}
+
 func TestLabGenerationBeforeAfter(t *testing.T) {
 	if os.Getenv("ROCA_VECTOR_LAB") != "1" {
 		t.Skip("set ROCA_VECTOR_LAB=1 to measure a local lab copy")
 	}
-	dbPath := os.Getenv("ROCA_VECTOR_LAB_DB")
+	dbPath := strings.TrimSpace(os.Getenv("ROCA_VECTOR_LAB_DB"))
+	var title, started, fixtureQuery string
+	var all []labExchange
+	var targetIDs []string
 	if dbPath == "" {
-		t.Fatal("ROCA_VECTOR_LAB_DB is required")
-	}
-	targetIDs := strings.Split(os.Getenv("ROCA_VECTOR_LAB_IDS"), ",")
-	if len(targetIDs) == 0 || targetIDs[0] == "" {
-		t.Fatal("ROCA_VECTOR_LAB_IDS is required")
+		fixture := readLabFixture(t)
+		title, started, fixtureQuery = fixture.Title, fixture.Started, fixture.Query
+		all, targetIDs = fixture.Exchanges, fixture.TargetIDs
+	} else {
+		title, started, all = readLabDatabase(t, dbPath)
+		targetIDs = strings.Split(os.Getenv("ROCA_VECTOR_LAB_IDS"), ",")
+		if len(targetIDs) == 0 || targetIDs[0] == "" {
+			t.Fatal("ROCA_VECTOR_LAB_IDS is required with ROCA_VECTOR_LAB_DB")
+		}
 	}
 	wanted := map[string]bool{}
 	for _, id := range targetIDs {
 		wanted[strings.TrimSpace(id)] = true
 	}
-
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	var title, started string
-	_ = db.QueryRow(`SELECT COALESCE(title,''), COALESCE(started_at,'') FROM sessions LIMIT 1`).Scan(&title, &started)
-	rows, err := db.Query(`SELECT CAST(id AS TEXT), COALESCE(human_text,''), COALESCE(agent_text,'') FROM exchanges`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	type exchange struct{ id, human, agent string }
-	var all []exchange
-	for rows.Next() {
-		var item exchange
-		if err := rows.Scan(&item.id, &item.human, &item.agent); err != nil {
-			t.Fatal(err)
-		}
-		all = append(all, item)
-	}
-	if err := rows.Close(); err != nil {
-		t.Fatal(err)
-	}
 	query := strings.TrimSpace(os.Getenv("ROCA_VECTOR_LAB_QUERY"))
 	if query == "" {
-		shortest := 1 << 30
-		for _, item := range all {
-			text := strings.TrimSpace(item.human)
-			if !wanted[item.id] || text == "" {
-				continue
-			}
-			if len(text) < shortest {
-				shortest = len(text)
-				query = text
-			}
-		}
+		query = fixtureQuery
+	}
+	if query == "" {
+		query = shortestTargetText(all, wanted)
 	}
 	if query == "" {
 		t.Fatal("no lab query")
@@ -73,22 +65,23 @@ func TestLabGenerationBeforeAfter(t *testing.T) {
 	oldSources := make([]sourceRow, 0, len(all))
 	newSources := make([]sourceRow, 0, len(all)*2)
 	for _, item := range all {
-		concat := strings.TrimSpace(item.human)
-		if strings.TrimSpace(item.agent) != "" {
+		agent := labAgentText(item)
+		concat := strings.TrimSpace(item.Human)
+		if strings.TrimSpace(agent) != "" {
 			if concat != "" {
 				concat += "\n\n"
 			}
-			concat += item.agent
+			concat += agent
 		}
-		oldSources = append(oldSources, sourceRow{kind: "exchanges", sourceID: item.id, text: concat,
+		oldSources = append(oldSources, sourceRow{kind: "exchanges", sourceID: item.ID, text: concat,
 			chunkSize: 4000, overlap: 400})
-		if strings.TrimSpace(item.human) != "" {
-			newSources = append(newSources, sourceRow{kind: "exchanges", sourceID: item.id, column: "human_text",
-				text: item.human, rowText: concat, title: title, occurredAt: started})
+		if strings.TrimSpace(item.Human) != "" {
+			newSources = append(newSources, sourceRow{kind: "exchanges", sourceID: item.ID, column: "human_text",
+				text: item.Human, rowText: concat, title: title, occurredAt: started})
 		}
-		if strings.TrimSpace(item.agent) != "" {
-			newSources = append(newSources, sourceRow{kind: "exchanges", sourceID: item.id, column: "agent_text",
-				text: item.agent, rowText: concat, title: title, occurredAt: started})
+		if strings.TrimSpace(agent) != "" {
+			newSources = append(newSources, sourceRow{kind: "exchanges", sourceID: item.ID, column: "agent_text",
+				text: agent, rowText: concat, title: title, occurredAt: started})
 		}
 	}
 
@@ -115,6 +108,83 @@ func TestLabGenerationBeforeAfter(t *testing.T) {
 	if newMean <= oldMean || improved == 0 {
 		t.Fatalf("lab retrieval did not improve: mean old=%.3f new=%.3f improved=%d", oldMean/n, newMean/n, improved)
 	}
+}
+
+func readLabFixture(t *testing.T) labFixture {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("testdata", "lab_measurement.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture labFixture
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	if len(fixture.Exchanges) == 0 || len(fixture.TargetIDs) == 0 {
+		t.Fatal("sanitized lab fixture has no exchanges or targets")
+	}
+	return fixture
+}
+
+func readLabDatabase(t *testing.T, path string) (string, string, []labExchange) {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var title, started string
+	_ = db.QueryRow(`SELECT COALESCE(title,''), COALESCE(started_at,'') FROM sessions LIMIT 1`).Scan(&title, &started)
+	rows, err := db.Query(`SELECT CAST(id AS TEXT), COALESCE(human_text,''), COALESCE(agent_text,'') FROM exchanges`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var exchanges []labExchange
+	for rows.Next() {
+		var item labExchange
+		var agent string
+		if err := rows.Scan(&item.ID, &item.Human, &agent); err != nil {
+			t.Fatal(err)
+		}
+		item.AgentSeed = agent
+		exchanges = append(exchanges, item)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return title, started, exchanges
+}
+
+func shortestTargetText(exchanges []labExchange, wanted map[string]bool) string {
+	shortest := 1 << 30
+	var query string
+	for _, item := range exchanges {
+		text := strings.TrimSpace(item.Human)
+		if !wanted[item.ID] || text == "" {
+			continue
+		}
+		if len(text) < shortest {
+			shortest = len(text)
+			query = text
+		}
+	}
+	return query
+}
+
+func labAgentText(item labExchange) string {
+	if item.AgentWords <= 0 {
+		return item.AgentSeed
+	}
+	words := strings.Fields(item.AgentSeed)
+	if len(words) == 0 {
+		return ""
+	}
+	out := make([]string, item.AgentWords)
+	for i := range out {
+		out[i] = words[i%len(words)]
+	}
+	return strings.Join(out, " ")
 }
 
 func labRun(t *testing.T, ctx context.Context, embedder Embedder, sources []sourceRow, query string, wanted map[string]bool) (map[string]float64, int, float64) {

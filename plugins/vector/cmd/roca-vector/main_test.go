@@ -122,9 +122,13 @@ esac
 	t.Setenv("ROCA_VECTOR_ROCA_BINARY", core)
 
 	env := &environment{dbPath: filepath.Join(t.TempDir(), "roca.db"), stateDir: state}
-	first := executeForOutput(t, env, "ingest", "--delta", "--source", "sessions")
-	if !strings.Contains(first, "2 added") {
+	first := executeForOutput(t, env, "ingest", "--delta", "--reembed", "--source", "sessions")
+	if !strings.Contains(first, "vector reembed (sessions): 2 added") {
 		t.Fatalf("initial targeted delta output = %q", first)
+	}
+	repeatedReembed := executeForOutput(t, env, "ingest", "--delta", "--reembed", "--source", "sessions")
+	if !strings.Contains(repeatedReembed, "vector reembed (sessions): 0 added · 0 updated · 0 removed · 2 unchanged") {
+		t.Fatalf("repeated targeted reembed output = %q", repeatedReembed)
 	}
 
 	db, err := sql.Open("sqlite", vectorPath)
@@ -179,6 +183,7 @@ esac
 	}
 
 	t.Logf("initial CLI: %s", strings.TrimSpace(first))
+	t.Logf("repeat reembed CLI: %s", strings.TrimSpace(repeatedReembed))
 	t.Logf("repair CLI: %s", strings.TrimSpace(repaired))
 	t.Logf("repeat CLI: %s", strings.TrimSpace(steady))
 	t.Log(`source title: "Public health research {\"source_exchange_fingerprints\":[\"0123456789abcdef0123456789abcdef\"],\"enabled\":true}"`)
