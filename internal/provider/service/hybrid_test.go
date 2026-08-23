@@ -294,11 +294,23 @@ func TestHybridGoldenAgainstReadOnlyLabCopies(t *testing.T) {
 		}
 	}
 	t.Setenv("ROCA_VECTOR_STATE_DIR", stateDir)
-	vectorLeg := service.PluginVectorSearch(dbPath)
+	pluginVectorLeg := service.PluginVectorSearch(dbPath)
+	vectorCache := make(map[string]service.VectorHits)
+	vectorLeg := func(ctx context.Context, question string, k int, databases string) (service.VectorHits, error) {
+		key := fmt.Sprintf("%s\x00%d\x00%s", question, k, databases)
+		if hits, ok := vectorCache[key]; ok {
+			return hits, nil
+		}
+		hits, err := pluginVectorLeg(ctx, question, k, databases)
+		if err == nil {
+			vectorCache[key] = hits
+		}
+		return hits, err
+	}
 	open := func(vector service.VectorSearchFunc) *service.Service {
 		t.Helper()
 		svc, err := service.Open(service.Options{
-			DBPath: dbPath, DataDir: labDir, ReadOnly: true,
+			DBPath: dbPath, DataDir: labDir, ReadOnly: true, QueryTimeoutSet: true,
 			Version: "golden-eval", Commit: "golden-eval", VectorSearch: vector,
 		})
 		if err != nil {
