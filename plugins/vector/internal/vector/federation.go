@@ -143,8 +143,8 @@ func loadVectorRegistry(path string) (vectorRegistry, error) {
 }
 
 func validateRegistry(registry vectorRegistry) error {
-	if registry.Schema != vectorRegistrySchema {
-		return fmt.Errorf("vector registry schema is %d, want %d", registry.Schema, vectorRegistrySchema)
+	if registry.Schema != 1 && registry.Schema != vectorRegistrySchema {
+		return fmt.Errorf("vector registry schema is %d, want 1 or %d", registry.Schema, vectorRegistrySchema)
 	}
 	seenDatabases := map[string]bool{}
 	seenRoutes := map[string]bool{}
@@ -183,8 +183,10 @@ func validateRegistry(registry vectorRegistry) error {
 		seenTables := map[string]bool{}
 		for _, table := range database.Tables {
 			if !validIdentifier(table.Name) || !validIdentifier(table.IDColumn) ||
-				seenTables[table.Name] || len(table.TextColumns) == 0 ||
-				(len(table.TimeColumns) == 0 && table.TimeJoin == nil) {
+				seenTables[table.Name] || len(table.TextColumns) == 0 {
+				return fmt.Errorf("vector registry database %s has invalid table %q", owner, table.Name)
+			}
+			if registry.Schema >= 2 && len(table.TimeColumns) == 0 && table.TimeJoin == nil {
 				return fmt.Errorf("vector registry database %s has invalid table %q", owner, table.Name)
 			}
 			seenTables[table.Name] = true
@@ -1112,7 +1114,7 @@ func (d DeclaredCorpus) ResolveSources(ctx context.Context,
 		}
 		text := expanded[0].rowText
 		candidate := sourceRow{kind: kind, sourceID: id, text: text, rowText: text,
-			fingerprintVersion: table.contractFingerprint()}
+			fingerprintVersion: table.embeddingContractFingerprint()}
 		for _, lookup := range lookups {
 			if lookup.kind == kind && lookup.where.SourceID == id &&
 				candidate.identity() == lookup.where.Identity {
