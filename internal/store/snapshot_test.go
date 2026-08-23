@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -50,4 +51,35 @@ func TestReadOnlySnapshotLifecycle(t *testing.T) {
 			}
 		}
 	})
+}
+
+type dirEntryStub struct {
+	name string
+	err  error
+}
+
+func (e dirEntryStub) Name() string               { return e.name }
+func (e dirEntryStub) IsDir() bool                { return true }
+func (e dirEntryStub) Type() fs.FileMode          { return fs.ModeDir }
+func (e dirEntryStub) Info() (fs.FileInfo, error) { return nil, e.err }
+
+func TestScavengeToleratesConcurrentlyRemovedSnapshot(t *testing.T) {
+	// A snapshot directory can be removed by its owner between the directory
+	// listing and the per-entry stat; scavenging must skip it, not fail.
+	err := scavengeSnapshotEntries(context.Background(), t.TempDir(), []fs.DirEntry{
+		dirEntryStub{name: snapshotDirectoryPrefix + "vanished", err: fs.ErrNotExist},
+	}, time.Now())
+	if err != nil {
+		t.Fatalf("scavenge failed on a concurrently removed snapshot: %v", err)
+	}
+}
+
+func TestScavengeStillSurfacesRealSnapshotErrors(t *testing.T) {
+	boom := errors.New("boom")
+	err := scavengeSnapshotEntries(context.Background(), t.TempDir(), []fs.DirEntry{
+		dirEntryStub{name: snapshotDirectoryPrefix + "stale", err: boom},
+	}, time.Now())
+	if !errors.Is(err, boom) {
+		t.Fatalf("scavenge error = %v, want it to wrap %v", err, boom)
+	}
 }
