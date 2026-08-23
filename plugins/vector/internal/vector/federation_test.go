@@ -511,7 +511,7 @@ func TestFederationQueryKeepsMixedModelsPerDatabaseAndFailsSoftWithoutModel(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.MixedModels || len(result.Results) != 0 || len(result.DatabaseResults) != 2 {
+	if !result.MixedModels || !result.VectorExecuted || len(result.Results) != 0 || len(result.DatabaseResults) != 2 {
 		t.Fatalf("mixed-model federation result = %+v", result)
 	}
 	if len(embedder.inputs) != queryCalls+2 {
@@ -537,7 +537,7 @@ func TestFederationQueryKeepsMixedModelsPerDatabaseAndFailsSoftWithoutModel(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fallback.Results) != 0 || len(fallback.DatabaseResults) != 0 ||
+	if fallback.VectorExecuted || len(fallback.Results) != 0 || len(fallback.DatabaseResults) != 0 ||
 		!strings.Contains(strings.Join(fallback.Notices, "\n"), "continuing with FTS-only") {
 		t.Fatalf("model-unavailable fallback = %+v", fallback)
 	}

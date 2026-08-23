@@ -37,6 +37,16 @@ func TestSelectRareTermsFallsBackToTheLeastCommonWhenEverythingIsCommon(t *testi
 	}
 }
 
+func TestSelectRareTermsDropsTokensMissingFromEveryDocument(t *testing.T) {
+	got := search.SelectRareTerms([]search.TermStat{
+		{Term: "tulipanismo", Docs: 0},
+		{Term: "absent", Docs: 0},
+	}, 100, 0.02, 5)
+	if len(got) != 0 {
+		t.Fatalf("zero-DF terms = %v, want none", got)
+	}
+}
+
 func TestFuseRRFRewardsConsensusWithoutNormalizingLegScores(t *testing.T) {
 	vector := []search.RankedDoc{
 		{Key: "corpus.memories.202", Rank: 2, Score: 0.60, Database: "corpus", Table: "memories", ID: "202"},

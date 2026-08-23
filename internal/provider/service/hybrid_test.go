@@ -2,6 +2,9 @@ package service_test
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -80,6 +83,99 @@ func TestSearchFusesVectorAndFTSAndCanRequireBoth(t *testing.T) {
 	}
 }
 
+func TestSearchDoesNotLabelAnUnavailableVectorEngine(t *testing.T) {
+	svc := initialized(t, freshPaths(t), func(options *service.Options) {
+		options.VectorSearch = func(context.Context, string, int, string) (service.VectorHits, error) {
+			return service.VectorHits{Notices: []string{
+				"database corpus has no ready vector sidecar; continuing with FTS-only",
+			}}, nil
+		}
+	})
+	seedHybridCorpus(t, svc)
+
+	result, err := svc.Search(context.Background(), service.SearchRequest{
+		Question: "salud mental", Top: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(result.Engines, ",") != "fts" {
+		t.Fatalf("engines = %v, want fts-only", result.Engines)
+	}
+}
+
+func TestSearchDoesNotFlattenMixedModelVectorGroups(t *testing.T) {
+	svc := initialized(t, freshPaths(t), func(options *service.Options) {
+		options.VectorSearch = func(context.Context, string, int, string) (service.VectorHits, error) {
+			return service.VectorHits{Executed: true, MixedModels: true, Results: []service.VectorHit{
+				{Rank: 1, Score: 0.91, Database: "corpus", Table: "memories", ID: "1"},
+				{Rank: 1, Score: 0.42, Database: "ops", Table: "memories", ID: "1"},
+			}}, nil
+		}
+	})
+	seedHybridCorpus(t, svc)
+
+	result, err := svc.Search(context.Background(), service.SearchRequest{
+		Question: "salud mental", Top: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(result.Engines, ",") != "fts" {
+		t.Fatalf("mixed-model engines = %v, want fts-only", result.Engines)
+	}
+	for _, hit := range result.Hits {
+		if hit.VectorRank != nil {
+			t.Fatalf("mixed-model vector hit leaked into fusion: %+v", hit)
+		}
+	}
+	if !strings.Contains(strings.Join(result.Notices, "\n"), "cannot be fused") {
+		t.Fatalf("mixed-model degradation was not explained: %v", result.Notices)
+	}
+}
+
+func TestSearchUsesOnlyVectorWhenEveryFTSTermHasZeroDocumentFrequency(t *testing.T) {
+	svc := initialized(t, freshPaths(t), func(options *service.Options) {
+		options.VectorSearch = func(context.Context, string, int, string) (service.VectorHits, error) {
+			return service.VectorHits{Executed: true, Results: []service.VectorHit{{
+				Rank: 1, Score: 0.58, Database: "core", Table: "memories", ID: "1",
+				Text: "semantic neighbor",
+			}}}, nil
+		}
+	})
+	seedHybridCorpus(t, svc)
+
+	result, err := svc.Search(context.Background(), service.SearchRequest{
+		Question: "tulipanismo", Top: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Terms) != 0 || strings.Join(result.Engines, ",") != "vector" {
+		t.Fatalf("zero-DF route terms=%v engines=%v", result.Terms, result.Engines)
+	}
+}
+
+func TestPluginVectorSearchPreservesMixedModelAndExecutionState(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "roca-vector")
+	script := `#!/bin/sh
+printf '%s' '{"mixed_models":true,"vector_executed":true,"results":[],"database_results":[{"database":"corpus","model":"a","results":[{"rank":1,"score":0.9,"database":"corpus","table":"memories","id":"1"}]}],"notices":[]}'
+`
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	hits, err := service.PluginVectorSearch("")(context.Background(), "salud mental", 100, "all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hits.Executed || !hits.MixedModels || len(hits.Results) != 0 {
+		t.Fatalf("vector envelope state = %+v", hits)
+	}
+}
+
 func TestSearchResolvesSessionSnippetsFromDeclaredColumns(t *testing.T) {
 	svc, _ := serviceWithPaths(t)
 	seedHybridCorpus(t, svc)
@@ -123,6 +219,203 @@ func TestSearchLongQuestionDoesNotPromoteGenericFTSNoise(t *testing.T) {
 	if !hybridHitContains(result, "salud mental") {
 		t.Fatalf("long question missed the rare document: terms=%v hits=%+v", result.Terms, result.Hits)
 	}
+}
+
+func TestHybridGoldenHitsAtTenMatchesOrBeatsEachLeg(t *testing.T) {
+	cases := []struct {
+		query string
+		text  string
+	}{
+		{"why should I never upload a short as private first", "Initial privacy sabotaged distribution; publish the clip unlisted before switching visibility."},
+		{"what happened when I changed the title of a dead short", "Renaming an old dormant clip revived impressions and audience discovery."},
+		{"does the bridge from shorts to long-form videos actually work", "The bridge from brief vertical clips to full-length films converted viewers."},
+		{"what lessons did I learn about making YouTube shorts for my channel", "Lessons from producing vertical clips for the creator channel."},
+	}
+	vectorTargets := map[string]string{}
+	vectorLeg := service.VectorSearchFunc(func(_ context.Context, question string, _ int, _ string) (service.VectorHits, error) {
+		id := vectorTargets[question]
+		return service.VectorHits{Executed: true, Results: []service.VectorHit{{
+			Rank: 1, Score: 0.58, Database: "core", Table: "memories", ID: id,
+		}}}, nil
+	})
+	hybrid := initialized(t, freshPaths(t), func(options *service.Options) {
+		options.VectorSearch = vectorLeg
+	})
+	vectorTargets = seedHybridGoldenCorpus(t, hybrid, cases)
+	fts, _ := serviceWithPaths(t)
+	ftsTargets := seedHybridGoldenCorpus(t, fts, cases)
+
+	hybridHits, ftsHits, vectorHits := 0, 0, 0
+	for _, golden := range cases {
+		hybridResult, err := hybrid.Search(context.Background(), service.SearchRequest{
+			Question: golden.query, Top: 10,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ftsResult, err := fts.Search(context.Background(), service.SearchRequest{
+			Question: golden.query, Top: 10,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if searchResultHasSource(hybridResult, "core.memories."+vectorTargets[golden.query]) {
+			hybridHits++
+		}
+		if searchResultHasSource(ftsResult, "core.memories."+ftsTargets[golden.query]) {
+			ftsHits++
+		}
+		vectorResult, err := vectorLeg(context.Background(), golden.query, 100, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if vectorHitsHaveSource(vectorResult.Results, "core.memories."+vectorTargets[golden.query]) {
+			vectorHits++
+		}
+	}
+	t.Logf("golden hits@10: hybrid=%d pure-fts=%d pure-vector=%d",
+		hybridHits, ftsHits, vectorHits)
+	if hybridHits < ftsHits || hybridHits < vectorHits {
+		t.Fatalf("hybrid hits@10 = %d, pure-fts = %d, pure-vector = %d",
+			hybridHits, ftsHits, vectorHits)
+	}
+}
+
+func TestHybridGoldenAgainstReadOnlyLabCopies(t *testing.T) {
+	labDir := os.Getenv("ROCA_HYBRID_GOLDEN_LAB_DIR")
+	if labDir == "" {
+		t.Skip("set ROCA_HYBRID_GOLDEN_LAB_DIR to read-only golden database copies")
+	}
+	dbPath := filepath.Join(labDir, "roca.db")
+	stateDir := filepath.Join(labDir, "vector-state")
+	for _, path := range []string{dbPath, stateDir} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("golden lab copy %s: %v", path, err)
+		}
+	}
+	t.Setenv("ROCA_VECTOR_STATE_DIR", stateDir)
+	vectorLeg := service.PluginVectorSearch(dbPath)
+	open := func(vector service.VectorSearchFunc) *service.Service {
+		t.Helper()
+		svc, err := service.Open(service.Options{
+			DBPath: dbPath, DataDir: labDir, ReadOnly: true,
+			Version: "golden-eval", Commit: "golden-eval", VectorSearch: vector,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = svc.Close() })
+		return svc
+	}
+	hybrid, fts := open(vectorLeg), open(nil)
+	cases := []struct {
+		query string
+		table string
+		ids   []string
+	}{
+		{"why should I never upload a short as private first", "memories", []string{"202"}},
+		{"what happened when I changed the title of a dead short", "memories", []string{"199"}},
+		{"does the bridge from shorts to long-form videos actually work", "memories", []string{"219"}},
+		{"what lessons did I learn about making YouTube shorts for my channel", "exchanges", []string{"111818", "10119"}},
+	}
+
+	hybridHits, ftsHits, vectorHits := 0, 0, 0
+	for _, golden := range cases {
+		hybridResult, err := hybrid.Search(context.Background(), service.SearchRequest{
+			Question: golden.query, Top: 10,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ftsResult, err := fts.Search(context.Background(), service.SearchRequest{
+			Question: golden.query, Top: 10,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		vectorResult, err := vectorLeg(context.Background(), golden.query, 100, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if goldenSearchHit(hybridResult.Hits, golden.table, golden.ids) {
+			hybridHits++
+		}
+		if goldenSearchHit(ftsResult.Hits, golden.table, golden.ids) {
+			ftsHits++
+		}
+		if goldenVectorHit(vectorResult.Results, golden.table, golden.ids) {
+			vectorHits++
+		}
+	}
+	t.Logf("lab-copy golden hits@10: hybrid=%d pure-fts=%d pure-vector=%d",
+		hybridHits, ftsHits, vectorHits)
+	if hybridHits < ftsHits || hybridHits < vectorHits {
+		t.Fatalf("hybrid hits@10 = %d, pure-fts = %d, pure-vector = %d",
+			hybridHits, ftsHits, vectorHits)
+	}
+}
+
+func goldenSearchHit(hits []service.SearchHit, table string, ids []string) bool {
+	for _, hit := range hits {
+		if hit.Table == table && containsTerm(ids, hit.ID) {
+			return true
+		}
+	}
+	return false
+}
+
+func goldenVectorHit(hits []service.VectorHit, table string, ids []string) bool {
+	for _, hit := range hits {
+		if hit.Rank <= 10 && hit.Table == table && containsTerm(ids, hit.ID) {
+			return true
+		}
+	}
+	return false
+}
+
+func seedHybridGoldenCorpus(t *testing.T, svc *service.Service, cases []struct {
+	query string
+	text  string
+}) map[string]string {
+	t.Helper()
+	targets := make(map[string]string, len(cases))
+	for _, golden := range cases {
+		result, err := svc.DB().SQL().Exec(
+			"INSERT INTO memories (layer, content, origin) VALUES ('discovery', ?, 'agent')", golden.text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, err := result.LastInsertId()
+		if err != nil {
+			t.Fatal(err)
+		}
+		targets[golden.query] = fmt.Sprint(id)
+	}
+	for index := 0; index < 60; index++ {
+		seed(t, svc, "discovery", fmt.Sprintf("generic unrelated fixture note %d", index))
+	}
+	if _, err := svc.Index(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	return targets
+}
+
+func searchResultHasSource(result service.SearchResult, source string) bool {
+	for _, hit := range result.Hits {
+		if hit.Source == source {
+			return true
+		}
+	}
+	return false
+}
+
+func vectorHitsHaveSource(hits []service.VectorHit, source string) bool {
+	for _, hit := range hits {
+		if hit.Database+"."+hit.Table+"."+hit.ID == source {
+			return true
+		}
+	}
+	return false
 }
 
 func seedHybridCorpus(t *testing.T, svc *service.Service) {

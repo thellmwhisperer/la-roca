@@ -68,8 +68,10 @@ type VectorHit struct {
 
 // VectorHits is the vector leg as HybridSearch consumes it.
 type VectorHits struct {
-	Results []VectorHit `json:"results"`
-	Notices []string    `json:"notices"`
+	Results     []VectorHit `json:"results"`
+	Notices     []string    `json:"notices"`
+	Executed    bool        `json:"vector_executed"`
+	MixedModels bool        `json:"mixed_models"`
 }
 
 // VectorSearchFunc runs the vector leg. Tests inject it; production shells to
@@ -136,7 +138,7 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResult, 
 	if ftsErr != nil {
 		return result, ftsErr
 	}
-	if len(surfaces) > 0 {
+	if len(surfaces) > 0 && len(terms) > 0 {
 		result.Engines = append(result.Engines, search.LegFTS)
 	}
 
@@ -148,8 +150,13 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResult, 
 			result.Notices = append(result.Notices, "vector search unavailable: "+searchErr.Error())
 		} else {
 			result.Notices = append(result.Notices, hits.Notices...)
-			vectorDocs = vectorRanked(hits.Results)
-			result.Engines = append(result.Engines, search.LegVector)
+			if hits.MixedModels {
+				result.Notices = append(result.Notices,
+					"mixed-model vector results cannot be fused; continuing with FTS-only")
+			} else if hits.Executed || len(hits.Results) > 0 {
+				vectorDocs = vectorRanked(hits.Results)
+				result.Engines = append(result.Engines, search.LegVector)
+			}
 		}
 	} else {
 		result.Notices = append(result.Notices,
@@ -377,32 +384,46 @@ func (s *Service) selectTerms(ctx context.Context, route pluginRoute, surfaces [
 	if len(tokens) == 0 || len(surfaces) == 0 {
 		return nil, nil
 	}
-	stats := make([]search.TermStat, 0, len(tokens))
-	corpusDocs := 0
+	branches := make([]string, 0, len(surfaces)*(len(tokens)+1))
 	for _, surface := range surfaces {
-		countSQL := "SELECT COUNT(*) AS n FROM " + qualified(surface.Schema, surface.FTSTable)
-		n, err := s.countScalar(ctx, route, countSQL, maxChars)
-		if err != nil {
-			continue
-		}
-		corpusDocs += n
+		branches = append(branches, "SELECT -1 AS token_index, 0 AS docs, COUNT(*) AS corpus_docs FROM "+
+			qualified(surface.Schema, surface.FTSTable))
 	}
-	for _, token := range tokens {
-		docs := 0
+	valid := make([]bool, len(tokens))
+	for index, token := range tokens {
 		match := search.MatchExpression(token, search.MatchAll)
 		if match == "" {
 			continue
 		}
+		valid[index] = true
 		for _, surface := range surfaces {
-			countSQL := "SELECT COUNT(*) AS n FROM " + qualified(surface.Schema, surface.FTSTable) +
-				" WHERE " + quoteIdent(surface.FTSTable) + " MATCH " + sqlString(match)
-			n, err := s.countScalar(ctx, route, countSQL, maxChars)
-			if err != nil {
-				continue
-			}
-			docs += n
+			branches = append(branches, "SELECT "+strconv.Itoa(index)+
+				" AS token_index, COUNT(*) AS docs, 0 AS corpus_docs FROM "+
+				qualified(surface.Schema, surface.FTSTable)+" WHERE "+
+				quoteIdent(surface.FTSTable)+" MATCH "+sqlString(match))
 		}
-		stats = append(stats, search.TermStat{Term: token, Docs: docs})
+	}
+	statement := "SELECT token_index, SUM(docs) AS docs, SUM(corpus_docs) AS corpus_docs FROM (" +
+		strings.Join(branches, " UNION ALL ") + ") GROUP BY token_index ORDER BY token_index"
+	rows, err := s.runSearchSQL(ctx, route, statement, maxChars)
+	if err != nil {
+		return nil, err
+	}
+	corpusDocs := 0
+	documentCounts := make(map[int]int, len(tokens))
+	for _, row := range rows {
+		index := scalarInt(row["token_index"])
+		if index < 0 {
+			corpusDocs = scalarInt(row["corpus_docs"])
+			continue
+		}
+		documentCounts[index] = scalarInt(row["docs"])
+	}
+	stats := make([]search.TermStat, 0, len(tokens))
+	for index, token := range tokens {
+		if valid[index] {
+			stats = append(stats, search.TermStat{Term: token, Docs: documentCounts[index]})
+		}
 	}
 	return search.SelectRareTerms(stats, corpusDocs, search.MaxDFRatio, search.MaxRareTerms), nil
 }
@@ -482,27 +503,20 @@ func sqlString(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
-func (s *Service) countScalar(ctx context.Context, route pluginRoute, statement string, maxChars int) (int, error) {
-	rows, err := s.runSearchSQL(ctx, route, statement, maxChars)
-	if err != nil {
-		return 0, err
-	}
-	if len(rows) == 0 {
-		return 0, nil
-	}
-	switch value := rows[0]["n"].(type) {
+func scalarInt(raw any) int {
+	switch value := raw.(type) {
 	case int64:
-		return int(value), nil
+		return int(value)
 	case int:
-		return value, nil
+		return value
 	case float64:
-		return int(value), nil
+		return int(value)
 	case json.Number:
 		n, _ := value.Int64()
-		return int(n), nil
+		return int(n)
 	default:
 		n, _ := strconv.Atoi(fmt.Sprint(value))
-		return n, nil
+		return n
 	}
 }
 
@@ -549,21 +563,15 @@ func PluginVectorSearch(dbPath string) VectorSearchFunc {
 			return VectorHits{Notices: []string{"vector search unavailable: " + message}}, nil
 		}
 		var envelope struct {
-			Results         []VectorHit `json:"results"`
-			DatabaseResults []struct {
-				Results []VectorHit `json:"results"`
-			} `json:"database_results"`
-			Notices []string `json:"notices"`
+			Results        []VectorHit `json:"results"`
+			Notices        []string    `json:"notices"`
+			VectorExecuted bool        `json:"vector_executed"`
+			MixedModels    bool        `json:"mixed_models"`
 		}
 		if err := json.Unmarshal(out, &envelope); err != nil {
 			return VectorHits{}, fmt.Errorf("decode vector query: %w", err)
 		}
-		hits := envelope.Results
-		if len(hits) == 0 {
-			for _, group := range envelope.DatabaseResults {
-				hits = append(hits, group.Results...)
-			}
-		}
-		return VectorHits{Results: hits, Notices: envelope.Notices}, nil
+		return VectorHits{Results: envelope.Results, Notices: envelope.Notices,
+			Executed: envelope.VectorExecuted, MixedModels: envelope.MixedModels}, nil
 	}
 }

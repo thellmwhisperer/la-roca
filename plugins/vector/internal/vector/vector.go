@@ -336,10 +336,29 @@ func validateSourceKind(sourceKind string, declared map[string]bool) error {
 }
 
 func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) {
+	return i.queryTexts(ctx, []string{text}, k, 0, true)
+}
+
+func (i Index) QueryExpanded(ctx context.Context, text string, k int, minScore float64) ([]Result, error) {
+	return i.queryTexts(ctx, ExpandedQueries(text), k, minScore, false)
+}
+
+func (i Index) queryTexts(ctx context.Context, texts []string, k int,
+	minScore float64, trimToK bool) ([]Result, error) {
 	if err := i.validate(); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(text) == "" {
+	cleaned := make([]string, 0, len(texts))
+	seenText := map[string]bool{}
+	for _, text := range texts {
+		text = strings.TrimSpace(text)
+		if text == "" || seenText[text] {
+			continue
+		}
+		seenText[text] = true
+		cleaned = append(cleaned, text)
+	}
+	if len(cleaned) == 0 {
 		return nil, fmt.Errorf("semantic query is empty")
 	}
 	if k < 1 || k > 100 {
@@ -362,14 +381,29 @@ func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) 
 	if model == "" || dimensions == 0 {
 		return nil, fmt.Errorf("vector index is not ready; run `roca vector install`")
 	}
-	vectors, err := i.Embedder.Embed(ctx, model, []string{QueryPrefix + text})
+	inputs := make([]string, len(cleaned))
+	for index, text := range cleaned {
+		inputs[index] = QueryPrefix + text
+	}
+	vectors, err := i.Embedder.Embed(ctx, model, inputs)
 	if err != nil {
 		return nil, err
 	}
-	if len(vectors) != 1 || len(vectors[0]) != dimensions {
-		return nil, fmt.Errorf("query embedding has the wrong dimensions")
+	if len(vectors) != len(inputs) {
+		return nil, fmt.Errorf("embedding provider returned no query vector")
 	}
-	return i.queryVector(ctx, store, vectors[0], k)
+	var results []Result
+	for _, embedding := range vectors {
+		if len(embedding) != dimensions {
+			return nil, fmt.Errorf("query embedding has the wrong dimensions")
+		}
+		hits, err := i.queryVector(ctx, store, embedding, k)
+		if err != nil {
+			return nil, err
+		}
+		results = unionFederatedHits(results, filterVectorFloor(hits, minScore))
+	}
+	return finishFederatedHits(results, k, trimToK), nil
 }
 
 func (i Index) queryVector(ctx context.Context, store *sql.DB, embedding []float32, k int) ([]Result, error) {
@@ -384,10 +418,11 @@ func (i Index) queryVector(ctx context.Context, store *sql.DB, embedding []float
 	seen := map[string]bool{}
 	misses := 0
 	for _, candidate := range candidates {
-		if seen[candidate.sourceID] {
+		key := candidate.kind + "\x00" + candidate.sourceID
+		if seen[key] {
 			continue
 		}
-		seen[candidate.sourceID] = true
+		seen[key] = true
 		body, err := i.Corpus.ResolveSource(ctx, candidate.kind, candidate.where)
 		if err != nil {
 			return nil, err

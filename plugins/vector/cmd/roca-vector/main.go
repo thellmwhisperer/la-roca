@@ -335,7 +335,8 @@ func queryCommand(env *environment) *cobra.Command {
 						"databases": result.Databases, "model": result.Model,
 						"mixed_models": result.MixedModels, "results": result.Results,
 						"database_results": result.DatabaseResults, "notices": result.Notices,
-						"elapsed_ms": time.Since(started).Milliseconds()})
+						"vector_executed": result.VectorExecuted,
+						"elapsed_ms":      time.Since(started).Milliseconds()})
 				}
 				for _, notice := range result.Notices {
 					fmt.Fprintln(os.Stderr, "notice:", notice)
@@ -361,13 +362,19 @@ func queryCommand(env *environment) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			results, err := index.Query(command.Context(), args[0], k)
+			var results []vector.Result
+			if expandTemplates {
+				results, err = index.QueryExpanded(command.Context(), args[0], k, minScore)
+			} else {
+				results, err = index.Query(command.Context(), args[0], k)
+			}
 			if err != nil {
 				return err
 			}
 			if env.json {
 				return printJSON(map[string]any{"query": args[0], "k": k,
-					"results": results, "elapsed_ms": time.Since(started).Milliseconds()})
+					"results": results, "vector_executed": true,
+					"elapsed_ms": time.Since(started).Milliseconds()})
 			}
 			printResults(results)
 			return nil

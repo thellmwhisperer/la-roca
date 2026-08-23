@@ -226,6 +226,7 @@ type FederatedQuery struct {
 	Databases       []string              `json:"databases"`
 	Model           string                `json:"model,omitempty"`
 	MixedModels     bool                  `json:"mixed_models"`
+	VectorExecuted  bool                  `json:"vector_executed"`
 	Results         []Result              `json:"results"`
 	DatabaseResults []DatabaseQueryResult `json:"database_results,omitempty"`
 	Notices         []string              `json:"notices"`
@@ -380,6 +381,7 @@ func (f Federation) searchTarget(ctx context.Context, result *FederatedQuery, ta
 		if closeErr != nil {
 			return fmt.Errorf("close vector sidecar %s: %w", target.database.owner(), closeErr)
 		}
+		result.VectorExecuted = true
 		tagFederatedResults(hits, target.database.Database)
 		hits = filterVectorFloor(hits, minScore)
 		if result.MixedModels {

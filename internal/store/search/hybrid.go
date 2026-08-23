@@ -76,13 +76,12 @@ func SelectRareTerms(stats []TermStat, corpusDocs int, maxRatio float64, keep in
 	if maxRatio <= 0 {
 		maxRatio = MaxDFRatio
 	}
-	var rare, common, absent []TermStat
+	var rare, common []TermStat
 	for _, stat := range stats {
 		if strings.TrimSpace(stat.Term) == "" {
 			continue
 		}
 		if stat.Docs <= 0 {
-			absent = append(absent, stat)
 			continue
 		}
 		if corpusDocs > 0 && float64(stat.Docs)/float64(corpusDocs) > maxRatio {
@@ -96,9 +95,6 @@ func SelectRareTerms(stats []TermStat, corpusDocs int, maxRatio float64, keep in
 	if len(pool) == 0 {
 		pool = common
 		fallback = len(pool) > 0
-	}
-	if len(pool) == 0 {
-		pool = absent
 	}
 	sort.SliceStable(pool, func(i, j int) bool {
 		if pool[i].Docs != pool[j].Docs {

@@ -46,11 +46,12 @@ roca exec "SELECT source_agent, COUNT(*) AS sessions
            ORDER BY sessions DESC"
 ```
 
-Recovery is SQL plus a local FTS5 index with diacritic folding; a plain `LIKE`
-fallback works before the index exists. If you want semantics, your model
-supplies it at question time; the retrieval itself stays exact and auditable.
-No usable provider, or SQL that cannot run, falls back to literal search and
-says so in the result.
+`roca playground` recovers with SQL plus a local FTS5 index with diacritic
+folding; a plain `LIKE` fallback works before the index exists. Its configured
+model supplies semantic interpretation at question time, while the checked SQL
+retrieval stays exact and auditable. No usable provider, or SQL that cannot run,
+falls back to literal search and says so in the result. `roca query` instead
+uses the deterministic hybrid path described above.
 
 ## Read-only queries across machines
 

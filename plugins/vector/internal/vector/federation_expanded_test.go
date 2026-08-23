@@ -94,6 +94,31 @@ func TestQueryExpandedLiftsBareNounsAndFloorsWeakNeighbors(t *testing.T) {
 	}
 }
 
+func TestIndexQueryExpandedSupportsTheLegacyBoundary(t *testing.T) {
+	corpus := &memoryCorpus{sources: []sourceRow{{
+		kind: "memories", sourceID: "salud-1", text: "Hablamos de salud mental en la terapia",
+	}}}
+	index := Index{Corpus: corpus, VectorPath: filepath.Join(t.TempDir(), "vector.db"),
+		Model: DefaultModel, Embedder: &liftEmbedder{}, Database: "corpus"}
+	if _, err := index.Ingest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := index.Query(context.Background(), "salud mental", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) == 0 || raw[0].Score >= 0.35 {
+		t.Fatalf("raw legacy result = %+v, want a weak neighbor", raw)
+	}
+	expanded, err := index.QueryExpanded(context.Background(), "salud mental", 10, 0.35)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(expanded) == 0 || expanded[0].ID != "salud-1" || expanded[0].Score < 0.35 {
+		t.Fatalf("expanded legacy result = %+v", expanded)
+	}
+}
+
 func TestQueryExpandedResolvesSessionSnippetsFromTheCatalog(t *testing.T) {
 	root := t.TempDir()
 	pluginDir := filepath.Join(root, "roca-corpus")
