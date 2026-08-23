@@ -730,6 +730,40 @@ func TestSnapshotReaperReleasesLeaseBeforeDeletion(t *testing.T) {
 	}
 }
 
+func TestSnapshotSizeFailurePreventsReapTelemetry(t *testing.T) {
+	tempRoot := isolateSnapshotTemp(t)
+	root := snapshotNamespaceForTest(t, tempRoot)
+	ctx, records := captureSnapshotRecords()
+	orphan := filepath.Join(root, snapshotDirectoryPrefix+"unmeasurable")
+	if err := os.Mkdir(orphan, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	payload := filepath.Join(orphan, "payload")
+	if err := os.WriteFile(payload, []byte("payload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	originalInfo := snapshotEntryInfoFn
+	t.Cleanup(func() { snapshotEntryInfoFn = originalInfo })
+	snapshotEntryInfoFn = func(entry os.DirEntry) (os.FileInfo, error) {
+		if entry.Name() == "payload" {
+			return nil, &os.PathError{Op: "stat", Path: payload, Err: os.ErrPermission}
+		}
+		return originalInfo(entry)
+	}
+	if err := scavengeReadOnlySnapshots(ctx, root); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("snapshot size error = %v, want permission error", err)
+	}
+	if captured := records(); len(captured) != 0 {
+		t.Fatalf("unmeasured snapshot produced reap telemetry: %v", captured)
+	}
+	if matches, err := filepath.Glob(filepath.Join(root, snapshotReapPrefix+"*")); err != nil {
+		t.Fatal(err)
+	} else if len(matches) != 1 {
+		t.Fatalf("unmeasured snapshot claims = %v, want one retained claim", matches)
+	}
+}
+
 func TestSnapshotReapFailureBlocksAnotherCopy(t *testing.T) {
 	tempRoot := isolateSnapshotTemp(t)
 	root := snapshotNamespaceForTest(t, tempRoot)
@@ -931,7 +965,7 @@ func TestSnapshotHelperProcess(t *testing.T) {
 		return
 	}
 	if mode == "signal-registration" {
-		snapshotBeforeLeaseRegistrationFn = func(directory string) {
+		snapshotAfterLeaseRegistrationFn = func(directory string) {
 			fmt.Printf("STAGING %s\n", directory)
 			os.Stdout.Sync()
 			for !snapshotShuttingDown.Load() {

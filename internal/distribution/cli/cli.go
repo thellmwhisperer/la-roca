@@ -738,6 +738,7 @@ func (env *cliEnv) openStoreService() (*service.Service, config.Paths, error) {
 // already known when the database is opened.
 func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error) {
 	readOnly := env.forceReadOnly || config.ReadOnly(os.Getenv(config.EnvReadOnly))
+	snapshotCtx := snapshotTelemetryContext(context.Background(), filepath.Dir(paths.DB))
 	if !readOnly {
 		if err := os.MkdirAll(dirOf(paths.DB), 0o700); err != nil {
 			return nil, fmt.Errorf("create the database directory: %w", err)
@@ -797,7 +798,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		if _, err := rocacron.Ensure(pluginDir, pluginExecutableDir(paths), env.build.Version); err != nil {
 			return nil, fmt.Errorf("install bundled cron plugin for DATA SPLIT: %w", err)
 		}
-		_, prepareErr := datasplit.PrepareHub(context.Background(), datasplit.HubOptions{
+		_, prepareErr := datasplit.PrepareHub(snapshotCtx, datasplit.HubOptions{
 			CoreDatabase: paths.DB, OpsDatabase: opsDatabase, CorpusDatabase: corpusDatabase,
 			CronDatabase: filepath.Join(pluginDir, rocacron.Name, rocacron.DatabaseFilename),
 			SnapshotDir:  filepath.Join(paths.Backups, "data-split"),
@@ -814,7 +815,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 	}
 	writerFenced := false
 	if fileExists(opsDatabase) {
-		writerFenced, err = rocaops.MemoryCustodyWriterFenced(context.Background(), opsDatabase)
+		writerFenced, err = rocaops.MemoryCustodyWriterFenced(snapshotCtx, opsDatabase)
 		if err != nil {
 			return nil, fmt.Errorf("inspect the DATA SPLIT writer fence: %w", err)
 		}
@@ -889,6 +890,13 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 	}
 	env.openedDir = filepath.Dir(paths.DB)
 	return svc, nil
+}
+
+func snapshotTelemetryContext(ctx context.Context, dataDir string) context.Context {
+	writer := logfile.New(dataDir)
+	return store.WithSnapshotLogWriter(ctx, func(record map[string]any) error {
+		return writer.Append(logfile.Snapshots, record)
+	})
 }
 
 func (env *cliEnv) finishIngestProgress() {
