@@ -102,6 +102,8 @@ non-failing writer contract. This DATA SPLIT stage deliberately keeps rotation
 and both call-stream writes unchanged as the rollback path; retiring those two
 JSONL streams requires a separately proven rollback transition. The ops copy
 has no automatic expiry, and its retention policy cannot prune corpus or cron.
+Read-only snapshot create and reap events go to the dated `snapshots` JSONL
+stream in the same directory: source, size, reason, count, and megabytes reclaimed.
 
 `executions` and `mcp-audit` share one top-level call contract. Surface-specific
 fields are `command` plus `flags` for CLI and `tool` for MCP:

@@ -1,6 +1,12 @@
 package securefile
 
-import "os"
+import (
+	"errors"
+	"os"
+)
+
+// ErrBusy is returned by TryLock when another process already holds the lease.
+var ErrBusy = errors.New("file is locked")
 
 func validateExistingLock(path string, file *os.File, release func() error) error {
 	held, err := file.Stat()

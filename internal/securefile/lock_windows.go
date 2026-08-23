@@ -3,6 +3,7 @@
 package securefile
 
 import (
+	"errors"
 	"os"
 
 	"golang.org/x/sys/windows"
@@ -10,14 +11,20 @@ import (
 
 // Lock takes an advisory cross-process lock on a file beside the protected data.
 func Lock(path string) (func() error, error) {
-	return lock(path, windows.OPEN_ALWAYS)
+	return lock(path, windows.OPEN_ALWAYS, false)
 }
 
 func LockExisting(path string) (func() error, error) {
-	return lock(path, windows.OPEN_EXISTING)
+	return lock(path, windows.OPEN_EXISTING, false)
 }
 
-func lock(path string, disposition uint32) (func() error, error) {
+// TryLock acquires an exclusive lock without waiting. The file must already
+// exist. ErrBusy means another process holds it.
+func TryLock(path string) (func() error, error) {
+	return lock(path, windows.OPEN_EXISTING, true)
+}
+
+func lock(path string, disposition uint32, nonBlocking bool) (func() error, error) {
 	name, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return nil, err
@@ -34,9 +41,16 @@ func lock(path string, disposition uint32) (func() error, error) {
 		file.Close()
 		return nil, err
 	}
+	lockFlags := windows.LOCKFILE_EXCLUSIVE_LOCK
+	if nonBlocking {
+		lockFlags |= windows.LOCKFILE_FAIL_IMMEDIATELY
+	}
 	overlapped := &windows.Overlapped{}
-	if err := windows.LockFileEx(windows.Handle(file.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, overlapped); err != nil {
+	if err := windows.LockFileEx(windows.Handle(file.Fd()), lockFlags, 0, 1, 0, overlapped); err != nil {
 		file.Close()
+		if nonBlocking && (errors.Is(err, windows.ERROR_LOCK_VIOLATION) || errors.Is(err, windows.ERROR_IO_PENDING)) {
+			return nil, ErrBusy
+		}
 		return nil, err
 	}
 	release := func() error {

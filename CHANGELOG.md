@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Bug Fixes
+
+* **store:** delete read-only database snapshots on every exit, reap orphans the next process no longer holds, and reuse one copy per source inside a process. Create and reap events go to the snapshots JSONL telemetry log with source, size, count and megabytes reclaimed.
+
 ### Features
 
 * **plugins:** `roca mcp serve` raises plugin-declared session companions. A `plugin.json` may name an executable inside the plugin directory plus fixed argv; serve starts that child for the session, reaps it on exit, retries crashes with bounded backoff, and leaves a dying companion down without blocking queries. Plugins without the field are unchanged. Telemetry is JSONL under the data directory logs area, never a database.

@@ -449,6 +449,13 @@ func treeSnapshot(t *testing.T, root string) map[string]treeSnapshotEntry {
 		if err != nil {
 			return err
 		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(filepath.ToSlash(rel), "/logs/") {
+			return nil
+		}
 		info, err := entry.Info()
 		if err != nil {
 			return err

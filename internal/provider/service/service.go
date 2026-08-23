@@ -172,7 +172,18 @@ func Open(opts Options) (*Service, error) {
 	return openWithContext(ctx, opts)
 }
 
+// EnableSnapshotLogs writes snapshot create and reap records to dataDir/logs.
+// The CLI calls it before any read-only snapshot is taken.
+func EnableSnapshotLogs(dataDir string) {
+	store.SetSnapshotLogDir(dataDir)
+}
+
 func openWithContext(ctx context.Context, opts Options) (*Service, error) {
+	logDir := opts.DataDir
+	if logDir == "" && opts.DBPath != "" {
+		logDir = filepath.Dir(opts.DBPath)
+	}
+	store.SetSnapshotLogDir(logDir)
 	registry, err := layers.Load()
 	if err != nil {
 		return nil, err

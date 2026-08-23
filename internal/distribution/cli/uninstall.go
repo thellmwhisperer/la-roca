@@ -746,7 +746,7 @@ func realDirectory(path string) bool {
 
 func ownedLogName(name string) bool {
 	for _, stream := range []string{
-		logfile.Executions, logfile.MCPAudit, logfile.Ingest, logfile.Migrations,
+		logfile.Executions, logfile.MCPAudit, logfile.Ingest, logfile.Migrations, logfile.Snapshots,
 	} {
 		prefix := stream + "-"
 		if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, ".jsonl") {

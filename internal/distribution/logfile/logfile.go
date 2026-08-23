@@ -26,6 +26,7 @@ const (
 	Ingest        = "ingest"
 	Migrations    = "migrations"
 	Companions    = "companions"
+	Snapshots     = "snapshots"
 	lockName      = ".roca.lock"
 	maxFileBytes  = int64(5 << 20)
 	maxFiles      = 6
