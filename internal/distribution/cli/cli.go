@@ -803,6 +803,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 				prepareErr)
 		}
 	}
+	service.EnableSnapshotLogs(filepath.Dir(paths.DB))
 	writerFenced := false
 	if fileExists(opsDatabase) {
 		writerFenced, err = rocaops.MemoryCustodyWriterFenced(context.Background(), opsDatabase)
