@@ -38,6 +38,37 @@ func TestExecutableNameKeepsAFamilyPrefix(t *testing.T) {
 	}
 }
 
+func TestInspectAcceptsAnOptionalCompanionDeclaration(t *testing.T) {
+	source := t.TempDir()
+	writePackageMetadata(t, source, map[string]any{
+		"schema": 1, "name": "synthetic-exec", "version": "1.0.0",
+		"kind":      "executable",
+		"companion": map[string]any{"executable": "roca-synthetic-exec", "args": []string{"watch"}},
+	})
+	executable := plugininstall.ExecutableName("synthetic-exec")
+	writeFixtureFile(t, filepath.Join(source, executable), []byte("#!/bin/sh\nexit 0\n"), 0o700)
+	writeChecksums(t, source, []string{"plugin.json", executable})
+	candidate, err := plugininstall.Inspect(source, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if candidate.Name != "synthetic-exec" || candidate.Kind != plugininstall.ExecutablePackage {
+		t.Fatalf("candidate = %+v", candidate)
+	}
+
+	unknown := t.TempDir()
+	writePackageMetadata(t, unknown, map[string]any{
+		"schema": 1, "name": "synthetic-exec", "version": "1.0.0",
+		"kind": "executable", "mystery": true,
+	})
+	writeFixtureFile(t, filepath.Join(unknown, executable), []byte("#!/bin/sh\nexit 0\n"), 0o700)
+	writeChecksums(t, unknown, []string{"plugin.json", executable})
+	if _, err := plugininstall.Inspect(unknown, unknown); err == nil ||
+		!strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("unknown field error = %v", err)
+	}
+}
+
 func TestInspectVerifiesTheSourceAndClassifiesItsRisk(t *testing.T) {
 	for _, executable := range []bool{false, true} {
 		t.Run(fmt.Sprintf("executable=%t", executable), func(t *testing.T) {
