@@ -41,12 +41,47 @@ func Resolve(evidence Evidence) (Session, error) {
 		return Session{}, fmt.Errorf("cannot watch this session: no invoking agent was found in the process tree")
 	}
 	id := sessionID(harness, evidence.Environment)
-	if id == "" {
+	if id == "" && hasSessionEnvironment(harness) {
 		return Session{}, fmt.Errorf("cannot watch this session: %s is running but its session identity is not in the process environment",
 			ProductName(harness))
 	}
 	var matches []ingest.Target
-	for _, target := range ingest.Scan(evidence.Roots).Targets {
+	if id != "" {
+		matches = sessionMatches(harness, id, evidence.Roots)
+	} else {
+		matches = openFileMatches(harness, evidence)
+	}
+	if len(matches) == 0 {
+		if id != "" {
+			return Session{}, fmt.Errorf("cannot watch this session: the %s transcript for this session is not in the session store",
+				ProductName(harness))
+		}
+		return Session{}, fmt.Errorf("cannot watch this session: %s is running but its session identity is not in the process environment and no unique open session file names it",
+			ProductName(harness))
+	}
+	if len(matches) != 1 {
+		if id != "" {
+			return Session{}, fmt.Errorf("cannot watch this session: more than one %s transcript matches this session",
+				ProductName(harness))
+		}
+		return Session{}, fmt.Errorf("cannot watch this session: more than one open %s session file matches this session",
+			ProductName(harness))
+	}
+	return Session{Harness: harness, Kind: matches[0].Kind, Path: matches[0].Path, ID: id}, nil
+}
+
+func hasSessionEnvironment(harness string) bool {
+	switch harness {
+	case "claude", "grok", "codex", "hermes":
+		return true
+	default:
+		return false
+	}
+}
+
+func sessionMatches(harness, id string, roots ingest.Roots) []ingest.Target {
+	var matches []ingest.Target
+	for _, target := range ingest.Scan(roots).Targets {
 		if target.SourceAgent != harness || target.SessionID != id {
 			continue
 		}
@@ -55,15 +90,36 @@ func Resolve(evidence Evidence) (Session, error) {
 		}
 		matches = append(matches, target)
 	}
-	if len(matches) == 0 {
-		return Session{}, fmt.Errorf("cannot watch this session: the %s transcript for this session is not in the session store",
-			ProductName(harness))
+	return matches
+}
+
+func openFileMatches(harness string, evidence Evidence) []ingest.Target {
+	open := map[string]bool{}
+	for _, process := range evidence.Processes {
+		for _, file := range process.OpenFiles {
+			open[normalizedPath(file)] = true
+		}
 	}
-	if len(matches) != 1 {
-		return Session{}, fmt.Errorf("cannot watch this session: more than one %s transcript matches this session",
-			ProductName(harness))
+	var matches []ingest.Target
+	for _, target := range ingest.Scan(evidence.Roots).Targets {
+		if target.SourceAgent != harness {
+			continue
+		}
+		if target.Kind == parsers.KindGrokSessionMetadata {
+			continue
+		}
+		if open[normalizedPath(target.Path)] {
+			matches = append(matches, target)
+		}
 	}
-	return Session{Harness: harness, Kind: matches[0].Kind, Path: matches[0].Path, ID: id}, nil
+	return matches
+}
+
+func normalizedPath(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	return filepath.Clean(path)
 }
 
 func invokingHarness(evidence Evidence) string {

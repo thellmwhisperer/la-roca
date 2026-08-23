@@ -36,6 +36,12 @@ func TestObserveCallsReadsShellCommandsFromClaudeAndGrokFixtures(t *testing.T) {
 		if call.Command != test.command {
 			t.Errorf("%s command = %q, want %q", test.kind, call.Command, test.command)
 		}
+		if result.Name != test.wantName {
+			t.Errorf("%s result name = %q, want %q", test.kind, result.Name, test.wantName)
+		}
+		if result.Command != test.command {
+			t.Errorf("%s result command = %q, want %q", test.kind, result.Command, test.command)
+		}
 		if result.Output != test.output {
 			t.Errorf("%s output = %q, want %q", test.kind, result.Output, test.output)
 		}
@@ -45,5 +51,20 @@ func TestObserveCallsReadsShellCommandsFromClaudeAndGrokFixtures(t *testing.T) {
 func TestObserveCallsIgnoresUnknownKinds(t *testing.T) {
 	if events := ObserveCalls(KindClaudeMemory, []byte("not a session")); len(events) != 0 {
 		t.Fatalf("unknown kind events = %#v", events)
+	}
+}
+
+func TestObserveCallsEmitsPiBashAsCommandThenResult(t *testing.T) {
+	content := []byte(`{"type":"message","id":"m1","timestamp":"2026-08-01T10:00:01Z","message":{"role":"bashExecution","command":"echo hi","content":"hi\n"}}` + "\n")
+	events := ObserveCalls(KindPiSession, content)
+	if len(events) != 2 {
+		t.Fatalf("events = %#v, want a call and a result", events)
+	}
+	call, result := events[0], events[1]
+	if call.IsResult || call.Name != "bash" || call.Command != "echo hi" {
+		t.Fatalf("call = %#v", call)
+	}
+	if !result.IsResult || result.Name != "bash" || result.Command != "echo hi" || result.Output != "hi" {
+		t.Fatalf("result = %#v", result)
 	}
 }

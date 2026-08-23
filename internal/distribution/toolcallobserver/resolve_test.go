@@ -144,6 +144,86 @@ func TestResolveUsesTheInvokingHarnessSessionFile(t *testing.T) {
 	}
 }
 
+func TestResolveUsesAnOpenSessionFileForHarnessesWithoutSessionEnv(t *testing.T) {
+	roots := labRoots(t)
+	piPath := filepath.Join(roots.PiSessions, "demo", "session.jsonl")
+	piPathTwo := filepath.Join(roots.PiSessions, "demo-two", "session.jsonl")
+	openCodePath := roots.OpenCodeDB
+	cursorPath := filepath.Join(roots.Home, ".cursor", "chats", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "store.db")
+	for _, path := range []string{piPath, piPathTwo, openCodePath, cursorPath} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cases := []struct {
+		name    string
+		facts   Evidence
+		want    string
+		missing string
+	}{
+		{
+			name: "pi session file is open",
+			facts: Evidence{
+				Processes: []Process{{Command: "pi", OpenFiles: []string{piPath}}},
+			},
+			want: piPath,
+		},
+		{
+			name: "opencode database is open",
+			facts: Evidence{
+				Processes: []Process{{Command: "opencode", OpenFiles: []string{openCodePath}}},
+			},
+			want: openCodePath,
+		},
+		{
+			name: "cursor store is open",
+			facts: Evidence{
+				Processes: []Process{{Command: "cursor", OpenFiles: []string{cursorPath}}},
+			},
+			want: cursorPath,
+		},
+		{
+			name: "pi process with no open session file",
+			facts: Evidence{
+				Processes: []Process{{Command: "pi"}},
+			},
+			missing: "open session file",
+		},
+		{
+			name: "pi process with several open session files",
+			facts: Evidence{
+				Processes: []Process{{Command: "pi", OpenFiles: []string{piPath, piPathTwo}}},
+			},
+			missing: "more than one",
+		},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			test.facts.Roots = roots
+			got, err := Resolve(test.facts)
+			if test.missing != "" {
+				if err == nil {
+					t.Fatalf("resolved %s, want a refusal", got.Path)
+				}
+				if !strings.Contains(err.Error(), test.missing) {
+					t.Fatalf("error %q does not name %q", err, test.missing)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Path != test.want {
+				t.Fatalf("path = %q, want %q", got.Path, test.want)
+			}
+		})
+	}
+}
+
 func labRoots(t *testing.T) ingest.Roots {
 	t.Helper()
 	home := t.TempDir()

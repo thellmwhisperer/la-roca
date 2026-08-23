@@ -18,7 +18,7 @@ func terminalCommand(req TerminalRequest) string {
 		parts = append(parts, "cd "+shellQuote(req.Cwd))
 	}
 	for _, env := range req.Env {
-		parts = append(parts, "export "+env)
+		parts = append(parts, "export "+quoteEnvValue(env))
 	}
 	parts = append(parts, shellJoin(req.Command))
 	return strings.Join(parts, " && ")
@@ -27,6 +27,14 @@ func terminalCommand(req TerminalRequest) string {
 func appleString(value string) string {
 	replacer := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
 	return `"` + replacer.Replace(value) + `"`
+}
+
+func quoteEnvValue(assignment string) string {
+	key, value, found := strings.Cut(assignment, "=")
+	if !found {
+		return assignment
+	}
+	return key + "=" + shellQuote(value)
 }
 
 func shellQuote(value string) string {

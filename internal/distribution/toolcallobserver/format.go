@@ -13,18 +13,18 @@ const outputBudget = 500
 func Format(event parsers.CallEvent) string {
 	stamp := displayTime(event.Timestamp)
 	if event.IsResult {
-		body := bound(event.Output, outputBudget)
-		if body == "" {
-			body = "(no output)"
-		}
 		if isShell(event.Name) || event.Command != "" {
+			body := bound(event.Output, outputBudget)
+			if body == "" {
+				body = "(no output)"
+			}
 			return stamp + "  output\n" + indent(body)
 		}
 		name := event.Name
 		if name == "" {
 			name = "tool"
 		}
-		return stamp + "  " + name + " result\n" + indent(body)
+		return stamp + "  " + name + " result"
 	}
 	if isShell(event.Name) || event.Command != "" {
 		return stamp + "  shell  " + bound(event.Command, axi.FieldWidth)

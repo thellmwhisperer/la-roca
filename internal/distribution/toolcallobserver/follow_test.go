@@ -15,7 +15,9 @@ import (
 func TestFollowWritesAShellCommandAndItsOutputWithinSeconds(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, claudeSessionID+".jsonl")
-	if err := os.WriteFile(path, []byte(`{"type":"user","timestamp":"2026-08-01T10:00:00Z","message":{"content":"start"}}`+"\n"), 0o600); err != nil {
+	history := `{"type":"assistant","timestamp":"2026-08-01T09:00:01Z","message":{"content":[{"type":"tool_use","id":"old-1","name":"Bash","input":{"command":"echo old-history"}}]}}` + "\n" +
+		`{"type":"user","timestamp":"2026-08-01T09:00:02Z","message":{"content":[{"type":"tool_result","tool_use_id":"old-1","content":"old-history\n"}]}}` + "\n"
+	if err := os.WriteFile(path, []byte(history), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
@@ -34,6 +36,10 @@ func TestFollowWritesAShellCommandAndItsOutputWithinSeconds(t *testing.T) {
 	for time.Now().Before(deadline) {
 		got := out.String()
 		if strings.Contains(got, "echo live-lab") && strings.Contains(got, "live-lab") {
+			if strings.Contains(got, "old-history") {
+				cancel()
+				t.Fatalf("follow replayed history:\n%s", got)
+			}
 			cancel()
 			select {
 			case err := <-done:

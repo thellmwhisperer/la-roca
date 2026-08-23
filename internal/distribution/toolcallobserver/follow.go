@@ -15,35 +15,69 @@ type FollowOptions struct {
 	PollEvery time.Duration
 }
 
-// Follow writes each tool call as it lands in the session file. It polls, and
-// on supported platforms a native file watch wakes it sooner. Closing the
-// context is a clean stop.
+// Follow writes each tool call as it lands in the session file. It tails from
+// the current end of the file, reading only newly appended complete records,
+// with a native file watch waking it sooner than the poll. A truncated or
+// rotated file is reopened from the start. Closing the context is a clean stop.
 func Follow(ctx context.Context, session Session, out io.Writer, opts FollowOptions) error {
 	if opts.PollEvery <= 0 {
 		opts.PollEvery = 200 * time.Millisecond
 	}
-	seen := map[string]bool{}
+	offset := int64(0)
+	if info, err := os.Stat(session.Path); err == nil {
+		offset = info.Size()
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	var carry []byte
 	emit := func() error {
-		data, err := os.ReadFile(session.Path)
+		info, err := os.Stat(session.Path)
 		if err != nil {
 			if os.IsNotExist(err) {
 				return nil
 			}
 			return err
 		}
-		for _, event := range parsers.ObserveCalls(session.Kind, data) {
-			key := event.ID + "\x00" + event.Timestamp + "\x00" + event.Name + "\x00" + boolKey(event.IsResult)
-			if seen[key] {
-				continue
+		if info.Size() < offset {
+			offset = 0
+			carry = nil
+		}
+		file, err := os.Open(session.Path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
 			}
-			seen[key] = true
-			line := Format(event)
-			if line == "" {
-				continue
+			return err
+		}
+		defer file.Close()
+		if _, err := file.Seek(offset, io.SeekStart); err != nil {
+			return err
+		}
+		chunk, err := io.ReadAll(file)
+		if err != nil {
+			return err
+		}
+		offset += int64(len(chunk))
+		buf := append(carry, chunk...)
+		last := 0
+		for i := 0; i < len(buf); i++ {
+			if buf[i] == '\n' {
+				last = i + 1
 			}
-			if _, err := fmt.Fprintln(out, line); err != nil {
-				return err
+		}
+		if last > 0 {
+			for _, event := range parsers.ObserveCalls(session.Kind, buf[:last]) {
+				line := Format(event)
+				if line == "" {
+					continue
+				}
+				if _, err := fmt.Fprintln(out, line); err != nil {
+					return err
+				}
 			}
+			carry = append([]byte(nil), buf[last:]...)
+		} else {
+			carry = append([]byte(nil), buf...)
 		}
 		return nil
 	}
@@ -69,11 +103,4 @@ func Follow(ctx context.Context, session Session, out io.Writer, opts FollowOpti
 			}
 		}
 	}
-}
-
-func boolKey(value bool) string {
-	if value {
-		return "1"
-	}
-	return "0"
 }

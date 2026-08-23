@@ -18,6 +18,11 @@ type CallEvent struct {
 	IsResult  bool
 }
 
+type pendingCall struct {
+	Name    string
+	Command string
+}
+
 // ObserveCalls lists tool-call records in source order using the same field
 // names the ingest parsers already read. Unknown kinds return nothing.
 func ObserveCalls(kind Kind, content []byte) []CallEvent {
@@ -37,6 +42,7 @@ func ObserveCalls(kind Kind, content []byte) []CallEvent {
 
 func observeClaude(content []byte) []CallEvent {
 	var events []CallEvent
+	pending := map[string]pendingCall{}
 	_, _ = eachJSONLine(content, func(_ int, raw string) error {
 		var line claudeLine
 		if err := json.Unmarshal([]byte(raw), &line); err != nil {
@@ -46,6 +52,7 @@ func observeClaude(content []byte) []CallEvent {
 		for _, block := range blocks {
 			switch block.Type {
 			case "tool_use":
+				pending[block.ID] = pendingCall{Name: block.Name, Command: recordedCommand(block.Input)}
 				events = append(events, CallEvent{
 					Timestamp: line.stamp(),
 					ID:        block.ID,
@@ -54,9 +61,12 @@ func observeClaude(content []byte) []CallEvent {
 					Command:   recordedCommand(block.Input),
 				})
 			case "tool_result":
+				call := pending[block.ToolUseID]
 				events = append(events, CallEvent{
 					Timestamp: line.stamp(),
 					ID:        block.ToolUseID,
+					Name:      call.Name,
+					Command:   call.Command,
 					Output:    resultText(block.Content),
 					IsResult:  true,
 				})
@@ -69,6 +79,7 @@ func observeClaude(content []byte) []CallEvent {
 
 func observeGrok(content []byte) []CallEvent {
 	var events []CallEvent
+	pending := map[string]pendingCall{}
 	_, _ = consumeGrokUpdates(content, func(_ int, line grokUpdateLine) {
 		if line.Method != "session/update" {
 			return
@@ -76,17 +87,25 @@ func observeGrok(content []byte) []CallEvent {
 		update := line.Params.Update
 		switch update.SessionUpdate {
 		case "tool_call":
+			command := recordedCommand(update.RawInput)
+			pending[update.ToolCallID] = pendingCall{
+				Name:    firstNonEmpty(update.Meta.Tool.Name, update.Kind, update.Title),
+				Command: command,
+			}
 			events = append(events, CallEvent{
 				Timestamp: grokTimestamp(line.Timestamp),
 				ID:        update.ToolCallID,
 				Name:      firstNonEmpty(update.Meta.Tool.Name, update.Kind, update.Title),
 				Params:    Clip(rawText(update.RawInput), paramsBudget),
-				Command:   recordedCommand(update.RawInput),
+				Command:   command,
 			})
 		case "tool_call_update":
+			call := pending[update.ToolCallID]
 			events = append(events, CallEvent{
 				Timestamp: grokTimestamp(line.Timestamp),
 				ID:        update.ToolCallID,
+				Name:      call.Name,
+				Command:   call.Command,
 				Output:    grokToolOutput(update),
 				IsResult:  true,
 			})
@@ -97,6 +116,7 @@ func observeGrok(content []byte) []CallEvent {
 
 func observeCodex(content []byte) []CallEvent {
 	var events []CallEvent
+	pending := map[string]pendingCall{}
 	_, _ = eachJSONLine(content, func(_ int, raw string) error {
 		var line codexLine
 		if err := json.Unmarshal([]byte(raw), &line); err != nil {
@@ -112,17 +132,22 @@ func observeCodex(content []byte) []CallEvent {
 		switch payload.InnerType {
 		case "function_call", "custom_tool_call":
 			params := firstNonEmpty(rawText(payload.Arguments), payload.Input)
+			command := firstNonEmpty(recordedCommand(payload.Arguments), payload.Input)
+			pending[payload.CallID] = pendingCall{Name: payload.Name, Command: command}
 			events = append(events, CallEvent{
 				Timestamp: validInstant(line.Timestamp),
 				ID:        payload.CallID,
 				Name:      payload.Name,
 				Params:    Clip(params, paramsBudget),
-				Command:   firstNonEmpty(recordedCommand(payload.Arguments), payload.Input),
+				Command:   command,
 			})
 		case "function_call_output", "custom_tool_call_output":
+			call := pending[payload.CallID]
 			events = append(events, CallEvent{
 				Timestamp: validInstant(line.Timestamp),
 				ID:        payload.CallID,
+				Name:      call.Name,
+				Command:   call.Command,
 				Output:    rawText(payload.Output),
 				IsResult:  true,
 			})
@@ -134,6 +159,7 @@ func observeCodex(content []byte) []CallEvent {
 
 func observePi(content []byte) []CallEvent {
 	var events []CallEvent
+	pending := map[string]pendingCall{}
 	_, _ = eachJSONLine(content, func(_ int, raw string) error {
 		var entry piEntry
 		if err := json.Unmarshal([]byte(raw), &entry); err != nil {
@@ -153,6 +179,7 @@ func observePi(content []byte) []CallEvent {
 				if block.Type != "toolCall" || block.ID == "" {
 					continue
 				}
+				pending[block.ID] = pendingCall{Name: block.Name, Command: recordedCommand(block.Arguments)}
 				events = append(events, CallEvent{
 					Timestamp: stamp,
 					ID:        block.ID,
@@ -162,9 +189,12 @@ func observePi(content []byte) []CallEvent {
 				})
 			}
 		case "toolResult":
+			call := pending[entry.Message.ToolCallID]
 			events = append(events, CallEvent{
 				Timestamp: stamp,
 				ID:        entry.Message.ToolCallID,
+				Name:      call.Name,
+				Command:   call.Command,
 				Output:    piContentText(entry.Message.Content),
 				IsResult:  true,
 			})
@@ -172,13 +202,22 @@ func observePi(content []byte) []CallEvent {
 			if entry.Message.Exclude {
 				return nil
 			}
+			command := strings.TrimSpace(entry.Message.Command)
+			id := "bash:" + entry.ID
 			events = append(events, CallEvent{
 				Timestamp: stamp,
-				ID:        "bash:" + entry.ID,
+				ID:        id,
 				Name:      "bash",
-				Params:    Clip(strings.TrimSpace(entry.Message.Command), paramsBudget),
-				Command:   strings.TrimSpace(entry.Message.Command),
+				Params:    Clip(command, paramsBudget),
+				Command:   command,
+			})
+			events = append(events, CallEvent{
+				Timestamp: stamp,
+				ID:        id,
+				Name:      "bash",
+				Command:   command,
 				Output:    piContentText(entry.Message.Content),
+				IsResult:  true,
 			})
 		}
 		return nil

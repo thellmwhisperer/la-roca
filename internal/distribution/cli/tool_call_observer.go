@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -127,12 +129,7 @@ func liveObserverEvidence() toolcallobserver.Evidence {
 		key, value, _ := strings.Cut(item, "=")
 		environment[key] = value
 	}
-	var processes []toolcallobserver.Process
-	for _, process := range processAncestry(os.Getppid()) {
-		processes = append(processes, toolcallobserver.Process{
-			Command: process.Command, Arguments: process.Arguments,
-		})
-	}
+	processes := observerProcessAncestry(os.Getppid())
 	home, _ := os.UserHomeDir()
 	settings := ingest.Settings{}
 	if environment["CLAUDE_PROJECTS_ROOT"] == "" {
@@ -152,6 +149,34 @@ func liveObserverEvidence() toolcallobserver.Evidence {
 			GOOS: runtime.GOOS, Home: home, Getenv: os.Getenv,
 		}, settings),
 	}
+}
+
+func observerProcessAncestry(pid int) []toolcallobserver.Process {
+	processes := make([]toolcallobserver.Process, 0, 8)
+	for range 8 {
+		output, err := exec.Command("ps", "-o", "ppid=", "-o", "comm=", "-o", "args=", "-p", strconv.Itoa(pid)).Output()
+		if err != nil {
+			break
+		}
+		fields := strings.Fields(string(output))
+		if len(fields) < 2 {
+			break
+		}
+		parent, err := strconv.Atoi(fields[0])
+		if err != nil {
+			break
+		}
+		processes = append(processes, toolcallobserver.Process{
+			Command:   fields[1],
+			Arguments: fields[2:],
+			OpenFiles: openFilesOf(pid),
+		})
+		if parent <= 1 || parent == pid {
+			break
+		}
+		pid = parent
+	}
+	return processes
 }
 
 func kindForHarness(harness string) parsers.Kind {
