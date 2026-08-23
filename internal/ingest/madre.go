@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
+	"path/filepath"
 	"strconv"
 
 	"github.com/thellmwhisperer/la-roca/pkg/ingestprovenance"
@@ -60,7 +62,7 @@ var madreExclusions = []struct {
 // records. The whole read happens before anything is written, on a query_only
 // connection: a snapshot, never a live tail.
 func ReadMadre(ctx context.Context, path string) (parsers.Records, []string, error) {
-	db, err := openForeignSource(ctx, "Legacy store", path, madreSchema)
+	db, err := openMadreSource(ctx, path)
 	if err != nil {
 		return parsers.Records{}, nil, err
 	}
@@ -124,6 +126,35 @@ func ReadMadre(ctx context.Context, path string) (parsers.Records, []string, err
 	}
 	records.Discards = append(records.Discards, madreExclusionDiscards(ctx, db)...)
 	return records, complaints, nil
+}
+
+func openMadreSource(ctx context.Context, path string) (*sql.DB, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolve %q: %w", path, err)
+	}
+	dsn := "file:" + abs + "?" + url.Values{
+		"mode": {"ro"},
+		"_pragma": {
+			fmt.Sprintf("busy_timeout(%d)", foreignBusyTimeoutMS),
+			"query_only(1)",
+		},
+	}.Encode()
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open %q for reading: %w", abs, err)
+	}
+	if err := db.PingContext(ctx); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("open %q for reading: %w", abs, err)
+	}
+	for _, table := range madreSchema {
+		if err := requireColumns(ctx, db, table.name, table.required); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("Legacy store: %w", err)
+		}
+	}
+	return db, nil
 }
 
 func groupMadreRows(rows []row) map[string][]row {
@@ -243,10 +274,6 @@ func madreMemory(source row) (parsers.Memory, bool) {
 	if origin == "" {
 		origin = "cron"
 	}
-	status := source.text("status")
-	if status == "" {
-		status = "active"
-	}
 	memory := parsers.Memory{
 		Layer:         source.text("layer"),
 		Content:       content,
@@ -258,9 +285,10 @@ func madreMemory(source row) (parsers.Memory, bool) {
 		Source:        madreSource,
 		FilePath:      identity,
 		CreatedAt:     source.text("created_at"),
-		Status:        status,
+		Status:        source.text("status"),
 		SourceSession: source.text("source_session"),
 		PreserveLayer: true,
+		PreserveState: true,
 	}
 	if sequence, ok := source.number("source_sequence"); ok {
 		value := int(sequence)
@@ -270,6 +298,19 @@ func madreMemory(source row) (parsers.Memory, bool) {
 		memory.Supersedes = int64(supersedes)
 	}
 	return memory, true
+}
+
+func writeMadreSessions(ctx context.Context, tx *sql.Tx, sessions []parsers.Session) (Counts, error) {
+	w := &writer{tx: tx}
+	var counts Counts
+	for _, session := range sessions {
+		written, err := w.sessionIfMissing(ctx, session)
+		if err != nil {
+			return counts, err
+		}
+		counts.add(written)
+	}
+	return counts, nil
 }
 
 func madreExclusionDiscards(ctx context.Context, db *sql.DB) []parsers.Discard {

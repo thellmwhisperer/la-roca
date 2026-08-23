@@ -645,7 +645,13 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 	}
 	var counts Counts
 	err := db.Write(ctx, func(tx *sql.Tx) error {
-		written, err := writeRecords(ctx, tx, layers, opts.HermesReservedMemories, records)
+		var written Counts
+		var err error
+		if target.Kind == parsers.KindLegacyStoreDB {
+			written, err = writeMadreSessions(ctx, tx, records.Sessions)
+		} else {
+			written, err = writeRecords(ctx, tx, layers, opts.HermesReservedMemories, records)
+		}
 		if err != nil {
 			return err
 		}

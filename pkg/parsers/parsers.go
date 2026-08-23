@@ -397,7 +397,7 @@ type Memory struct {
 	// memory schema has no separate updated_at column, so aggregate updates use
 	// this timestamp as the row's searchable time.
 	CreatedAt string
-	// Status is active, pending, or resolved. Empty means active.
+	// Status is active, pending, or resolved. Empty normally means active.
 	Status string
 	// Supersedes is the source identity of the memory this one replaces, when
 	// the artefact records one. Zero means none.
@@ -406,9 +406,10 @@ type Memory struct {
 	// artefact recorded. They stay empty when it recorded none.
 	SourceSession  string
 	SourceSequence *int
-	// PreserveLayer keeps the declared layer instead of falling back to pattern
-	// when the registry does not know the name. Aliases still resolve.
+	// PreserveLayer writes the declared layer verbatim.
 	PreserveLayer bool
+	// PreserveState keeps empty status and created_at values empty in storage.
+	PreserveState bool
 }
 
 // Parse turns an artefact into normalized records. It does not open the

@@ -29,6 +29,7 @@ const defaultLayer = "pattern"
 type Counts struct {
 	Sessions          int `json:"sessions"`
 	SessionsUpdated   int `json:"sessions_updated"`
+	SessionsSkipped   int `json:"sessions_skipped"`
 	Exchanges         int `json:"exchanges"`
 	ThinkingBlocks    int `json:"thinking_blocks"`
 	ToolUses          int `json:"tool_uses"`
@@ -49,6 +50,7 @@ type Counts struct {
 func (c *Counts) add(other Counts) {
 	c.Sessions += other.Sessions
 	c.SessionsUpdated += other.SessionsUpdated
+	c.SessionsSkipped += other.SessionsSkipped
 	c.Exchanges += other.Exchanges
 	c.ThinkingBlocks += other.ThinkingBlocks
 	c.ToolUses += other.ToolUses
@@ -140,6 +142,15 @@ type exchangeKey struct {
 }
 
 func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, error) {
+	return w.sessionWithPolicy(ctx, session, false)
+}
+
+func (w *writer) sessionIfMissing(ctx context.Context, session parsers.Session) (Counts, error) {
+	return w.sessionWithPolicy(ctx, session, true)
+}
+
+func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
+	skipExisting bool) (Counts, error) {
 	var counts Counts
 	if session.ID == "" {
 		return counts, nil
@@ -148,6 +159,10 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 	current, exists, err := w.currentSession(ctx, session.ID)
 	if err != nil {
 		return counts, err
+	}
+	if exists && skipExisting {
+		counts.SessionsSkipped = 1
+		return counts, nil
 	}
 	storedMetadata, staleSnapshot := staleSnapshotMetadata(session, current)
 	if staleSnapshot {
@@ -1379,20 +1394,25 @@ func (w *writer) memory(ctx context.Context, memory parsers.Memory) (Counts, err
 		(storedProject == "" || authoritative)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		fallback := defaultLayer
-		if memory.PreserveLayer {
-			fallback = memory.Layer
+		layer := memory.Layer
+		if !memory.PreserveLayer {
+			layer = w.layers.Resolve(memory.Layer, defaultLayer)
 		}
-		layer := w.layers.Resolve(memory.Layer, fallback)
-		status := memory.Status
-		if status == "" {
+		var status any = memory.Status
+		if memory.PreserveState {
+			status = nullIfEmpty(memory.Status)
+		} else if memory.Status == "" {
 			status = "active"
 		}
-		_, err := w.tx.ExecContext(ctx, `
+		createdAt := "COALESCE(NULLIF(?, ''), datetime('now'))"
+		if memory.PreserveState {
+			createdAt = "NULLIF(?, '')"
+		}
+		_, err := w.tx.ExecContext(ctx, fmt.Sprintf(`
 			INSERT INTO memories
 			  (layer, content, metadata, origin, source_agent, source_model, source_surface,
 			   source_session, source_sequence, project, status, supersedes, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), datetime('now')))`,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, %s)`, createdAt),
 			layer, memory.Content, string(metadata), memory.Origin,
 			nullIfEmpty(memory.SourceAgent), nullIfEmpty(memory.SourceModel),
 			nullIfEmpty(memory.SourceSurface), nullIfEmpty(memory.SourceSession),
