@@ -338,14 +338,11 @@ func readPhysicalDigests(ctx context.Context, destination *sql.DB,
 func physicalDigestQuery(destinationTable string) (string, error) {
 	switch destinationTable {
 	case "session_versions":
-		return `SELECT version_digest, session_id, source_agent, source_surface, project, started_at, ended_at,
-			duration_minutes, title, metadata FROM session_versions`, nil
+		return `SELECT version_digest FROM session_versions`, nil
 	case "exchange_versions":
 		return `SELECT version_digest FROM exchange_versions`, nil
 	case "tool_use_versions":
-		return `SELECT version_digest, session_id, exchange_number, tool_name,
-			tool_params_summary, had_error, error_message, initiative_type
-			FROM tool_use_versions`, nil
+		return `SELECT version_digest FROM tool_use_versions`, nil
 	case "thinking_block_versions":
 		return `SELECT version_digest FROM thinking_block_versions`, nil
 	case "ingest_file_state_versions":
@@ -360,30 +357,20 @@ func scanPhysicalDigest(rows *sql.Rows, destinationTable string) (string, string
 	var stored string
 	switch destinationTable {
 	case "session_versions":
-		var sessionID string
-		var agent, surface, project, started, ended, title, metadata sql.NullString
-		var duration sql.NullInt64
-		if err := rows.Scan(&stored, &sessionID, &agent, &surface, &project, &started, &ended,
-			&duration, &title, &metadata); err != nil {
+		if err := rows.Scan(&stored); err != nil {
 			return "", "", err
 		}
-		return stored, canonicalDigest("session", sessionID, agent, surface, project, started, ended,
-			duration, title, metadata), nil
+		return stored, stored, nil
 	case "exchange_versions":
 		if err := rows.Scan(&stored); err != nil {
 			return "", "", err
 		}
 		return stored, stored, nil
 	case "tool_use_versions":
-		var sessionID sql.NullString
-		var number, hadError sql.NullInt64
-		var name, params, errorMessage, initiative sql.NullString
-		if err := rows.Scan(&stored, &sessionID, &number, &name, &params, &hadError,
-			&errorMessage, &initiative); err != nil {
+		if err := rows.Scan(&stored); err != nil {
 			return "", "", err
 		}
-		return stored, canonicalDigest("tool-use", sessionID.String, number, name, params,
-			hadError, errorMessage, initiative), nil
+		return stored, stored, nil
 	case "thinking_block_versions":
 		if err := rows.Scan(&stored); err != nil {
 			return "", "", err

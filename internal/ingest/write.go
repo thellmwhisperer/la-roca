@@ -900,10 +900,8 @@ func (w *writer) recordExchangeLineage(ctx context.Context, sessionID string,
 	if err != nil || !present || !stored.numberValid {
 		return err
 	}
-	payload := sessionID + "\x00" + fmt.Sprintf("%d", stored.number) + "\x00" +
-		stored.humanText + "\x00" + stored.agentText
-	sum := sha256.Sum256([]byte(payload))
-	digest := hex.EncodeToString(sum[:])
+	digest := framedDigest(sessionID, fmt.Sprintf("%d", stored.number),
+		stored.humanText, stored.agentText)
 	_, err = w.tx.ExecContext(ctx, `INSERT OR IGNORE INTO exchange_versions
 		(version_digest, session_id, exchange_number) VALUES (?, ?, ?)`,
 		digest, sessionID, stored.number)
@@ -911,6 +909,17 @@ func (w *writer) recordExchangeLineage(ctx context.Context, sessionID string,
 		return fmt.Errorf("record exchange lineage of %s/%d: %w", sessionID, stored.number, err)
 	}
 	return nil
+}
+
+func framedDigest(fields ...string) string {
+	hash := sha256.New()
+	var length [8]byte
+	for _, field := range fields {
+		binary.BigEndian.PutUint64(length[:], uint64(len(field)))
+		_, _ = hash.Write(length[:])
+		_, _ = hash.Write([]byte(field))
+	}
+	return hex.EncodeToString(hash.Sum(nil))
 }
 
 func (w *writer) tableExists(ctx context.Context, name string) (bool, error) {

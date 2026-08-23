@@ -3,6 +3,7 @@ package rocacorpus
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
@@ -10,6 +11,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/store/exactdedup"
 	"github.com/thellmwhisperer/la-roca/pkg/ingestprovenance"
+	sqlite "modernc.org/sqlite"
 )
 
 const (
@@ -55,9 +57,13 @@ func ApplySchema(path string) error {
 	}
 	defer db.Close()
 	if err := exactdedup.EnsureGuards(context.Background(), db); err != nil {
-		// A corpus that still has exact duplicates cannot take the unique hash
-		// index. Version content is already gone; uniqueness waits on exact dedup.
-		return nil
+		var sqliteErr *sqlite.Error
+		if errors.As(err, &sqliteErr) && sqliteErr.Code() == 2067 {
+			// A corpus that still has exact duplicates cannot take the unique hash
+			// index. Version content is already gone; uniqueness waits on exact dedup.
+			return nil
+		}
+		return err
 	}
 	return nil
 }
@@ -115,16 +121,19 @@ func prepareIngestProvenance(path string) error {
 		}
 	}
 	archiveAltered := archiveTablePresent && !archiveColumnPresent
-	if altered {
-		// SQLite validates an external-content FTS table against its content
-		// table while ALTER runs. Retire the derived session index first and let
-		// the canonical declaration recreate it after the column is present.
-		for _, statement := range []string{
-			`DROP TRIGGER IF EXISTS sessions_ai`,
-			`DROP TRIGGER IF EXISTS sessions_ad`,
-			`DROP TRIGGER IF EXISTS sessions_au`,
-			`DROP TABLE IF EXISTS sessions_fts`,
-		} {
+	if altered || archiveAltered {
+		var statements []string
+		if altered {
+			statements = append(statements,
+				`DROP TRIGGER IF EXISTS sessions_ai`,
+				`DROP TRIGGER IF EXISTS sessions_ad`,
+				`DROP TRIGGER IF EXISTS sessions_au`,
+				`DROP TABLE IF EXISTS sessions_fts`)
+		}
+		if archiveAltered {
+			statements = append(statements, `DROP TABLE IF EXISTS session_versions_fts`)
+		}
+		for _, statement := range statements {
 			if _, err := tx.Exec(statement); err != nil {
 				return fmt.Errorf("retire the derived session index: %w", err)
 			}

@@ -59,6 +59,10 @@ func TestCompactRewritesAFatCorpusWithoutLosingCurrentRows(t *testing.T) {
 	assertNoColumn(t, db, "exchange_versions", "human_text")
 	assertNoColumn(t, db, "exchange_versions", "agent_text")
 	assertNoColumn(t, db, "thinking_block_versions", "full_text")
+	assertNoColumn(t, db, "session_versions", "title")
+	assertNoColumn(t, db, "session_versions", "metadata")
+	assertNoColumn(t, db, "tool_use_versions", "tool_params_summary")
+	assertNoColumn(t, db, "tool_use_versions", "error_message")
 	assertCountQuery(t, db, `SELECT COUNT(*) FROM custody_memberships`, 0)
 	assertCountQuery(t, db, `SELECT COUNT(*) FROM corpus_source_rows`, 0)
 	assertCountQuery(t, db, `SELECT COUNT(*) FROM exchange_versions`, 0)
@@ -227,6 +231,18 @@ func TestCompactIsIdempotentOnAnAlreadySlimDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE compact_freelist_fixture(payload BLOB);
+		INSERT INTO compact_freelist_fixture(payload) VALUES (zeroblob(1048576));
+		DROP TABLE compact_freelist_fixture`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
 	second, err := rocacorpus.Compact(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
@@ -240,5 +256,40 @@ func TestCompactIsIdempotentOnAnAlreadySlimDatabase(t *testing.T) {
 	}
 	if info.Size() <= 0 {
 		t.Fatal("compact left an empty database")
+	}
+	db, err = sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var freelist int
+	if err := db.QueryRow(`PRAGMA freelist_count`).Scan(&freelist); err != nil {
+		t.Fatal(err)
+	}
+	if freelist != 0 {
+		t.Fatalf("idempotent compact left freelist_count=%d", freelist)
+	}
+}
+
+func TestCompactRefusesToReportMissingHashGuards(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "roca-corpus.db")
+	if err := rocacorpus.ApplySchema(path); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP INDEX idx_sessions_exact_payload;
+		INSERT INTO sessions(session_id, source_agent, title, metadata)
+		VALUES ('duplicate-a', 'claude', 'same', '{}'),
+		       ('duplicate-b', 'claude', 'same', '{}')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rocacorpus.Compact(context.Background(), path); err == nil {
+		t.Fatal("compact reported success without every hash guard")
 	}
 }

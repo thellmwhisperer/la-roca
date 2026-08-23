@@ -211,8 +211,7 @@ CREATE TABLE IF NOT EXISTS session_versions (
   started_at       TEXT,
   ended_at         TEXT,
   duration_minutes INTEGER,
-  title            TEXT,
-  metadata         TEXT
+  observed_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS exchange_versions (
@@ -239,10 +238,9 @@ CREATE TABLE IF NOT EXISTS tool_use_versions (
   session_id          TEXT NOT NULL,
   exchange_number     INTEGER,
   tool_name           TEXT,
-  tool_params_summary TEXT,
   had_error           INTEGER,
-  error_message       TEXT,
-  initiative_type     TEXT
+  initiative_type     TEXT,
+  observed_at         TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS thinking_block_versions (

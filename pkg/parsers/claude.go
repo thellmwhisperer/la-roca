@@ -102,7 +102,7 @@ type claudeBuilder struct {
 // the next one, which is what makes "what did we decide before the compaction"
 // answerable.
 func ParseClaudeSession(content []byte, meta FileMeta) (Records, error) {
-	builder := &claudeBuilder{pending: map[string]*ToolUse{}}
+	builder := &claudeBuilder{pending: map[string]*ToolUse{}, number: meta.ExchangeNumberOffset}
 	cwd, model := "", ""
 	discards, validLines := consumeClaudeLines(content, func(line claudeLine) {
 		if cwd == "" {

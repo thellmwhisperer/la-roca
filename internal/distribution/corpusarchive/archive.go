@@ -119,6 +119,12 @@ func Merge(ctx context.Context, destinationPath string, sources []Source, option
 		return Report{}, err
 	}
 	defer run.close()
+	if !rebuildSessions {
+		rebuildSessions, err = sessionArchiveCoordinatesNeedRebuild(ctx, run.destination, run.sources)
+		if err != nil {
+			return Report{}, err
+		}
+	}
 	states, err := prepareArchiveMigrations(ctx, run.destination)
 	if err != nil {
 		return Report{}, err
@@ -148,6 +154,9 @@ func Merge(ctx context.Context, destinationPath string, sources []Source, option
 			return Report{}, err
 		}
 	}
+	if err := materializeCurrent(ctx, run.destination, run.sources); err != nil {
+		return Report{}, err
+	}
 	report, err := buildReport(ctx, run.destination, run.sources)
 	if err != nil {
 		return report, err
@@ -168,6 +177,15 @@ func Merge(ctx context.Context, destinationPath string, sources []Source, option
 	}
 	report.VerificationDigest = digest
 	return report, nil
+}
+
+func MaterializeCurrent(ctx context.Context, destinationPath string, sources []Source) error {
+	run, err := openArchiveRun(ctx, destinationPath, sources, Options{}, false)
+	if err != nil {
+		return err
+	}
+	defer run.close()
+	return materializeCurrent(ctx, run.destination, run.sources)
 }
 
 // Verify reproduces DATA-3's frozen-source reconciliation without importing
@@ -264,6 +282,54 @@ func sessionArchiveNeedsSurfaceMigration(ctx context.Context, destinationPath st
 		}
 	}
 	return false, rows.Err()
+}
+
+func sessionArchiveCoordinatesNeedRebuild(ctx context.Context, destination *sql.DB,
+	sources []preparedSource,
+) (bool, error) {
+	table := archiveSourceTables[0]
+	for _, source := range sources {
+		rows, err := source.db.QueryContext(ctx, table.query)
+		if err != nil {
+			return false, err
+		}
+		tracker := &occurrenceTracker{}
+		for rows.Next() {
+			record, err := table.scan(rows, tracker)
+			if err != nil {
+				rows.Close()
+				return false, err
+			}
+			expected, ok := record.currentValues[2].(sql.NullString)
+			if !ok {
+				rows.Close()
+				return false, fmt.Errorf("session archive source surface has unexpected type")
+			}
+			var actual sql.NullString
+			err = destination.QueryRowContext(ctx,
+				`SELECT source_surface FROM session_versions WHERE version_digest = ?`,
+				record.digest).Scan(&actual)
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				rows.Close()
+				return false, err
+			}
+			if actual != expected {
+				rows.Close()
+				return true, nil
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return false, err
+		}
+		if err := rows.Close(); err != nil {
+			return false, err
+		}
+	}
+	return false, nil
 }
 
 func resetSessionArchive(ctx context.Context, destination *sql.DB) error {

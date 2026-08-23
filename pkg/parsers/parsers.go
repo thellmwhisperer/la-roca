@@ -100,8 +100,9 @@ type FileMeta struct {
 	// ProjectFromCwd marks a project recovered from a session transcript's
 	// recorded working directory, which is exact and outranks the lossy
 	// directory-name or config fallbacks on re-read.
-	ProjectFromCwd bool
-	SourceAgent    string
+	ProjectFromCwd       bool
+	SourceAgent          string
+	ExchangeNumberOffset int
 	// Sidecar is paired metadata JSON for a Cowork audit transcript or Cursor
 	// agent store. It travels as content so the parser stays off the disk.
 	Sidecar []byte

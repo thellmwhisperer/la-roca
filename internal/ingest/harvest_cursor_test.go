@@ -2,6 +2,8 @@ package ingest
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/store"
+	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 )
 
 const harvestCursorSession = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -85,6 +88,7 @@ func TestGrowingSessionAppendsWithoutVersioningOldRows(t *testing.T) {
 	if harvestVersionCount(t, db) != 0 {
 		t.Fatalf("pass 3 versioned an unchanged row")
 	}
+	assertHarvestCursorState(t, db, sessionPath, 3, true)
 
 	rewriteHarvestExchange(t, sessionPath, workspace)
 	fourth, err := Run(ctx, db, registry(t), options)
@@ -101,6 +105,90 @@ func TestGrowingSessionAppendsWithoutVersioningOldRows(t *testing.T) {
 		t.Fatalf("rewrite lineage rows = %d, want 1", harvestVersionCount(t, db))
 	}
 	assertLineageHasNoContent(t, db)
+}
+
+func TestIncompleteGrowingSessionFallsBackToACompleteReparse(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(home, "w", "demo")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sessionPath := filepath.Join(home, ".claude", "projects", encodeRoot(workspace),
+		harvestCursorSession+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(sessionPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	user := fmt.Sprintf("{\"type\":\"user\",\"timestamp\":\"2026-08-01T10:00:00Z\",\"cwd\":%q,\"message\":{\"content\":\"pending\"}}\n", workspace)
+	if err := os.WriteFile(sessionPath, []byte(user), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	db := corpusDatabase(t)
+	roots := ResolveRoots(Environment{GOOS: "darwin", Home: home},
+		Settings{WorkspaceRoots: []string{filepath.Dir(workspace)}})
+	if _, err := Run(t.Context(), db, registry(t), Options{Roots: roots}); err != nil {
+		t.Fatal(err)
+	}
+	assertHarvestCursorState(t, db, sessionPath, 0, false)
+	assistant := `{"type":"assistant","timestamp":"2026-08-01T10:00:10Z","message":{"content":[{"type":"text","text":"complete"}]}}` + "\n"
+	if err := os.WriteFile(sessionPath, []byte(user+assistant), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(t.Context(), db, registry(t), Options{Roots: roots}); err != nil {
+		t.Fatal(err)
+	}
+	if got := countRows(t, db.SQL(), "exchanges"); got != 1 {
+		t.Fatalf("completed fallback exchanges = %d, want 1", got)
+	}
+	assertHarvestCursorState(t, db, sessionPath, 1, true)
+}
+
+func TestLineageDigestFramesEmbeddedNULBoundaries(t *testing.T) {
+	db := corpusDatabase(t)
+	write := func(human, agent string) {
+		t.Helper()
+		err := db.Write(t.Context(), func(tx *sql.Tx) error {
+			_, err := writeRecords(t.Context(), tx, registry(t), nil, parsers.Records{
+				Sessions: []parsers.Session{{
+					ID: harvestCursorSession, SourceAgent: "claude",
+					ExchangeNumbersAuthoritative: true,
+					Exchanges:                    []parsers.Exchange{{Number: 1, HumanText: human, AgentText: agent}},
+				}},
+			})
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("x\x00y", "z")
+	write("x", "y\x00z")
+	write("x\x00y", "z")
+	if got := harvestVersionCount(t, db); got != 2 {
+		t.Fatalf("boundary-distinct lineage rows = %d, want 2", got)
+	}
+}
+
+func assertHarvestCursorState(t *testing.T, db *store.DB, path string, cursor int,
+	complete bool) {
+	t.Helper()
+	var encoded []byte
+	if err := db.SQL().QueryRow(`SELECT metadata FROM ingest_file_state WHERE path = ?`, path).
+		Scan(&encoded); err != nil {
+		t.Fatal(err)
+	}
+	var state harvestCursorState
+	if err := json.Unmarshal(encoded, &state); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.ByteOffset != info.Size() || state.PrefixDigest == "" ||
+		state.ExchangeCursor != cursor || state.LastExchangeComplete != complete {
+		t.Fatalf("cursor state = %+v, size=%d; want cursor=%d complete=%t",
+			state, info.Size(), cursor, complete)
+	}
 }
 
 func corpusDatabase(t *testing.T) *store.DB {

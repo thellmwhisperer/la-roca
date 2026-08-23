@@ -637,6 +637,34 @@ func EnsureGuards(ctx context.Context, db queryExecutor) error {
 	return EnsureTableGuards(ctx, db)
 }
 
+func GuardsInstalled(ctx context.Context, db interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}) (bool, error) {
+	specs, err := specs(ctx, db)
+	if err != nil {
+		return false, err
+	}
+	for _, spec := range specs {
+		name := "idx_" + spec.name + "_exact_payload"
+		want := fmt.Sprintf("CREATE UNIQUE INDEX %s ON %s(%s)",
+			name, spec.name, guardKeyExpression(spec.payload))
+		var installed sql.NullString
+		err := db.QueryRowContext(ctx,
+			`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?`, name).Scan(&installed)
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if !installed.Valid || normalizeDDL(installed.String) != normalizeDDL(want) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func EnsureTableGuards(ctx context.Context, db queryExecutor, only ...string) error {
 	specs, err := specs(ctx, db)
 	if err != nil {

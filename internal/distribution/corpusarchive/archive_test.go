@@ -44,18 +44,23 @@ func TestMergePreservesAliasesDivergenceAndSourceScopedChildIdentity(t *testing.
 	}
 
 	db := openTestDB(t, destination)
-	assertCount(t, db, "sessions", 0)
-	assertCount(t, db, "exchanges", 0)
-	assertCount(t, db, "tool_uses", 0)
-	assertCount(t, db, "thinking_blocks", 0)
-	assertCount(t, db, "ingest_file_state", 0)
+	assertCount(t, db, "sessions", 4)
+	assertCount(t, db, "exchanges", 4)
+	assertCount(t, db, "tool_uses", 2)
+	assertCount(t, db, "thinking_blocks", 1)
+	assertCount(t, db, "ingest_file_state", 3)
 	assertCountQuery(t, db, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'
 		AND name IN ('session_versions_fts', 'exchange_versions_fts', 'thinking_block_versions_fts')`, 0)
 	assertCountQuery(t, db, `SELECT COUNT(*) FROM pragma_table_info('exchange_versions')
 		WHERE name IN ('human_text', 'agent_text')`, 0)
 	assertCountQuery(t, db, `SELECT COUNT(*) FROM pragma_table_info('thinking_block_versions')
 		WHERE name = 'full_text'`, 0)
-	assertCountQuery(t, db, `SELECT COUNT(*) FROM session_versions WHERE title LIKE '%coreonly%'`, 1)
+	assertCountQuery(t, db, `SELECT COUNT(*) FROM pragma_table_info('session_versions')
+		WHERE name IN ('title', 'metadata')`, 0)
+	assertCountQuery(t, db, `SELECT COUNT(*) FROM pragma_table_info('tool_use_versions')
+		WHERE name IN ('tool_params_summary', 'error_message')`, 0)
+	assertCountQuery(t, db, `SELECT COUNT(*) FROM sessions WHERE session_id = 'core-only'
+		AND title = 'coreonly title'`, 1)
 
 	var fingerprint, source string
 	if err := db.QueryRow(`SELECT v.fingerprint, h.source_database
@@ -125,6 +130,28 @@ func TestMergePreservesAliasesDivergenceAndSourceScopedChildIdentity(t *testing.
 	if err == nil || !strings.Contains(err.Error(), "absent from the verified archive") {
 		t.Fatalf("verified archive accepted an additional source: %v", err)
 	}
+}
+
+func TestMergeMaterializesExactSessionAliasesAsOneCurrentFact(t *testing.T) {
+	directory := t.TempDir()
+	core := createFrozenSource(t, filepath.Join(directory, "core.db"), func(t *testing.T, db *sql.DB) {
+		seedSession(t, db, "core-alias", "same session")
+		seedExchange(t, db, 1, "core-alias", 1, "same question", "same answer")
+	})
+	corpus := createFrozenSource(t, filepath.Join(directory, "corpus.db"), func(t *testing.T, db *sql.DB) {
+		seedSession(t, db, "corpus-canonical", "same session")
+		seedExchange(t, db, 1, "corpus-canonical", 1, "same question", "same answer")
+	})
+	destination := filepath.Join(directory, "destination.db")
+	if _, err := Merge(t.Context(), destination, archiveSourcePair(core, corpus), Options{}); err != nil {
+		t.Fatal(err)
+	}
+	db := openTestDB(t, destination)
+	defer db.Close()
+	assertCount(t, db, "sessions", 1)
+	assertCount(t, db, "exchanges", 1)
+	assertCountQuery(t, db, `SELECT COUNT(*) FROM exchanges
+		WHERE session_id = 'corpus-canonical' AND exchange_number = 1`, 1)
 }
 
 func TestMergeRejectsAnUnverifiedOrWritableSourceIdentity(t *testing.T) {
@@ -323,9 +350,9 @@ func TestVerifyRejectsEveryReconciliationMismatch(t *testing.T) {
 			},
 		},
 		{
-			name: "lost session surface", want: "custody mismatch",
+			name: "lost retained state metadata", want: "custody mismatch",
 			mutate: func(t *testing.T, db *sql.DB) {
-				execTest(t, db, `UPDATE session_versions SET source_surface = NULL`)
+				execTest(t, db, `UPDATE ingest_file_state_versions SET source_agent = NULL`)
 			},
 		},
 		{
@@ -345,12 +372,12 @@ func TestVerifyRejectsEveryReconciliationMismatch(t *testing.T) {
 			name: "duplicate physical payload", want: "duplicate physical",
 			mutate: func(t *testing.T, db *sql.DB) {
 				digest := strings.Repeat("e", 64)
-				execTest(t, db, `INSERT INTO session_versions
-					(version_digest, session_id, source_agent, source_surface, project,
-					 started_at, ended_at, duration_minutes, title, metadata)
-					SELECT ?, session_id, source_agent, source_surface, project,
-					       started_at, ended_at, duration_minutes, title, metadata
-					FROM session_versions LIMIT 1`, digest)
+				execTest(t, db, `INSERT INTO ingest_file_state_versions
+					(version_digest, path, source_kind, source_agent, project, fingerprint,
+					 last_synced_at, last_error, metadata)
+					SELECT ?, path, source_kind, source_agent, project, fingerprint,
+					       last_synced_at, last_error, metadata
+					FROM ingest_file_state_versions LIMIT 1`, digest)
 			},
 			assert: func(t *testing.T, report Report) {
 				if report.Reconciliation.DuplicatePhysicalRows != 1 {
@@ -405,6 +432,7 @@ func TestVerifyRejectsEveryReconciliationMismatch(t *testing.T) {
 				func(t *testing.T, db *sql.DB) {
 					seedSession(t, db, "verified-session", "verified session")
 					seedExchange(t, db, 1, "verified-session", 1, "question", "answer")
+					seedState(t, db, "/verified/transcript", "verified-fingerprint")
 				})
 			sources := []Source{frozenSource(source)}
 			destination := filepath.Join(directory, "destination.db")
@@ -450,6 +478,8 @@ func TestMergeUpgradesPreReconciliationSessionCustody(t *testing.T) {
 		`DROP VIEW IF EXISTS session_version_memberships`,
 		`DROP TABLE IF EXISTS session_versions_fts`,
 		`ALTER TABLE session_versions DROP COLUMN source_surface`,
+		`CREATE VIRTUAL TABLE session_versions_fts USING fts5(
+			project, content='session_versions', content_rowid='id')`,
 		`UPDATE plugin_schema SET schema_version = 3`,
 		`DELETE FROM migration_batches WHERE migration = 'corpus-archive-reconciliation-v1'`,
 		`DELETE FROM plugin_migrations WHERE migration = 'corpus-archive-reconciliation-v1'`,
@@ -487,6 +517,8 @@ func TestMergeUpgradesPreReconciliationSessionCustody(t *testing.T) {
 	if surface != "synthetic-cli" {
 		t.Fatalf("upgraded source surface = %q", surface)
 	}
+	assertCountQuery(t, db, `SELECT COUNT(*) FROM sqlite_master
+		WHERE type = 'table' AND name = 'session_versions_fts'`, 0)
 	eligible, err = CutoverEligible(t.Context(), destination)
 	if err != nil || !eligible {
 		t.Fatalf("upgraded cutover eligibility = %t, %v", eligible, err)

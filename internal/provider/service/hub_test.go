@@ -567,8 +567,8 @@ func seedHubCoreSession(t *testing.T, plugins, sessionID, agent, surface string)
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO session_versions
-		(version_digest, session_id, source_agent, source_surface, title, metadata)
-		VALUES (?, ?, ?, ?, 'Synthetic OpenCode session', '{}')`,
+		(version_digest, session_id, source_agent, source_surface)
+		VALUES (?, ?, ?, ?)`,
 		digest, sessionID, agent, surface); err != nil {
 		t.Fatal(err)
 	}

@@ -1029,6 +1029,9 @@ func compactCommand(env *cliEnv) *cobra.Command {
 			env.prelogged = true
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if env.forceReadOnly || config.ReadOnly(os.Getenv(config.EnvReadOnly)) {
+				return fmt.Errorf("compact refuses to write in read-only mode")
+			}
 			target, err := compactTarget(env, args)
 			if err != nil {
 				return err

@@ -1,8 +1,12 @@
 package ingest
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"os"
@@ -205,8 +209,17 @@ type Result struct {
 	SourceStats    map[string]*SourceStats `json:"-"`
 	Coverage       CoverageReport          `json:"coverage"`
 	// categories indexes DiscardSummary while the run is collapsing into it.
-	categories     map[string]int `json:"-"`
-	fileCategories map[string]int `json:"-"`
+	categories     map[string]int                `json:"-"`
+	fileCategories map[string]int                `json:"-"`
+	harvestCursors map[string]harvestCursorState `json:"-"`
+}
+
+type harvestCursorState struct {
+	ByteOffset           int64  `json:"byte_offset"`
+	PrefixDigest         string `json:"prefix_digest"`
+	ExchangeCursor       int    `json:"exchange_cursor"`
+	LastExchangeComplete bool   `json:"last_exchange_complete"`
+	ParserVersion        string `json:"parser_version"`
 }
 
 // Run reads every source in the matrix once and writes what changed.
@@ -366,7 +379,8 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		result.categorizeFile("parsed", "new or changed fingerprint")
 		stats.Read++
 		discardsBefore, excludedBefore := result.RecordsDiscarded, result.RecordsExcluded
-		ingested, err := ingestOne(ctx, db, layers, opts, target, fingerprint, &result)
+		ingested, err := ingestOne(ctx, db, layers, opts, target, fingerprint,
+			state[target.Path], &result)
 		stats.RecordsDiscarded += result.RecordsDiscarded - discardsBefore
 		stats.RecordsExcluded += result.RecordsExcluded - excludedBefore
 		finishTarget()
@@ -591,8 +605,8 @@ func (r *Result) categorize(discard parsers.Discard) {
 // a crash between the two leave a fingerprint saying "synced" over data that was
 // never written, and that file would then be skipped forever.
 func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Options,
-	target Target, fingerprint string, result *Result) (bool, error) {
-	records, reason := read(ctx, opts, target, result)
+	target Target, fingerprint string, previous incrementality.FileState, result *Result) (bool, error) {
+	records, reason := read(ctx, opts, target, previous, result)
 	if reason != "" {
 		result.fail(target, reason)
 		// The failure is recorded against the path so the next run reads the file
@@ -671,7 +685,13 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 				opsCounts.MemoriesInserted + opsCounts.MemoriesUpdated,
 			"message_coverage": records.MessageCoverage,
 		}
-		if info, statErr := os.Stat(target.Path); statErr == nil {
+		if cursor, ok := result.harvestCursors[target.Path]; ok {
+			summary["byte_offset"] = cursor.ByteOffset
+			summary["prefix_digest"] = cursor.PrefixDigest
+			summary["exchange_cursor"] = cursor.ExchangeCursor
+			summary["last_exchange_complete"] = cursor.LastExchangeComplete
+			summary["parser_version"] = cursor.ParserVersion
+		} else if info, statErr := os.Stat(target.Path); statErr == nil {
 			summary["byte_offset"] = info.Size()
 		}
 		if !destinationsComplete {
@@ -689,7 +709,8 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 
 // read turns one artefact into records; what the content declares outranks what
 // the path encodes.
-func read(ctx context.Context, opts Options, target Target, result *Result) (parsers.Records, string) {
+func read(ctx context.Context, opts Options, target Target, previous incrementality.FileState,
+	result *Result) (parsers.Records, string) {
 	var databaseReader func(context.Context, string) (parsers.Records, []string, error)
 	switch target.Kind {
 	case parsers.KindOpenCodeDB:
@@ -794,6 +815,8 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 		SourceAgent:    target.SourceAgent,
 		SourceType:     target.SourceType,
 	}
+	fullContent := content
+	content, meta.ExchangeNumberOffset = cursorContent(target, previous, content)
 	if target.SidecarPath != "" {
 		meta.Sidecar, err = os.ReadFile(target.SidecarPath)
 		if err != nil {
@@ -805,6 +828,7 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 		if err != nil {
 			return parsers.Records{}, err.Error()
 		}
+		recordHarvestCursor(target, meta.ExchangeNumberOffset, fullContent, records, result)
 		resolveProjects(ctx, opts, target, &records)
 		return records, ""
 	}
@@ -813,9 +837,89 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 	if err != nil {
 		return parsers.Records{}, err.Error()
 	}
+	recordHarvestCursor(target, meta.ExchangeNumberOffset, fullContent, records, result)
 	parsers.ApplyCanonicalHarness(target.Kind, &records)
 	resolveProjects(ctx, opts, target, &records)
 	return records, ""
+}
+
+func cursorContent(target Target, previous incrementality.FileState, content []byte) ([]byte, int) {
+	if target.Kind != parsers.KindClaudeSession {
+		return content, 0
+	}
+	var cursor harvestCursorState
+	if json.Unmarshal(previous.Metadata, &cursor) != nil || cursor.ByteOffset <= 0 ||
+		cursor.ByteOffset >= int64(len(content)) || cursor.PrefixDigest == "" ||
+		!cursor.LastExchangeComplete || cursor.ParserVersion != parserVersions[target.Kind] {
+		return content, 0
+	}
+	offset := int(cursor.ByteOffset)
+	if content[offset-1] != '\n' || digestBytes(content[:offset]) != cursor.PrefixDigest ||
+		!claudeTailStartsTurn(content[offset:]) {
+		return content, 0
+	}
+	return content[offset:], cursor.ExchangeCursor
+}
+
+func claudeTailStartsTurn(content []byte) bool {
+	for _, raw := range bytes.Split(content, []byte{'\n'}) {
+		if len(bytes.TrimSpace(raw)) == 0 {
+			continue
+		}
+		var line struct {
+			Type    string `json:"type"`
+			Message *struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(raw, &line) != nil || line.Type != "user" || line.Message == nil {
+			return false
+		}
+		var text string
+		if json.Unmarshal(line.Message.Content, &text) == nil {
+			return true
+		}
+		var blocks []struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(line.Message.Content, &blocks) != nil {
+			return false
+		}
+		for _, block := range blocks {
+			if block.Type != "tool_result" {
+				return true
+			}
+		}
+		return len(blocks) == 0
+	}
+	return false
+}
+
+func recordHarvestCursor(target Target, offset int, full []byte, records parsers.Records,
+	result *Result) {
+	if target.Kind != parsers.KindClaudeSession {
+		return
+	}
+	exchangeCursor := offset
+	for _, session := range records.Sessions {
+		for _, exchange := range session.Exchanges {
+			if exchange.Number > exchangeCursor {
+				exchangeCursor = exchange.Number
+			}
+		}
+	}
+	if result.harvestCursors == nil {
+		result.harvestCursors = map[string]harvestCursorState{}
+	}
+	result.harvestCursors[target.Path] = harvestCursorState{
+		ByteOffset: int64(len(full)), PrefixDigest: digestBytes(full), ExchangeCursor: exchangeCursor,
+		LastExchangeComplete: records.Deferred == 0, ParserVersion: parserVersions[target.Kind],
+	}
+}
+
+func digestBytes(content []byte) string {
+	sum := sha256.Sum256(content)
+	return hex.EncodeToString(sum[:])
 }
 
 // resolveProjects settles each session's project with this precedence:

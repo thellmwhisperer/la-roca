@@ -9,6 +9,7 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/bundledplugin"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
+	"github.com/thellmwhisperer/la-roca/internal/store/exactdedup"
 )
 
 // CompactReport is the measured rewrite of a corpus database onto the one-row law.
@@ -58,10 +59,8 @@ func Compact(ctx context.Context, path string) (CompactReport, error) {
 	if err := ApplySchema(path); err != nil {
 		return CompactReport{}, err
 	}
-	if rewrote {
-		if err := vacuumDatabase(path); err != nil {
-			return CompactReport{}, err
-		}
+	if err := vacuumDatabase(path); err != nil {
+		return CompactReport{}, err
 	}
 
 	db, err = bundledplugin.OpenDatabase(path, true)
@@ -79,12 +78,29 @@ func Compact(ctx context.Context, path string) (CompactReport, error) {
 		return CompactReport{}, err
 	}
 	sourceRows, err := tableCountDB(ctx, db, "corpus_source_rows")
+	if err != nil {
+		db.Close()
+		return CompactReport{}, err
+	}
+	hashIndexes, err := exactdedup.GuardsInstalled(ctx, db)
+	if err != nil {
+		db.Close()
+		return CompactReport{}, err
+	}
+	if !hashIndexes {
+		db.Close()
+		return CompactReport{}, fmt.Errorf("compact could not install every hash-backed exact-payload guard")
+	}
+	versionFTSDropped, err := versionFTSAbsent(ctx, db)
 	closeErr := db.Close()
 	if err != nil {
 		return CompactReport{}, err
 	}
 	if closeErr != nil {
 		return CompactReport{}, closeErr
+	}
+	if !versionFTSDropped {
+		return CompactReport{}, fmt.Errorf("compact left a version full-text index installed")
 	}
 	if after != before {
 		return CompactReport{}, fmt.Errorf(
@@ -111,10 +127,25 @@ func Compact(ctx context.Context, path string) (CompactReport, error) {
 		BytesAfter:         afterInfo.Size(),
 		ReclaimedBytes:     reclaimed,
 		AlreadyApplied:     !rewrote,
-		VersionFTSDropped:  true,
-		HashIndexes:        true,
+		VersionFTSDropped:  versionFTSDropped,
+		HashIndexes:        hashIndexes,
 		ArchiveRowsDropped: custody == 0 && sourceRows == 0,
 	}, nil
+}
+
+func versionFTSAbsent(ctx context.Context, db *sql.DB) (bool, error) {
+	for _, table := range []string{
+		"session_versions_fts", "exchange_versions_fts", "thinking_block_versions_fts",
+	} {
+		present, err := tableExistsDB(ctx, db, table)
+		if err != nil {
+			return false, err
+		}
+		if present {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 type currentRowCounts struct {
@@ -185,10 +216,14 @@ func applyStorageLaw(path string, dropArchive bool) (bool, error) {
 }
 
 func storageLawNeeded(ctx context.Context, db *sql.DB) (bool, error) {
-	if present, err := tableExistsDB(ctx, db, "exchange_versions_fts"); err != nil {
-		return false, err
-	} else if present {
-		return true, nil
+	for _, table := range []string{
+		"session_versions_fts", "exchange_versions_fts", "thinking_block_versions_fts",
+	} {
+		if present, err := tableExistsDB(ctx, db, table); err != nil {
+			return false, err
+		} else if present {
+			return true, nil
+		}
 	}
 	if present, err := columnExistsDB(ctx, db, "exchange_versions", "human_text"); err != nil {
 		return false, err
@@ -199,6 +234,18 @@ func storageLawNeeded(ctx context.Context, db *sql.DB) (bool, error) {
 		return false, err
 	} else if present {
 		return true, nil
+	}
+	for _, column := range []struct{ table, name string }{
+		{"session_versions", "title"},
+		{"session_versions", "metadata"},
+		{"tool_use_versions", "tool_params_summary"},
+		{"tool_use_versions", "error_message"},
+	} {
+		if present, err := columnExistsDB(ctx, db, column.table, column.name); err != nil {
+			return false, err
+		} else if present {
+			return true, nil
+		}
 	}
 	var indexSQL sql.NullString
 	err := db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_exchanges_exact_payload'`).
@@ -397,7 +444,31 @@ var dropArchiveStatements = []string{
 }
 
 var slimVersionStatements = []string{
-	`CREATE TABLE IF NOT EXISTS exchange_versions_slim (
+	`DROP TABLE IF EXISTS session_versions_slim`,
+	`CREATE TABLE session_versions_slim (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  version_digest   TEXT NOT NULL UNIQUE CHECK (length(version_digest) = 64),
+  session_id       TEXT NOT NULL,
+  source_agent     TEXT,
+  source_surface   TEXT,
+  project          TEXT,
+  started_at       TEXT,
+  ended_at         TEXT,
+  duration_minutes INTEGER,
+  observed_at      TEXT NOT NULL DEFAULT (datetime('now'))
+)`,
+	`INSERT OR IGNORE INTO session_versions_slim
+  (id, version_digest, session_id, source_agent, source_surface, project,
+   started_at, ended_at, duration_minutes)
+ SELECT id, version_digest, session_id, source_agent, source_surface, project,
+   started_at, ended_at, duration_minutes
+ FROM session_versions`,
+	`DROP TABLE IF EXISTS session_versions`,
+	`ALTER TABLE session_versions_slim RENAME TO session_versions`,
+	`CREATE INDEX IF NOT EXISTS session_versions_logical_id
+  ON session_versions(session_id)`,
+	`DROP TABLE IF EXISTS exchange_versions_slim`,
+	`CREATE TABLE exchange_versions_slim (
   id                  INTEGER PRIMARY KEY AUTOINCREMENT,
   version_digest      TEXT NOT NULL UNIQUE CHECK (length(version_digest) = 64),
   session_id          TEXT NOT NULL,
@@ -426,7 +497,27 @@ var slimVersionStatements = []string{
 	`ALTER TABLE exchange_versions_slim RENAME TO exchange_versions`,
 	`CREATE INDEX IF NOT EXISTS exchange_versions_logical_key
   ON exchange_versions(session_id, exchange_number)`,
-	`CREATE TABLE IF NOT EXISTS thinking_block_versions_slim (
+	`DROP TABLE IF EXISTS tool_use_versions_slim`,
+	`CREATE TABLE tool_use_versions_slim (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  version_digest      TEXT NOT NULL UNIQUE CHECK (length(version_digest) = 64),
+  session_id          TEXT NOT NULL,
+  exchange_number     INTEGER,
+  tool_name           TEXT,
+  had_error           INTEGER,
+  initiative_type     TEXT,
+  observed_at         TEXT NOT NULL DEFAULT (datetime('now'))
+)`,
+	`INSERT OR IGNORE INTO tool_use_versions_slim
+  (id, version_digest, session_id, exchange_number, tool_name, had_error, initiative_type)
+ SELECT id, version_digest, session_id, exchange_number, tool_name, had_error, initiative_type
+ FROM tool_use_versions`,
+	`DROP TABLE IF EXISTS tool_use_versions`,
+	`ALTER TABLE tool_use_versions_slim RENAME TO tool_use_versions`,
+	`CREATE INDEX IF NOT EXISTS tool_use_versions_parent
+  ON tool_use_versions(session_id, exchange_number)`,
+	`DROP TABLE IF EXISTS thinking_block_versions_slim`,
+	`CREATE TABLE thinking_block_versions_slim (
   id                  INTEGER PRIMARY KEY AUTOINCREMENT,
   version_digest      TEXT NOT NULL UNIQUE CHECK (length(version_digest) = 64),
   session_id          TEXT NOT NULL,

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/migrationledger"
@@ -21,8 +22,10 @@ type archiveTable struct {
 type archiveRecord struct {
 	sourceKey        string
 	digest           string
+	currentDigest    string
 	destinationTable string
 	values           []any
+	currentValues    []any
 	provenance       []any
 	sourceRowID      sql.NullInt64
 	sessionID        sql.NullString
@@ -56,6 +59,10 @@ func scanExchangePayload(rows *sql.Rows, identity any) (exchangePayload, error) 
 
 func (payload exchangePayload) values() []any {
 	return payload.insertValues()
+}
+
+func (payload exchangePayload) currentValues() []any {
+	return payload.digestValues()
 }
 
 func (payload exchangePayload) digestValues() []any {
@@ -130,6 +137,148 @@ func importSource(ctx context.Context, destination *sql.DB, source preparedSourc
 			return fmt.Errorf("merge %s.%s into corpus shadow: %w",
 				source.Database, table.sourceTable, err)
 		}
+	}
+	return nil
+}
+
+func materializeCurrent(ctx context.Context, destination *sql.DB, sources []preparedSource) error {
+	tx, err := destination.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin current corpus materialization: %w", err)
+	}
+	defer tx.Rollback()
+	preferredSessions := map[string]bool{}
+	type sourceSession struct{ database, sessionID string }
+	sessionAliases := map[sourceSession]string{}
+	canonicalSessions := map[string]string{}
+	sessionTable := archiveSourceTables[0]
+	for _, source := range sources {
+		rows, err := source.db.QueryContext(ctx, sessionTable.query)
+		if err != nil {
+			return err
+		}
+		tracker := &occurrenceTracker{}
+		for rows.Next() {
+			record, scanErr := sessionTable.scan(rows, tracker)
+			if scanErr != nil {
+				rows.Close()
+				return scanErr
+			}
+			if source.ExistingCorpus && record.sessionID.Valid {
+				preferredSessions[record.sessionID.String] = true
+			}
+			if record.sessionID.Valid {
+				canonical, found := canonicalSessions[record.currentDigest]
+				if !found {
+					canonical = record.sessionID.String
+					canonicalSessions[record.currentDigest] = canonical
+				}
+				sessionAliases[sourceSession{source.Database, record.sessionID.String}] = canonical
+				if canonical != record.sessionID.String {
+					continue
+				}
+			}
+			if err := materializeRecord(ctx, tx, record); err != nil {
+				rows.Close()
+				return err
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+	}
+	for _, table := range archiveSourceTables[1:] {
+		for _, source := range sources {
+			rows, err := source.db.QueryContext(ctx, table.query)
+			if err != nil {
+				return err
+			}
+			tracker := &occurrenceTracker{}
+			for rows.Next() {
+				record, scanErr := table.scan(rows, tracker)
+				if scanErr != nil {
+					rows.Close()
+					return scanErr
+				}
+				if !source.ExistingCorpus && record.sessionID.Valid &&
+					preferredSessions[record.sessionID.String] {
+					continue
+				}
+				if record.sessionID.Valid {
+					if canonical := sessionAliases[sourceSession{
+						source.Database, record.sessionID.String,
+					}]; canonical != "" && canonical != record.sessionID.String {
+						record.currentValues = slices.Clone(record.currentValues)
+						record.currentValues[0] = canonical
+					}
+				}
+				if err := materializeRecord(ctx, tx, record); err != nil {
+					rows.Close()
+					return err
+				}
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return err
+			}
+			if err := rows.Close(); err != nil {
+				return err
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit current corpus materialization: %w", err)
+	}
+	return nil
+}
+
+func materializeRecord(ctx context.Context, tx *sql.Tx, record archiveRecord) error {
+	var query string
+	args := record.currentValues
+	switch record.destinationTable {
+	case "session_versions":
+		query = `INSERT INTO sessions
+			(session_id, source_agent, source_surface, project, started_at, ended_at,
+			 duration_minutes, title, metadata)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(session_id) DO NOTHING`
+	case "exchange_versions":
+		query = `INSERT OR IGNORE INTO exchanges
+			(session_id, exchange_number, is_after_compaction, human_text, agent_text,
+			 human_timestamp, agent_timestamp, response_latency_ms, model, provider,
+			 tokens_in, tokens_out, tokens_reasoning, cost_usd)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	case "tool_use_versions":
+		query = `INSERT INTO tool_uses
+			(session_id, exchange_number, tool_name, tool_params_summary, had_error,
+			 error_message, initiative_type)
+			SELECT ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (
+			 SELECT 1 FROM tool_uses WHERE session_id IS ? AND exchange_number IS ?
+			   AND tool_name IS ? AND tool_params_summary IS ? AND had_error IS ?
+			   AND error_message IS ? AND initiative_type IS ?)`
+		args = append(slices.Clone(args), args...)
+	case "thinking_block_versions":
+		query = `INSERT INTO thinking_blocks
+			(session_id, exchange_number, position_in_session, depth, caution_ratio,
+			 word_count, is_after_compaction, full_text)
+			SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (
+			 SELECT 1 FROM thinking_blocks WHERE session_id IS ? AND exchange_number IS ?
+			   AND position_in_session IS ? AND depth IS ? AND caution_ratio IS ?
+			   AND word_count IS ? AND is_after_compaction IS ? AND full_text IS ?)`
+		args = append(slices.Clone(args), args...)
+	case "ingest_file_state_versions":
+		query = `INSERT INTO ingest_file_state
+			(path, source_kind, source_agent, project, fingerprint, last_synced_at,
+			 last_error, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(path) DO NOTHING`
+	default:
+		return fmt.Errorf("unknown current corpus destination for %q", record.destinationTable)
+	}
+	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+		return fmt.Errorf("materialize current %s row: %w", sourceTableFor(record.destinationTable), err)
 	}
 	return nil
 }
@@ -308,7 +457,7 @@ func insertStatement(destinationTable string) (string, error) {
 	case "session_versions":
 		return `INSERT OR IGNORE INTO session_versions
 			(version_digest, session_id, source_agent, source_surface, project, started_at, ended_at,
-			 duration_minutes, title, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, nil
+			 duration_minutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, nil
 	case "exchange_versions":
 		return `INSERT OR IGNORE INTO exchange_versions
 			(version_digest, session_id, exchange_number, is_after_compaction,
@@ -317,8 +466,8 @@ func insertStatement(destinationTable string) (string, error) {
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, nil
 	case "tool_use_versions":
 		return `INSERT OR IGNORE INTO tool_use_versions
-			(version_digest, session_id, exchange_number, tool_name, tool_params_summary,
-			 had_error, error_message, initiative_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, nil
+			(version_digest, session_id, exchange_number, tool_name, had_error, initiative_type)
+			VALUES (?, ?, ?, ?, ?, ?)`, nil
 	case "thinking_block_versions":
 		return `INSERT OR IGNORE INTO thinking_block_versions
 			(version_digest, session_id, exchange_number, position_in_session, depth,
@@ -371,13 +520,17 @@ func scanSession(rows *sql.Rows, _ *occurrenceTracker) (archiveRecord, error) {
 		return archiveRecord{}, err
 	}
 	values := []any{sessionID, sourceAgent, sourceSurface, project, startedAt, endedAt,
-		duration, title, metadata}
+		duration}
+	currentValues := []any{sessionID, sourceAgent, sourceSurface, project, startedAt,
+		endedAt, duration, title, metadata}
 	return archiveRecord{
 		sourceKey:        canonicalDigest("session-key", sessionID),
-		digest:           canonicalDigest("session", values...),
+		digest:           canonicalDigest("session", currentValues...),
+		currentDigest:    canonicalDigest("session-current", currentValues[1:]...),
 		destinationTable: "session_versions", values: values,
-		sourceRowID: sql.NullInt64{Int64: rowID, Valid: true},
-		sessionID:   sql.NullString{String: sessionID, Valid: true},
+		currentValues: currentValues,
+		sourceRowID:   sql.NullInt64{Int64: rowID, Valid: true},
+		sessionID:     sql.NullString{String: sessionID, Valid: true},
 	}, nil
 }
 
@@ -396,8 +549,9 @@ func scanExchange(rows *sql.Rows, tracker *occurrenceTracker) (archiveRecord, er
 		sourceKey: occurrenceKey("exchange", payload.sessionID, payload.number, digest, ordinal.Int64),
 		digest:    digest, destinationTable: "exchange_versions",
 		values: payload.insertValues(), provenance: payload.provenanceValues(),
-		sourceRowID: sql.NullInt64{Int64: id, Valid: true},
-		sessionID:   payload.sessionID, exchangeNumber: payload.number, ordinal: ordinal,
+		currentValues: payload.currentValues(),
+		sourceRowID:   sql.NullInt64{Int64: id, Valid: true},
+		sessionID:     payload.sessionID, exchangeNumber: payload.number, ordinal: ordinal,
 	}, nil
 }
 
@@ -412,10 +566,13 @@ func scanToolUse(rows *sql.Rows, tracker *occurrenceTracker) (archiveRecord, err
 	if !sessionID.Valid {
 		return archiveRecord{}, fmt.Errorf("tool use %d has no deterministic parent turn", id)
 	}
-	values := []any{sessionID.String, number, name, params, hadError, errorMessage, initiative}
-	digest := canonicalDigest("tool-use", values...)
+	currentValues := []any{sessionID.String, number, name, params, hadError, errorMessage, initiative}
+	digest := canonicalDigest("tool-use", currentValues...)
 	ordinal := tracker.next(sessionID, number, digest)
-	return childRecord("tool_use_versions", id, sessionID, number, ordinal, digest, values), nil
+	record := childRecord("tool_use_versions", id, sessionID, number, ordinal, digest,
+		[]any{sessionID.String, number, name, hadError, initiative})
+	record.currentValues = currentValues
+	return record, nil
 }
 
 func scanThinkingBlock(rows *sql.Rows, tracker *occurrenceTracker) (archiveRecord, error) {
@@ -434,7 +591,9 @@ func scanThinkingBlock(rows *sql.Rows, tracker *occurrenceTracker) (archiveRecor
 		wordCount, compacted, fullText)
 	ordinal := tracker.next(sessionID, number, digest)
 	values := []any{sessionID.String, number, position, depth, caution, wordCount, compacted}
-	return childRecord("thinking_block_versions", id, sessionID, number, ordinal, digest, values), nil
+	record := childRecord("thinking_block_versions", id, sessionID, number, ordinal, digest, values)
+	record.currentValues = append(slices.Clone(values), fullText)
+	return record, nil
 }
 
 func childRecord(destination string, id int64, sessionID sql.NullString,
@@ -460,7 +619,8 @@ func scanIngestState(rows *sql.Rows, _ *occurrenceTracker) (archiveRecord, error
 		sourceKey:        canonicalDigest("ingest-file-state-key", path),
 		digest:           canonicalDigest("ingest-file-state", values...),
 		destinationTable: "ingest_file_state_versions", values: values,
-		statePath: sql.NullString{String: path, Valid: true},
+		currentValues: slices.Clone(values),
+		statePath:     sql.NullString{String: path, Valid: true},
 	}, nil
 }
 
