@@ -16,28 +16,28 @@ import (
 )
 
 const (
-	madreFixtureSession  = "madre-fixture-session"
-	madreOverlapSession  = "madre-overlap-session"
-	madreHandoffContent  = "synthetic madre handoff for the next agent"
-	madreFeedbackContent = "synthetic madre feedback about the ingest route"
-	madreCreatedAt       = "2026-08-01 12:00:00"
+	legacyFixtureSession  = "legacy-fixture-session"
+	legacyOverlapSession  = "legacy-overlap-session"
+	legacyHandoffContent  = "synthetic legacy handoff for the next agent"
+	legacyFeedbackContent = "synthetic legacy feedback about the ingest route"
+	legacyCreatedAt       = "2026-08-01 12:00:00"
 )
 
 func TestLegacyStoreIngest(t *testing.T) {
 	t.Parallel()
-	path := seedMadreFixture(t)
+	path := seedLegacyStoreFixture(t)
 
-	records, discards, err := ReadMadre(context.Background(), path)
+	records, discards, err := ReadLegacyStore(context.Background(), path)
 	if err != nil {
-		t.Fatalf("ReadMadre: %v", err)
+		t.Fatalf("ReadLegacyStore: %v", err)
 	}
-	if records.Seen.Sessions != 2 {
-		t.Fatalf("seen sessions = %d, want 2", records.Seen.Sessions)
+	if records.Seen.Sessions != 4 {
+		t.Fatalf("seen sessions = %d, want 4", records.Seen.Sessions)
 	}
-	if len(records.Sessions) != 2 {
-		t.Fatalf("sessions = %d, want 2", len(records.Sessions))
+	if len(records.Sessions) != 4 {
+		t.Fatalf("sessions = %d, want 4", len(records.Sessions))
 	}
-	session := madreSessionByID(t, records, madreFixtureSession)
+	session := legacyStoreSessionByID(t, records, legacyFixtureSession)
 	if session.SourceAgent != "claude-code" {
 		t.Errorf("session source_agent = %q, want claude-code", session.SourceAgent)
 	}
@@ -48,7 +48,7 @@ func TestLegacyStoreIngest(t *testing.T) {
 		t.Fatalf("exchanges = %d, want 1", len(session.Exchanges))
 	}
 	exchange := session.Exchanges[0]
-	if exchange.HumanText != "count the madre rows" || exchange.AgentText != "two sessions" {
+	if exchange.HumanText != "count the legacy rows" || exchange.AgentText != "two sessions" {
 		t.Errorf("exchange text = %q / %q", exchange.HumanText, exchange.AgentText)
 	}
 	if len(exchange.Thinking) != 1 || exchange.Thinking[0].Text != "measure first" {
@@ -67,11 +67,11 @@ func TestLegacyStoreIngest(t *testing.T) {
 		if memory.SourceSurface != ingestprovenance.LegacyStore {
 			t.Errorf("memory %q source_surface = %q", memory.Layer, memory.SourceSurface)
 		}
-		if memory.Source != madreSource || memory.FilePath == "" {
+		if memory.Source != legacyStoreSource || memory.FilePath == "" {
 			t.Errorf("memory %q identity = %q %q", memory.Layer, memory.Source, memory.FilePath)
 		}
 		if memory.Layer != "handover" && memory.Layer != "protocol" &&
-			memory.CreatedAt != madreCreatedAt {
+			memory.CreatedAt != legacyCreatedAt {
 			t.Errorf("memory %q created_at = %q", memory.Layer, memory.CreatedAt)
 		}
 	}
@@ -79,7 +79,7 @@ func TestLegacyStoreIngest(t *testing.T) {
 	if !ok {
 		t.Fatal("handoff memory missing")
 	}
-	if handoff.Content != madreHandoffContent || handoff.Status != "pending" {
+	if handoff.Content != legacyHandoffContent || handoff.Status != "pending" {
 		t.Errorf("handoff = %+v", handoff)
 	}
 	if _, ok := layers["feedback"]; !ok {
@@ -98,28 +98,38 @@ func TestLegacyStoreIngest(t *testing.T) {
 	if len(discards) != 0 {
 		t.Errorf("complaints = %v", discards)
 	}
-	excluded, unmatchedTools := 0, 0
+	reasons := map[string]int{}
 	for _, discard := range records.Discards {
-		if discard.Reason == madreMissingToolExchangeReason {
-			if discard.ByDesign {
-				t.Errorf("unmatched tool was excluded by design: %+v", discard)
-			}
-			unmatchedTools++
-			continue
-		}
-		if !discard.ByDesign {
-			t.Errorf("unexpected discard: %+v", discard)
-		}
-		excluded += 1
+		reasons[discard.Reason]++
 	}
-	if unmatchedTools != 1 {
-		t.Errorf("unmatched tool discards = %d, want 1", unmatchedTools)
+	for _, reason := range []string{
+		legacyStoreMissingToolExchangeReason,
+		legacyStoreMissingExchangeSessionReason,
+		legacyStoreMissingToolSessionReason,
+		legacyStoreMissingThinkingSessionReason,
+		legacyStoreEmptyMemoryReason,
+		"legacy store layer statistics",
+	} {
+		if reasons[reason] != 1 {
+			t.Errorf("discard reason %q = %d, want 1", reason, reasons[reason])
+		}
 	}
-	if excluded == 0 {
-		t.Error("garden and proposal rows were not reported as exclusions by design")
+	for _, discard := range records.Discards {
+		wantByDesign := discard.Reason == legacyStoreEmptyMemoryReason ||
+			discard.Reason == "legacy store layer statistics" ||
+			discard.Reason == "legacy store garden records" ||
+			discard.Reason == "legacy store proposals"
+		if discard.ByDesign != wantByDesign {
+			t.Errorf("discard %q by_design = %t, want %t", discard.Reason, discard.ByDesign, wantByDesign)
+		}
+	}
+	for _, id := range []string{"legacy-store:empty-session:101", "legacy-store:empty-session:102"} {
+		if got := legacyStoreSessionByID(t, records, id); got.ID != id {
+			t.Errorf("fallback session = %q, want %q", got.ID, id)
+		}
 	}
 
-	corpus, ops := madreStores(t)
+	corpus, ops := legacyStoreStores(t)
 	roots := ResolveRoots(Environment{GOOS: "darwin", Home: t.TempDir()}, Settings{LegacyStoreDB: path})
 	options := Options{Roots: roots, Ops: ops}
 	first, err := Run(context.Background(), corpus, registry(t), options)
@@ -129,24 +139,24 @@ func TestLegacyStoreIngest(t *testing.T) {
 	if first.Errors != 0 {
 		t.Fatalf("first errors = %+v", first.ErrorDetails)
 	}
-	counts, ok := first.Sources[madreSource]
+	counts, ok := first.Sources[legacyStoreSource]
 	if !ok {
-		t.Fatalf("source %q missing: %v", madreSource, SortedSources(first.Sources))
+		t.Fatalf("source %q missing: %v", legacyStoreSource, SortedSources(first.Sources))
 	}
-	if counts.Sessions != 2 || counts.Exchanges != 2 || counts.ThinkingBlocks != 2 ||
+	if counts.Sessions != 4 || counts.Exchanges != 2 || counts.ThinkingBlocks != 2 ||
 		counts.ToolUses != 2 || counts.MemoriesInserted != 5 {
 		t.Fatalf("first source counts = %+v", counts)
 	}
-	if first.Delta.Sessions != 2 || first.Delta.Exchanges != 2 || first.Delta.Memories != 5 {
+	if first.Delta.Sessions != 4 || first.Delta.Exchanges != 2 || first.Delta.Memories != 5 {
 		t.Fatalf("first aggregate delta = %+v", first.Delta)
 	}
-	if first.RecordsDiscarded != 1 {
-		t.Errorf("first discarded records = %d, want 1 unmatched tool", first.RecordsDiscarded)
+	if first.RecordsDiscarded != 4 {
+		t.Errorf("first discarded records = %d, want 4 invalid child references", first.RecordsDiscarded)
 	}
 
 	var surface, agent string
 	if err := corpus.SQL().QueryRow(`SELECT source_surface, source_agent FROM sessions WHERE session_id = ?`,
-		madreFixtureSession).Scan(&surface, &agent); err != nil {
+		legacyFixtureSession).Scan(&surface, &agent); err != nil {
 		t.Fatal(err)
 	}
 	if surface != ingestprovenance.LegacyStore || agent != "claude-code" {
@@ -157,13 +167,13 @@ func TestLegacyStoreIngest(t *testing.T) {
 	var expires sql.NullString
 	if err := ops.SQL().QueryRow(`
 		SELECT layer, status, created_at, expires_at FROM memories WHERE content = ?`,
-		madreHandoffContent).Scan(&layer, &status, &created, &expires); err != nil {
+		legacyHandoffContent).Scan(&layer, &status, &created, &expires); err != nil {
 		t.Fatal(err)
 	}
 	if layer != "handoff" {
 		t.Errorf("handoff landed in layer %q", layer)
 	}
-	if status != "pending" || created != madreCreatedAt {
+	if status != "pending" || created != legacyCreatedAt {
 		t.Errorf("handoff status/created_at = %q / %q", status, created)
 	}
 	if expires.Valid {
@@ -187,6 +197,19 @@ func TestLegacyStoreIngest(t *testing.T) {
 				wantLayer, landedStatus.String, landedCreated.String)
 		}
 	}
+	var sourceMemoryID, sourceSupersedes int64
+	var landedSupersedes sql.NullInt64
+	if err := ops.SQL().QueryRow(`
+		SELECT json_extract(metadata, '$.legacy_memory_id'),
+		       json_extract(metadata, '$.legacy_supersedes'), supersedes
+		FROM memories WHERE content = 'synthetic legacy discovery'`).
+		Scan(&sourceMemoryID, &sourceSupersedes, &landedSupersedes); err != nil {
+		t.Fatal(err)
+	}
+	if sourceMemoryID != 3 || sourceSupersedes != 1 || !landedSupersedes.Valid {
+		t.Errorf("legacy supersedes metadata = source %d supersedes %d landed %+v",
+			sourceMemoryID, sourceSupersedes, landedSupersedes)
+	}
 	if got := countRows(t, ops.SQL(), "memories"); got != 5 {
 		t.Errorf("ops memories = %d, want 5", got)
 	}
@@ -204,23 +227,23 @@ func TestLegacyStoreIngest(t *testing.T) {
 	if got := countRows(t, ops.SQL(), "memories"); got != 5 {
 		t.Errorf("second ops memories = %d, want 5", got)
 	}
-	if second.Sources[madreSource].MemoriesInserted != 0 {
-		t.Errorf("second memories inserted = %d", second.Sources[madreSource].MemoriesInserted)
+	if second.Sources[legacyStoreSource].MemoriesInserted != 0 {
+		t.Errorf("second memories inserted = %d", second.Sources[legacyStoreSource].MemoriesInserted)
 	}
 }
 
 func TestLegacyStoreSkipsFederatedOverlap(t *testing.T) {
 	t.Parallel()
-	path := seedMadreFixture(t)
-	corpus, ops := madreStores(t)
+	path := seedLegacyStoreFixture(t)
+	corpus, ops := legacyStoreStores(t)
 	if err := corpus.Write(context.Background(), func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT INTO sessions (session_id, source_agent, source_surface, title)
-			VALUES (?, 'claude', 'Claude Code', 'already federated')`, madreOverlapSession)
+			VALUES (?, 'claude', 'Claude Code', 'already federated')`, legacyOverlapSession)
 		if err != nil {
 			return err
 		}
 		_, err = tx.Exec(`INSERT INTO exchanges (session_id, exchange_number, human_text, agent_text)
-			VALUES (?, 1, 'already here', 'keep this')`, madreOverlapSession)
+			VALUES (?, 1, 'already here', 'keep this')`, legacyOverlapSession)
 		return err
 	}); err != nil {
 		t.Fatal(err)
@@ -237,12 +260,12 @@ func TestLegacyStoreSkipsFederatedOverlap(t *testing.T) {
 	if result.Errors != 0 {
 		t.Fatalf("errors = %+v", result.ErrorDetails)
 	}
-	if result.Delta.Sessions != 1 {
-		t.Errorf("delta sessions = %d, want 1 (the missing fixture session)", result.Delta.Sessions)
+	if result.Delta.Sessions != 3 {
+		t.Errorf("delta sessions = %d, want 3 missing fixture sessions", result.Delta.Sessions)
 	}
-	if result.Sources[madreSource].SessionsSkipped != 1 {
+	if result.Sources[legacyStoreSource].SessionsSkipped != 1 {
 		t.Errorf("overlap sessions skipped = %d, want 1",
-			result.Sources[madreSource].SessionsSkipped)
+			result.Sources[legacyStoreSource].SessionsSkipped)
 	}
 	var reportedOverlap bool
 	for _, line := range progress {
@@ -253,12 +276,12 @@ func TestLegacyStoreSkipsFederatedOverlap(t *testing.T) {
 	if !reportedOverlap {
 		t.Errorf("progress did not report the overlap: %v", progress)
 	}
-	if countRows(t, corpus.SQL(), "sessions") != 2 {
-		t.Errorf("sessions = %d, want 2", countRows(t, corpus.SQL(), "sessions"))
+	if countRows(t, corpus.SQL(), "sessions") != 4 {
+		t.Errorf("sessions = %d, want 4", countRows(t, corpus.SQL(), "sessions"))
 	}
 	var title, surface string
 	if err := corpus.SQL().QueryRow(`SELECT COALESCE(title, ''), COALESCE(source_surface, '')
-		FROM sessions WHERE session_id = ?`, madreOverlapSession).Scan(&title, &surface); err != nil {
+		FROM sessions WHERE session_id = ?`, legacyOverlapSession).Scan(&title, &surface); err != nil {
 		t.Fatal(err)
 	}
 	if title != "already federated" || surface != "Claude Code" {
@@ -271,7 +294,7 @@ func TestLegacyStoreSkipsFederatedOverlap(t *testing.T) {
 	for _, table := range []string{"thinking_blocks", "tool_uses"} {
 		var got int
 		if err := corpus.SQL().QueryRow("SELECT COUNT(*) FROM "+table+" WHERE session_id = ?",
-			madreOverlapSession).Scan(&got); err != nil {
+			legacyOverlapSession).Scan(&got); err != nil {
 			t.Fatal(err)
 		}
 		if got != 0 {
@@ -282,8 +305,8 @@ func TestLegacyStoreSkipsFederatedOverlap(t *testing.T) {
 
 func TestLegacyStoreRetriesMemoriesAfterOpsBecomesAvailable(t *testing.T) {
 	t.Parallel()
-	path := seedMadreFixture(t)
-	corpus, ops := madreStores(t)
+	path := seedLegacyStoreFixture(t)
+	corpus, ops := legacyStoreStores(t)
 	roots := ResolveRoots(Environment{GOOS: "darwin", Home: t.TempDir()},
 		Settings{LegacyStoreDB: path})
 
@@ -291,8 +314,8 @@ func TestLegacyStoreRetriesMemoriesAfterOpsBecomesAvailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if withoutOps.Sources[madreSource].Sessions != 2 {
-		t.Fatalf("sessions without ops = %+v", withoutOps.Sources[madreSource])
+	if withoutOps.Sources[legacyStoreSource].Sessions != 4 {
+		t.Fatalf("sessions without ops = %+v", withoutOps.Sources[legacyStoreSource])
 	}
 	if got := countRows(t, ops.SQL(), "memories"); got != 0 {
 		t.Fatalf("ops memories without ops routing = %d, want 0", got)
@@ -302,15 +325,15 @@ func TestLegacyStoreRetriesMemoriesAfterOpsBecomesAvailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	counts := withOps.Sources[madreSource]
-	if counts.MemoriesInserted != 5 || counts.SessionsSkipped != 2 {
+	counts := withOps.Sources[legacyStoreSource]
+	if counts.MemoriesInserted != 5 || counts.SessionsSkipped != 4 {
 		t.Fatalf("retry counts = %+v", counts)
 	}
 	if got := countRows(t, ops.SQL(), "memories"); got != 5 {
 		t.Errorf("ops memories after enabling ops = %d, want 5", got)
 	}
-	if got := countRows(t, corpus.SQL(), "sessions"); got != 2 {
-		t.Errorf("corpus sessions after retry = %d, want 2", got)
+	if got := countRows(t, corpus.SQL(), "sessions"); got != 4 {
+		t.Errorf("corpus sessions after retry = %d, want 4", got)
 	}
 	if withOps.Delta.Memories != 5 {
 		t.Errorf("memory delta after enabling ops = %d, want 5", withOps.Delta.Memories)
@@ -319,8 +342,8 @@ func TestLegacyStoreRetriesMemoriesAfterOpsBecomesAvailable(t *testing.T) {
 
 func TestLegacyStoreReportsCommittedOpsWhenCorpusFails(t *testing.T) {
 	t.Parallel()
-	path := seedMadreFixture(t)
-	corpus, ops := madreStores(t)
+	path := seedLegacyStoreFixture(t)
+	corpus, ops := legacyStoreStores(t)
 	failing := &failOnceDatabase{
 		Database: corpus,
 		failure:  errors.New("synthetic corpus write failure"),
@@ -332,7 +355,7 @@ func TestLegacyStoreReportsCommittedOpsWhenCorpusFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	counts := first.Sources[madreSource]
+	counts := first.Sources[legacyStoreSource]
 	if first.WriteFailed != 1 || counts.MemoriesInserted != 5 {
 		t.Fatalf("failed corpus run = write_failed %d counts %+v", first.WriteFailed, counts)
 	}
@@ -348,18 +371,18 @@ func TestLegacyStoreReportsCommittedOpsWhenCorpusFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	retryCounts := retry.Sources[madreSource]
+	retryCounts := retry.Sources[legacyStoreSource]
 	if retryCounts.MemoriesInserted != 0 || retryCounts.MemoriesUnchanged != 5 {
 		t.Errorf("retry memory counts = %+v", retryCounts)
 	}
-	if retry.Delta.Memories != 0 || retry.Delta.Sessions != 2 {
-		t.Errorf("retry delta = %+v, want two sessions and no memories", retry.Delta)
+	if retry.Delta.Memories != 0 || retry.Delta.Sessions != 4 {
+		t.Errorf("retry delta = %+v, want four sessions and no memories", retry.Delta)
 	}
 }
 
 func TestLegacyStoreConnectionIsReadOnly(t *testing.T) {
 	t.Parallel()
-	db, err := openMadreSource(context.Background(), seedMadreFixture(t))
+	db, err := openLegacyStoreSource(context.Background(), seedLegacyStoreFixture(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,8 +413,8 @@ func TestLegacyStoreRootsAndDetection(t *testing.T) {
 		t.Errorf("env = %q", fromEnv.LegacyStoreDB)
 	}
 
-	if got := DetectAgents(roots); containsString(got, madreSource) {
-		t.Errorf("absent madre was detected: %v", got)
+	if got := DetectAgents(roots); containsString(got, legacyStoreSource) {
+		t.Errorf("absent legacy store was detected: %v", got)
 	}
 	if err := os.MkdirAll(filepath.Dir(want), 0o700); err != nil {
 		t.Fatal(err)
@@ -400,8 +423,8 @@ func TestLegacyStoreRootsAndDetection(t *testing.T) {
 		t.Fatal(err)
 	}
 	present := ResolveRoots(Environment{GOOS: "darwin", Home: home}, Settings{})
-	if got := DetectAgents(present); !containsString(got, madreSource) {
-		t.Errorf("present madre not detected: %v", got)
+	if got := DetectAgents(present); !containsString(got, legacyStoreSource) {
+		t.Errorf("present legacy store not detected: %v", got)
 	}
 }
 
@@ -414,7 +437,7 @@ func TestLegacyStoreLabDelta(t *testing.T) {
 	if !isFile(delta) {
 		t.Fatalf("lab delta is missing at the configured directory")
 	}
-	corpus, ops := madreStores(t)
+	corpus, ops := legacyStoreStores(t)
 	roots := ResolveRoots(Environment{GOOS: "darwin", Home: t.TempDir()}, Settings{LegacyStoreDB: delta})
 	first, err := Run(context.Background(), corpus, registry(t), Options{Roots: roots, Ops: ops})
 	if err != nil {
@@ -468,7 +491,7 @@ func TestLegacyStoreLabSkipsOverlap(t *testing.T) {
 		t.Skip("lab full copy is not present")
 	}
 	ids := legacyStoreSessionSample(t, full, 5)
-	corpus, ops := madreStores(t)
+	corpus, ops := legacyStoreStores(t)
 	if err := corpus.Write(context.Background(), func(tx *sql.Tx) error {
 		for _, id := range ids {
 			if _, err := tx.Exec(`INSERT INTO sessions (session_id, source_agent, source_surface, title)
@@ -551,7 +574,7 @@ func legacyStoreCount(t *testing.T, path, table string) int {
 	return count
 }
 
-func madreStores(t *testing.T) (*store.DB, *store.DB) {
+func legacyStoreStores(t *testing.T) (*store.DB, *store.DB) {
 	t.Helper()
 	corpus := rocaDatabase(t)
 	opsPath := filepath.Join(t.TempDir(), "roca-ops.db")
@@ -580,7 +603,7 @@ func (db *failOnceDatabase) Write(ctx context.Context, fn func(*sql.Tx) error) e
 	return db.Database.Write(ctx, fn)
 }
 
-func madreSessionByID(t *testing.T, records parsers.Records, id string) parsers.Session {
+func legacyStoreSessionByID(t *testing.T, records parsers.Records, id string) parsers.Session {
 	t.Helper()
 	for _, session := range records.Sessions {
 		if session.ID == id {
@@ -591,7 +614,7 @@ func madreSessionByID(t *testing.T, records parsers.Records, id string) parsers.
 	return parsers.Session{}
 }
 
-func seedMadreFixture(t *testing.T) string {
+func seedLegacyStoreFixture(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "roca.db")
 	db := openSynthetic(t, path)
@@ -617,35 +640,47 @@ func seedMadreFixture(t *testing.T) string {
 		status TEXT, supersedes INTEGER, created_at TEXT)`)
 	exec(t, db, `CREATE TABLE garden_channels (id TEXT PRIMARY KEY, name TEXT)`)
 	exec(t, db, `CREATE TABLE proposals (id INTEGER PRIMARY KEY, kind TEXT, summary TEXT)`)
+	exec(t, db, `CREATE TABLE layer_stats (layer TEXT PRIMARY KEY, count INTEGER)`)
 	exec(t, db, `INSERT INTO sessions VALUES (?, 'claude-code', 'demo',
-		'2026-08-01 12:00:00', '2026-08-01 12:01:00', 1, 'madre fixture', '{}')`, madreFixtureSession)
+		'2026-08-01 12:00:00', '2026-08-01 12:01:00', 1, 'legacy fixture', '{}')`, legacyFixtureSession)
 	exec(t, db, `INSERT INTO sessions VALUES (?, 'codex', 'demo',
-		'2026-08-01 13:00:00', '2026-08-01 13:01:00', 1, 'overlap fixture', '{}')`, madreOverlapSession)
-	exec(t, db, `INSERT INTO exchanges VALUES (1, ?, 1, 0, 'count the madre rows', 'two sessions',
-		'2026-08-01T12:00:00Z', '2026-08-01T12:00:04Z', 4000)`, madreFixtureSession)
+		'2026-08-01 13:00:00', '2026-08-01 13:01:00', 1, 'overlap fixture', '{}')`, legacyOverlapSession)
+	exec(t, db, `INSERT INTO sessions(rowid, session_id, source_agent, project, started_at, title)
+		VALUES (101, NULL, 'codex', 'demo', '2026-08-01 14:00:00', 'empty session one')`)
+	exec(t, db, `INSERT INTO sessions(rowid, session_id, source_agent, project, started_at, title)
+		VALUES (102, NULL, 'codex', 'demo', '2026-08-01 15:00:00', 'empty session two')`)
+	exec(t, db, `INSERT INTO exchanges VALUES (1, ?, 1, 0, 'count the legacy rows', 'two sessions',
+		'2026-08-01T12:00:00Z', '2026-08-01T12:00:04Z', 4000)`, legacyFixtureSession)
 	exec(t, db, `INSERT INTO exchanges VALUES (2, ?, 1, 0, 'already here', 'keep this',
-		'2026-08-01T13:00:00Z', '2026-08-01T13:00:02Z', 2000)`, madreOverlapSession)
+		'2026-08-01T13:00:00Z', '2026-08-01T13:00:02Z', 2000)`, legacyOverlapSession)
+	exec(t, db, `INSERT INTO exchanges VALUES (3, 'missing-session', 1, 0, 'orphan', 'orphan',
+		'2026-08-01T16:00:00Z', '2026-08-01T16:00:01Z', 1000)`)
 	exec(t, db, `INSERT INTO thinking_blocks VALUES (1, ?, 1, 1.0, 'think', 0.1, 2, 0, 'measure first')`,
-		madreFixtureSession)
+		legacyFixtureSession)
 	exec(t, db, `INSERT INTO thinking_blocks VALUES (2, ?, 1, 1.0, 'think', 0.2, 2, 0, 'do not enrich')`,
-		madreOverlapSession)
+		legacyOverlapSession)
+	exec(t, db, `INSERT INTO thinking_blocks VALUES (3, 'missing-session', 1, 1.0, 'think', 0.2, 1, 0, 'orphan')`)
 	exec(t, db, `INSERT INTO tool_uses VALUES (1, ?, 1, 'exec', 'select 1', 0, NULL, 'reactive')`,
-		madreFixtureSession)
+		legacyFixtureSession)
 	exec(t, db, `INSERT INTO tool_uses VALUES (2, ?, 1, 'exec', 'select 2', 0, NULL, 'reactive')`,
-		madreOverlapSession)
+		legacyOverlapSession)
 	exec(t, db, `INSERT INTO tool_uses VALUES (3, ?, 99, 'exec', 'select 99', 0, NULL, 'reactive')`,
-		madreFixtureSession)
+		legacyFixtureSession)
+	exec(t, db, `INSERT INTO tool_uses VALUES (4, 'missing-session', 1, 'exec', 'orphan', 0, NULL, 'reactive')`)
 	exec(t, db, `INSERT INTO memories VALUES (1, 'handoff', ?, '{}', 'agent', 'claude-code', ?, 1, 'demo',
-		'pending', NULL, ?)`, madreHandoffContent, madreFixtureSession, madreCreatedAt)
+		'pending', NULL, ?)`, legacyHandoffContent, legacyFixtureSession, legacyCreatedAt)
 	exec(t, db, `INSERT INTO memories VALUES (2, 'feedback', ?, '{}', 'agent', 'claude-code', ?, 2, 'demo',
-		'active', NULL, ?)`, madreFeedbackContent, madreFixtureSession, madreCreatedAt)
-	exec(t, db, `INSERT INTO memories VALUES (3, 'discovery', 'synthetic madre discovery', '{}', 'agent',
-		'claude-code', ?, 3, 'demo', 'active', 1, ?)`, madreFixtureSession, madreCreatedAt)
+		'active', NULL, ?)`, legacyFeedbackContent, legacyFixtureSession, legacyCreatedAt)
+	exec(t, db, `INSERT INTO memories VALUES (3, 'discovery', 'synthetic legacy discovery', '{}', 'agent',
+		'claude-code', ?, 3, 'demo', 'active', 1, ?)`, legacyFixtureSession, legacyCreatedAt)
 	exec(t, db, `INSERT INTO memories VALUES (4, 'handover', 'synthetic legacy handover', '{}', 'agent',
-		'claude-code', ?, 4, 'demo', NULL, NULL, NULL)`, madreFixtureSession)
+		'claude-code', ?, 4, 'demo', NULL, NULL, NULL)`, legacyFixtureSession)
 	exec(t, db, `INSERT INTO memories VALUES (5, 'protocol', 'synthetic legacy protocol', '{}', 'agent',
-		'claude-code', ?, 5, 'demo', '', NULL, '')`, madreFixtureSession)
+		'claude-code', ?, 5, 'demo', '', NULL, '')`, legacyFixtureSession)
+	exec(t, db, `INSERT INTO memories VALUES (6, 'question', '', '{}', 'agent', 'codex', NULL, 6, 'demo',
+		'active', NULL, '2026-08-01 16:00:00')`)
 	exec(t, db, `INSERT INTO garden_channels VALUES ('garden-1', 'synthetic')`)
 	exec(t, db, `INSERT INTO proposals VALUES (1, 'note', 'leave this out')`)
+	exec(t, db, `INSERT INTO layer_stats VALUES ('handoff', 1)`)
 	return path
 }

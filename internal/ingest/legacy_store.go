@@ -18,14 +18,18 @@ import (
 // the corpus; memories keep the layer they were stored under and land in ops.
 
 const (
-	madreSource                    = "legacy-store"
-	madreMemoryFile                = "legacy-store:memory:"
-	madreMemoryIDKey               = "madre_memory_id"
-	madreSupersedesKey             = "madre_supersedes"
-	madreMissingToolExchangeReason = "tool references a missing exchange"
+	legacyStoreSource                       = "legacy-store"
+	legacyStoreMemoryFile                   = "legacy-store:memory:"
+	legacyMemoryIDKey                       = "legacy_memory_id"
+	legacySupersedesKey                     = "legacy_supersedes"
+	legacyStoreMissingToolExchangeReason    = "tool references a missing exchange"
+	legacyStoreMissingExchangeSessionReason = "exchange references a missing session"
+	legacyStoreMissingToolSessionReason     = "tool references a missing session"
+	legacyStoreMissingThinkingSessionReason = "thinking block references a missing session"
+	legacyStoreEmptyMemoryReason            = "legacy store memory has empty content"
 )
 
-var madreSchema = []foreignTable{
+var legacyStoreSchema = []foreignTable{
 	{"sessions", []string{"session_id", "source_agent", "project", "started_at",
 		"ended_at", "duration_minutes", "title", "metadata"}},
 	{"exchanges", []string{"id", "session_id", "exchange_number", "is_after_compaction",
@@ -40,7 +44,7 @@ var madreSchema = []foreignTable{
 		"status", "supersedes", "created_at"}},
 }
 
-var madreExclusions = []struct {
+var legacyStoreExclusions = []struct {
 	table, reason string
 }{
 	{"flow_patterns", "legacy store derived flow patterns"},
@@ -51,6 +55,7 @@ var madreExclusions = []struct {
 	{"garden_voice_leases", "legacy store garden records"},
 	{"ingest_file_state", "legacy store ingest state"},
 	{"layers", "legacy store layer registry"},
+	{"layer_stats", "legacy store layer statistics"},
 	{"messages", "legacy store unused message rows"},
 	{"proposal_annotations", "legacy store proposals"},
 	{"proposals", "legacy store proposals"},
@@ -59,18 +64,18 @@ var madreExclusions = []struct {
 	{"runs", "legacy store run history"},
 }
 
-// ReadMadre projects a pre-federation La Roca database onto normalized
+// ReadLegacyStore projects a pre-federation La Roca database onto normalized
 // records. The whole read happens before anything is written, on a query_only
 // connection: a snapshot, never a live tail.
-func ReadMadre(ctx context.Context, path string) (parsers.Records, []string, error) {
-	db, err := openMadreSource(ctx, path)
+func ReadLegacyStore(ctx context.Context, path string) (parsers.Records, []string, error) {
+	db, err := openLegacyStoreSource(ctx, path)
 	if err != nil {
 		return parsers.Records{}, nil, err
 	}
 	defer db.Close()
 
 	sessions, err := queryRows(ctx, db,
-		`SELECT session_id, source_agent, project, started_at, ended_at,
+		`SELECT CAST(rowid AS TEXT) AS source_rowid, session_id, source_agent, project, started_at, ended_at,
 		        duration_minutes, title, metadata
 		 FROM sessions ORDER BY started_at, session_id, rowid`)
 	if err != nil {
@@ -105,33 +110,48 @@ func ReadMadre(ctx context.Context, path string) (parsers.Records, []string, err
 		return parsers.Records{}, nil, err
 	}
 
-	exchangesBySession := groupMadreRows(exchanges)
-	toolsBySession := groupMadreRows(tools)
-	thinkingBySession := groupMadreRows(thinking)
+	exchangesBySession := groupLegacyStoreRows(exchanges)
+	toolsBySession := groupLegacyStoreRows(tools)
+	thinkingBySession := groupLegacyStoreRows(thinking)
 
 	records := parsers.Records{Seen: parsers.Seen{Sessions: len(sessions)}}
 	var complaints []string
 	for _, source := range sessions {
 		native := source.text("session_id")
-		sessionExchanges := exchangesBySession[native]
+		var sessionExchanges, sessionTools, sessionThinking []row
+		if native != "" {
+			sessionExchanges = exchangesBySession[native]
+			sessionTools = toolsBySession[native]
+			sessionThinking = thinkingBySession[native]
+			delete(exchangesBySession, native)
+			delete(toolsBySession, native)
+			delete(thinkingBySession, native)
+		}
 		records.Seen.Messages += len(sessionExchanges)
-		session, discards := madreSession(source, sessionExchanges,
-			thinkingBySession[native], toolsBySession[native])
+		session, discards := legacyStoreSession(source, sessionExchanges,
+			sessionThinking, sessionTools)
 		records.Sessions = append(records.Sessions, session)
 		records.Discards = append(records.Discards, discards...)
 	}
+	records.Discards = append(records.Discards,
+		legacyStoreOrphanDiscards(exchangesBySession, legacyStoreMissingExchangeSessionReason)...)
+	records.Discards = append(records.Discards,
+		legacyStoreOrphanDiscards(toolsBySession, legacyStoreMissingToolSessionReason)...)
+	records.Discards = append(records.Discards,
+		legacyStoreOrphanDiscards(thinkingBySession, legacyStoreMissingThinkingSessionReason)...)
 	for _, memory := range memories {
-		normalized, ok := madreMemory(memory)
+		normalized, ok := legacyStoreMemory(memory)
 		if !ok {
+			records.Discards = append(records.Discards, parsers.Excluded(legacyStoreEmptyMemoryReason))
 			continue
 		}
 		records.Memories = append(records.Memories, normalized)
 	}
-	records.Discards = append(records.Discards, madreExclusionDiscards(ctx, db)...)
+	records.Discards = append(records.Discards, legacyStoreExclusionDiscards(ctx, db)...)
 	return records, complaints, nil
 }
 
-func openMadreSource(ctx context.Context, path string) (*sql.DB, error) {
+func openLegacyStoreSource(ctx context.Context, path string) (*sql.DB, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("resolve %q: %w", path, err)
@@ -151,7 +171,7 @@ func openMadreSource(ctx context.Context, path string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("open %q for reading: %w", abs, err)
 	}
-	for _, table := range madreSchema {
+	for _, table := range legacyStoreSchema {
 		if err := requireColumns(ctx, db, table.name, table.required); err != nil {
 			db.Close()
 			return nil, fmt.Errorf("Legacy store: %w", err)
@@ -160,7 +180,7 @@ func openMadreSource(ctx context.Context, path string) (*sql.DB, error) {
 	return db, nil
 }
 
-func groupMadreRows(rows []row) map[string][]row {
+func groupLegacyStoreRows(rows []row) map[string][]row {
 	out := map[string][]row{}
 	for _, item := range rows {
 		id := item.text("session_id")
@@ -169,10 +189,20 @@ func groupMadreRows(rows []row) map[string][]row {
 	return out
 }
 
-func madreSession(source row, exchanges, thinking, tools []row) (parsers.Session, []parsers.Discard) {
+func legacyStoreOrphanDiscards(groups map[string][]row, reason string) []parsers.Discard {
+	var discards []parsers.Discard
+	for _, rows := range groups {
+		for range rows {
+			discards = append(discards, parsers.Discard{Reason: reason})
+		}
+	}
+	return discards
+}
+
+func legacyStoreSession(source row, exchanges, thinking, tools []row) (parsers.Session, []parsers.Discard) {
 	id := source.text("session_id")
 	if id == "" {
-		id = madreSource + ":empty-session"
+		id = legacyStoreSource + ":empty-session:" + source.text("source_rowid")
 	}
 	session := parsers.Session{
 		ID:               id,
@@ -182,7 +212,7 @@ func madreSession(source row, exchanges, thinking, tools []row) (parsers.Session
 		StartedAt:        source.text("started_at"),
 		EndedAt:          source.text("ended_at"),
 		Title:            source.text("title"),
-		ExchangeKeyScope: madreSource,
+		ExchangeKeyScope: legacyStoreSource,
 	}
 	if minutes, ok := source.number("duration_minutes"); ok {
 		value := int(minutes)
@@ -191,12 +221,12 @@ func madreSession(source row, exchanges, thinking, tools []row) (parsers.Session
 	thinkingByNumber := map[int][]parsers.Thinking{}
 	for _, block := range thinking {
 		number, _ := block.number("exchange_number")
-		thinkingByNumber[int(number)] = append(thinkingByNumber[int(number)], madreThinking(block))
+		thinkingByNumber[int(number)] = append(thinkingByNumber[int(number)], legacyStoreThinking(block))
 	}
 	toolsByNumber := map[int][]parsers.ToolUse{}
 	for _, tool := range tools {
 		number, _ := tool.number("exchange_number")
-		toolsByNumber[int(number)] = append(toolsByNumber[int(number)], madreTool(tool))
+		toolsByNumber[int(number)] = append(toolsByNumber[int(number)], legacyStoreTool(tool))
 	}
 	claimed := map[int]bool{}
 	for i, item := range exchanges {
@@ -205,7 +235,7 @@ func madreSession(source row, exchanges, thinking, tools []row) (parsers.Session
 		exchange := parsers.Exchange{
 			Number:            i + 1,
 			SourceID:          strconv.FormatInt(int64(exchangeID), 10),
-			IsAfterCompaction: madreFlag(item, "is_after_compaction"),
+			IsAfterCompaction: legacyStoreFlag(item, "is_after_compaction"),
 			HumanText:         item.text("human_text"),
 			AgentText:         item.text("agent_text"),
 			HumanTimestamp:    item.text("human_timestamp"),
@@ -230,13 +260,13 @@ func madreSession(source row, exchanges, thinking, tools []row) (parsers.Session
 	var discards []parsers.Discard
 	for _, leftovers := range toolsByNumber {
 		for range leftovers {
-			discards = append(discards, parsers.Discard{Reason: madreMissingToolExchangeReason})
+			discards = append(discards, parsers.Discard{Reason: legacyStoreMissingToolExchangeReason})
 		}
 	}
 	return session, discards
 }
 
-func madreThinking(block row) parsers.Thinking {
+func legacyStoreThinking(block row) parsers.Thinking {
 	position, _ := block.number("position_in_session")
 	if id, ok := block.number("id"); ok {
 		position += id * 1e-12
@@ -246,7 +276,7 @@ func madreThinking(block row) parsers.Thinking {
 		Position:          position,
 		Depth:             block.text("depth"),
 		WordCount:         int(words),
-		IsAfterCompaction: madreFlag(block, "is_after_compaction"),
+		IsAfterCompaction: legacyStoreFlag(block, "is_after_compaction"),
 		Text:              block.text("full_text"),
 	}
 	if ratio, ok := block.number("caution_ratio"); ok {
@@ -255,30 +285,30 @@ func madreThinking(block row) parsers.Thinking {
 	return out
 }
 
-func madreTool(tool row) parsers.ToolUse {
+func legacyStoreTool(tool row) parsers.ToolUse {
 	return parsers.ToolUse{
 		Name:           tool.text("tool_name"),
 		ParamsSummary:  tool.text("tool_params_summary"),
-		HadError:       madreFlag(tool, "had_error"),
+		HadError:       legacyStoreFlag(tool, "had_error"),
 		ErrorMessage:   tool.text("error_message"),
 		InitiativeType: tool.text("initiative_type"),
 	}
 }
 
-func madreMemory(source row) (parsers.Memory, bool) {
+func legacyStoreMemory(source row) (parsers.Memory, bool) {
 	content := source.text("content")
 	if content == "" {
 		return parsers.Memory{}, false
 	}
 	id, _ := source.number("id")
-	identity := madreMemoryFile + strconv.FormatInt(int64(id), 10)
+	identity := legacyStoreMemoryFile + strconv.FormatInt(int64(id), 10)
 	metadata := map[string]any{
-		"_cron_source":   madreSource,
-		"file_path":      identity,
-		madreMemoryIDKey: int64(id),
+		"_cron_source":    legacyStoreSource,
+		"file_path":       identity,
+		legacyMemoryIDKey: int64(id),
 	}
 	if supersedes, ok := source.number("supersedes"); ok && supersedes != 0 {
-		metadata[madreSupersedesKey] = int64(supersedes)
+		metadata[legacySupersedesKey] = int64(supersedes)
 	}
 	origin := source.text("origin")
 	if origin == "" {
@@ -292,7 +322,7 @@ func madreMemory(source row) (parsers.Memory, bool) {
 		SourceSurface: ingestprovenance.LegacyStore,
 		Project:       source.text("project"),
 		Metadata:      parsers.WithoutEmpty(metadata),
-		Source:        madreSource,
+		Source:        legacyStoreSource,
 		FilePath:      identity,
 		CreatedAt:     source.text("created_at"),
 		Status:        source.text("status"),
@@ -310,7 +340,7 @@ func madreMemory(source row) (parsers.Memory, bool) {
 	return memory, true
 }
 
-func writeMadreSessions(ctx context.Context, tx *sql.Tx, sessions []parsers.Session) (Counts, error) {
+func writeLegacyStoreSessions(ctx context.Context, tx *sql.Tx, sessions []parsers.Session) (Counts, error) {
 	w := &writer{tx: tx}
 	var counts Counts
 	for _, session := range sessions {
@@ -323,9 +353,9 @@ func writeMadreSessions(ctx context.Context, tx *sql.Tx, sessions []parsers.Sess
 	return counts, nil
 }
 
-func madreExclusionDiscards(ctx context.Context, db *sql.DB) []parsers.Discard {
+func legacyStoreExclusionDiscards(ctx context.Context, db *sql.DB) []parsers.Discard {
 	var discards []parsers.Discard
-	for _, exclusion := range madreExclusions {
+	for _, exclusion := range legacyStoreExclusions {
 		columns, err := tableColumns(ctx, db, exclusion.table)
 		if err != nil || len(columns) == 0 {
 			continue
@@ -342,25 +372,25 @@ func madreExclusionDiscards(ctx context.Context, db *sql.DB) []parsers.Discard {
 	return discards
 }
 
-func madreFlag(item row, key string) bool {
+func legacyStoreFlag(item row, key string) bool {
 	value, ok := item.number(key)
 	return ok && value != 0
 }
 
-func remapMadreSupersedes(ctx context.Context, tx *sql.Tx) error {
+func remapLegacyStoreSupersedes(ctx context.Context, tx *sql.Tx) error {
 	_, err := tx.ExecContext(ctx, `
 		UPDATE memories
 		SET supersedes = (
 		  SELECT other.id FROM memories AS other
 		  WHERE json_extract(other.metadata, '$._cron_source') =
 		        json_extract(memories.metadata, '$._cron_source')
-		    AND json_extract(other.metadata, '$.`+madreMemoryIDKey+`') =
-		        json_extract(memories.metadata, '$.`+madreSupersedesKey+`')
+		    AND json_extract(other.metadata, '$.`+legacyMemoryIDKey+`') =
+		        json_extract(memories.metadata, '$.`+legacySupersedesKey+`')
 		  LIMIT 1
 		)
 		WHERE json_extract(metadata, '$._cron_source') = ?
-		  AND json_extract(metadata, '$.`+madreSupersedesKey+`') IS NOT NULL
-		  AND supersedes IS NULL`, madreSource)
+		  AND json_extract(metadata, '$.`+legacySupersedesKey+`') IS NOT NULL
+		  AND supersedes IS NULL`, legacyStoreSource)
 	if err != nil {
 		return fmt.Errorf("remap legacy store supersedes: %w", err)
 	}

@@ -157,7 +157,7 @@ func Scan(roots Roots) Plan {
 	plan.add(existingFile(roots.HermesDB, Target{
 		Kind: parsers.KindHermesDB, SourceAgent: "hermes"}), "hermes_databases")
 	plan.add(existingFile(roots.LegacyStoreDB, Target{
-		Kind: parsers.KindLegacyStoreDB, SourceAgent: madreSource}), "legacy_store_databases")
+		Kind: parsers.KindLegacyStoreDB, SourceAgent: legacyStoreSource}), "legacy_store_databases")
 	plan.add(scanHermesStore(roots), "hermes_files")
 	if roots.Home != "" {
 		addRegisteredParsers(roots, &plan, parsers.Registered())
@@ -260,7 +260,7 @@ func DetectAgents(roots Roots) []string {
 		{"pi", pathExists(roots.PiRoot) || pathExists(roots.PiSessions)},
 		{"hermes", isFile(roots.HermesDB) || isFile(filepath.Join(roots.HermesHome, "memories", "MEMORY.md"))},
 		{"grok", pathExists(roots.GrokSessions)},
-		{madreSource, isFile(roots.LegacyStoreDB)},
+		{legacyStoreSource, isFile(roots.LegacyStoreDB)},
 	}
 	detected := make([]string, 0, len(candidates))
 	for _, candidate := range candidates {

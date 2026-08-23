@@ -644,7 +644,7 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 					return err
 				}
 				opsCounts = written
-				return remapMadreSupersedes(ctx, tx)
+				return remapLegacyStoreSupersedes(ctx, tx)
 			}); err != nil {
 				return false, err
 			}
@@ -656,7 +656,7 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 		var written Counts
 		var err error
 		if target.Kind == parsers.KindLegacyStoreDB {
-			written, err = writeMadreSessions(ctx, tx, records.Sessions)
+			written, err = writeLegacyStoreSessions(ctx, tx, records.Sessions)
 		} else {
 			written, err = writeRecords(ctx, tx, layers, opts.HermesReservedMemories, records)
 		}
@@ -694,7 +694,7 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 	case parsers.KindHermesDB:
 		databaseReader = ReadHermes
 	case parsers.KindLegacyStoreDB:
-		databaseReader = ReadMadre
+		databaseReader = ReadLegacyStore
 	case parsers.KindCursorDB:
 		databaseReader = ReadCursor
 	case parsers.KindCursorStore:
