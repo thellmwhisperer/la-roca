@@ -1,0 +1,6 @@
+[
+  {"query": "why should I never upload a short as private first", "want_id": "doc-private-first"},
+  {"query": "what happened when I changed the title of a dead short", "want_id": "doc-title-change"},
+  {"query": "does the bridge from shorts to long-form videos actually work", "want_id": "doc-bridge"},
+  {"query": "what lessons did I learn about making YouTube shorts for my channel", "want_id": "doc-lessons"}
+]

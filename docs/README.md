@@ -14,8 +14,7 @@ Reading order, from operator to contributor:
 4. [Ingest sources](ingest.md): import downloaded data exports once and understand
    their incremental boundary.
 5. [Local vector search](vector.md): the default-off `features.vector` switch,
-   Windows and Unix Ollama setup, the one-time embedding-model download,
-   hardware-conditioned indexing time, and the null-delta check.
+   the one embeddings-model download, newest-first indexing, and the null-delta check.
 6. [Agent parser contribution kit](agent-parsers.md): support another agent with
    a measured real store, a synthetic fixture, one parser file, and one registry
    line.

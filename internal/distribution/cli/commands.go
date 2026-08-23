@@ -205,6 +205,9 @@ func initCommand(env *cliEnv) *cobra.Command {
 				axi.Number(int64(result.RowsBefore.Memories)), axi.Number(int64(result.RowsBefore.Sessions)),
 				axi.Number(int64(result.RowsBefore.Exchanges)), axi.Number(int64(result.RowsBefore.ThinkingBlocks)),
 				axi.Number(int64(result.RowsBefore.ToolUses)))
+			if err := env.offerSemanticSearch(cmd.Context(), input, interactive, paths); err != nil {
+				return err
+			}
 			renderBootstrap(env, result)
 			return nil
 		},
@@ -330,6 +333,51 @@ var newInstallFeatureChanges = []config.Change{
 
 // writeNewInstallConfig materializes the product contract for an init that
 // began without a configuration file.
+func (env *cliEnv) offerSemanticSearch(ctx context.Context, input *bufio.Reader, interactive bool, paths config.Paths) error {
+	if !interactive || input == nil {
+		return nil
+	}
+	env.initSay("semantic search finds by meaning, not just the exact words")
+	env.initSay("it downloads one embedding model once, then indexes newest material first while history catches up")
+	env.initSay("[yes/no]")
+	line, err := input.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	answer := strings.ToLower(strings.TrimSpace(line))
+	if answer != "yes" && answer != "y" {
+		return nil
+	}
+	previous, err := os.ReadFile(paths.Config)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read the configuration: %w", err)
+	}
+	updated, err := config.ApplyText(string(previous), []config.Change{
+		{Kind: config.SetValue, Table: "features", Key: "vector", Value: true},
+	})
+	if err != nil {
+		return fmt.Errorf("enable semantic search: %w", err)
+	}
+	if err := os.WriteFile(paths.Config, []byte(updated), 0o600); err != nil {
+		return fmt.Errorf("write the configuration: %w", err)
+	}
+	path, found := findPlugin("vector")
+	if !found {
+		env.print("semantic search: enabled. run `roca vector install` after the companion is on PATH")
+		return nil
+	}
+	command := exec.CommandContext(ctx, path, "install")
+	if env.dbPath != "" {
+		command.Args = append([]string{path, "--db-path", env.dbPath, "install"})
+	}
+	command.Stdout, command.Stderr = env.out, env.errOut
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("start semantic indexing: %w", err)
+	}
+	env.print("semantic search: the embedding model is on disk; newest material is being indexed first")
+	return nil
+}
+
 func writeNewInstallConfig(path string) error {
 	updated, err := config.ApplyText("", newInstallFeatureChanges)
 	if err != nil {

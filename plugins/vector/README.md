@@ -14,8 +14,8 @@ directory holds only worker coordination, logs, and completion state.
 Every release core carries its matching companion and the standard installer
 materializes it beside `roca`; `features.plugins` is not required. Vector
 retrieval remains off until `features.vector = true`. Follow [Local vector
-search](../../docs/vector.md) for native Windows and Unix setup, the Ollama
-prerequisite, indexing, and verification. Standalone verified archives remain
+search](../../docs/vector.md) for the one model download, newest-first
+indexing, and verification. Standalone verified archives remain
 release artefacts for explicit plugin-package workflows.
 
 ## Build from source
@@ -30,8 +30,9 @@ roca plugin install .tmp/vector-package
 
 ## Use
 
-Ollama must be running locally. The default model is
-`nomic-embed-text-v2-moe`; select another installed model with `--model`.
+The default embedding model is `nomic-embed-text-v2-moe`. macOS and Linux
+download that one file; Windows keeps the previous local runtime until its
+native lane exists.
 
 ```sh
 roca vector install

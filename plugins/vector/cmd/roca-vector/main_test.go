@@ -20,9 +20,19 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+type stubEmbedder struct{}
+
+func (stubEmbedder) Pull(context.Context, string) error { return nil }
+func (stubEmbedder) Embed(context.Context, string, []string) ([][]float32, error) {
+	return [][]float32{{1, 0, 0, 0, 0, 0, 0, 0}}, nil
+}
+
 func TestInstallLaunchesThePluginBinaryIntoManifestOwnedState(t *testing.T) {
-	oldLaunch, oldExecutable := launchWorker, currentExecutable
-	t.Cleanup(func() { launchWorker, currentExecutable = oldLaunch, oldExecutable })
+	oldLaunch, oldExecutable, oldEmbedder := launchWorker, currentExecutable, newEmbedder
+	t.Cleanup(func() {
+		launchWorker, currentExecutable, newEmbedder = oldLaunch, oldExecutable, oldEmbedder
+	})
+	newEmbedder = func(*environment) vector.Embedder { return stubEmbedder{} }
 	var request vector.LaunchRequest
 	launchWorker = func(got vector.LaunchRequest) (vector.LaunchResult, error) {
 		request = got
@@ -121,6 +131,11 @@ func TestTargetedSessionDeltaIsObservableAndIdempotentThroughCLI(t *testing.T) {
 	}))
 	t.Cleanup(ollama.Close)
 	t.Setenv("OLLAMA_HOST", ollama.URL)
+	oldEmbedder := newEmbedder
+	t.Cleanup(func() { newEmbedder = oldEmbedder })
+	newEmbedder = func(*environment) vector.Embedder {
+		return vector.Ollama{BaseURL: ollama.URL}
+	}
 
 	core := filepath.Join(t.TempDir(), "roca")
 	coreScript := `#!/bin/sh

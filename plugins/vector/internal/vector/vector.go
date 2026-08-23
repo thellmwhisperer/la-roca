@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thellmwhisperer/la-roca-vector/internal/engine"
 	"github.com/thellmwhisperer/la-roca/pkg/incrementality"
 	_ "modernc.org/sqlite"
 	_ "modernc.org/sqlite/vec"
@@ -44,6 +45,7 @@ type Index struct {
 	Progress    func(IngestProgress)
 	BatchSize   int
 	totalHint   int
+	Events      engine.Sink
 }
 
 type Corpus interface {
@@ -515,7 +517,7 @@ func (i Index) batchSize() int {
 }
 
 func (i Index) emitProgress(report Delta, timeRange string, started time.Time) {
-	if i.Progress == nil && i.Notice == nil {
+	if i.Progress == nil && i.Notice == nil && i.Events == nil {
 		return
 	}
 	elapsed := time.Since(started)
@@ -535,9 +537,14 @@ func (i Index) emitProgress(report Delta, timeRange string, started time.Time) {
 	}
 	if i.Progress != nil {
 		i.Progress(progress)
-		return
 	}
-	if i.Notice != nil {
+	if i.Events != nil {
+		message := fmt.Sprintf("semantic index: %d/%d sources · %d chunks",
+			progress.Sources, progress.Total, progress.Chunks)
+		i.Events(engine.Partial("ingest", message, timeRange,
+			int64(progress.Sources), int64(progress.Total), eta))
+	}
+	if i.Progress == nil && i.Notice != nil {
 		message := fmt.Sprintf("vector ingest: %d sources · %d chunks", progress.Sources, progress.Chunks)
 		if progress.Total > 0 {
 			message = fmt.Sprintf("vector ingest: %d/%d sources · %d chunks",

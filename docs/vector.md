@@ -54,43 +54,22 @@ That exposes `roca vector` and lists `vector` in `roca plugins`. Absent or
 false, the command does not exist. On Windows, keep `roca-vector.exe` beside
 `roca.exe` in the directory on `PATH`.
 
-## Prerequisites
+## The one download
 
-Ollama must be running locally (default `http://127.0.0.1:11434`).
+Semantic search downloads one embedding model (~1 GB) into the selected
+Roca data directory. That is the only extra download. There is no second
+runtime, no daemon, and no extra command after you consent.
 
-The embedding model is `nomic-embed-text-v2-moe` (~957 MB). Pull it
-**before** the first index build. The download happens once; later delta
-ingest and queries reuse the local copy. The `vector install` command will
-pull the model if it is missing — do the explicit pull first so the size
-is not a surprise inside a background worker:
+`roca init` keeps its single ritual: full-text search works first, one
+yes for semantic search, then the model download and the newest-first
+index build. `roca vector install` does the same download and build when
+you turn it on later.
 
-```
-ollama pull nomic-embed-text-v2-moe
-```
-
-### Ollama on Windows
-
-1. Install Ollama from https://ollama.com/download (Windows installer
-   `OllamaSetup.exe`). Official notes: https://docs.ollama.com/windows.
-   The installer does not require Administrator rights. After it
-   finishes, Ollama stays in the system tray and serves
-   `http://127.0.0.1:11434`.
-2. Open a **new** terminal (`cmd` or PowerShell) and confirm with
-   `ollama --version`.
-3. Pull the embedding model above (~957 MB, one-time) before
-   the `vector install` step below.
-
-NVIDIA GPUs accelerate this model. On a machine with no GPU, Ollama
-runs on CPU.
-
-### Ollama on macOS and Linux
-
-Install Ollama from https://ollama.com/download, start the daemon, then
-pull the same model before the first index build.
+macOS and Linux run the embedding engine inside the vector companion.
+Windows keeps the previous local runtime path until its own native build
+lane ships; see the release notes.
 
 ## Index declared databases
-
-Start the first build only after the model pull has finished:
 
 ```sh
 roca vector install

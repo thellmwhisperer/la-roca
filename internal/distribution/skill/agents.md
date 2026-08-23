@@ -49,8 +49,7 @@ under `[features]` in `~/.roca/config.toml` (or in `config.toml` next to the
 database selected with `--db-path`), then install the index.
 
 ```sh
-ollama pull nomic-embed-text-v2-moe    # ~1 GB, one time
-roca vector install                    # builds the index in the background
+roca vector install                    # one model download, then the newest-first index build
 ```
 
 Tell your user the build is running, and offer them a live view of the

@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/thellmwhisperer/la-roca-vector/internal/engine"
+	"github.com/thellmwhisperer/la-roca-vector/internal/telemetry"
 	"github.com/thellmwhisperer/la-roca-vector/internal/vector"
 )
 
@@ -21,6 +23,7 @@ var (
 	date              = "unknown"
 	launchWorker      = vector.Launch
 	currentExecutable = os.Executable
+	newEmbedder       = defaultEmbedder
 )
 
 type environment struct {
@@ -55,7 +58,7 @@ func rootCommand(env *environment) *cobra.Command {
 	root.PersistentFlags().StringVar(&env.stateDir, "state-dir", env.stateDir, "plugin state directory")
 	_ = root.PersistentFlags().MarkHidden("state-dir")
 	root.AddCommand(installCommand(env), ingestCommand(env), compactCommand(env),
-		queryCommand(env), workerCommand(env))
+		queryCommand(env), workerCommand(env), residentCommand(env))
 	return root
 }
 
@@ -65,12 +68,15 @@ func installCommand(env *environment) *cobra.Command {
 		Use:   "install",
 		Short: "Download the embedding model and build declared sidecars in the background",
 		Args:  cobra.NoArgs,
-		RunE: func(*cobra.Command, []string) error {
+		RunE: func(command *cobra.Command, _ []string) error {
 			if readOnly() {
 				return fmt.Errorf("vector install is disabled while ROCA_READ_ONLY is enabled")
 			}
 			state, err := env.resolveStateDir()
 			if err != nil {
+				return err
+			}
+			if err := newEmbedder(env).Pull(command.Context(), model); err != nil {
 				return err
 			}
 			executable, err := currentExecutable()
@@ -101,7 +107,7 @@ func installCommand(env *environment) *cobra.Command {
 			return nil
 		},
 	}
-	command.Flags().StringVar(&model, "model", model, "local Ollama embedding model")
+	command.Flags().StringVar(&model, "model", model, "embedding model identifier")
 	return command
 }
 
@@ -217,7 +223,7 @@ func ingestCommand(env *environment) *cobra.Command {
 	}
 	command.Flags().BoolVar(&delta, "delta", false, "embed only new or changed chunks")
 	command.Flags().BoolVar(&reembed, "reembed", false, "rebuild sidecar chunks under the current generation policy")
-	command.Flags().StringVar(&model, "model", "", "local Ollama embedding model (default: indexed model)")
+	command.Flags().StringVar(&model, "model", "", "embedding model identifier (default: indexed model)")
 	command.Flags().StringVar(&source, "source", "", "limit the delta to one declared table")
 	return command
 }
@@ -454,7 +460,7 @@ func workerCommand(env *environment) *cobra.Command {
 			return nil
 		},
 	}
-	command.Flags().StringVar(&model, "model", model, "local Ollama embedding model")
+	command.Flags().StringVar(&model, "model", model, "embedding model identifier")
 	return command
 }
 
@@ -472,8 +478,9 @@ func (env *environment) index(model string) (vector.Index, error) {
 	if err != nil {
 		return vector.Index{}, err
 	}
+	embedder, events := env.embedder()
 	return vector.Index{Corpus: core, VectorPath: filepath.Join(state, vector.DatabaseFilename),
-		Model: model, Embedder: vector.Ollama{BaseURL: os.Getenv("OLLAMA_HOST")},
+		Model: model, Embedder: embedder, Events: events,
 		Notice: func(message string) { fmt.Fprintln(os.Stderr, message) }, Database: "corpus"}, nil
 }
 
@@ -486,9 +493,35 @@ func (env *environment) federation(model string) (vector.Federation, error) {
 	if err != nil {
 		return vector.Federation{}, err
 	}
-	return vector.LoadFederation(core, pluginRoot, model, version,
-		vector.Ollama{BaseURL: os.Getenv("OLLAMA_HOST")},
-		func(message string) { fmt.Fprintln(os.Stderr, message) })
+	embedder, events := env.embedder()
+	loaded, err := vector.LoadFederation(core, pluginRoot, model, version,
+		embedder, func(message string) { fmt.Fprintln(os.Stderr, message) })
+	if err != nil {
+		return vector.Federation{}, err
+	}
+	loaded.Events = events
+	return loaded, nil
+}
+
+func defaultEmbedder(env *environment) vector.Embedder {
+	events := env.events()
+	var tel *telemetry.Store
+	if state, err := env.resolveStateDir(); err == nil {
+		if store, openErr := telemetry.Open(telemetry.Path(state)); openErr == nil {
+			tel = store
+		}
+	}
+	return vector.ConfiguredEmbedder(coreDataDir(env.dbPath), env.stateDir, events, tel)
+}
+
+func (env *environment) embedder() (vector.Embedder, engine.Sink) {
+	return newEmbedder(env), env.events()
+}
+
+func (env *environment) events() engine.Sink {
+	return func(event engine.Event) {
+		fmt.Fprintln(os.Stderr, event.Line())
+	}
 }
 
 func (env *environment) resolvePluginRoot() (string, error) {

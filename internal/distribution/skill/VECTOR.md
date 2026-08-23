@@ -20,8 +20,7 @@ build it: one model download (~1 GB) and one background index build (a few
 hours, or a laptop left running overnight). It pays back every day after.
 
 ```sh
-ollama pull nomic-embed-text-v2-moe
-# set [features] vector = true in ~/.roca/config.toml
+# set [features] vector = true in the selected configuration, or say yes at init
 roca vector install
 ```
 

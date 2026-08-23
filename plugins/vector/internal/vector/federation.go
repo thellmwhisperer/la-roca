@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thellmwhisperer/la-roca-vector/internal/engine"
 	"github.com/thellmwhisperer/la-roca/pkg/incrementality"
 )
 
@@ -72,6 +73,7 @@ type Federation struct {
 	Notice       func(string)
 	Progress     func(IngestProgress)
 	Reembed      bool
+	Events       engine.Sink
 	databases    []vectorDatabase
 	routes       []vectorRoute
 }
@@ -677,7 +679,7 @@ func (f Federation) index(database vectorDatabase, reader DeclaredCorpus, sideca
 	}
 	return Index{Corpus: reader, VectorPath: sidecar, Model: f.Model,
 		Embedder: f.Embedder, Notice: f.Notice, Progress: f.Progress, Reembed: f.Reembed,
-		SourceKinds: kinds, Database: database.Database}
+		SourceKinds: kinds, Database: database.Database, Events: f.Events}
 }
 
 type DeclaredCorpus struct {

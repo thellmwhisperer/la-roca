@@ -48,8 +48,9 @@ plugins reports that none were placed.
 Windows is not installed by the shell script. Download the `.exe` release
 artefact, place it as `roca.exe` in a directory on `PATH`, and let that core
 binary extract its carried `roca-vector.exe` beside it. The exact native
-sequence, Ollama install, and one-time model pull are in
-[Local vector search](vector.md#windows-install). The same release also
+sequence is in
+[Local vector search](vector.md#windows-install). Windows keeps the previous
+local embeddings runtime until its own native lane exists. The same release also
 publishes `roca-vector-vX.Y.Z-windows-x64.tar.gz` for standalone use. Core
 executable release artefacts are:
 

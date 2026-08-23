@@ -10,12 +10,14 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	_ "modernc.org/sqlite"
 )
 
 type recordingEmbedder struct {
+	mu     sync.Mutex
 	inputs [][]string
 }
 
@@ -26,7 +28,9 @@ type compactFixtureEmbedder struct {
 func (e *recordingEmbedder) Pull(context.Context, string) error { return nil }
 
 func (e *recordingEmbedder) Embed(_ context.Context, _ string, input []string) ([][]float32, error) {
+	e.mu.Lock()
 	e.inputs = append(e.inputs, append([]string(nil), input...))
+	e.mu.Unlock()
 	vectors := make([][]float32, len(input))
 	for i, text := range input {
 		text = strings.ToLower(text)
