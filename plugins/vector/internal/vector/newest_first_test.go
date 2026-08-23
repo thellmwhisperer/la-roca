@@ -59,16 +59,16 @@ func TestDeclaredCorpusPagesNewestFirst(t *testing.T) {
 	}
 }
 
-func TestDeclaredCorpusFallsBackToRowidWhenChronologicalColumnsAreAbsent(t *testing.T) {
+func TestDeclaredCorpusFallsBackToDeclaredIDWithoutChronologicalColumns(t *testing.T) {
 	db, err := sql.Open("sqlite", "file:"+t.TempDir()+"/source.db")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	if _, err := db.Exec(`CREATE TABLE sessions (session_id TEXT PRIMARY KEY, title TEXT)`); err != nil {
+	if _, err := db.Exec(`CREATE TABLE sessions (session_id TEXT PRIMARY KEY, title TEXT) WITHOUT ROWID`); err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"old", "mid", "new"} {
+	for _, id := range []string{"001-old", "002-mid", "003-new"} {
 		if _, err := db.Exec(`INSERT INTO sessions VALUES (?,?)`, id, "title "+id); err != nil {
 			t.Fatal(err)
 		}
@@ -83,8 +83,62 @@ func TestDeclaredCorpusFallsBackToRowidWhenChronologicalColumnsAreAbsent(t *test
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 3 || rows[0].sourceID != "new" || rows[2].sourceID != "old" {
-		t.Fatalf("rowid fallback order = %+v", rows)
+	if len(rows) != 3 || rows[0].sourceID != "003-new" || rows[2].sourceID != "001-old" {
+		t.Fatalf("declared ID fallback order = %+v", rows)
+	}
+}
+
+func TestDeclaredCorpusLimitsUnboundedStatementsToIngestReads(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+t.TempDir()+"/source.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if _, err := db.Exec(`CREATE TABLE records (id TEXT PRIMARY KEY, body TEXT) WITHOUT ROWID;
+		INSERT INTO records VALUES ('record-1','synthetic body')`); err != nil {
+		t.Fatal(err)
+	}
+	base := sqliteRunner(db)
+	wantUnbounded := false
+	runner := func(ctx context.Context, executable string, args ...string) ([]byte, error) {
+		unbounded := false
+		for index := 0; index+1 < len(args); index++ {
+			if args[index] == "--timeout-ms" && args[index+1] == "0" {
+				unbounded = true
+				break
+			}
+		}
+		if wantUnbounded != unbounded {
+			return nil, fmt.Errorf("statement timeout mismatch: got unbounded=%t, want %t", unbounded, wantUnbounded)
+		}
+		return base(ctx, executable, args...)
+	}
+	table := vectorTable{Name: "records", IDColumn: "id", TextColumns: []string{"body"}}
+	corpus := DeclaredCorpus{Core: CoreCLI{Executable: "sqlite-fixture", Run: runner},
+		Database: vectorDatabase{Plugin: "fixture", Database: "records", Alias: "main",
+			Tables: []vectorTable{table}}}
+	wantUnbounded = true
+	if _, err := corpus.CountChunks(context.Background(), "records"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := corpus.CountSources(context.Background(), "records"); err != nil {
+		t.Fatal(err)
+	}
+	if err := corpus.WalkSources(context.Background(), "records", func(sourceRow) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	wantUnbounded = false
+	want := sourceRow{kind: "records", sourceID: "record-1", text: "synthetic body",
+		rowText: "synthetic body", fingerprintVersion: table.embeddingContractFingerprint()}
+	if _, err := corpus.ResolveSource(context.Background(), "records", locator{
+		SourceID: "record-1", Identity: want.identity(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := corpus.ResolveSources(context.Background(), []sourceLookup{{
+		kind: "records", where: locator{SourceID: "record-1", Identity: want.identity()},
+	}}); err != nil {
+		t.Fatal(err)
 	}
 }
 

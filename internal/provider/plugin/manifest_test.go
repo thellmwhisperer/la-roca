@@ -538,4 +538,21 @@ func TestMissingChronologicalColumnsDoNotExpelAPlugin(t *testing.T) {
 	if len(descriptors) != 1 || descriptors[0].Name != "synthetic" || len(descriptors[0].VectorTables) != 1 {
 		t.Fatalf("discovery = %+v", descriptors)
 	}
+	database, err := plugin.Validate(t.Context(), descriptors[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := plugin.ComposeVectorRegistry([]plugin.Database{database})
+	registryPath := plugin.VectorRegistryPath(root)
+	if err := plugin.SaveVectorRegistry(registryPath, registry); err != nil {
+		t.Fatalf("save registry without chronological columns: %v", err)
+	}
+	loaded, err := plugin.LoadVectorRegistry(registryPath)
+	if err != nil {
+		t.Fatalf("load registry without chronological columns: %v", err)
+	}
+	if len(loaded.Databases) != 1 || len(loaded.Databases[0].Tables) != 1 ||
+		len(loaded.Databases[0].Tables[0].TimeColumns) != 0 || loaded.Databases[0].Tables[0].TimeJoin != nil {
+		t.Fatalf("registry without chronological columns = %+v", loaded)
+	}
 }

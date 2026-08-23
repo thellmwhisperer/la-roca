@@ -109,6 +109,9 @@ func TestQueryStartsBackgroundModelDownloadWithoutWaiting(t *testing.T) {
 	if launched.Executable != "/synthetic/roca-vector" {
 		t.Fatalf("query did not start a background download: %+v", launched)
 	}
+	if launched.Progress != nil {
+		t.Fatalf("query passed its progress stream to the detached worker: %+v", launched)
+	}
 }
 
 type blockingDownloadEmbedder struct {

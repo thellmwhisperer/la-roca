@@ -900,7 +900,7 @@ func (d DeclaredCorpus) CountChunks(ctx context.Context, sourceKind string) (int
 		statement := fmt.Sprintf(`SELECT COALESCE(SUM(%s),0) AS total FROM %s.%s AS %s WHERE %s.%s IS NOT NULL AND (%s)`,
 			strings.Join(counts, "+"), quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name),
 			alias, alias, quoteIdentifier(table.IDColumn), declaredNonEmptyPredicate(alias, table.TextColumns))
-		rows, err := d.Core.query(ctx, statement)
+		rows, err := d.Core.queryIngest(ctx, statement)
 		if err != nil {
 			return 0, fmt.Errorf("count declared chunks %s/%s: %w", d.Database.owner(), table.Name, err)
 		}
@@ -983,7 +983,7 @@ func (i *declaredTableIterator) advance(ctx context.Context) error {
 			i.current = nil
 			return nil
 		}
-		values, err := i.corpus.Core.query(ctx, i.corpus.pageQuery(i.table, i.cursor, i.catalog))
+		values, err := i.corpus.Core.queryIngest(ctx, i.corpus.pageQuery(i.table, i.cursor, i.catalog))
 		if err != nil {
 			return fmt.Errorf("read declared surface %s/%s: %w", i.corpus.Database.owner(), i.table.Name, err)
 		}
@@ -1156,7 +1156,7 @@ func (d DeclaredCorpus) CountSources(ctx context.Context, sourceKind string) (in
 		statement := fmt.Sprintf(`SELECT COUNT(*) AS n FROM %s.%s src WHERE %s IS NOT NULL AND (%s)`,
 			quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name),
 			quoteIdentifier(table.IDColumn), declaredNonEmptyPredicate("src", table.TextColumns))
-		rows, err := d.Core.query(ctx, statement)
+		rows, err := d.Core.queryIngest(ctx, statement)
 		if err != nil {
 			return 0, err
 		}
@@ -1203,7 +1203,7 @@ func (d DeclaredCorpus) contextSQL(table vectorTable,
 			quoteIdentifier(table.TimeJoin.ForeignColumn))
 		timeColumns = append(timeColumns, qualifiedColumns(timeline, table.TimeJoin.TimeColumns)...)
 	}
-	timeExpression := "printf('%020d', src._rowid_)"
+	timeExpression := "CAST(src." + quoteIdentifier(table.IDColumn) + " AS TEXT)"
 	if len(timeColumns) > 0 {
 		timeExpression = "COALESCE(" + strings.Join(append(timeColumns, "''"), ",") + ")"
 	}

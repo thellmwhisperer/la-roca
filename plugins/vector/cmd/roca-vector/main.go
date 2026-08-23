@@ -550,7 +550,7 @@ func (env *environment) startBackgroundSetup() error {
 	}
 	_, err = launchWorker(vector.LaunchRequest{
 		Executable: executable, Arguments: workerArguments(env.dbPath, state, vector.DefaultModel),
-		DataDir: state, Progress: os.Stderr,
+		DataDir:     state,
 		Environment: []string{"ROCA_VECTOR_PLUGIN_ROOT=" + pluginRoot},
 	})
 	return err

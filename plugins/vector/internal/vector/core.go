@@ -119,7 +119,7 @@ func (i *corePageIterator) advance(ctx context.Context) error {
 			i.current = nil
 			return nil
 		}
-		values, err := i.core.query(ctx, i.page.query(i.cursor))
+		values, err := i.core.queryIngest(ctx, i.page.query(i.cursor))
 		if err != nil {
 			return fmt.Errorf("read core %s: %w", i.page.kind, err)
 		}
@@ -158,7 +158,7 @@ func (c CoreCLI) CountChunks(ctx context.Context, sourceKind string) (int64, err
 		if sourceKind != "" && sourceKind != kind {
 			continue
 		}
-		rows, err := c.query(ctx, statements[kind])
+		rows, err := c.queryIngest(ctx, statements[kind])
 		if err != nil {
 			return 0, fmt.Errorf("count core %s: %w", kind, err)
 		}
@@ -593,6 +593,14 @@ func (c CoreCLI) resolveIdentity(ctx context.Context, kind string, where locator
 }
 
 func (c CoreCLI) query(ctx context.Context, statement string) ([]map[string]any, error) {
+	return c.queryWithTimeout(ctx, statement, "")
+}
+
+func (c CoreCLI) queryIngest(ctx context.Context, statement string) ([]map[string]any, error) {
+	return c.queryWithTimeout(ctx, statement, "0")
+}
+
+func (c CoreCLI) queryWithTimeout(ctx context.Context, statement, timeout string) ([]map[string]any, error) {
 	if strings.TrimSpace(c.Executable) == "" {
 		return nil, fmt.Errorf("roca executable is required")
 	}
@@ -600,7 +608,11 @@ func (c CoreCLI) query(ctx context.Context, statement string) ([]map[string]any,
 	if c.DBPath != "" {
 		args = append(args, "--db-path", c.DBPath)
 	}
-	args = append(args, "exec", "--timeout-ms", "0", "--max-chars", strconv.Itoa(coreFieldBudget), statement)
+	args = append(args, "exec")
+	if timeout != "" {
+		args = append(args, "--timeout-ms", timeout)
+	}
+	args = append(args, "--max-chars", strconv.Itoa(coreFieldBudget), statement)
 	run := c.Run
 	if run == nil {
 		run = runCommand
