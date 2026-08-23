@@ -147,7 +147,6 @@ func materializeCurrent(ctx context.Context, destination *sql.DB, sources []prep
 		return fmt.Errorf("begin current corpus materialization: %w", err)
 	}
 	defer tx.Rollback()
-	preferredSessions := map[string]bool{}
 	type sourceSession struct{ database, sessionID string }
 	sessionAliases := map[sourceSession]string{}
 	canonicalSessions := map[string]string{}
@@ -163,9 +162,6 @@ func materializeCurrent(ctx context.Context, destination *sql.DB, sources []prep
 			if scanErr != nil {
 				rows.Close()
 				return scanErr
-			}
-			if source.ExistingCorpus && record.sessionID.Valid {
-				preferredSessions[record.sessionID.String] = true
 			}
 			if record.sessionID.Valid {
 				canonical, found := canonicalSessions[record.currentDigest]
@@ -203,10 +199,6 @@ func materializeCurrent(ctx context.Context, destination *sql.DB, sources []prep
 				if scanErr != nil {
 					rows.Close()
 					return scanErr
-				}
-				if !source.ExistingCorpus && record.sessionID.Valid &&
-					preferredSessions[record.sessionID.String] {
-					continue
 				}
 				if record.sessionID.Valid {
 					if canonical := sessionAliases[sourceSession{
@@ -250,7 +242,9 @@ func materializeRecord(ctx context.Context, tx *sql.Tx, record archiveRecord) er
 			(session_id, exchange_number, is_after_compaction, human_text, agent_text,
 			 human_timestamp, agent_timestamp, response_latency_ms, model, provider,
 			 tokens_in, tokens_out, tokens_reasoning, cost_usd)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (
+			 SELECT 1 FROM exchanges WHERE session_id IS ? AND exchange_number IS ?)`
+		args = append(slices.Clone(args), args[0], args[1])
 	case "tool_use_versions":
 		query = `INSERT INTO tool_uses
 			(session_id, exchange_number, tool_name, tool_params_summary, had_error,
@@ -261,14 +255,13 @@ func materializeRecord(ctx context.Context, tx *sql.Tx, record archiveRecord) er
 			   AND error_message IS ? AND initiative_type IS ?)`
 		args = append(slices.Clone(args), args...)
 	case "thinking_block_versions":
-		query = `INSERT INTO thinking_blocks
+		query = `INSERT OR IGNORE INTO thinking_blocks
 			(session_id, exchange_number, position_in_session, depth, caution_ratio,
 			 word_count, is_after_compaction, full_text)
 			SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (
 			 SELECT 1 FROM thinking_blocks WHERE session_id IS ? AND exchange_number IS ?
-			   AND position_in_session IS ? AND depth IS ? AND caution_ratio IS ?
-			   AND word_count IS ? AND is_after_compaction IS ? AND full_text IS ?)`
-		args = append(slices.Clone(args), args...)
+			   AND position_in_session IS ?)`
+		args = append(slices.Clone(args), args[0], args[1], args[2])
 	case "ingest_file_state_versions":
 		query = `INSERT INTO ingest_file_state
 			(path, source_kind, source_agent, project, fingerprint, last_synced_at,

@@ -43,6 +43,9 @@ func TestCompactRewritesAFatCorpusWithoutLosingCurrentRows(t *testing.T) {
 		t.Fatalf("compact did not shrink the database: before=%d after=%d",
 			report.BytesBefore, report.BytesAfter)
 	}
+	if report.VacuumFreelist != 0 {
+		t.Fatalf("compact report vacuum freelist = %d", report.VacuumFreelist)
+	}
 
 	db, err = sql.Open("sqlite", path)
 	if err != nil {
@@ -79,7 +82,7 @@ func TestCompactRewritesAFatCorpusWithoutLosingCurrentRows(t *testing.T) {
 	if err := db.QueryRow(`PRAGMA freelist_count`).Scan(&freelist); err != nil {
 		t.Fatal(err)
 	}
-	if freelist > 16 {
+	if freelist != 0 {
 		t.Fatalf("compact did not VACUUM: freelist_count=%d", freelist)
 	}
 }

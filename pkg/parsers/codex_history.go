@@ -78,7 +78,8 @@ func parseCodexHistory(content []byte, meta FileMeta) Records {
 			})
 		}
 		session := &records.Sessions[at]
-		exchange := historyExchange(len(session.Exchanges)+1, line.SessionID, line)
+		exchange := historyExchange(exchangeNumberOffset(meta, line.SessionID)+
+			len(session.Exchanges)+1, line.SessionID, line)
 		session.Exchanges = append(session.Exchanges, exchange)
 		timestamp := exchange.HumanTimestamp
 		if session.StartedAt == "" || timestamp < session.StartedAt {

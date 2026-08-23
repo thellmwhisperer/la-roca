@@ -72,18 +72,19 @@ type grokTurn struct {
 }
 
 type grokReader struct {
-	pending   map[string]*ToolUse
-	current   *grokTurn
-	exchanges []Exchange
-	discards  []Discard
-	deferred  int
+	pending      map[string]*ToolUse
+	current      *grokTurn
+	exchanges    []Exchange
+	discards     []Discard
+	deferred     int
+	numberOffset int
 }
 
 // ParseGrokSession turns one updates.jsonl stream into one session. The session
 // UUID and workspace are path identity, not mutable payload metadata. summary.json
 // remains a title sidecar; timestamps come from the primary stream itself.
 func ParseGrokSession(content []byte, meta FileMeta) (Records, error) {
-	reader := &grokReader{pending: map[string]*ToolUse{}}
+	reader := &grokReader{pending: map[string]*ToolUse{}, numberOffset: meta.ExchangeNumberOffset}
 	discards, _ := consumeGrokUpdates(content, reader.consume)
 	unanswered := reader.current != nil && reader.current.blocks == 0
 	reader.flush(false)
@@ -246,7 +247,7 @@ func (r *grokReader) flush(closed bool) {
 		sourceID = "grok-prompt:" + r.current.promptIndex
 	}
 	exchange := Exchange{
-		Number:         len(r.exchanges) + 1,
+		Number:         r.numberOffset + len(r.exchanges) + 1,
 		SourceID:       sourceID,
 		HumanText:      r.current.humanText.String(),
 		AgentText:      r.current.agentText.String(),

@@ -170,7 +170,7 @@ func ParseSubagent(content []byte, meta FileMeta) (Records, error) {
 	}
 	for i := range pairs {
 		session.Exchanges = append(session.Exchanges, Exchange{
-			Number:         i + 1,
+			Number:         meta.ExchangeNumberOffset + i + 1,
 			HumanText:      humans[i].text,
 			AgentText:      agents[i].text,
 			HumanTimestamp: humans[i].timestamp,

@@ -146,7 +146,7 @@ func ParseClaudeSession(content []byte, meta FileMeta) (Records, error) {
 // ParseCoworkAudit turns a Cowork audit transcript into one session, merging in
 // what its paired metadata file declares about it.
 func ParseCoworkAudit(content []byte, meta FileMeta) (Records, error) {
-	builder := &claudeBuilder{auditMode: true, pending: map[string]*ToolUse{}}
+	builder := &claudeBuilder{auditMode: true, pending: map[string]*ToolUse{}, number: meta.ExchangeNumberOffset}
 	firstSessionID := ""
 	discards, _ := consumeClaudeLines(content, func(line claudeLine) {
 		if firstSessionID == "" {
@@ -167,7 +167,7 @@ func ParseCoworkAudit(content []byte, meta FileMeta) (Records, error) {
 		SourceAgent: firstNonEmpty(meta.SourceAgent, "cowork"),
 		Project:     meta.Project,
 		Title:       sidecar.title,
-		Snapshot:    true,
+		Snapshot:    !meta.Incremental,
 		Exchanges:   exchanges,
 		Metadata:    map[string]any{"entrypoint": "claude-cowork"},
 	}

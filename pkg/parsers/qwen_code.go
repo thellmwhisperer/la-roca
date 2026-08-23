@@ -74,14 +74,15 @@ type qwenCodeTurn struct {
 }
 
 type qwenCodeReader struct {
-	sessionID string
-	cwd       string
-	gitBranch string
-	version   string
-	current   *qwenCodeTurn
-	exchanges []Exchange
-	discards  []Discard
-	deferred  int
+	sessionID    string
+	cwd          string
+	gitBranch    string
+	version      string
+	current      *qwenCodeTurn
+	exchanges    []Exchange
+	discards     []Discard
+	deferred     int
+	numberOffset int
 }
 
 func detectQwenCode(file File) bool {
@@ -108,7 +109,7 @@ func qwenCodeRecordType(kind string) bool {
 // aggregates those messages and their usage while retaining the model stated
 // by the source.
 func ParseQwenCode(content []byte, meta FileMeta) (Records, error) {
-	reader := qwenCodeReader{}
+	reader := qwenCodeReader{numberOffset: meta.ExchangeNumberOffset}
 	discards, valid := eachJSONLine(content, func(record int, raw string) error {
 		var line qwenCodeRecord
 		if err := json.Unmarshal([]byte(raw), &line); err != nil {
@@ -258,7 +259,7 @@ func (r *qwenCodeReader) flush() {
 		return
 	}
 	exchange := Exchange{
-		Number:         len(r.exchanges) + 1,
+		Number:         r.numberOffset + len(r.exchanges) + 1,
 		HumanText:      strings.TrimSpace(r.current.humanText.String()),
 		AgentText:      strings.TrimSpace(r.current.agentText.String()),
 		HumanTimestamp: r.current.humanTS, AgentTimestamp: r.current.agentTS,

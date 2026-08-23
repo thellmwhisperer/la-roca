@@ -45,9 +45,9 @@ func TestMergePreservesAliasesDivergenceAndSourceScopedChildIdentity(t *testing.
 
 	db := openTestDB(t, destination)
 	assertCount(t, db, "sessions", 4)
-	assertCount(t, db, "exchanges", 4)
-	assertCount(t, db, "tool_uses", 2)
-	assertCount(t, db, "thinking_blocks", 1)
+	assertCount(t, db, "exchanges", 5)
+	assertCount(t, db, "tool_uses", 3)
+	assertCount(t, db, "thinking_blocks", 2)
 	assertCount(t, db, "ingest_file_state", 3)
 	assertCountQuery(t, db, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'
 		AND name IN ('session_versions_fts', 'exchange_versions_fts', 'thinking_block_versions_fts')`, 0)
@@ -61,6 +61,14 @@ func TestMergePreservesAliasesDivergenceAndSourceScopedChildIdentity(t *testing.
 		WHERE name IN ('tool_params_summary', 'error_message')`, 0)
 	assertCountQuery(t, db, `SELECT COUNT(*) FROM sessions WHERE session_id = 'core-only'
 		AND title = 'coreonly title'`, 1)
+	assertCountQuery(t, db, `SELECT COUNT(*) FROM exchanges WHERE session_id = 'divergent'
+		AND exchange_number = 2 AND human_text = 'core extra'`, 1)
+	assertCountQuery(t, db, `SELECT COUNT(*) FROM exchanges WHERE session_id = 'divergent'
+		AND exchange_number = 1 AND agent_text = 'core answer'`, 0)
+	assertCountQuery(t, db, `SELECT COUNT(*) FROM tool_uses WHERE session_id = 'divergent'
+		AND tool_name = 'Write'`, 1)
+	assertCountQuery(t, db, `SELECT COUNT(*) FROM thinking_blocks WHERE session_id = 'divergent'
+		AND full_text = 'core thought'`, 1)
 
 	var fingerprint, source string
 	if err := db.QueryRow(`SELECT v.fingerprint, h.source_database

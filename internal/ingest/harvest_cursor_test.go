@@ -11,6 +11,7 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/store"
+	"github.com/thellmwhisperer/la-roca/pkg/incrementality"
 	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 )
 
@@ -105,6 +106,132 @@ func TestGrowingSessionAppendsWithoutVersioningOldRows(t *testing.T) {
 		t.Fatalf("rewrite lineage rows = %d, want 1", harvestVersionCount(t, db))
 	}
 	assertLineageHasNoContent(t, db)
+}
+
+func TestAppendableSessionParsersUseStoredExchangeCursor(t *testing.T) {
+	claudeFirst := harvestTurn(1, "/w/demo", "question 1", "answer 1")
+	claudeSecond := harvestTurn(2, "/w/demo", "question 2", "answer 2")
+	cases := []struct {
+		name, sessionID, first, second string
+		kind                           parsers.Kind
+		target                         Target
+	}{
+		{name: "claude", kind: parsers.KindClaudeSession, sessionID: harvestCursorSession,
+			first: claudeFirst, second: claudeSecond},
+		{name: "cowork", kind: parsers.KindCoworkAudit, sessionID: "cowork-1",
+			first: claudeFirst, second: claudeSecond},
+		{name: "codex", kind: parsers.KindCodexSession, sessionID: "codex-1",
+			first: `{"type":"session_meta","payload":{"id":"codex-1","cwd":"/w/demo","timestamp":"2026-08-01T10:00:00Z"}}` + "\n" +
+				`{"type":"event_msg","timestamp":"2026-08-01T10:00:01Z","payload":{"type":"user_message","message":"question 1"}}` + "\n" +
+				`{"type":"event_msg","timestamp":"2026-08-01T10:00:02Z","payload":{"type":"task_complete","last_agent_message":"answer 1"}}` + "\n",
+			second: `{"type":"event_msg","timestamp":"2026-08-01T10:00:03Z","payload":{"type":"user_message","message":"question 2"}}` + "\n" +
+				`{"type":"event_msg","timestamp":"2026-08-01T10:00:04Z","payload":{"type":"task_complete","last_agent_message":"answer 2"}}` + "\n"},
+		{name: "codex history", kind: parsers.KindCodexHistory, sessionID: "history-1",
+			first:  `{"session_id":"history-1","text":"question 1","ts":1785578401}` + "\n",
+			second: `{"session_id":"history-1","text":"question 2","ts":1785578402}` + "\n"},
+		{name: "subagent", kind: parsers.KindSubagent, sessionID: "child-1",
+			target: Target{SourceAgent: "claude-code"},
+			first: `{"type":"user","sessionId":"parent-1","agentId":"child-1","message":{"content":"question 1"}}` + "\n" +
+				`{"type":"assistant","sessionId":"parent-1","agentId":"child-1","message":{"content":"answer 1"}}` + "\n",
+			second: `{"type":"user","sessionId":"parent-1","agentId":"child-1","message":{"content":"question 2"}}` + "\n" +
+				`{"type":"assistant","sessionId":"parent-1","agentId":"child-1","message":{"content":"answer 2"}}` + "\n"},
+		{name: "pi", kind: parsers.KindPiSession, sessionID: "pi:pi-1",
+			first: `{"type":"session","version":3,"id":"pi-1","cwd":"/w/demo"}` + "\n" +
+				`{"id":"u1","parentId":null,"type":"message","message":{"role":"user","content":"question 1"}}` + "\n" +
+				`{"id":"a1","parentId":"u1","type":"message","message":{"role":"assistant","content":"answer 1","stopReason":"stop"}}` + "\n",
+			second: `{"id":"u2","parentId":"a1","type":"message","message":{"role":"user","content":"question 2"}}` + "\n" +
+				`{"id":"a2","parentId":"u2","type":"message","message":{"role":"assistant","content":"answer 2","stopReason":"stop"}}` + "\n"},
+		{name: "qwen", kind: parsers.KindQwenCode, sessionID: "qwen-1",
+			target: Target{SourceAgent: "qwen-code", FileName: "session.jsonl"},
+			first: `{"type":"user","sessionId":"qwen-1","version":"1","message":{"parts":[{"text":"question 1"}]}}` + "\n" +
+				`{"type":"assistant","sessionId":"qwen-1","version":"1","message":{"parts":[{"text":"answer 1"}]}}` + "\n",
+			second: `{"type":"user","sessionId":"qwen-1","version":"1","message":{"parts":[{"text":"question 2"}]}}` + "\n" +
+				`{"type":"assistant","sessionId":"qwen-1","version":"1","message":{"parts":[{"text":"answer 2"}]}}` + "\n"},
+		{name: "grok", kind: parsers.KindGrokSession, sessionID: "grok-1",
+			first: `{"method":"session/update","params":{"sessionId":"grok-1","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"question 1"},"_meta":{"promptIndex":1}}}}` + "\n" +
+				`{"method":"session/update","params":{"sessionId":"grok-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"answer 1"}}}}` + "\n",
+			second: `{"method":"session/update","params":{"sessionId":"grok-1","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"question 2"},"_meta":{"promptIndex":2}}}}` + "\n" +
+				`{"method":"session/update","params":{"sessionId":"grok-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"answer 2"}}}}` + "\n"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "session.jsonl")
+			if testCase.kind == parsers.KindSubagent {
+				path = filepath.Join(t.TempDir(), "subagents", "child-1.jsonl")
+				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(path, []byte(testCase.first+testCase.second), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			state := harvestCursorState{
+				ByteOffset: int64(len(testCase.first)), PrefixDigest: digestBytes([]byte(testCase.first)),
+				ExchangeCursor: 1, ExchangeCursors: map[string]int{testCase.sessionID: 1},
+				LastExchangeComplete: true, ParserVersion: readingVersion(testCase.kind),
+			}
+			metadata, err := json.Marshal(state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			target := testCase.target
+			target.Path, target.Kind, target.SessionID = path, testCase.kind, testCase.sessionID
+			if target.FileName == "" {
+				target.FileName = filepath.Base(path)
+			}
+			result := Result{}
+			records, reason := read(t.Context(), Options{}, target,
+				incrementality.FileState{Metadata: metadata}, &result)
+			if reason != "" {
+				t.Fatal(reason)
+			}
+			if len(records.Sessions) != 1 || len(records.Sessions[0].Exchanges) != 1 {
+				t.Fatalf("incremental records = %+v", records)
+			}
+			exchange := records.Sessions[0].Exchanges[0]
+			if exchange.Number != 2 || exchange.HumanText != "question 2" {
+				t.Fatalf("incremental exchange = %+v", exchange)
+			}
+			if cursor := result.harvestCursors[path]; cursor.ExchangeCursor != 2 ||
+				cursor.ExchangeCursors[testCase.sessionID] != 2 {
+				t.Fatalf("persisted cursor = %+v", cursor)
+			}
+		})
+	}
+}
+
+func TestCodexHistoryCursorRemainsPerSession(t *testing.T) {
+	prefix := `{"session_id":"history-1","text":"one","ts":1785578401}` + "\n" +
+		`{"session_id":"history-2","text":"other","ts":1785578402}` + "\n"
+	tail := `{"session_id":"history-1","text":"two","ts":1785578403}` + "\n"
+	path := filepath.Join(t.TempDir(), "history.jsonl")
+	if err := os.WriteFile(path, []byte(prefix+tail), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state := harvestCursorState{
+		ByteOffset: int64(len(prefix)), PrefixDigest: digestBytes([]byte(prefix)),
+		ExchangeCursor: 1, ExchangeCursors: map[string]int{"history-1": 1, "history-2": 1},
+		LastExchangeComplete: true, ParserVersion: readingVersion(parsers.KindCodexHistory),
+	}
+	metadata, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := Result{}
+	records, reason := read(t.Context(), Options{}, Target{
+		Path: path, FileName: filepath.Base(path), Kind: parsers.KindCodexHistory,
+	}, incrementality.FileState{Metadata: metadata}, &result)
+	if reason != "" {
+		t.Fatal(reason)
+	}
+	if len(records.Sessions) != 1 || records.Sessions[0].ID != "history-1" ||
+		len(records.Sessions[0].Exchanges) != 1 || records.Sessions[0].Exchanges[0].Number != 2 {
+		t.Fatalf("incremental history records = %+v", records)
+	}
+	cursor := result.harvestCursors[path]
+	if cursor.ExchangeCursors["history-1"] != 2 || cursor.ExchangeCursors["history-2"] != 1 {
+		t.Fatalf("per-session history cursor = %+v", cursor.ExchangeCursors)
+	}
 }
 
 func TestIncompleteGrowingSessionFallsBackToACompleteReparse(t *testing.T) {

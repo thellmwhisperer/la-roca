@@ -27,6 +27,7 @@ type CompactReport struct {
 	VersionFTSDropped  bool  `json:"version_fts_dropped"`
 	HashIndexes        bool  `json:"hash_indexes"`
 	ArchiveRowsDropped bool  `json:"archive_rows_dropped"`
+	VacuumFreelist     int64 `json:"vacuum_freelist"`
 }
 
 type migrationSeal struct {
@@ -92,15 +93,24 @@ func Compact(ctx context.Context, path string) (CompactReport, error) {
 		return CompactReport{}, fmt.Errorf("compact could not install every hash-backed exact-payload guard")
 	}
 	versionFTSDropped, err := versionFTSAbsent(ctx, db)
-	closeErr := db.Close()
 	if err != nil {
+		db.Close()
 		return CompactReport{}, err
 	}
+	var vacuumFreelist int64
+	if err := db.QueryRowContext(ctx, `PRAGMA freelist_count`).Scan(&vacuumFreelist); err != nil {
+		db.Close()
+		return CompactReport{}, err
+	}
+	closeErr := db.Close()
 	if closeErr != nil {
 		return CompactReport{}, closeErr
 	}
 	if !versionFTSDropped {
 		return CompactReport{}, fmt.Errorf("compact left a version full-text index installed")
+	}
+	if vacuumFreelist != 0 {
+		return CompactReport{}, fmt.Errorf("compact left VACUUM freelist at %d", vacuumFreelist)
 	}
 	if after != before {
 		return CompactReport{}, fmt.Errorf(
@@ -130,6 +140,7 @@ func Compact(ctx context.Context, path string) (CompactReport, error) {
 		VersionFTSDropped:  versionFTSDropped,
 		HashIndexes:        hashIndexes,
 		ArchiveRowsDropped: custody == 0 && sourceRows == 0,
+		VacuumFreelist:     vacuumFreelist,
 	}, nil
 }
 

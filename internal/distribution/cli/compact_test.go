@@ -1,11 +1,15 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 )
 
 func TestCompactRefusesEveryReadOnlyControlBeforeOpeningTheTarget(t *testing.T) {
@@ -30,5 +34,27 @@ func TestCompactRefusesEveryReadOnlyControlBeforeOpeningTheTarget(t *testing.T) 
 				t.Fatalf("read-only compact touched target: %v", err)
 			}
 		})
+	}
+}
+
+func TestCompactOutputReportsTheMeasuredVacuumFreelist(t *testing.T) {
+	report := rocacorpus.CompactReport{VacuumFreelist: 0}
+	var product bytes.Buffer
+	if err := renderCompact(&cliEnv{out: &product}, report); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(product.String(), "VACUUM freelist 0") {
+		t.Fatalf("compact product output = %q", product.String())
+	}
+	var encoded bytes.Buffer
+	if err := renderCompact(&cliEnv{out: &encoded, json: true}, report); err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(encoded.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if value, found := payload["vacuum_freelist"]; !found || value != float64(0) {
+		t.Fatalf("compact JSON vacuum freelist = %v, present=%t", value, found)
 	}
 }
