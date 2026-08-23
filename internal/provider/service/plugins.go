@@ -85,6 +85,7 @@ func (s *Service) pluginsFor(ctx context.Context, input string,
 	candidates, warnings := plugin.Discover(s.opts.PluginDir)
 	candidates = s.onDemand(candidates)
 	limit := max(0, plugin.MaxAttached-len(s.resident)-s.layerRegistryAttachmentCost())
+	ctx = s.snapshotContext(ctx)
 	return s.withResidents(validatePluginRouteLimit(ctx,
 		selectPlugins(input, candidates), warnings, limit, s.opts.ReadOnly))
 }
@@ -158,6 +159,7 @@ func (s *Service) withResidents(route pluginRoute) pluginRoute {
 }
 
 func (s *Service) openResidents(ctx context.Context) error {
+	ctx = s.snapshotContext(ctx)
 	if !s.pluginsActive() && s.opts.PluginDir == "" {
 		return nil
 	}

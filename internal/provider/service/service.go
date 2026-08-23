@@ -161,6 +161,7 @@ type Service struct {
 
 	layoutMu         sync.Mutex
 	readLayout       ReadLayout
+	snapshotLog      store.SnapshotLogWriter
 	hubSearchMu      sync.Mutex
 	hubSearchReady   bool
 	hubSearchFailure error
@@ -173,17 +174,18 @@ func Open(opts Options) (*Service, error) {
 	return openWithContext(ctx, opts)
 }
 
-// EnableSnapshotLogs writes snapshot create and reap records to dataDir/logs.
-// The CLI calls it before any read-only snapshot is taken.
-func EnableSnapshotLogs(dataDir string) {
+func snapshotLogWriter(dataDir string) store.SnapshotLogWriter {
 	if strings.TrimSpace(dataDir) == "" {
-		store.SetSnapshotLogWriter(nil)
-		return
+		return nil
 	}
 	writer := logfile.New(dataDir)
-	store.SetSnapshotLogWriter(func(record map[string]any) error {
+	return func(record map[string]any) error {
 		return writer.Append(logfile.Snapshots, record)
-	})
+	}
+}
+
+func (s *Service) snapshotContext(ctx context.Context) context.Context {
+	return store.WithSnapshotLogWriter(ctx, s.snapshotLog)
 }
 
 func openWithContext(ctx context.Context, opts Options) (*Service, error) {
@@ -191,7 +193,6 @@ func openWithContext(ctx context.Context, opts Options) (*Service, error) {
 	if logDir == "" && opts.DBPath != "" {
 		logDir = filepath.Dir(opts.DBPath)
 	}
-	EnableSnapshotLogs(logDir)
 	registry, err := layers.Load()
 	if err != nil {
 		return nil, err
@@ -203,10 +204,14 @@ func openWithContext(ctx context.Context, opts Options) (*Service, error) {
 	if layout != LayoutLegacyServing && layout != LayoutShadowEqual && layout != LayoutCutover {
 		return nil, fmt.Errorf("unknown serving layout %q", layout)
 	}
-	svc := &Service{opts: opts, registry: registry, readLayout: layout}
+	svc := &Service{
+		opts: opts, registry: registry, readLayout: layout,
+		snapshotLog: snapshotLogWriter(logDir),
+	}
+	ctx = svc.snapshotContext(ctx)
 	if layout != LayoutCutover {
 		if opts.ReadOnly {
-			svc.legacy, err = store.OpenReadOnly(opts.DBPath)
+			svc.legacy, err = store.OpenReadOnlyContext(ctx, opts.DBPath)
 		} else {
 			svc.legacy, err = store.Open(opts.DBPath)
 		}

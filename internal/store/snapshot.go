@@ -1,5 +1,5 @@
 /**
- * @overview Creates leased read-only SQLite snapshots. ~950 lines, 7 public symbols.
+ * @overview Creates leased read-only SQLite snapshots. ~1000 lines, 8 public symbols.
  *
  *   READING GUIDE
  *   -------------
@@ -15,7 +15,7 @@
  *   PUBLIC API
  *   ----------
  *   ReadOnlySnapshot         Leased read-only database copy.
- *   SetSnapshotLogWriter     Selects the snapshot telemetry sink.
+ *   WithSnapshotLogWriter    Binds snapshot telemetry to an operation context.
  *   OpenReadOnlySnapshot     Opens or reuses a stable source snapshot.
  *   CloseReadOnlySnapshots   Closes every snapshot still held by the process.
  *   SQL                      Returns the copied database handle.
@@ -29,7 +29,7 @@
  *   claimSnapshotDirectory
  *   inspectSnapshotSource, copySnapshotSource, openCopiedSnapshot, cleanupHeldSnapshots
  *
- * @exports ReadOnlySnapshot, SetSnapshotLogWriter, OpenReadOnlySnapshot, CloseReadOnlySnapshots, SQL, URI, Close
+ * @exports ReadOnlySnapshot, SnapshotLogWriter, WithSnapshotLogWriter, OpenReadOnlySnapshot, CloseReadOnlySnapshots, SQL, URI, Close
  * @deps database/sql and modernc SQLite; internal/securefile; os/signal and filesystem
  */
 package store
@@ -109,19 +109,23 @@ type snapshotLease struct {
 	err       error
 }
 
-type snapshotLogSink struct {
-	append func(map[string]any) error
-}
+// SnapshotLogWriter records snapshot lifecycle telemetry.
+type SnapshotLogWriter func(map[string]any) error
+
+type snapshotLogContextKey struct{}
 
 var (
-	snapshotLogger       atomic.Pointer[snapshotLogSink]
 	snapshotShuttingDown atomic.Bool
 
 	snapshotCacheMu sync.Mutex
 	snapshotCache   = map[string]*snapshotArtifact{}
 	snapshotFlight  = map[string]*snapshotInflight{}
 
-	snapshotNamespaceMu sync.Mutex
+	snapshotNamespaceGate = func() chan struct{} {
+		gate := make(chan struct{}, 1)
+		gate <- struct{}{}
+		return gate
+	}()
 
 	snapshotHeldMu sync.Mutex
 	snapshotHeld   = map[*snapshotLease]struct{}{}
@@ -137,13 +141,9 @@ var (
 	snapshotUserIdentityFn            = snapshotUserIdentity
 )
 
-// SetSnapshotLogWriter routes snapshot create and reap records to telemetry.
-func SetSnapshotLogWriter(appendRecord func(map[string]any) error) {
-	if appendRecord == nil {
-		snapshotLogger.Store(nil)
-		return
-	}
-	snapshotLogger.Store(&snapshotLogSink{append: appendRecord})
+// WithSnapshotLogWriter binds snapshot lifecycle telemetry to ctx.
+func WithSnapshotLogWriter(ctx context.Context, writer SnapshotLogWriter) context.Context {
+	return context.WithValue(ctx, snapshotLogContextKey{}, writer)
 }
 
 // -/ 1/7
@@ -162,17 +162,7 @@ func OpenReadOnlySnapshot(ctx context.Context, path string) (*ReadOnlySnapshot, 
 		return nil, err
 	}
 	ensureSnapshotExitCleanup()
-	tempRoot := os.TempDir()
-	namespace, err := snapshotNamespaceRoot(tempRoot)
-	if err != nil {
-		return nil, err
-	}
-	if err := scavengeLegacyReadOnlySnapshots(ctx, tempRoot, namespace); err != nil {
-		return nil, err
-	}
-	if err := scavengeReadOnlySnapshots(ctx, namespace); err != nil {
-		return nil, err
-	}
+	logger := snapshotLogWriterFromContext(ctx)
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -215,7 +205,18 @@ func OpenReadOnlySnapshot(ctx context.Context, path string) (*ReadOnlySnapshot, 
 		snapshotFlight[abs] = flight
 		snapshotCacheMu.Unlock()
 
-		created, createErr := createReadOnlySnapshot(ctx, abs, before, namespace)
+		var created *snapshotArtifact
+		tempRoot := os.TempDir()
+		namespace, createErr := snapshotNamespaceRoot(tempRoot)
+		if createErr == nil {
+			createErr = scavengeLegacyReadOnlySnapshots(ctx, tempRoot, namespace)
+		}
+		if createErr == nil {
+			createErr = scavengeReadOnlySnapshots(ctx, namespace)
+		}
+		if createErr == nil {
+			created, createErr = createReadOnlySnapshot(ctx, abs, before, namespace, logger)
+		}
 		if createErr == nil && snapshotShuttingDown.Load() {
 			createErr = errors.Join(errSnapshotShuttingDown, created.destroy())
 			created = nil
@@ -275,8 +276,10 @@ func isSnapshotContextError(err error) bool {
 
 // -- 3/7 HELPER · Snapshot creation and atomic publication --
 
-func createReadOnlySnapshot(ctx context.Context, abs string, before snapshotSourceState, namespace string) (*snapshotArtifact, error) {
-	lease, directory, err := createSnapshotDirectory(namespace)
+func createReadOnlySnapshot(ctx context.Context, abs string, before snapshotSourceState, namespace string,
+	logger SnapshotLogWriter,
+) (*snapshotArtifact, error) {
+	lease, directory, err := createSnapshotDirectory(ctx, namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -338,7 +341,7 @@ func createReadOnlySnapshot(ctx context.Context, abs string, before snapshotSour
 		if err == nil && before == final {
 			snapshot.lease = lease
 			snapshot.fingerprint = snapshotFingerprint(abs, final)
-			logSnapshotRecord(map[string]any{
+			logSnapshotRecord(logger, map[string]any{
 				"event":      "create",
 				"source":     abs,
 				"size_bytes": snapshotSourceSize(before),
@@ -359,8 +362,8 @@ func createReadOnlySnapshot(ctx context.Context, abs string, before snapshotSour
 	return nil, abandon(fmt.Errorf("database %q kept changing while it was snapshotted", abs))
 }
 
-func createSnapshotDirectory(root string) (*snapshotLease, string, error) {
-	releaseNamespace, err := lockSnapshotNamespace(root)
+func createSnapshotDirectory(ctx context.Context, root string) (*snapshotLease, string, error) {
+	releaseNamespace, err := lockSnapshotNamespace(ctx, root)
 	if err != nil {
 		return nil, "", fmt.Errorf("lock read-only snapshot namespace: %w", err)
 	}
@@ -401,18 +404,50 @@ func createSnapshotDirectory(root string) (*snapshotLease, string, error) {
 	return lease, directory, nil
 }
 
-func lockSnapshotNamespace(root string) (func() error, error) {
-	snapshotNamespaceMu.Lock()
-	release, err := securefile.Lock(filepath.Join(root, snapshotNamespaceLeaseName))
+func lockSnapshotNamespace(ctx context.Context, root string) (func() error, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-snapshotNamespaceGate:
+	}
+	releaseGate := func() { snapshotNamespaceGate <- struct{}{} }
+	leasePath := filepath.Join(root, snapshotNamespaceLeaseName)
+	file, err := os.OpenFile(leasePath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
-		snapshotNamespaceMu.Unlock()
+		releaseGate()
 		return nil, err
 	}
-	return func() error {
-		err := release()
-		snapshotNamespaceMu.Unlock()
-		return err
-	}, nil
+	if err := errors.Join(file.Chmod(0o600), file.Close()); err != nil {
+		releaseGate()
+		return nil, err
+	}
+	for {
+		release, err := securefile.TryLock(leasePath)
+		if err == nil {
+			return func() error {
+				err := release()
+				releaseGate()
+				return err
+			}, nil
+		}
+		if !errors.Is(err, securefile.ErrBusy) {
+			releaseGate()
+			return nil, err
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			releaseGate()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 func snapshotNamespaceRoot(tempRoot string) (string, error) {
@@ -495,7 +530,7 @@ func scavengeLegacyReadOnlySnapshots(ctx context.Context, tempRoot, namespace st
 func scavengeSnapshotRoot(ctx context.Context, lockRoot, scanRoot, claimRoot string,
 	legacy bool,
 ) (resultErr error) {
-	releaseNamespace, err := lockSnapshotNamespace(lockRoot)
+	releaseNamespace, err := lockSnapshotNamespace(ctx, lockRoot)
 	if err != nil {
 		return fmt.Errorf("lock read-only snapshot namespace: %w", err)
 	}
@@ -523,7 +558,7 @@ func scavengeSnapshotRoot(ctx context.Context, lockRoot, scanRoot, claimRoot str
 		if !candidate {
 			continue
 		}
-		release, orphan, err := snapshotOrphanLease(path)
+		release, orphan, err := snapshotOrphanLease(ctx, path, legacy)
 		if err != nil {
 			reapErrors = append(reapErrors, fmt.Errorf("inspect orphan snapshot %q: %w", path, err))
 			continue
@@ -544,7 +579,14 @@ func scavengeSnapshotRoot(ctx context.Context, lockRoot, scanRoot, claimRoot str
 			}
 			continue
 		}
-		size := directorySize(claimed)
+		size, err := directorySize(ctx, claimed)
+		if err != nil {
+			if release != nil {
+				err = errors.Join(err, release())
+			}
+			reapErrors = append(reapErrors, fmt.Errorf("measure orphan snapshot %q: %w", claimed, err))
+			continue
+		}
 		if release != nil {
 			if err := release(); err != nil {
 				reapErrors = append(reapErrors, fmt.Errorf("release orphan snapshot lease %q: %w", claimed, err))
@@ -568,7 +610,7 @@ func scavengeSnapshotRoot(ctx context.Context, lockRoot, scanRoot, claimRoot str
 		reclaimed += size
 	}
 	if reaped > 0 {
-		logSnapshotRecord(map[string]any{
+		logSnapshotRecord(snapshotLogWriterFromContext(ctx), map[string]any{
 			"event":           "reap",
 			"count":           reaped,
 			"reclaimed_mb":    reclaimed / bytesPerMB,
@@ -619,12 +661,16 @@ func claimSnapshotDirectory(root, directory string) (string, error) {
 	return claimed, nil
 }
 
-func snapshotOrphanLease(directory string) (func() error, bool, error) {
+func snapshotOrphanLease(ctx context.Context, directory string, legacy bool) (func() error, bool, error) {
 	release, err := securefile.TryLock(filepath.Join(directory, snapshotLeaseName))
 	if err == nil {
 		return release, true, nil
 	}
 	if os.IsNotExist(err) {
+		if legacy {
+			live, probeErr := legacySnapshotHasOpenHandles(ctx, directory)
+			return nil, !live, probeErr
+		}
 		return nil, true, nil
 	}
 	if errors.Is(err, securefile.ErrBusy) {
@@ -683,9 +729,12 @@ func snapshotSourceSize(state snapshotSourceState) int64 {
 	return total
 }
 
-func directorySize(root string) int64 {
+func directorySize(ctx context.Context, root string) (int64, error) {
 	var total int64
-	_ = filepath.WalkDir(root, func(_ string, entry os.DirEntry, err error) error {
+	err := filepath.WalkDir(root, func(_ string, entry os.DirEntry, err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		if err != nil || entry.IsDir() {
 			return err
 		}
@@ -696,7 +745,7 @@ func directorySize(root string) int64 {
 		total += info.Size()
 		return nil
 	})
-	return total
+	return total, err
 }
 
 func copySnapshotSource(ctx context.Context, source, destination string) error {
@@ -862,7 +911,7 @@ func ensureSnapshotExitCleanup() {
 			cleaned := make(chan struct{})
 			go func() {
 				if namespace, err := snapshotNamespaceRoot(os.TempDir()); err == nil {
-					if release, err := lockSnapshotNamespace(namespace); err == nil {
+					if release, err := lockSnapshotNamespace(context.Background(), namespace); err == nil {
 						_ = release()
 					}
 				}
@@ -918,13 +967,17 @@ func cleanupHeldSnapshots() error {
 
 // -- 7/7 HELPER · JSONL telemetry --
 
-func logSnapshotRecord(record map[string]any) {
-	logger := snapshotLogger.Load()
-	if logger == nil {
+func snapshotLogWriterFromContext(ctx context.Context) SnapshotLogWriter {
+	writer, _ := ctx.Value(snapshotLogContextKey{}).(SnapshotLogWriter)
+	return writer
+}
+
+func logSnapshotRecord(writer SnapshotLogWriter, record map[string]any) {
+	if writer == nil {
 		return
 	}
 	record["timestamp"] = time.Now().UTC()
-	_ = logger.append(record)
+	_ = writer(record)
 }
 
 // -/ 7/7
