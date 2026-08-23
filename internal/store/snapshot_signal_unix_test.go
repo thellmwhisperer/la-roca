@@ -1,7 +1,7 @@
 //go:build !windows
 
 /**
- * @overview Verifies Unix signal cleanup for snapshot owners. ~120 lines, no public symbols.
+ * @overview Verifies Unix signal cleanup for snapshot owners. ~165 lines, no public symbols.
  *
  *   READING GUIDE
  *   -------------
@@ -18,18 +18,21 @@
  *   INTERNALS
  *   ---------
  *   TestCatchableSignalsRemoveOpenSnapshots, TestSignalDuringLeaseRegistrationCleansStaging
- *   TestSignalCleanupHasABoundedFallback
+ *   TestSignalCleanupHasABoundedFallback, TestSignalCleanupDoesNotWaitForNamespaceLock
  *
  * @exports
- * @deps testing; syscall
+ * @deps testing; filepath and syscall; internal/securefile
  */
 package store
 
 import (
 	"os"
+	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
 
 // -- 1/1 CORE · TestCatchableSignalsRemoveOpenSnapshots -- <- START HERE
@@ -118,6 +121,42 @@ func TestSignalCleanupHasABoundedFallback(t *testing.T) {
 	if dirs := listSnapshotDirs(t, root); len(dirs) != 0 {
 		t.Fatalf("next open left snapshot dirs %v", dirs)
 	}
+}
+
+func TestSignalCleanupDoesNotWaitForNamespaceLock(t *testing.T) {
+	root := isolateSnapshotTemp(t)
+	helper := startSnapshotHelper(t, root, fixtureDatabase(t), "hold-forever")
+	namespace := snapshotNamespaceForTest(t, root)
+	release, err := securefile.Lock(filepath.Join(namespace, snapshotNamespaceLeaseName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	locked := true
+	t.Cleanup(func() {
+		if locked {
+			_ = release()
+		}
+	})
+	if err := helper.cmd.Process.Signal(syscall.SIGHUP); err != nil {
+		t.Fatal(err)
+	}
+	waited := make(chan error, 1)
+	go func() { waited <- helper.wait() }()
+	select {
+	case err := <-waited:
+		if err == nil {
+			t.Fatal("signaled helper exited successfully")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("signal cleanup waited for the namespace lock")
+	}
+	if _, err := os.Stat(helper.directory); !os.IsNotExist(err) {
+		t.Fatalf("signal cleanup left snapshot while namespace was locked: %v", err)
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	locked = false
 }
 
 // -/ 1/1

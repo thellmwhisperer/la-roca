@@ -1,10 +1,11 @@
 /**
- * @overview Verifies completed CLI snapshot cleanup. ~125 lines, no public symbols.
+ * @overview Verifies completed CLI snapshot cleanup and telemetry. ~185 lines, no public symbols.
  *
  *   READING GUIDE
  *   -------------
  *   1. Start at TestCompletedReadOnlyCommandRemovesSnapshots  <- executable contract
  *   2. TestCompletedCommandDrainsExistingSnapshots            <- process boundary
+ *   3. TestCustodySnapshotUsesCLITelemetry                     <- pre-service logging
  *
  *   MAIN FLOW
  *   ---------
@@ -17,15 +18,17 @@
  *   INTERNALS
  *   ---------
  *   TestCompletedReadOnlyCommandRemovesSnapshots, TestCompletedCommandDrainsExistingSnapshots
+ *   TestCustodySnapshotUsesCLITelemetry
  *   snapshotDirectories
  *
  * @exports
- * @deps context; os/exec; internal/store; testing
+ * @deps context; os/exec; internal/logfile, rocaops, and store; testing
  */
 package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -33,7 +36,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/thellmwhisperer/la-roca/internal/distribution/logfile"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/store"
 )
 
@@ -108,6 +114,57 @@ func TestCompletedCommandDrainsExistingSnapshots(t *testing.T) {
 		t.Fatalf("completed command left snapshot directories %v, error = %v", directories, err)
 	}
 	_ = snapshot.Close()
+}
+
+func TestCustodySnapshotUsesCLITelemetry(t *testing.T) {
+	tempRoot := t.TempDir()
+	t.Setenv("TMPDIR", tempRoot)
+	t.Setenv("TMP", tempRoot)
+	t.Setenv("TEMP", tempRoot)
+	dataDir := t.TempDir()
+	orphan := filepath.Join(tempRoot, "roca-read-only-snapshot-custody-orphan")
+	if err := os.Mkdir(orphan, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(orphan, "payload"), []byte("orphan"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	opsPath := filepath.Join(dataDir, "ops.db")
+	database, err := store.Open(opsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	fenced, err := rocaops.MemoryCustodyWriterFenced(snapshotTelemetryContext(t.Context(), dataDir), opsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fenced {
+		t.Fatal("empty custody database reported a writer fence")
+	}
+	if directories, err := snapshotDirectories(tempRoot); err != nil || len(directories) != 0 {
+		t.Fatalf("custody check left snapshot directories %v, error = %v", directories, err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dataDir, logfile.DirName,
+		logfile.Snapshots+"-"+time.Now().UTC().Format(time.DateOnly)+".jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		var record struct {
+			Event string `json:"event"`
+		}
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatal(err)
+		}
+		events[record.Event] = true
+	}
+	if !events["create"] || !events["reap"] {
+		t.Fatalf("custody snapshot telemetry events = %v, want create and reap", events)
+	}
 }
 
 func snapshotDirectories(root string) ([]string, error) {

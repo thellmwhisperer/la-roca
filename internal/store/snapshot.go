@@ -15,6 +15,7 @@
  *   PUBLIC API
  *   ----------
  *   ReadOnlySnapshot         Leased read-only database copy.
+ *   SnapshotLogWriter        Snapshot lifecycle telemetry sink.
  *   WithSnapshotLogWriter    Binds snapshot telemetry to an operation context.
  *   OpenReadOnlySnapshot     Opens or reuses a stable source snapshot.
  *   CloseReadOnlySnapshots   Closes every snapshot still held by the process.
@@ -134,11 +135,12 @@ var (
 )
 
 var (
-	copySnapshotSourceFn              = copySnapshotSource
-	snapshotBeforeLeaseRegistrationFn func(string)
-	claimSnapshotDirectoryFn          = claimSnapshotDirectory
-	removeSnapshotDirectoryFn         = os.RemoveAll
-	snapshotUserIdentityFn            = snapshotUserIdentity
+	copySnapshotSourceFn             = copySnapshotSource
+	snapshotAfterLeaseRegistrationFn func(string)
+	claimSnapshotDirectoryFn         = claimSnapshotDirectory
+	removeSnapshotDirectoryFn        = os.RemoveAll
+	snapshotEntryInfoFn              = func(entry os.DirEntry) (os.FileInfo, error) { return entry.Info() }
+	snapshotUserIdentityFn           = snapshotUserIdentity
 )
 
 // WithSnapshotLogWriter binds snapshot lifecycle telemetry to ctx.
@@ -369,24 +371,34 @@ func createSnapshotDirectory(ctx context.Context, root string) (*snapshotLease, 
 	}
 	defer releaseNamespace()
 
+	snapshotHeldMu.Lock()
+	if snapshotShuttingDown.Load() {
+		snapshotHeldMu.Unlock()
+		return nil, "", errSnapshotShuttingDown
+	}
 	staging, err := os.MkdirTemp(root, snapshotStagingPrefix)
 	if err != nil {
+		snapshotHeldMu.Unlock()
 		return nil, "", fmt.Errorf("create read-only snapshot staging directory: %w", err)
 	}
 	leasePath := filepath.Join(staging, snapshotLeaseName)
 	if err := os.WriteFile(leasePath, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
+		snapshotHeldMu.Unlock()
 		return nil, "", cleanupSnapshotDirectory(staging, err)
 	}
 	release, err := securefile.LockExisting(leasePath)
 	if err != nil {
+		snapshotHeldMu.Unlock()
 		return nil, "", cleanupSnapshotDirectory(staging,
 			fmt.Errorf("lock read-only snapshot: %w", err))
 	}
 	lease := &snapshotLease{directory: staging, release: release}
-	if snapshotBeforeLeaseRegistrationFn != nil {
-		snapshotBeforeLeaseRegistrationFn(staging)
+	snapshotHeld[lease] = struct{}{}
+	snapshotHeldMu.Unlock()
+	if snapshotAfterLeaseRegistrationFn != nil {
+		snapshotAfterLeaseRegistrationFn(staging)
 	}
-	if !registerHeldSnapshot(lease) {
+	if snapshotShuttingDown.Load() {
 		return nil, "", lease.destroy(errSnapshotShuttingDown)
 	}
 
@@ -738,9 +750,9 @@ func directorySize(ctx context.Context, root string) (int64, error) {
 		if err != nil || entry.IsDir() {
 			return err
 		}
-		info, err := entry.Info()
+		info, err := snapshotEntryInfoFn(entry)
 		if err != nil {
-			return nil
+			return err
 		}
 		total += info.Size()
 		return nil
@@ -882,16 +894,6 @@ func (artifact *snapshotArtifact) destroy() error {
 	return artifact.err
 }
 
-func registerHeldSnapshot(lease *snapshotLease) bool {
-	snapshotHeldMu.Lock()
-	defer snapshotHeldMu.Unlock()
-	if snapshotShuttingDown.Load() {
-		return false
-	}
-	snapshotHeld[lease] = struct{}{}
-	return true
-}
-
 func unregisterHeldSnapshot(lease *snapshotLease) {
 	snapshotHeldMu.Lock()
 	delete(snapshotHeld, lease)
@@ -910,11 +912,6 @@ func ensureSnapshotExitCleanup() {
 			signal.Reset(terminating...)
 			cleaned := make(chan struct{})
 			go func() {
-				if namespace, err := snapshotNamespaceRoot(os.TempDir()); err == nil {
-					if release, err := lockSnapshotNamespace(context.Background(), namespace); err == nil {
-						_ = release()
-					}
-				}
 				cleanupHeldSnapshots()
 				close(cleaned)
 			}()
