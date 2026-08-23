@@ -90,6 +90,27 @@ func TestSignalDuringLeaseRegistrationCleansStaging(t *testing.T) {
 	}
 }
 
+func TestSignalDuringCopyRemovesSnapshot(t *testing.T) {
+	root := isolateSnapshotTemp(t)
+	helper := startSnapshotHelper(t, root, fixtureDatabase(t), "signal-during-copy")
+	if err := helper.cmd.Process.Signal(syscall.SIGHUP); err != nil {
+		t.Fatal(err)
+	}
+	waited := make(chan error, 1)
+	go func() { waited <- helper.wait() }()
+	select {
+	case err := <-waited:
+		if err == nil {
+			t.Fatal("signaled helper exited successfully")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("signaled helper did not exit")
+	}
+	if _, err := os.Stat(helper.directory); !os.IsNotExist(err) {
+		t.Fatalf("signal left snapshot directory during copy: %v", err)
+	}
+}
+
 func TestSignalCleanupHasABoundedFallback(t *testing.T) {
 	root := isolateSnapshotTemp(t)
 	helper := startSnapshotHelper(t, root, fixtureDatabase(t), "hold-query")
