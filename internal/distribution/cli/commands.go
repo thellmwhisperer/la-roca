@@ -811,7 +811,7 @@ func exploreCommand(env *cliEnv) *cobra.Command {
 
 func addDatabaseFlag(cmd *cobra.Command, dest *string) {
 	cmd.Flags().StringVar(dest, "databases", "",
-		"comma list of attached database names (corpus,ops), or all")
+		"comma list of attached database names to narrow the default federation, or all")
 }
 
 func databaseScopeCommand(env *cliEnv) *cobra.Command {
@@ -975,6 +975,7 @@ func axiQuery(answer queryAnswer) string {
 
 func execCommand(env *cliEnv) *cobra.Command {
 	var req service.ExecRequest
+	timeoutMS := -1
 	cmd := &cobra.Command{
 		Use:   "exec <SELECT>",
 		Short: "Run a SELECT under the read-only gate",
@@ -983,6 +984,10 @@ func execCommand(env *cliEnv) *cobra.Command {
 		Args: cobra.MinimumNArgs(1),
 		RunE: env.serviceRunE(func(cmd *cobra.Command, args []string, svc *service.Service) error {
 			req.SQL = strings.Join(args, " ")
+			if timeoutMS >= 0 {
+				req.Timeout = time.Duration(timeoutMS) * time.Millisecond
+				req.TimeoutSet = true
+			}
 			result, err := svc.Exec(cmd.Context(), req)
 			if err != nil {
 				return err
@@ -996,6 +1001,7 @@ func execCommand(env *cliEnv) *cobra.Command {
 		}),
 	}
 	cmd.Flags().IntVar(&req.MaxChars, "max-chars", service.DefaultMaxChars, "character budget per text field")
+	cmd.Flags().IntVar(&timeoutMS, "timeout-ms", -1, "statement budget in milliseconds; 0 disables the bound")
 	return cmd
 }
 

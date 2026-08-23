@@ -365,10 +365,6 @@ func (v VectorFragment) valid(declarations map[string]DatabaseDeclaration,
 				}
 				seenColumns[column] = true
 			}
-			if len(table.TimeColumns) == 0 && table.TimeJoin == nil {
-				return fmt.Errorf("vector table %s.%s declares no chronological columns",
-					database.Database, table.Name)
-			}
 			for _, column := range table.TimeColumns {
 				if !validIdentifier(column) || !columns[column] {
 					return fmt.Errorf("vector table %s.%s has invalid or missing time column %q",

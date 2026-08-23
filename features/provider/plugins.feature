@@ -5,7 +5,7 @@ Feature: Querying isolated plugin databases
   Background:
     Given an initialized home with no model
 
-  Scenario: A relevant plugin stays out of the default corpus-only answer
+  Scenario: A valid plugin joins the default whole-federation answer
     Given the synthetic plugin "well-formed" is installed
     And the provider configuration is:
       | provider | model             | availability |
@@ -13,7 +13,7 @@ Feature: Querying isolated plugin databases
     And the model answers with SQL "SELECT 1 AS answer LIMIT 1"
     When I ask "Which receipts were recorded?"
     Then the command exits with code 0
-    And the consulted databases are "core, plugin:roca-corpus"
+    And the consulted databases are "core, plugin:roca-corpus, plugin:well-formed"
 
   Scenario: A lying semantic layer degrades with a warning instead of becoming queryable
     Given the synthetic plugin "lying" is installed

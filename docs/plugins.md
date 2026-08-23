@@ -421,12 +421,14 @@ noise, and other deterministic-only fields out unless their meaning is itself
 the retrieval surface.
 
 Inside `vector.databases[].tables[]`, the author contract names the table,
-stable id column, opt-in prose columns, and chronological source. Use
-`time_columns` when the row carries its own timestamps. Use `time_join` when
-chronology comes from a related declared table; it names that table, the local
-and foreign join columns, and the related table's ordered `time_columns`. Every
-named chronological or join column must appear in the relevant semantic table's
-ordered `columns` list.
+stable id column, and opt-in prose columns. Chronology is optional: use
+`time_columns` when the row carries its own timestamps, or `time_join` when it
+comes from a related declared table. A chronological join names that table, the
+local and foreign join columns, and the related table's ordered `time_columns`.
+Every named chronological or join column must appear in the relevant semantic
+table's ordered `columns` list. When neither form is declared, newest-first
+ingest falls back to deterministic descending order on `id_column`, including
+for `WITHOUT ROWID` tables.
 
 ```json
 {"name": "receipts",

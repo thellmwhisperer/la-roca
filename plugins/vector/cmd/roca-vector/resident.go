@@ -27,7 +27,10 @@ func residentCommand(env *environment) *cobra.Command {
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			embedder, events := env.embedder()
+			if err := env.startBackgroundSetup(); err != nil {
+				return err
+			}
+			embedder, events := env.queryEmbedder()
 			encoder := json.NewEncoder(os.Stdout)
 			started := time.Now()
 			if err := encoder.Encode(engine.Progress("prewarm", "semantic search: preparing", 0, 1, 0)); err != nil {

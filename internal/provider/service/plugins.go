@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/query"
@@ -478,8 +479,18 @@ func schemaWithPlugins(includeCore bool, databases []plugin.Database) query.Sche
 	return plugin.Compose(base, databases)
 }
 
+type execBudget struct {
+	timeout time.Duration
+	set     bool
+}
+
 func (s *Service) executeWithPlugins(ctx context.Context, statement, term string,
 	maxChars int, databases []plugin.Database) ([]string, []map[string]any, error) {
+	return s.executeWithPluginsBudget(ctx, statement, term, maxChars, databases, execBudget{})
+}
+
+func (s *Service) executeWithPluginsBudget(ctx context.Context, statement, term string,
+	maxChars int, databases []plugin.Database, budget execBudget) ([]string, []map[string]any, error) {
 	if s.servingLayout() != LayoutLegacyServing && s.hub != nil && needsHubSearch(statement) {
 		if err := s.ensureHubSearch(ctx); err != nil {
 			if recoverErr := s.recoverHubSearchFailure(err); recoverErr != nil {
@@ -487,19 +498,22 @@ func (s *Service) executeWithPlugins(ctx context.Context, statement, term string
 			}
 		}
 	}
-	columns, rows, err := s.executeWithDatabase(ctx, statement, term, maxChars, databases, s.db)
+	columns, rows, err := s.executeWithDatabase(ctx, statement, term, maxChars, databases, s.db, budget)
 	if err != nil || s.servingLayout() != LayoutShadowEqual || s.hubDB == nil {
 		return columns, rows, err
 	}
 	hubColumns, hubRows, hubErr := s.executeWithDatabase(
-		ctx, statement, term, maxChars, databases, s.hubDB)
+		ctx, statement, term, maxChars, databases, s.hubDB, budget)
 	s.compareShadow(s.shadowEqual(columns, rows, hubColumns, hubRows), hubErr, "shadow rows differ")
 	return columns, rows, nil
 }
 
 func (s *Service) executeWithDatabase(ctx context.Context, statement, term string,
-	maxChars int, databases []plugin.Database, target *store.DB) ([]string, []map[string]any, error) {
+	maxChars int, databases []plugin.Database, target *store.DB, budget execBudget) ([]string, []map[string]any, error) {
 	timeout, bounded := s.queryExecutionBudget()
+	if budget.set {
+		timeout, bounded = budget.timeout, budget.timeout > 0
+	}
 	queryCtx := ctx
 	var cancel context.CancelFunc = func() {}
 	if bounded {

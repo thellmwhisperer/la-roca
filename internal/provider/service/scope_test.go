@@ -54,8 +54,8 @@ func TestResolveScopeSelectsOnlyNamedDatabases(t *testing.T) {
 		wantUnused  []string
 		wantErr     string
 	}{
-		{name: "default prefers corpus", wantCore: true, wantSchemas: []string{"plugin_roca_corpus"},
-			wantUnused: []string{"ops"}},
+		{name: "default is the whole federation", wantCore: true,
+			wantSchemas: []string{"plugin_roca_corpus", "plugin_roca_ops"}},
 		{name: "explicit pair", names: []string{"corpus", "ops"},
 			wantSchemas: []string{"plugin_roca_corpus", "plugin_roca_ops"}, wantUnused: []string{"core"}},
 		{name: "all attached", names: []string{"all"}, wantCore: true,
@@ -91,13 +91,14 @@ func TestResolveScopeSelectsOnlyNamedDatabases(t *testing.T) {
 	}
 }
 
-func TestDefaultScopeWithoutCorpusIsCore(t *testing.T) {
+func TestDefaultScopeWithoutCorpusStillIncludesOps(t *testing.T) {
 	ops := plugin.Database{Descriptor: plugin.Descriptor{
 		Name: rocaOpsPluginName, DatabaseName: "ops", Schema: "plugin_roca_ops",
 	}}
 	route, err := resolveScope(nil, pluginRoute{includeCore: true, databases: []plugin.Database{ops}})
-	if err != nil || !route.includeCore || len(route.databases) != 0 {
-		t.Fatalf("route = %+v, err = %v; want core only", route, err)
+	if err != nil || !route.includeCore || len(route.databases) != 1 ||
+		route.databases[0].Schema != "plugin_roca_ops" {
+		t.Fatalf("route = %+v, err = %v; want core and ops", route, err)
 	}
 }
 

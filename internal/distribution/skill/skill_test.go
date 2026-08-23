@@ -197,22 +197,6 @@ func TestShippedSkillsCarryTheSearchDoctrine(t *testing.T) {
 	}
 }
 
-func TestPluginGuideDocumentsTheChronologicalVectorAuthorContract(t *testing.T) {
-	body, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "plugins.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{
-		"the author contract names the table,\nstable id column, opt-in prose columns, and chronological source",
-		"{\"name\": \"receipts\",\n \"id_column\": \"id\",\n \"text_columns\": [\"title\"],\n \"time_columns\": [\"created_at\"]}",
-		"a\ndatabase with no `vector` declaration continues to serve through FTS and SQL\nexactly as before",
-	} {
-		if !strings.Contains(string(body), want) {
-			t.Errorf("plugin author guide missing %q", want)
-		}
-	}
-}
-
 func TestOnlyThePreviouslyShippedSkillHasALegacySignature(t *testing.T) {
 	embedded := skill.EmbeddedSkills()
 	if embedded[0].Name != skill.SkillName || embedded[0].Legacy == "" {
