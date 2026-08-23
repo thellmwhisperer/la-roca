@@ -73,15 +73,7 @@ func TestMissingCompanionLeavesServeQueriesUnaffected(t *testing.T) {
 }
 
 func TestCompanionCrashRetriesThenStaysDown(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fixture uses a POSIX executable")
-	}
-	root, data := t.TempDir(), t.TempDir()
-	starts := filepath.Join(data, "starts")
-	installCompanion(t, root, "mirror", "roca-mirror", []string{},
-		"#!/bin/sh\nn=0\n[ -f "+starts+" ] && n=$(cat "+starts+")\necho $((n+1)) > "+starts+"\nexit 1\n")
-	notices := &safeBuffer{}
-	set := startPluginCompanionsWithPolicy(root, data, notices, fastCompanionPolicy)
+	_, starts, notices, set := startCountingCompanion(t, "1")
 	defer set.Close()
 	waitFor(t, func() bool { return strings.Contains(notices.String(), "plugin mirror companion stopped") })
 	waitSettled(t, starts, 3)
@@ -94,15 +86,7 @@ func TestCompanionCrashRetriesThenStaysDown(t *testing.T) {
 }
 
 func TestCompanionCleanExitStopsWithoutCrashTelemetry(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fixture uses a POSIX executable")
-	}
-	root, data := t.TempDir(), t.TempDir()
-	starts := filepath.Join(data, "starts")
-	installCompanion(t, root, "mirror", "roca-mirror", []string{},
-		"#!/bin/sh\nn=0\n[ -f "+starts+" ] && n=$(cat "+starts+")\necho $((n+1)) > "+starts+"\nexit 0\n")
-	notices := &safeBuffer{}
-	set := startPluginCompanionsWithPolicy(root, data, notices, fastCompanionPolicy)
+	data, starts, notices, set := startCountingCompanion(t, "0")
 	defer set.Close()
 	waitFor(t, func() bool {
 		raw, err := os.ReadFile(starts)
@@ -123,6 +107,24 @@ func TestCompanionCleanExitStopsWithoutCrashTelemetry(t *testing.T) {
 	if !strings.Contains(body, `"event":"exited"`) || !strings.Contains(body, `"reason":"exit 0"`) {
 		t.Fatalf("clean exit telemetry missing exited/exit-0 record: %s", body)
 	}
+}
+
+// startCountingCompanion installs a companion that counts how many times it
+// has started into data/starts and then exits with the given code, raising it
+// with the fast test backoff. It returns the data dir, the starts path, the
+// notice buffer, and the raised set.
+func startCountingCompanion(t *testing.T, exitCode string) (data, starts string, notices *safeBuffer, set *companionSet) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture uses a POSIX executable")
+	}
+	root, data := t.TempDir(), t.TempDir()
+	starts = filepath.Join(data, "starts")
+	installCompanion(t, root, "mirror", "roca-mirror", []string{},
+		"#!/bin/sh\nn=0\n[ -f "+starts+" ] && n=$(cat "+starts+")\necho $((n+1)) > "+starts+"\nexit "+exitCode+"\n")
+	notices = &safeBuffer{}
+	set = startPluginCompanionsWithPolicy(root, data, notices, fastCompanionPolicy)
+	return data, starts, notices, set
 }
 
 func TestCompanionNeverResolvesThroughPATH(t *testing.T) {
