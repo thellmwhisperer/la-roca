@@ -92,6 +92,37 @@ func TestOneWriteFailureDoesNotAbortLaterSources(t *testing.T) {
 	}
 }
 
+func TestMemoryCheckConstraintRemainsAWriteError(t *testing.T) {
+	db := rocaDatabase(t)
+	ctx := context.Background()
+	var counts Counts
+	err := db.Write(ctx, func(tx *sql.Tx) error {
+		var err error
+		counts, err = WriteRecords(ctx, tx, registry(t), parsers.Records{
+			Memories: []parsers.Memory{{
+				Layer: "pattern", Content: "synthetic invalid memory", Origin: "invalid",
+				Source: "fixture", FilePath: "invalid-origin",
+			}},
+		})
+		return err
+	})
+	if err == nil || !strings.Contains(err.Error(), "CHECK constraint failed") {
+		t.Fatalf("invalid memory origin error = %v, want CHECK constraint failure", err)
+	}
+	if counts.MemoriesUnchanged != 0 {
+		t.Fatalf("memories unchanged = %d, want invalid row reported as an error",
+			counts.MemoriesUnchanged)
+	}
+	var landed int
+	if err := db.SQL().QueryRow(`SELECT COUNT(*) FROM memories WHERE content = ?`,
+		"synthetic invalid memory").Scan(&landed); err != nil {
+		t.Fatal(err)
+	}
+	if landed != 0 {
+		t.Fatalf("invalid memories landed = %d, want 0", landed)
+	}
+}
+
 func runCollidingSources(t *testing.T, transcript func(*world) string) (Result, int) {
 	t.Helper()
 	world, roots := collisionWorld(t)
