@@ -24,6 +24,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/axi"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
+	"github.com/thellmwhisperer/la-roca/internal/distribution/rocavector"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
 	"github.com/thellmwhisperer/la-roca/internal/provider"
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
@@ -206,13 +207,35 @@ func initCommand(env *cliEnv) *cobra.Command {
 				axi.Number(int64(result.RowsBefore.Memories)), axi.Number(int64(result.RowsBefore.Sessions)),
 				axi.Number(int64(result.RowsBefore.Exchanges)), axi.Number(int64(result.RowsBefore.ThinkingBlocks)),
 				axi.Number(int64(result.RowsBefore.ToolUses)))
-			if err := env.offerSemanticSearch(cmd.Context(), input, interactive, paths, configMissingAtStart); err != nil {
+			if err := env.ensureBundledVectorForInit(paths); err != nil {
 				return err
 			}
 			renderBootstrap(env, result)
-			return nil
+			return env.offerSemanticSearch(cmd.Context(), input, interactive, paths, configMissingAtStart)
 		},
 	}
+}
+
+func (env *cliEnv) ensureBundledVectorForInit(paths config.Paths) error {
+	payload := slices.Clone(env.bundledVectorPayload)
+	if payload == nil {
+		var err error
+		payload, err = rocavector.Payload()
+		if err != nil {
+			// Development and unit-test binaries are not release envelopes. They
+			// keep the existing companion discovery path; a shipped binary always
+			// carries the payload and must place it before asking for consent.
+			if strings.Contains(err.Error(), "does not carry a bundled vector executable") {
+				return nil
+			}
+			return fmt.Errorf("read bundled semantic search companion: %w", err)
+		}
+	}
+	if _, err := rocavector.EnsureWithPayload(pluginRoot(paths), pluginExecutableDir(paths),
+		env.build.Version, payload); err != nil {
+		return fmt.Errorf("install bundled semantic search companion: %w", err)
+	}
+	return nil
 }
 
 var terminalInput = func(in any) bool {

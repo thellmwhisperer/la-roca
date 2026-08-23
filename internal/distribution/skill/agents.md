@@ -39,17 +39,20 @@ of every installed database's tables and example questions. Read both
 before your first real search. If you cannot write skills into your
 runtime, `roca mcp install <runtime>` exposes the same operations as tools.
 
-## Step two (optional): add vector search after the first answer works
+## Step two (optional): add vector search
 
-Do not make the first working answer depend on vectors. Once init, skill
-installation, and the first query succeed, invite the user to build the optional
-index: one model download and one background build (a few hours, or a laptop
-left running overnight), and it pays back every day after. Set `vector = true`
-under `[features]` in `~/.roca/config.toml` (or in `config.toml` next to the
-database selected with `--db-path`), then install the index.
+Do not make the first working answer depend on vectors. Full-text search works
+first. During interactive init, invite the user to say yes to semantic search:
+that one remembered answer starts the one model download and a newest-first
+background build. No second setup command or separate runtime is needed.
+
+If they decline during init and choose semantic search later, set
+`vector = true` under `[features]` in `~/.roca/config.toml` (or in
+`config.toml` next to
+the database selected with `--db-path`), then start the build:
 
 ```sh
-roca vector install                    # one model download, then the newest-first index build
+roca vector install
 ```
 
 Tell your user the build is running, and offer them a live view of the

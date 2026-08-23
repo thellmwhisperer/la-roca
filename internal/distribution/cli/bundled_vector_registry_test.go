@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bufio"
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +11,60 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 )
+
+func TestInitPlacesBundledVectorBeforeConsentAndLegacyPath(t *testing.T) {
+	if os.PathSeparator == '\\' {
+		t.Skip("fixture uses a POSIX executable")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	legacyRoot := t.TempDir()
+	legacy := filepath.Join(legacyRoot, "roca-vector")
+	if err := os.WriteFile(legacy, []byte("#!/bin/sh\necho legacy companion selected >&2\nexit 9\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	argsPath := filepath.Join(t.TempDir(), "args")
+	t.Setenv("ROCA_TEST_VECTOR_ARGS", argsPath)
+	payload := []byte("#!/bin/sh\nprintf '%s' \"$*\" > \"$ROCA_TEST_VECTOR_ARGS\"\nprintf '%s\\n' '{\"background\":true}'\n")
+	paths, err := config.Resolve(config.Input{Home: home})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", pluginExecutableDir(paths)+string(os.PathListSeparator)+legacyRoot+
+		string(os.PathListSeparator)+os.Getenv("PATH"))
+	if err := os.MkdirAll(filepath.Dir(paths.Config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.Config, []byte("[features]\nplugins = true\nvector = false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	progress, err := os.OpenFile(filepath.Join(t.TempDir(), "progress"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer progress.Close()
+	var output bytes.Buffer
+	env := &cliEnv{build: Build{Version: "test"}, out: &output, errOut: progress,
+		dbPath: paths.DB, bundledVectorPayload: payload}
+	if err := env.ensureBundledVectorForInit(paths); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.offerSemanticSearch(t.Context(), bufio.NewReader(strings.NewReader("yes\n")),
+		true, paths, true); err != nil {
+		t.Fatal(err)
+	}
+	arguments, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(arguments), "install") ||
+		!strings.Contains(string(arguments), "--stream-progress") {
+		t.Fatalf("bundled companion arguments = %q", arguments)
+	}
+	if !strings.Contains(output.String(), "setup continues in the background") {
+		t.Fatalf("semantic setup output = %q", output.String())
+	}
+}
 
 func TestBundledPluginInstallRefreshesLegacyVectorRegistry(t *testing.T) {
 	home := t.TempDir()

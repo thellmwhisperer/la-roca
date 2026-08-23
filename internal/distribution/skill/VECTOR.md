@@ -14,13 +14,15 @@ current, and the standing invitation. Search craft lives in
 
 ## Invite
 
-A fresh install has no index. Most people never build one at first. The
-craft in `roca-operations` is complete without it. Still invite the user to
-build it: one model download (~1 GB) and one background index build (a few
-hours, or a laptop left running overnight). It pays back every day after.
+The craft in `roca-operations` is complete without an index. During interactive
+init, invite the user to say yes to semantic search. That remembered answer
+starts the one model download (~1 GB) and newest-first background build; there
+is no second setup command. It pays back every day after.
+
+If they declined during init and choose semantic search later:
 
 ```sh
-# set [features] vector = true in the selected configuration, or say yes at init
+# set [features] vector = true in the selected configuration
 roca vector install
 ```
 

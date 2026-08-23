@@ -62,14 +62,15 @@ second runtime, no daemon, and no extra command after you consent. The download
 is size- and checksum-verified before it becomes active, then reused by later
 indexing and queries.
 
-On those platforms, `roca init` keeps its single ritual: full-text search works
-first, one yes for semantic search, then the model download and the newest-first
-index build. `roca vector install` does the same download and build when you
-turn it on later.
+The [init flow](lifecycle.md#initialize) owns first-run consent and ordering. If
+semantic search is enabled there, no separate vector command is needed.
+`roca vector install` performs the same download and build only when you turn it
+on later.
 
-macOS and Linux run the embedding engine inside the vector companion.
-Windows keeps the previous local runtime path until its own native build
-lane ships; see the release notes.
+macOS and Linux run the embedding engine inside the vector companion. macOS
+uses hardware acceleration when available and falls back to CPU if it cannot
+start; Linux uses CPU. Windows keeps the previous local runtime path until its
+own native build lane ships; see the release notes.
 
 ## Index declared databases
 
@@ -96,7 +97,9 @@ never present in the central index fall through to embedding; an unreadable or
 incompatible legacy index is ignored and the ordinary build continues. The
 central index is removed only after every declared sidecar has completed
 successfully. Existing compatible indexes remain valid across the engine
-upgrade and do not need a full re-embedding pass.
+upgrade and do not need a full re-embedding pass. An older generated vector
+registry is accepted during upgrade and refreshed by core; it needs no manual
+migration.
 
 Worker coordination remains under `~/.roca/plugins/roca-vector/state/`
 (`%USERPROFILE%\.roca\plugins\roca-vector\state` on Windows). macOS and Linux
@@ -110,10 +113,10 @@ are not ready leave their databases on deterministic FTS and SQL. The
 timestamps time the first pass. During setup, download and indexing progress stream live with completed
 counts, the current time range, and an ETA. Indexing works from newest material
 toward the oldest history, so recent work becomes searchable first. Engine
-timings (load, pre-warm, query, throughput, backend and fallback, memory
-high-water, errors) are dated JSONL files in the data directory logs area,
-rotated, content-redacted, and never a database table. No telemetry leaves the
-machine.
+timings (load, pre-warm, per-query embedding, throughput, backend and fallback,
+memory high-water, and errors) are rotated, dated JSONL files at
+`<data-directory>/logs/engine-YYYY-MM-DD.jsonl`. They contain no query or
+document text, never enter a database table, and never leave the machine.
 
 Indexing is incremental after that. `vector ingest` always requires `--delta`:
 

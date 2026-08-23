@@ -104,9 +104,10 @@ If a config existed beside the resolved database when init began, init
 preserves it byte-for-byte, skips the chooser, and uses its current model
 selection; use `roca model set` for an intentional later change.
 
-A normal fresh init asks for the database, model, and confirmation. An ambiguous
-harness adds one question; adoption separately asks for its source path. It uses
-the agent CLI's existing session and does not add a login step.
+A normal fresh init asks for the database, model, confirmation, and one semantic
+search decision after full-text indexing is ready. An ambiguous harness adds one
+question; adoption separately asks for its source path. It uses the agent CLI's
+existing session and does not add a login step.
 
 Init also writes and registers `prompt.md` in the selected data directory. Its
 marked SYSTEM zone is shipped by La Roca; its marked USER zone belongs to the
@@ -139,6 +140,16 @@ selection without opening the chooser or adding model settings. A missing
 config still receives the new-install feature block above. Human output emits one
 `answering:` notice with the chosen provider/model and configuration path;
 scripts receive no prompts. `--json` remains one JSON document.
+
+On interactive input with no recorded semantic-search decision, init asks once
+after ingest and the full-text index are ready. The yes or no is stored in the
+selected configuration and is not asked again. Yes enables semantic search and
+starts the single embedding-model download plus newest-first indexing in the
+background; there is no separate runtime, daemon, or second setup command.
+Choosing no leaves full-text search working. To opt in later, enable
+`features.vector` and run `roca vector install`. Non-interactive init never asks
+or starts this optional setup. [Local vector search](vector.md) owns model,
+index, progress, and platform details.
 
 ## Skills
 
