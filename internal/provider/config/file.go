@@ -129,6 +129,33 @@ func ApplyText(text string, changes []Change) (string, error) {
 	return updated, nil
 }
 
+func HasValue(text, table, key string) (bool, error) {
+	if strings.TrimSpace(text) == "" {
+		return false, nil
+	}
+	var document map[string]any
+	if _, err := toml.Decode(text, &document); err != nil {
+		return false, fmt.Errorf("the configuration is not valid TOML: %w", err)
+	}
+	current := any(document)
+	for _, segment := range strings.Split(table, ".") {
+		values, ok := current.(map[string]any)
+		if !ok {
+			return false, nil
+		}
+		current, ok = values[segment]
+		if !ok {
+			return false, nil
+		}
+	}
+	values, ok := current.(map[string]any)
+	if !ok {
+		return false, nil
+	}
+	_, ok = values[key]
+	return ok, nil
+}
+
 func RedactProviderSecrets(text string) (string, error) {
 	var document map[string]any
 	if strings.TrimSpace(text) == "" {
@@ -671,6 +698,7 @@ type FeaturesConfig struct {
 	AskMissingReferent bool `toml:"ask_missing_referent"`
 	Plugins            bool `toml:"plugins"`
 	Vector             bool `toml:"vector"`
+	VectorConsent      bool `toml:"vector_consent"`
 	Cron               bool `toml:"cron"`
 	ArtifactRefresh    bool `toml:"artifact_refresh"`
 	RocaOps            bool `toml:"roca_ops"`

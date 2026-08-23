@@ -94,7 +94,7 @@ func TestVectorManifestValidationKeepsEmbeddabilityExplicitAndActionable(t *test
     "database": "records",
     "description": "Synthetic records.",
     "questions": ["Which synthetic records exist?"],
-    "tables": [{"name": "records", "description": "One synthetic record.", "columns": ["id", "title", "body", "telemetry"]}]
+    "tables": [{"name": "records", "description": "One synthetic record.", "columns": ["id", "title", "body", "telemetry", "created_at"]}]
   }]},
   "vector": {"databases": [{
     "database": "records",
@@ -102,6 +102,7 @@ func TestVectorManifestValidationKeepsEmbeddabilityExplicitAndActionable(t *test
       "name": "records",
       "id_column": "id",
       "text_columns": ["title", "body"],
+      "time_columns": ["created_at"],
       "chunking": {"max_chars": 4000, "overlap_chars": 400}
     }]
   }]},
@@ -114,6 +115,7 @@ func TestVectorManifestValidationKeepsEmbeddabilityExplicitAndActionable(t *test
 	}
 	table := manifest.Vector.Databases[0].Tables[0]
 	if !slices.Equal(table.TextColumns, []string{"title", "body"}) ||
+		!slices.Equal(table.TimeColumns, []string{"created_at"}) ||
 		table.Chunking == nil || *table.Chunking.MaxChars != 4000 || *table.Chunking.OverlapChars != 400 {
 		t.Fatalf("vector table = %+v", table)
 	}
@@ -198,14 +200,14 @@ func TestManifestEngineDiscoversAttachesComposesAndRegisters(t *testing.T) {
   ],
   "semantic": {"databases": [
     {"database": "records", "description": "Synthetic records.", "questions": ["Which synthetic records exist?"], "tables": [
-      {"name": "records", "description": "One synthetic record.", "columns": ["id", "value"]}
+      {"name": "records", "description": "One synthetic record.", "columns": ["id", "value", "created_at"]}
     ]},
     {"database": "runs", "description": "Synthetic run history and errors.", "questions": ["Which synthetic runs failed?"], "tables": [
       {"name": "runs", "description": "One synthetic run.", "columns": ["id", "error"]}
     ]}
   ]},
   "vector": {"databases": [{"database": "records", "tables": [{
-    "name": "records", "id_column": "id", "text_columns": ["value"],
+    "name": "records", "id_column": "id", "text_columns": ["value"], "time_columns": ["created_at"],
     "chunking": {"max_chars": 2400, "overlap_chars": 240}
   }]}]},
   "verbs": [{"name": "inspect", "description": "Inspect synthetic records.", "capability": "inspect"}],
@@ -215,7 +217,7 @@ func TestManifestEngineDiscoversAttachesComposesAndRegisters(t *testing.T) {
 		t.Fatal(err)
 	}
 	createManifestDatabase(t, filepath.Join(directory, "records.db"),
-		`CREATE TABLE records (id INTEGER PRIMARY KEY, value TEXT); INSERT INTO records (value) VALUES ('cobalt');`)
+		`CREATE TABLE records (id INTEGER PRIMARY KEY, value TEXT, created_at TEXT); INSERT INTO records (value,created_at) VALUES ('cobalt','2026-01-01');`)
 	createManifestDatabase(t, filepath.Join(directory, "runs.db"),
 		`CREATE TABLE runs (id INTEGER PRIMARY KEY, error TEXT); INSERT INTO runs (error) VALUES ('synthetic failure');`)
 
@@ -244,7 +246,7 @@ func TestManifestEngineDiscoversAttachesComposesAndRegisters(t *testing.T) {
 	if len(registry.Databases) != 1 || registry.Databases[0].Plugin != "synthetic" ||
 		registry.Databases[0].Database != "records" || registry.Databases[0].Path != "records.db" ||
 		registry.Databases[0].Alias != "synthetic_records" ||
-		!slices.Equal(registry.Databases[0].Tables[0].Columns, []string{"id", "value"}) {
+		!slices.Equal(registry.Databases[0].Tables[0].Columns, []string{"id", "value", "created_at"}) {
 		t.Fatalf("vector registry = %+v", registry)
 	}
 	if len(registry.Routes) != 2 || registry.Routes[0].Database != "records" ||
@@ -258,7 +260,7 @@ func TestManifestEngineDiscoversAttachesComposesAndRegisters(t *testing.T) {
 	loadedRegistry, err := plugin.LoadVectorRegistry(registryPath)
 	if err != nil || len(loadedRegistry.Databases) != 1 || len(loadedRegistry.Routes) != 2 ||
 		!slices.Equal(loadedRegistry.Databases[0].Tables[0].TextColumns, []string{"value"}) ||
-		!slices.Equal(loadedRegistry.Databases[0].Tables[0].Columns, []string{"id", "value"}) {
+		!slices.Equal(loadedRegistry.Databases[0].Tables[0].Columns, []string{"id", "value", "created_at"}) {
 		t.Fatalf("loaded vector registry = %+v, err = %v", loadedRegistry, err)
 	}
 	invalidRegistry := registry
@@ -303,6 +305,35 @@ func TestManifestEngineDiscoversAttachesComposesAndRegisters(t *testing.T) {
 		registrations[0].MCP != "roca_inspect" || registrations[0].Binary != "roca-synthetic" ||
 		!slices.Equal(registrations[0].Command, []string{"inspect"}) {
 		t.Fatalf("verb registrations = %+v", registrations)
+	}
+}
+
+func TestLoadVectorRegistryAcceptsSchemaOneHomes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), plugin.VectorRegistryFilename)
+	body := `{
+  "schema": 1,
+  "databases": [{
+    "plugin": "synthetic",
+    "database": "records",
+    "path": "records.db",
+    "alias": "synthetic_records",
+    "tables": [{
+      "name": "records",
+      "id_column": "id",
+      "text_columns": ["value"]
+    }]
+  }]
+}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := plugin.LoadVectorRegistry(path)
+	if err != nil {
+		t.Fatalf("load schema-1 registry: %v", err)
+	}
+	if registry.Schema != 1 || len(registry.Databases) != 1 || registry.Routes == nil ||
+		!slices.Equal(registry.Databases[0].Tables[0].TextColumns, []string{"value"}) {
+		t.Fatalf("schema-1 registry = %+v", registry)
 	}
 }
 

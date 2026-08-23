@@ -64,34 +64,114 @@ func (c CoreCLI) WalkSources(ctx context.Context, sourceKind string, visit func(
 	if err := validateSourceKind(sourceKind, nil); err != nil {
 		return err
 	}
+	iterators := []*corePageIterator{}
 	for _, source := range corePages() {
 		if sourceKind != "" && source.kind != sourceKind {
 			continue
 		}
-		cursor := source.initial
-		for {
-			rows, err := c.query(ctx, source.query(cursor))
-			if err != nil {
-				return fmt.Errorf("read core %s: %w", source.kind, err)
+		iterator := &corePageIterator{core: c, page: source, cursor: source.initial}
+		if err := iterator.advance(ctx); err != nil {
+			return err
+		}
+		iterators = append(iterators, iterator)
+	}
+	for {
+		selected := -1
+		for index, iterator := range iterators {
+			if iterator.current == nil {
+				continue
 			}
-			for _, values := range rows {
-				row, next, err := source.decode(values)
-				if err != nil {
-					return fmt.Errorf("decode core %s: %w", source.kind, err)
-				}
-				cursor = next
-				for _, item := range expandDecoded(row, values) {
-					if err := visit(item); err != nil {
-						return err
-					}
-				}
-			}
-			if len(rows) < walkPageSize {
-				break
+			if selected < 0 || sourceNewer(*iterator.current, *iterators[selected].current) {
+				selected = index
 			}
 		}
+		if selected < 0 {
+			return nil
+		}
+		if err := visit(*iterators[selected].current); err != nil {
+			return err
+		}
+		if err := iterators[selected].advance(ctx); err != nil {
+			return err
+		}
 	}
-	return nil
+}
+
+type corePageIterator struct {
+	core    CoreCLI
+	page    corePage
+	cursor  string
+	rows    []sourceRow
+	index   int
+	done    bool
+	current *sourceRow
+}
+
+func (i *corePageIterator) advance(ctx context.Context) error {
+	for {
+		if i.index < len(i.rows) {
+			row := i.rows[i.index]
+			i.index++
+			i.current = &row
+			return nil
+		}
+		if i.done {
+			i.current = nil
+			return nil
+		}
+		values, err := i.core.query(ctx, i.page.query(i.cursor))
+		if err != nil {
+			return fmt.Errorf("read core %s: %w", i.page.kind, err)
+		}
+		i.done = len(values) < walkPageSize
+		i.rows = i.rows[:0]
+		i.index = 0
+		for _, value := range values {
+			row, next, err := i.page.decode(value)
+			if err != nil {
+				return fmt.Errorf("decode core %s: %w", i.page.kind, err)
+			}
+			i.cursor = next
+			i.rows = append(i.rows, expandDecoded(row, value)...)
+		}
+	}
+}
+
+func (c CoreCLI) CountChunks(ctx context.Context, sourceKind string) (int64, error) {
+	if err := validateSourceKind(sourceKind, nil); err != nil {
+		return 0, err
+	}
+	sessionText := fmt.Sprintf(`trim(COALESCE(title,'') || CASE WHEN COALESCE(title,'')<>'' AND %s<>'' THEN char(10) ELSE '' END || %s)`,
+		sessionProjectName, sessionProjectName)
+	statements := map[string]string{
+		"memories": fmt.Sprintf(`SELECT COALESCE(SUM(%s),0) AS total FROM %s WHERE COALESCE(content,'')<>''`,
+			chunkCountExpression("COALESCE(content,'')", defaultChunkSize, defaultOverlap), corpusTable("memories")),
+		"exchanges": fmt.Sprintf(`SELECT COALESCE(SUM(%s),0) AS total FROM %s WHERE COALESCE(human_text,'')<>'' OR COALESCE(agent_text,'')<>''`,
+			chunkCountExpression(exchangeText, defaultChunkSize, defaultOverlap), corpusTable("exchanges")),
+		"thinking_blocks": fmt.Sprintf(`SELECT COALESCE(SUM(%s),0) AS total FROM %s WHERE COALESCE(full_text,'')<>''`,
+			chunkCountExpression("COALESCE(full_text,'')", defaultChunkSize, defaultOverlap), corpusTable("thinking_blocks")),
+		"sessions": fmt.Sprintf(`SELECT COALESCE(SUM(%s),0) AS total FROM %s WHERE COALESCE(title,'')<>'' OR %s<>''`,
+			chunkCountExpression(sessionText, defaultChunkSize, defaultOverlap), corpusTable("sessions"), sessionProjectName),
+	}
+	var total int64
+	for _, kind := range []string{"memories", "exchanges", "thinking_blocks", "sessions"} {
+		if sourceKind != "" && sourceKind != kind {
+			continue
+		}
+		rows, err := c.query(ctx, statements[kind])
+		if err != nil {
+			return 0, fmt.Errorf("count core %s: %w", kind, err)
+		}
+		if len(rows) != 1 {
+			return 0, fmt.Errorf("count core %s returned %d rows", kind, len(rows))
+		}
+		count, err := integer(rows[0], "total")
+		if err != nil {
+			return 0, err
+		}
+		total += count
+	}
+	return total, nil
 }
 
 func (c CoreCLI) ResolveDatabaseScope(ctx context.Context, databases string) (DatabaseScope, error) {
@@ -170,16 +250,24 @@ func corePages() []corePage {
 			decode: decodeExchange,
 		},
 		{
-			kind: "thinking_blocks", initial: newestIDCursor,
+			kind: "thinking_blocks", initial: joinCursor(newestTimeCursor, newestIDCursor),
 			query: func(cursor string) string {
-				return fmt.Sprintf(`SELECT t.id,COALESCE(t.session_id,'') AS session_id,t.exchange_number,
-					t.position_in_session,COALESCE(t.full_text,'') AS text,
-					COALESCE(s.title,'') AS context_title, COALESCE(%s,'') AS context_project,
-					COALESCE(s.started_at,'') AS occurred_at
-					FROM %s t LEFT JOIN %s s ON s.session_id = t.session_id
-					WHERE COALESCE(t.full_text,'') <> '' AND t.id < %s ORDER BY t.id DESC LIMIT %d`,
+				ts, id := splitCursor(cursor)
+				return fmt.Sprintf(`WITH ordered_thinking AS (
+					SELECT t.id,COALESCE(t.session_id,'') AS session_id,t.exchange_number,
+						t.position_in_session,COALESCE(t.full_text,'') AS text,
+						COALESCE(s.title,'') AS context_title, COALESCE(%s,'') AS context_project,
+						COALESCE(e.agent_timestamp,e.human_timestamp,s.started_at,'') AS occurred_at
+					FROM %s AS t
+					LEFT JOIN %s AS e ON e.session_id=t.session_id AND e.exchange_number=t.exchange_number
+					LEFT JOIN %s AS s ON s.session_id=t.session_id
+					WHERE COALESCE(t.full_text,'') <> ''
+				) SELECT * FROM ordered_thinking
+				WHERE occurred_at < %s OR (occurred_at = %s AND id < %s)
+				ORDER BY occurred_at DESC,id DESC LIMIT %d`,
 					strings.ReplaceAll(sessionProjectName, "metadata", "s.metadata"),
-					corpusTable("thinking_blocks"), corpusTable("sessions"), cursor, walkPageSize)
+					corpusTable("thinking_blocks"), corpusTable("exchanges"), corpusTable("sessions"),
+					sqlLiteral(ts), sqlLiteral(ts), id, walkPageSize)
 			},
 			decode: decodeThinking,
 		},
@@ -255,7 +343,7 @@ func decodeThinking(values map[string]any) (sourceRow, string, error) {
 	if position, ok := nullableFloat(values["position_in_session"]); ok {
 		row.position = strconv.FormatFloat(position, 'g', -1, 64)
 	}
-	return row, strconv.FormatInt(id, 10), nil
+	return row, joinCursor(row.occurredAt, strconv.FormatInt(id, 10)), nil
 }
 
 func decodeSession(values map[string]any) (sourceRow, string, error) {

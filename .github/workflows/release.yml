@@ -57,10 +57,57 @@ jobs:
           UPGRADE_HOME: ${{ matrix.version }}
         run: make upgrade-gauntlet UPGRADE_HOME="$UPGRADE_HOME"
 
+  native-artifacts:
+    needs: upgrade-gauntlet
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            runner: macos-14
+            compatibility: false
+          - target: linux-amd64
+            runner: ubuntu-latest
+            compatibility: true
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+            compatibility: false
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Native build tools
+        if: startsWith(matrix.target, 'linux-')
+        run: sudo apt-get update && sudo apt-get install -y cmake g++
+      - name: Build native release artifacts
+        env:
+          VERSION: ${{ inputs.tag || github.ref_name }}
+        run: |
+          make "${{ matrix.target }}" VERSION="$VERSION"
+          if [ "${{ matrix.compatibility }}" = true ]; then
+            make windows-amd64 VERSION="$VERSION"
+          fi
+      - name: Preserve release artifact modes
+        run: ./scripts/archive-release-lane.sh bin "release-${{ matrix.target }}.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: release-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+
   # One red leg of the matrix fails the whole job, so no historical home can
   # stop upgrading and still be published over.
   publish:
-    needs: upgrade-gauntlet
+    needs: [upgrade-gauntlet, native-artifacts]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -77,6 +124,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Native build tools
+        run: sudo apt-get update && sudo apt-get install -y cmake g++
+
       # A release nobody could merge is a release nobody should install. The
       # same gate the pull request had to pass, run again over the tag, because a
       # tag can point anywhere. `make check` builds the binary and runs the
@@ -90,14 +140,18 @@ jobs:
       - name: Format, vet, tests and build of the vector module
         run: make -C plugins/vector check
 
-      # The version the binary reports IS the tag, injected through the
-      # Makefile's ldflags. Everything downstream depends on it: the artefact
-      # names carry it, `roca update` compares against it to decide whether it
-      # is already the latest, and `install.sh` reads it to skip a reinstall.
-      - name: The core and vector artefacts from a single runner
-        env:
-          VERSION: ${{ inputs.tag || github.ref_name }}
-        run: make dist VERSION="$VERSION"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: .tmp/release-lanes
+          merge-multiple: true
+
+      - name: Aggregate native release artifacts
+        run: |
+          mkdir -p bin
+          for archive in .tmp/release-lanes/release-*.tar.gz; do
+            tar -C bin -xzf "$archive"
+          done
 
       # The Linux core, its materialized vector companion and the standalone
       # vector archive all answer the tag, and the package manifest carries that

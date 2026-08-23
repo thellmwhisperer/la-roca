@@ -74,10 +74,19 @@ type VectorDatabase struct {
 }
 
 type VectorTable struct {
-	Name        string         `json:"name"`
-	IDColumn    string         `json:"id_column"`
-	TextColumns []string       `json:"text_columns"`
-	Chunking    *ChunkingHints `json:"chunking,omitempty"`
+	Name        string          `json:"name"`
+	IDColumn    string          `json:"id_column"`
+	TextColumns []string        `json:"text_columns"`
+	TimeColumns []string        `json:"time_columns,omitempty"`
+	TimeJoin    *VectorTimeJoin `json:"time_join,omitempty"`
+	Chunking    *ChunkingHints  `json:"chunking,omitempty"`
+}
+
+type VectorTimeJoin struct {
+	Table         string   `json:"table"`
+	LocalColumn   string   `json:"local_column"`
+	ForeignColumn string   `json:"foreign_column"`
+	TimeColumns   []string `json:"time_columns"`
 }
 
 // ChunkingHints lets a database describe useful boundaries without owning the
@@ -356,6 +365,34 @@ func (v VectorFragment) valid(declarations map[string]DatabaseDeclaration,
 				}
 				seenColumns[column] = true
 			}
+			if len(table.TimeColumns) == 0 && table.TimeJoin == nil {
+				return fmt.Errorf("vector table %s.%s declares no chronological columns",
+					database.Database, table.Name)
+			}
+			for _, column := range table.TimeColumns {
+				if !validIdentifier(column) || !columns[column] {
+					return fmt.Errorf("vector table %s.%s has invalid or missing time column %q",
+						database.Database, table.Name, column)
+				}
+			}
+			if join := table.TimeJoin; join != nil {
+				joined, exists := semanticTables[database.Database][join.Table]
+				joinedColumns := make(map[string]bool, len(joined.Columns))
+				for _, column := range joined.Columns {
+					joinedColumns[column] = true
+				}
+				if !exists || !columns[join.LocalColumn] || !joinedColumns[join.ForeignColumn] ||
+					len(join.TimeColumns) == 0 {
+					return fmt.Errorf("vector table %s.%s has an invalid chronological join",
+						database.Database, table.Name)
+				}
+				for _, column := range join.TimeColumns {
+					if !validIdentifier(column) || !joinedColumns[column] {
+						return fmt.Errorf("vector table %s.%s has invalid joined time column %q",
+							database.Database, table.Name, column)
+					}
+				}
+			}
 			if err := table.Chunking.valid(database.Database, table.Name); err != nil {
 				return err
 			}
@@ -427,6 +464,12 @@ func (m Manifest) vectorFor(name string) []VectorTable {
 
 func cloneVectorTable(table VectorTable) VectorTable {
 	table.TextColumns = slices.Clone(table.TextColumns)
+	table.TimeColumns = slices.Clone(table.TimeColumns)
+	if table.TimeJoin != nil {
+		join := *table.TimeJoin
+		join.TimeColumns = slices.Clone(join.TimeColumns)
+		table.TimeJoin = &join
+	}
 	if table.Chunking != nil {
 		chunking := *table.Chunking
 		if chunking.MaxChars != nil {

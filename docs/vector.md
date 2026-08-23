@@ -3,8 +3,8 @@
 Vector retrieval is opt-in and off by default. The release core carries its
 matching `roca-vector` companion; the installation step extracts the companion
 next to `roca`, and the switch only unhides dispatch. It does not require
-`features.plugins`. Windows is a first-class indexing seat: the matching
-artefacts are `roca-<version>-windows-x64.exe` (core, carrying
+`features.plugins`. Windows remains an indexing seat through its compatibility
+payload: the matching artefacts are `roca-<version>-windows-x64.exe` (core, carrying
 `roca-vector.exe`) and
 `roca-vector-vX.Y.Z-windows-x64.tar.gz` (standalone archive in the same
 release).
@@ -54,43 +54,25 @@ That exposes `roca vector` and lists `vector` in `roca plugins`. Absent or
 false, the command does not exist. On Windows, keep `roca-vector.exe` beside
 `roca.exe` in the directory on `PATH`.
 
-## Prerequisites
+## The one download
 
-Ollama must be running locally (default `http://127.0.0.1:11434`).
+On macOS and Linux, semantic search downloads one embedding model (~1 GB) into
+the selected Roca data directory. That is the only extra download. There is no
+second runtime, no daemon, and no extra command after you consent. The download
+is size- and checksum-verified before it becomes active, then reused by later
+indexing and queries.
 
-The embedding model is `nomic-embed-text-v2-moe` (~957 MB). Pull it
-**before** the first index build. The download happens once; later delta
-ingest and queries reuse the local copy. The `vector install` command will
-pull the model if it is missing — do the explicit pull first so the size
-is not a surprise inside a background worker:
+The [init flow](lifecycle.md#initialize) owns first-run consent and ordering. If
+semantic search is enabled there, no separate vector command is needed.
+`roca vector install` performs the same download and build only when you turn it
+on later.
 
-```
-ollama pull nomic-embed-text-v2-moe
-```
-
-### Ollama on Windows
-
-1. Install Ollama from https://ollama.com/download (Windows installer
-   `OllamaSetup.exe`). Official notes: https://docs.ollama.com/windows.
-   The installer does not require Administrator rights. After it
-   finishes, Ollama stays in the system tray and serves
-   `http://127.0.0.1:11434`.
-2. Open a **new** terminal (`cmd` or PowerShell) and confirm with
-   `ollama --version`.
-3. Pull the embedding model above (~957 MB, one-time) before
-   the `vector install` step below.
-
-NVIDIA GPUs accelerate this model. On a machine with no GPU, Ollama
-runs on CPU.
-
-### Ollama on macOS and Linux
-
-Install Ollama from https://ollama.com/download, start the daemon, then
-pull the same model before the first index build.
+macOS and Linux run the embedding engine inside the vector companion. macOS
+uses hardware acceleration when available and falls back to CPU if it cannot
+start; Linux uses CPU. Windows keeps the previous local runtime path until its
+own native build lane ships; see the release notes.
 
 ## Index declared databases
-
-Start the first build only after the model pull has finished:
 
 ```sh
 roca vector install
@@ -114,7 +96,10 @@ partial build. Fingerprint mismatches, changed chunking, and content that was
 never present in the central index fall through to embedding; an unreadable or
 incompatible legacy index is ignored and the ordinary build continues. The
 central index is removed only after every declared sidecar has completed
-successfully.
+successfully. Existing compatible indexes remain valid across the engine
+upgrade and do not need a full re-embedding pass. An older generated vector
+registry is accepted during upgrade and refreshed by core; it needs no manual
+migration.
 
 Worker coordination remains under `~/.roca/plugins/roca-vector/state/`
 (`%USERPROFILE%\.roca\plugins\roca-vector\state` on Windows). macOS and Linux
@@ -125,7 +110,13 @@ Windows sends no desktop notification: inspect `completion.json` or
 completion record describes that worker run; query readiness is checked from
 each selected sidecar's owner, model, and dimensions metadata. Sidecars that
 are not ready leave their databases on deterministic FTS and SQL. The
-timestamps time the first pass on this machine.
+timestamps time the first pass. During setup, download and indexing progress stream live with completed
+counts, the current time range, and an ETA. Indexing works from newest material
+toward the oldest history, so recent work becomes searchable first. Engine
+timings (load, pre-warm, per-query embedding, throughput, backend and fallback,
+memory high-water, and errors) are rotated, dated JSONL files at
+`<data-directory>/logs/engine-YYYY-MM-DD.jsonl`. They contain no query or
+document text, never enter a database table, and never leave the machine.
 
 Indexing is incremental after that. `vector ingest` always requires `--delta`:
 
@@ -164,28 +155,7 @@ roca vector --db-path /path/to/roca.db ingest --delta
 
 `ROCA_READ_ONLY` refuses `install`, `ingest --delta`, and `compact`.
 
-## Time and disk
-
-Throughput depends on the machine. Measured Apple Silicon rates:
-
-| Hardware | Chunks/min |
-|---|---|
-| M1 base | 576 |
-| Pro laptop | 2,400–2,500 |
-
-A bounded 24-row lab rebuild with the current embedding engine measured 24
-chunks before the policy change and 55 after it: 2.29x as many chunks at about
-30 chunks/s. Use that 2.29x result as the measured planning sample, not a
-universal multiplier; source shape and declared columns determine the actual
-growth.
-
-A 353k-chunk corpus is about 10 hours at the M1-base rate and about
-2.5 hours at the pro-laptop rate.
-
-Windows has no published rate here. NVIDIA GPUs accelerate; a CPU-only
-box can be slower than the M1. The first full pass **is** your
-measurement for this machine: time that run and scale from it. A later
-daily delta against an unchanged or lightly grown corpus is minutes.
+## Disk and maintenance
 
 As an order-of-magnitude reference, a production home with 353,663 chunks
 measured 1.3 GB on disk after compaction. Expect roughly 1.3-1.5 GB per

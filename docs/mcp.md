@@ -27,6 +27,13 @@ over its standard input and output, and it dies when that pipe closes. There is
 no daemon, no port, no supervisor and no unit file, and that is the whole
 lifecycle.
 
+When semantic search is enabled, the server also owns one vector companion over
+private pipes for the lifetime of that session. It prepares the embedding model
+in the background as the session starts, so the first semantic query does not
+pay the startup cost. The companion has no port or pid file and stops with the
+MCP server; one-shot CLI queries load the model for that invocation only. Its
+preparation status goes to standard error, leaving protocol output untouched.
+
 ```
 roca mcp serve
 ```
@@ -34,7 +41,7 @@ roca mcp serve
 Nothing but the protocol goes to standard output. A print there corrupts the
 session, which is why every diagnostic in this path writes to standard error.
 
-### The six tools
+### The core tools and semantic search
 
 | Tool | What it does | The caller that defends it |
 |---|---|---|
@@ -44,6 +51,11 @@ session, which is why every diagnostic in this path writes to standard error.
 | `roca_store` | Writes one memory back | The other half of the same job |
 | `roca_health` | The non-destructive checks over live data | An agent that cannot run `roca doctor` |
 | `roca_sql` | Compiles a question into SQL without running it | Agents that need to inspect the SQL before `roca_exec` runs it |
+
+With semantic search enabled and its companion available, the same server also
+exposes `roca_vector_query`. It searches selected local indexes by meaning and
+uses the session-resident, pre-prepared model described above. The six core
+tools remain available whether or not semantic search is enabled.
 
 `roca_query`, `roca_explore`, and `roca_sql` reject empty questions and share
 the CLI's generous 1000-character cap before work begins. The model-backed
