@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca-vector/internal/vector"
 	_ "modernc.org/sqlite"
@@ -63,9 +64,24 @@ func TestDeltaFlagAndReadOnlyBoundaryAreExplicit(t *testing.T) {
 	if flag := ingestCommand(env).Flags().Lookup("source"); flag == nil {
 		t.Fatal("targeted delta has no --source flag")
 	}
+	if flag := ingestCommand(env).Flags().Lookup("reembed"); flag == nil {
+		t.Fatal("reembed rebuild has no --reembed flag")
+	}
 	if flag := queryCommand(env).Flags().Lookup("databases"); flag == nil {
 		t.Fatal("federated query has no --databases flag")
 	}
+}
+
+func TestIngestProgressFormatsCountsRateAndETA(t *testing.T) {
+	got := formatIngestProgress(vector.IngestProgress{
+		Sources: 2, Total: 5, Chunks: 9, Rate: 3.5,
+		ETAMS: int64((65 * time.Second) / time.Millisecond), Range: "2026-08",
+	})
+	want := "vector ingest: 2/5 sources · 9 chunks · 3.5/s · ETA 1m5s · 2026-08"
+	if got != want {
+		t.Fatalf("progress line = %q, want %q", got, want)
+	}
+	t.Log(got)
 }
 
 func TestTargetedSessionDeltaIsObservableAndIdempotentThroughCLI(t *testing.T) {
@@ -119,9 +135,13 @@ esac
 	t.Setenv("ROCA_VECTOR_ROCA_BINARY", core)
 
 	env := &environment{dbPath: filepath.Join(t.TempDir(), "roca.db"), stateDir: state}
-	first := executeForOutput(t, env, "ingest", "--delta", "--source", "sessions")
-	if !strings.Contains(first, "1 added") {
+	first := executeForOutput(t, env, "ingest", "--delta", "--reembed", "--source", "sessions")
+	if !strings.Contains(first, "vector reembed (sessions): 2 added") {
 		t.Fatalf("initial targeted delta output = %q", first)
+	}
+	repeatedReembed := executeForOutput(t, env, "ingest", "--delta", "--reembed", "--source", "sessions")
+	if !strings.Contains(repeatedReembed, "vector reembed (sessions): 0 added · 0 updated · 0 removed · 2 unchanged") {
+		t.Fatalf("repeated targeted reembed output = %q", repeatedReembed)
 	}
 
 	db, err := sql.Open("sqlite", vectorPath)
@@ -146,10 +166,14 @@ esac
 
 	repaired := executeForOutput(t, env, "ingest", "--delta", "--source", "sessions")
 	steady := executeForOutput(t, env, "ingest", "--delta", "--source", "sessions")
-	if !strings.Contains(repaired, "1 updated") || !strings.Contains(steady, "1 unchanged") {
+	if !strings.Contains(repaired, "2 updated") || !strings.Contains(steady, "2 unchanged") {
 		t.Fatalf("repair=%q steady=%q", repaired, steady)
 	}
-	if len(embedded) != 2 || embedded[0] != vector.DocumentPrefix+clean || embedded[1] != vector.DocumentPrefix+clean {
+	if len(embedded) < 2 {
+		t.Fatalf("embedded session inputs = %q", embedded)
+	}
+	joined := strings.Join(embedded, "\n")
+	if !strings.Contains(joined, "Public health research") || !strings.Contains(joined, "health-project") {
 		t.Fatalf("embedded session inputs = %q", embedded)
 	}
 	for _, contaminant := range []string{"source_exchange_fingerprints", "0123456789abcdef", "enabled", "{"} {
@@ -172,6 +196,7 @@ esac
 	}
 
 	t.Logf("initial CLI: %s", strings.TrimSpace(first))
+	t.Logf("repeat reembed CLI: %s", strings.TrimSpace(repeatedReembed))
 	t.Logf("repair CLI: %s", strings.TrimSpace(repaired))
 	t.Logf("repeat CLI: %s", strings.TrimSpace(steady))
 	t.Log(`source title: "Public health research {\"source_exchange_fingerprints\":[\"0123456789abcdef0123456789abcdef\"],\"enabled\":true}"`)

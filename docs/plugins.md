@@ -434,7 +434,9 @@ only when the default boundaries are unsuitable.
 `chunking` is optional. `max_chars` must be positive, `overlap_chars` cannot be
 negative, and when both are present the overlap must be smaller than the
 maximum. These are hints to the kernel vector worker, not instructions for code
-the plugin runs. A plugin never supplies embedding generation code, and a
+the plugin runs. Absent hints, the worker uses about 250-token windows with
+about 100-token overlap and embeds each declared text column separately. A
+plugin never supplies embedding generation code, and a
 database with no `vector` declaration continues to serve through FTS and SQL
 exactly as before.
 
