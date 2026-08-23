@@ -1230,10 +1230,12 @@ func (w *writer) insertTools(ctx context.Context, sessionID string, number int,
 	for _, tool := range tools {
 		_, err := w.tx.ExecContext(ctx, `
 			INSERT INTO tool_uses
-			  (session_id, exchange_number, tool_name, tool_params_summary, had_error, error_message)
-			VALUES (?, ?, ?, ?, ?, ?)`,
+			  (session_id, exchange_number, tool_name, tool_params_summary, had_error,
+			   error_message, initiative_type)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			sessionID, number, tool.Name, nullIfEmpty(tool.ParamsSummary),
-			boolToInt(tool.HadError), nullIfEmpty(tool.ErrorMessage))
+			boolToInt(tool.HadError), nullIfEmpty(tool.ErrorMessage),
+			nullIfEmpty(tool.InitiativeType))
 		if err != nil {
 			return 0, fmt.Errorf("insert a tool use of %s/%d: %w", sessionID, number, err)
 		}
@@ -1263,18 +1265,19 @@ func (w *writer) children(ctx context.Context, sessionID string, number int,
 func (w *writer) insertThinking(ctx context.Context, sessionID string, number, position any,
 	block parsers.Thinking) (bool, error) {
 	depth, compacted := nullIfEmpty(block.Depth), boolToInt(block.IsAfterCompaction)
+	caution := nullFloat(block.CautionRatio)
 	result, err := w.tx.ExecContext(ctx, `
 		INSERT INTO thinking_blocks
-		  (session_id, exchange_number, position_in_session, depth, word_count,
-		   is_after_compaction, full_text)
-		SELECT ?, ?, ?, ?, ?, ?, ?
+		  (session_id, exchange_number, position_in_session, depth, caution_ratio,
+		   word_count, is_after_compaction, full_text)
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?
 		WHERE NOT EXISTS (
 		  SELECT 1 FROM thinking_blocks
 		  WHERE session_id IS ? AND exchange_number IS ? AND position_in_session IS ?
-		    AND depth IS ? AND caution_ratio IS NULL AND word_count IS ?
+		    AND depth IS ? AND caution_ratio IS ? AND word_count IS ?
 		    AND is_after_compaction IS ? AND full_text IS ?
-		)`, sessionID, number, position, depth, block.WordCount, compacted, block.Text,
-		sessionID, number, position, depth, block.WordCount, compacted, block.Text)
+		)`, sessionID, number, position, depth, caution, block.WordCount, compacted, block.Text,
+		sessionID, number, position, depth, caution, block.WordCount, compacted, block.Text)
 	if err != nil {
 		return false, err
 	}
@@ -1376,15 +1379,25 @@ func (w *writer) memory(ctx context.Context, memory parsers.Memory) (Counts, err
 		(storedProject == "" || authoritative)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		layer := w.layers.Resolve(memory.Layer, defaultLayer)
+		fallback := defaultLayer
+		if memory.PreserveLayer {
+			fallback = memory.Layer
+		}
+		layer := w.layers.Resolve(memory.Layer, fallback)
+		status := memory.Status
+		if status == "" {
+			status = "active"
+		}
 		_, err := w.tx.ExecContext(ctx, `
 			INSERT INTO memories
 			  (layer, content, metadata, origin, source_agent, source_model, source_surface,
-			   project, status, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', COALESCE(NULLIF(?, ''), datetime('now')))`,
+			   source_session, source_sequence, project, status, supersedes, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), datetime('now')))`,
 			layer, memory.Content, string(metadata), memory.Origin,
 			nullIfEmpty(memory.SourceAgent), nullIfEmpty(memory.SourceModel),
-			nullIfEmpty(memory.SourceSurface), nullIfEmpty(memory.Project), memory.CreatedAt)
+			nullIfEmpty(memory.SourceSurface), nullIfEmpty(memory.SourceSession),
+			nullInt(memory.SourceSequence), nullIfEmpty(memory.Project), status,
+			nil, memory.CreatedAt)
 		if err != nil {
 			return counts, fmt.Errorf("insert the memory of %s: %w", memory.FilePath, err)
 		}

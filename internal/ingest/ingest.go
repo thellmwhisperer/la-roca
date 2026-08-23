@@ -28,6 +28,9 @@ type Options struct {
 	// HermesReservedMemories is the read-only operational store that may hold
 	// the nine Hermes memories curated before MEMORY.md ingestion existed.
 	HermesReservedMemories *sql.DB
+	// Ops receives legacy-store memories. Conversations still write to the
+	// ingest target. Nil drops those memories as a named exclusion.
+	Ops Database
 	// DryRun reports what would be read and writes nothing. It is a first-class
 	// mode and not a debugging aid: it is how an operator checks that a root is
 	// being seen before letting anything touch the database.
@@ -321,7 +324,8 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		fingerprint, err := targetFingerprint(target)
 		if err != nil {
 			metadata, metadataErr := incrementality.MetadataFingerprint(target.Path)
-			isDatabase := target.Kind == parsers.KindOpenCodeDB || target.Kind == parsers.KindHermesDB
+			isDatabase := target.Kind == parsers.KindOpenCodeDB || target.Kind == parsers.KindHermesDB ||
+				target.Kind == parsers.KindLegacyStoreDB
 			if metadataErr == nil && !isDatabase && incrementality.UnchangedMetadata(state, target.Path, metadata) {
 				result.FilesSkipped++
 				result.categorizeFile("skipped", "unchanged fingerprint")
@@ -615,6 +619,30 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 	}
 	result.discard(target, records.Discards)
 
+	var opsCounts Counts
+	if target.Kind == parsers.KindLegacyStoreDB && len(records.Memories) > 0 {
+		if opts.Ops == nil {
+			excluded := make([]parsers.Discard, 0, len(records.Memories))
+			for range records.Memories {
+				excluded = append(excluded, parsers.Excluded("legacy store memories need the ops plugin"))
+			}
+			result.discard(target, excluded)
+			records.Memories = nil
+		} else {
+			memories := records.Memories
+			records.Memories = nil
+			if err := opts.Ops.Write(ctx, func(tx *sql.Tx) error {
+				written, err := writeRecords(ctx, tx, layers, nil, parsers.Records{Memories: memories})
+				if err != nil {
+					return err
+				}
+				opsCounts = written
+				return remapMadreSupersedes(ctx, tx)
+			}); err != nil {
+				return false, err
+			}
+		}
+	}
 	var counts Counts
 	err := db.Write(ctx, func(tx *sql.Tx) error {
 		written, err := writeRecords(ctx, tx, layers, opts.HermesReservedMemories, records)
@@ -622,10 +650,11 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 			return err
 		}
 		counts = written
+		counts.add(opsCounts)
 		summary := map[string]any{
-			"sessions":         written.Sessions,
-			"exchanges":        written.Exchanges,
-			"memories":         written.MemoriesInserted + written.MemoriesUpdated,
+			"sessions":         counts.Sessions,
+			"exchanges":        counts.Exchanges,
+			"memories":         counts.MemoriesInserted + counts.MemoriesUpdated,
 			"message_coverage": records.MessageCoverage,
 		}
 		return incrementality.RecordState(ctx, tx, incrementalityTarget(target),
@@ -647,6 +676,8 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 		databaseReader = ReadOpenCode
 	case parsers.KindHermesDB:
 		databaseReader = ReadHermes
+	case parsers.KindLegacyStoreDB:
+		databaseReader = ReadMadre
 	case parsers.KindCursorDB:
 		databaseReader = ReadCursor
 	case parsers.KindCursorStore:
@@ -876,6 +907,7 @@ func declaredRoots(roots Roots) map[string]string {
 		"pi_sessions":                roots.PiSessions,
 		"hermes_home":                roots.HermesHome,
 		"hermes_db":                  roots.HermesDB,
+		"legacy_store_db":            roots.LegacyStoreDB,
 		"grok_sessions":              roots.GrokSessions,
 		"grok_memtrace":              roots.GrokMemtrace,
 		"claude_export":              strings.Join(roots.ClaudeWebExports, string(os.PathListSeparator)),

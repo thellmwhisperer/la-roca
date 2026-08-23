@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 )
 
-// Two sources of the matrix are not files but databases another agent is using
-// right now: OpenCode's and Hermes's. This is how they are opened, and the two
-// rules are not negotiable: never write, and never block the agent that owns them.
+// Foreign SQLite sources (OpenCode, Hermes, a retired pre-federation store)
+// are opened the same way, and the two rules are not negotiable: never write,
+// and never block the agent that owns them.
 
 // foreignBusyTimeoutMS is a quarter of a second. It is deliberately short: this
 // process is a guest in somebody else's database, and a guest that waits fifteen
@@ -55,11 +55,10 @@ type foreignTable struct {
 // openForeignSource opens another agent's database and refuses it whole when its
 // shape is not the one this build reads.
 //
-// The two source adapters that read a live database, OpenCode's and Hermes's,
-// open it the same way and owe the operator the same refusal, so the sequence is
-// written once and each of them brings only its own schema. `source` names the
-// agent, because "the table is missing a column" without a name does not say
-// which agent migrated under us.
+// The adapters that read a foreign database open it the same way and owe the
+// operator the same refusal, so the sequence is written once and each of them
+// brings only its own schema. `source` names the agent, because "the table is
+// missing a column" without a name does not say which agent migrated under us.
 //
 // The schema is a slice and not a map on purpose: a map would name a different
 // missing table on every run, and two runs of one broken database have to read

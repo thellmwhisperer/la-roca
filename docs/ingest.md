@@ -19,6 +19,7 @@ without a La Roca login](lifecycle.md#install).
 | Pi | Complete session tree, including nested child runs |
 | Hermes | Sessions and channel, usage and routing intel from its state database, plus curated MEMORY.md blocks |
 | Grok Build | Sessions, from the session update stream and its metadata sidecar |
+| Legacy store | A pre-federation `roca.db`: conversations into the corpus, memories into ops with their original layers |
 
 Repository `AGENTS.md` and `CLAUDE.md` files are instructions and are never
 ingested as memories. Live databases are read with SQLite `query_only` enabled
@@ -35,7 +36,7 @@ roca ingest /path/to/extracted-export
 
 The path belongs only to that invocation. A later `roca ingest` with no path,
 including the nightly run, reads only live Claude, Codex, Qwen Code, GLM, Cursor,
-Pi, OpenCode, Hermes, Grok Build, and Cowork sources. It fingerprints each source
+Pi, OpenCode, Hermes, Grok Build, Cowork, and the pre-federation store. It fingerprints each source
 file by path and content, so an explicit rerun of the same export is a zero
 delta and a newer export contributes only message identities that have not
 already landed.
@@ -233,6 +234,24 @@ The live `sessions.source` channel (acp, cron, tui, cli, telegram, desktop)
 is the session's surface qualifier: `source_surface` is `Hermes/<channel>`
 when Hermes recorded one, and `Hermes` when it did not. The same channel is
 kept in session metadata.
+
+## Pre-federation store
+
+The previous generation kept harvested conversations and agent-written
+memories in one SQLite file. `roca ingest` reads that `roca.db` the same way
+it reads OpenCode or Hermes, with `query_only` and a short busy timeout. The
+default is the retired product home beside `~/.roca`. Override the path with
+`legacy_store_db_path` or `LEGACY_STORE_DB_PATH`. An absent file is a clean
+no-op.
+
+Sessions, exchanges, tool uses, and thinking blocks land in the corpus under
+their original `session_id`, which is the dedupe key against sessions already
+federated. `source_surface` records the legacy-store import route;
+`source_agent` stays what the source stored. Memories land in ops and keep
+the layer, status, and `created_at` the source recorded: a handoff stays a
+handoff. Expiry is not invented. Garden, proposal, run, and other
+non-conversation tables are left out by design. A second run over the same
+file adds nothing.
 
 `session_model_usage` joins onto those sessions as operational `model_usage`
 metadata (per-model provider and API base, requests, input, output, cache and

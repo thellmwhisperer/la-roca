@@ -136,6 +136,7 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (IngestResult, 
 	report, err := ingest.Run(ctx, target, s.registry, ingest.Options{
 		Roots:                  roots,
 		HermesReservedMemories: hermesReservedMemories,
+		Ops:                    s.ops,
 		DryRun:                 req.DryRun,
 		Progress:               s.opts.Progress,
 		LiveProgress:           s.opts.IngestProgress,

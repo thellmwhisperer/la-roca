@@ -384,9 +384,11 @@ func ingestSources(file config.File, home, runnerDir string) ingest.Roots {
 			PiSessions:            file.Default("pi_sessions_root"),
 			HermesHome:            file.Default("hermes_home"),
 			HermesDB:              file.Default("hermes_db_path"),
-			GrokSessions:          file.Default("grok_sessions_root"),
-			RunnerDir:             runnerDir,
-			WorkspaceRoots:        file.DefaultList(keyWorkspaceRoots),
-			SubagentRoots:         file.DefaultList(keySubagentRoots),
+			LegacyStoreDB: firstNonEmpty(
+				file.Default("legacy_store_db_path"), file.Default(ingest.RetiredStoreConfigKey())),
+			GrokSessions:   file.Default("grok_sessions_root"),
+			RunnerDir:      runnerDir,
+			WorkspaceRoots: file.DefaultList(keyWorkspaceRoots),
+			SubagentRoots:  file.DefaultList(keySubagentRoots),
 		})
 }
