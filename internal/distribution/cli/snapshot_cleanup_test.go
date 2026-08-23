@@ -122,8 +122,8 @@ func TestCustodySnapshotUsesCLITelemetry(t *testing.T) {
 	t.Setenv("TMP", tempRoot)
 	t.Setenv("TEMP", tempRoot)
 	dataDir := t.TempDir()
-	orphan := filepath.Join(tempRoot, "roca-read-only-snapshot-custody-orphan")
-	if err := os.Mkdir(orphan, 0o700); err != nil {
+	orphan, err := os.MkdirTemp(tempRoot, "roca-read-only-snapshot-custody-orphan-")
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(orphan, "payload"), []byte("orphan"), 0o600); err != nil {
@@ -168,18 +168,7 @@ func TestCustodySnapshotUsesCLITelemetry(t *testing.T) {
 }
 
 func snapshotDirectories(root string) ([]string, error) {
-	var directories []string
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() && strings.HasPrefix(entry.Name(), "roca-read-only-snapshot-") {
-			directories = append(directories, path)
-			return filepath.SkipDir
-		}
-		return nil
-	})
-	return directories, err
+	return store.SnapshotDirectories(root)
 }
 
 // -/ 1/1
