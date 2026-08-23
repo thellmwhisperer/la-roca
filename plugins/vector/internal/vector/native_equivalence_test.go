@@ -57,13 +57,18 @@ func TestNativeEngineMatchesPublicEquivalenceFixture(t *testing.T) {
 			t.Errorf("public input %q dimensions = %d, want %d", input, len(vectors[inputIndex]), len(reference))
 			continue
 		}
+		maxDelta := 0.0
+		maxElement := 0
 		for element := range reference {
 			delta := math.Abs(float64(vectors[inputIndex][element] - reference[element]))
-			if delta > golden.MaxAbsoluteDelta {
-				t.Errorf("public input %q element %d delta = %.9g, limit %.9g",
-					input, element, delta, golden.MaxAbsoluteDelta)
-				break
+			if delta > maxDelta {
+				maxDelta = delta
+				maxElement = element
 			}
+		}
+		if maxDelta > golden.MaxAbsoluteDelta {
+			t.Errorf("public input %q maximum delta at element %d = %.9g, limit %.9g",
+				input, maxElement, maxDelta, golden.MaxAbsoluteDelta)
 		}
 	}
 }

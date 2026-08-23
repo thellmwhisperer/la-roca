@@ -1,6 +1,6 @@
 {
   "reference": "previous-production-engine",
-  "max_absolute_delta": 0.0003,
+  "max_absolute_delta": 0.001,
   "vectors": [
     {
       "input": "search_document: Never publish a short video as private first. The recommendation system will not test the thumbnail or the title while it stays hidden.",

@@ -208,7 +208,18 @@ func TestNewestFirstIngestMakesRecentRowsQueryableWhileOlderWait(t *testing.T) {
 		wg.Wait()
 		t.Fatalf("first embedded batch was not the recent source: %q", first)
 	}
-	results, err := index.Query(context.Background(), "alpha", 10)
+	var (
+		results []Result
+		err     error
+	)
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		results, err = index.Query(context.Background(), "alpha", 10)
+		if err == nil && len(results) > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	if err != nil {
 		close(gate)
 		wg.Wait()

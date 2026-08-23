@@ -7,6 +7,7 @@ DIST    ?= ../../bin
 LLAMA_COMMIT ?= b21e4de74567f5eef213765c9476a843c2e43f0d
 LLAMA_DIR ?= $(abspath ../../.tmp/llama.cpp)
 LLAMA_BUILD ?= $(LLAMA_DIR)/build-native
+LLAMA_JOBS ?= 2
 HOST_OS ?= $(shell go env GOOS)
 HOST_ARCH ?= $(shell go env GOARCH)
 
@@ -26,7 +27,7 @@ llama:
 	LLAMA_COMMIT=$(LLAMA_COMMIT) LLAMA_DIR=$(LLAMA_DIR) sh scripts/fetch-llama.sh
 	cmake -S $(LLAMA_DIR) -B $(LLAMA_BUILD) -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
 		$(CMAKE_FLAGS) -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=OFF -DLLAMA_CURL=OFF
-	cmake --build $(LLAMA_BUILD) --config Release --target llama -j
+	cmake --build $(LLAMA_BUILD) --config Release --target llama -j$(LLAMA_JOBS)
 
 .PHONY: build-native
 build-native: llama
