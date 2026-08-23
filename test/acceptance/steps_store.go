@@ -438,8 +438,8 @@ func (m *world) wordIndexNeverBroken() error {
 	return nil
 }
 
-// meaningPassNotStarted holds the line the decision drew: the plain command
-// downloads nothing and starts nothing. The second yes is asked for by name.
+// meaningPassNotStarted holds the line the decision drew: a run nobody is
+// reading is never asked, so it downloads nothing and starts nothing.
 func (m *world) meaningPassNotStarted() error {
 	if strings.Contains(m.last.stdout, "deep search: reading") {
 		return fmt.Errorf("bare init started the meaning pass: %s", m.last.stdout)

@@ -19,7 +19,8 @@ init, after word search works, La Roca asks once for permission to find history
 by meaning and download the model it needs. A yes starts the background build;
 it pays back every day after.
 
-If they declined during init and choose semantic search later:
+There is no separate command to start one during first-run consent. If they
+declined during init and choose semantic search later:
 
 ```sh
 # set [features] vector = true in the selected configuration
@@ -75,8 +76,8 @@ reports a null aggregate delta (`0 added · 0 updated · 0 removed`) and an
 unchanged count equal to the live chunk count across declared databases.
 
 `ROCA_READ_ONLY` refuses `install`, `ingest --delta`, and `compact`.
-For a database that is not the default, start the pass at the plugin instead
-of at init and name the database:
+For a database that is not the default, and for any machine init never asked,
+start the pass at the plugin and name the database:
 
 ```sh
 roca vector install --db-path <path>

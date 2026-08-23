@@ -11,17 +11,26 @@ release).
 
 ## The one-command path
 
-`roca init --vectors` is the supported first run and does everything the
-sections below describe by hand: it gets the local embedding runtime going if
-this machine allows it, fetches the model if it is missing, turns
-`features.vector` on in the configuration `roca doctor` names, and starts the
-background pass. Word search keeps answering the whole time. If the machine
-cannot embed, init reports that and prints one next step instead of failing.
+There is one command and one question. `roca init` stops at working full-text
+search, and then, in that same run, asks whether to read the history for
+meaning as well, saying plainly that word search already answers, that it
+answers partially, and that a yes downloads what it needs.
 
-Bare `roca init` never does any of this: it stops at working full-text search,
-downloads nothing, and does not rewrite an existing configuration. A bare
-non-interactive run, including one with `--db-path`, has the same boundary.
-Passing `--vectors` explicitly on that command still starts the background pass.
+A yes does everything the sections below describe by hand: it gets the local
+embedding runtime going if this machine allows it, fetches the model if it is
+missing, turns `features.vector` on in the configuration `roca doctor` names,
+and starts the background pass. Word search keeps answering the whole time. If
+the machine cannot embed, init reports that and prints one next step instead of
+failing, and leaves `features.vector` off so nothing promises an index that is
+not being built.
+
+The question is asked only where an answer means something: a terminal with a
+person reading it, a word search that has just hit, and a machine that is not
+already indexing. A non-interactive run, a run with `--db-path`, and CI are
+never asked; they stop at working full-text search, download nothing, and do
+not rewrite an existing configuration. On those machines the pass starts at the
+plugin instead, with `roca vector install`. There is no `--vectors` flag: a run
+nobody answered has not consented to a download.
 
 Progress is reported as a fraction of the history on this machine:
 
@@ -100,6 +109,9 @@ start; Linux uses CPU. Windows keeps the previous local runtime path until its
 own native build lane ships; see the release notes.
 
 ## Index declared databases
+
+A yes to the question `roca init` asks starts this build. To start it
+separately instead, which is also how a machine init never asked gets an index:
 
 ```sh
 roca vector install

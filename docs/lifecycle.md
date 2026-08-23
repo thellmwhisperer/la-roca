@@ -117,20 +117,20 @@ reports the round trip. A machine with no agent history yet says exactly that,
 which is a fact about the machine and not a fault in the index. Only an index
 that fails to answer for text it holds is reported as a fault.
 
-### The second yes
+### The yes, inside the same run
 
-`roca init --vectors` adds one thing to that run: it gets the local embedding
-runtime going if the machine allows it, fetches the embedding model if it is
-missing, turns `features.vector` on, and starts the background pass that reads
-the history for meaning. Word search keeps answering while it runs, and
+After word search is ready, an eligible terminal init says that semantic search
+finds by meaning rather than exact words and that enabling it downloads one
+embedding model. It then asks once. A yes stores `features.vector = true` and
+`features.vector_consent = true` and starts setup in the background; a no stores
+the consent decision with vector search disabled. Existing configurations are
+otherwise preserved.
+
+There is no `roca init --vectors` flag. Non-interactive init, CI, and runs with
+`--db-path` are not asked and do not start the optional download. Machines that
+opt in later enable `features.vector` and start the pass with
+`roca vector install`. Word search keeps answering while it runs, and
 `roca vector status` reports progress as a fraction of this machine's history.
-A machine that cannot embed gets one clear next step and a working word search,
-never a failed init.
-
-In a terminal, a run that proved word search on real history offers the same
-yes as a question. Bare non-interactive init, any run with `--db-path`, and any
-run whose configuration already enables the feature stop at working full text:
-they download nothing and rewrite no existing configuration.
 
 Init also writes and registers `prompt.md` in the selected data directory. Its
 marked SYSTEM zone is shipped by La Roca; its marked USER zone belongs to the
@@ -164,15 +164,8 @@ config still receives the new-install feature block above. Human output emits on
 `answering:` notice with the chosen provider/model and configuration path;
 scripts receive no prompts. `--json` remains one JSON document.
 
-On interactive input with no recorded semantic-search decision, init asks once
-after ingest and the full-text index are ready. The yes or no is stored in the
-selected configuration and is not asked again. Yes enables semantic search and
-starts the single embedding-model download plus newest-first indexing in the
-background; there is no separate runtime, daemon, or second setup command.
-Choosing no leaves full-text search working. To opt in later, enable
-`features.vector` and run `roca vector install`. Non-interactive init never asks
-or starts this optional setup. [Local vector search](vector.md) owns model,
-index, progress, and platform details.
+[Local vector search](vector.md) owns model, index, progress, and platform
+details for this optional setup.
 
 ## Skills
 

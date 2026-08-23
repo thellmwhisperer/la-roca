@@ -16,6 +16,9 @@ machine, writes the skills into the runtimes it finds, and does not return
 until word search works. The last thing it does is prove it: it takes a word
 out of your user's own history and asks the index for it.
 
+Then, in that same run, it asks one question. There is no second command to
+learn: see below.
+
 ```sh
 curl -fsSL https://raw.githubusercontent.com/thellmwhisperer/la-roca/main/install.sh | sh
 roca init      # adopts an already signed-in agent CLI; no login, no keys

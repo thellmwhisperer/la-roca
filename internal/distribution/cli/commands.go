@@ -71,7 +71,9 @@ func initCommand(env *cliEnv) *cobra.Command {
 			"With no existing config, a terminal model-first chooser lists detected CLI defaults and pulled Ollama models,\n" +
 			"resolves the harness, confirms the pair, and writes it into the new configuration.\n" +
 			"An existing config is preserved byte-for-byte and skips the chooser.\n" +
-			"Non-interactive callers must select a location explicitly with --db-path; they are never prompted.",
+			"Non-interactive callers must select a location explicitly with --db-path; they are never prompted.\n" +
+			"Init does not return until word search works. A terminal run then asks once whether to read the\n" +
+			"history for meaning as well; that yes downloads what it needs and indexes in the background.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			commandStarted := time.Now()
 			env.wantIngestProgress = true
