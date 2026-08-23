@@ -29,6 +29,7 @@ const defaultLayer = "pattern"
 type Counts struct {
 	Sessions          int `json:"sessions"`
 	SessionsUpdated   int `json:"sessions_updated"`
+	SessionsSkipped   int `json:"sessions_skipped"`
 	Exchanges         int `json:"exchanges"`
 	ThinkingBlocks    int `json:"thinking_blocks"`
 	ToolUses          int `json:"tool_uses"`
@@ -49,6 +50,7 @@ type Counts struct {
 func (c *Counts) add(other Counts) {
 	c.Sessions += other.Sessions
 	c.SessionsUpdated += other.SessionsUpdated
+	c.SessionsSkipped += other.SessionsSkipped
 	c.Exchanges += other.Exchanges
 	c.ThinkingBlocks += other.ThinkingBlocks
 	c.ToolUses += other.ToolUses
@@ -70,9 +72,10 @@ type layerResolver interface {
 
 // writer holds what every write of one run shares.
 type writer struct {
-	tx                     *sql.Tx
-	layers                 layerResolver
-	hermesReservedMemories *sql.DB
+	tx                              *sql.Tx
+	layers                          layerResolver
+	hermesReservedMemories          *sql.DB
+	preserveSessionThinkingPosition bool
 }
 
 // WriteRecords writes one artefact's records and returns what it wrote.
@@ -140,6 +143,15 @@ type exchangeKey struct {
 }
 
 func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, error) {
+	return w.sessionWithPolicy(ctx, session, false)
+}
+
+func (w *writer) sessionIfMissing(ctx context.Context, session parsers.Session) (Counts, error) {
+	return w.sessionWithPolicy(ctx, session, true)
+}
+
+func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
+	skipExisting bool) (Counts, error) {
 	var counts Counts
 	if session.ID == "" {
 		return counts, nil
@@ -148,6 +160,10 @@ func (w *writer) session(ctx context.Context, session parsers.Session) (Counts, 
 	current, exists, err := w.currentSession(ctx, session.ID)
 	if err != nil {
 		return counts, err
+	}
+	if exists && skipExisting {
+		counts.SessionsSkipped = 1
+		return counts, nil
 	}
 	storedMetadata, staleSnapshot := staleSnapshotMetadata(session, current)
 	if staleSnapshot {
@@ -1230,10 +1246,12 @@ func (w *writer) insertTools(ctx context.Context, sessionID string, number int,
 	for _, tool := range tools {
 		_, err := w.tx.ExecContext(ctx, `
 			INSERT INTO tool_uses
-			  (session_id, exchange_number, tool_name, tool_params_summary, had_error, error_message)
-			VALUES (?, ?, ?, ?, ?, ?)`,
+			  (session_id, exchange_number, tool_name, tool_params_summary, had_error,
+			   error_message, initiative_type)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			sessionID, number, tool.Name, nullIfEmpty(tool.ParamsSummary),
-			boolToInt(tool.HadError), nullIfEmpty(tool.ErrorMessage))
+			boolToInt(tool.HadError), nullIfEmpty(tool.ErrorMessage),
+			nullIfEmpty(tool.InitiativeType))
 		if err != nil {
 			return 0, fmt.Errorf("insert a tool use of %s/%d: %w", sessionID, number, err)
 		}
@@ -1263,18 +1281,19 @@ func (w *writer) children(ctx context.Context, sessionID string, number int,
 func (w *writer) insertThinking(ctx context.Context, sessionID string, number, position any,
 	block parsers.Thinking) (bool, error) {
 	depth, compacted := nullIfEmpty(block.Depth), boolToInt(block.IsAfterCompaction)
+	caution := nullFloat(block.CautionRatio)
 	result, err := w.tx.ExecContext(ctx, `
 		INSERT INTO thinking_blocks
-		  (session_id, exchange_number, position_in_session, depth, word_count,
-		   is_after_compaction, full_text)
-		SELECT ?, ?, ?, ?, ?, ?, ?
+		  (session_id, exchange_number, position_in_session, depth, caution_ratio,
+		   word_count, is_after_compaction, full_text)
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?
 		WHERE NOT EXISTS (
 		  SELECT 1 FROM thinking_blocks
 		  WHERE session_id IS ? AND exchange_number IS ? AND position_in_session IS ?
-		    AND depth IS ? AND caution_ratio IS NULL AND word_count IS ?
+		    AND depth IS ? AND caution_ratio IS ? AND word_count IS ?
 		    AND is_after_compaction IS ? AND full_text IS ?
-		)`, sessionID, number, position, depth, block.WordCount, compacted, block.Text,
-		sessionID, number, position, depth, block.WordCount, compacted, block.Text)
+		)`, sessionID, number, position, depth, caution, block.WordCount, compacted, block.Text,
+		sessionID, number, position, depth, caution, block.WordCount, compacted, block.Text)
 	if err != nil {
 		return false, err
 	}
@@ -1282,11 +1301,14 @@ func (w *writer) insertThinking(ctx context.Context, sessionID string, number, p
 	return affected != 0, err
 }
 
-// sessionThinking writes a block that hangs off the session. Its natural key is
-// its own text, because it has no exchange to be numbered under.
+// sessionThinking writes a block that hangs off the session rather than an exchange.
 func (w *writer) sessionThinking(ctx context.Context, sessionID string,
 	block parsers.Thinking) (bool, error) {
-	landed, err := w.insertThinking(ctx, sessionID, nil, nil, block)
+	var position any
+	if w.preserveSessionThinkingPosition {
+		position = block.Position
+	}
+	landed, err := w.insertThinking(ctx, sessionID, nil, position, block)
 	if err != nil {
 		return false, fmt.Errorf("insert a thinking block of %s: %w", sessionID, err)
 	}
@@ -1376,15 +1398,30 @@ func (w *writer) memory(ctx context.Context, memory parsers.Memory) (Counts, err
 		(storedProject == "" || authoritative)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		layer := w.layers.Resolve(memory.Layer, defaultLayer)
-		_, err := w.tx.ExecContext(ctx, `
+		layer := memory.Layer
+		if !memory.PreserveLayer {
+			layer = w.layers.Resolve(memory.Layer, defaultLayer)
+		}
+		var status any = memory.Status
+		if memory.PreserveState {
+			status = nullIfEmpty(memory.Status)
+		} else if memory.Status == "" {
+			status = "active"
+		}
+		createdAt := "COALESCE(NULLIF(?, ''), datetime('now'))"
+		if memory.PreserveState {
+			createdAt = "NULLIF(?, '')"
+		}
+		_, err := w.tx.ExecContext(ctx, fmt.Sprintf(`
 			INSERT INTO memories
 			  (layer, content, metadata, origin, source_agent, source_model, source_surface,
-			   project, status, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', COALESCE(NULLIF(?, ''), datetime('now')))`,
+			   source_session, source_sequence, project, status, supersedes, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, %s)`, createdAt),
 			layer, memory.Content, string(metadata), memory.Origin,
 			nullIfEmpty(memory.SourceAgent), nullIfEmpty(memory.SourceModel),
-			nullIfEmpty(memory.SourceSurface), nullIfEmpty(memory.Project), memory.CreatedAt)
+			nullIfEmpty(memory.SourceSurface), nullIfEmpty(memory.SourceSession),
+			nullInt(memory.SourceSequence), nullIfEmpty(memory.Project), status,
+			nil, memory.CreatedAt)
 		if err != nil {
 			return counts, fmt.Errorf("insert the memory of %s: %w", memory.FilePath, err)
 		}

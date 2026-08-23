@@ -54,11 +54,13 @@ const (
 	KindQwenCode Kind = "qwen_code"
 	// KindGLMSkill is a user skill stored by GLM.
 	KindGLMSkill Kind = "glm_skill"
-	// KindOpenCodeDB and KindHermesDB are read by internal/ingest, which opens
-	// their databases read-only. They are declared here so that one enumeration
-	// names every source the ingest state table can hold.
-	KindOpenCodeDB Kind = "opencode_database"
-	KindHermesDB   Kind = "hermes_database"
+	// KindOpenCodeDB, KindHermesDB, and KindLegacyStoreDB are read by
+	// internal/ingest, which opens their databases read-only. They are declared
+	// here so that one enumeration names every source the ingest state table can
+	// hold.
+	KindOpenCodeDB    Kind = "opencode_database"
+	KindHermesDB      Kind = "hermes_database"
+	KindLegacyStoreDB Kind = "legacy_store_database"
 	// KindHermesMemory is Hermes's curated MEMORY.md, split at § into one
 	// memory per block. Identity is the block's content hash.
 	KindHermesMemory Kind = "hermes_memory"
@@ -357,14 +359,16 @@ type Thinking struct {
 	WordCount         int
 	IsAfterCompaction bool
 	Text              string
+	CautionRatio      *float64
 }
 
 // ToolUse is one tool call, with the verdict its result carried.
 type ToolUse struct {
-	Name          string
-	ParamsSummary string
-	HadError      bool
-	ErrorMessage  string
+	Name           string
+	ParamsSummary  string
+	HadError       bool
+	ErrorMessage   string
+	InitiativeType string
 }
 
 // Memory is one curated text: a memory file, a rule or a skill.
@@ -393,6 +397,19 @@ type Memory struct {
 	// memory schema has no separate updated_at column, so aggregate updates use
 	// this timestamp as the row's searchable time.
 	CreatedAt string
+	// Status is active, pending, or resolved. Empty normally means active.
+	Status string
+	// Supersedes is the source identity of the memory this one replaces, when
+	// the artefact records one. Zero means none.
+	Supersedes int64
+	// SourceSession and SourceSequence are the conversation coordinates the
+	// artefact recorded. They stay empty when it recorded none.
+	SourceSession  string
+	SourceSequence *int
+	// PreserveLayer writes the declared layer verbatim.
+	PreserveLayer bool
+	// PreserveState keeps empty status and created_at values empty in storage.
+	PreserveState bool
 }
 
 // Parse turns an artefact into normalized records. It does not open the
