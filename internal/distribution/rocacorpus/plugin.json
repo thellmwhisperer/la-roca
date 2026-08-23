@@ -110,22 +110,43 @@
           {
             "name": "sessions",
             "id_column": "session_id",
-            "text_columns": ["title", "project"]
+            "text_columns": ["title", "project"],
+            "time_columns": ["started_at"]
           },
           {
             "name": "memories",
             "id_column": "id",
-            "text_columns": ["content"]
+            "text_columns": ["content"],
+            "time_columns": ["created_at"],
+            "time_join": {
+              "table": "sessions",
+              "local_column": "source_session",
+              "foreign_column": "session_id",
+              "time_columns": ["started_at"]
+            }
           },
           {
             "name": "exchanges",
             "id_column": "id",
-            "text_columns": ["human_text", "agent_text"]
+            "text_columns": ["human_text", "agent_text"],
+            "time_columns": ["agent_timestamp", "human_timestamp"],
+            "time_join": {
+              "table": "sessions",
+              "local_column": "session_id",
+              "foreign_column": "session_id",
+              "time_columns": ["started_at"]
+            }
           },
           {
             "name": "thinking_blocks",
             "id_column": "id",
-            "text_columns": ["full_text"]
+            "text_columns": ["full_text"],
+            "time_join": {
+              "table": "sessions",
+              "local_column": "session_id",
+              "foreign_column": "session_id",
+              "time_columns": ["started_at"]
+            }
           }
         ]
       }

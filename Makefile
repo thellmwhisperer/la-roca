@@ -13,12 +13,26 @@ LDFLAGS := -s -w \
 	-X main.commit=$(COMMIT) \
 	-X main.date=$(DATE)
 
-# CGO_ENABLED=0 is the product's premise: a static binary, cross compilation
-# with no toolchain and a single release lane instead of three.
+# The core stays CGO_ENABLED=0. The vector payload links the local embedding
+# engine on macOS and Linux; Windows keeps the previous path until its own
+# native lane exists.
 GO_BUILD := CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)"
 VECTOR_BUILD := $(MAKE) -C plugins/vector build VERSION=$(VERSION) COMMIT=$(COMMIT) DATE=$(DATE)
 VECTOR_TMP := $(abspath .tmp)
 VECTOR_BUNDLE := go run ./cmd/bundle-vector
+HOST_OS ?= $(shell go env GOOS)
+HOST_ARCH ?= $(shell go env GOARCH)
+
+DIST_TARGETS := windows-amd64
+ifeq ($(HOST_OS)-$(HOST_ARCH),darwin-arm64)
+DIST_TARGETS += darwin-arm64
+endif
+ifeq ($(HOST_OS)-$(HOST_ARCH),linux-amd64)
+DIST_TARGETS += linux-amd64
+endif
+ifeq ($(HOST_OS)-$(HOST_ARCH),linux-arm64)
+DIST_TARGETS += linux-arm64
+endif
 
 .PHONY: build
 build: ## Build the binary for this machine
@@ -28,17 +42,17 @@ build: ## Build the binary for this machine
 
 .PHONY: darwin-arm64 linux-arm64 linux-amd64 windows-amd64
 darwin-arm64: ## Build the macOS ARM64 artefact
-	$(VECTOR_BUILD) GOOS=darwin GOARCH=arm64 BIN=$(VECTOR_TMP)/roca-vector-darwin-arm64
+	$(MAKE) -C plugins/vector darwin-arm64 VERSION=$(VERSION) COMMIT=$(COMMIT) DATE=$(DATE)
 	GOOS=darwin GOARCH=arm64 $(GO_BUILD) -o bin/roca-$(VERSION)-darwin-arm64 ./cmd/roca
 	$(VECTOR_BUNDLE) --binary bin/roca-$(VERSION)-darwin-arm64 --payload $(VECTOR_TMP)/roca-vector-darwin-arm64
 
 linux-arm64:
-	$(VECTOR_BUILD) GOOS=linux GOARCH=arm64 BIN=$(VECTOR_TMP)/roca-vector-linux-arm64
+	$(MAKE) -C plugins/vector linux-arm64 VERSION=$(VERSION) COMMIT=$(COMMIT) DATE=$(DATE)
 	GOOS=linux GOARCH=arm64 $(GO_BUILD) -o bin/roca-$(VERSION)-linux-arm64 ./cmd/roca
 	$(VECTOR_BUNDLE) --binary bin/roca-$(VERSION)-linux-arm64 --payload $(VECTOR_TMP)/roca-vector-linux-arm64
 
 linux-amd64:
-	$(VECTOR_BUILD) GOOS=linux GOARCH=amd64 BIN=$(VECTOR_TMP)/roca-vector-linux-x64
+	$(MAKE) -C plugins/vector linux-amd64 VERSION=$(VERSION) COMMIT=$(COMMIT) DATE=$(DATE)
 	GOOS=linux GOARCH=amd64 $(GO_BUILD) -o bin/roca-$(VERSION)-linux-x64 ./cmd/roca
 	$(VECTOR_BUNDLE) --binary bin/roca-$(VERSION)-linux-x64 --payload $(VECTOR_TMP)/roca-vector-linux-x64
 
@@ -46,7 +60,7 @@ linux-amd64:
 # a file without the extension. `release.ArtefactName` says the same thing in Go
 # and a test reads this file to prove the two agree.
 windows-amd64:
-	$(VECTOR_BUILD) GOOS=windows GOARCH=amd64 BIN=$(VECTOR_TMP)/roca-vector-windows-x64.exe
+	$(MAKE) -C plugins/vector windows-amd64 VERSION=$(VERSION) COMMIT=$(COMMIT) DATE=$(DATE)
 	GOOS=windows GOARCH=amd64 $(GO_BUILD) -o bin/roca-$(VERSION)-windows-x64.exe ./cmd/roca
 	$(VECTOR_BUNDLE) --binary bin/roca-$(VERSION)-windows-x64.exe --payload $(VECTOR_TMP)/roca-vector-windows-x64.exe
 
@@ -55,7 +69,7 @@ vector-dist:
 	$(MAKE) -C plugins/vector dist VERSION=$(VERSION)
 
 .PHONY: dist
-dist: darwin-arm64 linux-arm64 linux-amd64 windows-amd64 vector-dist ## Build every release target from a single runner
+dist: $(DIST_TARGETS) vector-dist ## Build native vector payloads plus the Windows compatibility payload
 
 .PHONY: test
 test: ## Unit and contract tests

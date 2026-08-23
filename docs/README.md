@@ -14,16 +14,17 @@ Reading order, from operator to contributor:
 4. [Ingest sources](ingest.md): import downloaded data exports once and understand
    their incremental boundary.
 5. [Local vector search](vector.md): the default-off `features.vector` switch,
-   Windows and Unix Ollama setup, the one-time embedding-model download,
-   hardware-conditioned indexing time, and the null-delta check.
+   the one-download macOS and Linux setup, Windows compatibility, newest-first
+   indexing, and the null-delta check.
 6. [Agent parser contribution kit](agent-parsers.md): support another agent with
    a measured real store, a synthetic fixture, one parser file, and one registry
    line.
 7. [Plugins](plugins.md): a copy-verbatim quickstart to your first installed
    plugin, then the manifest engine, isolated plugin-owned databases,
    executable capabilities, package lifecycle, and a build-your-own example.
-8. [The MCP plug](mcp.md): the stdio server, its six tools, the TOON answer
-   contract, and the supported integration targets.
+8. [The MCP plug](mcp.md): the stdio server, its six core tools and optional
+   semantic-search tool, the TOON answer contract, and the supported
+   integration targets.
 9. [Operations](operations.md): memory-layer validation and repair, the audit
    log contract for every CLI and MCP call, the query failures `roca doctor`
    reports, the privacy-safe `roca doctor --report` support snapshot,

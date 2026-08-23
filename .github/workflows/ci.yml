@@ -57,6 +57,38 @@ jobs:
       - name: Format, vet, tests and build of the vector module
         run: make -C plugins/vector check
 
+  vector-native-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: plugins/vector/go.mod
+          cache-dependency-path: plugins/vector/go.sum
+          cache: true
+      - name: Native CPU embedding engine
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++
+          make -C plugins/vector build-native
+          cd plugins/vector && CGO_ENABLED=1 go test ./internal/engine ./internal/model ./internal/telemetry ./internal/vector
+          CGO_ENABLED=1 go test -tags=native_equivalence ./internal/vector -run TestNativeEngineMatchesPublicEquivalenceFixture -count=1
+
+  vector-native-darwin:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: plugins/vector/go.mod
+          cache-dependency-path: plugins/vector/go.sum
+          cache: true
+      - name: Native Metal embedding engine
+        run: |
+          make -C plugins/vector build-native
+          cd plugins/vector && CGO_ENABLED=1 go test ./internal/engine ./internal/model ./internal/telemetry ./internal/vector
+          CGO_ENABLED=1 go test -tags=native_equivalence ./internal/vector -run TestNativeEngineMatchesPublicEquivalenceFixture -count=1
+
   check:
     runs-on: ubuntu-latest
     steps:
@@ -74,6 +106,10 @@ jobs:
       - name: Slop gate (duplication, orphans and claims)
         run: make slop
 
+      # Native Linux vector payloads need a C++ toolchain. The core stays CGO-free.
+      - name: Native build tools
+        run: sudo apt-get update && sudo apt-get install -y cmake g++
+
       # `make check` builds the binary itself (its first prerequisite) and runs
       # the acceptance suite as part of `go test ./...`, so there is no separate
       # build or acceptance step: a green check is a green suite over the real
@@ -81,11 +117,10 @@ jobs:
       - name: Build, format, vet, tests and slop gate
         run: make check
 
-      # Core binaries and installable vector archives come out of one runner
-      # because CGO_ENABLED=0 makes cross compilation trivial. It is the same
-      # `make dist` the release channel runs, so a target that stops building or
-      # packaging is a red pull request and not a red tag.
-      - name: The core and vector artefacts from a single runner
+      # The core stays a CGO-free cross-compile. Native embedding payloads are
+      # built on their own runners; this job still proves the Windows
+      # compatibility payload and the host Linux CPU payload.
+      - name: Host artefacts and the Windows compatibility payload
         run: make dist
 
       # The OSS portability guard: an absolute path with a machine name, a user

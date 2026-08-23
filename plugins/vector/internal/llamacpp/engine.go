@@ -1,0 +1,95 @@
+//go:build cgo && !windows
+
+package llamacpp
+
+/*
+#cgo CXXFLAGS: -std=c++17 -O3 -I${SRCDIR}/../../../../.tmp/llama.cpp/include -I${SRCDIR}/../../../../.tmp/llama.cpp/ggml/include -I${SRCDIR}/../../../../.tmp/llama.cpp/src
+#include "wrapper.h"
+#include <stdlib.h>
+*/
+import "C"
+
+import (
+	"fmt"
+	"runtime"
+	"unsafe"
+)
+
+const (
+	BackendMetal = "metal"
+	BackendCPU   = "cpu"
+)
+
+type Engine struct {
+	engine         *C.roca_llama_engine
+	Backend        string
+	FallbackReason string
+}
+
+func Open(model string, threads, gpuLayers int) (*Engine, error) {
+	if threads <= 0 {
+		threads = runtime.NumCPU()
+	}
+	path := C.CString(model)
+	defer C.free(unsafe.Pointer(path))
+	var message *C.char
+	var accelerated C.int
+	engine := C.roca_llama_open(path, C.int(threads), C.int(gpuLayers), &accelerated, &message)
+	if engine == nil {
+		defer C.roca_llama_release(unsafe.Pointer(message))
+		return nil, fmt.Errorf("open the embedding model: %s", C.GoString(message))
+	}
+	backend, fallback := selectedBackend(gpuLayers, accelerated != 0)
+	result := &Engine{engine: engine, Backend: backend, FallbackReason: fallback}
+	return result, nil
+}
+
+func selectedBackend(gpuLayers int, accelerated bool) (string, string) {
+	if accelerated {
+		return BackendMetal, ""
+	}
+	if gpuLayers > 0 {
+		return BackendCPU, "accelerator unavailable"
+	}
+	return BackendCPU, ""
+}
+
+func OpenPreferred(model string, threads int) (*Engine, error) {
+	if runtime.GOOS == "darwin" {
+		engine, err := Open(model, threads, 99)
+		if err == nil {
+			return engine, nil
+		}
+		cpu, cpuErr := Open(model, threads, 0)
+		if cpuErr != nil {
+			return nil, err
+		}
+		cpu.FallbackReason = "accelerator init failed"
+		return cpu, nil
+	}
+	return Open(model, threads, 0)
+}
+
+func (e *Engine) Close() {
+	if e != nil && e.engine != nil {
+		C.roca_llama_close(e.engine)
+		e.engine = nil
+	}
+}
+
+func (e *Engine) Embed(text string) ([]float32, int, error) {
+	input := C.CString(text)
+	defer C.free(unsafe.Pointer(input))
+	var raw *C.float
+	var dimensions C.int
+	var tokens C.int
+	var message *C.char
+	if C.roca_llama_embed(e.engine, input, C.size_t(len(text)), &raw, &dimensions, &tokens, &message) != 0 {
+		defer C.roca_llama_release(unsafe.Pointer(message))
+		return nil, 0, fmt.Errorf("embed: %s", C.GoString(message))
+	}
+	defer C.roca_llama_release(unsafe.Pointer(raw))
+	vector := make([]float32, int(dimensions))
+	copy(vector, unsafe.Slice((*float32)(unsafe.Pointer(raw)), int(dimensions)))
+	return vector, int(tokens), nil
+}

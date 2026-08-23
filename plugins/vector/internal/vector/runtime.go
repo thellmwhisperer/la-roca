@@ -90,14 +90,17 @@ func writeCompletion(directory string, completion Completion) error {
 }
 
 type LaunchRequest struct {
-	Executable string
-	Arguments  []string
-	DataDir    string
+	Executable  string
+	Arguments   []string
+	DataDir     string
+	Progress    *os.File
+	Environment []string
 }
 
 type LaunchResult struct {
 	PID            int    `json:"pid,omitempty"`
 	LogPath        string `json:"log_path"`
+	LogOffset      int64  `json:"log_offset,omitempty"`
 	AlreadyRunning bool   `json:"already_running"`
 }
 
@@ -164,13 +167,22 @@ func Launch(request LaunchRequest) (LaunchResult, error) {
 		return LaunchResult{}, err
 	}
 	defer log.Close()
+	logInfo, err := log.Stat()
+	if err != nil {
+		return LaunchResult{}, err
+	}
 	devNull, err := os.Open(os.DevNull)
 	if err != nil {
 		return LaunchResult{}, err
 	}
 	defer devNull.Close()
 	command := exec.Command(request.Executable, request.Arguments...)
+	command.Env = append(os.Environ(), request.Environment...)
 	command.Stdin, command.Stdout, command.Stderr = devNull, log, log
+	if request.Progress != nil && runtime.GOOS != "windows" {
+		command.ExtraFiles = []*os.File{request.Progress}
+		command.Args = append(command.Args, "--progress-fd=3")
+	}
 	command.SysProcAttr = detachedProcessAttributes
 	if err := command.Start(); err != nil {
 		return LaunchResult{}, fmt.Errorf("start vector worker: %w", err)
@@ -188,7 +200,7 @@ func Launch(request LaunchRequest) (LaunchResult, error) {
 		return LaunchResult{}, err
 	}
 	removeClaim = false
-	return LaunchResult{PID: pid, LogPath: logPath}, nil
+	return LaunchResult{PID: pid, LogPath: logPath, LogOffset: logInfo.Size()}, nil
 }
 
 func claimWorker(path string) (*os.File, error) {

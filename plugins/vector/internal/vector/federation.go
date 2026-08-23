@@ -13,14 +13,17 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/thellmwhisperer/la-roca-vector/internal/engine"
+	"github.com/thellmwhisperer/la-roca-vector/internal/telemetry"
 	"github.com/thellmwhisperer/la-roca/pkg/incrementality"
 )
 
 const (
 	vectorRegistryFilename = "vector-registry.json"
-	vectorRegistrySchema   = 1
+	vectorRegistrySchema   = 2
 	declaredReaderVersion  = "declared-surfaces-v2"
 )
 
@@ -51,11 +54,20 @@ type vectorDatabase struct {
 }
 
 type vectorTable struct {
-	Name        string         `json:"name"`
-	IDColumn    string         `json:"id_column"`
-	TextColumns []string       `json:"text_columns"`
-	Columns     []string       `json:"columns,omitempty"`
-	Chunking    *chunkingHints `json:"chunking,omitempty"`
+	Name        string          `json:"name"`
+	IDColumn    string          `json:"id_column"`
+	TextColumns []string        `json:"text_columns"`
+	TimeColumns []string        `json:"time_columns,omitempty"`
+	TimeJoin    *vectorTimeJoin `json:"time_join,omitempty"`
+	Columns     []string        `json:"columns,omitempty"`
+	Chunking    *chunkingHints  `json:"chunking,omitempty"`
+}
+
+type vectorTimeJoin struct {
+	Table         string   `json:"table"`
+	LocalColumn   string   `json:"local_column"`
+	ForeignColumn string   `json:"foreign_column"`
+	TimeColumns   []string `json:"time_columns"`
 }
 
 type chunkingHints struct {
@@ -72,6 +84,7 @@ type Federation struct {
 	Notice       func(string)
 	Progress     func(IngestProgress)
 	Reembed      bool
+	Events       engine.Sink
 	databases    []vectorDatabase
 	routes       []vectorRoute
 }
@@ -130,8 +143,8 @@ func loadVectorRegistry(path string) (vectorRegistry, error) {
 }
 
 func validateRegistry(registry vectorRegistry) error {
-	if registry.Schema != vectorRegistrySchema {
-		return fmt.Errorf("vector registry schema is %d, want %d", registry.Schema, vectorRegistrySchema)
+	if registry.Schema != 1 && registry.Schema != vectorRegistrySchema {
+		return fmt.Errorf("vector registry schema is %d, want 1 or %d", registry.Schema, vectorRegistrySchema)
 	}
 	seenDatabases := map[string]bool{}
 	seenRoutes := map[string]bool{}
@@ -173,6 +186,9 @@ func validateRegistry(registry vectorRegistry) error {
 				seenTables[table.Name] || len(table.TextColumns) == 0 {
 				return fmt.Errorf("vector registry database %s has invalid table %q", owner, table.Name)
 			}
+			if registry.Schema >= 2 && len(table.TimeColumns) == 0 && table.TimeJoin == nil {
+				return fmt.Errorf("vector registry database %s has invalid table %q", owner, table.Name)
+			}
 			seenTables[table.Name] = true
 			seenColumns := map[string]bool{}
 			for _, column := range table.TextColumns {
@@ -198,6 +214,29 @@ func validateRegistry(registry vectorRegistry) error {
 				for _, column := range table.TextColumns {
 					if !catalogColumns[column] {
 						return fmt.Errorf("vector registry table %s/%s catalog omits text column %q",
+							owner, table.Name, column)
+					}
+				}
+			}
+			for _, column := range table.TimeColumns {
+				if !validIdentifier(column) {
+					return fmt.Errorf("vector registry table %s/%s has invalid time column %q",
+						owner, table.Name, column)
+				}
+				if len(catalogColumns) > 0 && !catalogColumns[column] {
+					return fmt.Errorf("vector registry table %s/%s catalog omits time column %q",
+						owner, table.Name, column)
+				}
+			}
+			if join := table.TimeJoin; join != nil {
+				if !validIdentifier(join.Table) || !validIdentifier(join.LocalColumn) ||
+					!validIdentifier(join.ForeignColumn) || len(join.TimeColumns) == 0 {
+					return fmt.Errorf("vector registry table %s/%s has an invalid chronological join",
+						owner, table.Name)
+				}
+				for _, column := range join.TimeColumns {
+					if !validIdentifier(column) {
+						return fmt.Errorf("vector registry table %s/%s has invalid joined time column %q",
 							owner, table.Name, column)
 					}
 				}
@@ -347,7 +386,8 @@ func (f Federation) queryTexts(ctx context.Context, texts []string, k int, datab
 			result.noticeModelUnavailable(model, group, "embedding provider is unavailable")
 			continue
 		}
-		vectors, err := f.Embedder.Embed(ctx, model, prefixed)
+		vectors, err := f.Embedder.Embed(telemetry.WithOperation(ctx, telemetry.OperationQuery),
+			model, prefixed)
 		if err != nil {
 			result.noticeModelUnavailable(model, group, err.Error())
 			continue
@@ -606,6 +646,15 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 	}
 	result := FederationDelta{Databases: []DatabaseDelta{}}
 	matched := sourceKind == ""
+	var preparationErr error
+	type ingestJob struct {
+		database                       vectorDatabase
+		reader                         DeclaredCorpus
+		sidecar, contract, fingerprint string
+		delta                          Delta
+		err                            error
+	}
+	jobs := []*ingestJob{}
 	for _, database := range f.databases {
 		reader := DeclaredCorpus{Core: f.Core, Database: database}
 		if sourceKind != "" && !reader.hasTable(sourceKind) {
@@ -620,44 +669,186 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 		contract := database.contractFingerprint()
 		fingerprint, err := databaseFingerprint(databasePath, contract)
 		if err != nil {
-			return FederationDelta{}, fmt.Errorf("fingerprint vector source %s: %w", database.owner(), err)
+			if preparationErr == nil {
+				preparationErr = fmt.Errorf("fingerprint vector source %s: %w", database.owner(), err)
+			}
+			continue
 		}
-		var delta Delta
 		if sourceKind == "" && !f.Reembed {
-			delta, err = unchangedSidecar(sidecar, database.owner(), f.Model, contract, fingerprint)
-			if err == nil {
+			delta, unchangedErr := unchangedSidecar(sidecar, database.owner(), f.Model, contract, fingerprint)
+			if unchangedErr == nil {
 				if err := sealSidecar(sidecar, database.owner(), f.Model, f.BuildVersion, contract, fingerprint); err != nil {
 					return FederationDelta{}, err
 				}
 				result.add(database.owner(), delta)
 				continue
 			}
-			if !errors.Is(err, errSidecarChanged) {
-				return FederationDelta{}, err
+			if !errors.Is(unchangedErr, errSidecarChanged) {
+				return FederationDelta{}, unchangedErr
 			}
 		}
-		index := f.index(database, reader, sidecar)
-		if sourceKind == "" {
-			delta, err = index.Ingest(ctx)
-		} else {
-			delta, err = index.IngestSource(ctx, sourceKind)
-		}
-		if err != nil {
-			return FederationDelta{}, fmt.Errorf("index vector source %s: %w", database.owner(), err)
-		}
-		storedFingerprint := ""
-		if sourceKind == "" {
-			storedFingerprint = fingerprint
-		}
-		if err := sealSidecar(sidecar, database.owner(), f.Model, f.BuildVersion, contract, storedFingerprint); err != nil {
-			return FederationDelta{}, err
-		}
-		result.add(database.owner(), delta)
+		jobs = append(jobs, &ingestJob{database: database, reader: reader, sidecar: sidecar,
+			contract: contract, fingerprint: fingerprint})
 	}
 	if !matched {
 		return FederationDelta{}, fmt.Errorf("unknown vector source %q", sourceKind)
 	}
+	if len(jobs) == 0 {
+		return result, preparationErr
+	}
+	orderedCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	scheduler := newEmbeddingScheduler(orderedCtx, f.Embedder, len(jobs))
+	var workers sync.WaitGroup
+	for id, job := range jobs {
+		workers.Add(1)
+		go func(id int, job *ingestJob) {
+			defer workers.Done()
+			index := f.index(job.database, job.reader, job.sidecar)
+			index.BatchSize = 1
+			index.Embedder = scheduledEmbedder{base: f.Embedder, id: id, scheduler: scheduler}
+			if sourceKind == "" {
+				job.delta, job.err = index.Ingest(orderedCtx)
+			} else {
+				job.delta, job.err = index.IngestSource(orderedCtx, sourceKind)
+			}
+			scheduler.finished <- id
+		}(id, job)
+	}
+	scheduler.run()
+	workers.Wait()
+	var ingestErr error
+	for _, job := range jobs {
+		if job.err != nil {
+			if ingestErr == nil {
+				ingestErr = fmt.Errorf("index vector source %s: %w", job.database.owner(), job.err)
+			}
+			continue
+		}
+		storedFingerprint := ""
+		if sourceKind == "" {
+			storedFingerprint = job.fingerprint
+		}
+		if err := sealSidecar(job.sidecar, job.database.owner(), f.Model, f.BuildVersion,
+			job.contract, storedFingerprint); err != nil {
+			return FederationDelta{}, err
+		}
+		result.add(job.database.owner(), job.delta)
+	}
+	if preparationErr != nil {
+		return result, preparationErr
+	}
+	if ingestErr != nil {
+		return result, ingestErr
+	}
 	return result, nil
+}
+
+type embeddingRequest struct {
+	id    int
+	ctx   context.Context
+	model string
+	input []string
+	order sourceOrder
+	reply chan embeddingReply
+}
+
+type embeddingReply struct {
+	vectors [][]float32
+	err     error
+}
+
+type embeddingScheduler struct {
+	ctx      context.Context
+	base     Embedder
+	requests chan embeddingRequest
+	finished chan int
+	active   map[int]bool
+	mu       sync.Mutex
+}
+
+func newEmbeddingScheduler(ctx context.Context, base Embedder, count int) *embeddingScheduler {
+	active := make(map[int]bool, count)
+	for id := 0; id < count; id++ {
+		active[id] = true
+	}
+	return &embeddingScheduler{ctx: ctx, base: base, requests: make(chan embeddingRequest),
+		finished: make(chan int, count), active: active}
+}
+
+func (s *embeddingScheduler) run() {
+	pending := map[int]embeddingRequest{}
+	for len(s.active) > 0 {
+		for len(pending) < len(s.active) {
+			select {
+			case request := <-s.requests:
+				pending[request.id] = request
+			case id := <-s.finished:
+				delete(s.active, id)
+			case <-s.ctx.Done():
+				for _, request := range pending {
+					request.reply <- embeddingReply{err: s.ctx.Err()}
+				}
+				return
+			}
+		}
+		if len(s.active) == 0 {
+			return
+		}
+		selected := -1
+		for id, request := range pending {
+			if selected < 0 || orderNewer(request.order, pending[selected].order) {
+				selected = id
+			}
+		}
+		request := pending[selected]
+		delete(pending, selected)
+		vectors, err := s.embed(request.ctx, request.model, request.input)
+		request.reply <- embeddingReply{vectors: vectors, err: err}
+	}
+}
+
+func (s *embeddingScheduler) embed(ctx context.Context, model string, input []string) ([][]float32, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.base.Embed(ctx, model, input)
+}
+
+func orderNewer(left, right sourceOrder) bool {
+	if left.timestamp != right.timestamp {
+		return left.timestamp > right.timestamp
+	}
+	return left.id > right.id
+}
+
+type scheduledEmbedder struct {
+	base      Embedder
+	id        int
+	scheduler *embeddingScheduler
+}
+
+func (e scheduledEmbedder) Pull(ctx context.Context, model string) error {
+	return e.base.Pull(ctx, model)
+}
+
+func (e scheduledEmbedder) Embed(ctx context.Context, model string, input []string) ([][]float32, error) {
+	order, ok := ctx.Value(sourceOrderKey{}).(sourceOrder)
+	if !ok {
+		return e.scheduler.embed(ctx, model, input)
+	}
+	reply := make(chan embeddingReply, 1)
+	request := embeddingRequest{id: e.id, ctx: ctx, model: model, input: input, order: order, reply: reply}
+	select {
+	case e.scheduler.requests <- request:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	select {
+	case result := <-reply:
+		return result.vectors, result.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func (r *FederationDelta) add(owner string, delta Delta) {
@@ -677,7 +868,7 @@ func (f Federation) index(database vectorDatabase, reader DeclaredCorpus, sideca
 	}
 	return Index{Corpus: reader, VectorPath: sidecar, Model: f.Model,
 		Embedder: f.Embedder, Notice: f.Notice, Progress: f.Progress, Reembed: f.Reembed,
-		SourceKinds: kinds, Database: database.Database}
+		SourceKinds: kinds, Database: database.Database, Events: f.Events}
 }
 
 type DeclaredCorpus struct {
@@ -689,6 +880,43 @@ type declaredCursor struct {
 	time  string
 	id    string
 	valid bool
+}
+
+func (d DeclaredCorpus) CountChunks(ctx context.Context, sourceKind string) (int64, error) {
+	tables := d.Database.Tables
+	if sourceKind != "" {
+		table, ok := d.table(sourceKind)
+		if !ok {
+			return 0, fmt.Errorf("unknown vector source %q", sourceKind)
+		}
+		tables = []vectorTable{table}
+	}
+	var total int64
+	for _, table := range tables {
+		alias := "_vector_count"
+		size, overlap := table.chunking()
+		counts := make([]string, 0, len(table.TextColumns))
+		for _, column := range table.TextColumns {
+			text := fmt.Sprintf("COALESCE(CAST(%s.%s AS TEXT),'')", alias, quoteIdentifier(column))
+			counts = append(counts, chunkCountExpression(text, size, overlap))
+		}
+		statement := fmt.Sprintf(`SELECT COALESCE(SUM(%s),0) AS total FROM %s.%s AS %s WHERE %s.%s IS NOT NULL AND (%s)`,
+			strings.Join(counts, "+"), quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name),
+			alias, alias, quoteIdentifier(table.IDColumn), declaredNonEmptyPredicate(alias, table.TextColumns))
+		rows, err := d.Core.query(ctx, statement)
+		if err != nil {
+			return 0, fmt.Errorf("count declared chunks %s/%s: %w", d.Database.owner(), table.Name, err)
+		}
+		if len(rows) != 1 {
+			return 0, fmt.Errorf("count declared chunks %s/%s returned %d rows", d.Database.owner(), table.Name, len(rows))
+		}
+		count, err := integer(rows[0], "total")
+		if err != nil {
+			return 0, err
+		}
+		total += count
+	}
+	return total, nil
 }
 
 func (d DeclaredCorpus) WalkSources(ctx context.Context, sourceKind string,
@@ -705,45 +933,100 @@ func (d DeclaredCorpus) WalkSources(ctx context.Context, sourceKind string,
 	for _, table := range d.Database.Tables {
 		catalog[table.Name] = table.availableColumns()
 	}
+	iterators := make([]*declaredTableIterator, 0, len(tables))
 	for _, table := range tables {
-		cursor := declaredCursor{}
-		for {
-			rows, err := d.Core.query(ctx, d.pageQuery(table, cursor, catalog))
-			if err != nil {
-				return fmt.Errorf("read declared surface %s/%s: %w", d.Database.owner(), table.Name, err)
+		iterator := &declaredTableIterator{corpus: d, table: table, catalog: catalog}
+		if err := iterator.advance(ctx); err != nil {
+			return err
+		}
+		iterators = append(iterators, iterator)
+	}
+	for {
+		selected := -1
+		for index, iterator := range iterators {
+			if iterator.current == nil {
+				continue
 			}
-			for _, values := range rows {
-				id := stringValue(values["source_id"])
-				if id == "" {
-					continue
-				}
-				cursor = declaredCursor{time: stringValue(values["context_time"]), id: id, valid: true}
-				row := sourceRow{kind: table.Name, sourceID: id,
-					fingerprintVersion: table.contractFingerprint(),
-					title:              stringValue(values["context_title"]),
-					project:            stringValue(values["context_project"]),
-					occurredAt:         stringValue(values["context_time"]),
-					createdAt:          stringValue(values["context_time"])}
-				if table.Chunking != nil && (table.Chunking.MaxChars != nil || table.Chunking.OverlapChars != nil) {
-					size, overlap := table.chunking()
-					row.chunkSize, row.overlap = size, overlap
-				}
-				expanded := expandColumnRows(row, table.TextColumns, values)
-				if len(expanded) == 0 {
-					continue
-				}
-				for _, item := range expanded {
-					if err := visit(item); err != nil {
-						return err
-					}
-				}
-			}
-			if len(rows) < walkPageSize {
-				break
+			if selected < 0 || sourceNewer(*iterator.current, *iterators[selected].current) {
+				selected = index
 			}
 		}
+		if selected < 0 {
+			return nil
+		}
+		if err := visit(*iterators[selected].current); err != nil {
+			return err
+		}
+		if err := iterators[selected].advance(ctx); err != nil {
+			return err
+		}
 	}
-	return nil
+}
+
+type declaredTableIterator struct {
+	corpus  DeclaredCorpus
+	table   vectorTable
+	catalog map[string]map[string]bool
+	cursor  declaredCursor
+	rows    []sourceRow
+	index   int
+	done    bool
+	current *sourceRow
+}
+
+func (i *declaredTableIterator) advance(ctx context.Context) error {
+	for {
+		if i.index < len(i.rows) {
+			row := i.rows[i.index]
+			i.index++
+			i.current = &row
+			return nil
+		}
+		if i.done {
+			i.current = nil
+			return nil
+		}
+		values, err := i.corpus.Core.query(ctx, i.corpus.pageQuery(i.table, i.cursor, i.catalog))
+		if err != nil {
+			return fmt.Errorf("read declared surface %s/%s: %w", i.corpus.Database.owner(), i.table.Name, err)
+		}
+		i.done = len(values) < walkPageSize
+		i.rows = i.rows[:0]
+		i.index = 0
+		for _, value := range values {
+			id := stringValue(value["source_id"])
+			if id == "" {
+				continue
+			}
+			occurredAt := stringValue(value["context_time"])
+			i.cursor = declaredCursor{time: occurredAt, id: id, valid: true}
+			row := sourceRow{kind: i.table.Name, sourceID: id,
+				fingerprintVersion: i.table.embeddingContractFingerprint(),
+				title:              stringValue(value["context_title"]),
+				project:            stringValue(value["context_project"]),
+				occurredAt:         occurredAt,
+				createdAt:          occurredAt}
+			if i.table.Chunking != nil &&
+				(i.table.Chunking.MaxChars != nil || i.table.Chunking.OverlapChars != nil) {
+				size, overlap := i.table.chunking()
+				row.chunkSize, row.overlap = size, overlap
+			}
+			i.rows = append(i.rows, expandColumnRows(row, i.table.TextColumns, value)...)
+		}
+	}
+}
+
+func sourceNewer(left, right sourceRow) bool {
+	if left.occurredAt != right.occurredAt {
+		return left.occurredAt > right.occurredAt
+	}
+	if left.sourceID != right.sourceID {
+		return left.sourceID > right.sourceID
+	}
+	if left.column != right.column {
+		return left.column < right.column
+	}
+	return left.kind > right.kind
 }
 
 func (d DeclaredCorpus) ResolveSource(ctx context.Context, kind string, where locator) (string, error) {
@@ -768,7 +1051,7 @@ func (d DeclaredCorpus) ResolveSource(ctx context.Context, kind string, where lo
 		}
 		text := expanded[0].rowText
 		candidate := sourceRow{kind: kind, sourceID: where.SourceID, text: text, rowText: text,
-			fingerprintVersion: table.contractFingerprint()}
+			fingerprintVersion: table.embeddingContractFingerprint()}
 		if candidate.identity() == where.Identity {
 			return text, nil
 		}
@@ -831,7 +1114,7 @@ func (d DeclaredCorpus) ResolveSources(ctx context.Context,
 		}
 		text := expanded[0].rowText
 		candidate := sourceRow{kind: kind, sourceID: id, text: text, rowText: text,
-			fingerprintVersion: table.contractFingerprint()}
+			fingerprintVersion: table.embeddingContractFingerprint()}
 		for _, lookup := range lookups {
 			if lookup.kind == kind && lookup.where.SourceID == id &&
 				candidate.identity() == lookup.where.Identity {
@@ -893,60 +1176,72 @@ func (d DeclaredCorpus) pageQuery(table vectorTable, cursor declaredCursor,
 
 func (d DeclaredCorpus) contextSQL(table vectorTable,
 	catalog map[string]map[string]bool) (string, string) {
-	empty := `, '' AS context_title, '' AS context_project, '' AS context_time`
 	alias := quoteIdentifier(d.Database.Alias)
 	columns := catalog[table.Name]
+	timeColumns := qualifiedColumns("src", table.TimeColumns)
+	join := ""
+	if table.TimeJoin != nil {
+		timeline := "timeline"
+		join = fmt.Sprintf(" LEFT JOIN %s.%s %s ON CAST(src.%s AS TEXT)=CAST(%s.%s AS TEXT)",
+			alias, quoteIdentifier(table.TimeJoin.Table), timeline,
+			quoteIdentifier(table.TimeJoin.LocalColumn), timeline,
+			quoteIdentifier(table.TimeJoin.ForeignColumn))
+		timeColumns = append(timeColumns, qualifiedColumns(timeline, table.TimeJoin.TimeColumns)...)
+	}
+	timeExpression := "''"
+	if len(timeColumns) > 0 {
+		timeExpression = "COALESCE(" + strings.Join(append(timeColumns, "''"), ",") + ")"
+	}
+	title, project := "''", "''"
+	if d.Database.Plugin != "roca-corpus" && d.Database.Plugin != "roca-ops" {
+		return fmt.Sprintf(", %s AS context_title, %s AS context_project, %s AS context_time",
+			title, project, timeExpression), join
+	}
 	switch table.Name {
 	case "sessions":
-		return fmt.Sprintf(`, %s AS context_title, %s AS context_project, %s AS context_time`,
-			coalesceDeclared(columns, "src", "title"),
-			coalesceDeclared(columns, "src", "project"),
-			coalesceDeclared(columns, "src", "started_at")), ""
+		title = coalesceDeclared(columns, "src", "title")
+		project = coalesceDeclared(columns, "src", "project")
 	case "exchanges":
 		sessions, hasSessions := d.table("sessions")
 		sessionColumns := catalog["sessions"]
-		occurred := coalesceDeclared(columns, "src", "human_timestamp", "agent_timestamp")
-		if !hasSessions || !columns["session_id"] || !sessionColumns[sessions.IDColumn] {
-			return fmt.Sprintf(`, '' AS context_title, '' AS context_project, %s AS context_time`, occurred), ""
-		}
-		return fmt.Sprintf(`, %s AS context_title, %s AS context_project, %s AS context_time`,
-				coalesceDeclared(sessionColumns, "ctx", "title"),
-				coalesceDeclared(sessionColumns, "ctx", "project"),
-				coalesceDeclaredPair(columns, "src", []string{"human_timestamp", "agent_timestamp"},
-					sessionColumns, "ctx", []string{"started_at"})),
-			fmt.Sprintf(" LEFT JOIN %s.%s ctx ON ctx.%s = src.%s", alias,
+		if hasSessions && columns["session_id"] && sessionColumns[sessions.IDColumn] {
+			title = coalesceDeclared(sessionColumns, "ctx", "title")
+			project = coalesceDeclared(sessionColumns, "ctx", "project")
+			join += fmt.Sprintf(" LEFT JOIN %s.%s ctx ON ctx.%s = src.%s", alias,
 				quoteIdentifier(sessions.Name), quoteIdentifier(sessions.IDColumn), quoteIdentifier("session_id"))
+		}
 	case "thinking_blocks":
 		sessions, hasSessions := d.table("sessions")
 		sessionColumns := catalog["sessions"]
-		if !hasSessions || !columns["session_id"] || !sessionColumns[sessions.IDColumn] {
-			return empty, ""
-		}
-		return fmt.Sprintf(`, %s AS context_title, %s AS context_project, %s AS context_time`,
-				coalesceDeclared(sessionColumns, "ctx", "title"),
-				coalesceDeclared(sessionColumns, "ctx", "project"),
-				coalesceDeclared(sessionColumns, "ctx", "started_at")),
-			fmt.Sprintf(" LEFT JOIN %s.%s ctx ON ctx.%s = src.%s", alias,
+		if hasSessions && columns["session_id"] && sessionColumns[sessions.IDColumn] {
+			title = coalesceDeclared(sessionColumns, "ctx", "title")
+			project = coalesceDeclared(sessionColumns, "ctx", "project")
+			join += fmt.Sprintf(" LEFT JOIN %s.%s ctx ON ctx.%s = src.%s", alias,
 				quoteIdentifier(sessions.Name), quoteIdentifier(sessions.IDColumn), quoteIdentifier("session_id"))
+		}
 	case "memories":
+		title = coalesceDeclared(columns, "src", "project")
 		sessions, hasSessions := d.table("sessions")
 		sessionColumns := catalog["sessions"]
-		if !hasSessions || !columns["source_session"] || !sessionColumns[sessions.IDColumn] {
-			return fmt.Sprintf(`, %s AS context_title, '' AS context_project, %s AS context_time`,
-				coalesceDeclared(columns, "src", "project"),
-				coalesceDeclared(columns, "src", "created_at")), ""
-		}
-		return fmt.Sprintf(`, %s AS context_title, %s AS context_project, %s AS context_time`,
-				coalesceDeclaredPair(sessionColumns, "ctx", []string{"title"},
-					columns, "src", []string{"project"}),
-				coalesceDeclared(sessionColumns, "ctx", "project"),
-				coalesceDeclaredPair(columns, "src", []string{"created_at"},
-					sessionColumns, "ctx", []string{"started_at"})),
-			fmt.Sprintf(" LEFT JOIN %s.%s ctx ON ctx.%s = src.%s", alias,
+		if d.Database.Plugin == "roca-corpus" && hasSessions &&
+			columns["source_session"] && sessionColumns[sessions.IDColumn] {
+			title = coalesceDeclaredPair(sessionColumns, "ctx", []string{"title"},
+				columns, "src", []string{"project"})
+			project = coalesceDeclared(sessionColumns, "ctx", "project")
+			join += fmt.Sprintf(" LEFT JOIN %s.%s ctx ON ctx.%s = src.%s", alias,
 				quoteIdentifier(sessions.Name), quoteIdentifier(sessions.IDColumn), quoteIdentifier("source_session"))
-	default:
-		return empty, ""
+		}
 	}
+	return fmt.Sprintf(", %s AS context_title, %s AS context_project, %s AS context_time",
+		title, project, timeExpression), join
+}
+
+func qualifiedColumns(alias string, columns []string) []string {
+	result := make([]string, len(columns))
+	for index, column := range columns {
+		result[index] = alias + "." + quoteIdentifier(column)
+	}
+	return result
 }
 
 func coalesceDeclared(columns map[string]bool, alias string, names ...string) string {
@@ -1070,13 +1365,18 @@ func readMetadata(db *sql.DB, keys ...string) (map[string]string, error) {
 func (d vectorDatabase) contractFingerprint() string {
 	fields := []string{declaredReaderVersion, d.Plugin, d.Database, d.Alias}
 	for _, table := range d.Tables {
-		fields = append(fields, table.contractFingerprint())
+		fields = append(fields, table.readerContractFingerprint())
 	}
 	return incrementality.ContentFingerprint(fields...)
 }
 
-func (t vectorTable) contractFingerprint() string {
-	fields := []string{declaredReaderVersion, chunkPolicyVersion, t.Name, t.IDColumn, "per-column"}
+func (t vectorTable) readerContractFingerprint() string {
+	fields := []string{declaredReaderVersion, t.Name, t.IDColumn}
+	fields = append(fields, t.TimeColumns...)
+	if t.TimeJoin != nil {
+		fields = append(fields, t.TimeJoin.Table, t.TimeJoin.LocalColumn, t.TimeJoin.ForeignColumn)
+		fields = append(fields, t.TimeJoin.TimeColumns...)
+	}
 	fields = append(fields, t.TextColumns...)
 	if len(t.Columns) > 0 {
 		fields = append(fields, "catalog")
@@ -1101,6 +1401,18 @@ func (t vectorTable) availableColumns() map[string]bool {
 		columns[column] = true
 	}
 	return columns
+}
+
+func (t vectorTable) embeddingContractFingerprint() string {
+	fields := []string{declaredReaderVersion, chunkPolicyVersion, t.Name, t.IDColumn, "per-column"}
+	fields = append(fields, t.TextColumns...)
+	if t.Chunking != nil && (t.Chunking.MaxChars != nil || t.Chunking.OverlapChars != nil) {
+		size, overlap := t.chunking()
+		fields = append(fields, "chars", strconv.Itoa(size), strconv.Itoa(overlap))
+	} else {
+		fields = append(fields, "tokens", strconv.Itoa(defaultChunkTokens), strconv.Itoa(defaultOverlapTokens))
+	}
+	return incrementality.ContentFingerprint(fields...)
 }
 
 func (t vectorTable) chunking() (int, int) {

@@ -47,36 +47,37 @@ const (
 )
 
 type cliEnv struct {
-	build              Build
-	out                io.Writer
-	errOut             io.Writer
-	dbPath             string
-	json               bool
-	code               int
-	outcome            any
-	auditQuery         *service.QueryResult
-	correlation        string
-	auditCommand       string
-	auditArgs          []string
-	started            time.Time
-	prelogged          bool
-	skipExecutionLog   bool
-	openedDir          string
-	auditOpsDatabase   string
-	liveIngest         *ingestRows
-	wantIngestProgress bool
-	ingestStarted      time.Time
-	modelBackend       modelValidationBackend
-	modelPicker        modelPicker
-	skipReconciliation bool
-	skipInitChooser    bool
-	initPromptWait     time.Duration
-	initChooserElapsed time.Duration
-	features           config.FeaturesConfig
-	featuresLoaded     bool
-	omitCorpus         bool
-	forceReadOnly      bool
-	sshRunner          sshCommandRunner
+	build                Build
+	out                  io.Writer
+	errOut               io.Writer
+	dbPath               string
+	json                 bool
+	code                 int
+	outcome              any
+	auditQuery           *service.QueryResult
+	correlation          string
+	auditCommand         string
+	auditArgs            []string
+	started              time.Time
+	prelogged            bool
+	skipExecutionLog     bool
+	openedDir            string
+	auditOpsDatabase     string
+	liveIngest           *ingestRows
+	wantIngestProgress   bool
+	ingestStarted        time.Time
+	modelBackend         modelValidationBackend
+	modelPicker          modelPicker
+	skipReconciliation   bool
+	skipInitChooser      bool
+	initPromptWait       time.Duration
+	initChooserElapsed   time.Duration
+	features             config.FeaturesConfig
+	featuresLoaded       bool
+	omitCorpus           bool
+	forceReadOnly        bool
+	sshRunner            sshCommandRunner
+	bundledVectorPayload []byte
 }
 
 // Execute runs the CLI and returns the process exit code.
@@ -844,6 +845,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		PluginDir:                 pluginDir,
 		PluginsEnabled:            file.Features.Plugins,
 		RocaOpsEnabled:            rocaOpsEnabled,
+		VectorEnabled:             file.Features.Vector,
 		CorpusEnabled:             !env.omitCorpus,
 		ReadLayout:                readLayout,
 		RollbackLayout:            rollbackLayout,

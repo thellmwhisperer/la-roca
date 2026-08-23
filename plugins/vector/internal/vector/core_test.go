@@ -31,17 +31,18 @@ func TestCoreCLIWalksEverySourceThroughRocaExec(t *testing.T) {
 		case strings.Contains(statement, "FROM "+corpusTable("exchanges")):
 			rows = []map[string]any{{"id": 2, "session_id": "s1", "exchange_number": 4,
 				"human_text": "beta question", "agent_text": "beta answer",
-				"occurred_at": "2026-03-18", "context_title": "delta session"}}
+				"occurred_at": "2026-08-13", "context_title": "delta session"}}
 		case strings.Contains(statement, "FROM "+corpusTable("thinking_blocks")):
 			rows = []map[string]any{{"id": 3, "session_id": "s1", "exchange_number": nil,
-				"position_in_session": nil, "text": "gamma reasoning"}}
+				"position_in_session": nil, "text": "gamma reasoning", "occurred_at": "2026-08-12",
+				"context_title": "delta session", "context_project": "Synthetic orchard"}}
 		case strings.Contains(statement, "FROM "+corpusTable("sessions")):
 			if !strings.Contains(statement, "$.project_name") || strings.Contains(statement, "metadata AS") ||
 				strings.Contains(statement, "COALESCE(project,") {
 				t.Fatalf("session projection did not select only the project label: %s", statement)
 			}
 			rows = []map[string]any{{"session_id": "s1", "title": "delta session",
-				"project_name": "Synthetic orchard"}}
+				"project_name": "Synthetic orchard", "occurred_at": "2026-08-11"}}
 		default:
 			return nil, fmt.Errorf("unexpected statement %s", statement)
 		}
@@ -146,10 +147,47 @@ func TestCoreCLIPaginatesEmptyTimestampsAndCarriesProjectContext(t *testing.T) {
 	}
 }
 
+func TestCoreCLIWalkSourcesMergesFamiliesNewestFirst(t *testing.T) {
+	runner := func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		statement := args[len(args)-1]
+		var rows []map[string]any
+		switch {
+		case strings.Contains(statement, "FROM "+corpusTable("memories")):
+			rows = []map[string]any{{"id": 1, "content": "older memory", "created_at": "2026-08-20"}}
+		case strings.Contains(statement, "FROM "+corpusTable("exchanges")):
+			rows = []map[string]any{{"id": 2, "session_id": "new", "exchange_number": 1,
+				"human_text": "newest exchange", "agent_text": "", "occurred_at": "2026-08-23"}}
+		case strings.Contains(statement, "FROM "+corpusTable("thinking_blocks")):
+			rows = []map[string]any{{"id": 3, "session_id": "middle", "text": "middle thought",
+				"occurred_at": "2026-08-21"}}
+		case strings.Contains(statement, "FROM "+corpusTable("sessions")):
+			rows = []map[string]any{{"session_id": "oldest", "title": "oldest session",
+				"occurred_at": "2026-08-19"}}
+		default:
+			return nil, fmt.Errorf("unexpected statement %s", statement)
+		}
+		return json.Marshal(map[string]any{"rows": rows})
+	}
+	core := CoreCLI{Executable: "/synthetic/roca", Run: runner}
+	var kinds []string
+	if err := core.WalkSources(context.Background(), "", func(source sourceRow) error {
+		kinds = append(kinds, source.kind)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(kinds, []string{"exchanges", "thinking_blocks", "memories", "sessions"}) {
+		t.Fatalf("source order = %v", kinds)
+	}
+}
+
 func TestCoreCLIThinkingHeaderFallsBackToSessionProject(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "corpus.db")
 	createSourceDatabase(t, dbPath, `
 		CREATE TABLE sessions(session_id TEXT PRIMARY KEY, title TEXT, metadata TEXT, started_at TEXT);
+		CREATE TABLE exchanges(
+			id INTEGER PRIMARY KEY, session_id TEXT, exchange_number INTEGER,
+			human_timestamp TEXT, agent_timestamp TEXT);
 		CREATE TABLE thinking_blocks(
 			id INTEGER PRIMARY KEY, session_id TEXT, exchange_number INTEGER,
 			position_in_session REAL, full_text TEXT);

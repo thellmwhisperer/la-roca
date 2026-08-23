@@ -113,7 +113,8 @@
           {
             "name": "memories",
             "id_column": "id",
-            "text_columns": ["content"]
+            "text_columns": ["content"],
+            "time_columns": ["created_at"]
           }
         ]
       }

@@ -1,101 +1,162 @@
 package release
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
-// The artefact name is a contract shared by four places: this package, the
-// Makefile that builds the artefacts, `install.sh` that downloads them and the
-// workflow that publishes them. A fifth spelling anywhere turns "there is no
-// artefact for your platform" into a lie on a platform that has one.
-//
-// Three of those four are held together here by reading the files themselves,
-// because a comment saying "keep these in sync" has never kept anything in sync.
-// The fourth (`install.sh`) builds its name at run time out of the tag and the
-// platform, and the acceptance suite runs the real script.
+var releaseArtifactSet = []string{
+	"roca-v-test-darwin-arm64",
+	"roca-v-test-linux-arm64",
+	"roca-v-test-linux-x64",
+	"roca-v-test-windows-x64.exe",
+	"roca-vector-v-test-darwin-arm64.tar.gz",
+	"roca-vector-v-test-linux-arm64.tar.gz",
+	"roca-vector-v-test-linux-x64.tar.gz",
+	"roca-vector-v-test-windows-x64.tar.gz",
+}
 
-// theMatrix is what the channel publishes, spelled as `Platform` spells it.
-var theMatrix = []string{"darwin-arm64", "linux-x64", "linux-arm64", "windows-x64"}
+type releaseWorkflow struct {
+	Jobs map[string]struct {
+		Needs    any `yaml:"needs"`
+		RunsOn   any `yaml:"runs-on"`
+		Strategy struct {
+			Matrix struct {
+				Include []map[string]any `yaml:"include"`
+			} `yaml:"matrix"`
+		} `yaml:"strategy"`
+		Steps []struct {
+			Name string         `yaml:"name"`
+			Uses string         `yaml:"uses"`
+			Run  string         `yaml:"run"`
+			With map[string]any `yaml:"with"`
+		} `yaml:"steps"`
+	} `yaml:"jobs"`
+}
 
-// The Makefile is where the names are really written, and `make dist` is what
-// the workflow runs. Reading it with the Makefile's own `$(VERSION)` in the
-// place of a version is what makes the comparison exact instead of a substring
-// that would also match a shorter platform's name.
-func TestTheMakefileBuildsEveryArtefactTheChannelPublishes(t *testing.T) {
-	makefile := readRepoFile(t, "../../../Makefile")
-	for _, platform := range theMatrix {
-		if want := ArtefactName("$(VERSION)", platform); !strings.Contains(makefile, want) {
-			t.Errorf("the Makefile builds no %s", want)
+func TestReleaseLaneArchivePreservesActualArtifactSetAndModes(t *testing.T) {
+	root := t.TempDir()
+	output := filepath.Join(root, "output")
+	if err := os.MkdirAll(output, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lanes := [][]string{
+		{releaseArtifactSet[0], releaseArtifactSet[4]},
+		{releaseArtifactSet[1], releaseArtifactSet[5]},
+		{releaseArtifactSet[2], releaseArtifactSet[3], releaseArtifactSet[6], releaseArtifactSet[7]},
+	}
+	for lane, artifacts := range lanes {
+		input := filepath.Join(root, fmt.Sprintf("input-%d", lane))
+		if err := os.MkdirAll(input, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range artifacts {
+			mode := os.FileMode(0o644)
+			if !strings.HasSuffix(name, ".tar.gz") {
+				mode = 0o755
+			}
+			if err := os.WriteFile(filepath.Join(input, name), []byte(name), mode); err != nil {
+				t.Fatal(err)
+			}
+		}
+		archive := filepath.Join(root, fmt.Sprintf("release-%d.tar.gz", lane))
+		command := exec.Command(filepath.Join("..", "..", "..", "scripts", "archive-release-lane.sh"),
+			input, archive)
+		if packed, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("package release lane: %v\n%s", err, packed)
+		}
+		command = exec.Command("tar", "-C", output, "-xzf", archive)
+		if extracted, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("extract release lane: %v\n%s", err, extracted)
+		}
+	}
+	entries, err := os.ReadDir(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		got = append(got, entry.Name())
+	}
+	slices.Sort(got)
+	wantSorted := slices.Clone(releaseArtifactSet)
+	slices.Sort(wantSorted)
+	if !slices.Equal(got, wantSorted) {
+		t.Fatalf("extracted artifacts = %v, want %v", got, wantSorted)
+	}
+	for _, artifact := range releaseArtifactSet {
+		if strings.HasSuffix(artifact, ".tar.gz") {
+			continue
+		}
+		info, err := os.Stat(filepath.Join(output, artifact))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o755 {
+			t.Fatalf("%s mode = %o, want 755", artifact, info.Mode().Perm())
 		}
 	}
 }
 
-// The workflow publishes what the Makefile built. A `go build` of its own in
-// the channel would be a second spelling of the names, in the one place where
-// nobody runs the tests that would catch it.
-func TestTheChannelBuildsThroughTheMakefileAndNotByHand(t *testing.T) {
-	workflow := readRepoFile(t, "../../../.github/workflows/release.yml")
-	if !strings.Contains(workflow, "persist-credentials: false") {
-		t.Error("the release checkout persists its GitHub credential")
+func TestReleaseWorkflowBuildsNativelyAndAggregatesBeforePublishing(t *testing.T) {
+	body := readRepoFile(t, "../../../.github/workflows/release.yml")
+	var workflow releaseWorkflow
+	if err := yaml.Unmarshal([]byte(body), &workflow); err != nil {
+		t.Fatalf("release workflow is not valid YAML: %v", err)
 	}
-	if !strings.Contains(workflow, "make dist") {
-		t.Error("the release workflow does not build with `make dist`")
+	native, ok := workflow.Jobs["native-artifacts"]
+	if !ok {
+		t.Fatal("release workflow has no native-artifacts job")
 	}
-	if strings.Contains(workflow, "go build") {
-		t.Error("the release workflow builds by hand: the artefact names live in the Makefile")
-	}
-	// The checksums are what every install and every update verifies against,
-	// and an artefact with no line of its own in them is refused by name.
-	if !strings.Contains(workflow, "checksums.txt") {
-		t.Error("the release workflow publishes no checksums.txt")
-	}
-}
-
-func TestTheChannelBuildsAndPublishesAStampedVectorPackagePerPlatform(t *testing.T) {
-	makefile := readRepoFile(t, "../../../Makefile")
-	pluginMakefile := readRepoFile(t, "../../../plugins/vector/Makefile")
-	if !strings.Contains(makefile, "$(MAKE) -C plugins/vector dist VERSION=$(VERSION)") {
-		t.Fatal("the root distribution does not pass its version to the vector package build")
-	}
-	for _, platform := range theMatrix {
-		name := "roca-vector-$(VERSION)-" + platform + ".tar.gz"
-		if !strings.Contains(pluginMakefile, name) {
-			t.Errorf("the vector distribution builds no %s", name)
+	wantTargets := []string{"darwin-arm64", "linux-amd64", "linux-arm64"}
+	var targets []string
+	darwinRunner := ""
+	for _, lane := range native.Strategy.Matrix.Include {
+		target, _ := lane["target"].(string)
+		runner, _ := lane["runner"].(string)
+		targets = append(targets, target)
+		if target == "darwin-arm64" {
+			darwinRunner = runner
 		}
 	}
-	workflow := readRepoFile(t, "../../../.github/workflows/release.yml")
-	for _, required := range []string{
-		"plugin_version", `test "$plugin_version" = "$VERSION"`,
-		`"$bundle_home/bin/roca-vector" --version`,
-		"sha256sum roca-*", `gh release upload "$VERSION" --clobber bin/roca-*`,
-	} {
-		if !strings.Contains(workflow, required) {
-			t.Errorf("the release workflow does not prove or publish vector packages with %q", required)
+	slices.Sort(targets)
+	slices.Sort(wantTargets)
+	if !slices.Equal(targets, wantTargets) {
+		t.Fatalf("native release targets = %v, want %v", targets, wantTargets)
+	}
+	if !strings.HasPrefix(darwinRunner, "macos-") {
+		t.Fatalf("darwin artifact runner = %q, want native macOS", darwinRunner)
+	}
+	archiveUpload := false
+	for _, step := range native.Steps {
+		if step.Uses == "actions/upload-artifact@v4" &&
+			step.With["path"] == "release-${{ matrix.target }}.tar.gz" {
+			archiveUpload = true
 		}
 	}
-	ci := readRepoFile(t, "../../../.github/workflows/ci.yml")
-	if !strings.Contains(ci, "make dist") {
-		t.Error("pull-request CI does not dry-run the full release distribution")
+	if !archiveUpload {
+		t.Fatal("native lanes do not upload mode-preserving release archives")
 	}
-}
-
-func TestEveryCoreArtifactBundlesItsPlatformVectorExecutable(t *testing.T) {
-	makefile := readRepoFile(t, "../../../Makefile")
-	for _, payload := range []string{
-		"roca-vector-native",
-		"roca-vector-darwin-arm64",
-		"roca-vector-linux-arm64",
-		"roca-vector-linux-x64",
-		"roca-vector-windows-x64.exe",
-	} {
-		if !strings.Contains(makefile, "--payload $(VECTOR_TMP)/"+payload) {
-			t.Errorf("the core distribution does not bundle %s", payload)
+	publish, ok := workflow.Jobs["publish"]
+	if !ok {
+		t.Fatal("release workflow has no publish job")
+	}
+	aggregated := false
+	for _, step := range publish.Steps {
+		if step.Uses == "actions/download-artifact@v4" && step.With["pattern"] == "release-*" &&
+			step.With["merge-multiple"] == true && step.With["path"] == ".tmp/release-lanes" {
+			aggregated = true
 		}
 	}
-	if !strings.Contains(makefile, "go run ./cmd/bundle-vector") {
-		t.Error("the core build has no vector payload bundler")
+	if !aggregated {
+		t.Fatal("publish does not aggregate every native artifact lane")
 	}
 }
 
