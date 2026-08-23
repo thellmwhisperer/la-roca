@@ -348,7 +348,7 @@ func TestExperimentalFeaturesDefaultOffAndAreEnabledAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if missing.Features.Plugins || missing.Features.RocaOps || missing.Features.Vector ||
+	if missing.Features.Plugins || missing.Features.RocaOps || missing.Features.Vector || missing.Features.VectorConsent ||
 		missing.Features.Cron || missing.Features.ArtifactRefresh || missing.Features.ReleaseRedirects {
 		t.Fatalf("an experimental feature defaulted on without a configuration file: %+v", missing.Features)
 	}
@@ -360,6 +360,7 @@ func TestExperimentalFeaturesDefaultOffAndAreEnabledAlone(t *testing.T) {
 		{key: "plugins", read: func(features FeaturesConfig) bool { return features.Plugins }},
 		{key: "roca_ops", read: func(features FeaturesConfig) bool { return features.RocaOps }},
 		{key: "vector", read: func(features FeaturesConfig) bool { return features.Vector }},
+		{key: "vector_consent", read: func(features FeaturesConfig) bool { return features.VectorConsent }},
 		{key: "cron", read: func(features FeaturesConfig) bool { return features.Cron }},
 		{key: "artifact_refresh", read: func(features FeaturesConfig) bool { return features.ArtifactRefresh }},
 		{key: "release_redirects", read: func(features FeaturesConfig) bool { return features.ReleaseRedirects }},
@@ -380,6 +381,22 @@ func TestExperimentalFeaturesDefaultOffAndAreEnabledAlone(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestVectorConsentRoundTripsThroughThePublicConfigAPI(t *testing.T) {
+	updated, err := ApplyText("", []Change{{
+		Kind: SetValue, Table: "features", Key: "vector_consent", Value: true,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadFile(write(t, updated))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.Features.VectorConsent || len(loaded.Warnings) != 0 {
+		t.Fatalf("vector consent = %t, warnings = %v", loaded.Features.VectorConsent, loaded.Warnings)
 	}
 }
 

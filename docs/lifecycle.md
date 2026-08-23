@@ -121,10 +121,10 @@ that fails to answer for text it holds is reported as a fault.
 
 After word search is ready, an eligible terminal init says that semantic search
 finds by meaning rather than exact words and that enabling it downloads one
-embedding model. It then asks once. A yes stores `features.vector = true` and
-`features.vector_consent = true` and starts setup in the background; a no stores
-the consent decision with vector search disabled. Existing configurations are
-otherwise preserved.
+embedding model. It then asks once. A yes starts setup and, after the background
+pass acknowledges that it started, stores `features.vector = true` and
+`features.vector_consent = true`; a no stores the consent decision with vector
+search disabled. Existing configurations are otherwise preserved.
 
 There is no `roca init --vectors` flag. Non-interactive init, CI, and runs with
 `--db-path` are not asked and do not start the optional download. Machines that

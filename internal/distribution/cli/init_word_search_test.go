@@ -2,6 +2,8 @@ package cli
 
 import (
 	"database/sql"
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -21,6 +23,27 @@ func TestInitProvesWordSearchOnHistoryItJustRead(t *testing.T) {
 	}
 	if !strings.Contains(run.output, "and found it in") {
 		t.Errorf("the proof does not say where the word was found:\n%s", run.output)
+	}
+}
+
+func TestInitRejectsRemovedVectorsFlagWithoutInitializationSideEffects(t *testing.T) {
+	home := hermeticHome(t)
+	var output, warnings strings.Builder
+	env := hermeticCLIEnv(&cliEnv{build: Build{Version: "test"}, out: &output, errOut: &warnings,
+		bundledVectorPayload: []byte("synthetic payload")})
+	code, err := executeWithEnv(env, []string{"init", "--vectors"}, nil)
+	if err == nil || code == ExitOK || !strings.Contains(err.Error(), "unknown flag: --vectors") {
+		t.Fatalf("removed flag = code %d err %v output %q", code, err, output.String()+warnings.String())
+	}
+	for _, path := range []string{
+		filepath.Join(home, ".roca", "roca.db"),
+		filepath.Join(home, ".roca", "config.toml"),
+		filepath.Join(home, ".local", "bin", "roca-vector"),
+		filepath.Join(home, ".roca", "plugins", "roca-vector", "plugin.json"),
+	} {
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("removed flag created %s: %v", path, statErr)
+		}
 	}
 }
 
@@ -89,4 +112,17 @@ func emptyWordIndex(t *testing.T, path string, refuseRepair bool) {
 			t.Fatal(err)
 		}
 	}
+}
+
+func deepSearchHome(t *testing.T) (string, string) {
+	t.Helper()
+	home := hermeticHome(t)
+	claudeRoot := filepath.Join(home, "sources", "claude")
+	writeConfig(t, home, fmt.Sprintf("[defaults]\nclaude_projects_root = %q\nworkspace_roots = [%q]\n",
+		claudeRoot, filepath.Join(home, "workspace")))
+	writeFile(t, filepath.Join(claudeRoot, "-synthetic-demo", "66666666-6666-6666-6666-666666666666.jsonl"),
+		`{"type":"user","timestamp":"2026-08-01T10:00:00Z","cwd":"/synthetic/demo","message":{"content":"how did we settle the harbour lighting question"}}
+{"type":"assistant","timestamp":"2026-08-01T10:00:01Z","message":{"content":[{"type":"text","text":"we kept the harbour lighting on a separate circuit"}]}}
+`)
+	return home, filepath.Join(home, ".roca", "roca.db")
 }

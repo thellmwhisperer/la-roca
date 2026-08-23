@@ -1629,14 +1629,14 @@ type DatabaseProgress struct {
 	Total    int    `json:"total"`
 }
 
-// Progress answers while a pass is running and after one stopped, because both
+// HistoryProgress answers while a pass is running and after one stopped, because both
 // are questions the operator asks. It reads counts only: no embedding, no
 // chunking, nothing that would make asking expensive.
-func (f Federation) Progress(ctx context.Context) (Progress, error) {
+func (f Federation) HistoryProgress(ctx context.Context) (Progress, error) {
 	result := Progress{Databases: []DatabaseProgress{}}
 	for _, database := range f.databases {
 		reader := DeclaredCorpus{Core: f.Core, Database: database}
-		total, err := reader.countSources(ctx)
+		total, err := reader.CountSources(ctx, "")
 		if err != nil {
 			return Progress{}, err
 		}
@@ -1653,32 +1653,6 @@ func (f Federation) Progress(ctx context.Context) (Progress, error) {
 		result.Read, result.Total = result.Read+read, result.Total+total
 	}
 	return result, nil
-}
-
-func (d DeclaredCorpus) countSources(ctx context.Context) (int, error) {
-	total := 0
-	for _, table := range d.Database.Tables {
-		rows, err := d.Core.query(ctx, d.countQuery(table))
-		if err != nil {
-			return 0, fmt.Errorf("count declared surface %s/%s: %w", d.Database.owner(), table.Name, err)
-		}
-		for _, values := range rows {
-			counted, err := integer(values, "total")
-			if err != nil {
-				return 0, fmt.Errorf("count declared surface %s/%s: %w", d.Database.owner(), table.Name, err)
-			}
-			total += int(counted)
-		}
-	}
-	return total, nil
-}
-
-func (d DeclaredCorpus) countQuery(table vectorTable) string {
-	return fmt.Sprintf(`WITH vector_rows AS (
-		SELECT CAST(%s AS TEXT) AS source_id,%s AS text FROM %s.%s WHERE %s IS NOT NULL
-	) SELECT COUNT(*) AS total FROM vector_rows WHERE source_id<>'' AND text<>''`,
-		quoteIdentifier(table.IDColumn), declaredTextExpression(table.TextColumns),
-		quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name), quoteIdentifier(table.IDColumn))
 }
 
 // countIndexedSources counts source rows the index already holds, not chunks: a
@@ -1702,14 +1676,14 @@ func countIndexedSources(ctx context.Context, sourcePath, sidecarPath string, ta
 	read := 0
 	for _, table := range tables {
 		statement := fmt.Sprintf(`WITH declared_rows AS (
-			SELECT CAST(%s AS TEXT) AS source_id,%s AS text
-			FROM declared_source.%s WHERE %s IS NOT NULL
+			SELECT CAST(src.%s AS TEXT) AS source_id
+			FROM declared_source.%s AS src WHERE src.%s IS NOT NULL AND (%s)
 		) SELECT COUNT(*) FROM declared_rows
-		WHERE source_id<>'' AND text<>'' AND EXISTS (
+		WHERE source_id<>'' AND EXISTS (
 			SELECT 1 FROM chunks WHERE source_kind=?
 			AND CAST(json_extract(locator,'$.source_id') AS TEXT)=declared_rows.source_id
-		)`, quoteIdentifier(table.IDColumn), declaredTextExpression(table.TextColumns),
-			quoteIdentifier(table.Name), quoteIdentifier(table.IDColumn))
+		)`, quoteIdentifier(table.IDColumn), quoteIdentifier(table.Name), quoteIdentifier(table.IDColumn),
+			declaredNonEmptyPredicate("src", table.TextColumns))
 		var tableRead int
 		err := store.QueryRowContext(ctx, statement, table.Name).Scan(&tableRead)
 		if err != nil && strings.Contains(fmt.Sprint(err), "no such table: chunks") {

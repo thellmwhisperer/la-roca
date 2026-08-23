@@ -61,7 +61,7 @@ func TestSkillInstallWritesUnderTempHome(t *testing.T) {
 	previous := 0
 	for _, command := range []string{
 		"curl -fsSL", "roca init", "roca query",
-		"roca skill install", "roca vector status",
+		"roca mcp install", "roca vector status",
 	} {
 		offset := strings.Index(zones.System[previous:], command)
 		if offset < 0 {
@@ -69,10 +69,9 @@ func TestSkillInstallWritesUnderTempHome(t *testing.T) {
 		}
 		previous += offset + len(command)
 	}
-	// The yes is a question `roca init` asks, not a second command and not a
-	// hand-edited configuration file: an agent that is taught to switch a
-	// feature on by hand switches it on for a machine with no index to serve.
-	for _, forbidden := range []string{"plugins = true", "roca_ops = true", "vector = true",
+	// The first-run yes is a question `roca init` asks, not a second init command
+	// or an unrelated feature switch.
+	for _, forbidden := range []string{"plugins = true", "roca_ops = true",
 		"roca init --vectors"} {
 		if strings.Contains(zones.System, forbidden) {
 			t.Fatalf("installed agent playbook still tells agents to set %q", forbidden)

@@ -9,7 +9,7 @@ description: >
 # La Roca vector index
 
 This skill owns the database sidecars: building them, watching their progress, keeping them
-current, and the standing invitation. Search craft lives in
+current, and the standing invitation to invite the user to build them. Search craft lives in
 `roca-operations`. The contract is docs/vector.md.
 
 ## Invite

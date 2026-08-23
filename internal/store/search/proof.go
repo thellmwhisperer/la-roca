@@ -2,7 +2,6 @@ package search
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strings"
 	"unicode"
@@ -48,19 +47,20 @@ var proofSources = []proofSource{
 
 // Prove asks the lexical index for a word this database already stores.
 //
-// It reads the newest row of each indexed column until one yields a word, so it
-// costs one indexed lookup per source and never depends on the corpus being in
-// any particular language: the word comes out of the data itself.
+// It reads each indexed column newest first until one yields a word and never
+// depends on the corpus being in any particular language: the word comes out
+// of the data itself.
 func Prove(ctx context.Context, db *store.DB) (Proof, error) {
 	if db == nil {
 		return Proof{}, fmt.Errorf("proving word search needs a database")
 	}
+	hasRows := false
 	for _, source := range proofSources {
-		text, err := newestText(ctx, db, source)
+		word, rows, err := newestWord(ctx, db, source)
 		if err != nil {
 			return Proof{}, err
 		}
-		word := probeWord(text)
+		hasRows = hasRows || rows
 		if word == "" {
 			continue
 		}
@@ -76,6 +76,9 @@ func Prove(ctx context.Context, db *store.DB) (Proof, error) {
 		return Proof{Ready: true, Word: word, Matches: matches,
 			Capped: matches >= proofLimit}, nil
 	}
+	if hasRows {
+		return Proof{Reason: "agent history is present but contains no searchable words"}, nil
+	}
 	return EmptyProof(), nil
 }
 
@@ -87,19 +90,30 @@ func EmptyProof() Proof {
 		Reason: "there is no agent history on this machine to search yet"}
 }
 
-func newestText(ctx context.Context, db *store.DB, source proofSource) (string, error) {
+func newestWord(ctx context.Context, db *store.DB, source proofSource) (string, bool, error) {
 	statement := fmt.Sprintf(
-		`SELECT %[1]s FROM %[2]s WHERE %[1]s IS NOT NULL AND %[1]s <> '' ORDER BY rowid DESC LIMIT 1`,
+		`SELECT %[1]s FROM %[2]s WHERE %[1]s IS NOT NULL AND %[1]s <> '' ORDER BY rowid DESC`,
 		source.column, source.table)
-	var text string
-	err := db.SQL().QueryRowContext(ctx, statement).Scan(&text)
-	if err == sql.ErrNoRows {
-		return "", nil
-	}
+	rows, err := db.SQL().QueryContext(ctx, statement)
 	if err != nil {
-		return "", fmt.Errorf("read a %s row to search for: %w", source.table, err)
+		return "", false, fmt.Errorf("read %s rows to search for: %w", source.table, err)
 	}
-	return text, nil
+	defer rows.Close()
+	hasRows := false
+	for rows.Next() {
+		hasRows = true
+		var text string
+		if err := rows.Scan(&text); err != nil {
+			return "", hasRows, fmt.Errorf("read a %s row to search for: %w", source.table, err)
+		}
+		if word := probeWord(text); word != "" {
+			return word, true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", hasRows, fmt.Errorf("read %s rows to search for: %w", source.table, err)
+	}
+	return "", hasRows, nil
 }
 
 func countMatches(ctx context.Context, db *store.DB, index, word string) (int, error) {

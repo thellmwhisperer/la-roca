@@ -40,13 +40,16 @@ later it is answering questions about everything your agents ever did:
 ```text
 $ curl -fsSL https://raw.githubusercontent.com/thellmwhisperer/la-roca/main/install.sh | sh
 $ roca init
-$ roca skill install codex   # or claude, opencode, pi, hermes: your runtime
 $ roca query "what did we decide about the retention window"
 search hybrid · engines fts,vector · 24 ms
 terms[2]: retention, window
 rows[1]{rank,source,legs,consensus,snippet}:
   1,corpus.memories.202,vector+fts,true,"30 days and out. I do not want eternal logs."
 ```
+
+Init installs the skills into every runtime it detects. If your runtime was not
+detected, use `roca skill install codex` (or `claude`, `opencode`, `pi`, or
+`hermes`) as a fallback.
 
 If an already signed-in agent CLI is on `PATH` (`claude`, `codex`, ...),
 no login of any kind is needed: La Roca borrows the plan you already pay

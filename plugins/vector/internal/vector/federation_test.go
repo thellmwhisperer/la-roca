@@ -1003,7 +1003,7 @@ func TestAnInterruptedIndexStillAnswersWithTheRowsItAlreadyWrote(t *testing.T) {
 		t.Fatalf("an unfinished index claimed to match its source: %q", fingerprint)
 	}
 
-	progress, err := federation.Progress(context.Background())
+	progress, err := federation.HistoryProgress(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1016,7 +1016,7 @@ func TestProgressCountsHistoryReadAgainstHistoryDeclared(t *testing.T) {
 	federation, corpusPath, _, _ := federationFixture(t)
 	ctx := context.Background()
 
-	before, err := federation.Progress(ctx)
+	before, err := federation.HistoryProgress(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1027,7 +1027,7 @@ func TestProgressCountsHistoryReadAgainstHistoryDeclared(t *testing.T) {
 	if _, err := federation.Ingest(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
-	after, err := federation.Progress(ctx)
+	after, err := federation.HistoryProgress(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1040,7 +1040,7 @@ func TestProgressCountsHistoryReadAgainstHistoryDeclared(t *testing.T) {
 
 	mutateSourceDatabase(t, corpusPath, `DELETE FROM articles WHERE id='article-1';
 		INSERT INTO articles VALUES ('article-3','Replacement title','Replacement body','raw-counter')`)
-	replaced, err := federation.Progress(ctx)
+	replaced, err := federation.HistoryProgress(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

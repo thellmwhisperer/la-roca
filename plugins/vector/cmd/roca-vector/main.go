@@ -114,7 +114,7 @@ func installCommand(env *environment) *cobra.Command {
 			} else {
 				fmt.Println("semantic search: setup continues in the background")
 			}
-			fmt.Println("semantic search: newest material is indexed first")
+			fmt.Println("semantic search: word search keeps answering while history is read")
 			return nil
 		},
 	}
@@ -170,7 +170,7 @@ func (env *environment) indexStatus(ctx context.Context) (indexStatus, error) {
 	if err != nil {
 		return status, nil
 	}
-	progress, err := federation.Progress(ctx)
+	progress, err := federation.HistoryProgress(ctx)
 	if err != nil {
 		return status, nil
 	}
@@ -185,7 +185,7 @@ func (env *environment) indexStatus(ctx context.Context) (indexStatus, error) {
 func statusLines(status indexStatus) []string {
 	if !status.HistoryKnown {
 		return []string{"deep search: progress unavailable · word search is answering now",
-			"  next step: `roca init`"}
+			"  next step: `roca vector install`"}
 	}
 	fraction := fmt.Sprintf("%d of %d read", status.Read, status.Total)
 	switch {
@@ -202,10 +202,10 @@ func statusLines(status indexStatus) []string {
 		if status.Stopped != "" {
 			lines = append(lines, "  it stopped because "+productStopReason(status.Stopped))
 		}
-		return append(lines, "  next step: `roca init`")
+		return append(lines, "  next step: `roca vector install`")
 	default:
 		return []string{"deep search: not started · word search is answering now",
-			"  next step: `roca init`"}
+			"  next step: `roca vector install`"}
 	}
 }
 

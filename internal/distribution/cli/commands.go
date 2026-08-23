@@ -210,16 +210,14 @@ func initCommand(env *cliEnv) *cobra.Command {
 				axi.Number(int64(result.RowsBefore.Memories)), axi.Number(int64(result.RowsBefore.Sessions)),
 				axi.Number(int64(result.RowsBefore.Exchanges)), axi.Number(int64(result.RowsBefore.ThinkingBlocks)),
 				axi.Number(int64(result.RowsBefore.ToolUses)))
-			if err := env.ensureBundledVectorForInit(paths); err != nil {
-				return err
-			}
 			renderBootstrap(env, result)
-			return env.offerSemanticSearch(cmd.Context(), input, interactive, paths, configMissingAtStart)
+			return env.offerSemanticSearch(cmd.Context(), input, interactive, paths,
+				configMissingAtStart, result.WordSearch)
 		},
 	}
 }
 
-func (env *cliEnv) ensureBundledVectorForInit(paths config.Paths) error {
+func (env *cliEnv) ensureBundledVectorForInit(paths config.Paths) (string, error) {
 	payload := slices.Clone(env.bundledVectorPayload)
 	if payload == nil {
 		var err error
@@ -229,16 +227,25 @@ func (env *cliEnv) ensureBundledVectorForInit(paths config.Paths) error {
 			// keep the existing companion discovery path; a shipped binary always
 			// carries the payload and must place it before asking for consent.
 			if strings.Contains(err.Error(), "does not carry a bundled vector executable") {
-				return nil
+				path, found := findPlugin("vector")
+				if !found {
+					return "", nil
+				}
+				absolute, absErr := filepath.Abs(path)
+				if absErr != nil {
+					return "", fmt.Errorf("resolve semantic search companion: %w", absErr)
+				}
+				return absolute, nil
 			}
-			return fmt.Errorf("read bundled semantic search companion: %w", err)
+			return "", fmt.Errorf("read bundled semantic search companion: %w", err)
 		}
 	}
-	if _, err := rocavector.EnsureWithPayload(pluginRoot(paths), pluginExecutableDir(paths),
-		env.build.Version, payload); err != nil {
-		return fmt.Errorf("install bundled semantic search companion: %w", err)
+	result, err := rocavector.EnsureWithPayload(pluginRoot(paths), pluginExecutableDir(paths),
+		env.build.Version, payload)
+	if err != nil {
+		return "", fmt.Errorf("install bundled semantic search companion: %w", err)
 	}
-	return nil
+	return result.Executable, nil
 }
 
 var terminalInput = func(in any) bool {
@@ -361,8 +368,9 @@ var newInstallFeatureChanges = []config.Change{
 // writeNewInstallConfig materializes the product contract for an init that
 // began without a configuration file.
 func (env *cliEnv) offerSemanticSearch(ctx context.Context, input *bufio.Reader, interactive bool,
-	paths config.Paths, newConfig bool) error {
-	if !interactive || input == nil {
+	paths config.Paths, newConfig bool, proof *search.Proof) error {
+	if !interactive || input == nil || env.dbPath != "" || ciRun() || proof == nil ||
+		!proof.Ready || proof.Word == "" || proof.Matches == 0 {
 		return nil
 	}
 	previous, err := os.ReadFile(paths.Config)
@@ -381,45 +389,75 @@ func (env *cliEnv) offerSemanticSearch(ctx context.Context, input *bufio.Reader,
 	if err != nil {
 		return fmt.Errorf("read semantic search preference: %w", err)
 	}
-	if decided {
-		if !loaded.Features.Vector {
-			return nil
-		}
-		return env.startSemanticSearchSetup(ctx)
-	}
-	if loaded.Features.Vector || (!newConfig && !hasVector) {
+	if decided || loaded.Features.Vector || (!newConfig && !hasVector) ||
+		rocavector.WorkerRunning(pluginRoot(paths)) {
 		return nil
 	}
-	env.initSay("semantic search finds by meaning, not just the exact words")
-	env.initSay("it downloads one embedding model once, then indexes newest material first while history catches up")
-	env.initSay("[yes/no]")
-	line, err := input.ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
+	executable, err := env.ensureBundledVectorForInit(paths)
+	if err != nil {
+		env.renderSemanticSearchSetupFailure()
+		return nil
+	}
+	env.initSay("word search already answers, but exact words only find part of your history")
+	env.initSay("semantic search finds the rest by meaning")
+	env.initSay("it downloads one embedding model once, then reads your history in the background")
+	env.initSay("word search keeps answering the whole time")
+	enabled, answered, err := env.readSemanticSearchAnswer(input)
+	if err != nil || !answered {
 		return err
 	}
-	answer := strings.ToLower(strings.TrimSpace(line))
-	enabled := answer == "yes" || answer == "y"
-	updated, err := config.ApplyText(string(previous), []config.Change{
-		{Kind: config.SetValue, Table: "features", Key: "vector", Value: enabled},
-		{Kind: config.SetValue, Table: "features", Key: "vector_consent", Value: true},
-	})
+	if enabled {
+		if err := env.startSemanticSearchSetup(ctx, executable); err != nil {
+			env.renderSemanticSearchSetupFailure()
+			return nil
+		}
+	}
+	changes := []config.Change{{
+		Kind: config.SetValue, Table: "features", Key: "vector_consent", Value: true,
+	}}
+	if enabled {
+		changes = append(changes, config.Change{
+			Kind: config.SetValue, Table: "features", Key: "vector", Value: true,
+		})
+	}
+	updated, err := config.ApplyText(string(previous), changes)
 	if err != nil {
 		return fmt.Errorf("enable semantic search: %w", err)
 	}
 	if err := securefile.Replace(paths.Config, []byte(updated), previous); err != nil {
 		return fmt.Errorf("write the configuration: %w", err)
 	}
-	if !enabled {
-		return nil
-	}
-	return env.startSemanticSearchSetup(ctx)
+	return nil
 }
 
-func (env *cliEnv) startSemanticSearchSetup(ctx context.Context) error {
-	path, found := findPlugin("vector")
-	if !found {
-		env.print("semantic search: enabled; setup will begin when its companion is available")
-		return nil
+func ciRun() bool {
+	written := strings.TrimSpace(os.Getenv("CI"))
+	return written != "" && written != "0" && !strings.EqualFold(written, "false")
+}
+
+func (env *cliEnv) readSemanticSearchAnswer(input *bufio.Reader) (bool, bool, error) {
+	for {
+		env.initSay("[yes/no]")
+		line, err := env.readInitRaw(input)
+		answer := strings.ToLower(strings.TrimSpace(line))
+		switch answer {
+		case "yes", "y":
+			return true, true, nil
+		case "no", "n":
+			return false, true, nil
+		}
+		if err != nil && !errors.Is(err, io.EOF) {
+			return false, false, err
+		}
+		if errors.Is(err, io.EOF) {
+			return false, false, nil
+		}
+	}
+}
+
+func (env *cliEnv) startSemanticSearchSetup(ctx context.Context, path string) error {
+	if path == "" {
+		return fmt.Errorf("semantic search companion is unavailable")
 	}
 	arguments := []string{"--json"}
 	if env.dbPath != "" {
@@ -444,8 +482,13 @@ func (env *cliEnv) startSemanticSearchSetup(ctx context.Context) error {
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil || !result.Background {
 		return fmt.Errorf("semantic search setup returned an invalid response")
 	}
-	env.print("semantic search: setup continues in the background; newest material is indexed first")
+	env.print("semantic search: setup continues in the background; word search keeps answering")
 	return nil
+}
+
+func (env *cliEnv) renderSemanticSearchSetupFailure() {
+	env.print("semantic search: setup did not start; word search keeps answering")
+	env.print("  next step: `roca vector install`")
 }
 
 func writeNewInstallConfig(path string) error {

@@ -72,3 +72,21 @@ func TestProofRefusesToCallAnEmptiedIndexEmpty(t *testing.T) {
 		t.Fatalf("the failure names neither the word nor the reason: %+v", proof)
 	}
 }
+
+func TestProofSkipsANewerTokenlessRow(t *testing.T) {
+	ctx := context.Background()
+	db := openWorld(t)
+	writeTo(t, db, `INSERT INTO memories (layer, content, origin) VALUES
+		('discovery', 'alpha lighthouse', 'agent'),
+		('discovery', '😀', 'agent')`)
+	if _, err := search.Index(ctx, db, nil); err != nil {
+		t.Fatal(err)
+	}
+	proof, err := search.Prove(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !proof.Ready || proof.Empty || proof.Word != "lighthouse" || proof.Matches == 0 {
+		t.Fatalf("tokenless newest row hid searchable history: %+v", proof)
+	}
+}

@@ -899,6 +899,7 @@ func readFeatures(section map[string]any, path string, warnings *[]string) Featu
 		"ask_missing_referent": &features.AskMissingReferent,
 		"plugins":              &features.Plugins,
 		"vector":               &features.Vector,
+		"vector_consent":       &features.VectorConsent,
 		"cron":                 &features.Cron,
 		"artifact_refresh":     &features.ArtifactRefresh,
 		"roca_ops":             &features.RocaOps,
