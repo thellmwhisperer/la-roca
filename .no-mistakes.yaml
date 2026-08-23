@@ -1,0 +1,3 @@
+commands:
+  lint: make fmt && make vet && make slop
+  test: make test
