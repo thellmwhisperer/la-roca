@@ -594,6 +594,40 @@ func TestPluginContractRefreshRegistersUpdatesAndUnregistersVectorSurfaces(t *te
 		t.Fatalf("updated vector surfaces = %+v, err = %v", registry, err)
 	}
 
+	database, err = sql.Open("sqlite", filepath.Join(directory, "records.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec("INSERT INTO records (title, body, telemetry) VALUES ('snapshot', 'federated body', '')"); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	writePluginChecksums(t, directory, plugin.PackageFilename, "records.db")
+	output.Reset()
+	code, err = executeWithEnv(env,
+		[]string{"plugin", "--yes", "sync", directory}, strings.NewReader(""))
+	if err != nil || code != ExitOK {
+		t.Fatalf("plugin sync = code %d, err %v, output %q", code, err, output.String())
+	}
+	installedDatabase, err := sql.Open("sqlite", filepath.Join(pluginRoot(paths), "synthetic-vector", "records.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snapshotCount int
+	if err := installedDatabase.QueryRow("SELECT count(*) FROM records WHERE title = 'snapshot'").Scan(&snapshotCount); err != nil {
+		installedDatabase.Close()
+		t.Fatal(err)
+	}
+	if err := installedDatabase.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if snapshotCount != 1 {
+		t.Fatalf("plugin sync did not replace the database snapshot: %d", snapshotCount)
+	}
+
 	output.Reset()
 	code, err = executeWithEnv(env,
 		[]string{"plugin", "--yes", "uninstall", "synthetic-vector"}, strings.NewReader(""))

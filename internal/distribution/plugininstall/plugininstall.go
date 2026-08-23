@@ -1423,6 +1423,90 @@ func (m Manager) preflightExecutableRepair(candidate Candidate) (Manifest, bool,
 	return manifest, false, nil
 }
 
+// SyncDataPackage replaces the database payload of an installed data-only
+// plugin. Unlike Update and UpdateInPlace, this is deliberately destructive to
+// the installed database: it is reserved for an external source of truth that
+// has explicitly synchronized a complete data snapshot. The replacement is
+// staged and activated atomically, while the plugin state directory remains in
+// place.
+func (m Manager) SyncDataPackage(candidate Candidate) (Result, error) {
+	if err := m.valid(); err != nil {
+		return Result{}, err
+	}
+	if candidate.Kind != DataPackage || candidate.Risk != DataOnly || candidate.Executable != "" {
+		return Result{}, fmt.Errorf(
+			"plugin %s is not a data-only package; database synchronization refused", candidate.Name)
+	}
+	target := filepath.Join(m.PluginRoot, candidate.Name)
+	previous, err := ReadManifest(target)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return m.Install(candidate)
+		}
+		return Result{}, fmt.Errorf("sync plugin %s: %w", candidate.Name, err)
+	}
+	if previous.Kind != DataPackage || previous.Risk != DataOnly || previous.Executable != "" {
+		return Result{}, fmt.Errorf("plugin %s is not an installed data-only package", candidate.Name)
+	}
+	if !sameDatabaseFiles(manifestDatabaseFiles(previous), candidateDatabaseFiles(candidate)) {
+		return Result{}, fmt.Errorf(
+			"plugin %s changed its database files from %v to %v; synchronization refused",
+			candidate.Name, manifestDatabaseFiles(previous), candidateDatabaseFiles(candidate))
+	}
+	if previous.StateDir != candidate.StateDir {
+		return Result{}, fmt.Errorf(
+			"plugin %s changed its state directory from %s to %s; synchronization refused",
+			candidate.Name, previous.StateDir, candidate.StateDir)
+	}
+	staged, err := m.stage(candidate, nil)
+	if err != nil {
+		return Result{}, err
+	}
+	defer os.RemoveAll(staged)
+	backup := filepath.Join(m.PluginRoot, "."+candidate.Name+".sync-previous")
+	if _, err := os.Lstat(backup); err == nil {
+		return Result{}, fmt.Errorf("sync recovery directory already exists at %s", backup)
+	} else if !os.IsNotExist(err) {
+		return Result{}, fmt.Errorf("inspect sync recovery directory: %w", err)
+	}
+	if err := os.Rename(target, backup); err != nil {
+		return Result{}, fmt.Errorf("preserve previous plugin for sync: %w", err)
+	}
+	rollback := func() {
+		_ = os.RemoveAll(target)
+		_ = os.Rename(backup, target)
+	}
+	if err := os.Rename(staged, target); err != nil {
+		rollback()
+		return Result{}, fmt.Errorf("activate synchronized plugin: %w", err)
+	}
+	stateMoved := false
+	if candidate.StateDir != "" {
+		state := filepath.Join(backup, candidate.StateDir)
+		err := os.Rename(state, filepath.Join(target, candidate.StateDir))
+		switch {
+		case err == nil:
+			stateMoved = true
+		case os.IsNotExist(err):
+			if err := createStateDir(target, candidate.StateDir); err != nil {
+				rollback()
+				return Result{}, err
+			}
+		default:
+			rollback()
+			return Result{}, fmt.Errorf("preserve plugin state directory: %w", err)
+		}
+	}
+	if err := os.RemoveAll(backup); err != nil {
+		if stateMoved {
+			_ = os.Rename(filepath.Join(target, candidate.StateDir), filepath.Join(backup, candidate.StateDir))
+		}
+		rollback()
+		return Result{}, fmt.Errorf("remove previous plugin after sync: %w", err)
+	}
+	return resultFor(candidate, target, ""), nil
+}
+
 // CandidateFromManifest describes an installed plugin the way Inspect describes
 // a source, so a caller that only has the manifest asks the operator about the
 // same package. Manifest.Executable is the installed path; the candidate names

@@ -454,8 +454,8 @@ func pluginCommand(env *cliEnv) *cobra.Command {
 		},
 	}
 	command.PersistentFlags().BoolVar(&consented, "yes", false, "accept the displayed plugin risk without prompting")
-	command.AddCommand(pluginInstallCommand(env, &consented), pluginUpdateCommand(env, &consented),
-		pluginUninstallCommand(env, &consented))
+	command.AddCommand(pluginInstallCommand(env, &consented), pluginSyncCommand(env, &consented),
+		pluginUpdateCommand(env, &consented), pluginUninstallCommand(env, &consented))
 	return command
 }
 
@@ -486,6 +486,38 @@ func pluginInstallCommand(env *cliEnv, consented *bool) *cobra.Command {
 			// the same installed manifest set after the package is in place.
 			env.refreshPluginContracts()
 			return env.reportPlugin("installed", result)
+		},
+	}
+}
+
+func pluginSyncCommand(env *cliEnv, consented *bool) *cobra.Command {
+	return &cobra.Command{
+		Use:   "sync <path|archive|url|owner/repo>",
+		Short: "Install or atomically replace a data-only plugin snapshot",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			manager, scratch, err := env.pluginManager()
+			if err != nil {
+				return err
+			}
+			candidate, cleanup, err := resolvePluginCandidate(cmd.Context(), args[0], scratch)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			if candidate.Kind != plugininstall.DataPackage || candidate.Risk != plugininstall.DataOnly || candidate.Executable != "" {
+				return fmt.Errorf("plugin sync accepts only data-only packages")
+			}
+			accepted, err := env.confirmPlugin(cmd.InOrStdin(), "sync", candidate, "", *consented)
+			if err != nil || !accepted {
+				return err
+			}
+			result, err := manager.SyncDataPackage(candidate)
+			if err != nil {
+				return err
+			}
+			env.refreshPluginContracts()
+			return env.reportPlugin("synchronized", result)
 		},
 	}
 }

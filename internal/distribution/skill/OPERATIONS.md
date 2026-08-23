@@ -202,9 +202,10 @@ La Roca is a federating kernel: capabilities ship as plugins that own their
 own SQLite databases and declare them in a `plugin.json` manifest; the kernel
 attaches them read-only and folds their tables into natural-language search.
 
-- Use one: follow `roca plugin install --help`, then run `roca plugin update
-  <name>` / `roca plugin uninstall <name>`. The experimental surface requires
-  `features.plugins=true`.
+- Use one: follow `roca plugin install --help`, then run `roca plugin sync
+  <source>` for a complete external data snapshot, or `roca plugin update
+  <name>` / `roca plugin uninstall <name>` for the normal lifecycle. The
+  experimental surface requires `features.plugins=true`.
 - Build one: a manifest plus one executable is a complete plugin. Follow the
   quickstart in the repository's `docs/plugins.md`; start from its minimal
   example and grow, do not hand-roll the packaging.

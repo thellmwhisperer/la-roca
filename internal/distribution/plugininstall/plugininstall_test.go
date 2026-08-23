@@ -269,6 +269,55 @@ func TestInstallUpdateAndUninstallPreservePluginOwnedData(t *testing.T) {
 	}
 }
 
+func TestSyncDataPackageReplacesTheDeclaredDatabasePayload(t *testing.T) {
+	root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
+	manager := plugininstall.Manager{PluginRoot: root, BinDir: bin}
+	source := writePackage(t, "synthetic", "1.0.0", false, false)
+	candidate, err := plugininstall.Inspect(source, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Install(candidate); err != nil {
+		t.Fatal(err)
+	}
+
+	installedDB := filepath.Join(root, "synthetic", "plugin.db")
+	withPackageDatabase(t, installedDB, func(db *sql.DB) {
+		if _, err := db.Exec(`INSERT INTO records (value) VALUES ('stale installed data')`); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	writePackageAt(t, source, "synthetic", "2.0.0", false, false)
+	updated, err := plugininstall.Inspect(source, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.SyncDataPackage(updated); err != nil {
+		t.Fatal(err)
+	}
+
+	withPackageDatabase(t, installedDB, func(db *sql.DB) {
+		var sourceCount, staleCount int
+		if err := db.QueryRow(`SELECT count(*) FROM records WHERE value = 'source marker'`).Scan(&sourceCount); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.QueryRow(`SELECT count(*) FROM records WHERE value = 'stale installed data'`).Scan(&staleCount); err != nil {
+			t.Fatal(err)
+		}
+		if sourceCount != 1 || staleCount != 0 {
+			t.Fatalf("synchronized database counts = source %d stale %d", sourceCount, staleCount)
+		}
+	})
+	manifest, err := plugininstall.ReadManifest(filepath.Join(root, "synthetic"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Version != "2.0.0" || manifest.Checksum != updated.Checksum {
+		t.Fatalf("synchronized manifest = %+v", manifest)
+	}
+}
+
 func TestRecoverUpdateRestoresTransferredVectorSidecars(t *testing.T) {
 	root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
 	manager := plugininstall.Manager{PluginRoot: root, BinDir: bin}
