@@ -23,8 +23,12 @@ roca query "what did we decide about <something your user cares about>"
 ```
 
 `roca init` runs the first ingest. Later, `roca ingest` picks up whatever is
-new. `roca query` is hybrid search with labeled evidence; `roca exec` is the
-checked SELECT seat.
+new. A growing session file appends new exchanges; it does not rewrite rows
+that already landed. `roca compact` rewrites an older corpus database onto
+one current row per fact and VACUUMs. Version tables keep digests, not a
+second copy of the text. Archive bookkeeping that duplicated current rows
+is emptied. `roca query` is hybrid search with labeled evidence; `roca exec`
+is the checked SELECT seat.
 
 ## Read the installed skills, now, not later
 

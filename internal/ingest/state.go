@@ -46,24 +46,28 @@ var parserVersions = map[parsers.Kind]string{
 var registeredParser = parsers.Lookup
 
 func incrementalityTarget(target Target) incrementality.Target {
-	version, versioned := parserVersions[target.Kind]
-	if !versioned {
-		if registered, found := registeredParser(string(target.Kind)); found {
-			version = registered.Version
-		}
-	}
 	return incrementality.Target{
 		Path:          target.Path,
 		Kind:          string(target.Kind),
 		SourceAgent:   target.SourceAgent,
 		Project:       target.Project,
-		ParserVersion: version,
+		ParserVersion: readingVersion(target.Kind),
 		IncludeSQLiteWAL: target.Kind == parsers.KindOpenCodeDB ||
 			target.Kind == parsers.KindHermesDB || target.Kind == parsers.KindLegacyStoreDB ||
 			target.Kind == parsers.KindCursorDB ||
 			target.Kind == parsers.KindCursorStore,
 		CompanionPaths: target.CompanionPaths,
 	}
+}
+
+func readingVersion(kind parsers.Kind) string {
+	if version, found := parserVersions[kind]; found {
+		return version
+	}
+	if registered, found := registeredParser(string(kind)); found {
+		return registered.Version
+	}
+	return ""
 }
 
 func targetFingerprint(target Target) (string, error) {

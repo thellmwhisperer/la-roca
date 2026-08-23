@@ -1,8 +1,12 @@
 package ingest
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"os"
@@ -205,8 +209,24 @@ type Result struct {
 	SourceStats    map[string]*SourceStats `json:"-"`
 	Coverage       CoverageReport          `json:"coverage"`
 	// categories indexes DiscardSummary while the run is collapsing into it.
-	categories     map[string]int `json:"-"`
-	fileCategories map[string]int `json:"-"`
+	categories     map[string]int                `json:"-"`
+	fileCategories map[string]int                `json:"-"`
+	harvestCursors map[string]harvestCursorState `json:"-"`
+}
+
+type harvestCursorState struct {
+	ByteOffset           int64          `json:"byte_offset"`
+	PrefixDigest         string         `json:"prefix_digest"`
+	ExchangeCursor       int            `json:"exchange_cursor"`
+	ExchangeCursors      map[string]int `json:"exchange_cursors,omitempty"`
+	LastExchangeComplete bool           `json:"last_exchange_complete"`
+	ParserVersion        string         `json:"parser_version"`
+}
+
+type harvestCursorSeed struct {
+	Incremental     bool
+	ExchangeCursor  int
+	ExchangeCursors map[string]int
 }
 
 // Run reads every source in the matrix once and writes what changed.
@@ -366,7 +386,8 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		result.categorizeFile("parsed", "new or changed fingerprint")
 		stats.Read++
 		discardsBefore, excludedBefore := result.RecordsDiscarded, result.RecordsExcluded
-		ingested, err := ingestOne(ctx, db, layers, opts, target, fingerprint, &result)
+		ingested, err := ingestOne(ctx, db, layers, opts, target, fingerprint,
+			state[target.Path], &result)
 		stats.RecordsDiscarded += result.RecordsDiscarded - discardsBefore
 		stats.RecordsExcluded += result.RecordsExcluded - excludedBefore
 		finishTarget()
@@ -591,8 +612,8 @@ func (r *Result) categorize(discard parsers.Discard) {
 // a crash between the two leave a fingerprint saying "synced" over data that was
 // never written, and that file would then be skipped forever.
 func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Options,
-	target Target, fingerprint string, result *Result) (bool, error) {
-	records, reason := read(ctx, opts, target, result)
+	target Target, fingerprint string, previous incrementality.FileState, result *Result) (bool, error) {
+	records, reason := read(ctx, opts, target, previous, result)
 	if reason != "" {
 		result.fail(target, reason)
 		// The failure is recorded against the path so the next run reads the file
@@ -671,6 +692,16 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 				opsCounts.MemoriesInserted + opsCounts.MemoriesUpdated,
 			"message_coverage": records.MessageCoverage,
 		}
+		if cursor, ok := result.harvestCursors[target.Path]; ok {
+			summary["byte_offset"] = cursor.ByteOffset
+			summary["prefix_digest"] = cursor.PrefixDigest
+			summary["exchange_cursor"] = cursor.ExchangeCursor
+			summary["exchange_cursors"] = cursor.ExchangeCursors
+			summary["last_exchange_complete"] = cursor.LastExchangeComplete
+			summary["parser_version"] = cursor.ParserVersion
+		} else if info, statErr := os.Stat(target.Path); statErr == nil {
+			summary["byte_offset"] = info.Size()
+		}
 		if !destinationsComplete {
 			return nil
 		}
@@ -686,7 +717,8 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 
 // read turns one artefact into records; what the content declares outranks what
 // the path encodes.
-func read(ctx context.Context, opts Options, target Target, result *Result) (parsers.Records, string) {
+func read(ctx context.Context, opts Options, target Target, previous incrementality.FileState,
+	result *Result) (parsers.Records, string) {
 	var databaseReader func(context.Context, string) (parsers.Records, []string, error)
 	switch target.Kind {
 	case parsers.KindOpenCodeDB:
@@ -797,22 +829,371 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 			result.fail(Target{Path: target.SidecarPath, Kind: parsers.KindSessionMetadata}, err.Error())
 		}
 	}
-	if registered, ok := parsers.Lookup(string(target.Kind)); ok && len(registered.Locations) > 0 {
-		records, err := registered.Parse(parsers.File{Content: content, Meta: meta})
-		if err != nil {
-			return parsers.Records{}, err.Error()
+	fullContent := content
+	baseMeta := meta
+	content, seed := cursorContent(target, previous, content)
+	meta.ExchangeNumberOffset = seed.ExchangeCursor
+	meta.ExchangeNumberOffsets = maps.Clone(seed.ExchangeCursors)
+	meta.Incremental = seed.Incremental
+	registered, useRegistered := parsers.Lookup(string(target.Kind))
+	useRegistered = useRegistered && len(registered.Locations) > 0
+	parse := func(input []byte, fileMeta parsers.FileMeta) (parsers.Records, error) {
+		if useRegistered {
+			return registered.Parse(parsers.File{Content: input, Meta: fileMeta})
 		}
-		resolveProjects(ctx, opts, target, &records)
-		return records, ""
+		return parsers.Parse(target.Kind, input, fileMeta)
 	}
-
-	records, err := parsers.Parse(target.Kind, content, meta)
+	records, err := parse(content, meta)
+	if err != nil && seed.Incremental {
+		seed = harvestCursorSeed{}
+		meta = baseMeta
+		records, err = parse(fullContent, meta)
+	}
 	if err != nil {
 		return parsers.Records{}, err.Error()
 	}
-	parsers.ApplyCanonicalHarness(target.Kind, &records)
+	if seed.Incremental {
+		for index := range records.Sessions {
+			records.Sessions[index].Incremental = true
+		}
+	}
+	recordHarvestCursor(target, seed, fullContent, records, result)
+	if !useRegistered {
+		parsers.ApplyCanonicalHarness(target.Kind, &records)
+	}
 	resolveProjects(ctx, opts, target, &records)
 	return records, ""
+}
+
+func cursorContent(target Target, previous incrementality.FileState,
+	content []byte,
+) ([]byte, harvestCursorSeed) {
+	if !appendableSessionKind(target.Kind) {
+		return content, harvestCursorSeed{}
+	}
+	var cursor harvestCursorState
+	if json.Unmarshal(previous.Metadata, &cursor) != nil || cursor.ByteOffset <= 0 ||
+		cursor.ByteOffset >= int64(len(content)) || cursor.PrefixDigest == "" ||
+		!cursor.LastExchangeComplete || cursor.ParserVersion != readingVersion(target.Kind) {
+		return content, harvestCursorSeed{}
+	}
+	if target.Kind == parsers.KindCodexHistory && len(cursor.ExchangeCursors) == 0 {
+		return content, harvestCursorSeed{}
+	}
+	offset := int(cursor.ByteOffset)
+	if content[offset-1] != '\n' || digestBytes(content[:offset]) != cursor.PrefixDigest {
+		return content, harvestCursorSeed{}
+	}
+	tail, ok := prepareCursorTail(target.Kind, content[:offset], content[offset:])
+	if !ok {
+		return content, harvestCursorSeed{}
+	}
+	return tail, harvestCursorSeed{Incremental: true, ExchangeCursor: cursor.ExchangeCursor,
+		ExchangeCursors: maps.Clone(cursor.ExchangeCursors)}
+}
+
+func appendableSessionKind(kind parsers.Kind) bool {
+	switch kind {
+	case parsers.KindClaudeSession, parsers.KindCoworkAudit, parsers.KindCodexSession,
+		parsers.KindCodexHistory, parsers.KindSubagent, parsers.KindPiSession,
+		parsers.KindQwenCode, parsers.KindGrokSession:
+		return true
+	default:
+		return false
+	}
+}
+
+func prepareCursorTail(kind parsers.Kind, prefix, tail []byte) ([]byte, bool) {
+	switch kind {
+	case parsers.KindClaudeSession, parsers.KindCoworkAudit:
+		return tail, claudeTailStartsTurn(tail)
+	case parsers.KindCodexSession:
+		return codexCursorTail(prefix, tail)
+	case parsers.KindCodexHistory:
+		return tail, codexHistoryTailStartsTurn(tail)
+	case parsers.KindSubagent:
+		return tail, messageTailStartsUser(tail)
+	case parsers.KindPiSession:
+		return piCursorTail(prefix, tail)
+	case parsers.KindQwenCode:
+		return tail, qwenTailStartsTurn(tail)
+	case parsers.KindGrokSession:
+		return tail, grokTailStartsTurn(tail)
+	default:
+		return nil, false
+	}
+}
+
+func codexCursorTail(prefix, tail []byte) ([]byte, bool) {
+	if !codexTailStartsTurn(tail) {
+		return nil, false
+	}
+	for _, raw := range bytes.Split(prefix, []byte{'\n'}) {
+		if len(bytes.TrimSpace(raw)) == 0 {
+			continue
+		}
+		var line struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(raw, &line) == nil && line.Type == "session_meta" {
+			prepared := append(append([]byte{}, raw...), '\n')
+			return append(prepared, tail...), true
+		}
+	}
+	return tail, true
+}
+
+func claudeTailStartsTurn(content []byte) bool {
+	raw, ok := firstNonblankLine(content)
+	if !ok {
+		return false
+	}
+	var line struct {
+		Type    string `json:"type"`
+		Message *struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"message"`
+	}
+	if json.Unmarshal(raw, &line) != nil || line.Type != "user" || line.Message == nil {
+		return false
+	}
+	var text string
+	if json.Unmarshal(line.Message.Content, &text) == nil {
+		return true
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(line.Message.Content, &blocks) != nil {
+		return false
+	}
+	for _, block := range blocks {
+		if block.Type != "tool_result" {
+			return true
+		}
+	}
+	return len(blocks) == 0
+}
+
+func codexTailStartsTurn(content []byte) bool {
+	startsTurn := false
+	forEachNonBlankLine(content, func(raw []byte) bool {
+		var line struct {
+			Type    string `json:"type"`
+			Payload struct {
+				Type string `json:"type"`
+				Role string `json:"role"`
+			} `json:"payload"`
+			SessionID string `json:"session_id"`
+			Text      string `json:"text"`
+		}
+		if json.Unmarshal(raw, &line) != nil {
+			return false
+		}
+		switch line.Type {
+		case "session_meta", "turn_context":
+			return true
+		case "event_msg":
+			if line.Payload.Type == "user_message" {
+				startsTurn = true
+				return false
+			}
+			if line.Payload.Type == "task_started" {
+				return true
+			}
+			return false
+		case "response_item":
+			startsTurn = line.Payload.Type == "message" && line.Payload.Role == "user"
+			return false
+		case "":
+			startsTurn = line.SessionID != "" && strings.TrimSpace(line.Text) != ""
+			return false
+		default:
+			return false
+		}
+	})
+	return startsTurn
+}
+
+func codexHistoryTailStartsTurn(content []byte) bool {
+	raw, ok := firstNonblankLine(content)
+	if !ok {
+		return false
+	}
+	var line struct {
+		Type      string   `json:"type"`
+		SessionID string   `json:"session_id"`
+		Text      string   `json:"text"`
+		Timestamp *float64 `json:"ts"`
+	}
+	return json.Unmarshal(raw, &line) == nil && line.Type == "" && line.SessionID != "" &&
+		strings.TrimSpace(line.Text) != "" && line.Timestamp != nil && *line.Timestamp > 0
+}
+
+func messageTailStartsUser(content []byte) bool {
+	raw, ok := firstNonblankLine(content)
+	if !ok {
+		return false
+	}
+	var line struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal(raw, &line) == nil && line.Type == "user"
+}
+
+func qwenTailStartsTurn(content []byte) bool {
+	startsTurn := false
+	forEachNonBlankLine(content, func(raw []byte) bool {
+		var line struct {
+			Type      string `json:"type"`
+			SessionID string `json:"sessionId"`
+		}
+		if json.Unmarshal(raw, &line) != nil || line.SessionID == "" {
+			return false
+		}
+		if line.Type == "system" {
+			return true
+		}
+		startsTurn = line.Type == "user"
+		return false
+	})
+	return startsTurn
+}
+
+func grokTailStartsTurn(content []byte) bool {
+	startsTurn := false
+	forEachNonBlankLine(content, func(raw []byte) bool {
+		var line struct {
+			Method string `json:"method"`
+			Params struct {
+				Update struct {
+					Type string `json:"sessionUpdate"`
+				} `json:"update"`
+			} `json:"params"`
+		}
+		if json.Unmarshal(raw, &line) != nil {
+			return false
+		}
+		if line.Method == "_x.ai/session/update" {
+			return true
+		}
+		startsTurn = line.Method == "session/update" && line.Params.Update.Type == "user_message_chunk"
+		return false
+	})
+	return startsTurn
+}
+
+func piCursorTail(prefix, tail []byte) ([]byte, bool) {
+	header, ok := firstNonblankLine(prefix)
+	if !ok {
+		return nil, false
+	}
+	var headerType struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(header, &headerType) != nil || headerType.Type != "session" {
+		return nil, false
+	}
+	lines := bytes.Split(tail, []byte{'\n'})
+	first := -1
+	startsTurn := false
+	for index, raw := range lines {
+		if len(bytes.TrimSpace(raw)) == 0 {
+			continue
+		}
+		if first < 0 {
+			first = index
+		}
+		var entry struct {
+			Type    string `json:"type"`
+			Message *struct {
+				Role string `json:"role"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(raw, &entry) != nil {
+			return nil, false
+		}
+		if entry.Type == "message" && entry.Message != nil {
+			startsTurn = entry.Message.Role == "user"
+			break
+		}
+	}
+	if first < 0 || !startsTurn {
+		return nil, false
+	}
+	var root map[string]json.RawMessage
+	if json.Unmarshal(lines[first], &root) != nil {
+		return nil, false
+	}
+	root["parentId"] = json.RawMessage("null")
+	rewritten, err := json.Marshal(root)
+	if err != nil {
+		return nil, false
+	}
+	lines[first] = rewritten
+	prepared := append(append([]byte{}, header...), '\n')
+	prepared = append(prepared, bytes.Join(lines, []byte{'\n'})...)
+	if len(prepared) == 0 || prepared[len(prepared)-1] != '\n' {
+		prepared = append(prepared, '\n')
+	}
+	return prepared, true
+}
+
+// forEachNonBlankLine calls fn for each line of content that carries
+// non-whitespace bytes, in order. fn returns false to stop scanning early.
+func forEachNonBlankLine(content []byte, fn func([]byte) bool) {
+	for _, raw := range bytes.Split(content, []byte{'\n'}) {
+		if len(bytes.TrimSpace(raw)) == 0 {
+			continue
+		}
+		if !fn(raw) {
+			return
+		}
+	}
+}
+
+func firstNonblankLine(content []byte) ([]byte, bool) {
+	var line []byte
+	forEachNonBlankLine(content, func(raw []byte) bool {
+		line = bytes.TrimSpace(raw)
+		return false
+	})
+	return line, line != nil
+}
+
+func recordHarvestCursor(target Target, seed harvestCursorSeed, full []byte, records parsers.Records,
+	result *Result) {
+	if !appendableSessionKind(target.Kind) {
+		return
+	}
+	exchangeCursor := seed.ExchangeCursor
+	exchangeCursors := maps.Clone(seed.ExchangeCursors)
+	if exchangeCursors == nil {
+		exchangeCursors = map[string]int{}
+	}
+	for _, session := range records.Sessions {
+		for _, exchange := range session.Exchanges {
+			if exchange.Number > exchangeCursor {
+				exchangeCursor = exchange.Number
+			}
+			if exchange.Number > exchangeCursors[session.ID] {
+				exchangeCursors[session.ID] = exchange.Number
+			}
+		}
+	}
+	if result.harvestCursors == nil {
+		result.harvestCursors = map[string]harvestCursorState{}
+	}
+	result.harvestCursors[target.Path] = harvestCursorState{
+		ByteOffset: int64(len(full)), PrefixDigest: digestBytes(full), ExchangeCursor: exchangeCursor,
+		ExchangeCursors: exchangeCursors, LastExchangeComplete: records.Deferred == 0,
+		ParserVersion: readingVersion(target.Kind),
+	}
+}
+
+func digestBytes(content []byte) string {
+	sum := sha256.Sum256(content)
+	return hex.EncodeToString(sum[:])
 }
 
 // resolveProjects settles each session's project with this precedence:

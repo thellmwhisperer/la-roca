@@ -71,6 +71,15 @@ func TestPrepareHubRunsEveryShadowCustodyMigrationBeforeCutover(t *testing.T) {
 	if sourceRowID < 1 {
 		t.Fatalf("core session rowid = %d", sourceRowID)
 	}
+	var currentSessions int
+	if err := corpus.QueryRow(`SELECT COUNT(*) FROM sessions
+		WHERE session_id = 'synthetic-session' AND title = 'Synthetic archive marker'`).
+		Scan(&currentSessions); err != nil {
+		t.Fatal(err)
+	}
+	if currentSessions != 1 {
+		t.Fatalf("materialized current sessions = %d, want 1", currentSessions)
+	}
 }
 
 func seedHubSources(t *testing.T, options HubOptions) {

@@ -72,10 +72,11 @@ func ParseSubagent(content []byte, meta FileMeta) (Records, error) {
 	}
 
 	session := Session{
-		ID:          sessionID,
-		SourceAgent: firstNonEmpty(meta.SourceAgent, "claude-code"),
-		Project:     meta.Project,
-		Metadata:    map[string]any{"source_type": kind},
+		ID:                           sessionID,
+		SourceAgent:                  firstNonEmpty(meta.SourceAgent, "claude-code"),
+		Project:                      meta.Project,
+		Metadata:                     map[string]any{"source_type": kind},
+		ExchangeNumbersAuthoritative: true,
 	}
 	if agentID != "" && parentID != "" {
 		session.ParentID = parentID
@@ -119,71 +120,85 @@ func ParseSubagent(content []byte, meta FileMeta) (Records, error) {
 		model string
 		usage UsageTally
 	}
-	var humans, agents []side
-	pendingAgent := false
+	type turn struct {
+		human side
+		agent *side
+	}
+	var current *turn
+	deferred := 0
+	flush := func() {
+		if current == nil {
+			return
+		}
+		if current.agent == nil {
+			discards = append(discards, Discard{Record: current.human.record,
+				Reason: "human turn with no answer to pair it with"})
+			current = nil
+			return
+		}
+		number := meta.ExchangeNumberOffset + len(session.Exchanges) + 1
+		session.Exchanges = append(session.Exchanges, Exchange{
+			Number:         number,
+			HumanText:      current.human.text,
+			AgentText:      current.agent.text,
+			HumanTimestamp: current.human.timestamp,
+			AgentTimestamp: current.agent.timestamp,
+			LatencyMS:      latency(current.human.timestamp, current.agent.timestamp),
+			Provenance:     current.agent.usage.Provenance(current.agent.model, ""),
+		})
+		current = nil
+	}
 	for _, entry := range entries {
 		text, blocks := decodeContent(entry.Message)
 		if text == "" {
 			text = joinText(blocks)
 		}
 		if text == "" {
+			flush()
 			discards = append(discards, Discard{Record: entry.record, Reason: "subagent record has no readable content"})
-			pendingAgent = false
 			continue
 		}
 		switch entry.Type {
 		case "user":
-			pendingAgent = false
-			humans = append(humans, side{text: text, timestamp: validInstant(entry.Timestamp), record: entry.record})
+			flush()
+			current = &turn{human: side{text: text, timestamp: validInstant(entry.Timestamp), record: entry.record}}
 		case "assistant":
-			if !pendingAgent {
-				agents = append(agents, side{text: text, timestamp: validInstant(entry.Timestamp), record: entry.record})
-				pendingAgent = true
-			} else {
-				agents[len(agents)-1].text += "\n" + text
+			if current == nil {
+				deferred++
+				discards = append(discards, Discard{Record: entry.record,
+					Reason: "answer with no human turn to pair it with"})
+				continue
 			}
-			answer := &agents[len(agents)-1]
+			if current.agent == nil {
+				current.agent = &side{text: text, timestamp: validInstant(entry.Timestamp), record: entry.record}
+			} else {
+				current.agent.text += "\n" + text
+				if timestamp := validInstant(entry.Timestamp); timestamp != "" {
+					current.agent.timestamp = timestamp
+				}
+			}
+			answer := current.agent
 			if answer.model == "" && entry.Message != nil {
 				answer.model = entry.Message.Model
 			}
 			claimClaudeUsage(&answer.usage, entry.Message)
 		default:
-			pendingAgent = false
+			flush()
 			discards = append(discards, Discard{Record: entry.record,
 				Reason:   "unsupported subagent record: " + entry.Type,
 				Category: "unsupported subagent record"})
 		}
 	}
 
-	// An unbalanced transcript has a side with nowhere to go: a human turn nobody
-	// answered, or an answer to a turn that is not in this file. Those records are
-	// counted rather than dropped in silence, because the discard counter is what
-	// tells an operator "no exchanges" from "the file was empty".
-	pairs := min(len(humans), len(agents))
-	for _, unpaired := range humans[pairs:] {
-		discards = append(discards, Discard{Record: unpaired.record,
-			Reason: "human turn with no answer to pair it with"})
+	if current != nil && current.agent == nil {
+		deferred++
 	}
-	for _, unpaired := range agents[pairs:] {
-		discards = append(discards, Discard{Record: unpaired.record,
-			Reason: "answer with no human turn to pair it with"})
-	}
-	for i := range pairs {
-		session.Exchanges = append(session.Exchanges, Exchange{
-			Number:         i + 1,
-			HumanText:      humans[i].text,
-			AgentText:      agents[i].text,
-			HumanTimestamp: humans[i].timestamp,
-			AgentTimestamp: agents[i].timestamp,
-			LatencyMS:      latency(humans[i].timestamp, agents[i].timestamp),
-			Provenance:     agents[i].usage.Provenance(agents[i].model, ""),
-		})
-	}
+	flush()
 	if len(session.Exchanges) == 0 {
-		return Records{Discards: discards}, nil
+		return Records{Discards: discards, Deferred: deferred}, nil
 	}
 	session.StartedAt, session.EndedAt, session.DurationMinutes = span(session.Exchanges)
-	return Records{Sessions: []Session{session}, Discards: discards}, nil
+	return Records{Sessions: []Session{session}, Discards: discards, Deferred: deferred}, nil
 }
 
 // LooksLikeSubagent decides whether a file really is a subagent transcript
