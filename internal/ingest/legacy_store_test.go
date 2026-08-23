@@ -11,16 +11,18 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/store"
+	"github.com/thellmwhisperer/la-roca/internal/store/exactdedup"
 	"github.com/thellmwhisperer/la-roca/pkg/ingestprovenance"
 	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 )
 
 const (
-	legacyFixtureSession  = "legacy-fixture-session"
-	legacyOverlapSession  = "legacy-overlap-session"
-	legacyHandoffContent  = "synthetic legacy handoff for the next agent"
-	legacyFeedbackContent = "synthetic legacy feedback about the ingest route"
-	legacyCreatedAt       = "2026-08-01 12:00:00"
+	legacyFixtureSession          = "legacy-fixture-session"
+	legacyOverlapSession          = "legacy-overlap-session"
+	legacyFederatedPayloadSession = "federated-exact-payload"
+	legacyHandoffContent          = "synthetic legacy handoff for the next agent"
+	legacyFeedbackContent         = "synthetic legacy feedback about the ingest route"
+	legacyCreatedAt               = "2026-08-01 12:00:00"
 )
 
 func TestLegacyStoreIngest(t *testing.T) {
@@ -357,6 +359,87 @@ func TestLegacyStoreSkipsFederatedOverlap(t *testing.T) {
 		if got != 0 {
 			t.Errorf("overlap %s = %d, want 0", table, got)
 		}
+	}
+}
+
+func TestLegacyStoreSkipsExactPayloadOverlapAndContinues(t *testing.T) {
+	t.Parallel()
+	path := seedLegacyStoreFixture(t)
+	corpus, ops := legacyStoreStores(t)
+	if err := exactdedup.EnsureGuards(context.Background(), corpus.SQL()); err != nil {
+		t.Fatal(err)
+	}
+	if err := corpus.Write(context.Background(), func(tx *sql.Tx) error {
+		_, err := tx.Exec(`INSERT INTO sessions
+			(session_id, source_agent, source_surface, project, started_at, ended_at,
+			 duration_minutes, title, metadata)
+			VALUES (?, 'codex', ?, 'demo', '2026-08-01 13:00:00', '2026-08-01 13:01:00',
+			        1, 'overlap fixture', '{}')`,
+			legacyFederatedPayloadSession, ingestprovenance.LegacyStore)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	roots := ResolveRoots(Environment{GOOS: "darwin", Home: t.TempDir()}, Settings{LegacyStoreDB: path})
+	var progress []string
+	options := Options{Roots: roots, Ops: ops, Progress: func(line string) { progress = append(progress, line) }}
+	result, err := Run(context.Background(), corpus, registry(t), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Errors != 0 || result.WriteFailed != 0 {
+		t.Fatalf("exact-payload overlap aborted the source: errors=%+v write_failed=%d",
+			result.ErrorDetails, result.WriteFailed)
+	}
+	if result.Delta.Sessions != 3 {
+		t.Errorf("delta sessions = %d, want 3 new sessions", result.Delta.Sessions)
+	}
+	if result.Sources[legacyStoreSource].SessionsSkipped != 1 {
+		t.Errorf("exact-payload sessions skipped = %d, want 1",
+			result.Sources[legacyStoreSource].SessionsSkipped)
+	}
+	if result.Sources[legacyStoreSource].Sessions != 3 {
+		t.Errorf("ingested sessions = %d, want 3", result.Sources[legacyStoreSource].Sessions)
+	}
+	var reportedOverlap bool
+	for _, line := range progress {
+		if strings.Contains(line, "sessions_skipped=1 (session_id already present)") {
+			reportedOverlap = true
+		}
+	}
+	if !reportedOverlap {
+		t.Errorf("progress did not report the overlap: %v", progress)
+	}
+	if countRows(t, corpus.SQL(), "sessions") != 4 {
+		t.Errorf("sessions = %d, want 4 (1 federated + 3 new)", countRows(t, corpus.SQL(), "sessions"))
+	}
+	var title, surface string
+	if err := corpus.SQL().QueryRow(`SELECT COALESCE(title, ''), COALESCE(source_surface, '')
+		FROM sessions WHERE session_id = ?`, legacyFederatedPayloadSession).Scan(&title, &surface); err != nil {
+		t.Fatal(err)
+	}
+	if title != "overlap fixture" || surface != ingestprovenance.LegacyStore {
+		t.Errorf("federated payload session mutated: title=%q surface=%q", title, surface)
+	}
+	var overlapLanded int
+	if err := corpus.SQL().QueryRow(`SELECT COUNT(*) FROM sessions WHERE session_id = ?`,
+		legacyOverlapSession).Scan(&overlapLanded); err != nil {
+		t.Fatal(err)
+	}
+	if overlapLanded != 0 {
+		t.Errorf("exact-payload overlap inserted a second session row")
+	}
+	if countRows(t, corpus.SQL(), "exchanges") != 1 {
+		t.Errorf("exchanges = %d, want 1 from the new sessions", countRows(t, corpus.SQL(), "exchanges"))
+	}
+
+	second, err := Run(context.Background(), corpus, registry(t), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Errors != 0 || second.Delta != (Tables{}) {
+		t.Errorf("second run errors=%+v delta=%+v, want zero", second.ErrorDetails, second.Delta)
 	}
 }
 

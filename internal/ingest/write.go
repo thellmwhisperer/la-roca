@@ -199,10 +199,19 @@ func (w *writer) sessionWithPolicy(ctx context.Context, session parsers.Session,
 			return counts, err
 		}
 	} else {
-		counts.Sessions = 1
-		if err := w.insertSession(ctx, session); err != nil {
+		inserted, err := w.registerSession(ctx, session, skipExisting)
+		if err != nil {
+			if skipExisting && isExactPayloadConflict(err) {
+				counts.SessionsSkipped = 1
+				return counts, nil
+			}
 			return counts, err
 		}
+		if skipExisting && !inserted {
+			counts.SessionsSkipped = 1
+			return counts, nil
+		}
+		counts.Sessions = 1
 	}
 
 	for _, exchange := range session.Exchanges {
@@ -998,20 +1007,37 @@ func mergeMetadata(base, preferred map[string]any) map[string]any {
 // the idempotency to the primary key, so two processes racing over the same file
 // insert it once.
 func (w *writer) insertSession(ctx context.Context, session parsers.Session) error {
-	_, err := w.tx.ExecContext(ctx, `
+	_, err := w.registerSession(ctx, session, false)
+	return err
+}
+
+// registerSession inserts a session row. When anyUnique is set, an exact-payload
+// collision is treated like a primary-key miss: the statement is ignored and
+// the caller skips children instead of aborting the batch.
+func (w *writer) registerSession(ctx context.Context, session parsers.Session,
+	anyUnique bool) (bool, error) {
+	conflict := "ON CONFLICT(session_id) DO NOTHING"
+	if anyUnique {
+		conflict = "ON CONFLICT DO NOTHING"
+	}
+	result, err := w.tx.ExecContext(ctx, `
 		INSERT INTO sessions
 		  (session_id, source_agent, source_surface, project, started_at, ended_at,
 		   duration_minutes, title, metadata)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}')
-		ON CONFLICT(session_id) DO NOTHING`,
+		`+conflict,
 		session.ID, nullIfEmpty(session.SourceAgent), nullIfEmpty(session.SourceSurface),
 		nullIfEmpty(session.Project),
 		nullIfEmpty(session.StartedAt), nullIfEmpty(session.EndedAt),
 		nullInt(session.DurationMinutes), nullIfEmpty(session.Title))
 	if err != nil {
-		return fmt.Errorf("register the session %s: %w", session.ID, err)
+		return false, fmt.Errorf("register the session %s: %w", session.ID, err)
 	}
-	return nil
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("register the session %s: %w", session.ID, err)
+	}
+	return affected > 0, nil
 }
 
 // refreshSession merges what was just observed into the row that is there.
@@ -1243,6 +1269,7 @@ func (w *writer) enrichExchange(ctx context.Context, sessionID string, stored st
 
 func (w *writer) insertTools(ctx context.Context, sessionID string, number int,
 	tools []parsers.ToolUse) (int, error) {
+	inserted := 0
 	for _, tool := range tools {
 		_, err := w.tx.ExecContext(ctx, `
 			INSERT INTO tool_uses
@@ -1253,10 +1280,14 @@ func (w *writer) insertTools(ctx context.Context, sessionID string, number int,
 			boolToInt(tool.HadError), nullIfEmpty(tool.ErrorMessage),
 			nullIfEmpty(tool.InitiativeType))
 		if err != nil {
-			return 0, fmt.Errorf("insert a tool use of %s/%d: %w", sessionID, number, err)
+			if isExactPayloadConflict(err) || isUniqueConstraint(err) {
+				continue
+			}
+			return inserted, fmt.Errorf("insert a tool use of %s/%d: %w", sessionID, number, err)
 		}
+		inserted++
 	}
-	return len(tools), nil
+	return inserted, nil
 }
 
 func (w *writer) children(ctx context.Context, sessionID string, number int,
@@ -1295,6 +1326,9 @@ func (w *writer) insertThinking(ctx context.Context, sessionID string, number, p
 		)`, sessionID, number, position, depth, caution, block.WordCount, compacted, block.Text,
 		sessionID, number, position, depth, caution, block.WordCount, compacted, block.Text)
 	if err != nil {
+		if isExactPayloadConflict(err) || isUniqueConstraint(err) {
+			return false, nil
+		}
 		return false, err
 	}
 	affected, err := result.RowsAffected()
@@ -1337,6 +1371,18 @@ func (w *writer) patchMetadata(ctx context.Context, sessionID string, payload ma
 
 // SQLITE_CONSTRAINT_UNIQUE is 2067; the primary constraint class is 19.
 const sqliteConstraintUnique = 2067
+
+func isUniqueConstraint(err error) bool {
+	var serr *sqlite.Error
+	if errors.As(err, &serr) {
+		return serr.Code() == sqliteConstraintUnique || serr.Code()&0xff == 19
+	}
+	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
+}
+
+func isExactPayloadConflict(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "_exact_payload")
+}
 
 func isSessionExactPayloadConflict(err error) bool {
 	if err == nil || !strings.Contains(err.Error(), "idx_sessions_exact_payload") {
@@ -1423,6 +1469,10 @@ func (w *writer) memory(ctx context.Context, memory parsers.Memory) (Counts, err
 			nullInt(memory.SourceSequence), nullIfEmpty(memory.Project), status,
 			nil, memory.CreatedAt)
 		if err != nil {
+			if isExactPayloadConflict(err) || isUniqueConstraint(err) {
+				counts.MemoriesUnchanged = 1
+				return counts, nil
+			}
 			return counts, fmt.Errorf("insert the memory of %s: %w", memory.FilePath, err)
 		}
 		counts.MemoriesInserted = 1
