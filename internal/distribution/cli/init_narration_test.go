@@ -10,7 +10,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/store/search"
@@ -74,12 +73,12 @@ func TestSemanticConsentConsumesStructuredWorkerResult(t *testing.T) {
 	}
 }
 
-func TestSemanticConsentLeavesLiveProgressConnectedAfterInitReturns(t *testing.T) {
+func TestSemanticConsentKeepsCompanionProgressOffTheInitSurface(t *testing.T) {
 	t.Setenv("CI", "")
 	t.Setenv("ROCA_VECTOR_STATE_DIR", "")
 	root := t.TempDir()
-	fixture := "#!/bin/sh\ncase \" $* \" in *\" --stream-progress \"*) ;; *) exit 9;; esac\n" +
-		"(sleep 0.1; printf '%s\\n' 'downloading the embedding model · 1/2' >&2) &\n" +
+	fixture := "#!/bin/sh\ncase \" $* \" in *\" --stream-progress \"*) exit 9;; esac\n" +
+		"printf '%s\\n' 'semantic index: 1/2 chunks · 1 added' >&2\n" +
 		"printf '%s\\n' '{\"background\":true}'\n"
 	installVectorFixture(t, root, fixture)
 	progressPath := filepath.Join(root, "progress")
@@ -95,15 +94,10 @@ func TestSemanticConsentLeavesLiveProgressConnectedAfterInitReturns(t *testing.T
 		true, paths, true, readyProof()); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		body, _ := os.ReadFile(progressPath)
-		if strings.Contains(string(body), "downloading the embedding model · 1/2") {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+	body, _ := os.ReadFile(progressPath)
+	if strings.Contains(string(body), "chunks") || strings.Contains(string(body), "semantic index") {
+		t.Fatalf("init streamed chunk counts to the terminal: %q", body)
 	}
-	t.Fatal("live semantic setup progress stopped when init returned")
 }
 
 func TestSemanticConsentIsDurableForYesAndNo(t *testing.T) {

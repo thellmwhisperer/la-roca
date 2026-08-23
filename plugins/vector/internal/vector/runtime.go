@@ -154,6 +154,7 @@ func Launch(request LaunchRequest) (LaunchResult, error) {
 	if claim == nil {
 		return LaunchResult{LogPath: filepath.Join(request.DataDir, WorkerLogFilename), AlreadyRunning: true}, nil
 	}
+	_ = os.Remove(filepath.Join(request.DataDir, CompletionFilename))
 	removeClaim := true
 	defer func() {
 		claim.Close()

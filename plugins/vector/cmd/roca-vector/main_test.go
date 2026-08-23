@@ -439,6 +439,9 @@ func TestStatusSpeaksInHistoryReadAndNeverCallsTheProductEmpty(t *testing.T) {
 		{name: "history unavailable", status: indexStatus{},
 			want:   []string{"progress unavailable", "word search", "next step"},
 			absent: []string{"empty", "nothing"}},
+		{name: "progress unknown after worker failure", status: indexStatus{Stopped: "finalize sidecar: disk full"},
+			want:   []string{"progress unavailable", "storage space", "roca vector install`"},
+			absent: []string{"ready", "empty", "nothing", "finalize", "sidecar", "disk full"}},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

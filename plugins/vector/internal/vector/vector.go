@@ -186,6 +186,7 @@ type sourceOrder struct {
 type storedChunk struct {
 	id                int64
 	sourceKind        string
+	sourceID          string
 	fingerprint       string
 	sourceFingerprint string
 }
@@ -991,6 +992,7 @@ func readIndexState(db *sql.DB) (map[string]storedChunk, string, int, error) {
 			return nil, "", 0, err
 		}
 		item.sourceKind = kind
+		item.sourceID = sourceID
 		state[chunkKey(kind, sourceID, column, index)] = item
 	}
 	if err := rows.Close(); err != nil {
@@ -1061,8 +1063,8 @@ func writeBatch(ctx context.Context, db *sql.DB, chunks []desiredChunk, vectors 
 				return err
 			}
 			report.Updated++
-			existing[key] = storedChunk{id: old.id, sourceKind: chunk.sourceKind, fingerprint: chunk.fingerprint,
-				sourceFingerprint: chunk.sourceFingerprint}
+			existing[key] = storedChunk{id: old.id, sourceKind: chunk.sourceKind, sourceID: chunk.sourceID,
+				fingerprint: chunk.fingerprint, sourceFingerprint: chunk.sourceFingerprint}
 			continue
 		}
 		result, err := tx.ExecContext(ctx, `INSERT INTO chunks(source_kind,source_id,text_column,chunk_index,fingerprint,source_fingerprint,locator) VALUES (?,?,?,?,?,?,?)`,
@@ -1081,8 +1083,8 @@ func writeBatch(ctx context.Context, db *sql.DB, chunks []desiredChunk, vectors 
 			return err
 		}
 		report.Added++
-		existing[key] = storedChunk{id: id, sourceKind: chunk.sourceKind, fingerprint: chunk.fingerprint,
-			sourceFingerprint: chunk.sourceFingerprint}
+		existing[key] = storedChunk{id: id, sourceKind: chunk.sourceKind, sourceID: chunk.sourceID,
+			fingerprint: chunk.fingerprint, sourceFingerprint: chunk.sourceFingerprint}
 	}
 	if err := tx.Commit(); err != nil {
 		return err
@@ -1152,6 +1154,7 @@ func removeMissing(ctx context.Context, db *sql.DB, existing map[string]storedCh
 		return err
 	}
 	defer tx.Rollback()
+	removedSources := map[[2]string]bool{}
 	for key, old := range existing {
 		if sourceKind != "" && old.sourceKind != sourceKind {
 			continue
@@ -1165,7 +1168,14 @@ func removeMissing(ctx context.Context, db *sql.DB, existing map[string]storedCh
 		if _, err := tx.ExecContext(ctx, `DELETE FROM chunks WHERE id=?`, old.id); err != nil {
 			return err
 		}
+		removedSources[[2]string{old.sourceKind, old.sourceID}] = true
 		report.Removed++
+	}
+	for key := range removedSources {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM sources WHERE source_kind=? AND source_id=?`,
+			key[0], key[1]); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }

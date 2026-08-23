@@ -191,6 +191,11 @@ func (env *environment) indexStatus(ctx context.Context) (indexStatus, error) {
 // named every time reading is not complete, because it is answering right then.
 func statusLines(status indexStatus) []string {
 	if !status.HistoryKnown {
+		if status.Stopped != "" {
+			return []string{"deep search: progress unavailable · word search is answering now",
+				"  it stopped because " + productStopReason(status.Stopped),
+				"  next step: `roca vector install`"}
+		}
 		return []string{"deep search: progress unavailable · word search is answering now",
 			"  next step: `roca vector install`"}
 	}

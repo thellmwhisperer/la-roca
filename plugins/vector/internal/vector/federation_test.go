@@ -1046,8 +1046,8 @@ func TestProgressCountsHistoryReadAgainstHistoryDeclared(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if edited.Read != 3 || edited.Total != 4 {
-		t.Fatalf("progress after editing one declared row = %d of %d, want 3 of 4",
+	if edited.Read != 4 || edited.Total != 4 {
+		t.Fatalf("progress after editing one declared row = %d of %d, want 4 of 4 (status counts rows, not freshness)",
 			edited.Read, edited.Total)
 	}
 
@@ -1063,7 +1063,7 @@ func TestProgressCountsHistoryReadAgainstHistoryDeclared(t *testing.T) {
 	}
 }
 
-func TestProgressRejectsShortenedRowsWithTrailingStoredChunks(t *testing.T) {
+func TestResweepGarbageCollectsStaleTrailingChunks(t *testing.T) {
 	federation, corpusPath, _, _ := federationFixture(t)
 	ctx := context.Background()
 	longBody := strings.Repeat("alpha lighthouse ", 1200)
@@ -1075,13 +1075,37 @@ func TestProgressRejectsShortenedRowsWithTrailingStoredChunks(t *testing.T) {
 	if err != nil || before.Read != before.Total {
 		t.Fatalf("completed long-row progress = %+v, err %v", before, err)
 	}
+	store := openTestSQLite(t, SidecarPath(corpusPath))
+	var longChunks int
+	if err := store.QueryRow(`SELECT COUNT(*) FROM chunks WHERE source_kind='articles' AND source_id='articles/article-1'`).Scan(&longChunks); err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if longChunks < 2 {
+		t.Fatalf("long row produced %d chunks, want at least 2", longChunks)
+	}
 	mutateSourceDatabase(t, corpusPath, `UPDATE articles SET body=`+sqlLiteral(longBody[:200])+` WHERE id='article-1'`)
+	if _, err := federation.Ingest(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	store = openTestSQLite(t, SidecarPath(corpusPath))
+	defer store.Close()
+	var shortChunks int
+	if err := store.QueryRow(`SELECT COUNT(*) FROM chunks WHERE source_kind='articles' AND source_id='articles/article-1'`).Scan(&shortChunks); err != nil {
+		t.Fatal(err)
+	}
+	if shortChunks >= longChunks {
+		t.Fatalf("shortened row kept %d chunks, want fewer than %d", shortChunks, longChunks)
+	}
 	after, err := federation.HistoryProgress(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after.Read != after.Total-1 {
-		t.Fatalf("shortened row with stale trailing chunks = %d of %d read", after.Read, after.Total)
+	if after.Read != after.Total {
+		t.Fatalf("reswept shortened row progress = %d of %d", after.Read, after.Total)
 	}
 }
 

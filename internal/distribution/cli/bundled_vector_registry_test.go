@@ -57,7 +57,7 @@ func TestInitPlacesBundledVectorBeforeConsentAndLegacyPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(arguments), "install") ||
-		!strings.Contains(string(arguments), "--stream-progress") {
+		strings.Contains(string(arguments), "--stream-progress") {
 		t.Fatalf("bundled companion arguments = %q", arguments)
 	}
 	if !strings.Contains(output.String(), "setup continues in the background") {

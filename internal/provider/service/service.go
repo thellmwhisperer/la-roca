@@ -1013,33 +1013,13 @@ func (s *Service) rebuildWordSearch(ctx context.Context) (search.Report, error) 
 		if openErr != nil {
 			return search.Report{}, openErr
 		}
-		started := time.Now()
 		var report search.Report
 		var rebuildErr error
 		switch database.Name {
 		case rocaCorpusPluginName:
 			report, rebuildErr = search.Rebuild(ctx, db)
-		case rocaOpsPluginName:
-			report, rebuildErr = search.RebuildSources(ctx, db, sources)
 		default:
-			tx, beginErr := db.SQL().BeginTx(ctx, nil)
-			rebuildErr = beginErr
-			if rebuildErr == nil {
-				for _, source := range sources {
-					_, rebuildErr = tx.ExecContext(ctx, fmt.Sprintf(
-						`INSERT INTO %s(%s) VALUES('rebuild')`, quoteIdent(source.Index), quoteIdent(source.Index)))
-					if rebuildErr != nil {
-						break
-					}
-				}
-			}
-			if rebuildErr == nil {
-				rebuildErr = tx.Commit()
-			} else if tx != nil {
-				_ = tx.Rollback()
-			}
-			report = search.Report{LexicalBuilt: rebuildErr == nil,
-				ElapsedMS: time.Since(started).Milliseconds()}
+			report, rebuildErr = search.RebuildSources(ctx, db, sources)
 		}
 		closeErr := db.Close()
 		if rebuildErr != nil {

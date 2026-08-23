@@ -453,12 +453,7 @@ func (env *cliEnv) startSemanticSearchSetup(ctx context.Context, path string) er
 	command := exec.CommandContext(ctx, path, arguments...)
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout
-	if progress, ok := env.errOut.(*os.File); ok {
-		command.Args = append(command.Args, "--stream-progress")
-		command.Stderr = progress
-	} else {
-		command.Stderr = &stderr
-	}
+	command.Stderr = &stderr
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("semantic search setup could not start")
 	}

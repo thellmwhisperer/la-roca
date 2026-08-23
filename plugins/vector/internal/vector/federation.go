@@ -1381,6 +1381,14 @@ func unchangedSidecar(path, owner, model, contract, sourceFingerprint string) (D
 	if dimensions, _ := strconv.Atoi(metadata["dimensions"]); dimensions == 0 {
 		return Delta{}, errSidecarChanged
 	}
+	var sourceTable int
+	if err := store.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sources'`).Scan(&sourceTable); err != nil || sourceTable == 0 {
+		return Delta{}, errSidecarChanged
+	}
+	var progressIdentity string
+	if err := store.QueryRow(`SELECT value FROM meta WHERE key='progress_identity'`).Scan(&progressIdentity); err != nil || progressIdentity != sourceProgressVersion {
+		return Delta{}, errSidecarChanged
+	}
 	var chunks, sources int
 	if err := store.QueryRow(`SELECT COUNT(*) FROM chunks`).Scan(&chunks); err != nil {
 		return Delta{}, errSidecarChanged
@@ -1710,30 +1718,12 @@ func countIndexedSources(ctx context.Context, database vectorDatabase,
 		return 0, fmt.Errorf("vector progress identity is unavailable")
 	}
 	read := 0
-	direct := database
-	direct.Alias = "main"
-	reader := DeclaredCorpus{Database: direct}
-	catalog := make(map[string]map[string]bool, len(database.Tables))
 	for _, table := range database.Tables {
-		catalog[table.Name] = table.availableColumns()
-	}
-	for _, table := range database.Tables {
-		contextSQL, join, _ := reader.contextSQL(table, catalog)
-		inner := fmt.Sprintf(`SELECT CAST(src.%s AS TEXT) AS source_id%s%s
-			FROM main.%s src%s WHERE %s`, quoteIdentifier(table.IDColumn),
-			declaredColumnSelect("src", table.TextColumns), contextSQL,
-			quoteIdentifier(table.Name), join, declaredSourcePredicate("src", table))
-		fields := []string{sqlLiteral(table.embeddingContractFingerprint()), "source_id",
-			"context_title", "context_project", "context_time"}
-		for _, column := range table.TextColumns {
-			fields = append(fields, fmt.Sprintf("COALESCE(CAST(%s AS TEXT),'')", quoteIdentifier(column)))
-		}
-		statement := fmt.Sprintf(`WITH declared AS (%s), current_rows AS (
-			SELECT source_id,%s(%s) AS source_fingerprint FROM declared)
-			SELECT COUNT(*) FROM current_rows JOIN vector_sidecar.sources progress
-			ON progress.source_kind=%s AND progress.raw_source_id=current_rows.source_id
-			AND progress.source_fingerprint=current_rows.source_fingerprint`, inner,
-			sourceFingerprintFunction, strings.Join(fields, ","), sqlLiteral(table.Name))
+		statement := fmt.Sprintf(`SELECT COUNT(*) FROM main.%s src
+			JOIN vector_sidecar.sources progress
+			ON progress.source_kind=%s AND progress.raw_source_id=CAST(src.%s AS TEXT)`,
+			quoteIdentifier(table.Name), sqlLiteral(table.Name),
+			quoteIdentifier(table.IDColumn))
 		var count int
 		if err := store.QueryRowContext(ctx, statement).Scan(&count); err != nil {
 			return 0, fmt.Errorf("count indexed rows in %s/%s: %w",
