@@ -61,7 +61,7 @@ func TestSemanticConsentConsumesStructuredWorkerResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	companion := filepath.Join(bin, "roca-vector")
-	fixture := "#!/bin/sh\nprintf '%s\\n' '{\"background\":true,\"pid\":4242,\"log_path\":\"/private/operator/path\"}'\nprintf '%s\\n' 'raw worker detail' >&2\n"
+	fixture := "#!/bin/sh\nprintf '%s\\n' '{\"background\":true,\"already_running\":true,\"pid\":4242,\"log_path\":\"/private/operator/path\"}'\nprintf '%s\\n' 'raw worker detail' >&2\n"
 	if err := os.WriteFile(companion, []byte(fixture), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestSemanticConsentConsumesStructuredWorkerResult(t *testing.T) {
 	env := &cliEnv{out: &out, errOut: &errOut, dbPath: filepath.Join(root, "roca.db")}
 	paths := config.Paths{Config: filepath.Join(root, "config.toml")}
 	input := bufio.NewReader(strings.NewReader("yes\n"))
-	if err := env.offerSemanticSearch(context.Background(), input, true, paths); err != nil {
+	if err := env.offerSemanticSearch(context.Background(), input, true, paths, true); err != nil {
 		t.Fatal(err)
 	}
 	combined := out.String() + errOut.String()
@@ -82,4 +82,70 @@ func TestSemanticConsentConsumesStructuredWorkerResult(t *testing.T) {
 			t.Fatalf("semantic setup output leaked %q: %q", detail, combined)
 		}
 	}
+}
+
+func TestSemanticConsentIsDurableForYesAndNo(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "declined", true: "enabled"}[enabled], func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "config.toml")
+			body := "[features]\nvector = false\n"
+			if enabled {
+				body = "[features]\nvector = true\n"
+			}
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var out, errOut bytes.Buffer
+			env := &cliEnv{out: &out, errOut: &errOut}
+			if err := env.offerSemanticSearch(context.Background(),
+				bufio.NewReader(strings.NewReader("yes\n")), true, config.Paths{Config: path}, true); err != nil {
+				t.Fatal(err)
+			}
+			if out.Len()+errOut.Len() != 0 {
+				t.Fatalf("decided consent prompted again: %q", out.String()+errOut.String())
+			}
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(after) != body {
+				t.Fatalf("decided consent changed: %q", after)
+			}
+		})
+	}
+}
+
+func TestSemanticDeclinePersistsExplicitDecision(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "config.toml")
+	if err := os.WriteFile(path, []byte("[features]\nplugins = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	env := &cliEnv{out: &out, errOut: &errOut}
+	if err := env.offerSemanticSearch(context.Background(),
+		bufio.NewReader(strings.NewReader("no\n")), true, config.Paths{Config: path}, true); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := config.LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Features.Vector {
+		t.Fatal("declined semantic search remained enabled")
+	}
+	decided, err := config.HasValue(string(mustRead(t, path)), "features", "vector")
+	if err != nil || !decided {
+		t.Fatalf("decline decision was not durable: decided=%v err=%v", decided, err)
+	}
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }

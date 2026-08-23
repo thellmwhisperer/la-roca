@@ -57,7 +57,6 @@ func TestTTYInitListsDetectedModelsAndEnterKeepsTheFactoryDefault(t *testing.T) 
 		"plugins = true",
 		"roca_ops = true",
 		"cron = true",
-		"vector = false",
 	} {
 		if !strings.Contains(config, want) {
 			t.Errorf("config does not contain %q:\n%s", want, config)
@@ -336,7 +335,7 @@ func TestReinitializeChooserFailureLeavesTheDatabaseUntouched(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := "[features]\nplugins = true\nroca_ops = true\ncron = true\nvector = false\n"
+			want := "[features]\nplugins = true\nroca_ops = true\ncron = true\n"
 			if string(raw) != want {
 				t.Fatalf("chooser exit config:\n--- want ---\n%s--- got ---\n%s", want, raw)
 			}
@@ -385,7 +384,7 @@ func TestNonTTYInitPrintsOneAnsweringAlertAndWritesNewInstallConfig(t *testing.T
 	if err != nil {
 		t.Fatalf("read new-install config: %v", err)
 	}
-	want := "[features]\nplugins = true\nroca_ops = true\ncron = true\nvector = false\n"
+	want := "[features]\nplugins = true\nroca_ops = true\ncron = true\n"
 	if string(raw) != want {
 		t.Fatalf("new-install config:\n--- want ---\n%s--- got ---\n%s", want, raw)
 	}
@@ -410,7 +409,7 @@ func TestInitIgnoresConfigOverrideWhenCreatingExplicitDatabaseConfig(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "[features]\nplugins = true\nroca_ops = true\ncron = true\nvector = false\n"
+	want := "[features]\nplugins = true\nroca_ops = true\ncron = true\n"
 	if string(raw) != want {
 		t.Fatalf("database-adjacent config:\n--- want ---\n%s--- got ---\n%s", want, raw)
 	}

@@ -91,16 +91,15 @@ func installCommand(env *environment) *cobra.Command {
 				return printJSON(map[string]any{
 					"background": true, "model": model, "pid": result.PID,
 					"already_running": result.AlreadyRunning, "log_path": result.LogPath,
+					"log_offset": result.LogOffset,
 				})
 			}
 			if result.AlreadyRunning {
-				fmt.Println("vector install: background indexing is already running")
+				fmt.Println("semantic search: setup is already running")
 			} else {
-				fmt.Printf("vector install: background worker %d started\n", result.PID)
+				fmt.Println("semantic search: setup continues in the background")
 			}
-			fmt.Printf("  model: %s\n", model)
-			fmt.Println("  completion: a desktop notification will report exit status and counts")
-			fmt.Printf("  log: %s\n", result.LogPath)
+			fmt.Println("semantic search: newest material is indexed first")
 			return nil
 		},
 	}

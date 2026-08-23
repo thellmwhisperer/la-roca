@@ -535,12 +535,12 @@ func TestPluginContractRefreshRegistersUpdatesAndUnregistersVectorSurfaces(t *te
     "tables": [{
       "name": "records",
       "description": "One synthetic record.",
-      "columns": ["id", "title", "body", "telemetry"]
+      "columns": ["id", "title", "body", "telemetry", "occurred_at"]
     }]
   }]},
   "vector": {"databases": [{
     "database": "records",
-    "tables": [{"name": "records", "id_column": "id", "text_columns": ["title", "body"]}]
+    "tables": [{"name": "records", "id_column": "id", "text_columns": ["title", "body"], "time_columns": ["occurred_at"]}]
   }]},
   "verbs": [],
   "capabilities": []
@@ -551,7 +551,7 @@ func TestPluginContractRefreshRegistersUpdatesAndUnregistersVectorSurfaces(t *te
 		t.Fatal(err)
 	}
 	if _, err := database.Exec(`CREATE TABLE records (
-		id INTEGER PRIMARY KEY, title TEXT, body TEXT, telemetry TEXT)`); err != nil {
+		id INTEGER PRIMARY KEY, title TEXT, body TEXT, telemetry TEXT, occurred_at TEXT)`); err != nil {
 		database.Close()
 		t.Fatal(err)
 	}

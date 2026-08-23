@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/thellmwhisperer/la-roca-vector/internal/engine"
 )
 
 func TestDeclaredCorpusPagesNewestFirst(t *testing.T) {
@@ -54,6 +56,71 @@ func TestDeclaredCorpusPagesNewestFirst(t *testing.T) {
 	}
 	if rows[0].sourceID != "9" || rows[len(rows)-1].sourceID != "10" {
 		t.Fatalf("time did not dominate non-monotonic IDs: first=%q last=%q", rows[0].sourceID, rows[len(rows)-1].sourceID)
+	}
+}
+
+func TestEmbeddingSchedulerMergesDatabaseHeadsNewestFirst(t *testing.T) {
+	base := &recordingEmbedder{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	scheduler := newEmbeddingScheduler(ctx, base, 2)
+	var workers sync.WaitGroup
+	run := func(id int, entries []struct{ at, text string }) {
+		defer workers.Done()
+		embedder := scheduledEmbedder{base: base, id: id, scheduler: scheduler}
+		for _, entry := range entries {
+			ordered := context.WithValue(ctx, sourceOrderKey{}, sourceOrder{timestamp: entry.at, id: entry.text})
+			if _, err := embedder.Embed(ordered, DefaultModel, []string{entry.text}); err != nil {
+				return
+			}
+		}
+		scheduler.finished <- id
+	}
+	workers.Add(2)
+	go run(0, []struct{ at, text string }{{"2026-03-01", "new"}, {"2024-01-01", "old"}})
+	go run(1, []struct{ at, text string }{{"2025-02-01", "middle"}})
+	scheduler.run()
+	workers.Wait()
+	inputs := base.snapshot()
+	var got []string
+	for _, input := range inputs {
+		got = append(got, input[0])
+	}
+	want := []string{"new", "middle", "old"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("global embedding order = %v, want %v", got, want)
+	}
+}
+
+func TestIngestProgressCountsOnlyPendingEmbeddingWork(t *testing.T) {
+	rows := make([]sourceRow, 40)
+	for index := range rows {
+		rows[index] = sourceRow{kind: "memories", sourceID: fmt.Sprintf("%d", index),
+			text: fmt.Sprintf("unchanged %d", index), occurredAt: fmt.Sprintf("2026-01-%02d", 40-index)}
+	}
+	corpus := &memoryCorpus{sources: rows}
+	path := t.TempDir() + "/vector.db"
+	index := Index{Corpus: corpus, VectorPath: path, Model: DefaultModel, Embedder: &recordingEmbedder{}, BatchSize: 4}
+	if _, err := index.Ingest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	corpus.sources[len(corpus.sources)-1].text = "changed oldest"
+	var totals []int64
+	index.Events = func(event engine.Event) {
+		if event.Stage == "ingest" {
+			totals = append(totals, event.Total)
+		}
+	}
+	if _, err := index.Ingest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(totals) == 0 {
+		t.Fatal("changed ingest emitted no progress")
+	}
+	for _, total := range totals {
+		if total != 1 {
+			t.Fatalf("embedding progress total = %d, want one changed chunk", total)
+		}
 	}
 }
 

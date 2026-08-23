@@ -98,6 +98,7 @@ type LaunchRequest struct {
 type LaunchResult struct {
 	PID            int    `json:"pid,omitempty"`
 	LogPath        string `json:"log_path"`
+	LogOffset      int64  `json:"log_offset,omitempty"`
 	AlreadyRunning bool   `json:"already_running"`
 }
 
@@ -164,6 +165,10 @@ func Launch(request LaunchRequest) (LaunchResult, error) {
 		return LaunchResult{}, err
 	}
 	defer log.Close()
+	logInfo, err := log.Stat()
+	if err != nil {
+		return LaunchResult{}, err
+	}
 	devNull, err := os.Open(os.DevNull)
 	if err != nil {
 		return LaunchResult{}, err
@@ -188,7 +193,7 @@ func Launch(request LaunchRequest) (LaunchResult, error) {
 		return LaunchResult{}, err
 	}
 	removeClaim = false
-	return LaunchResult{PID: pid, LogPath: logPath}, nil
+	return LaunchResult{PID: pid, LogPath: logPath, LogOffset: logInfo.Size()}, nil
 }
 
 func claimWorker(path string) (*os.File, error) {

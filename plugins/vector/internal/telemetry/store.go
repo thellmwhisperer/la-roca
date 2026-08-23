@@ -17,19 +17,24 @@ import (
 )
 
 const (
-	KindLoad    = "load"
-	KindPrewarm = "prewarm"
-	KindEmbed   = "embed"
-	KindBatch   = "batch"
-	KindError   = "error"
-	Stream      = "engine"
-	LogsDir     = "logs"
-	maxFiles    = 6
+	KindLoad         = "load"
+	KindPrewarm      = "prewarm"
+	KindEmbed        = "embed"
+	KindBatch        = "batch"
+	KindError        = "error"
+	Stream           = "engine"
+	LogsDir          = "logs"
+	OperationQuery   = "query"
+	OperationIngest  = "ingest"
+	OperationPrewarm = "prewarm"
+	OperationProbe   = "probe"
+	maxFiles         = 6
 )
 
 type Record struct {
 	Timestamp  time.Time `json:"timestamp"`
 	Kind       string    `json:"kind"`
+	Operation  string    `json:"operation,omitempty"`
 	Backend    string    `json:"backend,omitempty"`
 	Fallback   string    `json:"fallback_reason,omitempty"`
 	DurationMS int64     `json:"duration_ms"`
@@ -37,6 +42,17 @@ type Record struct {
 	Throughput float64   `json:"throughput,omitempty"`
 	MemoryHWM  int64     `json:"memory_hwm_bytes,omitempty"`
 	Err        string    `json:"error,omitempty"`
+}
+
+type operationKey struct{}
+
+func WithOperation(ctx context.Context, operation string) context.Context {
+	return context.WithValue(ctx, operationKey{}, operation)
+}
+
+func Operation(ctx context.Context) string {
+	operation, _ := ctx.Value(operationKey{}).(string)
+	return operation
 }
 
 type Store struct {

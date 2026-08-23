@@ -206,7 +206,7 @@ func initCommand(env *cliEnv) *cobra.Command {
 				axi.Number(int64(result.RowsBefore.Memories)), axi.Number(int64(result.RowsBefore.Sessions)),
 				axi.Number(int64(result.RowsBefore.Exchanges)), axi.Number(int64(result.RowsBefore.ThinkingBlocks)),
 				axi.Number(int64(result.RowsBefore.ToolUses)))
-			if err := env.offerSemanticSearch(cmd.Context(), input, interactive, paths); err != nil {
+			if err := env.offerSemanticSearch(cmd.Context(), input, interactive, paths, configMissingAtStart); err != nil {
 				return err
 			}
 			renderBootstrap(env, result)
@@ -326,7 +326,6 @@ func initConfigPath(paths config.Paths) string {
 var newInstallFeatureChanges = []config.Change{
 	// ApplyText inserts a new value at the start of its table, so declare the
 	// changes in reverse to materialize the public new-install order below.
-	{Kind: config.SetValue, Table: "features", Key: "vector", Value: false},
 	{Kind: config.SetValue, Table: "features", Key: "cron", Value: true},
 	{Kind: config.SetValue, Table: "features", Key: "roca_ops", Value: true},
 	{Kind: config.SetValue, Table: "features", Key: "plugins", Value: true},
@@ -334,8 +333,20 @@ var newInstallFeatureChanges = []config.Change{
 
 // writeNewInstallConfig materializes the product contract for an init that
 // began without a configuration file.
-func (env *cliEnv) offerSemanticSearch(ctx context.Context, input *bufio.Reader, interactive bool, paths config.Paths) error {
-	if !interactive || input == nil {
+func (env *cliEnv) offerSemanticSearch(ctx context.Context, input *bufio.Reader, interactive bool,
+	paths config.Paths, mayPrompt bool) error {
+	if !interactive || input == nil || !mayPrompt {
+		return nil
+	}
+	previous, err := os.ReadFile(paths.Config)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read the configuration: %w", err)
+	}
+	decided, err := config.HasValue(string(previous), "features", "vector")
+	if err != nil {
+		return fmt.Errorf("read semantic search preference: %w", err)
+	}
+	if decided {
 		return nil
 	}
 	env.initSay("semantic search finds by meaning, not just the exact words")
@@ -346,21 +357,18 @@ func (env *cliEnv) offerSemanticSearch(ctx context.Context, input *bufio.Reader,
 		return err
 	}
 	answer := strings.ToLower(strings.TrimSpace(line))
-	if answer != "yes" && answer != "y" {
-		return nil
-	}
-	previous, err := os.ReadFile(paths.Config)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read the configuration: %w", err)
-	}
+	enabled := answer == "yes" || answer == "y"
 	updated, err := config.ApplyText(string(previous), []config.Change{
-		{Kind: config.SetValue, Table: "features", Key: "vector", Value: true},
+		{Kind: config.SetValue, Table: "features", Key: "vector", Value: enabled},
 	})
 	if err != nil {
 		return fmt.Errorf("enable semantic search: %w", err)
 	}
-	if err := os.WriteFile(paths.Config, []byte(updated), 0o600); err != nil {
+	if err := securefile.Replace(paths.Config, []byte(updated), previous); err != nil {
 		return fmt.Errorf("write the configuration: %w", err)
+	}
+	if !enabled {
+		return nil
 	}
 	path, found := findPlugin("vector")
 	if !found {
@@ -379,13 +387,46 @@ func (env *cliEnv) offerSemanticSearch(ctx context.Context, input *bufio.Reader,
 		return fmt.Errorf("semantic search setup could not start")
 	}
 	var result struct {
-		Background bool `json:"background"`
+		Background     bool   `json:"background"`
+		AlreadyRunning bool   `json:"already_running"`
+		LogPath        string `json:"log_path"`
+		LogOffset      int64  `json:"log_offset"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil || !result.Background {
 		return fmt.Errorf("semantic search setup returned an invalid response")
 	}
 	env.print("semantic search: setup continues in the background; newest material is indexed first")
+	if !result.AlreadyRunning {
+		relaySemanticProgress(ctx, env, result.LogPath, result.LogOffset)
+	}
 	return nil
+}
+
+func relaySemanticProgress(ctx context.Context, env *cliEnv, path string, offset int64) {
+	deadline := time.Now().Add(1500 * time.Millisecond)
+	seen := map[string]bool{}
+	for time.Now().Before(deadline) {
+		file, err := os.Open(path)
+		if err == nil {
+			_, _ = file.Seek(offset, io.SeekStart)
+			scanner := bufio.NewScanner(file)
+			for scanner.Scan() {
+				line := strings.TrimSpace(scanner.Text())
+				offset += int64(len(scanner.Bytes()) + 1)
+				if !seen[line] && (strings.HasPrefix(line, "downloading the embedding model") ||
+					strings.HasPrefix(line, "semantic index:")) {
+					seen[line] = true
+					env.print("%s", line)
+				}
+			}
+			_ = file.Close()
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }
 
 func writeNewInstallConfig(path string) error {

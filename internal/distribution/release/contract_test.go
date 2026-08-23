@@ -1,10 +1,10 @@
 package release
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -41,33 +41,66 @@ type releaseWorkflow struct {
 	} `yaml:"jobs"`
 }
 
-func TestNativeReleaseLanesProduceThePublishedArtifactSet(t *testing.T) {
-	root := filepath.Clean(filepath.Join("..", "..", ".."))
-	targets := []struct {
-		name, goos, arch string
-	}{
-		{"darwin-arm64", "darwin", "arm64"},
-		{"linux-amd64", "linux", "amd64"},
-		{"linux-arm64", "linux", "arm64"},
-		{"windows-amd64", "linux", "amd64"},
+func TestReleaseLaneArchivePreservesActualArtifactSetAndModes(t *testing.T) {
+	root := t.TempDir()
+	output := filepath.Join(root, "output")
+	if err := os.MkdirAll(output, 0o700); err != nil {
+		t.Fatal(err)
 	}
-	seen := map[string]bool{}
-	artifactPattern := regexp.MustCompile(`(?:bin|DIST\))/((?:roca|roca-vector)-v-test-[A-Za-z0-9.-]+)`)
-	for _, target := range targets {
-		command := exec.Command("make", "-n", target.name, "VERSION=v-test",
-			"HOST_OS="+target.goos, "HOST_ARCH="+target.arch)
-		command.Dir = root
-		output, err := command.CombinedOutput()
-		if err != nil {
-			t.Fatalf("make -n %s: %v\n%s", target.name, err, output)
+	lanes := [][]string{
+		{releaseArtifactSet[0], releaseArtifactSet[4]},
+		{releaseArtifactSet[1], releaseArtifactSet[5]},
+		{releaseArtifactSet[2], releaseArtifactSet[3], releaseArtifactSet[6], releaseArtifactSet[7]},
+	}
+	for lane, artifacts := range lanes {
+		input := filepath.Join(root, fmt.Sprintf("input-%d", lane))
+		if err := os.MkdirAll(input, 0o700); err != nil {
+			t.Fatal(err)
 		}
-		for _, match := range artifactPattern.FindAllStringSubmatch(string(output), -1) {
-			seen[match[1]] = true
+		for _, name := range artifacts {
+			mode := os.FileMode(0o644)
+			if !strings.HasSuffix(name, ".tar.gz") {
+				mode = 0o755
+			}
+			if err := os.WriteFile(filepath.Join(input, name), []byte(name), mode); err != nil {
+				t.Fatal(err)
+			}
 		}
+		archive := filepath.Join(root, fmt.Sprintf("release-%d.tar.gz", lane))
+		arguments := append([]string{"-C", input, "-czf", archive}, artifacts...)
+		command := exec.Command("tar", arguments...)
+		if packed, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("package release lane: %v\n%s", err, packed)
+		}
+		command = exec.Command("tar", "-C", output, "-xzf", archive)
+		if extracted, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("extract release lane: %v\n%s", err, extracted)
+		}
+	}
+	entries, err := os.ReadDir(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		got = append(got, entry.Name())
+	}
+	slices.Sort(got)
+	wantSorted := slices.Clone(releaseArtifactSet)
+	slices.Sort(wantSorted)
+	if !slices.Equal(got, wantSorted) {
+		t.Fatalf("extracted artifacts = %v, want %v", got, wantSorted)
 	}
 	for _, artifact := range releaseArtifactSet {
-		if !seen[artifact] {
-			t.Errorf("native make targets did not produce %s; got %v", artifact, sortedKeys(seen))
+		if strings.HasSuffix(artifact, ".tar.gz") {
+			continue
+		}
+		info, err := os.Stat(filepath.Join(output, artifact))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o755 {
+			t.Fatalf("%s mode = %o, want 755", artifact, info.Mode().Perm())
 		}
 	}
 }
@@ -101,26 +134,29 @@ func TestReleaseWorkflowBuildsNativelyAndAggregatesBeforePublishing(t *testing.T
 	if !strings.HasPrefix(darwinRunner, "macos-") {
 		t.Fatalf("darwin artifact runner = %q, want native macOS", darwinRunner)
 	}
+	archiveUpload := false
+	for _, step := range native.Steps {
+		if step.Uses == "actions/upload-artifact@v4" &&
+			step.With["path"] == "release-${{ matrix.target }}.tar.gz" {
+			archiveUpload = true
+		}
+	}
+	if !archiveUpload {
+		t.Fatal("native lanes do not upload mode-preserving release archives")
+	}
 	publish, ok := workflow.Jobs["publish"]
 	if !ok {
 		t.Fatal("release workflow has no publish job")
 	}
 	aggregated := false
-	restoredModes := false
 	for _, step := range publish.Steps {
 		if step.Uses == "actions/download-artifact@v4" && step.With["pattern"] == "release-*" &&
-			step.With["merge-multiple"] == true {
+			step.With["merge-multiple"] == true && step.With["path"] == ".tmp/release-lanes" {
 			aggregated = true
-		}
-		if step.Name == "Restore executable permissions" && strings.Contains(step.Run, "chmod 0755") {
-			restoredModes = true
 		}
 	}
 	if !aggregated {
 		t.Fatal("publish does not aggregate every native artifact lane")
-	}
-	if !restoredModes {
-		t.Fatal("publish does not restore executable modes after artifact download")
 	}
 }
 

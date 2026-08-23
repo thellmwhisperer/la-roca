@@ -45,7 +45,7 @@ func (n *Native) Embed(ctx context.Context, requestedModel string, input []strin
 		throughput = float64(len(input)) / elapsed.Seconds()
 	}
 	n.record(telemetry.Record{
-		Kind: kind, Backend: n.backend, Fallback: n.fallback,
+		Kind: kind, Operation: telemetry.Operation(ctx), Backend: n.backend, Fallback: n.fallback,
 		DurationMS: elapsed.Milliseconds(), BatchSize: len(input),
 		Throughput: throughput, MemoryHWM: memoryHighWater(),
 	})
@@ -84,7 +84,7 @@ func (n *Native) Close() {
 
 func (n *Native) Prewarm(ctx context.Context) error {
 	started := time.Now()
-	if _, err := n.Embed(ctx, DefaultModel, []string{QueryPrefix + "warmup"}); err != nil {
+	if _, err := n.Embed(telemetry.WithOperation(ctx, telemetry.OperationPrewarm), DefaultModel, []string{QueryPrefix + "warmup"}); err != nil {
 		return err
 	}
 	n.record(telemetry.Record{

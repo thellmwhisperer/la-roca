@@ -96,10 +96,12 @@ jobs:
           if [ "${{ matrix.compatibility }}" = true ]; then
             make windows-amd64 VERSION="$VERSION"
           fi
+      - name: Preserve release artifact modes
+        run: tar -C bin -czf "release-${{ matrix.target }}.tar.gz" roca-*
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.target }}
-          path: bin/roca-*
+          path: release-${{ matrix.target }}.tar.gz
           if-no-files-found: error
 
   # One red leg of the matrix fails the whole job, so no historical home can
@@ -141,11 +143,15 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           pattern: release-*
-          path: bin
+          path: .tmp/release-lanes
           merge-multiple: true
 
-      - name: Restore executable permissions
-        run: find bin -maxdepth 1 -type f -name 'roca-*' ! -name '*.tar.gz' -exec chmod 0755 {} +
+      - name: Aggregate native release artifacts
+        run: |
+          mkdir -p bin
+          for archive in .tmp/release-lanes/release-*.tar.gz; do
+            tar -C bin -xzf "$archive"
+          done
 
       # The Linux core, its materialized vector companion and the standalone
       # vector archive all answer the tag, and the package manifest carries that

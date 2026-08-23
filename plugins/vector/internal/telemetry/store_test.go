@@ -22,7 +22,7 @@ func TestStoreRecordsJSONLWithoutContentOrDatabase(t *testing.T) {
 	records := []Record{
 		{Kind: KindLoad, Backend: "metal", DurationMS: 299, MemoryHWM: 700 << 20},
 		{Kind: KindPrewarm, Backend: "metal", DurationMS: 301},
-		{Kind: KindEmbed, Backend: "metal", DurationMS: 18, BatchSize: 1},
+		{Kind: KindEmbed, Operation: OperationQuery, Backend: "metal", DurationMS: 18, BatchSize: 1},
 		{Kind: KindBatch, Backend: "cpu", DurationMS: 1200, BatchSize: 64, Throughput: 53.3, Fallback: "accelerator init failed"},
 		{Kind: KindError, Backend: "cpu", Err: "the embedding model is not downloaded"},
 	}
@@ -30,6 +30,13 @@ func TestStoreRecordsJSONLWithoutContentOrDatabase(t *testing.T) {
 		if err := store.Record(context.Background(), record); err != nil {
 			t.Fatal(err)
 		}
+	}
+	read, err := store.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if read[2].Operation != OperationQuery {
+		t.Fatalf("query operation = %q", read[2].Operation)
 	}
 	if err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {

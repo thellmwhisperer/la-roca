@@ -13,9 +13,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/thellmwhisperer/la-roca-vector/internal/engine"
+	"github.com/thellmwhisperer/la-roca-vector/internal/telemetry"
 	"github.com/thellmwhisperer/la-roca/pkg/incrementality"
 )
 
@@ -382,7 +384,8 @@ func (f Federation) queryTexts(ctx context.Context, texts []string, k int, datab
 			result.noticeModelUnavailable(model, group, "embedding provider is unavailable")
 			continue
 		}
-		vectors, err := f.Embedder.Embed(ctx, model, prefixed)
+		vectors, err := f.Embedder.Embed(telemetry.WithOperation(ctx, telemetry.OperationQuery),
+			model, prefixed)
 		if err != nil {
 			result.noticeModelUnavailable(model, group, err.Error())
 			continue
@@ -641,6 +644,15 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 	}
 	result := FederationDelta{Databases: []DatabaseDelta{}}
 	matched := sourceKind == ""
+	var preparationErr error
+	type ingestJob struct {
+		database                       vectorDatabase
+		reader                         DeclaredCorpus
+		sidecar, contract, fingerprint string
+		delta                          Delta
+		err                            error
+	}
+	jobs := []*ingestJob{}
 	for _, database := range f.databases {
 		reader := DeclaredCorpus{Core: f.Core, Database: database}
 		if sourceKind != "" && !reader.hasTable(sourceKind) {
@@ -655,44 +667,186 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 		contract := database.contractFingerprint()
 		fingerprint, err := databaseFingerprint(databasePath, contract)
 		if err != nil {
-			return FederationDelta{}, fmt.Errorf("fingerprint vector source %s: %w", database.owner(), err)
+			if preparationErr == nil {
+				preparationErr = fmt.Errorf("fingerprint vector source %s: %w", database.owner(), err)
+			}
+			continue
 		}
-		var delta Delta
 		if sourceKind == "" && !f.Reembed {
-			delta, err = unchangedSidecar(sidecar, database.owner(), f.Model, contract, fingerprint)
-			if err == nil {
+			delta, unchangedErr := unchangedSidecar(sidecar, database.owner(), f.Model, contract, fingerprint)
+			if unchangedErr == nil {
 				if err := sealSidecar(sidecar, database.owner(), f.Model, f.BuildVersion, contract, fingerprint); err != nil {
 					return FederationDelta{}, err
 				}
 				result.add(database.owner(), delta)
 				continue
 			}
-			if !errors.Is(err, errSidecarChanged) {
-				return FederationDelta{}, err
+			if !errors.Is(unchangedErr, errSidecarChanged) {
+				return FederationDelta{}, unchangedErr
 			}
 		}
-		index := f.index(database, reader, sidecar)
-		if sourceKind == "" {
-			delta, err = index.Ingest(ctx)
-		} else {
-			delta, err = index.IngestSource(ctx, sourceKind)
-		}
-		if err != nil {
-			return FederationDelta{}, fmt.Errorf("index vector source %s: %w", database.owner(), err)
-		}
-		storedFingerprint := ""
-		if sourceKind == "" {
-			storedFingerprint = fingerprint
-		}
-		if err := sealSidecar(sidecar, database.owner(), f.Model, f.BuildVersion, contract, storedFingerprint); err != nil {
-			return FederationDelta{}, err
-		}
-		result.add(database.owner(), delta)
+		jobs = append(jobs, &ingestJob{database: database, reader: reader, sidecar: sidecar,
+			contract: contract, fingerprint: fingerprint})
 	}
 	if !matched {
 		return FederationDelta{}, fmt.Errorf("unknown vector source %q", sourceKind)
 	}
+	if len(jobs) == 0 {
+		return result, preparationErr
+	}
+	orderedCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	scheduler := newEmbeddingScheduler(orderedCtx, f.Embedder, len(jobs))
+	var workers sync.WaitGroup
+	for id, job := range jobs {
+		workers.Add(1)
+		go func(id int, job *ingestJob) {
+			defer workers.Done()
+			index := f.index(job.database, job.reader, job.sidecar)
+			index.BatchSize = 1
+			index.Embedder = scheduledEmbedder{base: f.Embedder, id: id, scheduler: scheduler}
+			if sourceKind == "" {
+				job.delta, job.err = index.Ingest(orderedCtx)
+			} else {
+				job.delta, job.err = index.IngestSource(orderedCtx, sourceKind)
+			}
+			scheduler.finished <- id
+		}(id, job)
+	}
+	scheduler.run()
+	workers.Wait()
+	var ingestErr error
+	for _, job := range jobs {
+		if job.err != nil {
+			if ingestErr == nil {
+				ingestErr = fmt.Errorf("index vector source %s: %w", job.database.owner(), job.err)
+			}
+			continue
+		}
+		storedFingerprint := ""
+		if sourceKind == "" {
+			storedFingerprint = job.fingerprint
+		}
+		if err := sealSidecar(job.sidecar, job.database.owner(), f.Model, f.BuildVersion,
+			job.contract, storedFingerprint); err != nil {
+			return FederationDelta{}, err
+		}
+		result.add(job.database.owner(), job.delta)
+	}
+	if preparationErr != nil {
+		return result, preparationErr
+	}
+	if ingestErr != nil {
+		return result, ingestErr
+	}
 	return result, nil
+}
+
+type embeddingRequest struct {
+	id    int
+	ctx   context.Context
+	model string
+	input []string
+	order sourceOrder
+	reply chan embeddingReply
+}
+
+type embeddingReply struct {
+	vectors [][]float32
+	err     error
+}
+
+type embeddingScheduler struct {
+	ctx      context.Context
+	base     Embedder
+	requests chan embeddingRequest
+	finished chan int
+	active   map[int]bool
+	mu       sync.Mutex
+}
+
+func newEmbeddingScheduler(ctx context.Context, base Embedder, count int) *embeddingScheduler {
+	active := make(map[int]bool, count)
+	for id := 0; id < count; id++ {
+		active[id] = true
+	}
+	return &embeddingScheduler{ctx: ctx, base: base, requests: make(chan embeddingRequest),
+		finished: make(chan int), active: active}
+}
+
+func (s *embeddingScheduler) run() {
+	pending := map[int]embeddingRequest{}
+	for len(s.active) > 0 {
+		for len(pending) < len(s.active) {
+			select {
+			case request := <-s.requests:
+				pending[request.id] = request
+			case id := <-s.finished:
+				delete(s.active, id)
+			case <-s.ctx.Done():
+				for _, request := range pending {
+					request.reply <- embeddingReply{err: s.ctx.Err()}
+				}
+				return
+			}
+		}
+		if len(s.active) == 0 {
+			return
+		}
+		selected := -1
+		for id, request := range pending {
+			if selected < 0 || orderNewer(request.order, pending[selected].order) {
+				selected = id
+			}
+		}
+		request := pending[selected]
+		delete(pending, selected)
+		vectors, err := s.embed(request.ctx, request.model, request.input)
+		request.reply <- embeddingReply{vectors: vectors, err: err}
+	}
+}
+
+func (s *embeddingScheduler) embed(ctx context.Context, model string, input []string) ([][]float32, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.base.Embed(ctx, model, input)
+}
+
+func orderNewer(left, right sourceOrder) bool {
+	if left.timestamp != right.timestamp {
+		return left.timestamp > right.timestamp
+	}
+	return left.id > right.id
+}
+
+type scheduledEmbedder struct {
+	base      Embedder
+	id        int
+	scheduler *embeddingScheduler
+}
+
+func (e scheduledEmbedder) Pull(ctx context.Context, model string) error {
+	return e.base.Pull(ctx, model)
+}
+
+func (e scheduledEmbedder) Embed(ctx context.Context, model string, input []string) ([][]float32, error) {
+	order, ok := ctx.Value(sourceOrderKey{}).(sourceOrder)
+	if !ok {
+		return e.scheduler.embed(ctx, model, input)
+	}
+	reply := make(chan embeddingReply, 1)
+	request := embeddingRequest{id: e.id, ctx: ctx, model: model, input: input, order: order, reply: reply}
+	select {
+	case e.scheduler.requests <- request:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	select {
+	case result := <-reply:
+		return result.vectors, result.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func (r *FederationDelta) add(owner string, delta Delta) {
@@ -777,45 +931,100 @@ func (d DeclaredCorpus) WalkSources(ctx context.Context, sourceKind string,
 	for _, table := range d.Database.Tables {
 		catalog[table.Name] = table.availableColumns()
 	}
+	iterators := make([]*declaredTableIterator, 0, len(tables))
 	for _, table := range tables {
-		cursor := declaredCursor{}
-		for {
-			rows, err := d.Core.query(ctx, d.pageQuery(table, cursor, catalog))
-			if err != nil {
-				return fmt.Errorf("read declared surface %s/%s: %w", d.Database.owner(), table.Name, err)
+		iterator := &declaredTableIterator{corpus: d, table: table, catalog: catalog}
+		if err := iterator.advance(ctx); err != nil {
+			return err
+		}
+		iterators = append(iterators, iterator)
+	}
+	for {
+		selected := -1
+		for index, iterator := range iterators {
+			if iterator.current == nil {
+				continue
 			}
-			for _, values := range rows {
-				id := stringValue(values["source_id"])
-				if id == "" {
-					continue
-				}
-				cursor = declaredCursor{time: stringValue(values["context_time"]), id: id, valid: true}
-				row := sourceRow{kind: table.Name, sourceID: id,
-					fingerprintVersion: table.embeddingContractFingerprint(),
-					title:              stringValue(values["context_title"]),
-					project:            stringValue(values["context_project"]),
-					occurredAt:         stringValue(values["context_time"]),
-					createdAt:          stringValue(values["context_time"])}
-				if table.Chunking != nil && (table.Chunking.MaxChars != nil || table.Chunking.OverlapChars != nil) {
-					size, overlap := table.chunking()
-					row.chunkSize, row.overlap = size, overlap
-				}
-				expanded := expandColumnRows(row, table.TextColumns, values)
-				if len(expanded) == 0 {
-					continue
-				}
-				for _, item := range expanded {
-					if err := visit(item); err != nil {
-						return err
-					}
-				}
-			}
-			if len(rows) < walkPageSize {
-				break
+			if selected < 0 || sourceNewer(*iterator.current, *iterators[selected].current) {
+				selected = index
 			}
 		}
+		if selected < 0 {
+			return nil
+		}
+		if err := visit(*iterators[selected].current); err != nil {
+			return err
+		}
+		if err := iterators[selected].advance(ctx); err != nil {
+			return err
+		}
 	}
-	return nil
+}
+
+type declaredTableIterator struct {
+	corpus  DeclaredCorpus
+	table   vectorTable
+	catalog map[string]map[string]bool
+	cursor  declaredCursor
+	rows    []sourceRow
+	index   int
+	done    bool
+	current *sourceRow
+}
+
+func (i *declaredTableIterator) advance(ctx context.Context) error {
+	for {
+		if i.index < len(i.rows) {
+			row := i.rows[i.index]
+			i.index++
+			i.current = &row
+			return nil
+		}
+		if i.done {
+			i.current = nil
+			return nil
+		}
+		values, err := i.corpus.Core.query(ctx, i.corpus.pageQuery(i.table, i.cursor, i.catalog))
+		if err != nil {
+			return fmt.Errorf("read declared surface %s/%s: %w", i.corpus.Database.owner(), i.table.Name, err)
+		}
+		i.done = len(values) < walkPageSize
+		i.rows = i.rows[:0]
+		i.index = 0
+		for _, value := range values {
+			id := stringValue(value["source_id"])
+			if id == "" {
+				continue
+			}
+			occurredAt := stringValue(value["context_time"])
+			i.cursor = declaredCursor{time: occurredAt, id: id, valid: true}
+			row := sourceRow{kind: i.table.Name, sourceID: id,
+				fingerprintVersion: i.table.embeddingContractFingerprint(),
+				title:              stringValue(value["context_title"]),
+				project:            stringValue(value["context_project"]),
+				occurredAt:         occurredAt,
+				createdAt:          occurredAt}
+			if i.table.Chunking != nil &&
+				(i.table.Chunking.MaxChars != nil || i.table.Chunking.OverlapChars != nil) {
+				size, overlap := i.table.chunking()
+				row.chunkSize, row.overlap = size, overlap
+			}
+			i.rows = append(i.rows, expandColumnRows(row, i.table.TextColumns, value)...)
+		}
+	}
+}
+
+func sourceNewer(left, right sourceRow) bool {
+	if left.occurredAt != right.occurredAt {
+		return left.occurredAt > right.occurredAt
+	}
+	if left.sourceID != right.sourceID {
+		return left.sourceID > right.sourceID
+	}
+	if left.column != right.column {
+		return left.column < right.column
+	}
+	return left.kind > right.kind
 }
 
 func (d DeclaredCorpus) ResolveSource(ctx context.Context, kind string, where locator) (string, error) {
