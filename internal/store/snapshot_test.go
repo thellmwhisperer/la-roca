@@ -35,6 +35,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -87,14 +88,24 @@ func TestReadOnlySnapshotLifecycle(t *testing.T) {
 		if first.directory != second.directory {
 			t.Fatalf("second open copied again: %q vs %q", first.directory, second.directory)
 		}
+		if first == second {
+			t.Fatal("cache reuse returned the same acquisition handle")
+		}
 		if dirs := listSnapshotDirs(t, root); len(dirs) != 1 {
 			t.Fatalf("reuse left snapshot dirs %v, want 1", dirs)
 		}
 		if err := first.Close(); err != nil {
 			t.Fatal(err)
 		}
+		if err := first.Close(); err != nil {
+			t.Fatal(err)
+		}
 		if dirs := listSnapshotDirs(t, root); len(dirs) != 1 {
-			t.Fatalf("first close removed a still-used snapshot: %v", dirs)
+			t.Fatalf("repeated close removed a still-used snapshot: %v", dirs)
+		}
+		var schemaVersion int
+		if err := second.SQL().QueryRow("PRAGMA schema_version").Scan(&schemaVersion); err != nil {
+			t.Fatalf("second acquisition was closed by an alias: %v", err)
 		}
 		if err := second.Close(); err != nil {
 			t.Fatal(err)
@@ -458,6 +469,73 @@ func TestConcurrentSnapshotReapersCountOneRemoval(t *testing.T) {
 	}
 }
 
+func TestVanishedSnapshotIsNotCountedAsReaped(t *testing.T) {
+	root := isolateSnapshotTemp(t)
+	dataDir := t.TempDir()
+	SetSnapshotLogDir(dataDir)
+	t.Cleanup(func() { SetSnapshotLogDir("") })
+	orphan := filepath.Join(root, snapshotDirectoryPrefix+"vanished")
+	if err := os.Mkdir(orphan, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	originalClaim := claimSnapshotDirectoryFn
+	t.Cleanup(func() { claimSnapshotDirectoryFn = originalClaim })
+	claimSnapshotDirectoryFn = func(root, directory string) (string, error) {
+		if err := os.RemoveAll(directory); err != nil {
+			return "", err
+		}
+		return originalClaim(root, directory)
+	}
+	if err := scavengeReadOnlySnapshots(context.Background(), root); err != nil {
+		t.Fatal(err)
+	}
+	matches, err := filepath.Glob(filepath.Join(dataDir, "logs", "snapshots-*.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("vanished snapshot produced reap telemetry: %v", matches)
+	}
+}
+
+func TestSnapshotReaperReleasesLeaseBeforeDeletion(t *testing.T) {
+	root := isolateSnapshotTemp(t)
+	orphan := filepath.Join(root, snapshotDirectoryPrefix+"windows-compatible")
+	if err := os.Mkdir(orphan, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(orphan, snapshotLeaseName), []byte("1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	originalRemove := removeSnapshotDirectoryFn
+	t.Cleanup(func() { removeSnapshotDirectoryFn = originalRemove })
+	var deletionErr error
+	var deletionCalled bool
+	removeSnapshotDirectoryFn = func(directory string) error {
+		deletionCalled = true
+		release, err := securefile.TryLock(filepath.Join(directory, snapshotLeaseName))
+		if err != nil {
+			deletionErr = fmt.Errorf("lease remained held at deletion: %w", err)
+			return deletionErr
+		}
+		if err := release(); err != nil {
+			return err
+		}
+		return originalRemove(directory)
+	}
+	if err := scavengeReadOnlySnapshots(context.Background(), root); err != nil {
+		t.Fatal(err)
+	}
+	if !deletionCalled || deletionErr != nil {
+		t.Fatalf("deletion called = %t, error = %v", deletionCalled, deletionErr)
+	}
+	if matches, err := filepath.Glob(filepath.Join(root, snapshotReapPrefix+"*")); err != nil {
+		t.Fatal(err)
+	} else if len(matches) != 0 {
+		t.Fatalf("claimed orphan remained after reap: %v", matches)
+	}
+}
+
 func TestSnapshotTelemetryLogsCreateAndReap(t *testing.T) {
 	root := isolateSnapshotTemp(t)
 	dataDir := t.TempDir()
@@ -539,10 +617,33 @@ func TestSnapshotHelperProcess(t *testing.T) {
 	if mode == "" {
 		t.Skip("helper process")
 	}
+	if mode == "signal-registration" {
+		snapshotBeforeLeaseRegistrationFn = func(directory string) {
+			fmt.Printf("STAGING %s\n", directory)
+			os.Stdout.Sync()
+			for !snapshotShuttingDown.Load() {
+				runtime.Gosched()
+			}
+		}
+	}
 	snapshot, err := OpenReadOnlySnapshot(context.Background(), os.Getenv("ROCA_SNAPSHOT_SOURCE"))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "open: %v\n", err)
 		os.Exit(1)
+	}
+	if mode == "hold-query" {
+		started := make(chan struct{})
+		go func() {
+			close(started)
+			var count int64
+			_ = snapshot.SQL().QueryRowContext(context.Background(), `
+				WITH RECURSIVE count_to_a_billion(value) AS (
+					VALUES(0) UNION ALL SELECT value + 1 FROM count_to_a_billion WHERE value < 1000000000
+				)
+				SELECT COUNT(*) FROM count_to_a_billion`).Scan(&count)
+		}()
+		<-started
+		time.Sleep(50 * time.Millisecond)
 	}
 	fmt.Printf("READY %s\n", snapshot.directory)
 	os.Stdout.Sync()
@@ -594,8 +695,9 @@ func startSnapshotHelper(t *testing.T, tmp, source, mode string) *snapshotHelper
 		_ = helper.wait()
 		t.Fatalf("helper stdout: %v", err)
 	}
-	directory := strings.TrimSpace(strings.TrimPrefix(line, "READY "))
-	if directory == "" || !strings.Contains(directory, snapshotDirectoryPrefix) {
+	directory := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(line, "READY "), "STAGING "))
+	if directory == "" || (!strings.Contains(directory, snapshotDirectoryPrefix) &&
+		!strings.Contains(directory, snapshotStagingPrefix)) {
 		t.Fatalf("helper announced %q", line)
 	}
 	helper.directory = directory
