@@ -522,10 +522,13 @@ func (env *environment) federationWithEmbedder(model string, embedder vector.Emb
 func defaultEmbedder(env *environment) vector.Embedder {
 	events := env.events()
 	var tel *telemetry.Store
-	if store, err := telemetry.Open(coreDataDir(env.dbPath)); err == nil {
-		tel = store
+	locked := readOnly()
+	if !locked {
+		if store, err := telemetry.Open(coreDataDir(env.dbPath)); err == nil {
+			tel = store
+		}
 	}
-	return vector.ConfiguredEmbedder(coreDataDir(env.dbPath), env.stateDir, events, tel)
+	return vector.ConfiguredEmbedder(coreDataDir(env.dbPath), env.stateDir, events, tel, locked)
 }
 
 func (env *environment) embedder() (vector.Embedder, engine.Sink) {

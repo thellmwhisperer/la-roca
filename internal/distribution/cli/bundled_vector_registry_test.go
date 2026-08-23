@@ -38,4 +38,29 @@ func TestBundledPluginInstallRefreshesLegacyVectorRegistry(t *testing.T) {
 	if registry.Schema != 2 || len(registry.Databases) == 0 {
 		t.Fatalf("refreshed registry = %+v", registry)
 	}
+	var corpus *plugin.VectorRegistration
+	for index := range registry.Databases {
+		if registry.Databases[index].Database == "corpus" {
+			corpus = &registry.Databases[index]
+			break
+		}
+	}
+	if corpus == nil {
+		t.Fatal("refreshed registry has no corpus declaration")
+	}
+	wantLocal := map[string]string{"memories": "source_session", "exchanges": "session_id"}
+	for table, local := range wantLocal {
+		var found *plugin.VectorRegistrationTable
+		for index := range corpus.Tables {
+			if corpus.Tables[index].Name == table {
+				found = &corpus.Tables[index]
+				break
+			}
+		}
+		if found == nil || found.TimeJoin == nil || found.TimeJoin.Table != "sessions" ||
+			found.TimeJoin.LocalColumn != local || found.TimeJoin.ForeignColumn != "session_id" ||
+			len(found.TimeJoin.TimeColumns) != 1 || found.TimeJoin.TimeColumns[0] != "started_at" {
+			t.Fatalf("%s chronological fallback = %+v", table, found)
+		}
+	}
 }

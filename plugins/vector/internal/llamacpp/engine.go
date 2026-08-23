@@ -84,7 +84,7 @@ func (e *Engine) Embed(text string) ([]float32, int, error) {
 	var dimensions C.int
 	var tokens C.int
 	var message *C.char
-	if C.roca_llama_embed(e.engine, input, &raw, &dimensions, &tokens, &message) != 0 {
+	if C.roca_llama_embed(e.engine, input, C.size_t(len(text)), &raw, &dimensions, &tokens, &message) != 0 {
 		defer C.roca_llama_release(unsafe.Pointer(message))
 		return nil, 0, fmt.Errorf("embed: %s", C.GoString(message))
 	}

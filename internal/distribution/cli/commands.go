@@ -355,7 +355,13 @@ func (env *cliEnv) offerSemanticSearch(ctx context.Context, input *bufio.Reader,
 	if err != nil {
 		return fmt.Errorf("read semantic search preference: %w", err)
 	}
-	if decided || loaded.Features.Vector || (!newConfig && !hasVector) {
+	if decided {
+		if !loaded.Features.Vector {
+			return nil
+		}
+		return env.startSemanticSearchSetup(ctx)
+	}
+	if loaded.Features.Vector || (!newConfig && !hasVector) {
 		return nil
 	}
 	env.initSay("semantic search finds by meaning, not just the exact words")
@@ -380,6 +386,10 @@ func (env *cliEnv) offerSemanticSearch(ctx context.Context, input *bufio.Reader,
 	if !enabled {
 		return nil
 	}
+	return env.startSemanticSearchSetup(ctx)
+}
+
+func (env *cliEnv) startSemanticSearchSetup(ctx context.Context) error {
 	path, found := findPlugin("vector")
 	if !found {
 		env.print("semantic search: enabled; setup will begin when its companion is available")

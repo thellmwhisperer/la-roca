@@ -107,6 +107,20 @@ func TestDeltaFlagAndReadOnlyBoundaryAreExplicit(t *testing.T) {
 	}
 }
 
+func TestReadOnlyEmbedderDoesNotCreateLogsOrDownloadState(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	t.Setenv("ROCA_READ_ONLY", "1")
+	embedder := defaultEmbedder(&environment{dbPath: filepath.Join(dataDir, "roca.db")})
+	if err := embedder.Pull(context.Background(), vector.DefaultModel); err == nil ||
+		!strings.Contains(err.Error(), "not downloaded") {
+		t.Fatalf("read-only model lookup = %v", err)
+	}
+	if _, err := os.Stat(dataDir); !os.IsNotExist(err) {
+		t.Fatalf("read-only embedder created data state: %v", err)
+	}
+}
+
 func TestIngestProgressFormatsCountsRateAndETA(t *testing.T) {
 	got := formatIngestProgress(vector.IngestProgress{
 		Sources: 2, Total: 5, Chunks: 9, Rate: 3.5,

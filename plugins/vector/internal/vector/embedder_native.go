@@ -18,6 +18,7 @@ type Native struct {
 	StateDir  string
 	Events    engine.Sink
 	Telemetry *telemetry.Store
+	ReadOnly  bool
 	once      sync.Once
 	engine    nativeEngine
 	backend   string
@@ -30,8 +31,8 @@ type nativeEngine interface {
 	Close()
 }
 
-func ConfiguredEmbedder(dataDir, stateDir string, events engine.Sink, tel *telemetry.Store) Embedder {
-	return &Native{DataDir: dataDir, StateDir: stateDir, Events: events, Telemetry: tel}
+func ConfiguredEmbedder(dataDir, stateDir string, events engine.Sink, tel *telemetry.Store, readOnly bool) Embedder {
+	return &Native{DataDir: dataDir, StateDir: stateDir, Events: events, Telemetry: tel, ReadOnly: readOnly}
 }
 
 func (n *Native) Pull(ctx context.Context, requestedModel string) error {
@@ -42,8 +43,15 @@ func (n *Native) pull(ctx context.Context, requestedModel string) error {
 	if requestedModel != DefaultModel {
 		return fmt.Errorf("embedding model %q is not supported by this engine", requestedModel)
 	}
-	_, err := model.Ensure(ctx, n.DataDir, model.DefaultManifest(), n.Events)
+	_, err := n.modelPath(ctx)
 	return err
+}
+
+func (n *Native) modelPath(ctx context.Context) (string, error) {
+	if n.ReadOnly {
+		return model.Existing(n.DataDir, model.DefaultManifest())
+	}
+	return model.Ensure(ctx, n.DataDir, model.DefaultManifest(), n.Events)
 }
 
 func (n *Native) record(record telemetry.Record) {

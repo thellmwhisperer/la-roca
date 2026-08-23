@@ -10,7 +10,6 @@ import (
 
 	"github.com/thellmwhisperer/la-roca-vector/internal/engine"
 	"github.com/thellmwhisperer/la-roca-vector/internal/llamacpp"
-	"github.com/thellmwhisperer/la-roca-vector/internal/model"
 	"github.com/thellmwhisperer/la-roca-vector/internal/telemetry"
 )
 
@@ -53,7 +52,7 @@ func (n *Native) Embed(ctx context.Context, requestedModel string, input []strin
 }
 
 func (n *Native) open(ctx context.Context) error {
-	path, err := model.Ensure(ctx, n.DataDir, model.DefaultManifest(), n.Events)
+	path, err := n.modelPath(ctx)
 	if err != nil {
 		n.record(telemetry.Record{Kind: telemetry.KindError, Err: "the embedding model is not downloaded"})
 		return err

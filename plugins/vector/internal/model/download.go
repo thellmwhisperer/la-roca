@@ -29,9 +29,20 @@ func FilePath(dataDir string, manifest Manifest) string {
 	return filepath.Join(dataDir, "models", manifest.ID, manifest.SHA256+".gguf")
 }
 
+func Existing(dataDir string, manifest Manifest) (string, error) {
+	if err := validateManifest(manifest); err != nil {
+		return "", err
+	}
+	path := FilePath(dataDir, manifest)
+	if !validModelFile(path, manifest) {
+		return "", fmt.Errorf("the embedding model is not downloaded")
+	}
+	return path, nil
+}
+
 func Ensure(ctx context.Context, dataDir string, manifest Manifest, sink engine.Sink) (string, error) {
-	if manifest.ID == "" || manifest.SHA256 == "" || manifest.URL == "" || manifest.Bytes <= 0 {
-		return "", fmt.Errorf("embedding model manifest is incomplete")
+	if err := validateManifest(manifest); err != nil {
+		return "", err
 	}
 	path := FilePath(dataDir, manifest)
 	if validModelFile(path, manifest) {
@@ -73,6 +84,13 @@ func Ensure(ctx context.Context, dataDir string, manifest Manifest, sink engine.
 	}
 	emit(sink, engine.Result("download", "embedding model: ready"))
 	return path, nil
+}
+
+func validateManifest(manifest Manifest) error {
+	if manifest.ID == "" || manifest.SHA256 == "" || manifest.URL == "" || manifest.Bytes <= 0 {
+		return fmt.Errorf("embedding model manifest is incomplete")
+	}
+	return nil
 }
 
 func validModelFile(path string, manifest Manifest) bool {

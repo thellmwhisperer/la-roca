@@ -131,6 +131,30 @@ func TestSemanticConsentIsDurableForYesAndNo(t *testing.T) {
 	}
 }
 
+func TestSemanticConsentRetriesSetupWithoutPromptingAgain(t *testing.T) {
+	root := t.TempDir()
+	calls := filepath.Join(root, "calls")
+	t.Setenv("ROCA_TEST_VECTOR_CALLS", calls)
+	installVectorFixture(t, root, "#!/bin/sh\nprintf x >> \"$ROCA_TEST_VECTOR_CALLS\"\nprintf '%s\\n' '{\"background\":true}'\n")
+	path := filepath.Join(root, "config.toml")
+	body := "[features]\nvector_consent = true\nvector = true\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		output := runSemanticConsent(t, path, "no\n")
+		if strings.Contains(output, "[yes/no]") {
+			t.Fatalf("durable consent prompted again: %q", output)
+		}
+	}
+	if got := string(mustRead(t, calls)); got != "xx" {
+		t.Fatalf("semantic setup launches = %q, want one per init", got)
+	}
+	if got := string(mustRead(t, path)); got != body {
+		t.Fatalf("durable consent changed: %q", got)
+	}
+}
+
 func TestSemanticDeclinePersistsExplicitDecision(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "config.toml")

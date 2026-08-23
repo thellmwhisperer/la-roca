@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -28,7 +29,7 @@ func TestNativeEngineMatchesPublicEquivalenceFixture(t *testing.T) {
 	if dataDir == "" {
 		dataDir = t.TempDir()
 	}
-	embedder := ConfiguredEmbedder(dataDir, t.TempDir(), nil, nil)
+	embedder := ConfiguredEmbedder(dataDir, t.TempDir(), nil, nil, false)
 	if closer, ok := embedder.(*Native); ok {
 		t.Cleanup(closer.Close)
 	}
@@ -70,6 +71,14 @@ func TestNativeEngineMatchesPublicEquivalenceFixture(t *testing.T) {
 			t.Errorf("public input %q maximum delta at element %d = %.9g, limit %.9g",
 				input, maxElement, maxDelta, golden.MaxAbsoluteDelta)
 		}
+	}
+	nulVectors, err := embedder.Embed(context.Background(), DefaultModel,
+		[]string{QueryPrefix + "before", QueryPrefix + "before\x00after"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nulVectors) != 2 || slices.Equal(nulVectors[0], nulVectors[1]) {
+		t.Fatal("embedded NUL truncated the input")
 	}
 }
 

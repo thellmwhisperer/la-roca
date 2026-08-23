@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -71,6 +72,7 @@ extern "C" roca_llama_engine * roca_llama_open(const char * model_path, int thre
 extern "C" int roca_llama_embed(
     roca_llama_engine * engine,
     const char * text,
+    size_t text_size,
     float ** embedding,
     int * dimensions,
     int * token_count,
@@ -80,8 +82,12 @@ extern "C" int roca_llama_embed(
         return 1;
     }
 
+    if (text_size > static_cast<size_t>(INT32_MAX)) {
+        fail(error, "input length overflow");
+        return 1;
+    }
     const llama_vocab * vocab = llama_model_get_vocab(engine->model);
-    const int32_t text_length = static_cast<int32_t>(std::strlen(text));
+    const int32_t text_length = static_cast<int32_t>(text_size);
     int32_t wanted = llama_tokenize(vocab, text, text_length, nullptr, 0, true, true);
     if (wanted == INT32_MIN) {
         fail(error, "token count overflow");

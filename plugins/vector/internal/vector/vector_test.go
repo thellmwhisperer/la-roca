@@ -80,7 +80,7 @@ func TestChunksOverlapWithoutRepeatingTerminalChunk(t *testing.T) {
 }
 
 func TestNativeEmbedderRejectsUnsupportedModelBeforeLoading(t *testing.T) {
-	embedder := ConfiguredEmbedder(t.TempDir(), t.TempDir(), nil, nil)
+	embedder := ConfiguredEmbedder(t.TempDir(), t.TempDir(), nil, nil, false)
 	if err := embedder.Pull(context.Background(), "another-768-dimensional-model"); err == nil ||
 		!strings.Contains(err.Error(), "not supported") {
 		t.Fatalf("unsupported model error = %v", err)
