@@ -56,14 +56,20 @@ func Compact(ctx context.Context, path string) (CompactReport, error) {
 		return CompactReport{}, closeErr
 	}
 
-	rewrote, err := applyStorageLaw(path, true)
+	rewrote, err := applyStorageLaw(ctx, path, true)
 	if err != nil {
+		return CompactReport{}, err
+	}
+	if err := ctx.Err(); err != nil {
 		return CompactReport{}, err
 	}
 	if err := ApplySchema(path); err != nil {
 		return CompactReport{}, err
 	}
-	if err := vacuumDatabase(path); err != nil {
+	if err := ctx.Err(); err != nil {
+		return CompactReport{}, err
+	}
+	if err := vacuumDatabase(ctx, path); err != nil {
 		return CompactReport{}, err
 	}
 
@@ -201,13 +207,12 @@ func countCurrentRows(ctx context.Context, db *sql.DB) (currentRowCounts, error)
 	return counts, nil
 }
 
-func applyStorageLaw(path string, dropArchive bool) (bool, error) {
+func applyStorageLaw(ctx context.Context, path string, dropArchive bool) (bool, error) {
 	db, err := bundledplugin.OpenDatabase(path, false)
 	if err != nil {
 		return false, err
 	}
 	defer db.Close()
-	ctx := context.Background()
 	needed, err := storageLawNeeded(ctx, db)
 	if err != nil {
 		return false, err
@@ -243,7 +248,7 @@ func applyStorageLaw(path string, dropArchive bool) (bool, error) {
 		}
 	}
 	for _, statement := range statements {
-		if _, err := tx.Exec(statement); err != nil {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
 			return false, fmt.Errorf("apply storage-law rewrite: %w", err)
 		}
 	}
@@ -376,13 +381,13 @@ func columnExistsDB(ctx context.Context, db *sql.DB, table, column string) (bool
 	return columns[column], nil
 }
 
-func vacuumDatabase(path string) error {
+func vacuumDatabase(ctx context.Context, path string) error {
 	db, err := bundledplugin.OpenDatabase(path, false)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	if _, err := db.Exec("VACUUM"); err != nil {
+	if _, err := db.ExecContext(ctx, "VACUUM"); err != nil {
 		return fmt.Errorf("vacuum corpus database: %w", err)
 	}
 	return nil

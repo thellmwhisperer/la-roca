@@ -1001,18 +1001,24 @@ func contentAnchor(human, agent string) ([sha256.Size]byte, bool) {
 
 // currentSession is what the database already holds for this id.
 func (w *writer) currentSession(ctx context.Context, id string) (row, bool, error) {
-	var agent, surface, metadata sql.NullString
+	var agent, surface, started, ended, metadata sql.NullString
+	var duration sql.NullInt64
 	err := w.tx.QueryRowContext(ctx,
-		`SELECT source_agent, source_surface, metadata FROM sessions WHERE session_id = ?`, id).
-		Scan(&agent, &surface, &metadata)
+		`SELECT source_agent, source_surface, started_at, ended_at, duration_minutes, metadata
+		 FROM sessions WHERE session_id = ?`, id).
+		Scan(&agent, &surface, &started, &ended, &duration, &metadata)
 	if errors.Is(err, sql.ErrNoRows) {
 		return row{}, false, nil
 	}
 	if err != nil {
 		return nil, false, fmt.Errorf("look up the session %s: %w", id, err)
 	}
-	return row{"source_agent": agent.String, "source_surface": surface.String,
-		"metadata": metadata.String}, true, nil
+	current := row{"source_agent": agent.String, "source_surface": surface.String,
+		"started_at": started.String, "ended_at": ended.String, "metadata": metadata.String}
+	if duration.Valid {
+		current["duration_minutes"] = duration.Int64
+	}
+	return current, true, nil
 }
 
 func staleSnapshotMetadata(session parsers.Session, current row) (map[string]any, bool) {
@@ -1081,11 +1087,11 @@ func (w *writer) registerSession(ctx context.Context, session parsers.Session,
 
 // refreshSession merges what was just observed into the row that is there.
 //
-// Two policies, and the difference matters. A snapshot artefact (a desktop
+// A snapshot artefact (a desktop
 // metadata file, a database row) states the session's current state, so its
-// non-empty fields win. Re-parsing a grown transcript does not: there the identity
-// fields only fill NULLs, because a transcript re-read cannot know better than the
-// metadata file that named the session.
+// non-empty fields win. A cursor tail advances the observed time span. Other
+// transcript readings only fill NULL identity fields because they cannot know
+// better than the metadata file that named the session.
 //
 // The title never overwrites a title that is already there: the first writer with
 // a real one keeps it, or two sources would take turns renaming the session.
@@ -1099,13 +1105,6 @@ func (w *writer) refreshSession(ctx context.Context, session parsers.Session, cu
 	if session.Project != "" {
 		project = session.Project
 	}
-	// The two policies differ in these five columns and in nothing else: a
-	// snapshot states the project, the start, the end and the duration, while a
-	// transcript re-read only fills their absence. ended_at and duration are
-	// identity fields like the other two: a transcript re-read cannot know better
-	// than the metadata file that named the session, so re-parsing it must not
-	// clobber a value a snapshot already set. The argument order is the same
-	// either way.
 	setSurface, setProject, setStarted, setEnded, setDuration :=
 		"COALESCE(source_surface, ?)",
 		"COALESCE(project, ?)", "COALESCE(started_at, ?)", "COALESCE(ended_at, ?)", "COALESCE(duration_minutes, ?)"
@@ -1113,6 +1112,11 @@ func (w *writer) refreshSession(ctx context.Context, session parsers.Session, cu
 		setSurface, setProject, setStarted, setEnded, setDuration =
 			"COALESCE(?, source_surface)",
 			"COALESCE(?, project)", "COALESCE(?, started_at)", "COALESCE(?, ended_at)", "COALESCE(?, duration_minutes)"
+	} else if session.Incremental {
+		session.StartedAt = earlierSessionInstant(current.text("started_at"), session.StartedAt)
+		session.EndedAt = laterSessionInstant(current.text("ended_at"), session.EndedAt)
+		session.DurationMinutes = mergedSessionDuration(current, session)
+		setStarted, setEnded, setDuration = "?", "?", "?"
 	}
 	statement := fmt.Sprintf(`
 		UPDATE sessions SET
@@ -1134,6 +1138,55 @@ func (w *writer) refreshSession(ctx context.Context, session parsers.Session, cu
 		return fmt.Errorf("refresh the session %s: %w", session.ID, err)
 	}
 	return nil
+}
+
+func earlierSessionInstant(current, incoming string) string {
+	if current == "" {
+		return incoming
+	}
+	if incoming == "" {
+		return current
+	}
+	currentTime, currentOK := parseTimestampInstant(current)
+	incomingTime, incomingOK := parseTimestampInstant(incoming)
+	if currentOK && incomingOK && incomingTime.present && currentTime.present &&
+		instantTime(incomingTime).Before(instantTime(currentTime)) {
+		return incoming
+	}
+	return current
+}
+
+func laterSessionInstant(current, incoming string) string {
+	if current == "" {
+		return incoming
+	}
+	if incoming == "" {
+		return current
+	}
+	currentTime, currentOK := parseTimestampInstant(current)
+	incomingTime, incomingOK := parseTimestampInstant(incoming)
+	if currentOK && incomingOK && incomingTime.present && currentTime.present &&
+		instantTime(incomingTime).After(instantTime(currentTime)) {
+		return incoming
+	}
+	return current
+}
+
+func mergedSessionDuration(current row, session parsers.Session) *int {
+	started, startedOK := parseTimestampInstant(session.StartedAt)
+	ended, endedOK := parseTimestampInstant(session.EndedAt)
+	if startedOK && endedOK && started.present && ended.present {
+		span := instantTime(ended).Sub(instantTime(started))
+		if span >= 0 {
+			minutes := int(span / time.Minute)
+			return &minutes
+		}
+	}
+	if duration, ok := current.number("duration_minutes"); ok {
+		value := int(duration)
+		return &value
+	}
+	return session.DurationMinutes
 }
 
 // agentAfterRefresh decides who a known session is attributed to.

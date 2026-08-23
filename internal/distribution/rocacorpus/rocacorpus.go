@@ -39,7 +39,7 @@ func ApplySchema(path string) error {
 	if err != nil {
 		return err
 	}
-	rewrote, err := applyStorageLaw(path, false)
+	rewrote, err := applyStorageLaw(context.Background(), path, false)
 	if err != nil {
 		return err
 	}

@@ -124,11 +124,8 @@ func TestLooksLikeSubagentRejectsAForeignTranscriptUnderASharedRoot(t *testing.T
 }
 
 // The discard counter is the contract: every source record the parser leaves out
-// is counted with its position and its reason. Positional pairing drops the
-// surplus side of an unbalanced transcript, and those turns were dropped in
-// silence, so `records_discarded` under-reported what the corpus lost and an
-// operator read "no exchanges" as "the file was empty".
-func TestSubagentCountsTheTurnsPositionalPairingCannotUse(t *testing.T) {
+// is counted with its position and its reason.
+func TestSubagentCountsUnpairedTurns(t *testing.T) {
 	for _, want := range []struct {
 		name      string
 		lines     []string
@@ -145,7 +142,7 @@ func TestSubagentCountsTheTurnsPositionalPairingCannotUse(t *testing.T) {
 				`{"type":"user","sessionId":"p","agentId":"c","message":{"content":"third"}}`,
 			},
 			exchanges: 1,
-			deferred:  2,
+			deferred:  1,
 			// The third and fourth lines are the turns nobody answered.
 			records: []int{3, 4},
 		},
@@ -191,5 +188,27 @@ func TestSubagentCountsTheTurnsPositionalPairingCannotUse(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSubagentDoesNotAttachAnAnswerToAnAbandonedPrompt(t *testing.T) {
+	content := `{"type":"user","sessionId":"p","agentId":"c","message":{"content":"abandoned"}}
+{"type":"user","sessionId":"p","agentId":"c","message":{"content":"current"}}
+{"type":"assistant","sessionId":"p","agentId":"c","message":{"content":"answer"}}
+`
+	records, err := Parse(KindSubagent, []byte(content),
+		FileMeta{Path: "/w/.claude/projects/-w-demo/sess/subagents/c.jsonl"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records.Sessions) != 1 || len(records.Sessions[0].Exchanges) != 1 {
+		t.Fatalf("records = %+v", records)
+	}
+	exchange := records.Sessions[0].Exchanges[0]
+	if exchange.HumanText != "current" || exchange.AgentText != "answer" {
+		t.Fatalf("exchange = %+v", exchange)
+	}
+	if len(records.Discards) != 1 || records.Discards[0].Record != 1 {
+		t.Fatalf("discards = %+v", records.Discards)
 	}
 }

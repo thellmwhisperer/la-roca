@@ -121,7 +121,7 @@ func TestAppendableSessionParsersUseStoredExchangeCursor(t *testing.T) {
 		{name: "cowork", kind: parsers.KindCoworkAudit, sessionID: "cowork-1",
 			first: claudeFirst, second: claudeSecond},
 		{name: "codex", kind: parsers.KindCodexSession, sessionID: "codex-1",
-			first: `{"type":"session_meta","payload":{"id":"codex-1","cwd":"/w/demo","timestamp":"2026-08-01T10:00:00Z"}}` + "\n" +
+			first: `{"type":"session_meta","payload":{"id":"codex-1","cwd":"/w/demo","timestamp":"2026-08-01T10:00:00Z","model_provider":"openai"}}` + "\n" +
 				`{"type":"event_msg","timestamp":"2026-08-01T10:00:01Z","payload":{"type":"user_message","message":"question 1"}}` + "\n" +
 				`{"type":"event_msg","timestamp":"2026-08-01T10:00:02Z","payload":{"type":"task_complete","last_agent_message":"answer 1"}}` + "\n",
 			second: `{"type":"event_msg","timestamp":"2026-08-01T10:00:03Z","payload":{"type":"user_message","message":"question 2"}}` + "\n" +
@@ -191,6 +191,10 @@ func TestAppendableSessionParsersUseStoredExchangeCursor(t *testing.T) {
 			exchange := records.Sessions[0].Exchanges[0]
 			if exchange.Number != 2 || exchange.HumanText != "question 2" {
 				t.Fatalf("incremental exchange = %+v", exchange)
+			}
+			if testCase.kind == parsers.KindCodexSession &&
+				records.Sessions[0].Metadata["model_provider"] != "openai" {
+				t.Fatalf("incremental Codex metadata = %+v", records.Sessions[0].Metadata)
 			}
 			if cursor := result.harvestCursors[path]; cursor.ExchangeCursor != 2 ||
 				cursor.ExchangeCursors[testCase.sessionID] != 2 {
@@ -341,9 +345,83 @@ func TestIncompleteSubagentTailForcesACompleteReparse(t *testing.T) {
 		t.Fatal(reason)
 	}
 	if len(records.Sessions) != 1 || len(records.Sessions[0].Exchanges) != 1 ||
-		records.Sessions[0].Exchanges[0].HumanText != "pending question" {
+		records.Sessions[0].Exchanges[0].HumanText != "later question" {
 		t.Fatalf("subagent fallback records = %+v", records)
 	}
+}
+
+func TestIncrementalPiSessionAdvancesItsTimeline(t *testing.T) {
+	prefix := `{"type":"session","version":3,"id":"pi-timeline","cwd":"/w/demo","timestamp":"2026-08-01T13:00:00Z"}` + "\n" +
+		`{"id":"u1","parentId":null,"type":"message","timestamp":"2026-08-01T13:00:01Z","message":{"role":"user","content":"one"}}` + "\n" +
+		`{"id":"a1","parentId":"u1","type":"message","timestamp":"2026-08-01T13:00:02Z","message":{"role":"assistant","content":"done","stopReason":"stop"}}` + "\n"
+	tail := `{"id":"u2","parentId":"a1","type":"message","timestamp":"2026-08-01T13:10:00Z","message":{"role":"user","content":"two"}}` + "\n" +
+		`{"id":"a2","parentId":"u2","type":"message","timestamp":"2026-08-01T13:10:02Z","message":{"role":"assistant","content":"done again","stopReason":"stop"}}` + "\n"
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	target := Target{Path: path, FileName: filepath.Base(path), Kind: parsers.KindPiSession}
+	if err := os.WriteFile(path, []byte(prefix), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	firstResult := Result{}
+	first, reason := read(t.Context(), Options{}, target, incrementality.FileState{}, &firstResult)
+	if reason != "" {
+		t.Fatal(reason)
+	}
+	db := corpusDatabase(t)
+	writeHarvestRecords(t, db, first)
+	metadata, err := json.Marshal(firstResult.harvestCursors[path])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(prefix+tail), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	secondResult := Result{}
+	second, reason := read(t.Context(), Options{}, target,
+		incrementality.FileState{Metadata: metadata}, &secondResult)
+	if reason != "" {
+		t.Fatal(reason)
+	}
+	if len(second.Sessions) != 1 || !second.Sessions[0].Incremental {
+		t.Fatalf("incremental Pi session = %+v", second.Sessions)
+	}
+	writeHarvestRecords(t, db, second)
+	var started, ended string
+	var duration int
+	if err := db.SQL().QueryRow(`SELECT started_at, ended_at, duration_minutes FROM sessions
+		WHERE session_id = 'pi:pi-timeline'`).Scan(&started, &ended, &duration); err != nil {
+		t.Fatal(err)
+	}
+	if started != "2026-08-01T13:00:01Z" || ended != "2026-08-01T13:10:02Z" || duration != 10 {
+		t.Fatalf("incremental timeline = %s to %s (%d minutes)", started, ended, duration)
+	}
+}
+
+func TestSubagentAssistantExtensionRewritesOneExchangeWithLineage(t *testing.T) {
+	first := `{"type":"user","sessionId":"parent-1","agentId":"child-rewrite","message":{"content":"question"}}` + "\n" +
+		`{"type":"assistant","sessionId":"parent-1","agentId":"child-rewrite","message":{"content":"partial"}}` + "\n"
+	second := first + `{"type":"assistant","sessionId":"parent-1","agentId":"child-rewrite","message":{"content":"complete"}}` + "\n"
+	db := corpusDatabase(t)
+	for _, content := range []string{first, second} {
+		records, err := parsers.Parse(parsers.KindSubagent, []byte(content), parsers.FileMeta{
+			Path: "/w/.claude/projects/-w-demo/session/subagents/child-rewrite.jsonl",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeHarvestRecords(t, db, records)
+	}
+	var answer string
+	if err := db.SQL().QueryRow(`SELECT agent_text FROM exchanges
+		WHERE session_id = 'child-rewrite' AND exchange_number = 1`).Scan(&answer); err != nil {
+		t.Fatal(err)
+	}
+	if answer != "partial\ncomplete" {
+		t.Fatalf("rewritten subagent answer = %q", answer)
+	}
+	if got := harvestVersionCount(t, db); got != 1 {
+		t.Fatalf("subagent rewrite lineage rows = %d, want 1", got)
+	}
+	assertLineageHasNoContent(t, db)
 }
 
 func TestLineageDigestFramesEmbeddedNULBoundaries(t *testing.T) {
@@ -407,6 +485,16 @@ func corpusDatabase(t *testing.T) *store.DB {
 	}
 	t.Cleanup(func() { db.Close() })
 	return db
+}
+
+func writeHarvestRecords(t *testing.T, db *store.DB, records parsers.Records) {
+	t.Helper()
+	if err := db.Write(t.Context(), func(tx *sql.Tx) error {
+		_, err := writeRecords(t.Context(), tx, registry(t), nil, records)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func writeHarvestTranscript(t *testing.T, path, cwd string, exchanges int) {

@@ -852,6 +852,11 @@ func read(ctx context.Context, opts Options, target Target, previous incremental
 	if err != nil {
 		return parsers.Records{}, err.Error()
 	}
+	if seed.Incremental {
+		for index := range records.Sessions {
+			records.Sessions[index].Incremental = true
+		}
+	}
 	recordHarvestCursor(target, seed, fullContent, records, result)
 	if !useRegistered {
 		parsers.ApplyCanonicalHarness(target.Kind, &records)
@@ -903,7 +908,7 @@ func prepareCursorTail(kind parsers.Kind, prefix, tail []byte) ([]byte, bool) {
 	case parsers.KindClaudeSession, parsers.KindCoworkAudit:
 		return tail, claudeTailStartsTurn(tail)
 	case parsers.KindCodexSession:
-		return tail, codexTailStartsTurn(tail)
+		return codexCursorTail(prefix, tail)
 	case parsers.KindCodexHistory:
 		return tail, codexHistoryTailStartsTurn(tail)
 	case parsers.KindSubagent:
@@ -917,6 +922,25 @@ func prepareCursorTail(kind parsers.Kind, prefix, tail []byte) ([]byte, bool) {
 	default:
 		return nil, false
 	}
+}
+
+func codexCursorTail(prefix, tail []byte) ([]byte, bool) {
+	if !codexTailStartsTurn(tail) {
+		return nil, false
+	}
+	for _, raw := range bytes.Split(prefix, []byte{'\n'}) {
+		if len(bytes.TrimSpace(raw)) == 0 {
+			continue
+		}
+		var line struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(raw, &line) == nil && line.Type == "session_meta" {
+			prepared := append(append([]byte{}, raw...), '\n')
+			return append(prepared, tail...), true
+		}
+	}
+	return tail, true
 }
 
 func claudeTailStartsTurn(content []byte) bool {

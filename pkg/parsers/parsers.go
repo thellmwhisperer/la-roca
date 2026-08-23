@@ -193,7 +193,8 @@ type Session struct {
 	// non-null fields win and the first non-blank title stays. A metadata
 	// artefact is a snapshot; re-parsing a grown transcript is not, because
 	// there the identity fields only fill NULLs.
-	Snapshot bool
+	Snapshot    bool
+	Incremental bool
 	// HistoryFallback marks the prompt-only history Codex kept for legacy
 	// sessions whose rollout contains metadata but no conversation.
 	HistoryFallback bool
