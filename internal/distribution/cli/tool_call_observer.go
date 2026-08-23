@@ -5,11 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"syscall"
 
@@ -158,29 +156,12 @@ func liveObserverEvidence() toolcallobserver.Evidence {
 }
 
 func observerProcessAncestry(pid int) []toolcallobserver.Process {
-	processes := make([]toolcallobserver.Process, 0, 8)
-	for range 8 {
-		output, err := exec.Command("ps", "-o", "ppid=", "-o", "comm=", "-o", "args=", "-p", strconv.Itoa(pid)).Output()
-		if err != nil {
-			break
-		}
-		fields := strings.Fields(string(output))
-		if len(fields) < 2 {
-			break
-		}
-		parent, err := strconv.Atoi(fields[0])
-		if err != nil {
-			break
-		}
+	records := walkProcessTree(pid)
+	processes := make([]toolcallobserver.Process, 0, len(records))
+	for _, record := range records {
 		processes = append(processes, toolcallobserver.Process{
-			Command:   fields[1],
-			Arguments: fields[2:],
-			OpenFiles: openFilesOf(pid),
+			Command: record.Command, Arguments: record.Arguments, OpenFiles: openFilesOf(record.PID),
 		})
-		if parent <= 1 || parent == pid {
-			break
-		}
-		pid = parent
 	}
 	return processes
 }

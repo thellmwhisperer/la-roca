@@ -20,10 +20,18 @@ func TestResolveUsesTheInvokingHarnessSessionFile(t *testing.T) {
 	claudePath := filepath.Join(roots.ClaudeProjects, "synthetic-lab", claudeSessionID+".jsonl")
 	grokPath := filepath.Join(roots.GrokSessions, "%2Fsynthetic%2Flab", grokSessionID, "updates.jsonl")
 	codexPath := filepath.Join(roots.CodexSessions, "2026", "08", "01", codexThreadID+".jsonl")
+	piPath := filepath.Join(roots.PiSessions, "demo", "session.jsonl")
+	piPathTwo := filepath.Join(roots.PiSessions, "demo-two", "session.jsonl")
+	openCodePath := roots.OpenCodeDB
+	cursorPath := filepath.Join(roots.Home, ".cursor", "chats", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "store.db")
 	mustExist := []struct{ path, body string }{
 		{claudePath, claudeShellLog},
 		{grokPath, grokShellLog},
 		{codexPath, `{"type":"session_meta","payload":{"id":"` + codexThreadID + `"}}`},
+		{piPath, `{"type":"session","version":3,"id":"pi-session-1","cwd":"/synthetic/lab","timestamp":"2026-08-01T13:00:00Z"}` + "\n"},
+		{piPathTwo, `{"type":"session","version":3,"id":"pi-session-2","cwd":"/synthetic/lab-two"}` + "\n"},
+		{openCodePath, "{}"},
+		{cursorPath, "{}"},
 	}
 	for _, file := range mustExist {
 		if err := os.MkdirAll(filepath.Dir(file.path), 0o700); err != nil {
@@ -120,51 +128,21 @@ func TestResolveUsesTheInvokingHarnessSessionFile(t *testing.T) {
 			},
 			missing: "Grok",
 		},
-	}
-	for _, test := range cases {
-		t.Run(test.name, func(t *testing.T) {
-			test.facts.Roots = roots
-			got, err := Resolve(test.facts)
-			if test.missing != "" {
-				if err == nil {
-					t.Fatalf("resolved %s, want a refusal", got.Path)
-				}
-				if !strings.Contains(err.Error(), test.missing) {
-					t.Fatalf("error %q does not name %q", err, test.missing)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got.Path != test.want {
-				t.Fatalf("path = %q, want %q", got.Path, test.want)
-			}
-		})
-	}
-}
-
-func TestResolveUsesAnOpenSessionFileForHarnessesWithoutSessionEnv(t *testing.T) {
-	roots := labRoots(t)
-	piPath := filepath.Join(roots.PiSessions, "demo", "session.jsonl")
-	piPathTwo := filepath.Join(roots.PiSessions, "demo-two", "session.jsonl")
-	openCodePath := roots.OpenCodeDB
-	cursorPath := filepath.Join(roots.Home, ".cursor", "chats", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "store.db")
-	for _, path := range []string{piPath, piPathTwo, openCodePath, cursorPath} {
-		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	cases := []struct {
-		name    string
-		facts   Evidence
-		want    string
-		missing string
-	}{
+		{
+			name: "pi session id resolves the session file",
+			facts: Evidence{
+				Processes:   []Process{{Command: "pi"}},
+				Environment: map[string]string{"PI_SESSION_ID": "pi-session-1"},
+			},
+			want: piPath,
+		},
+		{
+			name: "pi missing session id refuses",
+			facts: Evidence{
+				Processes: []Process{{Command: "pi"}},
+			},
+			missing: "session identity",
+		},
 		{
 			name: "pi session file is open",
 			facts: Evidence{
@@ -187,74 +165,11 @@ func TestResolveUsesAnOpenSessionFileForHarnessesWithoutSessionEnv(t *testing.T)
 			want: cursorPath,
 		},
 		{
-			name: "pi process with no open session file",
-			facts: Evidence{
-				Processes: []Process{{Command: "pi"}},
-			},
-			missing: "open session file",
-		},
-		{
 			name: "pi process with several open session files",
 			facts: Evidence{
 				Processes: []Process{{Command: "pi", OpenFiles: []string{piPath, piPathTwo}}},
 			},
 			missing: "more than one",
-		},
-	}
-	for _, test := range cases {
-		t.Run(test.name, func(t *testing.T) {
-			test.facts.Roots = roots
-			got, err := Resolve(test.facts)
-			if test.missing != "" {
-				if err == nil {
-					t.Fatalf("resolved %s, want a refusal", got.Path)
-				}
-				if !strings.Contains(err.Error(), test.missing) {
-					t.Fatalf("error %q does not name %q", err, test.missing)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got.Path != test.want {
-				t.Fatalf("path = %q, want %q", got.Path, test.want)
-			}
-		})
-	}
-}
-
-func TestResolveUsesPiSessionID(t *testing.T) {
-	roots := labRoots(t)
-	path := filepath.Join(roots.PiSessions, "demo", "session.jsonl")
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	body := `{"type":"session","version":3,"id":"pi-session-1","cwd":"/synthetic/lab","timestamp":"2026-08-01T13:00:00Z"}` + "\n"
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	cases := []struct {
-		name    string
-		facts   Evidence
-		want    string
-		missing string
-	}{
-		{
-			name: "pi session id resolves the session file",
-			facts: Evidence{
-				Processes:   []Process{{Command: "pi"}},
-				Environment: map[string]string{"PI_SESSION_ID": "pi-session-1"},
-			},
-			want: path,
-		},
-		{
-			name: "pi missing session id refuses",
-			facts: Evidence{
-				Processes: []Process{{Command: "pi"}},
-			},
-			missing: "session identity",
 		},
 	}
 	for _, test := range cases {

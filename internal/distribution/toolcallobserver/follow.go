@@ -30,6 +30,7 @@ func Follow(ctx context.Context, session Session, out io.Writer, opts FollowOpti
 		return err
 	}
 	var carry []byte
+	pending := map[string]parsers.CallEvent{}
 	emit := func() error {
 		info, err := os.Stat(session.Path)
 		if err != nil {
@@ -67,6 +68,18 @@ func Follow(ctx context.Context, session Session, out io.Writer, opts FollowOpti
 		}
 		if last > 0 {
 			for _, event := range parsers.ObserveCalls(session.Kind, buf[:last]) {
+				if event.IsResult {
+					if call, ok := pending[event.ID]; ok {
+						if event.Name == "" {
+							event.Name = call.Name
+						}
+						if event.Command == "" {
+							event.Command = call.Command
+						}
+					}
+				} else {
+					pending[event.ID] = event
+				}
 				line := Format(event)
 				if line == "" {
 					continue
