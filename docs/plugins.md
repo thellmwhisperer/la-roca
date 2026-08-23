@@ -246,8 +246,7 @@ database list.
 
 ## The manifest
 
-`plugin.json` schema 1 has five required parts and one optional retrieval
-contract:
+`plugin.json` schema 1 has five required parts and two optional contracts:
 
 - identity: `name`, `version`, and `binary`;
 - databases: every SQLite file, its declared attach alias, attachment mode,
@@ -255,6 +254,8 @@ contract:
 - semantic fragment: the tables and questions served by each database;
 - optional vector fragment: the stable row id, prose columns, and chronology a
   database opts into later semantic indexing;
+- optional session companion: a plugin-directory executable and fixed argv that
+  `roca mcp serve` raises for the lifetime of that session;
 - verbs: one canonical command name and description, projected to CLI and MCP;
 - capabilities: named executable calls used when SQL cannot perform the work.
 
@@ -462,6 +463,36 @@ metadata and incremental fingerprint GC. `roca vector query --databases ...`
 routes over those sidecars, merges only same-model scores, and leaves missing
 or undeclared vector coverage on the database's existing FTS/SQL path.
 
+### Session companions
+
+An optional `companion` object asks `roca mcp serve` to raise one child
+process for the lifetime of that session, the same way the server already owns
+its vector companion: stdin and stdout belong to the parent, the child dies
+when stdin closes, and there is no port, pid file, or daemon. Plugins without
+the field keep today's behavior.
+
+```json
+"companion": {
+  "executable": "roca-receipts",
+  "args": ["watch"]
+}
+```
+
+`executable` is a single filename inside the installed plugin directory. The
+server execs that file with the declared `args` as an argv array. It never
+searches `PATH` and never hands the arguments to a shell. Single-flight across
+concurrent serve sessions is the plugin's own responsibility; the server raises
+one candidate per session.
+
+A missing or non-executable companion does not take the server down. Serve
+starts, writes one notice on standard error plus a JSONL line under the data
+directory logs area, and keeps answering. A companion that exits is retried
+with bounded backoff; if it keeps dying, serve reports that once, leaves it
+down, and continues. Those events stay in log files, never in a database.
+
+Executable-only packages may declare the same object. The kernel does not
+invent plugin-specific flags, homes, or environment variables.
+
 ### Verbs and capabilities
 
 A verb is the public name. A capability is the executable call behind it. The
@@ -542,7 +573,8 @@ cannot be regenerated sets `custody: true` alongside the kind.
 
 Such a package is always classified **EXECUTABLE**. It never enters data-plugin
 discovery, attachment, or the semantic catalog: it is reached only by running
-its command.
+its command. It may still declare a session companion; serve execs that file
+from the installed plugin directory.
 
 ## Verified packages and lifecycle
 
