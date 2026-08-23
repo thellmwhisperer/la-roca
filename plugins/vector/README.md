@@ -44,7 +44,9 @@ roca vector query "which decision kept inference local" 5
 `install` is the plugin's adopt/init command: it pulls the model, prepares one
 sidecar per declared database, and starts a resumable background build.
 `ingest --delta` embeds only new or changed chunks and removes missing sources.
-Both writing commands and `compact` honor `ROCA_READ_ONLY`. `query` uses routed
+Use `ingest --delta --reembed` for the rebuild flow documented in [Local vector
+search](../../docs/vector.md#index-declared-databases). Both writing commands
+and `compact` honor `ROCA_READ_ONLY`. `query` uses routed
 database sidecars, binary ANN candidates, exact cosine reranking, stable source
 deduplication, and live text resolution. Pass `--databases corpus,ops` or
 `--databases all` with the same explicit routing semantics as `roca query`.
