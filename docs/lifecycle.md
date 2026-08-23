@@ -127,10 +127,11 @@ health, and `--json` carries the machine fields in both commands.
 Before asking for any provider setup, init detects supported agent CLIs already
 on `PATH` and uses their existing signed-in sessions. Its summary names the
 selected factory-default provider and points at `roca model check <provider>` to
-confirm that session answers; the next step is simply `roca query "<question>"`.
-Ollama and then keyword search remain the honest local fallbacks when no
-detected CLI can serve. Models authenticate through their own CLIs; La Roca
-stores no secrets.
+confirm the model-backed playground and explore seats. `roca query "<question>"`
+is available independently as zero-answering-model hybrid search. Ollama and
+then literal search remain the honest playground fallbacks when no detected CLI
+can serve. Models authenticate through their own CLIs; La Roca stores no
+secrets.
 
 With `--db-path` on non-terminal input, init keeps that zero-login factory
 selection without opening the chooser or adding model settings. A missing

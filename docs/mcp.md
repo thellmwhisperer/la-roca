@@ -12,10 +12,11 @@ the data, compact TOON rows, bounded text previews, and deterministic next
 commands in every answer. An agent never has to guess what it just got or
 what to run next.
 
-`roca_query` uses the same factory order as the CLI: La Roca detects an already
-signed-in supported agent CLI and needs no separate login or MCP credentials. Models
-authenticate through their own CLIs; La Roca stores no secrets. Ollama and the
-keyword rescue remain available when no agent CLI can serve.
+`roca_query` is the same deterministic hybrid search as the CLI: it uses
+full-text plus an optional template-expanded vector leg and never calls an
+answering model. The model-backed `roca_sql` and `roca_explore` tools use
+already signed-in supported agent CLIs or local Ollama; La Roca stores no
+provider secrets.
 
 ---
 
@@ -39,15 +40,15 @@ session, which is why every diagnostic in this path writes to standard error.
 |---|---|---|
 | `roca_exec` | Runs a SELECT under the same gate as `roca exec` | Agents that received SQL from `roca_sql` and have no shell |
 | `roca_explore` | Runs plain or deep investigation with prose, terrain, next probes, and generated SQL | Agents following evidence without a shell |
-| `roca_query` | Answers a question from memory | The product's job, for an agent with no shell |
+| `roca_query` | Returns labeled hybrid FTS/vector evidence; `top`, `require_both`, and `databases` match the CLI | An agent searching memory without a shell |
 | `roca_store` | Writes one memory back | The other half of the same job |
 | `roca_health` | The non-destructive checks over live data | An agent that cannot run `roca doctor` |
 | `roca_sql` | Compiles a question into SQL without running it | Agents that need to inspect the SQL before `roca_exec` runs it |
 
 `roca_query`, `roca_explore`, and `roca_sql` reject empty questions and share
-the CLI's generous 1000-character cap before any model is called, and the rest
-of that same input gate with it:
-[what happens on a query](models.md#what-happens-on-a-query).
+the CLI's generous 1000-character cap before work begins. The model-backed
+tools also follow the playground input and SQL gate:
+[what happens in the playground](models.md#what-happens-in-the-playground).
 
 `roca_explore` is a separate tool rather than a mode on `roca_query`. That keeps
 the established query schema and rows-first answer untouched while making the
@@ -75,10 +76,10 @@ two structural tests over `internal/distribution/mcpplug/handlers.go`
 the service, and the file may contain no control flow at all. A handler that
 needs an `if` needs it in the service, where the shell can reach it too.
 
-Parity is measured, not asserted: the same question over both surfaces returns
-the same `sql`, the same `queryplan`, the same rows and the same build; explore
-also shares its service call and text renderer byte-for-byte
-(scenario F08-04, and `internal/distribution/mcpplug/plug_test.go`).
+Parity is measured, not asserted: `roca_query` and the CLI return the same
+labeled hits and build from one service call; explore likewise shares its
+service call and text renderer byte-for-byte
+(`internal/distribution/mcpplug/plug_test.go`).
 
 ### On the protocol version
 

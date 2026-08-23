@@ -3,6 +3,7 @@ package cli
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"path/filepath"
 	"strings"
@@ -251,17 +252,14 @@ func TestQueryRefusalIsHonestUnderJSON(t *testing.T) {
 
 	out, err := runRootErr(t, contractBuild(), nil, "query", "tulipanismo", "--json")
 	if err != nil {
-		t.Fatalf("an unresolved question is not a program failure under --json: %v\n%s", err, out)
+		t.Fatalf("an empty hybrid search is not a program failure under --json: %v\n%s", err, out)
 	}
 	doc := mustJSON(t, out)
-	if doc["path"] != "unresolved" {
-		t.Errorf("path = %v, want unresolved", doc["path"])
+	if fmt.Sprint(doc["row_count"]) != "0" {
+		t.Errorf("row_count = %v, want 0", doc["row_count"])
 	}
-	if doc["match"] != "empty" {
-		t.Errorf("match = %v, want empty", doc["match"])
-	}
-	if doc["message"] == nil || doc["message"] == "" {
-		t.Errorf("the unresolved answer does not say why:\n%s", out)
+	if engines, _ := doc["engines"].([]any); len(engines) == 0 {
+		t.Errorf("empty hybrid search did not name its engines:\n%s", out)
 	}
 }
 

@@ -211,15 +211,15 @@ func RenderHelp(lines ...string) string {
 // an expanded view of them.
 func QueryHelp(res service.QueryResult) string {
 	question := shellArg(res.Question)
-	json := fmt.Sprintf("Run `roca query %s --json` for the complete result envelope", question)
+	json := fmt.Sprintf("Run `roca playground %s --json` for the complete result envelope", question)
 	if res.RowCount == 0 {
 		return RenderHelp(
-			"Run `roca query \"<shorter keywords>\"` to broaden the search",
-			fmt.Sprintf("Run `roca query %s --json` to inspect the route and SQL", question),
+			"Run `roca playground \"<shorter keywords>\"` to broaden the search",
+			fmt.Sprintf("Run `roca playground %s --json` to inspect the route and SQL", question),
 		)
 	}
 	lines := []string{json,
-		fmt.Sprintf("Run `roca query %s --sql-only`, then `roca exec \"<SELECT>\" --max-chars 2000` to inspect or expand rows", question)}
+		fmt.Sprintf("Run `roca playground %s --sql-only`, then `roca exec \"<SELECT>\" --max-chars 2000` to inspect or expand rows", question)}
 	return RenderHelp(lines...)
 }
 

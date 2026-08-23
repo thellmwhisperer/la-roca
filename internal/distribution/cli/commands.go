@@ -568,13 +568,50 @@ func indexCommand(env *cliEnv) *cobra.Command {
 }
 
 func queryCommand(env *cliEnv) *cobra.Command {
+	var req service.SearchRequest
+	var databases string
+	cmd := &cobra.Command{
+		Use:   "query <question>",
+		Short: "Hybrid FTS and vector search with labeled evidence",
+		Long: "Zero-inference hybrid search: rarity-selected full-text plus template-expanded " +
+			"vector neighbors, fused with RRF. Without a vector index the same command runs " +
+			"full-text alone. Questions must contain text and may be at most 1000 characters.",
+		Args: cobra.MinimumNArgs(1),
+		RunE: env.serviceRunE(func(cmd *cobra.Command, args []string, svc *service.Service) error {
+			req.Question = strings.Join(args, " ")
+			names, err := service.ParseDatabaseList(databases)
+			if err != nil {
+				return err
+			}
+			req.Databases = names
+			result, err := svc.Search(cmd.Context(), req)
+			if err != nil {
+				return err
+			}
+			env.capture(result)
+			if env.json {
+				return env.printJSON(result)
+			}
+			env.print("%s", axi.Search(result))
+			return nil
+		}),
+	}
+	cmd.Flags().IntVar(&req.Top, "top", 10, "number of fused hits to return")
+	cmd.Flags().BoolVar(&req.RequireBoth, "require-both", false, "keep only hits found by both FTS and vector")
+	cmd.Flags().IntVar(&req.MaxChars, "max-chars", service.DefaultMaxChars, "character budget per snippet")
+	addDatabaseFlag(cmd, &databases)
+	return cmd
+}
+
+func playgroundCommand(env *cliEnv) *cobra.Command {
 	var req service.QueryRequest
 	var full bool
 	var databases string
 	cmd := &cobra.Command{
-		Use:   "query <question>",
-		Short: "Answer a natural-language question about the memory",
-		Long: "Data: query; human reading: query --full; raw SQL: exec. " +
+		Use:   "playground <question>",
+		Short: "Human reading room: natural-language SQL and optional prose",
+		Long: "Compile a question into SQL with the answering model and optionally explain the rows. " +
+			"Agents search with `roca query`; this room is for humans. " +
 			"Questions must contain text and may be at most 1000 characters.",
 		Args: cobra.MinimumNArgs(1),
 		RunE: scopedQuestionRunE(env, &req, &databases, func(cmd *cobra.Command, svc *service.Service) error {
@@ -826,7 +863,7 @@ func execCommand(env *cliEnv) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "exec <SELECT>",
 		Short: "Run a SELECT under the read-only gate",
-		Long: "Natural companion of `query --sql-only`: runs the SQL that command\n" +
+		Long: "Natural companion of `playground --sql-only`: runs the SQL that command\n" +
 			"printed, under the same gate. What does not pass the gate does not touch the database.",
 		Args: cobra.MinimumNArgs(1),
 		RunE: env.serviceRunE(func(cmd *cobra.Command, args []string, svc *service.Service) error {

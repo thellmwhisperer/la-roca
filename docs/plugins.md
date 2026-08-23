@@ -177,11 +177,12 @@ rows[1]{title,amount_cents,database}:
   coffee,420,"plugin:first-receipts"
 ```
 
-The natural-language surface works too, because the semantic fragment is what
-routes the question (this needs an answering model, which `roca init` set up):
+The model-backed natural-language SQL surface works too. Select this on-demand
+database explicitly; its semantic fragment then gives the model the declared
+tables and columns:
 
 ```sh
-roca query "which receipts were recorded"
+roca playground --databases first-receipts "which receipts were recorded"
 ```
 
 Every answer says which databases it consulted, and every row carries its
@@ -644,7 +645,7 @@ before it touches those archives: see [Uninstall](lifecycle.md#uninstall).
 
 Plugins should treat the `roca` process as the public API:
 
-- use `roca query`, `roca query --sql-only`, and `roca exec` for gated reads;
+- use `roca query`, `roca playground --sql-only`, and `roca exec` for gated reads;
 - use `roca store --origin plugin:<name>` for attributed operational writes;
 - use `--json` for machine-shaped CLI output;
 - use `roca mcp serve` when MCP is the natural transport.
@@ -710,8 +711,8 @@ operational memory semantic fragment, custody and retention, and the `store`,
 `query`, `sql`, and `exec` verbs. Those declarations grant the existing CLI
 commands and MCP tools their seats without changing their handlers or output.
 `sql` is the exception to a verb naming a command of its own: its capability
-names `roca query --sql-only`, which stays its only CLI surface, while MCP
-keeps the `roca_sql` tool. Historical operational rows in the compatibility
+names `roca playground --sql-only`, which stays its only CLI surface, while
+MCP keeps the `roca_sql` tool. Historical operational rows in the compatibility
 database remain readable; the manifest migration does not move data. It owns an
 accent-insensitive `memories_fts` index over its own memories, rebuilt on every
 schema apply so a database that predates the index answers for the rows it

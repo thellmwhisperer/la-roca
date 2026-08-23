@@ -125,7 +125,7 @@ func TestADegradedQueryNamesItsAuditLineWithoutAnError(t *testing.T) {
 
 	var out, errs strings.Builder
 	code, runErr := execute(contractBuild(), &out, &errs,
-		[]string{"query", "how many synthetic memories are there"})
+		[]string{"playground", "how many synthetic memories are there"})
 	if runErr != nil {
 		t.Fatalf("a degraded answer became a program error: %v", runErr)
 	}

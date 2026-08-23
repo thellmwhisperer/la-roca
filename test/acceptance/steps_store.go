@@ -89,9 +89,8 @@ func registerStoreSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Then(`^the output names the missing content$`, m.namesMissingContent)
 	ctx.Then(`^the output names the refused write$`, m.namesRefusedWrite)
 	ctx.Then(`^the search returns the memory from the other database$`, m.searchReturnsOtherMemory)
-	ctx.Then(`^the output identifies the other database as the one that answered$`, m.outputIdentifiesOtherDatabase)
 	ctx.Then(`^the search returns the memory from the home database$`, m.searchReturnsHomeMemory)
-	ctx.Then(`^the output identifies the home database as the one that answered$`, m.outputIdentifiesHomeDatabase)
+	ctx.Then(`^the output labels the result as core database evidence$`, m.outputIdentifiesHomeDatabase)
 	ctx.Then(`^the output says to run "roca init" before searching it$`, m.outputPointsToInit)
 	ctx.Then(`^both writes succeed$`, m.bothWritesSucceed)
 	ctx.Then(`^the database holds both memories intact$`, m.holdsBothMemories)
@@ -329,7 +328,7 @@ func (m *world) searchOtherDatabase() error {
 }
 
 func (m *world) searchHomeDatabase() error {
-	_, err := m.runWith("roca query albatross", []string{"query", "albatross"})
+	_, err := m.runWith("roca query albatross --json", []string{"query", "albatross", "--json"})
 	return err
 }
 
@@ -557,23 +556,20 @@ func (m *world) storedMemoryHas(layer, origin, project string) error {
 	return nil
 }
 
-// searchRows is the rows list of the last query answer, refused empty so a step
+// searchRows is the hits list of the last query answer, refused empty so a step
 // that expects results cannot pass by finding nothing to look at.
 func (m *world) searchRows(wantNonEmpty bool) ([]any, error) {
 	document, err := m.json()
 	if err != nil {
 		return nil, err
 	}
-	// An absent rows field IS the honest zero: QueryResult carries `omitempty`, so
-	// a match of "empty" has no rows key at all. What is not allowed is a rows
-	// field that exists and is not a list, which no answer should ever produce.
-	raw, declared := document["rows"]
+	raw, declared := document["hits"]
 	rows, ok := raw.([]any)
 	if declared && !ok {
-		return nil, fmt.Errorf("rows is not a list: %s", m.last.stdout)
+		return nil, fmt.Errorf("hits is not a list: %s", m.last.stdout)
 	}
 	if wantNonEmpty && len(rows) == 0 {
-		return nil, fmt.Errorf("the search returned no rows: %s", m.last.stdout)
+		return nil, fmt.Errorf("the search returned no hits: %s", m.last.stdout)
 	}
 	return rows, nil
 }
@@ -617,8 +613,8 @@ func (m *world) firstResultContains(text string) error {
 		return err
 	}
 	first, _ := rows[0].(map[string]any)
-	if !strings.Contains(fmt.Sprint(first["text"]), text) {
-		return fmt.Errorf("the first result does not contain %q: %v", text, first["text"])
+	if !strings.Contains(fmt.Sprint(first["snippet"]), text) {
+		return fmt.Errorf("the first result does not contain %q: %v", text, first["snippet"])
 	}
 	return nil
 }
@@ -627,8 +623,8 @@ func (m *world) noResultContains(text string) error {
 	rows, _ := m.searchRows(false)
 	for _, raw := range rows {
 		row, _ := raw.(map[string]any)
-		if strings.Contains(fmt.Sprint(row["text"]), text) {
-			return fmt.Errorf("a result contains %q: %v", text, row["text"])
+		if strings.Contains(fmt.Sprint(row["snippet"]), text) {
+			return fmt.Errorf("a result contains %q: %v", text, row["snippet"])
 		}
 	}
 	return nil
@@ -653,14 +649,7 @@ func (m *world) searchReturnsOtherMemory() error {
 }
 
 func (m *world) outputIdentifiesOtherDatabase() error {
-	document, err := m.json()
-	if err != nil {
-		return err
-	}
-	if document["database_path"] != m.otherDBPath() {
-		return fmt.Errorf("database_path = %v, want %s", document["database_path"], m.otherDBPath())
-	}
-	return nil
+	return m.firstSearchHitHasDatabase("core")
 }
 
 func (m *world) searchReturnsHomeMemory() error {
@@ -668,7 +657,19 @@ func (m *world) searchReturnsHomeMemory() error {
 }
 
 func (m *world) outputIdentifiesHomeDatabase() error {
-	return m.outputContains("database: " + m.storeDBPath())
+	return m.firstSearchHitHasDatabase("core")
+}
+
+func (m *world) firstSearchHitHasDatabase(want string) error {
+	hits, err := m.searchRows(true)
+	if err != nil {
+		return err
+	}
+	first, _ := hits[0].(map[string]any)
+	if got := fmt.Sprint(first["database"]); got != want {
+		return fmt.Errorf("first hit database = %q, want %q", got, want)
+	}
+	return nil
 }
 
 func (m *world) outputPointsToInit() error {
