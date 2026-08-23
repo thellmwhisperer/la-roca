@@ -246,7 +246,7 @@ func TestManifestEngineDiscoversAttachesComposesAndRegisters(t *testing.T) {
 	if len(registry.Databases) != 1 || registry.Databases[0].Plugin != "synthetic" ||
 		registry.Databases[0].Database != "records" || registry.Databases[0].Path != "records.db" ||
 		registry.Databases[0].Alias != "synthetic_records" ||
-		!slices.Equal(registry.Databases[0].Tables[0].Columns, []string{"id", "value"}) {
+		!slices.Equal(registry.Databases[0].Tables[0].Columns, []string{"id", "value", "created_at"}) {
 		t.Fatalf("vector registry = %+v", registry)
 	}
 	if len(registry.Routes) != 2 || registry.Routes[0].Database != "records" ||
@@ -260,7 +260,7 @@ func TestManifestEngineDiscoversAttachesComposesAndRegisters(t *testing.T) {
 	loadedRegistry, err := plugin.LoadVectorRegistry(registryPath)
 	if err != nil || len(loadedRegistry.Databases) != 1 || len(loadedRegistry.Routes) != 2 ||
 		!slices.Equal(loadedRegistry.Databases[0].Tables[0].TextColumns, []string{"value"}) ||
-		!slices.Equal(loadedRegistry.Databases[0].Tables[0].Columns, []string{"id", "value"}) {
+		!slices.Equal(loadedRegistry.Databases[0].Tables[0].Columns, []string{"id", "value", "created_at"}) {
 		t.Fatalf("loaded vector registry = %+v, err = %v", loadedRegistry, err)
 	}
 	invalidRegistry := registry
@@ -305,6 +305,35 @@ func TestManifestEngineDiscoversAttachesComposesAndRegisters(t *testing.T) {
 		registrations[0].MCP != "roca_inspect" || registrations[0].Binary != "roca-synthetic" ||
 		!slices.Equal(registrations[0].Command, []string{"inspect"}) {
 		t.Fatalf("verb registrations = %+v", registrations)
+	}
+}
+
+func TestLoadVectorRegistryAcceptsSchemaOneHomes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), plugin.VectorRegistryFilename)
+	body := `{
+  "schema": 1,
+  "databases": [{
+    "plugin": "synthetic",
+    "database": "records",
+    "path": "records.db",
+    "alias": "synthetic_records",
+    "tables": [{
+      "name": "records",
+      "id_column": "id",
+      "text_columns": ["value"]
+    }]
+  }]
+}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := plugin.LoadVectorRegistry(path)
+	if err != nil {
+		t.Fatalf("load schema-1 registry: %v", err)
+	}
+	if registry.Schema != 1 || len(registry.Databases) != 1 || registry.Routes == nil ||
+		!slices.Equal(registry.Databases[0].Tables[0].TextColumns, []string{"value"}) {
+		t.Fatalf("schema-1 registry = %+v", registry)
 	}
 }
 

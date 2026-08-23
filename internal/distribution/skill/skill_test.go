@@ -197,14 +197,14 @@ func TestShippedSkillsCarryTheSearchDoctrine(t *testing.T) {
 	}
 }
 
-func TestPluginGuideKeepsTheThreeLineVectorAuthorContract(t *testing.T) {
+func TestPluginGuideDocumentsTheChronologicalVectorAuthorContract(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "plugins.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"the complete author contract is three\nlines: table, stable id column, and opt-in prose columns",
-		"{\"name\": \"receipts\",\n \"id_column\": \"id\",\n \"text_columns\": [\"title\"]}",
+		"the author contract names the table,\nstable id column, opt-in prose columns, and chronological source",
+		"{\"name\": \"receipts\",\n \"id_column\": \"id\",\n \"text_columns\": [\"title\"],\n \"time_columns\": [\"created_at\"]}",
 		"a\ndatabase with no `vector` declaration continues to serve through FTS and SQL\nexactly as before",
 	} {
 		if !strings.Contains(string(body), want) {

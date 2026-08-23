@@ -125,8 +125,8 @@ func LoadVectorRegistry(path string) (VectorRegistry, error) {
 	if err := requireJSONEnd(decoder); err != nil {
 		return VectorRegistry{}, fmt.Errorf("read vector registry: %w", err)
 	}
-	if registry.Schema != vectorRegistrySchema {
-		return VectorRegistry{}, fmt.Errorf("vector registry schema is %d, want %d",
+	if registry.Schema != 1 && registry.Schema != vectorRegistrySchema {
+		return VectorRegistry{}, fmt.Errorf("vector registry schema is %d, want 1 or %d",
 			registry.Schema, vectorRegistrySchema)
 	}
 	if registry.Databases == nil {
@@ -222,7 +222,7 @@ func (registry VectorRegistry) valid() error {
 		for _, table := range database.Tables {
 			if !validIdentifier(table.Name) || seenTables[table.Name] ||
 				!validIdentifier(table.IDColumn) || len(table.TextColumns) == 0 ||
-				(len(table.TimeColumns) == 0 && table.TimeJoin == nil) {
+				(registry.Schema >= 2 && len(table.TimeColumns) == 0 && table.TimeJoin == nil) {
 				return fmt.Errorf("vector registry database %s/%s has invalid table %q",
 					database.Plugin, database.Database, table.Name)
 			}
