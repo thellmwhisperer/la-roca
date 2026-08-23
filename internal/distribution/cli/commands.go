@@ -334,19 +334,27 @@ var newInstallFeatureChanges = []config.Change{
 // writeNewInstallConfig materializes the product contract for an init that
 // began without a configuration file.
 func (env *cliEnv) offerSemanticSearch(ctx context.Context, input *bufio.Reader, interactive bool,
-	paths config.Paths, mayPrompt bool) error {
-	if !interactive || input == nil || !mayPrompt {
+	paths config.Paths, newConfig bool) error {
+	if !interactive || input == nil {
 		return nil
 	}
 	previous, err := os.ReadFile(paths.Config)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read the configuration: %w", err)
 	}
-	decided, err := config.HasValue(string(previous), "features", "vector")
+	decided, err := config.HasValue(string(previous), "features", "vector_consent")
 	if err != nil {
 		return fmt.Errorf("read semantic search preference: %w", err)
 	}
-	if decided {
+	loaded, loadErr := config.LoadFile(paths.Config)
+	if loadErr != nil && !os.IsNotExist(loadErr) {
+		return fmt.Errorf("read semantic search preference: %w", loadErr)
+	}
+	hasVector, err := config.HasValue(string(previous), "features", "vector")
+	if err != nil {
+		return fmt.Errorf("read semantic search preference: %w", err)
+	}
+	if decided || loaded.Features.Vector || (!newConfig && !hasVector) {
 		return nil
 	}
 	env.initSay("semantic search finds by meaning, not just the exact words")
@@ -360,6 +368,7 @@ func (env *cliEnv) offerSemanticSearch(ctx context.Context, input *bufio.Reader,
 	enabled := answer == "yes" || answer == "y"
 	updated, err := config.ApplyText(string(previous), []config.Change{
 		{Kind: config.SetValue, Table: "features", Key: "vector", Value: enabled},
+		{Kind: config.SetValue, Table: "features", Key: "vector_consent", Value: true},
 	})
 	if err != nil {
 		return fmt.Errorf("enable semantic search: %w", err)
@@ -382,51 +391,24 @@ func (env *cliEnv) offerSemanticSearch(ctx context.Context, input *bufio.Reader,
 	arguments = append(arguments, "install")
 	command := exec.CommandContext(ctx, path, arguments...)
 	var stdout, stderr bytes.Buffer
-	command.Stdout, command.Stderr = &stdout, &stderr
+	command.Stdout = &stdout
+	if progress, ok := env.errOut.(*os.File); ok {
+		command.Args = append(command.Args, "--stream-progress")
+		command.Stderr = progress
+	} else {
+		command.Stderr = &stderr
+	}
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("semantic search setup could not start")
 	}
 	var result struct {
-		Background     bool   `json:"background"`
-		AlreadyRunning bool   `json:"already_running"`
-		LogPath        string `json:"log_path"`
-		LogOffset      int64  `json:"log_offset"`
+		Background bool `json:"background"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil || !result.Background {
 		return fmt.Errorf("semantic search setup returned an invalid response")
 	}
 	env.print("semantic search: setup continues in the background; newest material is indexed first")
-	if !result.AlreadyRunning {
-		relaySemanticProgress(ctx, env, result.LogPath, result.LogOffset)
-	}
 	return nil
-}
-
-func relaySemanticProgress(ctx context.Context, env *cliEnv, path string, offset int64) {
-	deadline := time.Now().Add(1500 * time.Millisecond)
-	seen := map[string]bool{}
-	for time.Now().Before(deadline) {
-		file, err := os.Open(path)
-		if err == nil {
-			_, _ = file.Seek(offset, io.SeekStart)
-			scanner := bufio.NewScanner(file)
-			for scanner.Scan() {
-				line := strings.TrimSpace(scanner.Text())
-				offset += int64(len(scanner.Bytes()) + 1)
-				if !seen[line] && (strings.HasPrefix(line, "downloading the embedding model") ||
-					strings.HasPrefix(line, "semantic index:")) {
-					seen[line] = true
-					env.print("%s", line)
-				}
-			}
-			_ = file.Close()
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(100 * time.Millisecond):
-		}
-	}
 }
 
 func writeNewInstallConfig(path string) error {

@@ -67,8 +67,8 @@ func TestReleaseLaneArchivePreservesActualArtifactSetAndModes(t *testing.T) {
 			}
 		}
 		archive := filepath.Join(root, fmt.Sprintf("release-%d.tar.gz", lane))
-		arguments := append([]string{"-C", input, "-czf", archive}, artifacts...)
-		command := exec.Command("tar", arguments...)
+		command := exec.Command(filepath.Join("..", "..", "..", "scripts", "archive-release-lane.sh"),
+			input, archive)
 		if packed, err := command.CombinedOutput(); err != nil {
 			t.Fatalf("package release lane: %v\n%s", err, packed)
 		}

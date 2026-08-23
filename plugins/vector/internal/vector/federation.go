@@ -771,7 +771,7 @@ func newEmbeddingScheduler(ctx context.Context, base Embedder, count int) *embed
 		active[id] = true
 	}
 	return &embeddingScheduler{ctx: ctx, base: base, requests: make(chan embeddingRequest),
-		finished: make(chan int), active: active}
+		finished: make(chan int, count), active: active}
 }
 
 func (s *embeddingScheduler) run() {

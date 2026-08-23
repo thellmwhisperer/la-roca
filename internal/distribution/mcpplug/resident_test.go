@@ -61,6 +61,38 @@ func TestResidentChildDiesWhenStdinCloses(t *testing.T) {
 	}
 }
 
+func TestResidentCloseTerminatesChildDuringPrewarm(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture uses a POSIX executable")
+	}
+	dir := t.TempDir()
+	script := filepath.Join(dir, "roca-vector")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexec sleep 30\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ROCA_VECTOR_RESIDENT_BINARY", script)
+	svc, err := service.Open(service.Options{DBPath: filepath.Join(dir, "roca.db"), VectorEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	resident, err := startResidentVector(context.Background(), svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- resident.Close() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		_ = resident.cmd.Process.Kill()
+		t.Fatal("resident close waited for prewarm")
+	}
+}
+
 func TestResidentRoutesByIDAndStreamsProductStatus(t *testing.T) {
 	status := new(bytes.Buffer)
 	resident := &residentVector{status: status, ready: make(chan struct{}), failed: make(chan struct{}),

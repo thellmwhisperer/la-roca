@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,9 +28,10 @@ var (
 )
 
 type environment struct {
-	json     bool
-	dbPath   string
-	stateDir string
+	json       bool
+	dbPath     string
+	stateDir   string
+	progressFD int
 }
 
 func main() {
@@ -56,7 +58,9 @@ func rootCommand(env *environment) *cobra.Command {
 	root.PersistentFlags().BoolVar(&env.json, "json", false, "JSON output")
 	root.PersistentFlags().StringVar(&env.dbPath, "db-path", env.dbPath, "La Roca database selected by the core CLI")
 	root.PersistentFlags().StringVar(&env.stateDir, "state-dir", env.stateDir, "plugin state directory")
+	root.PersistentFlags().IntVar(&env.progressFD, "progress-fd", 0, "live progress output")
 	_ = root.PersistentFlags().MarkHidden("state-dir")
+	_ = root.PersistentFlags().MarkHidden("progress-fd")
 	root.AddCommand(installCommand(env), ingestCommand(env), compactCommand(env),
 		queryCommand(env), workerCommand(env), residentCommand(env))
 	return root
@@ -64,6 +68,7 @@ func rootCommand(env *environment) *cobra.Command {
 
 func installCommand(env *environment) *cobra.Command {
 	model := vector.DefaultModel
+	streamProgress := false
 	command := &cobra.Command{
 		Use:   "install",
 		Short: "Download the embedding model and build declared sidecars in the background",
@@ -81,17 +86,20 @@ func installCommand(env *environment) *cobra.Command {
 				return fmt.Errorf("locate roca-vector: %w", err)
 			}
 			arguments := workerArguments(env.dbPath, state, model)
+			var progress *os.File
+			if !env.json || streamProgress {
+				progress = os.Stderr
+			}
 			result, err := launchWorker(vector.LaunchRequest{
-				Executable: executable, Arguments: arguments, DataDir: state,
+				Executable: executable, Arguments: arguments, DataDir: state, Progress: progress,
 			})
 			if err != nil {
 				return err
 			}
 			if env.json {
 				return printJSON(map[string]any{
-					"background": true, "model": model, "pid": result.PID,
-					"already_running": result.AlreadyRunning, "log_path": result.LogPath,
-					"log_offset": result.LogOffset,
+					"background": true, "model": model,
+					"already_running": result.AlreadyRunning,
 				})
 			}
 			if result.AlreadyRunning {
@@ -104,6 +112,8 @@ func installCommand(env *environment) *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&model, "model", model, "embedding model identifier")
+	command.Flags().BoolVar(&streamProgress, "stream-progress", false, "stream setup progress")
+	_ = command.Flags().MarkHidden("stream-progress")
 	return command
 }
 
@@ -518,8 +528,14 @@ func (env *environment) embedder() (vector.Embedder, engine.Sink) {
 }
 
 func (env *environment) events() engine.Sink {
+	output := io.Writer(os.Stderr)
+	if env.progressFD > 2 {
+		if progress := os.NewFile(uintptr(env.progressFD), "semantic-progress"); progress != nil {
+			output = io.MultiWriter(output, progress)
+		}
+	}
 	return func(event engine.Event) {
-		fmt.Fprintln(os.Stderr, event.Line())
+		fmt.Fprintln(output, event.Line())
 	}
 }
 

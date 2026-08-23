@@ -1,6 +1,7 @@
 #include "wrapper.h"
 
 #include "llama.h"
+#include "llama-ext.h"
 
 #include <algorithm>
 #include <cmath>
@@ -22,7 +23,8 @@ static void fail(char ** error, const std::string & message) {
     }
 }
 
-extern "C" roca_llama_engine * roca_llama_open(const char * model_path, int threads, int gpu_layers, char ** error) {
+extern "C" roca_llama_engine * roca_llama_open(const char * model_path, int threads, int gpu_layers,
+                                                 int * accelerated, char ** error) {
     llama_log_set(quiet_log, nullptr);
     llama_backend_init();
 
@@ -32,6 +34,18 @@ extern "C" roca_llama_engine * roca_llama_open(const char * model_path, int thre
     if (model == nullptr) {
         fail(error, "model load failed");
         return nullptr;
+    }
+
+    if (accelerated != nullptr) {
+        *accelerated = 0;
+        const int32_t devices = llama_model_n_devices(model);
+        for (int32_t i = 0; i < devices; ++i) {
+            const enum ggml_backend_dev_type type = ggml_backend_dev_type(llama_model_get_device(model, i));
+            if (type == GGML_BACKEND_DEVICE_TYPE_GPU || type == GGML_BACKEND_DEVICE_TYPE_ACCEL) {
+                *accelerated = 1;
+                break;
+            }
+        }
     }
 
     llama_context_params context_params = llama_context_default_params();

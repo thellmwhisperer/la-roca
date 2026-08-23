@@ -698,6 +698,7 @@ type FeaturesConfig struct {
 	AskMissingReferent bool `toml:"ask_missing_referent"`
 	Plugins            bool `toml:"plugins"`
 	Vector             bool `toml:"vector"`
+	VectorConsent      bool `toml:"vector_consent"`
 	Cron               bool `toml:"cron"`
 	ArtifactRefresh    bool `toml:"artifact_refresh"`
 	RocaOps            bool `toml:"roca_ops"`

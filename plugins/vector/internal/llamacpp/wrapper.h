@@ -7,7 +7,8 @@ extern "C" {
 
 typedef struct roca_llama_engine roca_llama_engine;
 
-roca_llama_engine * roca_llama_open(const char * model_path, int threads, int gpu_layers, char ** error);
+roca_llama_engine * roca_llama_open(const char * model_path, int threads, int gpu_layers,
+                                    int * accelerated, char ** error);
 int roca_llama_embed(roca_llama_engine * engine, const char * text, float ** embedding,
                      int * dimensions, int * token_count, char ** error);
 void roca_llama_close(roca_llama_engine * engine);

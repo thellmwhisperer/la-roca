@@ -92,6 +92,23 @@ func TestEmbeddingSchedulerMergesDatabaseHeadsNewestFirst(t *testing.T) {
 	}
 }
 
+func TestEmbeddingSchedulerCompletionDoesNotBlockAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	scheduler := newEmbeddingScheduler(ctx, &recordingEmbedder{}, 1)
+	cancel()
+	scheduler.run()
+	done := make(chan struct{})
+	go func() {
+		scheduler.finished <- 0
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("worker completion blocked after scheduler cancellation")
+	}
+}
+
 func TestIngestProgressCountsOnlyPendingEmbeddingWork(t *testing.T) {
 	rows := make([]sourceRow, 40)
 	for index := range rows {
@@ -104,6 +121,7 @@ func TestIngestProgressCountsOnlyPendingEmbeddingWork(t *testing.T) {
 	if _, err := index.Ingest(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	corpus.sources[len(corpus.sources)-2].text = "changed older"
 	corpus.sources[len(corpus.sources)-1].text = "changed oldest"
 	var totals []int64
 	index.Events = func(event engine.Event) {
@@ -118,8 +136,8 @@ func TestIngestProgressCountsOnlyPendingEmbeddingWork(t *testing.T) {
 		t.Fatal("changed ingest emitted no progress")
 	}
 	for _, total := range totals {
-		if total != 1 {
-			t.Fatalf("embedding progress total = %d, want one changed chunk", total)
+		if total != 2 {
+			t.Fatalf("embedding progress total = %d, want two changed chunks", total)
 		}
 	}
 }

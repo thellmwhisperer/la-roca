@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 )
@@ -65,7 +66,7 @@ func TestSemanticConsentConsumesStructuredWorkerResult(t *testing.T) {
 	if err := os.WriteFile(companion, []byte(fixture), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", bin)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	var out, errOut bytes.Buffer
 	env := &cliEnv{out: &out, errOut: &errOut, dbPath: filepath.Join(root, "roca.db")}
 	paths := config.Paths{Config: filepath.Join(root, "config.toml")}
@@ -84,12 +85,53 @@ func TestSemanticConsentConsumesStructuredWorkerResult(t *testing.T) {
 	}
 }
 
+func TestSemanticConsentLeavesLiveProgressConnectedAfterInitReturns(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture uses a POSIX executable")
+	}
+	root := t.TempDir()
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	companion := filepath.Join(bin, "roca-vector")
+	fixture := "#!/bin/sh\ncase \" $* \" in *\" --stream-progress \"*) ;; *) exit 9;; esac\n" +
+		"(sleep 0.1; printf '%s\\n' 'downloading the embedding model · 1/2' >&2) &\n" +
+		"printf '%s\\n' '{\"background\":true}'\n"
+	if err := os.WriteFile(companion, []byte(fixture), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	progressPath := filepath.Join(root, "progress")
+	progress, err := os.OpenFile(progressPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer progress.Close()
+	var out bytes.Buffer
+	env := &cliEnv{out: &out, errOut: progress, dbPath: filepath.Join(root, "roca.db")}
+	paths := config.Paths{Config: filepath.Join(root, "config.toml")}
+	if err := env.offerSemanticSearch(context.Background(), bufio.NewReader(strings.NewReader("yes\n")),
+		true, paths, true); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		body, _ := os.ReadFile(progressPath)
+		if strings.Contains(string(body), "downloading the embedding model · 1/2") {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("live semantic setup progress stopped when init returned")
+}
+
 func TestSemanticConsentIsDurableForYesAndNo(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		t.Run(map[bool]string{false: "declined", true: "enabled"}[enabled], func(t *testing.T) {
 			root := t.TempDir()
 			path := filepath.Join(root, "config.toml")
-			body := "[features]\nvector = false\n"
+			body := "[features]\nvector_consent = true\nvector = false\n"
 			if enabled {
 				body = "[features]\nvector = true\n"
 			}
@@ -99,7 +141,7 @@ func TestSemanticConsentIsDurableForYesAndNo(t *testing.T) {
 			var out, errOut bytes.Buffer
 			env := &cliEnv{out: &out, errOut: &errOut}
 			if err := env.offerSemanticSearch(context.Background(),
-				bufio.NewReader(strings.NewReader("yes\n")), true, config.Paths{Config: path}, true); err != nil {
+				bufio.NewReader(strings.NewReader("yes\n")), true, config.Paths{Config: path}, false); err != nil {
 				t.Fatal(err)
 			}
 			if out.Len()+errOut.Len() != 0 {
@@ -119,13 +161,13 @@ func TestSemanticConsentIsDurableForYesAndNo(t *testing.T) {
 func TestSemanticDeclinePersistsExplicitDecision(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "config.toml")
-	if err := os.WriteFile(path, []byte("[features]\nplugins = true\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("[features]\nplugins = true\nvector = false\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var out, errOut bytes.Buffer
 	env := &cliEnv{out: &out, errOut: &errOut}
 	if err := env.offerSemanticSearch(context.Background(),
-		bufio.NewReader(strings.NewReader("no\n")), true, config.Paths{Config: path}, true); err != nil {
+		bufio.NewReader(strings.NewReader("no\n")), true, config.Paths{Config: path}, false); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := config.LoadFile(path)
@@ -135,7 +177,7 @@ func TestSemanticDeclinePersistsExplicitDecision(t *testing.T) {
 	if loaded.Features.Vector {
 		t.Fatal("declined semantic search remained enabled")
 	}
-	decided, err := config.HasValue(string(mustRead(t, path)), "features", "vector")
+	decided, err := config.HasValue(string(mustRead(t, path)), "features", "vector_consent")
 	if err != nil || !decided {
 		t.Fatalf("decline decision was not durable: decided=%v err=%v", decided, err)
 	}

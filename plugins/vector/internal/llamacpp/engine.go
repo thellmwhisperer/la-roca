@@ -3,7 +3,7 @@
 package llamacpp
 
 /*
-#cgo CXXFLAGS: -std=c++17 -O3 -I${SRCDIR}/../../../../.tmp/llama.cpp/include -I${SRCDIR}/../../../../.tmp/llama.cpp/ggml/include
+#cgo CXXFLAGS: -std=c++17 -O3 -I${SRCDIR}/../../../../.tmp/llama.cpp/include -I${SRCDIR}/../../../../.tmp/llama.cpp/ggml/include -I${SRCDIR}/../../../../.tmp/llama.cpp/src
 #include "wrapper.h"
 #include <stdlib.h>
 */
@@ -33,16 +33,25 @@ func Open(model string, threads, gpuLayers int) (*Engine, error) {
 	path := C.CString(model)
 	defer C.free(unsafe.Pointer(path))
 	var message *C.char
-	engine := C.roca_llama_open(path, C.int(threads), C.int(gpuLayers), &message)
+	var accelerated C.int
+	engine := C.roca_llama_open(path, C.int(threads), C.int(gpuLayers), &accelerated, &message)
 	if engine == nil {
 		defer C.roca_llama_release(unsafe.Pointer(message))
 		return nil, fmt.Errorf("open the embedding model: %s", C.GoString(message))
 	}
-	backend := BackendCPU
-	if gpuLayers > 0 {
-		backend = BackendMetal
+	backend, fallback := selectedBackend(gpuLayers, accelerated != 0)
+	result := &Engine{engine: engine, Backend: backend, FallbackReason: fallback}
+	return result, nil
+}
+
+func selectedBackend(gpuLayers int, accelerated bool) (string, string) {
+	if accelerated {
+		return BackendMetal, ""
 	}
-	return &Engine{engine: engine, Backend: backend}, nil
+	if gpuLayers > 0 {
+		return BackendCPU, "accelerator unavailable"
+	}
+	return BackendCPU, ""
 }
 
 func OpenPreferred(model string, threads int) (*Engine, error) {

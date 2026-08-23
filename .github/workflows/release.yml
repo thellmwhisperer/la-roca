@@ -97,7 +97,7 @@ jobs:
             make windows-amd64 VERSION="$VERSION"
           fi
       - name: Preserve release artifact modes
-        run: tar -C bin -czf "release-${{ matrix.target }}.tar.gz" roca-*
+        run: ./scripts/archive-release-lane.sh bin "release-${{ matrix.target }}.tar.gz"
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.target }}

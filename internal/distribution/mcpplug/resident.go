@@ -282,8 +282,14 @@ func (r *residentVector) Close() error {
 	r.stateMu.Lock()
 	r.closing = true
 	r.stateMu.Unlock()
-	r.closeOnce.Do(func() { _ = r.stdin.Close() })
-	return <-r.done
+	r.closeOnce.Do(func() {
+		_ = r.stdin.Close()
+		if r.cmd != nil && r.cmd.Process != nil {
+			_ = r.cmd.Process.Kill()
+		}
+		<-r.done
+	})
+	return nil
 }
 
 func firstNonEmpty(values ...string) string {

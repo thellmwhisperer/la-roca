@@ -93,6 +93,7 @@ type LaunchRequest struct {
 	Executable string
 	Arguments  []string
 	DataDir    string
+	Progress   *os.File
 }
 
 type LaunchResult struct {
@@ -176,6 +177,10 @@ func Launch(request LaunchRequest) (LaunchResult, error) {
 	defer devNull.Close()
 	command := exec.Command(request.Executable, request.Arguments...)
 	command.Stdin, command.Stdout, command.Stderr = devNull, log, log
+	if request.Progress != nil && runtime.GOOS != "windows" {
+		command.ExtraFiles = []*os.File{request.Progress}
+		command.Args = append(command.Args, "--progress-fd=3")
+	}
 	command.SysProcAttr = detachedProcessAttributes
 	if err := command.Start(); err != nil {
 		return LaunchResult{}, fmt.Errorf("start vector worker: %w", err)

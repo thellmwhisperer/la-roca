@@ -152,7 +152,7 @@ func TestTargetedSessionDeltaIsObservableAndIdempotentThroughCLI(t *testing.T) {
 	coreScript := `#!/bin/sh
 for argument do statement="$argument"; done
 case "$statement" in
-  *COUNT*plugin_roca_corpus.sessions*)
+  *SUM*plugin_roca_corpus.sessions*)
     printf '%s\n' '{"rows":[{"total":1}]}'
     ;;
   *plugin_roca_corpus.sessions*)
