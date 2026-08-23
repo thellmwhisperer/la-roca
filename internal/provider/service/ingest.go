@@ -133,10 +133,14 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (IngestResult, 
 				rocaOpsPluginName, err)
 		}
 	}
+	var ops ingest.Database
+	if s.ops != nil {
+		ops = s.ops
+	}
 	report, err := ingest.Run(ctx, target, s.registry, ingest.Options{
 		Roots:                  roots,
 		HermesReservedMemories: hermesReservedMemories,
-		Ops:                    s.ops,
+		Ops:                    ops,
 		DryRun:                 req.DryRun,
 		Progress:               s.opts.Progress,
 		LiveProgress:           s.opts.IngestProgress,
