@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -164,10 +165,18 @@ func installBundledPluginsCommand(env *cliEnv) *cobra.Command {
 				}, "%s: bundled plugins were not placed", reason)
 			}
 			binDir := pluginExecutableDir(paths)
+			vectorSpec := rocavector.BundleSpec()
+			if env.bundledVectorPayload != nil {
+				payload := slices.Clone(env.bundledVectorPayload)
+				vectorSpec.Payload = func() ([]byte, error) { return payload, nil }
+			}
 			installed, err := bundledplugin.EnsureAll(root, binDir, env.build.Version,
-				rocaops.BundleSpec(), rocacorpus.BundleSpec(), rocacron.BundleSpec(), rocavector.BundleSpec())
+				rocaops.BundleSpec(), rocacorpus.BundleSpec(), rocacron.BundleSpec(), vectorSpec)
 			if err != nil {
 				return err
+			}
+			if err := env.refreshVectorRegistry(); err != nil {
+				return fmt.Errorf("refresh vector declarations: %w", err)
 			}
 			ops, corpus, cron, vector := installed[0], installed[1], installed[2], installed[3]
 			return env.report(map[string]any{

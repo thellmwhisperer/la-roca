@@ -62,6 +62,9 @@ type Options struct {
 	// RocaOpsEnabled extracts the agent-facing write surface into the bundled
 	// resident roca-ops plugin. Its zero value preserves the core-only product.
 	RocaOpsEnabled bool
+	// VectorEnabled is the single consent gate for semantic retrieval. The MCP
+	// surface uses it to decide whether the session-owned vector child exists.
+	VectorEnabled bool
 	// CorpusEnabled routes perennial ingest into the bundled corpus database and
 	// attaches that archive to every query. The CLI always enables it; the zero
 	// value keeps the engine usable with no bundled domains in package tests and
@@ -112,6 +115,9 @@ type Options struct {
 	// alone with the same envelope.
 	VectorSearch VectorSearchFunc
 }
+
+// VectorEnabled reports the consent decision resolved by the opening surface.
+func (s *Service) VectorEnabled() bool { return s != nil && s.opts.VectorEnabled }
 
 type ReadLayout string
 

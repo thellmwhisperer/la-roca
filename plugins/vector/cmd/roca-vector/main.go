@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/thellmwhisperer/la-roca-vector/internal/engine"
+	"github.com/thellmwhisperer/la-roca-vector/internal/telemetry"
 	"github.com/thellmwhisperer/la-roca-vector/internal/vector"
 )
 
@@ -21,12 +24,14 @@ var (
 	date              = "unknown"
 	launchWorker      = vector.Launch
 	currentExecutable = os.Executable
+	newEmbedder       = defaultEmbedder
 )
 
 type environment struct {
-	json     bool
-	dbPath   string
-	stateDir string
+	json       bool
+	dbPath     string
+	stateDir   string
+	progressFD int
 }
 
 func main() {
@@ -53,19 +58,22 @@ func rootCommand(env *environment) *cobra.Command {
 	root.PersistentFlags().BoolVar(&env.json, "json", false, "JSON output")
 	root.PersistentFlags().StringVar(&env.dbPath, "db-path", env.dbPath, "La Roca database selected by the core CLI")
 	root.PersistentFlags().StringVar(&env.stateDir, "state-dir", env.stateDir, "plugin state directory")
+	root.PersistentFlags().IntVar(&env.progressFD, "progress-fd", 0, "live progress output")
 	_ = root.PersistentFlags().MarkHidden("state-dir")
+	_ = root.PersistentFlags().MarkHidden("progress-fd")
 	root.AddCommand(installCommand(env), ingestCommand(env), compactCommand(env),
-		queryCommand(env), workerCommand(env))
+		queryCommand(env), workerCommand(env), residentCommand(env))
 	return root
 }
 
 func installCommand(env *environment) *cobra.Command {
 	model := vector.DefaultModel
+	streamProgress := false
 	command := &cobra.Command{
 		Use:   "install",
 		Short: "Download the embedding model and build declared sidecars in the background",
 		Args:  cobra.NoArgs,
-		RunE: func(*cobra.Command, []string) error {
+		RunE: func(command *cobra.Command, _ []string) error {
 			if readOnly() {
 				return fmt.Errorf("vector install is disabled while ROCA_READ_ONLY is enabled")
 			}
@@ -77,31 +85,40 @@ func installCommand(env *environment) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("locate roca-vector: %w", err)
 			}
+			pluginRoot, err := env.resolvePluginRoot()
+			if err != nil {
+				return err
+			}
 			arguments := workerArguments(env.dbPath, state, model)
+			var progress *os.File
+			if !env.json || streamProgress {
+				progress = os.Stderr
+			}
 			result, err := launchWorker(vector.LaunchRequest{
-				Executable: executable, Arguments: arguments, DataDir: state,
+				Executable: executable, Arguments: arguments, DataDir: state, Progress: progress,
+				Environment: []string{"ROCA_VECTOR_PLUGIN_ROOT=" + pluginRoot},
 			})
 			if err != nil {
 				return err
 			}
 			if env.json {
 				return printJSON(map[string]any{
-					"background": true, "model": model, "pid": result.PID,
-					"already_running": result.AlreadyRunning, "log_path": result.LogPath,
+					"background": true, "model": model,
+					"already_running": result.AlreadyRunning,
 				})
 			}
 			if result.AlreadyRunning {
-				fmt.Println("vector install: background indexing is already running")
+				fmt.Println("semantic search: setup is already running")
 			} else {
-				fmt.Printf("vector install: background worker %d started\n", result.PID)
+				fmt.Println("semantic search: setup continues in the background")
 			}
-			fmt.Printf("  model: %s\n", model)
-			fmt.Println("  completion: a desktop notification will report exit status and counts")
-			fmt.Printf("  log: %s\n", result.LogPath)
+			fmt.Println("semantic search: newest material is indexed first")
 			return nil
 		},
 	}
-	command.Flags().StringVar(&model, "model", model, "local Ollama embedding model")
+	command.Flags().StringVar(&model, "model", model, "embedding model identifier")
+	command.Flags().BoolVar(&streamProgress, "stream-progress", false, "stream setup progress")
+	_ = command.Flags().MarkHidden("stream-progress")
 	return command
 }
 
@@ -217,7 +234,7 @@ func ingestCommand(env *environment) *cobra.Command {
 	}
 	command.Flags().BoolVar(&delta, "delta", false, "embed only new or changed chunks")
 	command.Flags().BoolVar(&reembed, "reembed", false, "rebuild sidecar chunks under the current generation policy")
-	command.Flags().StringVar(&model, "model", "", "local Ollama embedding model (default: indexed model)")
+	command.Flags().StringVar(&model, "model", "", "embedding model identifier (default: indexed model)")
 	command.Flags().StringVar(&source, "source", "", "limit the delta to one declared table")
 	return command
 }
@@ -454,7 +471,7 @@ func workerCommand(env *environment) *cobra.Command {
 			return nil
 		},
 	}
-	command.Flags().StringVar(&model, "model", model, "local Ollama embedding model")
+	command.Flags().StringVar(&model, "model", model, "embedding model identifier")
 	return command
 }
 
@@ -472,12 +489,19 @@ func (env *environment) index(model string) (vector.Index, error) {
 	if err != nil {
 		return vector.Index{}, err
 	}
+	embedder, events := env.embedder()
 	return vector.Index{Corpus: core, VectorPath: filepath.Join(state, vector.DatabaseFilename),
-		Model: model, Embedder: vector.Ollama{BaseURL: os.Getenv("OLLAMA_HOST")},
+		Model: model, Embedder: embedder, Events: events,
 		Notice: func(message string) { fmt.Fprintln(os.Stderr, message) }, Database: "corpus"}, nil
 }
 
 func (env *environment) federation(model string) (vector.Federation, error) {
+	embedder, events := env.embedder()
+	return env.federationWithEmbedder(model, embedder, events)
+}
+
+func (env *environment) federationWithEmbedder(model string, embedder vector.Embedder,
+	events engine.Sink) (vector.Federation, error) {
 	core, err := env.core()
 	if err != nil {
 		return vector.Federation{}, err
@@ -486,9 +510,41 @@ func (env *environment) federation(model string) (vector.Federation, error) {
 	if err != nil {
 		return vector.Federation{}, err
 	}
-	return vector.LoadFederation(core, pluginRoot, model, version,
-		vector.Ollama{BaseURL: os.Getenv("OLLAMA_HOST")},
-		func(message string) { fmt.Fprintln(os.Stderr, message) })
+	loaded, err := vector.LoadFederation(core, pluginRoot, model, version,
+		embedder, func(message string) { fmt.Fprintln(os.Stderr, message) })
+	if err != nil {
+		return vector.Federation{}, err
+	}
+	loaded.Events = events
+	return loaded, nil
+}
+
+func defaultEmbedder(env *environment) vector.Embedder {
+	events := env.events()
+	var tel *telemetry.Store
+	locked := readOnly()
+	if !locked {
+		if store, err := telemetry.Open(coreDataDir(env.dbPath)); err == nil {
+			tel = store
+		}
+	}
+	return vector.ConfiguredEmbedder(coreDataDir(env.dbPath), env.stateDir, events, tel, locked)
+}
+
+func (env *environment) embedder() (vector.Embedder, engine.Sink) {
+	return newEmbedder(env), env.events()
+}
+
+func (env *environment) events() engine.Sink {
+	output := io.Writer(os.Stderr)
+	if env.progressFD > 2 {
+		if progress := os.NewFile(uintptr(env.progressFD), "semantic-progress"); progress != nil {
+			output = io.MultiWriter(output, progress)
+		}
+	}
+	return func(event engine.Event) {
+		fmt.Fprintln(output, event.Line())
+	}
 }
 
 func (env *environment) resolvePluginRoot() (string, error) {

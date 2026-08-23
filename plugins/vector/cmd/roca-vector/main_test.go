@@ -20,9 +20,30 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+type stubEmbedder struct{}
+
+type countingPullEmbedder struct{ pulls int }
+
+func (stubEmbedder) Pull(context.Context, string) error { return nil }
+func (stubEmbedder) Embed(context.Context, string, []string) ([][]float32, error) {
+	return [][]float32{{1, 0, 0, 0, 0, 0, 0, 0}}, nil
+}
+
+func (e *countingPullEmbedder) Pull(context.Context, string) error { e.pulls++; return nil }
+func (e *countingPullEmbedder) Embed(context.Context, string, []string) ([][]float32, error) {
+	return [][]float32{{1, 0, 0, 0, 0, 0, 0, 0}}, nil
+}
+
 func TestInstallLaunchesThePluginBinaryIntoManifestOwnedState(t *testing.T) {
-	oldLaunch, oldExecutable := launchWorker, currentExecutable
-	t.Cleanup(func() { launchWorker, currentExecutable = oldLaunch, oldExecutable })
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ROCA_VECTOR_PLUGIN_ROOT", "")
+	oldLaunch, oldExecutable, oldEmbedder := launchWorker, currentExecutable, newEmbedder
+	t.Cleanup(func() {
+		launchWorker, currentExecutable, newEmbedder = oldLaunch, oldExecutable, oldEmbedder
+	})
+	embedder := &countingPullEmbedder{}
+	newEmbedder = func(*environment) vector.Embedder { return embedder }
 	var request vector.LaunchRequest
 	launchWorker = func(got vector.LaunchRequest) (vector.LaunchResult, error) {
 		request = got
@@ -30,7 +51,8 @@ func TestInstallLaunchesThePluginBinaryIntoManifestOwnedState(t *testing.T) {
 	}
 	currentExecutable = func() (string, error) { return "/synthetic/roca-vector", nil }
 	state := filepath.Join(t.TempDir(), "state")
-	env := &environment{dbPath: "/synthetic/roca.db", stateDir: state}
+	t.Setenv("ROCA_VECTOR_STATE_DIR", state)
+	env := &environment{dbPath: "/synthetic/roca.db"}
 	root := rootCommand(env)
 	root.SetArgs([]string{"install"})
 	if err := root.Execute(); err != nil {
@@ -40,6 +62,13 @@ func TestInstallLaunchesThePluginBinaryIntoManifestOwnedState(t *testing.T) {
 	if request.Executable != "/synthetic/roca-vector" || request.DataDir != state ||
 		!slices.Equal(request.Arguments, want) {
 		t.Fatalf("launch request = %+v, want args %q", request, want)
+	}
+	wantRoot := "ROCA_VECTOR_PLUGIN_ROOT=" + filepath.Join(home, ".roca", "plugins")
+	if !slices.Contains(request.Environment, wantRoot) {
+		t.Fatalf("worker environment = %q, want %q", request.Environment, wantRoot)
+	}
+	if embedder.pulls != 0 {
+		t.Fatalf("install blocked on %d foreground model downloads", embedder.pulls)
 	}
 }
 
@@ -75,6 +104,20 @@ func TestDeltaFlagAndReadOnlyBoundaryAreExplicit(t *testing.T) {
 	}
 	if flag := queryCommand(env).Flags().Lookup("min-score"); flag == nil {
 		t.Fatal("vector query has no --min-score flag")
+	}
+}
+
+func TestReadOnlyEmbedderDoesNotCreateLogsOrDownloadState(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	t.Setenv("ROCA_READ_ONLY", "1")
+	embedder := defaultEmbedder(&environment{dbPath: filepath.Join(dataDir, "roca.db")})
+	if err := embedder.Pull(context.Background(), vector.DefaultModel); err == nil ||
+		!strings.Contains(err.Error(), "not downloaded") {
+		t.Fatalf("read-only model lookup = %v", err)
+	}
+	if _, err := os.Stat(dataDir); !os.IsNotExist(err) {
+		t.Fatalf("read-only embedder created data state: %v", err)
 	}
 }
 
@@ -121,11 +164,19 @@ func TestTargetedSessionDeltaIsObservableAndIdempotentThroughCLI(t *testing.T) {
 	}))
 	t.Cleanup(ollama.Close)
 	t.Setenv("OLLAMA_HOST", ollama.URL)
+	oldEmbedder := newEmbedder
+	t.Cleanup(func() { newEmbedder = oldEmbedder })
+	newEmbedder = func(*environment) vector.Embedder {
+		return vector.Ollama{BaseURL: ollama.URL}
+	}
 
 	core := filepath.Join(t.TempDir(), "roca")
 	coreScript := `#!/bin/sh
 for argument do statement="$argument"; done
 case "$statement" in
+  *SUM*plugin_roca_corpus.sessions*)
+    printf '%s\n' '{"rows":[{"total":1}]}'
+    ;;
   *plugin_roca_corpus.sessions*)
     printf '%s\n' '{"rows":[{"session_id":"session-clean","title":"Public health research {\"source_exchange_fingerprints\":[\"0123456789abcdef0123456789abcdef\"],\"enabled\":true}","project_name":"health-project"}]}'
     ;;
@@ -275,5 +326,27 @@ func TestWorkerCarriesExplicitCoreAndStatePaths(t *testing.T) {
 		"_worker", "--model", "synthetic-model"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("worker arguments = %q, want %q", got, want)
+	}
+}
+
+func TestFederationUsesTheResidentPrewarmedEmbedder(t *testing.T) {
+	root := t.TempDir()
+	pluginRoot := filepath.Join(root, "plugins")
+	if err := os.MkdirAll(pluginRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	registry := `{"schema":2,"databases":[{"plugin":"fixture","database":"records","path":"records.db","alias":"fixture_records","tables":[{"name":"records","id_column":"id","text_columns":["body"],"time_columns":["created_at"]}]}],"routes":[{"plugin":"fixture","database":"records","alias":"fixture_records","source":"plugin:fixture/records"}]}`
+	if err := os.WriteFile(filepath.Join(pluginRoot, "vector-registry.json"), []byte(registry), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ROCA_VECTOR_ROCA_BINARY", "/synthetic/roca")
+	embedder := &countingPullEmbedder{}
+	env := &environment{dbPath: filepath.Join(root, "roca.db"), stateDir: filepath.Join(root, "state")}
+	federation, err := env.federationWithEmbedder(vector.DefaultModel, embedder, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if federation.Embedder != embedder {
+		t.Fatal("federation replaced the prewarmed resident embedder")
 	}
 }

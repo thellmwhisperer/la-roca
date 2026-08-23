@@ -57,7 +57,6 @@ func TestTTYInitListsDetectedModelsAndEnterKeepsTheFactoryDefault(t *testing.T) 
 		"plugins = true",
 		"roca_ops = true",
 		"cron = true",
-		"vector = false",
 	} {
 		if !strings.Contains(config, want) {
 			t.Errorf("config does not contain %q:\n%s", want, config)
@@ -294,8 +293,14 @@ func TestTTYInitReportsTheEffectiveModelAfterPersistence(t *testing.T) {
 			if test.avoidGuidance != "" && strings.Contains(out, test.avoidGuidance) {
 				t.Fatalf("effective guidance still contains %q:\n%s", test.avoidGuidance, out)
 			}
-			if !strings.HasSuffix(strings.TrimSpace(out), "run roca doctor to confirm who will answer") {
-				t.Fatalf("effective guidance does not end with the verification instruction:\n%s", out)
+			var answerLine string
+			for _, line := range strings.Split(out, "\n") {
+				if strings.HasPrefix(strings.TrimSpace(line), "answering:") {
+					answerLine = strings.TrimSpace(line)
+				}
+			}
+			if !strings.HasSuffix(answerLine, "run roca doctor to confirm who will answer") {
+				t.Fatalf("effective guidance does not end with the verification instruction: %q\n%s", answerLine, out)
 			}
 		})
 	}

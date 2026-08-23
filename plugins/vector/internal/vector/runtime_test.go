@@ -5,7 +5,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 type captureNotifier struct{ notification Completion }
@@ -49,6 +51,35 @@ func TestLaunchReportsTheClaimedWorkerPID(t *testing.T) {
 	if claimed := ReadWorkerPID(directory); result.PID <= 0 || result.PID != claimed {
 		t.Fatalf("reported pid %d, claim file pid %d", result.PID, claimed)
 	}
+}
+
+func TestLaunchKeepsLiveProgressConnectedAfterLauncherReturns(t *testing.T) {
+	shell, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skipf("no shell to launch: %v", err)
+	}
+	directory := t.TempDir()
+	progressPath := filepath.Join(directory, "progress")
+	progress, err := os.OpenFile(progressPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer progress.Close()
+	_, err = Launch(LaunchRequest{Executable: shell,
+		Arguments: []string{"-c", "sleep 0.1; echo 'semantic index: 1/2 chunks' >&3"},
+		DataDir:   directory, Progress: progress})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		body, _ := os.ReadFile(progressPath)
+		if strings.Contains(string(body), "semantic index: 1/2 chunks") {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("detached worker did not retain the live progress channel")
 }
 
 func TestWorkerClaimDistinguishesLiveAndStaleProcesses(t *testing.T) {

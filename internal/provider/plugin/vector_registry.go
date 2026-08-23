@@ -15,7 +15,7 @@ import (
 
 const (
 	VectorRegistryFilename = "vector-registry.json"
-	vectorRegistrySchema   = 1
+	vectorRegistrySchema   = 2
 )
 
 // VectorRegistry is the generated, inference-free projection consumed by the
@@ -47,11 +47,13 @@ type VectorRegistration struct {
 // VectorRegistrationTable combines opt-in retrieval columns with the
 // validated semantic catalog columns needed for safe contextual queries.
 type VectorRegistrationTable struct {
-	Name        string         `json:"name"`
-	IDColumn    string         `json:"id_column"`
-	TextColumns []string       `json:"text_columns"`
-	Columns     []string       `json:"columns,omitempty"`
-	Chunking    *ChunkingHints `json:"chunking,omitempty"`
+	Name        string          `json:"name"`
+	IDColumn    string          `json:"id_column"`
+	TextColumns []string        `json:"text_columns"`
+	TimeColumns []string        `json:"time_columns,omitempty"`
+	TimeJoin    *VectorTimeJoin `json:"time_join,omitempty"`
+	Columns     []string        `json:"columns,omitempty"`
+	Chunking    *ChunkingHints  `json:"chunking,omitempty"`
 }
 
 func VectorRegistryPath(pluginRoot string) string {
@@ -88,7 +90,8 @@ func ComposeVectorRegistry(databases []Database) VectorRegistry {
 			cloned := cloneVectorTable(table)
 			tables[index] = VectorRegistrationTable{
 				Name: cloned.Name, IDColumn: cloned.IDColumn,
-				TextColumns: cloned.TextColumns, Chunking: cloned.Chunking,
+				TextColumns: cloned.TextColumns, TimeColumns: cloned.TimeColumns,
+				TimeJoin: cloned.TimeJoin, Chunking: cloned.Chunking,
 			}
 			for _, semanticTable := range database.Tables {
 				if semanticTable.Name == table.Name {
@@ -122,8 +125,8 @@ func LoadVectorRegistry(path string) (VectorRegistry, error) {
 	if err := requireJSONEnd(decoder); err != nil {
 		return VectorRegistry{}, fmt.Errorf("read vector registry: %w", err)
 	}
-	if registry.Schema != vectorRegistrySchema {
-		return VectorRegistry{}, fmt.Errorf("vector registry schema is %d, want %d",
+	if registry.Schema != 1 && registry.Schema != vectorRegistrySchema {
+		return VectorRegistry{}, fmt.Errorf("vector registry schema is %d, want 1 or %d",
 			registry.Schema, vectorRegistrySchema)
 	}
 	if registry.Databases == nil {
@@ -218,7 +221,8 @@ func (registry VectorRegistry) valid() error {
 		seenTables := map[string]bool{}
 		for _, table := range database.Tables {
 			if !validIdentifier(table.Name) || seenTables[table.Name] ||
-				!validIdentifier(table.IDColumn) || len(table.TextColumns) == 0 {
+				!validIdentifier(table.IDColumn) || len(table.TextColumns) == 0 ||
+				(registry.Schema >= 2 && len(table.TimeColumns) == 0 && table.TimeJoin == nil) {
 				return fmt.Errorf("vector registry database %s/%s has invalid table %q",
 					database.Plugin, database.Database, table.Name)
 			}
@@ -247,6 +251,29 @@ func (registry VectorRegistry) valid() error {
 				for _, column := range table.TextColumns {
 					if !catalogColumns[column] {
 						return fmt.Errorf("vector registry table %s/%s.%s catalog omits text column %q",
+							database.Plugin, database.Database, table.Name, column)
+					}
+				}
+			}
+			for _, column := range table.TimeColumns {
+				if !validIdentifier(column) {
+					return fmt.Errorf("vector registry table %s/%s.%s has invalid time column %q",
+						database.Plugin, database.Database, table.Name, column)
+				}
+				if len(catalogColumns) > 0 && !catalogColumns[column] {
+					return fmt.Errorf("vector registry table %s/%s.%s catalog omits time column %q",
+						database.Plugin, database.Database, table.Name, column)
+				}
+			}
+			if join := table.TimeJoin; join != nil {
+				if !validIdentifier(join.Table) || !validIdentifier(join.LocalColumn) ||
+					!validIdentifier(join.ForeignColumn) || len(join.TimeColumns) == 0 {
+					return fmt.Errorf("vector registry table %s/%s.%s has an invalid chronological join",
+						database.Plugin, database.Database, table.Name)
+				}
+				for _, column := range join.TimeColumns {
+					if !validIdentifier(column) {
+						return fmt.Errorf("vector registry table %s/%s.%s has invalid joined time column %q",
 							database.Plugin, database.Database, table.Name, column)
 					}
 				}

@@ -64,6 +64,10 @@ type plug struct{ svc *service.Service }
 // the glue between the handlers and the SDK, where it cannot grow logic the
 // other surfaces cannot reach.
 func New(svc *service.Service, build Build) *mcp.Server {
+	return newServer(svc, build, nil)
+}
+
+func newServer(svc *service.Service, build Build, resident *residentVector) *mcp.Server {
 	p := &plug{svc: svc}
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:        ServerName,
@@ -98,6 +102,9 @@ func New(svc *service.Service, build Build) *mcp.Server {
 	}
 	if manifest.HasVerb(service.StoreVerb) {
 		mcp.AddTool(server, storeTool, sanitizing(p.store, dbPath, dataDir))
+	}
+	if resident != nil {
+		mcp.AddTool(server, vectorQueryTool, sanitizing(resident.call, dbPath, dataDir))
 	}
 	server.AddReceivingMiddleware(auditCalls(audit, os.Stderr))
 	return server
@@ -537,14 +544,28 @@ func scrubDataDir(text, dataDir string) string {
 // Serve runs the server over stdio in the foreground until the client closes
 // the pipe. There is no daemon: this process is the session.
 func Serve(ctx context.Context, svc *service.Service, build Build) error {
-	return serveOver(ctx, svc, build, &mcp.StdioTransport{})
+	resident, err := consentedResident(ctx, svc)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "notice: semantic search will load when first used")
+	}
+	if resident != nil {
+		defer resident.Close()
+	}
+	return serveOver(ctx, svc, build, &mcp.StdioTransport{}, resident)
+}
+
+func consentedResident(ctx context.Context, svc *service.Service) (*residentVector, error) {
+	if !svc.VectorEnabled() {
+		return nil, nil
+	}
+	return startResidentVector(ctx, svc)
 }
 
 // serveOver is Serve with the transport injected, which is what lets a test
 // drive the same code path over a pipe it owns.
 func serveOver(ctx context.Context, svc *service.Service, build Build,
-	transport mcp.Transport) error {
-	err := New(svc, build).Run(ctx, transport)
+	transport mcp.Transport, resident *residentVector) error {
+	err := newServer(svc, build, resident).Run(ctx, transport)
 	// A closed pipe is how this server ends its life, not a failure: the agent
 	// that launched it went away, which is exactly the contract. The comparison
 	// is errors.Is because the transport wraps: an == check reported the normal
