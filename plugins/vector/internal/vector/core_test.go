@@ -16,7 +16,8 @@ func TestCoreCLIWalksEverySourceThroughRocaExec(t *testing.T) {
 		if executable != "/synthetic/roca" {
 			t.Fatalf("executable = %q", executable)
 		}
-		if !slices.Equal(args[:5], []string{"--json", "--db-path", "/synthetic/roca.db", "exec", "--max-chars"}) {
+		if !slices.Equal(args[:7], []string{"--json", "--db-path", "/synthetic/roca.db", "exec",
+			"--timeout-ms", "0", "--max-chars"}) {
 			t.Fatalf("prefix = %q", args)
 		}
 		statement := args[len(args)-1]
@@ -309,8 +310,10 @@ func TestSessionEmbeddingTextKeepsOnlyHumanContent(t *testing.T) {
 
 func TestCoreCLIResolvesSessionWithHumanProjectName(t *testing.T) {
 	var statement string
+	var commandArgs []string
 	want := sourceRow{kind: "sessions", text: "Synthetic canvas\nSynthetic orchard"}
 	core := CoreCLI{Executable: "roca", Run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		commandArgs = slices.Clone(args)
 		statement = args[len(args)-1]
 		return json.Marshal(map[string]any{"rows": []map[string]any{{
 			"title":        "Synthetic canvas",
@@ -329,6 +332,9 @@ func TestCoreCLIResolvesSessionWithHumanProjectName(t *testing.T) {
 	if !strings.Contains(statement, "$.project_name") || strings.Contains(statement, "metadata AS") ||
 		strings.Contains(statement, "COALESCE(project,") {
 		t.Fatalf("session resolution did not select only the project label: %s", statement)
+	}
+	if slices.Contains(commandArgs, "--timeout-ms") {
+		t.Fatalf("serving lookup disabled the interactive timeout: %q", commandArgs)
 	}
 }
 

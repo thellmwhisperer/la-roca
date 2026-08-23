@@ -19,11 +19,10 @@ type Native struct {
 	Events    engine.Sink
 	Telemetry *telemetry.Store
 	ReadOnly  bool
-	once      sync.Once
+	mu        sync.Mutex
 	engine    nativeEngine
 	backend   string
 	fallback  string
-	err       error
 }
 
 type nativeEngine interface {

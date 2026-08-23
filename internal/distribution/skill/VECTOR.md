@@ -77,9 +77,10 @@ roca vector query "what did we decide" 10
 roca vector query --databases corpus,ops "what did we decide" 10
 ```
 
-`k` is optional (default 10) and capped at 100. The default route searches the
-corpus sidecar; `--databases` follows `roca query` selection. Same-model
+`k` is optional (default 10) and capped at 100. Default scope and background
+model-download behavior are defined in `docs/vector.md#first-query`:
+`--databases` narrows the whole attached federation, and a missing or
+downloading model leaves its database FTS-only without blocking. Same-model
 sidecars merge into one top-N, while mixed-model results stay grouped per
 database with a notice. Hits carry database, table, id, score, and a text
-preview. A missing sidecar or unavailable model leaves that database FTS-only.
-The hybrid search loop itself is in `roca-operations`.
+preview. The hybrid search loop itself is in `roca-operations`.

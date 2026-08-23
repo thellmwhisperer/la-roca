@@ -53,7 +53,7 @@ type QueryRequest struct {
 	// SQLOnly returns the SQL the model generated without running it.
 	SQLOnly bool
 	// Databases is the explicit --databases selection: attached names, or "all".
-	// Empty means the default scope (corpus plus core when corpus is attached).
+	// Empty means the whole installed federation.
 	Databases []string
 	// Progress and the interpretation hooks are presentation only. They are
 	// ignored by machine callers and never enter the result envelope.
@@ -386,8 +386,10 @@ func MergeWidenedResult(first, widened QueryResult) QueryResult {
 // ExecRequest is a SELECT the caller wants to run as it is. It is the natural
 // companion of `playground --sql-only`.
 type ExecRequest struct {
-	SQL      string
-	MaxChars int
+	SQL        string
+	MaxChars   int
+	Timeout    time.Duration
+	TimeoutSet bool
 }
 
 // ExecResult is what that SELECT returned, with the SQL that actually ran.
@@ -430,7 +432,8 @@ func (s *Service) Exec(ctx context.Context, req ExecRequest) (ExecResult, error)
 	if err != nil {
 		return ExecResult{}, logfile.Typed(err, DegradedInvalidSQL)
 	}
-	columns, rows, err := s.executeWithPlugins(ctx, validated, "", req.MaxChars, route.databases)
+	columns, rows, err := s.executeWithPluginsBudget(ctx, validated, "", req.MaxChars, route.databases,
+		execBudget{timeout: req.Timeout, set: req.TimeoutSet})
 	if err != nil {
 		degraded := DegradedExecution
 		if errors.Is(err, errQueryTimeout) {
