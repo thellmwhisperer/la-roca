@@ -24,7 +24,11 @@ type goldenVector struct {
 
 func TestNativeEngineMatchesPublicEquivalenceFixture(t *testing.T) {
 	inputs := publicEquivalenceInputs(t)
-	embedder := ConfiguredEmbedder(t.TempDir(), t.TempDir(), nil, nil)
+	dataDir := os.Getenv("ROCA_VECTOR_EQUIVALENCE_DATA_DIR")
+	if dataDir == "" {
+		dataDir = t.TempDir()
+	}
+	embedder := ConfiguredEmbedder(dataDir, t.TempDir(), nil, nil)
 	if closer, ok := embedder.(*Native); ok {
 		t.Cleanup(closer.Close)
 	}

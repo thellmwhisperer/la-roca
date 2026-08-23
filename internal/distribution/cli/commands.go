@@ -326,6 +326,7 @@ func initConfigPath(paths config.Paths) string {
 var newInstallFeatureChanges = []config.Change{
 	// ApplyText inserts a new value at the start of its table, so declare the
 	// changes in reverse to materialize the public new-install order below.
+	{Kind: config.SetValue, Table: "features", Key: "vector", Value: false},
 	{Kind: config.SetValue, Table: "features", Key: "cron", Value: true},
 	{Kind: config.SetValue, Table: "features", Key: "roca_ops", Value: true},
 	{Kind: config.SetValue, Table: "features", Key: "plugins", Value: true},

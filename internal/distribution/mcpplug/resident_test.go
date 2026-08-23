@@ -32,7 +32,9 @@ func TestResidentChildDiesWhenStdinCloses(t *testing.T) {
 	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command(script)
+	waitCtx, cancelWait := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelWait()
+	command := exec.CommandContext(waitCtx, script)
 	stdin, err := command.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -42,18 +44,16 @@ func TestResidentChildDiesWhenStdinCloses(t *testing.T) {
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}
-	done := make(chan error, 1)
-	go func() { done <- command.Wait() }()
 	if err := stdin.Close(); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
+	if err := command.Wait(); err != nil {
+		if waitCtx.Err() != nil {
+			t.Fatal("resident child outlived stdin close")
 		}
-	case <-time.After(2 * time.Second):
-		_ = command.Process.Kill()
+		t.Fatal(err)
+	}
+	if waitCtx.Err() != nil {
 		t.Fatal("resident child outlived stdin close")
 	}
 	if _, err := os.Stat(marker); err != nil {

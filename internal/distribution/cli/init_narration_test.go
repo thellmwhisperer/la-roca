@@ -53,20 +53,9 @@ func TestInitNarratesItsPhasesAndPointsToThePromptLast(t *testing.T) {
 }
 
 func TestSemanticConsentConsumesStructuredWorkerResult(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fixture uses a POSIX executable")
-	}
 	root := t.TempDir()
-	bin := filepath.Join(root, "bin")
-	if err := os.MkdirAll(bin, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	companion := filepath.Join(bin, "roca-vector")
 	fixture := "#!/bin/sh\nprintf '%s\\n' '{\"background\":true,\"already_running\":true,\"pid\":4242,\"log_path\":\"/private/operator/path\"}'\nprintf '%s\\n' 'raw worker detail' >&2\n"
-	if err := os.WriteFile(companion, []byte(fixture), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	installVectorFixture(t, root, fixture)
 	var out, errOut bytes.Buffer
 	env := &cliEnv{out: &out, errOut: &errOut, dbPath: filepath.Join(root, "roca.db")}
 	paths := config.Paths{Config: filepath.Join(root, "config.toml")}
@@ -86,22 +75,11 @@ func TestSemanticConsentConsumesStructuredWorkerResult(t *testing.T) {
 }
 
 func TestSemanticConsentLeavesLiveProgressConnectedAfterInitReturns(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fixture uses a POSIX executable")
-	}
 	root := t.TempDir()
-	bin := filepath.Join(root, "bin")
-	if err := os.MkdirAll(bin, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	companion := filepath.Join(bin, "roca-vector")
 	fixture := "#!/bin/sh\ncase \" $* \" in *\" --stream-progress \"*) ;; *) exit 9;; esac\n" +
 		"(sleep 0.1; printf '%s\\n' 'downloading the embedding model · 1/2' >&2) &\n" +
 		"printf '%s\\n' '{\"background\":true}'\n"
-	if err := os.WriteFile(companion, []byte(fixture), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	installVectorFixture(t, root, fixture)
 	progressPath := filepath.Join(root, "progress")
 	progress, err := os.OpenFile(progressPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
@@ -138,14 +116,9 @@ func TestSemanticConsentIsDurableForYesAndNo(t *testing.T) {
 			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			var out, errOut bytes.Buffer
-			env := &cliEnv{out: &out, errOut: &errOut}
-			if err := env.offerSemanticSearch(context.Background(),
-				bufio.NewReader(strings.NewReader("yes\n")), true, config.Paths{Config: path}, false); err != nil {
-				t.Fatal(err)
-			}
-			if out.Len()+errOut.Len() != 0 {
-				t.Fatalf("decided consent prompted again: %q", out.String()+errOut.String())
+			output := runSemanticConsent(t, path, "yes\n")
+			if output != "" {
+				t.Fatalf("decided consent prompted again: %q", output)
 			}
 			after, err := os.ReadFile(path)
 			if err != nil {
@@ -164,12 +137,7 @@ func TestSemanticDeclinePersistsExplicitDecision(t *testing.T) {
 	if err := os.WriteFile(path, []byte("[features]\nplugins = true\nvector = false\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	var out, errOut bytes.Buffer
-	env := &cliEnv{out: &out, errOut: &errOut}
-	if err := env.offerSemanticSearch(context.Background(),
-		bufio.NewReader(strings.NewReader("no\n")), true, config.Paths{Config: path}, false); err != nil {
-		t.Fatal(err)
-	}
+	runSemanticConsent(t, path, "no\n")
 	loaded, err := config.LoadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -181,6 +149,32 @@ func TestSemanticDeclinePersistsExplicitDecision(t *testing.T) {
 	if err != nil || !decided {
 		t.Fatalf("decline decision was not durable: decided=%v err=%v", decided, err)
 	}
+}
+
+func installVectorFixture(t *testing.T, root, fixture string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture uses a POSIX executable")
+	}
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "roca-vector"), []byte(fixture), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func runSemanticConsent(t *testing.T, path, answer string) string {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	env := &cliEnv{out: &out, errOut: &errOut}
+	if err := env.offerSemanticSearch(context.Background(), bufio.NewReader(strings.NewReader(answer)),
+		true, config.Paths{Config: path}, false); err != nil {
+		t.Fatal(err)
+	}
+	return out.String() + errOut.String()
 }
 
 func mustRead(t *testing.T, path string) []byte {

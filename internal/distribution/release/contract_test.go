@@ -160,15 +160,6 @@ func TestReleaseWorkflowBuildsNativelyAndAggregatesBeforePublishing(t *testing.T
 	}
 }
 
-func sortedKeys(values map[string]bool) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	return keys
-}
-
 func readRepoFile(t *testing.T, path string) string {
 	t.Helper()
 	body, err := os.ReadFile(path)
