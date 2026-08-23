@@ -82,19 +82,14 @@ rows in the playground; agents narrate from the rows themselves.
 
 ## Which databases a question sees
 
-`roca query`, `roca explore`, and `roca vector query` default to the corpus
-database when it is attached, together with the core compatibility store where
-that command can use it. Historical corpus study should not drag in ops
-handoffs, cron jobs, or other federated stores. Without an attached corpus, the
-default deterministic route is core alone.
-
-Pass `--databases` to select exactly the named databases when a question spans
-them: `--databases corpus,ops`, `--databases cron,corpus`, or `--databases all`
-for every attached database. The same explicit scope applies to vector
-discovery and deterministic FTS/SQL framing. Include `core` explicitly when a
-named deterministic set needs it. Unknown names fail and list what is attached.
-Routing does not guess relevance. It does not auto-select a plugin from the
-wording.
+`roca query`, `roca explore`, and `roca vector query` default to every attached
+plugin database (the whole installed federation), together with the core
+compatibility store. Searching operational memories does not require naming
+`ops`. `--databases` narrows that set: `--databases corpus`, `--databases
+corpus,ops`, or `--databases all` for every attached database. Include `core`
+explicitly when a named deterministic set needs it. Unknown names fail and list
+what is attached. Routing does not guess relevance. It does not auto-select a
+plugin from the wording.
 
 The SQL seat sees tables only for the selected databases. It also sees an
 inventory of the other attached names, but not their tables, when they are held
@@ -175,9 +170,9 @@ use every selected database through its unchanged FTS/SQL path.
   FTS alone otherwise). `roca explore` and `roca playground` spend inference
   and are last resort. Agents never pass `--full`.
 
-Handoffs and ops live on the ops database. Use the qualified handoff query under
-Deterministic patterns; natural-language questions that need ops must select it
-as described under Which databases a question sees.
+Handoffs and ops live on the ops database. The default `roca query` route
+includes it. Use the qualified handoff query under Deterministic patterns when
+writing SQL yourself.
 
 ## When to call what
 
@@ -222,7 +217,7 @@ agent, to narrate. `roca vector query` does no model inference; `roca exec`
 does none either.
 
 1. Search by meaning with `roca vector query --databases <scope> "<first-person phrase or bare word>" 100`.
-   Omit `--databases` only when the default corpus scope is intentional:
+   Omit `--databases` to search the whole installed federation:
    `roca vector query "<first-person phrase or bare word>" 100`. The
    mandatory loop always requests the top 100 hits. Hits print score, database,
    source table, and source id; one query can mix a declared plugin hit with a

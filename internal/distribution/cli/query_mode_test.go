@@ -255,7 +255,7 @@ func TestQueryFullAdoptsADegradedEmptyWidenedResult(t *testing.T) {
 	svc := scopedQueryModeService(t, model)
 
 	answer, err := answerQuery(t.Context(), svc,
-		service.QueryRequest{Question: queryModeQuestion}, true)
+		service.QueryRequest{Question: queryModeQuestion, Databases: []string{"corpus"}}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,6 +279,7 @@ func TestQueryFullBuffersWidenAndMergesQueryTelemetry(t *testing.T) {
 		scopedQueryModeService(t, &streamingQueryModeProvider{base}),
 		service.QueryRequest{
 			Question:            queryModeQuestion,
+			Databases:           []string{"corpus"},
 			InterpretationDelta: func(delta string) { deltas = append(deltas, delta) },
 		}, true)
 	if err != nil {

@@ -595,11 +595,10 @@ func TestQueryScopesTheSQLSeatAndFailsUnknownNames(t *testing.T) {
 		sqlOnly    bool
 	}{
 		{
-			name:       "default is corpus without ops noise",
+			name:       "default is the whole federation",
 			sql:        `SELECT 1 AS answer LIMIT 1`,
-			wantDBs:    []string{"core", "plugin:roca-corpus"},
-			wantPrompt: []string{"plugin_roca_corpus", "Attached databases not in this pass"},
-			hidePrompt: []string{"plugin_roca_ops", "plugin_well_formed"},
+			wantDBs:    []string{"core", "plugin:roca-ops", "plugin:roca-corpus", "plugin:well-formed"},
+			wantPrompt: []string{"plugin_roca_corpus", "plugin_roca_ops", "plugin_well_formed"},
 		},
 		{
 			name:       "explicit names widen the seat",
@@ -616,15 +615,17 @@ func TestQueryScopesTheSQLSeatAndFailsUnknownNames(t *testing.T) {
 			wantErr:   "unknown database \"nope\"; attached databases:",
 		},
 		{
-			name:    "empty scoped pass widens once",
-			sql:     `SELECT 1 AS answer WHERE 0 LIMIT 1`,
-			wantDBs: []string{"core", "plugin:roca-ops", "plugin:roca-corpus", "plugin:well-formed"},
-			widened: true,
+			name:      "narrowed empty pass widens once",
+			databases: []string{"corpus"},
+			sql:       `SELECT 1 AS answer WHERE 0 LIMIT 1`,
+			wantDBs:   []string{"core", "plugin:roca-ops", "plugin:roca-corpus", "plugin:well-formed"},
+			widened:   true,
 		},
 		{
 			name:       "sql only stays on the scoped pass",
+			databases:  []string{"corpus"},
 			sql:        `SELECT 1 AS answer WHERE 0 LIMIT 1`,
-			wantDBs:    []string{"core", "plugin:roca-corpus"},
+			wantDBs:    []string{"plugin:roca-corpus"},
 			wantPrompt: []string{"plugin_roca_corpus", "Attached databases not in this pass"},
 			hidePrompt: []string{"plugin_roca_ops", "plugin_well_formed"},
 			sqlOnly:    true,
@@ -679,7 +680,9 @@ func TestSuccessfulWideningDropsTheScopedPassAnswerState(t *testing.T) {
 		latency: 7, answers: []string{first, empty, widened},
 	}
 	svc := initializedScopedPlugins(t, paths, plugins, model)
-	result, err := svc.Query(t.Context(), service.QueryRequest{Question: "Which receipts were recorded?"})
+	result, err := svc.Query(t.Context(), service.QueryRequest{
+		Question: "Which receipts were recorded?", Databases: []string{"corpus"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

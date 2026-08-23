@@ -107,7 +107,7 @@ func TestExploreBuffersWidenAndMergesQueryTelemetry(t *testing.T) {
 	var announced service.QueryResult
 	var starts int
 	result, err := svc.Explore(t.Context(), service.ExploreRequest{QueryRequest: service.QueryRequest{
-		Question: "orbit",
+		Question: "orbit", Databases: []string{"corpus"},
 		InterpretationStart: func(_ bool, result service.QueryResult) {
 			starts++
 			announced = result

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/service"
 )
@@ -73,6 +74,26 @@ func TestSearchDoesNotLabelAnUnavailableVectorEngine(t *testing.T) {
 	result := mustHybridSearch(t, svc, "salud mental", false)
 	if strings.Join(result.Engines, ",") != "fts" {
 		t.Fatalf("engines = %v, want fts-only", result.Engines)
+	}
+}
+
+func TestSearchReturnsFTSWhenEmbeddingModelIsNotDownloaded(t *testing.T) {
+	started := time.Now()
+	svc := seededHybridService(t,
+		func(context.Context, string, int, string) (service.VectorHits, error) {
+			return service.VectorHits{Notices: []string{
+				"vector search unavailable: the embedding model is not downloaded",
+			}}, nil
+		})
+	result := mustHybridSearch(t, svc, "salud mental", false)
+	if strings.Join(result.Engines, ",") != "fts" {
+		t.Fatalf("engines = %v, want fts-only", result.Engines)
+	}
+	if !hybridHitContains(result, "salud mental") {
+		t.Fatalf("FTS results were lost while the model was downloading: %+v", result.Hits)
+	}
+	if time.Since(started) > 2*time.Second {
+		t.Fatalf("search blocked for %s waiting on a model download", time.Since(started))
 	}
 }
 
