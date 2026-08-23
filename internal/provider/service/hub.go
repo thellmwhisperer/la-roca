@@ -49,23 +49,23 @@ func installHubCompatibility(ctx context.Context, db *sql.DB, opsSchema, corpusS
 		 FROM ` + ops + `.memory_compatibility WHERE source_database = 'core'`,
 		`CREATE TEMP VIEW sessions AS SELECT session_id, source_agent, project, started_at,
 			ended_at, duration_minutes, title, metadata, source_surface
-		 FROM ` + corpus + `.session_version_memberships WHERE source_database = 'core'`,
-		`CREATE TEMP VIEW exchanges AS SELECT source_row_id AS id, session_id,
+		 FROM ` + corpus + `.sessions`,
+		`CREATE TEMP VIEW exchanges AS SELECT id, session_id,
 			exchange_number, is_after_compaction, human_text, agent_text, human_timestamp,
 			agent_timestamp, response_latency_ms, model, provider, tokens_in, tokens_out,
 			tokens_reasoning, cost_usd
-		 FROM ` + corpus + `.exchange_version_memberships WHERE source_database = 'core'`,
-		`CREATE TEMP VIEW tool_uses AS SELECT source_row_id AS id, session_id,
+		 FROM ` + corpus + `.exchanges`,
+		`CREATE TEMP VIEW tool_uses AS SELECT id, session_id,
 			exchange_number, tool_name, tool_params_summary, had_error, error_message,
 			initiative_type
-		 FROM ` + corpus + `.tool_use_version_memberships WHERE source_database = 'core'`,
-		`CREATE TEMP VIEW thinking_blocks AS SELECT source_row_id AS id, session_id,
+		 FROM ` + corpus + `.tool_uses`,
+		`CREATE TEMP VIEW thinking_blocks AS SELECT id, session_id,
 			exchange_number, position_in_session, depth, caution_ratio, word_count,
 			is_after_compaction, full_text
-		 FROM ` + corpus + `.thinking_block_version_memberships WHERE source_database = 'core'`,
+		 FROM ` + corpus + `.thinking_blocks`,
 		`CREATE TEMP VIEW ingest_file_state AS SELECT path, source_kind, source_agent,
 			project, fingerprint, last_synced_at, last_error, metadata
-		 FROM ` + corpus + `.ingest_file_state_version_memberships WHERE source_database = 'core'`,
+		 FROM ` + corpus + `.ingest_file_state`,
 		`CREATE TEMP TABLE layers (
 			name TEXT PRIMARY KEY, description TEXT NOT NULL, schema_file TEXT NOT NULL,
 			access_mode TEXT, ingest_allowed INTEGER, is_coordination INTEGER,
@@ -138,8 +138,7 @@ func (s *Service) buildHubSearch(ctx context.Context) (resultErr error) {
 		`CREATE TEMP TABLE hub_session_fts_content
 			 (rowid INTEGER PRIMARY KEY, title TEXT, project TEXT)`,
 		`INSERT INTO hub_session_fts_content(rowid, title, project)
-			 SELECT source_row_id, title, project FROM ` + quoteSchema(s.corpusSchema()) +
-			`.session_version_memberships WHERE source_database = 'core'`,
+			 SELECT rowid, title, project FROM ` + quoteSchema(s.corpusSchema()) + `.sessions`,
 		`CREATE VIRTUAL TABLE temp.sessions_fts USING fts5(title, project,
 			 content='hub_session_fts_content', content_rowid='rowid',
 			 tokenize='unicode61 remove_diacritics 2')`,

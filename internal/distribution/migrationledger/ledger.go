@@ -166,12 +166,8 @@ CREATE INDEX IF NOT EXISTS migration_batches_migration
   ON migration_batches(migration);
 CREATE INDEX IF NOT EXISTS custody_memberships_destination
   ON custody_memberships(destination_table, destination_key);
-CREATE INDEX IF NOT EXISTS custody_memberships_digest
-  ON custody_memberships(canonical_digest);
 CREATE INDEX IF NOT EXISTS custody_memberships_batch
   ON custody_memberships(migration, batch_id);
-CREATE INDEX IF NOT EXISTS custody_memberships_migration
-  ON custody_memberships(migration);
 `
 
 // batchKeyColumns and membershipKeyColumns are how many columns each custody

@@ -15,7 +15,6 @@ type familySpec struct {
 var archiveFamilies = []familySpec{
 	{
 		name: "sessions", destinationTable: "session_versions",
-		ftsTable: "session_versions_fts",
 		divergentSQL: `SELECT COUNT(*) FROM (
 			SELECT session_id FROM corpus_source_rows
 			WHERE source_table = 'sessions'
@@ -25,7 +24,6 @@ var archiveFamilies = []familySpec{
 	},
 	{
 		name: "exchanges", destinationTable: "exchange_versions",
-		ftsTable: "exchange_versions_fts",
 		divergentSQL: `SELECT COUNT(*) FROM (
 			SELECT session_id, exchange_number FROM corpus_source_rows
 			WHERE source_table = 'exchanges'
@@ -34,10 +32,7 @@ var archiveFamilies = []familySpec{
 			   AND COUNT(DISTINCT version_digest) > 1)`,
 	},
 	{name: "tool_uses", destinationTable: "tool_use_versions"},
-	{
-		name: "thinking_blocks", destinationTable: "thinking_block_versions",
-		ftsTable: "thinking_block_versions_fts",
-	},
+	{name: "thinking_blocks", destinationTable: "thinking_block_versions"},
 	{name: "ingest_file_state", destinationTable: "ingest_file_state_versions"},
 }
 
@@ -269,6 +264,33 @@ func reportDigest(report Report) (string, error) {
 		return "", err
 	}
 	return canonicalDigest("corpus-archive-reconciliation", legacy, string(encoded)), nil
+}
+
+// buildLegacyReport produces the reconciliation report and its legacy digest,
+// the pair Merge seals and Verify reproduces.
+func buildLegacyReport(ctx context.Context, destination *sql.DB,
+	sources []preparedSource,
+) (Report, string, error) {
+	report, err := buildReport(ctx, destination, sources)
+	if err != nil {
+		return report, "", err
+	}
+	ledgerDigest, err := legacyReportDigest(report)
+	if err != nil {
+		return report, "", err
+	}
+	return report, ledgerDigest, nil
+}
+
+// sealReportDigest computes the report's verification digest and stores it on
+// the report, returning the digest so the caller can record or verify it.
+func sealReportDigest(report *Report) (string, error) {
+	digest, err := reportDigest(*report)
+	if err != nil {
+		return "", err
+	}
+	report.VerificationDigest = digest
+	return digest, nil
 }
 
 func legacyReportDigest(report Report) (string, error) {

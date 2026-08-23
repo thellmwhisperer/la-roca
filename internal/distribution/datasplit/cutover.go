@@ -46,10 +46,6 @@ func PrepareHub(ctx context.Context, options HubOptions) (HubReport, error) {
 	if err != nil {
 		return HubReport{}, err
 	}
-	if eligibility.ready() {
-		return HubReport{Ready: true}, nil
-	}
-
 	report := HubReport{}
 	report.Memory, err = rocaops.MigrateMemoryCustody(ctx, rocaops.MemoryCustodyOptions{
 		CorePath: options.CoreDatabase, CorpusPath: options.CorpusDatabase,
@@ -63,23 +59,29 @@ func PrepareHub(ctx context.Context, options HubOptions) (HubReport, error) {
 	if coreSnapshot == "" || corpusSnapshot == "" {
 		return report, fmt.Errorf("DATA-2 did not publish the core and corpus snapshots")
 	}
+	coreDigest, digestErr := corpusarchive.SnapshotDigest(coreSnapshot)
+	if digestErr != nil {
+		return report, digestErr
+	}
+	corpusDigest, digestErr := corpusarchive.SnapshotDigest(corpusSnapshot)
+	if digestErr != nil {
+		return report, digestErr
+	}
+	corpusSources := []corpusarchive.Source{
+		{Database: "core", Path: coreSnapshot, SnapshotDigest: coreDigest},
+		{Database: "plugin:roca-corpus", Path: corpusSnapshot,
+			SnapshotDigest: corpusDigest, ExistingCorpus: true},
+	}
 	if !eligibility.corpus {
-		coreDigest, digestErr := corpusarchive.SnapshotDigest(coreSnapshot)
-		if digestErr != nil {
-			return report, digestErr
-		}
-		corpusDigest, digestErr := corpusarchive.SnapshotDigest(corpusSnapshot)
-		if digestErr != nil {
-			return report, digestErr
-		}
 		report.Corpus, err = corpusarchive.Merge(ctx, options.CorpusDatabase, []corpusarchive.Source{
-			{Database: "core", Path: coreSnapshot, SnapshotDigest: coreDigest},
-			{Database: "plugin:roca-corpus", Path: corpusSnapshot,
-				SnapshotDigest: corpusDigest, ExistingCorpus: true},
+			corpusSources[0], corpusSources[1],
 		}, corpusarchive.Options{})
 		if err != nil {
 			return report, fmt.Errorf("prepare DATA-3 corpus custody: %w", err)
 		}
+	} else if err := corpusarchive.MaterializeCurrent(ctx, options.CorpusDatabase,
+		corpusSources); err != nil {
+		return report, fmt.Errorf("materialize DATA-3 current corpus: %w", err)
 	}
 	if !eligibility.legacy {
 		report.Legacy, err = ImportLegacyOrphans(ctx, LegacyOptions{
