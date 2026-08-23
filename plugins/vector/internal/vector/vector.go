@@ -4,6 +4,7 @@ package vector
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -19,7 +20,7 @@ import (
 	"github.com/thellmwhisperer/la-roca-vector/internal/engine"
 	"github.com/thellmwhisperer/la-roca-vector/internal/telemetry"
 	"github.com/thellmwhisperer/la-roca/pkg/incrementality"
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 	_ "modernc.org/sqlite/vec"
 )
 
@@ -34,6 +35,20 @@ const (
 	// would otherwise spend one process per candidate to answer nothing.
 	maxUnresolvedCandidates = 32
 )
+
+const sourceFingerprintFunction = "roca_vector_source_fingerprint"
+const sourceProgressVersion = "source-v1"
+
+var sourceFingerprintRegistrationErr = sqlite.RegisterDeterministicScalarFunction(
+	sourceFingerprintFunction, -1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+		fields := make([]string, len(args))
+		for index, value := range args {
+			if value != nil {
+				fields[index] = fmt.Sprint(value)
+			}
+		}
+		return incrementality.ContentFingerprint(fields...), nil
+	})
 
 type Index struct {
 	Corpus      Corpus
@@ -117,6 +132,8 @@ type sourceRow struct {
 	chunkSize          int
 	overlap            int
 	fingerprintVersion string
+	sourceFingerprint  string
+	sourceChunks       int
 	sessionID          string
 	ordinal            int64
 	hasOrdinal         bool
@@ -145,14 +162,18 @@ type locator struct {
 }
 
 type desiredChunk struct {
-	sourceKind  string
-	sourceID    string
-	column      string
-	index       int
-	fingerprint string
-	locator     locator
-	text        string
-	occurredAt  string
+	sourceKind        string
+	sourceID          string
+	rawSourceID       string
+	column            string
+	index             int
+	fingerprint       string
+	sourceFingerprint string
+	sourceChunks      int
+	progressComplete  bool
+	locator           locator
+	text              string
+	occurredAt        string
 }
 
 type sourceOrderKey struct{}
@@ -163,9 +184,10 @@ type sourceOrder struct {
 }
 
 type storedChunk struct {
-	id          int64
-	sourceKind  string
-	fingerprint string
+	id                int64
+	sourceKind        string
+	fingerprint       string
+	sourceFingerprint string
 }
 
 const sessionEmbeddingTextVersion = "sessions-human-v2"
@@ -218,6 +240,11 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 	if err := ensureBaseSchema(store); err != nil {
 		return Delta{}, err
 	}
+	if sourceKind == "" {
+		if err := markSourceProgressKnown(ctx, store); err != nil {
+			return Delta{}, err
+		}
+	}
 	existing, model, dimensions, err := readIndexState(store)
 	if err != nil {
 		return Delta{}, err
@@ -260,6 +287,8 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 	type scanSummary struct {
 		sources, unchanged int
 		desired            map[string]string
+		chunks             map[string]desiredChunk
+		markers            map[string]desiredChunk
 		err                error
 	}
 	scanCtx, cancelScan := context.WithCancel(ctx)
@@ -273,7 +302,8 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 		existingSnapshot[key] = chunk
 	}
 	go func() {
-		summary := scanSummary{desired: make(map[string]string, len(existingSnapshot))}
+		summary := scanSummary{desired: make(map[string]string, len(existingSnapshot)),
+			chunks: make(map[string]desiredChunk, len(existingSnapshot)), markers: map[string]desiredChunk{}}
 		seenSources := map[string]bool{}
 		summary.err = i.Corpus.WalkSources(scanCtx, sourceKind, func(source sourceRow) error {
 			rowKey := source.kind + "\x00" + source.stableID()
@@ -285,12 +315,17 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 			for chunkIndex, text := range source.window() {
 				input := header + text
 				chunk := desiredChunk{
-					sourceKind: source.kind, sourceID: source.stableID(), column: source.column,
-					index: chunkIndex, fingerprint: source.embeddingFingerprint(input),
-					locator: source.locator(), text: input, occurredAt: source.occurredAt,
+					sourceKind: source.kind, sourceID: source.stableID(), rawSourceID: source.sourceID,
+					column: source.column,
+					index:  chunkIndex, fingerprint: source.embeddingFingerprint(input),
+					sourceFingerprint: source.sourceFingerprint, sourceChunks: source.sourceChunks,
+					progressComplete: sourceKind == "",
+					locator:          source.locator(), text: input, occurredAt: source.occurredAt,
 				}
 				key := chunkKey(chunk.sourceKind, chunk.sourceID, chunk.column, chunk.index)
 				summary.desired[key] = chunk.fingerprint
+				summary.chunks[key] = chunk
+				summary.markers[rowKey] = chunk
 				if old, ok := existingSnapshot[key]; ok && old.fingerprint == chunk.fingerprint {
 					summary.unchanged++
 					continue
@@ -401,6 +436,9 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 	if !embeddingStarted.IsZero() {
 		i.emitProgress(report, currentRange, embeddedChunks, max(discovered.Load(), embeddingTotal), embeddingStarted)
 	}
+	if err := syncSourceFingerprints(ctx, store, summary.chunks, existing); err != nil {
+		return Delta{}, err
+	}
 	if dimensions == 0 {
 		vectors, err := i.Embedder.Embed(telemetry.WithOperation(ctx, telemetry.OperationProbe), i.Model, []string{DocumentPrefix + "dimension probe"})
 		if err != nil {
@@ -416,6 +454,18 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 	}
 	if err := removeMissing(ctx, store, existing, desiredFingerprints, sourceKind, &report); err != nil {
 		return Delta{}, err
+	}
+	markers := make([]desiredChunk, 0, len(summary.markers))
+	for _, marker := range summary.markers {
+		markers = append(markers, marker)
+	}
+	if err := refreshSourceRecords(ctx, store, markers); err != nil {
+		return Delta{}, err
+	}
+	if sourceKind == "" {
+		if err := markSourceProgressKnown(ctx, store); err != nil {
+			return Delta{}, err
+		}
 	}
 	report.Chunks = report.Added + report.Updated + report.Unchanged
 	return report, nil
@@ -787,6 +837,9 @@ func chunkKey(kind, sourceID, column string, index int) string {
 }
 
 func openSQLite(path string, readOnly bool) (*sql.DB, error) {
+	if sourceFingerprintRegistrationErr != nil {
+		return nil, sourceFingerprintRegistrationErr
+	}
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
@@ -815,6 +868,7 @@ const chunksDDL = `CREATE TABLE IF NOT EXISTS chunks(
 			text_column TEXT NOT NULL DEFAULT '',
 			chunk_index INTEGER NOT NULL,
 			fingerprint TEXT NOT NULL,
+			source_fingerprint TEXT NOT NULL DEFAULT '',
 			locator TEXT NOT NULL,
 			updated_at TEXT NOT NULL DEFAULT (datetime('now')),
 			UNIQUE(source_kind, source_id, text_column, chunk_index)
@@ -830,6 +884,19 @@ func ensureBaseSchema(db *sql.DB) error {
 	}
 	if err := ensureChunksTable(db); err != nil {
 		return err
+	}
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS sources(
+			source_kind TEXT NOT NULL,
+			source_id TEXT NOT NULL,
+			raw_source_id TEXT NOT NULL,
+			source_fingerprint TEXT NOT NULL,
+			chunk_count INTEGER NOT NULL,
+			updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+			PRIMARY KEY(source_kind, source_id)
+		);
+		CREATE INDEX IF NOT EXISTS sources_content
+			ON sources(source_kind, raw_source_id, source_fingerprint);`); err != nil {
+		return fmt.Errorf("initialize vector source progress: %w", err)
 	}
 	var schema string
 	_ = db.QueryRow(`SELECT value FROM meta WHERE key='schema'`).Scan(&schema)
@@ -853,6 +920,11 @@ func ensureChunksTable(db *sql.DB) error {
 		return nil
 	}
 	if columns["text_column"] {
+		if !columns["source_fingerprint"] {
+			if _, err := db.Exec(`ALTER TABLE chunks ADD COLUMN source_fingerprint TEXT NOT NULL DEFAULT ''`); err != nil {
+				return fmt.Errorf("upgrade vector source progress: %w", err)
+			}
+		}
 		return nil
 	}
 	_, err = db.Exec(`CREATE TABLE chunks_v2(
@@ -862,12 +934,13 @@ func ensureChunksTable(db *sql.DB) error {
 			text_column TEXT NOT NULL DEFAULT '',
 			chunk_index INTEGER NOT NULL,
 			fingerprint TEXT NOT NULL,
+			source_fingerprint TEXT NOT NULL DEFAULT '',
 			locator TEXT NOT NULL,
 			updated_at TEXT NOT NULL DEFAULT (datetime('now')),
 			UNIQUE(source_kind, source_id, text_column, chunk_index)
 		);
-		INSERT INTO chunks_v2(id,source_kind,source_id,text_column,chunk_index,fingerprint,locator,updated_at)
-			SELECT id,source_kind,source_id,'',chunk_index,fingerprint,locator,updated_at FROM chunks;
+		INSERT INTO chunks_v2(id,source_kind,source_id,text_column,chunk_index,fingerprint,source_fingerprint,locator,updated_at)
+			SELECT id,source_kind,source_id,'',chunk_index,fingerprint,'',locator,updated_at FROM chunks;
 		DROP TABLE chunks;
 		ALTER TABLE chunks_v2 RENAME TO chunks;`)
 	if err != nil {
@@ -897,7 +970,15 @@ func tableColumns(db *sql.DB, table string) (map[string]bool, error) {
 
 func readIndexState(db *sql.DB) (map[string]storedChunk, string, int, error) {
 	state := map[string]storedChunk{}
-	rows, err := db.Query(`SELECT id, source_kind, source_id, COALESCE(text_column,''), chunk_index, fingerprint FROM chunks`)
+	columns, err := tableColumns(db, "chunks")
+	if err != nil {
+		return nil, "", 0, err
+	}
+	sourceFingerprint := "''"
+	if columns["source_fingerprint"] {
+		sourceFingerprint = "source_fingerprint"
+	}
+	rows, err := db.Query(`SELECT id, source_kind, source_id, COALESCE(text_column,''), chunk_index, fingerprint, ` + sourceFingerprint + ` FROM chunks`)
 	if err != nil {
 		return nil, "", 0, err
 	}
@@ -905,7 +986,7 @@ func readIndexState(db *sql.DB) (map[string]storedChunk, string, int, error) {
 		var item storedChunk
 		var kind, sourceID, column string
 		var index int
-		if err := rows.Scan(&item.id, &kind, &sourceID, &column, &index, &item.fingerprint); err != nil {
+		if err := rows.Scan(&item.id, &kind, &sourceID, &column, &index, &item.fingerprint, &item.sourceFingerprint); err != nil {
 			rows.Close()
 			return nil, "", 0, err
 		}
@@ -927,6 +1008,7 @@ func resetIndex(db *sql.DB) error {
 	_, err := db.Exec(`DROP TABLE IF EXISTS ann_embeddings;
 		DROP TABLE IF EXISTS embeddings;
 		DELETE FROM chunks;
+		DELETE FROM sources;
 		DELETE FROM meta WHERE key NOT IN ('schema','owner');
 		INSERT OR IGNORE INTO meta(key,value) VALUES ('schema','` + vectorStorageSchema + `');`)
 	if err != nil {
@@ -969,7 +1051,7 @@ func writeBatch(ctx context.Context, db *sql.DB, chunks []desiredChunk, vectors 
 			if err := deleteEmbeddings(ctx, tx, old.id); err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE chunks SET fingerprint=?,locator=?,text_column=?,updated_at=datetime('now') WHERE id=?`, chunk.fingerprint, string(where), chunk.column, old.id); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE chunks SET fingerprint=?,source_fingerprint=?,locator=?,text_column=?,updated_at=datetime('now') WHERE id=?`, chunk.fingerprint, chunk.sourceFingerprint, string(where), chunk.column, old.id); err != nil {
 				return err
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO embeddings(rowid,embedding) VALUES (?,?)`, old.id, vectorBlob(vectors[n])); err != nil {
@@ -979,11 +1061,12 @@ func writeBatch(ctx context.Context, db *sql.DB, chunks []desiredChunk, vectors 
 				return err
 			}
 			report.Updated++
-			existing[key] = storedChunk{id: old.id, sourceKind: chunk.sourceKind, fingerprint: chunk.fingerprint}
+			existing[key] = storedChunk{id: old.id, sourceKind: chunk.sourceKind, fingerprint: chunk.fingerprint,
+				sourceFingerprint: chunk.sourceFingerprint}
 			continue
 		}
-		result, err := tx.ExecContext(ctx, `INSERT INTO chunks(source_kind,source_id,text_column,chunk_index,fingerprint,locator) VALUES (?,?,?,?,?,?)`,
-			chunk.sourceKind, chunk.sourceID, chunk.column, chunk.index, chunk.fingerprint, string(where))
+		result, err := tx.ExecContext(ctx, `INSERT INTO chunks(source_kind,source_id,text_column,chunk_index,fingerprint,source_fingerprint,locator) VALUES (?,?,?,?,?,?,?)`,
+			chunk.sourceKind, chunk.sourceID, chunk.column, chunk.index, chunk.fingerprint, chunk.sourceFingerprint, string(where))
 		if err != nil {
 			return err
 		}
@@ -998,9 +1081,67 @@ func writeBatch(ctx context.Context, db *sql.DB, chunks []desiredChunk, vectors 
 			return err
 		}
 		report.Added++
-		existing[key] = storedChunk{id: id, sourceKind: chunk.sourceKind, fingerprint: chunk.fingerprint}
+		existing[key] = storedChunk{id: id, sourceKind: chunk.sourceKind, fingerprint: chunk.fingerprint,
+			sourceFingerprint: chunk.sourceFingerprint}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return refreshSourceRecords(ctx, db, chunks)
+}
+
+func refreshSourceRecords(ctx context.Context, db *sql.DB, chunks []desiredChunk) error {
+	rows := map[string]desiredChunk{}
+	for _, chunk := range chunks {
+		rows[chunk.sourceKind+"\x00"+chunk.sourceID] = chunk
+	}
+	wrote := false
+	for _, chunk := range rows {
+		var total, current int
+		if err := db.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(source_fingerprint=?),0)
+			FROM chunks WHERE source_kind=? AND source_id=?`, chunk.sourceFingerprint,
+			chunk.sourceKind, chunk.sourceID).Scan(&total, &current); err != nil {
+			return err
+		}
+		if total != chunk.sourceChunks || current != chunk.sourceChunks {
+			continue
+		}
+		if _, err := db.ExecContext(ctx, `INSERT INTO sources(source_kind,source_id,raw_source_id,source_fingerprint,chunk_count)
+			VALUES (?,?,?,?,?) ON CONFLICT(source_kind,source_id) DO UPDATE SET
+			raw_source_id=excluded.raw_source_id,source_fingerprint=excluded.source_fingerprint,
+			chunk_count=excluded.chunk_count,updated_at=datetime('now')`, chunk.sourceKind,
+			chunk.sourceID, chunk.rawSourceID, chunk.sourceFingerprint, chunk.sourceChunks); err != nil {
+			return err
+		}
+		wrote = wrote || chunk.progressComplete
+	}
+	if wrote {
+		return markSourceProgressKnown(ctx, db)
+	}
+	return nil
+}
+
+func markSourceProgressKnown(ctx context.Context, db *sql.DB) error {
+	_, err := db.ExecContext(ctx, `INSERT OR REPLACE INTO meta(key,value) VALUES ('progress_identity',?)`,
+		sourceProgressVersion)
+	return err
+}
+
+func syncSourceFingerprints(ctx context.Context, db *sql.DB,
+	chunks map[string]desiredChunk, existing map[string]storedChunk) error {
+	for key, chunk := range chunks {
+		old, ok := existing[key]
+		if !ok || old.sourceFingerprint == chunk.sourceFingerprint {
+			continue
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE chunks SET source_fingerprint=?,updated_at=datetime('now') WHERE id=?`,
+			chunk.sourceFingerprint, old.id); err != nil {
+			return err
+		}
+		old.sourceFingerprint = chunk.sourceFingerprint
+		existing[key] = old
+	}
+	return nil
 }
 
 func removeMissing(ctx context.Context, db *sql.DB, existing map[string]storedChunk,
@@ -1272,8 +1413,10 @@ func buildCompactedStore(ctx context.Context, target *sql.DB, sourcePath, model 
 		sql  string
 	}{
 		{"metadata", `INSERT OR REPLACE INTO main.meta(key,value) SELECT key,value FROM source.meta`},
-		{"chunk identities", `INSERT INTO main.chunks(id,source_kind,source_id,text_column,chunk_index,fingerprint,locator,updated_at)
-			SELECT id,source_kind,source_id,COALESCE(text_column,''),chunk_index,fingerprint,locator,updated_at FROM source.chunks ORDER BY id`},
+		{"chunk identities", `INSERT INTO main.chunks(id,source_kind,source_id,text_column,chunk_index,fingerprint,source_fingerprint,locator,updated_at)
+			SELECT id,source_kind,source_id,COALESCE(text_column,''),chunk_index,fingerprint,source_fingerprint,locator,updated_at FROM source.chunks ORDER BY id`},
+		{"source progress", `INSERT INTO main.sources(source_kind,source_id,raw_source_id,source_fingerprint,chunk_count,updated_at)
+			SELECT source_kind,source_id,raw_source_id,source_fingerprint,chunk_count,updated_at FROM source.sources`},
 		{"float embeddings", `INSERT INTO main.embeddings(rowid,embedding)
 			SELECT rowid,vec_f32(embedding) FROM source.embeddings`},
 		{"ANN embeddings", `INSERT INTO main.ann_embeddings(rowid,embedding)

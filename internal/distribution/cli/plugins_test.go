@@ -26,10 +26,10 @@ func TestPluginsResolveFromAControlledPathAndNeverTheCurrentDirectory(t *testing
 	t.Chdir(cwd)
 	t.Setenv("PATH", cwd+string(os.PathListSeparator)+fixtures)
 
-	if _, found := findPlugin("local"); found {
+	if _, found := resolveCompanion("local", ""); found {
 		t.Fatal("resolved a plugin from the current directory")
 	}
-	path, found := findPlugin("demo")
+	path, found := resolveCompanion("demo", "")
 	if !found || path != filepath.Join(fixtures, "roca-demo") {
 		t.Fatalf("demo plugin = %q, found=%v", path, found)
 	}
@@ -45,14 +45,18 @@ func TestVectorExecutableLifecycleRemainsReachableWhenSearchIsDisabled(t *testin
 		pluginRoot, directory, "synthetic-version", []byte("#!/bin/sh\nexit 0\n")); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", directory)
-	root := rootCommand(&cliEnv{})
+	t.Setenv("PATH", "")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ROCA_PREFIX", directory)
+	env := &cliEnv{}
+	root := rootCommand(env)
 
-	if handled, _, err := dispatchPlugin(root, []string{"vector"}, config.FeaturesConfig{}); handled || err != nil {
+	if handled, _, err := dispatchPlugin(env, root, []string{"vector"}, config.FeaturesConfig{}); handled || err != nil {
 		t.Fatalf("disabled vector dispatch = handled %v, err %v", handled, err)
 	}
 	for _, verb := range []string{"install", "status"} {
-		if handled, code, err := dispatchPlugin(root, []string{"vector", verb}, config.FeaturesConfig{}); !handled || code != ExitOK || err != nil {
+		if handled, code, err := dispatchPlugin(env, root, []string{"vector", verb}, config.FeaturesConfig{}); !handled || code != ExitOK || err != nil {
 			t.Fatalf("disabled vector %s = handled %v, code %d, err %v", verb, handled, code, err)
 		}
 	}
@@ -60,12 +64,12 @@ func TestVectorExecutableLifecycleRemainsReachableWhenSearchIsDisabled(t *testin
 		{"vector", "--json", "status"},
 		{"vector", "--db-path", filepath.Join(t.TempDir(), "roca.db"), "install"},
 	} {
-		if handled, code, err := dispatchPlugin(root, command, config.FeaturesConfig{}); !handled || code != ExitOK || err != nil {
+		if handled, code, err := dispatchPlugin(env, root, command, config.FeaturesConfig{}); !handled || code != ExitOK || err != nil {
 			t.Fatalf("disabled vector lifecycle flags %v = handled %v, code %d, err %v",
 				command, handled, code, err)
 		}
 	}
-	if handled, _, err := dispatchPlugin(root, []string{"vector", "query"}, config.FeaturesConfig{}); handled || err != nil {
+	if handled, _, err := dispatchPlugin(env, root, []string{"vector", "query"}, config.FeaturesConfig{}); handled || err != nil {
 		t.Fatalf("disabled vector query = handled %v, err %v", handled, err)
 	}
 	if plugins := listPlugins(config.FeaturesConfig{}); len(plugins) != 0 {
@@ -73,11 +77,11 @@ func TestVectorExecutableLifecycleRemainsReachableWhenSearchIsDisabled(t *testin
 	}
 
 	enabled := config.FeaturesConfig{Vector: true}
-	if handled, code, err := dispatchPlugin(root, []string{"vector"}, enabled); !handled || code != ExitOK || err != nil {
+	if handled, code, err := dispatchPlugin(env, root, []string{"vector"}, enabled); !handled || code != ExitOK || err != nil {
 		t.Fatalf("enabled vector dispatch = handled %v, code %d, err %v", handled, code, err)
 	}
-	if plugins := listPlugins(enabled); len(plugins) != 1 || plugins[0].Name != "vector" {
-		t.Fatalf("enabled vector listing = %+v", plugins)
+	if plugins := listPlugins(enabled); len(plugins) != 0 {
+		t.Fatalf("managed vector appeared in the PATH-only listing: %+v", plugins)
 	}
 }
 

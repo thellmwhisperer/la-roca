@@ -1011,7 +1011,20 @@ func (i *declaredTableIterator) advance(ctx context.Context) error {
 				size, overlap := i.table.chunking()
 				row.chunkSize, row.overlap = size, overlap
 			}
-			i.rows = append(i.rows, expandColumnRows(row, i.table.TextColumns, value)...)
+			fields := []string{i.table.embeddingContractFingerprint(), id, row.title, row.project, row.occurredAt}
+			for _, column := range i.table.TextColumns {
+				fields = append(fields, stringValue(value[column]))
+			}
+			row.sourceFingerprint = incrementality.ContentFingerprint(fields...)
+			expanded := expandColumnRows(row, i.table.TextColumns, value)
+			chunks := 0
+			for _, item := range expanded {
+				chunks += len(item.window())
+			}
+			for index := range expanded {
+				expanded[index].sourceChunks = chunks
+			}
+			i.rows = append(i.rows, expanded...)
 		}
 	}
 }
@@ -1651,7 +1664,7 @@ func (f Federation) HistoryProgress(ctx context.Context) (Progress, error) {
 			return Progress{}, err
 		}
 		databasePath := f.databasePath(database)
-		read, err := countIndexedSources(ctx, reader, SidecarPath(databasePath))
+		read, err := countIndexedSources(ctx, database, databasePath, SidecarPath(databasePath))
 		if err != nil {
 			return Progress{}, err
 		}
@@ -1667,49 +1680,66 @@ func (f Federation) HistoryProgress(ctx context.Context) (Progress, error) {
 
 // countIndexedSources counts source rows whose current text the index holds,
 // and a sidecar that is not there yet is zero read rather than an error.
-func countIndexedSources(ctx context.Context, reader DeclaredCorpus, sidecarPath string) (int, error) {
+func countIndexedSources(ctx context.Context, database vectorDatabase,
+	databasePath, sidecarPath string) (int, error) {
 	if _, err := os.Stat(sidecarPath); err != nil {
 		if os.IsNotExist(err) {
 			return 0, nil
 		}
 		return 0, err
 	}
-	store, err := openSQLite(sidecarPath, true)
+	store, err := openSQLite(databasePath, true)
 	if err != nil {
-		return 0, fmt.Errorf("open vector sidecar %s: %w", filepath.Base(sidecarPath), err)
+		return 0, fmt.Errorf("open vector source %s: %w", filepath.Base(databasePath), err)
 	}
 	defer store.Close()
-	indexed, _, _, err := readIndexState(store)
-	if err != nil && strings.Contains(fmt.Sprint(err), "no such table: chunks") {
-		return 0, nil
+	if _, err := store.ExecContext(ctx, `ATTACH DATABASE ? AS vector_sidecar`, sidecarPath); err != nil {
+		return 0, fmt.Errorf("attach vector sidecar %s: %w", filepath.Base(sidecarPath), err)
 	}
-	if err != nil {
-		return 0, fmt.Errorf("read indexed rows in %s: %w", filepath.Base(sidecarPath), err)
-	}
-	current := map[string]bool{}
-	err = reader.WalkSources(ctx, "", func(source sourceRow) error {
-		rowKey := source.kind + "\x00" + source.stableID()
-		if _, exists := current[rowKey]; !exists {
-			current[rowKey] = true
-		}
-		header := source.header()
-		for index, text := range source.window() {
-			key := chunkKey(source.kind, source.stableID(), source.column, index)
-			stored, exists := indexed[key]
-			if !exists || stored.fingerprint != source.embeddingFingerprint(header+text) {
-				current[rowKey] = false
-			}
-		}
-		return nil
-	})
-	if err != nil {
+	var sourceTable int
+	if err := store.QueryRowContext(ctx, `SELECT COUNT(*) FROM vector_sidecar.sqlite_master
+		WHERE type='table' AND name='sources'`).Scan(&sourceTable); err != nil {
 		return 0, err
 	}
+	if sourceTable == 0 {
+		return 0, fmt.Errorf("vector progress identity is unavailable")
+	}
+	var progressIdentity string
+	if err := store.QueryRowContext(ctx, `SELECT value FROM vector_sidecar.meta
+		WHERE key='progress_identity'`).Scan(&progressIdentity); err != nil || progressIdentity != sourceProgressVersion {
+		return 0, fmt.Errorf("vector progress identity is unavailable")
+	}
 	read := 0
-	for _, matches := range current {
-		if matches {
-			read++
+	direct := database
+	direct.Alias = "main"
+	reader := DeclaredCorpus{Database: direct}
+	catalog := make(map[string]map[string]bool, len(database.Tables))
+	for _, table := range database.Tables {
+		catalog[table.Name] = table.availableColumns()
+	}
+	for _, table := range database.Tables {
+		contextSQL, join, _ := reader.contextSQL(table, catalog)
+		inner := fmt.Sprintf(`SELECT CAST(src.%s AS TEXT) AS source_id%s%s
+			FROM main.%s src%s WHERE %s`, quoteIdentifier(table.IDColumn),
+			declaredColumnSelect("src", table.TextColumns), contextSQL,
+			quoteIdentifier(table.Name), join, declaredSourcePredicate("src", table))
+		fields := []string{sqlLiteral(table.embeddingContractFingerprint()), "source_id",
+			"context_title", "context_project", "context_time"}
+		for _, column := range table.TextColumns {
+			fields = append(fields, fmt.Sprintf("COALESCE(CAST(%s AS TEXT),'')", quoteIdentifier(column)))
 		}
+		statement := fmt.Sprintf(`WITH declared AS (%s), current_rows AS (
+			SELECT source_id,%s(%s) AS source_fingerprint FROM declared)
+			SELECT COUNT(*) FROM current_rows JOIN vector_sidecar.sources progress
+			ON progress.source_kind=%s AND progress.raw_source_id=current_rows.source_id
+			AND progress.source_fingerprint=current_rows.source_fingerprint`, inner,
+			sourceFingerprintFunction, strings.Join(fields, ","), sqlLiteral(table.Name))
+		var count int
+		if err := store.QueryRowContext(ctx, statement).Scan(&count); err != nil {
+			return 0, fmt.Errorf("count indexed rows in %s/%s: %w",
+				database.owner(), table.Name, err)
+		}
+		read += count
 	}
 	return read, nil
 }

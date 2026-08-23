@@ -381,7 +381,7 @@ func (env *cliEnv) offerSemanticSearch(ctx context.Context, input *bufio.Reader,
 	}
 	executable, err := env.ensureBundledVectorForInit(paths)
 	if err != nil {
-		env.renderSemanticSearchSetupFailure(false)
+		env.renderSemanticSearchSetupFailure(paths)
 		return nil
 	}
 	env.initSay("word search already answers, but exact words only find part of your history")
@@ -394,7 +394,7 @@ func (env *cliEnv) offerSemanticSearch(ctx context.Context, input *bufio.Reader,
 	}
 	if enabled {
 		if err := env.startSemanticSearchSetup(ctx, executable); err != nil {
-			env.renderSemanticSearchSetupFailure(executable != "")
+			env.renderSemanticSearchSetupFailure(paths)
 			return nil
 		}
 	}
@@ -472,9 +472,9 @@ func (env *cliEnv) startSemanticSearchSetup(ctx context.Context, path string) er
 	return nil
 }
 
-func (env *cliEnv) renderSemanticSearchSetupFailure(companionReady bool) {
+func (env *cliEnv) renderSemanticSearchSetupFailure(paths config.Paths) {
 	env.print("semantic search: setup did not start; word search keeps answering")
-	if companionReady {
+	if _, found := resolveCompanion("vector", pluginExecutableDir(paths)); found {
 		env.print("  next step: `roca vector install`")
 		return
 	}

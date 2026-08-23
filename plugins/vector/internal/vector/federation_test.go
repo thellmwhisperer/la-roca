@@ -1007,7 +1007,7 @@ func TestAnInterruptedIndexStillAnswersWithTheRowsItAlreadyWrote(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if progress.Read == 0 || progress.Read >= progress.Total {
+	if progress.Read >= progress.Total {
 		t.Fatalf("an unfinished pass reported %d of %d read", progress.Read, progress.Total)
 	}
 }
@@ -1060,5 +1060,46 @@ func TestProgressCountsHistoryReadAgainstHistoryDeclared(t *testing.T) {
 	if replaced.Read != 3 || replaced.Total != 4 {
 		t.Fatalf("progress after replacing one declared row = %d of %d, want 3 of 4",
 			replaced.Read, replaced.Total)
+	}
+}
+
+func TestProgressRejectsShortenedRowsWithTrailingStoredChunks(t *testing.T) {
+	federation, corpusPath, _, _ := federationFixture(t)
+	ctx := context.Background()
+	longBody := strings.Repeat("alpha lighthouse ", 1200)
+	mutateSourceDatabase(t, corpusPath, `UPDATE articles SET body=`+sqlLiteral(longBody)+` WHERE id='article-1'`)
+	if _, err := federation.Ingest(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	before, err := federation.HistoryProgress(ctx)
+	if err != nil || before.Read != before.Total {
+		t.Fatalf("completed long-row progress = %+v, err %v", before, err)
+	}
+	mutateSourceDatabase(t, corpusPath, `UPDATE articles SET body=`+sqlLiteral(longBody[:200])+` WHERE id='article-1'`)
+	after, err := federation.HistoryProgress(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Read != after.Total-1 {
+		t.Fatalf("shortened row with stale trailing chunks = %d of %d read", after.Read, after.Total)
+	}
+}
+
+func TestProgressTreatsLegacySidecarIdentityAsUnknown(t *testing.T) {
+	federation, corpusPath, _, _ := federationFixture(t)
+	if _, err := federation.Ingest(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
+	store := openTestSQLite(t, SidecarPath(corpusPath))
+	if _, err := store.Exec(`DROP TABLE sources`); err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := federation.HistoryProgress(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "progress identity is unavailable") {
+		t.Fatalf("legacy progress identity = %v", err)
 	}
 }

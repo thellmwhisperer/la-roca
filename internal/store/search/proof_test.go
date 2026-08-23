@@ -49,6 +49,20 @@ func TestProofSaysEmptyRatherThanBrokenOnAFreshDatabase(t *testing.T) {
 	}
 }
 
+func TestProofTreatsTokenlessHistoryAsNothingSearchable(t *testing.T) {
+	ctx := context.Background()
+	db := openWorld(t)
+	writeTo(t, db, `INSERT INTO memories (layer, content, origin) VALUES ('discovery', '😀', 'agent')`)
+
+	proof, err := search.Prove(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proof.Ready || !proof.Empty || proof.Word != "" {
+		t.Fatalf("tokenless history became a word-search fault: %+v", proof)
+	}
+}
+
 // An index that was never built is a fault with a name. Reporting it as empty
 // would tell somebody with a full database that they have nothing.
 func TestProofRefusesToCallAnEmptiedIndexEmpty(t *testing.T) {

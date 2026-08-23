@@ -214,6 +214,8 @@ func TestSemanticSetupFailuresKeepConfigurationAndInitSuccessful(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			root := t.TempDir()
 			t.Setenv("HOME", root)
+			managed := filepath.Join(root, "managed-bin")
+			t.Setenv("ROCA_PREFIX", managed)
 			installVectorFixture(t, root, testCase.fixture)
 			path := filepath.Join(root, "config.toml")
 			t.Setenv("ROCA_CONFIG", path)
@@ -231,7 +233,9 @@ func TestSemanticSetupFailuresKeepConfigurationAndInitSuccessful(t *testing.T) {
 			if !strings.Contains(output, "`roca vector install`") {
 				t.Fatalf("failed setup did not name the installed recovery command: %q", output)
 			}
-			installVectorFixture(t, root, "#!/bin/sh\nexit 0\n")
+			if err := os.WriteFile(filepath.Join(managed, "roca-vector"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
 			var recoveryOutput bytes.Buffer
 			code, err := executeWithOptions(&cliEnv{out: &recoveryOutput, errOut: &recoveryOutput},
 				[]string{"vector", "install"}, nil, true)
@@ -253,6 +257,7 @@ func TestSemanticCompanionPlacementFailureKeepsConfigurationAndInitSuccessful(t 
 		t.Fatal(err)
 	}
 	t.Setenv("ROCA_PREFIX", prefix)
+	t.Setenv("PATH", "")
 	paths, err := config.Resolve(config.Input{Home: home})
 	if err != nil {
 		t.Fatal(err)
@@ -308,7 +313,7 @@ func TestMissingBundledCompanionNeverExecutesAPathFallback(t *testing.T) {
 	if got := string(mustRead(t, path)); got != before {
 		t.Fatalf("missing payload changed configuration: %q", got)
 	}
-	if !strings.Contains(output.String(), "`roca init`") || strings.Count(output.String(), "next step:") != 1 {
+	if !strings.Contains(output.String(), "`roca vector install`") || strings.Count(output.String(), "next step:") != 1 {
 		t.Fatalf("missing payload recovery output = %q", output.String())
 	}
 }
@@ -404,7 +409,7 @@ func runSemanticConsent(t *testing.T, path, answer string) string {
 	t.Setenv("CI", "")
 	var out, errOut bytes.Buffer
 	var payload []byte
-	if fixture, found := findPlugin("vector"); found {
+	if fixture, found := resolveCompanion("vector", ""); found {
 		payload, _ = os.ReadFile(fixture)
 	}
 	env := &cliEnv{out: &out, errOut: &errOut, bundledVectorPayload: payload}

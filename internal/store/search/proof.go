@@ -9,19 +9,19 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/store"
 )
 
-// proofLimit bounds the probe. The question is whether the index answers, not
+// ProofLimit bounds the probe. The question is whether the index answers, not
 // how many rows it holds, and a MATCH counted to the end of a real corpus is a
 // full scan paid for a yes or no.
-const proofLimit = 50
+const ProofLimit = 50
 
 // Proof is the round trip a first run completes before it says word search
 // works: a word taken from a row this database already holds, asked back of the
 // lexical index, and found there.
 //
 // The three outcomes are different states, not degrees of the same one. Ready
-// is the index answering. Empty is a machine with no agent history yet, which
-// is nothing to fix. Neither of those, and the index did not answer for text it
-// is supposed to hold, which is the one the operator has to see.
+// is the index answering. Empty is a machine with no searchable words yet,
+// which is nothing to fix. Neither of those, and the index did not answer for
+// text it is supposed to hold, which is the one the operator has to see.
 type Proof struct {
 	Ready   bool   `json:"ready"`
 	Word    string `json:"word,omitempty"`
@@ -106,7 +106,7 @@ func ProveSources(ctx context.Context, db *store.DB, sources []ProofSource) (Pro
 			}
 			if ready == nil {
 				candidate := Proof{Ready: true, Word: word, Matches: matches,
-					Capped: matches >= proofLimit}
+					Capped: matches >= ProofLimit}
 				ready = &candidate
 			}
 		}
@@ -115,17 +115,17 @@ func ProveSources(ctx context.Context, db *store.DB, sources []ProofSource) (Pro
 		return *ready, nil
 	}
 	if hasRows {
-		return Proof{Reason: "agent history is present but contains no searchable words"}, nil
+		return EmptyProof(), nil
 	}
 	return EmptyProof(), nil
 }
 
-// EmptyProof is the answer for a machine that has no agent history yet. Nothing
-// to search is a fact about the machine, not a fault in the index, and a caller
-// proving several databases needs one wording for it.
+// EmptyProof is the answer for a machine that has no searchable words yet.
+// Nothing to search is a fact about the machine, not a fault in the index, and
+// a caller proving several databases needs one wording for it.
 func EmptyProof() Proof {
 	return Proof{Empty: true,
-		Reason: "there is no agent history on this machine to search yet"}
+		Reason: "there is nothing searchable in this machine's agent history yet"}
 }
 
 func indexedColumns(ctx context.Context, db *store.DB, source ProofSource) ([]string, error) {
@@ -182,7 +182,7 @@ func quoteProofIdentifier(identifier string) string {
 func countMatches(ctx context.Context, db *store.DB, index, word string) (int, error) {
 	statement := fmt.Sprintf(
 		`SELECT COUNT(*) FROM (SELECT rowid FROM %[1]s WHERE %[1]s MATCH ? LIMIT %[2]d)`,
-		index, proofLimit)
+		index, ProofLimit)
 	var matches int
 	if err := db.SQL().QueryRowContext(ctx, statement,
 		MatchExpression(word, MatchAll)).Scan(&matches); err != nil {
@@ -212,4 +212,9 @@ func probeWord(text string) string {
 		return best
 	}
 	return fallback
+}
+
+// ProbeWord selects the word a lexical proof should ask back from source text.
+func ProbeWord(text string) string {
+	return probeWord(text)
 }

@@ -126,6 +126,17 @@ func emptyWordIndex(t *testing.T, path string, refuseRepair bool) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	var held int
+	for _, table := range []string{"memories", "exchanges", "thinking_blocks", "sessions"} {
+		var rows int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&rows); err != nil {
+			t.Fatal(err)
+		}
+		held += rows
+	}
+	if held == 0 {
+		t.Fatal("corpus repair fixture contains no source rows")
+	}
 	for _, table := range []string{"memories_fts", "exchanges_fts", "thinking_fts", "sessions_fts"} {
 		if _, err := db.Exec(`INSERT INTO ` + table + `(` + table + `) VALUES ('delete-all')`); err != nil {
 			t.Fatal(err)

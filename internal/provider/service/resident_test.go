@@ -62,6 +62,50 @@ func TestWordProofIncludesAndRebuildsOperationalHistory(t *testing.T) {
 	}
 }
 
+func TestWordProofIncludesBrokenCorpusBesideHealthyCore(t *testing.T) {
+	svc := corpusResidentService(t)
+	if _, err := svc.Init(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.db.SQL().Exec(`INSERT INTO memories (layer, content, origin)
+		VALUES ('fact', 'healthy core lighthouse', 'agent')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.corpus.SQL().Exec(`INSERT INTO memories (layer, content, origin)
+		VALUES ('fact', 'broken corpus harbour', 'agent')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.corpus.SQL().Exec(`INSERT INTO memories_fts(memories_fts) VALUES('delete-all')`); err != nil {
+		t.Fatal(err)
+	}
+	proof := svc.proveWordSearch(t.Context())
+	if proof.Ready || proof.Empty || proof.Word == "" {
+		t.Fatalf("healthy core masked corpus failure: %+v", proof)
+	}
+}
+
+func TestInitDoesNotRebuildTokenlessHistory(t *testing.T) {
+	var progress []string
+	options := residentTestOptions(t)
+	options.Progress = func(line string) { progress = append(progress, line) }
+	svc, err := openWithContext(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = svc.Close() })
+	if _, err := svc.ops.SQL().Exec(`INSERT INTO memories (layer, content, origin)
+		VALUES ('handoff', '😀', 'agent')`); err != nil {
+		t.Fatal(err)
+	}
+	result, err := svc.Init(t.Context())
+	if err != nil || result.WordSearch == nil || result.WordSearch.Ready || !result.WordSearch.Empty {
+		t.Fatalf("tokenless init proof = %+v, err %v", result.WordSearch, err)
+	}
+	if strings.Contains(strings.Join(progress, "\n"), "rebuilding the full-text index") {
+		t.Fatalf("tokenless history triggered a rebuild: %v", progress)
+	}
+}
+
 func TestResidentQueriesAcquireIndependentReadConnections(t *testing.T) {
 	svc, err := openWithContext(t.Context(), residentTestOptions(t))
 	if err != nil {
