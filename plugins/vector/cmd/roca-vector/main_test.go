@@ -35,6 +35,9 @@ func (e *countingPullEmbedder) Embed(context.Context, string, []string) ([][]flo
 }
 
 func TestInstallLaunchesThePluginBinaryIntoManifestOwnedState(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ROCA_VECTOR_PLUGIN_ROOT", "")
 	oldLaunch, oldExecutable, oldEmbedder := launchWorker, currentExecutable, newEmbedder
 	t.Cleanup(func() {
 		launchWorker, currentExecutable, newEmbedder = oldLaunch, oldExecutable, oldEmbedder
@@ -48,7 +51,8 @@ func TestInstallLaunchesThePluginBinaryIntoManifestOwnedState(t *testing.T) {
 	}
 	currentExecutable = func() (string, error) { return "/synthetic/roca-vector", nil }
 	state := filepath.Join(t.TempDir(), "state")
-	env := &environment{dbPath: "/synthetic/roca.db", stateDir: state}
+	t.Setenv("ROCA_VECTOR_STATE_DIR", state)
+	env := &environment{dbPath: "/synthetic/roca.db"}
 	root := rootCommand(env)
 	root.SetArgs([]string{"install"})
 	if err := root.Execute(); err != nil {
@@ -58,6 +62,10 @@ func TestInstallLaunchesThePluginBinaryIntoManifestOwnedState(t *testing.T) {
 	if request.Executable != "/synthetic/roca-vector" || request.DataDir != state ||
 		!slices.Equal(request.Arguments, want) {
 		t.Fatalf("launch request = %+v, want args %q", request, want)
+	}
+	wantRoot := "ROCA_VECTOR_PLUGIN_ROOT=" + filepath.Join(home, ".roca", "plugins")
+	if !slices.Contains(request.Environment, wantRoot) {
+		t.Fatalf("worker environment = %q, want %q", request.Environment, wantRoot)
 	}
 	if embedder.pulls != 0 {
 		t.Fatalf("install blocked on %d foreground model downloads", embedder.pulls)

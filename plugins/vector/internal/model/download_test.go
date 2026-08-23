@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -100,6 +101,41 @@ func TestEnsureRejectsHashMismatchAndLeavesNoPartial(t *testing.T) {
 		if strings.HasSuffix(entry.Name(), ".partial") {
 			t.Fatalf("partial survived a failed download: %s", entry.Name())
 		}
+	}
+}
+
+func TestEnsureRetriesIntegrityFailureWithinOneInstall(t *testing.T) {
+	payload := []byte("pinned-embedding-model")
+	sum := sha256.Sum256(payload)
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if hits.Add(1) == 1 {
+			_, _ = w.Write(append(slices.Clone(payload), []byte("corrupt")...))
+			return
+		}
+		_, _ = w.Write(payload)
+	}))
+	t.Cleanup(server.Close)
+
+	root := t.TempDir()
+	path, err := Ensure(context.Background(), root, Manifest{
+		ID: ID, SHA256: hex.EncodeToString(sum[:]), Bytes: int64(len(payload)), URL: server.URL,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hits.Load() != 2 {
+		t.Fatalf("download attempts = %d, want one internal retry", hits.Load())
+	}
+	stored, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(stored, payload) {
+		t.Fatalf("stored bytes = %q, want the pinned payload", stored)
+	}
+	if _, err := os.Stat(path + ".partial"); !os.IsNotExist(err) {
+		t.Fatalf("partial survived successful retry: %v", err)
 	}
 }
 

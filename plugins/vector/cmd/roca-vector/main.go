@@ -85,6 +85,10 @@ func installCommand(env *environment) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("locate roca-vector: %w", err)
 			}
+			pluginRoot, err := env.resolvePluginRoot()
+			if err != nil {
+				return err
+			}
 			arguments := workerArguments(env.dbPath, state, model)
 			var progress *os.File
 			if !env.json || streamProgress {
@@ -92,6 +96,7 @@ func installCommand(env *environment) *cobra.Command {
 			}
 			result, err := launchWorker(vector.LaunchRequest{
 				Executable: executable, Arguments: arguments, DataDir: state, Progress: progress,
+				Environment: []string{"ROCA_VECTOR_PLUGIN_ROOT=" + pluginRoot},
 			})
 			if err != nil {
 				return err

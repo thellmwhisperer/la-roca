@@ -52,13 +52,20 @@ func Ensure(ctx context.Context, dataDir string, manifest Manifest, sink engine.
 	}
 	_ = os.Remove(path)
 	partial := path + ".partial"
-	if err := download(ctx, manifest, partial, sink); err != nil {
+	var verifyErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := download(ctx, manifest, partial, sink); err != nil {
+			_ = os.Remove(partial)
+			return "", err
+		}
+		verifyErr = verifyFile(partial, manifest.SHA256, manifest.Bytes)
+		if verifyErr == nil {
+			break
+		}
 		_ = os.Remove(partial)
-		return "", err
 	}
-	if err := verifyFile(partial, manifest.SHA256, manifest.Bytes); err != nil {
-		_ = os.Remove(partial)
-		return "", err
+	if verifyErr != nil {
+		return "", verifyErr
 	}
 	if err := os.Rename(partial, path); err != nil {
 		_ = os.Remove(partial)

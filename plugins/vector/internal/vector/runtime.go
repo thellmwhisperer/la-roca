@@ -90,10 +90,11 @@ func writeCompletion(directory string, completion Completion) error {
 }
 
 type LaunchRequest struct {
-	Executable string
-	Arguments  []string
-	DataDir    string
-	Progress   *os.File
+	Executable  string
+	Arguments   []string
+	DataDir     string
+	Progress    *os.File
+	Environment []string
 }
 
 type LaunchResult struct {
@@ -176,6 +177,7 @@ func Launch(request LaunchRequest) (LaunchResult, error) {
 	}
 	defer devNull.Close()
 	command := exec.Command(request.Executable, request.Arguments...)
+	command.Env = append(os.Environ(), request.Environment...)
 	command.Stdin, command.Stdout, command.Stderr = devNull, log, log
 	if request.Progress != nil && runtime.GOOS != "windows" {
 		command.ExtraFiles = []*os.File{request.Progress}

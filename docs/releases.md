@@ -11,9 +11,10 @@ uploads release artefacts.
 
 Each release carries four `roca` binaries, each with its matching vector
 executable embedded for installation, plus the four existing
-`roca-vector-vX.Y.Z-<platform>.tar.gz` standalone archives. Semantic search is
-available in the macOS ARM64 and Linux releases. Windows keeps its existing
-compatibility payload until it passes the same equivalence lane. `make dist`
+`roca-vector-vX.Y.Z-<platform>.tar.gz` standalone archives. The embedded
+semantic-search engine is available in the macOS ARM64 and Linux releases.
+Windows keeps its existing compatibility payload until it passes the same
+equivalence lane. `make dist`
 on one machine builds the matching host payload plus Windows. The workflow
 stamps the core, embedded vector,
 standalone vector, and vector manifests with one tag, checks the runnable Linux
