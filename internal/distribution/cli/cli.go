@@ -462,25 +462,11 @@ func pluginCommand(env *cliEnv) *cobra.Command {
 }
 
 func pluginInstallCommand(env *cliEnv, consented *bool) *cobra.Command {
-	return &cobra.Command{
-		Use:   "install <path|archive|url|owner/repo>",
-		Short: "Verify a source and install its plugin",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			manager, scratch, err := env.pluginManager()
-			if err != nil {
-				return err
-			}
-			candidate, cleanup, err := resolvePluginCandidate(cmd.Context(), args[0], scratch)
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-			accepted, err := env.confirmPlugin(cmd.InOrStdin(), "install", candidate, "", *consented)
-			if err != nil || !accepted {
-				return err
-			}
+	return pluginSourceCommand(env, consented, "install <path|archive|url|owner/repo>",
+		"Verify a source and install its plugin", "install", nil,
+		func(cmd *cobra.Command, manager plugininstall.Manager, candidate plugininstall.Candidate) error {
 			var result plugininstall.Result
+			var err error
 			action := "installed"
 			if candidate.Kind == plugininstall.DataPackage && candidate.Federated && candidate.Risk == plugininstall.DataOnly {
 				if err := requireSemanticSyncCandidate(candidate); err != nil {
@@ -494,8 +480,6 @@ func pluginInstallCommand(env *cliEnv, consented *bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// The new plugin's semantic and vector fragments are registered from
-			// the same installed manifest set after the package is in place.
 			if action == "synchronized" {
 				if err := env.completePluginSync(cmd.Context(), candidate.Name); err != nil {
 					return err
@@ -504,32 +488,14 @@ func pluginInstallCommand(env *cliEnv, consented *bool) *cobra.Command {
 				env.refreshPluginContracts()
 			}
 			return env.reportPlugin(action, result)
-		},
-	}
+		})
 }
 
 func pluginSyncCommand(env *cliEnv, consented *bool) *cobra.Command {
-	return &cobra.Command{
-		Use:   "sync <path|archive|url|owner/repo>",
-		Short: "Install or atomically replace a data-only plugin snapshot",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			manager, scratch, err := env.pluginManager()
-			if err != nil {
-				return err
-			}
-			candidate, cleanup, err := resolvePluginCandidate(cmd.Context(), args[0], scratch)
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-			if err := requireSemanticSyncCandidate(candidate); err != nil {
-				return err
-			}
-			accepted, err := env.confirmPlugin(cmd.InOrStdin(), "sync", candidate, "", *consented)
-			if err != nil || !accepted {
-				return err
-			}
+	return pluginSourceCommand(env, consented, "sync <path|archive|url|owner/repo>",
+		"Install or atomically replace a data-only plugin snapshot", "sync",
+		requireSemanticSyncCandidate,
+		func(cmd *cobra.Command, manager plugininstall.Manager, candidate plugininstall.Candidate) error {
 			result, err := manager.SyncDataPackage(candidate)
 			if err != nil {
 				return err
@@ -538,8 +504,47 @@ func pluginSyncCommand(env *cliEnv, consented *bool) *cobra.Command {
 				return err
 			}
 			return env.reportPlugin("synchronized", result)
+		})
+}
+
+func pluginSourceCommand(env *cliEnv, consented *bool, use, short, action string,
+	validate func(plugininstall.Candidate) error,
+	run func(*cobra.Command, plugininstall.Manager, plugininstall.Candidate) error,
+) *cobra.Command {
+	return &cobra.Command{
+		Use:   use,
+		Short: short,
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			manager, candidate, cleanup, err := env.pluginCommandCandidate(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			if validate != nil {
+				if err := validate(candidate); err != nil {
+					return err
+				}
+			}
+			accepted, err := env.confirmPlugin(cmd.InOrStdin(), action, candidate, "", *consented)
+			if err != nil || !accepted {
+				return err
+			}
+			return run(cmd, manager, candidate)
 		},
 	}
+}
+
+func (env *cliEnv) pluginCommandCandidate(ctx context.Context, reference string) (plugininstall.Manager, plugininstall.Candidate, func(), error) {
+	manager, scratch, err := env.pluginManager()
+	if err != nil {
+		return plugininstall.Manager{}, plugininstall.Candidate{}, func() {}, err
+	}
+	candidate, cleanup, err := resolvePluginCandidate(ctx, reference, scratch)
+	if err != nil {
+		return plugininstall.Manager{}, plugininstall.Candidate{}, func() {}, err
+	}
+	return manager, candidate, cleanup, nil
 }
 
 func requireSemanticSyncCandidate(candidate plugininstall.Candidate) error {

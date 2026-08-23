@@ -547,18 +547,8 @@ func TestPluginContractRefreshRegistersUpdatesAndUnregistersVectorSurfaces(t *te
   "capabilities": []
 }`
 	writeFile(t, manifestPath, manifest)
-	database, err := sql.Open("sqlite", filepath.Join(directory, "records.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.Exec(`CREATE TABLE records (
-		id INTEGER PRIMARY KEY, title TEXT, body TEXT, telemetry TEXT)`); err != nil {
-		database.Close()
-		t.Fatal(err)
-	}
-	if err := database.Close(); err != nil {
-		t.Fatal(err)
-	}
+	execPluginDatabase(t, filepath.Join(directory, "records.db"), `CREATE TABLE records (
+		id INTEGER PRIMARY KEY, title TEXT, body TEXT, telemetry TEXT)`)
 	writePluginChecksums(t, directory, plugin.PackageFilename, "records.db")
 
 	var output strings.Builder
@@ -597,17 +587,7 @@ func TestPluginContractRefreshRegistersUpdatesAndUnregistersVectorSurfaces(t *te
 		t.Fatalf("updated vector surfaces = %+v, err = %v", registry, err)
 	}
 
-	database, err = sql.Open("sqlite", filepath.Join(directory, "records.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.Exec("INSERT INTO records (title, body, telemetry) VALUES ('snapshot', 'federated body', '')"); err != nil {
-		database.Close()
-		t.Fatal(err)
-	}
-	if err := database.Close(); err != nil {
-		t.Fatal(err)
-	}
+	execPluginDatabase(t, filepath.Join(directory, "records.db"), "INSERT INTO records (title, body, telemetry) VALUES ('snapshot', 'federated body', '')")
 	writePluginChecksums(t, directory, plugin.PackageFilename, "records.db")
 	output.Reset()
 	code, err = executeWithEnv(env,
@@ -643,6 +623,21 @@ func TestPluginContractRefreshRegistersUpdatesAndUnregistersVectorSurfaces(t *te
 	registry, err = plugin.LoadVectorRegistry(registryPath)
 	if err != nil || len(registry.Databases) != 0 {
 		t.Fatalf("unregistered vector surfaces = %+v, err = %v", registry, err)
+	}
+}
+
+func execPluginDatabase(t *testing.T, path, statement string) {
+	t.Helper()
+	database, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(statement); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 

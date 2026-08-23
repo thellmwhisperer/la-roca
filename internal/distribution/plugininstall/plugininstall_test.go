@@ -269,10 +269,17 @@ func TestInstallUpdateAndUninstallPreservePluginOwnedData(t *testing.T) {
 	}
 }
 
-func TestSyncDataPackageReplacesTheDeclaredDatabasePayload(t *testing.T) {
+func installDataPackage(t *testing.T, name, version string, custodial bool) (plugininstall.Manager, string, plugininstall.Candidate) {
+	t.Helper()
 	root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
 	manager := plugininstall.Manager{PluginRoot: root, BinDir: bin}
-	source := writePackage(t, "synthetic", "1.0.0", false, false)
+	source, candidate := installPackage(t, manager, name, version, custodial)
+	return manager, source, candidate
+}
+
+func installPackage(t *testing.T, manager plugininstall.Manager, name, version string, custodial bool) (string, plugininstall.Candidate) {
+	t.Helper()
+	source := writePackage(t, name, version, custodial, false)
 	candidate, err := plugininstall.Inspect(source, source)
 	if err != nil {
 		t.Fatal(err)
@@ -280,6 +287,12 @@ func TestSyncDataPackageReplacesTheDeclaredDatabasePayload(t *testing.T) {
 	if _, err := manager.Install(candidate); err != nil {
 		t.Fatal(err)
 	}
+	return source, candidate
+}
+
+func TestSyncDataPackageReplacesTheDeclaredDatabasePayload(t *testing.T) {
+	manager, source, _ := installDataPackage(t, "synthetic", "1.0.0", false)
+	root := manager.PluginRoot
 	writeFixtureFile(t, filepath.Join(root, "synthetic", "plugin.vector.db"), []byte("stale vectors"), 0o600)
 
 	installedDB := filepath.Join(root, "synthetic", "plugin.db")
@@ -352,16 +365,8 @@ func TestSyncDataPackageRejectsCustodyPolicyChanges(t *testing.T) {
 }
 
 func TestRecoverUpdateRestoresTransferredVectorSidecars(t *testing.T) {
-	root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
-	manager := plugininstall.Manager{PluginRoot: root, BinDir: bin}
-	source := writePackage(t, "synthetic", "1.0.0", false, false)
-	previous, err := plugininstall.Inspect(source, source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := manager.Install(previous); err != nil {
-		t.Fatal(err)
-	}
+	manager, source, _ := installDataPackage(t, "synthetic", "1.0.0", false)
+	root := manager.PluginRoot
 	target := filepath.Join(root, "synthetic")
 	backup := filepath.Join(root, ".synthetic.previous")
 	database := filepath.Join(target, "plugin.db")
@@ -709,14 +714,7 @@ func TestCustodialUninstallArchivesTheWholePlugin(t *testing.T) {
 		ArchiveRoot: filepath.Join(base, "plugin-custody"),
 		Now:         func() time.Time { return time.Date(2026, 8, 13, 21, 5, 0, 0, time.UTC) },
 	}
-	source := writePackage(t, "custodial", "1.0.0", true, false)
-	candidate, err := plugininstall.Inspect(source, source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := manager.Install(candidate); err != nil {
-		t.Fatal(err)
-	}
+	source, candidate := installPackage(t, manager, "custodial", "1.0.0", true)
 
 	result, err := manager.Uninstall("custodial")
 	if err != nil {

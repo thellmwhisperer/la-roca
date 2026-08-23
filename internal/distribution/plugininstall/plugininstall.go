@@ -796,13 +796,20 @@ func updateRecoveryProof(name string, previous Manifest) string {
 }
 
 func createRecoveryProof(path, proof string) error {
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".recovery-proof-")
+	return writeTemporaryFile(path, ".recovery-proof-", func(file *os.File) error {
+		_, err := file.WriteString(proof)
+		return err
+	}, os.Link)
+}
+
+func writeTemporaryFile(path, pattern string, write func(*os.File) error, publish func(string, string) error) error {
+	temporary, err := os.CreateTemp(filepath.Dir(path), pattern)
 	if err != nil {
 		return err
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
-	if _, err := temporary.WriteString(proof); err != nil {
+	if err := write(temporary); err != nil {
 		temporary.Close()
 		return err
 	}
@@ -813,7 +820,7 @@ func createRecoveryProof(path, proof string) error {
 	if err := temporary.Close(); err != nil {
 		return err
 	}
-	return os.Link(temporaryPath, path)
+	return publish(temporaryPath, path)
 }
 
 func verifyRecoveryProof(path, proof string) error {
@@ -996,20 +1003,9 @@ func (m Manager) Update(candidate Candidate) (Result, error) {
 		_ = os.Rename(backup, target)
 		return Result{}, fmt.Errorf("activate plugin update: %w", err)
 	}
-	if candidate.StateDir != "" {
-		state := filepath.Join(backup, candidate.StateDir)
-		err := os.Rename(state, filepath.Join(target, candidate.StateDir))
-		switch {
-		case err == nil:
-		case os.IsNotExist(err):
-			if err := createStateDir(target, candidate.StateDir); err != nil {
-				_ = m.RecoverUpdate(candidate.Name)
-				return Result{}, err
-			}
-		default:
-			_ = m.RecoverUpdate(candidate.Name)
-			return Result{}, fmt.Errorf("preserve plugin state directory: %w", err)
-		}
+	if err := preserveStateDirectory(backup, target, candidate.StateDir); err != nil {
+		_ = m.RecoverUpdate(candidate.Name)
+		return Result{}, err
 	}
 	if err := moveDatabaseSidecars(backup, target, previousManifest); err != nil {
 		_ = m.RecoverUpdate(candidate.Name)
@@ -1033,6 +1029,22 @@ func (m Manager) Update(candidate Candidate) (Result, error) {
 		return Result{}, fmt.Errorf("remove previous plugin after update: %w", err)
 	}
 	return resultFor(candidate, target, executable), nil
+}
+
+func preserveStateDirectory(backup, target, stateDir string) error {
+	if stateDir == "" {
+		return nil
+	}
+	state := filepath.Join(backup, stateDir)
+	err := os.Rename(state, filepath.Join(target, stateDir))
+	switch {
+	case err == nil:
+		return nil
+	case os.IsNotExist(err):
+		return createStateDir(target, stateDir)
+	default:
+		return fmt.Errorf("preserve plugin state directory: %w", err)
+	}
 }
 
 func moveDatabaseSidecars(source, destination string, manifest Manifest) error {
@@ -1504,26 +1516,11 @@ func syncDirectory(path string) error {
 }
 
 func writeSyncRecoveryJournal(path string, journal syncRecoveryJournal) error {
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".sync-journal-")
-	if err != nil {
-		return err
-	}
-	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
-	encoder := json.NewEncoder(temporary)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(journal); err != nil {
-		temporary.Close()
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		temporary.Close()
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(temporaryPath, path); err != nil {
+	if err := writeTemporaryFile(path, ".sync-journal-", func(file *os.File) error {
+		encoder := json.NewEncoder(file)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(journal)
+	}, os.Rename); err != nil {
 		return err
 	}
 	return syncDirectory(filepath.Dir(path))
@@ -1769,18 +1766,8 @@ func (m Manager) SyncDataPackage(candidate Candidate) (Result, error) {
 		_ = m.RecoverSync(candidate.Name)
 		return Result{}, fmt.Errorf("sync activated plugin: %w", err)
 	}
-	if candidate.StateDir != "" {
-		state := filepath.Join(backup, candidate.StateDir)
-		err := os.Rename(state, filepath.Join(target, candidate.StateDir))
-		switch {
-		case err == nil:
-		case os.IsNotExist(err):
-			if err := createStateDir(target, candidate.StateDir); err != nil {
-				return Result{}, err
-			}
-		default:
-			return Result{}, fmt.Errorf("preserve plugin state directory: %w", err)
-		}
+	if err := preserveStateDirectory(backup, target, candidate.StateDir); err != nil {
+		return Result{}, err
 	}
 	if err := removeDatabaseSidecars(backup, previous); err != nil {
 		return Result{}, fmt.Errorf("invalidate previous vector sidecars: %w", err)
