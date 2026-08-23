@@ -186,9 +186,6 @@ func validateRegistry(registry vectorRegistry) error {
 				seenTables[table.Name] || len(table.TextColumns) == 0 {
 				return fmt.Errorf("vector registry database %s has invalid table %q", owner, table.Name)
 			}
-			if registry.Schema >= 2 && len(table.TimeColumns) == 0 && table.TimeJoin == nil {
-				return fmt.Errorf("vector registry database %s has invalid table %q", owner, table.Name)
-			}
 			seenTables[table.Name] = true
 			seenColumns := map[string]bool{}
 			for _, column := range table.TextColumns {
@@ -903,7 +900,7 @@ func (d DeclaredCorpus) CountChunks(ctx context.Context, sourceKind string) (int
 		statement := fmt.Sprintf(`SELECT COALESCE(SUM(%s),0) AS total FROM %s.%s AS %s WHERE %s.%s IS NOT NULL AND (%s)`,
 			strings.Join(counts, "+"), quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name),
 			alias, alias, quoteIdentifier(table.IDColumn), declaredNonEmptyPredicate(alias, table.TextColumns))
-		rows, err := d.Core.query(ctx, statement)
+		rows, err := d.Core.queryIngest(ctx, statement)
 		if err != nil {
 			return 0, fmt.Errorf("count declared chunks %s/%s: %w", d.Database.owner(), table.Name, err)
 		}
@@ -986,7 +983,7 @@ func (i *declaredTableIterator) advance(ctx context.Context) error {
 			i.current = nil
 			return nil
 		}
-		values, err := i.corpus.Core.query(ctx, i.corpus.pageQuery(i.table, i.cursor, i.catalog))
+		values, err := i.corpus.Core.queryIngest(ctx, i.corpus.pageQuery(i.table, i.cursor, i.catalog))
 		if err != nil {
 			return fmt.Errorf("read declared surface %s/%s: %w", i.corpus.Database.owner(), i.table.Name, err)
 		}
@@ -1078,7 +1075,7 @@ func (d DeclaredCorpus) ResolveSources(ctx context.Context,
 		seen[key] = true
 		idsByTable[lookup.kind] = append(idsByTable[lookup.kind], lookup.where.SourceID)
 	}
-	branches := make([]string, 0, len(idsByTable))
+	branches := make([]string, 0)
 	for _, table := range d.Database.Tables {
 		ids := idsByTable[table.Name]
 		if len(ids) == 0 {
@@ -1088,11 +1085,14 @@ func (d DeclaredCorpus) ResolveSources(ctx context.Context,
 		for index, id := range ids {
 			literals[index] = sqlLiteral(id)
 		}
-		branches = append(branches, fmt.Sprintf(
-			`SELECT %s AS source_kind,CAST(%s AS TEXT) AS source_id%s FROM %s.%s WHERE CAST(%s AS TEXT) IN (%s)`,
-			sqlLiteral(table.Name), quoteIdentifier(table.IDColumn),
-			declaredColumnSelect("", table.TextColumns), quoteIdentifier(d.Database.Alias),
-			quoteIdentifier(table.Name), quoteIdentifier(table.IDColumn), strings.Join(literals, ",")))
+		inList := strings.Join(literals, ",")
+		for _, column := range table.TextColumns {
+			branches = append(branches, fmt.Sprintf(
+				`SELECT %s AS source_kind,CAST(%s AS TEXT) AS source_id,%s AS column_name,CAST(%s AS TEXT) AS column_text FROM %s.%s WHERE CAST(%s AS TEXT) IN (%s)`,
+				sqlLiteral(table.Name), quoteIdentifier(table.IDColumn), sqlLiteral(column),
+				quoteIdentifier(column), quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name),
+				quoteIdentifier(table.IDColumn), inList))
+		}
 	}
 	if len(branches) == 0 {
 		return resolved, nil
@@ -1101,9 +1101,23 @@ func (d DeclaredCorpus) ResolveSources(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
+	grouped := map[string]map[string]any{}
+	kinds := map[string]string{}
+	ids := map[string]string{}
 	for _, values := range rows {
 		kind := stringValue(values["source_kind"])
 		id := stringValue(values["source_id"])
+		column := stringValue(values["column_name"])
+		key := sourceLookupKey(kind, id)
+		if grouped[key] == nil {
+			grouped[key] = map[string]any{}
+			kinds[key] = kind
+			ids[key] = id
+		}
+		grouped[key][column] = stringValue(values["column_text"])
+	}
+	for key, values := range grouped {
+		kind, id := kinds[key], ids[key]
 		table, ok := d.table(kind)
 		if !ok {
 			continue
@@ -1116,9 +1130,11 @@ func (d DeclaredCorpus) ResolveSources(ctx context.Context,
 		candidate := sourceRow{kind: kind, sourceID: id, text: text, rowText: text,
 			fingerprintVersion: table.embeddingContractFingerprint()}
 		for _, lookup := range lookups {
-			if lookup.kind == kind && lookup.where.SourceID == id &&
-				candidate.identity() == lookup.where.Identity {
-				resolved[sourceLookupKey(kind, id)] = text
+			if lookup.kind != kind || lookup.where.SourceID != id {
+				continue
+			}
+			if lookup.where.Identity == "" || candidate.identity() == lookup.where.Identity {
+				resolved[key] = text
 				break
 			}
 		}
@@ -1140,7 +1156,7 @@ func (d DeclaredCorpus) CountSources(ctx context.Context, sourceKind string) (in
 		statement := fmt.Sprintf(`SELECT COUNT(*) AS n FROM %s.%s src WHERE %s IS NOT NULL AND (%s)`,
 			quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name),
 			quoteIdentifier(table.IDColumn), declaredNonEmptyPredicate("src", table.TextColumns))
-		rows, err := d.Core.query(ctx, statement)
+		rows, err := d.Core.queryIngest(ctx, statement)
 		if err != nil {
 			return 0, err
 		}
@@ -1158,24 +1174,23 @@ func (d DeclaredCorpus) CountSources(ctx context.Context, sourceKind string) (in
 
 func (d DeclaredCorpus) pageQuery(table vectorTable, cursor declaredCursor,
 	catalog map[string]map[string]bool) string {
+	contextSQL, join, timeSQL := d.contextSQL(table, catalog)
 	bound := ""
 	if cursor.valid {
-		bound = fmt.Sprintf(" AND (context_time<%s OR (context_time=%s AND source_id<%s))",
-			sqlLiteral(cursor.time), sqlLiteral(cursor.time), sqlLiteral(cursor.id))
+		bound = fmt.Sprintf(" AND (%s<%s OR (%s=%s AND CAST(src.%s AS TEXT)<%s))",
+			timeSQL, sqlLiteral(cursor.time), timeSQL, sqlLiteral(cursor.time),
+			quoteIdentifier(table.IDColumn), sqlLiteral(cursor.id))
 	}
-	contextSQL, join := d.contextSQL(table, catalog)
-	return fmt.Sprintf(`WITH vector_rows AS (
-		SELECT CAST(src.%s AS TEXT) AS source_id%s%s FROM %s.%s src%s
-		WHERE src.%s IS NOT NULL
-	) SELECT * FROM vector_rows
-	WHERE source_id<>''%s ORDER BY context_time DESC, source_id DESC LIMIT %d`,
+	return fmt.Sprintf(`SELECT CAST(src.%s AS TEXT) AS source_id%s%s FROM %s.%s src%s
+		WHERE src.%s IS NOT NULL AND CAST(src.%s AS TEXT)<>''%s
+		ORDER BY context_time DESC, source_id DESC LIMIT %d`,
 		quoteIdentifier(table.IDColumn), declaredColumnSelect("src", table.TextColumns), contextSQL,
 		quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name), join,
-		quoteIdentifier(table.IDColumn), bound, walkPageSize)
+		quoteIdentifier(table.IDColumn), quoteIdentifier(table.IDColumn), bound, walkPageSize)
 }
 
 func (d DeclaredCorpus) contextSQL(table vectorTable,
-	catalog map[string]map[string]bool) (string, string) {
+	catalog map[string]map[string]bool) (string, string, string) {
 	alias := quoteIdentifier(d.Database.Alias)
 	columns := catalog[table.Name]
 	timeColumns := qualifiedColumns("src", table.TimeColumns)
@@ -1188,14 +1203,14 @@ func (d DeclaredCorpus) contextSQL(table vectorTable,
 			quoteIdentifier(table.TimeJoin.ForeignColumn))
 		timeColumns = append(timeColumns, qualifiedColumns(timeline, table.TimeJoin.TimeColumns)...)
 	}
-	timeExpression := "''"
+	timeExpression := "CAST(src." + quoteIdentifier(table.IDColumn) + " AS TEXT)"
 	if len(timeColumns) > 0 {
 		timeExpression = "COALESCE(" + strings.Join(append(timeColumns, "''"), ",") + ")"
 	}
 	title, project := "''", "''"
 	if d.Database.Plugin != "roca-corpus" && d.Database.Plugin != "roca-ops" {
 		return fmt.Sprintf(", %s AS context_title, %s AS context_project, %s AS context_time",
-			title, project, timeExpression), join
+			title, project, timeExpression), join, timeExpression
 	}
 	switch table.Name {
 	case "sessions":
@@ -1233,7 +1248,7 @@ func (d DeclaredCorpus) contextSQL(table vectorTable,
 		}
 	}
 	return fmt.Sprintf(", %s AS context_title, %s AS context_project, %s AS context_time",
-		title, project, timeExpression), join
+		title, project, timeExpression), join, timeExpression
 }
 
 func qualifiedColumns(alias string, columns []string) []string {

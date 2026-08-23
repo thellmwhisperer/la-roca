@@ -8,15 +8,19 @@ rare full-text terms, embeds the question plus static question templates when
 a vector index exists, fuses the two lists with RRF, and labels which legs
 found each hit. Without a vector index the same command runs full-text alone.
 `--top N` (default 10) controls the fused result count, `--require-both` keeps
-only dual-confirmed hits, and `--databases corpus,ops` (or `all`) selects the
-federated scope explicitly. `--json` returns the complete machine envelope.
+only dual-confirmed hits, and `--databases` narrows the default (every attached
+plugin database, including ops). `--json` returns the complete machine envelope.
 Questions must contain text and have a generous 1000-character cap on both CLI
 and MCP query surfaces.
 
 `roca playground` is the human room: it compiles a question into one checked
 `SELECT`, `--sql-only` compiles without executing, and `--full` adds a prose
 reading of the rows. `roca exec` runs your own `SELECT` through the same
-read-only gate.
+read-only gate. By default it uses the configured
+[`query.timeout_ms`](models.md#the-configuration). `--timeout-ms N` overrides that
+statement budget for one invocation; `0` disables the bound. Vector ingest uses
+the unbounded form only for its paged source sweeps and source counts, while
+query-time source lookups keep the interactive budget.
 
 For investigations, `roca explore "<term>"` uses the same checked query and
 second-inference seat but gives the interpreter an investigation mission. Every
@@ -106,7 +110,7 @@ The JSON envelope additionally keeps the RRF score and split source fields.
 ```text
 $ roca query "have I fixed a stale lock error before"
 search hybrid · engines fts,vector · 18 ms
-databases: core, corpus
+databases: core, corpus, ops
 terms[3]: stale, lock, error
 rows[2]{rank,source,legs,consensus,vector_score,vector_rank,fts_rank,snippet}:
   1,corpus.exchanges.912,vector+fts,true,0.61,2,1,"fixed: stale .lock left by a killed run; remove it and rerun"
@@ -119,8 +123,9 @@ BM25 ranking. The vector leg embeds the raw question plus fixed Spanish and
 English question wrappers, oversamples neighbors, applies a similarity floor,
 and deduplicates chunks by stable source. RRF then combines ranks without
 normalizing either leg's native scores. If vector search is unavailable,
-missing, or incompatible, the same envelope reports the notice and contains
-the federated FTS results alone.
+missing, or still downloading, the same envelope reports the notice and contains
+the federated FTS results alone. The query never waits on the embedding model
+download.
 
 ## The playground's two readers
 

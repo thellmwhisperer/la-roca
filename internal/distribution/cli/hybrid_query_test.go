@@ -26,7 +26,15 @@ func TestQueryFTSOnlyReturnsLabeledHits(t *testing.T) {
 	runRoot(t, contractBuild(), "store", "--layer", "discovery",
 		"--content", "a private note about salud mental in therapy", "--origin", "agent")
 
-	out := runRoot(t, contractBuild(), "query", "--databases", "all", "salud mental")
+	out := runRoot(t, contractBuild(), "query", "salud mental")
+	if !strings.Contains(out, "search fts") || !strings.Contains(out, "engines fts") {
+		t.Fatalf("default query lost its engine label:\n%s", out)
+	}
+	if !strings.Contains(out, "private note about salud mental") {
+		t.Fatalf("default query missed the stored ops memory:\n%s", out)
+	}
+
+	out = runRoot(t, contractBuild(), "query", "--databases", "all", "salud mental")
 	if !strings.Contains(out, "search fts") || !strings.Contains(out, "engines fts") {
 		t.Fatalf("FTS-only query lost its engine label:\n%s", out)
 	}

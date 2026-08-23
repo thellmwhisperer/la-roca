@@ -221,8 +221,7 @@ func (registry VectorRegistry) valid() error {
 		seenTables := map[string]bool{}
 		for _, table := range database.Tables {
 			if !validIdentifier(table.Name) || seenTables[table.Name] ||
-				!validIdentifier(table.IDColumn) || len(table.TextColumns) == 0 ||
-				(registry.Schema >= 2 && len(table.TimeColumns) == 0 && table.TimeJoin == nil) {
+				!validIdentifier(table.IDColumn) || len(table.TextColumns) == 0 {
 				return fmt.Errorf("vector registry database %s/%s has invalid table %q",
 					database.Plugin, database.Database, table.Name)
 			}

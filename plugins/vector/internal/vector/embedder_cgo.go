@@ -17,9 +17,8 @@ func (n *Native) Embed(ctx context.Context, requestedModel string, input []strin
 	if requestedModel != DefaultModel {
 		return nil, fmt.Errorf("embedding model %q is not supported by this engine", requestedModel)
 	}
-	n.once.Do(func() { n.err = n.open(ctx) })
-	if n.err != nil {
-		return nil, n.err
+	if err := n.ensureOpen(ctx); err != nil {
+		return nil, err
 	}
 	started := time.Now()
 	result := make([][]float32, len(input))
@@ -51,6 +50,15 @@ func (n *Native) Embed(ctx context.Context, requestedModel string, input []strin
 	return result, nil
 }
 
+func (n *Native) ensureOpen(ctx context.Context) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.engine != nil {
+		return nil
+	}
+	return n.open(ctx)
+}
+
 func (n *Native) open(ctx context.Context) error {
 	path, err := n.modelPath(ctx)
 	if err != nil {
@@ -75,7 +83,12 @@ func (n *Native) open(ctx context.Context) error {
 }
 
 func (n *Native) Close() {
-	if n != nil && n.engine != nil {
+	if n == nil {
+		return
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.engine != nil {
 		n.engine.Close()
 		n.engine = nil
 	}
