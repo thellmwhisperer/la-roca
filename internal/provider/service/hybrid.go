@@ -387,7 +387,7 @@ func (s *Service) selectTerms(ctx context.Context, route pluginRoute, surfaces [
 	branches := make([]string, 0, len(surfaces)*(len(tokens)+1))
 	for _, surface := range surfaces {
 		branches = append(branches, "SELECT -1 AS token_index, 0 AS docs, COUNT(*) AS corpus_docs FROM "+
-			qualified(surface.Schema, surface.FTSTable))
+			qualified(surface.Schema, surface.Table))
 	}
 	valid := make([]bool, len(tokens))
 	for index, token := range tokens {

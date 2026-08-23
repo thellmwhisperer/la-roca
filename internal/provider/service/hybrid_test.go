@@ -316,7 +316,7 @@ func TestHybridGoldenAgainstReadOnlyLabCopies(t *testing.T) {
 	open := func(vector service.VectorSearchFunc) *service.Service {
 		t.Helper()
 		svc, err := service.Open(service.Options{
-			DBPath: dbPath, DataDir: labDir, ReadOnly: true, QueryTimeoutSet: true,
+			DBPath: dbPath, DataDir: labDir, ReadOnly: true,
 			Version: "golden-eval", Commit: "golden-eval", VectorSearch: vector,
 		})
 		if err != nil {
