@@ -1,5 +1,5 @@
 /**
- * @overview Verifies snapshot lifetime, reuse, reaping, and telemetry. ~1000 lines, no public symbols.
+ * @overview Verifies snapshot lifetime, reuse, reaping, and telemetry. ~1150 lines, no public symbols.
  *
  *   READING GUIDE
  *   -------------
@@ -400,6 +400,97 @@ func TestSnapshotFlightWaitersOwnTheirContexts(t *testing.T) {
 	})
 }
 
+func TestSnapshotCacheAndSweepCoordination(t *testing.T) {
+	t.Run("cache hits skip the namespace sweep", func(t *testing.T) {
+		root := isolateSnapshotTemp(t)
+		source := fixtureDatabase(t)
+		first, err := OpenReadOnlySnapshot(context.Background(), source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = first.Close() })
+		namespace := snapshotNamespaceForTest(t, root)
+		release, err := securefile.Lock(filepath.Join(namespace, snapshotNamespaceLeaseName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		locked := true
+		t.Cleanup(func() {
+			if locked {
+				_ = release()
+			}
+		})
+
+		result := make(chan snapshotResult, 1)
+		go func() {
+			snapshot, err := OpenReadOnlySnapshot(context.Background(), source)
+			result <- snapshotResult{snapshot: snapshot, err: err}
+		}()
+		select {
+		case opened := <-result:
+			if opened.err != nil {
+				t.Fatal(opened.err)
+			}
+			if err := opened.snapshot.Close(); err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(250 * time.Millisecond):
+			_ = release()
+			locked = false
+			opened := <-result
+			if opened.snapshot != nil {
+				_ = opened.snapshot.Close()
+			}
+			t.Fatal("cache hit waited for the snapshot namespace sweep")
+		}
+		if err := release(); err != nil {
+			t.Fatal(err)
+		}
+		locked = false
+	})
+
+	t.Run("creator sweep honors cancellation", func(t *testing.T) {
+		root := isolateSnapshotTemp(t)
+		namespace := snapshotNamespaceForTest(t, root)
+		source := fixtureDatabase(t)
+		release, err := securefile.Lock(filepath.Join(namespace, snapshotNamespaceLeaseName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		locked := true
+		t.Cleanup(func() {
+			if locked {
+				_ = release()
+			}
+		})
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+		result := make(chan error, 1)
+		go func() {
+			snapshot, err := OpenReadOnlySnapshot(ctx, source)
+			if snapshot != nil {
+				_ = snapshot.Close()
+			}
+			result <- err
+		}()
+		select {
+		case err := <-result:
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("creator error = %v, want context deadline exceeded", err)
+			}
+		case <-time.After(250 * time.Millisecond):
+			_ = release()
+			locked = false
+			<-result
+			t.Fatal("canceled creator remained blocked on the namespace sweep")
+		}
+		if err := release(); err != nil {
+			t.Fatal(err)
+		}
+		locked = false
+	})
+}
+
 // -/ 2/5
 
 // -- 3/5 HELPER · Cross-process reaping and telemetry --
@@ -447,22 +538,8 @@ func TestLegacySnapshotNamespaceIsMigratedSafely(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(orphan, "payload"), []byte("orphan"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	live := filepath.Join(tempRoot, snapshotDirectoryPrefix+"legacy-live")
-	if err := os.Mkdir(live, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	leasePath := filepath.Join(live, snapshotLeaseName)
-	if err := os.WriteFile(leasePath, []byte("1\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	release, err := securefile.LockExisting(leasePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = release()
-		_ = os.RemoveAll(live)
-	})
+	live := startSnapshotHelper(t, tempRoot, "", "legacy-hold")
+	t.Cleanup(func() { _ = os.RemoveAll(live.directory) })
 
 	snapshot, err := OpenReadOnlySnapshot(context.Background(), fixtureDatabase(t))
 	if err != nil {
@@ -474,8 +551,24 @@ func TestLegacySnapshotNamespaceIsMigratedSafely(t *testing.T) {
 	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
 		t.Fatalf("legacy orphan still exists: %v", err)
 	}
-	if _, err := os.Stat(live); err != nil {
+	if _, err := os.Stat(live.directory); err != nil {
 		t.Fatalf("legacy live snapshot was reaped: %v", err)
+	}
+	if err := live.stdin.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := live.wait(); err != nil {
+		t.Fatal(err)
+	}
+	next, err := OpenReadOnlySnapshot(context.Background(), fixtureDatabase(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := next.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(live.directory); !os.IsNotExist(err) {
+		t.Fatalf("closed legacy snapshot was not reaped: %v", err)
 	}
 }
 
@@ -529,7 +622,7 @@ func TestSnapshotPublicationIsLeasedBeforeItIsVisible(t *testing.T) {
 func TestConcurrentSnapshotReapersCountOneRemoval(t *testing.T) {
 	root := isolateSnapshotTemp(t)
 	root = snapshotNamespaceForTest(t, root)
-	records := captureSnapshotRecords(t)
+	ctx, records := captureSnapshotRecords()
 	orphan := filepath.Join(root, snapshotDirectoryPrefix+"orphan")
 	if err := os.Mkdir(orphan, 0o700); err != nil {
 		t.Fatal(err)
@@ -547,7 +640,7 @@ func TestConcurrentSnapshotReapersCountOneRemoval(t *testing.T) {
 	}
 	results := make(chan error, 2)
 	for range 2 {
-		go func() { results <- scavengeReadOnlySnapshots(context.Background(), root) }()
+		go func() { results <- scavengeReadOnlySnapshots(ctx, root) }()
 	}
 	select {
 	case err := <-results:
@@ -577,7 +670,7 @@ func TestConcurrentSnapshotReapersCountOneRemoval(t *testing.T) {
 func TestVanishedSnapshotIsNotCountedAsReaped(t *testing.T) {
 	root := isolateSnapshotTemp(t)
 	root = snapshotNamespaceForTest(t, root)
-	records := captureSnapshotRecords(t)
+	ctx, records := captureSnapshotRecords()
 	orphan := filepath.Join(root, snapshotDirectoryPrefix+"vanished")
 	if err := os.Mkdir(orphan, 0o700); err != nil {
 		t.Fatal(err)
@@ -590,7 +683,7 @@ func TestVanishedSnapshotIsNotCountedAsReaped(t *testing.T) {
 		}
 		return originalClaim(root, directory)
 	}
-	if err := scavengeReadOnlySnapshots(context.Background(), root); err != nil {
+	if err := scavengeReadOnlySnapshots(ctx, root); err != nil {
 		t.Fatal(err)
 	}
 	if captured := records(); len(captured) != 0 {
@@ -698,7 +791,7 @@ func TestAlreadyAbsentSnapshotRemovalIsBenign(t *testing.T) {
 func TestSnapshotTelemetryLogsCreateAndReap(t *testing.T) {
 	root := isolateSnapshotTemp(t)
 	root = snapshotNamespaceForTest(t, root)
-	records := captureSnapshotRecords(t)
+	ctx, records := captureSnapshotRecords()
 
 	orphan := filepath.Join(root, snapshotDirectoryPrefix+"orphan")
 	if err := os.Mkdir(orphan, 0o700); err != nil {
@@ -709,7 +802,7 @@ func TestSnapshotTelemetryLogsCreateAndReap(t *testing.T) {
 	}
 
 	source := fixtureDatabase(t)
-	snapshot, err := OpenReadOnlySnapshot(context.Background(), source)
+	snapshot, err := OpenReadOnlySnapshot(ctx, source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -749,6 +842,47 @@ func TestSnapshotTelemetryLogsCreateAndReap(t *testing.T) {
 	}
 }
 
+func TestSnapshotTelemetryStaysBoundToAcquisitionContext(t *testing.T) {
+	root := isolateSnapshotTemp(t)
+	ctxA, recordsA := captureSnapshotRecords()
+	ctxB, recordsB := captureSnapshotRecords()
+	for _, acquisition := range []struct {
+		ctx    context.Context
+		source string
+	}{
+		{ctx: ctxA, source: fixtureDatabase(t)},
+		{ctx: ctxB, source: fixtureDatabase(t)},
+		{ctx: ctxA, source: fixtureDatabase(t)},
+	} {
+		snapshot, err := OpenReadOnlySnapshot(acquisition.ctx, acquisition.source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := snapshot.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := snapshotCreateCount(recordsA()); got != 2 {
+		t.Fatalf("first acquisition logger create count = %d, want 2", got)
+	}
+	if got := snapshotCreateCount(recordsB()); got != 1 {
+		t.Fatalf("second acquisition logger create count = %d, want 1", got)
+	}
+	if dirs := listSnapshotDirs(t, root); len(dirs) != 0 {
+		t.Fatalf("telemetry acquisitions left snapshot dirs %v", dirs)
+	}
+}
+
+func snapshotCreateCount(records []map[string]any) int {
+	count := 0
+	for _, record := range records {
+		if record["event"] == "create" {
+			count++
+		}
+	}
+	return count
+}
+
 func TestExitCleanupRemovesOpenSnapshots(t *testing.T) {
 	root := isolateSnapshotTemp(t)
 	snapshot, err := OpenReadOnlySnapshot(context.Background(), fixtureDatabase(t))
@@ -773,6 +907,28 @@ func TestSnapshotHelperProcess(t *testing.T) {
 	mode := os.Getenv("ROCA_SNAPSHOT_HELPER")
 	if mode == "" {
 		t.Skip("helper process")
+	}
+	if mode == "legacy-hold" {
+		directory, err := os.MkdirTemp(os.TempDir(), snapshotDirectoryPrefix)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "create legacy snapshot: %v\n", err)
+			os.Exit(1)
+		}
+		attempt := filepath.Join(directory, "0")
+		if err := os.Mkdir(attempt, 0o700); err != nil {
+			fmt.Fprintf(os.Stderr, "create legacy snapshot attempt: %v\n", err)
+			os.Exit(1)
+		}
+		file, err := os.OpenFile(filepath.Join(attempt, "database.db"), os.O_CREATE|os.O_RDWR, 0o600)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "open legacy snapshot: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("READY %s\n", directory)
+		os.Stdout.Sync()
+		_, _ = io.Copy(io.Discard, os.Stdin)
+		_ = file.Close()
+		return
 	}
 	if mode == "signal-registration" {
 		snapshotBeforeLeaseRegistrationFn = func(directory string) {
@@ -931,11 +1087,10 @@ func snapshotNamespaceForTest(t *testing.T, tempRoot string) string {
 	return root
 }
 
-func captureSnapshotRecords(t *testing.T) func() []map[string]any {
-	t.Helper()
+func captureSnapshotRecords() (context.Context, func() []map[string]any) {
 	var mu sync.Mutex
 	var records []map[string]any
-	SetSnapshotLogWriter(func(record map[string]any) error {
+	ctx := WithSnapshotLogWriter(context.Background(), func(record map[string]any) error {
 		copied := make(map[string]any, len(record))
 		for key, value := range record {
 			copied[key] = value
@@ -945,8 +1100,7 @@ func captureSnapshotRecords(t *testing.T) func() []map[string]any {
 		mu.Unlock()
 		return nil
 	})
-	t.Cleanup(func() { SetSnapshotLogWriter(nil) })
-	return func() []map[string]any {
+	return ctx, func() []map[string]any {
 		mu.Lock()
 		defer mu.Unlock()
 		return append([]map[string]any(nil), records...)

@@ -86,11 +86,16 @@ func Open(path string) (*DB, error) {
 }
 
 func OpenReadOnly(path string) (*DB, error) {
+	return OpenReadOnlyContext(context.Background(), path)
+}
+
+// OpenReadOnlyContext opens a physically read-only snapshot using ctx.
+func OpenReadOnlyContext(ctx context.Context, path string) (*DB, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("resolve the database path %q: %w", path, err)
 	}
-	snapshot, err := OpenReadOnlySnapshot(context.Background(), abs)
+	snapshot, err := OpenReadOnlySnapshot(ctx, abs)
 	if err != nil {
 		return nil, fmt.Errorf("open the database %q read-only: %w", abs, err)
 	}

@@ -106,6 +106,7 @@ func (s *Service) inventoryRoute(ctx context.Context) pluginRoute {
 	candidates, warnings := plugin.Discover(s.opts.PluginDir)
 	route.warnings = append(route.warnings, warnings...)
 	limit := max(0, plugin.MaxAttached-len(route.databases)-s.layerRegistryAttachmentCost())
+	ctx = s.snapshotContext(ctx)
 	extra := validatePluginRouteLimit(ctx, s.onDemand(candidates), nil, limit, s.opts.ReadOnly)
 	route.databases = append(route.databases, extra.databases...)
 	route.omitted = append(route.omitted, extra.omitted...)
