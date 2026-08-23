@@ -44,6 +44,9 @@ func TestLegacyStoreIngest(t *testing.T) {
 	if session.SourceSurface != ingestprovenance.LegacyStore {
 		t.Errorf("session source_surface = %q, want %q", session.SourceSurface, ingestprovenance.LegacyStore)
 	}
+	if session.Metadata["source_note"] != "session kept" {
+		t.Errorf("session metadata = %+v", session.Metadata)
+	}
 	if len(session.Exchanges) != 1 {
 		t.Fatalf("exchanges = %d, want 1", len(session.Exchanges))
 	}
@@ -51,14 +54,24 @@ func TestLegacyStoreIngest(t *testing.T) {
 	if exchange.HumanText != "count the legacy rows" || exchange.AgentText != "two sessions" {
 		t.Errorf("exchange text = %q / %q", exchange.HumanText, exchange.AgentText)
 	}
+	if exchange.Provenance.Model != "claude-opus-4" || exchange.Provenance.Provider != "anthropic" ||
+		exchange.Provenance.TokensIn == nil || *exchange.Provenance.TokensIn != 11 ||
+		exchange.Provenance.TokensOut == nil || *exchange.Provenance.TokensOut != 7 ||
+		exchange.Provenance.TokensReasoning == nil || *exchange.Provenance.TokensReasoning != 3 ||
+		exchange.Provenance.CostUSD == nil || *exchange.Provenance.CostUSD != 0.25 {
+		t.Errorf("exchange provenance = %+v", exchange.Provenance)
+	}
 	if len(exchange.Thinking) != 1 || exchange.Thinking[0].Text != "measure first" {
 		t.Errorf("thinking = %+v", exchange.Thinking)
 	}
 	if len(exchange.Tools) != 1 || exchange.Tools[0].Name != "exec" {
 		t.Errorf("tools = %+v", exchange.Tools)
 	}
-	if len(session.Thinking) != 2 || session.Thinking[0].Position == session.Thinking[1].Position {
-		t.Errorf("unmatched thinking = %+v, want two distinct positions", session.Thinking)
+	if len(session.Thinking) != 3 || session.Thinking[0].Text != "unmatched duplicate" ||
+		session.Thinking[1].Text != "unmatched duplicate" ||
+		session.Thinking[2].Text != "unmatched third" ||
+		session.Thinking[0].Position == session.Thinking[1].Position {
+		t.Errorf("unmatched thinking = %+v, want deterministic source order", session.Thinking)
 	}
 
 	if len(records.Memories) != 5 {
@@ -84,6 +97,10 @@ func TestLegacyStoreIngest(t *testing.T) {
 	}
 	if handoff.Content != legacyHandoffContent || handoff.Status != "pending" {
 		t.Errorf("handoff = %+v", handoff)
+	}
+	if handoff.SourceModel != "legacy-memory-model" || handoff.Metadata["source_note"] != "memory kept" ||
+		handoff.Metadata["file_path"] != legacyStoreMemoryFile+"1" {
+		t.Errorf("handoff provenance = model %q metadata %+v", handoff.SourceModel, handoff.Metadata)
 	}
 	if _, ok := layers["feedback"]; !ok {
 		t.Error("feedback memory missing")
@@ -146,7 +163,7 @@ func TestLegacyStoreIngest(t *testing.T) {
 	if !ok {
 		t.Fatalf("source %q missing: %v", legacyStoreSource, SortedSources(first.Sources))
 	}
-	if counts.Sessions != 4 || counts.Exchanges != 2 || counts.ThinkingBlocks != 4 ||
+	if counts.Sessions != 4 || counts.Exchanges != 2 || counts.ThinkingBlocks != 5 ||
 		counts.ToolUses != 2 || counts.MemoriesInserted != 5 {
 		t.Fatalf("first source counts = %+v", counts)
 	}
@@ -157,13 +174,34 @@ func TestLegacyStoreIngest(t *testing.T) {
 		t.Errorf("first discarded records = %d, want 4 invalid child references", first.RecordsDiscarded)
 	}
 
-	var surface, agent string
-	if err := corpus.SQL().QueryRow(`SELECT source_surface, source_agent FROM sessions WHERE session_id = ?`,
-		legacyFixtureSession).Scan(&surface, &agent); err != nil {
+	var surface, agent, sessionNote, nestedNote string
+	var sourceExchange int
+	if err := corpus.SQL().QueryRow(`
+		SELECT source_surface, source_agent, json_extract(metadata, '$.source_note'),
+		       json_extract(metadata, '$."legacy-store".source_note'),
+		       json_extract(metadata, '$."legacy-store".source_exchange_ids."1"')
+		FROM sessions WHERE session_id = ?`, legacyFixtureSession).
+		Scan(&surface, &agent, &sessionNote, &nestedNote, &sourceExchange); err != nil {
 		t.Fatal(err)
 	}
-	if surface != ingestprovenance.LegacyStore || agent != "claude-code" {
-		t.Errorf("landed session provenance = %q / %q", surface, agent)
+	if surface != ingestprovenance.LegacyStore || agent != "claude-code" ||
+		sessionNote != "session kept" || nestedNote != "nested kept" || sourceExchange != 1 {
+		t.Errorf("landed session provenance = %q / %q metadata %q / %q exchange %d",
+			surface, agent, sessionNote, nestedNote, sourceExchange)
+	}
+	var model, provider string
+	var tokensIn, tokensOut, tokensReasoning int
+	var cost float64
+	if err := corpus.SQL().QueryRow(`
+		SELECT model, provider, tokens_in, tokens_out, tokens_reasoning, cost_usd
+		FROM exchanges WHERE session_id = ? AND exchange_number = 1`, legacyFixtureSession).
+		Scan(&model, &provider, &tokensIn, &tokensOut, &tokensReasoning, &cost); err != nil {
+		t.Fatal(err)
+	}
+	if model != "claude-opus-4" || provider != "anthropic" || tokensIn != 11 ||
+		tokensOut != 7 || tokensReasoning != 3 || cost != 0.25 {
+		t.Errorf("landed exchange provenance = %q/%q %d/%d/%d %.2f",
+			model, provider, tokensIn, tokensOut, tokensReasoning, cost)
 	}
 	var unmatched, distinctPositions, assignedExchanges int
 	if err := corpus.SQL().QueryRow(`
@@ -177,11 +215,13 @@ func TestLegacyStoreIngest(t *testing.T) {
 			unmatched, distinctPositions, assignedExchanges)
 	}
 
-	var layer, status, created string
+	var layer, status, created, sourceModel, memoryNote string
 	var expires sql.NullString
 	if err := ops.SQL().QueryRow(`
-		SELECT layer, status, created_at, expires_at FROM memories WHERE content = ?`,
-		legacyHandoffContent).Scan(&layer, &status, &created, &expires); err != nil {
+		SELECT layer, status, created_at, expires_at, source_model,
+		       json_extract(metadata, '$.source_note')
+		FROM memories WHERE content = ?`, legacyHandoffContent).
+		Scan(&layer, &status, &created, &expires, &sourceModel, &memoryNote); err != nil {
 		t.Fatal(err)
 	}
 	if layer != "handoff" {
@@ -192,6 +232,9 @@ func TestLegacyStoreIngest(t *testing.T) {
 	}
 	if expires.Valid {
 		t.Errorf("handoff expires_at = %q, want NULL", expires.String)
+	}
+	if sourceModel != "legacy-memory-model" || memoryNote != "memory kept" {
+		t.Errorf("handoff source metadata = model %q note %q", sourceModel, memoryNote)
 	}
 	for content, wantLayer := range map[string]string{
 		"synthetic legacy handover": "handover",
@@ -403,6 +446,23 @@ func TestLegacyStoreConnectionIsReadOnly(t *testing.T) {
 	defer db.Close()
 	if _, err := db.Exec(`INSERT INTO sessions (session_id) VALUES ('must-not-land')`); err == nil {
 		t.Fatal("legacy store connection accepted a write")
+	}
+}
+
+func TestLegacyStoreAcceptsMeasuredSchemaWithoutOptionalProvenance(t *testing.T) {
+	t.Parallel()
+	records, _, err := ReadLegacyStore(context.Background(), seedLegacyStoreMeasuredFixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := legacyStoreSessionByID(t, records, legacyFixtureSession)
+	if !session.Exchanges[0].Provenance.Empty() {
+		t.Errorf("absent exchange provenance = %+v, want empty", session.Exchanges[0].Provenance)
+	}
+	for _, memory := range records.Memories {
+		if memory.SourceModel != "" {
+			t.Errorf("absent memory source_model = %q", memory.SourceModel)
+		}
 	}
 }
 
@@ -629,6 +689,14 @@ func legacyStoreSessionByID(t *testing.T, records parsers.Records, id string) pa
 }
 
 func seedLegacyStoreFixture(t *testing.T) string {
+	return seedLegacyStoreFixtureWithOptionalProvenance(t, true)
+}
+
+func seedLegacyStoreMeasuredFixture(t *testing.T) string {
+	return seedLegacyStoreFixtureWithOptionalProvenance(t, false)
+}
+
+func seedLegacyStoreFixtureWithOptionalProvenance(t *testing.T, optional bool) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "roca.db")
 	db := openSynthetic(t, path)
@@ -656,7 +724,8 @@ func seedLegacyStoreFixture(t *testing.T) string {
 	exec(t, db, `CREATE TABLE proposals (id INTEGER PRIMARY KEY, kind TEXT, summary TEXT)`)
 	exec(t, db, `CREATE TABLE layer_stats (layer TEXT PRIMARY KEY, count INTEGER)`)
 	exec(t, db, `INSERT INTO sessions VALUES (?, 'claude-code', 'demo',
-		'2026-08-01 12:00:00', '2026-08-01 12:01:00', 1, 'legacy fixture', '{}')`, legacyFixtureSession)
+		'2026-08-01 12:00:00', '2026-08-01 12:01:00', 1, 'legacy fixture',
+		'{"source_note":"session kept","legacy-store":{"source_note":"nested kept"}}')`, legacyFixtureSession)
 	exec(t, db, `INSERT INTO sessions VALUES (?, 'codex', 'demo',
 		'2026-08-01 13:00:00', '2026-08-01 13:01:00', 1, 'overlap fixture', '{}')`, legacyOverlapSession)
 	exec(t, db, `INSERT INTO sessions(rowid, session_id, source_agent, project, started_at, title)
@@ -678,6 +747,8 @@ func seedLegacyStoreFixture(t *testing.T) string {
 		legacyFixtureSession)
 	exec(t, db, `INSERT INTO thinking_blocks VALUES (5, ?, 2, 2.0, 'think', 0.3, 2, 0, 'unmatched duplicate')`,
 		legacyFixtureSession)
+	exec(t, db, `INSERT INTO thinking_blocks VALUES (6, ?, 3, 1.0, 'think', 0.4, 2, 0, 'unmatched third')`,
+		legacyFixtureSession)
 	exec(t, db, `INSERT INTO tool_uses VALUES (1, ?, 1, 'exec', 'select 1', 0, NULL, 'reactive')`,
 		legacyFixtureSession)
 	exec(t, db, `INSERT INTO tool_uses VALUES (2, ?, 1, 'exec', 'select 2', 0, NULL, 'reactive')`,
@@ -685,7 +756,7 @@ func seedLegacyStoreFixture(t *testing.T) string {
 	exec(t, db, `INSERT INTO tool_uses VALUES (3, ?, 99, 'exec', 'select 99', 0, NULL, 'reactive')`,
 		legacyFixtureSession)
 	exec(t, db, `INSERT INTO tool_uses VALUES (4, 'missing-session', 1, 'exec', 'orphan', 0, NULL, 'reactive')`)
-	exec(t, db, `INSERT INTO memories VALUES (1, 'handoff', ?, '{}', 'agent', 'claude-code', ?, 1, 'demo',
+	exec(t, db, `INSERT INTO memories VALUES (1, 'handoff', ?, '{"source_note":"memory kept","file_path":"source path"}', 'agent', 'claude-code', ?, 1, 'demo',
 		'pending', NULL, ?)`, legacyHandoffContent, legacyFixtureSession, legacyCreatedAt)
 	exec(t, db, `INSERT INTO memories VALUES (2, 'feedback', ?, '{}', 'agent', 'claude-code', ?, 2, 'demo',
 		'active', NULL, ?)`, legacyFeedbackContent, legacyFixtureSession, legacyCreatedAt)
@@ -700,5 +771,21 @@ func seedLegacyStoreFixture(t *testing.T) string {
 	exec(t, db, `INSERT INTO garden_channels VALUES ('garden-1', 'synthetic')`)
 	exec(t, db, `INSERT INTO proposals VALUES (1, 'note', 'leave this out')`)
 	exec(t, db, `INSERT INTO layer_stats VALUES ('handoff', 1)`)
+	if optional {
+		for _, statement := range []string{
+			`ALTER TABLE exchanges ADD COLUMN model TEXT`,
+			`ALTER TABLE exchanges ADD COLUMN provider TEXT`,
+			`ALTER TABLE exchanges ADD COLUMN tokens_in INTEGER`,
+			`ALTER TABLE exchanges ADD COLUMN tokens_out INTEGER`,
+			`ALTER TABLE exchanges ADD COLUMN tokens_reasoning INTEGER`,
+			`ALTER TABLE exchanges ADD COLUMN cost_usd REAL`,
+			`ALTER TABLE memories ADD COLUMN source_model TEXT`,
+			`UPDATE exchanges SET model = 'claude-opus-4', provider = 'anthropic',
+			 tokens_in = 11, tokens_out = 7, tokens_reasoning = 3, cost_usd = 0.25 WHERE id = 1`,
+			`UPDATE memories SET source_model = 'legacy-memory-model' WHERE id = 1`,
+		} {
+			exec(t, db, statement)
+		}
+	}
 	return path
 }

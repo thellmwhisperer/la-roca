@@ -3,10 +3,13 @@ package ingest
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/thellmwhisperer/la-roca/pkg/ingestprovenance"
 	"github.com/thellmwhisperer/la-roca/pkg/parsers"
@@ -81,9 +84,16 @@ func ReadLegacyStore(ctx context.Context, path string) (parsers.Records, []strin
 	if err != nil {
 		return parsers.Records{}, nil, err
 	}
+	exchangeProjection, err := legacyStoreProjection(ctx, db, "exchanges", []string{
+		"id", "session_id", "exchange_number", "is_after_compaction", "human_text",
+		"agent_text", "human_timestamp", "agent_timestamp", "response_latency_ms",
+		"model", "provider", "tokens_in", "tokens_out", "tokens_reasoning", "cost_usd",
+	})
+	if err != nil {
+		return parsers.Records{}, nil, err
+	}
 	exchanges, err := queryRows(ctx, db,
-		`SELECT id, session_id, exchange_number, is_after_compaction, human_text,
-		        agent_text, human_timestamp, agent_timestamp, response_latency_ms
+		`SELECT `+exchangeProjection+`
 		 FROM exchanges ORDER BY session_id, exchange_number, id`)
 	if err != nil {
 		return parsers.Records{}, nil, err
@@ -102,10 +112,15 @@ func ReadLegacyStore(ctx context.Context, path string) (parsers.Records, []strin
 	if err != nil {
 		return parsers.Records{}, nil, err
 	}
+	memoryProjection, err := legacyStoreProjection(ctx, db, "memories", []string{
+		"id", "layer", "content", "metadata", "origin", "source_agent", "source_model",
+		"source_session", "source_sequence", "project", "status", "supersedes", "created_at",
+	})
+	if err != nil {
+		return parsers.Records{}, nil, err
+	}
 	memories, err := queryRows(ctx, db,
-		`SELECT id, layer, content, metadata, origin, source_agent, source_session,
-		        source_sequence, project, status, supersedes, created_at
-		 FROM memories ORDER BY id`)
+		`SELECT `+memoryProjection+` FROM memories ORDER BY id`)
 	if err != nil {
 		return parsers.Records{}, nil, err
 	}
@@ -180,6 +195,21 @@ func openLegacyStoreSource(ctx context.Context, path string) (*sql.DB, error) {
 	return db, nil
 }
 
+func legacyStoreProjection(ctx context.Context, db *sql.DB, table string,
+	candidates []string) (string, error) {
+	available, err := tableColumns(ctx, db, table)
+	if err != nil {
+		return "", err
+	}
+	selected := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		if available[candidate] {
+			selected = append(selected, candidate)
+		}
+	}
+	return strings.Join(selected, ", "), nil
+}
+
 func groupLegacyStoreRows(rows []row) map[string][]row {
 	out := map[string][]row{}
 	for _, item := range rows {
@@ -212,6 +242,7 @@ func legacyStoreSession(source row, exchanges, thinking, tools []row) (parsers.S
 		StartedAt:        source.text("started_at"),
 		EndedAt:          source.text("ended_at"),
 		Title:            source.text("title"),
+		Metadata:         legacyStoreMetadata(source.text("metadata")),
 		ExchangeKeyScope: legacyStoreSource,
 	}
 	if minutes, ok := source.number("duration_minutes"); ok {
@@ -240,6 +271,7 @@ func legacyStoreSession(source row, exchanges, thinking, tools []row) (parsers.S
 			AgentText:         item.text("agent_text"),
 			HumanTimestamp:    item.text("human_timestamp"),
 			AgentTimestamp:    item.text("agent_timestamp"),
+			Provenance:        legacyStoreProvenance(item),
 		}
 		if !claimed[int(original)] {
 			exchange.Thinking = thinkingByNumber[int(original)]
@@ -254,8 +286,13 @@ func legacyStoreSession(source row, exchanges, thinking, tools []row) (parsers.S
 		}
 		session.Exchanges = append(session.Exchanges, exchange)
 	}
-	for _, leftover := range thinkingByNumber {
-		session.Thinking = append(session.Thinking, leftover...)
+	leftoverNumbers := make([]int, 0, len(thinkingByNumber))
+	for number := range thinkingByNumber {
+		leftoverNumbers = append(leftoverNumbers, number)
+	}
+	sort.Ints(leftoverNumbers)
+	for _, number := range leftoverNumbers {
+		session.Thinking = append(session.Thinking, thinkingByNumber[number]...)
 	}
 	var discards []parsers.Discard
 	for _, leftovers := range toolsByNumber {
@@ -295,6 +332,37 @@ func legacyStoreTool(tool row) parsers.ToolUse {
 	}
 }
 
+func legacyStoreProvenance(source row) parsers.Provenance {
+	provenance := parsers.Provenance{
+		Model:    source.text("model"),
+		Provider: source.text("provider"),
+	}
+	if value, ok := source.number("tokens_in"); ok {
+		count := int(value)
+		provenance.TokensIn = &count
+	}
+	if value, ok := source.number("tokens_out"); ok {
+		count := int(value)
+		provenance.TokensOut = &count
+	}
+	if value, ok := source.number("tokens_reasoning"); ok {
+		count := int(value)
+		provenance.TokensReasoning = &count
+	}
+	if value, ok := source.number("cost_usd"); ok {
+		provenance.CostUSD = &value
+	}
+	return provenance
+}
+
+func legacyStoreMetadata(encoded string) map[string]any {
+	var metadata map[string]any
+	if encoded == "" || json.Unmarshal([]byte(encoded), &metadata) != nil || metadata == nil {
+		return map[string]any{}
+	}
+	return metadata
+}
+
 func legacyStoreMemory(source row) (parsers.Memory, bool) {
 	content := source.text("content")
 	if content == "" {
@@ -302,11 +370,10 @@ func legacyStoreMemory(source row) (parsers.Memory, bool) {
 	}
 	id, _ := source.number("id")
 	identity := legacyStoreMemoryFile + strconv.FormatInt(int64(id), 10)
-	metadata := map[string]any{
-		"_cron_source":    legacyStoreSource,
-		"file_path":       identity,
-		legacyMemoryIDKey: int64(id),
-	}
+	metadata := legacyStoreMetadata(source.text("metadata"))
+	metadata["_cron_source"] = legacyStoreSource
+	metadata["file_path"] = identity
+	metadata[legacyMemoryIDKey] = int64(id)
 	if supersedes, ok := source.number("supersedes"); ok && supersedes != 0 {
 		metadata[legacySupersedesKey] = int64(supersedes)
 	}
@@ -319,6 +386,7 @@ func legacyStoreMemory(source row) (parsers.Memory, bool) {
 		Content:       content,
 		Origin:        origin,
 		SourceAgent:   source.text("source_agent"),
+		SourceModel:   source.text("source_model"),
 		SourceSurface: ingestprovenance.LegacyStore,
 		Project:       source.text("project"),
 		Metadata:      parsers.WithoutEmpty(metadata),
