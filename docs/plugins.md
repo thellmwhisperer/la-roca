@@ -253,8 +253,8 @@ contract:
 - databases: every SQLite file, its declared attach alias, attachment mode,
   custody, and plugin-owned retention policy;
 - semantic fragment: the tables and questions served by each database;
-- optional vector fragment: the stable row id and prose columns a database
-  opts into later semantic indexing;
+- optional vector fragment: the stable row id, prose columns, and chronology a
+  database opts into later semantic indexing;
 - verbs: one canonical command name and description, projected to CLI and MCP;
 - capabilities: named executable calls used when SQL cannot perform the work.
 
@@ -303,7 +303,7 @@ it.)
             "name": "receipts",
             "description": "One row per purchase receipt.",
             "questions": ["How much did a purchase cost?"],
-            "columns": ["id", "title", "amount_cents"]
+            "columns": ["id", "title", "amount_cents", "created_at"]
           }
         ]
       },
@@ -330,6 +330,7 @@ it.)
             "name": "receipts",
             "id_column": "id",
             "text_columns": ["title"],
+            "time_columns": ["created_at"],
             "chunking": {"max_chars": 4000, "overlap_chars": 400}
           }
         ]
@@ -419,13 +420,19 @@ names one declared database and table, one stable `id_column`, and the ordered
 noise, and other deterministic-only fields out unless their meaning is itself
 the retrieval surface.
 
-Inside `vector.databases[].tables[]`, the complete author contract is three
-lines: table, stable id column, and opt-in prose columns.
+Inside `vector.databases[].tables[]`, the author contract names the table,
+stable id column, opt-in prose columns, and chronological source. Use
+`time_columns` when the row carries its own timestamps. Use `time_join` when
+chronology comes from a related declared table; it names that table, the local
+and foreign join columns, and the related table's ordered `time_columns`. Every
+named chronological or join column must appear in the relevant semantic table's
+ordered `columns` list.
 
 ```json
 {"name": "receipts",
  "id_column": "id",
- "text_columns": ["title"]}
+ "text_columns": ["title"],
+ "time_columns": ["created_at"]}
 ```
 
 That is declaration only. The kernel owns embedding generation, fingerprints,

@@ -10,12 +10,15 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca-vector/internal/engine"
 	_ "modernc.org/sqlite"
 )
 
 type recordingEmbedder struct {
+	mu     sync.Mutex
 	inputs [][]string
 }
 
@@ -26,7 +29,9 @@ type compactFixtureEmbedder struct {
 func (e *recordingEmbedder) Pull(context.Context, string) error { return nil }
 
 func (e *recordingEmbedder) Embed(_ context.Context, _ string, input []string) ([][]float32, error) {
+	e.mu.Lock()
 	e.inputs = append(e.inputs, append([]string(nil), input...))
+	e.mu.Unlock()
 	vectors := make([][]float32, len(input))
 	for i, text := range input {
 		text = strings.ToLower(text)
@@ -72,6 +77,33 @@ func TestChunksOverlapWithoutRepeatingTerminalChunk(t *testing.T) {
 	if strings.Join(unicode, "|") != "a🙂b|bc" {
 		t.Fatalf("unicode chunks = %q", unicode)
 	}
+}
+
+func TestNativeEmbedderRejectsUnsupportedModelBeforeLoading(t *testing.T) {
+	embedder := ConfiguredEmbedder(t.TempDir(), t.TempDir(), nil, nil, false)
+	if err := embedder.Pull(context.Background(), "another-768-dimensional-model"); err == nil ||
+		!strings.Contains(err.Error(), "not supported") {
+		t.Fatalf("unsupported model error = %v", err)
+	}
+}
+
+func TestIngestProgressReportsRemainingETA(t *testing.T) {
+	corpus := &memoryCorpus{sources: []sourceRow{
+		{kind: "memories", text: "alpha beta gamma", occurredAt: "2026-08-01", chunkSize: 6},
+	}}
+	var events []engine.Event
+	index := Index{Corpus: corpus, VectorPath: filepath.Join(t.TempDir(), "vector.db"),
+		Model: DefaultModel, Embedder: &recordingEmbedder{}, BatchSize: 1,
+		Events: func(event engine.Event) { events = append(events, event) }}
+	if _, err := index.Ingest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if event.Stage == "ingest" && event.Done == 1 && event.Total == 3 && event.ETA > 0 {
+			return
+		}
+	}
+	t.Fatalf("no remaining-work ETA event: %+v", events)
 }
 
 func TestStableSourceIDsUseCoreNaturalKeys(t *testing.T) {
@@ -672,6 +704,17 @@ func (m *memoryCorpus) WalkSources(_ context.Context, sourceKind string, visit f
 		}
 	}
 	return nil
+}
+
+func (m *memoryCorpus) CountChunks(_ context.Context, sourceKind string) (int64, error) {
+	var total int64
+	for _, source := range m.sources {
+		if sourceKind == "" || source.kind == sourceKind {
+			size, overlap := source.chunking()
+			total += int64(len(chunks(source.text, size, overlap)))
+		}
+	}
+	return total, nil
 }
 
 func (m *memoryCorpus) ResolveSource(_ context.Context, kind string, where locator) (string, error) {

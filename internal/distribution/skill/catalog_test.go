@@ -21,7 +21,7 @@ func catalogFixtureDatabases() []plugin.Database {
 				Questions:   []string{"What did the synthetic corpus record?"},
 			},
 			VectorTables: []plugin.VectorTable{{
-				Name: "sessions", IDColumn: "session_id", TextColumns: []string{"title"},
+				Name: "sessions", IDColumn: "session_id", TextColumns: []string{"title"}, TimeColumns: []string{"session_id"},
 			}},
 		},
 		Tables: []plugin.Table{{
