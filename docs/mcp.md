@@ -155,7 +155,7 @@ An agent learns La Roca three different ways. They stack; none replaces another.
 | Layer | What it is | How the operator turns it on |
 |---|---|---|
 | **Prompt** | The generated `prompt.md` block for agent instructions | Automatic on every init |
-| **Skill** | Three embedded skills (`roca`, `roca-operations`, `roca-vector`) plus `roca-semantica`, the semantic catalog generated from the installed plugin manifests | `roca init` installs the three embedded skills into every detected skill seat and names `roca` and `roca-operations` as must-read; `roca skill install <runtime>` or `--all` writes all four as registered, zoned files |
+| **Skill** | Three embedded skills (`roca`, `roca-operations`, `roca-vector`) plus `roca-semantica`, the semantic catalog generated from the installed plugin manifests | `roca init` installs all four (the three embedded skills plus `roca-semantica`) into every detected skill seat and names `roca` and `roca-operations` as must-read; `roca skill install <runtime>` or `--all` writes the same four as registered, zoned files |
 | **MCP** | Six passthrough tools for agents with no shell | `roca mcp install <runtime>` |
 
 ```
