@@ -130,7 +130,8 @@ func ParseQwenCode(content []byte, meta FileMeta) (Records, error) {
 			"cwd": reader.cwd, "git_branch": reader.gitBranch,
 			"qwen_version": reader.version, "source_path": meta.Path,
 		}),
-		Exchanges: reader.exchanges,
+		ExchangeNumbersAuthoritative: true,
+		Exchanges:                    reader.exchanges,
 	}
 	session.StartedAt, session.EndedAt, session.DurationMinutes = span(session.Exchanges)
 	return Records{Sessions: []Session{session},

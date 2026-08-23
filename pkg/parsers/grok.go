@@ -256,6 +256,8 @@ func (r *grokReader) flush(closed bool) {
 		LatencyMS:      latency(r.current.humanTS, r.current.agentTS),
 		Provenance:     usage.Provenance(grokModelLabel(r.current.model), ""),
 	}
+	exchange.Fingerprint = chatGPTExchangeFingerprint(exchange)
+	exchange.RewriteOnIdentityChange = true
 	if text := strings.TrimSpace(r.current.thoughtText.String()); text != "" {
 		exchange.Thinking = append(exchange.Thinking, Thinking{Text: text, WordCount: wordCount(text)})
 	}

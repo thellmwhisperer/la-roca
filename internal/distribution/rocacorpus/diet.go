@@ -3,6 +3,7 @@ package rocacorpus
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -38,12 +39,16 @@ type migrationSeal struct {
 // Compact rewrites an existing corpus database to the one-row storage law and
 // VACUUMs. Current harvest rows are counted before and after; they must match.
 func Compact(ctx context.Context, path string) (CompactReport, error) {
-	beforeInfo, err := os.Stat(path)
+	beforeBytes, err := databaseSize(path)
 	if err != nil {
-		return CompactReport{}, fmt.Errorf("stat corpus database: %w", err)
+		return CompactReport{}, fmt.Errorf("measure corpus database: %w", err)
 	}
 	db, err := bundledplugin.OpenDatabase(path, false)
 	if err != nil {
+		return CompactReport{}, err
+	}
+	if err := ensureCorpusOwned(ctx, db); err != nil {
+		db.Close()
 		return CompactReport{}, err
 	}
 	before, err := countCurrentRows(ctx, db)
@@ -124,11 +129,11 @@ func Compact(ctx context.Context, path string) (CompactReport, error) {
 			before.sessions, after.sessions, before.exchanges, after.exchanges,
 			before.thinking, after.thinking, before.tools, after.tools)
 	}
-	afterInfo, err := os.Stat(path)
+	afterBytes, err := databaseSize(path)
 	if err != nil {
 		return CompactReport{}, err
 	}
-	reclaimed := beforeInfo.Size() - afterInfo.Size()
+	reclaimed := beforeBytes - afterBytes
 	if reclaimed < 0 {
 		reclaimed = 0
 	}
@@ -139,8 +144,8 @@ func Compact(ctx context.Context, path string) (CompactReport, error) {
 		ToolUses:           after.tools,
 		CustodyMemberships: custody,
 		CorpusSourceRows:   sourceRows,
-		BytesBefore:        beforeInfo.Size(),
-		BytesAfter:         afterInfo.Size(),
+		BytesBefore:        beforeBytes,
+		BytesAfter:         afterBytes,
 		ReclaimedBytes:     reclaimed,
 		AlreadyApplied:     !rewrote,
 		VersionFTSDropped:  versionFTSDropped,
@@ -148,6 +153,46 @@ func Compact(ctx context.Context, path string) (CompactReport, error) {
 		ArchiveRowsDropped: custody == 0 && sourceRows == 0,
 		VacuumFreelist:     vacuumFreelist,
 	}, nil
+}
+
+// ensureCorpusOwned verifies the target file belongs to the roca-corpus plugin
+// before any mutation. The core schema shares the four current tables, so a row
+// count alone cannot distinguish it from a corpus database.
+func ensureCorpusOwned(ctx context.Context, db *sql.DB) error {
+	snapshot, err := migrationledger.Inspect(ctx, db)
+	if err != nil {
+		return fmt.Errorf("inspect corpus database ownership: %w", err)
+	}
+	if snapshot.Plugin != Name {
+		if snapshot.Plugin == "" {
+			return fmt.Errorf("the database declares no %s corpus identity; compact refuses to mutate it", Name)
+		}
+		return fmt.Errorf("the database belongs to %q, not the %s corpus", snapshot.Plugin, Name)
+	}
+	return nil
+}
+
+// databaseSize reports the total physical footprint of a database, including
+// the WAL sidecar where uncheckpointed pages live.
+func databaseSize(path string) (int64, error) {
+	total, err := fileSize(path)
+	if err != nil {
+		return 0, err
+	}
+	if wal, err := fileSize(path + "-wal"); err == nil {
+		total += wal
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return 0, fmt.Errorf("measure corpus database WAL: %w", err)
+	}
+	return total, nil
+}
+
+func fileSize(path string) (int64, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, err
+	}
+	return info.Size(), nil
 }
 
 func restoreCompactSchema(ctx context.Context, path string) error {

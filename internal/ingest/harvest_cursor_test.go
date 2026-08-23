@@ -424,6 +424,106 @@ func TestSubagentAssistantExtensionRewritesOneExchangeWithLineage(t *testing.T) 
 	assertLineageHasNoContent(t, db)
 }
 
+func TestCoworkAssistantExtensionRewritesOneExchangeWithLineage(t *testing.T) {
+	first := `{"type":"user","session_id":"cowork-rewrite","_audit_timestamp":"2026-08-01T12:00:00Z","message":{"content":[{"type":"text","text":"question"}]}}` + "\n" +
+		`{"type":"assistant","_audit_timestamp":"2026-08-01T12:00:04Z","message":{"content":"partial"}}` + "\n"
+	second := first + `{"type":"assistant","_audit_timestamp":"2026-08-01T12:00:05Z","message":{"content":"complete"}}` + "\n"
+	db := corpusDatabase(t)
+	for _, content := range []string{first, second} {
+		records, err := parsers.Parse(parsers.KindCoworkAudit, []byte(content), parsers.FileMeta{
+			SourceAgent: "cowork", SessionID: "cowork-rewrite",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeHarvestRecords(t, db, records)
+	}
+	var answer string
+	if err := db.SQL().QueryRow(`SELECT agent_text FROM exchanges
+		WHERE session_id = 'cowork-rewrite' AND exchange_number = 1`).Scan(&answer); err != nil {
+		t.Fatal(err)
+	}
+	if answer != "partial\ncomplete" {
+		t.Fatalf("rewritten cowork answer = %q", answer)
+	}
+	if got := harvestVersionCount(t, db); got != 1 {
+		t.Fatalf("cowork rewrite lineage rows = %d, want 1", got)
+	}
+	assertLineageHasNoContent(t, db)
+}
+
+func TestQwenAssistantExtensionRewritesOneExchangeWithLineage(t *testing.T) {
+	first := `{"type":"user","sessionId":"qwen-rewrite","timestamp":"2026-08-01T09:00:00Z","cwd":"/synthetic/harbour","version":"9.9.9","message":{"role":"user","parts":[{"text":"question"}]}}` + "\n" +
+		`{"type":"assistant","sessionId":"qwen-rewrite","timestamp":"2026-08-01T09:00:01Z","cwd":"/synthetic/harbour","version":"9.9.9","message":{"role":"model","parts":[{"text":"partial"}]}}` + "\n"
+	second := first + `{"type":"assistant","sessionId":"qwen-rewrite","timestamp":"2026-08-01T09:00:02Z","cwd":"/synthetic/harbour","version":"9.9.9","message":{"role":"model","parts":[{"text":"complete"}]}}` + "\n"
+	db := corpusDatabase(t)
+	for _, content := range []string{first, second} {
+		records, err := parsers.Parse(parsers.KindQwenCode, []byte(content), parsers.FileMeta{
+			SourceAgent: "qwen-code",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeHarvestRecords(t, db, records)
+	}
+	var count int
+	if err := db.SQL().QueryRow(`SELECT COUNT(*) FROM exchanges WHERE session_id = 'qwen-rewrite'`).
+		Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("qwen rewrite allocated %d exchanges, want 1", count)
+	}
+	var answer string
+	if err := db.SQL().QueryRow(`SELECT agent_text FROM exchanges
+		WHERE session_id = 'qwen-rewrite' AND exchange_number = 1`).Scan(&answer); err != nil {
+		t.Fatal(err)
+	}
+	if answer != "partial\ncomplete" {
+		t.Fatalf("rewritten qwen answer = %q", answer)
+	}
+	if got := harvestVersionCount(t, db); got != 1 {
+		t.Fatalf("qwen rewrite lineage rows = %d, want 1", got)
+	}
+	assertLineageHasNoContent(t, db)
+}
+
+func TestGrokAssistantExtensionRewritesOneExchangeWithLineage(t *testing.T) {
+	first := `{"method":"session/update","params":{"sessionId":"grok-rewrite","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"question"},"_meta":{"promptIndex":1}}},"timestamp":1785585600}` + "\n" +
+		`{"method":"session/update","params":{"sessionId":"grok-rewrite","_meta":{"promptId":"prompt-1"},"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"partial"}}},"timestamp":1785585601}` + "\n"
+	second := first + `{"method":"session/update","params":{"sessionId":"grok-rewrite","_meta":{"promptId":"prompt-1"},"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"complete"}}},"timestamp":1785585602}` + "\n"
+	db := corpusDatabase(t)
+	for _, content := range []string{first, second} {
+		records, err := parsers.Parse(parsers.KindGrokSession, []byte(content), parsers.FileMeta{
+			SourceAgent: "grok", SessionID: "grok-rewrite",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeHarvestRecords(t, db, records)
+	}
+	var count int
+	if err := db.SQL().QueryRow(`SELECT COUNT(*) FROM exchanges WHERE session_id = 'grok-rewrite'`).
+		Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("grok rewrite allocated %d exchanges, want 1", count)
+	}
+	var answer string
+	if err := db.SQL().QueryRow(`SELECT agent_text FROM exchanges
+		WHERE session_id = 'grok-rewrite' AND exchange_number = 1`).Scan(&answer); err != nil {
+		t.Fatal(err)
+	}
+	if answer != "partialcomplete" {
+		t.Fatalf("rewritten grok answer = %q", answer)
+	}
+	if got := harvestVersionCount(t, db); got != 1 {
+		t.Fatalf("grok rewrite lineage rows = %d, want 1", got)
+	}
+	assertLineageHasNoContent(t, db)
+}
+
 func TestLineageDigestFramesEmbeddedNULBoundaries(t *testing.T) {
 	db := corpusDatabase(t)
 	write := func(human, agent string) {

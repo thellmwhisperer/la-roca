@@ -337,6 +337,91 @@ func assertNoColumn(t *testing.T, db *sql.DB, table, column string) {
 	}
 }
 
+func TestCompactRefusesANonCorpusDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "core.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`CREATE TABLE sessions (
+  session_id    TEXT PRIMARY KEY,
+  source_agent  TEXT DEFAULT 'claude-code',
+  project       TEXT,
+  started_at    TEXT,
+  ended_at      TEXT,
+  duration_minutes INTEGER,
+  title         TEXT,
+  metadata      TEXT DEFAULT '{}',
+  source_surface TEXT
+)`,
+		`CREATE TABLE exchanges (
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id            TEXT,
+  exchange_number       INTEGER,
+  is_after_compaction   INTEGER DEFAULT 0,
+  human_text            TEXT,
+  agent_text            TEXT,
+  human_timestamp       TEXT,
+  agent_timestamp       TEXT,
+  response_latency_ms   INTEGER,
+  model                 TEXT,
+  provider              TEXT,
+  tokens_in             INTEGER,
+  tokens_out            INTEGER,
+  tokens_reasoning      INTEGER,
+  cost_usd              REAL
+)`,
+		`CREATE TABLE tool_uses (
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id            TEXT,
+  exchange_number       INTEGER,
+  tool_name             TEXT,
+  tool_params_summary   TEXT,
+  had_error             INTEGER DEFAULT 0,
+  error_message         TEXT,
+  initiative_type       TEXT
+)`,
+		`CREATE TABLE thinking_blocks (
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id            TEXT,
+  exchange_number       INTEGER,
+  position_in_session   REAL,
+  depth                 TEXT,
+  caution_ratio         REAL,
+  word_count            INTEGER,
+  is_after_compaction   INTEGER DEFAULT 0,
+  full_text             TEXT
+)`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := rocacorpus.Compact(context.Background(), path); err == nil {
+		t.Fatal("compact accepted a database with no corpus identity")
+	}
+
+	db, err = sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var owned int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'plugin_schema'`).
+		Scan(&owned); err != nil {
+		t.Fatal(err)
+	}
+	if owned != 0 {
+		t.Fatal("compact mutated a non-corpus database")
+	}
+}
+
 func TestCompactIsIdempotentOnAnAlreadySlimDatabase(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "roca-corpus.db")
 	if err := rocacorpus.ApplySchema(path); err != nil {

@@ -163,13 +163,14 @@ func ParseCoworkAudit(content []byte, meta FileMeta) (Records, error) {
 
 	sidecar := readSessionMetadata(meta.Sidecar)
 	session := Session{
-		ID:          firstNonEmpty(sidecar.sessionID, meta.SessionID, firstSessionID),
-		SourceAgent: firstNonEmpty(meta.SourceAgent, "cowork"),
-		Project:     meta.Project,
-		Title:       sidecar.title,
-		Snapshot:    !meta.Incremental,
-		Exchanges:   exchanges,
-		Metadata:    map[string]any{"entrypoint": "claude-cowork"},
+		ID:                           firstNonEmpty(sidecar.sessionID, meta.SessionID, firstSessionID),
+		SourceAgent:                  firstNonEmpty(meta.SourceAgent, "cowork"),
+		Project:                      meta.Project,
+		Title:                        sidecar.title,
+		Snapshot:                     !meta.Incremental,
+		ExchangeNumbersAuthoritative: true,
+		Exchanges:                    exchanges,
+		Metadata:                     map[string]any{"entrypoint": "claude-cowork"},
 	}
 	if sidecar.initialMessage != "" {
 		session.Metadata["initial_message"] = sidecar.initialMessage
