@@ -1,3 +1,34 @@
+/**
+ * @overview Creates leased read-only SQLite snapshots. ~700 lines, 6 public symbols.
+ *
+ *   READING GUIDE
+ *   -------------
+ *   1. Start at OpenReadOnlySnapshot  <- coordinates reuse and creation
+ *   2. createReadOnlySnapshot         <- publishes a leased copy
+ *   3. scavengeReadOnlySnapshots      <- removes abandoned copies
+ *   4. ReadOnlySnapshot.Close         <- releases the final reference
+ *
+ *   MAIN FLOW
+ *   ---------
+ *   OpenReadOnlySnapshot -> create/read cache -> hold lease -> Close -> remove directory
+ *
+ *   PUBLIC API
+ *   ----------
+ *   ReadOnlySnapshot         Leased read-only database copy.
+ *   SetSnapshotLogDir        Selects the snapshot telemetry directory.
+ *   OpenReadOnlySnapshot     Opens or reuses a stable source snapshot.
+ *   SQL                      Returns the copied database handle.
+ *   URI                      Returns the copied database URI.
+ *   Close                    Releases one reference and removes the final copy.
+ *
+ *   INTERNALS
+ *   ---------
+ *   snapshotLease, snapshotInflight, createReadOnlySnapshot, scavengeReadOnlySnapshots
+ *   inspectSnapshotSource, copySnapshotSource, openCopiedSnapshot, cleanupHeldSnapshots
+ *
+ * @exports ReadOnlySnapshot, SetSnapshotLogDir, OpenReadOnlySnapshot, SQL, URI, Close
+ * @deps database/sql and modernc SQLite; internal/securefile; os/signal and filesystem
+ */
 package store
 
 import (
@@ -15,7 +46,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/securefile"
@@ -24,18 +54,22 @@ import (
 var snapshotArtifacts = [...]string{"", "-wal", "-journal"}
 
 const (
-	snapshotDirectoryPrefix = "roca-read-only-snapshot-"
-	snapshotLeaseName       = "lease"
-	snapshotCopyBufferSize  = 128 * 1024
-	snapshotLogStream       = "snapshots"
-	bytesPerMB              = 1024 * 1024
+	snapshotDirectoryPrefix    = "roca-read-only-snapshot-"
+	snapshotStagingPrefix      = ".roca-snapshot-staging-"
+	snapshotNamespaceLeaseName = ".roca-read-only-snapshot-namespace.lease"
+	snapshotLeaseName          = "lease"
+	snapshotCopyBufferSize     = 128 * 1024
+	snapshotLogStream          = "snapshots"
+	bytesPerMB                 = 1024 * 1024
 )
+
+// -- 1/7 HELPER · Snapshot state and coordination --
 
 type ReadOnlySnapshot struct {
 	database    *sql.DB
 	uri         string
 	directory   string
-	lease       func() error
+	lease       *snapshotLease
 	fingerprint string
 	refs        int
 	once        sync.Once
@@ -55,6 +89,14 @@ type snapshotInflight struct {
 	err   error
 }
 
+type snapshotLease struct {
+	mu        sync.Mutex
+	directory string
+	release   func() error
+	once      sync.Once
+	err       error
+}
+
 var (
 	snapshotLogDir atomic.Pointer[string]
 
@@ -62,11 +104,15 @@ var (
 	snapshotCache   = map[string]*ReadOnlySnapshot{}
 	snapshotFlight  = map[string]*snapshotInflight{}
 
+	snapshotNamespaceMu sync.Mutex
+
 	snapshotHeldMu sync.Mutex
-	snapshotHeld   = map[string]func() error{}
+	snapshotHeld   = map[*snapshotLease]struct{}{}
 
 	snapshotExitOnce sync.Once
 )
+
+var copySnapshotSourceFn = copySnapshotSource
 
 // SetSnapshotLogDir routes snapshot create/reap records to the standard JSONL
 // telemetry logs under dataDir/logs. Empty disables them.
@@ -78,6 +124,10 @@ func SetSnapshotLogDir(dataDir string) {
 	dir := dataDir
 	snapshotLogDir.Store(&dir)
 }
+
+// -/ 1/7
+
+// -- 2/7 CORE · OpenReadOnlySnapshot cache and flights -- <- START HERE
 
 func OpenReadOnlySnapshot(ctx context.Context, path string) (*ReadOnlySnapshot, error) {
 	if err := ctx.Err(); err != nil {
@@ -91,65 +141,92 @@ func OpenReadOnlySnapshot(ctx context.Context, path string) (*ReadOnlySnapshot, 
 	if err := scavengeReadOnlySnapshots(ctx, os.TempDir()); err != nil {
 		return nil, err
 	}
-	before, err := inspectSnapshotSource(abs)
-	if err != nil {
-		return nil, err
-	}
-	fingerprint := snapshotFingerprint(abs, before)
-
-	snapshotCacheMu.Lock()
-	if cached, ok := snapshotCache[fingerprint]; ok {
-		cached.refs++
-		snapshotCacheMu.Unlock()
-		return cached, nil
-	}
-	if flight, ok := snapshotFlight[fingerprint]; ok {
-		snapshotCacheMu.Unlock()
-		<-flight.ready
-		if flight.err != nil {
-			return nil, flight.err
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
+		before, err := inspectSnapshotSource(abs)
+		if err != nil {
+			return nil, err
+		}
+		fingerprint := snapshotFingerprint(abs, before)
+
 		snapshotCacheMu.Lock()
 		if cached, ok := snapshotCache[fingerprint]; ok {
 			cached.refs++
 			snapshotCacheMu.Unlock()
 			return cached, nil
 		}
+		if flight, ok := snapshotFlight[abs]; ok {
+			snapshotCacheMu.Unlock()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-flight.ready:
+			}
+			if flight.err != nil {
+				if ctx.Err() == nil && isSnapshotContextError(flight.err) {
+					continue
+				}
+				return nil, flight.err
+			}
+			continue
+		}
+		flight := &snapshotInflight{ready: make(chan struct{})}
+		snapshotFlight[abs] = flight
 		snapshotCacheMu.Unlock()
-		return OpenReadOnlySnapshot(ctx, path)
-	}
-	flight := &snapshotInflight{ready: make(chan struct{})}
-	snapshotFlight[fingerprint] = flight
-	snapshotCacheMu.Unlock()
 
-	snapshot, err := createReadOnlySnapshot(ctx, abs, before)
-	snapshotCacheMu.Lock()
-	delete(snapshotFlight, fingerprint)
-	if err == nil {
-		snapshot.fingerprint = fingerprint
-		snapshot.refs = 1
-		snapshotCache[fingerprint] = snapshot
+		created, createErr := createReadOnlySnapshot(ctx, abs, before)
+		var snapshot *ReadOnlySnapshot
+		var duplicate *ReadOnlySnapshot
+		snapshotCacheMu.Lock()
+		if createErr == nil {
+			if cached, ok := snapshotCache[created.fingerprint]; ok {
+				cached.refs++
+				snapshot = cached
+				duplicate = created
+			} else {
+				created.refs = 1
+				snapshotCache[created.fingerprint] = created
+				snapshot = created
+			}
+		}
+		snapshotCacheMu.Unlock()
+
+		if duplicate != nil {
+			if err := duplicate.destroy(); err != nil {
+				_ = snapshot.Close()
+				snapshot = nil
+				createErr = err
+			}
+		}
+
+		snapshotCacheMu.Lock()
+		if snapshotFlight[abs] == flight {
+			delete(snapshotFlight, abs)
+		}
+		flight.err = createErr
+		close(flight.ready)
+		snapshotCacheMu.Unlock()
+		return snapshot, createErr
 	}
-	flight.err = err
-	close(flight.ready)
-	snapshotCacheMu.Unlock()
-	return snapshot, err
 }
 
+func isSnapshotContextError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// -/ 2/7
+
+// -- 3/7 HELPER · Snapshot creation and atomic publication --
+
 func createReadOnlySnapshot(ctx context.Context, abs string, before snapshotSourceState) (*ReadOnlySnapshot, error) {
-	directory, err := os.MkdirTemp(os.TempDir(), snapshotDirectoryPrefix)
+	lease, directory, err := createSnapshotDirectory(os.TempDir())
 	if err != nil {
-		return nil, fmt.Errorf("create read-only snapshot directory: %w", err)
+		return nil, err
 	}
-	lease, err := securefile.Lock(filepath.Join(directory, snapshotLeaseName))
-	if err != nil {
-		return nil, cleanupSnapshotDirectory(directory, fmt.Errorf("lock read-only snapshot: %w", err))
-	}
-	_ = os.WriteFile(filepath.Join(directory, snapshotLeaseName),
-		[]byte(strconv.Itoa(os.Getpid())+"\n"), 0o600)
-	registerHeldSnapshot(directory, lease)
 	abandon := func(cause error) error {
-		return abandonSnapshotDirectory(directory, lease, cause)
+		return lease.destroy(cause)
 	}
 
 	for attempt := range 3 {
@@ -168,7 +245,7 @@ func createReadOnlySnapshot(ctx context.Context, abs string, before snapshotSour
 			return nil, abandon(err)
 		}
 		destination := filepath.Join(attemptDirectory, filepath.Base(abs))
-		if err := copySnapshotSource(ctx, abs, destination); err != nil {
+		if err := copySnapshotSourceFn(ctx, abs, destination); err != nil {
 			after, inspectErr := inspectSnapshotSource(abs)
 			if inspectErr == nil && before != after {
 				if cleanupErr := cleanupSnapshotDirectory(attemptDirectory, nil); cleanupErr != nil {
@@ -205,6 +282,7 @@ func createReadOnlySnapshot(ctx context.Context, abs string, before snapshotSour
 		final, err := inspectSnapshotSource(abs)
 		if err == nil && before == final {
 			snapshot.lease = lease
+			snapshot.fingerprint = snapshotFingerprint(abs, final)
 			logSnapshotRecord(map[string]any{
 				"event":      "create",
 				"source":     abs,
@@ -226,7 +304,92 @@ func createReadOnlySnapshot(ctx context.Context, abs string, before snapshotSour
 	return nil, abandon(fmt.Errorf("database %q kept changing while it was snapshotted", abs))
 }
 
+func createSnapshotDirectory(root string) (*snapshotLease, string, error) {
+	releaseNamespace, err := lockSnapshotNamespace(root)
+	if err != nil {
+		return nil, "", fmt.Errorf("lock read-only snapshot namespace: %w", err)
+	}
+	defer releaseNamespace()
+
+	staging, err := os.MkdirTemp(root, snapshotStagingPrefix)
+	if err != nil {
+		return nil, "", fmt.Errorf("create read-only snapshot staging directory: %w", err)
+	}
+	release, err := securefile.Lock(filepath.Join(staging, snapshotLeaseName))
+	if err != nil {
+		return nil, "", cleanupSnapshotDirectory(staging,
+			fmt.Errorf("lock read-only snapshot: %w", err))
+	}
+	lease := &snapshotLease{directory: staging, release: release}
+	registerHeldSnapshot(lease)
+	if err := os.WriteFile(filepath.Join(staging, snapshotLeaseName),
+		[]byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
+		return nil, "", lease.destroy(err)
+	}
+
+	placeholder, err := os.CreateTemp(root, snapshotDirectoryPrefix)
+	if err != nil {
+		return nil, "", lease.destroy(fmt.Errorf("reserve read-only snapshot name: %w", err))
+	}
+	directory := placeholder.Name()
+	if err := errors.Join(placeholder.Close(), os.Remove(directory)); err != nil {
+		return nil, "", lease.destroy(fmt.Errorf("reserve read-only snapshot name: %w", err))
+	}
+	if err := lease.move(directory); err != nil {
+		return nil, "", lease.destroy(fmt.Errorf("publish read-only snapshot: %w", err))
+	}
+	return lease, directory, nil
+}
+
+func lockSnapshotNamespace(root string) (func() error, error) {
+	snapshotNamespaceMu.Lock()
+	release, err := securefile.Lock(filepath.Join(root, snapshotNamespaceLeaseName))
+	if err != nil {
+		snapshotNamespaceMu.Unlock()
+		return nil, err
+	}
+	return func() error {
+		err := release()
+		snapshotNamespaceMu.Unlock()
+		return err
+	}, nil
+}
+
+func (lease *snapshotLease) move(directory string) error {
+	lease.mu.Lock()
+	defer lease.mu.Unlock()
+	if err := os.Rename(lease.directory, directory); err != nil {
+		return err
+	}
+	lease.directory = directory
+	return nil
+}
+
+func (lease *snapshotLease) destroy(cause error) error {
+	lease.once.Do(func() {
+		unregisterHeldSnapshot(lease)
+		lease.mu.Lock()
+		defer lease.mu.Unlock()
+		var releaseErr error
+		if lease.release != nil {
+			releaseErr = lease.release()
+		}
+		lease.err = errors.Join(releaseErr, cleanupSnapshotDirectory(lease.directory, nil))
+	})
+	return errors.Join(cause, lease.err)
+}
+
+// -/ 3/7
+
+// -- 4/7 HELPER · Orphan reaping --
+
 func scavengeReadOnlySnapshots(ctx context.Context, root string) error {
+	releaseNamespace, err := lockSnapshotNamespace(root)
+	if err != nil {
+		return fmt.Errorf("lock read-only snapshot namespace: %w", err)
+	}
+	defer releaseNamespace()
+
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return fmt.Errorf("inspect read-only snapshot directory: %w", err)
@@ -237,17 +400,24 @@ func scavengeReadOnlySnapshots(ctx context.Context, root string) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), snapshotDirectoryPrefix) {
+		if !entry.IsDir() || (!strings.HasPrefix(entry.Name(), snapshotDirectoryPrefix) &&
+			!strings.HasPrefix(entry.Name(), snapshotStagingPrefix)) {
 			continue
 		}
 		path := filepath.Join(root, entry.Name())
-		orphan, err := snapshotLeaseOrphan(path)
+		release, orphan, err := snapshotOrphanLease(path)
 		if err != nil || !orphan {
 			continue
 		}
 		size := directorySize(path)
 		if err := os.RemoveAll(path); err != nil {
+			if release != nil {
+				_ = release()
+			}
 			continue
+		}
+		if release != nil {
+			_ = release()
 		}
 		reaped++
 		reclaimed += size
@@ -263,19 +433,18 @@ func scavengeReadOnlySnapshots(ctx context.Context, root string) error {
 	return nil
 }
 
-func snapshotLeaseOrphan(directory string) (bool, error) {
+func snapshotOrphanLease(directory string) (func() error, bool, error) {
 	release, err := securefile.TryLock(filepath.Join(directory, snapshotLeaseName))
 	if err == nil {
-		_ = release()
-		return true, nil
+		return release, true, nil
 	}
 	if os.IsNotExist(err) {
-		return true, nil
+		return nil, true, nil
 	}
 	if errors.Is(err, securefile.ErrBusy) {
-		return false, nil
+		return nil, false, nil
 	}
-	return false, err
+	return nil, false, err
 }
 
 func cleanupSnapshotDirectory(directory string, cause error) error {
@@ -285,14 +454,9 @@ func cleanupSnapshotDirectory(directory string, cause error) error {
 	return cause
 }
 
-func abandonSnapshotDirectory(directory string, lease func() error, cause error) error {
-	unregisterHeldSnapshot(directory)
-	var leaseErr error
-	if lease != nil {
-		leaseErr = lease()
-	}
-	return errors.Join(cause, leaseErr, cleanupSnapshotDirectory(directory, nil))
-}
+// -/ 4/7
+
+// -- 5/7 HELPER · Source fingerprinting, copying, and SQLite opening --
 
 func inspectSnapshotSource(path string) (snapshotSourceState, error) {
 	var state snapshotSourceState
@@ -423,6 +587,10 @@ func openCopiedSnapshot(ctx context.Context, path, directory string) (*ReadOnlyS
 	return &ReadOnlySnapshot{database: database, uri: uri, directory: directory}, nil
 }
 
+// -/ 5/7
+
+// -- 6/7 HELPER · Handle lifetime and process cleanup --
+
 func (snapshot *ReadOnlySnapshot) SQL() *sql.DB {
 	return snapshot.database
 }
@@ -455,32 +623,37 @@ func (snapshot *ReadOnlySnapshot) destroy() error {
 		if snapshot.database != nil {
 			closeErr = snapshot.database.Close()
 		}
-		snapshot.err = abandonSnapshotDirectory(snapshot.directory, snapshot.lease, closeErr)
+		if snapshot.lease != nil {
+			snapshot.err = snapshot.lease.destroy(closeErr)
+		} else {
+			snapshot.err = cleanupSnapshotDirectory(snapshot.directory, closeErr)
+		}
 	})
 	return snapshot.err
 }
 
-func registerHeldSnapshot(directory string, lease func() error) {
+func registerHeldSnapshot(lease *snapshotLease) {
 	snapshotHeldMu.Lock()
-	snapshotHeld[directory] = lease
+	snapshotHeld[lease] = struct{}{}
 	snapshotHeldMu.Unlock()
 }
 
-func unregisterHeldSnapshot(directory string) {
+func unregisterHeldSnapshot(lease *snapshotLease) {
 	snapshotHeldMu.Lock()
-	delete(snapshotHeld, directory)
+	delete(snapshotHeld, lease)
 	snapshotHeldMu.Unlock()
 }
 
 func ensureSnapshotExitCleanup() {
 	snapshotExitOnce.Do(func() {
 		signals := make(chan os.Signal, 1)
-		signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+		terminating := snapshotTerminationSignals()
+		signal.Notify(signals, terminating...)
 		go func() {
 			sig := <-signals
 			signal.Stop(signals)
 			cleanupHeldSnapshots()
-			signal.Reset(os.Interrupt, syscall.SIGTERM)
+			signal.Reset(terminating...)
 			if process, err := os.FindProcess(os.Getpid()); err == nil {
 				_ = process.Signal(sig)
 			}
@@ -502,15 +675,16 @@ func cleanupHeldSnapshots() {
 
 	snapshotHeldMu.Lock()
 	pending := snapshotHeld
-	snapshotHeld = map[string]func() error{}
+	snapshotHeld = map[*snapshotLease]struct{}{}
 	snapshotHeldMu.Unlock()
-	for directory, lease := range pending {
-		if lease != nil {
-			_ = lease()
-		}
-		_ = os.RemoveAll(directory)
+	for lease := range pending {
+		_ = lease.destroy(nil)
 	}
 }
+
+// -/ 6/7
+
+// -- 7/7 HELPER · JSONL telemetry --
 
 func logSnapshotRecord(record map[string]any) {
 	dirp := snapshotLogDir.Load()
@@ -535,3 +709,5 @@ func logSnapshotRecord(record map[string]any) {
 	_, _ = file.Write(append(line, '\n'))
 	_ = file.Close()
 }
+
+// -/ 7/7

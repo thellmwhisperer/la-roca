@@ -1,3 +1,28 @@
+/**
+ * @overview Verifies snapshot lifetime, reuse, reaping, and telemetry. ~700 lines, no public symbols.
+ *
+ *   READING GUIDE
+ *   -------------
+ *   1. Start at TestReadOnlySnapshotLifecycle        <- baseline behavior
+ *   2. TestSnapshotFlightsUseFinalSourceFingerprint <- concurrency contract
+ *   3. TestKilledProcessOrphanIsReapedAndLiveSnapshotIsKept
+ *   4. TestSnapshotHelperProcess                    <- subprocess fixture
+ *
+ *   MAIN FLOW
+ *   ---------
+ *   fixtureDatabase -> OpenReadOnlySnapshot -> assert filesystem/telemetry -> Close
+ *
+ *   PUBLIC API
+ *   ----------
+ *   None.
+ *
+ *   INTERNALS
+ *   ---------
+ *   lifecycle tests, flight tests, reap tests, snapshotHelper, filesystem helpers
+ *
+ * @exports
+ * @deps testing; os/exec; internal/securefile
+ */
 package store
 
 import (
@@ -11,8 +36,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/thellmwhisperer/la-roca/internal/securefile"
 )
+
+// -- 1/5 CORE · Snapshot lifecycle -- <- START HERE
 
 func TestReadOnlySnapshotLifecycle(t *testing.T) {
 	t.Run("canceled before copy", func(t *testing.T) {
@@ -104,6 +136,199 @@ func TestReadOnlySnapshotLifecycle(t *testing.T) {
 	})
 }
 
+// -/ 1/5
+
+// -- 2/5 HELPER · Cache identity and context-aware flights --
+
+func TestSnapshotFlightsUseFinalSourceFingerprint(t *testing.T) {
+	root := isolateSnapshotTemp(t)
+	source := fixtureDatabase(t)
+	originalCopy := copySnapshotSourceFn
+	t.Cleanup(func() { copySnapshotSourceFn = originalCopy })
+
+	entered := make(chan struct{})
+	releaseCopy := make(chan struct{})
+	concurrentCopy := make(chan struct{})
+	var concurrentOnce sync.Once
+	var copies atomic.Int32
+	copySnapshotSourceFn = func(ctx context.Context, source, destination string) error {
+		call := copies.Add(1)
+		if call == 1 {
+			close(entered)
+			<-releaseCopy
+		} else {
+			select {
+			case <-releaseCopy:
+			default:
+				concurrentOnce.Do(func() { close(concurrentCopy) })
+			}
+		}
+		return originalCopy(ctx, source, destination)
+	}
+
+	firstResult := make(chan snapshotResult, 1)
+	go func() {
+		snapshot, err := OpenReadOnlySnapshot(context.Background(), source)
+		firstResult <- snapshotResult{snapshot: snapshot, err: err}
+	}()
+	<-entered
+	info, err := os.Stat(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := info.ModTime().Add(2 * time.Second)
+	if err := os.Chtimes(source, changed, changed); err != nil {
+		t.Fatal(err)
+	}
+
+	secondResult := make(chan snapshotResult, 1)
+	go func() {
+		snapshot, err := OpenReadOnlySnapshot(context.Background(), source)
+		secondResult <- snapshotResult{snapshot: snapshot, err: err}
+	}()
+	select {
+	case <-concurrentCopy:
+		t.Fatal("source change started a second concurrent snapshot copy")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(releaseCopy)
+
+	first := <-firstResult
+	second := <-secondResult
+	if first.err != nil || second.err != nil {
+		t.Fatalf("opens failed: first=%v second=%v", first.err, second.err)
+	}
+	if first.snapshot.directory != second.snapshot.directory {
+		t.Fatalf("flights published different snapshots: %q vs %q",
+			first.snapshot.directory, second.snapshot.directory)
+	}
+	third, err := OpenReadOnlySnapshot(context.Background(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.directory != first.snapshot.directory {
+		t.Fatalf("final fingerprint copied again: %q vs %q", third.directory, first.snapshot.directory)
+	}
+	if got := copies.Load(); got != 2 {
+		t.Fatalf("copy attempts = %d, want 2 for one source-change retry", got)
+	}
+	if dirs := listSnapshotDirs(t, root); len(dirs) != 1 {
+		t.Fatalf("flight reuse left snapshot dirs %v, want 1", dirs)
+	}
+	for _, snapshot := range []*ReadOnlySnapshot{first.snapshot, second.snapshot, third} {
+		if err := snapshot.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestSnapshotFlightWaitersOwnTheirContexts(t *testing.T) {
+	t.Run("creator cancellation is retried", func(t *testing.T) {
+		isolateSnapshotTemp(t)
+		source := fixtureDatabase(t)
+		originalCopy := copySnapshotSourceFn
+		t.Cleanup(func() { copySnapshotSourceFn = originalCopy })
+
+		entered := make(chan struct{})
+		var copies atomic.Int32
+		copySnapshotSourceFn = func(ctx context.Context, source, destination string) error {
+			if copies.Add(1) == 1 {
+				close(entered)
+				<-ctx.Done()
+				return ctx.Err()
+			}
+			return originalCopy(ctx, source, destination)
+		}
+
+		creatorCtx, cancelCreator := context.WithCancel(context.Background())
+		creatorResult := make(chan snapshotResult, 1)
+		go func() {
+			snapshot, err := OpenReadOnlySnapshot(creatorCtx, source)
+			creatorResult <- snapshotResult{snapshot: snapshot, err: err}
+		}()
+		<-entered
+		waiterResult := make(chan snapshotResult, 1)
+		go func() {
+			snapshot, err := OpenReadOnlySnapshot(context.Background(), source)
+			waiterResult <- snapshotResult{snapshot: snapshot, err: err}
+		}()
+		select {
+		case result := <-waiterResult:
+			if result.snapshot != nil {
+				_ = result.snapshot.Close()
+			}
+			t.Fatalf("waiter returned before creator cancellation: %v", result.err)
+		case <-time.After(50 * time.Millisecond):
+		}
+		cancelCreator()
+		creator := <-creatorResult
+		if !errors.Is(creator.err, context.Canceled) {
+			t.Fatalf("creator error = %v, want context canceled", creator.err)
+		}
+		waiter := <-waiterResult
+		if waiter.err != nil {
+			t.Fatalf("healthy waiter inherited creator error: %v", waiter.err)
+		}
+		if err := waiter.snapshot.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("waiter cancellation returns during copy", func(t *testing.T) {
+		isolateSnapshotTemp(t)
+		source := fixtureDatabase(t)
+		originalCopy := copySnapshotSourceFn
+		t.Cleanup(func() { copySnapshotSourceFn = originalCopy })
+
+		entered := make(chan struct{})
+		releaseCopy := make(chan struct{})
+		copySnapshotSourceFn = func(ctx context.Context, source, destination string) error {
+			close(entered)
+			<-releaseCopy
+			return originalCopy(ctx, source, destination)
+		}
+		creatorResult := make(chan snapshotResult, 1)
+		go func() {
+			snapshot, err := OpenReadOnlySnapshot(context.Background(), source)
+			creatorResult <- snapshotResult{snapshot: snapshot, err: err}
+		}()
+		<-entered
+
+		waiterCtx, cancelWaiter := context.WithCancel(context.Background())
+		waiterResult := make(chan snapshotResult, 1)
+		go func() {
+			snapshot, err := OpenReadOnlySnapshot(waiterCtx, source)
+			waiterResult <- snapshotResult{snapshot: snapshot, err: err}
+		}()
+		select {
+		case result := <-waiterResult:
+			t.Fatalf("waiter returned before cancellation: %v", result.err)
+		case <-time.After(50 * time.Millisecond):
+		}
+		cancelWaiter()
+		select {
+		case result := <-waiterResult:
+			if !errors.Is(result.err, context.Canceled) {
+				t.Fatalf("waiter error = %v, want context canceled", result.err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("canceled waiter remained blocked on the creator")
+		}
+		close(releaseCopy)
+		creator := <-creatorResult
+		if creator.err != nil {
+			t.Fatal(creator.err)
+		}
+		if err := creator.snapshot.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+// -/ 2/5
+
+// -- 3/5 HELPER · Cross-process reaping and telemetry --
+
 func TestKilledProcessOrphanIsReapedAndLiveSnapshotIsKept(t *testing.T) {
 	root := isolateSnapshotTemp(t)
 	killedSource := fixtureDatabase(t)
@@ -135,6 +360,101 @@ func TestKilledProcessOrphanIsReapedAndLiveSnapshotIsKept(t *testing.T) {
 	}
 	if _, err := os.Stat(live.directory); err != nil {
 		t.Fatalf("live helper snapshot was reaped: %v", err)
+	}
+}
+
+func TestSnapshotPublicationIsLeasedBeforeItIsVisible(t *testing.T) {
+	root := isolateSnapshotTemp(t)
+	source := fixtureDatabase(t)
+	originalCopy := copySnapshotSourceFn
+	t.Cleanup(func() { copySnapshotSourceFn = originalCopy })
+	entered := make(chan struct{})
+	releaseCopy := make(chan struct{})
+	copySnapshotSourceFn = func(ctx context.Context, source, destination string) error {
+		close(entered)
+		<-releaseCopy
+		return originalCopy(ctx, source, destination)
+	}
+	result := make(chan snapshotResult, 1)
+	go func() {
+		snapshot, err := OpenReadOnlySnapshot(context.Background(), source)
+		result <- snapshotResult{snapshot: snapshot, err: err}
+	}()
+	<-entered
+	dirs := listSnapshotDirs(t, root)
+	if len(dirs) != 1 {
+		t.Fatalf("visible snapshot dirs = %v, want 1", dirs)
+	}
+	if _, err := securefile.TryLock(filepath.Join(dirs[0], snapshotLeaseName)); !errors.Is(err, securefile.ErrBusy) {
+		t.Fatalf("visible snapshot lease = %v, want busy", err)
+	}
+	if matches, err := filepath.Glob(filepath.Join(root, snapshotStagingPrefix+"*")); err != nil {
+		t.Fatal(err)
+	} else if len(matches) != 0 {
+		t.Fatalf("staging directories remained visible after publication: %v", matches)
+	}
+	if err := scavengeReadOnlySnapshots(context.Background(), root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dirs[0]); err != nil {
+		t.Fatalf("concurrent reap removed a published snapshot: %v", err)
+	}
+	close(releaseCopy)
+	opened := <-result
+	if opened.err != nil {
+		t.Fatal(opened.err)
+	}
+	if err := opened.snapshot.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestConcurrentSnapshotReapersCountOneRemoval(t *testing.T) {
+	root := isolateSnapshotTemp(t)
+	dataDir := t.TempDir()
+	SetSnapshotLogDir(dataDir)
+	t.Cleanup(func() { SetSnapshotLogDir("") })
+	orphan := filepath.Join(root, snapshotDirectoryPrefix+"orphan")
+	if err := os.Mkdir(orphan, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(orphan, snapshotLeaseName), []byte("1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(orphan, "payload"), make([]byte, 2<<20), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	releaseNamespace, err := securefile.Lock(filepath.Join(root, snapshotNamespaceLeaseName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := make(chan error, 2)
+	for range 2 {
+		go func() { results <- scavengeReadOnlySnapshots(context.Background(), root) }()
+	}
+	select {
+	case err := <-results:
+		t.Fatalf("reaper bypassed namespace lease: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if err := releaseNamespace(); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var reaped float64
+	for _, record := range readSnapshotLog(t, dataDir) {
+		if record["event"] == "reap" {
+			reaped += record["count"].(float64)
+		}
+	}
+	if reaped != 1 {
+		t.Fatalf("concurrent reapers reported %.0f removals, want 1", reaped)
 	}
 }
 
@@ -209,6 +529,10 @@ func TestExitCleanupRemovesOpenSnapshots(t *testing.T) {
 	}
 	_ = snapshot.Close()
 }
+
+// -/ 3/5
+
+// -- 4/5 HELPER · Subprocess snapshot owner --
 
 func TestSnapshotHelperProcess(t *testing.T) {
 	mode := os.Getenv("ROCA_SNAPSHOT_HELPER")
@@ -286,6 +610,15 @@ func (helper *snapshotHelper) wait() error {
 	return helper.cmd.Wait()
 }
 
+// -/ 4/5
+
+// -- 5/5 HELPER · Test fixtures and filesystem assertions --
+
+type snapshotResult struct {
+	snapshot *ReadOnlySnapshot
+	err      error
+}
+
 func isolateSnapshotTemp(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -352,3 +685,5 @@ func readSnapshotLog(t *testing.T, dataDir string) []map[string]any {
 	}
 	return records
 }
+
+// -/ 5/5
