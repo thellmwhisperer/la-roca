@@ -47,7 +47,8 @@ func TestOwnerRepoInstallPrefersAPublishedReleaseArchive(t *testing.T) {
 	archive := releasePluginArchive(t, name, tag, true)
 	channel := newPluginReleaseChannel(t, "owner/"+name, tag, platform, archive)
 	resolver := plugininstall.Resolver{
-		API: channel.URL,
+		API:  channel.URL,
+		HTTP: channel.Client(),
 		CloneURL: func(string) (string, bool) {
 			t.Fatal("cloned the repository tree even though a release archive was published")
 			return "", false
@@ -83,7 +84,7 @@ func TestOwnerRepoUpdateMovesForwardAndPreservesCustodyBytes(t *testing.T) {
 	name := "synthetic-release"
 	first := releasePluginArchive(t, name, "v1.0.0", true)
 	channel := newPluginReleaseChannel(t, "owner/"+name, "v1.0.0", platform, first)
-	resolver := plugininstall.Resolver{API: channel.URL, CloneURL: refuseClone(t)}
+	resolver := plugininstall.Resolver{API: channel.URL, HTTP: channel.Client(), CloneURL: refuseClone(t)}
 	root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
 	manager := plugininstall.Manager{PluginRoot: root, BinDir: bin}
 
@@ -103,13 +104,7 @@ func TestOwnerRepoUpdateMovesForwardAndPreservesCustodyBytes(t *testing.T) {
 	if _, err := manager.Update(updated); err != nil {
 		t.Fatal(err)
 	}
-	if fileDigest(t, dbPath) != before {
-		t.Fatal("update rewrote custodial database bytes")
-	}
-	got, err := os.ReadFile(dbPath)
-	if err != nil || string(got) != string(marker) {
-		t.Fatalf("custody bytes = %q, err=%v", got, err)
-	}
+	assertCustodyPreserved(t, dbPath, marker, before)
 	manifest, err := plugininstall.ReadManifest(filepath.Join(root, name))
 	if err != nil || manifest.Version != "v1.1.0" || manifest.Source != "owner/"+name {
 		t.Fatalf("updated manifest = %+v, err=%v", manifest, err)
@@ -152,7 +147,7 @@ func TestUpdateRebasesASeedSourceOntoPublishedReleases(t *testing.T) {
 	platform := releasePlatform(t)
 	archive := releasePluginArchive(t, name, "v1.0.0", true)
 	channel := newPluginReleaseChannel(t, "owner/"+name, "v1.0.0", platform, archive)
-	resolver := plugininstall.Resolver{API: channel.URL, CloneURL: refuseClone(t)}
+	resolver := plugininstall.Resolver{API: channel.URL, HTTP: channel.Client(), CloneURL: refuseClone(t)}
 	rebased := resolveOwnerRepo(t, resolver, "owner/"+name)
 	if _, err := manager.Update(rebased); err != nil {
 		t.Fatal(err)
@@ -195,35 +190,16 @@ func TestInstallOverAnExistingPluginNamesTheExactUpdateInvocation(t *testing.T) 
 // it is exercised end to end: install, write custodial bytes, then update from
 // the same tree and confirm the operator's bytes survive the update.
 func TestReleaseLessDataOnlyOwnerRepoFallsBackToTheTree(t *testing.T) {
-	name := "synthetic-data"
-	tree := writeReleasePluginPackage(t, filepath.Join(t.TempDir(), "tree"), name, "1.0.0", false)
-	remote := gitRepoFromDirectory(t, tree)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.NotFound(w, r)
-	}))
-	t.Cleanup(server.Close)
 	cloned := false
-	resolver := plugininstall.Resolver{
-		API: server.URL,
-		CloneURL: func(reference string) (string, bool) {
-			if reference != "owner/"+name {
-				t.Fatalf("clone reference = %q", reference)
-			}
-			cloned = true
-			return remote, true
-		},
-	}
+	name, resolver := dataOnlyFallbackResolver(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}), &cloned)
 	root, bin := filepath.Join(t.TempDir(), "plugins"), filepath.Join(t.TempDir(), "bin")
 	manager := plugininstall.Manager{PluginRoot: root, BinDir: bin}
 
-	resolved, cleanup, err := resolver.Resolve(context.Background(), "owner/"+name, t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	resolved, cleanup := resolveTreeFallback(t, resolver, "owner/"+name, &cloned,
+		"release-less owner/repo did not fall back to the tree")
 	defer cleanup()
-	if !cloned {
-		t.Fatal("release-less owner/repo did not fall back to the tree")
-	}
 	candidate, err := plugininstall.Inspect(resolved.Reference, resolved.Directory)
 	if err != nil {
 		t.Fatal(err)
@@ -242,14 +218,9 @@ func TestReleaseLessDataOnlyOwnerRepoFallsBackToTheTree(t *testing.T) {
 	before := fileDigest(t, dbPath)
 
 	cloned = false
-	updatedResolved, updatedCleanup, err := resolver.Resolve(context.Background(), "owner/"+name, t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	updatedResolved, updatedCleanup := resolveTreeFallback(t, resolver, "owner/"+name, &cloned,
+		"update did not fall back to the tree again")
 	defer updatedCleanup()
-	if !cloned {
-		t.Fatal("update did not fall back to the tree again")
-	}
 	updated, err := plugininstall.Inspect(updatedResolved.Reference, updatedResolved.Directory)
 	if err != nil {
 		t.Fatal(err)
@@ -257,13 +228,7 @@ func TestReleaseLessDataOnlyOwnerRepoFallsBackToTheTree(t *testing.T) {
 	if _, err := manager.Update(updated); err != nil {
 		t.Fatal(err)
 	}
-	if fileDigest(t, dbPath) != before {
-		t.Fatal("update rewrote custodial database bytes")
-	}
-	got, err := os.ReadFile(dbPath)
-	if err != nil || string(got) != string(marker) {
-		t.Fatalf("custody bytes = %q, err=%v", got, err)
-	}
+	assertCustodyPreserved(t, dbPath, marker, before)
 }
 
 // A data-only plugin whose repo has published a tag but no plugin archive
@@ -271,17 +236,15 @@ func TestReleaseLessDataOnlyOwnerRepoFallsBackToTheTree(t *testing.T) {
 // release until it carries a platform archive, and the tree fallback must not
 // be blocked by a platform the release channel does not build.
 func TestDataOnlyOwnerRepoFallsBackToTheTreeWhenTheReleaseCarriesNoPluginArchive(t *testing.T) {
-	name := "synthetic-data"
-	tree := writeReleasePluginPackage(t, filepath.Join(t.TempDir(), "tree"), name, "1.0.0", false)
-	remote := gitRepoFromDirectory(t, tree)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/repos/owner/"+name+"/releases/latest" {
+	cloned := false
+	name, resolver := dataOnlyFallbackResolver(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/owner/synthetic-data/releases/latest" {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"tag_name": "v1.0.0",
 				"assets": []any{
 					map[string]any{
-						"name": name + "-1.0.0-source.tar.gz",
-						"url":  "http://" + r.Host + "/repos/owner/" + name + "/releases/assets/1",
+						"name": "synthetic-data-1.0.0-source.tar.gz",
+						"url":  "http://" + r.Host + "/repos/owner/synthetic-data/releases/assets/1",
 						"size": 0,
 					},
 				},
@@ -289,27 +252,10 @@ func TestDataOnlyOwnerRepoFallsBackToTheTreeWhenTheReleaseCarriesNoPluginArchive
 			return
 		}
 		http.NotFound(w, r)
-	}))
-	t.Cleanup(server.Close)
-	cloned := false
-	resolver := plugininstall.Resolver{
-		API: server.URL,
-		CloneURL: func(reference string) (string, bool) {
-			if reference != "owner/"+name {
-				t.Fatalf("clone reference = %q", reference)
-			}
-			cloned = true
-			return remote, true
-		},
-	}
-	resolved, cleanup, err := resolver.Resolve(context.Background(), "owner/"+name, t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	}), &cloned)
+	resolved, cleanup := resolveTreeFallback(t, resolver, "owner/"+name, &cloned,
+		"a tag with no plugin archive did not fall back to the tree")
 	defer cleanup()
-	if !cloned {
-		t.Fatal("a tag with no plugin archive did not fall back to the tree")
-	}
 	candidate, err := plugininstall.Inspect(resolved.Reference, resolved.Directory)
 	if err != nil {
 		t.Fatal(err)
@@ -324,22 +270,10 @@ func TestDataOnlyOwnerRepoFallsBackToTheTreeWhenTheReleaseCarriesNoPluginArchive
 func TestOwnerRepoTreeFallbackRefusesAnExecutablePackage(t *testing.T) {
 	name := "synthetic-release"
 	tree := writeReleasePluginPackage(t, filepath.Join(t.TempDir(), "tree"), name, "v1.0.0", true)
-	remote := gitRepoFromDirectory(t, tree)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.NotFound(w, r)
-	}))
-	t.Cleanup(server.Close)
 	cloned := false
-	resolver := plugininstall.Resolver{
-		API: server.URL,
-		CloneURL: func(reference string) (string, bool) {
-			if reference != "owner/"+name {
-				t.Fatalf("clone reference = %q", reference)
-			}
-			cloned = true
-			return remote, true
-		},
-	}
+	resolver := treeFallbackResolver(t, name, tree, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}), &cloned)
 	_, cleanup, err := resolver.Resolve(context.Background(), "owner/"+name, t.TempDir())
 	if err == nil {
 		cleanup()
@@ -375,6 +309,94 @@ func refuseClone(t *testing.T) func(string) (string, bool) {
 	return func(string) (string, bool) {
 		t.Fatal("cloned the repository tree")
 		return "", false
+	}
+}
+
+// dataOnlyFallbackResolver builds the release-less data-only owner/repo the
+// two tree-fallback fixtures share and returns its name and clone-tracking
+// Resolver.
+func dataOnlyFallbackResolver(t *testing.T, handler http.HandlerFunc, cloned *bool) (string, plugininstall.Resolver) {
+	t.Helper()
+	const name = "synthetic-data"
+	tree := writeReleasePluginPackage(t, filepath.Join(t.TempDir(), "tree"), name, "1.0.0", false)
+	return name, treeFallbackResolver(t, name, tree, handler, cloned)
+}
+
+// treeFallbackResolver builds a release channel (whose handler the test
+// supplies) and the clone-tracking Resolver the tree-fallback tests share.
+func treeFallbackResolver(t *testing.T, name, tree string, handler http.HandlerFunc, cloned *bool) plugininstall.Resolver {
+	t.Helper()
+	remote := gitRepoFromDirectory(t, tree)
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	return plugininstall.Resolver{
+		API: server.URL,
+		CloneURL: func(reference string) (string, bool) {
+			if reference != "owner/"+name {
+				t.Fatalf("clone reference = %q", reference)
+			}
+			*cloned = true
+			return remote, true
+		},
+	}
+}
+
+// resolveTreeFallback resolves an owner/repo through the tree fallback and
+// asserts the clone happened, returning the resolved directory and its cleanup.
+func resolveTreeFallback(t *testing.T, resolver plugininstall.Resolver, reference string, cloned *bool, reason string) (plugininstall.Resolved, func()) {
+	t.Helper()
+	resolved, cleanup, err := resolver.Resolve(context.Background(), reference, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !*cloned {
+		t.Fatal(reason)
+	}
+	return resolved, cleanup
+}
+
+// assertCustodyPreserved fails when an update touched the custodial database
+// bytes, which must survive an in-place update untouched.
+func assertCustodyPreserved(t *testing.T, dbPath string, marker []byte, before string) {
+	t.Helper()
+	if fileDigest(t, dbPath) != before {
+		t.Fatal("update rewrote custodial database bytes")
+	}
+	got, err := os.ReadFile(dbPath)
+	if err != nil || string(got) != string(marker) {
+		t.Fatalf("custody bytes = %q, err=%v", got, err)
+	}
+}
+
+// semanticDatabase builds one semantic database descriptor for a synthetic
+// plugin package, shared by the release and federated package fixtures.
+func semanticDatabase(database, description, question, tableDescription string) map[string]any {
+	return map[string]any{
+		"database": database, "description": description,
+		"questions": []string{question},
+		"tables": []map[string]any{{
+			"name": "entries", "description": tableDescription,
+			"columns": []string{"id", "value"},
+		}},
+	}
+}
+
+// finishPluginPackage writes the manifest and recreates the declared database
+// files, the tail every synthetic package fixture shares.
+func finishPluginPackage(t *testing.T, directory string, manifest map[string]any, databases []string) {
+	t.Helper()
+	manifest["verbs"] = []map[string]any{}
+	manifest["capabilities"] = []map[string]any{}
+	writePackageMetadata(t, directory, manifest)
+	for _, name := range databases {
+		if err := os.Remove(filepath.Join(directory, name)); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		withPackageDatabase(t, filepath.Join(directory, name), func(db *sql.DB) {
+			if _, err := db.Exec(`CREATE TABLE entries (id INTEGER PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
@@ -427,28 +449,11 @@ func writeReleasePluginPackage(t *testing.T, directory, name, version string, wi
 		},
 		"semantic": map[string]any{
 			"databases": []map[string]any{
-				{
-					"database": "records", "description": "Synthetic custodial records.",
-					"questions": []string{"Which synthetic records exist?"},
-					"tables": []map[string]any{{
-						"name": "entries", "description": "One synthetic row.",
-						"columns": []string{"id", "value"},
-					}},
-				},
+				semanticDatabase("records", "Synthetic custodial records.", "Which synthetic records exist?", "One synthetic row."),
 			},
 		},
-		"verbs":        []map[string]any{},
-		"capabilities": []map[string]any{},
 	}
-	writePackageMetadata(t, directory, manifest)
-	if err := os.Remove(filepath.Join(directory, "records.db")); err != nil && !os.IsNotExist(err) {
-		t.Fatal(err)
-	}
-	withPackageDatabase(t, filepath.Join(directory, "records.db"), func(db *sql.DB) {
-		if _, err := db.Exec(`CREATE TABLE entries (id INTEGER PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
-			t.Fatal(err)
-		}
-	})
+	finishPluginPackage(t, directory, manifest, []string{"records.db"})
 	files := []string{"plugin.json", "records.db"}
 	if withBinary {
 		executable := plugininstall.ExecutableName(name)
@@ -523,6 +528,8 @@ type pluginReleaseChannel struct {
 	URL  string
 	repo string
 
+	client *http.Client
+
 	mu       sync.Mutex
 	tag      string
 	platform string
@@ -534,14 +541,19 @@ type pluginReleaseChannel struct {
 func newPluginReleaseChannel(t *testing.T, repo, tag, platform string, archive []byte) *pluginReleaseChannel {
 	t.Helper()
 	channel := &pluginReleaseChannel{repo: repo}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		channel.serve(w, r)
 	}))
 	t.Cleanup(server.Close)
 	channel.URL = server.URL
+	channel.client = server.Client()
 	channel.set(tag, platform, archive)
 	return channel
 }
+
+// Client returns an *http.Client that trusts this channel's test server, so
+// the production HTTPS asset-origin guard still applies to the download path.
+func (c *pluginReleaseChannel) Client() *http.Client { return c.client }
 
 func (c *pluginReleaseChannel) set(tag, platform string, archive []byte) {
 	c.mu.Lock()

@@ -240,22 +240,11 @@ func TestPluginConsentDistinguishesDataFromCodeAndNamesTheReplacedChecksum(t *te
 }
 
 func TestPluginUpdateAcceptsAnExplicitSourceToRebase(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	paths := resolvedIn(t, home)
-	writeFile(t, paths.Config, "[features]\nplugins = true\n")
-	first := writeCLIPluginPackage(t, filepath.Join(t.TempDir(), "first"), "synthetic-release", "1.0.0")
+	paths, env, output := installedSyntheticRelease(t)
 	second := writeCLIPluginPackage(t, filepath.Join(t.TempDir(), "second"), "synthetic-release", "2.0.0")
 
-	var output strings.Builder
-	env := &cliEnv{out: &output, errOut: &output}
-	code, err := executeWithEnv(env, []string{"plugin", "--yes", "install", first}, strings.NewReader(""))
-	if err != nil || code != ExitOK {
-		t.Fatalf("install = code %d err %v output %q", code, err, output.String())
-	}
-
 	output.Reset()
-	code, err = executeWithEnv(env,
+	code, err := executeWithEnv(env,
 		[]string{"plugin", "--yes", "update", "synthetic-release", second}, strings.NewReader(""))
 	if err != nil || code != ExitOK {
 		t.Fatalf("update with source = code %d err %v output %q", code, err, output.String())
@@ -273,21 +262,10 @@ func TestPluginUpdateAcceptsAnExplicitSourceToRebase(t *testing.T) {
 }
 
 func TestPluginInstallOverAnExistingPluginNamesTheUpdateWithThatSource(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	paths := resolvedIn(t, home)
-	writeFile(t, paths.Config, "[features]\nplugins = true\n")
-	first := writeCLIPluginPackage(t, filepath.Join(t.TempDir(), "first"), "synthetic-release", "1.0.0")
+	_, env, _ := installedSyntheticRelease(t)
 	newer := writeCLIPluginPackage(t, filepath.Join(t.TempDir(), "newer"), "synthetic-release", "2.0.0")
 
-	var output strings.Builder
-	env := &cliEnv{out: &output, errOut: &output}
-	code, err := executeWithEnv(env, []string{"plugin", "--yes", "install", first}, strings.NewReader(""))
-	if err != nil || code != ExitOK {
-		t.Fatalf("install = code %d err %v output %q", code, err, output.String())
-	}
-
-	code, err = executeWithEnv(env, []string{"plugin", "--yes", "install", newer}, strings.NewReader(""))
+	code, err := executeWithEnv(env, []string{"plugin", "--yes", "install", newer}, strings.NewReader(""))
 	if err == nil || code == ExitOK {
 		t.Fatalf("second install succeeded: code %d err %v", code, err)
 	}
@@ -295,6 +273,27 @@ func TestPluginInstallOverAnExistingPluginNamesTheUpdateWithThatSource(t *testin
 	if !strings.Contains(err.Error(), want) {
 		t.Fatalf("already-installed error = %v, want %q", err, want)
 	}
+}
+
+// installedSyntheticRelease is the shared prologue for the two CLI tests that
+// rebase or refuse to auto-update an already installed synthetic plugin: it
+// points HOME at a fresh home, enables plugins, installs v1.0.0, and returns
+// the resolved paths and the environment for the second command.
+func installedSyntheticRelease(t *testing.T) (config.Paths, *cliEnv, *strings.Builder) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	paths := resolvedIn(t, home)
+	writeFile(t, paths.Config, "[features]\nplugins = true\n")
+	first := writeCLIPluginPackage(t, filepath.Join(t.TempDir(), "first"), "synthetic-release", "1.0.0")
+
+	output := &strings.Builder{}
+	env := &cliEnv{out: output, errOut: output}
+	code, err := executeWithEnv(env, []string{"plugin", "--yes", "install", first}, strings.NewReader(""))
+	if err != nil || code != ExitOK {
+		t.Fatalf("install = code %d err %v output %q", code, err, output.String())
+	}
+	return paths, env, output
 }
 
 func writeCLIPluginPackage(t *testing.T, directory, name, version string) string {

@@ -5,8 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
-	"os"
 	"runtime"
 	"strings"
 
@@ -51,10 +49,10 @@ func (r Resolver) resolvePublishedRelease(
 			"release %s publishes no checksums.txt: nothing is installed unverified",
 			found.Tag), true
 	}
-	if err := sameReleaseOrigin(source, asset.URL); err != nil {
+	if err := source.ValidateAsset(asset.URL); err != nil {
 		return Resolved{}, func() {}, err, true
 	}
-	if err := sameReleaseOrigin(source, sums.URL); err != nil {
+	if err := source.ValidateAsset(sums.URL); err != nil {
 		return Resolved{}, func() {}, err, true
 	}
 	payload, err := source.Download(ctx, asset)
@@ -98,14 +96,10 @@ func (r Resolver) refuseExecutableTreeFallback(reference, directory string) erro
 }
 
 func extractArchiveBytes(payload []byte, scratchRoot string) (string, func(), error) {
-	if err := os.MkdirAll(scratchRoot, 0o700); err != nil {
-		return "", func() {}, fmt.Errorf("create plugin download directory: %w", err)
-	}
-	directory, err := os.MkdirTemp(scratchRoot, "source-")
+	directory, cleanup, err := newExtractDir(scratchRoot)
 	if err != nil {
-		return "", func() {}, fmt.Errorf("create plugin download: %w", err)
+		return "", func() {}, err
 	}
-	cleanup := func() { _ = os.RemoveAll(directory) }
 	if err := extractTarGzip(bytes.NewReader(payload), directory); err != nil {
 		cleanup()
 		return "", func() {}, err
@@ -178,21 +172,4 @@ func releasePublishesPluginArchive(found release.Release) bool {
 
 func releaseNotFound(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "answered 404")
-}
-
-func sameReleaseOrigin(source release.Source, assetURL string) error {
-	base, baseErr := url.Parse(sourceAPI(source))
-	asset, assetErr := url.Parse(assetURL)
-	if baseErr != nil || assetErr != nil || asset.Scheme != base.Scheme ||
-		asset.Host != base.Host || asset.User != nil {
-		return fmt.Errorf("the plugin release asset URL must use the selected release origin")
-	}
-	return nil
-}
-
-func sourceAPI(source release.Source) string {
-	if strings.TrimSpace(source.API) == "" {
-		return release.DefaultAPI
-	}
-	return strings.TrimRight(source.API, "/")
 }

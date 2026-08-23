@@ -257,14 +257,10 @@ func cloneGit(ctx context.Context, reference, cloneSource, scratchRoot string) (
 	if strings.HasPrefix(cloneSource, "-") {
 		return Resolved{}, func() {}, fmt.Errorf("plugin source may not begin with '-'")
 	}
-	if err := os.MkdirAll(scratchRoot, 0o700); err != nil {
-		return Resolved{}, func() {}, fmt.Errorf("create plugin download directory: %w", err)
-	}
-	directory, err := os.MkdirTemp(scratchRoot, "source-")
+	directory, cleanup, err := newExtractDir(scratchRoot)
 	if err != nil {
-		return Resolved{}, func() {}, fmt.Errorf("create plugin download: %w", err)
+		return Resolved{}, func() {}, err
 	}
-	cleanup := func() { _ = os.RemoveAll(directory) }
 	command := exec.CommandContext(ctx, "git", "clone", "--depth", "1", "--", cloneSource, directory)
 	if output, err := command.CombinedOutput(); err != nil {
 		cleanup()
@@ -283,7 +279,9 @@ func archiveReference(reference string) bool {
 		strings.HasSuffix(strings.ToLower(name), ".tgz")
 }
 
-func extractArchive(ctx context.Context, reference, scratchRoot string) (string, func(), error) {
+// newExtractDir creates the private scratch directory a resolved plugin source
+// is extracted or cloned into, and the cleanup that removes it.
+func newExtractDir(scratchRoot string) (string, func(), error) {
 	if err := os.MkdirAll(scratchRoot, 0o700); err != nil {
 		return "", func() {}, fmt.Errorf("create plugin download directory: %w", err)
 	}
@@ -291,7 +289,14 @@ func extractArchive(ctx context.Context, reference, scratchRoot string) (string,
 	if err != nil {
 		return "", func() {}, fmt.Errorf("create plugin download: %w", err)
 	}
-	cleanup := func() { _ = os.RemoveAll(directory) }
+	return directory, func() { _ = os.RemoveAll(directory) }, nil
+}
+
+func extractArchive(ctx context.Context, reference, scratchRoot string) (string, func(), error) {
+	directory, cleanup, err := newExtractDir(scratchRoot)
+	if err != nil {
+		return "", func() {}, err
+	}
 	input, err := openArchive(ctx, reference)
 	if err != nil {
 		cleanup()

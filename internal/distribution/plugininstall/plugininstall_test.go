@@ -825,38 +825,12 @@ func writeFederatedPackage(t *testing.T, directory, name, version string) {
 		},
 		"semantic": map[string]any{
 			"databases": []map[string]any{
-				{
-					"database": "records", "description": "Synthetic records.",
-					"questions": []string{"Which records exist?"},
-					"tables": []map[string]any{{
-						"name": "entries", "description": "Synthetic entries.",
-						"columns": []string{"id", "value"},
-					}},
-				},
-				{
-					"database": "runs", "description": "Synthetic runs.",
-					"questions": []string{"Which runs exist?"},
-					"tables": []map[string]any{{
-						"name": "entries", "description": "Synthetic run entries.",
-						"columns": []string{"id", "value"},
-					}},
-				},
+				semanticDatabase("records", "Synthetic records.", "Which records exist?", "Synthetic entries."),
+				semanticDatabase("runs", "Synthetic runs.", "Which runs exist?", "Synthetic run entries."),
 			},
 		},
-		"verbs":        []map[string]any{},
-		"capabilities": []map[string]any{},
 	}
-	writePackageMetadata(t, directory, manifest)
-	for _, name := range []string{"records.db", "runs.db"} {
-		if err := os.Remove(filepath.Join(directory, name)); err != nil && !os.IsNotExist(err) {
-			t.Fatal(err)
-		}
-		withPackageDatabase(t, filepath.Join(directory, name), func(db *sql.DB) {
-			if _, err := db.Exec(`CREATE TABLE entries (id INTEGER PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
-				t.Fatal(err)
-			}
-		})
-	}
+	finishPluginPackage(t, directory, manifest, []string{"records.db", "runs.db"})
 	writeChecksums(t, directory, []string{"plugin.json", "records.db", "runs.db"})
 }
 
