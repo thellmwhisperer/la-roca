@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -27,6 +28,11 @@ var (
 	trailerMagic = [16]byte{'R', 'O', 'C', 'A', '_', 'V', 'E', 'C', 'T', 'O', 'R', '_', 'V', '1'}
 	manifest     = []byte(`{"schema":1,"name":"roca-vector","version":"dev","kind":"executable","state_directory":"state"}`)
 )
+
+// ErrNoPayload reports that the running binary is not a release envelope and
+// carries no appended vector executable at all. It distinguishes that build
+// fact from a payload that exists but failed to read or verify.
+var ErrNoPayload = errors.New("running roca binary does not carry a bundled vector executable")
 
 func Ensure(root, binDir, version string) (plugininstall.Result, error) {
 	return bundledplugin.Ensure(root, binDir, version, BundleSpec())
@@ -72,7 +78,7 @@ func ReadPayload(path string) ([]byte, error) {
 	}
 	start, length, expected, ok := payloadEnvelope(raw)
 	if !ok {
-		return nil, fmt.Errorf("running roca binary does not carry a bundled vector executable")
+		return nil, ErrNoPayload
 	}
 	payload := raw[start : start+length]
 	digest := sha256.Sum256(payload)

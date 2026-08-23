@@ -284,12 +284,12 @@ func TestSemanticCompanionPlacementFailureKeepsConfigurationAndInitSuccessful(t 
 	}
 }
 
-func TestMissingBundledCompanionNeverExecutesAPathFallback(t *testing.T) {
+func TestDevBinaryWithoutPayloadReachesQuestionAndDiscoversPathCompanion(t *testing.T) {
 	t.Setenv("CI", "")
 	root := t.TempDir()
 	calls := filepath.Join(root, "calls")
 	t.Setenv("ROCA_TEST_VECTOR_CALLS", calls)
-	installVectorFixture(t, root, "#!/bin/sh\nprintf x >> \"$ROCA_TEST_VECTOR_CALLS\"\n")
+	installVectorFixture(t, root, "#!/bin/sh\nprintf x >> \"$ROCA_TEST_VECTOR_CALLS\"\nprintf '%s\\n' '{\"background\":true}'\n")
 	path := filepath.Join(root, "config.toml")
 	before := "[features]\nvector = false\n"
 	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
@@ -301,14 +301,60 @@ func TestMissingBundledCompanionNeverExecutesAPathFallback(t *testing.T) {
 		true, config.Paths{Home: root, Config: path}, true, readyProof()); err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(output.String(), "[yes/no]") {
+		t.Fatalf("dev binary did not reach the consent question: %q", output.String())
+	}
+	if _, err := os.Stat(calls); err != nil {
+		t.Fatalf("dev binary did not discover the PATH companion: %v", err)
+	}
+	loaded, err := config.LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.Features.Vector || !loaded.Features.VectorConsent {
+		t.Fatalf("dev binary consent was not persisted: features=%+v", loaded.Features)
+	}
+}
+
+func TestPayloadPlacementFailureNeverConsultsPathCompanion(t *testing.T) {
+	t.Setenv("CI", "")
+	t.Setenv("ROCA_VECTOR_STATE_DIR", "")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	prefix := filepath.Join(home, "not-a-directory")
+	if err := os.WriteFile(prefix, []byte("occupied"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ROCA_PREFIX", prefix)
+	calls := filepath.Join(home, "calls")
+	t.Setenv("ROCA_TEST_VECTOR_CALLS", calls)
+	installVectorFixture(t, home, "#!/bin/sh\nprintf x >> \"$ROCA_TEST_VECTOR_CALLS\"\nprintf '%s\\n' '{\"background\":true}'\n")
+	paths, err := config.Resolve(config.Input{Home: home})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.Config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	before := "[features]\nvector = false\n"
+	if err := os.WriteFile(paths.Config, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	env := &cliEnv{build: Build{Version: "test"}, out: &output, errOut: &output,
+		bundledVectorPayload: []byte("#!/bin/sh\nexit 0\n")}
+	if err := env.offerSemanticSearch(context.Background(), bufio.NewReader(strings.NewReader("yes\n")),
+		true, paths, true, readyProof()); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(calls); !os.IsNotExist(err) {
-		t.Fatalf("eligible init executed an unverified PATH companion: %v", err)
+		t.Fatalf("placement failure consulted a PATH companion: %v", err)
 	}
-	if got := string(mustRead(t, path)); got != before {
-		t.Fatalf("missing payload changed configuration: %q", got)
+	if got := string(mustRead(t, paths.Config)); got != before {
+		t.Fatalf("placement failure changed configuration: %q", got)
 	}
-	if !strings.Contains(output.String(), "`roca vector install`") || strings.Count(output.String(), "next step:") != 1 {
-		t.Fatalf("missing payload recovery output = %q", output.String())
+	if strings.Count(output.String(), "next step:") != 1 {
+		t.Fatalf("placement failure output = %q", output.String())
 	}
 }
 

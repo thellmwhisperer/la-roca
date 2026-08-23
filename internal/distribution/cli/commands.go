@@ -223,6 +223,9 @@ func (env *cliEnv) ensureBundledVectorForInit(paths config.Paths) (string, error
 		var err error
 		payload, err = rocavector.Payload()
 		if err != nil {
+			if errors.Is(err, rocavector.ErrNoPayload) {
+				return "", nil
+			}
 			return "", fmt.Errorf("read bundled semantic search companion: %w", err)
 		}
 	}
@@ -443,7 +446,11 @@ func (env *cliEnv) readSemanticSearchAnswer(input *bufio.Reader) (bool, bool, er
 
 func (env *cliEnv) startSemanticSearchSetup(ctx context.Context, path string) error {
 	if path == "" {
-		return fmt.Errorf("semantic search companion is unavailable")
+		discovered, found := resolveCompanion("vector", "")
+		if !found {
+			return fmt.Errorf("semantic search companion is unavailable")
+		}
+		path = discovered
 	}
 	arguments := []string{"--json"}
 	if env.dbPath != "" {
