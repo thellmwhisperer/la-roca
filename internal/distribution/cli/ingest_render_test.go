@@ -167,6 +167,23 @@ func TestAStoreBackedSourceRowShowsWhatItSaw(t *testing.T) {
 	}
 }
 
+func TestLegacyStoreSourceRowReportsSessionOverlap(t *testing.T) {
+	var output strings.Builder
+	renderIngestSources(&cliEnv{out: &output}, service.IngestResult{Result: ingest.Result{
+		Sources: map[string]*ingest.Counts{"legacy-store": {
+			Sessions: 3, SessionsSkipped: 2, Exchanges: 7,
+		}},
+		SourceStats: map[string]*ingest.SourceStats{"legacy-store": {Processed: 1, Read: 1}},
+	}})
+	for _, want := range []string{
+		"3 sessions", "2 sessions skipped as already present (session_id overlap)", "7 exchanges",
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("legacy-store source row does not carry %q: %q", want, output.String())
+		}
+	}
+}
+
 func TestASourceRowReportsReadAndWriteFailuresWithoutNegativeSkips(t *testing.T) {
 	for _, test := range []struct {
 		name        string

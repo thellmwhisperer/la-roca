@@ -305,6 +305,8 @@ func CanonicalHarness(kind Kind, sourceAgent string) string {
 		return ingestprovenance.OpenCode
 	case KindHermesDB:
 		return ingestprovenance.Hermes
+	case KindLegacyStoreDB:
+		return ingestprovenance.LegacyStore
 	default:
 		return ""
 	}

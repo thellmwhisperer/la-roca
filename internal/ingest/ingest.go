@@ -28,6 +28,9 @@ type Options struct {
 	// HermesReservedMemories is the read-only operational store that may hold
 	// the nine Hermes memories curated before MEMORY.md ingestion existed.
 	HermesReservedMemories *sql.DB
+	// Ops receives legacy-store memories. Conversations still write to the
+	// ingest target. Nil drops those memories as a named exclusion.
+	Ops Database
 	// DryRun reports what would be read and writes nothing. It is a first-class
 	// mode and not a debugging aid: it is how an operator checks that a root is
 	// being seen before letting anything touch the database.
@@ -277,7 +280,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		}
 	}
 
-	before, err := tableCounts(ctx, db.SQL())
+	before, err := runTableCounts(ctx, db, opts.Ops)
 	if err != nil {
 		if !opts.DryRun {
 			return result, err
@@ -321,7 +324,8 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 		fingerprint, err := targetFingerprint(target)
 		if err != nil {
 			metadata, metadataErr := incrementality.MetadataFingerprint(target.Path)
-			isDatabase := target.Kind == parsers.KindOpenCodeDB || target.Kind == parsers.KindHermesDB
+			isDatabase := target.Kind == parsers.KindOpenCodeDB || target.Kind == parsers.KindHermesDB ||
+				target.Kind == parsers.KindLegacyStoreDB
 			if metadataErr == nil && !isDatabase && incrementality.UnchangedMetadata(state, target.Path, metadata) {
 				result.FilesSkipped++
 				result.categorizeFile("skipped", "unchanged fingerprint")
@@ -388,7 +392,7 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 	}
 
 	if !opts.DryRun {
-		after, err := tableCounts(ctx, db.SQL())
+		after, err := runTableCounts(ctx, db, opts.Ops)
 		if err != nil {
 			return result, err
 		}
@@ -399,8 +403,13 @@ func Run(ctx context.Context, db Database, layers layerResolver, opts Options) (
 	if opts.Progress != nil {
 		for _, name := range SortedSources(result.Sources) {
 			counts := result.Sources[name]
-			opts.Progress(fmt.Sprintf("ingest: %s complete · sessions=%d exchanges=%d memories=%d",
-				name, counts.Sessions, counts.Exchanges,
+			skipped := ""
+			if counts.SessionsSkipped > 0 {
+				skipped = fmt.Sprintf(" · sessions_skipped=%d (session_id already present)",
+					counts.SessionsSkipped)
+			}
+			opts.Progress(fmt.Sprintf("ingest: %s complete · sessions=%d%s · exchanges=%d memories=%d",
+				name, counts.Sessions, skipped, counts.Exchanges,
 				counts.MemoriesInserted+counts.MemoriesUpdated))
 		}
 	}
@@ -615,18 +624,55 @@ func ingestOne(ctx context.Context, db Database, layers layerResolver, opts Opti
 	}
 	result.discard(target, records.Discards)
 
+	destinationsComplete := true
+	var opsCounts Counts
+	if target.Kind == parsers.KindLegacyStoreDB && len(records.Memories) > 0 {
+		if opts.Ops == nil {
+			destinationsComplete = false
+			excluded := make([]parsers.Discard, 0, len(records.Memories))
+			for range records.Memories {
+				excluded = append(excluded, parsers.Excluded("legacy store memories need the ops plugin"))
+			}
+			result.discard(target, excluded)
+			records.Memories = nil
+		} else {
+			memories := records.Memories
+			records.Memories = nil
+			if err := opts.Ops.Write(ctx, func(tx *sql.Tx) error {
+				written, err := writeRecords(ctx, tx, layers, nil, parsers.Records{Memories: memories})
+				if err != nil {
+					return err
+				}
+				opsCounts = written
+				return remapLegacyStoreSupersedes(ctx, tx)
+			}); err != nil {
+				return false, err
+			}
+			result.recordWritten(target, opsCounts)
+		}
+	}
 	var counts Counts
 	err := db.Write(ctx, func(tx *sql.Tx) error {
-		written, err := writeRecords(ctx, tx, layers, opts.HermesReservedMemories, records)
+		var written Counts
+		var err error
+		if target.Kind == parsers.KindLegacyStoreDB {
+			written, err = writeLegacyStoreSessions(ctx, tx, records.Sessions)
+		} else {
+			written, err = writeRecords(ctx, tx, layers, opts.HermesReservedMemories, records)
+		}
 		if err != nil {
 			return err
 		}
 		counts = written
 		summary := map[string]any{
-			"sessions":         written.Sessions,
-			"exchanges":        written.Exchanges,
-			"memories":         written.MemoriesInserted + written.MemoriesUpdated,
+			"sessions":  counts.Sessions,
+			"exchanges": counts.Exchanges,
+			"memories": counts.MemoriesInserted + counts.MemoriesUpdated +
+				opsCounts.MemoriesInserted + opsCounts.MemoriesUpdated,
 			"message_coverage": records.MessageCoverage,
+		}
+		if !destinationsComplete {
+			return nil
 		}
 		return incrementality.RecordState(ctx, tx, incrementalityTarget(target),
 			fingerprint, "", summary)
@@ -647,6 +693,8 @@ func read(ctx context.Context, opts Options, target Target, result *Result) (par
 		databaseReader = ReadOpenCode
 	case parsers.KindHermesDB:
 		databaseReader = ReadHermes
+	case parsers.KindLegacyStoreDB:
+		databaseReader = ReadLegacyStore
 	case parsers.KindCursorDB:
 		databaseReader = ReadCursor
 	case parsers.KindCursorStore:
@@ -859,6 +907,22 @@ func tableCounts(ctx context.Context, db *sql.DB) (Tables, error) {
 	return counts, nil
 }
 
+func runTableCounts(ctx context.Context, db, ops Database) (Tables, error) {
+	counts, err := tableCounts(ctx, db.SQL())
+	if err != nil {
+		return counts, err
+	}
+	if ops == nil || ops.SQL() == db.SQL() {
+		return counts, nil
+	}
+	var memories int
+	if err := ops.SQL().QueryRowContext(ctx, `SELECT COUNT(*) FROM memories`).Scan(&memories); err != nil {
+		return counts, fmt.Errorf("count the rows of ops memories: %w", err)
+	}
+	counts.Memories += memories
+	return counts, nil
+}
+
 // declaredRoots is where the run looked. It is reported because "it found nothing"
 // and "it looked somewhere else" are the two explanations of an empty ingest, and
 // an operator cannot tell them apart without this.
@@ -876,6 +940,7 @@ func declaredRoots(roots Roots) map[string]string {
 		"pi_sessions":                roots.PiSessions,
 		"hermes_home":                roots.HermesHome,
 		"hermes_db":                  roots.HermesDB,
+		"legacy_store_db":            roots.LegacyStoreDB,
 		"grok_sessions":              roots.GrokSessions,
 		"grok_memtrace":              roots.GrokMemtrace,
 		"claude_export":              strings.Join(roots.ClaudeWebExports, string(os.PathListSeparator)),

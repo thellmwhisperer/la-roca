@@ -24,6 +24,7 @@ func TestRootsOnMacOS(t *testing.T) {
 		"pi":              "/Users/op/.pi/agent/sessions",
 		"hermes":          "/Users/op/.hermes/state.db",
 		"hermes home":     "/Users/op/.hermes",
+		"legacy store":    "/Users/op/." + retiredStoreHome() + "/roca.db",
 		"grok":            "/Users/op/.grok/sessions",
 		"grok memtrace":   "/Users/op/.grok/memtrace",
 	}
@@ -40,6 +41,7 @@ func TestRootsOnMacOS(t *testing.T) {
 		"pi":              roots.PiSessions,
 		"hermes":          roots.HermesDB,
 		"hermes home":     roots.HermesHome,
+		"legacy store":    roots.LegacyStoreDB,
 		"grok":            roots.GrokSessions,
 		"grok memtrace":   roots.GrokMemtrace,
 	}
