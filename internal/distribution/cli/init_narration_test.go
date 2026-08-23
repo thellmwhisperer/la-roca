@@ -57,8 +57,8 @@ func TestSemanticConsentConsumesStructuredWorkerResult(t *testing.T) {
 	fixture := "#!/bin/sh\nprintf '%s\\n' '{\"background\":true,\"already_running\":true,\"pid\":4242,\"log_path\":\"/private/operator/path\"}'\nprintf '%s\\n' 'raw worker detail' >&2\n"
 	installVectorFixture(t, root, fixture)
 	var out, errOut bytes.Buffer
-	env := &cliEnv{out: &out, errOut: &errOut}
-	paths := config.Paths{Config: filepath.Join(root, "config.toml")}
+	env := &cliEnv{out: &out, errOut: &errOut, bundledVectorPayload: []byte(fixture)}
+	paths := config.Paths{Home: root, Config: filepath.Join(root, "config.toml")}
 	input := bufio.NewReader(strings.NewReader("yes\n"))
 	if err := env.offerSemanticSearch(context.Background(), input, true, paths, true, readyProof()); err != nil {
 		t.Fatal(err)
@@ -89,8 +89,8 @@ func TestSemanticConsentLeavesLiveProgressConnectedAfterInitReturns(t *testing.T
 	}
 	defer progress.Close()
 	var out bytes.Buffer
-	env := &cliEnv{out: &out, errOut: progress}
-	paths := config.Paths{Config: filepath.Join(root, "config.toml")}
+	env := &cliEnv{out: &out, errOut: progress, bundledVectorPayload: []byte(fixture)}
+	paths := config.Paths{Home: root, Config: filepath.Join(root, "config.toml")}
 	if err := env.offerSemanticSearch(context.Background(), bufio.NewReader(strings.NewReader("yes\n")),
 		true, paths, true, readyProof()); err != nil {
 		t.Fatal(err)
@@ -285,6 +285,34 @@ func TestSemanticCompanionPlacementFailureKeepsConfigurationAndInitSuccessful(t 
 	}
 }
 
+func TestMissingBundledCompanionNeverExecutesAPathFallback(t *testing.T) {
+	t.Setenv("CI", "")
+	root := t.TempDir()
+	calls := filepath.Join(root, "calls")
+	t.Setenv("ROCA_TEST_VECTOR_CALLS", calls)
+	installVectorFixture(t, root, "#!/bin/sh\nprintf x >> \"$ROCA_TEST_VECTOR_CALLS\"\n")
+	path := filepath.Join(root, "config.toml")
+	before := "[features]\nvector = false\n"
+	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	env := &cliEnv{out: &output, errOut: &output}
+	if err := env.offerSemanticSearch(context.Background(), bufio.NewReader(strings.NewReader("yes\n")),
+		true, config.Paths{Home: root, Config: path}, true, readyProof()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(calls); !os.IsNotExist(err) {
+		t.Fatalf("eligible init executed an unverified PATH companion: %v", err)
+	}
+	if got := string(mustRead(t, path)); got != before {
+		t.Fatalf("missing payload changed configuration: %q", got)
+	}
+	if !strings.Contains(output.String(), "`roca init`") || strings.Count(output.String(), "next step:") != 1 {
+		t.Fatalf("missing payload recovery output = %q", output.String())
+	}
+}
+
 func TestIneligibleInitNeverOffersOrPlacesSemanticSearch(t *testing.T) {
 	for _, testCase := range []struct {
 		name        string
@@ -375,9 +403,13 @@ func runSemanticConsent(t *testing.T, path, answer string) string {
 	t.Helper()
 	t.Setenv("CI", "")
 	var out, errOut bytes.Buffer
-	env := &cliEnv{out: &out, errOut: &errOut}
+	var payload []byte
+	if fixture, found := findPlugin("vector"); found {
+		payload, _ = os.ReadFile(fixture)
+	}
+	env := &cliEnv{out: &out, errOut: &errOut, bundledVectorPayload: payload}
 	if err := env.offerSemanticSearch(context.Background(), bufio.NewReader(strings.NewReader(answer)),
-		true, config.Paths{Config: path}, false, readyProof()); err != nil {
+		true, config.Paths{Home: filepath.Dir(path), Config: path}, false, readyProof()); err != nil {
 		t.Fatal(err)
 	}
 	return out.String() + errOut.String()

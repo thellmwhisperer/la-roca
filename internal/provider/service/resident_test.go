@@ -30,6 +30,38 @@ func TestResidentInitializationHonorsItsContext(t *testing.T) {
 	}
 }
 
+func TestWordProofIncludesAndRebuildsOperationalHistory(t *testing.T) {
+	svc, err := openWithContext(t.Context(), residentTestOptions(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = svc.Close() })
+	if _, err := svc.Init(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ops.SQL().Exec(`INSERT INTO memories (layer, content, origin)
+		VALUES ('handoff', 'harbour lighthouse', 'agent')`); err != nil {
+		t.Fatal(err)
+	}
+
+	proof := svc.proveWordSearch(t.Context())
+	if !proof.Ready || proof.Empty || proof.Word == "" {
+		t.Fatalf("ops-only history did not prove ready: %+v", proof)
+	}
+	if _, err := svc.ops.SQL().Exec(`INSERT INTO memories_fts(memories_fts) VALUES('delete-all')`); err != nil {
+		t.Fatal(err)
+	}
+	if broken := svc.proveWordSearch(t.Context()); broken.Ready || broken.Empty {
+		t.Fatalf("broken ops index did not become the aggregate fault: %+v", broken)
+	}
+	if _, err := svc.rebuildWordSearch(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if repaired := svc.proveWordSearch(t.Context()); !repaired.Ready {
+		t.Fatalf("ops index was not repaired by the shared rebuild: %+v", repaired)
+	}
+}
+
 func TestResidentQueriesAcquireIndependentReadConnections(t *testing.T) {
 	svc, err := openWithContext(t.Context(), residentTestOptions(t))
 	if err != nil {

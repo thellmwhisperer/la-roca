@@ -1651,7 +1651,7 @@ func (f Federation) HistoryProgress(ctx context.Context) (Progress, error) {
 			return Progress{}, err
 		}
 		databasePath := f.databasePath(database)
-		read, err := countIndexedSources(ctx, databasePath, SidecarPath(databasePath), database.Tables)
+		read, err := countIndexedSources(ctx, reader, SidecarPath(databasePath))
 		if err != nil {
 			return Progress{}, err
 		}
@@ -1665,10 +1665,9 @@ func (f Federation) HistoryProgress(ctx context.Context) (Progress, error) {
 	return result, nil
 }
 
-// countIndexedSources counts source rows the index already holds, not chunks: a
-// row half chunked is a row the reader has reached, and a sidecar that is not
-// there yet is zero read rather than an error.
-func countIndexedSources(ctx context.Context, sourcePath, sidecarPath string, tables []vectorTable) (int, error) {
+// countIndexedSources counts source rows whose current text the index holds,
+// and a sidecar that is not there yet is zero read rather than an error.
+func countIndexedSources(ctx context.Context, reader DeclaredCorpus, sidecarPath string) (int, error) {
 	if _, err := os.Stat(sidecarPath); err != nil {
 		if os.IsNotExist(err) {
 			return 0, nil
@@ -1680,34 +1679,39 @@ func countIndexedSources(ctx context.Context, sourcePath, sidecarPath string, ta
 		return 0, fmt.Errorf("open vector sidecar %s: %w", filepath.Base(sidecarPath), err)
 	}
 	defer store.Close()
-	if _, err := store.ExecContext(ctx, `ATTACH DATABASE ? AS declared_source`, sourcePath); err != nil {
-		return 0, fmt.Errorf("attach declared history for %s: %w", filepath.Base(sidecarPath), err)
+	indexed, _, _, err := readIndexState(store)
+	if err != nil && strings.Contains(fmt.Sprint(err), "no such table: chunks") {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read indexed rows in %s: %w", filepath.Base(sidecarPath), err)
+	}
+	current := map[string]bool{}
+	err = reader.WalkSources(ctx, "", func(source sourceRow) error {
+		rowKey := source.kind + "\x00" + source.stableID()
+		if _, exists := current[rowKey]; !exists {
+			current[rowKey] = true
+		}
+		header := source.header()
+		for index, text := range source.window() {
+			key := chunkKey(source.kind, source.stableID(), source.column, index)
+			stored, exists := indexed[key]
+			if !exists || stored.fingerprint != source.embeddingFingerprint(header+text) {
+				current[rowKey] = false
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
 	}
 	read := 0
-	for _, table := range tables {
-		var tableRead int
-		err := store.QueryRowContext(ctx, indexedSourceCountQuery(table), table.Name).Scan(&tableRead)
-		if err != nil && strings.Contains(fmt.Sprint(err), "no such table: chunks") {
-			return 0, nil
+	for _, matches := range current {
+		if matches {
+			read++
 		}
-		if err != nil {
-			return 0, fmt.Errorf("count indexed rows in %s: %w", filepath.Base(sidecarPath), err)
-		}
-		read += tableRead
 	}
 	return read, nil
-}
-
-func indexedSourceCountQuery(table vectorTable) string {
-	return fmt.Sprintf(`WITH indexed_ids AS MATERIALIZED (
-		SELECT DISTINCT CAST(json_extract(locator,'$.source_id') AS TEXT) AS source_id
-		FROM chunks WHERE source_kind=?
-			AND json_extract(locator,'$.source_id') IS NOT NULL
-	) SELECT COUNT(*) FROM indexed_ids
-	JOIN declared_source.%s AS src
-		ON CAST(src.%s AS TEXT)=indexed_ids.source_id
-	WHERE %s`, quoteIdentifier(table.Name), quoteIdentifier(table.IDColumn),
-		declaredSourcePredicate("src", table))
 }
 
 func (f Federation) HasSidecars() bool {

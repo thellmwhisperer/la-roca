@@ -47,7 +47,9 @@ runtime, `roca mcp install <runtime>` exposes the same operations as tools.
 Do not make the first working answer depend on vectors. Full-text search works
 first. During interactive init, after word search works, La Roca asks once for
 permission to find history by meaning and to download the model it needs. A
-yes records the decision and starts the background build.
+yes records the decision and starts the background build. The companion's
+`install` and `status` lifecycle commands remain available while the feature is
+off; its answering verbs require `vector = true`.
 
 If they decline during init and choose semantic search later, set
 `vector = true` under `[features]` in `~/.roca/config.toml` (or in

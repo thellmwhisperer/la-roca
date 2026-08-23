@@ -2,7 +2,7 @@
 
 Vector retrieval is opt-in and off by default. The release core carries its
 matching `roca-vector` companion; the installation step extracts the companion
-next to `roca`, and the switch only unhides dispatch. It does not require
+next to `roca`, and the switch enables semantic answering. It does not require
 `features.plugins`. Windows remains an indexing seat through its compatibility
 payload: the matching artefacts are `roca-<version>-windows-x64.exe` (core, carrying
 `roca-vector.exe`) and
@@ -86,9 +86,11 @@ or `config.toml` next to a `--db-path` database):
 vector = true
 ```
 
-That exposes `roca vector` and lists `vector` in `roca plugins`. Absent or
-false, the command does not exist. On Windows, keep `roca-vector.exe` beside
-`roca.exe` in the directory on `PATH`.
+That exposes the semantic answering verbs and lists `vector` in `roca plugins`.
+When the switch is absent or false, answering stays unavailable, but `roca
+vector install` and `roca vector status` remain reachable whenever the
+companion is installed so an operator can start, resume, or inspect the pass.
+On Windows, keep `roca-vector.exe` beside `roca.exe` in the directory on `PATH`.
 
 ## The one download
 

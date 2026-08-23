@@ -1040,6 +1040,17 @@ func TestProgressCountsHistoryReadAgainstHistoryDeclared(t *testing.T) {
 		t.Fatalf("progress databases = %+v", after.Databases)
 	}
 
+	mutateSourceDatabase(t, corpusPath, `UPDATE articles
+		SET title='Edited title', body='Edited body' WHERE id='article-1'`)
+	edited, err := federation.HistoryProgress(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if edited.Read != 3 || edited.Total != 4 {
+		t.Fatalf("progress after editing one declared row = %d of %d, want 3 of 4",
+			edited.Read, edited.Total)
+	}
+
 	mutateSourceDatabase(t, corpusPath, `DELETE FROM articles WHERE id='article-1';
 		INSERT INTO articles VALUES ('article-3','Replacement title','Replacement body','raw-counter')`)
 	replaced, err := federation.HistoryProgress(ctx)
@@ -1049,45 +1060,5 @@ func TestProgressCountsHistoryReadAgainstHistoryDeclared(t *testing.T) {
 	if replaced.Read != 3 || replaced.Total != 4 {
 		t.Fatalf("progress after replacing one declared row = %d of %d, want 3 of 4",
 			replaced.Read, replaced.Total)
-	}
-}
-
-func TestProgressUsesIndexedSourceIdentityWithoutCorrelatedChunkScans(t *testing.T) {
-	federation, corpusPath, _, _ := federationFixture(t)
-	ctx := context.Background()
-	if _, err := federation.Ingest(ctx, ""); err != nil {
-		t.Fatal(err)
-	}
-	store, err := openSQLite(SidecarPath(corpusPath), true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	if _, err := store.ExecContext(ctx, `ATTACH DATABASE ? AS declared_source`, corpusPath); err != nil {
-		t.Fatal(err)
-	}
-	table := federation.databases[0].Tables[0]
-	rows, err := store.QueryContext(ctx, `EXPLAIN QUERY PLAN `+indexedSourceCountQuery(table), table.Name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	var plan strings.Builder
-	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
-			t.Fatal(err)
-		}
-		plan.WriteString(detail)
-		plan.WriteByte('\n')
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(plan.String(), "CORRELATED") ||
-		!strings.Contains(plan.String(), "USING INDEX") ||
-		!strings.Contains(plan.String(), "source_kind=?)") {
-		t.Fatalf("progress query is not bounded by indexed chunk identity:\n%s", plan.String())
 	}
 }

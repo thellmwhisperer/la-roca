@@ -421,8 +421,12 @@ func TestStatusSpeaksInHistoryReadAndNeverCallsTheProductEmpty(t *testing.T) {
 	}{
 		{name: "running", status: indexStatus{HistoryKnown: true, Running: true, Read: 3, Total: 5},
 			want: []string{"reading your history", "3 of 5", "word search keeps answering"}},
-		{name: "finished", status: indexStatus{HistoryKnown: true, Read: 5, Total: 5},
+		{name: "finished", status: indexStatus{HistoryKnown: true, Completed: true, Read: 5, Total: 5},
 			want: []string{"ready"}},
+		{name: "failed after reading all", status: indexStatus{HistoryKnown: true, Read: 5, Total: 5,
+			Stopped: "finalize sidecar: disk full"},
+			want:   []string{"stopped", "5 of 5", "storage space", "roca vector install`"},
+			absent: []string{"deep search: ready", "finalize", "sidecar", "disk full"}},
 		{name: "stopped partway", status: indexStatus{HistoryKnown: true, Read: 3, Total: 5,
 			Stopped: "pull nomic-embed-text at /synthetic/corpus.vector.db: ollama runtime failed"},
 			want:   []string{"3 of 5", "word search", "roca vector install`", "local reading service stopped answering"},

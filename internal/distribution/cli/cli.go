@@ -303,7 +303,26 @@ func dispatchPlugin(root *cobra.Command, args []string, features config.Features
 }
 
 func vectorLifecycleCommand(args []string) bool {
-	return len(args) > 0 && (args[0] == "install" || args[0] == "status")
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		switch {
+		case argument == "--json" || strings.HasPrefix(argument, "--json="):
+			continue
+		case argument == "--db-path" || argument == "--state-dir" || argument == "--progress-fd":
+			index++
+			if index >= len(args) {
+				return false
+			}
+			continue
+		case strings.HasPrefix(argument, "--db-path=") ||
+			strings.HasPrefix(argument, "--state-dir=") ||
+			strings.HasPrefix(argument, "--progress-fd="):
+			continue
+		default:
+			return argument == "install" || argument == "status"
+		}
+	}
+	return false
 }
 
 func builtIn(root *cobra.Command, name string) bool {

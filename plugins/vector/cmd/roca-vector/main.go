@@ -130,6 +130,7 @@ func installCommand(env *environment) *cobra.Command {
 type indexStatus struct {
 	HistoryKnown bool                      `json:"history_known"`
 	Running      bool                      `json:"running"`
+	Completed    bool                      `json:"completed"`
 	Read         int                       `json:"read"`
 	Total        int                       `json:"total"`
 	Databases    []vector.DatabaseProgress `json:"databases,omitempty"`
@@ -164,7 +165,13 @@ func (env *environment) indexStatus(ctx context.Context) (indexStatus, error) {
 	}
 	status := indexStatus{Running: vector.WorkerRunning(state)}
 	if completion, ok := vector.ReadCompletion(state); ok && !status.Running {
-		status.Stopped = productStopReason(completion.Error)
+		status.Completed = completion.ExitStatus == 0 && strings.TrimSpace(completion.Error) == ""
+		if !status.Completed {
+			status.Stopped = productStopReason(completion.Error)
+			if status.Stopped == "" {
+				status.Stopped = "the pass stopped before it finished"
+			}
+		}
 	}
 	federation, err := env.federation("")
 	if err != nil {
@@ -192,16 +199,21 @@ func statusLines(status indexStatus) []string {
 	case status.Running:
 		return []string{"deep search: reading your history · " + fraction,
 			"  word search keeps answering while it runs"}
+	case status.Stopped != "":
+		return []string{"deep search: stopped · " + fraction,
+			"  what it read already answers, and word search answers for the rest",
+			"  it stopped because " + productStopReason(status.Stopped),
+			"  next step: `roca vector install`"}
 	case status.Total == 0:
 		return []string{"deep search: nothing to read yet · there is no history on this machine"}
-	case status.Read >= status.Total:
+	case status.Completed && status.Read >= status.Total:
 		return []string{"deep search: ready · your history is understood, not only searched"}
+	case status.Read >= status.Total:
+		return []string{"deep search: stopped before it finished · " + fraction,
+			"  word search is answering now", "  next step: `roca vector install`"}
 	case status.Read > 0:
 		lines := []string{"deep search: stopped partway · " + fraction,
 			"  what it read already answers, and word search answers for the rest"}
-		if status.Stopped != "" {
-			lines = append(lines, "  it stopped because "+productStopReason(status.Stopped))
-		}
 		return append(lines, "  next step: `roca vector install`")
 	default:
 		return []string{"deep search: not started · word search is answering now",

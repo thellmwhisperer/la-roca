@@ -33,16 +33,18 @@ type Proof struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// proofSource is one source table and the FTS table that carries its text.
-type proofSource struct {
-	table, index string
+// ProofSource is one source table and the FTS table that carries its text.
+type ProofSource struct {
+	Table, Index string
+	Columns      []string
+	IDColumn     string
 }
 
-var proofSources = []proofSource{
-	{"memories", "memories_fts"},
-	{"exchanges", "exchanges_fts"},
-	{"sessions", "sessions_fts"},
-	{"thinking_blocks", "thinking_fts"},
+var proofSources = []ProofSource{
+	{Table: "memories", Index: "memories_fts", Columns: []string{"content"}},
+	{Table: "exchanges", Index: "exchanges_fts", Columns: []string{"human_text", "agent_text"}},
+	{Table: "sessions", Index: "sessions_fts", Columns: []string{"title", "project"}},
+	{Table: "thinking_blocks", Index: "thinking_fts", Columns: []string{"full_text"}},
 }
 
 // Prove asks the lexical index for a word this database already stores.
@@ -51,17 +53,41 @@ var proofSources = []proofSource{
 // depends on the corpus being in any particular language: the word comes out
 // of the data itself.
 func Prove(ctx context.Context, db *store.DB) (Proof, error) {
+	return ProveSources(ctx, db, proofSources)
+}
+
+// ProveSources asks the lexical indexes declared by a searchable database.
+func ProveSources(ctx context.Context, db *store.DB, sources []ProofSource) (Proof, error) {
 	if db == nil {
 		return Proof{}, fmt.Errorf("proving word search needs a database")
 	}
 	hasRows := false
-	for _, source := range proofSources {
+	var ready *Proof
+	for _, source := range sources {
 		columns, err := indexedColumns(ctx, db, source)
 		if err != nil {
 			return Proof{}, err
 		}
+		indexed := make(map[string]bool, len(columns))
 		for _, column := range columns {
-			word, rows, err := newestWord(ctx, db, source.table, column)
+			indexed[column] = true
+		}
+		for _, column := range source.Columns {
+			if indexed[column] {
+				continue
+			}
+			word, rows, err := newestWord(ctx, db, source.Table, column)
+			if err != nil {
+				return Proof{}, err
+			}
+			hasRows = hasRows || rows
+			if word != "" {
+				return Proof{Word: word, Reason: fmt.Sprintf(
+					"the word index %s is missing or does not index %s", source.Index, column)}, nil
+			}
+		}
+		for _, column := range columns {
+			word, rows, err := newestWord(ctx, db, source.Table, column)
 			if err != nil {
 				return Proof{}, err
 			}
@@ -69,18 +95,24 @@ func Prove(ctx context.Context, db *store.DB) (Proof, error) {
 			if word == "" {
 				continue
 			}
-			matches, err := countMatches(ctx, db, source.index, word)
+			matches, err := countMatches(ctx, db, source.Index, word)
 			if err != nil {
 				return Proof{Word: word, Reason: err.Error()}, nil
 			}
 			if matches == 0 {
 				return Proof{Word: word, Reason: fmt.Sprintf(
 					"the word index did not answer for %q, a word %s already holds",
-					word, source.table)}, nil
+					word, source.Table)}, nil
 			}
-			return Proof{Ready: true, Word: word, Matches: matches,
-				Capped: matches >= proofLimit}, nil
+			if ready == nil {
+				candidate := Proof{Ready: true, Word: word, Matches: matches,
+					Capped: matches >= proofLimit}
+				ready = &candidate
+			}
 		}
+	}
+	if ready != nil {
+		return *ready, nil
 	}
 	if hasRows {
 		return Proof{Reason: "agent history is present but contains no searchable words"}, nil
@@ -96,30 +128,30 @@ func EmptyProof() Proof {
 		Reason: "there is no agent history on this machine to search yet"}
 }
 
-func indexedColumns(ctx context.Context, db *store.DB, source proofSource) ([]string, error) {
+func indexedColumns(ctx context.Context, db *store.DB, source ProofSource) ([]string, error) {
 	rows, err := db.SQL().QueryContext(ctx,
-		`SELECT name FROM pragma_table_info(?) ORDER BY cid`, source.index)
+		`SELECT name FROM pragma_table_info(?) ORDER BY cid`, source.Index)
 	if err != nil {
-		return nil, fmt.Errorf("read indexed columns for %s: %w", source.table, err)
+		return nil, fmt.Errorf("read indexed columns for %s: %w", source.Table, err)
 	}
 	defer rows.Close()
 	var columns []string
 	for rows.Next() {
 		var column string
 		if err := rows.Scan(&column); err != nil {
-			return nil, fmt.Errorf("read an indexed column for %s: %w", source.table, err)
+			return nil, fmt.Errorf("read an indexed column for %s: %w", source.Table, err)
 		}
 		columns = append(columns, column)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read indexed columns for %s: %w", source.table, err)
+		return nil, fmt.Errorf("read indexed columns for %s: %w", source.Table, err)
 	}
 	return columns, nil
 }
 
 func newestWord(ctx context.Context, db *store.DB, table, column string) (string, bool, error) {
 	statement := fmt.Sprintf(
-		`SELECT %[1]s FROM %[2]s WHERE %[1]s IS NOT NULL AND %[1]s <> '' ORDER BY rowid DESC`,
+		`SELECT COALESCE(CAST(%[1]s AS TEXT),'') FROM %[2]s ORDER BY rowid DESC`,
 		quoteProofIdentifier(column), quoteProofIdentifier(table))
 	rows, err := db.SQL().QueryContext(ctx, statement)
 	if err != nil {

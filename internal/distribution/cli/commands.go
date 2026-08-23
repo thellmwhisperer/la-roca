@@ -223,20 +223,6 @@ func (env *cliEnv) ensureBundledVectorForInit(paths config.Paths) (string, error
 		var err error
 		payload, err = rocavector.Payload()
 		if err != nil {
-			// Development and unit-test binaries are not release envelopes. They
-			// keep the existing companion discovery path; a shipped binary always
-			// carries the payload and must place it before asking for consent.
-			if strings.Contains(err.Error(), "does not carry a bundled vector executable") {
-				path, found := findPlugin("vector")
-				if !found {
-					return "", nil
-				}
-				absolute, absErr := filepath.Abs(path)
-				if absErr != nil {
-					return "", fmt.Errorf("resolve semantic search companion: %w", absErr)
-				}
-				return absolute, nil
-			}
 			return "", fmt.Errorf("read bundled semantic search companion: %w", err)
 		}
 	}

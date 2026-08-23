@@ -107,3 +107,39 @@ func TestProofUsesEveryIndexedColumn(t *testing.T) {
 		t.Fatalf("an indexed project-only session was not proved ready: %+v", proof)
 	}
 }
+
+func TestProofTreatsAMissingIndexAsAFaultWhenItsSourceHasHistory(t *testing.T) {
+	ctx := context.Background()
+	db := openWorld(t)
+	writeTo(t, db, `INSERT INTO memories (layer, content, origin)
+		VALUES ('discovery', 'alpha lighthouse', 'agent')`)
+
+	proof, err := search.Prove(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proof.Ready || proof.Empty || proof.Word == "" || proof.Reason == "" {
+		t.Fatalf("missing index was not a named word-search fault: %+v", proof)
+	}
+}
+
+func TestProofDoesNotLetAHealthySourceMaskABrokenSiblingIndex(t *testing.T) {
+	ctx := context.Background()
+	db := openWorld(t)
+	writeTo(t, db, `INSERT INTO memories (layer, content, origin)
+		VALUES ('discovery', 'healthy lighthouse', 'agent')`)
+	writeTo(t, db, `INSERT INTO sessions (session_id, project, title)
+		VALUES ('broken-sibling', 'harbour', 'broken sibling')`)
+	if _, err := search.Index(ctx, db, nil); err != nil {
+		t.Fatal(err)
+	}
+	writeTo(t, db, `INSERT INTO sessions_fts(sessions_fts) VALUES('delete-all')`)
+
+	proof, err := search.Prove(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proof.Ready || proof.Empty || proof.Reason == "" {
+		t.Fatalf("healthy memory index masked a broken session index: %+v", proof)
+	}
+}

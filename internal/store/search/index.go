@@ -69,6 +69,48 @@ func Rebuild(ctx context.Context, db *store.DB) (Report, error) {
 	return Report{LexicalBuilt: built, ElapsedMS: time.Since(started).Milliseconds()}, nil
 }
 
+// RebuildSources recreates the declared derived FTS tables without changing
+// their source rows.
+func RebuildSources(ctx context.Context, db *store.DB, sources []ProofSource) (Report, error) {
+	started := time.Now()
+	tx, err := db.SQL().BeginTx(ctx, nil)
+	if err != nil {
+		return Report{}, err
+	}
+	defer tx.Rollback()
+	for _, source := range sources {
+		if len(source.Columns) == 0 {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `DROP TABLE IF EXISTS `+quoteProofIdentifier(source.Index)); err != nil {
+			return Report{}, err
+		}
+		columns := make([]string, len(source.Columns))
+		for index, column := range source.Columns {
+			columns[index] = quoteProofIdentifier(column)
+		}
+		options := "content='" + strings.ReplaceAll(source.Table, "'", "''") + "'"
+		if source.IDColumn != "" {
+			options += ",content_rowid='" + strings.ReplaceAll(source.IDColumn, "'", "''") + "'"
+		}
+		statement := fmt.Sprintf(
+			`CREATE VIRTUAL TABLE %s USING fts5(%s,%s,tokenize='unicode61 remove_diacritics 2')`,
+			quoteProofIdentifier(source.Index), strings.Join(columns, ","), options)
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return Report{}, err
+		}
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(
+			`INSERT INTO %s(%s) VALUES('rebuild')`, quoteProofIdentifier(source.Index),
+			quoteProofIdentifier(source.Index))); err != nil {
+			return Report{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return Report{}, err
+	}
+	return Report{LexicalBuilt: true, ElapsedMS: time.Since(started).Milliseconds()}, nil
+}
+
 // EnsureTokenizer upgrades an existing lexical index to the tokenizer shipped
 // by this build. The content tables are never changed: only the four derived FTS
 // tables and their state markers are replaced.

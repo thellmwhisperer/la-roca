@@ -56,6 +56,15 @@ func TestVectorExecutableLifecycleRemainsReachableWhenSearchIsDisabled(t *testin
 			t.Fatalf("disabled vector %s = handled %v, code %d, err %v", verb, handled, code, err)
 		}
 	}
+	for _, command := range [][]string{
+		{"vector", "--json", "status"},
+		{"vector", "--db-path", filepath.Join(t.TempDir(), "roca.db"), "install"},
+	} {
+		if handled, code, err := dispatchPlugin(root, command, config.FeaturesConfig{}); !handled || code != ExitOK || err != nil {
+			t.Fatalf("disabled vector lifecycle flags %v = handled %v, code %d, err %v",
+				command, handled, code, err)
+		}
+	}
 	if handled, _, err := dispatchPlugin(root, []string{"vector", "query"}, config.FeaturesConfig{}); handled || err != nil {
 		t.Fatalf("disabled vector query = handled %v, err %v", handled, err)
 	}

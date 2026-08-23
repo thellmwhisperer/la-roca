@@ -897,8 +897,8 @@ func lowerWithPositions(text string) (string, []int) {
 func (s *Service) proveWordSearch(ctx context.Context) *search.Proof {
 	var fault *search.Proof
 	var ready *search.Proof
-	for _, database := range s.searchable() {
-		proof, err := search.Prove(ctx, database)
+	for _, target := range s.wordSearchTargets() {
+		proof, err := search.ProveSources(ctx, target.database, target.sources)
 		if err != nil {
 			proof = search.Proof{Reason: err.Error()}
 		}
@@ -923,24 +923,47 @@ func (s *Service) proveWordSearch(ctx context.Context) *search.Proof {
 	return &empty
 }
 
-// searchable lists the databases the word index is served from, in the order
-// rows are most likely to live in them. It follows Index: what that builds is
-// what this has to be able to ask.
-func (s *Service) searchable() []*store.DB {
-	var databases []*store.DB
-	if s.opts.CorpusEnabled && s.corpus != nil {
-		databases = append(databases, s.corpus)
+type wordSearchTarget struct {
+	name     string
+	database *store.DB
+	sources  []search.ProofSource
+}
+
+func (s *Service) wordSearchTargets() []wordSearchTarget {
+	route := pluginRoute{includeCore: s.servingLayout() != LayoutCutover,
+		databases: bundledSearchDatabases(pluginRoute{databases: s.resident})}
+	handles := map[string]*store.DB{ScopeCore: s.db, "corpus": s.corpus, "ops": s.ops}
+	byName := map[string]int{}
+	var targets []wordSearchTarget
+	for _, surface := range collectSurfaces(route) {
+		database := handles[surface.Database]
+		if database == nil {
+			continue
+		}
+		index, ok := byName[surface.Database]
+		if !ok {
+			index = len(targets)
+			byName[surface.Database] = index
+			targets = append(targets, wordSearchTarget{name: surface.Database, database: database})
+		}
+		targets[index].sources = append(targets[index].sources, search.ProofSource{
+			Table: surface.Table, Index: surface.FTSTable, Columns: surface.TextColumns,
+			IDColumn: surface.IDColumn,
+		})
 	}
-	if s.servingLayout() != LayoutCutover && s.db != nil {
-		databases = append(databases, s.db)
-	}
-	return databases
+	return targets
 }
 
 func (s *Service) rebuildWordSearch(ctx context.Context) (search.Report, error) {
 	var result search.Report
-	for _, database := range s.searchable() {
-		report, err := search.Rebuild(ctx, database)
+	for _, target := range s.wordSearchTargets() {
+		var report search.Report
+		var err error
+		if target.name == "ops" {
+			report, err = search.RebuildSources(ctx, target.database, target.sources)
+		} else {
+			report, err = search.Rebuild(ctx, target.database)
+		}
 		if err != nil {
 			return search.Report{}, err
 		}

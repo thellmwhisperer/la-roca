@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/cucumber/godog"
+	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 )
 
 // registerStoreSteps wires the curated step vocabulary of the STORE domain.
@@ -448,12 +449,13 @@ func (m *world) meaningPassNotStarted() error {
 }
 
 func (m *world) meaningPassSwitchedOff() error {
-	raw, err := os.ReadFile(filepath.Join(m.home, ".roca", "config.toml"))
+	path := filepath.Join(m.home, ".roca", "config.toml")
+	loaded, err := config.LoadFile(path)
 	if err != nil {
 		return err
 	}
-	if !strings.Contains(string(raw), "vector = false") {
-		return fmt.Errorf("bare init changed the meaning pass switch: %s", raw)
+	if loaded.Features.Vector {
+		return fmt.Errorf("bare init enabled the meaning pass in %s", path)
 	}
 	return nil
 }
