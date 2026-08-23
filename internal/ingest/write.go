@@ -1369,15 +1369,12 @@ func (w *writer) patchMetadata(ctx context.Context, sessionID string, payload ma
 	return nil
 }
 
-// SQLITE_CONSTRAINT_UNIQUE is 2067; the primary constraint class is 19.
+// SQLITE_CONSTRAINT_UNIQUE is 2067.
 const sqliteConstraintUnique = 2067
 
 func isUniqueConstraint(err error) bool {
 	var serr *sqlite.Error
-	if errors.As(err, &serr) {
-		return serr.Code() == sqliteConstraintUnique || serr.Code()&0xff == 19
-	}
-	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
+	return errors.As(err, &serr) && serr.Code() == sqliteConstraintUnique
 }
 
 func isExactPayloadConflict(err error) bool {

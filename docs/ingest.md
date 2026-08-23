@@ -277,7 +277,10 @@ source `session_id` is the dedupe key against sessions already federated; an
 empty ID receives a deterministic fallback. Overlaps remain untouched and the
 summary reports them as already present. An exact-payload match against a
 session already in the federation (a different id, the same registration
-payload) is the same overlap: it does not abort the source. Duplicate source
+payload) is the same overlap: it does not abort the source. Child-table counts
+report only exchanges, thinking blocks, and tool uses actually inserted; an
+overlapping child row that does not land is therefore absent from its inserted
+count rather than reported by a separate overlap counter. Duplicate source
 exchange numbers and thinking positions are disambiguated deterministically so
 each distinct source row can land. `source_surface` is `Legacy store`, while
 `source_agent` stays what the source stored. Tool rows whose source exchange
