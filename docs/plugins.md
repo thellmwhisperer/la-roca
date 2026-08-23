@@ -486,9 +486,11 @@ one candidate per session.
 
 A missing or non-executable companion does not take the server down. Serve
 starts, writes one notice on standard error plus a JSONL line under the data
-directory logs area, and keeps answering. A companion that exits is retried
-with bounded backoff; if it keeps dying, serve reports that once, leaves it
-down, and continues. Those events stay in log files, never in a database.
+directory logs area, and keeps answering. A companion that exits cleanly
+(exit 0) is left down without the `stopped` notice or telemetry. A crash — a
+non-zero exit or a start failure after the executable resolved — is retried
+with bounded backoff, and a companion that keeps crashing is reported once and
+left down. Those events stay in log files, never in a database.
 
 Executable-only packages may declare the same object. The kernel does not
 invent plugin-specific flags, homes, or environment variables.
