@@ -51,6 +51,15 @@ type Corpus interface {
 	ResolveSource(context.Context, string, locator) (string, error)
 }
 
+type sourceLookup struct {
+	kind  string
+	where locator
+}
+
+type batchCorpus interface {
+	ResolveSources(context.Context, []sourceLookup) (map[string]string, error)
+}
+
 type Delta struct {
 	Added     int `json:"added"`
 	Updated   int `json:"updated"`
@@ -416,6 +425,26 @@ func (i Index) queryVector(ctx context.Context, store *sql.DB, embedding []float
 	}
 	results := make([]Result, 0, k)
 	seen := map[string]bool{}
+	resolved := map[string]string(nil)
+	if corpus, ok := i.Corpus.(batchCorpus); ok {
+		lookups := make([]sourceLookup, 0, min(len(candidates), k+maxUnresolvedCandidates-1))
+		queued := map[string]bool{}
+		for _, candidate := range candidates {
+			key := sourceLookupKey(candidate.kind, candidate.where.SourceID)
+			if queued[key] {
+				continue
+			}
+			queued[key] = true
+			lookups = append(lookups, sourceLookup{kind: candidate.kind, where: candidate.where})
+			if len(lookups) == k+maxUnresolvedCandidates-1 {
+				break
+			}
+		}
+		resolved, err = corpus.ResolveSources(ctx, lookups)
+		if err != nil {
+			return nil, err
+		}
+	}
 	misses := 0
 	for _, candidate := range candidates {
 		key := candidate.kind + "\x00" + candidate.sourceID
@@ -423,9 +452,14 @@ func (i Index) queryVector(ctx context.Context, store *sql.DB, embedding []float
 			continue
 		}
 		seen[key] = true
-		body, err := i.Corpus.ResolveSource(ctx, candidate.kind, candidate.where)
-		if err != nil {
-			return nil, err
+		var body string
+		if resolved != nil {
+			body = resolved[sourceLookupKey(candidate.kind, candidate.where.SourceID)]
+		} else {
+			body, err = i.Corpus.ResolveSource(ctx, candidate.kind, candidate.where)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if body == "" {
 			misses++
@@ -448,6 +482,10 @@ func (i Index) queryVector(ctx context.Context, store *sql.DB, embedding []float
 		}
 	}
 	return results, nil
+}
+
+func sourceLookupKey(kind, sourceID string) string {
+	return kind + "\x00" + sourceID
 }
 
 func (i Index) waitingForIndex(path string) {

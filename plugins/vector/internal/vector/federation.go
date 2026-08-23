@@ -751,6 +751,73 @@ func (d DeclaredCorpus) ResolveSource(ctx context.Context, kind string, where lo
 	return "", nil
 }
 
+func (d DeclaredCorpus) ResolveSources(ctx context.Context,
+	lookups []sourceLookup) (map[string]string, error) {
+	resolved := make(map[string]string, len(lookups))
+	idsByTable := make(map[string][]string)
+	seen := make(map[string]bool)
+	for _, lookup := range lookups {
+		if lookup.where.SourceID == "" {
+			continue
+		}
+		if _, ok := d.table(lookup.kind); !ok {
+			return nil, fmt.Errorf("unknown vector source %q", lookup.kind)
+		}
+		key := sourceLookupKey(lookup.kind, lookup.where.SourceID)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		idsByTable[lookup.kind] = append(idsByTable[lookup.kind], lookup.where.SourceID)
+	}
+	branches := make([]string, 0, len(idsByTable))
+	for _, table := range d.Database.Tables {
+		ids := idsByTable[table.Name]
+		if len(ids) == 0 {
+			continue
+		}
+		literals := make([]string, len(ids))
+		for index, id := range ids {
+			literals[index] = sqlLiteral(id)
+		}
+		branches = append(branches, fmt.Sprintf(
+			`SELECT %s AS source_kind,CAST(%s AS TEXT) AS source_id%s FROM %s.%s WHERE CAST(%s AS TEXT) IN (%s)`,
+			sqlLiteral(table.Name), quoteIdentifier(table.IDColumn),
+			declaredColumnSelect("", table.TextColumns), quoteIdentifier(d.Database.Alias),
+			quoteIdentifier(table.Name), quoteIdentifier(table.IDColumn), strings.Join(literals, ",")))
+	}
+	if len(branches) == 0 {
+		return resolved, nil
+	}
+	rows, err := d.Core.query(ctx, strings.Join(branches, " UNION ALL "))
+	if err != nil {
+		return nil, err
+	}
+	for _, values := range rows {
+		kind := stringValue(values["source_kind"])
+		id := stringValue(values["source_id"])
+		table, ok := d.table(kind)
+		if !ok {
+			continue
+		}
+		expanded := expandColumnRows(sourceRow{kind: kind, sourceID: id}, table.TextColumns, values)
+		if len(expanded) == 0 {
+			continue
+		}
+		text := expanded[0].rowText
+		candidate := sourceRow{kind: kind, sourceID: id, text: text, rowText: text,
+			fingerprintVersion: table.contractFingerprint()}
+		for _, lookup := range lookups {
+			if lookup.kind == kind && lookup.where.SourceID == id &&
+				candidate.identity() == lookup.where.Identity {
+				resolved[sourceLookupKey(kind, id)] = text
+				break
+			}
+		}
+	}
+	return resolved, nil
+}
+
 func (d DeclaredCorpus) CountSources(ctx context.Context, sourceKind string) (int, error) {
 	tables := d.Database.Tables
 	if sourceKind != "" {

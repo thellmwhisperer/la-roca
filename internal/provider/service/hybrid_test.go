@@ -269,6 +269,10 @@ func TestHybridGoldenHitsAtTenMatchesOrBeatsEachLeg(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if !vectorResult.Executed {
+			t.Fatalf("pure-vector baseline did not execute for %q: notices=%v",
+				golden.query, vectorResult.Notices)
+		}
 		if vectorHitsHaveSource(vectorResult.Results, "core.memories."+vectorTargets[golden.query]) {
 			vectorHits++
 		}
@@ -288,12 +292,14 @@ func TestHybridGoldenAgainstReadOnlyLabCopies(t *testing.T) {
 	}
 	dbPath := filepath.Join(labDir, "roca.db")
 	stateDir := filepath.Join(labDir, "vector-state")
-	for _, path := range []string{dbPath, stateDir} {
+	pluginRoot := filepath.Join(labDir, "plugins")
+	for _, path := range []string{dbPath, stateDir, pluginRoot} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("golden lab copy %s: %v", path, err)
 		}
 	}
 	t.Setenv("ROCA_VECTOR_STATE_DIR", stateDir)
+	t.Setenv("ROCA_VECTOR_PLUGIN_ROOT", pluginRoot)
 	pluginVectorLeg := service.PluginVectorSearch(dbPath)
 	vectorCache := make(map[string]service.VectorHits)
 	vectorLeg := func(ctx context.Context, question string, k int, databases string) (service.VectorHits, error) {
@@ -349,6 +355,10 @@ func TestHybridGoldenAgainstReadOnlyLabCopies(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if !vectorResult.Executed {
+			t.Fatalf("pure-vector baseline did not execute for %q: notices=%v",
+				golden.query, vectorResult.Notices)
+		}
 		if goldenSearchHit(hybridResult.Hits, golden.table, golden.ids) {
 			hybridHits++
 		}
@@ -361,6 +371,9 @@ func TestHybridGoldenAgainstReadOnlyLabCopies(t *testing.T) {
 	}
 	t.Logf("lab-copy golden hits@10: hybrid=%d pure-fts=%d pure-vector=%d",
 		hybridHits, ftsHits, vectorHits)
+	if vectorHits == 0 {
+		t.Fatal("pure-vector historical baseline found no golden target; comparison is vacuous")
+	}
 	if hybridHits < ftsHits || hybridHits < vectorHits {
 		t.Fatalf("hybrid hits@10 = %d, pure-fts = %d, pure-vector = %d",
 			hybridHits, ftsHits, vectorHits)

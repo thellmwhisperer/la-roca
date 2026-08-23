@@ -2,6 +2,7 @@ package vector
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -162,5 +163,43 @@ func TestQueryExpandedResolvesSessionSnippetsFromTheCatalog(t *testing.T) {
 	if !strings.Contains(hit.Text, "Session title about recovery") ||
 		!strings.Contains(hit.Text, "therapy") {
 		t.Fatalf("session snippet was not resolved from catalog columns: %q", hit.Text)
+	}
+}
+
+func TestQueryExpandedBatchesDeclaredSourceResolution(t *testing.T) {
+	federation, corpusPath, _, _ := federationFixture(t)
+	for index := 0; index < 20; index++ {
+		mutateSourceDatabase(t, corpusPath, fmt.Sprintf(
+			`INSERT INTO articles VALUES ('batch-%d','Batch title %d','Batch body %d','raw-counter')`,
+			index, index, index))
+	}
+	if _, err := federation.Ingest(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
+
+	run := federation.Core.Run
+	resolutionCalls := 0
+	federation.Core.Run = func(ctx context.Context, executable string, args ...string) ([]byte, error) {
+		for _, arg := range args {
+			if arg == "exec" {
+				resolutionCalls++
+				if resolutionCalls > len(ExpandedQueries("batch")) {
+					return nil, fmt.Errorf("source resolution process budget exceeded")
+				}
+				break
+			}
+		}
+		return run(ctx, executable, args...)
+	}
+
+	result, err := federation.QueryExpanded(context.Background(), "batch", 10, "corpus", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Results) != 10 {
+		t.Fatalf("expanded query returned %d results, want 10", len(result.Results))
+	}
+	if resolutionCalls != len(ExpandedQueries("batch")) {
+		t.Fatalf("source resolution calls = %d, want one per embedded query", resolutionCalls)
 	}
 }
