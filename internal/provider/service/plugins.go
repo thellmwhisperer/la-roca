@@ -169,6 +169,7 @@ func (s *Service) openResidents(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		s.layerSet = stableLayers
 	}
 	var candidates []plugin.Descriptor
 	if s.opts.RocaOpsEnabled {
@@ -285,7 +286,8 @@ func stableLayerDatabase(ctx context.Context, descriptors []plugin.Descriptor, p
 			database, err = plugin.Validate(ctx, descriptor)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("validate %s layer registry: %w", rocaOpsPluginName, err)
+			return nil, errors.Join(fmt.Errorf("validate %s layer registry: %w", rocaOpsPluginName, err),
+				closePluginDatabases(databases, nil))
 		}
 		databases = append(databases, database)
 	}
@@ -294,9 +296,26 @@ func stableLayerDatabase(ctx context.Context, descriptors []plugin.Descriptor, p
 	}
 	selected := databaseForVerb(databases, StoreVerb, rocaOpsPluginName)
 	if selected == nil {
-		return nil, fmt.Errorf("%s declares no single durable layer registry", rocaOpsPluginName)
+		return nil, errors.Join(fmt.Errorf("%s declares no single durable layer registry", rocaOpsPluginName),
+			closePluginDatabases(databases, nil))
+	}
+	if err := closePluginDatabases(databases, selected); err != nil {
+		return nil, errors.Join(err, selected.Close())
 	}
 	return selected, nil
+}
+
+func closePluginDatabases(databases []plugin.Database, keep *plugin.Database) error {
+	var result error
+	for index := range databases {
+		if keep == &databases[index] {
+			continue
+		}
+		if err := databases[index].Close(); err != nil {
+			result = errors.Join(result, fmt.Errorf("close %s: %w", databases[index].Source(), err))
+		}
+	}
+	return result
 }
 
 // residentCorpus is the attached bundled corpus, or nil when this installation

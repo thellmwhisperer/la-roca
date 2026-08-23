@@ -12,6 +12,7 @@ import (
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocacorpus"
 	"github.com/thellmwhisperer/la-roca/internal/distribution/rocaops"
 	"github.com/thellmwhisperer/la-roca/internal/ingest"
+	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
 	"github.com/thellmwhisperer/la-roca/internal/provider/query"
 	"github.com/thellmwhisperer/la-roca/internal/store/search"
 )
@@ -27,6 +28,56 @@ func TestResidentInitializationHonorsItsContext(t *testing.T) {
 	}
 	if err == nil || !strings.Contains(err.Error(), context.Canceled.Error()) {
 		t.Fatalf("resident initialization with a canceled context = %v", err)
+	}
+}
+
+func TestStableLayerDatabaseClosesAmbiguousPhysicalSnapshots(t *testing.T) {
+	tempRoot := t.TempDir()
+	t.Setenv("TMPDIR", tempRoot)
+	t.Setenv("TMP", tempRoot)
+	t.Setenv("TEMP", tempRoot)
+	manifest := &plugin.Manifest{
+		Name:  rocaOpsPluginName,
+		Verbs: []plugin.Verb{{Name: StoreVerb}},
+	}
+	var descriptors []plugin.Descriptor
+	for index := range 2 {
+		path := filepath.Join(t.TempDir(), fmt.Sprintf("ops-%d.db", index))
+		database, err := sql.Open("sqlite", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.Exec(`CREATE TABLE registry (id INTEGER)`); err != nil {
+			t.Fatal(err)
+		}
+		if err := database.Close(); err != nil {
+			t.Fatal(err)
+		}
+		descriptors = append(descriptors, plugin.Descriptor{
+			Name: rocaOpsPluginName, Database: path,
+			DatabaseName: fmt.Sprintf("ops-%d", index), Schema: fmt.Sprintf("plugin_ops_%d", index),
+			Manifest: manifest,
+			Semantic: plugin.Semantic{
+				Attachment: plugin.AttachmentResident,
+				Tables:     []plugin.SemanticTable{{Name: "registry", Columns: []string{"id"}}},
+			},
+		})
+	}
+	selected, err := stableLayerDatabase(t.Context(), descriptors, true)
+	if selected != nil || err == nil || !strings.Contains(err.Error(), "no single durable layer registry") {
+		t.Fatalf("selected = %+v, error = %v", selected, err)
+	}
+	err = filepath.WalkDir(tempRoot, func(_ string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), "roca-read-only-snapshot-") {
+			return fmt.Errorf("partial service open left snapshot %q", entry.Name())
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

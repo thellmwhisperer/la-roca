@@ -1,12 +1,13 @@
 /**
- * @overview Verifies snapshot lifetime, reuse, reaping, and telemetry. ~950 lines, no public symbols.
+ * @overview Verifies snapshot lifetime, reuse, reaping, and telemetry. ~1000 lines, no public symbols.
  *
  *   READING GUIDE
  *   -------------
  *   1. Start at TestReadOnlySnapshotLifecycle        <- baseline behavior
  *   2. TestSnapshotFlightsUseFinalSourceFingerprint <- concurrency contract
  *   3. TestKilledProcessOrphanIsReapedAndLiveSnapshotIsKept
- *   4. TestSnapshotHelperProcess                    <- subprocess fixture
+ *   4. TestLegacySnapshotNamespaceIsMigratedSafely  <- upgrade contract
+ *   5. TestSnapshotHelperProcess                    <- subprocess fixture
  *
  *   MAIN FLOW
  *   ---------
@@ -29,7 +30,6 @@ package store
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -438,6 +438,47 @@ func TestKilledProcessOrphanIsReapedAndLiveSnapshotIsKept(t *testing.T) {
 	}
 }
 
+func TestLegacySnapshotNamespaceIsMigratedSafely(t *testing.T) {
+	tempRoot := isolateSnapshotTemp(t)
+	orphan := filepath.Join(tempRoot, snapshotDirectoryPrefix+"legacy-orphan")
+	if err := os.Mkdir(orphan, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(orphan, "payload"), []byte("orphan"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	live := filepath.Join(tempRoot, snapshotDirectoryPrefix+"legacy-live")
+	if err := os.Mkdir(live, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	leasePath := filepath.Join(live, snapshotLeaseName)
+	if err := os.WriteFile(leasePath, []byte("1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	release, err := securefile.LockExisting(leasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = release()
+		_ = os.RemoveAll(live)
+	})
+
+	snapshot, err := OpenReadOnlySnapshot(context.Background(), fixtureDatabase(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := snapshot.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+		t.Fatalf("legacy orphan still exists: %v", err)
+	}
+	if _, err := os.Stat(live); err != nil {
+		t.Fatalf("legacy live snapshot was reaped: %v", err)
+	}
+}
+
 func TestSnapshotPublicationIsLeasedBeforeItIsVisible(t *testing.T) {
 	root := isolateSnapshotTemp(t)
 	namespace := snapshotNamespaceForTest(t, root)
@@ -488,9 +529,7 @@ func TestSnapshotPublicationIsLeasedBeforeItIsVisible(t *testing.T) {
 func TestConcurrentSnapshotReapersCountOneRemoval(t *testing.T) {
 	root := isolateSnapshotTemp(t)
 	root = snapshotNamespaceForTest(t, root)
-	dataDir := t.TempDir()
-	SetSnapshotLogDir(dataDir)
-	t.Cleanup(func() { SetSnapshotLogDir("") })
+	records := captureSnapshotRecords(t)
 	orphan := filepath.Join(root, snapshotDirectoryPrefix+"orphan")
 	if err := os.Mkdir(orphan, 0o700); err != nil {
 		t.Fatal(err)
@@ -524,23 +563,21 @@ func TestConcurrentSnapshotReapersCountOneRemoval(t *testing.T) {
 		}
 	}
 
-	var reaped float64
-	for _, record := range readSnapshotLog(t, dataDir) {
+	var reaped int
+	for _, record := range records() {
 		if record["event"] == "reap" {
-			reaped += record["count"].(float64)
+			reaped += record["count"].(int)
 		}
 	}
 	if reaped != 1 {
-		t.Fatalf("concurrent reapers reported %.0f removals, want 1", reaped)
+		t.Fatalf("concurrent reapers reported %d removals, want 1", reaped)
 	}
 }
 
 func TestVanishedSnapshotIsNotCountedAsReaped(t *testing.T) {
 	root := isolateSnapshotTemp(t)
 	root = snapshotNamespaceForTest(t, root)
-	dataDir := t.TempDir()
-	SetSnapshotLogDir(dataDir)
-	t.Cleanup(func() { SetSnapshotLogDir("") })
+	records := captureSnapshotRecords(t)
 	orphan := filepath.Join(root, snapshotDirectoryPrefix+"vanished")
 	if err := os.Mkdir(orphan, 0o700); err != nil {
 		t.Fatal(err)
@@ -556,12 +593,8 @@ func TestVanishedSnapshotIsNotCountedAsReaped(t *testing.T) {
 	if err := scavengeReadOnlySnapshots(context.Background(), root); err != nil {
 		t.Fatal(err)
 	}
-	matches, err := filepath.Glob(filepath.Join(dataDir, "logs", "snapshots-*.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(matches) != 0 {
-		t.Fatalf("vanished snapshot produced reap telemetry: %v", matches)
+	if captured := records(); len(captured) != 0 {
+		t.Fatalf("vanished snapshot produced reap telemetry: %v", captured)
 	}
 }
 
@@ -665,9 +698,7 @@ func TestAlreadyAbsentSnapshotRemovalIsBenign(t *testing.T) {
 func TestSnapshotTelemetryLogsCreateAndReap(t *testing.T) {
 	root := isolateSnapshotTemp(t)
 	root = snapshotNamespaceForTest(t, root)
-	dataDir := t.TempDir()
-	SetSnapshotLogDir(dataDir)
-	t.Cleanup(func() { SetSnapshotLogDir("") })
+	records := captureSnapshotRecords(t)
 
 	orphan := filepath.Join(root, snapshotDirectoryPrefix+"orphan")
 	if err := os.Mkdir(orphan, 0o700); err != nil {
@@ -686,9 +717,8 @@ func TestSnapshotTelemetryLogsCreateAndReap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	records := readSnapshotLog(t, dataDir)
 	var sawCreate, sawReap bool
-	for _, record := range records {
+	for _, record := range records() {
 		switch record["event"] {
 		case "create":
 			sawCreate = true
@@ -698,14 +728,14 @@ func TestSnapshotTelemetryLogsCreateAndReap(t *testing.T) {
 			if record["reason"] != "copy" {
 				t.Errorf("create reason = %v, want copy", record["reason"])
 			}
-			size, _ := record["size_bytes"].(float64)
+			size, _ := record["size_bytes"].(int64)
 			if size <= 0 {
 				t.Errorf("create size_bytes = %v, want > 0", record["size_bytes"])
 			}
 		case "reap":
 			sawReap = true
-			count, _ := record["count"].(float64)
-			reclaimed, _ := record["reclaimed_mb"].(float64)
+			count, _ := record["count"].(int)
+			reclaimed, _ := record["reclaimed_mb"].(int64)
 			if count < 1 {
 				t.Errorf("reap count = %v, want at least 1", record["count"])
 			}
@@ -715,7 +745,7 @@ func TestSnapshotTelemetryLogsCreateAndReap(t *testing.T) {
 		}
 	}
 	if !sawCreate || !sawReap {
-		t.Fatalf("log records = %v, want create and reap", records)
+		t.Fatalf("log records = %v, want create and reap", records())
 	}
 }
 
@@ -901,31 +931,26 @@ func snapshotNamespaceForTest(t *testing.T, tempRoot string) string {
 	return root
 }
 
-func readSnapshotLog(t *testing.T, dataDir string) []map[string]any {
+func captureSnapshotRecords(t *testing.T) func() []map[string]any {
 	t.Helper()
-	matches, err := filepath.Glob(filepath.Join(dataDir, "logs", "snapshots-*.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(matches) == 0 {
-		t.Fatal("no snapshot telemetry log")
-	}
-	raw, err := os.ReadFile(matches[0])
-	if err != nil {
-		t.Fatal(err)
-	}
+	var mu sync.Mutex
 	var records []map[string]any
-	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
-		if line == "" {
-			continue
+	SetSnapshotLogWriter(func(record map[string]any) error {
+		copied := make(map[string]any, len(record))
+		for key, value := range record {
+			copied[key] = value
 		}
-		var record map[string]any
-		if err := json.Unmarshal([]byte(line), &record); err != nil {
-			t.Fatalf("invalid snapshot log line %q: %v", line, err)
-		}
-		records = append(records, record)
+		mu.Lock()
+		records = append(records, copied)
+		mu.Unlock()
+		return nil
+	})
+	t.Cleanup(func() { SetSnapshotLogWriter(nil) })
+	return func() []map[string]any {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]map[string]any(nil), records...)
 	}
-	return records
 }
 
 // -/ 5/5
