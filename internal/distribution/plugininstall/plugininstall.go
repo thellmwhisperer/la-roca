@@ -153,12 +153,13 @@ func databaseVectorSidecar(name string) string {
 }
 
 type packageMetadata struct {
-	Schema   int         `json:"schema"`
-	Name     string      `json:"name"`
-	Version  string      `json:"version"`
-	Kind     PackageKind `json:"kind,omitempty"`
-	Custody  bool        `json:"custody,omitempty"`
-	StateDir string      `json:"state_directory,omitempty"`
+	Schema    int                          `json:"schema"`
+	Name      string                       `json:"name"`
+	Version   string                       `json:"version"`
+	Kind      PackageKind                  `json:"kind,omitempty"`
+	Custody   bool                         `json:"custody,omitempty"`
+	StateDir  string                       `json:"state_directory,omitempty"`
+	Companion *plugin.CompanionDeclaration `json:"companion,omitempty"`
 }
 
 func Resolve(ctx context.Context, reference, scratchRoot string) (Resolved, func(), error) {
@@ -385,6 +386,11 @@ func Inspect(source, directory string) (Candidate, error) {
 	if metadata.Schema != 1 || !safeName(metadata.Name) || strings.TrimSpace(metadata.Version) == "" {
 		return Candidate{}, fmt.Errorf(
 			"%s needs schema 1, a safe name, and a version", PackageFilename)
+	}
+	if metadata.Companion != nil {
+		if err := metadata.Companion.Valid(); err != nil {
+			return Candidate{}, err
+		}
 	}
 	rides, err := plugin.InspectRides(metadata.Name, directory)
 	if err != nil {
