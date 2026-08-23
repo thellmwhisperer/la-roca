@@ -551,6 +551,8 @@ func Serve(ctx context.Context, svc *service.Service, build Build) error {
 	if resident != nil {
 		defer resident.Close()
 	}
+	companions := startPluginCompanions(svc.PluginDir(), svc.DataDir(), os.Stderr)
+	defer companions.Close()
 	return serveOver(ctx, svc, build, &mcp.StdioTransport{}, resident)
 }
 

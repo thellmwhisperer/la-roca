@@ -34,6 +34,14 @@ pay the startup cost. The companion has no port or pid file and stops with the
 MCP server; one-shot CLI queries load the model for that invocation only. Its
 preparation status goes to standard error, leaving protocol output untouched.
 
+The same session parent raises every installed plugin that declares a
+`companion` in `plugin.json`. Each child is exec'd from the plugin directory
+with that declaration's fixed argv, over private pipes, and is reaped when
+serve exits. A companion crash is logged and retried with bounded backoff; a
+companion that keeps dying is reported once and left down. Queries continue
+either way. Plugins that omit the field are unchanged. The declaration and
+degradation contract live in [the plugin manifest](plugins.md#session-companions).
+
 ```
 roca mcp serve
 ```

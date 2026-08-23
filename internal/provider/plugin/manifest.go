@@ -39,6 +39,7 @@ type Manifest struct {
 	Vector       *VectorFragment       `json:"vector,omitempty"`
 	Verbs        []Verb                `json:"verbs"`
 	Capabilities []Capability          `json:"capabilities"`
+	Companion    *CompanionDeclaration `json:"companion,omitempty"`
 }
 
 type DatabaseDeclaration struct {
@@ -310,6 +311,11 @@ func (m Manifest) Valid() error {
 			return fmt.Errorf("verb %s names missing capability %q", verb.Name, verb.Capability)
 		}
 		verbs[verb.Name] = true
+	}
+	if m.Companion != nil {
+		if err := m.Companion.Valid(); err != nil {
+			return err
+		}
 	}
 	return nil
 }

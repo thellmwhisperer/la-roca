@@ -128,30 +128,16 @@ func (d Descriptor) databaseLabel() string {
 }
 
 func Discover(root string) ([]Descriptor, []string) {
-	if strings.TrimSpace(root) == "" {
-		return nil, nil
-	}
-	entries, err := os.ReadDir(root)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, []string{fmt.Sprintf("plugins could not be discovered: %v", err)}
-	}
-
+	names, warnings := pluginDirectories(root)
 	var found []Descriptor
-	var warnings []string
-	for _, entry := range entries {
-		if !entry.IsDir() || !validPluginName(entry.Name()) {
-			continue
-		}
-		directory := filepath.Join(root, entry.Name())
+	for _, name := range names {
+		directory := filepath.Join(root, name)
 		if executablePackage(directory) {
 			continue
 		}
-		descriptors, err := InspectAll(entry.Name(), directory)
+		descriptors, err := InspectAll(name, directory)
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("plugin %s is unavailable: %v", entry.Name(), err))
+			warnings = append(warnings, fmt.Sprintf("plugin %s is unavailable: %v", name, err))
 			continue
 		}
 		found = append(found, descriptors...)
@@ -165,6 +151,26 @@ func Discover(root string) ([]Descriptor, []string) {
 		return strings.Compare(a.DatabaseName, b.DatabaseName)
 	})
 	return found, warnings
+}
+
+func pluginDirectories(root string) ([]string, []string) {
+	if strings.TrimSpace(root) == "" {
+		return nil, nil
+	}
+	entries, err := os.ReadDir(root)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, []string{fmt.Sprintf("plugins could not be discovered: %v", err)}
+	}
+	var names []string
+	for _, entry := range entries {
+		if entry.IsDir() && validPluginName(entry.Name()) {
+			names = append(names, entry.Name())
+		}
+	}
+	return names, nil
 }
 
 // installedPackage is the part of the local installation inventory discovery
