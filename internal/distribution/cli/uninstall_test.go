@@ -388,6 +388,7 @@ func TestPurgeOwnsEveryDatedAndRotatedLogStream(t *testing.T) {
 		"mcp-audit-2026-08-12-1.jsonl":   true,
 		"ingest-2026-08-12.jsonl":        true,
 		"migrations-2026-08-12.jsonl":    true,
+		"snapshots-2026-08-12.jsonl":     true,
 		"migrations-2026-08-12-x.jsonl":  false,
 		"migrations-2026-08-12-1.backup": false,
 		"operator-2026-08-12.jsonl":      false,
