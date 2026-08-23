@@ -222,7 +222,15 @@ func (r Resolver) Resolve(ctx context.Context, reference, scratchRoot string) (R
 			return Resolved{}, func() {}, fmt.Errorf(
 				"plugin source %q is neither a directory, URL, nor owner/repo", reference)
 		}
-		return cloneGit(ctx, reference, cloneSource, scratchRoot)
+		resolved, cleanup, err := cloneGit(ctx, reference, cloneSource, scratchRoot)
+		if err != nil {
+			return Resolved{}, func() {}, err
+		}
+		if err := r.refuseExecutableTreeFallback(reference, resolved.Directory); err != nil {
+			cleanup()
+			return Resolved{}, func() {}, err
+		}
+		return resolved, cleanup, nil
 	}
 	if !sourceURL(reference) {
 		return Resolved{}, func() {}, fmt.Errorf(

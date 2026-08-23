@@ -3,6 +3,7 @@ package plugininstall
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -73,6 +74,27 @@ func (r Resolver) resolvePublishedRelease(
 			asset.Name, err), true
 	}
 	return Resolved{Reference: reference, Directory: directory}, cleanup, nil, true
+}
+
+// refuseExecutableTreeFallback enforces the owner/repo tree fallback contract:
+// only a data-only package may install from a repository tree when no plugin
+// release archive was published.
+func (r Resolver) refuseExecutableTreeFallback(reference, directory string) error {
+	candidate, err := Inspect(reference, directory)
+	if err != nil {
+		return err
+	}
+	if candidate.Risk == DataOnly {
+		return nil
+	}
+	message := fmt.Sprintf(
+		"%s published no plugin release archive; the repository tree is only a fallback for a release-less data-only plugin",
+		reference)
+	if strings.TrimSpace(r.Token) == "" {
+		message += "; if the repository is private, export " + release.EnvToken +
+			" with a token that can read its releases"
+	}
+	return errors.New(message)
 }
 
 func extractArchiveBytes(payload []byte, scratchRoot string) (string, func(), error) {

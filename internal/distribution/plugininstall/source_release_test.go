@@ -211,21 +211,47 @@ func TestReleaseLessDataOnlyOwnerRepoFallsBackToTheTree(t *testing.T) {
 	if candidate.Executable != "" || candidate.Risk != plugininstall.DataOnly || candidate.Version != "1.0.0" {
 		t.Fatalf("tree candidate = %+v", candidate)
 	}
+}
 
-	docs, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "plugins.md"))
-	if err != nil {
-		t.Fatal(err)
+// A release-less owner/repo whose tree ships an executable must not install
+// from that unverified tree: the fallback exists only for data-only plugins.
+func TestOwnerRepoTreeFallbackRefusesAnExecutablePackage(t *testing.T) {
+	name := "synthetic-release"
+	tree := writeReleasePluginPackage(t, filepath.Join(t.TempDir(), "tree"), name, "v1.0.0", true)
+	remote := gitRepoFromDirectory(t, tree)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(server.Close)
+	cloned := false
+	resolver := plugininstall.Resolver{
+		API: server.URL,
+		CloneURL: func(reference string) (string, bool) {
+			if reference != "owner/"+name {
+				t.Fatalf("clone reference = %q", reference)
+			}
+			cloned = true
+			return remote, true
+		},
 	}
-	body := string(docs)
+	_, cleanup, err := resolver.Resolve(context.Background(), "owner/"+name, t.TempDir())
+	if err == nil {
+		cleanup()
+		t.Fatal("executable tree fallback was accepted")
+	}
+	if !cloned {
+		t.Fatal("release-less owner/repo did not fall back to the tree")
+	}
 	for _, needle := range []string{
-		"published release",
-		"fallback",
-		"data-only",
-		"roca plugin update <name> [source]",
+		"published no plugin release archive",
+		"release-less data-only plugin",
 	} {
-		if !strings.Contains(body, needle) {
-			t.Errorf("docs/plugins.md does not document %q", needle)
+		if !strings.Contains(err.Error(), needle) {
+			t.Errorf("refusal error %q does not mention %q", err, needle)
 		}
+	}
+	if !strings.Contains(err.Error(), release.EnvToken) {
+		t.Errorf("refusal error %q does not mention %s for a private repository", err, release.EnvToken)
 	}
 }
 
