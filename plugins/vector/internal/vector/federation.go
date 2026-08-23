@@ -21,7 +21,7 @@ import (
 
 const (
 	vectorRegistryFilename = "vector-registry.json"
-	vectorRegistrySchema   = 1
+	vectorRegistrySchema   = 2
 	declaredReaderVersion  = "declared-surfaces-v2"
 )
 
@@ -52,11 +52,20 @@ type vectorDatabase struct {
 }
 
 type vectorTable struct {
-	Name        string         `json:"name"`
-	IDColumn    string         `json:"id_column"`
-	TextColumns []string       `json:"text_columns"`
-	Columns     []string       `json:"columns,omitempty"`
-	Chunking    *chunkingHints `json:"chunking,omitempty"`
+	Name        string          `json:"name"`
+	IDColumn    string          `json:"id_column"`
+	TextColumns []string        `json:"text_columns"`
+	TimeColumns []string        `json:"time_columns,omitempty"`
+	TimeJoin    *vectorTimeJoin `json:"time_join,omitempty"`
+	Columns     []string        `json:"columns,omitempty"`
+	Chunking    *chunkingHints  `json:"chunking,omitempty"`
+}
+
+type vectorTimeJoin struct {
+	Table         string   `json:"table"`
+	LocalColumn   string   `json:"local_column"`
+	ForeignColumn string   `json:"foreign_column"`
+	TimeColumns   []string `json:"time_columns"`
 }
 
 type chunkingHints struct {
@@ -172,7 +181,8 @@ func validateRegistry(registry vectorRegistry) error {
 		seenTables := map[string]bool{}
 		for _, table := range database.Tables {
 			if !validIdentifier(table.Name) || !validIdentifier(table.IDColumn) ||
-				seenTables[table.Name] || len(table.TextColumns) == 0 {
+				seenTables[table.Name] || len(table.TextColumns) == 0 ||
+				(len(table.TimeColumns) == 0 && table.TimeJoin == nil) {
 				return fmt.Errorf("vector registry database %s has invalid table %q", owner, table.Name)
 			}
 			seenTables[table.Name] = true
@@ -200,6 +210,29 @@ func validateRegistry(registry vectorRegistry) error {
 				for _, column := range table.TextColumns {
 					if !catalogColumns[column] {
 						return fmt.Errorf("vector registry table %s/%s catalog omits text column %q",
+							owner, table.Name, column)
+					}
+				}
+			}
+			for _, column := range table.TimeColumns {
+				if !validIdentifier(column) {
+					return fmt.Errorf("vector registry table %s/%s has invalid time column %q",
+						owner, table.Name, column)
+				}
+				if len(catalogColumns) > 0 && !catalogColumns[column] {
+					return fmt.Errorf("vector registry table %s/%s catalog omits time column %q",
+						owner, table.Name, column)
+				}
+			}
+			if join := table.TimeJoin; join != nil {
+				if !validIdentifier(join.Table) || !validIdentifier(join.LocalColumn) ||
+					!validIdentifier(join.ForeignColumn) || len(join.TimeColumns) == 0 {
+					return fmt.Errorf("vector registry table %s/%s has an invalid chronological join",
+						owner, table.Name)
+				}
+				for _, column := range join.TimeColumns {
+					if !validIdentifier(column) {
+						return fmt.Errorf("vector registry table %s/%s has invalid joined time column %q",
 							owner, table.Name, column)
 					}
 				}
@@ -895,60 +928,72 @@ func (d DeclaredCorpus) pageQuery(table vectorTable, cursor declaredCursor,
 
 func (d DeclaredCorpus) contextSQL(table vectorTable,
 	catalog map[string]map[string]bool) (string, string) {
-	empty := `, '' AS context_title, '' AS context_project, '' AS context_time`
 	alias := quoteIdentifier(d.Database.Alias)
 	columns := catalog[table.Name]
+	timeColumns := qualifiedColumns("src", table.TimeColumns)
+	join := ""
+	if table.TimeJoin != nil {
+		timeline := "timeline"
+		join = fmt.Sprintf(" LEFT JOIN %s.%s %s ON CAST(src.%s AS TEXT)=CAST(%s.%s AS TEXT)",
+			alias, quoteIdentifier(table.TimeJoin.Table), timeline,
+			quoteIdentifier(table.TimeJoin.LocalColumn), timeline,
+			quoteIdentifier(table.TimeJoin.ForeignColumn))
+		timeColumns = append(timeColumns, qualifiedColumns(timeline, table.TimeJoin.TimeColumns)...)
+	}
+	timeExpression := "''"
+	if len(timeColumns) > 0 {
+		timeExpression = "COALESCE(" + strings.Join(append(timeColumns, "''"), ",") + ")"
+	}
+	title, project := "''", "''"
+	if d.Database.Plugin != "roca-corpus" && d.Database.Plugin != "roca-ops" {
+		return fmt.Sprintf(", %s AS context_title, %s AS context_project, %s AS context_time",
+			title, project, timeExpression), join
+	}
 	switch table.Name {
 	case "sessions":
-		return fmt.Sprintf(`, %s AS context_title, %s AS context_project, %s AS context_time`,
-			coalesceDeclared(columns, "src", "title"),
-			coalesceDeclared(columns, "src", "project"),
-			coalesceDeclared(columns, "src", "started_at")), ""
+		title = coalesceDeclared(columns, "src", "title")
+		project = coalesceDeclared(columns, "src", "project")
 	case "exchanges":
 		sessions, hasSessions := d.table("sessions")
 		sessionColumns := catalog["sessions"]
-		occurred := coalesceDeclared(columns, "src", "human_timestamp", "agent_timestamp")
-		if !hasSessions || !columns["session_id"] || !sessionColumns[sessions.IDColumn] {
-			return fmt.Sprintf(`, '' AS context_title, '' AS context_project, %s AS context_time`, occurred), ""
-		}
-		return fmt.Sprintf(`, %s AS context_title, %s AS context_project, %s AS context_time`,
-				coalesceDeclared(sessionColumns, "ctx", "title"),
-				coalesceDeclared(sessionColumns, "ctx", "project"),
-				coalesceDeclaredPair(columns, "src", []string{"human_timestamp", "agent_timestamp"},
-					sessionColumns, "ctx", []string{"started_at"})),
-			fmt.Sprintf(" LEFT JOIN %s.%s ctx ON ctx.%s = src.%s", alias,
+		if hasSessions && columns["session_id"] && sessionColumns[sessions.IDColumn] {
+			title = coalesceDeclared(sessionColumns, "ctx", "title")
+			project = coalesceDeclared(sessionColumns, "ctx", "project")
+			join += fmt.Sprintf(" LEFT JOIN %s.%s ctx ON ctx.%s = src.%s", alias,
 				quoteIdentifier(sessions.Name), quoteIdentifier(sessions.IDColumn), quoteIdentifier("session_id"))
+		}
 	case "thinking_blocks":
 		sessions, hasSessions := d.table("sessions")
 		sessionColumns := catalog["sessions"]
-		if !hasSessions || !columns["session_id"] || !sessionColumns[sessions.IDColumn] {
-			return empty, ""
-		}
-		return fmt.Sprintf(`, %s AS context_title, %s AS context_project, %s AS context_time`,
-				coalesceDeclared(sessionColumns, "ctx", "title"),
-				coalesceDeclared(sessionColumns, "ctx", "project"),
-				coalesceDeclared(sessionColumns, "ctx", "started_at")),
-			fmt.Sprintf(" LEFT JOIN %s.%s ctx ON ctx.%s = src.%s", alias,
+		if hasSessions && columns["session_id"] && sessionColumns[sessions.IDColumn] {
+			title = coalesceDeclared(sessionColumns, "ctx", "title")
+			project = coalesceDeclared(sessionColumns, "ctx", "project")
+			join += fmt.Sprintf(" LEFT JOIN %s.%s ctx ON ctx.%s = src.%s", alias,
 				quoteIdentifier(sessions.Name), quoteIdentifier(sessions.IDColumn), quoteIdentifier("session_id"))
+		}
 	case "memories":
+		title = coalesceDeclared(columns, "src", "project")
 		sessions, hasSessions := d.table("sessions")
 		sessionColumns := catalog["sessions"]
-		if !hasSessions || !columns["source_session"] || !sessionColumns[sessions.IDColumn] {
-			return fmt.Sprintf(`, %s AS context_title, '' AS context_project, %s AS context_time`,
-				coalesceDeclared(columns, "src", "project"),
-				coalesceDeclared(columns, "src", "created_at")), ""
-		}
-		return fmt.Sprintf(`, %s AS context_title, %s AS context_project, %s AS context_time`,
-				coalesceDeclaredPair(sessionColumns, "ctx", []string{"title"},
-					columns, "src", []string{"project"}),
-				coalesceDeclared(sessionColumns, "ctx", "project"),
-				coalesceDeclaredPair(columns, "src", []string{"created_at"},
-					sessionColumns, "ctx", []string{"started_at"})),
-			fmt.Sprintf(" LEFT JOIN %s.%s ctx ON ctx.%s = src.%s", alias,
+		if d.Database.Plugin == "roca-corpus" && hasSessions &&
+			columns["source_session"] && sessionColumns[sessions.IDColumn] {
+			title = coalesceDeclaredPair(sessionColumns, "ctx", []string{"title"},
+				columns, "src", []string{"project"})
+			project = coalesceDeclared(sessionColumns, "ctx", "project")
+			join += fmt.Sprintf(" LEFT JOIN %s.%s ctx ON ctx.%s = src.%s", alias,
 				quoteIdentifier(sessions.Name), quoteIdentifier(sessions.IDColumn), quoteIdentifier("source_session"))
-	default:
-		return empty, ""
+		}
 	}
+	return fmt.Sprintf(", %s AS context_title, %s AS context_project, %s AS context_time",
+		title, project, timeExpression), join
+}
+
+func qualifiedColumns(alias string, columns []string) []string {
+	result := make([]string, len(columns))
+	for index, column := range columns {
+		result[index] = alias + "." + quoteIdentifier(column)
+	}
+	return result
 }
 
 func coalesceDeclared(columns map[string]bool, alias string, names ...string) string {
@@ -1079,6 +1124,11 @@ func (d vectorDatabase) contractFingerprint() string {
 
 func (t vectorTable) contractFingerprint() string {
 	fields := []string{declaredReaderVersion, chunkPolicyVersion, t.Name, t.IDColumn, "per-column"}
+	fields = append(fields, t.TimeColumns...)
+	if t.TimeJoin != nil {
+		fields = append(fields, t.TimeJoin.Table, t.TimeJoin.LocalColumn, t.TimeJoin.ForeignColumn)
+		fields = append(fields, t.TimeJoin.TimeColumns...)
+	}
 	fields = append(fields, t.TextColumns...)
 	if len(t.Columns) > 0 {
 		fields = append(fields, "catalog")

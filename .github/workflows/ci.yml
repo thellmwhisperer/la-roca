@@ -72,6 +72,7 @@ jobs:
           sudo apt-get install -y cmake g++
           make -C plugins/vector build-native
           cd plugins/vector && CGO_ENABLED=1 go test ./internal/engine ./internal/model ./internal/telemetry ./internal/vector
+          CGO_ENABLED=1 go test -tags=native_equivalence ./internal/vector -run TestNativeEngineMatchesPublicEquivalenceFixture -count=1
 
   vector-native-darwin:
     runs-on: macos-14
@@ -86,6 +87,7 @@ jobs:
         run: |
           make -C plugins/vector build-native
           cd plugins/vector && CGO_ENABLED=1 go test ./internal/engine ./internal/model ./internal/telemetry ./internal/vector
+          CGO_ENABLED=1 go test -tags=native_equivalence ./internal/vector -run TestNativeEngineMatchesPublicEquivalenceFixture -count=1
 
   check:
     runs-on: ubuntu-latest

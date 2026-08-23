@@ -76,9 +76,6 @@ func installCommand(env *environment) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := newEmbedder(env).Pull(command.Context(), model); err != nil {
-				return err
-			}
 			executable, err := currentExecutable()
 			if err != nil {
 				return fmt.Errorf("locate roca-vector: %w", err)
@@ -485,6 +482,12 @@ func (env *environment) index(model string) (vector.Index, error) {
 }
 
 func (env *environment) federation(model string) (vector.Federation, error) {
+	embedder, events := env.embedder()
+	return env.federationWithEmbedder(model, embedder, events)
+}
+
+func (env *environment) federationWithEmbedder(model string, embedder vector.Embedder,
+	events engine.Sink) (vector.Federation, error) {
 	core, err := env.core()
 	if err != nil {
 		return vector.Federation{}, err
@@ -493,7 +496,6 @@ func (env *environment) federation(model string) (vector.Federation, error) {
 	if err != nil {
 		return vector.Federation{}, err
 	}
-	embedder, events := env.embedder()
 	loaded, err := vector.LoadFederation(core, pluginRoot, model, version,
 		embedder, func(message string) { fmt.Fprintln(os.Stderr, message) })
 	if err != nil {

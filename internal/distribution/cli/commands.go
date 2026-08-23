@@ -374,7 +374,7 @@ func (env *cliEnv) offerSemanticSearch(ctx context.Context, input *bufio.Reader,
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("start semantic indexing: %w", err)
 	}
-	env.print("semantic search: the embedding model is on disk; newest material is being indexed first")
+	env.print("semantic search: setup continues in the background; newest material is indexed first")
 	return nil
 }
 

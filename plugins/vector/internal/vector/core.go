@@ -94,6 +94,37 @@ func (c CoreCLI) WalkSources(ctx context.Context, sourceKind string, visit func(
 	return nil
 }
 
+func (c CoreCLI) CountSources(ctx context.Context, sourceKind string) (int, error) {
+	if err := validateSourceKind(sourceKind, nil); err != nil {
+		return 0, err
+	}
+	statements := map[string]string{
+		"memories": fmt.Sprintf(`SELECT COUNT(*) AS total FROM %s WHERE COALESCE(content,'')<>''`, corpusTable("memories")),
+		"exchanges": fmt.Sprintf(`SELECT COUNT(*) AS total FROM %s WHERE COALESCE(human_text,'')<>'' OR COALESCE(agent_text,'')<>''`, corpusTable("exchanges")),
+		"thinking_blocks": fmt.Sprintf(`SELECT COUNT(*) AS total FROM %s WHERE COALESCE(full_text,'')<>''`, corpusTable("thinking_blocks")),
+		"sessions": fmt.Sprintf(`SELECT COUNT(*) AS total FROM %s WHERE COALESCE(title,'')<>'' OR %s<>''`, corpusTable("sessions"), sessionProjectName),
+	}
+	total := 0
+	for _, kind := range []string{"memories", "exchanges", "thinking_blocks", "sessions"} {
+		if sourceKind != "" && sourceKind != kind {
+			continue
+		}
+		rows, err := c.query(ctx, statements[kind])
+		if err != nil {
+			return 0, fmt.Errorf("count core %s: %w", kind, err)
+		}
+		if len(rows) != 1 {
+			return 0, fmt.Errorf("count core %s returned %d rows", kind, len(rows))
+		}
+		count, err := integer(rows[0], "total")
+		if err != nil {
+			return 0, err
+		}
+		total += int(count)
+	}
+	return total, nil
+}
+
 func (c CoreCLI) ResolveDatabaseScope(ctx context.Context, databases string) (DatabaseScope, error) {
 	if strings.TrimSpace(c.Executable) == "" {
 		return DatabaseScope{}, fmt.Errorf("roca executable is required")

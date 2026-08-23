@@ -62,6 +62,10 @@ type batchCorpus interface {
 	ResolveSources(context.Context, []sourceLookup) (map[string]string, error)
 }
 
+type sourceCounter interface {
+	CountSources(context.Context, string) (int, error)
+}
+
 type Delta struct {
 	Added     int `json:"added"`
 	Updated   int `json:"updated"`
@@ -218,10 +222,7 @@ func (i Index) ingest(ctx context.Context, sourceKind string) (Delta, error) {
 			return Delta{}, err
 		}
 	}
-
-	if counter, ok := i.Corpus.(interface {
-		CountSources(context.Context, string) (int, error)
-	}); ok {
+	if counter, ok := i.Corpus.(sourceCounter); ok {
 		if total, countErr := counter.CountSources(ctx, sourceKind); countErr == nil {
 			i.totalHint = total
 		}

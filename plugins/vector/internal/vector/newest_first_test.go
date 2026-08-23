@@ -2,54 +2,89 @@ package vector
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
 
-func TestCoreCLIWalksNewestFirstByTime(t *testing.T) {
-	var statements []string
-	core := CoreCLI{Executable: "/synthetic/roca", DBPath: "/synthetic/roca.db",
-		Run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
-			statement := args[len(args)-1]
-			statements = append(statements, statement)
-			return []byte(`{"rows":[]}`), nil
-		}}
-	if err := core.WalkSources(context.Background(), "", func(sourceRow) error { return nil }); err != nil {
+func TestDeclaredCorpusPagesNewestFirst(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+t.TempDir()+"/source.db")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(statements) != 4 {
-		t.Fatalf("statements = %d", len(statements))
+	t.Cleanup(func() { db.Close() })
+	if _, err := db.Exec(`CREATE TABLE records (id TEXT PRIMARY KEY, body TEXT, occurred_at TEXT)`); err != nil {
+		t.Fatal(err)
 	}
-	joined := strings.Join(statements, "\n")
-	for _, want := range []string{
-		"ORDER BY COALESCE(created_at,'') DESC",
-		"ORDER BY COALESCE(occurred_at,'') DESC",
-		"ORDER BY id DESC",
-		"ORDER BY COALESCE(started_at,'') DESC",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("missing newest-first clause %q in %s", want, joined)
+	for index := 0; index < walkPageSize+3; index++ {
+		id := fmt.Sprintf("row-%04d", (index*137)%(walkPageSize+3))
+		occurred := fmt.Sprintf("2026-08-%02dT%02d:%02d:%02dZ", 31-index/24, index%24, index%60, index%60)
+		if index >= 31*24 {
+			occurred = fmt.Sprintf("2025-07-%02dT00:00:00Z", 28-(index%28))
+		}
+		if _, err := db.Exec(`INSERT INTO records VALUES (?,?,?)`, id, "body "+id, occurred); err != nil {
+			t.Fatal(err)
 		}
 	}
-	if strings.Contains(joined, "ORDER BY id LIMIT") || strings.Contains(joined, "ORDER BY session_id LIMIT") {
-		t.Fatalf("walk still pages oldest-first: %s", joined)
+	if _, err := db.Exec(`INSERT INTO records VALUES ('9','numeric recent','2027-01-01T00:00:00Z'),('10','numeric old','2024-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	corpus := DeclaredCorpus{Core: CoreCLI{Executable: "sqlite-fixture", Run: sqliteRunner(db)},
+		Database: vectorDatabase{Plugin: "fixture", Database: "records", Alias: "main",
+			Tables: []vectorTable{{Name: "records", IDColumn: "id", TextColumns: []string{"body"},
+				TimeColumns: []string{"occurred_at"}}}}}
+	var rows []sourceRow
+	if err := corpus.WalkSources(context.Background(), "records", func(row sourceRow) error {
+		rows = append(rows, row)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != walkPageSize+5 {
+		t.Fatalf("walk returned %d rows, want %d", len(rows), walkPageSize+5)
+	}
+	for index := 1; index < len(rows); index++ {
+		if rows[index-1].occurredAt < rows[index].occurredAt {
+			t.Fatalf("timestamps rose at %d: %q before %q", index, rows[index-1].occurredAt, rows[index].occurredAt)
+		}
+	}
+	if rows[0].sourceID != "9" || rows[len(rows)-1].sourceID != "10" {
+		t.Fatalf("time did not dominate non-monotonic IDs: first=%q last=%q", rows[0].sourceID, rows[len(rows)-1].sourceID)
 	}
 }
 
-func TestDeclaredCorpusPagesNewestFirst(t *testing.T) {
-	corpus := DeclaredCorpus{Database: vectorDatabase{
-		Alias:  "plugin_roca_corpus",
-		Tables: []vectorTable{{Name: "memories", IDColumn: "id", TextColumns: []string{"content"}}},
-	}}
-	first := corpus.pageQuery(corpus.Database.Tables[0], "")
-	if !strings.Contains(first, "ORDER BY source_id DESC") {
-		t.Fatalf("declared walk is not newest-first: %s", first)
-	}
-	next := corpus.pageQuery(corpus.Database.Tables[0], "9")
-	if !strings.Contains(next, "source_id<'9'") && !strings.Contains(next, "source_id<") {
-		t.Fatalf("declared cursor is not descending: %s", next)
+func sqliteRunner(db *sql.DB) CommandRunner {
+	return func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		result, err := db.Query(args[len(args)-1])
+		if err != nil {
+			return nil, err
+		}
+		defer result.Close()
+		columns, err := result.Columns()
+		if err != nil {
+			return nil, err
+		}
+		rows := []map[string]any{}
+		for result.Next() {
+			values := make([]any, len(columns))
+			pointers := make([]any, len(columns))
+			for index := range values {
+				pointers[index] = &values[index]
+			}
+			if err := result.Scan(pointers...); err != nil {
+				return nil, err
+			}
+			row := map[string]any{}
+			for index, column := range columns {
+				row[column] = values[index]
+			}
+			rows = append(rows, row)
+		}
+		return json.Marshal(map[string]any{"rows": rows})
 	}
 }
 

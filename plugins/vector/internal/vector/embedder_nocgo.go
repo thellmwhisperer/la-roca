@@ -16,5 +16,3 @@ func (n *Native) Close() {}
 func (n *Native) Prewarm(context.Context) error {
 	return fmt.Errorf("this build does not include the local embedding engine")
 }
-
-func readMem(info *int64) { *info = 0 }

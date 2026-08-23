@@ -10,7 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/thellmwhisperer/la-roca-vector/internal/engine"
 )
@@ -105,5 +108,43 @@ func TestPathIsRelativeToSelectedDataDirectory(t *testing.T) {
 	path := FilePath(root, Manifest{ID: "nomic-embed-text-v2-moe", SHA256: SHA256})
 	if !strings.HasPrefix(path, root) || strings.Contains(path, string(os.PathSeparator)+".roca"+string(os.PathSeparator)) {
 		t.Fatalf("path escaped the selected data directory: %q", path)
+	}
+}
+
+func TestConcurrentEnsureSerializesOnePartialDownload(t *testing.T) {
+	payload := []byte(strings.Repeat("concurrent-model-byte", 4096))
+	sum := sha256.Sum256(payload)
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		time.Sleep(40 * time.Millisecond)
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(payload)))
+		_, _ = w.Write(payload)
+	}))
+	t.Cleanup(server.Close)
+	manifest := Manifest{ID: ID, SHA256: hex.EncodeToString(sum[:]), Bytes: int64(len(payload)), URL: server.URL}
+	root := t.TempDir()
+	start := make(chan struct{})
+	errors := make(chan error, 2)
+	var wait sync.WaitGroup
+	for range 2 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-start
+			_, err := Ensure(context.Background(), root, manifest, nil)
+			errors <- err
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(errors)
+	for err := range errors {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("concurrent downloads = %d, want 1", got)
 	}
 }

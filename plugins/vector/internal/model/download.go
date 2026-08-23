@@ -34,16 +34,23 @@ func Ensure(ctx context.Context, dataDir string, manifest Manifest, sink engine.
 		return "", fmt.Errorf("embedding model manifest is incomplete")
 	}
 	path := FilePath(dataDir, manifest)
-	if current, err := os.Stat(path); err == nil && current.Size() == manifest.Bytes {
-		if err := verifyFile(path, manifest.SHA256, manifest.Bytes); err == nil {
-			emit(sink, engine.Result("download", "embedding model: ready"))
-			return path, nil
-		}
-		_ = os.Remove(path)
+	if validModelFile(path, manifest) {
+		emit(sink, engine.Result("download", "embedding model: ready"))
+		return path, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return "", fmt.Errorf("create the embedding model directory: %w", err)
 	}
+	release, err := lockModel(path + ".lock")
+	if err != nil {
+		return "", fmt.Errorf("lock the embedding model download: %w", err)
+	}
+	defer release()
+	if validModelFile(path, manifest) {
+		emit(sink, engine.Result("download", "embedding model: ready"))
+		return path, nil
+	}
+	_ = os.Remove(path)
 	partial := path + ".partial"
 	if err := download(ctx, manifest, partial, sink); err != nil {
 		_ = os.Remove(partial)
@@ -59,6 +66,12 @@ func Ensure(ctx context.Context, dataDir string, manifest Manifest, sink engine.
 	}
 	emit(sink, engine.Result("download", "embedding model: ready"))
 	return path, nil
+}
+
+func validModelFile(path string, manifest Manifest) bool {
+	current, err := os.Stat(path)
+	return err == nil && current.Size() == manifest.Bytes &&
+		verifyFile(path, manifest.SHA256, manifest.Bytes) == nil
 }
 
 func download(ctx context.Context, manifest Manifest, partial string, sink engine.Sink) error {

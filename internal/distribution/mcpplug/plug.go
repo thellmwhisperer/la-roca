@@ -544,7 +544,7 @@ func scrubDataDir(text, dataDir string) string {
 // Serve runs the server over stdio in the foreground until the client closes
 // the pipe. There is no daemon: this process is the session.
 func Serve(ctx context.Context, svc *service.Service, build Build) error {
-	resident, err := startResidentVector(ctx, svc)
+	resident, err := consentedResident(ctx, svc)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "notice: semantic search will load when first used")
 	}
@@ -552,6 +552,13 @@ func Serve(ctx context.Context, svc *service.Service, build Build) error {
 		defer resident.Close()
 	}
 	return serveOver(ctx, svc, build, &mcp.StdioTransport{}, resident)
+}
+
+func consentedResident(ctx context.Context, svc *service.Service) (*residentVector, error) {
+	if !svc.VectorEnabled() {
+		return nil, nil
+	}
+	return startResidentVector(ctx, svc)
 }
 
 // serveOver is Serve with the transport injected, which is what lets a test

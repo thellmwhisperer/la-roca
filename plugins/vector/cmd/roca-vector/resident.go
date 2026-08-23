@@ -27,7 +27,7 @@ func residentCommand(env *environment) *cobra.Command {
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			embedder, _ := env.embedder()
+			embedder, events := env.embedder()
 			encoder := json.NewEncoder(os.Stdout)
 			started := time.Now()
 			if err := encoder.Encode(engine.Progress("prewarm", "semantic search: preparing", 0, 1, 0)); err != nil {
@@ -42,7 +42,7 @@ func residentCommand(env *environment) *cobra.Command {
 					return err
 				}
 			}
-			federation, err := env.federation("")
+			federation, err := env.federationWithEmbedder("", embedder, events)
 			if err != nil {
 				return err
 			}

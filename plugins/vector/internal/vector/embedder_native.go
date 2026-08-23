@@ -4,6 +4,7 @@ package vector
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/thellmwhisperer/la-roca-vector/internal/engine"
@@ -33,7 +34,14 @@ func ConfiguredEmbedder(dataDir, stateDir string, events engine.Sink, tel *telem
 	return &Native{DataDir: dataDir, StateDir: stateDir, Events: events, Telemetry: tel}
 }
 
-func (n *Native) Pull(ctx context.Context, _ string) error {
+func (n *Native) Pull(ctx context.Context, requestedModel string) error {
+	return n.pull(ctx, requestedModel)
+}
+
+func (n *Native) pull(ctx context.Context, requestedModel string) error {
+	if requestedModel != DefaultModel {
+		return fmt.Errorf("embedding model %q is not supported by this engine", requestedModel)
+	}
 	_, err := model.Ensure(ctx, n.DataDir, model.DefaultManifest(), n.Events)
 	return err
 }
@@ -52,9 +60,5 @@ func (n *Native) emit(event engine.Event) {
 }
 
 func memoryHighWater() int64 {
-	var info runtimeMem
-	readMem(&info)
-	return info
+	return processHighWater()
 }
-
-type runtimeMem = int64

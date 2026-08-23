@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca-vector/internal/engine"
 	_ "modernc.org/sqlite"
 )
 
@@ -76,6 +77,34 @@ func TestChunksOverlapWithoutRepeatingTerminalChunk(t *testing.T) {
 	if strings.Join(unicode, "|") != "a🙂b|bc" {
 		t.Fatalf("unicode chunks = %q", unicode)
 	}
+}
+
+func TestNativeEmbedderRejectsUnsupportedModelBeforeLoading(t *testing.T) {
+	embedder := ConfiguredEmbedder(t.TempDir(), t.TempDir(), nil, nil)
+	if err := embedder.Pull(context.Background(), "another-768-dimensional-model"); err == nil ||
+		!strings.Contains(err.Error(), "not supported") {
+		t.Fatalf("unsupported model error = %v", err)
+	}
+}
+
+func TestIngestProgressReportsRemainingETA(t *testing.T) {
+	corpus := &memoryCorpus{sources: []sourceRow{
+		{kind: "memories", text: "alpha newest", occurredAt: "2026-08-01"},
+		{kind: "memories", text: "beta older", occurredAt: "2025-08-01"},
+	}}
+	var events []engine.Event
+	index := Index{Corpus: corpus, VectorPath: filepath.Join(t.TempDir(), "vector.db"),
+		Model: DefaultModel, Embedder: &recordingEmbedder{}, BatchSize: 1,
+		Events: func(event engine.Event) { events = append(events, event) }}
+	if _, err := index.Ingest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if event.Stage == "ingest" && event.Done == 1 && event.Total == 2 && event.ETA > 0 {
+			return
+		}
+	}
+	t.Fatalf("no remaining-work ETA event: %+v", events)
 }
 
 func TestStableSourceIDsUseCoreNaturalKeys(t *testing.T) {
@@ -676,6 +705,16 @@ func (m *memoryCorpus) WalkSources(_ context.Context, sourceKind string, visit f
 		}
 	}
 	return nil
+}
+
+func (m *memoryCorpus) CountSources(_ context.Context, sourceKind string) (int, error) {
+	total := 0
+	for _, source := range m.sources {
+		if sourceKind == "" || source.kind == sourceKind {
+			total++
+		}
+	}
+	return total, nil
 }
 
 func (m *memoryCorpus) ResolveSource(_ context.Context, kind string, where locator) (string, error) {

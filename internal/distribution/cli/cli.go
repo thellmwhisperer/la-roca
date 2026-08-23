@@ -844,6 +844,7 @@ func (env *cliEnv) openServiceWith(paths config.Paths) (*service.Service, error)
 		PluginDir:                 pluginDir,
 		PluginsEnabled:            file.Features.Plugins,
 		RocaOpsEnabled:            rocaOpsEnabled,
+		VectorEnabled:             file.Features.Vector,
 		CorpusEnabled:             !env.omitCorpus,
 		ReadLayout:                readLayout,
 		RollbackLayout:            rollbackLayout,

@@ -45,16 +45,20 @@ type residentVector struct {
 	stdin     io.WriteCloser
 	cmd       *exec.Cmd
 	encoder   *json.Encoder
+	status    io.Writer
 	closeOnce sync.Once
-	queryMu   sync.Mutex
+	writeMu   sync.Mutex
 	stateMu   sync.Mutex
+	pendingMu sync.Mutex
 	ready     chan struct{}
-	responses chan residentEnvelope
-	failures  chan error
+	failed    chan struct{}
 	done      chan error
 	readyErr  error
+	failure   error
 	prewarmMS int64
 	nextID    int64
+	pending   map[int64]chan residentEnvelope
+	closing   bool
 }
 
 func startResidentVector(ctx context.Context, svc *service.Service) (*residentVector, error) {
@@ -87,8 +91,8 @@ func startResidentVector(ctx context.Context, svc *service.Service) (*residentVe
 	command.Stderr = os.Stderr
 	resident := &residentVector{
 		stdin: stdin, cmd: command, encoder: json.NewEncoder(stdin),
-		ready: make(chan struct{}), responses: make(chan residentEnvelope, 4),
-		failures: make(chan error, 1), done: make(chan error, 1),
+		status: os.Stderr, ready: make(chan struct{}), failed: make(chan struct{}),
+		done: make(chan error, 1), pending: make(map[int64]chan residentEnvelope),
 	}
 	if err := command.Start(); err != nil {
 		stdin.Close()
@@ -131,6 +135,9 @@ func (r *residentVector) decode(reader io.Reader) {
 		}
 		switch response.Kind {
 		case "progress":
+			if r.status != nil && strings.TrimSpace(response.Message) != "" {
+				fmt.Fprintln(r.status, response.Message)
+			}
 			continue
 		case "result":
 			if response.Stage == "prewarm" {
@@ -144,13 +151,13 @@ func (r *residentVector) decode(reader io.Reader) {
 				r.markReady(nil)
 				continue
 			}
-			r.responses <- response
+			r.route(response)
 		case "error":
 			if response.Stage == "prewarm" {
 				r.markReady(fmt.Errorf("%s", firstNonEmpty(response.Error, response.Message, "semantic search is not ready")))
 				continue
 			}
-			r.responses <- response
+			r.route(response)
 		default:
 			r.fail(fmt.Errorf("semantic search protocol: unknown message %q", response.Kind))
 			return
@@ -158,6 +165,25 @@ func (r *residentVector) decode(reader io.Reader) {
 	}
 	if err := scanner.Err(); err != nil {
 		r.fail(err)
+		return
+	}
+	r.stateMu.Lock()
+	closing := r.closing
+	r.stateMu.Unlock()
+	if !closing {
+		r.fail(io.ErrUnexpectedEOF)
+	}
+}
+
+func (r *residentVector) route(response residentEnvelope) {
+	r.pendingMu.Lock()
+	ch := r.pending[response.ID]
+	r.pendingMu.Unlock()
+	if ch != nil {
+		select {
+		case ch <- response:
+		default:
+		}
 	}
 }
 
@@ -176,10 +202,12 @@ func (r *residentVector) markReady(err error) {
 
 func (r *residentVector) fail(err error) {
 	r.markReady(err)
-	select {
-	case r.failures <- err:
-	default:
+	r.stateMu.Lock()
+	if r.failure == nil {
+		r.failure = err
+		close(r.failed)
 	}
+	r.stateMu.Unlock()
 }
 
 func (r *residentVector) waitReady(ctx context.Context) error {
@@ -208,26 +236,37 @@ func (r *residentVector) call(ctx context.Context, _ *mcp.CallToolRequest,
 	if err := r.waitReady(ctx); err != nil {
 		return nil, nil, err
 	}
-	r.queryMu.Lock()
-	defer r.queryMu.Unlock()
+	r.pendingMu.Lock()
 	r.nextID++
-	request := map[string]any{"id": r.nextID, "op": "query", "query": query, "k": in.K}
+	id := r.nextID
+	responseCh := make(chan residentEnvelope, 1)
+	r.pending[id] = responseCh
+	r.pendingMu.Unlock()
+	defer func() {
+		r.pendingMu.Lock()
+		delete(r.pending, id)
+		r.pendingMu.Unlock()
+	}()
+	request := map[string]any{"id": id, "op": "query", "query": query, "k": in.K}
 	if strings.TrimSpace(in.Databases) != "" {
 		request["databases"] = in.Databases
 	}
-	if err := r.encoder.Encode(request); err != nil {
+	r.writeMu.Lock()
+	err := r.encoder.Encode(request)
+	r.writeMu.Unlock()
+	if err != nil {
 		return nil, nil, fmt.Errorf("ask semantic search: %w", err)
 	}
 	var response residentEnvelope
 	select {
 	case <-ctx.Done():
 		return nil, nil, ctx.Err()
-	case err := <-r.failures:
+	case <-r.failed:
+		r.stateMu.Lock()
+		err := r.failure
+		r.stateMu.Unlock()
 		return nil, nil, err
-	case response = <-r.responses:
-	}
-	if response.ID != 0 && response.ID != r.nextID {
-		return nil, nil, fmt.Errorf("semantic search response id %d, want %d", response.ID, r.nextID)
+	case response = <-responseCh:
 	}
 	if response.Kind == "error" || response.Error != "" {
 		return nil, nil, fmt.Errorf("%s", firstNonEmpty(response.Error, response.Message, "semantic search failed"))
@@ -240,6 +279,9 @@ func (r *residentVector) call(ctx context.Context, _ *mcp.CallToolRequest,
 }
 
 func (r *residentVector) Close() error {
+	r.stateMu.Lock()
+	r.closing = true
+	r.stateMu.Unlock()
 	r.closeOnce.Do(func() { _ = r.stdin.Close() })
 	return <-r.done
 }

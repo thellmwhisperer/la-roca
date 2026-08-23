@@ -124,21 +124,21 @@ func TestFederatedWorkerReusesLegacyMonolithEmbeddingsBeforeRetiringIt(t *testin
 	createSourceDatabase(t, opsPath, `
 		CREATE TABLE memories(id INTEGER PRIMARY KEY,content TEXT,project TEXT,created_at TEXT);
 		INSERT INTO memories VALUES (1,'Operational memory already embedded','ops','2026-03-01');`)
-	writeRegistry(t, root, vectorRegistry{Schema: 1, Databases: []vectorDatabase{
+	writeRegistry(t, root, vectorRegistry{Schema: vectorRegistrySchema, Databases: []vectorDatabase{
 		{Plugin: "roca-corpus", Database: "corpus", Path: "roca-corpus.db", Alias: "plugin_roca_corpus",
 			Tables: []vectorTable{
 				{Name: "sessions", IDColumn: "session_id", TextColumns: []string{"title", "project"},
-					Columns: []string{"session_id", "title", "project", "started_at"}},
+					TimeColumns: []string{"session_id"}, Columns: []string{"session_id", "title", "project", "started_at"}},
 				{Name: "memories", IDColumn: "id", TextColumns: []string{"content"},
-					Columns: []string{"id", "content", "project", "created_at", "source_session"}},
+					TimeColumns: []string{"id"}, Columns: []string{"id", "content", "project", "created_at", "source_session"}},
 				{Name: "exchanges", IDColumn: "id", TextColumns: []string{"human_text", "agent_text"},
-					Columns: []string{"id", "session_id", "human_text", "agent_text", "human_timestamp", "agent_timestamp"}},
+					TimeColumns: []string{"id"}, Columns: []string{"id", "session_id", "human_text", "agent_text", "human_timestamp", "agent_timestamp"}},
 				{Name: "thinking_blocks", IDColumn: "id", TextColumns: []string{"full_text"},
-					Columns: []string{"id", "session_id", "full_text"}},
+					TimeColumns: []string{"id"}, Columns: []string{"id", "session_id", "full_text"}},
 			}},
 		{Plugin: "roca-ops", Database: "ops", Path: "roca-ops.db", Alias: "plugin_roca_ops",
 			Tables: []vectorTable{{Name: "memories", IDColumn: "id", TextColumns: []string{"content"},
-				Columns: []string{"id", "content", "project", "created_at"}}}},
+				TimeColumns: []string{"id"}, Columns: []string{"id", "content", "project", "created_at"}}}},
 	}})
 
 	embedder := &recordingEmbedder{}
@@ -218,10 +218,10 @@ func TestLegacySeedReembedsWhenContextChangesEmbeddingInput(t *testing.T) {
 	createSourceDatabase(t, dbPath, `
 		CREATE TABLE memories(id INTEGER PRIMARY KEY, content TEXT, project TEXT, created_at TEXT);
 		INSERT INTO memories VALUES (1,'short personal memory','Wellbeing project','2026-03-18');`)
-	writeRegistry(t, root, vectorRegistry{Schema: 1, Databases: []vectorDatabase{{
+	writeRegistry(t, root, vectorRegistry{Schema: vectorRegistrySchema, Databases: []vectorDatabase{{
 		Plugin: "roca-ops", Database: "ops", Path: "roca-ops.db", Alias: "plugin_roca_ops",
 		Tables: []vectorTable{{Name: "memories", IDColumn: "id", TextColumns: []string{"content"},
-			Columns: []string{"id", "content", "project", "created_at"}}},
+			TimeColumns: []string{"created_at"}, Columns: []string{"id", "content", "project", "created_at"}}},
 	}}})
 
 	embedder := &recordingEmbedder{}
@@ -265,7 +265,7 @@ func TestFederatedWorkerKeepsLegacyMonolithUntilEveryDeclaredSidecarCompletes(t 
 	federation, corpusPath, opsPath, _ := federationFixture(t)
 	federation.databases = append(federation.databases, vectorDatabase{
 		Plugin: "fixture", Database: "missing", Path: "missing.db", Alias: "plugin_fixture_missing",
-		Tables: []vectorTable{{Name: "records", IDColumn: "id", TextColumns: []string{"content"}}},
+		Tables: []vectorTable{{Name: "records", IDColumn: "id", TextColumns: []string{"content"}, TimeColumns: []string{"id"}}},
 	})
 	state := t.TempDir()
 	legacy := filepath.Join(state, DatabaseFilename)
@@ -458,11 +458,11 @@ func TestFederationQueryFansOutDuplicateCanonicalNamesBySource(t *testing.T) {
 	createSourceDatabase(t, secondPath, `
 		CREATE TABLE records(id TEXT PRIMARY KEY,body TEXT);
 		INSERT INTO records VALUES ('second-id','alpha second body');`)
-	writeRegistry(t, root, vectorRegistry{Schema: 1, Databases: []vectorDatabase{
+	writeRegistry(t, root, vectorRegistry{Schema: vectorRegistrySchema, Databases: []vectorDatabase{
 		{Plugin: "fixture-first", Database: "shared", Path: "first.db", Alias: "plugin_fixture_first",
-			Tables: []vectorTable{{Name: "records", IDColumn: "id", TextColumns: []string{"body"}}}},
+			Tables: []vectorTable{{Name: "records", IDColumn: "id", TextColumns: []string{"body"}, TimeColumns: []string{"id"}}}},
 		{Plugin: "fixture-second", Database: "shared", Path: "second.db", Alias: "plugin_fixture_second",
-			Tables: []vectorTable{{Name: "records", IDColumn: "id", TextColumns: []string{"body"}}}},
+			Tables: []vectorTable{{Name: "records", IDColumn: "id", TextColumns: []string{"body"}, TimeColumns: []string{"id"}}}},
 	}, Routes: []vectorRoute{
 		{Plugin: "fixture-first", Database: "shared", Alias: "plugin_fixture_first", Source: "plugin:fixture-first"},
 		{Plugin: "fixture-second", Database: "shared", Alias: "plugin_fixture_second", Source: "plugin:fixture-second"},
@@ -558,11 +558,11 @@ func (unavailableEmbedder) Embed(context.Context, string, []string) ([][]float32
 }
 
 func TestFederationRejectsSidecarDatabaseCollisionsAndUnownedFiles(t *testing.T) {
-	collision := vectorRegistry{Schema: 1, Databases: []vectorDatabase{
+	collision := vectorRegistry{Schema: vectorRegistrySchema, Databases: []vectorDatabase{
 		{Plugin: "fixture", Database: "records", Path: "records.db", Alias: "records",
-			Tables: []vectorTable{{Name: "entries", IDColumn: "id", TextColumns: []string{"body"}}}},
+			Tables: []vectorTable{{Name: "entries", IDColumn: "id", TextColumns: []string{"body"}, TimeColumns: []string{"id"}}}},
 		{Plugin: "fixture", Database: "vectors", Path: "records.vector.db", Alias: "vectors",
-			Tables: []vectorTable{{Name: "entries", IDColumn: "id", TextColumns: []string{"body"}}}},
+			Tables: []vectorTable{{Name: "entries", IDColumn: "id", TextColumns: []string{"body"}, TimeColumns: []string{"id"}}}},
 	}}
 	if err := validateRegistry(collision); err == nil || !strings.Contains(err.Error(), "collides") {
 		t.Fatalf("sidecar database collision passed with %v", err)
@@ -596,9 +596,9 @@ func TestFederationSealsEmptySidecarWithDimensions(t *testing.T) {
 	}
 	databasePath := filepath.Join(pluginDir, "empty.db")
 	createSourceDatabase(t, databasePath, `CREATE TABLE entries(id TEXT PRIMARY KEY, body TEXT);`)
-	writeRegistry(t, root, vectorRegistry{Schema: 1, Databases: []vectorDatabase{{
+	writeRegistry(t, root, vectorRegistry{Schema: vectorRegistrySchema, Databases: []vectorDatabase{{
 		Plugin: "fixture", Database: "empty", Path: "empty.db", Alias: "fixture_empty",
-		Tables: []vectorTable{{Name: "entries", IDColumn: "id", TextColumns: []string{"body"}}},
+		Tables: []vectorTable{{Name: "entries", IDColumn: "id", TextColumns: []string{"body"}, TimeColumns: []string{"id"}}},
 	}}})
 	embedder := &recordingEmbedder{}
 	federation, err := LoadFederation(CoreCLI{Executable: "roca", Run: sqliteExecRunner(t,
@@ -651,12 +651,12 @@ func federationFixture(t *testing.T) (Federation, string, string, *recordingEmbe
 		CREATE TABLE memories(id INTEGER PRIMARY KEY,content TEXT,status TEXT,project TEXT,created_at TEXT);
 		INSERT INTO memories VALUES (1,'Operational decision','active','ops','2026-03-01');
 		INSERT INTO memories VALUES (2,'Temporary handoff','active','ops','2026-03-02');`)
-	writeRegistry(t, root, vectorRegistry{Schema: 1, Databases: []vectorDatabase{
+	writeRegistry(t, root, vectorRegistry{Schema: vectorRegistrySchema, Databases: []vectorDatabase{
 		{Plugin: "roca-corpus", Database: "corpus", Path: "roca-corpus.db", Alias: "plugin_roca_corpus",
-			Tables: []vectorTable{{Name: "articles", IDColumn: "id", TextColumns: []string{"title", "body"},
+			Tables: []vectorTable{{Name: "articles", IDColumn: "id", TextColumns: []string{"title", "body"}, TimeColumns: []string{"id"},
 				Chunking: &chunkingHints{MaxChars: intPointer(24), OverlapChars: intPointer(4)}}}},
 		{Plugin: "roca-ops", Database: "ops", Path: "roca-ops.db", Alias: "plugin_roca_ops",
-			Tables: []vectorTable{{Name: "memories", IDColumn: "id", TextColumns: []string{"content"}}}},
+			Tables: []vectorTable{{Name: "memories", IDColumn: "id", TextColumns: []string{"content"}, TimeColumns: []string{"id"}}}},
 	}, Routes: []vectorRoute{
 		{Plugin: "roca-corpus", Database: "corpus", Alias: "plugin_roca_corpus", Source: "plugin:roca-corpus"},
 		{Plugin: "roca-ops", Database: "ops", Alias: "plugin_roca_ops", Source: "plugin:roca-ops"},

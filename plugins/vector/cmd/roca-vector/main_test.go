@@ -22,8 +22,15 @@ import (
 
 type stubEmbedder struct{}
 
+type countingPullEmbedder struct{ pulls int }
+
 func (stubEmbedder) Pull(context.Context, string) error { return nil }
 func (stubEmbedder) Embed(context.Context, string, []string) ([][]float32, error) {
+	return [][]float32{{1, 0, 0, 0, 0, 0, 0, 0}}, nil
+}
+
+func (e *countingPullEmbedder) Pull(context.Context, string) error { e.pulls++; return nil }
+func (e *countingPullEmbedder) Embed(context.Context, string, []string) ([][]float32, error) {
 	return [][]float32{{1, 0, 0, 0, 0, 0, 0, 0}}, nil
 }
 
@@ -32,7 +39,8 @@ func TestInstallLaunchesThePluginBinaryIntoManifestOwnedState(t *testing.T) {
 	t.Cleanup(func() {
 		launchWorker, currentExecutable, newEmbedder = oldLaunch, oldExecutable, oldEmbedder
 	})
-	newEmbedder = func(*environment) vector.Embedder { return stubEmbedder{} }
+	embedder := &countingPullEmbedder{}
+	newEmbedder = func(*environment) vector.Embedder { return embedder }
 	var request vector.LaunchRequest
 	launchWorker = func(got vector.LaunchRequest) (vector.LaunchResult, error) {
 		request = got
@@ -50,6 +58,9 @@ func TestInstallLaunchesThePluginBinaryIntoManifestOwnedState(t *testing.T) {
 	if request.Executable != "/synthetic/roca-vector" || request.DataDir != state ||
 		!slices.Equal(request.Arguments, want) {
 		t.Fatalf("launch request = %+v, want args %q", request, want)
+	}
+	if embedder.pulls != 0 {
+		t.Fatalf("install blocked on %d foreground model downloads", embedder.pulls)
 	}
 }
 
@@ -141,6 +152,9 @@ func TestTargetedSessionDeltaIsObservableAndIdempotentThroughCLI(t *testing.T) {
 	coreScript := `#!/bin/sh
 for argument do statement="$argument"; done
 case "$statement" in
+  *COUNT*plugin_roca_corpus.sessions*)
+    printf '%s\n' '{"rows":[{"total":1}]}'
+    ;;
   *plugin_roca_corpus.sessions*)
     printf '%s\n' '{"rows":[{"session_id":"session-clean","title":"Public health research {\"source_exchange_fingerprints\":[\"0123456789abcdef0123456789abcdef\"],\"enabled\":true}","project_name":"health-project"}]}'
     ;;
@@ -290,5 +304,27 @@ func TestWorkerCarriesExplicitCoreAndStatePaths(t *testing.T) {
 		"_worker", "--model", "synthetic-model"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("worker arguments = %q, want %q", got, want)
+	}
+}
+
+func TestFederationUsesTheResidentPrewarmedEmbedder(t *testing.T) {
+	root := t.TempDir()
+	pluginRoot := filepath.Join(root, "plugins")
+	if err := os.MkdirAll(pluginRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	registry := `{"schema":2,"databases":[{"plugin":"fixture","database":"records","path":"records.db","alias":"fixture_records","tables":[{"name":"records","id_column":"id","text_columns":["body"],"time_columns":["created_at"]}]}],"routes":[{"plugin":"fixture","database":"records","alias":"fixture_records","source":"plugin:fixture/records"}]}`
+	if err := os.WriteFile(filepath.Join(pluginRoot, "vector-registry.json"), []byte(registry), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ROCA_VECTOR_ROCA_BINARY", "/synthetic/roca")
+	embedder := &countingPullEmbedder{}
+	env := &environment{dbPath: filepath.Join(root, "roca.db"), stateDir: filepath.Join(root, "state")}
+	federation, err := env.federationWithEmbedder(vector.DefaultModel, embedder, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if federation.Embedder != embedder {
+		t.Fatal("federation replaced the prewarmed resident embedder")
 	}
 }

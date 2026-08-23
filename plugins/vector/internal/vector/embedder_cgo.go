@@ -14,7 +14,10 @@ import (
 	"github.com/thellmwhisperer/la-roca-vector/internal/telemetry"
 )
 
-func (n *Native) Embed(ctx context.Context, _ string, input []string) ([][]float32, error) {
+func (n *Native) Embed(ctx context.Context, requestedModel string, input []string) ([][]float32, error) {
+	if requestedModel != DefaultModel {
+		return nil, fmt.Errorf("embedding model %q is not supported by this engine", requestedModel)
+	}
 	n.once.Do(func() { n.err = n.open(ctx) })
 	if n.err != nil {
 		return nil, n.err
@@ -90,10 +93,4 @@ func (n *Native) Prewarm(ctx context.Context) error {
 	})
 	n.emit(engine.Result("prewarm", "semantic search: ready"))
 	return nil
-}
-
-func readMem(info *int64) {
-	var stats runtime.MemStats
-	runtime.ReadMemStats(&stats)
-	*info = int64(stats.Sys)
 }
