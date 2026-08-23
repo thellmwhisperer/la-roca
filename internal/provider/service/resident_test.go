@@ -31,11 +31,7 @@ func TestResidentInitializationHonorsItsContext(t *testing.T) {
 }
 
 func TestWordProofIncludesAndRebuildsOperationalHistory(t *testing.T) {
-	svc, err := openWithContext(t.Context(), residentTestOptions(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = svc.Close() })
+	svc := openResident(t, residentTestOptions(t))
 	if _, err := svc.Init(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -88,11 +84,7 @@ func TestInitDoesNotRebuildTokenlessHistory(t *testing.T) {
 	var progress []string
 	options := residentTestOptions(t)
 	options.Progress = func(line string) { progress = append(progress, line) }
-	svc, err := openWithContext(t.Context(), options)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = svc.Close() })
+	svc := openResident(t, options)
 	if _, err := svc.ops.SQL().Exec(`INSERT INTO memories (layer, content, origin)
 		VALUES ('handoff', '😀', 'agent')`); err != nil {
 		t.Fatal(err)
@@ -283,6 +275,18 @@ func corpusResidentService(t *testing.T) *Service {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { svc.Close() })
+	return svc
+}
+
+// openResident opens the service with options and registers its cleanup,
+// failing the test on error.
+func openResident(t *testing.T, options Options) *Service {
+	t.Helper()
+	svc, err := openWithContext(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = svc.Close() })
 	return svc
 }
 

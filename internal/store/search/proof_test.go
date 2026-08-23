@@ -31,16 +31,7 @@ func TestProofAsksTheIndexForAWordTheDatabaseHolds(t *testing.T) {
 // A machine with no agent history has nothing to find. That is not a broken
 // index, and the caller has to be able to tell the two apart.
 func TestProofSaysEmptyRatherThanBrokenOnAFreshDatabase(t *testing.T) {
-	ctx := context.Background()
-	db := openWorld(t)
-	if _, err := search.Index(ctx, db, nil); err != nil {
-		t.Fatalf("Index: %v", err)
-	}
-
-	proof, err := search.Prove(ctx, db)
-	if err != nil {
-		t.Fatalf("Prove: %v", err)
-	}
+	proof := proveWorld(t, "")
 	if proof.Ready || !proof.Empty {
 		t.Fatalf("an empty database was not reported as empty: %+v", proof)
 	}
@@ -88,35 +79,17 @@ func TestProofRefusesToCallAnEmptiedIndexEmpty(t *testing.T) {
 }
 
 func TestProofSkipsANewerTokenlessRow(t *testing.T) {
-	ctx := context.Background()
-	db := openWorld(t)
-	writeTo(t, db, `INSERT INTO memories (layer, content, origin) VALUES
+	proof := proveWorld(t, `INSERT INTO memories (layer, content, origin) VALUES
 		('discovery', 'alpha lighthouse', 'agent'),
 		('discovery', '😀', 'agent')`)
-	if _, err := search.Index(ctx, db, nil); err != nil {
-		t.Fatal(err)
-	}
-	proof, err := search.Prove(ctx, db)
-	if err != nil {
-		t.Fatal(err)
-	}
 	if !proof.Ready || proof.Empty || proof.Word != "lighthouse" || proof.Matches == 0 {
 		t.Fatalf("tokenless newest row hid searchable history: %+v", proof)
 	}
 }
 
 func TestProofUsesEveryIndexedColumn(t *testing.T) {
-	ctx := context.Background()
-	db := openWorld(t)
-	writeTo(t, db, `INSERT INTO sessions (session_id, project, title)
+	proof := proveWorld(t, `INSERT INTO sessions (session_id, project, title)
 		VALUES ('project-only', 'harbour', '')`)
-	if _, err := search.Index(ctx, db, nil); err != nil {
-		t.Fatal(err)
-	}
-	proof, err := search.Prove(ctx, db)
-	if err != nil {
-		t.Fatal(err)
-	}
 	if !proof.Ready || proof.Empty || proof.Word != "harbour" || proof.Matches == 0 {
 		t.Fatalf("an indexed project-only session was not proved ready: %+v", proof)
 	}
@@ -156,4 +129,23 @@ func TestProofDoesNotLetAHealthySourceMaskABrokenSiblingIndex(t *testing.T) {
 	if proof.Ready || proof.Empty || proof.Reason == "" {
 		t.Fatalf("healthy memory index masked a broken session index: %+v", proof)
 	}
+}
+
+// proveWorld seeds a fresh database with seed (when non-empty), builds its
+// full-text index, and returns the search proof over that index.
+func proveWorld(t *testing.T, seed string) search.Proof {
+	t.Helper()
+	ctx := context.Background()
+	db := openWorld(t)
+	if seed != "" {
+		writeTo(t, db, seed)
+	}
+	if _, err := search.Index(ctx, db, nil); err != nil {
+		t.Fatal(err)
+	}
+	proof, err := search.Prove(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return proof
 }
