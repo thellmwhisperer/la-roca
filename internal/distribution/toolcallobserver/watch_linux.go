@@ -15,7 +15,6 @@ func watchFile(path string, notify chan<- struct{}) func() {
 		return func() {}
 	}
 	go func() {
-		defer unix.Close(fd)
 		buf := make([]byte, unix.SizeofInotifyEvent+unix.NAME_MAX+1)
 		for {
 			select {
