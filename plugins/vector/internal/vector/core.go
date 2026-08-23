@@ -80,8 +80,10 @@ func (c CoreCLI) WalkSources(ctx context.Context, sourceKind string, visit func(
 					return fmt.Errorf("decode core %s: %w", source.kind, err)
 				}
 				cursor = next
-				if err := visit(row); err != nil {
-					return err
+				for _, item := range expandDecoded(row, values) {
+					if err := visit(item); err != nil {
+						return err
+					}
 				}
 			}
 			if len(rows) < walkPageSize {
@@ -125,54 +127,88 @@ func (c CoreCLI) ResolveDatabaseScope(ctx context.Context, databases string) (Da
 	return result, nil
 }
 
+const (
+	newestTimeCursor = "9999-12-31 23:59:59"
+	newestIDCursor   = "9223372036854775807"
+)
+
 func corePages() []corePage {
 	return []corePage{
 		{
-			kind: "memories", initial: "0",
+			kind: "memories", initial: joinCursor(newestTimeCursor, newestIDCursor),
 			query: func(cursor string) string {
+				ts, id := splitCursor(cursor)
 				return fmt.Sprintf(`SELECT id,content,COALESCE(source_session,'') AS source_session,
 					source_sequence,COALESCE(source_agent,'') AS source_agent,
 					COALESCE(metadata,'{}') AS metadata,COALESCE(layer,'') AS layer,
-					COALESCE(origin,'') AS origin,COALESCE(created_at,'') AS created_at
-					FROM %s WHERE COALESCE(content,'') <> '' AND id > %s ORDER BY id LIMIT %d`,
-					corpusTable("memories"), cursor, walkPageSize)
+					COALESCE(origin,'') AS origin,COALESCE(project,'') AS project,
+					COALESCE(created_at,'') AS created_at
+					FROM %s WHERE COALESCE(content,'') <> ''
+					AND (COALESCE(created_at,'') < %s OR (COALESCE(created_at,'') = %s AND id < %s))
+					ORDER BY COALESCE(created_at,'') DESC, id DESC LIMIT %d`,
+					corpusTable("memories"), sqlLiteral(ts), sqlLiteral(ts), id, walkPageSize)
 			},
 			decode: decodeMemory,
 		},
 		{
-			kind: "exchanges", initial: "0",
+			kind: "exchanges", initial: joinCursor(newestTimeCursor, newestIDCursor),
 			query: func(cursor string) string {
-				return fmt.Sprintf(`SELECT id,COALESCE(session_id,'') AS session_id,exchange_number,
-					%s AS text FROM %s
-					WHERE (COALESCE(human_text,'') <> '' OR COALESCE(agent_text,'') <> '')
-					AND id > %s ORDER BY id LIMIT %d`, exchangeText, corpusTable("exchanges"), cursor, walkPageSize)
+				ts, id := splitCursor(cursor)
+				return fmt.Sprintf(`SELECT e.id,COALESCE(e.session_id,'') AS session_id,e.exchange_number,
+					COALESCE(e.human_text,'') AS human_text,COALESCE(e.agent_text,'') AS agent_text,
+					COALESCE(e.human_timestamp, e.agent_timestamp, s.started_at, '') AS occurred_at,
+					COALESCE(s.title,'') AS context_title, COALESCE(%s,'') AS context_project
+					FROM %s e LEFT JOIN %s s ON s.session_id = e.session_id
+					WHERE (COALESCE(e.human_text,'') <> '' OR COALESCE(e.agent_text,'') <> '')
+					AND (COALESCE(e.human_timestamp, e.agent_timestamp, s.started_at, '') < %s
+					OR (COALESCE(e.human_timestamp, e.agent_timestamp, s.started_at, '') = %s AND e.id < %s))
+					ORDER BY occurred_at DESC, e.id DESC LIMIT %d`,
+					strings.ReplaceAll(sessionProjectName, "metadata", "s.metadata"),
+					corpusTable("exchanges"), corpusTable("sessions"),
+					sqlLiteral(ts), sqlLiteral(ts), id, walkPageSize)
 			},
 			decode: decodeExchange,
 		},
 		{
-			kind: "thinking_blocks", initial: "0",
+			kind: "thinking_blocks", initial: newestIDCursor,
 			query: func(cursor string) string {
-				return fmt.Sprintf(`SELECT id,COALESCE(session_id,'') AS session_id,exchange_number,
-					position_in_session,COALESCE(full_text,'') AS text FROM %s
-					WHERE COALESCE(full_text,'') <> '' AND id > %s ORDER BY id LIMIT %d`,
-					corpusTable("thinking_blocks"), cursor, walkPageSize)
+				return fmt.Sprintf(`SELECT t.id,COALESCE(t.session_id,'') AS session_id,t.exchange_number,
+					t.position_in_session,COALESCE(t.full_text,'') AS text,
+					COALESCE(s.title,'') AS context_title, COALESCE(%s,'') AS context_project,
+					COALESCE(s.started_at,'') AS occurred_at
+					FROM %s t LEFT JOIN %s s ON s.session_id = t.session_id
+					WHERE COALESCE(t.full_text,'') <> '' AND t.id < %s ORDER BY t.id DESC LIMIT %d`,
+					strings.ReplaceAll(sessionProjectName, "metadata", "s.metadata"),
+					corpusTable("thinking_blocks"), corpusTable("sessions"), cursor, walkPageSize)
 			},
 			decode: decodeThinking,
 		},
 		{
-			kind: "sessions", initial: "",
+			kind: "sessions", initial: joinCursor(newestTimeCursor, "~"),
 			query: func(cursor string) string {
+				ts, id := splitCursor(cursor)
 				return fmt.Sprintf(`SELECT session_id,COALESCE(title,'') AS title,
-					%s AS project_name FROM %s
+					%s AS project_name, COALESCE(started_at,'') AS occurred_at FROM %s
 					WHERE (COALESCE(title,'') <> '' OR %s <> '')
-					AND session_id > %s ORDER BY session_id LIMIT %d`,
+					AND (COALESCE(started_at,'') < %s OR (COALESCE(started_at,'') = %s AND session_id < %s))
+					ORDER BY COALESCE(started_at,'') DESC, session_id DESC LIMIT %d`,
 					sessionProjectName, corpusTable("sessions"), sessionProjectName,
-					sqlLiteral(cursor), walkPageSize)
+					sqlLiteral(ts), sqlLiteral(ts), sqlLiteral(id), walkPageSize)
 			},
 			decode: decodeSession,
 		},
 	}
 }
+
+func splitCursor(cursor string) (string, string) {
+	ts, id, ok := strings.Cut(cursor, "|")
+	if !ok {
+		return newestTimeCursor, newestIDCursor
+	}
+	return ts, id
+}
+
+func joinCursor(ts, id string) string { return ts + "|" + id }
 
 func decodeMemory(values map[string]any) (sourceRow, string, error) {
 	id, err := integer(values, "id")
@@ -181,7 +217,8 @@ func decodeMemory(values map[string]any) (sourceRow, string, error) {
 	}
 	row := sourceRow{kind: "memories", text: stringValue(values["content"]),
 		sessionID: stringValue(values["source_session"]), layer: stringValue(values["layer"]),
-		origin: stringValue(values["origin"]), createdAt: stringValue(values["created_at"])}
+		origin: stringValue(values["origin"]), createdAt: stringValue(values["created_at"]),
+		occurredAt: stringValue(values["created_at"]), project: stringValue(values["project"])}
 	row.ordinal, row.hasOrdinal = nullableInteger(values["source_sequence"])
 	var tags map[string]any
 	if json.Unmarshal([]byte(stringValue(values["metadata"])), &tags) == nil {
@@ -191,7 +228,7 @@ func decodeMemory(values map[string]any) (sourceRow, string, error) {
 	if row.cronSource == "" {
 		row.cronSource = stringValue(values["source_agent"])
 	}
-	return row, strconv.FormatInt(id, 10), nil
+	return row, joinCursor(row.occurredAt, strconv.FormatInt(id, 10)), nil
 }
 
 func decodeExchange(values map[string]any) (sourceRow, string, error) {
@@ -200,9 +237,10 @@ func decodeExchange(values map[string]any) (sourceRow, string, error) {
 		return sourceRow{}, "", err
 	}
 	row := sourceRow{kind: "exchanges", sessionID: stringValue(values["session_id"]),
-		text: stringValue(values["text"])}
+		text: stringValue(values["text"]), title: stringValue(values["context_title"]),
+		project: stringValue(values["context_project"]), occurredAt: stringValue(values["occurred_at"])}
 	row.ordinal, row.hasOrdinal = nullableInteger(values["exchange_number"])
-	return row, strconv.FormatInt(id, 10), nil
+	return row, joinCursor(row.occurredAt, strconv.FormatInt(id, 10)), nil
 }
 
 func decodeThinking(values map[string]any) (sourceRow, string, error) {
@@ -211,7 +249,8 @@ func decodeThinking(values map[string]any) (sourceRow, string, error) {
 		return sourceRow{}, "", err
 	}
 	row := sourceRow{kind: "thinking_blocks", sessionID: stringValue(values["session_id"]),
-		text: stringValue(values["text"])}
+		text: stringValue(values["text"]), title: stringValue(values["context_title"]),
+		project: stringValue(values["context_project"]), occurredAt: stringValue(values["occurred_at"])}
 	row.ordinal, row.hasOrdinal = nullableInteger(values["exchange_number"])
 	if position, ok := nullableFloat(values["position_in_session"]); ok {
 		row.position = strconv.FormatFloat(position, 'g', -1, 64)
@@ -224,8 +263,30 @@ func decodeSession(values map[string]any) (sourceRow, string, error) {
 	if id == "" {
 		return sourceRow{}, "", fmt.Errorf("session_id is empty")
 	}
-	text := sessionEmbeddingText(stringValue(values["title"]), stringValue(values["project_name"]))
-	return sourceRow{kind: "sessions", sessionID: id, text: text}, id, nil
+	title := stringValue(values["title"])
+	project := stringValue(values["project_name"])
+	text := sessionEmbeddingText(title, project)
+	occurred := stringValue(values["occurred_at"])
+	return sourceRow{kind: "sessions", sessionID: id, text: text, title: cleanSessionField(title),
+		project: cleanSessionField(project), occurredAt: occurred}, joinCursor(occurred, id), nil
+}
+
+func expandDecoded(row sourceRow, values map[string]any) []sourceRow {
+	switch row.kind {
+	case "exchanges":
+		return expandColumnRows(row, []string{"human_text", "agent_text"}, values)
+	case "sessions":
+		cleaned := map[string]any{
+			"title":   cleanSessionField(stringValue(values["title"])),
+			"project": cleanSessionField(stringValue(values["project_name"])),
+		}
+		return expandColumnRows(row, []string{"title", "project"}, cleaned)
+	default:
+		if strings.TrimSpace(row.text) == "" {
+			return nil
+		}
+		return []sourceRow{row}
+	}
 }
 
 func sessionEmbeddingText(title, projectName string) string {

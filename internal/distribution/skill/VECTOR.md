@@ -45,12 +45,15 @@ Indexing is incremental after the first pass. Always pass `--delta`:
 
 ```sh
 roca vector ingest --delta
+roca vector ingest --delta --reembed
 ```
 
 A full delta embeds every table and prose column declared in the generated
 vector registry. The bundled corpus declares sessions, memories, exchanges,
 and thinking blocks; ops declares operational memories. Restrict a repair with
-`--source <declared-table>`.
+`--source <declared-table>`. Use `--reembed` for the resumable rebuild flow;
+generation policy, progress, and sizing details live in
+`docs/vector.md#index-declared-databases`.
 
 Churn leaves empty pages. Reclaim them explicitly; ingest does not
 compact on its own:
