@@ -37,7 +37,7 @@ func ApplySchema(path string) error {
 	if err != nil {
 		return err
 	}
-	rewrote, err := applyStorageLaw(path)
+	rewrote, err := applyStorageLaw(path, false)
 	if err != nil {
 		return err
 	}

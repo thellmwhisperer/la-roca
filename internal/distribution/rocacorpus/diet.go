@@ -13,16 +13,19 @@ import (
 
 // CompactReport is the measured rewrite of a corpus database onto the one-row law.
 type CompactReport struct {
-	Sessions          int64 `json:"sessions"`
-	Exchanges         int64 `json:"exchanges"`
-	ThinkingBlocks    int64 `json:"thinking_blocks"`
-	ToolUses          int64 `json:"tool_uses"`
-	BytesBefore       int64 `json:"bytes_before"`
-	BytesAfter        int64 `json:"bytes_after"`
-	ReclaimedBytes    int64 `json:"reclaimed_bytes"`
-	AlreadyApplied    bool  `json:"already_applied"`
-	VersionFTSDropped bool  `json:"version_fts_dropped"`
-	HashIndexes       bool  `json:"hash_indexes"`
+	Sessions           int64 `json:"sessions"`
+	Exchanges          int64 `json:"exchanges"`
+	ThinkingBlocks     int64 `json:"thinking_blocks"`
+	ToolUses           int64 `json:"tool_uses"`
+	CustodyMemberships int64 `json:"custody_memberships"`
+	CorpusSourceRows   int64 `json:"corpus_source_rows"`
+	BytesBefore        int64 `json:"bytes_before"`
+	BytesAfter         int64 `json:"bytes_after"`
+	ReclaimedBytes     int64 `json:"reclaimed_bytes"`
+	AlreadyApplied     bool  `json:"already_applied"`
+	VersionFTSDropped  bool  `json:"version_fts_dropped"`
+	HashIndexes        bool  `json:"hash_indexes"`
+	ArchiveRowsDropped bool  `json:"archive_rows_dropped"`
 }
 
 type migrationSeal struct {
@@ -48,7 +51,7 @@ func Compact(ctx context.Context, path string) (CompactReport, error) {
 		return CompactReport{}, closeErr
 	}
 
-	rewrote, err := applyStorageLaw(path)
+	rewrote, err := applyStorageLaw(path, true)
 	if err != nil {
 		return CompactReport{}, err
 	}
@@ -66,6 +69,16 @@ func Compact(ctx context.Context, path string) (CompactReport, error) {
 		return CompactReport{}, err
 	}
 	after, err := countCurrentRows(ctx, db)
+	if err != nil {
+		db.Close()
+		return CompactReport{}, err
+	}
+	custody, err := tableCountDB(ctx, db, "custody_memberships")
+	if err != nil {
+		db.Close()
+		return CompactReport{}, err
+	}
+	sourceRows, err := tableCountDB(ctx, db, "corpus_source_rows")
 	closeErr := db.Close()
 	if err != nil {
 		return CompactReport{}, err
@@ -88,16 +101,19 @@ func Compact(ctx context.Context, path string) (CompactReport, error) {
 		reclaimed = 0
 	}
 	return CompactReport{
-		Sessions:          after.sessions,
-		Exchanges:         after.exchanges,
-		ThinkingBlocks:    after.thinking,
-		ToolUses:          after.tools,
-		BytesBefore:       beforeInfo.Size(),
-		BytesAfter:        afterInfo.Size(),
-		ReclaimedBytes:    reclaimed,
-		AlreadyApplied:    !rewrote,
-		VersionFTSDropped: true,
-		HashIndexes:       true,
+		Sessions:           after.sessions,
+		Exchanges:          after.exchanges,
+		ThinkingBlocks:     after.thinking,
+		ToolUses:           after.tools,
+		CustodyMemberships: custody,
+		CorpusSourceRows:   sourceRows,
+		BytesBefore:        beforeInfo.Size(),
+		BytesAfter:         afterInfo.Size(),
+		ReclaimedBytes:     reclaimed,
+		AlreadyApplied:     !rewrote,
+		VersionFTSDropped:  true,
+		HashIndexes:        true,
+		ArchiveRowsDropped: custody == 0 && sourceRows == 0,
 	}, nil
 }
 
@@ -123,25 +139,41 @@ func countCurrentRows(ctx context.Context, db *sql.DB) (currentRowCounts, error)
 	return counts, nil
 }
 
-func applyStorageLaw(path string) (bool, error) {
+func applyStorageLaw(path string, dropArchive bool) (bool, error) {
 	db, err := bundledplugin.OpenDatabase(path, false)
 	if err != nil {
 		return false, err
 	}
 	defer db.Close()
-	needed, err := storageLawNeeded(context.Background(), db)
+	ctx := context.Background()
+	needed, err := storageLawNeeded(ctx, db)
 	if err != nil {
 		return false, err
 	}
-	if !needed {
+	bookkeeping, err := archiveBookkeepingPresent(ctx, db)
+	if err != nil {
+		return false, err
+	}
+	if !needed && !(dropArchive && bookkeeping) {
 		return false, nil
 	}
-	tx, err := db.BeginTx(context.Background(), nil)
+	harvest, err := countCurrentRows(ctx, db)
+	if err != nil {
+		return false, err
+	}
+	statements := storageLawPrefix
+	if dropArchive && bookkeeping &&
+		harvest.sessions+harvest.exchanges+harvest.thinking+harvest.tools > 0 {
+		statements = append(statements, dropArchiveStatements...)
+	} else if needed {
+		statements = append(statements, slimVersionStatements...)
+	}
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, fmt.Errorf("begin storage-law rewrite: %w", err)
 	}
 	defer tx.Rollback()
-	for _, statement := range storageLawStatements {
+	for _, statement := range statements {
 		if _, err := tx.Exec(statement); err != nil {
 			return false, fmt.Errorf("apply storage-law rewrite: %w", err)
 		}
@@ -187,6 +219,31 @@ func storageLawNeeded(ctx context.Context, db *sql.DB) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+func archiveBookkeepingPresent(ctx context.Context, db *sql.DB) (bool, error) {
+	for _, table := range []string{"custody_memberships", "corpus_source_rows"} {
+		count, err := tableCountDB(ctx, db, table)
+		if err != nil {
+			return false, err
+		}
+		if count > 0 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func tableCountDB(ctx context.Context, db *sql.DB, name string) (int64, error) {
+	present, err := tableExistsDB(ctx, db, name)
+	if err != nil || !present {
+		return 0, err
+	}
+	var count int64
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+name).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count %s: %w", name, err)
+	}
+	return count, nil
 }
 
 func indexExistsDB(ctx context.Context, db *sql.DB, name string) (bool, error) {
@@ -292,7 +349,7 @@ func restoreMigrationSeals(path string, seals []migrationSeal) error {
 	return nil
 }
 
-var storageLawStatements = []string{
+var storageLawPrefix = []string{
 	`DROP VIEW IF EXISTS session_version_memberships`,
 	`DROP VIEW IF EXISTS exchange_version_memberships`,
 	`DROP VIEW IF EXISTS tool_use_version_memberships`,
@@ -307,6 +364,39 @@ var storageLawStatements = []string{
 	`DROP INDEX IF EXISTS idx_memories_exact_payload`,
 	`DROP INDEX IF EXISTS custody_memberships_digest`,
 	`DROP INDEX IF EXISTS custody_memberships_migration`,
+}
+
+// dropArchiveStatements remove the internal archive copy once current harvest
+// rows already hold the facts. Batch hashes stay on migration_batches.
+var dropArchiveStatements = []string{
+	`DROP TABLE IF EXISTS custody_memberships`,
+	`CREATE TABLE IF NOT EXISTS custody_memberships (
+  migration           TEXT NOT NULL DEFAULT '',
+  source_database     TEXT NOT NULL,
+  source_table        TEXT NOT NULL,
+  source_key          TEXT NOT NULL,
+  destination_table   TEXT NOT NULL,
+  destination_key     TEXT NOT NULL,
+  canonical_digest    TEXT NOT NULL,
+  batch_id            TEXT NOT NULL,
+  PRIMARY KEY (migration, source_database, source_table, source_key),
+  FOREIGN KEY (migration, batch_id) REFERENCES migration_batches(migration, batch_id)
+    DEFERRABLE INITIALLY DEFERRED
+)`,
+	`CREATE INDEX IF NOT EXISTS custody_memberships_destination
+  ON custody_memberships(destination_table, destination_key)`,
+	`CREATE INDEX IF NOT EXISTS custody_memberships_batch
+  ON custody_memberships(migration, batch_id)`,
+	`DROP TABLE IF EXISTS corpus_source_rows`,
+	`DROP TABLE IF EXISTS ingest_file_state_heads`,
+	`DROP TABLE IF EXISTS ingest_file_state_versions`,
+	`DROP TABLE IF EXISTS session_versions`,
+	`DROP TABLE IF EXISTS exchange_versions`,
+	`DROP TABLE IF EXISTS tool_use_versions`,
+	`DROP TABLE IF EXISTS thinking_block_versions`,
+}
+
+var slimVersionStatements = []string{
 	`CREATE TABLE IF NOT EXISTS exchange_versions_slim (
   id                  INTEGER PRIMARY KEY AUTOINCREMENT,
   version_digest      TEXT NOT NULL UNIQUE CHECK (length(version_digest) = 64),

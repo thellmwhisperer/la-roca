@@ -57,13 +57,22 @@ func TestCompactPreservesCurrentRowsOnALabCopy(t *testing.T) {
 	}
 	t.Logf("current rows sessions=%d exchanges=%d thinking=%d tools=%d",
 		report.Sessions, report.Exchanges, report.ThinkingBlocks, report.ToolUses)
-	t.Logf("size %d -> %d bytes (reclaimed %d)", report.BytesBefore, report.BytesAfter, report.ReclaimedBytes)
+	t.Logf("archive bookkeeping custody=%d source_rows=%d",
+		report.CustodyMemberships, report.CorpusSourceRows)
+	t.Logf("size %.1f MB -> %.1f MB (reclaimed %.1f MB)",
+		float64(report.BytesBefore)/(1024*1024), float64(report.BytesAfter)/(1024*1024),
+		float64(report.ReclaimedBytes)/(1024*1024))
 	if report.BytesAfter >= report.BytesBefore {
 		t.Errorf("compact did not shrink the database: before=%d after=%d",
 			report.BytesBefore, report.BytesAfter)
 	}
-	if report.BytesBefore > 1024*1024*1024 && report.ReclaimedBytes < 2*1024*1024*1024 {
-		t.Errorf("reclaimed %d bytes, want at least 2 GB on a multi-GB corpus", report.ReclaimedBytes)
+	if report.CustodyMemberships != 0 || report.CorpusSourceRows != 0 {
+		t.Errorf("archive bookkeeping remains: custody=%d source_rows=%d",
+			report.CustodyMemberships, report.CorpusSourceRows)
+	}
+	if report.BytesBefore > 4*1024*1024*1024 && report.BytesAfter > 2*1024*1024*1024 {
+		t.Errorf("compact left %.1f MB; want current content plus one FTS plus hash indexes (under 2 GB)",
+			float64(report.BytesAfter)/(1024*1024))
 	}
 }
 

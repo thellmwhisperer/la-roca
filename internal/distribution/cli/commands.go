@@ -1068,8 +1068,8 @@ func renderCompact(env *cliEnv, report rocacorpus.CompactReport) error {
 	env.print("size: %.1f MB -> %.1f MB (reclaimed %.1f MB)", beforeMB, afterMB, reclaimedMB)
 	env.print("version FTS: removed")
 	env.print("payload indexes: hash")
-	env.print("custody_memberships: source identity to digest, kept")
-	env.print("corpus_source_rows: source coordinates to digest, kept")
+	env.print("custody_memberships: archive source-to-digest map, %d rows", report.CustodyMemberships)
+	env.print("corpus_source_rows: archive coordinates, %d rows", report.CorpusSourceRows)
 	if report.AlreadyApplied {
 		env.print("rewrite: already applied")
 	}

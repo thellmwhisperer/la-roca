@@ -59,6 +59,10 @@ func TestCompactRewritesAFatCorpusWithoutLosingCurrentRows(t *testing.T) {
 	assertNoColumn(t, db, "exchange_versions", "human_text")
 	assertNoColumn(t, db, "exchange_versions", "agent_text")
 	assertNoColumn(t, db, "thinking_block_versions", "full_text")
+	assertCountQuery(t, db, `SELECT COUNT(*) FROM custody_memberships`, 0)
+	assertCountQuery(t, db, `SELECT COUNT(*) FROM corpus_source_rows`, 0)
+	assertCountQuery(t, db, `SELECT COUNT(*) FROM exchange_versions`, 0)
+	assertCountQuery(t, db, `SELECT COUNT(*) FROM thinking_block_versions`, 0)
 	var indexSQL string
 	if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_exchanges_exact_payload'`).
 		Scan(&indexSQL); err != nil {
@@ -66,6 +70,13 @@ func TestCompactRewritesAFatCorpusWithoutLosingCurrentRows(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(indexSQL), "roca_payload_hash(") {
 		t.Fatalf("payload index still stores content: %s", indexSQL)
+	}
+	var freelist int
+	if err := db.QueryRow(`PRAGMA freelist_count`).Scan(&freelist); err != nil {
+		t.Fatal(err)
+	}
+	if freelist > 16 {
+		t.Fatalf("compact did not VACUUM: freelist_count=%d", freelist)
 	}
 }
 
@@ -117,6 +128,17 @@ func seedFatCorpus(t *testing.T, db *sql.DB) {
 		`CREATE VIRTUAL TABLE exchange_versions_fts USING fts5(
 			human_text, agent_text, content='exchange_versions', content_rowid='id')`,
 		`INSERT INTO exchange_versions_fts(exchange_versions_fts) VALUES ('rebuild')`,
+		`INSERT INTO custody_memberships
+			(migration, source_database, source_table, source_key, destination_table,
+			 destination_key, canonical_digest, batch_id)
+			VALUES ('corpus-archive-exchanges', 'core', 'exchanges', '` + strings.Repeat("c", 64) + `',
+			        'exchange_versions', '` + strings.Repeat("a", 64) + `',
+			        '` + strings.Repeat("d", 64) + `', 'batch-1')`,
+		`INSERT INTO corpus_source_rows
+			(source_database, source_table, source_key, destination_table, version_digest,
+			 source_row_id, session_id, exchange_number, occurrence_ordinal)
+			VALUES ('core', 'exchanges', '` + strings.Repeat("c", 64) + `', 'exchange_versions',
+			        '` + strings.Repeat("a", 64) + `', 1, 'sess-1', 1, 0)`,
 	}
 	for _, statement := range statements {
 		if _, err := db.Exec(statement); err != nil {
@@ -161,6 +183,17 @@ func assertNoTable(t *testing.T, db *sql.DB, name string) {
 	t.Helper()
 	if tableExists(t, db, name) {
 		t.Fatalf("table %s still exists", name)
+	}
+}
+
+func assertCountQuery(t *testing.T, db *sql.DB, query string, want int) {
+	t.Helper()
+	var got int
+	if err := db.QueryRow(query).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("%s = %d, want %d", query, got, want)
 	}
 }
 

@@ -688,8 +688,10 @@ The five family migrations retain their table-level archive seal, and cutover
 additionally requires the versioned DATA-3 reconciliation seal.
 
 `roca compact` rewrites an existing corpus database onto that one-row law and
-VACUUMs. Current session, exchange, thinking, and tool rows stay. Backup copies
-belong outside the database.
+VACUUMs. Current session, exchange, thinking, and tool rows stay. Once those
+current rows exist, compact empties `custody_memberships` (the archive
+source-to-digest map) and `corpus_source_rows` (archive coordinates); batch
+hashes remain on `migration_batches`. Backup copies belong outside the database.
 
 That reconciliation rereads the same frozen sources and compares every source
 database and table by occurrence count and canonical payload hash. It also
