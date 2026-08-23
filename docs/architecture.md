@@ -116,21 +116,23 @@ collapse divergent payloads.
 distribution. External plugin source trees may live under `plugins/<name>/` as
 independent modules; the root Go module does not import them.
 
-## Query path
+## Read paths
 
-1. Discovery reads installed manifests and reports malformed declarations.
-2. The semantic router selects resident databases plus relevant on-demand
-   databases.
-3. The engine checks declared tables and ordered columns against each real
-   SQLite schema.
-4. The validated fragments are composed into the catalog shown to NL-to-SQL.
-5. The kernel attaches selected files read-only and validates the generated
-   `SELECT` under the same gate used for explicit SQL.
-6. Results declare consulted and omitted databases and carry row provenance.
+`roca query` resolves the requested database scope, discovers full-text and
+vector surfaces from the validated manifests, selects rare terms from the live
+FTS indexes, and fuses full-text and template-expanded vector candidates by
+stable `database.table.id` identity. It invokes no answering model. Missing or
+incompatible vector sidecars leave the same federated FTS path running, and
+every hit carries its source and per-leg evidence. Snippet resolution uses each
+manifest's declared ID and text columns, so every vector-declared table follows
+the same path without a hardcoded source-family map.
 
-The first inference sees schema, never result rows. The optional interpretation
-inference sees only returned rows. Moving schema ownership into manifests does
-not change that privacy boundary or the behavior of `roca query`.
+`roca playground`, `roca explore`, and `roca_sql` retain the model-written SQL
+path. Discovery validates semantic declarations against each real SQLite
+schema, the selected fragments form the NL-to-SQL catalog, and every generated
+`SELECT` passes the same read-only gate as explicit SQL. The first inference
+sees schema, never result rows; optional interpretation sees only returned
+rows. Results declare consulted and omitted databases and carry row provenance.
 
 See [Plugins](plugins.md) for the manifest schema and a complete build-your-own
 package.

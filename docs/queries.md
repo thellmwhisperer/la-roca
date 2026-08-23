@@ -7,9 +7,11 @@ without a La Roca login](lifecycle.md#install).
 rare full-text terms, embeds the question plus static question templates when
 a vector index exists, fuses the two lists with RRF, and labels which legs
 found each hit. Without a vector index the same command runs full-text alone.
-`--top N` (default 10) and `--require-both` keep only dual-confirmed hits.
-`--json` returns the complete machine envelope. Questions must contain text and
-have a generous 1000-character cap on both CLI and MCP query surfaces.
+`--top N` (default 10) controls the fused result count, `--require-both` keeps
+only dual-confirmed hits, and `--databases corpus,ops` (or `all`) selects the
+federated scope explicitly. `--json` returns the complete machine envelope.
+Questions must contain text and have a generous 1000-character cap on both CLI
+and MCP query surfaces.
 
 `roca playground` is the human room: it compiles a question into one checked
 `SELECT`, `--sql-only` compiles without executing, and `--full` adds a prose
@@ -94,98 +96,66 @@ and call-history writes for the run and opens the local stores read-only, so it
 writes to neither the local nor remote rocks. The data path is SQL and JSON
 only; it performs no inference.
 
-## One answer, two readers
+## One search, labeled evidence
 
-Every query serves both audiences. Your agent gets the rows; you get the
-prose with `--full`:
-
-<details open>
-<summary><strong>What your agent sees (default): TOON format, for token efficiency and a better agent experience</strong></summary>
+The compact default output identifies every source as `database.table.id` and
+shows whether FTS, vector, or both legs found it. Vector hits carry cosine and
+vector rank, FTS hits carry FTS rank, and `consensus` makes agreement visible.
+The JSON envelope additionally keeps the RRF score and split source fields.
 
 ```text
 $ roca query "have I fixed a stale lock error before"
-SQL · provider codex · model gpt-5.6 · 2.9 s / search · 3 ms
-rows[2]{source,created_at,text}:
-  exchange,"2026-06-14 23:41:02","fixed: stale .lock left by a killed run; rm .ingest.lock and rerun with --resume"
-  memory,"2026-06-15 00:02:19","Pattern: a killed ingest leaves .ingest.lock behind; delete it before blaming the parser"
+search hybrid · engines fts,vector · 18 ms
+databases: core, corpus
+terms[3]: stale, lock, error
+rows[2]{rank,source,legs,consensus,vector_score,vector_rank,fts_rank,snippet}:
+  1,corpus.exchanges.912,vector+fts,true,0.61,2,1,"fixed: stale .lock left by a killed run; remove it and rerun"
+  2,corpus.memories.207,vector+fts,true,0.57,4,2,"Pattern: a killed ingest can leave its lock file behind"
 ```
 
-</details>
+The FTS leg measures each token against the selected live indexes, removes
+zero-frequency and broadly common terms, and keeps a small rare-term set for
+BM25 ranking. The vector leg embeds the raw question plus fixed Spanish and
+English question wrappers, oversamples neighbors, applies a similarity floor,
+and deduplicates chunks by stable source. RRF then combines ranks without
+normalizing either leg's native scores. If vector search is unavailable,
+missing, or incompatible, the same envelope reports the notice and contains
+the federated FTS results alone.
 
-<details>
-<summary><strong>What you see with <code>--full</code>: concise human prose</strong></summary>
+## The playground's two readers
+
+`roca playground` preserves the model-written SQL room. Its default output is
+efficient for an agent or a human inspecting the generated statement:
 
 ```text
-$ roca query --full "have I fixed a stale lock error before"
+$ roca playground "have I fixed a stale lock error before"
+route model
+SQL · provider codex · model gpt-5.6 · 2.9 s
+search · 3 ms
+rows[2]{source,created_at,text}:
+  exchange,"2026-06-14 23:41:02","fixed: stale .lock left by a killed run; remove it and rerun"
+  memory,"2026-06-15 00:02:19","Pattern: a killed ingest can leave its lock file behind"
+```
+
+Add `--full` when a human wants a second model pass to explain those rows:
+
+```text
+$ roca playground --full "have I fixed a stale lock error before"
 SQL · codex · gpt-5.6 · 2.9 s / search · 3 ms / answer · ollama · gemma4:12b · 11.4 s
 
-Yes, twice, and both times it was the same trap. On 14 June at 23:41 you
-fixed it live: a killed run had left .ingest.lock behind, and the cure was
-rm .ingest.lock followed by a rerun with --resume. The next morning you
-stored the lesson as a pattern: a killed ingest always leaves its lock file
-behind, so delete it before blaming the parser.
+Yes, twice, and both rows point to the same stale-lock failure and recovery.
 ```
 
-The second inference reads only the rows and writes the answer. It can be a
-local model on your machine: make the query smart so the reader can be
-cheap, local, and secure.
+Without an explicit `models.interpret_order`, the provider that writes the SQL
+also reads the rows. The longer model, repair, and routing contracts live in
+[Model providers](models.md); [the MCP plug](mcp.md) documents the shell-less
+`roca_query`, `roca_sql`, and `roca_exec` equivalents.
 
-</details>
-
-The prose examples below use an optional Codex-to-Ollama split; without an
-explicit `models.interpret_order`, the provider that writes the SQL also reads
-the rows.
-
-```text
-$ roca query --full "which model do I have real chemistry with, and which one just gets the job done"
-SQL · codex · gpt-5.6 · 3.4 s / search · 4 ms / answer · ollama · gemma4:12b · 12.1 s
-
-Claude is the passionate one: three times the praise and three times the
-cursing of anyone else, and you always come back. Codex is the contractor:
-half the anger, a third of the joy, and the only one you trust overnight
-("going to sleep, I expect both PRs green by morning"). And the one you
-cannot work with lately is qwen-0.8b: four abandoned sessions in a row
-without a single kind word.
-```
-
-```text
-$ roca query "have I fixed a stale lock error before"
-SQL · provider codex · model gpt-5.6 · 2.9 s / search · 3 ms
-rows[2]{source,created_at,text}:
-  exchange,"2026-06-14 23:41:02","fixed: stale .lock left by a killed run; rm .ingest.lock and rerun with --resume"
-  memory,"2026-06-15 00:02:19","Pattern: a killed ingest leaves .ingest.lock behind; delete it before blaming the parser"
-```
-
-```text
-$ roca query "the ffmpeg one-liner that extracted frames for verification"
-rows[1]{source,created_at,text}:
-  exchange,"2026-07-29 18:05:33","ffmpeg -ss 2 -i out.mp4 -frames:v 1 -q:v 3 frame.jpg   # verify before delivering"
-```
-
-```text
-$ roca query "what did we decide about the retention window"
-rows[2]{source,created_at,text}:
-  memory,"2026-08-02 21:14:09","Decision: operational logs keep 30 days, in dated streams"
-  exchange,"2026-08-02 21:02:44","30 days and out. I do not want eternal logs."
-```
-
-The answers are already in your logs, with the rows to prove them. Questions
-that history can settle include:
-
-- Which sessions went well, and which one wasted an evening?
-- What do you keep re-explaining to every new session?
-- Which model is fastest at fixing tests? Which one writes the best plans?
-- Which model do you actually have fun working with, and which one can you
-  simply not work with?
-- Which harness works best for which kind of work?
-
-A session starts by asking for the latest handoff and ends by storing one:
+For facts whose ordering matters, use explicit SQL instead of asking ranking to
+imply it. A session can fetch its latest project handoff exactly and then store
+the next one:
 
 ```sh
-roca query "latest handoff for this project"
-roca store --layer handoff --content "token refresh done, retry pending" --agent codex --model gpt-5
+roca exec "SELECT content, created_at FROM plugin_roca_ops.memories WHERE layer = 'handoff' AND project = '<project>' ORDER BY created_at DESC LIMIT 1"
+roca store --layer handoff --project '<project>' --content "token refresh done, retry pending" --agent codex --model gpt-5
 ```
-
-The longer model, repair, and routing contracts live in
-[Model providers](models.md). MCP tools share this gate:
-[The MCP plug](mcp.md).

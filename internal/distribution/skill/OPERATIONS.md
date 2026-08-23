@@ -10,10 +10,11 @@ description: >
 
 # La Roca
 
-Local SQLite memory of what agents leave on disk. Query in natural language and
-the answering model turns the question into SQL over the schema; investigate
-concepts with grounded exploration; store memories that last. No network
-required after install beyond the model provider itself.
+Local SQLite memory of what agents leave on disk. Search with deterministic
+hybrid retrieval, use the playground when a model should turn a question into
+SQL, investigate concepts with grounded exploration, and store memories that
+last. No network is required after install beyond configured model or embedding
+providers.
 
 Before first use, run `roca init` in a terminal. With no home database it asks
 `new` or `adopt` with no default. `adopt` then asks you to type the source path,

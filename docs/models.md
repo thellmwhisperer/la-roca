@@ -3,12 +3,15 @@
 After [installation](lifecycle.md#install), La Roca uses **detected agent CLIs
 with a local floor**. It finds shipped CLI presets on `PATH`, uses their
 existing signed-in sessions in stable order (`claude`, then `codex`), then
-tries local Ollama. No La Roca login or provider table is required: ask with
-`roca query`. An explicit provider order remains authoritative.
+tries local Ollama. No La Roca login or provider table is required for
+`roca playground`, `roca explore`, or `roca_sql`. An explicit provider order
+remains authoritative. `roca query` itself uses no answering model; its optional
+vector leg only embeds the search text.
 
-Questions use the first configured provider that reports itself ready. If the
-selected provider is unavailable or produces unusable SQL, La Roca reports the
-degraded state and attempts literal search over the local index.
+Model-backed questions use the first configured provider that reports itself
+ready. If the selected provider is unavailable or produces unusable SQL, La
+Roca reports the degraded state and attempts literal search over the local
+index.
 
 ## The configuration
 
@@ -161,13 +164,13 @@ turns the model off entirely. There is no environment override for
 `interpret_order` or `explore_order`: they are decisions about where your data
 goes, and they are written down in the file.
 
-### Splitting the two inferences
+### Splitting the two playground inferences
 
-A full query normally costs two model calls. The first turns the question into
-SQL and receives the question and the schema. The second turns the rows that SQL
-returned into prose, and it is the only one that ever sees your data. A gate
-rejection adds one correction call before the row-reading call; first-shot
-successes and zero-result rescues do not pay for it.
+`roca playground --full` normally costs two model calls. The first turns the
+question into SQL and receives the question and the schema. The second turns
+the rows that SQL returned into prose, and it is the only one that ever sees
+your data. A gate rejection adds one correction call before the row-reading
+call; first-shot successes and zero-result rescues do not pay for it.
 
 `interpret_order` puts that second call on providers of its own:
 
@@ -214,8 +217,8 @@ that is going to read the rows.
 
 `roca explore` keeps the SQL role unchanged: the first inference sees the
 question and schema, emits one SELECT, and never sees returned rows. At the same
-`InterpretStream` call site used by `query --full`, an explicit explore context
-selects a different interpreter mission:
+`InterpretStream` call site used by `playground --full`, an explicit explore
+context selects a different interpreter mission:
 
 - plain explore answers only what the rows support and adds short,
   single-concept trail hints;
@@ -235,7 +238,7 @@ nothing, and the provenance labels a query surface synthesizes about who wrote a
 row (`author`, `agent`, `model`, `surface`, `provider`, `provenance`, and the
 `source_` columns) are left out too, so the fleet's own naming never outranks the
 corpus in a probe. Both CLI modes print the generated SQL as well as the prose
-so the investigator learns the schema and can graduate to `query --sql-only`
+so the investigator learns the schema and can graduate to `playground --sql-only`
 plus `exec`.
 
 Deep mode may use a stronger row-reading model without moving ordinary prose:
@@ -367,8 +370,8 @@ When `response_format = "json"`, La Roca reads the answer from stdout's
 `result` field; otherwise stdout is plain answer text. This declaration is
 independent of command arguments, so a CLI may accept JSON input while returning
 text. Non-zero exits, malformed JSON, missing binaries, and timeouts are ordinary
-provider failures: they produce the same honest degraded query path as any
-unavailable model. `roca doctor` lists every detected shipped binary, identifies
+provider failures: they produce the same honest degraded model-backed path as
+any unavailable model. `roca doctor` lists every detected shipped binary, identifies
 the provider the factory order selected and the `roca model check` that confirms
 it, and reports a binary-specific remedy for anything missing or unusable.
 
@@ -447,7 +450,7 @@ retires nothing behind its model confirmation; when the provider you choose
 still carries retired settings or a leftover credential file, that proposal is
 shown with its own yes or no first.
 
-## What happens on a query
+## What happens in the playground
 
 1. The question is checked before any model is called: it must contain text and
    stay within a deliberately generous 1000-character cap, the same on the CLI
@@ -483,8 +486,8 @@ A provider in an explicit order that says it is available and then fails is
 **not** silently retried with the next one. The factory order has one declared
 exception: when a detected local CLI's first real request proves that its
 session is unusable, La Roca records that failure and tries the next ready
-factory provider. This uses the query itself instead of spending an extra model
-inference on a separate account probe.
+factory provider. This uses the playground request itself instead of spending
+an extra model inference on a separate account probe.
 
 Every answer down this path declares who answered:
 
@@ -607,7 +610,7 @@ describes precisely, and the model corrects it immediately when shown. One retry
 and no more: a model that cannot fix it with the error in front of it will not
 fix it on the fifth try, and each try costs seconds.
 
-A query that is valid at once costs one request. Only the ones that need it pay.
+A statement that is valid at once costs one request. Only the ones that need it pay.
 Zero rows keep their existing literal rescue and never trigger a SQL retry;
 `roca exec` SQL is user-authored and is never retried.
 
@@ -622,7 +625,7 @@ has `invalid_sql` or `sql_execution_error` and falls through to the ordinary
 rescue, and a rescue that fired for zero rows never asked for a correction of
 its own.
 
-The narration says the same thing above the rows: a query that paid for a
+The narration says the same thing above the rows: a playground request that paid for a
 correction gets its own `SQL retry after gate rejection` or `SQL retry after
 execution error` line with the time that correction took. Both audit streams
 record the identical distinction, and what they keep is listed under
