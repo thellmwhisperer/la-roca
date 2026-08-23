@@ -162,6 +162,35 @@ func TestMergeMaterializesExactSessionAliasesAsOneCurrentFact(t *testing.T) {
 		WHERE session_id = 'corpus-canonical' AND exchange_number = 1`, 1)
 }
 
+func TestMergeUsesDestinationSessionAsCurrentCanonical(t *testing.T) {
+	directory := t.TempDir()
+	core := createFrozenSource(t, filepath.Join(directory, "core.db"), func(t *testing.T, db *sql.DB) {
+		seedSession(t, db, "core-alias", "same session")
+		seedExchange(t, db, 1, "core-alias", 1, "question", "answer")
+	})
+	corpus := createFrozenSource(t, filepath.Join(directory, "corpus.db"), func(*testing.T, *sql.DB) {})
+	destination := filepath.Join(directory, "destination.db")
+	if err := rocacorpus.ApplySchema(destination); err != nil {
+		t.Fatal(err)
+	}
+	db := openTestDB(t, destination)
+	seedSession(t, db, "destination-canonical", "same session")
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Merge(t.Context(), destination, archiveSourcePair(core, corpus), Options{}); err != nil {
+		t.Fatal(err)
+	}
+	db = openTestDB(t, destination)
+	defer db.Close()
+	assertCount(t, db, "sessions", 1)
+	assertCountQuery(t, db, `SELECT COUNT(*) FROM sessions
+		WHERE session_id = 'destination-canonical'`, 1)
+	assertCountQuery(t, db, `SELECT COUNT(*) FROM exchanges
+		WHERE session_id = 'destination-canonical' AND exchange_number = 1`, 1)
+}
+
 func TestMergeRejectsAnUnverifiedOrWritableSourceIdentity(t *testing.T) {
 	for _, testCase := range []struct {
 		name, want string

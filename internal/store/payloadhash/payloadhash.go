@@ -56,6 +56,9 @@ func frameValue(value driver.Value) (byte, []byte, error) {
 		binary.BigEndian.PutUint64(encoded[:], uint64(value))
 		return 1, encoded[:], nil
 	case float64:
+		if value == 0 {
+			value = 0
+		}
 		binary.BigEndian.PutUint64(encoded[:], math.Float64bits(value))
 		return 2, encoded[:], nil
 	case bool:

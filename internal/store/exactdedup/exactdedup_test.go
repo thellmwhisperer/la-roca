@@ -3,6 +3,7 @@ package exactdedup_test
 import (
 	"context"
 	"database/sql"
+	"math"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -216,6 +217,34 @@ func TestExactPayloadGuardFramesEmbeddedNULValues(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO exchanges(session_id, exchange_number, human_text, agent_text)
 		VALUES ('session-a', 1, ?, 'answer')`, "a\x00x"); err == nil {
 		t.Fatal("hash exact-payload guard accepted a NUL-bearing duplicate")
+	}
+}
+
+func TestExactPayloadGuardCanonicalizesSignedZero(t *testing.T) {
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "roca.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(data.Schema + data.SearchSchema); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO sessions(session_id, source_agent, title, started_at, metadata)
+		VALUES ('session-a', 'fixture', 'zero fixture', '2026-08-16T10:00:00Z', '{}')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := exactdedup.EnsureGuards(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	insert := `INSERT INTO thinking_blocks
+		(session_id, exchange_number, position_in_session, caution_ratio, full_text)
+		VALUES ('session-a', 1, 1, ?, 'same thought')`
+	if _, err := db.Exec(insert, 0.0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(insert, math.Copysign(0, -1)); err == nil {
+		t.Fatal("hash exact-payload guard accepted a signed-zero duplicate")
 	}
 }
 

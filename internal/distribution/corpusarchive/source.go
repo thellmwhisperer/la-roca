@@ -151,6 +151,28 @@ func materializeCurrent(ctx context.Context, destination *sql.DB, sources []prep
 	sessionAliases := map[sourceSession]string{}
 	canonicalSessions := map[string]string{}
 	sessionTable := archiveSourceTables[0]
+	destinationRows, err := tx.QueryContext(ctx, sessionTable.query)
+	if err != nil {
+		return err
+	}
+	destinationTracker := &occurrenceTracker{}
+	for destinationRows.Next() {
+		record, scanErr := sessionTable.scan(destinationRows, destinationTracker)
+		if scanErr != nil {
+			destinationRows.Close()
+			return scanErr
+		}
+		if record.sessionID.Valid {
+			canonicalSessions[record.currentDigest] = record.sessionID.String
+		}
+	}
+	if err := destinationRows.Err(); err != nil {
+		destinationRows.Close()
+		return err
+	}
+	if err := destinationRows.Close(); err != nil {
+		return err
+	}
 	for _, source := range sources {
 		rows, err := source.db.QueryContext(ctx, sessionTable.query)
 		if err != nil {
