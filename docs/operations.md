@@ -93,9 +93,10 @@ changes. Query result rows are written to neither sink.
 
 ## Streams and contents
 
-The dated `executions`, `mcp-audit`, `ingest`, and `migrations` JSONL streams
-retain at most 30 days. Each file is capped at 5 MiB and each stream keeps at
-most six files, so a busy installation cannot grow a stream beyond 30 MiB.
+The dated `executions`, `mcp-audit`, `ingest`, `migrations`, and `snapshots`
+JSONL streams retain at most 30 days. Each file is capped at 5 MiB and each
+stream keeps at most six files, so a busy installation cannot grow a stream
+beyond 30 MiB.
 Consumers should glob `<stream>-*.jsonl`; rotated segments have the same prefix.
 An individual record larger than the file cap is dropped under the same
 non-failing writer contract. This DATA SPLIT stage deliberately keeps rotation
