@@ -63,6 +63,9 @@ func TestDeltaFlagAndReadOnlyBoundaryAreExplicit(t *testing.T) {
 	if flag := ingestCommand(env).Flags().Lookup("source"); flag == nil {
 		t.Fatal("targeted delta has no --source flag")
 	}
+	if flag := ingestCommand(env).Flags().Lookup("reembed"); flag == nil {
+		t.Fatal("reembed rebuild has no --reembed flag")
+	}
 	if flag := queryCommand(env).Flags().Lookup("databases"); flag == nil {
 		t.Fatal("federated query has no --databases flag")
 	}
@@ -120,7 +123,7 @@ esac
 
 	env := &environment{dbPath: filepath.Join(t.TempDir(), "roca.db"), stateDir: state}
 	first := executeForOutput(t, env, "ingest", "--delta", "--source", "sessions")
-	if !strings.Contains(first, "1 added") {
+	if !strings.Contains(first, "2 added") {
 		t.Fatalf("initial targeted delta output = %q", first)
 	}
 
@@ -146,10 +149,14 @@ esac
 
 	repaired := executeForOutput(t, env, "ingest", "--delta", "--source", "sessions")
 	steady := executeForOutput(t, env, "ingest", "--delta", "--source", "sessions")
-	if !strings.Contains(repaired, "1 updated") || !strings.Contains(steady, "1 unchanged") {
+	if !strings.Contains(repaired, "2 updated") || !strings.Contains(steady, "2 unchanged") {
 		t.Fatalf("repair=%q steady=%q", repaired, steady)
 	}
-	if len(embedded) != 2 || embedded[0] != vector.DocumentPrefix+clean || embedded[1] != vector.DocumentPrefix+clean {
+	if len(embedded) < 2 {
+		t.Fatalf("embedded session inputs = %q", embedded)
+	}
+	joined := strings.Join(embedded, "\n")
+	if !strings.Contains(joined, "Public health research") || !strings.Contains(joined, "health-project") {
 		t.Fatalf("embedded session inputs = %q", embedded)
 	}
 	for _, contaminant := range []string{"source_exchange_fingerprints", "0123456789abcdef", "enabled", "{"} {

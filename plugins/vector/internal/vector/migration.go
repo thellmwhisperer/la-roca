@@ -77,7 +77,7 @@ func legacyChunkLookup(ctx context.Context, legacy *sql.DB) (map[string]int64, e
 		if err := rows.Scan(&id, &kind, &index, &fingerprint); err != nil {
 			return nil, fmt.Errorf("read legacy vector chunk: %w", err)
 		}
-		key := chunkKey(kind, fingerprint, index)
+		key := chunkKey(kind, fingerprint, "", index)
 		if lookup[key] == 0 {
 			lookup[key] = id
 		}
@@ -176,17 +176,18 @@ func (f Federation) seedLegacySidecar(ctx context.Context, legacy *sql.DB,
 		return nil
 	}
 	err = reader.WalkSources(ctx, "", func(source sourceRow) error {
-		size, overlap := source.chunking()
-		for index, text := range chunks(source.text, size, overlap) {
+		header := source.header()
+		for index, text := range source.window() {
+			input := header + text
 			desired := desiredChunk{
-				sourceKind: source.kind, sourceID: source.stableID(), index: index,
-				fingerprint: source.embeddingFingerprint(text), locator: source.locator(), text: text,
+				sourceKind: source.kind, sourceID: source.stableID(), column: source.column, index: index,
+				fingerprint: source.embeddingFingerprint(input), locator: source.locator(), text: input,
 			}
-			stored := existing[chunkKey(desired.sourceKind, desired.sourceID, desired.index)]
+			stored := existing[chunkKey(desired.sourceKind, desired.sourceID, desired.column, desired.index)]
 			if stored.id != 0 && stored.fingerprint == desired.fingerprint {
 				continue
 			}
-			legacyID := lookup[chunkKey(source.kind, embeddingFingerprint(source.kind, text), index)]
+			legacyID := lookup[chunkKey(source.kind, embeddingFingerprint(source.kind, text), "", index)]
 			if legacyID == 0 {
 				continue
 			}
@@ -278,8 +279,8 @@ func copyLegacySeedBatch(ctx context.Context, legacy, target *sql.DB,
 		}
 		id := seed.targetID
 		if id == 0 {
-			result, err := tx.ExecContext(ctx, `INSERT INTO chunks(source_kind,source_id,chunk_index,fingerprint,locator)
-				VALUES (?,?,?,?,?)`, seed.chunk.sourceKind, seed.chunk.sourceID, seed.chunk.index,
+			result, err := tx.ExecContext(ctx, `INSERT INTO chunks(source_kind,source_id,text_column,chunk_index,fingerprint,locator)
+				VALUES (?,?,?,?,?,?)`, seed.chunk.sourceKind, seed.chunk.sourceID, seed.chunk.column, seed.chunk.index,
 				seed.chunk.fingerprint, string(where))
 			if err != nil {
 				return 0, fmt.Errorf("write legacy chunk seed: %w", err)

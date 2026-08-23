@@ -29,7 +29,8 @@ func TestCoreCLIWalksEverySourceThroughRocaExec(t *testing.T) {
 				"origin": "agent", "created_at": "2026-08-14"}}
 		case strings.Contains(statement, "FROM "+corpusTable("exchanges")):
 			rows = []map[string]any{{"id": 2, "session_id": "s1", "exchange_number": 4,
-				"text": "beta question\n\nbeta answer"}}
+				"human_text": "beta question", "agent_text": "beta answer",
+				"occurred_at": "2026-03-18", "context_title": "delta session"}}
 		case strings.Contains(statement, "FROM "+corpusTable("thinking_blocks")):
 			rows = []map[string]any{{"id": 3, "session_id": "s1", "exchange_number": nil,
 				"position_in_session": nil, "text": "gamma reasoning"}}
@@ -53,12 +54,32 @@ func TestCoreCLIWalksEverySourceThroughRocaExec(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(queries) != 4 || len(sources) != 4 {
+	if len(queries) != 4 {
 		t.Fatalf("queries=%d sources=%+v", len(queries), sources)
 	}
-	if sources[0].filePath != "notes.md" || sources[1].stableID() != "exchanges/s1/4/"+sources[1].identity() ||
-		!strings.Contains(sources[2].stableID(), "/unkeyed/") || sources[3].stableID() != "sessions/s1/"+sources[3].identity() ||
-		sources[3].text != "delta session\nSynthetic orchard" {
+	if sources[0].filePath != "notes.md" {
+		t.Fatalf("decoded sources = %+v", sources)
+	}
+	var exchange, session *sourceRow
+	for i := range sources {
+		switch sources[i].kind {
+		case "exchanges":
+			if exchange == nil {
+				exchange = &sources[i]
+			}
+			if sources[i].column == "" {
+				t.Fatalf("exchange missing column identity: %+v", sources[i])
+			}
+		case "sessions":
+			if session == nil {
+				session = &sources[i]
+			}
+		}
+	}
+	if exchange == nil || exchange.stableID() != "exchanges/s1/4/"+exchange.identity() {
+		t.Fatalf("decoded sources = %+v", sources)
+	}
+	if session == nil || session.stableID() != "sessions/s1/"+session.identity() {
 		t.Fatalf("decoded sources = %+v", sources)
 	}
 	queries, sources = nil, nil
@@ -68,7 +89,7 @@ func TestCoreCLIWalksEverySourceThroughRocaExec(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(queries) != 1 || len(sources) != 1 || !strings.Contains(queries[0], corpusTable("sessions")) {
+	if len(queries) != 1 || len(sources) < 1 || !strings.Contains(queries[0], corpusTable("sessions")) {
 		t.Fatalf("targeted session walk queried %d pages and returned %+v", len(queries), sources)
 	}
 }
@@ -288,7 +309,7 @@ func TestLargeCoreIdentifiersRemainExactAcrossJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if next != fmt.Sprint(identifier) {
-		t.Fatalf("large id cursor = %s, want %d", next, identifier)
+	if next != joinCursor("2026-08-14", fmt.Sprint(identifier)) {
+		t.Fatalf("large id cursor = %s, want %s", next, joinCursor("2026-08-14", fmt.Sprint(identifier)))
 	}
 }

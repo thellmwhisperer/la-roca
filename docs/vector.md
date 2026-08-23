@@ -130,6 +130,7 @@ Indexing is incremental after that. `vector ingest` always requires `--delta`:
 
 ```sh
 roca vector ingest --delta
+roca vector ingest --delta --reembed
 ```
 
 A full delta sweeps every table and prose column declared by installed plugin
@@ -137,6 +138,14 @@ manifests. The bundled corpus declares session titles/projects, memory content,
 human/agent exchanges, and thinking text; ops declares operational memory
 content. Raw tool data, call telemetry, and other undeclared columns stay
 FTS-only. Restrict a repair to a declared table with `--source <table>`.
+
+Generation policy: each declared text column is embedded on its own, so a short
+human turn is not averaged into a long agent answer. Windows are about 250
+tokens with about 100 tokens of overlap, and each embedding input gets a short
+deterministic header from session title or project and year-month when those
+columns exist. `--reembed` rebuilds a sidecar under that policy. It is
+resumable: interrupting and running it again continues, and it does not
+duplicate chunks. Progress prints counts, rate, and ETA, newest rows first.
 
 The worker fingerprints each database (including its SQLite WAL) through
 `pkg/incrementality` and skips the row sweep when both source and declaration
@@ -174,7 +183,9 @@ daily delta against an unchanged or lightly grown corpus is minutes.
 As an order-of-magnitude reference, a production home with 353,663 chunks
 measured 1.3 GB on disk after compaction. Expect roughly 1.3-1.5 GB per
 ~350k chunks per sidecar; the footprint varies with the source and embedding
-model. Churn (many updates and deletes) leaves empty pages; reclaim every
+model. Per-column windows and overlap raise live chunk count by about 2x on a
+mixed conversation corpus, so plan disk from that multiple after `--reembed`.
+Churn (many updates and deletes) leaves empty pages; reclaim every
 installed sidecar explicitly:
 
 ```sh

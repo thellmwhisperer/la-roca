@@ -48,8 +48,12 @@ func (e *compactFixtureEmbedder) Embed(_ context.Context, _ string, input []stri
 	e.calls++
 	vectors := make([][]float32, len(input))
 	for index, text := range input {
+		payload := strings.TrimPrefix(text, DocumentPrefix)
+		if start := strings.Index(payload, "] "); start >= 0 && strings.HasPrefix(payload, "[") {
+			payload = payload[start+2:]
+		}
 		var ordinal int
-		if _, err := fmt.Sscanf(text, DocumentPrefix+"synthetic record %d", &ordinal); err == nil {
+		if _, err := fmt.Sscanf(payload, "synthetic record %d", &ordinal); err == nil {
 			vectors[index] = []float32{1, float32(ordinal+1) / 2300, 0, 0, 0, 0, 0, 0}
 		} else {
 			vectors[index] = []float32{1, 0, 0, 0, 0, 0, 0, 0}

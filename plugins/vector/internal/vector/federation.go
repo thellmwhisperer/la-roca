@@ -21,7 +21,7 @@ import (
 const (
 	vectorRegistryFilename = "vector-registry.json"
 	vectorRegistrySchema   = 1
-	declaredReaderVersion  = "declared-surfaces-v1"
+	declaredReaderVersion  = "declared-surfaces-v2"
 )
 
 var (
@@ -69,6 +69,8 @@ type Federation struct {
 	BuildVersion string
 	Embedder     Embedder
 	Notice       func(string)
+	Progress     func(IngestProgress)
+	Reembed      bool
 	databases    []vectorDatabase
 	routes       []vectorRoute
 }
@@ -494,7 +496,7 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 			return FederationDelta{}, fmt.Errorf("fingerprint vector source %s: %w", database.owner(), err)
 		}
 		var delta Delta
-		if sourceKind == "" {
+		if sourceKind == "" && !f.Reembed {
 			delta, err = unchangedSidecar(sidecar, database.owner(), f.Model, contract, fingerprint)
 			if err == nil {
 				if err := sealSidecar(sidecar, database.owner(), f.Model, f.BuildVersion, contract, fingerprint); err != nil {
@@ -547,7 +549,8 @@ func (f Federation) index(database vectorDatabase, reader DeclaredCorpus, sideca
 		kinds[table.Name] = true
 	}
 	return Index{Corpus: reader, VectorPath: sidecar, Model: f.Model,
-		Embedder: f.Embedder, Notice: f.Notice, SourceKinds: kinds, Database: database.Database}
+		Embedder: f.Embedder, Notice: f.Notice, Progress: f.Progress, Reembed: f.Reembed,
+		SourceKinds: kinds, Database: database.Database}
 }
 
 type DeclaredCorpus struct {
@@ -574,17 +577,28 @@ func (d DeclaredCorpus) WalkSources(ctx context.Context, sourceKind string,
 			}
 			for _, values := range rows {
 				id := stringValue(values["source_id"])
-				text := stringValue(values["text"])
-				if id == "" || text == "" {
+				if id == "" {
 					continue
 				}
 				cursor = id
-				size, overlap := table.chunking()
-				row := sourceRow{kind: table.Name, sourceID: id, text: text,
-					chunkSize: size, overlap: overlap,
-					fingerprintVersion: table.contractFingerprint()}
-				if err := visit(row); err != nil {
-					return err
+				row := sourceRow{kind: table.Name, sourceID: id,
+					fingerprintVersion: table.contractFingerprint(),
+					title:              stringValue(values["context_title"]),
+					project:            stringValue(values["context_project"]),
+					occurredAt:         stringValue(values["context_time"]),
+					createdAt:          stringValue(values["context_time"])}
+				if table.Chunking != nil && (table.Chunking.MaxChars != nil || table.Chunking.OverlapChars != nil) {
+					size, overlap := table.chunking()
+					row.chunkSize, row.overlap = size, overlap
+				}
+				expanded := expandColumnRows(row, table.TextColumns, values)
+				if len(expanded) == 0 {
+					continue
+				}
+				for _, item := range expanded {
+					if err := visit(item); err != nil {
+						return err
+					}
 				}
 			}
 			if len(rows) < walkPageSize {
@@ -603,16 +617,20 @@ func (d DeclaredCorpus) ResolveSource(ctx context.Context, kind string, where lo
 	if where.SourceID == "" {
 		return "", nil
 	}
-	statement := fmt.Sprintf(`SELECT %s AS text FROM %s.%s WHERE CAST(%s AS TEXT)=%s`,
-		declaredTextExpression(table.TextColumns), quoteIdentifier(d.Database.Alias),
+	statement := fmt.Sprintf(`SELECT %s FROM %s.%s WHERE CAST(%s AS TEXT)=%s`,
+		strings.TrimPrefix(declaredColumnSelect("", table.TextColumns), ", "), quoteIdentifier(d.Database.Alias),
 		quoteIdentifier(table.Name), quoteIdentifier(table.IDColumn), sqlLiteral(where.SourceID))
 	rows, err := d.Core.query(ctx, statement)
 	if err != nil {
 		return "", err
 	}
 	for _, values := range rows {
-		text := stringValue(values["text"])
-		candidate := sourceRow{kind: kind, sourceID: where.SourceID, text: text,
+		expanded := expandColumnRows(sourceRow{kind: kind, sourceID: where.SourceID}, table.TextColumns, values)
+		if len(expanded) == 0 {
+			continue
+		}
+		text := expanded[0].rowText
+		candidate := sourceRow{kind: kind, sourceID: where.SourceID, text: text, rowText: text,
 			fingerprintVersion: table.contractFingerprint()}
 		if candidate.identity() == where.Identity {
 			return text, nil
@@ -621,14 +639,111 @@ func (d DeclaredCorpus) ResolveSource(ctx context.Context, kind string, where lo
 	return "", nil
 }
 
+func (d DeclaredCorpus) CountSources(ctx context.Context, sourceKind string) (int, error) {
+	tables := d.Database.Tables
+	if sourceKind != "" {
+		table, ok := d.table(sourceKind)
+		if !ok {
+			return 0, fmt.Errorf("unknown vector source %q", sourceKind)
+		}
+		tables = []vectorTable{table}
+	}
+	total := 0
+	for _, table := range tables {
+		statement := fmt.Sprintf(`SELECT COUNT(*) AS n FROM %s.%s src WHERE %s IS NOT NULL AND (%s)`,
+			quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name),
+			quoteIdentifier(table.IDColumn), declaredNonEmptyPredicate("src", table.TextColumns))
+		rows, err := d.Core.query(ctx, statement)
+		if err != nil {
+			return 0, err
+		}
+		if len(rows) == 0 {
+			continue
+		}
+		count, ok := nullableInteger(rows[0]["n"])
+		if !ok {
+			count, _ = nullableInteger(rows[0]["N"])
+		}
+		total += int(count)
+	}
+	return total, nil
+}
+
 func (d DeclaredCorpus) pageQuery(table vectorTable, cursor string) string {
+	bound := ""
+	if strings.TrimSpace(cursor) != "" {
+		bound = " AND source_id<" + sqlLiteral(cursor)
+	}
+	contextSQL, join := d.contextSQL(table.Name)
 	return fmt.Sprintf(`WITH vector_rows AS (
-		SELECT CAST(%s AS TEXT) AS source_id,%s AS text FROM %s.%s WHERE %s IS NOT NULL
-	) SELECT source_id,text FROM vector_rows
-	WHERE source_id<>'' AND text<>'' AND source_id>%s ORDER BY source_id LIMIT %d`,
-		quoteIdentifier(table.IDColumn), declaredTextExpression(table.TextColumns),
-		quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name), quoteIdentifier(table.IDColumn),
-		sqlLiteral(cursor), walkPageSize)
+		SELECT CAST(src.%s AS TEXT) AS source_id%s%s FROM %s.%s src%s
+		WHERE src.%s IS NOT NULL
+	) SELECT * FROM vector_rows
+	WHERE source_id<>''%s ORDER BY source_id DESC LIMIT %d`,
+		quoteIdentifier(table.IDColumn), declaredColumnSelect("src", table.TextColumns), contextSQL,
+		quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name), join,
+		quoteIdentifier(table.IDColumn), bound, walkPageSize)
+}
+
+func (d DeclaredCorpus) contextSQL(tableName string) (string, string) {
+	empty := `, '' AS context_title, '' AS context_project, '' AS context_time`
+	alias := quoteIdentifier(d.Database.Alias)
+	switch tableName {
+	case "sessions":
+		return `, COALESCE(src.title,'') AS context_title, COALESCE(src.project,'') AS context_project, COALESCE(src.started_at,'') AS context_time`, ""
+	case "exchanges":
+		if !d.hasTable("sessions") {
+			return `, '' AS context_title, '' AS context_project, COALESCE(src.human_timestamp, src.agent_timestamp, '') AS context_time`, ""
+		}
+		return `, COALESCE(ctx.title,'') AS context_title, COALESCE(ctx.project,'') AS context_project, COALESCE(src.human_timestamp, src.agent_timestamp, ctx.started_at, '') AS context_time`,
+			fmt.Sprintf(" LEFT JOIN %s.sessions ctx ON ctx.session_id = src.session_id", alias)
+	case "thinking_blocks":
+		if !d.hasTable("sessions") {
+			return empty, ""
+		}
+		return `, COALESCE(ctx.title,'') AS context_title, COALESCE(ctx.project,'') AS context_project, COALESCE(ctx.started_at,'') AS context_time`,
+			fmt.Sprintf(" LEFT JOIN %s.sessions ctx ON ctx.session_id = src.session_id", alias)
+	case "memories":
+		if !d.hasTable("sessions") {
+			return `, COALESCE(src.project,'') AS context_title, '' AS context_project, COALESCE(src.created_at,'') AS context_time`, ""
+		}
+		return `, COALESCE(ctx.title, src.project, '') AS context_title, COALESCE(ctx.project,'') AS context_project, COALESCE(src.created_at, ctx.started_at, '') AS context_time`,
+			fmt.Sprintf(" LEFT JOIN %s.sessions ctx ON ctx.session_id = src.source_session", alias)
+	default:
+		return empty, ""
+	}
+}
+
+func declaredColumnSelect(alias string, columns []string) string {
+	var b strings.Builder
+	prefix := ""
+	if alias != "" {
+		prefix = alias + "."
+	}
+	for _, column := range columns {
+		b.WriteString(", CAST(")
+		b.WriteString(prefix)
+		b.WriteString(quoteIdentifier(column))
+		b.WriteString(" AS TEXT) AS ")
+		b.WriteString(quoteIdentifier(column))
+	}
+	return b.String()
+}
+
+func declaredNonEmptyPredicate(alias string, columns []string) string {
+	parts := make([]string, len(columns))
+	prefix := ""
+	if alias != "" {
+		prefix = alias + "."
+	}
+	for index, column := range columns {
+		parts[index] = fmt.Sprintf("trim(COALESCE(CAST(%s%s AS TEXT),'')) <> ''",
+			prefix, quoteIdentifier(column))
+	}
+	if len(parts) == 0 {
+		return "1=1"
+	}
+	return strings.Join(parts, " OR ")
 }
 
 func (d DeclaredCorpus) table(name string) (vectorTable, bool) {
@@ -643,14 +758,6 @@ func (d DeclaredCorpus) table(name string) (vectorTable, bool) {
 func (d DeclaredCorpus) hasTable(name string) bool {
 	_, ok := d.table(name)
 	return ok
-}
-
-func declaredTextExpression(columns []string) string {
-	parts := make([]string, len(columns))
-	for index, column := range columns {
-		parts[index] = fmt.Sprintf("COALESCE(CAST(%s AS TEXT),'')", quoteIdentifier(column))
-	}
-	return "trim(" + strings.Join(parts, " || char(10) || char(10) || ") + ")"
 }
 
 var errSidecarChanged = errors.New("sidecar source changed")
@@ -710,10 +817,14 @@ func (d vectorDatabase) contractFingerprint() string {
 }
 
 func (t vectorTable) contractFingerprint() string {
-	fields := []string{declaredReaderVersion, t.Name, t.IDColumn}
+	fields := []string{declaredReaderVersion, chunkPolicyVersion, t.Name, t.IDColumn, "per-column"}
 	fields = append(fields, t.TextColumns...)
-	size, overlap := t.chunking()
-	fields = append(fields, strconv.Itoa(size), strconv.Itoa(overlap))
+	if t.Chunking != nil && (t.Chunking.MaxChars != nil || t.Chunking.OverlapChars != nil) {
+		size, overlap := t.chunking()
+		fields = append(fields, "chars", strconv.Itoa(size), strconv.Itoa(overlap))
+	} else {
+		fields = append(fields, "tokens", strconv.Itoa(defaultChunkTokens), strconv.Itoa(defaultOverlapTokens))
+	}
 	return incrementality.ContentFingerprint(fields...)
 }
 
@@ -793,7 +904,7 @@ func assertSidecarOwner(path, owner string) error {
 		if schemaErr := store.QueryRow(`SELECT value FROM meta WHERE key='schema'`).Scan(&schema); schemaErr != nil || schema != vectorStorageSchema {
 			return fmt.Errorf("existing sidecar for %s is not an owned or interrupted vector index", owner)
 		}
-		if _, schemaErr := store.Exec(`SELECT id,source_kind,source_id,chunk_index,fingerprint,locator,updated_at FROM chunks LIMIT 0`); schemaErr != nil {
+		if _, schemaErr := store.Exec(`SELECT id,source_kind,source_id,text_column,chunk_index,fingerprint,locator,updated_at FROM chunks LIMIT 0`); schemaErr != nil {
 			return fmt.Errorf("existing sidecar for %s is not an owned or interrupted vector index", owner)
 		}
 		return nil
