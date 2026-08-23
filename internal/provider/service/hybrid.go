@@ -84,6 +84,7 @@ type searchSurface struct {
 	Table       string
 	IDColumn    string
 	TextColumns []string
+	Columns     []string
 	FTSTable    string
 }
 
@@ -161,6 +162,12 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResult, 
 	} else {
 		result.Notices = append(result.Notices,
 			"vector index is not installed; continuing with FTS-only")
+	}
+	if len(result.Engines) == 0 && len(surfaces) > 0 {
+		// A zero-DF query has no MATCH expression to execute. When vectors are
+		// unavailable, still name FTS as the active degradation path so an empty
+		// machine-readable envelope does not report an unknown search engine.
+		result.Engines = append(result.Engines, search.LegFTS)
 	}
 
 	fused := search.FuseRRF(vectorDocs, ftsDocs, search.RRFK)
@@ -272,7 +279,7 @@ func surfacesFromTables(database, schema string, tables []plugin.Table, vectors 
 		surfaces = append(surfaces, searchSurface{
 			Database: database, Schema: schema, Table: vector.Name,
 			IDColumn: vector.IDColumn, TextColumns: append([]string(nil), vector.TextColumns...),
-			FTSTable: fts.Name,
+			Columns: append([]string(nil), sourceColumns(tables, vector.Name)...), FTSTable: fts.Name,
 		})
 	}
 	if len(vectors) > 0 {
@@ -289,10 +296,19 @@ func surfacesFromTables(database, schema string, tables []plugin.Table, vectors 
 		surfaces = append(surfaces, searchSurface{
 			Database: database, Schema: schema, Table: source.Name,
 			IDColumn: inferIDColumn(source.Columns), TextColumns: append([]string(nil), table.Columns...),
-			FTSTable: table.Name,
+			Columns: append([]string(nil), source.Columns...), FTSTable: table.Name,
 		})
 	}
 	return surfaces
+}
+
+func sourceColumns(tables []plugin.Table, name string) []string {
+	for _, table := range tables {
+		if !table.FTS5 && table.Name == name {
+			return table.Columns
+		}
+	}
+	return nil
 }
 
 func findFTSTable(tables []plugin.Table, source string, textColumns []string) (plugin.Table, bool) {
@@ -467,14 +483,19 @@ func ftsBranch(surface searchSurface, match string) string {
 	alias := "s"
 	fts := qualified(surface.Schema, surface.FTSTable)
 	source := qualified(surface.Schema, surface.Table)
+	current := ""
+	if columnsCovered([]string{surface.IDColumn, "supersedes"}, surface.Columns) {
+		current = fmt.Sprintf(" WHERE %s.%s NOT IN (SELECT %s FROM %s WHERE %s IS NOT NULL)",
+			alias, quoteIdent(surface.IDColumn), quoteIdent("supersedes"), source, quoteIdent("supersedes"))
+	}
 	return fmt.Sprintf(
 		"SELECT %s AS database, %s AS \"table\", CAST(%s.%s AS TEXT) AS id, %s AS snippet, f.rango AS rango "+
 			"FROM (SELECT rowid AS fila, bm25(%s) AS rango FROM %s WHERE %s MATCH %s) AS f "+
-			"JOIN %s AS %s ON %s.rowid = f.fila",
+			"JOIN %s AS %s ON %s.rowid = f.fila%s",
 		sqlString(surface.Database), sqlString(surface.Table),
 		alias, quoteIdent(surface.IDColumn), snippetExpr(alias, surface.TextColumns),
 		quoteIdent(surface.FTSTable), fts, quoteIdent(surface.FTSTable), sqlString(match),
-		source, alias, alias)
+		source, alias, alias, current)
 }
 
 func snippetExpr(alias string, columns []string) string {

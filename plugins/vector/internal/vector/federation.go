@@ -54,6 +54,7 @@ type vectorTable struct {
 	Name        string         `json:"name"`
 	IDColumn    string         `json:"id_column"`
 	TextColumns []string       `json:"text_columns"`
+	Columns     []string       `json:"columns,omitempty"`
 	Chunking    *chunkingHints `json:"chunking,omitempty"`
 }
 
@@ -180,6 +181,26 @@ func validateRegistry(registry vectorRegistry) error {
 						owner, table.Name, column)
 				}
 				seenColumns[column] = true
+			}
+			catalogColumns := map[string]bool{}
+			for _, column := range table.Columns {
+				if !validIdentifier(column) || catalogColumns[column] {
+					return fmt.Errorf("vector registry table %s/%s has invalid catalog column %q",
+						owner, table.Name, column)
+				}
+				catalogColumns[column] = true
+			}
+			if len(catalogColumns) > 0 {
+				if !catalogColumns[table.IDColumn] {
+					return fmt.Errorf("vector registry table %s/%s catalog omits id column %q",
+						owner, table.Name, table.IDColumn)
+				}
+				for _, column := range table.TextColumns {
+					if !catalogColumns[column] {
+						return fmt.Errorf("vector registry table %s/%s catalog omits text column %q",
+							owner, table.Name, column)
+					}
+				}
 			}
 			if err := validateChunking(table.Chunking); err != nil {
 				return fmt.Errorf("vector registry table %s/%s: %w", owner, table.Name, err)
@@ -680,10 +701,14 @@ func (d DeclaredCorpus) WalkSources(ctx context.Context, sourceKind string,
 		}
 		tables = []vectorTable{table}
 	}
+	catalog := make(map[string]map[string]bool, len(d.Database.Tables))
+	for _, table := range d.Database.Tables {
+		catalog[table.Name] = table.availableColumns()
+	}
 	for _, table := range tables {
 		cursor := declaredCursor{}
 		for {
-			rows, err := d.Core.query(ctx, d.pageQuery(table, cursor))
+			rows, err := d.Core.query(ctx, d.pageQuery(table, cursor, catalog))
 			if err != nil {
 				return fmt.Errorf("read declared surface %s/%s: %w", d.Database.owner(), table.Name, err)
 			}
@@ -848,13 +873,14 @@ func (d DeclaredCorpus) CountSources(ctx context.Context, sourceKind string) (in
 	return total, nil
 }
 
-func (d DeclaredCorpus) pageQuery(table vectorTable, cursor declaredCursor) string {
+func (d DeclaredCorpus) pageQuery(table vectorTable, cursor declaredCursor,
+	catalog map[string]map[string]bool) string {
 	bound := ""
 	if cursor.valid {
 		bound = fmt.Sprintf(" AND (context_time<%s OR (context_time=%s AND source_id<%s))",
 			sqlLiteral(cursor.time), sqlLiteral(cursor.time), sqlLiteral(cursor.id))
 	}
-	contextSQL, join := d.contextSQL(table.Name)
+	contextSQL, join := d.contextSQL(table, catalog)
 	return fmt.Sprintf(`WITH vector_rows AS (
 		SELECT CAST(src.%s AS TEXT) AS source_id%s%s FROM %s.%s src%s
 		WHERE src.%s IS NOT NULL
@@ -865,33 +891,86 @@ func (d DeclaredCorpus) pageQuery(table vectorTable, cursor declaredCursor) stri
 		quoteIdentifier(table.IDColumn), bound, walkPageSize)
 }
 
-func (d DeclaredCorpus) contextSQL(tableName string) (string, string) {
+func (d DeclaredCorpus) contextSQL(table vectorTable,
+	catalog map[string]map[string]bool) (string, string) {
 	empty := `, '' AS context_title, '' AS context_project, '' AS context_time`
 	alias := quoteIdentifier(d.Database.Alias)
-	switch tableName {
+	columns := catalog[table.Name]
+	switch table.Name {
 	case "sessions":
-		return `, COALESCE(src.title,'') AS context_title, COALESCE(src.project,'') AS context_project, COALESCE(src.started_at,'') AS context_time`, ""
+		return fmt.Sprintf(`, %s AS context_title, %s AS context_project, %s AS context_time`,
+			coalesceDeclared(columns, "src", "title"),
+			coalesceDeclared(columns, "src", "project"),
+			coalesceDeclared(columns, "src", "started_at")), ""
 	case "exchanges":
-		if !d.hasTable("sessions") {
-			return `, '' AS context_title, '' AS context_project, COALESCE(src.human_timestamp, src.agent_timestamp, '') AS context_time`, ""
+		sessions, hasSessions := d.table("sessions")
+		sessionColumns := catalog["sessions"]
+		occurred := coalesceDeclared(columns, "src", "human_timestamp", "agent_timestamp")
+		if !hasSessions || !columns["session_id"] || !sessionColumns[sessions.IDColumn] {
+			return fmt.Sprintf(`, '' AS context_title, '' AS context_project, %s AS context_time`, occurred), ""
 		}
-		return `, COALESCE(ctx.title,'') AS context_title, COALESCE(ctx.project,'') AS context_project, COALESCE(src.human_timestamp, src.agent_timestamp, ctx.started_at, '') AS context_time`,
-			fmt.Sprintf(" LEFT JOIN %s.sessions ctx ON ctx.session_id = src.session_id", alias)
+		return fmt.Sprintf(`, %s AS context_title, %s AS context_project, %s AS context_time`,
+				coalesceDeclared(sessionColumns, "ctx", "title"),
+				coalesceDeclared(sessionColumns, "ctx", "project"),
+				coalesceDeclaredPair(columns, "src", []string{"human_timestamp", "agent_timestamp"},
+					sessionColumns, "ctx", []string{"started_at"})),
+			fmt.Sprintf(" LEFT JOIN %s.%s ctx ON ctx.%s = src.%s", alias,
+				quoteIdentifier(sessions.Name), quoteIdentifier(sessions.IDColumn), quoteIdentifier("session_id"))
 	case "thinking_blocks":
-		if !d.hasTable("sessions") {
+		sessions, hasSessions := d.table("sessions")
+		sessionColumns := catalog["sessions"]
+		if !hasSessions || !columns["session_id"] || !sessionColumns[sessions.IDColumn] {
 			return empty, ""
 		}
-		return `, COALESCE(ctx.title,'') AS context_title, COALESCE(ctx.project,'') AS context_project, COALESCE(ctx.started_at,'') AS context_time`,
-			fmt.Sprintf(" LEFT JOIN %s.sessions ctx ON ctx.session_id = src.session_id", alias)
+		return fmt.Sprintf(`, %s AS context_title, %s AS context_project, %s AS context_time`,
+				coalesceDeclared(sessionColumns, "ctx", "title"),
+				coalesceDeclared(sessionColumns, "ctx", "project"),
+				coalesceDeclared(sessionColumns, "ctx", "started_at")),
+			fmt.Sprintf(" LEFT JOIN %s.%s ctx ON ctx.%s = src.%s", alias,
+				quoteIdentifier(sessions.Name), quoteIdentifier(sessions.IDColumn), quoteIdentifier("session_id"))
 	case "memories":
-		if !d.hasTable("sessions") {
-			return `, COALESCE(src.project,'') AS context_title, '' AS context_project, COALESCE(src.created_at,'') AS context_time`, ""
+		sessions, hasSessions := d.table("sessions")
+		sessionColumns := catalog["sessions"]
+		if !hasSessions || !columns["source_session"] || !sessionColumns[sessions.IDColumn] {
+			return fmt.Sprintf(`, %s AS context_title, '' AS context_project, %s AS context_time`,
+				coalesceDeclared(columns, "src", "project"),
+				coalesceDeclared(columns, "src", "created_at")), ""
 		}
-		return `, COALESCE(ctx.title, src.project, '') AS context_title, COALESCE(ctx.project,'') AS context_project, COALESCE(src.created_at, ctx.started_at, '') AS context_time`,
-			fmt.Sprintf(" LEFT JOIN %s.sessions ctx ON ctx.session_id = src.source_session", alias)
+		return fmt.Sprintf(`, %s AS context_title, %s AS context_project, %s AS context_time`,
+				coalesceDeclaredPair(sessionColumns, "ctx", []string{"title"},
+					columns, "src", []string{"project"}),
+				coalesceDeclared(sessionColumns, "ctx", "project"),
+				coalesceDeclaredPair(columns, "src", []string{"created_at"},
+					sessionColumns, "ctx", []string{"started_at"})),
+			fmt.Sprintf(" LEFT JOIN %s.%s ctx ON ctx.%s = src.%s", alias,
+				quoteIdentifier(sessions.Name), quoteIdentifier(sessions.IDColumn), quoteIdentifier("source_session"))
 	default:
 		return empty, ""
 	}
+}
+
+func coalesceDeclared(columns map[string]bool, alias string, names ...string) string {
+	return coalesceDeclaredPair(columns, alias, names, nil, "", nil)
+}
+
+func coalesceDeclaredPair(first map[string]bool, firstAlias string, firstNames []string,
+	second map[string]bool, secondAlias string, secondNames []string) string {
+	values := make([]string, 0, len(firstNames)+len(secondNames)+1)
+	for _, name := range firstNames {
+		if first[name] {
+			values = append(values, firstAlias+"."+quoteIdentifier(name))
+		}
+	}
+	for _, name := range secondNames {
+		if second[name] {
+			values = append(values, secondAlias+"."+quoteIdentifier(name))
+		}
+	}
+	values = append(values, "''")
+	if len(values) == 1 {
+		return values[0]
+	}
+	return "COALESCE(" + strings.Join(values, ", ") + ")"
 }
 
 func declaredColumnSelect(alias string, columns []string) string {
@@ -999,6 +1078,10 @@ func (d vectorDatabase) contractFingerprint() string {
 func (t vectorTable) contractFingerprint() string {
 	fields := []string{declaredReaderVersion, chunkPolicyVersion, t.Name, t.IDColumn, "per-column"}
 	fields = append(fields, t.TextColumns...)
+	if len(t.Columns) > 0 {
+		fields = append(fields, "catalog")
+		fields = append(fields, t.Columns...)
+	}
 	if t.Chunking != nil && (t.Chunking.MaxChars != nil || t.Chunking.OverlapChars != nil) {
 		size, overlap := t.chunking()
 		fields = append(fields, "chars", strconv.Itoa(size), strconv.Itoa(overlap))
@@ -1006,6 +1089,18 @@ func (t vectorTable) contractFingerprint() string {
 		fields = append(fields, "tokens", strconv.Itoa(defaultChunkTokens), strconv.Itoa(defaultOverlapTokens))
 	}
 	return incrementality.ContentFingerprint(fields...)
+}
+
+func (t vectorTable) availableColumns() map[string]bool {
+	columns := make(map[string]bool, len(t.Columns)+len(t.TextColumns)+1)
+	for _, column := range t.Columns {
+		columns[column] = true
+	}
+	columns[t.IDColumn] = true
+	for _, column := range t.TextColumns {
+		columns[column] = true
+	}
+	return columns
 }
 
 func (t vectorTable) chunking() (int, int) {
