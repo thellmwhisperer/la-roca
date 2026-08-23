@@ -107,7 +107,7 @@ has no automatic expiry, and its retention policy cannot prune corpus or cron.
 fields are `command` plus `flags` for CLI and `tool` for MCP:
 
 ```json
-{"timestamp":"2026-08-12T10:30:00Z","source":"mcp","tool":"roca_query","args":{"query":"find the synthetic lighthouse"},"ok":false,"error":"the generated SQL was rejected","error_type":"invalid_sql","duration_ms":184,"question":"find the synthetic lighthouse","sql":"SELECT missing FROM memories","model_sql":"SELECT missing FROM memories","sql_provider":"codex","sql_model":"gpt-synthetic","row_count":0,"fallback_reason":"invalid_sql","retry_type":"gate_rejection","retry_reason":"no such column: missing","correlation_id":"qf_0123456789abcdef"}
+{"timestamp":"2026-08-12T10:30:00Z","source":"mcp","tool":"roca_sql","args":{"query":"find the synthetic lighthouse"},"ok":false,"error":"the generated SQL was rejected","error_type":"invalid_sql","duration_ms":184,"question":"find the synthetic lighthouse","sql":"SELECT missing FROM memories","model_sql":"SELECT missing FROM memories","sql_provider":"codex","sql_model":"gpt-synthetic","row_count":0,"fallback_reason":"invalid_sql","retry_type":"gate_rejection","retry_reason":"no such column: missing","correlation_id":"qf_0123456789abcdef"}
 ```
 
 The additive `call_id` is the durable ops identity: it equals the correlation ID
@@ -140,14 +140,16 @@ The stable fields are:
   plugin's own non-zero exit: its arguments, streams and exit status cross the
   plugin seam untouched, so its ID is read back from the log through
   `roca doctor` rather than written into output the plugin owns.
-- Query calls add `question`, `sql`, `model_sql`, `sql_provider`, `sql_model`,
-  phase timings, and any `degraded`, `fallback_reason`, `retry_reason`, provider
-  note, or `queryplan`. `sql` is the cleaned model-generated statement,
+- Model-written SQL calls add `question`, `sql`, `model_sql`, `sql_provider`,
+  `sql_model`, phase timings, and any `degraded`, `fallback_reason`,
+  `retry_reason`, provider note, or `queryplan`. `sql` is the cleaned
+  model-generated statement,
   including when a deterministic rescue later answers the call. `model_sql` is
   the model's exact answer; `raw_sql` remains its compatibility alias when that
   answer differs from `sql`. The provider field names match the query result
   envelope; they do not depend on memory authorship schema changes.
-- Both query surfaces record route and retry provenance at the top level:
+- The CLI and MCP model-written SQL surfaces record route and retry provenance
+  at the top level:
   `path`, `retried`, `retried_sql`, `retry_type`, `model_sql`, the failed
   `first_model_sql`, and the `sql_retry_inference_ms` and
   `sql_retry_provider_latency_ms` subsets of the SQL phase. A degraded query

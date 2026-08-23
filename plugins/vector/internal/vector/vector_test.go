@@ -125,6 +125,39 @@ func TestStableSourceIDsUseCoreNaturalKeys(t *testing.T) {
 	}
 }
 
+func TestQueryKeepsTheSameRawIDAcrossSourceTables(t *testing.T) {
+	corpus := &memoryCorpus{sources: []sourceRow{
+		{kind: "memories", sourceID: "1", text: "alpha memory"},
+		{kind: "exchanges", sourceID: "1", text: "alpha exchange"},
+	}}
+	path := filepath.Join(t.TempDir(), "vector.db")
+	index := Index{Corpus: corpus, VectorPath: path, Model: DefaultModel,
+		Embedder: &recordingEmbedder{}, Database: "corpus"}
+	if _, err := index.Ingest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	db := openTestSQLite(t, path)
+	if _, err := db.Exec(`UPDATE chunks SET source_id='1'`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := index.Query(context.Background(), "alpha", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tables := map[string]bool{}
+	for _, result := range results {
+		tables[result.Table] = true
+	}
+	if !tables["memories"] || !tables["exchanges"] {
+		t.Fatalf("same-id results = %+v", results)
+	}
+}
+
 func TestDivergentFederatedVersionsStaySeparateAndIdempotent(t *testing.T) {
 	sources := []sourceRow{
 		{kind: "sessions", sessionID: "shared", text: "alpha session"},

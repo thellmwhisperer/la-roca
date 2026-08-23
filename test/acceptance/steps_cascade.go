@@ -177,7 +177,7 @@ func (m *world) rowsEqualToTheDirectQuery() error {
 	if question == "" {
 		return fmt.Errorf("I do not know what question was asked before: %q", m.previous.command)
 	}
-	if _, err := m.runWith("roca query "+question, []string{"query", question, "--json"}); err != nil {
+	if _, err := m.runWith("roca playground "+question, []string{"playground", question, "--json"}); err != nil {
 		return err
 	}
 	direct, err := m.json()

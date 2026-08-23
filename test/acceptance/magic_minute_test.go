@@ -22,10 +22,10 @@ import (
 //  1. copy the binary onto the PATH (installing IS copying one file)
 //  2. `roca init`: create the explicit database, read the detected source families off the
 //     disk, gate model-authored SQL and index what was found
-//  3. ask the first question and get rows back
+//  3. ask the first question and get a labeled search envelope back
 //
 // The timed query is not decoration in this test. An installation that answers in
-// forty seconds and cannot say whether its search is any good is half a
+// forty seconds and cannot say which search engine answered is half a
 // product, and the query step makes the answer measurable
 // from day one.
 const theMagicMinute = time.Minute
@@ -84,15 +84,16 @@ func TestTheMagicMinute(t *testing.T) {
 		t.Errorf("init read no file of the seeded corpus: %v", bootstrap["ingest"])
 	}
 
-	// And the answer itself. The model is off for this measurement, so the
-	// honest answer is unresolved: what matters is that the query completed and
-	// declared its path, not that it returned rows it had no model to find.
+	// And the answer itself. Vectors are off for this measurement, so the honest
+	// answer may be empty: what matters is that the query completed and declared
+	// the deterministic engine it used, not that it invented a match.
 	var answer map[string]any
 	if err := json.Unmarshal([]byte(m.last.stdout), &answer); err != nil {
 		t.Fatalf("the answer is not JSON: %v\n%s", err, m.last.stdout)
 	}
-	if path := text(answer, "path"); path == "" {
-		t.Fatalf("the first question came back with no path: %v", answer)
+	engines, ok := answer["engines"].([]any)
+	if !ok || len(engines) == 0 {
+		t.Fatalf("the first question came back with no search engine: %v", answer)
 	}
 
 	if total > theMagicMinute {

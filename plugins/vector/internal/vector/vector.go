@@ -51,6 +51,15 @@ type Corpus interface {
 	ResolveSource(context.Context, string, locator) (string, error)
 }
 
+type sourceLookup struct {
+	kind  string
+	where locator
+}
+
+type batchCorpus interface {
+	ResolveSources(context.Context, []sourceLookup) (map[string]string, error)
+}
+
 type Delta struct {
 	Added     int `json:"added"`
 	Updated   int `json:"updated"`
@@ -336,10 +345,29 @@ func validateSourceKind(sourceKind string, declared map[string]bool) error {
 }
 
 func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) {
+	return i.queryTexts(ctx, []string{text}, k, 0, true)
+}
+
+func (i Index) QueryExpanded(ctx context.Context, text string, k int, minScore float64) ([]Result, error) {
+	return i.queryTexts(ctx, ExpandedQueries(text), k, minScore, false)
+}
+
+func (i Index) queryTexts(ctx context.Context, texts []string, k int,
+	minScore float64, trimToK bool) ([]Result, error) {
 	if err := i.validate(); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(text) == "" {
+	cleaned := make([]string, 0, len(texts))
+	seenText := map[string]bool{}
+	for _, text := range texts {
+		text = strings.TrimSpace(text)
+		if text == "" || seenText[text] {
+			continue
+		}
+		seenText[text] = true
+		cleaned = append(cleaned, text)
+	}
+	if len(cleaned) == 0 {
 		return nil, fmt.Errorf("semantic query is empty")
 	}
 	if k < 1 || k > 100 {
@@ -362,14 +390,29 @@ func (i Index) Query(ctx context.Context, text string, k int) ([]Result, error) 
 	if model == "" || dimensions == 0 {
 		return nil, fmt.Errorf("vector index is not ready; run `roca vector install`")
 	}
-	vectors, err := i.Embedder.Embed(ctx, model, []string{QueryPrefix + text})
+	inputs := make([]string, len(cleaned))
+	for index, text := range cleaned {
+		inputs[index] = QueryPrefix + text
+	}
+	vectors, err := i.Embedder.Embed(ctx, model, inputs)
 	if err != nil {
 		return nil, err
 	}
-	if len(vectors) != 1 || len(vectors[0]) != dimensions {
-		return nil, fmt.Errorf("query embedding has the wrong dimensions")
+	if len(vectors) != len(inputs) {
+		return nil, fmt.Errorf("embedding provider returned no query vector")
 	}
-	return i.queryVector(ctx, store, vectors[0], k)
+	var results []Result
+	for _, embedding := range vectors {
+		if len(embedding) != dimensions {
+			return nil, fmt.Errorf("query embedding has the wrong dimensions")
+		}
+		hits, err := i.queryVector(ctx, store, embedding, k)
+		if err != nil {
+			return nil, err
+		}
+		results = unionFederatedHits(results, filterVectorFloor(hits, minScore))
+	}
+	return finishFederatedHits(results, k, trimToK), nil
 }
 
 func (i Index) queryVector(ctx context.Context, store *sql.DB, embedding []float32, k int) ([]Result, error) {
@@ -382,15 +425,41 @@ func (i Index) queryVector(ctx context.Context, store *sql.DB, embedding []float
 	}
 	results := make([]Result, 0, k)
 	seen := map[string]bool{}
-	misses := 0
-	for _, candidate := range candidates {
-		if seen[candidate.sourceID] {
-			continue
+	resolved := map[string]string(nil)
+	if corpus, ok := i.Corpus.(batchCorpus); ok {
+		lookups := make([]sourceLookup, 0, min(len(candidates), k+maxUnresolvedCandidates-1))
+		queued := map[string]bool{}
+		for _, candidate := range candidates {
+			key := sourceLookupKey(candidate.kind, candidate.where.SourceID)
+			if queued[key] {
+				continue
+			}
+			queued[key] = true
+			lookups = append(lookups, sourceLookup{kind: candidate.kind, where: candidate.where})
+			if len(lookups) == k+maxUnresolvedCandidates-1 {
+				break
+			}
 		}
-		seen[candidate.sourceID] = true
-		body, err := i.Corpus.ResolveSource(ctx, candidate.kind, candidate.where)
+		resolved, err = corpus.ResolveSources(ctx, lookups)
 		if err != nil {
 			return nil, err
+		}
+	}
+	misses := 0
+	for _, candidate := range candidates {
+		key := candidate.kind + "\x00" + candidate.sourceID
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		var body string
+		if resolved != nil {
+			body = resolved[sourceLookupKey(candidate.kind, candidate.where.SourceID)]
+		} else {
+			body, err = i.Corpus.ResolveSource(ctx, candidate.kind, candidate.where)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if body == "" {
 			misses++
@@ -413,6 +482,10 @@ func (i Index) queryVector(ctx context.Context, store *sql.DB, embedding []float
 		}
 	}
 	return results, nil
+}
+
+func sourceLookupKey(kind, sourceID string) string {
+	return kind + "\x00" + sourceID
 }
 
 func (i Index) waitingForIndex(path string) {

@@ -41,11 +41,11 @@ later it is answering questions about everything your agents ever did:
 $ curl -fsSL https://raw.githubusercontent.com/thellmwhisperer/la-roca/main/install.sh | sh
 $ roca init
 $ roca skill install codex   # or claude, opencode, pi, hermes: your runtime
-$ roca query --full "what did we decide about the retention window"
-SQL · codex · gpt-5.6-luna · 3.1 s / search · 2 ms / answer · 9.8 s
-
-You decided it on 2 August: operational logs keep 30 days, in dated streams.
-Your own words that night: "30 days and out. I do not want eternal logs."
+$ roca query "what did we decide about the retention window"
+search hybrid · engines fts,vector · 24 ms
+terms[2]: retention, window
+rows[1]{rank,source,legs,consensus,snippet}:
+  1,corpus.memories.202,vector+fts,true,"30 days and out. I do not want eternal logs."
 ```
 
 If an already signed-in agent CLI is on `PATH` (`claude`, `codex`, ...),
@@ -110,8 +110,9 @@ roca exec "SELECT source_agent, COUNT(*) FROM sessions
            WHERE started_at LIKE '2026-07%' GROUP BY 1 ORDER BY 2 DESC"
 ```
 
-`roca query` compiles your question into one checked `SELECT` and shows it.
-`roca explore` turns the same machinery into a guided investigation.
+`roca query` searches with deterministic full-text and optional vector fusion.
+`roca playground` compiles a question into one checked `SELECT`, while
+`roca explore` turns that model-backed machinery into a guided investigation.
 [Queries, explore, and the read-only gate.](docs/queries.md)
 
 ### Compare rocks across machines
@@ -146,11 +147,11 @@ incremental, idempotent, read-only against live stores.
 
 - **One normalized schema.** Sessions, exchanges, thinking, tool calls, and
   curated memory layers, the same shape for every runtime.
-- **A query is two inferences.** The first sees the schema, never your rows,
-  and writes one `SELECT`. The second sees only result rows. Either can be
-  a local model.
-- **Exact retrieval.** SQL plus FTS5 with diacritic folding; opt-in local
-  vectors for meaning; honest fallbacks that say so.
+- **Query is deterministic hybrid retrieval.** Rare-term FTS and optional local
+  vectors fuse into labeled evidence without an answering-model pass.
+- **The playground keeps model-written SQL.** With `--full`, the first model
+  sees the schema and writes one `SELECT`; the second sees only result rows.
+  Either can be local.
 - **Extensible.** [Plugins](docs/plugins.md) federate your own SQLite
   databases into the same query surface: a checksummed package, one consent
   screen, and your team's sources answer next to the corpus.

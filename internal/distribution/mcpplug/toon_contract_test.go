@@ -71,8 +71,8 @@ func TestQueryThroughThePlugRendersTheRouteLineNotAJSONDump(t *testing.T) {
 	})
 	text := renderedText(result)
 
-	if !strings.Contains(text, "route ") {
-		t.Errorf("the route narration is missing:\n%s", text)
+	if !strings.Contains(text, "search ") {
+		t.Errorf("the hybrid search narration is missing:\n%s", text)
 	}
 	if looksLikeJSONDump(text) {
 		t.Errorf("the readable half is a JSON dump, not AXI TOON:\n%s", text)
