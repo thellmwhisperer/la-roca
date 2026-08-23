@@ -55,7 +55,7 @@ func TestObserveCallsIgnoresUnknownKinds(t *testing.T) {
 }
 
 func TestObserveCallsEmitsPiBashAsCommandThenResult(t *testing.T) {
-	content := []byte(`{"type":"message","id":"m1","timestamp":"2026-08-01T10:00:01Z","message":{"role":"bashExecution","command":"echo hi","content":"hi\n"}}` + "\n")
+	content := []byte(`{"type":"message","id":"m1","timestamp":"2026-08-01T10:00:01Z","message":{"role":"bashExecution","command":"echo hi","output":"hi\n"}}` + "\n")
 	events := ObserveCalls(KindPiSession, content)
 	if len(events) != 2 {
 		t.Fatalf("events = %#v, want a call and a result", events)

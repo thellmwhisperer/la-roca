@@ -162,6 +162,9 @@ func parseTabCreate(raw []byte) (tabID, paneID string, err error) {
 	if envelope.Result.Tab.TabID == "" {
 		return "", "", fmt.Errorf("Herdr tab create did not return a tab id")
 	}
+	if envelope.Result.RootPane.PaneID == "" {
+		return "", "", fmt.Errorf("Herdr tab create did not return a root pane id")
+	}
 	return envelope.Result.Tab.TabID, envelope.Result.RootPane.PaneID, nil
 }
 

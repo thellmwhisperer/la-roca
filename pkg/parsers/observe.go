@@ -215,6 +215,10 @@ func observePi(content []byte) []CallEvent {
 			}
 			command := strings.TrimSpace(entry.Message.Command)
 			id := "bash:" + entry.ID
+			output := strings.TrimSpace(entry.Message.Output)
+			if output == "" {
+				output = piContentText(entry.Message.Content)
+			}
 			events = append(events, CallEvent{
 				Timestamp: stamp,
 				ID:        id,
@@ -227,7 +231,7 @@ func observePi(content []byte) []CallEvent {
 				ID:        id,
 				Name:      "bash",
 				Command:   command,
-				Output:    piContentText(entry.Message.Content),
+				Output:    output,
 				IsResult:  true,
 			})
 		}

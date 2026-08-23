@@ -79,6 +79,19 @@ func TestOpenWindowFallsBackToTheTerminal(t *testing.T) {
 				return nil, fmt.Errorf("herdr did not answer")
 			},
 		},
+		{
+			name:     "herdr tab create omits the root pane id",
+			lookPath: func(string) (string, bool) { return "/bin/herdr", true },
+			runner: func(_ context.Context, name string, args ...string) ([]byte, error) {
+				if len(args) >= 2 && args[0] == "workspace" && args[1] == "list" {
+					return herdrListJSON(t, []Workspace{{ID: "wCap", Label: HumanWorkspaceLabel}}), nil
+				}
+				if len(args) >= 2 && args[0] == "tab" && args[1] == "create" {
+					return []byte(`{"result":{"tab":{"tab_id":"wCap:t9"}}}`), nil
+				}
+				return nil, fmt.Errorf("unexpected herdr %q %v", name, args)
+			},
+		},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
