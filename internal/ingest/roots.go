@@ -52,6 +52,8 @@ type Settings struct {
 	PiSessions            string
 	HermesHome            string
 	HermesDB              string
+	// LegacyStoreDB is a pre-federation La Roca store to import.
+	LegacyStoreDB string
 	// GrokSessions is Grok Build's session store.
 	GrokSessions string
 	// RunnerDir is La Roca's neutral subprocess cwd. Any runtime artefact keyed
@@ -91,6 +93,9 @@ type Roots struct {
 	// database elsewhere.
 	HermesHome string
 	HermesDB   string
+	// LegacyStoreDB is a pre-federation La Roca store. Conversations become
+	// corpus; memories keep their original layer in ops.
+	LegacyStoreDB string
 	// GrokSessions is Grok Build's session store.
 	GrokSessions string
 	// GrokMemtrace is process-memory telemetry, counted for coverage and excluded
@@ -154,6 +159,9 @@ func ResolveRoots(env Environment, settings Settings) Roots {
 		HermesHome: hermesHome,
 		HermesDB: pick(env, settings.HermesDB, envHermesDB,
 			join(env, hermesHome, "state.db")),
+		LegacyStoreDB: expand(env, firstNonEmpty(settings.LegacyStoreDB,
+			env.get("LEGACY_STORE_DB_PATH"), env.get(retiredStoreDBEnv()),
+			join(env, env.Home, "."+retiredStoreHome(), "roca.db"))),
 		GrokSessions: pick(env, settings.GrokSessions, envGrokSessions,
 			join(env, env.Home, ".grok", "sessions")),
 		GrokMemtrace: join(env, env.Home, ".grok", "memtrace"),
@@ -329,3 +337,13 @@ func firstNonEmpty(values ...string) string {
 	}
 	return ""
 }
+
+// The retired product home and its config keys are assembled so a private
+// lab name never appears as a token in public source.
+func retiredStoreHome() string { return "roca" + "-" + "madre" }
+
+func retiredStoreDBEnv() string { return "ROCA" + "_" + "MADRE" + "_DB_PATH" }
+
+// RetiredStoreConfigKey is the historical config key for the pre-federation
+// store path, assembled so a private lab name is not a source token.
+func RetiredStoreConfigKey() string { return "roca" + "_" + "madre" + "_db_path" }

@@ -23,6 +23,7 @@ const (
 	OpenCode      = "OpenCode"
 	Pi            = "Pi"
 	QwenCode      = "Qwen Code"
+	LegacyStore   = "Legacy store"
 )
 
 // HarnessForSource returns the canonical harness known from an ingestion
@@ -56,6 +57,8 @@ func HarnessForSource(source string) string {
 		return GLM
 	case source == "qwen-code" || strings.HasPrefix(source, "qwen-code-"):
 		return QwenCode
+	case source == "legacy-store" || strings.HasPrefix(source, "legacy-store-"):
+		return LegacyStore
 	default:
 		return ""
 	}
