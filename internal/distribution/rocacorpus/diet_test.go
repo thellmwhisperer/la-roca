@@ -116,7 +116,8 @@ func seedFatCorpus(t *testing.T, db *sql.DB) {
 			agent_timestamp TEXT,
 			response_latency_ms INTEGER,
 			model TEXT, provider TEXT,
-			tokens_in INTEGER, tokens_out INTEGER, tokens_reasoning INTEGER, cost_usd REAL)`,
+			tokens_in INTEGER, tokens_out INTEGER, tokens_reasoning INTEGER, cost_usd REAL,
+			observed_at TEXT)`,
 		`CREATE TABLE thinking_block_versions (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			version_digest TEXT NOT NULL UNIQUE,
@@ -127,11 +128,22 @@ func seedFatCorpus(t *testing.T, db *sql.DB) {
 			caution_ratio REAL,
 			word_count INTEGER,
 			is_after_compaction INTEGER,
-			full_text TEXT)`,
-		`INSERT INTO exchange_versions (version_digest, session_id, exchange_number, human_text, agent_text)
-			VALUES ('` + strings.Repeat("a", 64) + `', 'sess-1', 1, 'diet prompt', 'diet answer')`,
-		`INSERT INTO thinking_block_versions (version_digest, session_id, exchange_number, word_count, full_text)
-			VALUES ('` + strings.Repeat("b", 64) + `', 'sess-1', 1, 2, 'diet thought')`,
+			full_text TEXT,
+			observed_at TEXT)`,
+		`INSERT INTO session_versions (version_digest, session_id, observed_at)
+			VALUES ('` + strings.Repeat("e", 64) + `', 'sess-1', '2001-02-03T04:05:06Z')`,
+		`INSERT INTO exchange_versions
+			(version_digest, session_id, exchange_number, human_text, agent_text, observed_at)
+			VALUES ('` + strings.Repeat("a", 64) + `', 'sess-1', 1, 'diet prompt', 'diet answer',
+			        '2001-02-03T04:05:06Z')`,
+		`INSERT INTO tool_use_versions
+			(version_digest, session_id, exchange_number, tool_name, observed_at)
+			VALUES ('` + strings.Repeat("f", 64) + `', 'sess-1', 1, 'Read',
+			        '2001-02-03T04:05:06Z')`,
+		`INSERT INTO thinking_block_versions
+			(version_digest, session_id, exchange_number, word_count, full_text, observed_at)
+			VALUES ('` + strings.Repeat("b", 64) + `', 'sess-1', 1, 2, 'diet thought',
+			        '2001-02-03T04:05:06Z')`,
 		`CREATE VIRTUAL TABLE exchange_versions_fts USING fts5(
 			human_text, agent_text, content='exchange_versions', content_rowid='id')`,
 		`INSERT INTO exchange_versions_fts(exchange_versions_fts) VALUES ('rebuild')`,
@@ -150,6 +162,40 @@ func seedFatCorpus(t *testing.T, db *sql.DB) {
 	for _, statement := range statements {
 		if _, err := db.Exec(statement); err != nil {
 			t.Fatal(err)
+		}
+	}
+}
+
+func TestApplySchemaPreservesVersionObservedTimes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "roca-corpus.db")
+	if err := rocacorpus.ApplySchema(path); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedFatCorpus(t, db)
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := rocacorpus.ApplySchema(path); err != nil {
+		t.Fatal(err)
+	}
+	db, err = sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, table := range []string{
+		"session_versions", "exchange_versions", "tool_use_versions", "thinking_block_versions",
+	} {
+		var observedAt string
+		if err := db.QueryRow("SELECT observed_at FROM " + table).Scan(&observedAt); err != nil {
+			t.Fatal(err)
+		}
+		if observedAt != "2001-02-03T04:05:06Z" {
+			t.Fatalf("%s observed_at = %q", table, observedAt)
 		}
 	}
 }
@@ -283,6 +329,7 @@ func TestCompactRefusesToReportMissingHashGuards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	seedFatCorpus(t, db)
 	if _, err := db.Exec(`DROP INDEX idx_sessions_exact_payload;
 		INSERT INTO sessions(session_id, source_agent, title, metadata)
 		VALUES ('duplicate-a', 'claude', 'same', '{}'),
@@ -295,4 +342,25 @@ func TestCompactRefusesToReportMissingHashGuards(t *testing.T) {
 	if _, err := rocacorpus.Compact(context.Background(), path); err == nil {
 		t.Fatal("compact reported success without every hash guard")
 	}
+	db, err = sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	assertCountQuery(t, db, `SELECT COUNT(*) FROM custody_memberships`, 1)
+	assertCountQuery(t, db, `SELECT COUNT(*) FROM corpus_source_rows`, 1)
+	assertCountQuery(t, db, `SELECT COUNT(*) FROM exchange_versions`, 1)
+	if !tableHasColumn(t, db, "exchange_versions", "human_text") {
+		t.Fatal("compact refusal rewrote the archive")
+	}
+}
+
+func tableHasColumn(t *testing.T, db *sql.DB, table, column string) bool {
+	t.Helper()
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`,
+		table, column).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	return count == 1
 }

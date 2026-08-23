@@ -160,6 +160,7 @@ func ParseSubagent(content []byte, meta FileMeta) (Records, error) {
 	// counted rather than dropped in silence, because the discard counter is what
 	// tells an operator "no exchanges" from "the file was empty".
 	pairs := min(len(humans), len(agents))
+	deferred := len(humans) + len(agents) - pairs*2
 	for _, unpaired := range humans[pairs:] {
 		discards = append(discards, Discard{Record: unpaired.record,
 			Reason: "human turn with no answer to pair it with"})
@@ -180,10 +181,10 @@ func ParseSubagent(content []byte, meta FileMeta) (Records, error) {
 		})
 	}
 	if len(session.Exchanges) == 0 {
-		return Records{Discards: discards}, nil
+		return Records{Discards: discards, Deferred: deferred}, nil
 	}
 	session.StartedAt, session.EndedAt, session.DurationMinutes = span(session.Exchanges)
-	return Records{Sessions: []Session{session}, Discards: discards}, nil
+	return Records{Sessions: []Session{session}, Discards: discards, Deferred: deferred}, nil
 }
 
 // LooksLikeSubagent decides whether a file really is a subagent transcript

@@ -42,11 +42,14 @@ func Compact(ctx context.Context, path string) (CompactReport, error) {
 	if err != nil {
 		return CompactReport{}, fmt.Errorf("stat corpus database: %w", err)
 	}
-	db, err := bundledplugin.OpenDatabase(path, true)
+	db, err := bundledplugin.OpenDatabase(path, false)
 	if err != nil {
 		return CompactReport{}, err
 	}
 	before, err := countCurrentRows(ctx, db)
+	if err == nil {
+		err = preflightHashGuards(ctx, db)
+	}
 	if closeErr := db.Close(); err != nil {
 		return CompactReport{}, err
 	} else if closeErr != nil {
@@ -144,6 +147,23 @@ func Compact(ctx context.Context, path string) (CompactReport, error) {
 	}, nil
 }
 
+func preflightHashGuards(ctx context.Context, db *sql.DB) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin hash-guard preflight: %w", err)
+	}
+	if err := exactdedup.EnsureGuards(ctx, tx); err != nil {
+		if rollbackErr := tx.Rollback(); rollbackErr != nil {
+			return fmt.Errorf("preflight hash guards: %v; rollback preflight: %w", err, rollbackErr)
+		}
+		return fmt.Errorf("preflight hash guards: %w", err)
+	}
+	if err := tx.Rollback(); err != nil {
+		return fmt.Errorf("rollback hash-guard preflight: %w", err)
+	}
+	return nil
+}
+
 func versionFTSAbsent(ctx context.Context, db *sql.DB) (bool, error) {
 	for _, table := range []string{
 		"session_versions_fts", "exchange_versions_fts", "thinking_block_versions_fts",
@@ -204,17 +224,24 @@ func applyStorageLaw(path string, dropArchive bool) (bool, error) {
 		return false, err
 	}
 	statements := storageLawPrefix
+	slimVersions := false
 	if dropArchive && bookkeeping &&
 		harvest.sessions+harvest.exchanges+harvest.thinking+harvest.tools > 0 {
 		statements = append(statements, dropArchiveStatements...)
 	} else if needed {
 		statements = append(statements, slimVersionStatements...)
+		slimVersions = true
 	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, fmt.Errorf("begin storage-law rewrite: %w", err)
 	}
 	defer tx.Rollback()
+	if slimVersions {
+		if err := prepareSlimVersionObservedAt(ctx, tx); err != nil {
+			return false, err
+		}
+	}
 	for _, statement := range statements {
 		if _, err := tx.Exec(statement); err != nil {
 			return false, fmt.Errorf("apply storage-law rewrite: %w", err)
@@ -224,6 +251,27 @@ func applyStorageLaw(path string, dropArchive bool) (bool, error) {
 		return false, fmt.Errorf("commit storage-law rewrite: %w", err)
 	}
 	return true, nil
+}
+
+func prepareSlimVersionObservedAt(ctx context.Context, tx *sql.Tx) error {
+	for _, table := range []string{
+		"session_versions", "exchange_versions", "tool_use_versions", "thinking_block_versions",
+	} {
+		columns, err := bundledplugin.TableColumns(ctx, tx, table)
+		if err != nil {
+			return fmt.Errorf("inspect %s observed time: %w", table, err)
+		}
+		if !columns["observed_at"] {
+			if _, err := tx.ExecContext(ctx, "ALTER TABLE "+table+" ADD COLUMN observed_at TEXT"); err != nil {
+				return fmt.Errorf("add %s observed time: %w", table, err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx,
+			"UPDATE "+table+" SET observed_at = datetime('now') WHERE observed_at IS NULL"); err != nil {
+			return fmt.Errorf("backfill %s observed time: %w", table, err)
+		}
+	}
+	return nil
 }
 
 func storageLawNeeded(ctx context.Context, db *sql.DB) (bool, error) {
@@ -469,11 +517,11 @@ var slimVersionStatements = []string{
   observed_at      TEXT NOT NULL DEFAULT (datetime('now'))
 )`,
 	`INSERT OR IGNORE INTO session_versions_slim
-  (id, version_digest, session_id, source_agent, source_surface, project,
-   started_at, ended_at, duration_minutes)
- SELECT id, version_digest, session_id, source_agent, source_surface, project,
-   started_at, ended_at, duration_minutes
- FROM session_versions`,
+	  (id, version_digest, session_id, source_agent, source_surface, project,
+	   started_at, ended_at, duration_minutes, observed_at)
+	 SELECT id, version_digest, session_id, source_agent, source_surface, project,
+	   started_at, ended_at, duration_minutes, observed_at
+	 FROM session_versions`,
 	`DROP TABLE IF EXISTS session_versions`,
 	`ALTER TABLE session_versions_slim RENAME TO session_versions`,
 	`CREATE INDEX IF NOT EXISTS session_versions_logical_id
@@ -497,13 +545,13 @@ var slimVersionStatements = []string{
   observed_at         TEXT NOT NULL DEFAULT (datetime('now'))
 )`,
 	`INSERT OR IGNORE INTO exchange_versions_slim
-  (id, version_digest, session_id, exchange_number, is_after_compaction,
-   human_timestamp, agent_timestamp, response_latency_ms,
-   model, provider, tokens_in, tokens_out, tokens_reasoning, cost_usd)
- SELECT id, version_digest, session_id, exchange_number, is_after_compaction,
-   human_timestamp, agent_timestamp, response_latency_ms,
-   model, provider, tokens_in, tokens_out, tokens_reasoning, cost_usd
- FROM exchange_versions`,
+	  (id, version_digest, session_id, exchange_number, is_after_compaction,
+	   human_timestamp, agent_timestamp, response_latency_ms,
+	   model, provider, tokens_in, tokens_out, tokens_reasoning, cost_usd, observed_at)
+	 SELECT id, version_digest, session_id, exchange_number, is_after_compaction,
+	   human_timestamp, agent_timestamp, response_latency_ms,
+	   model, provider, tokens_in, tokens_out, tokens_reasoning, cost_usd, observed_at
+	 FROM exchange_versions`,
 	`DROP TABLE IF EXISTS exchange_versions`,
 	`ALTER TABLE exchange_versions_slim RENAME TO exchange_versions`,
 	`CREATE INDEX IF NOT EXISTS exchange_versions_logical_key
@@ -520,9 +568,11 @@ var slimVersionStatements = []string{
   observed_at         TEXT NOT NULL DEFAULT (datetime('now'))
 )`,
 	`INSERT OR IGNORE INTO tool_use_versions_slim
-  (id, version_digest, session_id, exchange_number, tool_name, had_error, initiative_type)
- SELECT id, version_digest, session_id, exchange_number, tool_name, had_error, initiative_type
- FROM tool_use_versions`,
+	  (id, version_digest, session_id, exchange_number, tool_name, had_error, initiative_type,
+	   observed_at)
+	 SELECT id, version_digest, session_id, exchange_number, tool_name, had_error, initiative_type,
+	   observed_at
+	 FROM tool_use_versions`,
 	`DROP TABLE IF EXISTS tool_use_versions`,
 	`ALTER TABLE tool_use_versions_slim RENAME TO tool_use_versions`,
 	`CREATE INDEX IF NOT EXISTS tool_use_versions_parent
@@ -541,11 +591,11 @@ var slimVersionStatements = []string{
   observed_at         TEXT NOT NULL DEFAULT (datetime('now'))
 )`,
 	`INSERT OR IGNORE INTO thinking_block_versions_slim
-  (id, version_digest, session_id, exchange_number, position_in_session, depth,
-   caution_ratio, word_count, is_after_compaction)
- SELECT id, version_digest, session_id, exchange_number, position_in_session, depth,
-   caution_ratio, word_count, is_after_compaction
- FROM thinking_block_versions`,
+	  (id, version_digest, session_id, exchange_number, position_in_session, depth,
+	   caution_ratio, word_count, is_after_compaction, observed_at)
+	 SELECT id, version_digest, session_id, exchange_number, position_in_session, depth,
+	   caution_ratio, word_count, is_after_compaction, observed_at
+	 FROM thinking_block_versions`,
 	`DROP TABLE IF EXISTS thinking_block_versions`,
 	`ALTER TABLE thinking_block_versions_slim RENAME TO thinking_block_versions`,
 	`CREATE INDEX IF NOT EXISTS thinking_block_versions_parent

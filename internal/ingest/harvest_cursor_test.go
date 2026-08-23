@@ -302,6 +302,50 @@ func TestIncompleteGrowingSessionFallsBackToACompleteReparse(t *testing.T) {
 	assertHarvestCursorState(t, db, sessionPath, 1, true)
 }
 
+func TestIncompleteSubagentTailForcesACompleteReparse(t *testing.T) {
+	prefix := `{"type":"user","sessionId":"parent-1","agentId":"child-1","message":{"content":"pending question"}}` + "\n"
+	tail := `{"type":"user","sessionId":"parent-1","agentId":"child-1","message":{"content":"later question"}}` + "\n" +
+		`{"type":"assistant","sessionId":"parent-1","agentId":"child-1","message":{"content":"later answer"}}` + "\n"
+	path := filepath.Join(t.TempDir(), "subagents", "child-1.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(prefix), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	first := Result{}
+	_, reason := read(t.Context(), Options{}, Target{
+		Path: path, FileName: filepath.Base(path), Kind: parsers.KindSubagent,
+		SourceAgent: "claude-code",
+	}, incrementality.FileState{}, &first)
+	if reason != "" {
+		t.Fatal(reason)
+	}
+	cursor := first.harvestCursors[path]
+	if cursor.LastExchangeComplete {
+		t.Fatal("unpaired subagent tail was recorded as complete")
+	}
+	metadata, err := json.Marshal(cursor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(prefix+tail), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	second := Result{}
+	records, reason := read(t.Context(), Options{}, Target{
+		Path: path, FileName: filepath.Base(path), Kind: parsers.KindSubagent,
+		SourceAgent: "claude-code",
+	}, incrementality.FileState{Metadata: metadata}, &second)
+	if reason != "" {
+		t.Fatal(reason)
+	}
+	if len(records.Sessions) != 1 || len(records.Sessions[0].Exchanges) != 1 ||
+		records.Sessions[0].Exchanges[0].HumanText != "pending question" {
+		t.Fatalf("subagent fallback records = %+v", records)
+	}
+}
+
 func TestLineageDigestFramesEmbeddedNULBoundaries(t *testing.T) {
 	db := corpusDatabase(t)
 	write := func(human, agent string) {

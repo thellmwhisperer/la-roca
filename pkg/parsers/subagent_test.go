@@ -133,6 +133,7 @@ func TestSubagentCountsTheTurnsPositionalPairingCannotUse(t *testing.T) {
 		name      string
 		lines     []string
 		exchanges int
+		deferred  int
 		records   []int
 	}{
 		{
@@ -144,6 +145,7 @@ func TestSubagentCountsTheTurnsPositionalPairingCannotUse(t *testing.T) {
 				`{"type":"user","sessionId":"p","agentId":"c","message":{"content":"third"}}`,
 			},
 			exchanges: 1,
+			deferred:  2,
 			// The third and fourth lines are the turns nobody answered.
 			records: []int{3, 4},
 		},
@@ -153,6 +155,7 @@ func TestSubagentCountsTheTurnsPositionalPairingCannotUse(t *testing.T) {
 				`{"type":"assistant","sessionId":"p","agentId":"c","message":{"content":"unprompted"}}`,
 			},
 			exchanges: 0,
+			deferred:  1,
 			records:   []int{1},
 		},
 	} {
@@ -168,6 +171,9 @@ func TestSubagentCountsTheTurnsPositionalPairingCannotUse(t *testing.T) {
 			}
 			if got != want.exchanges {
 				t.Errorf("exchanges = %d, want %d", got, want.exchanges)
+			}
+			if records.Deferred != want.deferred {
+				t.Errorf("deferred = %d, want %d", records.Deferred, want.deferred)
 			}
 			if len(records.Discards) != len(want.records) {
 				t.Fatalf("discards = %d, want %d: %+v",
