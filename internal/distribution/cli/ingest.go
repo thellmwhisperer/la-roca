@@ -222,6 +222,11 @@ func renderIngestSources(env *cliEnv, result service.IngestResult) {
 			stats = &ingest.SourceStats{}
 		}
 		sessions := counts.Sessions + counts.SessionsUpdated
+		sessionSummary := axi.Quantity(int64(sessions), "session")
+		if counts.SessionsSkipped > 0 {
+			sessionSummary += fmt.Sprintf(" · %s skipped as already present (session_id overlap)",
+				axi.Quantity(int64(counts.SessionsSkipped), "session"))
+		}
 		// The discard count earns its place on the row only when there is one:
 		// printing "0 discarded" beside every healthy source is what taught an
 		// operator to read the row looking for bad news.
@@ -241,7 +246,7 @@ func renderIngestSources(env *cliEnv, result service.IngestResult) {
 		}
 		env.print("  ✓ %s · %s · %s · %s · %s · %s%s",
 			ingestSourceLabel(name), coverage,
-			axi.Quantity(int64(sessions), "session"),
+			sessionSummary,
 			axi.Quantity(int64(counts.Exchanges), "exchange"),
 			axi.Quantity(int64(counts.MemoriesInserted+counts.MemoriesUpdated), "memory", "memories"),
 			discarded, axi.Duration(stats.ElapsedMS))
@@ -384,9 +389,11 @@ func ingestSources(file config.File, home, runnerDir string) ingest.Roots {
 			PiSessions:            file.Default("pi_sessions_root"),
 			HermesHome:            file.Default("hermes_home"),
 			HermesDB:              file.Default("hermes_db_path"),
-			GrokSessions:          file.Default("grok_sessions_root"),
-			RunnerDir:             runnerDir,
-			WorkspaceRoots:        file.DefaultList(keyWorkspaceRoots),
-			SubagentRoots:         file.DefaultList(keySubagentRoots),
+			LegacyStoreDB: firstNonEmpty(
+				file.Default("legacy_store_db_path"), file.Default(ingest.RetiredStoreConfigKey())),
+			GrokSessions:   file.Default("grok_sessions_root"),
+			RunnerDir:      runnerDir,
+			WorkspaceRoots: file.DefaultList(keyWorkspaceRoots),
+			SubagentRoots:  file.DefaultList(keySubagentRoots),
 		})
 }

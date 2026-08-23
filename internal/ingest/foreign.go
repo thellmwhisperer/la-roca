@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 )
 
-// Two sources of the matrix are not files but databases another agent is using
-// right now: OpenCode's and Hermes's. This is how they are opened, and the two
-// rules are not negotiable: never write, and never block the agent that owns them.
+// Live foreign SQLite sources are opened without mode=ro so SQLite can read
+// their WAL shared indexes. The engine-level query_only guard still prevents
+// writes, and the short busy timeout avoids blocking the owner.
 
 // foreignBusyTimeoutMS is a quarter of a second. It is deliberately short: this
 // process is a guest in somebody else's database, and a guest that waits fifteen
@@ -24,25 +24,37 @@ const foreignBusyTimeoutMS = 250
 // reliably read a live WAL database without access to its shared index. The
 // engine-level query_only guard rejects every write statement on the connection.
 func openForeign(path string) (*sql.DB, error) {
+	return openForeignPath(context.Background(), path, false)
+}
+
+func openForeignPath(ctx context.Context, path string, readOnly bool) (*sql.DB, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("resolve %q: %w", path, err)
 	}
-	dsn := "file:" + abs + "?" + url.Values{
-		"_pragma": {
-			fmt.Sprintf("busy_timeout(%d)", foreignBusyTimeoutMS),
-			"query_only(1)",
-		},
-	}.Encode()
+	dsn := "file:" + abs + "?" + foreignSourceQuery(readOnly)
 	handle, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open %q for reading: %w", abs, err)
 	}
-	if err := handle.Ping(); err != nil {
+	if err := handle.PingContext(ctx); err != nil {
 		handle.Close()
 		return nil, fmt.Errorf("open %q for reading: %w", abs, err)
 	}
 	return handle, nil
+}
+
+func foreignSourceQuery(readOnly bool) string {
+	query := url.Values{
+		"_pragma": {
+			fmt.Sprintf("busy_timeout(%d)", foreignBusyTimeoutMS),
+			"query_only(1)",
+		},
+	}
+	if readOnly {
+		query.Set("mode", "ro")
+	}
+	return query.Encode()
 }
 
 // foreignTable is one table a source's database has to have, and the columns
@@ -55,11 +67,10 @@ type foreignTable struct {
 // openForeignSource opens another agent's database and refuses it whole when its
 // shape is not the one this build reads.
 //
-// The two source adapters that read a live database, OpenCode's and Hermes's,
-// open it the same way and owe the operator the same refusal, so the sequence is
-// written once and each of them brings only its own schema. `source` names the
-// agent, because "the table is missing a column" without a name does not say
-// which agent migrated under us.
+// The live-store adapters open their databases the same way and owe the operator
+// the same refusal, so the sequence is written once and each of them brings only
+// its own schema. `source` names the agent, because "the table is missing a
+// column" without a name does not say which agent migrated under us.
 //
 // The schema is a slice and not a map on purpose: a map would name a different
 // missing table on every run, and two runs of one broken database have to read

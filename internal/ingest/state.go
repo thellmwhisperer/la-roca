@@ -31,6 +31,7 @@ var parserVersions = map[parsers.Kind]string{
 	parsers.KindPiSession:               "pi-session-v7",
 	parsers.KindOpenCodeDB:              "opencode-v9",
 	parsers.KindHermesDB:                "hermes-v8",
+	parsers.KindLegacyStoreDB:           "legacy-store-v1",
 	parsers.KindClaudeWebConversations:  "claude-web-conversations-v4",
 	parsers.KindClaudeWebMemories:       "claude-web-memories-v1",
 	parsers.KindClaudeWebProjects:       "claude-web-projects-v1",
@@ -58,7 +59,8 @@ func incrementalityTarget(target Target) incrementality.Target {
 		Project:       target.Project,
 		ParserVersion: version,
 		IncludeSQLiteWAL: target.Kind == parsers.KindOpenCodeDB ||
-			target.Kind == parsers.KindHermesDB || target.Kind == parsers.KindCursorDB ||
+			target.Kind == parsers.KindHermesDB || target.Kind == parsers.KindLegacyStoreDB ||
+			target.Kind == parsers.KindCursorDB ||
 			target.Kind == parsers.KindCursorStore,
 		CompanionPaths: target.CompanionPaths,
 	}
