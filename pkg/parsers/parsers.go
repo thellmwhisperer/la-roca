@@ -113,8 +113,8 @@ type FileMeta struct {
 }
 
 func exchangeNumberOffset(meta FileMeta, sessionID string) int {
-	if offset := meta.ExchangeNumberOffsets[sessionID]; offset > 0 {
-		return offset
+	if meta.ExchangeNumberOffsets != nil {
+		return meta.ExchangeNumberOffsets[sessionID]
 	}
 	return meta.ExchangeNumberOffset
 }

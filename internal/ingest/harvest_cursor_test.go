@@ -234,6 +234,39 @@ func TestCodexHistoryCursorRemainsPerSession(t *testing.T) {
 	}
 }
 
+func TestCodexHistoryCursorStartsNewSessionAtOne(t *testing.T) {
+	prefix := `{"session_id":"history-1","text":"five","ts":1785578401}` + "\n"
+	tail := `{"session_id":"history-2","text":"first","ts":1785578402}` + "\n"
+	path := filepath.Join(t.TempDir(), "history.jsonl")
+	if err := os.WriteFile(path, []byte(prefix+tail), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state := harvestCursorState{
+		ByteOffset: int64(len(prefix)), PrefixDigest: digestBytes([]byte(prefix)),
+		ExchangeCursor: 5, ExchangeCursors: map[string]int{"history-1": 5},
+		LastExchangeComplete: true, ParserVersion: readingVersion(parsers.KindCodexHistory),
+	}
+	metadata, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := Result{}
+	records, reason := read(t.Context(), Options{}, Target{
+		Path: path, FileName: filepath.Base(path), Kind: parsers.KindCodexHistory,
+	}, incrementality.FileState{Metadata: metadata}, &result)
+	if reason != "" {
+		t.Fatal(reason)
+	}
+	if len(records.Sessions) != 1 || records.Sessions[0].ID != "history-2" ||
+		len(records.Sessions[0].Exchanges) != 1 || records.Sessions[0].Exchanges[0].Number != 1 {
+		t.Fatalf("new history session records = %+v", records)
+	}
+	cursor := result.harvestCursors[path]
+	if cursor.ExchangeCursors["history-1"] != 5 || cursor.ExchangeCursors["history-2"] != 1 {
+		t.Fatalf("per-session history cursor = %+v", cursor.ExchangeCursors)
+	}
+}
+
 func TestIncompleteGrowingSessionFallsBackToACompleteReparse(t *testing.T) {
 	home := t.TempDir()
 	workspace := filepath.Join(home, "w", "demo")

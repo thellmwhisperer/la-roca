@@ -364,6 +364,12 @@ func TestVerifyRejectsEveryReconciliationMismatch(t *testing.T) {
 			},
 		},
 		{
+			name: "changed retained session coordinate", want: "custody mismatch",
+			mutate: func(t *testing.T, db *sql.DB) {
+				execTest(t, db, `UPDATE session_versions SET project = 'corrupt'`)
+			},
+		},
+		{
 			name: "consistently relabeled physical digest", want: "custody mismatch",
 			mutate: func(t *testing.T, db *sql.DB) {
 				digest := strings.Repeat("f", 64)
