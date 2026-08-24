@@ -19,6 +19,7 @@
  *   INTERNALS
  *   ---------
  *   legacySnapshotHasOpenHandles, snapshotTargetWithin, snapshotProcVanished
+ *   snapshotProcUninspectable
  *
  * @exports
  * @deps Linux procfs
@@ -59,7 +60,7 @@ func legacySnapshotHasOpenHandles(ctx context.Context, directory string) (bool, 
 		}
 		processRoot := filepath.Join("/proc", process.Name())
 		info, err := os.Stat(processRoot)
-		if snapshotProcVanished(err) {
+		if snapshotProcVanished(err) || snapshotProcUninspectable(err) {
 			continue
 		}
 		if err != nil {
@@ -70,7 +71,7 @@ func legacySnapshotHasOpenHandles(ctx context.Context, directory string) (bool, 
 			continue
 		}
 		fds, err := os.ReadDir(filepath.Join(processRoot, "fd"))
-		if snapshotProcVanished(err) {
+		if snapshotProcVanished(err) || snapshotProcUninspectable(err) {
 			continue
 		}
 		if err != nil {
@@ -78,7 +79,7 @@ func legacySnapshotHasOpenHandles(ctx context.Context, directory string) (bool, 
 		}
 		for _, fd := range fds {
 			target, err := os.Readlink(filepath.Join(processRoot, "fd", fd.Name()))
-			if snapshotProcVanished(err) {
+			if snapshotProcVanished(err) || snapshotProcUninspectable(err) {
 				continue
 			}
 			if err != nil {
@@ -104,4 +105,15 @@ func snapshotTargetWithin(directory, target string) bool {
 // may skip it instead of aborting the whole probe.
 func snapshotProcVanished(err error) bool {
 	return os.IsNotExist(err) || errors.Is(err, syscall.ESRCH)
+}
+
+// snapshotProcUninspectable reports whether a procfs read failed because the
+// process refuses to expose its file descriptors to a same-user reader. Linux
+// enforces this for non-dumpable processes (PR_SET_DUMPABLE=0), which includes
+// the .NET runner processes that share the CI user. Such a process can never be
+// a roca snapshot holder — roca is an ordinary dumpable Go program — so the
+// sweep skips it instead of declaring the whole probe indeterminate, which
+// would silently disable orphan reaping on any shared CI or dev machine.
+func snapshotProcUninspectable(err error) bool {
+	return errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EPERM)
 }
