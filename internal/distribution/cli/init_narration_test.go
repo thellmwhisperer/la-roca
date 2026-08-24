@@ -4,22 +4,19 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
+	"github.com/thellmwhisperer/la-roca/internal/store/search"
 )
 
 func TestInitNarratesItsPhasesAndPointsToThePromptLast(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("ROCA_DB_PATH", "")
-	t.Setenv("ROCA_CONFIG", "")
-	t.Setenv("ROCA_MODELS_ORDER", "none")
+	home := hermeticHome(t)
 
 	out := runRoot(t, Build{Version: "test", Commit: "test-sha"},
 		"init", "--db-path", filepath.Join(home, ".roca", "roca.db"))
@@ -53,14 +50,16 @@ func TestInitNarratesItsPhasesAndPointsToThePromptLast(t *testing.T) {
 }
 
 func TestSemanticConsentConsumesStructuredWorkerResult(t *testing.T) {
+	t.Setenv("CI", "")
+	t.Setenv("ROCA_VECTOR_STATE_DIR", "")
 	root := t.TempDir()
 	fixture := "#!/bin/sh\nprintf '%s\\n' '{\"background\":true,\"already_running\":true,\"pid\":4242,\"log_path\":\"/private/operator/path\"}'\nprintf '%s\\n' 'raw worker detail' >&2\n"
 	installVectorFixture(t, root, fixture)
 	var out, errOut bytes.Buffer
-	env := &cliEnv{out: &out, errOut: &errOut, dbPath: filepath.Join(root, "roca.db")}
-	paths := config.Paths{Config: filepath.Join(root, "config.toml")}
+	env := &cliEnv{out: &out, errOut: &errOut, bundledVectorPayload: []byte(fixture)}
+	paths := config.Paths{Home: root, Config: filepath.Join(root, "config.toml")}
 	input := bufio.NewReader(strings.NewReader("yes\n"))
-	if err := env.offerSemanticSearch(context.Background(), input, true, paths, true); err != nil {
+	if err := env.offerSemanticSearch(context.Background(), input, true, paths, true, readyProof()); err != nil {
 		t.Fatal(err)
 	}
 	combined := out.String() + errOut.String()
@@ -74,10 +73,12 @@ func TestSemanticConsentConsumesStructuredWorkerResult(t *testing.T) {
 	}
 }
 
-func TestSemanticConsentLeavesLiveProgressConnectedAfterInitReturns(t *testing.T) {
+func TestSemanticConsentKeepsCompanionProgressOffTheInitSurface(t *testing.T) {
+	t.Setenv("CI", "")
+	t.Setenv("ROCA_VECTOR_STATE_DIR", "")
 	root := t.TempDir()
-	fixture := "#!/bin/sh\ncase \" $* \" in *\" --stream-progress \"*) ;; *) exit 9;; esac\n" +
-		"(sleep 0.1; printf '%s\\n' 'downloading the embedding model · 1/2' >&2) &\n" +
+	fixture := "#!/bin/sh\ncase \" $* \" in *\" --stream-progress \"*) exit 9;; esac\n" +
+		"printf '%s\\n' 'semantic index: 1/2 chunks · 1 added' >&2\n" +
 		"printf '%s\\n' '{\"background\":true}'\n"
 	installVectorFixture(t, root, fixture)
 	progressPath := filepath.Join(root, "progress")
@@ -87,21 +88,16 @@ func TestSemanticConsentLeavesLiveProgressConnectedAfterInitReturns(t *testing.T
 	}
 	defer progress.Close()
 	var out bytes.Buffer
-	env := &cliEnv{out: &out, errOut: progress, dbPath: filepath.Join(root, "roca.db")}
-	paths := config.Paths{Config: filepath.Join(root, "config.toml")}
+	env := &cliEnv{out: &out, errOut: progress, bundledVectorPayload: []byte(fixture)}
+	paths := config.Paths{Home: root, Config: filepath.Join(root, "config.toml")}
 	if err := env.offerSemanticSearch(context.Background(), bufio.NewReader(strings.NewReader("yes\n")),
-		true, paths, true); err != nil {
+		true, paths, true, readyProof()); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		body, _ := os.ReadFile(progressPath)
-		if strings.Contains(string(body), "downloading the embedding model · 1/2") {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+	body, _ := os.ReadFile(progressPath)
+	if strings.Contains(string(body), "chunks") || strings.Contains(string(body), "semantic index") {
+		t.Fatalf("init streamed chunk counts to the terminal: %q", body)
 	}
-	t.Fatal("live semantic setup progress stopped when init returned")
 }
 
 func TestSemanticConsentIsDurableForYesAndNo(t *testing.T) {
@@ -131,7 +127,7 @@ func TestSemanticConsentIsDurableForYesAndNo(t *testing.T) {
 	}
 }
 
-func TestSemanticConsentRetriesSetupWithoutPromptingAgain(t *testing.T) {
+func TestEnabledSemanticSearchDoesNotRestartDuringInit(t *testing.T) {
 	root := t.TempDir()
 	calls := filepath.Join(root, "calls")
 	t.Setenv("ROCA_TEST_VECTOR_CALLS", calls)
@@ -147,8 +143,8 @@ func TestSemanticConsentRetriesSetupWithoutPromptingAgain(t *testing.T) {
 			t.Fatalf("durable consent prompted again: %q", output)
 		}
 	}
-	if got := string(mustRead(t, calls)); got != "xx" {
-		t.Fatalf("semantic setup launches = %q, want one per init", got)
+	if _, err := os.Stat(calls); !os.IsNotExist(err) {
+		t.Fatalf("semantic setup restarted with an enabled feature: %v", err)
 	}
 	if got := string(mustRead(t, path)); got != body {
 		t.Fatalf("durable consent changed: %q", got)
@@ -157,6 +153,7 @@ func TestSemanticConsentRetriesSetupWithoutPromptingAgain(t *testing.T) {
 
 func TestSemanticDeclinePersistsExplicitDecision(t *testing.T) {
 	root := t.TempDir()
+	installVectorFixture(t, root, "#!/bin/sh\nexit 9\n")
 	path := filepath.Join(root, "config.toml")
 	if err := os.WriteFile(path, []byte("[features]\nplugins = true\nvector = false\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -175,8 +172,260 @@ func TestSemanticDeclinePersistsExplicitDecision(t *testing.T) {
 	}
 }
 
+func TestSemanticConsentReasksInvalidAnswersAndLeavesEOFUndecided(t *testing.T) {
+	root := t.TempDir()
+	installVectorFixture(t, root, "#!/bin/sh\nprintf '%s\\n' '{\"background\":true}'\n")
+	path := filepath.Join(root, "config.toml")
+	before := "[features]\nvector = false\n"
+	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := runSemanticConsent(t, path, "later\ny\n")
+	if strings.Count(output, "[yes/no]") != 2 {
+		t.Fatalf("invalid answer was not re-asked: %q", output)
+	}
+	loaded, err := config.LoadFile(path)
+	if err != nil || !loaded.Features.Vector || !loaded.Features.VectorConsent {
+		t.Fatalf("valid retry was not persisted: features=%+v err=%v", loaded.Features, err)
+	}
+
+	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runSemanticConsent(t, path, "")
+	if got := string(mustRead(t, path)); got != before {
+		t.Fatalf("EOF changed the undecided configuration: %q", got)
+	}
+}
+
+func TestSemanticSetupFailuresKeepConfigurationAndInitSuccessful(t *testing.T) {
+	for _, testCase := range []struct {
+		name, fixture string
+	}{
+		{name: "launch failure", fixture: "#!/bin/sh\nexit 7\n"},
+		{name: "invalid acknowledgement", fixture: "#!/bin/sh\nprintf '%s\\n' '{\"background\":false}'\n"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			root := t.TempDir()
+			t.Setenv("HOME", root)
+			managed := filepath.Join(root, "managed-bin")
+			t.Setenv("ROCA_PREFIX", managed)
+			installVectorFixture(t, root, testCase.fixture)
+			path := filepath.Join(root, "config.toml")
+			t.Setenv("ROCA_CONFIG", path)
+			before := "# operator setting\n[features]\nplugins = true\nvector = false\n"
+			if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			output := runSemanticConsent(t, path, "yes\n")
+			if got := string(mustRead(t, path)); got != before {
+				t.Fatalf("failed setup changed configuration: %q", got)
+			}
+			if strings.Count(output, "next step:") != 1 || !strings.Contains(output, "word search keeps answering") {
+				t.Fatalf("failed setup output = %q", output)
+			}
+			if !strings.Contains(output, "`roca vector install`") {
+				t.Fatalf("failed setup did not name the installed recovery command: %q", output)
+			}
+			if err := os.WriteFile(filepath.Join(managed, "roca-vector"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			var recoveryOutput bytes.Buffer
+			code, err := executeWithOptions(&cliEnv{out: &recoveryOutput, errOut: &recoveryOutput},
+				[]string{"vector", "install"}, nil, true)
+			if code != ExitOK || err != nil {
+				t.Fatalf("printed recovery command was not accepted: code=%d err=%v output=%q",
+					code, err, recoveryOutput.String())
+			}
+		})
+	}
+}
+
+func TestSemanticCompanionPlacementFailureKeepsConfigurationAndInitSuccessful(t *testing.T) {
+	t.Setenv("PATH", "")
+	_, paths := placementFailureHome(t)
+	output := offerBundledConsent(t, paths)
+	if got := string(mustRead(t, paths.Config)); got != "[features]\nvector = false\n" {
+		t.Fatalf("placement failure changed configuration: %q", got)
+	}
+	if strings.Count(output, "next step:") != 1 {
+		t.Fatalf("placement failure output = %q", output)
+	}
+	if !strings.Contains(output, "`roca init`") {
+		t.Fatalf("placement failure did not name init as its recovery: %q", output)
+	}
+	if _, err := runInitChoice(t, true, "new\n", "init"); err != nil {
+		t.Fatalf("printed recovery command was not accepted in the preserved state: %v", err)
+	}
+}
+
+func TestDevBinaryWithoutPayloadReachesQuestionAndDiscoversPathCompanion(t *testing.T) {
+	t.Setenv("CI", "")
+	root := t.TempDir()
+	calls := filepath.Join(root, "calls")
+	t.Setenv("ROCA_TEST_VECTOR_CALLS", calls)
+	installVectorFixture(t, root, "#!/bin/sh\nprintf x >> \"$ROCA_TEST_VECTOR_CALLS\"\nprintf '%s\\n' '{\"background\":true}'\n")
+	path := filepath.Join(root, "config.toml")
+	before := "[features]\nvector = false\n"
+	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	env := &cliEnv{out: &output, errOut: &output}
+	if err := env.offerSemanticSearch(context.Background(), bufio.NewReader(strings.NewReader("yes\n")),
+		true, config.Paths{Home: root, Config: path}, true, readyProof()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "[yes/no]") {
+		t.Fatalf("dev binary did not reach the consent question: %q", output.String())
+	}
+	if _, err := os.Stat(calls); err != nil {
+		t.Fatalf("dev binary did not discover the PATH companion: %v", err)
+	}
+	loaded, err := config.LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.Features.Vector || !loaded.Features.VectorConsent {
+		t.Fatalf("dev binary consent was not persisted: features=%+v", loaded.Features)
+	}
+}
+
+func TestPayloadPlacementFailureNeverConsultsPathCompanion(t *testing.T) {
+	home, paths := placementFailureHome(t)
+	calls := filepath.Join(home, "calls")
+	t.Setenv("ROCA_TEST_VECTOR_CALLS", calls)
+	installVectorFixture(t, home, "#!/bin/sh\nprintf x >> \"$ROCA_TEST_VECTOR_CALLS\"\nprintf '%s\\n' '{\"background\":true}'\n")
+	output := offerBundledConsent(t, paths)
+	if _, err := os.Stat(calls); !os.IsNotExist(err) {
+		t.Fatalf("placement failure consulted a PATH companion: %v", err)
+	}
+	if got := string(mustRead(t, paths.Config)); got != "[features]\nvector = false\n" {
+		t.Fatalf("placement failure changed configuration: %q", got)
+	}
+	if strings.Count(output, "next step:") != 1 {
+		t.Fatalf("placement failure output = %q", output)
+	}
+}
+
+func TestIneligibleInitNeverOffersOrPlacesSemanticSearch(t *testing.T) {
+	for _, testCase := range []struct {
+		name        string
+		interactive bool
+		explicit    bool
+		ci          bool
+		proof       *search.Proof
+		config      string
+		active      bool
+	}{
+		{name: "non-interactive", proof: readyProof()},
+		{name: "explicit database", interactive: true, explicit: true, proof: readyProof()},
+		{name: "CI", interactive: true, ci: true, proof: readyProof()},
+		{name: "empty history", interactive: true, proof: &search.Proof{Empty: true}},
+		{name: "ready without a hit", interactive: true, proof: &search.Proof{Ready: true}},
+		{name: "feature enabled", interactive: true, proof: readyProof(), config: "[features]\nvector = true\n"},
+		{name: "worker active", interactive: true, proof: readyProof(), active: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("PATH", "")
+			t.Setenv("CI", map[bool]string{true: "true"}[testCase.ci])
+			t.Setenv("ROCA_VECTOR_STATE_DIR", "")
+			paths := resolveHome(t, home)
+			body := testCase.config
+			if body == "" {
+				body = "[features]\nvector = false\n"
+			}
+			if err := os.WriteFile(paths.Config, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if testCase.active {
+				state := filepath.Join(pluginRoot(paths), "roca-vector", "state")
+				if err := os.MkdirAll(state, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(state, ".worker"), []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var output bytes.Buffer
+			env := &cliEnv{out: &output, errOut: &output,
+				bundledVectorPayload: []byte("synthetic payload")}
+			if testCase.explicit {
+				env.dbPath = filepath.Join(home, "explicit.db")
+			}
+			if err := env.offerSemanticSearch(context.Background(), bufio.NewReader(strings.NewReader("yes\n")),
+				testCase.interactive, paths, true, testCase.proof); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(output.String(), "[yes/no]") {
+				t.Fatalf("ineligible init asked for consent: %q", output.String())
+			}
+			if got := string(mustRead(t, paths.Config)); got != body {
+				t.Fatalf("ineligible init changed config: %q", got)
+			}
+			if _, err := os.Stat(filepath.Join(pluginRoot(paths), "roca-vector", "plugin.json")); !os.IsNotExist(err) {
+				t.Fatalf("ineligible init placed the companion: %v", err)
+			}
+		})
+	}
+}
+
+// placementFailureHome builds the shared environment for the companion
+// placement-failure tests: HOME points at a directory whose ROCA_PREFIX is a
+// plain file, so placing the bundled payload always fails. It returns the home
+// directory and the resolved config paths.
+func placementFailureHome(t *testing.T) (string, config.Paths) {
+	t.Helper()
+	t.Setenv("CI", "")
+	t.Setenv("ROCA_VECTOR_STATE_DIR", "")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	prefix := filepath.Join(home, "not-a-directory")
+	if err := os.WriteFile(prefix, []byte("occupied"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ROCA_PREFIX", prefix)
+	return home, resolveHome(t, home)
+}
+
+// resolveHome resolves the default config paths under home and creates the
+// directory that holds the config file.
+func resolveHome(t *testing.T, home string) config.Paths {
+	t.Helper()
+	paths, err := config.Resolve(config.Input{Home: home})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.Config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return paths
+}
+
+// offerBundledConsent writes the undecided vector configuration and offers
+// semantic search with a bundled payload that would launch if placement
+// succeeded, returning the combined output.
+func offerBundledConsent(t *testing.T, paths config.Paths) string {
+	t.Helper()
+	const before = "[features]\nvector = false\n"
+	if err := os.WriteFile(paths.Config, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	env := &cliEnv{build: Build{Version: "test"}, out: &output, errOut: &output,
+		bundledVectorPayload: []byte("#!/bin/sh\nexit 0\n")}
+	if err := env.offerSemanticSearch(context.Background(), bufio.NewReader(strings.NewReader("yes\n")),
+		true, paths, true, readyProof()); err != nil {
+		t.Fatal(err)
+	}
+	return output.String()
+}
+
 func installVectorFixture(t *testing.T, root, fixture string) {
 	t.Helper()
+	t.Setenv("ROCA_VECTOR_STATE_DIR", "")
 	if runtime.GOOS == "windows" {
 		t.Skip("fixture uses a POSIX executable")
 	}
@@ -192,13 +441,22 @@ func installVectorFixture(t *testing.T, root, fixture string) {
 
 func runSemanticConsent(t *testing.T, path, answer string) string {
 	t.Helper()
+	t.Setenv("CI", "")
 	var out, errOut bytes.Buffer
-	env := &cliEnv{out: &out, errOut: &errOut}
+	var payload []byte
+	if fixture, found := resolveCompanion("vector", ""); found {
+		payload, _ = os.ReadFile(fixture)
+	}
+	env := &cliEnv{out: &out, errOut: &errOut, bundledVectorPayload: payload}
 	if err := env.offerSemanticSearch(context.Background(), bufio.NewReader(strings.NewReader(answer)),
-		true, config.Paths{Config: path}, false); err != nil {
+		true, config.Paths{Home: filepath.Dir(path), Config: path}, false, readyProof()); err != nil {
 		t.Fatal(err)
 	}
 	return out.String() + errOut.String()
+}
+
+func readyProof() *search.Proof {
+	return &search.Proof{Ready: true, Word: "history", Matches: 1}
 }
 
 func mustRead(t *testing.T, path string) []byte {

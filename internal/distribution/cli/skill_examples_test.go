@@ -60,6 +60,13 @@ func TestEverySkillExampleIsValidAgainstTheRealCLI(t *testing.T) {
 			continue
 		}
 		validateExampleFlags(t, line, cmd, args, realLayers)
+		// `roca init` is a first-run recipe, not a question asked of an
+		// installation that already exists: run against this fixture it would
+		// ask whether to keep or replace the fixture's own database. Its flags
+		// are checked above like every other example.
+		if tokens[1] == "init" {
+			continue
+		}
 		if code, out := fixture.run(tokens[1:]); code != ExitOK {
 			t.Errorf("skill example did not exit 0 (code %d):\n  %s\n%s",
 				code, line, out)
@@ -102,7 +109,7 @@ func taughtPluginDispatch(tokens []string) bool {
 		return true
 	}
 	switch tokens[1] {
-	case "install", "ingest", "compact", "query":
+	case "install", "ingest", "compact", "query", "status":
 		return true
 	default:
 		return false
