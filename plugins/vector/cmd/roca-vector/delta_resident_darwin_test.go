@@ -63,6 +63,61 @@ func runE2ECore(args []string) bool {
 	return true
 }
 
+func createOwnedSource(path, extraSQL string) error {
+	store, err := sql.Open("sqlite", path)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	statement := `CREATE TABLE IF NOT EXISTS records(id TEXT PRIMARY KEY, body TEXT);`
+	if extraSQL != "" {
+		statement += ";" + extraSQL
+	}
+	_, err = store.Exec(statement)
+	return err
+}
+
+func assertWriterReportedCPU(t *testing.T, dataDir string) {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(dataDir, "logs", "engine-*.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) == 0 {
+		t.Fatal("writer produced no engine telemetry")
+	}
+	sawLoad := false
+	for _, path := range matches {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range strings.Split(string(raw), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			var record struct {
+				Kind    string `json:"kind"`
+				Backend string `json:"backend"`
+			}
+			if err := json.Unmarshal([]byte(line), &record); err != nil {
+				t.Fatal(err)
+			}
+			if record.Kind != "load" {
+				continue
+			}
+			sawLoad = true
+			if record.Backend != "cpu" {
+				t.Fatalf("writer load backend = %q, want cpu", record.Backend)
+			}
+		}
+	}
+	if !sawLoad {
+		t.Fatal("writer produced no load telemetry")
+	}
+}
+
 func containsArgument(args []string, target string) bool {
 	for _, argument := range args {
 		if argument == target {
@@ -100,11 +155,14 @@ func TestDeltaIngestTerminatesWhileResidentHoldsAccelerator(t *testing.T) {
 		t.Fatal(err)
 	}
 	sourcePath := filepath.Join(fixtureRoot, "records.db")
-	if err := os.WriteFile(sourcePath, nil, 0o600); err != nil {
+	if err := createOwnedSource(sourcePath, ""); err != nil {
 		t.Fatal(err)
 	}
 	sidecarPath := vector.SidecarPath(sourcePath)
-	if err := os.WriteFile(sidecarPath, nil, 0o600); err != nil {
+	if err := vector.InitOwnedSidecar(sidecarPath, "fixture/records", vector.DefaultModel); err != nil {
+		t.Fatal(err)
+	}
+	if err := createOwnedSource(sourcePath, "INSERT INTO records(id, body) VALUES ('record-1', 'accelerator concurrency regression')"); err != nil {
 		t.Fatal(err)
 	}
 	registry := map[string]any{
@@ -180,7 +238,13 @@ func TestDeltaIngestTerminatesWhileResidentHoldsAccelerator(t *testing.T) {
 
 	ingest := exec.CommandContext(ctx, binary, "--json", "--db-path", dbPath,
 		"--state-dir", stateDir, "ingest", "--delta")
-	ingestOutput, err := ingest.CombinedOutput()
+	ingestLog, err := os.Create(filepath.Join(root, "ingest.stderr"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ingest.Stderr = ingestLog
+	ingestOutput, err := ingest.Output()
+	_ = ingestLog.Close()
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			t.Fatal("vector ingest --delta did not terminate while the accelerated resident was alive")
@@ -211,6 +275,7 @@ func TestDeltaIngestTerminatesWhileResidentHoldsAccelerator(t *testing.T) {
 	if chunks == 0 {
 		t.Fatal("vector ingest --delta terminated without growing the index")
 	}
+	assertWriterReportedCPU(t, root)
 
 	if err := residentInput.Close(); err != nil {
 		t.Fatal(err)

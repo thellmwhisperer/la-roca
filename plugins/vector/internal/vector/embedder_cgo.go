@@ -77,8 +77,8 @@ func (n *Native) open(ctx context.Context) error {
 		n.record(telemetry.Record{Kind: telemetry.KindError, Err: "the embedding model failed to load"})
 		return fmt.Errorf("the embedding model failed to load")
 	}
-	if !n.ReadOnly && loaded.FallbackReason == "" && loaded.Backend == llamacpp.BackendCPU {
-		loaded.FallbackReason = "indexing leaves the accelerator for live search"
+	if !n.ReadOnly {
+		loaded.FallbackReason = writerFallbackReason(llamacpp.GPULayers(true) > 0, loaded.Backend, loaded.FallbackReason)
 	}
 	n.engine = loaded
 	n.backend = loaded.Backend

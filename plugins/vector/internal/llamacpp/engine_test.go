@@ -37,6 +37,7 @@ func TestSelectedBackendReflectsActualAcceleration(t *testing.T) {
 		{99, true, BackendMetal, ""},
 		{99, false, BackendCPU, "accelerator unavailable"},
 		{0, false, BackendCPU, ""},
+		{0, true, BackendCPU, ""},
 	}
 	for _, test := range tests {
 		backend, fallback := selectedBackend(test.layers, test.accelerated)

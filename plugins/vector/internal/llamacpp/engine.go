@@ -45,13 +45,13 @@ func Open(model string, threads, gpuLayers int) (*Engine, error) {
 }
 
 func selectedBackend(gpuLayers int, accelerated bool) (string, string) {
+	if gpuLayers <= 0 {
+		return BackendCPU, ""
+	}
 	if accelerated {
 		return BackendMetal, ""
 	}
-	if gpuLayers > 0 {
-		return BackendCPU, "accelerator unavailable"
-	}
-	return BackendCPU, ""
+	return BackendCPU, "accelerator unavailable"
 }
 
 func OpenPreferred(model string, threads int) (*Engine, error) {
