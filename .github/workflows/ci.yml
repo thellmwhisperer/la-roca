@@ -9,6 +9,8 @@ permissions:
   contents: read
 
 jobs:
+  # Every job name this workflow reports is a required check on main. Re-derive
+  # that list from a completed CI run when the matrix changes; do not guess labels.
   # versions.txt is the only list of frozen homes. Reading it here turns each
   # committed archive into its own runner, so a failure names the exact
   # historical version in the job list and a new archive adds a job by itself.
