@@ -111,6 +111,7 @@ func assertWriterReportedCPU(t *testing.T, dataDir string) {
 			if record.Backend != "cpu" {
 				t.Fatalf("writer load backend = %q, want cpu", record.Backend)
 			}
+			t.Log("writer engine telemetry: backend=cpu")
 		}
 	}
 	if !sawLoad {
@@ -235,6 +236,7 @@ func TestDeltaIngestTerminatesWhileResidentHoldsAccelerator(t *testing.T) {
 	if !accelerated {
 		t.Skip("native resident did not acquire the accelerator")
 	}
+	t.Log("resident prewarm: accelerated=true")
 
 	ingest := exec.CommandContext(ctx, binary, "--json", "--db-path", dbPath,
 		"--state-dir", stateDir, "ingest", "--delta")
@@ -262,6 +264,7 @@ func TestDeltaIngestTerminatesWhileResidentHoldsAccelerator(t *testing.T) {
 	if report.Counts.Added == 0 {
 		t.Fatalf("vector ingest --delta added no embeddings: %s", ingestOutput)
 	}
+	t.Logf("roca vector ingest --delta: exited 0, added=%d", report.Counts.Added)
 
 	store, err := sql.Open("sqlite", sidecarPath)
 	if err != nil {
@@ -275,6 +278,7 @@ func TestDeltaIngestTerminatesWhileResidentHoldsAccelerator(t *testing.T) {
 	if chunks == 0 {
 		t.Fatal("vector ingest --delta terminated without growing the index")
 	}
+	t.Logf("persisted sidecar state: chunks=%d", chunks)
 	assertWriterReportedCPU(t, root)
 
 	if err := residentInput.Close(); err != nil {
