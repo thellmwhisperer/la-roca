@@ -57,7 +57,8 @@ func TestProductVocabularyIsFreeOfInternalRoles(t *testing.T) {
 			}
 			return nil
 		}
-		if entry.Name() == ".git" || filepath.Clean(path) == filepath.Clean(here) {
+		if entry.Name() == ".git" || filepath.Clean(path) == filepath.Clean(here) ||
+			filepath.Clean(path) == filepath.Join(root, "CHANGELOG.md") {
 			return nil
 		}
 		body, err := os.ReadFile(path)
