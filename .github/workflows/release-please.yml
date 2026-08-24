@@ -43,6 +43,10 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           GH_REPO: ${{ github.repository }}
           RELEASE_PR: ${{ steps.release.outputs.pr }}
+          AUTO_MERGE_AFTER_PR: "249"
         run: |
           pr_number=$(jq -r '.number' <<<"$RELEASE_PR")
+          if [ "$pr_number" -le "$AUTO_MERGE_AFTER_PR" ]; then
+            exit 0
+          fi
           gh pr merge --merge --auto "$pr_number"

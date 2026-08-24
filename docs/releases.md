@@ -5,9 +5,11 @@ without a La Roca login](lifecycle.md#install).
 
 `.github/workflows/release-please.yml` maintains one release pull request from
 the Conventional Commits merged into `main`; it does not build artefacts.
-The workflow arms auto-merge only on the release pull request returned by
-Release Please, and GitHub merges it once the required checks pass. That merge
-creates the `vX.Y.Z` tag. The tag then triggers
+The workflow arms auto-merge only on a release pull request returned by
+Release Please after the protected adoption boundary; the pre-adoption release
+pull request keeps its existing merge policy. GitHub merges later release pull
+requests once their required checks pass. That merge creates the `vX.Y.Z` tag.
+The tag then triggers
 `.github/workflows/release.yml`, which is the only workflow that builds and
 uploads release artefacts.
 
@@ -51,15 +53,16 @@ in the tree.
 
 ## Version policy
 
-The release manifest and the repository-root `plugin.json` both start at
-`1.0.0`. Release Please updates the plugin version through `extra-files`, so
-the plugin manifest has no independent version lifecycle and no permanently
-pinned release override. A bundled plugin's federation manifest, such as
+The release manifest and the repository-root `plugin.json` both record the
+current published version. Release Please updates the plugin version through
+`extra-files`, so the plugin manifest has no independent version lifecycle and
+no permanently pinned release override. A bundled plugin's federation manifest,
+such as
 `internal/distribution/rocacorpus/plugin.json`, is not an `extra-files` target:
 the installer stamps it with the running build's version, so its checked-in
 placeholder never ships.
 
-After `1.0.0`, normal Conventional Commits choose the next version:
+Normal Conventional Commits choose the next version:
 
 - `fix:` produces a patch release.
 - `feat:` produces a minor release.
