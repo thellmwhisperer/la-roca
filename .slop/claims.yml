@@ -4,6 +4,10 @@ claims:
     contract:
       file: features/distribution/cli.feature
       item: "Help lists every command with one honest line each"
+  internal/distribution/cli/tool_call_observer.go:
+    contract:
+      file: features/distribution/cli.feature
+      item: "Help lists every command with one honest line each"
   internal/distribution/cli/artifacts.go:
     contract:
       file: features/distribution/skill.feature

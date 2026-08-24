@@ -71,6 +71,7 @@ type piMessage struct {
 	ToolCallID string          `json:"toolCallId"`
 	IsError    bool            `json:"isError"`
 	Command    string          `json:"command"`
+	Output     string          `json:"output"`
 	ExitCode   *int            `json:"exitCode"`
 	Cancelled  bool            `json:"cancelled"`
 	Exclude    bool            `json:"excludeFromContext"`
