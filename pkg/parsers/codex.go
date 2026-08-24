@@ -136,7 +136,8 @@ func ParseCodexSession(content []byte, meta FileMeta) (Records, error) {
 			Project:     meta.Project,
 			Metadata:    map[string]any{},
 		},
-		pending: map[string]*ToolUse{},
+		pending:      map[string]*ToolUse{},
+		numberOffset: meta.ExchangeNumberOffset,
 	}
 	reader.read(content)
 
@@ -197,7 +198,8 @@ type codexReader struct {
 	// those records recover.
 	legacy []Exchange
 
-	pending map[string]*ToolUse
+	pending      map[string]*ToolUse
+	numberOffset int
 
 	// open is the turn the event stream has started and not closed.
 	open      *codexTurn
@@ -268,7 +270,8 @@ func (r *codexReader) legacyPrompt(raw string) bool {
 		return false
 	}
 	r.legacy = append(r.legacy,
-		historyExchange(len(r.legacy)+1, firstNonEmpty(line.SessionID, r.session.ID), line))
+		historyExchange(r.numberOffset+len(r.legacy)+1,
+			firstNonEmpty(line.SessionID, r.session.ID), line))
 	return true
 }
 
@@ -439,7 +442,7 @@ func (r *codexReader) exchanges(turns []codexTurn) []Exchange {
 	exchanges := make([]Exchange, 0, len(turns))
 	for _, turn := range turns {
 		exchange := Exchange{
-			Number:         len(exchanges) + 1,
+			Number:         r.numberOffset + len(exchanges) + 1,
 			HumanText:      turn.humanText,
 			AgentText:      turn.agentText,
 			HumanTimestamp: turn.humanTS,

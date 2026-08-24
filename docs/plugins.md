@@ -248,8 +248,7 @@ database list.
 
 ## The manifest
 
-`plugin.json` schema 1 has five required parts and one optional retrieval
-contract:
+`plugin.json` schema 1 has five required parts and two optional contracts:
 
 - identity: `name`, `version`, and `binary`;
 - databases: every SQLite file, its declared attach alias, attachment mode,
@@ -257,6 +256,8 @@ contract:
 - semantic fragment: the tables and questions served by each database;
 - optional vector fragment: the stable row id, prose columns, and chronology a
   database opts into later semantic indexing;
+- optional session companion: a plugin-directory executable and fixed argv that
+  `roca mcp serve` raises for the lifetime of that session;
 - verbs: one canonical command name and description, projected to CLI and MCP;
 - capabilities: named executable calls used when SQL cannot perform the work.
 
@@ -464,6 +465,38 @@ metadata and incremental fingerprint GC. `roca vector query --databases ...`
 routes over those sidecars, merges only same-model scores, and leaves missing
 or undeclared vector coverage on the database's existing FTS/SQL path.
 
+### Session companions
+
+An optional `companion` object asks `roca mcp serve` to raise one child
+process for the lifetime of that session, the same way the server already owns
+its vector companion: stdin and stdout belong to the parent, the child dies
+when stdin closes, and there is no port, pid file, or daemon. Plugins without
+the field keep today's behavior.
+
+```json
+"companion": {
+  "executable": "roca-receipts",
+  "args": ["watch"]
+}
+```
+
+`executable` is a single filename inside the installed plugin directory. The
+server execs that file with the declared `args` as an argv array. It never
+searches `PATH` and never hands the arguments to a shell. Single-flight across
+concurrent serve sessions is the plugin's own responsibility; the server raises
+one candidate per session.
+
+A missing or non-executable companion does not take the server down. Serve
+starts, writes one notice on standard error plus a JSONL line under the data
+directory logs area, and keeps answering. A companion that exits cleanly
+(exit 0) is left down without the `stopped` notice or telemetry. A crash — a
+non-zero exit or a start failure after the executable resolved — is retried
+with bounded backoff, and a companion that keeps crashing is reported once and
+left down. Those events stay in log files, never in a database.
+
+Executable-only packages may declare the same object. The kernel does not
+invent plugin-specific flags, homes, or environment variables.
+
 ### Verbs and capabilities
 
 A verb is the public name. A capability is the executable call behind it. The
@@ -544,7 +577,8 @@ cannot be regenerated sets `custody: true` alongside the kind.
 
 Such a package is always classified **EXECUTABLE**. It never enters data-plugin
 discovery, attachment, or the semantic catalog: it is reached only by running
-its command.
+its command. It may still declare a session companion; serve execs that file
+from the installed plugin directory.
 
 ## Verified packages and lifecycle
 
@@ -692,15 +726,23 @@ the semantic fragment used by NL-to-SQL, custody, and plugin-owned archive
 retention. Existing ingest and query behavior is unchanged by the migration.
 
 Its schema also declares the shadow archive the retired core history is copied
-into: one version table per family, full-text indexes rebuilt over the ones
-that carry text, and the evidence tying each version back to the source row it
-came from. Those tables are migration machinery rather than fleet memory, so
-they stay hidden from every query surface, and the served tables above keep
-answering exactly as before until the atomic cutover. Each family is a named
-custody migration of its own, `corpus-archive-<family>`, because a migration
-owns exactly one destination. The five family migrations retain their
-table-level archive seal, and cutover additionally requires the versioned
-DATA-3 reconciliation seal.
+into: one digest-only version table per family, and the evidence tying each
+version back to the source row it came from. Version rows store the payload
+hash, source coordinates, and observed time. They never store a second copy of
+`human_text`, `agent_text`, or `full_text`. There is no full-text index over
+versions: search uses the current harvest tables. Those tables are migration
+machinery rather than fleet memory, so they stay hidden from every query
+surface, and the served tables above keep answering exactly as before until the
+atomic cutover. Each family is a named custody migration of its own,
+`corpus-archive-<family>`, because a migration owns exactly one destination.
+The five family migrations retain their table-level archive seal, and cutover
+additionally requires the versioned DATA-3 reconciliation seal.
+
+`roca compact` rewrites an existing corpus database onto that one-row law and
+VACUUMs. Current session, exchange, thinking, and tool rows stay. Once those
+current rows exist, compact empties `custody_memberships` (the archive
+source-to-digest map) and `corpus_source_rows` (archive coordinates); batch
+hashes remain on `migration_batches`. Backup copies belong outside the database.
 
 That reconciliation rereads the same frozen sources and compares every source
 database and table by occurrence count and canonical payload hash. It also

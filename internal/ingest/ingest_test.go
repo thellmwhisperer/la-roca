@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thellmwhisperer/la-roca/pkg/incrementality"
 	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 )
 
@@ -775,7 +776,7 @@ func TestCommitRetryDoesNotDoubleReportCounters(t *testing.T) {
 	result := Result{Sources: map[string]*Counts{}}
 	target := Target{Path: path, Kind: parsers.KindSessionMetadata, SourceAgent: "claude"}
 	_, err := ingestOne(context.Background(), retryOnceDatabase{db.SQL()}, registry(t), Options{},
-		target, "fingerprint", &result)
+		target, "fingerprint", incrementality.FileState{}, &result)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -795,7 +796,7 @@ func TestEmptySessionIdentityIsCountedBeforeWrite(t *testing.T) {
 	result := Result{Sources: map[string]*Counts{}}
 	target := Target{Path: path, Kind: parsers.KindCoworkAudit, SourceAgent: "cowork"}
 	if _, err := ingestOne(context.Background(), db, registry(t), Options{}, target,
-		"fingerprint", &result); err != nil {
+		"fingerprint", incrementality.FileState{}, &result); err != nil {
 		t.Fatal(err)
 	}
 	if result.RecordsDiscarded != 1 || !strings.Contains(result.DiscardDetails[0].Reason, "no identity") {
@@ -815,7 +816,7 @@ func TestUnknownSubagentProbeIsCounted(t *testing.T) {
 	}
 	records, reason := read(context.Background(), Options{}, Target{
 		Path: path, Kind: parsers.KindSubagent,
-	}, &Result{})
+	}, incrementality.FileState{}, &Result{})
 	if reason != "" {
 		t.Fatalf("read failure = %q", reason)
 	}
