@@ -71,6 +71,7 @@ type piMessage struct {
 	ToolCallID string          `json:"toolCallId"`
 	IsError    bool            `json:"isError"`
 	Command    string          `json:"command"`
+	Output     string          `json:"output"`
 	ExitCode   *int            `json:"exitCode"`
 	Cancelled  bool            `json:"cancelled"`
 	Exclude    bool            `json:"excludeFromContext"`
@@ -151,7 +152,7 @@ func ParsePiSession(content []byte, meta FileMeta) (Records, error) {
 			"cwd":               header.Cwd,
 			"parent_session":    header.ParentSession,
 		}),
-		Snapshot: true,
+		Snapshot: !meta.Incremental,
 	}
 	if header.ParentSession != "" {
 		session.ParentID = header.ParentSession
@@ -170,7 +171,8 @@ func ParsePiSession(content []byte, meta FileMeta) (Records, error) {
 	if err != nil {
 		return Records{}, err
 	}
-	exchanges, sessionThinking, title, stillOpen, exchangeDiscards := piExchanges(active)
+	exchanges, sessionThinking, title, stillOpen, exchangeDiscards :=
+		piExchanges(active, meta.ExchangeNumberOffset)
 	deferred += stillOpen
 	discards = append(discards, exchangeDiscards...)
 
@@ -347,14 +349,14 @@ func (p *piPending) claim(message *piMessage) {
 	}
 }
 
-func piExchanges(active []*piEntry) ([]Exchange, []Thinking, string, int, []Discard) {
+func piExchanges(active []*piEntry, numberOffset int) ([]Exchange, []Thinking, string, int, []Discard) {
 	var exchanges []Exchange
 	var sessionThinking []Thinking
 	var pending *piPending
 	compacted := false
 	title := ""
 	deferred := 0
-	number := 0
+	number := numberOffset
 	var discards []Discard
 
 	close := func() {
