@@ -10,16 +10,21 @@ Contributor agent notes (the project-intrinsic memory that used to live in
 make build
 make check
 make accept-index
+make e2e-smoke
 make upgrade-gauntlet
 make split-oracle
 make dist
 ```
 
-`make check` runs formatting, vet, unit tests, the Godog acceptance suite, and
-the duplication gate. Acceptance contracts live directly under
+`make check` runs formatting, vet, unit tests, the acceptance tests, and the
+duplication gate. Godog acceptance contracts live directly under
 `features/{store,ingest,provider,distribution}/`; every feature there is
 discovered automatically, and `make accept-index` rejects any other layout. The
-Godog harness is compiled only with the `acceptance` build tag.
+acceptance harnesses are compiled only with the `acceptance` build tag.
+
+`make e2e-smoke` isolates the real-binary operator path in a disposable `HOME`
+and covers init, ingest, query, plugin install, and plugin update. It is also
+part of `make check` and must never mutate an operator's live La Roca home.
 
 `make upgrade-gauntlet` is the second gate every pull request has to pass: it
 upgrades the committed homes of older releases through the binary you just
