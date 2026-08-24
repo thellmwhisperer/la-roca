@@ -67,22 +67,33 @@ func (n *Native) open(ctx context.Context) error {
 	}
 	n.emit(engine.Progress("prewarm", "semantic search: preparing", 0, 1, 0))
 	started := time.Now()
-	engine, err := llamacpp.Open(path, runtime.NumCPU(), llamacpp.GPULayers(n.ReadOnly))
+	var loaded *llamacpp.Engine
+	if n.ReadOnly {
+		loaded, err = llamacpp.OpenPreferred(path, runtime.NumCPU())
+	} else {
+		loaded, err = llamacpp.Open(path, runtime.NumCPU(), 0)
+	}
 	if err != nil {
 		n.record(telemetry.Record{Kind: telemetry.KindError, Err: "the embedding model failed to load"})
 		return fmt.Errorf("the embedding model failed to load")
 	}
-	if !n.ReadOnly && engine.FallbackReason == "" && engine.Backend == llamacpp.BackendCPU {
-		engine.FallbackReason = "indexing leaves the accelerator for live search"
+	if !n.ReadOnly && loaded.FallbackReason == "" && loaded.Backend == llamacpp.BackendCPU {
+		loaded.FallbackReason = "indexing leaves the accelerator for live search"
 	}
-	n.engine = engine
-	n.backend = engine.Backend
-	n.fallback = engine.FallbackReason
+	n.engine = loaded
+	n.backend = loaded.Backend
+	n.fallback = loaded.FallbackReason
 	n.record(telemetry.Record{
 		Kind: telemetry.KindLoad, Backend: n.backend, Fallback: n.fallback,
 		DurationMS: time.Since(started).Milliseconds(), MemoryHWM: memoryHighWater(),
 	})
 	return nil
+}
+
+func (n *Native) Accelerated() bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.backend == llamacpp.BackendMetal
 }
 
 func (n *Native) Close() {
