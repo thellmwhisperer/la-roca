@@ -75,9 +75,14 @@ dist: $(DIST_TARGETS) vector-dist ## Build native vector payloads plus the Windo
 test: ## Unit and contract tests
 	go test ./...
 
-.PHONY: accept accept-index split-oracle
+.PHONY: accept accept-index split-oracle e2e-smoke
+# Pin the suite to the artefact this recipe's `build` just wrote. An inherited
+# ROCA_BIN, including a stub, cannot select a different binary.
 accept: build accept-index ## The godog acceptance suites against the real binary
-	go test -tags=acceptance ./test/acceptance -count=1
+	ROCA_BIN=$(BIN) go test -tags=acceptance ./test/acceptance -count=1
+
+e2e-smoke: build ## Real binary in a disposable home: init, ingest, query, plugin install and update
+	ROCA_BIN=$(BIN) go test -tags=acceptance ./test/acceptance -run '^TestRealBinaryDisposableHomeSmoke$$' -count=1
 
 split-oracle: build ## Record and replay the DATA SPLIT compatibility goldens
 	go test -tags=acceptance ./test/acceptance -run '^TestDataSplitCompatibilityOracle$$' -count=1

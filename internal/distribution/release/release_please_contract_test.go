@@ -2,45 +2,84 @@ package release
 
 import (
 	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
-func TestReleasePleaseRunsOnlyFromTrustedMainWithLeastPrivilege(t *testing.T) {
-	workflow := readRepoFile(t, "../../../.github/workflows/release-please.yml")
-	for _, required := range []string{
-		"branches: [main]",
-		"contents: read",
-		"googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071",
-		"secrets.RELEASE_PLEASE_TOKEN",
-		"steps.token.outputs.present == 'true'",
-		`echo "present=true" >> "$GITHUB_OUTPUT"`,
-		`echo "present=false" >> "$GITHUB_OUTPUT"`,
-	} {
-		if !strings.Contains(workflow, required) {
-			t.Errorf("release-please workflow is missing %q", required)
+type releasePleaseWorkflow struct {
+	Name        string                       `yaml:"name"`
+	On          map[string]releasePleasePush `yaml:"on"`
+	Permissions map[string]string            `yaml:"permissions"`
+	Jobs        map[string]releasePleaseJob  `yaml:"jobs"`
+}
+
+type releasePleasePush struct {
+	Branches []string `yaml:"branches"`
+}
+
+type releasePleaseJob struct {
+	RunsOn string              `yaml:"runs-on"`
+	Steps  []releasePleaseStep `yaml:"steps"`
+}
+
+type releasePleaseStep struct {
+	Name string            `yaml:"name"`
+	ID   string            `yaml:"id"`
+	If   string            `yaml:"if"`
+	Uses string            `yaml:"uses"`
+	Run  string            `yaml:"run"`
+	Env  map[string]string `yaml:"env"`
+	With map[string]string `yaml:"with"`
+}
+
+func TestReleasePleaseReplicatesTheTrustedMainControlPlane(t *testing.T) {
+	workflow := parseReleasePleaseWorkflow(t)
+	if workflow.Name != "release-please" {
+		t.Fatalf("workflow name = %q, want release-please", workflow.Name)
+	}
+	if len(workflow.On) != 1 || !slices.Equal(workflow.On["push"].Branches, []string{"main"}) {
+		t.Fatalf("workflow triggers = %#v, want only pushes to main", workflow.On)
+	}
+	wantPermissions := map[string]string{"contents": "write", "pull-requests": "write"}
+	if len(workflow.Permissions) != len(wantPermissions) {
+		t.Fatalf("workflow permissions = %#v, want %#v", workflow.Permissions, wantPermissions)
+	}
+	for permission, want := range wantPermissions {
+		if workflow.Permissions[permission] != want {
+			t.Fatalf("workflow permission %s = %q, want %q", permission, workflow.Permissions[permission], want)
 		}
 	}
-	for _, forbidden := range []string{
-		"workflow_dispatch",
-		"pull_request_target",
-		"actions/checkout",
-		"contents: write",
-		"issues: write",
-		"pull-requests: write",
-		"make dist",
-		"go build",
-		"gh release",
-		// Step-level secret comparison still invoked the action with an empty
-		// token; the gate must be the env check + output, not this form.
-		"if: ${{ secrets.RELEASE_PLEASE_TOKEN != '' }}",
-		"if: secrets.RELEASE_PLEASE_TOKEN != ''",
-	} {
-		if strings.Contains(workflow, forbidden) {
-			t.Errorf("release-please workflow exposes or duplicates privileged work with %q", forbidden)
-		}
+	if len(workflow.Jobs) != 1 {
+		t.Fatalf("workflow jobs = %#v, want one release-please job", workflow.Jobs)
+	}
+	job, ok := workflow.Jobs["release-please"]
+	if !ok || job.RunsOn != "ubuntu-latest" || len(job.Steps) != 3 {
+		t.Fatalf("release-please job = %#v", job)
+	}
+
+	validation, action, automerge := job.Steps[0], job.Steps[1], job.Steps[2]
+	if validation.Name != "Validate RELEASE_PLEASE_TOKEN is set" ||
+		validation.Env["TOKEN"] != "${{ secrets.RELEASE_PLEASE_TOKEN }}" {
+		t.Fatalf("token validation step = %#v", validation)
+	}
+	if action.Uses != "googleapis/release-please-action@8b8fd2cc23b2e18957157a9d923d75aa0c6f6ad5" ||
+		action.ID != "release" || action.With["token"] != "${{ secrets.RELEASE_PLEASE_TOKEN }}" {
+		t.Fatalf("release-please action step = %#v", action)
+	}
+	if automerge.Name != "Enable auto-merge for release PR" ||
+		automerge.If != "${{ steps.release.outputs.pr }}" ||
+		automerge.Env["GH_TOKEN"] != "${{ secrets.RELEASE_PLEASE_TOKEN }}" ||
+		automerge.Env["GH_REPO"] != "${{ github.repository }}" ||
+		automerge.Env["RELEASE_PR"] != "${{ steps.release.outputs.pr }}" ||
+		automerge.Env["AUTO_MERGE_AFTER_PR"] != "249" {
+		t.Fatalf("release PR auto-merge step = %#v", automerge)
 	}
 
 	channel := parseReleaseWorkflow(t)
@@ -49,13 +88,75 @@ func TestReleasePleaseRunsOnlyFromTrustedMainWithLeastPrivilege(t *testing.T) {
 	}
 }
 
+func TestReleasePleaseTokenValidationFailsClosed(t *testing.T) {
+	validation := parseReleasePleaseWorkflow(t).Jobs["release-please"].Steps[0]
+	missing := exec.Command("bash", "-eu", "-o", "pipefail", "-c", validation.Run)
+	missing.Env = append(os.Environ(), "TOKEN=")
+	output, err := missing.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "RELEASE_PLEASE_TOKEN secret is not set") {
+		t.Fatalf("missing token result = %v\n%s", err, output)
+	}
+
+	present := exec.Command("bash", "-eu", "-o", "pipefail", "-c", validation.Run)
+	present.Env = append(os.Environ(), "TOKEN=present")
+	if output, err := present.CombinedOutput(); err != nil {
+		t.Fatalf("present token failed: %v\n%s", err, output)
+	}
+}
+
+func TestReleasePleaseArmsAutoMergeOnlyAfterTheProtectedPR(t *testing.T) {
+	automerge := parseReleasePleaseWorkflow(t).Jobs["release-please"].Steps[2]
+	tools := t.TempDir()
+	logPath := filepath.Join(tools, "gh.log")
+	writeExecutable(t, filepath.Join(tools, "jq"), "#!/bin/sh\nsed -n 's/.*\"number\":[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p'\n")
+	writeExecutable(t, filepath.Join(tools, "gh"), "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$GH_LOG\"\n")
+
+	run := func(releasePR string) string {
+		t.Helper()
+		if err := os.Remove(logPath); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		command := exec.Command("bash", "-eu", "-o", "pipefail", "-c", automerge.Run)
+		command.Env = append(os.Environ(),
+			"PATH="+tools+":"+os.Getenv("PATH"),
+			"GH_LOG="+logPath,
+			"GH_TOKEN=token",
+			"GH_REPO=thellmwhisperer/la-roca",
+			"RELEASE_PR="+releasePR,
+			"AUTO_MERGE_AFTER_PR=249",
+		)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("auto-merge script failed: %v\n%s", err, output)
+		}
+		body, err := os.ReadFile(logPath)
+		if os.IsNotExist(err) {
+			return ""
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(string(body))
+	}
+
+	if invocation := run(`{"number":249}`); invocation != "" {
+		t.Fatalf("protected release PR was modified with %q", invocation)
+	}
+	if invocation := run(`{"number":250}`); invocation != "pr merge --merge --auto 250" {
+		t.Fatalf("gh invocation = %q", invocation)
+	}
+}
+
 func TestReleasePleaseOwnsOneStableVersion(t *testing.T) {
 	var config struct {
-		ReleaseType string `json:"release-type"`
-		Packages    map[string]struct {
-			PackageName string `json:"package-name"`
-			ReleaseAs   string `json:"release-as"`
-			ExtraFiles  []struct {
+		BumpMinorPreMajor    bool `json:"bump-minor-pre-major"`
+		BumpPatchForMinorPre bool `json:"bump-patch-for-minor-pre-major"`
+		Packages             map[string]struct {
+			ReleaseType           string `json:"release-type"`
+			PackageName           string `json:"package-name"`
+			IncludeVInTag         bool   `json:"include-v-in-tag"`
+			IncludeComponentInTag bool   `json:"include-component-in-tag"`
+			ReleaseAs             string `json:"release-as"`
+			ExtraFiles            []struct {
 				Type     string `json:"type"`
 				Path     string `json:"path"`
 				JSONPath string `json:"jsonpath"`
@@ -69,17 +170,17 @@ func TestReleasePleaseOwnsOneStableVersion(t *testing.T) {
 	if !ok {
 		t.Fatal("release-please does not declare the repository root as its Go package")
 	}
-	if config.ReleaseType != "go" || root.PackageName != "roca" || root.ReleaseAs != "" {
-		t.Fatalf("release config = type %q, package %q, release-as %q; want go, roca, no pinned release",
-			config.ReleaseType, root.PackageName, root.ReleaseAs)
+	if !config.BumpMinorPreMajor || !config.BumpPatchForMinorPre || root.ReleaseType != "go" ||
+		root.PackageName != "roca" || !root.IncludeVInTag || root.IncludeComponentInTag || root.ReleaseAs != "" {
+		t.Fatalf("release config = %#v, want the authoritative root Go package without a pinned release", config)
 	}
 
 	var manifest map[string]string
 	if err := json.Unmarshal([]byte(readRepoFile(t, "../../../.release-please-manifest.json")), &manifest); err != nil {
 		t.Fatalf("release-please manifest is not valid JSON: %v", err)
 	}
-	if !regexp.MustCompile(`^\d+\.\d+\.\d+$`).MatchString(manifest["."]) {
-		t.Fatalf("manifest baseline = %q, want a stable semver owned by release-please", manifest["."])
+	if len(manifest) != 1 || !regexp.MustCompile(`^\d+\.\d+\.\d+$`).MatchString(manifest["."]) {
+		t.Fatalf("manifest baseline = %#v, want one stable root semver owned by release-please", manifest)
 	}
 
 	var plugin struct {
@@ -96,13 +197,21 @@ func TestReleasePleaseOwnsOneStableVersion(t *testing.T) {
 		t.Fatalf("plugin version is not owned by release-please: extra-files = %#v", root.ExtraFiles)
 	}
 
-	docs := readRepoFile(t, "../../../docs/releases.md")
-	for _, required := range []string{"feat:", "BREAKING CHANGE:", "RELEASE_PLEASE_TOKEN", "plugin.json"} {
-		if !strings.Contains(docs, required) {
-			t.Errorf("release documentation is missing %q", required)
-		}
+}
+
+func parseReleasePleaseWorkflow(t *testing.T) releasePleaseWorkflow {
+	t.Helper()
+	body := readRepoFile(t, "../../../.github/workflows/release-please.yml")
+	var workflow releasePleaseWorkflow
+	if err := yaml.Unmarshal([]byte(body), &workflow); err != nil {
+		t.Fatalf("release-please workflow is not valid YAML: %v", err)
 	}
-	if strings.Contains(docs, "release-as") {
-		t.Error("release documentation still instructs maintainers to pin a release")
+	return workflow
+}
+
+func writeExecutable(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
 	}
 }

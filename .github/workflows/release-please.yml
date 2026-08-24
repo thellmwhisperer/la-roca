@@ -1,40 +1,53 @@
-name: Release Please
+name: release-please
+
+# release-please owns the release PR / version / changelog automation for La
+# Roca. It reads conventional commits merged to main, maintains plugin.json +
+# CHANGELOG.md, and opens a "release-please" PR that, when merged, tags
+# vX.Y.Z and publishes the GitHub release that the existing Release workflow
+# builds binaries against.
+#
+# La Roca asks GitHub to auto-merge only release PRs created by this workflow
+# after protected legacy PR #249 and after their required checks pass. Other
+# pull requests, including #249, retain their existing merge policy.
+# RELEASE_PLEASE_TOKEN must be a fine-grained PAT with Contents + Pull requests
+# read/write on this repository.
 
 on:
   push:
     branches: [main]
 
-# The action receives a separately scoped repository token. The automatic
-# workflow token remains read-only and cannot mutate repository state.
 permissions:
-  contents: read
-
-concurrency:
-  group: release-please
-  cancel-in-progress: false
+  contents: write
+  pull-requests: write
 
 jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      # Step-level `if: secrets.X != ''` still ran the action with an empty
-      # token (CI stayed red: "Input required and not supplied: token"). Gate
-      # through an env check + output so a missing secret is a green skip.
-      - id: token
+      - name: Validate RELEASE_PLEASE_TOKEN is set
         env:
-          RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
         run: |
-          if [ -n "$RELEASE_PLEASE_TOKEN" ]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
+          if [ -z "$TOKEN" ]; then
+            echo "::error::RELEASE_PLEASE_TOKEN secret is not set. Create a fine-grained PAT scoped to this repository with Contents and Pull requests set to read and write, then add it to this repository's secrets."
+            exit 1
           fi
-      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
-        if: steps.token.outputs.present == 'true'
+
+      - uses: googleapis/release-please-action@8b8fd2cc23b2e18957157a9d923d75aa0c6f6ad5 # v4
+        id: release
         with:
-          # A repository token is intentional: tags created with GITHUB_TOKEN do
-          # not trigger the existing tag-driven release workflow. This workflow
-          # has no branch-selectable dispatch and never checks out repository code.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
+
+      - name: Enable auto-merge for release PR
+        if: ${{ steps.release.outputs.pr }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_PR: ${{ steps.release.outputs.pr }}
+          AUTO_MERGE_AFTER_PR: "249"
+        run: |
+          pr_number=$(jq -r '.number' <<<"$RELEASE_PR")
+          if [ "$pr_number" -le "$AUTO_MERGE_AFTER_PR" ]; then
+            exit 0
+          fi
+          gh pr merge --merge --auto "$pr_number"

@@ -21,14 +21,15 @@ type queryModeProvider struct {
 	answers []string
 	// name and model are the provenance a split test needs: two of these under
 	// different names is an installation with the inferences on two providers.
-	name         string
-	model        string
-	calls        int
-	failAt       int
-	unreadyAfter int
-	latency      int64
-	delays       []time.Duration
-	budgets      []time.Duration
+	name             string
+	model            string
+	calls            int
+	failAt           int
+	unreadyAfter     int
+	latency          int64
+	delays           []time.Duration
+	unboundedDelayAt int
+	budgets          []time.Duration
 }
 
 type streamingQueryModeProvider struct{ *queryModeProvider }
@@ -66,10 +67,20 @@ func (p *queryModeProvider) Chat(ctx context.Context, _ provider.ChatRequest) (p
 		p.budgets = append(p.budgets, time.Until(deadline))
 	}
 	if p.calls <= len(p.delays) && p.delays[p.calls-1] > 0 {
-		select {
-		case <-time.After(p.delays[p.calls-1]):
-		case <-ctx.Done():
-			return provider.ChatResponse{}, ctx.Err()
+		if p.calls == p.unboundedDelayAt {
+			time.Sleep(p.delays[p.calls-1])
+		} else {
+			select {
+			case <-time.After(p.delays[p.calls-1]):
+				if err := ctx.Err(); err != nil {
+					return provider.ChatResponse{}, err
+				}
+				if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+					return provider.ChatResponse{}, context.DeadlineExceeded
+				}
+			case <-ctx.Done():
+				return provider.ChatResponse{}, ctx.Err()
+			}
 		}
 	}
 	if p.calls == p.failAt {
@@ -318,8 +329,9 @@ func scopedQueryModeService(t *testing.T, model provider.Provider) *service.Serv
 
 func TestQueryFullAdaptsTheInterpretationDeadlineAndReportsItsTimeout(t *testing.T) {
 	model := &queryModeProvider{
-		answers: []string{queryModeSQL, queryModeProse},
-		delays:  []time.Duration{20 * time.Millisecond, 200 * time.Millisecond},
+		answers:          []string{queryModeSQL, queryModeProse},
+		delays:           []time.Duration{20 * time.Millisecond, 200 * time.Millisecond},
+		unboundedDelayAt: 1,
 	}
 	answer, err := answerQuery(t.Context(),
 		queryModeServiceWithTimeout(t, model, 40*time.Millisecond),

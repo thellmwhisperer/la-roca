@@ -5,9 +5,13 @@ without a La Roca login](lifecycle.md#install).
 
 `.github/workflows/release-please.yml` maintains one release pull request from
 the Conventional Commits merged into `main`; it does not build artefacts.
-Merging that pull request creates the `vX.Y.Z` tag. The tag then triggers
-`.github/workflows/release.yml`, which is the only workflow that builds and
-uploads release artefacts.
+Release pull request #249 predates this auto-merge policy and retains its
+existing merge policy. For release pull requests with a number above #249, the
+workflow asks GitHub to auto-merge with a merge commit once the required checks
+pass. The resulting push to `main` lets Release Please create both the `vX.Y.Z`
+tag and GitHub release. The tag then triggers
+`.github/workflows/release.yml`, the only workflow that builds and uploads
+release artefacts.
 
 Each `vX.Y.Z` binary release carries four `roca` binaries, each with its
 matching vector executable embedded for installation, plus the four existing
@@ -29,12 +33,12 @@ automatic `GITHUB_TOKEN`. GitHub does not start a second workflow from a tag
 created with `GITHUB_TOKEN`; the repository token is what lets the new tag start
 the existing release channel. Scope that fine-grained token only to this
 repository, with write access to contents and pull requests. The workflow's own
-`GITHUB_TOKEN` is read-only, and the privileged token is available only on a
-push to `main`: there is no branch-selectable manual or pull-request trigger and
-no checkout of repository code. Also allow GitHub Actions to create pull
-requests in the repository settings. When the secret is absent the workflow
-stays green: a first step checks the token via the environment and sets an
-output, and the action runs only when that output says the token is present.
+permissions match that contract, and the privileged token is available only on
+a push to `main`: there is no branch-selectable manual or pull-request trigger
+and no checkout of repository code. Also allow GitHub Actions to create pull
+requests and enable auto-merge in the repository settings. A missing secret is
+a release-channel failure, not a green skip: the workflow stops with the exact
+fine-grained-token setup required to restore it.
 
 The same release workflow owns the separately versioned embedding payload.
 Tagging the exact model contract `models-v1` stages the upstream GGUF through
@@ -49,15 +53,16 @@ in the tree.
 
 ## Version policy
 
-The release manifest and the repository-root `plugin.json` both start at
-`1.0.0`. Release Please updates the plugin version through `extra-files`, so
-the plugin manifest has no independent version lifecycle and no permanently
-pinned release override. A bundled plugin's federation manifest, such as
+The release manifest and the repository-root `plugin.json` both record the
+current published version. Release Please updates the plugin version through
+`extra-files`, so the plugin manifest has no independent version lifecycle and
+no permanently pinned release override. A bundled plugin's federation manifest,
+such as
 `internal/distribution/rocacorpus/plugin.json`, is not an `extra-files` target:
 the installer stamps it with the running build's version, so its checked-in
 placeholder never ships.
 
-After `1.0.0`, normal Conventional Commits choose the next version:
+Normal Conventional Commits choose the next version:
 
 - `fix:` produces a patch release.
 - `feat:` produces a minor release.
