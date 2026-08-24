@@ -197,7 +197,8 @@ own SQLite databases and declare them in a `plugin.json` manifest; the kernel
 attaches them read-only and folds their tables into natural-language search.
 
 - Use one: follow `roca plugin install --help`, then run `roca plugin update
-  <name>` / `roca plugin uninstall <name>`. The experimental surface requires
+  <name> [source]` / `roca plugin uninstall <name>`. `owner/repo` uses a
+  published release archive when one exists. The experimental surface requires
   `features.plugins=true`.
 - Build one: a manifest plus one executable is a complete plugin. Follow the
   quickstart in the repository's `docs/plugins.md`; start from its minimal
