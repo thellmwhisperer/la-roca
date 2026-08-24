@@ -41,6 +41,9 @@ func residentCommand(env *environment) *cobra.Command {
 			} else {
 				event := engine.Result("prewarm", "semantic search: ready")
 				event.Extra = map[string]any{"prewarm_ms": time.Since(started).Milliseconds()}
+				if reporter, ok := embedder.(interface{ Accelerated() bool }); ok {
+					event.Extra["accelerated"] = reporter.Accelerated()
+				}
 				if err := encoder.Encode(event); err != nil {
 					return err
 				}
