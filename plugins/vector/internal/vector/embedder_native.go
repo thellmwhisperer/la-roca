@@ -34,6 +34,13 @@ func ConfiguredEmbedder(dataDir, stateDir string, events engine.Sink, tel *telem
 	return &Native{DataDir: dataDir, StateDir: stateDir, Events: events, Telemetry: tel, ReadOnly: readOnly}
 }
 
+func writerFallbackReason(readersUseAccelerator bool, backend, existing string) string {
+	if !readersUseAccelerator || existing != "" || backend != "cpu" {
+		return existing
+	}
+	return "indexing leaves the accelerator for live search"
+}
+
 func (n *Native) Pull(ctx context.Context, requestedModel string) error {
 	return n.pull(ctx, requestedModel)
 }

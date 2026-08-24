@@ -662,6 +662,16 @@ func (unavailableEmbedder) Embed(context.Context, string, []string) ([][]float32
 	return nil, fmt.Errorf("model is not installed")
 }
 
+func TestInitOwnedSidecarSatisfiesOwnerCheck(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "records.vector.db")
+	if err := InitOwnedSidecar(path, "fixture/records", DefaultModel); err != nil {
+		t.Fatal(err)
+	}
+	if err := assertSidecarOwner(path, "fixture/records"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestFederationRejectsSidecarDatabaseCollisionsAndUnownedFiles(t *testing.T) {
 	collision := vectorRegistry{Schema: vectorRegistrySchema, Databases: []vectorDatabase{
 		{Plugin: "fixture", Database: "records", Path: "records.db", Alias: "records",
