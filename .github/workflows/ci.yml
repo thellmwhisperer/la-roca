@@ -112,10 +112,10 @@ jobs:
       - name: Native build tools
         run: sudo apt-get update && sudo apt-get install -y cmake g++
 
-      # `make check` builds the binary itself (its first prerequisite) and runs
-      # the acceptance suite as part of `go test ./...`, so there is no separate
-      # build or acceptance step: a green check is a green suite over the real
-      # binary, on a runner that had nothing an hour ago.
+      # `make check` builds the binary itself and runs the acceptance-tagged
+      # suite through its `accept` prerequisite, so there is no separate build
+      # or acceptance step: a green check is a green suite over the real binary,
+      # on a runner that had nothing an hour ago.
       - name: Build, format, vet, tests and slop gate
         run: make check
 
