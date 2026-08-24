@@ -77,6 +77,9 @@ orphan_scopes:
       - "internal/distribution/cli/render.go"
       - "internal/distribution/cli/spinner.go"
       - "internal/distribution/cli/style.go"
+      - "internal/distribution/cli/openfiles_darwin.go"
+      - "internal/distribution/cli/openfiles_linux.go"
+      - "internal/distribution/cli/openfiles_other.go"
 
 # Claims select the same registered capability files. Any new registrator or
 # embedded asset is therefore rejected until it points at a surviving scenario.
@@ -93,6 +96,9 @@ claims:
         - "internal/distribution/cli/render.go"
         - "internal/distribution/cli/spinner.go"
         - "internal/distribution/cli/style.go"
+        - "internal/distribution/cli/openfiles_darwin.go"
+        - "internal/distribution/cli/openfiles_linux.go"
+        - "internal/distribution/cli/openfiles_other.go"
     mcp_tools:
       files: ["internal/distribution/mcpplug/tools.go"]
     embedded_assets:
