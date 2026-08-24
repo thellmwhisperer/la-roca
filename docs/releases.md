@@ -5,7 +5,9 @@ without a La Roca login](lifecycle.md#install).
 
 `.github/workflows/release-please.yml` maintains one release pull request from
 the Conventional Commits merged into `main`; it does not build artefacts.
-Merging that pull request creates the `vX.Y.Z` tag. The tag then triggers
+The workflow arms auto-merge only on the release pull request returned by
+Release Please, and GitHub merges it once the required checks pass. That merge
+creates the `vX.Y.Z` tag. The tag then triggers
 `.github/workflows/release.yml`, which is the only workflow that builds and
 uploads release artefacts.
 
@@ -29,12 +31,12 @@ automatic `GITHUB_TOKEN`. GitHub does not start a second workflow from a tag
 created with `GITHUB_TOKEN`; the repository token is what lets the new tag start
 the existing release channel. Scope that fine-grained token only to this
 repository, with write access to contents and pull requests. The workflow's own
-`GITHUB_TOKEN` is read-only, and the privileged token is available only on a
-push to `main`: there is no branch-selectable manual or pull-request trigger and
-no checkout of repository code. Also allow GitHub Actions to create pull
-requests in the repository settings. When the secret is absent the workflow
-stays green: a first step checks the token via the environment and sets an
-output, and the action runs only when that output says the token is present.
+permissions match that contract, and the privileged token is available only on
+a push to `main`: there is no branch-selectable manual or pull-request trigger
+and no checkout of repository code. Also allow GitHub Actions to create pull
+requests and enable auto-merge in the repository settings. A missing secret is
+a release-channel failure, not a green skip: the workflow stops with the exact
+fine-grained-token setup required to restore it.
 
 The same release workflow owns the separately versioned embedding payload.
 Tagging the exact model contract `models-v1` stages the upstream GGUF through
