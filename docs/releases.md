@@ -9,13 +9,13 @@ Merging that pull request creates the `vX.Y.Z` tag. The tag then triggers
 `.github/workflows/release.yml`, which is the only workflow that builds and
 uploads release artefacts.
 
-Each release carries four `roca` binaries, each with its matching vector
-executable embedded for installation, plus the four existing
+Each `vX.Y.Z` binary release carries four `roca` binaries, each with its
+matching vector executable embedded for installation, plus the four existing
 `roca-vector-vX.Y.Z-<platform>.tar.gz` standalone archives. The embedded
 semantic-search engine is available in the macOS ARM64 and Linux releases.
 Windows keeps its existing compatibility payload until it passes the same
 equivalence lane. `make dist`
-on one machine builds the matching host payload plus Windows. The workflow
+on one machine builds the matching host payload plus Windows. The binary lane
 stamps the core, embedded vector,
 standalone vector, and vector manifests with one tag, checks the runnable Linux
 artefacts, and publishes one top-level `checksums.txt` covering every asset. A
@@ -35,6 +35,17 @@ no checkout of repository code. Also allow GitHub Actions to create pull
 requests in the repository settings. When the secret is absent the workflow
 stays green: a first step checks the token via the environment and sets an
 output, and the action runs only when that output says the token is present.
+
+The same release workflow owns the separately versioned embedding payload.
+Tagging the exact model contract `models-v1` stages the upstream GGUF through
+`plugins/vector/cmd/model-release`, which verifies its pinned byte count and
+SHA-256 before publishing the model asset, its Apache-2.0 license, and then
+`checksums.txt`. Runtime downloads use that GitHub release asset; the upstream
+URL is consulted only by the release lane. Model releases are always marked
+non-latest, including on reruns, so `releases/latest` remains the binary channel
+used by the installer and `roca update`. Any other `models-v*` tag is refused by
+the staging command, so changing model bytes requires an explicit new contract
+in the tree.
 
 ## Version policy
 
@@ -80,5 +91,5 @@ small synthetic ingest in an isolated HOME, and records no operator data. Both
 workflows read `versions.txt` and give every committed home a job of its own,
 which upgrades it with the current binary, performs another synthetic ingest,
 executes deterministic SQL reads, and runs doctor and data health checks. The
-release workflow publishes only once all of those jobs are green, so a failed
-compound migration blocks the release.
+binary release lane publishes only once all of those jobs are green, so a
+failed compound migration blocks the binary release.

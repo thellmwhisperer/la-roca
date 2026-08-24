@@ -7,11 +7,11 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*", "models-v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: "The tag to build and publish (vX.Y.Z)"
+        description: "The tag to build and publish (vX.Y.Z or models-v1)"
         required: true
 
 permissions:
@@ -21,6 +21,7 @@ jobs:
   # Both gauntlet jobs only read the tag they extract archives from, so neither
   # keeps the workflow's write-scoped token in its checkout.
   upgrade-homes:
+    if: ${{ !startsWith(inputs.tag || github.ref_name, 'models-v') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -35,6 +36,7 @@ jobs:
         run: echo "versions=$(./scripts/upgrade-gauntlet.sh --versions)" >> "$GITHUB_OUTPUT"
 
   upgrade-gauntlet:
+    if: ${{ !startsWith(inputs.tag || github.ref_name, 'models-v') }}
     needs: upgrade-homes
     runs-on: ubuntu-latest
     permissions:
@@ -58,6 +60,7 @@ jobs:
         run: make upgrade-gauntlet UPGRADE_HOME="$UPGRADE_HOME"
 
   native-artifacts:
+    if: ${{ !startsWith(inputs.tag || github.ref_name, 'models-v') }}
     needs: upgrade-gauntlet
     permissions:
       contents: read
@@ -107,6 +110,7 @@ jobs:
   # One red leg of the matrix fails the whole job, so no historical home can
   # stop upgrading and still be published over.
   publish:
+    if: ${{ !startsWith(inputs.tag || github.ref_name, 'models-v') }}
     needs: [upgrade-gauntlet, native-artifacts]
     runs-on: ubuntu-latest
     steps:
@@ -216,3 +220,26 @@ jobs:
               --title "roca $VERSION" --generate-notes
           gh release upload "$VERSION" --clobber bin/roca-*
           gh release upload "$VERSION" --clobber bin/checksums.txt
+
+  # The embeddings payload has its own stable tag but travels through the same
+  # release control plane as binaries. The staging command owns the upstream
+  # source, expected byte count and digest; an unexpected models-v* tag fails
+  # before anything is published.
+  publish-models:
+    if: ${{ startsWith(inputs.tag || github.ref_name, 'models-v') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.tag || github.ref_name }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: plugins/vector/go.mod
+          cache-dependency-path: plugins/vector/go.sum
+          cache: true
+      - name: Stage and publish the verified embedding model
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.tag || github.ref_name }}
+        run: ./scripts/publish-model-release.sh "$VERSION" bin

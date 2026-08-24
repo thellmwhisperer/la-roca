@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+
+	"github.com/thellmwhisperer/la-roca-vector/internal/model"
 )
 
 type goldenVectors struct {
@@ -28,6 +30,12 @@ func TestNativeEngineMatchesPublicEquivalenceFixture(t *testing.T) {
 	dataDir := os.Getenv("ROCA_VECTOR_EQUIVALENCE_DATA_DIR")
 	if dataDir == "" {
 		dataDir = t.TempDir()
+	}
+	// A release is published only after its commit passes CI. Seed the same
+	// content-addressed cache from the pinned source so this equivalence gate
+	// does not depend on the release asset that the gate authorizes.
+	if _, err := model.Ensure(context.Background(), dataDir, model.SourceManifest(), nil); err != nil {
+		t.Fatal(err)
 	}
 	embedder := ConfiguredEmbedder(dataDir, t.TempDir(), nil, nil, false)
 	if closer, ok := embedder.(*Native); ok {

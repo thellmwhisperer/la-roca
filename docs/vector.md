@@ -2,12 +2,48 @@
 
 Vector retrieval is opt-in and off by default. The release core carries its
 matching `roca-vector` companion; the installation step extracts the companion
-next to `roca`, and the switch only unhides dispatch. It does not require
+next to `roca`, and the switch enables semantic answering. It does not require
 `features.plugins`. Windows remains an indexing seat through its compatibility
 payload: the matching artefacts are `roca-<version>-windows-x64.exe` (core, carrying
 `roca-vector.exe`) and
 `roca-vector-vX.Y.Z-windows-x64.tar.gz` (standalone archive in the same
 release).
+
+## The one-command path
+
+There is one command and one question. `roca init` stops at working full-text
+search, and then, in that same run, asks whether to read the history for
+meaning as well, saying plainly that word search already answers, that it
+answers partially, and that a yes downloads what it needs.
+
+A yes does everything the sections below describe by hand: it gets the local
+embedding runtime going if this machine allows it, fetches the model if it is
+missing, turns `features.vector` on in the configuration `roca doctor` names,
+and starts the background pass. Word search keeps answering the whole time. If
+the machine cannot embed, init reports that and prints one next step instead of
+failing, and leaves `features.vector` off so nothing promises an index that is
+not being built.
+
+The question is asked only where an answer means something: a terminal with a
+person reading it, a word search that has just hit, and a machine that is not
+already indexing. A non-interactive run, a run with `--db-path`, and CI are
+never asked; they stop at working full-text search, download nothing, and do
+not rewrite an existing configuration. On those machines the pass starts at the
+plugin instead, with `roca vector install`. There is no `--vectors` flag: a run
+nobody answered has not consented to a download.
+
+Progress is reported as a fraction of the history on this machine:
+
+```sh
+roca vector status
+```
+
+It says whether a pass is reading right now, how much it has read, and what
+stopped it if it stopped. A pass that stopped partway leaves the rows it
+already wrote queryable; those rows answer, and full text answers for the rest.
+
+The rest of this document is the contract underneath, for operators who want
+each step separately or who are on a machine the one command cannot serve.
 
 ## Windows install
 
@@ -50,9 +86,11 @@ or `config.toml` next to a `--db-path` database):
 vector = true
 ```
 
-That exposes `roca vector` and lists `vector` in `roca plugins`. Absent or
-false, the command does not exist. On Windows, keep `roca-vector.exe` beside
-`roca.exe` in the directory on `PATH`.
+That exposes the semantic answering verbs and lists `vector` in `roca plugins`.
+When the switch is absent or false, answering stays unavailable, but `roca
+vector install` and `roca vector status` remain reachable whenever the
+companion is installed so an operator can start, resume, or inspect the pass.
+On Windows, keep `roca-vector.exe` beside `roca.exe` in the directory on `PATH`.
 
 ## The one download
 
@@ -60,19 +98,26 @@ On macOS and Linux, semantic search downloads one embedding model (~1 GB) into
 the selected Roca data directory. That is the only extra download. There is no
 second runtime, no daemon, and no extra command after you consent. The download
 is size- and checksum-verified before it becomes active, then reused by later
-indexing and queries.
+indexing and queries. The pinned bytes are served from La Roca's `models-v1`
+GitHub release, whose release lane verifies the upstream source before
+publication.
 
 The [init flow](lifecycle.md#initialize) owns first-run consent and ordering. If
 semantic search is enabled there, no separate vector command is needed.
 `roca vector install` performs the same download and build only when you turn it
 on later.
 
-macOS and Linux run the embedding engine inside the vector companion. macOS
-uses hardware acceleration when available and falls back to CPU if it cannot
-start; Linux uses CPU. Windows keeps the previous local runtime path until its
-own native build lane ships; see the release notes.
+macOS and Linux run the embedding engine inside the vector companion. On
+macOS, live queries use hardware acceleration when available and fall back to
+CPU if it cannot start; indexing stays on CPU so it cannot contend with live
+search for the accelerator. Linux uses CPU for both paths. Windows keeps the
+previous local runtime path until its own native build lane ships; see the
+release notes.
 
 ## Index declared databases
+
+A yes to the question `roca init` asks starts this build. To start it
+separately instead, which is also how a machine init never asked gets an index:
 
 ```sh
 roca vector install
@@ -106,15 +151,15 @@ Worker coordination remains under `~/.roca/plugins/roca-vector/state/`
 can send a desktop notification with the exit status and aggregate counts.
 Windows sends no desktop notification: inspect `completion.json` or
 `worker.log` in that state directory. The worker log path is printed at launch;
-`completion.json` records `started_at`, `finished_at`, and `exit_status`. The
-completion record describes that worker run; query readiness is checked from
-each selected sidecar's owner, model, and dimensions metadata. Sidecars that
-are not ready leave their databases on deterministic FTS and SQL. The
-timestamps time the first pass. During setup, download and indexing progress stream live with completed
-counts, the current time range, and an ETA. Indexing works from newest material
-toward the oldest history, so recent work becomes searchable first. Engine
-timings (load, pre-warm, per-query embedding, throughput, backend and fallback,
-memory high-water, and errors) are rotated, dated JSONL files at
+`completion.json` records `started_at`, `finished_at`, and `exit_status`. That
+record describes the worker run, not sidecar readiness. A sidecar is ready when
+its identity, model, and dimensions match the current declaration. Rows already
+written remain queryable whether the pass finished, failed, or stopped early;
+deterministic FTS and SQL answer for the rest. The timestamps time the first
+pass on this machine. During setup, download and indexing progress stream live
+with completed counts, the current time range, and an ETA. Engine timings
+(load, pre-warm, per-query embedding, throughput, backend and fallback, memory
+high-water, and errors) are rotated, dated JSONL files at
 `<data-directory>/logs/engine-YYYY-MM-DD.jsonl`. They contain no query or
 document text, never enter a database table, and never leave the machine.
 
