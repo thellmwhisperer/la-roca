@@ -55,19 +55,17 @@ func selectedBackend(gpuLayers int, accelerated bool) (string, string) {
 }
 
 func OpenPreferred(model string, threads int) (*Engine, error) {
-	if runtime.GOOS == "darwin" {
-		engine, err := Open(model, threads, 99)
-		if err == nil {
-			return engine, nil
-		}
-		cpu, cpuErr := Open(model, threads, 0)
-		if cpuErr != nil {
-			return nil, err
-		}
-		cpu.FallbackReason = "accelerator init failed"
-		return cpu, nil
+	layers := GPULayers(true)
+	engine, err := Open(model, threads, layers)
+	if err == nil || layers == 0 {
+		return engine, err
 	}
-	return Open(model, threads, 0)
+	cpu, cpuErr := Open(model, threads, 0)
+	if cpuErr != nil {
+		return nil, err
+	}
+	cpu.FallbackReason = "accelerator init failed"
+	return cpu, nil
 }
 
 func (e *Engine) Close() {
