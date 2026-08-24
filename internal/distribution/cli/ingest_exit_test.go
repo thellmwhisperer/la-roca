@@ -121,21 +121,14 @@ func TestDirectIngestKeepsAReadFailureNonFatal(t *testing.T) {
 
 func initializedIngestCLI(t *testing.T) (home, claudeRoot, grokRoot, dbPath string) {
 	t.Helper()
-	home = t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("ROCA_DB_PATH", "")
-	t.Setenv("ROCA_CONFIG", "")
-	t.Setenv("ROCA_MODELS_ORDER", "none")
+	home = hermeticHome(t)
 	claudeRoot = filepath.Join(home, "sources", "claude")
 	grokRoot = filepath.Join(home, "sources", "grok")
 	writeConfig(t, home, fmt.Sprintf("[defaults]\nclaude_projects_root = %q\ngrok_sessions_root = %q\nworkspace_roots = [%q]\n",
 		claudeRoot, grokRoot, filepath.Join(home, "workspace")))
 	dbPath = filepath.Join(home, ".roca", "roca.db")
 
-	run := executeHermeticCLI([]string{"init", "--db-path", dbPath})
-	if run.err != nil || run.code != ExitOK {
-		t.Fatalf("init = code %d err %v:\n%s%s", run.code, run.err, run.output, run.warnings)
-	}
+	initMustSucceed(t, "init", "--db-path", dbPath)
 	return home, claudeRoot, grokRoot, dbPath
 }
 

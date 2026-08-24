@@ -183,8 +183,10 @@ func (f Federation) seedLegacySidecar(ctx context.Context, legacy *sql.DB,
 				continue
 			}
 			desired := desiredChunk{
-				sourceKind: source.kind, sourceID: source.stableID(), column: source.column, index: index,
-				fingerprint: source.embeddingFingerprint(input), locator: source.locator(), text: input,
+				sourceKind: source.kind, sourceID: source.stableID(), rawSourceID: source.sourceID,
+				column: source.column, index: index, fingerprint: source.embeddingFingerprint(input),
+				sourceFingerprint: source.sourceFingerprint, sourceChunks: source.sourceChunks,
+				locator: source.locator(), text: input,
 			}
 			stored := existing[chunkKey(desired.sourceKind, desired.sourceID, desired.column, desired.index)]
 			if stored.id != 0 && stored.fingerprint == desired.fingerprint {
@@ -282,9 +284,9 @@ func copyLegacySeedBatch(ctx context.Context, legacy, target *sql.DB,
 		}
 		id := seed.targetID
 		if id == 0 {
-			result, err := tx.ExecContext(ctx, `INSERT INTO chunks(source_kind,source_id,text_column,chunk_index,fingerprint,locator)
-				VALUES (?,?,?,?,?,?)`, seed.chunk.sourceKind, seed.chunk.sourceID, seed.chunk.column, seed.chunk.index,
-				seed.chunk.fingerprint, string(where))
+			result, err := tx.ExecContext(ctx, `INSERT INTO chunks(source_kind,source_id,text_column,chunk_index,fingerprint,source_fingerprint,locator)
+				VALUES (?,?,?,?,?,?,?)`, seed.chunk.sourceKind, seed.chunk.sourceID, seed.chunk.column, seed.chunk.index,
+				seed.chunk.fingerprint, seed.chunk.sourceFingerprint, string(where))
 			if err != nil {
 				return 0, fmt.Errorf("write legacy chunk seed: %w", err)
 			}
@@ -296,8 +298,8 @@ func copyLegacySeedBatch(ctx context.Context, legacy, target *sql.DB,
 			if err := deleteEmbeddings(ctx, tx, id); err != nil {
 				return 0, fmt.Errorf("replace legacy chunk seed embeddings: %w", err)
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE chunks SET fingerprint=?,locator=?,updated_at=datetime('now')
-				WHERE id=?`, seed.chunk.fingerprint, string(where), id); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE chunks SET fingerprint=?,source_fingerprint=?,locator=?,updated_at=datetime('now')
+				WHERE id=?`, seed.chunk.fingerprint, seed.chunk.sourceFingerprint, string(where), id); err != nil {
 				return 0, fmt.Errorf("update legacy chunk seed: %w", err)
 			}
 		}
@@ -310,6 +312,13 @@ func copyLegacySeedBatch(ctx context.Context, legacy, target *sql.DB,
 		}
 	}
 	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	chunks := make([]desiredChunk, len(seeds))
+	for index := range seeds {
+		chunks[index] = seeds[index].chunk
+	}
+	if err := refreshSourceRecords(ctx, target, chunks); err != nil {
 		return 0, err
 	}
 	return len(seeds), nil

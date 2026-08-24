@@ -959,3 +959,171 @@ func flattenInputs(batches [][]string) []string {
 }
 
 func intPointer(value int) *int { return &value }
+
+// haltingEmbedder lets one batch through and drops the next, which leaves the
+// index in the state this test is about: rows written, run never finished.
+type haltingEmbedder struct{ batches int }
+
+func (e *haltingEmbedder) Pull(context.Context, string) error { return nil }
+
+func (e *haltingEmbedder) Embed(_ context.Context, _ string, input []string) ([][]float32, error) {
+	e.batches++
+	if e.batches == 2 {
+		return nil, fmt.Errorf("the embedding pass was interrupted")
+	}
+	vectors := make([][]float32, len(input))
+	for index := range input {
+		vectors[index] = []float32{1, 0, 0, 0, 0, 0, 0, 0}
+	}
+	return vectors, nil
+}
+
+func TestAnInterruptedIndexStillAnswersWithTheRowsItAlreadyWrote(t *testing.T) {
+	federation, corpusPath, _, _ := federationFixture(t)
+	mutateSourceDatabase(t, corpusPath, fmt.Sprintf(
+		`INSERT INTO articles VALUES ('article-3','Long title','%s','raw-counter')`,
+		strings.Repeat("remembered alpha ", 120)))
+	federation.Embedder = &haltingEmbedder{}
+
+	if _, err := federation.Ingest(context.Background(), ""); err == nil {
+		t.Fatal("an embedder that stops answering has to fail the ingest")
+	}
+
+	answer, err := federation.Query(context.Background(), "remembered", 10, "corpus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(answer.Notices, "\n"), "FTS-only") {
+		t.Fatalf("an unfinished index reported itself as absent: %q", answer.Notices)
+	}
+	if len(answer.Results) == 0 {
+		t.Fatal("an unfinished index hid the rows it had already written")
+	}
+	if fingerprint := sidecarMeta(t, SidecarPath(corpusPath))["source_fingerprint"]; fingerprint != "" {
+		t.Fatalf("an unfinished index claimed to match its source: %q", fingerprint)
+	}
+
+	progress, err := federation.HistoryProgress(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.Read >= progress.Total {
+		t.Fatalf("an unfinished pass reported %d of %d read", progress.Read, progress.Total)
+	}
+}
+
+func TestProgressCountsHistoryReadAgainstHistoryDeclared(t *testing.T) {
+	federation, corpusPath, _, _ := federationFixture(t)
+	ctx := context.Background()
+	mutateSourceDatabase(t, corpusPath, `INSERT INTO articles
+		VALUES ('','Ignored title','Ignored body','raw-empty')`)
+
+	before, err := federation.HistoryProgress(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Total != 4 || before.Read != 0 {
+		t.Fatalf("progress before any pass = %d of %d", before.Read, before.Total)
+	}
+
+	if _, err := federation.Ingest(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	after, err := federation.HistoryProgress(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Read != 4 || after.Total != 4 {
+		t.Fatalf("progress after a finished pass = %d of %d", after.Read, after.Total)
+	}
+	if len(after.Databases) != 2 {
+		t.Fatalf("progress databases = %+v", after.Databases)
+	}
+
+	mutateSourceDatabase(t, corpusPath, `UPDATE articles
+		SET title='Edited title', body='Edited body' WHERE id='article-1'`)
+	edited, err := federation.HistoryProgress(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if edited.Read != 4 || edited.Total != 4 {
+		t.Fatalf("progress after editing one declared row = %d of %d, want 4 of 4 (status counts rows, not freshness)",
+			edited.Read, edited.Total)
+	}
+
+	mutateSourceDatabase(t, corpusPath, `DELETE FROM articles WHERE id='article-1';
+		INSERT INTO articles VALUES ('article-3','Replacement title','Replacement body','raw-counter')`)
+	replaced, err := federation.HistoryProgress(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replaced.Read != 3 || replaced.Total != 4 {
+		t.Fatalf("progress after replacing one declared row = %d of %d, want 3 of 4",
+			replaced.Read, replaced.Total)
+	}
+}
+
+func TestResweepGarbageCollectsStaleTrailingChunks(t *testing.T) {
+	federation, corpusPath, _, _ := federationFixture(t)
+	ctx := context.Background()
+	longBody := strings.Repeat("alpha lighthouse ", 1200)
+	mutateSourceDatabase(t, corpusPath, `UPDATE articles SET body=`+sqlLiteral(longBody)+` WHERE id='article-1'`)
+	if _, err := federation.Ingest(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	before, err := federation.HistoryProgress(ctx)
+	if err != nil || before.Read != before.Total {
+		t.Fatalf("completed long-row progress = %+v, err %v", before, err)
+	}
+	store := openTestSQLite(t, SidecarPath(corpusPath))
+	var longChunks int
+	if err := store.QueryRow(`SELECT COUNT(*) FROM chunks WHERE source_kind='articles' AND source_id='articles/article-1'`).Scan(&longChunks); err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if longChunks < 2 {
+		t.Fatalf("long row produced %d chunks, want at least 2", longChunks)
+	}
+	mutateSourceDatabase(t, corpusPath, `UPDATE articles SET body=`+sqlLiteral(longBody[:200])+` WHERE id='article-1'`)
+	if _, err := federation.Ingest(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	store = openTestSQLite(t, SidecarPath(corpusPath))
+	defer store.Close()
+	var shortChunks int
+	if err := store.QueryRow(`SELECT COUNT(*) FROM chunks WHERE source_kind='articles' AND source_id='articles/article-1'`).Scan(&shortChunks); err != nil {
+		t.Fatal(err)
+	}
+	if shortChunks >= longChunks {
+		t.Fatalf("shortened row kept %d chunks, want fewer than %d", shortChunks, longChunks)
+	}
+	after, err := federation.HistoryProgress(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Read != after.Total {
+		t.Fatalf("reswept shortened row progress = %d of %d", after.Read, after.Total)
+	}
+}
+
+func TestProgressTreatsLegacySidecarIdentityAsUnknown(t *testing.T) {
+	federation, corpusPath, _, _ := federationFixture(t)
+	if _, err := federation.Ingest(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
+	store := openTestSQLite(t, SidecarPath(corpusPath))
+	if _, err := store.Exec(`DROP TABLE sources`); err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := federation.HistoryProgress(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "progress identity is unavailable") {
+		t.Fatalf("legacy progress identity = %v", err)
+	}
+}

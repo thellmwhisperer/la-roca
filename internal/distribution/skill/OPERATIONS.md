@@ -151,7 +151,9 @@ is last resort.
 Vector readiness is per selected sidecar. The aggregate worker record at
 `~/.roca/plugins/roca-vector/state/completion.json` reports `finished_at` and
 `exit_status` for that worker run; it is not a readiness prerequisite for every
-query. `features.vector = true` only unhides `roca vector`; it is not the index.
+query. `features.vector = true` enables semantic answering; it is not the index.
+Lifecycle `install` and `status` remain available with the companion while the
+feature is off.
 Query every available selected sidecar. A selected database with no declaration,
 a missing or unready sidecar, or an unavailable embedding model emits a notice
 and keeps exactly its existing FTS/SQL behavior. When none of the selected
