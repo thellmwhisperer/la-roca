@@ -6,7 +6,7 @@ import "testing"
 
 func TestWriterFallbackReasonIsDarwinSpecific(t *testing.T) {
 	tests := []struct {
-		readers bool
+		readers                 bool
 		backend, existing, want string
 	}{
 		{true, "cpu", "", "indexing leaves the accelerator for live search"},
