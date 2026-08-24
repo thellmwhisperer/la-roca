@@ -78,13 +78,13 @@ func TestSearchDoesNotLabelAnUnavailableVectorEngine(t *testing.T) {
 }
 
 func TestSearchReturnsFTSWhenEmbeddingModelIsNotDownloaded(t *testing.T) {
-	started := time.Now()
 	svc := seededHybridService(t,
 		func(context.Context, string, int, string) (service.VectorHits, error) {
 			return service.VectorHits{Notices: []string{
 				"vector search unavailable: the embedding model is not downloaded",
 			}}, nil
 		})
+	started := time.Now()
 	result := mustHybridSearch(t, svc, "salud mental", false)
 	if strings.Join(result.Engines, ",") != "fts" {
 		t.Fatalf("engines = %v, want fts-only", result.Engines)
