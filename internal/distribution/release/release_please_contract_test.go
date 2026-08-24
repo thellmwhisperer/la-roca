@@ -77,7 +77,8 @@ func TestReleasePleaseReplicatesTheTrustedMainControlPlane(t *testing.T) {
 		automerge.If != "${{ steps.release.outputs.pr }}" ||
 		automerge.Env["GH_TOKEN"] != "${{ secrets.RELEASE_PLEASE_TOKEN }}" ||
 		automerge.Env["GH_REPO"] != "${{ github.repository }}" ||
-		automerge.Env["RELEASE_PR"] != "${{ steps.release.outputs.pr }}" {
+		automerge.Env["RELEASE_PR"] != "${{ steps.release.outputs.pr }}" ||
+		automerge.Env["AUTO_MERGE_AFTER_PR"] != "249" {
 		t.Fatalf("release PR auto-merge step = %#v", automerge)
 	}
 
@@ -103,26 +104,44 @@ func TestReleasePleaseTokenValidationFailsClosed(t *testing.T) {
 	}
 }
 
-func TestReleasePleaseArmsAutoMergeForTheReturnedPR(t *testing.T) {
+func TestReleasePleaseArmsAutoMergeOnlyAfterTheProtectedPR(t *testing.T) {
 	automerge := parseReleasePleaseWorkflow(t).Jobs["release-please"].Steps[2]
 	tools := t.TempDir()
 	logPath := filepath.Join(tools, "gh.log")
-	writeExecutable(t, filepath.Join(tools, "jq"), "#!/bin/sh\nprintf '%s\\n' 73\n")
+	writeExecutable(t, filepath.Join(tools, "jq"), "#!/bin/sh\nsed -n 's/.*\"number\":[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p'\n")
 	writeExecutable(t, filepath.Join(tools, "gh"), "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$GH_LOG\"\n")
 
-	command := exec.Command("bash", "-eu", "-o", "pipefail", "-c", automerge.Run)
-	command.Env = append(os.Environ(),
-		"PATH="+tools+":"+os.Getenv("PATH"),
-		"GH_LOG="+logPath,
-		"GH_TOKEN=token",
-		"GH_REPO=thellmwhisperer/la-roca",
-		`RELEASE_PR={"number":73}`,
-	)
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("auto-merge script failed: %v\n%s", err, output)
+	run := func(releasePR string) string {
+		t.Helper()
+		if err := os.Remove(logPath); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		command := exec.Command("bash", "-eu", "-o", "pipefail", "-c", automerge.Run)
+		command.Env = append(os.Environ(),
+			"PATH="+tools+":"+os.Getenv("PATH"),
+			"GH_LOG="+logPath,
+			"GH_TOKEN=token",
+			"GH_REPO=thellmwhisperer/la-roca",
+			"RELEASE_PR="+releasePR,
+			"AUTO_MERGE_AFTER_PR=249",
+		)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("auto-merge script failed: %v\n%s", err, output)
+		}
+		body, err := os.ReadFile(logPath)
+		if os.IsNotExist(err) {
+			return ""
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(string(body))
 	}
-	invocation := strings.TrimSpace(readRepoFile(t, logPath))
-	if invocation != "pr merge --merge --auto 73" {
+
+	if invocation := run(`{"number":249}`); invocation != "" {
+		t.Fatalf("protected release PR was modified with %q", invocation)
+	}
+	if invocation := run(`{"number":250}`); invocation != "pr merge --merge --auto 250" {
 		t.Fatalf("gh invocation = %q", invocation)
 	}
 }
