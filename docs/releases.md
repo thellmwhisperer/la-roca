@@ -36,6 +36,15 @@ requests in the repository settings. When the secret is absent the workflow
 stays green: a first step checks the token via the environment and sets an
 output, and the action runs only when that output says the token is present.
 
+The same release workflow owns the separately versioned embedding payload.
+Tagging the exact model contract `models-v1` stages the upstream GGUF through
+`plugins/vector/cmd/model-release`, which verifies its pinned byte count and
+SHA-256 before publishing the model asset, its Apache-2.0 license, and then
+`checksums.txt`. Runtime downloads use that GitHub release asset; the upstream
+URL is consulted only by the release lane. Any other `models-v*` tag is refused
+by the staging command, so changing model bytes requires an explicit new
+contract in the tree.
+
 ## Version policy
 
 The release manifest and the repository-root `plugin.json` both start at

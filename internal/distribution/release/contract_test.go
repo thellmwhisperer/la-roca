@@ -25,8 +25,9 @@ var releaseArtifactSet = []string{
 
 type releaseWorkflow struct {
 	Jobs map[string]struct {
-		Needs    any `yaml:"needs"`
-		RunsOn   any `yaml:"runs-on"`
+		Needs    any    `yaml:"needs"`
+		RunsOn   any    `yaml:"runs-on"`
+		If       string `yaml:"if"`
 		Strategy struct {
 			Matrix struct {
 				Include []map[string]any `yaml:"include"`
@@ -106,11 +107,7 @@ func TestReleaseLaneArchivePreservesActualArtifactSetAndModes(t *testing.T) {
 }
 
 func TestReleaseWorkflowBuildsNativelyAndAggregatesBeforePublishing(t *testing.T) {
-	body := readRepoFile(t, "../../../.github/workflows/release.yml")
-	var workflow releaseWorkflow
-	if err := yaml.Unmarshal([]byte(body), &workflow); err != nil {
-		t.Fatalf("release workflow is not valid YAML: %v", err)
-	}
+	workflow := parseReleaseWorkflow(t)
 	native, ok := workflow.Jobs["native-artifacts"]
 	if !ok {
 		t.Fatal("release workflow has no native-artifacts job")
@@ -158,6 +155,43 @@ func TestReleaseWorkflowBuildsNativelyAndAggregatesBeforePublishing(t *testing.T
 	if !aggregated {
 		t.Fatal("publish does not aggregate every native artifact lane")
 	}
+}
+
+func TestReleaseWorkflowPublishesThePinnedModelThroughTheSameChannel(t *testing.T) {
+	workflow := parseReleaseWorkflow(t)
+	models, ok := workflow.Jobs["publish-models"]
+	if !ok {
+		t.Fatal("release workflow has no publish-models job")
+	}
+	if !strings.Contains(models.If, "startsWith") || !strings.Contains(models.If, "models-v") {
+		t.Fatalf("model release condition = %q", models.If)
+	}
+	stages, publishesAssetAndLicense, publishesChecksums := false, false, false
+	for _, step := range models.Steps {
+		if strings.Contains(step.Run, "go run ./cmd/model-release") {
+			stages = true
+		}
+		if strings.Contains(step.Run, `gh release upload "$VERSION" --clobber bin/*.gguf bin/LICENSE-model.txt`) {
+			publishesAssetAndLicense = true
+		}
+		if strings.Contains(step.Run, `gh release upload "$VERSION" --clobber bin/checksums.txt`) {
+			publishesChecksums = true
+		}
+	}
+	if !stages || !publishesAssetAndLicense || !publishesChecksums {
+		t.Fatalf("model release steps = stage %t, asset and license %t, checksums %t",
+			stages, publishesAssetAndLicense, publishesChecksums)
+	}
+}
+
+func parseReleaseWorkflow(t *testing.T) releaseWorkflow {
+	t.Helper()
+	body := readRepoFile(t, "../../../.github/workflows/release.yml")
+	var workflow releaseWorkflow
+	if err := yaml.Unmarshal([]byte(body), &workflow); err != nil {
+		t.Fatalf("release workflow is not valid YAML: %v", err)
+	}
+	return workflow
 }
 
 func readRepoFile(t *testing.T, path string) string {

@@ -60,7 +60,9 @@ On macOS and Linux, semantic search downloads one embedding model (~1 GB) into
 the selected Roca data directory. That is the only extra download. There is no
 second runtime, no daemon, and no extra command after you consent. The download
 is size- and checksum-verified before it becomes active, then reused by later
-indexing and queries.
+indexing and queries. The pinned bytes are served from La Roca's `models-v1`
+GitHub release, whose release lane verifies the upstream source before
+publication.
 
 The [init flow](lifecycle.md#initialize) owns first-run consent and ordering. If
 semantic search is enabled there, no separate vector command is needed.

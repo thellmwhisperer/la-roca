@@ -43,8 +43,8 @@ func TestReleasePleaseRunsOnlyFromTrustedMainWithLeastPrivilege(t *testing.T) {
 	}
 
 	channel := readRepoFile(t, "../../../.github/workflows/release.yml")
-	if !strings.Contains(channel, `tags: ["v*"]`) {
-		t.Error("the artefact channel is no longer driven by vX.Y.Z tags")
+	if !strings.Contains(channel, `tags: ["v*", "models-v*"]`) {
+		t.Error("the artefact channel is no longer driven by binary and model tags")
 	}
 }
 
