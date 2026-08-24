@@ -73,25 +73,38 @@ func loadCatalogFeatures(root string) ([]godog.Feature, error) {
 // exactly the artefact `make build` produces.
 func rocaBinary() (string, error) {
 	if path := os.Getenv("ROCA_BIN"); path != "" {
-		return filepath.Abs(path)
+		if filepath.IsAbs(path) {
+			return filepath.Clean(path), nil
+		}
+		root, err := acceptanceRoot()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(root, path), nil
 	}
-	path, err := filepath.Abs(filepath.Join("..", "..", "bin", "roca"))
+	root, err := acceptanceRoot()
 	if err != nil {
 		return "", err
 	}
+	path := filepath.Join(root, "bin", "roca")
 	if _, err := os.Stat(path); err != nil {
 		return "", fmt.Errorf("%s does not exist: run `make build` first", path)
 	}
 	return path, nil
 }
 
+func acceptanceRoot() (string, error) {
+	return filepath.Abs(filepath.Join("..", ".."))
+}
+
 // acceptanceTempDir creates a scratch directory under the project's ignored
 // .tmp/, so a suite never writes outside the repository.
 func acceptanceTempDir(prefix string) (string, error) {
-	root, err := filepath.Abs(filepath.Join("..", "..", ".tmp"))
+	projectRoot, err := acceptanceRoot()
 	if err != nil {
 		return "", err
 	}
+	root := filepath.Join(projectRoot, ".tmp")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return "", err
 	}
