@@ -55,21 +55,24 @@ func TestSkillInstallWritesUnderTempHome(t *testing.T) {
 	if err != nil || zones.System != skill.Content() || zones.User != "" {
 		t.Fatalf("installed zones = %+v, err %v", zones, err)
 	}
-	previous := -1
+	// The playbook is read top to bottom, so the steps have to appear in the
+	// order an agent performs them. Each one is looked for after the last, which
+	// leaves prose free to name a command before the step that runs it.
+	previous := 0
 	for _, command := range []string{
-		"curl -fsSL", "roca init", "roca skill install", "roca query",
-		"vector = true", "roca vector install",
+		"curl -fsSL", "roca init", "roca query",
+		"roca mcp install", "roca vector status",
 	} {
-		index := strings.Index(zones.System, command)
-		if index < 0 {
-			t.Fatalf("installed agent playbook is missing %q", command)
+		offset := strings.Index(zones.System[previous:], command)
+		if offset < 0 {
+			t.Fatalf("installed agent playbook is missing %q, or puts it out of order", command)
 		}
-		if index <= previous {
-			t.Fatalf("installed agent playbook puts %q out of order", command)
-		}
-		previous = index
+		previous += offset + len(command)
 	}
-	for _, forbidden := range []string{"plugins = true", "roca_ops = true"} {
+	// The first-run yes is a question `roca init` asks, not a second init command
+	// or an unrelated feature switch.
+	for _, forbidden := range []string{"plugins = true", "roca_ops = true",
+		"roca init --vectors"} {
 		if strings.Contains(zones.System, forbidden) {
 			t.Fatalf("installed agent playbook still tells agents to set %q", forbidden)
 		}
@@ -263,10 +266,18 @@ func TestInitInstallsEmbeddedSkillsIntoDetectedRuntimes(t *testing.T) {
 			}
 		}
 	}
+	// The catalog is the map of what is searchable on this machine. An agent
+	// that reads the skills after init and does not find it composes SQL by
+	// guessing, so init writes it too and no manual step stands between the
+	// first ingest and a good first question.
 	for _, runtime := range []string{"claude", "cursor"} {
 		path := filepath.Join(home, "."+runtime, "skills", "roca-semantica", "SKILL.md")
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Fatalf("init installed the catalog skill at %s; that stays on skill install", path)
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("init did not install the catalog skill at %s: %v", path, err)
+		}
+		if !strings.Contains(string(body), skill.CatalogName) {
+			t.Errorf("the catalog skill at %s does not name itself:\n%s", path, body)
 		}
 	}
 }
@@ -366,13 +377,15 @@ func TestSkillTeachesTheInvestigationFunnel(t *testing.T) {
 			name: "vector owns the index",
 			body: skill.VectorContent(),
 			want: []string{
+				"There is no separate command to start one",
+				"roca vector status",
 				"roca vector install",
 				"roca vector ingest --delta",
 				"roca vector compact",
 				"completion.json",
 				"invite the user to",
-				"exit_status == 0",
-				"Otherwise treat the index as unavailable",
+				"is not an\nempty product",
+				"never to decide whether the index",
 			},
 		},
 	} {

@@ -28,6 +28,8 @@ import (
 // A zero request means this default, never an unbounded response.
 const DefaultMaxChars = 500
 
+const wordProofFieldBudget = 64 << 20
+
 // Options are the service's opening options.
 type Options struct {
 	DBPath    string
@@ -438,6 +440,10 @@ type InitResult struct {
 	Rows       ingest.Tables  `json:"rows"`
 	Bedrock    *Bedrock       `json:"bedrock"`
 	Search     *search.Report `json:"search_index,omitempty"`
+	// WordSearch is the round trip init will not return without: a word taken
+	// from a row this machine holds, asked back of the index, and found. The
+	// index being built is a step; this is the promise that step was for.
+	WordSearch *search.Proof `json:"word_search,omitempty"`
 	// Model and Ingest are the rest of the bootstrap: whether a model is going
 	// to answer, and what the first read of the disk found. Neither can fail
 	// the command, and both report.
@@ -574,9 +580,8 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 	}
 	result.SetupElapsedMS = time.Since(started).Milliseconds()
 
-	// The rest of the bootstrap. None of it may take the command down: a
-	// database that is ready is the thing init promised, and a source that
-	// cannot be read or a model that is not installed are reported states.
+	// The rest of the bootstrap reports unreadable sources and unavailable
+	// models as states. Word search remains the completion boundary for init.
 	progress("ingest: starting first read")
 	result.Ingest = s.bootstrapIngest(ctx)
 	progress(fmt.Sprintf("ingest: complete · %d files read · %d skipped · %d errors",
@@ -584,6 +589,28 @@ func (s *Service) Init(ctx context.Context) (InitResult, error) {
 	result.Search = result.Ingest.Index
 	if result.Search != nil {
 		progress(fmt.Sprintf("index: ready in %d ms", result.Search.ElapsedMS))
+	}
+	progress("word search: asking the index for a word from your own history")
+	result.WordSearch = s.proveWordSearch(ctx)
+	progress("word search: " + wordSearchProgress(*result.WordSearch))
+	if !result.WordSearch.Ready && !result.WordSearch.Empty {
+		progress("word search: rebuilding the full-text index once")
+		rebuilt, rebuildErr := s.rebuildWordSearch(ctx)
+		if rebuildErr != nil {
+			return result, wordSearchInitError()
+		}
+		if result.Search == nil {
+			result.Search = &rebuilt
+		} else {
+			result.Search.LexicalBuilt = result.Search.LexicalBuilt || rebuilt.LexicalBuilt
+			result.Search.ElapsedMS += rebuilt.ElapsedMS
+		}
+		progress("word search: asking the rebuilt index again")
+		result.WordSearch = s.proveWordSearch(ctx)
+		progress("word search: " + wordSearchProgress(*result.WordSearch))
+		if !result.WordSearch.Ready && !result.WordSearch.Empty {
+			return result, wordSearchInitError()
+		}
 	}
 	progress("model: checking declared providers")
 	modelStarted := time.Now()
@@ -867,4 +894,159 @@ func lowerWithPositions(text string) (string, []int) {
 		}
 	}
 	return lower.String(), positions
+}
+
+func (s *Service) proveWordSearch(ctx context.Context) *search.Proof {
+	route := s.inventoryRoute(ctx)
+	defer route.closeOnDemand()
+	var fault *search.Proof
+	var ready *search.Proof
+	for _, surface := range collectSurfaces(route) {
+		proof := s.proveWordSearchSurface(ctx, route, surface)
+		if proof.Ready && ready == nil {
+			candidate := proof
+			ready = &candidate
+		}
+		if !proof.Empty && fault == nil {
+			if !proof.Ready {
+				candidate := proof
+				fault = &candidate
+			}
+		}
+	}
+	if fault != nil {
+		return fault
+	}
+	if ready != nil {
+		return ready
+	}
+	empty := search.EmptyProof()
+	return &empty
+}
+
+func (s *Service) proveWordSearchSurface(ctx context.Context, route pluginRoute,
+	surface searchSurface) search.Proof {
+	var ready *search.Proof
+	for _, column := range surface.TextColumns {
+		cursor := ""
+		columnReady := false
+		for {
+			bound := ""
+			if cursor != "" {
+				bound = fmt.Sprintf(" WHERE CAST(%s AS TEXT) < %s", quoteIdent(surface.IDColumn), sqlString(cursor))
+			}
+			statement := fmt.Sprintf("SELECT CAST(%s AS TEXT) AS probe_id,COALESCE(CAST(%s AS TEXT),'') AS probe_text FROM %s%s ORDER BY CAST(%s AS TEXT) DESC LIMIT 500",
+				quoteIdent(surface.IDColumn), quoteIdent(column), qualified(surface.Schema, surface.Table),
+				bound, quoteIdent(surface.IDColumn))
+			rows, err := s.runSearchSQL(ctx, route, statement, wordProofFieldBudget)
+			if err != nil {
+				return search.Proof{Reason: err.Error()}
+			}
+			if len(rows) == 0 {
+				break
+			}
+			for _, row := range rows {
+				cursor = fmt.Sprint(row["probe_id"])
+				word := search.ProbeWord(fmt.Sprint(row["probe_text"]))
+				if word == "" {
+					continue
+				}
+				match := search.MatchExpression(word, search.MatchAll)
+				count := fmt.Sprintf("SELECT COUNT(*) AS matches FROM (SELECT rowid FROM %s WHERE %s MATCH %s LIMIT %d)",
+					qualified(surface.Schema, surface.FTSTable), quoteIdent(surface.FTSTable),
+					sqlString(match), search.ProofLimit)
+				matches, err := s.runSearchSQL(ctx, route, count, DefaultMaxChars)
+				if err != nil {
+					return search.Proof{Word: word, Reason: err.Error()}
+				}
+				found := 0
+				if len(matches) > 0 {
+					found = scalarInt(matches[0]["matches"])
+				}
+				if found == 0 {
+					return search.Proof{Word: word, Reason: fmt.Sprintf(
+						"the word index did not answer for %q, a word %s already holds", word, surface.Table)}
+				}
+				if ready == nil {
+					candidate := search.Proof{Ready: true, Word: word, Matches: found,
+						Capped: found >= search.ProofLimit}
+					ready = &candidate
+				}
+				columnReady = true
+				break
+			}
+			if columnReady || len(rows) < 500 || cursor == "" {
+				break
+			}
+		}
+	}
+	if ready != nil {
+		return *ready
+	}
+	return search.EmptyProof()
+}
+
+func (s *Service) rebuildWordSearch(ctx context.Context) (search.Report, error) {
+	var result search.Report
+	if s.servingLayout() != LayoutCutover {
+		var err error
+		result, err = search.Rebuild(ctx, s.db)
+		if err != nil {
+			return search.Report{}, err
+		}
+	}
+	route := s.inventoryRoute(ctx)
+	defer route.closeOnDemand()
+	surfaces := collectSurfaces(route)
+	for _, database := range route.databases {
+		var sources []search.ProofSource
+		for _, surface := range surfaces {
+			if surface.Database == scopeName(database) {
+				sources = append(sources, search.ProofSource{Table: surface.Table,
+					Index: surface.FTSTable, Columns: surface.TextColumns, IDColumn: surface.IDColumn})
+			}
+		}
+		if len(sources) == 0 {
+			continue
+		}
+		db, openErr := store.Open(database.Database)
+		if openErr != nil {
+			return search.Report{}, openErr
+		}
+		var report search.Report
+		var rebuildErr error
+		switch database.Name {
+		case rocaCorpusPluginName:
+			report, rebuildErr = search.Rebuild(ctx, db)
+		default:
+			report, rebuildErr = search.RebuildSources(ctx, db, sources)
+		}
+		closeErr := db.Close()
+		if rebuildErr != nil {
+			return search.Report{}, rebuildErr
+		}
+		if closeErr != nil {
+			return search.Report{}, closeErr
+		}
+		result.LexicalBuilt = result.LexicalBuilt || report.LexicalBuilt
+		result.ElapsedMS += report.ElapsedMS
+	}
+	return result, nil
+}
+
+func wordSearchInitError() error {
+	return fmt.Errorf("word search is not working after one rebuild; next step: run `roca doctor`")
+}
+
+// wordSearchProgress says which of the three states the probe reached in the
+// words the progress stream uses.
+func wordSearchProgress(proof search.Proof) string {
+	switch {
+	case proof.Ready:
+		return fmt.Sprintf("ready · asked for %q and found it", proof.Word)
+	case proof.Empty:
+		return "nothing to search on this machine yet"
+	default:
+		return "did not answer · " + proof.Reason
+	}
 }
