@@ -3,6 +3,7 @@ package release
 import (
 	"encoding/json"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -42,9 +43,9 @@ func TestReleasePleaseRunsOnlyFromTrustedMainWithLeastPrivilege(t *testing.T) {
 		}
 	}
 
-	channel := readRepoFile(t, "../../../.github/workflows/release.yml")
-	if !strings.Contains(channel, `tags: ["v*", "models-v*"]`) {
-		t.Error("the artefact channel is no longer driven by binary and model tags")
+	channel := parseReleaseWorkflow(t)
+	if want := []string{"v*", "models-v*"}; !slices.Equal(channel.On.Push.Tags, want) {
+		t.Fatalf("artefact channel tags = %v, want %v", channel.On.Push.Tags, want)
 	}
 }
 

@@ -237,20 +237,8 @@ jobs:
           go-version-file: plugins/vector/go.mod
           cache-dependency-path: plugins/vector/go.sum
           cache: true
-      - name: Stage the verified embedding model
-        env:
-          VERSION: ${{ inputs.tag || github.ref_name }}
-        run: |
-          cd plugins/vector
-          go run ./cmd/model-release --tag "$VERSION" --out ../../bin
-      - name: Publish the model before its checksum contract
+      - name: Stage and publish the verified embedding model
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.tag || github.ref_name }}
-        run: |
-          gh release view "$VERSION" >/dev/null 2>&1 || \
-            gh release create "$VERSION" --verify-tag \
-              --title "roca $VERSION" \
-              --notes "Pinned Apache-2.0 embedding model used by La Roca semantic search, sourced from nomic-ai/nomic-embed-text-v2-moe-GGUF. The asset is verified against the source byte count and SHA-256 before publication."
-          gh release upload "$VERSION" --clobber bin/*.gguf bin/LICENSE-model.txt
-          gh release upload "$VERSION" --clobber bin/checksums.txt
+        run: ./scripts/publish-model-release.sh "$VERSION" bin
