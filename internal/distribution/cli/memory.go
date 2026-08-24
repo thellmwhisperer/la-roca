@@ -448,8 +448,23 @@ func currentAuthorshipEvidence() authorshipEvidence {
 	return authorshipEvidence{Environment: environment, Processes: processAncestry(os.Getppid())}
 }
 
+type processRecord struct {
+	PID       int
+	Command   string
+	Arguments []string
+}
+
 func processAncestry(pid int) []authorshipProcess {
-	processes := make([]authorshipProcess, 0, 8)
+	records := walkProcessTree(pid)
+	processes := make([]authorshipProcess, 0, len(records))
+	for _, record := range records {
+		processes = append(processes, authorshipProcess{Command: record.Command, Arguments: record.Arguments})
+	}
+	return processes
+}
+
+func walkProcessTree(pid int) []processRecord {
+	processes := make([]processRecord, 0, 8)
 	for range 8 {
 		output, err := exec.Command("ps", "-o", "ppid=", "-o", "comm=", "-o", "args=", "-p", strconv.Itoa(pid)).Output()
 		if err != nil {
@@ -463,7 +478,7 @@ func processAncestry(pid int) []authorshipProcess {
 		if err != nil {
 			break
 		}
-		processes = append(processes, authorshipProcess{Command: fields[1], Arguments: fields[2:]})
+		processes = append(processes, processRecord{PID: pid, Command: fields[1], Arguments: fields[2:]})
 		if parent <= 1 || parent == pid {
 			break
 		}
