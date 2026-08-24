@@ -5,13 +5,13 @@ without a La Roca login](lifecycle.md#install).
 
 `.github/workflows/release-please.yml` maintains one release pull request from
 the Conventional Commits merged into `main`; it does not build artefacts.
-The workflow arms auto-merge only on a release pull request returned by
-Release Please after the protected adoption boundary; the pre-adoption release
-pull request keeps its existing merge policy. GitHub merges later release pull
-requests once their required checks pass. That merge creates the `vX.Y.Z` tag.
-The tag then triggers
-`.github/workflows/release.yml`, which is the only workflow that builds and
-uploads release artefacts.
+Release pull request #249 predates this auto-merge policy and retains its
+existing merge policy. For release pull requests with a number above #249, the
+workflow asks GitHub to auto-merge with a merge commit once the required checks
+pass. The resulting push to `main` lets Release Please create both the `vX.Y.Z`
+tag and GitHub release. The tag then triggers
+`.github/workflows/release.yml`, the only workflow that builds and uploads
+release artefacts.
 
 Each `vX.Y.Z` binary release carries four `roca` binaries, each with its
 matching vector executable embedded for installation, plus the four existing
