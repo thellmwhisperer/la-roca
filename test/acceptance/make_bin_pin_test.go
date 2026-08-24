@@ -1,3 +1,5 @@
+//go:build acceptance
+
 package acceptance
 
 import (
@@ -9,49 +11,72 @@ import (
 )
 
 func TestMakeAcceptanceAndE2ESmokePinTheBuiltBinaryOverInheritedROCABin(t *testing.T) {
-	root, err := filepath.Abs(filepath.Join("..", ".."))
+	root, err := acceptanceRoot()
 	if err != nil {
 		t.Fatal(err)
 	}
-	stub := filepath.Join(t.TempDir(), "roca-stub")
-	if err := os.WriteFile(stub, []byte("#!/bin/sh\necho STUB\n"), 0o700); err != nil {
+	goTool, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	temp, err := acceptanceTempDir("make-bin-pin-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(temp) })
+
+	built := filepath.Join(temp, "roca-built")
+	stub := filepath.Join(temp, "roca-stub")
+	fakeTools := filepath.Join(temp, "tools")
+	if err := os.Mkdir(fakeTools, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(built, []byte("#!/bin/sh\nprintf 'BUILT\\n'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nprintf 'STUB\\n'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	goWrapper := filepath.Join(fakeTools, "go")
+	if err := os.WriteFile(goWrapper, []byte("#!/bin/sh\nexec \"$REAL_GO\" test -tags=acceptance ./test/acceptance -run '^TestMakeBinPinProbe$' -count=1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	relativeBuilt, err := filepath.Rel(root, built)
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	for _, test := range []struct {
-		target string
-		bin    string
-	}{
-		{target: "accept", bin: "bin/roca"},
-		{target: "e2e-smoke", bin: "bin/roca"},
-		{target: "e2e-smoke", bin: ".tmp/roca"},
-	} {
-		t.Run(test.target+"/"+test.bin, func(t *testing.T) {
-			cmd := exec.Command("make", "-n", "--no-print-directory", test.target, "BIN="+test.bin)
+	for _, target := range []string{"accept", "e2e-smoke"} {
+		t.Run(target, func(t *testing.T) {
+			cmd := exec.Command("make", "--no-print-directory", target, "BIN="+relativeBuilt, "VECTOR_BUILD=:", "GO_BUILD=:", "VECTOR_BUNDLE=:")
 			cmd.Dir = root
-			cmd.Env = append(os.Environ(), "ROCA_BIN="+stub)
+			cmd.Env = append(os.Environ(),
+				"PATH="+fakeTools+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"REAL_GO="+goTool,
+				"ROCA_BIN="+stub,
+				"ROCA_MAKE_BIN_PIN_PROBE=1",
+			)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
-				t.Fatalf("make -n %s: %v\n%s", test.target, err, out)
-			}
-			recipe := pinnedTestRecipe(t, string(out))
-			if !strings.Contains(recipe, "ROCA_BIN="+test.bin) {
-				t.Fatalf("make -n %s BIN=%s did not pin ROCA_BIN=%s\n%s", test.target, test.bin, test.bin, recipe)
-			}
-			if strings.Contains(recipe, stub) {
-				t.Fatalf("inherited stub selected a different binary\n%s", recipe)
+				t.Fatalf("make %s: %v\n%s", target, err, out)
 			}
 		})
 	}
 }
 
-func pinnedTestRecipe(t *testing.T, output string) string {
-	t.Helper()
-	for _, line := range strings.Split(output, "\n") {
-		if strings.Contains(line, "go test -tags=acceptance") && strings.Contains(line, "ROCA_BIN=") {
-			return line
-		}
+func TestMakeBinPinProbe(t *testing.T) {
+	if os.Getenv("ROCA_MAKE_BIN_PIN_PROBE") != "1" {
+		t.Skip("make binary pin probe")
 	}
-	t.Fatalf("make -n printed no pinned acceptance test recipe\n%s", output)
-	return ""
+	binary, err := rocaBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(binary).CombinedOutput()
+	if err != nil {
+		t.Fatalf("execute selected binary %s: %v\n%s", binary, err, out)
+	}
+	if got := strings.TrimSpace(string(out)); got != "BUILT" {
+		t.Fatalf("selected binary output %q, want BUILT", got)
+	}
 }
