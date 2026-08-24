@@ -57,6 +57,8 @@ func TestProductVocabularyIsFreeOfInternalRoles(t *testing.T) {
 			}
 			return nil
 		}
+		// Release Please generates CHANGELOG.md from commit history; it is not
+		// authored product copy owned by this source-tree vocabulary check.
 		if entry.Name() == ".git" || filepath.Clean(path) == filepath.Clean(here) ||
 			filepath.Clean(path) == filepath.Join(root, "CHANGELOG.md") {
 			return nil
