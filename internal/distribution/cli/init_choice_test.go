@@ -21,7 +21,7 @@ func TestInitMachineDurationExcludesPromptWait(t *testing.T) {
 
 func TestInitAsksForNewOrAUserSuppliedAdoptionPath(t *testing.T) {
 	t.Run("new", func(t *testing.T) {
-		home := initChoiceHome(t)
+		home := hermeticHome(t)
 		out, err := runInitChoice(t, true, "new\n", "init")
 		if err != nil {
 			t.Fatalf("init: %v\n%s", err, out)
@@ -41,7 +41,7 @@ func TestInitAsksForNewOrAUserSuppliedAdoptionPath(t *testing.T) {
 	})
 
 	t.Run("adopt", func(t *testing.T) {
-		home := initChoiceHome(t)
+		home := hermeticHome(t)
 		source := seedCandidate(t, filepath.Join(home, "import", "candidate.db"))
 		before, err := os.ReadFile(source)
 		if err != nil {
@@ -66,7 +66,7 @@ func TestInitAsksForNewOrAUserSuppliedAdoptionPath(t *testing.T) {
 }
 
 func TestInitOffersToKeepOrReinitializeItsHomeDatabase(t *testing.T) {
-	home := initChoiceHome(t)
+	home := hermeticHome(t)
 	own := filepath.Join(home, ".roca", "roca.db")
 	if out, err := runInitChoice(t, false, "", "init", "--db-path", own); err != nil {
 		t.Fatalf("seed init: %v\n%s", err, out)
@@ -86,7 +86,7 @@ func TestInitOffersToKeepOrReinitializeItsHomeDatabase(t *testing.T) {
 }
 
 func TestInitLeavesAnExistingConfigByteExact(t *testing.T) {
-	home := initChoiceHome(t)
+	home := hermeticHome(t)
 	configPath := filepath.Join(home, ".roca", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
 		t.Fatal(err)
@@ -109,7 +109,7 @@ func TestInitLeavesAnExistingConfigByteExact(t *testing.T) {
 }
 
 func TestReinitializeRemovesTheRollbackJournal(t *testing.T) {
-	home := initChoiceHome(t)
+	home := hermeticHome(t)
 	path := filepath.Join(home, ".roca", "roca.db")
 	if out, err := runInitChoice(t, false, "", "init", "--db-path", path); err != nil {
 		t.Fatalf("seed init: %v\n%s", err, out)
@@ -127,7 +127,7 @@ func TestReinitializeRemovesTheRollbackJournal(t *testing.T) {
 }
 
 func TestInitNamesAnActualSchemaRepair(t *testing.T) {
-	home := initChoiceHome(t)
+	home := hermeticHome(t)
 	own := seedCandidate(t, filepath.Join(home, ".roca", "roca.db"))
 	db, err := store.Open(own)
 	if err != nil {
@@ -150,7 +150,7 @@ func TestInitNamesAnActualSchemaRepair(t *testing.T) {
 }
 
 func TestInitRefusesWithoutATerminalOrAnExplicitLocation(t *testing.T) {
-	home := initChoiceHome(t)
+	home := hermeticHome(t)
 	out, err := runInitChoice(t, false, "new\n", "init")
 	if err == nil {
 		t.Fatalf("non-TTY init silently chose a database:\n%s", out)
@@ -164,7 +164,7 @@ func TestInitRefusesWithoutATerminalOrAnExplicitLocation(t *testing.T) {
 }
 
 func TestACommandWithoutADatabaseSaysToRunInitAndCreatesNothing(t *testing.T) {
-	home := initChoiceHome(t)
+	home := hermeticHome(t)
 	out, err := runInitChoice(t, false, "", "query", "who", "is", "Ana")
 	if err == nil {
 		t.Fatalf("query opened a database that init never created:\n%s", out)
@@ -219,16 +219,6 @@ func assertNoHomeDatabase(t *testing.T, home, operation string) {
 	if _, err := os.Stat(filepath.Join(home, ".roca", "roca.db")); !os.IsNotExist(err) {
 		t.Fatalf("%s created the missing database", operation)
 	}
-}
-
-func initChoiceHome(t *testing.T) string {
-	t.Helper()
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("ROCA_DB_PATH", "")
-	t.Setenv("ROCA_CONFIG", "")
-	t.Setenv("ROCA_MODELS_ORDER", "none")
-	return home
 }
 
 func seedCandidate(t *testing.T, path string) string {

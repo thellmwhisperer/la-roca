@@ -10,6 +10,7 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 	"github.com/thellmwhisperer/la-roca/internal/provider/plugin"
+	"github.com/thellmwhisperer/la-roca/internal/store/search"
 )
 
 func TestInitPlacesBundledVectorBeforeConsentAndLegacyPath(t *testing.T) {
@@ -18,6 +19,8 @@ func TestInitPlacesBundledVectorBeforeConsentAndLegacyPath(t *testing.T) {
 	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("CI", "")
+	t.Setenv("ROCA_VECTOR_STATE_DIR", "")
 	legacyRoot := t.TempDir()
 	legacy := filepath.Join(legacyRoot, "roca-vector")
 	if err := os.WriteFile(legacy, []byte("#!/bin/sh\necho legacy companion selected >&2\nexit 9\n"), 0o700); err != nil {
@@ -30,8 +33,7 @@ func TestInitPlacesBundledVectorBeforeConsentAndLegacyPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", pluginExecutableDir(paths)+string(os.PathListSeparator)+legacyRoot+
-		string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("PATH", legacyRoot+string(os.PathListSeparator)+os.Getenv("PATH"))
 	if err := os.MkdirAll(filepath.Dir(paths.Config), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -45,12 +47,9 @@ func TestInitPlacesBundledVectorBeforeConsentAndLegacyPath(t *testing.T) {
 	defer progress.Close()
 	var output bytes.Buffer
 	env := &cliEnv{build: Build{Version: "test"}, out: &output, errOut: progress,
-		dbPath: paths.DB, bundledVectorPayload: payload}
-	if err := env.ensureBundledVectorForInit(paths); err != nil {
-		t.Fatal(err)
-	}
+		bundledVectorPayload: payload}
 	if err := env.offerSemanticSearch(t.Context(), bufio.NewReader(strings.NewReader("yes\n")),
-		true, paths, true); err != nil {
+		true, paths, true, &search.Proof{Ready: true, Word: "history", Matches: 1}); err != nil {
 		t.Fatal(err)
 	}
 	arguments, err := os.ReadFile(argsPath)
@@ -58,7 +57,7 @@ func TestInitPlacesBundledVectorBeforeConsentAndLegacyPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(arguments), "install") ||
-		!strings.Contains(string(arguments), "--stream-progress") {
+		strings.Contains(string(arguments), "--stream-progress") {
 		t.Fatalf("bundled companion arguments = %q", arguments)
 	}
 	if !strings.Contains(output.String(), "setup continues in the background") {

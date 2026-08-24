@@ -277,21 +277,35 @@ func (env *cliEnv) installRuntimeSkillsFiltered(runtime, catalog string,
 	return outcomes, refused
 }
 
-// seedDetectedSkills writes the three embedded skills into every skill seat
-// whose config directory exists. restoreMissing is init's consent to write
-// again; ingest reseed skips a runtime that already has a registry entry so a
-// later agent still receives the skills without rewriting ones already placed.
+// seedDetectedSkills writes the embedded skills into every skill seat whose
+// config directory exists. restoreMissing is init's consent to write again;
+// ingest reseed skips a runtime that already has a registry entry so a later
+// agent still receives the skills without rewriting ones already placed.
+//
+// Init also writes the generated catalog. It is the map of what is searchable on
+// this machine, and an agent that has the craft skills but not the catalog
+// composes SQL by guessing. Nothing should stand between the first ingest and a
+// good first question.
 func (env *cliEnv) seedDetectedSkills(restoreMissing bool) []string {
 	home, err := env.skillHome()
 	if err != nil {
 		env.warnf("warning: skills were not installed: %v\n", err)
 		return nil
 	}
+	catalog := ""
+	if restoreMissing {
+		composed, composeErr := env.composedCatalogSkill()
+		if composeErr != nil {
+			env.warnCatalogRefresh(composeErr)
+		} else {
+			catalog = composed
+		}
+	}
 	detected := skill.Detected(home, os.Getenv)
 	for _, runtime := range detected {
 		var refused []error
 		if restoreMissing {
-			_, refused = env.installRuntimeSkills(runtime, "", false, true, false)
+			_, refused = env.installRuntimeSkills(runtime, catalog, false, true, catalog != "")
 		} else {
 			_, refused = env.reseedRuntimeSkills(runtime)
 		}

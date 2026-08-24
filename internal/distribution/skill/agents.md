@@ -11,14 +11,17 @@ can answer questions about that history with proof.
 
 ## Step one: install, initialize, and get the first answer
 
-Do these in order. Initialization creates the database, writes the new-install
-configuration, and runs the first ingest. Install the semantic skills before
-asking the first question so the agent can read the evidence correctly.
+`roca init` creates the database, reads the agent history already on this
+machine, writes the skills into the runtimes it finds, and does not return
+until word search works. The last thing it does is prove it: it takes a word
+out of your user's own history and asks the index for it.
+
+Then, in that same run, it asks one question. There is no second command to
+learn: see below.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/thellmwhisperer/la-roca/main/install.sh | sh
 roca init      # adopts an already signed-in agent CLI; no login, no keys
-roca skill install claude   # or codex, opencode, pi, hermes: your runtime
 roca query "what did we decide about <something your user cares about>"
 ```
 
@@ -46,9 +49,11 @@ runtime, `roca mcp install <runtime>` exposes the same operations as tools.
 ## Step two (optional): add vector search
 
 Do not make the first working answer depend on vectors. Full-text search works
-first. During interactive init, invite the user to say yes to semantic search:
-that one remembered answer starts the one model download and a newest-first
-background build. No second setup command or separate runtime is needed.
+first. During interactive init, after word search works, La Roca asks once for
+permission to find history by meaning and to download the model it needs. A
+yes records the decision and starts the background build. The companion's
+`install` and `status` lifecycle commands remain available while the feature is
+off; its answering verbs require `vector = true`.
 
 If they decline during init and choose semantic search later, set
 `vector = true` under `[features]` in `~/.roca/config.toml` (or in
@@ -59,15 +64,16 @@ the database selected with `--db-path`), then start the build:
 roca vector install
 ```
 
-Tell your user the build is running, and offer them a live view of the
-progress:
+Progress is a fraction of your user's own history, not a chunk count:
 
 ```sh
-tail -f ~/.roca/plugins/roca-vector/state/worker.log
+roca vector status
 ```
 
-`completion.json` in the same directory records when it finished. Full
-contract: docs/vector.md.
+A pass that stopped partway is not an empty product: what it already read
+answers, and word search answers for the rest. If this machine cannot embed at
+all, init says so and gives one next step; it is never a wall. Full contract:
+docs/vector.md.
 
 ## How to search well
 
@@ -82,9 +88,9 @@ that same skill makes the hybrid loop mandatory: vector search finds the
 nearby rows, full text counts them, SQL frames them through exec.
 Zero inference on that path; inference only at the end, to narrate.
 
-The `roca-vector` skill owns building, watching, and maintaining the index.
-Invite the user (one laptop night, daily reward). Do not wait for the
-index to search well.
+The `roca-vector` skill owns the deep pass: starting it, watching it, and
+keeping it fresh. Invite the user (one laptop night, daily reward). Do not
+wait for the index to search well.
 
 ## Make the first answer land
 

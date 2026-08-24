@@ -167,16 +167,23 @@ func TestShippedSkillsCarryTheSearchDoctrine(t *testing.T) {
 			want: []string{
 				"name: roca-vector",
 				"invite the user to",
+				"There is no separate command to start one",
+				"roca vector status",
 				"roca vector install",
 				"roca vector ingest --delta",
 				"roca vector compact",
-				"worker.log",
 				"completion.json",
 				"finished_at",
-				"exit_status == 0",
-				"Otherwise treat the index as unavailable",
+				"is not an\nempty product",
 			},
-			refuse: []string{"## Hybrid discovery", "## Hybrid loop", "roca vector vocab"},
+			// A pass that ended badly is still a pass that wrote rows. The old
+			// rule turned an unfinished index into an absent one, which is how a
+			// machine full of history comes to report itself as empty.
+			// A pass that ended badly is still a pass that wrote rows, and the
+			// index has one door: the question `roca init` asks. Both removed
+			// rules are pinned out so neither can come back.
+			refuse: []string{"## Hybrid discovery", "## Hybrid loop", "roca vector vocab",
+				"Otherwise treat the index as unavailable", "roca init --vectors"},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {

@@ -684,6 +684,9 @@ func (f Federation) Ingest(ctx context.Context, sourceKind string) (FederationDe
 				return FederationDelta{}, unchangedErr
 			}
 		}
+		if err := claimSidecar(sidecar, database.owner(), f.BuildVersion, contract, sourceKind == ""); err != nil {
+			return FederationDelta{}, err
+		}
 		jobs = append(jobs, &ingestJob{database: database, reader: reader, sidecar: sidecar,
 			contract: contract, fingerprint: fingerprint})
 	}
@@ -897,9 +900,9 @@ func (d DeclaredCorpus) CountChunks(ctx context.Context, sourceKind string) (int
 			text := fmt.Sprintf("COALESCE(CAST(%s.%s AS TEXT),'')", alias, quoteIdentifier(column))
 			counts = append(counts, chunkCountExpression(text, size, overlap))
 		}
-		statement := fmt.Sprintf(`SELECT COALESCE(SUM(%s),0) AS total FROM %s.%s AS %s WHERE %s.%s IS NOT NULL AND (%s)`,
+		statement := fmt.Sprintf(`SELECT COALESCE(SUM(%s),0) AS total FROM %s.%s AS %s WHERE %s`,
 			strings.Join(counts, "+"), quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name),
-			alias, alias, quoteIdentifier(table.IDColumn), declaredNonEmptyPredicate(alias, table.TextColumns))
+			alias, declaredSourcePredicate(alias, table))
 		rows, err := d.Core.queryIngest(ctx, statement)
 		if err != nil {
 			return 0, fmt.Errorf("count declared chunks %s/%s: %w", d.Database.owner(), table.Name, err)
@@ -1008,7 +1011,20 @@ func (i *declaredTableIterator) advance(ctx context.Context) error {
 				size, overlap := i.table.chunking()
 				row.chunkSize, row.overlap = size, overlap
 			}
-			i.rows = append(i.rows, expandColumnRows(row, i.table.TextColumns, value)...)
+			fields := []string{i.table.embeddingContractFingerprint(), id, row.title, row.project, row.occurredAt}
+			for _, column := range i.table.TextColumns {
+				fields = append(fields, stringValue(value[column]))
+			}
+			row.sourceFingerprint = incrementality.ContentFingerprint(fields...)
+			expanded := expandColumnRows(row, i.table.TextColumns, value)
+			chunks := 0
+			for _, item := range expanded {
+				chunks += len(item.window())
+			}
+			for index := range expanded {
+				expanded[index].sourceChunks = chunks
+			}
+			i.rows = append(i.rows, expanded...)
 		}
 	}
 }
@@ -1153,9 +1169,9 @@ func (d DeclaredCorpus) CountSources(ctx context.Context, sourceKind string) (in
 	}
 	total := 0
 	for _, table := range tables {
-		statement := fmt.Sprintf(`SELECT COUNT(*) AS n FROM %s.%s src WHERE %s IS NOT NULL AND (%s)`,
+		statement := fmt.Sprintf(`SELECT COUNT(*) AS n FROM %s.%s src WHERE %s`,
 			quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name),
-			quoteIdentifier(table.IDColumn), declaredNonEmptyPredicate("src", table.TextColumns))
+			declaredSourcePredicate("src", table))
 		rows, err := d.Core.queryIngest(ctx, statement)
 		if err != nil {
 			return 0, err
@@ -1182,11 +1198,11 @@ func (d DeclaredCorpus) pageQuery(table vectorTable, cursor declaredCursor,
 			quoteIdentifier(table.IDColumn), sqlLiteral(cursor.id))
 	}
 	return fmt.Sprintf(`SELECT CAST(src.%s AS TEXT) AS source_id%s%s FROM %s.%s src%s
-		WHERE src.%s IS NOT NULL AND CAST(src.%s AS TEXT)<>''%s
+		WHERE %s%s
 		ORDER BY context_time DESC, source_id DESC LIMIT %d`,
 		quoteIdentifier(table.IDColumn), declaredColumnSelect("src", table.TextColumns), contextSQL,
 		quoteIdentifier(d.Database.Alias), quoteIdentifier(table.Name), join,
-		quoteIdentifier(table.IDColumn), quoteIdentifier(table.IDColumn), bound, walkPageSize)
+		declaredSourcePredicate("src", table), bound, walkPageSize)
 }
 
 func (d DeclaredCorpus) contextSQL(table vectorTable,
@@ -1315,6 +1331,16 @@ func declaredNonEmptyPredicate(alias string, columns []string) string {
 	return strings.Join(parts, " OR ")
 }
 
+func declaredSourcePredicate(alias string, table vectorTable) string {
+	prefix := ""
+	if alias != "" {
+		prefix = alias + "."
+	}
+	id := prefix + quoteIdentifier(table.IDColumn)
+	return fmt.Sprintf("%s IS NOT NULL AND CAST(%s AS TEXT)<>'' AND (%s)",
+		id, id, declaredNonEmptyPredicate(alias, table.TextColumns))
+}
+
 func (d DeclaredCorpus) table(name string) (vectorTable, bool) {
 	for _, table := range d.Database.Tables {
 		if table.Name == name {
@@ -1353,6 +1379,14 @@ func unchangedSidecar(path, owner, model, contract, sourceFingerprint string) (D
 		return Delta{}, errSidecarChanged
 	}
 	if dimensions, _ := strconv.Atoi(metadata["dimensions"]); dimensions == 0 {
+		return Delta{}, errSidecarChanged
+	}
+	var sourceTable int
+	if err := store.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sources'`).Scan(&sourceTable); err != nil || sourceTable == 0 {
+		return Delta{}, errSidecarChanged
+	}
+	var progressIdentity string
+	if err := store.QueryRow(`SELECT value FROM meta WHERE key='progress_identity'`).Scan(&progressIdentity); err != nil || progressIdentity != sourceProgressVersion {
 		return Delta{}, errSidecarChanged
 	}
 	var chunks, sources int
@@ -1453,6 +1487,30 @@ func SidecarPath(databasePath string) string {
 }
 
 func sealSidecar(path, owner, model, buildVersion, contract, sourceFingerprint string) error {
+	values := map[string]string{
+		"owner": owner, "model": model, "version": buildVersion, "contract": contract,
+	}
+	if sourceFingerprint != "" {
+		values["source_fingerprint"] = sourceFingerprint
+	}
+	return writeSidecarMeta(path, owner, values, nil)
+}
+
+// claimSidecar names the index before it is built. Identity written at the end
+// of a run is identity a run that never ends never writes, and rows already on
+// disk then read as an absent index: the product looks empty when it is not.
+// The fingerprint of the source goes in the same breath, because an index that
+// has not finished must never claim to already match what it was built from.
+func claimSidecar(path, owner, buildVersion, contract string, full bool) error {
+	var clear []string
+	if full {
+		clear = []string{"source_fingerprint"}
+	}
+	return writeSidecarMeta(path, owner, map[string]string{
+		"owner": owner, "version": buildVersion, "contract": contract}, clear)
+}
+
+func writeSidecarMeta(path, owner string, values map[string]string, clear []string) error {
 	store, err := openSQLite(path, false)
 	if err != nil {
 		return fmt.Errorf("open vector sidecar for %s: %w", owner, err)
@@ -1469,12 +1527,6 @@ func sealSidecar(path, owner, model, buildVersion, contract, sourceFingerprint s
 	if knownOwner != "" && knownOwner != owner {
 		return fmt.Errorf("vector sidecar owner is %s, want %s", knownOwner, owner)
 	}
-	values := map[string]string{
-		"owner": owner, "model": model, "version": buildVersion, "contract": contract,
-	}
-	if sourceFingerprint != "" {
-		values["source_fingerprint"] = sourceFingerprint
-	}
 	tx, err := store.Begin()
 	if err != nil {
 		return err
@@ -1482,6 +1534,11 @@ func sealSidecar(path, owner, model, buildVersion, contract, sourceFingerprint s
 	defer tx.Rollback()
 	for key, value := range values {
 		if _, err := tx.Exec(`INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)`, key, value); err != nil {
+			return err
+		}
+	}
+	for _, key := range clear {
+		if _, err := tx.Exec(`DELETE FROM meta WHERE key=?`, key); err != nil {
 			return err
 		}
 	}
@@ -1586,6 +1643,95 @@ func (f Federation) Compact(ctx context.Context) (CompactFederationReport, error
 		return report, fmt.Errorf("vector search is not initialized; run `roca vector install`")
 	}
 	return report, nil
+}
+
+// Progress is how far the meaning pass has read the history, counted in the
+// unit a person recognizes: rows of their own history. Chunks and vectors are
+// how the index is built, not what the operator is waiting for.
+type Progress struct {
+	Read      int                `json:"read"`
+	Total     int                `json:"total"`
+	Databases []DatabaseProgress `json:"databases"`
+}
+
+type DatabaseProgress struct {
+	Database string `json:"database"`
+	Read     int    `json:"read"`
+	Total    int    `json:"total"`
+}
+
+// HistoryProgress answers while a pass is running and after one stopped, because both
+// are questions the operator asks. It reads counts only: no embedding, no
+// chunking, nothing that would make asking expensive.
+func (f Federation) HistoryProgress(ctx context.Context) (Progress, error) {
+	result := Progress{Databases: []DatabaseProgress{}}
+	for _, database := range f.databases {
+		reader := DeclaredCorpus{Core: f.Core, Database: database}
+		total, err := reader.CountSources(ctx, "")
+		if err != nil {
+			return Progress{}, err
+		}
+		databasePath := f.databasePath(database)
+		read, err := countIndexedSources(ctx, database, databasePath, SidecarPath(databasePath))
+		if err != nil {
+			return Progress{}, err
+		}
+		if read > total {
+			read = total
+		}
+		result.Databases = append(result.Databases,
+			DatabaseProgress{Database: database.Database, Read: read, Total: total})
+		result.Read, result.Total = result.Read+read, result.Total+total
+	}
+	return result, nil
+}
+
+// countIndexedSources counts source rows whose current text the index holds,
+// and a sidecar that is not there yet is zero read rather than an error.
+func countIndexedSources(ctx context.Context, database vectorDatabase,
+	databasePath, sidecarPath string) (int, error) {
+	if _, err := os.Stat(sidecarPath); err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	store, err := openSQLite(databasePath, true)
+	if err != nil {
+		return 0, fmt.Errorf("open vector source %s: %w", filepath.Base(databasePath), err)
+	}
+	defer store.Close()
+	if _, err := store.ExecContext(ctx, `ATTACH DATABASE ? AS vector_sidecar`, sidecarPath); err != nil {
+		return 0, fmt.Errorf("attach vector sidecar %s: %w", filepath.Base(sidecarPath), err)
+	}
+	var sourceTable int
+	if err := store.QueryRowContext(ctx, `SELECT COUNT(*) FROM vector_sidecar.sqlite_master
+		WHERE type='table' AND name='sources'`).Scan(&sourceTable); err != nil {
+		return 0, err
+	}
+	if sourceTable == 0 {
+		return 0, fmt.Errorf("vector progress identity is unavailable")
+	}
+	var progressIdentity string
+	if err := store.QueryRowContext(ctx, `SELECT value FROM vector_sidecar.meta
+		WHERE key='progress_identity'`).Scan(&progressIdentity); err != nil || progressIdentity != sourceProgressVersion {
+		return 0, fmt.Errorf("vector progress identity is unavailable")
+	}
+	read := 0
+	for _, table := range database.Tables {
+		statement := fmt.Sprintf(`SELECT COUNT(*) FROM main.%s src
+			JOIN vector_sidecar.sources progress
+			ON progress.source_kind=%s AND progress.raw_source_id=CAST(src.%s AS TEXT)`,
+			quoteIdentifier(table.Name), sqlLiteral(table.Name),
+			quoteIdentifier(table.IDColumn))
+		var count int
+		if err := store.QueryRowContext(ctx, statement).Scan(&count); err != nil {
+			return 0, fmt.Errorf("count indexed rows in %s/%s: %w",
+				database.owner(), table.Name, err)
+		}
+		read += count
+	}
+	return read, nil
 }
 
 func (f Federation) HasSidecars() bool {

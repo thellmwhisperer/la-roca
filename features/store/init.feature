@@ -20,6 +20,20 @@ Feature: Bootstrapping a database
     Then the command exits with code 0
     And the output is plain text, not JSON
 
+  Scenario: Init does not return until word search answers
+    Given a clean HOME
+    When I initialize the database without JSON
+    Then the command exits with code 0
+    And init reports the word search round trip
+    And init never reports the word index as broken
+
+  Scenario: Bare init stops at working word search
+    Given a clean HOME
+    When I initialize the database without JSON
+    Then the command exits with code 0
+    And init did not start reading the history for meaning
+    And the configuration leaves the meaning pass switched off
+
   Scenario: Running init twice leaves the database intact
     Given a fresh Roca database
     And a memory in layer "project" with content "the survivor note about kites"

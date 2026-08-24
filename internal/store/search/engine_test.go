@@ -199,17 +199,24 @@ func requestForPlan(plan query.Plan, excluded []string) search.Request {
 	return search.Request{Term: plan.Term, SQLLexical: stmt, Method: search.MethodFTS, Limit: 10}
 }
 
-func seededWorld(t *testing.T) *store.DB {
+// openWorld is a database with the schema on it and nothing else: the machine
+// that has just been initialized and has not read anything yet.
+func openWorld(t *testing.T) *store.DB {
 	t.Helper()
-	ctx := context.Background()
 	db, err := store.Open(filepath.Join(t.TempDir(), "roca.db"))
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	if err := store.ApplySchema(ctx, db); err != nil {
+	if err := store.ApplySchema(context.Background(), db); err != nil {
 		t.Fatalf("ApplySchema: %v", err)
 	}
+	return db
+}
+
+func seededWorld(t *testing.T) *store.DB {
+	t.Helper()
+	db := openWorld(t)
 	writeTo(t, db, `
 		INSERT INTO memories (layer, content, origin) VALUES
 		  ('fact', 'the team forbids long dashes in every deliverable', 'human'),

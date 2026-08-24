@@ -18,8 +18,10 @@ run.
 
 The installed core materializes `roca-vector` in the same directory, including
 when `--prefix` or `ROCA_PREFIX` selects a custom one. Its manifest and dormant
-`state/` directory live under `~/.roca/plugins/roca-vector/`; dispatch remains hidden
-unless the existing `features.vector` switch is true. See
+`state/` directory live under `~/.roca/plugins/roca-vector/`; the semantic
+answering verbs stay hidden unless the existing `features.vector` switch is true,
+while `roca vector install` and `roca vector status` remain reachable whenever
+the companion is installed. See
 [Local vector search](vector.md) for the operator path from that switch to a
 first query. Installation refuses to
 replace an externally sourced plugin package, an unmanaged plugin directory, or
@@ -109,6 +111,29 @@ search decision after full-text indexing is ready. An ambiguous harness adds one
 question; adoption separately asks for its source path. It uses the agent CLI's
 existing session and does not add a login step.
 
+### Word search before init returns
+
+Init does not return until word search works. After the first ingest it takes a
+word out of a row this machine now holds, asks the full-text index for it, and
+reports the round trip. A machine with no agent history yet says exactly that,
+which is a fact about the machine and not a fault in the index. Only an index
+that fails to answer for text it holds is reported as a fault.
+
+### The yes, inside the same run
+
+After word search is ready, an eligible terminal init says that semantic search
+finds by meaning rather than exact words and that enabling it downloads one
+embedding model. It then asks once. A yes starts setup and, after the background
+pass acknowledges that it started, stores `features.vector = true` and
+`features.vector_consent = true`; a no stores the consent decision with vector
+search disabled. Existing configurations are otherwise preserved.
+
+There is no `roca init --vectors` flag. Non-interactive init, CI, and runs with
+`--db-path` are not asked and do not start the optional download. Machines that
+opt in later enable `features.vector` and start the pass with
+`roca vector install`. Word search keeps answering while it runs, and
+`roca vector status` reports progress as a fraction of this machine's history.
+
 Init also writes and registers `prompt.md` in the selected data directory. Its
 marked SYSTEM zone is shipped by La Roca; its marked USER zone belongs to the
 operator. A file an earlier release wrote is moved into those zones once, and
@@ -141,15 +166,8 @@ config still receives the new-install feature block above. Human output emits on
 `answering:` notice with the chosen provider/model and configuration path;
 scripts receive no prompts. `--json` remains one JSON document.
 
-On interactive input with no recorded semantic-search decision, init asks once
-after ingest and the full-text index are ready. The yes or no is stored in the
-selected configuration and is not asked again. Yes enables semantic search and
-starts the single embedding-model download plus newest-first indexing in the
-background; there is no separate runtime, daemon, or second setup command.
-Choosing no leaves full-text search working. To opt in later, enable
-`features.vector` and run `roca vector install`. Non-interactive init never asks
-or starts this optional setup. [Local vector search](vector.md) owns model,
-index, progress, and platform details.
+[Local vector search](vector.md) owns model, index, progress, and platform
+details for this optional setup.
 
 ## Skills
 
@@ -160,10 +178,11 @@ comes with its whole story: the how, the why, and the failed attempts behind
 the final answer, one question away.
 
 `roca init` ships the three embedded skills (`roca`, `roca-operations`,
-`roca-vector`) into every detected skill seat. `roca skill install` writes
-those three plus `roca-semantica`, a catalog of every installed plugin's tables
-and example questions generated from the same fragments natural-language search
-uses. An agent installed after init receives the three embedded skills after
+`roca-vector`) into every detected skill seat, and with them `roca-semantica`,
+a catalog of every installed plugin's tables and example questions generated
+from the same fragments natural-language search uses. `roca skill install`
+writes the same four for a runtime init did not detect. An agent installed
+after init receives the three embedded skills after
 the next successful non-dry-run ingest, whether plain or nightly. Each
 installed skill and the generated prompt keep shipped SYSTEM content separate
 from an operator-owned USER zone, and `roca update` tracks their

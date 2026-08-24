@@ -68,6 +68,52 @@ INSERT INTO receipts (title) VALUES ('synthetic hidden-by-flag marker')`)
 	}
 }
 
+func TestInitProvesAndRebuildsEverySearchablePluginDatabase(t *testing.T) {
+	paths := freshPaths(t)
+	plugins := filepath.Join(paths.data, "plugins")
+	installQueryPlugin(t, plugins, "search-proof", `
+version: 1
+attachment: on-demand
+description: Synthetic searchable notes.
+questions: ["Which notes mention the lighthouse?"]
+tables:
+  - name: notes
+    description: Notes.
+    columns: [id, body]
+  - name: notes_fts
+    description: Note search index.
+    columns: [body]
+`, `CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT);
+CREATE VIRTUAL TABLE notes_fts USING fts5(body,content='notes',content_rowid='id');
+INSERT INTO notes(body) VALUES ('harbour lighthouse');
+INSERT INTO notes_fts(notes_fts) VALUES('rebuild')`)
+
+	svc := initialized(t, paths, func(options *service.Options) {
+		options.PluginDir = plugins
+		options.PluginsEnabled = true
+	})
+	scope, scopeErr := svc.ResolveDatabaseScope(t.Context(), nil)
+	if scopeErr != nil || !slices.Contains(scope.Databases, "search-proof") {
+		t.Fatalf("search-proof route = %+v, err %v", scope, scopeErr)
+	}
+	result, err := svc.Init(t.Context())
+	if err != nil || result.WordSearch == nil || !result.WordSearch.Ready {
+		t.Fatalf("plugin-only word proof = %+v, err %v", result.WordSearch, err)
+	}
+	db := openSQLite(t, filepath.Join(plugins, "search-proof", "plugin.db"))
+	if _, err := db.Exec(`INSERT INTO notes_fts(notes_fts) VALUES('delete-all')`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	result, err = svc.Init(t.Context())
+	if err != nil || result.WordSearch == nil || !result.WordSearch.Ready {
+		t.Fatalf("plugin word index was not rebuilt: %+v, err %v", result.WordSearch, err)
+	}
+}
+
 func TestRocaOpsOffLeavesTheBundledPluginCompletelyInert(t *testing.T) {
 	paths := freshPaths(t)
 	plugins := ensureRocaOps(t, paths)

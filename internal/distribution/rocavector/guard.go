@@ -24,6 +24,33 @@ func RelocationLockPath(root string) string {
 	return filepath.Join(root, relocationLockFilename)
 }
 
+func WorkerRunning(root string) bool {
+	directories := []string{
+		filepath.Join(root, LegacyName, StateDir),
+		filepath.Join(root, Name, StateDir),
+		filepath.Join(root, "."+Name+".previous", StateDir),
+	}
+	if configured := strings.TrimSpace(os.Getenv("ROCA_VECTOR_STATE_DIR")); configured != "" {
+		if absolute, err := filepath.Abs(configured); err == nil {
+			directories = append(directories, absolute)
+		}
+	}
+	for _, directory := range directories {
+		if root == "" && !filepath.IsAbs(directory) {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(directory, workerClaimFilename))
+		if err != nil {
+			continue
+		}
+		pid, _ := strconv.Atoi(strings.TrimSpace(string(raw)))
+		if pid > 0 && processAlive(pid) {
+			return true
+		}
+	}
+	return false
+}
+
 func validateExclusiveFileLock(path string, file *os.File, release func() error) (func() error, bool, error) {
 	held, err := file.Stat()
 	if err != nil {
