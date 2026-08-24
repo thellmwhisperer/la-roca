@@ -1,0 +1,220 @@
+package search
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"unicode"
+
+	"github.com/thellmwhisperer/la-roca/internal/store"
+)
+
+// ProofLimit bounds the probe. The question is whether the index answers, not
+// how many rows it holds, and a MATCH counted to the end of a real corpus is a
+// full scan paid for a yes or no.
+const ProofLimit = 50
+
+// Proof is the round trip a first run completes before it says word search
+// works: a word taken from a row this database already holds, asked back of the
+// lexical index, and found there.
+//
+// The three outcomes are different states, not degrees of the same one. Ready
+// is the index answering. Empty is a machine with no searchable words yet,
+// which is nothing to fix. Neither of those, and the index did not answer for
+// text it is supposed to hold, which is the one the operator has to see.
+type Proof struct {
+	Ready   bool   `json:"ready"`
+	Word    string `json:"word,omitempty"`
+	Matches int    `json:"matches"`
+	// Capped says the count stopped at the probe's ceiling instead of reaching
+	// the end, so the number read as "at least this many".
+	Capped bool   `json:"capped,omitempty"`
+	Empty  bool   `json:"empty,omitempty"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// ProofSource is one source table and the FTS table that carries its text.
+type ProofSource struct {
+	Table, Index string
+	Columns      []string
+	IDColumn     string
+}
+
+var proofSources = []ProofSource{
+	{Table: "memories", Index: "memories_fts", Columns: []string{"content"}},
+	{Table: "exchanges", Index: "exchanges_fts", Columns: []string{"human_text", "agent_text"}},
+	{Table: "sessions", Index: "sessions_fts", Columns: []string{"title", "project"}},
+	{Table: "thinking_blocks", Index: "thinking_fts", Columns: []string{"full_text"}},
+}
+
+// Prove asks the lexical index for a word this database already stores.
+//
+// It reads each indexed column newest first until one yields a word and never
+// depends on the corpus being in any particular language: the word comes out
+// of the data itself.
+func Prove(ctx context.Context, db *store.DB) (Proof, error) {
+	return ProveSources(ctx, db, proofSources)
+}
+
+// ProveSources asks the lexical indexes declared by a searchable database.
+func ProveSources(ctx context.Context, db *store.DB, sources []ProofSource) (Proof, error) {
+	if db == nil {
+		return Proof{}, fmt.Errorf("proving word search needs a database")
+	}
+	hasRows := false
+	var ready *Proof
+	for _, source := range sources {
+		columns, err := indexedColumns(ctx, db, source)
+		if err != nil {
+			return Proof{}, err
+		}
+		indexed := make(map[string]bool, len(columns))
+		for _, column := range columns {
+			indexed[column] = true
+		}
+		for _, column := range source.Columns {
+			if indexed[column] {
+				continue
+			}
+			word, rows, err := newestWord(ctx, db, source.Table, column)
+			if err != nil {
+				return Proof{}, err
+			}
+			hasRows = hasRows || rows
+			if word != "" {
+				return Proof{Word: word, Reason: fmt.Sprintf(
+					"the word index %s is missing or does not index %s", source.Index, column)}, nil
+			}
+		}
+		for _, column := range columns {
+			word, rows, err := newestWord(ctx, db, source.Table, column)
+			if err != nil {
+				return Proof{}, err
+			}
+			hasRows = hasRows || rows
+			if word == "" {
+				continue
+			}
+			matches, err := countMatches(ctx, db, source.Index, word)
+			if err != nil {
+				return Proof{Word: word, Reason: err.Error()}, nil
+			}
+			if matches == 0 {
+				return Proof{Word: word, Reason: fmt.Sprintf(
+					"the word index did not answer for %q, a word %s already holds",
+					word, source.Table)}, nil
+			}
+			if ready == nil {
+				candidate := Proof{Ready: true, Word: word, Matches: matches,
+					Capped: matches >= ProofLimit}
+				ready = &candidate
+			}
+		}
+	}
+	if ready != nil {
+		return *ready, nil
+	}
+	if hasRows {
+		return EmptyProof(), nil
+	}
+	return EmptyProof(), nil
+}
+
+// EmptyProof is the answer for a machine that has no searchable words yet.
+// Nothing to search is a fact about the machine, not a fault in the index, and
+// a caller proving several databases needs one wording for it.
+func EmptyProof() Proof {
+	return Proof{Empty: true,
+		Reason: "there is nothing searchable in this machine's agent history yet"}
+}
+
+func indexedColumns(ctx context.Context, db *store.DB, source ProofSource) ([]string, error) {
+	rows, err := db.SQL().QueryContext(ctx,
+		`SELECT name FROM pragma_table_info(?) ORDER BY cid`, source.Index)
+	if err != nil {
+		return nil, fmt.Errorf("read indexed columns for %s: %w", source.Table, err)
+	}
+	defer rows.Close()
+	var columns []string
+	for rows.Next() {
+		var column string
+		if err := rows.Scan(&column); err != nil {
+			return nil, fmt.Errorf("read an indexed column for %s: %w", source.Table, err)
+		}
+		columns = append(columns, column)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read indexed columns for %s: %w", source.Table, err)
+	}
+	return columns, nil
+}
+
+func newestWord(ctx context.Context, db *store.DB, table, column string) (string, bool, error) {
+	statement := fmt.Sprintf(
+		`SELECT COALESCE(CAST(%[1]s AS TEXT),'') FROM %[2]s ORDER BY rowid DESC`,
+		quoteProofIdentifier(column), quoteProofIdentifier(table))
+	rows, err := db.SQL().QueryContext(ctx, statement)
+	if err != nil {
+		return "", false, fmt.Errorf("read %s rows to search for: %w", table, err)
+	}
+	defer rows.Close()
+	hasRows := false
+	for rows.Next() {
+		hasRows = true
+		var text string
+		if err := rows.Scan(&text); err != nil {
+			return "", hasRows, fmt.Errorf("read a %s row to search for: %w", table, err)
+		}
+		if word := probeWord(text); word != "" {
+			return word, true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", hasRows, fmt.Errorf("read %s rows to search for: %w", table, err)
+	}
+	return "", hasRows, nil
+}
+
+func quoteProofIdentifier(identifier string) string {
+	return `"` + strings.ReplaceAll(identifier, `"`, `""`) + `"`
+}
+
+func countMatches(ctx context.Context, db *store.DB, index, word string) (int, error) {
+	statement := fmt.Sprintf(
+		`SELECT COUNT(*) FROM (SELECT rowid FROM %[1]s WHERE %[1]s MATCH ? LIMIT %[2]d)`,
+		index, ProofLimit)
+	var matches int
+	if err := db.SQL().QueryRowContext(ctx, statement,
+		MatchExpression(word, MatchAll)).Scan(&matches); err != nil {
+		return 0, fmt.Errorf("search the word index for %q: %w", word, err)
+	}
+	return matches, nil
+}
+
+// probeWord is the longest word of the text that is worth asking for: short
+// tokens and bare numbers match half the corpus and prove nothing about the
+// index. It falls back to the longest token there is rather than give up on a
+// row whose every word is short.
+func probeWord(text string) string {
+	best, fallback := "", ""
+	for _, token := range Tokenize(text) {
+		if len([]rune(token)) > len([]rune(fallback)) {
+			fallback = token
+		}
+		if len([]rune(token)) < 4 || !strings.ContainsFunc(token, unicode.IsLetter) {
+			continue
+		}
+		if len([]rune(token)) > len([]rune(best)) {
+			best = token
+		}
+	}
+	if best != "" {
+		return best
+	}
+	return fallback
+}
+
+// ProbeWord selects the word a lexical proof should ask back from source text.
+func ProbeWord(text string) string {
+	return probeWord(text)
+}

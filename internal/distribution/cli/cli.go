@@ -130,7 +130,7 @@ func executeWithOptions(env *cliEnv, args []string, in io.Reader, plugins bool) 
 	}
 	root := rootCommand(env)
 	if plugins {
-		if handled, code, err := dispatchPlugin(root, args, env.features); handled {
+		if handled, code, err := dispatchPlugin(env, root, args, env.features); handled {
 			env.auditCommand = args[0]
 			env.auditArgs = redactPluginArguments(args[1:])
 			if err != nil {
@@ -287,14 +287,15 @@ type pathPlugin struct {
 	Path string `json:"path"`
 }
 
-func dispatchPlugin(root *cobra.Command, args []string, features config.FeaturesConfig) (bool, int, error) {
+func dispatchPlugin(env *cliEnv, root *cobra.Command, args []string, features config.FeaturesConfig) (bool, int, error) {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") || builtIn(root, args[0]) {
 		return false, 0, nil
 	}
-	if args[0] == "vector" && !features.Vector {
+	if args[0] == "vector" && !features.Vector && !vectorLifecycleCommand(args[1:]) {
 		return false, 0, nil
 	}
-	path, found := findPlugin(args[0])
+	paths, _ := env.resolvePaths()
+	path, found := resolveCompanion(args[0], pluginExecutableDir(paths))
 	if !found {
 		return false, 0, nil
 	}
@@ -311,6 +312,29 @@ func dispatchPlugin(root *cobra.Command, args []string, features config.Features
 	return true, ExitError, fmt.Errorf("execute plugin %s: %w", path, err)
 }
 
+func vectorLifecycleCommand(args []string) bool {
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		switch {
+		case argument == "--json" || strings.HasPrefix(argument, "--json="):
+			continue
+		case argument == "--db-path" || argument == "--state-dir" || argument == "--progress-fd":
+			index++
+			if index >= len(args) {
+				return false
+			}
+			continue
+		case strings.HasPrefix(argument, "--db-path=") ||
+			strings.HasPrefix(argument, "--state-dir=") ||
+			strings.HasPrefix(argument, "--progress-fd="):
+			continue
+		default:
+			return argument == "install" || argument == "status"
+		}
+	}
+	return false
+}
+
 func builtIn(root *cobra.Command, name string) bool {
 	for _, command := range root.Commands() {
 		if command.Name() == name || slices.Contains(command.Aliases, name) {
@@ -320,7 +344,15 @@ func builtIn(root *cobra.Command, name string) bool {
 	return false
 }
 
-func findPlugin(name string) (string, bool) {
+func resolveCompanion(name, managedDirectory string) (string, bool) {
+	if managedDirectory != "" {
+		for _, filename := range pluginFilenames("roca-" + name) {
+			path := filepath.Join(managedDirectory, filename)
+			if isExecutable(path) {
+				return path, true
+			}
+		}
+	}
 	for _, directory := range pluginPathDirectories() {
 		for _, filename := range pluginFilenames("roca-" + name) {
 			path := filepath.Join(directory, filename)

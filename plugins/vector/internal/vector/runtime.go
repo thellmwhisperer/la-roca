@@ -154,6 +154,7 @@ func Launch(request LaunchRequest) (LaunchResult, error) {
 	if claim == nil {
 		return LaunchResult{LogPath: filepath.Join(request.DataDir, WorkerLogFilename), AlreadyRunning: true}, nil
 	}
+	_ = os.Remove(filepath.Join(request.DataDir, CompletionFilename))
 	removeClaim := true
 	defer func() {
 		claim.Close()
@@ -260,6 +261,27 @@ func (SystemNotifier) Notify(ctx context.Context, completion Completion) error {
 
 func appleScript(value string) string {
 	return strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", " ").Replace(value)
+}
+
+// WorkerRunning says whether a background pass is reading right now. The claim
+// file is the same one Launch takes, so the answer is the process itself and not
+// a status somebody remembered to write.
+func WorkerRunning(directory string) bool {
+	pid := ReadWorkerPID(directory)
+	return pid > 0 && workerProcessAlive(pid)
+}
+
+// ReadCompletion returns the record the last pass left behind, if there is one.
+func ReadCompletion(directory string) (Completion, bool) {
+	raw, err := os.ReadFile(filepath.Join(directory, CompletionFilename))
+	if err != nil {
+		return Completion{}, false
+	}
+	var completion Completion
+	if err := json.Unmarshal(raw, &completion); err != nil {
+		return Completion{}, false
+	}
+	return completion, true
 }
 
 func ReadWorkerPID(directory string) int {

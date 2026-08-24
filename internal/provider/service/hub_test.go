@@ -77,11 +77,7 @@ func TestCutoverWritersRemainAuthoritativeInPlugins(t *testing.T) {
 
 func TestRocaOpsLayerRepairUsesTheOperationalOwner(t *testing.T) {
 	options := residentTestOptions(t)
-	svc, err := openWithContext(t.Context(), options)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = svc.Close() })
+	svc := openResident(t, options)
 	if _, err := svc.ensureSchema(t.Context()); err != nil {
 		t.Fatal(err)
 	}

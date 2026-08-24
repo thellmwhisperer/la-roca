@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/cucumber/godog"
+	"github.com/thellmwhisperer/la-roca/internal/provider/config"
 )
 
 // registerStoreSteps wires the curated step vocabulary of the STORE domain.
@@ -74,6 +75,10 @@ func registerStoreSteps(ctx *godog.ScenarioContext, binary string) {
 	ctx.Then(`^the JSON output declares the match was empty$`, m.jsonDeclaresEmptyMatch)
 	ctx.Then(`^the database holds every v1 table$`, m.holdsEveryV1Table)
 	ctx.Then(`^the output is plain text, not JSON$`, m.plainTextNotJSON)
+	ctx.Then(`^init reports the word search round trip$`, m.wordSearchWasProved)
+	ctx.Then(`^init never reports the word index as broken$`, m.wordIndexNeverBroken)
+	ctx.Then(`^init did not start reading the history for meaning$`, m.meaningPassNotStarted)
+	ctx.Then(`^the configuration leaves the meaning pass switched off$`, m.meaningPassSwitchedOff)
 	ctx.Then(`^the memory is still there$`, m.memoryStillThere)
 	ctx.Then(`^a backup was taken before the repair$`, m.backupWasTaken)
 	ctx.Then(`^the repair left the schema current$`, m.schemaLeftCurrent)
@@ -419,6 +424,40 @@ func (m *world) plainTextNotJSON() error {
 		return fmt.Errorf("the init output is JSON, and it had to be plain text")
 	}
 	return m.outputContains("database outcome")
+}
+
+// wordSearchWasProved reads the promise init exists to keep: it does not return
+// until it has asked the index for a word and said what came back.
+func (m *world) wordSearchWasProved() error {
+	return m.outputContains("word search:")
+}
+
+func (m *world) wordIndexNeverBroken() error {
+	if strings.Contains(m.last.stdout, "did not answer") {
+		return fmt.Errorf("init called the word index broken: %s", m.last.stdout)
+	}
+	return nil
+}
+
+// meaningPassNotStarted holds the line the decision drew: a run nobody is
+// reading is never asked, so it downloads nothing and starts nothing.
+func (m *world) meaningPassNotStarted() error {
+	if strings.Contains(m.last.stdout, "deep search: reading") {
+		return fmt.Errorf("bare init started the meaning pass: %s", m.last.stdout)
+	}
+	return nil
+}
+
+func (m *world) meaningPassSwitchedOff() error {
+	path := filepath.Join(m.home, ".roca", "config.toml")
+	loaded, err := config.LoadFile(path)
+	if err != nil {
+		return err
+	}
+	if loaded.Features.Vector {
+		return fmt.Errorf("bare init enabled the meaning pass in %s", path)
+	}
+	return nil
 }
 
 func (m *world) memoryStillThere() error {
