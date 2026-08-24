@@ -6,8 +6,9 @@ name: release-please
 # vX.Y.Z and publishes the GitHub release that the existing Release workflow
 # builds binaries against.
 #
-# La Roca auto-merges only the release PR created by this workflow, after its
-# required checks pass. Other pull requests retain their normal merge policy.
+# La Roca asks GitHub to auto-merge only release PRs created by this workflow
+# after protected legacy PR #249 and after their required checks pass. Other
+# pull requests, including #249, retain their existing merge policy.
 # RELEASE_PLEASE_TOKEN must be a fine-grained PAT with Contents + Pull requests
 # read/write on this repository.
 
