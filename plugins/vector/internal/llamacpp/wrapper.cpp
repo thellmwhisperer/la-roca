@@ -39,12 +39,14 @@ extern "C" roca_llama_engine * roca_llama_open(const char * model_path, int thre
 
     if (accelerated != nullptr) {
         *accelerated = 0;
-        const int32_t devices = llama_model_n_devices(model);
-        for (int32_t i = 0; i < devices; ++i) {
-            const enum ggml_backend_dev_type type = ggml_backend_dev_type(llama_model_get_device(model, i));
-            if (type == GGML_BACKEND_DEVICE_TYPE_GPU || type == GGML_BACKEND_DEVICE_TYPE_ACCEL) {
-                *accelerated = 1;
-                break;
+        if (gpu_layers != 0) {
+            const int32_t devices = llama_model_n_devices(model);
+            for (int32_t i = 0; i < devices; ++i) {
+                const enum ggml_backend_dev_type type = ggml_backend_dev_type(llama_model_get_device(model, i));
+                if (type == GGML_BACKEND_DEVICE_TYPE_GPU || type == GGML_BACKEND_DEVICE_TYPE_ACCEL) {
+                    *accelerated = 1;
+                    break;
+                }
             }
         }
     }

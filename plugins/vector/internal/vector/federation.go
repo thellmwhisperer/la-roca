@@ -1486,6 +1486,13 @@ func SidecarPath(databasePath string) string {
 	return strings.TrimSuffix(databasePath, extension) + ".vector" + extension
 }
 
+// InitOwnedSidecar writes the owned sidecar schema used by install and ingest.
+// An empty file is not enough: delta ingest inspects owner metadata before it
+// opens a writer.
+func InitOwnedSidecar(path, owner, model string) error {
+	return sealSidecar(path, owner, model, "", "", "")
+}
+
 func sealSidecar(path, owner, model, buildVersion, contract, sourceFingerprint string) error {
 	values := map[string]string{
 		"owner": owner, "model": model, "version": buildVersion, "contract": contract,

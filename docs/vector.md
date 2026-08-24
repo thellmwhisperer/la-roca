@@ -107,10 +107,12 @@ semantic search is enabled there, no separate vector command is needed.
 `roca vector install` performs the same download and build only when you turn it
 on later.
 
-macOS and Linux run the embedding engine inside the vector companion. macOS
-uses hardware acceleration when available and falls back to CPU if it cannot
-start; Linux uses CPU. Windows keeps the previous local runtime path until its
-own native build lane ships; see the release notes.
+macOS and Linux run the embedding engine inside the vector companion. On
+macOS, live queries use hardware acceleration when available and fall back to
+CPU if it cannot start; indexing stays on CPU so it cannot contend with live
+search for the accelerator. Linux uses CPU for both paths. Windows keeps the
+previous local runtime path until its own native build lane ships; see the
+release notes.
 
 ## Index declared databases
 
