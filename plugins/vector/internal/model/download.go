@@ -25,6 +25,12 @@ func DefaultManifest() Manifest {
 	return Manifest{ID: ID, SHA256: SHA256, Bytes: Bytes, URL: DownloadURL}
 }
 
+// SourceManifest is used only by the release lane. Runtime downloads stay on
+// DefaultManifest, whose URL is the verified La Roca release asset.
+func SourceManifest() Manifest {
+	return Manifest{ID: ID, SHA256: SHA256, Bytes: Bytes, URL: SourceURL}
+}
+
 func FilePath(dataDir string, manifest Manifest) string {
 	return filepath.Join(dataDir, "models", manifest.ID, manifest.SHA256+".gguf")
 }
