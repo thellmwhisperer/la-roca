@@ -21,11 +21,11 @@ type queryModeProvider struct {
 	answers []string
 	// name and model are the provenance a split test needs: two of these under
 	// different names is an installation with the inferences on two providers.
-	name         string
-	model        string
-	calls        int
-	failAt       int
-	unreadyAfter int
+	name             string
+	model            string
+	calls            int
+	failAt           int
+	unreadyAfter     int
 	latency          int64
 	delays           []time.Duration
 	unboundedDelayAt int
