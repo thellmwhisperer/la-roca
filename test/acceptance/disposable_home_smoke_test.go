@@ -13,8 +13,6 @@ import (
 	"testing"
 )
 
-const smokePluginName = "harbor-ledger"
-
 // TestRealBinaryDisposableHomeSmoke walks the operator path against the artefact
 // `make build` produces: init, ingest, query, plugin install, and plugin update.
 // The HOME is a disposable directory. The live operator home is never written.
@@ -39,9 +37,10 @@ func TestRealBinaryDisposableHomeSmoke(t *testing.T) {
 	if filepath.Clean(home) == filepath.Clean(operatorHome) {
 		t.Fatal("the disposable home resolved to the operator home")
 	}
-	livePlugin := filepath.Join(operatorHome, ".roca", "plugins", smokePluginName)
+	pluginName := "harbor-ledger-" + strings.TrimPrefix(filepath.Base(home), "roca-e2e-smoke-")
+	livePlugin := filepath.Join(operatorHome, ".roca", "plugins", pluginName)
 	if _, err := os.Stat(livePlugin); !os.IsNotExist(err) {
-		t.Fatal("the smoke plugin already exists in the live operator home")
+		t.Fatal("the per-run smoke plugin path is not absent from the live operator home")
 	}
 
 	m := &world{binary: binary, home: home}
@@ -81,8 +80,8 @@ func TestRealBinaryDisposableHomeSmoke(t *testing.T) {
 		t.Fatalf("query named no search engine: %v", answer["engines"])
 	}
 
-	source := filepath.Join(home, "src", smokePluginName)
-	if err := writeHarborLedgerPackage(source, "1.0.0"); err != nil {
+	source := filepath.Join(home, "src", pluginName)
+	if err := writeHarborLedgerPackage(source, pluginName, "1.0.0"); err != nil {
 		t.Fatalf("write plugin 1.0.0: %v", err)
 	}
 	if _, err := m.runWith("roca plugin install --yes --json",
@@ -93,27 +92,27 @@ func TestRealBinaryDisposableHomeSmoke(t *testing.T) {
 		t.Fatalf("plugin install: code %d\n%s\n%s", m.last.code, m.last.stdout, m.last.stderr)
 	}
 	installed := pluginJSON(t, m.last.stdout)
-	if installed["action"] != "installed" || installed["name"] != smokePluginName || installed["version"] != "1.0.0" {
+	if installed["action"] != "installed" || installed["name"] != pluginName || installed["version"] != "1.0.0" {
 		t.Fatalf("plugin install action=%v name=%v version=%v",
 			installed["action"], installed["name"], installed["version"])
 	}
-	pluginDir := filepath.Join(home, ".roca", "plugins", smokePluginName)
+	pluginDir := filepath.Join(home, ".roca", "plugins", pluginName)
 	if _, err := os.Stat(pluginDir); err != nil {
 		t.Fatalf("installed plugin missing from the disposable home: %v", err)
 	}
 
-	if err := writeHarborLedgerPackage(source, "1.1.0"); err != nil {
+	if err := writeHarborLedgerPackage(source, pluginName, "1.1.0"); err != nil {
 		t.Fatalf("write plugin 1.1.0: %v", err)
 	}
 	if _, err := m.runWith("roca plugin update --yes --json",
-		[]string{"plugin", "update", "--yes", "--json", smokePluginName}); err != nil {
+		[]string{"plugin", "update", "--yes", "--json", pluginName}); err != nil {
 		t.Fatal(err)
 	}
 	if m.last.code != 0 {
 		t.Fatalf("plugin update: code %d\n%s\n%s", m.last.code, m.last.stdout, m.last.stderr)
 	}
 	updated := pluginJSON(t, m.last.stdout)
-	if updated["action"] != "updated" || updated["name"] != smokePluginName || updated["version"] != "1.1.0" {
+	if updated["action"] != "updated" || updated["name"] != pluginName || updated["version"] != "1.1.0" {
 		t.Fatalf("plugin update action=%v name=%v version=%v",
 			updated["action"], updated["name"], updated["version"])
 	}
@@ -135,7 +134,7 @@ func enableExperimentalPlugins(home string) error {
 	return os.WriteFile(path, append(raw, []byte("\n[features]\nplugins = true\n")...), 0o600)
 }
 
-func writeHarborLedgerPackage(directory, version string) error {
+func writeHarborLedgerPackage(directory, name, version string) error {
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return err
 	}
@@ -162,7 +161,7 @@ func writeHarborLedgerPackage(directory, version string) error {
     }]
   }]}
 }
-`, smokePluginName, version)
+`, name, version)
 	if err := os.WriteFile(filepath.Join(directory, "plugin.json"), []byte(manifest), 0o600); err != nil {
 		return err
 	}
