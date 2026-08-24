@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -120,6 +121,10 @@ func scavengeReadOnlySnapshots(ctx context.Context, root string, now time.Time) 
 	if err != nil {
 		return fmt.Errorf("inspect read-only snapshot directory: %w", err)
 	}
+	return scavengeSnapshotEntries(ctx, root, entries, now)
+}
+
+func scavengeSnapshotEntries(ctx context.Context, root string, entries []fs.DirEntry, now time.Time) error {
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -129,6 +134,11 @@ func scavengeReadOnlySnapshots(ctx context.Context, root string, now time.Time) 
 		}
 		info, err := entry.Info()
 		if err != nil {
+			if os.IsNotExist(err) {
+				// A concurrent snapshot closed and removed its directory
+				// after ReadDir listed it; there is nothing left to scavenge.
+				continue
+			}
 			return fmt.Errorf("inspect stale read-only snapshot %q: %w", entry.Name(), err)
 		}
 		if age := now.Sub(info.ModTime()); age < snapshotStaleAfter {

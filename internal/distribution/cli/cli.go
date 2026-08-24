@@ -437,7 +437,9 @@ func pluginCommand(env *cliEnv) *cobra.Command {
 		Use:   "plugin",
 		Short: "Install, update, or uninstall an experimental plugin",
 		Long: "Manages verified plugin packages from a directory, a .tar.gz release archive,\n" +
-			"a Git URL, or an owner/repo source. This experimental surface requires features.plugins=true.",
+			"a Git URL, or an owner/repo source. An owner/repo source uses the latest published\n" +
+			"release archive when one exists, and falls back to the repository tree only for a\n" +
+			"release-less data-only plugin. This experimental surface requires features.plugins=true.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
@@ -482,9 +484,9 @@ func pluginInstallCommand(env *cliEnv, consented *bool) *cobra.Command {
 
 func pluginUpdateCommand(env *cliEnv, consented *bool) *cobra.Command {
 	return &cobra.Command{
-		Use:   "update <name>",
-		Short: "Refresh a plugin from its recorded source",
-		Args:  cobra.ExactArgs(1),
+		Use:   "update <name> [source]",
+		Short: "Refresh a plugin from its recorded source, or rebase it onto a new one",
+		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			manager, scratch, err := env.pluginManager()
 			if err != nil {
@@ -494,7 +496,11 @@ func pluginUpdateCommand(env *cliEnv, consented *bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			candidate, cleanup, err := resolvePluginCandidate(cmd.Context(), manifest.Source, scratch)
+			reference := manifest.Source
+			if len(args) == 2 {
+				reference = args[1]
+			}
+			candidate, cleanup, err := resolvePluginCandidate(cmd.Context(), reference, scratch)
 			if err != nil {
 				return err
 			}
