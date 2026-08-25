@@ -16,6 +16,24 @@ Most users need to do nothing: an already signed-in Codex or Claude CLI is detec
 
 The bootstrap JSON field `external_credential` is now named `command_transport`; it reports that the selected model runs through a local agent CLI without implying that La Roca owns authentication.
 
+## [1.75.0](https://github.com/thellmwhisperer/la-roca/compare/v1.74.2...v1.75.0) (2026-08-24)
+
+
+### Features
+
+* **cli:** add tool-call-observer for live session tool calls ([#254](https://github.com/thellmwhisperer/la-roca/issues/254)) ([bb2db08](https://github.com/thellmwhisperer/la-roca/commit/bb2db08aa5588eec88311c2ee5c0938d96cd51be))
+* **cli:** prove word search and ask the vector question inside init ([#255](https://github.com/thellmwhisperer/la-roca/issues/255)) ([6b050dc](https://github.com/thellmwhisperer/la-roca/commit/6b050dc396d77552739ee553c81071ce15649f17))
+* declare no-mistakes lint and test commands ([#248](https://github.com/thellmwhisperer/la-roca/issues/248)) ([05552fd](https://github.com/thellmwhisperer/la-roca/commit/05552fd2efa37b9d4efe94aa91003a840883c6ee))
+* **distribution:** install and update owner/repo plugins from published releases ([#253](https://github.com/thellmwhisperer/la-roca/issues/253)) ([7a5223d](https://github.com/thellmwhisperer/la-roca/commit/7a5223db2a1df87cd320a038703b26c8ee16b25e))
+* **distribution:** store one current row per fact in corpus databases ([#250](https://github.com/thellmwhisperer/la-roca/issues/250)) ([c2b6313](https://github.com/thellmwhisperer/la-roca/commit/c2b631356e5dbe03f8fc03ece6ad0ba8bc857bbd))
+* **plugins:** raise plugin session companions from mcp serve ([#251](https://github.com/thellmwhisperer/la-roca/issues/251)) ([f441542](https://github.com/thellmwhisperer/la-roca/commit/f441542ea33df1c35cdcf86e70e926f1eb7b5426))
+* **vector:** publish verified embedding model releases ([#256](https://github.com/thellmwhisperer/la-roca/issues/256)) ([96ea64c](https://github.com/thellmwhisperer/la-roca/commit/96ea64cca6b7899803f7a1e6d1343a03bf60085b))
+
+
+### Bug Fixes
+
+* **vector:** prevent delta ingest hangs under Metal contention ([#257](https://github.com/thellmwhisperer/la-roca/issues/257)) ([392d8af](https://github.com/thellmwhisperer/la-roca/commit/392d8af87d93056f5fd0982e2ef65869e309b856))
+
 ## [1.74.2](https://github.com/thellmwhisperer/la-roca/compare/v1.74.1...v1.74.2) (2026-08-23)
 
 
