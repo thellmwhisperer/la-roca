@@ -109,8 +109,17 @@ on later.
 
 macOS and Linux run the embedding engine inside the vector companion. On
 macOS, live queries use hardware acceleration when available and fall back to
-CPU if it cannot start; indexing stays on CPU so it cannot contend with live
-search for the accelerator. Linux uses CPU for both paths. Windows keeps the
+CPU if it cannot start. Indexing picks its backend by occasion: a bulk build
+(`roca vector install`, `roca vector ingest --delta --reembed`) takes the
+accelerator, because it is a foreground job you are waiting on, while the
+background delta pass stays on CPU so it cannot contend with live search.
+`--accelerate` overrides either default in both directions, including
+`--accelerate=false` to keep a bulk build on the CPU; `ROCA_VECTOR_WRITER_GPU`
+(`1` or `0`) does the same for a worker started elsewhere, and the flag wins
+over the variable. Telemetry records the decision: `fallback_reason` reads
+`operator requested accelerator`, `operator requested cpu`, `bulk build
+default`, or `indexing leaves the accelerator for live search`, so a slow run
+is diagnosable from the log. Linux uses CPU for both paths. Windows keeps the
 previous local runtime path until its own native build lane ships; see the
 release notes.
 
