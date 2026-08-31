@@ -16,6 +16,13 @@ Most users need to do nothing: an already signed-in Codex or Claude CLI is detec
 
 The bootstrap JSON field `external_credential` is now named `command_transport`; it reports that the selected model runs through a local agent CLI without implying that La Roca owns authentication.
 
+## [1.77.0](https://github.com/thellmwhisperer/la-roca/compare/v1.76.0...v1.77.0) (2026-08-31)
+
+
+### Features
+
+* **ingest:** add ZCode desktop session ingestion ([#272](https://github.com/thellmwhisperer/la-roca/issues/272)) ([15b7823](https://github.com/thellmwhisperer/la-roca/commit/15b7823991ef91e593003ad063329af32aa80b67))
+
 ## [1.76.0](https://github.com/thellmwhisperer/la-roca/compare/v1.75.0...v1.76.0) (2026-08-31)
 
 
