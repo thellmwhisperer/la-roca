@@ -16,6 +16,7 @@ without a La Roca login](lifecycle.md#install).
 | GLM | User skill documents and their supporting Markdown files |
 | Cursor | Agent and legacy IDE sessions, prompts, thinking, and tool calls from its local SQLite stores |
 | OpenCode | Sessions and exchanges, distilled from its local database |
+| ZCode | Desktop sessions, messages, reasoning, and tool calls from its local database |
 | Pi | Complete session tree, including nested child runs |
 | Hermes | Sessions and channel, usage and routing intel from its state database, plus curated MEMORY.md blocks |
 | Grok Build | Sessions, from the session update stream and its metadata sidecar |
@@ -36,7 +37,7 @@ roca ingest /path/to/extracted-export
 
 The path belongs only to that invocation. A later `roca ingest` with no path,
 including the nightly run, reads only live Claude, Codex, Qwen Code, GLM, Cursor,
-Pi, OpenCode, Hermes, Grok Build, Cowork, and the pre-federation store. It
+Pi, OpenCode, ZCode, Hermes, Grok Build, Cowork, and the pre-federation store. It
 fingerprints each source file by path and content, so an explicit rerun of the
 same export is a zero delta and a newer export contributes only message
 identities that have not already landed. A live session file that grows
@@ -398,6 +399,54 @@ Files under `~/.grok/memtrace/` are process-memory telemetry (`start`, `sample`,
 and `purge` records), not semantic memory or conversation. The coverage report
 counts their files and records under that exclusion reason without ingesting
 them.
+
+## ZCode
+
+This reader is pinned to ZCode Desktop 3.10.2 (macOS build 3.10.2.6414),
+whose bundled session runtime reports schema version 0.16.5 and migrations
+`0001_base_session_store` through `0018_session_input_failed_status`. ZCode
+keeps the primary conversation store at `~/.zcode/cli/db/db.sqlite` in SQLite
+WAL mode. The database's `session` rows carry identity, title, directory,
+parent, runtime version, and millisecond timestamps. Its ordered `message` rows
+carry JSON documents: visible human prompts record the selected model under
+`model`, while assistant messages record `modelID` and `providerID` directly.
+Ordered `part` rows contain `text`, `reasoning`, `tool`, `file`, `timeline`, and
+step telemetry documents. A tool document includes its call ID, name, status,
+input, output or error, and start/end timestamps.
+
+The populated store measured for this reading contained one session, 45
+messages, and 151 parts: 10 user-role messages (seven visible prompts and three
+hidden synthetic reminders), 35 assistant-role messages, 31 reasoning parts,
+28 completed tool parts, 24 text parts, one attachment reference, one model
+change marker, and step telemetry around model calls. The same database also
+held 35 `model_usage`, 28 `tool_usage`, and seven `turn_usage` observability
+rows. These aggregates established the synthetic fixture shape; no real
+conversation text, identifier, account value, or attachment entered a fixture.
+
+Three secondary surfaces were checked. `~/.zcode/v2/tasks-index.sqlite` is a
+desktop task index that repeats session title, status, workspace, and selected
+model but has no messages. `~/.zcode/cli/rollout/model-io-<session>.jsonl`
+contains raw model request/response telemetry (41 records in the measured
+session) that repeats the durable conversation at a lower-level network
+boundary. `~/.zcode/cli/log/*.jsonl` is operational telemetry, and
+`~/Library/Application Support/ZCode` contains Electron browser state rather
+than durable conversations. None adds a conversation record absent from the
+primary database, so none is ingested.
+
+La Roca opens the primary database through the shared query-only live-SQLite
+boundary and fingerprints its WAL with parser reading `zcode-3.10.2-v1`.
+Override the source with `zcode_db_path` or `ZCODE_DB_PATH`; when neither is
+set, ZCode's own `ZCODE_STORAGE_DIR` moves the default database with the app.
+Every supported visible, finished message that declares a model becomes one
+source-identified exchange. Human messages take model and provider from their
+nested `model` document; assistant messages take them from `modelID` and
+`providerID`, along with any recorded usage and cost. A message with no
+source-recorded model does not enter the corpus, which keeps model attribution
+non-empty on every ZCode exchange.
+Reasoning and completed or failed tools stay attached to their message. A
+running assistant message is deferred, while hidden synthetic reminders,
+timeline events, attachment references, and step telemetry are named
+exclusions.
 
 ## OpenCode
 

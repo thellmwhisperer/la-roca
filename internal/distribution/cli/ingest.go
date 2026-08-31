@@ -385,6 +385,7 @@ func ingestSources(file config.File, home, runnerDir string) ingest.Roots {
 			CodexStateDB:          file.Default("codex_state_db_path"),
 			OpenCodeDB:            file.Default("opencode_db_path"),
 			OpenCodeTelegramLogs:  file.Default("opencode_telegram_bot_logs"),
+			ZCodeDB:               file.Default("zcode_db_path"),
 			PiRoot:                file.Default("pi_root"),
 			PiSessions:            file.Default("pi_sessions_root"),
 			HermesHome:            file.Default("hermes_home"),
