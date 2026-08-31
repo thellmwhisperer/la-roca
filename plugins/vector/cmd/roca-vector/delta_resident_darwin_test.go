@@ -54,8 +54,12 @@ func runE2ECore(args []string) bool {
 	case strings.Contains(statement, "SUM("):
 		rows = append(rows, map[string]any{"total": 1})
 	case strings.Contains(statement, `FROM "plugin_fixture"."records"`):
+		body := strings.TrimSpace(os.Getenv("ROCA_VECTOR_E2E_BODY"))
+		if body == "" {
+			body = "accelerator concurrency regression"
+		}
 		rows = append(rows, map[string]any{
-			"source_id": "record-1", "body": "accelerator concurrency regression",
+			"source_id": "record-1", "body": body,
 			"context_title": "", "context_project": "", "context_time": "record-1",
 		})
 	}
@@ -77,7 +81,7 @@ func createOwnedSource(path, extraSQL string) error {
 	return err
 }
 
-func assertWriterReportedCPU(t *testing.T, dataDir string) {
+func assertLastWriterBackend(t *testing.T, dataDir, wantBackend, wantReason string) {
 	t.Helper()
 	matches, err := filepath.Glob(filepath.Join(dataDir, "logs", "engine-*.jsonl"))
 	if err != nil {
@@ -86,7 +90,11 @@ func assertWriterReportedCPU(t *testing.T, dataDir string) {
 	if len(matches) == 0 {
 		t.Fatal("writer produced no engine telemetry")
 	}
-	sawLoad := false
+	var last struct {
+		Kind     string `json:"kind"`
+		Backend  string `json:"backend"`
+		Fallback string `json:"fallback_reason"`
+	}
 	for _, path := range matches {
 		raw, err := os.ReadFile(path)
 		if err != nil {
@@ -98,25 +106,27 @@ func assertWriterReportedCPU(t *testing.T, dataDir string) {
 				continue
 			}
 			var record struct {
-				Kind    string `json:"kind"`
-				Backend string `json:"backend"`
+				Kind     string `json:"kind"`
+				Backend  string `json:"backend"`
+				Fallback string `json:"fallback_reason"`
 			}
 			if err := json.Unmarshal([]byte(line), &record); err != nil {
 				t.Fatal(err)
 			}
-			if record.Kind != "load" {
-				continue
+			if record.Kind == "load" {
+				last = record
 			}
-			sawLoad = true
-			if record.Backend != "cpu" {
-				t.Fatalf("writer load backend = %q, want cpu", record.Backend)
-			}
-			t.Log("writer engine telemetry: backend=cpu")
 		}
 	}
-	if !sawLoad {
+	if last.Kind == "" {
 		t.Fatal("writer produced no load telemetry")
 	}
+	if last.Backend != wantBackend || last.Fallback != wantReason {
+		t.Fatalf("writer telemetry = backend %q reason %q, want backend %q reason %q",
+			last.Backend, last.Fallback, wantBackend, wantReason)
+	}
+	t.Logf("writer engine telemetry: backend=%s fallback_reason=%q",
+		last.Backend, last.Fallback)
 }
 
 func containsArgument(args []string, target string) bool {
@@ -238,33 +248,61 @@ func TestDeltaIngestTerminatesWhileResidentHoldsAccelerator(t *testing.T) {
 	}
 	t.Log("resident prewarm: accelerated=true")
 
-	ingest := exec.CommandContext(ctx, binary, "--json", "--db-path", dbPath,
-		"--state-dir", stateDir, "ingest", "--delta")
-	ingestLog, err := os.Create(filepath.Join(root, "ingest.stderr"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	ingest.Stderr = ingestLog
-	ingestOutput, err := ingest.Output()
-	_ = ingestLog.Close()
-	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			t.Fatal("vector ingest --delta did not terminate while the accelerated resident was alive")
+	runIngest := func(label string, environment, arguments []string) int {
+		t.Helper()
+		commandArgs := []string{"--json", "--db-path", dbPath, "--state-dir", stateDir,
+			"ingest", "--delta"}
+		commandArgs = append(commandArgs, arguments...)
+		ingest := exec.CommandContext(ctx, binary, commandArgs...)
+		ingest.Env = append(os.Environ(), environment...)
+		ingestLog, err := os.Create(filepath.Join(root, strings.ReplaceAll(label, " ", "-")+".stderr"))
+		if err != nil {
+			t.Fatal(err)
 		}
-		t.Fatalf("vector ingest --delta: %v: %s", err, strings.TrimSpace(string(ingestOutput)))
+		ingest.Stderr = ingestLog
+		ingestOutput, err := ingest.Output()
+		_ = ingestLog.Close()
+		if err != nil {
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				t.Fatalf("%s did not terminate while the accelerated resident was alive", label)
+			}
+			t.Fatalf("%s: %v: %s", label, err, strings.TrimSpace(string(ingestOutput)))
+		}
+		var report struct {
+			Counts struct {
+				Added int `json:"added"`
+			} `json:"counts"`
+		}
+		if err := json.Unmarshal(ingestOutput, &report); err != nil {
+			t.Fatalf("decode %s output: %v: %s", label, err, ingestOutput)
+		}
+		t.Logf("%s: exited 0, added=%d", label, report.Counts.Added)
+		return report.Counts.Added
 	}
-	var report struct {
-		Counts struct {
-			Added int `json:"added"`
-		} `json:"counts"`
+
+	if added := runIngest("roca vector ingest --delta", nil, nil); added == 0 {
+		t.Fatal("vector ingest --delta added no embeddings")
 	}
-	if err := json.Unmarshal(ingestOutput, &report); err != nil {
-		t.Fatalf("decode ingest output: %v: %s", err, ingestOutput)
-	}
-	if report.Counts.Added == 0 {
-		t.Fatalf("vector ingest --delta added no embeddings: %s", ingestOutput)
-	}
-	t.Logf("roca vector ingest --delta: exited 0, added=%d", report.Counts.Added)
+	assertLastWriterBackend(t, root, "cpu", "indexing leaves the accelerator for live search")
+
+	runIngest("roca vector ingest --delta --reembed",
+		[]string{"ROCA_VECTOR_E2E_BODY=bulk build default"}, []string{"--reembed"})
+	assertLastWriterBackend(t, root, "metal", "bulk build default")
+
+	runIngest("ROCA_VECTOR_WRITER_GPU=0 roca vector ingest --delta --reembed",
+		[]string{"ROCA_VECTOR_WRITER_GPU=0", "ROCA_VECTOR_E2E_BODY=environment cpu"},
+		[]string{"--reembed"})
+	assertLastWriterBackend(t, root, "cpu", "operator requested cpu")
+
+	runIngest("ROCA_VECTOR_WRITER_GPU=0 roca vector ingest --delta --reembed --accelerate",
+		[]string{"ROCA_VECTOR_WRITER_GPU=0", "ROCA_VECTOR_E2E_BODY=flag accelerator"},
+		[]string{"--reembed", "--accelerate"})
+	assertLastWriterBackend(t, root, "metal", "operator requested accelerator")
+
+	runIngest("ROCA_VECTOR_WRITER_GPU=1 roca vector ingest --delta --reembed --accelerate=false",
+		[]string{"ROCA_VECTOR_WRITER_GPU=1", "ROCA_VECTOR_E2E_BODY=flag cpu"},
+		[]string{"--reembed", "--accelerate=false"})
+	assertLastWriterBackend(t, root, "cpu", "operator requested cpu")
 
 	store, err := sql.Open("sqlite", sidecarPath)
 	if err != nil {
@@ -278,8 +316,7 @@ func TestDeltaIngestTerminatesWhileResidentHoldsAccelerator(t *testing.T) {
 	if chunks == 0 {
 		t.Fatal("vector ingest --delta terminated without growing the index")
 	}
-	t.Logf("persisted sidecar state: chunks=%d", chunks)
-	assertWriterReportedCPU(t, root)
+	t.Logf("persisted sidecar state after backend policy passes: chunks=%d", chunks)
 
 	if err := residentInput.Close(); err != nil {
 		t.Fatal(err)

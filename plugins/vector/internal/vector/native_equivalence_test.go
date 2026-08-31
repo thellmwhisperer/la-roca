@@ -11,6 +11,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/thellmwhisperer/la-roca-vector/internal/llamacpp"
 	"github.com/thellmwhisperer/la-roca-vector/internal/model"
 )
 
@@ -37,7 +38,8 @@ func TestNativeEngineMatchesPublicEquivalenceFixture(t *testing.T) {
 	if _, err := model.Ensure(context.Background(), dataDir, model.SourceManifest(), nil); err != nil {
 		t.Fatal(err)
 	}
-	embedder := ConfiguredEmbedder(dataDir, t.TempDir(), nil, nil, false)
+	embedder := ConfiguredEmbedder(dataDir, t.TempDir(), nil, nil, false,
+		llamacpp.Policy{Occasion: llamacpp.OccasionDelta})
 	if closer, ok := embedder.(*Native); ok {
 		t.Cleanup(closer.Close)
 	}
