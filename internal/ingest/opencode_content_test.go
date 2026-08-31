@@ -11,31 +11,12 @@ import (
 )
 
 func syntheticOpenCodeContent(t *testing.T) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "opencode.db")
-	db := openSynthetic(t, path)
-	fixture, err := os.ReadFile(filepath.Join("testdata", "opencode-content.sql"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(string(fixture)); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return path
+	return syntheticDatabaseFixture(t, "opencode.db", "opencode-content.sql")
 }
 
 func TestOpenCodeConvertsEachFinishedMessageAndItsContent(t *testing.T) {
 	path := syntheticOpenCodeContent(t)
-	records, complaints, err := ReadOpenCode(context.Background(), path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(complaints) != 0 || len(records.Sessions) != 1 {
-		t.Fatalf("complaints/sessions = %v/%d", complaints, len(records.Sessions))
-	}
+	records := readSyntheticDatabase(t, path, ReadOpenCode)
 	coverage := records.MessageCoverage
 	if coverage == nil || coverage.Seen != 7 || coverage.Converted != 5 ||
 		coverage.Skipped["assistant message still being written"] != 1 ||

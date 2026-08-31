@@ -433,6 +433,20 @@ boundary. `~/.zcode/cli/log/*.jsonl` is operational telemetry, and
 than durable conversations. None adds a conversation record absent from the
 primary database, so none is ingested.
 
+La Roca opens the primary database through the shared query-only live-SQLite
+boundary and fingerprints its WAL with parser reading `zcode-3.10.2-v1`.
+Override the source with `zcode_db_path` or `ZCODE_DB_PATH`; when neither is
+set, ZCode's own `ZCODE_STORAGE_DIR` moves the default database with the app.
+Every visible finished message becomes one source-identified exchange. Human
+messages take model and provider from their nested `model` document; assistant
+messages take them from `modelID` and `providerID`, along with any recorded
+usage and cost. A message with no source-recorded model does not enter the
+corpus, which keeps model attribution non-empty on every ZCode exchange.
+Reasoning and completed or failed tools stay attached to their message. A
+running assistant message is deferred, while hidden synthetic reminders,
+timeline events, attachment references, and step telemetry are named
+exclusions.
+
 ## OpenCode
 
 OpenCode's SQLite store is read as a snapshot through a query-only connection.

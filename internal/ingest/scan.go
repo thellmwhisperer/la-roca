@@ -81,7 +81,7 @@ type Plan struct {
 }
 
 var supportedAgentFamilies = []string{
-	"claude", "claude-desktop", "cowork", "codex", "opencode", "pi", "hermes", "grok", "cursor",
+	"claude", "claude-desktop", "cowork", "codex", "opencode", "zcode", "pi", "hermes", "grok", "cursor",
 }
 
 // MissingAgentFamilies returns the supported families not present in detected,
@@ -154,6 +154,8 @@ func Scan(roots Roots) Plan {
 		}
 	}
 	plan.add(openCode, "opencode_databases")
+	plan.add(existingFile(roots.ZCodeDB, Target{
+		Kind: parsers.KindZCodeDB, SourceAgent: "zcode"}), "zcode_databases")
 	plan.add(existingFile(roots.HermesDB, Target{
 		Kind: parsers.KindHermesDB, SourceAgent: "hermes"}), "hermes_databases")
 	plan.add(existingFile(roots.LegacyStoreDB, Target{
@@ -257,6 +259,7 @@ func DetectAgents(roots Roots) []string {
 		{"cowork", pathExists(roots.CoworkSessions)},
 		{"codex", pathExists(roots.CodexRoot) || pathExists(roots.CodexSessions) || isFile(roots.CodexStateDB)},
 		{"opencode", isFile(roots.OpenCodeDB)},
+		{"zcode", isFile(roots.ZCodeDB)},
 		{"pi", pathExists(roots.PiRoot) || pathExists(roots.PiSessions)},
 		{"hermes", isFile(roots.HermesDB) || isFile(filepath.Join(roots.HermesHome, "memories", "MEMORY.md"))},
 		{"grok", pathExists(roots.GrokSessions)},
