@@ -11,6 +11,7 @@ import (
 
 	"github.com/thellmwhisperer/la-roca/internal/provider/layers"
 	"github.com/thellmwhisperer/la-roca/internal/store"
+	"github.com/thellmwhisperer/la-roca/pkg/parsers"
 	_ "modernc.org/sqlite"
 )
 
@@ -298,6 +299,36 @@ func (w *world) seedHermes(t *testing.T, path string) {
 	              1785542800, NULL, NULL, 1, 0, 10, 1, 0, NULL, 'fixture-hermes-provider')`,
 		w.demoCwd())
 	exec(t, db, `INSERT INTO messages VALUES (4,'h2','user','in progress',NULL,NULL,NULL,1785542800,1,NULL)`)
+}
+
+func syntheticDatabaseFixture(t *testing.T, name, fixture string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	db := openSynthetic(t, path)
+	content, err := os.ReadFile(filepath.Join("testdata", fixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(string(content)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func readSyntheticDatabase(t *testing.T, path string,
+	read func(context.Context, string) (parsers.Records, []string, error)) parsers.Records {
+	t.Helper()
+	records, complaints, err := read(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(complaints) != 0 || len(records.Sessions) != 1 {
+		t.Fatalf("complaints/sessions = %v/%d", complaints, len(records.Sessions))
+	}
+	return records
 }
 
 func openSynthetic(t *testing.T, path string) *sql.DB {

@@ -13,6 +13,7 @@ Feature: Knowing what lives on this machine
       | cowork          |
       | codex           |
       | opencode        |
+      | zcode           |
       | pi              |
       | hermes          |
       | grok            |

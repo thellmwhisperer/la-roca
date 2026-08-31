@@ -41,7 +41,7 @@ func TestDetectedAgentsFollowExistingStores(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, path := range []string{roots.OpenCodeDB, roots.HermesDB} {
+	for _, path := range []string{roots.OpenCodeDB, roots.ZCodeDB, roots.HermesDB} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -51,7 +51,7 @@ func TestDetectedAgentsFollowExistingStores(t *testing.T) {
 	}
 
 	plan := Scan(roots)
-	want := []string{"claude", "claude-desktop", "cowork", "codex", "opencode", "pi", "hermes", "grok"}
+	want := []string{"claude", "claude-desktop", "cowork", "codex", "opencode", "zcode", "pi", "hermes", "grok"}
 	if !slices.Equal(plan.DetectedAgents, want) {
 		t.Fatalf("detected agents = %v, want %v", plan.DetectedAgents, want)
 	}

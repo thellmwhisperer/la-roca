@@ -100,7 +100,7 @@ func registerIngestAttributionSteps(ctx *godog.ScenarioContext, w *ingestAccepta
 		want := map[string]string{
 			"claude": "Claude Code", "claude-desktop": "Claude Desktop",
 			"cowork": "Cowork", "codex": "Codex CLI", "opencode": "OpenCode",
-			"pi": "Pi", "hermes": "Hermes", "grok": "Grok Build",
+			"zcode": "ZCode", "pi": "Pi", "hermes": "Hermes", "grok": "Grok Build",
 		}
 		for rows.Next() {
 			var family, harness string
@@ -173,6 +173,7 @@ func (w *ingestAcceptanceWorld) seedEverySupportedSession() error {
 		w.seedCoworkSession,
 		func() error { return w.seedCodexSession("") },
 		w.seedOpenCodeSession,
+		w.seedZCodeSession,
 		w.seedPiSession,
 		func() error { return w.seedHermesSession("") },
 		w.seedGrokSession,
