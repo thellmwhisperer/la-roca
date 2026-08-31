@@ -146,6 +146,9 @@ func TestZCodeIngestWritesCorpusProvenanceAndFileStateIncrementally(t *testing.T
 	if len(first.DetectedAgents) != 1 || first.DetectedAgents[0] != "zcode" {
 		t.Fatalf("detected agents = %v", first.DetectedAgents)
 	}
+	if got := first.Roots["zcode_db"]; got != path {
+		t.Fatalf("reported ZCode database = %q, want %q", got, path)
+	}
 	if got := first.MessageCoverage["zcode"]; got.Seen != 8 || got.Converted != 3 {
 		t.Fatalf("ZCode message coverage = %+v", got)
 	}

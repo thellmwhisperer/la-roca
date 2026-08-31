@@ -1319,6 +1319,7 @@ func declaredRoots(roots Roots) map[string]string {
 		"codex_sessions":             roots.CodexSessions,
 		"opencode_db":                roots.OpenCodeDB,
 		"opencode_telegram_bot_logs": roots.OpenCodeTelegramLogs,
+		"zcode_db":                   roots.ZCodeDB,
 		"pi_root":                    roots.PiRoot,
 		"pi_sessions":                roots.PiSessions,
 		"hermes_home":                roots.HermesHome,
