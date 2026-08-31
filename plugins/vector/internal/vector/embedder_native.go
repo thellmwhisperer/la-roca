@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/thellmwhisperer/la-roca-vector/internal/engine"
+	"github.com/thellmwhisperer/la-roca-vector/internal/llamacpp"
 	"github.com/thellmwhisperer/la-roca-vector/internal/model"
 	"github.com/thellmwhisperer/la-roca-vector/internal/telemetry"
 )
@@ -19,10 +20,13 @@ type Native struct {
 	Events    engine.Sink
 	Telemetry *telemetry.Store
 	ReadOnly  bool
-	mu        sync.Mutex
-	engine    nativeEngine
-	backend   string
-	fallback  string
+	// Writer is the backend policy for an indexing run: which occasion this
+	// pass is, plus whatever lever the operator pulled. Readers ignore it.
+	Writer   llamacpp.Policy
+	mu       sync.Mutex
+	engine   nativeEngine
+	backend  string
+	fallback string
 }
 
 type nativeEngine interface {
@@ -30,15 +34,20 @@ type nativeEngine interface {
 	Close()
 }
 
-func ConfiguredEmbedder(dataDir, stateDir string, events engine.Sink, tel *telemetry.Store, readOnly bool) Embedder {
-	return &Native{DataDir: dataDir, StateDir: stateDir, Events: events, Telemetry: tel, ReadOnly: readOnly}
+func ConfiguredEmbedder(dataDir, stateDir string, events engine.Sink, tel *telemetry.Store,
+	readOnly bool, writer llamacpp.Policy) Embedder {
+	return &Native{DataDir: dataDir, StateDir: stateDir, Events: events, Telemetry: tel,
+		ReadOnly: readOnly, Writer: writer}
 }
 
-func writerFallbackReason(readersUseAccelerator bool, backend, existing string) string {
-	if !readersUseAccelerator || existing != "" || backend != "cpu" {
+// writerFallbackReason keeps the engine's own answer when it has one: an
+// accelerator that refused to start is a better explanation of a CPU run than
+// the policy that asked for it.
+func writerFallbackReason(policy, existing string) string {
+	if existing != "" {
 		return existing
 	}
-	return "indexing leaves the accelerator for live search"
+	return policy
 }
 
 func (n *Native) Pull(ctx context.Context, requestedModel string) error {

@@ -15,10 +15,23 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/thellmwhisperer/la-roca-vector/internal/engine"
+	"github.com/thellmwhisperer/la-roca-vector/internal/llamacpp"
 	"github.com/thellmwhisperer/la-roca-vector/internal/model"
 	"github.com/thellmwhisperer/la-roca-vector/internal/telemetry"
 	"github.com/thellmwhisperer/la-roca-vector/internal/vector"
 )
+
+// writerGPUEnv carries the operator lever into the detached worker, which is
+// its own process and never sees the flag the parent was given.
+const writerGPUEnv = "ROCA_VECTOR_WRITER_GPU"
+
+// accelerateFlag is the operator lever: the flag is tri-state on purpose, so
+// "not passed" keeps the occasion's default and `--accelerate=false` can force
+// a bulk build back onto the CPU.
+const accelerateFlag = "accelerate"
+
+const accelerateUsage = "run this indexing pass on the accelerator " +
+	"(--accelerate=false forces the cpu)"
 
 var (
 	version           = "dev"
@@ -34,6 +47,40 @@ type environment struct {
 	dbPath     string
 	stateDir   string
 	progressFD int
+	// writer is the backend policy the running command decided on. Commands
+	// that never index leave it zero and take the conservative delta default.
+	writer llamacpp.Policy
+}
+
+// writerPolicy resolves the occasion against the operator lever. The flag is a
+// pointer because only a flag the operator actually typed overrides the
+// environment; an untouched flag is not a decision.
+func writerPolicy(occasion llamacpp.Occasion, flag *bool) llamacpp.Policy {
+	lever := llamacpp.LeverFrom(os.Getenv(writerGPUEnv))
+	if flag != nil {
+		lever = llamacpp.LeverFor(*flag)
+	}
+	return llamacpp.Policy{Occasion: occasion, Lever: lever}
+}
+
+// acceleratorLever reports the flag only when the operator set it.
+func acceleratorLever(command *cobra.Command, value bool) *bool {
+	if !command.Flags().Changed(accelerateFlag) {
+		return nil
+	}
+	return &value
+}
+
+// workerLeverEnvironment hands an explicit lever down to the spawned worker.
+// Without one the worker keeps its own default for the occasion it runs.
+func workerLeverEnvironment(flag *bool) []string {
+	if flag == nil {
+		return nil
+	}
+	if *flag {
+		return []string{writerGPUEnv + "=1"}
+	}
+	return []string{writerGPUEnv + "=0"}
 }
 
 func main() {
@@ -71,6 +118,7 @@ func rootCommand(env *environment) *cobra.Command {
 func installCommand(env *environment) *cobra.Command {
 	model := vector.DefaultModel
 	streamProgress := false
+	accelerate := false
 	command := &cobra.Command{
 		Use:   "install",
 		Short: "Download the embedding model and build declared sidecars in the background",
@@ -96,9 +144,12 @@ func installCommand(env *environment) *cobra.Command {
 			if !env.json || streamProgress {
 				progress = os.Stderr
 			}
+			workerEnvironment := []string{"ROCA_VECTOR_PLUGIN_ROOT=" + pluginRoot}
+			workerEnvironment = append(workerEnvironment,
+				workerLeverEnvironment(acceleratorLever(command, accelerate))...)
 			result, err := launchWorker(vector.LaunchRequest{
 				Executable: executable, Arguments: arguments, DataDir: state, Progress: progress,
-				Environment: []string{"ROCA_VECTOR_PLUGIN_ROOT=" + pluginRoot},
+				Environment: workerEnvironment,
 			})
 			if err != nil {
 				return err
@@ -121,6 +172,7 @@ func installCommand(env *environment) *cobra.Command {
 	command.Flags().StringVar(&model, "model", model, "embedding model identifier")
 	command.Flags().BoolVar(&streamProgress, "stream-progress", false, "stream setup progress")
 	_ = command.Flags().MarkHidden("stream-progress")
+	command.Flags().BoolVar(&accelerate, accelerateFlag, true, accelerateUsage)
 	return command
 }
 
@@ -266,6 +318,7 @@ func ingestCommand(env *environment) *cobra.Command {
 	var model string
 	var source string
 	var reembed bool
+	var accelerate bool
 	command := &cobra.Command{
 		Use:   "ingest --delta",
 		Short: "Embed only new or changed chunks from declared databases",
@@ -277,6 +330,10 @@ func ingestCommand(env *environment) *cobra.Command {
 			if readOnly() {
 				return fmt.Errorf("vector ingest --delta is disabled while ROCA_READ_ONLY is enabled")
 			}
+			// A reembed rebuilds every chunk: it is a bulk job the operator is
+			// waiting on, not the background pass that yields to live search.
+			env.writer = writerPolicy(llamacpp.WriterOccasion(reembed),
+				acceleratorLever(command, accelerate))
 			state, err := env.resolveStateDir()
 			if err != nil {
 				return err
@@ -375,6 +432,7 @@ func ingestCommand(env *environment) *cobra.Command {
 	command.Flags().BoolVar(&reembed, "reembed", false, "rebuild sidecar chunks under the current generation policy")
 	command.Flags().StringVar(&model, "model", "", "embedding model identifier (default: indexed model)")
 	command.Flags().StringVar(&source, "source", "", "limit the delta to one declared table")
+	command.Flags().BoolVar(&accelerate, accelerateFlag, false, accelerateUsage)
 	return command
 }
 
@@ -567,6 +625,9 @@ func workerCommand(env *environment) *cobra.Command {
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
+			// The worker is the install build: a foreground bulk job from the
+			// operator's side, so it accelerates unless the parent said not to.
+			env.writer = writerPolicy(llamacpp.OccasionBulk, nil)
 			state, err := env.resolveStateDir()
 			if err != nil {
 				return err
@@ -722,7 +783,13 @@ func defaultEmbedder(env *environment) vector.Embedder {
 			tel = store
 		}
 	}
-	return vector.ConfiguredEmbedder(coreDataDir(env.dbPath), env.stateDir, events, tel, locked)
+	// A command that did not declare its occasion is not a bulk build; keep the
+	// conservative default that leaves the accelerator to live search.
+	writer := env.writer
+	if writer.Occasion == "" {
+		writer = writerPolicy(llamacpp.OccasionDelta, nil)
+	}
+	return vector.ConfiguredEmbedder(coreDataDir(env.dbPath), env.stateDir, events, tel, locked, writer)
 }
 
 func (env *environment) embedder() (vector.Embedder, engine.Sink) {
@@ -731,7 +798,8 @@ func (env *environment) embedder() (vector.Embedder, engine.Sink) {
 
 func (env *environment) queryEmbedder() (vector.Embedder, engine.Sink) {
 	events := env.events()
-	return vector.ConfiguredEmbedder(coreDataDir(env.dbPath), env.stateDir, events, nil, true), events
+	return vector.ConfiguredEmbedder(coreDataDir(env.dbPath), env.stateDir, events, nil, true,
+		llamacpp.ReadPolicy()), events
 }
 
 func (env *environment) events() engine.Sink {
