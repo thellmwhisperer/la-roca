@@ -54,8 +54,10 @@ func selectedBackend(gpuLayers int, accelerated bool) (string, string) {
 	return BackendCPU, "accelerator unavailable"
 }
 
-func OpenPreferred(model string, threads int) (*Engine, error) {
-	layers := GPULayers(true)
+// OpenPreferred opens the engine the way the policy asks and falls back to the
+// CPU rather than failing outright when the accelerator will not start.
+func OpenPreferred(model string, threads int, policy Policy) (*Engine, error) {
+	layers := policy.GPULayers()
 	engine, err := Open(model, threads, layers)
 	if err == nil || layers == 0 {
 		return engine, err

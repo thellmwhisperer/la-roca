@@ -67,18 +67,17 @@ func (n *Native) open(ctx context.Context) error {
 	}
 	n.emit(engine.Progress("prewarm", "semantic search: preparing", 0, 1, 0))
 	started := time.Now()
-	var loaded *llamacpp.Engine
-	if n.ReadOnly {
-		loaded, err = llamacpp.OpenPreferred(path, runtime.NumCPU())
-	} else {
-		loaded, err = llamacpp.Open(path, runtime.NumCPU(), 0)
+	policy := llamacpp.ReadPolicy()
+	if !n.ReadOnly {
+		policy = n.Writer
 	}
+	loaded, err := llamacpp.OpenPreferred(path, runtime.NumCPU(), policy)
 	if err != nil {
 		n.record(telemetry.Record{Kind: telemetry.KindError, Err: "the embedding model failed to load"})
 		return fmt.Errorf("the embedding model failed to load")
 	}
 	if !n.ReadOnly {
-		loaded.FallbackReason = writerFallbackReason(llamacpp.GPULayers(true) > 0, loaded.Backend, loaded.FallbackReason)
+		loaded.FallbackReason = writerFallbackReason(policy.Reason(), loaded.FallbackReason)
 	}
 	n.engine = loaded
 	n.backend = loaded.Backend
